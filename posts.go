@@ -327,7 +327,7 @@ func (p *posts) handleList(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, orEmpty(out))
 }
 
 func (p *posts) handleReact(value int16) http.HandlerFunc {

@@ -230,5 +230,5 @@ func (f *favorites) handleList(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, items)
+	writeJSON(w, http.StatusOK, orEmpty(items))
 }

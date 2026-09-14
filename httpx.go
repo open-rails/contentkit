@@ -74,6 +74,20 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
+// orEmpty makes a list endpoint answer "no items" with [] rather than null.
+//
+// An empty Go slice is nil, and nil encodes as JSON null. A caller reasonably
+// reads that as "the field is absent" rather than "the list is empty", so
+// anything that iterates or measures the result fails on exactly the case it
+// is least likely to have been tested against. Returning [] keeps the response
+// type stable whether or not there are rows.
+func orEmpty[T any](items []T) []T {
+	if items == nil {
+		return []T{}
+	}
+	return items
+}
+
 // decodeJSON reads a JSON body with a sane size cap.
 func decodeJSON(r *http.Request, dst any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
