@@ -682,7 +682,7 @@ func (c *comments) handleList(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSON(w, http.StatusOK, orEmpty(list))
 }
 
 // handleAdminList serves the moderation queue (CommentModerate-gated): all
@@ -699,7 +699,7 @@ func (c *comments) handleAdminList(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, items)
+	writeJSON(w, http.StatusOK, orEmpty(items))
 }
 
 // handleRestore un-deletes a comment (CommentModerate-gated).
@@ -724,7 +724,7 @@ func (c *comments) handleLatest(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, items)
+	writeJSON(w, http.StatusOK, orEmpty(items))
 }
 
 func (c *comments) handleReplies(w http.ResponseWriter, req *http.Request) {
@@ -735,7 +735,7 @@ func (c *comments) handleReplies(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSON(w, http.StatusOK, orEmpty(list))
 }
 
 func (c *comments) handleCreate(w http.ResponseWriter, req *http.Request) {
