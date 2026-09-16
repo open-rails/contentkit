@@ -226,11 +226,15 @@ func processDirtyOnce(
 		if err := pg.DeleteSearchDocuments(ctx, tx, schema, r.EntityType, r.EntityID, r.Language); err != nil {
 			return nil, err
 		}
-		if err := pg.DeleteEmbeddingVectorsForEntity(ctx, pool, schema, r.EntityType, r.EntityID, r.Language); err != nil {
-			return nil, err
-		}
-		if err := repo.DeleteAllForEntity(ctx, r.EntityType, r.EntityID, r.Language); err != nil {
-			return nil, err
+		// Keyword-only installations have no semantic tables. Explicit
+		// semantic ownership opts into cleanup of that independent storage.
+		if _, enabled := semanticSet[r.EntityType]; enabled {
+			if err := pg.DeleteEmbeddingVectorsForEntity(ctx, pool, schema, r.EntityType, r.EntityID, r.Language); err != nil {
+				return nil, err
+			}
+			if err := repo.DeleteAllForEntity(ctx, r.EntityType, r.EntityID, r.Language); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -261,10 +265,9 @@ func processDirtyOnce(
 				if r.IsDeleted || r.EntityType != et || r.Language != lang {
 					continue
 				}
-				doc, ok := docs[r.EntityID]
-				if !ok {
-					continue
-				}
+				// Missing requested IDs mean the entity no longer exists;
+				// an empty document deletes any stale indexed record.
+				doc := docs[r.EntityID]
 				current, err := dirtyRevisionCurrent(ctx, tx, qs, r)
 				if err != nil {
 					return nil, err

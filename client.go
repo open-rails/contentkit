@@ -98,7 +98,8 @@ type SearchOptions struct {
 	Language string
 	// Defaults to LanguageModeExact when omitted.
 	LanguageMode LanguageMode
-	Mode         SearchMode
+	// Defaults to lexical; semantic and dual require explicit opt-in.
+	Mode SearchMode
 
 	// If set, applied to both lexical + semantic entity types unless explicitly overridden.
 	EntityTypes []string
@@ -219,7 +220,7 @@ func (c *Client) search(ctx context.Context, userText string, opts SearchOptions
 	}
 	mode := opts.Mode
 	if mode == "" {
-		mode = SearchModeDual
+		mode = SearchModeLexical
 	}
 	switch mode {
 	case SearchModeLexical, SearchModeSemantic, SearchModeDual:

@@ -15,7 +15,9 @@ Hosts should only use:
 - `client.SearchWithTrace(ctx, query, searchkit.SearchOptions{...})` for offline evaluation/debugging
 - `client.Typeahead(ctx, query, searchkit.TypeaheadOptions{...})`
 
-Use `SearchOptions.Mode`:
+An omitted `SearchOptions.Mode` defaults to lexical keyword search. Semantic and
+dual modes require explicit opt-in and optional storage/provider configuration:
+
 
 - `searchkit.SearchModeLexical`
 - `searchkit.SearchModeSemantic`

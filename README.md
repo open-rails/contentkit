@@ -12,12 +12,44 @@
 
 This README is a **manual** for host applications. Design notes live in `agents/NOTES.md`.
 
-> **Status & direction.** searchkit is evolving from a hybrid-search library into a **unified entity
-> + signal platform** — search + recommendations + history + "unseen" + engagement — runnable both
-> **embedded** and as a **multi-tenant SaaS server**. Canonical design:
-> [`docs/DESIGN.md`](docs/DESIGN.md), [`docs/signal-plane.md`](docs/signal-plane.md),
-> [`docs/api-surface.md`](docs/api-surface.md). The **embedded hub** (signal + discovery planes) is
-> implemented — see "The embedded hub" below. The standalone SaaS server is future work.
+## Keyword-first installation
+
+The normal search path is keyword-only. An omitted `SearchOptions.Mode` uses
+lexical retrieval. No embedder, provider credentials, vector extension or
+ClickHouse connection is needed. Semantic/dual modes require explicit opt-in;
+semantic search and recommendation work remain separate capabilities.
+
+**Fresh keyword installations:** load `migrations.KeywordPostgres` into a new
+`searchkit-keyword` migration group scoped to the host schema. This profile owns
+three tables / 22 columns: documents (8), dirty queue (8), and backfill cursor (6).
+It requires `pg_trgm` and PGroonga. Typed title/alias/keyword fields and improved
+multilingual fuzzy relevance remain follow-up work; this profile does not claim
+those matching changes are complete.
+
+**Existing combined installations:** keep `migrations.Postgres`, the original
+`searchkit` migration group, and its original migration checksums. Run keyword
+mode with no embedders and no `SemanticEntityTypes`; optional semantic tables and
+data remain intact. Their eight-table footprint is not reduced by changing runtime
+configuration. Do not switch a populated migration ledger between profiles or
+mark a different baseline applied. Enabling semantic storage on a fresh keyword
+installation needs a separate future provisioning/migration step; it is not a
+profile toggle. No automatic table drop or semantic-data conversion is performed.
+
+```go
+client, err := searchkit.NewClient(searchkit.ClientConfig{
+    Pool: pool, Schema: "doujins", DefaultLanguage: "en",
+})
+hits, err := client.Search(ctx, query, searchkit.SearchOptions{
+    EntityTypes: []string{"gallery"}, // defaults to lexical
+})
+```
+
+For indexing, construct `runtime.New` with `Pool`, `Schema` and
+`BuildLexicalString`, then run `worker.SyncOnce` with lexical entity types and a
+bounded ID-listing callback. A missing requested ID in a successful builder result
+means the source entity no longer exists and deletes its old document; transient
+failures must return an error. Explicit deletion also works without semantic
+tables. Existing dirty revisions, writer serialization and retry rules apply.
 
 ## The embedded hub (signal + discovery planes)
 
@@ -161,7 +193,7 @@ Note on PGroonga (CJK/Korean support):
 - You must install the PGroonga extension package in your Postgres image for your Postgres major version (package names vary by distro).
   - Example (Debian/Ubuntu images): install `postgresql-<MAJOR>-pgroonga` from the PGDG/APT repo, then restart Postgres.
 - The baseline migration runs `CREATE EXTENSION pgroonga`, which typically requires superuser (or elevated) privileges.
-- If your environment can’t run `CREATE EXTENSION` from app migrations, install/enable PGroonga out-of-band, then mark the migration applied (or apply it manually).
+- If your environment can’t run `CREATE EXTENSION` from app migrations, install/enable PGroonga out-of-band, then apply the complete baseline to create its tables, functions and indexes.
 - If PGroonga is not installed/enabled, CJK/Korean routing (`ja/zh/ko`) will fail at query time with a Postgres error (missing operator/function/index).
 
 ```go
@@ -186,7 +218,7 @@ func applySearchkitMigrations(ctx context.Context, sqlDB *sql.DB, schema string)
 }
 ```
 
-### 2) Create embedders (text, and optionally VL)
+### 2) Optional semantic setup: create embedders
 
 Use `embedder.NewOpenAICompatible(...)` with your provider’s OpenAI-compatible base URL + API key + model name.
 
@@ -213,7 +245,7 @@ rt, _ := runtime.NewWithContext(ctx, runtime.Options{
 
 Host apps provide:
 
-- `runtime.BuildSemanticDocument(ctx, entity_type, language, []entity_id) -> map[id]string` (**required**)
+- `runtime.BuildSemanticDocument(ctx, entity_type, language, []entity_id) -> map[id]string` (required only with semantic embedders)
   - Used to generate embeddings.
 - `runtime.BuildLexicalString(ctx, entity_type, language, []entity_id) -> map[id]string` (required if you want lexical docs)
   - Used to populate `search_documents` for both trigram typeahead and FTS.
@@ -271,8 +303,6 @@ Recommended entrypoint:
 client, err := searchkit.NewClient(searchkit.ClientConfig{
   Pool:            pool,
   Schema:          "doujins",
-  Embedder:        rt,          // runtime.Runtime implements Embedder
-  DefaultModel:    "text-embed-3-small",
   DefaultLanguage: "en",
 })
 ```
@@ -283,13 +313,10 @@ Then per request:
 hits, err := client.Search(ctx, userQuery, searchkit.SearchOptions{
   Language: "en",
   LanguageMode: searchkit.LanguageModeExact, // exact|fallback_en (default exact)
-  Mode:     searchkit.SearchModeDual, // lexical|semantic|dual
+  Mode:     searchkit.SearchModeLexical, // default; semantic/dual are opt-in
   EntityTypes: []string{"gallery"},
   Limit:          20,  // final fused results
   CandidateLimit: 100, // per-source candidates before RRF; defaults to Limit
-  // Positive cosine floor applied to semantic candidates before RRF.
-  // Values <= 0 disable the additional floor.
-  SemanticMinSimilarity: 0.35,
 })
 ```
 

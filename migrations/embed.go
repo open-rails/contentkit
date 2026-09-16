@@ -11,7 +11,18 @@ import (
 //go:embed postgres/*.sql
 var postgresFS embed.FS
 
+// Postgres is the immutable combined profile for existing installations.
 var Postgres fs.FS = mustSubFS(postgresFS, "postgres")
+
+//go:embed keyword/*.sql
+var keywordFS embed.FS
+
+// KeywordPostgres is a separate fresh-install profile, requiring pg_trgm and
+// PGroonga but no vector extension or semantic tables. Use its own migration
+// ledger/group identity; never replace an existing Postgres migration ledger.
+// Existing combined installations can use keyword runtime while keeping their
+// original profile and all optional semantic data.
+var KeywordPostgres fs.FS = mustSubFS(keywordFS, "keyword")
 
 func mustSubFS(fsys fs.FS, dir string) fs.FS {
 	sub, err := fs.Sub(fsys, dir)

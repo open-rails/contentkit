@@ -123,7 +123,7 @@ type SearchTrace struct {
 func initializeSearchTrace(client *Client, normalizedQuery string, opts SearchOptions) SearchTrace {
 	mode := opts.Mode
 	if mode == "" {
-		mode = SearchModeDual
+		mode = SearchModeLexical
 	}
 	language := strings.TrimSpace(opts.Language)
 	if language == "" {

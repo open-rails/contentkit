@@ -32,7 +32,9 @@ type BuildSemanticDocument func(ctx context.Context, entityType string, language
 // entities in a specific language.
 //
 // These strings should stay "sharp": do NOT include search hints or
-// description-like text.
+// description-like text. Missing requested IDs mean the entity no longer exists
+// and delete its indexed document. Return an error for failed/incomplete reads;
+// do not return a partial map on transient failures.
 type BuildLexicalString func(ctx context.Context, entityType string, language string, entityIDs []string) (map[string]string, error)
 
 type Runtime struct {
@@ -155,10 +157,10 @@ func New(opts Options) (*Runtime, error) {
 		vlEmbedders:       vlMap,
 		queryInstructions: queryInstructions,
 		taskRepo:          repo,
-		storage:       store,
-		buildSemantic: opts.BuildSemanticDocument,
-		buildLexical:  opts.BuildLexicalString,
-		listAssetURLs: opts.ListAssetURLs,
+		storage:           store,
+		buildSemantic:     opts.BuildSemanticDocument,
+		buildLexical:      opts.BuildLexicalString,
+		listAssetURLs:     opts.ListAssetURLs,
 	}, nil
 }
 

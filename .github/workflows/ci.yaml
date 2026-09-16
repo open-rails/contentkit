@@ -67,3 +67,35 @@ jobs:
 
       - name: test
         run: go test ./... -count=1 -race
+
+  keyword_profiles:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: groonga/pgroonga:4.0.8-debian-18
+        env:
+          POSTGRES_USER: searchkit
+          POSTGRES_PASSWORD: searchkit
+          POSTGRES_DB: searchkit_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U searchkit"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SEARCHKIT_PROFILE_URL: postgres://searchkit:searchkit@localhost:5432/searchkit_test?sslmode=disable
+      SEARCHKIT_PGROONGA_URL: postgres://searchkit:searchkit@localhost:5432/searchkit_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+      - name: Install optional vector package for existing-profile qualification
+        run: >-
+          docker exec '${{ job.services.postgres.id }}' bash -c
+          'apt-get update -qq && apt-get install -y -qq --no-install-recommends postgresql-18-pgvector'
+      - name: Test fresh keyword and existing combined profiles and PGroonga discovery
+        run: go test ./... -race -count=1 -run 'KeywordProfileIntegration|PGroonga'
