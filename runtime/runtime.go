@@ -37,6 +37,10 @@ type BuildSemanticDocument func(ctx context.Context, entityType string, language
 // do not return a partial map on transient failures.
 type BuildLexicalString func(ctx context.Context, entityType string, language string, entityIDs []string) (map[string]string, error)
 
+// BuildKeywordDocuments supplies structured inputs. Missing requested IDs mean
+// deletion; partial/transient failures must return an error.
+type BuildKeywordDocuments func(ctx context.Context, entityType, language string, entityIDs []string) (map[string]pg.KeywordDocument, error)
+
 type Runtime struct {
 	textEmbedders map[string]embedder.Embedder
 	vlEmbedders   map[string]vl.Embedder
@@ -50,6 +54,7 @@ type Runtime struct {
 
 	buildSemantic BuildSemanticDocument
 	buildLexical  BuildLexicalString
+	buildKeywords BuildKeywordDocuments
 	listAssetURLs vl.ListAssetURLs
 }
 
@@ -75,7 +80,8 @@ type Options struct {
 
 	// Optional: only needed if you want searchkit-managed lexical (trigram)
 	// document storage/backfill.
-	BuildLexicalString BuildLexicalString
+	BuildLexicalString    BuildLexicalString
+	BuildKeywordDocuments BuildKeywordDocuments
 
 	// Required if VLEmbedders is non-empty.
 	ListAssetURLs vl.ListAssetURLs
@@ -98,8 +104,8 @@ func New(opts Options) (*Runtime, error) {
 	if hasEmbedders && opts.BuildSemanticDocument == nil {
 		return nil, fmt.Errorf("BuildSemanticDocument is required when embedders are configured")
 	}
-	if !hasEmbedders && opts.BuildLexicalString == nil {
-		return nil, fmt.Errorf("at least one embedder or BuildLexicalString is required")
+	if !hasEmbedders && opts.BuildLexicalString == nil && opts.BuildKeywordDocuments == nil {
+		return nil, fmt.Errorf("at least one embedder or keyword document builder is required")
 	}
 
 	textMap := make(map[string]embedder.Embedder, len(opts.TextEmbedders))
@@ -160,6 +166,7 @@ func New(opts Options) (*Runtime, error) {
 		storage:           store,
 		buildSemantic:     opts.BuildSemanticDocument,
 		buildLexical:      opts.BuildLexicalString,
+		buildKeywords:     opts.BuildKeywordDocuments,
 		listAssetURLs:     opts.ListAssetURLs,
 	}, nil
 }
@@ -434,4 +441,21 @@ func (r *Runtime) GenerateAndStoreEmbedding(ctx context.Context, entityType stri
 		return r.GenerateAndStoreVLEmbedding(ctx, entityType, entityID, model, language)
 	}
 	return r.GenerateAndStoreTextEmbedding(ctx, entityType, entityID, model, language)
+}
+
+// BuildKeywordDocuments prefers canonical fields. The legacy string builder is
+// a compatibility adapter until the host supplies explicit names and aliases.
+func (r *Runtime) BuildKeywordDocuments(ctx context.Context, entityType, language string, ids []string) (map[string]pg.KeywordDocument, error) {
+	if r.buildKeywords != nil {
+		return r.buildKeywords(ctx, entityType, language, ids)
+	}
+	legacy, err := r.BuildLexicalString(ctx, entityType, language, ids)
+	if err != nil {
+		return nil, err
+	}
+	docs := make(map[string]pg.KeywordDocument, len(legacy))
+	for id, text := range legacy {
+		docs[id] = pg.KeywordDocument{Title: text}
+	}
+	return docs, nil
 }

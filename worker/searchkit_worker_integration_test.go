@@ -38,7 +38,7 @@ func workerFixture(t *testing.T) (context.Context, *pgxpool.Pool, string) {
 	_, err = pool.Exec(ctx, fmt.Sprintf(`CREATE SCHEMA %s;
  CREATE FUNCTION %s.searchkit_regconfig_for_language(text) RETURNS regconfig LANGUAGE sql IMMUTABLE AS $$ SELECT 'simple'::regconfig $$;
  CREATE TABLE %s.search_dirty (entity_type text,entity_id text,language text,is_deleted boolean DEFAULT false,reason text DEFAULT 'test',created_at timestamptz DEFAULT now(),updated_at timestamptz DEFAULT now(),PRIMARY KEY(entity_type,entity_id,language));
- CREATE TABLE %s.search_documents (entity_type text,entity_id text,language text,raw_document text,document text,tsv tsvector,created_at timestamptz,updated_at timestamptz,PRIMARY KEY(entity_type,entity_id,language));
+ CREATE TABLE %s.search_documents (entity_type text,entity_id text,language text,title text NOT NULL DEFAULT '',aliases text[] NOT NULL DEFAULT '{}',keywords text[] NOT NULL DEFAULT '{}',raw_document text,document text,tsv tsvector,created_at timestamptz,updated_at timestamptz,PRIMARY KEY(entity_type,entity_id,language));
  CREATE TABLE %s.search_documents_backfill_state (entity_type text,language text,cursor text DEFAULT '',state text DEFAULT 'pending',last_error text,updated_at timestamptz DEFAULT now(),PRIMARY KEY(entity_type,language));`, schema, schema, schema, schema, schema))
 	if err != nil {
 		t.Fatal(err)
@@ -212,8 +212,10 @@ func TestIntegrationLostWriterCannotOverwrite(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
+	// Wait for backend exit, not merely signal delivery: otherwise the next
+	// tick may correctly skip a lock that the terminating backend still holds.
 	var terminated bool
-	err := pool.QueryRow(ctx, `SELECT pg_terminate_backend(pid) FROM pg_locks WHERE locktype='advisory' AND granted AND classid=((hashtextextended($1,0)>>32)&4294967295)::oid AND objid=(hashtextextended($1,0)&4294967295)::oid AND objsubid=1`, "searchkit:sync:"+schema).Scan(&terminated)
+	err := pool.QueryRow(ctx, `SELECT pg_terminate_backend(pid, 5000) FROM pg_locks WHERE locktype='advisory' AND granted AND classid=((hashtextextended($1,0)>>32)&4294967295)::oid AND objid=(hashtextextended($1,0)&4294967295)::oid AND objsubid=1`, "searchkit:sync:"+schema).Scan(&terminated)
 	if err != nil || !terminated {
 		t.Fatalf("terminate: %v %v", terminated, err)
 	}

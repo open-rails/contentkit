@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/searchkit/migrations"
+	"github.com/open-rails/searchkit/pg"
 	"github.com/open-rails/searchkit/runtime"
 	"github.com/open-rails/searchkit/worker"
 )
@@ -29,8 +30,8 @@ func TestKeywordProfileIntegration(t *testing.T) {
 		files           fs.FS
 		tables, columns int
 	}{
-		{"fresh_keyword", migrations.KeywordPostgres, 3, 22},
-		{"existing_combined", migrations.Postgres, 8, 61},
+		{"fresh_keyword", migrations.KeywordPostgres, 3, 25},
+		{"existing_combined", migrations.Postgres, 8, 64},
 	} {
 		t.Run(profile.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -116,7 +117,7 @@ func TestKeywordProfileIntegration(t *testing.T) {
 			}
 			documents := map[string]string{"1": "Blue ocean"}
 			var buildErr error
-			rt, err := runtime.New(runtime.Options{Pool: pool, Schema: "app", BuildLexicalString: func(_ context.Context, _ string, _ string, ids []string) (map[string]string, error) {
+			runtimeOpts := runtime.Options{Pool: pool, Schema: "app", BuildLexicalString: func(_ context.Context, _ string, _ string, ids []string) (map[string]string, error) {
 				if buildErr != nil {
 					return nil, buildErr
 				}
@@ -127,7 +128,21 @@ func TestKeywordProfileIntegration(t *testing.T) {
 					}
 				}
 				return out, nil
-			}})
+			}}
+			if profile.name == "fresh_keyword" {
+				runtimeOpts.BuildKeywordDocuments = func(ctx context.Context, kind, lang string, ids []string) (map[string]pg.KeywordDocument, error) {
+					docs, err := runtimeOpts.BuildLexicalString(ctx, kind, lang, ids)
+					if err != nil {
+						return nil, err
+					}
+					structured := make(map[string]pg.KeywordDocument, len(docs))
+					for id, title := range docs {
+						structured[id] = pg.KeywordDocument{Title: title, Aliases: []string{"azure waves"}}
+					}
+					return structured, nil
+				}
+			}
+			rt, err := runtime.New(runtimeOpts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -160,6 +175,9 @@ func TestKeywordProfileIntegration(t *testing.T) {
 			}
 			mark(false)
 			search("Blue ocean", 1)
+			if profile.name == "fresh_keyword" {
+				search("azure", 1)
+			}
 			buildErr = errors.New("temporary source failure")
 			if _, err := pool.Exec(ctx, `INSERT INTO app.search_dirty(entity_type,entity_id,language) VALUES('gallery','1','en') ON CONFLICT(entity_type,entity_id,language) DO UPDATE SET reason='retry'`); err != nil {
 				t.Fatal(err)

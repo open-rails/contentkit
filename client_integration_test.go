@@ -76,6 +76,7 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
+	installKeywordFields(t, ctx, pool, schema)
 	_, err = pool.Exec(ctx, fmt.Sprintf(`
 		INSERT INTO %s.search_documents(entity_type, entity_id, language, document, raw_document, tsv)
 		VALUES ('gallery', '1', 'en', lower('Two factor authentication'), 'Two factor authentication', to_tsvector(%s.searchkit_regconfig_for_language('en'), 'Two factor authentication'))
@@ -147,7 +148,7 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 	if !reflect.DeepEqual(tracedLexHits, lexHits) {
 		t.Fatalf("traced lexical results differ: got %+v, want %+v", tracedLexHits, lexHits)
 	}
-	if len(lexTrace.Sources) != 1 || lexTrace.Sources[0].Backend != BackendFTS || lexTrace.Sources[0].Status != SourceStatusSucceeded || len(lexTrace.Results) != len(tracedLexHits) {
+	if len(lexTrace.Sources) != 1 || lexTrace.Sources[0].Backend != BackendKeyword || lexTrace.Sources[0].Status != SourceStatusSucceeded || len(lexTrace.Results) != len(tracedLexHits) {
 		t.Fatalf("unexpected lexical trace: %+v", lexTrace)
 	}
 

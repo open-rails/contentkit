@@ -254,13 +254,13 @@ func processDirtyOnce(
 	}
 	for et, byLang := range groupedLex {
 		for lang, ids := range byLang {
-			docs, err := rt.BuildLexicalString(ctx, et, lang, ids)
+			docs, err := rt.BuildKeywordDocuments(ctx, et, lang, ids)
 			if err != nil {
 				return nil, err
 			}
 			// Recheck generations after building. Changed or unsolicited IDs are
 			// not published; their latest queue entry remains for the next tick.
-			eligible := make(map[string]string)
+			eligible := make(map[string]pg.KeywordDocument)
 			for _, r := range batch {
 				if r.IsDeleted || r.EntityType != et || r.Language != lang {
 					continue
@@ -276,7 +276,7 @@ func processDirtyOnce(
 					eligible[r.EntityID] = doc
 				}
 			}
-			if err := pg.UpsertSearchDocuments(ctx, tx, schema, et, lang, eligible); err != nil {
+			if err := pg.UpsertKeywordDocuments(ctx, tx, schema, et, lang, eligible); err != nil {
 				return nil, err
 			}
 		}

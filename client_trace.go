@@ -11,6 +11,7 @@ import (
 type RetrievalBackend string
 
 const (
+	BackendKeyword  RetrievalBackend = "keyword"
 	BackendFTS      RetrievalBackend = "fts"
 	BackendTrigram  RetrievalBackend = "trigram"
 	BackendPGroonga RetrievalBackend = "pgroonga"
@@ -21,6 +22,7 @@ const (
 type ScoreKind string
 
 const (
+	ScoreKeywordMatch      ScoreKind = "keyword_match"
 	ScoreFTSRank           ScoreKind = "fts_rank"
 	ScoreTrigramSimilarity ScoreKind = "trigram_similarity"
 	ScorePGroongaRaw       ScoreKind = "pgroonga_score"

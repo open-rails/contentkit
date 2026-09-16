@@ -106,6 +106,7 @@ func newEvalTestClient(t *testing.T) (context.Context, *Client) {
 		t.Fatalf("setup schema: %v", err)
 	}
 
+	installKeywordFields(t, ctx, pool, schema)
 	corpus := []seedDoc{
 		{id: "1", doc: "two factor authentication", vec: []float32{1, 0, 0}},
 		{id: "2", doc: "two factor backup codes", vec: []float32{0.9, 0.1, 0}},

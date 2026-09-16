@@ -212,11 +212,11 @@ func TestClientSearchWithTrace_ReturnsFailedSourceTrace(t *testing.T) {
 	if err == nil {
 		t.Fatal("SearchWithTrace() error = nil, want source error")
 	}
-	if trace.ErrorCategory != "fts" || len(trace.Sources) != 1 {
+	if trace.ErrorCategory != "keyword" || len(trace.Sources) != 1 {
 		t.Fatalf("unexpected failed trace: %#v", trace)
 	}
 	source := trace.Sources[0]
-	if source.Backend != BackendFTS || source.ScoreKind != ScoreFTSRank || source.Status != SourceStatusFailed || source.ErrorCategory != "fts" {
+	if source.Backend != BackendKeyword || source.ScoreKind != ScoreKeywordMatch || source.Status != SourceStatusFailed || source.ErrorCategory != "keyword" {
 		t.Fatalf("unexpected failed source: %#v", source)
 	}
 }

@@ -2,8 +2,7 @@
 
 `searchkit` is a Go library for:
 
-- **Typeahead / fuzzy lexical search** (language-specific) via Postgres `pg_trgm` over `search_documents.document` (and optionally PGroonga for `ja/zh/ko`).
-- **Keyword lexical search** (BM25-family; language-specific) via Postgres full-text search over `search_documents.tsv` (and optionally PGroonga for `ja/zh/ko`).
+- **Keyword search and typeahead** over structured titles, aliases and keywords, using PostgreSQL exact indexes, PGroonga native-script prefix matching, and indexed `pg_trgm` typo candidates.
 - **Semantic search** (language-specific embeddings) via pgvector `halfvec` stored in `embedding_vectors`.
 - A **single, host-run worker loop** that:
   - consumes `search_dirty` notifications (changed/deleted entities),
@@ -21,10 +20,9 @@ semantic search and recommendation work remain separate capabilities.
 
 **Fresh keyword installations:** load `migrations.KeywordPostgres` into a new
 `searchkit-keyword` migration group scoped to the host schema. This profile owns
-three tables / 22 columns: documents (8), dirty queue (8), and backfill cursor (6).
-It requires `pg_trgm` and PGroonga. Typed title/alias/keyword fields and improved
-multilingual fuzzy relevance remain follow-up work; this profile does not claim
-those matching changes are complete.
+three tables / 25 columns: documents (11), dirty queue (8), and backfill cursor (6).
+It requires `pg_trgm` and PGroonga. Apply the complete profile, including its
+additive keyword-fields migration, before using the current client.
 
 **Existing combined installations:** keep `migrations.Postgres`, the original
 `searchkit` migration group, and its original migration checksums. Run keyword
@@ -45,11 +43,49 @@ hits, err := client.Search(ctx, query, searchkit.SearchOptions{
 ```
 
 For indexing, construct `runtime.New` with `Pool`, `Schema` and
-`BuildLexicalString`, then run `worker.SyncOnce` with lexical entity types and a
+`BuildKeywordDocuments`, returning `pg.KeywordDocument{Title, Aliases, Keywords}`, then run `worker.SyncOnce` with lexical entity types and a
 bounded ID-listing callback. A missing requested ID in a successful builder result
 means the source entity no longer exists and deletes its old document; transient
 failures must return an error. Explicit deletion also works without semantic
 tables. Existing dirty revisions, writer serialization and retry rules apply.
+The existing `BuildLexicalString` callback remains an adapter for hosts upgrading:
+its entire string becomes the title until the host provides structured inputs.
+Reindex through the dirty queue after adopting the structured callback; do not
+rewrite an applied baseline or guess alias boundaries in concatenated old text.
+
+### Keyword matching contract
+
+Search and Typeahead share the same matcher for every language. Database-side
+Unicode compatibility normalization, Latin accent folding, lowercasing, and whitespace folding are identical for index
+and query; display strings and native characters remain intact. Japanese dakuten and
+Hangul composition are preserved; `café`/`cafe` and `résumé`/`resume` match. Canonical exact
+names rank above exact aliases, then literal token/prefix matches, then one-edit
+matches. All query tokens are required. `not`, `OR`, hyphens and quotes are name
+text/punctuation, not Boolean query syntax. Native CJK substrings can match inside
+an unspaced name; Latin prefixes start at token boundaries.
+
+Typos accept one Unicode insertion, deletion, substitution or adjacent
+transposition per token. One/two-character terms require literal matches. This
+is not transliteration, keyboard-layout correction, or a promise of complete
+edit-distance recall: fuzzy retrieval first selects trigram candidates, so a typo
+with no shared trigram can be missed. In particular very short native names may
+need explicit aliases. Exact names and aliases have their own indexed candidate
+route and do not compete with the fuzzy candidate limit.
+
+Each exact, prefix and fuzzy route returns at most `min(MaxCandidateLimit,
+max(100, Limit * 8))` documents before Go validates and ranks them. Host eligibility
+filters execute inside every SQL route before its limit. Query limits are 256
+characters and 16 tokens. Each request has a two-second ceiling, including SQL
+and candidate scoring, or an earlier caller context deadline; transactions also
+set a local server statement timeout. This is a resource bound, not a latency
+promise. Structured input limits are 512 characters per name,
+64 aliases, and 256 keywords; these also apply to legacy string adapters. Supply
+structured fields instead of concatenating a long description. No full-catalog Go scan is used. Typeahead's
+`MinSimilarity` now filters the documented match-tier score (exact title 1, alias
+0.9, token/prefix 0.75–0.77, typo 0.5–0.52), not PGroonga's raw score. Search scores
+remain RRF scores; opt-in traces show the `keyword` source and `keyword_match`
+score. Quality/recall should be evaluated on the host's catalog before changing
+candidate bounds or typo rules.
 
 ## The embedded hub (signal + discovery planes)
 
@@ -194,7 +230,7 @@ Note on PGroonga (CJK/Korean support):
   - Example (Debian/Ubuntu images): install `postgresql-<MAJOR>-pgroonga` from the PGDG/APT repo, then restart Postgres.
 - The baseline migration runs `CREATE EXTENSION pgroonga`, which typically requires superuser (or elevated) privileges.
 - If your environment can’t run `CREATE EXTENSION` from app migrations, install/enable PGroonga out-of-band, then apply the complete baseline to create its tables, functions and indexes.
-- If PGroonga is not installed/enabled, CJK/Korean routing (`ja/zh/ko`) will fail at query time with a Postgres error (missing operator/function/index).
+- PGroonga is required for the current keyword matcher for every language. Provision it and apply additive migrations before upgrading the client.
 
 ```go
 import (
@@ -247,8 +283,9 @@ Host apps provide:
 
 - `runtime.BuildSemanticDocument(ctx, entity_type, language, []entity_id) -> map[id]string` (required only with semantic embedders)
   - Used to generate embeddings.
-- `runtime.BuildLexicalString(ctx, entity_type, language, []entity_id) -> map[id]string` (required if you want lexical docs)
-  - Used to populate `search_documents` for both trigram typeahead and FTS.
+- `runtime.BuildKeywordDocuments(ctx, entity_type, language, []entity_id) -> map[id]pg.KeywordDocument`
+  - Supplies canonical titles, aliases and contextual keywords. Searchkit owns all derived indexes.
+  - `BuildLexicalString` remains a whole-title adapter for existing hosts.
 - `vl.ListAssetURLs(ctx, entity_type, []entity_id) -> map[id][]AssetURL` (required only if VL models are enabled)
 
 ### 4) Mark changes (host writes `search_dirty`)
@@ -369,9 +406,7 @@ Language strictness:
 
 Language-specific routing (handled inside the client):
 
-- For most languages, Typeahead uses `pg_trgm` over `<schema>.search_documents.document`, and Search uses Postgres FTS (`tsvector` + `ts_rank_cd`) for the lexical side.
-- For `ja`/`zh`/`ko`, Typeahead and the lexical side of Search use **PGroonga** over `<schema>.search_documents.raw_document` (native-script), because Postgres FTS `simple` config does not provide Japanese/Chinese segmentation and trigram transliteration is lossy.
-- Mixed-script (`CJK + ASCII`) queries run both lexical backends (PGroonga + trigram) and merge deterministically.
+- Search and Typeahead use the shared keyword matcher described above, regardless of language. Low-level FTS, trigram and PGroonga APIs remain available for explicit specialist callers.
 
 Query syntax notes:
 

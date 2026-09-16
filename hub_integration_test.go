@@ -87,6 +87,7 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 		_, _ = pool.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+hubTestPGSchema+" CASCADE")
 	})
 
+	installKeywordFields(t, ctx, pool, hubTestPGSchema)
 	docs := []struct {
 		id, text string
 		vec      []float32

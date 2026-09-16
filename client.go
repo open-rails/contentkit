@@ -280,7 +280,7 @@ func (c *Client) search(ctx context.Context, userText string, opts SearchOptions
 
 	if mode == SearchModeLexical || mode == SearchModeDual {
 		for _, lang := range languages {
-			lexLists, err := c.searchLexical(ctx, qEmbed, lang, candidateLimit, lexTypes, opts.FilterSQL, opts.FilterArgs, trace)
+			lexLists, err := c.searchLexical(ctx, userText, lang, candidateLimit, lexTypes, opts.FilterSQL, opts.FilterArgs, trace)
 			if err != nil {
 				return nil, err
 			}
@@ -433,115 +433,22 @@ func (c *Client) SimilarTo(ctx context.Context, entityType string, entityID stri
 }
 
 func (c *Client) searchLexical(ctx context.Context, q string, language string, limit int, entityTypes []string, filterSQL string, filterArgs map[string]any, trace *SearchTrace) ([][]search.RRFKey, error) {
-	route := lexicalRouting(language, q, false)
-	out := make([][]search.RRFKey, 0, 2)
-
-	if route.useFTS {
-		traceIndex := beginSourceTrace(trace, BackendFTS, language, "", ScoreFTSRank, limit)
-		lex, err := search.FTSSearch(ctx, c.pool, q, search.FTSOptions{
-			Schema:      c.schema,
-			Language:    language,
-			EntityTypes: entityTypes,
-			Limit:       limit,
-			FilterSQL:   filterSQL,
-			FilterArgs:  filterArgs,
-		})
-		if err != nil {
-			failSourceTrace(trace, traceIndex, "fts")
-			return nil, err
-		}
-		keys := make([]search.RRFKey, 0, len(lex))
-		var candidates []CandidateTrace
+	traceIndex := beginSourceTrace(trace, BackendKeyword, language, "", ScoreKeywordMatch, limit)
+	hits, err := search.KeywordSearch(ctx, c.pool, q, search.LexicalOptions{Schema: c.schema, Language: language, EntityTypes: entityTypes, Limit: limit, FilterSQL: filterSQL, FilterArgs: filterArgs})
+	if err != nil {
+		failSourceTrace(trace, traceIndex, "keyword")
+		return nil, err
+	}
+	keys := make([]search.RRFKey, 0, len(hits))
+	var candidates []CandidateTrace
+	for i, h := range hits {
+		keys = append(keys, search.RRFKey{EntityType: h.EntityType, EntityID: h.EntityID, Language: h.Language})
 		if trace != nil {
-			candidates = make([]CandidateTrace, 0, len(lex))
+			candidates = append(candidates, CandidateTrace{Key: TraceKey{EntityType: h.EntityType, EntityID: h.EntityID, Language: h.Language}, Rank: i + 1, Score: h.Score})
 		}
-		for i, h := range lex {
-			keys = append(keys, search.RRFKey{EntityType: h.EntityType, EntityID: h.EntityID, Language: h.Language})
-			if trace != nil {
-				candidates = append(candidates, CandidateTrace{
-					Key:  TraceKey{EntityType: h.EntityType, EntityID: h.EntityID, Language: h.Language},
-					Rank: i + 1, Score: h.Score,
-				})
-			}
-		}
-		completeSourceTrace(trace, traceIndex, candidates)
-		out = append(out, keys)
 	}
-
-	if route.useTrigram {
-		traceIndex := beginSourceTrace(trace, BackendTrigram, language, "", ScoreTrigramSimilarity, limit)
-		lex, err := search.LexicalSearch(ctx, c.pool, q, search.LexicalOptions{
-			Schema:        c.schema,
-			Language:      language,
-			EntityTypes:   entityTypes,
-			Limit:         limit,
-			MinSimilarity: 0.1,
-			FilterSQL:     filterSQL,
-			FilterArgs:    filterArgs,
-		})
-		if err != nil {
-			failSourceTrace(trace, traceIndex, "trigram")
-			return nil, err
-		}
-		keys := make([]search.RRFKey, 0, len(lex))
-		var candidates []CandidateTrace
-		if trace != nil {
-			candidates = make([]CandidateTrace, 0, len(lex))
-		}
-		for i, h := range lex {
-			keys = append(keys, search.RRFKey{EntityType: h.EntityType, EntityID: h.EntityID, Language: h.Language})
-			if trace != nil {
-				candidates = append(candidates, CandidateTrace{
-					Key:  TraceKey{EntityType: h.EntityType, EntityID: h.EntityID, Language: h.Language},
-					Rank: i + 1, Score: h.Score,
-				})
-			}
-		}
-		completeSourceTrace(trace, traceIndex, candidates)
-		out = append(out, keys)
-	}
-
-	if route.usePGroonga {
-		traceIndex := beginSourceTrace(trace, BackendPGroonga, language, "", ScorePGroongaRaw, limit)
-		lex, err := search.PGroongaSearch(ctx, c.pool, q, search.PGroongaOptions{
-			Schema:      c.schema,
-			Language:    language,
-			EntityTypes: entityTypes,
-			Limit:       limit,
-			Prefix:      false,
-			ScoreK:      1,
-			FilterSQL:   filterSQL,
-			FilterArgs:  filterArgs,
-		})
-		if err != nil {
-			failSourceTrace(trace, traceIndex, "pgroonga")
-			return nil, err
-		}
-		keys := make([]search.RRFKey, 0, len(lex))
-		var candidates []CandidateTrace
-		if trace != nil {
-			candidates = make([]CandidateTrace, 0, len(lex))
-		}
-		for i, h := range lex {
-			keys = append(keys, search.RRFKey{EntityType: h.EntityType, EntityID: h.EntityID, Language: h.Language})
-			if trace != nil {
-				normalizedScore := h.Score
-				candidates = append(candidates, CandidateTrace{
-					Key:             TraceKey{EntityType: h.EntityType, EntityID: h.EntityID, Language: h.Language},
-					Rank:            i + 1,
-					Score:           h.RawScore,
-					NormalizedScore: &normalizedScore,
-				})
-			}
-		}
-		completeSourceTrace(trace, traceIndex, candidates)
-		out = append(out, keys)
-	}
-
-	if len(out) == 0 {
-		return nil, nil
-	}
-	return out, nil
+	completeSourceTrace(trace, traceIndex, candidates)
+	return [][]search.RRFKey{keys}, nil
 }
 
 func (c *Client) searchSemantic(
@@ -619,7 +526,7 @@ type TypeaheadHit struct {
 
 // Typeahead returns suggestions while a user is typing (typos/substring matching).
 func (c *Client) Typeahead(ctx context.Context, userText string, opts TypeaheadOptions) ([]TypeaheadHit, error) {
-	q := querynorm.QueryForEmbedding(userText)
+	q := strings.TrimSpace(userText)
 	if q == "" || !hasAnyLetterOrNumber(q) {
 		return []TypeaheadHit{}, nil
 	}
@@ -656,44 +563,12 @@ func (c *Client) Typeahead(ctx context.Context, userText string, opts TypeaheadO
 	}
 
 	for _, lang := range languages {
-		route := lexicalRouting(lang, q, true)
-
-		if route.useTrigram {
-			hits, err := search.LexicalSearch(ctx, c.pool, q, search.LexicalOptions{
-				Schema:        c.schema,
-				Language:      lang,
-				EntityTypes:   entityTypes,
-				Limit:         limit,
-				MinSimilarity: minSim,
-				FilterSQL:     opts.FilterSQL,
-				FilterArgs:    opts.FilterArgs,
-			})
-			if err != nil {
-				return nil, err
-			}
-			for _, h := range hits {
-				add(TypeaheadHit{EntityType: h.EntityType, EntityID: h.EntityID, Language: h.Language, Score: h.Score})
-			}
+		hits, err := search.KeywordSearch(ctx, c.pool, q, search.LexicalOptions{Schema: c.schema, Language: lang, EntityTypes: entityTypes, Limit: limit, FilterSQL: opts.FilterSQL, FilterArgs: opts.FilterArgs})
+		if err != nil {
+			return nil, err
 		}
-
-		if route.usePGroonga {
-			hits, err := search.PGroongaSearch(ctx, c.pool, q, search.PGroongaOptions{
-				Schema:      c.schema,
-				Language:    lang,
-				EntityTypes: entityTypes,
-				Limit:       limit,
-				Prefix:      true,
-				ScoreK:      1,
-				FilterSQL:   opts.FilterSQL,
-				FilterArgs:  opts.FilterArgs,
-			})
-			if err != nil {
-				return nil, err
-			}
-			for _, h := range hits {
-				if minSim > 0 && h.Score < minSim {
-					continue
-				}
+		for _, h := range hits {
+			if minSim <= 0 || h.Score >= minSim {
 				add(TypeaheadHit{EntityType: h.EntityType, EntityID: h.EntityID, Language: h.Language, Score: h.Score})
 			}
 		}
@@ -720,35 +595,6 @@ func (c *Client) Typeahead(ctx context.Context, userText string, opts TypeaheadO
 		out = out[:limit]
 	}
 	return out, nil
-}
-
-func isCJKLanguage(lang string) bool {
-	switch strings.ToLower(strings.TrimSpace(lang)) {
-	case "ja", "zh", "ko":
-		return true
-	default:
-		return false
-	}
-}
-
-type lexicalRoute struct {
-	useFTS      bool
-	useTrigram  bool
-	usePGroonga bool
-}
-
-func lexicalRouting(language string, q string, typeahead bool) lexicalRoute {
-	if !isCJKLanguage(language) {
-		if typeahead {
-			return lexicalRoute{useTrigram: true}
-		}
-		return lexicalRoute{useFTS: true}
-	}
-
-	return lexicalRoute{
-		useTrigram:  containsASCIIAlphaNum(q),
-		usePGroonga: containsCJKScript(q),
-	}
 }
 
 func resolveLanguageModes(language string, mode LanguageMode) ([]string, error) {
