@@ -747,3 +747,56 @@ func TestIntegrationNegativeSignalsAndItemPairs(t *testing.T) {
 		t.Fatalf("refresh not idempotent: %d vs %d", len(coR2), len(coR))
 	}
 }
+
+func TestIntegrationForgetImpressionsIsolation(t *testing.T) {
+	st, conn := freshStore(t)
+	ctx := context.Background()
+	user := Subject{UserID: "same-key"}
+	anon := Subject{AnonKey: "same-key"}
+	for i, tc := range []struct {
+		tenant  string
+		subject Subject
+	}{
+		{"doujins", user}, {"doujins", anon}, {"hentai0", user}, {"doujins", Subject{UserID: "other"}},
+	} {
+		err := st.RecordImpressions(ctx, tc.tenant, []Impression{{QueryID: fmt.Sprintf("q%d", i), Surface: SurfaceSearch, Subject: tc.subject, OccurredAt: at(1, 10), Shown: []EntityRef{{EntityType: "gallery", EntityID: "g1"}, {EntityType: "gallery", EntityID: "g2"}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.RecordSignal(ctx, "doujins", view("g1", user, 1, 10, 1, 2, 50, false)); err != nil {
+		t.Fatal(err)
+	}
+	// Entity-scoped history clearing must leave even mixed-entity exposure lists intact.
+	if err := st.Forget(ctx, "doujins", user, "gallery", "g1"); err != nil {
+		t.Fatal(err)
+	}
+	assertCount := func(query string, want uint64) {
+		t.Helper()
+		rows, err := conn.Query(ctx, query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var count uint64
+		if !rows.Next() {
+			t.Fatal("no result")
+		}
+		if err := rows.Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != want {
+			t.Fatalf("%s: got %d want %d", query, count, want)
+		}
+	}
+	assertCount("SELECT count() FROM "+testDB+".search_impressions FINAL", 4)
+	for i := 0; i < 2; i++ {
+		if err := st.ForgetImpressions(ctx, "doujins", user); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertCount("SELECT count() FROM "+testDB+".search_impressions FINAL", 3)
+	assertCount("SELECT count() FROM "+testDB+".search_impressions FINAL WHERE tenant='doujins' AND subject_kind='user' AND subject='same-key'", 0)
+	// Existing daily totals must not be destroyed by history or impression clearing.
+	assertCount("SELECT sum(signals) FROM "+testDB+".entity_daily", 1)
+}

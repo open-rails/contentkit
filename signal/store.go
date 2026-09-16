@@ -493,9 +493,11 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ?`, stateColumns, st.db)
 	return out, rows.Err()
 }
 
-// Forget erases a subject's signals — for one entity (ref non-nil) or for an
-// entire entity type (ref nil, entityType set) — from both the event stream
-// and the current-state projection. Backs host "clear my history" features
+// Forget erases a subject's signals for one entity, or an entire entity type
+// when entityID is empty, from both the event stream
+// and the current-state projection. This is NOT account erasure: impressions,
+// exact-subject daily aggregate states, and derived item pairs remain.
+// Backs host "clear my history" features
 // (lightweight DELETEs; eventual on replicated tables).
 func (st *Store) Forget(ctx context.Context, tenant string, subject Subject, entityType string, entityID string) error {
 	if err := subject.Validate(); err != nil {
@@ -519,6 +521,27 @@ func (st *Store) Forget(ctx context.Context, tenant string, subject Subject, ent
 	}
 	if err := st.conn.Exec(ctx, fmt.Sprintf("DELETE FROM %s.signal_state%s", st.db, stWhere), stArgs...); err != nil {
 		return fmt.Errorf("signal: forget state: %w", err)
+	}
+	return nil
+}
+
+// ForgetImpressions removes all result-list exposures for one tenant and subject.
+// It is separate from entity-scoped Forget: one result list can contain many
+// entities, and clearing one history entry must not erase unrelated exposures.
+// Completion waits for the mutation on the current server (not every replica).
+// Hosts must fence concurrent ingestion before using this for account erasure.
+// This alone is NOT complete erasure: signal events, state, exact-subject daily
+// aggregate states, and derived item pairs require separate lifecycle handling.
+func (st *Store) ForgetImpressions(ctx context.Context, tenant string, subject Subject) error {
+	if strings.TrimSpace(tenant) == "" {
+		return fmt.Errorf("signal: tenant is required")
+	}
+	if err := subject.Validate(); err != nil {
+		return err
+	}
+	query := fmt.Sprintf(`ALTER TABLE %s.search_impressions DELETE WHERE tenant = ? AND subject_kind = ? AND subject = ? SETTINGS mutations_sync = 1`, st.db)
+	if err := st.conn.Exec(ctx, query, tenant, subject.Kind(), subject.Key()); err != nil {
+		return fmt.Errorf("signal: forget impressions: %w", err)
 	}
 	return nil
 }

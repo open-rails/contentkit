@@ -208,6 +208,24 @@ func TestRecordSignalValidation(t *testing.T) {
 	}
 }
 
+func TestForgetImpressionsValidation(t *testing.T) {
+	fc := &fakeConn{}
+	st, _ := NewStore(fc, "hub")
+	for _, tc := range []struct {
+		tenant  string
+		subject Subject
+	}{
+		{"", Subject{UserID: "u1"}}, {"doujins", Subject{}},
+	} {
+		if err := st.ForgetImpressions(context.Background(), tc.tenant, tc.subject); err == nil {
+			t.Fatal("expected validation error")
+		}
+	}
+	if len(fc.execs) != 0 {
+		t.Fatal("invalid request executed mutation")
+	}
+}
+
 func TestHistoryStatusFilters(t *testing.T) {
 	fc := &fakeConn{}
 	st, _ := NewStore(fc, "hub")
