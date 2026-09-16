@@ -4,39 +4,33 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"unicode"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var pgroongaExtensionSchema struct {
-	once   sync.Once
-	schema string
-	err    error
-}
-
+// Discover against the current connection pool. This small catalog lookup avoids
+// process-global pool retention, stale schema ownership and cached startup errors.
 func getPGroongaExtensionSchema(ctx context.Context, pool *pgxpool.Pool) (string, error) {
 	if pool == nil {
 		return "", fmt.Errorf("pool is required")
 	}
 
-	pgroongaExtensionSchema.once.Do(func() {
-		var schema string
-		err := pool.QueryRow(ctx, `
+	var schema string
+	err := pool.QueryRow(ctx, `
 			SELECT n.nspname
 			FROM pg_extension e
 			JOIN pg_namespace n ON n.oid = e.extnamespace
 			WHERE e.extname = 'pgroonga'
 		`).Scan(&schema)
-		if err != nil {
-			pgroongaExtensionSchema.err = fmt.Errorf("detect pgroonga extension schema: %w", err)
-			return
-		}
-		pgroongaExtensionSchema.schema = schema
-	})
-	return pgroongaExtensionSchema.schema, pgroongaExtensionSchema.err
+	if err != nil {
+		// Do not cache failures: a transient connection or migration error must
+		// not poison every future PGroonga search in this process.
+		return "", fmt.Errorf("detect pgroonga extension schema: %w", err)
+	}
+
+	return schema, nil
 }
 
 // PGroongaHit is a lexical hit returned by PGroonga-backed search.
