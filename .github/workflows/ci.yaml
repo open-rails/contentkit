@@ -25,22 +25,6 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
-      clickhouse:
-        # Drives the signal-plane and hub integration tests (event stream,
-        # current-state reprojection, popular/recommend, dedup).
-        image: clickhouse/clickhouse-server:latest
-        env:
-          CLICKHOUSE_USER: searchkit
-          CLICKHOUSE_PASSWORD: searchkit
-          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "clickhouse-client --user searchkit --password searchkit --query 'SELECT 1'"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 12
-
     env:
       # Drive the env-gated integration tests. Without these they skip; with them
       # they run against the services above (Postgres: client/eval; ClickHouse +
@@ -49,9 +33,25 @@ jobs:
       SEARCHKIT_TEST_CH_ADDR: localhost:9000
       SEARCHKIT_TEST_CH_USER: searchkit
       SEARCHKIT_TEST_CH_PASSWORD: searchkit
+      SEARCHKIT_TEST_CH_CLUSTER: searchkit
 
     steps:
       - uses: actions/checkout@v4
+
+      # Signal-plane migrations use replicated engines, so ClickHouse runs with
+      # embedded Keeper and a one-node cluster (config needs the checkout).
+      - name: Start ClickHouse with Keeper
+        run: |
+          docker run -d --name clickhouse -p 9000:9000 \
+            -e CLICKHOUSE_USER=searchkit -e CLICKHOUSE_PASSWORD=searchkit -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+            -v "$GITHUB_WORKSPACE/.github/clickhouse/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro" \
+            clickhouse/clickhouse-server:25.8
+          for i in $(seq 1 60); do
+            docker exec clickhouse clickhouse-client --user searchkit --password searchkit -q "SELECT count() FROM system.zookeeper WHERE path = '/'" && exit 0
+            sleep 2
+          done
+          docker logs clickhouse
+          exit 1
 
       - uses: actions/setup-go@v5
         with:

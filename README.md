@@ -112,9 +112,10 @@ import (
 
 ch, _ := clickhouse.Open(&clickhouse.Options{Addr: []string{"localhost:9000"}})
 
-// Once at startup (DDL privileges required). Idempotent. Set Cluster for
-// replicated/ON CLUSTER deployments.
-_ = signal.EnsureSchema(ctx, ch, signal.SchemaOptions{Database: "hub"})
+// Startup gate (runtime credentials, read-only): refuse analytics on mismatch.
+if err := signal.CheckSchema(ctx, ch, "hub"); err != nil {
+	return err
+}
 
 hub, _ := searchkit.NewEmbedded(searchkit.EmbeddedConfig{
 	PG:           pgPool,
@@ -138,6 +139,29 @@ hub, _ := searchkit.NewEmbedded(searchkit.EmbeddedConfig{
 
 Omitting `CH` runs content-only: search/typeahead work, signal/discovery methods return
 `ErrSignalPlaneDisabled`.
+
+### Signal schema ownership
+
+Searchkit owns the signal-plane ClickHouse schema as a versioned migratekit lineage,
+`migrations.SignalClickHouse`. Hosts apply it in their migrate step with DDL credentials, never at
+application startup:
+
+```go
+_ = signal.CreateDatabase(ctx, adminCH, "hub", cluster) // migratekit connects to the database
+m := chmigrate.New(&chmigrate.Config{ClientAddr: addr, Database: "hub", Username: ddlUser, Password: ddlPass,
+	App: "searchkit_signal", Cluster: cluster, PostgresDB: sqlDB})
+migs, _ := migratekit.LoadFromFS(migrations.SignalClickHouse)
+_ = m.ApplyMigrations(ctx, migs)
+```
+
+- Tables use replicated engines (Keeper required, also for one node); `{{ON_CLUSTER}}` follows `Cluster`.
+- Every statement is individually idempotent (migratekit may re-run a partially applied migration).
+- `signal.CheckSchema` compares tables, columns, engines, version columns and keys with what this
+  library version reads and writes. Existence of a table is not compatibility. It needs only SELECT on
+  `system.tables`/`system.columns`; runtime credentials need SELECT/INSERT (plus ALTER DELETE where
+  history clearing is used) on the signal database, not DDL.
+- Installations created by the removed `EnsureSchema` match `0001_signal_baseline` and record it
+  without changes.
 
 ### Recording signals
 

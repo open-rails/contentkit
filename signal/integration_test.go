@@ -3,64 +3,26 @@ package signal
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/open-rails/searchkit/internal/signaltest"
 )
 
-// Integration tests are opt-in: set SEARCHKIT_TEST_CH_ADDR to a ClickHouse
-// native address (e.g. "localhost:9000"). Optional: SEARCHKIT_TEST_CH_USER /
+// Integration tests are opt-in: set SEARCHKIT_TEST_CH_ADDR to a Keeper-enabled
+// ClickHouse native address (replicated engines); SEARCHKIT_TEST_CH_CLUSTER
+// enables ON CLUSTER DDL. Optional: SEARCHKIT_TEST_CH_USER /
 // SEARCHKIT_TEST_CH_PASSWORD. The tests own the database named below.
 const testDB = "searchkit_signal_test"
 
-func testConn(t *testing.T) Conn {
-	t.Helper()
-	addr := os.Getenv("SEARCHKIT_TEST_CH_ADDR")
-	if addr == "" {
-		t.Skip("SEARCHKIT_TEST_CH_ADDR not set; skipping ClickHouse integration test")
-	}
-	user := os.Getenv("SEARCHKIT_TEST_CH_USER")
-	if user == "" {
-		user = "default"
-	}
-	conn, err := clickhouse.Open(&clickhouse.Options{
-		Addr: []string{addr},
-		Auth: clickhouse.Auth{
-			Username: user,
-			Password: os.Getenv("SEARCHKIT_TEST_CH_PASSWORD"),
-		},
-	})
-	if err != nil {
-		t.Fatalf("clickhouse open: %v", err)
-	}
-	t.Cleanup(func() { _ = conn.Close() })
-	return conn
-}
-
 func freshStore(t *testing.T) (*Store, Conn) {
 	t.Helper()
-	conn := testConn(t)
-	ctx := context.Background()
-	if err := conn.Exec(ctx, "DROP DATABASE IF EXISTS "+testDB); err != nil {
-		t.Fatalf("drop test db: %v", err)
-	}
-	if err := EnsureSchema(ctx, conn, SchemaOptions{Database: testDB}); err != nil {
-		t.Fatalf("ensure schema: %v", err)
-	}
+	conn := signaltest.FromEnv(t).Fresh(t, testDB)
 	st, err := NewStore(conn, testDB)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return st, conn
-}
-
-func TestIntegrationSchemaIdempotent(t *testing.T) {
-	_, conn := freshStore(t)
-	if err := EnsureSchema(context.Background(), conn, SchemaOptions{Database: testDB}); err != nil {
-		t.Fatalf("second EnsureSchema must be a no-op: %v", err)
-	}
 }
 
 func at(day, hour int) time.Time {

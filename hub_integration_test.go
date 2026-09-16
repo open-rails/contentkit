@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/open-rails/searchkit/internal/signaltest"
 	"github.com/open-rails/searchkit/signal"
 	"github.com/pgvector/pgvector-go"
 )
@@ -35,19 +35,6 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 		t.Fatalf("pgxpool: %v", err)
 	}
 	defer pool.Close()
-
-	chUser := os.Getenv("SEARCHKIT_TEST_CH_USER")
-	if chUser == "" {
-		chUser = "default"
-	}
-	ch, err := clickhouse.Open(&clickhouse.Options{
-		Addr: []string{chAddr},
-		Auth: clickhouse.Auth{Username: chUser, Password: os.Getenv("SEARCHKIT_TEST_CH_PASSWORD")},
-	})
-	if err != nil {
-		t.Fatalf("clickhouse open: %v", err)
-	}
-	defer ch.Close()
 
 	// --- Postgres content plane (minimal schema, like client tests) ---
 	_, err = pool.Exec(ctx, fmt.Sprintf(`
@@ -111,16 +98,13 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 		}
 	}
 
-	// --- ClickHouse signal plane ---
-	if err := ch.Exec(ctx, "DROP DATABASE IF EXISTS "+hubTestCHDB); err != nil {
-		t.Fatalf("drop ch db: %v", err)
+	// --- ClickHouse signal plane (real migration lineage) ---
+	chEnv := signaltest.FromEnv(t)
+	ch := chEnv.Fresh(t, hubTestCHDB)
+	if err := signal.CheckSchema(ctx, ch, hubTestCHDB); err != nil {
+		t.Fatal(err)
 	}
-	if err := signal.EnsureSchema(ctx, ch, signal.SchemaOptions{Database: hubTestCHDB}); err != nil {
-		t.Fatalf("ensure ch schema: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = ch.Exec(context.Background(), "DROP DATABASE IF EXISTS "+hubTestCHDB)
-	})
+	t.Cleanup(func() { chEnv.Drop(t, chEnv.Open(t, ""), hubTestCHDB) })
 
 	// --- The hub ---
 	emb := &recordingEmbedder{vec: []float32{1, 0, 0}}

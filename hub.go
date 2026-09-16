@@ -100,8 +100,8 @@ type EmbeddedConfig struct {
 
 	// Signal plane (ClickHouse). Optional: omit CH to run content-only
 	// (signal/discovery methods return ErrSignalPlaneDisabled). CHDatabase
-	// is the hub's dedicated ClickHouse database; run signal.EnsureSchema
-	// once before first use.
+	// is the hub's dedicated ClickHouse database; apply
+	// migrations.SignalClickHouse and gate startup on signal.CheckSchema.
 	CH         signal.Conn
 	CHDatabase string
 

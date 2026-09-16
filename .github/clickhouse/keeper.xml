@@ -1,0 +1,25 @@
+<!-- Single-node Keeper, macros and cluster so signal-plane tests run the replicated migration lineage. -->
+<clickhouse>
+  <keeper_server>
+    <tcp_port>9181</tcp_port>
+    <server_id>1</server_id>
+    <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
+    <snapshot_storage_path>/var/lib/clickhouse/coordination/snapshots</snapshot_storage_path>
+    <raft_configuration>
+      <server><id>1</id><hostname>localhost</hostname><port>9234</port></server>
+    </raft_configuration>
+  </keeper_server>
+  <zookeeper>
+    <node><host>localhost</host><port>9181</port></node>
+  </zookeeper>
+  <macros>
+    <shard>01</shard>
+    <replica>r1</replica>
+  </macros>
+  <remote_servers>
+    <searchkit>
+      <shard><replica><host>localhost</host><port>9000</port><user>searchkit</user><password>searchkit</password></replica></shard>
+    </searchkit>
+  </remote_servers>
+  <distributed_ddl><path>/clickhouse/task_queue/ddl</path></distributed_ddl>
+</clickhouse>

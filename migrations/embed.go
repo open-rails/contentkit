@@ -31,3 +31,12 @@ func mustSubFS(fsys fs.FS, dir string) fs.FS {
 	}
 	return sub
 }
+
+//go:embed clickhouse/signal/*.sql
+var signalClickHouseFS embed.FS
+
+// SignalClickHouse is the signal-plane ClickHouse lineage. Apply it with
+// migratekit chmigrate to the dedicated signal database (see signal.CreateDatabase)
+// under its own app identity; check compatibility at startup with
+// signal.CheckSchema.
+var SignalClickHouse fs.FS = mustSubFS(signalClickHouseFS, "clickhouse/signal")

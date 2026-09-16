@@ -341,41 +341,6 @@ func TestPopularPathSelection(t *testing.T) {
 	}
 }
 
-func TestEnsureSchemaValidation(t *testing.T) {
-	ctx := context.Background()
-	if err := EnsureSchema(ctx, &fakeConn{}, SchemaOptions{}); err == nil {
-		t.Fatal("missing database must error")
-	}
-	if err := EnsureSchema(ctx, &fakeConn{}, SchemaOptions{Database: "bad-name"}); err == nil {
-		t.Fatal("invalid database name must error")
-	}
-	fc := &fakeConn{}
-	if err := EnsureSchema(ctx, fc, SchemaOptions{Database: "hub"}); err != nil {
-		t.Fatal(err)
-	}
-	if len(fc.execs) != 8 { // db + 3 tables + net_value alter + item_pairs + search_impressions + mv
-		t.Fatalf("expected 8 DDL statements, got %d", len(fc.execs))
-	}
-	for _, e := range fc.execs {
-		if strings.Contains(e.query, "ON CLUSTER") || strings.Contains(e.query, "Replicated") {
-			t.Fatalf("non-cluster DDL must not be replicated:\n%s", e.query)
-		}
-	}
-
-	fc = &fakeConn{}
-	if err := EnsureSchema(ctx, fc, SchemaOptions{Database: "hub", Cluster: "main"}); err != nil {
-		t.Fatal(err)
-	}
-	for i, e := range fc.execs {
-		if !strings.Contains(e.query, "ON CLUSTER 'main'") {
-			t.Fatalf("cluster DDL %d must be ON CLUSTER:\n%s", i, e.query)
-		}
-	}
-	if !strings.Contains(fc.execs[1].query, "ReplicatedReplacingMergeTree") {
-		t.Fatalf("cluster tables must use Replicated engines:\n%s", fc.execs[1].query)
-	}
-}
-
 func TestCoEngagedExcludesAnchor(t *testing.T) {
 	fc := &fakeConn{}
 	st, _ := NewStore(fc, "hub")
@@ -434,5 +399,27 @@ func TestRecordSignalsBatch(t *testing.T) {
 	}
 	if len(fc.execs) != 2 || !strings.Contains(fc.execs[1].query, "entity_id = ?") {
 		t.Fatalf("single-signal batch should use the point reprojection path")
+	}
+}
+
+func TestSchemaHelpersValidateIdentifiers(t *testing.T) {
+	ctx := context.Background()
+	if err := CreateDatabase(ctx, &fakeConn{}, "bad-name", ""); err == nil {
+		t.Fatal("invalid database name must error")
+	}
+	if err := CreateDatabase(ctx, &fakeConn{}, "hub", "bad cluster"); err == nil {
+		t.Fatal("invalid cluster name must error")
+	}
+	if err := CheckSchema(ctx, &fakeConn{}, "hub;drop"); err == nil {
+		t.Fatal("invalid database name must error")
+	}
+	for full, want := range map[string]string{
+		"ReplicatedReplacingMergeTree('/clickhouse/tables/hub/t', '{replica}', recorded_at) ORDER BY (a, b)": "recorded_at",
+		"ReplacingMergeTree(version) PARTITION BY toYYYYMM(occurred_at) ORDER BY a":                          "version",
+		"ReplicatedAggregatingMergeTree('/clickhouse/tables/hub/t', '{replica}') ORDER BY a":                 "",
+	} {
+		if got := engineVersionColumn(full); got != want {
+			t.Fatalf("engineVersionColumn(%q)=%q want %q", full, got, want)
+		}
 	}
 }
