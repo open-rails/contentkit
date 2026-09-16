@@ -6,9 +6,14 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/open-rails/searchkit/internal/textnormalize"
 )
+
+// DocumentExecutor allows a pool or transaction to own lexical document writes.
+type DocumentExecutor interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
 
 const searchDocumentsTable = "search_documents"
 
@@ -16,7 +21,7 @@ const searchDocumentsTable = "search_documents"
 //
 // Documents are heavy-normalized by searchkit before storage so host apps can pass
 // "raw-ish" display strings.
-func UpsertSearchDocuments(ctx context.Context, pool *pgxpool.Pool, schema string, entityType string, language string, docs map[string]string) error {
+func UpsertSearchDocuments(ctx context.Context, pool DocumentExecutor, schema string, entityType string, language string, docs map[string]string) error {
 	if pool == nil {
 		return fmt.Errorf("pool is required")
 	}
@@ -114,11 +119,11 @@ func UpsertSearchDocuments(ctx context.Context, pool *pgxpool.Pool, schema strin
 	return nil
 }
 
-func DeleteSearchDocuments(ctx context.Context, pool *pgxpool.Pool, schema string, entityType string, entityID string, language string) error {
+func DeleteSearchDocuments(ctx context.Context, pool DocumentExecutor, schema string, entityType string, entityID string, language string) error {
 	return DeleteSearchDocumentsMany(ctx, pool, schema, entityType, []string{entityID}, language)
 }
 
-func DeleteSearchDocumentsMany(ctx context.Context, pool *pgxpool.Pool, schema string, entityType string, entityIDs []string, language string) error {
+func DeleteSearchDocumentsMany(ctx context.Context, pool DocumentExecutor, schema string, entityType string, entityIDs []string, language string) error {
 	if pool == nil {
 		return fmt.Errorf("pool is required")
 	}

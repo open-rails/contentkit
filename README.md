@@ -244,6 +244,23 @@ This single entrypoint:
 2) runs bounded backfill for missing docs/embeddings,
 3) drains `embedding_tasks` (does provider calls and writes `embedding_vectors`).
 
+Apply migration `0002_search_dirty_revision.up.sql` before deploying the worker.
+Its trigger assigns a new sequence-backed revision on every dirty insert/update,
+including equal-timestamp UPSERTs. Hosts continue writing the existing columns.
+
+`SyncOnce` permits one lexical writer per database/schema. A competing tick
+returns without work. Documents and queue acknowledgements commit together;
+changed generations are skipped after the callback and remain queued. Backfill
+adds IDs to this same queue, so new backfill documents appear on a subsequent tick.
+
+The pool must have at least two connections. Document/list callbacks must be
+bounded, read-only and respect cancellation; one transaction/connection remains
+open across the tick. Hosts must mark catalog changes dirty in the same transaction
+as the catalog write. Direct document writers must not race this worker. These
+changes do not fence semantic embedding provider workers; that lifecycle remains
+separate.
+
+
 ### 6) Query candidates (lexical + semantic)
 
 Recommended entrypoint:
