@@ -50,8 +50,8 @@ func (st *Store) States(ctx context.Context, tenant string, subject Subject, ref
 	}
 	q := fmt.Sprintf(`SELECT %s
 FROM %s.subject_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND (%s)`,
-		stateColumns, st.db, strings.Join(clauses, " OR "))
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND (%s) AND %s`,
+		stateColumns, st.db, strings.Join(clauses, " OR "), st.notErased())
 	rows, err := st.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: states: %w", err)
@@ -102,7 +102,7 @@ func (st *Store) History(ctx context.Context, tenant string, subject Subject, op
 	var sb strings.Builder
 	fmt.Fprintf(&sb, `SELECT %s
 FROM %s.subject_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ?`, stateColumns, st.db)
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s`, stateColumns, st.db, st.notErased())
 	args, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key()}, opts)
 	if err != nil {
 		return nil, err
@@ -133,7 +133,7 @@ func (st *Store) HistoryCount(ctx context.Context, tenant string, subject Subjec
 	var sb strings.Builder
 	fmt.Fprintf(&sb, `SELECT toInt64(count())
 FROM %s.subject_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ?`, st.db)
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s`, st.db, st.notErased())
 	args, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key()}, opts)
 	if err != nil {
 		return 0, err
@@ -163,7 +163,7 @@ func (st *Store) SeenIDs(ctx context.Context, tenant string, subject Subject, en
 	}
 	q := fmt.Sprintf(`SELECT entity_id
 FROM %s.subject_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND entity_type = ? AND max_progress > 0`, st.db)
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND entity_type = ? AND max_progress > 0 AND %s`, st.db, st.notErased())
 	rows, err := st.conn.Query(ctx, q, tenant, subject.Kind(), subject.Key(), entityType)
 	if err != nil {
 		return nil, fmt.Errorf("signal: seen ids: %w", err)
@@ -190,7 +190,7 @@ func (st *Store) NegativeIDs(ctx context.Context, tenant string, subject Subject
 	args := []any{tenant, subject.Kind(), subject.Key()}
 	fmt.Fprintf(&sb, `SELECT entity_type, entity_id
 FROM %s.subject_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND net_value < 0`, st.db)
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND net_value < 0 AND %s`, st.db, st.notErased())
 	if types := trimAll(entityTypes); len(types) > 0 {
 		sb.WriteString(" AND entity_type IN ?")
 		args = append(args, types)
@@ -225,7 +225,7 @@ func (st *Store) TopStates(ctx context.Context, tenant string, subject Subject, 
 	args := []any{tenant, subject.Kind(), subject.Key()}
 	fmt.Fprintf(&sb, `SELECT %s
 FROM %s.subject_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ?`, stateColumns, st.db)
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s`, stateColumns, st.db, st.notErased())
 	if types := trimAll(opts.EntityTypes); len(types) > 0 {
 		sb.WriteString(" AND entity_type IN ?")
 		args = append(args, types)
@@ -287,10 +287,10 @@ FROM (
         sum(score_sum) AS s_score, sum(events) AS s_events, sum(value_sum) AS s_value,
         sumMap(type_counts) AS s_types
     FROM %[1]s.subject_daily FINAL
-    WHERE tenant = ? AND entity_type = ? AND events > 0%[2]s
+    WHERE tenant = ? AND entity_type = ? AND events > 0%[2]s AND %[5]s
     GROUP BY entity_id, subject_kind, subject
 )
-GROUP BY entity_id`, st.db, where.String(), SubjectKindUser, SubjectKindAnon), args
+GROUP BY entity_id`, st.db, where.String(), SubjectKindUser, SubjectKindAnon, st.notErased()), args
 }
 
 func scanMetrics(rows driver.Rows, id *string, m *EntityMetrics, extra ...any) error {
@@ -451,18 +451,18 @@ func (st *Store) CoEngaged(ctx context.Context, tenant string, ref EntityRef, op
 FROM (
     SELECT entity_type, entity_id, subject_kind, subject, sum(value_sum) AS net
     FROM %[1]s.subject_daily FINAL
-    WHERE tenant = ? AND events > 0%[2]s%[3]s
+    WHERE tenant = ? AND events > 0%[2]s%[3]s AND %[5]s
       AND NOT (entity_type = ? AND entity_id = ?)
       AND (subject_kind, subject) IN (
           SELECT DISTINCT subject_kind, subject FROM %[1]s.subject_daily FINAL
-          WHERE tenant = ? AND entity_type = ? AND entity_id = ? AND events > 0%[3]s
+          WHERE tenant = ? AND entity_type = ? AND entity_id = ? AND events > 0%[3]s AND %[5]s
           LIMIT ?)
     GROUP BY entity_type, entity_id, subject_kind, subject
 )
 GROUP BY entity_type, entity_id
 HAVING strength > 0
 ORDER BY strength DESC, entity_type ASC, entity_id ASC
-LIMIT ?%[4]s`, st.db, candidates.String(), pred, finalSettings)
+LIMIT ?%[4]s`, st.db, candidates.String(), pred, finalSettings, st.notErased())
 	rows, err := st.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: co-engaged: %w", err)
@@ -549,7 +549,7 @@ FROM (
             FROM (
                 SELECT subject_kind, subject, entity_type, entity_id, sum(value_sum) AS net_v
                 FROM %[1]s.subject_daily FINAL
-                WHERE tenant = ? AND events > 0%[4]s
+                WHERE tenant = ? AND events > 0%[4]s AND %[6]s
                 GROUP BY subject_kind, subject, entity_type, entity_id
             )
             GROUP BY subject_kind, subject
@@ -558,7 +558,7 @@ FROM (
 )
 WHERE a != bs.1
 GROUP BY entity_type_a, entity_id_a, entity_type_b, entity_id_b
-HAVING strength > 0%[5]s`, st.db, escapeCHString(tenant), maxPer, winPred, finalSettings)
+HAVING strength > 0%[5]s`, st.db, escapeCHString(tenant), maxPer, winPred, finalSettings, st.notErased())
 	if err := st.conn.Exec(ctx, q, append([]any{tenant}, winArgs...)...); err != nil {
 		return fmt.Errorf("signal: refresh co-engagement: %w", err)
 	}

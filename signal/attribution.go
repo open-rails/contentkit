@@ -327,7 +327,7 @@ func (st *Store) canonicalClicks(tenant string, opts AttributionOptions) (string
     GROUP BY entity_type, entity_id, subject_kind, subject, event_id`,
 		PayloadKeyRenderID, PayloadKeyPosition, st.db, pred, st.notErased())
 	args := append([]any{tenant, TypeClick}, predArgs...)
-	return q, append(args, tenant)
+	return q, args
 }
 
 // exposurePredicate renders the WHERE of the export's exposure rows: tenant,
@@ -340,12 +340,7 @@ func (st *Store) exposurePredicate(tenant string, opts AttributionOptions) (stri
 		sb += " AND surface = ?"
 		args = append(args, surface)
 	}
-	return sb + " AND " + st.notErased(), append(args, tenant)
-}
-
-// notErased excludes subjects the erasure ledger covers (one tenant arg).
-func (st *Store) notErased() string {
-	return subjectHashExpr + " NOT IN (SELECT subject_hash FROM " + st.db + ".erasures WHERE tenant = ?)"
+	return sb + " AND " + st.notErased(), args
 }
 
 const (

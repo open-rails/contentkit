@@ -29,11 +29,11 @@ func (st *Store) Inventory(ctx context.Context, tenant string) ([]InventoryRow, 
 FROM (
     SELECT entity_type, entity_id, subject_kind, subject, signal_type, event_id, argMax(occurred_at, version) AS at, count() AS raw
     FROM %s.events
-    WHERE tenant = ?
+    WHERE tenant = ? AND %[2]s
     GROUP BY entity_type, entity_id, subject_kind, subject, signal_type, event_id
 )
 GROUP BY entity_type, signal_type
-ORDER BY entity_type, signal_type`, st.db)
+ORDER BY entity_type, signal_type`, st.db, st.notErased())
 	rows, err := st.conn.Query(ctx, q, tenant)
 	if err != nil {
 		return nil, fmt.Errorf("signal: inventory: %w", err)

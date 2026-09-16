@@ -8,8 +8,16 @@ import (
 	"time"
 )
 
-// subjectHash is the fence key: sipHash128 over "kind:subject".
+// subjectHashExpr is the fence key: sipHash128 over "kind:subject".
 const subjectHashExpr = "sipHash128(concat(subject_kind, ':', subject))"
+
+// notErased is the read and write barrier for subject-bearing rows. It is
+// deliberately evaluated by ClickHouse in the same INSERT/SELECT statement
+// as the data operation: a writer that read the ledger before EraseSubjects
+// recorded its fence is still filtered after the fence commits.
+func (st *Store) notErased() string {
+	return "(" + subjectHashExpr + ", tenant) NOT IN (SELECT subject_hash, tenant FROM " + st.db + ".erasures)"
+}
 
 // ErasureReport describes one erasure or enforcement pass.
 type ErasureReport struct {
@@ -59,9 +67,13 @@ func (st *Store) EraseSubjects(ctx context.Context, tenants []string, subjects [
 		return report, err
 	}
 	kinds, keys := subjectColumns(subjects)
+	quorum, err := st.erasureQuorum(ctx)
+	if err != nil {
+		return report, err
+	}
 	for _, tenant := range tenants {
 		fence := fmt.Sprintf(`INSERT INTO %s.erasures (tenant, subject_hash, erased_at)
-SELECT ?, sipHash128(concat(t.1, ':', t.2)), now64(6) FROM (SELECT arrayJoin(arrayZip(?, ?)) AS t)`, st.db)
+	SELECT ?, sipHash128(concat(t.1, ':', t.2)), now64(6) FROM (SELECT arrayJoin(arrayZip(?, ?)) AS t)%s`, st.db, quorumSetting(quorum))
 		if err := st.conn.Exec(ctx, fence, tenant, kinds, keys); err != nil {
 			return report, fmt.Errorf("signal: record erasure fence: %w", err)
 		}
@@ -257,6 +269,38 @@ func subjectColumns(subjects []Subject) (kinds, keys []string) {
 		keys = append(keys, s.Key())
 	}
 	return kinds, keys
+}
+
+// erasureQuorum is the number of replicas Keeper expects for the erasure
+// ledger. A quorum insert makes EraseSubjects fail closed when a replica is
+// unavailable instead of reporting completion while another process can still
+// read the subject as live.
+func (st *Store) erasureQuorum(ctx context.Context) (uint32, error) {
+	rows, err := st.conn.Query(ctx, "SELECT max(toUInt32(total_replicas)) FROM system.replicas WHERE database = ? AND table = 'erasures'", st.db)
+	if err != nil {
+		return 0, fmt.Errorf("signal: erasure quorum: %w", err)
+	}
+	defer rows.Close()
+	var n uint32
+	if rows.Next() {
+		if err := rows.Scan(&n); err != nil {
+			return 0, fmt.Errorf("signal: erasure quorum scan: %w", err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if n == 0 {
+		n = 1
+	}
+	return n, nil
+}
+
+func quorumSetting(quorum uint32) string {
+	if quorum <= 1 {
+		return ""
+	}
+	return fmt.Sprintf(" SETTINGS insert_quorum = %d, insert_quorum_parallel = 1", quorum)
 }
 
 // fenced returns the subjects among the given ones that a recorded erasure

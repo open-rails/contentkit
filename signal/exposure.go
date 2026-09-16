@@ -53,7 +53,10 @@ func (st *Store) RecordExposures(ctx context.Context, tenant string, exposures [
 		if e.Subject != (Subject{}) {
 			kind, key = e.Subject.Kind(), e.Subject.Key()
 		}
-		rows = append(rows, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		// Keep the erasure predicate in the INSERT statement. The client-side
+		// fenced lookup is only an optimization; an in-flight writer may resume
+		// after EraseSubjects records its ledger row.
+		rows = append(rows, "SELECT ? AS tenant, ? AS render_id, ? AS stage, ? AS revision, ? AS query_id, ? AS surface, ? AS ranker, ? AS language, ? AS subject_kind, ? AS subject, ? AS entity_types, ? AS entity_ids, ? AS positions, ? AS occurred_at")
 		args = append(args, tenant, e.RenderID, string(e.Stage), e.Revision, e.QueryID, surface, e.Ranker, e.Language,
 			kind, key, types, ids, positions, e.OccurredAt.UTC())
 	}
@@ -63,7 +66,10 @@ func (st *Store) RecordExposures(ctx context.Context, tenant string, exposures [
 	insert := fmt.Sprintf(`INSERT INTO %s.exposures
 (tenant, render_id, stage, revision, query_id, surface, ranker, language, subject_kind, subject,
  entity_types, entity_ids, positions, occurred_at)
-VALUES %s`, st.db, strings.Join(rows, ", "))
+SELECT tenant, render_id, stage, revision, query_id, surface, ranker, language, subject_kind, subject,
+       entity_types, entity_ids, positions, occurred_at
+FROM (%s) AS incoming
+WHERE %s`, st.db, strings.Join(rows, " UNION ALL "), st.notErased())
 	if err := st.conn.Exec(ctx, insert, args...); err != nil {
 		return fmt.Errorf("signal: insert exposures: %w", err)
 	}

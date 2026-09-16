@@ -120,7 +120,11 @@ func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Sig
 		if err := checkLen("Payload", payload, MaxPayloadBytes); err != nil {
 			return err
 		}
-		rows = append(rows, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		// Use a server-side SELECT filter instead of a client-side fence check
+		// alone. A request can be paused after fenced() and resume after an
+		// erasure commits; evaluating the ledger in this statement prevents that
+		// in-flight write from landing on any replica.
+		rows = append(rows, "SELECT ? AS tenant, ? AS entity_type, ? AS entity_id, ? AS subject_kind, ? AS subject, ? AS signal_type, ? AS event_id, ? AS revision, ? AS occurred_at, ? AS duration_s, ? AS progress, ? AS progress_max, ? AS value, ? AS score, ? AS completed, ? AS resume, ? AS payload")
 		args = append(args,
 			tenant, s.EntityType, s.EntityID, s.Subject.Kind(), s.Subject.Key(), s.Type,
 			strings.TrimSpace(s.EventID), s.Revision, s.OccurredAt.UTC(),
@@ -134,7 +138,10 @@ func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Sig
 	insert := fmt.Sprintf(`INSERT INTO %s.events
 (tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id, revision, occurred_at,
  duration_s, progress, progress_max, value, score, completed, resume, payload)
-VALUES %s`, st.db, strings.Join(rows, ", "))
+SELECT tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id, revision, occurred_at,
+       duration_s, progress, progress_max, value, score, completed, resume, payload
+FROM (%s) AS incoming
+WHERE %s`, st.db, strings.Join(rows, " UNION ALL "), st.notErased())
 	if err := st.conn.Exec(ctx, insert, args...); err != nil {
 		return fmt.Errorf("signal: insert events: %w", err)
 	}
@@ -155,8 +162,8 @@ func (st *Store) canonicalEvents(filter string) string {
         argMax(tuple(occurred_at, revision, duration_s, progress, progress_max, value, score, completed, resume), version) AS c,
         max(ingested_at) AS ing
     FROM %s.events
-    WHERE tenant = ? AND %s
-    GROUP BY entity_type, entity_id, subject_kind, subject, signal_type, event_id`, st.db, filter)
+    WHERE tenant = ? AND %s AND %s
+    GROUP BY entity_type, entity_id, subject_kind, subject, signal_type, event_id`, st.db, filter, st.notErased())
 }
 
 // project rebuilds subject_state and subject_daily for keys from canonical
@@ -281,6 +288,7 @@ func (st *Store) RepairProjections(ctx context.Context, tenant string, opts Repa
 		sb.WriteString(" AND ingested_at >= ?")
 		args = append(args, opts.IngestedSince.UTC())
 	}
+	sb.WriteString(" AND " + st.notErased())
 	if opts.After != nil {
 		sb.WriteString(" AND (entity_type, entity_id, subject_kind, subject) > (?, ?, ?, ?)")
 		args = append(args, opts.After.args()...)
@@ -316,15 +324,15 @@ func (st *Store) staleKeys(ctx context.Context, tenant string, keys []Projection
 	filter, keyArgs := keyFilter(keys)
 	q := fmt.Sprintf(`SELECT r.entity_type, r.entity_id, r.subject_kind, r.subject
 FROM (SELECT entity_type, entity_id, subject_kind, subject, max(ingested_at) AS raw
-      FROM %[1]s.events WHERE tenant = ? AND %[2]s GROUP BY entity_type, entity_id, subject_kind, subject) AS r
+      FROM %[1]s.events WHERE tenant = ? AND %[2]s AND %[3]s GROUP BY entity_type, entity_id, subject_kind, subject) AS r
 LEFT JOIN (SELECT entity_type, entity_id, subject_kind, subject, max(version) AS projected
-      FROM %[1]s.subject_state WHERE tenant = ? AND %[2]s GROUP BY entity_type, entity_id, subject_kind, subject) AS s
+      FROM %[1]s.subject_state WHERE tenant = ? AND %[2]s AND %[3]s GROUP BY entity_type, entity_id, subject_kind, subject) AS s
   USING (entity_type, entity_id, subject_kind, subject)
 LEFT JOIN (SELECT entity_type, entity_id, subject_kind, subject, max(version) AS projected
-      FROM %[1]s.subject_daily WHERE tenant = ? AND %[2]s GROUP BY entity_type, entity_id, subject_kind, subject) AS d
+      FROM %[1]s.subject_daily WHERE tenant = ? AND %[2]s AND %[3]s GROUP BY entity_type, entity_id, subject_kind, subject) AS d
   USING (entity_type, entity_id, subject_kind, subject)
 WHERE s.projected < r.raw OR d.projected < r.raw
-ORDER BY r.entity_type, r.entity_id, r.subject_kind, r.subject`, st.db, filter)
+ORDER BY r.entity_type, r.entity_id, r.subject_kind, r.subject`, st.db, filter, st.notErased())
 	args := make([]any, 0, 3+3*len(keyArgs))
 	for i := 0; i < 3; i++ {
 		args = append(args, tenant)
