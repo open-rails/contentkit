@@ -63,7 +63,9 @@ The kit owns the storage/upsert/read machinery; the host owns only the `Scorer`.
 `occurred_at`. Clicks are ordinary signals carrying `render_id` / `surface` / `position` in their
 payload (`Signal.WithAttribution`). `Store.Attribution` joins canonical clicks to the requested
 stage's canonical list, yielding `(render, shown placements, clicks with Exposed flag)` and the
-clicks whose render has no exposure at that stage.
+clicks whose render has no exposure at that stage, as bounded pages over one deterministic order
+(renders by id with clicks by time, then unattributed clicks) resumed by an opaque cursor that can
+stop inside a render; erased subjects are filtered through the ledger at read time.
 
 ## Facets & filtering (host-defined)
 

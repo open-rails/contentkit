@@ -244,9 +244,12 @@ _ = hub.RecordSignals(ctx, []signal.Signal{signal.Signal{
 
 `hub.Attribution(ctx, signal.AttributionOptions{Stage: signal.StageVisible, Window: w})` exports renders at
 one stage with their canonical clicks joined (`Exposed` says whether the clicked item was in that
-stage's list) plus `Unattributed` clicks whose render has no exposure at that stage. A click without
-exposure, or an item never exposed, is never a negative example; unclicked exposed items are
-"not chosen", not "disliked". `hub.ForgetExposures` clears a subject's exposures (search history).
+stage's list) plus `Unattributed` clicks whose render has no exposure at that stage. Pages are bounded
+by `Limit` renders and `ClickLimit` click rows and resumed with the opaque `Next` cursor (a render
+with more clicks than fit continues on the next page with `Continued`); concatenating pages at any
+size yields every row once (see `HOST_INTEGRATION.md`). A click without exposure, or an item never
+exposed, is never a negative example; unclicked exposed items are "not chosen", not "disliked".
+`hub.ForgetExposures` clears a subject's exposures (search history).
 
 ### Discovery reads (all id-returning)
 

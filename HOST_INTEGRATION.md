@@ -142,6 +142,35 @@ hits, err := searchkitClient.Typeahead(ctx, query, searchkit.TypeaheadOptions{
 
 Host then resolves IDs to gallery payloads and applies response formatting.
 
+## Attribution Export (paged evaluation data)
+
+`hub.Attribution(ctx, signal.AttributionOptions{Stage, Window, Surface, Limit, ClickLimit, After})`
+exports one deterministic sequence per (stage, window, surface):
+
+1. renders at the stage in `RenderID` order, each with its canonical clicks in
+   `(OccurredAt, entity, subject, EventID)` order;
+2. then the `Unattributed` clicks (render has no exposure at that stage) in
+   `(render id, OccurredAt, entity, subject, EventID)` order.
+
+Cursor contract:
+
+- Every page holds at most `Limit` renders (default 500) and `ClickLimit` click rows, attributed and
+  unattributed together (default 5000). Both bounds may change between pages.
+- `Next` is an opaque token positioned exactly after the last row emitted. Pass it back unchanged as
+  `After` with the same `Stage`, `Window` and `Surface`; a token from another export or a malformed
+  token is rejected with an error. Empty `Next` means the export is complete; a non-empty `Next`
+  always leads to a non-empty page.
+- A render whose clicks do not fit continues on the next page: its header repeats with
+  `Continued: true` and only the remaining clicks. Merge by `RenderID`. Zero-click renders are
+  emitted once, complete.
+- Once a page carries `Unattributed` rows no later page carries renders.
+- Concatenating all pages at any bounds yields exactly the single-page result: no row is lost or
+  duplicated. Rows written or revised during the walk may fall before or after the cursor; export a
+  closed `Window` for reproducible datasets.
+- Clicks are signals of type `signal.TypeClick` carrying `render_id`/`position`
+  (`Signal.WithAttribution`); clicks without a render id are not exported. Erased subjects are
+  excluded through the erasure ledger at read time, not only by deletion.
+
 ## Migration Checklist
 
 - Create and reuse a single `searchkit.Client`.

@@ -152,7 +152,7 @@ func TestIntegrationExposureAttribution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Renders) != 2 || first.Next != "r2" {
+	if len(first.Renders) != 2 || first.Next == "" || len(first.Unattributed) != 0 {
 		t.Fatalf("page 1: %+v", first)
 	}
 	second, err := st.Attribution(ctx, tenant, AttributionOptions{Stage: StageServed, Window: window, Limit: 2, After: first.Next})
@@ -161,6 +161,9 @@ func TestIntegrationExposureAttribution(t *testing.T) {
 	}
 	if len(second.Renders) != 1 || second.Renders[0].RenderID != "r3" || second.Next != "" || ids(second.Renders[0].Clicks)[0] != "x:c4" {
 		t.Fatalf("page 2: %+v", second)
+	}
+	if got := ids(second.Unattributed); !reflect.DeepEqual(got, []string{"s2:c6", "z:c5"}) {
+		t.Fatalf("final page carries the unattributed stream: %v", got)
 	}
 
 	// Outside the window nothing is exported; another tenant sees nothing.
