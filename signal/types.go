@@ -13,8 +13,6 @@ package signal
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -76,52 +74,57 @@ func (s Subject) Validate() error {
 	return nil
 }
 
-// Signal is one summarized interaction: a view-session, reaction, rating,
-// purchase, etc. One row per session/interaction — never one row per
-// read/scroll tick; the host reports a single summarized event when a session
-// ends (exit beacon style).
+// TypeView is the consumption signal type. Viewer counts, popularity and
+// progress/completion/resume state read only view events; clicks and feedback
+// stay separate signals.
+const TypeView = "view"
+
+// Signal is one logical source event: a consumption session, reaction, click,
+// rating. Identity is (tenant, entity, subject, Type, EventID): re-delivering the
+// same identity never adds another event, whatever its arrival order, batch or
+// merge state. Never emit one event per scroll/frame tick.
 type Signal struct {
 	EntityRef
 	Subject Subject
 
-	// Type is HOST-DEFINED: "view" | "rate" | "purchase" | "listen" | ...
+	// Type is host-defined except TypeView.
 	Type string
 
-	// EventID is an optional idempotency key. When empty, a deterministic hash
-	// of (entity, subject, type, occurred_at at nanosecond precision) is used:
-	// re-delivering an event that carries the same OccurredAt deduplicates,
-	// while genuinely distinct interactions within the same wall-clock second
-	// stay distinct. Hosts wanting idempotency independent of timing should set
-	// EventID explicitly.
+	// EventID is the required stable source identity. Retries must reuse it;
+	// never mint a new id (or time) per delivery attempt.
 	EventID string
 
+	// Revision orders cumulative snapshots of one EventID (for example a
+	// checkpointed consumption session, or a subject's current preference):
+	// the highest revision is the event, lower ones are superseded. Leave 0 for
+	// immutable events. Conflicting content at an equal revision resolves by a
+	// deterministic content hash, not by arrival order.
+	Revision uint64
+
+	// OccurredAt is the required immutable source time (a session's start). It
+	// selects the UTC day the event counts in.
 	OccurredAt time.Time
 
-	// Implicit consumption (all optional).
+	// Consumption measurements, cumulative for the revision.
 	DurationS   uint32 // active time
-	Progress    uint32 // consumption numerator (pages / scroll % / watched s)
-	ProgressMax uint32 // consumption denominator (page count / 100 / duration)
+	Progress    uint32 // numerator (pages / scroll % / watched s)
+	ProgressMax uint32 // denominator (page count / 100 / duration)
 
-	// Explicit feedback (all optional).
-	Value float64 // rating / vote / price / score
-	Label string  // categorical: reaction kind / variant
+	// Value is explicit feedback (+1 like, -1 dislike, rating). State and
+	// windows sum the canonical values.
+	Value float64
 
-	// Weight is host/scorer-assigned importance. Defaults to 1.
-	Weight float64
-
-	// Score is the engagement score from the entity type's Scorer. When a
-	// Scorer is registered for the entity type, the hub fills this (and
-	// Progress/ProgressMax/Completed) before recording.
+	// Score is the engagement score; a registered Scorer fills it together with
+	// Progress/ProgressMax/Completed.
 	Score int16
 
 	// Completed per the entity type's completion rule.
 	Completed bool
 
-	// Resume is an opaque host pointer for "pick up where you left off":
-	// last page / scroll offset / timestamp. Carried into current-state.
+	// Resume is an opaque host pointer for "pick up where you left off".
 	Resume string
 
-	// Payload holds anything else, JSON-encoded at rest, for re-scoring later.
+	// Payload holds bounded context, JSON-encoded at rest.
 	Payload map[string]any
 }
 
@@ -135,19 +138,17 @@ func (s Signal) validate() error {
 	if strings.TrimSpace(s.Type) == "" {
 		return fmt.Errorf("signal: Type is required")
 	}
-	return nil
-}
-
-// eventID returns the explicit EventID or a deterministic content hash.
-func (s Signal) eventID() string {
-	if id := strings.TrimSpace(s.EventID); id != "" {
-		return id
+	if strings.TrimSpace(s.EventID) == "" {
+		return fmt.Errorf("signal: EventID is required (stable source identity reused by retries)")
 	}
-	h := sha256.Sum256([]byte(strings.Join([]string{
-		s.EntityType, s.EntityID, s.Subject.Kind(), s.Subject.Key(),
-		s.Type, fmt.Sprintf("%d", s.OccurredAt.UTC().UnixNano()),
-	}, "\x1f")))
-	return hex.EncodeToString(h[:16])
+	if s.OccurredAt.IsZero() {
+		return fmt.Errorf("signal: OccurredAt is required (immutable source time)")
+	}
+	if err := checkIdentifiers("EntityType", s.EntityType, "EntityID", s.EntityID, "Subject", s.Subject.Key(),
+		"Type", s.Type, "EventID", s.EventID); err != nil {
+		return err
+	}
+	return checkLen("Resume", s.Resume, MaxResumeBytes)
 }
 
 // Scored is the result of an entity type's Scorer.
@@ -173,8 +174,8 @@ type ScorerFunc func(ctx context.Context, s Signal) (Scored, error)
 
 func (f ScorerFunc) Score(ctx context.Context, s Signal) (Scored, error) { return f(ctx, s) }
 
-// Impression surfaces — the render context a result was shown in. Hosts may use
-// other values; these are the common ones learned-ranking training distinguishes.
+// Render surfaces. Hosts may use other values; these are the common ones
+// evaluation distinguishes.
 const (
 	SurfaceSearch  = "search"
 	SurfaceForYou  = "foryou"
@@ -183,54 +184,103 @@ const (
 	SurfaceOrganic = "organic"
 )
 
-// Impression is one SERP/shelf render: the ranked entities shown to a subject
-// for a query, recorded as a single row (never one row per item). Shown is in
-// rank order and positions are derived as StartPosition + index — StartPosition
-// defaults to 1 (a first page is positions 1..N; a paginated render sets it to
-// the page's first absolute position). QueryID is unique per render; click
-// signals carry it (see the attribution payload keys) so a click joins back to
-// what was shown and at which position — the label source for learned ranking.
-// NormalizedQuery must be normalized text only — no raw referrers or PII.
-// Subject is optional (anonymous renders may omit it).
-type Impression struct {
-	QueryID         string
-	Surface         string
-	NormalizedQuery string
-	Language        string
-	Subject         Subject
-	Shown           []EntityRef
-	StartPosition   uint32
-	OccurredAt      time.Time
+// ExposureStage says how far a result list got: served by the API, rendered
+// by the client, or actually visible to the subject. A click is attributed
+// against the stage the evaluation asks for; an item absent from that stage's
+// list was not exposed there and is never a negative example.
+type ExposureStage string
+
+const (
+	StageServed   ExposureStage = "served"
+	StageRendered ExposureStage = "rendered"
+	StageVisible  ExposureStage = "visible"
+)
+
+func (s ExposureStage) validate() error {
+	switch s {
+	case StageServed, StageRendered, StageVisible:
+		return nil
+	}
+	return fmt.Errorf("exposure: invalid stage %q", s)
 }
 
-func (im Impression) validate() error {
-	if strings.TrimSpace(im.QueryID) == "" {
-		return fmt.Errorf("impression: QueryID is required")
+// Placement is one shown entity and its absolute 1-based position in the render.
+type Placement struct {
+	EntityRef
+	Position uint32
+}
+
+// Exposure is one result list at one stage: the cumulative set of placements
+// the stage reached, as one row. Identity is (tenant, RenderID, Stage);
+// re-sending replaces, a higher Revision supersedes (a visible list that grows
+// as the subject scrolls). Never one row per item or per scroll tick. No query
+// text is stored; QueryID groups the pages/renders of one query.
+type Exposure struct {
+	RenderID   string // required, stable per render, shared with its clicks
+	Stage      ExposureStage
+	Revision   uint64
+	QueryID    string
+	Surface    string
+	Ranker     string // ranking configuration identity for offline comparison
+	Language   string
+	Subject    Subject // optional for anonymous renders
+	Shown      []Placement
+	OccurredAt time.Time // required
+}
+
+func (e Exposure) validate() error {
+	if strings.TrimSpace(e.RenderID) == "" {
+		return fmt.Errorf("exposure: RenderID is required")
 	}
-	if len(im.Shown) == 0 {
-		return fmt.Errorf("impression: at least one shown entity is required")
+	if err := e.Stage.validate(); err != nil {
+		return err
 	}
-	for i, ref := range im.Shown {
-		if err := ref.validate(); err != nil {
-			return fmt.Errorf("impression: shown entity %d: %w", i, err)
+	if e.OccurredAt.IsZero() {
+		return fmt.Errorf("exposure: OccurredAt is required")
+	}
+	if len(e.Shown) == 0 {
+		return fmt.Errorf("exposure: at least one placement is required")
+	}
+	if len(e.Shown) > MaxShownPerExposure {
+		return &LimitError{Field: "Shown", Limit: MaxShownPerExposure, Got: len(e.Shown)}
+	}
+	seen := map[uint32]struct{}{}
+	for i, p := range e.Shown {
+		if err := p.validate(); err != nil {
+			return fmt.Errorf("exposure: placement %d: %w", i, err)
+		}
+		if p.Position == 0 {
+			return fmt.Errorf("exposure: placement %d: Position is required (1-based)", i)
+		}
+		if _, dup := seen[p.Position]; dup {
+			return fmt.Errorf("exposure: duplicate position %d", p.Position)
+		}
+		seen[p.Position] = struct{}{}
+		if err := checkIdentifiers("Shown.EntityType", p.EntityType, "Shown.EntityID", p.EntityID); err != nil {
+			return err
 		}
 	}
-	return nil
+	if e.Subject != (Subject{}) {
+		if err := e.Subject.Validate(); err != nil {
+			return err
+		}
+	}
+	return checkIdentifiers("RenderID", e.RenderID, "QueryID", e.QueryID, "Surface", e.Surface,
+		"Ranker", e.Ranker, "Language", e.Language, "Subject", e.Subject.Key())
 }
 
-// Standardized click-attribution payload keys. Hosts writing click/engagement
-// signals set these exact keys (via WithAttribution) so training jobs can join
-// clicks to search_impressions on the query id and read the shown position.
+// Standardized click-attribution payload keys, set via WithAttribution so
+// evaluation can join clicks to exposures on the render id.
 const (
-	PayloadKeyQueryID  = "query_id"
+	PayloadKeyRenderID = "render_id"
 	PayloadKeySurface  = "surface"
 	PayloadKeyPosition = "position"
 )
 
 // Attribution links a click/engagement signal to the render that produced it.
 type Attribution struct {
-	QueryID  string // the Impression.QueryID the click came from
-	Surface  string // the render surface (search|foryou|similar|popular|organic)
+	RenderID string // the Exposure.RenderID the click came from
+	Surface  string
 	Position uint32 // 1-based position of the clicked item within that render
 }
 
@@ -242,8 +292,8 @@ func (s Signal) WithAttribution(a Attribution) Signal {
 	for k, v := range s.Payload {
 		payload[k] = v
 	}
-	if strings.TrimSpace(a.QueryID) != "" {
-		payload[PayloadKeyQueryID] = a.QueryID
+	if strings.TrimSpace(a.RenderID) != "" {
+		payload[PayloadKeyRenderID] = a.RenderID
 	}
 	if strings.TrimSpace(a.Surface) != "" {
 		payload[PayloadKeySurface] = a.Surface
@@ -262,8 +312,8 @@ func (s Signal) Attribution() Attribution {
 	if s.Payload == nil {
 		return a
 	}
-	if v, ok := s.Payload[PayloadKeyQueryID].(string); ok {
-		a.QueryID = v
+	if v, ok := s.Payload[PayloadKeyRenderID].(string); ok {
+		a.RenderID = v
 	}
 	if v, ok := s.Payload[PayloadKeySurface].(string); ok {
 		a.Surface = v
@@ -294,23 +344,25 @@ func payloadUint32(v any) uint32 {
 	return 0
 }
 
-// State is one subject's standing with one entity — the row UI annotation is
-// built from (seen?, progress bar, completed?, resume pointer).
+// State is one subject's compact, indefinitely retained standing with one
+// entity, derived from its canonical events.
 type State struct {
-	Seen          bool // MaxProgress > 0
-	FirstSeenAt   time.Time
-	LastSignalAt  time.Time
-	TotalEvents   uint32
-	MaxProgress   uint32 // progress bar = MaxProgress / ProgressMax
-	ProgressMax   uint32
-	Completed     bool
-	Resume        string
-	HasInteracted bool // any explicit feedback (Value/Label) recorded
-	LastScore     int16
-	// NetValue is the sum of explicit-feedback Values (e.g. +1 like, -1
-	// dislike). Negative = the subject's current sentiment is negative;
-	// recommendations exclude such entities from seeds and results.
+	Seen         bool // MaxProgress > 0
+	FirstSeenAt  time.Time
+	LastSignalAt time.Time
+	TotalEvents  uint32 // canonical events of every type
+	Views        uint32 // canonical view events (sessions)
+	Completions  uint32 // completed views
+	ActiveS      uint64 // summed view DurationS
+	MaxProgress  uint32 // progress bar = MaxProgress / ProgressMax
+	ProgressMax  uint32
+	Completed    bool
+	Resume       string // latest non-empty resume pointer
+	LastScore    int16  // score of the latest view
+	// NetValue sums canonical feedback Values. Negative = current sentiment is
+	// negative; recommendations exclude such entities.
 	NetValue float64
+	Feedback uint32 // canonical events with a non-zero Value
 }
 
 // StateRow is a State with its entity, as returned by History.
@@ -345,71 +397,131 @@ type HistoryOptions struct {
 	Offset int
 }
 
-// EntityEngagement aggregates signal quality for one entity —
-// interaction-weighted, not raw view volume.
-type EntityEngagement struct {
-	UniqueUsers    uint64
-	UniqueAnon     uint64
-	Signals        uint64 // deduplicated events
-	Completions    uint64 // subjects who completed
-	CompletionRate float64
-	// AvgScore averages over scored events (score != 0).
-	AvgScore float64
-	// SignalCounts counts events per host-defined signal type.
-	SignalCounts map[string]uint64
+// EntityMetrics are named, separately defined statistics for one entity over a
+// window, computed from canonical events. Each subject counts once per metric
+// that says "subjects"; sessions and feedback are never relabeled as views.
+type EntityMetrics struct {
+	Viewers     uint64 // subjects with at least one view
+	UserViewers uint64
+	AnonViewers uint64
+	Views       uint64 // view events (sessions)
+	Completions uint64 // completed views
+	Completers  uint64 // subjects with a completed view
+	ActiveS     uint64 // summed view DurationS
+	ScoreSum    int64  // summed view scores; ScoreSum/Views is the mean
+	Events      uint64 // canonical events of every type
+	ValueSum    float64
+	// PositiveSubjects / NegativeSubjects: subjects whose summed feedback
+	// Value in the window is > 0 / < 0.
+	PositiveSubjects uint64
+	NegativeSubjects uint64
+	SignalCounts     map[string]uint64 // canonical events per type
 }
 
-// Window selects a time range for Popular. Zero value = all time.
+// Window is a literal range of whole UTC calendar days, [From, To). A zero
+// From or To leaves that side unbounded; the zero Window is all time. Every
+// qualifying event inside the window counts with equal weight: there is no age
+// decay, and an event's contribution does not depend on where in the window it
+// falls.
 type Window struct {
-	From time.Time
-	To   time.Time
+	From time.Time // inclusive UTC midnight
+	To   time.Time // exclusive UTC midnight
 }
 
-// LastDays returns a window beginning at UTC midnight n days ago.
-// The open upper bound includes the current partial day.
-func LastDays(n int) Window {
-	today := time.Now().UTC().Truncate(24 * time.Hour)
-	return Window{From: today.AddDate(0, 0, -n)}
+// LastDays returns the n most recent UTC calendar days including the day that
+// contains now: [midnight(now) - (n-1) days, midnight(now) + 1 day). The window
+// moves only at UTC midnight, so String is a stable cache key within a day.
+// n must be positive (Validate reports otherwise).
+func LastDays(n int, now time.Time) Window {
+	today := utcDay(now)
+	return Window{From: today.AddDate(0, 0, 1-n), To: today.AddDate(0, 0, 1)}
 }
 
-// Between returns an arbitrary date-slice window.
+// Between returns the whole UTC days [from, to); both must be UTC midnights.
 func Between(from, to time.Time) Window { return Window{From: from, To: to} }
 
 // AllTime returns the unbounded window.
 func AllTime() Window { return Window{} }
 
-func (w Window) allTime() bool { return w.From.IsZero() && w.To.IsZero() }
-
-// dayAligned reports whether both endpoints are UTC midnight or unbounded.
-func (w Window) dayAligned() bool {
-	aligned := func(t time.Time) bool {
-		if t.IsZero() {
-			return true
+// Validate reports a window that is not a non-empty range of whole UTC days.
+func (w Window) Validate() error {
+	for _, t := range []time.Time{w.From, w.To} {
+		if !t.IsZero() && !t.Equal(utcDay(t)) {
+			return fmt.Errorf("signal: window bound %s is not a UTC midnight", t.Format(time.RFC3339Nano))
 		}
-		u := t.UTC()
-		return u.Hour() == 0 && u.Minute() == 0 && u.Second() == 0 && u.Nanosecond() == 0
 	}
-	return aligned(w.From) && aligned(w.To)
+	if !w.From.IsZero() && !w.To.IsZero() && !w.From.Before(w.To) {
+		return fmt.Errorf("signal: empty window [%s, %s)", w.From.UTC().Format(time.DateOnly), w.To.UTC().Format(time.DateOnly))
+	}
+	return nil
+}
+
+// String renders the window as "[from,to)" dates ("*" when unbounded).
+func (w Window) String() string {
+	day := func(t time.Time) string {
+		if t.IsZero() {
+			return "*"
+		}
+		return t.UTC().Format(time.DateOnly)
+	}
+	return "[" + day(w.From) + "," + day(w.To) + ")"
+}
+
+// predicate renders " AND column >= ? AND column < ?" for the bounded sides.
+func (w Window) predicate(column string) (string, []any) {
+	var (
+		sb   strings.Builder
+		args []any
+	)
+	if !w.From.IsZero() {
+		sb.WriteString(" AND " + column + " >= ?")
+		args = append(args, w.From.UTC())
+	}
+	if !w.To.IsZero() {
+		sb.WriteString(" AND " + column + " < ?")
+		args = append(args, w.To.UTC())
+	}
+	return sb.String(), args
+}
+
+// dayPredicate renders the window over a Date column.
+func (w Window) dayPredicate(column string) (string, []any) {
+	var (
+		sb   strings.Builder
+		args []any
+	)
+	if !w.From.IsZero() {
+		sb.WriteString(" AND " + column + " >= toDate(?)")
+		args = append(args, w.From.UTC().Format(time.DateOnly))
+	}
+	if !w.To.IsZero() {
+		sb.WriteString(" AND " + column + " < toDate(?)")
+		args = append(args, w.To.UTC().Format(time.DateOnly))
+	}
+	return sb.String(), args
+}
+
+func utcDay(t time.Time) time.Time {
+	u := t.UTC()
+	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 // RankWeights tunes the default popularity ranking:
 //
-//	volume  = log10(1 + unique subjects)            (log-scaled volume)
-//	quality = (Σ score + PriorScore·PriorWeight) /
-//	          (scored events + PriorWeight)          (Bayesian-smoothed avg)
+//	volume  = log10(1 + viewers)
+//	quality = (score_sum + PriorScore·PriorWeight) / (views + PriorWeight)
 //	rank    = volume × max(QualityFloor, quality)
 //
-// Qualifying views have equal time weight inside the selected window.
-// A score of zero is a valid observation and participates in the mean.
+// Qualifying views have equal time weight inside the selected window. A score
+// of zero is a valid observation and participates in the mean.
 type RankWeights struct {
-	// PriorWeight is the strength of the Bayesian prior in pseudo-events.
-	// Defaults to 10. Prevents tiny-sample entities from outranking
-	// high-volume ones.
+	// PriorWeight is the strength of the Bayesian prior in pseudo-views.
+	// Defaults to 10.
 	PriorWeight float64
 	// PriorScore is the prior mean engagement score. Defaults to 0.
 	PriorScore float64
 	// QualityFloor keeps pure-volume ranking meaningful when hosts record no
-	// scores (quality term would be ~0). Defaults to 1.
+	// scores. Defaults to 1.
 	QualityFloor float64
 }
 
@@ -432,19 +544,19 @@ type PopularOptions struct {
 	Weights RankWeights
 
 	// RankExpr, when set, REPLACES the default ranking with a host-supplied
-	// ClickHouse expression (trusted SQL, mechanism vs meaning). It may
-	// reference the aggregate aliases: subjects, signals, engagement_sum,
-	// scored_signals, completions.
+	// ClickHouse expression (trusted SQL). It may reference the window metric
+	// columns: viewers, user_viewers, anon_viewers, views, completions,
+	// completers, active_s, score_sum, events, value_sum, positive_subjects,
+	// negative_subjects.
 	RankExpr string
 }
 
-// PopularHit is one ranked entity from Popular.
+// PopularHit is one ranked entity from Popular. Only entities with at least one
+// view in the window rank.
 type PopularHit struct {
 	EntityRef
-	Subjects    uint64
-	Signals     uint64
-	Completions uint64
-	Score       float64
+	EntityMetrics
+	Score float64
 }
 
 // CoEngagedOptions controls co-engagement queries ("subjects who engaged with

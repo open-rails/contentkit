@@ -49,44 +49,50 @@ type tableSpec struct {
 // expectedSchema is the schema this library version reads and writes. It must
 // match the latest migration in migrations/clickhouse/signal.
 var expectedSchema = map[string]tableSpec{
-	"signal_events": {
-		engine: "ReplacingMergeTree", version: "recorded_at",
-		sortingKey:   "tenant, entity_type, entity_id, subject_kind, subject, occurred_at, event_id",
+	"events": {
+		engine: "ReplacingMergeTree", version: "version",
+		sortingKey:   "tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id",
 		partitionKey: "toYYYYMM(occurred_at)",
 		columns: []columnSpec{
 			{"tenant", "LowCardinality(String)"}, {"entity_type", "LowCardinality(String)"}, {"entity_id", "String"},
 			{"subject_kind", "LowCardinality(String)"}, {"subject", "String"}, {"signal_type", "LowCardinality(String)"},
-			{"event_id", "String"}, {"occurred_at", "DateTime('UTC')"}, {"duration_s", "UInt32"}, {"progress", "UInt32"},
-			{"progress_max", "UInt32"}, {"value", "Float64"}, {"label", "LowCardinality(String)"}, {"weight", "Float64"},
-			{"score", "Int16"}, {"completed", "Bool"}, {"resume", "String"}, {"payload", "String"},
-			{"recorded_at", "DateTime('UTC')"},
+			{"event_id", "String"}, {"revision", "UInt64"}, {"occurred_at", "DateTime('UTC')"}, {"duration_s", "UInt32"},
+			{"progress", "UInt32"}, {"progress_max", "UInt32"}, {"value", "Float64"}, {"score", "Int16"},
+			{"completed", "Bool"}, {"resume", "String"}, {"payload", "String"}, {"version", "UInt128"},
+			{"ingested_at", "DateTime64(6, 'UTC')"},
 		},
 	},
-	"signal_state": {
-		engine: "ReplacingMergeTree", version: "last_updated",
+	"subject_state": {
+		engine: "ReplacingMergeTree", version: "version",
 		sortingKey: "tenant, subject_kind, subject, entity_type, entity_id",
 		columns: []columnSpec{
 			{"tenant", "LowCardinality(String)"}, {"subject_kind", "LowCardinality(String)"}, {"subject", "String"},
 			{"entity_type", "LowCardinality(String)"}, {"entity_id", "String"}, {"first_seen_at", "DateTime('UTC')"},
-			{"last_signal_at", "DateTime('UTC')"}, {"total_events", "UInt32"}, {"max_progress", "UInt32"},
-			{"progress_max", "UInt32"}, {"completed", "Bool"}, {"resume", "String"}, {"has_interacted", "Bool"},
-			{"last_score", "Int16"}, {"net_value", "Float64"}, {"last_updated", "DateTime64(3, 'UTC')"},
+			{"last_signal_at", "DateTime('UTC')"}, {"total_events", "UInt32"}, {"views", "UInt32"},
+			{"completions", "UInt32"}, {"active_s", "UInt64"}, {"max_progress", "UInt32"}, {"progress_max", "UInt32"},
+			{"completed", "Bool"}, {"resume", "String"}, {"last_score", "Int16"}, {"net_value", "Float64"},
+			{"feedback", "UInt32"}, {"version", "DateTime64(6, 'UTC')"},
 		},
 	},
-	"entity_daily": {
-		engine:       "AggregatingMergeTree",
-		sortingKey:   "tenant, entity_type, entity_id, day",
-		partitionKey: "toYear(day)",
+	"subject_daily": {
+		engine: "ReplacingMergeTree", version: "version",
+		sortingKey:   "tenant, entity_type, entity_id, subject_kind, subject, day",
+		partitionKey: "toYYYYMM(day)",
 		columns: []columnSpec{
 			{"tenant", "LowCardinality(String)"}, {"entity_type", "LowCardinality(String)"}, {"entity_id", "String"},
-			{"day", "Date"}, {"subjects", "AggregateFunction(uniqExact, String)"},
-			{"signals", "SimpleAggregateFunction(sum, UInt64)"}, {"engagement_sum", "SimpleAggregateFunction(sum, Int64)"},
-			{"scored_signals", "SimpleAggregateFunction(sum, UInt64)"}, {"completions", "SimpleAggregateFunction(sum, UInt64)"},
-			{"value_sum", "SimpleAggregateFunction(sum, Float64)"},
-			{"signal_counts", "SimpleAggregateFunction(sumMap, Map(String, UInt64))"},
+			{"subject_kind", "LowCardinality(String)"}, {"subject", "String"}, {"day", "Date"}, {"events", "UInt32"},
+			{"views", "UInt32"}, {"completions", "UInt32"}, {"active_s", "UInt64"}, {"score_sum", "Int64"},
+			{"value_sum", "Float64"}, {"type_counts", "Map(LowCardinality(String), UInt32)"},
+			{"version", "DateTime64(6, 'UTC')"},
 		},
 	},
-	"mv_entity_daily": {engine: "MaterializedView"},
+	"erasures": {
+		engine: "ReplacingMergeTree", version: "erased_at",
+		sortingKey: "tenant, subject_hash",
+		columns: []columnSpec{
+			{"tenant", "LowCardinality(String)"}, {"subject_hash", "FixedString(16)"}, {"erased_at", "DateTime64(6, 'UTC')"},
+		},
+	},
 	"item_pairs": {
 		engine: "ReplacingMergeTree", version: "refreshed_at",
 		sortingKey: "tenant, entity_type_a, entity_id_a, entity_type_b, entity_id_b",
@@ -96,16 +102,18 @@ var expectedSchema = map[string]tableSpec{
 			{"refreshed_at", "DateTime('UTC')"},
 		},
 	},
-	"search_impressions": {
-		engine: "ReplacingMergeTree", version: "recorded_at",
-		sortingKey:   "tenant, occurred_at, query_id",
+	"exposures": {
+		engine: "ReplacingMergeTree", version: "version",
+		sortingKey:   "tenant, render_id, stage",
 		partitionKey: "toYYYYMM(occurred_at)",
 		columns: []columnSpec{
-			{"tenant", "LowCardinality(String)"}, {"query_id", "String"}, {"surface", "LowCardinality(String)"},
-			{"normalized_query", "String"}, {"language", "LowCardinality(String)"}, {"subject_kind", "LowCardinality(String)"},
-			{"subject", "String"}, {"shown_entity_types", "Array(LowCardinality(String))"},
-			{"shown_entity_ids", "Array(String)"}, {"shown_positions", "Array(UInt32)"},
-			{"occurred_at", "DateTime('UTC')"}, {"recorded_at", "DateTime('UTC')"},
+			{"tenant", "LowCardinality(String)"}, {"render_id", "String"}, {"stage", "LowCardinality(String)"},
+			{"revision", "UInt64"}, {"query_id", "String"}, {"surface", "LowCardinality(String)"},
+			{"ranker", "LowCardinality(String)"}, {"language", "LowCardinality(String)"},
+			{"subject_kind", "LowCardinality(String)"}, {"subject", "String"},
+			{"entity_types", "Array(LowCardinality(String))"}, {"entity_ids", "Array(String)"},
+			{"positions", "Array(UInt32)"}, {"occurred_at", "DateTime('UTC')"}, {"version", "UInt128"},
+			{"ingested_at", "DateTime64(6, 'UTC')"},
 		},
 	},
 }

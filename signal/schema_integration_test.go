@@ -46,7 +46,7 @@ func TestIntegrationCheckSchemaRuntimePrivileges(t *testing.T) {
 	if err := CheckSchema(ctx, runtime, testDB); err != nil {
 		t.Fatalf("runtime credentials must validate the schema read-only: %v", err)
 	}
-	if err := runtime.Exec(ctx, "ALTER TABLE signal_events ADD COLUMN IF NOT EXISTS probe UInt8"); err == nil {
+	if err := runtime.Exec(ctx, "ALTER TABLE events ADD COLUMN IF NOT EXISTS probe UInt8"); err == nil {
 		t.Fatal("runtime credentials unexpectedly hold DDL privileges")
 	}
 	_ = conn
@@ -59,17 +59,17 @@ func TestIntegrationCheckSchemaRefusesIncompatible(t *testing.T) {
 		ddl  []string
 		want []string
 	}{
-		"missing database": {want: []string{"missing table signal_events"}},
+		"missing database": {want: []string{"missing table events", "missing table subject_daily"}},
 		"changed column and extra column": {
 			ddl: []string{
-				"ALTER TABLE signal_state" + env.OnCluster() + " MODIFY COLUMN total_events UInt64",
-				"ALTER TABLE search_impressions" + env.OnCluster() + " ADD COLUMN raw_query String",
+				"ALTER TABLE subject_state" + env.OnCluster() + " MODIFY COLUMN total_events UInt64",
+				"ALTER TABLE exposures" + env.OnCluster() + " ADD COLUMN raw_query String",
 			},
-			want: []string{"signal_state.total_events type UInt64, want UInt32", "search_impressions unexpected column raw_query"},
+			want: []string{"subject_state.total_events type UInt64, want UInt32", "exposures unexpected column raw_query"},
 		},
-		"missing materialized view": {
-			ddl:  []string{"DROP VIEW mv_entity_daily" + env.OnCluster() + " SYNC"},
-			want: []string{"missing table mv_entity_daily"},
+		"missing projection table": {
+			ddl:  []string{"DROP TABLE subject_daily" + env.OnCluster() + " SYNC"},
+			want: []string{"missing table subject_daily"},
 		},
 		"wrong version column": {
 			ddl: []string{

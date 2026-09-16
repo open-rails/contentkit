@@ -91,7 +91,7 @@ candidate bounds or typo rules.
 
 Beyond search, searchkit can run as an in-process **discovery hub**: it records per-user
 interaction **signals** in ClickHouse and answers id-returning discovery queries — history, unseen,
-view-context annotation, engagement, popularity/trending, personalized search, and
+view-context annotation, engagement, windowed popularity, personalized search, and
 recommendations. The host hydrates ids → cards from its own DB; searchkit stores no presentation
 data.
 
@@ -165,47 +165,88 @@ _ = m.ApplyMigrations(ctx, migs)
 
 ### Recording signals
 
-One summarized event per session/interaction (exit-beacon style — never one row per scroll tick):
+One logical source event per session or interaction (never one per scroll/frame tick), batched:
 
 ```go
-_ = hub.RecordSignal(ctx, signal.Signal{
+_ = hub.RecordSignals(ctx, []signal.Signal{{
 	EntityRef:   signal.EntityRef{EntityType: "blog_post", EntityID: "42"},
 	Subject:     signal.Subject{UserID: userID},   // or AnonKey for anonymous
-	Type:        "view",                            // host-defined
+	Type:        signal.TypeView,                   // consumption; other types are host-defined
+	EventID:     sessionID,                         // required, stable across retries
+	Revision:    checkpoint,                        // cumulative snapshots: highest wins
+	OccurredAt:  sessionStart,                      // required, immutable
 	DurationS:   180,
-	Progress:    95, ProgressMax: 100,              // generic consumption units
-	Resume:      "scroll:95",                       // opaque resume pointer
-})
+	Progress:    95, ProgressMax: 100,              // cumulative for this revision
+	Resume:      "scroll:95",
+}})
 ```
 
-The registered `Scorer` for the entity type fills `Score`/`Progress`/`ProgressMax`/`Completed`.
-Replayed events (same content or same `EventID`) deduplicate instead of double-counting. The default
-`event_id` hashes `occurred_at` at nanosecond precision, so genuinely distinct same-second interactions
-stay distinct; set an explicit `EventID` for idempotency independent of timing.
+**Canonical events.** Identity is `(tenant, entity, subject, Type, EventID)`. A retry, duplicate batch,
+out-of-order revision or ClickHouse merge never changes results: the highest `Revision` is the event
+(equal revisions resolve by content hash, not arrival order). Checkpoints are revisions of one session,
+not new views. Current preferences (like/dislike) are one `EventID` per subject × entity with a
+monotonic `Revision` and `Value` = current preference; transitions with distinct ids are summed. Record
+a work view and its selected-version view as two entity types with derived ids
+(`sessionID:gallery_version:<uuid>`, same revision); work metrics never include version rows.
 
-**Impression + attribution logging (learned-ranking training data).** Log one row per SERP/shelf render so
-clicks can be attributed to what was shown. Call once per render (exit-beacon style, **never per item**);
-clicks then carry that render's `query_id` + position via `WithAttribution`:
+The registered `Scorer` for the entity type fills `Score`/`Progress`/`ProgressMax`/`Completed`; a
+scorer error records nothing from the batch.
+
+**Projections.** Each write rebuilds, from canonical events, the touched subject × entity rows in
+`subject_state` (indefinite compact state: first/last, views, completions, active seconds, progress,
+resume, last score, net feedback) and `subject_daily` (per UTC day contributions). Windows, exact unique
+viewers and per-subject deletion read `subject_daily`; nothing is incremented, so projections are
+always rebuildable from `events`.
+
+**Minimal signal set.** Collect only what reads and planned evaluation use:
+
+| Record | Shape |
+| --- | --- |
+| Consumption | one `view` event per session on the work, plus one on the selected version (derived id), cumulative `Revision` per checkpoint |
+| Feedback | one replaceable preference per subject × entity (`Value` = current preference) |
+| Search/recommendation selection | one `click` with attribution; one exposure row per list and stage |
+
+Do not write a view per parent entity (tag/artist/character/season): it multiplies rows per checkpoint
+(eight parents = 4.3× the canonical events, 5× the daily rows and ~3× the p95 write latency of the
+minimal shape in the synthetic workload test) and duplicates catalog relationships the host already
+owns. Derive parent affinity from the host catalog instead. Each
+`RecordSignals` call is three statements (event insert, state and daily projection) reading only the
+touched subject × entity history. Oversize batches and fields are rejected with `*signal.LimitError`
+(`MaxSignalsPerBatch`, `MaxPayloadBytes`, ...): treat it and outage errors as backpressure — count them,
+then drop optional telemetry or retry with the same ids. `hub.Inventory` reports canonical/raw volume
+per entity and signal type; `hub.PurgeEntityTypes` irreversibly removes retired types (for example
+legacy fan-out rows) from events, projections and pairs.
+
+**Exposure + attribution logging (evaluation data).** Record what a subject was actually shown so
+clicks can be attributed against it. One `Exposure` row per result list **and stage** — `served` (API
+returned it), `rendered` (client drew it), `visible` (actually on screen; cumulative, re-sent with a higher
+`Revision` as the subject scrolls) — never per item or scroll tick. `RenderID` is minted once per
+render, returned with the response, and carried by clicks; `QueryID` groups the pages of one query;
+`Ranker` names the ranking configuration for offline comparison. No query text is stored.
 
 ```go
-qid := newQueryID() // unique per render
-_ = hub.RecordImpressions(ctx, []signal.Impression{{
-  QueryID: qid, Surface: signal.SurfaceSearch, NormalizedQuery: "two factor", Language: "en", Subject: user,
-  Shown: []signal.EntityRef{ // in rank order; positions derived as StartPosition + index (default 1)
-    {EntityType: "gallery", EntityID: "g1"},
-    {EntityType: "gallery", EntityID: "g2"},
+rid := newRenderID()
+_ = hub.RecordExposures(ctx, []signal.Exposure{{
+  RenderID: rid, Stage: signal.StageRendered, QueryID: qid, Surface: signal.SurfaceSearch, Ranker: "keyword-v1",
+  Language: "en", Subject: user, OccurredAt: renderedAt,
+  Shown: []signal.Placement{ // absolute 1-based positions; page 2 starts at 11
+    {EntityRef: signal.EntityRef{EntityType: "gallery", EntityID: "g1"}, Position: 1},
+    {EntityRef: signal.EntityRef{EntityType: "gallery", EntityID: "g2"}, Position: 2},
   },
 }})
 
 // On click, attach the render context to the click signal:
-_ = hub.RecordSignal(ctx, signal.Signal{
+_ = hub.RecordSignals(ctx, []signal.Signal{signal.Signal{
   EntityRef: signal.EntityRef{EntityType: "gallery", EntityID: "g1"}, Subject: user, Type: "click",
-}.WithAttribution(signal.Attribution{QueryID: qid, Surface: signal.SurfaceSearch, Position: 1}))
+  EventID: "click:" + rid + ":g1", OccurredAt: clickedAt,
+}.WithAttribution(signal.Attribution{RenderID: rid, Surface: signal.SurfaceSearch, Position: 1})})
 ```
 
-`NormalizedQuery` must be normalized text only (no raw referrers/PII). `WithAttribution` writes the
-standardized `query_id`/`surface`/`position` payload keys training jobs join on. Paginated renders set
-`StartPosition` to the page's first absolute position.
+`hub.Attribution(ctx, signal.AttributionOptions{Stage: signal.StageVisible, Window: w})` exports renders at
+one stage with their canonical clicks joined (`Exposed` says whether the clicked item was in that
+stage's list) plus `Unattributed` clicks whose render has no exposure at that stage. A click without
+exposure, or an item never exposed, is never a negative example; unclicked exposed items are
+"not chosen", not "disliked". `hub.ForgetExposures` clears a subject's exposures (search history).
 
 ### Discovery reads (all id-returning)
 
@@ -213,16 +254,19 @@ standardized `query_id`/`surface`/`position` payload keys training jobs join on.
 hist, _ := hub.History(ctx, user, signal.HistoryOptions{EntityType: "blog_post", Status: signal.HistoryInProgress})
 fresh, _ := hub.Unseen(ctx, user, searchkit.UnseenOptions{EntityType: "blog_post", Limit: 20})
 states, _ := hub.States(ctx, user, refs)          // bulk "seen? % read? resume?" for a page of cards
-eng, _   := hub.Engagement(ctx, ref)              // unique subjects, completion rate, avg score
-top, _   := hub.Popular(ctx, "blog_post", signal.PopularOptions{Window: signal.LastDays(30)})
-slice, _ := hub.Popular(ctx, "blog_post", signal.PopularOptions{Window: signal.Between(a, b)}) // arbitrary date slices
+m, _     := hub.Metrics(ctx, "blog_post", ids, window) // viewers, views, completers, feedback subjects, ...
+top, _   := hub.Popular(ctx, "blog_post", signal.PopularOptions{Window: signal.LastDays(30, time.Now())})
+slice, _ := hub.Popular(ctx, "blog_post", signal.PopularOptions{Window: signal.Between(fromDay, toDay)}) // whole UTC days [from, to)
 recs, _  := hub.Recommend(ctx, user, searchkit.RecommendOptions{EntityTypes: []string{"blog_post"}})
 ```
 
-- `Popular` merges a tiny daily rollup (`entity_daily`) for day-aligned windows and scans raw
-  events for sub-day slices. Default ranking: log-scaled unique subjects × Bayesian-smoothed
-  engagement; tune via `RankWeights` (equal time weight inside each window) or replace with a trusted
-  `RankExpr`.
+- `Metrics` returns separately named statistics: `Viewers` (subjects with a view), `Views` (sessions),
+  `Completions`/`Completers`, `ActiveS`, `ScoreSum`, `Events`, `SignalCounts`, and
+  `PositiveSubjects`/`NegativeSubjects` (summed feedback per subject). Clicks and reactions are never
+  counted as views.
+- `Popular` ranks entities with at least one view inside a literal window. Default ranking: log-scaled
+  viewers × Bayesian-smoothed mean view score; tune via `RankWeights` or replace with a trusted
+  `RankExpr` over the metric columns (`viewers`, `views`, `completers`, `positive_subjects`, ...).
 - `Recommend` fuses content similarity (seeded from the subject's high-signal entities) with
   co-engagement, excludes seen, and falls back to popularity on cold start. **Negative feedback
   demotes**: signals with `Value < 0` (e.g. a dislike) exclude an entity from seeds and results,
@@ -236,10 +280,26 @@ recs, _  := hub.Recommend(ctx, user, searchkit.RecommendOptions{EntityTypes: []s
 - `hub.SimilarTo(..., HubSimilarOptions{CoEngagement: true})` fuses vector neighbours with
   "subjects who engaged with X also engaged with Y".
 
-**Maintenance (host-scheduled).** Two `Hub` maintenance methods run periodically
-(cron-style): `hub.RefreshCoEngagement(...)` rebuilds the `item_pairs` rollup, and
-`hub.ReprojectStaleStates(ctx, signal.StaleStateOptions{})` re-derives any current-state row that fell
-behind the event stream after a crashed reprojection — idempotent, and a no-op when everything is current.
+**Erasure (account deletion).** `hub.EraseSubjects(ctx, subjects)` permanently erases subjects from the
+hub's tenant: it records a fence first (`erasures`, a hash of the subject), then deletes their events,
+compact state, daily contributions, exposures and legacy raw rows, removes co-engagement pairs that
+included entities they contributed to (rebuilt by the next `RefreshCoEngagement`), waits for the
+mutations on every replica and verifies nothing remains (`ErasureReport.Complete()`). Fenced subjects'
+later signals and exposures are dropped and projection rebuilds cannot resurrect them. Windows and
+viewer counts exclude exactly the erased contributions because they are stored per subject.
+`hub.Forget` (clear one entity/type from history) is not erasure. `hub.EnforceErasures(ctx, opts)`
+re-applies recorded erasures to catch residue from a write racing the fence or a restored backup:
+schedule it with `Since` = previous run, and run it with zero `Since` after every restore, after
+re-erasing subjects deleted since the backup (the host's deletion ledger is authoritative; the
+`erasures` table is restored with the backup). A shared account exists in every tenant: each host
+erases its own tenant.
+
+**Maintenance (host-scheduled).** `hub.RefreshCoEngagement(...)` rebuilds the `item_pairs` rollup.
+`hub.RepairProjections(ctx, signal.RepairOptions{...})` is the owned projection repair: bounded by
+`Limit`, resumable with `After: res.Next`, scoped by `Window` (event days) and `IngestedSince`. Run it
+periodically with `IngestedSince` covering the last runs (a crash between the event insert and the
+projections leaves projections stale, never events lost); run it with `Rebuild: true` after a restore,
+a legacy import or a projection-semantics change. It is idempotent and reports `Examined`/`Repaired`.
 
 ## Host app integration (manual)
 
@@ -521,17 +581,13 @@ Construct the runtime via `runtime.NewWithContext(...)` to:
 
 ### Popularity window semantics
 
-Popularity and card viewer counts use only `view` events. Clicks and reactions
-remain stored as separate signals. All qualifying views inside the requested
-window have equal time weight; `RankWeights.HalfLifeDays` has been removed in
-this pre-v1 change. No current Doujins/Hentai0 host call used it. A zero engagement
-score is a valid view observation, not a missing score.
+A `signal.Window` is a half-open range of whole UTC calendar days, `[From, To)`; a zero side is
+unbounded. `signal.LastDays(n, now)` is the `n` most recent UTC days **including** the day containing
+`now`: `LastDays(7, 2026-09-16T15:00Z)` = `[2026-09-10, 2026-09-17)`. It moves only at UTC midnight, so
+`Window.String()` is a stable cache key for a day; 7/30/90/365/all produce distinct keys. Sub-day or
+empty windows are rejected (`Window.Validate`) before any query. An event at `From 00:00:00` and one at
+`To - 1s` contribute identically; there is no decay or age weight inside a window.
 
-Until the daily projection has view-only, retry-safe aggregates, these reads use
-`signal_events FINAL`. This fixes duplicate-delivery and mixed-signal correctness
-but scans more data than a daily rollup; qualify production query cost before
-large-scale rollout. Do not expire these source events before the replacement
-projection and durable compact-history design can answer the same queries.
-Retries must still preserve both event ID and occurrence time: changing either
-can represent a different storage key. This patch does not implement session
-revision reconciliation, compaction, or the future explicit-feedback formula.
+Popularity and viewer counts use only `view` events. A zero engagement score is a valid view
+observation. Reads use the `subject_daily` projection; raw `events` are retained (no TTL) as the repair
+and rebuild source.

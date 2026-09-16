@@ -95,7 +95,13 @@ func (e Env) Migrations(t testing.TB) [][]string {
 // Apply runs every migration statement against conn (default database set).
 func (e Env) Apply(t testing.TB, conn driver.Conn) {
 	t.Helper()
-	for _, stmts := range e.Migrations(t) {
+	e.ApplyRange(t, conn, 0, len(e.Migrations(t)))
+}
+
+// ApplyRange runs migrations [from, to) (zero-based, lineage order).
+func (e Env) ApplyRange(t testing.TB, conn driver.Conn, from, to int) {
+	t.Helper()
+	for _, stmts := range e.Migrations(t)[from:to] {
 		for _, stmt := range stmts {
 			if err := conn.Exec(context.Background(), stmt); err != nil {
 				t.Fatalf("apply migration statement: %v\n%s", err, stmt)
@@ -108,14 +114,20 @@ func (e Env) Apply(t testing.TB, conn driver.Conn) {
 // connection whose default database is database.
 func (e Env) Fresh(t testing.TB, database string) driver.Conn {
 	t.Helper()
+	conn := e.Empty(t, database)
+	e.Apply(t, conn)
+	return conn
+}
+
+// Empty drops and recreates database without applying migrations.
+func (e Env) Empty(t testing.TB, database string) driver.Conn {
+	t.Helper()
 	admin := e.Open(t, "")
 	e.Drop(t, admin, database)
 	if err := admin.Exec(context.Background(), "CREATE DATABASE "+database+e.OnCluster()); err != nil {
 		t.Fatalf("create %s: %v", database, err)
 	}
-	conn := e.Open(t, database)
-	e.Apply(t, conn)
-	return conn
+	return e.Open(t, database)
 }
 
 // Split separates statements terminated by ';' at end of line, dropping

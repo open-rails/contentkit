@@ -23,13 +23,13 @@ type Hub interface {
     SimilarTo(ctx context.Context, ref EntityRef, opts SimilarOptions) ([]Hit, error) // "more like this": vector + lexical + co-engagement
 
     // --- Signal plane ---
-    RecordSignal(ctx context.Context, s Signal) error            // view-session / reaction / rating
+    RecordSignals(ctx context.Context, signals []Signal) error   // canonical events: view sessions / reactions / ratings
 
     // --- Discovery plane (reads over entities × signals) ---
     History(ctx context.Context, subject Subject, opts HistoryOptions) ([]StateRow, error)
     Unseen(ctx context.Context, subject Subject, opts UnseenOptions) ([]EntityRef, error)
     States(ctx context.Context, subject Subject, refs []EntityRef) (map[EntityRef]State, error) // bulk UI annotation: seen %, resume
-    Engagement(ctx context.Context, ref EntityRef) (EntityEngagement, error)
+    Metrics(ctx context.Context, entityType string, ids []string, window Window) (map[string]EntityMetrics, error)
     Popular(ctx context.Context, entityType string, opts PopularOptions) ([]Hit, error)         // windowed rankings
     Recommend(ctx context.Context, subject Subject, opts RecOptions) ([]Hit, error)             // "for you" (user -> items)
 }
@@ -107,7 +107,7 @@ type Registry interface {
 
 Searchkit today pulls content via `BuildLexicalString` / `BuildSemanticDocument` / `ListAssetURLs`
 callbacks — embedded-only. The unified hub flips this: hosts **push** content with `UpsertEntity`
-(and signals with `RecordSignal`), so both deployment modes are symmetric. Internally the worker
+(and signals with `RecordSignals`), so both deployment modes are symmetric. Internally the worker
 still drives `search_dirty` → backfill → `embedding_tasks`; `UpsertEntity` writes the document and
 marks it dirty.
 

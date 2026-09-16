@@ -45,7 +45,7 @@ type RecommendOptions struct {
 	DiversityLambda float32
 
 	// PopularWindow is the popularity window used to fill out results on
-	// cold start or thin candidate sets (default: last 30 days).
+	// cold start or thin candidate sets (zero = all time, like every Window).
 	PopularWindow signal.Window
 
 	// Language / Model override the content-plane similarity defaults.
@@ -92,9 +92,6 @@ func (h *EmbeddedHub) Recommend(ctx context.Context, subject signal.Subject, opt
 		coWeight = 1
 	}
 	popWindow := opts.PopularWindow
-	if popWindow == (signal.Window{}) {
-		popWindow = signal.LastDays(30)
-	}
 
 	seeds, err := store.TopStates(ctx, h.tenant, subject, signal.TopStatesOptions{
 		EntityTypes:     opts.SeedEntityTypes,

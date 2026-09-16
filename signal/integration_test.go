@@ -40,6 +40,7 @@ func view(entityID string, sub Subject, day, hour int, progress, progressMax uin
 		Score:       score,
 		Completed:   completed,
 		Resume:      fmt.Sprintf("p:%d", progress),
+		EventID:     fmt.Sprintf("%s:%s:%d:%d", entityID, sub.Key(), day, hour),
 	}
 }
 
@@ -51,15 +52,15 @@ func TestIntegrationStateLifecycleAndReplay(t *testing.T) {
 	ref := EntityRef{EntityType: "gallery", EntityID: "g1"}
 
 	// First session: page 5 of 20.
-	if err := st.RecordSignal(ctx, tenant, view("g1", user, 1, 10, 5, 20, 30, false)); err != nil {
+	if err := st.RecordSignals(ctx, tenant, []Signal{view("g1", user, 1, 10, 5, 20, 30, false)}); err != nil {
 		t.Fatal(err)
 	}
 	// Second session: page 19 of 20, completed.
-	if err := st.RecordSignal(ctx, tenant, view("g1", user, 2, 11, 19, 20, 90, true)); err != nil {
+	if err := st.RecordSignals(ctx, tenant, []Signal{view("g1", user, 2, 11, 19, 20, 90, true)}); err != nil {
 		t.Fatal(err)
 	}
 	// REPLAY of the second session (identical content -> same event_id).
-	if err := st.RecordSignal(ctx, tenant, view("g1", user, 2, 11, 19, 20, 90, true)); err != nil {
+	if err := st.RecordSignals(ctx, tenant, []Signal{view("g1", user, 2, 11, 19, 20, 90, true)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -88,7 +89,7 @@ func TestIntegrationStateLifecycleAndReplay(t *testing.T) {
 	}
 
 	// A later partial re-read must not regress completed/max_progress.
-	if err := st.RecordSignal(ctx, tenant, view("g1", user, 3, 9, 3, 20, 10, false)); err != nil {
+	if err := st.RecordSignals(ctx, tenant, []Signal{view("g1", user, 3, 9, 3, 20, 10, false)}); err != nil {
 		t.Fatal(err)
 	}
 	states, err = st.States(ctx, tenant, user, []EntityRef{ref})
@@ -104,173 +105,105 @@ func TestIntegrationStateLifecycleAndReplay(t *testing.T) {
 	}
 }
 
-// insertRawEvent appends an event straight to the stream WITHOUT reprojecting
-// state — reproducing the residue of a crash between RecordSignal's two steps.
+// insertRawEvent appends a canonical-table row WITHOUT projecting it — the
+// residue of a crash between RecordSignals' insert and projection statements.
 func insertRawEvent(t *testing.T, conn Conn, tenant, entityID string, sub Subject, eventID string, occurredAt time.Time, progress, progressMax uint32, score int16, completed bool, resume string) {
 	t.Helper()
-	q := fmt.Sprintf(`INSERT INTO %s.signal_events
-(tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id, occurred_at,
- duration_s, progress, progress_max, value, label, weight, score, completed, resume, payload)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, testDB)
+	q := fmt.Sprintf(`INSERT INTO %s.events
+(tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id, occurred_at, progress, progress_max, score, completed, resume)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, testDB)
 	if err := conn.Exec(context.Background(), q,
-		tenant, "gallery", entityID, sub.Kind(), sub.Key(), "view", eventID, occurredAt.UTC(),
-		uint32(0), progress, progressMax, float64(0), "", float64(1), score, completed, resume, "",
+		tenant, "gallery", entityID, sub.Kind(), sub.Key(), TypeView, eventID, occurredAt.UTC(),
+		progress, progressMax, score, completed, resume,
 	); err != nil {
 		t.Fatalf("insert raw event %s: %v", eventID, err)
 	}
 }
 
-func TestIntegrationReprojectStaleHealsState(t *testing.T) {
+func TestIntegrationRepairProjectionsHealsCrashResidue(t *testing.T) {
 	st, conn := freshStore(t)
 	ctx := context.Background()
 	tenant := "doujins"
 	user := Subject{UserID: "u1"}
 
-	// Validation guards.
-	if _, err := st.ReprojectStale(ctx, "", StaleStateOptions{}); err == nil {
-		t.Fatal("ReprojectStale with empty tenant must error")
+	if _, err := st.RepairProjections(ctx, "", RepairOptions{}); err == nil {
+		t.Fatal("empty tenant must error")
 	}
-	if _, err := st.ReprojectStale(ctx, tenant, StaleStateOptions{Limit: -1}); err == nil {
-		t.Fatal("ReprojectStale with negative limit must error")
+	if _, err := st.RepairProjections(ctx, tenant, RepairOptions{Window: Between(at(1, 3), at(2, 0))}); err == nil {
+		t.Fatal("sub-day window must error")
 	}
 
-	// g1: recorded normally (state healthy at total_events=1), then a second
-	// distinct event lands in the stream without reprojection (crash residue).
-	if err := st.RecordSignal(ctx, tenant, view("g1", user, 1, 10, 5, 20, 30, false)); err != nil {
+	// g1: projected at one event, then a second event lands without projection.
+	if err := st.RecordSignals(ctx, tenant, []Signal{view("g1", user, 1, 10, 5, 20, 30, false)}); err != nil {
 		t.Fatal(err)
 	}
 	insertRawEvent(t, conn, tenant, "g1", user, "g1-evt-2", at(2, 11), 19, 20, 90, true, "p:19")
-	// g2: only a raw event, never RecordSignal'd — its state row is missing.
+	// g2: never projected at all.
 	insertRawEvent(t, conn, tenant, "g2", user, "g2-evt-1", at(3, 9), 7, 20, 40, false, "p:7")
+	// g3: healthy, must not be rewritten.
+	if err := st.RecordSignals(ctx, tenant, []Signal{view("g3", user, 3, 10, 2, 20, 10, false)}); err != nil {
+		t.Fatal(err)
+	}
 
-	ref1 := EntityRef{EntityType: "gallery", EntityID: "g1"}
-	ref2 := EntityRef{EntityType: "gallery", EntityID: "g2"}
-
+	ref1, ref2 := EntityRef{EntityType: "gallery", EntityID: "g1"}, EntityRef{EntityType: "gallery", EntityID: "g2"}
 	pre, err := st.States(ctx, tenant, user, []EntityRef{ref1, ref2})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if pre[ref1].TotalEvents != 1 {
-		t.Fatalf("precondition: g1 total_events=%d want 1 (stale)", pre[ref1].TotalEvents)
+		t.Fatalf("precondition: g1 stale state %+v", pre[ref1])
 	}
 	if _, ok := pre[ref2]; ok {
-		t.Fatalf("precondition: g2 state should be missing, got %+v", pre[ref2])
+		t.Fatalf("precondition: g2 state must be missing: %+v", pre[ref2])
 	}
 
-	healed, err := st.ReprojectStale(ctx, tenant, StaleStateOptions{})
+	// Bounded pages: two keys, then one, then done.
+	page1, err := st.RepairProjections(ctx, tenant, RepairOptions{Limit: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if healed != 2 {
-		t.Fatalf("healed=%d want 2 (g1 lag + g2 missing)", healed)
+	if page1.Examined != 2 || page1.Repaired != 2 || page1.Next == nil || page1.Next.EntityID != "g2" {
+		t.Fatalf("page 1: %+v", page1)
+	}
+	page2, err := st.RepairProjections(ctx, tenant, RepairOptions{Limit: 2, After: page1.Next})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page2.Examined != 1 || page2.Repaired != 0 || page2.Next != nil {
+		t.Fatalf("page 2 (healthy g3): %+v next=%v", page2, page2.Next)
 	}
 
 	post, err := st.States(ctx, tenant, user, []EntityRef{ref1, ref2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if post[ref1].TotalEvents != 2 || !post[ref1].LastSignalAt.Equal(at(2, 11)) {
-		t.Fatalf("g1 not healed: %+v", post[ref1])
+	if s := post[ref1]; s.TotalEvents != 2 || !s.LastSignalAt.Equal(at(2, 11)) || !s.Completed || s.Resume != "p:19" {
+		t.Fatalf("g1 not healed: %+v", s)
 	}
-	if s2, ok := post[ref2]; !ok || s2.TotalEvents != 1 || !s2.LastSignalAt.Equal(at(3, 9)) {
-		t.Fatalf("g2 not healed: %+v (ok=%v)", s2, ok)
+	if s, ok := post[ref2]; !ok || s.TotalEvents != 1 || s.Resume != "p:7" {
+		t.Fatalf("g2 not healed: %+v (ok=%v)", s, ok)
 	}
-
-	// Idempotent: a second sweep is a no-op.
-	healed, err = st.ReprojectStale(ctx, tenant, StaleStateOptions{})
+	m, err := st.Metrics(ctx, tenant, "gallery", []string{"g1", "g2"}, AllTime())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if healed != 0 {
-		t.Fatalf("second sweep healed=%d want 0 (no-op)", healed)
-	}
-}
-
-func TestIntegrationRecordImpressions(t *testing.T) {
-	st, conn := freshStore(t)
-	ctx := context.Background()
-	tenant := "doujins"
-
-	imp := Impression{
-		QueryID:         "q-123",
-		Surface:         SurfaceSearch,
-		NormalizedQuery: "two factor",
-		Language:        "en",
-		Subject:         Subject{UserID: "u1"},
-		Shown: []EntityRef{
-			{EntityType: "gallery", EntityID: "g1"},
-			{EntityType: "gallery", EntityID: "g2"},
-		},
-		OccurredAt: at(1, 10),
-	}
-	if err := st.RecordImpressions(ctx, tenant, []Impression{imp}); err != nil {
-		t.Fatal(err)
-	}
-	// Re-record the same query_id: idempotent (ReplacingMergeTree).
-	if err := st.RecordImpressions(ctx, tenant, []Impression{imp}); err != nil {
-		t.Fatal(err)
+	if m["g1"].Views != 2 || m["g2"].Views != 1 || m["g1"].Completions != 1 {
+		t.Fatalf("daily projection not healed: %+v", m)
 	}
 
-	rows, err := conn.Query(ctx, fmt.Sprintf(`
-SELECT count(), any(normalized_query), any(surface), any(shown_entity_ids), any(shown_positions)
-FROM %s.search_impressions FINAL
-WHERE tenant = ? AND query_id = ?`, testDB), tenant, "q-123")
+	res, err := st.RepairProjections(ctx, tenant, RepairOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
-	if !rows.Next() {
-		t.Fatal("no impression row returned")
+	if res.Examined != 3 || res.Repaired != 0 {
+		t.Fatalf("second sweep must be a no-op: %+v", res)
 	}
-	var (
-		count     uint64
-		nq, surf  string
-		ids       []string
-		positions []uint32
-	)
-	if err := rows.Scan(&count, &nq, &surf, &ids, &positions); err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 {
-		t.Fatalf("re-recording the same query_id must dedup: count=%d want 1", count)
-	}
-	if nq != "two factor" || surf != SurfaceSearch {
-		t.Fatalf("unexpected fields: nq=%q surf=%q", nq, surf)
-	}
-	if len(ids) != 2 || ids[0] != "g1" || ids[1] != "g2" {
-		t.Fatalf("shown ids: %v", ids)
-	}
-	if len(positions) != 2 || positions[0] != 1 || positions[1] != 2 {
-		t.Fatalf("shown positions: %v", positions)
-	}
-
-	// A paginated render derives absolute positions from StartPosition.
-	if err := st.RecordImpressions(ctx, tenant, []Impression{{
-		QueryID:       "q-page2",
-		Surface:       SurfaceSearch,
-		Subject:       Subject{UserID: "u1"},
-		StartPosition: 11,
-		Shown:         []EntityRef{{EntityType: "gallery", EntityID: "g11"}, {EntityType: "gallery", EntityID: "g12"}},
-		OccurredAt:    at(1, 11),
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	pageRows, err := conn.Query(ctx, fmt.Sprintf(
-		`SELECT any(shown_positions) FROM %s.search_impressions FINAL WHERE tenant = ? AND query_id = ?`, testDB),
-		tenant, "q-page2")
+	res, err = st.RepairProjections(ctx, tenant, RepairOptions{Rebuild: true, Window: Between(at(3, 0), at(4, 0))})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pageRows.Close()
-	if !pageRows.Next() {
-		t.Fatal("no paginated impression row")
-	}
-	var pagePositions []uint32
-	if err := pageRows.Scan(&pagePositions); err != nil {
-		t.Fatal(err)
-	}
-	if len(pagePositions) != 2 || pagePositions[0] != 11 || pagePositions[1] != 12 {
-		t.Fatalf("StartPosition not applied: %v", pagePositions)
+	if res.Examined != 2 || res.Repaired != 2 {
+		t.Fatalf("windowed rebuild must reproject g2 and g3 only: %+v", res)
 	}
 }
 
@@ -281,10 +214,10 @@ func TestIntegrationAnonVsUserSubjects(t *testing.T) {
 	user := Subject{UserID: "u1"}
 	anon := Subject{AnonKey: "abc123"}
 
-	if err := st.RecordSignal(ctx, tenant, view("g1", user, 1, 10, 5, 10, 50, false)); err != nil {
+	if err := st.RecordSignals(ctx, tenant, []Signal{view("g1", user, 1, 10, 5, 10, 50, false)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RecordSignal(ctx, tenant, view("g1", anon, 1, 11, 10, 10, 80, true)); err != nil {
+	if err := st.RecordSignals(ctx, tenant, []Signal{view("g1", anon, 1, 11, 10, 10, 80, true)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -301,21 +234,16 @@ func TestIntegrationAnonVsUserSubjects(t *testing.T) {
 		t.Fatalf("subject isolation broken: user=%+v anon=%+v", us[ref], as[ref])
 	}
 
-	eng, err := st.Engagement(ctx, tenant, ref)
+	m, err := st.Metrics(ctx, tenant, "gallery", []string{"g1"}, AllTime())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if eng.UniqueUsers != 1 || eng.UniqueAnon != 1 || eng.Signals != 2 {
-		t.Fatalf("engagement: %+v", eng)
+	g1 := m["g1"]
+	if g1.UserViewers != 1 || g1.AnonViewers != 1 || g1.Viewers != 2 || g1.Views != 2 {
+		t.Fatalf("metrics: %+v", g1)
 	}
-	if eng.CompletionRate != 0.5 {
-		t.Fatalf("completion rate: %v want 0.5", eng.CompletionRate)
-	}
-	if eng.SignalCounts["view"] != 2 {
-		t.Fatalf("signal counts: %v", eng.SignalCounts)
-	}
-	if eng.AvgScore != 65 { // (50+80)/2
-		t.Fatalf("avg score: %v want 65", eng.AvgScore)
+	if g1.Completers != 1 || g1.Completions != 1 || g1.SignalCounts[TypeView] != 2 || g1.ScoreSum != 130 {
+		t.Fatalf("metrics: %+v", g1)
 	}
 }
 
@@ -339,12 +267,11 @@ func TestIntegrationHistoryAndSeen(t *testing.T) {
 			Progress:    50,
 			ProgressMax: 100,
 			Score:       30,
+			EventID:     "b1-session",
 		},
 	}
-	for _, s := range signals {
-		if err := st.RecordSignal(ctx, tenant, s); err != nil {
-			t.Fatal(err)
-		}
+	if err := st.RecordSignals(ctx, tenant, signals); err != nil {
+		t.Fatal(err)
 	}
 
 	// Full history, most recent first, across types.
@@ -410,22 +337,22 @@ func TestIntegrationPopular(t *testing.T) {
 	// gMeh: 5 subjects, low scores. gOld: 8 subjects but outside the window.
 	for i := 0; i < 10; i++ {
 		sub := Subject{AnonKey: fmt.Sprintf("hot%d", i)}
-		if err := st.RecordSignal(ctx, tenant, view("gHot", sub, 10, 8+i%4, 18, 20, 80, true)); err != nil {
+		if err := st.RecordSignals(ctx, tenant, []Signal{view("gHot", sub, 10, 8+i%4, 18, 20, 80, true)}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := st.RecordSignal(ctx, tenant, view("gNiche", Subject{AnonKey: "n1"}, 10, 9, 20, 20, 100, true)); err != nil {
+	if err := st.RecordSignals(ctx, tenant, []Signal{view("gNiche", Subject{AnonKey: "n1"}, 10, 9, 20, 20, 100, true)}); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 5; i++ {
 		sub := Subject{AnonKey: fmt.Sprintf("meh%d", i)}
-		if err := st.RecordSignal(ctx, tenant, view("gMeh", sub, 11, 8+i%4, 2, 20, 10, false)); err != nil {
+		if err := st.RecordSignals(ctx, tenant, []Signal{view("gMeh", sub, 11, 8+i%4, 2, 20, 10, false)}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for i := 0; i < 8; i++ {
 		sub := Subject{AnonKey: fmt.Sprintf("old%d", i)}
-		if err := st.RecordSignal(ctx, tenant, view("gOld", sub, 1, 8+i%4, 18, 20, 90, true)); err != nil {
+		if err := st.RecordSignals(ctx, tenant, []Signal{view("gOld", sub, 1, 8+i%4, 18, 20, 90, true)}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -454,8 +381,8 @@ func TestIntegrationPopular(t *testing.T) {
 			t.Fatalf("tiny-sample entity outranked high-volume: %+v", hits)
 		}
 	}
-	if hits[0].Subjects != 10 {
-		t.Fatalf("gHot subjects=%d want 10", hits[0].Subjects)
+	if hits[0].Viewers != 10 {
+		t.Fatalf("gHot viewers=%d want 10", hits[0].Viewers)
 	}
 
 	// All-time includes gOld.
@@ -467,23 +394,9 @@ func TestIntegrationPopular(t *testing.T) {
 		t.Fatalf("all-time should rank 4 entities: %+v", all)
 	}
 
-	// Sub-day window (events path): day 10, 08:00-10:00 only.
-	subDay, err := st.Popular(ctx, tenant, "gallery", PopularOptions{
-		Window: Between(at(10, 8), at(10, 10)),
-		Limit:  10,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, h := range subDay {
-		if h.EntityID == "gMeh" || h.EntityID == "gOld" {
-			t.Fatalf("out-of-window entity in sub-day results: %+v", subDay)
-		}
-	}
-
 	// Host rank expression: raw subject count.
 	byVolume, err := st.Popular(ctx, tenant, "gallery", PopularOptions{
-		RankExpr: "toFloat64(subjects)",
+		RankExpr: "toFloat64(viewers)",
 		Limit:    10,
 	})
 	if err != nil {
@@ -522,7 +435,7 @@ func TestIntegrationCoEngaged(t *testing.T) {
 	for _, p := range pairs {
 		for _, id := range p.ids {
 			hour++
-			if err := st.RecordSignal(ctx, tenant, view(id, Subject{UserID: p.sub}, 1, 8+hour%10, 10, 10, 50, true)); err != nil {
+			if err := st.RecordSignals(ctx, tenant, []Signal{view(id, Subject{UserID: p.sub}, 1, 8+hour%10, 10, 10, 50, true)}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -543,64 +456,6 @@ func TestIntegrationCoEngaged(t *testing.T) {
 	}
 }
 
-func TestIntegrationRecordSignalsFanOut(t *testing.T) {
-	st, _ := freshStore(t)
-	ctx := context.Background()
-	tenant := "t"
-	user := Subject{UserID: "u1"}
-
-	mk := func(entityType, id string, weight float64) Signal {
-		return Signal{
-			EntityRef:  EntityRef{EntityType: entityType, EntityID: id},
-			Subject:    user,
-			Type:       "view",
-			OccurredAt: at(5, 12),
-			Progress:   10, ProgressMax: 20,
-			Weight: weight,
-		}
-	}
-	batch := []Signal{
-		mk("gallery", "g1", 1),
-		mk("artist", "a1", 0.25),
-		mk("series", "s1", 0.25),
-		mk("tag", "t1", 0.25),
-		mk("tag", "t2", 0.25),
-	}
-	if err := st.RecordSignals(ctx, tenant, batch); err != nil {
-		t.Fatal(err)
-	}
-	// Replay the whole batch: state must converge, not double-count.
-	if err := st.RecordSignals(ctx, tenant, batch); err != nil {
-		t.Fatal(err)
-	}
-
-	states, err := st.States(ctx, tenant, user, []EntityRef{
-		{EntityType: "gallery", EntityID: "g1"},
-		{EntityType: "artist", EntityID: "a1"},
-		{EntityType: "tag", EntityID: "t2"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(states) != 3 {
-		t.Fatalf("expected 3 states, got %v", states)
-	}
-	for ref, s := range states {
-		if s.TotalEvents != 1 || s.MaxProgress != 10 {
-			t.Fatalf("%v: replayed batch double-counted: %+v", ref, s)
-		}
-	}
-
-	// Fan-out powers per-type popularity.
-	pop, err := st.Popular(ctx, tenant, "tag", PopularOptions{Limit: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(pop) != 2 {
-		t.Fatalf("tag popularity from fan-out: %+v", pop)
-	}
-}
-
 func TestIntegrationNegativeSignalsAndItemPairs(t *testing.T) {
 	st, _ := freshStore(t)
 	ctx := context.Background()
@@ -613,7 +468,7 @@ func TestIntegrationNegativeSignalsAndItemPairs(t *testing.T) {
 			Type:       kind,
 			OccurredAt: at(day, 12),
 			Value:      value,
-			Label:      kind,
+			EventID:    kind + ":" + id + ":" + sub.Key(),
 		}
 	}
 
@@ -624,10 +479,8 @@ func TestIntegrationNegativeSignalsAndItemPairs(t *testing.T) {
 		react(u2, "A", "like", 1, 2), react(u2, "C", "like", 1, 2),
 		react(u3, "A", "like", 1, 3), react(u3, "B", "dislike", -1, 3),
 	}
-	for _, s := range signals {
-		if err := st.RecordSignal(ctx, tenant, s); err != nil {
-			t.Fatal(err)
-		}
+	if err := st.RecordSignals(ctx, tenant, signals); err != nil {
+		t.Fatal(err)
 	}
 
 	// State carries net sentiment.
@@ -708,57 +561,4 @@ func TestIntegrationNegativeSignalsAndItemPairs(t *testing.T) {
 	if len(coR2) != len(coR) {
 		t.Fatalf("refresh not idempotent: %d vs %d", len(coR2), len(coR))
 	}
-}
-
-func TestIntegrationForgetImpressionsIsolation(t *testing.T) {
-	st, conn := freshStore(t)
-	ctx := context.Background()
-	user := Subject{UserID: "same-key"}
-	anon := Subject{AnonKey: "same-key"}
-	for i, tc := range []struct {
-		tenant  string
-		subject Subject
-	}{
-		{"doujins", user}, {"doujins", anon}, {"hentai0", user}, {"doujins", Subject{UserID: "other"}},
-	} {
-		err := st.RecordImpressions(ctx, tc.tenant, []Impression{{QueryID: fmt.Sprintf("q%d", i), Surface: SurfaceSearch, Subject: tc.subject, OccurredAt: at(1, 10), Shown: []EntityRef{{EntityType: "gallery", EntityID: "g1"}, {EntityType: "gallery", EntityID: "g2"}}}})
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := st.RecordSignal(ctx, "doujins", view("g1", user, 1, 10, 1, 2, 50, false)); err != nil {
-		t.Fatal(err)
-	}
-	// Entity-scoped history clearing must leave even mixed-entity exposure lists intact.
-	if err := st.Forget(ctx, "doujins", user, "gallery", "g1"); err != nil {
-		t.Fatal(err)
-	}
-	assertCount := func(query string, want uint64) {
-		t.Helper()
-		rows, err := conn.Query(ctx, query)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer rows.Close()
-		var count uint64
-		if !rows.Next() {
-			t.Fatal("no result")
-		}
-		if err := rows.Scan(&count); err != nil {
-			t.Fatal(err)
-		}
-		if count != want {
-			t.Fatalf("%s: got %d want %d", query, count, want)
-		}
-	}
-	assertCount("SELECT count() FROM "+testDB+".search_impressions FINAL", 4)
-	for i := 0; i < 2; i++ {
-		if err := st.ForgetImpressions(ctx, "doujins", user); err != nil {
-			t.Fatal(err)
-		}
-	}
-	assertCount("SELECT count() FROM "+testDB+".search_impressions FINAL", 3)
-	assertCount("SELECT count() FROM "+testDB+".search_impressions FINAL WHERE tenant='doujins' AND subject_kind='user' AND subject='same-key'", 0)
-	// Existing daily totals must not be destroyed by history or impression clearing.
-	assertCount("SELECT sum(signals) FROM "+testDB+".entity_daily", 1)
 }

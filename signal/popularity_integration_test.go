@@ -13,10 +13,10 @@ func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 	ctx := context.Background()
 	// Keep duplicate rows physically present so FINAL, not merge timing, must
 	// make retries contribute once to scores and completions.
-	if err := conn.Exec(ctx, "SYSTEM STOP MERGES "+testDB+".signal_events"); err != nil {
+	if err := conn.Exec(ctx, "SYSTEM STOP MERGES "+testDB+".events"); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = conn.Exec(ctx, "SYSTEM START MERGES "+testDB+".signal_events") })
+	t.Cleanup(func() { _ = conn.Exec(ctx, "SYSTEM START MERGES "+testDB+".events") })
 	for _, cohort := range []struct {
 		id  string
 		day int
@@ -37,7 +37,7 @@ func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 	if err := st.RecordSignals(ctx, "t", []Signal{click, like, outside}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RecordSignal(ctx, "other-tenant", view("early", Subject{UserID: "foreign"}, 20, 8, 10, 10, 100, true)); err != nil {
+	if err := st.RecordSignals(ctx, "other-tenant", []Signal{view("early", Subject{UserID: "foreign"}, 20, 8, 10, 10, 100, true)}); err != nil {
 		t.Fatal(err)
 	}
 	window := Between(at(2, 0), at(29, 0))
@@ -51,7 +51,7 @@ func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 			t.Fatalf("expected only consuming entities in tenant/window: %+v", hits)
 		}
 		for _, hit := range hits {
-			if hit.Subjects != 2 || hit.Signals != 2 || hit.Completions != 2 {
+			if hit.Viewers != 2 || hit.Views != 2 || hit.Completions != 2 {
 				t.Fatalf("clicks or duplicate deliveries inflated consumption: %+v", hit)
 			}
 			// The zero-score view counts in the mean; early and late have equal weight.
@@ -63,14 +63,18 @@ func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 		return hits
 	}
 	before := read()
-	counts, err := st.SubjectCounts(ctx, "t", "gallery", []string{"early", "late", "outside", "reaction-only"}, window)
-	if err != nil || !reflect.DeepEqual(counts, map[string]uint64{"early": 2, "late": 2}) {
+	metrics, err := st.Metrics(ctx, "t", "gallery", []string{"early", "late", "outside", "reaction-only"}, window)
+	counts := map[string]uint64{}
+	for id, m := range metrics {
+		counts[id] = m.Viewers
+	}
+	if err != nil || !reflect.DeepEqual(counts, map[string]uint64{"early": 2, "late": 2, "reaction-only": 0}) {
 		t.Fatalf("card counts disagree with popularity: %v, %v", counts, err)
 	}
-	if err := conn.Exec(ctx, "SYSTEM START MERGES "+testDB+".signal_events"); err != nil {
+	if err := conn.Exec(ctx, "SYSTEM START MERGES "+testDB+".events"); err != nil {
 		t.Fatal(err)
 	}
-	if err := conn.Exec(ctx, "OPTIMIZE TABLE "+testDB+".signal_events FINAL"); err != nil {
+	if err := conn.Exec(ctx, "OPTIMIZE TABLE "+testDB+".events FINAL"); err != nil {
 		t.Fatal(err)
 	}
 	if after := read(); !reflect.DeepEqual(before, after) {

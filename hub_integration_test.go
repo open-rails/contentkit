@@ -146,26 +146,28 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 	day := func(d, h int) time.Time { return time.Date(2026, 6, d, h, 0, 0, 0, time.UTC) }
 
 	// Record signals: u1 completes g1; many anons view g2 (popular).
-	if err := hub.RecordSignal(ctx, signal.Signal{
+	g1View := signal.Signal{
 		EntityRef:  signal.EntityRef{EntityType: "gallery", EntityID: "g1"},
 		Subject:    user,
-		Type:       "view",
+		Type:       signal.TypeView,
+		EventID:    "u1-g1",
 		OccurredAt: day(1, 10),
 		Progress:   20, ProgressMax: 20,
 		Resume: "p:20",
-	}); err != nil {
-		t.Fatalf("RecordSignal: %v", err)
 	}
+	batch := []signal.Signal{g1View}
 	for i := 0; i < 8; i++ {
-		if err := hub.RecordSignal(ctx, signal.Signal{
+		batch = append(batch, signal.Signal{
 			EntityRef:  signal.EntityRef{EntityType: "gallery", EntityID: "g2"},
 			Subject:    signal.Subject{AnonKey: fmt.Sprintf("a%d", i)},
-			Type:       "view",
+			Type:       signal.TypeView,
+			EventID:    fmt.Sprintf("a%d-g2", i),
 			OccurredAt: day(2, 9+i%6),
 			Progress:   18, ProgressMax: 20,
-		}); err != nil {
-			t.Fatalf("RecordSignal anon: %v", err)
-		}
+		})
+	}
+	if err := hub.RecordSignals(ctx, batch); err != nil {
+		t.Fatalf("RecordSignals: %v", err)
 	}
 
 	// Scorer applied: g1 state must be completed with score 100.
@@ -196,13 +198,13 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 		t.Fatalf("unseen: %v", unseen)
 	}
 
-	// Engagement on g2.
-	eng, err := hub.Engagement(ctx, signal.EntityRef{EntityType: "gallery", EntityID: "g2"})
+	// Named metrics on g2.
+	metrics, err := hub.Metrics(ctx, "gallery", []string{"g2"}, signal.AllTime())
 	if err != nil {
-		t.Fatalf("Engagement: %v", err)
+		t.Fatalf("Metrics: %v", err)
 	}
-	if eng.UniqueAnon != 8 || eng.Signals != 8 {
-		t.Fatalf("engagement: %+v", eng)
+	if m := metrics["g2"]; m.AnonViewers != 8 || m.Views != 8 {
+		t.Fatalf("metrics: %+v", m)
 	}
 
 	// Popular: g2 must lead (8 subjects vs 1).
@@ -293,15 +295,8 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 	}
 
 	// Replay idempotency through the hub: re-record u1's g1 session.
-	if err := hub.RecordSignal(ctx, signal.Signal{
-		EntityRef:  signal.EntityRef{EntityType: "gallery", EntityID: "g1"},
-		Subject:    user,
-		Type:       "view",
-		OccurredAt: day(1, 10),
-		Progress:   20, ProgressMax: 20,
-		Resume: "p:20",
-	}); err != nil {
-		t.Fatalf("replay RecordSignal: %v", err)
+	if err := hub.RecordSignals(ctx, []signal.Signal{g1View}); err != nil {
+		t.Fatalf("replay RecordSignals: %v", err)
 	}
 	states, err = hub.States(ctx, user, []signal.EntityRef{{EntityType: "gallery", EntityID: "g1"}})
 	if err != nil {

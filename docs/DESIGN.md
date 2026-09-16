@@ -47,7 +47,7 @@ signals*:
 | History | signal current-state by subject, ordered by recency |
 | Unseen | entity catalog **minus** the subject's seen-set |
 | Engagement | the signal stream + per-entity aggregates |
-| Popularity / trending | windowed aggregates over the signal stream, ranked — fixed windows (30/90/365d) **and** arbitrary date slices |
+| Popularity | literal-window aggregates over the signal stream, ranked — fixed windows (30/90/365d) **and** arbitrary date slices |
 
 So search and recommendations are the same matrix read from two directions; history and unseen are
 membership queries against it. That's the whole reason to build it as a single library.
@@ -120,7 +120,7 @@ fastest and duplicates nothing.
 - **Embedded (now):** keep searchkit's existing **pull-callbacks** (`BuildLexicalString` /
   `BuildSemanticDocument` / `ListAssetURLs`) for content, and a host-provided `EntityCatalog` that
   reads the host's own tables for the unseen universe + gating. Nothing is duplicated — the host's
-  data stays in the host's DB. The signal plane is push by nature (`RecordSignal`).
+  data stays in the host's DB. The signal plane is push by nature (`RecordSignals`).
 - **Standalone (later):** a server can't call back into the host's Go funcs, so it switches to **push
   ingestion** — the host `UpsertEntity(...)`s lexical/semantic text + facets (+ optional render
   payload). See [../../open-rails-tracker/searchkit/future.md](../../open-rails-tracker/searchkit/future.md). The worker (`search_dirty` → backfill
@@ -169,8 +169,8 @@ Postgres as a stronger-isolation option for a few large tenants.
   references app tables by qualified name (same database, cross-schema).
 - **Content plane** — Postgres (`pg_trgm` / `tsv` / pgvector / PGroonga), as today.
 - **Signal plane** — event stream → ClickHouse (high-volume append; one event per session/interaction,
-  **never per read**); a daily per-entity rollup (`entity_daily`) for **popularity/trending** over any
-  window + per-user affinity; durable current-state (no TTL). See [signal-plane.md](signal-plane.md)
+  **never per read**) with canonical identity/revisions; rebuildable per-subject daily contributions
+  (`subject_daily`) for exact windowed popularity and compact current-state (`subject_state`), no TTL. See [signal-plane.md](signal-plane.md)
   for the store split, the unseen anti-join, and the popularity rollup.
 - **Identity** — authkit (subject = resolved user id; anonymous = session-key hash). The hub does not
   own identity.

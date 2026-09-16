@@ -16,57 +16,23 @@ fast reads for history, unseen, engagement, and (later) personalized search + re
 - **signals** — both *implicit* (view-session: duration, progress, completion) and *explicit*
   (reactions, ratings — "what they thought").
 
-## Two tables
+## Tables
 
-### 1. Event stream (append-only)
+- **`events`** — canonical source events. Identity `(tenant, entity_type, entity_id, subject, signal_type,
+  event_id)`; `ReplacingMergeTree(version)` with `version = revision << 64 | content hash`. Every read
+  and projection selects the highest version per identity explicitly (`argMax`), so correctness never
+  depends on merge timing, batch boundaries or partitions. Retained without TTL as the rebuild source.
+- **`subject_state`** — one row per `(tenant, subject, entity_type, entity_id)`: first/last signal,
+  canonical event count, views, completions, active seconds, max progress, resume, last view score,
+  net feedback. Indefinite compact history.
+- **`subject_daily`** — one row per `(tenant, entity_type, entity_id, subject, day)`: events, views,
+  completions, active seconds, score and value sums, per-type counts. Windows sum days per subject
+  first, so unique viewers over 7/30/90/365/all days are exact and deleting a subject removes exactly
+  its contributions.
 
-One row per view-session or interaction. **Never one row per read/scroll** — the host reports a
-single summarized event when a session ends (on unload / visibility-hidden), exactly like the
-existing gallery exit-beacon.
-
-Conceptual columns:
-
-```
-tenant, entity_type, entity_id, subject,
-signal_type        -- HOST-DEFINED: view | rate | purchase | listen | ...
-occurred_at,
-duration_s,        -- active time (optional)
-progress,          -- consumption numerator (pages / scroll % / watch %) — optional
-progress_max,      -- consumption denominator (page_count / 100 / video length) — optional
-value,             -- explicit feedback: rating / vote / price / score — optional
-label,             -- categorical: reaction kind / variant — optional
-weight,            -- host/scorer-assigned importance (default 1)
-score,             -- engagement 0..100 from the entity's Scorer
-completed,         -- bool, per the entity's completion rule
-payload            -- anything else (Map), for re-scoring later
-```
-
-The columns are **generic** (`progress`/`progress_max`), not gallery-specific (`max_page_reached`).
-Each entity type's `Scorer` interprets them.
-
-### 2. Current-state projection (durable, no TTL)
-
-One row per `(tenant, subject, entity_type, entity_id)`, upserted from the event stream — the
-load-bearing table for history/unseen/progress:
-
-```
-tenant, entity_type, entity_id, subject,
-first_seen_at, last_signal_at,
-total_events,
-max_progress, progress_max, completed,   -- max_progress / progress_max = the "% watched" bar
-resume,                                   -- opaque host pointer: last page / scroll / timestamp
-has_interacted, last_score,
-last_updated
-```
-
-On ClickHouse this is a `ReplacingMergeTree(last_updated)` ordered by
-`(tenant, subject, entity_type, entity_id)` so the latest state wins; no TTL (durable seen-state,
-unlike a 30-day visitor counter).
-
-The projection is recomputed from the (deduplicated) event stream on every signal, so it is
-replay-idempotent and self-heals on the next signal for a key. A crashed reprojection can leave a key
-behind until then; a periodic host-scheduled sweep (`Hub.ReprojectStaleStates`) finds rows that lag the
-stream and re-derives them.
+Both projections are rebuilt from canonical events for every touched key and versioned by the newest
+raw ingest time of that key, so a projection that saw more events always replaces one that saw fewer.
+`RepairProjections` rebuilds stale or missing projections in bounded, resumable steps.
 
 ## The Scorer (per-entity extension point)
 
@@ -89,22 +55,15 @@ Examples:
 
 The kit owns the storage/upsert/read machinery; the host owns only the `Scorer`.
 
-## Impressions & attribution (learned-ranking data)
+## Exposures & attribution (evaluation data)
 
-Beyond the engagement stream, a separate append-only table records **what was shown**, so clicks become
-training labels for learned ranking:
-
-- **`search_impressions`** — one row per SERP/shelf render (never per item). `tenant`, `query_id` (unique
-  per render), `surface` (`search`/`foryou`/`similar`/`popular`/`organic`), `normalized_query` (normalized
-  text only — no raw referrers/PII), `language`, `subject`, the shown items as parallel arrays
-  `shown_entity_types` / `shown_entity_ids` / `shown_positions`, and `occurred_at`.
-  `ReplacingMergeTree(recorded_at)`, month-partitioned; re-delivering a `query_id` deduplicates.
-
-Write via `RecordImpressions` (batched, one row per render; shown entities are given in rank order and
-positions are derived from `StartPosition`). A **click** is an ordinary signal that links
-back to its render through standardized attribution payload keys — `query_id`, `surface`, `position` — set
-via `Signal.WithAttribution(...)`. Training joins clicks to `search_impressions` on `query_id` and reads
-the shown position, yielding `(query, shown items + positions, clicked item, dwell)`.
+`exposures` records **what was shown**, one row per result list and stage (`served` / `rendered` /
+`visible`), identity `(tenant, render_id, stage)` with revisions like events: `query_id`, `surface`,
+`ranker`, `language`, `subject`, parallel `entity_types` / `entity_ids` / `positions` arrays,
+`occurred_at`. Clicks are ordinary signals carrying `render_id` / `surface` / `position` in their
+payload (`Signal.WithAttribution`). `Store.Attribution` joins canonical clicks to the requested
+stage's canonical list, yielding `(render, shown placements, clicks with Exposed flag)` and the
+clicks whose render has no exposure at that stage.
 
 ## Facets & filtering (host-defined)
 
@@ -118,38 +77,35 @@ them without calling back to the host.
 ## The four reads
 
 ### History — "what I've seen"
-`current_state` for the subject, ordered by `last_signal_at DESC`. Filter by `completed` /
+`subject_state` for the subject, ordered by `last_signal_at DESC`. Filter by `completed` /
 `in_progress` (via `max_progress` vs `progress_max`) for "finished" vs "started".
 
 ### Unseen — "new stuff I haven't seen"
 `entity catalog (for type; visible_from <= now, not deleted, matching the host's facet filter) MINUS
-{ entity_id : current_state row exists for subject with max_progress > 0 }`. Ordered by
+{ entity_id : subject_state row exists for subject with max_progress > 0 }`. Ordered by
 `visible_from DESC`. This is the anti-join described below.
 
-### Engagement — "quality of this entity"
-Aggregates over the event stream per `(tenant, entity_type, entity_id)`: unique subjects, completion
-rate, avg score, signal counts by type. Interaction-weighted quality, not raw view volume.
+### Metrics — named statistics per entity and window
+Viewers, views, completions, completers, active seconds, score sum, events, per-type counts and
+positive/negative feedback subjects, each defined separately from canonical `subject_daily` rows.
 
-### Popularity & trending — "what's hot in a window"
-Ranked entities over a time window, from a daily rollup `entity_daily` (AggregatingMergeTree, one row
-per `(tenant, entity_type, entity_id, day)`: unique subjects, signals, engagement sum, completions,
-per-type counts) fed by a materialized view from `signal_events`.
+### Popularity — "what's popular in a window"
+Ranked entities with at least one view in a window, from `subject_daily`.
 
-- **Fixed windows** (30/90/365d) = merge the last N day-buckets.
-- **Arbitrary slices** (e.g. `2025-06-05 → 2025-08-08`) = merge the day-buckets in range.
-- **Sub-day / custom** = scan `signal_events` directly (partitioned by month, so the range prunes).
+- **Windows** are whole UTC calendar days `[From, To)`: `LastDays(n, now)` is the n most recent days
+  including today; `Between` takes arbitrary day slices (e.g. `2025-06-05 → 2025-08-08`). Sub-day
+  windows are rejected. All events inside a window count equally.
 
 `Popular(entity_type, window, filter, limit)` ranks by a default formula (log-scaled volume × avg
-engagement, optional time-decay + Bayesian prior); the host can tune the weights or supply its own
-ranking expression (mechanism vs meaning). The daily rollup is tiny (one row/entity/day), so it is
-retained for years to serve "past year" and historical slices even if raw events expire sooner. The
-same rollup feeds recs cold-start and search ranking.
+engagement with a Bayesian prior, no time decay); the host can tune the weights or supply its own
+ranking expression over the metric columns (mechanism vs meaning). The same projection feeds recs
+cold-start and search ranking.
 
 ### Annotations & resume — mark up lists with seen-state
 For any list already on screen (search results, popular, similar, history), one bulk call
 `States(subject, [entity_ids])` returns each entity's standing for that subject: seen?, `% =
 max_progress / progress_max` (the YouTube-style progress bar), completed?, and `resume` (where to pick
-up). It's a point/`IN` lookup on `current_state` (keyed by `(tenant, subject, entity_type,
+up). It's a point/`IN` lookup on `subject_state` (keyed by `(tenant, subject, entity_type,
 entity_id)`), so annotating a page of cards is cheap. This is how seen-state is *displayed*; `Unseen`
 is how it's *filtered out*.
 
@@ -166,7 +122,7 @@ Both read the same matrix; they differ by anchor:
 
 Personalized search is the same affinity/popularity signals fused into search ranking — a per-request
 toggle the host flips (e.g. only for logged-in users), optionally demoting already-seen via
-`current_state`.
+`subject_state`.
 
 ## The unseen anti-join (store-split decision)
 

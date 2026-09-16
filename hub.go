@@ -54,10 +54,13 @@ type Hub interface {
 	SimilarTo(ctx context.Context, entityType, entityID string, opts HubSimilarOptions) ([]RecHit, error)
 
 	// Signal plane.
-	RecordSignal(ctx context.Context, s signal.Signal) error
 	RecordSignals(ctx context.Context, signals []signal.Signal) error
-	RecordImpressions(ctx context.Context, impressions []signal.Impression) error
+	RecordExposures(ctx context.Context, exposures []signal.Exposure) error
+	ForgetExposures(ctx context.Context, subject signal.Subject) error
+	Attribution(ctx context.Context, opts signal.AttributionOptions) (signal.AttributionPage, error)
 	Forget(ctx context.Context, subject signal.Subject, entityType, entityID string) error
+	EraseSubjects(ctx context.Context, subjects []signal.Subject) (signal.ErasureReport, error)
+	EnforceErasures(ctx context.Context, opts signal.EnforceOptions) (signal.ErasureReport, error)
 
 	// Discovery plane.
 	History(ctx context.Context, subject signal.Subject, opts signal.HistoryOptions) ([]signal.StateRow, error)
@@ -65,15 +68,16 @@ type Hub interface {
 	SeenIDs(ctx context.Context, subject signal.Subject, entityType string) (map[string]struct{}, error)
 	Unseen(ctx context.Context, subject signal.Subject, opts UnseenOptions) ([]string, error)
 	States(ctx context.Context, subject signal.Subject, refs []signal.EntityRef) (map[signal.EntityRef]signal.State, error)
-	Engagement(ctx context.Context, ref signal.EntityRef) (signal.EntityEngagement, error)
+	Metrics(ctx context.Context, entityType string, ids []string, window signal.Window) (map[string]signal.EntityMetrics, error)
 	Popular(ctx context.Context, entityType string, opts signal.PopularOptions) ([]signal.PopularHit, error)
 	PopularityFor(ctx context.Context, entityType string, ids []string, window signal.Window) (map[string]float64, error)
-	SubjectCounts(ctx context.Context, entityType string, ids []string, window signal.Window) (map[string]uint64, error)
 	Recommend(ctx context.Context, subject signal.Subject, opts RecommendOptions) ([]RecHit, error)
 
 	// Maintenance.
 	RefreshCoEngagement(ctx context.Context, opts signal.RefreshCoEngagementOptions) error
-	ReprojectStaleStates(ctx context.Context, opts signal.StaleStateOptions) (int, error)
+	RepairProjections(ctx context.Context, opts signal.RepairOptions) (signal.RepairResult, error)
+	Inventory(ctx context.Context) ([]signal.InventoryRow, error)
+	PurgeEntityTypes(ctx context.Context, entityTypes []string) error
 }
 
 // EmbeddedHub implements the full Hub surface; a future remote client must
@@ -191,7 +195,7 @@ type Personalization struct {
 	// PopularityWeight is the RRF weight of the candidate-set popularity
 	// list blended with the content ranking. Defaults to 0.25.
 	PopularityWeight float32
-	// PopularityWindow defaults to the last 30 days.
+	// PopularityWindow bounds candidate popularity (zero = all time).
 	PopularityWindow signal.Window
 
 	// AffinityWeight boosts entities the subject already engaged with by
@@ -231,9 +235,6 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 	}
 	if p.PopularityWeight <= 0 {
 		p.PopularityWeight = 0.25
-	}
-	if p.PopularityWindow == (signal.Window{}) {
-		p.PopularityWindow = signal.LastDays(30)
 	}
 	if p.SeenPenalty <= 0 {
 		p.SeenPenalty = 0.85
@@ -532,56 +533,70 @@ func (h *EmbeddedHub) RefreshCoEngagement(ctx context.Context, opts signal.Refre
 	return store.RefreshCoEngagement(ctx, h.tenant, opts)
 }
 
-// ReprojectStaleStates repairs durable current-state that has fallen behind the
-// event stream (see signal.Store.ReprojectStale for the failure it heals).
-// Host-scheduled maintenance, intended to run periodically like
-// RefreshCoEngagement; returns the number of (subject, entity) keys healed.
-func (h *EmbeddedHub) ReprojectStaleStates(ctx context.Context, opts signal.StaleStateOptions) (int, error) {
+// RepairProjections is the bounded, host-scheduled projection repair (see
+// signal.Store.RepairProjections): run it periodically with IngestedSince for
+// crash repair, and with Rebuild over a window after semantic changes.
+func (h *EmbeddedHub) RepairProjections(ctx context.Context, opts signal.RepairOptions) (signal.RepairResult, error) {
 	store, err := h.requireStore()
 	if err != nil {
-		return 0, err
+		return signal.RepairResult{}, err
 	}
-	return store.ReprojectStale(ctx, h.tenant, opts)
+	return store.RepairProjections(ctx, h.tenant, opts)
 }
 
-// RecordImpressions logs one row per SERP/shelf render (see
-// signal.Store.RecordImpressions) so clicks can later be attributed to what was
-// shown — the label source for learned ranking. Hosts call this once per render
-// (exit-beacon style), never per item.
-func (h *EmbeddedHub) RecordImpressions(ctx context.Context, impressions []signal.Impression) error {
+// Inventory reports canonical event volume per entity and signal type.
+func (h *EmbeddedHub) Inventory(ctx context.Context) ([]signal.InventoryRow, error) {
+	store, err := h.requireStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.Inventory(ctx, h.tenant)
+}
+
+// PurgeEntityTypes irreversibly deletes whole entity types from this tenant's
+// signal plane (see signal.Store.PurgeEntityTypes).
+func (h *EmbeddedHub) PurgeEntityTypes(ctx context.Context, entityTypes []string) error {
 	store, err := h.requireStore()
 	if err != nil {
 		return err
 	}
-	return store.RecordImpressions(ctx, h.tenant, impressions)
+	return store.PurgeEntityTypes(ctx, h.tenant, entityTypes)
+}
+
+// RecordExposures logs one row per result list and stage (served, rendered,
+// visible) so clicks can be attributed to what was actually exposed. Hosts call
+// it once per list per stage, never per item.
+func (h *EmbeddedHub) RecordExposures(ctx context.Context, exposures []signal.Exposure) error {
+	store, err := h.requireStore()
+	if err != nil {
+		return err
+	}
+	return store.RecordExposures(ctx, h.tenant, exposures)
+}
+
+// ForgetExposures clears a subject's result-list exposures (search history).
+func (h *EmbeddedHub) ForgetExposures(ctx context.Context, subject signal.Subject) error {
+	store, err := h.requireStore()
+	if err != nil {
+		return err
+	}
+	return store.ForgetExposures(ctx, h.tenant, subject)
+}
+
+// Attribution exports renders at one stage with their clicks joined (see
+// signal.Store.Attribution); the evaluation dataset source.
+func (h *EmbeddedHub) Attribution(ctx context.Context, opts signal.AttributionOptions) (signal.AttributionPage, error) {
+	store, err := h.requireStore()
+	if err != nil {
+		return signal.AttributionPage{}, err
+	}
+	return store.Attribution(ctx, h.tenant, opts)
 }
 
 // --- Signal plane ---
 
-// RecordSignal applies the entity type's registered Scorer (if any), then
-// appends the event and updates the durable current-state projection.
-func (h *EmbeddedHub) RecordSignal(ctx context.Context, s signal.Signal) error {
-	store, err := h.requireStore()
-	if err != nil {
-		return err
-	}
-	if scorer, ok := h.scorers[s.EntityType]; ok && scorer != nil {
-		scored, err := scorer.Score(ctx, s)
-		if err != nil {
-			return fmt.Errorf("searchkit: scorer for %q: %w", s.EntityType, err)
-		}
-		s.Score = scored.Score
-		s.Progress = scored.Progress
-		s.ProgressMax = scored.ProgressMax
-		s.Completed = scored.Completed
-	}
-	return store.RecordSignal(ctx, h.tenant, s)
-}
-
-// RecordSignals records a batch of signals in two ClickHouse statements
-// total (one event insert, one grouped state reprojection). Use when one
-// user action fans out into several signals. Each signal's entity type
-// Scorer is applied as in RecordSignal.
+// RecordSignals applies each entity type's registered Scorer, then records the
+// batch (see signal.Store.RecordSignals). A scorer error records nothing.
 func (h *EmbeddedHub) RecordSignals(ctx context.Context, signals []signal.Signal) error {
 	store, err := h.requireStore()
 	if err != nil {
@@ -622,6 +637,27 @@ func (h *EmbeddedHub) Forget(ctx context.Context, subject signal.Subject, entity
 		return err
 	}
 	return store.Forget(ctx, h.tenant, subject, entityType, entityID)
+}
+
+// EraseSubjects permanently erases subjects from this tenant's signal plane
+// and fences their future writes (see signal.Store.EraseSubjects). Shared
+// accounts exist in several tenants: each host erases its own tenant.
+func (h *EmbeddedHub) EraseSubjects(ctx context.Context, subjects []signal.Subject) (signal.ErasureReport, error) {
+	store, err := h.requireStore()
+	if err != nil {
+		return signal.ErasureReport{}, err
+	}
+	return store.EraseSubjects(ctx, []string{h.tenant}, subjects)
+}
+
+// EnforceErasures re-applies every recorded erasure of this tenant: schedule
+// it and run it after every restore.
+func (h *EmbeddedHub) EnforceErasures(ctx context.Context, opts signal.EnforceOptions) (signal.ErasureReport, error) {
+	store, err := h.requireStore()
+	if err != nil {
+		return signal.ErasureReport{}, err
+	}
+	return store.EnforceErasures(ctx, h.tenant, opts)
 }
 
 // HistoryCount returns the total row count History would paginate over.
@@ -707,14 +743,6 @@ func (h *EmbeddedHub) States(ctx context.Context, subject signal.Subject, refs [
 	return store.States(ctx, h.tenant, subject, refs)
 }
 
-func (h *EmbeddedHub) Engagement(ctx context.Context, ref signal.EntityRef) (signal.EntityEngagement, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return signal.EntityEngagement{}, err
-	}
-	return store.Engagement(ctx, h.tenant, ref)
-}
-
 func (h *EmbeddedHub) Popular(ctx context.Context, entityType string, opts signal.PopularOptions) ([]signal.PopularHit, error) {
 	store, err := h.requireStore()
 	if err != nil {
@@ -723,14 +751,14 @@ func (h *EmbeddedHub) Popular(ctx context.Context, entityType string, opts signa
 	return store.Popular(ctx, h.tenant, entityType, opts)
 }
 
-// SubjectCounts returns unique-subject counts for entity ids of one type
-// over a window (zero = all time) — bulk per-card view counts.
-func (h *EmbeddedHub) SubjectCounts(ctx context.Context, entityType string, ids []string, window signal.Window) (map[string]uint64, error) {
+// Metrics returns named window metrics (viewers, views, completions,
+// feedback, ...) for entity ids of one type.
+func (h *EmbeddedHub) Metrics(ctx context.Context, entityType string, ids []string, window signal.Window) (map[string]signal.EntityMetrics, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return nil, err
 	}
-	return store.SubjectCounts(ctx, h.tenant, entityType, ids, window)
+	return store.Metrics(ctx, h.tenant, entityType, ids, window)
 }
 
 // PopularityFor scores a fixed candidate set (entity ids of one type) by the

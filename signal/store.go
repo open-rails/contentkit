@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -42,53 +42,44 @@ func NewStore(conn Conn, database string) (*Store, error) {
 	return &Store{conn: conn, db: db}, nil
 }
 
-// RecordSignal appends one event and reprojects the durable current-state row
-// for that (subject, entity). The projection is recomputed ClickHouse-side
-// from the (deduplicated) event stream, so replaying an event converges to
-// identical state instead of double-counting.
-func (st *Store) RecordSignal(ctx context.Context, tenant string, s Signal) error {
-	if strings.TrimSpace(tenant) == "" {
-		return fmt.Errorf("signal: tenant is required")
-	}
-	if err := s.validate(); err != nil {
-		return err
-	}
-	if s.OccurredAt.IsZero() {
-		s.OccurredAt = time.Now().UTC()
-	}
-	if s.Weight == 0 {
-		s.Weight = 1
-	}
-	payload := ""
-	if len(s.Payload) > 0 {
-		b, err := json.Marshal(s.Payload)
-		if err != nil {
-			return fmt.Errorf("signal: marshal payload: %w", err)
-		}
-		payload = string(b)
-	}
-
-	insert := fmt.Sprintf(`INSERT INTO %s.signal_events
-(tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id, occurred_at,
- duration_s, progress, progress_max, value, label, weight, score, completed, resume, payload)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, st.db)
-	if err := st.conn.Exec(ctx, insert,
-		tenant, s.EntityType, s.EntityID, s.Subject.Kind(), s.Subject.Key(),
-		s.Type, s.eventID(), s.OccurredAt.UTC(),
-		s.DurationS, s.Progress, s.ProgressMax, s.Value, s.Label, s.Weight,
-		s.Score, s.Completed, s.Resume, payload,
-	); err != nil {
-		return fmt.Errorf("signal: insert event: %w", err)
-	}
-
-	return st.reprojectState(ctx, tenant, s.Subject, s.EntityRef)
+// ProjectionKey identifies one subject × entity projection.
+type ProjectionKey struct {
+	EntityRef
+	Subject Subject
 }
 
-// RecordSignals appends a batch of events and reprojects current-state for
-// every touched (subject, entity) key — ONE multi-row event insert plus ONE
-// grouped reprojection, regardless of batch size. Use this when a single
-// user action fans out into several signals (e.g. a gallery view that also
-// signals its artists/series/tags).
+func (k ProjectionKey) args() []any {
+	return []any{k.EntityType, k.EntityID, k.Subject.Kind(), k.Subject.Key()}
+}
+
+func (k ProjectionKey) less(o ProjectionKey) bool {
+	a, b := k.args(), o.args()
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i].(string) < b[i].(string)
+		}
+	}
+	return false
+}
+
+// keyFilter renders "(entity_type, entity_id, subject_kind, subject) IN (...)"
+// for sorted, deduplicated keys.
+func keyFilter(keys []ProjectionKey) (string, []any) {
+	tuples := make([]string, len(keys))
+	args := make([]any, 0, len(keys)*4)
+	for i, k := range keys {
+		tuples[i] = "(?, ?, ?, ?)"
+		args = append(args, k.args()...)
+	}
+	return "(entity_type, entity_id, subject_kind, subject) IN (" + strings.Join(tuples, ", ") + ")", args
+}
+
+// RecordSignals appends source events, then rebuilds the compact state and
+// daily projections of every touched subject × entity from its canonical
+// events. Replays, reordering and revisions converge; nothing is incremented.
+// Signals of erased subjects (EraseSubjects) are dropped. If the process stops
+// between the insert and the projections, the events are durable and
+// RepairProjections restores the projections.
 func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Signal) error {
 	if strings.TrimSpace(tenant) == "" {
 		return fmt.Errorf("signal: tenant is required")
@@ -96,27 +87,27 @@ func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Sig
 	if len(signals) == 0 {
 		return nil
 	}
-	if len(signals) == 1 {
-		return st.RecordSignal(ctx, tenant, signals[0])
+	if len(signals) > MaxSignalsPerBatch {
+		return &LimitError{Field: "signals per batch", Limit: MaxSignalsPerBatch, Got: len(signals)}
 	}
-
-	now := time.Now().UTC()
-	args := make([]any, 0, len(signals)*18)
-	type stateKey struct {
-		entityType, entityID, subjectKind, subject string
-	}
-	touched := map[stateKey]struct{}{}
-	rows := make([]string, 0, len(signals))
+	subjects := make([]Subject, 0, len(signals))
 	for i := range signals {
-		s := signals[i]
-		if err := s.validate(); err != nil {
+		if err := signals[i].validate(); err != nil {
 			return err
 		}
-		if s.OccurredAt.IsZero() {
-			s.OccurredAt = now
-		}
-		if s.Weight == 0 {
-			s.Weight = 1
+		subjects = append(subjects, signals[i].Subject)
+	}
+	fenced, err := st.fenced(ctx, tenant, subjects)
+	if err != nil {
+		return err
+	}
+	args := make([]any, 0, len(signals)*17)
+	rows := make([]string, 0, len(signals))
+	touched := map[ProjectionKey]struct{}{}
+	for i := range signals {
+		s := signals[i]
+		if _, erased := fenced[[2]string{s.Subject.Kind(), s.Subject.Key()}]; erased {
+			continue
 		}
 		payload := ""
 		if len(s.Payload) > 0 {
@@ -126,240 +117,245 @@ func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Sig
 			}
 			payload = string(b)
 		}
-		rows = append(rows, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		if err := checkLen("Payload", payload, MaxPayloadBytes); err != nil {
+			return err
+		}
+		rows = append(rows, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 		args = append(args,
-			tenant, s.EntityType, s.EntityID, s.Subject.Kind(), s.Subject.Key(),
-			s.Type, s.eventID(), s.OccurredAt.UTC(),
-			s.DurationS, s.Progress, s.ProgressMax, s.Value, s.Label, s.Weight,
-			s.Score, s.Completed, s.Resume, payload,
+			tenant, s.EntityType, s.EntityID, s.Subject.Kind(), s.Subject.Key(), s.Type,
+			strings.TrimSpace(s.EventID), s.Revision, s.OccurredAt.UTC(),
+			s.DurationS, s.Progress, s.ProgressMax, s.Value, s.Score, s.Completed, s.Resume, payload,
 		)
-		touched[stateKey{s.EntityType, s.EntityID, s.Subject.Kind(), s.Subject.Key()}] = struct{}{}
+		touched[ProjectionKey{EntityRef: s.EntityRef, Subject: subjectFromKey(s.Subject.Kind(), s.Subject.Key())}] = struct{}{}
 	}
-
-	insert := fmt.Sprintf(`INSERT INTO %s.signal_events
-(tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id, occurred_at,
- duration_s, progress, progress_max, value, label, weight, score, completed, resume, payload)
+	if len(rows) == 0 {
+		return nil
+	}
+	insert := fmt.Sprintf(`INSERT INTO %s.events
+(tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id, revision, occurred_at,
+ duration_s, progress, progress_max, value, score, completed, resume, payload)
 VALUES %s`, st.db, strings.Join(rows, ", "))
 	if err := st.conn.Exec(ctx, insert, args...); err != nil {
 		return fmt.Errorf("signal: insert events: %w", err)
 	}
-
-	// One grouped reprojection over every touched key.
-	keyTuples := make([]string, 0, len(touched))
-	keyArgs := []any{tenant}
+	keys := make([]ProjectionKey, 0, len(touched))
 	for k := range touched {
-		keyTuples = append(keyTuples, "(?, ?, ?, ?)")
-		keyArgs = append(keyArgs, k.entityType, k.entityID, k.subjectKind, k.subject)
-	}
-	q := fmt.Sprintf(`INSERT INTO %s.signal_state
-(tenant, subject_kind, subject, entity_type, entity_id, first_seen_at, last_signal_at,
- total_events, max_progress, progress_max, completed, resume, has_interacted, last_score, net_value, last_updated)
-SELECT
-    tenant, subject_kind, subject, entity_type, entity_id,
-    min(occurred_at),
-    max(occurred_at),
-    toUInt32(uniqExact(event_id)),
-    max(progress),
-    max(progress_max),
-    max(completed),
-    argMaxIf(resume, occurred_at, resume != ''),
-    max(value != 0 OR label != ''),
-    argMax(score, occurred_at),
-    sum(value),
-    now64(3)
-FROM %s.signal_events
-WHERE tenant = ? AND (entity_type, entity_id, subject_kind, subject) IN (%s)
-GROUP BY tenant, subject_kind, subject, entity_type, entity_id`, st.db, st.db, strings.Join(keyTuples, ", "))
-	if err := st.conn.Exec(ctx, q, keyArgs...); err != nil {
-		return fmt.Errorf("signal: reproject states: %w", err)
-	}
-	return nil
-}
-
-// RecordImpressions appends one row per SERP/shelf render — the shown items
-// stored as parallel arrays, batched into a single INSERT. Idempotent per
-// QueryID (re-delivering a render replaces it via ReplacingMergeTree). Empty
-// input is a no-op.
-func (st *Store) RecordImpressions(ctx context.Context, tenant string, impressions []Impression) error {
-	if strings.TrimSpace(tenant) == "" {
-		return fmt.Errorf("signal: tenant is required")
-	}
-	if len(impressions) == 0 {
-		return nil
-	}
-	now := time.Now().UTC()
-	rows := make([]string, 0, len(impressions))
-	args := make([]any, 0, len(impressions)*11)
-	for i := range impressions {
-		im := impressions[i]
-		if err := im.validate(); err != nil {
-			return err
-		}
-		surface := strings.TrimSpace(im.Surface)
-		if surface == "" {
-			surface = SurfaceSearch
-		}
-		occurredAt := im.OccurredAt
-		if occurredAt.IsZero() {
-			occurredAt = now
-		}
-		start := im.StartPosition
-		if start == 0 {
-			start = 1
-		}
-		types := make([]string, len(im.Shown))
-		ids := make([]string, len(im.Shown))
-		positions := make([]uint32, len(im.Shown))
-		for j, ref := range im.Shown {
-			types[j] = ref.EntityType
-			ids[j] = ref.EntityID
-			positions[j] = start + uint32(j)
-		}
-		rows = append(rows, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-		args = append(args,
-			tenant, im.QueryID, surface, im.NormalizedQuery, im.Language,
-			im.Subject.Kind(), im.Subject.Key(),
-			types, ids, positions, occurredAt.UTC(),
-		)
-	}
-	insert := fmt.Sprintf(`INSERT INTO %s.search_impressions
-(tenant, query_id, surface, normalized_query, language, subject_kind, subject,
- shown_entity_types, shown_entity_ids, shown_positions, occurred_at)
-VALUES %s`, st.db, strings.Join(rows, ", "))
-	if err := st.conn.Exec(ctx, insert, args...); err != nil {
-		return fmt.Errorf("signal: insert impressions: %w", err)
-	}
-	return nil
-}
-
-// reprojectState recomputes the current-state row for one (subject, entity)
-// key by aggregating its events. Deterministic and replay-idempotent:
-// total_events deduplicates by event_id, the rest are min/max/argMax.
-func (st *Store) reprojectState(ctx context.Context, tenant string, subject Subject, ref EntityRef) error {
-	q := fmt.Sprintf(`INSERT INTO %s.signal_state
-(tenant, subject_kind, subject, entity_type, entity_id, first_seen_at, last_signal_at,
- total_events, max_progress, progress_max, completed, resume, has_interacted, last_score, net_value, last_updated)
-SELECT
-    tenant, subject_kind, subject, entity_type, entity_id,
-    min(occurred_at),
-    max(occurred_at),
-    toUInt32(uniqExact(event_id)),
-    max(progress),
-    max(progress_max),
-    max(completed),
-    argMaxIf(resume, occurred_at, resume != ''),
-    max(value != 0 OR label != ''),
-    argMax(score, occurred_at),
-    sum(value),
-    now64(3)
-FROM %s.signal_events
-WHERE tenant = ? AND entity_type = ? AND entity_id = ? AND subject_kind = ? AND subject = ?
-GROUP BY tenant, subject_kind, subject, entity_type, entity_id`, st.db, st.db)
-	if err := st.conn.Exec(ctx, q, tenant, ref.EntityType, ref.EntityID, subject.Kind(), subject.Key()); err != nil {
-		return fmt.Errorf("signal: reproject state: %w", err)
-	}
-	return nil
-}
-
-// StaleStateOptions bounds a reprojection-heal sweep.
-type StaleStateOptions struct {
-	// Since restricts detection to keys with an event at or after this instant,
-	// which bounds the scan. Zero considers the tenant's whole event stream.
-	Since time.Time
-	// Limit caps how many lagging keys are reprojected in one call. Zero means
-	// no cap.
-	Limit int
-}
-
-// ReprojectStale repairs durable current-state that has fallen behind the event
-// stream — the residual risk of RecordSignal's non-atomic "insert event, then
-// reproject state" sequence. If the process dies between the two, the event is
-// durable but the state row is stale and only self-heals when the next signal
-// for that key arrives; a key that never gets another signal stays stale.
-//
-// It finds keys whose state is missing or lags (state total_events below the
-// stream's deduplicated count, or last_signal_at behind) and reprojects each
-// from the deduplicated event stream via reprojectState. It is idempotent and a
-// no-op when every key is current, and is intended to run periodically
-// (host-triggered, like RefreshCoEngagement). Returns the number of keys healed.
-func (st *Store) ReprojectStale(ctx context.Context, tenant string, opts StaleStateOptions) (int, error) {
-	if strings.TrimSpace(tenant) == "" {
-		return 0, fmt.Errorf("signal: tenant is required")
-	}
-	if opts.Limit < 0 {
-		return 0, fmt.Errorf("signal: limit must not be negative")
-	}
-
-	args := []any{tenant}
-	sinceFilter := ""
-	if !opts.Since.IsZero() {
-		sinceFilter = " AND occurred_at >= ?"
-		args = append(args, opts.Since.UTC())
-	}
-	args = append(args, tenant) // state subquery tenant
-	limitClause := ""
-	if opts.Limit > 0 {
-		limitClause = " LIMIT ?"
-		args = append(args, opts.Limit)
-	}
-
-	// Left side is the event stream, so only keys that actually have events are
-	// considered; the LEFT JOIN yields zero-valued state defaults for keys with
-	// no state row, which the WHERE then flags as lagging.
-	q := fmt.Sprintf(`
-SELECT e.entity_type, e.entity_id, e.subject_kind, e.subject
-FROM (
-    SELECT entity_type, entity_id, subject_kind, subject,
-           max(occurred_at) AS ev_last, toUInt32(uniqExact(event_id)) AS ev_count
-    FROM %s.signal_events
-    WHERE tenant = ?%s
-    GROUP BY entity_type, entity_id, subject_kind, subject
-) AS e
-LEFT JOIN (
-    SELECT entity_type, entity_id, subject_kind, subject,
-           argMax(last_signal_at, last_updated) AS st_last,
-           argMax(total_events, last_updated) AS st_count
-    FROM %s.signal_state
-    WHERE tenant = ?
-    GROUP BY entity_type, entity_id, subject_kind, subject
-) AS s USING (entity_type, entity_id, subject_kind, subject)
-WHERE e.ev_count != s.st_count OR e.ev_last > s.st_last
-ORDER BY e.entity_type, e.entity_id, e.subject_kind, e.subject%s`,
-		st.db, sinceFilter, st.db, limitClause)
-
-	rows, err := st.conn.Query(ctx, q, args...)
-	if err != nil {
-		return 0, fmt.Errorf("signal: detect stale states: %w", err)
-	}
-	type laggingKey struct{ entityType, entityID, subjectKind, subject string }
-	var keys []laggingKey
-	for rows.Next() {
-		var k laggingKey
-		if err := rows.Scan(&k.entityType, &k.entityID, &k.subjectKind, &k.subject); err != nil {
-			rows.Close()
-			return 0, fmt.Errorf("signal: scan stale key: %w", err)
-		}
 		keys = append(keys, k)
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return 0, fmt.Errorf("signal: iterate stale keys: %w", err)
-	}
-	rows.Close()
+	return st.project(ctx, tenant, keys)
+}
 
-	healed := 0
-	for _, k := range keys {
-		if err := ctx.Err(); err != nil {
-			return healed, err
-		}
-		ref := EntityRef{EntityType: k.entityType, EntityID: k.entityID}
-		if err := st.reprojectState(ctx, tenant, subjectFromKey(k.subjectKind, k.subject), ref); err != nil {
-			return healed, fmt.Errorf("signal: reproject stale key (%s/%s, %s:%s): %w",
-				k.entityType, k.entityID, k.subjectKind, k.subject, err)
-		}
-		healed++
+// canonicalEvents selects, per logical event of the filtered keys, the
+// highest-version row as c = (occurred_at, revision, duration_s, progress,
+// progress_max, value, score, completed, resume) plus the newest ingest time of
+// any of its rows. Superseded and duplicate rows never count, whether or not
+// ClickHouse has merged them.
+func (st *Store) canonicalEvents(filter string) string {
+	return fmt.Sprintf(`SELECT entity_type, entity_id, subject_kind, subject, signal_type, event_id,
+        argMax(tuple(occurred_at, revision, duration_s, progress, progress_max, value, score, completed, resume), version) AS c,
+        max(ingested_at) AS ing
+    FROM %s.events
+    WHERE tenant = ? AND %s
+    GROUP BY entity_type, entity_id, subject_kind, subject, signal_type, event_id`, st.db, filter)
+}
+
+// project rebuilds subject_state and subject_daily for keys from canonical
+// events. Every derived row carries version = newest raw ingest time of its
+// key, so a projection that saw more events replaces one that saw fewer and a
+// late stale projection cannot win. Day rows that lost their canonical events
+// (a revision moved a session to another day) are rewritten as zeros.
+func (st *Store) project(ctx context.Context, tenant string, keys []ProjectionKey) error {
+	if len(keys) == 0 {
+		return nil
 	}
-	return healed, nil
+	sort.Slice(keys, func(i, j int) bool { return keys[i].less(keys[j]) })
+	filter, keyArgs := keyFilter(keys)
+	canon := st.canonicalEvents(filter)
+
+	state := fmt.Sprintf(`INSERT INTO %[1]s.subject_state
+(tenant, subject_kind, subject, entity_type, entity_id, first_seen_at, last_signal_at, total_events, views,
+ completions, active_s, max_progress, progress_max, completed, resume, last_score, net_value, feedback, version)
+SELECT ?, subject_kind, subject, entity_type, entity_id,
+    min(c.1), max(c.1), toUInt32(count()),
+    toUInt32(countIf(signal_type = '%[3]s')),
+    toUInt32(countIf(signal_type = '%[3]s' AND c.8)),
+    sumIf(toUInt64(c.3), signal_type = '%[3]s'),
+    maxIf(c.4, signal_type = '%[3]s'),
+    maxIf(c.5, signal_type = '%[3]s'),
+    countIf(signal_type = '%[3]s' AND c.8) > 0,
+    argMaxIf(c.9, (c.1, c.2, event_id), c.9 != ''),
+    argMaxIf(c.7, (c.1, c.2, event_id), signal_type = '%[3]s'),
+    sum(c.6),
+    toUInt32(countIf(c.6 != 0)),
+    max(ing)
+FROM (%[2]s)
+GROUP BY subject_kind, subject, entity_type, entity_id`, st.db, canon, TypeView)
+	if err := st.conn.Exec(ctx, state, append([]any{tenant, tenant}, keyArgs...)...); err != nil {
+		return fmt.Errorf("signal: project state: %w", err)
+	}
+
+	daily := fmt.Sprintf(`INSERT INTO %[1]s.subject_daily
+(tenant, entity_type, entity_id, subject_kind, subject, day, events, views, completions, active_s,
+ score_sum, value_sum, type_counts, version)
+SELECT ?, entity_type, entity_id, subject_kind, subject, day, events, views, completions, active_s,
+    score_sum, value_sum, type_counts, version
+FROM (
+    SELECT entity_type, entity_id, subject_kind, subject, day,
+        toUInt32(sum(n)) AS events, toUInt32(sum(v)) AS views, toUInt32(sum(done)) AS completions,
+        sum(active) AS active_s, sum(score) AS score_sum, sum(val) AS value_sum, sumMap(types) AS type_counts,
+        max(max(ing)) OVER (PARTITION BY entity_type, entity_id, subject_kind, subject) AS version,
+        max(prior) AS prior_events
+    FROM (
+        SELECT entity_type, entity_id, subject_kind, subject, toDate(c.1) AS day,
+            toUInt32(1) AS n, toUInt32(signal_type = '%[4]s') AS v, toUInt32(signal_type = '%[4]s' AND c.8) AS done,
+            if(signal_type = '%[4]s', toUInt64(c.3), 0) AS active, if(signal_type = '%[4]s', toInt64(c.7), 0) AS score,
+            c.6 AS val, map(signal_type, toUInt32(1)) AS types, ing, toUInt32(0) AS prior
+        FROM (%[2]s)
+        UNION ALL
+        SELECT entity_type, entity_id, subject_kind, subject, day, 0, 0, 0, 0, 0, 0,
+            CAST(map(), 'Map(LowCardinality(String), UInt32)'), toDateTime64(0, 6, 'UTC'), events
+        FROM %[1]s.subject_daily FINAL
+        WHERE tenant = ? AND %[3]s
+    )
+    GROUP BY entity_type, entity_id, subject_kind, subject, day
+    HAVING events > 0 OR prior_events > 0
+)
+WHERE version > toDateTime64(0, 6, 'UTC')`, st.db, canon, filter, TypeView)
+	dailyArgs := append([]any{tenant, tenant}, keyArgs...)
+	dailyArgs = append(dailyArgs, tenant)
+	dailyArgs = append(dailyArgs, keyArgs...)
+	if err := st.conn.Exec(ctx, daily, dailyArgs...); err != nil {
+		return fmt.Errorf("signal: project daily: %w", err)
+	}
+	return nil
+}
+
+// RepairOptions bounds one RepairProjections call.
+type RepairOptions struct {
+	// Window limits candidate keys to those with an event on these days
+	// (zero = all time).
+	Window Window
+	// IngestedSince limits candidates to keys with a row ingested at or after
+	// it: the crash-repair scan. Zero = no bound.
+	IngestedSince time.Time
+	// After resumes strictly after this key in key order (nil = start).
+	After *ProjectionKey
+	// Limit caps candidate keys examined per call (default 1000).
+	Limit int
+	// Rebuild reprojects every candidate instead of only stale ones: after a
+	// projection semantics change, a restore or a legacy import.
+	Rebuild bool
+}
+
+// RepairResult reports one bounded repair step.
+type RepairResult struct {
+	Examined int
+	Repaired int
+	// Next is the cursor for the following call; nil when the range is done.
+	Next *ProjectionKey
+}
+
+// RepairProjections is the owned projection repair. It examines up to Limit
+// candidate keys in key order and rebuilds those whose state or daily
+// projection is missing or older than their newest raw event (all of them with
+// Rebuild). Idempotent; call again with After = Next until Next is nil.
+func (st *Store) RepairProjections(ctx context.Context, tenant string, opts RepairOptions) (RepairResult, error) {
+	var res RepairResult
+	if strings.TrimSpace(tenant) == "" {
+		return res, fmt.Errorf("signal: tenant is required")
+	}
+	if err := opts.Window.Validate(); err != nil {
+		return res, err
+	}
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 1000
+	}
+	var sb strings.Builder
+	args := []any{tenant}
+	fmt.Fprintf(&sb, `SELECT DISTINCT entity_type, entity_id, subject_kind, subject FROM %s.events WHERE tenant = ?`, st.db)
+	pred, predArgs := opts.Window.predicate("occurred_at")
+	sb.WriteString(pred)
+	args = append(args, predArgs...)
+	if !opts.IngestedSince.IsZero() {
+		sb.WriteString(" AND ingested_at >= ?")
+		args = append(args, opts.IngestedSince.UTC())
+	}
+	if opts.After != nil {
+		sb.WriteString(" AND (entity_type, entity_id, subject_kind, subject) > (?, ?, ?, ?)")
+		args = append(args, opts.After.args()...)
+	}
+	sb.WriteString(" ORDER BY entity_type, entity_id, subject_kind, subject LIMIT ?")
+	args = append(args, limit)
+	keys, err := st.scanKeys(ctx, sb.String(), args...)
+	if err != nil {
+		return res, fmt.Errorf("signal: repair candidates: %w", err)
+	}
+	res.Examined = len(keys)
+	if len(keys) == limit {
+		last := keys[len(keys)-1]
+		res.Next = &last
+	}
+	if len(keys) == 0 {
+		return res, nil
+	}
+	repair := keys
+	if !opts.Rebuild {
+		if repair, err = st.staleKeys(ctx, tenant, keys); err != nil {
+			return res, err
+		}
+	}
+	if err := st.project(ctx, tenant, repair); err != nil {
+		return res, err
+	}
+	res.Repaired = len(repair)
+	return res, nil
+}
+
+func (st *Store) staleKeys(ctx context.Context, tenant string, keys []ProjectionKey) ([]ProjectionKey, error) {
+	filter, keyArgs := keyFilter(keys)
+	q := fmt.Sprintf(`SELECT r.entity_type, r.entity_id, r.subject_kind, r.subject
+FROM (SELECT entity_type, entity_id, subject_kind, subject, max(ingested_at) AS raw
+      FROM %[1]s.events WHERE tenant = ? AND %[2]s GROUP BY entity_type, entity_id, subject_kind, subject) AS r
+LEFT JOIN (SELECT entity_type, entity_id, subject_kind, subject, max(version) AS projected
+      FROM %[1]s.subject_state WHERE tenant = ? AND %[2]s GROUP BY entity_type, entity_id, subject_kind, subject) AS s
+  USING (entity_type, entity_id, subject_kind, subject)
+LEFT JOIN (SELECT entity_type, entity_id, subject_kind, subject, max(version) AS projected
+      FROM %[1]s.subject_daily WHERE tenant = ? AND %[2]s GROUP BY entity_type, entity_id, subject_kind, subject) AS d
+  USING (entity_type, entity_id, subject_kind, subject)
+WHERE s.projected < r.raw OR d.projected < r.raw
+ORDER BY r.entity_type, r.entity_id, r.subject_kind, r.subject`, st.db, filter)
+	args := make([]any, 0, 3+3*len(keyArgs))
+	for i := 0; i < 3; i++ {
+		args = append(args, tenant)
+		args = append(args, keyArgs...)
+	}
+	keys, err := st.scanKeys(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("signal: detect stale projections: %w", err)
+	}
+	return keys, nil
+}
+
+func (st *Store) scanKeys(ctx context.Context, q string, args ...any) ([]ProjectionKey, error) {
+	rows, err := st.conn.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ProjectionKey
+	for rows.Next() {
+		var (
+			k             ProjectionKey
+			kind, subject string
+		)
+		if err := rows.Scan(&k.EntityType, &k.EntityID, &kind, &subject); err != nil {
+			return nil, err
+		}
+		k.Subject = subjectFromKey(kind, subject)
+		out = append(out, k)
+	}
+	return out, rows.Err()
 }
 
 // subjectFromKey rebuilds a Subject from its stored (kind, key) columns.
@@ -370,740 +366,31 @@ func subjectFromKey(kind, key string) Subject {
 	return Subject{AnonKey: key}
 }
 
-const stateColumns = `entity_type, entity_id, first_seen_at, last_signal_at, total_events,
- max_progress, progress_max, completed, resume, has_interacted, last_score, net_value`
-
-func scanStateRow(rows driver.Rows) (StateRow, error) {
-	var (
-		r         StateRow
-		completed bool
-		inter     bool
-	)
-	if err := rows.Scan(
-		&r.EntityType, &r.EntityID, &r.FirstSeenAt, &r.LastSignalAt, &r.TotalEvents,
-		&r.MaxProgress, &r.ProgressMax, &completed, &r.Resume, &inter, &r.LastScore, &r.NetValue,
-	); err != nil {
-		return StateRow{}, err
-	}
-	r.Completed = completed
-	r.HasInteracted = inter
-	r.Seen = r.MaxProgress > 0
-	return r, nil
-}
-
-// States is the bulk "annotate this list with view context" read: for each
-// requested entity, the subject's standing (seen?, progress bar, completed?,
-// resume pointer). Entities the subject has no signals for are absent from
-// the result map. A point/IN lookup on current-state — cheap per page of
-// cards.
-func (st *Store) States(ctx context.Context, tenant string, subject Subject, refs []EntityRef) (map[EntityRef]State, error) {
-	if err := subject.Validate(); err != nil {
-		return nil, err
-	}
-	out := make(map[EntityRef]State, len(refs))
-	if len(refs) == 0 {
-		return out, nil
-	}
-
-	// Group ids by entity type: (entity_type = ? AND entity_id IN ?) OR ...
-	byType := map[string][]string{}
-	for _, r := range refs {
-		if err := r.validate(); err != nil {
-			return nil, err
-		}
-		byType[r.EntityType] = append(byType[r.EntityType], r.EntityID)
-	}
-	clauses := make([]string, 0, len(byType))
-	args := []any{tenant, subject.Kind(), subject.Key()}
-	for _, t := range sortedKeys(byType) {
-		clauses = append(clauses, "(entity_type = ? AND entity_id IN ?)")
-		args = append(args, t, byType[t])
-	}
-
-	q := fmt.Sprintf(`SELECT %s
-FROM %s.signal_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND (%s)`,
-		stateColumns, st.db, strings.Join(clauses, " OR "))
-
-	rows, err := st.conn.Query(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("signal: states: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		r, err := scanStateRow(rows)
-		if err != nil {
-			return nil, fmt.Errorf("signal: states scan: %w", err)
-		}
-		out[r.EntityRef] = r.State
-	}
-	return out, rows.Err()
-}
-
-// History returns the subject's current-state rows, most recent signal first.
-func (st *Store) History(ctx context.Context, tenant string, subject Subject, opts HistoryOptions) ([]StateRow, error) {
-	if err := subject.Validate(); err != nil {
-		return nil, err
-	}
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 50
-	}
-
-	var sb strings.Builder
-	args := []any{tenant, subject.Kind(), subject.Key()}
-	fmt.Fprintf(&sb, `SELECT %s
-FROM %s.signal_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ?`, stateColumns, st.db)
-	if t := strings.TrimSpace(opts.EntityType); t != "" {
-		sb.WriteString(" AND entity_type = ?")
-		args = append(args, t)
-	}
-	switch opts.Status {
-	case HistoryAny:
-	case HistorySeen:
-		sb.WriteString(" AND max_progress > 0")
-	case HistoryInProgress:
-		sb.WriteString(" AND max_progress > 0 AND NOT completed")
-	case HistoryCompleted:
-		sb.WriteString(" AND completed")
-	default:
-		return nil, fmt.Errorf("signal: invalid HistoryOptions.Status %q", opts.Status)
-	}
-	if !opts.Since.IsZero() {
-		sb.WriteString(" AND last_signal_at >= ?")
-		args = append(args, opts.Since.UTC())
-	}
-	sb.WriteString(" ORDER BY last_signal_at DESC, entity_type ASC, entity_id ASC LIMIT ? OFFSET ?")
-	args = append(args, limit, opts.Offset)
-
-	rows, err := st.conn.Query(ctx, sb.String(), args...)
-	if err != nil {
-		return nil, fmt.Errorf("signal: history: %w", err)
-	}
-	defer rows.Close()
-	out := make([]StateRow, 0, limit)
-	for rows.Next() {
-		r, err := scanStateRow(rows)
-		if err != nil {
-			return nil, fmt.Errorf("signal: history scan: %w", err)
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-// Forget erases a subject's signals for one entity, or an entire entity type
-// when entityID is empty, from both the event stream
-// and the current-state projection. This is NOT account erasure: impressions,
-// exact-subject daily aggregate states, and derived item pairs remain.
-// Backs host "clear my history" features
-// (lightweight DELETEs; eventual on replicated tables).
+// Forget erases a subject's events and projections for one entity, or an
+// entire entity type when entityID is empty. Windows and popularity read the
+// per-subject projections, so they stop counting the subject at once. This is
+// NOT account erasure: impressions and the item_pairs rollup remain, and a
+// write racing the deletion can re-project.
 func (st *Store) Forget(ctx context.Context, tenant string, subject Subject, entityType string, entityID string) error {
+	if strings.TrimSpace(tenant) == "" {
+		return fmt.Errorf("signal: tenant is required")
+	}
 	if err := subject.Validate(); err != nil {
 		return err
 	}
 	if strings.TrimSpace(entityType) == "" {
 		return fmt.Errorf("signal: entityType is required")
 	}
-	evWhere := " WHERE tenant = ? AND entity_type = ? AND subject_kind = ? AND subject = ?"
-	stWhere := " WHERE tenant = ? AND subject_kind = ? AND subject = ? AND entity_type = ?"
-	evArgs := []any{tenant, entityType, subject.Kind(), subject.Key()}
-	stArgs := []any{tenant, subject.Kind(), subject.Key(), entityType}
+	where := " WHERE tenant = ? AND entity_type = ? AND subject_kind = ? AND subject = ?"
+	args := []any{tenant, entityType, subject.Kind(), subject.Key()}
 	if strings.TrimSpace(entityID) != "" {
-		evWhere += " AND entity_id = ?"
-		stWhere += " AND entity_id = ?"
-		evArgs = append(evArgs, entityID)
-		stArgs = append(stArgs, entityID)
+		where += " AND entity_id = ?"
+		args = append(args, entityID)
 	}
-	if err := st.conn.Exec(ctx, fmt.Sprintf("DELETE FROM %s.signal_events%s", st.db, evWhere), evArgs...); err != nil {
-		return fmt.Errorf("signal: forget events: %w", err)
-	}
-	if err := st.conn.Exec(ctx, fmt.Sprintf("DELETE FROM %s.signal_state%s", st.db, stWhere), stArgs...); err != nil {
-		return fmt.Errorf("signal: forget state: %w", err)
-	}
-	return nil
-}
-
-// ForgetImpressions removes all result-list exposures for one tenant and subject.
-// It is separate from entity-scoped Forget: one result list can contain many
-// entities, and clearing one history entry must not erase unrelated exposures.
-// Completion waits for the mutation on the current server (not every replica).
-// Hosts must fence concurrent ingestion before using this for account erasure.
-// This alone is NOT complete erasure: signal events, state, exact-subject daily
-// aggregate states, and derived item pairs require separate lifecycle handling.
-func (st *Store) ForgetImpressions(ctx context.Context, tenant string, subject Subject) error {
-	if strings.TrimSpace(tenant) == "" {
-		return fmt.Errorf("signal: tenant is required")
-	}
-	if err := subject.Validate(); err != nil {
-		return err
-	}
-	query := fmt.Sprintf(`ALTER TABLE %s.search_impressions DELETE WHERE tenant = ? AND subject_kind = ? AND subject = ? SETTINGS mutations_sync = 1`, st.db)
-	if err := st.conn.Exec(ctx, query, tenant, subject.Kind(), subject.Key()); err != nil {
-		return fmt.Errorf("signal: forget impressions: %w", err)
-	}
-	return nil
-}
-
-// HistoryCount returns the total row count History would paginate over.
-func (st *Store) HistoryCount(ctx context.Context, tenant string, subject Subject, opts HistoryOptions) (int64, error) {
-	if err := subject.Validate(); err != nil {
-		return 0, err
-	}
-	var sb strings.Builder
-	args := []any{tenant, subject.Kind(), subject.Key()}
-	fmt.Fprintf(&sb, `SELECT toInt64(count())
-FROM %s.signal_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ?`, st.db)
-	if t := strings.TrimSpace(opts.EntityType); t != "" {
-		sb.WriteString(" AND entity_type = ?")
-		args = append(args, t)
-	}
-	switch opts.Status {
-	case HistoryAny:
-	case HistorySeen:
-		sb.WriteString(" AND max_progress > 0")
-	case HistoryInProgress:
-		sb.WriteString(" AND max_progress > 0 AND NOT completed")
-	case HistoryCompleted:
-		sb.WriteString(" AND completed")
-	default:
-		return 0, fmt.Errorf("signal: invalid HistoryOptions.Status %q", opts.Status)
-	}
-	if !opts.Since.IsZero() {
-		sb.WriteString(" AND last_signal_at >= ?")
-		args = append(args, opts.Since.UTC())
-	}
-	rows, err := st.conn.Query(ctx, sb.String(), args...)
-	if err != nil {
-		return 0, fmt.Errorf("signal: history count: %w", err)
-	}
-	defer rows.Close()
-	var n int64
-	if rows.Next() {
-		if err := rows.Scan(&n); err != nil {
-			return 0, fmt.Errorf("signal: history count scan: %w", err)
+	for _, table := range []string{"events", "subject_state", "subject_daily"} {
+		if err := st.conn.Exec(ctx, fmt.Sprintf("DELETE FROM %s.%s%s", st.db, table, where), args...); err != nil {
+			return fmt.Errorf("signal: forget %s: %w", table, err)
 		}
-	}
-	return n, rows.Err()
-}
-
-// SeenIDs returns the subject's seen-set for one entity type: entity ids with
-// max_progress > 0. This is the signal-plane half of the unseen anti-join;
-// the caller diffs it against the host catalog's universe.
-func (st *Store) SeenIDs(ctx context.Context, tenant string, subject Subject, entityType string) (map[string]struct{}, error) {
-	if err := subject.Validate(); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(entityType) == "" {
-		return nil, fmt.Errorf("signal: entityType is required")
-	}
-	q := fmt.Sprintf(`SELECT entity_id
-FROM %s.signal_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND entity_type = ? AND max_progress > 0`, st.db)
-	rows, err := st.conn.Query(ctx, q, tenant, subject.Kind(), subject.Key(), entityType)
-	if err != nil {
-		return nil, fmt.Errorf("signal: seen ids: %w", err)
-	}
-	defer rows.Close()
-	out := map[string]struct{}{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("signal: seen ids scan: %w", err)
-		}
-		out[id] = struct{}{}
-	}
-	return out, rows.Err()
-}
-
-// NegativeIDs returns entity ids the subject has net-negative explicit
-// feedback for (sum of signal Values < 0, e.g. a dislike): the exclusion set
-// for recommendations.
-func (st *Store) NegativeIDs(ctx context.Context, tenant string, subject Subject, entityTypes []string) (map[EntityRef]struct{}, error) {
-	if err := subject.Validate(); err != nil {
-		return nil, err
-	}
-	var sb strings.Builder
-	args := []any{tenant, subject.Kind(), subject.Key()}
-	fmt.Fprintf(&sb, `SELECT entity_type, entity_id
-FROM %s.signal_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND net_value < 0`, st.db)
-	if types := trimAll(entityTypes); len(types) > 0 {
-		sb.WriteString(" AND entity_type IN ?")
-		args = append(args, types)
-	}
-	rows, err := st.conn.Query(ctx, sb.String(), args...)
-	if err != nil {
-		return nil, fmt.Errorf("signal: negative ids: %w", err)
-	}
-	defer rows.Close()
-	out := map[EntityRef]struct{}{}
-	for rows.Next() {
-		var ref EntityRef
-		if err := rows.Scan(&ref.EntityType, &ref.EntityID); err != nil {
-			return nil, fmt.Errorf("signal: negative ids scan: %w", err)
-		}
-		out[ref] = struct{}{}
-	}
-	return out, rows.Err()
-}
-
-// TopStates returns the subject's highest-signal entities (recommendation
-// seeds): ordered by last_score DESC, then recency.
-func (st *Store) TopStates(ctx context.Context, tenant string, subject Subject, opts TopStatesOptions) ([]StateRow, error) {
-	if err := subject.Validate(); err != nil {
-		return nil, err
-	}
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 10
-	}
-	var sb strings.Builder
-	args := []any{tenant, subject.Kind(), subject.Key()}
-	fmt.Fprintf(&sb, `SELECT %s
-FROM %s.signal_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ?`, stateColumns, st.db)
-	if types := trimAll(opts.EntityTypes); len(types) > 0 {
-		sb.WriteString(" AND entity_type IN ?")
-		args = append(args, types)
-	}
-	if opts.ExcludeNegative {
-		sb.WriteString(" AND net_value >= 0")
-	}
-	sb.WriteString(" ORDER BY last_score DESC, last_signal_at DESC, entity_type ASC, entity_id ASC LIMIT ?")
-	args = append(args, limit)
-
-	rows, err := st.conn.Query(ctx, sb.String(), args...)
-	if err != nil {
-		return nil, fmt.Errorf("signal: top states: %w", err)
-	}
-	defer rows.Close()
-	out := make([]StateRow, 0, limit)
-	for rows.Next() {
-		r, err := scanStateRow(rows)
-		if err != nil {
-			return nil, fmt.Errorf("signal: top states scan: %w", err)
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-// Engagement aggregates signal quality for one entity over the event stream.
-func (st *Store) Engagement(ctx context.Context, tenant string, ref EntityRef) (EntityEngagement, error) {
-	if err := ref.validate(); err != nil {
-		return EntityEngagement{}, err
-	}
-	q := fmt.Sprintf(`SELECT
-    uniqExactIf(subject, subject_kind = 'user') AS unique_users,
-    uniqExactIf(subject, subject_kind = 'anon') AS unique_anon,
-    uniqExact(event_id) AS signals,
-    uniqExactIf(concat(subject_kind, ':', subject), completed) AS completions,
-    uniqExact(concat(subject_kind, ':', subject)) AS subjects_total,
-    ifNotFinite(avgIf(score, score != 0), 0) AS avg_score,
-    sumMap(map(signal_type, toUInt64(1))) AS signal_counts
-FROM %s.signal_events
-WHERE tenant = ? AND entity_type = ? AND entity_id = ?`, st.db)
-
-	rows, err := st.conn.Query(ctx, q, tenant, ref.EntityType, ref.EntityID)
-	if err != nil {
-		return EntityEngagement{}, fmt.Errorf("signal: engagement: %w", err)
-	}
-	defer rows.Close()
-	var (
-		e             EntityEngagement
-		subjectsTotal uint64
-	)
-	if rows.Next() {
-		if err := rows.Scan(
-			&e.UniqueUsers, &e.UniqueAnon, &e.Signals,
-			&e.Completions, &subjectsTotal, &e.AvgScore, &e.SignalCounts,
-		); err != nil {
-			return EntityEngagement{}, fmt.Errorf("signal: engagement scan: %w", err)
-		}
-	}
-	if subjectsTotal > 0 {
-		e.CompletionRate = float64(e.Completions) / float64(subjectsTotal)
-	}
-	return e, rows.Err()
-}
-
-// SubjectCounts returns unique-subject counts for a fixed set of entity ids
-// of one type over a window (zero window = all time). Only view signals count;
-// a click or reaction is not evidence of consumption.
-func (st *Store) SubjectCounts(ctx context.Context, tenant string, entityType string, ids []string, window Window) (map[string]uint64, error) {
-	out := map[string]uint64{}
-	ids = trimAll(ids)
-	if strings.TrimSpace(entityType) == "" || len(ids) == 0 {
-		return out, nil
-	}
-	var sb strings.Builder
-	args := []any{tenant, entityType, ids}
-	fmt.Fprintf(&sb, `SELECT entity_id, uniqExact(tuple(subject_kind, subject))
-FROM %s.signal_events FINAL
-WHERE tenant = ? AND entity_type = ? AND entity_id IN ? AND signal_type = 'view'`, st.db)
-	if !window.From.IsZero() {
-		sb.WriteString(" AND occurred_at >= ?")
-		args = append(args, window.From.UTC())
-	}
-	if !window.To.IsZero() {
-		sb.WriteString(" AND occurred_at <= ?")
-		args = append(args, window.To.UTC())
-	}
-	sb.WriteString("\nGROUP BY entity_id")
-	q := sb.String()
-	rows, err := st.conn.Query(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("signal: subject counts: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var (
-			id string
-			n  uint64
-		)
-		if err := rows.Scan(&id, &n); err != nil {
-			return nil, fmt.Errorf("signal: subject counts scan: %w", err)
-		}
-		out[id] = n
-	}
-	return out, rows.Err()
-}
-
-// Popular ranks consumption of one entity type over a literal time window.
-// Every view in the window has equal time weight. Read canonical events until
-// the daily aggregates support view-only counts and replay-safe sums.
-//
-// IDs, when non-empty, restricts ranking to that candidate set (used for
-// signal-aware re-ranking of search results).
-func (st *Store) Popular(ctx context.Context, tenant string, entityType string, opts PopularOptions) ([]PopularHit, error) {
-	return st.popular(ctx, tenant, entityType, nil, opts)
-}
-
-// PopularityFor scores a fixed candidate set by the popularity ranking and
-// returns entity_id -> score. Candidates with no signals in the window are
-// absent.
-func (st *Store) PopularityFor(ctx context.Context, tenant string, entityType string, ids []string, window Window) (map[string]float64, error) {
-	ids = trimAll(ids)
-	if len(ids) == 0 {
-		return map[string]float64{}, nil
-	}
-	hits, err := st.popular(ctx, tenant, entityType, ids, PopularOptions{Window: window, Limit: len(ids)})
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]float64, len(hits))
-	for _, h := range hits {
-		out[h.EntityID] = h.Score
-	}
-	return out, nil
-}
-
-func (st *Store) popular(ctx context.Context, tenant string, entityType string, ids []string, opts PopularOptions) ([]PopularHit, error) {
-	if strings.TrimSpace(entityType) == "" {
-		return nil, fmt.Errorf("signal: entityType is required")
-	}
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 20
-	}
-	w := opts.Weights.withDefaults()
-	rankExpr := strings.TrimSpace(opts.RankExpr)
-	q, args := st.popularFromEvents(tenant, entityType, ids, opts.Window, rankExpr, w, limit)
-
-	rows, err := st.conn.Query(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("signal: popular: %w", err)
-	}
-	defer rows.Close()
-	out := make([]PopularHit, 0, limit)
-	for rows.Next() {
-		h := PopularHit{EntityRef: EntityRef{EntityType: entityType}}
-		if err := rows.Scan(&h.EntityID, &h.Subjects, &h.Signals, &h.Completions, &h.Score); err != nil {
-			return nil, fmt.Errorf("signal: popular scan: %w", err)
-		}
-		if math.IsNaN(h.Score) || math.IsInf(h.Score, 0) {
-			h.Score = 0
-		}
-		out = append(out, h)
-	}
-	return out, rows.Err()
-}
-
-// defaultRankExpr builds the default ranking over the aggregate aliases
-// subjects / engagement_sum / scored_signals (see RankWeights).
-func defaultRankExpr(w RankWeights, volumeExpr string) string {
-	return fmt.Sprintf(
-		"log10(1 + %s) * greatest(%g, (toFloat64(engagement_sum) + %g) / (toFloat64(scored_signals) + %g))",
-		volumeExpr, w.QualityFloor, w.PriorScore*w.PriorWeight, w.PriorWeight,
-	)
-}
-
-func (st *Store) popularFromEvents(tenant, entityType string, ids []string, win Window, rankExpr string, w RankWeights, limit int) (string, []any) {
-	if rankExpr == "" {
-		rankExpr = defaultRankExpr(w, "toFloat64(subjects)")
-	}
-	var sb strings.Builder
-	args := []any{tenant, entityType}
-	fmt.Fprintf(&sb, `SELECT
-    entity_id,
-    uniqExact(tuple(subject_kind, subject)) AS subjects,
-    uniqExact(event_id) AS signals,
-    toUInt64(countIf(completed)) AS completions,
-    (%s) AS rank_score
-FROM %s.signal_events FINAL
-WHERE tenant = ? AND entity_type = ? AND signal_type = 'view'`, rewriteRankAliases(rankExpr, map[string]string{
-		"subjects":       "uniqExact(tuple(subject_kind, subject))",
-		"signals":        "uniqExact(event_id)",
-		"engagement_sum": "toInt64(sum(score))",
-		"scored_signals": "toUInt64(count())",
-		"completions":    "toUInt64(countIf(completed))",
-	}), st.db)
-	if len(ids) > 0 {
-		sb.WriteString(" AND entity_id IN ?")
-		args = append(args, ids)
-	}
-	if !win.From.IsZero() {
-		sb.WriteString(" AND occurred_at >= ?")
-		args = append(args, win.From.UTC())
-	}
-	if !win.To.IsZero() {
-		sb.WriteString(" AND occurred_at <= ?")
-		args = append(args, win.To.UTC())
-	}
-	sb.WriteString("\nGROUP BY entity_id\nORDER BY rank_score DESC, entity_id ASC\nLIMIT ?")
-	args = append(args, limit)
-	return sb.String(), args
-}
-
-// rewriteRankAliases substitutes whole-word aggregate aliases in a rank
-// expression with their concrete aggregate expressions, so the same host
-// expression works over both the rollup and the raw event paths.
-func rewriteRankAliases(expr string, subs map[string]string) string {
-	for _, alias := range sortedKeys(subs) {
-		expr = replaceWord(expr, alias, subs[alias])
-	}
-	return expr
-}
-
-// replaceWord replaces whole-identifier occurrences of word in expr.
-func replaceWord(expr, word, with string) string {
-	isIdent := func(b byte) bool {
-		return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
-	}
-	var out strings.Builder
-	for i := 0; i < len(expr); {
-		j := strings.Index(expr[i:], word)
-		if j < 0 {
-			out.WriteString(expr[i:])
-			break
-		}
-		j += i
-		before := j == 0 || !isIdent(expr[j-1])
-		afterIdx := j + len(word)
-		after := afterIdx >= len(expr) || !isIdent(expr[afterIdx])
-		if before && after {
-			out.WriteString(expr[i:j])
-			out.WriteString(with)
-		} else {
-			out.WriteString(expr[i:afterIdx])
-		}
-		i = afterIdx
-	}
-	return out.String()
-}
-
-// CoEngaged returns entities co-engaged with the anchor: "subjects who
-// engaged with X also engaged with Y", strength = co-engaged subject count.
-// Works without a logged-in viewer; feeds the "more like this" fusion.
-func (st *Store) CoEngaged(ctx context.Context, tenant string, ref EntityRef, opts CoEngagedOptions) ([]CoEngagedHit, error) {
-	if err := ref.validate(); err != nil {
-		return nil, err
-	}
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 50
-	}
-	maxSubjects := opts.MaxSubjects
-	if maxSubjects <= 0 {
-		maxSubjects = 10000
-	}
-
-	var inner strings.Builder
-	innerArgs := []any{tenant, ref.EntityType, ref.EntityID}
-	fmt.Fprintf(&inner, `SELECT DISTINCT subject_kind, subject FROM %s.signal_events
-WHERE tenant = ? AND entity_type = ? AND entity_id = ?`, st.db)
-	if !opts.Window.From.IsZero() {
-		inner.WriteString(" AND occurred_at >= ?")
-		innerArgs = append(innerArgs, opts.Window.From.UTC())
-	}
-	if !opts.Window.To.IsZero() {
-		inner.WriteString(" AND occurred_at <= ?")
-		innerArgs = append(innerArgs, opts.Window.To.UTC())
-	}
-	inner.WriteString(" LIMIT ?")
-	innerArgs = append(innerArgs, maxSubjects)
-
-	// Try the precomputed item_pairs rollup first (refreshed via
-	// RefreshCoEngagement); fall back to the event scan when it has no rows
-	// for this anchor.
-	if !opts.SkipRollup {
-		hits, err := st.coEngagedFromRollup(ctx, tenant, ref, opts, limit)
-		if err != nil {
-			return nil, err
-		}
-		if len(hits) > 0 {
-			return hits, nil
-		}
-	}
-
-	var sb strings.Builder
-	args := []any{tenant}
-	// Net strength: subjects whose relation to the candidate is non-negative
-	// count for; subjects with negative explicit feedback count against.
-	fmt.Fprintf(&sb, `SELECT entity_type, entity_id,
-  toInt64(uniqExactIf(concat(subject_kind, ':', subject), value >= 0))
-  - toInt64(uniqExactIf(concat(subject_kind, ':', subject), value < 0)) AS strength
-FROM %s.signal_events
-WHERE tenant = ?
-  AND (subject_kind, subject) IN (%s)
-  AND NOT (entity_type = ? AND entity_id = ?)`, st.db, inner.String())
-	args = append(args, innerArgs...)
-	args = append(args, ref.EntityType, ref.EntityID)
-	if types := trimAll(opts.EntityTypes); len(types) > 0 {
-		sb.WriteString(" AND entity_type IN ?")
-		args = append(args, types)
-	}
-	if !opts.Window.From.IsZero() {
-		sb.WriteString(" AND occurred_at >= ?")
-		args = append(args, opts.Window.From.UTC())
-	}
-	if !opts.Window.To.IsZero() {
-		sb.WriteString(" AND occurred_at <= ?")
-		args = append(args, opts.Window.To.UTC())
-	}
-	sb.WriteString("\nGROUP BY entity_type, entity_id\nHAVING strength > 0\nORDER BY strength DESC, entity_type ASC, entity_id ASC\nLIMIT ?")
-	args = append(args, limit)
-
-	rows, err := st.conn.Query(ctx, sb.String(), args...)
-	if err != nil {
-		return nil, fmt.Errorf("signal: co-engaged: %w", err)
-	}
-	defer rows.Close()
-	out := make([]CoEngagedHit, 0, limit)
-	for rows.Next() {
-		var h CoEngagedHit
-		if err := rows.Scan(&h.EntityType, &h.EntityID, &h.Strength); err != nil {
-			return nil, fmt.Errorf("signal: co-engaged scan: %w", err)
-		}
-		out = append(out, h)
-	}
-	return out, rows.Err()
-}
-
-// coEngagedFromRollup serves CoEngaged from the precomputed item_pairs table.
-func (st *Store) coEngagedFromRollup(ctx context.Context, tenant string, ref EntityRef, opts CoEngagedOptions, limit int) ([]CoEngagedHit, error) {
-	var sb strings.Builder
-	args := []any{tenant, ref.EntityType, ref.EntityID}
-	fmt.Fprintf(&sb, `SELECT entity_type_b, entity_id_b, max(strength) AS s
-FROM %s.item_pairs
-WHERE tenant = ? AND entity_type_a = ? AND entity_id_a = ?`, st.db)
-	if types := trimAll(opts.EntityTypes); len(types) > 0 {
-		sb.WriteString(" AND entity_type_b IN ?")
-		args = append(args, types)
-	}
-	sb.WriteString("\nGROUP BY entity_type_b, entity_id_b\nHAVING s > 0\nORDER BY s DESC, entity_type_b ASC, entity_id_b ASC\nLIMIT ?")
-	args = append(args, limit)
-	rows, err := st.conn.Query(ctx, sb.String(), args...)
-	if err != nil {
-		return nil, fmt.Errorf("signal: co-engaged rollup: %w", err)
-	}
-	defer rows.Close()
-	out := make([]CoEngagedHit, 0, limit)
-	for rows.Next() {
-		var h CoEngagedHit
-		if err := rows.Scan(&h.EntityType, &h.EntityID, &h.Strength); err != nil {
-			return nil, fmt.Errorf("signal: co-engaged rollup scan: %w", err)
-		}
-		out = append(out, h)
-	}
-	return out, rows.Err()
-}
-
-// RefreshCoEngagement (re)materializes the item_pairs rollup for one tenant:
-// for every subject, the distinct entities they engaged with non-negatively
-// (capped at MaxEntitiesPerSubject) are cross-joined into pairs; pair
-// strength = co-engaged subject count minus subjects who negatively reacted
-// to the candidate. Run it periodically (host-triggered, like worker.SyncOnce).
-func (st *Store) RefreshCoEngagement(ctx context.Context, tenant string, opts RefreshCoEngagementOptions) error {
-	if strings.TrimSpace(tenant) == "" {
-		return fmt.Errorf("signal: tenant is required")
-	}
-	maxPer := opts.MaxEntitiesPerSubject
-	if maxPer <= 0 {
-		maxPer = 100
-	}
-
-	// Clear the previous rollup for this tenant (lightweight delete).
-	if err := st.conn.Exec(ctx, fmt.Sprintf(`DELETE FROM %s.item_pairs WHERE tenant = ?`, st.db), tenant); err != nil {
-		return fmt.Errorf("signal: clear item_pairs: %w", err)
-	}
-
-	var winFrom, winTo string
-	args := []any{tenant}
-	if !opts.Window.From.IsZero() {
-		winFrom = " AND occurred_at >= ?"
-		args = append(args, opts.Window.From.UTC())
-	}
-	if !opts.Window.To.IsZero() {
-		winTo = " AND occurred_at <= ?"
-		args = append(args, opts.Window.To.UTC())
-	}
-
-	// Per subject: pos = entities with non-negative net value, neg = entities
-	// with negative net value. Anchors (a) come from pos only; candidates (b)
-	// carry +1 when the subject engaged positively and -1 when negatively, so
-	// pair strength nets out dislikes.
-	q := fmt.Sprintf(`INSERT INTO %[1]s.item_pairs
-(tenant, entity_type_a, entity_id_a, entity_type_b, entity_id_b, strength, refreshed_at)
-SELECT
-    '%[2]s' AS tenant,
-    a.1 AS entity_type_a, a.2 AS entity_id_a,
-    (bs.1).1 AS entity_type_b, (bs.1).2 AS entity_id_b,
-    toInt64(sum(bs.2)) AS strength,
-    now()
-FROM (
-    SELECT arrayJoin(pos) AS a, arrayJoin(bsigned) AS bs
-    FROM (
-        SELECT
-            pos,
-            arrayConcat(
-                arrayMap(x -> (x, 1), pos),
-                arrayMap(x -> (x, -1), neg)
-            ) AS bsigned
-        FROM (
-            SELECT
-                subject_kind, subject,
-                groupUniqArrayIf(%[3]d)((entity_type, entity_id), net_v >= 0) AS pos,
-                groupUniqArrayIf(%[3]d)((entity_type, entity_id), net_v < 0) AS neg
-            FROM (
-                SELECT subject_kind, subject, entity_type, entity_id, sum(value) AS net_v
-                FROM %[1]s.signal_events
-                WHERE tenant = ?%[4]s%[5]s
-                GROUP BY subject_kind, subject, entity_type, entity_id
-            )
-            GROUP BY subject_kind, subject
-        )
-    )
-)
-WHERE a != bs.1
-GROUP BY entity_type_a, entity_id_a, entity_type_b, entity_id_b
-HAVING strength > 0`, st.db, escapeCHString(tenant), maxPer, winFrom, winTo)
-
-	if err := st.conn.Exec(ctx, q, args...); err != nil {
-		return fmt.Errorf("signal: refresh co-engagement: %w", err)
 	}
 	return nil
 }
@@ -1119,11 +406,7 @@ func sortedKeys[V any](m map[string]V) []string {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	for i := 1; i < len(keys); i++ {
-		for j := i; j > 0 && keys[j] < keys[j-1]; j-- {
-			keys[j], keys[j-1] = keys[j-1], keys[j]
-		}
-	}
+	sort.Strings(keys)
 	return keys
 }
 
