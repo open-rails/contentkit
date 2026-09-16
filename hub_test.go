@@ -289,7 +289,7 @@ func TestHubRecommendColdStartFallsBackToPopular(t *testing.T) {
 	fc := &hubFakeConn{rowsFor: map[string][][]any{
 		// TopStates + SeenIDs both hit signal_state and return nothing
 		// (cold user). Popular returns ranked entities.
-		"entity_daily": {
+		"signal_events": {
 			{"g1", uint64(10), uint64(12), uint64(8), float64(3.5)},
 			{"g2", uint64(5), uint64(6), uint64(1), float64(2.0)},
 		},

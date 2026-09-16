@@ -365,9 +365,8 @@ type Window struct {
 	To   time.Time
 }
 
-// LastDays returns a window covering the last n days (UTC day-aligned,
-// including today). Day alignment keeps Popular on the entity_daily rollup
-// instead of scanning raw events.
+// LastDays returns a window beginning at UTC midnight n days ago.
+// The open upper bound includes the current partial day.
 func LastDays(n int) Window {
 	today := time.Now().UTC().Truncate(24 * time.Hour)
 	return Window{From: today.AddDate(0, 0, -n)}
@@ -381,9 +380,7 @@ func AllTime() Window { return Window{} }
 
 func (w Window) allTime() bool { return w.From.IsZero() && w.To.IsZero() }
 
-// dayAligned reports whether the window can be served from the daily rollup
-// (both endpoints at UTC midnight, or unbounded). Sub-day windows scan the
-// raw event stream instead.
+// dayAligned reports whether both endpoints are UTC midnight or unbounded.
 func (w Window) dayAligned() bool {
 	aligned := func(t time.Time) bool {
 		if t.IsZero() {
@@ -402,8 +399,8 @@ func (w Window) dayAligned() bool {
 //	          (scored events + PriorWeight)          (Bayesian-smoothed avg)
 //	rank    = volume × max(QualityFloor, quality)
 //
-// With HalfLifeDays > 0, each day-bucket's subject count is decayed by
-// 2^(-age_days/half_life) before the log (time-decayed trending).
+// Qualifying views have equal time weight inside the selected window.
+// A score of zero is a valid observation and participates in the mean.
 type RankWeights struct {
 	// PriorWeight is the strength of the Bayesian prior in pseudo-events.
 	// Defaults to 10. Prevents tiny-sample entities from outranking
@@ -414,8 +411,6 @@ type RankWeights struct {
 	// QualityFloor keeps pure-volume ranking meaningful when hosts record no
 	// scores (quality term would be ~0). Defaults to 1.
 	QualityFloor float64
-	// HalfLifeDays applies exponential time decay to volume. 0 = no decay.
-	HalfLifeDays float64
 }
 
 func (w RankWeights) withDefaults() RankWeights {

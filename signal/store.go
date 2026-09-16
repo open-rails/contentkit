@@ -708,8 +708,8 @@ WHERE tenant = ? AND entity_type = ? AND entity_id = ?`, st.db)
 }
 
 // SubjectCounts returns unique-subject counts for a fixed set of entity ids
-// of one type over a window (zero window = all time) — the bulk "view count
-// per card" read, served from the daily rollup.
+// of one type over a window (zero window = all time). Only view signals count;
+// a click or reaction is not evidence of consumption.
 func (st *Store) SubjectCounts(ctx context.Context, tenant string, entityType string, ids []string, window Window) (map[string]uint64, error) {
 	out := map[string]uint64{}
 	ids = trimAll(ids)
@@ -718,15 +718,15 @@ func (st *Store) SubjectCounts(ctx context.Context, tenant string, entityType st
 	}
 	var sb strings.Builder
 	args := []any{tenant, entityType, ids}
-	fmt.Fprintf(&sb, `SELECT entity_id, uniqExactMerge(subjects)
-FROM %s.entity_daily
-WHERE tenant = ? AND entity_type = ? AND entity_id IN ?`, st.db)
+	fmt.Fprintf(&sb, `SELECT entity_id, uniqExact(tuple(subject_kind, subject))
+FROM %s.signal_events FINAL
+WHERE tenant = ? AND entity_type = ? AND entity_id IN ? AND signal_type = 'view'`, st.db)
 	if !window.From.IsZero() {
-		sb.WriteString(" AND day >= toDate(?)")
+		sb.WriteString(" AND occurred_at >= ?")
 		args = append(args, window.From.UTC())
 	}
 	if !window.To.IsZero() {
-		sb.WriteString(" AND day <= toDate(?)")
+		sb.WriteString(" AND occurred_at <= ?")
 		args = append(args, window.To.UTC())
 	}
 	sb.WriteString("\nGROUP BY entity_id")
@@ -749,9 +749,9 @@ WHERE tenant = ? AND entity_type = ? AND entity_id IN ?`, st.db)
 	return out, rows.Err()
 }
 
-// Popular ranks entities of one type over a time window. Day-aligned windows
-// (and all-time) merge the tiny entity_daily rollup; sub-day windows scan the
-// month-partitioned event stream.
+// Popular ranks consumption of one entity type over a literal time window.
+// Every view in the window has equal time weight. Read canonical events until
+// the daily aggregates support view-only counts and replay-safe sums.
 //
 // IDs, when non-empty, restricts ranking to that candidate set (used for
 // signal-aware re-ranking of search results).
@@ -788,20 +788,7 @@ func (st *Store) popular(ctx context.Context, tenant string, entityType string, 
 	}
 	w := opts.Weights.withDefaults()
 	rankExpr := strings.TrimSpace(opts.RankExpr)
-	useDecay := rankExpr == "" && w.HalfLifeDays > 0
-
-	var (
-		q    string
-		args []any
-	)
-	switch {
-	case !opts.Window.dayAligned():
-		q, args = st.popularFromEvents(tenant, entityType, ids, opts.Window, rankExpr, w, limit)
-	case useDecay:
-		q, args = st.popularDecayed(tenant, entityType, ids, opts.Window, w, limit)
-	default:
-		q, args = st.popularFromRollup(tenant, entityType, ids, opts.Window, rankExpr, w, limit)
-	}
+	q, args := st.popularFromEvents(tenant, entityType, ids, opts.Window, rankExpr, w, limit)
 
 	rows, err := st.conn.Query(ctx, q, args...)
 	if err != nil {
@@ -831,100 +818,6 @@ func defaultRankExpr(w RankWeights, volumeExpr string) string {
 	)
 }
 
-func (st *Store) popularFromRollup(tenant, entityType string, ids []string, win Window, rankExpr string, w RankWeights, limit int) (string, []any) {
-	if rankExpr == "" {
-		rankExpr = defaultRankExpr(w, "toFloat64(subjects)")
-	}
-	var sb strings.Builder
-	args := []any{tenant, entityType}
-	// Output aliases must not collide with the source columns (subjects /
-	// signals / completions): ClickHouse expands same-named aliases inside
-	// the rank expression, nesting the merge combinators.
-	fmt.Fprintf(&sb, `SELECT
-    entity_id,
-    uniqExactMerge(subjects) AS out_subjects,
-    toUInt64(sum(signals)) AS out_signals,
-    toUInt64(sum(completions)) AS out_completions,
-    (%s) AS rank_score
-FROM %s.entity_daily
-WHERE tenant = ? AND entity_type = ?`, rewriteRankAliases(rankExpr, map[string]string{
-		"subjects":       "uniqExactMerge(subjects)",
-		"signals":        "toUInt64(sum(signals))",
-		"engagement_sum": "toInt64(sum(engagement_sum))",
-		"scored_signals": "toUInt64(sum(scored_signals))",
-		"completions":    "toUInt64(sum(completions))",
-	}), st.db)
-	if len(ids) > 0 {
-		sb.WriteString(" AND entity_id IN ?")
-		args = append(args, ids)
-	}
-	if !win.From.IsZero() {
-		sb.WriteString(" AND day >= toDate(?)")
-		args = append(args, win.From.UTC())
-	}
-	if !win.To.IsZero() {
-		sb.WriteString(" AND day <= toDate(?)")
-		args = append(args, win.To.UTC())
-	}
-	sb.WriteString("\nGROUP BY entity_id\nORDER BY rank_score DESC, entity_id ASC\nLIMIT ?")
-	args = append(args, limit)
-	return sb.String(), args
-}
-
-func (st *Store) popularDecayed(tenant, entityType string, ids []string, win Window, w RankWeights, limit int) (string, []any) {
-	// Per-day uniq subjects, decayed by age before the log; exact uniq across
-	// the window is still reported via the merged state.
-	rank := fmt.Sprintf(
-		"log10(1 + decayed_volume) * greatest(%g, (toFloat64(engagement_sum) + %g) / (toFloat64(scored_signals) + %g))",
-		w.QualityFloor, w.PriorScore*w.PriorWeight, w.PriorWeight,
-	)
-	var sb strings.Builder
-	args := []any{tenant, entityType}
-	fmt.Fprintf(&sb, `SELECT
-    entity_id,
-    uniqExactMerge(subjects_state) AS subjects,
-    toUInt64(sum(day_signals)) AS signals,
-    toUInt64(sum(day_completions)) AS completions,
-    (%s) AS rank_score
-FROM (
-    SELECT
-        entity_id,
-        day,
-        uniqExactMergeState(subjects) AS subjects_state,
-        uniqExactMerge(subjects) AS day_subjects,
-        sum(signals) AS day_signals,
-        sum(engagement_sum) AS day_engagement,
-        sum(scored_signals) AS day_scored,
-        sum(completions) AS day_completions
-    FROM %s.entity_daily
-    WHERE tenant = ? AND entity_type = ?`,
-		rewriteRankAliases(rank, map[string]string{
-			"decayed_volume": fmt.Sprintf("sum(toFloat64(day_subjects) * exp2(-toFloat64(dateDiff('day', day, toDate(now()))) / %g))", w.HalfLifeDays),
-			"engagement_sum": "toInt64(sum(day_engagement))",
-			"scored_signals": "toUInt64(sum(day_scored))",
-		}), st.db)
-	if len(ids) > 0 {
-		sb.WriteString(" AND entity_id IN ?")
-		args = append(args, ids)
-	}
-	if !win.From.IsZero() {
-		sb.WriteString(" AND day >= toDate(?)")
-		args = append(args, win.From.UTC())
-	}
-	if !win.To.IsZero() {
-		sb.WriteString(" AND day <= toDate(?)")
-		args = append(args, win.To.UTC())
-	}
-	sb.WriteString(`
-    GROUP BY entity_id, day
-)
-GROUP BY entity_id
-ORDER BY rank_score DESC, entity_id ASC
-LIMIT ?`)
-	args = append(args, limit)
-	return sb.String(), args
-}
-
 func (st *Store) popularFromEvents(tenant, entityType string, ids []string, win Window, rankExpr string, w RankWeights, limit int) (string, []any) {
 	if rankExpr == "" {
 		rankExpr = defaultRankExpr(w, "toFloat64(subjects)")
@@ -933,16 +826,16 @@ func (st *Store) popularFromEvents(tenant, entityType string, ids []string, win 
 	args := []any{tenant, entityType}
 	fmt.Fprintf(&sb, `SELECT
     entity_id,
-    uniqExact(concat(subject_kind, ':', subject)) AS subjects,
+    uniqExact(tuple(subject_kind, subject)) AS subjects,
     uniqExact(event_id) AS signals,
     toUInt64(countIf(completed)) AS completions,
     (%s) AS rank_score
-FROM %s.signal_events
-WHERE tenant = ? AND entity_type = ?`, rewriteRankAliases(rankExpr, map[string]string{
-		"subjects":       "uniqExact(concat(subject_kind, ':', subject))",
+FROM %s.signal_events FINAL
+WHERE tenant = ? AND entity_type = ? AND signal_type = 'view'`, rewriteRankAliases(rankExpr, map[string]string{
+		"subjects":       "uniqExact(tuple(subject_kind, subject))",
 		"signals":        "uniqExact(event_id)",
 		"engagement_sum": "toInt64(sum(score))",
-		"scored_signals": "toUInt64(countIf(score != 0))",
+		"scored_signals": "toUInt64(count())",
 		"completions":    "toUInt64(countIf(completed))",
 	}), st.db)
 	if len(ids) > 0 {

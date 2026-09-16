@@ -468,7 +468,7 @@ func TestIntegrationPopular(t *testing.T) {
 		}
 	}
 
-	// Window covering days 9..12 only (rollup path).
+	// Literal window beginning on day 9 and ending at midnight on day 12.
 	win := Between(time.Date(2026, 5, 9, 0, 0, 0, 0, time.UTC), time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC))
 	hits, err := st.Popular(ctx, tenant, "gallery", PopularOptions{Window: win, Limit: 10})
 	if err != nil {
@@ -517,15 +517,6 @@ func TestIntegrationPopular(t *testing.T) {
 		if h.EntityID == "gMeh" || h.EntityID == "gOld" {
 			t.Fatalf("out-of-window entity in sub-day results: %+v", subDay)
 		}
-	}
-
-	// Decayed ranking executes against the real schema.
-	if _, err := st.Popular(ctx, tenant, "gallery", PopularOptions{
-		Window:  win,
-		Weights: RankWeights{HalfLifeDays: 7},
-		Limit:   10,
-	}); err != nil {
-		t.Fatalf("decayed popular: %v", err)
 	}
 
 	// Host rank expression: raw subject count.

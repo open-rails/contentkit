@@ -279,7 +279,7 @@ func TestPopularPathSelection(t *testing.T) {
 	ctx := context.Background()
 	midnight := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 
-	// Day-aligned -> rollup.
+	// Day-aligned popularity uses the exact event path until the rollup stores view-only subjects.
 	fc := &fakeConn{}
 	st, _ := NewStore(fc, "hub")
 	if _, err := st.Popular(ctx, "t", "gallery", PopularOptions{
@@ -287,8 +287,8 @@ func TestPopularPathSelection(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if q := fc.queries[0].query; !strings.Contains(q, "entity_daily") {
-		t.Fatalf("day-aligned window must use the rollup:\n%s", q)
+	if q := fc.queries[0].query; !strings.Contains(q, "signal_events") || !strings.Contains(q, "signal_type = 'view'") {
+		t.Fatalf("day-aligned window must use view events:\n%s", q)
 	}
 
 	// Sub-day -> events.
@@ -302,24 +302,13 @@ func TestPopularPathSelection(t *testing.T) {
 		t.Fatalf("sub-day window must scan events:\n%s", q)
 	}
 
-	// All-time -> rollup, no day predicates.
+	// All-time -> exact events, no day predicates.
 	fc.queries = nil
 	if _, err := st.Popular(ctx, "t", "gallery", PopularOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if q := fc.queries[0].query; !strings.Contains(q, "entity_daily") || strings.Contains(q, "day >=") {
-		t.Fatalf("all-time must use the rollup with no day bounds:\n%s", q)
-	}
-
-	// Decay -> nested day-bucket query.
-	fc.queries = nil
-	if _, err := st.Popular(ctx, "t", "gallery", PopularOptions{
-		Weights: RankWeights{HalfLifeDays: 14},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if q := fc.queries[0].query; !strings.Contains(q, "exp2(") || !strings.Contains(q, "GROUP BY entity_id, day") {
-		t.Fatalf("half-life must produce decayed day buckets:\n%s", q)
+	if q := fc.queries[0].query; !strings.Contains(q, "signal_events") || strings.Contains(q, "occurred_at >=") {
+		t.Fatalf("all-time must use events with no time bounds:\n%s", q)
 	}
 
 	// Host RankExpr replaces the default ranking and is alias-rewritten.
@@ -329,7 +318,7 @@ func TestPopularPathSelection(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if q := fc.queries[0].query; !strings.Contains(q, "toFloat64(uniqExactMerge(subjects)) + toFloat64(toUInt64(sum(completions)))") {
+	if q := fc.queries[0].query; !strings.Contains(q, "toFloat64(uniqExact(tuple(subject_kind, subject))) + toFloat64(toUInt64(countIf(completed)))") {
 		t.Fatalf("rank aliases must be rewritten to aggregates:\n%s", q)
 	}
 }

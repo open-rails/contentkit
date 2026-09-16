@@ -129,7 +129,7 @@ recs, _  := hub.Recommend(ctx, user, searchkit.RecommendOptions{EntityTypes: []s
 
 - `Popular` merges a tiny daily rollup (`entity_daily`) for day-aligned windows and scans raw
   events for sub-day slices. Default ranking: log-scaled unique subjects × Bayesian-smoothed
-  engagement; tune via `RankWeights` (incl. `HalfLifeDays` time decay) or replace with a trusted
+  engagement; tune via `RankWeights` (equal time weight inside each window) or replace with a trusted
   `RankExpr`.
 - `Recommend` fuses content similarity (seeded from the subject's high-signal entities) with
   co-engagement, excludes seen, and falls back to popularity on cold start. **Negative feedback
@@ -415,3 +415,20 @@ Construct the runtime via `runtime.NewWithContext(...)` to:
 
 - upsert the configured model set into `<schema>.embedding_models`, and
 - ensure per-model cosine + binary HNSW indexes exist (via `CREATE INDEX CONCURRENTLY`).
+
+### Popularity window semantics
+
+Popularity and card viewer counts use only `view` events. Clicks and reactions
+remain stored as separate signals. All qualifying views inside the requested
+window have equal time weight; `RankWeights.HalfLifeDays` has been removed in
+this pre-v1 change. No current Doujins/Hentai0 host call used it. A zero engagement
+score is a valid view observation, not a missing score.
+
+Until the daily projection has view-only, retry-safe aggregates, these reads use
+`signal_events FINAL`. This fixes duplicate-delivery and mixed-signal correctness
+but scans more data than a daily rollup; qualify production query cost before
+large-scale rollout. Do not expire these source events before the replacement
+projection and durable compact-history design can answer the same queries.
+Retries must still preserve both event ID and occurrence time: changing either
+can represent a different storage key. This patch does not implement session
+revision reconciliation, compaction, or the future explicit-feedback formula.
