@@ -284,18 +284,20 @@ recs, _  := hub.Recommend(ctx, user, searchkit.RecommendOptions{EntityTypes: []s
   "subjects who engaged with X also engaged with Y".
 
 **Erasure (account deletion).** `hub.EraseSubjects(ctx, subjects)` permanently erases subjects from the
-hub's tenant: it records a fence first (`erasures`, a hash of the subject), then deletes their events,
-compact state, daily contributions, exposures and legacy raw rows, removes co-engagement pairs that
-included entities they contributed to (rebuilt by the next `RefreshCoEngagement`), waits for the
-mutations on every replica and verifies nothing remains (`ErasureReport.Complete()`). Fenced subjects'
-later signals and exposures are dropped and projection rebuilds cannot resurrect them. Windows and
-viewer counts exclude exactly the erased contributions because they are stored per subject.
-`hub.Forget` (clear one entity/type from history) is not erasure. `hub.EnforceErasures(ctx, opts)`
-re-applies recorded erasures to catch residue from a write racing the fence or a restored backup:
-schedule it with `Since` = previous run, and run it with zero `Since` after every restore, after
-re-erasing subjects deleted since the backup (the host's deletion ledger is authoritative; the
-`erasures` table is restored with the backup). A shared account exists in every tenant: each host
-erases its own tenant.
+hub's tenant. It records the erasure in the `erasures` ledger first (a hash of the subject, written
+with a quorum of every replica), then deletes their events, compact state, daily contributions,
+exposures and legacy raw rows, removes co-engagement pairs that included entities they contributed
+to (rebuilt by the next `RefreshCoEngagement`), waits for the mutations on every replica and
+verifies nothing remains. The ledger is the barrier: every write, read, projection and export
+evaluates it inside its own ClickHouse statement, so a writer that read the ledger before the
+erasure and inserts afterwards, a projection that observed pre-erasure events, a delayed job or a
+restored backup can leave physical residue but never a readable row. See
+[HOST_INTEGRATION.md](HOST_INTEGRATION.md#subject-erasure-completion-contract) for the completion
+contract. `hub.Forget` (clear one entity/type from history) is not erasure. `hub.EnforceErasures(ctx)`
+physically removes such residue for every recorded erasure of the tenant (no cursor): schedule it,
+and run it after every restore, after re-erasing subjects deleted since the backup (the host's
+deletion ledger is authoritative; the `erasures` table is restored with the backup). A shared account
+exists in every tenant: each host erases its own tenant.
 
 **Maintenance (host-scheduled).** `hub.RefreshCoEngagement(...)` rebuilds the `item_pairs` rollup.
 `hub.RepairProjections(ctx, signal.RepairOptions{...})` is the owned projection repair: bounded by

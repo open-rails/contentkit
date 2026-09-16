@@ -5,18 +5,28 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 )
 
 // subjectHashExpr is the fence key: sipHash128 over "kind:subject".
 const subjectHashExpr = "sipHash128(concat(subject_kind, ':', subject))"
 
+// subjectHashKey is the Go-side input of the same hash for one subject.
+func subjectHashKey(s Subject) string { return s.Kind() + ":" + s.Key() }
+
 // notErased is the read and write barrier for subject-bearing rows. It is
 // deliberately evaluated by ClickHouse in the same INSERT/SELECT statement
 // as the data operation: a writer that read the ledger before EraseSubjects
-// recorded its fence is still filtered after the fence commits.
+// recorded its fence is still filtered after the fence commits. Every read,
+// projection and export of subject rows carries it (or subjectNotErased).
 func (st *Store) notErased() string {
 	return "(" + subjectHashExpr + ", tenant) NOT IN (SELECT subject_hash, tenant FROM " + st.db + ".erasures)"
+}
+
+// subjectNotErased is the barrier for single-subject reads: a primary-key
+// lookup of the ledger evaluated once per query instead of materializing the
+// whole ledger. Binds two arguments: the tenant and subjectHashKey(subject).
+func (st *Store) subjectNotErased() string {
+	return "(SELECT count() FROM " + st.db + ".erasures WHERE tenant = ? AND subject_hash = sipHash128(?)) = 0"
 }
 
 // ErasureReport describes one erasure or enforcement pass.
@@ -42,14 +52,31 @@ func (r ErasureReport) Complete() bool {
 // subjectTables hold rows keyed by (tenant, subject_kind, subject).
 var subjectTables = []string{"events", "subject_state", "subject_daily", "exposures"}
 
-// EraseSubjects permanently erases subjects from every listed tenant: it
-// records the fence first (so concurrent and later writes, impressions and
-// projection rebuilds for them are dropped), deletes their events, compact
-// state, daily contributions, impressions and legacy raw rows, removes
-// co-engagement pairs touching entities they contributed to, waits for the
-// mutations on every replica and verifies nothing remains. Idempotent. After
-// restoring a backup, replay every erasure newer than the backup and run
-// EnforceErasures.
+// maxErasurePasses bounds the delete-and-verify loop of one erasure: a row
+// landing between a pass's mutation and its count is deleted by the next pass.
+const maxErasurePasses = 3
+
+// EraseSubjects permanently erases subjects from every listed tenant.
+//
+// Completion contract: when the returned report is Complete(),
+//
+//  1. the erasure is recorded in the ledger on every replica (quorum insert),
+//     so from that moment every write, read, projection and export on any
+//     replica drops or hides the subjects' rows (the barrier): the subject
+//     key is dead in the tenant forever;
+//  2. every row of the subjects that existed when the pass ran is deleted from
+//     events, compact state, daily contributions, exposures and legacy raw
+//     tables on every replica (mutations_sync = 2) and re-counted as zero;
+//  3. co-engagement pairs touching entities the subjects contributed to are
+//     removed (RefreshCoEngagement rebuilds them and re-verifies the ledger
+//     around its build).
+//
+// A writer or projection that observed the pre-erasure state can still leave
+// residue rows; they are unreadable by (1) and EnforceErasures removes them
+// physically. Idempotent. Returns an error without Complete() when a replica
+// is unavailable (the fence would not be durable everywhere) or rows remain
+// after maxErasurePasses. After restoring a backup, replay every erasure newer
+// than the backup and run EnforceErasures.
 func (st *Store) EraseSubjects(ctx context.Context, tenants []string, subjects []Subject) (ErasureReport, error) {
 	report := ErasureReport{Remaining: map[string]uint64{}}
 	tenants = trimAll(tenants)
@@ -79,7 +106,7 @@ func (st *Store) EraseSubjects(ctx context.Context, tenants []string, subjects [
 		}
 	}
 	for _, tenant := range tenants {
-		pass, err := st.eraseWhere(ctx, tenant, filter, args)
+		pass, err := st.erasePasses(ctx, tenant, filter, args)
 		if err != nil {
 			return report, err
 		}
@@ -91,30 +118,38 @@ func (st *Store) EraseSubjects(ctx context.Context, tenants []string, subjects [
 	return report, nil
 }
 
-// EnforceOptions bounds EnforceErasures.
-type EnforceOptions struct {
-	// Since limits enforcement to erasures recorded at or after it (zero = all).
-	// Periodic runs pass the previous run's start; a restore passes zero.
-	Since time.Time
+// erasedCount is the ledger's distinct subject count: RefreshCoEngagement
+// re-verifies it around a build so a rollup never publishes a subject erased
+// while it was being computed.
+func (st *Store) erasedCount(ctx context.Context, tenant string) (uint64, error) {
+	rows, err := st.conn.Query(ctx, fmt.Sprintf("SELECT uniqExact(subject_hash) FROM %s.erasures WHERE tenant = ?", st.db), tenant)
+	if err != nil {
+		return 0, fmt.Errorf("signal: erasure ledger: %w", err)
+	}
+	defer rows.Close()
+	var n uint64
+	if rows.Next() {
+		if err := rows.Scan(&n); err != nil {
+			return 0, err
+		}
+	}
+	return n, rows.Err()
 }
 
-// EnforceErasures re-applies recorded erasures of a tenant: it deletes residue
-// written by writers that passed the fence check before the fence existed, or
-// rows restored from a backup. Idempotent; schedule it and run it with a zero
-// Since after every restore (after re-erasing subjects deleted since the
-// backup, which the host's own deletion ledger knows).
-func (st *Store) EnforceErasures(ctx context.Context, tenant string, opts EnforceOptions) (ErasureReport, error) {
+// EnforceErasures re-applies every recorded erasure of a tenant to every row:
+// it deletes residue left by writers or projections that observed the state
+// before the fence, or rows restored from a backup. Such rows were already
+// unreadable; this removes them physically. There is no cursor, so a delayed
+// write for an old erasure is never skipped. Idempotent; schedule it, and run
+// it after every restore (after re-erasing subjects deleted since the backup,
+// which the host's own deletion ledger knows).
+func (st *Store) EnforceErasures(ctx context.Context, tenant string) (ErasureReport, error) {
 	report := ErasureReport{Remaining: map[string]uint64{}}
 	if strings.TrimSpace(tenant) == "" {
 		return report, fmt.Errorf("signal: tenant is required")
 	}
-	q := fmt.Sprintf("SELECT DISTINCT hex(subject_hash) FROM %s.erasures WHERE tenant = ?", st.db)
-	args := []any{tenant}
-	if !opts.Since.IsZero() {
-		q += " AND erased_at >= ?"
-		args = append(args, opts.Since.UTC())
-	}
-	rows, err := st.conn.Query(ctx, q+" ORDER BY 1", args...)
+	q := fmt.Sprintf("SELECT DISTINCT hex(subject_hash) FROM %s.erasures WHERE tenant = ? ORDER BY 1", st.db)
+	rows, err := st.conn.Query(ctx, q, tenant)
 	if err != nil {
 		return report, fmt.Errorf("signal: read erasures: %w", err)
 	}
@@ -134,7 +169,7 @@ func (st *Store) EnforceErasures(ctx context.Context, tenant string, opts Enforc
 	for start := 0; start < len(hashes); start += mutationTupleChunk {
 		chunk := hashes[start:min(start+mutationTupleChunk, len(hashes))]
 		filter := "hex(" + subjectHashExpr + ") IN ?"
-		pass, err := st.eraseWhere(ctx, tenant, filter, []any{chunk})
+		pass, err := st.erasePasses(ctx, tenant, filter, []any{chunk})
 		if err != nil {
 			return report, err
 		}
@@ -144,6 +179,22 @@ func (st *Store) EnforceErasures(ctx context.Context, tenant string, opts Enforc
 		return report, fmt.Errorf("signal: erasure enforcement incomplete: %v", report.Remaining)
 	}
 	return report, nil
+}
+
+// erasePasses runs eraseWhere until nothing remains or maxErasurePasses.
+func (st *Store) erasePasses(ctx context.Context, tenant, filter string, args []any) (ErasureReport, error) {
+	var pairs uint64
+	for pass := 1; ; pass++ {
+		report, err := st.eraseWhere(ctx, tenant, filter, args)
+		if err != nil {
+			return report, err
+		}
+		pairs += report.PairsRemoved
+		report.PairsRemoved = pairs
+		if report.Complete() || pass == maxErasurePasses {
+			return report, nil
+		}
+	}
 }
 
 func (st *Store) eraseWhere(ctx context.Context, tenant, filter string, args []any) (ErasureReport, error) {
@@ -159,7 +210,8 @@ func (st *Store) eraseWhere(ctx context.Context, tenant, filter string, args []a
 		}
 	}
 	// Pairs first: the contributed entity set is read from the rows being
-	// erased, and passed as literals so every replica deletes the same pairs.
+	// erased, and passed as literals so every replica deletes the same pairs
+	// (replicated mutations reject subqueries as nondeterministic).
 	entities, err := st.contributedEntities(ctx, tenant, filter, args)
 	if err != nil {
 		return report, err
@@ -203,7 +255,7 @@ func (st *Store) eraseWhere(ctx context.Context, tenant, filter string, args []a
 	return report, nil
 }
 
-// mutationTupleChunk bounds the literal IN list of one pair deletion.
+// mutationTupleChunk bounds the literal IN list of one mutation.
 const mutationTupleChunk = 1000
 
 // contributedEntities lists entities the filtered subjects have daily rows for.
@@ -304,7 +356,8 @@ func quorumSetting(quorum uint32) string {
 }
 
 // fenced returns the subjects among the given ones that a recorded erasure
-// covers; writes for them are dropped.
+// covers; writers skip them before building their INSERT. This is hygiene,
+// not the barrier: the INSERT itself and every read re-evaluate the ledger.
 func (st *Store) fenced(ctx context.Context, tenant string, subjects []Subject) (map[[2]string]struct{}, error) {
 	if len(subjects) == 0 {
 		return nil, nil

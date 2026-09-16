@@ -60,7 +60,7 @@ type Hub interface {
 	Attribution(ctx context.Context, opts signal.AttributionOptions) (signal.AttributionPage, error)
 	Forget(ctx context.Context, subject signal.Subject, entityType, entityID string) error
 	EraseSubjects(ctx context.Context, subjects []signal.Subject) (signal.ErasureReport, error)
-	EnforceErasures(ctx context.Context, opts signal.EnforceOptions) (signal.ErasureReport, error)
+	EnforceErasures(ctx context.Context) (signal.ErasureReport, error)
 
 	// Discovery plane.
 	History(ctx context.Context, subject signal.Subject, opts signal.HistoryOptions) ([]signal.StateRow, error)
@@ -639,9 +639,9 @@ func (h *EmbeddedHub) Forget(ctx context.Context, subject signal.Subject, entity
 	return store.Forget(ctx, h.tenant, subject, entityType, entityID)
 }
 
-// EraseSubjects permanently erases subjects from this tenant's signal plane
-// and fences their future writes (see signal.Store.EraseSubjects). Shared
-// accounts exist in several tenants: each host erases its own tenant.
+// EraseSubjects permanently erases subjects from this tenant's signal plane:
+// see signal.Store.EraseSubjects for the completion contract. Shared accounts
+// exist in several tenants: each host erases its own tenant.
 func (h *EmbeddedHub) EraseSubjects(ctx context.Context, subjects []signal.Subject) (signal.ErasureReport, error) {
 	store, err := h.requireStore()
 	if err != nil {
@@ -650,14 +650,15 @@ func (h *EmbeddedHub) EraseSubjects(ctx context.Context, subjects []signal.Subje
 	return store.EraseSubjects(ctx, []string{h.tenant}, subjects)
 }
 
-// EnforceErasures re-applies every recorded erasure of this tenant: schedule
-// it and run it after every restore.
-func (h *EmbeddedHub) EnforceErasures(ctx context.Context, opts signal.EnforceOptions) (signal.ErasureReport, error) {
+// EnforceErasures physically removes residue of every recorded erasure of
+// this tenant (see signal.Store.EnforceErasures): schedule it and run it after
+// every restore.
+func (h *EmbeddedHub) EnforceErasures(ctx context.Context) (signal.ErasureReport, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return signal.ErasureReport{}, err
 	}
-	return store.EnforceErasures(ctx, h.tenant, opts)
+	return store.EnforceErasures(ctx, h.tenant)
 }
 
 // HistoryCount returns the total row count History would paginate over.

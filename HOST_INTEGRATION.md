@@ -171,6 +171,44 @@ Cursor contract:
   (`Signal.WithAttribution`); clicks without a render id are not exported. Erased subjects are
   excluded through the erasure ledger at read time, not only by deletion.
 
+## Subject Erasure Completion Contract
+
+`hub.EraseSubjects(ctx, subjects)` (account deletion) returns an `ErasureReport`; `Complete()` is
+true only when all of the following hold, and the guarantee then survives restarts, other
+processes, delayed jobs and restores:
+
+1. The erasure is recorded in the `erasures` ledger with `insert_quorum` = every replica of the
+   ledger table. If a replica is down the call fails fast (`TOO_FEW_LIVE_REPLICAS`), records
+   nothing and deletes nothing; retry later. Never treat an error as deletion.
+2. Every row of the subjects that existed when the call ran is deleted from events, compact state,
+   daily contributions, exposures and legacy raw tables on every replica (`mutations_sync = 2`),
+   re-counted as zero (up to three delete-and-verify passes), and co-engagement pairs touching
+   entities they contributed to are removed.
+3. From the moment the ledger row is durable, every write, read, projection and export evaluates
+   the ledger inside its own ClickHouse statement: `RecordSignals`/`RecordExposures` drop the
+   subjects' rows server-side; `States`, `History`, `SeenIDs`, `NegativeIDs`, `TopStates`,
+   `Metrics`, `Popular`, `PopularityFor`, `CoEngaged`, `Attribution`, `Inventory` never return them;
+   `RecordSignals`' projections, `RepairProjections` and `RefreshCoEngagement` never derive from
+   them (a co-engagement build re-verifies the ledger around itself and rebuilds if an erasure
+   landed meanwhile).
+
+The subject key is dead in that tenant forever: later signals and exposures for it are dropped, and
+writes are never accepted under a "new epoch". User ids are never reused; rotate anonymous keys
+instead of reusing one after erasing it. A shared account exists in every tenant: each host erases
+its own tenant.
+
+Residue (rows that landed physically after the fence, or rows restored from a backup) is
+unreadable by (3). `hub.EnforceErasures(ctx)` deletes it for every recorded erasure of the tenant;
+there is no cursor, so nothing is skipped. Schedule it (daily is enough) and run it after every
+restore, after re-erasing the subjects deleted since the backup (the host's deletion ledger is
+authoritative; the `erasures` table is restored with the backup). A non-`Complete()` report from it
+means rows remained after three passes: investigate, do not ignore.
+
+Host wiring: call `EraseSubjects` from account deletion and treat only `Complete()` as done;
+schedule `EnforceErasures`, `RepairProjections` and `RefreshCoEngagement`; keep the host deletion
+ledger for restores. Multi-replica behaviour is qualified on two replicas sharing one Keeper; a
+production cluster must be qualified in place.
+
 ## Migration Checklist
 
 - Create and reuse a single `searchkit.Client`.

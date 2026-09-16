@@ -219,7 +219,7 @@ func TestHubEraseSubjectsIsTenantScoped(t *testing.T) {
 			t.Fatalf("%s history after erasure: %v %v", tc.hub.Tenant(), hist, err)
 		}
 	}
-	if _, err := h.EnforceErasures(ctx, signal.EnforceOptions{}); err != nil {
+	if _, err := h.EnforceErasures(ctx); err != nil {
 		t.Fatal(err)
 	}
 	m, err := h.Metrics(ctx, "gallery", []string{"g1"}, signal.AllTime())

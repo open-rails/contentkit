@@ -43,15 +43,15 @@ func (st *Store) States(ctx context.Context, tenant string, subject Subject, ref
 		byType[r.EntityType] = append(byType[r.EntityType], r.EntityID)
 	}
 	clauses := make([]string, 0, len(byType))
-	args := []any{tenant, subject.Kind(), subject.Key()}
+	args := []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}
 	for _, t := range sortedKeys(byType) {
 		clauses = append(clauses, "(entity_type = ? AND entity_id IN ?)")
 		args = append(args, t, byType[t])
 	}
 	q := fmt.Sprintf(`SELECT %s
 FROM %s.subject_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND (%s) AND %s`,
-		stateColumns, st.db, strings.Join(clauses, " OR "), st.notErased())
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND (%s)`,
+		stateColumns, st.db, st.subjectNotErased(), strings.Join(clauses, " OR "))
 	rows, err := st.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: states: %w", err)
@@ -102,8 +102,8 @@ func (st *Store) History(ctx context.Context, tenant string, subject Subject, op
 	var sb strings.Builder
 	fmt.Fprintf(&sb, `SELECT %s
 FROM %s.subject_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s`, stateColumns, st.db, st.notErased())
-	args, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key()}, opts)
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s`, stateColumns, st.db, st.subjectNotErased())
+	args, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -133,8 +133,8 @@ func (st *Store) HistoryCount(ctx context.Context, tenant string, subject Subjec
 	var sb strings.Builder
 	fmt.Fprintf(&sb, `SELECT toInt64(count())
 FROM %s.subject_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s`, st.db, st.notErased())
-	args, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key()}, opts)
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s`, st.db, st.subjectNotErased())
+	args, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, opts)
 	if err != nil {
 		return 0, err
 	}
@@ -163,8 +163,8 @@ func (st *Store) SeenIDs(ctx context.Context, tenant string, subject Subject, en
 	}
 	q := fmt.Sprintf(`SELECT entity_id
 FROM %s.subject_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND entity_type = ? AND max_progress > 0 AND %s`, st.db, st.notErased())
-	rows, err := st.conn.Query(ctx, q, tenant, subject.Kind(), subject.Key(), entityType)
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND entity_type = ? AND max_progress > 0`, st.db, st.subjectNotErased())
+	rows, err := st.conn.Query(ctx, q, tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject), entityType)
 	if err != nil {
 		return nil, fmt.Errorf("signal: seen ids: %w", err)
 	}
@@ -187,10 +187,10 @@ func (st *Store) NegativeIDs(ctx context.Context, tenant string, subject Subject
 		return nil, err
 	}
 	var sb strings.Builder
-	args := []any{tenant, subject.Kind(), subject.Key()}
+	args := []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}
 	fmt.Fprintf(&sb, `SELECT entity_type, entity_id
 FROM %s.subject_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND net_value < 0 AND %s`, st.db, st.notErased())
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND net_value < 0`, st.db, st.subjectNotErased())
 	if types := trimAll(entityTypes); len(types) > 0 {
 		sb.WriteString(" AND entity_type IN ?")
 		args = append(args, types)
@@ -222,10 +222,10 @@ func (st *Store) TopStates(ctx context.Context, tenant string, subject Subject, 
 		limit = 10
 	}
 	var sb strings.Builder
-	args := []any{tenant, subject.Kind(), subject.Key()}
+	args := []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}
 	fmt.Fprintf(&sb, `SELECT %s
 FROM %s.subject_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s`, stateColumns, st.db, st.notErased())
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s`, stateColumns, st.db, st.subjectNotErased())
 	if types := trimAll(opts.EntityTypes); len(types) > 0 {
 		sb.WriteString(" AND entity_type IN ?")
 		args = append(args, types)
@@ -508,10 +508,17 @@ WHERE tenant = ? AND entity_type_a = ? AND entity_id_a = ?`, st.db)
 	return out, rows.Err()
 }
 
+// maxRefreshAttempts bounds RefreshCoEngagement's rebuilds when erasures keep
+// landing while it computes.
+const maxRefreshAttempts = 3
+
 // RefreshCoEngagement (re)materializes the item_pairs rollup for one tenant:
 // per subject, the distinct entities with non-negative summed feedback
 // (capped at MaxEntitiesPerSubject) are cross-joined into pairs; strength =
 // co-engaged subjects minus subjects with negative feedback on the candidate.
+// Pairs carry no subject, so a build that started before an erasure could
+// publish that subject's contribution after EraseSubjects removed its pairs:
+// the build is repeated while the erasure ledger changed during it.
 func (st *Store) RefreshCoEngagement(ctx context.Context, tenant string, opts RefreshCoEngagementOptions) error {
 	if strings.TrimSpace(tenant) == "" {
 		return fmt.Errorf("signal: tenant is required")
@@ -519,6 +526,28 @@ func (st *Store) RefreshCoEngagement(ctx context.Context, tenant string, opts Re
 	if err := opts.Window.Validate(); err != nil {
 		return err
 	}
+	for attempt := 1; ; attempt++ {
+		before, err := st.erasedCount(ctx, tenant)
+		if err != nil {
+			return err
+		}
+		if err := st.buildCoEngagement(ctx, tenant, opts); err != nil {
+			return err
+		}
+		after, err := st.erasedCount(ctx, tenant)
+		if err != nil {
+			return err
+		}
+		if after == before {
+			return nil
+		}
+		if attempt == maxRefreshAttempts {
+			return fmt.Errorf("signal: co-engagement refresh raced erasures %d times; retry", attempt)
+		}
+	}
+}
+
+func (st *Store) buildCoEngagement(ctx context.Context, tenant string, opts RefreshCoEngagementOptions) error {
 	maxPer := opts.MaxEntitiesPerSubject
 	if maxPer <= 0 {
 		maxPer = 100

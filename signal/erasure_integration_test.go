@@ -185,7 +185,7 @@ VALUES ('doujins', 'residue', 'served', 'search', 'user', 'gone', ['gallery'], [
 	if n := countWhere(t, conn, "subject_state", "tenant = 'doujins' AND subject = 'gone'"); n == 0 {
 		t.Fatal("precondition: residue projected")
 	}
-	enforced, err := st.EnforceErasures(ctx, "doujins", EnforceOptions{})
+	enforced, err := st.EnforceErasures(ctx, "doujins")
 	if err != nil || !enforced.Complete() {
 		t.Fatalf("enforce: %+v %v", enforced, err)
 	}
