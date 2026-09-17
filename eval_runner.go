@@ -34,15 +34,16 @@ func (r clientRunner) Run(ctx context.Context, c eval.GoldenCase) ([]eval.Result
 	}
 	opts.Limit = c.K
 
-	hits, err := r.client.Search(ctx, c.Query, opts)
+	page, err := r.client.Search(ctx, c.Query, opts)
 	if err != nil {
 		return nil, "search", err
 	}
 
-	results := make([]eval.Result, len(hits))
-	for i, hit := range hits {
+	// Golden cases judge content items, so the parent is the graded key.
+	results := make([]eval.Result, len(page.Hits))
+	for i, hit := range page.Hits {
 		results[i] = eval.Result{
-			Key:   eval.GoldenKey{EntityType: hit.EntityType, EntityID: hit.EntityID},
+			Key:   eval.GoldenKey{EntityType: hit.EntityType, EntityID: hit.ParentID},
 			Score: hit.Score,
 		}
 	}

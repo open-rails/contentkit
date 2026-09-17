@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -107,10 +106,20 @@ type SearchOptions struct {
 	LexicalEntityTypes  []string
 	SemanticEntityTypes []string
 
-	Limit int
-	// CandidateLimit is the maximum number requested from each retrieval source
-	// before RRF. It defaults to Limit and is clamped to at least Limit.
+	// Limit is the page size in content items; Offset skips items. Documents
+	// are grouped per item before either applies.
+	Limit  int
+	Offset int
+	// CandidateLimit is the document window requested from each retrieval
+	// source (per language) before grouping. It defaults to twice Offset+Limit
+	// (at least 100) and is clamped to at least Offset+Limit. Pass the same
+	// value on every page when a truncated window must stay identical.
 	CandidateLimit int
+
+	// Eligibility maps each document to its content item and enforces the
+	// host's access, publication and version-trait rules on that one document.
+	// Lexical mode only. Without it every document is its own item.
+	Eligibility *Eligibility
 
 	// Semantic model override (defaults to client).
 	Model string
@@ -130,11 +139,30 @@ type SearchOptions struct {
 	FilterArgs map[string]any
 }
 
+// SearchHit is one content item, represented by its matched document.
 type SearchHit struct {
 	EntityType string
-	EntityID   string
-	Language   string
-	Score      float32
+	// EntityID is the matched document (for example a version id) and
+	// ParentID the item it belongs to; they are equal without Eligibility.
+	EntityID string
+	ParentID string
+	// Language is the matched document's language.
+	Language string
+	// Score ranks the item by its best matching document in any searched
+	// language: the keyword match tier in lexical mode, RRF otherwise.
+	Score float32
+}
+
+// SearchResult is one page of items.
+type SearchResult struct {
+	Hits []SearchHit
+	// HasMore is true when items follow this page in the grouped retrieval, or
+	// when Truncated: documents beyond the window were never ranked, so the
+	// next page may still be non-empty.
+	HasMore bool
+	// Truncated reports that a candidate window filled. Raise CandidateLimit
+	// for complete deep pagination.
+	Truncated bool
 }
 
 type SimilarOptions struct {
@@ -160,63 +188,57 @@ type SimilarHit struct {
 	Score      float32
 }
 
-func (c *Client) Search(ctx context.Context, userText string, opts SearchOptions) ([]SearchHit, error) {
+// Search returns one page of content items. Documents from every searched
+// language are grouped per item (Eligibility parent, else entity id) before
+// Offset and Limit apply; each hit carries the matched document and language.
+func (c *Client) Search(ctx context.Context, userText string, opts SearchOptions) (SearchResult, error) {
 	return c.search(ctx, userText, opts, nil)
 }
 
 // SearchWithTrace executes Search and returns opt-in retrieval provenance. On
 // failure, the returned trace contains all work completed before the error.
-func (c *Client) SearchWithTrace(ctx context.Context, userText string, opts SearchOptions) ([]SearchHit, SearchTrace, error) {
+func (c *Client) SearchWithTrace(ctx context.Context, userText string, opts SearchOptions) (SearchResult, SearchTrace, error) {
 	var trace SearchTrace
-	hits, err := c.search(ctx, userText, opts, &trace)
-	return hits, trace, err
+	result, err := c.search(ctx, userText, opts, &trace)
+	return result, trace, err
 }
 
-func (c *Client) search(ctx context.Context, userText string, opts SearchOptions, trace *SearchTrace) ([]SearchHit, error) {
+// effectiveLimits resolves the page and document window sizes.
+func (c *Client) effectiveLimits(opts SearchOptions) (limit, offset, candidateLimit int) {
+	limit = opts.Limit
+	if limit <= 0 {
+		limit = c.defaultLimit
+	}
+	offset = max(opts.Offset, 0)
+	candidateLimit = opts.CandidateLimit
+	if candidateLimit <= 0 {
+		candidateLimit = min(search.MaxCandidateLimit, max(100, (offset+limit)*2))
+	}
+	candidateLimit = max(candidateLimit, offset+limit)
+	return limit, offset, candidateLimit
+}
+
+func (c *Client) search(ctx context.Context, userText string, opts SearchOptions, trace *SearchTrace) (SearchResult, error) {
+	var result SearchResult
 	qEmbed := querynorm.QueryForEmbedding(userText)
 	if trace != nil {
 		*trace = initializeSearchTrace(c, qEmbed, opts)
 	}
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = c.defaultLimit
-	}
-	candidateLimit := opts.CandidateLimit
-	if candidateLimit <= 0 {
-		candidateLimit = limit
-	}
-	if candidateLimit < limit {
-		candidateLimit = limit
-	}
-	if candidateLimit > search.MaxCandidateLimit {
+	fail := func(category string, err error) (SearchResult, error) {
 		if trace != nil {
-			trace.ErrorCategory = "validation"
+			trace.ErrorCategory = category
 		}
-		return nil, fmt.Errorf("effective CandidateLimit must not exceed %d", search.MaxCandidateLimit)
+		return result, err
+	}
+	if opts.Offset < 0 {
+		return fail("validation", fmt.Errorf("Offset must not be negative"))
+	}
+	limit, offset, candidateLimit := c.effectiveLimits(opts)
+	if candidateLimit > search.MaxCandidateLimit {
+		return fail("validation", fmt.Errorf("effective CandidateLimit must not exceed %d", search.MaxCandidateLimit))
 	}
 	if math.IsNaN(float64(opts.SemanticMinSimilarity)) || math.IsInf(float64(opts.SemanticMinSimilarity), 0) {
-		if trace != nil {
-			trace.ErrorCategory = "validation"
-		}
-		return nil, fmt.Errorf("SemanticMinSimilarity must be finite")
-	}
-	if qEmbed == "" || !hasAnyLetterOrNumber(qEmbed) {
-		if trace != nil {
-			trace.EmptyReason = EmptyReasonNormalizedQuery
-		}
-		return []SearchHit{}, nil
-	}
-
-	language := strings.TrimSpace(opts.Language)
-	if language == "" {
-		language = c.defaultLanguage
-	}
-	languages, err := resolveLanguageModes(language, opts.LanguageMode)
-	if err != nil {
-		if trace != nil {
-			trace.ErrorCategory = "validation"
-		}
-		return nil, fmt.Errorf("invalid SearchOptions.LanguageMode %q", opts.LanguageMode)
+		return fail("validation", fmt.Errorf("SemanticMinSimilarity must be finite"))
 	}
 	mode := opts.Mode
 	if mode == "" {
@@ -225,10 +247,25 @@ func (c *Client) search(ctx context.Context, userText string, opts SearchOptions
 	switch mode {
 	case SearchModeLexical, SearchModeSemantic, SearchModeDual:
 	default:
+		return fail("validation", fmt.Errorf("invalid SearchOptions.Mode %q", mode))
+	}
+	if opts.Eligibility != nil && mode != SearchModeLexical {
+		return fail("validation", fmt.Errorf("Eligibility requires SearchModeLexical"))
+	}
+	language := strings.TrimSpace(opts.Language)
+	if language == "" {
+		language = c.defaultLanguage
+	}
+	languages, err := resolveLanguageModes(language, opts.LanguageMode)
+	if err != nil {
+		return fail("validation", fmt.Errorf("invalid SearchOptions.LanguageMode %q", opts.LanguageMode))
+	}
+	result.Hits = []SearchHit{}
+	if qEmbed == "" || !hasAnyLetterOrNumber(qEmbed) {
 		if trace != nil {
-			trace.ErrorCategory = "validation"
+			trace.EmptyReason = EmptyReasonNormalizedQuery
 		}
-		return nil, fmt.Errorf("invalid SearchOptions.Mode %q", mode)
+		return result, nil
 	}
 
 	semanticMinSimilarity := opts.SemanticMinSimilarity
@@ -264,127 +301,158 @@ func (c *Client) search(ctx context.Context, userText string, opts SearchOptions
 	}
 
 	if mode != SearchModeSemantic && len(lexTypes) == 0 {
-		if trace != nil {
-			trace.ErrorCategory = "validation"
-		}
-		return nil, fmt.Errorf("LexicalEntityTypes is required for lexical/dual search")
+		return fail("validation", fmt.Errorf("LexicalEntityTypes is required for lexical/dual search"))
 	}
 	if mode != SearchModeLexical && len(semTypes) == 0 {
-		if trace != nil {
-			trace.ErrorCategory = "validation"
-		}
-		return nil, fmt.Errorf("SemanticEntityTypes is required for semantic/dual search")
+		return fail("validation", fmt.Errorf("SemanticEntityTypes is required for semantic/dual search"))
 	}
 
-	lists := make([][]search.RRFKey, 0, 3)
-
-	if mode == SearchModeLexical || mode == SearchModeDual {
+	// Lexical mode ranks by calibrated keyword tiers and groups per item across
+	// the searched languages; no rank fusion is involved.
+	if mode == SearchModeLexical {
+		var docs []groupedDoc
 		for _, lang := range languages {
-			lexLists, err := c.searchLexical(ctx, userText, lang, candidateLimit, lexTypes, opts.FilterSQL, opts.FilterArgs, trace)
+			keyword, sourceIndex, err := c.searchLexical(ctx, userText, lang, candidateLimit, lexTypes, opts.FilterSQL, opts.FilterArgs, opts.Eligibility, trace)
 			if err != nil {
-				return nil, err
+				return result, err
 			}
-			lists = append(lists, lexLists...)
+			result.Truncated = result.Truncated || keyword.Truncated
+			for rank, h := range keyword.Hits {
+				docs = append(docs, groupedDoc{
+					EntityType: h.EntityType, EntityID: h.EntityID, ParentID: h.ParentID, Language: h.Language,
+					Priority: h.Priority, Score: h.Score, requested: lang == languages[0], sourceIndex: sourceIndex, sourceRank: rank + 1,
+				})
+			}
+		}
+		groups := groupByParent(docs)
+		if len(groups) == 0 && trace != nil {
+			trace.EmptyReason = EmptyReasonNoCandidates
+		}
+		selected, hasMore := page(groups, offset, limit)
+		result.HasMore = hasMore || result.Truncated
+		result.Hits = make([]SearchHit, 0, len(selected))
+		for i, g := range selected {
+			result.Hits = append(result.Hits, hitFromGroup(g))
+			if trace != nil {
+				trace.Results = append(trace.Results, resultTraceFromGroup(offset+i+1, g))
+			}
+		}
+		return result, nil
+	}
+
+	lists := make([][]search.RRFKey, 0, 4)
+	if mode == SearchModeDual {
+		for _, lang := range languages {
+			keyword, _, err := c.searchLexical(ctx, userText, lang, candidateLimit, lexTypes, opts.FilterSQL, opts.FilterArgs, nil, trace)
+			if err != nil {
+				return result, err
+			}
+			result.Truncated = result.Truncated || keyword.Truncated
+			keys := make([]search.RRFKey, 0, len(keyword.Hits))
+			for _, h := range keyword.Hits {
+				keys = append(keys, search.RRFKey{EntityType: h.EntityType, EntityID: h.EntityID, Language: h.Language})
+			}
+			lists = append(lists, keys)
 		}
 	}
 
-	if mode == SearchModeSemantic || mode == SearchModeDual {
-		if c.embedder == nil {
-			if trace != nil {
-				trace.ErrorCategory = "embedder_required"
-			}
-			return nil, fmt.Errorf("Embedder is required for semantic search")
-		}
-		model := strings.TrimSpace(opts.Model)
-		if model == "" {
-			model = c.defaultModel
-		}
-		if strings.TrimSpace(model) == "" {
-			if trace != nil {
-				trace.ErrorCategory = "model_required"
-			}
-			return nil, fmt.Errorf("Model is required for semantic search")
-		}
+	if c.embedder == nil {
+		return fail("embedder_required", fmt.Errorf("Embedder is required for semantic search"))
+	}
+	model := strings.TrimSpace(opts.Model)
+	if model == "" {
+		model = c.defaultModel
+	}
+	if strings.TrimSpace(model) == "" {
+		return fail("model_required", fmt.Errorf("Model is required for semantic search"))
+	}
 
-		twoStage := c.defaultTwoStage
-		if opts.TwoStage != nil {
-			twoStage = *opts.TwoStage
-		}
-		oversample := opts.OversampleFactor
-		if oversample <= 0 {
-			oversample = c.defaultOversample
-		}
-		oversample = search.EffectiveOversampleFactor(oversample)
+	twoStage := c.defaultTwoStage
+	if opts.TwoStage != nil {
+		twoStage = *opts.TwoStage
+	}
+	oversample := opts.OversampleFactor
+	if oversample <= 0 {
+		oversample = c.defaultOversample
+	}
+	oversample = search.EffectiveOversampleFactor(oversample)
+	if trace != nil {
+		trace.Model = model
+		trace.TwoStage = twoStage
+		trace.OversampleFactor = oversample
+	}
+
+	vec, err := c.embedder.EmbedQueryText(ctx, model, qEmbed)
+	if err != nil {
+		return fail("embedding", err)
+	}
+	if len(vec) == 0 {
 		if trace != nil {
-			trace.Model = model
-			trace.TwoStage = twoStage
-			trace.OversampleFactor = oversample
+			trace.EmptyReason = EmptyReasonEmbedding
 		}
+		return result, nil
+	}
 
-		vec, err := c.embedder.EmbedQueryText(ctx, model, qEmbed)
+	for _, lang := range languages {
+		semKeys, err := c.searchSemantic(ctx, lang, model, vec, candidateLimit, semTypes, twoStage, oversample, semanticMinSimilarity, semanticMinSimilarityEnabled, opts.FilterSQL, opts.FilterArgs, trace)
 		if err != nil {
-			if trace != nil {
-				trace.ErrorCategory = "embedding"
-			}
-			return nil, err
+			return result, err
 		}
-		if len(vec) == 0 {
-			if trace != nil {
-				trace.EmptyReason = EmptyReasonEmbedding
-			}
-			return []SearchHit{}, nil
+		if len(semKeys) >= candidateLimit {
+			result.Truncated = true
 		}
-
-		for _, lang := range languages {
-			semKeys, err := c.searchSemantic(ctx, lang, model, vec, candidateLimit, semTypes, twoStage, oversample, semanticMinSimilarity, semanticMinSimilarityEnabled, opts.FilterSQL, opts.FilterArgs, trace)
-			if err != nil {
-				return nil, err
-			}
-			lists = append(lists, semKeys)
-		}
-	}
-
-	if len(lists) == 0 {
-		if trace != nil {
-			trace.EmptyReason = EmptyReasonNoRoute
-		}
-		return []SearchHit{}, nil
+		lists = append(lists, semKeys)
 	}
 
 	var fused []search.RRFHit
+	var traced []search.RRFTraceHit
 	if trace == nil {
 		fused = search.FuseRRF(lists, search.RRFOptions{K: rrfk})
 	} else {
-		traced, err := search.FuseRRFWithTrace(lists, search.RRFOptions{K: rrfk})
+		traced, err = search.FuseRRFWithTrace(lists, search.RRFOptions{K: rrfk})
 		if err != nil {
-			trace.ErrorCategory = "rrf"
-			return nil, fmt.Errorf("fusing traced search results: %w", err)
+			return fail("rrf", fmt.Errorf("fusing traced search results: %w", err))
 		}
 		fused = make([]search.RRFHit, 0, len(traced))
-		trace.Results = make([]ResultTrace, 0, minInt(limit, len(traced)))
-		for i, hit := range traced {
+		for _, hit := range traced {
 			fused = append(fused, hit.Hit)
-			if i < limit {
-				trace.Results = append(trace.Results, resultTraceFromRRF(i+1, hit))
-			}
 		}
 	}
 	if len(fused) == 0 && trace != nil {
 		trace.EmptyReason = EmptyReasonNoCandidates
 	}
-	out := make([]SearchHit, 0, minInt(limit, len(fused)))
-	for _, h := range fused {
-		out = append(out, SearchHit{
-			EntityType: h.EntityType,
-			EntityID:   h.EntityID,
-			Language:   h.Language,
-			Score:      h.Score,
+	// Fused keys still carry one entry per language; group them per entity so a
+	// fallback language never repeats an item.
+	docs := make([]groupedDoc, 0, len(fused))
+	for i, h := range fused {
+		docs = append(docs, groupedDoc{
+			EntityType: h.EntityType, EntityID: h.EntityID, ParentID: h.EntityID, Language: h.Language,
+			Score: h.Score, requested: h.Language == languages[0], fused: i,
 		})
-		if len(out) >= limit {
-			break
+	}
+	groups := groupByParent(docs)
+	selected, hasMore := page(groups, offset, limit)
+	result.HasMore = hasMore || result.Truncated
+	result.Hits = make([]SearchHit, 0, len(selected))
+	for i, g := range selected {
+		result.Hits = append(result.Hits, hitFromGroup(g))
+		if trace != nil {
+			resultTrace := resultTraceFromRRF(offset+i+1, traced[g.best.fused])
+			resultTrace.Key = TraceKey{EntityType: g.representative.EntityType, EntityID: g.representative.EntityID, ParentID: g.representative.ParentID, Language: g.representative.Language}
+			trace.Results = append(trace.Results, resultTrace)
 		}
 	}
-	return out, nil
+	return result, nil
+}
+
+func hitFromGroup(g group) SearchHit {
+	return SearchHit{
+		EntityType: g.representative.EntityType,
+		EntityID:   g.representative.EntityID,
+		ParentID:   g.representative.ParentID,
+		Language:   g.representative.Language,
+		Score:      g.best.Score,
+	}
 }
 
 func (c *Client) SimilarTo(ctx context.Context, entityType string, entityID string, opts SimilarOptions) ([]SimilarHit, error) {
@@ -432,23 +500,22 @@ func (c *Client) SimilarTo(ctx context.Context, entityType string, entityID stri
 	return out, nil
 }
 
-func (c *Client) searchLexical(ctx context.Context, q string, language string, limit int, entityTypes []string, filterSQL string, filterArgs map[string]any, trace *SearchTrace) ([][]search.RRFKey, error) {
+// searchLexical runs one language's keyword window and returns its trace source index.
+func (c *Client) searchLexical(ctx context.Context, q string, language string, limit int, entityTypes []string, filterSQL string, filterArgs map[string]any, eligibility *Eligibility, trace *SearchTrace) (search.KeywordResult, int, error) {
 	traceIndex := beginSourceTrace(trace, BackendKeyword, language, "", ScoreKeywordMatch, limit)
-	hits, err := search.KeywordSearch(ctx, c.pool, q, search.LexicalOptions{Schema: c.schema, Language: language, EntityTypes: entityTypes, Limit: limit, FilterSQL: filterSQL, FilterArgs: filterArgs})
+	result, err := search.KeywordSearch(ctx, c.pool, q, search.LexicalOptions{Schema: c.schema, Language: language, EntityTypes: entityTypes, Limit: limit, FilterSQL: filterSQL, FilterArgs: filterArgs, Eligibility: eligibility})
 	if err != nil {
 		failSourceTrace(trace, traceIndex, "keyword")
-		return nil, err
+		return result, traceIndex, err
 	}
-	keys := make([]search.RRFKey, 0, len(hits))
-	var candidates []CandidateTrace
-	for i, h := range hits {
-		keys = append(keys, search.RRFKey{EntityType: h.EntityType, EntityID: h.EntityID, Language: h.Language})
-		if trace != nil {
-			candidates = append(candidates, CandidateTrace{Key: TraceKey{EntityType: h.EntityType, EntityID: h.EntityID, Language: h.Language}, Rank: i + 1, Score: h.Score})
+	if trace != nil {
+		candidates := make([]CandidateTrace, 0, len(result.Hits))
+		for i, h := range result.Hits {
+			candidates = append(candidates, CandidateTrace{Key: TraceKey{EntityType: h.EntityType, EntityID: h.EntityID, ParentID: h.ParentID, Language: h.Language}, Rank: i + 1, Score: h.Score})
 		}
+		completeSourceTrace(trace, traceIndex, candidates)
 	}
-	completeSourceTrace(trace, traceIndex, candidates)
-	return [][]search.RRFKey{keys}, nil
+	return result, traceIndex, nil
 }
 
 func (c *Client) searchSemantic(
@@ -515,16 +582,21 @@ type TypeaheadOptions struct {
 	MinSimilarity float32
 	FilterSQL     string
 	FilterArgs    map[string]any
+	// Eligibility groups suggestions per content item; see SearchOptions.
+	Eligibility *Eligibility
 }
 
+// TypeaheadHit is one suggested content item and its matched document.
 type TypeaheadHit struct {
 	EntityType string
 	EntityID   string
+	ParentID   string
 	Language   string
 	Score      float32
 }
 
-// Typeahead returns suggestions while a user is typing (typos/substring matching).
+// Typeahead returns suggestions while a user is typing (typos/substring
+// matching), one per content item, grouped before Limit.
 func (c *Client) Typeahead(ctx context.Context, userText string, opts TypeaheadOptions) ([]TypeaheadHit, error) {
 	q := strings.TrimSpace(userText)
 	if q == "" || !hasAnyLetterOrNumber(q) {
@@ -547,52 +619,27 @@ func (c *Client) Typeahead(ctx context.Context, userText string, opts TypeaheadO
 	if limit <= 0 {
 		limit = 10
 	}
+	if limit > search.MaxCandidateLimit/2 {
+		return nil, fmt.Errorf("Limit must not exceed %d", search.MaxCandidateLimit/2)
+	}
 	minSim := opts.MinSimilarity
 
-	type key struct {
-		t string
-		i string
-		l string
-	}
-	merged := make(map[key]TypeaheadHit)
-	add := func(h TypeaheadHit) {
-		k := key{t: h.EntityType, i: h.EntityID, l: h.Language}
-		if prev, ok := merged[k]; !ok || h.Score > prev.Score {
-			merged[k] = h
-		}
-	}
-
+	var docs []groupedDoc
 	for _, lang := range languages {
-		hits, err := search.KeywordSearch(ctx, c.pool, q, search.LexicalOptions{Schema: c.schema, Language: lang, EntityTypes: entityTypes, Limit: limit, FilterSQL: opts.FilterSQL, FilterArgs: opts.FilterArgs})
+		result, err := search.KeywordSearch(ctx, c.pool, q, search.LexicalOptions{Schema: c.schema, Language: lang, EntityTypes: entityTypes, Limit: limit * 2, FilterSQL: opts.FilterSQL, FilterArgs: opts.FilterArgs, Eligibility: opts.Eligibility})
 		if err != nil {
 			return nil, err
 		}
-		for _, h := range hits {
+		for _, h := range result.Hits {
 			if minSim <= 0 || h.Score >= minSim {
-				add(TypeaheadHit{EntityType: h.EntityType, EntityID: h.EntityID, Language: h.Language, Score: h.Score})
+				docs = append(docs, groupedDoc{EntityType: h.EntityType, EntityID: h.EntityID, ParentID: h.ParentID, Language: h.Language, Priority: h.Priority, Score: h.Score, requested: lang == languages[0]})
 			}
 		}
 	}
-
-	out := make([]TypeaheadHit, 0, len(merged))
-	for _, h := range merged {
-		out = append(out, h)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		a, b := out[i], out[j]
-		if a.Score != b.Score {
-			return a.Score > b.Score
-		}
-		if a.EntityType != b.EntityType {
-			return a.EntityType < b.EntityType
-		}
-		if a.EntityID != b.EntityID {
-			return a.EntityID < b.EntityID
-		}
-		return a.Language < b.Language
-	})
-	if len(out) > limit {
-		out = out[:limit]
+	groups, _ := page(groupByParent(docs), 0, limit)
+	out := make([]TypeaheadHit, 0, len(groups))
+	for _, g := range groups {
+		out = append(out, TypeaheadHit{EntityType: g.representative.EntityType, EntityID: g.representative.EntityID, ParentID: g.representative.ParentID, Language: g.representative.Language, Score: g.best.Score})
 	}
 	return out, nil
 }

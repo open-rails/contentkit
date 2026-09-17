@@ -50,7 +50,7 @@ func TestClientSearchWithTrace_NormalizedEmptyMatchesSearch(t *testing.T) {
 	if trace.RequestedMode != SearchModeLexical || trace.Mode != SearchModeLexical || trace.ResultLimit != 20 || trace.RRFK != 60 || trace.OversampleFactor != 5 {
 		t.Fatalf("effective defaults missing from early trace: %#v", trace)
 	}
-	if trace.CandidateLimit != trace.ResultLimit || trace.SemanticMinSimilarity != 0 {
+	if trace.CandidateLimit != 100 || trace.SemanticMinSimilarity != 0 {
 		t.Fatalf("effective controls missing from early trace: %#v", trace)
 	}
 }

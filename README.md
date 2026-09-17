@@ -73,19 +73,61 @@ need explicit aliases. Exact names and aliases have their own indexed candidate
 route and do not compete with the fuzzy candidate limit.
 
 Each exact, prefix and fuzzy route returns at most `min(MaxCandidateLimit,
-max(100, Limit * 8))` documents before Go validates and ranks them. Host eligibility
-filters execute inside every SQL route before its limit. Query limits are 256
-characters and 16 tokens. Each request has a two-second ceiling, including SQL
+max(100, CandidateLimit * 8))` documents before Go validates and ranks them. Host
+eligibility filters and the eligibility join execute inside every SQL route
+before its limit. Query limits are 256 characters and 16 tokens. Each request has a two-second ceiling, including SQL
 and candidate scoring, or an earlier caller context deadline; transactions also
 set a local server statement timeout. This is a resource bound, not a latency
 promise. Structured input limits are 512 characters per name,
 64 aliases, and 256 keywords; these also apply to legacy string adapters. Supply
 structured fields instead of concatenating a long description. No full-catalog Go scan is used. Typeahead's
-`MinSimilarity` now filters the documented match-tier score (exact title 1, alias
-0.9, token/prefix 0.75–0.77, typo 0.5–0.52), not PGroonga's raw score. Search scores
-remain RRF scores; opt-in traces show the `keyword` source and `keyword_match`
-score. Quality/recall should be evaluated on the host's catalog before changing
+`MinSimilarity` filters the documented match-tier score (exact title 1, alias
+0.9, token/prefix 0.75–0.77, typo 0.5–0.52), not PGroonga's raw score. Lexical
+`SearchHit.Score` is that tier score; only dual/semantic results carry RRF
+scores. Opt-in traces show the `keyword` source and `keyword_match` score.
+Quality/recall should be evaluated on the host's catalog before changing
 candidate bounds or typo rules.
+
+### One result per content item
+
+Index one document per version and language where fields differ (for example
+`gallery_version`/`video_version` keyed by the version id, in that version's
+language, with the work's tags plus that version's traits as keywords). At query
+time the host's `Eligibility` join maps every candidate document to its content
+item and decides whether that one document is eligible:
+
+```go
+page, err := client.Search(ctx, query, searchkit.SearchOptions{
+  Language: "es", EntityTypes: []string{"gallery_version"}, Limit: 20, Offset: 40,
+  Eligibility: &searchkit.Eligibility{
+    SQL: `SELECT gv.gallery_id AS parent_id, (NOT gv.is_language_default)::int AS priority
+          FROM app.gallery_versions gv JOIN app.galleries g ON g.id = gv.gallery_id
+          WHERE gv.id::text = sd.entity_id AND gv.page_language = sd.language
+            AND g.deleted_at IS NULL AND gv.deleted_at IS NULL AND gv.live_at <= now()
+            AND (@colored IS FALSE OR EXISTS (SELECT 1 FROM app.gallery_version_tags t WHERE t.version_id = gv.id AND t.tag_id = @colored_tag))`,
+    Args: map[string]any{"colored": wantColored, "colored_tag": coloredTagID},
+  },
+})
+for _, hit := range page.Hits { /* hit.ParentID = gallery, hit.EntityID = matched version, hit.Language */ }
+// page.HasMore, page.Truncated
+```
+
+The join is trusted host SQL (never user input) evaluated per document inside
+every retrieval route: it returns no row when the document is ineligible, or
+one row with `parent_id` (text) and `priority` (integer, lower preferred among
+an item's equal matches, e.g. the language default). Every requested version
+trait must hold on that same row; a colored English edition plus an original
+Spanish edition never yields a Spanish colored result, and drafts or deleted
+siblings never make their item eligible. Documents from all searched languages
+are grouped per `(entity type, parent_id)` **before** `Offset`/`Limit`: one hit
+per item, ranked by its best matching document in any searched language and
+represented by the best document in the requested language when one matched
+(then score, `priority`, language, id). Ties never prefer English unless it is
+the requested language. `HasMore` is true when items follow the page in the
+grouped retrieval; it is also true when `Truncated` reports that a candidate
+window filled, because unranked documents remain. Pass the same
+`CandidateLimit` on every page of a session for identical truncated windows.
+Hosts re-check authorization when hydrating `ParentID`/`EntityID` into cards.
 
 ## The embedded hub (signal + discovery planes)
 
@@ -436,29 +478,31 @@ client, err := searchkit.NewClient(searchkit.ClientConfig{
 Then per request:
 
 ```go
-hits, err := client.Search(ctx, userQuery, searchkit.SearchOptions{
+page, err := client.Search(ctx, userQuery, searchkit.SearchOptions{
   Language: "en",
   LanguageMode: searchkit.LanguageModeExact, // exact|fallback_en (default exact)
   Mode:     searchkit.SearchModeLexical, // default; semantic/dual are opt-in
   EntityTypes: []string{"gallery"},
-  Limit:          20,  // final fused results
-  CandidateLimit: 100, // per-source candidates before RRF; defaults to Limit
+  Limit:          20,  // page size in content items
+  Offset:         0,   // items skipped; grouping happens before both
+  CandidateLimit: 200, // per-source document window; defaults to max(100, 2*(Offset+Limit))
 })
+// page.Hits, page.HasMore, page.Truncated
 ```
 
 Search scores and semantic confidence are different domains:
 
-- `SearchHit.Score` is an RRF score derived from source ranks. It is not cosine similarity.
+- `SearchHit.Score` is the keyword match tier in lexical mode and an RRF score derived from source ranks in dual/semantic mode. It is never cosine similarity.
 - `SemanticMinSimilarity` filters raw cosine similarity before RRF.
 - `SemanticMinSimilarityEnabled` makes an explicit zero floor inclusive, retaining zero-similarity candidates while dropping negative candidates.
 - `SimilarOptions.MinSimilarityEnabled` provides the same explicit zero-floor behavior for nearest-neighbor recommendations.
-- `CandidateLimit` controls each source's retrieval depth; `Limit` controls the final response size.
+- `CandidateLimit` controls each source's document window; `Limit`/`Offset` page the grouped items.
 - `OversampleFactor` controls only the binary-quantized first stage when `TwoStage=true`. Values `<=1` use the effective default `5`.
 
 For offline evaluation and diagnostics, use the opt-in traced call:
 
 ```go
-hits, trace, err := client.SearchWithTrace(ctx, userQuery, opts)
+page, trace, err := client.SearchWithTrace(ctx, userQuery, opts)
 ```
 
 The trace records effective routing/configuration, source candidates and score domains, and exact RRF contributions. On failure, it contains the work completed before the error. Ordinary `Search` does not collect trace candidates.
@@ -481,7 +525,7 @@ hits, err := client.Typeahead(ctx, userQuery, searchkit.TypeaheadOptions{
 
 Host-injected filters:
 
-- `FilterSQL` and `FilterArgs` are supported on both `SearchOptions` and `TypeaheadOptions`.
+- `FilterSQL` and `FilterArgs` are supported on both `SearchOptions` and `TypeaheadOptions`; `Eligibility` (per-document parent mapping, lexical only) is supported on both as well.
 - SearchKit applies these filters inside retrieval queries (before ranking/pagination) for lexical and semantic search paths.
 - Treat `FilterSQL` as trusted host SQL only. Never concatenate raw user input into it; pass values through `FilterArgs`.
 - This keeps SearchKit schema-agnostic: each host can enforce visibility/business constraints with host-specific SQL (including joins/EXISTS).
@@ -490,7 +534,7 @@ Host-injected filters:
 Language strictness:
 
 - `LanguageModeExact` (default): query only requested language.
-- `LanguageModeFallbackEnglish`: query requested language and English in one call.
+- `LanguageModeFallbackEnglish`: query requested language and English in one call. An item found in both languages is returned once, represented by its requested-language document.
 - Language mode is applied inside SearchKit retrieval (before ranking/pagination), not as post-filtering in host app code.
 
 Language-specific routing (handled inside the client):

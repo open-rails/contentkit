@@ -84,7 +84,7 @@ func (c *Client) LinkQuery(ctx context.Context, query string, opts LinkOptions) 
 	if mode == "" {
 		mode = SearchModeDual
 	}
-	hits, trace, err := c.SearchWithTrace(ctx, query, SearchOptions{
+	page, trace, err := c.SearchWithTrace(ctx, query, SearchOptions{
 		Language:                     opts.Language,
 		Mode:                         mode,
 		EntityTypes:                  vocab,
@@ -98,7 +98,7 @@ func (c *Client) LinkQuery(ctx context.Context, query string, opts LinkOptions) 
 	if err != nil {
 		return QueryPlan{}, fmt.Errorf("link query: %w", err)
 	}
-	return planFromHits(query, hits, limit, trace), nil
+	return planFromHits(query, page.Hits, limit, trace), nil
 }
 
 // linkProvenance is the per-entity branch evidence extracted from a trace.

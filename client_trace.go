@@ -52,6 +52,7 @@ const (
 type TraceKey struct {
 	EntityType string `json:"entity_type"`
 	EntityID   string `json:"entity_id"`
+	ParentID   string `json:"parent_id,omitempty"`
 	Language   string `json:"language"`
 }
 
@@ -136,17 +137,7 @@ func initializeSearchTrace(client *Client, normalizedQuery string, opts SearchOp
 	if model == "" {
 		model = client.defaultModel
 	}
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = client.defaultLimit
-	}
-	candidateLimit := opts.CandidateLimit
-	if candidateLimit <= 0 {
-		candidateLimit = limit
-	}
-	if candidateLimit < limit {
-		candidateLimit = limit
-	}
+	limit, _, candidateLimit := client.effectiveLimits(opts)
 	semanticMinSimilarity := opts.SemanticMinSimilarity
 	finiteSemanticMinSimilarity := !math.IsNaN(float64(semanticMinSimilarity)) && !math.IsInf(float64(semanticMinSimilarity), 0)
 	semanticMinSimilarityEnabled := finiteSemanticMinSimilarity && (opts.SemanticMinSimilarityEnabled || semanticMinSimilarity > 0)
@@ -234,5 +225,20 @@ func resultTraceFromRRF(rank int, hit search.RRFTraceHit) ResultTrace {
 			Language:   hit.Hit.Language,
 		},
 		Rank: rank, Score: hit.Hit.Score, ScoreKind: ScoreRRF, Contributions: contributions,
+	}
+}
+
+// resultTraceFromGroup records a grouped keyword item: the key is the returned
+// document, the contribution the best document's source position.
+func resultTraceFromGroup(rank int, g group) ResultTrace {
+	return ResultTrace{
+		Key: TraceKey{
+			EntityType: g.representative.EntityType,
+			EntityID:   g.representative.EntityID,
+			ParentID:   g.representative.ParentID,
+			Language:   g.representative.Language,
+		},
+		Rank: rank, Score: g.best.Score, ScoreKind: ScoreKeywordMatch,
+		Contributions: []ContributionTrace{{SourceIndex: g.best.sourceIndex, SourceRank: g.best.sourceRank, Weight: 1, Contribution: g.best.Score}},
 	}
 }

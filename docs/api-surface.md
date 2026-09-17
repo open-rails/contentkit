@@ -18,7 +18,7 @@ type Hub interface {
     DeleteEntity(ctx context.Context, ref EntityRef) error
 
     // --- Content plane (query) ---
-    Search(ctx context.Context, text string, opts SearchOptions) ([]Hit, error)
+    Search(ctx context.Context, text string, opts SearchOptions) (SearchResult, error) // one page of items: Hits, HasMore, Truncated
     Typeahead(ctx context.Context, text string, opts TypeaheadOptions) ([]Hit, error)
     SimilarTo(ctx context.Context, ref EntityRef, opts SimilarOptions) ([]Hit, error) // "more like this": vector + lexical + co-engagement
 

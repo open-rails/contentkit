@@ -165,12 +165,12 @@ func TestKeywordProfileIntegration(t *testing.T) {
 			}
 			search := func(query string, want int) {
 				t.Helper()
-				hits, err := client.Search(ctx, query, SearchOptions{EntityTypes: []string{"gallery"}})
+				page, err := client.Search(ctx, query, SearchOptions{EntityTypes: []string{"gallery"}})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(hits) != want {
-					t.Fatalf("%q got %v want %d hits", query, hits, want)
+				if len(page.Hits) != want {
+					t.Fatalf("%q got %v want %d hits", query, page, want)
 				}
 			}
 			mark(false)

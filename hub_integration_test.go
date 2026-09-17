@@ -225,7 +225,7 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(plain) < 2 {
+	if len(plain.Hits) < 2 {
 		t.Fatalf("plain search: %+v", plain)
 	}
 
@@ -248,7 +248,7 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 		t.Fatalf("personalized Search: %v", err)
 	}
 	rank := map[string]int{}
-	for i, h := range pers {
+	for i, h := range pers.Hits {
 		rank[h.EntityID] = i
 	}
 	if rank["g2"] > rank["g1"] {

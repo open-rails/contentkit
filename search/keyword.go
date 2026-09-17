@@ -13,27 +13,39 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// KeywordResult is one language's scored document window.
+type KeywordResult struct {
+	// Hits are documents ordered by score, entity type and entity id.
+	Hits []LexicalHit
+	// Truncated reports that a route filled its SQL window or that more scored
+	// documents existed than Limit: documents beyond the window were never ranked.
+	Truncated bool
+}
+
 // KeywordSearch preserves names and aliases, including native scripts. Exact
 // names precede aliases, token/prefix matches, then conservative one-edit typos.
 // PostgreSQL retrieves bounded candidates; Go never scans the document catalog.
-func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts LexicalOptions) ([]LexicalHit, error) {
+// Host filters and the eligibility join run inside every route before its limit.
+func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts LexicalOptions) (KeywordResult, error) {
+	var result KeywordResult
 	if pool == nil || strings.TrimSpace(opts.Language) == "" {
-		return nil, fmt.Errorf("pool and language are required")
+		return result, fmt.Errorf("pool and language are required")
 	}
 	if opts.Limit <= 0 {
-		return []LexicalHit{}, nil
+		result.Hits = []LexicalHit{}
+		return result, nil
 	}
 	if opts.Limit > MaxCandidateLimit {
-		return nil, fmt.Errorf("limit must not exceed %d", MaxCandidateLimit)
+		return result, fmt.Errorf("limit must not exceed %d", MaxCandidateLimit)
 	}
 	if utf8.RuneCountInString(query) > 256 {
-		return nil, fmt.Errorf("keyword query exceeds 256 characters")
+		return result, fmt.Errorf("keyword query exceeds 256 characters")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	qs, err := quoteIdent(opts.Schema)
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 	// Normalize in the same database function as the expression indexes. This
 	// avoids Go/Postgres Unicode casing and locale differences.
@@ -42,21 +54,23 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts L
  (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pg_trgm'),
  (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pgroonga')`, qs), query).Scan(&q, &trgmSchema, &nativeSchema)
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 	tokens := keywordTokens(q)
 	if len(tokens) == 0 {
-		return []LexicalHit{}, nil
+		result.Hits = []LexicalHit{}
+		return result, nil
 	}
 	if len(tokens) > 16 {
-		return nil, fmt.Errorf("keyword query exceeds 16 tokens")
+		return result, fmt.Errorf("keyword query exceeds 16 tokens")
 	}
 	qt, _ := quoteIdent(trgmSchema)
 	qn, _ := quoteIdent(nativeSchema)
 	terms := qs + `.searchkit_keyword_terms(sd.title,sd.aliases,sd.keywords,sd.raw_document)`
 	corpus := qs + `.searchkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_document)`
 	where := `sd.language=@language`
-	args := pgx.NamedArgs{"language": opts.Language, "q": q, "prefix": "", "limit": min(MaxCandidateLimit, max(100, opts.Limit*8))}
+	sqlLimit := min(MaxCandidateLimit, max(100, opts.Limit*8))
+	args := pgx.NamedArgs{"language": opts.Language, "q": q, "prefix": "", "limit": sqlLimit}
 	if len(opts.EntityTypes) > 0 {
 		where += ` AND sd.entity_type=ANY(@types::text[])`
 		args["types"] = opts.EntityTypes
@@ -64,7 +78,17 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts L
 	if strings.TrimSpace(opts.FilterSQL) != "" {
 		where += ` AND (` + opts.FilterSQL + `)`
 		if err := mergeNamedArgs(args, opts.FilterArgs); err != nil {
-			return nil, err
+			return result, err
+		}
+	}
+	from := qs + `.search_documents sd`
+	parent, priority := `sd.entity_id`, `0`
+	if opts.Eligibility != nil && strings.TrimSpace(opts.Eligibility.SQL) != "" {
+		// LATERAL binds sd inside the host query; a missing column fails loudly.
+		from += ` JOIN LATERAL (SELECT h.parent_id::text AS parent_id,h.priority::int AS priority FROM (` + opts.Eligibility.SQL + `) AS h LIMIT 1) e ON true`
+		parent, priority = `e.parent_id`, `e.priority`
+		if err := mergeNamedArgs(args, opts.Eligibility.Args); err != nil {
+			return result, err
 		}
 	}
 	// Tokens contain letters/numbers only and are lowercase. Appending '*' makes
@@ -74,7 +98,7 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts L
 		prefixes[i] = t + "*"
 	}
 	args["prefix"] = strings.Join(prefixes, " ")
-	selectSQL := fmt.Sprintf(`SELECT sd.entity_type,sd.entity_id,sd.language,%s,cardinality(sd.aliases) FROM %s.search_documents sd WHERE %s AND `, terms, qs, where)
+	selectSQL := fmt.Sprintf(`SELECT sd.entity_type,sd.entity_id,sd.language,%s,%s,%s,cardinality(sd.aliases) FROM %s WHERE %s AND `, parent, priority, terms, from, where)
 	exact := selectSQL + fmt.Sprintf(`%s @> ARRAY[@q::text] ORDER BY (%s[1]=@q) DESC,(@q=ANY((%s)[2:1+cardinality(sd.aliases)])) DESC,sd.entity_type,sd.entity_id LIMIT @limit`, terms, "("+terms+")", terms)
 	prefix := selectSQL + fmt.Sprintf(`%s OPERATOR(%s.&@~) @prefix ORDER BY sd.entity_type,sd.entity_id LIMIT @limit`, terms, qn)
 	// The GiST word-distance order can stop after a bounded number of candidates.
@@ -83,14 +107,14 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts L
 	fuzzy := selectSQL + fmt.Sprintf(`%s OPERATOR(%s.%%>) @q ORDER BY %s OPERATOR(%s.<->>) @q,sd.entity_type,sd.entity_id LIMIT @limit`, corpus, qt, corpus, qt)
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 	defer tx.Rollback(ctx)
 	// The whole request has a two-second ceiling (or an earlier caller deadline),
 	// including candidate scoring. SET LOCAL applies before retrieval and cannot leak into
 	// another pooled request. A SELECT CTE setting the GUC has ambiguous timing.
 	if _, err = tx.Exec(ctx, `SET LOCAL pg_trgm.word_similarity_threshold=0.1; SET LOCAL statement_timeout=2000`); err != nil {
-		return nil, err
+		return result, err
 	}
 	queries := []string{exact, prefix}
 	if utf8.RuneCountInString(q) >= 3 {
@@ -101,24 +125,32 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts L
 	for _, sql := range queries {
 		rows, err := tx.Query(ctx, sql, args)
 		if err != nil {
-			return nil, err
+			return result, err
 		}
+		seen := 0
 		for rows.Next() {
 			if err := ctx.Err(); err != nil {
 				rows.Close()
-				return nil, err
+				return result, err
 			}
+			seen++
 			var h LexicalHit
+			var parentID *string
 			var fields []string
 			var aliases int
-			if err := rows.Scan(&h.EntityType, &h.EntityID, &h.Language, &fields, &aliases); err != nil {
+			if err := rows.Scan(&h.EntityType, &h.EntityID, &h.Language, &parentID, &h.Priority, &fields, &aliases); err != nil {
 				rows.Close()
-				return nil, err
+				return result, err
 			}
+			if parentID == nil || *parentID == "" {
+				rows.Close()
+				return result, fmt.Errorf("eligibility join returned no parent_id for %s/%s", h.EntityType, h.EntityID)
+			}
+			h.ParentID = *parentID
 			h.Score = keywordScore(ctx, q, tokens, fields, aliases)
 			if err := ctx.Err(); err != nil {
 				rows.Close()
-				return nil, err
+				return result, err
 			}
 			if h.Score > 0 {
 				k := key{h.EntityType, h.EntityID, h.Language}
@@ -129,11 +161,14 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts L
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
-			return nil, err
+			return result, err
+		}
+		if seen >= sqlLimit {
+			result.Truncated = true
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+		return result, err
 	}
 	out := make([]LexicalHit, 0, len(found))
 	for _, h := range found {
@@ -149,12 +184,14 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts L
 		return out[i].EntityID < out[j].EntityID
 	})
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return result, err
 	}
 	if len(out) > opts.Limit {
 		out = out[:opts.Limit]
+		result.Truncated = true
 	}
-	return out, nil
+	result.Hits = out
+	return result, nil
 }
 
 func keywordTokens(s string) []string {

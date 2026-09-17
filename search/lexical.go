@@ -15,8 +15,25 @@ import (
 type LexicalHit struct {
 	EntityType string
 	EntityID   string
-	Language   string
-	Score      float32
+	// ParentID is the content item the document belongs to: the eligibility
+	// join's parent_id, or EntityID when no join is configured.
+	ParentID string
+	// Priority orders same-item documents at equal match; lower is preferred.
+	Priority int32
+	Language string
+	Score    float32
+}
+
+// Eligibility is trusted host SQL joined laterally to every candidate document
+// (alias sd: entity_type, entity_id, language). It returns no row when the
+// document is not eligible for this request, or one row with the columns
+// parent_id (text: the content item the document belongs to) and priority
+// (integer: preferred document among an item's equal matches, lower first).
+// Ownership, access, publication and every requested version trait must hold
+// on that one row; sibling documents never make each other eligible.
+type Eligibility struct {
+	SQL  string
+	Args map[string]any
 }
 
 type LexicalOptions struct {
@@ -38,6 +55,9 @@ type LexicalOptions struct {
 	// FilterArgs are named args referenced by FilterSQL using pgx '@name'
 	// placeholders (e.g. "... language = @lang").
 	FilterArgs map[string]any
+
+	// Eligibility joins host content per document (KeywordSearch only).
+	Eligibility *Eligibility
 }
 
 // LexicalSearch runs a trigram similarity search against `<schema>.search_documents`.

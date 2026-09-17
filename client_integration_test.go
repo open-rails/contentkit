@@ -124,7 +124,7 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	lexHits, err := client.Search(ctx, "factor", SearchOptions{
+	lexHitsPage, err := client.Search(ctx, "factor", SearchOptions{
 		Mode:               SearchModeLexical,
 		Language:           "en",
 		LexicalEntityTypes: []string{"gallery"},
@@ -133,10 +133,11 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lexical Search: %v", err)
 	}
+	lexHits := lexHitsPage.Hits
 	if len(lexHits) == 0 || lexHits[0].EntityID != "1" {
 		t.Fatalf("expected lexical hit entity_id=1, got %+v", lexHits)
 	}
-	tracedLexHits, lexTrace, err := client.SearchWithTrace(ctx, "factor", SearchOptions{
+	tracedLexHitsPage, lexTrace, err := client.SearchWithTrace(ctx, "factor", SearchOptions{
 		Mode:               SearchModeLexical,
 		Language:           "en",
 		LexicalEntityTypes: []string{"gallery"},
@@ -145,6 +146,7 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("traced lexical Search: %v", err)
 	}
+	tracedLexHits := tracedLexHitsPage.Hits
 	if !reflect.DeepEqual(tracedLexHits, lexHits) {
 		t.Fatalf("traced lexical results differ: got %+v, want %+v", tracedLexHits, lexHits)
 	}
@@ -152,7 +154,7 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 		t.Fatalf("unexpected lexical trace: %+v", lexTrace)
 	}
 
-	semHits, err := client.Search(ctx, "two-factor", SearchOptions{
+	semHitsPage, err := client.Search(ctx, "two-factor", SearchOptions{
 		Mode:                SearchModeSemantic,
 		Language:            "en",
 		SemanticEntityTypes: []string{"gallery"},
@@ -161,10 +163,11 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("semantic Search: %v", err)
 	}
+	semHits := semHitsPage.Hits
 	if len(semHits) == 0 || semHits[0].EntityID != "1" {
 		t.Fatalf("expected semantic hit entity_id=1, got %+v", semHits)
 	}
-	tracedSemHits, semTrace, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
+	tracedSemHitsPage, semTrace, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
 		Mode:                SearchModeSemantic,
 		Language:            "en",
 		SemanticEntityTypes: []string{"gallery"},
@@ -173,6 +176,7 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("traced semantic Search: %v", err)
 	}
+	tracedSemHits := tracedSemHitsPage.Hits
 	if !reflect.DeepEqual(tracedSemHits, semHits) {
 		t.Fatalf("traced semantic results differ: got %+v, want %+v", tracedSemHits, semHits)
 	}
@@ -205,7 +209,7 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 		}
 	}
 
-	limitedHits, limitedTrace, err := client.SearchWithTrace(ctx, "factor", SearchOptions{
+	limitedHitsPage, limitedTrace, err := client.SearchWithTrace(ctx, "factor", SearchOptions{
 		Mode:               SearchModeLexical,
 		Language:           "en",
 		LexicalEntityTypes: []string{"gallery"},
@@ -215,11 +219,12 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("candidate-limited Search: %v", err)
 	}
+	limitedHits := limitedHitsPage.Hits
 	if len(limitedHits) != 1 || limitedTrace.ResultLimit != 1 || limitedTrace.CandidateLimit != 2 || len(limitedTrace.Sources[0].Candidates) != 2 {
 		t.Fatalf("candidate/result limits not separated: hits=%+v trace=%+v", limitedHits, limitedTrace)
 	}
 
-	flooredHits, floorTrace, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
+	flooredHitsPage, floorTrace, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
 		Mode:                  SearchModeSemantic,
 		Language:              "en",
 		SemanticEntityTypes:   []string{"gallery"},
@@ -229,12 +234,13 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("semantic-floor Search: %v", err)
 	}
+	flooredHits := flooredHitsPage.Hits
 	if len(flooredHits) != 0 || floorTrace.SemanticMinSimilarity != 1.1 || len(floorTrace.Sources) != 1 || len(floorTrace.Sources[0].Candidates) != 0 {
 		t.Fatalf("semantic floor not applied/traced: hits=%+v trace=%+v", flooredHits, floorTrace)
 	}
 
 	for _, floor := range []float32{0, -0.5} {
-		disabledHits, disabledTrace, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
+		disabledHitsPage, disabledTrace, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
 			Mode:                  SearchModeSemantic,
 			Language:              "en",
 			SemanticEntityTypes:   []string{"gallery"},
@@ -247,6 +253,7 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 		if err != nil {
 			t.Fatalf("two-stage disabled-floor Search(%v): %v", floor, err)
 		}
+		disabledHits := disabledHitsPage.Hits
 		if len(disabledHits) != 1 || disabledTrace.SemanticMinSimilarity != 0 || disabledTrace.CandidateLimit != 3 || disabledTrace.OversampleFactor != 2 {
 			t.Fatalf("unexpected disabled-floor limits: floor=%v hits=%+v trace=%+v", floor, disabledHits, disabledTrace)
 		}
@@ -256,7 +263,7 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 		}
 	}
 
-	positiveHits, positiveTrace, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
+	positiveHitsPage, positiveTrace, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
 		Mode:                  SearchModeSemantic,
 		Language:              "en",
 		SemanticEntityTypes:   []string{"gallery"},
@@ -269,6 +276,7 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("two-stage positive-floor Search: %v", err)
 	}
+	positiveHits := positiveHitsPage.Hits
 	if len(positiveHits) != 2 || len(positiveTrace.Sources[0].Candidates) != 2 {
 		t.Fatalf("positive floor did not remove negative candidate: hits=%+v trace=%+v", positiveHits, positiveTrace)
 	}
@@ -280,7 +288,7 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 		t.Fatalf("insert embedding_vectors 4: %v", err)
 	}
 
-	zeroFloorHits, zeroFloorTrace, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
+	zeroFloorHitsPage, zeroFloorTrace, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
 		Mode:                         SearchModeSemantic,
 		Language:                     "en",
 		SemanticEntityTypes:          []string{"gallery"},
@@ -293,13 +301,14 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("two-stage explicit-zero-floor Search: %v", err)
 	}
+	zeroFloorHits := zeroFloorHitsPage.Hits
 	if len(zeroFloorHits) != 3 || len(zeroFloorTrace.Sources[0].Candidates) != 3 || !zeroFloorTrace.SemanticMinSimilarityEnabled {
 		t.Fatalf("explicit zero floor did not keep zero/drop negative: hits=%+v trace=%+v", zeroFloorHits, zeroFloorTrace)
 	}
 	assertEntityIDs(t, zeroFloorHits, []string{"1", "2", "4"})
 
 	oneStage := false
-	oneStageHits, _, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
+	oneStageHitsPage, _, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
 		Mode:                         SearchModeSemantic,
 		Language:                     "en",
 		SemanticEntityTypes:          []string{"gallery"},
@@ -311,6 +320,7 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("one-stage explicit-zero-floor Search: %v", err)
 	}
+	oneStageHits := oneStageHitsPage.Hits
 	assertEntityIDs(t, oneStageHits, []string{"1", "2", "4"})
 
 	similarHits, err := client.SimilarTo(ctx, "gallery", "1", SimilarOptions{
@@ -326,7 +336,7 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 		t.Fatalf("explicit zero floor did not keep zero/drop negative SimilarTo hit: %+v", similarHits)
 	}
 
-	filteredLex, err := client.Search(ctx, "two factor", SearchOptions{
+	filteredLexPage, err := client.Search(ctx, "two factor", SearchOptions{
 		Mode:               SearchModeLexical,
 		Language:           "en",
 		LexicalEntityTypes: []string{"gallery"},
@@ -339,13 +349,14 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("filtered lexical Search: %v", err)
 	}
+	filteredLex := filteredLexPage.Hits
 	for _, h := range filteredLex {
 		if h.EntityID != "1" {
 			t.Fatalf("expected filtered lexical hits to contain only entity_id=1, got %+v", filteredLex)
 		}
 	}
 
-	filteredSem, err := client.Search(ctx, "two-factor", SearchOptions{
+	filteredSemPage, err := client.Search(ctx, "two-factor", SearchOptions{
 		Mode:                SearchModeSemantic,
 		Language:            "en",
 		SemanticEntityTypes: []string{"gallery"},
@@ -358,6 +369,7 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("filtered semantic Search: %v", err)
 	}
+	filteredSem := filteredSemPage.Hits
 	for _, h := range filteredSem {
 		if h.EntityID != "1" {
 			t.Fatalf("expected filtered semantic hits to contain only entity_id=1, got %+v", filteredSem)
@@ -383,7 +395,7 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 	}
 
 	// Default behavior is strict language (exact only).
-	strictLex, err := client.Search(ctx, "factor", SearchOptions{
+	strictLexPage, err := client.Search(ctx, "factor", SearchOptions{
 		Mode:               SearchModeLexical,
 		Language:           "es",
 		LexicalEntityTypes: []string{"gallery"},
@@ -392,11 +404,12 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("strict lexical Search: %v", err)
 	}
+	strictLex := strictLexPage.Hits
 	if len(strictLex) != 0 {
 		t.Fatalf("expected strict lexical language mode to return no hits, got %+v", strictLex)
 	}
 
-	fallbackLex, err := client.Search(ctx, "factor", SearchOptions{
+	fallbackLexPage, err := client.Search(ctx, "factor", SearchOptions{
 		Mode:               SearchModeLexical,
 		Language:           "es",
 		LanguageMode:       LanguageModeFallbackEnglish,
@@ -406,6 +419,7 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fallback lexical Search: %v", err)
 	}
+	fallbackLex := fallbackLexPage.Hits
 	if len(fallbackLex) == 0 {
 		t.Fatalf("expected fallback lexical language mode to return english hits")
 	}
@@ -425,6 +439,57 @@ func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
 	}
 	if len(strictTypeahead) != 0 {
 		t.Fatalf("expected strict typeahead language mode to return no hits, got %+v", strictTypeahead)
+	}
+
+	// A Spanish document for gallery 1 in both planes: dual fallback must
+	// return the item once, in the requested language, with truthful paging.
+	_, err = pool.Exec(ctx, fmt.Sprintf(`
+		INSERT INTO %s.search_documents(entity_type, entity_id, language, document, raw_document, tsv, title)
+		VALUES ('gallery', '1', 'es', lower('Two factor authentication'), 'Two factor authentication', to_tsvector('simple', 'Two factor authentication'), 'Two factor authentication')
+	`, quotedSchema))
+	if err != nil {
+		t.Fatalf("insert spanish gallery 1: %v", err)
+	}
+	_, err = pool.Exec(ctx, fmt.Sprintf(`
+		INSERT INTO %s.embedding_vectors(entity_type, entity_id, model, language, embedding)
+		VALUES ('gallery', '1', 'm', 'es', $1::halfvec(3))
+	`, quotedSchema), pgvector.NewHalfVector([]float32{1, 0, 0}))
+	if err != nil {
+		t.Fatalf("insert spanish vector 1: %v", err)
+	}
+	for _, mode := range []SearchMode{SearchModeLexical, SearchModeDual} {
+		dual, err := client.Search(ctx, "two factor", SearchOptions{
+			Mode:         mode,
+			Language:     "es",
+			LanguageMode: LanguageModeFallbackEnglish,
+			EntityTypes:  []string{"gallery"},
+			Limit:        1,
+		})
+		if err != nil {
+			t.Fatalf("%s fallback Search: %v", mode, err)
+		}
+		if len(dual.Hits) != 1 || dual.Hits[0].EntityID != "1" || dual.Hits[0].Language != "es" || dual.Hits[0].ParentID != "1" || !dual.HasMore {
+			t.Fatalf("%s fallback page: %+v", mode, dual)
+		}
+		next, err := client.Search(ctx, "two factor", SearchOptions{
+			Mode:         mode,
+			Language:     "es",
+			LanguageMode: LanguageModeFallbackEnglish,
+			EntityTypes:  []string{"gallery"},
+			Limit:        1,
+			Offset:       1,
+		})
+		if err != nil {
+			t.Fatalf("%s fallback page 2: %v", mode, err)
+		}
+		// Dual mode also retrieves the vector-only galleries 3 and 4 after 2.
+		if len(next.Hits) != 1 || next.Hits[0].EntityID != "2" || next.Hits[0].Language != "en" || next.HasMore != (mode == SearchModeDual) {
+			t.Fatalf("%s fallback page 2: %+v", mode, next)
+		}
+	}
+	_, err = pool.Exec(ctx, fmt.Sprintf(`DELETE FROM %s.search_documents WHERE language='es'; DELETE FROM %s.embedding_vectors WHERE language='es'`, quotedSchema, quotedSchema))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	fallbackTypeahead, err := client.Typeahead(ctx, "two", TypeaheadOptions{

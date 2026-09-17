@@ -49,7 +49,7 @@ type Hub interface {
 	Tenant() string
 
 	// Content plane.
-	Search(ctx context.Context, userText string, opts HubSearchOptions) ([]SearchHit, error)
+	Search(ctx context.Context, userText string, opts HubSearchOptions) (SearchResult, error)
 	Typeahead(ctx context.Context, userText string, opts TypeaheadOptions) ([]TypeaheadHit, error)
 	SimilarTo(ctx context.Context, entityType, entityID string, opts HubSimilarOptions) ([]RecHit, error)
 
@@ -221,17 +221,17 @@ type HubSearchOptions struct {
 	Personalize *Personalization
 }
 
-func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearchOptions) ([]SearchHit, error) {
+func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearchOptions) (SearchResult, error) {
 	if opts.Personalize == nil {
 		return h.client.Search(ctx, userText, opts.SearchOptions)
 	}
 	store, err := h.requireStore()
 	if err != nil {
-		return nil, err
+		return SearchResult{}, err
 	}
 	p := *opts.Personalize
 	if err := p.Subject.Validate(); err != nil {
-		return nil, err
+		return SearchResult{}, err
 	}
 	if p.PopularityWeight <= 0 {
 		p.PopularityWeight = 0.25
@@ -246,20 +246,20 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 		p.DislikePenalty = 0.3
 	}
 
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = h.client.defaultLimit
-	}
+	limit, offset, _ := h.client.effectiveLimits(opts.SearchOptions)
 
-	// Oversample the content ranking so re-ranking has headroom.
+	// Oversample the content ranking so re-ranking has headroom; the page is
+	// cut from the re-ranked list.
 	base := opts.SearchOptions
-	base.Limit = clampInt(limit*3, 50, 500)
-	hits, err := h.client.Search(ctx, userText, base)
+	base.Offset = 0
+	base.Limit = clampInt((offset+limit)*3, 50, 500)
+	content, err := h.client.Search(ctx, userText, base)
 	if err != nil {
-		return nil, err
+		return SearchResult{}, err
 	}
+	hits := content.Hits
 	if len(hits) == 0 {
-		return hits, nil
+		return content, nil
 	}
 
 	// Candidate popularity, per entity type.
@@ -271,7 +271,7 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 	for t, ids := range idsByType {
 		scores, err := store.PopularityFor(ctx, h.tenant, t, ids, p.PopularityWindow)
 		if err != nil {
-			return nil, err
+			return SearchResult{}, err
 		}
 		for id, s := range scores {
 			popularity[signal.EntityRef{EntityType: t, EntityID: id}] = s
@@ -279,9 +279,12 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 	}
 
 	// RRF-fuse the content list with the candidate popularity list.
+	byKey := make(map[search.RRFKey]SearchHit, len(hits))
 	contentList := make([]search.RRFKey, 0, len(hits))
 	for _, hit := range hits {
-		contentList = append(contentList, search.RRFKey{EntityType: hit.EntityType, EntityID: hit.EntityID, Language: hit.Language})
+		key := search.RRFKey{EntityType: hit.EntityType, EntityID: hit.EntityID, Language: hit.Language}
+		byKey[key] = hit
+		contentList = append(contentList, key)
 	}
 	popList := make([]search.RRFKey, 0, len(hits))
 	for _, hit := range hits {
@@ -308,7 +311,7 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 		}
 		states, err = store.States(ctx, h.tenant, p.Subject, refs)
 		if err != nil {
-			return nil, err
+			return SearchResult{}, err
 		}
 	}
 
@@ -333,7 +336,9 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 				}
 			}
 		}
-		out = append(out, SearchHit{EntityType: f.EntityType, EntityID: f.EntityID, Language: f.Language, Score: score})
+		hit := byKey[f.RRFKey]
+		hit.Score = score
+		out = append(out, hit)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Score != out[j].Score {
@@ -344,10 +349,14 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 		}
 		return out[i].EntityID < out[j].EntityID
 	})
-	if len(out) > limit {
-		out = out[:limit]
+	result := SearchResult{Hits: []SearchHit{}, Truncated: content.Truncated}
+	if offset < len(out) {
+		end := min(offset+limit, len(out))
+		result.Hits = out[offset:end]
+		result.HasMore = end < len(out)
 	}
-	return out, nil
+	result.HasMore = result.HasMore || content.HasMore
+	return result, nil
 }
 
 func (h *EmbeddedHub) Typeahead(ctx context.Context, userText string, opts TypeaheadOptions) ([]TypeaheadHit, error) {

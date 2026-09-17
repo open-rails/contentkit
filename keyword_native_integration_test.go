@@ -120,11 +120,12 @@ func TestKeywordNativeIntegration(t *testing.T) {
 		{"ko", "마법소너", "native"}, {"ko", "마소녀", "native"}, {"ko", "마법작소녀", "native"}, {"ko", "마법녀소", "native"}, {"ko", "법마소녀", "native"}, {"ko", "마법소녀", "native"},
 	} {
 		t.Run(tc.lang+"/"+tc.query, func(t *testing.T) {
-			hits, trace, err := client.SearchWithTrace(ctx, tc.query, SearchOptions{Language: tc.lang, EntityTypes: []string{"gallery"}, Limit: 10})
+			page, trace, err := client.SearchWithTrace(ctx, tc.query, SearchOptions{Language: tc.lang, EntityTypes: []string{"gallery"}, Limit: 10})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(hits) == 0 || hits[0].EntityID != tc.id {
+			hits := page.Hits
+			if len(hits) == 0 || hits[0].EntityID != tc.id || hits[0].ParentID != tc.id || hits[0].Language != tc.lang || page.HasMore || page.Truncated {
 				t.Fatalf("hits=%v want first %s", hits, tc.id)
 			}
 			if trace.Sources[0].Backend != BackendKeyword {
@@ -140,19 +141,19 @@ func TestKeywordNativeIntegration(t *testing.T) {
 		})
 	}
 	for _, tc := range []struct{ lang, query string }{{"en", "not aquarium"}, {"en", "not guxxxy"}, {"ja", "鬼刀"}, {"ja", "鬼月の刀"}, {"zh", "魔刀"}, {"zh", "海洋世界"}, {"ko", "마너"}, {"ko", "바다세계"}, {"en", "not OR guilty"}} {
-		hits, err := client.Search(ctx, tc.query, SearchOptions{Language: tc.lang, EntityTypes: []string{"gallery"}})
+		page, err := client.Search(ctx, tc.query, SearchOptions{Language: tc.lang, EntityTypes: []string{"gallery"}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(hits) != 0 {
-			t.Errorf("negative %s/%s hits=%v", tc.lang, tc.query, hits)
+		if len(page.Hits) != 0 || page.HasMore {
+			t.Errorf("negative %s/%s page=%+v", tc.lang, tc.query, page)
 		}
 	}
 	// Server and client ceilings apply even without a host-provided deadline.
 	t.Run("budgets", func(t *testing.T) {
-		hits, err := client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", EntityTypes: []string{"gallery"}, FilterSQL: "current_setting('statement_timeout')='2s'"})
-		if err != nil || len(hits) != 3 {
-			t.Fatalf("statement budget: %v %v", hits, err)
+		page, err := client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", EntityTypes: []string{"gallery"}, FilterSQL: "current_setting('statement_timeout')='2s'"})
+		if err != nil || len(page.Hits) != 3 {
+			t.Fatalf("statement budget: %v %v", page, err)
 		}
 		for _, duration := range []time.Duration{25 * time.Millisecond, 10 * time.Second} {
 			request, cancel := context.WithTimeout(ctx, duration)
@@ -167,32 +168,36 @@ func TestKeywordNativeIntegration(t *testing.T) {
 			}
 		}
 	})
-	hits, err := client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", EntityTypes: []string{"gallery"}})
+	page, err := client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", EntityTypes: []string{"gallery"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(hits) != 3 || hits[0].EntityID != "canonical" || hits[1].EntityID != "alias" || hits[2].EntityID != "keyword" {
-		t.Fatalf("tier order=%v", hits)
+	hits := page.Hits
+	if len(hits) != 3 || hits[0].EntityID != "canonical" || hits[1].EntityID != "alias" || hits[2].EntityID != "keyword" || page.HasMore {
+		t.Fatalf("tier order=%v", page)
 	}
-	hits, err = client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", EntityTypes: []string{"gallery"}, FilterSQL: "sd.entity_id = @eligible", FilterArgs: map[string]any{"eligible": "alias"}})
-	if err != nil || len(hits) != 1 || hits[0].EntityID != "alias" {
-		t.Fatalf("host filter hits=%v err=%v", hits, err)
+	if hits[0].Score != 1 || hits[1].Score != .9 || hits[2].Score != .75 {
+		t.Fatalf("lexical scores are match tiers: %+v", hits)
+	}
+	page, err = client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", EntityTypes: []string{"gallery"}, FilterSQL: "sd.entity_id = @eligible", FilterArgs: map[string]any{"eligible": "alias"}})
+	if err != nil || len(page.Hits) != 1 || page.Hits[0].EntityID != "alias" {
+		t.Fatalf("host filter page=%v err=%v", page, err)
 	}
 	if err = pg.UpsertKeywordDocuments(ctx, pool, schema, "gallery", "en", map[string]pg.KeywordDocument{"alias": {Title: "Court Drama"}, "canonical": {}}); err != nil {
 		t.Fatal(err)
 	}
-	hits, err = client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", EntityTypes: []string{"gallery"}})
-	if err != nil || len(hits) != 1 || hits[0].EntityID != "keyword" {
-		t.Fatalf("update/delete hits=%v err=%v", hits, err)
+	page, err = client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", EntityTypes: []string{"gallery"}})
+	if err != nil || len(page.Hits) != 1 || page.Hits[0].EntityID != "keyword" {
+		t.Fatalf("update/delete page=%v err=%v", page, err)
 	}
 	// The legacy public writer must replace old typed fields as well: no stale
 	// aliases/keywords survive a subsequent string-only update.
 	if err = pg.UpsertSearchDocuments(ctx, pool, schema, "gallery", "en", map[string]string{"keyword": "Sea breeze"}); err != nil {
 		t.Fatal(err)
 	}
-	hits, err = client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", EntityTypes: []string{"gallery"}})
-	if err != nil || len(hits) != 0 {
-		t.Fatalf("legacy update retained fields: %v %v", hits, err)
+	page, err = client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", EntityTypes: []string{"gallery"}})
+	if err != nil || len(page.Hits) != 0 {
+		t.Fatalf("legacy update retained fields: %v %v", page, err)
 	}
 	// Real filler catalog. EXPLAIN must prove an indexed fuzzy scan without forcing
 	// enable_seqscan off; a query that only works on the tiny fixture is insufficient.
@@ -227,8 +232,8 @@ func TestKeywordNativeIntegration(t *testing.T) {
 	if !strings.Contains(plan.String(), "search_documents_keyword_fuzzy") || strings.Contains(plan.String(), "Seq Scan") {
 		t.Fatalf("expected indexed bounded fuzzy path:\n%s", plan.String())
 	}
-	hits, err = client.Search(ctx, "魔法女少", SearchOptions{Language: "zh", EntityTypes: []string{"gallery"}})
-	if err != nil || len(hits) != 1 || hits[0].EntityID != "native" {
-		t.Fatalf("large catalog hits=%v err=%v", hits, err)
+	page, err = client.Search(ctx, "魔法女少", SearchOptions{Language: "zh", EntityTypes: []string{"gallery"}})
+	if err != nil || len(page.Hits) != 1 || page.Hits[0].EntityID != "native" || page.HasMore {
+		t.Fatalf("large catalog page=%v err=%v", page, err)
 	}
 }
