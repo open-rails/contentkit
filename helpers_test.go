@@ -2,17 +2,12 @@ package contentkit
 
 import (
 	"context"
-	"fmt"
-	"io/fs"
-	"os"
 	"testing"
-	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/migrations"
+	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/search"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -39,56 +34,11 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 }
 
 // testPG connects to CONTENTKIT_TEST_URL or skips.
-func testPG(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	dsn := os.Getenv("CONTENTKIT_TEST_URL")
-	if dsn == "" {
-		t.Skip("CONTENTKIT_TEST_URL not set")
-	}
-	pool, err := pgxpool.New(context.Background(), dsn)
-	if err != nil {
-		t.Fatalf("pgxpool: %v", err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
-}
+func testPG(t *testing.T) *pgxpool.Pool { return pgtest.Pool(t, nil) }
 
-// keywordSchema creates a disposable schema and applies the keyword profile
-// lineage to it, exactly as a host's migrate step does.
+// keywordSchema creates a disposable schema with the keyword profile applied.
 func keywordSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
-	t.Helper()
-	schema := fmt.Sprintf("ck_test_%d_%d", os.Getpid(), time.Now().UnixNano())
-	quoted := pgx.Identifier{schema}.Sanitize()
-	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, _ = pool.Exec(cleanupCtx, "DROP SCHEMA IF EXISTS "+quoted+" CASCADE")
-	})
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, "CREATE SCHEMA "+quoted+"; SET LOCAL search_path TO "+quoted+",public"); err != nil {
-		t.Fatal(err)
-	}
-	files, err := fs.ReadDir(migrations.Postgres, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range files {
-		sql, err := fs.ReadFile(migrations.Postgres, f.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tx.Exec(ctx, string(sql)); err != nil {
-			t.Fatalf("%s: %v", f.Name(), err)
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	return schema
+	return pgtest.Schema(t, ctx, pool)
 }
 
 func upsertDocs(t *testing.T, ctx context.Context, pool *pgxpool.Pool, schema string, docs ...KeywordDocument) {

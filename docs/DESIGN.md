@@ -1,7 +1,7 @@
 # ContentKit design notes
 
 The binding design is
-[open-rails-tracker/contentkit/DESIGN.md](https://github.com/open-rails/open-rails-tracker/blob/master/contentkit/DESIGN.md)
+[open-rails-tracker/contentkit/DESIGN.md](https://github.com/open-rails/tracker/blob/master/contentkit/DESIGN.md)
 and the 2026-09-17 platform design in the doujins-org tracker. This file
 records only what the code in this repository assumes.
 

@@ -73,8 +73,8 @@ type documentRow struct {
 	ContentVersionID string   `json:"content_version_id"`
 	Language         string   `json:"language"`
 	Title            string   `json:"title,omitempty"`
-	Aliases          []string `json:"aliases,omitempty"`
-	Keywords         []string `json:"keywords,omitempty"`
+	Aliases          []string `json:"aliases"`
+	Keywords         []string `json:"keywords"`
 	Raw              string   `json:"raw,omitempty"`
 }
 

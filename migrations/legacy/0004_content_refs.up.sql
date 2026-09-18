@@ -50,11 +50,3 @@ ALTER FUNCTION searchkit_keyword_normalize(text) RENAME TO contentkit_keyword_no
 ALTER FUNCTION searchkit_keyword_terms(text, text[], text[], text) RENAME TO contentkit_keyword_terms;
 ALTER FUNCTION searchkit_keyword_text(text, text[], text[], text) RENAME TO contentkit_keyword_text;
 DROP FUNCTION searchkit_regconfig_for_language(text);
-
--- The embedding plane left ContentKit; User Intelligence owns its own index.
--- Export these tables first (docs/migration.md); they are rebuildable.
-DROP TABLE embedding_dead_letters;
-DROP TABLE embedding_vectors_backfill_state;
-DROP TABLE embedding_tasks;
-DROP TABLE embedding_vectors;
-DROP TABLE embedding_models;

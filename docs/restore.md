@@ -8,9 +8,9 @@ erasure ledger are not. Restore them differently.
 1. Restore the dump into the host schema as usual. Its `migrations` ledger
    still names the old lineage state.
 2. Run the host's migrate step: migratekit applies the pending content-refs
-   migration (and, for the legacy lineage, drops the embedding tables — the
-   export step in [migration.md](migration.md) applies to the restored data
-   just as it did before).
+   migration (and, for the legacy lineage, 0005 drops the embedding tables —
+   the export step in [migration.md](migration.md) applies to the restored
+   data just as it did before).
 3. The restored `search_documents` rows now sit in `content_search_documents`
    under `tenant_id = ''`. Reindex through the worker backfill, then delete the
    `''` rows. Do not try to map old rows onto tenants by hand.

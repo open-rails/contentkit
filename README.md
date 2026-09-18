@@ -7,7 +7,7 @@ erasure) and the **discovery reads** over both. It needs no model provider,
 API key or vector extension. Probabilistic features (semantic ranking,
 moderation, clustering) plug into its ports from User Intelligence.
 
-Design: [open-rails-tracker/contentkit/DESIGN.md](https://github.com/open-rails/open-rails-tracker/blob/master/contentkit/DESIGN.md).
+Design: [open-rails-tracker/contentkit/DESIGN.md](https://github.com/open-rails/tracker/blob/master/contentkit/DESIGN.md).
 Host contract: [HOST_INTEGRATION.md](HOST_INTEGRATION.md). Migrations:
 [docs/migration.md](docs/migration.md), [docs/restore.md](docs/restore.md).
 

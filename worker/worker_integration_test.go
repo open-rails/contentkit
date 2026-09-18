@@ -4,18 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/migrations"
+	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/search"
 )
 
@@ -23,49 +20,10 @@ const tenant = "doujins"
 
 func workerFixture(t *testing.T) (context.Context, *pgxpool.Pool, string) {
 	t.Helper()
-	dsn := os.Getenv("CONTENTKIT_TEST_URL")
-	if dsn == "" {
-		t.Skip("CONTENTKIT_TEST_URL not set")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.MaxConns = 2
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-	schema := fmt.Sprintf("worker_test_%d", time.Now().UnixNano())
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, "CREATE SCHEMA "+schema+"; SET LOCAL search_path TO "+schema+",public"); err != nil {
-		t.Fatal(err)
-	}
-	files, err := fs.ReadDir(migrations.Postgres, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range files {
-		sql, err := fs.ReadFile(migrations.Postgres, f.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tx.Exec(ctx, string(sql)); err != nil {
-			t.Fatalf("%s: %v", f.Name(), err)
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE") })
-	return ctx, pool, schema
+	pool := pgtest.Pool(t, func(cfg *pgxpool.Config) { cfg.MaxConns = 2 })
+	return ctx, pool, pgtest.Schema(t, ctx, pool)
 }
 
 func gallery(id string) contentref.ContentRef { return contentref.New(tenant, "gallery", id) }
@@ -448,5 +406,4 @@ func TestIntegrationBuilderMustStayInScope(t *testing.T) {
 	if n := count(t, ctx, pool, schema, "content_search_documents", "true"); n != 0 {
 		t.Fatal("foreign document written")
 	}
-	_ = pgx.ErrNoRows
 }

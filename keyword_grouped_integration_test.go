@@ -226,27 +226,27 @@ CREATE TABLE host.versions(id text PRIMARY KEY, item_id text NOT NULL REFERENCES
 			t.Fatalf("pages=%v", seen)
 		}
 		// A window smaller than the matching documents is reported, keeps one
-		// card per item, and stays consistent across pages at the same limit.
-		first := search("blue ocean", "en", LanguageModeExact, SearchOptions{Limit: 5, CandidateLimit: 12})
-		if !first.Truncated || !first.HasMore || len(first.Hits) != 5 {
+		// card per item and stays consistent across pages at the same limit.
+		// Documents order by (content id, version), so a window holds whole
+		// items plus at most one partial item, whose default version beyond the
+		// window cannot be chosen.
+		first := search("blue ocean", "en", LanguageModeExact, SearchOptions{Limit: 5, CandidateLimit: 25})
+		if !first.Truncated || !first.HasMore {
 			t.Fatalf("truncated page=%+v", first)
 		}
-		second := search("blue ocean", "en", LanguageModeExact, SearchOptions{Limit: 5, Offset: 5, CandidateLimit: 12})
-		if len(second.Hits) != 5 || !second.HasMore {
+		expect(first, "p01=pv3-p01/en", "p02=pv3-p02/en", "p03=pv3-p03/en", "p04=pv3-p04/en", "p05=pv3-p05/en")
+		second := search("blue ocean", "en", LanguageModeExact, SearchOptions{Limit: 5, Offset: 5, CandidateLimit: 25})
+		if !second.Truncated || !second.HasMore {
 			t.Fatalf("second truncated page=%+v", second)
 		}
-		for _, h := range append(first.Hits, second.Hits...) {
-			if strings.HasPrefix(h.Version(), "pv3-") {
-				t.Fatalf("default version beyond the window cannot be chosen: %+v", h)
-			}
-		}
-		beyond := search("blue ocean", "en", LanguageModeExact, SearchOptions{Limit: 5, Offset: 12, CandidateLimit: 12})
+		expect(second, "p06=pv3-p06/en", "p07=pv3-p07/en", "p08=pv3-p08/en", "p09=pv1-p09/en")
+		beyond := search("blue ocean", "en", LanguageModeExact, SearchOptions{Limit: 5, Offset: 12, CandidateLimit: 25})
 		if len(beyond.Hits) != 0 || !beyond.HasMore || !beyond.Truncated {
 			t.Fatalf("page beyond window=%+v", beyond)
 		}
 		// Traced pages report the same items and their best document positions.
 		traced, trace, err := client.SearchWithTrace(ctx, "blue ocean", SearchOptions{Language: "en", ContentKinds: kinds, Limit: 5, Offset: 5, Eligibility: groupedEligibility()})
-		if err != nil || len(trace.Results) != 5 || trace.Results[0].Rank != 6 || trace.Results[0].Key.ContentID != "p06" || trace.Results[0].ScoreKind != ScoreKeywordMatch || trace.Results[0].Contributions[0].SourceRank != 6 {
+		if err != nil || len(trace.Results) != 5 || trace.Results[0].Rank != 6 || trace.Results[0].Key.ContentID != "p06" || trace.Results[0].ScoreKind != ScoreKeywordMatch || trace.Results[0].Contributions[0].SourceRank != 16 {
 			t.Fatalf("trace=%+v err=%v", trace, err)
 		}
 		if len(traced.Hits) != 5 || traced.Hits[0].ContentID != "p06" || trace.Sources[0].Candidates[0].Key.ContentID != "p01" {

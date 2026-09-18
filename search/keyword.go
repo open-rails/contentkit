@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -191,7 +192,9 @@ func Eligible(ctx context.Context, pool *pgxpool.Pool, opts Options, candidates 
 		return nil, err
 	}
 	type row struct {
-		Kind, ID, Version string
+		Kind    string `json:"content_kind"`
+		ID      string `json:"content_id"`
+		Version string `json:"content_version_id"`
 	}
 	rows := make([]row, 0, len(candidates))
 	byKey := map[documentKey]int{}
@@ -205,7 +208,11 @@ func Eligible(ctx context.Context, pool *pgxpool.Pool, opts Options, candidates 
 		byKey[documentKey{c.Key(), c.Language}] = i
 		rows = append(rows, row{c.ContentKind, c.ContentID, c.Version()})
 	}
-	args["candidates"] = rows
+	data, err := json.Marshal(rows)
+	if err != nil {
+		return nil, err
+	}
+	args["candidates"] = data
 	sql := fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,%s FROM %s
  JOIN jsonb_to_recordset(@candidates::jsonb) AS c(content_kind text,content_id text,content_version_id text)
  ON c.content_kind=sd.content_kind AND c.content_id=sd.content_id AND c.content_version_id=sd.content_version_id

@@ -38,13 +38,13 @@ DELETE FROM content_search_backfill  WHERE tenant_id = '';
 Hosts write the queue through `search.MarkDirty` (or the same SQL) with the
 tenant, kind, id, optional version and language of every changed document.
 
-## Legacy 0004 also drops the embedding tables — export first
+## Legacy 0005 drops the embedding tables — export first
 
 `embedding_models`, `embedding_tasks`, `embedding_vectors`,
 `embedding_vectors_backfill_state` and `embedding_dead_letters` leave the host
 schema. They are rebuildable and User Intelligence owns its own index, but
 the design requires an export, a checksum and a restore qualification before
-any rebuildable table is dropped. Before applying legacy 0004:
+any rebuildable table is dropped. Before applying legacy 0005:
 
 ```sh
 # 1. Export (schema name as installed, e.g. doujins).
@@ -65,7 +65,7 @@ psql "$DSN" -Atc "
 createdb embeddings_qualify && pg_restore -d embeddings_qualify embeddings-*.dump
 ```
 
-Only after step 3 matches, apply the lineage. The `vector` extension itself is
+Only after step 3 matches, apply 0005 (legacy 0004 alone lets ContentKit run on the converted keyword tables; migratekit applies both when both are pending, so export before the migrate step that carries 0005). The `vector` extension itself is
 left installed (dropping it needs superuser and is not ContentKit's to decide).
 
 ## Signal plane 0005: content references
