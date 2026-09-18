@@ -20,7 +20,7 @@ mux.Handle("/api/social/", http.StripPrefix("/api/social", rt.Handler()))
 
 Hosts use:
 
-- `rt.Search(ctx, query, contentkit.HubSearchOptions{...})` → `SearchResult{Hits, HasMore, Truncated, Degraded}`
+- `rt.Search(ctx, query, contentkit.HubSearchOptions{...})` → `SearchResult{Hits, HasMore, Truncated}`
 - `rt.Client().SearchWithTrace(...)` for offline evaluation/debugging
 - `rt.Typeahead(ctx, query, contentkit.TypeaheadOptions{...})`
 - `worker.SyncOnce(ctx, rt.WorkerOptions(hostOptions))` on a schedule, `search.MarkDirty` in content transactions
@@ -162,8 +162,7 @@ ContentKit groups documents per work `(tenant, kind, content_id)` across the
 searched languages before `Offset`/`Limit`. Each hit returns the matched
 document's reference (`ContentID` = the work, `Version()` = the matched
 version or `""`) and `Language`; `Score` ranks the work by its best document in
-any searched language. Hosts re-check authorization while hydrating. Semantic
-candidates from a `SemanticRanker` pass the same join before fusion.
+any searched language. Hosts re-check authorization while hydrating.
 
 ## Filter policy (host-owned)
 
@@ -187,15 +186,11 @@ candidates from a `SemanticRanker` pass the same join before fusion.
   in both is returned once, represented by its requested-language document;
   ties never prefer English.
 
-## Semantic ranking (optional)
+## External document consumers
 
-Register a `SemanticRanker` on `ClientConfig`/`EmbeddedConfig` and set
-`SearchOptions.Semantic`. The ranker sees the normalized query, language,
-kinds, window and the host constraints; ContentKit re-verifies its candidates
-through the eligibility join, RRF-fuses them with the keyword list
-(`SemanticWeight`, `RRFK`), then groups and pages. Absent ranker, timeout
-(`SemanticTimeout`, default 2s) or failure: keyword-only with
-`SearchResult.Degraded = true`. Never surface that as an error.
+`DocumentSink` is an optional, neutral change feed for external indexes,
+caches and audit consumers. Semantic search belongs entirely to the deferred
+User Intelligence library; ContentKit exposes no semantic search hook.
 
 ## Worker
 
@@ -261,7 +256,7 @@ unfavorite keep a zero-valued snapshot; a rollback exports nothing; anonymous
   out. `MyReactions`/`IsFavorited` accept route references and read under the
   canonical one; `Counts` reads exactly the reference given (likes/favorites
   under the canonical reference, comment counts under the thread's).
-- **Delivery**: schedule `rt.DeliverPreferences(ctx, pageSize, maxRows)` from
+- **Delivery**: schedule `rt.DeliverPreferences(ctx, after, pageSize, maxRows)` from
   the host worker (e.g. a River periodic job every few seconds). It pages
   pending rows in key order per sweep (no persisted high-water mark), writes
   one `signal` event per subject × reference × axis (`Type` = axis,
@@ -273,6 +268,9 @@ unfavorite keep a zero-valued snapshot; a rollback exports nothing; anonymous
 - **Erasure**: call `rt.EraseSubjects` (fence in the signal plane, then purge
   the obligations) from the account-deletion handoff; a late delivery for a
   fenced subject is the terminal `PreferenceSubjectErased`, never a retry.
+- **Bounded delivery**: keep the returned `Next` cursor for the current sweep
+  and pass it as `after` on the next call, including after a sink error. Reset
+  to zero when exhausted; never persist it as a global high-water mark.
 - **Repair**: `rt.ReplayPreferences(ctx, after, pageSize, maxRows)` re-delivers
   every snapshot (acknowledged rows and zeros included) and resumes from the
   returned `Next`; newer snapshots still win by revision.

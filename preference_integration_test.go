@@ -114,7 +114,7 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 	if older.Revision >= newer.Revision || older.Value != 1 || newer.Value != -1 || newer.ContentID != "42" || older.PreferenceKey != newer.PreferenceKey {
 		t.Fatalf("delayed old like can overwrite newer dislike: like=%+v dislike=%+v", older, newer)
 	}
-	report, err := rt.DeliverPreferences(ctx, 10, 0)
+	report, err := rt.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0)
 	if err != nil || report.Acknowledged != 1 {
 		t.Fatalf("deliver newer = %+v err=%v", report, err)
 	}
@@ -146,21 +146,21 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 	// resurrection or double counting.
 	do(t, h, u1, "POST", "/gallery/42:en/neutral", nil)
 	do(t, h, u1, "POST", "/gallery/42:ja/favorite", nil)
-	if _, err := rt.DeliverPreferences(ctx, 10, 0); err != nil {
+	if _, err := rt.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0); err != nil {
 		t.Fatal(err)
 	}
 	if s := state(t, rt, "u1", "42"); s.NetValue != 1 || s.Feedback != 1 {
 		t.Fatalf("state after neutral + favorite = %+v, want favorite 1 and reaction 0", s)
 	}
 	do(t, h, u1, "DELETE", "/gallery/42:en/favorite", nil)
-	if _, err := rt.DeliverPreferences(ctx, 10, 0); err != nil {
+	if _, err := rt.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0); err != nil {
 		t.Fatal(err)
 	}
 	if s := state(t, rt, "u1", "42"); s.NetValue != 0 || s.Feedback != 0 {
 		t.Fatalf("state after unfavorite = %+v, want zero", s)
 	}
 	do(t, h, u1, "POST", "/gallery/42:ja/favorite", nil)
-	if _, err := rt.DeliverPreferences(ctx, 10, 0); err != nil {
+	if _, err := rt.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0); err != nil {
 		t.Fatal(err)
 	}
 	if s := state(t, rt, "u1", "42"); s.NetValue != 1 || s.Feedback != 1 {
@@ -178,7 +178,7 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 	}
 	down := newPreferenceRuntime(t, pool, hostSchema, searchSchema, unreachable)
 	do(t, h, u1, "POST", "/gallery/7:en/like", nil)
-	if _, err := down.DeliverPreferences(ctx, 10, 0); err == nil {
+	if _, err := down.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0); err == nil {
 		t.Fatal("delivery over a closed connection succeeded")
 	}
 	if p := pendingRows(t, rt); len(p) != 1 || p[0].ContentID != "7" {
@@ -188,7 +188,7 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 	if disp, err := sink.DeliverPreferences(ctx, pendingRows(t, rt)); err != nil || disp[0] != content.PreferenceAccepted {
 		t.Fatalf("direct delivery = %v err=%v", disp, err)
 	}
-	if rep, err := rt.DeliverPreferences(ctx, 10, 0); err != nil || rep.Acknowledged != 1 {
+	if rep, err := rt.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0); err != nil || rep.Acknowledged != 1 {
 		t.Fatalf("recovery sweep = %+v err=%v", rep, err)
 	}
 	if s, m := state(t, rt, "u1", "7"), metrics(t, rt, "7"); s.NetValue != 1 || m.PositiveSubjects != 1 || m.Events != 1 {
@@ -210,7 +210,7 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 	if p := pendingRows(t, rt); len(p) != 1 || p[0].Revision <= oldClock {
 		t.Fatalf("revision after the floor = %+v, want above %d", p, oldClock)
 	}
-	if _, err := rt.DeliverPreferences(ctx, 10, 0); err != nil {
+	if _, err := rt.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0); err != nil {
 		t.Fatal(err)
 	}
 	if s := state(t, rt, "u2", "9"); s.NetValue != -1 {
@@ -261,7 +261,7 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 	if rec := do(t, h, u3, "POST", "/gallery/42:en/dislike", nil); rec.Code != http.StatusOK {
 		t.Fatalf("source write after erasure: %d", rec.Code)
 	}
-	if rep, err := rt.DeliverPreferences(ctx, 10, 0); err != nil || rep.Erased != 1 || rep.Acknowledged != 0 {
+	if rep, err := rt.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0); err != nil || rep.Erased != 1 || rep.Acknowledged != 0 {
 		t.Fatalf("sweep after erasure = %+v err=%v, want the obligation purged, nothing ingested", rep, err)
 	}
 	if hist, _ := rt.History(ctx, signal.Subject{UserID: "u3"}, signal.HistoryOptions{}); len(hist) != 0 {

@@ -87,12 +87,12 @@ func (r *Runtime) preferenceSink() (content.PreferenceSink, error) {
 // snapshots into the signal plane (see content.Runtime.DeliverPreferences).
 // Schedule it from the host's worker; with the signal plane disabled it
 // returns ErrSignalPlaneDisabled and every row stays pending.
-func (r *Runtime) DeliverPreferences(ctx context.Context, pageSize, maxRows int) (content.PreferenceDelivery, error) {
+func (r *Runtime) DeliverPreferences(ctx context.Context, after content.PreferenceKey, pageSize, maxRows int) (content.PreferenceDelivery, error) {
 	sink, err := r.preferenceSink()
 	if err != nil {
 		return content.PreferenceDelivery{}, err
 	}
-	return r.Content.DeliverPreferences(ctx, sink, pageSize, maxRows)
+	return r.Content.DeliverPreferences(ctx, sink, after, pageSize, maxRows)
 }
 
 // ReplayPreferences replays every snapshot from after into the signal plane

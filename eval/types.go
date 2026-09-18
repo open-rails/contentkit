@@ -77,7 +77,7 @@ type Outcome struct {
 }
 
 // Failed creates an execution-failure outcome. Category should be a stable,
-// sanitized identifier such as "timeout" or "semantic_search".
+// sanitized identifier such as "timeout" or "keyword_search".
 func Failed(c GoldenCase, category string) Outcome {
 	category = normalizeErrorCategory(category)
 	return Outcome{

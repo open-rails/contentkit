@@ -196,9 +196,9 @@ func TestPreferences_ConcurrentLocaleRoutesShareOneOrderedPreference(t *testing.
 		t.Fatal(err)
 	}
 	prev := row.Revision
-	value := -row.Value // every step must be a change: start opposite the final value
-	if value == 0 {
-		value = 1
+	value := int16(1)
+	if row.Value == value {
+		value = -1
 	}
 	for _, backend := range []*Runtime{other, rt, other, rt} {
 		mustReact(t, backend, actor, "gallery", "42:en", value)
@@ -748,8 +748,15 @@ func TestPreferences_MigrateCollapsesLocaleHistory(t *testing.T) {
 	if c := countsOf(t, rt, ref("gallery", "42")); c.Likes != 1 || c.Dislikes != 1 || c.Favorites != 1 {
 		t.Fatalf("work counts = %+v, want the anonymous like, u1's dislike and one favorite", c)
 	}
-	if c := countsOf(t, rt, ref("gallery", "42:ja")); c.Likes != 0 || c.Dislikes != 0 || c.Favorites != 0 || c.CommentCount != 1 {
-		t.Fatalf("language counts = %+v, want preferences zeroed and the comment count kept", c)
+	if c := countsOf(t, rt, ref("gallery", "42:ja")); c.Likes != 1 || c.Dislikes != 1 || c.Favorites != 1 || c.CommentCount != 1 {
+		t.Fatalf("language counts = %+v, want canonical preferences and localized comments", c)
+	}
+	var raw Counts
+	if err := rt.store.pool.QueryRow(ctx, `SELECT likes, dislikes, favorites, comment_count FROM `+rt.store.t.counts+` WHERE tenant_id=$1 AND content_kind='gallery' AND content_id='42:ja'`, rt.tenant).Scan(&raw.Likes, &raw.Dislikes, &raw.Favorites, &raw.CommentCount); err != nil {
+		t.Fatal(err)
+	}
+	if raw.Likes != 0 || raw.Dislikes != 0 || raw.Favorites != 0 || raw.CommentCount != 1 {
+		t.Fatalf("physical locale rollup = %+v", raw)
 	}
 	var threads int
 	if err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.comments+` WHERE content_id = '42:ja'`).Scan(&threads); err != nil || threads != 1 {
@@ -885,14 +892,14 @@ func TestPreferences_DeliverySweepAndReplay(t *testing.T) {
 		mustReact(t, rt, Actor{ID: actor, Kind: "user"}, "gallery", "42:en", 1)
 	}
 	down := &deliverySink{fail: errors.New("clickhouse unavailable")}
-	if _, err := rt.DeliverPreferences(ctx, down, 10, 0); err == nil {
+	if _, err := rt.DeliverPreferences(ctx, down, PreferenceKey{}, 10, 0); err == nil {
 		t.Fatal("a failing sink must surface its error")
 	}
 	if got := len(pending(t, rt)); got != 3 {
 		t.Fatalf("pending after the outage = %d, want 3", got)
 	}
 	sink := &deliverySink{verdicts: map[string]PreferenceDisposition{"u1": PreferenceRetry, "u2": PreferenceAccepted, "u3": PreferenceSubjectErased}}
-	report, err := rt.DeliverPreferences(ctx, sink, 2, 0)
+	report, err := rt.DeliverPreferences(ctx, sink, PreferenceKey{}, 2, 0)
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
@@ -915,7 +922,7 @@ func TestPreferences_DeliverySweepAndReplay(t *testing.T) {
 	}
 	// A crash between acceptance and acknowledgement replays the same snapshot.
 	replay := &deliverySink{verdicts: map[string]PreferenceDisposition{"u1": PreferenceAccepted}}
-	if _, err := rt.DeliverPreferences(ctx, replay, 10, 0); err != nil {
+	if _, err := rt.DeliverPreferences(ctx, replay, PreferenceKey{}, 10, 0); err != nil {
 		t.Fatal(err)
 	}
 	if len(replay.seen) != 1 || replay.seen[0][0].PreferenceKey != got[0].PreferenceKey || replay.seen[0][0].Revision != got[0].Revision {
