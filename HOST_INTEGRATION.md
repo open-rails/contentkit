@@ -127,8 +127,11 @@ User Intelligence library; ContentKit exposes no semantic search hook.
 ## Worker
 
 `worker.SyncOnce` permits one writer per schema and tenant; a competing tick
-returns without work. Documents, queue acknowledgements and sink deliveries
-commit together; a document whose sink delivery failed stays queued under a
+returns without work. Documents and queue acknowledgements
+commit together in Postgres; external sink effects do not share that transaction.
+Both sink operations carry the dirty revision: apply only newer versions
+atomically and retain a tombstone version after deletion. This fences operations
+that finish remotely after the caller sees a timeout. A failed sink stays queued under a
 new revision while its keyword row commits. The pool needs two connections;
 callbacks must be bounded, read-only and respect cancellation.
 
