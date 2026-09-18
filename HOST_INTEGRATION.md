@@ -166,8 +166,13 @@ ledger, it may acknowledge AuthKit immediately. Downstream cleanup remains a
 separate pending local obligation until all required planes complete. Do not
 hold AuthKit acknowledgement waiting for provider availability.
 
-That worker calls `rt.Content.ErasePrivateSubjects(ctx, actorIDs)` in addition
-to the existing analytics erasure. It atomically commits permanent tenant/subject
+That worker calls the unified `rt.EraseSubjects(ctx, subjects)`: it handles
+signals, preference obligations and private-source/provider cleanup. A deliberately
+disabled signal plane is absent, not an unfinished erasure. Any configured-plane
+failure returns an error and an incomplete report; keep the local obligation pending.
+`rt.EmbeddedHub.EraseSubjects` remains analytics-only, and
+`rt.Content.ErasePrivateSubjects` is available to standalone content consumers.
+Private cleanup atomically commits permanent tenant/subject
 source fences, removes poll answers, and removes held/rejected private payloads
 and moderation metadata. A never-published item becomes a tombstone; its row
 and replies are preserved. An item with a previous approved payload retains that
