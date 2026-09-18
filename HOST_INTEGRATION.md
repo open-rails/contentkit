@@ -8,7 +8,7 @@ another tenant are rejected.
 
 Hosts use:
 
-- `client.Search(ctx, query, contentkit.SearchOptions{...})` → `SearchResult{Hits, HasMore, Truncated, Degraded}`
+- `client.Search(ctx, query, contentkit.SearchOptions{...})` → `SearchResult{Hits, HasMore, Truncated}`
 - `client.SearchWithTrace(...)` for offline evaluation/debugging
 - `client.Typeahead(ctx, query, contentkit.TypeaheadOptions{...})`
 - `worker.SyncOnce` on a schedule, `search.MarkDirty` in content transactions
@@ -44,8 +44,7 @@ ContentKit groups documents per work `(tenant, kind, content_id)` across the
 searched languages before `Offset`/`Limit`. Each hit returns the matched
 document's reference (`ContentID` = the work, `Version()` = the matched
 version or `""`) and `Language`; `Score` ranks the work by its best document in
-any searched language. Hosts re-check authorization while hydrating. Semantic
-candidates from a `SemanticRanker` pass the same join before fusion.
+any searched language. Hosts re-check authorization while hydrating.
 
 ## Filter policy (host-owned)
 
@@ -69,15 +68,11 @@ candidates from a `SemanticRanker` pass the same join before fusion.
   in both is returned once, represented by its requested-language document;
   ties never prefer English.
 
-## Semantic ranking (optional)
+## External document consumers
 
-Register a `SemanticRanker` on `ClientConfig`/`EmbeddedConfig` and set
-`SearchOptions.Semantic`. The ranker sees the normalized query, language,
-kinds, window and the host constraints; ContentKit re-verifies its candidates
-through the eligibility join, RRF-fuses them with the keyword list
-(`SemanticWeight`, `RRFK`), then groups and pages. Absent ranker, timeout
-(`SemanticTimeout`, default 2s) or failure: keyword-only with
-`SearchResult.Degraded = true`. Never surface that as an error.
+`DocumentSink` is an optional, neutral change feed for external indexes,
+caches and audit consumers. Semantic search belongs entirely to the deferred
+User Intelligence library; ContentKit exposes no semantic search hook.
 
 ## Worker
 

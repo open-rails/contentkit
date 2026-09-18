@@ -251,7 +251,7 @@ func TestFailed_SanitizesErrorCategory(t *testing.T) {
 			t.Fatalf("Failed(%q).ErrorCategory = %q, want unspecified", category, got)
 		}
 	}
-	if got := Failed(c, "semantic_search").ErrorCategory; got != "semantic_search" {
+	if got := Failed(c, "keyword_search").ErrorCategory; got != "keyword_search" {
 		t.Fatalf("Failed(valid).ErrorCategory = %q", got)
 	}
 }

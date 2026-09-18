@@ -6,17 +6,14 @@ import "strings"
 type RetrievalBackend string
 
 const (
-	BackendKeyword        RetrievalBackend = "keyword"
-	BackendSemanticRanker RetrievalBackend = "semantic_ranker"
+	BackendKeyword RetrievalBackend = "keyword"
 )
 
 // ScoreKind identifies the numeric domain of a candidate or result score.
 type ScoreKind string
 
 const (
-	ScoreKeywordMatch   ScoreKind = "keyword_match"
-	ScoreSemanticRanker ScoreKind = "semantic_ranker"
-	ScoreRRF            ScoreKind = "rrf"
+	ScoreKeywordMatch ScoreKind = "keyword_match"
 )
 
 // SourceStatus records whether an attempted retrieval source succeeded.
@@ -48,9 +45,7 @@ type CandidateTrace struct {
 	Score float32  `json:"score"`
 }
 
-// SourceTrace records one routed backend execution and its candidates. A
-// failed semantic ranker source is recorded here while the request succeeds
-// keyword-only (SearchResult.Degraded).
+// SourceTrace records one language-specific keyword retrieval and its candidates.
 type SourceTrace struct {
 	Backend       RetrievalBackend `json:"backend"`
 	Language      string           `json:"language"`
@@ -84,21 +79,14 @@ type SearchTrace struct {
 	RequestedLanguage       string        `json:"requested_language,omitempty"`
 	RequestedLanguageMode   LanguageMode  `json:"requested_language_mode,omitempty"`
 	Languages               []string      `json:"languages,omitempty"`
-	RequestedSemantic       bool          `json:"requested_semantic"`
-	Semantic                bool          `json:"semantic"`
 	RequestedResultLimit    int           `json:"requested_result_limit"`
 	ResultLimit             int           `json:"result_limit"`
 	RequestedCandidateLimit int           `json:"requested_candidate_limit"`
 	CandidateLimit          int           `json:"candidate_limit"`
-	RequestedRRFK           int           `json:"requested_rrf_k"`
-	RRFK                    int           `json:"rrf_k"`
-	SemanticWeight          float32       `json:"semantic_weight"`
 	Sources                 []SourceTrace `json:"sources,omitempty"`
 	Results                 []ResultTrace `json:"results,omitempty"`
 	EmptyReason             EmptyReason   `json:"empty_reason,omitempty"`
 	ErrorCategory           string        `json:"error_category,omitempty"`
-	// Degraded reports that the semantic ranker was requested and failed.
-	Degraded bool `json:"degraded,omitempty"`
 }
 
 func initializeSearchTrace(client *Client, normalizedQuery string, opts SearchOptions) SearchTrace {
@@ -108,15 +96,12 @@ func initializeSearchTrace(client *Client, normalizedQuery string, opts SearchOp
 	}
 	languages, _ := resolveLanguageModes(language, opts.LanguageMode)
 	limit, _, candidateLimit := client.effectiveLimits(opts)
-	rrfk, weight := client.fusion(opts)
 	return SearchTrace{
 		NormalizedQuery:   normalizedQuery,
 		RequestedLanguage: opts.Language, RequestedLanguageMode: opts.LanguageMode,
-		Languages:         append([]string(nil), languages...),
-		RequestedSemantic: opts.Semantic, Semantic: opts.Semantic && client.ranker != nil,
+		Languages:            append([]string(nil), languages...),
 		RequestedResultLimit: opts.Limit, ResultLimit: limit,
 		RequestedCandidateLimit: opts.CandidateLimit, CandidateLimit: candidateLimit,
-		RequestedRRFK: opts.RRFK, RRFK: rrfk, SemanticWeight: weight,
 	}
 }
 
@@ -128,18 +113,14 @@ func beginSourceTrace(trace *SearchTrace, backend RetrievalBackend, language str
 	return len(trace.Sources) - 1
 }
 
-// failSourceTrace marks a source failed; fatal says the request fails with it.
-func failSourceTrace(trace *SearchTrace, index int, category string, fatal bool) {
+// failSourceTrace records the source error that failed the request.
+func failSourceTrace(trace *SearchTrace, index int, category string) {
 	if trace == nil || index < 0 {
 		return
 	}
 	trace.Sources[index].Status = SourceStatusFailed
 	trace.Sources[index].ErrorCategory = category
-	if fatal {
-		trace.ErrorCategory = category
-	} else {
-		trace.Degraded = true
-	}
+	trace.ErrorCategory = category
 }
 
 func completeSourceTrace(trace *SearchTrace, index int, candidates []CandidateTrace) {
