@@ -53,18 +53,18 @@ func orderBy(sort, likes, dislikes, created string) string {
 }
 
 // Counts batch-reads the aggregate counts of refs (O(1) rollup rows). A
-// reference with no engagement yet is absent from the map.
+// reference with no engagement yet is absent from the map. Preference counts
+// use the canonical work; comment counts keep the original localized thread.
 func (rt *Runtime) Counts(ctx context.Context, refs []contentref.ContentRef) (map[contentref.ContentKey]Counts, error) {
 	out := make(map[contentref.ContentKey]Counts, len(refs))
-	for _, r := range refs {
-		if err := rt.checkRef(r); err != nil {
-			return nil, err
-		}
+	stored, err := rt.preferences.storedRefs(refs)
+	if err != nil {
+		return nil, err
 	}
 	if len(refs) == 0 {
 		return out, nil
 	}
-	kinds, ids, versions := refColumns(refs)
+	kinds, ids, versions := refColumns(append(append([]contentref.ContentRef(nil), refs...), stored.refs...))
 	rows, err := rt.store.pool.Query(ctx, `SELECT content_kind, content_id, content_version_id, likes, dislikes, favorites, comment_count
 		FROM `+rt.store.t.counts+` WHERE tenant_id = $1 AND `+refsIn(2), rt.tenant, kinds, ids, versions)
 	if err != nil {
@@ -79,7 +79,20 @@ func (rt *Runtime) Counts(ctx context.Context, refs []contentref.ContentRef) (ma
 		}
 		out[k] = c
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	result := make(map[contentref.ContentKey]Counts, len(refs))
+	for i, r := range refs {
+		local, localFound := out[r.Key()]
+		preference, preferenceFound := out[stored.refs[i].Key()]
+		if !localFound && !preferenceFound {
+			continue
+		}
+		local.Likes, local.Dislikes, local.Favorites = preference.Likes, preference.Dislikes, preference.Favorites
+		result[r.Key()] = local
+	}
+	return result, nil
 }
 
 // ListFavorites returns userID's bookmarks newest-first: the host-facing Go
@@ -101,19 +114,20 @@ func (rt *Runtime) LatestComments(ctx context.Context, actor Actor, limit, offse
 }
 
 // MyReactions batch-reads the actor's own reaction (-1/0/1) for many refs: the
-// hydration read for list/detail responses. Only nonzero reactions appear.
+// hydration read for list/detail responses, keyed by the caller's references
+// and read under their canonical preference references (the identity the
+// write path stores under). Only nonzero reactions appear.
 func (rt *Runtime) MyReactions(ctx context.Context, actor Actor, refs []contentref.ContentRef) (map[contentref.ContentKey]int16, error) {
 	out := make(map[contentref.ContentKey]int16, len(refs))
-	for _, r := range refs {
-		if err := rt.checkRef(r); err != nil {
-			return nil, err
-		}
+	stored, err := rt.preferences.storedRefs(refs)
+	if err != nil {
+		return nil, err
 	}
 	userID, ip, ok := reactionKey(actor)
 	if !ok || len(refs) == 0 {
 		return out, nil
 	}
-	kinds, ids, versions := refColumns(refs)
+	kinds, ids, versions := refColumns(stored.refs)
 	rows, err := rt.store.pool.Query(ctx, `SELECT content_kind, content_id, content_version_id, value
 		FROM `+rt.store.t.reactions+`
 		WHERE tenant_id = $1 AND `+actorPred(userID, 2)+` AND value <> 0 AND `+refsIn(3),
@@ -128,7 +142,9 @@ func (rt *Runtime) MyReactions(ctx context.Context, actor Actor, refs []contentr
 		if err := rows.Scan(&k.ContentKind, &k.ContentID, &k.ContentVersionID, &v); err != nil {
 			return nil, err
 		}
-		out[k] = v
+		for _, caller := range stored.callers[k] {
+			out[caller] = v
+		}
 	}
 	return out, rows.Err()
 }

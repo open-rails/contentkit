@@ -412,16 +412,18 @@ func (p *posts) react(ctx context.Context, actor Actor, id string, value int16) 
 	if err := p.requirePublished(ctx, tx, id); err != nil {
 		return err
 	}
-	dLikes, dDislikes, err := p.rt.reactions.applyTx(ctx, tx, actor, p.rt.Ref(KindPost, id).Key(), value)
-	if err != nil {
-		return err
-	}
-	if dLikes != 0 || dDislikes != 0 {
-		if _, err := tx.Exec(ctx, `UPDATE `+p.s.t.posts+`
-			SET total_likes = total_likes + $1, total_dislikes = total_dislikes + $2, updated_at = now()
-			WHERE id = $3 AND tenant_id = $4`, dLikes, dDislikes, id, p.s.tenant); err != nil {
-			return err
+	storage, key, exportable := p.rt.preferences.target(actor, p.rt.Ref(KindPost, id), PreferenceAxisReaction)
+	if _, err := p.rt.preferences.mutate(ctx, tx, key, exportable, value, func() (bool, error) {
+		dLikes, dDislikes, err := p.rt.reactions.applyTx(ctx, tx, actor, storage.Key(), value)
+		if err != nil || (dLikes == 0 && dDislikes == 0) {
+			return false, err
 		}
+		_, err = tx.Exec(ctx, `UPDATE `+p.s.t.posts+`
+			SET total_likes = total_likes + $1, total_dislikes = total_dislikes + $2, updated_at = now()
+			WHERE id = $3 AND tenant_id = $4`, dLikes, dDislikes, id, p.s.tenant)
+		return true, err
+	}); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }

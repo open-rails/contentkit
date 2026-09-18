@@ -63,6 +63,17 @@ DELETE FROM content_search_backfill  WHERE tenant_id = '';
 Hosts write the queue through `search.MarkDirty` (or the same SQL) with the
 tenant, kind, id, optional version and language of every changed document.
 
+## Social 0004: preference snapshots
+
+`content_preference_snapshots` (tenant, actor, canonical reference, axis,
+value, revision, occurred_at, delivered_revision), one sequence
+`content_preference_revision_seq` and the cutover archive
+`content_preference_key_archive`. Nothing is written until the host sets
+`content.Options.Canonicalizer`. Export state and the sequence are user state
+in backup/recovery: a content-only restore must not rewind them, and a full
+recovery re-runs `SeedPreferenceRevisionFloor` against the retained sink
+before writers resume ([HOST_INTEGRATION.md](../HOST_INTEGRATION.md#preference-boundary-reactions-and-favorites-into-the-signal-plane)).
+
 ## Legacy 0005 drops the embedding tables — export first
 
 `embedding_models`, `embedding_tasks`, `embedding_vectors`,

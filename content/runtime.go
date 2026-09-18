@@ -39,6 +39,11 @@ type Options struct {
 	Authz    Authorizer
 	Resolver ContentResolver
 
+	// Canonicalizer enables the preference boundary (preferences.go): the
+	// reaction/favorite row, the counts rollup and the exported snapshot all
+	// use the reference it returns. nil = no preference export.
+	Canonicalizer ContentCanonicalizer
+
 	// Optional ports (nil -> default).
 	Users     UserEnricher     // default: no enrichment (ids only)
 	Media     MediaStore       // explicit override; usually leave nil and set Storage
@@ -80,11 +85,12 @@ type Runtime struct {
 	// against the public bucket origin; empty = serve values verbatim.
 	mediaBase string
 
-	reactions *reactions
-	polls     *polls
-	comments  *comments
-	posts     *posts
-	favorites *favorites
+	preferences *preferences
+	reactions   *reactions
+	polls       *polls
+	comments    *comments
+	posts       *posts
+	favorites   *favorites
 }
 
 // New constructs a Runtime over a schema the social lineage was applied to
@@ -130,7 +136,9 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if err := rt.checkSchema(ctx); err != nil {
 		return nil, err
 	}
-	// reactions first: comments and posts reuse its applyTx primitive.
+	// preferences before the writers that record into it; reactions before
+	// comments and posts, which reuse its applyTx primitive.
+	rt.preferences = newPreferences(rt, opts.Canonicalizer)
 	rt.reactions = newReactions(rt)
 	rt.polls = newPolls(rt)
 	rt.comments = newComments(rt)
@@ -142,7 +150,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 // checkSchema fails construction when the social lineage (incl. the content
 // reference migration) is not applied to the schema.
 func (rt *Runtime) checkSchema(ctx context.Context) error {
-	if _, err := rt.store.pool.Exec(ctx, `SELECT tenant_id, content_kind, content_id, content_version_id FROM `+rt.store.t.counts+` LIMIT 0`); err != nil {
+	if _, err := rt.store.pool.Exec(ctx, `SELECT tenant_id, content_kind, content_id, content_version_id FROM `+rt.store.t.counts+` LIMIT 0; SELECT revision FROM `+rt.store.t.preferenceSnapshots+` LIMIT 0`); err != nil {
 		return fmt.Errorf("content: schema %q lacks the social lineage (apply contentkit.Migrate): %w", rt.schema, err)
 	}
 	return nil

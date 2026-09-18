@@ -27,67 +27,74 @@ type FavoriteItem struct {
 }
 
 // add gates on visibility only, then idempotently inserts under the canonical
-// reference. Re-favoriting is a no-op success.
-func (f *favorites) add(ctx context.Context, actor Actor, kind, id string) error {
+// preference reference and records the snapshot in the same transaction.
+// Re-favoriting is a no-op success that exports nothing.
+func (f *favorites) add(ctx context.Context, actor Actor, kind, id string) (*PreferenceSnapshot, error) {
 	ref, err := f.rt.gate(ctx, kind, id, actor, false)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	key := ref.Key()
+	storage, key, exportable := f.rt.preferences.target(actor, ref, PreferenceAxisFavorite)
 	tx, err := f.s.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	tag, err := tx.Exec(ctx, `INSERT INTO `+f.s.t.favorites+` (`+keyCols+`, user_id) VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (tenant_id, user_id, content_kind, content_id, content_version_id) DO NOTHING`,
-		append(keyArgs(key), actor.ID)...)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 1 { // only a real new favorite bumps the rollup
-		if err := bumpCounts(ctx, tx, f.s, key, 0, 0, 1, 0); err != nil {
-			return err
+	snap, err := f.rt.preferences.mutate(ctx, tx, key, exportable, 1, func() (bool, error) {
+		tag, err := tx.Exec(ctx, `INSERT INTO `+f.s.t.favorites+` (`+keyCols+`, user_id) VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (tenant_id, user_id, content_kind, content_id, content_version_id) DO NOTHING`,
+			append(keyArgs(storage.Key()), actor.ID)...)
+		if err != nil || tag.RowsAffected() != 1 {
+			return false, err
 		}
+		return true, bumpCounts(ctx, tx, f.s, storage.Key(), 0, 0, 1, 0)
+	})
+	if err != nil {
+		return nil, err
 	}
-	return tx.Commit(ctx)
+	return snap, tx.Commit(ctx)
 }
 
-// remove deletes the caller's bookmark (idempotent). No visibility gate:
-// un-wishlisting content that later became hidden must still work.
-func (f *favorites) remove(ctx context.Context, actor Actor, kind, id string) error {
-	key := f.rt.canonical(ctx, kind, id, actor).Key()
+// remove deletes the caller's bookmark (idempotent) and keeps a zero-valued
+// snapshot. No visibility gate: un-wishlisting content that later became
+// hidden must still work.
+func (f *favorites) remove(ctx context.Context, actor Actor, kind, id string) (*PreferenceSnapshot, error) {
+	storage, key, exportable := f.rt.preferences.target(actor, f.rt.canonical(ctx, kind, id, actor), PreferenceAxisFavorite)
 	tx, err := f.s.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	tag, err := tx.Exec(ctx, `DELETE FROM `+f.s.t.favorites+` WHERE `+keyPred(1)+` AND user_id = $5`, append(keyArgs(key), actor.ID)...)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 1 { // only a real removal decrements the rollup
-		if err := bumpCounts(ctx, tx, f.s, key, 0, 0, -1, 0); err != nil {
-			return err
+	snap, err := f.rt.preferences.mutate(ctx, tx, key, exportable, 0, func() (bool, error) {
+		tag, err := tx.Exec(ctx, `DELETE FROM `+f.s.t.favorites+` WHERE `+keyPred(1)+` AND user_id = $5`, append(keyArgs(storage.Key()), actor.ID)...)
+		if err != nil || tag.RowsAffected() != 1 {
+			return false, err
 		}
+		return true, bumpCounts(ctx, tx, f.s, storage.Key(), 0, 0, -1, 0)
+	})
+	if err != nil {
+		return nil, err
 	}
-	return tx.Commit(ctx)
+	return snap, tx.Commit(ctx)
 }
 
-// IsFavorited batch-reports which of refs the user has bookmarked. Every
-// requested key is present in the map (absent bookmarks => false).
+// IsFavorited batch-reports which of refs the user has bookmarked, keyed by
+// the caller's references; each is read under its canonical preference
+// reference, the identity the write path stores under. Every requested key is
+// present in the map (absent bookmarks => false).
 func (f *favorites) IsFavorited(ctx context.Context, userID string, refs []contentref.ContentRef) (map[contentref.ContentKey]bool, error) {
 	out := make(map[contentref.ContentKey]bool, len(refs))
+	stored, err := f.rt.preferences.storedRefs(refs)
+	if err != nil {
+		return nil, err
+	}
 	for _, r := range refs {
-		if err := f.rt.checkRef(r); err != nil {
-			return nil, err
-		}
 		out[r.Key()] = false
 	}
 	if userID == "" || len(refs) == 0 {
 		return out, nil
 	}
-	kinds, ids, versions := refColumns(refs)
+	kinds, ids, versions := refColumns(stored.refs)
 	rows, err := f.s.pool.Query(ctx, `SELECT content_kind, content_id, content_version_id FROM `+f.s.t.favorites+`
 		WHERE tenant_id = $1 AND user_id = $2 AND `+refsIn(3), f.s.tenant, userID, kinds, ids, versions)
 	if err != nil {
@@ -99,7 +106,9 @@ func (f *favorites) IsFavorited(ctx context.Context, userID string, refs []conte
 		if err := rows.Scan(&k.ContentKind, &k.ContentID, &k.ContentVersionID); err != nil {
 			return nil, err
 		}
-		out[k] = true
+		for _, caller := range stored.callers[k] {
+			out[caller] = true
+		}
 	}
 	return out, rows.Err()
 }
@@ -142,7 +151,7 @@ func (f *favorites) handleAdd(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if err := f.add(req.Context(), actor, req.PathValue("kind"), req.PathValue("id")); err != nil {
+	if _, err := f.add(req.Context(), actor, req.PathValue("kind"), req.PathValue("id")); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -155,7 +164,7 @@ func (f *favorites) handleRemove(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if err := f.remove(req.Context(), actor, req.PathValue("kind"), req.PathValue("id")); err != nil {
+	if _, err := f.remove(req.Context(), actor, req.PathValue("kind"), req.PathValue("id")); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -169,7 +178,7 @@ func (f *favorites) handleStatus(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	ref := f.rt.canonical(req.Context(), req.PathValue("kind"), req.PathValue("id"), actor)
-	m, err := f.IsFavorited(req.Context(), actor.ID, []contentref.ContentRef{ref})
+	m, err := f.IsFavorited(req.Context(), actor.ID, []contentref.ContentRef{ref}) // read under the stored reference
 	if err != nil {
 		writeErr(w, err)
 		return

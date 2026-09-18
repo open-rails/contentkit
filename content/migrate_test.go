@@ -17,7 +17,7 @@ func TestMigrations_ChainIsHeaded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("chain: %v", err)
 	}
-	if len(ms) != 3 || ms[2].Name != "0003_content_refs.up.sql" {
+	if len(ms) != 4 || ms[3].Name != "0004_preference_snapshots.up.sql" {
 		t.Fatalf("migrations = %+v", ms)
 	}
 }
