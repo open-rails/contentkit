@@ -103,7 +103,93 @@ type ContentProcessor interface {
 // Perms carries the opaque host permission strings checked through
 // Authorizer.Can before privileged writes. An unset gate fails closed.
 type Perms struct {
-	PostWrite       string // create/update/delete posts
-	PollWrite       string // create/update/delete polls + options
-	CommentModerate string // moderator delete/restore of another actor's comment
+	PostWrite        string // create/update/delete posts
+	PollWrite        string // create/update/delete polls + options
+	CommentModerate  string // moderator delete/restore of another actor's comment
+	ModerationReview string // list and resolve held comments and posts
 }
+
+// --- moderation and classification ports (nil -> publish / refuse) ---
+
+// Decision is a ContentModerator's outcome for one text write.
+type Decision string
+
+const (
+	DecisionApprove Decision = "approve" // publish
+	DecisionReject  Decision = "reject"  // refuse the write: 422 with the reason, nothing stored
+	DecisionReview  Decision = "review"  // store held: author-only until a reviewer resolves it
+)
+
+// ModerationInput is one comment or post body about to publish. The moderator
+// sees sanitized text and opaque ids only.
+type ModerationInput struct {
+	SubjectID string // opaque content author; may differ from editing moderator
+	Tenant    string
+	Actor     Actor
+	// Ref is the content the item belongs to: the commented work for a
+	// comment, the post's own reference for a post.
+	Ref    contentref.ContentRef
+	Kind   string // KindComment | KindPost
+	ItemID string // the existing item on an edit; empty on create
+	Title  string // posts only
+	Text   string
+}
+
+// Verdict is a moderator's decision with its provenance. Reason is shown to
+// the author on reject and review; Model, PromptVersion and Confidence are
+// kept with a held item for the reviewer.
+type Verdict struct {
+	Decision      Decision
+	Reason        string
+	Model         string
+	PromptVersion string
+	Confidence    float64
+}
+
+// ContentModerator screens every comment/post write before it publishes.
+// Absent port: every write publishes. An error or an unknown decision fails
+// closed to review: the submission is kept, held, never published unscreened.
+type ContentModerator interface {
+	Screen(ctx context.Context, in ModerationInput) (Verdict, error)
+}
+
+// Answer is one free-text poll answer handed to the AnswerClassifier.
+type Answer struct {
+	Tenant     string
+	QuestionID string
+	AnswerID   string
+	Revision   int64  // monotonic per answer; retries retain this revision
+	SubjectID  string // opaque authenticated actor, never an IP
+	Text       string
+}
+
+// GroupAssignment is the group an answer was placed in at store time.
+type GroupAssignment struct {
+	GroupID string
+	Label   string
+}
+
+// Group is one answer group of a free-text poll with its current size. The
+// ContentKit owns current assignments and counts, so delayed provider side
+// effects cannot rewrite results.
+type Group struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Count int    `json:"count"`
+}
+
+// AnswerClassifier groups free-text poll answers. Classify runs when an
+// answer is stored or edited. Poll results come from source assignments. Without a
+// registered classifier a free-text poll cannot be created.
+// Classify must be idempotent by (Tenant, AnswerID, Revision), ignore older
+// revisions. ContentKit accepts assignments only by source-revision CAS;
+// the stored result is the sole authority for current membership and labels.
+// Provider erasure/lifecycle wiring is a separate host integration obligation.
+type AnswerClassifier interface {
+	Classify(ctx context.Context, a Answer) (GroupAssignment, error)
+}
+
+// StatelessPolicy explicitly declares that a policy implementation retains no
+// personal data outside this process. Built-in deterministic policies satisfy
+// this marker; retaining providers must instead configure PrivateDataEraser.
+type StatelessPolicy interface{ StatelessPolicy() }

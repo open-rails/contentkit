@@ -48,10 +48,19 @@ type Options struct {
 	Users     UserEnricher     // default: no enrichment (ids only)
 	Media     MediaStore       // explicit override; usually leave nil and set Storage
 	Processor ContentProcessor // default: strip tags
+	// Moderator screens comment/post writes; nil publishes everything.
+	// Compose a BasicModerator in front of an AI moderator with Chain.
+	Moderator ContentModerator
+	// Classifier groups free-text poll answers; nil refuses free-text polls.
+	Classifier AnswerClassifier
 
 	// Storage configures the built-in S3-backed media store (poll/post image
 	// upload to a public bucket); used when Media is nil. See StorageConfig.
 	Storage *StorageConfig
+
+	// PrivateDataEraser is required when policy ports retain external personal data.
+	// Nil explicitly means stateless ports; never remove it during an outage.
+	PrivateDataEraser PrivateDataEraser
 
 	// Perms are the opaque host permission strings gating privileged writes.
 	Perms Perms
@@ -68,19 +77,22 @@ type Options struct {
 // Runtime is one tenant's embedded content module: shared deps + the module
 // services, exposing one mountable http.Handler.
 type Runtime struct {
-	store        *store
-	schema       string
-	tenant       string
-	searchSchema string
-	identity     Identity
-	authz        Authorizer
-	resolver     ContentResolver
-	users        UserEnricher
-	media        MediaStore
-	processor    ContentProcessor
-	perms        Perms
-	log          *slog.Logger
-	kinds        map[string]struct{}
+	store         *store
+	schema        string
+	tenant        string
+	searchSchema  string
+	identity      Identity
+	authz         Authorizer
+	resolver      ContentResolver
+	users         UserEnricher
+	media         MediaStore
+	processor     ContentProcessor
+	moderator     ContentModerator
+	classifier    AnswerClassifier
+	privateEraser PrivateDataEraser
+	perms         Perms
+	log           *slog.Logger
+	kinds         map[string]struct{}
 	// mediaBase absolutizes stored relative media paths (backfilled rows)
 	// against the public bucket origin; empty = serve values verbatim.
 	mediaBase string
@@ -108,24 +120,30 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if opts.Identity == nil || opts.Authz == nil || opts.Resolver == nil {
 		return nil, fmt.Errorf("content: Identity, Authz and Resolver ports are required")
 	}
+	if opts.PrivateDataEraser == nil && (!policyIsStateless(opts.Moderator) || !policyIsStateless(opts.Classifier)) {
+		return nil, fmt.Errorf("content: retaining policy ports require PrivateDataEraser; stateless ports must declare StatelessPolicy")
+	}
 	media, err := resolveMedia(opts)
 	if err != nil {
 		return nil, err
 	}
 	rt := &Runtime{
-		store:        newStore(opts.Pool, opts.Schema, opts.Tenant),
-		schema:       opts.Schema,
-		tenant:       opts.Tenant,
-		searchSchema: strings.TrimSpace(opts.SearchSchema),
-		identity:     opts.Identity,
-		authz:        opts.Authz,
-		resolver:     opts.Resolver,
-		users:        orDefault[UserEnricher](opts.Users, noopEnricher{}),
-		media:        media,
-		processor:    orDefault[ContentProcessor](opts.Processor, stripProcessor{}),
-		perms:        opts.Perms,
-		log:          orDefault[*slog.Logger](opts.Logger, slog.Default()),
-		kinds:        make(map[string]struct{}, len(opts.ContentKinds)),
+		store:         newStore(opts.Pool, opts.Schema, opts.Tenant),
+		schema:        opts.Schema,
+		tenant:        opts.Tenant,
+		searchSchema:  strings.TrimSpace(opts.SearchSchema),
+		identity:      opts.Identity,
+		authz:         opts.Authz,
+		resolver:      opts.Resolver,
+		users:         orDefault[UserEnricher](opts.Users, noopEnricher{}),
+		media:         media,
+		processor:     orDefault[ContentProcessor](opts.Processor, stripProcessor{}),
+		moderator:     opts.Moderator,
+		classifier:    opts.Classifier,
+		privateEraser: opts.PrivateDataEraser,
+		perms:         opts.Perms,
+		log:           orDefault[*slog.Logger](opts.Logger, slog.Default()),
+		kinds:         make(map[string]struct{}, len(opts.ContentKinds)),
 	}
 	if opts.Storage != nil {
 		rt.mediaBase = strings.TrimRight(opts.Storage.PublicBaseURL, "/")
@@ -150,7 +168,10 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 // checkSchema fails construction when the social lineage (incl. the content
 // reference migration) is not applied to the schema.
 func (rt *Runtime) checkSchema(ctx context.Context) error {
-	if _, err := rt.store.pool.Exec(ctx, `SELECT tenant_id, content_kind, content_id, content_version_id FROM `+rt.store.t.counts+` LIMIT 0; SELECT revision FROM `+rt.store.t.preferenceSnapshots+` LIMIT 0`); err != nil {
+	if _, err := rt.store.pool.Exec(ctx, `SELECT tenant_id, content_kind, content_id, content_version_id FROM `+rt.store.t.counts+` LIMIT 0;
+		SELECT revision FROM `+rt.store.t.preferenceSnapshots+` LIMIT 0;
+		SELECT moderation FROM `+rt.store.t.comments+` LIMIT 0; SELECT moderation FROM `+rt.store.t.posts+` LIMIT 0;
+		SELECT kind, closes_at FROM `+rt.store.t.pollQuestions+` LIMIT 0; SELECT group_id FROM `+rt.store.t.pollAnswers+` LIMIT 0`); err != nil {
 		return fmt.Errorf("content: schema %q lacks the social lineage (apply contentkit.Migrate): %w", rt.schema, err)
 	}
 	return nil
@@ -173,6 +194,7 @@ func (rt *Runtime) Handler() http.Handler {
 	rt.comments.mount(mux)
 	rt.posts.mount(mux)
 	rt.favorites.mount(mux)
+	rt.mountModeration(mux)
 	return rt.accessLog(mux)
 }
 

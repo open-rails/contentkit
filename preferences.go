@@ -106,22 +106,54 @@ func (r *Runtime) ReplayPreferences(ctx context.Context, after content.Preferenc
 	return r.Content.ReplayPreferences(ctx, sink, after, pageSize, maxRows)
 }
 
-// EraseSubjects records the erasure fence in the signal plane, then purges the
-// subjects' preference obligations: a pending delivery can no longer re-ingest
-// them, and nothing rotates an erased subject into a new identity.
+// EraseSubjects erases every configured runtime plane: signals, preference
+// obligations, and C4 private-source/provider data. Current approved authored
+// content remains under host retention policy (content.ErasePrivateSubjects).
+// This is not an account wipe: authoritative social_reactions/social_favorites
+// and poll votes remain under the host's separate retention/deletion policy.
+// EmbeddedHub.EraseSubjects is the explicit analytics-only lower-level API.
+//
+// AuthKit ACK means durable acceptance by the host's deletion ledger, not this
+// downstream completion. Retry while error != nil or !report.Complete(). A
+// disabled signal plane is intentionally absent. Remaining may include pending
+// plane markers private_content, signal_plane or preference_obligations when a
+// plane could not complete; these are not estimates of retained provider rows.
 func (r *Runtime) EraseSubjects(ctx context.Context, subjects []signal.Subject) (signal.ErasureReport, error) {
-	report, err := r.EmbeddedHub.EraseSubjects(ctx, subjects)
-	if err != nil && !errors.Is(err, ErrSignalPlaneDisabled) {
-		return report, err
+	invalid := signal.ErasureReport{Remaining: map[string]uint64{"invalid_subjects": 1}}
+	if len(subjects) > signal.MaxErasureSubjects {
+		return invalid, &signal.LimitError{Field: "subjects per erasure", Limit: signal.MaxErasureSubjects, Got: len(subjects)}
+	}
+	for _, s := range subjects {
+		if err := s.Validate(); err != nil {
+			return invalid, err
+		}
+	}
+	report, signalErr := r.EmbeddedHub.EraseSubjects(ctx, subjects)
+	if errors.Is(signalErr, ErrSignalPlaneDisabled) {
+		signalErr = nil
+	}
+	if report.Remaining == nil {
+		report.Remaining = map[string]uint64{}
 	}
 	var actors []string
 	for _, s := range subjects {
-		if s.UserID != "" {
-			actors = append(actors, s.UserID)
+		if s.Kind() == signal.SubjectKindUser {
+			actors = append(actors, s.Key())
 		}
 	}
-	if _, perr := r.Content.PurgePreferenceSubjects(ctx, actors); perr != nil {
-		return report, perr
+	var preferenceErr error
+	if signalErr == nil {
+		_, preferenceErr = r.Content.PurgePreferenceSubjects(ctx, actors)
 	}
-	return report, err
+	privateErr := r.Content.ErasePrivateSubjects(ctx, actors)
+	if signalErr != nil {
+		report.Remaining["signal_plane"] = 1
+	}
+	if preferenceErr != nil {
+		report.Remaining["preference_obligations"] = 1
+	}
+	if privateErr != nil {
+		report.Remaining["private_content"] = 1
+	}
+	return report, errors.Join(signalErr, preferenceErr, privateErr)
 }

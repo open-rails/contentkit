@@ -31,7 +31,7 @@ another tenant is an error, never remapped.
 | Package | Owns |
 |---|---|
 | `contentref` | `ContentRef`, `ContentKey`, `TaxonomyID` |
-| `content` | posts, comments, reactions, favorites, polls and their counts over `ContentRef`, in the host schema's `social_*` tables; the `Identity`/`Authorizer`/`ContentResolver`/`UserEnricher`/`MediaStore`/`ContentProcessor` ports and the HTTP routes |
+| `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `social_*` tables; the `Identity`/`Authorizer`/`ContentResolver`/`UserEnricher`/`MediaStore`/`ContentProcessor` ports, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, and the HTTP routes |
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
 | `worker` | one tenant's document maintenance: dirty queue, bounded backfill, sink delivery |
 | `taxonomy` | generic catalog: nodes (tags, artists, creators, characters, series, seasons, voice actors), localized names/aliases, edges, content assignments, effective tags, per-language counts, typeahead documents, admin routes |

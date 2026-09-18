@@ -29,7 +29,7 @@ func (p *posts) markDirty(ctx context.Context, tx pgx.Tx, id, language string, d
 // KeywordDocuments returns the current keyword document of every published
 // post in refs for language (the worker's BuildKeywordDocuments shape for kind
 // "post"). A draft, unpublished, deleted or other-language post yields no
-// document, which deletes its stale index entry.
+// document, which deletes its stale index entry; so does a held or rejected one.
 func (rt *Runtime) KeywordDocuments(ctx context.Context, tenant, kind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
 	if tenant != rt.tenant || kind != KindPost {
 		return nil, fmt.Errorf("content: KeywordDocuments serves %s/%s, not %s/%s", rt.tenant, KindPost, tenant, kind)
@@ -43,7 +43,7 @@ func (rt *Runtime) KeywordDocuments(ctx context.Context, tenant, kind, language 
 	}
 	rows, err := rt.store.pool.Query(ctx, `SELECT id, title, slug FROM `+rt.store.t.posts+`
 		WHERE tenant_id = $1 AND language = $2 AND id = ANY($3) AND deleted_at IS NULL AND is_draft = false
-		AND (live_at IS NULL OR live_at <= now())`, rt.tenant, language, ids)
+		AND moderation = 'approved' AND (live_at IS NULL OR live_at <= now())`, rt.tenant, language, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func (rt *Runtime) ListContent(ctx context.Context, tenant, kind, language, curs
 	}
 	rows, err := rt.store.pool.Query(ctx, `SELECT id FROM `+rt.store.t.posts+`
 		WHERE tenant_id = $1 AND language = $2 AND id > $3 AND deleted_at IS NULL AND is_draft = false
-		AND (live_at IS NULL OR live_at <= now()) ORDER BY id LIMIT $4`, rt.tenant, language, cursor, limit+1)
+		AND moderation = 'approved' AND (live_at IS NULL OR live_at <= now()) ORDER BY id LIMIT $4`, rt.tenant, language, cursor, limit+1)
 	if err != nil {
 		return nil, "", false, err
 	}
