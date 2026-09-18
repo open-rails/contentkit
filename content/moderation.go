@@ -197,8 +197,9 @@ func (m *BasicModerator) Screen(_ context.Context, in ModerationInput) (Verdict,
 
 // HeldItem is one comment or post awaiting review.
 type HeldItem struct {
-	Kind string `json:"kind"` // KindComment | KindPost
-	ID   string `json:"id"`
+	Kind     string `json:"kind"`     // KindComment | KindPost
+	Revision int64  `json:"revision"` // required when resolving this exact screened text
+	ID       string `json:"id"`
 	// Ref is the commented content, or the post's own reference.
 	Ref           contentref.ContentRef `json:"ref"`
 	AuthorID      string                `json:"author_id,omitempty"`
@@ -223,6 +224,7 @@ type HeldPage struct {
 // ReviewDecision resolves a held item: approve publishes it, reject keeps it
 // author-only with Reason (or the moderator's reason when empty).
 type ReviewDecision struct {
+	Revision int64 // the revision returned by ListHeld; stale decisions cannot publish edits
 	Decision Decision
 	Reviewer string
 	Reason   string
@@ -246,12 +248,12 @@ func (rt *Runtime) ListHeld(ctx context.Context, kind, cursor string, limit int)
 	var sql string
 	if kind == KindComment {
 		sql = `SELECT id::text, ` + keyCols + `, coalesce(user_id, ''), coalesce(anon_name, ''), '', body,
-			coalesce(moderation_reason, ''), moderation_verdict, updated_at, created_at
-			FROM ` + rt.store.t.comments + ` WHERE tenant_id = $1 AND moderation = 'held' AND (created_at, id::text) > ($2, $3)
+			coalesce(moderation_reason, ''), moderation_verdict, updated_at, created_at, moderation_revision
+			FROM ` + rt.store.t.comments + ` WHERE tenant_id = $1 AND moderation = 'held' AND deleted_at IS NULL AND (created_at, id::text) > ($2, $3)
 			ORDER BY created_at, id LIMIT $4`
 	} else {
 		sql = `SELECT id, tenant_id, '` + KindPost + `', id, '', author_id, '', title, body,
-			coalesce(moderation_reason, ''), moderation_verdict, updated_at, created_at
+			coalesce(moderation_reason, ''), moderation_verdict, updated_at, created_at, moderation_revision
 			FROM ` + rt.store.t.posts + ` WHERE tenant_id = $1 AND moderation = 'held' AND deleted_at IS NULL AND (created_at, id) > ($2, $3)
 			ORDER BY created_at, id LIMIT $4`
 	}
@@ -265,7 +267,7 @@ func (rt *Runtime) ListHeld(ctx context.Context, kind, cursor string, limit int)
 		it := HeldItem{Kind: kind}
 		var k contentref.ContentKey
 		var meta []byte
-		if err := rows.Scan(&it.ID, &k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID, &it.AuthorID, &it.AnonName, &it.Title, &it.Body, &it.Reason, &meta, &it.HeldAt, &it.CreatedAt); err != nil {
+		if err := rows.Scan(&it.ID, &k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID, &it.AuthorID, &it.AnonName, &it.Title, &it.Body, &it.Reason, &meta, &it.HeldAt, &it.CreatedAt, &it.Revision); err != nil {
 			return HeldPage{}, err
 		}
 		it.Ref = k.Ref()
@@ -309,6 +311,9 @@ func (rt *Runtime) Resolve(ctx context.Context, kind, id string, d ReviewDecisio
 	if d.Decision != DecisionApprove && d.Decision != DecisionReject {
 		return badRequest("decision must be %s or %s", DecisionApprove, DecisionReject)
 	}
+	if d.Revision < 1 {
+		return badRequest("reviewed revision is required")
+	}
 	if strings.TrimSpace(d.Reviewer) == "" {
 		return badRequest("reviewer is required")
 	}
@@ -342,8 +347,8 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d ReviewDecis
 	var k contentref.ContentKey
 	err = tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+` SET moderation = $3, moderation_reason = CASE WHEN $3 = 'approved' THEN NULL ELSE coalesce(nullif($4, ''), moderation_reason) END,
 		moderated_by = $5, moderated_at = now(), updated_at = now()
-		WHERE id = $1 AND tenant_id = $2 AND moderation = 'held'
-		RETURNING reply_to_id::text, deleted_at, `+keyCols, cid, c.s.tenant, state, d.Reason, d.Reviewer).
+		WHERE id = $1 AND tenant_id = $2 AND moderation = 'held' AND deleted_at IS NULL AND moderation_revision = $6
+		RETURNING reply_to_id::text, deleted_at, `+keyCols, cid, c.s.tenant, state, d.Reason, d.Reviewer, d.Revision).
 		Scan(&replyTo, &deletedAt, &k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
@@ -380,8 +385,8 @@ func (p *posts) resolve(ctx context.Context, id, state string, d ReviewDecision)
 	var language string
 	err = tx.QueryRow(ctx, `UPDATE `+p.s.t.posts+` SET moderation = $3, moderation_reason = CASE WHEN $3 = 'approved' THEN NULL ELSE coalesce(nullif($4, ''), moderation_reason) END,
 		moderated_by = $5, moderated_at = now(), updated_at = now()
-		WHERE id = $1 AND tenant_id = $2 AND moderation = 'held' AND deleted_at IS NULL RETURNING language`,
-		id, p.s.tenant, state, d.Reason, d.Reviewer).Scan(&language)
+		WHERE id = $1 AND tenant_id = $2 AND moderation = 'held' AND deleted_at IS NULL AND moderation_revision = $6 RETURNING language`,
+		id, p.s.tenant, state, d.Reason, d.Reviewer, d.Revision).Scan(&language)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -424,6 +429,7 @@ func (rt *Runtime) handleResolve(w http.ResponseWriter, req *http.Request) {
 	}
 	var in struct {
 		Decision Decision `json:"decision"`
+		Revision int64    `json:"revision"`
 		Reason   string   `json:"reason,omitempty"`
 	}
 	if err := decodeJSON(req, &in); err != nil {
@@ -434,7 +440,7 @@ func (rt *Runtime) handleResolve(w http.ResponseWriter, req *http.Request) {
 	if reviewer == "" {
 		reviewer = fmt.Sprintf("%s:%s", actor.Kind, actor.IP)
 	}
-	if err := rt.Resolve(req.Context(), req.PathValue("kind"), req.PathValue("id"), ReviewDecision{Decision: in.Decision, Reviewer: reviewer, Reason: in.Reason}); err != nil {
+	if err := rt.Resolve(req.Context(), req.PathValue("kind"), req.PathValue("id"), ReviewDecision{Revision: in.Revision, Decision: in.Decision, Reviewer: reviewer, Reason: in.Reason}); err != nil {
 		writeErr(w, err)
 		return
 	}

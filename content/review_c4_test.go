@@ -18,7 +18,7 @@ func TestReviewC4StaleReviewCannotPublishEditedText(t *testing.T) {
 	if _, err := rt.comments.edit(ctx, author, held.ID, "iffy replacement never reviewed"); err != nil {
 		t.Fatal(err)
 	}
-	decision := ReviewDecision{Decision: DecisionApprove, Reviewer: "reviewer"}
+	decision := ReviewDecision{Revision: page.Items[0].Revision, Decision: DecisionApprove, Reviewer: "reviewer"}
 	_ = page // reviewer saw this immutable page before the edit
 	if err := rt.Resolve(ctx, KindComment, held.ID, decision); err == nil {
 		t.Fatal("stale reviewer decision published replacement text")

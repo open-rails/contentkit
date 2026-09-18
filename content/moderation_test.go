@@ -199,7 +199,7 @@ func TestModeration_CommentVerdicts(t *testing.T) {
 	}
 
 	// resolve approve: published and counted
-	if err := rt.Resolve(ctx, KindComment, held.ID, ReviewDecision{Decision: DecisionApprove, Reviewer: "reviewer"}); err != nil {
+	if err := rt.Resolve(ctx, KindComment, held.ID, ReviewDecision{Revision: 1, Decision: DecisionApprove, Reviewer: "reviewer"}); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	if !contains(listIDs(t, rt, other), held.ID) || countsOf(t, rt, g1).CommentCount != 2 {
@@ -212,13 +212,13 @@ func TestModeration_CommentVerdicts(t *testing.T) {
 	if ids := heldIDs(t, rt, KindComment); len(ids) != 0 {
 		t.Fatalf("queue after approve = %v", ids)
 	}
-	if err := rt.Resolve(ctx, KindComment, held.ID, ReviewDecision{Decision: DecisionApprove, Reviewer: "reviewer"}); !errors.Is(err, ErrNotFound) {
+	if err := rt.Resolve(ctx, KindComment, held.ID, ReviewDecision{Revision: 1, Decision: DecisionApprove, Reviewer: "reviewer"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("re-resolve: %v, want ErrNotFound", err)
 	}
 
 	// resolve reject: final, author-visible with the reviewer's reason
 	rej2 := mustComment(t, rt, author, "gallery", "1", createInput{Body: "another iffy one"})
-	if err := rt.Resolve(ctx, KindComment, rej2.ID, ReviewDecision{Decision: DecisionReject, Reviewer: "reviewer", Reason: "off topic"}); err != nil {
+	if err := rt.Resolve(ctx, KindComment, rej2.ID, ReviewDecision{Revision: 1, Decision: DecisionReject, Reviewer: "reviewer", Reason: "off topic"}); err != nil {
 		t.Fatalf("reject: %v", err)
 	}
 	if contains(listIDs(t, rt, other), rej2.ID) || countsOf(t, rt, g1).CommentCount != 2 {
@@ -242,13 +242,13 @@ func TestModeration_CommentVerdicts(t *testing.T) {
 	}
 
 	// validation
-	if err := rt.Resolve(ctx, KindComment, rej2.ID, ReviewDecision{Decision: DecisionReview, Reviewer: "r"}); err == nil {
+	if err := rt.Resolve(ctx, KindComment, rej2.ID, ReviewDecision{Revision: 1, Decision: DecisionReview, Reviewer: "r"}); err == nil {
 		t.Fatal("review is not a resolution")
 	}
-	if err := rt.Resolve(ctx, "gallery", rej2.ID, ReviewDecision{Decision: DecisionApprove, Reviewer: "r"}); err == nil {
+	if err := rt.Resolve(ctx, "gallery", rej2.ID, ReviewDecision{Revision: 1, Decision: DecisionApprove, Reviewer: "r"}); err == nil {
 		t.Fatal("unknown kind accepted")
 	}
-	if err := rt.Resolve(ctx, KindComment, rej2.ID, ReviewDecision{Decision: DecisionApprove}); err == nil {
+	if err := rt.Resolve(ctx, KindComment, rej2.ID, ReviewDecision{Revision: 1, Decision: DecisionApprove}); err == nil {
 		t.Fatal("missing reviewer accepted")
 	}
 	if _, err := rt.ListHeld(ctx, "gallery", "", 10); err == nil {
@@ -306,7 +306,7 @@ func TestModeration_FailClosed(t *testing.T) {
 	if len(page.Items) != 1 || page.Items[0].Error != "model provider down" || page.Items[0].Model != "" {
 		t.Fatalf("held item after failure = %+v", page.Items)
 	}
-	if err := rt.Resolve(ctx, KindComment, cm.ID, ReviewDecision{Decision: DecisionApprove, Reviewer: "reviewer"}); err != nil {
+	if err := rt.Resolve(ctx, KindComment, cm.ID, ReviewDecision{Revision: 1, Decision: DecisionApprove, Reviewer: "reviewer"}); err != nil {
 		t.Fatal(err)
 	}
 	if !contains(listIDs(t, rt, other), cm.ID) {
@@ -375,7 +375,7 @@ func TestModeration_EditRescreens(t *testing.T) {
 	if reps, _ := rt.comments.replies(ctx, author, top.ID, 10, 0); len(reps) != 1 || reps[0].Moderation != ModerationHeld {
 		t.Fatalf("author's replies = %+v", reps)
 	}
-	if err := rt.Resolve(ctx, KindComment, reply.ID, ReviewDecision{Decision: DecisionApprove, Reviewer: "reviewer"}); err != nil {
+	if err := rt.Resolve(ctx, KindComment, reply.ID, ReviewDecision{Revision: 2, Decision: DecisionApprove, Reviewer: "reviewer"}); err != nil {
 		t.Fatal(err)
 	}
 	list, _ = rt.comments.list(ctx, other, "gallery", "1", "", 50, 0)
@@ -439,7 +439,7 @@ func TestModeration_Posts(t *testing.T) {
 	if len(page.Items) != 1 || page.Items[0].ID != held.ID || page.Items[0].Title != "Hello" || page.Items[0].AuthorID != "reviewer" || page.Items[0].Ref.ContentKind != KindPost {
 		t.Fatalf("held posts = %+v", page.Items)
 	}
-	if err := rt.Resolve(ctx, KindPost, held.ID, ReviewDecision{Decision: DecisionApprove, Reviewer: "reviewer"}); err != nil {
+	if err := rt.Resolve(ctx, KindPost, held.ID, ReviewDecision{Revision: 1, Decision: DecisionApprove, Reviewer: "reviewer"}); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(listPosts(t, h, "")); n != 1 {
@@ -467,7 +467,7 @@ func TestModeration_Posts(t *testing.T) {
 		t.Fatalf("draft = %d, moderator calls %d -> %d", rec.Code, calls, len(mod.inputs))
 	}
 	draft := decodePost(t, rec)
-	if rec = doJSON(t, h, editor, "PATCH", "/posts/"+draft.ID, postWriteReq{IsDraft: ptr(false)}); rec.Code != http.StatusOK || decodePost(t, rec).Moderation != ModerationHeld {
+	if rec = doJSON(t, h, editor, "PATCH", "/posts/"+draft.ID, postWriteReq{IsDraft: ptr(false)}); rec.Code != http.StatusAccepted || decodePost(t, rec).Moderation != ModerationHeld {
 		t.Fatalf("publishing an iffy draft = %d %s, want held", rec.Code, rec.Body.String())
 	}
 	if rec = doJSON(t, h, editor, "PATCH", "/posts/"+draft.ID, postWriteReq{Body: ptr("clean now")}); rec.Code != http.StatusOK || decodePost(t, rec).Moderation != "" {
@@ -554,19 +554,19 @@ func TestModeration_ReviewRoutes(t *testing.T) {
 	if rec = doJSON(t, h, reviewer, "GET", "/moderation/held?kind=gallery", nil); rec.Code != http.StatusBadRequest {
 		t.Fatalf("queue with a bad kind = %d", rec.Code)
 	}
-	if rec = doJSON(t, h, user, "POST", "/moderation/comment/"+held.ID+"/resolve", map[string]string{"decision": "approve"}); rec.Code != http.StatusForbidden {
+	if rec = doJSON(t, h, user, "POST", "/moderation/comment/"+held.ID+"/resolve", map[string]any{"revision": int64(1), "decision": "approve"}); rec.Code != http.StatusForbidden {
 		t.Fatalf("resolve without the perm = %d", rec.Code)
 	}
-	if rec = doJSON(t, h, reviewer, "POST", "/moderation/comment/"+held.ID+"/resolve", map[string]string{"decision": "review"}); rec.Code != http.StatusBadRequest {
+	if rec = doJSON(t, h, reviewer, "POST", "/moderation/comment/"+held.ID+"/resolve", map[string]any{"revision": int64(1), "decision": "review"}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("resolve with a bad decision = %d", rec.Code)
 	}
-	if rec = doJSON(t, h, reviewer, "POST", "/moderation/comment/"+held.ID+"/resolve", map[string]string{"decision": "reject", "reason": "nope"}); rec.Code != http.StatusOK {
+	if rec = doJSON(t, h, reviewer, "POST", "/moderation/comment/"+held.ID+"/resolve", map[string]any{"revision": int64(1), "decision": "reject", "reason": "nope"}); rec.Code != http.StatusOK {
 		t.Fatalf("resolve = %d %s", rec.Code, rec.Body.String())
 	}
-	if rec = doJSON(t, h, reviewer, "POST", "/moderation/comment/"+held.ID+"/resolve", map[string]string{"decision": "approve"}); rec.Code != http.StatusNotFound {
+	if rec = doJSON(t, h, reviewer, "POST", "/moderation/comment/"+held.ID+"/resolve", map[string]any{"revision": int64(1), "decision": "approve"}); rec.Code != http.StatusNotFound {
 		t.Fatalf("re-resolve = %d, want 404", rec.Code)
 	}
-	if rec = doJSON(t, h, reviewer, "POST", "/moderation/post/nope/resolve", map[string]string{"decision": "approve"}); rec.Code != http.StatusNotFound {
+	if rec = doJSON(t, h, reviewer, "POST", "/moderation/post/nope/resolve", map[string]any{"revision": int64(1), "decision": "approve"}); rec.Code != http.StatusNotFound {
 		t.Fatalf("resolve a missing post = %d, want 404", rec.Code)
 	}
 	list, _ := rt.comments.list(context.Background(), author, "gallery", "1", "", 10, 0)
@@ -607,10 +607,10 @@ func TestModeration_TenantIsolation(t *testing.T) {
 	if ids := heldIDs(t, b, KindPost); len(ids) != 0 {
 		t.Fatalf("tenant b sees a's held posts: %v", ids)
 	}
-	if err := b.Resolve(ctx, KindComment, held.ID, ReviewDecision{Decision: DecisionApprove, Reviewer: "r"}); !errors.Is(err, ErrNotFound) {
+	if err := b.Resolve(ctx, KindComment, held.ID, ReviewDecision{Revision: 1, Decision: DecisionApprove, Reviewer: "r"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("tenant b resolved a's comment: %v", err)
 	}
-	if err := b.Resolve(ctx, KindPost, post.ID, ReviewDecision{Decision: DecisionApprove, Reviewer: "r"}); !errors.Is(err, ErrNotFound) {
+	if err := b.Resolve(ctx, KindPost, post.ID, ReviewDecision{Revision: 1, Decision: DecisionApprove, Reviewer: "r"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("tenant b resolved a's post: %v", err)
 	}
 	if list, _ := b.comments.list(ctx, author, "gallery", "1", "", 10, 0); len(list) != 0 {

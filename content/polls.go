@@ -366,16 +366,29 @@ func (p *polls) attach(ctx context.Context, actor Actor, views []pollView) error
 		if a, ok := mine[views[i].ID]; ok {
 			views[i].MyAnswer = &a
 		}
-		views[i].Groups = []Group{}
+		groups, err := p.currentGroups(ctx, views[i].ID)
+		if err != nil {
+			return err
+		}
+		views[i].Groups = groups
 		if p.rt.classifier == nil {
 			views[i].GroupsUnavailable = true
 			continue
 		}
-		groups, err := p.rt.classifier.Groups(ctx, p.s.tenant, views[i].ID)
+		metadata, err := p.rt.classifier.Groups(ctx, p.s.tenant, views[i].ID)
 		if err != nil {
 			p.rt.log.Warn("answer classifier groups failed", "poll", views[i].ID, "err", err.Error())
 			views[i].GroupsUnavailable = true
 			continue
+		}
+		labels := map[string]string{}
+		for _, g := range metadata {
+			labels[g.ID] = g.Label
+		}
+		for j := range groups {
+			if label := labels[groups[j].ID]; label != "" {
+				groups[j].Label = label
+			}
 		}
 		sort.Slice(groups, func(a, b int) bool {
 			if groups[a].Count != groups[b].Count {
@@ -389,6 +402,27 @@ func (p *polls) attach(ctx context.Context, actor Actor, views []pollView) error
 		views[i].Groups = orEmpty(groups)
 	}
 	return nil
+}
+
+// currentGroups reads the durable assignments accepted for the current answer revisions.
+// Provider-side aggregation is never an authority for membership or counts.
+func (p *polls) currentGroups(ctx context.Context, questionID string) ([]Group, error) {
+	rows, err := p.s.pool.Query(ctx, `SELECT group_id, coalesce((array_agg(group_label ORDER BY classified_at DESC, id))[1], group_id), count(*)
+ FROM `+p.s.t.pollAnswers+` WHERE tenant_id=$1 AND question_id=$2 AND classified_at IS NOT NULL
+ GROUP BY group_id ORDER BY count(*) DESC, 2, group_id`, p.s.tenant, questionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Group{}
+	for rows.Next() {
+		var g Group
+		if err := rows.Scan(&g.ID, &g.Label, &g.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
 }
 
 // answersFor batch-loads the answer count per question and the caller's own
@@ -580,36 +614,48 @@ func (p *polls) answer(ctx context.Context, actor Actor, pollID, text string) (p
 	if err := p.open(ctx, tx, pollID, PollFreeText); err != nil {
 		return pollView{}, err
 	}
-	var id string
-	if err := tx.QueryRow(ctx, `INSERT INTO `+p.s.t.pollAnswers+` (tenant_id, question_id, actor_id, text)
+	a := Answer{Tenant: p.s.tenant, QuestionID: pollID, SubjectID: actor.ID, Text: text}
+	err = tx.QueryRow(ctx, `INSERT INTO `+p.s.t.pollAnswers+` AS current (tenant_id, question_id, actor_id, text)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (tenant_id, question_id, actor_id) DO UPDATE
-		SET text = EXCLUDED.text, group_id = NULL, classified_at = NULL, updated_at = now()
-		RETURNING id::text`, p.s.tenant, pollID, actor.ID, text).Scan(&id); err != nil {
+		SET text = EXCLUDED.text, revision = current.revision + 1, group_id = NULL, group_label = NULL, classified_at = NULL, updated_at = clock_timestamp()
+		WHERE current.text <> EXCLUDED.text
+		RETURNING id::text, revision`, p.s.tenant, pollID, actor.ID, text).Scan(&a.AnswerID, &a.Revision)
+	pending := true
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = tx.QueryRow(ctx, `SELECT id::text, revision, classified_at IS NULL FROM `+p.s.t.pollAnswers+`
+			WHERE tenant_id=$1 AND question_id=$2 AND actor_id=$3`, p.s.tenant, pollID, actor.ID).Scan(&a.AnswerID, &a.Revision, &pending)
+	}
+	if err != nil {
 		return pollView{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return pollView{}, err
 	}
-	if err := p.classify(ctx, Answer{Tenant: p.s.tenant, QuestionID: pollID, AnswerID: id, Text: text}); err != nil {
-		p.rt.log.Warn("answer classifier failed; answer kept unclassified", "poll", pollID, "answer", id, "err", err.Error())
+	if pending {
+		if _, err := p.classify(ctx, a); err != nil {
+			p.rt.log.Warn("answer classifier failed; answer kept unclassified", "poll", pollID, "answer", a.AnswerID, "err", err.Error())
+		}
 	}
 	return p.get(ctx, actor, pollID)
 }
 
 // classify runs the classifier over one answer and records the assignment,
 // unless the text changed meanwhile (that edit classifies itself).
-func (p *polls) classify(ctx context.Context, a Answer) error {
+func (p *polls) classify(ctx context.Context, a Answer) (bool, error) {
 	if p.rt.classifier == nil {
-		return ErrNoClassifier
+		return false, ErrNoClassifier
 	}
 	g, err := p.rt.classifier.Classify(ctx, a)
 	if err != nil {
-		return err
+		return false, err
 	}
-	_, err = p.s.pool.Exec(ctx, `UPDATE `+p.s.t.pollAnswers+` SET group_id = $3, classified_at = now()
-		WHERE id = $1 AND tenant_id = $2 AND text = $4 AND classified_at IS NULL`, a.AnswerID, p.s.tenant, g.GroupID, a.Text)
-	return err
+	if strings.TrimSpace(g.GroupID) == "" {
+		return false, errors.New("classifier returned an empty group id")
+	}
+	tag, err := p.s.pool.Exec(ctx, `UPDATE `+p.s.t.pollAnswers+` SET group_id = $3, group_label = $5, classified_at = clock_timestamp()
+		WHERE id = $1 AND tenant_id = $2 AND revision = $4 AND classified_at IS NULL`, a.AnswerID, p.s.tenant, g.GroupID, a.Revision, g.Label)
+	return tag.RowsAffected() == 1, err
 }
 
 // ReclassifyPending retries classification of this tenant's unclassified
@@ -620,15 +666,15 @@ func (rt *Runtime) ReclassifyPending(ctx context.Context, limit int) (int, error
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := rt.store.pool.Query(ctx, `SELECT id::text, question_id::text, text FROM `+rt.store.t.pollAnswers+`
-		WHERE tenant_id = $1 AND classified_at IS NULL ORDER BY updated_at LIMIT $2`, rt.tenant, limit)
+	rows, err := rt.store.pool.Query(ctx, `SELECT id::text, question_id::text, text, revision, actor_id FROM `+rt.store.t.pollAnswers+`
+		WHERE tenant_id = $1 AND classified_at IS NULL AND EXISTS (SELECT 1 FROM `+rt.store.t.pollQuestions+` q WHERE q.id = question_id AND q.tenant_id = $1 AND q.deleted_at IS NULL) ORDER BY updated_at LIMIT $2`, rt.tenant, limit)
 	if err != nil {
 		return 0, err
 	}
 	var pending []Answer
 	for rows.Next() {
 		a := Answer{Tenant: rt.tenant}
-		if err := rows.Scan(&a.AnswerID, &a.QuestionID, &a.Text); err != nil {
+		if err := rows.Scan(&a.AnswerID, &a.QuestionID, &a.Text, &a.Revision, &a.SubjectID); err != nil {
 			rows.Close()
 			return 0, err
 		}
@@ -641,13 +687,14 @@ func (rt *Runtime) ReclassifyPending(ctx context.Context, limit int) (int, error
 	var n int
 	var first error
 	for _, a := range pending {
-		if err := rt.polls.classify(ctx, a); err != nil {
+		if applied, err := rt.polls.classify(ctx, a); err != nil {
 			if first == nil {
 				first = err
 			}
 			continue
+		} else if applied {
+			n++
 		}
-		n++
 	}
 	return n, first
 }

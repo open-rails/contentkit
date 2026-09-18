@@ -157,6 +157,8 @@ type Answer struct {
 	Tenant     string
 	QuestionID string
 	AnswerID   string
+	Revision   int64  // monotonic per answer; retries retain this revision
+	SubjectID  string // opaque authenticated actor, never an IP
 	Text       string
 }
 
@@ -167,8 +169,8 @@ type GroupAssignment struct {
 }
 
 // Group is one answer group of a free-text poll with its current size. The
-// classifier owns the assignments (it may re-cluster); ContentKit only keeps
-// which answers are still unclassified.
+// ContentKit owns current assignments and counts. Groups supplies labels only;
+// provider counts are ignored, so delayed side effects cannot rewrite results.
 type Group struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
@@ -178,6 +180,10 @@ type Group struct {
 // AnswerClassifier groups free-text poll answers. Classify runs when an
 // answer is stored or edited; Groups is read with the poll results. Without a
 // registered classifier a free-text poll cannot be created.
+// Classify must be idempotent by (Tenant, AnswerID, Revision), ignore older
+// revisions. ContentKit accepts assignments only by source-revision CAS;
+// Groups supplies label metadata, never authoritative membership or counts.
+// Provider erasure/lifecycle wiring is a separate host integration obligation.
 type AnswerClassifier interface {
 	Classify(ctx context.Context, a Answer) (GroupAssignment, error)
 	Groups(ctx context.Context, tenant, questionID string) ([]Group, error)

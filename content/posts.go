@@ -311,7 +311,7 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		excerpt = COALESCE($4, excerpt), slug = COALESCE($5, slug),
 		language = COALESCE($6, language), cover_url = COALESCE($7, cover_url),
 		is_draft = $8, live_at = COALESCE($9, live_at),
-		moderation = $11, moderation_reason = $12, moderation_verdict = $13,
+		moderation_revision = moderation_revision + 1, moderated_by = NULL, moderated_at = NULL, moderation = $11, moderation_reason = $12, moderation_verdict = $13,
 		updated_at = now()
 		WHERE id = $1 AND tenant_id = $10 RETURNING language`,
 		id, curTitle, curBody, excerpt, in.Slug, in.Language, in.CoverURL, curDraft, in.LiveAt, p.s.tenant, sc.state, sc.reason, sc.meta).Scan(&after); err != nil {
@@ -337,7 +337,11 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, v)
+	status := http.StatusOK
+	if v.Moderation == ModerationHeld {
+		status = http.StatusAccepted
+	}
+	writeJSON(w, status, v)
 }
 
 func (p *posts) handleDelete(w http.ResponseWriter, req *http.Request) {

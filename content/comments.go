@@ -539,7 +539,7 @@ func (c *comments) edit(ctx context.Context, actor Actor, cid, rawBody string) (
 	}
 	var cm Comment
 	replyTo, userID, anonName, _, err := scanComment(tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+`
-		SET body = $2, moderation = $3, moderation_reason = $4, moderation_verdict = $5, updated_at = now()
+		SET body = $2, moderation_revision = moderation_revision + 1, moderated_by = NULL, moderated_at = NULL, moderation = $3, moderation_reason = $4, moderation_verdict = $5, updated_at = now()
 		WHERE id = $1 RETURNING `+commentCols, cid, clean, sc.state, sc.reason, sc.meta), &cm)
 	if err != nil {
 		return Comment{}, err
@@ -772,7 +772,11 @@ func (c *comments) handleEdit(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, cm)
+	status := http.StatusOK
+	if cm.Moderation == ModerationHeld {
+		status = http.StatusAccepted
+	}
+	writeJSON(w, status, cm)
 }
 
 func (c *comments) handleDelete(w http.ResponseWriter, req *http.Request) {
