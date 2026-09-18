@@ -91,8 +91,37 @@ func TestRuntimeErasureIncludesPrivatePlaneIntegration(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			// Validate the whole batch before touching any plane, even without CH.
+			oversized := make([]signal.Subject, signal.MaxErasureSubjects+1)
+			for i := range oversized {
+				oversized[i] = signal.Subject{UserID: actor.ID}
+			}
+			for _, invalid := range [][]signal.Subject{
+				{{UserID: actor.ID}, {UserID: actor.ID, AnonKey: "ambiguous"}}, oversized,
+			} {
+				report, err := rt.EraseSubjects(ctx, invalid)
+				if err == nil || report.Complete() {
+					t.Fatalf("invalid batch accepted: %+v %v", report, err)
+				}
+				for _, table := range []string{"social_poll_answers", "content_preference_snapshots"} {
+					var n int
+					if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+host+`.`+table+` WHERE actor_id=$1`, actor.ID).Scan(&n); err != nil || n != 1 {
+						t.Fatalf("invalid batch mutated %s: %d %v", table, n, err)
+					}
+				}
+				var fences int
+				if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+host+`.content_private_subject_erasures`).Scan(&fences); err != nil || fences != 0 || provider.fenced {
+					t.Fatalf("invalid batch crossed private/provider boundary: %d %v", fences, err)
+				}
+				if enabled {
+					history, err := rt.History(ctx, signal.Subject{UserID: actor.ID}, signal.HistoryOptions{})
+					if err != nil || len(history) != 1 {
+						t.Fatalf("invalid batch mutated signal plane: %+v %v", history, err)
+					}
+				}
+			}
 			provider.down = true
-			subjects := []signal.Subject{{UserID: actor.ID}}
+			subjects := []signal.Subject{{UserID: " " + actor.ID + " "}}
 			report, err := rt.EraseSubjects(ctx, subjects)
 			if err == nil || report.Complete() {
 				t.Fatalf("provider outage falsely completed runtime erasure: %+v %v", report, err)

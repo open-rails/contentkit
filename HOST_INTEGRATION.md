@@ -180,8 +180,12 @@ payload without republishing it. Current approved authored content is untouched
 and remains under host retention policy. Provider cleanup runs after SQL commit;
 an error leaves the host's downstream obligation pending and safe to retry.
 
-This API intentionally does not redefine published-content/account deletion
-policy. The source fence and approved payload snapshots are durable user state;
+This is a scoped erasure API, not an account wipe. It removes signal records,
+preference snapshots/archives and new C4 private data. Existing authoritative
+`social_reactions` and `social_favorites` rows, poll votes, and currently approved
+authored content remain under the host's separate account-retention/deletion policy.
+A complete runtime report covers only these configured erasure planes.
+This API intentionally does not redefine that account policy. The source fence and approved payload snapshots are durable user state;
 restore must preserve/reapply fences before accepting writes. Provider erasure
 must independently maintain the same permanent-fence semantics across restore.
 

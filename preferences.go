@@ -109,6 +109,8 @@ func (r *Runtime) ReplayPreferences(ctx context.Context, after content.Preferenc
 // EraseSubjects erases every configured runtime plane: signals, preference
 // obligations, and C4 private-source/provider data. Current approved authored
 // content remains under host retention policy (content.ErasePrivateSubjects).
+// This is not an account wipe: authoritative social_reactions/social_favorites
+// and poll votes remain under the host's separate retention/deletion policy.
 // EmbeddedHub.EraseSubjects is the explicit analytics-only lower-level API.
 //
 // AuthKit ACK means durable acceptance by the host's deletion ledger, not this
@@ -117,6 +119,15 @@ func (r *Runtime) ReplayPreferences(ctx context.Context, after content.Preferenc
 // plane markers private_content, signal_plane or preference_obligations when a
 // plane could not complete; these are not estimates of retained provider rows.
 func (r *Runtime) EraseSubjects(ctx context.Context, subjects []signal.Subject) (signal.ErasureReport, error) {
+	invalid := signal.ErasureReport{Remaining: map[string]uint64{"invalid_subjects": 1}}
+	if len(subjects) > signal.MaxErasureSubjects {
+		return invalid, &signal.LimitError{Field: "subjects per erasure", Limit: signal.MaxErasureSubjects, Got: len(subjects)}
+	}
+	for _, s := range subjects {
+		if err := s.Validate(); err != nil {
+			return invalid, err
+		}
+	}
 	report, signalErr := r.EmbeddedHub.EraseSubjects(ctx, subjects)
 	if errors.Is(signalErr, ErrSignalPlaneDisabled) {
 		signalErr = nil
@@ -126,8 +137,8 @@ func (r *Runtime) EraseSubjects(ctx context.Context, subjects []signal.Subject) 
 	}
 	var actors []string
 	for _, s := range subjects {
-		if s.UserID != "" {
-			actors = append(actors, s.UserID)
+		if s.Kind() == signal.SubjectKindUser {
+			actors = append(actors, s.Key())
 		}
 	}
 	var preferenceErr error
