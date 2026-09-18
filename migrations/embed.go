@@ -1,6 +1,6 @@
 // Package migrations embeds ContentKit's migratekit lineages: the keyword
 // Postgres profile, the pre-ContentKit combined Postgres lineage that converges
-// on it, and the ClickHouse signal plane.
+// on it, the taxonomy Postgres lineage and the ClickHouse signal plane.
 package migrations
 
 import (
@@ -25,6 +25,15 @@ var legacyFS embed.FS
 // Export those tables before applying it (docs/migration.md). Never use it
 // for a new installation.
 var LegacyPostgres fs.FS = mustSubFS(legacyFS, "legacy")
+
+//go:embed taxonomy/*.sql
+var taxonomyFS embed.FS
+
+// Taxonomy is the catalog lineage (content_nodes, content_node_names,
+// content_edges, content_assignments, content_node_counts). Apply it under its
+// own migratekit app id (contentkit_taxonomy) into the same host schema after
+// the keyword profile, which it depends on.
+var Taxonomy fs.FS = mustSubFS(taxonomyFS, "taxonomy")
 
 func mustSubFS(fsys fs.FS, dir string) fs.FS {
 	sub, err := fs.Sub(fsys, dir)

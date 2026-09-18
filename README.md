@@ -32,9 +32,10 @@ another tenant is an error, never remapped.
 | `contentref` | `ContentRef`, `ContentKey`, `TaxonomyID` |
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
 | `worker` | one tenant's document maintenance: dirty queue, bounded backfill, sink delivery |
+| `taxonomy` | generic catalog: nodes (tags, artists, creators, characters, series, seasons, voice actors), localized names/aliases, edges, content assignments, effective tags, per-language counts, typeahead documents, admin routes |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
 | `eval` | lexical golden-case evaluation, reports, baselines |
-| `migrations` | the three migratekit lineages |
+| `migrations` | the migratekit lineages: keyword, legacy, taxonomy, signal |
 | root | `Client` (search + typeahead + semantic fusion), `EmbeddedHub` (signal + discovery), the `SemanticRanker` port |
 
 ## Install
@@ -101,6 +102,28 @@ two-second ceiling per request.
 | `SemanticRanker` | a request sets `SearchOptions.Semantic` and a ranker is registered | `Rank(SemanticRequest) []SemanticCandidate`; candidates are re-verified through the host eligibility join, RRF-fused with the keyword ranking, then grouped and paged as usual; a failure degrades to keyword-only (`SearchResult.Degraded`), never an error |
 
 ContentKit ships no implementation of either.
+
+## Taxonomy
+
+Nodes, names, edges and assignments are tenant-scoped; effective tags are the
+work's assignments ∪ the selected version's; `RequireAll` makes a multi-node
+filter hold on one eligible version inside the same join as search. Apply
+`migrations.Taxonomy` after the keyword profile; see
+[docs/taxonomy-migration.md](docs/taxonomy-migration.md).
+
+```go
+store, _ := taxonomy.New(taxonomy.Options{Pool: pool, Schema: schema, Tenant: "doujins",
+	Kinds: []string{"tag", "artist", "character", "series", "voice_actor"}, Languages: []string{"en", "es"},
+	CountEligibility: &search.Eligibility{SQL: releasedVersionSQL}})
+_ = store.WithTx(tx).Assign(ctx, []taxonomy.Assignment{{ContentRef: g1.WithVersion(v2), TaxonomyID: "colored"}}, taxonomy.AssignOptions{})
+tags, _ := store.EffectiveTags(ctx, []contentkit.ContentRef{g1.WithVersion(v2)})
+filter, args, _ := taxonomy.RequireAll(schema, []taxonomy.TaxonomyID{"colored"})
+page, _ := client.Search(ctx, q, contentkit.SearchOptions{Language: "es", ContentKinds: []string{"gallery"}, FilterSQL: filter, FilterArgs: args, Eligibility: elig})
+mux.Handle("/admin/taxonomy/", http.StripPrefix("/admin/taxonomy", taxonomy.Handler(store)))
+```
+
+Worker: `ContentKinds: append(hostKinds, store.Kinds()...)`, `ListContent:
+store.Lister(listGalleries)`, `BuildKeywordDocuments: store.Builder(buildGalleryDocuments)`.
 
 ## Signal plane and discovery
 

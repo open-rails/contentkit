@@ -122,6 +122,25 @@ WHERE gv.id::text = sd.content_version_id AND g.id::text = sd.content_id AND gv.
       = cardinality(@only_slugs::text[])`
 ```
 
+## Taxonomy (nodes, assignments, effective tags, counts)
+
+`taxonomy.Store` owns the generic catalog of one tenant. Assign work-level
+tags with a work reference and version traits with a version reference; read
+`EffectiveTags` (work ∪ version) when hydrating. For "every requested tag on
+one version" use `taxonomy.RequireAll(schema, ids)` as `FilterSQL`/`FilterArgs`
+next to your `Eligibility`: both hold on the same `sd` row, so a Spanish
+request for `colored` is never satisfied by an English colored edition plus a
+Spanish original. `Store.Browse` runs that join without a query text.
+
+Counts derive from your documents and `Options.CountEligibility` (your public
+visibility join); call `RecountContent` when a work's versions or visibility
+change, `RebuildCounts` after bulk loads written with
+`AssignOptions{SuppressCounts: true}`. Mark your content documents dirty in
+the transaction that calls `Assign`/`Unassign` (`store.WithTx(tx)`).
+Typeahead documents of nodes are built by the store: register its kinds with
+the worker through `store.Lister`/`store.Builder`. Mount `taxonomy.Handler`
+behind your admin authorization. Adoption: [docs/taxonomy-migration.md](docs/taxonomy-migration.md).
+
 ## Attribution export (paged evaluation data)
 
 `hub.Attribution(ctx, signal.AttributionOptions{Stage, Window, Surface, Limit, ClickLimit, After})`

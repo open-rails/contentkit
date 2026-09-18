@@ -1,12 +1,13 @@
 # Migrations
 
-ContentKit owns three migratekit lineages. Every file is immutable once
+ContentKit owns four migratekit lineages. Every file is immutable once
 applied; `migratekit relink --check` verifies the parent links.
 
 | Lineage | Embedded FS | Store | Ledger app id |
 |---|---|---|---|
 | Keyword profile | `migrations.Postgres` | host Postgres schema | new installations: `contentkit`; existing keyword installations keep theirs |
 | Legacy combined | `migrations.LegacyPostgres` | host Postgres schema | existing installations only, under the ledger they already have (`searchkit`) |
+| Taxonomy | `migrations.Taxonomy` | host Postgres schema, after the keyword profile | `contentkit_taxonomy` (see [taxonomy-migration.md](taxonomy-migration.md)) |
 | Signal plane | `migrations.SignalClickHouse` | dedicated ClickHouse database | existing: `searchkit_signal`; new: `contentkit_signal` |
 
 Never switch a populated ledger between lineages and never use the legacy
