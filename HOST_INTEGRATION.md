@@ -249,6 +249,34 @@ after the fence or came back with a restore) is unreadable; schedule
 subjects deleted since the backup. A shared account exists in every tenant:
 each host erases its own tenant.
 
+## Popularity (policy-ranked)
+
+Hosts rank by a named policy, never by the default rank: resolve the configured
+name at startup and build one `popularity.Ranker` per hub.
+
+```go
+policy, err := popularity.ByName(cfg.PopularityPolicy) // "" = v1; unknown names refuse startup
+ranker, err := popularity.New(popularity.Config{Source: hub, Policy: policy, Cache: cache, Catalog: catalog})
+
+window, err := popularity.WindowForPeriod(period, time.Now()) // 7d|30d|90d|365d|all, else error
+top, err := ranker.Popular(ctx, "gallery", window, offset+limit)     // ClickHouse RankExpr, global; slice for the page
+scores, err := ranker.Scores(ctx, "gallery", artistGalleryIDs, window) // Go over Metrics: host-selected candidates
+artists, err := ranker.Taxonomy(ctx, "gallery", "artist", window)     // member sums through the Catalog port
+```
+
+- `Hit` carries the score next to the raw metrics: show `Viewers` and
+  `MeanEngagement()` as public counts, never anything derived from the score.
+- Register `popularity.SessionScorer` (or your own `signal.Scorer`) per content
+  kind so session scores are coverage of the selected version × dwell.
+- `Catalog.Assignments(tenant, contentKind, taxonomyKind, ids)` maps ranked
+  works to their taxonomy ids from the host's tables; ContentKit never records
+  a signal against a taxonomy id.
+- Cache keys carry tenant, policy name, kind, window and bounds; two policies
+  sharing one cache never read each other's entries.
+
+See [docs/popularity-policy.md](docs/popularity-policy.md) for the formula,
+priors, the judged fixture and the host adoption steps.
+
 ## Migration checklist
 
 - Create and reuse one `contentkit.Runtime` per tenant.

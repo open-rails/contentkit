@@ -35,6 +35,7 @@ another tenant is an error, never remapped.
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
 | `worker` | one tenant's document maintenance: dirty queue, bounded backfill, sink delivery |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
+| `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, taxonomy popularity through the host `Catalog` port |
 | `eval` | lexical golden-case evaluation, reports, baselines |
 | `migrations` | the four migratekit lineages (social, keyword, legacy keyword, signal) |
 | root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (every lineage), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
@@ -139,6 +140,10 @@ top, _ := hub.Popular(ctx, "gallery", signal.PopularOptions{Window: signal.LastD
   once across versions; `States` and `Metrics` read exactly the references
   given, work or version.
 - Windows are whole UTC days, 7/30/90/365/all, no decay.
+- Rank by a named policy, not the default rank: `popularity.ByName("v1")`,
+  `popularity.New(popularity.Config{Source: hub, Policy: policy})`, then
+  `ranker.Popular` / `ranker.Scores` / `ranker.Taxonomy`
+  ([docs/popularity-policy.md](docs/popularity-policy.md)).
 - `EraseSubjects` is account erasure with a quorum-written fence; see
   [HOST_INTEGRATION.md](HOST_INTEGRATION.md#subject-erasure-completion-contract).
 - Reactions and favorites reach the signal plane through ContentKit's own

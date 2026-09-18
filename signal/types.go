@@ -418,8 +418,12 @@ type ContentMetrics struct {
 	Completers  uint64 // subjects with a completed view
 	ActiveS     uint64 // summed view DurationS
 	ScoreSum    int64  // summed view scores; ScoreSum/Views is the mean
-	Events      uint64 // canonical events of every type
-	ValueSum    float64
+	// ViewerEngagementSum sums each viewer's mean session score, normalized
+	// and clamped to [0,1]. Every viewer contributes at most one unit.
+	ViewerEngagementSum float64
+	ReturningViewers    uint64 // subjects with more than one canonical view in the window
+	Events              uint64 // canonical events of every type
+	ValueSum            float64
 	// PositiveSubjects / NegativeSubjects: subjects whose summed feedback
 	// Value in the window is > 0 / < 0.
 	PositiveSubjects uint64
@@ -555,7 +559,8 @@ type PopularOptions struct {
 	// RankExpr, when set, REPLACES the default ranking with a host-supplied
 	// ClickHouse expression (trusted SQL). It may reference the window metric
 	// columns: viewers, user_viewers, anon_viewers, views, completions,
-	// completers, active_s, score_sum, events, value_sum, positive_subjects,
+	// completers, active_s, score_sum, viewer_engagement_sum, returning_viewers,
+	// events, value_sum, positive_subjects,
 	// negative_subjects.
 	RankExpr string
 }
