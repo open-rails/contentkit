@@ -10,8 +10,8 @@ import (
 	"testing"
 )
 
-// TestAccessLog checks that an internal 500 is logged at ERROR with its
-// cause, while a client 4xx is logged only at DEBUG (not as an error).
+// TestAccessLog checks that a 5xx is logged at ERROR with the cause writeErr
+// captured, while a client 4xx is logged only at DEBUG (not as an error).
 func TestAccessLog(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -23,6 +23,10 @@ func TestAccessLog(t *testing.T) {
 		{"internal 500", errors.New("boom from handler"), http.StatusInternalServerError, "ERROR", "boom from handler"},
 		{"forbidden 403", ErrForbidden, http.StatusForbidden, "DEBUG", ""},
 		{"not found 404", ErrNotFound, http.StatusNotFound, "DEBUG", ""},
+		{"tenant mismatch 500", ErrTenant, http.StatusInternalServerError, "ERROR", ErrTenant.Error()},
+		// A 501 is a host-configuration fault: operators get it at ERROR with the
+		// cause, clients get the public not_configured code.
+		{"unwired media 501", errUnsupportedMedia, http.StatusNotImplemented, "ERROR", errUnsupportedMedia.Error()},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

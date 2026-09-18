@@ -120,6 +120,32 @@ two-second ceiling per request.
 or audit consumers. ContentKit ships no sink implementation or AI-specific
 configuration.
 
+## Errors
+
+Both mounted handlers (`content.Runtime.Handler`, `taxonomy.Handler`) answer
+failures with one flat body. Branch on `code`; `error` is a human message and
+may change.
+
+```json
+{"error":"not found","code":"not_found"}
+```
+
+| Status | Code | Meaning |
+|---|---|---|
+| 400 | `invalid_request` | malformed or semantically invalid input |
+| 401 | `unauthorized` | no identity |
+| 403 | `forbidden` | identity present, not permitted |
+| 404 | `not_found` | absent, unpublished or soft-deleted (existence is hidden) |
+| 409 | `conflict` | state or revision conflict |
+| 422 | `moderation_rejected` | a `ContentModerator` refused the write; `error` is the author-facing reason |
+| 501 | `not_configured` | the host never wired the port this route needs (`MediaStore`, `AnswerClassifier`) |
+| 500 | `tenant_mismatch` | a host port answered with another tenant's data |
+| 500 | `internal_error` | anything else |
+
+5xx bodies carry no cause: it goes to `Options.Logger` (`slog.Default()` when
+unset) with the request method, path, status and duration. Postgres constraint
+names, driver text and stack traces are logged, never served.
+
 ## Taxonomy
 
 Nodes, names, edges and assignments are tenant-scoped; effective tags are the

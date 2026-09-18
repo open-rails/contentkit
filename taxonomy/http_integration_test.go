@@ -11,7 +11,31 @@ import (
 	"testing"
 )
 
-// Every admin route is driven live with a positive and a negative case.
+// statusCode is fail()'s status -> public code mapping; every failing route
+// must answer it.
+var statusCode = map[int]string{
+	http.StatusBadRequest:          CodeInvalidRequest,
+	http.StatusNotFound:            CodeNotFound,
+	http.StatusConflict:            CodeConflict,
+	http.StatusInternalServerError: CodeInternal,
+}
+
+// sqlMarkers are the shapes a Postgres constraint name or driver text takes;
+// none of them may ever reach a client.
+var sqlMarkers = []string{"_fkey", "_check", "_key", "sqlstate", "content_nodes_", "content_node_names_", "content_edges_", "content_assignments_", "content_node_counts_", "SQLSTATE", "pgx"}
+
+func assertNoSQLLeak(t *testing.T, where, body string) {
+	t.Helper()
+	for _, m := range sqlMarkers {
+		if strings.Contains(body, m) {
+			t.Fatalf("%s leaks %q on the wire: %s", where, m, body)
+		}
+	}
+}
+
+// Every admin route is driven live with a positive and a negative case; every
+// failure additionally asserts the stable public code and the absence of any
+// SQL identifier.
 func TestHandlerIntegration(t *testing.T) {
 	ctx := context.Background()
 	pool, schema := testSchema(t, ctx)
@@ -40,11 +64,22 @@ func TestHandlerIntegration(t *testing.T) {
 		if code != status || !strings.Contains(out, contains) {
 			t.Fatalf("%s %s -> %d %s (want %d containing %q)", method, path, code, out, status, contains)
 		}
+		if status >= http.StatusBadRequest {
+			where := method + " " + path
+			assertNoSQLLeak(t, where, out)
+			var e errorBody
+			if err := json.Unmarshal([]byte(out), &e); err != nil {
+				t.Fatalf("%s -> error body %q: %v", where, out, err)
+			}
+			if want := statusCode[status]; e.Code != want {
+				t.Fatalf("%s -> code %q, want %q", where, e.Code, want)
+			}
+		}
 		return out
 	}
 
 	expect("POST", "/nodes", `[{"taxonomy_id":"colored","kind":"tag","slug":"colored","names":[{"language":"en","kind":"name","name":"Colored"}]},{"taxonomy_id":"colour","kind":"tag","slug":"colour"},{"taxonomy_id":"fate","kind":"series","slug":"fate"}]`, http.StatusCreated, `"taxonomy_id":"colored"`)
-	expect("POST", "/nodes", `[{"kind":"tag","slug":"colored"}]`, http.StatusConflict, "conflict")
+	expect("POST", "/nodes", `[{"kind":"tag","slug":"colored"}]`, http.StatusConflict, `{"error":"taxonomy: conflict","code":"conflict"}`)
 	expect("POST", "/nodes", `[{"kind":"studio","slug":"x"}]`, http.StatusBadRequest, "not registered")
 	expect("POST", "/nodes", `[{"kind":"tag","slug":"x","unknown":1}]`, http.StatusBadRequest, "unknown field")
 	expect("GET", "/nodes?kind=tag&limit=1", "", http.StatusOK, `"next_cursor"`)
@@ -59,7 +94,7 @@ func TestHandlerIntegration(t *testing.T) {
 	expect("POST", "/nodes/missing/names", `[{"language":"en","name":"x"}]`, http.StatusNotFound, "not found")
 	expect("POST", "/edges", `[{"from_taxonomy_id":"colored","relation":"synonym","to_taxonomy_id":"colour"}]`, http.StatusOK, `"edges":1`)
 	expect("POST", "/edges", `[{"from_taxonomy_id":"colored","relation":"synonym","to_taxonomy_id":"colored"}]`, http.StatusBadRequest, "self loop")
-	expect("POST", "/edges", `[{"from_taxonomy_id":"colored","relation":"synonym","to_taxonomy_id":"missing"}]`, http.StatusNotFound, "not found")
+	expect("POST", "/edges", `[{"from_taxonomy_id":"colored","relation":"synonym","to_taxonomy_id":"missing"}]`, http.StatusNotFound, `{"error":"taxonomy: not found","code":"not_found"}`)
 	expect("POST", "/assignments", `[{"content_kind":"gallery","content_id":"g1","taxonomy_id":"colored"},{"content_kind":"gallery","content_id":"g1","content_version_id":"v1","taxonomy_id":"colour","relation":"tag"}]`, http.StatusOK, `"assignments":2`)
 	expect("POST", "/assignments", `[{"content_kind":"gallery","content_id":"g1","taxonomy_id":"missing"}]`, http.StatusNotFound, "not active")
 	expect("POST", "/assignments", `[{"tenant_id":"hentai0","content_kind":"video","content_id":"m1","taxonomy_id":"colored"}]`, http.StatusBadRequest, "outside tenant")

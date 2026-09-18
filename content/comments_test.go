@@ -135,8 +135,8 @@ func TestComments_EditSanitizesAndRejectionIs422(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	writeErr(rec, RejectedError{Reason: "links are not allowed"})
-	if rec.Code != http.StatusUnprocessableEntity || rec.Body.String() != "{\"error\":\"links are not allowed\"}\n" {
-		t.Fatalf("rejection = %d %s, want 422 with the reason", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnprocessableEntity || rec.Body.String() != "{\"error\":\"links are not allowed\",\"code\":\"moderation_rejected\"}\n" {
+		t.Fatalf("rejection = %d %s, want 422 with the reason and the moderation code", rec.Code, rec.Body.String())
 	}
 }
 
