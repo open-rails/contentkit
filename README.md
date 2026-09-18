@@ -34,6 +34,7 @@ another tenant is an error, never remapped.
 | `worker` | one tenant's document maintenance: dirty queue, bounded backfill, sink delivery |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
 | `eval` | lexical golden-case evaluation, reports, baselines |
+| `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, taxonomy popularity through the host `Catalog` port |
 | `migrations` | the three migratekit lineages |
 | root | `Client` (search + typeahead + semantic fusion), `EmbeddedHub` (signal + discovery), the `SemanticRanker` port |
 
@@ -123,6 +124,10 @@ top, _ := hub.Popular(ctx, "gallery", signal.PopularOptions{Window: signal.LastD
   once across versions; `States` and `Metrics` read exactly the references
   given, work or version.
 - Windows are whole UTC days, 7/30/90/365/all, no decay.
+- Rank by a named policy, not the default rank: `popularity.ByName("v1")`,
+  `popularity.New(popularity.Config{Source: hub, Policy: policy})`, then
+  `ranker.Popular` / `ranker.Scores` / `ranker.Taxonomy`
+  ([docs/popularity-policy.md](docs/popularity-policy.md)).
 - `EraseSubjects` is account erasure with a quorum-written fence; see
   [HOST_INTEGRATION.md](HOST_INTEGRATION.md#subject-erasure-completion-contract).
 
