@@ -249,14 +249,14 @@ func (c *Client) search(ctx context.Context, userText string, opts SearchOptions
 		result.Truncated = result.Truncated || keyword.Truncated
 		var semanticHits []search.Hit
 		semanticIndex := -1
+		semanticOK := false
 		if semantic {
-			var ok bool
-			semanticHits, semanticIndex, ok = c.rankSemantic(ctx, q, lang, candidateLimit, kinds, opts, trace)
-			if !ok {
+			semanticHits, semanticIndex, semanticOK = c.rankSemantic(ctx, q, lang, candidateLimit, kinds, opts, trace)
+			if !semanticOK {
 				result.Degraded = true
 			}
 		}
-		if semanticIndex < 0 {
+		if !semanticOK {
 			// Keyword ranks by calibrated match tiers; no fusion is involved.
 			for rank, h := range keyword.Hits {
 				docs = append(docs, groupedDoc{ref: h.ContentRef, language: h.Language, priority: h.Priority, score: h.Score, requested: requested,

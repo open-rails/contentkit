@@ -105,6 +105,10 @@ func TestClientSearch_Integration_KeywordAndSemanticRanker(t *testing.T) {
 	if sum != first.Score {
 		t.Fatalf("contributions %v != score %v", sum, first.Score)
 	}
+	plainFused, err := client.Search(ctx, "factor", SearchOptions{Language: "en", ContentKinds: kinds, Limit: 10, Semantic: true})
+	if err != nil || !reflect.DeepEqual(plainFused, fused) {
+		t.Fatalf("semantic Search must match SearchWithTrace: plain=%+v traced=%+v err=%v", plainFused, fused, err)
+	}
 	// Eligibility applies to semantic candidates as to keyword documents.
 	eligible, err := client.Search(ctx, "factor", SearchOptions{Language: "en", ContentKinds: kinds, Semantic: true,
 		Eligibility: &Eligibility{SQL: `SELECT 0 AS priority WHERE sd.content_id = @only`, Args: map[string]any{"only": "2"}}})
