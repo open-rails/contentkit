@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strings"
 
 	"github.com/open-rails/contentkit/contentref"
 )
@@ -52,10 +51,6 @@ type RRFTraceKey struct {
 	Language         string `json:"language"`
 }
 
-func (k RRFKey) keyString() string {
-	return strings.Join([]string{k.TenantID, k.ContentKind, k.ContentID, k.ContentVersionID, k.Language}, "\x1f")
-}
-
 func (k RRFKey) less(o RRFKey) bool {
 	if k.ContentKind != o.ContentKind {
 		return k.ContentKind < o.ContentKind
@@ -96,22 +91,21 @@ func FuseRRFWithTrace(lists [][]RRFKey, opts RRFOptions) ([]RRFTraceHit, error) 
 			Hit:           hit,
 			Key:           RRFTraceKey{TenantID: hit.TenantID, ContentKind: hit.ContentKind, ContentID: hit.ContentID, ContentVersionID: hit.ContentVersionID, Language: hit.Language},
 			Score:         hit.Score,
-			Contributions: contributions[hit.RRFKey.keyString()],
+			Contributions: contributions[hit.RRFKey],
 		})
 	}
 	return out, nil
 }
 
-func fuseRRF(lists [][]RRFKey, opts RRFOptions, includeTrace bool) ([]RRFHit, map[string][]RRFContribution) {
+func fuseRRF(lists [][]RRFKey, opts RRFOptions, includeTrace bool) ([]RRFHit, map[RRFKey][]RRFContribution) {
 	k := opts.K
 	if k <= 0 {
 		k = 60
 	}
-	scores := make(map[string]float32)
-	example := make(map[string]RRFKey)
-	var contributions map[string][]RRFContribution
+	scores := make(map[RRFKey]float32)
+	var contributions map[RRFKey][]RRFContribution
 	if includeTrace {
-		contributions = make(map[string][]RRFContribution)
+		contributions = make(map[RRFKey][]RRFContribution)
 	}
 	for li, list := range lists {
 		w := float32(1.0)
@@ -120,8 +114,7 @@ func fuseRRF(lists [][]RRFKey, opts RRFOptions, includeTrace bool) ([]RRFHit, ma
 		}
 		for i, item := range list {
 			rank := i + 1
-			ks := item.keyString()
-			example[ks] = item
+			ks := item
 			contribution := w / (float32(k) + float32(rank))
 			scores[ks] += contribution
 			if includeTrace {
@@ -131,7 +124,7 @@ func fuseRRF(lists [][]RRFKey, opts RRFOptions, includeTrace bool) ([]RRFHit, ma
 	}
 	out := make([]RRFHit, 0, len(scores))
 	for ks, sc := range scores {
-		out = append(out, RRFHit{RRFKey: example[ks], Score: sc})
+		out = append(out, RRFHit{RRFKey: ks, Score: sc})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Score != out[j].Score {

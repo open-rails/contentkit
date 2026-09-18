@@ -5,8 +5,8 @@ and marketplace hosts: tenant-scoped **interactions** (posts, comments,
 reactions, favorites, polls), **keyword search** over host content, the
 ClickHouse **signal plane** (consumption, feedback, exposures, popularity,
 erasure) and the **discovery reads** over both. It needs no model provider,
-API key or vector extension. Probabilistic features (semantic ranking,
-moderation, clustering) plug into its ports from User Intelligence.
+API key or vector extension. Semantic search belongs entirely to the separate, deferred User Intelligence
+library; ContentKit has no semantic search configuration or runtime hook.
 
 Design: [open-rails-tracker/contentkit/DESIGN.md](https://github.com/open-rails/tracker/blob/master/contentkit/DESIGN.md).
 Host contract: [HOST_INTEGRATION.md](HOST_INTEGRATION.md). Migrations:
@@ -37,7 +37,7 @@ another tenant is an error, never remapped.
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
 | `eval` | lexical golden-case evaluation, reports, baselines |
 | `migrations` | the four migratekit lineages (social, keyword, legacy keyword, signal) |
-| root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (every lineage), `Client` (search + typeahead + semantic fusion), `EmbeddedHub` (signal + discovery), the `SemanticRanker` port |
+| root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (every lineage), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
 
 ## Install
 
@@ -113,9 +113,10 @@ two-second ceiling per request.
 | Port | Called when | Contract |
 |---|---|---|
 | `DocumentSink` | the worker publishes or deletes a document | `Upsert(PublishedDocument)`, `Delete(DocumentKey)`; at-least-once, idempotent by `(DocumentKey, Version)`; a failing sink keeps the row queued and never blocks the keyword index |
-| `SemanticRanker` | a request sets `SearchOptions.Semantic` and a ranker is registered | `Rank(SemanticRequest) []SemanticCandidate`; candidates are re-verified through the host eligibility join, RRF-fused with the keyword ranking, then grouped and paged as usual; a failure degrades to keyword-only (`SearchResult.Degraded`), never an error |
 
-ContentKit ships no implementation of either.
+`DocumentSink` is a neutral document change feed for external indexes, caches
+or audit consumers. ContentKit ships no sink implementation or AI-specific
+configuration.
 
 ## Signal plane and discovery
 

@@ -102,7 +102,7 @@ func (h *EmbeddedHub) Recommend(ctx context.Context, subject signal.Subject, opt
 	}
 	fused := []search.RRFHit{}
 	if len(lists) > 0 {
-		fused = search.FuseRRF(lists, search.RRFOptions{K: h.client.defaultRRFK})
+		fused = search.FuseRRF(lists, search.RRFOptions{K: h.defaultRRFK})
 	}
 
 	// Exclusions: seeds, (unless IncludeSeen) everything already seen, and
@@ -181,7 +181,7 @@ func (h *EmbeddedHub) Recommend(ctx context.Context, subject signal.Subject, opt
 				}
 				score := tail / 2
 				if tail == 0 {
-					score = 1 / float32(h.client.defaultRRFK+i+1)
+					score = 1 / float32(h.defaultRRFK+i+1)
 				}
 				push(ph.ContentRef, score)
 			}
