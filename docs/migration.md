@@ -11,11 +11,12 @@ applied; `migratekit relink --check` verifies the parent links.
 | Taxonomy | `migrations.Taxonomy` | keyword Postgres schema, after the keyword profile | `contentkit_taxonomy` (see [taxonomy-migration.md](taxonomy-migration.md)) |
 | Signal plane | `migrations.SignalClickHouse` | dedicated ClickHouse database | existing: `searchkit_signal`; new: `contentkit_signal` |
 
-`contentkit.Migrate` applies the social, keyword and signal lineages from one call (social into `Schema`,
+`contentkit.Migrate` applies the social, keyword, optional taxonomy and signal lineages from one call (social into `Schema`,
 keyword into `SearchSchema`, signal into `ClickHouse` when configured); the
 per-lineage entry points remain `content.Migrate` and migratekit directly.
-Apply `migrations.Taxonomy` separately after the keyword profile, as described
-in [taxonomy-migration.md](taxonomy-migration.md).
+Set `Taxonomy: true` to apply `migrations.Taxonomy` in the resolved
+`SearchSchema` after the keyword profile and before ClickHouse. Omit it when
+the host does not use the catalog. See [taxonomy-migration.md](taxonomy-migration.md).
 Never switch a populated ledger between lineages and never use the legacy
 lineage for a new installation. Both search lineages end on the same schema
 (the `keyword`/`legacy` profile test proves the fingerprints equal).

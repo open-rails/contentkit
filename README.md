@@ -38,7 +38,7 @@ another tenant is an error, never remapped.
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
 | `eval` | lexical golden-case evaluation, reports, baselines |
 | `migrations` | the five migratekit lineages (social, keyword, legacy keyword, taxonomy, signal) |
-| root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (social, keyword, signal), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
+| root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (social, keyword, optional taxonomy, signal), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
 
 ## Install
 

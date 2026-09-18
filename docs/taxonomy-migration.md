@@ -9,6 +9,15 @@ tables and triggers. No compatibility views.
 Lineage: `migrations.Taxonomy` (migratekit app id `contentkit_taxonomy`),
 applied into the same schema after the keyword profile it depends on
 (`contentkit_keyword_normalize`, `content_search_documents`, the dirty queue).
+Enable it through `contentkit.MigrateConfig{Taxonomy: true}`: the unified migrate
+entry applies it in `SearchSchema` after keyword migrations. The existing
+`contentkit_taxonomy` ledger label is preserved.
+
+Catalog construction is intentionally optional and host-configured: create
+`taxonomy.Store` with the same pool, keyword schema and tenant, plus your
+registered kinds, languages and count-eligibility rule. Wrap the runtime worker
+with the store builder/lister and mount its handler behind host authorization.
+`NewRuntime` does not infer these application-specific catalog choices.
 
 ## Tables (31 catalog columns + 6 derived)
 

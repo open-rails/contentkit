@@ -169,7 +169,10 @@ WHERE gv.id::text = sd.content_version_id AND g.id::text = sd.content_id AND gv.
 
 ## Taxonomy (nodes, assignments, effective tags, counts)
 
-`taxonomy.Store` owns the generic catalog of one tenant. Assign work-level
+`taxonomy.Store` owns the generic catalog of one tenant. Enable its lineage
+with `contentkit.MigrateConfig{Taxonomy: true}`; it follows keyword migrations
+in `SearchSchema`. Construct the optional store with that schema and the
+host's kinds, languages and count-eligibility rule. Assign work-level
 tags with a work reference and version traits with a version reference; read
 `EffectiveTags` (work ∪ version) when hydrating. For "every requested tag on
 one version" use `taxonomy.RequireAll(schema, ids)` as `FilterSQL`/`FilterArgs`

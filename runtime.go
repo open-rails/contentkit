@@ -120,12 +120,15 @@ type MigrateConfig struct {
 	// LegacySearch applies migrations.LegacyPostgres (existing installations
 	// created from the pre-ContentKit combined lineage; docs/migration.md).
 	LegacySearch bool
+	// Taxonomy applies the optional catalog lineage in SearchSchema after the
+	// keyword lineage it depends on. Its ledger app is contentkit_taxonomy.
+	Taxonomy bool
 	// ClickHouse applies the signal lineage when set; PostgresDB defaults to DB.
 	ClickHouse *chmigrate.Config
 }
 
 // Migrate applies every ContentKit lineage: social in Schema, keyword in
-// SearchSchema and, when configured, the signal plane in ClickHouse.
+// SearchSchema, optional taxonomy in SearchSchema, and the configured signal plane.
 func Migrate(ctx context.Context, cfg MigrateConfig) error {
 	if cfg.DB == nil {
 		return fmt.Errorf("contentkit: DB is required")
@@ -159,6 +162,15 @@ func Migrate(ctx context.Context, cfg MigrateConfig) error {
 	}
 	if err := migratekit.NewPostgres(cfg.DB, app).WithSchema(searchSchema).ApplyMigrations(ctx, migs); err != nil {
 		return fmt.Errorf("contentkit: apply keyword migrations: %w", err)
+	}
+	if cfg.Taxonomy {
+		catalog, err := migratekit.Load(migrations.Taxonomy, ".", migratekit.RequireParentLinks())
+		if err != nil {
+			return fmt.Errorf("contentkit: load taxonomy migrations: %w", err)
+		}
+		if err := migratekit.NewPostgres(cfg.DB, "contentkit_taxonomy").WithSchema(searchSchema).ApplyMigrations(ctx, catalog); err != nil {
+			return fmt.Errorf("contentkit: apply taxonomy migrations: %w", err)
+		}
 	}
 	if cfg.ClickHouse == nil {
 		return nil
