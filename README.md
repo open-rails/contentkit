@@ -114,7 +114,7 @@ two-second ceiling per request.
 
 | Port | Called when | Contract |
 |---|---|---|
-| `DocumentSink` | the worker publishes or deletes a document | `Upsert(PublishedDocument)`, `Delete(DocumentKey)`; at-least-once, idempotent by `(DocumentKey, Version)`; a failing sink keeps the row queued and never blocks the keyword index |
+| `DocumentSink` | the worker publishes or deletes a document | `Upsert(PublishedDocument)`, `Delete(DocumentKey, Version)`; at-least-once, atomic newer-version wins across both operations, with a retained deletion tombstone; a failing sink keeps the row queued and never blocks the keyword index |
 
 `DocumentSink` is a neutral document change feed for external indexes, caches
 or audit consumers. ContentKit ships no sink implementation or AI-specific

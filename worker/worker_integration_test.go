@@ -292,7 +292,7 @@ func (s *recordingSink) Upsert(_ context.Context, doc search.PublishedDocument) 
 	return nil
 }
 
-func (s *recordingSink) Delete(_ context.Context, key search.DocumentKey) error {
+func (s *recordingSink) Delete(_ context.Context, key search.DocumentKey, _ int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.failing {
