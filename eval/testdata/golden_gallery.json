@@ -1,50 +1,48 @@
 {
-  "id": "gallery-smoke-v1",
+  "id": "gallery-keyword-v2",
   "cases": [
     {
       "id": "two-factor",
       "query": "two factor",
       "language": "en",
-      "entity_types": ["gallery"],
+      "content_kinds": ["gallery"],
       "k": 5,
-      "labels": {"score_domain": "fused", "query_type": "keyword"},
+      "labels": {"score_domain": "keyword_match", "query_type": "keyword"},
       "judgments": [
-        {"key": {"entity_type": "gallery", "entity_id": "1"}, "relevance": 3},
-        {"key": {"entity_type": "gallery", "entity_id": "2"}, "relevance": 2}
+        {"key": {"content_kind": "gallery", "content_id": "1"}, "relevance": 3},
+        {"key": {"content_kind": "gallery", "content_id": "2"}, "relevance": 2}
       ]
     },
     {
       "id": "single-sign-on",
       "query": "single sign on",
       "language": "en",
-      "entity_types": ["gallery"],
+      "content_kinds": ["gallery"],
       "k": 5,
-      "labels": {"score_domain": "fused", "query_type": "phrase"},
+      "labels": {"score_domain": "keyword_match", "query_type": "phrase"},
       "judgments": [
-        {"key": {"entity_type": "gallery", "entity_id": "3"}, "relevance": 3},
-        {"key": {"entity_type": "gallery", "entity_id": "4"}, "relevance": 2}
+        {"key": {"content_kind": "gallery", "content_id": "3"}, "relevance": 3}
       ]
     },
     {
       "id": "authentication",
       "query": "authentication",
       "language": "en",
-      "entity_types": ["gallery"],
+      "content_kinds": ["gallery"],
       "k": 5,
-      "labels": {"score_domain": "fused", "query_type": "keyword"},
+      "labels": {"score_domain": "keyword_match", "query_type": "keyword"},
       "judgments": [
-        {"key": {"entity_type": "gallery", "entity_id": "1"}, "relevance": 3},
-        {"key": {"entity_type": "gallery", "entity_id": "2"}, "relevance": 1}
+        {"key": {"content_kind": "gallery", "content_id": "1"}, "relevance": 3}
       ]
     },
     {
       "id": "nonsense-empty",
       "query": "zzzq nonexistent",
       "language": "en",
-      "entity_types": ["gallery"],
+      "content_kinds": ["gallery"],
       "k": 5,
       "expect_empty": true,
-      "labels": {"score_domain": "fused", "query_type": "nonsense"}
+      "labels": {"score_domain": "keyword_match", "query_type": "nonsense"}
     }
   ]
 }

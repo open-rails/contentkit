@@ -7,70 +7,87 @@ import (
 	"strings"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+
+	"github.com/open-rails/contentkit/contentref"
 )
 
-const stateColumns = `entity_type, entity_id, first_seen_at, last_signal_at, total_events, views, completions,
+const stateColumns = refColumns + `, first_seen_at, last_signal_at, total_events, views, completions,
  active_s, max_progress, progress_max, completed, resume, last_score, net_value, feedback`
 
-func scanStateRow(rows driver.Rows) (StateRow, error) {
-	var r StateRow
+// workLevel selects the rows of the work itself, never of a version.
+const workLevel = " AND content_version_id = ''"
+
+func scanStateRow(rows driver.Rows, tenant string) (StateRow, error) {
+	var (
+		r       StateRow
+		version string
+	)
 	if err := rows.Scan(
-		&r.EntityType, &r.EntityID, &r.FirstSeenAt, &r.LastSignalAt, &r.TotalEvents, &r.Views, &r.Completions,
+		&r.ContentKind, &r.ContentID, &version, &r.FirstSeenAt, &r.LastSignalAt, &r.TotalEvents, &r.Views, &r.Completions,
 		&r.ActiveS, &r.MaxProgress, &r.ProgressMax, &r.Completed, &r.Resume, &r.LastScore, &r.NetValue, &r.Feedback,
 	); err != nil {
 		return StateRow{}, err
 	}
+	r.TenantID = tenant
+	r.ContentRef = r.ContentRef.WithVersion(version)
 	r.Seen = r.MaxProgress > 0
 	return r, nil
 }
 
+// refTuples renders "(content_kind, content_id, content_version_id) IN (...)"
+// for references already validated against the tenant.
+func refTuples(refs []ContentRef) (string, []any) {
+	tuples := make([]string, len(refs))
+	args := make([]any, 0, 3*len(refs))
+	for i, r := range refs {
+		tuples[i] = "(?, ?, ?)"
+		args = append(args, r.ContentKind, r.ContentID, r.Version())
+	}
+	return "(" + refColumns + ") IN (" + strings.Join(tuples, ", ") + ")", args
+}
+
 // States is the bulk "annotate this list with view context" read: for each
-// requested entity, the subject's standing (seen?, progress bar, completed?,
-// resume pointer). Entities the subject has no signals for are absent.
-func (st *Store) States(ctx context.Context, tenant string, subject Subject, refs []EntityRef) (map[EntityRef]State, error) {
+// requested reference (work or version), the subject's standing (seen?,
+// progress bar, completed?, resume pointer). References the subject has no
+// signals for are absent.
+func (st *Store) States(ctx context.Context, tenant string, subject Subject, refs []ContentRef) (map[ContentKey]State, error) {
 	if err := subject.Validate(); err != nil {
 		return nil, err
 	}
-	out := make(map[EntityRef]State, len(refs))
+	out := make(map[ContentKey]State, len(refs))
 	if len(refs) == 0 {
 		return out, nil
 	}
-	byType := map[string][]string{}
 	for _, r := range refs {
-		if err := r.validate(); err != nil {
+		if err := checkRef(tenant, r); err != nil {
 			return nil, err
 		}
-		byType[r.EntityType] = append(byType[r.EntityType], r.EntityID)
 	}
-	clauses := make([]string, 0, len(byType))
-	args := []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}
-	for _, t := range sortedKeys(byType) {
-		clauses = append(clauses, "(entity_type = ? AND entity_id IN ?)")
-		args = append(args, t, byType[t])
-	}
+	filter, refArgs := refTuples(refs)
+	args := append([]any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, refArgs...)
 	q := fmt.Sprintf(`SELECT %s
-FROM %s.subject_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND (%s)`,
-		stateColumns, st.db, st.subjectNotErased(), strings.Join(clauses, " OR "))
+FROM %s.subject_content_state FINAL
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND %s`,
+		stateColumns, st.db, st.subjectNotErased(), filter)
 	rows, err := st.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: states: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		r, err := scanStateRow(rows)
+		r, err := scanStateRow(rows, tenant)
 		if err != nil {
 			return nil, fmt.Errorf("signal: states scan: %w", err)
 		}
-		out[r.EntityRef] = r.State
+		out[r.Key()] = r.State
 	}
 	return out, rows.Err()
 }
 
 func historyFilter(sb *strings.Builder, args []any, opts HistoryOptions) ([]any, error) {
-	if t := strings.TrimSpace(opts.EntityType); t != "" {
-		sb.WriteString(" AND entity_type = ?")
-		args = append(args, t)
+	if k := strings.TrimSpace(opts.ContentKind); k != "" {
+		sb.WriteString(" AND content_kind = ?")
+		args = append(args, k)
 	}
 	switch opts.Status {
 	case HistoryAny:
@@ -90,7 +107,7 @@ func historyFilter(sb *strings.Builder, args []any, opts HistoryOptions) ([]any,
 	return args, nil
 }
 
-// History returns the subject's state rows, most recent signal first.
+// History returns the subject's work-level state rows, most recent signal first.
 func (st *Store) History(ctx context.Context, tenant string, subject Subject, opts HistoryOptions) ([]StateRow, error) {
 	if err := subject.Validate(); err != nil {
 		return nil, err
@@ -101,13 +118,13 @@ func (st *Store) History(ctx context.Context, tenant string, subject Subject, op
 	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, `SELECT %s
-FROM %s.subject_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s`, stateColumns, st.db, st.subjectNotErased())
+FROM %s.subject_content_state FINAL
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, st.db, st.subjectNotErased(), workLevel)
 	args, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, opts)
 	if err != nil {
 		return nil, err
 	}
-	sb.WriteString(" ORDER BY last_signal_at DESC, entity_type ASC, entity_id ASC LIMIT ? OFFSET ?")
+	sb.WriteString(" ORDER BY last_signal_at DESC, content_kind ASC, content_id ASC LIMIT ? OFFSET ?")
 	args = append(args, limit, opts.Offset)
 	rows, err := st.conn.Query(ctx, sb.String(), args...)
 	if err != nil {
@@ -116,7 +133,7 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s`, stateColumns, st.
 	defer rows.Close()
 	out := make([]StateRow, 0, limit)
 	for rows.Next() {
-		r, err := scanStateRow(rows)
+		r, err := scanStateRow(rows, tenant)
 		if err != nil {
 			return nil, fmt.Errorf("signal: history scan: %w", err)
 		}
@@ -132,8 +149,8 @@ func (st *Store) HistoryCount(ctx context.Context, tenant string, subject Subjec
 	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, `SELECT toInt64(count())
-FROM %s.subject_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s`, st.db, st.subjectNotErased())
+FROM %s.subject_content_state FINAL
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, st.db, st.subjectNotErased(), workLevel)
 	args, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, opts)
 	if err != nil {
 		return 0, err
@@ -152,19 +169,19 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s`, st.db, st.subject
 	return n, rows.Err()
 }
 
-// SeenIDs returns the subject's seen-set for one entity type: entity ids with
+// SeenIDs returns the subject's seen-set for one content kind: work ids with
 // max_progress > 0. This is the signal-plane half of the unseen anti-join.
-func (st *Store) SeenIDs(ctx context.Context, tenant string, subject Subject, entityType string) (map[string]struct{}, error) {
+func (st *Store) SeenIDs(ctx context.Context, tenant string, subject Subject, contentKind string) (map[string]struct{}, error) {
 	if err := subject.Validate(); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(entityType) == "" {
-		return nil, fmt.Errorf("signal: entityType is required")
+	if strings.TrimSpace(contentKind) == "" {
+		return nil, fmt.Errorf("signal: contentKind is required")
 	}
-	q := fmt.Sprintf(`SELECT entity_id
-FROM %s.subject_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND entity_type = ? AND max_progress > 0`, st.db, st.subjectNotErased())
-	rows, err := st.conn.Query(ctx, q, tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject), entityType)
+	q := fmt.Sprintf(`SELECT content_id
+FROM %s.subject_content_state FINAL
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND content_kind = ?%s AND max_progress > 0`, st.db, st.subjectNotErased(), workLevel)
+	rows, err := st.conn.Query(ctx, q, tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject), contentKind)
 	if err != nil {
 		return nil, fmt.Errorf("signal: seen ids: %w", err)
 	}
@@ -180,38 +197,38 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND entity_type = ?
 	return out, rows.Err()
 }
 
-// NegativeIDs returns entities the subject has net-negative canonical feedback
-// for: the exclusion set for recommendations.
-func (st *Store) NegativeIDs(ctx context.Context, tenant string, subject Subject, entityTypes []string) (map[EntityRef]struct{}, error) {
+// NegativeIDs returns the works the subject has net-negative canonical
+// feedback for: the exclusion set for recommendations.
+func (st *Store) NegativeIDs(ctx context.Context, tenant string, subject Subject, contentKinds []string) (map[ContentKey]struct{}, error) {
 	if err := subject.Validate(); err != nil {
 		return nil, err
 	}
 	var sb strings.Builder
 	args := []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}
-	fmt.Fprintf(&sb, `SELECT entity_type, entity_id
-FROM %s.subject_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND net_value < 0`, st.db, st.subjectNotErased())
-	if types := trimAll(entityTypes); len(types) > 0 {
-		sb.WriteString(" AND entity_type IN ?")
-		args = append(args, types)
+	fmt.Fprintf(&sb, `SELECT content_kind, content_id
+FROM %s.subject_content_state FINAL
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s AND net_value < 0`, st.db, st.subjectNotErased(), workLevel)
+	if kinds := trimAll(contentKinds); len(kinds) > 0 {
+		sb.WriteString(" AND content_kind IN ?")
+		args = append(args, kinds)
 	}
 	rows, err := st.conn.Query(ctx, sb.String(), args...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: negative ids: %w", err)
 	}
 	defer rows.Close()
-	out := map[EntityRef]struct{}{}
+	out := map[ContentKey]struct{}{}
 	for rows.Next() {
-		var ref EntityRef
-		if err := rows.Scan(&ref.EntityType, &ref.EntityID); err != nil {
+		var kind, id string
+		if err := rows.Scan(&kind, &id); err != nil {
 			return nil, fmt.Errorf("signal: negative ids scan: %w", err)
 		}
-		out[ref] = struct{}{}
+		out[contentref.New(tenant, kind, id).Key()] = struct{}{}
 	}
 	return out, rows.Err()
 }
 
-// TopStates returns the subject's highest-signal entities (recommendation
+// TopStates returns the subject's highest-signal works (recommendation
 // seeds): ordered by last_score DESC, then recency.
 func (st *Store) TopStates(ctx context.Context, tenant string, subject Subject, opts TopStatesOptions) ([]StateRow, error) {
 	if err := subject.Validate(); err != nil {
@@ -224,16 +241,16 @@ func (st *Store) TopStates(ctx context.Context, tenant string, subject Subject, 
 	var sb strings.Builder
 	args := []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}
 	fmt.Fprintf(&sb, `SELECT %s
-FROM %s.subject_state FINAL
-WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s`, stateColumns, st.db, st.subjectNotErased())
-	if types := trimAll(opts.EntityTypes); len(types) > 0 {
-		sb.WriteString(" AND entity_type IN ?")
-		args = append(args, types)
+FROM %s.subject_content_state FINAL
+WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, st.db, st.subjectNotErased(), workLevel)
+	if kinds := trimAll(opts.ContentKinds); len(kinds) > 0 {
+		sb.WriteString(" AND content_kind IN ?")
+		args = append(args, kinds)
 	}
 	if opts.ExcludeNegative {
 		sb.WriteString(" AND net_value >= 0")
 	}
-	sb.WriteString(" ORDER BY last_score DESC, last_signal_at DESC, entity_type ASC, entity_id ASC LIMIT ?")
+	sb.WriteString(" ORDER BY last_score DESC, last_signal_at DESC, content_kind ASC, content_id ASC LIMIT ?")
 	args = append(args, limit)
 	rows, err := st.conn.Query(ctx, sb.String(), args...)
 	if err != nil {
@@ -242,7 +259,7 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s`, stateColumns, st.
 	defer rows.Close()
 	out := make([]StateRow, 0, limit)
 	for rows.Next() {
-		r, err := scanStateRow(rows)
+		r, err := scanStateRow(rows, tenant)
 		if err != nil {
 			return nil, fmt.Errorf("signal: top states scan: %w", err)
 		}
@@ -255,19 +272,14 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s`, stateColumns, st.
 const metricColumns = `viewers, user_viewers, anon_viewers, views, completions, completers, active_s,
  score_sum, events, value_sum, positive_subjects, negative_subjects, signal_counts`
 
-// windowMetrics aggregates subject_daily for one entity type over a window:
-// first per subject (so each subject counts once), then per entity.
-func (st *Store) windowMetrics(tenant, entityType string, ids []string, win Window) (string, []any) {
-	var where strings.Builder
-	args := []any{tenant, entityType}
-	if len(ids) > 0 {
-		where.WriteString(" AND entity_id IN ?")
-		args = append(args, ids)
-	}
+// windowMetrics aggregates subject_content_daily rows matching filter over a
+// window: first per subject (so each subject counts once), then per content
+// reference.
+func (st *Store) windowMetrics(tenant, filter string, filterArgs []any, win Window) (string, []any) {
+	args := append([]any{tenant}, filterArgs...)
 	pred, predArgs := win.dayPredicate("day")
-	where.WriteString(pred)
 	args = append(args, predArgs...)
-	return fmt.Sprintf(`SELECT entity_id,
+	return fmt.Sprintf(`SELECT %[6]s,
     toUInt64(countIf(s_views > 0)) AS viewers,
     toUInt64(countIf(s_views > 0 AND subject_kind = '%[3]s')) AS user_viewers,
     toUInt64(countIf(s_views > 0 AND subject_kind = '%[4]s')) AS anon_viewers,
@@ -282,19 +294,19 @@ func (st *Store) windowMetrics(tenant, entityType string, ids []string, win Wind
     toUInt64(countIf(s_value < 0)) AS negative_subjects,
     CAST(sumMap(s_types), 'Map(String, UInt64)') AS signal_counts
 FROM (
-    SELECT entity_id, subject_kind, subject,
+    SELECT %[6]s, subject_kind, subject,
         sum(views) AS s_views, sum(completions) AS s_completions, sum(active_s) AS s_active,
         sum(score_sum) AS s_score, sum(events) AS s_events, sum(value_sum) AS s_value,
         sumMap(type_counts) AS s_types
-    FROM %[1]s.subject_daily FINAL
-    WHERE tenant = ? AND entity_type = ? AND events > 0%[2]s AND %[5]s
-    GROUP BY entity_id, subject_kind, subject
+    FROM %[1]s.subject_content_daily FINAL
+    WHERE tenant = ? AND %[2]s AND events > 0%[7]s AND %[5]s
+    GROUP BY %[6]s, subject_kind, subject
 )
-GROUP BY entity_id`, st.db, where.String(), SubjectKindUser, SubjectKindAnon, st.notErased()), args
+GROUP BY %[6]s`, st.db, filter, SubjectKindUser, SubjectKindAnon, st.notErased(), refColumns, pred), args
 }
 
-func scanMetrics(rows driver.Rows, id *string, m *EntityMetrics, extra ...any) error {
-	dest := []any{id, &m.Viewers, &m.UserViewers, &m.AnonViewers, &m.Views, &m.Completions, &m.Completers,
+func scanMetrics(rows driver.Rows, kind, id, version *string, m *ContentMetrics, extra ...any) error {
+	dest := []any{kind, id, version, &m.Viewers, &m.UserViewers, &m.AnonViewers, &m.Views, &m.Completions, &m.Completers,
 		&m.ActiveS, &m.ScoreSum, &m.Events, &m.ValueSum, &m.PositiveSubjects, &m.NegativeSubjects, &m.SignalCounts}
 	return rows.Scan(append(dest, extra...)...)
 }
@@ -303,21 +315,24 @@ func scanMetrics(rows driver.Rows, id *string, m *EntityMetrics, extra ...any) e
 // needs to merge across partitions.
 const finalSettings = "\nSETTINGS do_not_merge_across_partitions_select_final = 1"
 
-// Metrics returns named window metrics for entity ids of one type (zero window
-// = all time). Ids with no canonical events in the window are absent.
-func (st *Store) Metrics(ctx context.Context, tenant string, entityType string, ids []string, window Window) (map[string]EntityMetrics, error) {
-	out := map[string]EntityMetrics{}
-	ids = trimAll(ids)
-	if strings.TrimSpace(entityType) == "" {
-		return nil, fmt.Errorf("signal: entityType is required")
-	}
+// Metrics returns named window metrics for the references (works or versions;
+// zero window = all time). References with no canonical events in the window
+// are absent. A work's metrics never include its version rows.
+func (st *Store) Metrics(ctx context.Context, tenant string, refs []ContentRef, window Window) (map[ContentKey]ContentMetrics, error) {
+	out := map[ContentKey]ContentMetrics{}
 	if err := window.Validate(); err != nil {
 		return nil, err
 	}
-	if len(ids) == 0 {
+	if len(refs) == 0 {
 		return out, nil
 	}
-	q, args := st.windowMetrics(tenant, entityType, ids, window)
+	for _, r := range refs {
+		if err := checkRef(tenant, r); err != nil {
+			return nil, err
+		}
+	}
+	filter, filterArgs := refTuples(refs)
+	q, args := st.windowMetrics(tenant, filter, filterArgs, window)
 	rows, err := st.conn.Query(ctx, q+finalSettings, args...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: metrics: %w", err)
@@ -325,37 +340,38 @@ func (st *Store) Metrics(ctx context.Context, tenant string, entityType string, 
 	defer rows.Close()
 	for rows.Next() {
 		var (
-			id string
-			m  EntityMetrics
+			kind, id, version string
+			m                 ContentMetrics
 		)
-		if err := scanMetrics(rows, &id, &m); err != nil {
+		if err := scanMetrics(rows, &kind, &id, &version, &m); err != nil {
 			return nil, fmt.Errorf("signal: metrics scan: %w", err)
 		}
-		out[id] = m
+		out[contentref.NewVersion(tenant, kind, id, version).Key()] = m
 	}
 	return out, rows.Err()
 }
 
-// Popular ranks entities of one type with at least one view in a literal
-// window. Every view in the window has equal time weight.
-func (st *Store) Popular(ctx context.Context, tenant string, entityType string, opts PopularOptions) ([]PopularHit, error) {
-	return st.popular(ctx, tenant, entityType, nil, opts)
+// Popular ranks works of one kind with at least one view in a literal window.
+// Every view in the window has equal time weight.
+func (st *Store) Popular(ctx context.Context, tenant string, contentKind string, opts PopularOptions) ([]PopularHit, error) {
+	return st.popular(ctx, tenant, contentKind, nil, opts)
 }
 
-// PopularityFor scores a fixed candidate set by the popularity ranking and
-// returns entity_id -> score. Candidates without views in the window are absent.
-func (st *Store) PopularityFor(ctx context.Context, tenant string, entityType string, ids []string, window Window) (map[string]float64, error) {
+// PopularityFor scores a fixed candidate set of works by the popularity
+// ranking and returns content_id -> score. Candidates without views in the
+// window are absent.
+func (st *Store) PopularityFor(ctx context.Context, tenant string, contentKind string, ids []string, window Window) (map[string]float64, error) {
 	ids = trimAll(ids)
 	if len(ids) == 0 {
 		return map[string]float64{}, nil
 	}
-	hits, err := st.popular(ctx, tenant, entityType, ids, PopularOptions{Window: window, Limit: len(ids)})
+	hits, err := st.popular(ctx, tenant, contentKind, ids, PopularOptions{Window: window, Limit: len(ids)})
 	if err != nil {
 		return nil, err
 	}
 	out := make(map[string]float64, len(hits))
 	for _, h := range hits {
-		out[h.EntityID] = h.Score
+		out[h.ContentID] = h.Score
 	}
 	return out, nil
 }
@@ -368,9 +384,12 @@ func defaultRankExpr(w RankWeights) string {
 	)
 }
 
-func (st *Store) popular(ctx context.Context, tenant string, entityType string, ids []string, opts PopularOptions) ([]PopularHit, error) {
-	if strings.TrimSpace(entityType) == "" {
-		return nil, fmt.Errorf("signal: entityType is required")
+func (st *Store) popular(ctx context.Context, tenant string, contentKind string, ids []string, opts PopularOptions) ([]PopularHit, error) {
+	if strings.TrimSpace(tenant) == "" {
+		return nil, fmt.Errorf("signal: tenant is required")
+	}
+	if strings.TrimSpace(contentKind) == "" {
+		return nil, fmt.Errorf("signal: contentKind is required")
 	}
 	if err := opts.Window.Validate(); err != nil {
 		return nil, err
@@ -383,12 +402,17 @@ func (st *Store) popular(ctx context.Context, tenant string, entityType string, 
 	if rankExpr == "" {
 		rankExpr = defaultRankExpr(opts.Weights.withDefaults())
 	}
-	metrics, args := st.windowMetrics(tenant, entityType, ids, opts.Window)
-	q := fmt.Sprintf(`SELECT entity_id, %s, (%s) AS rank_score
+	filter, filterArgs := "content_kind = ?"+workLevel, []any{contentKind}
+	if len(ids) > 0 {
+		filter += " AND content_id IN ?"
+		filterArgs = append(filterArgs, ids)
+	}
+	metrics, args := st.windowMetrics(tenant, filter, filterArgs, opts.Window)
+	q := fmt.Sprintf(`SELECT %s, %s, (%s) AS rank_score
 FROM (%s)
 WHERE views > 0
-ORDER BY rank_score DESC, entity_id ASC
-LIMIT ?%s`, metricColumns, rankExpr, metrics, finalSettings)
+ORDER BY rank_score DESC, content_id ASC
+LIMIT ?%s`, refColumns, metricColumns, rankExpr, metrics, finalSettings)
 	rows, err := st.conn.Query(ctx, q, append(args, limit)...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: popular: %w", err)
@@ -396,10 +420,14 @@ LIMIT ?%s`, metricColumns, rankExpr, metrics, finalSettings)
 	defer rows.Close()
 	out := make([]PopularHit, 0, limit)
 	for rows.Next() {
-		h := PopularHit{EntityRef: EntityRef{EntityType: entityType}}
-		if err := scanMetrics(rows, &h.EntityID, &h.EntityMetrics, &h.Score); err != nil {
+		var (
+			h                 PopularHit
+			kind, id, version string
+		)
+		if err := scanMetrics(rows, &kind, &id, &version, &h.ContentMetrics, &h.Score); err != nil {
 			return nil, fmt.Errorf("signal: popular scan: %w", err)
 		}
+		h.ContentRef = contentref.NewVersion(tenant, kind, id, version)
 		if math.IsNaN(h.Score) || math.IsInf(h.Score, 0) {
 			h.Score = 0
 		}
@@ -408,12 +436,15 @@ LIMIT ?%s`, metricColumns, rankExpr, metrics, finalSettings)
 	return out, rows.Err()
 }
 
-// CoEngaged returns entities co-engaged with the anchor: "subjects who
+// CoEngaged returns works co-engaged with the anchor work: "subjects who
 // engaged with X also engaged with Y". Strength nets subjects whose summed
 // feedback for the candidate is non-negative against those with negative.
-func (st *Store) CoEngaged(ctx context.Context, tenant string, ref EntityRef, opts CoEngagedOptions) ([]CoEngagedHit, error) {
-	if err := ref.validate(); err != nil {
+func (st *Store) CoEngaged(ctx context.Context, tenant string, ref ContentRef, opts CoEngagedOptions) ([]CoEngagedHit, error) {
+	if err := checkRef(tenant, ref); err != nil {
 		return nil, err
+	}
+	if ref.Version() != "" {
+		return nil, fmt.Errorf("signal: co-engagement is work-level; %s names a version", ref)
 	}
 	if err := opts.Window.Validate(); err != nil {
 		return nil, err
@@ -438,83 +469,83 @@ func (st *Store) CoEngaged(ctx context.Context, tenant string, ref EntityRef, op
 	pred, predArgs := opts.Window.dayPredicate("day")
 	args := []any{tenant}
 	var candidates strings.Builder
-	if types := trimAll(opts.EntityTypes); len(types) > 0 {
-		candidates.WriteString(" AND entity_type IN ?")
-		args = append(args, types)
+	if kinds := trimAll(opts.ContentKinds); len(kinds) > 0 {
+		candidates.WriteString(" AND content_kind IN ?")
+		args = append(args, kinds)
 	}
 	args = append(args, predArgs...)
-	args = append(args, ref.EntityType, ref.EntityID, tenant, ref.EntityType, ref.EntityID)
+	args = append(args, ref.ContentKind, ref.ContentID, tenant, ref.ContentKind, ref.ContentID)
 	args = append(args, predArgs...)
 	args = append(args, maxSubjects, limit)
-	q := fmt.Sprintf(`SELECT entity_type, entity_id,
+	q := fmt.Sprintf(`SELECT content_kind, content_id,
     toInt64(countIf(net >= 0)) - toInt64(countIf(net < 0)) AS strength
 FROM (
-    SELECT entity_type, entity_id, subject_kind, subject, sum(value_sum) AS net
-    FROM %[1]s.subject_daily FINAL
-    WHERE tenant = ? AND events > 0%[2]s%[3]s AND %[5]s
-      AND NOT (entity_type = ? AND entity_id = ?)
+    SELECT content_kind, content_id, subject_kind, subject, sum(value_sum) AS net
+    FROM %[1]s.subject_content_daily FINAL
+    WHERE tenant = ? AND events > 0%[6]s%[2]s%[3]s AND %[5]s
+      AND NOT (content_kind = ? AND content_id = ?)
       AND (subject_kind, subject) IN (
-          SELECT DISTINCT subject_kind, subject FROM %[1]s.subject_daily FINAL
-          WHERE tenant = ? AND entity_type = ? AND entity_id = ? AND events > 0%[3]s AND %[5]s
+          SELECT DISTINCT subject_kind, subject FROM %[1]s.subject_content_daily FINAL
+          WHERE tenant = ? AND content_kind = ? AND content_id = ?%[6]s AND events > 0%[3]s AND %[5]s
           LIMIT ?)
-    GROUP BY entity_type, entity_id, subject_kind, subject
+    GROUP BY content_kind, content_id, subject_kind, subject
 )
-GROUP BY entity_type, entity_id
+GROUP BY content_kind, content_id
 HAVING strength > 0
-ORDER BY strength DESC, entity_type ASC, entity_id ASC
-LIMIT ?%[4]s`, st.db, candidates.String(), pred, finalSettings, st.notErased())
+ORDER BY strength DESC, content_kind ASC, content_id ASC
+LIMIT ?%[4]s`, st.db, candidates.String(), pred, finalSettings, st.notErased(), workLevel)
 	rows, err := st.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: co-engaged: %w", err)
 	}
 	defer rows.Close()
+	return scanCoEngaged(rows, tenant, limit)
+}
+
+func scanCoEngaged(rows driver.Rows, tenant string, limit int) ([]CoEngagedHit, error) {
 	out := make([]CoEngagedHit, 0, limit)
 	for rows.Next() {
-		var h CoEngagedHit
-		if err := rows.Scan(&h.EntityType, &h.EntityID, &h.Strength); err != nil {
+		var (
+			h        CoEngagedHit
+			kind, id string
+		)
+		if err := rows.Scan(&kind, &id, &h.Strength); err != nil {
 			return nil, fmt.Errorf("signal: co-engaged scan: %w", err)
 		}
+		h.ContentRef = contentref.New(tenant, kind, id)
 		out = append(out, h)
 	}
 	return out, rows.Err()
 }
 
-// coEngagedFromRollup serves CoEngaged from the precomputed item_pairs table.
-func (st *Store) coEngagedFromRollup(ctx context.Context, tenant string, ref EntityRef, opts CoEngagedOptions, limit int) ([]CoEngagedHit, error) {
+// coEngagedFromRollup serves CoEngaged from the precomputed content_pairs table.
+func (st *Store) coEngagedFromRollup(ctx context.Context, tenant string, ref ContentRef, opts CoEngagedOptions, limit int) ([]CoEngagedHit, error) {
 	var sb strings.Builder
-	args := []any{tenant, ref.EntityType, ref.EntityID}
-	fmt.Fprintf(&sb, `SELECT entity_type_b, entity_id_b, max(strength) AS s
-FROM %s.item_pairs
-WHERE tenant = ? AND entity_type_a = ? AND entity_id_a = ?`, st.db)
-	if types := trimAll(opts.EntityTypes); len(types) > 0 {
-		sb.WriteString(" AND entity_type_b IN ?")
-		args = append(args, types)
+	args := []any{tenant, ref.ContentKind, ref.ContentID}
+	fmt.Fprintf(&sb, `SELECT content_kind_b, content_id_b, max(strength) AS s
+FROM %s.content_pairs
+WHERE tenant = ? AND content_kind_a = ? AND content_id_a = ?`, st.db)
+	if kinds := trimAll(opts.ContentKinds); len(kinds) > 0 {
+		sb.WriteString(" AND content_kind_b IN ?")
+		args = append(args, kinds)
 	}
-	sb.WriteString("\nGROUP BY entity_type_b, entity_id_b\nHAVING s > 0\nORDER BY s DESC, entity_type_b ASC, entity_id_b ASC\nLIMIT ?")
+	sb.WriteString("\nGROUP BY content_kind_b, content_id_b\nHAVING s > 0\nORDER BY s DESC, content_kind_b ASC, content_id_b ASC\nLIMIT ?")
 	args = append(args, limit)
 	rows, err := st.conn.Query(ctx, sb.String(), args...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: co-engaged rollup: %w", err)
 	}
 	defer rows.Close()
-	out := make([]CoEngagedHit, 0, limit)
-	for rows.Next() {
-		var h CoEngagedHit
-		if err := rows.Scan(&h.EntityType, &h.EntityID, &h.Strength); err != nil {
-			return nil, fmt.Errorf("signal: co-engaged rollup scan: %w", err)
-		}
-		out = append(out, h)
-	}
-	return out, rows.Err()
+	return scanCoEngaged(rows, tenant, limit)
 }
 
 // maxRefreshAttempts bounds RefreshCoEngagement's rebuilds when erasures keep
 // landing while it computes.
 const maxRefreshAttempts = 3
 
-// RefreshCoEngagement (re)materializes the item_pairs rollup for one tenant:
-// per subject, the distinct entities with non-negative summed feedback
-// (capped at MaxEntitiesPerSubject) are cross-joined into pairs; strength =
+// RefreshCoEngagement (re)materializes the content_pairs rollup for one
+// tenant: per subject, the distinct works with non-negative summed feedback
+// (capped at MaxContentPerSubject) are cross-joined into pairs; strength =
 // co-engaged subjects minus subjects with negative feedback on the candidate.
 // Pairs carry no subject, so a build that started before an erasure could
 // publish that subject's contribution after EraseSubjects removed its pairs:
@@ -548,20 +579,20 @@ func (st *Store) RefreshCoEngagement(ctx context.Context, tenant string, opts Re
 }
 
 func (st *Store) buildCoEngagement(ctx context.Context, tenant string, opts RefreshCoEngagementOptions) error {
-	maxPer := opts.MaxEntitiesPerSubject
+	maxPer := opts.MaxContentPerSubject
 	if maxPer <= 0 {
 		maxPer = 100
 	}
-	if err := st.conn.Exec(ctx, fmt.Sprintf(`DELETE FROM %s.item_pairs WHERE tenant = ?`, st.db), tenant); err != nil {
-		return fmt.Errorf("signal: clear item_pairs: %w", err)
+	if err := st.conn.Exec(ctx, fmt.Sprintf(`DELETE FROM %s.content_pairs WHERE tenant = ?`, st.db), tenant); err != nil {
+		return fmt.Errorf("signal: clear content_pairs: %w", err)
 	}
 	winPred, winArgs := opts.Window.dayPredicate("day")
-	q := fmt.Sprintf(`INSERT INTO %[1]s.item_pairs
-(tenant, entity_type_a, entity_id_a, entity_type_b, entity_id_b, strength, refreshed_at)
+	q := fmt.Sprintf(`INSERT INTO %[1]s.content_pairs
+(tenant, content_kind_a, content_id_a, content_kind_b, content_id_b, strength, refreshed_at)
 SELECT
     '%[2]s' AS tenant,
-    a.1 AS entity_type_a, a.2 AS entity_id_a,
-    (bs.1).1 AS entity_type_b, (bs.1).2 AS entity_id_b,
+    a.1 AS content_kind_a, a.2 AS content_id_a,
+    (bs.1).1 AS content_kind_b, (bs.1).2 AS content_id_b,
     toInt64(sum(bs.2)) AS strength,
     now()
 FROM (
@@ -573,21 +604,21 @@ FROM (
         FROM (
             SELECT
                 subject_kind, subject,
-                groupUniqArrayIf(%[3]d)((entity_type, entity_id), net_v >= 0) AS pos,
-                groupUniqArrayIf(%[3]d)((entity_type, entity_id), net_v < 0) AS neg
+                groupUniqArrayIf(%[3]d)((content_kind, content_id), net_v >= 0) AS pos,
+                groupUniqArrayIf(%[3]d)((content_kind, content_id), net_v < 0) AS neg
             FROM (
-                SELECT subject_kind, subject, entity_type, entity_id, sum(value_sum) AS net_v
-                FROM %[1]s.subject_daily FINAL
-                WHERE tenant = ? AND events > 0%[4]s AND %[6]s
-                GROUP BY subject_kind, subject, entity_type, entity_id
+                SELECT subject_kind, subject, content_kind, content_id, sum(value_sum) AS net_v
+                FROM %[1]s.subject_content_daily FINAL
+                WHERE tenant = ? AND events > 0%[7]s%[4]s AND %[6]s
+                GROUP BY subject_kind, subject, content_kind, content_id
             )
             GROUP BY subject_kind, subject
         )
     )
 )
 WHERE a != bs.1
-GROUP BY entity_type_a, entity_id_a, entity_type_b, entity_id_b
-HAVING strength > 0%[5]s`, st.db, escapeCHString(tenant), maxPer, winPred, finalSettings, st.notErased())
+GROUP BY content_kind_a, content_id_a, content_kind_b, content_id_b
+HAVING strength > 0%[5]s`, st.db, escapeCHString(tenant), maxPer, winPred, finalSettings, st.notErased(), workLevel)
 	if err := st.conn.Exec(ctx, q, append([]any{tenant}, winArgs...)...); err != nil {
 		return fmt.Errorf("signal: refresh co-engagement: %w", err)
 	}

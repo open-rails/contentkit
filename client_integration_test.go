@@ -1,528 +1,175 @@
-package searchkit
+package contentkit
 
 import (
 	"context"
-	"fmt"
-	"os"
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/pgvector/pgvector-go"
+	"github.com/open-rails/contentkit/contentref"
 )
 
-func TestClientSearch_Integration_LexicalAndSemantic(t *testing.T) {
-	dsn := os.Getenv("SEARCHKIT_TEST_URL")
-	if dsn == "" {
-		t.Skip("SEARCHKIT_TEST_URL not set")
-	}
+// rankerFunc is a SemanticRanker test double.
+type rankerFunc func(ctx context.Context, req SemanticRequest) ([]SemanticCandidate, error)
 
+func (f rankerFunc) Rank(ctx context.Context, req SemanticRequest) ([]SemanticCandidate, error) {
+	return f(ctx, req)
+}
+
+func TestClientSearch_Integration_KeywordAndSemanticRanker(t *testing.T) {
+	pool := testPG(t)
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatalf("pgxpool: %v", err)
-	}
-	t.Cleanup(pool.Close)
-
-	schema := fmt.Sprintf("searchkit_test_%d_%d", os.Getpid(), time.Now().UnixNano())
-	quotedSchema := pgx.Identifier{schema}.Sanitize()
-	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if _, err := pool.Exec(cleanupCtx, "DROP SCHEMA IF EXISTS "+quotedSchema+" CASCADE"); err != nil {
-			t.Errorf("drop integration schema %s: %v", schema, err)
+	schema := keywordSchema(t, ctx, pool)
+	upsertDocs(t, ctx, pool, schema,
+		doc("gallery", "1", "en", "Two factor authentication", nil, nil),
+		doc("gallery", "2", "en", "Two factor backup codes", nil, nil),
+		doc("gallery", "3", "en", "Cooking with cast iron", nil, nil),
+	)
+	var (
+		rankerCalls []SemanticRequest
+		rankerErr   error
+		candidates  []SemanticCandidate
+	)
+	ranker := rankerFunc(func(ctx context.Context, req SemanticRequest) ([]SemanticCandidate, error) {
+		rankerCalls = append(rankerCalls, req)
+		if rankerErr != nil {
+			return nil, rankerErr
 		}
+		return candidates, nil
 	})
-
-	// Minimal isolated schema for trigram + FTS + semantic search.
-	_, err = pool.Exec(ctx, fmt.Sprintf(`
-		CREATE EXTENSION IF NOT EXISTS pg_trgm;
-		CREATE EXTENSION IF NOT EXISTS vector;
-		CREATE SCHEMA %s;
-
-		CREATE OR REPLACE FUNCTION %s.searchkit_regconfig_for_language(lang text)
-		RETURNS regconfig
-		LANGUAGE sql
-		IMMUTABLE
-		AS $$
-			SELECT 'simple'::regconfig
-		$$;
-
-		CREATE TABLE %s.search_documents (
-			entity_type text NOT NULL,
-			entity_id text NOT NULL,
-			language text NOT NULL,
-			document text,
-			raw_document text,
-			tsv tsvector,
-			created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (entity_type, entity_id, language)
-		);
-
-		CREATE TABLE %s.embedding_vectors (
-			entity_type text NOT NULL,
-			entity_id text NOT NULL,
-			model text NOT NULL,
-			language text NOT NULL,
-			embedding halfvec,
-			created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (entity_type, entity_id, model, language)
-		);
-	`, quotedSchema, quotedSchema, quotedSchema, quotedSchema))
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	installKeywordFields(t, ctx, pool, schema)
-	_, err = pool.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s.search_documents(entity_type, entity_id, language, document, raw_document, tsv)
-		VALUES ('gallery', '1', 'en', lower('Two factor authentication'), 'Two factor authentication', to_tsvector(%s.searchkit_regconfig_for_language('en'), 'Two factor authentication'))
-	`, quotedSchema, quotedSchema))
-	if err != nil {
-		t.Fatalf("insert search_documents: %v", err)
-	}
-	_, err = pool.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s.search_documents(entity_type, entity_id, language, document, raw_document, tsv)
-		VALUES ('gallery', '2', 'en', lower('Two factor backup codes'), 'Two factor backup codes', to_tsvector(%s.searchkit_regconfig_for_language('en'), 'Two factor backup codes'))
-	`, quotedSchema, quotedSchema))
-	if err != nil {
-		t.Fatalf("insert search_documents 2: %v", err)
-	}
-
-	_, err = pool.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s.embedding_vectors(entity_type, entity_id, model, language, embedding)
-		VALUES ('gallery', '1', 'm', 'en', $1::halfvec(3))
-	`, quotedSchema), pgvector.NewHalfVector([]float32{1, 0, 0}))
-	if err != nil {
-		t.Fatalf("insert embedding_vectors: %v", err)
-	}
-	_, err = pool.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s.embedding_vectors(entity_type, entity_id, model, language, embedding)
-		VALUES ('gallery', '2', 'm', 'en', $1::halfvec(3))
-	`, quotedSchema), pgvector.NewHalfVector([]float32{1, 0, 0}))
-	if err != nil {
-		t.Fatalf("insert embedding_vectors 2: %v", err)
-	}
-	_, err = pool.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s.embedding_vectors(entity_type, entity_id, model, language, embedding)
-		VALUES ('gallery', '3', 'm', 'en', $1::halfvec(3))
-	`, quotedSchema), pgvector.NewHalfVector([]float32{-1, 0, 0}))
-	if err != nil {
-		t.Fatalf("insert embedding_vectors 3: %v", err)
-	}
-	emb := &recordingEmbedder{vec: []float32{1, 0, 0}}
-	client, err := NewClient(ClientConfig{
-		Pool:         pool,
-		Schema:       schema,
-		Embedder:     emb,
-		DefaultModel: "m",
-	})
+	client, err := NewClient(ClientConfig{Pool: pool, Schema: schema, Tenant: testTenant, SemanticRanker: ranker, SemanticTimeout: 200 * time.Millisecond})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
+	kinds := []string{"gallery"}
 
-	lexHitsPage, err := client.Search(ctx, "factor", SearchOptions{
-		Mode:               SearchModeLexical,
-		Language:           "en",
-		LexicalEntityTypes: []string{"gallery"},
-		Limit:              10,
-	})
+	// Keyword only.
+	page, err := client.Search(ctx, "factor", SearchOptions{Language: "en", ContentKinds: kinds, Limit: 10})
 	if err != nil {
-		t.Fatalf("lexical Search: %v", err)
+		t.Fatalf("Search: %v", err)
 	}
-	lexHits := lexHitsPage.Hits
-	if len(lexHits) == 0 || lexHits[0].EntityID != "1" {
-		t.Fatalf("expected lexical hit entity_id=1, got %+v", lexHits)
+	if !reflect.DeepEqual(ids(page.Hits), []string{"1", "2"}) || page.Hits[0].TenantID != testTenant || page.Hits[0].Version() != "" || page.Hits[0].Language != "en" {
+		t.Fatalf("keyword hits: %+v", page.Hits)
 	}
-	tracedLexHitsPage, lexTrace, err := client.SearchWithTrace(ctx, "factor", SearchOptions{
-		Mode:               SearchModeLexical,
-		Language:           "en",
-		LexicalEntityTypes: []string{"gallery"},
-		Limit:              10,
-	})
-	if err != nil {
-		t.Fatalf("traced lexical Search: %v", err)
+	traced, trace, err := client.SearchWithTrace(ctx, "factor", SearchOptions{Language: "en", ContentKinds: kinds, Limit: 10})
+	if err != nil || !reflect.DeepEqual(traced, page) {
+		t.Fatalf("traced results differ: %+v %v", traced, err)
 	}
-	tracedLexHits := tracedLexHitsPage.Hits
-	if !reflect.DeepEqual(tracedLexHits, lexHits) {
-		t.Fatalf("traced lexical results differ: got %+v, want %+v", tracedLexHits, lexHits)
+	if len(trace.Sources) != 1 || trace.Sources[0].Backend != BackendKeyword || trace.Sources[0].Status != SourceStatusSucceeded || len(trace.Results) != 2 || trace.Results[0].ScoreKind != ScoreKeywordMatch || trace.Results[0].Key.ContentID != "1" || len(rankerCalls) != 0 {
+		t.Fatalf("unexpected keyword trace: %+v", trace)
 	}
-	if len(lexTrace.Sources) != 1 || lexTrace.Sources[0].Backend != BackendKeyword || lexTrace.Sources[0].Status != SourceStatusSucceeded || len(lexTrace.Results) != len(tracedLexHits) {
-		t.Fatalf("unexpected lexical trace: %+v", lexTrace)
+	limited, limitedTrace, err := client.SearchWithTrace(ctx, "factor", SearchOptions{Language: "en", ContentKinds: kinds, Limit: 1, CandidateLimit: 2})
+	if err != nil || len(limited.Hits) != 1 || limitedTrace.ResultLimit != 1 || limitedTrace.CandidateLimit != 2 || len(limitedTrace.Sources[0].Candidates) != 2 || !limited.HasMore {
+		t.Fatalf("candidate/result limits not separated: hits=%+v trace=%+v err=%v", limited, limitedTrace, err)
 	}
 
-	semHitsPage, err := client.Search(ctx, "two-factor", SearchOptions{
-		Mode:                SearchModeSemantic,
-		Language:            "en",
-		SemanticEntityTypes: []string{"gallery"},
-		Limit:               10,
-	})
+	// Host filter and typeahead.
+	filtered, err := client.Search(ctx, "two factor", SearchOptions{Language: "en", ContentKinds: kinds, FilterSQL: "sd.content_id = @allowed_id", FilterArgs: map[string]any{"allowed_id": "1"}})
+	if err != nil || !reflect.DeepEqual(ids(filtered.Hits), []string{"1"}) {
+		t.Fatalf("filtered: %+v %v", filtered, err)
+	}
+	suggestions, err := client.Typeahead(ctx, "two", TypeaheadOptions{Language: "en", ContentKinds: kinds, FilterSQL: "sd.content_id = @allowed_id", FilterArgs: map[string]any{"allowed_id": "1"}})
+	if err != nil || len(suggestions) != 1 || suggestions[0].ContentID != "1" {
+		t.Fatalf("filtered typeahead: %+v %v", suggestions, err)
+	}
+
+	// Semantic: the ranker's candidates are verified against the index and fused.
+	candidates = []SemanticCandidate{
+		{ContentRef: gallery("3"), Language: "en", Score: .9},
+		{ContentRef: gallery("1"), Language: "en", Score: .5},
+		{ContentRef: gallery("99"), Language: "en", Score: .4}, // no document: dropped
+	}
+	fused, fusedTrace, err := client.SearchWithTrace(ctx, "factor", SearchOptions{Language: "en", ContentKinds: kinds, Limit: 10, Semantic: true})
 	if err != nil {
 		t.Fatalf("semantic Search: %v", err)
 	}
-	semHits := semHitsPage.Hits
-	if len(semHits) == 0 || semHits[0].EntityID != "1" {
-		t.Fatalf("expected semantic hit entity_id=1, got %+v", semHits)
+	if !reflect.DeepEqual(ids(fused.Hits), []string{"1", "3", "2"}) || fused.Degraded {
+		t.Fatalf("fused hits: %+v", fused)
 	}
-	tracedSemHitsPage, semTrace, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
-		Mode:                SearchModeSemantic,
-		Language:            "en",
-		SemanticEntityTypes: []string{"gallery"},
-		Limit:               10,
+	if len(rankerCalls) != 1 || rankerCalls[0].Tenant != testTenant || rankerCalls[0].Query != "factor" || rankerCalls[0].Language != "en" || rankerCalls[0].Limit != 100 || !reflect.DeepEqual(rankerCalls[0].ContentKinds, kinds) {
+		t.Fatalf("ranker request: %+v", rankerCalls)
+	}
+	if len(fusedTrace.Sources) != 2 || fusedTrace.Sources[1].Backend != BackendSemanticRanker || fusedTrace.Sources[1].ScoreKind != ScoreSemanticRanker || len(fusedTrace.Sources[1].Candidates) != 2 || !fusedTrace.Semantic {
+		t.Fatalf("semantic source trace: %+v", fusedTrace.Sources)
+	}
+	first := fusedTrace.Results[0]
+	if first.ScoreKind != ScoreRRF || len(first.Contributions) != 2 || first.Contributions[0].SourceIndex != 0 || first.Contributions[1].SourceIndex != 1 {
+		t.Fatalf("fused result must carry both sources' contributions: %+v", first)
+	}
+	var sum float32
+	for _, c := range first.Contributions {
+		sum += c.Contribution
+	}
+	if sum != first.Score {
+		t.Fatalf("contributions %v != score %v", sum, first.Score)
+	}
+	// Eligibility applies to semantic candidates as to keyword documents.
+	eligible, err := client.Search(ctx, "factor", SearchOptions{Language: "en", ContentKinds: kinds, Semantic: true,
+		Eligibility: &Eligibility{SQL: `SELECT 0 AS priority WHERE sd.content_id = @only`, Args: map[string]any{"only": "2"}}})
+	if err != nil || !reflect.DeepEqual(ids(eligible.Hits), []string{"2"}) {
+		t.Fatalf("eligibility must bound semantic candidates: %+v %v", eligible, err)
+	}
+	// A ranker proposing another tenant's content degrades the request.
+	candidates = []SemanticCandidate{{ContentRef: contentref.New("hentai0", "gallery", "3"), Language: "en", Score: .9}}
+	foreign, foreignTrace, err := client.SearchWithTrace(ctx, "factor", SearchOptions{Language: "en", ContentKinds: kinds, Semantic: true})
+	if err != nil || !foreign.Degraded || !reflect.DeepEqual(ids(foreign.Hits), []string{"1", "2"}) || foreignTrace.Sources[1].ErrorCategory != "semantic_eligibility" {
+		t.Fatalf("foreign candidate: %+v %+v %v", foreign, foreignTrace.Sources, err)
+	}
+
+	// Ranker failure degrades to keyword-only, never an error.
+	rankerErr = errors.New("provider down")
+	degraded, degradedTrace, err := client.SearchWithTrace(ctx, "factor", SearchOptions{Language: "en", ContentKinds: kinds, Limit: 10, Semantic: true})
+	if err != nil || !degraded.Degraded || !reflect.DeepEqual(ids(degraded.Hits), []string{"1", "2"}) {
+		t.Fatalf("degraded: %+v %v", degraded, err)
+	}
+	if !degradedTrace.Degraded || degradedTrace.ErrorCategory != "" || degradedTrace.Sources[1].Status != SourceStatusFailed || degradedTrace.Sources[1].ErrorCategory != "semantic_ranker" || degradedTrace.Results[0].ScoreKind != ScoreKeywordMatch {
+		t.Fatalf("degraded trace: %+v", degradedTrace)
+	}
+	// A hung ranker is bounded by SemanticTimeout.
+	rankerErr = nil
+	slow := rankerFunc(func(ctx context.Context, _ SemanticRequest) ([]SemanticCandidate, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
 	})
-	if err != nil {
-		t.Fatalf("traced semantic Search: %v", err)
+	slowClient, _ := NewClient(ClientConfig{Pool: pool, Schema: schema, Tenant: testTenant, SemanticRanker: slow, SemanticTimeout: 50 * time.Millisecond})
+	started := time.Now()
+	hung, err := slowClient.Search(ctx, "factor", SearchOptions{Language: "en", ContentKinds: kinds, Semantic: true})
+	if err != nil || !hung.Degraded || len(hung.Hits) != 2 || time.Since(started) > 2*time.Second {
+		t.Fatalf("hung ranker: %+v %v after %s", hung, err, time.Since(started))
 	}
-	tracedSemHits := tracedSemHitsPage.Hits
-	if !reflect.DeepEqual(tracedSemHits, semHits) {
-		t.Fatalf("traced semantic results differ: got %+v, want %+v", tracedSemHits, semHits)
-	}
-	if len(semTrace.Sources) != 1 || semTrace.Sources[0].Backend != BackendSemantic || semTrace.Sources[0].ScoreKind != ScoreCosineSimilarity || len(semTrace.Sources[0].Candidates) != len(tracedSemHits) {
-		t.Fatalf("unexpected semantic trace: %+v", semTrace)
-	}
-	for _, result := range semTrace.Results {
-		var contributionSum float32
-		for _, contribution := range result.Contributions {
-			contributionSum += contribution.Contribution
-		}
-		if contributionSum != result.Score {
-			t.Fatalf("result contributions = %v, score = %v", contributionSum, result.Score)
-		}
-	}
-	for range 10 {
-		_, repeatedTrace, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
-			Mode:                SearchModeSemantic,
-			Language:            "en",
-			SemanticEntityTypes: []string{"gallery"},
-			Limit:               3,
-			CandidateLimit:      3,
-		})
-		if err != nil {
-			t.Fatalf("repeated semantic Search: %v", err)
-		}
-		candidates := repeatedTrace.Sources[0].Candidates
-		if len(candidates) != 3 || candidates[0].Key.EntityID != "1" || candidates[1].Key.EntityID != "2" || candidates[2].Key.EntityID != "3" {
-			t.Fatalf("semantic ties are not deterministic: %+v", candidates)
-		}
+	// Without a registered ranker, Semantic is keyword-only and not degraded.
+	plain, _ := NewClient(ClientConfig{Pool: pool, Schema: schema, Tenant: testTenant})
+	none, noneTrace, err := plain.SearchWithTrace(ctx, "factor", SearchOptions{Language: "en", ContentKinds: kinds, Semantic: true})
+	if err != nil || none.Degraded || len(noneTrace.Sources) != 1 || noneTrace.Semantic || !noneTrace.RequestedSemantic {
+		t.Fatalf("no ranker: %+v %+v %v", none, noneTrace, err)
 	}
 
-	limitedHitsPage, limitedTrace, err := client.SearchWithTrace(ctx, "factor", SearchOptions{
-		Mode:               SearchModeLexical,
-		Language:           "en",
-		LexicalEntityTypes: []string{"gallery"},
-		Limit:              1,
-		CandidateLimit:     2,
-	})
-	if err != nil {
-		t.Fatalf("candidate-limited Search: %v", err)
+	// Language strictness and fallback with one work in two languages.
+	strict, err := client.Search(ctx, "factor", SearchOptions{Language: "es", ContentKinds: kinds})
+	if err != nil || len(strict.Hits) != 0 {
+		t.Fatalf("strict language: %+v %v", strict, err)
 	}
-	limitedHits := limitedHitsPage.Hits
-	if len(limitedHits) != 1 || limitedTrace.ResultLimit != 1 || limitedTrace.CandidateLimit != 2 || len(limitedTrace.Sources[0].Candidates) != 2 {
-		t.Fatalf("candidate/result limits not separated: hits=%+v trace=%+v", limitedHits, limitedTrace)
+	upsertDocs(t, ctx, pool, schema, doc("gallery", "1", "es", "Two factor authentication", nil, nil))
+	fallback, err := client.Search(ctx, "two factor", SearchOptions{Language: "es", LanguageMode: LanguageModeFallbackEnglish, ContentKinds: kinds, Limit: 1})
+	if err != nil || len(fallback.Hits) != 1 || fallback.Hits[0].ContentID != "1" || fallback.Hits[0].Language != "es" || !fallback.HasMore {
+		t.Fatalf("fallback page: %+v %v", fallback, err)
 	}
-
-	flooredHitsPage, floorTrace, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
-		Mode:                  SearchModeSemantic,
-		Language:              "en",
-		SemanticEntityTypes:   []string{"gallery"},
-		Limit:                 10,
-		SemanticMinSimilarity: 1.1,
-	})
-	if err != nil {
-		t.Fatalf("semantic-floor Search: %v", err)
+	next, err := client.Search(ctx, "two factor", SearchOptions{Language: "es", LanguageMode: LanguageModeFallbackEnglish, ContentKinds: kinds, Limit: 1, Offset: 1})
+	if err != nil || len(next.Hits) != 1 || next.Hits[0].ContentID != "2" || next.Hits[0].Language != "en" || next.HasMore {
+		t.Fatalf("fallback page 2: %+v %v", next, err)
 	}
-	flooredHits := flooredHitsPage.Hits
-	if len(flooredHits) != 0 || floorTrace.SemanticMinSimilarity != 1.1 || len(floorTrace.Sources) != 1 || len(floorTrace.Sources[0].Candidates) != 0 {
-		t.Fatalf("semantic floor not applied/traced: hits=%+v trace=%+v", flooredHits, floorTrace)
-	}
-
-	for _, floor := range []float32{0, -0.5} {
-		disabledHitsPage, disabledTrace, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
-			Mode:                  SearchModeSemantic,
-			Language:              "en",
-			SemanticEntityTypes:   []string{"gallery"},
-			Limit:                 1,
-			CandidateLimit:        3,
-			TwoStage:              boolPointer(true),
-			OversampleFactor:      2,
-			SemanticMinSimilarity: floor,
-		})
-		if err != nil {
-			t.Fatalf("two-stage disabled-floor Search(%v): %v", floor, err)
-		}
-		disabledHits := disabledHitsPage.Hits
-		if len(disabledHits) != 1 || disabledTrace.SemanticMinSimilarity != 0 || disabledTrace.CandidateLimit != 3 || disabledTrace.OversampleFactor != 2 {
-			t.Fatalf("unexpected disabled-floor limits: floor=%v hits=%+v trace=%+v", floor, disabledHits, disabledTrace)
-		}
-		candidates := disabledTrace.Sources[0].Candidates
-		if len(candidates) != 3 || candidates[2].Score >= 0 {
-			t.Fatalf("disabled floor removed negative cosine candidate: floor=%v candidates=%+v", floor, candidates)
-		}
-	}
-
-	positiveHitsPage, positiveTrace, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
-		Mode:                  SearchModeSemantic,
-		Language:              "en",
-		SemanticEntityTypes:   []string{"gallery"},
-		Limit:                 3,
-		CandidateLimit:        3,
-		TwoStage:              boolPointer(true),
-		OversampleFactor:      2,
-		SemanticMinSimilarity: 0.1,
-	})
-	if err != nil {
-		t.Fatalf("two-stage positive-floor Search: %v", err)
-	}
-	positiveHits := positiveHitsPage.Hits
-	if len(positiveHits) != 2 || len(positiveTrace.Sources[0].Candidates) != 2 {
-		t.Fatalf("positive floor did not remove negative candidate: hits=%+v trace=%+v", positiveHits, positiveTrace)
-	}
-	_, err = pool.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s.embedding_vectors(entity_type, entity_id, model, language, embedding)
-		VALUES ('gallery', '4', 'm', 'en', $1::halfvec(3))
-	`, quotedSchema), pgvector.NewHalfVector([]float32{0, 1, 0}))
-	if err != nil {
-		t.Fatalf("insert embedding_vectors 4: %v", err)
-	}
-
-	zeroFloorHitsPage, zeroFloorTrace, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
-		Mode:                         SearchModeSemantic,
-		Language:                     "en",
-		SemanticEntityTypes:          []string{"gallery"},
-		Limit:                        4,
-		CandidateLimit:               4,
-		TwoStage:                     boolPointer(true),
-		OversampleFactor:             2,
-		SemanticMinSimilarityEnabled: true,
-	})
-	if err != nil {
-		t.Fatalf("two-stage explicit-zero-floor Search: %v", err)
-	}
-	zeroFloorHits := zeroFloorHitsPage.Hits
-	if len(zeroFloorHits) != 3 || len(zeroFloorTrace.Sources[0].Candidates) != 3 || !zeroFloorTrace.SemanticMinSimilarityEnabled {
-		t.Fatalf("explicit zero floor did not keep zero/drop negative: hits=%+v trace=%+v", zeroFloorHits, zeroFloorTrace)
-	}
-	assertEntityIDs(t, zeroFloorHits, []string{"1", "2", "4"})
-
-	oneStage := false
-	oneStageHitsPage, _, err := client.SearchWithTrace(ctx, "two-factor", SearchOptions{
-		Mode:                         SearchModeSemantic,
-		Language:                     "en",
-		SemanticEntityTypes:          []string{"gallery"},
-		Limit:                        4,
-		CandidateLimit:               4,
-		TwoStage:                     &oneStage,
-		SemanticMinSimilarityEnabled: true,
-	})
-	if err != nil {
-		t.Fatalf("one-stage explicit-zero-floor Search: %v", err)
-	}
-	oneStageHits := oneStageHitsPage.Hits
-	assertEntityIDs(t, oneStageHits, []string{"1", "2", "4"})
-
-	similarHits, err := client.SimilarTo(ctx, "gallery", "1", SimilarOptions{
-		Language:             "en",
-		Model:                "m",
-		Limit:                4,
-		MinSimilarityEnabled: true,
-	})
-	if err != nil {
-		t.Fatalf("explicit-zero-floor SimilarTo: %v", err)
-	}
-	if len(similarHits) != 2 || similarHits[0].EntityID != "2" || similarHits[1].EntityID != "4" {
-		t.Fatalf("explicit zero floor did not keep zero/drop negative SimilarTo hit: %+v", similarHits)
-	}
-
-	filteredLexPage, err := client.Search(ctx, "two factor", SearchOptions{
-		Mode:               SearchModeLexical,
-		Language:           "en",
-		LexicalEntityTypes: []string{"gallery"},
-		Limit:              10,
-		FilterSQL:          "sd.entity_id = @allowed_id",
-		FilterArgs: map[string]any{
-			"allowed_id": "1",
-		},
-	})
-	if err != nil {
-		t.Fatalf("filtered lexical Search: %v", err)
-	}
-	filteredLex := filteredLexPage.Hits
-	for _, h := range filteredLex {
-		if h.EntityID != "1" {
-			t.Fatalf("expected filtered lexical hits to contain only entity_id=1, got %+v", filteredLex)
-		}
-	}
-
-	filteredSemPage, err := client.Search(ctx, "two-factor", SearchOptions{
-		Mode:                SearchModeSemantic,
-		Language:            "en",
-		SemanticEntityTypes: []string{"gallery"},
-		Limit:               10,
-		FilterSQL:           "ev.entity_id = @allowed_id",
-		FilterArgs: map[string]any{
-			"allowed_id": "1",
-		},
-	})
-	if err != nil {
-		t.Fatalf("filtered semantic Search: %v", err)
-	}
-	filteredSem := filteredSemPage.Hits
-	for _, h := range filteredSem {
-		if h.EntityID != "1" {
-			t.Fatalf("expected filtered semantic hits to contain only entity_id=1, got %+v", filteredSem)
-		}
-	}
-
-	filteredTypeahead, err := client.Typeahead(ctx, "two", TypeaheadOptions{
-		Language:    "en",
-		EntityTypes: []string{"gallery"},
-		Limit:       10,
-		FilterSQL:   "sd.entity_id = @allowed_id",
-		FilterArgs: map[string]any{
-			"allowed_id": "1",
-		},
-	})
-	if err != nil {
-		t.Fatalf("filtered typeahead: %v", err)
-	}
-	for _, h := range filteredTypeahead {
-		if h.EntityID != "1" {
-			t.Fatalf("expected filtered typeahead hits to contain only entity_id=1, got %+v", filteredTypeahead)
-		}
-	}
-
-	// Default behavior is strict language (exact only).
-	strictLexPage, err := client.Search(ctx, "factor", SearchOptions{
-		Mode:               SearchModeLexical,
-		Language:           "es",
-		LexicalEntityTypes: []string{"gallery"},
-		Limit:              10,
-	})
-	if err != nil {
-		t.Fatalf("strict lexical Search: %v", err)
-	}
-	strictLex := strictLexPage.Hits
-	if len(strictLex) != 0 {
-		t.Fatalf("expected strict lexical language mode to return no hits, got %+v", strictLex)
-	}
-
-	fallbackLexPage, err := client.Search(ctx, "factor", SearchOptions{
-		Mode:               SearchModeLexical,
-		Language:           "es",
-		LanguageMode:       LanguageModeFallbackEnglish,
-		LexicalEntityTypes: []string{"gallery"},
-		Limit:              10,
-	})
-	if err != nil {
-		t.Fatalf("fallback lexical Search: %v", err)
-	}
-	fallbackLex := fallbackLexPage.Hits
-	if len(fallbackLex) == 0 {
-		t.Fatalf("expected fallback lexical language mode to return english hits")
-	}
-	for _, h := range fallbackLex {
-		if h.Language != "en" {
-			t.Fatalf("expected fallback lexical hits language=en, got %+v", fallbackLex)
-		}
-	}
-
-	strictTypeahead, err := client.Typeahead(ctx, "two", TypeaheadOptions{
-		Language:    "es",
-		EntityTypes: []string{"gallery"},
-		Limit:       10,
-	})
-	if err != nil {
-		t.Fatalf("strict typeahead: %v", err)
-	}
-	if len(strictTypeahead) != 0 {
-		t.Fatalf("expected strict typeahead language mode to return no hits, got %+v", strictTypeahead)
-	}
-
-	// A Spanish document for gallery 1 in both planes: dual fallback must
-	// return the item once, in the requested language, with truthful paging.
-	_, err = pool.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s.search_documents(entity_type, entity_id, language, document, raw_document, tsv, title)
-		VALUES ('gallery', '1', 'es', lower('Two factor authentication'), 'Two factor authentication', to_tsvector('simple', 'Two factor authentication'), 'Two factor authentication')
-	`, quotedSchema))
-	if err != nil {
-		t.Fatalf("insert spanish gallery 1: %v", err)
-	}
-	_, err = pool.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s.embedding_vectors(entity_type, entity_id, model, language, embedding)
-		VALUES ('gallery', '1', 'm', 'es', $1::halfvec(3))
-	`, quotedSchema), pgvector.NewHalfVector([]float32{1, 0, 0}))
-	if err != nil {
-		t.Fatalf("insert spanish vector 1: %v", err)
-	}
-	for _, mode := range []SearchMode{SearchModeLexical, SearchModeDual} {
-		dual, err := client.Search(ctx, "two factor", SearchOptions{
-			Mode:         mode,
-			Language:     "es",
-			LanguageMode: LanguageModeFallbackEnglish,
-			EntityTypes:  []string{"gallery"},
-			Limit:        1,
-		})
-		if err != nil {
-			t.Fatalf("%s fallback Search: %v", mode, err)
-		}
-		if len(dual.Hits) != 1 || dual.Hits[0].EntityID != "1" || dual.Hits[0].Language != "es" || dual.Hits[0].ParentID != "1" || !dual.HasMore {
-			t.Fatalf("%s fallback page: %+v", mode, dual)
-		}
-		next, err := client.Search(ctx, "two factor", SearchOptions{
-			Mode:         mode,
-			Language:     "es",
-			LanguageMode: LanguageModeFallbackEnglish,
-			EntityTypes:  []string{"gallery"},
-			Limit:        1,
-			Offset:       1,
-		})
-		if err != nil {
-			t.Fatalf("%s fallback page 2: %v", mode, err)
-		}
-		// Dual mode also retrieves the vector-only galleries 3 and 4 after 2.
-		if len(next.Hits) != 1 || next.Hits[0].EntityID != "2" || next.Hits[0].Language != "en" || next.HasMore != (mode == SearchModeDual) {
-			t.Fatalf("%s fallback page 2: %+v", mode, next)
-		}
-	}
-	_, err = pool.Exec(ctx, fmt.Sprintf(`DELETE FROM %s.search_documents WHERE language='es'; DELETE FROM %s.embedding_vectors WHERE language='es'`, quotedSchema, quotedSchema))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	fallbackTypeahead, err := client.Typeahead(ctx, "two", TypeaheadOptions{
-		Language:     "es",
-		LanguageMode: LanguageModeFallbackEnglish,
-		EntityTypes:  []string{"gallery"},
-		Limit:        10,
-	})
-	if err != nil {
-		t.Fatalf("fallback typeahead: %v", err)
-	}
-	if len(fallbackTypeahead) == 0 {
-		t.Fatalf("expected fallback typeahead language mode to return english hits")
+	fallbackTypeahead, err := client.Typeahead(ctx, "two", TypeaheadOptions{Language: "es", LanguageMode: LanguageModeFallbackEnglish, ContentKinds: kinds})
+	if err != nil || len(fallbackTypeahead) != 2 {
+		t.Fatalf("fallback typeahead: %+v %v", fallbackTypeahead, err)
 	}
 	for _, h := range fallbackTypeahead {
-		if h.Language != "en" {
-			t.Fatalf("expected fallback typeahead hits language=en, got %+v", fallbackTypeahead)
+		if h.ContentID == "1" && h.Language != "es" || h.ContentID == "2" && h.Language != "en" {
+			t.Fatalf("fallback typeahead languages: %+v", fallbackTypeahead)
 		}
 	}
-}
-
-func boolPointer(value bool) *bool {
-	return &value
-}
-
-func assertEntityIDs(t *testing.T, hits []SearchHit, want []string) {
-	t.Helper()
-	if len(hits) != len(want) {
-		t.Fatalf("hit count = %d, want %d: %+v", len(hits), len(want), hits)
-	}
-	for i := range want {
-		if hits[i].EntityID != want[i] {
-			t.Fatalf("hit %d entity ID = %q, want %q: %+v", i, hits[i].EntityID, want[i], hits)
-		}
+	if !strings.HasPrefix(schema, "ck_test_") {
+		t.Fatal(schema)
 	}
 }

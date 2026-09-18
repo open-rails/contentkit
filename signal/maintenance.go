@@ -7,33 +7,35 @@ import (
 	"time"
 )
 
-// InventoryRow sizes one entity type × signal type of a tenant's canonical
+// InventoryRow sizes one content kind × signal type of a tenant's canonical
 // events: the evidence for deciding which signals to keep collecting.
 type InventoryRow struct {
-	EntityType string
-	SignalType string
-	Events     uint64 // canonical events
-	RawRows    uint64 // stored rows incl. unmerged superseded revisions and retries
-	Subjects   uint64
-	Entities   uint64
-	FirstAt    time.Time
-	LastAt     time.Time
+	ContentKind string
+	SignalType  string
+	Events      uint64 // canonical events
+	RawRows     uint64 // stored rows incl. unmerged superseded revisions and retries
+	Subjects    uint64
+	// ContentItems counts distinct content ids (works and their versions
+	// count once per id).
+	ContentItems uint64
+	FirstAt      time.Time
+	LastAt       time.Time
 }
 
-// Inventory reports canonical and raw event volume per entity and signal type.
+// Inventory reports canonical and raw event volume per content kind and signal type.
 func (st *Store) Inventory(ctx context.Context, tenant string) ([]InventoryRow, error) {
 	if strings.TrimSpace(tenant) == "" {
 		return nil, fmt.Errorf("signal: tenant is required")
 	}
-	q := fmt.Sprintf(`SELECT entity_type, signal_type, count(), sum(raw), uniqExact(subject_kind, subject), uniqExact(entity_id), min(at), max(at)
+	q := fmt.Sprintf(`SELECT content_kind, signal_type, count(), sum(raw), uniqExact(subject_kind, subject), uniqExact(content_id), min(at), max(at)
 FROM (
-    SELECT entity_type, entity_id, subject_kind, subject, signal_type, event_id, argMax(occurred_at, version) AS at, count() AS raw
-    FROM %s.events
+    SELECT %[3]s, subject_kind, subject, signal_type, event_id, argMax(occurred_at, version) AS at, count() AS raw
+    FROM %[1]s.signals
     WHERE tenant = ? AND %[2]s
-    GROUP BY entity_type, entity_id, subject_kind, subject, signal_type, event_id
+    GROUP BY %[3]s, subject_kind, subject, signal_type, event_id
 )
-GROUP BY entity_type, signal_type
-ORDER BY entity_type, signal_type`, st.db, st.notErased())
+GROUP BY content_kind, signal_type
+ORDER BY content_kind, signal_type`, st.db, st.notErased(), refColumns)
 	rows, err := st.conn.Query(ctx, q, tenant)
 	if err != nil {
 		return nil, fmt.Errorf("signal: inventory: %w", err)
@@ -42,7 +44,7 @@ ORDER BY entity_type, signal_type`, st.db, st.notErased())
 	var out []InventoryRow
 	for rows.Next() {
 		var r InventoryRow
-		if err := rows.Scan(&r.EntityType, &r.SignalType, &r.Events, &r.RawRows, &r.Subjects, &r.Entities, &r.FirstAt, &r.LastAt); err != nil {
+		if err := rows.Scan(&r.ContentKind, &r.SignalType, &r.Events, &r.RawRows, &r.Subjects, &r.ContentItems, &r.FirstAt, &r.LastAt); err != nil {
 			return nil, fmt.Errorf("signal: inventory scan: %w", err)
 		}
 		out = append(out, r)
@@ -50,23 +52,23 @@ ORDER BY entity_type, signal_type`, st.db, st.notErased())
 	return out, rows.Err()
 }
 
-// PurgeEntityTypes deletes a tenant's events, projections and co-engagement
-// pairs for whole entity types (for example retired per-parent fan-out rows)
-// and waits for the mutations on every replica. Irreversible; inventory first.
-func (st *Store) PurgeEntityTypes(ctx context.Context, tenant string, entityTypes []string) error {
+// PurgeContentKinds deletes a tenant's events, projections and co-engagement
+// pairs for whole content kinds (for example retired fan-out rows) and waits
+// for the mutations on every replica. Irreversible; inventory first.
+func (st *Store) PurgeContentKinds(ctx context.Context, tenant string, contentKinds []string) error {
 	if strings.TrimSpace(tenant) == "" {
 		return fmt.Errorf("signal: tenant is required")
 	}
-	types := trimAll(entityTypes)
-	if len(types) == 0 {
-		return fmt.Errorf("signal: entityTypes are required")
+	kinds := trimAll(contentKinds)
+	if len(kinds) == 0 {
+		return fmt.Errorf("signal: contentKinds are required")
 	}
-	for _, table := range []string{"events", "subject_state", "subject_daily"} {
-		if err := st.mutate(ctx, table, "tenant = ? AND entity_type IN ?", tenant, types); err != nil {
+	for _, table := range []string{"signals", "subject_content_state", "subject_content_daily"} {
+		if err := st.mutate(ctx, table, "tenant = ? AND content_kind IN ?", tenant, kinds); err != nil {
 			return err
 		}
 	}
-	return st.mutate(ctx, "item_pairs", "tenant = ? AND (entity_type_a IN ? OR entity_type_b IN ?)", tenant, types, types)
+	return st.mutate(ctx, "content_pairs", "tenant = ? AND (content_kind_a IN ? OR content_kind_b IN ?)", tenant, kinds, kinds)
 }
 
 // mutate runs ALTER TABLE DELETE and waits for completion on all replicas.

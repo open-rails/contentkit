@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+
+	"github.com/open-rails/contentkit/contentref"
 )
 
 // TypeClick is the selection signal type Attribution joins to exposures.
@@ -42,13 +44,13 @@ type AttributionOptions struct {
 
 // AttributedClick is a canonical click carrying a render id.
 type AttributedClick struct {
-	EntityRef
+	ContentRef
 	Subject    Subject // who clicked; may differ from the render's subject
 	Position   uint32  // position claimed by the click
 	OccurredAt time.Time
 	EventID    string
-	// Exposed reports whether the clicked entity is in the render's list at the
-	// requested stage. False means "not exposed at this stage", never negative.
+	// Exposed reports whether the clicked content is in the render's list at
+	// the requested stage. False means "not exposed at this stage", never negative.
 	Exposed bool
 }
 
@@ -84,8 +86,8 @@ type AttributionPage struct {
 // clicks have no exposure to learn from.
 //
 // The export is one deterministic sequence: renders in render_id order, each
-// with its clicks in (occurred_at, entity, subject, event_id) order, followed
-// by the unattributed clicks in (render_id, occurred_at, entity, subject,
+// with its clicks in (occurred_at, content, subject, event_id) order, followed
+// by the unattributed clicks in (render_id, occurred_at, content, subject,
 // event_id) order. Every page is bounded by Limit renders and ClickLimit click
 // rows; Next resumes exactly after the last row emitted, inside a render when
 // its clicks did not fit. Concatenating all pages at any size yields the same
@@ -165,7 +167,7 @@ func (st *Store) attributionRenders(ctx context.Context, page *AttributionPage, 
 	for _, c := range clicks {
 		r := &renders[byRender[c.key.Render]]
 		for _, p := range r.Shown {
-			if p.EntityRef == c.click.EntityRef {
+			if p.Equal(c.click.ContentRef) {
 				c.click.Exposed = true
 				break
 			}
@@ -207,13 +209,13 @@ func (st *Store) attributionUnattributed(ctx context.Context, page *AttributionP
 		clickSelect, canon, st.db, known)
 	args = append(args, knownArgs...)
 	if cur.Click != nil {
-		sb.WriteString(" AND (render_id, " + clickKeyColumns + ") > (?, ?, ?, ?, ?, ?, ?)")
+		sb.WriteString(" AND (render_id, " + clickKeyColumns + ") > (?, ?, ?, ?, ?, ?, ?, ?)")
 		args = append(args, cur.Click.Render)
 		args = append(args, cur.Click.args()...)
 	}
 	sb.WriteString("\nORDER BY render_id, " + clickKeyColumns + "\nLIMIT ?")
 	args = append(args, budget+1)
-	rows, err := st.scanClicks(ctx, sb.String(), args...)
+	rows, err := st.scanClicks(ctx, tenant, sb.String(), args...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: attribution unattributed clicks: %w", err)
 	}
@@ -240,10 +242,10 @@ func (st *Store) attributionUnattributed(ctx context.Context, page *AttributionP
 func (st *Store) stageRenders(ctx context.Context, tenant string, opts AttributionOptions, cur attributionCursor, limit int) ([]AttributedRender, bool, error) {
 	pred, args := st.exposurePredicate(tenant, opts)
 	var sb strings.Builder
-	fmt.Fprintf(&sb, `SELECT render_id, c.1, c.2, c.3, c.4, c.5, c.6, c.7, c.8, c.9, c.10
+	fmt.Fprintf(&sb, `SELECT render_id, c.1, c.2, c.3, c.4, c.5, c.6, c.7, c.8, c.9, c.10, c.11
 FROM (
     SELECT render_id,
-        argMax(tuple(query_id, surface, ranker, language, subject_kind, subject, entity_types, entity_ids, positions, occurred_at), version) AS c
+        argMax(tuple(query_id, surface, ranker, language, subject_kind, subject, content_kinds, content_ids, content_version_ids, positions, occurred_at), version) AS c
     FROM %s.exposures
     WHERE %s`, st.db, pred)
 	if cur.Render != "" {
@@ -264,19 +266,23 @@ FROM (
 	var out []AttributedRender
 	for rows.Next() {
 		var (
-			r          AttributedRender
-			kind, key  string
-			types, ids []string
-			positions  []uint32
+			r                    AttributedRender
+			kind, key            string
+			kinds, ids, versions []string
+			positions            []uint32
 		)
-		if err := rows.Scan(&r.RenderID, &r.QueryID, &r.Surface, &r.Ranker, &r.Language, &kind, &key, &types, &ids, &positions, &r.OccurredAt); err != nil {
+		if err := rows.Scan(&r.RenderID, &r.QueryID, &r.Surface, &r.Ranker, &r.Language, &kind, &key, &kinds, &ids, &versions, &positions, &r.OccurredAt); err != nil {
 			return nil, false, fmt.Errorf("signal: attribution scan: %w", err)
 		}
 		if key != "" {
 			r.Subject = subjectFromKey(kind, key)
 		}
 		for i := range ids {
-			r.Shown = append(r.Shown, Placement{EntityRef: EntityRef{EntityType: types[i], EntityID: ids[i]}, Position: positions[i]})
+			version := ""
+			if i < len(versions) {
+				version = versions[i]
+			}
+			r.Shown = append(r.Shown, Placement{ContentRef: contentref.NewVersion(tenant, kinds[i], ids[i], version), Position: positions[i]})
 		}
 		out = append(out, r)
 	}
@@ -298,13 +304,13 @@ func (st *Store) renderClicks(ctx context.Context, tenant string, opts Attributi
 	fmt.Fprintf(&sb, "%s\nFROM (%s)\nWHERE render_id IN ?", clickSelect, canon)
 	args = append(args, ids)
 	if cur.Partial && cur.Click != nil {
-		sb.WriteString(" AND (render_id > ? OR (" + clickKeyColumns + ") > (?, ?, ?, ?, ?, ?))")
+		sb.WriteString(" AND (render_id > ? OR (" + clickKeyColumns + ") > (?, ?, ?, ?, ?, ?, ?))")
 		args = append(args, cur.Render)
 		args = append(args, cur.Click.args()...)
 	}
 	sb.WriteString("\nORDER BY render_id, " + clickKeyColumns + "\nLIMIT ?")
 	args = append(args, budget+1)
-	rows, err := st.scanClicks(ctx, sb.String(), args...)
+	rows, err := st.scanClicks(ctx, tenant, sb.String(), args...)
 	if err != nil {
 		return nil, "", fmt.Errorf("signal: attribution clicks: %w", err)
 	}
@@ -319,13 +325,13 @@ func (st *Store) renderClicks(ctx context.Context, tenant string, opts Attributi
 // rows never count, whether or not ClickHouse has merged them.
 func (st *Store) canonicalClicks(tenant string, opts AttributionOptions) (string, []any) {
 	pred, predArgs := opts.Window.predicate("occurred_at")
-	q := fmt.Sprintf(`SELECT JSONExtractString(argMax(payload, version), '%s') AS render_id,
-        entity_type, entity_id, subject_kind, subject, event_id,
-        argMax(tuple(occurred_at, toUInt32(JSONExtractUInt(payload, '%s'))), version) AS c
-    FROM %s.events
-    WHERE tenant = ? AND signal_type = ?%s AND %s
-    GROUP BY entity_type, entity_id, subject_kind, subject, event_id`,
-		PayloadKeyRenderID, PayloadKeyPosition, st.db, pred, st.notErased())
+	q := fmt.Sprintf(`SELECT JSONExtractString(argMax(payload, version), '%[1]s') AS render_id,
+        %[6]s, subject_kind, subject, event_id,
+        argMax(tuple(occurred_at, toUInt32(JSONExtractUInt(payload, '%[2]s'))), version) AS c
+    FROM %[3]s.signals
+    WHERE tenant = ? AND signal_type = ?%[4]s AND %[5]s
+    GROUP BY %[6]s, subject_kind, subject, event_id`,
+		PayloadKeyRenderID, PayloadKeyPosition, st.db, pred, st.notErased(), refColumns)
 	args := append([]any{tenant, TypeClick}, predArgs...)
 	return q, args
 }
@@ -344,8 +350,8 @@ func (st *Store) exposurePredicate(tenant string, opts AttributionOptions) (stri
 }
 
 const (
-	clickSelect     = "SELECT render_id, entity_type, entity_id, subject_kind, subject, event_id, c.1, c.2"
-	clickKeyColumns = "c.1, entity_type, entity_id, subject_kind, subject, event_id"
+	clickSelect     = "SELECT render_id, " + refColumns + ", subject_kind, subject, event_id, c.1, c.2"
+	clickKeyColumns = "c.1, " + refColumns + ", subject_kind, subject, event_id"
 )
 
 type clickRow struct {
@@ -353,7 +359,7 @@ type clickRow struct {
 	click AttributedClick
 }
 
-func (st *Store) scanClicks(ctx context.Context, q string, args ...any) ([]clickRow, error) {
+func (st *Store) scanClicks(ctx context.Context, tenant, q string, args ...any) ([]clickRow, error) {
 	rows, err := st.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -361,7 +367,7 @@ func (st *Store) scanClicks(ctx context.Context, q string, args ...any) ([]click
 	defer rows.Close()
 	var out []clickRow
 	for rows.Next() {
-		r, err := scanClick(rows)
+		r, err := scanClick(rows, tenant)
 		if err != nil {
 			return nil, err
 		}
@@ -370,13 +376,13 @@ func (st *Store) scanClicks(ctx context.Context, q string, args ...any) ([]click
 	return out, rows.Err()
 }
 
-func scanClick(rows driver.Rows) (clickRow, error) {
+func scanClick(rows driver.Rows, tenant string) (clickRow, error) {
 	var r clickRow
 	k := &r.key
-	if err := rows.Scan(&k.Render, &k.EntityType, &k.EntityID, &k.SubjectKind, &k.Subject, &k.EventID, &k.OccurredAt, &r.click.Position); err != nil {
+	if err := rows.Scan(&k.Render, &k.ContentKind, &k.ContentID, &k.ContentVersionID, &k.SubjectKind, &k.Subject, &k.EventID, &k.OccurredAt, &r.click.Position); err != nil {
 		return r, err
 	}
-	r.click.EntityRef = EntityRef{EntityType: k.EntityType, EntityID: k.EntityID}
+	r.click.ContentRef = contentref.NewVersion(tenant, k.ContentKind, k.ContentID, k.ContentVersionID)
 	r.click.Subject = subjectFromKey(k.SubjectKind, k.Subject)
 	r.click.EventID = k.EventID
 	r.click.OccurredAt = k.OccurredAt
@@ -384,20 +390,22 @@ func scanClick(rows driver.Rows) (clickRow, error) {
 }
 
 // clickKey is the total export order of canonical clicks within a render:
-// (occurred_at, entity_type, entity_id, subject_kind, subject, event_id); the
-// last five columns are the click's identity, so the key is unique.
+// (occurred_at, content_kind, content_id, content_version_id, subject_kind,
+// subject, event_id); the last six columns are the click's identity, so the
+// key is unique.
 type clickKey struct {
-	Render      string    `json:"r"`
-	OccurredAt  time.Time `json:"t"`
-	EntityType  string    `json:"et"`
-	EntityID    string    `json:"ei"`
-	SubjectKind string    `json:"sk"`
-	Subject     string    `json:"s"`
-	EventID     string    `json:"e"`
+	Render           string    `json:"r"`
+	OccurredAt       time.Time `json:"t"`
+	ContentKind      string    `json:"ck"`
+	ContentID        string    `json:"ci"`
+	ContentVersionID string    `json:"cv,omitempty"`
+	SubjectKind      string    `json:"sk"`
+	Subject          string    `json:"s"`
+	EventID          string    `json:"e"`
 }
 
 func (k clickKey) args() []any {
-	return []any{k.OccurredAt.UTC(), k.EntityType, k.EntityID, k.SubjectKind, k.Subject, k.EventID}
+	return []any{k.OccurredAt.UTC(), k.ContentKind, k.ContentID, k.ContentVersionID, k.SubjectKind, k.Subject, k.EventID}
 }
 
 const (

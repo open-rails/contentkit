@@ -9,82 +9,87 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-rails/searchkit/internal/signaltest"
+	"github.com/open-rails/contentkit/internal/signaltest"
 )
 
 // deliveries is a multiset of source deliveries: superseded revisions, exact
 // retries, a conflicting same-revision replay with a re-stamped time (also
 // across a month partition), and replaceable feedback delivered out of order.
-func deliveries() []Signal {
+func deliveries(tenant string) []Signal {
 	day := func(d, h int) time.Time { return time.Date(2026, 5, d, h, 0, 0, 0, time.UTC) }
 	u1, u2, u3, a1 := Subject{UserID: "u1"}, Subject{UserID: "u2"}, Subject{UserID: "u3"}, Subject{AnonKey: "a1"}
-	g := func(id string) EntityRef { return EntityRef{EntityType: "gallery", EntityID: id} }
+	g := func(id string) ContentRef { return gallery(tenant, id) }
 	var out []Signal
 	for r := uint64(1); r <= 4; r++ {
-		out = append(out, Signal{EntityRef: g("g1"), Subject: u1, Type: TypeView, EventID: "s1", Revision: r,
+		out = append(out, Signal{ContentRef: g("g1"), Subject: u1, Type: TypeView, EventID: "s1", Revision: r,
 			OccurredAt: day(5, 10), DurationS: uint32(60 * r), Progress: uint32(2 * r), ProgressMax: 10,
 			Score: int16(10 * r), Completed: r == 4, Resume: fmt.Sprintf("p:%d", 2*r)})
 	}
 	for r, v := range []float64{1, -1, 1, -1} {
-		out = append(out, Signal{EntityRef: g("g1"), Subject: u1, Type: "reaction", EventID: "pref", Revision: uint64(r + 1),
+		out = append(out, Signal{ContentRef: g("g1"), Subject: u1, Type: "reaction", EventID: "pref", Revision: uint64(r + 1),
 			OccurredAt: day(5, 11), Value: v})
 	}
 	out = append(out,
-		Signal{EntityRef: g("g1"), Subject: u2, Type: TypeView, EventID: "v2", OccurredAt: day(6, 10), DurationS: 30, Progress: 3, ProgressMax: 10, Score: 20},
-		Signal{EntityRef: g("g1"), Subject: u2, Type: TypeView, EventID: "v2", OccurredAt: day(7, 9), DurationS: 30, Progress: 3, ProgressMax: 10, Score: 20},
-		Signal{EntityRef: g("g1"), Subject: u2, Type: "click", EventID: "c2", OccurredAt: day(6, 10)},
-		Signal{EntityRef: g("g2"), Subject: a1, Type: TypeView, EventID: "va", OccurredAt: time.Date(2026, 5, 31, 23, 0, 0, 0, time.UTC), Progress: 1, ProgressMax: 5, Score: 5},
-		Signal{EntityRef: g("g2"), Subject: a1, Type: TypeView, EventID: "va", OccurredAt: time.Date(2026, 6, 1, 1, 0, 0, 0, time.UTC), Progress: 1, ProgressMax: 5, Score: 5},
-		Signal{EntityRef: g("g2"), Subject: u3, Type: "like", EventID: "l3", OccurredAt: day(8, 8), Value: 1},
-		Signal{EntityRef: g("g2"), Subject: u3, Type: TypeView, EventID: "v3", OccurredAt: day(8, 7), Progress: 5, ProgressMax: 5, Score: 90, Completed: true},
-		Signal{EntityRef: g("g3"), Subject: u1, Type: TypeView, EventID: "v4", OccurredAt: day(9, 7), Progress: 2, ProgressMax: 4, Score: 30},
+		Signal{ContentRef: g("g1"), Subject: u2, Type: TypeView, EventID: "v2", OccurredAt: day(6, 10), DurationS: 30, Progress: 3, ProgressMax: 10, Score: 20},
+		Signal{ContentRef: g("g1"), Subject: u2, Type: TypeView, EventID: "v2", OccurredAt: day(7, 9), DurationS: 30, Progress: 3, ProgressMax: 10, Score: 20},
+		Signal{ContentRef: g("g1"), Subject: u2, Type: "click", EventID: "c2", OccurredAt: day(6, 10)},
+		Signal{ContentRef: g("g2"), Subject: a1, Type: TypeView, EventID: "va", OccurredAt: time.Date(2026, 5, 31, 23, 0, 0, 0, time.UTC), Progress: 1, ProgressMax: 5, Score: 5},
+		Signal{ContentRef: g("g2"), Subject: a1, Type: TypeView, EventID: "va", OccurredAt: time.Date(2026, 6, 1, 1, 0, 0, 0, time.UTC), Progress: 1, ProgressMax: 5, Score: 5},
+		Signal{ContentRef: g("g2"), Subject: u3, Type: "like", EventID: "l3", OccurredAt: day(8, 8), Value: 1},
+		Signal{ContentRef: g("g2"), Subject: u3, Type: TypeView, EventID: "v3", OccurredAt: day(8, 7), Progress: 5, ProgressMax: 5, Score: 90, Completed: true},
+		Signal{ContentRef: g("g3"), Subject: u1, Type: TypeView, EventID: "v4", OccurredAt: day(9, 7), Progress: 2, ProgressMax: 4, Score: 30},
 	)
 	return out
 }
 
+// tenantless strips the tenant so snapshots of different tenants compare equal.
 type storeSnapshot struct {
-	States  map[string]map[EntityRef]State
-	History map[string][]StateRow
-	Metrics map[string]map[string]EntityMetrics
-	Popular map[string][]PopularHit
-	CoEng   []CoEngagedHit
+	States  map[string]map[string]State
+	History map[string][]string
+	Metrics map[string]map[string]ContentMetrics
+	Popular map[string][]string
+	CoEng   map[string]int64
 }
 
 func snapshot(t *testing.T, st *Store, tenant string) storeSnapshot {
 	t.Helper()
 	ctx := context.Background()
 	subjects := []Subject{{UserID: "u1"}, {UserID: "u2"}, {UserID: "u3"}, {AnonKey: "a1"}}
-	refs := []EntityRef{{EntityType: "gallery", EntityID: "g1"}, {EntityType: "gallery", EntityID: "g2"}, {EntityType: "gallery", EntityID: "g3"}}
-	snap := storeSnapshot{States: map[string]map[EntityRef]State{}, History: map[string][]StateRow{}, Metrics: map[string]map[string]EntityMetrics{}, Popular: map[string][]PopularHit{}}
+	snap := storeSnapshot{States: map[string]map[string]State{}, History: map[string][]string{}, Metrics: map[string]map[string]ContentMetrics{}, Popular: map[string][]string{}, CoEng: map[string]int64{}}
 	for _, s := range subjects {
-		states, err := st.States(ctx, tenant, s, refs)
+		states, err := st.States(ctx, tenant, s, refs(tenant, "g1", "g2", "g3"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		snap.States[s.Key()] = states
+		snap.States[s.Key()] = map[string]State{}
+		for k, v := range states {
+			snap.States[s.Key()][k.ContentID] = v
+		}
 		hist, err := st.History(ctx, tenant, s, HistoryOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		snap.History[s.Key()] = hist
+		for _, h := range hist {
+			snap.History[s.Key()] = append(snap.History[s.Key()], fmt.Sprintf("%s:%+v", h.ContentID, h.State))
+		}
 	}
 	for _, w := range []Window{AllTime(), Between(time.Date(2026, 5, 6, 0, 0, 0, 0, time.UTC), time.Date(2026, 5, 7, 0, 0, 0, 0, time.UTC)), LastDays(30, time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC))} {
-		m, err := st.Metrics(ctx, tenant, "gallery", []string{"g1", "g2", "g3"}, w)
-		if err != nil {
-			t.Fatal(err)
-		}
-		snap.Metrics[w.String()] = m
+		snap.Metrics[w.String()] = metricsByID(t, st, tenant, []string{"g1", "g2", "g3"}, w)
 		hits, err := st.Popular(ctx, tenant, "gallery", PopularOptions{Window: w, Limit: 10})
 		if err != nil {
 			t.Fatal(err)
 		}
-		snap.Popular[w.String()] = hits
+		for _, h := range hits {
+			snap.Popular[w.String()] = append(snap.Popular[w.String()], fmt.Sprintf("%s:%g:%+v", h.ContentID, h.Score, h.ContentMetrics))
+		}
 	}
-	co, err := st.CoEngaged(ctx, tenant, EntityRef{EntityType: "gallery", EntityID: "g1"}, CoEngagedOptions{SkipRollup: true})
+	co, err := st.CoEngaged(ctx, tenant, gallery(tenant, "g1"), CoEngagedOptions{SkipRollup: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap.CoEng = co
+	for _, h := range co {
+		snap.CoEng[h.ContentID] = h.Strength
+	}
 	return snap
 }
 
@@ -93,19 +98,20 @@ func snapshot(t *testing.T, st *Store, tenant string) storeSnapshot {
 func TestIntegrationDeliveriesConvergeAcrossOrderMergesAndRebuild(t *testing.T) {
 	st, conn := freshStore(t)
 	ctx := context.Background()
-	for _, table := range []string{"events", "subject_state", "subject_daily"} {
+	for _, table := range []string{"signals", "subject_content_state", "subject_content_daily"} {
 		if err := conn.Exec(ctx, "SYSTEM STOP MERGES "+testDB+"."+table); err != nil {
 			t.Fatal(err)
 		}
 	}
-	base := deliveries()
 	rng := rand.New(rand.NewSource(874))
-	orders := map[string][]Signal{"ordered": base}
+	orders := map[string][]Signal{"ordered": deliveries("ordered")}
+	base := deliveries("reversed")
 	reversed := make([]Signal, len(base))
 	for i := range base {
 		reversed[len(base)-1-i] = base[i]
 	}
 	orders["reversed"] = reversed
+	base = deliveries("chaos")
 	chaos := append(append([]Signal{}, base...), base...)
 	chaos = append(chaos, base[:5]...)
 	rng.Shuffle(len(chaos), func(i, j int) { chaos[i], chaos[j] = chaos[j], chaos[i] })
@@ -136,7 +142,7 @@ func TestIntegrationDeliveriesConvergeAcrossOrderMergesAndRebuild(t *testing.T) 
 	}
 
 	// Intended semantics on the converged result.
-	u1g1 := want.States["u1"][EntityRef{EntityType: "gallery", EntityID: "g1"}]
+	u1g1 := want.States["u1"]["g1"]
 	if u1g1.TotalEvents != 2 || u1g1.Views != 1 || u1g1.ActiveS != 240 || u1g1.MaxProgress != 8 ||
 		!u1g1.Completed || u1g1.Completions != 1 || u1g1.Resume != "p:8" || u1g1.LastScore != 40 ||
 		u1g1.NetValue != -1 || u1g1.Feedback != 1 {
@@ -150,7 +156,7 @@ func TestIntegrationDeliveriesConvergeAcrossOrderMergesAndRebuild(t *testing.T) 
 		t.Fatalf("a re-stamped replay across a month boundary must stay one view: %+v", g2)
 	}
 
-	for _, table := range []string{"events", "subject_state", "subject_daily"} {
+	for _, table := range []string{"signals", "subject_content_state", "subject_content_daily"} {
 		if err := conn.Exec(ctx, "SYSTEM START MERGES "+testDB+"."+table); err != nil {
 			t.Fatal(err)
 		}
@@ -162,7 +168,7 @@ func TestIntegrationDeliveriesConvergeAcrossOrderMergesAndRebuild(t *testing.T) 
 		if got := snapshot(t, st, tenant); !reflect.DeepEqual(got, want) {
 			t.Fatalf("%s changed after merges:\n got %+v\nwant %+v", tenant, got, want)
 		}
-		for _, table := range []string{"subject_state", "subject_daily"} {
+		for _, table := range []string{"subject_content_state", "subject_content_daily"} {
 			if err := conn.Exec(ctx, "DELETE FROM "+testDB+"."+table+" WHERE tenant = ?", tenant); err != nil {
 				t.Fatal(err)
 			}
@@ -177,25 +183,26 @@ func TestIntegrationDeliveriesConvergeAcrossOrderMergesAndRebuild(t *testing.T) 
 			}
 		}
 		if got := snapshot(t, st, tenant); !reflect.DeepEqual(got, want) {
-			t.Fatalf("%s rebuilt from canonical events diverged:\n got %+v\nwant %+v", tenant, got, want)
+			t.Fatalf("%s rebuilt from canonical signals diverged:\n got %+v\nwant %+v", tenant, got, want)
 		}
 	}
 }
 
-// #878: each named metric counts only what it names.
+// #878: each named metric counts only what it names; a work's metrics never
+// include its version rows, and versions are read by their own reference.
 func TestIntegrationMetricsAreTruthful(t *testing.T) {
 	st, _ := freshStore(t)
 	ctx := context.Background()
 	day := func(d int) time.Time { return time.Date(2026, 5, d, 9, 0, 0, 0, time.UTC) }
-	work := func(id string) EntityRef { return EntityRef{EntityType: "gallery", EntityID: id} }
-	edition := func(id string) EntityRef { return EntityRef{EntityType: "gallery_version", EntityID: id} }
+	w := gallery("t", "w")
+	edition := func(v string) ContentRef { return w.WithVersion(v) }
 	var sigs []Signal
 	session := func(sub Subject, id, version string, d int, completed bool) {
 		base := Signal{Subject: sub, Type: TypeView, OccurredAt: day(d), DurationS: 100, Progress: 10, ProgressMax: 10, Score: 50, Completed: completed}
-		w, v := base, base
-		w.EntityRef, w.EventID = work("w"), id
-		v.EntityRef, v.EventID = edition(version), id+":gallery_version:"+version
-		sigs = append(sigs, w, v)
+		work, ver := base, base
+		work.ContentRef, work.EventID = w, id
+		ver.ContentRef, ver.EventID = edition(version), id
+		sigs = append(sigs, work, ver)
 	}
 	repeat := Subject{UserID: "repeat"}
 	session(repeat, "r1", "ed-en", 1, true)
@@ -203,50 +210,47 @@ func TestIntegrationMetricsAreTruthful(t *testing.T) {
 	session(repeat, "r3", "ed-ja", 2, true)
 	session(Subject{AnonKey: "guest"}, "g1", "ed-ja", 2, false)
 	sigs = append(sigs,
-		Signal{EntityRef: work("w"), Subject: Subject{UserID: "clicker"}, Type: "click", EventID: "c", OccurredAt: day(1)},
-		Signal{EntityRef: work("w"), Subject: Subject{UserID: "fan"}, Type: "reaction", EventID: "pref", OccurredAt: day(1), Value: 1},
-		Signal{EntityRef: work("w"), Subject: Subject{UserID: "critic"}, Type: "reaction", EventID: "pref", OccurredAt: day(2), Value: -1},
+		Signal{ContentRef: w, Subject: Subject{UserID: "clicker"}, Type: "click", EventID: "c", OccurredAt: day(1)},
+		Signal{ContentRef: w, Subject: Subject{UserID: "fan"}, Type: "reaction", EventID: "pref", OccurredAt: day(1), Value: 1},
+		Signal{ContentRef: w, Subject: Subject{UserID: "critic"}, Type: "reaction", EventID: "pref", OccurredAt: day(2), Value: -1},
 	)
 	// Every delivery arrives twice.
 	if err := st.RecordSignals(ctx, "t", append(append([]Signal{}, sigs...), sigs...)); err != nil {
 		t.Fatal(err)
 	}
-	m, err := st.Metrics(ctx, "t", "gallery", []string{"w"}, AllTime())
+	m, err := st.Metrics(ctx, "t", []ContentRef{w, edition("ed-en"), edition("ed-ja")}, AllTime())
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := EntityMetrics{
+	want := ContentMetrics{
 		Viewers: 2, UserViewers: 1, AnonViewers: 1, Views: 4, Completions: 2, Completers: 1, ActiveS: 400,
 		ScoreSum: 200, Events: 7, ValueSum: 0, PositiveSubjects: 1, NegativeSubjects: 1,
 		SignalCounts: map[string]uint64{TypeView: 4, "click": 1, "reaction": 2},
 	}
-	if got := m["w"]; !reflect.DeepEqual(got, want) {
+	if got := m[w.Key()]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("work metrics:\n got %+v\nwant %+v", got, want)
 	}
-	ed, err := st.Metrics(ctx, "t", "gallery_version", []string{"ed-en", "ed-ja"}, AllTime())
+	en, ja := m[edition("ed-en").Key()], m[edition("ed-ja").Key()]
+	if en.Views != 2 || en.Viewers != 1 || ja.Views != 2 || ja.Viewers != 2 {
+		t.Fatalf("version projections count separately from the work: %+v %+v", en, ja)
+	}
+	day2, err := st.Metrics(ctx, "t", []ContentRef{w}, Between(time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC), time.Date(2026, 5, 3, 0, 0, 0, 0, time.UTC)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ed["ed-en"].Views != 2 || ed["ed-en"].Viewers != 1 || ed["ed-ja"].Views != 2 || ed["ed-ja"].Viewers != 2 {
-		t.Fatalf("version projections count separately from the work: %+v", ed)
-	}
-	day2, err := st.Metrics(ctx, "t", "gallery", []string{"w"}, Between(time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC), time.Date(2026, 5, 3, 0, 0, 0, 0, time.UTC)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := day2["w"]; got.Viewers != 2 || got.Views != 2 || got.NegativeSubjects != 1 || got.PositiveSubjects != 0 {
+	if got := day2[w.Key()]; got.Viewers != 2 || got.Views != 2 || got.NegativeSubjects != 1 || got.PositiveSubjects != 0 {
 		t.Fatalf("day-2 window: %+v", got)
 	}
 	hits, err := st.Popular(ctx, "t", "gallery", PopularOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(hits) != 1 || !reflect.DeepEqual(hits[0].EntityMetrics, want) {
-		t.Fatalf("popular must report the same metrics: %+v", hits)
+	if len(hits) != 1 || !hits[0].Equal(w) || !reflect.DeepEqual(hits[0].ContentMetrics, want) {
+		t.Fatalf("popular ranks works only, with the same metrics: %+v", hits)
 	}
 	clickOnly, err := st.Popular(ctx, "t", "gallery", PopularOptions{RankExpr: "toFloat64(events)"})
 	if err != nil || len(clickOnly) != 1 {
-		t.Fatalf("entities without views never rank: %+v %v", clickOnly, err)
+		t.Fatalf("works without views never rank: %+v %v", clickOnly, err)
 	}
 }
 
@@ -256,18 +260,14 @@ func TestIntegrationProjectionVersionsAndOrphanDays(t *testing.T) {
 	st, conn := freshStore(t)
 	ctx := context.Background()
 	sub := Subject{UserID: "u"}
-	ref := EntityRef{EntityType: "gallery", EntityID: "g"}
+	ref := gallery("t", "g")
 	d := func(day int) time.Time { return time.Date(2026, 5, day, 0, 0, 0, 0, time.UTC) }
 	rev := func(r uint64, occurred time.Time) Signal {
-		return Signal{EntityRef: ref, Subject: sub, Type: TypeView, EventID: "s", Revision: r, OccurredAt: occurred, DurationS: uint32(r), Progress: uint32(r), ProgressMax: 64}
+		return Signal{ContentRef: ref, Subject: sub, Type: TypeView, EventID: "s", Revision: r, OccurredAt: occurred, DurationS: uint32(r), Progress: uint32(r), ProgressMax: 64}
 	}
 	viewsOn := func(day int) uint64 {
 		t.Helper()
-		m, err := st.Metrics(ctx, "t", "gallery", []string{"g"}, Between(d(day), d(day+1)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return m["g"].Views
+		return metricsByID(t, st, "t", []string{"g"}, Between(d(day), d(day+1)))["g"].Views
 	}
 	if err := st.RecordSignals(ctx, "t", []Signal{rev(1, d(5).Add(time.Hour))}); err != nil {
 		t.Fatal(err)
@@ -280,7 +280,7 @@ func TestIntegrationProjectionVersionsAndOrphanDays(t *testing.T) {
 	}
 
 	// A stale nonzero day row left by an interrupted projection.
-	if err := conn.Exec(ctx, `INSERT INTO `+testDB+`.subject_daily (tenant, entity_type, entity_id, subject_kind, subject, day, events, views, completions, active_s, score_sum, value_sum, type_counts, version)
+	if err := conn.Exec(ctx, `INSERT INTO `+testDB+`.subject_content_daily (tenant, content_kind, content_id, subject_kind, subject, day, events, views, completions, active_s, score_sum, value_sum, type_counts, version)
 VALUES ('t', 'gallery', 'g', 'user', 'u', '2026-05-03', 1, 1, 0, 0, 0, 0, map('view', 1), '2000-01-01 00:00:00')`); err != nil {
 		t.Fatal(err)
 	}
@@ -311,11 +311,11 @@ VALUES ('t', 'gallery', 'g', 'user', 'u', '2026-05-03', 1, 1, 0, 0, 0, 0, map('v
 			t.Fatal(err)
 		}
 	}
-	states, err := st.States(ctx, "t", sub, []EntityRef{ref})
+	states, err := st.States(ctx, "t", sub, []ContentRef{ref})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := states[ref]; s.MaxProgress != 34 || s.ActiveS != 34 || s.Views != 1 || s.TotalEvents != 1 {
+	if s := states[ref.Key()]; s.MaxProgress != 34 || s.ActiveS != 34 || s.Views != 1 || s.TotalEvents != 1 {
 		t.Fatalf("concurrent projections must converge on revision 34: %+v", s)
 	}
 	if res, err := st.RepairProjections(ctx, "t", RepairOptions{}); err != nil || res.Repaired != 0 {
@@ -323,8 +323,9 @@ VALUES ('t', 'gallery', 'g', 'user', 'u', '2026-05-03', 1, 1, 0, 0, 0, 0, map('v
 	}
 }
 
-// Rows written by the removed schema survive 0002 and rebuild into projections.
-func TestIntegrationLegacyEventsMigrateIntoCanonicalProjections(t *testing.T) {
+// Rows written by the pre-ContentKit schemas survive every migration: the 0002
+// copy of legacy raw rows and the 0005 copy into content-referenced tables.
+func TestIntegrationLegacyRowsMigrateIntoContentReferencedTables(t *testing.T) {
 	env := signaltest.FromEnv(t)
 	ctx := context.Background()
 	conn := env.Empty(t, testDB)
@@ -337,7 +338,21 @@ func TestIntegrationLegacyEventsMigrateIntoCanonicalProjections(t *testing.T) {
 	if err := conn.Exec(ctx, legacy); err != nil {
 		t.Fatal(err)
 	}
-	env.ApplyRange(t, conn, 1, len(env.Migrations(t)))
+	// Up to the last pre-ContentKit schema (0004), then write and project a
+	// canonical event, an exposure and a pair there before 0005 converts.
+	env.ApplyRange(t, conn, 1, 4)
+	for _, stmt := range []string{
+		`INSERT INTO events (tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id, occurred_at, progress, progress_max, score, completed, resume) VALUES ('doujins', 'gallery', '8', 'user', 'u2', 'view', 'pre-cut', '2026-04-02 10:00:00', 10, 10, 70, true, 'p:10')`,
+		`INSERT INTO subject_state (tenant, subject_kind, subject, entity_type, entity_id, first_seen_at, last_signal_at, total_events, views, completions, active_s, max_progress, progress_max, completed, resume, last_score, net_value, feedback, version) VALUES ('doujins', 'user', 'u2', 'gallery', '8', '2026-04-02 10:00:00', '2026-04-02 10:00:00', 1, 1, 1, 0, 10, 10, true, 'p:10', 70, 0, 0, '2026-04-02 10:00:01')`,
+		`INSERT INTO subject_daily (tenant, entity_type, entity_id, subject_kind, subject, day, events, views, completions, active_s, score_sum, value_sum, type_counts, version) VALUES ('doujins', 'gallery', '8', 'user', 'u2', '2026-04-02', 1, 1, 1, 0, 70, 0, map('view', 1), '2026-04-02 10:00:01')`,
+		`INSERT INTO item_pairs (tenant, entity_type_a, entity_id_a, entity_type_b, entity_id_b, strength) VALUES ('doujins', 'gallery', '7', 'gallery', '8', 3)`,
+		`INSERT INTO exposures (tenant, render_id, stage, surface, subject_kind, subject, entity_types, entity_ids, positions, occurred_at) VALUES ('doujins', 'pre-cut', 'rendered', 'search', 'user', 'u2', ['gallery'], ['8'], [1], '2026-04-02 10:00:00')`,
+	} {
+		if err := conn.Exec(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	env.ApplyRange(t, conn, 4, len(env.Migrations(t)))
 	if err := CheckSchema(ctx, conn, testDB); err != nil {
 		t.Fatal(err)
 	}
@@ -345,25 +360,52 @@ func TestIntegrationLegacyEventsMigrateIntoCanonicalProjections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Projections copied by 0005 are readable before any repair.
+	g8 := gallery("doujins", "8")
+	states, err := st.States(ctx, "doujins", Subject{UserID: "u2"}, []ContentRef{g8})
+	if err != nil || states[g8.Key()].LastScore != 70 || !states[g8.Key()].Completed {
+		t.Fatalf("copied state: %+v %v", states, err)
+	}
+	if m := metricsByID(t, st, "doujins", []string{"8"}, AllTime()); m["8"].Views != 1 {
+		t.Fatalf("copied daily: %+v", m)
+	}
+	co, err := st.CoEngaged(ctx, "doujins", gallery("doujins", "7"), CoEngagedOptions{})
+	if err != nil || len(co) != 1 || co[0].ContentID != "8" || co[0].Strength != 3 {
+		t.Fatalf("copied pairs: %+v %v", co, err)
+	}
+	page, err := st.Attribution(ctx, "doujins", AttributionOptions{Stage: StageRendered})
+	if err != nil || len(page.Renders) != 1 || !page.Renders[0].Shown[0].Equal(g8) {
+		t.Fatalf("converted exposures: %+v %v", page, err)
+	}
+	// The legacy raw rows, copied twice over, rebuild into canonical projections.
 	res, err := st.RepairProjections(ctx, "doujins", RepairOptions{Rebuild: true})
-	if err != nil || res.Repaired != 2 {
+	if err != nil || res.Repaired != 3 {
 		t.Fatalf("rebuild legacy keys: %+v %v", res, err)
 	}
-	ref := EntityRef{EntityType: "gallery", EntityID: "7"}
-	states, err := st.States(ctx, "doujins", Subject{UserID: "u1"}, []EntityRef{ref})
+	g7 := gallery("doujins", "7")
+	states, err = st.States(ctx, "doujins", Subject{UserID: "u1"}, []ContentRef{g7})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := states[ref]; s.TotalEvents != 2 || s.Views != 1 || s.NetValue != 1 || s.Resume != "p:5" || s.LastScore != 40 {
+	if s := states[g7.Key()]; s.TotalEvents != 2 || s.Views != 1 || s.NetValue != 1 || s.Resume != "p:5" || s.LastScore != 40 {
 		t.Fatalf("legacy state: %+v", s)
 	}
-	// Re-running the copy (a partially applied migration) must not add events.
+	// Re-running the copies (a partially applied migration) must not add events.
 	env.ApplyRange(t, conn, 1, 2)
+	env.ApplyRange(t, conn, 4, 5)
 	if _, err := st.RepairProjections(ctx, "doujins", RepairOptions{Rebuild: true}); err != nil {
 		t.Fatal(err)
 	}
-	m, err := st.Metrics(ctx, "doujins", "gallery", []string{"7"}, AllTime())
-	if err != nil || m["7"].Views != 1 || m["7"].Events != 2 {
-		t.Fatalf("re-applied copy duplicated events: %+v %v", m, err)
+	if m := metricsByID(t, st, "doujins", []string{"7", "8"}, AllTime()); m["7"].Views != 1 || m["7"].Events != 2 || m["8"].Views != 1 {
+		t.Fatalf("re-applied copies duplicated events: %+v", m)
+	}
+	// Erasure still clears the kept pre-ContentKit tables.
+	if report, err := st.EraseSubjects(ctx, []string{"doujins"}, []Subject{{UserID: "u2"}}); err != nil || !report.Complete() {
+		t.Fatalf("erase across kept tables: %+v %v", report, err)
+	}
+	for _, table := range []string{"events", "subject_state", "subject_daily", "signals", "subject_content_state", "subject_content_daily", "exposures"} {
+		if n := countWhere(t, conn, table, "tenant = 'doujins' AND subject = 'u2'"); n != 0 {
+			t.Fatalf("%s still holds %d rows of the erased subject", table, n)
+		}
 	}
 }

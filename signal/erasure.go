@@ -34,8 +34,8 @@ type ErasureReport struct {
 	// Remaining counts rows still attributable to the subjects per table after
 	// the pass; every value is zero when erasure is complete.
 	Remaining map[string]uint64
-	// PairsRemoved counts item_pairs rows invalidated because an erased subject
-	// contributed to an entity in them; RefreshCoEngagement rebuilds them.
+	// PairsRemoved counts content_pairs rows invalidated because an erased
+	// subject contributed to a work in them; RefreshCoEngagement rebuilds them.
 	PairsRemoved uint64
 }
 
@@ -50,7 +50,11 @@ func (r ErasureReport) Complete() bool {
 }
 
 // subjectTables hold rows keyed by (tenant, subject_kind, subject).
-var subjectTables = []string{"events", "subject_state", "subject_daily", "exposures"}
+var subjectTables = []string{"signals", "subject_content_state", "subject_content_daily", "exposures"}
+
+// legacySubjectTables are pre-ContentKit tables that may still hold subject
+// rows until a later migration drops them; erased when present.
+var legacySubjectTables = []string{"signal_events", "search_impressions", "events", "subject_state", "subject_daily"}
 
 // maxErasurePasses bounds the delete-and-verify loop of one erasure: a row
 // landing between a pass's mutation and its count is deleted by the next pass.
@@ -65,9 +69,9 @@ const maxErasurePasses = 3
 //     replica drops or hides the subjects' rows (the barrier): the subject
 //     key is dead in the tenant forever;
 //  2. every row of the subjects that existed when the pass ran is deleted from
-//     events, compact state, daily contributions, exposures and legacy raw
+//     signals, compact state, daily contributions, exposures and legacy raw
 //     tables on every replica (mutations_sync = 2) and re-counted as zero;
-//  3. co-engagement pairs touching entities the subjects contributed to are
+//  3. co-engagement pairs touching works the subjects contributed to are
 //     removed (RefreshCoEngagement rebuilds them and re-verifies the ledger
 //     around its build).
 //
@@ -200,7 +204,7 @@ func (st *Store) erasePasses(ctx context.Context, tenant, filter string, args []
 func (st *Store) eraseWhere(ctx context.Context, tenant, filter string, args []any) (ErasureReport, error) {
 	report := ErasureReport{Remaining: map[string]uint64{}}
 	tables := append([]string{}, subjectTables...)
-	for _, legacy := range []string{"signal_events", "search_impressions"} {
+	for _, legacy := range legacySubjectTables {
 		exists, err := st.tableExists(ctx, legacy)
 		if err != nil {
 			return report, err
@@ -209,33 +213,33 @@ func (st *Store) eraseWhere(ctx context.Context, tenant, filter string, args []a
 			tables = append(tables, legacy)
 		}
 	}
-	// Pairs first: the contributed entity set is read from the rows being
+	// Pairs first: the contributed work set is read from the rows being
 	// erased, and passed as literals so every replica deletes the same pairs
 	// (replicated mutations reject subqueries as nondeterministic).
-	entities, err := st.contributedEntities(ctx, tenant, filter, args)
+	works, err := st.contributedContent(ctx, tenant, filter, args)
 	if err != nil {
 		return report, err
 	}
-	for start := 0; start < len(entities); start += mutationTupleChunk {
-		chunk := entities[start:min(start+mutationTupleChunk, len(entities))]
+	for start := 0; start < len(works); start += mutationTupleChunk {
+		chunk := works[start:min(start+mutationTupleChunk, len(works))]
 		tuples := make([]string, len(chunk))
 		pairArgs := make([]any, 0, 1+4*len(chunk))
 		pairArgs = append(pairArgs, tenant)
-		for i, e := range chunk {
+		for i, w := range chunk {
 			tuples[i] = "(?, ?)"
-			pairArgs = append(pairArgs, e.EntityType, e.EntityID)
+			pairArgs = append(pairArgs, w[0], w[1])
 		}
 		in := "(" + strings.Join(tuples, ", ") + ")"
 		pairArgs = append(pairArgs, pairArgs[1:]...)
-		where := fmt.Sprintf("tenant = ? AND ((entity_type_a, entity_id_a) IN %[1]s OR (entity_type_b, entity_id_b) IN %[1]s)", in)
-		n, err := st.count(ctx, "item_pairs", tenant, where[len("tenant = ? AND "):], pairArgs[1:])
+		where := fmt.Sprintf("tenant = ? AND ((content_kind_a, content_id_a) IN %[1]s OR (content_kind_b, content_id_b) IN %[1]s)", in)
+		n, err := st.count(ctx, "content_pairs", tenant, where[len("tenant = ? AND "):], pairArgs[1:])
 		if err != nil {
 			return report, err
 		}
 		if n == 0 {
 			continue
 		}
-		if err := st.mutate(ctx, "item_pairs", where, pairArgs...); err != nil {
+		if err := st.mutate(ctx, "content_pairs", where, pairArgs...); err != nil {
 			return report, err
 		}
 		report.PairsRemoved += n
@@ -258,21 +262,22 @@ func (st *Store) eraseWhere(ctx context.Context, tenant, filter string, args []a
 // mutationTupleChunk bounds the literal IN list of one mutation.
 const mutationTupleChunk = 1000
 
-// contributedEntities lists entities the filtered subjects have daily rows for.
-func (st *Store) contributedEntities(ctx context.Context, tenant, filter string, args []any) ([]EntityRef, error) {
-	q := fmt.Sprintf(`SELECT DISTINCT entity_type, entity_id FROM %s.subject_daily WHERE tenant = ? AND %s ORDER BY entity_type, entity_id`, st.db, filter)
+// contributedContent lists the works (kind, id) the filtered subjects have
+// daily rows for; version rows collapse onto their work.
+func (st *Store) contributedContent(ctx context.Context, tenant, filter string, args []any) ([][2]string, error) {
+	q := fmt.Sprintf(`SELECT DISTINCT content_kind, content_id FROM %s.subject_content_daily WHERE tenant = ? AND %s ORDER BY content_kind, content_id`, st.db, filter)
 	rows, err := st.conn.Query(ctx, q, append([]any{tenant}, args...)...)
 	if err != nil {
-		return nil, fmt.Errorf("signal: contributed entities: %w", err)
+		return nil, fmt.Errorf("signal: contributed content: %w", err)
 	}
 	defer rows.Close()
-	var out []EntityRef
+	var out [][2]string
 	for rows.Next() {
-		var ref EntityRef
-		if err := rows.Scan(&ref.EntityType, &ref.EntityID); err != nil {
+		var w [2]string
+		if err := rows.Scan(&w[0], &w[1]); err != nil {
 			return nil, err
 		}
-		out = append(out, ref)
+		out = append(out, w)
 	}
 	return out, rows.Err()
 }

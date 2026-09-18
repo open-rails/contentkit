@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/open-rails/contentkit/contentref"
 )
 
 func TestSubject(t *testing.T) {
@@ -30,10 +32,10 @@ func TestSubject(t *testing.T) {
 
 func TestAttributionRoundTrip(t *testing.T) {
 	base := Signal{
-		EntityRef: EntityRef{EntityType: "gallery", EntityID: "1"},
-		Subject:   Subject{UserID: "u1"},
-		Type:      "click",
-		Payload:   map[string]any{"existing": "keep"},
+		ContentRef: contentref.New("t", "gallery", "1"),
+		Subject:    Subject{UserID: "u1"},
+		Type:       "click",
+		Payload:    map[string]any{"existing": "keep"},
 	}
 	got := base.WithAttribution(Attribution{RenderID: "q1", Surface: SurfaceSearch, Position: 3})
 
@@ -103,23 +105,26 @@ func TestRecordSignalsValidation(t *testing.T) {
 	st, _ := NewStore(fc, "hub")
 	ctx := context.Background()
 	valid := Signal{
-		EntityRef: EntityRef{EntityType: "a", EntityID: "1"}, Subject: Subject{UserID: "u"},
+		ContentRef: contentref.New("t", "a", "1"), Subject: Subject{UserID: "u"},
 		Type: TypeView, EventID: "e1", OccurredAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
 	}
 	if err := st.RecordSignals(ctx, "", []Signal{valid}); err == nil {
 		t.Fatal("missing tenant must error")
 	}
 	for name, mutate := range map[string]func(*Signal){
-		"entity":      func(s *Signal) { s.EntityID = "" },
-		"subject":     func(s *Signal) { s.Subject = Subject{} },
-		"type":        func(s *Signal) { s.Type = "" },
-		"event id":    func(s *Signal) { s.EventID = " " },
-		"occurred at": func(s *Signal) { s.OccurredAt = time.Time{} },
+		"content id":     func(s *Signal) { s.ContentID = "" },
+		"content kind":   func(s *Signal) { s.ContentKind = "" },
+		"foreign tenant": func(s *Signal) { s.TenantID = "other" },
+		"empty version":  func(s *Signal) { s.ContentVersionID = new(string) },
+		"subject":        func(s *Signal) { s.Subject = Subject{} },
+		"type":           func(s *Signal) { s.Type = "" },
+		"event id":       func(s *Signal) { s.EventID = " " },
+		"occurred at":    func(s *Signal) { s.OccurredAt = time.Time{} },
 	} {
 		bad := valid
 		mutate(&bad)
 		if err := st.RecordSignals(ctx, "t", []Signal{valid, bad}); err == nil {
-			t.Fatalf("missing %s must error", name)
+			t.Fatalf("%s must error", name)
 		}
 	}
 	if len(fc.execs) != 0 {
@@ -133,15 +138,21 @@ func TestStatesEmptyRefs(t *testing.T) {
 	if err != nil || len(got) != 0 {
 		t.Fatalf("empty refs: got %v err %v", got, err)
 	}
+	if _, err := st.States(context.Background(), "t", Subject{UserID: "u"}, []ContentRef{contentref.New("other", "a", "1")}); err == nil {
+		t.Fatal("foreign tenant reference must error")
+	}
+	if _, err := st.CoEngaged(context.Background(), "t", contentref.NewVersion("t", "a", "1", "v"), CoEngagedOptions{}); err == nil {
+		t.Fatal("co-engagement is work-level")
+	}
 }
 
 func TestExposureValidate(t *testing.T) {
 	at := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	item := func(id string, pos uint32) Placement {
-		return Placement{EntityRef: EntityRef{EntityType: "gallery", EntityID: id}, Position: pos}
+		return Placement{ContentRef: contentref.New("t", "gallery", id), Position: pos}
 	}
 	valid := Exposure{RenderID: "r1", Stage: StageVisible, OccurredAt: at, Shown: []Placement{item("a", 1), item("b", 3)}}
-	if err := valid.validate(); err != nil {
+	if err := valid.validate("t"); err != nil {
 		t.Fatalf("valid exposure rejected: %v", err)
 	}
 	for name, mutate := range map[string]func(*Exposure){
@@ -151,18 +162,17 @@ func TestExposureValidate(t *testing.T) {
 		"empty":              func(e *Exposure) { e.Shown = nil },
 		"zero position":      func(e *Exposure) { e.Shown = []Placement{item("a", 0)} },
 		"duplicate position": func(e *Exposure) { e.Shown = []Placement{item("a", 2), item("b", 2)} },
-		"entity":             func(e *Exposure) { e.Shown = []Placement{{Position: 1}} },
-		"subject":            func(e *Exposure) { e.Subject = Subject{UserID: "u", AnonKey: "a"} },
+		"content":            func(e *Exposure) { e.Shown = []Placement{{Position: 1}} },
+		"foreign tenant": func(e *Exposure) {
+			e.Shown = []Placement{{ContentRef: contentref.New("o", "gallery", "a"), Position: 1}}
+		},
+		"subject": func(e *Exposure) { e.Subject = Subject{UserID: "u", AnonKey: "a"} },
 	} {
 		bad := valid
 		mutate(&bad)
-		if err := bad.validate(); err == nil {
+		if err := bad.validate("t"); err == nil {
 			t.Fatalf("%s must be rejected", name)
 		}
-	}
-	s := Signal{}.WithAttribution(Attribution{RenderID: "r1", Surface: SurfaceSearch, Position: 3})
-	if a := s.Attribution(); a.RenderID != "r1" || a.Position != 3 || a.Surface != SurfaceSearch {
-		t.Fatalf("attribution round trip: %+v", a)
 	}
 }
 
@@ -193,15 +203,16 @@ func TestIngestionLimitsRejectOversizeInput(t *testing.T) {
 	st, _ := NewStore(fc, "hub")
 	ctx := context.Background()
 	at := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	valid := Signal{EntityRef: EntityRef{EntityType: "a", EntityID: "1"}, Subject: Subject{UserID: "u"}, Type: TypeView, EventID: "e", OccurredAt: at}
+	valid := Signal{ContentRef: contentref.New("t", "a", "1"), Subject: Subject{UserID: "u"}, Type: TypeView, EventID: "e", OccurredAt: at}
 	var limit *LimitError
 	long := strings.Repeat("x", MaxIdentifierBytes+1)
 	for name, mutate := range map[string]func(*Signal){
-		"entity id": func(s *Signal) { s.EntityID = long },
-		"event id":  func(s *Signal) { s.EventID = long },
-		"subject":   func(s *Signal) { s.Subject = Subject{AnonKey: long} },
-		"resume":    func(s *Signal) { s.Resume = strings.Repeat("r", MaxResumeBytes+1) },
-		"payload":   func(s *Signal) { s.Payload = map[string]any{"k": strings.Repeat("p", MaxPayloadBytes)} },
+		"content id": func(s *Signal) { s.ContentID = long },
+		"version":    func(s *Signal) { s.ContentRef = s.WithVersion(long) },
+		"event id":   func(s *Signal) { s.EventID = long },
+		"subject":    func(s *Signal) { s.Subject = Subject{AnonKey: long} },
+		"resume":     func(s *Signal) { s.Resume = strings.Repeat("r", MaxResumeBytes+1) },
+		"payload":    func(s *Signal) { s.Payload = map[string]any{"k": strings.Repeat("p", MaxPayloadBytes)} },
 	} {
 		bad := valid
 		mutate(&bad)
@@ -214,7 +225,7 @@ func TestIngestionLimitsRejectOversizeInput(t *testing.T) {
 	}
 	shown := make([]Placement, MaxShownPerExposure+1)
 	for i := range shown {
-		shown[i] = Placement{EntityRef: EntityRef{EntityType: "a", EntityID: "1"}, Position: uint32(i + 1)}
+		shown[i] = Placement{ContentRef: contentref.New("t", "a", "1"), Position: uint32(i + 1)}
 	}
 	exposure := Exposure{RenderID: "r", Stage: StageServed, OccurredAt: at, Shown: shown}
 	if err := st.RecordExposures(ctx, "t", []Exposure{exposure}); !errors.As(err, &limit) {
@@ -226,7 +237,7 @@ func TestIngestionLimitsRejectOversizeInput(t *testing.T) {
 	if len(fc.execs) != 0 {
 		t.Fatal("rejected input reached ClickHouse")
 	}
-	if err := st.PurgeEntityTypes(ctx, "t", nil); err == nil {
-		t.Fatal("purge without entity types must error")
+	if err := st.PurgeContentKinds(ctx, "t", nil); err == nil {
+		t.Fatal("purge without content kinds must error")
 	}
 }

@@ -1,52 +1,19 @@
-package searchkit
+package contentkit
 
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/open-rails/searchkit/signal"
+	"github.com/open-rails/contentkit/signal"
 )
-
-func lazyPool(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	// pgxpool connects lazily; these unit tests never touch Postgres.
-	pool, err := pgxpool.New(context.Background(), "postgres://unused:unused@127.0.0.1:9/unused")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
-}
-
-func newTestHub(t *testing.T, ch signal.Conn, database string, mutate func(*EmbeddedConfig)) *EmbeddedHub {
-	t.Helper()
-	cfg := EmbeddedConfig{
-		PG:       lazyPool(t),
-		PGSchema: "hub",
-		Tenant:   "doujins",
-	}
-	if ch != nil {
-		cfg.CH = ch
-		cfg.CHDatabase = database
-	}
-	if mutate != nil {
-		mutate(&cfg)
-	}
-	h, err := NewEmbedded(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return h
-}
-
-// --- tests ---
 
 func TestHubSignalPlaneDisabled(t *testing.T) {
 	h := newTestHub(t, nil, "", nil)
 	ctx := context.Background()
 	sub := signal.Subject{UserID: "u1"}
+	g1 := h.Content("gallery", "g1")
 
 	if err := h.RecordSignals(ctx, []signal.Signal{{}}); !errors.Is(err, ErrSignalPlaneDisabled) {
 		t.Fatalf("RecordSignals: %v", err)
@@ -57,7 +24,7 @@ func TestHubSignalPlaneDisabled(t *testing.T) {
 	if _, err := h.States(ctx, sub, nil); !errors.Is(err, ErrSignalPlaneDisabled) {
 		t.Fatalf("States: %v", err)
 	}
-	if _, err := h.Metrics(ctx, "gallery", []string{"1"}, signal.AllTime()); !errors.Is(err, ErrSignalPlaneDisabled) {
+	if _, err := h.Metrics(ctx, []ContentRef{g1}, signal.AllTime()); !errors.Is(err, ErrSignalPlaneDisabled) {
 		t.Fatalf("Metrics: %v", err)
 	}
 	if _, err := h.RepairProjections(ctx, signal.RepairOptions{}); !errors.Is(err, ErrSignalPlaneDisabled) {
@@ -69,20 +36,30 @@ func TestHubSignalPlaneDisabled(t *testing.T) {
 	if _, err := h.Popular(ctx, "gallery", signal.PopularOptions{}); !errors.Is(err, ErrSignalPlaneDisabled) {
 		t.Fatalf("Popular: %v", err)
 	}
-	if _, err := h.Unseen(ctx, sub, UnseenOptions{EntityType: "gallery"}); !errors.Is(err, ErrSignalPlaneDisabled) {
+	if _, err := h.Unseen(ctx, sub, UnseenOptions{ContentKind: "gallery"}); !errors.Is(err, ErrSignalPlaneDisabled) {
 		t.Fatalf("Unseen: %v", err)
 	}
-	if _, err := h.Recommend(ctx, sub, RecommendOptions{EntityTypes: []string{"gallery"}}); !errors.Is(err, ErrSignalPlaneDisabled) {
+	if _, err := h.Recommend(ctx, sub, RecommendOptions{ContentKinds: []string{"gallery"}}); !errors.Is(err, ErrSignalPlaneDisabled) {
 		t.Fatalf("Recommend: %v", err)
+	}
+	if _, err := h.SimilarTo(ctx, g1, SimilarOptions{}); !errors.Is(err, ErrSignalPlaneDisabled) {
+		t.Fatalf("SimilarTo: %v", err)
 	}
 	if _, err := h.Search(ctx, "query", HubSearchOptions{Personalize: &Personalization{Subject: sub}}); !errors.Is(err, ErrSignalPlaneDisabled) {
 		t.Fatalf("personalized Search: %v", err)
 	}
+	if err := h.PurgeContentKinds(ctx, []string{"gallery"}); !errors.Is(err, ErrSignalPlaneDisabled) {
+		t.Fatalf("PurgeContentKinds: %v", err)
+	}
 }
 
-func TestHubDefaultTenant(t *testing.T) {
-	h := newTestHub(t, nil, "", func(c *EmbeddedConfig) { c.Tenant = "" })
-	if h.Tenant() != "default" {
+func TestHubRequiresTenant(t *testing.T) {
+	_, err := NewEmbedded(EmbeddedConfig{PG: lazyPool(t), PGSchema: "hub"})
+	if err == nil || !strings.Contains(err.Error(), "Tenant") {
+		t.Fatalf("NewEmbedded without a tenant: %v", err)
+	}
+	h := newTestHub(t, nil, "", nil)
+	if h.Tenant() != testTenant || h.Content("gallery", "1").TenantID != testTenant {
 		t.Fatalf("tenant: %q", h.Tenant())
 	}
 }

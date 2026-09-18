@@ -1,4 +1,4 @@
-module github.com/open-rails/searchkit
+module github.com/open-rails/contentkit
 
 go 1.24.1
 
@@ -7,11 +7,7 @@ toolchain go1.24.7
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.40.3
 	github.com/jackc/pgx/v5 v5.7.5
-	github.com/mozillazg/go-unidecode v0.2.0
-	github.com/pgvector/pgvector-go v0.2.2
-	github.com/sashabaranov/go-openai v1.40.3
 	golang.org/x/sync v0.19.0
-	golang.org/x/text v0.34.0
 )
 
 require (
@@ -27,6 +23,7 @@ require (
 	github.com/klauspost/compress v1.18.3 // indirect
 	github.com/paulmach/orb v0.12.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.25 // indirect
+	github.com/rogpeppe/go-internal v1.9.0 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	go.opentelemetry.io/otel v1.41.0 // indirect
@@ -34,4 +31,5 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/text v0.34.0 // indirect
 )

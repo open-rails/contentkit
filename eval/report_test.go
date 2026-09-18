@@ -9,8 +9,8 @@ import (
 func TestBuildReport_NormalizesAndGroupsOutcomes(t *testing.T) {
 	t.Parallel()
 
-	a := GoldenKey{EntityType: "gallery", EntityID: "a"}
-	b := GoldenKey{EntityType: "gallery", EntityID: "b"}
+	a := GoldenKey{ContentKind: "gallery", ContentID: "a"}
+	b := GoldenKey{ContentKind: "gallery", ContentID: "b"}
 	manual := GoldenCase{
 		ID: "manual", Query: "manual", K: 2, Expected: []GoldenKey{a},
 		Labels: map[string]string{"suite": "manual", ScoreDomainLabel: "rrf"},
@@ -132,7 +132,7 @@ func TestBuildReport_RejectsUnknownOutcomeStatus(t *testing.T) {
 func TestBuildReport_RoundTripPreservesOrderAndScores(t *testing.T) {
 	t.Parallel()
 
-	key := GoldenKey{EntityType: "gallery", EntityID: "1"}
+	key := GoldenKey{ContentKind: "gallery", ContentID: "1"}
 	report, err := BuildReport(
 		ReportIdentity{DatasetID: "dataset", SuiteID: "suite", CandidateID: "candidate"},
 		[]Outcome{{

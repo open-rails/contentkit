@@ -21,7 +21,7 @@ func (st *Store) RecordExposures(ctx context.Context, tenant string, exposures [
 	}
 	subjects := make([]Subject, 0, len(exposures))
 	for i := range exposures {
-		if err := exposures[i].validate(); err != nil {
+		if err := exposures[i].validate(tenant); err != nil {
 			return err
 		}
 		if exposures[i].Subject != (Subject{}) {
@@ -33,7 +33,7 @@ func (st *Store) RecordExposures(ctx context.Context, tenant string, exposures [
 		return err
 	}
 	rows := make([]string, 0, len(exposures))
-	args := make([]any, 0, len(exposures)*14)
+	args := make([]any, 0, len(exposures)*15)
 	for i := range exposures {
 		e := exposures[i]
 		if _, erased := fenced[[2]string{e.Subject.Kind(), e.Subject.Key()}]; erased {
@@ -43,11 +43,12 @@ func (st *Store) RecordExposures(ctx context.Context, tenant string, exposures [
 		if surface == "" {
 			surface = SurfaceSearch
 		}
-		types := make([]string, len(e.Shown))
+		kinds := make([]string, len(e.Shown))
 		ids := make([]string, len(e.Shown))
+		versions := make([]string, len(e.Shown))
 		positions := make([]uint32, len(e.Shown))
 		for j, p := range e.Shown {
-			types[j], ids[j], positions[j] = p.EntityType, p.EntityID, p.Position
+			kinds[j], ids[j], versions[j], positions[j] = p.ContentKind, p.ContentID, p.Version(), p.Position
 		}
 		kind, key := "", ""
 		if e.Subject != (Subject{}) {
@@ -56,18 +57,18 @@ func (st *Store) RecordExposures(ctx context.Context, tenant string, exposures [
 		// Keep the erasure predicate in the INSERT statement. The client-side
 		// fenced lookup is only an optimization; an in-flight writer may resume
 		// after EraseSubjects records its ledger row.
-		rows = append(rows, "SELECT ? AS tenant, ? AS render_id, ? AS stage, ? AS revision, ? AS query_id, ? AS surface, ? AS ranker, ? AS language, ? AS subject_kind, ? AS subject, ? AS entity_types, ? AS entity_ids, ? AS positions, ? AS occurred_at")
+		rows = append(rows, "SELECT ? AS tenant, ? AS render_id, ? AS stage, ? AS revision, ? AS query_id, ? AS surface, ? AS ranker, ? AS language, ? AS subject_kind, ? AS subject, ? AS content_kinds, ? AS content_ids, ? AS content_version_ids, ? AS positions, ? AS occurred_at")
 		args = append(args, tenant, e.RenderID, string(e.Stage), e.Revision, e.QueryID, surface, e.Ranker, e.Language,
-			kind, key, types, ids, positions, e.OccurredAt.UTC())
+			kind, key, kinds, ids, versions, positions, e.OccurredAt.UTC())
 	}
 	if len(rows) == 0 {
 		return nil
 	}
 	insert := fmt.Sprintf(`INSERT INTO %s.exposures
 (tenant, render_id, stage, revision, query_id, surface, ranker, language, subject_kind, subject,
- entity_types, entity_ids, positions, occurred_at)
+ content_kinds, content_ids, content_version_ids, positions, occurred_at)
 SELECT tenant, render_id, stage, revision, query_id, surface, ranker, language, subject_kind, subject,
-       entity_types, entity_ids, positions, occurred_at
+       content_kinds, content_ids, content_version_ids, positions, occurred_at
 FROM (%s) AS incoming
 WHERE %s`, st.db, strings.Join(rows, " UNION ALL "), st.notErased())
 	if err := st.conn.Exec(ctx, insert, args...); err != nil {

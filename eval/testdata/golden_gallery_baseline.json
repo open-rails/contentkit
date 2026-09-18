@@ -85,22 +85,22 @@
         "id": "authentication",
         "query": "authentication",
         "language": "en",
-        "entity_types": [
+        "content_kinds": [
           "gallery"
         ],
         "k": 5,
         "judgments": [
           {
             "key": {
-              "entity_type": "gallery",
-              "entity_id": "1"
+              "content_kind": "gallery",
+              "content_id": "1"
             },
             "relevance": 3
           },
           {
             "key": {
-              "entity_type": "gallery",
-              "entity_id": "2"
+              "content_kind": "gallery",
+              "content_id": "2"
             },
             "relevance": 1
           }
@@ -113,15 +113,15 @@
       "results": [
         {
           "key": {
-            "entity_type": "gallery",
-            "entity_id": "1"
+            "content_kind": "gallery",
+            "content_id": "1"
           },
           "score": 0.032786883
         },
         {
           "key": {
-            "entity_type": "gallery",
-            "entity_id": "2"
+            "content_kind": "gallery",
+            "content_id": "2"
           },
           "score": 0.016129032
         }
@@ -142,7 +142,7 @@
         "id": "nonsense-empty",
         "query": "zzzq nonexistent",
         "language": "en",
-        "entity_types": [
+        "content_kinds": [
           "gallery"
         ],
         "k": 5,
@@ -164,22 +164,22 @@
         "id": "single-sign-on",
         "query": "single sign on",
         "language": "en",
-        "entity_types": [
+        "content_kinds": [
           "gallery"
         ],
         "k": 5,
         "judgments": [
           {
             "key": {
-              "entity_type": "gallery",
-              "entity_id": "3"
+              "content_kind": "gallery",
+              "content_id": "3"
             },
             "relevance": 3
           },
           {
             "key": {
-              "entity_type": "gallery",
-              "entity_id": "4"
+              "content_kind": "gallery",
+              "content_id": "4"
             },
             "relevance": 2
           }
@@ -192,15 +192,15 @@
       "results": [
         {
           "key": {
-            "entity_type": "gallery",
-            "entity_id": "3"
+            "content_kind": "gallery",
+            "content_id": "3"
           },
           "score": 0.032786883
         },
         {
           "key": {
-            "entity_type": "gallery",
-            "entity_id": "4"
+            "content_kind": "gallery",
+            "content_id": "4"
           },
           "score": 0.016129032
         }
@@ -221,22 +221,22 @@
         "id": "two-factor",
         "query": "two factor",
         "language": "en",
-        "entity_types": [
+        "content_kinds": [
           "gallery"
         ],
         "k": 5,
         "judgments": [
           {
             "key": {
-              "entity_type": "gallery",
-              "entity_id": "1"
+              "content_kind": "gallery",
+              "content_id": "1"
             },
             "relevance": 3
           },
           {
             "key": {
-              "entity_type": "gallery",
-              "entity_id": "2"
+              "content_kind": "gallery",
+              "content_id": "2"
             },
             "relevance": 2
           }
@@ -249,15 +249,15 @@
       "results": [
         {
           "key": {
-            "entity_type": "gallery",
-            "entity_id": "1"
+            "content_kind": "gallery",
+            "content_id": "1"
           },
           "score": 0.032786883
         },
         {
           "key": {
-            "entity_type": "gallery",
-            "entity_id": "2"
+            "content_kind": "gallery",
+            "content_id": "2"
           },
           "score": 0.032258064
         }

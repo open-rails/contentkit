@@ -1,4 +1,4 @@
-package searchkit
+package contentkit
 
 import (
 	"context"
@@ -6,24 +6,25 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-
-	"golang.org/x/sync/errgroup"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/open-rails/searchkit/search"
-	"github.com/open-rails/searchkit/signal"
+
+	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/search"
+	"github.com/open-rails/contentkit/signal"
 )
 
 // ErrSignalPlaneDisabled is returned by signal/discovery methods when the hub
 // was constructed without a ClickHouse connection.
-var ErrSignalPlaneDisabled = errors.New("searchkit: signal plane disabled (no ClickHouse configured)")
+var ErrSignalPlaneDisabled = errors.New("contentkit: signal plane disabled (no ClickHouse configured)")
 
-// EntityCatalog supplies the entity "universe" for Unseen: live, non-deleted
-// entity ids of a type, read from the host's own tables. The host owns
-// visibility and gating (premium, region, ...) — searchkit never interprets
+// ContentCatalog supplies the content "universe" for Unseen: live, non-deleted
+// content ids of a kind, read from the host's own tables. The host owns
+// visibility and gating (premium, region, ...) — ContentKit never interprets
 // them. Order defines Unseen order (recommended: newest first).
-type EntityCatalog interface {
-	Universe(ctx context.Context, tenant string, entityType string, q CatalogQuery) ([]string, error)
+type ContentCatalog interface {
+	Universe(ctx context.Context, tenant string, contentKind string, q CatalogQuery) ([]string, error)
 }
 
 // CatalogQuery bounds a Universe read. Limit 0 = host-defined default.
@@ -31,19 +32,19 @@ type CatalogQuery struct {
 	Limit int
 }
 
-// EntityCatalogFunc adapts a function to the EntityCatalog interface.
-type EntityCatalogFunc func(ctx context.Context, tenant string, entityType string, q CatalogQuery) ([]string, error)
+// ContentCatalogFunc adapts a function to the ContentCatalog interface.
+type ContentCatalogFunc func(ctx context.Context, tenant string, contentKind string, q CatalogQuery) ([]string, error)
 
-func (f EntityCatalogFunc) Universe(ctx context.Context, tenant string, entityType string, q CatalogQuery) ([]string, error) {
-	return f(ctx, tenant, entityType, q)
+func (f ContentCatalogFunc) Universe(ctx context.Context, tenant string, contentKind string, q CatalogQuery) ([]string, error) {
+	return f(ctx, tenant, contentKind, q)
 }
 
 // Hub is the single surface host apps program against: content-plane queries
-// (search/typeahead/similar), the signal plane (RecordSignal), and the
-// discovery plane (reads over entities × signals). All methods return ranked
-// entity ids (+ per-user State); the host hydrates ids → cards from its own
-// DB. Every method is implicitly tenant-scoped (pinned at construction in
-// embedded mode).
+// (search/typeahead), the signal plane (RecordSignals), and the discovery
+// plane (reads over content × signals). All methods return ranked content
+// references (+ per-subject State); the host hydrates them into cards from
+// its own DB. Every method is scoped to the tenant pinned at construction;
+// a reference of another tenant is an error.
 type Hub interface {
 	// Tenant returns the tenant this hub instance is scoped to.
 	Tenant() string
@@ -51,39 +52,34 @@ type Hub interface {
 	// Content plane.
 	Search(ctx context.Context, userText string, opts HubSearchOptions) (SearchResult, error)
 	Typeahead(ctx context.Context, userText string, opts TypeaheadOptions) ([]TypeaheadHit, error)
-	SimilarTo(ctx context.Context, entityType, entityID string, opts HubSimilarOptions) ([]RecHit, error)
+	SimilarTo(ctx context.Context, ref ContentRef, opts SimilarOptions) ([]RecHit, error)
 
 	// Signal plane.
 	RecordSignals(ctx context.Context, signals []signal.Signal) error
 	RecordExposures(ctx context.Context, exposures []signal.Exposure) error
 	ForgetExposures(ctx context.Context, subject signal.Subject) error
 	Attribution(ctx context.Context, opts signal.AttributionOptions) (signal.AttributionPage, error)
-	Forget(ctx context.Context, subject signal.Subject, entityType, entityID string) error
+	Forget(ctx context.Context, subject signal.Subject, contentKind, contentID string) error
 	EraseSubjects(ctx context.Context, subjects []signal.Subject) (signal.ErasureReport, error)
 	EnforceErasures(ctx context.Context) (signal.ErasureReport, error)
 
 	// Discovery plane.
 	History(ctx context.Context, subject signal.Subject, opts signal.HistoryOptions) ([]signal.StateRow, error)
 	HistoryCount(ctx context.Context, subject signal.Subject, opts signal.HistoryOptions) (int64, error)
-	SeenIDs(ctx context.Context, subject signal.Subject, entityType string) (map[string]struct{}, error)
+	SeenIDs(ctx context.Context, subject signal.Subject, contentKind string) (map[string]struct{}, error)
 	Unseen(ctx context.Context, subject signal.Subject, opts UnseenOptions) ([]string, error)
-	States(ctx context.Context, subject signal.Subject, refs []signal.EntityRef) (map[signal.EntityRef]signal.State, error)
-	Metrics(ctx context.Context, entityType string, ids []string, window signal.Window) (map[string]signal.EntityMetrics, error)
-	Popular(ctx context.Context, entityType string, opts signal.PopularOptions) ([]signal.PopularHit, error)
-	PopularityFor(ctx context.Context, entityType string, ids []string, window signal.Window) (map[string]float64, error)
+	States(ctx context.Context, subject signal.Subject, refs []ContentRef) (map[ContentKey]signal.State, error)
+	Metrics(ctx context.Context, refs []ContentRef, window signal.Window) (map[ContentKey]signal.ContentMetrics, error)
+	Popular(ctx context.Context, contentKind string, opts signal.PopularOptions) ([]signal.PopularHit, error)
+	PopularityFor(ctx context.Context, contentKind string, ids []string, window signal.Window) (map[string]float64, error)
 	Recommend(ctx context.Context, subject signal.Subject, opts RecommendOptions) ([]RecHit, error)
 
 	// Maintenance.
 	RefreshCoEngagement(ctx context.Context, opts signal.RefreshCoEngagementOptions) error
 	RepairProjections(ctx context.Context, opts signal.RepairOptions) (signal.RepairResult, error)
 	Inventory(ctx context.Context) ([]signal.InventoryRow, error)
-	PurgeEntityTypes(ctx context.Context, entityTypes []string) error
+	PurgeContentKinds(ctx context.Context, contentKinds []string) error
 }
-
-// EmbeddedHub implements the full Hub surface; a future remote client must
-// too (cross-mode conformance, see open-rails-tracker/searchkit/future.md). Embedded-only
-// extras like Client() are deliberately NOT part of the interface.
-var _ Hub = (*EmbeddedHub)(nil)
 
 // EmbeddedConfig configures an in-process hub against the shared DB.
 type EmbeddedConfig struct {
@@ -92,15 +88,15 @@ type EmbeddedConfig struct {
 	// collisions.
 	PG       *pgxpool.Pool
 	PGSchema string
-	Embedder Embedder
+
+	// SemanticRanker and SemanticTimeout are passed to the search client.
+	SemanticRanker  SemanticRanker
+	SemanticTimeout time.Duration
 
 	// Content-plane defaults (as in ClientConfig).
-	DefaultLanguage  string
-	DefaultModel     string
-	DefaultLimit     int
-	DefaultRRFK      int
-	TwoStage         bool
-	OversampleFactor int
+	DefaultLanguage string
+	DefaultLimit    int
+	DefaultRRFK     int
 
 	// Signal plane (ClickHouse). Optional: omit CH to run content-only
 	// (signal/discovery methods return ErrSignalPlaneDisabled). CHDatabase
@@ -109,18 +105,17 @@ type EmbeddedConfig struct {
 	CH         signal.Conn
 	CHDatabase string
 
-	// Tenant is the single implicit tenant for this embedded hub. Defaults
-	// to "default". The tenant column exists so embedded and (future)
-	// multi-tenant server mode share storage and code.
+	// Tenant is the single tenant of this embedded hub. Required: every
+	// document, signal, cursor and result carries it.
 	Tenant string
 
-	// Scorers maps entity type → host Scorer. When a signal arrives for a
-	// registered type, the scorer's result overwrites Score / Progress /
+	// Scorers maps content kind → host Scorer. When a signal arrives for a
+	// registered kind, the scorer's result overwrites Score / Progress /
 	// ProgressMax / Completed before recording.
 	Scorers map[string]signal.Scorer
 
-	// Catalogs maps entity type → host EntityCatalog (the Unseen universe).
-	Catalogs map[string]EntityCatalog
+	// Catalogs maps content kind → host ContentCatalog (the Unseen universe).
+	Catalogs map[string]ContentCatalog
 }
 
 // EmbeddedHub implements Hub in-process. Construct with NewEmbedded.
@@ -129,37 +124,31 @@ type EmbeddedHub struct {
 	store    *signal.Store
 	tenant   string
 	scorers  map[string]signal.Scorer
-	catalogs map[string]EntityCatalog
+	catalogs map[string]ContentCatalog
 }
 
 var _ Hub = (*EmbeddedHub)(nil)
 
-// NewEmbedded builds the embedded hub: in-process, shared DB, single implicit
-// tenant.
+// NewEmbedded builds the embedded hub: in-process, shared DB, one tenant.
 func NewEmbedded(cfg EmbeddedConfig) (*EmbeddedHub, error) {
 	client, err := NewClient(ClientConfig{
-		Pool:             cfg.PG,
-		Schema:           cfg.PGSchema,
-		Embedder:         cfg.Embedder,
-		DefaultLanguage:  cfg.DefaultLanguage,
-		DefaultModel:     cfg.DefaultModel,
-		DefaultLimit:     cfg.DefaultLimit,
-		DefaultRRFK:      cfg.DefaultRRFK,
-		TwoStage:         cfg.TwoStage,
-		OversampleFactor: cfg.OversampleFactor,
+		Pool:            cfg.PG,
+		Schema:          cfg.PGSchema,
+		Tenant:          cfg.Tenant,
+		SemanticRanker:  cfg.SemanticRanker,
+		SemanticTimeout: cfg.SemanticTimeout,
+		DefaultLanguage: cfg.DefaultLanguage,
+		DefaultLimit:    cfg.DefaultLimit,
+		DefaultRRFK:     cfg.DefaultRRFK,
 	})
 	if err != nil {
 		return nil, err
 	}
-
 	h := &EmbeddedHub{
 		client:   client,
-		tenant:   strings.TrimSpace(cfg.Tenant),
+		tenant:   client.Tenant(),
 		scorers:  cfg.Scorers,
 		catalogs: cfg.Catalogs,
-	}
-	if h.tenant == "" {
-		h.tenant = "default"
 	}
 	if cfg.CH != nil {
 		store, err := signal.NewStore(cfg.CH, cfg.CHDatabase)
@@ -176,6 +165,11 @@ func (h *EmbeddedHub) Client() *Client { return h.client }
 
 // Tenant returns the pinned tenant value.
 func (h *EmbeddedHub) Tenant() string { return h.tenant }
+
+// Content returns a reference to a work of this hub's tenant.
+func (h *EmbeddedHub) Content(contentKind, contentID string) ContentRef {
+	return contentref.New(h.tenant, contentKind, contentID)
+}
 
 func (h *EmbeddedHub) requireStore() (*signal.Store, error) {
 	if h.store == nil {
@@ -198,19 +192,19 @@ type Personalization struct {
 	// PopularityWindow bounds candidate popularity (zero = all time).
 	PopularityWindow signal.Window
 
-	// AffinityWeight boosts entities the subject already engaged with by
+	// AffinityWeight boosts works the subject already engaged with by
 	// (1 + AffinityWeight·last_score/100). 0 = off.
 	AffinityWeight float32
 
-	// DemoteSeen demotes already-seen / completed entities.
+	// DemoteSeen demotes already-seen / completed works.
 	DemoteSeen bool
 	// SeenPenalty multiplies seen-but-not-completed scores (default 0.85).
 	SeenPenalty float32
 	// CompletedPenalty multiplies completed scores (default 0.6).
 	CompletedPenalty float32
-	// DislikePenalty multiplies entities the subject has net-negative
-	// explicit feedback for (default 0.3). Always applied when view context
-	// is loaded (i.e. AffinityWeight > 0 or DemoteSeen).
+	// DislikePenalty multiplies works the subject has net-negative explicit
+	// feedback for (default 0.3). Always applied when view context is loaded
+	// (i.e. AffinityWeight > 0 or DemoteSeen).
 	DislikePenalty float32
 }
 
@@ -262,19 +256,19 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 		return content, nil
 	}
 
-	// Candidate popularity, per entity type.
-	idsByType := map[string][]string{}
+	// Candidate popularity per kind, at work level.
+	idsByKind := map[string][]string{}
 	for _, hit := range hits {
-		idsByType[hit.EntityType] = append(idsByType[hit.EntityType], hit.EntityID)
+		idsByKind[hit.ContentKind] = append(idsByKind[hit.ContentKind], hit.ContentID)
 	}
-	popularity := map[signal.EntityRef]float64{}
-	for t, ids := range idsByType {
-		scores, err := store.PopularityFor(ctx, h.tenant, t, ids, p.PopularityWindow)
+	popularity := map[ContentKey]float64{}
+	for kind, ids := range idsByKind {
+		scores, err := store.PopularityFor(ctx, h.tenant, kind, ids, p.PopularityWindow)
 		if err != nil {
 			return SearchResult{}, err
 		}
 		for id, s := range scores {
-			popularity[signal.EntityRef{EntityType: t, EntityID: id}] = s
+			popularity[h.Content(kind, id).Key()] = s
 		}
 	}
 
@@ -282,20 +276,18 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 	byKey := make(map[search.RRFKey]SearchHit, len(hits))
 	contentList := make([]search.RRFKey, 0, len(hits))
 	for _, hit := range hits {
-		key := search.RRFKey{EntityType: hit.EntityType, EntityID: hit.EntityID, Language: hit.Language}
+		key := search.RRFKey{ContentKey: hit.Key(), Language: hit.Language}
 		byKey[key] = hit
 		contentList = append(contentList, key)
 	}
 	popList := make([]search.RRFKey, 0, len(hits))
 	for _, hit := range hits {
-		if popularity[signal.EntityRef{EntityType: hit.EntityType, EntityID: hit.EntityID}] > 0 {
-			popList = append(popList, search.RRFKey{EntityType: hit.EntityType, EntityID: hit.EntityID, Language: hit.Language})
+		if popularity[hit.Content().Key()] > 0 {
+			popList = append(popList, search.RRFKey{ContentKey: hit.Key(), Language: hit.Language})
 		}
 	}
 	sort.SliceStable(popList, func(i, j int) bool {
-		pi := popularity[signal.EntityRef{EntityType: popList[i].EntityType, EntityID: popList[i].EntityID}]
-		pj := popularity[signal.EntityRef{EntityType: popList[j].EntityType, EntityID: popList[j].EntityID}]
-		return pi > pj
+		return popularity[popList[i].Ref().Content().Key()] > popularity[popList[j].Ref().Content().Key()]
 	})
 	fused := search.FuseRRF([][]search.RRFKey{contentList, popList}, search.RRFOptions{
 		K:       h.client.defaultRRFK,
@@ -303,11 +295,11 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 	})
 
 	// Per-subject view context: affinity boost + seen/completed demotion.
-	var states map[signal.EntityRef]signal.State
+	var states map[ContentKey]signal.State
 	if p.AffinityWeight > 0 || p.DemoteSeen {
-		refs := make([]signal.EntityRef, 0, len(hits))
+		refs := make([]ContentRef, 0, len(hits))
 		for _, hit := range hits {
-			refs = append(refs, signal.EntityRef{EntityType: hit.EntityType, EntityID: hit.EntityID})
+			refs = append(refs, hit.Content())
 		}
 		states, err = store.States(ctx, h.tenant, p.Subject, refs)
 		if err != nil {
@@ -318,7 +310,7 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 	out := make([]SearchHit, 0, len(fused))
 	for _, f := range fused {
 		score := f.Score
-		if st, ok := states[signal.EntityRef{EntityType: f.EntityType, EntityID: f.EntityID}]; ok {
+		if st, ok := states[f.Ref().Content().Key()]; ok {
 			if st.NetValue < 0 {
 				// Explicit negative feedback outranks every other adjustment.
 				score *= p.DislikePenalty
@@ -344,12 +336,12 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 		if out[i].Score != out[j].Score {
 			return out[i].Score > out[j].Score
 		}
-		if out[i].EntityType != out[j].EntityType {
-			return out[i].EntityType < out[j].EntityType
+		if out[i].ContentKind != out[j].ContentKind {
+			return out[i].ContentKind < out[j].ContentKind
 		}
-		return out[i].EntityID < out[j].EntityID
+		return out[i].ContentID < out[j].ContentID
 	})
-	result := SearchResult{Hits: []SearchHit{}, Truncated: content.Truncated}
+	result := SearchResult{Hits: []SearchHit{}, Truncated: content.Truncated, Degraded: content.Degraded}
 	if offset < len(out) {
 		end := min(offset+limit, len(out))
 		result.Hits = out[offset:end]
@@ -363,168 +355,75 @@ func (h *EmbeddedHub) Typeahead(ctx context.Context, userText string, opts Typea
 	return h.client.Typeahead(ctx, userText, opts)
 }
 
-// RecHit is one ranked entity from fused similarity or recommendations.
+// RecHit is one ranked work from co-engagement or recommendations.
 type RecHit struct {
-	EntityType string
-	EntityID   string
-	Score      float32
+	ContentRef
+	Score float32
 }
 
-// HubSimilarOptions extends content SimilarOptions with co-engagement fusion:
-// "more like this" = vector similarity ⊕ subjects-who-engaged-X-also-engaged-Y.
-type HubSimilarOptions struct {
-	SimilarOptions
+// SimilarOptions controls SimilarTo: "more like this" from co-engagement,
+// subjects who engaged with the anchor also engaged with the result.
+type SimilarOptions struct {
+	Limit int
+	// ContentKinds limits result kinds (default: any).
+	ContentKinds []string
+	// Window bounds the co-engagement scan (default all time).
+	Window signal.Window
 
-	// CoEngagement enables fusing the co-engagement list (requires the
-	// signal plane).
-	CoEngagement bool
-	// CoEngagementWeight is the RRF weight of the co-engagement list
-	// relative to the vector list (default 1).
-	CoEngagementWeight float32
-	// CoEngagementWindow bounds the co-engagement scan (default all time).
-	CoEngagementWindow signal.Window
-
-	// ExcludeSeenFor drops entities this subject has already seen (and
-	// always drops entities they negatively reacted to).
+	// ExcludeSeenFor drops works this subject has already seen (and always
+	// drops works they negatively reacted to).
 	ExcludeSeenFor *signal.Subject
-
-	// DiversityLambda enables MMR diversity over the fused list ((0,1),
-	// higher = more relevance). 0 disables.
-	DiversityLambda float32
 }
 
-func (h *EmbeddedHub) SimilarTo(ctx context.Context, entityType, entityID string, opts HubSimilarOptions) ([]RecHit, error) {
+func (h *EmbeddedHub) SimilarTo(ctx context.Context, ref ContentRef, opts SimilarOptions) ([]RecHit, error) {
+	store, err := h.requireStore()
+	if err != nil {
+		return nil, err
+	}
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = h.client.defaultLimit
 	}
-
-	lists := make([][]search.RRFKey, 0, 2)
-	weights := make([]float32, 0, 2)
-
-	// Vector similarity (skipped when no model is configured — e.g. a
-	// lexical-only deployment — so co-engagement can still serve).
-	model := strings.TrimSpace(opts.Model)
-	if model == "" {
-		model = h.client.defaultModel
-	}
-
-	// The two sources are independent and live in different stores, so they run
-	// together; the fused order is unchanged because the lists are appended
-	// afterwards in their original order, and RRF weights are positional.
-	var (
-		vectorKeys []search.RRFKey
-		coKeys     []search.RRFKey
-	)
-	group, groupCtx := errgroup.WithContext(ctx)
-	if model != "" {
-		group.Go(func() error {
-			simOpts := opts.SimilarOptions
-			simOpts.Limit = clampInt(limit*2, limit, 200)
-			vec, err := h.client.SimilarTo(groupCtx, entityType, entityID, simOpts)
-			if err != nil {
-				return err
-			}
-			keys := make([]search.RRFKey, 0, len(vec))
-			for _, v := range vec {
-				keys = append(keys, search.RRFKey{EntityType: v.EntityType, EntityID: v.EntityID})
-			}
-			vectorKeys = keys
-			return nil
-		})
-	}
-	if opts.CoEngagement {
-		store, err := h.requireStore()
-		if err != nil {
-			return nil, err
-		}
-		group.Go(func() error {
-			co, err := store.CoEngaged(groupCtx, h.tenant, signal.EntityRef{EntityType: entityType, EntityID: entityID}, signal.CoEngagedOptions{
-				EntityTypes: opts.EntityTypes,
-				Window:      opts.CoEngagementWindow,
-				Limit:       clampInt(limit*2, limit, 200),
-			})
-			if err != nil {
-				return err
-			}
-			keys := make([]search.RRFKey, 0, len(co))
-			for _, c := range co {
-				keys = append(keys, search.RRFKey{EntityType: c.EntityType, EntityID: c.EntityID})
-			}
-			coKeys = keys
-			return nil
-		})
-	}
-	if err := group.Wait(); err != nil {
+	co, err := store.CoEngaged(ctx, h.tenant, ref, signal.CoEngagedOptions{
+		ContentKinds: opts.ContentKinds,
+		Window:       opts.Window,
+		Limit:        clampInt(limit*2, limit, 200),
+	})
+	if err != nil {
 		return nil, err
 	}
-
-	if model != "" {
-		lists = append(lists, vectorKeys)
-		weights = append(weights, 1)
-	}
-	if opts.CoEngagement {
-		w := opts.CoEngagementWeight
-		if w <= 0 {
-			w = 1
-		}
-		lists = append(lists, coKeys)
-		weights = append(weights, w)
-	}
-
-	if len(lists) == 0 {
-		return nil, fmt.Errorf("searchkit: SimilarTo requires a semantic model or CoEngagement enabled")
-	}
-
-	fused := search.FuseRRF(lists, search.RRFOptions{K: h.client.defaultRRFK, Weights: weights})
-
 	var seen map[string]map[string]struct{}
+	var negative map[ContentKey]struct{}
 	if opts.ExcludeSeenFor != nil {
-		store, err := h.requireStore()
-		if err != nil {
-			return nil, err
-		}
 		seen = map[string]map[string]struct{}{}
-		for _, f := range fused {
-			if _, ok := seen[f.EntityType]; ok {
+		for _, c := range co {
+			if _, ok := seen[c.ContentKind]; ok {
 				continue
 			}
-			s, err := store.SeenIDs(ctx, h.tenant, *opts.ExcludeSeenFor, f.EntityType)
+			s, err := store.SeenIDs(ctx, h.tenant, *opts.ExcludeSeenFor, c.ContentKind)
 			if err != nil {
 				return nil, err
 			}
-			seen[f.EntityType] = s
+			seen[c.ContentKind] = s
 		}
-	}
-
-	var negative map[signal.EntityRef]struct{}
-	if opts.ExcludeSeenFor != nil && h.store != nil {
-		neg, err := h.store.NegativeIDs(ctx, h.tenant, *opts.ExcludeSeenFor, opts.EntityTypes)
-		if err != nil {
+		if negative, err = store.NegativeIDs(ctx, h.tenant, *opts.ExcludeSeenFor, opts.ContentKinds); err != nil {
 			return nil, err
 		}
-		negative = neg
 	}
-
-	candidates := make([]RecHit, 0, len(fused))
-	for _, f := range fused {
-		if f.EntityType == entityType && f.EntityID == entityID {
+	candidates := make([]RecHit, 0, len(co))
+	for _, c := range co {
+		if c.Equal(ref.Content()) {
 			continue // drop the anchor
 		}
 		if seen != nil {
-			if _, ok := seen[f.EntityType][f.EntityID]; ok {
+			if _, ok := seen[c.ContentKind][c.ContentID]; ok {
 				continue
 			}
 		}
-		if negative != nil {
-			if _, ok := negative[signal.EntityRef{EntityType: f.EntityType, EntityID: f.EntityID}]; ok {
-				continue
-			}
+		if _, ok := negative[c.Key()]; ok {
+			continue
 		}
-		candidates = append(candidates, RecHit{EntityType: f.EntityType, EntityID: f.EntityID, Score: f.Score})
-	}
-	if opts.DiversityLambda > 0 {
-		candidates = h.diversifyRecHits(ctx, candidates, opts.DiversityLambda, model, opts.Language)
+		candidates = append(candidates, RecHit{ContentRef: c.ContentRef, Score: float32(c.Strength)})
 	}
 	if len(candidates) > limit {
 		candidates = candidates[:limit]
@@ -532,7 +431,7 @@ func (h *EmbeddedHub) SimilarTo(ctx context.Context, entityType, entityID string
 	return candidates, nil
 }
 
-// RefreshCoEngagement (re)materializes the item_pairs co-engagement rollup
+// RefreshCoEngagement (re)materializes the content_pairs co-engagement rollup
 // for this tenant (see signal.Store.RefreshCoEngagement). Run periodically.
 func (h *EmbeddedHub) RefreshCoEngagement(ctx context.Context, opts signal.RefreshCoEngagementOptions) error {
 	store, err := h.requireStore()
@@ -553,7 +452,7 @@ func (h *EmbeddedHub) RepairProjections(ctx context.Context, opts signal.RepairO
 	return store.RepairProjections(ctx, h.tenant, opts)
 }
 
-// Inventory reports canonical event volume per entity and signal type.
+// Inventory reports canonical event volume per content kind and signal type.
 func (h *EmbeddedHub) Inventory(ctx context.Context) ([]signal.InventoryRow, error) {
 	store, err := h.requireStore()
 	if err != nil {
@@ -562,14 +461,14 @@ func (h *EmbeddedHub) Inventory(ctx context.Context) ([]signal.InventoryRow, err
 	return store.Inventory(ctx, h.tenant)
 }
 
-// PurgeEntityTypes irreversibly deletes whole entity types from this tenant's
-// signal plane (see signal.Store.PurgeEntityTypes).
-func (h *EmbeddedHub) PurgeEntityTypes(ctx context.Context, entityTypes []string) error {
+// PurgeContentKinds irreversibly deletes whole content kinds from this tenant's
+// signal plane (see signal.Store.PurgeContentKinds).
+func (h *EmbeddedHub) PurgeContentKinds(ctx context.Context, contentKinds []string) error {
 	store, err := h.requireStore()
 	if err != nil {
 		return err
 	}
-	return store.PurgeEntityTypes(ctx, h.tenant, entityTypes)
+	return store.PurgeContentKinds(ctx, h.tenant, contentKinds)
 }
 
 // RecordExposures logs one row per result list and stage (served, rendered,
@@ -604,8 +503,8 @@ func (h *EmbeddedHub) Attribution(ctx context.Context, opts signal.AttributionOp
 
 // --- Signal plane ---
 
-// RecordSignals applies each entity type's registered Scorer, then records the
-// batch (see signal.Store.RecordSignals). A scorer error records nothing.
+// RecordSignals applies each content kind's registered Scorer, then records
+// the batch (see signal.Store.RecordSignals). A scorer error records nothing.
 func (h *EmbeddedHub) RecordSignals(ctx context.Context, signals []signal.Signal) error {
 	store, err := h.requireStore()
 	if err != nil {
@@ -613,10 +512,10 @@ func (h *EmbeddedHub) RecordSignals(ctx context.Context, signals []signal.Signal
 	}
 	out := make([]signal.Signal, 0, len(signals))
 	for _, s := range signals {
-		if scorer, ok := h.scorers[s.EntityType]; ok && scorer != nil {
+		if scorer, ok := h.scorers[s.ContentKind]; ok && scorer != nil {
 			scored, err := scorer.Score(ctx, s)
 			if err != nil {
-				return fmt.Errorf("searchkit: scorer for %q: %w", s.EntityType, err)
+				return fmt.Errorf("contentkit: scorer for %q: %w", s.ContentKind, err)
 			}
 			s.Score = scored.Score
 			s.Progress = scored.Progress
@@ -638,14 +537,15 @@ func (h *EmbeddedHub) History(ctx context.Context, subject signal.Subject, opts 
 	return store.History(ctx, h.tenant, subject, opts)
 }
 
-// Forget erases the subject's signals for one entity (entityID set) or a
-// whole entity type (entityID empty) — host "clear my history" support.
-func (h *EmbeddedHub) Forget(ctx context.Context, subject signal.Subject, entityType, entityID string) error {
+// Forget erases the subject's signals for one work and its versions
+// (contentID set) or a whole content kind (contentID empty) — host "clear my
+// history" support.
+func (h *EmbeddedHub) Forget(ctx context.Context, subject signal.Subject, contentKind, contentID string) error {
 	store, err := h.requireStore()
 	if err != nil {
 		return err
 	}
-	return store.Forget(ctx, h.tenant, subject, entityType, entityID)
+	return store.Forget(ctx, h.tenant, subject, contentKind, contentID)
 }
 
 // EraseSubjects permanently erases subjects from this tenant's signal plane:
@@ -679,21 +579,22 @@ func (h *EmbeddedHub) HistoryCount(ctx context.Context, subject signal.Subject, 
 	return store.HistoryCount(ctx, h.tenant, subject, opts)
 }
 
-// SeenIDs returns the subject's seen-set for one entity type (the signal-plane
-// half of the unseen anti-join). Use when the host wants to run its own diff
-// against a custom-filtered universe instead of Unseen's registered catalog.
-func (h *EmbeddedHub) SeenIDs(ctx context.Context, subject signal.Subject, entityType string) (map[string]struct{}, error) {
+// SeenIDs returns the subject's seen-set for one content kind (the
+// signal-plane half of the unseen anti-join). Use when the host wants to run
+// its own diff against a custom-filtered universe instead of Unseen's
+// registered catalog.
+func (h *EmbeddedHub) SeenIDs(ctx context.Context, subject signal.Subject, contentKind string) (map[string]struct{}, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return nil, err
 	}
-	return store.SeenIDs(ctx, h.tenant, subject, entityType)
+	return store.SeenIDs(ctx, h.tenant, subject, contentKind)
 }
 
 // UnseenOptions controls Unseen reads.
 type UnseenOptions struct {
-	// EntityType selects which catalog universe to diff against. Required.
-	EntityType string
+	// ContentKind selects which catalog universe to diff against. Required.
+	ContentKind string
 	// Limit caps the returned ids (default 50). Order follows the host
 	// catalog's Universe order.
 	Limit int
@@ -710,24 +611,24 @@ func (h *EmbeddedHub) Unseen(ctx context.Context, subject signal.Subject, opts U
 	if err != nil {
 		return nil, err
 	}
-	entityType := strings.TrimSpace(opts.EntityType)
-	if entityType == "" {
-		return nil, fmt.Errorf("searchkit: UnseenOptions.EntityType is required")
+	contentKind := strings.TrimSpace(opts.ContentKind)
+	if contentKind == "" {
+		return nil, fmt.Errorf("contentkit: UnseenOptions.ContentKind is required")
 	}
-	catalog, ok := h.catalogs[entityType]
+	catalog, ok := h.catalogs[contentKind]
 	if !ok || catalog == nil {
-		return nil, fmt.Errorf("searchkit: no EntityCatalog registered for entity type %q", entityType)
+		return nil, fmt.Errorf("contentkit: no ContentCatalog registered for content kind %q", contentKind)
 	}
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = 50
 	}
 
-	universe, err := catalog.Universe(ctx, h.tenant, entityType, CatalogQuery{Limit: opts.CatalogLimit})
+	universe, err := catalog.Universe(ctx, h.tenant, contentKind, CatalogQuery{Limit: opts.CatalogLimit})
 	if err != nil {
-		return nil, fmt.Errorf("searchkit: catalog universe for %q: %w", entityType, err)
+		return nil, fmt.Errorf("contentkit: catalog universe for %q: %w", contentKind, err)
 	}
-	seen, err := store.SeenIDs(ctx, h.tenant, subject, entityType)
+	seen, err := store.SeenIDs(ctx, h.tenant, subject, contentKind)
 	if err != nil {
 		return nil, err
 	}
@@ -745,7 +646,7 @@ func (h *EmbeddedHub) Unseen(ctx context.Context, subject signal.Subject, opts U
 	return out, nil
 }
 
-func (h *EmbeddedHub) States(ctx context.Context, subject signal.Subject, refs []signal.EntityRef) (map[signal.EntityRef]signal.State, error) {
+func (h *EmbeddedHub) States(ctx context.Context, subject signal.Subject, refs []ContentRef) (map[ContentKey]signal.State, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return nil, err
@@ -753,33 +654,33 @@ func (h *EmbeddedHub) States(ctx context.Context, subject signal.Subject, refs [
 	return store.States(ctx, h.tenant, subject, refs)
 }
 
-func (h *EmbeddedHub) Popular(ctx context.Context, entityType string, opts signal.PopularOptions) ([]signal.PopularHit, error) {
+func (h *EmbeddedHub) Popular(ctx context.Context, contentKind string, opts signal.PopularOptions) ([]signal.PopularHit, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return nil, err
 	}
-	return store.Popular(ctx, h.tenant, entityType, opts)
+	return store.Popular(ctx, h.tenant, contentKind, opts)
 }
 
 // Metrics returns named window metrics (viewers, views, completions,
-// feedback, ...) for entity ids of one type.
-func (h *EmbeddedHub) Metrics(ctx context.Context, entityType string, ids []string, window signal.Window) (map[string]signal.EntityMetrics, error) {
+// feedback, ...) for the references (works or versions).
+func (h *EmbeddedHub) Metrics(ctx context.Context, refs []ContentRef, window signal.Window) (map[ContentKey]signal.ContentMetrics, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return nil, err
 	}
-	return store.Metrics(ctx, h.tenant, entityType, ids, window)
+	return store.Metrics(ctx, h.tenant, refs, window)
 }
 
-// PopularityFor scores a fixed candidate set (entity ids of one type) by the
-// popularity ranking, returning entity_id -> score. Use to rank a host-
+// PopularityFor scores a fixed candidate set (work ids of one kind) by the
+// popularity ranking, returning content_id -> score. Use to rank a host-
 // filtered universe (e.g. "galleries of artist X by popularity").
-func (h *EmbeddedHub) PopularityFor(ctx context.Context, entityType string, ids []string, window signal.Window) (map[string]float64, error) {
+func (h *EmbeddedHub) PopularityFor(ctx context.Context, contentKind string, ids []string, window signal.Window) (map[string]float64, error) {
 	store, err := h.requireStore()
 	if err != nil {
 		return nil, err
 	}
-	return store.PopularityFor(ctx, h.tenant, entityType, ids, window)
+	return store.PopularityFor(ctx, h.tenant, contentKind, ids, window)
 }
 
 func clampInt(v, lo, hi int) int {

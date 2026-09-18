@@ -1,171 +1,126 @@
-package searchkit
+package contentkit
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/open-rails/searchkit/migrations"
-	"github.com/open-rails/searchkit/pg"
-	"github.com/open-rails/searchkit/runtime"
-	"github.com/open-rails/searchkit/worker"
+
+	"github.com/open-rails/contentkit/migrations"
+	"github.com/open-rails/contentkit/search"
+	"github.com/open-rails/contentkit/worker"
 )
 
-// These tests require pg_trgm + PGroonga, and vector for the existing combined
-// installation subtest. Every test owns a new database, never a shared schema.
-func TestKeywordProfileIntegration(t *testing.T) {
-	dsn := os.Getenv("SEARCHKIT_PROFILE_URL")
-	if dsn == "" {
-		t.Skip("SEARCHKIT_PROFILE_URL not set (PGroonga + vector server)")
-	}
-	for _, profile := range []struct {
-		name            string
-		files           fs.FS
-		tables, columns int
-	}{
-		{"fresh_keyword", migrations.KeywordPostgres, 3, 25},
-		{"existing_combined", migrations.Postgres, 8, 64},
+// schemaFingerprint renders every ContentKit-owned object of schema app:
+// columns, constraints, indexes, triggers and functions (extension objects
+// excluded). Both Postgres lineages must converge on one fingerprint.
+func schemaFingerprint(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
+	t.Helper()
+	var b strings.Builder
+	for _, q := range []string{
+		`SELECT 'column '||table_name||'.'||column_name||' '||data_type||' null='||is_nullable||' default='||coalesce(column_default,'') FROM information_schema.columns WHERE table_schema='app' ORDER BY 1`,
+		`SELECT 'constraint '||conrelid::regclass||' '||conname||' '||pg_get_constraintdef(oid) FROM pg_constraint WHERE connamespace='app'::regnamespace ORDER BY 1`,
+		`SELECT 'index '||indexdef FROM pg_indexes WHERE schemaname='app' ORDER BY 1`,
+		`SELECT 'trigger '||tgrelid::regclass||' '||tgname||' '||pg_get_triggerdef(oid) FROM pg_trigger WHERE NOT tgisinternal AND tgrelid IN (SELECT oid FROM pg_class WHERE relnamespace='app'::regnamespace) ORDER BY 1`,
+		`SELECT 'function '||proname||'('||pg_get_function_identity_arguments(p.oid)||') '||md5(pg_get_functiondef(p.oid)) FROM pg_proc p WHERE pronamespace='app'::regnamespace AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid=p.oid AND d.deptype='e') ORDER BY 1`,
+		`SELECT 'sequence '||sequencename FROM pg_sequences WHERE schemaname='app' ORDER BY 1`,
 	} {
+		rows, err := pool.Query(ctx, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			var line string
+			if err := rows.Scan(&line); err != nil {
+				t.Fatal(err)
+			}
+			b.WriteString(line + "\n")
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return b.String()
+}
+
+// Both lineages end on the keyword profile schema (3 tables, 28 columns, no
+// embedding tables); the legacy lineage converts existing rows in place and
+// drops the embedding tables; the worker and search run identically on each.
+func TestKeywordProfileIntegration(t *testing.T) {
+	fingerprints := map[string]string{}
+	for _, profile := range []struct {
+		name  string
+		files fs.FS
+	}{{"keyword", migrations.Postgres}, {"legacy", migrations.LegacyPostgres}} {
 		t.Run(profile.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
-			admin, err := pgxpool.New(ctx, dsn)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer admin.Close()
-			db := fmt.Sprintf("sk_profile_%d", time.Now().UnixNano())
-			if _, err := admin.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{db}.Sanitize()); err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _, _ = admin.Exec(context.Background(), "DROP DATABASE "+pgx.Identifier{db}.Sanitize()) }()
-			cfg := admin.Config()
-			cfg.ConnConfig.Database = db
-			pool, err := pgxpool.NewWithConfig(ctx, cfg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer pool.Close()
-			// The fixture ledger records the exact migration names/checksums the host
-			// applied. Runtime operations must neither rewrite it nor change profiles.
-			if _, err := pool.Exec(ctx, `CREATE SCHEMA app; CREATE TABLE public.applied_migrations(name text PRIMARY KEY,checksum text NOT NULL)`); err != nil {
-				t.Fatal(err)
-			}
-			files, err := fs.ReadDir(profile.files, ".")
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, entry := range files {
-				sql, err := fs.ReadFile(profile.files, entry.Name())
-				if err != nil {
-					t.Fatal(err)
-				}
-				tx, err := pool.Begin(ctx)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err = tx.Exec(ctx, "SET LOCAL search_path TO app,public"); err == nil {
-					_, err = tx.Exec(ctx, string(sql))
-				}
-				if err == nil {
-					_, err = tx.Exec(ctx, "INSERT INTO public.applied_migrations VALUES($1,$2)", entry.Name(), fmt.Sprintf("%x", sha256.Sum256(sql)))
-				}
-				if err != nil {
-					_ = tx.Rollback(ctx)
-					t.Fatalf("%s: %v", entry.Name(), err)
-				}
-				if err = tx.Commit(ctx); err != nil {
+			pool := profileDB(t, ctx, "ck_profile_"+profile.name, nil)
+			exec := func(sql string, args ...any) {
+				t.Helper()
+				if _, err := pool.Exec(ctx, sql, args...); err != nil {
 					t.Fatal(err)
 				}
 			}
+			applyLineage(t, ctx, pool, profile.files, func(name string) {
+				if profile.name != "legacy" || name != "0004_content_refs.up.sql" {
+					return
+				}
+				// Data on the pre-ContentKit schema: a vector, an old-keyed document
+				// and dirty row. The vector table is exported before this step
+				// (docs/migration.md); the rows convert in place under tenant ''.
+				exec(`INSERT INTO app.embedding_vectors(entity_type,entity_id,model,language,embedding) VALUES('gallery','1','preserved','en','[1,2,3]'::app.halfvec)`)
+				exec(`INSERT INTO app.search_documents(entity_type,entity_id,language,title,raw_document,document) VALUES('gallery','old','en','Old Row','Old Row','old row')`)
+				exec(`INSERT INTO app.search_dirty(entity_type,entity_id,language) VALUES('gallery','old','en')`)
+			})
 			snapshot := func() string {
 				var s string
-				err := pool.QueryRow(ctx, "SELECT string_agg(name||':'||checksum,',' ORDER BY name) FROM public.applied_migrations").Scan(&s)
-				if err != nil {
+				if err := pool.QueryRow(ctx, "SELECT string_agg(name||':'||checksum,',' ORDER BY name) FROM public.applied_migrations").Scan(&s); err != nil {
 					t.Fatal(err)
 				}
 				return s
 			}
 			ledger := snapshot()
-			var tables, columns int
-			if err := pool.QueryRow(ctx, "SELECT count(DISTINCT table_name),count(*) FROM information_schema.columns WHERE table_schema='app' AND table_name IN ('search_documents','search_dirty','search_documents_backfill_state','embedding_models','embedding_tasks','embedding_vectors','embedding_vectors_backfill_state','embedding_dead_letters')").Scan(&tables, &columns); err != nil {
+			var tables, columns, embedding int
+			if err := pool.QueryRow(ctx, "SELECT count(DISTINCT table_name),count(*) FROM information_schema.columns WHERE table_schema='app' AND table_name IN ('content_search_documents','content_search_dirty','content_search_backfill')").Scan(&tables, &columns); err != nil {
 				t.Fatal(err)
 			}
-			if tables != profile.tables || columns != profile.columns {
-				t.Fatalf("schema=%d/%d want %d/%d", tables, columns, profile.tables, profile.columns)
+			if err := pool.QueryRow(ctx, "SELECT count(*) FROM information_schema.tables WHERE table_schema='app' AND (table_name LIKE 'embedding%' OR table_name LIKE 'search\\_%')").Scan(&embedding); err != nil {
+				t.Fatal(err)
 			}
-			if profile.name == "fresh_keyword" {
-				var vector bool
-				if err := pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname='vector')").Scan(&vector); err != nil {
-					t.Fatal(err)
-				}
-				if vector {
-					t.Fatal("keyword profile installed vector")
-				}
+			if tables != 3 || columns != 28 || embedding != 0 {
+				t.Fatalf("schema=%d tables/%d columns, %d pre-ContentKit tables; want 3/28/0", tables, columns, embedding)
 			}
-			if profile.name == "existing_combined" {
-				if _, err := pool.Exec(ctx, `INSERT INTO app.embedding_vectors(entity_type,entity_id,model,language,embedding) VALUES('gallery','1','preserved','en','[1,2,3]'::app.halfvec)`); err != nil {
-					t.Fatal(err)
-				}
+			var vector bool
+			if err := pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname='vector')").Scan(&vector); err != nil {
+				t.Fatal(err)
 			}
-			documents := map[string]string{"1": "Blue ocean"}
-			var buildErr error
-			runtimeOpts := runtime.Options{Pool: pool, Schema: "app", BuildLexicalString: func(_ context.Context, _ string, _ string, ids []string) (map[string]string, error) {
-				if buildErr != nil {
-					return nil, buildErr
-				}
-				out := map[string]string{}
-				for _, id := range ids {
-					if text, ok := documents[id]; ok {
-						out[id] = text
-					}
-				}
-				return out, nil
-			}}
-			if profile.name == "fresh_keyword" {
-				runtimeOpts.BuildKeywordDocuments = func(ctx context.Context, kind, lang string, ids []string) (map[string]pg.KeywordDocument, error) {
-					docs, err := runtimeOpts.BuildLexicalString(ctx, kind, lang, ids)
-					if err != nil {
-						return nil, err
-					}
-					structured := make(map[string]pg.KeywordDocument, len(docs))
-					for id, title := range docs {
-						structured[id] = pg.KeywordDocument{Title: title, Aliases: []string{"azure waves"}}
-					}
-					return structured, nil
-				}
+			if vector != (profile.name == "legacy") {
+				t.Fatalf("vector extension present=%v", vector)
 			}
-			rt, err := runtime.New(runtimeOpts)
+			fingerprints[profile.name] = schemaFingerprint(t, ctx, pool)
+
+			client, err := NewClient(ClientConfig{Pool: pool, Schema: "app", Tenant: testTenant})
 			if err != nil {
 				t.Fatal(err)
 			}
-			client, err := NewClient(ClientConfig{Pool: pool, Schema: "app"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			opts := worker.SearchkitOptions{Pool: pool, Schema: "app", SupportedLanguages: []string{"en"}, LexicalEntityTypes: []string{"gallery"}, ListEntityIDsPage: func(context.Context, string, string, string, int) ([]string, string, bool, error) {
-				return nil, "", true, nil
-			}}
-			mark := func(deleted bool) {
+			count := func(table, where string) int {
 				t.Helper()
-				_, err := pool.Exec(ctx, `INSERT INTO app.search_dirty(entity_type,entity_id,language,is_deleted) VALUES('gallery','1','en',$1) ON CONFLICT(entity_type,entity_id,language) DO UPDATE SET is_deleted=EXCLUDED.is_deleted`, deleted)
-				if err != nil {
+				var n int
+				if err := pool.QueryRow(ctx, "SELECT count(*) FROM app."+table+" WHERE "+where).Scan(&n); err != nil {
 					t.Fatal(err)
 				}
-				if err := worker.SyncOnce(ctx, rt, opts); err != nil {
-					t.Fatal(err)
-				}
+				return n
 			}
-			search := func(query string, want int) {
+			expectHits := func(query string, want int) {
 				t.Helper()
-				page, err := client.Search(ctx, query, SearchOptions{EntityTypes: []string{"gallery"}})
+				page, err := client.Search(ctx, query, SearchOptions{ContentKinds: []string{"gallery"}})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -173,52 +128,84 @@ func TestKeywordProfileIntegration(t *testing.T) {
 					t.Fatalf("%q got %v want %d hits", query, page, want)
 				}
 			}
-			mark(false)
-			search("Blue ocean", 1)
-			if profile.name == "fresh_keyword" {
-				search("azure", 1)
+			if profile.name == "legacy" {
+				// Converted rows carry tenant '' and are unreachable by any tenant;
+				// the documented cleanup removes them.
+				if count("content_search_documents", "tenant_id='' AND content_id='old' AND content_version_id=''") != 1 || count("content_search_dirty", "tenant_id=''") != 1 {
+					t.Fatal("pre-ContentKit rows must survive conversion under tenant ''")
+				}
+				expectHits("Old Row", 0)
+				exec(`DELETE FROM app.content_search_documents WHERE tenant_id=''; DELETE FROM app.content_search_dirty WHERE tenant_id=''; DELETE FROM app.content_search_backfill WHERE tenant_id=''`)
+				if count("content_search_documents", "true") != 0 {
+					t.Fatal("cleanup left rows")
+				}
 			}
+
+			documents := map[string]string{"1": "Blue ocean"}
+			var buildErr error
+			opts := worker.Options{Pool: pool, Schema: "app", Tenant: testTenant, SupportedLanguages: []string{"en"}, ContentKinds: []string{"gallery"},
+				ListContent: func(context.Context, string, string, string, string, int) ([]ContentRef, string, bool, error) {
+					return nil, "", true, nil
+				},
+				BuildKeywordDocuments: func(_ context.Context, _, kind, lang string, refs []ContentRef) ([]KeywordDocument, error) {
+					if buildErr != nil {
+						return nil, buildErr
+					}
+					var out []KeywordDocument
+					for _, ref := range refs {
+						if title, ok := documents[ref.ContentID]; ok {
+							out = append(out, KeywordDocument{DocumentKey: DocumentKey{ContentRef: ref, Language: lang}, Title: title, Aliases: []string{"azure waves"}})
+						}
+					}
+					return out, nil
+				}}
+			mark := func(deleted bool) {
+				t.Helper()
+				if err := search.MarkDirty(ctx, pool, "app", []search.DirtyMark{{DocumentKey: DocumentKey{ContentRef: gallery("1"), Language: "en"}, Deleted: deleted}}); err != nil {
+					t.Fatal(err)
+				}
+				if err := worker.SyncOnce(ctx, opts); err != nil {
+					t.Fatal(err)
+				}
+			}
+			mark(false)
+			expectHits("Blue ocean", 1)
+			expectHits("azure", 1)
 			buildErr = errors.New("temporary source failure")
-			if _, err := pool.Exec(ctx, `INSERT INTO app.search_dirty(entity_type,entity_id,language) VALUES('gallery','1','en') ON CONFLICT(entity_type,entity_id,language) DO UPDATE SET reason='retry'`); err != nil {
+			if err := search.MarkDirty(ctx, pool, "app", []search.DirtyMark{{DocumentKey: DocumentKey{ContentRef: gallery("1"), Language: "en"}, Reason: "retry"}}); err != nil {
 				t.Fatal(err)
 			}
-			if err := worker.SyncOnce(ctx, rt, opts); !errors.Is(err, buildErr) {
+			if err := worker.SyncOnce(ctx, opts); !errors.Is(err, buildErr) {
 				t.Fatalf("expected builder failure, got %v", err)
 			}
-			search("Blue ocean", 1)
-			var pending int
-			if err := pool.QueryRow(ctx, "SELECT count(*) FROM app.search_dirty").Scan(&pending); err != nil {
-				t.Fatal(err)
-			}
-			if pending != 1 {
+			expectHits("Blue ocean", 1)
+			if count("content_search_dirty", "true") != 1 {
 				t.Fatal("failed build lost pending retry")
 			}
 			buildErr = nil
 			documents["1"] = "Red forest"
 			mark(false)
-			search("Red forest", 1)
-			search("Blue ocean", 0)
-			// Omitting a requested ID means the source entity no longer exists.
+			expectHits("Red forest", 1)
+			expectHits("Blue ocean", 0)
+			// Omitting a requested reference means the content no longer exists.
 			delete(documents, "1")
 			mark(false)
-			search("Red forest", 0)
+			expectHits("Red forest", 0)
 			documents["1"] = "Amber field"
 			mark(false)
-			search("Amber field", 1)
+			expectHits("Amber field", 1)
 			mark(true)
-			search("Amber field", 0)
+			expectHits("Amber field", 0)
 			if snapshot() != ledger {
 				t.Fatal("keyword runtime modified the migration ledger")
 			}
-			if profile.name == "existing_combined" {
-				var value string
-				if err := pool.QueryRow(ctx, `SELECT embedding::text FROM app.embedding_vectors WHERE model='preserved'`).Scan(&value); err != nil {
-					t.Fatal(err)
-				}
-				if value != "[1,2,3]" {
-					t.Fatal("optional semantic data changed", value)
-				}
-			}
+			_ = fmt.Sprint
 		})
+	}
+	if fingerprints["keyword"] == "" || fingerprints["legacy"] == "" {
+		t.Skip("both lineages must run")
+	}
+	if fingerprints["keyword"] != fingerprints["legacy"] {
+		t.Fatalf("lineages diverge:\n--- keyword ---\n%s\n--- legacy ---\n%s", fingerprints["keyword"], fingerprints["legacy"])
 	}
 }

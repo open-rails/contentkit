@@ -1,3 +1,4 @@
+-- parent: root
 -- searchkit: Postgres schema for lexical + semantic search — consolidated
 -- baseline (squashed from 001..003, 2026-07-07).
 --

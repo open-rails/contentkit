@@ -1,3 +1,4 @@
+-- parent: 1 sha256:087b205cb4786bd7b1603b019b4ede03eae4b974d9626d29166bed2e3033aae8
 -- A timestamp is not a queue generation: now() is constant within a host
 -- transaction, and delete/reinsert must not reuse an earlier generation.
 ALTER TABLE search_dirty ADD COLUMN revision bigserial;

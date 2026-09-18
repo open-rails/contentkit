@@ -69,16 +69,16 @@ func ValidateCase(c GoldenCase) error {
 		seenLabels[name] = struct{}{}
 	}
 
-	seenEntityTypes := make(map[string]struct{}, len(c.EntityTypes))
-	for _, entityType := range c.EntityTypes {
-		entityType = strings.TrimSpace(entityType)
-		if entityType == "" {
-			return fmt.Errorf("case %q: entity types must be nonempty", caseID(c))
+	seenContentKinds := make(map[string]struct{}, len(c.ContentKinds))
+	for _, contentKind := range c.ContentKinds {
+		contentKind = strings.TrimSpace(contentKind)
+		if contentKind == "" {
+			return fmt.Errorf("case %q: content kinds must be nonempty", caseID(c))
 		}
-		if _, duplicate := seenEntityTypes[entityType]; duplicate {
-			return fmt.Errorf("case %q: duplicate entity type %q", caseID(c), entityType)
+		if _, duplicate := seenContentKinds[contentKind]; duplicate {
+			return fmt.Errorf("case %q: duplicate content kind %q", caseID(c), contentKind)
 		}
-		seenEntityTypes[entityType] = struct{}{}
+		seenContentKinds[contentKind] = struct{}{}
 	}
 	return nil
 }
@@ -172,11 +172,11 @@ func caseID(c GoldenCase) string {
 }
 
 func validateGoldenKey(key GoldenKey) error {
-	if key.EntityType == "" {
-		return fmt.Errorf("entity type is required")
+	if key.ContentKind == "" {
+		return fmt.Errorf("content kind is required")
 	}
-	if key.EntityID == "" {
-		return fmt.Errorf("entity id is required")
+	if key.ContentID == "" {
+		return fmt.Errorf("content id is required")
 	}
 	return nil
 }
@@ -223,7 +223,7 @@ func normalizedDCG(relevance map[GoldenKey]int, k int, dcg float64) float64 {
 
 func cloneCase(c GoldenCase) GoldenCase {
 	out := c
-	out.EntityTypes = append([]string(nil), c.EntityTypes...)
+	out.ContentKinds = append([]string(nil), c.ContentKinds...)
 	out.Expected = append([]GoldenKey(nil), c.Expected...)
 	out.Judgments = append([]Judgment(nil), c.Judgments...)
 	if c.Labels != nil {
@@ -240,8 +240,8 @@ func normalizeCase(c GoldenCase) GoldenCase {
 	out.ID = strings.TrimSpace(out.ID)
 	out.Query = strings.TrimSpace(out.Query)
 	out.Language = strings.TrimSpace(out.Language)
-	for i := range out.EntityTypes {
-		out.EntityTypes[i] = strings.TrimSpace(out.EntityTypes[i])
+	for i := range out.ContentKinds {
+		out.ContentKinds[i] = strings.TrimSpace(out.ContentKinds[i])
 	}
 	for i := range out.Expected {
 		out.Expected[i] = normalizeGoldenKey(out.Expected[i])
@@ -260,7 +260,7 @@ func normalizeCase(c GoldenCase) GoldenCase {
 }
 
 func normalizeGoldenKey(key GoldenKey) GoldenKey {
-	key.EntityType = strings.TrimSpace(key.EntityType)
-	key.EntityID = strings.TrimSpace(key.EntityID)
+	key.ContentKind = strings.TrimSpace(key.ContentKind)
+	key.ContentID = strings.TrimSpace(key.ContentID)
 	return key
 }
