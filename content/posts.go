@@ -196,7 +196,7 @@ func (p *posts) handleCreate(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	tx, err := p.s.pool.Begin(ctx)
+	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -307,7 +307,7 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	tx, err := p.s.pool.Begin(ctx)
+	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -367,7 +367,7 @@ func (p *posts) handleDelete(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	id := req.PathValue("id")
-	tx, err := p.s.pool.Begin(ctx)
+	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -470,11 +470,14 @@ func (p *posts) handleReact(value int16) http.HandlerFunc {
 // (no host gate): it verifies the post is published inside the tx, reuses
 // reactions.applyTx and bumps the split counter by the exact returned deltas.
 func (p *posts) react(ctx context.Context, actor Actor, id string, value int16) error {
-	tx, err := p.s.pool.Begin(ctx)
+	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := p.rt.guardPrivateSubject(ctx, tx, viewerID(actor)); err != nil {
+		return err
+	}
 	if err := p.requirePublished(ctx, tx, id); err != nil {
 		return err
 	}
@@ -510,7 +513,7 @@ func (p *posts) requirePublished(ctx context.Context, q querier, id string) erro
 	var ok bool
 	err := q.QueryRow(ctx, `SELECT true FROM `+p.s.t.posts+`
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND is_draft = false AND moderation = 'approved'
-		AND (live_at IS NULL OR live_at <= now())`, id, p.s.tenant).Scan(&ok)
+		AND (live_at IS NULL OR live_at <= now()) FOR UPDATE`, id, p.s.tenant).Scan(&ok)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}

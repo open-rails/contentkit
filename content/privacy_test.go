@@ -84,7 +84,7 @@ func TestPrivateErasureRetriesProviderAfterDurableSourceFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider.down = true
-	if err := rt.ErasePrivateSubjects(ctx, []string{"u1"}); err == nil {
+	if err := rt.EraseSubjects(ctx, []string{"u1"}); err == nil {
 		t.Fatal("provider outage incorrectly completed deletion")
 	}
 	var n int
@@ -95,7 +95,7 @@ func TestPrivateErasureRetriesProviderAfterDurableSourceFence(t *testing.T) {
 		t.Fatalf("source fence lost: %v", err)
 	}
 	provider.down = false
-	if err := rt.ErasePrivateSubjects(ctx, []string{"u1"}); err != nil {
+	if err := rt.EraseSubjects(ctx, []string{"u1"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(provider.retained) != 0 || !provider.fenced[testTenant+"/u1"] {
@@ -114,7 +114,7 @@ func TestPrivateErasureFencesPausedClassifierCompletion(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { _, err := p.answer(ctx, Actor{ID: "u1"}, poll.ID, "paused"); done <- err }()
 	<-provider.entered
-	if err := rt.ErasePrivateSubjects(ctx, []string{"u1"}); err != nil {
+	if err := rt.EraseSubjects(ctx, []string{"u1"}); err != nil {
 		t.Fatal(err)
 	}
 	close(provider.release)
@@ -142,7 +142,7 @@ func TestPrivateErasureFencesPausedModerationBeforeSourceCommit(t *testing.T) {
 		done <- err
 	}()
 	<-provider.entered
-	if err := rt.ErasePrivateSubjects(ctx, []string{"u1"}); err != nil {
+	if err := rt.EraseSubjects(ctx, []string{"u1"}); err != nil {
 		t.Fatal(err)
 	}
 	close(provider.release)
@@ -173,7 +173,7 @@ func TestPrivateErasurePreservesPublicationRepliesAndOtherTenant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.ErasePrivateSubjects(ctx, []string{"u1"}); err != nil {
+	if err := rt.EraseSubjects(ctx, []string{"u1"}); err != nil {
 		t.Fatal(err)
 	}
 	var body string
@@ -208,7 +208,7 @@ func TestPrivateErasurePreservesPublishedPostSnapshot(t *testing.T) {
 	if rec.Code != 202 {
 		t.Fatalf("hold edit: %d %s", rec.Code, rec.Body.String())
 	}
-	if err := rt.ErasePrivateSubjects(ctx, []string{author.ID}); err != nil {
+	if err := rt.EraseSubjects(ctx, []string{author.ID}); err != nil {
 		t.Fatal(err)
 	}
 	var body, title, state string
@@ -250,7 +250,7 @@ func TestPrivateFenceSurvivesRuntimeRestartAndReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.ErasePrivateSubjects(ctx, []string{author.ID}); err != nil {
+	if err := rt.EraseSubjects(ctx, []string{author.ID}); err != nil {
 		t.Fatal(err)
 	}
 	opts := Options{Pool: rt.store.pool, Schema: rt.schema, Tenant: rt.tenant, Identity: &fakeIdentity{}, Authz: allowAll{}, Resolver: rt.resolver, ContentKinds: []string{"gallery"}, Moderator: &fakeModerator{}}

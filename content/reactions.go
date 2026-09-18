@@ -125,11 +125,14 @@ func (r *reactions) react(ctx context.Context, actor Actor, kind, id string, val
 		return contentref.ContentRef{}, nil, err
 	}
 	storage, key, exportable := r.rt.preferences.target(actor, ref, PreferenceAxisReaction)
-	tx, err := r.s.pool.Begin(ctx)
+	tx, err := r.s.beginMutation(ctx)
 	if err != nil {
 		return contentref.ContentRef{}, nil, err
 	}
 	defer tx.Rollback(ctx)
+	if err := r.rt.guardPrivateSubject(ctx, tx, viewerID(actor)); err != nil {
+		return contentref.ContentRef{}, nil, err
+	}
 	snap, err := r.rt.preferences.mutate(ctx, tx, key, exportable, value, func() (bool, error) {
 		dLikes, dDislikes, err := r.applyTx(ctx, tx, actor, storage.Key(), value)
 		return dLikes != 0 || dDislikes != 0, err

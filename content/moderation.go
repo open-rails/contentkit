@@ -350,7 +350,7 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d ReviewDecis
 	if !uuidRe.MatchString(cid) {
 		return ErrNotFound
 	}
-	tx, err := c.s.pool.Begin(ctx)
+	tx, err := c.s.beginMutation(ctx)
 	if err != nil {
 		return err
 	}
@@ -400,7 +400,7 @@ func (c *comments) count(ctx context.Context, tx pgx.Tx, replyTo *string, k cont
 // resolve moves a held post to its final state and re-queues its keyword
 // document (an approved post indexes; anything else drops the stale entry).
 func (p *posts) resolve(ctx context.Context, id, state string, d ReviewDecision) error {
-	tx, err := p.s.pool.Begin(ctx)
+	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
 		return err
 	}

@@ -67,7 +67,7 @@ func TestPausedPostScreeningDoesNotBlockErasure(t *testing.T) {
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() { done <- patchPostWithContext(rt, ctx, post.ID, "paused edit") }()
 	<-mod.entered
-	err := rt.ErasePrivateSubjects(ctx, []string{"author"})
+	err := rt.EraseSubjects(ctx, []string{"author"})
 	close(mod.release)
 	late := <-done
 	if err != nil {

@@ -99,7 +99,7 @@ func (c *comments) create(ctx context.Context, actor Actor, kind, id string, in 
 		return Comment{}, err
 	}
 
-	tx, err := c.s.pool.Begin(ctx)
+	tx, err := c.s.beginMutation(ctx)
 	if err != nil {
 		return Comment{}, err
 	}
@@ -388,7 +388,7 @@ func (c *comments) restore(ctx context.Context, cid string) error {
 	if !uuidRe.MatchString(cid) {
 		return ErrNotFound
 	}
-	tx, err := c.s.pool.Begin(ctx)
+	tx, err := c.s.beginMutation(ctx)
 	if err != nil {
 		return err
 	}
@@ -525,7 +525,7 @@ func (c *comments) edit(ctx context.Context, actor Actor, cid, rawBody string) (
 	if err != nil {
 		return Comment{}, err
 	}
-	tx, err := c.s.pool.Begin(ctx)
+	tx, err := c.s.beginMutation(ctx)
 	if err != nil {
 		return Comment{}, err
 	}
@@ -574,7 +574,7 @@ func (c *comments) softDelete(ctx context.Context, actor Actor, cid string) erro
 	if _, err := c.loadForWrite(ctx, actor, cid); err != nil {
 		return err
 	}
-	tx, err := c.s.pool.Begin(ctx)
+	tx, err := c.s.beginMutation(ctx)
 	if err != nil {
 		return err
 	}
@@ -642,14 +642,17 @@ func (c *comments) reactTx(ctx context.Context, actor Actor, cid string, value i
 	if !uuidRe.MatchString(cid) {
 		return reactionCounts{}, ErrNotFound
 	}
-	tx, err := c.s.pool.Begin(ctx)
+	tx, err := c.s.beginMutation(ctx)
 	if err != nil {
 		return reactionCounts{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := c.rt.guardPrivateSubject(ctx, tx, viewerID(actor)); err != nil {
+		return reactionCounts{}, err
+	}
 	var deletedAt *time.Time
 	var state string
-	if err := tx.QueryRow(ctx, `SELECT deleted_at, moderation FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2`, cid, c.s.tenant).Scan(&deletedAt, &state); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT deleted_at, moderation FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, cid, c.s.tenant).Scan(&deletedAt, &state); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return reactionCounts{}, ErrNotFound
 		}
