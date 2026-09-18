@@ -1,3 +1,4 @@
+-- parent: root
 -- socialkit core schema (single migration): content + engagement primitives.
 --
 -- Tables are created UNQUALIFIED here; migratekit applies them into the host's

@@ -1,4 +1,4 @@
-package socialkit
+package content
 
 import (
 	"bytes"
@@ -13,8 +13,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-// StorageConfig configures socialkit's built-in, S3-backed media store. When
-// set (Options.Storage), socialkit owns file upload itself: it writes poll/post
+// StorageConfig configures ContentKit's built-in, S3-backed media store. When
+// set (Options.Storage), ContentKit owns file upload itself: it writes poll/post
 // images to a PUBLIC bucket and returns the public URL — no presigning. Works
 // with AWS S3, MinIO, or R2 (set Endpoint + UsePathStyle for the latter two).
 type StorageConfig struct {
@@ -27,7 +27,7 @@ type StorageConfig struct {
 	UsePathStyle    bool   // true for MinIO / most self-hosted S3
 }
 
-// s3Store is socialkit's built-in MediaStore over aws-sdk-go-v2, writing to a
+// s3Store is ContentKit's built-in MediaStore over aws-sdk-go-v2, writing to a
 // public bucket. It satisfies the MediaStore port (Put) and adds Delete.
 type s3Store struct {
 	client        *s3.Client
@@ -37,10 +37,10 @@ type s3Store struct {
 
 func newS3Store(cfg StorageConfig) (*s3Store, error) {
 	if cfg.Bucket == "" {
-		return nil, fmt.Errorf("socialkit: Storage.Bucket is required")
+		return nil, fmt.Errorf("content: Storage.Bucket is required")
 	}
 	if cfg.PublicBaseURL == "" {
-		return nil, fmt.Errorf("socialkit: Storage.PublicBaseURL is required (public bucket, no presigning)")
+		return nil, fmt.Errorf("content: Storage.PublicBaseURL is required (public bucket, no presigning)")
 	}
 	opts := s3.Options{
 		Region:       cfg.Region,
@@ -67,7 +67,7 @@ func (s *s3Store) Put(ctx context.Context, key string, data []byte, contentType 
 		Body:        bytes.NewReader(data),
 		ContentType: aws.String(contentType),
 	}); err != nil {
-		return "", fmt.Errorf("socialkit: put object %q: %w", key, err)
+		return "", fmt.Errorf("content: put object %q: %w", key, err)
 	}
 	return s.publicBaseURL + "/" + key, nil
 }

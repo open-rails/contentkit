@@ -32,6 +32,10 @@ func TestAppliedMigrationsKeepTheirLedgerIdentity(t *testing.T) {
 			"0001_keyword_schema.up.sql": "68ee97ffe4018b63bfebe954f6fe22eac71f250b861b185f5883d87dea922406",
 			"0002_keyword_fields.up.sql": "ef68ec7f801c39594fc54901bf8fe7c762781acf97560bc9f114869179277550",
 		}},
+		{"social", Social, map[string]string{
+			"0001_social_core.up.sql":         "c9323cfddb2da2020ec07bb55aa2ba0aa779abdceb59313859bb95972a89c26c",
+			"0002_comments_latest_idx.up.sql": "b431d777d4b77ec4eddaef06ca11553aeff2632dbe043dc1b390ebb7a62d5a46",
+		}},
 		{"legacy", LegacyPostgres, map[string]string{
 			"0001_schema.up.sql":                "087b205cb4786bd7b1603b019b4ede03eae4b974d9626d29166bed2e3033aae8",
 			"0002_search_dirty_revision.up.sql": "1e716a58d3d2d664dea90ace6b023bef67f7a4b24cf86575ec2c09cff9e2f562",

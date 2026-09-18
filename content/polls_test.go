@@ -1,4 +1,4 @@
-package socialkit
+package content
 
 import (
 	"bytes"

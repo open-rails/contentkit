@@ -1,4 +1,4 @@
-package socialkit
+package content
 
 import (
 	"bytes"
@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/pgtest"
 )
 
 // postPerm is the opaque PostWrite permission wired for the posts tests.
@@ -27,7 +30,7 @@ func newPostRuntime(t *testing.T, opts Options) (*Runtime, *pgxpool.Pool) {
 	return newTestRuntime(t, opts)
 }
 
-// postMux mounts only the posts routes (rt.Handler wires reactions, not posts).
+// postMux mounts only the posts routes.
 func postMux(rt *Runtime) http.Handler {
 	mux := http.NewServeMux()
 	newPosts(rt).mount(mux)
@@ -186,35 +189,6 @@ func TestPostDraftVisibility(t *testing.T) {
 	}
 }
 
-func TestPostRecorderSignals(t *testing.T) {
-	rr := &recordingRecorder{}
-	rt, _ := newPostRuntime(t, Options{Recorder: rr})
-	h := postMux(rt)
-	author := Actor{ID: "root1"}
-
-	rec := doJSON(t, h, author, "POST", "/posts", postWriteReq{Title: ptr("t"), Body: ptr("b"), IsDraft: ptr(false)})
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("create: status %d body %s", rec.Code, rec.Body.String())
-	}
-	id := decodePost(t, rec).ID
-
-	if rec = doJSON(t, h, author, "DELETE", "/posts/"+id, nil); rec.Code != http.StatusOK {
-		t.Fatalf("delete: status %d", rec.Code)
-	}
-
-	rr.mu.Lock()
-	defer rr.mu.Unlock()
-	if len(rr.posts) != 2 {
-		t.Fatalf("post signals = %d, want 2", len(rr.posts))
-	}
-	if rr.posts[0].Deleted || rr.posts[0].PostID != id {
-		t.Fatalf("create signal = %+v", rr.posts[0])
-	}
-	if !rr.posts[1].Deleted || rr.posts[1].PostID != id {
-		t.Fatalf("delete signal = %+v", rr.posts[1])
-	}
-}
-
 func TestPostListSortedAndCounts(t *testing.T) {
 	rt, _ := newPostRuntime(t, Options{})
 	h := postMux(rt)
@@ -250,7 +224,7 @@ func TestPostLikeBumpsCountersConcurrentExact(t *testing.T) {
 	// Insert a published post directly (react has no perm gate; it needs a target).
 	var id string
 	if err := pool.QueryRow(ctx, `INSERT INTO `+rt.store.t.posts+`
-		(author_id, title, body, is_draft) VALUES ('a', 't', 'b', false) RETURNING id`).Scan(&id); err != nil {
+		(tenant_id, author_id, title, body, is_draft) VALUES ($1, 'a', 't', 'b', false) RETURNING id`, testTenant).Scan(&id); err != nil {
 		t.Fatalf("seed post: %v", err)
 	}
 
@@ -294,7 +268,7 @@ func TestPostLikeBumpsCountersConcurrentExact(t *testing.T) {
 	// reacting on a draft/absent target is 404 (ErrNotFound)
 	var draftID string
 	if err := pool.QueryRow(ctx, `INSERT INTO `+rt.store.t.posts+`
-		(author_id, title, body, is_draft) VALUES ('a', 't', 'b', true) RETURNING id`).Scan(&draftID); err != nil {
+		(tenant_id, author_id, title, body, is_draft) VALUES ($1, 'a', 't', 'b', true) RETURNING id`, testTenant).Scan(&draftID); err != nil {
 		t.Fatalf("seed draft: %v", err)
 	}
 	if err := p.react(ctx, actor, draftID, 1); err == nil {
@@ -342,4 +316,78 @@ func listPosts(t *testing.T, h http.Handler, language string) []postView {
 		t.Fatalf("decode list: %v (body=%s)", err, rec.Body.String())
 	}
 	return out
+}
+
+// Every post write queues the post as a keyword document in the search
+// schema's dirty queue inside the same transaction; the module's builder
+// returns a document only for a published post in that language.
+func TestPostWritesQueueKeywordDocuments(t *testing.T) {
+	ctx := context.Background()
+	pool := pgtest.Pool(t, nil)
+	searchSchema := pgtest.Schema(t, ctx, pool)
+	rt, _ := newPostRuntime(t, Options{SearchSchema: searchSchema})
+	h := postMux(rt)
+	author := Actor{ID: "root1", Kind: "user"}
+
+	rec := doJSON(t, h, author, "POST", "/posts", postWriteReq{Title: ptr("Hello"), Body: ptr("b"), Language: ptr("en"), Slug: ptr("hello"), IsDraft: ptr(false)})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	id := decodePost(t, rec).ID
+	dirty := func() map[string]bool {
+		rows, err := pool.Query(ctx, fmt.Sprintf(`SELECT language, is_deleted FROM %s.content_search_dirty WHERE tenant_id = $1 AND content_kind = $2 AND content_id = $3 AND reason = 'post'`, searchSchema), testTenant, KindPost, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		out := map[string]bool{}
+		for rows.Next() {
+			var lang string
+			var deleted bool
+			if err := rows.Scan(&lang, &deleted); err != nil {
+				t.Fatal(err)
+			}
+			out[lang] = deleted
+		}
+		return out
+	}
+	if got := dirty(); len(got) != 1 || got["en"] {
+		t.Fatalf("dirty after create = %v, want en rebuild", got)
+	}
+	docs, err := rt.KeywordDocuments(ctx, testTenant, KindPost, "en", []contentref.ContentRef{rt.Ref(KindPost, id)})
+	if err != nil || len(docs) != 1 || docs[0].Title != "Hello" || docs[0].Aliases[0] != "hello" || docs[0].Language != "en" {
+		t.Fatalf("KeywordDocuments = %+v err=%v", docs, err)
+	}
+	refs, _, done, err := rt.ListContent(ctx, testTenant, KindPost, "en", "", 10)
+	if err != nil || !done || len(refs) != 1 || refs[0].ContentID != id {
+		t.Fatalf("ListContent = %v done=%v err=%v", refs, done, err)
+	}
+
+	// A language change deletes the old-language document and queues the new one.
+	if rec = doJSON(t, h, author, "PATCH", "/posts/"+id, postWriteReq{Language: ptr("ja")}); rec.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := dirty(); !got["en"] || got["ja"] {
+		t.Fatalf("dirty after language change = %v, want en deleted and ja rebuild", got)
+	}
+	if docs, _ := rt.KeywordDocuments(ctx, testTenant, KindPost, "en", []contentref.ContentRef{rt.Ref(KindPost, id)}); len(docs) != 0 {
+		t.Fatalf("an en document survives the language change: %+v", docs)
+	}
+	// Unpublishing yields no document; deleting queues a deletion.
+	if rec = doJSON(t, h, author, "PATCH", "/posts/"+id, postWriteReq{IsDraft: ptr(true)}); rec.Code != http.StatusOK {
+		t.Fatalf("draft: %d", rec.Code)
+	}
+	if docs, _ := rt.KeywordDocuments(ctx, testTenant, KindPost, "ja", []contentref.ContentRef{rt.Ref(KindPost, id)}); len(docs) != 0 {
+		t.Fatalf("a draft yields a document: %+v", docs)
+	}
+	if rec = doJSON(t, h, author, "DELETE", "/posts/"+id, nil); rec.Code != http.StatusOK {
+		t.Fatalf("delete: %d", rec.Code)
+	}
+	if got := dirty(); !got["ja"] {
+		t.Fatalf("dirty after delete = %v, want ja deleted", got)
+	}
+	// Another tenant's post is neither built nor listed by this runtime.
+	if _, err := rt.KeywordDocuments(ctx, "other", KindPost, "en", nil); err == nil {
+		t.Fatal("KeywordDocuments accepted another tenant")
+	}
 }

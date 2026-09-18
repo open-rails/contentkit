@@ -1,4 +1,4 @@
-package socialkit
+package content
 
 import (
 	"context"
@@ -9,80 +9,74 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/open-rails/migratekit"
+
+	"github.com/open-rails/contentkit/contentref"
 )
 
-// MigratekitApp is the migratekit tracker label for socialkit's migrations. A
-// host running a central migrate step applies socialkit.PostgresMigrations under
-// THIS label (+ WithSchema(hostSchema)) and passes Options.SkipMigrate, so the
-// runtime and the migrate step agree. One label is safe across hosts that share
-// a database with different schemas: migratekit v1.2.0+ folds the target schema
-// into its tracker identity, so doujins.* and hentai0.* track independently.
-const MigratekitApp = "socialkit"
+// Reserved content kinds owned by this package: reactions on comments and
+// posts are keyed by them and never pass through the ContentResolver.
+const (
+	KindComment = "comment"
+	KindPost    = "post"
+)
 
-// Options configures a Runtime. Pool, Schema, Identity, Authz and Entities are
-// mandatory; the rest fall back to documented defaults.
+// Options configures a Runtime. Pool, Schema, Tenant, Identity, Authz and
+// Resolver are mandatory; the rest fall back to documented defaults.
 type Options struct {
-	// Pool is the host's shared pgx pool. socialkit does not own its lifecycle.
+	// Pool is the host's shared pgx pool; the runtime does not own its lifecycle.
 	Pool *pgxpool.Pool
-	// Schema is the host schema every table + query is qualified to ("doujins").
+	// Schema is the host schema holding the social_* tables (contentkit.Migrate).
 	Schema string
+	// Tenant scopes every row, index, cursor and result. Required.
+	Tenant string
+	// SearchSchema is the keyword-profile schema whose dirty queue receives
+	// posts as search documents. Empty: posts are not indexed.
+	SearchSchema string
 
 	// Mandatory ports.
 	Identity Identity
 	Authz    Authorizer
-	Entities EntityResolver
+	Resolver ContentResolver
 
 	// Optional ports (nil -> default).
-	Users      UserEnricher     // default: no enrichment (ids only)
-	Moderation Moderation       // default: DefaultModeration
-	Recorder   Recorder         // default: no-op
-	Media      MediaStore       // explicit override; usually leave nil and set Storage
-	Content    ContentProcessor // default: strip tags
+	Users     UserEnricher     // default: no enrichment (ids only)
+	Media     MediaStore       // explicit override; usually leave nil and set Storage
+	Processor ContentProcessor // default: strip tags
 
-	// Storage configures socialkit's built-in S3-backed media store (poll/post
-	// image upload to a public bucket). When set and Media is nil, socialkit owns
-	// file upload itself. See StorageConfig.
+	// Storage configures the built-in S3-backed media store (poll/post image
+	// upload to a public bucket); used when Media is nil. See StorageConfig.
 	Storage *StorageConfig
 
-	// Perms are the host-supplied, opaque permission strings gating privileged
-	// writes (see Perms). An unset perm on a privileged action fails closed.
+	// Perms are the opaque host permission strings gating privileged writes.
 	Perms Perms
 
-	// EntityTypes are the commentable/reactable/favoritable types the host
-	// registers (e.g. "gallery", "video", "post"). Reads/writes on an
-	// unregistered type return 404.
-	EntityTypes []string
+	// ContentKinds are the commentable/reactable/favoritable kinds the host
+	// registers (e.g. "gallery", "video", "post"). Unregistered kinds are 404.
+	ContentKinds []string
 
-	// SkipMigrate skips the self-migration at construction (host runs a central
-	// migrate step). Runtime still validates the schema is present.
-	SkipMigrate bool
-
-	// Logger receives socialkit's access log: each request at DEBUG, and a 500 at
-	// ERROR with its cause (4xx are debug-only, not failures). nil -> slog.Default().
+	// Logger receives the access log: each request at DEBUG, a 500 at ERROR
+	// with its cause. nil -> slog.Default().
 	Logger *slog.Logger
 }
 
-// Runtime is an embedded socialkit instance: shared deps + the module services,
-// exposing one mountable http.Handler.
+// Runtime is one tenant's embedded content module: shared deps + the module
+// services, exposing one mountable http.Handler.
 type Runtime struct {
-	store    *store
-	schema   string
-	identity Identity
-	authz    Authorizer
-	entities EntityResolver
-	users    UserEnricher
-	mod      Moderation
-	rec      Recorder
-	media    MediaStore
-	content  ContentProcessor
-	perms    Perms
-	log      *slog.Logger
-	types    map[string]struct{}
-	// mediaBase absolutizes stored relative media paths (legacy/backfilled rows)
+	store        *store
+	schema       string
+	tenant       string
+	searchSchema string
+	identity     Identity
+	authz        Authorizer
+	resolver     ContentResolver
+	users        UserEnricher
+	media        MediaStore
+	processor    ContentProcessor
+	perms        Perms
+	log          *slog.Logger
+	kinds        map[string]struct{}
+	// mediaBase absolutizes stored relative media paths (backfilled rows)
 	// against the public bucket origin; empty = serve values verbatim.
 	mediaBase string
 
@@ -93,53 +87,50 @@ type Runtime struct {
 	favorites *favorites
 }
 
-// New constructs a Runtime, self-migrates socialkit's schema (unless
-// SkipMigrate), and wires the module services.
+// New constructs a Runtime over a schema the social lineage was applied to
+// (Migrate) and wires the module services.
 func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if opts.Pool == nil {
-		return nil, fmt.Errorf("socialkit: Pool is required")
+		return nil, fmt.Errorf("content: Pool is required")
 	}
-	if opts.Schema == "" {
-		return nil, fmt.Errorf("socialkit: Schema is required")
+	if strings.TrimSpace(opts.Schema) == "" {
+		return nil, fmt.Errorf("content: Schema is required")
 	}
-	if opts.Identity == nil || opts.Authz == nil || opts.Entities == nil {
-		return nil, fmt.Errorf("socialkit: Identity, Authz and Entities ports are required")
+	if strings.TrimSpace(opts.Tenant) == "" {
+		return nil, fmt.Errorf("content: Tenant is required")
 	}
-
+	if opts.Identity == nil || opts.Authz == nil || opts.Resolver == nil {
+		return nil, fmt.Errorf("content: Identity, Authz and Resolver ports are required")
+	}
 	media, err := resolveMedia(opts)
 	if err != nil {
 		return nil, err
 	}
-
 	rt := &Runtime{
-		store:    newStore(opts.Pool, opts.Schema),
-		schema:   opts.Schema,
-		identity: opts.Identity,
-		authz:    opts.Authz,
-		entities: opts.Entities,
-		users:    orDefault[UserEnricher](opts.Users, noopEnricher{}),
-		mod:      orDefault[Moderation](opts.Moderation, &DefaultModeration{}),
-		rec:      orDefault[Recorder](opts.Recorder, noopRecorder{}),
-		media:    media,
-		content:  orDefault[ContentProcessor](opts.Content, stripProcessor{}),
-		perms:    opts.Perms,
-		log:      orDefault[*slog.Logger](opts.Logger, slog.Default()),
-		types:    make(map[string]struct{}, len(opts.EntityTypes)),
+		store:        newStore(opts.Pool, opts.Schema, opts.Tenant),
+		schema:       opts.Schema,
+		tenant:       opts.Tenant,
+		searchSchema: strings.TrimSpace(opts.SearchSchema),
+		identity:     opts.Identity,
+		authz:        opts.Authz,
+		resolver:     opts.Resolver,
+		users:        orDefault[UserEnricher](opts.Users, noopEnricher{}),
+		media:        media,
+		processor:    orDefault[ContentProcessor](opts.Processor, stripProcessor{}),
+		perms:        opts.Perms,
+		log:          orDefault[*slog.Logger](opts.Logger, slog.Default()),
+		kinds:        make(map[string]struct{}, len(opts.ContentKinds)),
 	}
 	if opts.Storage != nil {
 		rt.mediaBase = strings.TrimRight(opts.Storage.PublicBaseURL, "/")
 	}
-	for _, t := range opts.EntityTypes {
-		rt.types[t] = struct{}{}
+	for _, k := range opts.ContentKinds {
+		rt.kinds[k] = struct{}{}
 	}
-
-	if !opts.SkipMigrate {
-		if err := rt.migrate(ctx); err != nil {
-			return nil, err
-		}
+	if err := rt.checkSchema(ctx); err != nil {
+		return nil, err
 	}
-
-	// reactions first — comments and posts reuse its applyTx primitive.
+	// reactions first: comments and posts reuse its applyTx primitive.
 	rt.reactions = newReactions(rt)
 	rt.polls = newPolls(rt)
 	rt.comments = newComments(rt)
@@ -148,28 +139,25 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	return rt, nil
 }
 
-// migrate applies socialkit's migrations into the host schema, idempotently.
-func (rt *Runtime) migrate(ctx context.Context) error {
-	migrations, err := migratekit.LoadFromFS(PostgresMigrations)
-	if err != nil {
-		return fmt.Errorf("socialkit: load migrations: %w", err)
-	}
-	db := stdlib.OpenDBFromPool(rt.store.pool)
-	defer db.Close() // wraps the pool; does not close the host's pool
-	// migratekit's WithSchema sets search_path but does not create the schema;
-	// ensure it exists (no-op for hosts that already own it).
-	if _, err := db.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{rt.schema}.Sanitize()); err != nil {
-		return fmt.Errorf("socialkit: ensure schema: %w", err)
-	}
-	if err := migratekit.NewPostgres(db, MigratekitApp).WithSchema(rt.schema).ApplyMigrations(ctx, migrations); err != nil {
-		return fmt.Errorf("socialkit: apply migrations: %w", err)
+// checkSchema fails construction when the social lineage (incl. the content
+// reference migration) is not applied to the schema.
+func (rt *Runtime) checkSchema(ctx context.Context) error {
+	if _, err := rt.store.pool.Exec(ctx, `SELECT tenant_id, content_kind, content_id, content_version_id FROM `+rt.store.t.counts+` LIMIT 0`); err != nil {
+		return fmt.Errorf("content: schema %q lacks the social lineage (apply contentkit.Migrate): %w", rt.schema, err)
 	}
 	return nil
 }
 
+// Tenant returns the tenant this runtime is scoped to.
+func (rt *Runtime) Tenant() string { return rt.tenant }
+
+// Ref returns a reference to a work of this runtime's tenant.
+func (rt *Runtime) Ref(contentKind, contentID string) contentref.ContentRef {
+	return contentref.New(rt.tenant, contentKind, contentID)
+}
+
 // Handler returns the mountable http.Handler. The host mounts it under a prefix
-// (e.g. "/api/social/") after its own auth middleware has populated identity
-// into the request context. socialkit ships no middleware.
+// (e.g. "/api/social/") after its own auth middleware populated the identity.
 func (rt *Runtime) Handler() http.Handler {
 	mux := http.NewServeMux()
 	rt.reactions.mount(mux)
@@ -180,91 +168,108 @@ func (rt *Runtime) Handler() http.Handler {
 	return rt.accessLog(mux)
 }
 
-// accessLog logs each request at DEBUG, and a 500 at ERROR with its cause. 4xx are
-// expected client outcomes, logged only at debug.
+// accessLog logs each request at DEBUG, and a 500 at ERROR with its cause.
 func (rt *Runtime) accessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		start := time.Now()
 		next.ServeHTTP(sw, r)
-		attrs := []any{
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", sw.status,
-			"duration", time.Since(start),
-		}
+		attrs := []any{"method", r.Method, "path", r.URL.Path, "status", sw.status, "duration", time.Since(start)}
 		if sw.status >= http.StatusInternalServerError {
 			if sw.internalErr != nil {
 				attrs = append(attrs, "err", sw.internalErr.Error())
 			}
-			rt.log.Error("socialkit request failed", attrs...)
+			rt.log.Error("content request failed", attrs...)
 			return
 		}
-		rt.log.Debug("socialkit request", attrs...)
+		rt.log.Debug("content request", attrs...)
 	})
 }
 
-// --- shared handler helpers used by every module ---
+// --- shared helpers used by every module ---
 
-var entityTypeRe = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+var contentKindRe = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
 
-func (rt *Runtime) isRegistered(entityType string) bool {
-	_, ok := rt.types[entityType]
+func (rt *Runtime) isRegistered(kind string) bool {
+	_, ok := rt.kinds[kind]
 	return ok
 }
 
-// gate resolves a target and enforces the required access level. It returns a
-// sentinel error (ErrNotFound/ErrNotVisible/ErrForbidden) that writeErr maps to
-// status, or the resolver's own error. The returned ref carries the resolver's
-// CANONICAL identity (e.g. "slug-123" -> "123:en"); callers MUST store/query by
-// ref.Type/ref.ID, never the caller-supplied key, so aliases can't fragment
-// rows. A resolver that leaves Type/ID empty keeps the caller-supplied key.
-func (rt *Runtime) gate(ctx context.Context, entityType, entityID string, actor Actor, needAccessible bool) (EntityRef, error) {
-	if !entityTypeRe.MatchString(entityType) || !rt.isRegistered(entityType) {
-		return EntityRef{}, ErrNotFound
+// checkRef pins a caller-supplied reference to this tenant.
+func (rt *Runtime) checkRef(ref contentref.ContentRef) error {
+	if err := ref.Validate(); err != nil {
+		return badRequest("%v", err)
 	}
-	if entityID == "" {
-		return EntityRef{}, ErrNotFound
+	if ref.TenantID != rt.tenant {
+		return ErrTenant
 	}
-	ref, err := rt.entities.Resolve(ctx, entityType, entityID, actor)
+	return nil
+}
+
+// canonicalRef merges the resolver's verdict into the requested reference: a
+// zero Ref keeps the request, a foreign tenant is refused.
+func (rt *Runtime) canonicalRef(requested, resolved contentref.ContentRef) (contentref.ContentRef, error) {
+	if resolved.ContentID == "" {
+		return requested, nil
+	}
+	if resolved.TenantID == "" {
+		resolved.TenantID = rt.tenant
+	}
+	if resolved.ContentKind == "" {
+		resolved.ContentKind = requested.ContentKind
+	}
+	if err := rt.checkRef(resolved); err != nil {
+		return contentref.ContentRef{}, err
+	}
+	return resolved, nil
+}
+
+// gate resolves a route target and enforces the required access level. The
+// returned reference is the resolver's canonical identity; callers store and
+// query by it, never by the caller-supplied key, so aliases cannot fragment rows.
+func (rt *Runtime) gate(ctx context.Context, kind, id string, actor Actor, needAccessible bool) (contentref.ContentRef, error) {
+	if !contentKindRe.MatchString(kind) || !rt.isRegistered(kind) || id == "" {
+		return contentref.ContentRef{}, ErrNotFound
+	}
+	requested := rt.Ref(kind, id)
+	res, err := rt.resolver.Resolve(ctx, requested, actor)
 	if err != nil {
-		return EntityRef{}, err
+		return contentref.ContentRef{}, err
 	}
-	if ref.Type == "" {
-		ref.Type = entityType
+	ref, err := rt.canonicalRef(requested, res.Ref)
+	if err != nil {
+		return contentref.ContentRef{}, err
 	}
-	if ref.ID == "" {
-		ref.ID = entityID
+	if !res.Visible {
+		return contentref.ContentRef{}, ErrNotVisible
 	}
-	if !ref.Visible {
-		return EntityRef{}, ErrNotVisible
-	}
-	if needAccessible && !ref.Accessible {
-		return EntityRef{}, ErrForbidden
+	if needAccessible && !res.Accessible {
+		return contentref.ContentRef{}, ErrForbidden
 	}
 	return ref, nil
 }
 
 // canonical maps a caller-supplied key to the resolver's canonical one for
-// paths that must succeed even when the target is hidden (e.g. un-wishlisting
+// paths that must succeed even when the target is hidden (un-wishlisting
 // deleted content): a resolve failure falls back to the raw key.
-func (rt *Runtime) canonical(ctx context.Context, entityType, entityID string, actor Actor) (string, string) {
-	if !entityTypeRe.MatchString(entityType) || !rt.isRegistered(entityType) || entityID == "" {
-		return entityType, entityID
+func (rt *Runtime) canonical(ctx context.Context, kind, id string, actor Actor) contentref.ContentRef {
+	requested := rt.Ref(kind, id)
+	if !contentKindRe.MatchString(kind) || !rt.isRegistered(kind) || id == "" {
+		return requested
 	}
-	ref, err := rt.entities.Resolve(ctx, entityType, entityID, actor)
-	if err != nil || ref.ID == "" {
-		return entityType, entityID
+	res, err := rt.resolver.Resolve(ctx, requested, actor)
+	if err != nil {
+		return requested
 	}
-	if ref.Type == "" {
-		ref.Type = entityType
+	ref, err := rt.canonicalRef(requested, res.Ref)
+	if err != nil {
+		return requested
 	}
-	return ref.Type, ref.ID
+	return ref
 }
 
 // requirePerm is fail-closed: an unset perm, a denied check, or a check error
-// all deny. authkit resolves a human's authority server-side and that can fail;
-// an error must never become "allowed".
+// all deny.
 func (rt *Runtime) requirePerm(ctx context.Context, actor Actor, perm string) error {
 	if perm == "" {
 		return errForbidden
@@ -276,8 +281,8 @@ func (rt *Runtime) requirePerm(ctx context.Context, actor Actor, perm string) er
 	return nil
 }
 
-// absMediaURL absolutizes a stored relative media path (legacy/backfilled data)
-// against the public bucket origin; absolute URLs and unset values pass through.
+// absMediaURL absolutizes a stored relative media path against the public
+// bucket origin; absolute URLs and unset values pass through.
 func (rt *Runtime) absMediaURL(u string) string {
 	if u == "" || rt.mediaBase == "" || strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
 		return u

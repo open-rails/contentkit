@@ -1,17 +1,16 @@
-package socialkit
+package content
 
 import (
 	"context"
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/open-rails/contentkit/contentref"
 )
 
-// favorites is the user-only bookmark (wishlist): an unsigned presence over the
-// polymorphic key. KEY DISTINCTION vs reactions: a favorite requires the target
-// be VISIBLE only, NOT accessible — you can wishlist premium content you don't
-// own yet. No anonymous favorites (the row is keyed on user_id alone).
+// favorites is the user-only bookmark (wishlist): an unsigned presence over a
+// content key. A favorite requires the target be VISIBLE only, not accessible:
+// premium content can be wishlisted before it is owned. No anonymous favorites.
 type favorites struct {
 	rt *Runtime
 	s  *store
@@ -21,121 +20,83 @@ func newFavorites(rt *Runtime) *favorites {
 	return &favorites{rt: rt, s: rt.store}
 }
 
-// EntityKey is a polymorphic target for the batch favorite lookup.
-type EntityKey struct {
-	Type string `json:"entity_type"`
-	ID   string `json:"entity_id"`
-}
-
 // FavoriteItem is one row of the caller's wishlist (newest-first on list).
 type FavoriteItem struct {
-	EntityType string    `json:"entity_type"`
-	EntityID   string    `json:"entity_id"`
-	CreatedAt  time.Time `json:"created_at"`
+	contentref.ContentRef
+	CreatedAt time.Time `json:"created_at"`
 }
 
-// add gates on visibility ONLY (needAccessible=false) so a premium-locked but
-// visible entity can be wishlisted, then idempotently inserts and emits the
-// discovery signal. Re-favoriting is a no-op success (ON CONFLICT DO NOTHING).
-func (f *favorites) add(ctx context.Context, actor Actor, entityType, entityID string) error {
-	ref, err := f.rt.gate(ctx, entityType, entityID, actor, false)
+// add gates on visibility only, then idempotently inserts under the canonical
+// reference. Re-favoriting is a no-op success.
+func (f *favorites) add(ctx context.Context, actor Actor, kind, id string) error {
+	ref, err := f.rt.gate(ctx, kind, id, actor, false)
 	if err != nil {
 		return err
 	}
-	entityType, entityID = ref.Type, ref.ID // store under the canonical key
+	key := ref.Key()
 	tx, err := f.s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	tag, err := tx.Exec(ctx, `INSERT INTO `+f.s.t.favorites+`
-		(user_id, entity_type, entity_id) VALUES ($1, $2, $3)
-		ON CONFLICT (user_id, entity_type, entity_id) DO NOTHING`,
-		actor.ID, entityType, entityID)
+	tag, err := tx.Exec(ctx, `INSERT INTO `+f.s.t.favorites+` (`+keyCols+`, user_id) VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (tenant_id, user_id, content_kind, content_id, content_version_id) DO NOTHING`,
+		append(keyArgs(key), actor.ID)...)
 	if err != nil {
 		return err
 	}
-	changed := tag.RowsAffected() == 1
-	if changed { // only a real new favorite bumps the rollup
-		if err := bumpCounts(ctx, tx, f.s, entityType, entityID, 0, 0, 1, 0); err != nil {
+	if tag.RowsAffected() == 1 { // only a real new favorite bumps the rollup
+		if err := bumpCounts(ctx, tx, f.s, key, 0, 0, 1, 0); err != nil {
 			return err
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-	if changed {
-		f.rt.rec.Reaction(ctx, ReactionSignal{
-			EntityType: entityType, EntityID: entityID, ActorID: actor.ID, EventID: uuid.NewString(), Kind: "favorite", Delta: 0,
-		})
-	}
-	return nil
+	return tx.Commit(ctx)
 }
 
-// remove deletes the caller's bookmark (idempotent — no row is a no-op success)
-// and emits the unfavorite signal. No visibility gate: un-wishlisting content
-// that later became hidden must still work.
-func (f *favorites) remove(ctx context.Context, actor Actor, entityType, entityID string) error {
-	// Canonicalize when possible; falls back to the raw key so un-wishlisting
-	// content the resolver can no longer see still works.
-	entityType, entityID = f.rt.canonical(ctx, entityType, entityID, actor)
+// remove deletes the caller's bookmark (idempotent). No visibility gate:
+// un-wishlisting content that later became hidden must still work.
+func (f *favorites) remove(ctx context.Context, actor Actor, kind, id string) error {
+	key := f.rt.canonical(ctx, kind, id, actor).Key()
 	tx, err := f.s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	tag, err := tx.Exec(ctx, `DELETE FROM `+f.s.t.favorites+`
-		WHERE user_id = $1 AND entity_type = $2 AND entity_id = $3`,
-		actor.ID, entityType, entityID)
+	tag, err := tx.Exec(ctx, `DELETE FROM `+f.s.t.favorites+` WHERE `+keyPred(1)+` AND user_id = $5`, append(keyArgs(key), actor.ID)...)
 	if err != nil {
 		return err
 	}
-	changed := tag.RowsAffected() == 1
-	if changed { // only a real removal decrements the rollup
-		if err := bumpCounts(ctx, tx, f.s, entityType, entityID, 0, 0, -1, 0); err != nil {
+	if tag.RowsAffected() == 1 { // only a real removal decrements the rollup
+		if err := bumpCounts(ctx, tx, f.s, key, 0, 0, -1, 0); err != nil {
 			return err
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-	if changed {
-		f.rt.rec.Reaction(ctx, ReactionSignal{
-			EntityType: entityType, EntityID: entityID, ActorID: actor.ID, EventID: uuid.NewString(), Kind: "unfavorite", Delta: 0,
-		})
-	}
-	return nil
+	return tx.Commit(ctx)
 }
 
-// IsFavorited batch-reports which of targets the user has bookmarked. Every
-// requested key is present in the map (absent bookmarks => false). Batch-shaped:
-// the status endpoint is just a slice of one.
-func (f *favorites) IsFavorited(ctx context.Context, userID string, targets []EntityKey) (map[EntityKey]bool, error) {
-	out := make(map[EntityKey]bool, len(targets))
-	for _, k := range targets {
-		out[k] = false
+// IsFavorited batch-reports which of refs the user has bookmarked. Every
+// requested key is present in the map (absent bookmarks => false).
+func (f *favorites) IsFavorited(ctx context.Context, userID string, refs []contentref.ContentRef) (map[contentref.ContentKey]bool, error) {
+	out := make(map[contentref.ContentKey]bool, len(refs))
+	for _, r := range refs {
+		if err := f.rt.checkRef(r); err != nil {
+			return nil, err
+		}
+		out[r.Key()] = false
 	}
-	if userID == "" || len(targets) == 0 {
+	if userID == "" || len(refs) == 0 {
 		return out, nil
 	}
-	types := make([]string, len(targets))
-	ids := make([]string, len(targets))
-	for i, k := range targets {
-		types[i], ids[i] = k.Type, k.ID
-	}
-	// unnest pairs the type/id arrays positionally so one round-trip checks all
-	// (avoids cross-matching type_a with id_b that a plain IN would allow).
-	rows, err := f.s.pool.Query(ctx, `SELECT entity_type, entity_id FROM `+f.s.t.favorites+`
-		WHERE user_id = $1 AND (entity_type, entity_id) IN (
-			SELECT * FROM unnest($2::text[], $3::text[]))`,
-		userID, types, ids)
+	kinds, ids, versions := refColumns(refs)
+	rows, err := f.s.pool.Query(ctx, `SELECT content_kind, content_id, content_version_id FROM `+f.s.t.favorites+`
+		WHERE tenant_id = $1 AND user_id = $2 AND `+refsIn(3), f.s.tenant, userID, kinds, ids, versions)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var k EntityKey
-		if err := rows.Scan(&k.Type, &k.ID); err != nil {
+		k := contentref.ContentKey{TenantID: f.s.tenant}
+		if err := rows.Scan(&k.ContentKind, &k.ContentID, &k.ContentVersionID); err != nil {
 			return nil, err
 		}
 		out[k] = true
@@ -145,11 +106,10 @@ func (f *favorites) IsFavorited(ctx context.Context, userID string, targets []En
 
 // list returns the caller's favorites, most recent first, paginated.
 func (f *favorites) list(ctx context.Context, userID string, limit, offset int) ([]FavoriteItem, error) {
-	rows, err := f.s.pool.Query(ctx, `SELECT entity_type, entity_id, created_at
-		FROM `+f.s.t.favorites+`
-		WHERE user_id = $1
-		ORDER BY created_at DESC, entity_type, entity_id
-		LIMIT $2 OFFSET $3`, userID, limit, offset)
+	rows, err := f.s.pool.Query(ctx, `SELECT content_kind, content_id, content_version_id, created_at
+		FROM `+f.s.t.favorites+` WHERE tenant_id = $1 AND user_id = $2
+		ORDER BY created_at DESC, content_kind, content_id, content_version_id
+		LIMIT $3 OFFSET $4`, f.s.tenant, userID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -157,9 +117,11 @@ func (f *favorites) list(ctx context.Context, userID string, limit, offset int) 
 	items := make([]FavoriteItem, 0, min(limit, 128)) // limit can be MaxInt32 ("all")
 	for rows.Next() {
 		var it FavoriteItem
-		if err := rows.Scan(&it.EntityType, &it.EntityID, &it.CreatedAt); err != nil {
+		var kind, id, version string
+		if err := rows.Scan(&kind, &id, &version, &it.CreatedAt); err != nil {
 			return nil, err
 		}
+		it.ContentRef = contentref.NewVersion(f.s.tenant, kind, id, version)
 		items = append(items, it)
 	}
 	return items, rows.Err()
@@ -169,9 +131,9 @@ func (f *favorites) list(ctx context.Context, userID string, limit, offset int) 
 
 func (f *favorites) mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /favorites", f.handleList)
-	mux.HandleFunc("POST /{type}/{id}/favorite", f.handleAdd)
-	mux.HandleFunc("DELETE /{type}/{id}/favorite", f.handleRemove)
-	mux.HandleFunc("GET /{type}/{id}/favorite", f.handleStatus)
+	mux.HandleFunc("POST /{kind}/{id}/favorite", f.handleAdd)
+	mux.HandleFunc("DELETE /{kind}/{id}/favorite", f.handleRemove)
+	mux.HandleFunc("GET /{kind}/{id}/favorite", f.handleStatus)
 }
 
 func (f *favorites) handleAdd(w http.ResponseWriter, req *http.Request) {
@@ -180,8 +142,7 @@ func (f *favorites) handleAdd(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	entityType, entityID := req.PathValue("type"), req.PathValue("id")
-	if err := f.add(req.Context(), actor, entityType, entityID); err != nil {
+	if err := f.add(req.Context(), actor, req.PathValue("kind"), req.PathValue("id")); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -194,8 +155,7 @@ func (f *favorites) handleRemove(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	entityType, entityID := req.PathValue("type"), req.PathValue("id")
-	if err := f.remove(req.Context(), actor, entityType, entityID); err != nil {
+	if err := f.remove(req.Context(), actor, req.PathValue("kind"), req.PathValue("id")); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -208,14 +168,13 @@ func (f *favorites) handleStatus(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	entityType, entityID := f.rt.canonical(req.Context(), req.PathValue("type"), req.PathValue("id"), actor)
-	key := EntityKey{Type: entityType, ID: entityID}
-	m, err := f.IsFavorited(req.Context(), actor.ID, []EntityKey{key})
+	ref := f.rt.canonical(req.Context(), req.PathValue("kind"), req.PathValue("id"), actor)
+	m, err := f.IsFavorited(req.Context(), actor.ID, []contentref.ContentRef{ref})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"favorited": m[key]})
+	writeJSON(w, http.StatusOK, map[string]bool{"favorited": m[ref.Key()]})
 }
 
 func (f *favorites) handleList(w http.ResponseWriter, req *http.Request) {

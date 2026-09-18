@@ -1,7 +1,8 @@
 # contentkit
 
 `contentkit` is the deterministic content library for the Doujins, Hentai0
-and marketplace hosts: tenant-scoped **keyword search** over host content, the
+and marketplace hosts: tenant-scoped **interactions** (posts, comments,
+reactions, favorites, polls), **keyword search** over host content, the
 ClickHouse **signal plane** (consumption, feedback, exposures, popularity,
 erasure) and the **discovery reads** over both. It needs no model provider,
 API key or vector extension. Probabilistic features (semantic ranking,
@@ -30,32 +31,46 @@ another tenant is an error, never remapped.
 | Package | Owns |
 |---|---|
 | `contentref` | `ContentRef`, `ContentKey`, `TaxonomyID` |
+| `content` | posts, comments, reactions, favorites, polls and their counts over `ContentRef`, in the host schema's `social_*` tables; the `Identity`/`Authorizer`/`ContentResolver`/`UserEnricher`/`MediaStore`/`ContentProcessor` ports and the HTTP routes |
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
 | `worker` | one tenant's document maintenance: dirty queue, bounded backfill, sink delivery |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
 | `eval` | lexical golden-case evaluation, reports, baselines |
-| `migrations` | the three migratekit lineages |
-| root | `Client` (search + typeahead + semantic fusion), `EmbeddedHub` (signal + discovery), the `SemanticRanker` port |
+| `migrations` | the four migratekit lineages (social, keyword, legacy keyword, signal) |
+| root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (every lineage), `Client` (search + typeahead + semantic fusion), `EmbeddedHub` (signal + discovery), the `SemanticRanker` port |
 
 ## Install
 
-Apply the keyword profile with migratekit into the host schema (PGroonga and
-pg_trgm required, no vector extension) and the signal lineage into a
-dedicated ClickHouse database:
+One call applies the social lineage into the host schema, the keyword profile
+into the search schema (PGroonga and pg_trgm required, no vector extension)
+and the signal lineage into a dedicated ClickHouse database:
 
 ```go
-migs, _ := migratekit.LoadFromFS(migrations.Postgres)
-m := migratekit.NewPostgres(sqlDB, "contentkit").WithSchema(schema)
-_ = m.ApplyMigrations(ctx, migs)
-
 _ = signal.CreateDatabase(ctx, adminCH, "hub", cluster)
-ch := chmigrate.New(&chmigrate.Config{ClientAddr: addr, Database: "hub", App: "contentkit_signal", Cluster: cluster, PostgresDB: sqlDB})
-chmigs, _ := migratekit.LoadFromFS(migrations.SignalClickHouse)
-_ = ch.ApplyMigrations(ctx, chmigs)
+_ = contentkit.Migrate(ctx, contentkit.MigrateConfig{
+	DB: sqlDB, Schema: "doujins", SearchSchema: "doujins_searchkit",
+	ClickHouse: &chmigrate.Config{ClientAddr: addr, Database: "hub", App: "contentkit_signal", Cluster: cluster},
+})
+_, _ = content.AssignTenant(ctx, pool, "doujins", "doujins") // once, after the first migrate on an existing install
 ```
 
-Existing installations keep their lineage (`migrations.LegacyPostgres`,
-`searchkit_signal`); see [docs/migration.md](docs/migration.md).
+Existing installations keep their lineages (`socialkit`, `searchkit`/
+`migrations.LegacyPostgres`, `searchkit_signal`); see [docs/migration.md](docs/migration.md).
+
+## Runtime
+
+```go
+rt, _ := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
+	EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: "doujins_searchkit", Tenant: "doujins", CH: ch, CHDatabase: "hub"},
+	Content: content.Options{Schema: "doujins", Identity: identity, Authz: authz, Resolver: resolver, ContentKinds: []string{"gallery", "post"}},
+})
+mux.Handle("/api/social/", http.StripPrefix("/api/social", rt.Handler()))
+counts, _ := rt.Content.Counts(ctx, []contentkit.ContentRef{rt.Content.Ref("gallery", "42")})
+_ = worker.SyncOnce(ctx, rt.WorkerOptions(hostWorkerOptions)) // host documents + posts
+```
+
+`rt` is the `Hub` (search, typeahead, signals, discovery) plus `rt.Content`
+(interactions). See [HOST_INTEGRATION.md](HOST_INTEGRATION.md).
 
 ## Search
 

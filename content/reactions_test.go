@@ -1,4 +1,4 @@
-package socialkit
+package content
 
 import (
 	"context"
@@ -8,13 +8,13 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/google/uuid"
+	"github.com/open-rails/contentkit/contentref"
 )
 
 func TestReactions_TransitionsAndCounts(t *testing.T) {
 	res := &fakeResolver{}
 	res.set("widget", "1", true, true)
-	rt, _ := newTestRuntime(t, Options{Entities: res, EntityTypes: []string{"widget"}})
+	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	ctx := context.Background()
 	actor := Actor{ID: "u1", Kind: "user"}
 
@@ -25,22 +25,21 @@ func TestReactions_TransitionsAndCounts(t *testing.T) {
 		}
 	}
 	must(reactErr(rt.reactions.react(ctx, actor, "widget", "1", 1))) // like
-	assertCounts(t, rt, actor, "widget", "1", 1, 0, 1)
+	assertCounts(t, rt, actor, ref("widget", "1"), 1, 0, 1)
 	must(reactErr(rt.reactions.react(ctx, actor, "widget", "1", -1))) // switch to dislike
-	assertCounts(t, rt, actor, "widget", "1", 0, 1, -1)
+	assertCounts(t, rt, actor, ref("widget", "1"), 0, 1, -1)
 	must(reactErr(rt.reactions.react(ctx, actor, "widget", "1", 0))) // neutral (not delete)
-	assertCounts(t, rt, actor, "widget", "1", 0, 0, 0)
+	assertCounts(t, rt, actor, ref("widget", "1"), 0, 0, 0)
 
 	// second distinct user likes -> independent row
 	must(reactErr(rt.reactions.react(ctx, Actor{ID: "u2", Kind: "user"}, "widget", "1", 1)))
-	assertCounts(t, rt, actor, "widget", "1", 1, 0, 0) // u1 still neutral, one like total
+	assertCounts(t, rt, actor, ref("widget", "1"), 1, 0, 0)
 }
 
 func TestReactions_ConcurrentDoubleLikeIsExact(t *testing.T) {
 	res := &fakeResolver{}
 	res.set("widget", "42", true, true)
-	recorder := &recordingRecorder{}
-	rt, _ := newTestRuntime(t, Options{Entities: res, EntityTypes: []string{"widget"}, Recorder: recorder})
+	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	actor := Actor{ID: "racer", Kind: "user"}
 
 	var wg sync.WaitGroup
@@ -60,18 +59,14 @@ func TestReactions_ConcurrentDoubleLikeIsExact(t *testing.T) {
 		}
 	}
 	// 20 concurrent identical likes from one actor => exactly one like.
-	assertCounts(t, rt, actor, "widget", "42", 1, 0, 1)
-	if got := recorder.reactionCount(); got != 1 {
-		t.Fatalf("recorder signals = %d, want exactly 1", got)
-	}
-	assertValidEventID(t, recorder.reactionSignals()[0].EventID)
+	assertCounts(t, rt, actor, ref("widget", "42"), 1, 0, 1)
 }
 
 func TestReactions_GatingRejectsInaccessibleAndMissing(t *testing.T) {
 	res := &fakeResolver{}
 	res.set("widget", "locked", true, false)  // visible but premium-locked
 	res.set("widget", "hidden", false, false) // unpublished/deleted
-	rt, _ := newTestRuntime(t, Options{Entities: res, EntityTypes: []string{"widget"}})
+	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	ctx := context.Background()
 	actor := Actor{ID: "u1", Kind: "user"}
 
@@ -85,14 +80,14 @@ func TestReactions_GatingRejectsInaccessibleAndMissing(t *testing.T) {
 		t.Fatalf("react on missing: want ErrNotFound, got %v", err)
 	}
 	if err := reactErr(rt.reactions.react(ctx, actor, "unregistered", "1", 1)); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("react on unregistered type: want ErrNotFound, got %v", err)
+		t.Fatalf("react on unregistered kind: want ErrNotFound, got %v", err)
 	}
 }
 
 func TestReactions_AnonymousDedupByIP(t *testing.T) {
 	res := &fakeResolver{}
 	res.set("widget", "1", true, true)
-	rt, _ := newTestRuntime(t, Options{Entities: res, EntityTypes: []string{"widget"}})
+	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	ctx := context.Background()
 	anon := Actor{IP: "10.0.0.1", Anonymous: true}
 
@@ -102,7 +97,7 @@ func TestReactions_AnonymousDedupByIP(t *testing.T) {
 	if err := reactErr(rt.reactions.react(ctx, anon, "widget", "1", 1)); err != nil {
 		t.Fatalf("anon re-like: %v", err)
 	}
-	assertCounts(t, rt, anon, "widget", "1", 1, 0, 1) // one like from the IP
+	assertCounts(t, rt, anon, ref("widget", "1"), 1, 0, 1) // one like from the IP
 
 	// unidentifiable actor (no id, no ip) is rejected
 	if err := reactErr(rt.reactions.react(ctx, Actor{Anonymous: true}, "widget", "1", 1)); err == nil {
@@ -110,163 +105,28 @@ func TestReactions_AnonymousDedupByIP(t *testing.T) {
 	}
 }
 
-func TestReactions_RecorderSignalEmitted(t *testing.T) {
+// A failing transaction leaves no reaction row behind.
+func TestReactions_TransactionErrorRollsBack(t *testing.T) {
 	res := &fakeResolver{}
 	res.set("widget", "1", true, true)
-	rec := &recordingRecorder{}
-	rt, _ := newTestRuntime(t, Options{Entities: res, EntityTypes: []string{"widget"}, Recorder: rec})
-	if err := reactErr(rt.reactions.react(context.Background(), Actor{ID: "u1"}, "widget", "1", 1)); err != nil {
-		t.Fatalf("react: %v", err)
-	}
-	if rec.reactionCount() != 1 {
-		t.Fatalf("recorder signals = %d, want 1", rec.reactionCount())
-	}
-	if got := rec.reactionSignals()[0]; got.Kind != "like" || got.Delta != 1 {
-		t.Fatalf("recorder signal = %+v, want like delta +1", got)
-	}
-}
-
-func TestReactions_RecorderTransitionDeltas(t *testing.T) {
-	tests := []struct {
-		name      string
-		previous  int16
-		next      int16
-		wantKind  string
-		wantDelta int16
-	}{
-		{name: "neutral to like", previous: 0, next: 1, wantKind: "like", wantDelta: 1},
-		{name: "like to neutral", previous: 1, next: 0, wantKind: "neutral", wantDelta: -1},
-		{name: "neutral to dislike", previous: 0, next: -1, wantKind: "dislike", wantDelta: -1},
-		{name: "dislike to neutral", previous: -1, next: 0, wantKind: "neutral", wantDelta: 1},
-		{name: "like to dislike", previous: 1, next: -1, wantKind: "dislike", wantDelta: -2},
-		{name: "dislike to like", previous: -1, next: 1, wantKind: "like", wantDelta: 2},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			res := &fakeResolver{}
-			res.set("widget", "1", true, true)
-			rec := &recordingRecorder{}
-			rt, _ := newTestRuntime(t, Options{Entities: res, EntityTypes: []string{"widget"}, Recorder: rec})
-			actor := Actor{ID: "u1", Kind: "user"}
-
-			if err := reactErr(rt.reactions.react(context.Background(), actor, "widget", "1", tt.previous)); err != nil {
-				t.Fatalf("set previous reaction: %v", err)
-			}
-			rec.resetReactions()
-			if err := reactErr(rt.reactions.react(context.Background(), actor, "widget", "1", tt.next)); err != nil {
-				t.Fatalf("transition reaction: %v", err)
-			}
-
-			signals := rec.reactionSignals()
-			if len(signals) != 1 {
-				t.Fatalf("recorder signals = %d, want 1", len(signals))
-			}
-			if signals[0].Kind != tt.wantKind || signals[0].Delta != tt.wantDelta {
-				t.Fatalf("recorder signal = %+v, want kind=%q delta=%d", signals[0], tt.wantKind, tt.wantDelta)
-			}
-			assertValidEventID(t, signals[0].EventID)
-		})
-	}
-}
-
-func TestReactions_RecorderAssignsDistinctTransitionIDs(t *testing.T) {
-	res := &fakeResolver{}
-	res.set("widget", "1", true, true)
-	recorder := &recordingRecorder{}
-	rt, _ := newTestRuntime(t, Options{Entities: res, EntityTypes: []string{"widget"}, Recorder: recorder})
-	actor := Actor{ID: "u1", Kind: "user"}
-
-	for _, value := range []int16{1, 0, 1} {
-		if err := reactErr(rt.reactions.react(context.Background(), actor, "widget", "1", value)); err != nil {
-			t.Fatalf("react with value %d: %v", value, err)
-		}
-	}
-
-	signals := recorder.reactionSignals()
-	if len(signals) != 3 {
-		t.Fatalf("recorder signals = %d, want 3", len(signals))
-	}
-	seen := make(map[string]struct{}, len(signals))
-	for _, recorded := range signals {
-		assertValidEventID(t, recorded.EventID)
-		if _, exists := seen[recorded.EventID]; exists {
-			t.Fatalf("duplicate event ID %q", recorded.EventID)
-		}
-		seen[recorded.EventID] = struct{}{}
-	}
-}
-
-func TestReactions_RecorderSkipsNoOp(t *testing.T) {
-	res := &fakeResolver{}
-	res.set("widget", "1", true, true)
-	rec := &recordingRecorder{}
-	rt, _ := newTestRuntime(t, Options{Entities: res, EntityTypes: []string{"widget"}, Recorder: rec})
-	actor := Actor{ID: "u1", Kind: "user"}
-
-	if err := reactErr(rt.reactions.react(context.Background(), actor, "widget", "1", 0)); err != nil {
-		t.Fatalf("initial neutral reaction: %v", err)
-	}
-	if err := reactErr(rt.reactions.react(context.Background(), actor, "widget", "1", 0)); err != nil {
-		t.Fatalf("repeated neutral reaction: %v", err)
-	}
-	if got := rec.reactionCount(); got != 0 {
-		t.Fatalf("recorder signals after neutral no-ops = %d, want 0", got)
-	}
-	if err := reactErr(rt.reactions.react(context.Background(), actor, "widget", "1", 1)); err != nil {
-		t.Fatalf("like reaction: %v", err)
-	}
-	if err := reactErr(rt.reactions.react(context.Background(), actor, "widget", "1", 1)); err != nil {
-		t.Fatalf("repeated like reaction: %v", err)
-	}
-	if got := rec.reactionCount(); got != 1 {
-		t.Fatalf("recorder signals after repeated like = %d, want 1", got)
-	}
-	assertValidEventID(t, rec.reactionSignals()[0].EventID)
-}
-
-func TestReactions_RecorderObservesCommittedState(t *testing.T) {
-	res := &fakeResolver{}
-	res.set("widget", "1", true, true)
-	recorder := &committedStateRecorder{}
-	rt, pool := newTestRuntime(t, Options{Entities: res, EntityTypes: []string{"widget"}, Recorder: recorder})
-	recorder.pool = pool
-
-	if err := reactErr(rt.reactions.react(context.Background(), Actor{ID: "u1"}, "widget", "1", 1)); err != nil {
-		t.Fatalf("react: %v", err)
-	}
-	recorder.assertVisible(t, 1)
-	assertValidEventID(t, recorder.reactionSignals()[0].EventID)
-}
-
-func assertValidEventID(t *testing.T, eventID string) {
-	t.Helper()
-	if _, err := uuid.Parse(eventID); err != nil {
-		t.Fatalf("event ID %q is not a valid UUID: %v", eventID, err)
-	}
-}
-
-func TestReactions_RecorderSkipsTransactionError(t *testing.T) {
-	res := &fakeResolver{}
-	res.set("widget", "1", true, true)
-	recorder := &recordingRecorder{}
-	rt, pool := newTestRuntime(t, Options{Entities: res, EntityTypes: []string{"widget"}, Recorder: recorder})
-	if _, err := pool.Exec(context.Background(), `DROP TABLE hostapp.social_entity_counts`); err != nil {
+	rt, pool := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `DROP TABLE `+rt.store.t.counts); err != nil {
 		t.Fatalf("drop counts table: %v", err)
 	}
-
-	if err := reactErr(rt.reactions.react(context.Background(), Actor{ID: "u1"}, "widget", "1", 1)); err == nil {
+	if err := reactErr(rt.reactions.react(ctx, Actor{ID: "u1"}, "widget", "1", 1)); err == nil {
 		t.Fatal("react error = nil, want transaction failure")
 	}
-	if got := recorder.reactionCount(); got != 0 {
-		t.Fatalf("recorder signals = %d, want 0 after rollback", got)
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.reactions).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("reaction rows after rollback = %d err=%v, want 0", n, err)
 	}
 }
 
 func TestReactions_HTTPRoute(t *testing.T) {
 	res := &fakeResolver{}
 	res.set("widget", "1", true, true)
-	rt, _ := newTestRuntime(t, Options{Entities: res, EntityTypes: []string{"widget"}})
+	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	h := rt.Handler()
 
 	req := httptest.NewRequest("POST", "/widget/1/like", nil)
@@ -276,11 +136,17 @@ func TestReactions_HTTPRoute(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST like: status %d, body %s", rec.Code, rec.Body.String())
 	}
+	req = httptest.NewRequest("GET", "/widget/ghost/reaction", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET unknown reaction: status %d, want 404", rec.Code)
+	}
 }
 
-func assertCounts(t *testing.T, rt *Runtime, actor Actor, entityType, id string, wantLikes, wantDislikes int, wantMine int16) {
+func assertCounts(t *testing.T, rt *Runtime, actor Actor, r contentref.ContentRef, wantLikes, wantDislikes int, wantMine int16) {
 	t.Helper()
-	c, err := rt.reactions.counts(context.Background(), rt.store.pool, actor, entityType, id)
+	c, err := rt.reactions.counts(context.Background(), rt.store.pool, actor, r.Key())
 	if err != nil {
 		t.Fatalf("counts: %v", err)
 	}

@@ -1,18 +1,19 @@
-package socialkit
+package content
 
 import "errors"
 
-// Sentinel errors an EntityResolver returns to gate a target. socialkit maps
-// them to HTTP status and never leaks which one to unauthorized callers beyond
-// the status code.
+// Sentinel errors a ContentResolver returns to gate a target; mapped to HTTP
+// status without leaking which one beyond the code.
 var (
-	// ErrNotFound: the (type,id) does not exist. -> 404
-	ErrNotFound = errors.New("socialkit: entity not found")
+	// ErrNotFound: the reference does not exist. -> 404
+	ErrNotFound = errors.New("content: not found")
 	// ErrNotVisible: exists but unpublished or soft-deleted. -> 404 (hidden).
-	ErrNotVisible = errors.New("socialkit: entity not visible")
-	// ErrForbidden: visible but the actor may not consume it (premium-locked). -> 403
-	ErrForbidden = errors.New("socialkit: entity not accessible")
+	ErrNotVisible = errors.New("content: not visible")
+	// ErrForbidden: visible but the actor may not consume it. -> 403
+	ErrForbidden = errors.New("content: not accessible")
+	// ErrTenant: a reference of another tenant reached this runtime.
+	ErrTenant = errors.New("content: reference belongs to another tenant")
 )
 
 // errUnsupportedMedia is the default MediaStore's response (no store wired).
-var errUnsupportedMedia = errors.New("socialkit: no MediaStore configured")
+var errUnsupportedMedia = errors.New("content: no MediaStore configured")

@@ -1,6 +1,6 @@
 // Package migrations embeds ContentKit's migratekit lineages: the keyword
 // Postgres profile, the pre-ContentKit combined Postgres lineage that converges
-// on it, and the ClickHouse signal plane.
+// on it, the social lineage in the host schema, and the ClickHouse signal plane.
 package migrations
 
 import (
@@ -11,9 +11,9 @@ import (
 //go:embed keyword/*.sql
 var keywordFS embed.FS
 
-// Postgres is the keyword profile: the only Postgres lineage for new
+// Postgres is the keyword profile: the only Postgres search lineage for new
 // installations. It requires pg_trgm and PGroonga and no vector extension.
-// Apply it under its own migratekit app id, scoped to the host schema.
+// Apply it under its own migratekit app id, scoped to the keyword schema.
 var Postgres fs.FS = mustSubFS(keywordFS, "keyword")
 
 //go:embed legacy/*.sql
@@ -25,6 +25,13 @@ var legacyFS embed.FS
 // Export those tables before applying it (docs/migration.md). Never use it
 // for a new installation.
 var LegacyPostgres fs.FS = mustSubFS(legacyFS, "legacy")
+
+//go:embed social/*.sql
+var socialFS embed.FS
+
+// Social is the interaction lineage (social_* tables) applied into the host
+// schema under content.MigratekitApp; every file carries a parent link.
+var Social fs.FS = mustSubFS(socialFS, "social")
 
 func mustSubFS(fsys fs.FS, dir string) fs.FS {
 	sub, err := fs.Sub(fsys, dir)

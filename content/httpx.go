@@ -1,4 +1,4 @@
-package socialkit
+package content
 
 import (
 	"encoding/json"
@@ -26,6 +26,12 @@ var (
 	errForbidden    = httpError{status: http.StatusForbidden, msg: "forbidden"}
 )
 
+// RejectedError is a policy rejection of a text write, answered as 422 with
+// its reason. The ContentModerator port (C4) reports a Reject verdict through it.
+type RejectedError struct{ Reason string }
+
+func (e RejectedError) Error() string { return e.Reason }
+
 // statusWriter records the response status and any internal-error cause (set by
 // writeErr) for Runtime.accessLog. Status defaults to 200.
 type statusWriter struct {
@@ -39,8 +45,8 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
-// writeErr maps kit errors to HTTP status. Resolver sentinels hide existence
-// (not-visible -> 404); Authorizer/identity failures are fail-closed.
+// writeErr maps errors to HTTP status. Resolver sentinels hide existence
+// (not-visible -> 404); authorization and identity failures are fail-closed.
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound), errors.Is(err, ErrNotVisible):
@@ -53,12 +59,11 @@ func writeErr(w http.ResponseWriter, err error) {
 			writeJSON(w, he.status, map[string]string{"error": he.msg})
 			return
 		}
-		var me moderationError
-		if errors.As(err, &me) {
-			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": me.Error()})
+		var rej RejectedError
+		if errors.As(err, &rej) {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": rej.Reason})
 			return
 		}
-		// A 500: stash the cause for accessLog; the client only gets a generic body.
 		if sw, ok := w.(*statusWriter); ok {
 			sw.internalErr = err
 		}
@@ -75,12 +80,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 // orEmpty makes a list endpoint answer "no items" with [] rather than null.
-//
-// An empty Go slice is nil, and nil encodes as JSON null. A caller reasonably
-// reads that as "the field is absent" rather than "the list is empty", so
-// anything that iterates or measures the result fails on exactly the case it
-// is least likely to have been tested against. Returning [] keeps the response
-// type stable whether or not there are rows.
 func orEmpty[T any](items []T) []T {
 	if items == nil {
 		return []T{}
@@ -99,7 +98,6 @@ func decodeJSON(r *http.Request, dst any) error {
 }
 
 // parsePage reads limit/offset with a default limit of 20 and a hard cap of 100.
-// The shared pager for every module's list handler.
 func parsePage(req *http.Request) (limit, offset int) {
 	limit, offset = 20, 0
 	if v, err := strconv.Atoi(req.URL.Query().Get("limit")); err == nil && v > 0 {

@@ -1,11 +1,14 @@
-package socialkit
+package content
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/open-rails/contentkit/contentref"
 )
 
 // querier is the subset of pgx shared by *pgxpool.Pool and pgx.Tx, so store
@@ -16,12 +19,12 @@ type querier interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
-// store holds the shared pool and the pre-qualified, schema-scoped table names.
-// Every module references tables via s.t.* so all queries land in the host
-// schema given at construction (no reliance on the pool's search_path).
+// store holds the shared pool, the tenant and the pre-qualified, schema-scoped
+// table names. Every query lands in the host schema given at construction.
 type store struct {
 	pool   *pgxpool.Pool
 	schema string
+	tenant string
 	t      tables
 }
 
@@ -34,14 +37,15 @@ type tables struct {
 	pollVotes     string
 	posts         string
 	favorites     string
-	entityCounts  string
+	counts        string
 }
 
-func newStore(pool *pgxpool.Pool, schema string) *store {
+func newStore(pool *pgxpool.Pool, schema, tenant string) *store {
 	q := func(name string) string { return pgx.Identifier{schema, name}.Sanitize() }
 	return &store{
 		pool:   pool,
 		schema: schema,
+		tenant: tenant,
 		t: tables{
 			reactions:     q("social_reactions"),
 			comments:      q("social_comments"),
@@ -50,7 +54,37 @@ func newStore(pool *pgxpool.Pool, schema string) *store {
 			pollVotes:     q("social_poll_votes"),
 			posts:         q("social_posts"),
 			favorites:     q("social_favorites"),
-			entityCounts:  q("social_entity_counts"),
+			counts:        q("social_entity_counts"),
 		},
 	}
+}
+
+// keyCols is the content key of every keyed social table.
+const keyCols = "tenant_id, content_kind, content_id, content_version_id"
+
+// keyPred renders the key predicate with placeholders $n..$n+3 (see keyArgs).
+func keyPred(n int) string {
+	return "tenant_id = $" + strconv.Itoa(n) + " AND content_kind = $" + strconv.Itoa(n+1) +
+		" AND content_id = $" + strconv.Itoa(n+2) + " AND content_version_id = $" + strconv.Itoa(n+3)
+}
+
+// keyArgs are the bound values of keyPred, in order.
+func keyArgs(k contentref.ContentKey) []any {
+	return []any{k.TenantID, k.ContentKind, k.ContentID, k.ContentVersionID}
+}
+
+// refColumns unzips references into positional arrays for unnest pairing.
+func refColumns(refs []contentref.ContentRef) (kinds, ids, versions []string) {
+	kinds, ids, versions = make([]string, len(refs)), make([]string, len(refs)), make([]string, len(refs))
+	for i, r := range refs {
+		kinds[i], ids[i], versions[i] = r.ContentKind, r.ContentID, r.Version()
+	}
+	return kinds, ids, versions
+}
+
+// refsIn renders "(content_kind, content_id, content_version_id) IN (...)" over
+// positional arrays bound at $n..$n+2; tenant is bound separately.
+func refsIn(n int) string {
+	return "(content_kind, content_id, content_version_id) IN (SELECT * FROM unnest($" + strconv.Itoa(n) +
+		"::text[], $" + strconv.Itoa(n+1) + "::text[], $" + strconv.Itoa(n+2) + "::text[]))"
 }

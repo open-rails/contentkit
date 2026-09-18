@@ -1,4 +1,4 @@
-package socialkit
+package content
 
 import (
 	"context"
@@ -12,9 +12,10 @@ import (
 )
 
 // polls is the standalone site-wide poll module: admin-authored questions with
-// options, anon-capable one-vote-per-(poll,user)/(poll,ip) tallying. Unlike the
-// engagement modules it is NOT tied to a host entity, so it never gates on the
-// EntityResolver — writes gate on the PollWrite perm; reads/votes are public.
+// options, anon-capable one-vote-per-(poll,user)/(poll,ip) tallying. It is not
+// tied to host content, so it never gates on the ContentResolver: writes gate
+// on the PollWrite perm; reads/votes are public. Questions carry the tenant;
+// options and votes hang off their question.
 type polls struct {
 	rt *Runtime
 	s  *store
@@ -100,8 +101,8 @@ func (p *polls) create(ctx context.Context, actor Actor, in createPollInput) (po
 
 	var id string
 	if err := tx.QueryRow(ctx, `INSERT INTO `+p.s.t.pollQuestions+`
-		(question, language, image_url, live_at) VALUES ($1, $2, $3, COALESCE($4, now()))
-		RETURNING id::text`, in.Question, in.Language, nullIf(in.ImageURL), in.LiveAt).Scan(&id); err != nil {
+		(tenant_id, question, language, image_url, live_at) VALUES ($1, $2, $3, $4, COALESCE($5, now()))
+		RETURNING id::text`, p.s.tenant, in.Question, in.Language, nullIf(in.ImageURL), in.LiveAt).Scan(&id); err != nil {
 		return pollView{}, err
 	}
 	for _, o := range in.Options {
@@ -132,7 +133,7 @@ func (p *polls) update(ctx context.Context, actor Actor, id string, in updatePol
 	tag, err := p.s.pool.Exec(ctx, `UPDATE `+p.s.t.pollQuestions+`
 		SET question = COALESCE($2, question), is_active = COALESCE($3, is_active),
 		    live_at = COALESCE($4, live_at), image_url = COALESCE($5, image_url), updated_at = now()
-		WHERE id = $1 AND deleted_at IS NULL`, id, in.Question, in.IsActive, in.LiveAt, in.ImageURL)
+		WHERE id = $1 AND tenant_id = $6 AND deleted_at IS NULL`, id, in.Question, in.IsActive, in.LiveAt, in.ImageURL, p.s.tenant)
 	if err != nil {
 		return pollView{}, err
 	}
@@ -148,7 +149,7 @@ func (p *polls) softDelete(ctx context.Context, actor Actor, id string) error {
 		return err
 	}
 	tag, err := p.s.pool.Exec(ctx, `UPDATE `+p.s.t.pollQuestions+`
-		SET deleted_at = now(), updated_at = now() WHERE id = $1 AND deleted_at IS NULL`, id)
+		SET deleted_at = now(), updated_at = now() WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant)
 	if err != nil {
 		return err
 	}
@@ -178,7 +179,7 @@ type listFilter struct {
 func (p *polls) list(ctx context.Context, actor Actor, f listFilter) ([]pollView, error) {
 	from, to, hasWindow := parseWindow(f.month, f.date)
 	sql := `SELECT id::text, question, language, is_active, coalesce(image_url,''), live_at
-		FROM ` + p.s.t.pollQuestions + ` WHERE deleted_at IS NULL`
+		FROM ` + p.s.t.pollQuestions + ` WHERE tenant_id = $1 AND deleted_at IS NULL`
 	if !f.admin {
 		sql += ` AND live_at <= now()`
 		// Only the default (windowless) view is restricted to the active poll;
@@ -187,7 +188,7 @@ func (p *polls) list(ctx context.Context, actor Actor, f listFilter) ([]pollView
 			sql += ` AND is_active = true`
 		}
 	}
-	var args []any
+	args := []any{p.s.tenant}
 	arg := func(v any) string {
 		args = append(args, v)
 		return "$" + strconv.Itoa(len(args))
@@ -249,7 +250,7 @@ func (p *polls) get(ctx context.Context, actor Actor, id string) (pollView, erro
 	}
 	v := pollView{Options: []pollOption{}}
 	err := p.s.pool.QueryRow(ctx, `SELECT id::text, question, language, is_active, coalesce(image_url,''), live_at
-		FROM `+p.s.t.pollQuestions+` WHERE id = $1 AND deleted_at IS NULL`, id).
+		FROM `+p.s.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant).
 		Scan(&v.ID, &v.Question, &v.Language, &v.IsActive, &v.ImageURL, &v.LiveAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pollView{}, ErrNotFound
@@ -364,7 +365,7 @@ func (p *polls) vote(ctx context.Context, actor Actor, pollID, optionID string) 
 	// (hide all as 404 — a future poll must not leak via the vote path).
 	var exists bool
 	err = tx.QueryRow(ctx, `SELECT true FROM `+p.s.t.pollQuestions+`
-		WHERE id = $1 AND deleted_at IS NULL AND is_active = true AND live_at <= now()`, pollID).Scan(&exists)
+		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND is_active = true AND live_at <= now()`, pollID, p.s.tenant).Scan(&exists)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pollView{}, ErrNotFound
 	}
@@ -399,6 +400,12 @@ func (p *polls) vote(ctx context.Context, actor Actor, pollID, optionID string) 
 		return pollView{}, err
 	}
 	return p.get(ctx, actor, pollID)
+}
+
+// ownsQuestion renders the predicate tying an option/vote row to a question of
+// this tenant; col is the question id column, n the tenant placeholder.
+func (p *polls) ownsQuestion(col string, n int) string {
+	return `EXISTS (SELECT 1 FROM ` + p.s.t.pollQuestions + ` tq WHERE tq.id = ` + col + ` AND tq.tenant_id = $` + strconv.Itoa(n) + `)`
 }
 
 // pollVoteConflict targets the partial unique index for the voter's dedup key.
@@ -461,9 +468,9 @@ func (p *polls) handleAddOption(w http.ResponseWriter, req *http.Request) {
 	err := p.s.pool.QueryRow(req.Context(), `INSERT INTO `+p.s.t.pollOptions+`
 		(question_id, label, image_url, position)
 		SELECT q.id, $2, $3, COALESCE($4, (SELECT COALESCE(MAX(position)+1, 0) FROM `+p.s.t.pollOptions+` WHERE question_id = q.id))
-		FROM `+p.s.t.pollQuestions+` q WHERE q.id = $1 AND q.deleted_at IS NULL
+		FROM `+p.s.t.pollQuestions+` q WHERE q.id = $1 AND q.tenant_id = $5 AND q.deleted_at IS NULL
 		RETURNING id::text, label, coalesce(image_url,''), position, vote_count`,
-		id, strings.TrimSpace(*in.Label), in.ImageURL, in.Position).
+		id, strings.TrimSpace(*in.Label), in.ImageURL, in.Position, p.s.tenant).
 		Scan(&o.ID, &o.Label, &o.ImageURL, &o.Position, &o.VoteCount)
 	if errors.Is(err, pgx.ErrNoRows) { // poll missing/deleted
 		writeErr(w, ErrNotFound)
@@ -505,9 +512,9 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 	var o pollOption
 	err := p.s.pool.QueryRow(req.Context(), `UPDATE `+p.s.t.pollOptions+`
 		SET label = COALESCE($2, label), image_url = COALESCE($3, image_url), position = COALESCE($4, position)
-		WHERE id = $1 AND question_id = $5
+		WHERE id = $1 AND question_id = $5 AND `+p.ownsQuestion("question_id", 6)+`
 		RETURNING id::text, label, coalesce(image_url,''), position, vote_count`,
-		oid, in.Label, in.ImageURL, in.Position, pollID).
+		oid, in.Label, in.ImageURL, in.Position, pollID, p.s.tenant).
 		Scan(&o.ID, &o.Label, &o.ImageURL, &o.Position, &o.VoteCount)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeErr(w, ErrNotFound)
@@ -537,8 +544,8 @@ func (p *polls) handleDeleteOption(w http.ResponseWriter, req *http.Request) {
 	// Single statement: delete only when >= 3 siblings exist, so a poll never
 	// shrinks below 2 votable options.
 	tag, err := p.s.pool.Exec(req.Context(), `DELETE FROM `+p.s.t.pollOptions+` o
-		WHERE o.id = $1 AND o.question_id = $2 AND (
-			SELECT count(*) FROM `+p.s.t.pollOptions+` s WHERE s.question_id = $2) >= 3`, oid, pollID)
+		WHERE o.id = $1 AND o.question_id = $2 AND `+p.ownsQuestion("o.question_id", 3)+` AND (
+			SELECT count(*) FROM `+p.s.t.pollOptions+` s WHERE s.question_id = $2) >= 3`, oid, pollID, p.s.tenant)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -547,7 +554,7 @@ func (p *polls) handleDeleteOption(w http.ResponseWriter, req *http.Request) {
 		// Missing option and too-few-options both land here; disambiguate.
 		var exists bool
 		if err := p.s.pool.QueryRow(req.Context(), `SELECT true FROM `+p.s.t.pollOptions+`
-			WHERE id = $1 AND question_id = $2`, oid, pollID).Scan(&exists); err == nil && exists {
+			WHERE id = $1 AND question_id = $2 AND `+p.ownsQuestion("question_id", 3), oid, pollID, p.s.tenant).Scan(&exists); err == nil && exists {
 			writeErr(w, badRequest("a poll needs at least 2 options"))
 			return
 		}
@@ -584,9 +591,9 @@ func (p *polls) handleQuestionImage(w http.ResponseWriter, req *http.Request) {
 	// changed) can drop the old object instead of orphaning it. Best-effort.
 	var prev *string
 	_ = p.s.pool.QueryRow(req.Context(), `SELECT image_url FROM `+p.s.t.pollQuestions+`
-		WHERE id = $1 AND deleted_at IS NULL`, id).Scan(&prev)
+		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant).Scan(&prev)
 	tag, err := p.s.pool.Exec(req.Context(), `UPDATE `+p.s.t.pollQuestions+`
-		SET image_url = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL`, id, url)
+		SET image_url = $2, updated_at = now() WHERE id = $1 AND tenant_id = $3 AND deleted_at IS NULL`, id, url, p.s.tenant)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -601,7 +608,7 @@ func (p *polls) handleQuestionImage(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"image_url": url})
 }
 
-// handleOptionImage uploads an option image to socialkit's media store and
+// handleOptionImage uploads an option image to the media store and
 // stores the resulting public URL on the option. PollWrite-gated.
 func (p *polls) handleOptionImage(w http.ResponseWriter, req *http.Request) {
 	actor := p.rt.actor(req.Context())
@@ -626,8 +633,8 @@ func (p *polls) handleOptionImage(w http.ResponseWriter, req *http.Request) {
 	}
 	// Best-effort old-object cleanup on a key-changing replace (see question image).
 	var prev *string
-	_ = p.s.pool.QueryRow(req.Context(), `SELECT image_url FROM `+p.s.t.pollOptions+` WHERE id = $1`, oid).Scan(&prev)
-	tag, err := p.s.pool.Exec(req.Context(), `UPDATE `+p.s.t.pollOptions+` SET image_url = $2 WHERE id = $1`, oid, url)
+	_ = p.s.pool.QueryRow(req.Context(), `SELECT image_url FROM `+p.s.t.pollOptions+` WHERE id = $1 AND `+p.ownsQuestion("question_id", 2), oid, p.s.tenant).Scan(&prev)
+	tag, err := p.s.pool.Exec(req.Context(), `UPDATE `+p.s.t.pollOptions+` SET image_url = $2 WHERE id = $1 AND `+p.ownsQuestion("question_id", 3), oid, url, p.s.tenant)
 	if err != nil {
 		writeErr(w, err)
 		return

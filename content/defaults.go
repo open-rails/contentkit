@@ -1,4 +1,4 @@
-package socialkit
+package content
 
 import (
 	"context"
@@ -13,12 +13,6 @@ func (noopEnricher) UsersByIDs(context.Context, []string) (map[string]PublicUser
 	return map[string]PublicUser{}, nil
 }
 
-// noopRecorder drops engagement signals (no discovery system wired).
-type noopRecorder struct{}
-
-func (noopRecorder) Reaction(context.Context, ReactionSignal) {}
-func (noopRecorder) Post(context.Context, PostSignal)         {}
-
 // unsupportedMediaStore rejects uploads (no MediaStore wired).
 type unsupportedMediaStore struct{}
 
@@ -26,8 +20,7 @@ func (unsupportedMediaStore) Put(context.Context, string, []byte, string) (strin
 	return "", errUnsupportedMedia
 }
 
-// stripProcessor is the default ContentProcessor: strip HTML tags to a safe
-// plain-text subset. Hosts plug in their own rich-text sanitizer.
+// stripProcessor is the default ContentProcessor: strip HTML tags to plain text.
 type stripProcessor struct{}
 
 var tagRe = regexp.MustCompile(`<[^>]*>`)

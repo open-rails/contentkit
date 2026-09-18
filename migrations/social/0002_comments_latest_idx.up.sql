@@ -1,3 +1,4 @@
+-- parent: 1 sha256:c9323cfddb2da2020ec07bb55aa2ba0aa779abdceb59313859bb95972a89c26c
 -- Index for the cross-entity latest-comments feed (GET /comments/latest and
 -- Runtime.LatestComments): it lists ALL live comments newest-first, but the
 -- only created_at index (social_comments_toplevel_idx) leads on

@@ -1,4 +1,4 @@
-package socialkit
+package content
 
 import (
 	"bytes"
@@ -33,7 +33,7 @@ func insertPost(t *testing.T, rt *Runtime) string {
 	t.Helper()
 	var id string
 	if err := rt.store.pool.QueryRow(context.Background(),
-		`INSERT INTO `+rt.store.t.posts+` (author_id, title, body) VALUES ('admin','t','b') RETURNING id::text`).Scan(&id); err != nil {
+		`INSERT INTO `+rt.store.t.posts+` (tenant_id, author_id, title, body) VALUES ($1,'admin','t','b') RETURNING id::text`, testTenant).Scan(&id); err != nil {
 		t.Fatalf("insert post: %v", err)
 	}
 	return id

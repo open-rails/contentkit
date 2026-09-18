@@ -1,4 +1,4 @@
-package socialkit
+package content
 
 import (
 	"context"
@@ -6,16 +6,17 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/open-rails/contentkit/contentref"
 )
 
-// reactions is the 3-state (like/dislike/neutral) reaction system over the
-// polymorphic key — the reference module every other engagement type mirrors.
+// reactions is the 3-state (like/dislike/neutral) reaction system over a
+// content key: the reference module every other engagement type mirrors.
 //
-// Its applyTx is the shared concurrency-safe upsert primitive: the comments and
-// posts modules reuse it inside their own transactions to write a reaction AND
-// bump their own SPLIT counter atomically, so the counter logic lives here once.
+// applyTx is the shared concurrency-safe upsert primitive: comments and posts
+// reuse it inside their own transactions to write a reaction and bump their own
+// split counter atomically.
 type reactions struct {
 	rt *Runtime
 	s  *store
@@ -25,28 +26,25 @@ func newReactions(rt *Runtime) *reactions {
 	return &reactions{rt: rt, s: rt.store}
 }
 
-// reactionCounts is the SPLIT tally for an entity plus the caller's own value.
+// reactionCounts is the split tally for a reference plus the caller's own value.
 type reactionCounts struct {
 	Likes    int   `json:"likes"`
 	Dislikes int   `json:"dislikes"`
 	Mine     int16 `json:"mine"` // -1, 0, or 1; 0 also means "no reaction"
 }
 
-// applyTx performs the 3-state upsert for (entityType, entityID, actor) inside
-// tx and returns the count deltas (dLikes/dDislikes, each -1/0/+1) so the caller
-// can denormalize a SPLIT counter in the same transaction. Neutral (0) is a
-// stored state, not a delete, so a recommender "mute" signal survives.
+// applyTx performs the 3-state upsert for (key, actor) inside tx and returns
+// the count deltas (each -1/0/+1) so the caller can denormalize a split counter
+// in the same transaction. Neutral (0) is a stored state, not a delete.
 //
 // Concurrency: SELECT ... FOR UPDATE locks the existing row; a lost insert race
-// (23505) re-selects and updates. Exact under concurrent double-like and
-// like<->dislike switches.
-func (r *reactions) applyTx(ctx context.Context, tx pgx.Tx, actor Actor, entityType, entityID string, value int16) (dLikes, dDislikes int, err error) {
+// re-selects and updates. Exact under concurrent double-like and switches.
+func (r *reactions) applyTx(ctx context.Context, tx pgx.Tx, actor Actor, key contentref.ContentKey, value int16) (dLikes, dDislikes int, err error) {
 	userID, ip, ok := reactionKey(actor)
 	if !ok {
 		return 0, 0, badRequest("cannot identify reactor (no user id or ip)")
 	}
-
-	prev, found, err := r.lockExisting(ctx, tx, userID, ip, entityType, entityID)
+	prev, found, err := r.lockExisting(ctx, tx, userID, ip, key)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -54,61 +52,58 @@ func (r *reactions) applyTx(ctx context.Context, tx pgx.Tx, actor Actor, entityT
 		if prev == value {
 			return 0, 0, nil
 		}
-		if _, err = tx.Exec(ctx, `UPDATE `+r.s.t.reactions+`
-			SET value = $1, updated_at = now()
-			WHERE entity_type = $2 AND entity_id = $3 AND `+actorPred(userID, 4), value, entityType, entityID, actorArg(userID, ip)); err != nil {
+		if err := r.update(ctx, tx, userID, ip, key, value); err != nil {
 			return 0, 0, err
 		}
 		dLikes, dDislikes = delta(prev, value)
-		return r.bumpAndReturn(ctx, tx, entityType, entityID, dLikes, dDislikes)
+		return r.bumpAndReturn(ctx, tx, key, dLikes, dDislikes)
 	}
-
-	// No existing row: insert, tolerating a concurrent insert. ON CONFLICT DO
-	// NOTHING makes the losing racer BLOCK on the other tx then no-op (0 rows) —
-	// a bare INSERT would raise 23505, which aborts the whole tx (25P02) and
-	// poisons the re-select. RowsAffected distinguishes the two outcomes.
+	// ON CONFLICT DO NOTHING makes the losing racer block on the other tx then
+	// no-op; a bare INSERT would abort the whole transaction.
 	tag, err := tx.Exec(ctx, `INSERT INTO `+r.s.t.reactions+`
-		(entity_type, entity_id, user_id, ip, value) VALUES ($1, $2, $3, $4, $5)`+onConflict(userID),
-		entityType, entityID, nullIf(userID), nullIf(ip), value)
+		(`+keyCols+`, user_id, ip, value) VALUES ($1, $2, $3, $4, $5, $6, $7)`+onConflict(userID),
+		append(keyArgs(key), nullIf(userID), nullIf(ip), value)...)
 	if err != nil {
 		return 0, 0, err
 	}
 	if tag.RowsAffected() == 1 {
 		dLikes, dDislikes = delta(0, value)
-		return r.bumpAndReturn(ctx, tx, entityType, entityID, dLikes, dDislikes)
+		return r.bumpAndReturn(ctx, tx, key, dLikes, dDislikes)
 	}
-	// Lost the insert race: the row now exists (committed) — lock + update it.
-	prev, found, err = r.lockExisting(ctx, tx, userID, ip, entityType, entityID)
+	// Lost the insert race: the row now exists (committed); lock + update it.
+	prev, found, err = r.lockExisting(ctx, tx, userID, ip, key)
 	if err != nil || !found {
 		return 0, 0, err
 	}
 	if prev == value {
 		return 0, 0, nil
 	}
-	if _, err = tx.Exec(ctx, `UPDATE `+r.s.t.reactions+`
-		SET value = $1, updated_at = now()
-		WHERE entity_type = $2 AND entity_id = $3 AND `+actorPred(userID, 4), value, entityType, entityID, actorArg(userID, ip)); err != nil {
+	if err := r.update(ctx, tx, userID, ip, key, value); err != nil {
 		return 0, 0, err
 	}
 	dLikes, dDislikes = delta(prev, value)
-	return r.bumpAndReturn(ctx, tx, entityType, entityID, dLikes, dDislikes)
+	return r.bumpAndReturn(ctx, tx, key, dLikes, dDislikes)
 }
 
-// bumpAndReturn denormalizes the reaction delta into the per-entity rollup
-// (same tx) and returns the deltas for callers that also keep their own counter.
-func (r *reactions) bumpAndReturn(ctx context.Context, tx pgx.Tx, entityType, entityID string, dLikes, dDislikes int) (int, int, error) {
-	if err := bumpCounts(ctx, tx, r.s, entityType, entityID, dLikes, dDislikes, 0, 0); err != nil {
+func (r *reactions) update(ctx context.Context, tx pgx.Tx, userID, ip string, key contentref.ContentKey, value int16) error {
+	_, err := tx.Exec(ctx, `UPDATE `+r.s.t.reactions+` SET value = $1, updated_at = now()
+		WHERE `+keyPred(2)+` AND `+actorPred(userID, 6), append([]any{value}, append(keyArgs(key), actorArg(userID, ip))...)...)
+	return err
+}
+
+// bumpAndReturn denormalizes the reaction delta into the rollup (same tx).
+func (r *reactions) bumpAndReturn(ctx context.Context, tx pgx.Tx, key contentref.ContentKey, dLikes, dDislikes int) (int, int, error) {
+	if err := bumpCounts(ctx, tx, r.s, key, dLikes, dDislikes, 0, 0); err != nil {
 		return 0, 0, err
 	}
 	return dLikes, dDislikes, nil
 }
 
 // lockExisting selects+locks the caller's current reaction row, if any.
-func (r *reactions) lockExisting(ctx context.Context, tx pgx.Tx, userID, ip, entityType, entityID string) (value int16, found bool, err error) {
-	row := tx.QueryRow(ctx, `SELECT value FROM `+r.s.t.reactions+`
-		WHERE entity_type = $1 AND entity_id = $2 AND `+actorPred(userID, 3)+` FOR UPDATE`,
-		entityType, entityID, actorArg(userID, ip))
-	err = row.Scan(&value)
+func (r *reactions) lockExisting(ctx context.Context, tx pgx.Tx, userID, ip string, key contentref.ContentKey) (value int16, found bool, err error) {
+	err = tx.QueryRow(ctx, `SELECT value FROM `+r.s.t.reactions+`
+		WHERE `+keyPred(1)+` AND `+actorPred(userID, 5)+` FOR UPDATE`,
+		append(keyArgs(key), actorArg(userID, ip))...).Scan(&value)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, false, nil
 	}
@@ -118,52 +113,40 @@ func (r *reactions) lockExisting(ctx context.Context, tx pgx.Tx, userID, ip, ent
 	return value, true, nil
 }
 
-// react is the generic entry point for host-registered entity types: it gates
-// on accessibility (no reacting on deleted/unpublished/premium-locked targets),
-// applies the reaction under the resolver's CANONICAL key, and emits the
-// discovery signal. Returns the canonical ref so callers read counts by it.
-func (r *reactions) react(ctx context.Context, actor Actor, entityType, entityID string, value int16) (EntityRef, error) {
-	ref, err := r.rt.gate(ctx, entityType, entityID, actor, true)
+// react is the entry point for host-registered kinds: it gates on
+// accessibility and applies the reaction under the resolver's canonical
+// reference. Returns that reference so callers read counts by it.
+func (r *reactions) react(ctx context.Context, actor Actor, kind, id string, value int16) (contentref.ContentRef, error) {
+	ref, err := r.rt.gate(ctx, kind, id, actor, true)
 	if err != nil {
-		return EntityRef{}, err
+		return contentref.ContentRef{}, err
 	}
 	tx, err := r.s.pool.Begin(ctx)
 	if err != nil {
-		return EntityRef{}, err
+		return contentref.ContentRef{}, err
 	}
 	defer tx.Rollback(ctx)
-	dLikes, dDislikes, err := r.applyTx(ctx, tx, actor, ref.Type, ref.ID, value)
-	if err != nil {
-		return EntityRef{}, err
+	if _, _, err := r.applyTx(ctx, tx, actor, ref.Key(), value); err != nil {
+		return contentref.ContentRef{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return EntityRef{}, err
+		return contentref.ContentRef{}, err
 	}
-	if dLikes == 0 && dDislikes == 0 {
-		return ref, nil
-	}
-	r.rt.rec.Reaction(ctx, ReactionSignal{
-		EntityType: ref.Type, EntityID: ref.ID, ActorID: actor.ID, Kind: reactionKind(value),
-		EventID: uuid.NewString(), Delta: int16(dLikes - dDislikes),
-	})
 	return ref, nil
 }
 
-// counts returns the SPLIT tally plus the caller's own reaction, on a querier
-// (pool or tx). The tally is an O(1) read of the per-entity rollup, which
-// applyTx maintains in-tx.
-func (r *reactions) counts(ctx context.Context, q querier, actor Actor, entityType, entityID string) (reactionCounts, error) {
+// counts returns the split tally plus the caller's own reaction: an O(1) read
+// of the rollup applyTx maintains in-tx.
+func (r *reactions) counts(ctx context.Context, q querier, actor Actor, key contentref.ContentKey) (reactionCounts, error) {
 	var out reactionCounts
-	if err := q.QueryRow(ctx, `SELECT likes, dislikes FROM `+r.s.t.entityCounts+`
-		WHERE entity_type = $1 AND entity_id = $2`, entityType, entityID).Scan(&out.Likes, &out.Dislikes); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if err := q.QueryRow(ctx, `SELECT likes, dislikes FROM `+r.s.t.counts+` WHERE `+keyPred(1), keyArgs(key)...).Scan(&out.Likes, &out.Dislikes); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return out, err
 	}
 	if userID, ip, ok := reactionKey(actor); ok {
-		row := q.QueryRow(ctx, `SELECT value FROM `+r.s.t.reactions+`
-			WHERE entity_type = $1 AND entity_id = $2 AND `+actorPred(userID, 3),
-			entityType, entityID, actorArg(userID, ip))
 		var mine int16
-		if err := row.Scan(&mine); err == nil {
+		err := q.QueryRow(ctx, `SELECT value FROM `+r.s.t.reactions+` WHERE `+keyPred(1)+` AND `+actorPred(userID, 5),
+			append(keyArgs(key), actorArg(userID, ip))...).Scan(&mine)
+		if err == nil {
 			out.Mine = mine
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return out, err
@@ -175,22 +158,22 @@ func (r *reactions) counts(ctx context.Context, q querier, actor Actor, entityTy
 // --- HTTP ---
 
 func (r *reactions) mount(mux *http.ServeMux) {
-	mux.HandleFunc("POST /{type}/{id}/like", r.handleSet(1))
-	mux.HandleFunc("POST /{type}/{id}/dislike", r.handleSet(-1))
-	mux.HandleFunc("POST /{type}/{id}/neutral", r.handleSet(0))
-	mux.HandleFunc("DELETE /{type}/{id}/reaction", r.handleSet(0))
-	mux.HandleFunc("GET /{type}/{id}/reaction", r.handleGet)
+	mux.HandleFunc("POST /{kind}/{id}/like", r.handleSet(1))
+	mux.HandleFunc("POST /{kind}/{id}/dislike", r.handleSet(-1))
+	mux.HandleFunc("POST /{kind}/{id}/neutral", r.handleSet(0))
+	mux.HandleFunc("DELETE /{kind}/{id}/reaction", r.handleSet(0))
+	mux.HandleFunc("GET /{kind}/{id}/reaction", r.handleGet)
 }
 
 func (r *reactions) handleSet(value int16) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		actor := r.rt.actor(req.Context())
-		ref, err := r.react(req.Context(), actor, req.PathValue("type"), req.PathValue("id"), value)
+		ref, err := r.react(req.Context(), actor, req.PathValue("kind"), req.PathValue("id"), value)
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
-		cnt, err := r.counts(req.Context(), r.s.pool, actor, ref.Type, ref.ID)
+		cnt, err := r.counts(req.Context(), r.s.pool, actor, ref.Key())
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -201,12 +184,12 @@ func (r *reactions) handleSet(value int16) http.HandlerFunc {
 
 func (r *reactions) handleGet(w http.ResponseWriter, req *http.Request) {
 	actor := r.rt.actor(req.Context())
-	ref, err := r.rt.gate(req.Context(), req.PathValue("type"), req.PathValue("id"), actor, false)
+	ref, err := r.rt.gate(req.Context(), req.PathValue("kind"), req.PathValue("id"), actor, false)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	cnt, err := r.counts(req.Context(), r.s.pool, actor, ref.Type, ref.ID)
+	cnt, err := r.counts(req.Context(), r.s.pool, actor, ref.Key())
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -217,7 +200,7 @@ func (r *reactions) handleGet(w http.ResponseWriter, req *http.Request) {
 // --- reaction key + delta helpers (shared by comments/posts via applyTx) ---
 
 // reactionKey returns the dedup identity: a user id when present, else the IP.
-// ok=false when the actor is fully unidentifiable (no id, no ip).
+// ok=false when the actor is fully unidentifiable.
 func reactionKey(a Actor) (userID, ip string, ok bool) {
 	if a.ID != "" && !a.Anonymous {
 		return a.ID, a.IP, true
@@ -228,9 +211,8 @@ func reactionKey(a Actor) (userID, ip string, ok bool) {
 	return "", "", false
 }
 
-// actorPred/actorArg build the WHERE clause + bound arg selecting the caller's
-// row: by user_id when identified, else by (user_id IS NULL AND ip = ...). n is
-// the 1-based placeholder index for the actor argument in the surrounding query.
+// actorPred/actorArg build the predicate + bound arg selecting the caller's
+// row; n is the 1-based placeholder index of the actor argument.
 func actorPred(userID string, n int) string {
 	if userID != "" {
 		return "user_id = $" + strconv.Itoa(n)
@@ -245,24 +227,12 @@ func actorArg(userID, ip string) string {
 	return ip
 }
 
-// onConflict targets the partial unique index for the actor's dedup key so a
-// concurrent insert no-ops instead of aborting the transaction.
+// onConflict targets the partial unique index for the actor's dedup key.
 func onConflict(userID string) string {
 	if userID != "" {
-		return ` ON CONFLICT (entity_type, entity_id, user_id) WHERE user_id IS NOT NULL DO NOTHING`
+		return ` ON CONFLICT (` + keyCols + `, user_id) WHERE user_id IS NOT NULL DO NOTHING`
 	}
-	return ` ON CONFLICT (entity_type, entity_id, ip) WHERE user_id IS NULL AND ip IS NOT NULL DO NOTHING`
-}
-
-func reactionKind(value int16) string {
-	switch value {
-	case 1:
-		return "like"
-	case -1:
-		return "dislike"
-	default:
-		return "neutral"
-	}
+	return ` ON CONFLICT (` + keyCols + `, ip) WHERE user_id IS NULL AND ip IS NOT NULL DO NOTHING`
 }
 
 func delta(prev, next int16) (dLikes, dDislikes int) {

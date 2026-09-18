@@ -1,4 +1,4 @@
-package socialkit
+package content
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// TestAccessLog checks that a socialkit-internal 500 is logged at ERROR with its
+// TestAccessLog checks that an internal 500 is logged at ERROR with its
 // cause, while a client 4xx is logged only at DEBUG (not as an error).
 func TestAccessLog(t *testing.T) {
 	cases := []struct {
