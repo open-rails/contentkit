@@ -1,0 +1,113 @@
+package content
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
+)
+
+// httpError carries an explicit status for handler-level failures (validation,
+// auth). Sentinel resolver errors are mapped separately in writeErr.
+type httpError struct {
+	status int
+	msg    string
+}
+
+func (e httpError) Error() string { return e.msg }
+
+func badRequest(format string, a ...any) httpError {
+	return httpError{status: http.StatusBadRequest, msg: fmt.Sprintf(format, a...)}
+}
+
+var (
+	errUnauthorized = httpError{status: http.StatusUnauthorized, msg: "authentication required"}
+	errForbidden    = httpError{status: http.StatusForbidden, msg: "forbidden"}
+)
+
+// RejectedError is a policy rejection of a text write, answered as 422 with
+// its reason. The ContentModerator port (C4) reports a Reject verdict through it.
+type RejectedError struct{ Reason string }
+
+func (e RejectedError) Error() string { return e.Reason }
+
+// statusWriter records the response status and any internal-error cause (set by
+// writeErr) for Runtime.accessLog. Status defaults to 200.
+type statusWriter struct {
+	http.ResponseWriter
+	status      int
+	internalErr error
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+// writeErr maps errors to HTTP status. Resolver sentinels hide existence
+// (not-visible -> 404); authorization and identity failures are fail-closed.
+func writeErr(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrNotFound), errors.Is(err, ErrNotVisible):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+	case errors.Is(err, ErrForbidden):
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+	default:
+		var he httpError
+		if errors.As(err, &he) {
+			writeJSON(w, he.status, map[string]string{"error": he.msg})
+			return
+		}
+		var rej RejectedError
+		if errors.As(err, &rej) {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": rej.Reason})
+			return
+		}
+		if sw, ok := w.(*statusWriter); ok {
+			sw.internalErr = err
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+	}
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if v != nil {
+		_ = json.NewEncoder(w).Encode(v)
+	}
+}
+
+// orEmpty makes a list endpoint answer "no items" with [] rather than null.
+func orEmpty[T any](items []T) []T {
+	if items == nil {
+		return []T{}
+	}
+	return items
+}
+
+// decodeJSON reads a JSON body with a sane size cap.
+func decodeJSON(r *http.Request, dst any) error {
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return badRequest("invalid JSON body: %v", err)
+	}
+	return nil
+}
+
+// parsePage reads limit/offset with a default limit of 20 and a hard cap of 100.
+func parsePage(req *http.Request) (limit, offset int) {
+	limit, offset = 20, 0
+	if v, err := strconv.Atoi(req.URL.Query().Get("limit")); err == nil && v > 0 {
+		limit = v
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if v, err := strconv.Atoi(req.URL.Query().Get("offset")); err == nil && v > 0 {
+		offset = v
+	}
+	return limit, offset
+}
