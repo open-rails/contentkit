@@ -167,6 +167,56 @@ WHERE gv.id::text = sd.content_version_id AND g.id::text = sd.content_id AND gv.
       = cardinality(@only_slugs::text[])`
 ```
 
+## Preference boundary (reactions and favorites into the signal plane)
+
+Reactions and favorites are exported to the signal plane through ContentKit's
+own outbox, never through a host callback. Each mutation, inside its own
+transaction: takes an advisory lock on `(schema, tenant, actor, canonical
+reference, axis)` **before** reading state, applies the social change and its
+counters, allocates `revision` from `content_preference_revision_seq`
+(`BIGINT INCREMENT 1 NO CYCLE CACHE 1`) with `clock_timestamp()` and upserts
+`content_preference_snapshots`. A no-op allocates nothing; neutral and
+unfavorite keep a zero-valued snapshot; a rollback exports nothing; anonymous
+(IP) reactions are never subjects.
+
+- **`content.ContentCanonicalizer`** (`Options.Canonicalizer`, required for
+  export) maps the resolver's reference to the one reference the reaction row,
+  the counts rollup and the snapshot all use. Doujins strips the language
+  suffix (`"42:en"` → `"42"`); explicit version feedback keeps its
+  `content_version_id`; a language suffix never implies a version; comment
+  threads keep their localized reference; `ok=false` keeps a kind (taxonomy)
+  out. `MyReactions`/`IsFavorited` accept route references and read under the
+  canonical one; `Counts` reads exactly the reference given (likes/favorites
+  under the canonical reference, comment counts under the thread's).
+- **Delivery**: schedule `rt.DeliverPreferences(ctx, after, pageSize, maxRows)` from
+  the host worker (e.g. a River periodic job every few seconds). It pages
+  pending rows in key order per sweep (no persisted high-water mark), writes
+  one `signal` event per subject × reference × axis (`Type` = axis,
+  `EventID` = `contentkit.PreferenceEventID`, `Revision` and `OccurredAt`
+  copied, `Value` = current value), and acknowledges exactly the revision sent
+  (`GREATEST` guarded by `sent <= revision`). A failing sink or a closed
+  ClickHouse leaves rows pending; a failing key never starves others;
+  at-least-once with convergence by revision.
+- **Erasure**: call `rt.EraseSubjects` (fence in the signal plane, then purge
+  the obligations) from the account-deletion handoff; a late delivery for a
+  fenced subject is the terminal `PreferenceSubjectErased`, never a retry.
+- **Bounded delivery**: keep the returned `Next` cursor for the current sweep
+  and pass it as `after` on the next call, including after a sink error. Reset
+  to zero when exhausted; never persist it as a global high-water mark.
+- **Repair**: `rt.ReplayPreferences(ctx, after, pageSize, maxRows)` re-delivers
+  every snapshot (acknowledged rows and zeros included) and resumes from the
+  returned `Next`; newer snapshots still win by revision.
+- **Cutover** (once per host, writers paused): `contentkit.Migrate` (social
+  0004) → stop the old callback bridge and drain its queues →
+  `rt.Content.SeedPreferenceRevisionFloor(maxExistingSinkRevision)` (fails
+  closed outside `[0, MaxInt64/2]`, only ever advances) →
+  `rt.Content.MigratePreferences(PreferenceMigrationOptions{ExportedKeys, DryRun})`
+  (archives the language-scoped rows, collapses them: dislike wins, else
+  like; favorite if any; recomputes counts; seeds snapshots at real source
+  times and zeros for previously exported keys) → retire the old
+  per-transition signal identities in the sink → start the delivery worker
+  → `ReplayPreferences` once from the zero key.
+
 ## Attribution export (paged evaluation data)
 
 `hub.Attribution(ctx, signal.AttributionOptions{Stage, Window, Surface, Limit, ClickLimit, After})`
@@ -205,4 +255,5 @@ each host erases its own tenant.
 - Index per-version documents; move visibility/trait policy into `Eligibility`.
 - Page with `Offset`/`Limit` and `HasMore`; never fetch N documents and dedupe.
 - Apply the lineages with `contentkit.Migrate` per [docs/migration.md](docs/migration.md); run `content.AssignTenant` once; gate startup on `signal.CheckSchema`.
+- Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, implement `ContentCanonicalizer`, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, schedule `DeliverPreferences`, wire `EraseSubjects` into deletion, run the cutover above once, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id`.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.

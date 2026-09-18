@@ -26,6 +26,8 @@ type store struct {
 	schema string
 	tenant string
 	t      tables
+	// revisionSeq is the schema-qualified preference revision sequence.
+	revisionSeq string
 }
 
 // tables are the fully-qualified ("schema"."name") identifiers, sanitized once.
@@ -38,6 +40,9 @@ type tables struct {
 	posts         string
 	favorites     string
 	counts        string
+
+	preferenceSnapshots string
+	preferenceArchive   string
 }
 
 func newStore(pool *pgxpool.Pool, schema, tenant string) *store {
@@ -55,7 +60,11 @@ func newStore(pool *pgxpool.Pool, schema, tenant string) *store {
 			posts:         q("social_posts"),
 			favorites:     q("social_favorites"),
 			counts:        q("social_entity_counts"),
+
+			preferenceSnapshots: q("content_preference_snapshots"),
+			preferenceArchive:   q("content_preference_key_archive"),
 		},
+		revisionSeq: revisionSeqName(schema),
 	}
 }
 

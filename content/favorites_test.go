@@ -30,7 +30,7 @@ func TestFavorites_AddRemoveStatus(t *testing.T) {
 	actor := Actor{ID: "u1", Kind: "user"}
 	w := ref("widget", "1")
 
-	if err := f.add(ctx, actor, "widget", "1"); err != nil {
+	if _, err := f.add(ctx, actor, "widget", "1"); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 	if !favIsFavorited(t, f, "u1", w) {
@@ -40,13 +40,13 @@ func TestFavorites_AddRemoveStatus(t *testing.T) {
 		t.Fatalf("favorites count after add = %d, want 1", c.Favorites)
 	}
 	// re-add is idempotent: no error, still a single row.
-	if err := f.add(ctx, actor, "widget", "1"); err != nil {
+	if _, err := f.add(ctx, actor, "widget", "1"); err != nil {
 		t.Fatalf("re-add: %v", err)
 	}
 	if c := countsOf(t, rt, w); c.Favorites != 1 {
 		t.Fatalf("favorites count after re-add = %d, want 1 (idempotent)", c.Favorites)
 	}
-	if err := f.remove(ctx, actor, "widget", "1"); err != nil {
+	if _, err := f.remove(ctx, actor, "widget", "1"); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 	if favIsFavorited(t, f, "u1", w) {
@@ -56,7 +56,7 @@ func TestFavorites_AddRemoveStatus(t *testing.T) {
 		t.Fatalf("favorites count after remove = %d, want 0", c.Favorites)
 	}
 	// remove again is idempotent (no row) -> no error.
-	if err := f.remove(ctx, actor, "widget", "1"); err != nil {
+	if _, err := f.remove(ctx, actor, "widget", "1"); err != nil {
 		t.Fatalf("idempotent remove: %v", err)
 	}
 }
@@ -69,7 +69,7 @@ func TestFavorites_TransactionErrorRollsBack(t *testing.T) {
 	if _, err := pool.Exec(ctx, `DROP TABLE `+rt.store.t.counts); err != nil {
 		t.Fatalf("drop counts table: %v", err)
 	}
-	if err := rt.favorites.add(ctx, Actor{ID: "u1", Kind: "user"}, "widget", "1"); err == nil {
+	if _, err := rt.favorites.add(ctx, Actor{ID: "u1", Kind: "user"}, "widget", "1"); err == nil {
 		t.Fatal("favorite error = nil, want transaction failure")
 	}
 	var n int
@@ -88,10 +88,10 @@ func TestFavorites_BatchIsFavorited(t *testing.T) {
 	ctx := context.Background()
 	actor := Actor{ID: "u1", Kind: "user"}
 
-	if err := f.add(ctx, actor, "widget", "1"); err != nil {
+	if _, err := f.add(ctx, actor, "widget", "1"); err != nil {
 		t.Fatalf("add 1: %v", err)
 	}
-	if err := f.add(ctx, actor, "widget", "3"); err != nil {
+	if _, err := f.add(ctx, actor, "widget", "3"); err != nil {
 		t.Fatalf("add 3: %v", err)
 	}
 	targets := []contentref.ContentRef{ref("widget", "1"), ref("widget", "2"), ref("widget", "3"), ref("widget", "4")}
@@ -122,7 +122,7 @@ func TestFavorites_WishlistVisibleNotAccessible(t *testing.T) {
 	ctx := context.Background()
 	actor := Actor{ID: "u1", Kind: "user"}
 
-	if err := f.add(ctx, actor, "widget", "premium"); err != nil {
+	if _, err := f.add(ctx, actor, "widget", "premium"); err != nil {
 		t.Fatalf("favorite premium-locked: want success, got %v", err)
 	}
 	if !favIsFavorited(t, f, "u1", ref("widget", "premium")) {
@@ -141,13 +141,13 @@ func TestFavorites_GatingHiddenMissing(t *testing.T) {
 	ctx := context.Background()
 	actor := Actor{ID: "u1", Kind: "user"}
 
-	if err := f.add(ctx, actor, "widget", "hidden"); !errors.Is(err, ErrNotVisible) {
+	if _, err := f.add(ctx, actor, "widget", "hidden"); !errors.Is(err, ErrNotVisible) {
 		t.Fatalf("favorite hidden: want ErrNotVisible, got %v", err)
 	}
-	if err := f.add(ctx, actor, "widget", "ghost"); !errors.Is(err, ErrNotFound) {
+	if _, err := f.add(ctx, actor, "widget", "ghost"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("favorite missing: want ErrNotFound, got %v", err)
 	}
-	if err := f.add(ctx, actor, "unregistered", "1"); !errors.Is(err, ErrNotFound) {
+	if _, err := f.add(ctx, actor, "unregistered", "1"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("favorite unregistered kind: want ErrNotFound, got %v", err)
 	}
 }
@@ -191,7 +191,7 @@ func TestFavorites_ListAndCounts(t *testing.T) {
 	u1, u2 := Actor{ID: "u1", Kind: "user"}, Actor{ID: "u2", Kind: "user"}
 
 	for _, id := range []string{"1", "2", "3"} {
-		if err := f.add(ctx, u1, "widget", id); err != nil {
+		if _, err := f.add(ctx, u1, "widget", id); err != nil {
 			t.Fatalf("add %s: %v", id, err)
 		}
 	}
@@ -209,7 +209,7 @@ func TestFavorites_ListAndCounts(t *testing.T) {
 	if want := []string{"3", "2", "1"}; !reflect.DeepEqual(order, want) {
 		t.Fatalf("list order = %v, want %v (newest-first)", order, want)
 	}
-	if err := f.add(ctx, u2, "widget", "1"); err != nil {
+	if _, err := f.add(ctx, u2, "widget", "1"); err != nil {
 		t.Fatalf("u2 add: %v", err)
 	}
 	counts, err := rt.Counts(ctx, []contentref.ContentRef{ref("widget", "1"), ref("widget", "2"), ref("widget", "3"), ref("widget", "4")})
