@@ -129,11 +129,13 @@ func (s *Store) insertNames(ctx context.Context, q querier, rows []nameRow) erro
    AND n.normalized <> %s.contentkit_keyword_normalize(r.name)`, s.table("content_node_names"), recordset, s.qs), s.tenant, data); err != nil {
 		return err
 	}
-	// Equal normalized forms collapse to one row; the last input wins.
-	_, err = q.Exec(ctx, fmt.Sprintf(`INSERT INTO %s (tenant_id, taxonomy_id, language, kind, name, source_revision)
+	// Equal normalized forms collapse to one row; a canonical name wins
+	// over an alias, and the last input of the same kind wins.
+	_, err = q.Exec(ctx, fmt.Sprintf(`INSERT INTO %s AS existing (tenant_id, taxonomy_id, language, kind, name, source_revision)
  SELECT DISTINCT ON (r.taxonomy_id, r.language, %s.contentkit_keyword_normalize(r.name)) $1, r.taxonomy_id, r.language, r.kind, r.name, r.source_revision
- FROM %s ORDER BY r.taxonomy_id, r.language, %s.contentkit_keyword_normalize(r.name), r.ordinal DESC
- ON CONFLICT (tenant_id, taxonomy_id, language, normalized) DO UPDATE SET kind=EXCLUDED.kind, name=EXCLUDED.name, source_revision=EXCLUDED.source_revision`,
+ FROM %s ORDER BY r.taxonomy_id, r.language, %s.contentkit_keyword_normalize(r.name), (r.kind='name') DESC, r.ordinal DESC
+ ON CONFLICT (tenant_id, taxonomy_id, language, normalized) DO UPDATE SET kind=EXCLUDED.kind, name=EXCLUDED.name, source_revision=EXCLUDED.source_revision
+ WHERE existing.kind <> 'name' OR EXCLUDED.kind = 'name'`,
 		s.table("content_node_names"), s.qs, recordset, s.qs), s.tenant, data)
 	return err
 }
@@ -525,6 +527,14 @@ func (s *Store) Merge(ctx context.Context, from, into TaxonomyID) (MergeReport, 
 			return fmt.Errorf("%w: cannot merge kind %s into %s", ErrConflict, src.Kind, dst.Kind)
 		}
 		a := s.table("content_assignments")
+		// Folding an accepted assignment into a proposed duplicate must not
+		// make the accepted content classification disappear.
+		if _, err := q.Exec(ctx, fmt.Sprintf(`UPDATE %s dst SET state='active', source_revision=greatest(dst.source_revision, src.source_revision)
+ FROM %s src WHERE src.tenant_id=$1 AND src.taxonomy_id=$2 AND src.state='active'
+ AND dst.tenant_id=src.tenant_id AND dst.taxonomy_id=$3 AND dst.content_kind=src.content_kind AND dst.content_id=src.content_id
+ AND dst.content_version_id IS NOT DISTINCT FROM src.content_version_id AND dst.relation=src.relation AND dst.state='proposed'`, a, a), s.tenant, string(from), string(into)); err != nil {
+			return err
+		}
 		tag, err := q.Exec(ctx, fmt.Sprintf(`INSERT INTO %s (tenant_id, content_kind, content_id, content_version_id, taxonomy_id, relation, source_revision, state)
  SELECT tenant_id, content_kind, content_id, content_version_id, $3, relation, source_revision, state FROM %s WHERE tenant_id=$1 AND taxonomy_id=$2
  ON CONFLICT (tenant_id, content_kind, content_id, content_version_id, taxonomy_id, relation) DO NOTHING`, a, a), s.tenant, string(from), string(into))
