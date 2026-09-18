@@ -664,6 +664,9 @@ const MaxExportedPreferencesPerBatch = 1000
 // then seed source truth before calling it. Persist the exported-key inventory
 // before retiring old sink identities. Retrying a page is idempotent.
 func (rt *Runtime) ReconcileExportedPreferences(ctx context.Context, keys []PreferenceKey) (int64, error) {
+	if len(keys) == 0 {
+		return 0, nil
+	}
 	if len(keys) > MaxExportedPreferencesPerBatch {
 		return 0, fmt.Errorf("content: exported preference batch exceeds %d", MaxExportedPreferencesPerBatch)
 	}
@@ -679,7 +682,7 @@ func (rt *Runtime) ReconcileExportedPreferences(ctx context.Context, keys []Pref
 		if k.TenantID != rt.tenant {
 			return 0, ErrTenant
 		}
-		if k.ActorID == "" || k.ContentID == "" || k.ContentKind == "" {
+		if strings.TrimSpace(k.ActorID) == "" || k.ContentID == "" || k.ContentKind == "" {
 			return 0, badRequest("exported preference key is incomplete")
 		}
 		if k.Axis != PreferenceAxisReaction && k.Axis != PreferenceAxisFavorite {

@@ -51,3 +51,19 @@ func TestReconcileExportedPreferencesIsBoundedCanonicalAndIdempotent(t *testing.
 		t.Fatal("unbounded batch accepted")
 	}
 }
+
+func TestReconcileExportedPreferencesEmptyAndBlankActor(t *testing.T) {
+	ctx := context.Background()
+	plain, _ := newTestRuntime(t, Options{})
+	if n, err := plain.ReconcileExportedPreferences(ctx, nil); err != nil || n != 0 {
+		t.Fatalf("empty page = %d %v", n, err)
+	}
+	rt := newPreferenceRuntime(t)
+	key := prefKey("  ", "gallery", "42", PreferenceAxisReaction)
+	if _, err := rt.ReconcileExportedPreferences(ctx, []PreferenceKey{key}); err == nil {
+		t.Fatal("blank actor accepted")
+	}
+	if got := snapshotRows(t, rt); len(got) != 0 {
+		t.Fatal("invalid page mutated snapshots")
+	}
+}
