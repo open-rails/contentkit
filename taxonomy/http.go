@@ -20,7 +20,9 @@ import (
 // ErrInvalid, 404 for ErrNotFound, 409 for ErrConflict and a sanitized 500 for
 // everything else; the cause always reaches Options.Logger.
 //
-//	GET    /nodes?kind=&state=&slug=&cursor=&limit=   -> NodePage
+//	GET    /nodes?kind=&state=&id=&slug=&language=&language_mode=
+//	              &name_prefix=&q=&content_kind=&min_count=
+//	              &sort=&cursor=&offset=&limit=           -> NodePage
 //	POST   /nodes                [NodeInput]          -> [Node]
 //	GET    /nodes/{id}                                -> NodeDetail
 //	PATCH  /nodes/{id}           NodeUpdate           -> Node
@@ -159,7 +161,23 @@ func publicMessage(err error) string {
 func (h handler) listNodes(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	page, err := h.s.ListNodes(r.Context(), ListOptions{Kind: q.Get("kind"), State: State(q.Get("state")), Slug: q.Get("slug"), Cursor: q.Get("cursor"), Limit: limit})
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	minCount, _ := strconv.Atoi(q.Get("min_count"))
+	var states []State
+	for _, st := range q["state"] {
+		states = append(states, State(st))
+	}
+	var ids []TaxonomyID
+	for _, id := range q["id"] {
+		ids = append(ids, TaxonomyID(id))
+	}
+	page, err := h.s.ListNodes(r.Context(), ListOptions{
+		Kind: q.Get("kind"), States: states, IDs: ids, Slug: q.Get("slug"),
+		Language: q.Get("language"), LanguageMode: LanguageMode(q.Get("language_mode")),
+		NamePrefix: q.Get("name_prefix"), Query: q.Get("q"),
+		ContentKind: q.Get("content_kind"), MinCount: minCount,
+		Sort: Sort(q.Get("sort")), Cursor: q.Get("cursor"), Offset: offset, Limit: limit,
+	})
 	if err != nil {
 		fail(w, err)
 		return

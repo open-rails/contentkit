@@ -36,23 +36,109 @@ type NodeDetail struct {
 	Counts []Count `json:"counts"`
 }
 
-// ListOptions filters and pages ListNodes; the page is ordered by taxonomy_id.
+// Sort orders a node page. Every order is made total by taxonomy_id, so a page
+// boundary never repeats or drops a row.
+type Sort string
+
+const (
+	// SortID orders by taxonomy_id ascending. The default, and the only order
+	// ListOptions.Cursor can page.
+	SortID Sort = ""
+	// SortName orders by the resolved display name; nameless nodes come last.
+	SortName Sort = "name"
+	// SortCount orders by content count, largest first.
+	SortCount Sort = "count"
+	// SortCreated orders by creation time, newest first.
+	SortCreated Sort = "created"
+	// SortUpdated orders by last change, most recent first.
+	SortUpdated Sort = "updated"
+)
+
+var sorts = map[Sort]string{SortID: "", SortName: "nm.normalized ASC NULLS LAST", SortCount: "coalesce(cc.total, 0) DESC", SortCreated: "n.created_at DESC", SortUpdated: "n.updated_at DESC"}
+
+// LanguageMode decides what a node without a canonical name in the request
+// language gets.
+type LanguageMode string
+
+const (
+	// LanguageFallback takes the store's configured Languages in order, then
+	// any language the node has. The default.
+	LanguageFallback LanguageMode = ""
+	// LanguageStrict lists the node with an empty Name.
+	LanguageStrict LanguageMode = "strict"
+	// LanguageRequired drops the node from the page.
+	LanguageRequired LanguageMode = "required"
+)
+
+// ListOptions filters, orders and pages ListNodes. The zero value lists the
+// tenant's active nodes by taxonomy_id, which is what a full admin sync wants;
+// a catalog index page sets Language, Sort, ContentKind and Offset.
 type ListOptions struct {
+	// Kind selects one registered node kind; empty lists every kind.
 	Kind string
-	// State defaults to active.
-	State State
+	// States lists nodes in any of these states; empty means active only.
+	States []State
+	// IDs selects exactly these nodes; empty does not filter.
+	IDs []TaxonomyID
 	// Slug selects one slug exactly.
 	Slug string
-	// Cursor is the NextCursor of the previous page.
+	// Related keeps nodes with an edge pointing at this node; with Relation,
+	// only that relation. The characters of a series are
+	// {Related: seriesID, Relation: RelationMemberOf}.
+	Related TaxonomyID
+	// Relation narrows Related; empty accepts any relation.
+	Relation Relation
+
+	// Language resolves NodeRow.Name and scopes the counts Count, MinCount and
+	// SortCount read. Empty uses the store's first configured language.
+	Language string
+	// LanguageMode decides the display name when the node has none in Language.
+	LanguageMode LanguageMode
+	// NamePrefix keeps nodes whose display name starts with it: the A-Z index.
+	// Matched normalized, so "e" also matches "Étude".
+	NamePrefix string
+	// Query keeps nodes with a name or alias containing it, in any language.
+	// Matched normalized; % and _ are literal.
+	Query string
+	// ContentKind scopes the count to one host content kind; empty sums them.
+	ContentKind string
+	// MinCount keeps nodes whose Count is at least this. 1 hides empty nodes.
+	MinCount int
+
+	// Sort orders the page.
+	Sort Sort
+
+	// Cursor is the previous page's NextCursor. Keyset paging: it requires the
+	// default Sort, excludes Offset, and skips the total — a full sync pages in
+	// constant time instead of paying for a count per page.
 	Cursor string
+	// Offset pages from the start of the ordered result.
+	Offset int
 	// Limit defaults to 50 and is capped at 500.
 	Limit int
 }
 
+// NodeRow is a listed node with its display name and content count.
+type NodeRow struct {
+	Node
+	// Name is the canonical name resolved for ListOptions.Language, empty when
+	// the node has none (see LanguageMode).
+	Name string `json:"name,omitempty"`
+	// NameLanguage is the language Name came from.
+	NameLanguage string `json:"name_language,omitempty"`
+	// Count is the number of distinct works of ContentKind with an eligible
+	// document in Language whose effective assignments include the node.
+	Count int `json:"count"`
+}
+
 // NodePage is one page of nodes.
 type NodePage struct {
-	Nodes      []Node `json:"nodes"`
+	Nodes []NodeRow `json:"nodes"`
+	// NextCursor pages the default Sort; empty on the last page and under any
+	// other order.
 	NextCursor string `json:"next_cursor,omitempty"`
+	// Total is the unpaged match count, zero on a Cursor page.
+	Total int `json:"total"`
 }
 
 type nodeRow struct {
@@ -73,6 +159,15 @@ type nameRow struct {
 }
 
 const nodeColumns = `taxonomy_id, tenant_id, kind, slug, state, source_revision, created_at, updated_at`
+
+// nodeColumnsN is nodeColumns qualified for ListNodes' joined query.
+const nodeColumnsN = `n.taxonomy_id, n.tenant_id, n.kind, n.slug, n.state, n.source_revision, n.created_at, n.updated_at`
+
+func scanNodeRow(row pgx.CollectableRow) (NodeRow, error) {
+	var r NodeRow
+	err := row.Scan(&r.TaxonomyID, &r.TenantID, &r.Kind, &r.Slug, &r.State, &r.SourceRevision, &r.CreatedAt, &r.UpdatedAt, &r.Name, &r.NameLanguage, &r.Count)
+	return r, err
+}
 
 func scanNode(row pgx.Row) (Node, error) {
 	var n Node
@@ -337,40 +432,195 @@ func (s *Store) Nodes(ctx context.Context, ids []TaxonomyID) ([]Node, error) {
 	return out, err
 }
 
-// ListNodes pages the tenant's nodes by taxonomy_id.
-func (s *Store) ListNodes(ctx context.Context, opts ListOptions) (NodePage, error) {
-	page := NodePage{Nodes: []Node{}}
-	state := opts.State
-	if state == "" {
-		state = StateActive
+// listQuery is one compiled ListNodes request.
+type listQuery struct {
+	from, where, order string
+	args               pgx.NamedArgs
+	limit              int
+	// cursored: the order is pageable by keyset, so the page carries NextCursor.
+	cursored bool
+	// total: count the unpaged matches. A cursor page does not, which is what
+	// keeps a full sync O(page) instead of paying a count per page.
+	total bool
+}
+
+// compileList validates the options and builds the shared FROM/WHERE. Both
+// laterals carry tenant_id, as does every predicate: a node of another tenant
+// can neither be listed nor lend its names or counts to one that is.
+func (s *Store) compileList(opts ListOptions) (listQuery, error) {
+	q := listQuery{args: pgx.NamedArgs{"tenant": s.tenant}, cursored: opts.Sort == SortID, total: opts.Cursor == ""}
+	order, ok := sorts[opts.Sort]
+	if !ok {
+		return q, fmt.Errorf("%w: sort %q", ErrInvalid, opts.Sort)
 	}
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 50
+	if opts.Cursor != "" && (opts.Sort != SortID || opts.Offset != 0) {
+		return q, fmt.Errorf("%w: Cursor pages the default sort from its own position; it excludes Sort and Offset", ErrInvalid)
 	}
-	if limit > 500 {
-		limit = 500
+	q.limit = opts.Limit
+	if q.limit <= 0 {
+		q.limit = 50
 	}
-	kind := strings.TrimSpace(opts.Kind)
-	if kind != "" {
+	if q.limit > 500 {
+		q.limit = 500
+	}
+	language := strings.TrimSpace(opts.Language)
+	if language == "" {
+		language = s.languages[0]
+	}
+	language, err := normalizeLanguage(language)
+	if err != nil {
+		return q, err
+	}
+	q.args["language"], q.args["fallback"] = language, s.languages
+
+	states := opts.States
+	if len(states) == 0 {
+		states = []State{StateActive}
+	}
+	list := make([]string, 0, len(states))
+	for _, st := range states {
+		if st != StateActive && st != StateMerged && st != StateDeleted {
+			return q, fmt.Errorf("%w: state %q", ErrInvalid, st)
+		}
+		list = append(list, string(st))
+	}
+	q.args["states"] = list
+	where := []string{"n.tenant_id = @tenant", "n.state = ANY(@states::text[])"}
+
+	if kind := strings.TrimSpace(opts.Kind); kind != "" {
 		if err := s.requireKind(kind); err != nil {
-			return page, err
+			return q, err
 		}
+		where = append(where, "n.kind = @kind")
+		q.args["kind"] = kind
 	}
-	args := pgx.NamedArgs{"tenant": s.tenant, "state": state, "kind": kind, "slug": strings.TrimSpace(opts.Slug), "cursor": opts.Cursor, "limit": limit + 1}
-	err := s.read(ctx, func(q querier) error {
-		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT %s FROM %s WHERE tenant_id=@tenant AND state=@state
- AND (@kind='' OR kind=@kind) AND (@slug='' OR slug=@slug) AND taxonomy_id > @cursor ORDER BY taxonomy_id LIMIT @limit`, nodeColumns, s.table("content_nodes")), args)
+	if slug := strings.TrimSpace(opts.Slug); slug != "" {
+		where = append(where, "n.slug = @slug")
+		q.args["slug"] = slug
+	}
+	if opts.Related != "" {
+		if err := validateID(opts.Related); err != nil {
+			return q, err
+		}
+		relation := ""
+		if opts.Relation != "" {
+			if _, ok := relations[opts.Relation]; !ok {
+				return q, fmt.Errorf("%w: relation %q", ErrInvalid, opts.Relation)
+			}
+			relation = " AND e.relation = @relation"
+			q.args["relation"] = string(opts.Relation)
+		}
+		where = append(where, fmt.Sprintf(`EXISTS (SELECT 1 FROM %s e
+   WHERE e.tenant_id = n.tenant_id AND e.from_taxonomy_id = n.taxonomy_id AND e.to_taxonomy_id = @related%s)`,
+			s.table("content_edges"), relation))
+		q.args["related"] = string(opts.Related)
+	} else if opts.Relation != "" {
+		return q, fmt.Errorf("%w: Relation narrows Related and needs it", ErrInvalid)
+	}
+	if len(opts.IDs) > 0 {
+		ids := make([]string, 0, len(opts.IDs))
+		for _, id := range opts.IDs {
+			if err := validateID(id); err != nil {
+				return q, err
+			}
+			ids = append(ids, string(id))
+		}
+		where = append(where, "n.taxonomy_id = ANY(@ids::text[])")
+		q.args["ids"] = ids
+	}
+
+	// The name lateral pins the language for strict and required; fallback
+	// prefers the request language, then the store's configured order.
+	pin := ""
+	if opts.LanguageMode == LanguageStrict || opts.LanguageMode == LanguageRequired {
+		pin = " AND nn.language = @language"
+	} else if opts.LanguageMode != LanguageFallback {
+		return q, fmt.Errorf("%w: language mode %q", ErrInvalid, opts.LanguageMode)
+	}
+	countPin := ""
+	if ck := strings.TrimSpace(opts.ContentKind); ck != "" {
+		countPin = " AND cn.content_kind = @content_kind"
+		q.args["content_kind"] = ck
+	}
+	q.from = fmt.Sprintf(`FROM %s n
+ LEFT JOIN LATERAL (SELECT nn.name, nn.language, nn.normalized FROM %s nn
+   WHERE nn.tenant_id = n.tenant_id AND nn.taxonomy_id = n.taxonomy_id AND nn.kind = 'name'%s
+   ORDER BY CASE WHEN nn.language = @language THEN 0 ELSE 1 + coalesce(array_position(@fallback::text[], nn.language), 1000) END, nn.language
+   LIMIT 1) nm ON true
+ LEFT JOIN LATERAL (SELECT sum(cn.content_count)::int AS total FROM %s cn
+   WHERE cn.tenant_id = n.tenant_id AND cn.taxonomy_id = n.taxonomy_id AND cn.language = @language%s) cc ON true`,
+		s.table("content_nodes"), s.table("content_node_names"), pin, s.table("content_node_counts"), countPin)
+
+	if opts.LanguageMode == LanguageRequired {
+		where = append(where, "nm.name IS NOT NULL")
+	}
+	if prefix := strings.TrimSpace(opts.NamePrefix); prefix != "" {
+		where = append(where, "nm.normalized LIKE "+s.likePattern("@prefix", false))
+		q.args["prefix"] = prefix
+	}
+	if query := strings.TrimSpace(opts.Query); query != "" {
+		where = append(where, fmt.Sprintf(`EXISTS (SELECT 1 FROM %s qn
+   WHERE qn.tenant_id = n.tenant_id AND qn.taxonomy_id = n.taxonomy_id AND qn.normalized LIKE %s)`,
+			s.table("content_node_names"), s.likePattern("@query", true)))
+		q.args["query"] = query
+	}
+	if opts.MinCount > 0 {
+		where = append(where, "coalesce(cc.total, 0) >= @min_count")
+		q.args["min_count"] = opts.MinCount
+	}
+	if opts.Cursor != "" {
+		where = append(where, "n.taxonomy_id > @cursor")
+		q.args["cursor"] = opts.Cursor
+	}
+	q.where = strings.Join(where, " AND ")
+
+	if order != "" {
+		order += ", "
+	}
+	q.order = order + "n.taxonomy_id"
+	return q, nil
+}
+
+// likePattern normalizes an argument the way the stored normalized column is
+// generated, then escapes LIKE's wildcards so a user's % or _ stays literal.
+func (s *Store) likePattern(arg string, contains bool) string {
+	escaped := fmt.Sprintf(`replace(replace(replace(%s.contentkit_keyword_normalize(%s), '\', '\\'), '%%', '\%%'), '_', '\_')`, s.qs, arg)
+	if contains {
+		return `'%' || ` + escaped + ` || '%'`
+	}
+	return escaped + ` || '%'`
+}
+
+// ListNodes pages the tenant's nodes with their display name in the request
+// language and their content count. The zero ListOptions keeps the historical
+// behavior: active nodes ordered by taxonomy_id, paged by Cursor.
+func (s *Store) ListNodes(ctx context.Context, opts ListOptions) (NodePage, error) {
+	page := NodePage{Nodes: []NodeRow{}}
+	q, err := s.compileList(opts)
+	if err != nil {
+		return page, err
+	}
+	q.args["limit"], q.args["offset"] = q.limit, max(opts.Offset, 0)
+	if q.cursored {
+		q.args["limit"] = q.limit + 1 // one extra row decides whether a next cursor exists
+	}
+	err = s.read(ctx, func(db querier) error {
+		if q.total {
+			if err := db.QueryRow(ctx, "SELECT count(*) "+q.from+" WHERE "+q.where, q.args).Scan(&page.Total); err != nil {
+				return err
+			}
+		}
+		rows, err := db.Query(ctx, fmt.Sprintf(`SELECT %s, coalesce(nm.name, ''), coalesce(nm.language, ''), coalesce(cc.total, 0) %s WHERE %s ORDER BY %s LIMIT @limit OFFSET @offset`, nodeColumnsN, q.from, q.where, q.order), q.args)
 		if err != nil {
 			return err
 		}
-		nodes, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Node, error) { return scanNode(row) })
+		nodes, err := pgx.CollectRows(rows, scanNodeRow)
 		if err != nil {
 			return err
 		}
-		if len(nodes) > limit {
-			nodes = nodes[:limit]
-			page.NextCursor = string(nodes[limit-1].TaxonomyID)
+		if q.cursored && len(nodes) > q.limit {
+			nodes = nodes[:q.limit]
+			page.NextCursor = string(nodes[q.limit-1].TaxonomyID)
 		}
 		page.Nodes = nodes
 		return nil
