@@ -86,7 +86,8 @@ type dirtyRow struct {
 
 // SyncOnce runs one tick: drain the dirty queue, then a bounded backfill step.
 // One writer per schema and tenant: a competing tick returns without work.
-// Documents, queue acknowledgements and sink deliveries share one transaction.
+// Documents and queue acknowledgements share one Postgres transaction.
+// Sink calls run before acknowledgement but own their external transactions.
 func SyncOnce(ctx context.Context, opts Options) error {
 	cfg := opts.withDefaults()
 	if cfg.Pool == nil {
@@ -200,7 +201,7 @@ func processDirtyOnce(ctx context.Context, tx pgx.Tx, qs string, cfg Options) ([
 		}
 		var err error
 		if doc.Title == "" {
-			err = cfg.Sink.Delete(ctx, doc.DocumentKey)
+			err = cfg.Sink.Delete(ctx, doc.DocumentKey, revision)
 		} else {
 			err = cfg.Sink.Upsert(ctx, search.PublishedDocument{KeywordDocument: doc, Version: revision})
 		}
@@ -211,6 +212,7 @@ func processDirtyOnce(ctx context.Context, tx pgx.Tx, qs string, cfg Options) ([
 
 	// Deletions first.
 	var removed []search.DocumentKey
+	var deletions []dirtyRow
 	for _, r := range batch {
 		if !r.IsDeleted {
 			continue
@@ -221,13 +223,14 @@ func processDirtyOnce(ctx context.Context, tx pgx.Tx, qs string, cfg Options) ([
 		}
 		if current {
 			removed = append(removed, r.DocumentKey)
+			deletions = append(deletions, r)
 		}
 	}
 	if err := search.DeleteKeywordDocuments(ctx, tx, cfg.Schema, removed); err != nil {
 		return nil, nil, err
 	}
-	for _, key := range removed {
-		deliver(search.KeywordDocument{DocumentKey: key}, 0)
+	for _, r := range deletions {
+		deliver(search.KeywordDocument{DocumentKey: r.DocumentKey}, r.Revision)
 	}
 
 	// Rebuilds, grouped per kind and language for batch-shaped host callbacks.

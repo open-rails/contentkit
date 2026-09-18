@@ -81,6 +81,13 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm SCHEMA public; CREATE EXTENSION IF NOT EX
 // concurrency-safe, so the first install is serialized.
 func Schema(t testing.TB, ctx context.Context, pool *pgxpool.Pool) string {
 	t.Helper()
+	return SchemaWith(t, ctx, pool)
+}
+
+// SchemaWith is Schema followed by the given lineages, applied in order after
+// the keyword profile (for example migrations.Taxonomy).
+func SchemaWith(t testing.TB, ctx context.Context, pool *pgxpool.Pool, lineages ...fs.FS) string {
+	t.Helper()
 	schema := fmt.Sprintf("ck_test_%d_%d", os.Getpid(), time.Now().UnixNano())
 	quoted := pgx.Identifier{schema}.Sanitize()
 	t.Cleanup(func() {
@@ -97,17 +104,19 @@ func Schema(t testing.TB, ctx context.Context, pool *pgxpool.Pool) string {
 	if _, err := tx.Exec(ctx, "CREATE SCHEMA "+quoted+"; SET LOCAL search_path TO "+quoted+",public"); err != nil {
 		t.Fatal(err)
 	}
-	files, err := fs.ReadDir(migrations.Postgres, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range files {
-		sql, err := fs.ReadFile(migrations.Postgres, f.Name())
+	for _, lineage := range append([]fs.FS{migrations.Postgres}, lineages...) {
+		files, err := fs.ReadDir(lineage, ".")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := tx.Exec(ctx, string(sql)); err != nil {
-			t.Fatalf("%s: %v", f.Name(), err)
+		for _, f := range files {
+			sql, err := fs.ReadFile(lineage, f.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.Exec(ctx, string(sql)); err != nil {
+				t.Fatalf("%s: %v", f.Name(), err)
+			}
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {

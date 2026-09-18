@@ -224,21 +224,21 @@ func TestIntegrationMetricsAreTruthful(t *testing.T) {
 	}
 	want := ContentMetrics{
 		Viewers: 2, UserViewers: 1, AnonViewers: 1, Views: 4, Completions: 2, Completers: 1, ActiveS: 400,
-		ScoreSum: 200, Events: 7, ValueSum: 0, PositiveSubjects: 1, NegativeSubjects: 1,
+		ScoreSum: 200, ViewerEngagementSum: 1, ReturningViewers: 1, Events: 7, ValueSum: 0, PositiveSubjects: 1, NegativeSubjects: 1,
 		SignalCounts: map[string]uint64{TypeView: 4, "click": 1, "reaction": 2},
 	}
 	if got := m[w.Key()]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("work metrics:\n got %+v\nwant %+v", got, want)
 	}
 	en, ja := m[edition("ed-en").Key()], m[edition("ed-ja").Key()]
-	if en.Views != 2 || en.Viewers != 1 || ja.Views != 2 || ja.Viewers != 2 {
+	if en.Views != 2 || en.Viewers != 1 || en.ViewerEngagementSum != .5 || en.ReturningViewers != 1 || ja.Views != 2 || ja.Viewers != 2 || ja.ViewerEngagementSum != 1 || ja.ReturningViewers != 0 {
 		t.Fatalf("version projections count separately from the work: %+v %+v", en, ja)
 	}
 	day2, err := st.Metrics(ctx, "t", []ContentRef{w}, Between(time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC), time.Date(2026, 5, 3, 0, 0, 0, 0, time.UTC)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := day2[w.Key()]; got.Viewers != 2 || got.Views != 2 || got.NegativeSubjects != 1 || got.PositiveSubjects != 0 {
+	if got := day2[w.Key()]; got.Viewers != 2 || got.Views != 2 || got.NegativeSubjects != 1 || got.PositiveSubjects != 0 || got.ViewerEngagementSum != 1 || got.ReturningViewers != 0 {
 		t.Fatalf("day-2 window: %+v", got)
 	}
 	hits, err := st.Popular(ctx, "t", "gallery", PopularOptions{})

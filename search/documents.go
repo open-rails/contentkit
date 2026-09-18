@@ -49,8 +49,8 @@ type KeywordDocument struct {
 type PublishedDocument struct {
 	KeywordDocument
 	// Version orders deliveries of one DocumentKey: the dirty-queue revision
-	// that published the document. A re-delivery carries a higher Version;
-	// an equal or lower Version is stale and must be ignored.
+	// that published the document. Retries may repeat it; sinks atomically
+	// ignore equal or lower versions across both upserts and deletes.
 	Version int64
 }
 
@@ -59,11 +59,16 @@ type PublishedDocument struct {
 // acknowledged. Delivery is at-least-once: a failing call keeps the row queued
 // (with a new Version) while the keyword index still commits, so an
 // unavailable sink never blocks keyword search. Implementations must be
-// idempotent by (DocumentKey, Version) and bounded: durably enqueue, never
-// embed inline. User Intelligence implements it; ContentKit ships none.
+// bounded and atomically apply only versions newer than the last version of
+// each DocumentKey. Keep that version after deletion as a tombstone, so late
+// upserts cannot resurrect a deleted document and late deletes cannot erase
+// a newer upsert. A remote call may finish after returning an error or timeout;
+// the worker's transaction lock cannot serialize those remote effects.
+// These external writes do not share the Postgres transaction. Implementations
+// may durably enqueue work; ContentKit ships no sink implementation.
 type DocumentSink interface {
 	Upsert(ctx context.Context, doc PublishedDocument) error
-	Delete(ctx context.Context, key DocumentKey) error
+	Delete(ctx context.Context, key DocumentKey, version int64) error
 }
 
 type documentRow struct {

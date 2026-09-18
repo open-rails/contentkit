@@ -34,10 +34,12 @@ another tenant is an error, never remapped.
 | `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `social_*` tables; the `Identity`/`Authorizer`/`ContentResolver`/`UserEnricher`/`MediaStore`/`ContentProcessor` ports, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, and the HTTP routes |
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
 | `worker` | one tenant's document maintenance: dirty queue, bounded backfill, sink delivery |
+| `taxonomy` | generic catalog: nodes (tags, artists, creators, characters, series, seasons, voice actors), localized names/aliases, edges, content assignments, effective tags, per-language counts, typeahead documents, admin routes |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
+| `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, taxonomy popularity through the host `Catalog` port |
 | `eval` | lexical golden-case evaluation, reports, baselines |
-| `migrations` | the four migratekit lineages (social, keyword, legacy keyword, signal) |
-| root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (every lineage), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
+| `migrations` | the five migratekit lineages (social, keyword, legacy keyword, taxonomy, signal) |
+| root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (social, keyword, optional taxonomy, signal), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
 
 ## Install
 
@@ -112,11 +114,33 @@ two-second ceiling per request.
 
 | Port | Called when | Contract |
 |---|---|---|
-| `DocumentSink` | the worker publishes or deletes a document | `Upsert(PublishedDocument)`, `Delete(DocumentKey)`; at-least-once, idempotent by `(DocumentKey, Version)`; a failing sink keeps the row queued and never blocks the keyword index |
+| `DocumentSink` | the worker publishes or deletes a document | `Upsert(PublishedDocument)`, `Delete(DocumentKey, Version)`; at-least-once, atomic newer-version wins across both operations, with a retained deletion tombstone; a failing sink keeps the row queued and never blocks the keyword index |
 
 `DocumentSink` is a neutral document change feed for external indexes, caches
 or audit consumers. ContentKit ships no sink implementation or AI-specific
 configuration.
+
+## Taxonomy
+
+Nodes, names, edges and assignments are tenant-scoped; effective tags are the
+work's assignments ∪ the selected version's; `RequireAll` makes a multi-node
+filter hold on one eligible version inside the same join as search. Apply
+`migrations.Taxonomy` after the keyword profile; see
+[docs/taxonomy-migration.md](docs/taxonomy-migration.md).
+
+```go
+store, _ := taxonomy.New(taxonomy.Options{Pool: pool, Schema: schema, Tenant: "doujins",
+	Kinds: []string{"tag", "artist", "character", "series", "voice_actor"}, Languages: []string{"en", "es"},
+	CountEligibility: &search.Eligibility{SQL: releasedVersionSQL}})
+_ = store.WithTx(tx).Assign(ctx, []taxonomy.Assignment{{ContentRef: g1.WithVersion(v2), TaxonomyID: "colored"}}, taxonomy.AssignOptions{})
+tags, _ := store.EffectiveTags(ctx, []contentkit.ContentRef{g1.WithVersion(v2)})
+filter, args, _ := taxonomy.RequireAll(schema, []taxonomy.TaxonomyID{"colored"})
+page, _ := client.Search(ctx, q, contentkit.SearchOptions{Language: "es", ContentKinds: []string{"gallery"}, FilterSQL: filter, FilterArgs: args, Eligibility: elig})
+mux.Handle("/admin/taxonomy/", http.StripPrefix("/admin/taxonomy", taxonomy.Handler(store)))
+```
+
+Worker: `ContentKinds: append(hostKinds, store.Kinds()...)`, `ListContent:
+store.Lister(listGalleries)`, `BuildKeywordDocuments: store.Builder(buildGalleryDocuments)`.
 
 ## Signal plane and discovery
 
@@ -139,6 +163,10 @@ top, _ := hub.Popular(ctx, "gallery", signal.PopularOptions{Window: signal.LastD
   once across versions; `States` and `Metrics` read exactly the references
   given, work or version.
 - Windows are whole UTC days, 7/30/90/365/all, no decay.
+- Rank by a named policy, not the default rank: `popularity.ByName("v1")`,
+  `popularity.New(popularity.Config{Source: hub, Policy: policy})`, then
+  `ranker.Popular` / `ranker.Scores` / `ranker.Taxonomy`
+  ([docs/popularity-policy.md](docs/popularity-policy.md)).
 - `EraseSubjects` is account erasure with a quorum-written fence; see
   [HOST_INTEGRATION.md](HOST_INTEGRATION.md#subject-erasure-completion-contract).
 - Reactions and favorites reach the signal plane through ContentKit's own
