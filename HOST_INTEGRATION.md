@@ -193,7 +193,7 @@ unfavorite keep a zero-valued snapshot; a rollback exports nothing; anonymous
   out. `MyReactions`/`IsFavorited` accept route references and read under the
   canonical one; `Counts` reads exactly the reference given (likes/favorites
   under the canonical reference, comment counts under the thread's).
-- **Delivery**: schedule `rt.DeliverPreferences(ctx, pageSize, maxRows)` from
+- **Delivery**: schedule `rt.DeliverPreferences(ctx, after, pageSize, maxRows)` from
   the host worker (e.g. a River periodic job every few seconds). It pages
   pending rows in key order per sweep (no persisted high-water mark), writes
   one `signal` event per subject × reference × axis (`Type` = axis,
@@ -205,6 +205,9 @@ unfavorite keep a zero-valued snapshot; a rollback exports nothing; anonymous
 - **Erasure**: call `rt.EraseSubjects` (fence in the signal plane, then purge
   the obligations) from the account-deletion handoff; a late delivery for a
   fenced subject is the terminal `PreferenceSubjectErased`, never a retry.
+- **Bounded delivery**: keep the returned `Next` cursor for the current sweep
+  and pass it as `after` on the next call, including after a sink error. Reset
+  to zero when exhausted; never persist it as a global high-water mark.
 - **Repair**: `rt.ReplayPreferences(ctx, after, pageSize, maxRows)` re-delivers
   every snapshot (acknowledged rows and zeros included) and resumes from the
   returned `Next`; newer snapshots still win by revision.

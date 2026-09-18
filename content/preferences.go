@@ -297,14 +297,15 @@ func (rt *Runtime) SeedPreferenceRevisionFloor(ctx context.Context, floor int64)
 		return 0, fmt.Errorf("content: preference revision floor %d is outside the safe range [0, %d]", floor, maxPreferenceRevisionFloor)
 	}
 	var current, used int64
-	if err := rt.store.pool.QueryRow(ctx, `SELECT last_value FROM `+rt.store.revisionSeq).Scan(&current); err != nil {
+	var called bool
+	if err := rt.store.pool.QueryRow(ctx, `SELECT last_value, is_called FROM `+rt.store.revisionSeq).Scan(&current, &called); err != nil {
 		return 0, err
 	}
 	if err := rt.store.pool.QueryRow(ctx, `SELECT COALESCE(max(revision), 0) FROM `+rt.store.t.preferenceSnapshots).Scan(&used); err != nil {
 		return 0, err
 	}
 	want := max(max(floor, current), used)
-	if want == current {
+	if want == current && (called || floor < current && used < current) {
 		return current, nil
 	}
 	if _, err := rt.store.pool.Exec(ctx, `SELECT setval('`+rt.store.revisionSeq+`', $1)`, want); err != nil {
@@ -313,17 +314,25 @@ func (rt *Runtime) SeedPreferenceRevisionFloor(ctx context.Context, floor int64)
 	return want, nil
 }
 
-// PurgePreferenceSubjects removes the tenant's snapshots of erased actors: the
-// terminal deletion fence, not a delivery outcome. Returns the rows removed.
+// PurgePreferenceSubjects removes the tenant's snapshots and cutover archive of erased actors: the
+// terminal deletion fence, not a delivery outcome. Returns snapshot rows removed.
 func (rt *Runtime) PurgePreferenceSubjects(ctx context.Context, actorIDs []string) (int64, error) {
 	if len(actorIDs) == 0 {
 		return 0, nil
 	}
-	tag, err := rt.store.pool.Exec(ctx, `DELETE FROM `+rt.store.t.preferenceSnapshots+` WHERE tenant_id = $1 AND actor_id = ANY($2)`, rt.tenant, actorIDs)
+	tx, err := rt.store.pool.Begin(ctx)
 	if err != nil {
 		return 0, err
 	}
-	return tag.RowsAffected(), nil
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `DELETE FROM `+rt.store.t.preferenceSnapshots+` WHERE tenant_id = $1 AND actor_id = ANY($2)`, rt.tenant, actorIDs)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM `+rt.store.t.preferenceArchive+` WHERE tenant_id = $1 AND actor_id = ANY($2)`, rt.tenant, actorIDs); err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), tx.Commit(ctx)
 }
 
 // --- cutover: collapse per-language source rows onto canonical references ---
@@ -445,7 +454,10 @@ func (p *preferences) migrateAxis(ctx context.Context, tx pgx.Tx, report *Prefer
 		if !ok {
 			continue
 		}
-		k := groupKey{actor: r.actor, ip: r.ip, ref: w.Key()}
+		k := groupKey{actor: r.actor, ref: w.Key()}
+		if r.actor == "" {
+			k.ip = r.ip
+		}
 		if _, seen := groups[k]; !seen {
 			order = append(order, k)
 		}
@@ -688,14 +700,16 @@ type PreferenceDelivery struct {
 	Next PreferenceKey
 }
 
-// DeliverPreferences runs one bounded sweep: it pages the tenant's pending
+// DeliverPreferences continues one bounded sweep from after: it pages the tenant's pending
 // snapshots in key order, hands each page to the sink, acknowledges exactly the
 // revisions the sink accepted, purges erased subjects and leaves the rest
 // pending. pageSize bounds each page; maxRows bounds the sweep (<= 0: until
 // the cursor runs out). The cursor is per-sweep, so a key that keeps failing
-// never starves the rest: the next sweep starts from the pending rows again.
-func (rt *Runtime) DeliverPreferences(ctx context.Context, sink PreferenceSink, pageSize, maxRows int) (PreferenceDelivery, error) {
-	return rt.sweep(ctx, sink, PreferenceKey{}, pageSize, maxRows, rt.PendingPreferences)
+// never starves the rest. Resume from Next even after a sink error. Once Next
+// is zero the sweep is exhausted; start the next sweep from zero. Keep this
+// cursor only for the current sweep, never as a persistent high-water mark.
+func (rt *Runtime) DeliverPreferences(ctx context.Context, sink PreferenceSink, after PreferenceKey, pageSize, maxRows int) (PreferenceDelivery, error) {
+	return rt.sweep(ctx, sink, after, pageSize, maxRows, rt.PendingPreferences)
 }
 
 // ReplayPreferences is the bounded full-snapshot replay that repairs sink
@@ -708,7 +722,7 @@ func (rt *Runtime) ReplayPreferences(ctx context.Context, sink PreferenceSink, a
 }
 
 func (rt *Runtime) sweep(ctx context.Context, sink PreferenceSink, after PreferenceKey, pageSize, maxRows int, page func(context.Context, PreferenceKey, int) ([]PreferenceSnapshot, error)) (PreferenceDelivery, error) {
-	var out PreferenceDelivery
+	out := PreferenceDelivery{Next: after}
 	if sink == nil {
 		return out, errors.New("content: DeliverPreferences needs a sink")
 	}
@@ -721,9 +735,12 @@ func (rt *Runtime) sweep(ctx context.Context, sink PreferenceSink, after Prefere
 			limit = maxRows - out.Delivered
 		}
 		snaps, err := page(ctx, after, limit)
-		if err != nil || len(snaps) == 0 {
-			out.Next = PreferenceKey{}
+		if err != nil {
 			return out, err
+		}
+		if len(snaps) == 0 {
+			out.Next = PreferenceKey{}
+			return out, nil
 		}
 		after = snaps[len(snaps)-1].PreferenceKey
 		out.Next = after
