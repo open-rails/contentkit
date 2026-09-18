@@ -2,6 +2,7 @@ package popularity
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -157,6 +158,9 @@ func (r *Ranker) Candidates(ctx context.Context, contentKind string, ids []strin
 	if strings.TrimSpace(contentKind) == "" {
 		return nil, fmt.Errorf("popularity: contentKind is required")
 	}
+	if err := window.Validate(); err != nil {
+		return nil, err
+	}
 	refs := make([]signal.ContentRef, 0, len(ids))
 	for _, id := range ids {
 		if id = strings.TrimSpace(id); id != "" {
@@ -267,10 +271,17 @@ func sortHits(hits []Hit) {
 	})
 }
 
-// cacheKey names the tenant and the policy so no other policy, tenant, kind,
-// window or bound can read this entry.
+// cacheKey includes the complete policy and unambiguous component boundaries.
+// Tenant identifiers and custom policy names are opaque: a delimiter in one
+// must never allow another tenant or policy to reuse its cached results.
 func (r *Ranker) cacheKey(parts ...string) string {
-	return "contentkit:popularity:" + r.source.Tenant() + ":" + r.policy.Name + ":" + strings.Join(parts, ":")
+	// New validates every float in Policy, so this fixed shape always encodes.
+	body, _ := json.Marshal(struct {
+		Tenant string
+		Policy Policy
+		Parts  []string
+	}{r.source.Tenant(), r.policy, parts})
+	return fmt.Sprintf("contentkit:popularity:%x", sha256.Sum256(body))
 }
 
 func (r *Ranker) cached(ctx context.Context, key string, into any) bool {
