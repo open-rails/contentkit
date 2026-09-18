@@ -33,8 +33,8 @@ another tenant is an error, never remapped.
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
 | `worker` | one tenant's document maintenance: dirty queue, bounded backfill, sink delivery |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
-| `eval` | lexical golden-case evaluation, reports, baselines |
 | `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, taxonomy popularity through the host `Catalog` port |
+| `eval` | lexical golden-case evaluation, reports, baselines |
 | `migrations` | the three migratekit lineages |
 | root | `Client` (search + typeahead + semantic fusion), `EmbeddedHub` (signal + discovery), the `SemanticRanker` port |
 
