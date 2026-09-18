@@ -634,45 +634,68 @@ func (p *polls) classify(ctx context.Context, a Answer) (bool, error) {
 	return tag.RowsAffected() == 1, err
 }
 
-// ReclassifyPending retries classification of this tenant's unclassified
-// free-text answers, oldest write first, up to limit (default 100). It
-// returns how many were classified and the first classifier error, so a
-// persistent failure surfaces to the host's scheduler.
-func (rt *Runtime) ReclassifyPending(ctx context.Context, limit int) (int, error) {
+// ClassificationPage reports one bounded pending scan. Resume Next even when
+// a provider error is returned; empty Next ends the sweep. Start the next sweep
+// from empty, so failed answers and new revisions behind the cursor are retried.
+type ClassificationPage struct {
+	Classified int
+	Next       string
+}
+
+// ReclassifyPending processes one page in immutable answer-id order. The cursor
+// is per-sweep only, never a persistent high-water mark. Errors do not strand
+// later keys. Unchanged source revisions retain their classification identity.
+func (rt *Runtime) ReclassifyPending(ctx context.Context, after string, limit int) (ClassificationPage, error) {
+	out := ClassificationPage{Next: after}
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := rt.store.pool.Query(ctx, `SELECT id::text, question_id::text, text, revision, actor_id FROM `+rt.store.t.pollAnswers+`
-		WHERE tenant_id = $1 AND classified_at IS NULL AND EXISTS (SELECT 1 FROM `+rt.store.t.pollQuestions+` q WHERE q.id = question_id AND q.tenant_id = $1 AND q.deleted_at IS NULL) ORDER BY updated_at LIMIT $2`, rt.tenant, limit)
+	if after != "" && !uuidRe.MatchString(after) {
+		return out, badRequest("invalid answer cursor")
+	}
+	cursor := after
+	if cursor == "" {
+		cursor = "00000000-0000-0000-0000-000000000000"
+	}
+	rows, err := rt.store.pool.Query(ctx, `SELECT id::text,question_id::text,text,revision,actor_id FROM `+rt.store.t.pollAnswers+`
+ WHERE tenant_id=$1 AND classified_at IS NULL AND id > $3::uuid
+ AND EXISTS (SELECT 1 FROM `+rt.store.t.pollQuestions+` q WHERE q.id=question_id AND q.tenant_id=$1 AND q.deleted_at IS NULL)
+ ORDER BY id LIMIT $2`, rt.tenant, limit+1, cursor)
 	if err != nil {
-		return 0, err
+		return out, err
 	}
 	var pending []Answer
 	for rows.Next() {
 		a := Answer{Tenant: rt.tenant}
 		if err := rows.Scan(&a.AnswerID, &a.QuestionID, &a.Text, &a.Revision, &a.SubjectID); err != nil {
 			rows.Close()
-			return 0, err
+			return out, err
 		}
 		pending = append(pending, a)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return 0, err
+		return out, err
 	}
-	var n int
+	out.Next = ""
+	if len(pending) > limit {
+		pending = pending[:limit]
+		out.Next = pending[len(pending)-1].AnswerID
+	}
 	var first error
 	for _, a := range pending {
-		if applied, err := rt.polls.classify(ctx, a); err != nil {
+		applied, err := rt.polls.classify(ctx, a)
+		if err != nil {
 			if first == nil {
 				first = err
 			}
 			continue
-		} else if applied {
-			n++
+		}
+		if applied {
+			out.Classified++
 		}
 	}
-	return n, first
+	return out, first
 }
 
 // ownsQuestion renders the predicate tying an option/vote row to a question of

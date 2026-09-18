@@ -126,8 +126,10 @@ before) or `free_text`: one answer per signed-in actor in
 Creating a free-text poll without `Options.Classifier` is refused (`501`,
 `content.ErrNoClassifier`). Each stored or edited answer is classified right
 after commit; a classifier failure keeps the answer with `classified: false`
-and the host retries with `rt.Content.ReclassifyPending(ctx, limit)` on a
-schedule (returns the count classified and the first error). The classifier
+and the host retries with `rt.Content.ReclassifyPending(ctx, after, limit)` on a
+schedule (returns `ClassificationPage{Classified, Next}` and the first error).
+Continue `Next` even after provider failure, and restart from empty when the
+sweep ends. This is a per-sweep cursor, never a durable high-water mark. The classifier
 returns a group id and label for an immutable `(tenant, answer_id, revision)`.
 ContentKit CAS-persists that assignment only while the revision is current.
 Membership, labels and counts are read from these durable assignments:
@@ -142,7 +144,10 @@ old assignment until the new revision is classified; late old results cannot win
 
 The moderation queue includes `revision`; resolve requests must echo it with
 `decision` and optional `reason`. A decision about an older body cannot publish
-an intervening edit. Held creates **and edits** return 202.
+an intervening edit. Comment/post edits screen the captured payload outside SQL
+transactions; a short source-revision CAS transaction then commits the verdict.
+A concurrent intervening edit returns 409 for retry; provider waits never hold
+source row/subject locks. Held creates **and edits** return 202.
 
 Retaining classifiers/moderators must configure `content.Options.PrivateDataEraser`.
 Its `EraseSubjects(ctx, tenant, actorIDs)` must durably fence those subjects and

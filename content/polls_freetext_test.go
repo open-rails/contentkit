@@ -216,26 +216,26 @@ func TestPolls_FreeTextClassifierFailureRetry(t *testing.T) {
 	if err != nil || v.AnswerCount != 1 || v.MyAnswer == nil || v.MyAnswer.Classified || len(v.Groups) != 0 {
 		t.Fatalf("answer under a failing classifier = %+v err=%v, want kept and unclassified", v, err)
 	}
-	n, err := rt.ReclassifyPending(ctx, 10)
-	if err != nil || n != 1 {
-		t.Fatalf("ReclassifyPending = %d, %v", n, err)
+	n, err := rt.ReclassifyPending(ctx, "", 10)
+	if err != nil || n.Classified != 1 {
+		t.Fatalf("ReclassifyPending = %+v, %v", n, err)
 	}
 	if v, _ = p.get(ctx, u, poll.ID); !v.MyAnswer.Classified || len(v.Groups) != 1 || v.Groups[0].ID != "cats" {
 		t.Fatalf("after retry = %+v", v)
 	}
-	if n, err = rt.ReclassifyPending(ctx, 10); err != nil || n != 0 {
-		t.Fatalf("second ReclassifyPending = %d, %v", n, err)
+	if n, err = rt.ReclassifyPending(ctx, "", 10); err != nil || n.Classified != 0 {
+		t.Fatalf("second ReclassifyPending = %+v, %v", n, err)
 	}
 	// an edit reclassifies; a failing retry reports the error and keeps waiting
 	cl.failN = 2
 	if v, _ = p.answer(ctx, u, poll.ID, "dogs"); v.MyAnswer.Classified {
 		t.Fatal("edited answer kept a stale classification")
 	}
-	if n, err = rt.ReclassifyPending(ctx, 10); err == nil || n != 0 {
-		t.Fatalf("failing retry = %d, %v, want the error", n, err)
+	if n, err = rt.ReclassifyPending(ctx, "", 10); err == nil || n.Classified != 0 {
+		t.Fatalf("failing retry = %+v, %v, want the error", n, err)
 	}
-	if n, err = rt.ReclassifyPending(ctx, 10); err != nil || n != 1 {
-		t.Fatalf("recovered retry = %d, %v", n, err)
+	if n, err = rt.ReclassifyPending(ctx, "", 10); err != nil || n.Classified != 1 {
+		t.Fatalf("recovered retry = %+v, %v", n, err)
 	}
 	if v, _ = p.get(ctx, u, poll.ID); len(v.Groups) != 1 || v.Groups[0].ID != "dogs" {
 		t.Fatalf("after edit and retry = %+v", v.Groups)
@@ -264,8 +264,8 @@ func TestPolls_FreeTextTenantIsolation(t *testing.T) {
 	if _, err := b.polls.get(ctx, u, poll.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("tenant b read a's poll: %v", err)
 	}
-	if n, _ := b.ReclassifyPending(ctx, 10); n != 0 {
-		t.Fatalf("tenant b reclassified a's answers: %d", n)
+	if n, _ := b.ReclassifyPending(ctx, "", 10); n.Classified != 0 {
+		t.Fatalf("tenant b reclassified a's answers: %+v", n)
 	}
 	v, _ := a.polls.get(ctx, u, poll.ID)
 	if v.AnswerCount != 1 || v.MyAnswer == nil || len(v.Groups) != 1 {

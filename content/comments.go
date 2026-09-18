@@ -534,14 +534,18 @@ func (c *comments) edit(ctx context.Context, actor Actor, cid, rawBody string) (
 		return Comment{}, err
 	}
 	var before string
+	var revision int64
 	var k contentref.ContentKey
-	err = tx.QueryRow(ctx, `SELECT moderation, `+keyCols+` FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL FOR UPDATE`, cid, c.s.tenant).
-		Scan(&before, &k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID)
+	err = tx.QueryRow(ctx, `SELECT moderation, moderation_revision, `+keyCols+` FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL FOR UPDATE`, cid, c.s.tenant).
+		Scan(&before, &revision, &k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Comment{}, ErrNotFound
 	}
 	if err != nil {
 		return Comment{}, err
+	}
+	if revision != target.revision {
+		return Comment{}, errContentChanged
 	}
 	var cm Comment
 	replyTo, userID, anonName, _, err := scanComment(tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+`
@@ -598,8 +602,9 @@ func (c *comments) softDelete(ctx context.Context, actor Actor, cid string) erro
 // writeTarget is what loadForWrite resolves: the owner (nil for an anonymous
 // comment) and the content the comment belongs to.
 type writeTarget struct {
-	ownerID *string
-	ref     contentref.ContentRef
+	revision int64
+	ownerID  *string
+	ref      contentref.ContentRef
 }
 
 // loadForWrite resolves a live comment and authorizes actor as owner-or-moderator.
@@ -610,8 +615,8 @@ func (c *comments) loadForWrite(ctx context.Context, actor Actor, cid string) (w
 	var t writeTarget
 	var k contentref.ContentKey
 	var deletedAt *time.Time
-	row := c.s.pool.QueryRow(ctx, `SELECT user_id, `+keyCols+`, deleted_at FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2`, cid, c.s.tenant)
-	if err := row.Scan(&t.ownerID, &k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID, &deletedAt); err != nil {
+	row := c.s.pool.QueryRow(ctx, `SELECT user_id, `+keyCols+`, deleted_at, moderation_revision FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2`, cid, c.s.tenant)
+	if err := row.Scan(&t.ownerID, &k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID, &deletedAt, &t.revision); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return writeTarget{}, ErrNotFound
 		}

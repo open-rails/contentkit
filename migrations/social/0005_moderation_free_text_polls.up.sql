@@ -47,9 +47,9 @@ CREATE TABLE social_poll_answers (
     updated_at    timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT social_poll_answers_actor_uq UNIQUE (tenant_id, question_id, actor_id)
 );
--- Unclassified answers in write order (ReclassifyPending).
+-- Unclassified answers in native UUID key order (ReclassifyPending).
 CREATE INDEX social_poll_answers_pending_idx
-    ON social_poll_answers (tenant_id, updated_at) WHERE classified_at IS NULL;
+    ON social_poll_answers (tenant_id, id) WHERE classified_at IS NULL;
 
 -- Bind reviewer decisions and classifier delivery to immutable source revisions.
 ALTER TABLE social_comments ADD COLUMN moderation_revision bigint NOT NULL DEFAULT 1 CHECK (moderation_revision > 0);

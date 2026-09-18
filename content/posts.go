@@ -273,32 +273,15 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	tx, err := p.s.pool.Begin(ctx)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	var subject string
-	if err := tx.QueryRow(ctx, `SELECT author_id FROM `+p.s.t.posts+` WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL`, id, p.s.tenant).Scan(&subject); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			err = ErrNotFound
-		}
-		writeErr(w, err)
-		return
-	}
-	if err := p.rt.guardPrivateSubject(ctx, tx, subject); err != nil {
-		writeErr(w, err)
-		return
-	}
-	// Lock the row and screen the merged text under the lock, so the stored
-	// state always belongs to the stored text.
-	var before, curTitle, curBody string
+	// Capture the source revision before invoking an external policy. No SQL
+	// transaction or subject/row lock is held while the provider runs.
+	var subject, before, curTitle, curBody string
 	var curDraft bool
-	err = tx.QueryRow(ctx, `SELECT language, title, body, is_draft FROM `+p.s.t.posts+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL FOR UPDATE`, id, p.s.tenant).Scan(&before, &curTitle, &curBody, &curDraft)
+	var revision int64
+	err = p.s.pool.QueryRow(ctx, `SELECT author_id,language,title,body,is_draft,moderation_revision FROM `+p.s.t.posts+`
+		WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL`, id, p.s.tenant).Scan(&subject, &before, &curTitle, &curBody, &curDraft, &revision)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeErr(w, ErrNotFound)
-		return
+		err = ErrNotFound
 	}
 	if err != nil {
 		writeErr(w, err)
@@ -324,6 +307,16 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	tx, err := p.s.pool.Begin(ctx)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := p.rt.guardPrivateSubject(ctx, tx, subject); err != nil {
+		writeErr(w, err)
+		return
+	}
 	var after string
 	if err := tx.QueryRow(ctx, `UPDATE `+p.s.t.posts+` SET
 		title = $2, body = $3,
@@ -332,8 +325,11 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		is_draft = $8, live_at = COALESCE($9, live_at),
 		published_content = CASE WHEN $11='approved' THEN NULL WHEN moderation='approved' AND NOT is_draft THEN jsonb_build_object('title',title,'body',body,'excerpt',excerpt) ELSE published_content END, moderation_revision = moderation_revision + 1, moderated_by = NULL, moderated_at = NULL, moderation = $11, moderation_reason = $12, moderation_verdict = $13,
 		updated_at = now()
-		WHERE id = $1 AND tenant_id = $10 RETURNING language`,
-		id, curTitle, curBody, excerpt, in.Slug, in.Language, in.CoverURL, curDraft, in.LiveAt, p.s.tenant, sc.state, sc.reason, sc.meta).Scan(&after); err != nil {
+		WHERE id = $1 AND tenant_id = $10 AND deleted_at IS NULL AND moderation_revision=$14 RETURNING language`,
+		id, curTitle, curBody, excerpt, in.Slug, in.Language, in.CoverURL, curDraft, in.LiveAt, p.s.tenant, sc.state, sc.reason, sc.meta, revision).Scan(&after); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = errContentChanged
+		}
 		writeErr(w, err)
 		return
 	}

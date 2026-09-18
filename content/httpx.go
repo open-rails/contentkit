@@ -22,8 +22,9 @@ func badRequest(format string, a ...any) httpError {
 }
 
 var (
-	errUnauthorized = httpError{status: http.StatusUnauthorized, msg: "authentication required"}
-	errForbidden    = httpError{status: http.StatusForbidden, msg: "forbidden"}
+	errContentChanged = httpError{status: http.StatusConflict, msg: "content changed while being screened; retry the edit"}
+	errUnauthorized   = httpError{status: http.StatusUnauthorized, msg: "authentication required"}
+	errForbidden      = httpError{status: http.StatusForbidden, msg: "forbidden"}
 )
 
 // RejectedError is a policy rejection of a text write, answered as 422 with

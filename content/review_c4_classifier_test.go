@@ -63,8 +63,8 @@ func TestReviewC4DeletedPollIsNotSentForClassification(t *testing.T) {
 	if _, err := rt.store.pool.Exec(ctx, `UPDATE `+rt.store.t.pollQuestions+` SET deleted_at=now() WHERE id=$1`, poll.ID); err != nil {
 		t.Fatal(err)
 	}
-	n, err := rt.ReclassifyPending(ctx, 10)
-	if err != nil || n != 0 {
-		t.Fatalf("deleted poll answer sent for classification: n=%d err=%v", n, err)
+	n, err := rt.ReclassifyPending(ctx, "", 10)
+	if err != nil || n.Classified != 0 {
+		t.Fatalf("deleted poll answer sent for classification: n=%+v err=%v", n, err)
 	}
 }
