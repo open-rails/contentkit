@@ -174,7 +174,7 @@ func TestNodesNamesEdgesAndMergeIntegration(t *testing.T) {
 	if tags, _ = s.EffectiveTags(ctx, []contentref.ContentRef{g1}); len(tags[g1.Key()]) != 0 {
 		t.Fatalf("deleted node still effective: %v", tags)
 	}
-	if page, _ = s.ListNodes(ctx, ListOptions{Kind: "tag", State: StateDeleted}); len(page.Nodes) != 1 {
+	if page, _ = s.ListNodes(ctx, ListOptions{Kind: "tag", States: []State{StateDeleted}}); len(page.Nodes) != 1 {
 		t.Fatalf("deleted listing: %+v", page)
 	}
 	active := StateActive

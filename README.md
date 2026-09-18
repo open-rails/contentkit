@@ -139,6 +139,20 @@ page, _ := client.Search(ctx, q, contentkit.SearchOptions{Language: "es", Conten
 mux.Handle("/admin/taxonomy/", http.StripPrefix("/admin/taxonomy", taxonomy.Handler(store)))
 ```
 
+`ListNodes` backs a catalog index page directly: the display name in the
+request language (falling back to the store's configured order, or pinned with
+`LanguageMode`), the per-language content count, an A-Z index, a name+alias
+search, hide-empty, five orders and offset paging with a total. The zero
+`ListOptions` keeps the keyset contract a full admin sync wants.
+
+```go
+page, _ := store.ListNodes(ctx, taxonomy.ListOptions{Kind: "artist", Language: "es",
+	ContentKind: "gallery", MinCount: 1, Sort: taxonomy.SortCount, Offset: 40, Limit: 20})
+// page.Total, and per row: Name, NameLanguage, Count.
+letter, _ := store.ListNodes(ctx, taxonomy.ListOptions{Kind: "artist", Language: "es", NamePrefix: "a"})
+cast, _ := store.ListNodes(ctx, taxonomy.ListOptions{Kind: "character", Related: "s-fate", Relation: taxonomy.RelationMemberOf})
+```
+
 Worker: `ContentKinds: append(hostKinds, store.Kinds()...)`, `ListContent:
 store.Lister(listGalleries)`, `BuildKeywordDocuments: store.Builder(buildGalleryDocuments)`.
 
