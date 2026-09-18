@@ -19,8 +19,8 @@ func TestIntegrationWindowBoundariesAreLiteral(t *testing.T) {
 	record := func(id, subject string, at time.Time) {
 		t.Helper()
 		sig := Signal{
-			EntityRef: EntityRef{EntityType: "gallery", EntityID: id},
-			Subject:   Subject{UserID: subject}, Type: "view", EventID: id + ":" + subject,
+			ContentRef: gallery(tenant, id),
+			Subject:    Subject{UserID: subject}, Type: "view", EventID: id + ":" + subject,
 			OccurredAt: at, Progress: 10, ProgressMax: 10, Score: 60, Completed: true,
 		}
 		if err := st.RecordSignals(ctx, tenant, []Signal{sig}); err != nil {
@@ -40,7 +40,7 @@ func TestIntegrationWindowBoundariesAreLiteral(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(hits) != 3 {
-		t.Fatalf("only in-window entities rank: %+v", hits)
+		t.Fatalf("only in-window works rank: %+v", hits)
 	}
 	for _, h := range hits[1:] {
 		if h.Score != hits[0].Score || h.Viewers != 2 || h.Views != 2 || h.Completions != 2 {
@@ -48,10 +48,7 @@ func TestIntegrationWindowBoundariesAreLiteral(t *testing.T) {
 		}
 	}
 	ids := []string{"first-instant", "middle", "last-instant", "before", "after"}
-	metrics, err := st.Metrics(ctx, tenant, "gallery", ids, window)
-	if err != nil {
-		t.Fatal(err)
-	}
+	metrics := metricsByID(t, st, tenant, ids, window)
 	counts := map[string]uint64{}
 	for id, m := range metrics {
 		counts[id] = m.Viewers
@@ -68,13 +65,13 @@ func TestIntegrationWindowBoundariesAreLiteral(t *testing.T) {
 	}
 
 	// Co-engagement uses the same half-open days.
-	co, err := st.CoEngaged(ctx, tenant, EntityRef{EntityType: "gallery", EntityID: "middle"}, CoEngagedOptions{Window: window, SkipRollup: true, Limit: 10})
+	co, err := st.CoEngaged(ctx, tenant, gallery(tenant, "middle"), CoEngagedOptions{Window: window, SkipRollup: true, Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := map[string]int64{}
 	for _, h := range co {
-		got[h.EntityID] = h.Strength
+		got[h.ContentID] = h.Strength
 	}
 	if want := map[string]int64{"first-instant": 2, "last-instant": 2}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("windowed co-engagement %v want %v", got, want)
@@ -82,13 +79,13 @@ func TestIntegrationWindowBoundariesAreLiteral(t *testing.T) {
 	if err := st.RefreshCoEngagement(ctx, tenant, RefreshCoEngagementOptions{Window: window}); err != nil {
 		t.Fatal(err)
 	}
-	co, err = st.CoEngaged(ctx, tenant, EntityRef{EntityType: "gallery", EntityID: "middle"}, CoEngagedOptions{Limit: 10})
+	co, err = st.CoEngaged(ctx, tenant, gallery(tenant, "middle"), CoEngagedOptions{Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
 	got = map[string]int64{}
 	for _, h := range co {
-		got[h.EntityID] = h.Strength
+		got[h.ContentID] = h.Strength
 	}
 	if want := map[string]int64{"first-instant": 2, "last-instant": 2}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("windowed pair rollup %v want %v", got, want)

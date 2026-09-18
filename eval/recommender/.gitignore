@@ -1,6 +1,0 @@
-# Real user-behavior data + normalized inputs (privacy) — never commit.
-data/
-# Host-side adapters: host domain knowledge lives with the host, not in searchkit.
-adapters/
-.venv/
-__pycache__/

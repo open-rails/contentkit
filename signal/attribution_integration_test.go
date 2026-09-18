@@ -34,10 +34,10 @@ func loadAttributionFixture(t *testing.T) attributionFixture {
 		day1: time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)}
 	f.window = Between(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC))
 	day3 := f.day1.AddDate(0, 0, 2)
-	g := func(ids ...string) []Placement {
+	g := func(tenant string, ids ...string) []Placement {
 		out := make([]Placement, len(ids))
 		for i, id := range ids {
-			out[i] = Placement{EntityRef: EntityRef{EntityType: "gallery", EntityID: id}, Position: uint32(i + 1)}
+			out[i] = Placement{ContentRef: gallery(tenant, id), Position: uint32(i + 1)}
 		}
 		return out
 	}
@@ -46,54 +46,54 @@ func loadAttributionFixture(t *testing.T) attributionFixture {
 			Subject: sub, OccurredAt: at, Shown: shown}
 	}
 	exposures := []Exposure{
-		ex("R01", StageRendered, 0, f.u1, SurfaceSearch, f.day1, g("g1", "g2")),
-		ex("R02", StageRendered, 0, f.u1, SurfaceSearch, f.day1, g("g1", "g2", "g3", "g4", "g5")),
-		ex("R03", StageRendered, 0, f.u2, SurfaceSearch, f.day1, g("g6")),
-		ex("R04", StageRendered, 0, f.a1, SurfaceSearch, f.day1, g("g7", "g8")),
-		ex("R05", StageRendered, 0, f.a1, SurfaceSearch, f.day1, g("g7")),
-		ex("R06", StageRendered, 0, f.u1, SurfaceSimilar, f.day1, g("g10")),
-		ex("R07", StageRendered, 2, f.u1, SurfaceSearch, f.day1, g("g11", "g12")),
-		ex("R07", StageRendered, 1, f.u1, SurfaceSearch, f.day1, g("g11")),
-		ex("R08", StageRendered, 0, f.u1, SurfaceSearch, f.day1, g("g13")),
-		ex("R09", StageRendered, 0, f.u3, SurfaceSearch, f.day1, g("g14")),
-		ex("R10", StageRendered, 0, f.u1, SurfaceSearch, f.day1, g("g15")),
-		ex("R11", StageRendered, 0, f.u1, SurfaceSearch, day3, g("g16")),
-		ex("S01", StageServed, 0, f.u1, SurfaceSearch, f.day1, g("g17")),
+		ex("R01", StageRendered, 0, f.u1, SurfaceSearch, f.day1, g("t", "g1", "g2")),
+		ex("R02", StageRendered, 0, f.u1, SurfaceSearch, f.day1, g("t", "g1", "g2", "g3", "g4", "g5")),
+		ex("R03", StageRendered, 0, f.u2, SurfaceSearch, f.day1, g("t", "g6")),
+		ex("R04", StageRendered, 0, f.a1, SurfaceSearch, f.day1, g("t", "g7", "g8")),
+		ex("R05", StageRendered, 0, f.a1, SurfaceSearch, f.day1, g("t", "g7")),
+		ex("R06", StageRendered, 0, f.u1, SurfaceSimilar, f.day1, g("t", "g10")),
+		ex("R07", StageRendered, 2, f.u1, SurfaceSearch, f.day1, g("t", "g11", "g12")),
+		ex("R07", StageRendered, 1, f.u1, SurfaceSearch, f.day1, g("t", "g11")),
+		ex("R08", StageRendered, 0, f.u1, SurfaceSearch, f.day1, g("t", "g13")),
+		ex("R09", StageRendered, 0, f.u3, SurfaceSearch, f.day1, g("t", "g14")),
+		ex("R10", StageRendered, 0, f.u1, SurfaceSearch, f.day1, g("t", "g15")),
+		ex("R11", StageRendered, 0, f.u1, SurfaceSearch, day3, g("t", "g16")),
+		ex("S01", StageServed, 0, f.u1, SurfaceSearch, f.day1, g("t", "g17")),
 	}
 	if err := st.RecordExposures(ctx, f.tenant, exposures); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RecordExposures(ctx, "o", []Exposure{ex("R01", StageRendered, 0, f.u1, SurfaceSearch, f.day1, g("g1"))}); err != nil {
+	if err := st.RecordExposures(ctx, "o", []Exposure{ex("R01", StageRendered, 0, f.u1, SurfaceSearch, f.day1, g("o", "g1"))}); err != nil {
 		t.Fatal(err)
 	}
-	click := func(sub Subject, render, id string, pos uint32, event string, at time.Time) Signal {
-		return Signal{EntityRef: EntityRef{EntityType: "gallery", EntityID: id}, Subject: sub, Type: TypeClick, EventID: event, OccurredAt: at}.
+	click := func(tenant string, sub Subject, render, id string, pos uint32, event string, at time.Time) Signal {
+		return Signal{ContentRef: gallery(tenant, id), Subject: sub, Type: TypeClick, EventID: event, OccurredAt: at}.
 			WithAttribution(Attribution{RenderID: render, Surface: SurfaceSearch, Position: pos})
 	}
 	s := func(n int) time.Time { return f.day1.Add(time.Duration(n) * time.Second) }
 	clicks := []Signal{
-		click(f.u1, "R02", "g1", 1, "c02-1", s(1)),
-		click(f.u1, "R02", "g2", 2, "c02-2", s(2)),
-		click(f.u1, "R02", "g3", 3, "c02-3", s(3)),
-		click(f.u1, "R02", "g4", 4, "c02-4", s(4)),
-		click(f.u1, "R02", "g5", 5, "c02-5", s(5)),
-		click(f.u1, "R02", "g1", 1, "c02-6", s(6)),
-		click(f.u1, "R02", "g9", 9, "c02-7", s(7)), // not shown
-		click(f.u2, "R03", "g6", 1, "c03-1", s(10)),
-		click(f.a1, "R05", "g7", 1, "same", s(40)), // identity differs from the next only by subject
-		click(f.u1, "R05", "g7", 1, "same", s(40)),
-		click(f.u1, "R06", "g10", 1, "c06-1", s(11)),
-		click(f.u1, "R07", "g12", 2, "c07-1", s(12)), // exposed only by revision 2
-		click(f.u1, "R08", "g13", 1, "c08-1", s(80)),
-		click(f.u1, "R08", "g13", 1, "c08-1", s(81)), // retry, re-stamped
-		click(f.u3, "R09", "g14", 1, "c09-1", s(13)),
-		click(f.u1, "R10", "g15", 1, "c10-1", day3),  // outside the window
-		click(f.u1, "R11", "g16", 1, "c11-1", s(14)), // render outside the window
-		click(f.u1, "S01", "g17", 1, "cS1-1", s(15)), // served, never rendered
-		click(f.u1, "N01", "g1", 1, "cN1-1", s(16)),  // render never recorded
-		click(f.u2, "N01", "g2", 2, "cN1-2", s(17)),
-		click(f.a1, "N02", "g3", 1, "cN2-1", s(18)),
-		{EntityRef: EntityRef{EntityType: "gallery", EntityID: "g1"}, Subject: f.u1, Type: TypeClick, EventID: "organic", OccurredAt: s(19)},
+		click("t", f.u1, "R02", "g1", 1, "c02-1", s(1)),
+		click("t", f.u1, "R02", "g2", 2, "c02-2", s(2)),
+		click("t", f.u1, "R02", "g3", 3, "c02-3", s(3)),
+		click("t", f.u1, "R02", "g4", 4, "c02-4", s(4)),
+		click("t", f.u1, "R02", "g5", 5, "c02-5", s(5)),
+		click("t", f.u1, "R02", "g1", 1, "c02-6", s(6)),
+		click("t", f.u1, "R02", "g9", 9, "c02-7", s(7)), // not shown
+		click("t", f.u2, "R03", "g6", 1, "c03-1", s(10)),
+		click("t", f.a1, "R05", "g7", 1, "same", s(40)), // identity differs from the next only by subject
+		click("t", f.u1, "R05", "g7", 1, "same", s(40)),
+		click("t", f.u1, "R06", "g10", 1, "c06-1", s(11)),
+		click("t", f.u1, "R07", "g12", 2, "c07-1", s(12)), // exposed only by revision 2
+		click("t", f.u1, "R08", "g13", 1, "c08-1", s(80)),
+		click("t", f.u1, "R08", "g13", 1, "c08-1", s(81)), // retry, re-stamped
+		click("t", f.u3, "R09", "g14", 1, "c09-1", s(13)),
+		click("t", f.u1, "R10", "g15", 1, "c10-1", day3),  // outside the window
+		click("t", f.u1, "R11", "g16", 1, "c11-1", s(14)), // render outside the window
+		click("t", f.u1, "S01", "g17", 1, "cS1-1", s(15)), // served, never rendered
+		click("t", f.u1, "N01", "g1", 1, "cN1-1", s(16)),  // render never recorded
+		click("t", f.u2, "N01", "g2", 2, "cN1-2", s(17)),
+		click("t", f.a1, "N02", "g3", 1, "cN2-1", s(18)),
+		{ContentRef: gallery("t", "g1"), Subject: f.u1, Type: TypeClick, EventID: "organic", OccurredAt: s(19)},
 	}
 	// Deliver twice, the second time reversed.
 	reversed := make([]Signal, len(clicks))
@@ -103,7 +103,7 @@ func loadAttributionFixture(t *testing.T) attributionFixture {
 	if err := st.RecordSignals(ctx, f.tenant, append(clicks, reversed...)); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RecordSignals(ctx, "o", []Signal{click(f.u1, "R01", "g1", 1, "o-1", s(1)), click(f.u1, "N01", "g1", 1, "o-2", s(2))}); err != nil {
+	if err := st.RecordSignals(ctx, "o", []Signal{click("o", f.u1, "R01", "g1", 1, "o-1", s(1)), click("o", f.u1, "N01", "g1", 1, "o-2", s(2))}); err != nil {
 		t.Fatal(err)
 	}
 	report, err := st.EraseSubjects(ctx, []string{f.tenant}, []Subject{f.u3})
@@ -112,11 +112,11 @@ func loadAttributionFixture(t *testing.T) attributionFixture {
 	}
 	// Residue a writer that passed the fence check before the fence could leave:
 	// the export must exclude it through the ledger, not only through deletion.
-	if err := conn.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.events (tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id, occurred_at, payload)
+	if err := conn.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.signals (tenant, content_kind, content_id, subject_kind, subject, signal_type, event_id, occurred_at, payload)
 VALUES (?, 'gallery', 'g14', ?, ?, ?, 'c09-residue', ?, ?)`, testDB), f.tenant, f.u3.Kind(), f.u3.Key(), TypeClick, s(20), `{"render_id":"R09","position":1}`); err != nil {
 		t.Fatal(err)
 	}
-	if err := conn.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.exposures (tenant, render_id, stage, query_id, surface, subject_kind, subject, entity_types, entity_ids, positions, occurred_at)
+	if err := conn.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.exposures (tenant, render_id, stage, query_id, surface, subject_kind, subject, content_kinds, content_ids, positions, occurred_at)
 VALUES (?, 'R09', ?, 'q-R09', ?, ?, ?, ['gallery'], ['g14'], [1], ?)`, testDB), f.tenant, string(StageRendered), SurfaceSearch, f.u3.Kind(), f.u3.Key(), f.day1); err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ VALUES (?, 'R09', ?, 'q-R09', ?, ?, ?, ['gallery'], ['g14'], [1], ?)`, testDB), 
 func clickIDs(cs []AttributedClick) []string {
 	out := make([]string, 0, len(cs))
 	for _, c := range cs {
-		out = append(out, c.EntityID+":"+c.EventID+"@"+c.Subject.Key())
+		out = append(out, c.ContentID+":"+c.EventID+"@"+c.Subject.Key())
 	}
 	return out
 }
@@ -213,13 +213,13 @@ func TestIntegrationAttributionPagedExport(t *testing.T) {
 	ctx := context.Background()
 	st := f.st
 	// Keep superseded rows physically present until the merge check below.
-	for _, table := range []string{"exposures", "events"} {
+	for _, table := range []string{"exposures", "signals"} {
 		if err := f.conn.Exec(ctx, "SYSTEM STOP MERGES "+testDB+"."+table); err != nil {
 			t.Fatal(err)
 		}
 	}
 	t.Cleanup(func() {
-		for _, table := range []string{"exposures", "events"} {
+		for _, table := range []string{"exposures", "signals"} {
 			_ = f.conn.Exec(context.Background(), "SYSTEM START MERGES "+testDB+"."+table)
 		}
 	})
@@ -390,7 +390,7 @@ func TestIntegrationAttributionPagedExport(t *testing.T) {
 	}
 
 	// Merges change nothing.
-	for _, table := range []string{"exposures", "events"} {
+	for _, table := range []string{"exposures", "signals"} {
 		if err := f.conn.Exec(ctx, "SYSTEM START MERGES "+testDB+"."+table); err != nil {
 			t.Fatal(err)
 		}

@@ -12,7 +12,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
-	"github.com/open-rails/searchkit/internal/signaltest"
+	"github.com/open-rails/contentkit/internal/signaltest"
 )
 
 // gateConn pauses the first statement (Exec or Query) matching match after
@@ -80,18 +80,18 @@ func (c *gateConn) wait(t *testing.T, ctx context.Context) {
 type barrierFixture struct {
 	tenant       string
 	gone, keeper Subject
-	e1, e2       EntityRef
+	e1, e2       ContentRef
 	at           time.Time
 }
 
 func newBarrierFixture(tenant string) barrierFixture {
 	return barrierFixture{tenant: tenant, gone: Subject{UserID: "barrier-gone"}, keeper: Subject{UserID: "barrier-keeper"},
-		e1: EntityRef{EntityType: "gallery", EntityID: "b1"}, e2: EntityRef{EntityType: "gallery", EntityID: "b2"},
+		e1: gallery(tenant, "b1"), e2: gallery(tenant, "b2"),
 		at: time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)}
 }
 
-func (f barrierFixture) view(sub Subject, ref EntityRef, id string) Signal {
-	return Signal{EntityRef: ref, Subject: sub, Type: TypeView, EventID: id, OccurredAt: f.at, Progress: 2, ProgressMax: 2, Score: 50, Completed: true, DurationS: 30}
+func (f barrierFixture) view(sub Subject, ref ContentRef, id string) Signal {
+	return Signal{ContentRef: ref, Subject: sub, Type: TypeView, EventID: id, OccurredAt: f.at, Progress: 2, ProgressMax: 2, Score: 50, Completed: true, DurationS: 30}
 }
 
 func (f barrierFixture) seed(t *testing.T, st *Store) {
@@ -106,8 +106,8 @@ func (f barrierFixture) seed(t *testing.T, st *Store) {
 		t.Fatal(err)
 	}
 	if err := st.RecordExposures(ctx, f.tenant, []Exposure{
-		{RenderID: "gone-render", Stage: StageRendered, Subject: f.gone, Shown: []Placement{{EntityRef: f.e1, Position: 1}}, OccurredAt: f.at},
-		{RenderID: "keeper-render", Stage: StageRendered, Subject: f.keeper, Shown: []Placement{{EntityRef: f.e1, Position: 1}}, OccurredAt: f.at},
+		{RenderID: "gone-render", Stage: StageRendered, Subject: f.gone, Shown: []Placement{{ContentRef: f.e1, Position: 1}}, OccurredAt: f.at},
+		{RenderID: "keeper-render", Stage: StageRendered, Subject: f.keeper, Shown: []Placement{{ContentRef: f.e1, Position: 1}}, OccurredAt: f.at},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func (f barrierFixture) seed(t *testing.T, st *Store) {
 func (f barrierFixture) assertInvisible(t *testing.T, st *Store, phase string) {
 	t.Helper()
 	ctx := context.Background()
-	refs := []EntityRef{f.e1, f.e2}
+	refs := []ContentRef{f.e1, f.e2}
 	if s, err := st.States(ctx, f.tenant, f.gone, refs); err != nil || len(s) != 0 {
 		t.Fatalf("%s: States leaked %+v %v", phase, s, err)
 	}
@@ -137,13 +137,13 @@ func (f barrierFixture) assertInvisible(t *testing.T, st *Store, phase string) {
 	if neg, err := st.NegativeIDs(ctx, f.tenant, f.gone, nil); err != nil || len(neg) != 0 {
 		t.Fatalf("%s: NegativeIDs leaked %+v %v", phase, neg, err)
 	}
-	m, err := st.Metrics(ctx, f.tenant, "gallery", []string{f.e1.EntityID, f.e2.EntityID}, AllTime())
+	m, err := st.Metrics(ctx, f.tenant, refs, AllTime())
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{f.e1.EntityID, f.e2.EntityID} {
-		if m[id].Viewers != 1 || m[id].Views != 1 || m[id].PositiveSubjects != 0 || m[id].Events != 1 {
-			t.Fatalf("%s: Metrics[%s] counts the erased subject: %+v", phase, id, m[id])
+	for _, ref := range refs {
+		if m[ref.Key()].Viewers != 1 || m[ref.Key()].Views != 1 || m[ref.Key()].PositiveSubjects != 0 || m[ref.Key()].Events != 1 {
+			t.Fatalf("%s: Metrics[%s] counts the erased subject: %+v", phase, ref, m[ref.Key()])
 		}
 	}
 	pop, err := st.Popular(ctx, f.tenant, "gallery", PopularOptions{Window: AllTime(), Limit: 10})
@@ -163,7 +163,7 @@ func (f barrierFixture) assertInvisible(t *testing.T, st *Store, phase string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(co) != 1 || co[0].EntityID != f.e2.EntityID || co[0].Strength != 1 {
+		if len(co) != 1 || !co[0].Equal(f.e2) || co[0].Strength != 1 {
 			t.Fatalf("%s: CoEngaged(skipRollup=%v) counts the erased subject: %+v", phase, skip, co)
 		}
 	}
@@ -190,8 +190,8 @@ func (f barrierFixture) assertNoResidue(t *testing.T, conn Conn, phase string) {
 			t.Fatalf("%s: %s holds %d rows of the erased subject", phase, table, n)
 		}
 	}
-	if n := countWhere(t, conn, "events", "tenant = ? AND subject = ?", f.tenant, f.keeper.Key()); n < 2 {
-		t.Fatalf("%s: keeper damaged: %d events", phase, n)
+	if n := countWhere(t, conn, "signals", "tenant = ? AND subject = ?", f.tenant, f.keeper.Key()); n < 2 {
+		t.Fatalf("%s: keeper damaged: %d signals", phase, n)
 	}
 }
 
@@ -215,14 +215,14 @@ func plantResidue(t *testing.T, conn Conn, f barrierFixture, ingested time.Time)
 		sql  string
 		args []any
 	}{
-		{fmt.Sprintf(`INSERT INTO %s.events (tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id, occurred_at, progress, progress_max, score, completed, ingested_at)
-VALUES (?, ?, ?, ?, ?, 'view', 'residue', ?, 2, 2, 50, true, ?)`, testDB), []any{f.tenant, f.e1.EntityType, f.e1.EntityID, kind, key, f.at, ingested}},
-		{fmt.Sprintf(`INSERT INTO %s.subject_state (tenant, subject_kind, subject, entity_type, entity_id, first_seen_at, last_signal_at, total_events, views, completions, active_s, max_progress, progress_max, completed, resume, last_score, net_value, feedback, version)
-VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 0, 2, 2, true, '', 50, 0, 0, ?)`, testDB), []any{f.tenant, kind, key, f.e1.EntityType, f.e1.EntityID, f.at, f.at, ingested}},
-		{fmt.Sprintf(`INSERT INTO %s.subject_daily (tenant, entity_type, entity_id, subject_kind, subject, day, events, views, completions, active_s, score_sum, value_sum, type_counts, version)
-VALUES (?, ?, ?, ?, ?, toDate(?), 1, 1, 1, 0, 50, 0, map('view', 1), ?)`, testDB), []any{f.tenant, f.e1.EntityType, f.e1.EntityID, kind, key, f.at, ingested}},
-		{fmt.Sprintf(`INSERT INTO %s.exposures (tenant, render_id, stage, surface, subject_kind, subject, entity_types, entity_ids, positions, occurred_at, ingested_at)
-VALUES (?, 'residue', 'rendered', 'search', ?, ?, [?], [?], [1], ?, ?)`, testDB), []any{f.tenant, kind, key, f.e1.EntityType, f.e1.EntityID, f.at, ingested}},
+		{fmt.Sprintf(`INSERT INTO %s.signals (tenant, content_kind, content_id, subject_kind, subject, signal_type, event_id, occurred_at, progress, progress_max, score, completed, ingested_at)
+VALUES (?, ?, ?, ?, ?, 'view', 'residue', ?, 2, 2, 50, true, ?)`, testDB), []any{f.tenant, f.e1.ContentKind, f.e1.ContentID, kind, key, f.at, ingested}},
+		{fmt.Sprintf(`INSERT INTO %s.subject_content_state (tenant, subject_kind, subject, content_kind, content_id, first_seen_at, last_signal_at, total_events, views, completions, active_s, max_progress, progress_max, completed, resume, last_score, net_value, feedback, version)
+VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 0, 2, 2, true, '', 50, 0, 0, ?)`, testDB), []any{f.tenant, kind, key, f.e1.ContentKind, f.e1.ContentID, f.at, f.at, ingested}},
+		{fmt.Sprintf(`INSERT INTO %s.subject_content_daily (tenant, content_kind, content_id, subject_kind, subject, day, events, views, completions, active_s, score_sum, value_sum, type_counts, version)
+VALUES (?, ?, ?, ?, ?, toDate(?), 1, 1, 1, 0, 50, 0, map('view', 1), ?)`, testDB), []any{f.tenant, f.e1.ContentKind, f.e1.ContentID, kind, key, f.at, ingested}},
+		{fmt.Sprintf(`INSERT INTO %s.exposures (tenant, render_id, stage, surface, subject_kind, subject, content_kinds, content_ids, positions, occurred_at, ingested_at)
+VALUES (?, 'residue', 'rendered', 'search', ?, ?, [?], [?], [1], ?, ?)`, testDB), []any{f.tenant, kind, key, f.e1.ContentKind, f.e1.ContentID, f.at, ingested}},
 	} {
 		if err := conn.Exec(ctx, q.sql, q.args...); err != nil {
 			t.Fatalf("plant residue: %v\n%s", err, q.sql)
@@ -240,7 +240,7 @@ func TestIntegrationErasureBarrierPausedWriterAcrossConnections(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	f := newBarrierFixture("barrier")
-	gate := newGate(env.Open(t, testDB), "INSERT INTO "+testDB+".events")
+	gate := newGate(env.Open(t, testDB), "INSERT INTO "+testDB+".signals")
 	writer, _ := NewStore(gate, testDB)
 	eraser, _ := NewStore(env.Open(t, testDB), testDB)
 	reader, _ := NewStore(env.Open(t, testDB), testDB)
@@ -268,13 +268,13 @@ func TestIntegrationErasureBarrierPausedWriterAcrossConnections(t *testing.T) {
 	if _, err := reader.RepairProjections(ctx, f.tenant, RepairOptions{IngestedSince: f.at.AddDate(-1, 0, 0)}); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"subject_state", "subject_daily"} {
+	for _, table := range []string{"subject_content_state", "subject_content_daily"} {
 		if n := f.rawRows(t, conn, table); n != 0 {
 			t.Fatalf("repair re-projected an erased subject into %s: %d", table, n)
 		}
 	}
-	s, err := reader.States(ctx, f.tenant, f.keeper, []EntityRef{f.e1})
-	if err != nil || s[f.e1].LastScore != 60 {
+	s, err := reader.States(ctx, f.tenant, f.keeper, []ContentRef{f.e1})
+	if err != nil || s[f.e1.Key()].LastScore != 60 {
 		t.Fatalf("the keeper's write in the same batch must land: %+v %v", s, err)
 	}
 	f.assertInvisible(t, reader, "after repair")
@@ -288,7 +288,7 @@ func TestIntegrationErasureBarrierPausedWriterAcrossConnections(t *testing.T) {
 	if err := reader.RecordSignals(ctx, f.tenant, []Signal{f.view(f.gone, f.e2, "gone-later")}); err != nil {
 		t.Fatal(err)
 	}
-	if err := reader.RecordExposures(ctx, f.tenant, []Exposure{{RenderID: "gone-later", Stage: StageRendered, Subject: f.gone, Shown: []Placement{{EntityRef: f.e1, Position: 1}}, OccurredAt: f.at}}); err != nil {
+	if err := reader.RecordExposures(ctx, f.tenant, []Exposure{{RenderID: "gone-later", Stage: StageRendered, Subject: f.gone, Shown: []Placement{{ContentRef: f.e1, Position: 1}}, OccurredAt: f.at}}); err != nil {
 		t.Fatal(err)
 	}
 	f.assertNoResidue(t, conn, "after post-erasure writes")
@@ -306,12 +306,12 @@ func TestIntegrationErasureBarrierProjectionRacesErasure(t *testing.T) {
 	defer cancel()
 	f := newBarrierFixture("barrier")
 	f.seed(t, st)
-	gate := newGate(env.Open(t, testDB), "INSERT INTO "+testDB+".subject_state")
+	gate := newGate(env.Open(t, testDB), "INSERT INTO "+testDB+".subject_content_state")
 	writer, _ := NewStore(gate, testDB)
 	done := make(chan error, 1)
 	go func() { done <- writer.RecordSignals(ctx, f.tenant, []Signal{f.view(f.gone, f.e2, "gone-late")}) }()
 	gate.wait(t, ctx)
-	if n := f.rawRows(t, conn, "events"); n != 4 {
+	if n := f.rawRows(t, conn, "signals"); n != 4 {
 		t.Fatalf("precondition: the late event is durable before its projection: %d", n)
 	}
 	erase(t, st, f.tenant, f.gone)
@@ -350,7 +350,7 @@ func TestIntegrationErasureBarrierDelayedJobAcrossRestart(t *testing.T) {
 	f := newBarrierFixture("barrier")
 	f.seed(t, st)
 	oldProcess := env.Open(t, testDB)
-	gate := newGate(oldProcess, "INSERT INTO "+testDB+".events")
+	gate := newGate(oldProcess, "INSERT INTO "+testDB+".signals")
 	newProcess := env.Open(t, testDB)
 	gate.dispatch = func(ctx context.Context, query string, args ...any) error {
 		_ = oldProcess.Close()
@@ -446,7 +446,7 @@ func TestIntegrationErasureBarrierPairRebuildRacesErasure(t *testing.T) {
 		return checks == 2
 	}
 	gate.onExec = func(q string) {
-		if strings.HasPrefix(q, "INSERT INTO "+testDB+".item_pairs") {
+		if strings.HasPrefix(q, "INSERT INTO "+testDB+".content_pairs") {
 			builds.Add(1)
 		}
 	}
@@ -469,7 +469,7 @@ func TestIntegrationErasureBarrierPairRebuildRacesErasure(t *testing.T) {
 	if err != nil || len(co) != 1 || co[0].Strength != 2 {
 		t.Fatalf("rebuilt rollup must exclude the erased subject: %+v %v", co, err)
 	}
-	if n := countWhere(t, conn, "item_pairs", "tenant = ? AND strength > 2", f.tenant); n != 0 {
+	if n := countWhere(t, conn, "content_pairs", "tenant = ? AND strength > 2", f.tenant); n != 0 {
 		t.Fatalf("stale pairs remain: %d", n)
 	}
 
@@ -507,25 +507,26 @@ func TestIntegrationErasureBarrierTenantAndKindIsolation(t *testing.T) {
 	}
 	erase(t, st, a.tenant, a.gone)
 	plantResidue(t, conn, a, time.Now().UTC())
-	if s, err := st.States(ctx, a.tenant, a.gone, []EntityRef{a.e1, a.e2}); err != nil || len(s) != 0 {
+	if s, err := st.States(ctx, a.tenant, a.gone, []ContentRef{a.e1, a.e2}); err != nil || len(s) != 0 {
 		t.Fatalf("erased user leaked in tenant a: %+v %v", s, err)
 	}
 	for _, tc := range []struct {
 		tenant string
 		sub    Subject
-	}{{b.tenant, b.gone}, {a.tenant, anon}} {
-		s, err := st.States(ctx, tc.tenant, tc.sub, []EntityRef{a.e1})
-		if err != nil || !s[a.e1].Seen {
+		ref    ContentRef
+	}{{b.tenant, b.gone, b.e1}, {a.tenant, anon, a.e1}} {
+		s, err := st.States(ctx, tc.tenant, tc.sub, []ContentRef{tc.ref})
+		if err != nil || !s[tc.ref.Key()].Seen {
 			t.Fatalf("%s/%s must stay readable: %+v %v", tc.tenant, tc.sub.Kind(), s, err)
 		}
 	}
-	ma, err := st.Metrics(ctx, a.tenant, "gallery", []string{a.e1.EntityID}, AllTime())
-	if err != nil || ma[a.e1.EntityID].Viewers != 2 || ma[a.e1.EntityID].AnonViewers != 1 {
-		t.Fatalf("tenant a must count keeper and the anonymous key only: %+v %v", ma, err)
+	ma := metricsByID(t, st, a.tenant, []string{a.e1.ContentID}, AllTime())
+	if ma[a.e1.ContentID].Viewers != 2 || ma[a.e1.ContentID].AnonViewers != 1 {
+		t.Fatalf("tenant a must count keeper and the anonymous key only: %+v", ma)
 	}
-	mb, err := st.Metrics(ctx, b.tenant, "gallery", []string{b.e1.EntityID}, AllTime())
-	if err != nil || mb[b.e1.EntityID].Viewers != 2 || mb[b.e1.EntityID].PositiveSubjects != 1 {
-		t.Fatalf("tenant b metrics must be untouched: %+v %v", mb, err)
+	mb := metricsByID(t, st, b.tenant, []string{b.e1.ContentID}, AllTime())
+	if mb[b.e1.ContentID].Viewers != 2 || mb[b.e1.ContentID].PositiveSubjects != 1 {
+		t.Fatalf("tenant b metrics must be untouched: %+v", mb)
 	}
 	if r, err := st.EnforceErasures(ctx, b.tenant); err != nil || !r.Complete() || len(r.Remaining) != 0 {
 		t.Fatalf("tenant b has no erasures to enforce: %+v %v", r, err)
@@ -534,10 +535,10 @@ func TestIntegrationErasureBarrierTenantAndKindIsolation(t *testing.T) {
 		t.Fatalf("enforce a: %+v %v", r, err)
 	}
 	a.assertNoResidue(t, conn, "tenant a enforced")
-	if n := countWhere(t, conn, "events", "tenant = ? AND subject_kind = 'anon'", a.tenant); n != 1 {
+	if n := countWhere(t, conn, "signals", "tenant = ? AND subject_kind = 'anon'", a.tenant); n != 1 {
 		t.Fatalf("anonymous key spelled like the erased user must survive enforcement: %d", n)
 	}
-	if n := countWhere(t, conn, "events", "tenant = ? AND subject = ?", b.tenant, b.gone.Key()); n != 3 {
+	if n := countWhere(t, conn, "signals", "tenant = ? AND subject = ?", b.tenant, b.gone.Key()); n != 3 {
 		t.Fatalf("tenant b rows must survive enforcement: %d", n)
 	}
 }
@@ -574,20 +575,20 @@ func TestEveryReadCarriesTheErasureBarrier(t *testing.T) {
 	st, _ := NewStore(fc, "hub")
 	ctx := context.Background()
 	sub := Subject{UserID: "u"}
-	ref := EntityRef{EntityType: "a", EntityID: "1"}
-	_, _ = st.States(ctx, "t", sub, []EntityRef{ref})
+	ref := gallery("t", "1")
+	_, _ = st.States(ctx, "t", sub, []ContentRef{ref})
 	_, _ = st.History(ctx, "t", sub, HistoryOptions{})
 	_, _ = st.HistoryCount(ctx, "t", sub, HistoryOptions{})
-	_, _ = st.SeenIDs(ctx, "t", sub, "a")
+	_, _ = st.SeenIDs(ctx, "t", sub, "gallery")
 	_, _ = st.NegativeIDs(ctx, "t", sub, nil)
 	_, _ = st.TopStates(ctx, "t", sub, TopStatesOptions{})
-	_, _ = st.Metrics(ctx, "t", "a", []string{"1"}, AllTime())
-	_, _ = st.Popular(ctx, "t", "a", PopularOptions{})
+	_, _ = st.Metrics(ctx, "t", []ContentRef{ref}, AllTime())
+	_, _ = st.Popular(ctx, "t", "gallery", PopularOptions{})
 	_, _ = st.CoEngaged(ctx, "t", ref, CoEngagedOptions{SkipRollup: true})
 	_, _ = st.Inventory(ctx, "t")
 	_, _ = st.RepairProjections(ctx, "t", RepairOptions{})
 	_ = st.RefreshCoEngagement(ctx, "t", RefreshCoEngagementOptions{})
-	_ = st.RecordSignals(ctx, "t", []Signal{{EntityRef: ref, Subject: sub, Type: TypeView, EventID: "e", OccurredAt: time.Now()}})
+	_ = st.RecordSignals(ctx, "t", []Signal{{ContentRef: ref, Subject: sub, Type: TypeView, EventID: "e", OccurredAt: time.Now()}})
 	rows := ", tenant) NOT IN (SELECT subject_hash, tenant FROM hub.erasures)"
 	single := "(SELECT count() FROM hub.erasures WHERE tenant = ? AND subject_hash = sipHash128(?)) = 0"
 	n := 0
@@ -596,7 +597,7 @@ func TestEveryReadCarriesTheErasureBarrier(t *testing.T) {
 		if strings.Contains(q, "WHERE sipHash128(concat(t.1") {
 			continue // the writer's pre-insert fence check
 		}
-		if !strings.Contains(q, "hub.subject_state") && !strings.Contains(q, "hub.subject_daily") && !strings.Contains(q, "hub.events") {
+		if !strings.Contains(q, "hub.subject_content_state") && !strings.Contains(q, "hub.subject_content_daily") && !strings.Contains(q, "hub.signals") {
 			continue
 		}
 		if !strings.Contains(q, rows) && !strings.Contains(q, single) {
@@ -609,15 +610,15 @@ func TestEveryReadCarriesTheErasureBarrier(t *testing.T) {
 	}
 }
 
-// Two replicas of one shard behind one Keeper (SEARCHKIT_TEST_CH_ADDR2 is the
+// Two replicas of one shard behind one Keeper (CONTENTKIT_TEST_CH_ADDR2 is the
 // second replica): the writer pauses on replica B, the erasure runs on
 // replica A, and B is fenced the moment A returns Complete().
 func TestIntegrationErasureBarrierAcrossReplicas(t *testing.T) {
 	env := signaltest.FromEnv(t)
 	envB := env
-	envB.Addr = os.Getenv("SEARCHKIT_TEST_CH_ADDR2")
+	envB.Addr = os.Getenv("CONTENTKIT_TEST_CH_ADDR2")
 	if envB.Addr == "" {
-		t.Skip("SEARCHKIT_TEST_CH_ADDR2 not set; single replica")
+		t.Skip("CONTENTKIT_TEST_CH_ADDR2 not set; single replica")
 	}
 	stA, connA := freshStore(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -630,7 +631,7 @@ func TestIntegrationErasureBarrierAcrossReplicas(t *testing.T) {
 	}
 	sync := func(conn Conn) {
 		t.Helper()
-		for _, table := range append(append([]string{}, subjectTables...), "erasures", "item_pairs") {
+		for _, table := range append(append([]string{}, subjectTables...), "erasures", "content_pairs") {
 			if err := conn.Exec(ctx, "SYSTEM SYNC REPLICA "+testDB+"."+table); err != nil {
 				t.Fatal(err)
 			}
@@ -639,10 +640,10 @@ func TestIntegrationErasureBarrierAcrossReplicas(t *testing.T) {
 	f := newBarrierFixture("barrier")
 	f.seed(t, stA)
 	sync(connB)
-	if n := f.rawRows(t, connB, "events"); n != 3 {
+	if n := f.rawRows(t, connB, "signals"); n != 3 {
 		t.Fatalf("replica B must hold the seed: %d", n)
 	}
-	gate := newGate(envB.Open(t, testDB), "INSERT INTO "+testDB+".events")
+	gate := newGate(envB.Open(t, testDB), "INSERT INTO "+testDB+".signals")
 	writer, _ := NewStore(gate, testDB)
 	done := make(chan error, 1)
 	go func() { done <- writer.RecordSignals(ctx, f.tenant, []Signal{f.view(f.gone, f.e1, "gone-late")}) }()
@@ -663,7 +664,7 @@ func TestIntegrationErasureBarrierAcrossReplicas(t *testing.T) {
 	// Residue that did land (a restore on B) is hidden on A and B alike.
 	plantResidue(t, connB, f, f.at.AddDate(-1, 0, 0))
 	sync(connA)
-	if n := f.rawRows(t, connA, "events"); n != 1 {
+	if n := f.rawRows(t, connA, "signals"); n != 1 {
 		t.Fatalf("the residue replicates to A: %d", n)
 	}
 	f.assertInvisible(t, stA, "residue replicated to A")

@@ -45,7 +45,7 @@ func TestCompare_DetectsQualityAndFailureRegressions(t *testing.T) {
 	baseline, _ := comparisonReports(t)
 	judged := baseline.Outcomes[1].Case
 	empty := baseline.Outcomes[0].Case
-	miss, err := Evaluate(judged, []Result{{Key: GoldenKey{EntityType: "gallery", EntityID: "other"}, Score: 1}})
+	miss, err := Evaluate(judged, []Result{{Key: GoldenKey{ContentKind: "gallery", ContentID: "other"}, Score: 1}})
 	if err != nil {
 		t.Fatalf("Evaluate(miss) error = %v", err)
 	}
@@ -157,11 +157,11 @@ func TestCompare_DistinguishesDelimiterLikeScopes(t *testing.T) {
 	t.Parallel()
 
 	a := GoldenCase{
-		ID: "a", Query: "a", K: 1, Expected: []GoldenKey{{EntityType: "gallery", EntityID: "a"}},
+		ID: "a", Query: "a", K: 1, Expected: []GoldenKey{{ContentKind: "gallery", ContentID: "a"}},
 		Labels: map[string]string{"a": "b=c"},
 	}
 	b := GoldenCase{
-		ID: "b", Query: "b", K: 1, Expected: []GoldenKey{{EntityType: "gallery", EntityID: "b"}},
+		ID: "b", Query: "b", K: 1, Expected: []GoldenKey{{ContentKind: "gallery", ContentID: "b"}},
 		Labels: map[string]string{"a=b": "c"},
 	}
 	aHit, _ := Evaluate(a, []Result{{Key: a.Expected[0], Score: 1}})
@@ -207,7 +207,7 @@ func comparisonReports(t *testing.T) (Report, Report) {
 	t.Helper()
 	judged := GoldenCase{
 		ID: "judged", Query: "query", K: 1,
-		Expected: []GoldenKey{{EntityType: "gallery", EntityID: "1"}},
+		Expected: []GoldenKey{{ContentKind: "gallery", ContentID: "1"}},
 		Labels:   map[string]string{"suite": "manual"},
 	}
 	empty := GoldenCase{

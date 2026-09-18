@@ -73,12 +73,12 @@ func TestFloorHelpers_RejectMixedDomainsAndNonfiniteFloor(t *testing.T) {
 			ID: "malformed", Query: "query", K: 1,
 			Labels: map[string]string{ScoreDomainLabel: "cosine_similarity"},
 		},
-		Results: []Result{{Key: GoldenKey{EntityType: "gallery", EntityID: "1"}, Score: float32(math.NaN())}},
+		Results: []Result{{Key: GoldenKey{ContentKind: "gallery", ContentID: "1"}, Score: float32(math.NaN())}},
 	}
 	if _, err := SweepResultFloors(context.Background(), []Outcome{malformed}, "cosine_similarity", []float32{0}); err == nil {
 		t.Fatal("SweepResultFloors() error = nil, want malformed score error")
 	}
-	malformed.Results = []Result{{Key: GoldenKey{EntityType: "gallery"}, Score: -1}}
+	malformed.Results = []Result{{Key: GoldenKey{ContentKind: "gallery"}, Score: -1}}
 	if _, err := SweepResultFloors(context.Background(), []Outcome{malformed}, "cosine_similarity", []float32{0}); err == nil {
 		t.Fatal("SweepResultFloors() error = nil, want invalid key error before filtering")
 	}
@@ -96,8 +96,8 @@ func TestSweepResultFloors_HonorsCancellation(t *testing.T) {
 
 func floorOutcomes(t *testing.T) []Outcome {
 	t.Helper()
-	relevant := GoldenKey{EntityType: "gallery", EntityID: "relevant"}
-	garbage := GoldenKey{EntityType: "gallery", EntityID: "garbage"}
+	relevant := GoldenKey{ContentKind: "gallery", ContentID: "relevant"}
+	garbage := GoldenKey{ContentKind: "gallery", ContentID: "garbage"}
 	labels := func() map[string]string { return map[string]string{ScoreDomainLabel: "cosine_similarity"} }
 	judged, err := Evaluate(
 		GoldenCase{ID: "judged", Query: "query", K: 2, Expected: []GoldenKey{relevant}, Labels: labels()},

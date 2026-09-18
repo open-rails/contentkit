@@ -1,146 +1,37 @@
-package searchkit
+package contentkit
 
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
-	"strings"
 	"testing"
-	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/pgvector/pgvector-go"
-
-	"github.com/open-rails/searchkit/eval"
+	"github.com/open-rails/contentkit/eval"
 )
 
 const (
 	// evalBaselinePath is the committed golden report the regression gate
-	// compares against. Regenerate with SEARCHKIT_EVAL_UPDATE=1.
+	// compares against. Regenerate with CONTENTKIT_EVAL_UPDATE=1.
 	evalBaselinePath = "eval/testdata/golden_gallery_baseline.json"
-	evalUpdateEnv    = "SEARCHKIT_EVAL_UPDATE"
+	evalUpdateEnv    = "CONTENTKIT_EVAL_UPDATE"
 )
 
-// mapEmbedder is a deterministic, query-aware stub: it maps known query text to
-// a fixed vector so semantic ranking is reproducible across cases. An unknown
-// query fails loudly rather than silently embedding to a zero vector.
-type mapEmbedder struct {
-	vecs map[string][]float32
-}
-
-func (m mapEmbedder) EmbedQueryText(_ context.Context, _ string, text string) ([]float32, error) {
-	key := strings.ToLower(strings.TrimSpace(text))
-	if vec, ok := m.vecs[key]; ok {
-		return vec, nil
-	}
-	return nil, fmt.Errorf("mapEmbedder: no vector for query %q", key)
-}
-
-// seedDoc is one corpus row: FTS document text plus its semantic vector.
-type seedDoc struct {
-	id  string
-	doc string
-	vec []float32
-}
-
 // newEvalTestClient provisions an isolated schema, seeds a small deterministic
-// corpus, and returns a client wired to a query-aware embedder. Shared by the
-// baseline-gate and config-diff tests so the corpus stays identical.
+// corpus, and returns a keyword client. Shared by the baseline-gate and
+// config-diff tests so the corpus stays identical.
 func newEvalTestClient(t *testing.T) (context.Context, *Client) {
 	t.Helper()
-	dsn := os.Getenv("SEARCHKIT_TEST_URL")
-	if dsn == "" {
-		t.Skip("SEARCHKIT_TEST_URL not set")
-	}
-
+	pool := testPG(t)
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatalf("pgxpool: %v", err)
-	}
-	t.Cleanup(pool.Close)
-
-	schema := fmt.Sprintf("searchkit_eval_%d_%d", os.Getpid(), time.Now().UnixNano())
-	quotedSchema := pgx.Identifier{schema}.Sanitize()
-	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if _, err := pool.Exec(cleanupCtx, "DROP SCHEMA IF EXISTS "+quotedSchema+" CASCADE"); err != nil {
-			t.Errorf("drop eval schema %s: %v", schema, err)
-		}
-	})
-
-	if _, err := pool.Exec(ctx, fmt.Sprintf(`
-		CREATE EXTENSION IF NOT EXISTS pg_trgm;
-		CREATE EXTENSION IF NOT EXISTS vector;
-		CREATE SCHEMA %s;
-
-		CREATE OR REPLACE FUNCTION %s.searchkit_regconfig_for_language(lang text)
-		RETURNS regconfig LANGUAGE sql IMMUTABLE AS $$ SELECT 'simple'::regconfig $$;
-
-		CREATE TABLE %s.search_documents (
-			entity_type text NOT NULL,
-			entity_id text NOT NULL,
-			language text NOT NULL,
-			document text,
-			raw_document text,
-			tsv tsvector,
-			created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (entity_type, entity_id, language)
-		);
-
-		CREATE TABLE %s.embedding_vectors (
-			entity_type text NOT NULL,
-			entity_id text NOT NULL,
-			model text NOT NULL,
-			language text NOT NULL,
-			embedding halfvec,
-			created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (entity_type, entity_id, model, language)
-		);
-	`, quotedSchema, quotedSchema, quotedSchema, quotedSchema)); err != nil {
-		t.Fatalf("setup schema: %v", err)
-	}
-
-	installKeywordFields(t, ctx, pool, schema)
-	corpus := []seedDoc{
-		{id: "1", doc: "two factor authentication", vec: []float32{1, 0, 0}},
-		{id: "2", doc: "two factor backup codes", vec: []float32{0.9, 0.1, 0}},
-		{id: "3", doc: "single sign on saml", vec: []float32{0, 1, 0}},
-		{id: "4", doc: "password reset email flow", vec: []float32{0, 0.9, 0.1}},
-		{id: "5", doc: "unrelated cooking recipe", vec: []float32{-1, 0, 0}},
-	}
-	for _, d := range corpus {
-		if _, err := pool.Exec(ctx, fmt.Sprintf(`
-			INSERT INTO %s.search_documents(entity_type, entity_id, language, document, raw_document, tsv)
-			VALUES ('gallery', $1, 'en', lower($2), $2, to_tsvector(%s.searchkit_regconfig_for_language('en'), $2))
-		`, quotedSchema, quotedSchema), d.id, d.doc); err != nil {
-			t.Fatalf("insert search_documents %s: %v", d.id, err)
-		}
-		if _, err := pool.Exec(ctx, fmt.Sprintf(`
-			INSERT INTO %s.embedding_vectors(entity_type, entity_id, model, language, embedding)
-			VALUES ('gallery', $1, 'm', 'en', $2::halfvec(3))
-		`, quotedSchema), d.id, pgvector.NewHalfVector(d.vec)); err != nil {
-			t.Fatalf("insert embedding_vectors %s: %v", d.id, err)
-		}
-	}
-
-	emb := mapEmbedder{vecs: map[string][]float32{
-		"two factor":       {1, 0, 0},
-		"single sign on":   {0, 1, 0},
-		"authentication":   {1, 0, 0},
-		"zzzq nonexistent": {0, 0, 1},
-	}}
-	client, err := NewClient(ClientConfig{
-		Pool:         pool,
-		Schema:       schema,
-		Embedder:     emb,
-		DefaultModel: "m",
-	})
+	schema := keywordSchema(t, ctx, pool)
+	upsertDocs(t, ctx, pool, schema,
+		doc("gallery", "1", "en", "two factor authentication", nil, nil),
+		doc("gallery", "2", "en", "two factor backup codes", nil, nil),
+		doc("gallery", "3", "en", "single sign on saml", nil, nil),
+		doc("gallery", "4", "en", "password reset email flow", nil, nil),
+		doc("gallery", "5", "en", "unrelated cooking recipe", nil, nil),
+	)
+	client, err := NewClient(ClientConfig{Pool: pool, Schema: schema, Tenant: testTenant})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -161,16 +52,12 @@ func loadGoldenSuite(t *testing.T) eval.Suite {
 	return suite
 }
 
-// runGolden executes the golden suite under one search configuration and builds
-// a report. floor <= 0 disables the semantic floor.
-func runGolden(ctx context.Context, t *testing.T, client *Client, suite eval.Suite, candidateID string, floor float32) eval.Report {
+// runGolden executes the golden suite under one search configuration and
+// builds a report.
+func runGolden(ctx context.Context, t *testing.T, client *Client, suite eval.Suite, candidateID string, base SearchOptions) eval.Report {
 	t.Helper()
-	runner := NewEvalRunner(client, SearchOptions{
-		Mode:                  SearchModeDual,
-		Language:              "en",
-		SemanticMinSimilarity: floor,
-		RRFK:                  60,
-	})
+	base.Language = "en"
+	runner := NewEvalRunner(client, base)
 	identity := eval.ReportIdentity{DatasetID: "gallery-smoke", SuiteID: suite.ID, CandidateID: candidateID}
 	report, err := eval.RunSuite(ctx, suite, runner, identity, "query_type")
 	if err != nil {
@@ -179,39 +66,26 @@ func runGolden(ctx context.Context, t *testing.T, client *Client, suite eval.Sui
 	return report
 }
 
-// TestEvalRunSuite_Integration runs the committed golden suite through
+// TestEvalRunSuite_Integration runs the committed lexical golden suite through
 // client.Search against a real Postgres, asserts a clean baseline, and gates on
 // the committed baseline report so a future quality regression fails CI.
-// Regenerate the baseline with SEARCHKIT_EVAL_UPDATE=1.
+// Regenerate the baseline with CONTENTKIT_EVAL_UPDATE=1.
 func TestEvalRunSuite_Integration(t *testing.T) {
 	ctx, client := newEvalTestClient(t)
 	suite := loadGoldenSuite(t)
+	report := runGolden(ctx, t, client, suite, "keyword", SearchOptions{})
 
-	// Dual mode with a semantic floor: the floor removes the low-cosine tail so
-	// the nonsense query returns nothing instead of polluting with neighbors.
-	report := runGolden(ctx, t, client, suite, "dual+floor0.5", 0.5)
-
-	if report.Metrics.Cases != 4 {
-		t.Fatalf("Cases = %d, want 4", report.Metrics.Cases)
+	if report.Metrics.Cases != 4 || report.Metrics.FailedCases != 0 || report.Metrics.JudgedCases != 3 {
+		t.Fatalf("metrics = %+v, want 4 cases, 0 failed, 3 judged", report.Metrics)
 	}
-	if report.Metrics.FailedCases != 0 {
-		t.Fatalf("FailedCases = %d, want 0", report.Metrics.FailedCases)
-	}
-	if report.Metrics.JudgedCases != 3 {
-		t.Fatalf("JudgedCases = %d, want 3", report.Metrics.JudgedCases)
-	}
-	if report.Metrics.RecallAtK != 1 {
-		t.Fatalf("RecallAtK = %v, want 1 (all relevant retrieved within k)", report.Metrics.RecallAtK)
-	}
-	if report.Metrics.SuccessAtK != 1 {
-		t.Fatalf("SuccessAtK = %v, want 1 (every judged case hits)", report.Metrics.SuccessAtK)
+	if report.Metrics.RecallAtK != 1 || report.Metrics.SuccessAtK != 1 {
+		t.Fatalf("recall/success = %v/%v, want 1/1", report.Metrics.RecallAtK, report.Metrics.SuccessAtK)
 	}
 	if report.Metrics.NDCGAtK < 0.7 {
 		t.Fatalf("NDCGAtK = %v, want >= 0.7 (top-graded docs rank near top)", report.Metrics.NDCGAtK)
 	}
 	if report.Metrics.EmptyCases != 1 || report.Metrics.ExactEmptyRate != 1 {
-		t.Fatalf("empty metrics = {cases:%d rate:%v}, want {1, 1} (floor keeps nonsense empty)",
-			report.Metrics.EmptyCases, report.Metrics.ExactEmptyRate)
+		t.Fatalf("empty metrics = {cases:%d rate:%v}, want {1, 1}", report.Metrics.EmptyCases, report.Metrics.ExactEmptyRate)
 	}
 	if _, ok := report.Breakdowns["query_type"]; !ok {
 		t.Fatalf("missing query_type breakdown: %+v", report.Breakdowns)
@@ -223,19 +97,11 @@ func TestEvalRunSuite_Integration(t *testing.T) {
 	// Golden-file regression gate: update on demand, otherwise compare.
 	if os.Getenv(evalUpdateEnv) != "" {
 		writeBaselineReport(t, evalBaselinePath, report)
-		t.Logf("wrote baseline %s (SEARCHKIT_EVAL_UPDATE set)", evalBaselinePath)
+		t.Logf("wrote baseline %s (%s set)", evalBaselinePath, evalUpdateEnv)
 		return
 	}
 	baseline := loadReport(t, evalBaselinePath)
-	tolerances := eval.Tolerances{
-		RecallAtKDrop:      0,
-		SuccessAtKDrop:     0,
-		MRRAtKDrop:         0.05,
-		NDCGAtKDrop:        0.05,
-		ExactEmptyRateDrop: 0,
-		FailedCaseIncrease: 0,
-	}
-	comparison, err := eval.Compare(baseline, report, tolerances)
+	comparison, err := eval.Compare(baseline, report, eval.Tolerances{MRRAtKDrop: 0.05, NDCGAtKDrop: 0.05})
 	if err != nil {
 		t.Fatalf("Compare(baseline, current): %v", err)
 	}
@@ -248,44 +114,32 @@ func TestEvalRunSuite_Integration(t *testing.T) {
 }
 
 // TestEvalConfigDiff_Integration proves the eval can compare two configurations
-// side by side: disabling the semantic floor regresses exact-empty-rate because
-// the nonsense query's low-cosine tail is no longer filtered.
+// side by side: a host filter that hides gallery 1 regresses recall on the
+// cases that judge it, and the comparator flags it.
 func TestEvalConfigDiff_Integration(t *testing.T) {
 	ctx, client := newEvalTestClient(t)
 	suite := loadGoldenSuite(t)
 
-	floorOn := runGolden(ctx, t, client, suite, "dual+floor0.5", 0.5)
-	floorOff := runGolden(ctx, t, client, suite, "dual+nofloor", 0)
-
-	// Ground the claim directly: the floor keeps the nonsense case empty; without
-	// it the semantic tail leaks in.
-	if floorOn.Metrics.ExactEmptyRate != 1 {
-		t.Fatalf("floor-on ExactEmptyRate = %v, want 1", floorOn.Metrics.ExactEmptyRate)
+	full := runGolden(ctx, t, client, suite, "keyword", SearchOptions{})
+	filtered := runGolden(ctx, t, client, suite, "keyword-without-1", SearchOptions{FilterSQL: "sd.content_id <> @hidden", FilterArgs: map[string]any{"hidden": "1"}})
+	if full.Metrics.RecallAtK != 1 || filtered.Metrics.RecallAtK >= 1 {
+		t.Fatalf("recall full=%v filtered=%v", full.Metrics.RecallAtK, filtered.Metrics.RecallAtK)
 	}
-	if floorOff.Metrics.ExactEmptyRate != 0 {
-		t.Fatalf("floor-off ExactEmptyRate = %v, want 0 (semantic tail should leak without the floor)", floorOff.Metrics.ExactEmptyRate)
-	}
-
-	// The comparator must flag floor-off as a regression against floor-on.
-	strict := eval.Tolerances{} // zero tolerance on every metric
-	comparison, err := eval.Compare(floorOn, floorOff, strict)
+	comparison, err := eval.Compare(full, filtered, eval.Tolerances{})
 	if err != nil {
-		t.Fatalf("Compare(floorOn, floorOff): %v", err)
+		t.Fatalf("Compare: %v", err)
 	}
-	if !comparison.Compatible {
-		t.Fatalf("floor-on and floor-off reports should be comparable: %v", comparison.Mismatches)
+	if !comparison.Compatible || !comparison.Regressed() {
+		t.Fatalf("expected a comparable regression: %+v", comparison)
 	}
-	if !comparison.Regressed() {
-		t.Fatal("expected floor-off to regress vs floor-on, comparator saw none")
-	}
-	var sawEmptyRate bool
+	var sawRecall bool
 	for _, r := range comparison.Regressions {
-		if r.Metric == "exact_empty_rate" {
-			sawEmptyRate = true
+		if r.Metric == "recall_at_k" {
+			sawRecall = true
 		}
 	}
-	if !sawEmptyRate {
-		t.Fatalf("expected an exact_empty_rate regression, got %+v", comparison.Regressions)
+	if !sawRecall {
+		t.Fatalf("expected a recall_at_k regression, got %+v", comparison.Regressions)
 	}
 }
 

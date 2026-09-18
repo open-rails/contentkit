@@ -1,27 +1,28 @@
-package searchkit
+package contentkit
 
 import (
 	"context"
 	"fmt"
-	"io/fs"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/open-rails/searchkit/migrations"
-	"github.com/open-rails/searchkit/pg"
+
+	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/migrations"
 )
 
 // The host model behind these fixtures: item -> version, each version owning a
 // language, publication state, a default flag and traits. Effective keywords
-// are work tags plus that version's traits; siblings never contribute.
+// are work tags plus that version's traits; siblings never contribute. The
+// document is keyed by the version reference; the join only decides
+// eligibility and priority on that one row.
 const groupedEligibilitySQL = `
-SELECT v.item_id AS parent_id, (NOT v.is_default)::int AS priority
+SELECT (NOT v.is_default)::int AS priority
 FROM host.versions v JOIN host.items i ON i.id = v.item_id
-WHERE v.id = sd.entity_id AND v.language = sd.language AND v.live AND NOT i.deleted
+WHERE v.id = sd.content_version_id AND v.item_id = sd.content_id AND v.language = sd.language AND v.live AND NOT i.deleted
   AND v.traits @> @traits::text[]`
 
 func groupedEligibility(traits ...string) *Eligibility {
@@ -42,7 +43,8 @@ type version struct {
 	id, item, lang string
 	live, def      bool
 	traits         []string
-	doc            pg.KeywordDocument
+	title          string
+	aliases, kw    []string
 }
 
 func (f groupedFixture) add(versions ...version) {
@@ -58,9 +60,7 @@ func (f groupedFixture) add(versions ...version) {
 		if _, err := f.pool.Exec(f.ctx, `INSERT INTO host.versions(id,item_id,language,live,is_default,traits) VALUES($1,$2,$3,$4,$5,$6)`, v.id, v.item, v.lang, v.live, v.def, traits); err != nil {
 			f.t.Fatal(err)
 		}
-		if err := pg.UpsertKeywordDocuments(f.ctx, f.pool, f.schema, "item_version", v.lang, map[string]pg.KeywordDocument{v.id: v.doc}); err != nil {
-			f.t.Fatal(err)
-		}
+		upsertDocs(f.t, f.ctx, f.pool, f.schema, KeywordDocument{DocumentKey: DocumentKey{ContentRef: contentref.NewVersion(testTenant, "gallery", v.item, v.id), Language: v.lang}, Title: v.title, Aliases: v.aliases, Keywords: v.kw})
 	}
 }
 
@@ -72,69 +72,25 @@ func (f groupedFixture) exec(sql string, args ...any) {
 }
 
 func TestKeywordGroupedEligibilityIntegration(t *testing.T) {
-	dsn := os.Getenv("SEARCHKIT_PROFILE_URL")
-	if dsn == "" {
-		t.Skip("SEARCHKIT_PROFILE_URL not set")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	admin, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer admin.Close()
-	db := fmt.Sprintf("keyword_grouped_%d", time.Now().UnixNano())
-	if _, err = admin.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{db}.Sanitize()); err != nil {
-		t.Fatal(err)
-	}
-	defer admin.Exec(context.Background(), "DROP DATABASE "+pgx.Identifier{db}.Sanitize())
-	cfg := admin.Config()
-	cfg.ConnConfig.Database = db
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
-	const schema = "sk"
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, `CREATE SCHEMA sk; SET LOCAL search_path TO sk,public`); err != nil {
-		t.Fatal(err)
-	}
-	files, err := fs.ReadDir(migrations.KeywordPostgres, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, file := range files {
-		sql, err := fs.ReadFile(migrations.KeywordPostgres, file.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err = tx.Exec(ctx, string(sql)); err != nil {
-			t.Fatalf("%s: %v", file.Name(), err)
-		}
-	}
-	if _, err = tx.Exec(ctx, `CREATE SCHEMA host;
+	pool := profileDB(t, ctx, "keyword_grouped", migrations.Postgres)
+	const schema = "app"
+	if _, err := pool.Exec(ctx, `CREATE SCHEMA host;
 CREATE TABLE host.items(id text PRIMARY KEY, deleted boolean NOT NULL DEFAULT false);
 CREATE TABLE host.versions(id text PRIMARY KEY, item_id text NOT NULL REFERENCES host.items(id), language text NOT NULL,
   live boolean NOT NULL DEFAULT true, is_default boolean NOT NULL DEFAULT false, traits text[] NOT NULL DEFAULT '{}')`); err != nil {
 		t.Fatal(err)
 	}
-	if err = tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
 	f := groupedFixture{t, ctx, pool, schema}
-	client, err := NewClient(ClientConfig{Pool: pool, Schema: schema})
+	client, err := NewClient(ClientConfig{Pool: pool, Schema: schema, Tenant: testTenant})
 	if err != nil {
 		t.Fatal(err)
 	}
-	types := []string{"item_version"}
+	kinds := []string{"gallery"}
 	search := func(query, lang string, mode LanguageMode, opts SearchOptions) SearchResult {
 		t.Helper()
-		opts.Language, opts.LanguageMode, opts.EntityTypes = lang, mode, types
+		opts.Language, opts.LanguageMode, opts.ContentKinds = lang, mode, kinds
 		if opts.Eligibility == nil {
 			opts.Eligibility = groupedEligibility()
 		}
@@ -148,7 +104,7 @@ CREATE TABLE host.versions(id text PRIMARY KEY, item_id text NOT NULL REFERENCES
 		t.Helper()
 		var got []string
 		for _, h := range page.Hits {
-			got = append(got, h.ParentID+"="+h.EntityID+"/"+h.Language)
+			got = append(got, h.ContentID+"="+h.Version()+"/"+h.Language)
 		}
 		if strings.Join(got, " ") != strings.Join(want, " ") {
 			t.Fatalf("hits=%v want %v", got, want)
@@ -159,28 +115,28 @@ CREATE TABLE host.versions(id text PRIMARY KEY, item_id text NOT NULL REFERENCES
 	f.add(
 		// One work translated three times; the English original is the default
 		// but sorts after its colored sibling.
-		version{"g1-en-a", "g1", "en", true, false, colored, pg.KeywordDocument{Title: "Not Guilty", Keywords: []string{"Drama", "Colored"}}},
-		version{"g1-en-b", "g1", "en", true, true, nil, pg.KeywordDocument{Title: "Not Guilty", Keywords: []string{"Drama"}}},
-		version{"g1-es-1", "g1", "es", true, true, nil, pg.KeywordDocument{Title: "No Culpable", Aliases: []string{"Not Guilty"}, Keywords: []string{"Drama"}}},
-		version{"g1-es-2", "g1", "es", true, false, colored, pg.KeywordDocument{Title: "No Culpable", Aliases: []string{"Not Guilty"}, Keywords: []string{"Drama", "Colored"}}},
-		version{"g1-ja-1", "g1", "ja", true, true, nil, pg.KeywordDocument{Title: "無罪", Aliases: []string{"Not Guilty"}}},
+		version{"g1-en-a", "g1", "en", true, false, colored, "Not Guilty", nil, []string{"Drama", "Colored"}},
+		version{"g1-en-b", "g1", "en", true, true, nil, "Not Guilty", nil, []string{"Drama"}},
+		version{"g1-es-1", "g1", "es", true, true, nil, "No Culpable", []string{"Not Guilty"}, []string{"Drama"}},
+		version{"g1-es-2", "g1", "es", true, false, colored, "No Culpable", []string{"Not Guilty"}, []string{"Drama", "Colored"}},
+		version{"g1-ja-1", "g1", "ja", true, true, nil, "無罪", []string{"Not Guilty"}, nil},
 		// English Colored plus Spanish Original: no Spanish Colored exists.
-		version{"g2-en-col", "g2", "en", true, true, colored, pg.KeywordDocument{Title: "Spring Story", Keywords: []string{"Colored"}}},
-		version{"g2-es-orig", "g2", "es", true, true, nil, pg.KeywordDocument{Title: "Historia de Primavera", Aliases: []string{"Spring Story"}}},
+		version{"g2-en-col", "g2", "en", true, true, colored, "Spring Story", nil, []string{"Colored"}},
+		version{"g2-es-orig", "g2", "es", true, true, nil, "Historia de Primavera", []string{"Spring Story"}, nil},
 		// A real Spanish Colored edition.
-		version{"g3-es-col", "g3", "es", true, true, colored, pg.KeywordDocument{Title: "Verano", Aliases: []string{"Summer Story"}, Keywords: []string{"Colored"}}},
+		version{"g3-es-col", "g3", "es", true, true, colored, "Verano", []string{"Summer Story"}, []string{"Colored"}},
 		// A draft colored sibling that must stay invisible.
-		version{"g4-en-1", "g4", "en", true, true, nil, pg.KeywordDocument{Title: "Autumn Story"}},
-		version{"g4-en-2", "g4", "en", false, false, colored, pg.KeywordDocument{Title: "Autumn Story Secret", Keywords: []string{"Colored"}}},
+		version{"g4-en-1", "g4", "en", true, true, nil, "Autumn Story", nil, nil},
+		version{"g4-en-2", "g4", "en", false, false, colored, "Autumn Story Secret", nil, []string{"Colored"}},
 		// A deleted work with a live version.
-		version{"g5-en-1", "g5", "en", true, true, nil, pg.KeywordDocument{Title: "Winter Story"}},
+		version{"g5-en-1", "g5", "en", true, true, nil, "Winter Story", nil, nil},
 		// Native-script versions of one work.
-		version{"g6-ja-1", "g6", "ja", true, true, nil, pg.KeywordDocument{Title: "鬼滅の刃"}},
-		version{"g6-ja-2", "g6", "ja", true, false, colored, pg.KeywordDocument{Title: "鬼滅の刃", Keywords: []string{"カラー"}}},
-		version{"g6-zh-1", "g6", "zh", true, true, nil, pg.KeywordDocument{Title: "鬼灭之刃"}},
-		version{"g6-zh-2", "g6", "zh", true, false, nil, pg.KeywordDocument{Title: "鬼灭之刃"}},
-		version{"g6-ko-1", "g6", "ko", true, true, nil, pg.KeywordDocument{Title: "귀멸의 칼날"}},
-		version{"g6-ko-2", "g6", "ko", true, false, nil, pg.KeywordDocument{Title: "귀멸의 칼날"}},
+		version{"g6-ja-1", "g6", "ja", true, true, nil, "鬼滅の刃", nil, nil},
+		version{"g6-ja-2", "g6", "ja", true, false, colored, "鬼滅の刃", nil, []string{"カラー"}},
+		version{"g6-zh-1", "g6", "zh", true, true, nil, "鬼灭之刃", nil, nil},
+		version{"g6-zh-2", "g6", "zh", true, false, nil, "鬼灭之刃", nil, nil},
+		version{"g6-ko-1", "g6", "ko", true, true, nil, "귀멸의 칼날", nil, nil},
+		version{"g6-ko-2", "g6", "ko", true, false, nil, "귀멸의 칼날", nil, nil},
 	)
 	f.exec(`UPDATE host.items SET deleted=true WHERE id='g5'`)
 
@@ -199,8 +155,8 @@ CREATE TABLE host.versions(id text PRIMARY KEY, item_id text NOT NULL REFERENCES
 		if page.Hits[0].Score != 1 {
 			t.Fatalf("fallback rank score=%v", page.Hits[0].Score)
 		}
-		suggestions, err := client.Typeahead(ctx, "not gui", TypeaheadOptions{Language: "es", LanguageMode: LanguageModeFallbackEnglish, EntityTypes: types, Eligibility: groupedEligibility()})
-		if err != nil || len(suggestions) != 1 || suggestions[0].ParentID != "g1" || suggestions[0].EntityID != "g1-es-1" || suggestions[0].Language != "es" {
+		suggestions, err := client.Typeahead(ctx, "not gui", TypeaheadOptions{Language: "es", LanguageMode: LanguageModeFallbackEnglish, ContentKinds: kinds, Eligibility: groupedEligibility()})
+		if err != nil || len(suggestions) != 1 || suggestions[0].ContentID != "g1" || suggestions[0].Version() != "g1-es-1" || suggestions[0].Language != "es" {
 			t.Fatalf("typeahead=%+v err=%v", suggestions, err)
 		}
 		// Native-script typo/prefix matches also collapse to one card.
@@ -244,7 +200,7 @@ CREATE TABLE host.versions(id text PRIMARY KEY, item_id text NOT NULL REFERENCES
 		for v := 1; v <= 3; v++ {
 			for i := 1; i <= 12; i++ {
 				item := fmt.Sprintf("p%02d", i)
-				f.add(version{fmt.Sprintf("pv%d-%s", v, item), item, "en", true, v == 3, nil, pg.KeywordDocument{Title: "Blue Ocean"}})
+				f.add(version{fmt.Sprintf("pv%d-%s", v, item), item, "en", true, v == 3, nil, "Blue Ocean", nil, nil})
 			}
 		}
 		var seen []string
@@ -254,10 +210,10 @@ CREATE TABLE host.versions(id text PRIMARY KEY, item_id text NOT NULL REFERENCES
 				t.Fatalf("offset %d truncated: %+v", offset, page)
 			}
 			for _, h := range page.Hits {
-				if h.EntityID != "pv3-"+h.ParentID {
+				if h.Version() != "pv3-"+h.ContentID {
 					t.Fatalf("representative must be the default version: %+v", h)
 				}
-				seen = append(seen, h.ParentID)
+				seen = append(seen, h.ContentID)
 			}
 			if page.HasMore != (offset+5 < 12) || len(page.Hits) != min(5, 12-offset) {
 				t.Fatalf("offset %d page=%+v", offset, page)
@@ -270,34 +226,34 @@ CREATE TABLE host.versions(id text PRIMARY KEY, item_id text NOT NULL REFERENCES
 			t.Fatalf("pages=%v", seen)
 		}
 		// A window smaller than the matching documents is reported, keeps one
-		// card per item, and stays consistent across pages at the same limit.
-		first := search("blue ocean", "en", LanguageModeExact, SearchOptions{Limit: 5, CandidateLimit: 12})
-		if !first.Truncated || !first.HasMore || len(first.Hits) != 5 {
+		// card per item and stays consistent across pages at the same limit.
+		// Documents order by (content id, version), so a window holds whole
+		// items plus at most one partial item, whose default version beyond the
+		// window cannot be chosen.
+		first := search("blue ocean", "en", LanguageModeExact, SearchOptions{Limit: 5, CandidateLimit: 25})
+		if !first.Truncated || !first.HasMore {
 			t.Fatalf("truncated page=%+v", first)
 		}
-		second := search("blue ocean", "en", LanguageModeExact, SearchOptions{Limit: 5, Offset: 5, CandidateLimit: 12})
-		if len(second.Hits) != 5 || !second.HasMore {
+		expect(first, "p01=pv3-p01/en", "p02=pv3-p02/en", "p03=pv3-p03/en", "p04=pv3-p04/en", "p05=pv3-p05/en")
+		second := search("blue ocean", "en", LanguageModeExact, SearchOptions{Limit: 5, Offset: 5, CandidateLimit: 25})
+		if !second.Truncated || !second.HasMore {
 			t.Fatalf("second truncated page=%+v", second)
 		}
-		for _, h := range append(first.Hits, second.Hits...) {
-			if strings.HasPrefix(h.EntityID, "pv3-") {
-				t.Fatalf("default version beyond the window cannot be chosen: %+v", h)
-			}
-		}
-		beyond := search("blue ocean", "en", LanguageModeExact, SearchOptions{Limit: 5, Offset: 12, CandidateLimit: 12})
+		expect(second, "p06=pv3-p06/en", "p07=pv3-p07/en", "p08=pv3-p08/en", "p09=pv1-p09/en")
+		beyond := search("blue ocean", "en", LanguageModeExact, SearchOptions{Limit: 5, Offset: 12, CandidateLimit: 25})
 		if len(beyond.Hits) != 0 || !beyond.HasMore || !beyond.Truncated {
 			t.Fatalf("page beyond window=%+v", beyond)
 		}
 		// Traced pages report the same items and their best document positions.
-		traced, trace, err := client.SearchWithTrace(ctx, "blue ocean", SearchOptions{Language: "en", EntityTypes: types, Limit: 5, Offset: 5, Eligibility: groupedEligibility()})
-		if err != nil || len(trace.Results) != 5 || trace.Results[0].Rank != 6 || trace.Results[0].Key.ParentID != "p06" || trace.Results[0].ScoreKind != ScoreKeywordMatch || trace.Results[0].Contributions[0].SourceRank != 6 {
+		traced, trace, err := client.SearchWithTrace(ctx, "blue ocean", SearchOptions{Language: "en", ContentKinds: kinds, Limit: 5, Offset: 5, Eligibility: groupedEligibility()})
+		if err != nil || len(trace.Results) != 5 || trace.Results[0].Rank != 6 || trace.Results[0].Key.ContentID != "p06" || trace.Results[0].ScoreKind != ScoreKeywordMatch || trace.Results[0].Contributions[0].SourceRank != 16 {
 			t.Fatalf("trace=%+v err=%v", trace, err)
 		}
-		if len(traced.Hits) != 5 || traced.Hits[0].ParentID != "p06" || trace.Sources[0].Candidates[0].Key.ParentID != "p01" {
+		if len(traced.Hits) != 5 || traced.Hits[0].ContentID != "p06" || trace.Sources[0].Candidates[0].Key.ContentID != "p01" {
 			t.Fatalf("traced=%+v", traced)
 		}
-		for _, opts := range []SearchOptions{{Offset: -1}, {Offset: 9990, Limit: 20}, {Mode: SearchModeSemantic, Eligibility: groupedEligibility()}} {
-			opts.Language, opts.EntityTypes = "en", types
+		for _, opts := range []SearchOptions{{Offset: -1}, {Offset: 9990, Limit: 20}} {
+			opts.Language, opts.ContentKinds = "en", kinds
 			if _, trace, err := client.SearchWithTrace(ctx, "blue", opts); err == nil || trace.ErrorCategory != "validation" {
 				t.Fatalf("%+v: err=%v trace=%+v", opts, err, trace)
 			}
@@ -306,24 +262,24 @@ CREATE TABLE host.versions(id text PRIMARY KEY, item_id text NOT NULL REFERENCES
 
 	t.Run("join contract", func(t *testing.T) {
 		for name, join := range map[string]*Eligibility{
-			"missing parent column": {SQL: `SELECT 0 AS priority`},
-			"null parent":           {SQL: `SELECT NULL::text AS parent_id, 0 AS priority`},
-			"reserved arg":          {SQL: groupedEligibilitySQL, Args: map[string]any{"traits": []string{}, "language": "x"}},
+			"missing priority column": {SQL: `SELECT 1 AS other`},
+			"null priority":           {SQL: `SELECT NULL::int AS priority`},
+			"reserved arg":            {SQL: groupedEligibilitySQL, Args: map[string]any{"traits": []string{}, "language": "x"}},
 		} {
-			if _, err := client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", EntityTypes: types, Eligibility: join}); err == nil {
+			if _, err := client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", ContentKinds: kinds, Eligibility: join}); err == nil {
 				t.Fatalf("%s accepted", name)
 			}
 		}
-		if _, err := client.Typeahead(ctx, "not", TypeaheadOptions{Language: "en", EntityTypes: types, Eligibility: &Eligibility{SQL: `SELECT NULL::text AS parent_id, 0 AS priority`}}); err == nil {
-			t.Fatal("typeahead accepted null parent")
+		if _, err := client.Typeahead(ctx, "not", TypeaheadOptions{Language: "en", ContentKinds: kinds, Eligibility: &Eligibility{SQL: `SELECT NULL::int AS priority`}}); err == nil {
+			t.Fatal("typeahead accepted null priority")
 		}
 	})
 
 	t.Run("index plan with eligibility join", func(t *testing.T) {
 		f.exec(`INSERT INTO host.items(id) SELECT 'filler-'||i FROM generate_series(1,50000) i;
 INSERT INTO host.versions(id,item_id,language,live,is_default) SELECT 'fv-'||i,'filler-'||i,'zh',true,true FROM generate_series(1,50000) i;
-INSERT INTO sk.search_documents(entity_type,entity_id,language,title,document,raw_document) SELECT 'item_version','fv-'||i,'zh','占位内容'||md5(i::text),'filler','filler' FROM generate_series(1,50000) i;
-ANALYZE sk.search_documents; ANALYZE host.versions; ANALYZE host.items`)
+INSERT INTO app.content_search_documents(tenant_id,content_kind,content_id,content_version_id,language,title,raw_document) SELECT 'doujins','gallery','filler-'||i,'fv-'||i,'zh','占位内容'||md5(i::text),'filler' FROM generate_series(1,50000) i;
+ANALYZE app.content_search_documents; ANALYZE host.versions; ANALYZE host.items`)
 		var trgm string
 		if err := pool.QueryRow(ctx, `SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE extname='pg_trgm'`).Scan(&trgm); err != nil {
 			t.Fatal(err)
@@ -331,10 +287,10 @@ ANALYZE sk.search_documents; ANALYZE host.versions; ANALYZE host.items`)
 		qt := pgx.Identifier{trgm}.Sanitize()
 		f.exec(`SET pg_trgm.word_similarity_threshold=0.1`)
 		join := strings.ReplaceAll(groupedEligibilitySQL, "@traits::text[]", "'{}'::text[]")
-		rows, err := pool.Query(ctx, fmt.Sprintf(`EXPLAIN (ANALYZE,BUFFERS,COSTS OFF) SELECT sd.entity_id,e.parent_id FROM sk.search_documents sd
-JOIN LATERAL (SELECT h.parent_id::text AS parent_id,h.priority::int AS priority FROM (%s) AS h LIMIT 1) e ON true
-WHERE sd.language='zh' AND sk.searchkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_document) OPERATOR(%s.%%>) '鬼灭刃'
-ORDER BY sk.searchkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_document) OPERATOR(%s.<->>) '鬼灭刃' LIMIT 100`, join, qt, qt))
+		rows, err := pool.Query(ctx, fmt.Sprintf(`EXPLAIN (ANALYZE,BUFFERS,COSTS OFF) SELECT sd.content_id,e.priority FROM app.content_search_documents sd
+JOIN LATERAL (SELECT h.priority::int AS priority FROM (%s) AS h LIMIT 1) e ON true
+WHERE sd.tenant_id='doujins' AND sd.language='zh' AND app.contentkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_document) OPERATOR(%s.%%>) '鬼灭刃'
+ORDER BY app.contentkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_document) OPERATOR(%s.<->>) '鬼灭刃' LIMIT 100`, join, qt, qt))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -348,7 +304,7 @@ ORDER BY sk.searchkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_docume
 		}
 		rows.Close()
 		t.Log(plan.String())
-		if !strings.Contains(plan.String(), "search_documents_keyword_fuzzy") || strings.Contains(plan.String(), "Seq Scan") {
+		if !strings.Contains(plan.String(), "content_search_documents_keyword_fuzzy") || strings.Contains(plan.String(), "Seq Scan") {
 			t.Fatalf("expected indexed bounded fuzzy path with lateral join:\n%s", plan.String())
 		}
 		started := time.Now()

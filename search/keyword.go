@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,28 +12,26 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/open-rails/contentkit/contentref"
 )
 
-// KeywordResult is one language's scored document window.
-type KeywordResult struct {
-	// Hits are documents ordered by score, entity type and entity id.
-	Hits []LexicalHit
-	// Truncated reports that a route filled its SQL window or that more scored
-	// documents existed than Limit: documents beyond the window were never ranked.
-	Truncated bool
+type documentKey struct {
+	contentref.ContentKey
+	language string
 }
 
 // KeywordSearch preserves names and aliases, including native scripts. Exact
 // names precede aliases, token/prefix matches, then conservative one-edit typos.
 // PostgreSQL retrieves bounded candidates; Go never scans the document catalog.
 // Host filters and the eligibility join run inside every route before its limit.
-func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts LexicalOptions) (KeywordResult, error) {
-	var result KeywordResult
-	if pool == nil || strings.TrimSpace(opts.Language) == "" {
-		return result, fmt.Errorf("pool and language are required")
+func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts Options) (Result, error) {
+	var result Result
+	if pool == nil {
+		return result, fmt.Errorf("pool is required")
 	}
 	if opts.Limit <= 0 {
-		result.Hits = []LexicalHit{}
+		result.Hits = []Hit{}
 		return result, nil
 	}
 	if opts.Limit > MaxCandidateLimit {
@@ -43,14 +42,16 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts L
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	qs, err := quoteIdent(opts.Schema)
+	args := pgx.NamedArgs{"q": "", "prefix": "", "limit": 0}
+	from, where, priority, err := hostClauses(opts, args)
 	if err != nil {
 		return result, err
 	}
+	qs, _ := quoteIdent(opts.Schema)
 	// Normalize in the same database function as the expression indexes. This
 	// avoids Go/Postgres Unicode casing and locale differences.
 	var q, trgmSchema, nativeSchema string
-	err = pool.QueryRow(ctx, fmt.Sprintf(`SELECT %s.searchkit_keyword_normalize($1),
+	err = pool.QueryRow(ctx, fmt.Sprintf(`SELECT %s.contentkit_keyword_normalize($1),
  (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pg_trgm'),
  (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pgroonga')`, qs), query).Scan(&q, &trgmSchema, &nativeSchema)
 	if err != nil {
@@ -58,7 +59,7 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts L
 	}
 	tokens := keywordTokens(q)
 	if len(tokens) == 0 {
-		result.Hits = []LexicalHit{}
+		result.Hits = []Hit{}
 		return result, nil
 	}
 	if len(tokens) > 16 {
@@ -66,31 +67,10 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts L
 	}
 	qt, _ := quoteIdent(trgmSchema)
 	qn, _ := quoteIdent(nativeSchema)
-	terms := qs + `.searchkit_keyword_terms(sd.title,sd.aliases,sd.keywords,sd.raw_document)`
-	corpus := qs + `.searchkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_document)`
-	where := `sd.language=@language`
+	terms := qs + `.contentkit_keyword_terms(sd.title,sd.aliases,sd.keywords,sd.raw_document)`
+	corpus := qs + `.contentkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_document)`
 	sqlLimit := min(MaxCandidateLimit, max(100, opts.Limit*8))
-	args := pgx.NamedArgs{"language": opts.Language, "q": q, "prefix": "", "limit": sqlLimit}
-	if len(opts.EntityTypes) > 0 {
-		where += ` AND sd.entity_type=ANY(@types::text[])`
-		args["types"] = opts.EntityTypes
-	}
-	if strings.TrimSpace(opts.FilterSQL) != "" {
-		where += ` AND (` + opts.FilterSQL + `)`
-		if err := mergeNamedArgs(args, opts.FilterArgs); err != nil {
-			return result, err
-		}
-	}
-	from := qs + `.search_documents sd`
-	parent, priority := `sd.entity_id`, `0`
-	if opts.Eligibility != nil && strings.TrimSpace(opts.Eligibility.SQL) != "" {
-		// LATERAL binds sd inside the host query; a missing column fails loudly.
-		from += ` JOIN LATERAL (SELECT h.parent_id::text AS parent_id,h.priority::int AS priority FROM (` + opts.Eligibility.SQL + `) AS h LIMIT 1) e ON true`
-		parent, priority = `e.parent_id`, `e.priority`
-		if err := mergeNamedArgs(args, opts.Eligibility.Args); err != nil {
-			return result, err
-		}
-	}
+	args["q"], args["limit"] = q, sqlLimit
 	// Tokens contain letters/numbers only and are lowercase. Appending '*' makes
 	// each token a literal prefix, never an OR/NOT/query-language operator.
 	prefixes := make([]string, len(tokens))
@@ -98,13 +78,14 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts L
 		prefixes[i] = t + "*"
 	}
 	args["prefix"] = strings.Join(prefixes, " ")
-	selectSQL := fmt.Sprintf(`SELECT sd.entity_type,sd.entity_id,sd.language,%s,%s,%s,cardinality(sd.aliases) FROM %s WHERE %s AND `, parent, priority, terms, from, where)
-	exact := selectSQL + fmt.Sprintf(`%s @> ARRAY[@q::text] ORDER BY (%s[1]=@q) DESC,(@q=ANY((%s)[2:1+cardinality(sd.aliases)])) DESC,sd.entity_type,sd.entity_id LIMIT @limit`, terms, "("+terms+")", terms)
-	prefix := selectSQL + fmt.Sprintf(`%s OPERATOR(%s.&@~) @prefix ORDER BY sd.entity_type,sd.entity_id LIMIT @limit`, terms, qn)
+	const order = `sd.content_kind,sd.content_id,sd.content_version_id`
+	selectSQL := fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,%s,%s,cardinality(sd.aliases) FROM %s WHERE %s AND `, priority, terms, from, where)
+	exact := selectSQL + fmt.Sprintf(`%s @> ARRAY[@q::text] ORDER BY (%s[1]=@q) DESC,(@q=ANY((%s)[2:1+cardinality(sd.aliases)])) DESC,%s LIMIT @limit`, terms, "("+terms+")", terms, order)
+	prefix := selectSQL + fmt.Sprintf(`%s OPERATOR(%s.&@~) @prefix ORDER BY %s LIMIT @limit`, terms, qn, order)
 	// The GiST word-distance order can stop after a bounded number of candidates.
 	// Acceptance below requires at most one Unicode edit, not a low similarity
 	// threshold. Queries of one/two characters never enter the fuzzy route.
-	fuzzy := selectSQL + fmt.Sprintf(`%s OPERATOR(%s.%%>) @q ORDER BY %s OPERATOR(%s.<->>) @q,sd.entity_type,sd.entity_id LIMIT @limit`, corpus, qt, corpus, qt)
+	fuzzy := selectSQL + fmt.Sprintf(`%s OPERATOR(%s.%%>) @q ORDER BY %s OPERATOR(%s.<->>) @q,%s LIMIT @limit`, corpus, qt, corpus, qt, order)
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return result, err
@@ -120,8 +101,7 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts L
 	if utf8.RuneCountInString(q) >= 3 {
 		queries = append(queries, fuzzy)
 	}
-	type key struct{ kind, id, language string }
-	found := map[key]LexicalHit{}
+	found := map[documentKey]Hit{}
 	for _, sql := range queries {
 		rows, err := tx.Query(ctx, sql, args)
 		if err != nil {
@@ -134,26 +114,22 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts L
 				return result, err
 			}
 			seen++
-			var h LexicalHit
-			var parentID *string
+			h := Hit{ContentRef: contentref.ContentRef{TenantID: opts.Tenant}}
+			var version string
 			var fields []string
 			var aliases int
-			if err := rows.Scan(&h.EntityType, &h.EntityID, &h.Language, &parentID, &h.Priority, &fields, &aliases); err != nil {
+			if err := rows.Scan(&h.ContentKind, &h.ContentID, &version, &h.Language, &h.Priority, &fields, &aliases); err != nil {
 				rows.Close()
 				return result, err
 			}
-			if parentID == nil || *parentID == "" {
-				rows.Close()
-				return result, fmt.Errorf("eligibility join returned no parent_id for %s/%s", h.EntityType, h.EntityID)
-			}
-			h.ParentID = *parentID
+			h.ContentRef = h.ContentRef.WithVersion(version)
 			h.Score = keywordScore(ctx, q, tokens, fields, aliases)
 			if err := ctx.Err(); err != nil {
 				rows.Close()
 				return result, err
 			}
 			if h.Score > 0 {
-				k := key{h.EntityType, h.EntityID, h.Language}
+				k := documentKey{h.Key(), h.Language}
 				if old, ok := found[k]; !ok || h.Score > old.Score {
 					found[k] = h
 				}
@@ -170,19 +146,11 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts L
 	if err := tx.Commit(ctx); err != nil {
 		return result, err
 	}
-	out := make([]LexicalHit, 0, len(found))
+	out := make([]Hit, 0, len(found))
 	for _, h := range found {
 		out = append(out, h)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Score != out[j].Score {
-			return out[i].Score > out[j].Score
-		}
-		if out[i].EntityType != out[j].EntityType {
-			return out[i].EntityType < out[j].EntityType
-		}
-		return out[i].EntityID < out[j].EntityID
-	})
+	sort.Slice(out, func(i, j int) bool { return hitLess(out[i], out[j]) })
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
@@ -192,6 +160,93 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts L
 	}
 	result.Hits = out
 	return result, nil
+}
+
+func hitLess(a, b Hit) bool {
+	if a.Score != b.Score {
+		return a.Score > b.Score
+	}
+	if a.ContentKind != b.ContentKind {
+		return a.ContentKind < b.ContentKind
+	}
+	if a.ContentID != b.ContentID {
+		return a.ContentID < b.ContentID
+	}
+	return a.Version() < b.Version()
+}
+
+// Eligible returns the candidates that exist as documents of the request tenant
+// and language and pass the host filter and eligibility join, in their input
+// order with Priority filled. Candidates another source proposes are never
+// trusted with eligibility: this is the same join every keyword route runs.
+func Eligible(ctx context.Context, pool *pgxpool.Pool, opts Options, candidates []Candidate) ([]Hit, error) {
+	if pool == nil {
+		return nil, fmt.Errorf("pool is required")
+	}
+	if len(candidates) == 0 {
+		return []Hit{}, nil
+	}
+	args := pgx.NamedArgs{"candidates": nil}
+	from, where, priority, err := hostClauses(opts, args)
+	if err != nil {
+		return nil, err
+	}
+	type row struct {
+		Kind    string `json:"content_kind"`
+		ID      string `json:"content_id"`
+		Version string `json:"content_version_id"`
+	}
+	rows := make([]row, 0, len(candidates))
+	byKey := map[documentKey]int{}
+	for i, c := range candidates {
+		if c.TenantID != opts.Tenant || c.Language != opts.Language {
+			return nil, fmt.Errorf("candidate %s/%s is outside the request tenant/language", c.ContentRef, c.Language)
+		}
+		if err := c.Validate(); err != nil {
+			return nil, err
+		}
+		byKey[documentKey{c.Key(), c.Language}] = i
+		rows = append(rows, row{c.ContentKind, c.ContentID, c.Version()})
+	}
+	data, err := json.Marshal(rows)
+	if err != nil {
+		return nil, err
+	}
+	args["candidates"] = data
+	sql := fmt.Sprintf(`SELECT sd.content_kind,sd.content_id,sd.content_version_id,%s FROM %s
+ JOIN jsonb_to_recordset(@candidates::jsonb) AS c(content_kind text,content_id text,content_version_id text)
+ ON c.content_kind=sd.content_kind AND c.content_id=sd.content_id AND c.content_version_id=sd.content_version_id
+ WHERE %s`, priority, from, where)
+	res, err := pool.Query(ctx, sql, args)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Close()
+	out := make([]Hit, len(candidates))
+	present := make([]bool, len(candidates))
+	for res.Next() {
+		var kind, id, version string
+		var pr int32
+		if err := res.Scan(&kind, &id, &version, &pr); err != nil {
+			return nil, err
+		}
+		i, ok := byKey[documentKey{contentref.ContentKey{TenantID: opts.Tenant, ContentKind: kind, ContentID: id, ContentVersionID: version}, opts.Language}]
+		if !ok {
+			continue
+		}
+		c := candidates[i]
+		out[i], present[i] = Hit{ContentRef: c.ContentRef, Language: c.Language, Priority: pr, Score: c.Score}, true
+	}
+	if err := res.Err(); err != nil {
+		return nil, err
+	}
+	kept := make([]Hit, 0, len(out))
+	for i, h := range out {
+		if present[i] {
+			kept = append(kept, h)
+		}
+	}
+	return kept, nil
 }
 
 func keywordTokens(s string) []string {

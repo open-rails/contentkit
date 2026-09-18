@@ -40,20 +40,19 @@ jobs:
       postgres:
         image: groonga/pgroonga:4.0.8-debian-18
         env:
-          POSTGRES_USER: searchkit
-          POSTGRES_PASSWORD: searchkit
-          POSTGRES_DB: searchkit_test
+          POSTGRES_USER: contentkit
+          POSTGRES_PASSWORD: contentkit
+          POSTGRES_DB: contentkit_test
         ports:
         - 5432:5432
-        options: --health-cmd "pg_isready -U searchkit" --health-interval 10s --health-timeout 5s --health-retries 10
+        options: --health-cmd "pg_isready -U contentkit" --health-interval 10s --health-timeout 5s --health-retries 10
     env:
-      SEARCHKIT_TEST_URL: postgres://searchkit:searchkit@localhost:5432/searchkit_test?sslmode=disable
-      SEARCHKIT_TEST_CH_ADDR: localhost:9000
-      SEARCHKIT_TEST_CH_USER: searchkit
-      SEARCHKIT_TEST_CH_PASSWORD: searchkit
-      SEARCHKIT_TEST_CH_CLUSTER: searchkit
-      SEARCHKIT_PROFILE_URL: postgres://searchkit:searchkit@localhost:5432/searchkit_profiles?sslmode=disable
-      SEARCHKIT_PGROONGA_URL: postgres://searchkit:searchkit@localhost:5432/searchkit_native?sslmode=disable
+      CONTENTKIT_TEST_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_test?sslmode=disable
+      CONTENTKIT_PROFILE_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_profiles?sslmode=disable
+      CONTENTKIT_TEST_CH_ADDR: localhost:9000
+      CONTENTKIT_TEST_CH_USER: contentkit
+      CONTENTKIT_TEST_CH_PASSWORD: contentkit
+      CONTENTKIT_TEST_CH_CLUSTER: contentkit
     steps:
     - uses: actions/checkout@v4
       with:
@@ -61,11 +60,11 @@ jobs:
     - name: Start ClickHouse with Keeper
       run: |
         docker run -d --name clickhouse -p 9000:9000 \
-          -e CLICKHOUSE_USER=searchkit -e CLICKHOUSE_PASSWORD=searchkit -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+          -e CLICKHOUSE_USER=contentkit -e CLICKHOUSE_PASSWORD=contentkit -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
           -v "$GITHUB_WORKSPACE/.github/clickhouse/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro" \
           clickhouse/clickhouse-server:25.8
         for i in $(seq 1 60); do
-          docker exec clickhouse clickhouse-client --user searchkit --password searchkit -q "SELECT count() FROM system.zookeeper WHERE path = '/'" && exit 0
+          docker exec clickhouse clickhouse-client --user contentkit --password contentkit -q "SELECT count() FROM system.zookeeper WHERE path = '/'" && exit 0
           sleep 2
         done
         docker logs clickhouse
@@ -73,20 +72,18 @@ jobs:
     - uses: actions/setup-go@v5
       with:
         go-version-file: go.mod
-    - name: Install vector for combined-profile tests
+    - name: Install pgvector (only the legacy-lineage convergence test needs it)
       run: docker exec '${{ job.services.postgres.id }}' bash -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends postgresql-18-pgvector'
-    - name: Isolate keyword test databases
-      run: |
-        docker exec '${{ job.services.postgres.id }}' createdb -U searchkit searchkit_profiles
-        docker exec '${{ job.services.postgres.id }}' createdb -U searchkit searchkit_native
+    - name: Isolate profile test databases
+      run: docker exec '${{ job.services.postgres.id }}' createdb -U contentkit contentkit_profiles
     - name: build
       run: go build ./...
     - name: vet
       run: go vet ./...
     - name: test
-      run: go test ./... -count=1 -race
+      run: go test ./... -count=1 -race -p 2
     if: github.event_name != 'push'
-    timeout-minutes: 20
+    timeout-minutes: 25
 permissions:
   contents: read
 concurrency:

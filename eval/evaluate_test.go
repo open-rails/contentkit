@@ -9,7 +9,7 @@ import (
 func TestValidateCase(t *testing.T) {
 	t.Parallel()
 
-	key := GoldenKey{EntityType: "gallery", EntityID: "1"}
+	key := GoldenKey{ContentKind: "gallery", ContentID: "1"}
 	valid := GoldenCase{ID: "case-1", Query: "query", K: 5, Expected: []GoldenKey{key}}
 
 	tests := []struct {
@@ -44,9 +44,9 @@ func TestValidateCase(t *testing.T) {
 func TestEvaluate_GradedMetrics(t *testing.T) {
 	t.Parallel()
 
-	high := GoldenKey{EntityType: "gallery", EntityID: "high"}
-	medium := GoldenKey{EntityType: "gallery", EntityID: "medium"}
-	other := GoldenKey{EntityType: "gallery", EntityID: "other"}
+	high := GoldenKey{ContentKind: "gallery", ContentID: "high"}
+	medium := GoldenKey{ContentKind: "gallery", ContentID: "medium"}
+	other := GoldenKey{ContentKind: "gallery", ContentID: "other"}
 	c := GoldenCase{
 		ID:    "graded",
 		Query: "graded query",
@@ -77,8 +77,8 @@ func TestEvaluate_GradedMetrics(t *testing.T) {
 func TestEvaluate_DuplicatesDoNotCompactRawRanks(t *testing.T) {
 	t.Parallel()
 
-	a := GoldenKey{EntityType: "gallery", EntityID: "a"}
-	b := GoldenKey{EntityType: "gallery", EntityID: "b"}
+	a := GoldenKey{ContentKind: "gallery", ContentID: "a"}
+	b := GoldenKey{ContentKind: "gallery", ContentID: "b"}
 	results := []Result{{Key: a, Score: 1}, {Key: a, Score: 0.9}, {Key: b, Score: 0.8}}
 	out, err := Evaluate(GoldenCase{ID: "duplicates-k2", Query: "query", K: 2, Expected: []GoldenKey{b}}, results)
 	if err != nil {
@@ -102,9 +102,9 @@ func TestEvaluate_DuplicatesDoNotCompactRawRanks(t *testing.T) {
 func TestEvaluate_KBoundary(t *testing.T) {
 	t.Parallel()
 
-	a := GoldenKey{EntityType: "gallery", EntityID: "a"}
-	b := GoldenKey{EntityType: "gallery", EntityID: "b"}
-	c := GoldenKey{EntityType: "gallery", EntityID: "c"}
+	a := GoldenKey{ContentKind: "gallery", ContentID: "a"}
+	b := GoldenKey{ContentKind: "gallery", ContentID: "b"}
+	c := GoldenKey{ContentKind: "gallery", ContentID: "c"}
 
 	tests := []struct {
 		name    string
@@ -131,8 +131,8 @@ func TestEvaluate_KBoundary(t *testing.T) {
 func TestEvaluate_TiedScoresPreserveCallerOrder(t *testing.T) {
 	t.Parallel()
 
-	first := GoldenKey{EntityType: "gallery", EntityID: "first"}
-	relevant := GoldenKey{EntityType: "gallery", EntityID: "relevant"}
+	first := GoldenKey{ContentKind: "gallery", ContentID: "first"}
+	relevant := GoldenKey{ContentKind: "gallery", ContentID: "relevant"}
 	out, err := Evaluate(
 		GoldenCase{ID: "ties", Query: "query", K: 2, Expected: []GoldenKey{relevant}},
 		[]Result{{Key: first, Score: 0.5}, {Key: relevant, Score: 0.5}},
@@ -168,7 +168,7 @@ func TestEvaluate_EmptyAndUnjudgedAreDistinct(t *testing.T) {
 func TestEvaluate_RejectsNonfiniteScore(t *testing.T) {
 	t.Parallel()
 
-	key := GoldenKey{EntityType: "gallery", EntityID: "1"}
+	key := GoldenKey{ContentKind: "gallery", ContentID: "1"}
 	_, err := Evaluate(
 		GoldenCase{ID: "nan", Query: "query", K: 1, Expected: []GoldenKey{key}},
 		[]Result{{Key: key, Score: float32(math.NaN())}},
@@ -183,7 +183,7 @@ func TestValidateCase_RejectsAllZeroJudgments(t *testing.T) {
 
 	err := ValidateCase(GoldenCase{
 		ID: "zero", Query: "query", K: 1,
-		Judgments: []Judgment{{Key: GoldenKey{EntityType: "gallery", EntityID: "1"}, Relevance: 0}},
+		Judgments: []Judgment{{Key: GoldenKey{ContentKind: "gallery", ContentID: "1"}, Relevance: 0}},
 	})
 	if err == nil {
 		t.Fatal("ValidateCase() error = nil, want positive-judgment error")
@@ -196,10 +196,10 @@ func TestEvaluate_NormalizesKeysAndLabels(t *testing.T) {
 	out, err := Evaluate(
 		GoldenCase{
 			ID: " normalized ", Query: " query ", K: 1,
-			Expected: []GoldenKey{{EntityType: " gallery ", EntityID: " 1 "}},
+			Expected: []GoldenKey{{ContentKind: " gallery ", ContentID: " 1 "}},
 			Labels:   map[string]string{" suite ": " manual "},
 		},
-		[]Result{{Key: GoldenKey{EntityType: "gallery", EntityID: "1"}, Score: 1}},
+		[]Result{{Key: GoldenKey{ContentKind: "gallery", ContentID: "1"}, Score: 1}},
 	)
 	if err != nil {
 		t.Fatalf("Evaluate() error = %v", err)
@@ -215,8 +215,8 @@ func TestValidateCase_RejectsCanonicalDuplicates(t *testing.T) {
 	err := ValidateCase(GoldenCase{
 		ID: "duplicates", Query: "query", K: 1,
 		Expected: []GoldenKey{
-			{EntityType: "gallery", EntityID: "1"},
-			{EntityType: " gallery ", EntityID: "1 "},
+			{ContentKind: "gallery", ContentID: "1"},
+			{ContentKind: " gallery ", ContentID: "1 "},
 		},
 	})
 	if err == nil {
@@ -251,7 +251,7 @@ func TestFailed_SanitizesErrorCategory(t *testing.T) {
 			t.Fatalf("Failed(%q).ErrorCategory = %q, want unspecified", category, got)
 		}
 	}
-	if got := Failed(c, "semantic_search").ErrorCategory; got != "semantic_search" {
+	if got := Failed(c, "keyword_search").ErrorCategory; got != "keyword_search" {
 		t.Fatalf("Failed(valid).ErrorCategory = %q", got)
 	}
 }

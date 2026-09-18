@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/open-rails/contentkit/contentref"
 )
 
 // Pause only the network dispatch after the real store has read the fence.
@@ -18,7 +20,7 @@ type reviewPausedInsert struct {
 }
 
 func (c *reviewPausedInsert) Exec(ctx context.Context, query string, args ...any) error {
-	if strings.HasPrefix(query, "INSERT INTO "+testDB+".events") {
+	if strings.HasPrefix(query, "INSERT INTO "+testDB+".signals") {
 		c.once.Do(func() {
 			close(c.entered)
 			select {
@@ -41,9 +43,9 @@ func TestReviewErasureMustFenceInFlightWriter(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	subject := Subject{UserID: "review-erased"}
-	ref := EntityRef{EntityType: "gallery", EntityID: "review-1"}
+	ref := contentref.New("review", "gallery", "review-1")
 	go func() {
-		done <- writer.RecordSignals(ctx, "review", []Signal{{EntityRef: ref, Subject: subject, Type: TypeView, EventID: "pending", OccurredAt: time.Now(), Progress: 1}})
+		done <- writer.RecordSignals(ctx, "review", []Signal{{ContentRef: ref, Subject: subject, Type: TypeView, EventID: "pending", OccurredAt: time.Now(), Progress: 1}})
 	}()
 	select {
 	case <-gate.entered:
@@ -62,7 +64,7 @@ func TestReviewErasureMustFenceInFlightWriter(t *testing.T) {
 	if writeErr != nil {
 		t.Fatal(writeErr)
 	}
-	state, err := st.States(ctx, "review", subject, []EntityRef{ref})
+	state, err := st.States(ctx, "review", subject, []ContentRef{ref})
 	if err != nil {
 		t.Fatal(err)
 	}

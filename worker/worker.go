@@ -1,482 +1,395 @@
+// Package worker maintains one tenant's keyword documents: it drains the dirty
+// queue, runs a bounded cursor backfill and delivers every published document
+// to the optional DocumentSink.
 package worker
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
-	"log"
-	"math"
-	"math/rand"
 	"strings"
-	"sync"
-	"time"
 
-	"github.com/sashabaranov/go-openai"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/open-rails/searchkit/runtime"
-	"github.com/open-rails/searchkit/tasks"
-	"github.com/open-rails/searchkit/vl"
+	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/search"
 )
 
+// ListContentPage enumerates a tenant's content of one kind and language for
+// backfill: one bounded page from an opaque cursor, done when exhausted.
+type ListContentPage func(ctx context.Context, tenant, contentKind, language, cursor string, limit int) (refs []contentref.ContentRef, nextCursor string, done bool, err error)
+
+// BuildKeywordDocuments returns the current keyword document of every
+// requested reference that exists in the given language. A missing reference
+// means the content no longer exists and deletes its document. Return an
+// error for failed or incomplete reads; never a partial result.
+type BuildKeywordDocuments func(ctx context.Context, tenant, contentKind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error)
+
+// Options configures one tenant's worker.
 type Options struct {
-	BatchSize int
-	LockAhead time.Duration
-	PollEvery time.Duration
+	// Pool needs at least two connections: SyncOnce reserves one transaction
+	// while read-only host callbacks may query through the pool. Required.
+	Pool   *pgxpool.Pool
+	Schema string
+	Tenant string
 
-	MaxConcurrentEmbeds  int
-	MaxRequestsPerSecond float64 // 0 = unlimited
+	// SupportedLanguages are the document languages backfill enumerates. Required.
+	SupportedLanguages []string
+	// ContentKinds are the kinds backfill enumerates. Dirty rows of any kind
+	// are built through BuildKeywordDocuments.
+	ContentKinds []string
 
-	MaxAttempts int
-	BackoffBase time.Duration
-	BackoffMax  time.Duration
+	// Required.
+	ListContent           ListContentPage
+	BuildKeywordDocuments BuildKeywordDocuments
+
+	// Sink receives every published or deleted document (see search.DocumentSink).
+	Sink search.DocumentSink
+
+	// Batch sizing (defaults are conservative).
+	DirtyBatchSize   int
+	BackfillPageSize int
+	// Upper bound on how much cursor backfill work to do per SyncOnce.
+	BackfillMaxPages int
 }
 
-const providerEmbedBatchSize = 25
-
-func (o *Options) withDefaults() Options {
-	out := *o
-	if out.BatchSize <= 0 {
-		out.BatchSize = 250
+func (o Options) withDefaults() Options {
+	if o.DirtyBatchSize <= 0 {
+		o.DirtyBatchSize = 250
 	}
-	if out.LockAhead <= 0 {
-		out.LockAhead = 30 * time.Second
+	if o.BackfillPageSize <= 0 {
+		o.BackfillPageSize = 1000
 	}
-	if out.PollEvery <= 0 {
-		out.PollEvery = 2 * time.Second
+	if o.BackfillMaxPages <= 0 {
+		o.BackfillMaxPages = 5
 	}
-	if out.MaxConcurrentEmbeds <= 0 {
-		out.MaxConcurrentEmbeds = 8
-	}
-	if out.MaxAttempts <= 0 {
-		out.MaxAttempts = 10
-	}
-	if out.BackoffBase <= 0 {
-		out.BackoffBase = 5 * time.Second
-	}
-	if out.BackoffMax <= 0 {
-		out.BackoffMax = 10 * time.Minute
-	}
-	return out
+	return o
 }
 
-func isRateLimit(err error) bool {
-	var apiErr *openai.APIError
-	if errors.As(err, &apiErr) {
-		return apiErr.HTTPStatusCode == 429
-	}
-	var reqErr *openai.RequestError
-	if errors.As(err, &reqErr) {
-		return reqErr.HTTPStatusCode == 429
-	}
-	return false
+// documentIdentity compares version values, independent of host pointer allocation.
+type documentIdentity struct {
+	contentref.ContentKey
+	language string
 }
 
-func httpStatus(err error) (int, bool) {
-	var apiErr *openai.APIError
-	if errors.As(err, &apiErr) {
-		return apiErr.HTTPStatusCode, true
-	}
-	var reqErr *openai.RequestError
-	if errors.As(err, &reqErr) {
-		return reqErr.HTTPStatusCode, true
-	}
-	return 0, false
+func identity(key search.DocumentKey) documentIdentity {
+	return documentIdentity{key.ContentRef.Key(), key.Language}
 }
 
-func isRetryable(err error) bool {
-	code, ok := httpStatus(err)
-	if ok {
-		// Retry on rate limit/timeouts and server errors.
-		if code == 429 || code == 408 {
-			return true
+type dirtyRow struct {
+	search.DocumentKey
+	IsDeleted bool
+	Reason    string
+	Revision  int64
+}
+
+// SyncOnce runs one tick: drain the dirty queue, then a bounded backfill step.
+// One writer per schema and tenant: a competing tick returns without work.
+// Documents, queue acknowledgements and sink deliveries share one transaction.
+func SyncOnce(ctx context.Context, opts Options) error {
+	cfg := opts.withDefaults()
+	if cfg.Pool == nil {
+		return fmt.Errorf("worker: pool is required")
+	}
+	if strings.TrimSpace(cfg.Schema) == "" || strings.TrimSpace(cfg.Tenant) == "" {
+		return fmt.Errorf("worker: schema and tenant are required")
+	}
+	if len(cfg.SupportedLanguages) == 0 {
+		return fmt.Errorf("worker: SupportedLanguages is required")
+	}
+	if cfg.ListContent == nil || cfg.BuildKeywordDocuments == nil {
+		return fmt.Errorf("worker: ListContent and BuildKeywordDocuments are required")
+	}
+	qs, err := search.QuoteSchema(cfg.Schema)
+	if err != nil {
+		return err
+	}
+	// One writer per schema/tenant, covering dirty work AND backfills. The
+	// transaction owns all document writes and acknowledgements: losing its
+	// connection cannot leave an old callback able to overwrite a newer writer.
+	// Host callbacks may read through Pool, so reserve another slot.
+	if cfg.Pool.Config().MaxConns < 2 {
+		return fmt.Errorf("worker: SyncOnce requires at least two pool connections")
+	}
+	tx, err := cfg.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	var acquired bool
+	if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))`, LockKey(cfg.Schema, cfg.Tenant)).Scan(&acquired); err != nil {
+		return err
+	}
+	if !acquired {
+		return nil // Another tick owns this schema/tenant; retry next tick.
+	}
+
+	// 1) Drain dirty queue (fast path).
+	batch, retry, err := processDirtyOnce(ctx, tx, qs, cfg)
+	if err != nil {
+		return err
+	}
+
+	// 2) Bounded backfill tick (slow path).
+	if err := backfillOnce(ctx, tx, qs, cfg); err != nil {
+		return err
+	}
+
+	// Acknowledge only after every callback has finished; waiting on a host's
+	// concurrent UPSERT cannot hold queue locks while callbacks need the pool.
+	// A row whose sink delivery failed stays queued under a new revision.
+	for _, r := range batch {
+		var err error
+		if _, ok := retry[identity(r.DocumentKey)]; ok {
+			_, err = tx.Exec(ctx, fmt.Sprintf(`UPDATE %s.content_search_dirty SET reason='sink_retry', updated_at=now() WHERE tenant_id=$1 AND content_kind=$2 AND content_id=$3 AND content_version_id=$4 AND language=$5 AND revision=$6`, qs),
+				r.TenantID, r.ContentKind, r.ContentID, r.Version(), r.Language, r.Revision)
+		} else {
+			_, err = tx.Exec(ctx, fmt.Sprintf(`DELETE FROM %s.content_search_dirty WHERE tenant_id=$1 AND content_kind=$2 AND content_id=$3 AND content_version_id=$4 AND language=$5 AND revision=$6`, qs),
+				r.TenantID, r.ContentKind, r.ContentID, r.Version(), r.Language, r.Revision)
 		}
-		if code >= 500 && code <= 599 {
-			return true
+		if err != nil {
+			return err
 		}
-		// Provider misconfig (401/403/400/404/etc) should be retry-later so tasks can
-		// catch up once credentials/config are fixed.
-		if code >= 400 && code <= 499 {
-			return true
+	}
+	return tx.Commit(ctx)
+}
+
+// LockKey is the advisory-lock text of one schema/tenant writer.
+func LockKey(schema, tenant string) string { return "contentkit:sync:" + schema + ":" + tenant }
+
+type buildGroup struct{ kind, language string }
+
+// processDirtyOnce builds and publishes one batch of dirty rows and returns
+// the batch plus the keys whose sink delivery failed.
+func processDirtyOnce(ctx context.Context, tx pgx.Tx, qs string, cfg Options) ([]dirtyRow, map[documentIdentity]struct{}, error) {
+	rows, err := tx.Query(ctx, fmt.Sprintf(`
+		SELECT content_kind, content_id, content_version_id, language, is_deleted, reason, revision
+		FROM %s.content_search_dirty
+		WHERE tenant_id = $1
+		ORDER BY updated_at ASC
+		LIMIT $2
+	`, qs), cfg.Tenant, cfg.DirtyBatchSize)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	var batch []dirtyRow
+	for rows.Next() {
+		var (
+			r       dirtyRow
+			version string
+		)
+		if err := rows.Scan(&r.ContentKind, &r.ContentID, &version, &r.Language, &r.IsDeleted, &r.Reason, &r.Revision); err != nil {
+			return nil, nil, err
 		}
-		return true
+		r.ContentRef = contentref.NewVersion(cfg.Tenant, r.ContentKind, r.ContentID, version)
+		batch = append(batch, r)
 	}
-	return true
-}
-
-func expBackoff(base time.Duration, attempt int, max time.Duration) time.Duration {
-	if attempt < 1 {
-		attempt = 1
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
 	}
-	mult := math.Pow(2, float64(attempt-1))
-	d := time.Duration(float64(base) * mult)
-	if d > max {
-		return max
+	rows.Close()
+	retry := map[documentIdentity]struct{}{}
+	if len(batch) == 0 {
+		return nil, retry, nil
 	}
-	return d
-}
-
-func addJitter(rng *rand.Rand, d time.Duration) time.Duration {
-	if d <= 0 {
-		return d
-	}
-	// Up to 25% jitter.
-	j := time.Duration(rng.Int63n(int64(d / 4)))
-	return d + j
-}
-
-func makeTokenBucket(rps float64, burst int) <-chan struct{} {
-	ch := make(chan struct{}, burst)
-	for i := 0; i < burst; i++ {
-		ch <- struct{}{}
-	}
-	if rps <= 0 {
-		return ch
-	}
-	interval := time.Duration(float64(time.Second) / rps)
-	if interval < time.Millisecond {
-		interval = time.Millisecond
-	}
-	t := time.NewTicker(interval)
-	go func() {
-		for range t.C {
-			select {
-			case ch <- struct{}{}:
-			default:
-			}
+	deliver := func(doc search.KeywordDocument, revision int64) {
+		if cfg.Sink == nil {
+			return
 		}
-	}()
-	return ch
-}
+		var err error
+		if doc.Title == "" {
+			err = cfg.Sink.Delete(ctx, doc.DocumentKey)
+		} else {
+			err = cfg.Sink.Upsert(ctx, search.PublishedDocument{KeywordDocument: doc, Version: revision})
+		}
+		if err != nil {
+			retry[identity(doc.DocumentKey)] = struct{}{}
+		}
+	}
 
-func hydrateBatch(
-	ctx context.Context,
-	rt *runtime.Runtime,
-	batch []tasks.Task,
-) (docsByType map[string]map[string]map[string]string, assetsByType map[string]map[string][]vl.AssetURL, err error) {
-	// docsByType[entity_type][language][entity_id] = doc
-	docsByType = map[string]map[string]map[string]string{}
-	assetsByType = map[string]map[string][]vl.AssetURL{}
-
-	idsByTypeLang := map[string]map[string]map[string]struct{}{}
-	assetsNeededByType := map[string]map[string]struct{}{}
-
-	for _, t := range batch {
-		if strings.TrimSpace(t.EntityType) == "" || strings.TrimSpace(t.EntityID) == "" || strings.TrimSpace(t.Language) == "" {
+	// Deletions first.
+	var removed []search.DocumentKey
+	for _, r := range batch {
+		if !r.IsDeleted {
 			continue
 		}
-		if _, ok := idsByTypeLang[t.EntityType]; !ok {
-			idsByTypeLang[t.EntityType] = map[string]map[string]struct{}{}
-		}
-		if _, ok := idsByTypeLang[t.EntityType][t.Language]; !ok {
-			idsByTypeLang[t.EntityType][t.Language] = map[string]struct{}{}
-		}
-		idsByTypeLang[t.EntityType][t.Language][t.EntityID] = struct{}{}
-
-		if rt.IsVLModel(t.Model) {
-			if _, ok := assetsNeededByType[t.EntityType]; !ok {
-				assetsNeededByType[t.EntityType] = map[string]struct{}{}
-			}
-			assetsNeededByType[t.EntityType][t.EntityID] = struct{}{}
-		}
-	}
-
-	for et, byLang := range idsByTypeLang {
-		for lang, set := range byLang {
-			ids := make([]string, 0, len(set))
-			for id := range set {
-				ids = append(ids, id)
-			}
-			if len(ids) == 0 {
-				continue
-			}
-			m, err := rt.BuildSemanticDocument(ctx, et, lang, ids)
-			if err != nil {
-				return nil, nil, err
-			}
-			if _, ok := docsByType[et]; !ok {
-				docsByType[et] = map[string]map[string]string{}
-			}
-			docsByType[et][lang] = m
-		}
-	}
-
-	for et, set := range assetsNeededByType {
-		ids := make([]string, 0, len(set))
-		for id := range set {
-			ids = append(ids, id)
-		}
-		if len(ids) == 0 {
-			continue
-		}
-		m, err := rt.ListAssetURLs(ctx, et, ids)
+		current, err := dirtyRevisionCurrent(ctx, tx, qs, r)
 		if err != nil {
 			return nil, nil, err
 		}
-		assetsByType[et] = m
-	}
-
-	return docsByType, assetsByType, nil
-}
-
-func handleTaskResult(
-	ctx context.Context,
-	repo *tasks.Repo,
-	cfg Options,
-	rng *rand.Rand,
-	task tasks.Task,
-	err error,
-) {
-	if err == nil || errors.Is(err, runtime.ErrEntityNotFound) {
-		_ = repo.Complete(ctx, task.EntityType, task.EntityID, task.Model, task.Language, task.NextRunAt)
-		return
-	}
-
-	log.Printf(
-		"searchkit: task failed entity_type=%s entity_id=%s model=%s language=%s attempts=%d err=%T %v",
-		task.EntityType,
-		task.EntityID,
-		task.Model,
-		task.Language,
-		task.Attempts,
-		err,
-		err,
-	)
-
-	// This failure counts as the next attempt (tasks.Attempts is prior failures).
-	task.Attempts = task.Attempts + 1
-
-	// Attempt cap: move to dead-letter queue.
-	if task.Attempts >= cfg.MaxAttempts {
-		_ = repo.DeadLetter(ctx, task, task.NextRunAt, err)
-		return
-	}
-
-	// Permanent errors: move to dead-letter queue.
-	if !isRetryable(err) {
-		_ = repo.DeadLetter(ctx, task, task.NextRunAt, err)
-		return
-	}
-
-	attempt := task.Attempts
-	base := cfg.BackoffBase
-	max := cfg.BackoffMax
-
-	// For provider misconfiguration (4xx other than 429), we want a slower retry cadence
-	// (hours/days) so we can "catch up later" after creds/config are fixed without
-	// churning the provider.
-	if code, ok := httpStatus(err); ok && code >= 400 && code <= 499 && code != 429 && code != 408 {
-		if base < 15*time.Minute {
-			base = 15 * time.Minute
-		}
-		if max < 7*24*time.Hour {
-			max = 7 * 24 * time.Hour
+		if current {
+			removed = append(removed, r.DocumentKey)
 		}
 	}
-
-	backoff := expBackoff(base, attempt, max)
-	backoff = addJitter(rng, backoff)
-	_ = repo.Fail(ctx, task.EntityType, task.EntityID, task.Model, task.Language, task.NextRunAt, backoff)
-}
-
-func processBatch(ctx context.Context, rt *runtime.Runtime, repo *tasks.Repo, cfg Options, batch []tasks.Task, docsByType map[string]map[string]map[string]string, assetsByType map[string]map[string][]vl.AssetURL, sem chan struct{}, tokens <-chan struct{}, rng *rand.Rand) {
-	type textWorkItem struct {
-		task tasks.Task
-		doc  string
+	if err := search.DeleteKeywordDocuments(ctx, tx, cfg.Schema, removed); err != nil {
+		return nil, nil, err
 	}
-	type vlWorkItem struct {
-		task   tasks.Task
-		doc    string
-		assets []vl.AssetURL
+	for _, key := range removed {
+		deliver(search.KeywordDocument{DocumentKey: key}, 0)
 	}
 
-	textByModel := map[string][]textWorkItem{}
-	vlItems := make([]vlWorkItem, 0)
-
-	for _, task := range batch {
-		doc := ""
-		if byLang, ok := docsByType[task.EntityType]; ok {
-			if m, ok := byLang[task.Language]; ok {
-				doc = m[task.EntityID]
-			}
-		}
-		if strings.TrimSpace(doc) == "" {
-			_ = repo.Complete(ctx, task.EntityType, task.EntityID, task.Model, task.Language, task.NextRunAt)
+	// Rebuilds, grouped per kind and language for batch-shaped host callbacks.
+	grouped := map[buildGroup][]dirtyRow{}
+	var order []buildGroup
+	for _, r := range batch {
+		if r.IsDeleted {
 			continue
 		}
-
-		if rt.IsVLModel(task.Model) {
-			var assets []vl.AssetURL
-			if m, ok := assetsByType[task.EntityType]; ok {
-				assets = m[task.EntityID]
+		g := buildGroup{r.ContentKind, r.Language}
+		if _, ok := grouped[g]; !ok {
+			order = append(order, g)
+		}
+		grouped[g] = append(grouped[g], r)
+	}
+	for _, g := range order {
+		members := grouped[g]
+		refs := make([]contentref.ContentRef, 0, len(members))
+		for _, r := range members {
+			refs = append(refs, r.ContentRef)
+		}
+		built, err := cfg.BuildKeywordDocuments(ctx, cfg.Tenant, g.kind, g.language, refs)
+		if err != nil {
+			return nil, nil, err
+		}
+		byKey := make(map[documentIdentity]search.KeywordDocument, len(built))
+		for _, doc := range built {
+			if doc.TenantID != cfg.Tenant || doc.ContentKind != g.kind || doc.Language != g.language {
+				return nil, nil, fmt.Errorf("worker: builder returned %s/%s outside the requested %s/%s", doc.ContentRef, doc.Language, g.kind, g.language)
 			}
-			if len(assets) == 0 {
-				_ = repo.Complete(ctx, task.EntityType, task.EntityID, task.Model, task.Language, task.NextRunAt)
+			byKey[identity(doc.DocumentKey)] = doc
+		}
+		// Recheck generations after building. Changed or unsolicited keys are
+		// not published; their latest queue entry remains for the next tick.
+		// Missing requested keys mean the content no longer exists; an empty
+		// document deletes any stale indexed record.
+		type publish struct {
+			doc      search.KeywordDocument
+			revision int64
+		}
+		var eligible []publish
+		for _, r := range members {
+			current, err := dirtyRevisionCurrent(ctx, tx, qs, r)
+			if err != nil {
+				return nil, nil, err
+			}
+			if !current {
 				continue
 			}
-			vlItems = append(vlItems, vlWorkItem{task: task, doc: doc, assets: assets})
-			continue
-		}
-
-		textByModel[task.Model] = append(textByModel[task.Model], textWorkItem{task: task, doc: doc})
-	}
-
-	var wg sync.WaitGroup
-
-	// Text tasks are batched per model into providerEmbedBatchSize requests.
-	for model, items := range textByModel {
-		model := model
-		items := items
-		for start := 0; start < len(items); start += providerEmbedBatchSize {
-			end := start + providerEmbedBatchSize
-			if end > len(items) {
-				end = len(items)
+			doc, ok := byKey[identity(r.DocumentKey)]
+			if !ok {
+				doc = search.KeywordDocument{DocumentKey: r.DocumentKey}
 			}
-			chunk := items[start:end]
-
-			sem <- struct{}{}
-			wg.Add(1)
-			go func() {
-				defer func() {
-					<-sem
-					wg.Done()
-				}()
-
-				if tokens != nil {
-					select {
-					case <-ctx.Done():
-						return
-					case <-tokens:
-					}
-				}
-
-				embedItems := make([]runtime.TextEmbeddingItem, len(chunk))
-				for i, it := range chunk {
-					embedItems[i] = runtime.TextEmbeddingItem{
-						EntityType: it.task.EntityType,
-						EntityID:   it.task.EntityID,
-						Language:   it.task.Language,
-						Document:   it.doc,
-					}
-				}
-
-				perItemErrs, batchErr := rt.GenerateAndStoreTextEmbeddingsWithDocuments(ctx, model, embedItems)
-				if perItemErrs == nil {
-					perItemErrs = make([]error, len(chunk))
-				}
-
-				for i, it := range chunk {
-					err := perItemErrs[i]
-					if err == nil && batchErr != nil {
-						err = batchErr
-					}
-					handleTaskResult(ctx, repo, cfg, rng, it.task, err)
-				}
-			}()
+			eligible = append(eligible, publish{doc, r.Revision})
+		}
+		docs := make([]search.KeywordDocument, 0, len(eligible))
+		for _, p := range eligible {
+			docs = append(docs, p.doc)
+		}
+		if err := search.UpsertKeywordDocuments(ctx, tx, cfg.Schema, docs); err != nil {
+			return nil, nil, err
+		}
+		for _, p := range eligible {
+			deliver(p.doc, p.revision)
 		}
 	}
-
-	// VL tasks remain one request per task.
-	for _, it := range vlItems {
-		it := it
-		sem <- struct{}{}
-		wg.Add(1)
-		go func() {
-			defer func() {
-				<-sem
-				wg.Done()
-			}()
-
-			if tokens != nil {
-				select {
-				case <-ctx.Done():
-					return
-				case <-tokens:
-				}
-			}
-
-			err := rt.GenerateAndStoreVLEmbeddingWithInputs(ctx, it.task.EntityType, it.task.EntityID, it.task.Model, it.task.Language, it.doc, it.assets)
-			handleTaskResult(ctx, repo, cfg, rng, it.task, err)
-		}()
-	}
-
-	wg.Wait()
+	return batch, retry, nil
 }
 
-// DrainOnce fetches and processes a single batch of ready tasks, then returns.
-//
-// This is useful for integrating searchkit into an external job runner (e.g.
-// River/Cron) where you do not want an internal infinite polling loop.
-func DrainOnce(ctx context.Context, rt *runtime.Runtime, repo *tasks.Repo, opts Options) error {
-	if rt == nil {
-		return fmt.Errorf("runtime is required")
-	}
-	if repo == nil {
-		return fmt.Errorf("repo is required")
-	}
-	cfg := opts.withDefaults()
-
-	batch, err := repo.FetchReady(ctx, cfg.BatchSize, cfg.LockAhead)
-	if err != nil {
-		return err
-	}
-	if len(batch) == 0 {
+func backfillOnce(ctx context.Context, tx pgx.Tx, qs string, cfg Options) (retErr error) {
+	if cfg.BackfillMaxPages <= 0 || cfg.BackfillPageSize <= 0 {
 		return nil
 	}
-
-	docsByType, assetsByType, err := hydrateBatch(ctx, rt, batch)
-	if err != nil {
-		return err
+	pagesDone := 0
+	type request struct {
+		kind, language string
+		refs           []contentref.ContentRef
 	}
+	var pending []request
+	// Queue writes happen after all listing callbacks, avoiding pool starvation
+	// from host UPSERTs waiting for our newly inserted queue rows.
+	defer func() {
+		if retErr != nil {
+			return
+		}
+		for _, req := range pending {
+			rows := make([]map[string]string, 0, len(req.refs))
+			for _, ref := range req.refs {
+				if ref.TenantID != cfg.Tenant || ref.ContentKind != req.kind {
+					retErr = fmt.Errorf("worker: ListContent returned %s outside the requested %s/%s", ref, cfg.Tenant, req.kind)
+					return
+				}
+				rows = append(rows, map[string]string{"content_id": ref.ContentID, "content_version_id": ref.Version()})
+			}
+			data, err := json.Marshal(rows)
+			if err != nil {
+				retErr = err
+				return
+			}
+			// Backfill requests work through the same generation-fenced queue;
+			// a pending row keeps its revision.
+			if _, err := tx.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.content_search_dirty(tenant_id,content_kind,content_id,content_version_id,language,reason)
+ SELECT $1, $2, r.content_id, r.content_version_id, $3, 'backfill' FROM jsonb_to_recordset($4::jsonb) AS r(content_id text, content_version_id text)
+ ON CONFLICT(tenant_id,content_kind,content_id,content_version_id,language) DO NOTHING`, qs), cfg.Tenant, req.kind, req.language, data); err != nil {
+				retErr = err
+				return
+			}
+		}
+	}()
 
-	sem := make(chan struct{}, cfg.MaxConcurrentEmbeds)
-	var tokens <-chan struct{}
-	if cfg.MaxRequestsPerSecond > 0 {
-		tokens = makeTokenBucket(cfg.MaxRequestsPerSecond, cfg.MaxConcurrentEmbeds)
+	for _, kind := range cfg.ContentKinds {
+		for _, lang := range cfg.SupportedLanguages {
+			if pagesDone >= cfg.BackfillMaxPages {
+				return nil
+			}
+			if strings.TrimSpace(lang) == "" || strings.TrimSpace(kind) == "" {
+				continue
+			}
+			cursor, state, err := backfillState(ctx, tx, qs, cfg.Tenant, kind, lang)
+			if err != nil {
+				return err
+			}
+			if state == "done" {
+				continue
+			}
+			refs, nextCursor, done, err := cfg.ListContent(ctx, cfg.Tenant, kind, lang, cursor, cfg.BackfillPageSize)
+			if err != nil {
+				_, _ = tx.Exec(ctx, fmt.Sprintf(`UPDATE %s.content_search_backfill SET last_error = $4, state = 'failed', updated_at = now()
+ WHERE tenant_id = $1 AND content_kind = $2 AND language = $3`, qs), cfg.Tenant, kind, lang, err.Error())
+				return err
+			}
+			if len(refs) > 0 {
+				pending = append(pending, request{kind, lang, refs})
+			}
+			next := "running"
+			if done {
+				next = "done"
+			}
+			if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s.content_search_backfill SET cursor = $4, state = $5, last_error = NULL, updated_at = now()
+ WHERE tenant_id = $1 AND content_kind = $2 AND language = $3`, qs), cfg.Tenant, kind, lang, nextCursor, next); err != nil {
+				return err
+			}
+			pagesDone++
+		}
 	}
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-
-	processBatch(ctx, rt, repo, cfg, batch, docsByType, assetsByType, sem, tokens, rng)
 	return nil
 }
 
-// Run drains embedding tasks using the provided runtime and repository.
-//
-// This helper is optional; host apps can implement their own runner in River/Cron/etc.
-func Run(ctx context.Context, rt *runtime.Runtime, repo *tasks.Repo, opts Options) error {
-	if rt == nil {
-		return fmt.Errorf("runtime is required")
+func backfillState(ctx context.Context, tx pgx.Tx, qs, tenant, kind, language string) (cursor, state string, err error) {
+	if _, err := tx.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.content_search_backfill (tenant_id, content_kind, language) VALUES ($1, $2, $3)
+ ON CONFLICT (tenant_id, content_kind, language) DO NOTHING`, qs), tenant, kind, language); err != nil {
+		return "", "", err
 	}
-	if repo == nil {
-		return fmt.Errorf("repo is required")
+	if err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT cursor, state FROM %s.content_search_backfill WHERE tenant_id = $1 AND content_kind = $2 AND language = $3`, qs), tenant, kind, language).Scan(&cursor, &state); err != nil {
+		return "", "", err
 	}
-	cfg := opts.withDefaults()
+	return cursor, state, nil
+}
 
-	sem := make(chan struct{}, cfg.MaxConcurrentEmbeds)
-	var tokens <-chan struct{}
-	if cfg.MaxRequestsPerSecond > 0 {
-		tokens = makeTokenBucket(cfg.MaxRequestsPerSecond, cfg.MaxConcurrentEmbeds)
-	}
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-
-	ticker := time.NewTicker(cfg.PollEvery)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			batch, err := repo.FetchReady(ctx, cfg.BatchSize, cfg.LockAhead)
-			if err != nil {
-				return err
-			}
-
-			docsByType, assetsByType, err := hydrateBatch(ctx, rt, batch)
-			if err != nil {
-				return err
-			}
-
-			processBatch(ctx, rt, repo, cfg, batch, docsByType, assetsByType, sem, tokens, rng)
-		}
-	}
+func dirtyRevisionCurrent(ctx context.Context, tx pgx.Tx, qs string, r dirtyRow) (bool, error) {
+	var current bool
+	err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s.content_search_dirty WHERE tenant_id=$1 AND content_kind=$2 AND content_id=$3 AND content_version_id=$4 AND language=$5 AND revision=$6)`, qs),
+		r.TenantID, r.ContentKind, r.ContentID, r.Version(), r.Language, r.Revision).Scan(&current)
+	return current, err
 }

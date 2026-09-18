@@ -1,33 +1,36 @@
-package searchkit
+package contentkit
 
 import (
 	"reflect"
 	"testing"
+
+	"github.com/open-rails/contentkit/contentref"
 )
 
-func TestGroupByParentOrdersItemsWithoutEnglishPreference(t *testing.T) {
+func TestGroupByContentOrdersItemsWithoutEnglishPreference(t *testing.T) {
 	t.Parallel()
+	v := func(item, version string) ContentRef { return contentref.NewVersion("t", "v", item, version) }
 	docs := []groupedDoc{
-		{EntityType: "v", EntityID: "a-en", ParentID: "a", Language: "en", Score: .9},
-		{EntityType: "v", EntityID: "b-es", ParentID: "b", Language: "es", Score: .9, requested: true},
-		{EntityType: "v", EntityID: "a-es", ParentID: "a", Language: "es", Score: .5, requested: true, Priority: 1},
-		{EntityType: "v", EntityID: "a-es2", ParentID: "a", Language: "es", Score: .5, requested: true},
-		{EntityType: "v", EntityID: "c-en", ParentID: "c", Language: "en", Score: 1},
-		{EntityType: "w", EntityID: "c", Language: "es", Score: .9, requested: true},
+		{ref: v("a", "a-en"), language: "en", score: .9},
+		{ref: v("b", "b-es"), language: "es", score: .9, requested: true},
+		{ref: v("a", "a-es"), language: "es", score: .5, requested: true, priority: 1},
+		{ref: v("a", "a-es2"), language: "es", score: .5, requested: true},
+		{ref: v("c", "c-en"), language: "en", score: 1},
+		{ref: contentref.New("t", "w", "c"), language: "es", score: .9, requested: true},
 	}
 	var got []string
-	for _, g := range groupByParent(docs) {
-		got = append(got, g.best.ParentID+":"+g.representative.EntityID+"/"+g.representative.Language)
+	for _, g := range groupByContent(docs) {
+		got = append(got, g.best.ref.ContentID+":"+g.representative.ref.Version()+"/"+g.representative.language)
 	}
 	// c ranks first on score; a and b tie at .9 and the requested language
 	// breaks the tie; a is represented by its requested-language default even
-	// though its English document ranked it.
-	want := []string{"c:c-en/en", "b:b-es/es", "c:c/es", "a:a-es2/es"}
+	// though its English document ranked it; the kind w item is its own group.
+	want := []string{"c:c-en/en", "b:b-es/es", "c:/es", "a:a-es2/es"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("groups=%v want %v", got, want)
 	}
-	groups := groupByParent(docs)
-	if p, more := page(groups, 1, 2); len(p) != 2 || !more || p[0].best.ParentID != "b" {
+	groups := groupByContent(docs)
+	if p, more := page(groups, 1, 2); len(p) != 2 || !more || p[0].best.ref.ContentID != "b" {
 		t.Fatalf("page=%+v more=%v", p, more)
 	}
 	if p, more := page(groups, 3, 5); len(p) != 1 || more {

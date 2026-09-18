@@ -1,29 +1,18 @@
-package searchkit
+package contentkit
 
-import (
-	"sort"
-
-	"github.com/open-rails/searchkit/search"
-)
-
-// Eligibility is the host's per-document eligibility join; see search.Eligibility.
-type Eligibility = search.Eligibility
+import "sort"
 
 // groupedDoc is one scored document with its retrieval provenance.
 type groupedDoc struct {
-	EntityType string
-	EntityID   string
-	ParentID   string
-	Language   string
-	Priority   int32
-	Score      float32
+	ref      ContentRef
+	language string
+	priority int32
+	score    float32
 	// requested is true when the document language is the request language,
 	// not a fallback.
-	requested   bool
-	sourceIndex int
-	sourceRank  int
-	// fused indexes the RRF-fused list in dual/semantic modes.
-	fused int
+	requested     bool
+	scoreKind     ScoreKind
+	contributions []ContributionTrace
 }
 
 // group is one content item: ranked by its best document in any searched
@@ -34,55 +23,53 @@ type group struct {
 	representative groupedDoc
 }
 
-type groupKey struct{ entityType, parentID string }
-
 // rankLess orders documents for item ranking: score, requested language,
-// language, entity type, entity id. It agrees with each source's own order, so
-// a window prefix of documents yields a prefix of items.
+// language, content kind, id, version. It agrees with each source's own order,
+// so a window prefix of documents yields a prefix of items.
 func rankLess(a, b groupedDoc) bool {
-	if a.Score != b.Score {
-		return a.Score > b.Score
+	if a.score != b.score {
+		return a.score > b.score
 	}
 	if a.requested != b.requested {
 		return a.requested
 	}
-	if a.Language != b.Language {
-		return a.Language < b.Language
+	if a.language != b.language {
+		return a.language < b.language
 	}
-	if a.EntityType != b.EntityType {
-		return a.EntityType < b.EntityType
+	if a.ref.ContentKind != b.ref.ContentKind {
+		return a.ref.ContentKind < b.ref.ContentKind
 	}
-	return a.EntityID < b.EntityID
+	if a.ref.ContentID != b.ref.ContentID {
+		return a.ref.ContentID < b.ref.ContentID
+	}
+	return a.ref.Version() < b.ref.Version()
 }
 
 // representLess chooses the document returned for an item: the requested
-// language first, then score, host priority, language and entity id.
+// language first, then score, host priority, language and version.
 func representLess(a, b groupedDoc) bool {
 	if a.requested != b.requested {
 		return a.requested
 	}
-	if a.Score != b.Score {
-		return a.Score > b.Score
+	if a.score != b.score {
+		return a.score > b.score
 	}
-	if a.Priority != b.Priority {
-		return a.Priority < b.Priority
+	if a.priority != b.priority {
+		return a.priority < b.priority
 	}
-	if a.Language != b.Language {
-		return a.Language < b.Language
+	if a.language != b.language {
+		return a.language < b.language
 	}
-	return a.EntityID < b.EntityID
+	return a.ref.Version() < b.ref.Version()
 }
 
-// groupByParent keeps one entry per (entity type, parent) ordered by rankLess
-// of each item's best document. It runs before any page limit.
-func groupByParent(docs []groupedDoc) []group {
-	index := map[groupKey]int{}
+// groupByContent keeps one entry per work (tenant, kind, content id) ordered by
+// rankLess of each item's best document. It runs before any page limit.
+func groupByContent(docs []groupedDoc) []group {
+	index := map[ContentKey]int{}
 	groups := make([]group, 0, len(docs))
 	for _, d := range docs {
-		if d.ParentID == "" {
-			d.ParentID = d.EntityID
-		}
-		k := groupKey{d.EntityType, d.ParentID}
+		k := d.ref.Content().Key()
 		i, ok := index[k]
 		if !ok {
 			index[k] = len(groups)

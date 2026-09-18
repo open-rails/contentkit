@@ -13,7 +13,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
-	"github.com/open-rails/searchkit/migrations"
+	"github.com/open-rails/contentkit/migrations"
 )
 
 // Env configures the ClickHouse under test. Tests skip when Addr is empty.
@@ -22,17 +22,17 @@ type Env struct {
 	Addr, User, Password, Cluster string
 }
 
-// FromEnv reads SEARCHKIT_TEST_CH_{ADDR,USER,PASSWORD,CLUSTER} or skips.
+// FromEnv reads CONTENTKIT_TEST_CH_{ADDR,USER,PASSWORD,CLUSTER} or skips.
 func FromEnv(t testing.TB) Env {
 	t.Helper()
 	e := Env{
-		Addr:     os.Getenv("SEARCHKIT_TEST_CH_ADDR"),
-		User:     os.Getenv("SEARCHKIT_TEST_CH_USER"),
-		Password: os.Getenv("SEARCHKIT_TEST_CH_PASSWORD"),
-		Cluster:  os.Getenv("SEARCHKIT_TEST_CH_CLUSTER"),
+		Addr:     os.Getenv("CONTENTKIT_TEST_CH_ADDR"),
+		User:     os.Getenv("CONTENTKIT_TEST_CH_USER"),
+		Password: os.Getenv("CONTENTKIT_TEST_CH_PASSWORD"),
+		Cluster:  os.Getenv("CONTENTKIT_TEST_CH_CLUSTER"),
 	}
 	if e.Addr == "" {
-		t.Skip("SEARCHKIT_TEST_CH_ADDR not set; skipping ClickHouse integration test")
+		t.Skip("CONTENTKIT_TEST_CH_ADDR not set; skipping ClickHouse integration test")
 	}
 	if e.User == "" {
 		e.User = "default"

@@ -1,3 +1,6 @@
+// Package migrations embeds ContentKit's migratekit lineages: the keyword
+// Postgres profile, the pre-ContentKit combined Postgres lineage that converges
+// on it, and the ClickHouse signal plane.
 package migrations
 
 import (
@@ -5,24 +8,23 @@ import (
 	"io/fs"
 )
 
-// migratekit's LoadFromFS does not recurse into subdirectories, so we expose a
-// sub-filesystem rooted at "postgres/".
-//
-//go:embed postgres/*.sql
-var postgresFS embed.FS
-
-// Postgres is the immutable combined profile for existing installations.
-var Postgres fs.FS = mustSubFS(postgresFS, "postgres")
-
 //go:embed keyword/*.sql
 var keywordFS embed.FS
 
-// KeywordPostgres is a separate fresh-install profile, requiring pg_trgm and
-// PGroonga but no vector extension or semantic tables. Use its own migration
-// ledger/group identity; never replace an existing Postgres migration ledger.
-// Existing combined installations can use keyword runtime while keeping their
-// original profile and all optional semantic data.
-var KeywordPostgres fs.FS = mustSubFS(keywordFS, "keyword")
+// Postgres is the keyword profile: the only Postgres lineage for new
+// installations. It requires pg_trgm and PGroonga and no vector extension.
+// Apply it under its own migratekit app id, scoped to the host schema.
+var Postgres fs.FS = mustSubFS(keywordFS, "keyword")
+
+//go:embed legacy/*.sql
+var legacyFS embed.FS
+
+// LegacyPostgres is the pre-ContentKit combined lineage (searchkit app id).
+// Installations created from it keep applying it: its final migration
+// converges on the keyword profile schema and drops the embedding tables.
+// Export those tables before applying it (docs/migration.md). Never use it
+// for a new installation.
+var LegacyPostgres fs.FS = mustSubFS(legacyFS, "legacy")
 
 func mustSubFS(fsys fs.FS, dir string) fs.FS {
 	sub, err := fs.Sub(fsys, dir)

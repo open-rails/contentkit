@@ -46,45 +46,45 @@ type tableSpec struct {
 	columns      []columnSpec
 }
 
+var refColumnSpecs = []columnSpec{{"content_kind", "LowCardinality(String)"}, {"content_id", "String"}, {"content_version_id", "String"}}
+
 // expectedSchema is the schema this library version reads and writes. It must
-// match the latest migration in migrations/clickhouse/signal.
+// match the latest migration in migrations/clickhouse/signal. Tables the
+// lineage keeps only for a later drop are not listed and never read.
 var expectedSchema = map[string]tableSpec{
-	"events": {
+	"signals": {
 		engine: "ReplacingMergeTree", version: "version",
-		sortingKey:   "tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id",
+		sortingKey:   "tenant, content_kind, content_id, content_version_id, subject_kind, subject, signal_type, event_id",
 		partitionKey: "toYYYYMM(occurred_at)",
-		columns: []columnSpec{
-			{"tenant", "LowCardinality(String)"}, {"entity_type", "LowCardinality(String)"}, {"entity_id", "String"},
-			{"subject_kind", "LowCardinality(String)"}, {"subject", "String"}, {"signal_type", "LowCardinality(String)"},
-			{"event_id", "String"}, {"revision", "UInt64"}, {"occurred_at", "DateTime('UTC')"}, {"duration_s", "UInt32"},
-			{"progress", "UInt32"}, {"progress_max", "UInt32"}, {"value", "Float64"}, {"score", "Int16"},
-			{"completed", "Bool"}, {"resume", "String"}, {"payload", "String"}, {"version", "UInt128"},
-			{"ingested_at", "DateTime64(6, 'UTC')"},
-		},
+		columns: append(append([]columnSpec{{"tenant", "LowCardinality(String)"}}, refColumnSpecs...),
+			columnSpec{"subject_kind", "LowCardinality(String)"}, columnSpec{"subject", "String"}, columnSpec{"signal_type", "LowCardinality(String)"},
+			columnSpec{"event_id", "String"}, columnSpec{"revision", "UInt64"}, columnSpec{"occurred_at", "DateTime('UTC')"}, columnSpec{"duration_s", "UInt32"},
+			columnSpec{"progress", "UInt32"}, columnSpec{"progress_max", "UInt32"}, columnSpec{"value", "Float64"}, columnSpec{"score", "Int16"},
+			columnSpec{"completed", "Bool"}, columnSpec{"resume", "String"}, columnSpec{"payload", "String"}, columnSpec{"version", "UInt128"},
+			columnSpec{"ingested_at", "DateTime64(6, 'UTC')"},
+		),
 	},
-	"subject_state": {
+	"subject_content_state": {
 		engine: "ReplacingMergeTree", version: "version",
-		sortingKey: "tenant, subject_kind, subject, entity_type, entity_id",
-		columns: []columnSpec{
-			{"tenant", "LowCardinality(String)"}, {"subject_kind", "LowCardinality(String)"}, {"subject", "String"},
-			{"entity_type", "LowCardinality(String)"}, {"entity_id", "String"}, {"first_seen_at", "DateTime('UTC')"},
-			{"last_signal_at", "DateTime('UTC')"}, {"total_events", "UInt32"}, {"views", "UInt32"},
-			{"completions", "UInt32"}, {"active_s", "UInt64"}, {"max_progress", "UInt32"}, {"progress_max", "UInt32"},
-			{"completed", "Bool"}, {"resume", "String"}, {"last_score", "Int16"}, {"net_value", "Float64"},
-			{"feedback", "UInt32"}, {"version", "DateTime64(6, 'UTC')"},
-		},
+		sortingKey: "tenant, subject_kind, subject, content_kind, content_id, content_version_id",
+		columns: append(append([]columnSpec{{"tenant", "LowCardinality(String)"}, {"subject_kind", "LowCardinality(String)"}, {"subject", "String"}}, refColumnSpecs...),
+			columnSpec{"first_seen_at", "DateTime('UTC')"},
+			columnSpec{"last_signal_at", "DateTime('UTC')"}, columnSpec{"total_events", "UInt32"}, columnSpec{"views", "UInt32"},
+			columnSpec{"completions", "UInt32"}, columnSpec{"active_s", "UInt64"}, columnSpec{"max_progress", "UInt32"}, columnSpec{"progress_max", "UInt32"},
+			columnSpec{"completed", "Bool"}, columnSpec{"resume", "String"}, columnSpec{"last_score", "Int16"}, columnSpec{"net_value", "Float64"},
+			columnSpec{"feedback", "UInt32"}, columnSpec{"version", "DateTime64(6, 'UTC')"},
+		),
 	},
-	"subject_daily": {
+	"subject_content_daily": {
 		engine: "ReplacingMergeTree", version: "version",
-		sortingKey:   "tenant, entity_type, entity_id, subject_kind, subject, day",
+		sortingKey:   "tenant, content_kind, content_id, content_version_id, subject_kind, subject, day",
 		partitionKey: "toYYYYMM(day)",
-		columns: []columnSpec{
-			{"tenant", "LowCardinality(String)"}, {"entity_type", "LowCardinality(String)"}, {"entity_id", "String"},
-			{"subject_kind", "LowCardinality(String)"}, {"subject", "String"}, {"day", "Date"}, {"events", "UInt32"},
-			{"views", "UInt32"}, {"completions", "UInt32"}, {"active_s", "UInt64"}, {"score_sum", "Int64"},
-			{"value_sum", "Float64"}, {"type_counts", "Map(LowCardinality(String), UInt32)"},
-			{"version", "DateTime64(6, 'UTC')"},
-		},
+		columns: append(append([]columnSpec{{"tenant", "LowCardinality(String)"}}, refColumnSpecs...),
+			columnSpec{"subject_kind", "LowCardinality(String)"}, columnSpec{"subject", "String"}, columnSpec{"day", "Date"}, columnSpec{"events", "UInt32"},
+			columnSpec{"views", "UInt32"}, columnSpec{"completions", "UInt32"}, columnSpec{"active_s", "UInt64"}, columnSpec{"score_sum", "Int64"},
+			columnSpec{"value_sum", "Float64"}, columnSpec{"type_counts", "Map(LowCardinality(String), UInt32)"},
+			columnSpec{"version", "DateTime64(6, 'UTC')"},
+		),
 	},
 	"erasures": {
 		engine: "ReplacingMergeTree", version: "erased_at",
@@ -93,12 +93,12 @@ var expectedSchema = map[string]tableSpec{
 			{"tenant", "LowCardinality(String)"}, {"subject_hash", "FixedString(16)"}, {"erased_at", "DateTime64(6, 'UTC')"},
 		},
 	},
-	"item_pairs": {
+	"content_pairs": {
 		engine: "ReplacingMergeTree", version: "refreshed_at",
-		sortingKey: "tenant, entity_type_a, entity_id_a, entity_type_b, entity_id_b",
+		sortingKey: "tenant, content_kind_a, content_id_a, content_kind_b, content_id_b",
 		columns: []columnSpec{
-			{"tenant", "LowCardinality(String)"}, {"entity_type_a", "LowCardinality(String)"}, {"entity_id_a", "String"},
-			{"entity_type_b", "LowCardinality(String)"}, {"entity_id_b", "String"}, {"strength", "Int64"},
+			{"tenant", "LowCardinality(String)"}, {"content_kind_a", "LowCardinality(String)"}, {"content_id_a", "String"},
+			{"content_kind_b", "LowCardinality(String)"}, {"content_id_b", "String"}, {"strength", "Int64"},
 			{"refreshed_at", "DateTime('UTC')"},
 		},
 	},
@@ -111,7 +111,7 @@ var expectedSchema = map[string]tableSpec{
 			{"revision", "UInt64"}, {"query_id", "String"}, {"surface", "LowCardinality(String)"},
 			{"ranker", "LowCardinality(String)"}, {"language", "LowCardinality(String)"},
 			{"subject_kind", "LowCardinality(String)"}, {"subject", "String"},
-			{"entity_types", "Array(LowCardinality(String))"}, {"entity_ids", "Array(String)"},
+			{"content_kinds", "Array(LowCardinality(String))"}, {"content_ids", "Array(String)"}, {"content_version_ids", "Array(String)"},
 			{"positions", "Array(UInt32)"}, {"occurred_at", "DateTime('UTC')"}, {"version", "UInt128"},
 			{"ingested_at", "DateTime64(6, 'UTC')"},
 		},
@@ -126,7 +126,7 @@ type SchemaMismatchError struct {
 }
 
 func (e *SchemaMismatchError) Error() string {
-	return fmt.Sprintf("signal: database %q is incompatible with this searchkit version (apply migrations.SignalClickHouse): %s",
+	return fmt.Sprintf("signal: database %q is incompatible with this contentkit version (apply migrations.SignalClickHouse): %s",
 		e.Database, strings.Join(e.Problems, "; "))
 }
 
@@ -204,9 +204,6 @@ func CheckSchema(ctx context.Context, conn Conn, database string) error {
 		}
 		if got.partitionKey != want.partitionKey {
 			problems = append(problems, fmt.Sprintf("%s PARTITION BY %q, want %q", name, got.partitionKey, want.partitionKey))
-		}
-		if want.engine == "MaterializedView" {
-			continue
 		}
 		expected := map[string]string{}
 		for _, c := range want.columns {

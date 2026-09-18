@@ -1,4 +1,4 @@
-package searchkit
+package contentkit
 
 import (
 	"context"
@@ -11,137 +11,134 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/open-rails/searchkit/migrations"
-	"github.com/open-rails/searchkit/pg"
+
+	"github.com/open-rails/contentkit/migrations"
+	"github.com/open-rails/contentkit/search"
 )
 
-// installKeywordFields upgrades old minimal fixtures just as an existing host
-// applies the additive migration. The applied baseline is deliberately untouched.
-func installKeywordFields(t *testing.T, ctx context.Context, pool *pgxpool.Pool, schema string) {
+// profileDB creates a disposable database from CONTENTKIT_PROFILE_URL (a
+// server with PGroonga and, for the legacy lineage, pgvector) and applies the
+// lineage into schema "app".
+func profileDB(t *testing.T, ctx context.Context, prefix string, lineage fs.FS) *pgxpool.Pool {
 	t.Helper()
-	sql, err := fs.ReadFile(migrations.Postgres, "0003_keyword_fields.up.sql")
+	dsn := os.Getenv("CONTENTKIT_PROFILE_URL")
+	if dsn == "" {
+		t.Skip("CONTENTKIT_PROFILE_URL not set (PGroonga + vector server)")
+	}
+	admin, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx, err := pool.Begin(ctx)
+	t.Cleanup(admin.Close)
+	db := fmt.Sprintf("%s_%d", prefix, time.Now().UnixNano())
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{db}.Sanitize()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = admin.Exec(context.Background(), "DROP DATABASE "+pgx.Identifier{db}.Sanitize()) })
+	cfg := admin.Config()
+	cfg.ConnConfig.Database = db
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS pgroonga`); err != nil {
+	t.Cleanup(pool.Close)
+	if lineage != nil {
+		applyLineage(t, ctx, pool, lineage, nil)
+	}
+	return pool
+}
+
+// applyLineage applies every file of a lineage into schema app, recording the
+// ledger, and calls before(name) ahead of each file.
+func applyLineage(t *testing.T, ctx context.Context, pool *pgxpool.Pool, lineage fs.FS, before func(name string)) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS app; CREATE TABLE IF NOT EXISTS public.applied_migrations(name text PRIMARY KEY,checksum text NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = tx.Exec(ctx, `SET LOCAL search_path TO `+pgx.Identifier{schema}.Sanitize()+`,public`); err != nil {
+	files, err := fs.ReadDir(lineage, ".")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = tx.Exec(ctx, string(sql)); err != nil {
-		t.Fatal(err)
-	}
-	if err = tx.Commit(ctx); err != nil {
-		t.Fatal(err)
+	for _, entry := range files {
+		if before != nil {
+			before(entry.Name())
+		}
+		sql, err := fs.ReadFile(lineage, entry.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec(ctx, "SET LOCAL search_path TO app,public"); err == nil {
+			_, err = tx.Exec(ctx, string(sql))
+		}
+		if err == nil {
+			_, err = tx.Exec(ctx, "INSERT INTO public.applied_migrations VALUES($1,$2)", entry.Name(), fmt.Sprintf("%x", []byte(entry.Name())))
+		}
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("%s: %v", entry.Name(), err)
+		}
+		if err = tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
 func TestKeywordNativeIntegration(t *testing.T) {
-	dsn := os.Getenv("SEARCHKIT_PROFILE_URL")
-	if dsn == "" {
-		t.Skip("SEARCHKIT_PROFILE_URL not set")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
+	pool := profileDB(t, ctx, "keyword_native", migrations.Postgres)
+	const schema = "app"
+	client, err := NewClient(ClientConfig{Pool: pool, Schema: schema, Tenant: testTenant})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Close()
-	db := fmt.Sprintf("keyword_native_db_%d", time.Now().UnixNano())
-	if _, err = pool.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{db}.Sanitize()); err != nil {
-		t.Fatal(err)
+	documents := map[string]map[string]KeywordDocument{
+		"en": {"canonical": doc("gallery", "canonical", "en", "Not Guilty", nil, nil), "alias": doc("gallery", "alias", "en", "Court Drama", []string{"Not Guilty"}, nil), "keyword": doc("gallery", "keyword", "en", "Trial Story", nil, []string{"Not Guilty"}), "negative": doc("gallery", "negative", "en", "Guilty", nil, nil), "accent": doc("gallery", "accent", "en", "Café Moon", nil, nil), "hyphen": doc("gallery", "hyphen", "en", "Two-Factor", nil, nil), "accent-many": doc("gallery", "accent-many", "en", "Résumé façonné", nil, nil)},
+		"ja": {"native": doc("gallery", "native", "ja", "鬼滅の刃", []string{"Demon Slayer"}, nil), "negative": doc("gallery", "negative", "ja", "魔法少女", nil, nil), "voiced": doc("gallery", "voiced", "ja", "ガンダム", nil, nil), "unvoiced": doc("gallery", "unvoiced", "ja", "カンタム", nil, nil)},
+		"zh": {"native": doc("gallery", "native", "zh", "魔法少女", nil, nil), "negative": doc("gallery", "negative", "zh", "鬼滅の刃", nil, nil)},
+		"ko": {"native": doc("gallery", "native", "ko", "마법소녀", nil, nil), "negative": doc("gallery", "negative", "ko", "바다소년", nil, nil)},
 	}
-	admin := pool
-	defer admin.Exec(context.Background(), "DROP DATABASE "+pgx.Identifier{db}.Sanitize())
-	cfg := admin.Config()
-	cfg.ConnConfig.Database = db
-	pool, err = pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
-	schema := fmt.Sprintf("keyword_native_%d", time.Now().UnixNano())
-	qs := pgx.Identifier{schema}.Sanitize()
-	if _, err = pool.Exec(ctx, `CREATE SCHEMA `+qs); err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Exec(context.Background(), `DROP SCHEMA `+qs+` CASCADE`)
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, `SET LOCAL search_path TO `+qs+`,public`); err != nil {
-		t.Fatal(err)
-	}
-	files, err := fs.ReadDir(migrations.KeywordPostgres, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range files {
-		sql, err := fs.ReadFile(migrations.KeywordPostgres, f.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err = tx.Exec(ctx, string(sql)); err != nil {
-			t.Fatalf("%s: %v", f.Name(), err)
+	var all []KeywordDocument
+	for _, docs := range documents {
+		for _, d := range docs {
+			all = append(all, d)
 		}
 	}
-	if err = tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	client, err := NewClient(ClientConfig{Pool: pool, Schema: schema})
-	if err != nil {
-		t.Fatal(err)
-	}
-	documents := map[string]map[string]pg.KeywordDocument{
-		"en": {"canonical": {Title: "Not Guilty"}, "alias": {Title: "Court Drama", Aliases: []string{"Not Guilty"}}, "keyword": {Title: "Trial Story", Keywords: []string{"Not Guilty"}}, "negative": {Title: "Guilty"}, "accent": {Title: "Café Moon"}, "hyphen": {Title: "Two-Factor"}, "accent-many": {Title: "Résumé façonné"}},
-		"ja": {"native": {Title: "鬼滅の刃", Aliases: []string{"Demon Slayer"}}, "negative": {Title: "魔法少女"}, "voiced": {Title: "ガンダム"}, "unvoiced": {Title: "カンタム"}},
-		"zh": {"native": {Title: "魔法少女"}, "negative": {Title: "鬼滅の刃"}},
-		"ko": {"native": {Title: "마법소녀"}, "negative": {Title: "바다소년"}},
-	}
-	for lang, docs := range documents {
-		if err = pg.UpsertKeywordDocuments(ctx, pool, schema, "gallery", lang, docs); err != nil {
-			t.Fatal(err)
-		}
-	}
+	upsertDocs(t, ctx, pool, schema, all...)
 	for _, tc := range []struct{ lang, query, id string }{
 		{"en", "Not Guilty", "canonical"}, {"en", "not giulty", "canonical"}, {"en", "not guily", "canonical"}, {"en", "not guillty", "canonical"}, {"en", "not guxlty", "canonical"},
-		{"en", "ＮＯＴ　ＧＵＩＬＴＹ", "canonical"}, {"en", "not gui", "canonical"}, {"en", "ca", "accent"}, {"en", "Cafe\u0301 Moon", "accent"}, {"en", "Two-Factor", "hyphen"}, {"en", "cafe moon", "accent"}, {"en", "resume faconne", "accent-many"},
-		{"ja", "鬼滅の刃", "native"}, {"ja", "鬼滅の刀", "native"}, {"ja", "鬼の刃", "native"}, {"ja", "鬼滅なの刃", "native"}, {"ja", "鬼の滅刃", "native"}, {"ja", "滅鬼の刃", "native"}, {"ja", "の刃", "native"}, {"ja", "demon slayer", "native"}, {"ja", "ｶﾞﾝﾀﾞﾑ", "voiced"}, {"ja", "ガンダム", "voiced"}, {"ja", "カンタム", "unvoiced"},
+		{"en", "ＮＯＴ　ＧＵＩＬＴＹ", "canonical"}, {"en", "not gui", "canonical"}, {"en", "ca", "accent"}, {"en", "Café Moon", "accent"}, {"en", "Two-Factor", "hyphen"}, {"en", "cafe moon", "accent"}, {"en", "resume faconne", "accent-many"},
+		{"ja", "鬼滅の刃", "native"}, {"ja", "鬼滅の刀", "native"}, {"ja", "鬼の刃", "native"}, {"ja", "鬼滅なの刃", "native"}, {"ja", "鬼の滅刃", "native"}, {"ja", "滅鬼の刃", "native"}, {"ja", "の刃", "native"}, {"ja", "demon slayer", "native"}, {"ja", "ｶﾞﾝﾀﾞﾑ", "voiced"}, {"ja", "ガンダム", "voiced"}, {"ja", "カンタム", "unvoiced"},
 		{"zh", "魔法少如", "native"}, {"zh", "魔少女", "native"}, {"zh", "魔法小少女", "native"}, {"zh", "魔法女少", "native"}, {"zh", "法魔少女", "native"},
-		{"ko", "마법소너", "native"}, {"ko", "마소녀", "native"}, {"ko", "마법작소녀", "native"}, {"ko", "마법녀소", "native"}, {"ko", "법마소녀", "native"}, {"ko", "마법소녀", "native"},
+		{"ko", "마법소너", "native"}, {"ko", "마소녀", "native"}, {"ko", "마법작소녀", "native"}, {"ko", "마법녀소", "native"}, {"ko", "법마소녀", "native"}, {"ko", "마법소녀", "native"},
 	} {
 		t.Run(tc.lang+"/"+tc.query, func(t *testing.T) {
-			page, trace, err := client.SearchWithTrace(ctx, tc.query, SearchOptions{Language: tc.lang, EntityTypes: []string{"gallery"}, Limit: 10})
+			page, trace, err := client.SearchWithTrace(ctx, tc.query, SearchOptions{Language: tc.lang, ContentKinds: []string{"gallery"}, Limit: 10})
 			if err != nil {
 				t.Fatal(err)
 			}
 			hits := page.Hits
-			if len(hits) == 0 || hits[0].EntityID != tc.id || hits[0].ParentID != tc.id || hits[0].Language != tc.lang || page.HasMore || page.Truncated {
+			if len(hits) == 0 || hits[0].ContentID != tc.id || hits[0].Version() != "" || hits[0].TenantID != testTenant || hits[0].Language != tc.lang || page.HasMore || page.Truncated {
 				t.Fatalf("hits=%v want first %s", hits, tc.id)
 			}
 			if trace.Sources[0].Backend != BackendKeyword {
 				t.Fatalf("trace=%+v", trace)
 			}
-			suggestions, err := client.Typeahead(ctx, tc.query, TypeaheadOptions{Language: tc.lang, EntityTypes: []string{"gallery"}, Limit: 10})
+			suggestions, err := client.Typeahead(ctx, tc.query, TypeaheadOptions{Language: tc.lang, ContentKinds: []string{"gallery"}, Limit: 10})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(suggestions) == 0 || suggestions[0].EntityID != tc.id || suggestions[0].Score <= 0 {
+			if len(suggestions) == 0 || suggestions[0].ContentID != tc.id || suggestions[0].Score <= 0 {
 				t.Fatalf("suggestions=%v", suggestions)
 			}
 		})
 	}
 	for _, tc := range []struct{ lang, query string }{{"en", "not aquarium"}, {"en", "not guxxxy"}, {"ja", "鬼刀"}, {"ja", "鬼月の刀"}, {"zh", "魔刀"}, {"zh", "海洋世界"}, {"ko", "마너"}, {"ko", "바다세계"}, {"en", "not OR guilty"}} {
-		page, err := client.Search(ctx, tc.query, SearchOptions{Language: tc.lang, EntityTypes: []string{"gallery"}})
+		page, err := client.Search(ctx, tc.query, SearchOptions{Language: tc.lang, ContentKinds: []string{"gallery"}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -151,14 +148,14 @@ func TestKeywordNativeIntegration(t *testing.T) {
 	}
 	// Server and client ceilings apply even without a host-provided deadline.
 	t.Run("budgets", func(t *testing.T) {
-		page, err := client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", EntityTypes: []string{"gallery"}, FilterSQL: "current_setting('statement_timeout')='2s'"})
+		page, err := client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", ContentKinds: []string{"gallery"}, FilterSQL: "current_setting('statement_timeout')='2s'"})
 		if err != nil || len(page.Hits) != 3 {
 			t.Fatalf("statement budget: %v %v", page, err)
 		}
 		for _, duration := range []time.Duration{25 * time.Millisecond, 10 * time.Second} {
 			request, cancel := context.WithTimeout(ctx, duration)
 			started := time.Now()
-			_, err := client.Search(request, "Not Guilty", SearchOptions{Language: "en", EntityTypes: []string{"gallery"}, FilterSQL: "EXISTS (SELECT 1 FROM pg_sleep(5))"})
+			_, err := client.Search(request, "Not Guilty", SearchOptions{Language: "en", ContentKinds: []string{"gallery"}, FilterSQL: "EXISTS (SELECT 1 FROM pg_sleep(5))"})
 			cancel()
 			if err == nil {
 				t.Fatal("unbounded query completed")
@@ -168,40 +165,30 @@ func TestKeywordNativeIntegration(t *testing.T) {
 			}
 		}
 	})
-	page, err := client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", EntityTypes: []string{"gallery"}})
+	page, err := client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", ContentKinds: []string{"gallery"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	hits := page.Hits
-	if len(hits) != 3 || hits[0].EntityID != "canonical" || hits[1].EntityID != "alias" || hits[2].EntityID != "keyword" || page.HasMore {
+	if len(hits) != 3 || hits[0].ContentID != "canonical" || hits[1].ContentID != "alias" || hits[2].ContentID != "keyword" || page.HasMore {
 		t.Fatalf("tier order=%v", page)
 	}
 	if hits[0].Score != 1 || hits[1].Score != .9 || hits[2].Score != .75 {
 		t.Fatalf("lexical scores are match tiers: %+v", hits)
 	}
-	page, err = client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", EntityTypes: []string{"gallery"}, FilterSQL: "sd.entity_id = @eligible", FilterArgs: map[string]any{"eligible": "alias"}})
-	if err != nil || len(page.Hits) != 1 || page.Hits[0].EntityID != "alias" {
+	page, err = client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", ContentKinds: []string{"gallery"}, FilterSQL: "sd.content_id = @eligible", FilterArgs: map[string]any{"eligible": "alias"}})
+	if err != nil || len(page.Hits) != 1 || page.Hits[0].ContentID != "alias" {
 		t.Fatalf("host filter page=%v err=%v", page, err)
 	}
-	if err = pg.UpsertKeywordDocuments(ctx, pool, schema, "gallery", "en", map[string]pg.KeywordDocument{"alias": {Title: "Court Drama"}, "canonical": {}}); err != nil {
-		t.Fatal(err)
-	}
-	page, err = client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", EntityTypes: []string{"gallery"}})
-	if err != nil || len(page.Hits) != 1 || page.Hits[0].EntityID != "keyword" {
+	// An update replaces old aliases/keywords atomically; an empty title deletes.
+	upsertDocs(t, ctx, pool, schema, doc("gallery", "alias", "en", "Court Drama", nil, nil), doc("gallery", "canonical", "en", "", nil, nil))
+	page, err = client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", ContentKinds: []string{"gallery"}})
+	if err != nil || len(page.Hits) != 1 || page.Hits[0].ContentID != "keyword" {
 		t.Fatalf("update/delete page=%v err=%v", page, err)
-	}
-	// The legacy public writer must replace old typed fields as well: no stale
-	// aliases/keywords survive a subsequent string-only update.
-	if err = pg.UpsertSearchDocuments(ctx, pool, schema, "gallery", "en", map[string]string{"keyword": "Sea breeze"}); err != nil {
-		t.Fatal(err)
-	}
-	page, err = client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", EntityTypes: []string{"gallery"}})
-	if err != nil || len(page.Hits) != 0 {
-		t.Fatalf("legacy update retained fields: %v %v", page, err)
 	}
 	// Real filler catalog. EXPLAIN must prove an indexed fuzzy scan without forcing
 	// enable_seqscan off; a query that only works on the tiny fixture is insufficient.
-	if _, err = pool.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.search_documents(entity_type,entity_id,language,title,document,raw_document) SELECT 'gallery','filler-'||i,'zh','占位内容'||md5(i::text),'filler','filler' FROM generate_series(1,50000) i; ANALYZE %s.search_documents`, qs, qs)); err != nil {
+	if _, err = pool.Exec(ctx, `INSERT INTO app.content_search_documents(tenant_id,content_kind,content_id,content_version_id,language,title,raw_document) SELECT 'doujins','gallery','filler-'||i,'','zh','占位内容'||md5(i::text),'filler' FROM generate_series(1,50000) i; ANALYZE app.content_search_documents`); err != nil {
 		t.Fatal(err)
 	}
 	var trgm string
@@ -212,7 +199,7 @@ func TestKeywordNativeIntegration(t *testing.T) {
 	if _, err = pool.Exec(ctx, `SET pg_trgm.word_similarity_threshold=0.1`); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := pool.Query(ctx, fmt.Sprintf(`EXPLAIN (ANALYZE,BUFFERS,COSTS OFF) SELECT sd.entity_id FROM %s.search_documents sd WHERE sd.language='zh' AND %s.searchkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_document) OPERATOR(%s.%%>) '魔法女少' ORDER BY %s.searchkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_document) OPERATOR(%s.<->>) '魔法女少' LIMIT 100`, qs, qs, qt, qs, qt))
+	rows, err := pool.Query(ctx, fmt.Sprintf(`EXPLAIN (ANALYZE,BUFFERS,COSTS OFF) SELECT sd.content_id FROM app.content_search_documents sd WHERE sd.tenant_id='doujins' AND sd.language='zh' AND app.contentkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_document) OPERATOR(%s.%%>) '魔法女少' ORDER BY app.contentkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_document) OPERATOR(%s.<->>) '魔法女少' LIMIT 100`, qt, qt))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,11 +216,12 @@ func TestKeywordNativeIntegration(t *testing.T) {
 		t.Fatal(rows.Err())
 	}
 	t.Log(plan.String())
-	if !strings.Contains(plan.String(), "search_documents_keyword_fuzzy") || strings.Contains(plan.String(), "Seq Scan") {
+	if !strings.Contains(plan.String(), "content_search_documents_keyword_fuzzy") || strings.Contains(plan.String(), "Seq Scan") {
 		t.Fatalf("expected indexed bounded fuzzy path:\n%s", plan.String())
 	}
-	page, err = client.Search(ctx, "魔法女少", SearchOptions{Language: "zh", EntityTypes: []string{"gallery"}})
-	if err != nil || len(page.Hits) != 1 || page.Hits[0].EntityID != "native" || page.HasMore {
+	page, err = client.Search(ctx, "魔法女少", SearchOptions{Language: "zh", ContentKinds: []string{"gallery"}})
+	if err != nil || len(page.Hits) != 1 || page.Hits[0].ContentID != "native" || page.HasMore {
 		t.Fatalf("large catalog page=%v err=%v", page, err)
 	}
+	_ = search.MaxCandidateLimit
 }

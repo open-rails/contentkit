@@ -1,23 +1,66 @@
+// Package normalize cleans user query text before retrieval.
 package normalize
 
-import "math"
+import (
+	"strings"
+	"unicode"
+)
 
-// L2NormalizeInPlace normalizes vec to unit L2 norm.
-// If vec is empty or all zeros, it is left unchanged.
-func L2NormalizeInPlace(vec []float32) {
-	if len(vec) == 0 {
-		return
+func isLetterOrNumber(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsNumber(r)
+}
+
+// normalizeIntraTokenHyphens replaces '-' between two letters/numbers with a
+// space so "two-factor" reads as "two factor".
+func normalizeIntraTokenHyphens(s string) string {
+	rs := []rune(s)
+	if len(rs) == 0 {
+		return s
 	}
-	var sumSq float64
-	for _, v := range vec {
-		f := float64(v)
-		sumSq += f * f
+	for i := 1; i < len(rs)-1; i++ {
+		if rs[i] != '-' {
+			continue
+		}
+		if isLetterOrNumber(rs[i-1]) && isLetterOrNumber(rs[i+1]) {
+			rs[i] = ' '
+		}
 	}
-	if sumSq <= 0 {
-		return
+	return string(rs)
+}
+
+func stripLeadingHyphens(tok string) string {
+	for strings.HasPrefix(tok, "-") {
+		tok = strings.TrimPrefix(tok, "-")
 	}
-	invNorm := float32(1.0 / math.Sqrt(sumSq))
-	for i := range vec {
-		vec[i] *= invNorm
+	return tok
+}
+
+// Query returns the cleaned query text: hyphenated tokens split, leading '-'
+// treated as punctuation, whitespace collapsed. Words such as "not" stay
+// plain text; ContentKit has no Boolean query syntax.
+func Query(input string) string {
+	q := normalizeIntraTokenHyphens(strings.TrimSpace(input))
+	if q == "" {
+		return ""
 	}
+	parts := strings.Fields(q)
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = stripLeadingHyphens(p)
+		if p == "" {
+			continue
+		}
+		out = append(out, p)
+	}
+	return strings.Join(out, " ")
+}
+
+// HasAnyLetterOrNumber reports whether q contains searchable text.
+func HasAnyLetterOrNumber(q string) bool {
+	for _, r := range q {
+		if isLetterOrNumber(r) {
+			return true
+		}
+	}
+	return false
 }

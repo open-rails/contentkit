@@ -1,15 +1,15 @@
-package searchkit
+package contentkit
 
 import (
 	"context"
 
-	"github.com/open-rails/searchkit/eval"
+	"github.com/open-rails/contentkit/eval"
 )
 
 // NewEvalRunner adapts a Client to eval.CaseRunner so a golden suite can be
 // executed against real search. The base options carry cross-case settings
-// (Mode, LanguageMode, RRFK, floors); each case overrides Language,
-// EntityTypes, and Limit from its own definition.
+// (LanguageMode and filters); each case overrides Language,
+// ContentKinds, and Limit from its own definition.
 //
 // This adapter is the single seam where the client meets the dependency-free
 // eval package.
@@ -27,10 +27,8 @@ func (r clientRunner) Run(ctx context.Context, c eval.GoldenCase) ([]eval.Result
 	if c.Language != "" {
 		opts.Language = c.Language
 	}
-	if len(c.EntityTypes) > 0 {
-		// A case's entity types apply to both retrieval planes unless the base
-		// options already pinned per-plane types.
-		opts.EntityTypes = c.EntityTypes
+	if len(c.ContentKinds) > 0 {
+		opts.ContentKinds = c.ContentKinds
 	}
 	opts.Limit = c.K
 
@@ -39,11 +37,11 @@ func (r clientRunner) Run(ctx context.Context, c eval.GoldenCase) ([]eval.Result
 		return nil, "search", err
 	}
 
-	// Golden cases judge content items, so the parent is the graded key.
+	// Golden cases judge content items, so the work is the graded key.
 	results := make([]eval.Result, len(page.Hits))
 	for i, hit := range page.Hits {
 		results[i] = eval.Result{
-			Key:   eval.GoldenKey{EntityType: hit.EntityType, EntityID: hit.ParentID},
+			Key:   eval.GoldenKey{ContentKind: hit.ContentKind, ContentID: hit.ContentID},
 			Score: hit.Score,
 		}
 	}

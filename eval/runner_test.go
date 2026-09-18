@@ -29,17 +29,17 @@ func TestRunSuite_MixedHitFailAndEmpty(t *testing.T) {
 		ID: "suite",
 		Cases: []GoldenCase{
 			{ID: "hit", Query: "q", K: 3, Judgments: []Judgment{
-				{Key: GoldenKey{EntityType: "gallery", EntityID: "1"}, Relevance: 3},
+				{Key: GoldenKey{ContentKind: "gallery", ContentID: "1"}, Relevance: 3},
 			}},
 			{ID: "fail", Query: "q", K: 3, Expected: []GoldenKey{
-				{EntityType: "gallery", EntityID: "9"},
+				{ContentKind: "gallery", ContentID: "9"},
 			}},
 			{ID: "empty", Query: "q", K: 3, ExpectEmpty: true},
 		},
 	}
 	runner := stubRunner{
 		results: map[string][]Result{
-			"hit":   {{Key: GoldenKey{EntityType: "gallery", EntityID: "1"}, Score: 0.9}},
+			"hit":   {{Key: GoldenKey{ContentKind: "gallery", ContentID: "1"}, Score: 0.9}},
 			"empty": {},
 		},
 		failWith: map[string]string{"fail": "search"},

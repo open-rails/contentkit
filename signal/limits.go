@@ -8,8 +8,8 @@ const (
 	MaxSignalsPerBatch   = 500
 	MaxExposuresPerBatch = 200
 	MaxShownPerExposure  = 200
-	// MaxIdentifierBytes bounds entity types/ids, subject keys, signal types,
-	// event ids, query ids, surfaces and languages.
+	// MaxIdentifierBytes bounds content kinds/ids/versions, subject keys,
+	// signal types, event ids, query ids, surfaces and languages.
 	MaxIdentifierBytes = 256
 	MaxResumeBytes     = 256
 	MaxQueryBytes      = 256

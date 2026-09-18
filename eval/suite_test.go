@@ -14,9 +14,9 @@ func TestParseSuite(t *testing.T) {
     "id": "title",
     "query": "known title",
     "language": "en",
-    "entity_types": ["gallery"],
+    "content_kinds": ["gallery"],
     "k": 5,
-    "judgments": [{"key":{"entity_type":"gallery","entity_id":"42"},"relevance":3}],
+    "judgments": [{"key":{"content_kind":"gallery","content_id":"42"},"relevance":3}],
     "labels": {"suite":"manual"}
   }]
 }`

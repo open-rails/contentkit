@@ -19,8 +19,8 @@ type Conn interface {
 }
 
 // Store reads and writes the signal plane for one ClickHouse database.
-// Every method is tenant-scoped via its tenant argument; the embedded hub
-// pins a single tenant value.
+// Every method is tenant-scoped via its tenant argument; every content
+// reference it receives must belong to that tenant.
 type Store struct {
 	conn Conn
 	db   string
@@ -42,14 +42,17 @@ func NewStore(conn Conn, database string) (*Store, error) {
 	return &Store{conn: conn, db: db}, nil
 }
 
-// ProjectionKey identifies one subject × entity projection.
+// refColumns are the content reference columns of every signal table.
+const refColumns = "content_kind, content_id, content_version_id"
+
+// ProjectionKey identifies one subject × content reference projection.
 type ProjectionKey struct {
-	EntityRef
+	ContentKey
 	Subject Subject
 }
 
 func (k ProjectionKey) args() []any {
-	return []any{k.EntityType, k.EntityID, k.Subject.Kind(), k.Subject.Key()}
+	return []any{k.ContentKind, k.ContentID, k.ContentVersionID, k.Subject.Kind(), k.Subject.Key()}
 }
 
 func (k ProjectionKey) less(o ProjectionKey) bool {
@@ -62,24 +65,24 @@ func (k ProjectionKey) less(o ProjectionKey) bool {
 	return false
 }
 
-// keyFilter renders "(entity_type, entity_id, subject_kind, subject) IN (...)"
-// for sorted, deduplicated keys.
+// keyFilter renders "(content_kind, content_id, content_version_id,
+// subject_kind, subject) IN (...)" for sorted, deduplicated keys.
 func keyFilter(keys []ProjectionKey) (string, []any) {
 	tuples := make([]string, len(keys))
-	args := make([]any, 0, len(keys)*4)
+	args := make([]any, 0, len(keys)*5)
 	for i, k := range keys {
-		tuples[i] = "(?, ?, ?, ?)"
+		tuples[i] = "(?, ?, ?, ?, ?)"
 		args = append(args, k.args()...)
 	}
-	return "(entity_type, entity_id, subject_kind, subject) IN (" + strings.Join(tuples, ", ") + ")", args
+	return "(" + refColumns + ", subject_kind, subject) IN (" + strings.Join(tuples, ", ") + ")", args
 }
 
 // RecordSignals appends source events, then rebuilds the compact state and
-// daily projections of every touched subject × entity from its canonical
-// events. Replays, reordering and revisions converge; nothing is incremented.
-// Signals of erased subjects (EraseSubjects) are dropped. If the process stops
-// between the insert and the projections, the events are durable and
-// RepairProjections restores the projections.
+// daily projections of every touched subject × content reference from its
+// canonical events. Replays, reordering and revisions converge; nothing is
+// incremented. Signals of erased subjects (EraseSubjects) are dropped. If the
+// process stops between the insert and the projections, the events are durable
+// and RepairProjections restores the projections.
 func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Signal) error {
 	if strings.TrimSpace(tenant) == "" {
 		return fmt.Errorf("signal: tenant is required")
@@ -92,7 +95,7 @@ func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Sig
 	}
 	subjects := make([]Subject, 0, len(signals))
 	for i := range signals {
-		if err := signals[i].validate(); err != nil {
+		if err := signals[i].validate(tenant); err != nil {
 			return err
 		}
 		subjects = append(subjects, signals[i].Subject)
@@ -101,7 +104,7 @@ func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Sig
 	if err != nil {
 		return err
 	}
-	args := make([]any, 0, len(signals)*17)
+	args := make([]any, 0, len(signals)*18)
 	rows := make([]string, 0, len(signals))
 	touched := map[ProjectionKey]struct{}{}
 	for i := range signals {
@@ -124,26 +127,26 @@ func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Sig
 		// alone. A request can be paused after fenced() and resume after an
 		// erasure commits; evaluating the ledger in this statement prevents that
 		// in-flight write from landing on any replica.
-		rows = append(rows, "SELECT ? AS tenant, ? AS entity_type, ? AS entity_id, ? AS subject_kind, ? AS subject, ? AS signal_type, ? AS event_id, ? AS revision, ? AS occurred_at, ? AS duration_s, ? AS progress, ? AS progress_max, ? AS value, ? AS score, ? AS completed, ? AS resume, ? AS payload")
+		rows = append(rows, "SELECT ? AS tenant, ? AS content_kind, ? AS content_id, ? AS content_version_id, ? AS subject_kind, ? AS subject, ? AS signal_type, ? AS event_id, ? AS revision, ? AS occurred_at, ? AS duration_s, ? AS progress, ? AS progress_max, ? AS value, ? AS score, ? AS completed, ? AS resume, ? AS payload")
 		args = append(args,
-			tenant, s.EntityType, s.EntityID, s.Subject.Kind(), s.Subject.Key(), s.Type,
+			tenant, s.ContentKind, s.ContentID, s.Version(), s.Subject.Kind(), s.Subject.Key(), s.Type,
 			strings.TrimSpace(s.EventID), s.Revision, s.OccurredAt.UTC(),
 			s.DurationS, s.Progress, s.ProgressMax, s.Value, s.Score, s.Completed, s.Resume, payload,
 		)
-		touched[ProjectionKey{EntityRef: s.EntityRef, Subject: subjectFromKey(s.Subject.Kind(), s.Subject.Key())}] = struct{}{}
+		touched[ProjectionKey{ContentKey: s.Key(), Subject: subjectFromKey(s.Subject.Kind(), s.Subject.Key())}] = struct{}{}
 	}
 	if len(rows) == 0 {
 		return nil
 	}
-	insert := fmt.Sprintf(`INSERT INTO %s.events
-(tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id, revision, occurred_at,
+	insert := fmt.Sprintf(`INSERT INTO %s.signals
+(tenant, content_kind, content_id, content_version_id, subject_kind, subject, signal_type, event_id, revision, occurred_at,
  duration_s, progress, progress_max, value, score, completed, resume, payload)
-SELECT tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id, revision, occurred_at,
+SELECT tenant, content_kind, content_id, content_version_id, subject_kind, subject, signal_type, event_id, revision, occurred_at,
        duration_s, progress, progress_max, value, score, completed, resume, payload
 FROM (%s) AS incoming
 WHERE %s`, st.db, strings.Join(rows, " UNION ALL "), st.notErased())
 	if err := st.conn.Exec(ctx, insert, args...); err != nil {
-		return fmt.Errorf("signal: insert events: %w", err)
+		return fmt.Errorf("signal: insert signals: %w", err)
 	}
 	keys := make([]ProjectionKey, 0, len(touched))
 	for k := range touched {
@@ -158,19 +161,20 @@ WHERE %s`, st.db, strings.Join(rows, " UNION ALL "), st.notErased())
 // any of its rows. Superseded and duplicate rows never count, whether or not
 // ClickHouse has merged them.
 func (st *Store) canonicalEvents(filter string) string {
-	return fmt.Sprintf(`SELECT entity_type, entity_id, subject_kind, subject, signal_type, event_id,
+	return fmt.Sprintf(`SELECT %[3]s, subject_kind, subject, signal_type, event_id,
         argMax(tuple(occurred_at, revision, duration_s, progress, progress_max, value, score, completed, resume), version) AS c,
         max(ingested_at) AS ing
-    FROM %s.events
-    WHERE tenant = ? AND %s AND %s
-    GROUP BY entity_type, entity_id, subject_kind, subject, signal_type, event_id`, st.db, filter, st.notErased())
+    FROM %[1]s.signals
+    WHERE tenant = ? AND %[2]s AND %[4]s
+    GROUP BY %[3]s, subject_kind, subject, signal_type, event_id`, st.db, filter, refColumns, st.notErased())
 }
 
-// project rebuilds subject_state and subject_daily for keys from canonical
-// events. Every derived row carries version = newest raw ingest time of its
-// key, so a projection that saw more events replaces one that saw fewer and a
-// late stale projection cannot win. Day rows that lost their canonical events
-// (a revision moved a session to another day) are rewritten as zeros.
+// project rebuilds subject_content_state and subject_content_daily for keys
+// from canonical events. Every derived row carries version = newest raw ingest
+// time of its key, so a projection that saw more events replaces one that saw
+// fewer and a late stale projection cannot win. Day rows that lost their
+// canonical events (a revision moved a session to another day) are rewritten
+// as zeros.
 func (st *Store) project(ctx context.Context, tenant string, keys []ProjectionKey) error {
 	if len(keys) == 0 {
 		return nil
@@ -179,10 +183,10 @@ func (st *Store) project(ctx context.Context, tenant string, keys []ProjectionKe
 	filter, keyArgs := keyFilter(keys)
 	canon := st.canonicalEvents(filter)
 
-	state := fmt.Sprintf(`INSERT INTO %[1]s.subject_state
-(tenant, subject_kind, subject, entity_type, entity_id, first_seen_at, last_signal_at, total_events, views,
+	state := fmt.Sprintf(`INSERT INTO %[1]s.subject_content_state
+(tenant, subject_kind, subject, %[4]s, first_seen_at, last_signal_at, total_events, views,
  completions, active_s, max_progress, progress_max, completed, resume, last_score, net_value, feedback, version)
-SELECT ?, subject_kind, subject, entity_type, entity_id,
+SELECT ?, subject_kind, subject, %[4]s,
     min(c.1), max(c.1), toUInt32(count()),
     toUInt32(countIf(signal_type = '%[3]s')),
     toUInt32(countIf(signal_type = '%[3]s' AND c.8)),
@@ -196,38 +200,38 @@ SELECT ?, subject_kind, subject, entity_type, entity_id,
     toUInt32(countIf(c.6 != 0)),
     max(ing)
 FROM (%[2]s)
-GROUP BY subject_kind, subject, entity_type, entity_id`, st.db, canon, TypeView)
+GROUP BY subject_kind, subject, %[4]s`, st.db, canon, TypeView, refColumns)
 	if err := st.conn.Exec(ctx, state, append([]any{tenant, tenant}, keyArgs...)...); err != nil {
 		return fmt.Errorf("signal: project state: %w", err)
 	}
 
-	daily := fmt.Sprintf(`INSERT INTO %[1]s.subject_daily
-(tenant, entity_type, entity_id, subject_kind, subject, day, events, views, completions, active_s,
+	daily := fmt.Sprintf(`INSERT INTO %[1]s.subject_content_daily
+(tenant, %[5]s, subject_kind, subject, day, events, views, completions, active_s,
  score_sum, value_sum, type_counts, version)
-SELECT ?, entity_type, entity_id, subject_kind, subject, day, events, views, completions, active_s,
+SELECT ?, %[5]s, subject_kind, subject, day, events, views, completions, active_s,
     score_sum, value_sum, type_counts, version
 FROM (
-    SELECT entity_type, entity_id, subject_kind, subject, day,
+    SELECT %[5]s, subject_kind, subject, day,
         toUInt32(sum(n)) AS events, toUInt32(sum(v)) AS views, toUInt32(sum(done)) AS completions,
         sum(active) AS active_s, sum(score) AS score_sum, sum(val) AS value_sum, sumMap(types) AS type_counts,
-        max(max(ing)) OVER (PARTITION BY entity_type, entity_id, subject_kind, subject) AS version,
+        max(max(ing)) OVER (PARTITION BY %[5]s, subject_kind, subject) AS version,
         max(prior) AS prior_events
     FROM (
-        SELECT entity_type, entity_id, subject_kind, subject, toDate(c.1) AS day,
+        SELECT %[5]s, subject_kind, subject, toDate(c.1) AS day,
             toUInt32(1) AS n, toUInt32(signal_type = '%[4]s') AS v, toUInt32(signal_type = '%[4]s' AND c.8) AS done,
             if(signal_type = '%[4]s', toUInt64(c.3), 0) AS active, if(signal_type = '%[4]s', toInt64(c.7), 0) AS score,
             c.6 AS val, map(signal_type, toUInt32(1)) AS types, ing, toUInt32(0) AS prior
         FROM (%[2]s)
         UNION ALL
-        SELECT entity_type, entity_id, subject_kind, subject, day, 0, 0, 0, 0, 0, 0,
+        SELECT %[5]s, subject_kind, subject, day, 0, 0, 0, 0, 0, 0,
             CAST(map(), 'Map(LowCardinality(String), UInt32)'), toDateTime64(0, 6, 'UTC'), events
-        FROM %[1]s.subject_daily FINAL
+        FROM %[1]s.subject_content_daily FINAL
         WHERE tenant = ? AND %[3]s
     )
-    GROUP BY entity_type, entity_id, subject_kind, subject, day
+    GROUP BY %[5]s, subject_kind, subject, day
     HAVING events > 0 OR prior_events > 0
 )
-WHERE version > toDateTime64(0, 6, 'UTC')`, st.db, canon, filter, TypeView)
+WHERE version > toDateTime64(0, 6, 'UTC')`, st.db, canon, filter, TypeView, refColumns)
 	dailyArgs := append([]any{tenant, tenant}, keyArgs...)
 	dailyArgs = append(dailyArgs, tenant)
 	dailyArgs = append(dailyArgs, keyArgs...)
@@ -280,7 +284,7 @@ func (st *Store) RepairProjections(ctx context.Context, tenant string, opts Repa
 	}
 	var sb strings.Builder
 	args := []any{tenant}
-	fmt.Fprintf(&sb, `SELECT DISTINCT entity_type, entity_id, subject_kind, subject FROM %s.events WHERE tenant = ?`, st.db)
+	fmt.Fprintf(&sb, `SELECT DISTINCT %s, subject_kind, subject FROM %s.signals WHERE tenant = ?`, refColumns, st.db)
 	pred, predArgs := opts.Window.predicate("occurred_at")
 	sb.WriteString(pred)
 	args = append(args, predArgs...)
@@ -290,12 +294,12 @@ func (st *Store) RepairProjections(ctx context.Context, tenant string, opts Repa
 	}
 	sb.WriteString(" AND " + st.notErased())
 	if opts.After != nil {
-		sb.WriteString(" AND (entity_type, entity_id, subject_kind, subject) > (?, ?, ?, ?)")
+		sb.WriteString(" AND (" + refColumns + ", subject_kind, subject) > (?, ?, ?, ?, ?)")
 		args = append(args, opts.After.args()...)
 	}
-	sb.WriteString(" ORDER BY entity_type, entity_id, subject_kind, subject LIMIT ?")
+	sb.WriteString(" ORDER BY " + refColumns + ", subject_kind, subject LIMIT ?")
 	args = append(args, limit)
-	keys, err := st.scanKeys(ctx, sb.String(), args...)
+	keys, err := st.scanKeys(ctx, tenant, sb.String(), args...)
 	if err != nil {
 		return res, fmt.Errorf("signal: repair candidates: %w", err)
 	}
@@ -322,30 +326,31 @@ func (st *Store) RepairProjections(ctx context.Context, tenant string, opts Repa
 
 func (st *Store) staleKeys(ctx context.Context, tenant string, keys []ProjectionKey) ([]ProjectionKey, error) {
 	filter, keyArgs := keyFilter(keys)
-	q := fmt.Sprintf(`SELECT r.entity_type, r.entity_id, r.subject_kind, r.subject
-FROM (SELECT entity_type, entity_id, subject_kind, subject, max(ingested_at) AS raw
-      FROM %[1]s.events WHERE tenant = ? AND %[2]s AND %[3]s GROUP BY entity_type, entity_id, subject_kind, subject) AS r
-LEFT JOIN (SELECT entity_type, entity_id, subject_kind, subject, max(version) AS projected
-      FROM %[1]s.subject_state WHERE tenant = ? AND %[2]s AND %[3]s GROUP BY entity_type, entity_id, subject_kind, subject) AS s
-  USING (entity_type, entity_id, subject_kind, subject)
-LEFT JOIN (SELECT entity_type, entity_id, subject_kind, subject, max(version) AS projected
-      FROM %[1]s.subject_daily WHERE tenant = ? AND %[2]s AND %[3]s GROUP BY entity_type, entity_id, subject_kind, subject) AS d
-  USING (entity_type, entity_id, subject_kind, subject)
+	const cols = refColumns + ", subject_kind, subject"
+	q := fmt.Sprintf(`SELECT r.content_kind, r.content_id, r.content_version_id, r.subject_kind, r.subject
+FROM (SELECT %[4]s, max(ingested_at) AS raw
+      FROM %[1]s.signals WHERE tenant = ? AND %[2]s AND %[3]s GROUP BY %[4]s) AS r
+LEFT JOIN (SELECT %[4]s, max(version) AS projected
+      FROM %[1]s.subject_content_state WHERE tenant = ? AND %[2]s AND %[3]s GROUP BY %[4]s) AS s
+  USING (%[4]s)
+LEFT JOIN (SELECT %[4]s, max(version) AS projected
+      FROM %[1]s.subject_content_daily WHERE tenant = ? AND %[2]s AND %[3]s GROUP BY %[4]s) AS d
+  USING (%[4]s)
 WHERE s.projected < r.raw OR d.projected < r.raw
-ORDER BY r.entity_type, r.entity_id, r.subject_kind, r.subject`, st.db, filter, st.notErased())
+ORDER BY r.content_kind, r.content_id, r.content_version_id, r.subject_kind, r.subject`, st.db, filter, st.notErased(), cols)
 	args := make([]any, 0, 3+3*len(keyArgs))
 	for i := 0; i < 3; i++ {
 		args = append(args, tenant)
 		args = append(args, keyArgs...)
 	}
-	keys, err := st.scanKeys(ctx, q, args...)
+	keys, err := st.scanKeys(ctx, tenant, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: detect stale projections: %w", err)
 	}
 	return keys, nil
 }
 
-func (st *Store) scanKeys(ctx context.Context, q string, args ...any) ([]ProjectionKey, error) {
+func (st *Store) scanKeys(ctx context.Context, tenant, q string, args ...any) ([]ProjectionKey, error) {
 	rows, err := st.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -357,7 +362,8 @@ func (st *Store) scanKeys(ctx context.Context, q string, args ...any) ([]Project
 			k             ProjectionKey
 			kind, subject string
 		)
-		if err := rows.Scan(&k.EntityType, &k.EntityID, &kind, &subject); err != nil {
+		k.TenantID = tenant
+		if err := rows.Scan(&k.ContentKind, &k.ContentID, &k.ContentVersionID, &kind, &subject); err != nil {
 			return nil, err
 		}
 		k.Subject = subjectFromKey(kind, subject)
@@ -374,28 +380,28 @@ func subjectFromKey(kind, key string) Subject {
 	return Subject{AnonKey: key}
 }
 
-// Forget erases a subject's events and projections for one entity, or an
-// entire entity type when entityID is empty. Windows and popularity read the
-// per-subject projections, so they stop counting the subject at once. This is
-// NOT account erasure: impressions and the item_pairs rollup remain, and a
-// write racing the deletion can re-project.
-func (st *Store) Forget(ctx context.Context, tenant string, subject Subject, entityType string, entityID string) error {
+// Forget erases a subject's events and projections for one content item (the
+// work and all its versions) or an entire content kind when contentID is
+// empty. Windows and popularity read the per-subject projections, so they stop
+// counting the subject at once. This is NOT account erasure: exposures and the
+// content_pairs rollup remain, and a write racing the deletion can re-project.
+func (st *Store) Forget(ctx context.Context, tenant string, subject Subject, contentKind string, contentID string) error {
 	if strings.TrimSpace(tenant) == "" {
 		return fmt.Errorf("signal: tenant is required")
 	}
 	if err := subject.Validate(); err != nil {
 		return err
 	}
-	if strings.TrimSpace(entityType) == "" {
-		return fmt.Errorf("signal: entityType is required")
+	if strings.TrimSpace(contentKind) == "" {
+		return fmt.Errorf("signal: contentKind is required")
 	}
-	where := " WHERE tenant = ? AND entity_type = ? AND subject_kind = ? AND subject = ?"
-	args := []any{tenant, entityType, subject.Kind(), subject.Key()}
-	if strings.TrimSpace(entityID) != "" {
-		where += " AND entity_id = ?"
-		args = append(args, entityID)
+	where := " WHERE tenant = ? AND content_kind = ? AND subject_kind = ? AND subject = ?"
+	args := []any{tenant, contentKind, subject.Kind(), subject.Key()}
+	if strings.TrimSpace(contentID) != "" {
+		where += " AND content_id = ?"
+		args = append(args, contentID)
 	}
-	for _, table := range []string{"events", "subject_state", "subject_daily"} {
+	for _, table := range []string{"signals", "subject_content_state", "subject_content_daily"} {
 		if err := st.conn.Exec(ctx, fmt.Sprintf("DELETE FROM %s.%s%s", st.db, table, where), args...); err != nil {
 			return fmt.Errorf("signal: forget %s: %w", table, err)
 		}

@@ -5,25 +5,25 @@ import "strings"
 // GoldenCase is a validated query and its quality expectation. Case remains the
 // original minimal compatibility type used by RecallAtK and MRR.
 type GoldenCase struct {
-	ID          string            `json:"id"`
-	Query       string            `json:"query"`
-	Language    string            `json:"language,omitempty"`
-	EntityTypes []string          `json:"entity_types,omitempty"`
-	K           int               `json:"k"`
-	Expected    []GoldenKey       `json:"expected,omitempty"`
-	Judgments   []Judgment        `json:"judgments,omitempty"`
-	ExpectEmpty bool              `json:"expect_empty,omitempty"`
-	Labels      map[string]string `json:"labels,omitempty"`
+	ID           string            `json:"id"`
+	Query        string            `json:"query"`
+	Language     string            `json:"language,omitempty"`
+	ContentKinds []string          `json:"content_kinds,omitempty"`
+	K            int               `json:"k"`
+	Expected     []GoldenKey       `json:"expected,omitempty"`
+	Judgments    []Judgment        `json:"judgments,omitempty"`
+	ExpectEmpty  bool              `json:"expect_empty,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
 }
 
-// GoldenKey is the stable JSON entity identity used by golden fixtures and
+// GoldenKey is the stable JSON content identity used by golden fixtures and
 // reports. Key remains the original compatibility type.
 type GoldenKey struct {
-	EntityType string `json:"entity_type"`
-	EntityID   string `json:"entity_id"`
+	ContentKind string `json:"content_kind"`
+	ContentID   string `json:"content_id"`
 }
 
-// Judgment assigns a relevance grade to an entity for a query. Grades range
+// Judgment assigns a relevance grade to a content item for a query. Grades range
 // from 0 (not relevant) to 3 (highly relevant).
 type Judgment struct {
 	Key       GoldenKey `json:"key"`
@@ -77,7 +77,7 @@ type Outcome struct {
 }
 
 // Failed creates an execution-failure outcome. Category should be a stable,
-// sanitized identifier such as "timeout" or "semantic_search".
+// sanitized identifier such as "timeout" or "keyword_search".
 func Failed(c GoldenCase, category string) Outcome {
 	category = normalizeErrorCategory(category)
 	return Outcome{
