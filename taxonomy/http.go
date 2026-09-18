@@ -6,16 +6,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/open-rails/contentkit/contentref"
 )
 
 // Handler is the admin API of one tenant's store. Hosts mount it behind their
 // own admin authorization; every route is scoped to the store's tenant and
-// content ids stay opaque. Errors are JSON {"error": ...} with 400 for
-// ErrInvalid, 404 for ErrNotFound and 409 for ErrConflict.
+// content ids stay opaque. Errors are JSON {"error", "code"} with 400 for
+// ErrInvalid, 404 for ErrNotFound, 409 for ErrConflict and a sanitized 500 for
+// everything else; the cause always reaches Options.Logger.
 //
 //	GET    /nodes?kind=&state=&slug=&cursor=&limit=   -> NodePage
 //	POST   /nodes                [NodeInput]          -> [Node]
@@ -50,7 +53,40 @@ func Handler(s *Store) http.Handler {
 	mux.HandleFunc("POST /effective", h.effective)
 	mux.HandleFunc("GET /counts", h.counts)
 	mux.HandleFunc("POST /counts/rebuild", h.rebuild)
-	return mux
+	return accessLog(s.log, mux)
+}
+
+// statusWriter records the response status and the cause fail() withheld from
+// the wire, for accessLog. Status defaults to 200.
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+	cause  error
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+// accessLog logs each admin request at DEBUG and a 5xx at ERROR, both with the
+// captured cause: the only place a SQL constraint name or an internal error
+// text may appear.
+func accessLog(log *slog.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		start := time.Now()
+		next.ServeHTTP(sw, r)
+		attrs := []any{"method", r.Method, "path", r.URL.Path, "status", sw.status, "duration", time.Since(start)}
+		if sw.cause != nil {
+			attrs = append(attrs, "err", sw.cause.Error())
+		}
+		if sw.status >= http.StatusInternalServerError {
+			log.Error("taxonomy admin request failed", attrs...)
+			return
+		}
+		log.Debug("taxonomy admin request", attrs...)
+	})
 }
 
 type handler struct{ s *Store }
@@ -72,21 +108,52 @@ func write(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// Stable public error codes, the same vocabulary content uses. Clients branch
+// on Code; Error is a human message and may change.
+const (
+	CodeInvalidRequest = "invalid_request"
+	CodeNotFound       = "not_found"
+	CodeConflict       = "conflict"
+	CodeInternal       = "internal_error"
+)
+
+// errorBody is the flat error shape of the admin API.
+type errorBody struct {
+	Error string `json:"error"`
+	Code  string `json:"code"`
+}
+
+// fail answers with the mapped status, a stable public code and a message that
+// carries nothing internal — no SQL constraint name, no driver text. The full
+// cause goes to accessLog.
 func fail(w http.ResponseWriter, err error) {
-	status := http.StatusInternalServerError
+	status, code := http.StatusInternalServerError, CodeInternal
 	switch {
 	case errors.Is(err, ErrInvalid):
-		status = http.StatusBadRequest
+		status, code = http.StatusBadRequest, CodeInvalidRequest
 	case errors.Is(err, ErrNotFound):
-		status = http.StatusNotFound
+		status, code = http.StatusNotFound, CodeNotFound
 	case errors.Is(err, ErrConflict):
-		status = http.StatusConflict
+		status, code = http.StatusConflict, CodeConflict
 	}
-	msg := err.Error()
-	if status == http.StatusInternalServerError {
-		msg = "internal error"
+	msg := "internal error"
+	if status != http.StatusInternalServerError {
+		msg = publicMessage(err)
 	}
-	write(w, status, map[string]string{"error": msg})
+	if sw, ok := w.(*statusWriter); ok {
+		sw.cause = err
+	}
+	write(w, status, errorBody{Error: msg, Code: code})
+}
+
+// publicMessage is the error's own text, except for a Postgres integrity
+// violation, whose constraint name never leaves the process.
+func publicMessage(err error) string {
+	var ce constraintError
+	if errors.As(err, &ce) {
+		return ce.sentinel.Error()
+	}
+	return err.Error()
 }
 
 func (h handler) listNodes(w http.ResponseWriter, r *http.Request) {

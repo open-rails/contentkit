@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -161,6 +162,9 @@ type Options struct {
 	// counts (see search.Eligibility). Without it every document counts.
 	// Reserved arg names: tenant, ids, taxonomy_kinds.
 	CountEligibility *search.Eligibility
+	// Logger receives the admin API access log: each request at DEBUG, a 5xx
+	// at ERROR, both with the cause the response withheld. nil -> slog.Default().
+	Logger *slog.Logger
 }
 
 // Store is one tenant's catalog over the host schema.
@@ -174,6 +178,7 @@ type Store struct {
 	kindList  []string
 	languages []string
 	countElig *search.Eligibility
+	log       *slog.Logger
 }
 
 var identRE = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
@@ -191,7 +196,11 @@ func New(opts Options) (*Store, error) {
 	if tenant == "" {
 		return nil, fmt.Errorf("%w: Tenant is required", ErrInvalid)
 	}
-	s := &Store{pool: opts.Pool, qs: qs, schema: strings.TrimSpace(opts.Schema), tenant: tenant, kinds: map[string]struct{}{}, countElig: opts.CountEligibility}
+	log := opts.Logger
+	if log == nil {
+		log = slog.Default()
+	}
+	s := &Store{pool: opts.Pool, qs: qs, schema: strings.TrimSpace(opts.Schema), tenant: tenant, kinds: map[string]struct{}{}, countElig: opts.CountEligibility, log: log}
 	for _, k := range opts.Kinds {
 		k = strings.TrimSpace(k)
 		if !identRE.MatchString(k) {
@@ -267,6 +276,20 @@ func (s *Store) read(ctx context.Context, fn func(q querier) error) error {
 
 func (s *Store) table(name string) string { return s.qs + "." + name }
 
+// constraintError maps a Postgres integrity violation onto a sentinel while
+// keeping the constraint name for logs; the HTTP layer never renders it.
+type constraintError struct {
+	sentinel   error
+	sqlstate   string
+	constraint string
+}
+
+func (e constraintError) Error() string {
+	return fmt.Sprintf("%s: %s (sqlstate %s)", e.sentinel.Error(), e.constraint, e.sqlstate)
+}
+
+func (e constraintError) Unwrap() error { return e.sentinel }
+
 func mapPGError(err error) error {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
@@ -274,11 +297,11 @@ func mapPGError(err error) error {
 	}
 	switch pgErr.Code {
 	case "23505":
-		return fmt.Errorf("%w: %s", ErrConflict, pgErr.ConstraintName)
+		return constraintError{ErrConflict, pgErr.Code, pgErr.ConstraintName}
 	case "23503":
-		return fmt.Errorf("%w: %s", ErrNotFound, pgErr.ConstraintName)
+		return constraintError{ErrNotFound, pgErr.Code, pgErr.ConstraintName}
 	case "23514":
-		return fmt.Errorf("%w: %s", ErrInvalid, pgErr.ConstraintName)
+		return constraintError{ErrInvalid, pgErr.Code, pgErr.ConstraintName}
 	}
 	return err
 }
