@@ -355,3 +355,30 @@ func TestSourceErasureRedactsDraftAndScheduledPosts(t *testing.T) {
 		t.Fatalf("private=%d public=%d", private, public)
 	}
 }
+
+func TestErasureDoesNotRetainScheduledPostAsPublishedBackup(t *testing.T) {
+	ctx := context.Background()
+	rt := moderatedRuntime(t, &fakeModerator{})
+	actor := Actor{ID: "reviewer"}
+	future := time.Now().Add(time.Hour)
+	rec := doJSON(t, rt.Handler(), actor, "POST", "/posts", postWriteReq{Title: ptr("scheduled"), Body: ptr("private scheduled original"), IsDraft: ptr(false), LiveAt: &future})
+	if rec.Code != 201 {
+		t.Fatal(rec.Body.String())
+	}
+	post := decodePost(t, rec)
+	rec = doJSON(t, rt.Handler(), actor, "PATCH", "/posts/"+post.ID, postWriteReq{Body: ptr("iffy scheduled replacement")})
+	if rec.Code != 202 {
+		t.Fatal(rec.Body.String())
+	}
+	if err := rt.EraseSubjects(ctx, []string{actor.ID}); err != nil {
+		t.Fatal(err)
+	}
+	var body string
+	var backup *string
+	if err := rt.store.pool.QueryRow(ctx, `SELECT body,published_content::text FROM `+rt.store.t.posts+` WHERE id=$1`, post.ID).Scan(&body, &backup); err != nil {
+		t.Fatal(err)
+	}
+	if body != "" || backup != nil {
+		t.Fatalf("neverpublished content retained: %q %v", body, backup)
+	}
+}

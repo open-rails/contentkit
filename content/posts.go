@@ -323,7 +323,7 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		excerpt = COALESCE($4, excerpt), slug = COALESCE($5, slug),
 		language = COALESCE($6, language), cover_url = COALESCE($7, cover_url),
 		is_draft = $8, live_at = COALESCE($9, live_at),
-		published_content = CASE WHEN $11='approved' THEN NULL WHEN moderation='approved' AND NOT is_draft THEN jsonb_build_object('title',title,'body',body,'excerpt',excerpt) ELSE published_content END, moderation_revision = moderation_revision + 1, moderated_by = NULL, moderated_at = NULL, moderation = $11, moderation_reason = $12, moderation_verdict = $13,
+		published_content = CASE WHEN $11='approved' THEN NULL WHEN moderation='approved' AND NOT is_draft AND (live_at IS NULL OR live_at <= clock_timestamp()) THEN jsonb_build_object('title',title,'body',body,'excerpt',excerpt) ELSE published_content END, moderation_revision = moderation_revision + 1, moderated_by = NULL, moderated_at = NULL, moderation = $11, moderation_reason = $12, moderation_verdict = $13,
 		updated_at = now()
 		WHERE id = $1 AND tenant_id = $10 AND deleted_at IS NULL AND moderation_revision=$14 RETURNING language`,
 		id, curTitle, curBody, excerpt, in.Slug, in.Language, in.CoverURL, curDraft, in.LiveAt, p.s.tenant, sc.state, sc.reason, sc.meta, revision).Scan(&after); err != nil {
