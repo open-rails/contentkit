@@ -124,14 +124,21 @@ func (p *posts) handleCover(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// Check tenant ownership before touching the shared media object.
+	var prev *string
+	if err := p.s.pool.QueryRow(req.Context(), `SELECT cover_url FROM `+p.s.t.posts+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant).Scan(&prev); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = ErrNotFound
+		}
+		writeErr(w, err)
+		return
+	}
 	url, err := p.rt.media.Put(req.Context(), "posts/"+id+"/cover."+ext, data, ct)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	// Best-effort old-cover cleanup on a key-changing replace (extension changed).
-	var prev *string
-	_ = p.s.pool.QueryRow(req.Context(), `SELECT cover_url FROM `+p.s.t.posts+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant).Scan(&prev)
 	tag, err := p.s.pool.Exec(req.Context(), `UPDATE `+p.s.t.posts+` SET cover_url = $2, updated_at = now() WHERE id = $1 AND tenant_id = $3 AND deleted_at IS NULL`, id, url, p.s.tenant)
 	if err != nil {
 		writeErr(w, err)

@@ -582,6 +582,16 @@ func (p *polls) handleQuestionImage(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// Check tenant ownership before touching the shared media object.
+	var prev *string
+	if err := p.s.pool.QueryRow(req.Context(), `SELECT image_url FROM `+p.s.t.pollQuestions+`
+		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant).Scan(&prev); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = ErrNotFound
+		}
+		writeErr(w, err)
+		return
+	}
 	url, err := p.rt.media.Put(req.Context(), "polls/"+id+"."+ext, data, ct)
 	if err != nil {
 		writeErr(w, err)
@@ -589,9 +599,6 @@ func (p *polls) handleQuestionImage(w http.ResponseWriter, req *http.Request) {
 	}
 	// Remember the previous image so a replace under a different key (extension
 	// changed) can drop the old object instead of orphaning it. Best-effort.
-	var prev *string
-	_ = p.s.pool.QueryRow(req.Context(), `SELECT image_url FROM `+p.s.t.pollQuestions+`
-		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant).Scan(&prev)
 	tag, err := p.s.pool.Exec(req.Context(), `UPDATE `+p.s.t.pollQuestions+`
 		SET image_url = $2, updated_at = now() WHERE id = $1 AND tenant_id = $3 AND deleted_at IS NULL`, id, url, p.s.tenant)
 	if err != nil {
@@ -626,14 +633,21 @@ func (p *polls) handleOptionImage(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// Check tenant ownership before touching the shared media object.
+	var prev *string
+	if err := p.s.pool.QueryRow(req.Context(), `SELECT image_url FROM `+p.s.t.pollOptions+` WHERE id = $1 AND `+p.ownsQuestion("question_id", 2), oid, p.s.tenant).Scan(&prev); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = ErrNotFound
+		}
+		writeErr(w, err)
+		return
+	}
 	url, err := p.rt.media.Put(req.Context(), "polls/options/"+oid+"."+ext, data, ct)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	// Best-effort old-object cleanup on a key-changing replace (see question image).
-	var prev *string
-	_ = p.s.pool.QueryRow(req.Context(), `SELECT image_url FROM `+p.s.t.pollOptions+` WHERE id = $1 AND `+p.ownsQuestion("question_id", 2), oid, p.s.tenant).Scan(&prev)
 	tag, err := p.s.pool.Exec(req.Context(), `UPDATE `+p.s.t.pollOptions+` SET image_url = $2 WHERE id = $1 AND `+p.ownsQuestion("question_id", 3), oid, url, p.s.tenant)
 	if err != nil {
 		writeErr(w, err)
