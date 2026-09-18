@@ -27,7 +27,7 @@ func TestClientSearchWithTrace_NormalizedEmptyMatchesSearch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	opts := SearchOptions{ContentKinds: []string{"gallery"}, Semantic: true}
+	opts := SearchOptions{ContentKinds: []string{"gallery"}}
 	want, err := client.Search(context.Background(), "!!!", opts)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
@@ -36,13 +36,13 @@ func TestClientSearchWithTrace_NormalizedEmptyMatchesSearch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchWithTrace: %v", err)
 	}
-	if len(got.Hits) != 0 || len(want.Hits) != 0 || got.HasMore || got.Degraded {
+	if len(got.Hits) != 0 || len(want.Hits) != 0 || got.HasMore {
 		t.Fatalf("results: got %#v, want %#v", got, want)
 	}
 	if trace.EmptyReason != EmptyReasonNormalizedQuery || trace.ErrorCategory != "" || len(trace.Sources) != 0 {
 		t.Fatalf("unexpected trace: %#v", trace)
 	}
-	if trace.ResultLimit != 20 || trace.RRFK != 60 || trace.CandidateLimit != 100 || trace.SemanticWeight != 1 || !trace.RequestedSemantic || trace.Semantic {
+	if trace.ResultLimit != 20 || trace.CandidateLimit != 100 {
 		t.Fatalf("effective defaults missing from early trace: %#v", trace)
 	}
 	if _, err := json.Marshal(trace); err != nil {

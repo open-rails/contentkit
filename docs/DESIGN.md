@@ -3,16 +3,18 @@
 The binding design is
 [open-rails-tracker/contentkit/DESIGN.md](https://github.com/open-rails/tracker/blob/master/contentkit/DESIGN.md)
 and the 2026-09-17 platform design in the doujins-org tracker. This file
-records only what the code in this repository assumes.
+records what the code in this repository assumes, including the owner
+clarification of 2026-09-17: semantic search stays entirely outside ContentKit.
 
 ## Two libraries
 
 - **ContentKit** (this repo) is deterministic: keyword search, the signal
   plane, discovery reads, and — after C2/C3 — comments, reactions, favorites,
   polls and the durable preference outbox. It links no model provider.
-- **User Intelligence** is probabilistic and optional. It implements
-  ContentKit's ports (`DocumentSink`, `SemanticRanker`, later
-  `ContentModerator` and `AnswerClassifier`) and owns its own tables.
+- **User Intelligence** is a separate, deferred library that owns semantic
+  search and its own tables. ContentKit has no semantic runtime hook.
+- **DocumentSink** is a neutral document change feed for external indexes,
+  caches and audit consumers; no consumer implementation is linked here.
 
 ## Mechanism vs meaning
 
