@@ -1,18 +1,45 @@
 # Migrations
 
-ContentKit owns four migratekit lineages. Every file is immutable once
+ContentKit owns five migratekit lineages. Every file is immutable once
 applied; `migratekit relink --check` verifies the parent links.
 
 | Lineage | Embedded FS | Store | Ledger app id |
 |---|---|---|---|
-| Keyword profile | `migrations.Postgres` | host Postgres schema | new installations: `contentkit`; existing keyword installations keep theirs |
-| Legacy combined | `migrations.LegacyPostgres` | host Postgres schema | existing installations only, under the ledger they already have (`searchkit`) |
-| Taxonomy | `migrations.Taxonomy` | host Postgres schema, after the keyword profile | `contentkit_taxonomy` (see [taxonomy-migration.md](taxonomy-migration.md)) |
+| Social (interactions) | `migrations.Social` | host Postgres schema | `socialkit` (`content.MigratekitApp`; the label existing installations carry) |
+| Keyword profile | `migrations.Postgres` | keyword Postgres schema | new installations: `contentkit`; existing keyword installations keep theirs |
+| Legacy combined | `migrations.LegacyPostgres` | keyword Postgres schema | existing installations only, under the ledger they already have (`searchkit`) |
+| Taxonomy | `migrations.Taxonomy` | keyword Postgres schema, after the keyword profile | `contentkit_taxonomy` (see [taxonomy-migration.md](taxonomy-migration.md)) |
 | Signal plane | `migrations.SignalClickHouse` | dedicated ClickHouse database | existing: `searchkit_signal`; new: `contentkit_signal` |
 
+`contentkit.Migrate` applies the social, keyword and signal lineages from one call (social into `Schema`,
+keyword into `SearchSchema`, signal into `ClickHouse` when configured); the
+per-lineage entry points remain `content.Migrate` and migratekit directly.
+Apply `migrations.Taxonomy` separately after the keyword profile, as described
+in [taxonomy-migration.md](taxonomy-migration.md).
 Never switch a populated ledger between lineages and never use the legacy
-lineage for a new installation. Both Postgres lineages end on the same schema
+lineage for a new installation. Both search lineages end on the same schema
 (the `keyword`/`legacy` profile test proves the fingerprints equal).
+
+## Social 0003: content references
+
+`social_reactions`, `social_comments`, `social_favorites` and
+`social_entity_counts` are keyed by `(tenant_id, content_kind, content_id,
+content_version_id)` (`'' version` = the work); `social_poll_questions` and
+`social_posts` gain `tenant_id`; comment threading is `reply_to_id`. Table
+names stay `social_*` and no row moves: `entity_type`/`entity_id` are renamed
+in place, ids keep their stored values (a Doujins gallery reaction stays
+`42:en` until the preference cutover collapses it).
+
+Rows that existed before the migration carry `tenant_id = ''` and are served
+to nobody. A host schema is single-tenant, so adoption is one statement per
+table, run once right after the migrate step:
+
+```go
+n, err := content.AssignTenant(ctx, pool, "doujins", "doujins") // rows stamped
+```
+
+(`UPDATE <schema>.social_* SET tenant_id = 'doujins' WHERE tenant_id = ''`,
+idempotent.) `content.New` refuses a schema the lineage was not applied to.
 
 ## Keyword profile 0003 / legacy 0004: content references
 
@@ -38,6 +65,17 @@ DELETE FROM content_search_backfill  WHERE tenant_id = '';
 
 Hosts write the queue through `search.MarkDirty` (or the same SQL) with the
 tenant, kind, id, optional version and language of every changed document.
+
+## Social 0004: preference snapshots
+
+`content_preference_snapshots` (tenant, actor, canonical reference, axis,
+value, revision, occurred_at, delivered_revision), one sequence
+`content_preference_revision_seq` and the cutover archive
+`content_preference_key_archive`. Nothing is written until the host sets
+`content.Options.Canonicalizer`. Export state and the sequence are user state
+in backup/recovery: a content-only restore must not rewind them, and a full
+recovery re-runs `SeedPreferenceRevisionFloor` against the retained sink
+before writers resume ([HOST_INTEGRATION.md](../HOST_INTEGRATION.md#preference-boundary-reactions-and-favorites-into-the-signal-plane)).
 
 ## Legacy 0005 drops the embedding tables — export first
 

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -89,14 +88,11 @@ type EmbeddedConfig struct {
 	PG       *pgxpool.Pool
 	PGSchema string
 
-	// SemanticRanker and SemanticTimeout are passed to the search client.
-	SemanticRanker  SemanticRanker
-	SemanticTimeout time.Duration
-
 	// Content-plane defaults (as in ClientConfig).
 	DefaultLanguage string
 	DefaultLimit    int
-	DefaultRRFK     int
+	// DefaultRRFK controls deterministic popularity/discovery fusion (default 60).
+	DefaultRRFK int
 
 	// Signal plane (ClickHouse). Optional: omit CH to run content-only
 	// (signal/discovery methods return ErrSignalPlaneDisabled). CHDatabase
@@ -120,11 +116,12 @@ type EmbeddedConfig struct {
 
 // EmbeddedHub implements Hub in-process. Construct with NewEmbedded.
 type EmbeddedHub struct {
-	client   *Client
-	store    *signal.Store
-	tenant   string
-	scorers  map[string]signal.Scorer
-	catalogs map[string]ContentCatalog
+	defaultRRFK int
+	client      *Client
+	store       *signal.Store
+	tenant      string
+	scorers     map[string]signal.Scorer
+	catalogs    map[string]ContentCatalog
 }
 
 var _ Hub = (*EmbeddedHub)(nil)
@@ -135,20 +132,21 @@ func NewEmbedded(cfg EmbeddedConfig) (*EmbeddedHub, error) {
 		Pool:            cfg.PG,
 		Schema:          cfg.PGSchema,
 		Tenant:          cfg.Tenant,
-		SemanticRanker:  cfg.SemanticRanker,
-		SemanticTimeout: cfg.SemanticTimeout,
 		DefaultLanguage: cfg.DefaultLanguage,
 		DefaultLimit:    cfg.DefaultLimit,
-		DefaultRRFK:     cfg.DefaultRRFK,
 	})
 	if err != nil {
 		return nil, err
 	}
 	h := &EmbeddedHub{
-		client:   client,
-		tenant:   client.Tenant(),
-		scorers:  cfg.Scorers,
-		catalogs: cfg.Catalogs,
+		client:      client,
+		defaultRRFK: cfg.DefaultRRFK,
+		tenant:      client.Tenant(),
+		scorers:     cfg.Scorers,
+		catalogs:    cfg.Catalogs,
+	}
+	if h.defaultRRFK <= 0 {
+		h.defaultRRFK = 60
 	}
 	if cfg.CH != nil {
 		store, err := signal.NewStore(cfg.CH, cfg.CHDatabase)
@@ -290,7 +288,7 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 		return popularity[popList[i].Ref().Content().Key()] > popularity[popList[j].Ref().Content().Key()]
 	})
 	fused := search.FuseRRF([][]search.RRFKey{contentList, popList}, search.RRFOptions{
-		K:       h.client.defaultRRFK,
+		K:       h.defaultRRFK,
 		Weights: []float32{1, p.PopularityWeight},
 	})
 
@@ -341,7 +339,7 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 		}
 		return out[i].ContentID < out[j].ContentID
 	})
-	result := SearchResult{Hits: []SearchHit{}, Truncated: content.Truncated, Degraded: content.Degraded}
+	result := SearchResult{Hits: []SearchHit{}, Truncated: content.Truncated}
 	if offset < len(out) {
 		end := min(offset+limit, len(out))
 		result.Hits = out[offset:end]
@@ -443,7 +441,7 @@ func (h *EmbeddedHub) RefreshCoEngagement(ctx context.Context, opts signal.Refre
 
 // RepairProjections is the bounded, host-scheduled projection repair (see
 // signal.Store.RepairProjections): run it periodically with IngestedSince for
-// crash repair, and with Rebuild over a window after semantic changes.
+// crash repair, and with Rebuild over a window after projection changes.
 func (h *EmbeddedHub) RepairProjections(ctx context.Context, opts signal.RepairOptions) (signal.RepairResult, error) {
 	store, err := h.requireStore()
 	if err != nil {

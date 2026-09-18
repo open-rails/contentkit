@@ -6,15 +6,65 @@ another tenant are rejected.
 
 ## Contract
 
+One migrate call, one constructor, one HTTP mount per tenant:
+
+```go
+_ = contentkit.Migrate(ctx, contentkit.MigrateConfig{DB: sqlDB, Schema: "doujins", SearchSchema: "doujins_searchkit", ClickHouse: &chmigrate.Config{...}})
+rt, _ := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
+	EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: "doujins_searchkit", Tenant: "doujins", CH: ch, CHDatabase: "hub"},
+	Content: content.Options{Schema: "doujins", Identity: identity, Authz: authz, Resolver: resolver, Users: users,
+		Storage: storage, Processor: sanitizer, Perms: content.Perms{...}, ContentKinds: []string{"gallery", "post", "tag"}},
+})
+mux.Handle("/api/social/", http.StripPrefix("/api/social", rt.Handler()))
+```
+
 Hosts use:
 
-- `client.Search(ctx, query, contentkit.SearchOptions{...})` → `SearchResult{Hits, HasMore, Truncated, Degraded}`
-- `client.SearchWithTrace(...)` for offline evaluation/debugging
-- `client.Typeahead(ctx, query, contentkit.TypeaheadOptions{...})`
-- `worker.SyncOnce` on a schedule, `search.MarkDirty` in content transactions
-- `contentkit.EmbeddedHub` for the signal and discovery planes
+- `rt.Search(ctx, query, contentkit.HubSearchOptions{...})` → `SearchResult{Hits, HasMore, Truncated}`
+- `rt.Client().SearchWithTrace(...)` for offline evaluation/debugging
+- `rt.Typeahead(ctx, query, contentkit.TypeaheadOptions{...})`
+- `worker.SyncOnce(ctx, rt.WorkerOptions(hostOptions))` on a schedule, `search.MarkDirty` in content transactions
+- the `Hub` methods for the signal and discovery planes
+- `rt.Content` (package `content`) for interactions: `Counts`, `MyReactions`, `IsFavorited`, `ListFavorites`, `LatestComments`, `ReactionsByActor`
 
 Do not call `search` package SQL helpers from request paths.
+
+## Interactions (`content`)
+
+The content module owns posts, comments, reactions, favorites and polls in the
+host schema's `social_*` tables. Every row is keyed by the `ContentRef` of
+the host-owned work: `(tenant_id, content_kind, content_id,
+content_version_id)`; comment threading is `reply_to_id`. Routes are
+`/{kind}/{id}/comments|like|dislike|neutral|reaction|favorite`,
+`/comments/{cid}/...`, `/comments/latest`, `/comments/admin?content_kind=`,
+`/favorites`, `/polls...`, `/posts...`; `kind` must be in `ContentKinds`.
+
+Ports (all in `content`):
+
+| Port | Required | Contract |
+|---|---|---|
+| `Identity` | yes | reads the already-authenticated `Actor` from context; ContentKit never authenticates |
+| `Authorizer` | yes | `Can(actor, perm)` for `Perms{PostWrite, PollWrite, CommentModerate}`; fail-closed on error and on an unset perm |
+| `ContentResolver` | yes | `Resolve(ref, actor) → Resolution{Ref, Visible, Accessible}`: the whole gating surface. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request; another tenant is an error. React/comment need `Accessible`, favorite needs `Visible` |
+| `UserEnricher` | no | display data for author ids |
+| `MediaStore` / `Storage` | no | poll/post images; `Storage` is the built-in public-bucket S3 store |
+| `ContentProcessor` | no | rich-text sanitizer for comment/post bodies (default strips tags) |
+
+There is no `Recorder` and no `Moderation` port: reactions and favorites feed
+the signal plane through ContentKit's own preference outbox (C3), and
+`ContentModerator` (C4) decides comment/post publication at the `screen` seam
+in `comments.go`. A policy rejection answers 422 (`content.RejectedError`).
+
+Posts are ContentKit's own keyword documents (kind `post`, the post's
+language): every post write queues its `DocumentKey` in the keyword schema's
+dirty queue inside the write transaction; `rt.WorkerOptions` routes kind
+`post` to the module's builder and lister, so one worker tick maintains host
+documents and posts.
+
+The tenant is pinned at construction and stamped on every row; a `ContentRef`
+of another tenant passed to any read is `content.ErrTenant`, never remapped.
+Existing single-tenant rows convert under `tenant_id = ''` and are adopted
+once with `content.AssignTenant` ([docs/migration.md](docs/migration.md)).
 
 ## Documents: one per content reference and language
 
@@ -44,8 +94,7 @@ ContentKit groups documents per work `(tenant, kind, content_id)` across the
 searched languages before `Offset`/`Limit`. Each hit returns the matched
 document's reference (`ContentID` = the work, `Version()` = the matched
 version or `""`) and `Language`; `Score` ranks the work by its best document in
-any searched language. Hosts re-check authorization while hydrating. Semantic
-candidates from a `SemanticRanker` pass the same join before fusion.
+any searched language. Hosts re-check authorization while hydrating.
 
 ## Filter policy (host-owned)
 
@@ -69,15 +118,11 @@ candidates from a `SemanticRanker` pass the same join before fusion.
   in both is returned once, represented by its requested-language document;
   ties never prefer English.
 
-## Semantic ranking (optional)
+## External document consumers
 
-Register a `SemanticRanker` on `ClientConfig`/`EmbeddedConfig` and set
-`SearchOptions.Semantic`. The ranker sees the normalized query, language,
-kinds, window and the host constraints; ContentKit re-verifies its candidates
-through the eligibility join, RRF-fuses them with the keyword list
-(`SemanticWeight`, `RRFK`), then groups and pages. Absent ranker, timeout
-(`SemanticTimeout`, default 2s) or failure: keyword-only with
-`SearchResult.Degraded = true`. Never surface that as an error.
+`DocumentSink` is an optional, neutral change feed for external indexes,
+caches and audit consumers. Semantic search belongs entirely to the deferred
+User Intelligence library; ContentKit exposes no semantic search hook.
 
 ## Worker
 
@@ -141,6 +186,56 @@ Typeahead documents of nodes are built by the store: register its kinds with
 the worker through `store.Lister`/`store.Builder`. Mount `taxonomy.Handler`
 behind your admin authorization. Adoption: [docs/taxonomy-migration.md](docs/taxonomy-migration.md).
 
+## Preference boundary (reactions and favorites into the signal plane)
+
+Reactions and favorites are exported to the signal plane through ContentKit's
+own outbox, never through a host callback. Each mutation, inside its own
+transaction: takes an advisory lock on `(schema, tenant, actor, canonical
+reference, axis)` **before** reading state, applies the social change and its
+counters, allocates `revision` from `content_preference_revision_seq`
+(`BIGINT INCREMENT 1 NO CYCLE CACHE 1`) with `clock_timestamp()` and upserts
+`content_preference_snapshots`. A no-op allocates nothing; neutral and
+unfavorite keep a zero-valued snapshot; a rollback exports nothing; anonymous
+(IP) reactions are never subjects.
+
+- **`content.ContentCanonicalizer`** (`Options.Canonicalizer`, required for
+  export) maps the resolver's reference to the one reference the reaction row,
+  the counts rollup and the snapshot all use. Doujins strips the language
+  suffix (`"42:en"` → `"42"`); explicit version feedback keeps its
+  `content_version_id`; a language suffix never implies a version; comment
+  threads keep their localized reference; `ok=false` keeps a kind (taxonomy)
+  out. `MyReactions`/`IsFavorited` accept route references and read under the
+  canonical one; `Counts` reads exactly the reference given (likes/favorites
+  under the canonical reference, comment counts under the thread's).
+- **Delivery**: schedule `rt.DeliverPreferences(ctx, after, pageSize, maxRows)` from
+  the host worker (e.g. a River periodic job every few seconds). It pages
+  pending rows in key order per sweep (no persisted high-water mark), writes
+  one `signal` event per subject × reference × axis (`Type` = axis,
+  `EventID` = `contentkit.PreferenceEventID`, `Revision` and `OccurredAt`
+  copied, `Value` = current value), and acknowledges exactly the revision sent
+  (`GREATEST` guarded by `sent <= revision`). A failing sink or a closed
+  ClickHouse leaves rows pending; a failing key never starves others;
+  at-least-once with convergence by revision.
+- **Erasure**: call `rt.EraseSubjects` (fence in the signal plane, then purge
+  the obligations) from the account-deletion handoff; a late delivery for a
+  fenced subject is the terminal `PreferenceSubjectErased`, never a retry.
+- **Bounded delivery**: keep the returned `Next` cursor for the current sweep
+  and pass it as `after` on the next call, including after a sink error. Reset
+  to zero when exhausted; never persist it as a global high-water mark.
+- **Repair**: `rt.ReplayPreferences(ctx, after, pageSize, maxRows)` re-delivers
+  every snapshot (acknowledged rows and zeros included) and resumes from the
+  returned `Next`; newer snapshots still win by revision.
+- **Cutover** (once per host, writers paused): `contentkit.Migrate` (social
+  0004) → stop the old callback bridge and drain its queues →
+  `rt.Content.SeedPreferenceRevisionFloor(maxExistingSinkRevision)` (fails
+  closed outside `[0, MaxInt64/2]`, only ever advances) →
+  `rt.Content.MigratePreferences(PreferenceMigrationOptions{ExportedKeys, DryRun})`
+  (archives the language-scoped rows, collapses them: dislike wins, else
+  like; favorite if any; recomputes counts; seeds snapshots at real source
+  times and zeros for previously exported keys) → retire the old
+  per-transition signal identities in the sink → start the delivery worker
+  → `ReplayPreferences` once from the zero key.
+
 ## Attribution export (paged evaluation data)
 
 `hub.Attribution(ctx, signal.AttributionOptions{Stage, Window, Surface, Limit, ClickLimit, After})`
@@ -175,7 +270,9 @@ each host erases its own tenant.
 
 ## Migration checklist
 
-- Create and reuse one `contentkit.Client` / `EmbeddedHub` per tenant.
+- Create and reuse one `contentkit.Runtime` per tenant.
 - Index per-version documents; move visibility/trait policy into `Eligibility`.
 - Page with `Offset`/`Limit` and `HasMore`; never fetch N documents and dedupe.
-- Apply the lineages per [docs/migration.md](docs/migration.md); gate startup on `signal.CheckSchema`.
+- Apply the lineages with `contentkit.Migrate` per [docs/migration.md](docs/migration.md); run `content.AssignTenant` once; gate startup on `signal.CheckSchema`.
+- Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, implement `ContentCanonicalizer`, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, schedule `DeliverPreferences`, wire `EraseSubjects` into deletion, run the cutover above once, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id`.
+- Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.
