@@ -64,6 +64,25 @@ type ContentResolver interface {
 	Resolve(ctx context.Context, ref contentref.ContentRef, actor Actor) (Resolution, error)
 }
 
+// ContentCanonicalizer maps a resolved reference to the one reference an
+// actor's reaction or favorite is recorded, counted and exported under:
+// per-language routes ("42:en", "42:ja") collapse to one content_id; an
+// explicit content_version_id stays a distinct key; a language suffix never
+// implies a version. ok=false keeps the target out of the preference boundary
+// (its rows keep the resolver's reference and nothing is exported). Comment
+// threads never pass through it. Nil disables export: standalone hosts need no
+// analytics sink.
+type ContentCanonicalizer interface {
+	Canonical(ref contentref.ContentRef) (contentref.ContentRef, bool)
+}
+
+// ContentCanonicalizerFunc adapts a function to the ContentCanonicalizer port.
+type ContentCanonicalizerFunc func(ref contentref.ContentRef) (contentref.ContentRef, bool)
+
+func (f ContentCanonicalizerFunc) Canonical(ref contentref.ContentRef) (contentref.ContentRef, bool) {
+	return f(ref)
+}
+
 // UserEnricher batch-loads display data for author/actor ids.
 type UserEnricher interface {
 	UsersByIDs(ctx context.Context, ids []string) (map[string]PublicUser, error)

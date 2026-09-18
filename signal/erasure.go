@@ -360,6 +360,21 @@ func quorumSetting(quorum uint32) string {
 	return fmt.Sprintf(" SETTINGS insert_quorum = %d, insert_quorum_parallel = 1", quorum)
 }
 
+// ErasedSubjects reports which of the given subjects a recorded erasure of
+// tenant covers, so a producer can retire their obligations instead of
+// retrying deliveries the ledger will drop.
+func (st *Store) ErasedSubjects(ctx context.Context, tenant string, subjects []Subject) (map[Subject]bool, error) {
+	fenced, err := st.fenced(ctx, tenant, subjects)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[Subject]bool, len(fenced))
+	for k := range fenced {
+		out[subjectFromKey(k[0], k[1])] = true
+	}
+	return out, nil
+}
+
 // fenced returns the subjects among the given ones that a recorded erasure
 // covers; writers skip them before building their INSERT. This is hygiene,
 // not the barrier: the INSERT itself and every read re-evaluate the ledger.

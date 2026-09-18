@@ -140,6 +140,11 @@ top, _ := hub.Popular(ctx, "gallery", signal.PopularOptions{Window: signal.LastD
 - Windows are whole UTC days, 7/30/90/365/all, no decay.
 - `EraseSubjects` is account erasure with a quorum-written fence; see
   [HOST_INTEGRATION.md](HOST_INTEGRATION.md#subject-erasure-completion-contract).
+- Reactions and favorites reach the signal plane through ContentKit's own
+  preference outbox (`rt.DeliverPreferences`, `rt.ReplayPreferences`): a
+  compact snapshot per subject × reference × axis, revisions from a sequence
+  under the source lock, revision-exact acknowledgment; see
+  [HOST_INTEGRATION.md](HOST_INTEGRATION.md#preference-boundary-reactions-and-favorites-into-the-signal-plane).
 
 ## Testing
 

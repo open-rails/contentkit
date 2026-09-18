@@ -114,25 +114,33 @@ func (r *reactions) lockExisting(ctx context.Context, tx pgx.Tx, userID, ip stri
 }
 
 // react is the entry point for host-registered kinds: it gates on
-// accessibility and applies the reaction under the resolver's canonical
-// reference. Returns that reference so callers read counts by it.
-func (r *reactions) react(ctx context.Context, actor Actor, kind, id string, value int16) (contentref.ContentRef, error) {
+// accessibility, applies the reaction under the canonical preference
+// reference (or the resolver's for a declined target) and writes the
+// preference snapshot in the same transaction. Returns the reference callers
+// read counts by and the committed snapshot (nil when nothing changed or the
+// target is not exported).
+func (r *reactions) react(ctx context.Context, actor Actor, kind, id string, value int16) (contentref.ContentRef, *PreferenceSnapshot, error) {
 	ref, err := r.rt.gate(ctx, kind, id, actor, true)
 	if err != nil {
-		return contentref.ContentRef{}, err
+		return contentref.ContentRef{}, nil, err
 	}
+	storage, key, exportable := r.rt.preferences.target(actor, ref, PreferenceAxisReaction)
 	tx, err := r.s.pool.Begin(ctx)
 	if err != nil {
-		return contentref.ContentRef{}, err
+		return contentref.ContentRef{}, nil, err
 	}
 	defer tx.Rollback(ctx)
-	if _, _, err := r.applyTx(ctx, tx, actor, ref.Key(), value); err != nil {
-		return contentref.ContentRef{}, err
+	snap, err := r.rt.preferences.mutate(ctx, tx, key, exportable, value, func() (bool, error) {
+		dLikes, dDislikes, err := r.applyTx(ctx, tx, actor, storage.Key(), value)
+		return dLikes != 0 || dDislikes != 0, err
+	})
+	if err != nil {
+		return contentref.ContentRef{}, nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return contentref.ContentRef{}, err
+		return contentref.ContentRef{}, nil, err
 	}
-	return ref, nil
+	return storage, snap, nil
 }
 
 // counts returns the split tally plus the caller's own reaction: an O(1) read
@@ -168,7 +176,7 @@ func (r *reactions) mount(mux *http.ServeMux) {
 func (r *reactions) handleSet(value int16) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		actor := r.rt.actor(req.Context())
-		ref, err := r.react(req.Context(), actor, req.PathValue("kind"), req.PathValue("id"), value)
+		ref, _, err := r.react(req.Context(), actor, req.PathValue("kind"), req.PathValue("id"), value)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -189,6 +197,7 @@ func (r *reactions) handleGet(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	ref, _ = r.rt.preferences.work(ref) // counts live under the canonical reference
 	cnt, err := r.counts(req.Context(), r.s.pool, actor, ref.Key())
 	if err != nil {
 		writeErr(w, err)
