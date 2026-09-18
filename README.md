@@ -34,11 +34,12 @@ another tenant is an error, never remapped.
 | `content` | posts, comments, reactions, favorites, polls and their counts over `ContentRef`, in the host schema's `social_*` tables; the `Identity`/`Authorizer`/`ContentResolver`/`UserEnricher`/`MediaStore`/`ContentProcessor` ports and the HTTP routes |
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
 | `worker` | one tenant's document maintenance: dirty queue, bounded backfill, sink delivery |
+| `taxonomy` | generic catalog: nodes (tags, artists, creators, characters, series, seasons, voice actors), localized names/aliases, edges, content assignments, effective tags, per-language counts, typeahead documents, admin routes |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
 | `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, taxonomy popularity through the host `Catalog` port |
 | `eval` | lexical golden-case evaluation, reports, baselines |
-| `migrations` | the four migratekit lineages (social, keyword, legacy keyword, signal) |
-| root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (every lineage), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
+| `migrations` | the five migratekit lineages (social, keyword, legacy keyword, taxonomy, signal) |
+| root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (social, keyword, optional taxonomy, signal), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
 
 ## Install
 
@@ -118,6 +119,28 @@ two-second ceiling per request.
 `DocumentSink` is a neutral document change feed for external indexes, caches
 or audit consumers. ContentKit ships no sink implementation or AI-specific
 configuration.
+
+## Taxonomy
+
+Nodes, names, edges and assignments are tenant-scoped; effective tags are the
+work's assignments ∪ the selected version's; `RequireAll` makes a multi-node
+filter hold on one eligible version inside the same join as search. Apply
+`migrations.Taxonomy` after the keyword profile; see
+[docs/taxonomy-migration.md](docs/taxonomy-migration.md).
+
+```go
+store, _ := taxonomy.New(taxonomy.Options{Pool: pool, Schema: schema, Tenant: "doujins",
+	Kinds: []string{"tag", "artist", "character", "series", "voice_actor"}, Languages: []string{"en", "es"},
+	CountEligibility: &search.Eligibility{SQL: releasedVersionSQL}})
+_ = store.WithTx(tx).Assign(ctx, []taxonomy.Assignment{{ContentRef: g1.WithVersion(v2), TaxonomyID: "colored"}}, taxonomy.AssignOptions{})
+tags, _ := store.EffectiveTags(ctx, []contentkit.ContentRef{g1.WithVersion(v2)})
+filter, args, _ := taxonomy.RequireAll(schema, []taxonomy.TaxonomyID{"colored"})
+page, _ := client.Search(ctx, q, contentkit.SearchOptions{Language: "es", ContentKinds: []string{"gallery"}, FilterSQL: filter, FilterArgs: args, Eligibility: elig})
+mux.Handle("/admin/taxonomy/", http.StripPrefix("/admin/taxonomy", taxonomy.Handler(store)))
+```
+
+Worker: `ContentKinds: append(hostKinds, store.Kinds()...)`, `ListContent:
+store.Lister(listGalleries)`, `BuildKeywordDocuments: store.Builder(buildGalleryDocuments)`.
 
 ## Signal plane and discovery
 

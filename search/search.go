@@ -123,14 +123,24 @@ func hostClauses(opts Options, args pgx.NamedArgs) (from, where, priority string
 			return "", "", "", err
 		}
 	}
-	from, priority = qs+`.content_search_documents sd`, `0`
-	if opts.Eligibility != nil && strings.TrimSpace(opts.Eligibility.SQL) != "" {
-		// LATERAL binds sd inside the host query; a missing column fails loudly.
-		from += ` JOIN LATERAL (SELECT h.priority::int AS priority FROM (` + opts.Eligibility.SQL + `) AS h LIMIT 1) e ON true`
-		priority = `e.priority`
-		if err := mergeNamedArgs(args, opts.Eligibility.Args); err != nil {
-			return "", "", "", err
-		}
+	join, priority, err := EligibilityJoin(opts.Eligibility, args)
+	if err != nil {
+		return "", "", "", err
 	}
-	return from, where, priority, nil
+	return qs + `.content_search_documents sd` + join, where, priority, nil
+}
+
+// EligibilityJoin renders the host eligibility query as the lateral join every
+// route applies to a candidate row aliased sd, binding its named args. It
+// returns the join clause (empty without eligibility) and the priority
+// expression to select.
+func EligibilityJoin(e *Eligibility, args pgx.NamedArgs) (join, priority string, err error) {
+	if e == nil || strings.TrimSpace(e.SQL) == "" {
+		return "", "0::int", nil
+	}
+	if err := mergeNamedArgs(args, e.Args); err != nil {
+		return "", "", err
+	}
+	// LATERAL binds sd inside the host query; a missing column fails loudly.
+	return ` JOIN LATERAL (SELECT h.priority::int AS priority FROM (` + e.SQL + `) AS h LIMIT 1) e ON true`, `e.priority`, nil
 }
