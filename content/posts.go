@@ -34,7 +34,8 @@ func newPosts(rt *Runtime) *posts {
 		p.created_at, p.updated_at,
 		(SELECT count(*) FROM ` + s.t.comments + ` c
 			WHERE c.tenant_id = p.tenant_id AND c.content_kind = '` + KindPost + `' AND c.content_id = p.id
-			AND c.content_version_id = '' AND c.deleted_at IS NULL) AS comment_count`
+			AND c.content_version_id = '' AND c.deleted_at IS NULL AND c.moderation = 'approved') AS comment_count,
+		p.moderation, coalesce(p.moderation_reason, '')`
 	return &posts{rt: rt, s: s, cols: cols}
 }
 
@@ -53,8 +54,12 @@ type postView struct {
 	TotalLikes    int        `json:"total_likes"`
 	TotalDislikes int        `json:"total_dislikes"`
 	CommentCount  int        `json:"comment_count"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	// Moderation is "held" or "rejected" (with the reason) on an unpublished
+	// post; absent when approved.
+	Moderation       string    `json:"moderation,omitempty"`
+	ModerationReason string    `json:"moderation_reason,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // postWriteReq is the create/update body. All-pointer so PATCH is partial (nil =
@@ -177,18 +182,25 @@ func (p *posts) handleCreate(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	title := strings.TrimSpace(*in.Title)
+	id := uuid.NewString()
+	sc, err := p.screen(ctx, actor, id, title, body, derefBool(in.IsDraft))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	tx, err := p.s.pool.Begin(ctx)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	defer tx.Rollback(ctx)
-	var id, language string
+	var language string
 	err = tx.QueryRow(ctx, `INSERT INTO `+p.s.t.posts+`
-		(tenant_id, author_id, title, slug, body, excerpt, cover_url, language, is_draft, live_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, language`,
-		p.s.tenant, actor.ID, *in.Title, in.Slug, body, excerpt, in.CoverURL,
-		derefStr(in.Language), derefBool(in.IsDraft), in.LiveAt).Scan(&id, &language)
+		(id, tenant_id, author_id, title, slug, body, excerpt, cover_url, language, is_draft, live_at, moderation, moderation_reason, moderation_verdict)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING language`,
+		id, p.s.tenant, actor.ID, title, in.Slug, body, excerpt, in.CoverURL,
+		derefStr(in.Language), derefBool(in.IsDraft), in.LiveAt, sc.state, sc.reason, sc.meta).Scan(&language)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -206,7 +218,20 @@ func (p *posts) handleCreate(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, v)
+	status := http.StatusCreated
+	if v.Moderation == ModerationHeld { // stored, not published
+		status = http.StatusAccepted
+	}
+	writeJSON(w, status, v)
+}
+
+// screen runs the moderator over a post that will be live (not a draft); a
+// draft is never screened and carries no moderation state.
+func (p *posts) screen(ctx context.Context, actor Actor, id, title, body string, draft bool) (screening, error) {
+	if draft {
+		return screening{state: ModerationApproved}, nil
+	}
+	return p.rt.screen(ctx, ModerationInput{Actor: actor, Ref: p.rt.Ref(KindPost, id), Kind: KindPost, ItemID: id, Title: title, Text: body})
 }
 
 func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
@@ -243,8 +268,11 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	var before string
-	err = tx.QueryRow(ctx, `SELECT language FROM `+p.s.t.posts+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL FOR UPDATE`, id, p.s.tenant).Scan(&before)
+	// Lock the row and screen the merged text under the lock, so the stored
+	// state always belongs to the stored text.
+	var before, curTitle, curBody string
+	var curDraft bool
+	err = tx.QueryRow(ctx, `SELECT language, title, body, is_draft FROM `+p.s.t.posts+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL FOR UPDATE`, id, p.s.tenant).Scan(&before, &curTitle, &curBody, &curDraft)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeErr(w, ErrNotFound)
 		return
@@ -253,15 +281,33 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	if in.Title != nil {
+		if curTitle = strings.TrimSpace(*in.Title); curTitle == "" {
+			writeErr(w, badRequest("title cannot be blank"))
+			return
+		}
+	}
+	if body != nil {
+		curBody = *body
+	}
+	if in.IsDraft != nil {
+		curDraft = *in.IsDraft
+	}
+	sc, err := p.screen(ctx, actor, id, curTitle, curBody, curDraft)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	var after string
 	if err := tx.QueryRow(ctx, `UPDATE `+p.s.t.posts+` SET
-		title = COALESCE($2, title), body = COALESCE($3, body),
+		title = $2, body = $3,
 		excerpt = COALESCE($4, excerpt), slug = COALESCE($5, slug),
 		language = COALESCE($6, language), cover_url = COALESCE($7, cover_url),
-		is_draft = COALESCE($8, is_draft), live_at = COALESCE($9, live_at),
+		is_draft = $8, live_at = COALESCE($9, live_at),
+		moderation = $11, moderation_reason = $12, moderation_verdict = $13,
 		updated_at = now()
 		WHERE id = $1 AND tenant_id = $10 RETURNING language`,
-		id, in.Title, body, excerpt, in.Slug, in.Language, in.CoverURL, in.IsDraft, in.LiveAt, p.s.tenant).Scan(&after); err != nil {
+		id, curTitle, curBody, excerpt, in.Slug, in.Language, in.CoverURL, curDraft, in.LiveAt, p.s.tenant, sc.state, sc.reason, sc.meta).Scan(&after); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -331,9 +377,10 @@ func (p *posts) handleGet(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	// A published post is public; a draft is visible only to a PostWrite
-	// holder, else hidden as 404.
-	if !isPublished(v) {
+	// A published post is public; a draft, held or rejected post is visible
+	// only to its author (with the moderation reason) or a PostWrite holder,
+	// else hidden as 404.
+	if !isPublished(v) && (actor.Anonymous || actor.ID == "" || actor.ID != v.AuthorID) {
 		if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PostWrite); err != nil {
 			writeErr(w, ErrNotFound)
 			return
@@ -347,7 +394,7 @@ func (p *posts) handleList(w http.ResponseWriter, req *http.Request) {
 	q := req.URL.Query()
 	language, limit, offset := q.Get("language"), parseLimit(q.Get("limit")), parseOffset(q.Get("offset"))
 	rows, err := p.s.pool.Query(ctx, `SELECT `+p.cols+` FROM `+p.s.t.posts+` p
-		WHERE p.tenant_id = $4 AND p.deleted_at IS NULL AND p.is_draft = false
+		WHERE p.tenant_id = $4 AND p.deleted_at IS NULL AND p.is_draft = false AND p.moderation = 'approved'
 		AND (p.live_at IS NULL OR p.live_at <= now())
 		AND ($1 = '' OR p.language = $1)
 		`+orderBy(q.Get("sort"), "p.total_likes", "p.total_dislikes", "COALESCE(p.live_at, p.created_at)")+`
@@ -436,7 +483,7 @@ func (p *posts) loadByID(ctx context.Context, q querier, id string) (postView, e
 func (p *posts) requirePublished(ctx context.Context, q querier, id string) error {
 	var ok bool
 	err := q.QueryRow(ctx, `SELECT true FROM `+p.s.t.posts+`
-		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND is_draft = false
+		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND is_draft = false AND moderation = 'approved'
 		AND (live_at IS NULL OR live_at <= now())`, id, p.s.tenant).Scan(&ok)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
@@ -458,15 +505,19 @@ func (p *posts) sanitizePtr(ctx context.Context, s *string) (*string, error) {
 // scanPost scans the p.cols column order (pgx.Rows satisfies pgx.Row).
 func scanPost(row pgx.Row) (postView, error) {
 	var v postView
+	var state, reason string
 	err := row.Scan(&v.ID, &v.AuthorID, &v.Title, &v.Slug, &v.Body, &v.Excerpt,
 		&v.CoverURL, &v.Language, &v.IsDraft, &v.LiveAt, &v.TotalLikes,
-		&v.TotalDislikes, &v.CreatedAt, &v.UpdatedAt, &v.CommentCount)
+		&v.TotalDislikes, &v.CreatedAt, &v.UpdatedAt, &v.CommentCount, &state, &reason)
+	if state != ModerationApproved {
+		v.Moderation, v.ModerationReason = state, reason
+	}
 	return v, err
 }
 
 // isPublished mirrors the list predicate for a loaded row (deleted already excluded).
 func isPublished(v postView) bool {
-	return !v.IsDraft && (v.LiveAt == nil || !v.LiveAt.After(time.Now()))
+	return !v.IsDraft && v.Moderation == "" && (v.LiveAt == nil || !v.LiveAt.After(time.Now()))
 }
 
 const (

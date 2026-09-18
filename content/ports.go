@@ -103,7 +103,82 @@ type ContentProcessor interface {
 // Perms carries the opaque host permission strings checked through
 // Authorizer.Can before privileged writes. An unset gate fails closed.
 type Perms struct {
-	PostWrite       string // create/update/delete posts
-	PollWrite       string // create/update/delete polls + options
-	CommentModerate string // moderator delete/restore of another actor's comment
+	PostWrite        string // create/update/delete posts
+	PollWrite        string // create/update/delete polls + options
+	CommentModerate  string // moderator delete/restore of another actor's comment
+	ModerationReview string // list and resolve held comments and posts
+}
+
+// --- moderation and classification ports (nil -> publish / refuse) ---
+
+// Decision is a ContentModerator's outcome for one text write.
+type Decision string
+
+const (
+	DecisionApprove Decision = "approve" // publish
+	DecisionReject  Decision = "reject"  // refuse the write: 422 with the reason, nothing stored
+	DecisionReview  Decision = "review"  // store held: author-only until a reviewer resolves it
+)
+
+// ModerationInput is one comment or post body about to publish. The moderator
+// sees sanitized text and opaque ids only.
+type ModerationInput struct {
+	Tenant string
+	Actor  Actor
+	// Ref is the content the item belongs to: the commented work for a
+	// comment, the post's own reference for a post.
+	Ref    contentref.ContentRef
+	Kind   string // KindComment | KindPost
+	ItemID string // the existing item on an edit; empty on create
+	Title  string // posts only
+	Text   string
+}
+
+// Verdict is a moderator's decision with its provenance. Reason is shown to
+// the author on reject and review; Model, PromptVersion and Confidence are
+// kept with a held item for the reviewer.
+type Verdict struct {
+	Decision      Decision
+	Reason        string
+	Model         string
+	PromptVersion string
+	Confidence    float64
+}
+
+// ContentModerator screens every comment/post write before it publishes.
+// Absent port: every write publishes. An error or an unknown decision fails
+// closed to review: the submission is kept, held, never published unscreened.
+type ContentModerator interface {
+	Screen(ctx context.Context, in ModerationInput) (Verdict, error)
+}
+
+// Answer is one free-text poll answer handed to the AnswerClassifier.
+type Answer struct {
+	Tenant     string
+	QuestionID string
+	AnswerID   string
+	Text       string
+}
+
+// GroupAssignment is the group an answer was placed in at store time.
+type GroupAssignment struct {
+	GroupID string
+	Label   string
+}
+
+// Group is one answer group of a free-text poll with its current size. The
+// classifier owns the assignments (it may re-cluster); ContentKit only keeps
+// which answers are still unclassified.
+type Group struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Count int    `json:"count"`
+}
+
+// AnswerClassifier groups free-text poll answers. Classify runs when an
+// answer is stored or edited; Groups is read with the poll results. Without a
+// registered classifier a free-text poll cannot be created.
+type AnswerClassifier interface {
+	Classify(ctx context.Context, a Answer) (GroupAssignment, error)
+	Groups(ctx context.Context, tenant, questionID string) ([]Group, error)
 }

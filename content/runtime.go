@@ -48,6 +48,11 @@ type Options struct {
 	Users     UserEnricher     // default: no enrichment (ids only)
 	Media     MediaStore       // explicit override; usually leave nil and set Storage
 	Processor ContentProcessor // default: strip tags
+	// Moderator screens comment/post writes; nil publishes everything.
+	// Compose a BasicModerator in front of an AI moderator with Chain.
+	Moderator ContentModerator
+	// Classifier groups free-text poll answers; nil refuses free-text polls.
+	Classifier AnswerClassifier
 
 	// Storage configures the built-in S3-backed media store (poll/post image
 	// upload to a public bucket); used when Media is nil. See StorageConfig.
@@ -78,6 +83,8 @@ type Runtime struct {
 	users        UserEnricher
 	media        MediaStore
 	processor    ContentProcessor
+	moderator    ContentModerator
+	classifier   AnswerClassifier
 	perms        Perms
 	log          *slog.Logger
 	kinds        map[string]struct{}
@@ -123,6 +130,8 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		users:        orDefault[UserEnricher](opts.Users, noopEnricher{}),
 		media:        media,
 		processor:    orDefault[ContentProcessor](opts.Processor, stripProcessor{}),
+		moderator:    opts.Moderator,
+		classifier:   opts.Classifier,
 		perms:        opts.Perms,
 		log:          orDefault[*slog.Logger](opts.Logger, slog.Default()),
 		kinds:        make(map[string]struct{}, len(opts.ContentKinds)),
@@ -150,7 +159,10 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 // checkSchema fails construction when the social lineage (incl. the content
 // reference migration) is not applied to the schema.
 func (rt *Runtime) checkSchema(ctx context.Context) error {
-	if _, err := rt.store.pool.Exec(ctx, `SELECT tenant_id, content_kind, content_id, content_version_id FROM `+rt.store.t.counts+` LIMIT 0; SELECT revision FROM `+rt.store.t.preferenceSnapshots+` LIMIT 0`); err != nil {
+	if _, err := rt.store.pool.Exec(ctx, `SELECT tenant_id, content_kind, content_id, content_version_id FROM `+rt.store.t.counts+` LIMIT 0;
+		SELECT revision FROM `+rt.store.t.preferenceSnapshots+` LIMIT 0;
+		SELECT moderation FROM `+rt.store.t.comments+` LIMIT 0; SELECT moderation FROM `+rt.store.t.posts+` LIMIT 0;
+		SELECT kind, closes_at FROM `+rt.store.t.pollQuestions+` LIMIT 0; SELECT group_id FROM `+rt.store.t.pollAnswers+` LIMIT 0`); err != nil {
 		return fmt.Errorf("content: schema %q lacks the social lineage (apply contentkit.Migrate): %w", rt.schema, err)
 	}
 	return nil
@@ -173,6 +185,7 @@ func (rt *Runtime) Handler() http.Handler {
 	rt.comments.mount(mux)
 	rt.posts.mount(mux)
 	rt.favorites.mount(mux)
+	rt.mountModeration(mux)
 	return rt.accessLog(mux)
 }
 

@@ -74,6 +74,19 @@ in backup/recovery: a content-only restore must not rewind them, and a full
 recovery re-runs `SeedPreferenceRevisionFloor` against the retained sink
 before writers resume ([HOST_INTEGRATION.md](../HOST_INTEGRATION.md#preference-boundary-reactions-and-favorites-into-the-signal-plane)).
 
+## Social 0005: moderation state and free-text polls
+
+`social_comments` and `social_posts` gain `moderation` (`approved` default,
+`held`, `rejected`), `moderation_reason`, `moderation_verdict` (jsonb:
+model, prompt_version, confidence, or the moderator error that forced a
+hold), `moderated_by` and `moderated_at`, plus a partial index on held rows
+for the review queue. Existing rows are `approved`. `social_poll_questions`
+gains `kind` (`multiple_choice` default, `free_text`) and `closes_at`;
+`social_poll_answers(tenant_id, question_id, actor_id, text, group_id,
+classified_at, created_at, updated_at)` holds one free-text answer per actor.
+Nothing behaves differently until a host sets `content.Options.Moderator` or
+`Classifier`.
+
 ## Legacy 0005 drops the embedding tables — export first
 
 `embedding_models`, `embedding_tasks`, `embedding_vectors`,

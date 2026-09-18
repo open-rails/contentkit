@@ -196,17 +196,18 @@ func TestPreferences_ConcurrentLocaleRoutesShareOneOrderedPreference(t *testing.
 		t.Fatal(err)
 	}
 	prev := row.Revision
-	for i, backend := range []*Runtime{other, rt, other, rt} {
-		value := int16(1)
-		if i%2 == 1 {
-			value = -1
-		}
+	value := -row.Value // every step must be a change: start opposite the final value
+	if value == 0 {
+		value = 1
+	}
+	for _, backend := range []*Runtime{other, rt, other, rt} {
 		mustReact(t, backend, actor, "gallery", "42:en", value)
 		next := snapshotRow(t, rt, row.PreferenceKey)
 		if next.Revision <= prev {
 			t.Fatalf("revision %d did not increase past %d across backends", next.Revision, prev)
 		}
 		prev = next.Revision
+		value = -value
 	}
 }
 
