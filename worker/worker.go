@@ -67,6 +67,16 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
+// documentIdentity compares version values, independent of host pointer allocation.
+type documentIdentity struct {
+	contentref.ContentKey
+	language string
+}
+
+func identity(key search.DocumentKey) documentIdentity {
+	return documentIdentity{key.ContentRef.Key(), key.Language}
+}
+
 type dirtyRow struct {
 	search.DocumentKey
 	IsDeleted bool
@@ -131,7 +141,7 @@ func SyncOnce(ctx context.Context, opts Options) error {
 	// A row whose sink delivery failed stays queued under a new revision.
 	for _, r := range batch {
 		var err error
-		if _, ok := retry[r.DocumentKey]; ok {
+		if _, ok := retry[identity(r.DocumentKey)]; ok {
 			_, err = tx.Exec(ctx, fmt.Sprintf(`UPDATE %s.content_search_dirty SET reason='sink_retry', updated_at=now() WHERE tenant_id=$1 AND content_kind=$2 AND content_id=$3 AND content_version_id=$4 AND language=$5 AND revision=$6`, qs),
 				r.TenantID, r.ContentKind, r.ContentID, r.Version(), r.Language, r.Revision)
 		} else {
@@ -152,7 +162,7 @@ type buildGroup struct{ kind, language string }
 
 // processDirtyOnce builds and publishes one batch of dirty rows and returns
 // the batch plus the keys whose sink delivery failed.
-func processDirtyOnce(ctx context.Context, tx pgx.Tx, qs string, cfg Options) ([]dirtyRow, map[search.DocumentKey]struct{}, error) {
+func processDirtyOnce(ctx context.Context, tx pgx.Tx, qs string, cfg Options) ([]dirtyRow, map[documentIdentity]struct{}, error) {
 	rows, err := tx.Query(ctx, fmt.Sprintf(`
 		SELECT content_kind, content_id, content_version_id, language, is_deleted, reason, revision
 		FROM %s.content_search_dirty
@@ -180,7 +190,7 @@ func processDirtyOnce(ctx context.Context, tx pgx.Tx, qs string, cfg Options) ([
 		return nil, nil, err
 	}
 	rows.Close()
-	retry := map[search.DocumentKey]struct{}{}
+	retry := map[documentIdentity]struct{}{}
 	if len(batch) == 0 {
 		return nil, retry, nil
 	}
@@ -195,7 +205,7 @@ func processDirtyOnce(ctx context.Context, tx pgx.Tx, qs string, cfg Options) ([
 			err = cfg.Sink.Upsert(ctx, search.PublishedDocument{KeywordDocument: doc, Version: revision})
 		}
 		if err != nil {
-			retry[doc.DocumentKey] = struct{}{}
+			retry[identity(doc.DocumentKey)] = struct{}{}
 		}
 	}
 
@@ -243,12 +253,12 @@ func processDirtyOnce(ctx context.Context, tx pgx.Tx, qs string, cfg Options) ([
 		if err != nil {
 			return nil, nil, err
 		}
-		byKey := make(map[search.DocumentKey]search.KeywordDocument, len(built))
+		byKey := make(map[documentIdentity]search.KeywordDocument, len(built))
 		for _, doc := range built {
 			if doc.TenantID != cfg.Tenant || doc.ContentKind != g.kind || doc.Language != g.language {
 				return nil, nil, fmt.Errorf("worker: builder returned %s/%s outside the requested %s/%s", doc.ContentRef, doc.Language, g.kind, g.language)
 			}
-			byKey[doc.DocumentKey] = doc
+			byKey[identity(doc.DocumentKey)] = doc
 		}
 		// Recheck generations after building. Changed or unsolicited keys are
 		// not published; their latest queue entry remains for the next tick.
@@ -267,7 +277,7 @@ func processDirtyOnce(ctx context.Context, tx pgx.Tx, qs string, cfg Options) ([
 			if !current {
 				continue
 			}
-			doc, ok := byKey[r.DocumentKey]
+			doc, ok := byKey[identity(r.DocumentKey)]
 			if !ok {
 				doc = search.KeywordDocument{DocumentKey: r.DocumentKey}
 			}

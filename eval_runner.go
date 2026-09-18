@@ -8,7 +8,7 @@ import (
 
 // NewEvalRunner adapts a Client to eval.CaseRunner so a golden suite can be
 // executed against real search. The base options carry cross-case settings
-// (LanguageMode, Semantic, RRFK, filters); each case overrides Language,
+// (LanguageMode and filters); each case overrides Language,
 // ContentKinds, and Limit from its own definition.
 //
 // This adapter is the single seam where the client meets the dependency-free
