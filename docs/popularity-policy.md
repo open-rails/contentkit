@@ -17,7 +17,9 @@ once.
 | `Viewers` | distinct subjects with a view session (work level: a subject reading two versions counts once) |
 | `Views` | view sessions (checkpoints, retries and reordered deliveries of one event id are one session) |
 | `Completers` | subjects with a completed session (`SessionScorer`: >= 90% of the selected version covered) |
-| `ScoreSum` | summed session engagement scores |
+| `ScoreSum` | summed session engagement scores (raw public metric) |
+| `ViewerEngagementSum` | sum of each viewer's mean session score normalized to [0, 1], clamped per viewer |
+| `ReturningViewers` | subjects with more than one canonical view session inside the window |
 | `PositiveSubjects` / `NegativeSubjects` | subjects whose current feedback sums > 0 / < 0 |
 
 Windows are the literal `7d|30d|90d|365d|all` whole-UTC-day windows
@@ -52,16 +54,20 @@ constant (8 s per gallery page; 0 when the units are seconds).
 
 ```
 reach   = log10(1 + viewers)
-engage  = (score_sum/(100·views) · viewers + 0.40·10) / (viewers + 10)
+viewer_engagement_sum = sum_over_viewers(clamp(subject_score_sum/(100·subject_views), 0, 1))
+engage  = (viewer_engagement_sum + 0.40·10) / (viewers + 10)
 finish  = (completers + 0.30·10) / (viewers + 10)
 approve = (positive + 0.75·5) / (positive + negative + 5)
-revisit = min(1, (views − viewers) / (viewers + 10))
+revisit = returning_viewers / (viewers + 10)
 rank    = reach × (1 + 0.35·engage + 0.25·finish + 0.40·approve + 0.10·revisit)
 ```
 
 Each term lies in [0, 1], so quality multiplies reach by at most 2.1 and reach
-(distinct subjects) dominates. Sessions set the engagement *mean*; viewers set
-its *confidence*, so one subject's fifty re-reads are one observation. Priors are
+(distinct subjects) dominates. Engagement first averages sessions within each viewer, then gives each
+viewer one observation. Fifty re-reads can change that viewer's mean, but
+contribute at most one unit to the engagement sum and one returning-viewer
+count. For 100 viewers, one repeater can change quality by at most
+`0.35/110 + 0.10/110`, independent of their session count. Priors are
 pseudo-observations: with `ka = 5` one vote moves `approve` by at most 1/6 of
 its 0.40 weight (about 1% of a typical rank).
 
@@ -126,13 +132,17 @@ ignores votes, lets long works win on raw page counts and counts sessions as
 independent evidence. B shows the scorer fix alone fixes size but nothing else.
 D lets dislikes erase reach and a single vote moves the rank >5%; E cannot see
 re-reads; F's flat priors let one vote swing >5%. C is the only variant
-satisfying every judgment. `v1` scores, descending, identical to doujins #893:
+satisfying every original judgment. This prelaunch correction intentionally
+changes the old doujins #893 policy: its pooled session mean let one repeat
+viewer influence every viewer's engagement, and its session surplus could
+saturate the revisit bonus. Host score parity is not an acceptance gate.
+`v1` scores, descending:
 crowd_disliked 2.7036, short_full = long_full 2.3425, more_viewers 2.2094, liked
 2.1418, big_disliked 2.1125, one_like 2.0825, no_votes 2.0605, vote_changes
-2.0439, one_dislike 1.9943, mixed 1.9547, two_versions 1.9544, long_skimmed
+2.0439, one_dislike 1.9943, mixed 1.9547, two_versions 1.9472, long_skimmed
 1.8599, return_readers 1.8302, disliked 1.8164, once_readers = window_start =
 window_end 1.7782, ten_likes 1.6810, duplicate = single 1.6578, five_readers
-1.2788, repeat_reader 0.4967.
+1.2788, repeat_reader 0.4693.
 
 Also asserted: the two-version work has 13 viewers / 18 sessions with per-version
 counts and coverage against the selected version (es half-readers score 50, not
@@ -143,6 +153,20 @@ but before_window, `90d`/`365d`/`all` everything with before_window = window_sta
 database is invisible and ranks alone; taxonomy scores are the member sums
 through the `Catalog` and the signal plane holds no taxonomy rows; another policy
 name never reads v1's cache entry.
+
+## Adversarial viewer-volume qualification
+
+`TestIntegrationViewerWeightedQuality` records 100 zero-score viewers per
+work, then compares one viewer reaching 1,000 sessions against all 100 viewers
+returning once. The heavy viewer contributes `0.999` engagement units and one
+returning-viewer count, while the audience contributes 50 engagement units and
+100 returning-viewers. The test bounds the heavy viewer's score change, requires
+the audience-wide behavior to rank higher, and checks raw Views/ScoreSum stay
+1099/99900 and 200/10000 respectively. It also verifies negative legacy scores,
+feedback-only subjects, literal window exclusion, identical early/late scores,
+and ClickHouse/Go ranking parity against the real store. These metrics are
+computed at read time from existing per-subject daily numerators; no migration
+or re-ingestion is required.
 
 ## Host adoption
 
@@ -192,7 +216,7 @@ name never reads v1's cache entry.
 - `approve`'s prior 0.75 and the 8 s/page dwell constant are assumptions until
   live data exists; re-derive them as `v2`.
 - Sessions recorded under a legacy scorer carry scores in [−30, 100]; `engage`
-  clamps the mean to [0, 1].
+  clamps each viewer's mean to [0, 1].
 - `Recommend → PopularityFor` inside the hub still uses the default rank;
   recommendation-model work is separate.
 - Rollups keep numerators and denominators per subject per day, never a stored

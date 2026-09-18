@@ -2,16 +2,16 @@
 // signal plane's canonical window metrics (docs/popularity-policy.md).
 //
 //	reach   = log10(1 + viewers)
-//	engage  = (mean_session_score · viewers + e0·ke) / (viewers + ke)
+//	engage  = (viewer_engagement_sum + e0·ke) / (viewers + ke)
 //	finish  = (completers + f0·kf) / (viewers + kf)
 //	approve = (positive + a0·ka) / (positive + negative + ka)
-//	revisit = min(1, (views − viewers) / (viewers + kr))
+//	revisit = returning_viewers / (viewers + kr)
 //	rank    = reach × (1 + we·engage + wf·finish + wa·approve + wr·revisit)
 //
 // Every quality term lies in [0, 1], so reach (distinct subjects) dominates
-// and the multiplier is bounded by MaxQuality. Sessions set the engagement
-// mean, viewers its confidence: one subject's repeated sessions, checkpoints
-// and retries are one observation. Priors are pseudo-observations: one vote
+// and the multiplier is bounded by MaxQuality. Engagement averages sessions
+// within each viewer first; each viewer contributes at most one engagement
+// unit and one returning-viewer observation. Priors are pseudo-observations: one vote
 // moves approve by at most 1/(ka+1). Time only selects the window; no term
 // depends on when an observation happened inside it. The same formula runs in
 // ClickHouse (RankExpr, global top-N) and in Go (Score, candidate sets), and
@@ -132,12 +132,11 @@ func (p Policy) Score(m signal.ContentMetrics) float64 {
 	if views == 0 || viewers == 0 {
 		return 0
 	}
-	meanScore := math.Max(0, math.Min(1, float64(m.ScoreSum)/(100*views)))
-	engage := (meanScore*viewers + p.Priors.Engagement*p.Priors.EngagementWeight) / (viewers + p.Priors.EngagementWeight)
+	engage := (m.ViewerEngagementSum + p.Priors.Engagement*p.Priors.EngagementWeight) / (viewers + p.Priors.EngagementWeight)
 	finish := (float64(m.Completers) + p.Priors.Completion*p.Priors.CompletionWeight) / (viewers + p.Priors.CompletionWeight)
 	positive, negative := float64(m.PositiveSubjects), float64(m.NegativeSubjects)
 	approve := (positive + p.Priors.Approval*p.Priors.ApprovalWeight) / (positive + negative + p.Priors.ApprovalWeight)
-	revisit := math.Min(1, (views-viewers)/(viewers+p.Priors.RevisitWeight))
+	revisit := float64(m.ReturningViewers) / (viewers + p.Priors.RevisitWeight)
 	quality := 1 + p.Weights.Engagement*engage + p.Weights.Completion*finish + p.Weights.Approval*approve + p.Weights.Revisit*revisit
 	return math.Log10(1+viewers) * quality
 }
@@ -147,10 +146,10 @@ func (p Policy) Score(m signal.ContentMetrics) float64 {
 // literals; nothing user-controlled reaches it.
 func (p Policy) RankExpr() string {
 	return fmt.Sprintf(`log10(1 + toFloat64(viewers)) * (1
- + %s * ((greatest(0, least(1, toFloat64(score_sum) / (100 * toFloat64(views)))) * toFloat64(viewers) + %s) / (toFloat64(viewers) + %s))
+ + %s * ((toFloat64(viewer_engagement_sum) + %s) / (toFloat64(viewers) + %s))
  + %s * ((toFloat64(completers) + %s) / (toFloat64(viewers) + %s))
  + %s * ((toFloat64(positive_subjects) + %s) / (toFloat64(positive_subjects) + toFloat64(negative_subjects) + %s))
- + %s * least(1, (toFloat64(views) - toFloat64(viewers)) / (toFloat64(viewers) + %s)))`,
+ + %s * (toFloat64(returning_viewers) / (toFloat64(viewers) + %s)))`,
 		lit(p.Weights.Engagement), lit(p.Priors.Engagement*p.Priors.EngagementWeight), lit(p.Priors.EngagementWeight),
 		lit(p.Weights.Completion), lit(p.Priors.Completion*p.Priors.CompletionWeight), lit(p.Priors.CompletionWeight),
 		lit(p.Weights.Approval), lit(p.Priors.Approval*p.Priors.ApprovalWeight), lit(p.Priors.ApprovalWeight),

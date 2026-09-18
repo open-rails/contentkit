@@ -270,7 +270,7 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, s
 
 // metricColumns are the window metric aliases (also usable in RankExpr).
 const metricColumns = `viewers, user_viewers, anon_viewers, views, completions, completers, active_s,
- score_sum, events, value_sum, positive_subjects, negative_subjects, signal_counts`
+ score_sum, viewer_engagement_sum, returning_viewers, events, value_sum, positive_subjects, negative_subjects, signal_counts`
 
 // windowMetrics aggregates subject_content_daily rows matching filter over a
 // window: first per subject (so each subject counts once), then per content
@@ -288,6 +288,8 @@ func (st *Store) windowMetrics(tenant, filter string, filterArgs []any, win Wind
     toUInt64(countIf(s_completions > 0)) AS completers,
     toUInt64(sum(s_active)) AS active_s,
     toInt64(sum(s_score)) AS score_sum,
+    sum(if(s_views > 0, greatest(0., least(1., toFloat64(s_score) / (100. * greatest(toFloat64(s_views), 1.)))), 0.)) AS viewer_engagement_sum,
+    toUInt64(countIf(s_views > 1)) AS returning_viewers,
     toUInt64(sum(s_events)) AS events,
     toFloat64(sum(s_value)) AS value_sum,
     toUInt64(countIf(s_value > 0)) AS positive_subjects,
@@ -307,7 +309,7 @@ GROUP BY %[6]s`, st.db, filter, SubjectKindUser, SubjectKindAnon, st.notErased()
 
 func scanMetrics(rows driver.Rows, kind, id, version *string, m *ContentMetrics, extra ...any) error {
 	dest := []any{kind, id, version, &m.Viewers, &m.UserViewers, &m.AnonViewers, &m.Views, &m.Completions, &m.Completers,
-		&m.ActiveS, &m.ScoreSum, &m.Events, &m.ValueSum, &m.PositiveSubjects, &m.NegativeSubjects, &m.SignalCounts}
+		&m.ActiveS, &m.ScoreSum, &m.ViewerEngagementSum, &m.ReturningViewers, &m.Events, &m.ValueSum, &m.PositiveSubjects, &m.NegativeSubjects, &m.SignalCounts}
 	return rows.Scan(append(dest, extra...)...)
 }
 

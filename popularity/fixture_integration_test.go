@@ -62,7 +62,7 @@ var fxNames = map[string]string{
 	fxSingle: "single_delivery", fxEarly: "window_start", fxLate: "window_end", fxOutside: "before_window", fxVoteChanges: "vote_changes",
 }
 
-// expectedOrder is doujins #893's v1 ranking of the fixture, descending; a
+// expectedOrder is the viewer-weighted v1 ranking of the fixture; a
 // tier holds works with identical metrics that must score exactly equal.
 var expectedOrder = [][]string{
 	{fxCrowdDislike}, {fxShort, fxLongFull}, {fxMoreViewers}, {fxLiked}, {fxBigDisliked}, {fxOneLike}, {fxNoVotes},
@@ -70,12 +70,12 @@ var expectedOrder = [][]string{
 	{fxEarly, fxLate, fxOnce}, {fxTenLikes}, {fxDup, fxSingle}, {fxFive}, {fxRepeat},
 }
 
-// expectedScores are #893's documented v1 scores, two decimals.
+// expectedScores are the viewer-weighted v1 scores, two decimals.
 var expectedScores = map[string]float64{
 	fxCrowdDislike: 2.70, fxShort: 2.34, fxLongFull: 2.34, fxMoreViewers: 2.21, fxLiked: 2.14, fxBigDisliked: 2.11,
 	fxOneLike: 2.08, fxNoVotes: 2.06, fxOneDislike: 1.99, fxMixed: 1.95, fxMulti: 1.95, fxLongSkim: 1.86, fxReturn: 1.83,
 	fxDisliked: 1.82, fxEarly: 1.78, fxLate: 1.78, fxOnce: 1.78, fxTenLikes: 1.68, fxDup: 1.66, fxSingle: 1.66,
-	fxFive: 1.28, fxRepeat: 0.50,
+	fxFive: 1.28, fxRepeat: 0.47,
 }
 
 type fxCheckpoint struct {
@@ -405,7 +405,7 @@ func scoresByID(hits []popularity.Hit) map[string]float64 {
 // TestIntegrationPolicyFixture records the judged fixture through the real
 // hub into two ClickHouse databases (v1 session scorer and the legacy
 // scorer), ranks it under the corrected baseline and the policy variants, and
-// requires PolicyV1 to satisfy every judgment with doujins #893's ranking.
+// requires PolicyV1 to satisfy every judgment under viewer-weighted ranking.
 // The ClickHouse RankExpr and the Go formula must agree; public counts are
 // the raw metrics; windows are literal; a second tenant in the same database
 // never leaks; taxonomy popularity derives through the Catalog port; cache
@@ -461,7 +461,7 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 			t.Errorf("%s feedback: +%d -%d, want %v", fxNames[id], m.PositiveSubjects, m.NegativeSubjects, want)
 		}
 	}
-	if a, b := v1Metrics[fxDup], v1Metrics[fxSingle]; a.ScoreSum != b.ScoreSum || a.ActiveS != b.ActiveS || a.Events != b.Events {
+	if a, b := v1Metrics[fxDup], v1Metrics[fxSingle]; a.ScoreSum != b.ScoreSum || a.ActiveS != b.ActiveS || a.Events != b.Events || a.ViewerEngagementSum != b.ViewerEngagementSum || a.ReturningViewers != b.ReturningViewers {
 		t.Errorf("duplicate delivery changed metrics: %+v vs %+v", a, b)
 	}
 	// Feedback is the current preference per subject on the day it last
@@ -485,7 +485,7 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 	if es := versions[ref(fxMulti).WithVersion("v-es").Key()]; es.Viewers != 8 || es.Completers != 5 || es.ScoreSum != 5*100+3*50 {
 		t.Errorf("es version metrics: %+v", es)
 	}
-	if multi := v1Metrics[fxMulti]; multi.ScoreSum != 10*100+5*100+3*50 {
+	if multi := v1Metrics[fxMulti]; multi.ScoreSum != 10*100+5*100+3*50 || multi.ViewerEngagementSum != 11.5 || multi.ReturningViewers != 5 {
 		t.Errorf("work engagement across versions: %+v", multi)
 	}
 
@@ -570,7 +570,7 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 		t.Fatal("the baseline passes every judgment; the fixture no longer discriminates")
 	}
 
-	// The ranking is doujins #893's, tier by tier.
+	// The ranking is checked tier by tier independently of the former host policy.
 	var wantOrder []string
 	for _, tier := range expectedOrder {
 		for _, id := range tier[1:] {
@@ -583,11 +583,11 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 		wantOrder = append(wantOrder, tied...)
 	}
 	if got := strings.Join(ranked, ","); got != strings.Join(wantOrder, ",") {
-		t.Errorf("ranking differs from #893:\n got %v\nwant %v", ranked, wantOrder)
+		t.Errorf("ranking differs from judged order:\n got %v\nwant %v", ranked, wantOrder)
 	}
 	for id, want := range expectedScores {
 		if math.Round(chosen[id]*100)/100 != want {
-			t.Errorf("%s scores %.4f, #893 documents %.2f", fxNames[id], chosen[id], want)
+			t.Errorf("%s scores %.4f, judged fixture expects %.2f", fxNames[id], chosen[id], want)
 		}
 	}
 

@@ -62,7 +62,7 @@ func TestPolicyScoreIsBoundedByReach(t *testing.T) {
 	p := PolicyV1
 	for _, m := range []signal.ContentMetrics{
 		{Viewers: 1, Views: 1},
-		{Viewers: 50, Views: 500, Completers: 50, ScoreSum: 50000, PositiveSubjects: 50},
+		{Viewers: 50, Views: 500, Completers: 50, ScoreSum: 50000, ViewerEngagementSum: 50, ReturningViewers: 50, PositiveSubjects: 50},
 		{Viewers: 1000, Views: 1000, NegativeSubjects: 1000},
 		{Viewers: 3, Views: 3, ScoreSum: -90}, // legacy negative scores clamp
 	} {
@@ -80,7 +80,7 @@ func TestPolicyScoreIsBoundedByReach(t *testing.T) {
 func TestPolicyOneVoteCannotDominate(t *testing.T) {
 	t.Parallel()
 	p := PolicyV1
-	base := signal.ContentMetrics{Viewers: 20, Views: 20, Completers: 10, ScoreSum: 1600}
+	base := signal.ContentMetrics{Viewers: 20, Views: 20, Completers: 10, ScoreSum: 1600, ViewerEngagementSum: 16}
 	liked, disliked := base, base
 	liked.PositiveSubjects = 1
 	disliked.NegativeSubjects = 1
@@ -103,7 +103,7 @@ func TestPolicyOneVoteCannotDominate(t *testing.T) {
 // The documented no_votes fixture gallery: 20 readers, 8/10 pages, 80 s.
 func TestPolicyScoreMatchesDocumentedFormula(t *testing.T) {
 	t.Parallel()
-	m := signal.ContentMetrics{Viewers: 20, Views: 20, ScoreSum: 1600}
+	m := signal.ContentMetrics{Viewers: 20, Views: 20, ScoreSum: 1600, ViewerEngagementSum: 16}
 	engage := (0.8*20 + 0.40*10) / (20 + 10)
 	finish := (0 + 0.30*10) / (20 + 10)
 	approve := (0 + 0.75*5) / (0 + 0 + 5)
@@ -116,7 +116,7 @@ func TestPolicyScoreMatchesDocumentedFormula(t *testing.T) {
 func TestPolicyRankExprRendersLiterals(t *testing.T) {
 	t.Parallel()
 	expr := PolicyV1.RankExpr()
-	for _, col := range []string{"viewers", "views", "completers", "score_sum", "positive_subjects", "negative_subjects"} {
+	for _, col := range []string{"viewers", "completers", "viewer_engagement_sum", "returning_viewers", "positive_subjects", "negative_subjects"} {
 		if !strings.Contains(expr, col) {
 			t.Errorf("expression lacks %s", col)
 		}
@@ -229,4 +229,24 @@ func (fakeSource) Popular(context.Context, string, signal.PopularOptions) ([]sig
 }
 func (fakeSource) Metrics(context.Context, []signal.ContentRef, signal.Window) (map[signal.ContentKey]signal.ContentMetrics, error) {
 	return nil, nil
+}
+
+// Session volume cannot turn one viewer into evidence about the whole audience.
+func TestPolicyOneRepeaterHasOneViewerInfluence(t *testing.T) {
+	p := PolicyV1
+	baseline := signal.ContentMetrics{Viewers: 100, Views: 100}
+	heavy := baseline
+	heavy.Views, heavy.ScoreSum = 1099, 99900
+	heavy.ViewerEngagementSum, heavy.ReturningViewers = .999, 1
+	delta := p.Score(heavy) - p.Score(baseline)
+	bound := math.Log10(101) * (p.Weights.Engagement/(100+p.Priors.EngagementWeight) + p.Weights.Revisit/(100+p.Priors.RevisitWeight))
+	if delta <= 0 || delta > bound {
+		t.Fatalf("one repeater shifted rank by %g; maximum one-viewer bound %g", delta, bound)
+	}
+	audience := baseline
+	audience.Views, audience.ScoreSum = 200, 10000
+	audience.ViewerEngagementSum, audience.ReturningViewers = 50, 100
+	if p.Score(audience) <= p.Score(heavy) {
+		t.Fatalf("audience-wide repeat use must outrank one heavy viewer: audience=%g heavy=%g", p.Score(audience), p.Score(heavy))
+	}
 }
