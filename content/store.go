@@ -99,3 +99,10 @@ func refsIn(n int) string {
 	return "(content_kind, content_id, content_version_id) IN (SELECT * FROM unnest($" + strconv.Itoa(n) +
 		"::text[], $" + strconv.Itoa(n+1) + "::text[], $" + strconv.Itoa(n+2) + "::text[]))"
 }
+
+// beginMutation fixes the isolation required by the source-fence protocol.
+// After an advisory-lock wait, the fence query must see the eraser's committed
+// row, even when the host configured a repeatable-read session default.
+func (s *store) beginMutation(ctx context.Context) (pgx.Tx, error) {
+	return s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+}

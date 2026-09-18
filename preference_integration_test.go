@@ -258,11 +258,11 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 	if hist, err := rt.History(ctx, signal.Subject{UserID: "u3"}, signal.HistoryOptions{}); err != nil || len(hist) != 0 {
 		t.Fatalf("erased subject re-ingested: %+v err=%v", hist, err)
 	}
-	if rec := do(t, h, u3, "POST", "/gallery/42:en/dislike", nil); rec.Code != http.StatusOK {
+	if rec := do(t, h, u3, "POST", "/gallery/42:en/dislike", nil); rec.Code != http.StatusForbidden {
 		t.Fatalf("source write after erasure: %d", rec.Code)
 	}
-	if rep, err := rt.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0); err != nil || rep.Erased != 1 || rep.Acknowledged != 0 {
-		t.Fatalf("sweep after erasure = %+v err=%v, want the obligation purged, nothing ingested", rep, err)
+	if rep, err := rt.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0); err != nil || rep.Erased != 0 || rep.Acknowledged != 0 {
+		t.Fatalf("sweep after erasure = %+v err=%v, want no new obligation or ingestion", rep, err)
 	}
 	if hist, _ := rt.History(ctx, signal.Subject{UserID: "u3"}, signal.HistoryOptions{}); len(hist) != 0 {
 		t.Fatalf("erased subject re-ingested by the sweep: %+v", hist)

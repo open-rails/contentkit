@@ -171,21 +171,23 @@ signals, preference obligations and private-source/provider cleanup. A deliberat
 disabled signal plane is absent, not an unfinished erasure. Any configured-plane
 failure returns an error and an incomplete report; keep the local obligation pending.
 `rt.EmbeddedHub.EraseSubjects` remains analytics-only, and
-`rt.Content.ErasePrivateSubjects` is available to standalone content consumers.
-Private cleanup atomically commits permanent tenant/subject
-source fences, removes poll answers, and removes held/rejected private payloads
+`rt.Content.EraseSubjects` is available to standalone content consumers.
+Content cleanup atomically commits permanent tenant/subject
+source fences, removes authenticated interactions and poll answers, and removes held/rejected private payloads
 and moderation metadata. A never-published item becomes a tombstone; its row
 and replies are preserved. An item with a previous approved payload retains that
 payload without republishing it. Current approved authored content is untouched
 and remains under host retention policy. Provider cleanup runs after SQL commit;
 an error leaves the host's downstream obligation pending and safe to retry.
 
-This is a scoped erasure API, not an account wipe. It removes signal records,
-preference snapshots/archives and new C4 private data. Existing authoritative
-`social_reactions` and `social_favorites` rows, poll votes, and currently approved
-authored content remain under the host's separate account-retention/deletion policy.
-A complete runtime report covers only these configured erasure planes.
-This API intentionally does not redefine that account policy. The source fence and approved payload snapshots are durable user state;
+ContentKit owns removal of authenticated `social_reactions`, `social_favorites`,
+multiple-choice poll votes/answers and preference snapshots/archives. Source
+removal and exact counter decrements commit atomically under the permanent
+subject fence. Anonymous IP interactions, other tenants/subjects and currently
+approved authored content are preserved. Published authored-content retention
+remains the host's separate policy; this operation does not delete structural
+parents or other authors' replies.
+The source fence and approved payload snapshots are durable user state;
 restore must preserve/reapply fences before accepting writes. Provider erasure
 must independently maintain the same permanent-fence semantics across restore.
 
@@ -444,3 +446,28 @@ provider's production persistence or deletion guarantees. Each retaining adapter
 must prove durable deletion/fencing across its own restarts and backups before
 host downstream erasure can be marked complete. Soft-deleting a poll hides it and
 stops new pending-classification scans; it is not an external-provider erasure.
+
+### Interaction erasure and recovery
+
+Use the unified `rt.EraseSubjects` for account interaction erasure; standalone
+content consumers use `rt.Content.EraseSubjects`. Every live reaction, favorite,
+comment/post reaction and poll-vote writer takes the subject fence before other
+source locks. Erasure locks affected content rows and applies rollup deltas in
+deterministic key order using only rows actually deleted. Repeated calls are
+idempotent and never synthesize missing rollup or option rows.
+
+The existing permanent subject-fence table is retained (no new table). A restore
+must restore/reapply fences and replay the durable host deletion ledger through
+EraseSubjects before traffic resumes. Restored preference snapshots of fenced
+subjects are excluded from pending/full replay, and initial preference cutover
+refuses restored positive source rows for fenced subjects until that cleanup is
+replayed. Pause all source writers, including deletion, during initial cutover.
+
+Draft and future-scheduled posts are private even when their moderation verdict
+is approved. Content erasure redacts their title/body/excerpt and moderation
+provenance, retaining only a previously approved published payload if present.
+Their structural rows remain tombstones. Externally stored media/bucket object
+retention remains an explicit host/provider policy, not an implicit object delete.
+Guarded mutations and erasure use explicit READ COMMITTED transactions so a
+writer waiting for the subject lock observes the committed permanent fence even
+when its host connection default is REPEATABLE READ.

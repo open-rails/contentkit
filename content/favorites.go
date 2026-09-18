@@ -35,11 +35,14 @@ func (f *favorites) add(ctx context.Context, actor Actor, kind, id string) (*Pre
 		return nil, err
 	}
 	storage, key, exportable := f.rt.preferences.target(actor, ref, PreferenceAxisFavorite)
-	tx, err := f.s.pool.Begin(ctx)
+	tx, err := f.s.beginMutation(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	if err := f.rt.guardPrivateSubject(ctx, tx, viewerID(actor)); err != nil {
+		return nil, err
+	}
 	snap, err := f.rt.preferences.mutate(ctx, tx, key, exportable, 1, func() (bool, error) {
 		tag, err := tx.Exec(ctx, `INSERT INTO `+f.s.t.favorites+` (`+keyCols+`, user_id) VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (tenant_id, user_id, content_kind, content_id, content_version_id) DO NOTHING`,
@@ -60,11 +63,14 @@ func (f *favorites) add(ctx context.Context, actor Actor, kind, id string) (*Pre
 // hidden must still work.
 func (f *favorites) remove(ctx context.Context, actor Actor, kind, id string) (*PreferenceSnapshot, error) {
 	storage, key, exportable := f.rt.preferences.target(actor, f.rt.canonical(ctx, kind, id, actor), PreferenceAxisFavorite)
-	tx, err := f.s.pool.Begin(ctx)
+	tx, err := f.s.beginMutation(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	if err := f.rt.guardPrivateSubject(ctx, tx, viewerID(actor)); err != nil {
+		return nil, err
+	}
 	snap, err := f.rt.preferences.mutate(ctx, tx, key, exportable, 0, func() (bool, error) {
 		tag, err := tx.Exec(ctx, `DELETE FROM `+f.s.t.favorites+` WHERE `+keyPred(1)+` AND user_id = $5`, append(keyArgs(storage.Key()), actor.ID)...)
 		if err != nil || tag.RowsAffected() != 1 {

@@ -108,15 +108,15 @@ func (r *Runtime) ReplayPreferences(ctx context.Context, after content.Preferenc
 
 // EraseSubjects erases every configured runtime plane: signals, preference
 // obligations, and C4 private-source/provider data. Current approved authored
-// content remains under host retention policy (content.ErasePrivateSubjects).
-// This is not an account wipe: authoritative social_reactions/social_favorites
-// and poll votes remain under the host's separate retention/deletion policy.
+// content remains under host retention policy (content.EraseSubjects).
+// ContentKit-owned reactions, favorites, poll votes, preference obligations
+// and private submissions are removed atomically behind the source fence.
 // EmbeddedHub.EraseSubjects is the explicit analytics-only lower-level API.
 //
 // AuthKit ACK means durable acceptance by the host's deletion ledger, not this
 // downstream completion. Retry while error != nil or !report.Complete(). A
 // disabled signal plane is intentionally absent. Remaining may include pending
-// plane markers private_content, signal_plane or preference_obligations when a
+// plane markers content_plane or signal_plane when a
 // plane could not complete; these are not estimates of retained provider rows.
 func (r *Runtime) EraseSubjects(ctx context.Context, subjects []signal.Subject) (signal.ErasureReport, error) {
 	invalid := signal.ErasureReport{Remaining: map[string]uint64{"invalid_subjects": 1}}
@@ -141,19 +141,12 @@ func (r *Runtime) EraseSubjects(ctx context.Context, subjects []signal.Subject) 
 			actors = append(actors, s.Key())
 		}
 	}
-	var preferenceErr error
-	if signalErr == nil {
-		_, preferenceErr = r.Content.PurgePreferenceSubjects(ctx, actors)
-	}
-	privateErr := r.Content.ErasePrivateSubjects(ctx, actors)
+	privateErr := r.Content.EraseSubjects(ctx, actors)
 	if signalErr != nil {
 		report.Remaining["signal_plane"] = 1
 	}
-	if preferenceErr != nil {
-		report.Remaining["preference_obligations"] = 1
-	}
 	if privateErr != nil {
-		report.Remaining["private_content"] = 1
+		report.Remaining["content_plane"] = 1
 	}
-	return report, errors.Join(signalErr, preferenceErr, privateErr)
+	return report, errors.Join(signalErr, privateErr)
 }

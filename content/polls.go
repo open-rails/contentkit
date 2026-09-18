@@ -138,7 +138,7 @@ func (p *polls) create(ctx context.Context, actor Actor, in createPollInput) (po
 		}
 	}
 
-	tx, err := p.s.pool.Begin(ctx)
+	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
 		return pollView{}, err
 	}
@@ -490,11 +490,14 @@ func (p *polls) vote(ctx context.Context, actor Actor, pollID, optionID string) 
 		return pollView{}, badRequest("cannot identify voter (no user id or ip)")
 	}
 
-	tx, err := p.s.pool.Begin(ctx)
+	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
 		return pollView{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := p.rt.guardPrivateSubject(ctx, tx, viewerID(actor)); err != nil {
+		return pollView{}, err
+	}
 
 	if err := p.open(ctx, tx, pollID, PollMultipleChoice); err != nil {
 		return pollView{}, err
@@ -576,7 +579,7 @@ func (p *polls) answer(ctx context.Context, actor Actor, pollID, text string) (p
 	if utf8.RuneCountInString(text) > maxAnswerLen {
 		return pollView{}, badRequest("text exceeds %d characters", maxAnswerLen)
 	}
-	tx, err := p.s.pool.Begin(ctx)
+	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
 		return pollView{}, err
 	}

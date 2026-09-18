@@ -196,7 +196,7 @@ func (p *posts) handleCreate(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	tx, err := p.s.pool.Begin(ctx)
+	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -307,7 +307,7 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	tx, err := p.s.pool.Begin(ctx)
+	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -323,7 +323,7 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		excerpt = COALESCE($4, excerpt), slug = COALESCE($5, slug),
 		language = COALESCE($6, language), cover_url = COALESCE($7, cover_url),
 		is_draft = $8, live_at = COALESCE($9, live_at),
-		published_content = CASE WHEN $11='approved' THEN NULL WHEN moderation='approved' AND NOT is_draft THEN jsonb_build_object('title',title,'body',body,'excerpt',excerpt) ELSE published_content END, moderation_revision = moderation_revision + 1, moderated_by = NULL, moderated_at = NULL, moderation = $11, moderation_reason = $12, moderation_verdict = $13,
+		published_content = CASE WHEN $11='approved' THEN NULL WHEN moderation='approved' AND NOT is_draft AND (live_at IS NULL OR live_at <= clock_timestamp()) THEN jsonb_build_object('title',title,'body',body,'excerpt',excerpt) ELSE published_content END, moderation_revision = moderation_revision + 1, moderated_by = NULL, moderated_at = NULL, moderation = $11, moderation_reason = $12, moderation_verdict = $13,
 		updated_at = now()
 		WHERE id = $1 AND tenant_id = $10 AND deleted_at IS NULL AND moderation_revision=$14 RETURNING language`,
 		id, curTitle, curBody, excerpt, in.Slug, in.Language, in.CoverURL, curDraft, in.LiveAt, p.s.tenant, sc.state, sc.reason, sc.meta, revision).Scan(&after); err != nil {
@@ -367,7 +367,7 @@ func (p *posts) handleDelete(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	id := req.PathValue("id")
-	tx, err := p.s.pool.Begin(ctx)
+	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -470,11 +470,14 @@ func (p *posts) handleReact(value int16) http.HandlerFunc {
 // (no host gate): it verifies the post is published inside the tx, reuses
 // reactions.applyTx and bumps the split counter by the exact returned deltas.
 func (p *posts) react(ctx context.Context, actor Actor, id string, value int16) error {
-	tx, err := p.s.pool.Begin(ctx)
+	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := p.rt.guardPrivateSubject(ctx, tx, viewerID(actor)); err != nil {
+		return err
+	}
 	if err := p.requirePublished(ctx, tx, id); err != nil {
 		return err
 	}
@@ -510,7 +513,7 @@ func (p *posts) requirePublished(ctx context.Context, q querier, id string) erro
 	var ok bool
 	err := q.QueryRow(ctx, `SELECT true FROM `+p.s.t.posts+`
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND is_draft = false AND moderation = 'approved'
-		AND (live_at IS NULL OR live_at <= now())`, id, p.s.tenant).Scan(&ok)
+		AND (live_at IS NULL OR live_at <= now()) FOR UPDATE`, id, p.s.tenant).Scan(&ok)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}

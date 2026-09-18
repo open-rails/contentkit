@@ -56,8 +56,9 @@ func (rt *Runtime) privateFences() string {
 	return pgx.Identifier{rt.schema, "content_private_subject_erasures"}.Sanitize()
 }
 
-// ErasePrivateSubjects fences future private submissions, removes poll answers,
-// and removes private held/rejected payloads and moderation provenance. A
+// EraseSubjects fences future authenticated content writes, removes reactions,
+// favorites, poll votes/answers and preference snapshots/archives atomically,
+// and removes private held/rejected/draft/scheduled payloads and moderation provenance. A
 // previously published item retains its last approved payload without publishing
 // it again; its private replacement is erased. Never-published items become
 // tombstones. Published content and reply structure stay under host policy.
@@ -68,7 +69,7 @@ func (rt *Runtime) privateFences() string {
 // do not delay that acknowledgement until this method or remote cleanup succeeds.
 // Nil PrivateDataEraser means configured policy ports retain no external personal
 // data. Retaining providers must configure an eraser, including while offline.
-func (rt *Runtime) ErasePrivateSubjects(ctx context.Context, actorIDs []string) error {
+func (rt *Runtime) EraseSubjects(ctx context.Context, actorIDs []string) error {
 	ids := append([]string(nil), actorIDs...)
 	sort.Strings(ids)
 	compact := ids[:0]
@@ -84,7 +85,7 @@ func (rt *Runtime) ErasePrivateSubjects(ctx context.Context, actorIDs []string) 
 	if len(ids) == 0 {
 		return nil
 	}
-	tx, err := rt.store.pool.Begin(ctx)
+	tx, err := rt.store.beginMutation(ctx)
 	if err != nil {
 		return err
 	}
@@ -97,6 +98,9 @@ func (rt *Runtime) ErasePrivateSubjects(ctx context.Context, actorIDs []string) 
 			return err
 		}
 	}
+	if err := rt.eraseInteractions(ctx, tx, ids); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `DELETE FROM `+rt.store.t.pollAnswers+` WHERE tenant_id=$1 AND actor_id=ANY($2)`, rt.tenant, ids); err != nil {
 		return err
 	}
@@ -105,7 +109,7 @@ func (rt *Runtime) ErasePrivateSubjects(ctx context.Context, actorIDs []string) 
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE `+rt.store.t.posts+` SET title=coalesce(published_content->>'title',''), body=coalesce(published_content->>'body',''), excerpt=published_content->>'excerpt', author_id=CASE WHEN published_content IS NOT NULL THEN author_id ELSE '' END, moderation='rejected', moderation_reason=NULL, moderation_verdict=NULL, moderated_by=NULL, moderated_at=NULL, deleted_at=CASE WHEN published_content IS NOT NULL THEN deleted_at ELSE coalesce(deleted_at,clock_timestamp()) END, moderation_revision=moderation_revision+1, updated_at=clock_timestamp()
- WHERE tenant_id=$1 AND author_id=ANY($2) AND moderation IN ('held','rejected')`, rt.tenant, ids); err != nil {
+ WHERE tenant_id=$1 AND author_id=ANY($2) AND (moderation IN ('held','rejected') OR is_draft OR live_at > clock_timestamp())`, rt.tenant, ids); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {

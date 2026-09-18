@@ -222,8 +222,8 @@ func (p *preferences) scan(ctx context.Context, after PreferenceKey, limit int, 
 	if pendingOnly {
 		pred = ` AND delivered_revision < revision`
 	}
-	rows, err := p.s.pool.Query(ctx, `SELECT `+preferenceCols+` FROM `+p.s.t.preferenceSnapshots+`
-		WHERE tenant_id = $1 AND (actor_id, content_kind, content_id, content_version_id, axis) > ($2, $3, $4, $5, $6)`+pred+`
+	rows, err := p.s.pool.Query(ctx, `SELECT `+preferenceCols+` FROM `+p.s.t.preferenceSnapshots+` AS snapshot
+		WHERE NOT EXISTS (SELECT 1 FROM `+p.rt.privateFences()+` f WHERE f.tenant_id=snapshot.tenant_id AND f.actor_id=snapshot.actor_id) AND tenant_id = $1 AND (actor_id, content_kind, content_id, content_version_id, axis) > ($2, $3, $4, $5, $6)`+pred+`
 		ORDER BY actor_id, content_kind, content_id, content_version_id, axis
 		LIMIT $7`, p.s.tenant, after.ActorID, after.ContentKind, after.ContentID, after.ContentVersionID, after.Axis, limit)
 	if err != nil {
@@ -390,6 +390,19 @@ func (rt *Runtime) MigratePreferences(ctx context.Context, opts PreferenceMigrat
 		return report, err
 	}
 	defer tx.Rollback(ctx)
+	// Cutover/restore runs with ALL source writers (including erasure) paused.
+	// Reject restored source rows for fenced accounts before archiving or reseeding;
+	// the host must replay accepted erasures before resuming cutover/traffic.
+	var erasedSource bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (
+ SELECT 1 FROM `+rt.privateFences()+` f WHERE f.tenant_id=$1 AND (
+ EXISTS (SELECT 1 FROM `+rt.store.t.reactions+` r WHERE r.tenant_id=f.tenant_id AND r.user_id=f.actor_id)
+ OR EXISTS (SELECT 1 FROM `+rt.store.t.favorites+` v WHERE v.tenant_id=f.tenant_id AND v.user_id=f.actor_id)))`, rt.tenant).Scan(&erasedSource); err != nil {
+		return report, err
+	}
+	if erasedSource {
+		return report, ErrSubjectErased
+	}
 	for _, axis := range []string{PreferenceAxisReaction, PreferenceAxisFavorite} {
 		if err := rt.preferences.migrateAxis(ctx, tx, &report, axis); err != nil {
 			return report, err
@@ -651,6 +664,12 @@ func (p *preferences) tombstoneExported(ctx context.Context, tx pgx.Tx, report *
 		}
 		if k.Axis != PreferenceAxisReaction && k.Axis != PreferenceAxisFavorite {
 			return fmt.Errorf("content: exported key %+v has no known axis", k)
+		}
+		if err := p.rt.privateSubjectAllowed(ctx, tx, k.ActorID); err != nil {
+			if errors.Is(err, ErrSubjectErased) {
+				continue
+			}
+			return err
 		}
 		tag, err := tx.Exec(ctx, `INSERT INTO `+p.s.t.preferenceSnapshots+`
 			(tenant_id, actor_id, content_kind, content_id, content_version_id, axis, value, revision, occurred_at)

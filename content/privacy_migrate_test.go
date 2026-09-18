@@ -33,7 +33,7 @@ func TestPrivateMigrationPreservesLegacyPublishedContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.ErasePrivateSubjects(ctx, []string{"u1"}); err != nil {
+	if err := rt.EraseSubjects(ctx, []string{"u1"}); err != nil {
 		t.Fatal(err)
 	}
 	var body, user string
