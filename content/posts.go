@@ -202,6 +202,10 @@ func (p *posts) handleCreate(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
+	if err := p.rt.guardPrivateSubject(ctx, tx, viewerID(actor)); err != nil {
+		writeErr(w, err)
+		return
+	}
 	var language string
 	err = tx.QueryRow(ctx, `INSERT INTO `+p.s.t.posts+`
 		(id, tenant_id, author_id, title, slug, body, excerpt, cover_url, language, is_draft, live_at, moderation, moderation_reason, moderation_verdict)
@@ -275,6 +279,18 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
+	var subject string
+	if err := tx.QueryRow(ctx, `SELECT author_id FROM `+p.s.t.posts+` WHERE id=$1 AND tenant_id=$2 AND deleted_at IS NULL`, id, p.s.tenant).Scan(&subject); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = ErrNotFound
+		}
+		writeErr(w, err)
+		return
+	}
+	if err := p.rt.guardPrivateSubject(ctx, tx, subject); err != nil {
+		writeErr(w, err)
+		return
+	}
 	// Lock the row and screen the merged text under the lock, so the stored
 	// state always belongs to the stored text.
 	var before, curTitle, curBody string
@@ -300,7 +316,10 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 	if in.IsDraft != nil {
 		curDraft = *in.IsDraft
 	}
-	sc, err := p.screen(ctx, actor, id, curTitle, curBody, curDraft)
+	sc := screening{state: ModerationApproved}
+	if !curDraft {
+		sc, err = p.rt.screen(ctx, ModerationInput{SubjectID: subject, Actor: actor, Ref: p.rt.Ref(KindPost, id), Kind: KindPost, ItemID: id, Title: curTitle, Text: curBody})
+	}
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -311,7 +330,7 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		excerpt = COALESCE($4, excerpt), slug = COALESCE($5, slug),
 		language = COALESCE($6, language), cover_url = COALESCE($7, cover_url),
 		is_draft = $8, live_at = COALESCE($9, live_at),
-		moderation_revision = moderation_revision + 1, moderated_by = NULL, moderated_at = NULL, moderation = $11, moderation_reason = $12, moderation_verdict = $13,
+		published_content = CASE WHEN $11='approved' THEN NULL WHEN moderation='approved' AND NOT is_draft THEN jsonb_build_object('title',title,'body',body,'excerpt',excerpt) ELSE published_content END, moderation_revision = moderation_revision + 1, moderated_by = NULL, moderated_at = NULL, moderation = $11, moderation_reason = $12, moderation_verdict = $13,
 		updated_at = now()
 		WHERE id = $1 AND tenant_id = $10 RETURNING language`,
 		id, curTitle, curBody, excerpt, in.Slug, in.Language, in.CoverURL, curDraft, in.LiveAt, p.s.tenant, sc.state, sc.reason, sc.meta).Scan(&after); err != nil {

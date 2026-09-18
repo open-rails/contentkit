@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -69,10 +68,9 @@ type pollView struct {
 	Voted      bool         `json:"voted"`
 	MyOption   string       `json:"my_option,omitempty"`
 	// free_text only
-	AnswerCount       int         `json:"answer_count,omitempty"`
-	Groups            []Group     `json:"groups,omitempty"`
-	GroupsUnavailable bool        `json:"groups_unavailable,omitempty"` // the classifier failed to read groups
-	MyAnswer          *pollAnswer `json:"my_answer,omitempty"`
+	AnswerCount int         `json:"answer_count,omitempty"`
+	Groups      []Group     `json:"groups,omitempty"`
+	MyAnswer    *pollAnswer `json:"my_answer,omitempty"`
 }
 
 type createPollInput struct {
@@ -371,35 +369,7 @@ func (p *polls) attach(ctx context.Context, actor Actor, views []pollView) error
 			return err
 		}
 		views[i].Groups = groups
-		if p.rt.classifier == nil {
-			views[i].GroupsUnavailable = true
-			continue
-		}
-		metadata, err := p.rt.classifier.Groups(ctx, p.s.tenant, views[i].ID)
-		if err != nil {
-			p.rt.log.Warn("answer classifier groups failed", "poll", views[i].ID, "err", err.Error())
-			views[i].GroupsUnavailable = true
-			continue
-		}
-		labels := map[string]string{}
-		for _, g := range metadata {
-			labels[g.ID] = g.Label
-		}
-		for j := range groups {
-			if label := labels[groups[j].ID]; label != "" {
-				groups[j].Label = label
-			}
-		}
-		sort.Slice(groups, func(a, b int) bool {
-			if groups[a].Count != groups[b].Count {
-				return groups[a].Count > groups[b].Count
-			}
-			if groups[a].Label != groups[b].Label {
-				return groups[a].Label < groups[b].Label
-			}
-			return groups[a].ID < groups[b].ID
-		})
-		views[i].Groups = orEmpty(groups)
+
 	}
 	return nil
 }
@@ -611,6 +581,9 @@ func (p *polls) answer(ctx context.Context, actor Actor, pollID, text string) (p
 		return pollView{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := p.rt.guardPrivateSubject(ctx, tx, actor.ID); err != nil {
+		return pollView{}, err
+	}
 	if err := p.open(ctx, tx, pollID, PollFreeText); err != nil {
 		return pollView{}, err
 	}
@@ -634,7 +607,7 @@ func (p *polls) answer(ctx context.Context, actor Actor, pollID, text string) (p
 	}
 	if pending {
 		if _, err := p.classify(ctx, a); err != nil {
-			p.rt.log.Warn("answer classifier failed; answer kept unclassified", "poll", pollID, "answer", a.AnswerID, "err", err.Error())
+			p.rt.log.Warn("answer classifier failed; answer kept unclassified", "poll", pollID, "answer", a.AnswerID)
 		}
 	}
 	return p.get(ctx, actor, pollID)
@@ -645,6 +618,9 @@ func (p *polls) answer(ctx context.Context, actor Actor, pollID, text string) (p
 func (p *polls) classify(ctx context.Context, a Answer) (bool, error) {
 	if p.rt.classifier == nil {
 		return false, ErrNoClassifier
+	}
+	if err := p.rt.privateSubjectAllowed(ctx, p.s.pool, a.SubjectID); err != nil {
+		return false, err
 	}
 	g, err := p.rt.classifier.Classify(ctx, a)
 	if err != nil {

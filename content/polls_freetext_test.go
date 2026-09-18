@@ -16,10 +16,9 @@ import (
 // per (tenant, question), like a real classifier that may re-cluster. failN
 // makes the next N Classify calls fail.
 type fakeClassifier struct {
-	mu         sync.Mutex
-	failN      int
-	assigned   map[string]map[string]string // tenant|question -> answer id -> group id
-	groupCalls []string                     // "tenant|question" per Groups call
+	mu       sync.Mutex
+	failN    int
+	assigned map[string]map[string]string // tenant|question -> answer id -> group id
 }
 
 func (c *fakeClassifier) Classify(_ context.Context, a Answer) (GroupAssignment, error) {
@@ -39,22 +38,6 @@ func (c *fakeClassifier) Classify(_ context.Context, a Answer) (GroupAssignment,
 	}
 	c.assigned[k][a.AnswerID] = word
 	return GroupAssignment{GroupID: word, Label: strings.ToUpper(word[:1]) + word[1:]}, nil
-}
-
-func (c *fakeClassifier) Groups(_ context.Context, tenant, questionID string) ([]Group, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	k := tenant + "|" + questionID
-	c.groupCalls = append(c.groupCalls, k)
-	counts := map[string]int{}
-	for _, g := range c.assigned[k] {
-		counts[g]++
-	}
-	var out []Group
-	for id, n := range counts { // map order: ContentKit must sort
-		out = append(out, Group{ID: id, Label: strings.ToUpper(id[:1]) + id[1:], Count: n})
-	}
-	return out, nil
 }
 
 func freeTextPoll() createPollInput {
@@ -200,7 +183,7 @@ func TestPolls_FreeTextResultsDeterministic(t *testing.T) {
 			t.Fatal(err)
 		}
 		got, _ := json.Marshal(v.Groups)
-		if string(got) != want || v.AnswerCount != 5 || v.MyAnswer == nil || v.MyAnswer.Text != "cats rule" || v.GroupsUnavailable {
+		if string(got) != want || v.AnswerCount != 5 || v.MyAnswer == nil || v.MyAnswer.Text != "cats rule" {
 			t.Fatalf("results #%d = %s (count %d, mine %+v), want %s", i, got, v.AnswerCount, v.MyAnswer, want)
 		}
 	}
@@ -288,9 +271,11 @@ func TestPolls_FreeTextTenantIsolation(t *testing.T) {
 	if v.AnswerCount != 1 || v.MyAnswer == nil || len(v.Groups) != 1 {
 		t.Fatalf("tenant a view = %+v", v)
 	}
-	for _, call := range cl.groupCalls {
+	for call := range cl.assigned {
 		if !strings.HasPrefix(call, "site_a|") {
 			t.Fatalf("classifier asked for groups of %q", call)
 		}
 	}
 }
+
+func (*fakeClassifier) StatelessPolicy() {}

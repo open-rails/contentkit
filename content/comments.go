@@ -104,6 +104,9 @@ func (c *comments) create(ctx context.Context, actor Actor, kind, id string, in 
 		return Comment{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := c.rt.guardPrivateSubject(ctx, tx, viewerID(actor)); err != nil {
+		return Comment{}, err
+	}
 
 	var replyTo any
 	if in.ReplyToID != "" {
@@ -518,7 +521,7 @@ func (c *comments) edit(ctx context.Context, actor Actor, cid, rawBody string) (
 	if err != nil {
 		return Comment{}, err
 	}
-	sc, err := c.rt.screen(ctx, ModerationInput{Actor: actor, Ref: target.ref, Kind: KindComment, ItemID: cid, Text: clean})
+	sc, err := c.rt.screen(ctx, ModerationInput{SubjectID: deref(target.ownerID), Actor: actor, Ref: target.ref, Kind: KindComment, ItemID: cid, Text: clean})
 	if err != nil {
 		return Comment{}, err
 	}
@@ -527,6 +530,9 @@ func (c *comments) edit(ctx context.Context, actor Actor, cid, rawBody string) (
 		return Comment{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := c.rt.guardPrivateSubject(ctx, tx, deref(target.ownerID)); err != nil {
+		return Comment{}, err
+	}
 	var before string
 	var k contentref.ContentKey
 	err = tx.QueryRow(ctx, `SELECT moderation, `+keyCols+` FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL FOR UPDATE`, cid, c.s.tenant).
@@ -539,7 +545,7 @@ func (c *comments) edit(ctx context.Context, actor Actor, cid, rawBody string) (
 	}
 	var cm Comment
 	replyTo, userID, anonName, _, err := scanComment(tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+`
-		SET body = $2, moderation_revision = moderation_revision + 1, moderated_by = NULL, moderated_at = NULL, moderation = $3, moderation_reason = $4, moderation_verdict = $5, updated_at = now()
+		SET published_body = CASE WHEN $3='approved' THEN NULL WHEN moderation='approved' THEN body ELSE published_body END, body = $2, moderation_revision = moderation_revision + 1, moderated_by = NULL, moderated_at = NULL, moderation = $3, moderation_reason = $4, moderation_verdict = $5, updated_at = now()
 		WHERE id = $1 RETURNING `+commentCols, cid, clean, sc.state, sc.reason, sc.meta), &cm)
 	if err != nil {
 		return Comment{}, err

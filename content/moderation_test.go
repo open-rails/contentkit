@@ -303,7 +303,7 @@ func TestModeration_FailClosed(t *testing.T) {
 		t.Fatal("unscreened comment was published")
 	}
 	page, _ := rt.ListHeld(ctx, KindComment, "", 10)
-	if len(page.Items) != 1 || page.Items[0].Error != "model provider down" || page.Items[0].Model != "" {
+	if len(page.Items) != 1 || page.Items[0].Error != "moderator unavailable" || page.Items[0].Model != "" {
 		t.Fatalf("held item after failure = %+v", page.Items)
 	}
 	if err := rt.Resolve(ctx, KindComment, cm.ID, ReviewDecision{Revision: 1, Decision: DecisionApprove, Reviewer: "reviewer"}); err != nil {
@@ -620,3 +620,5 @@ func TestModeration_TenantIsolation(t *testing.T) {
 		t.Fatalf("tenant a's queue = %v", ids)
 	}
 }
+
+func (*fakeModerator) StatelessPolicy() {}

@@ -151,3 +151,21 @@ predate the canonical schema and are covered by the same checksum discipline.
 ## Restore
 
 See [restore.md](restore.md) for snapshots taken before these migrations.
+
+## C4 private-content state (social 0005)
+
+C4 is an unreleased prelaunch hard cut. One complete 0005 adds moderation state,
+reason/provenance/reviewer fields, source moderation revisions, retained last
+approved comment body/post payload, poll kind/close time, `social_poll_answers`
+(with answer revision and accepted group id/label), and
+`content_private_subject_erasures(tenant_id, actor_id, erased_at)`. For a held/rejected replacement, NULL retained payload means there was no
+approved predecessor. Approved items store their content once in the existing
+body; only approval-to-hold captures a backup, and approval clears it. There is
+no duplicate publication flag and no full-copy backfill of existing content. Existing social
+migrations 0001–0004 are unchanged. Scratch databases from experimental C4 drafts
+must be rebuilt; those drafts were never a supported released lineage.
+
+The host deletion ledger owns retries and completion across source/provider
+cleanup. AuthKit ACK means durable local acceptance, not completed downstream
+erasure. Back up permanent source fences and retained publication state; replay
+post-backup deletions before reopening private writes after recovery.

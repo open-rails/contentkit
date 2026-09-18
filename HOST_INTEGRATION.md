@@ -52,7 +52,7 @@ Ports (all in `content`):
 | `MediaStore` / `Storage` | no | poll/post images; `Storage` is the built-in public-bucket S3 store |
 | `ContentProcessor` | no | rich-text sanitizer for comment/post bodies (default strips tags) |
 | `ContentModerator` | no | `Screen(ModerationInput) → Verdict{Decision, Reason, Model, PromptVersion, Confidence}` before a comment/post publishes; absent = publish (see Moderation) |
-| `AnswerClassifier` | no | `Classify(Answer) → GroupAssignment` when a free-text poll answer is stored, `Groups(tenant, poll)` when results are read; absent = free-text polls are refused (see Free-text polls) |
+| `AnswerClassifier` | no | `Classify(Answer) → GroupAssignment` when a free-text answer revision is stored; results are source-owned; absent = free-text polls are refused (see Free-text polls) |
 
 There is no `Recorder` and no `Moderation` port: reactions and favorites feed
 the signal plane through ContentKit's own preference outbox, and the
@@ -128,11 +128,52 @@ Creating a free-text poll without `Options.Classifier` is refused (`501`,
 after commit; a classifier failure keeps the answer with `classified: false`
 and the host retries with `rt.Content.ReclassifyPending(ctx, limit)` on a
 schedule (returns the count classified and the first error). The classifier
-owns the assignments and may re-cluster; results are read from it:
+returns a group id and label for an immutable `(tenant, answer_id, revision)`.
+ContentKit CAS-persists that assignment only while the revision is current.
+Membership, labels and counts are read from these durable assignments:
 `GET /polls/{id}` (and the list) returns `answer_count`, `groups`
 (`[{id, label, count}]`, sorted by count desc, label, id) and the caller's
-`my_answer`; a failed `Groups` read degrades to `groups_unavailable: true`.
+`my_answer`. There is no provider results-read dependency. Identical answer
+retries retain revision/time and completed classification. An edit clears the
+old assignment until the new revision is classified; late old results cannot win.
 `POST /polls/{id}/answer {"text"}` creates or replaces the caller's answer.
+
+## Private-content lifecycle
+
+The moderation queue includes `revision`; resolve requests must echo it with
+`decision` and optional `reason`. A decision about an older body cannot publish
+an intervening edit. Held creates **and edits** return 202.
+
+Retaining classifiers/moderators must configure `content.Options.PrivateDataEraser`.
+Its `EraseSubjects(ctx, tenant, actorIDs)` must durably fence those subjects and
+remove retained personal data, including protection against operations already
+in flight. A queued delete is not completion. Composite retaining providers
+need a composite eraser. Actual AI/provider implementation stays outside ContentKit.
+
+Ports that retain no external personal data must explicitly implement
+`StatelessPolicy()`. `BasicModerator` does; its process-local duplicate cache
+uses a typed subject key and content digest and is cleared/fenced on local erase.
+A `Chain` is stateless only when every member is. Nil eraser is not an outage
+fallback for a retaining provider: construction rejects that configuration.
+
+After the host **durably accepts** an AuthKit deletion obligation in its local
+ledger, it may acknowledge AuthKit immediately. Downstream cleanup remains a
+separate pending local obligation until all required planes complete. Do not
+hold AuthKit acknowledgement waiting for provider availability.
+
+That worker calls `rt.Content.ErasePrivateSubjects(ctx, actorIDs)` in addition
+to the existing analytics erasure. It atomically commits permanent tenant/subject
+source fences, removes poll answers, and removes held/rejected private payloads
+and moderation metadata. A never-published item becomes a tombstone; its row
+and replies are preserved. An item with a previous approved payload retains that
+payload without republishing it. Current approved authored content is untouched
+and remains under host retention policy. Provider cleanup runs after SQL commit;
+an error leaves the host's downstream obligation pending and safe to retry.
+
+This API intentionally does not redefine published-content/account deletion
+policy. The source fence and approved payload snapshots are durable user state;
+restore must preserve/reapply fences before accepting writes. Provider erasure
+must independently maintain the same permanent-fence semantics across restore.
 
 ## Documents: one per content reference and language
 
@@ -379,3 +420,13 @@ priors, the judged fixture and the host adoption steps.
 - Wire `Options.Moderator` (a `Chain` of `BasicModerator` and the AI moderator), `Options.Classifier` for free-text polls, `Perms.ModerationReview`, and schedule `ReclassifyPending`.
 - Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, implement `ContentCanonicalizer`, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, schedule `DeliverPreferences`, wire `EraseSubjects` into deletion, run the cutover above once, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id`.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.
+
+### Lifecycle qualification scope
+
+The library tests exercise real PostgreSQL source transactions and controlled
+in-memory retaining policy implementations, including paused completions and
+provider outages. They qualify the port contract and source fences, not an AI
+provider's production persistence or deletion guarantees. Each retaining adapter
+must prove durable deletion/fencing across its own restarts and backups before
+host downstream erasure can be marked complete. Soft-deleting a poll hides it and
+stops new pending-classification scans; it is not an external-provider erasure.

@@ -50,3 +50,23 @@ CREATE TABLE social_poll_answers (
 -- Unclassified answers in write order (ReclassifyPending).
 CREATE INDEX social_poll_answers_pending_idx
     ON social_poll_answers (tenant_id, updated_at) WHERE classified_at IS NULL;
+
+-- Bind reviewer decisions and classifier delivery to immutable source revisions.
+ALTER TABLE social_comments ADD COLUMN moderation_revision bigint NOT NULL DEFAULT 1 CHECK (moderation_revision > 0);
+ALTER TABLE social_posts ADD COLUMN moderation_revision bigint NOT NULL DEFAULT 1 CHECK (moderation_revision > 0);
+ALTER TABLE social_poll_answers ADD COLUMN revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0);
+ALTER TABLE social_poll_answers ADD COLUMN group_label text;
+
+-- Permanent source fence. Provider completion is owned by the host's existing
+-- durable deletion obligation; AuthKit acknowledgement means local acceptance.
+CREATE TABLE content_private_subject_erasures (
+    tenant_id text NOT NULL,
+    actor_id text NOT NULL,
+    erased_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (tenant_id, actor_id)
+);
+-- Never remove published authored content as a side effect of private erasure.
+-- Retain the old approved payload only while a replacement is held/rejected.
+-- Approved current content remains in its original body; no duplicate storage.
+ALTER TABLE social_comments ADD COLUMN published_body text;
+ALTER TABLE social_posts ADD COLUMN published_content jsonb;

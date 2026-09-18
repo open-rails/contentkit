@@ -2,6 +2,7 @@ package content
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,14 +48,20 @@ type screening struct {
 // RejectedError (nothing stored). An error or unknown decision fails closed to
 // a hold. Without a moderator every write is approved.
 func (rt *Runtime) screen(ctx context.Context, in ModerationInput) (screening, error) {
+	if in.SubjectID == "" {
+		in.SubjectID = viewerID(in.Actor)
+	}
+	if err := rt.privateSubjectAllowed(ctx, rt.store.pool, in.SubjectID); err != nil {
+		return screening{}, err
+	}
 	if rt.moderator == nil {
 		return screening{state: ModerationApproved}, nil
 	}
 	in.Tenant = rt.tenant
 	v, err := rt.moderator.Screen(ctx, in)
 	if err != nil {
-		rt.log.Warn("content moderator failed; holding for review", "kind", in.Kind, "err", err.Error())
-		meta, _ := json.Marshal(verdictMeta{Error: err.Error()})
+		rt.log.Warn("content moderator failed; holding for review", "kind", in.Kind)
+		meta, _ := json.Marshal(verdictMeta{Error: "moderator unavailable"})
 		return screening{state: ModerationHeld, reason: ptrTo(heldReason), meta: meta}, nil
 	}
 	meta, _ := json.Marshal(verdictMeta{Model: v.Model, PromptVersion: v.PromptVersion, Confidence: v.Confidence})
@@ -123,7 +130,8 @@ type BasicModerator struct {
 	once     sync.Once
 	censorRe *regexp.Regexp
 	mu       sync.Mutex
-	recent   map[string]time.Time
+	recent   map[duplicateKey]time.Time
+	erased   map[privateSubjectKey]bool
 	swept    time.Time
 	now      func() time.Time
 }
@@ -154,7 +162,8 @@ func (m *BasicModerator) init() {
 			}
 			m.censorRe = regexp.MustCompile(`(?i)\b(` + strings.Join(quoted, "|") + `)\b`)
 		}
-		m.recent = map[string]time.Time{}
+		m.recent = map[duplicateKey]time.Time{}
+		m.erased = map[privateSubjectKey]bool{}
 	})
 }
 
@@ -173,10 +182,14 @@ func (m *BasicModerator) Screen(_ context.Context, in ModerationInput) (Verdict,
 		if actor == "" {
 			actor = in.Actor.IP
 		}
-		key := in.Tenant + "|" + actor + "|" + text
+		subject := privateSubjectKey{in.Tenant, actor}
+		key := duplicateKey{subject, sha256.Sum256([]byte(text))}
 		now := m.now()
 		m.mu.Lock()
 		defer m.mu.Unlock()
+		if m.erased[subject] {
+			return Verdict{}, ErrSubjectErased
+		}
 		if now.Sub(m.swept) >= m.DupWindow { // bound memory once per window
 			m.swept = now
 			for k, t := range m.recent {
@@ -342,10 +355,20 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d ReviewDecis
 		return err
 	}
 	defer tx.Rollback(ctx)
+	var subject string
+	if err := tx.QueryRow(ctx, `SELECT coalesce(user_id,'') FROM `+c.s.t.comments+` WHERE id=$1 AND tenant_id=$2`, cid, c.s.tenant).Scan(&subject); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if err := c.rt.guardPrivateSubject(ctx, tx, subject); err != nil {
+		return err
+	}
 	var replyTo *string
 	var deletedAt *time.Time
 	var k contentref.ContentKey
-	err = tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+` SET moderation = $3, moderation_reason = CASE WHEN $3 = 'approved' THEN NULL ELSE coalesce(nullif($4, ''), moderation_reason) END,
+	err = tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+` SET published_body = CASE WHEN $3='approved' THEN NULL ELSE published_body END, moderation = $3, moderation_reason = CASE WHEN $3 = 'approved' THEN NULL ELSE coalesce(nullif($4, ''), moderation_reason) END,
 		moderated_by = $5, moderated_at = now(), updated_at = now()
 		WHERE id = $1 AND tenant_id = $2 AND moderation = 'held' AND deleted_at IS NULL AND moderation_revision = $6
 		RETURNING reply_to_id::text, deleted_at, `+keyCols, cid, c.s.tenant, state, d.Reason, d.Reviewer, d.Revision).
@@ -382,8 +405,18 @@ func (p *posts) resolve(ctx context.Context, id, state string, d ReviewDecision)
 		return err
 	}
 	defer tx.Rollback(ctx)
+	var subject string
+	if err := tx.QueryRow(ctx, `SELECT coalesce(author_id,'') FROM `+p.s.t.posts+` WHERE id=$1 AND tenant_id=$2`, id, p.s.tenant).Scan(&subject); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if err := p.rt.guardPrivateSubject(ctx, tx, subject); err != nil {
+		return err
+	}
 	var language string
-	err = tx.QueryRow(ctx, `UPDATE `+p.s.t.posts+` SET moderation = $3, moderation_reason = CASE WHEN $3 = 'approved' THEN NULL ELSE coalesce(nullif($4, ''), moderation_reason) END,
+	err = tx.QueryRow(ctx, `UPDATE `+p.s.t.posts+` SET published_content = CASE WHEN $3='approved' THEN NULL ELSE published_content END, moderation = $3, moderation_reason = CASE WHEN $3 = 'approved' THEN NULL ELSE coalesce(nullif($4, ''), moderation_reason) END,
 		moderated_by = $5, moderated_at = now(), updated_at = now()
 		WHERE id = $1 AND tenant_id = $2 AND moderation = 'held' AND deleted_at IS NULL AND moderation_revision = $6 RETURNING language`,
 		id, p.s.tenant, state, d.Reason, d.Reviewer, d.Revision).Scan(&language)
@@ -445,4 +478,55 @@ func (rt *Runtime) handleResolve(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"decision": string(in.Decision)})
+}
+
+func (*BasicModerator) StatelessPolicy() {}
+
+func policyIsStateless(p any) bool {
+	if p == nil {
+		return true
+	}
+	if chain, ok := p.(Chain); ok {
+		for _, m := range chain {
+			if !policyIsStateless(m) {
+				return false
+			}
+		}
+		return true
+	}
+	_, ok := p.(StatelessPolicy)
+	return ok
+}
+
+type privateSubjectKey struct{ tenant, subject string }
+type duplicateKey struct {
+	subject privateSubjectKey
+	digest  [32]byte
+}
+
+func (m *BasicModerator) EraseSubjects(_ context.Context, tenant string, ids []string) error {
+	m.init()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, id := range ids {
+		k := privateSubjectKey{tenant, id}
+		m.erased[k] = true
+		for cached := range m.recent {
+			if cached.subject == k {
+				delete(m.recent, cached)
+			}
+		}
+	}
+	return nil
+}
+
+func eraseLocalPolicy(ctx context.Context, p any, tenant string, ids []string) {
+	switch m := p.(type) {
+	case *BasicModerator:
+		_ = m.EraseSubjects(ctx, tenant, ids)
+	case Chain:
+		for _, part := range m {
+			eraseLocalPolicy(ctx, part, tenant, ids)
+		}
+	}
 }

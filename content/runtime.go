@@ -58,6 +58,10 @@ type Options struct {
 	// upload to a public bucket); used when Media is nil. See StorageConfig.
 	Storage *StorageConfig
 
+	// PrivateDataEraser is required when policy ports retain external personal data.
+	// Nil explicitly means stateless ports; never remove it during an outage.
+	PrivateDataEraser PrivateDataEraser
+
 	// Perms are the opaque host permission strings gating privileged writes.
 	Perms Perms
 
@@ -73,21 +77,22 @@ type Options struct {
 // Runtime is one tenant's embedded content module: shared deps + the module
 // services, exposing one mountable http.Handler.
 type Runtime struct {
-	store        *store
-	schema       string
-	tenant       string
-	searchSchema string
-	identity     Identity
-	authz        Authorizer
-	resolver     ContentResolver
-	users        UserEnricher
-	media        MediaStore
-	processor    ContentProcessor
-	moderator    ContentModerator
-	classifier   AnswerClassifier
-	perms        Perms
-	log          *slog.Logger
-	kinds        map[string]struct{}
+	store         *store
+	schema        string
+	tenant        string
+	searchSchema  string
+	identity      Identity
+	authz         Authorizer
+	resolver      ContentResolver
+	users         UserEnricher
+	media         MediaStore
+	processor     ContentProcessor
+	moderator     ContentModerator
+	classifier    AnswerClassifier
+	privateEraser PrivateDataEraser
+	perms         Perms
+	log           *slog.Logger
+	kinds         map[string]struct{}
 	// mediaBase absolutizes stored relative media paths (backfilled rows)
 	// against the public bucket origin; empty = serve values verbatim.
 	mediaBase string
@@ -115,26 +120,30 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if opts.Identity == nil || opts.Authz == nil || opts.Resolver == nil {
 		return nil, fmt.Errorf("content: Identity, Authz and Resolver ports are required")
 	}
+	if opts.PrivateDataEraser == nil && (!policyIsStateless(opts.Moderator) || !policyIsStateless(opts.Classifier)) {
+		return nil, fmt.Errorf("content: retaining policy ports require PrivateDataEraser; stateless ports must declare StatelessPolicy")
+	}
 	media, err := resolveMedia(opts)
 	if err != nil {
 		return nil, err
 	}
 	rt := &Runtime{
-		store:        newStore(opts.Pool, opts.Schema, opts.Tenant),
-		schema:       opts.Schema,
-		tenant:       opts.Tenant,
-		searchSchema: strings.TrimSpace(opts.SearchSchema),
-		identity:     opts.Identity,
-		authz:        opts.Authz,
-		resolver:     opts.Resolver,
-		users:        orDefault[UserEnricher](opts.Users, noopEnricher{}),
-		media:        media,
-		processor:    orDefault[ContentProcessor](opts.Processor, stripProcessor{}),
-		moderator:    opts.Moderator,
-		classifier:   opts.Classifier,
-		perms:        opts.Perms,
-		log:          orDefault[*slog.Logger](opts.Logger, slog.Default()),
-		kinds:        make(map[string]struct{}, len(opts.ContentKinds)),
+		store:         newStore(opts.Pool, opts.Schema, opts.Tenant),
+		schema:        opts.Schema,
+		tenant:        opts.Tenant,
+		searchSchema:  strings.TrimSpace(opts.SearchSchema),
+		identity:      opts.Identity,
+		authz:         opts.Authz,
+		resolver:      opts.Resolver,
+		users:         orDefault[UserEnricher](opts.Users, noopEnricher{}),
+		media:         media,
+		processor:     orDefault[ContentProcessor](opts.Processor, stripProcessor{}),
+		moderator:     opts.Moderator,
+		classifier:    opts.Classifier,
+		privateEraser: opts.PrivateDataEraser,
+		perms:         opts.Perms,
+		log:           orDefault[*slog.Logger](opts.Logger, slog.Default()),
+		kinds:         make(map[string]struct{}, len(opts.ContentKinds)),
 	}
 	if opts.Storage != nil {
 		rt.mediaBase = strings.TrimRight(opts.Storage.PublicBaseURL, "/")

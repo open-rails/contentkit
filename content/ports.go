@@ -123,8 +123,9 @@ const (
 // ModerationInput is one comment or post body about to publish. The moderator
 // sees sanitized text and opaque ids only.
 type ModerationInput struct {
-	Tenant string
-	Actor  Actor
+	SubjectID string // opaque content author; may differ from editing moderator
+	Tenant    string
+	Actor     Actor
 	// Ref is the content the item belongs to: the commented work for a
 	// comment, the post's own reference for a post.
 	Ref    contentref.ContentRef
@@ -169,8 +170,8 @@ type GroupAssignment struct {
 }
 
 // Group is one answer group of a free-text poll with its current size. The
-// ContentKit owns current assignments and counts. Groups supplies labels only;
-// provider counts are ignored, so delayed side effects cannot rewrite results.
+// ContentKit owns current assignments and counts, so delayed provider side
+// effects cannot rewrite results.
 type Group struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
@@ -178,13 +179,17 @@ type Group struct {
 }
 
 // AnswerClassifier groups free-text poll answers. Classify runs when an
-// answer is stored or edited; Groups is read with the poll results. Without a
+// answer is stored or edited. Poll results come from source assignments. Without a
 // registered classifier a free-text poll cannot be created.
 // Classify must be idempotent by (Tenant, AnswerID, Revision), ignore older
 // revisions. ContentKit accepts assignments only by source-revision CAS;
-// Groups supplies label metadata, never authoritative membership or counts.
+// the stored result is the sole authority for current membership and labels.
 // Provider erasure/lifecycle wiring is a separate host integration obligation.
 type AnswerClassifier interface {
 	Classify(ctx context.Context, a Answer) (GroupAssignment, error)
-	Groups(ctx context.Context, tenant, questionID string) ([]Group, error)
 }
+
+// StatelessPolicy explicitly declares that a policy implementation retains no
+// personal data outside this process. Built-in deterministic policies satisfy
+// this marker; retaining providers must instead configure PrivateDataEraser.
+type StatelessPolicy interface{ StatelessPolicy() }
