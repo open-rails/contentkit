@@ -319,6 +319,45 @@ func TestComments_LatestFeed(t *testing.T) {
 	}
 }
 
+// The feed total counts exactly the rows the feed draws from: live and
+// approved, across content, never a held, rejected or tombstoned one.
+func TestComments_LatestFeedTotal(t *testing.T) {
+	mod := &fakeModerator{}
+	rt := moderatedRuntime(t, mod)
+	ctx := context.Background()
+	a := Actor{ID: "author"}
+
+	if n, err := rt.LatestCommentsTotal(ctx); err != nil || n != 0 {
+		t.Fatalf("empty total = %d, %v; want 0", n, err)
+	}
+
+	_ = mustComment(t, rt, a, "gallery", "1", createInput{Body: "approved one"})
+	_ = mustComment(t, rt, a, "gallery", "1", createInput{Body: "approved two"})
+	if held := mustComment(t, rt, a, "gallery", "1", createInput{Body: "iffy remark"}); held.Moderation != ModerationHeld {
+		t.Fatalf("fixture not held: %+v", held)
+	}
+	rejected := mustComment(t, rt, a, "gallery", "1", createInput{Body: "iffy offer"})
+	if err := rt.Resolve(ctx, KindComment, rejected.ID, ReviewDecision{Revision: 1, Decision: DecisionReject, Reviewer: "reviewer"}); err != nil {
+		t.Fatalf("reject fixture: %v", err)
+	}
+	gone := mustComment(t, rt, a, "gallery", "1", createInput{Body: "deleted later"})
+	if err := rt.comments.softDelete(ctx, a, gone.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	total, err := rt.LatestCommentsTotal(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	feed, err := rt.LatestComments(ctx, a, 50, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 || len(feed) != 2 {
+		t.Fatalf("total = %d, feed = %v; want 2 and two items", total, commentFeedIDs(feed))
+	}
+}
+
 func commentFeedIDs(items []FeedItem) []string {
 	ids := make([]string, len(items))
 	for i := range items {

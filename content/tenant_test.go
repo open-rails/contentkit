@@ -54,6 +54,9 @@ func TestTenantIsolation(t *testing.T) {
 	if feed, _ := b.LatestComments(ctx, u, 10, 0); len(feed) != 0 {
 		t.Fatalf("tenant b's feed shows a's comments: %v", feed)
 	}
+	if n, _ := b.LatestCommentsTotal(ctx); n != 0 {
+		t.Fatalf("tenant b's feed total counts a's comments: %d", n)
+	}
 	if _, err := b.comments.edit(ctx, u, cm.ID, "hijack"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("tenant b edits a's comment: %v", err)
 	}
