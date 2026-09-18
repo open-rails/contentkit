@@ -471,3 +471,17 @@ retention remains an explicit host/provider policy, not an implicit object delet
 Guarded mutations and erasure use explicit READ COMMITTED transactions so a
 writer waiting for the subject lock observes the committed permanent fence even
 when its host connection default is REPEATABLE READ.
+
+### Bounded exported-key reconciliation at cutover
+
+After writers/callbacks are paused and retired, establish the sink/source revision
+floor and run MigratePreferences once to seed source truth. Then stream the
+persisted exported-key inventory in pages of at most
+content.MaxExportedPreferencesPerBatch (1000) through
+rt.Content.ReconcileExportedPreferences(ctx, keys). It inserts only missing zero
+snapshots; existing revisions/time/value and erased-subject fences are preserved.
+Retries are idempotent. Inventory adapters must map legacy work/version identity
+explicitly before this call; a locale suffix never implies a version. Declined
+kinds and invalid/foreign keys fail the entire page before mutation. Persist the
+inventory before retiring any old sink preference identity. No schema migration
+or additional delivery queue is introduced.

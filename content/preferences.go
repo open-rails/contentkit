@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -647,6 +648,97 @@ func (p *preferences) recomputeCounts(ctx context.Context, tx pgx.Tx, report *Pr
 	}
 	report.CountsRewritten = tag.RowsAffected()
 	return nil
+}
+
+// MaxExportedPreferencesPerBatch bounds one cutover key-reconciliation call.
+const MaxExportedPreferencesPerBatch = 1000
+
+// ReconcileExportedPreferences reconciles one bounded page of previously
+// exported keys after MigratePreferences has seeded source truth. Missing keys
+// receive zero snapshots; current snapshots keep their exact value/revision/time.
+// Canonicalization uses the same host rule as live preferences. Fenced subjects
+// are skipped. The inserted count excludes existing snapshots and duplicates.
+//
+// This is an explicit cutover operation: pause all source/delivery writers and
+// retire old callbacks, seed the revision floor above retained sink/source state,
+// then seed source truth before calling it. Persist the exported-key inventory
+// before retiring old sink identities. Retrying a page is idempotent.
+func (rt *Runtime) ReconcileExportedPreferences(ctx context.Context, keys []PreferenceKey) (int64, error) {
+	if len(keys) == 0 {
+		return 0, nil
+	}
+	if len(keys) > MaxExportedPreferencesPerBatch {
+		return 0, fmt.Errorf("content: exported preference batch exceeds %d", MaxExportedPreferencesPerBatch)
+	}
+	if rt.preferences.canon == nil {
+		return 0, errors.New("content: exported preference reconciliation requires a Canonicalizer")
+	}
+	unique := map[PreferenceKey]struct{}{}
+	actors := map[string]struct{}{}
+	for _, k := range keys {
+		if k.TenantID == "" {
+			k.TenantID = rt.tenant
+		}
+		if k.TenantID != rt.tenant {
+			return 0, ErrTenant
+		}
+		if strings.TrimSpace(k.ActorID) == "" || k.ContentID == "" || k.ContentKind == "" {
+			return 0, badRequest("exported preference key is incomplete")
+		}
+		if k.Axis != PreferenceAxisReaction && k.Axis != PreferenceAxisFavorite {
+			return 0, badRequest("unknown preference axis")
+		}
+		if err := rt.checkRef(k.Ref()); err != nil {
+			return 0, err
+		}
+		ref, ok := rt.preferences.work(k.Ref())
+		if !ok {
+			return 0, badRequest("exported preference kind is not canonicalized")
+		}
+		k.ContentKind, k.ContentID, k.ContentVersionID = ref.ContentKind, ref.ContentID, ref.Version()
+		unique[k] = struct{}{}
+		actors[k.ActorID] = struct{}{}
+	}
+	ids := make([]string, 0, len(actors))
+	for id := range actors {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	tx, err := rt.store.beginMutation(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	for _, id := range ids {
+		if err := rt.lockPrivateSubject(ctx, tx, id); err != nil {
+			return 0, err
+		}
+	}
+	normalized := make([]PreferenceKey, 0, len(unique))
+	for k := range unique {
+		normalized = append(normalized, k)
+	}
+	sort.Slice(normalized, func(i, j int) bool {
+		a, b := normalized[i], normalized[j]
+		if a.ActorID != b.ActorID {
+			return a.ActorID < b.ActorID
+		}
+		if a.ContentKind != b.ContentKind {
+			return a.ContentKind < b.ContentKind
+		}
+		if a.ContentID != b.ContentID {
+			return a.ContentID < b.ContentID
+		}
+		if a.ContentVersionID != b.ContentVersionID {
+			return a.ContentVersionID < b.ContentVersionID
+		}
+		return a.Axis < b.Axis
+	})
+	var report PreferenceMigration
+	if err := rt.preferences.tombstoneExported(ctx, tx, &report, normalized); err != nil {
+		return 0, err
+	}
+	return report.Tombstoned, tx.Commit(ctx)
 }
 
 // tombstoneExported seeds a zero snapshot for every previously exported key
