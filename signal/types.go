@@ -559,7 +559,8 @@ type PopularOptions struct {
 	// RankExpr, when set, REPLACES the default ranking with a host-supplied
 	// ClickHouse expression (trusted SQL). It may reference the window metric
 	// columns: viewers, user_viewers, anon_viewers, views, completions,
-	// completers, active_s, score_sum, events, value_sum, positive_subjects,
+	// completers, active_s, score_sum, viewer_engagement_sum, returning_viewers,
+	// events, value_sum, positive_subjects,
 	// negative_subjects.
 	RankExpr string
 }
