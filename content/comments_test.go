@@ -234,6 +234,30 @@ func TestComments_ReactionCountersExact(t *testing.T) {
 	if top[i].Likes != 0 || top[i].Dislikes != 1 {
 		t.Fatalf("after switch: likes %d dislikes %d, want 0/1", top[i].Likes, top[i].Dislikes)
 	}
+
+	// Same counters, totalled per author: only live published comments
+	// contribute and an anonymous comment has no author to credit.
+	second := mustComment(t, rt, author, "gallery", "1", createInput{Body: "and me"})
+	if _, err := rt.comments.reactTx(ctx, Actor{ID: "other"}, second.ID, 1); err != nil {
+		t.Fatalf("react to second comment: %v", err)
+	}
+	anon := mustComment(t, rt, Actor{Anonymous: true, IP: "9.9.9.9"}, "gallery", "1", createInput{Body: "anon", AnonName: "guest"})
+	if _, err := rt.comments.reactTx(ctx, reactor, anon.ID, 1); err != nil {
+		t.Fatalf("react to anonymous comment: %v", err)
+	}
+	totals, err := rt.CommentReactionsByAuthor(ctx, []string{author.ID, author.ID, "nobody"})
+	if err != nil {
+		t.Fatalf("CommentReactionsByAuthor: %v", err)
+	}
+	if len(totals) != 1 || totals[author.ID] != (AuthorReactions{Likes: 1, Dislikes: 1}) {
+		t.Fatalf("author totals = %+v, want only author with 1 like and 1 dislike", totals)
+	}
+	if err := rt.comments.softDelete(ctx, author, second.ID); err != nil {
+		t.Fatalf("soft delete: %v", err)
+	}
+	if totals, _ = rt.CommentReactionsByAuthor(ctx, []string{author.ID}); totals[author.ID] != (AuthorReactions{Dislikes: 1}) {
+		t.Fatalf("totals after tombstone = %+v, want the deleted comment's like gone", totals)
+	}
 }
 
 func TestComments_ReplyCountDecrementsOnDelete(t *testing.T) {

@@ -189,6 +189,17 @@ func (rt *Runtime) ReactionsByActor(ctx context.Context, actor Actor, kind strin
 	return out, rows.Err()
 }
 
+// CommentReactionsByAuthor totals the reactions each author's published
+// comments have received: the profile stat behind "likes my comments got".
+// Like LatestCommentsTotal it takes no actor — held and rejected comments are
+// author-only and never counted, so every reader sees the same totals, and
+// filtering by per-reference visibility would cost one resolver call per
+// distinct reference the author ever commented on. An author with no published
+// comments is absent from the map.
+func (rt *Runtime) CommentReactionsByAuthor(ctx context.Context, userIDs []string) (map[string]AuthorReactions, error) {
+	return rt.comments.reactionsByAuthor(ctx, userIDs)
+}
+
 // IsFavorited batch-checks bookmarks for a user (every requested key is present
 // in the map, absent bookmarks => false).
 func (rt *Runtime) IsFavorited(ctx context.Context, userID string, refs []contentref.ContentRef) (map[contentref.ContentKey]bool, error) {
