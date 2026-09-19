@@ -179,7 +179,7 @@ func (p *posts) handleCreate(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, badRequest("body is required"))
 		return
 	}
-	body, err := p.rt.processor.Sanitize(ctx, *in.Body)
+	body, err := p.rt.postBodyProcessor.Sanitize(ctx, *in.Body)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -261,7 +261,7 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 	// Re-sanitize provided rich text; nil stays nil so COALESCE keeps the old value.
 	var body *string
 	if in.Body != nil {
-		b, err := p.rt.processor.Sanitize(ctx, *in.Body)
+		b, err := p.rt.postBodyProcessor.Sanitize(ctx, *in.Body)
 		if err != nil {
 			writeErr(w, err)
 			return
