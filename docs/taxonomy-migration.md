@@ -30,8 +30,12 @@ with the store builder/lister and mount its handler behind host authorization.
 | `content_node_counts` (derived) | tenant_id, taxonomy_id, content_kind, language, content_count, updated_at | rebuilt by `RebuildCounts`, recomputed on write |
 
 Every foreign key carries `tenant_id`, so a node can only be named, linked,
-assigned or counted inside its own tenant. `taxonomy_id` is opaque text:
-bigint and uuid host ids adopt as their text form. Product metadata that is
+assigned or counted inside its own tenant. `taxonomy_id` is opaque text and
+`content_nodes` is `PRIMARY KEY (tenant_id, taxonomy_id)`; `kind` is outside
+that key, so it does not separate two host tables that both number from 1.
+Adopt every host id as `'<kind>:<id>'` (`tag:42`, `creator:42`), uuid ids
+included — one rule per host, and public ids and URLs are unchanged because
+the host id stays in the value. Product metadata that is
 not a name, alias, edge or assignment (descriptions, `restricted`, creator
 `type`, `cover_key`, `indexable_buckets`, `sort_key`) stays in a host sidecar
 table keyed by `(tenant_id, taxonomy_id[, language])`.
@@ -66,16 +70,16 @@ table keyed by `(tenant_id, taxonomy_id[, language])`.
 
 | Existing | Becomes |
 |---|---|
-| `tags(id, slug, deleted_at)` | node kind `tag`, `taxonomy_id = id::text`; `deleted_at` → state `deleted` |
+| `tags(id, slug, deleted_at)` | node kind `tag`, `taxonomy_id = 'tag:<id>'`; `deleted_at` → state `deleted` |
 | `tags.display_name`, `tag_i18n.localized_name` | names: `en` canonical from `display_name` unless `tag_i18n` has `en`; every `tag_i18n` row a canonical name in its language |
 | `tag_i18n_aliases.alias` | alias in the `tag_i18n` row's language |
 | `artists(id, slug, romanized_name, native_name, native_name_lang, type)` | kind `artist`; `en` canonical = romanized_name, `native_name_lang` canonical = native_name; `type` → sidecar |
 | `artist_aliases.alias` | `en` alias |
 | `characters(id, slug, series_id, …)` | kind `character`; edge `(character, member_of, series)`; slugs are unique per series today, so re-slug collisions as `<series-slug>-<slug>` before the cut |
 | `series(id, slug, parent_id, is_categorical)` | kind `series`; edge `(child, child, parent)` for `parent_id`; `is_categorical` → sidecar |
-| `voice_actors(id uuid, display_name)` | kind `voice_actor`, `taxonomy_id = id::text`, `en` canonical name |
-| `gallery_tags` | assignments `(gallery, gallery_id, NULL, tag_id, 'tag')` |
-| `gallery_version_tags` | assignments `(gallery, gallery_id via gallery_versions, version_id, tag_id, 'tag')` |
+| `voice_actors(id uuid, display_name)` | kind `voice_actor`, `taxonomy_id = 'voice_actor:<id>'`, `en` canonical name |
+| `gallery_tags` | assignments `(gallery, gallery_id, NULL, 'tag:<tag_id>', 'tag')` |
+| `gallery_version_tags` | assignments `(gallery, gallery_id via gallery_versions, version_id, 'tag:<tag_id>', 'tag')` |
 | `gallery_artists` / `galleries.publisher_id` | relations `artist` / `publisher` to `artist` nodes |
 | `gallery_characters`, `gallery_series` | relations `character`, `series` |
 | `voice_actor_gallery_versions` | assignments with `content_version_id`, relation `voice_actor` |
@@ -93,23 +97,39 @@ sd.language`), so counts follow the same page-language rule as today.
 | `creators(display_name, type)`, `creators_i18n` | kind `creator`; `en` canonical = display_name; `type`, descriptions → sidecar |
 | `characters`, `characters_i18n.localized_name` | kind `character`; edge `member_of` series |
 | `series`, `series_i18n.display_name` | kind `series` (the saga/franchise) |
-| `seasons`, `seasons_i18n.display_name` | kind `season` (an ordered run); classify rows by meaning before renaming; `cover_key` → sidecar |
-| `videos.season_id` | assignment `(video, id, NULL, season_id, 'installment')`; the ordinal stays in the host's episode table |
-| `video_tags` (work) / `video_version_tags` | assignments with NULL / the version id, relation `tag` |
+| `seasons`, `seasons_i18n.display_name` | kind `season` (an ordered run); `cover_key` → sidecar |
+| `videos.season_id` | assignment `(video, id, NULL, 'season:<season_id>', 'installment')`; the ordinal stays in the host's episode table |
+| `video_version_tags` (every existing tag row) / `video_tags` (work, empty since `0011` created it) | assignments with the version id / NULL, relation `tag` |
 | `video_creators.role` | relation = role (`creator` when empty) |
 | `video_characters`, `video_series` | relations `character`, `series` |
 | `effective_video_tags` view | `EffectiveTags` / `RequireAll` |
 | `entity_video_counts`, `refresh_effective_tag_counts`, `entity_counts_suppressed()` | `content_node_counts`, `RecountContent`, `AssignOptions{SuppressCounts}` + `RebuildCounts` |
 
-Hentai0's count languages come from its documents: it indexes one document
-per creative version and audio/subtitle language, so `CountEligibility` is the
-live-version join and the language rule is unchanged.
+series/season need no reclassification: hentai0's `series` rows are already the
+referenced franchise and its `seasons` rows the ordered run.
+
+Hentai0 indexes one document per work and UI language, with
+`content_version_id = ''`. The effective-tag rule
+`coalesce(a.content_version_id,'') IN ('', sd.content_version_id)` then matches
+work assignments only, so `RecountContent`, `RequireAll` and `Browse` silently
+drop every version-scoped assignment — which after `0011` is the host's entire
+tag corpus. Convert the documents in the same cut: index one document per
+version and language, keep the keyword payload as the default version's
+projection, and pin `sd.content_version_id = v.default_version_id` in the
+search filter so keyword results are unchanged.
+
+`entity_video_counts.language` is a media language, not a document language:
+`get_video_version_languages` returns a version's published track languages
+plus burned-caption languages (`0012` dropped the guessed `audio_langs` /
+`sub_langs`). `CountEligibility` keeps that rule by correlating the candidate
+document with the function over the live-version join:
+`sd.language = ANY(get_video_version_languages(sd.content_version_id::uuid))`.
 
 ## Order of work per host
 
 1. Apply the taxonomy lineage in the host migrate step (after the keyword profile).
 2. In one transaction with `AssignOptions{SuppressCounts: true}`: create nodes
-   (ids as text), names, edges, assignments from the tables above, keeping
+   (ids as `'<kind>:<id>'`), names, edges, assignments from the tables above, keeping
    `source_revision` = the host row's version where one exists.
 3. `RebuildCounts`; compare with `expected_entity_gallery_counts()` /
    `entity_video_counts` row for row before dropping them.

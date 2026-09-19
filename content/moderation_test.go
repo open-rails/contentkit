@@ -172,6 +172,16 @@ func TestModeration_CommentVerdicts(t *testing.T) {
 	if i < 0 || mine[i].Moderation != ModerationHeld || mine[i].ModerationReason != "needs a look" || mine[i].Body != "iffy remark" {
 		t.Fatalf("author's view of the held comment = %+v", mine)
 	}
+	// A held comment cannot be reacted to, and never credits its author.
+	if _, err := rt.comments.reactTx(ctx, other, ok.ID, 1); err != nil {
+		t.Fatalf("react to the published comment: %v", err)
+	}
+	if _, err := rt.comments.reactTx(ctx, other, held.ID, 1); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("reacted to a held comment: %v", err)
+	}
+	if m, _ := rt.CommentReactionsByAuthor(ctx, []string{"author"}); m["author"] != (AuthorReactions{Likes: 1}) {
+		t.Fatalf("author totals = %+v, want only the published comment's like", m)
+	}
 	if feed, _ := rt.comments.latest(ctx, author, 50, 0); len(feed) != 1 || feed[0].ID != held.ID {
 		if len(feed) != 1 {
 			t.Fatalf("feed = %v, want only the approved comment", commentFeedIDs(feed))
