@@ -45,9 +45,10 @@ type Options struct {
 	Canonicalizer ContentCanonicalizer
 
 	// Optional ports (nil -> default).
-	Users     UserEnricher     // default: no enrichment (ids only)
-	Media     MediaStore       // explicit override; usually leave nil and set Storage
-	Processor ContentProcessor // default: strip tags
+	Users             UserEnricher     // default: no enrichment (ids only)
+	Media             MediaStore       // explicit override; usually leave nil and set Storage
+	Processor         ContentProcessor // comments and post excerpts; default: strip tags
+	PostBodyProcessor ContentProcessor // post bodies; default: Processor
 	// Moderator screens comment/post writes; nil publishes everything.
 	// Compose a BasicModerator in front of an AI moderator with Chain.
 	Moderator ContentModerator
@@ -77,22 +78,23 @@ type Options struct {
 // Runtime is one tenant's embedded content module: shared deps + the module
 // services, exposing one mountable http.Handler.
 type Runtime struct {
-	store         *store
-	schema        string
-	tenant        string
-	searchSchema  string
-	identity      Identity
-	authz         Authorizer
-	resolver      ContentResolver
-	users         UserEnricher
-	media         MediaStore
-	processor     ContentProcessor
-	moderator     ContentModerator
-	classifier    AnswerClassifier
-	privateEraser PrivateDataEraser
-	perms         Perms
-	log           *slog.Logger
-	kinds         map[string]struct{}
+	store             *store
+	schema            string
+	tenant            string
+	searchSchema      string
+	identity          Identity
+	authz             Authorizer
+	resolver          ContentResolver
+	users             UserEnricher
+	media             MediaStore
+	processor         ContentProcessor
+	postBodyProcessor ContentProcessor
+	moderator         ContentModerator
+	classifier        AnswerClassifier
+	privateEraser     PrivateDataEraser
+	perms             Perms
+	log               *slog.Logger
+	kinds             map[string]struct{}
 	// mediaBase absolutizes stored relative media paths (backfilled rows)
 	// against the public bucket origin; empty = serve values verbatim.
 	mediaBase string
@@ -127,23 +129,25 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	processor := orDefault[ContentProcessor](opts.Processor, stripProcessor{})
 	rt := &Runtime{
-		store:         newStore(opts.Pool, opts.Schema, opts.Tenant),
-		schema:        opts.Schema,
-		tenant:        opts.Tenant,
-		searchSchema:  strings.TrimSpace(opts.SearchSchema),
-		identity:      opts.Identity,
-		authz:         opts.Authz,
-		resolver:      opts.Resolver,
-		users:         orDefault[UserEnricher](opts.Users, noopEnricher{}),
-		media:         media,
-		processor:     orDefault[ContentProcessor](opts.Processor, stripProcessor{}),
-		moderator:     opts.Moderator,
-		classifier:    opts.Classifier,
-		privateEraser: opts.PrivateDataEraser,
-		perms:         opts.Perms,
-		log:           orDefault[*slog.Logger](opts.Logger, slog.Default()),
-		kinds:         make(map[string]struct{}, len(opts.ContentKinds)),
+		store:             newStore(opts.Pool, opts.Schema, opts.Tenant),
+		schema:            opts.Schema,
+		tenant:            opts.Tenant,
+		searchSchema:      strings.TrimSpace(opts.SearchSchema),
+		identity:          opts.Identity,
+		authz:             opts.Authz,
+		resolver:          opts.Resolver,
+		users:             orDefault[UserEnricher](opts.Users, noopEnricher{}),
+		media:             media,
+		processor:         processor,
+		postBodyProcessor: orDefault[ContentProcessor](opts.PostBodyProcessor, processor),
+		moderator:         opts.Moderator,
+		classifier:        opts.Classifier,
+		privateEraser:     opts.PrivateDataEraser,
+		perms:             opts.Perms,
+		log:               orDefault[*slog.Logger](opts.Logger, slog.Default()),
+		kinds:             make(map[string]struct{}, len(opts.ContentKinds)),
 	}
 	if opts.Storage != nil {
 		rt.mediaBase = strings.TrimRight(opts.Storage.PublicBaseURL, "/")

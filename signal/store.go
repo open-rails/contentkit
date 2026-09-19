@@ -184,10 +184,10 @@ func (st *Store) project(ctx context.Context, tenant string, keys []ProjectionKe
 	canon := st.canonicalEvents(filter)
 
 	state := fmt.Sprintf(`INSERT INTO %[1]s.subject_content_state
-(tenant, subject_kind, subject, %[4]s, first_seen_at, last_signal_at, total_events, views,
+(tenant, subject_kind, subject, %[4]s, first_seen_at, last_signal_at, last_view_at, total_events, views,
  completions, active_s, max_progress, progress_max, completed, resume, last_score, net_value, feedback, version)
 SELECT ?, subject_kind, subject, %[4]s,
-    min(c.1), max(c.1), toUInt32(count()),
+    min(c.1), max(c.1), maxIf(c.1, signal_type = '%[3]s'), toUInt32(count()),
     toUInt32(countIf(signal_type = '%[3]s')),
     toUInt32(countIf(signal_type = '%[3]s' AND c.8)),
     sumIf(toUInt64(c.3), signal_type = '%[3]s'),

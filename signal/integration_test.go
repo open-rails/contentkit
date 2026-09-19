@@ -320,6 +320,9 @@ func TestIntegrationHistoryAndSeen(t *testing.T) {
 	if all[0].ContentID != "b1" || all[3].ContentID != "g1" || all[0].TenantID != tenant {
 		t.Fatalf("history order wrong: %+v", all)
 	}
+	if !all[0].LastViewAt.Equal(at(4, 10)) || !all[3].LastViewAt.Equal(at(1, 10)) {
+		t.Fatalf("last view times wrong: %+v", all)
+	}
 
 	// Galleries only, in progress.
 	inProg, err := st.History(ctx, tenant, user, HistoryOptions{ContentKind: "gallery", Status: HistoryInProgress})
@@ -351,6 +354,33 @@ func TestIntegrationHistoryAndSeen(t *testing.T) {
 	}
 	if _, ok := seen["g3"]; ok {
 		t.Fatalf("g3 (zero progress) must not be seen: %v", seen)
+	}
+
+	// Later non-view activity affects the all-signals feed, but it must not
+	// resurrect an item cleared from watch history or change watch ordering.
+	click := Signal{
+		ContentRef: gallery(tenant, "g1"),
+		Subject:    user,
+		Type:       TypeClick,
+		EventID:    "g1-click",
+		OccurredAt: at(5, 10),
+	}
+	if err := st.RecordSignals(ctx, tenant, []Signal{click}); err != nil {
+		t.Fatal(err)
+	}
+	all, err = st.History(ctx, tenant, user, HistoryOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all[0].ContentID != "g1" {
+		t.Fatalf("all-signals history did not use signal recency: %+v", all)
+	}
+	seenAfterClear, err := st.History(ctx, tenant, user, HistoryOptions{Status: HistorySeen, Since: at(2, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seenAfterClear) != 2 || seenAfterClear[0].ContentID != "b1" || seenAfterClear[1].ContentID != "g2" {
+		t.Fatalf("watch history used non-view activity: %+v", seenAfterClear)
 	}
 
 	// TopStates orders by last_score.

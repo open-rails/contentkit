@@ -52,6 +52,12 @@ func (a postRoleAuthz) Can(_ context.Context, actor Actor, _ string) (bool, erro
 	return a.writers[actor.ID], nil
 }
 
+type processorFunc func(context.Context, string) (string, error)
+
+func (f processorFunc) Sanitize(ctx context.Context, raw string) (string, error) {
+	return f(ctx, raw)
+}
+
 // doJSON issues a request with an actor on context and returns the recorder.
 func doJSON(t *testing.T, h http.Handler, actor Actor, method, target string, body any) *httptest.ResponseRecorder {
 	t.Helper()
@@ -132,6 +138,32 @@ func TestPostCRUDHappyPath(t *testing.T) {
 	// double delete is 404
 	if rec = doJSON(t, h, author, "DELETE", "/posts/"+created.ID, nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("re-delete: status %d, want 404", rec.Code)
+	}
+}
+
+func TestPostBodyProcessorIsIndependent(t *testing.T) {
+	plain := processorFunc(func(_ context.Context, raw string) (string, error) {
+		return "plain:" + raw, nil
+	})
+	rich := processorFunc(func(_ context.Context, raw string) (string, error) {
+		return "rich:" + raw, nil
+	})
+	rt, _ := newPostRuntime(t, Options{Processor: plain, PostBodyProcessor: rich})
+	rec := doJSON(t, postMux(rt), Actor{ID: "root1"}, "POST", "/posts", postWriteReq{
+		Title:   ptr("processors"),
+		Body:    ptr("body"),
+		Excerpt: ptr("excerpt"),
+		IsDraft: ptr(false),
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: status %d body %s", rec.Code, rec.Body.String())
+	}
+	post := decodePost(t, rec)
+	if post.Body != "rich:body" {
+		t.Fatalf("body = %q, want rich processor output", post.Body)
+	}
+	if post.Excerpt == nil || *post.Excerpt != "plain:excerpt" {
+		t.Fatalf("excerpt = %v, want plain processor output", post.Excerpt)
 	}
 }
 
