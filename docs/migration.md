@@ -169,3 +169,15 @@ The host deletion ledger owns retries and completion across source/provider
 cleanup. AuthKit ACK means durable local acceptance, not completed downstream
 erasure. Back up permanent source fences and retained publication state; replay
 post-backup deletions before reopening private writes after recovery.
+
+## Signal plane 0006: view recency
+
+`subject_content_state.last_view_at` records the latest canonical `view`
+for a work. `HistorySeen`, `HistoryInProgress`, and `HistoryCompleted` use
+this column for ordering and `Since`; `HistoryAny` continues to use
+`last_signal_at`, so clicks and feedback do not resurrect or reorder watch
+history. The migration backfills every existing state row from the
+highest-version canonical event for each logical signal before hosts can read
+the new column. No manual projection repair is required after a successful
+migration; if a migration run is interrupted, rerun the migratekit migration
+before enabling the new history reader.
