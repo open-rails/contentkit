@@ -357,6 +357,7 @@ type State struct {
 	Seen         bool // MaxProgress > 0
 	FirstSeenAt  time.Time
 	LastSignalAt time.Time
+	LastViewAt   time.Time
 	TotalEvents  uint32 // canonical events of every type
 	Views        uint32 // canonical view events (sessions)
 	Completions  uint32 // completed views
@@ -398,8 +399,9 @@ type HistoryOptions struct {
 	// ContentKind limits results to one kind. Empty = all kinds.
 	ContentKind string
 	Status      HistoryStatus
-	// Since drops rows whose last signal is older (e.g. host "clear history
-	// before X" features). Zero = no lower bound.
+	// Since drops rows whose relevant activity is older (e.g. host "clear
+	// history before X" features). Seen statuses use the last view; HistoryAny
+	// uses the last signal. Zero = no lower bound.
 	Since  time.Time
 	Limit  int // default 50
 	Offset int

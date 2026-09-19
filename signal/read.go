@@ -11,7 +11,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 )
 
-const stateColumns = refColumns + `, first_seen_at, last_signal_at, total_events, views, completions,
+const stateColumns = refColumns + `, first_seen_at, last_signal_at, last_view_at, total_events, views, completions,
  active_s, max_progress, progress_max, completed, resume, last_score, net_value, feedback`
 
 // workLevel selects the rows of the work itself, never of a version.
@@ -23,7 +23,7 @@ func scanStateRow(rows driver.Rows, tenant string) (StateRow, error) {
 		version string
 	)
 	if err := rows.Scan(
-		&r.ContentKind, &r.ContentID, &version, &r.FirstSeenAt, &r.LastSignalAt, &r.TotalEvents, &r.Views, &r.Completions,
+		&r.ContentKind, &r.ContentID, &version, &r.FirstSeenAt, &r.LastSignalAt, &r.LastViewAt, &r.TotalEvents, &r.Views, &r.Completions,
 		&r.ActiveS, &r.MaxProgress, &r.ProgressMax, &r.Completed, &r.Resume, &r.LastScore, &r.NetValue, &r.Feedback,
 	); err != nil {
 		return StateRow{}, err
@@ -84,13 +84,15 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND %s`,
 	return out, rows.Err()
 }
 
-func historyFilter(sb *strings.Builder, args []any, opts HistoryOptions) ([]any, error) {
+func historyFilter(sb *strings.Builder, args []any, opts HistoryOptions) ([]any, string, error) {
 	if k := strings.TrimSpace(opts.ContentKind); k != "" {
 		sb.WriteString(" AND content_kind = ?")
 		args = append(args, k)
 	}
+	timeColumn := "last_view_at"
 	switch opts.Status {
 	case HistoryAny:
+		timeColumn = "last_signal_at"
 	case HistorySeen:
 		sb.WriteString(" AND max_progress > 0")
 	case HistoryInProgress:
@@ -98,16 +100,17 @@ func historyFilter(sb *strings.Builder, args []any, opts HistoryOptions) ([]any,
 	case HistoryCompleted:
 		sb.WriteString(" AND completed")
 	default:
-		return nil, fmt.Errorf("signal: invalid HistoryOptions.Status %q", opts.Status)
+		return nil, "", fmt.Errorf("signal: invalid HistoryOptions.Status %q", opts.Status)
 	}
 	if !opts.Since.IsZero() {
-		sb.WriteString(" AND last_signal_at >= ?")
+		sb.WriteString(" AND " + timeColumn + " >= ?")
 		args = append(args, opts.Since.UTC())
 	}
-	return args, nil
+	return args, timeColumn, nil
 }
 
-// History returns the subject's work-level state rows, most recent signal first.
+// History returns the subject's work-level state rows, most recent relevant
+// activity first. Seen statuses use view recency; HistoryAny uses signal recency.
 func (st *Store) History(ctx context.Context, tenant string, subject Subject, opts HistoryOptions) ([]StateRow, error) {
 	if err := subject.Validate(); err != nil {
 		return nil, err
@@ -120,11 +123,11 @@ func (st *Store) History(ctx context.Context, tenant string, subject Subject, op
 	fmt.Fprintf(&sb, `SELECT %s
 FROM %s.subject_content_state FINAL
 WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, st.db, st.subjectNotErased(), workLevel)
-	args, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, opts)
+	args, timeColumn, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, opts)
 	if err != nil {
 		return nil, err
 	}
-	sb.WriteString(" ORDER BY last_signal_at DESC, content_kind ASC, content_id ASC LIMIT ? OFFSET ?")
+	sb.WriteString(" ORDER BY " + timeColumn + " DESC, content_kind ASC, content_id ASC LIMIT ? OFFSET ?")
 	args = append(args, limit, opts.Offset)
 	rows, err := st.conn.Query(ctx, sb.String(), args...)
 	if err != nil {
@@ -151,7 +154,7 @@ func (st *Store) HistoryCount(ctx context.Context, tenant string, subject Subjec
 	fmt.Fprintf(&sb, `SELECT toInt64(count())
 FROM %s.subject_content_state FINAL
 WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, st.db, st.subjectNotErased(), workLevel)
-	args, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, opts)
+	args, _, err := historyFilter(&sb, []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, opts)
 	if err != nil {
 		return 0, err
 	}
