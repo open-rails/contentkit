@@ -54,6 +54,9 @@ func TestTenantIsolation(t *testing.T) {
 	if feed, _ := b.LatestComments(ctx, u, 10, 0); len(feed) != 0 {
 		t.Fatalf("tenant b's feed shows a's comments: %v", feed)
 	}
+	if n, _ := b.LatestCommentsTotal(ctx); n != 0 {
+		t.Fatalf("tenant b's feed total counts a's comments: %d", n)
+	}
 	if m, _ := a.CommentReactionsByAuthor(ctx, []string{u.ID}); len(m) != 1 {
 		t.Fatalf("tenant a author totals = %v, want the shared account's own row", m)
 	}

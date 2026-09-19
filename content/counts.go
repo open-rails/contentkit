@@ -113,6 +113,16 @@ func (rt *Runtime) LatestComments(ctx context.Context, actor Actor, limit, offse
 	return rt.comments.latest(ctx, actor, limit, offset)
 }
 
+// LatestCommentsTotal is the page total for LatestComments: how many live,
+// approved comments the feed draws from in this tenant. Per-reference
+// visibility is applied per page (a page may under-fill), so this is the
+// upper bound a paged envelope reports, not a per-actor exact count —
+// filtering it exactly would cost one resolver call per distinct reference
+// in the whole table.
+func (rt *Runtime) LatestCommentsTotal(ctx context.Context) (int, error) {
+	return rt.comments.latestTotal(ctx)
+}
+
 // MyReactions batch-reads the actor's own reaction (-1/0/1) for many refs: the
 // hydration read for list/detail responses, keyed by the caller's references
 // and read under their canonical preference references (the identity the

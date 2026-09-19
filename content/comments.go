@@ -322,6 +322,15 @@ func (c *comments) latest(ctx context.Context, actor Actor, limit, offset int) (
 	return kept, nil
 }
 
+// latestTotal counts the rows latest draws from, under the same tenant,
+// liveness and moderation predicate.
+func (c *comments) latestTotal(ctx context.Context) (int, error) {
+	var n int
+	err := c.s.pool.QueryRow(ctx, `SELECT count(*) FROM `+c.s.t.comments+`
+		WHERE tenant_id = $1 AND deleted_at IS NULL AND moderation = 'approved'`, c.s.tenant).Scan(&n)
+	return n, err
+}
+
 // AdminComment is the moderation view: raw body (no tombstoning), deletion
 // and moderation state and the content reference.
 type AdminComment struct {
