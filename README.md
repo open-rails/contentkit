@@ -12,6 +12,20 @@ Design: [open-rails-tracker/contentkit/DESIGN.md](https://github.com/open-rails/
 Host contract: [HOST_INTEGRATION.md](HOST_INTEGRATION.md). Migrations:
 [docs/migration.md](docs/migration.md), [docs/restore.md](docs/restore.md).
 
+## Release policy
+
+ContentKit is pre-stable and releases on `v0.x`; its API may change between
+minor versions. The historical `v1.0.0-rc.1` through `v1.1.1` tags were
+premature and are retracted. `v1.1.2` is a self-retracted, withdrawal-only
+marker carrying Go module metadata, not a supported stable API release.
+
+The marker and `v0.12.2` identify the same source commit. Go reads retractions
+from the highest release before applying them, so the marker makes fresh
+`@latest` requests select the latest unretracted `v0.x` release, including
+future `v0.x` releases. Existing tags remain immutable; retraction preserves
+explicit pins and does not automatically downgrade existing consumers.
+See [Go module retractions](https://go.dev/ref/mod#go-mod-file-retract).
+
 ## Vocabulary
 
 | Name | Meaning |

@@ -2,6 +2,10 @@ module github.com/open-rails/contentkit
 
 go 1.25
 
+// Premature v1 tags: ContentKit is pre-stable; use the latest v0.x release.
+// v1.1.2 is a withdrawal-only marker and retracts itself.
+retract [v1.0.0-0, v1.1.2]
+
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.40.3
 	github.com/aws/aws-sdk-go-v2 v1.42.1
