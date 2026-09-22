@@ -170,13 +170,13 @@ const nodeColumns = `taxonomy_id, tenant_id, kind, slug, state, source_revision,
 // nodeColumnsN is nodeColumns qualified for ListNodes' joined query.
 const nodeColumnsN = `n.taxonomy_id, n.tenant_id, n.kind, n.slug, n.state, n.source_revision, n.created_at, n.updated_at`
 
-func scanNodeRow(row pgx.CollectableRow) (NodeRow, error) {
+func scanNodeRow(row rowScanner) (NodeRow, error) {
 	var r NodeRow
 	err := row.Scan(&r.TaxonomyID, &r.TenantID, &r.Kind, &r.Slug, &r.State, &r.SourceRevision, &r.CreatedAt, &r.UpdatedAt, &r.Name, &r.NameLanguage, &r.Count)
 	return r, err
 }
 
-func scanNode(row pgx.Row) (Node, error) {
+func scanNode(row rowScanner) (Node, error) {
 	var n Node
 	err := row.Scan(&n.TaxonomyID, &n.TenantID, &n.Kind, &n.Slug, &n.State, &n.SourceRevision, &n.CreatedAt, &n.UpdatedAt)
 	if err == pgx.ErrNoRows {
@@ -278,7 +278,7 @@ func (s *Store) CreateNodes(ctx context.Context, inputs []NodeInput) ([]Node, er
 		if err != nil {
 			return err
 		}
-		created, err := pgx.CollectRows(res, func(row pgx.CollectableRow) (Node, error) { return scanNode(row) })
+		created, err := collectRows(res, func(row rowScanner) (Node, error) { return scanNode(row) })
 		if err != nil {
 			return err
 		}
@@ -421,7 +421,7 @@ func (s *Store) Nodes(ctx context.Context, ids []TaxonomyID) ([]Node, error) {
 		if err != nil {
 			return err
 		}
-		found, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Node, error) { return scanNode(row) })
+		found, err := collectRows(rows, func(row rowScanner) (Node, error) { return scanNode(row) })
 		if err != nil {
 			return err
 		}
@@ -634,7 +634,7 @@ func (s *Store) ListNodes(ctx context.Context, opts ListOptions) (NodePage, erro
 		if err != nil {
 			return err
 		}
-		nodes, err := pgx.CollectRows(rows, scanNodeRow)
+		nodes, err := collectRows(rows, scanNodeRow)
 		if err != nil {
 			return err
 		}

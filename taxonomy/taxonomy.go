@@ -170,7 +170,7 @@ type Options struct {
 // Store is one tenant's catalog over the host schema.
 type Store struct {
 	pool      *pgxpool.Pool
-	tx        pgx.Tx
+	tx        querier
 	qs        string
 	schema    string
 	tenant    string
@@ -240,14 +240,17 @@ func (s *Store) Kinds() []string { return append([]string{}, s.kindList...) }
 // commit with the content change that caused them.
 func (s *Store) WithTx(tx pgx.Tx) *Store {
 	c := *s
-	c.tx = tx
+	c.tx = nil
+	if tx != nil {
+		c.tx = nativeQuerier{tx}
+	}
 	return &c
 }
 
 type querier interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-	Query(context.Context, string, ...any) (pgx.Rows, error)
-	QueryRow(context.Context, string, ...any) pgx.Row
+	Query(context.Context, string, ...any) (resultRows, error)
+	QueryRow(context.Context, string, ...any) rowScanner
 }
 
 // run executes fn in the bound transaction or in a new one.
@@ -260,7 +263,7 @@ func (s *Store) run(ctx context.Context, fn func(q querier) error) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	if err := fn(tx); err != nil {
+	if err := fn(nativeQuerier{tx}); err != nil {
 		return mapPGError(err)
 	}
 	return tx.Commit(ctx)
@@ -271,7 +274,7 @@ func (s *Store) read(ctx context.Context, fn func(q querier) error) error {
 	if s.tx != nil {
 		return mapPGError(fn(s.tx))
 	}
-	return mapPGError(fn(s.pool))
+	return mapPGError(fn(nativeQuerier{s.pool}))
 }
 
 func (s *Store) table(name string) string { return s.qs + "." + name }
