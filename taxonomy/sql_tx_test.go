@@ -32,6 +32,13 @@ func TestSQLTxBorrowsAtomicCatalogTransaction(t *testing.T) {
 	if err := borrowed.Assign(ctx, []Assignment{assign(work(tenant, "gallery", "g1"), "sql-node", "")}, AssignOptions{}); err != nil {
 		t.Fatal(err)
 	}
+	var count, pending int
+	if err := tx.QueryRowContext(ctx, fmt.Sprintf("SELECT coalesce(sum(content_count),0) FROM %s.content_node_counts WHERE taxonomy_id='sql-node'", schema)).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("transaction count: %d %v", count, err)
+	}
+	if err := tx.QueryRowContext(ctx, fmt.Sprintf("SELECT count(*) FROM %s.content_search_dirty WHERE content_id='sql-node'", schema)).Scan(&pending); err != nil || pending == 0 {
+		t.Fatalf("transaction dirty: %d %v", pending, err)
+	}
 	page, err := borrowed.ListNodes(ctx, ListOptions{Kind: "tag", Language: "en"})
 	if err != nil || len(page.Nodes) == 0 {
 		t.Fatalf("named args query: %+v %v", page, err)
