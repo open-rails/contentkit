@@ -50,11 +50,13 @@ const (
 	SortCount Sort = "count"
 	// SortCreated orders by creation time, newest first.
 	SortCreated Sort = "created"
+	// SortOldest orders by creation time, oldest first.
+	SortOldest Sort = "oldest"
 	// SortUpdated orders by last change, most recent first.
 	SortUpdated Sort = "updated"
 )
 
-var sorts = map[Sort]string{SortID: "", SortName: "nm.normalized ASC NULLS LAST", SortCount: "coalesce(cc.total, 0) DESC", SortCreated: "n.created_at DESC", SortUpdated: "n.updated_at DESC"}
+var sorts = map[Sort]string{SortID: "", SortName: "nm.normalized ASC NULLS LAST", SortCount: "coalesce(cc.total, 0) DESC", SortCreated: "n.created_at DESC", SortOldest: "n.created_at ASC", SortUpdated: "n.updated_at DESC"}
 
 // LanguageMode decides what a node without a canonical name in the request
 // language gets.
@@ -111,6 +113,12 @@ type ListOptions struct {
 	// reserved even when their corresponding option is unset.
 	FilterSQL  string
 	FilterArgs map[string]any
+
+	// OrderSQL is a trusted host ORDER BY expression for host-owned directory
+	// ordering, such as phonetic names stored in a sidecar. It excludes Sort
+	// and Cursor; use Offset. Node alias n is available, FilterArgs binds values,
+	// and taxonomy_id is appended as a stable tiebreak. Never accept request SQL.
+	OrderSQL string
 
 	// Sort orders the page.
 	Sort Sort
@@ -459,6 +467,13 @@ func (s *Store) compileList(opts ListOptions) (listQuery, error) {
 	order, ok := sorts[opts.Sort]
 	if !ok {
 		return q, fmt.Errorf("%w: sort %q", ErrInvalid, opts.Sort)
+	}
+	if hostOrder := strings.TrimSpace(opts.OrderSQL); hostOrder != "" {
+		if opts.Sort != SortID || opts.Cursor != "" {
+			return q, fmt.Errorf("%w: OrderSQL excludes Sort and Cursor", ErrInvalid)
+		}
+		order = hostOrder
+		q.cursored = false
 	}
 	if opts.Cursor != "" && (opts.Sort != SortID || opts.Offset != 0) {
 		return q, fmt.Errorf("%w: Cursor pages the default sort from its own position; it excludes Sort and Offset", ErrInvalid)
