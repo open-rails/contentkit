@@ -21,6 +21,11 @@ func (s *Store) WithSQLTx(tx *sql.Tx) *Store {
 	return &c
 }
 
+type executionResult interface{ RowsAffected() int64 }
+type affectedRows int64
+
+func (a affectedRows) RowsAffected() int64 { return int64(a) }
+
 type rowScanner interface{ Scan(...any) error }
 type resultRows interface {
 	rowScanner
@@ -35,6 +40,9 @@ type pgxQuerier interface {
 }
 type nativeQuerier struct{ pgxQuerier }
 
+func (q nativeQuerier) Exec(ctx context.Context, query string, args ...any) (executionResult, error) {
+	return q.pgxQuerier.Exec(ctx, query, args...)
+}
 func (q nativeQuerier) Query(ctx context.Context, query string, args ...any) (resultRows, error) {
 	return q.pgxQuerier.Query(ctx, query, args...)
 }
@@ -73,20 +81,20 @@ func (q sqlQuerier) rewrite(ctx context.Context, query string, args []any) (stri
 	}
 	return query, args, nil
 }
-func (q sqlQuerier) Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
+func (q sqlQuerier) Exec(ctx context.Context, query string, args ...any) (executionResult, error) {
 	query, args, err := q.rewrite(ctx, query, args)
 	if err != nil {
-		return pgconn.CommandTag{}, err
+		return nil, err
 	}
 	result, err := q.tx.ExecContext(ctx, query, args...)
 	if err != nil {
-		return pgconn.CommandTag{}, err
+		return nil, err
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return pgconn.CommandTag{}, err
+		return nil, err
 	}
-	return pgconn.NewCommandTag(fmt.Sprintf("UPDATE %d", affected)), nil
+	return affectedRows(affected), nil
 }
 func (q sqlQuerier) Query(ctx context.Context, query string, args ...any) (resultRows, error) {
 	query, args, err := q.rewrite(ctx, query, args)
