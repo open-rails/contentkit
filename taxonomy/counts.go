@@ -3,7 +3,6 @@ package taxonomy
 import (
 	"context"
 	"fmt"
-
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/contentref"
@@ -103,7 +102,7 @@ func (s *Store) RecountContent(ctx context.Context, refs []contentref.ContentRef
 		if err != nil {
 			return err
 		}
-		ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		ids, err := collectRows(rows, scanString)
 		if err != nil || len(ids) == 0 {
 			return err
 		}
@@ -127,7 +126,7 @@ func (s *Store) RebuildCounts(ctx context.Context) (int, error) {
 			if err != nil {
 				return err
 			}
-			if ids, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil || len(ids) == 0 {
+			if ids, err = collectRows(rows, scanString); err != nil || len(ids) == 0 {
 				return err
 			}
 			return s.recountNodes(ctx, q, ids)
