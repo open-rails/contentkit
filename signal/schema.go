@@ -17,7 +17,7 @@ type Exec interface {
 
 // CreateDatabase creates the dedicated signal database (ON CLUSTER when cluster
 // is set). The schema itself is owned by the versioned migrations in
-// migrations.SignalClickHouse, applied with migratekit chmigrate; migratekit
+// migrations.ClickHouse, applied with migratekit chmigrate; migratekit
 // connects to the database, so it must exist first.
 func CreateDatabase(ctx context.Context, conn Exec, database, cluster string) error {
 	if !identRe.MatchString(database) {
@@ -49,8 +49,7 @@ type tableSpec struct {
 var refColumnSpecs = []columnSpec{{"content_kind", "LowCardinality(String)"}, {"content_id", "String"}, {"content_version_id", "String"}}
 
 // expectedSchema is the schema this library version reads and writes. It must
-// match the latest migration in migrations/clickhouse/signal. Tables the
-// lineage keeps only for a later drop are not listed and never read.
+// match the baseline in migrations/clickhouse.
 var expectedSchema = map[string]tableSpec{
 	"signals": {
 		engine: "ReplacingMergeTree", version: "version",
@@ -127,7 +126,7 @@ type SchemaMismatchError struct {
 }
 
 func (e *SchemaMismatchError) Error() string {
-	return fmt.Sprintf("signal: database %q is incompatible with this contentkit version (apply migrations.SignalClickHouse): %s",
+	return fmt.Sprintf("signal: database %q is incompatible with this contentkit version (apply migrations.ClickHouse): %s",
 		e.Database, strings.Join(e.Problems, "; "))
 }
 

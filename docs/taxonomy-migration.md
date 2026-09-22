@@ -6,12 +6,9 @@ table. Hosts adopt in place, one at a time, under the pre-launch hard-cut rule:
 rename or copy their rows into the library tables, keep every id, drop the old
 tables and triggers. No compatibility views.
 
-Lineage: `migrations.Taxonomy` (migratekit app id `contentkit_taxonomy`),
-applied into the same schema after the keyword profile it depends on
-(`contentkit_keyword_normalize`, `content_search_documents`, the dirty queue).
-Enable it through `contentkit.MigrateConfig{Taxonomy: true}`: the unified migrate
-entry applies it in `SearchSchema` after keyword migrations. The existing
-`contentkit_taxonomy` ledger label is preserved.
+The PostgreSQL baseline installs taxonomy together with interactions and
+keyword search in the host-selected schema. There is no separate taxonomy
+migration or ledger identity.
 
 Catalog construction is intentionally optional and host-configured: create
 `taxonomy.Store` with the same pool, keyword schema and tenant, plus your
@@ -127,7 +124,7 @@ document with the function over the live-version join:
 
 ## Order of work per host
 
-1. Apply the taxonomy lineage in the host migrate step (after the keyword profile).
+1. Apply the complete ContentKit PostgreSQL baseline in the host migrate step.
 2. In one transaction with `AssignOptions{SuppressCounts: true}`: create nodes
    (ids as `'<kind>:<id>'`), names, edges, assignments from the tables above, keeping
    `source_revision` = the host row's version where one exists. After the node's

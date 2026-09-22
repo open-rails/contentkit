@@ -19,8 +19,8 @@ import (
 
 // RuntimeConfig configures one tenant's full ContentKit: the search and signal
 // planes (EmbeddedConfig) and the interaction module (Content). Pool, tenant
-// and keyword schema are shared: Content.Pool, Content.Tenant and
-// Content.SearchSchema are filled from the hub configuration when empty.
+// and schema are shared: Content.Pool, Content.Tenant and Content.Schema are
+// filled from the hub configuration when empty. Posts join the keyword queue.
 type RuntimeConfig struct {
 	EmbeddedConfig
 	Content content.Options
@@ -49,8 +49,11 @@ func NewRuntime(ctx context.Context, cfg RuntimeConfig) (*Runtime, error) {
 	if c.Tenant != hub.Tenant() {
 		return nil, fmt.Errorf("contentkit: content tenant %q differs from hub tenant %q", c.Tenant, hub.Tenant())
 	}
-	if strings.TrimSpace(c.SearchSchema) == "" {
-		c.SearchSchema = cfg.PGSchema
+	if c.Schema == "" {
+		c.Schema = cfg.PGSchema
+	}
+	if c.Schema != cfg.PGSchema {
+		return nil, fmt.Errorf("contentkit: content schema %q differs from PostgreSQL schema %q", c.Schema, cfg.PGSchema)
 	}
 	rt, err := content.New(ctx, c)
 	if err != nil {
@@ -106,80 +109,34 @@ func (r *Runtime) WorkerOptions(host worker.Options) worker.Options {
 	return out
 }
 
-// MigrateConfig names the stores contentkit.Migrate applies the lineages to.
+// MigrateConfig selects the host-owned stores for the two ContentKit baselines.
 type MigrateConfig struct {
-	// DB holds DDL credentials for the host Postgres. Required.
+	// DB holds PostgreSQL DDL credentials. Required.
 	DB *sql.DB
-	// Schema is the host schema: the social lineage lands here. Required.
+	// Schema receives every PostgreSQL table; it may be the application's schema.
+	// Required. Identifiers contain letters, numbers or underscores.
 	Schema string
-	// SearchSchema receives the keyword lineage; "" = Schema.
-	SearchSchema string
-	// SearchApp is the keyword lineage's ledger label; "" = "contentkit".
-	// Existing keyword installations keep the label they were created with.
-	SearchApp string
-	// LegacySearch applies migrations.LegacyPostgres (existing installations
-	// created from the pre-ContentKit combined lineage; docs/migration.md).
-	LegacySearch bool
-	// Taxonomy applies the optional catalog lineage in SearchSchema after the
-	// keyword lineage it depends on. Its ledger app is contentkit_taxonomy.
-	Taxonomy bool
-	// ClickHouse applies the signal lineage when set; PostgresDB defaults to DB.
+	// ClickHouse applies the signal baseline when set; PostgresDB defaults to DB.
 	ClickHouse *chmigrate.Config
 }
 
-// Migrate applies every ContentKit lineage: social in Schema, keyword in
-// SearchSchema, optional taxonomy in SearchSchema, and the configured signal plane.
+// Migrate installs all PostgreSQL features in one host-selected schema and the
+// optional ClickHouse signal plane. This baseline initializes fresh stores.
 func Migrate(ctx context.Context, cfg MigrateConfig) error {
-	if cfg.DB == nil {
-		return fmt.Errorf("contentkit: DB is required")
-	}
-	if strings.TrimSpace(cfg.Schema) == "" {
-		return fmt.Errorf("contentkit: Schema is required")
-	}
-	if err := content.Migrate(ctx, cfg.DB, cfg.Schema); err != nil {
+	if err := migrations.ApplyPostgres(ctx, cfg.DB, cfg.Schema); err != nil {
 		return err
-	}
-	searchSchema, app, lineage := cfg.SearchSchema, cfg.SearchApp, migrations.Postgres
-	if searchSchema == "" {
-		searchSchema = cfg.Schema
-	}
-	if app == "" {
-		app = "contentkit"
-	}
-	if cfg.LegacySearch {
-		lineage = migrations.LegacyPostgres
-	}
-	qs, err := search.QuoteSchema(searchSchema)
-	if err != nil {
-		return err
-	}
-	if _, err := cfg.DB.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS "+qs); err != nil {
-		return fmt.Errorf("contentkit: ensure search schema: %w", err)
-	}
-	migs, err := migratekit.Load(lineage, ".", migratekit.RequireParentLinks())
-	if err != nil {
-		return fmt.Errorf("contentkit: load keyword migrations: %w", err)
-	}
-	if err := migratekit.NewPostgres(cfg.DB, app).WithSchema(searchSchema).ApplyMigrations(ctx, migs); err != nil {
-		return fmt.Errorf("contentkit: apply keyword migrations: %w", err)
-	}
-	if cfg.Taxonomy {
-		catalog, err := migratekit.Load(migrations.Taxonomy, ".", migratekit.RequireParentLinks())
-		if err != nil {
-			return fmt.Errorf("contentkit: load taxonomy migrations: %w", err)
-		}
-		if err := migratekit.NewPostgres(cfg.DB, "contentkit_taxonomy").WithSchema(searchSchema).ApplyMigrations(ctx, catalog); err != nil {
-			return fmt.Errorf("contentkit: apply taxonomy migrations: %w", err)
-		}
 	}
 	if cfg.ClickHouse == nil {
 		return nil
 	}
 	ch := *cfg.ClickHouse
+	if ch.App == "" {
+		ch.App = "contentkit_signal"
+	}
 	if ch.PostgresDB == nil {
 		ch.PostgresDB = cfg.DB
 	}
-	chmigs, err := migratekit.Load(migrations.SignalClickHouse, ".", migratekit.RequireParentLinks())
+	chmigs, err := migratekit.Load(migrations.ClickHouse, ".", migratekit.RequireParentLinks())
 	if err != nil {
 		return fmt.Errorf("contentkit: load signal migrations: %w", err)
 	}

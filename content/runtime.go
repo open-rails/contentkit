@@ -26,13 +26,10 @@ const (
 type Options struct {
 	// Pool is the host's shared pgx pool; the runtime does not own its lifecycle.
 	Pool *pgxpool.Pool
-	// Schema is the host schema holding the social_* tables (contentkit.Migrate).
+	// Schema is the host-selected schema holding all ContentKit tables.
 	Schema string
 	// Tenant scopes every row, index, cursor and result. Required.
 	Tenant string
-	// SearchSchema is the keyword-profile schema whose dirty queue receives
-	// posts as search documents. Empty: posts are not indexed.
-	SearchSchema string
 
 	// Mandatory ports.
 	Identity Identity
@@ -81,7 +78,6 @@ type Runtime struct {
 	store             *store
 	schema            string
 	tenant            string
-	searchSchema      string
 	identity          Identity
 	authz             Authorizer
 	resolver          ContentResolver
@@ -107,8 +103,7 @@ type Runtime struct {
 	favorites   *favorites
 }
 
-// New constructs a Runtime over a schema the social lineage was applied to
-// (Migrate) and wires the module services.
+// New constructs a Runtime over a schema the ContentKit baseline was applied to and wires the module services.
 func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if opts.Pool == nil {
 		return nil, fmt.Errorf("content: Pool is required")
@@ -134,7 +129,6 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		store:             newStore(opts.Pool, opts.Schema, opts.Tenant),
 		schema:            opts.Schema,
 		tenant:            opts.Tenant,
-		searchSchema:      strings.TrimSpace(opts.SearchSchema),
 		identity:          opts.Identity,
 		authz:             opts.Authz,
 		resolver:          opts.Resolver,
@@ -169,14 +163,13 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	return rt, nil
 }
 
-// checkSchema fails construction when the social lineage (incl. the content
-// reference migration) is not applied to the schema.
+// checkSchema refuses a schema missing required ContentKit tables.
 func (rt *Runtime) checkSchema(ctx context.Context) error {
 	if _, err := rt.store.pool.Exec(ctx, `SELECT tenant_id, content_kind, content_id, content_version_id FROM `+rt.store.t.counts+` LIMIT 0;
 		SELECT revision FROM `+rt.store.t.preferenceSnapshots+` LIMIT 0;
 		SELECT moderation FROM `+rt.store.t.comments+` LIMIT 0; SELECT moderation FROM `+rt.store.t.posts+` LIMIT 0;
 		SELECT kind, closes_at FROM `+rt.store.t.pollQuestions+` LIMIT 0; SELECT group_id FROM `+rt.store.t.pollAnswers+` LIMIT 0`); err != nil {
-		return fmt.Errorf("content: schema %q lacks the social lineage (apply contentkit.Migrate): %w", rt.schema, err)
+		return fmt.Errorf("content: schema %q lacks the ContentKit baseline (apply contentkit.Migrate): %w", rt.schema, err)
 	}
 	return nil
 }

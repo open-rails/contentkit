@@ -9,9 +9,9 @@ another tenant are rejected.
 One migrate call, one constructor, one HTTP mount per tenant:
 
 ```go
-_ = contentkit.Migrate(ctx, contentkit.MigrateConfig{DB: sqlDB, Schema: "doujins", SearchSchema: "doujins_searchkit", ClickHouse: &chmigrate.Config{...}})
+_ = contentkit.Migrate(ctx, contentkit.MigrateConfig{DB: sqlDB, Schema: "doujins", ClickHouse: &chmigrate.Config{...}})
 rt, _ := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
-	EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: "doujins_searchkit", Tenant: "doujins", CH: ch, CHDatabase: "hub"},
+	EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: "doujins", Tenant: "doujins", CH: ch, CHDatabase: "hub"},
 	Content: content.Options{Schema: "doujins", Identity: identity, Authz: authz, Resolver: resolver, Users: users,
 		Storage: storage, Processor: sanitizer, Perms: content.Perms{...}, ContentKinds: []string{"gallery", "post", "tag"}},
 })
@@ -66,8 +66,8 @@ documents and posts.
 
 The tenant is pinned at construction and stamped on every row; a `ContentRef`
 of another tenant passed to any read is `content.ErrTenant`, never remapped.
-Existing single-tenant rows convert under `tenant_id = ''` and are adopted
-once with `content.AssignTenant` ([docs/migration.md](docs/migration.md)).
+The host imports existing data with explicit tenant and content references
+after initializing fresh stores ([docs/migration.md](docs/migration.md)).
 
 ## Moderation (comments and posts)
 
@@ -299,7 +299,7 @@ WHERE gv.id::text = sd.content_version_id AND g.id::text = sd.content_id AND gv.
 
 `taxonomy.Store` owns the generic catalog of one tenant. Enable its lineage
 with `contentkit.MigrateConfig{Taxonomy: true}`; it follows keyword migrations
-in `SearchSchema`. Construct the optional store with that schema and the
+in the host-selected PostgreSQL schema. Construct the optional store with that schema and the
 host's kinds, languages and count-eligibility rule. Assign work-level
 tags with a work reference and version traits with a version reference; read
 `EffectiveTags` (work ∪ version) when hydrating. For "every requested tag on
@@ -432,7 +432,7 @@ priors, the judged fixture and the host adoption steps.
 - Create and reuse one `contentkit.Runtime` per tenant.
 - Index per-version documents; move visibility/trait policy into `Eligibility`.
 - Page with `Offset`/`Limit` and `HasMore`; never fetch N documents and dedupe.
-- Apply the lineages with `contentkit.Migrate` per [docs/migration.md](docs/migration.md); run `content.AssignTenant` once; gate startup on `signal.CheckSchema`.
+- Apply the baselines with `contentkit.Migrate` per [docs/migration.md](docs/migration.md); gate startup on `signal.CheckSchema`.
 - Wire `Options.Moderator` (a `Chain` of `BasicModerator` and the AI moderator), `Options.Classifier` for free-text polls, `Perms.ModerationReview`, and schedule `ReclassifyPending`.
 - Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, implement `ContentCanonicalizer`, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, schedule `DeliverPreferences`, wire `EraseSubjects` into deletion, run the cutover above once, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id`.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.

@@ -82,9 +82,9 @@ type Hub interface {
 
 // EmbeddedConfig configures an in-process hub against the shared DB.
 type EmbeddedConfig struct {
-	// Content plane (Postgres). PG + PGSchema are required. PGSchema should
-	// be a dedicated schema (not the host app's schema) to avoid table
-	// collisions.
+	// Content plane (Postgres). PG + PGSchema are required. PGSchema is the
+	// host-selected schema containing all ContentKit tables; it may also hold
+	// application tables.
 	PG       *pgxpool.Pool
 	PGSchema string
 
@@ -97,7 +97,7 @@ type EmbeddedConfig struct {
 	// Signal plane (ClickHouse). Optional: omit CH to run content-only
 	// (signal/discovery methods return ErrSignalPlaneDisabled). CHDatabase
 	// is the hub's dedicated ClickHouse database; apply
-	// migrations.SignalClickHouse and gate startup on signal.CheckSchema.
+	// migrations.ClickHouse and gate startup on signal.CheckSchema.
 	CH         signal.Conn
 	CHDatabase string
 

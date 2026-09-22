@@ -72,8 +72,6 @@ jobs:
     - uses: actions/setup-go@v5
       with:
         go-version-file: go.mod
-    - name: Install pgvector (only the legacy-lineage convergence test needs it)
-      run: docker exec '${{ job.services.postgres.id }}' bash -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends postgresql-18-pgvector'
     - name: Isolate profile test databases
       run: docker exec '${{ job.services.postgres.id }}' createdb -U contentkit contentkit_profiles
     - name: build

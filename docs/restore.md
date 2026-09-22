@@ -1,54 +1,28 @@
 # Restore
 
-Search documents are derived data; the ClickHouse signal plane and the
-erasure ledger are not. Restore them differently.
+Search documents and derived counts are rebuildable. Authored content,
+preferences and their revision sequence, moderation state, canonical signals
+and erasure fences are durable state.
 
-## Postgres snapshot taken before keyword 0003 / legacy 0004
+Restore a backup into a store initialized with the matching ContentKit
+baseline and host schema. Preserve MigrateKit's PostgreSQL migration ledger
+with the databases it tracks. The current initializer is not an upgrade tool
+for snapshots taken under older feature-specific migration chains; restore
+those with their matching library version before a verified host-owned import
+into fresh stores.
 
-1. Restore the dump into the host schema as usual. Its `migrations` ledger
-   still names the old lineage state.
-2. Run the host's migrate step: migratekit applies the pending content-refs
-   migration (and, for the legacy lineage, 0005 drops the embedding tables —
-   the export step in [migration.md](migration.md) applies to the restored
-   data just as it did before).
-3. The restored `search_documents` rows now sit in `content_search_documents`
-   under `tenant_id = ''`. Reindex through the worker backfill, then delete the
-   `''` rows. Do not try to map old rows onto tenants by hand.
+After restoring PostgreSQL, rebuild keyword documents from the host's current
+content and recompute taxonomy counts when the backup predates catalog
+changes. Do not rewind preference delivery revisions against a retained sink:
+run `SeedPreferenceRevisionFloor` before writers resume, as described in the
+[host integration guide](../HOST_INTEGRATION.md#preference-boundary-reactions-and-favorites-into-the-signal-plane).
 
-If a dump of only the old search tables must be loaded into an already
-converted schema, convert it on the way in:
+After restoring ClickHouse, replay every subject deletion newer than the
+backup from the host's deletion ledger, then run `EnforceErasures` for each
+tenant. Run `RepairProjections` and `RefreshCoEngagement` as needed to rebuild
+derived state from canonical signals. `signal.CheckSchema` must pass before
+serving analytics.
 
-```sql
-INSERT INTO content_search_documents (tenant_id, content_kind, content_id, content_version_id, language, title, aliases, keywords, raw_document, created_at, updated_at)
-SELECT '<tenant>', entity_type, entity_id, '', language, title, aliases, keywords, raw_document, created_at, updated_at
-FROM old_search_documents;
-```
-
-`content_version_id` is `''` for every old row: pre-cut documents were keyed
-by the version id in `entity_id` for grouped kinds, so a reindex (not this
-conversion) is what restores version references.
-
-## Postgres snapshot taken after the migrations
-
-Nothing to convert. Reindex if the snapshot predates catalog changes.
-
-## ClickHouse backup taken before signal 0005
-
-1. Restore the database.
-2. Apply the signal lineage: 0005 copies the restored `events`,
-   `subject_state`, `subject_daily` and `item_pairs` into the content-referenced
-   tables and converts `exposures`.
-3. Re-erase every subject deleted since the backup (the host's deletion ledger
-   is authoritative), then run `EnforceErasures` for each tenant: it clears the
-   restored legacy tables too.
-4. `signal.CheckSchema` must pass before the host serves analytics.
-
-## ClickHouse backup taken after signal 0005
-
-Steps 3 and 4 only.
-
-## What never rolls back
-
-Erasures. A restore that resurrects an erased subject is a defect; the
-ledger restored with the backup plus the host deletion ledger must be
-replayed before traffic.
+Erasures never roll back. Replay post-backup deletions and permanent source
+fences before reopening private writes; an AuthKit callback acknowledgement
+means durable acceptance, not completion of downstream erasure.

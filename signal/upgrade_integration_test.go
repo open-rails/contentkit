@@ -8,15 +8,13 @@ import (
 	"github.com/open-rails/contentkit/internal/signaltest"
 )
 
-func TestIntegrationViewRecencyMigrationBackfillsExistingState(t *testing.T) {
+func TestIntegrationViewRecencyRepairRestoresWatchHistory(t *testing.T) {
 	env := signaltest.FromEnv(t)
 	ctx := context.Background()
-	conn := env.Empty(t, testDB)
-	env.ApplyRange(t, conn, 0, 5)
+	conn := env.Fresh(t, testDB)
 
-	// This is the compacted state an installation has before 0006: a later
-	// click moved last_signal_at forward, while the latest consumption was
-	// still the view on May 4.
+	// A restored stale projection has a later click but lacks view recency.
+	// Repair must derive consumption time from the canonical signals.
 	if err := conn.Exec(ctx, `
         INSERT INTO subject_content_state
           (tenant, subject_kind, subject, content_kind, content_id,
@@ -46,7 +44,13 @@ func TestIntegrationViewRecencyMigrationBackfillsExistingState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	env.ApplyRange(t, conn, 5, 6)
+	st, err := NewStore(conn, testDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.RepairProjections(ctx, "doujins", RepairOptions{Rebuild: true}); err != nil {
+		t.Fatal(err)
+	}
 
 	var got time.Time
 	if err := conn.QueryRow(ctx, `SELECT last_view_at FROM subject_content_state FINAL WHERE tenant='doujins' AND subject_kind='user' AND subject='u1' AND content_kind='gallery' AND content_id='g1'`).Scan(&got); err != nil {
@@ -57,10 +61,6 @@ func TestIntegrationViewRecencyMigrationBackfillsExistingState(t *testing.T) {
 		t.Fatalf("backfilled last_view_at = %v, want %v", got, want)
 	}
 
-	st, err := NewStore(conn, testDB)
-	if err != nil {
-		t.Fatal(err)
-	}
 	history, err := st.History(ctx, "doujins", Subject{UserID: "u1"}, HistoryOptions{
 		Status: HistorySeen,
 		Since:  time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),

@@ -16,10 +16,10 @@ import (
 // it through KeywordDocuments. A post without a language is not a document.
 
 func (p *posts) markDirty(ctx context.Context, tx pgx.Tx, id, language string, deleted bool) error {
-	if p.rt.searchSchema == "" || language == "" {
+	if language == "" {
 		return nil
 	}
-	return search.MarkDirty(ctx, tx, p.rt.searchSchema, []search.DirtyMark{{
+	return search.MarkDirty(ctx, tx, p.rt.schema, []search.DirtyMark{{
 		DocumentKey: search.DocumentKey{ContentRef: p.rt.Ref(KindPost, id), Language: language},
 		Deleted:     deleted,
 		Reason:      "post",

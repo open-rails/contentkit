@@ -43,9 +43,9 @@ func TestRuntimeErasureIncludesPrivatePlaneIntegration(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		t.Run(fmt.Sprint("signal_enabled_", enabled), func(t *testing.T) {
 			host := pgtest.EmptySchema(t, ctx, pool)
-			searchSchema := pgtest.Schema(t, ctx, pool)
+			searchSchema := host
 			db := stdlib.OpenDBFromPool(pool)
-			if err := content.Migrate(ctx, db, host); err != nil {
+			if err := Migrate(ctx, MigrateConfig{DB: db, Schema: host}); err != nil {
 				t.Fatal(err)
 			}
 			db.Close()

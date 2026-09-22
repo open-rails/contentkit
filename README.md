@@ -52,32 +52,31 @@ another tenant is an error, never remapped.
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
 | `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, taxonomy popularity through the host `Catalog` port |
 | `eval` | lexical golden-case evaluation, reports, baselines |
-| `migrations` | the five migratekit lineages (social, keyword, legacy keyword, taxonomy, signal) |
-| root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (social, keyword, optional taxonomy, signal), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
+| `migrations` | one PostgreSQL baseline and one ClickHouse baseline |
+| root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (all PostgreSQL features and optional ClickHouse signals), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
 
 ## Install
 
-One call applies the social lineage into the host schema, the keyword profile
-into the search schema (PGroonga and pg_trgm required, no vector extension)
-and the signal lineage into a dedicated ClickHouse database:
+One call installs all PostgreSQL features in a host-selected schema (which
+may also hold application tables) and the signal plane in ClickHouse. PGroonga
+and pg_trgm live in public; no vector extension is required:
 
 ```go
 _ = signal.CreateDatabase(ctx, adminCH, "hub", cluster)
 _ = contentkit.Migrate(ctx, contentkit.MigrateConfig{
-	DB: sqlDB, Schema: "doujins", SearchSchema: "doujins_searchkit",
+	DB: sqlDB, Schema: "doujins",
 	ClickHouse: &chmigrate.Config{ClientAddr: addr, Database: "hub", App: "contentkit_signal", Cluster: cluster},
 })
-_, _ = content.AssignTenant(ctx, pool, "doujins", "doujins") // once, after the first migrate on an existing install
 ```
 
-Existing installations keep their lineages (`socialkit`, `searchkit`/
-`migrations.LegacyPostgres`, `searchkit_signal`); see [docs/migration.md](docs/migration.md).
+These are fresh-store baselines, not an in-place upgrade of old migration
+chains; see [docs/migration.md](docs/migration.md).
 
 ## Runtime
 
 ```go
 rt, _ := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
-	EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: "doujins_searchkit", Tenant: "doujins", CH: ch, CHDatabase: "hub"},
+	EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: "doujins", Tenant: "doujins", CH: ch, CHDatabase: "hub"},
 	Content: content.Options{Schema: "doujins", Identity: identity, Authz: authz, Resolver: resolver, ContentKinds: []string{"gallery", "post"}},
 })
 mux.Handle("/api/social/", http.StripPrefix("/api/social", rt.Handler()))
@@ -164,8 +163,7 @@ names, driver text and stack traces are logged, never served.
 
 Nodes, names, edges and assignments are tenant-scoped; effective tags are the
 work's assignments ∪ the selected version's; `RequireAll` makes a multi-node
-filter hold on one eligible version inside the same join as search. Apply
-`migrations.Taxonomy` after the keyword profile; see
+filter hold on one eligible version inside the same join as search. The PostgreSQL baseline always installs the taxonomy tables; see
 [docs/taxonomy-migration.md](docs/taxonomy-migration.md).
 
 ```go
@@ -238,6 +236,5 @@ go test ./... -race -count=1 -p 2
 ```
 
 Tests run against real PGroonga Postgres and ClickHouse+Keeper and skip
-without the variables; `CONTENTKIT_PROFILE_URL` needs `CREATEDB` (and pgvector
-for the legacy-lineage convergence test). Regenerate the eval baseline with
+without the variables; `CONTENTKIT_PROFILE_URL` needs `CREATEDB`. Regenerate the eval baseline with
 `CONTENTKIT_EVAL_UPDATE=1`.
