@@ -23,13 +23,21 @@ func TestMigrateHostSchemaAndForeignKeysIntegration(t *testing.T) {
 		_, _ = pool.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+q+" CASCADE")
 		_, _ = pool.Exec(context.Background(), "DELETE FROM public.migrations WHERE schema=$1", schema)
 	})
-	if _, err := pool.Exec(ctx, "CREATE SCHEMA "+q+"; CREATE TABLE "+q+".host_entities(tenant_id text, id text, PRIMARY KEY(tenant_id,id))"); err != nil {
-		t.Fatal(err)
-	}
 	db := stdlib.OpenDBFromPool(pool)
 	defer db.Close()
 	cfg := MigrateConfig{DB: db, Schema: schema}
-	if err := Migrate(ctx, cfg); err != nil {
+	// Both first callers target a missing schema; creation and baseline apply
+	// must serialize under the same migration lock.
+	results := make(chan error, 2)
+	for range 2 {
+		go func() { results <- Migrate(ctx, cfg) }()
+	}
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatalf("concurrent first initialization: %v", err)
+		}
+	}
+	if _, err := pool.Exec(ctx, "CREATE TABLE "+q+".host_entities(tenant_id text, id text, PRIMARY KEY(tenant_id,id))"); err != nil {
 		t.Fatal(err)
 	}
 	store, err := taxonomy.New(taxonomy.Options{Pool: pool, Schema: schema, Tenant: "site", Kinds: []string{"tag"}, Languages: []string{"en"}})
@@ -58,6 +66,9 @@ func TestMigrateHostSchemaAndForeignKeysIntegration(t *testing.T) {
 		t.Fatalf("repeat baseline: %v", err)
 	}
 	var count int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM public.migrations WHERE app='contentkit' AND schema=$1", schema).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("one baseline ledger row: %d %v", count, err)
+	}
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM "+q+".content_node_names WHERE taxonomy_id='tag-1' AND normalized='color'").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("catalog preserved on rerun: %d %v", count, err)
 	}

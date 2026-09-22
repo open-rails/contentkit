@@ -36,13 +36,10 @@ func ApplyPostgres(ctx context.Context, db *sql.DB, schema string) error {
 	if db == nil {
 		return fmt.Errorf("contentkit: DB is required")
 	}
-	quoted, err := search.QuoteSchema(schema)
-	if err != nil {
+	if _, err := search.QuoteSchema(schema); err != nil {
 		return fmt.Errorf("contentkit: Schema: %w", err)
 	}
-	if _, err := db.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS "+quoted); err != nil {
-		return fmt.Errorf("contentkit: ensure schema: %w", err)
-	}
+	// MigrateKit creates the selected schema under its migration lock.
 	baseline, err := migratekit.Load(Postgres, ".", migratekit.RequireParentLinks())
 	if err != nil {
 		return fmt.Errorf("contentkit: load PostgreSQL baseline: %w", err)

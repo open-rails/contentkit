@@ -297,9 +297,9 @@ WHERE gv.id::text = sd.content_version_id AND g.id::text = sd.content_id AND gv.
 
 ## Taxonomy (nodes, assignments, effective tags, counts)
 
-`taxonomy.Store` owns the generic catalog of one tenant. Enable its lineage
-with `contentkit.MigrateConfig{Taxonomy: true}`; it follows keyword migrations
-in the host-selected PostgreSQL schema. Construct the optional store with that schema and the
+`taxonomy.Store` owns the generic catalog of one tenant. The PostgreSQL
+baseline installs its tables in the host-selected schema. Construct the
+optional store with that schema and the
 host's kinds, languages and count-eligibility rule. Assign work-level
 tags with a work reference and version traits with a version reference; read
 `EffectiveTags` (work ∪ version) when hydrating. For "every requested tag on
@@ -356,8 +356,7 @@ unfavorite keep a zero-valued snapshot; a rollback exports nothing; anonymous
 - **Repair**: `rt.ReplayPreferences(ctx, after, pageSize, maxRows)` re-delivers
   every snapshot (acknowledged rows and zeros included) and resumes from the
   returned `Next`; newer snapshots still win by revision.
-- **Cutover** (once per host, writers paused): `contentkit.Migrate` (social
-  0004) → stop the old callback bridge and drain its queues →
+- **Cutover** (once per host, writers paused): `contentkit.Migrate` on the fresh target → stop the old callback bridge and drain its queues →
   `rt.Content.SeedPreferenceRevisionFloor(maxExistingSinkRevision)` (fails
   closed outside `[0, MaxInt64/2]`, only ever advances) →
   `rt.Content.MigratePreferences(PreferenceMigrationOptions{ExportedKeys, DryRun})`
