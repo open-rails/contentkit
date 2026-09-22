@@ -130,7 +130,13 @@ document with the function over the live-version join:
 1. Apply the taxonomy lineage in the host migrate step (after the keyword profile).
 2. In one transaction with `AssignOptions{SuppressCounts: true}`: create nodes
    (ids as `'<kind>:<id>'`), names, edges, assignments from the tables above, keeping
-   `source_revision` = the host row's version where one exists.
+   `source_revision` = the host row's version where one exists. After the node's
+   other mutations, use `SetImportedTimestamps(ctx, id, &createdAt, &updatedAt)`
+   to preserve valid source chronology. A nil timestamp leaves that field alone;
+   zero timestamps are rejected. The method uses the same transaction bound by
+   `WithTx` or `WithSQLTx`, leaves `source_revision` unchanged, and queues the
+   node for indexing. Ordinary mutations resume the normal update clock. This
+   import-only method is separate from the public HTTP mutation inputs.
 3. `RebuildCounts`; compare with `expected_entity_gallery_counts()` /
    `entity_video_counts` row for row before dropping them.
 4. Register the taxonomy kinds in the worker (`ContentKinds`, `store.Lister`,
