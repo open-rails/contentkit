@@ -105,6 +105,13 @@ type ListOptions struct {
 	// MinCount keeps nodes whose Count is at least this. 1 hides empty nodes.
 	MinCount int
 
+	// FilterSQL is trusted host SQL appended as AND (<FilterSQL>) against
+	// node alias n. Use it for host-owned sidecar policy, never request SQL.
+	// FilterArgs binds pgx @name placeholders. Library parameter names are
+	// reserved even when their corresponding option is unset.
+	FilterSQL  string
+	FilterArgs map[string]any
+
 	// Sort orders the page.
 	Sort Sort
 
@@ -571,6 +578,19 @@ func (s *Store) compileList(opts ListOptions) (listQuery, error) {
 	if opts.Cursor != "" {
 		where = append(where, "n.taxonomy_id > @cursor")
 		q.args["cursor"] = opts.Cursor
+	}
+	if filter := strings.TrimSpace(opts.FilterSQL); filter != "" {
+		where = append(where, "("+filter+")")
+	}
+	for name, value := range opts.FilterArgs {
+		if !identRE.MatchString(name) {
+			return q, fmt.Errorf("%w: invalid FilterArgs name %q", ErrInvalid, name)
+		}
+		switch name {
+		case "tenant", "language", "fallback", "states", "kind", "slug", "related", "relation", "ids", "content_kind", "prefix", "query", "min_count", "cursor", "limit", "offset":
+			return q, fmt.Errorf("%w: FilterArgs name %q is reserved", ErrInvalid, name)
+		}
+		q.args[name] = value
 	}
 	q.where = strings.Join(where, " AND ")
 
