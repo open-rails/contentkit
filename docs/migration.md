@@ -43,10 +43,19 @@ fills an omitted content schema from `PGSchema` and rejects a mismatch. Post
 writes with a language queue their keyword documents in that schema.
 
 The initializer is idempotent through MigrateKit's ledger. PostgreSQL uses
-app identity `contentkit`; ClickHouse defaults to `contentkit_signal` and may
-use a host-specified app identity when sharing a ledger across databases.
+app identity `contentkit`; ClickHouse defaults to `contentkit_signal`. The
+ClickHouse ledger also binds the explicit `Database`, so two databases may
+share the same app identity and PostgreSQL tracker. Each PostgreSQL tracker
+represents one logical ClickHouse deployment.
 MigrateKit owns tracking and locks in PostgreSQL `public.migrations`; this is
 migration metadata, separate from ContentKit's application tables.
+
+PostgreSQL commits its baseline transaction before ClickHouse begins. There
+is no cross-store transaction, and ClickHouse DDL can partially succeed.
+MigrateKit records the exact filename and source digest before starting the
+ClickHouse migration; rerunning the identical baseline retries its idempotent
+DDL. A changed source or an old unbound ClickHouse ledger is rejected. A
+failed ClickHouse step does not roll back the PostgreSQL baseline.
 
 ## Extensions and runtime privileges
 
