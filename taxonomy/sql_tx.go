@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -21,11 +22,6 @@ func (s *Store) WithSQLTx(tx *sql.Tx) *Store {
 	return &c
 }
 
-type executionResult interface{ RowsAffected() int64 }
-type affectedRows int64
-
-func (a affectedRows) RowsAffected() int64 { return int64(a) }
-
 type rowScanner interface{ Scan(...any) error }
 type resultRows interface {
 	rowScanner
@@ -40,9 +36,6 @@ type pgxQuerier interface {
 }
 type nativeQuerier struct{ pgxQuerier }
 
-func (q nativeQuerier) Exec(ctx context.Context, query string, args ...any) (executionResult, error) {
-	return q.pgxQuerier.Exec(ctx, query, args...)
-}
 func (q nativeQuerier) Query(ctx context.Context, query string, args ...any) (resultRows, error) {
 	return q.pgxQuerier.Query(ctx, query, args...)
 }
@@ -81,20 +74,22 @@ func (q sqlQuerier) rewrite(ctx context.Context, query string, args []any) (stri
 	}
 	return query, args, nil
 }
-func (q sqlQuerier) Exec(ctx context.Context, query string, args ...any) (executionResult, error) {
+func (q sqlQuerier) Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
 	query, args, err := q.rewrite(ctx, query, args)
 	if err != nil {
-		return nil, err
+		return pgconn.CommandTag{}, err
 	}
 	result, err := q.tx.ExecContext(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return pgconn.CommandTag{}, err
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return nil, err
+		return pgconn.CommandTag{}, err
 	}
-	return affectedRows(affected), nil
+	// database/sql exposes the affected count, not the PostgreSQL command verb.
+	// Taxonomy consumes only RowsAffected; search.MarkDirty ignores the tag.
+	return pgconn.NewCommandTag(strconv.FormatInt(affected, 10)), nil
 }
 func (q sqlQuerier) Query(ctx context.Context, query string, args ...any) (resultRows, error) {
 	query, args, err := q.rewrite(ctx, query, args)

@@ -248,7 +248,7 @@ func (s *Store) WithTx(tx pgx.Tx) *Store {
 }
 
 type querier interface {
-	Exec(context.Context, string, ...any) (executionResult, error)
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 	Query(context.Context, string, ...any) (resultRows, error)
 	QueryRow(context.Context, string, ...any) rowScanner
 }
