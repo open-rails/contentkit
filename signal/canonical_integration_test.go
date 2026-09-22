@@ -8,8 +8,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/open-rails/contentkit/internal/signaltest"
 )
 
 // deliveries is a multiset of source deliveries: superseded revisions, exact
@@ -320,92 +318,5 @@ VALUES ('t', 'gallery', 'g', 'user', 'u', '2026-05-03', 1, 1, 0, 0, 0, 0, map('v
 	}
 	if res, err := st.RepairProjections(ctx, "t", RepairOptions{}); err != nil || res.Repaired != 0 {
 		t.Fatalf("no projection may be left stale: %+v %v", res, err)
-	}
-}
-
-// Rows written by the pre-ContentKit schemas survive every migration: the 0002
-// copy of legacy raw rows and the 0005 copy into content-referenced tables.
-func TestIntegrationLegacyRowsMigrateIntoContentReferencedTables(t *testing.T) {
-	env := signaltest.FromEnv(t)
-	ctx := context.Background()
-	conn := env.Empty(t, testDB)
-	env.ApplyRange(t, conn, 0, 1)
-	legacy := `INSERT INTO signal_events (tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id, occurred_at, progress, progress_max, value, label, weight, score, completed, resume, recorded_at) VALUES
-('doujins', 'gallery', '7', 'user', 'u1', 'view', 'legacy-view', '2026-04-01 10:00:00', 5, 10, 0, '', 1, 40, false, 'p:5', '2026-04-01 10:00:01'),
-('doujins', 'gallery', '7', 'user', 'u1', 'view', 'legacy-view', '2026-04-01 10:00:00', 5, 10, 0, '', 1, 40, false, 'p:5', '2026-04-01 10:00:02'),
-('doujins', 'gallery', '7', 'user', 'u1', 'like', 'legacy-like', '2026-04-01 10:05:00', 0, 0, 1, 'like', 1, 0, false, '', '2026-04-01 10:05:01'),
-('doujins', 'tag', '3', 'user', 'u1', 'view', 'legacy-view:tag:3', '2026-04-01 10:00:00', 0, 0, 0, '', 0.25, 0, false, '', '2026-04-01 10:00:01')`
-	if err := conn.Exec(ctx, legacy); err != nil {
-		t.Fatal(err)
-	}
-	// Up to the last pre-ContentKit schema (0004), then write and project a
-	// canonical event, an exposure and a pair there before 0005 converts.
-	env.ApplyRange(t, conn, 1, 4)
-	for _, stmt := range []string{
-		`INSERT INTO events (tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id, occurred_at, progress, progress_max, score, completed, resume) VALUES ('doujins', 'gallery', '8', 'user', 'u2', 'view', 'pre-cut', '2026-04-02 10:00:00', 10, 10, 70, true, 'p:10')`,
-		`INSERT INTO subject_state (tenant, subject_kind, subject, entity_type, entity_id, first_seen_at, last_signal_at, total_events, views, completions, active_s, max_progress, progress_max, completed, resume, last_score, net_value, feedback, version) VALUES ('doujins', 'user', 'u2', 'gallery', '8', '2026-04-02 10:00:00', '2026-04-02 10:00:00', 1, 1, 1, 0, 10, 10, true, 'p:10', 70, 0, 0, '2026-04-02 10:00:01')`,
-		`INSERT INTO subject_daily (tenant, entity_type, entity_id, subject_kind, subject, day, events, views, completions, active_s, score_sum, value_sum, type_counts, version) VALUES ('doujins', 'gallery', '8', 'user', 'u2', '2026-04-02', 1, 1, 1, 0, 70, 0, map('view', 1), '2026-04-02 10:00:01')`,
-		`INSERT INTO item_pairs (tenant, entity_type_a, entity_id_a, entity_type_b, entity_id_b, strength) VALUES ('doujins', 'gallery', '7', 'gallery', '8', 3)`,
-		`INSERT INTO exposures (tenant, render_id, stage, surface, subject_kind, subject, entity_types, entity_ids, positions, occurred_at) VALUES ('doujins', 'pre-cut', 'rendered', 'search', 'user', 'u2', ['gallery'], ['8'], [1], '2026-04-02 10:00:00')`,
-	} {
-		if err := conn.Exec(ctx, stmt); err != nil {
-			t.Fatalf("%s: %v", stmt, err)
-		}
-	}
-	env.ApplyRange(t, conn, 4, len(env.Migrations(t)))
-	if err := CheckSchema(ctx, conn, testDB); err != nil {
-		t.Fatal(err)
-	}
-	st, err := NewStore(conn, testDB)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Projections copied by 0005 are readable before any repair.
-	g8 := gallery("doujins", "8")
-	states, err := st.States(ctx, "doujins", Subject{UserID: "u2"}, []ContentRef{g8})
-	if err != nil || states[g8.Key()].LastScore != 70 || !states[g8.Key()].Completed {
-		t.Fatalf("copied state: %+v %v", states, err)
-	}
-	if m := metricsByID(t, st, "doujins", []string{"8"}, AllTime()); m["8"].Views != 1 {
-		t.Fatalf("copied daily: %+v", m)
-	}
-	co, err := st.CoEngaged(ctx, "doujins", gallery("doujins", "7"), CoEngagedOptions{})
-	if err != nil || len(co) != 1 || co[0].ContentID != "8" || co[0].Strength != 3 {
-		t.Fatalf("copied pairs: %+v %v", co, err)
-	}
-	page, err := st.Attribution(ctx, "doujins", AttributionOptions{Stage: StageRendered})
-	if err != nil || len(page.Renders) != 1 || !page.Renders[0].Shown[0].Equal(g8) {
-		t.Fatalf("converted exposures: %+v %v", page, err)
-	}
-	// The legacy raw rows, copied twice over, rebuild into canonical projections.
-	res, err := st.RepairProjections(ctx, "doujins", RepairOptions{Rebuild: true})
-	if err != nil || res.Repaired != 3 {
-		t.Fatalf("rebuild legacy keys: %+v %v", res, err)
-	}
-	g7 := gallery("doujins", "7")
-	states, err = st.States(ctx, "doujins", Subject{UserID: "u1"}, []ContentRef{g7})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s := states[g7.Key()]; s.TotalEvents != 2 || s.Views != 1 || s.NetValue != 1 || s.Resume != "p:5" || s.LastScore != 40 {
-		t.Fatalf("legacy state: %+v", s)
-	}
-	// Re-running the copies (a partially applied migration) must not add events.
-	env.ApplyRange(t, conn, 1, 2)
-	env.ApplyRange(t, conn, 4, 5)
-	if _, err := st.RepairProjections(ctx, "doujins", RepairOptions{Rebuild: true}); err != nil {
-		t.Fatal(err)
-	}
-	if m := metricsByID(t, st, "doujins", []string{"7", "8"}, AllTime()); m["7"].Views != 1 || m["7"].Events != 2 || m["8"].Views != 1 {
-		t.Fatalf("re-applied copies duplicated events: %+v", m)
-	}
-	// Erasure still clears the kept pre-ContentKit tables.
-	if report, err := st.EraseSubjects(ctx, []string{"doujins"}, []Subject{{UserID: "u2"}}); err != nil || !report.Complete() {
-		t.Fatalf("erase across kept tables: %+v %v", report, err)
-	}
-	for _, table := range []string{"events", "subject_state", "subject_daily", "signals", "subject_content_state", "subject_content_daily", "exposures"} {
-		if n := countWhere(t, conn, table, "tenant = 'doujins' AND subject = 'u2'"); n != 0 {
-			t.Fatalf("%s still holds %d rows of the erased subject", table, n)
-		}
 	}
 }

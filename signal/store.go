@@ -27,7 +27,7 @@ type Store struct {
 }
 
 // NewStore returns a Store over an existing ClickHouse connection. The schema
-// comes from migrations.SignalClickHouse; verify it with CheckSchema.
+// comes from migrations.ClickHouse; verify it with CheckSchema.
 func NewStore(conn Conn, database string) (*Store, error) {
 	if conn == nil {
 		return nil, fmt.Errorf("signal: conn is required")

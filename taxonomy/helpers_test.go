@@ -9,7 +9,6 @@ import (
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
-	"github.com/open-rails/contentkit/migrations"
 	"github.com/open-rails/contentkit/search"
 )
 
@@ -21,7 +20,7 @@ const tenant = "doujins"
 func testSchema(t *testing.T, ctx context.Context) (*pgxpool.Pool, string) {
 	t.Helper()
 	pool := pgtest.Pool(t, nil)
-	schema := pgtest.SchemaWith(t, ctx, pool, migrations.Taxonomy)
+	schema := pgtest.Schema(t, ctx, pool)
 	if _, err := pool.Exec(ctx, fmt.Sprintf(`CREATE TABLE %s.hv (tenant_id text NOT NULL, content_kind text NOT NULL, content_id text NOT NULL, version_id text NOT NULL, language text NOT NULL, live boolean NOT NULL DEFAULT true, is_default boolean NOT NULL DEFAULT false, PRIMARY KEY (tenant_id, content_kind, version_id))`, schema)); err != nil {
 		t.Fatal(err)
 	}

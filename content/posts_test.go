@@ -357,7 +357,7 @@ func TestPostWritesQueueKeywordDocuments(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Pool(t, nil)
 	searchSchema := pgtest.Schema(t, ctx, pool)
-	rt, _ := newPostRuntime(t, Options{SearchSchema: searchSchema})
+	rt, _ := newPostRuntime(t, Options{Schema: searchSchema})
 	h := postMux(rt)
 	author := Actor{ID: "root1", Kind: "user"}
 

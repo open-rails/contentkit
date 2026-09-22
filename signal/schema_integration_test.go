@@ -17,7 +17,7 @@ func TestIntegrationMigrationsMatchCheckSchema(t *testing.T) {
 		t.Fatalf("fresh lineage must satisfy CheckSchema: %v", err)
 	}
 	// migratekit may re-run a partially applied migration: every statement must
-	// be individually idempotent, including 0005's in-place exposures conversion.
+	// be individually idempotent.
 	env.Apply(t, conn)
 	if err := CheckSchema(ctx, conn, testDB); err != nil {
 		t.Fatalf("reapplied lineage: %v", err)

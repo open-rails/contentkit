@@ -32,15 +32,13 @@ func countWhere(t *testing.T, conn Conn, table, where string, args ...any) uint6
 func TestIntegrationEraseSubjectsCompletely(t *testing.T) {
 	env := signaltest.FromEnv(t)
 	ctx := context.Background()
-	// Start on the 0001 schema so legacy raw rows exist too.
-	conn := env.Empty(t, testDB)
-	env.ApplyRange(t, conn, 0, 1)
-	if err := conn.Exec(ctx, `INSERT INTO signal_events (tenant, entity_type, entity_id, subject_kind, subject, signal_type, event_id, occurred_at, progress, progress_max) VALUES
+	// Include an earlier distinct session alongside the current sessions.
+	conn := env.Fresh(t, testDB)
+	if err := conn.Exec(ctx, `INSERT INTO signals (tenant, content_kind, content_id, subject_kind, subject, signal_type, event_id, occurred_at, progress, progress_max) VALUES
 ('doujins', 'gallery', '1', 'user', 'gone', 'view', 'legacy-gone', '2026-04-01 10:00:00', 1, 2),
 ('doujins', 'gallery', '1', 'user', 'kept', 'view', 'legacy-kept', '2026-04-01 10:00:00', 1, 2)`); err != nil {
 		t.Fatal(err)
 	}
-	env.ApplyRange(t, conn, 1, len(env.Migrations(t)))
 	if err := CheckSchema(ctx, conn, testDB); err != nil {
 		t.Fatal(err)
 	}
@@ -68,10 +66,6 @@ func TestIntegrationEraseSubjectsCompletely(t *testing.T) {
 			{RenderID: tenant + "-kept", Stage: StageServed, Subject: kept, Shown: shown, OccurredAt: at},
 			{RenderID: tenant + "-anon", Stage: StageServed, Shown: shown, OccurredAt: at},
 		}); err != nil {
-			t.Fatal(err)
-		}
-		if err := conn.Exec(ctx, `INSERT INTO search_impressions (tenant, query_id, subject_kind, subject, shown_entity_types, shown_entity_ids, shown_positions, occurred_at)
-VALUES (?, 'legacy-gone', 'user', 'gone', ['gallery'], ['1'], [1], '2026-05-02 09:00:00'), (?, 'legacy-kept', 'user', 'kept', ['gallery'], ['1'], [1], '2026-05-02 09:00:00')`, tenant, tenant); err != nil {
 			t.Fatal(err)
 		}
 		if err := st.RefreshCoEngagement(ctx, tenant, RefreshCoEngagementOptions{}); err != nil {
@@ -107,7 +101,7 @@ VALUES (?, 'legacy-gone', 'user', 'gone', ['gallery'], ['1'], [1], '2026-05-02 0
 		t.Fatalf("report: %+v", report)
 	}
 	for _, tenant := range []string{"doujins", "hentai0"} {
-		for _, table := range []string{"signals", "subject_content_state", "subject_content_daily", "exposures", "search_impressions", "signal_events", "events", "subject_state", "subject_daily"} {
+		for _, table := range []string{"signals", "subject_content_state", "subject_content_daily", "exposures"} {
 			if n := countWhere(t, conn, table, "tenant = ? AND subject_kind = 'user' AND subject = 'gone'", tenant); n != 0 {
 				t.Fatalf("%s.%s still holds %d rows", tenant, table, n)
 			}
@@ -124,7 +118,7 @@ VALUES (?, 'legacy-gone', 'user', 'gone', ['gallery'], ['1'], [1], '2026-05-02 0
 		}
 	}
 	after := metricsByID(t, st, "doujins", []string{"1", "2"}, AllTime())
-	// kept has a canonical and a legacy-copied view of gallery 1.
+	// kept retains both distinct sessions on gallery 1.
 	if after["1"].Viewers != 1 || after["2"].Viewers != 2 || after["1"].PositiveSubjects != 0 || after["1"].Views != 2 {
 		t.Fatalf("aggregates must exclude exactly the erased subject: %+v", after)
 	}

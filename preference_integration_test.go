@@ -90,9 +90,9 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 	env := signaltest.FromEnv(t)
 	pgtest.EnsureExtensions(t, ctx, pool)
 	hostSchema := pgtest.EmptySchema(t, ctx, pool)
-	searchSchema := pgtest.Schema(t, ctx, pool)
+	searchSchema := hostSchema
 	sqlDB := stdlib.OpenDBFromPool(pool)
-	if err := content.Migrate(ctx, sqlDB, hostSchema); err != nil {
+	if err := Migrate(ctx, MigrateConfig{DB: sqlDB, Schema: hostSchema}); err != nil {
 		t.Fatal(err)
 	}
 	_ = sqlDB.Close()

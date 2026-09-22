@@ -72,7 +72,7 @@ func TestRuntimeIntegration(t *testing.T) {
 	env := signaltest.FromEnv(t)
 	pgtest.EnsureExtensions(t, ctx, pool)
 	hostSchema := pgtest.EmptySchema(t, ctx, pool)
-	searchSchema := hostSchema + "_search"
+	searchSchema := hostSchema
 	unique := fmt.Sprintf("%d_%d", os.Getpid(), time.Now().UnixNano())
 	chDB, app := "ck_rt_"+unique, "ck_test_signal_"+unique
 	conn := env.Empty(t, chDB)
@@ -82,7 +82,7 @@ func TestRuntimeIntegration(t *testing.T) {
 		_, _ = pool.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+searchSchema+" CASCADE")
 		_, _ = pool.Exec(context.Background(), "DELETE FROM public.migrations WHERE schema = $1 OR app = $2", searchSchema, app)
 	})
-	cfg := MigrateConfig{DB: sqlDB, Schema: hostSchema, SearchSchema: searchSchema, ClickHouse: &chmigrate.Config{
+	cfg := MigrateConfig{DB: sqlDB, Schema: hostSchema, ClickHouse: &chmigrate.Config{
 		ClientAddr: env.Addr, Database: chDB, Username: env.User, Password: env.Password, App: app, Cluster: env.Cluster,
 	}}
 	for i := 0; i < 2; i++ { // idempotent

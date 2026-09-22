@@ -11,13 +11,14 @@ import (
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/migrations"
 )
 
 // testTenant is the tenant every test runtime is pinned to unless it says otherwise.
 const testTenant = "hostapp"
 
 // newTestRuntime provisions a disposable host schema on CONTENTKIT_TEST_URL
-// (skipping without it), applies the social lineage the way a host migrate
+// (skipping without it), applies the ContentKit baseline the way a host migrate
 // step does, and builds a Runtime against the given (usually fake) ports.
 func newTestRuntime(t *testing.T, opts Options) (*Runtime, *pgxpool.Pool) {
 	t.Helper()
@@ -26,7 +27,8 @@ func newTestRuntime(t *testing.T, opts Options) (*Runtime, *pgxpool.Pool) {
 	if opts.Schema == "" {
 		opts.Schema = pgtest.EmptySchema(t, ctx, pool)
 		db := stdlib.OpenDBFromPool(pool)
-		if err := Migrate(ctx, db, opts.Schema); err != nil {
+		pgtest.EnsureExtensions(t, ctx, pool)
+		if err := migrations.ApplyPostgres(ctx, db, opts.Schema); err != nil {
 			t.Fatalf("migrate: %v", err)
 		}
 		_ = db.Close()
