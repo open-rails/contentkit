@@ -28,7 +28,11 @@ func TestImportedTimestampsPreserveChronologyAndTransactions(t *testing.T) {
 	ctx := context.Background()
 	pool, schema, s := catalogFixture(t, ctx)
 	other := newStore(t, pool, schema, "other", nil)
-	mustCreate(t, ctx, s, tag("import-a", "import-a", name("en", "A")), tag("import-b", "import-b", name("en", "B")))
+	inputs := []NodeInput{tag("import-a", "import-a", name("en", "A")), tag("import-b", "import-b", name("en", "B"))}
+	for i := range inputs {
+		inputs[i].SourceRevision = 17
+	}
+	mustCreate(t, ctx, s, inputs...)
 	mustCreate(t, ctx, other, tag("foreign-only", "foreign-only", name("en", "Foreign")))
 	created := time.Date(2001, 2, 3, 4, 5, 6, 123456000, time.FixedZone("source", 9*60*60))
 	updated := time.Date(2000, 1, 2, 3, 4, 5, 654321000, time.FixedZone("source", -7*60*60))
@@ -44,7 +48,7 @@ func TestImportedTimestampsPreserveChronologyAndTransactions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !node.CreatedAt.Equal(wantCreated) || !node.UpdatedAt.Equal(wantUpdated) || node.SourceRevision != 0 {
+		if !node.CreatedAt.Equal(wantCreated) || !node.UpdatedAt.Equal(wantUpdated) || node.SourceRevision != 17 {
 			t.Fatalf("imported chronology: %+v", node.Node)
 		}
 	}
