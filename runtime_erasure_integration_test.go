@@ -35,7 +35,7 @@ func (p *runtimeRetainingPolicy) EraseSubjects(context.Context, string, []string
 	return nil
 }
 
-func TestRuntimeErasureIncludesPrivatePlaneIntegration(t *testing.T) {
+func TestRuntimeErasureIncludesContentPlaneIntegration(t *testing.T) {
 	ctx := context.Background()
 	pool := testPG(t)
 	pgtest.EnsureExtensions(t, ctx, pool)
@@ -58,12 +58,12 @@ func TestRuntimeErasureIncludesPrivatePlaneIntegration(t *testing.T) {
 			provider := &runtimeRetainingPolicy{}
 			rt, err := NewRuntime(ctx, RuntimeConfig{
 				EmbeddedConfig: EmbeddedConfig{PG: pool, PGSchema: searchSchema, Tenant: testTenant, CH: conn, CHDatabase: chDB},
-				Content:        content.Options{Schema: host, Identity: ctxIdentity{}, Authz: allowAuthz{}, Resolver: routeResolver{}, ContentKinds: []string{"gallery"}, Canonicalizer: content.ContentCanonicalizerFunc(stripLanguage), Moderator: provider, Classifier: provider, PrivateDataEraser: provider, Perms: content.Perms{PollWrite: "poll"}},
+				Content:        content.Options{Schema: host, Identity: ctxIdentity{}, Authz: allowAuthz{}, Resolver: routeResolver{}, ContentKinds: []string{"gallery"}, Canonicalizer: content.ContentCanonicalizerFunc(stripLanguage), Moderator: provider, Classifier: provider, ProviderDataEraser: provider, Perms: content.Perms{PollWrite: "poll"}},
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			actor := content.Actor{ID: "private-user"}
+			actor := content.Actor{ID: "erased-user"}
 			pollResponse := do(t, rt.Handler(), actor, "POST", "/polls", map[string]string{"kind": "free_text", "question": "Question"})
 			if pollResponse.Code != http.StatusCreated {
 				t.Fatalf("poll: %d %s", pollResponse.Code, pollResponse.Body.String())
@@ -77,8 +77,8 @@ func TestRuntimeErasureIncludesPrivatePlaneIntegration(t *testing.T) {
 				body   any
 				status int
 			}{
-				{"/polls/" + poll.ID + "/answer", map[string]string{"text": "private answer"}, http.StatusOK},
-				{"/gallery/42:en/comments", map[string]string{"body": "private held body"}, http.StatusAccepted},
+				{"/polls/" + poll.ID + "/answer", map[string]string{"text": "unpublished answer"}, http.StatusOK},
+				{"/gallery/42:en/comments", map[string]string{"body": "unpublished held body"}, http.StatusAccepted},
 				{"/gallery/42:en/like", nil, http.StatusOK},
 			} {
 				res := do(t, rt.Handler(), actor, "POST", action.path, action.body)
@@ -103,15 +103,15 @@ func TestRuntimeErasureIncludesPrivatePlaneIntegration(t *testing.T) {
 				if err == nil || report.Complete() {
 					t.Fatalf("invalid batch accepted: %+v %v", report, err)
 				}
-				for _, table := range []string{"social_poll_answers", "content_preference_snapshots"} {
+				for _, table := range []string{"content_poll_answers", "content_preference_snapshots"} {
 					var n int
 					if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+host+`.`+table+` WHERE actor_id=$1`, actor.ID).Scan(&n); err != nil || n != 1 {
 						t.Fatalf("invalid batch mutated %s: %d %v", table, n, err)
 					}
 				}
 				var fences int
-				if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+host+`.content_private_subject_erasures`).Scan(&fences); err != nil || fences != 0 || provider.fenced {
-					t.Fatalf("invalid batch crossed private/provider boundary: %d %v", fences, err)
+				if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+host+`.content_erased_subjects`).Scan(&fences); err != nil || fences != 0 || provider.fenced {
+					t.Fatalf("invalid batch crossed source/provider boundary: %d %v", fences, err)
 				}
 				if enabled {
 					history, err := rt.History(ctx, signal.Subject{UserID: actor.ID}, signal.HistoryOptions{})
@@ -127,9 +127,9 @@ func TestRuntimeErasureIncludesPrivatePlaneIntegration(t *testing.T) {
 				t.Fatalf("provider outage falsely completed runtime erasure: %+v %v", report, err)
 			}
 			for _, q := range []string{
-				`SELECT count(*) FROM ` + host + `.social_poll_answers WHERE actor_id='private-user'`,
-				`SELECT count(*) FROM ` + host + `.content_preference_snapshots WHERE actor_id='private-user'`,
-				`SELECT count(*) FROM ` + host + `.social_comments WHERE body='private held body'`,
+				`SELECT count(*) FROM ` + host + `.content_poll_answers WHERE actor_id='erased-user'`,
+				`SELECT count(*) FROM ` + host + `.content_preference_snapshots WHERE actor_id='erased-user'`,
+				`SELECT count(*) FROM ` + host + `.content_comments WHERE body='unpublished held body'`,
 			} {
 				var n int
 				if err := pool.QueryRow(ctx, q).Scan(&n); err != nil || n != 0 {
@@ -138,7 +138,7 @@ func TestRuntimeErasureIncludesPrivatePlaneIntegration(t *testing.T) {
 			}
 			res := do(t, rt.Handler(), actor, "POST", "/polls/"+poll.ID+"/answer", map[string]string{"text": "resurrection"})
 			if res.Code != http.StatusForbidden {
-				t.Fatalf("private source fence lost: %d", res.Code)
+				t.Fatalf("erasure fence lost: %d", res.Code)
 			}
 			provider.down = false
 			report, err = rt.EraseSubjects(ctx, subjects)

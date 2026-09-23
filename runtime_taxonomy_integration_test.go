@@ -72,7 +72,7 @@ func TestMigrateHostSchemaAndForeignKeysIntegration(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM "+q+".content_node_names WHERE taxonomy_id='tag-1' AND normalized='color'").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("catalog preserved on rerun: %d %v", count, err)
 	}
-	for _, table := range []string{"host_entities", "social_comments", "social_posts", "content_preference_snapshots", "content_search_documents", "content_nodes"} {
+	for _, table := range []string{"host_entities", "content_comments", "content_posts", "content_preference_snapshots", "content_search_documents", "content_nodes"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, pgx.Identifier{schema, table}.Sanitize()).Scan(&exists); err != nil || !exists {
 			t.Fatalf("missing same-schema table %s: %v", table, err)

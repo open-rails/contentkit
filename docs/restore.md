@@ -24,5 +24,5 @@ derived state from canonical signals. `signal.CheckSchema` must pass before
 serving analytics.
 
 Erasures never roll back. Replay post-backup deletions and permanent source
-fences before reopening private writes; an AuthKit callback acknowledgement
+fences before reopening content writes; an AuthKit callback acknowledgement
 means durable acceptance, not completion of downstream erasure.

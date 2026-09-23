@@ -1,8 +1,8 @@
 // Package content is ContentKit's interaction module: posts, comments,
 // reactions, favorites and polls over tenant-scoped content references, stored
-// in the host schema's social_* tables. Everything host-specific lives behind
-// the ports in this file; the package imports no sibling kit and bakes in no
-// host assumption. Content kinds are host-registered, access is an opaque host
+// in the host schema's content_* interaction tables. Everything host-specific
+// lives behind the ports in this file; the package imports no sibling kit and
+// bakes in no host assumption. Content kinds are host-registered, access is an opaque host
 // verdict, ids are opaque text, and every key, index and cursor carries the
 // tenant pinned at construction.
 package content
@@ -184,12 +184,12 @@ type Group struct {
 // Classify must be idempotent by (Tenant, AnswerID, Revision), ignore older
 // revisions. ContentKit accepts assignments only by source-revision CAS;
 // the stored result is the sole authority for current membership and labels.
-// Provider erasure/lifecycle wiring is a separate host integration obligation.
+// A classifier retaining personal data needs Options.ProviderDataEraser.
 type AnswerClassifier interface {
 	Classify(ctx context.Context, a Answer) (GroupAssignment, error)
 }
 
 // StatelessPolicy explicitly declares that a policy implementation retains no
 // personal data outside this process. Built-in deterministic policies satisfy
-// this marker; retaining providers must instead configure PrivateDataEraser.
+// this marker; retaining providers must instead configure ProviderDataEraser.
 type StatelessPolicy interface{ StatelessPolicy() }

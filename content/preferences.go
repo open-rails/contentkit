@@ -25,7 +25,7 @@ import (
 // Comment threads keep their own localized reference.
 //
 // Each preference-bearing mutation takes a transaction advisory lock on its
-// key, applies the social mutation and its counters, then allocates a
+// key, applies the interaction mutation and its counters, then allocates a
 // revision from the schema-local sequence with clock_timestamp() — all in the
 // caller's transaction. A rolled-back mutation leaves no exportable snapshot;
 // a no-op allocates no revision.
@@ -183,7 +183,7 @@ func (p *preferences) record(ctx context.Context, tx pgx.Tx, key PreferenceKey, 
 }
 
 // mutate runs one preference-bearing mutation in tx: lock the key, apply the
-// social change through apply (which reports whether state changed), then
+// interaction change through apply (which reports whether state changed), then
 // record the snapshot. Nothing is exported for a no-op or a declined target.
 func (p *preferences) mutate(ctx context.Context, tx pgx.Tx, key PreferenceKey, exportable bool, value int16, apply func() (bool, error)) (*PreferenceSnapshot, error) {
 	if exportable {
@@ -224,7 +224,7 @@ func (p *preferences) scan(ctx context.Context, after PreferenceKey, limit int, 
 		pred = ` AND delivered_revision < revision`
 	}
 	rows, err := p.s.pool.Query(ctx, `SELECT `+preferenceCols+` FROM `+p.s.t.preferenceSnapshots+` AS snapshot
-		WHERE NOT EXISTS (SELECT 1 FROM `+p.rt.privateFences()+` f WHERE f.tenant_id=snapshot.tenant_id AND f.actor_id=snapshot.actor_id) AND tenant_id = $1 AND (actor_id, content_kind, content_id, content_version_id, axis) > ($2, $3, $4, $5, $6)`+pred+`
+		WHERE NOT EXISTS (SELECT 1 FROM `+p.rt.erasedSubjectsTable()+` f WHERE f.tenant_id=snapshot.tenant_id AND f.actor_id=snapshot.actor_id) AND tenant_id = $1 AND (actor_id, content_kind, content_id, content_version_id, axis) > ($2, $3, $4, $5, $6)`+pred+`
 		ORDER BY actor_id, content_kind, content_id, content_version_id, axis
 		LIMIT $7`, p.s.tenant, after.ActorID, after.ContentKind, after.ContentID, after.ContentVersionID, after.Axis, limit)
 	if err != nil {
@@ -396,7 +396,7 @@ func (rt *Runtime) MigratePreferences(ctx context.Context, opts PreferenceMigrat
 	// the host must replay accepted erasures before resuming cutover/traffic.
 	var erasedSource bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS (
- SELECT 1 FROM `+rt.privateFences()+` f WHERE f.tenant_id=$1 AND (
+ SELECT 1 FROM `+rt.erasedSubjectsTable()+` f WHERE f.tenant_id=$1 AND (
  EXISTS (SELECT 1 FROM `+rt.store.t.reactions+` r WHERE r.tenant_id=f.tenant_id AND r.user_id=f.actor_id)
  OR EXISTS (SELECT 1 FROM `+rt.store.t.favorites+` v WHERE v.tenant_id=f.tenant_id AND v.user_id=f.actor_id)))`, rt.tenant).Scan(&erasedSource); err != nil {
 		return report, err
@@ -710,7 +710,7 @@ func (rt *Runtime) ReconcileExportedPreferences(ctx context.Context, keys []Pref
 	}
 	defer tx.Rollback(ctx)
 	for _, id := range ids {
-		if err := rt.lockPrivateSubject(ctx, tx, id); err != nil {
+		if err := rt.lockErasureSubject(ctx, tx, id); err != nil {
 			return 0, err
 		}
 	}
@@ -757,7 +757,7 @@ func (p *preferences) tombstoneExported(ctx context.Context, tx pgx.Tx, report *
 		if k.Axis != PreferenceAxisReaction && k.Axis != PreferenceAxisFavorite {
 			return fmt.Errorf("content: exported key %+v has no known axis", k)
 		}
-		if err := p.rt.privateSubjectAllowed(ctx, tx, k.ActorID); err != nil {
+		if err := p.rt.checkSubjectNotErased(ctx, tx, k.ActorID); err != nil {
 			if errors.Is(err, ErrSubjectErased) {
 				continue
 			}

@@ -130,7 +130,7 @@ func (r *reactions) react(ctx context.Context, actor Actor, kind, id string, val
 		return contentref.ContentRef{}, nil, err
 	}
 	defer tx.Rollback(ctx)
-	if err := r.rt.guardPrivateSubject(ctx, tx, viewerID(actor)); err != nil {
+	if err := r.rt.guardErasedSubject(ctx, tx, viewerID(actor)); err != nil {
 		return contentref.ContentRef{}, nil, err
 	}
 	snap, err := r.rt.preferences.mutate(ctx, tx, key, exportable, value, func() (bool, error) {

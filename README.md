@@ -45,7 +45,7 @@ another tenant is an error, never remapped.
 | Package | Owns |
 |---|---|
 | `contentref` | `ContentRef`, `ContentKey`, `TaxonomyID` |
-| `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `social_*` tables; the `Identity`/`Authorizer`/`ContentResolver`/`UserEnricher`/`MediaStore`/`ContentProcessor` ports, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, and the HTTP routes |
+| `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; the `Identity`/`Authorizer`/`ContentResolver`/`UserEnricher`/`MediaStore`/`ContentProcessor` ports, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, and the HTTP routes |
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
 | `worker` | one tenant's document maintenance: dirty queue, bounded backfill, sink delivery |
 | `taxonomy` | generic catalog: nodes (tags, artists, creators, characters, series, seasons, voice actors), localized names/aliases, edges, content assignments, effective tags, per-language counts, typeahead documents, admin routes |
@@ -220,7 +220,8 @@ top, _ := hub.Popular(ctx, "gallery", signal.PopularOptions{Window: signal.LastD
   `ranker.Popular` / `ranker.Scores` / `ranker.Taxonomy`
   ([docs/popularity-policy.md](docs/popularity-policy.md)).
 - `EraseSubjects` is account erasure with a quorum-written fence; see
-  [HOST_INTEGRATION.md](HOST_INTEGRATION.md#subject-erasure-completion-contract).
+  [HOST_INTEGRATION.md](HOST_INTEGRATION.md#subject-erasure-completion-contract)
+  and, for interaction data, [interaction erasure](HOST_INTEGRATION.md#interaction-erasure).
 - Reactions and favorites reach the signal plane through ContentKit's own
   preference outbox (`rt.DeliverPreferences`, `rt.ReplayPreferences`): a
   compact snapshot per subject × reference × axis, revisions from a sequence

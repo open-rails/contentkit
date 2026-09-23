@@ -32,7 +32,7 @@ Do not call `search` package SQL helpers from request paths.
 ## Interactions (`content`)
 
 The content module owns posts, comments, reactions, favorites and polls in the
-host schema's `social_*` tables. Every row is keyed by the `ContentRef` of
+host schema's `content_*` interaction tables. Every row is keyed by the `ContentRef` of
 the host-owned work: `(tenant_id, content_kind, content_id,
 content_version_id)`; comment threading is `reply_to_id`. Routes are
 `/{kind}/{id}/comments|like|dislike|neutral|reaction|favorite`,
@@ -84,7 +84,7 @@ and the text (title + body for posts). The verdict sets the item's
   indexed, cannot be replied to or reacted to, and is invisible to every reader
   except its author, who sees it with `moderation: "held"` and
   `moderation_reason`. An edit re-screens: a held item publishes on approval, a
-  published one is withdrawn on review.
+  published one is withdrawn on review (`202`).
 - A moderator error or an unknown decision **fails closed to `review`** with
   the reason "awaiting review"; the error is kept for the reviewer. Nothing is
   ever published unscreened and no submission is lost.
@@ -92,14 +92,20 @@ and the text (title + body for posts). The verdict sets the item's
 
 Review queue: `rt.Content.ListHeld(ctx, kind, cursor, limit)` pages held
 comments or posts oldest-first (`HeldItem` carries the body, the content
-reference, the reason, model, prompt version, confidence and any moderator
-error); `rt.Content.Resolve(ctx, kind, id, ReviewDecision{Decision, Reviewer,
-Reason})` writes the final state: `approve` publishes (counts and the keyword
+reference, the reason, model, prompt version, confidence, any moderator error
+and `revision`); `rt.Content.Resolve(ctx, kind, id, ReviewDecision{Revision,
+Decision, Reviewer, Reason})` writes the final state: `approve` publishes (counts and the keyword
 index follow), `reject` keeps the item author-visible as `rejected` with the
 reason. Over HTTP: `GET /moderation/held?kind=comment|post&cursor=&limit=` and
-`POST /moderation/{kind}/{id}/resolve {"decision","reason"}` (the actor id is
-the reviewer), both gated by `Perms.ModerationReview`. `GET /comments/admin`
-shows every state with real bodies.
+`POST /moderation/{kind}/{id}/resolve {"revision","decision","reason"}` (the
+actor id is the reviewer), both gated by `Perms.ModerationReview`.
+`GET /comments/admin` shows every state with real bodies.
+
+Screening is revision-fenced. A decision must echo the held `revision`, so it
+cannot publish an intervening edit. Edits are screened outside SQL
+transactions, then a short source-revision CAS transaction commits the verdict;
+a concurrent edit returns `409` for retry. Provider waits never hold row or
+subject locks.
 
 `content.BasicModerator{AllowLinks, DupWindow, CensorWords}` is the
 deterministic default (links, per-process duplicate guard, censor list);
@@ -116,9 +122,9 @@ set `Perms.ModerationReview` and point the admin review page at
 
 ## Free-text polls
 
-`social_poll_questions.kind` is `multiple_choice` (options + votes, as
+`content_poll_questions.kind` is `multiple_choice` (options + votes, as
 before) or `free_text`: one answer per signed-in actor in
-`social_poll_answers`, editable until the poll closes. `closes_at` (optional,
+`content_poll_answers`, editable until the poll closes. `closes_at` (optional,
 `PATCH`-able) and `is_active = false` close a poll for votes and answers alike
 (`400 poll is closed`); results stay readable. Anonymous actors cannot answer
 (an IP-keyed editable answer would let NAT neighbours overwrite each other).
@@ -140,56 +146,69 @@ retries retain revision/time and completed classification. An edit clears the
 old assignment until the new revision is classified; late old results cannot win.
 `POST /polls/{id}/answer {"text"}` creates or replaces the caller's answer.
 
-## Private-content lifecycle
+## Interaction erasure
 
-The moderation queue includes `revision`; resolve requests must echo it with
-`decision` and optional `reason`. A decision about an older body cannot publish
-an intervening edit. Comment/post edits screen the captured payload outside SQL
-transactions; a short source-revision CAS transaction then commits the verdict.
-A concurrent intervening edit returns 409 for retry; provider waits never hold
-source row/subject locks. Held creates **and edits** return 202.
+`rt.EraseSubjects(ctx, subjects)` erases deleted accounts from every configured
+plane: signals ([completion contract](#subject-erasure-completion-contract)),
+preference obligations, ContentKit interaction data and data retained by
+moderator/classifier providers. Standalone content consumers call
+`rt.Content.EraseSubjects`; `rt.EmbeddedHub.EraseSubjects` is analytics-only. A
+deliberately disabled signal plane is absent, not unfinished. Any
+configured-plane failure returns an error and an incomplete report: keep the
+host's obligation pending and retry (calls are idempotent). The host may
+acknowledge AuthKit as soon as it has durably accepted the deletion obligation
+in its own ledger; never hold that acknowledgement for provider availability.
 
-Retaining classifiers/moderators must configure `content.Options.PrivateDataEraser`.
-Its `EraseSubjects(ctx, tenant, actorIDs)` must durably fence those subjects and
-remove retained personal data, including protection against operations already
-in flight. A queued delete is not completion. Composite retaining providers
-need a composite eraser. Actual AI/provider implementation stays outside ContentKit.
+Content erasure commits atomically:
 
-Ports that retain no external personal data must explicitly implement
-`StatelessPolicy()`. `BasicModerator` does; its process-local duplicate cache
-uses a typed subject key and content digest and is cleared/fenced on local erase.
-A `Chain` is stateless only when every member is. Nil eraser is not an outage
-fallback for a retaining provider: construction rejects that configuration.
+- a permanent tenant/subject fence in `content_erased_subjects`; later writes by
+  that subject fail with `content.ErrSubjectErased`;
+- removal of the subject's authenticated reactions, favorites, poll votes and
+  answers and preference snapshots/archives, with exact counter decrements;
+- redaction of the subject's unpublished payloads (held/rejected comments and
+  posts, draft and future-scheduled posts even when approved) and their
+  moderation metadata. An item with a previously approved payload keeps it
+  without republishing; a never-published item becomes a tombstone, keeping its
+  row and replies.
 
-After the host **durably accepts** an AuthKit deletion obligation in its local
-ledger, it may acknowledge AuthKit immediately. Downstream cleanup remains a
-separate pending local obligation until all required planes complete. Do not
-hold AuthKit acknowledgement waiting for provider availability.
+Anonymous IP interactions, other tenants/subjects, currently approved authored
+content (host retention policy) and externally stored media are untouched.
+Every guarded writer takes the subject fence before other source locks; erasure
+locks affected rows and applies rollup deltas in deterministic key order from
+rows actually deleted, never synthesizing missing rollup or option rows. Guarded
+mutations and erasure use explicit READ COMMITTED transactions, so a writer
+waiting on the subject lock sees the committed fence even under a REPEATABLE
+READ default.
 
-That worker calls the unified `rt.EraseSubjects(ctx, subjects)`: it handles
-signals, preference obligations and private-source/provider cleanup. A deliberately
-disabled signal plane is absent, not an unfinished erasure. Any configured-plane
-failure returns an error and an incomplete report; keep the local obligation pending.
-`rt.EmbeddedHub.EraseSubjects` remains analytics-only, and
-`rt.Content.EraseSubjects` is available to standalone content consumers.
-Content cleanup atomically commits permanent tenant/subject
-source fences, removes authenticated interactions and poll answers, and removes held/rejected private payloads
-and moderation metadata. A never-published item becomes a tombstone; its row
-and replies are preserved. An item with a previous approved payload retains that
-payload without republishing it. Current approved authored content is untouched
-and remains under host retention policy. Provider cleanup runs after SQL commit;
-an error leaves the host's downstream obligation pending and safe to retry.
+### Provider data
 
-ContentKit owns removal of authenticated `social_reactions`, `social_favorites`,
-multiple-choice poll votes/answers and preference snapshots/archives. Source
-removal and exact counter decrements commit atomically under the permanent
-subject fence. Anonymous IP interactions, other tenants/subjects and currently
-approved authored content are preserved. Published authored-content retention
-remains the host's separate policy; this operation does not delete structural
-parents or other authors' replies.
-The source fence and approved payload snapshots are durable user state;
-restore must preserve/reapply fences before accepting writes. Provider erasure
-must independently maintain the same permanent-fence semantics across restore.
+Moderators/classifiers that retain personal data must configure
+`content.Options.ProviderDataEraser`. Its `EraseSubjects(ctx, tenant, actorIDs)`
+runs after the SQL commit and must durably fence those subjects and remove
+retained data, including against calls already in flight; a queued delete is
+not completion. Multiple retaining providers need a composite eraser; provider
+implementations stay outside ContentKit. Ports that retain nothing implement
+`StatelessPolicy()`: `BasicModerator` does (its duplicate cache is keyed by
+subject and cleared on erase), and a `Chain` is stateless only when every member
+is. Construction rejects a retaining port without an eraser; nil is never an
+outage fallback.
+
+The library tests qualify the port contract and source fences against real
+PostgreSQL with in-memory retaining providers (paused completions, outages), not
+a provider's production persistence. Each retaining adapter must prove durable
+deletion/fencing across its own restarts and backups before the host marks
+erasure complete. Soft-deleting a poll is not a provider erasure.
+
+### Recovery
+
+Fences and approved payload snapshots are durable user state. A restore must
+restore/reapply fences and replay the host deletion ledger through
+`EraseSubjects` before traffic resumes; provider erasure keeps the same
+permanent-fence semantics across its own restores. Restored preference
+snapshots of fenced subjects are excluded from replay, and initial preference
+cutover refuses restored positive source rows for fenced subjects until that
+cleanup is replayed. Pause all source writers, including deletion, during
+initial cutover.
 
 ## Documents: one per content reference and language
 
@@ -322,7 +341,7 @@ behind your admin authorization. Adoption: [docs/taxonomy-migration.md](docs/tax
 Reactions and favorites are exported to the signal plane through ContentKit's
 own outbox, never through a host callback. Each mutation, inside its own
 transaction: takes an advisory lock on `(schema, tenant, actor, canonical
-reference, axis)` **before** reading state, applies the social change and its
+reference, axis)` **before** reading state, applies the interaction change and its
 counters, allocates `revision` from `content_preference_revision_seq`
 (`BIGINT INCREMENT 1 NO CYCLE CACHE 1`) with `clock_timestamp()` and upserts
 `content_preference_snapshots`. A no-op allocates nothing; neutral and
@@ -435,41 +454,7 @@ priors, the judged fixture and the host adoption steps.
 - Wire `Options.Moderator` (a `Chain` of `BasicModerator` and the AI moderator), `Options.Classifier` for free-text polls, `Perms.ModerationReview`, and schedule `ReclassifyPending`.
 - Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, implement `ContentCanonicalizer`, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, schedule `DeliverPreferences`, wire `EraseSubjects` into deletion, run the cutover above once, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id`.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.
-
-### Lifecycle qualification scope
-
-The library tests exercise real PostgreSQL source transactions and controlled
-in-memory retaining policy implementations, including paused completions and
-provider outages. They qualify the port contract and source fences, not an AI
-provider's production persistence or deletion guarantees. Each retaining adapter
-must prove durable deletion/fencing across its own restarts and backups before
-host downstream erasure can be marked complete. Soft-deleting a poll hides it and
-stops new pending-classification scans; it is not an external-provider erasure.
-
-### Interaction erasure and recovery
-
-Use the unified `rt.EraseSubjects` for account interaction erasure; standalone
-content consumers use `rt.Content.EraseSubjects`. Every live reaction, favorite,
-comment/post reaction and poll-vote writer takes the subject fence before other
-source locks. Erasure locks affected content rows and applies rollup deltas in
-deterministic key order using only rows actually deleted. Repeated calls are
-idempotent and never synthesize missing rollup or option rows.
-
-The existing permanent subject-fence table is retained (no new table). A restore
-must restore/reapply fences and replay the durable host deletion ledger through
-EraseSubjects before traffic resumes. Restored preference snapshots of fenced
-subjects are excluded from pending/full replay, and initial preference cutover
-refuses restored positive source rows for fenced subjects until that cleanup is
-replayed. Pause all source writers, including deletion, during initial cutover.
-
-Draft and future-scheduled posts are private even when their moderation verdict
-is approved. Content erasure redacts their title/body/excerpt and moderation
-provenance, retaining only a previously approved published payload if present.
-Their structural rows remain tombstones. Externally stored media/bucket object
-retention remains an explicit host/provider policy, not an implicit object delete.
-Guarded mutations and erasure use explicit READ COMMITTED transactions so a
-writer waiting for the subject lock observes the committed permanent fence even
-when its host connection default is REPEATABLE READ.
+- Rename direct SQL on `social_*` tables to `content_*` (`social_entity_counts` → `content_interaction_counts`) and `content.Options.PrivateDataEraser` to `ProviderDataEraser`.
 
 ### Bounded exported-key reconciliation at cutover
 

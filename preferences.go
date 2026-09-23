@@ -107,10 +107,11 @@ func (r *Runtime) ReplayPreferences(ctx context.Context, after content.Preferenc
 }
 
 // EraseSubjects erases every configured runtime plane: signals, preference
-// obligations, and C4 private-source/provider data. Current approved authored
-// content remains under host retention policy (content.EraseSubjects).
-// ContentKit-owned reactions, favorites, poll votes, preference obligations
-// and private submissions are removed atomically behind the source fence.
+// obligations, interaction data and data retained by moderation/classifier
+// providers. Current approved authored content remains under host retention
+// policy (content.EraseSubjects). ContentKit-owned reactions, favorites, poll
+// votes, preference obligations and unpublished submissions are removed
+// atomically behind the source fence.
 // EmbeddedHub.EraseSubjects is the explicit analytics-only lower-level API.
 //
 // AuthKit ACK means durable acceptance by the host's deletion ledger, not this
@@ -141,12 +142,12 @@ func (r *Runtime) EraseSubjects(ctx context.Context, subjects []signal.Subject) 
 			actors = append(actors, s.Key())
 		}
 	}
-	privateErr := r.Content.EraseSubjects(ctx, actors)
+	contentErr := r.Content.EraseSubjects(ctx, actors)
 	if signalErr != nil {
 		report.Remaining["signal_plane"] = 1
 	}
-	if privateErr != nil {
+	if contentErr != nil {
 		report.Remaining["content_plane"] = 1
 	}
-	return report, errors.Join(signalErr, privateErr)
+	return report, errors.Join(signalErr, contentErr)
 }

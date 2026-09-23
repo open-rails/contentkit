@@ -57,7 +57,7 @@ func TestReviewC4DeletedPollIsNotSentForClassification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.answer(ctx, Actor{ID: "user"}, poll.ID, "private answer"); err != nil {
+	if _, err := p.answer(ctx, Actor{ID: "user"}, poll.ID, "free-text answer"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rt.store.pool.Exec(ctx, `UPDATE `+rt.store.t.pollQuestions+` SET deleted_at=now() WHERE id=$1`, poll.ID); err != nil {
