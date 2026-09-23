@@ -1,0 +1,157 @@
+import { createHash } from "node:crypto";
+import { UploadError } from "../src/errors.js";
+import type { Transport } from "../src/transport.js";
+import type { ErrorReply, PartBody, PresignBody, RequestReply } from "../src/wire.gen.js";
+
+const MiB = 1 << 20;
+
+interface Upload {
+  name: string;
+  type: string;
+  size: number;
+  parts: Map<number, { size: number; sha256: string }>;
+  signed: Map<number, PartBody>;
+  complete: boolean;
+}
+
+/**
+ * An in-process upload API and bucket with media.UploadHandler's semantics,
+ * for unit tests of the client's scheduling. The integration suite runs the
+ * real handler over MinIO.
+ */
+export class FakeServer {
+  objects = new Map<string, number>();
+  uploads = new Map<string, Upload>();
+  calls: string[] = [];
+  puts: string[] = [];
+  refuse?: ErrorReply & { status: number };
+  /** Fail the next n storage PUTs with a dropped connection. */
+  dropPuts = 0;
+  private seq = 0;
+
+  fetch: typeof fetch = async (input, init) => {
+    const path = new URL(String(input)).pathname.replace(/^\/api/, "");
+    this.calls.push(path);
+    const body = JSON.parse(String(init?.body));
+    try {
+      return json(200, this.route(path, body));
+    } catch (e) {
+      if (!(e instanceof UploadError)) throw e;
+      const headers: Record<string, string> = e.retryAfter ? { "Retry-After": String(e.retryAfter) } : {};
+      return json(e.status, { error: e.message, code: e.code, retry_after: e.retryAfter }, headers);
+    }
+  };
+
+  transport: Transport = async (req, body, { signal, onProgress }) => {
+    if (signal?.aborted) throw new UploadError("aborted", "aborted");
+    this.puts.push(req.url);
+    if (this.dropPuts > 0) {
+      this.dropPuts--;
+      onProgress?.(Math.floor(body.size / 2));
+      throw new UploadError("network", "connection reset");
+    }
+    const bytes = new Uint8Array(await body.arrayBuffer());
+    const sum = createHash("sha256").update(bytes).digest("base64");
+    if (req.headers["X-Amz-Checksum-Sha256"] !== sum) throw new UploadError("storage", "BadDigest", 400);
+    const [, kind, a, b] = new URL(req.url).pathname.split("/");
+    if (kind === "put") this.objects.set(a!, bytes.length);
+    else {
+      const u = this.uploads.get(a!)!;
+      const s = u.signed.get(Number(b))!;
+      if (s.size !== bytes.length) throw new UploadError("storage", "length", 403);
+      u.parts.set(Number(b), { size: bytes.length, sha256: s.sha256 });
+    }
+    onProgress?.(bytes.length);
+  };
+
+  private route(path: string, b: any): unknown {
+    switch (path) {
+      case "/presign": {
+        const p = b as PresignBody;
+        if (this.refuse) {
+          const r = this.refuse;
+          throw new UploadError(r.code, r.error, r.status, r.retry_after);
+        }
+        if (p.size <= 64 * MiB || p.slot) {
+          if (!p.sha256) throw new UploadError("invalid_request", "sha256 required", 400);
+          const name = p.slot ?? "sha256-" + p.sha256;
+          if (!p.slot && this.objects.get(name) === p.size) return { name, exists: true };
+          return { name, put: req(`fake://s3/put/${name}`, { "Content-Type": p.type, "X-Amz-Checksum-Sha256": b64(p.sha256) }) };
+        }
+        const ticket = `t${++this.seq}`;
+        const name = `u-${this.seq}`;
+        this.uploads.set(ticket, { name, type: p.type, size: p.size, parts: new Map(), signed: new Map(), complete: false });
+        return { name, multipart: { ticket, min_part_size: 8 * MiB, max_part_size: 16 * MiB, max_parts: Math.ceil(p.size / (8 * MiB)) } };
+      }
+      case "/parts": {
+        const u = this.ticket(b.ticket);
+        return {
+          parts: (b.parts as PartBody[]).map((p) => {
+            if (p.size > 16 * MiB || !p.sha256) throw new UploadError("invalid_request", "bad part", 400);
+            u.signed.set(p.number, p);
+            return { number: p.number, request: req(`fake://s3/part/${b.ticket}/${p.number}`, { "X-Amz-Checksum-Sha256": b64(p.sha256) }) };
+          }),
+        };
+      }
+      case "/parts/list": {
+        const u = this.ticket(b.ticket);
+        return { parts: [...u.parts].sort((x, y) => x[0] - y[0]).map(([number, p]) => ({ number, ...p })) };
+      }
+      case "/complete": {
+        const u = this.uploads.get(b.ticket);
+        if (!u) throw new UploadError("not_found", "no upload", 404);
+        const parts = [...u.parts].sort((x, y) => x[0] - y[0]);
+        let total = 0;
+        parts.forEach(([n, p], i) => {
+          if (n !== i + 1) throw new UploadError("incomplete", `part ${i + 1} missing`, 409);
+          if (i < parts.length - 1 && p.size < 8 * MiB) throw new UploadError("invalid_request", "small part", 400);
+          total += p.size;
+        });
+        if (total !== u.size) throw new UploadError("incomplete", "short", 409);
+        u.complete = true;
+        this.objects.set(u.name, total);
+        return { name: u.name, type: u.type, size: total };
+      }
+      case "/abort":
+        this.uploads.delete(b.ticket);
+        return undefined;
+      case "/commit":
+        return { files: b.ops.map((op: any) => ({ name: op.name, original: op.original, size: this.objects.get(op.original) })) };
+      case "/commit-slot":
+        return undefined;
+    }
+    throw new UploadError("not_found", path, 404);
+  }
+
+  private ticket(t: string): Upload {
+    const u = this.uploads.get(t);
+    if (!u || u.complete) throw new UploadError("not_found", "multipart upload not found", 404);
+    return u;
+  }
+}
+
+function req(url: string, headers: Record<string, string>): RequestReply {
+  return { method: "PUT", url, headers, expires: new Date(Date.now() + 900_000).toISOString() };
+}
+
+function b64(hex: string): string {
+  return Buffer.from(hex, "hex").toString("base64");
+}
+
+function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
+  if (body === undefined) return new Response(null, { status: 204 });
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...headers } });
+}
+
+/** Deterministic pseudo-random bytes. */
+export function bytes(n: number, seed = 1): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(n);
+  let x = seed * 2654435761;
+  for (let i = 0; i < n; i++) {
+    x ^= x << 13;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    out[i] = x & 0xff;
+  }
+  return out;
+}

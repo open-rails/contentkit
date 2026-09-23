@@ -1,0 +1,35 @@
+name: sdk-release
+'on':
+  push:
+    tags:
+    - 'v*'
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  publish:
+    name: Publish @open-rails/contentkit-upload
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: sdk/upload
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - uses: pnpm/action-setup@v4
+      with:
+        package_json_file: sdk/upload/package.json
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        registry-url: https://registry.npmjs.org
+    - run: pnpm install --frozen-lockfile
+    - run: pnpm check
+    - name: Version from tag
+      run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
+    - name: Publish
+      run: npm publish --access public --provenance
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

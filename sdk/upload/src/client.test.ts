@@ -1,0 +1,139 @@
+import { describe, expect, it } from "vitest";
+import { FakeServer, bytes } from "../test/fake.js";
+import { UploadClient, type UploadState } from "./client.js";
+import { UploadError } from "./errors.js";
+
+const MiB = 1 << 20;
+const ref = { kind: "video", id: "1" };
+
+function setup(o: { retries?: number; concurrency?: number } = {}) {
+  const s = new FakeServer();
+  const c = new UploadClient({
+    endpoint: "http://x/api",
+    fetch: s.fetch,
+    transport: s.transport,
+    retryDelay: () => 0,
+    ...o,
+  });
+  return { s, c };
+}
+
+function file(n: number, seed = 1, type = "video/mp4"): File {
+  return new File([bytes(n, seed)], `f${seed}.bin`, { type, lastModified: 1000 });
+}
+
+describe("single PUT", () => {
+  it("hashes, presigns with the checksum and PUTs; an identical file is not resent", async () => {
+    const { s, c } = setup();
+    const f = file(3 * MiB, 2, "image/png");
+    const phases = new Set<string>();
+    const up = await c.upload(f, { ref, onProgress: (p) => phases.add(p.phase) });
+    expect(up.name).toBe("sha256-" + up.sha256);
+    expect([up.exists, up.size, s.puts.length]).toEqual([false, 3 * MiB, 1]);
+    expect([...phases]).toEqual(["hashing", "uploading"]);
+    const again = await c.upload(f, { ref });
+    expect([again.exists, s.puts.length]).toEqual([true, 1]);
+  });
+
+  it("retries a dropped PUT", async () => {
+    const { s, c } = setup();
+    s.dropPuts = 2;
+    await c.upload(file(MiB), { ref });
+    expect(s.puts.length).toBe(3);
+  });
+
+  it("surfaces a refused presign without sending bytes", async () => {
+    const { s, c } = setup();
+    s.refuse = { status: 429, code: "rate_limited", error: "too many uploads", retry_after: 60 };
+    const err = await c.upload(file(MiB), { ref }).catch((e) => e);
+    expect(err).toBeInstanceOf(UploadError);
+    expect([err.code, err.retryAfter, err.isLimit, s.puts.length]).toEqual(["rate_limited", 60, true, 0]);
+  });
+
+  it("uploads and commits a slot", async () => {
+    const { s, c } = setup();
+    const up = await c.uploadSlot(file(MiB, 3, "image/png"), { ref, slot: "cover" });
+    expect(up.name).toBe("cover");
+    expect(s.calls).toEqual(["/presign", "/commit-slot"]);
+  });
+});
+
+describe("multipart", () => {
+  const size = 70 * MiB + 123;
+
+  it("presigns before hashing, so a refused upload reads nothing", async () => {
+    const { s, c } = setup();
+    s.refuse = { status: 413, code: "quota_exceeded", error: "over quota" };
+    let hashed = false;
+    const err = await c
+      .upload(file(size), { ref, onProgress: (p) => (hashed ||= p.phase === "hashing") })
+      .catch((e) => e);
+    expect([err.code, hashed, s.puts.length]).toEqual(["quota_exceeded", false, 0]);
+  });
+
+  it("uploads parts within the bounds, retries a dropped part and completes", async () => {
+    const { s, c } = setup();
+    s.dropPuts = 1;
+    const states: (UploadState | null)[] = [];
+    let last = 0;
+    const up = await c.upload(file(size), { ref, onState: (st) => states.push(st), onProgress: (p) => (last = p.loaded) });
+    expect(up).toMatchObject({ size, exists: false });
+    expect(states.at(-1)).toBeNull();
+    const plan = states.at(-2)!.parts;
+    expect(plan.reduce((n, p) => n + p.size, 0)).toBe(size);
+    for (const p of plan.slice(0, -1)) expect(p.size).toBeGreaterThanOrEqual(8 * MiB);
+    for (const p of plan) expect(p.size).toBeLessThanOrEqual(16 * MiB);
+    expect(s.puts.length).toBe(plan.length + 1);
+    expect(last).toBe(size);
+  });
+
+  it("resumes from saved state, sending only the parts that did not land", async () => {
+    const { s, c } = setup({ retries: 0, concurrency: 1 });
+    const f = file(size, 5);
+    let saved: UploadState | null = null;
+    let landed = 0;
+    const ctl = new AbortController();
+    const first = c.upload(f, {
+      ref,
+      signal: ctl.signal,
+      onState: (st) => (saved = st),
+      onProgress: (p) => {
+        if (p.loaded >= 16 * MiB && !ctl.signal.aborted) {
+          landed = p.loaded;
+          ctl.abort();
+        }
+      },
+    });
+    expect((await first.catch((e) => e)).code).toBe("aborted");
+    expect(saved).not.toBeNull();
+
+    const landedParts = s.uploads.get(saved!.ticket)!.parts.size;
+    expect(landedParts).toBeGreaterThan(0);
+    expect(landed).toBeGreaterThanOrEqual(16 * MiB);
+    const before = s.puts.length;
+    let final: UploadState | null = null;
+    const resumed = await new UploadClient({ endpoint: "http://x/api", fetch: s.fetch, transport: s.transport }).upload(f, {
+      ref,
+      resume: saved!,
+      onState: (st) => st && (final = st),
+    });
+    expect(resumed).toMatchObject({ name: saved!.name, size });
+    expect(s.puts.length - before).toBe(final!.parts.length - landedParts);
+    expect(s.calls).toContain("/parts/list");
+  });
+
+  it("refuses to resume with a different file", async () => {
+    const { c } = setup();
+    const state = { ticket: "t", name: "u-1", type: "video/mp4", size, ref, file: { size, name: "other", lastModified: 1 }, limits: { minPartSize: 8 * MiB, maxPartSize: 16 * MiB, maxParts: 9 }, parts: [] };
+    const err = await c.upload(file(size), { ref, resume: state }).catch((e) => e);
+    expect(err.code).toBe("resume_mismatch");
+  });
+
+  it("stops every part when one fails for good", async () => {
+    const { s, c } = setup({ retries: 1 });
+    s.dropPuts = 100;
+    const err = await c.upload(file(size), { ref }).catch((e) => e);
+    expect(err.code).toBe("network");
+    expect(s.puts.length).toBe(2);
+  });
+});
