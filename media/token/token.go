@@ -27,6 +27,9 @@ var (
 	ErrInvalid    = errors.New("token: signature does not cover this path")
 )
 
+// CookieName carries a folder token in cookie delivery mode.
+const CookieName = "mt"
+
 // DefaultWindow aligns expiries so tokens and URLs repeat within a window.
 const DefaultWindow = 4 * time.Hour
 
@@ -56,6 +59,40 @@ func NewRing(current Key, previous *Key) (Ring, error) {
 		return Ring{}, fmt.Errorf("token: previous key reuses id %q", current.ID)
 	}
 	return Ring{current: current, previous: previous}, nil
+}
+
+// ParseKey parses "{kid}:{base64 secret}" (standard or URL alphabet, padding
+// optional), the form hosts and the access worker read from their secret store.
+func ParseKey(s string) (Key, error) {
+	id, enc, ok := strings.Cut(strings.TrimSpace(s), ":")
+	if !ok {
+		return Key{}, fmt.Errorf("token: key must be \"{kid}:{base64 secret}\"")
+	}
+	enc = strings.TrimRight(enc, "=")
+	secret, err := base64.RawStdEncoding.DecodeString(enc)
+	if err != nil {
+		if secret, err = base64.RawURLEncoding.DecodeString(enc); err != nil {
+			return Key{}, fmt.Errorf("token: key %q: secret is not base64", id)
+		}
+	}
+	return Key{ID: id, Secret: secret}, nil
+}
+
+// ParseRing builds a ring from ParseKey strings; previous may be empty.
+func ParseRing(current, previous string) (Ring, error) {
+	cur, err := ParseKey(current)
+	if err != nil {
+		return Ring{}, err
+	}
+	var prev *Key
+	if strings.TrimSpace(previous) != "" {
+		p, err := ParseKey(previous)
+		if err != nil {
+			return Ring{}, err
+		}
+		prev = &p
+	}
+	return NewRing(cur, prev)
 }
 
 // Expiry is ceil((now + ttl) / window) * window.

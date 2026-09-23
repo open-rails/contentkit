@@ -96,29 +96,6 @@ func TestItemKeys(t *testing.T) {
 	}
 }
 
-func TestParseKey(t *testing.T) {
-	sum := sha256.Sum256(nil)
-	blob := media.SHA256Name(sum[:])
-	for key, want := range map[string]media.Key{
-		"d/gallery/1/manifest.json":       {Tenant: "d", Kind: "gallery", ID: "1", Area: media.AreaManifest},
-		"d/gallery/1/manifests/v2.json":   {Tenant: "d", Kind: "gallery", ID: "1", Area: media.AreaManifest, Name: "v2"},
-		"d/gallery/1/blobs/" + blob:       {Tenant: "d", Kind: "gallery", ID: "1", Area: media.AreaBlobs, Name: blob},
-		"d/gallery/1/originals/cover":     {Tenant: "d", Kind: "gallery", ID: "1", Area: media.AreaOriginals, Name: "cover"},
-		"o/user/42/public/avatar_80.webp": {Tenant: "o", Kind: "user", ID: "42", Area: media.AreaPublic, Name: "avatar_80"},
-	} {
-		got, ok := media.ParseKey(key)
-		if !ok || got != want {
-			t.Errorf("%s: %+v %v", key, got, ok)
-		}
-	}
-	for _, bad := range []string{"d/gallery/1", "d/gallery/1/blobs/x", "d/gallery/1/blobs/" + blob + "/x", "d/gallery/1/public/a.png",
-		"d/../1/manifest.json", "d/gallery/1/other/x"} {
-		if _, ok := media.ParseKey(bad); ok {
-			t.Errorf("parsed %q", bad)
-		}
-	}
-}
-
 func TestKindRules(t *testing.T) {
 	r := registry(t)
 	g, _ := r.Kind("gallery")

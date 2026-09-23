@@ -2,6 +2,7 @@ package token_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -146,6 +147,28 @@ func TestExpiryWindowsAndRotation(t *testing.T) {
 	} {
 		if _, err := token.NewRing(bad.cur, bad.prev); err == nil {
 			t.Fatalf("ring %+v accepted", bad)
+		}
+	}
+}
+
+func TestParseRing(t *testing.T) {
+	std := "k2:" + base64.StdEncoding.EncodeToString(k2.Secret)
+	url := "k1:" + base64.RawURLEncoding.EncodeToString(k1.Secret)
+	r, err := token.ParseRing(std, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_800_000_000, 0)
+	exp := token.Expiry(now, time.Hour, 0)
+	if err := r.Verify(ring(t, k1, nil).Sign(page, exp), page, "", now); err != nil {
+		t.Fatalf("previous key from ParseRing: %v", err)
+	}
+	if err := r.Verify(r.Sign(page, exp), page, "", now); err != nil || !strings.HasPrefix(r.Sign(page, exp), "k2.") {
+		t.Fatalf("current key from ParseRing: %v", err)
+	}
+	for _, bad := range [][2]string{{"k1", ""}, {"k1:not base64!", ""}, {"k1:" + base64.StdEncoding.EncodeToString([]byte("short")), ""}, {std, std}} {
+		if _, err := token.ParseRing(bad[0], bad[1]); err == nil {
+			t.Errorf("accepted %q", bad)
 		}
 	}
 }

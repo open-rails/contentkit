@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Kind is a host's per-kind rule set, registered once at startup.
@@ -80,23 +82,23 @@ type Registry struct {
 func NewRegistry(kinds ...Kind) (*Registry, error) {
 	r := &Registry{kinds: make(map[string]Kind, len(kinds))}
 	for _, k := range kinds {
-		if !validSegment(k.Name) {
+		if !layout.ValidSegment(k.Name) {
 			return nil, fmt.Errorf("media: invalid kind name %q", k.Name)
 		}
 		if _, dup := r.kinds[k.Name]; dup {
 			return nil, fmt.Errorf("media: duplicate kind %q", k.Name)
 		}
 		for name := range k.Specs {
-			if !validSegment(name) {
+			if !layout.ValidSegment(name) {
 				return nil, fmt.Errorf("media: kind %q: invalid spec name %q", k.Name, name)
 			}
 		}
 		for name, slot := range k.Slots {
-			if !validSegment(name) || isBlobName(name) || len(slot.Outputs) == 0 {
+			if !layout.ValidSegment(name) || layout.ValidBlobName(name) || len(slot.Outputs) == 0 {
 				return nil, fmt.Errorf("media: kind %q: invalid slot %q", k.Name, name)
 			}
 			for out := range slot.Outputs {
-				if !validSegment(out) {
+				if !layout.ValidSegment(out) {
 					return nil, fmt.Errorf("media: kind %q slot %q: invalid output %q", k.Name, name, out)
 				}
 			}

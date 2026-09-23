@@ -27,7 +27,7 @@ const (
 )
 
 // CookieName is the access worker's cookie.
-const CookieName = "mt"
+const CookieName = token.CookieName
 
 // Delivery is the host's per-site delivery configuration.
 type Delivery struct {
