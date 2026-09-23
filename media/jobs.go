@@ -15,6 +15,7 @@ import (
 	"github.com/riverqueue/river/rivertype"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // UserKind is the kind of per-user folders ({tenant}/user/{id}/), erased by EraseUserTx.
@@ -64,7 +65,7 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 		return nil, errors.New("media: Jobs needs a Store and a Registry")
 	}
 	for _, t := range cfg.Tenants {
-		if !validSegment(t) {
+		if !layout.ValidSegment(t) {
 			return nil, fmt.Errorf("media: invalid tenant %q", t)
 		}
 	}
@@ -311,7 +312,7 @@ func (j *Jobs) Enqueue(ctx context.Context, job ProcessJob) error {
 var _ ProcessQueue = (*Jobs)(nil)
 
 func folderPrefix(tenant, kind, id string) (string, error) {
-	if !validSegment(tenant) || !validSegment(kind) || !validSegment(id) {
+	if !layout.ValidSegment(tenant) || !layout.ValidSegment(kind) || !layout.ValidSegment(id) {
 		return "", fmt.Errorf("media: invalid folder %q/%q/%q", tenant, kind, id)
 	}
 	return tenant + "/" + kind + "/" + id + "/", nil

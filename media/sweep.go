@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // SweepResult reports one folder sweep. Wait > 0 means a manifest changed
@@ -108,8 +109,8 @@ func (j *Jobs) sweep(ctx context.Context, prefix string, objs []Object) (SweepRe
 	}
 	var doomed []string
 	for _, o := range objs {
-		k, ok := ParseKey(o.Key)
-		if !ok || !isBlobName(k.Name) || (k.Area != AreaBlobs && k.Area != AreaOriginals) {
+		k, ok := layout.Parse(o.Key)
+		if !ok || !layout.ValidBlobName(k.Name) || (k.Area != AreaBlobs && k.Area != AreaOriginals) {
 			continue
 		}
 		if !refs[k.Area+"/"+k.Name] && !o.LastModified.After(cutoff) {
@@ -142,7 +143,7 @@ func manifestETags(objs []Object) (map[string]string, time.Time) {
 	etags := map[string]string{}
 	var newest time.Time
 	for _, o := range objs {
-		if k, ok := ParseKey(o.Key); ok && k.Area == AreaManifest {
+		if k, ok := layout.Parse(o.Key); ok && k.Area == AreaManifest {
 			etags[o.Key] = o.ETag
 			if o.LastModified.After(newest) {
 				newest = o.LastModified
@@ -189,7 +190,7 @@ func (j *Jobs) deleteFolder(ctx context.Context, prefix string) error {
 	}
 	var manifests, rest []string
 	for _, o := range objs {
-		if k, ok := ParseKey(o.Key); ok && k.Area == AreaManifest {
+		if k, ok := layout.Parse(o.Key); ok && k.Area == AreaManifest {
 			manifests = append(manifests, o.Key)
 		} else {
 			rest = append(rest, o.Key)

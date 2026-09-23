@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // RestoreReport lists what Restore changed, by key.
@@ -66,7 +67,7 @@ func (s *Store) Restore(ctx context.Context, prefix string, at time.Time) (Resto
 
 	refs := map[string]bool{}
 	for _, key := range slices.Sorted(maps.Keys(history)) {
-		k, ok := media.ParseKey(key)
+		k, ok := layout.Parse(key)
 		if !ok || !pointInTime(k) {
 			continue
 		}
@@ -88,7 +89,7 @@ func (s *Store) Restore(ctx context.Context, prefix string, at time.Time) (Resto
 				}
 				rep.Reverted = append(rep.Reverted, key)
 			}
-			if k.Area == media.AreaManifest {
+			if k.Area == layout.AreaManifest {
 				if err := s.collectRefs(ctx, key, then.id, k, refs); err != nil {
 					return rep, err
 				}
@@ -129,12 +130,12 @@ func (s *Store) Restore(ctx context.Context, prefix string, at time.Time) (Resto
 
 // pointInTime keys are overwritten in place, so they return to their version
 // at T; content-addressed blobs and originals never change and are undeleted.
-func pointInTime(k media.Key) bool {
-	return k.Area == media.AreaManifest || k.Area == media.AreaPublic ||
-		(k.Area == media.AreaOriginals && !media.ValidBlobName(k.Name))
+func pointInTime(k layout.Key) bool {
+	return k.Area == layout.AreaManifest || k.Area == layout.AreaPublic ||
+		(k.Area == layout.AreaOriginals && !layout.ValidBlobName(k.Name))
 }
 
-func (s *Store) collectRefs(ctx context.Context, key, versionID string, k media.Key, refs map[string]bool) error {
+func (s *Store) collectRefs(ctx context.Context, key, versionID string, k layout.Key, refs map[string]bool) error {
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: &s.bucket, Key: &key, VersionId: &versionID})
 	if err != nil {
 		return mapErr("get version", key, err)
@@ -150,10 +151,10 @@ func (s *Store) collectRefs(ctx context.Context, key, versionID string, k media.
 	}
 	folder := strings.Join([]string{k.Tenant, k.Kind, k.ID}, "/") + "/"
 	for _, n := range man.Blobs() {
-		refs[folder+media.AreaBlobs+"/"+n] = true
+		refs[folder+layout.AreaBlobs+"/"+n] = true
 	}
 	for _, n := range man.Originals() {
-		refs[folder+media.AreaOriginals+"/"+n] = true
+		refs[folder+layout.AreaOriginals+"/"+n] = true
 	}
 	return nil
 }
