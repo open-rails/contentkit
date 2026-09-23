@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"slices"
 	"sync"
 	"time"
 
@@ -243,4 +244,33 @@ func (c *lru) remove(key string) {
 		c.order.Remove(e)
 		delete(c.items, key)
 	}
+}
+
+// references reports whether any manifest in the item's folder references the
+// original name.
+func (m *Manifests) references(ctx context.Context, item Item, name string) (bool, error) {
+	var keys []string
+	if item.Kind().Versioned {
+		for o, err := range m.store.List(ctx, item.ManifestsPrefix()) {
+			if err != nil {
+				return false, err
+			}
+			keys = append(keys, o.Key)
+		}
+	} else {
+		keys = []string{item.Prefix() + "manifest.json"}
+	}
+	for _, key := range keys {
+		man, _, err := m.get(ctx, key)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if slices.Contains(man.Originals(), name) {
+			return true, nil
+		}
+	}
+	return false, nil
 }

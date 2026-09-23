@@ -284,8 +284,8 @@ func (j *Jobs) originalBytes(ctx context.Context, prefix string) (int64, error) 
 }
 
 // Processor derives an item's files after a commit (image variants, video
-// encodes). It must be idempotent and finish only when the manifest needs no
-// more work: an Enqueue while its job runs is absorbed by that job.
+// encodes). It must be idempotent. An Enqueue while its job runs is absorbed:
+// the job reruns the processors when its input changed during the run.
 type Processor func(ctx context.Context, job ProcessJob) error
 
 // AddProcessor registers a processor for Enqueue'd jobs, before composition.
@@ -427,12 +427,46 @@ func (w *processWorker) Timeout(*river.Job[processArgs]) time.Duration { return 
 
 func (w *processWorker) Work(ctx context.Context, job *river.Job[processArgs]) error {
 	pj := ProcessJob{Ref: job.Args.Ref, Slot: job.Args.Slot}
-	if _, err := w.j.cfg.Kinds.Item(pj.Ref); err != nil {
+	item, err := w.j.cfg.Kinds.Item(pj.Ref)
+	if err != nil {
 		return river.JobCancel(err)
+	}
+	// The input is the manifest, or the slot original; a commit that lands
+	// after the processors read it changes its ETag.
+	key, err := item.ManifestKey()
+	if pj.Slot != "" {
+		key, err = item.SlotOriginal(pj.Slot)
+	}
+	if err != nil {
+		return river.JobCancel(err)
+	}
+	before, err := w.j.etag(ctx, key)
+	if err != nil {
+		return err
 	}
 	var errs []error
 	for _, p := range w.j.processors {
 		errs = append(errs, p(ctx, pj))
 	}
-	return errors.Join(errs...)
+	if err := errors.Join(errs...); err != nil {
+		return err
+	}
+	// A processor's own write also changes it; the rerun then finds no work
+	// and leaves the input unchanged.
+	after, err := w.j.etag(ctx, key)
+	if err != nil {
+		return err
+	}
+	if after != before {
+		return river.JobSnooze(0)
+	}
+	return nil
+}
+
+func (j *Jobs) etag(ctx context.Context, key string) (string, error) {
+	obj, err := j.cfg.Store.Head(ctx, key)
+	if errors.Is(err, ErrNotFound) {
+		return "", nil
+	}
+	return obj.ETag, err
 }
