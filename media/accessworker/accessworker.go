@@ -27,8 +27,6 @@ import (
 )
 
 const (
-	// CookieName carries a folder token in cookie mode.
-	CookieName = "mt"
 	// HealthPath answers 200 without touching the bucket.
 	HealthPath = "/healthz"
 
@@ -165,7 +163,7 @@ func (h *Handler) authorized(r *http.Request, t, key, dl string) bool {
 	if dl != "" { // download names are only signed into URL tokens
 		return false
 	}
-	for _, c := range r.CookiesNamed(CookieName) {
+	for _, c := range r.CookiesNamed(token.CookieName) {
 		if h.cfg.Ring.Verify(c.Value, key, "", now) == nil {
 			return true
 		}

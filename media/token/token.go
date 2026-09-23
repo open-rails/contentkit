@@ -27,6 +27,9 @@ var (
 	ErrInvalid    = errors.New("token: signature does not cover this path")
 )
 
+// CookieName carries a folder token in cookie delivery mode.
+const CookieName = "mt"
+
 // DefaultWindow aligns expiries so tokens and URLs repeat within a window.
 const DefaultWindow = 4 * time.Hour
 
