@@ -24,6 +24,9 @@ type Kind struct {
 	Specs     map[string]Spec // variant name → spec
 	Slots     map[string]Slot // public slot name → outputs
 	Video     bool
+	// Zip names the variant packed, in file order, into downloads["zip"];
+	// "" offers no zip.
+	Zip string
 }
 
 // Fit is how an image spec fits its box.
@@ -92,6 +95,9 @@ func NewRegistry(kinds ...Kind) (*Registry, error) {
 			if !layout.ValidSegment(name) {
 				return nil, fmt.Errorf("media: kind %q: invalid spec name %q", k.Name, name)
 			}
+		}
+		if _, ok := k.Specs[k.Zip]; k.Zip != "" && !ok {
+			return nil, fmt.Errorf("media: kind %q: zip variant %q has no spec", k.Name, k.Zip)
 		}
 		for name, slot := range k.Slots {
 			if !layout.ValidSegment(name) || layout.ValidBlobName(name) || len(slot.Outputs) == 0 {

@@ -28,7 +28,8 @@ type Object struct {
 	CacheControl   string
 	ContentRange   string
 	LastModified   time.Time
-	ChecksumSHA256 []byte // set when the backend stored a full-object SHA-256
+	ChecksumSHA256 []byte            // set when the backend stored a full-object SHA-256
+	Metadata       map[string]string // user metadata (x-amz-meta-*), lower-case keys; Head and Get
 }
 
 // PutOptions are conditions and headers for Put. IfNoneMatch "*" creates only.
@@ -38,6 +39,7 @@ type PutOptions struct {
 	ChecksumSHA256 []byte
 	IfMatch        string
 	IfNoneMatch    string
+	Metadata       map[string]string
 }
 
 // GetOptions: IfNoneMatch returns ErrNotModified on a match; Range is an HTTP Range value.

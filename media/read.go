@@ -51,6 +51,10 @@ type Hooks struct {
 	// DownloadName returns the display name a download is saved under, e.g.
 	// "[Artist] Title (English).zip". Default: "{content_id}-{key}{ext}".
 	DownloadName func(ctx context.Context, ref contentref.ContentRef, key string, d Download) (string, error)
+	// Failed reports a file a processor cannot derive (an undecodable image,
+	// say); file is the manifest file name, or the slot name. The job does not
+	// retry it; a new commit does.
+	Failed func(ctx context.Context, ref contentref.ContentRef, file string, err error)
 }
 
 // ReaderOptions configure a Reader.

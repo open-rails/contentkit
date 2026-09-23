@@ -97,6 +97,7 @@ func (s *Store) Put(ctx context.Context, key string, body io.Reader, size int64,
 	in.CacheControl = optional(o.CacheControl)
 	in.IfMatch = optional(o.IfMatch)
 	in.IfNoneMatch = optional(o.IfNoneMatch)
+	in.Metadata = o.Metadata
 	if o.ChecksumSHA256 != nil {
 		in.ChecksumSHA256 = aws.String(base64.StdEncoding.EncodeToString(o.ChecksumSHA256))
 	}
@@ -116,7 +117,7 @@ func (s *Store) Get(ctx context.Context, key string, o media.GetOptions) (io.Rea
 	}
 	return out.Body, media.Object{Key: key, Size: aws.ToInt64(out.ContentLength), ETag: aws.ToString(out.ETag),
 		ContentType: aws.ToString(out.ContentType), CacheControl: aws.ToString(out.CacheControl),
-		ContentRange: aws.ToString(out.ContentRange), LastModified: aws.ToTime(out.LastModified)}, nil
+		ContentRange: aws.ToString(out.ContentRange), LastModified: aws.ToTime(out.LastModified), Metadata: out.Metadata}, nil
 }
 
 // Head returns ErrNotFound for a missing key. Some backends answer 403 instead
@@ -128,7 +129,8 @@ func (s *Store) Head(ctx context.Context, key string) (media.Object, error) {
 	}
 	return media.Object{Key: key, Size: aws.ToInt64(out.ContentLength), ETag: aws.ToString(out.ETag),
 		ContentType: aws.ToString(out.ContentType), CacheControl: aws.ToString(out.CacheControl),
-		LastModified: aws.ToTime(out.LastModified), ChecksumSHA256: fullObject(out.ChecksumSHA256, out.ChecksumType)}, nil
+		LastModified: aws.ToTime(out.LastModified), ChecksumSHA256: fullObject(out.ChecksumSHA256, out.ChecksumType),
+		Metadata: out.Metadata}, nil
 }
 
 func (s *Store) Delete(ctx context.Context, key string) error {
