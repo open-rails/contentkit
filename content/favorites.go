@@ -40,7 +40,7 @@ func (f *favorites) add(ctx context.Context, actor Actor, kind, id string) (*Pre
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	if err := f.rt.guardPrivateSubject(ctx, tx, viewerID(actor)); err != nil {
+	if err := f.rt.guardErasedSubject(ctx, tx, viewerID(actor)); err != nil {
 		return nil, err
 	}
 	snap, err := f.rt.preferences.mutate(ctx, tx, key, exportable, 1, func() (bool, error) {
@@ -68,7 +68,7 @@ func (f *favorites) remove(ctx context.Context, actor Actor, kind, id string) (*
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	if err := f.rt.guardPrivateSubject(ctx, tx, viewerID(actor)); err != nil {
+	if err := f.rt.guardErasedSubject(ctx, tx, viewerID(actor)); err != nil {
 		return nil, err
 	}
 	snap, err := f.rt.preferences.mutate(ctx, tx, key, exportable, 0, func() (bool, error) {

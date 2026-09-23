@@ -18,7 +18,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 )
 
-// Moderation states stored in social_comments.moderation / social_posts.moderation.
+// Moderation states stored in content_comments.moderation / content_posts.moderation.
 const (
 	ModerationApproved = "approved"
 	ModerationHeld     = "held"
@@ -51,7 +51,7 @@ func (rt *Runtime) screen(ctx context.Context, in ModerationInput) (screening, e
 	if in.SubjectID == "" {
 		in.SubjectID = viewerID(in.Actor)
 	}
-	if err := rt.privateSubjectAllowed(ctx, rt.store.pool, in.SubjectID); err != nil {
+	if err := rt.checkSubjectNotErased(ctx, rt.store.pool, in.SubjectID); err != nil {
 		return screening{}, err
 	}
 	if rt.moderator == nil {
@@ -131,7 +131,7 @@ type BasicModerator struct {
 	censorRe *regexp.Regexp
 	mu       sync.Mutex
 	recent   map[duplicateKey]time.Time
-	erased   map[privateSubjectKey]bool
+	erased   map[subjectKey]bool
 	swept    time.Time
 	now      func() time.Time
 }
@@ -163,7 +163,7 @@ func (m *BasicModerator) init() {
 			m.censorRe = regexp.MustCompile(`(?i)\b(` + strings.Join(quoted, "|") + `)\b`)
 		}
 		m.recent = map[duplicateKey]time.Time{}
-		m.erased = map[privateSubjectKey]bool{}
+		m.erased = map[subjectKey]bool{}
 	})
 }
 
@@ -182,7 +182,7 @@ func (m *BasicModerator) Screen(_ context.Context, in ModerationInput) (Verdict,
 		if actor == "" {
 			actor = in.Actor.IP
 		}
-		subject := privateSubjectKey{in.Tenant, actor}
+		subject := subjectKey{in.Tenant, actor}
 		key := duplicateKey{subject, sha256.Sum256([]byte(text))}
 		now := m.now()
 		m.mu.Lock()
@@ -362,7 +362,7 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d ReviewDecis
 		}
 		return err
 	}
-	if err := c.rt.guardPrivateSubject(ctx, tx, subject); err != nil {
+	if err := c.rt.guardErasedSubject(ctx, tx, subject); err != nil {
 		return err
 	}
 	var replyTo *string
@@ -412,7 +412,7 @@ func (p *posts) resolve(ctx context.Context, id, state string, d ReviewDecision)
 		}
 		return err
 	}
-	if err := p.rt.guardPrivateSubject(ctx, tx, subject); err != nil {
+	if err := p.rt.guardErasedSubject(ctx, tx, subject); err != nil {
 		return err
 	}
 	var language string
@@ -498,9 +498,9 @@ func policyIsStateless(p any) bool {
 	return ok
 }
 
-type privateSubjectKey struct{ tenant, subject string }
+type subjectKey struct{ tenant, subject string }
 type duplicateKey struct {
-	subject privateSubjectKey
+	subject subjectKey
 	digest  [32]byte
 }
 
@@ -509,7 +509,7 @@ func (m *BasicModerator) EraseSubjects(_ context.Context, tenant string, ids []s
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, id := range ids {
-		k := privateSubjectKey{tenant, id}
+		k := subjectKey{tenant, id}
 		m.erased[k] = true
 		for cached := range m.recent {
 			if cached.subject == k {

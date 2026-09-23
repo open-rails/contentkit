@@ -9,7 +9,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 )
 
-// Counts is the denormalized per-reference aggregate (social_entity_counts).
+// Counts is the denormalized per-reference aggregate (content_interaction_counts).
 type Counts struct {
 	Likes        int `json:"likes"`
 	Dislikes     int `json:"dislikes"`

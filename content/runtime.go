@@ -56,9 +56,10 @@ type Options struct {
 	// upload to a public bucket); used when Media is nil. See StorageConfig.
 	Storage *StorageConfig
 
-	// PrivateDataEraser is required when policy ports retain external personal data.
+	// ProviderDataEraser is required when moderator/classifier ports retain
+	// external personal data.
 	// Nil explicitly means stateless ports; never remove it during an outage.
-	PrivateDataEraser PrivateDataEraser
+	ProviderDataEraser ProviderDataEraser
 
 	// Perms are the opaque host permission strings gating privileged writes.
 	Perms Perms
@@ -87,7 +88,7 @@ type Runtime struct {
 	postBodyProcessor ContentProcessor
 	moderator         ContentModerator
 	classifier        AnswerClassifier
-	privateEraser     PrivateDataEraser
+	providerEraser    ProviderDataEraser
 	perms             Perms
 	log               *slog.Logger
 	kinds             map[string]struct{}
@@ -117,8 +118,8 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if opts.Identity == nil || opts.Authz == nil || opts.Resolver == nil {
 		return nil, fmt.Errorf("content: Identity, Authz and Resolver ports are required")
 	}
-	if opts.PrivateDataEraser == nil && (!policyIsStateless(opts.Moderator) || !policyIsStateless(opts.Classifier)) {
-		return nil, fmt.Errorf("content: retaining policy ports require PrivateDataEraser; stateless ports must declare StatelessPolicy")
+	if opts.ProviderDataEraser == nil && (!policyIsStateless(opts.Moderator) || !policyIsStateless(opts.Classifier)) {
+		return nil, fmt.Errorf("content: retaining policy ports require ProviderDataEraser; stateless ports must declare StatelessPolicy")
 	}
 	media, err := resolveMedia(opts)
 	if err != nil {
@@ -138,7 +139,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		postBodyProcessor: orDefault[ContentProcessor](opts.PostBodyProcessor, processor),
 		moderator:         opts.Moderator,
 		classifier:        opts.Classifier,
-		privateEraser:     opts.PrivateDataEraser,
+		providerEraser:    opts.ProviderDataEraser,
 		perms:             opts.Perms,
 		log:               orDefault[*slog.Logger](opts.Logger, slog.Default()),
 		kinds:             make(map[string]struct{}, len(opts.ContentKinds)),

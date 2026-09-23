@@ -46,7 +46,7 @@ type editInput struct {
 	Body string `json:"body"`
 }
 
-// Comment is the API view of a social_comments row.
+// Comment is the API view of a content_comments row.
 type Comment struct {
 	ID         string      `json:"id"`
 	ReplyToID  string      `json:"reply_to_id,omitempty"`
@@ -104,7 +104,7 @@ func (c *comments) create(ctx context.Context, actor Actor, kind, id string, in 
 		return Comment{}, err
 	}
 	defer tx.Rollback(ctx)
-	if err := c.rt.guardPrivateSubject(ctx, tx, viewerID(actor)); err != nil {
+	if err := c.rt.guardErasedSubject(ctx, tx, viewerID(actor)); err != nil {
 		return Comment{}, err
 	}
 
@@ -539,7 +539,7 @@ func (c *comments) edit(ctx context.Context, actor Actor, cid, rawBody string) (
 		return Comment{}, err
 	}
 	defer tx.Rollback(ctx)
-	if err := c.rt.guardPrivateSubject(ctx, tx, deref(target.ownerID)); err != nil {
+	if err := c.rt.guardErasedSubject(ctx, tx, deref(target.ownerID)); err != nil {
 		return Comment{}, err
 	}
 	var before string
@@ -656,7 +656,7 @@ func (c *comments) reactTx(ctx context.Context, actor Actor, cid string, value i
 		return reactionCounts{}, err
 	}
 	defer tx.Rollback(ctx)
-	if err := c.rt.guardPrivateSubject(ctx, tx, viewerID(actor)); err != nil {
+	if err := c.rt.guardErasedSubject(ctx, tx, viewerID(actor)); err != nil {
 		return reactionCounts{}, err
 	}
 	var deletedAt *time.Time

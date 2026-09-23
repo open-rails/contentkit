@@ -53,15 +53,15 @@ func newStore(pool *pgxpool.Pool, schema, tenant string) *store {
 		schema: schema,
 		tenant: tenant,
 		t: tables{
-			reactions:     q("social_reactions"),
-			comments:      q("social_comments"),
-			pollQuestions: q("social_poll_questions"),
-			pollOptions:   q("social_poll_options"),
-			pollVotes:     q("social_poll_votes"),
-			pollAnswers:   q("social_poll_answers"),
-			posts:         q("social_posts"),
-			favorites:     q("social_favorites"),
-			counts:        q("social_entity_counts"),
+			reactions:     q("content_reactions"),
+			comments:      q("content_comments"),
+			pollQuestions: q("content_poll_questions"),
+			pollOptions:   q("content_poll_options"),
+			pollVotes:     q("content_poll_votes"),
+			pollAnswers:   q("content_poll_answers"),
+			posts:         q("content_posts"),
+			favorites:     q("content_favorites"),
+			counts:        q("content_interaction_counts"),
 
 			preferenceSnapshots: q("content_preference_snapshots"),
 			preferenceArchive:   q("content_preference_key_archive"),
@@ -70,7 +70,7 @@ func newStore(pool *pgxpool.Pool, schema, tenant string) *store {
 	}
 }
 
-// keyCols is the content key of every keyed social table.
+// keyCols is the content key of every keyed interaction table.
 const keyCols = "tenant_id, content_kind, content_id, content_version_id"
 
 // keyPred renders the key predicate with placeholders $n..$n+3 (see keyArgs).

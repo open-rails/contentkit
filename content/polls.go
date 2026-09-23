@@ -495,7 +495,7 @@ func (p *polls) vote(ctx context.Context, actor Actor, pollID, optionID string) 
 		return pollView{}, err
 	}
 	defer tx.Rollback(ctx)
-	if err := p.rt.guardPrivateSubject(ctx, tx, viewerID(actor)); err != nil {
+	if err := p.rt.guardErasedSubject(ctx, tx, viewerID(actor)); err != nil {
 		return pollView{}, err
 	}
 
@@ -584,7 +584,7 @@ func (p *polls) answer(ctx context.Context, actor Actor, pollID, text string) (p
 		return pollView{}, err
 	}
 	defer tx.Rollback(ctx)
-	if err := p.rt.guardPrivateSubject(ctx, tx, actor.ID); err != nil {
+	if err := p.rt.guardErasedSubject(ctx, tx, actor.ID); err != nil {
 		return pollView{}, err
 	}
 	if err := p.open(ctx, tx, pollID, PollFreeText); err != nil {
@@ -622,7 +622,7 @@ func (p *polls) classify(ctx context.Context, a Answer) (bool, error) {
 	if p.rt.classifier == nil {
 		return false, ErrNoClassifier
 	}
-	if err := p.rt.privateSubjectAllowed(ctx, p.s.pool, a.SubjectID); err != nil {
+	if err := p.rt.checkSubjectNotErased(ctx, p.s.pool, a.SubjectID); err != nil {
 		return false, err
 	}
 	g, err := p.rt.classifier.Classify(ctx, a)

@@ -202,7 +202,7 @@ func (p *posts) handleCreate(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := p.rt.guardPrivateSubject(ctx, tx, viewerID(actor)); err != nil {
+	if err := p.rt.guardErasedSubject(ctx, tx, viewerID(actor)); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -313,7 +313,7 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := p.rt.guardPrivateSubject(ctx, tx, subject); err != nil {
+	if err := p.rt.guardErasedSubject(ctx, tx, subject); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -475,7 +475,7 @@ func (p *posts) react(ctx context.Context, actor Actor, id string, value int16) 
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if err := p.rt.guardPrivateSubject(ctx, tx, viewerID(actor)); err != nil {
+	if err := p.rt.guardErasedSubject(ctx, tx, viewerID(actor)); err != nil {
 		return err
 	}
 	if err := p.requirePublished(ctx, tx, id); err != nil {
