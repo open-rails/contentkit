@@ -42,8 +42,7 @@ type tables struct {
 	favorites     string
 	counts        string
 
-	preferenceSnapshots string
-	preferenceArchive   string
+	preferenceSync string
 }
 
 func newStore(pool *pgxpool.Pool, schema, tenant string) *store {
@@ -63,8 +62,7 @@ func newStore(pool *pgxpool.Pool, schema, tenant string) *store {
 			favorites:     q("content_favorites"),
 			counts:        q("content_interaction_counts"),
 
-			preferenceSnapshots: q("content_preference_snapshots"),
-			preferenceArchive:   q("content_preference_key_archive"),
+			preferenceSync: q("content_preference_sync"),
 		},
 		revisionSeq: revisionSeqName(schema),
 	}

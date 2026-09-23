@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,26 +40,45 @@ func stripLanguage(r contentref.ContentRef) (contentref.ContentRef, bool) {
 	return contentref.New(r.TenantID, "gallery", id).WithVersion(r.Version()), true
 }
 
-func newPreferenceRuntime(t *testing.T, pool *pgxpool.Pool, hostSchema, searchSchema string, conn signal.Conn) *Runtime {
+type prefEnv struct {
+	pool   *pgxpool.Pool
+	schema string
+	conn   signal.Conn
+	chDB   string
+	// declined makes the canonicalizer refuse gallery "8" at sync time.
+	declined *atomic.Bool
+}
+
+func newPrefEnv(t *testing.T, chDB string) prefEnv {
 	t.Helper()
+	ctx := context.Background()
+	pool := testPG(t)
+	env := signaltest.FromEnv(t)
+	pgtest.EnsureExtensions(t, ctx, pool)
+	schema := pgtest.EmptySchema(t, ctx, pool)
+	sqlDB := stdlib.OpenDBFromPool(pool)
+	if err := Migrate(ctx, MigrateConfig{DB: sqlDB, Schema: schema}); err != nil {
+		t.Fatal(err)
+	}
+	_ = sqlDB.Close()
+	return prefEnv{pool: pool, schema: schema, conn: env.Fresh(t, chDB), chDB: chDB, declined: &atomic.Bool{}}
+}
+
+func (e prefEnv) runtime(t *testing.T, conn signal.Conn, overlap time.Duration) *Runtime {
+	t.Helper()
+	canon := func(r contentref.ContentRef) (contentref.ContentRef, bool) {
+		w, ok := stripLanguage(r)
+		return w, ok && !(e.declined.Load() && w.ContentID == "8")
+	}
 	rt, err := NewRuntime(context.Background(), RuntimeConfig{
-		EmbeddedConfig: EmbeddedConfig{PG: pool, PGSchema: searchSchema, Tenant: testTenant, CH: conn, CHDatabase: prefTestCHDB},
-		Content: content.Options{Schema: hostSchema, Identity: ctxIdentity{}, Authz: allowAuthz{}, Resolver: routeResolver{},
-			Canonicalizer: content.ContentCanonicalizerFunc(stripLanguage), ContentKinds: []string{"gallery"}},
+		EmbeddedConfig: EmbeddedConfig{PG: e.pool, PGSchema: e.schema, Tenant: testTenant, CH: conn, CHDatabase: e.chDB},
+		Content: content.Options{Schema: e.schema, Identity: ctxIdentity{}, Authz: allowAuthz{}, Resolver: routeResolver{},
+			Canonicalizer: content.ContentCanonicalizerFunc(canon), ContentKinds: []string{"gallery"}, PreferenceSyncOverlap: overlap},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return rt
-}
-
-func pendingRows(t *testing.T, rt *Runtime) []content.PreferenceSnapshot {
-	t.Helper()
-	rows, err := rt.Content.PendingPreferences(context.Background(), content.PreferenceKey{}, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return rows
 }
 
 func state(t *testing.T, rt *Runtime, user, id string) signal.State {
@@ -79,90 +99,62 @@ func metrics(t *testing.T, rt *Runtime, id string) signal.ContentMetrics {
 	return m[gallery(id).Key()]
 }
 
-// The preference boundary end to end through ContentKit's own worker on real
-// Postgres and ClickHouse: the two reviewer regressions (a delayed older
-// delivery cannot overwrite a newer commit; a replay keeps its revision), the
-// spec's outage / crash-before-ack / erasure / floor / replay cases, and zero
-// snapshots for removals.
+func mustSync(t *testing.T, rt *Runtime) content.PreferenceSyncReport {
+	t.Helper()
+	rep, err := rt.SyncPreferences(context.Background())
+	if err != nil {
+		t.Fatalf("SyncPreferences: %v", err)
+	}
+	return rep
+}
+
+// The preference boundary end to end on real Postgres and ClickHouse:
+// convergence across routes and toggles, unfavorite as neutral, outage
+// recovery, the restore floor, resync after sink loss, sync-time
+// canonicalization, anonymous rows and erasure.
 func TestPreferenceBoundaryIntegration(t *testing.T) {
 	ctx := context.Background()
-	pool := testPG(t)
-	env := signaltest.FromEnv(t)
-	pgtest.EnsureExtensions(t, ctx, pool)
-	hostSchema := pgtest.EmptySchema(t, ctx, pool)
-	searchSchema := hostSchema
-	sqlDB := stdlib.OpenDBFromPool(pool)
-	if err := Migrate(ctx, MigrateConfig{DB: sqlDB, Schema: hostSchema}); err != nil {
-		t.Fatal(err)
-	}
-	_ = sqlDB.Close()
-	conn := env.Fresh(t, prefTestCHDB)
-	rt := newPreferenceRuntime(t, pool, hostSchema, searchSchema, conn)
+	e := newPrefEnv(t, prefTestCHDB)
+	rt := e.runtime(t, e.conn, 0)
 	h := rt.Handler()
 	u1 := content.Actor{ID: "u1", Kind: "user"}
+	post := func(a content.Actor, method, path string) {
+		t.Helper()
+		if rec := do(t, h, a, method, path, nil); rec.Code != http.StatusOK {
+			t.Fatalf("%s %s: %d %s", method, path, rec.Code, rec.Body.String())
+		}
+	}
 
-	// Regression 1: the like committed first, then the dislike on another
-	// language route; the like's delivery is delayed past the dislike's.
-	if rec := do(t, h, u1, "POST", "/gallery/42:en/like", nil); rec.Code != http.StatusOK {
-		t.Fatalf("like: %d %s", rec.Code, rec.Body.String())
+	// like → neutral → like, then a dislike on another language route.
+	post(u1, "POST", "/gallery/42:en/like")
+	mustSync(t, rt)
+	post(u1, "POST", "/gallery/42:ja/neutral")
+	mustSync(t, rt)
+	if s := state(t, rt, "u1", "42"); s.NetValue != 0 || s.Feedback != 0 {
+		t.Fatalf("state after neutral = %+v, want zero", s)
 	}
-	older := pendingRows(t, rt)[0] // the committed like, held back
-	if rec := do(t, h, u1, "POST", "/gallery/42:ja/dislike", nil); rec.Code != http.StatusOK {
-		t.Fatalf("dislike: %d %s", rec.Code, rec.Body.String())
-	}
-	newer := pendingRows(t, rt)[0]
-	if older.Revision >= newer.Revision || older.Value != 1 || newer.Value != -1 || newer.ContentID != "42" || older.PreferenceKey != newer.PreferenceKey {
-		t.Fatalf("delayed old like can overwrite newer dislike: like=%+v dislike=%+v", older, newer)
-	}
-	report, err := rt.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0)
-	if err != nil || report.Acknowledged != 1 {
-		t.Fatalf("deliver newer = %+v err=%v", report, err)
-	}
-	sink, _ := rt.preferenceSink()
-	if disp, err := sink.DeliverPreferences(ctx, []content.PreferenceSnapshot{older}); err != nil || disp[0] != content.PreferenceAccepted {
-		t.Fatalf("delayed older delivery = %v err=%v", disp, err)
-	}
-	if s := state(t, rt, "u1", "42"); s.NetValue != -1 || s.Feedback != 1 {
-		t.Fatalf("sink state after the delayed older delivery = %+v, want the dislike", s)
-	}
-	if m := metrics(t, rt, "42"); m.NegativeSubjects != 1 || m.PositiveSubjects != 0 || m.SignalCounts["reaction"] != 1 {
+	post(u1, "POST", "/gallery/42:en/like")
+	post(u1, "POST", "/gallery/42:ja/dislike")
+	mustSync(t, rt)
+	mustSync(t, rt) // re-sends inside the overlap converge
+	if m := metrics(t, rt, "42"); m.NegativeSubjects != 1 || m.PositiveSubjects != 0 || m.SignalCounts["reaction"] != 1 || m.Events != 1 {
 		t.Fatalf("metrics = %+v, want one negative subject and one reaction event", m)
 	}
 
-	// Regression 2: replaying one committed snapshot, before and after a
-	// process restart, keeps its revision and time and adds no vote.
-	restarted := newPreferenceRuntime(t, pool, hostSchema, searchSchema, conn)
-	if rep, err := restarted.ReplayPreferences(ctx, content.PreferenceKey{}, 10, 0); err != nil || rep.Delivered != 1 {
-		t.Fatalf("replay = %+v err=%v", rep, err)
-	}
-	if again := pendingRows(t, rt); len(again) != 0 {
-		t.Fatalf("replay left rows pending: %+v", again)
-	}
-	if m := metrics(t, rt, "42"); m.NegativeSubjects != 1 || m.SignalCounts["reaction"] != 1 || m.Events != 1 {
-		t.Fatalf("metrics after replay = %+v, want no duplicate vote", m)
-	}
-
-	// Spec 3: neutral and favorite/unfavorite/refavorite converge without
-	// resurrection or double counting.
-	do(t, h, u1, "POST", "/gallery/42:en/neutral", nil)
-	do(t, h, u1, "POST", "/gallery/42:ja/favorite", nil)
-	if _, err := rt.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0); err != nil {
-		t.Fatal(err)
-	}
+	// favorite → unfavorite reaches the sink as neutral; re-favorite returns.
+	post(u1, "POST", "/gallery/42:en/neutral")
+	post(u1, "POST", "/gallery/42:ja/favorite")
+	mustSync(t, rt)
 	if s := state(t, rt, "u1", "42"); s.NetValue != 1 || s.Feedback != 1 {
-		t.Fatalf("state after neutral + favorite = %+v, want favorite 1 and reaction 0", s)
+		t.Fatalf("state after neutral + favorite = %+v", s)
 	}
-	do(t, h, u1, "DELETE", "/gallery/42:en/favorite", nil)
-	if _, err := rt.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0); err != nil {
-		t.Fatal(err)
-	}
+	post(u1, "DELETE", "/gallery/42:en/favorite")
+	mustSync(t, rt)
 	if s := state(t, rt, "u1", "42"); s.NetValue != 0 || s.Feedback != 0 {
 		t.Fatalf("state after unfavorite = %+v, want zero", s)
 	}
-	do(t, h, u1, "POST", "/gallery/42:ja/favorite", nil)
-	if _, err := rt.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0); err != nil {
-		t.Fatal(err)
-	}
+	post(u1, "POST", "/gallery/42:ja/favorite")
+	mustSync(t, rt)
 	if s := state(t, rt, "u1", "42"); s.NetValue != 1 || s.Feedback != 1 {
 		t.Fatalf("state after re-favorite = %+v", s)
 	}
@@ -170,101 +162,153 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 		t.Fatalf("metrics after the favorite cycle = %+v, want one identity per axis", m)
 	}
 
-	// Spec 6: the sink is unavailable (nothing listens on the address); the
-	// user action succeeded and the obligation waits for a healthy worker.
+	// Anonymous rows and targets the canonicalizer declines at sync time stay out.
+	post(content.Actor{IP: "10.0.0.1", Anonymous: true}, "POST", "/gallery/7:en/like")
+	post(u1, "POST", "/gallery/8:en/like")
+	e.declined.Store(true)
+	mustSync(t, rt)
+	e.declined.Store(false)
+	if m := metrics(t, rt, "7"); m.Events != 0 {
+		t.Fatalf("anonymous reaction exported: %+v", m)
+	}
+	if s := state(t, rt, "u1", "8"); s.Feedback != 0 {
+		t.Fatalf("declined target exported: %+v", s)
+	}
+
+	// The sink is unreachable: the write succeeded, the sync fails without
+	// advancing, and a healthy sync delivers.
 	unreachable, err := clickhouse.Open(&clickhouse.Options{Addr: []string{"127.0.0.1:1"}, DialTimeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
-	down := newPreferenceRuntime(t, pool, hostSchema, searchSchema, unreachable)
-	do(t, h, u1, "POST", "/gallery/7:en/like", nil)
-	if _, err := down.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0); err == nil {
-		t.Fatal("delivery over a closed connection succeeded")
+	down := e.runtime(t, unreachable, 0)
+	post(u1, "POST", "/gallery/9:en/like")
+	if _, err := down.SyncPreferences(ctx); err == nil {
+		t.Fatal("sync over a closed connection succeeded")
 	}
-	if p := pendingRows(t, rt); len(p) != 1 || p[0].ContentID != "7" {
-		t.Fatalf("pending after the outage = %+v", p)
-	}
-	// Spec 7: the sink accepted but the worker died before acknowledging.
-	if disp, err := sink.DeliverPreferences(ctx, pendingRows(t, rt)); err != nil || disp[0] != content.PreferenceAccepted {
-		t.Fatalf("direct delivery = %v err=%v", disp, err)
-	}
-	if rep, err := rt.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0); err != nil || rep.Acknowledged != 1 {
-		t.Fatalf("recovery sweep = %+v err=%v", rep, err)
-	}
-	if s, m := state(t, rt, "u1", "7"), metrics(t, rt, "7"); s.NetValue != 1 || m.PositiveSubjects != 1 || m.Events != 1 {
-		t.Fatalf("after the crash replay: state=%+v metrics=%+v", s, m)
+	mustSync(t, rt)
+	if s := state(t, rt, "u1", "9"); s.NetValue != 1 {
+		t.Fatalf("after the outage: %+v", s)
 	}
 
-	// Spec 10: old clock-domain revisions already in the sink; the seeded floor
-	// makes every new revision win.
+	// Restore floor: old revisions already in the sink lose to new ones.
 	u2 := content.Actor{ID: "u2", Kind: "user"}
-	oldClock := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC).UnixMicro()
+	old := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	if err := rt.RecordSignals(ctx, []signal.Signal{{ContentRef: gallery("9"), Subject: signal.Subject{UserID: "u2"}, Type: "reaction", EventID: PreferenceEventID,
-		Revision: uint64(oldClock), OccurredAt: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), Value: 1}}); err != nil {
+		Revision: uint64(old.UnixMicro()), OccurredAt: old, Value: 1}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.Content.SeedPreferenceRevisionFloor(ctx, oldClock); err != nil {
+	if _, err := rt.Content.SeedPreferenceRevisionFloor(ctx, old.UnixMicro()); err != nil {
 		t.Fatal(err)
 	}
-	do(t, h, u2, "POST", "/gallery/9:en/dislike", nil)
-	if p := pendingRows(t, rt); len(p) != 1 || p[0].Revision <= oldClock {
-		t.Fatalf("revision after the floor = %+v, want above %d", p, oldClock)
-	}
-	if _, err := rt.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0); err != nil {
-		t.Fatal(err)
-	}
+	post(u2, "POST", "/gallery/9:en/dislike")
+	mustSync(t, rt)
 	if s := state(t, rt, "u2", "9"); s.NetValue != -1 {
-		t.Fatalf("new revision lost to the old clock domain: %+v", s)
+		t.Fatalf("new revision lost to the old one: %+v", s)
 	}
 
-	// Spec 14: sink projections are lost after every row was acknowledged; the
-	// full replay restores current state, removals included.
+	// Sink loss: a full resync restores current state, zeros included, and a
+	// second resync adds nothing.
 	if err := rt.PurgeContentKinds(ctx, []string{"gallery"}); err != nil {
 		t.Fatal(err)
 	}
-	if s := state(t, rt, "u1", "42"); s.Feedback != 0 {
-		t.Fatalf("purge left state %+v", s)
-	}
-	if rep, err := rt.ReplayPreferences(ctx, content.PreferenceKey{}, 2, 0); err != nil || rep.Delivered != 4 {
-		t.Fatalf("full replay = %+v err=%v", rep, err)
+	for i := 0; i < 2; i++ {
+		if rep, err := rt.ResyncPreferences(ctx); err != nil || rep.Sent != 5 {
+			t.Fatalf("resync = %+v err=%v, want 5 rows", rep, err)
+		}
 	}
 	if s := state(t, rt, "u1", "42"); s.NetValue != 1 || s.Feedback != 1 {
-		t.Fatalf("state after the full replay = %+v, want neutral reaction + favorite", s)
+		t.Fatalf("state after resync = %+v, want neutral reaction + favorite", s)
 	}
-	if s := state(t, rt, "u2", "9"); s.NetValue != -1 {
-		t.Fatalf("u2 after the full replay = %+v", s)
+	if s := state(t, rt, "u1", "8"); s.NetValue != 1 {
+		t.Fatalf("accepted-again target after resync = %+v", s)
 	}
 	if m := metrics(t, rt, "42"); m.Events != 2 || m.PositiveSubjects != 1 {
-		t.Fatalf("metrics after the full replay = %+v", m)
+		t.Fatalf("metrics after resync = %+v", m)
 	}
 
-	// Spec 11: account erasure races a pending delivery: the fence is terminal.
+	// Erasure: the source rows go, the sink fences, a late send of a row read
+	// before the erasure is dropped, and nothing re-ingests.
 	u3 := content.Actor{ID: "u3", Kind: "user"}
-	do(t, h, u3, "POST", "/gallery/42:en/like", nil)
-	held := pendingRows(t, rt)[0]
-	if held.ActorID != "u3" {
-		t.Fatalf("pending = %+v", held)
+	post(u3, "POST", "/gallery/42:en/like")
+	var late []content.Preference
+	if _, err := rt.Content.ResyncPreferences(ctx, func(_ context.Context, page []content.Preference) error {
+		for _, p := range page {
+			if p.ActorID == "u3" {
+				late = append(late, p)
+			}
+		}
+		return nil
+	}); err != nil || len(late) != 1 {
+		t.Fatalf("u3 rows = %+v err=%v", late, err)
 	}
 	erasure, err := rt.EraseSubjects(ctx, []signal.Subject{{UserID: "u3"}})
 	if err != nil || !erasure.Complete() {
 		t.Fatalf("erase = %+v err=%v", erasure, err)
 	}
-	if p := pendingRows(t, rt); len(p) != 0 {
-		t.Fatalf("erased subject still owes a delivery: %+v", p)
-	}
-	if disp, err := sink.DeliverPreferences(ctx, []content.PreferenceSnapshot{held}); err != nil || disp[0] != content.PreferenceSubjectErased {
-		t.Fatalf("late delivery of an erased subject = %v err=%v, want the terminal disposition", disp, err)
-	}
-	if hist, err := rt.History(ctx, signal.Subject{UserID: "u3"}, signal.HistoryOptions{}); err != nil || len(hist) != 0 {
-		t.Fatalf("erased subject re-ingested: %+v err=%v", hist, err)
+	if err := rt.sendPreferences(ctx, late); err != nil {
+		t.Fatal(err)
 	}
 	if rec := do(t, h, u3, "POST", "/gallery/42:en/dislike", nil); rec.Code != http.StatusForbidden {
 		t.Fatalf("source write after erasure: %d", rec.Code)
 	}
-	if rep, err := rt.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0); err != nil || rep.Erased != 0 || rep.Acknowledged != 0 {
-		t.Fatalf("sweep after erasure = %+v err=%v, want no new obligation or ingestion", rep, err)
+	mustSync(t, rt)
+	if _, err := rt.ResyncPreferences(ctx); err != nil {
+		t.Fatal(err)
 	}
-	if hist, _ := rt.History(ctx, signal.Subject{UserID: "u3"}, signal.HistoryOptions{}); len(hist) != 0 {
-		t.Fatalf("erased subject re-ingested by the sweep: %+v", hist)
+	if hist, err := rt.History(ctx, signal.Subject{UserID: "u3"}, signal.HistoryOptions{}); err != nil || len(hist) != 0 {
+		t.Fatalf("erased subject re-ingested: %+v err=%v", hist, err)
+	}
+}
+
+// A transaction that allocated its revision before a later one committed and
+// synced is still delivered once it commits within the overlap, and the
+// watermark advances once the overlap has passed.
+func TestPreferenceSyncSlowCommitOverlapIntegration(t *testing.T) {
+	ctx := context.Background()
+	const overlap = 2 * time.Second
+	e := newPrefEnv(t, prefTestCHDB+"_overlap")
+	rt := e.runtime(t, e.conn, overlap)
+	h := rt.Handler()
+	u1 := content.Actor{ID: "u1", Kind: "user"}
+	do(t, h, u1, "POST", "/gallery/4:en/like", nil)
+	mustSync(t, rt)
+	time.Sleep(overlap + 200*time.Millisecond)
+
+	held, err := e.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Rollback(ctx)
+	var slow int64
+	if err := held.QueryRow(ctx, `INSERT INTO `+e.schema+`.content_reactions (tenant_id, content_kind, content_id, content_version_id, user_id, value, revision)
+		VALUES ($1, 'gallery', '5', '', 'slow', 1, nextval('`+e.schema+`.content_preference_revision_seq')) RETURNING revision`, testTenant).Scan(&slow); err != nil {
+		t.Fatal(err)
+	}
+	do(t, h, u1, "POST", "/gallery/6:en/like", nil)
+	mustSync(t, rt)
+	if s := state(t, rt, "u1", "6"); s.NetValue != 1 {
+		t.Fatalf("later commit not synced: %+v", s)
+	}
+	mustSync(t, rt)
+	var newest int64
+	if err := e.pool.QueryRow(ctx, `SELECT max(revision) FROM `+e.schema+`.content_preference_sync`).Scan(&newest); err != nil || newest <= slow {
+		t.Fatalf("newest checkpoint %d err=%v, want past the held revision %d", newest, err, slow)
+	}
+	if err := held.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rep := mustSync(t, rt); rep.From >= slow {
+		t.Fatalf("sync started at %d, past the held revision %d", rep.From, slow)
+	}
+	if s := state(t, rt, "slow", "5"); s.NetValue != 1 {
+		t.Fatalf("slow commit lost: %+v", s)
+	}
+
+	time.Sleep(overlap + 200*time.Millisecond)
+	mustSync(t, rt)
+	time.Sleep(overlap + 200*time.Millisecond)
+	if rep := mustSync(t, rt); rep.From < slow || rep.Sent != 0 {
+		t.Fatalf("watermark did not advance: %+v (held revision %d)", rep, slow)
 	}
 }

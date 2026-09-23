@@ -37,9 +37,13 @@ type Options struct {
 	Resolver ContentResolver
 
 	// Canonicalizer enables the preference boundary (preferences.go): the
-	// reaction/favorite row, the counts rollup and the exported snapshot all
-	// use the reference it returns. nil = no preference export.
+	// reaction/favorite row, the counts rollup and the export all use the
+	// reference it returns. nil = no preference export.
 	Canonicalizer ContentCanonicalizer
+	// PreferenceSyncOverlap bounds how long a preference write may take to
+	// commit and still be picked up by SyncPreferences.
+	// Default DefaultPreferenceSyncOverlap.
+	PreferenceSyncOverlap time.Duration
 
 	// Optional ports (nil -> default).
 	Users             UserEnricher     // default: no enrichment (ids only)
@@ -153,9 +157,9 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if err := rt.checkSchema(ctx); err != nil {
 		return nil, err
 	}
-	// preferences before the writers that record into it; reactions before
+	// preferences before the writers that resolve through it; reactions before
 	// comments and posts, which reuse its applyTx primitive.
-	rt.preferences = newPreferences(rt, opts.Canonicalizer)
+	rt.preferences = newPreferences(rt, opts.Canonicalizer, opts.PreferenceSyncOverlap)
 	rt.reactions = newReactions(rt)
 	rt.polls = newPolls(rt)
 	rt.comments = newComments(rt)
@@ -167,7 +171,8 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 // checkSchema refuses a schema missing required ContentKit tables.
 func (rt *Runtime) checkSchema(ctx context.Context) error {
 	if _, err := rt.store.pool.Exec(ctx, `SELECT tenant_id, content_kind, content_id, content_version_id FROM `+rt.store.t.counts+` LIMIT 0;
-		SELECT revision FROM `+rt.store.t.preferenceSnapshots+` LIMIT 0;
+		SELECT revision FROM `+rt.store.t.reactions+` LIMIT 0; SELECT value, revision FROM `+rt.store.t.favorites+` LIMIT 0;
+		SELECT revision FROM `+rt.store.t.preferenceSync+` LIMIT 0;
 		SELECT moderation FROM `+rt.store.t.comments+` LIMIT 0; SELECT moderation FROM `+rt.store.t.posts+` LIMIT 0;
 		SELECT kind, closes_at FROM `+rt.store.t.pollQuestions+` LIMIT 0; SELECT group_id FROM `+rt.store.t.pollAnswers+` LIMIT 0`); err != nil {
 		return fmt.Errorf("content: schema %q lacks the ContentKit baseline (apply contentkit.Migrate): %w", rt.schema, err)

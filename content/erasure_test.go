@@ -79,9 +79,9 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 		t.Fatalf("other tenant damaged: %+v", got)
 	}
 	for name, write := range map[string]func() error{
-		"reaction":         func() error { _, _, e := rt.reactions.react(ctx, u1, "gallery", "42:en", 1); return e },
-		"favorite":         func() error { _, e := rt.favorites.add(ctx, u1, "gallery", "42:en"); return e },
-		"unfavorite":       func() error { _, e := rt.favorites.remove(ctx, u1, "gallery", "42:en"); return e },
+		"reaction":         func() error { _, e := rt.reactions.react(ctx, u1, "gallery", "42:en", 1); return e },
+		"favorite":         func() error { return rt.favorites.add(ctx, u1, "gallery", "42:en") },
+		"unfavorite":       func() error { return rt.favorites.remove(ctx, u1, "gallery", "42:en") },
 		"post reaction":    func() error { return rt.posts.react(ctx, u1, post, 1) },
 		"comment reaction": func() error { _, e := rt.comments.reactTx(ctx, u1, cm.ID, 1); return e },
 		"poll vote":        func() error { _, e := rt.polls.vote(ctx, u1, poll.ID, poll.Options[0].ID); return e },
@@ -90,9 +90,9 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 			t.Fatalf("%s crossed source fence: %v", name, err)
 		}
 	}
-	for _, got := range pending(t, rt) {
+	for _, got := range exported(t, rt) {
 		if got.ActorID != u2.ID {
-			t.Fatalf("erased snapshot obligation survived: %+v", got)
+			t.Fatalf("erased preference still exports: %+v", got)
 		}
 	}
 }
@@ -117,9 +117,9 @@ func TestSourceWritesRaceErasureWithoutResurrection(t *testing.T) {
 			var err error
 			switch i % 3 {
 			case 0:
-				_, _, err = rt.reactions.react(ctx, actor, "gallery", "42:en", 1)
+				_, err = rt.reactions.react(ctx, actor, "gallery", "42:en", 1)
 			case 1:
-				_, err = rt.favorites.add(ctx, actor, "gallery", "42:en")
+				err = rt.favorites.add(ctx, actor, "gallery", "42:en")
 			case 2:
 				_, err = rt.polls.vote(ctx, actor, poll.ID, poll.Options[0].ID)
 			}
@@ -177,49 +177,36 @@ func TestConcurrentErasedActorsShareCountersWithoutDeadlock(t *testing.T) {
 	}
 }
 
-func TestRestoreReappliesSourceErasureAndFencedSnapshotsNeverReplay(t *testing.T) {
+func TestRestoreReappliesSourceErasureAndFencedRowsNeverExport(t *testing.T) {
 	ctx := context.Background()
 	rt := newPreferenceRuntime(t)
 	actor := Actor{ID: "gone"}
-	snapshot := mustReact(t, rt, actor, "gallery", "42:en", 1)
+	mustReact(t, rt, actor, "gallery", "42:en", 1)
 	mustReact(t, rt, Actor{ID: "keep"}, "gallery", "42:en", 1)
+	mustFavorite(t, rt, Actor{ID: "keep"}, "gallery", "42:en", true)
 	if err := rt.EraseSubjects(ctx, []string{actor.ID}); err != nil {
 		t.Fatal(err)
 	}
 	// Privileged restore loads old source/counters but retains the permanent fence.
-	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.reactions+` (`+keyCols+`,user_id,value) VALUES ($1,'gallery','42','','gone',1)`, rt.tenant); err != nil {
+	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.reactions+` (`+keyCols+`,user_id,value,revision) VALUES ($1,'gallery','42','','gone',1,`+rt.store.nextRevision()+`)`, rt.tenant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.favorites+` (`+keyCols+`,user_id,value,revision) VALUES ($1,'gallery','42','','gone',0,`+rt.store.nextRevision()+`)`, rt.tenant); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rt.store.pool.Exec(ctx, `UPDATE `+rt.store.t.counts+` SET likes=likes+1 WHERE tenant_id=$1 AND content_kind='gallery' AND content_id='42'`, rt.tenant); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.preferenceSnapshots+` (`+preferenceCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0)`, append(snapshot.PreferenceKey.args(), snapshot.Value, snapshot.Revision, snapshot.OccurredAt)...); err != nil {
-		t.Fatal(err)
-	}
-	all, err := rt.ScanPreferences(ctx, PreferenceKey{}, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, s := range all {
-		if s.ActorID == actor.ID {
-			t.Fatal("restored fenced snapshot became replayable")
+	for _, p := range exported(t, rt) {
+		if p.ActorID == actor.ID {
+			t.Fatal("restored fenced row became exportable")
 		}
-	}
-	if _, err := rt.MigratePreferences(ctx, PreferenceMigrationOptions{}); !errors.Is(err, ErrSubjectErased) {
-		t.Fatalf("restored erased source reseeded: %v", err)
 	}
 	if err := rt.EraseSubjects(ctx, []string{actor.ID}); err != nil {
 		t.Fatal(err)
 	}
-	if got := countsOf(t, rt, ref("gallery", "42")); got.Likes != 1 {
-		t.Fatalf("recovery double-counted erased interaction: %+v", got)
-	}
-	if _, err := rt.MigratePreferences(ctx, PreferenceMigrationOptions{ExportedKeys: []PreferenceKey{snapshot.PreferenceKey}}); err != nil {
-		t.Fatal(err)
-	}
-	var n int
-	if err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.preferenceSnapshots+` WHERE actor_id='gone'`).Scan(&n); err != nil || n != 0 {
-		t.Fatalf("export union recreated erased subject: %d %v", n, err)
+	if got := countsOf(t, rt, ref("gallery", "42")); got.Likes != 1 || got.Favorites != 1 {
+		t.Fatalf("recovery miscounted erased interactions: %+v", got)
 	}
 }
 
@@ -299,7 +286,7 @@ func TestSourceFenceSeesCommittedErasureWithRepeatableReadHostDefault(t *testing
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { _, _, err := rt.reactions.react(ctx, Actor{ID: "gone"}, "gallery", "42:en", 1); done <- err }()
+	go func() { _, err := rt.reactions.react(ctx, Actor{ID: "gone"}, "gallery", "42:en", 1); done <- err }()
 	// Observe the writer's advisory-lock wait before committing the erasure.
 	for {
 		var waiting bool
