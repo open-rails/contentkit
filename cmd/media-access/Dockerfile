@@ -1,5 +1,5 @@
 # Build from the repository root: docker build -f cmd/media-access/Dockerfile .
-FROM --platform=$BUILDPLATFORM golang:1.25 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.6 AS build
 ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
