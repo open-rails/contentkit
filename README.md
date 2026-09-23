@@ -56,6 +56,9 @@ another tenant is an error, never remapped.
 | `discovery` | `SimilarTo`/`Recommend`: the `Candidates` port, the default co-engagement source (`Engagement`), `Fallback`, and the shared exclusion/fill policy (`Recommender`) |
 | `eval` | lexical golden-case evaluation, reports, baselines |
 | `migrations` | one PostgreSQL baseline and one ClickHouse baseline |
+| `media` | per-item folders and keys, kind registry, the `Store` port, manifests with conditional-write edits |
+| `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests) |
+| `media/token` | media access tokens, shared by hosts and the access worker |
 | root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (all PostgreSQL features and optional ClickHouse signals), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
 
 ## Install
@@ -162,6 +165,36 @@ may change.
 unset) with the request method, path, status and duration. Postgres constraint
 names, driver text and stack traces are logged, never served.
 
+## Media
+
+Design: [MEDIA-DESIGN.md](https://github.com/open-rails/tracker/blob/master/contentkit/MEDIA-DESIGN.md).
+One private bucket; each item owns a folder the library keys:
+
+```text
+{tenant}/{kind}/{id}/manifest.json | manifests/{version}.json
+                    /originals/{sha256-hex | u-uuid | slot}   never served
+                    /blobs/{sha256-hex | u-uuid}              immutable derivatives
+                    /public/{name}.webp                       public slots
+```
+
+```go
+kinds, _ := media.NewRegistry(media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png"}, MaxBytes: 10 << 20})
+store, _ := s3.New(s3.Config{Bucket: "media", Endpoint: rgw, PublicEndpoint: "https://s3.doujins.ai", UsePathStyle: true,
+	AccessKeyID: id, SecretAccessKey: secret, Capabilities: caps}) // caps from media.Probe
+manifests, _ := media.NewManifests(store, kinds, media.ManifestOptions{Locker: media.PGLocker(pool)})
+_, _ = manifests.Edit(ctx, ref, func(m *media.Manifest) error { m.Files = append(m.Files, f); return nil })
+```
+
+`Edit` writes with `If-Match` (or `If-None-Match: *`) and retries on conflict;
+without `Capabilities.ConditionalPut` it serializes on a Postgres advisory lock
+instead. Reads are cached in process and revalidated by ETag. Presigned PUTs
+bind `Content-Type`, `Content-Length` and `x-amz-checksum-sha256`.
+
+Tokens are `kid.exp.base64url(HMAC-SHA256(secret, "{scope}|{exp}"))`: a scope
+is a folder (`…/blobs/`, covering the objects directly under it), one key, or
+`{key}#dl={name}` for a download name. Expiry is window-aligned (default 4 h);
+`token.Ring` verifies the current and previous key.
+
 ## Taxonomy
 
 Nodes, names, edges and assignments are tenant-scoped; effective tags are the
@@ -240,6 +273,12 @@ CONTENTKIT_TEST_URL=postgres://...  CONTENTKIT_PROFILE_URL=postgres://... \
 CONTENTKIT_TEST_CH_ADDR=localhost:9000 CONTENTKIT_TEST_CH_USER=... CONTENTKIT_TEST_CH_PASSWORD=... CONTENTKIT_TEST_CH_CLUSTER=... \
 go test ./... -race -count=1 -p 2
 ```
+
+Media tests also need an S3 backend (`CONTENTKIT_TEST_S3_ENDPOINT`,
+`_ACCESS_KEY`, `_SECRET_KEY`, optional `_REGION`, `_BUCKET` and `_REQUIRE`; see
+`media/internal/s3test`). CI runs them on MinIO. To record a Ceph RGW
+release's capabilities, point the same variables at an RGW bucket and run
+`go test ./media/... -v -count=1`; the log prints the probed capabilities.
 
 Tests run against real PGroonga Postgres and ClickHouse+Keeper and skip
 without the variables; `CONTENTKIT_PROFILE_URL` needs `CREATEDB`. Regenerate the eval baseline with
