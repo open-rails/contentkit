@@ -133,6 +133,11 @@ func (j *Jobs) sweep(ctx context.Context, prefix string, objs []Object) (SweepRe
 	return SweepResult{Deleted: doomed}, nil
 }
 
+func manifestKeys(objs []Object) map[string]string {
+	m, _ := manifestETags(objs)
+	return m
+}
+
 func manifestETags(objs []Object) (map[string]string, time.Time) {
 	etags := map[string]string{}
 	var newest time.Time

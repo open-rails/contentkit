@@ -38,8 +38,9 @@ type JobsConfig struct {
 	// must exceed the longest upload presign TTL and the 1-day multipart
 	// abort rule. Default 25 h.
 	LateUploadWindow time.Duration
-	Queue            string // default "contentkit_media"
-	MaxWorkers       int    // default 2
+	Limiter          UploadLimiter // releases a deleted item's quota; optional
+	Queue            string        // default "contentkit_media"
+	MaxWorkers       int           // default 2
 	Logger           *slog.Logger
 	Now              func() time.Time // clock for grace decisions; default time.Now
 }
@@ -49,10 +50,11 @@ type JobsConfig struct {
 type Jobs struct {
 	cfg JobsConfig
 
-	mu       sync.Mutex
-	regs     []func(*river.Config) error
-	composed bool
-	client   *river.Client[pgx.Tx]
+	mu         sync.Mutex
+	regs       []func(*river.Config) error
+	processors []Processor
+	composed   bool
+	client     *river.Client[pgx.Tx]
 }
 
 var ErrJobsNotBound = errors.New("media: River jobs are not composed into a client")
@@ -125,6 +127,7 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &sweepWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &sweepPassWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &deleteFolderWorker{j: j}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &processWorker{j: j}) },
 		} {
 			if err := w(); err != nil {
 				return err
@@ -210,16 +213,26 @@ func (j *Jobs) ScheduleSweep(ctx context.Context, ref contentref.ContentRef) err
 	return err
 }
 
+// Deletion is one item to delete. Owner is its quota owner (UploadGrant.Owner),
+// "" for none; with a Limiter configured the owner's usage is released.
+type Deletion struct {
+	Ref   contentref.ContentRef
+	Owner string
+}
+
 // DeleteItemsTx deletes each item's whole folder (every version) through a
 // job enqueued in the host's delete transaction. A second pass after
-// LateUploadWindow removes uploads that land after the first.
-func (j *Jobs) DeleteItemsTx(ctx context.Context, tx pgx.Tx, refs ...contentref.ContentRef) error {
+// LateUploadWindow removes uploads that land after the first. The quota to
+// release is measured here from the item's manifests, so a retried job
+// settles it once.
+func (j *Jobs) DeleteItemsTx(ctx context.Context, tx pgx.Tx, items ...Deletion) error {
 	c, err := j.bound()
 	if err != nil {
 		return err
 	}
-	params := make([]river.InsertManyParams, 0, len(refs))
-	for _, ref := range refs {
+	params := make([]river.InsertManyParams, 0, len(items))
+	for _, d := range items {
+		ref := d.Ref
 		if ref.Version() != "" {
 			return fmt.Errorf("media: delete %s: folders hold every version; pass the work ref", ref)
 		}
@@ -227,8 +240,14 @@ func (j *Jobs) DeleteItemsTx(ctx context.Context, tx pgx.Tx, refs ...contentref.
 		if err != nil {
 			return err
 		}
-		params = append(params, river.InsertManyParams{Args: deleteFolderArgs{Prefix: prefix},
-			InsertOpts: j.opts(&river.InsertOpts{UniqueOpts: pendingOnce})})
+		args := deleteFolderArgs{Prefix: prefix}
+		if j.cfg.Limiter != nil && d.Owner != "" {
+			if args.Release, err = j.originalBytes(ctx, prefix); err != nil {
+				return err
+			}
+			args.Owner = d.Owner
+		}
+		params = append(params, river.InsertManyParams{Args: args, InsertOpts: j.opts(&river.InsertOpts{UniqueOpts: pendingOnce})})
 	}
 	if len(params) == 0 {
 		return nil
@@ -239,9 +258,57 @@ func (j *Jobs) DeleteItemsTx(ctx context.Context, tx pgx.Tx, refs ...contentref.
 
 // EraseUserTx erases a user's media: the items the host maps to them plus
 // their user folder, {tenant}/user/{id}/.
-func (j *Jobs) EraseUserTx(ctx context.Context, tx pgx.Tx, tenant, userID string, items ...contentref.ContentRef) error {
-	return j.DeleteItemsTx(ctx, tx, append(items, contentref.New(tenant, UserKind, userID))...)
+func (j *Jobs) EraseUserTx(ctx context.Context, tx pgx.Tx, tenant, userID string, items ...Deletion) error {
+	return j.DeleteItemsTx(ctx, tx, append(items, Deletion{Ref: contentref.New(tenant, UserKind, userID)})...)
 }
+
+// originalBytes is the quota the folder's manifests were charged at commit.
+func (j *Jobs) originalBytes(ctx context.Context, prefix string) (int64, error) {
+	objs, err := j.list(ctx, prefix)
+	if err != nil {
+		return 0, err
+	}
+	var n int64
+	for key := range manifestKeys(objs) {
+		man, err := j.readManifest(ctx, key)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		n += man.OriginalBytes()
+	}
+	return n, nil
+}
+
+// Processor derives an item's files after a commit (image variants, video
+// encodes). It must be idempotent and finish only when the manifest needs no
+// more work: an Enqueue while its job runs is absorbed by that job.
+type Processor func(ctx context.Context, job ProcessJob) error
+
+// AddProcessor registers a processor for Enqueue'd jobs, before composition.
+func (j *Jobs) AddProcessor(p Processor) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.composed {
+		return errors.New("media: AddProcessor after RiverJobs was composed")
+	}
+	j.processors = append(j.processors, p)
+	return nil
+}
+
+// Enqueue implements ProcessQueue: one pending job per ref and slot, run by
+// every registered processor.
+func (j *Jobs) Enqueue(ctx context.Context, job ProcessJob) error {
+	if _, err := j.cfg.Kinds.Item(job.Ref); err != nil {
+		return err
+	}
+	_, err := j.Insert(ctx, processArgs{Ref: job.Ref, Slot: job.Slot}, &river.InsertOpts{UniqueOpts: pendingOnce})
+	return err
+}
+
+var _ ProcessQueue = (*Jobs)(nil)
 
 func folderPrefix(tenant, kind, id string) (string, error) {
 	if !validSegment(tenant) || !validSegment(kind) || !validSegment(id) {
@@ -305,8 +372,10 @@ func (w *sweepPassWorker) Work(ctx context.Context, _ *river.Job[sweepPassArgs])
 }
 
 type deleteFolderArgs struct {
-	Prefix string `json:"prefix"`
-	Final  bool   `json:"final,omitempty"`
+	Prefix  string `json:"prefix"`
+	Final   bool   `json:"final,omitempty"`
+	Owner   string `json:"owner,omitempty"`
+	Release int64  `json:"release,omitempty"`
 }
 
 func (deleteFolderArgs) Kind() string { return "contentkit_media_delete_folder" }
@@ -330,7 +399,39 @@ func (w *deleteFolderWorker) Work(ctx context.Context, job *river.Job[deleteFold
 	if job.Args.Final {
 		return nil
 	}
-	_, err := w.j.Insert(ctx, deleteFolderArgs{Prefix: job.Args.Prefix, Final: true}, &river.InsertOpts{
-		ScheduledAt: w.j.cfg.Now().Add(w.j.cfg.LateUploadWindow), UniqueOpts: pendingOnce})
-	return err
+	if _, err := w.j.Insert(ctx, deleteFolderArgs{Prefix: job.Args.Prefix, Final: true}, &river.InsertOpts{
+		ScheduledAt: w.j.cfg.Now().Add(w.j.cfg.LateUploadWindow), UniqueOpts: pendingOnce}); err != nil {
+		return err
+	}
+	if w.j.cfg.Limiter != nil && job.Args.Owner != "" && job.Args.Release > 0 {
+		tenant, _, _, _ := parseFolder(job.Args.Prefix)
+		return w.j.cfg.Limiter.Settle(ctx, Settlement{Tenant: tenant, Owner: job.Args.Owner, Delta: -job.Args.Release})
+	}
+	return nil
+}
+
+type processArgs struct {
+	Ref  contentref.ContentRef `json:"ref"`
+	Slot string                `json:"slot,omitempty"`
+}
+
+func (processArgs) Kind() string { return "contentkit_media_process" }
+
+type processWorker struct {
+	river.WorkerDefaults[processArgs]
+	j *Jobs
+}
+
+func (w *processWorker) Timeout(*river.Job[processArgs]) time.Duration { return time.Hour }
+
+func (w *processWorker) Work(ctx context.Context, job *river.Job[processArgs]) error {
+	pj := ProcessJob{Ref: job.Args.Ref, Slot: job.Args.Slot}
+	if _, err := w.j.cfg.Kinds.Item(pj.Ref); err != nil {
+		return river.JobCancel(err)
+	}
+	var errs []error
+	for _, p := range w.j.processors {
+		errs = append(errs, p(ctx, pj))
+	}
+	return errors.Join(errs...)
 }

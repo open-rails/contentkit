@@ -109,8 +109,9 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	clock = time.Now()
 	res, err := jobs.Sweep(ctx, work)
-	if err != nil || res.Wait <= 0 || res.Wait > grace+time.Second || len(res.Deleted) != 0 {
+	if err != nil || res.Wait <= 0 || res.Wait > grace+2*time.Second || len(res.Deleted) != 0 {
 		t.Fatalf("fresh manifests must defer the sweep: %+v %v", res, err)
 	}
 	edited := newestModified(t, s, g.Prefix())

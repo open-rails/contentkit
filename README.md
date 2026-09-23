@@ -220,11 +220,12 @@ is a folder (`…/blobs/`, covering the objects directly under it), one key, or
 Media's River jobs compose into the host client through `helpers/river`:
 
 ```go
-jobs, _ := media.NewJobs(media.JobsConfig{Store: store, Kinds: kinds, Tenants: []string{"d"}})
+jobs, _ := media.NewJobs(media.JobsConfig{Store: store, Kinds: kinds, Tenants: []string{"d"}, Limiter: limiter})
 manifests, _ := media.NewManifests(store, kinds, media.ManifestOptions{Jobs: jobs}) // edits schedule a sweep
+uploads, _ := media.NewUploads(media.UploadOptions{ /* … */ Queue: jobs})       // commits enqueue processing
 client, _ := riverhelpers.New(ctx, pool, &river.Config{Schema: "public"}, runtime.RiverJobs(), jobs.RiverJobs())
-_ = jobs.DeleteItemsTx(ctx, tx, ref)               // in the host's delete transaction
-_ = jobs.EraseUserTx(ctx, tx, "d", userID, refs...) // the user's items plus user/{id}/
+_ = jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref: ref, Owner: owner})  // in the host's delete transaction
+_ = jobs.EraseUserTx(ctx, tx, "d", userID, deletions...)                  // the user's items plus user/{id}/
 ```
 
 - **Sweep** (per folder, 24 h after each edit and in a daily pass over
@@ -233,6 +234,10 @@ _ = jobs.EraseUserTx(ctx, tx, "d", userID, refs...) // the user's items plus use
   than `Grace` (24 h). Slot originals, `public/` and manifests are never swept.
 - **Deletion** removes the whole folder, manifests first, then again after
   `LateUploadWindow` (25 h) for PUTs and multipart completions that land late.
+  With a `Limiter`, the owner's quota (the manifests' `OriginalBytes`) is
+  released once.
+- Processing: `jobs.Enqueue` (the uploads' `ProcessQueue`) runs one pending
+  job per ref and slot through every `AddProcessor` processor.
 - Media packages add workers with `jobs.Register(func(*river.Config) error)`
   before composition and enqueue with `jobs.Insert`/`InsertTx`.
 - Restore: [docs/restore.md](docs/restore.md#media).
