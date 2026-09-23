@@ -225,7 +225,7 @@ records `hls` and `downloads` only if the file still derives from the encoded
 original, so a replaced file keeps its previous `hls` until then. Outputs are
 byte-identical on retry. Jobs live in River schema `media_worker` in the host
 database: hosts run `video.Migrate` and enqueue through `video.NewEnqueuer`
-(a `ProcessQueue` for video kinds, insert-only); the worker's environment is
+(insert-only; register `enqueuer.Processor()` with `media.Jobs.AddProcessor`); the worker's environment is
 documented in `cmd/media-worker`.
 
 Tokens are `kid.exp.base64url(HMAC-SHA256(secret, "{scope}|{exp}"))`: a scope

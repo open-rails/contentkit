@@ -487,6 +487,9 @@ func TestRetriesAreIdempotent(t *testing.T) {
 	}
 }
 
+// The host flow: an upload commit enqueues media's process job in the host
+// schema, whose video processor inserts into media_worker, where the worker
+// encodes it.
 func TestWorkerEncodesCommittedUploads(t *testing.T) {
 	requireFFmpeg(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -498,30 +501,51 @@ func TestWorkerEncodesCommittedUploads(t *testing.T) {
 	if _, err := pool.Exec(ctx, "DELETE FROM "+video.Schema+".river_job"); err != nil {
 		t.Fatal(err)
 	}
-	var enq *video.Enqueuer
-	e := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return enq.Enqueue(ctx, j) }))
-	var err error
-	if enq, err = video.NewEnqueuer(pool, e.kinds); err != nil {
+	var jobs *media.Jobs
+	e := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return jobs.Enqueue(ctx, j) }))
+	enq, err := video.NewEnqueuer(pool, e.kinds)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if jobs, err = media.NewJobs(media.JobsConfig{Store: e.store, Kinds: e.kinds}); err != nil {
+		t.Fatal(err)
+	}
+	if err := jobs.AddProcessor(enq.Processor()); err != nil {
+		t.Fatal(err)
+	}
+	hostSchema := pgtest.EmptySchema(t, ctx, pool)
+	if err := riverhelpers.ApplyMigrations(ctx, pool, hostSchema); err != nil {
+		t.Fatal(err)
+	}
+	host, err := riverhelpers.New(ctx, pool, &river.Config{Schema: hostSchema, FetchPollInterval: 100 * time.Millisecond}, jobs.RiverJobs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := host.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
 	wc := video.WorkerConfig{Encoder: e.encoder, Pool: pool, Timeout: time.Hour}
-	jobs, err := video.Contribution(wc)
+	contribution, err := video.Contribution(wc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := riverhelpers.New(ctx, pool, video.ClientConfig(wc), jobs)
+	cfg := video.ClientConfig(wc)
+	cfg.FetchPollInterval = 100 * time.Millisecond
+	worker, err := riverhelpers.New(ctx, pool, cfg, contribution)
 	if err != nil {
 		t.Fatal(err)
 	}
-	done, stop := client.Subscribe(river.EventKindJobCompleted, river.EventKindJobFailed, river.EventKindJobCancelled)
+	done, stop := worker.Subscribe(river.EventKindJobCompleted, river.EventKindJobFailed, river.EventKindJobCancelled)
 	defer stop()
-	if err := client.Start(ctx); err != nil {
+	if err := worker.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
 		stopCtx, c := context.WithTimeout(context.Background(), 30*time.Second)
 		defer c()
-		_ = client.StopAndCancel(stopCtx)
+		_ = worker.StopAndCancel(stopCtx)
+		_ = host.StopAndCancel(stopCtx)
 	}()
 
 	source := e.commit(t, fixture{w: 640, h: 361, secs: 5, audio: 1, tone: 440}.make(t), media.OpInsert)

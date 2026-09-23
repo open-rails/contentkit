@@ -35,9 +35,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	return riverhelpers.ApplyMigrations(ctx, pool, Schema)
 }
 
-// Enqueuer is the host's insert-only client for video jobs. It implements
-// media.ProcessQueue for video kinds; hosts fan a commit out to it and to
-// their image processing.
+// Enqueuer is the host's insert-only client for video jobs.
 type Enqueuer struct {
 	client *river.Client[pgx.Tx]
 	kinds  *media.Registry
@@ -64,6 +62,10 @@ func (q *Enqueuer) Enqueue(ctx context.Context, job media.ProcessJob) error {
 	_, err = q.client.Insert(ctx, args, insertOpts())
 	return err
 }
+
+// Processor hands commits of video kinds to the worker: register it with
+// media.Jobs.AddProcessor so the host's process job inserts into Schema.
+func (q *Enqueuer) Processor() media.Processor { return q.Enqueue }
 
 // EnqueueTx inserts the job in the host's transaction.
 func (q *Enqueuer) EnqueueTx(ctx context.Context, tx pgx.Tx, job media.ProcessJob) error {
