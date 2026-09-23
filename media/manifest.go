@@ -3,6 +3,8 @@ package media
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Manifest is the ordered file list of an item or version. List order is
@@ -193,7 +195,7 @@ func (m *Manifest) Validate() error {
 	}
 	var err error
 	m.walk(func(area, name string) {
-		if err == nil && !isBlobName(name) {
+		if err == nil && !layout.ValidBlobName(name) {
 			err = fmt.Errorf("media: manifest: invalid %s reference %q", area, name)
 		}
 	})
