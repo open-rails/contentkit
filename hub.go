@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -57,6 +58,7 @@ type Hub interface {
 	RecordSignals(ctx context.Context, signals []signal.Signal) error
 	RecordExposures(ctx context.Context, exposures []signal.Exposure) error
 	ForgetExposures(ctx context.Context, subject signal.Subject) error
+	ForgetExposuresBefore(ctx context.Context, subject signal.Subject, before time.Time) error
 	Attribution(ctx context.Context, opts signal.AttributionOptions) (signal.AttributionPage, error)
 	Forget(ctx context.Context, subject signal.Subject, contentKind, contentID string) error
 	EraseSubjects(ctx context.Context, subjects []signal.Subject) (signal.ErasureReport, error)
@@ -487,6 +489,15 @@ func (h *EmbeddedHub) ForgetExposures(ctx context.Context, subject signal.Subjec
 		return err
 	}
 	return store.ForgetExposures(ctx, h.tenant, subject)
+}
+
+// ForgetExposuresBefore clears only exposures from before the host's clear request.
+func (h *EmbeddedHub) ForgetExposuresBefore(ctx context.Context, subject signal.Subject, before time.Time) error {
+	store, err := h.requireStore()
+	if err != nil {
+		return err
+	}
+	return store.ForgetExposuresBefore(ctx, h.tenant, subject, before)
 }
 
 // Attribution exports renders at one stage with their clicks joined (see

@@ -192,3 +192,54 @@ VALUES ('doujins', 'residue', 'served', 'search', 'user', 'gone', ['gallery'], [
 		t.Fatal("fence must be recorded")
 	}
 }
+
+func TestIntegrationRekeySubjectPreservesHistoryAndErasure(t *testing.T) {
+	st, conn := freshStore(t)
+	ctx := context.Background()
+	tenant := "doujins"
+	old := Subject{AnonKey: "anon_old"}
+	next := Subject{AnonKey: "anon_v1_hashed"}
+	at := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
+	view := func(subject Subject, id string) Signal {
+		return Signal{ContentRef: gallery(tenant, id), Subject: subject, Type: TypeView,
+			EventID: "view-" + id, OccurredAt: at, Progress: 1, ProgressMax: 2}
+	}
+	if err := st.RecordSignals(ctx, tenant, []Signal{view(old, "1"), view(next, "2")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordExposures(ctx, tenant, []Exposure{{RenderID: "old-render", Stage: StageRendered,
+		Subject: old, Surface: SurfaceSearch, Shown: []Placement{{ContentRef: gallery(tenant, "1"), Position: 1}}, OccurredAt: at}}); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := st.RekeyAnonymousSubject(ctx, tenant, old, next); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, table := range subjectTables {
+		if n := countWhere(t, conn, table, "tenant = ? AND subject_kind = 'anon' AND subject = ?", tenant, old.Key()); n != 0 {
+			t.Fatalf("%s retained %d rows under the cookie", table, n)
+		}
+	}
+	history, err := st.History(ctx, tenant, next, HistoryOptions{ContentKind: "gallery", Status: HistorySeen})
+	if err != nil || len(history) != 2 {
+		t.Fatalf("rekeyed history: %+v %v", history, err)
+	}
+	if n := countWhere(t, conn, "exposures", "tenant = ? AND subject_kind = 'anon' AND subject = ?", tenant, next.Key()); n != 1 {
+		t.Fatalf("rekeyed exposures: %d", n)
+	}
+	if err := st.RecordSignals(ctx, tenant, []Signal{view(old, "3")}); err != nil {
+		t.Fatal(err)
+	}
+	if n := countWhere(t, conn, "signals", "tenant = ? AND subject_kind = 'anon' AND subject = ?", tenant, old.Key()); n != 0 {
+		t.Fatalf("old subject accepted a late write: %d", n)
+	}
+	if _, err := st.EraseSubjects(ctx, []string{tenant}, []Subject{next}); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range subjectTables {
+		if n := countWhere(t, conn, table, "tenant = ? AND subject_kind = 'anon' AND subject = ?", tenant, next.Key()); n != 0 {
+			t.Fatalf("%s retained %d rows after erasure", table, n)
+		}
+	}
+}
