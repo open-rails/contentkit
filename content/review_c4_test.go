@@ -4,12 +4,14 @@ import (
 	"context"
 	"net/http"
 	"testing"
+
+	"github.com/open-rails/contentkit/access"
 )
 
 func TestReviewC4StaleReviewCannotPublishEditedText(t *testing.T) {
 	rt := moderatedRuntime(t, &fakeModerator{})
 	ctx := context.Background()
-	author := Actor{ID: "author"}
+	author := access.Actor{ID: "author"}
 	held := mustComment(t, rt, author, "gallery", "1", createInput{Body: "iffy original"})
 	page, err := rt.ListHeld(ctx, KindComment, "", 10)
 	if err != nil {
@@ -27,7 +29,7 @@ func TestReviewC4StaleReviewCannotPublishEditedText(t *testing.T) {
 
 func TestReviewC4HeldEditsReturnAccepted(t *testing.T) {
 	rt := moderatedRuntime(t, &fakeModerator{})
-	author := Actor{ID: "author"}
+	author := access.Actor{ID: "author"}
 	cm := mustComment(t, rt, author, "gallery", "1", createInput{Body: "fine"})
 	res := doJSON(t, rt.Handler(), author, "PATCH", "/comments/"+cm.ID, map[string]string{"body": "iffy edit"})
 	if res.Code != http.StatusAccepted {
@@ -37,7 +39,7 @@ func TestReviewC4HeldEditsReturnAccepted(t *testing.T) {
 
 func TestReviewC4DeletedHeldCommentLeavesReviewQueue(t *testing.T) {
 	rt := moderatedRuntime(t, &fakeModerator{})
-	actor := Actor{ID: "author"}
+	actor := access.Actor{ID: "author"}
 	ctx := context.Background()
 	cm := mustComment(t, rt, actor, "gallery", "1", createInput{Body: "iffy"})
 	if err := rt.comments.softDelete(ctx, actor, cm.ID); err != nil {
@@ -60,14 +62,14 @@ func TestReviewC4RetryDoesNotReclassifyUnchangedAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := p.answer(ctx, Actor{ID: "user"}, poll.ID, "cats")
+	first, err := p.answer(ctx, access.Actor{ID: "user"}, poll.ID, "cats")
 	if err != nil {
 		t.Fatal(err)
 	}
 	cl.mu.Lock()
 	cl.failN = 1
 	cl.mu.Unlock()
-	second, err := p.answer(ctx, Actor{ID: "user"}, poll.ID, "cats")
+	second, err := p.answer(ctx, access.Actor{ID: "user"}, poll.ID, "cats")
 	if err != nil {
 		t.Fatal(err)
 	}

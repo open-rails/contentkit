@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 )
 
@@ -21,7 +22,7 @@ func TestTenantIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	u := Actor{ID: "shared-account", Kind: "user"}
+	u := access.Actor{ID: "shared-account", Kind: "user"}
 	ga, gb := a.Ref("gallery", "g1"), b.Ref("gallery", "g1")
 
 	if _, err := a.reactions.react(ctx, u, "gallery", "g1", 1); err != nil {

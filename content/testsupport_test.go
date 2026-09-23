@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/migrations"
@@ -73,46 +74,46 @@ type fakeIdentity struct{}
 
 type actorCtxKey struct{}
 
-func withActor(ctx context.Context, a Actor) context.Context {
+func withActor(ctx context.Context, a access.Actor) context.Context {
 	return context.WithValue(ctx, actorCtxKey{}, a)
 }
 
-func (*fakeIdentity) Actor(ctx context.Context) (Actor, bool) {
-	a, ok := ctx.Value(actorCtxKey{}).(Actor)
+func (*fakeIdentity) Actor(ctx context.Context) (access.Actor, bool) {
+	a, ok := ctx.Value(actorCtxKey{}).(access.Actor)
 	return a, ok
 }
 
 // allowAll authorizes every perm; denyAll denies.
 type allowAll struct{}
 
-func (allowAll) Can(context.Context, Actor, string) (bool, error) { return true, nil }
+func (allowAll) Can(context.Context, access.Actor, string) (bool, error) { return true, nil }
 
 type denyAll struct{}
 
-func (denyAll) Can(context.Context, Actor, string) (bool, error) { return false, nil }
+func (denyAll) Can(context.Context, access.Actor, string) (bool, error) { return false, nil }
 
 // fakeResolver answers from an in-memory map keyed by "kind:id"; missing =>
 // not found. It ignores the tenant and keeps the caller's reference.
 type fakeResolver struct {
 	mu      sync.Mutex
-	entries map[string]Resolution
+	entries map[string]access.Resolution
 }
 
 func (f *fakeResolver) set(kind, id string, visible, accessible bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.entries == nil {
-		f.entries = map[string]Resolution{}
+		f.entries = map[string]access.Resolution{}
 	}
-	f.entries[kind+":"+id] = Resolution{Visible: visible, Accessible: accessible}
+	f.entries[kind+":"+id] = access.Resolution{Visible: visible, Accessible: accessible}
 }
 
-func (f *fakeResolver) Resolve(_ context.Context, r contentref.ContentRef, _ Actor) (Resolution, error) {
+func (f *fakeResolver) Resolve(_ context.Context, r contentref.ContentRef, _ access.Actor) (access.Resolution, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	res, ok := f.entries[r.ContentKind+":"+r.ContentID]
 	if !ok {
-		return Resolution{}, ErrNotFound
+		return access.Resolution{}, ErrNotFound
 	}
 	return res, nil
 }

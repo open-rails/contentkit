@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
@@ -63,7 +64,7 @@ func TestRuntimeErasureIncludesContentPlaneIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			actor := content.Actor{ID: "erased-user"}
+			actor := access.Actor{ID: "erased-user"}
 			pollResponse := do(t, rt.Handler(), actor, "POST", "/polls", map[string]string{"kind": "free_text", "question": "Question"})
 			if pollResponse.Code != http.StatusCreated {
 				t.Fatalf("poll: %d %s", pollResponse.Code, pollResponse.Body.String())

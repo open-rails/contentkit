@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
 )
@@ -40,7 +41,7 @@ func postMux(rt *Runtime) http.Handler {
 // postErrAuthz denies by erroring — proves fail-closed (error must not allow).
 type postErrAuthz struct{}
 
-func (postErrAuthz) Can(context.Context, Actor, string) (bool, error) {
+func (postErrAuthz) Can(context.Context, access.Actor, string) (bool, error) {
 	return false, fmt.Errorf("authz backend down")
 }
 
@@ -48,7 +49,7 @@ func (postErrAuthz) Can(context.Context, Actor, string) (bool, error) {
 // serve both a privileged and an unprivileged caller.
 type postRoleAuthz struct{ writers map[string]bool }
 
-func (a postRoleAuthz) Can(_ context.Context, actor Actor, _ string) (bool, error) {
+func (a postRoleAuthz) Can(_ context.Context, actor access.Actor, _ string) (bool, error) {
 	return a.writers[actor.ID], nil
 }
 
@@ -59,7 +60,7 @@ func (f processorFunc) Sanitize(ctx context.Context, raw string) (string, error)
 }
 
 // doJSON issues a request with an actor on context and returns the recorder.
-func doJSON(t *testing.T, h http.Handler, actor Actor, method, target string, body any) *httptest.ResponseRecorder {
+func doJSON(t *testing.T, h http.Handler, actor access.Actor, method, target string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	var buf bytes.Buffer
 	if body != nil {
@@ -88,7 +89,7 @@ func ptr[T any](v T) *T { return &v }
 func TestPostCRUDHappyPath(t *testing.T) {
 	rt, _ := newPostRuntime(t, Options{})
 	h := postMux(rt)
-	author := Actor{ID: "root1", Kind: "user"}
+	author := access.Actor{ID: "root1", Kind: "user"}
 
 	// create (published so it lands in the public list)
 	rec := doJSON(t, h, author, "POST", "/posts", postWriteReq{
@@ -149,7 +150,7 @@ func TestPostBodyProcessorIsIndependent(t *testing.T) {
 		return "rich:" + raw, nil
 	})
 	rt, _ := newPostRuntime(t, Options{Processor: plain, PostBodyProcessor: rich})
-	rec := doJSON(t, postMux(rt), Actor{ID: "root1"}, "POST", "/posts", postWriteReq{
+	rec := doJSON(t, postMux(rt), access.Actor{ID: "root1"}, "POST", "/posts", postWriteReq{
 		Title:   ptr("processors"),
 		Body:    ptr("body"),
 		Excerpt: ptr("excerpt"),
@@ -168,7 +169,7 @@ func TestPostBodyProcessorIsIndependent(t *testing.T) {
 }
 
 func TestPostPermissionGate(t *testing.T) {
-	author := Actor{ID: "root1", Kind: "user"}
+	author := access.Actor{ID: "root1", Kind: "user"}
 	body := postWriteReq{Title: ptr("x"), Body: ptr("y")}
 
 	// denyAll: every write is 403.
@@ -196,8 +197,8 @@ func TestPostDraftVisibility(t *testing.T) {
 	authz := postRoleAuthz{writers: map[string]bool{"editor": true}}
 	rt, _ := newPostRuntime(t, Options{Authz: authz})
 	h := postMux(rt)
-	editor := Actor{ID: "editor", Kind: "user"}
-	reader := Actor{ID: "reader", Kind: "user"}
+	editor := access.Actor{ID: "editor", Kind: "user"}
+	reader := access.Actor{ID: "reader", Kind: "user"}
 
 	rec := doJSON(t, h, editor, "POST", "/posts", postWriteReq{
 		Title: ptr("secret"), Body: ptr("draft body"), IsDraft: ptr(true),
@@ -224,7 +225,7 @@ func TestPostDraftVisibility(t *testing.T) {
 func TestPostListSortedAndCounts(t *testing.T) {
 	rt, _ := newPostRuntime(t, Options{})
 	h := postMux(rt)
-	author := Actor{ID: "root1"}
+	author := access.Actor{ID: "root1"}
 
 	// Two published posts with explicit past live_at so order is deterministic.
 	older := postWriteReq{Title: ptr("older"), Body: ptr("b"), IsDraft: ptr(false), LiveAt: ptr(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))}
@@ -261,7 +262,7 @@ func TestPostLikeBumpsCountersConcurrentExact(t *testing.T) {
 	}
 
 	p := newPosts(rt)
-	actor := Actor{ID: "racer", Kind: "user"}
+	actor := access.Actor{ID: "racer", Kind: "user"}
 
 	var wg sync.WaitGroup
 	errs := make(chan error, 20)
@@ -316,7 +317,7 @@ func TestPostLikeHTTPRoute(t *testing.T) {
 	rt.reactions.mount(mux)
 	newPosts(rt).mount(mux)
 
-	author := Actor{ID: "root1"}
+	author := access.Actor{ID: "root1"}
 	rec := doJSON(t, mux, author, "POST", "/posts", postWriteReq{Title: ptr("t"), Body: ptr("b"), IsDraft: ptr(false)})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: status %d body %s", rec.Code, rec.Body.String())
@@ -339,7 +340,7 @@ func listPosts(t *testing.T, h http.Handler, language string) []postView {
 	if language != "" {
 		target += "?language=" + language
 	}
-	rec := doJSON(t, h, Actor{Anonymous: true}, "GET", target, nil)
+	rec := doJSON(t, h, access.Actor{Anonymous: true}, "GET", target, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list: status %d body %s", rec.Code, rec.Body.String())
 	}
@@ -359,7 +360,7 @@ func TestPostWritesQueueKeywordDocuments(t *testing.T) {
 	searchSchema := pgtest.Schema(t, ctx, pool)
 	rt, _ := newPostRuntime(t, Options{Schema: searchSchema})
 	h := postMux(rt)
-	author := Actor{ID: "root1", Kind: "user"}
+	author := access.Actor{ID: "root1", Kind: "user"}
 
 	rec := doJSON(t, h, author, "POST", "/posts", postWriteReq{Title: ptr("Hello"), Body: ptr("b"), Language: ptr("en"), Slug: ptr("hello"), IsDraft: ptr(false)})
 	if rec.Code != http.StatusCreated {

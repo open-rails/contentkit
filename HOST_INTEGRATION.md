@@ -41,13 +41,13 @@ content_version_id)`; comment threading is `reply_to_id`. Routes are
 `/moderation/held`, `/moderation/{kind}/{id}/resolve`; `kind` must be in
 `ContentKinds`.
 
-Ports (all in `content`):
+Ports (in `content` unless qualified):
 
 | Port | Required | Contract |
 |---|---|---|
-| `Identity` | yes | reads the already-authenticated `Actor` from context; ContentKit never authenticates |
+| `Identity` | yes | reads the already-authenticated `access.Actor` from context; ContentKit never authenticates |
 | `Authorizer` | yes | `Can(actor, perm)` for `Perms{PostWrite, PollWrite, CommentModerate, ModerationReview}`; fail-closed on error and on an unset perm |
-| `ContentResolver` | yes | `Resolve(ref, actor) → Resolution{Ref, Visible, Accessible}`: the whole gating surface. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request; another tenant is an error. React/comment need `Accessible`, favorite needs `Visible` |
+| `access.ContentResolver` | yes | `Resolve(ref, actor) → access.Resolution{Ref, Visible, Accessible, PreviewLimit}`: the whole gating surface, shared with media. An error denies. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request; another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`; content ignores `PreviewLimit`. Media serves every file only when `Full()`, else the first `Units(n)` files (`PreviewLimit` N caps a `Visible` item to its first N files; free preview is `Accessible=false, PreviewLimit=3`) and `Visible` teasers |
 | `UserEnricher` | no | display data for author ids |
 | `MediaStore` / `Storage` | no | poll/post images; `Storage` is the built-in public-bucket S3 store |
 | `ContentProcessor` | no | rich-text sanitizer for comment/post bodies (default strips tags) |

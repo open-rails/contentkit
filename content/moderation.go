@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 )
 
@@ -90,7 +91,7 @@ func ptrTo[T any](v T) *T { return &v }
 
 // viewerID is the user id bound to reader predicates: an author sees their
 // own held and rejected items; anonymous actors see approved items only.
-func viewerID(a Actor) string {
+func viewerID(a access.Actor) string {
 	if a.Anonymous {
 		return ""
 	}

@@ -11,11 +11,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 )
 
 // Reserved content kinds owned by this package: reactions on comments and
-// posts are keyed by them and never pass through the ContentResolver.
+// posts are keyed by them and never pass through the access.ContentResolver.
 const (
 	KindComment = "comment"
 	KindPost    = "post"
@@ -34,7 +35,7 @@ type Options struct {
 	// Mandatory ports.
 	Identity Identity
 	Authz    Authorizer
-	Resolver ContentResolver
+	Resolver access.ContentResolver
 
 	// Canonicalizer enables the preference boundary (preferences.go): the
 	// reaction/favorite row, the counts rollup and the export all use the
@@ -85,7 +86,7 @@ type Runtime struct {
 	tenant            string
 	identity          Identity
 	authz             Authorizer
-	resolver          ContentResolver
+	resolver          access.ContentResolver
 	users             UserEnricher
 	media             MediaStore
 	processor         ContentProcessor
@@ -260,7 +261,7 @@ func (rt *Runtime) canonicalRef(requested, resolved contentref.ContentRef) (cont
 // gate resolves a route target and enforces the required access level. The
 // returned reference is the resolver's canonical identity; callers store and
 // query by it, never by the caller-supplied key, so aliases cannot fragment rows.
-func (rt *Runtime) gate(ctx context.Context, kind, id string, actor Actor, needAccessible bool) (contentref.ContentRef, error) {
+func (rt *Runtime) gate(ctx context.Context, kind, id string, actor access.Actor, needAccessible bool) (contentref.ContentRef, error) {
 	if !contentKindRe.MatchString(kind) || !rt.isRegistered(kind) || id == "" {
 		return contentref.ContentRef{}, ErrNotFound
 	}
@@ -285,7 +286,7 @@ func (rt *Runtime) gate(ctx context.Context, kind, id string, actor Actor, needA
 // canonical maps a caller-supplied key to the resolver's canonical one for
 // paths that must succeed even when the target is hidden (un-wishlisting
 // deleted content): a resolve failure falls back to the raw key.
-func (rt *Runtime) canonical(ctx context.Context, kind, id string, actor Actor) contentref.ContentRef {
+func (rt *Runtime) canonical(ctx context.Context, kind, id string, actor access.Actor) contentref.ContentRef {
 	requested := rt.Ref(kind, id)
 	if !contentKindRe.MatchString(kind) || !rt.isRegistered(kind) || id == "" {
 		return requested
@@ -303,7 +304,7 @@ func (rt *Runtime) canonical(ctx context.Context, kind, id string, actor Actor) 
 
 // requirePerm is fail-closed: an unset perm, a denied check, or a check error
 // all deny.
-func (rt *Runtime) requirePerm(ctx context.Context, actor Actor, perm string) error {
+func (rt *Runtime) requirePerm(ctx context.Context, actor access.Actor, perm string) error {
 	if perm == "" {
 		return errForbidden
 	}
@@ -324,19 +325,19 @@ func (rt *Runtime) absMediaURL(u string) string {
 }
 
 // actor reads the (possibly anonymous) authenticated actor from context.
-func (rt *Runtime) actor(ctx context.Context) Actor {
+func (rt *Runtime) actor(ctx context.Context) access.Actor {
 	a, ok := rt.identity.Actor(ctx)
 	if !ok {
-		return Actor{Anonymous: true}
+		return access.Actor{Anonymous: true}
 	}
 	return a
 }
 
 // requireActor demands a non-anonymous authenticated actor.
-func (rt *Runtime) requireActor(ctx context.Context) (Actor, error) {
+func (rt *Runtime) requireActor(ctx context.Context) (access.Actor, error) {
 	a, ok := rt.identity.Actor(ctx)
 	if !ok || a.Anonymous || a.ID == "" {
-		return Actor{}, errUnauthorized
+		return access.Actor{}, errUnauthorized
 	}
 	return a, nil
 }

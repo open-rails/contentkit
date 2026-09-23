@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 )
 
@@ -31,7 +32,7 @@ type FavoriteItem struct {
 
 // add gates on visibility only, then favorites under the canonical preference
 // reference. Re-favoriting is a no-op success.
-func (f *favorites) add(ctx context.Context, actor Actor, kind, id string) error {
+func (f *favorites) add(ctx context.Context, actor access.Actor, kind, id string) error {
 	ref, err := f.rt.gate(ctx, kind, id, actor, false)
 	if err != nil {
 		return err
@@ -41,11 +42,11 @@ func (f *favorites) add(ctx context.Context, actor Actor, kind, id string) error
 
 // remove unfavorites (idempotent), keeping the row at value 0. No visibility
 // gate: un-wishlisting content that later became hidden must still work.
-func (f *favorites) remove(ctx context.Context, actor Actor, kind, id string) error {
+func (f *favorites) remove(ctx context.Context, actor access.Actor, kind, id string) error {
 	return f.set(ctx, actor, f.rt.canonical(ctx, kind, id, actor), 0)
 }
 
-func (f *favorites) set(ctx context.Context, actor Actor, ref contentref.ContentRef, value int16) error {
+func (f *favorites) set(ctx context.Context, actor access.Actor, ref contentref.ContentRef, value int16) error {
 	storage, _ := f.rt.preferences.work(ref)
 	tx, err := f.s.beginMutation(ctx)
 	if err != nil {

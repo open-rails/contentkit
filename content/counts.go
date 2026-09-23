@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 )
 
@@ -106,7 +107,7 @@ func (rt *Runtime) ListFavorites(ctx context.Context, userID string, limit, offs
 
 // LatestComments is the host-facing feed API: newest comments across all
 // content the actor may see, with canonical references for host hydration.
-func (rt *Runtime) LatestComments(ctx context.Context, actor Actor, limit, offset int) ([]FeedItem, error) {
+func (rt *Runtime) LatestComments(ctx context.Context, actor access.Actor, limit, offset int) ([]FeedItem, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -127,7 +128,7 @@ func (rt *Runtime) LatestCommentsTotal(ctx context.Context) (int, error) {
 // hydration read for list/detail responses, keyed by the caller's references
 // and read under their canonical preference references (the identity the
 // write path stores under). Only nonzero reactions appear.
-func (rt *Runtime) MyReactions(ctx context.Context, actor Actor, refs []contentref.ContentRef) (map[contentref.ContentKey]int16, error) {
+func (rt *Runtime) MyReactions(ctx context.Context, actor access.Actor, refs []contentref.ContentRef) (map[contentref.ContentKey]int16, error) {
 	out := make(map[contentref.ContentKey]int16, len(refs))
 	stored, err := rt.preferences.storedRefs(refs)
 	if err != nil {
@@ -169,7 +170,7 @@ type ActorReaction struct {
 
 // ReactionsByActor lists the actor's nonzero reactions of one kind,
 // newest-first (e.g. a "my tag preferences" page). limit <= 0 means all.
-func (rt *Runtime) ReactionsByActor(ctx context.Context, actor Actor, kind string, limit, offset int) ([]ActorReaction, error) {
+func (rt *Runtime) ReactionsByActor(ctx context.Context, actor access.Actor, kind string, limit, offset int) ([]ActorReaction, error) {
 	userID, ip, ok := reactionKey(actor)
 	if !ok {
 		return nil, nil

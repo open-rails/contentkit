@@ -10,17 +10,9 @@ package content
 import (
 	"context"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 )
-
-// Actor is the already-authenticated caller, read from context by the Identity
-// port. ContentKit never authenticates.
-type Actor struct {
-	ID        string // stable subject id (uuid text); empty when Anonymous
-	Kind      string // opaque: "user" | "service" | "delegated" | ...
-	IP        string // anon fallback key for reactions / poll votes
-	Anonymous bool
-}
 
 // PublicUser is display enrichment for an author/actor id.
 type PublicUser struct {
@@ -29,39 +21,18 @@ type PublicUser struct {
 	Avatar   string `json:"avatar,omitempty"`
 }
 
-// Resolution is the host's verdict about a content reference.
-type Resolution struct {
-	// Ref is the canonical reference every row is stored and read under (an
-	// alias or slug resolves to it). A zero Ref keeps the requested one; a Ref
-	// of another tenant is an error.
-	Ref contentref.ContentRef
-	// Visible = published and not soft-deleted.
-	Visible bool
-	// Accessible = the actor may consume it: an opaque host verdict
-	// (entitlement, purchase, ACL, flag). ContentKit imposes no access model.
-	Accessible bool
-}
-
 // --- mandatory ports ---
 
 // Identity reads the authenticated actor from context; the host's middleware
 // populated it upstream.
 type Identity interface {
-	Actor(ctx context.Context) (Actor, bool)
+	Actor(ctx context.Context) (access.Actor, bool)
 }
 
 // Authorizer answers whether an actor holds an opaque host permission. Callers
 // are fail-closed: an error is never "allowed".
 type Authorizer interface {
-	Can(ctx context.Context, actor Actor, perm string) (bool, error)
-}
-
-// ContentResolver is the one mandatory content hook and the whole gating
-// surface: it says whether a ContentRef exists, is visible and is accessible.
-// Report absence either through the sentinel errors (ErrNotFound /
-// ErrNotVisible / ErrForbidden) or through the Resolution flags.
-type ContentResolver interface {
-	Resolve(ctx context.Context, ref contentref.ContentRef, actor Actor) (Resolution, error)
+	Can(ctx context.Context, actor access.Actor, perm string) (bool, error)
 }
 
 // ContentCanonicalizer maps a resolved reference to the one reference an
@@ -125,7 +96,7 @@ const (
 type ModerationInput struct {
 	SubjectID string // opaque content author; may differ from editing moderator
 	Tenant    string
-	Actor     Actor
+	Actor     access.Actor
 	// Ref is the content the item belongs to: the commented work for a
 	// comment, the post's own reference for a post.
 	Ref    contentref.ContentRef

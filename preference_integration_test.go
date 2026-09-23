@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
@@ -25,11 +26,11 @@ const prefTestCHDB = "contentkit_preference_test"
 // canonicalizer collapses the language suffix to the work.
 type routeResolver struct{}
 
-func (routeResolver) Resolve(_ context.Context, r contentref.ContentRef, _ content.Actor) (content.Resolution, error) {
+func (routeResolver) Resolve(_ context.Context, r contentref.ContentRef, _ access.Actor) (access.Resolution, error) {
 	if r.ContentKind != "gallery" {
-		return content.Resolution{}, content.ErrNotFound
+		return access.Resolution{}, content.ErrNotFound
 	}
-	return content.Resolution{Visible: true, Accessible: true}, nil
+	return access.Resolution{Visible: true, Accessible: true}, nil
 }
 
 func stripLanguage(r contentref.ContentRef) (contentref.ContentRef, bool) {
@@ -117,8 +118,8 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 	e := newPrefEnv(t, prefTestCHDB)
 	rt := e.runtime(t, e.conn, 0)
 	h := rt.Handler()
-	u1 := content.Actor{ID: "u1", Kind: "user"}
-	post := func(a content.Actor, method, path string) {
+	u1 := access.Actor{ID: "u1", Kind: "user"}
+	post := func(a access.Actor, method, path string) {
 		t.Helper()
 		if rec := do(t, h, a, method, path, nil); rec.Code != http.StatusOK {
 			t.Fatalf("%s %s: %d %s", method, path, rec.Code, rec.Body.String())
@@ -163,7 +164,7 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 	}
 
 	// Anonymous rows and targets the canonicalizer declines at sync time stay out.
-	post(content.Actor{IP: "10.0.0.1", Anonymous: true}, "POST", "/gallery/7:en/like")
+	post(access.Actor{IP: "10.0.0.1", Anonymous: true}, "POST", "/gallery/7:en/like")
 	post(u1, "POST", "/gallery/8:en/like")
 	e.declined.Store(true)
 	mustSync(t, rt)
@@ -192,7 +193,7 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 	}
 
 	// Restore floor: old revisions already in the sink lose to new ones.
-	u2 := content.Actor{ID: "u2", Kind: "user"}
+	u2 := access.Actor{ID: "u2", Kind: "user"}
 	old := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	if err := rt.RecordSignals(ctx, []signal.Signal{{ContentRef: gallery("9"), Subject: signal.Subject{UserID: "u2"}, Type: "reaction", EventID: PreferenceEventID,
 		Revision: uint64(old.UnixMicro()), OccurredAt: old, Value: 1}}); err != nil {
@@ -229,7 +230,7 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 
 	// Erasure: the source rows go, the sink fences, a late send of a row read
 	// before the erasure is dropped, and nothing re-ingests.
-	u3 := content.Actor{ID: "u3", Kind: "user"}
+	u3 := access.Actor{ID: "u3", Kind: "user"}
 	post(u3, "POST", "/gallery/42:en/like")
 	var late []content.Preference
 	if _, err := rt.Content.ResyncPreferences(ctx, func(_ context.Context, page []content.Preference) error {
@@ -270,7 +271,7 @@ func TestPreferenceSyncSlowCommitOverlapIntegration(t *testing.T) {
 	e := newPrefEnv(t, prefTestCHDB+"_overlap")
 	rt := e.runtime(t, e.conn, overlap)
 	h := rt.Handler()
-	u1 := content.Actor{ID: "u1", Kind: "user"}
+	u1 := access.Actor{ID: "u1", Kind: "user"}
 	do(t, h, u1, "POST", "/gallery/4:en/like", nil)
 	mustSync(t, rt)
 	time.Sleep(overlap + 200*time.Millisecond)

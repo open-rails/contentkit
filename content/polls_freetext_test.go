@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/open-rails/contentkit/access"
 )
 
 // fakeClassifier groups an answer by its first word and owns the assignments
@@ -65,7 +67,7 @@ func TestPolls_FreeTextAnswersOnePerActorEditableUntilClose(t *testing.T) {
 	cl := &fakeClassifier{}
 	rt, p := newPollTest(t, Options{Classifier: cl})
 	ctx := context.Background()
-	u1, u2, anon := Actor{ID: "u1"}, Actor{ID: "u2"}, Actor{Anonymous: true, IP: "1.1.1.1"}
+	u1, u2, anon := access.Actor{ID: "u1"}, access.Actor{ID: "u2"}, access.Actor{Anonymous: true, IP: "1.1.1.1"}
 
 	bad := freeTextPoll()
 	bad.Options = []createOptionInput{{Label: "x"}, {Label: "y"}}
@@ -123,7 +125,7 @@ func TestPolls_FreeTextAnswersOnePerActorEditableUntilClose(t *testing.T) {
 	if _, err := p.answer(ctx, u1, poll.ID, "too late"); err == nil {
 		t.Fatal("answer after close accepted")
 	}
-	if _, err := p.answer(ctx, Actor{ID: "u3"}, poll.ID, "too late"); err == nil {
+	if _, err := p.answer(ctx, access.Actor{ID: "u3"}, poll.ID, "too late"); err == nil {
 		t.Fatal("new answer after close accepted")
 	}
 	got, _ := p.get(ctx, u1, poll.ID)
@@ -172,13 +174,13 @@ func TestPolls_FreeTextResultsDeterministic(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i, text := range []string{"cats rule", "Cats forever", "dogs", "birds", "dogs are great"} {
-		if _, err := p.answer(ctx, Actor{ID: fmt.Sprintf("u%d", i)}, poll.ID, text); err != nil {
+		if _, err := p.answer(ctx, access.Actor{ID: fmt.Sprintf("u%d", i)}, poll.ID, text); err != nil {
 			t.Fatal(err)
 		}
 	}
 	want := `[{"id":"cats","label":"Cats","count":2},{"id":"dogs","label":"Dogs","count":2},{"id":"birds","label":"Birds","count":1}]`
 	for i := 0; i < 5; i++ { // classifier map order never leaks
-		v, err := p.get(ctx, Actor{ID: "u0"}, poll.ID)
+		v, err := p.get(ctx, access.Actor{ID: "u0"}, poll.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -188,19 +190,19 @@ func TestPolls_FreeTextResultsDeterministic(t *testing.T) {
 		}
 	}
 	// over HTTP, for a reader who did not answer
-	rec := doPollReq(t, rt.Handler(), "GET", "/polls/"+poll.ID, nil, Actor{ID: "lurker"})
+	rec := doPollReq(t, rt.Handler(), "GET", "/polls/"+poll.ID, nil, access.Actor{ID: "lurker"})
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) || strings.Contains(rec.Body.String(), `"my_answer"`) || !strings.Contains(rec.Body.String(), `"answer_count":5`) {
 		t.Fatalf("GET = %d %s", rec.Code, rec.Body.String())
 	}
-	rec = doPollReq(t, rt.Handler(), "POST", "/polls/"+poll.ID+"/answer", map[string]string{"text": "cats via http"}, Actor{ID: "lurker"})
+	rec = doPollReq(t, rt.Handler(), "POST", "/polls/"+poll.ID+"/answer", map[string]string{"text": "cats via http"}, access.Actor{ID: "lurker"})
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"text":"cats via http"`) || !strings.Contains(rec.Body.String(), `{"id":"cats","label":"Cats","count":3}`) {
 		t.Fatalf("POST answer = %d %s", rec.Code, rec.Body.String())
 	}
-	if rec = doPollReq(t, rt.Handler(), "POST", "/polls/"+poll.ID+"/answer", map[string]string{"text": "x"}, Actor{Anonymous: true, IP: "2.2.2.2"}); rec.Code != http.StatusUnauthorized {
+	if rec = doPollReq(t, rt.Handler(), "POST", "/polls/"+poll.ID+"/answer", map[string]string{"text": "x"}, access.Actor{Anonymous: true, IP: "2.2.2.2"}); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous POST answer = %d, want 401", rec.Code)
 	}
 	// the list view carries the same results
-	lst, _ := p.list(ctx, Actor{ID: "u0"}, listFilter{limit: 10})
+	lst, _ := p.list(ctx, access.Actor{ID: "u0"}, listFilter{limit: 10})
 	if len(lst) != 1 || len(lst[0].Groups) != 3 || lst[0].Groups[0].Count != 3 || lst[0].MyAnswer == nil {
 		t.Fatalf("list = %+v", lst)
 	}
@@ -211,7 +213,7 @@ func TestPolls_FreeTextClassifierFailureRetry(t *testing.T) {
 	rt, p := newPollTest(t, Options{Classifier: cl})
 	ctx := context.Background()
 	poll, _ := p.create(ctx, pollAdmin, freeTextPoll())
-	u := Actor{ID: "u1"}
+	u := access.Actor{ID: "u1"}
 	v, err := p.answer(ctx, u, poll.ID, "cats")
 	if err != nil || v.AnswerCount != 1 || v.MyAnswer == nil || v.MyAnswer.Classified || len(v.Groups) != 0 {
 		t.Fatalf("answer under a failing classifier = %+v err=%v, want kept and unclassified", v, err)
@@ -250,7 +252,7 @@ func TestPolls_FreeTextTenantIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	u := Actor{ID: "shared-account"}
+	u := access.Actor{ID: "shared-account"}
 	poll, err := a.polls.create(ctx, pollAdmin, freeTextPoll())
 	if err != nil {
 		t.Fatal(err)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/contentkit/access"
 )
 
 // posts is the generic authored-content primitive (a "blog post" is a post
@@ -238,7 +239,7 @@ func (p *posts) handleCreate(w http.ResponseWriter, req *http.Request) {
 
 // screen runs the moderator over a post that will be live (not a draft); a
 // draft is never screened and carries no moderation state.
-func (p *posts) screen(ctx context.Context, actor Actor, id, title, body string, draft bool) (screening, error) {
+func (p *posts) screen(ctx context.Context, actor access.Actor, id, title, body string, draft bool) (screening, error) {
 	if draft {
 		return screening{state: ModerationApproved}, nil
 	}
@@ -469,7 +470,7 @@ func (p *posts) handleReact(value int16) http.HandlerFunc {
 // react applies a like/dislike/neutral to a post. The post kind is internal
 // (no host gate): it verifies the post is published inside the tx, reuses
 // reactions.applyTx and bumps the split counter by the exact returned deltas.
-func (p *posts) react(ctx context.Context, actor Actor, id string, value int16) error {
+func (p *posts) react(ctx context.Context, actor access.Actor, id string, value int16) error {
 	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
 		return err
