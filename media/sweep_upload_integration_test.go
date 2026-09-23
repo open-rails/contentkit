@@ -84,8 +84,8 @@ func TestPresignAndCommitNeverReuseAnOriginalTheSweepMayTake(t *testing.T) {
 	// the sweep could take the object before the manifest edit lands.
 	untilAge(grace - grace/4 + 500*time.Millisecond)
 	var ue *media.UploadError
-	if err := commit(); !errors.As(err, &ue) || ue.Code != media.CodeNotUploaded {
-		t.Fatalf("commit of an original due for cleanup: %v", err)
+	if err := commit(); !errors.As(err, &ue) || ue.Code != media.CodeNotUploaded || len(ue.Originals) != 1 || ue.Originals[0] != name {
+		t.Fatalf("commit of an original due for cleanup: %v %+v", err, ue)
 	}
 	if res, err := jobs.Sweep(ctx, ref); err != nil || len(res.Deleted) != 0 {
 		t.Fatalf("sweep before the cutoff: %+v %v", res, err)

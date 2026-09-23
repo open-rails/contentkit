@@ -15,10 +15,14 @@ export class UploadError extends Error {
     readonly status = 0,
     /** Seconds until a rate limit frees (rate_limited). */
     readonly retryAfter?: number,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { originals?: string[] },
   ) {
     super(message, options);
+    this.originals = options?.originals;
   }
+
+  /** not_uploaded at commit: the originals to upload again. */
+  readonly originals?: string[];
 
   /** Rate or quota refusals: stop starting new uploads until the limit frees. */
   get isLimit(): boolean {
@@ -70,5 +74,5 @@ export async function fromResponse(res: Response): Promise<UploadError> {
   const retryAfter = body.retry_after ?? (Number.isFinite(header) && header > 0 ? header : undefined);
   const code: UploadErrorCode =
     body.code ?? byStatus[res.status] ?? (res.status >= 500 ? "internal_error" : "invalid_request");
-  return new UploadError(code, body.error ?? `HTTP ${res.status}`, res.status, retryAfter);
+  return new UploadError(code, body.error ?? `HTTP ${res.status}`, res.status, retryAfter, { originals: body.originals });
 }

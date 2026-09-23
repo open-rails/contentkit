@@ -144,8 +144,7 @@ export class UploadClient {
       const sources = o.sources ?? {};
       if (!(e instanceof UploadError) || e.code !== "not_uploaded") throw e;
       const originals = [...new Set(ops.map((op) => op.original).filter((n): n is string => !!n && n in sources))];
-      const named = originals.filter((n) => e.message.includes(n));
-      const stale = named.length > 0 ? named : originals;
+      const stale = e.originals ? originals.filter((n) => e.originals!.includes(n)) : originals;
       if (stale.length === 0) throw e;
       const renamed = new Map<string, string>();
       for (const name of stale) {

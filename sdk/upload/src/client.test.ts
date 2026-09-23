@@ -158,6 +158,23 @@ describe("commit", () => {
     expect([commits(), s.puts.length, s.stale.size]).toEqual([2, 3, 0]); // only b went up again
   });
 
+  it("uploads every sourced file again when the refusal names none", async () => {
+    const { s, c } = setup();
+    s.omitOriginals = true;
+    const a = file(1000, 14, "image/png");
+    const b = file(1000, 15, "image/png");
+    const ua = await c.upload(a, { ref: gallery });
+    const ub = await c.upload(b, { ref: gallery });
+    s.stale.add(ub.name);
+    await c.commit(
+      gallery,
+      [{ op: "insert", name: "1.png", original: ua.name }, { op: "insert", name: "2.png", original: ub.name }],
+      { sources: { [ua.name]: a, [ub.name]: b } },
+    );
+    // Both went through presign again; only the stale one needed bytes.
+    expect([s.calls.filter((x) => x === "/presign").length, s.puts.length]).toEqual([4, 3]);
+  });
+
   it("gives up after one retry, and without sources", async () => {
     const { s, c } = setup();
     const a = file(1000, 13, "image/png");

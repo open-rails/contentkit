@@ -55,13 +55,14 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
   });
 
   it("uploads a stale original again when commit refuses it", async () => {
-    // The server's sweep grace is 8 s: commit accepts an unreferenced original for ~6 s.
+    // The server's sweep grace is 20 s: commit refuses an unreferenced original after 15 s,
+    // and accepts a fresh one for 14 s (presign reuses one for 9 s).
     const ref = { kind: "gallery", id: "2", version: "en" };
     const body = bytes(2048, 8);
     const file = new File([body], "b.png", { type: "image/png" });
     const c = client();
     const up = await c.upload(file, { ref });
-    await new Promise((r) => setTimeout(r, 9000));
+    await new Promise((r) => setTimeout(r, 17_000));
     const ops = [{ op: "insert" as const, name: "001.png", original: up.name }];
     expect((await c.commit(ref, ops).catch((e) => e)).code).toBe("not_uploaded");
     const files = await c.commit(ref, ops, { sources: { [up.name]: file } });

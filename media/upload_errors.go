@@ -42,6 +42,7 @@ type UploadError struct {
 	Code       string
 	Message    string
 	RetryAfter time.Duration // CodeRate: when the window frees
+	Originals  []string      // CodeNotUploaded at commit: the originals to upload again
 }
 
 func (e *UploadError) Error() string { return "media: " + e.Message }

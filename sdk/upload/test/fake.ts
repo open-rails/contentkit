@@ -23,6 +23,8 @@ export class FakeServer {
   objects = new Map<string, number>();
   /** Originals the sweep may take: presign re-uploads them and commit refuses them. */
   stale = new Set<string>();
+  /** Answer not_uploaded without the originals field. */
+  omitOriginals = false;
   uploads = new Map<string, Upload>();
   calls: string[] = [];
   puts: string[] = [];
@@ -40,7 +42,7 @@ export class FakeServer {
     } catch (e) {
       if (!(e instanceof UploadError)) throw e;
       const headers: Record<string, string> = e.retryAfter ? { "Retry-After": String(e.retryAfter) } : {};
-      return json(e.status, { error: e.message, code: e.code, retry_after: e.retryAfter }, headers);
+      return json(e.status, { error: e.message, code: e.code, retry_after: e.retryAfter, originals: e.originals }, headers);
     }
   };
 
@@ -121,9 +123,12 @@ export class FakeServer {
         this.uploads.delete(b.ticket);
         return undefined;
       case "/commit":
-        for (const op of b.ops) {
-          if (op.original && (this.stale.has(op.original) || !this.objects.has(op.original))) {
-            throw new UploadError("not_uploaded", `${op.original} is due for cleanup; upload it again`, 409);
+        {
+          const missing = [...new Set<string>(b.ops.map((op: any) => op.original))].filter(
+            (n) => n && (this.stale.has(n) || !this.objects.has(n)),
+          );
+          if (missing.length) {
+            throw new UploadError("not_uploaded", "upload again", 409, undefined, { originals: this.omitOriginals ? undefined : missing });
           }
         }
         return { files: b.ops.map((op: any) => ({ name: op.name, original: op.original, size: this.objects.get(op.original) })) };
