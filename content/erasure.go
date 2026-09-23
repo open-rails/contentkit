@@ -58,7 +58,7 @@ func (rt *Runtime) erasedSubjectsTable() string {
 }
 
 // EraseSubjects fences future authenticated content writes, removes reactions,
-// favorites, poll votes/answers and preference snapshots/archives atomically,
+// favorites and poll votes/answers atomically,
 // and removes unpublished held/rejected/draft/scheduled payloads and moderation
 // provenance. A previously published item retains its last approved payload
 // without publishing it again; its unpublished replacement is erased. Never-published items become
@@ -175,18 +175,19 @@ func (rt *Runtime) eraseInteractions(ctx context.Context, tx pgx.Tx, ids []strin
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	rows, err = tx.Query(ctx, `DELETE FROM `+s.t.favorites+` WHERE tenant_id=$1 AND user_id=ANY($2) RETURNING `+keyCols, rt.tenant, ids)
+	rows, err = tx.Query(ctx, `DELETE FROM `+s.t.favorites+` WHERE tenant_id=$1 AND user_id=ANY($2) RETURNING `+keyCols+`,value`, rt.tenant, ids)
 	if err != nil {
 		return err
 	}
 	for rows.Next() {
 		var k contentref.ContentKey
-		if err := rows.Scan(&k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID); err != nil {
+		var value int16
+		if err := rows.Scan(&k.TenantID, &k.ContentKind, &k.ContentID, &k.ContentVersionID, &value); err != nil {
 			rows.Close()
 			return err
 		}
 		d := changes[k]
-		d.favorites++
+		d.favorites += int(value)
 		changes[k] = d
 	}
 	rows.Close()
@@ -251,11 +252,6 @@ func (rt *Runtime) eraseInteractions(ctx context.Context, tx pgx.Tx, ids []strin
 	sort.Strings(options)
 	for _, id := range options {
 		if _, err := tx.Exec(ctx, `UPDATE `+s.t.pollOptions+` SET vote_count=GREATEST(vote_count-$2,0) WHERE id=$1`, id, votes[id]); err != nil {
-			return err
-		}
-	}
-	for _, table := range []string{s.t.preferenceSnapshots, s.t.preferenceArchive} {
-		if _, err := tx.Exec(ctx, `DELETE FROM `+table+` WHERE tenant_id=$1 AND actor_id=ANY($2)`, rt.tenant, ids); err != nil {
 			return err
 		}
 	}

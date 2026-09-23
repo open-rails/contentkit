@@ -87,7 +87,7 @@ func TestRuntimeErasureIncludesContentPlaneIntegration(t *testing.T) {
 				}
 			}
 			if enabled {
-				if _, err := rt.DeliverPreferences(ctx, content.PreferenceKey{}, 10, 0); err != nil {
+				if _, err := rt.SyncPreferences(ctx); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -103,10 +103,10 @@ func TestRuntimeErasureIncludesContentPlaneIntegration(t *testing.T) {
 				if err == nil || report.Complete() {
 					t.Fatalf("invalid batch accepted: %+v %v", report, err)
 				}
-				for _, table := range []string{"content_poll_answers", "content_preference_snapshots"} {
+				for _, q := range []string{`SELECT count(*) FROM ` + host + `.content_poll_answers WHERE actor_id=$1`, `SELECT count(*) FROM ` + host + `.content_reactions WHERE user_id=$1`} {
 					var n int
-					if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+host+`.`+table+` WHERE actor_id=$1`, actor.ID).Scan(&n); err != nil || n != 1 {
-						t.Fatalf("invalid batch mutated %s: %d %v", table, n, err)
+					if err := pool.QueryRow(ctx, q, actor.ID).Scan(&n); err != nil || n != 1 {
+						t.Fatalf("invalid batch mutated %s: %d %v", q, n, err)
 					}
 				}
 				var fences int
@@ -128,7 +128,7 @@ func TestRuntimeErasureIncludesContentPlaneIntegration(t *testing.T) {
 			}
 			for _, q := range []string{
 				`SELECT count(*) FROM ` + host + `.content_poll_answers WHERE actor_id='erased-user'`,
-				`SELECT count(*) FROM ` + host + `.content_preference_snapshots WHERE actor_id='erased-user'`,
+				`SELECT count(*) FROM ` + host + `.content_reactions WHERE user_id='erased-user'`,
 				`SELECT count(*) FROM ` + host + `.content_comments WHERE body='unpublished held body'`,
 			} {
 				var n int

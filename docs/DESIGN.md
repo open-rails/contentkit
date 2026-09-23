@@ -10,7 +10,7 @@ clarification of 2026-09-17: semantic search stays entirely outside ContentKit.
 
 - **ContentKit** (this repo) is deterministic: keyword search, the signal
   plane, discovery reads, and — after C2/C3 — comments, reactions, favorites,
-  polls and the durable preference outbox. It links no model provider.
+  polls and the preference sync. It links no model provider.
 - **User Intelligence** is a separate, deferred library that owns semantic
   search and its own tables. ContentKit has no semantic runtime hook.
 - **DocumentSink** is a neutral document change feed for external indexes,

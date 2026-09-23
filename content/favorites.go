@@ -2,14 +2,17 @@ package content
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/contentref"
 )
 
-// favorites is the user-only bookmark (wishlist): an unsigned presence over a
-// content key. A favorite requires the target be VISIBLE only, not accessible:
+// favorites is the user-only bookmark (wishlist) over a content key: value 1
+// favorited, 0 unfavorited (the row is kept so the change exports). A favorite requires the target be VISIBLE only, not accessible:
 // premium content can be wishlisted before it is owned. No anonymous favorites.
 type favorites struct {
 	rt *Runtime
@@ -26,62 +29,70 @@ type FavoriteItem struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// add gates on visibility only, then idempotently inserts under the canonical
-// preference reference and records the snapshot in the same transaction.
-// Re-favoriting is a no-op success that exports nothing.
-func (f *favorites) add(ctx context.Context, actor Actor, kind, id string) (*PreferenceSnapshot, error) {
+// add gates on visibility only, then favorites under the canonical preference
+// reference. Re-favoriting is a no-op success.
+func (f *favorites) add(ctx context.Context, actor Actor, kind, id string) error {
 	ref, err := f.rt.gate(ctx, kind, id, actor, false)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	storage, key, exportable := f.rt.preferences.target(actor, ref, PreferenceAxisFavorite)
-	tx, err := f.s.beginMutation(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
-	if err := f.rt.guardErasedSubject(ctx, tx, viewerID(actor)); err != nil {
-		return nil, err
-	}
-	snap, err := f.rt.preferences.mutate(ctx, tx, key, exportable, 1, func() (bool, error) {
-		tag, err := tx.Exec(ctx, `INSERT INTO `+f.s.t.favorites+` (`+keyCols+`, user_id) VALUES ($1, $2, $3, $4, $5)
-			ON CONFLICT (tenant_id, user_id, content_kind, content_id, content_version_id) DO NOTHING`,
-			append(keyArgs(storage.Key()), actor.ID)...)
-		if err != nil || tag.RowsAffected() != 1 {
-			return false, err
-		}
-		return true, bumpCounts(ctx, tx, f.s, storage.Key(), 0, 0, 1, 0)
-	})
-	if err != nil {
-		return nil, err
-	}
-	return snap, tx.Commit(ctx)
+	return f.set(ctx, actor, ref, 1)
 }
 
-// remove deletes the caller's bookmark (idempotent) and keeps a zero-valued
-// snapshot. No visibility gate: un-wishlisting content that later became
-// hidden must still work.
-func (f *favorites) remove(ctx context.Context, actor Actor, kind, id string) (*PreferenceSnapshot, error) {
-	storage, key, exportable := f.rt.preferences.target(actor, f.rt.canonical(ctx, kind, id, actor), PreferenceAxisFavorite)
+// remove unfavorites (idempotent), keeping the row at value 0. No visibility
+// gate: un-wishlisting content that later became hidden must still work.
+func (f *favorites) remove(ctx context.Context, actor Actor, kind, id string) error {
+	return f.set(ctx, actor, f.rt.canonical(ctx, kind, id, actor), 0)
+}
+
+func (f *favorites) set(ctx context.Context, actor Actor, ref contentref.ContentRef, value int16) error {
+	storage, _ := f.rt.preferences.work(ref)
 	tx, err := f.s.beginMutation(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer tx.Rollback(ctx)
 	if err := f.rt.guardErasedSubject(ctx, tx, viewerID(actor)); err != nil {
-		return nil, err
+		return err
 	}
-	snap, err := f.rt.preferences.mutate(ctx, tx, key, exportable, 0, func() (bool, error) {
-		tag, err := tx.Exec(ctx, `DELETE FROM `+f.s.t.favorites+` WHERE `+keyPred(1)+` AND user_id = $5`, append(keyArgs(storage.Key()), actor.ID)...)
-		if err != nil || tag.RowsAffected() != 1 {
-			return false, err
-		}
-		return true, bumpCounts(ctx, tx, f.s, storage.Key(), 0, 0, -1, 0)
-	})
+	changed, err := f.setTx(ctx, tx, actor.ID, storage.Key(), value, true)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return snap, tx.Commit(ctx)
+	if changed {
+		if err := bumpCounts(ctx, tx, f.s, storage.Key(), 0, 0, int(2*value-1), 0); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// setTx moves the caller's row to value under its row lock, taking a fresh
+// revision on change; a lost insert race re-locks the winner's row once.
+func (f *favorites) setTx(ctx context.Context, tx pgx.Tx, userID string, key contentref.ContentKey, value int16, retry bool) (bool, error) {
+	args := append(keyArgs(key), userID)
+	var prev int16
+	err := tx.QueryRow(ctx, `SELECT value FROM `+f.s.t.favorites+` WHERE `+keyPred(1)+` AND user_id = $5 FOR UPDATE`, args...).Scan(&prev)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		if value == 0 {
+			return false, nil
+		}
+		tag, err := tx.Exec(ctx, `INSERT INTO `+f.s.t.favorites+` (`+keyCols+`, user_id, value, revision) VALUES ($1, $2, $3, $4, $5, 1, `+f.s.nextRevision()+`)
+			ON CONFLICT (tenant_id, user_id, content_kind, content_id, content_version_id) DO NOTHING`, args...)
+		if err != nil || tag.RowsAffected() == 1 || !retry {
+			return err == nil && tag.RowsAffected() == 1, err
+		}
+		return f.setTx(ctx, tx, userID, key, value, false)
+	case err != nil:
+		return false, err
+	case prev == value:
+		return false, nil
+	}
+	// Re-favoriting restarts the bookmark's age, which orders the wishlist.
+	_, err = tx.Exec(ctx, `UPDATE `+f.s.t.favorites+` SET value = $6::smallint, revision = `+f.s.nextRevision()+`, updated_at = now(),
+		created_at = CASE WHEN $6::smallint = 1 THEN now() ELSE created_at END WHERE `+keyPred(1)+` AND user_id = $5`, append(args, value)...)
+	return err == nil, err
 }
 
 // IsFavorited batch-reports which of refs the user has bookmarked, keyed by
@@ -102,7 +113,7 @@ func (f *favorites) IsFavorited(ctx context.Context, userID string, refs []conte
 	}
 	kinds, ids, versions := refColumns(stored.refs)
 	rows, err := f.s.pool.Query(ctx, `SELECT content_kind, content_id, content_version_id FROM `+f.s.t.favorites+`
-		WHERE tenant_id = $1 AND user_id = $2 AND `+refsIn(3), f.s.tenant, userID, kinds, ids, versions)
+		WHERE tenant_id = $1 AND user_id = $2 AND value = 1 AND `+refsIn(3), f.s.tenant, userID, kinds, ids, versions)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +133,7 @@ func (f *favorites) IsFavorited(ctx context.Context, userID string, refs []conte
 // list returns the caller's favorites, most recent first, paginated.
 func (f *favorites) list(ctx context.Context, userID string, limit, offset int) ([]FavoriteItem, error) {
 	rows, err := f.s.pool.Query(ctx, `SELECT content_kind, content_id, content_version_id, created_at
-		FROM `+f.s.t.favorites+` WHERE tenant_id = $1 AND user_id = $2
+		FROM `+f.s.t.favorites+` WHERE tenant_id = $1 AND user_id = $2 AND value = 1
 		ORDER BY created_at DESC, content_kind, content_id, content_version_id
 		LIMIT $3 OFFSET $4`, f.s.tenant, userID, limit, offset)
 	if err != nil {
@@ -157,7 +168,7 @@ func (f *favorites) handleAdd(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if _, err := f.add(req.Context(), actor, req.PathValue("kind"), req.PathValue("id")); err != nil {
+	if err := f.add(req.Context(), actor, req.PathValue("kind"), req.PathValue("id")); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -170,7 +181,7 @@ func (f *favorites) handleRemove(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if _, err := f.remove(req.Context(), actor, req.PathValue("kind"), req.PathValue("id")); err != nil {
+	if err := f.remove(req.Context(), actor, req.PathValue("kind"), req.PathValue("id")); err != nil {
 		writeErr(w, err)
 		return
 	}

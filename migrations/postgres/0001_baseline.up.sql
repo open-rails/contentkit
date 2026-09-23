@@ -86,19 +86,6 @@ CREATE TABLE content_nodes (
     CONSTRAINT content_nodes_state_check CHECK ((state = ANY (ARRAY['active'::text, 'merged'::text, 'deleted'::text])))
 );
 
-CREATE TABLE content_preference_key_archive (
-    archived_at timestamp with time zone DEFAULT now() NOT NULL,
-    tenant_id text NOT NULL,
-    axis text NOT NULL,
-    actor_id text,
-    ip text,
-    content_kind text NOT NULL,
-    content_id text NOT NULL,
-    content_version_id text NOT NULL,
-    value smallint NOT NULL,
-    source_at timestamp with time zone NOT NULL
-);
-
 CREATE SEQUENCE content_preference_revision_seq
     START WITH 1
     INCREMENT BY 1
@@ -106,20 +93,10 @@ CREATE SEQUENCE content_preference_revision_seq
     NO MAXVALUE
     CACHE 1;
 
-CREATE TABLE content_preference_snapshots (
+CREATE TABLE content_preference_sync (
     tenant_id text NOT NULL,
-    actor_id text NOT NULL,
-    content_kind text NOT NULL,
-    content_id text NOT NULL,
-    content_version_id text DEFAULT ''::text NOT NULL,
-    axis text NOT NULL,
-    value smallint NOT NULL,
-    revision bigint NOT NULL,
-    occurred_at timestamp with time zone NOT NULL,
-    delivered_revision bigint DEFAULT 0 NOT NULL,
-    CONSTRAINT content_preference_snapshots_axis_ck CHECK ((axis = ANY (ARRAY['reaction'::text, 'favorite'::text]))),
-    CONSTRAINT content_preference_snapshots_revision_ck CHECK (((revision > 0) AND (delivered_revision >= 0) AND (delivered_revision <= revision))),
-    CONSTRAINT content_preference_snapshots_value_ck CHECK (((value = ANY (ARRAY['-1'::integer, 0, 1])) AND ((axis <> 'favorite'::text) OR (value = ANY (ARRAY[0, 1])))))
+    taken_at timestamp with time zone NOT NULL,
+    revision bigint NOT NULL
 );
 
 CREATE TABLE content_erased_subjects (
@@ -220,7 +197,11 @@ CREATE TABLE content_favorites (
     content_id text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     tenant_id text NOT NULL,
-    content_version_id text DEFAULT ''::text NOT NULL
+    content_version_id text DEFAULT ''::text NOT NULL,
+    value smallint NOT NULL,
+    revision bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT content_favorites_value_ck CHECK ((value = ANY (ARRAY[0, 1])))
 );
 
 CREATE TABLE content_poll_answers (
@@ -311,6 +292,7 @@ CREATE TABLE content_reactions (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     tenant_id text NOT NULL,
     content_version_id text DEFAULT ''::text NOT NULL,
+    revision bigint NOT NULL,
     CONSTRAINT content_reactions_actor_ck CHECK (((user_id IS NOT NULL) OR (ip IS NOT NULL))),
     CONSTRAINT content_reactions_value_ck CHECK ((value = ANY (ARRAY['-1'::integer, 0, 1])))
 );
@@ -332,8 +314,8 @@ ALTER TABLE ONLY content_node_names
 ALTER TABLE ONLY content_nodes
     ADD CONSTRAINT content_nodes_pkey PRIMARY KEY (tenant_id, taxonomy_id);
 
-ALTER TABLE ONLY content_preference_snapshots
-    ADD CONSTRAINT content_preference_snapshots_pkey PRIMARY KEY (tenant_id, actor_id, content_kind, content_id, content_version_id, axis);
+ALTER TABLE ONLY content_preference_sync
+    ADD CONSTRAINT content_preference_sync_pkey PRIMARY KEY (tenant_id, taken_at);
 
 ALTER TABLE ONLY content_erased_subjects
     ADD CONSTRAINT content_erased_subjects_pkey PRIMARY KEY (tenant_id, actor_id);
@@ -388,7 +370,6 @@ CREATE INDEX content_nodes_kind ON content_nodes USING btree (tenant_id, kind, s
 
 CREATE UNIQUE INDEX content_nodes_slug ON content_nodes USING btree (tenant_id, kind, slug) WHERE (state = 'active'::text);
 
-CREATE INDEX content_preference_snapshots_pending_idx ON content_preference_snapshots USING btree (tenant_id, actor_id, content_kind, content_id, content_version_id, axis) WHERE (delivered_revision < revision);
 
 CREATE INDEX content_search_backfill_state ON content_search_backfill USING btree (state);
 
@@ -426,7 +407,9 @@ CREATE INDEX content_interaction_counts_likes_idx ON content_interaction_counts 
 
 CREATE INDEX content_favorites_content_idx ON content_favorites USING btree (tenant_id, content_kind, content_id, content_version_id);
 
-CREATE INDEX content_favorites_user_created_idx ON content_favorites USING btree (tenant_id, user_id, created_at DESC);
+CREATE INDEX content_favorites_revision_idx ON content_favorites USING btree (tenant_id, revision);
+
+CREATE INDEX content_favorites_user_created_idx ON content_favorites USING btree (tenant_id, user_id, created_at DESC) WHERE (value = 1);
 
 CREATE INDEX content_poll_answers_pending_idx ON content_poll_answers USING btree (tenant_id, id) WHERE (classified_at IS NULL);
 
@@ -445,6 +428,8 @@ CREATE INDEX content_posts_published_idx ON content_posts USING btree (tenant_id
 CREATE UNIQUE INDEX content_posts_slug_uq ON content_posts USING btree (tenant_id, slug) WHERE ((slug IS NOT NULL) AND (deleted_at IS NULL));
 
 CREATE INDEX content_reactions_content_idx ON content_reactions USING btree (tenant_id, content_kind, content_id, content_version_id);
+
+CREATE INDEX content_reactions_revision_idx ON content_reactions USING btree (tenant_id, revision);
 
 CREATE UNIQUE INDEX content_reactions_ip_uq ON content_reactions USING btree (tenant_id, content_kind, content_id, content_version_id, ip) WHERE ((user_id IS NULL) AND (ip IS NOT NULL));
 

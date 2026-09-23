@@ -28,14 +28,14 @@ func TestCanonicalRef_UnifiesAliases(t *testing.T) {
 	u := Actor{ID: "u1"}
 	canonical := ref("gallery", "123:en")
 
-	if _, err := rt.favorites.add(ctx, u, "gallery", "slug-123"); err != nil {
+	if err := rt.favorites.add(ctx, u, "gallery", "slug-123"); err != nil {
 		t.Fatalf("add via alias: %v", err)
 	}
 	fav, err := rt.IsFavorited(ctx, "u1", []contentref.ContentRef{canonical})
 	if err != nil || !fav[canonical.Key()] {
 		t.Fatalf("favorite via alias not stored under the canonical reference: %v %v", fav, err)
 	}
-	if _, _, err := rt.reactions.react(ctx, u, "gallery", "123", 1); err != nil {
+	if _, err := rt.reactions.react(ctx, u, "gallery", "123", 1); err != nil {
 		t.Fatalf("react via alias: %v", err)
 	}
 	if _, err := rt.comments.create(ctx, u, "gallery", "123:en", createInput{Body: "hi"}); err != nil {
@@ -51,7 +51,7 @@ func TestCanonicalRef_UnifiesAliases(t *testing.T) {
 	if alias := countsOf(t, rt, ref("gallery", "slug-123")); alias != (Counts{}) {
 		t.Fatalf("alias key leaked into the rollup: %+v", alias)
 	}
-	if _, err := rt.favorites.remove(ctx, u, "gallery", "123"); err != nil {
+	if err := rt.favorites.remove(ctx, u, "gallery", "123"); err != nil {
 		t.Fatal(err)
 	}
 	if c := countsOf(t, rt, canonical); c.Favorites != 0 {
@@ -79,10 +79,10 @@ func TestCanonicalRef_VersionIsADistinctKey(t *testing.T) {
 	u := Actor{ID: "u1"}
 	work, version := ref("gallery", "g1"), contentref.NewVersion(testTenant, "gallery", "g1", "v2")
 
-	if _, _, err := rt.reactions.react(ctx, u, "gallery", "g1", 1); err != nil {
+	if _, err := rt.reactions.react(ctx, u, "gallery", "g1", 1); err != nil {
 		t.Fatal(err)
 	}
-	if got, _, err := rt.reactions.react(ctx, u, "gallery", "g1@v2", -1); err != nil || !got.Equal(version) {
+	if got, err := rt.reactions.react(ctx, u, "gallery", "g1@v2", -1); err != nil || !got.Equal(version) {
 		t.Fatalf("version react = %s err=%v", got, err)
 	}
 	mine, err := rt.MyReactions(ctx, u, []contentref.ContentRef{work, version})
@@ -124,7 +124,7 @@ func TestRuntime_ListFavoritesExported(t *testing.T) {
 	ctx := context.Background()
 	u := Actor{ID: "u1"}
 	for _, id := range []string{"a", "b"} {
-		if _, err := rt.favorites.add(ctx, u, "gallery", id); err != nil {
+		if err := rt.favorites.add(ctx, u, "gallery", id); err != nil {
 			t.Fatal(err)
 		}
 	}

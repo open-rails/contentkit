@@ -158,7 +158,5 @@ func (f *fakeMedia) count() int {
 	return len(f.puts)
 }
 
-// reactErr / favErr adapt the (result, snapshot, error) returns for error-only assertions.
-func reactErr(_ contentref.ContentRef, _ *PreferenceSnapshot, err error) error { return err }
-
-func favErr(_ *PreferenceSnapshot, err error) error { return err }
+// reactErr adapts react's (reference, error) return for error-only assertions.
+func reactErr(_ contentref.ContentRef, err error) error { return err }

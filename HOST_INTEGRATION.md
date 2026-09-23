@@ -150,7 +150,7 @@ old assignment until the new revision is classified; late old results cannot win
 
 `rt.EraseSubjects(ctx, subjects)` erases deleted accounts from every configured
 plane: signals ([completion contract](#subject-erasure-completion-contract)),
-preference obligations, ContentKit interaction data and data retained by
+ContentKit interaction data and data retained by
 moderator/classifier providers. Standalone content consumers call
 `rt.Content.EraseSubjects`; `rt.EmbeddedHub.EraseSubjects` is analytics-only. A
 deliberately disabled signal plane is absent, not unfinished. Any
@@ -164,7 +164,7 @@ Content erasure commits atomically:
 - a permanent tenant/subject fence in `content_erased_subjects`; later writes by
   that subject fail with `content.ErrSubjectErased`;
 - removal of the subject's authenticated reactions, favorites, poll votes and
-  answers and preference snapshots/archives, with exact counter decrements;
+  answers, with exact counter decrements;
 - redaction of the subject's unpublished payloads (held/rejected comments and
   posts, draft and future-scheduled posts even when approved) and their
   moderation metadata. An item with a previously approved payload keeps it
@@ -204,11 +204,8 @@ erasure complete. Soft-deleting a poll is not a provider erasure.
 Fences and approved payload snapshots are durable user state. A restore must
 restore/reapply fences and replay the host deletion ledger through
 `EraseSubjects` before traffic resumes; provider erasure keeps the same
-permanent-fence semantics across its own restores. Restored preference
-snapshots of fenced subjects are excluded from replay, and initial preference
-cutover refuses restored positive source rows for fenced subjects until that
-cleanup is replayed. Pause all source writers, including deletion, during
-initial cutover.
+permanent-fence semantics across its own restores. Restored reactions and
+favorites of fenced subjects never export.
 
 ## Documents: one per content reference and language
 
@@ -338,52 +335,38 @@ behind your admin authorization. Adoption: [docs/taxonomy-migration.md](docs/tax
 
 ## Preference boundary (reactions and favorites into the signal plane)
 
-Reactions and favorites are exported to the signal plane through ContentKit's
-own outbox, never through a host callback. Each mutation, inside its own
-transaction: takes an advisory lock on `(schema, tenant, actor, canonical
-reference, axis)` **before** reading state, applies the interaction change and its
-counters, allocates `revision` from `content_preference_revision_seq`
-(`BIGINT INCREMENT 1 NO CYCLE CACHE 1`) with `clock_timestamp()` and upserts
-`content_preference_snapshots`. A no-op allocates nothing; neutral and
-unfavorite keep a zero-valued snapshot; a rollback exports nothing; anonymous
-(IP) reactions are never subjects.
+Reactions and favorites reach the signal plane straight from their own rows.
+`content_reactions.value` is -1/0/1 and `content_favorites.value` is 1/0:
+neutral and unfavorite keep the row at 0. Every value change stamps the row
+with `revision` from `content_preference_revision_seq` under the row lock; a
+no-op allocates nothing. Only authenticated rows export; anonymous (IP)
+reactions and comment threads never do.
 
 - **`content.ContentCanonicalizer`** (`Options.Canonicalizer`, required for
   export) maps the resolver's reference to the one reference the reaction row,
-  the counts rollup and the snapshot all use. Doujins strips the language
+  the counts rollup and the export all use. Doujins strips the language
   suffix (`"42:en"` → `"42"`); explicit version feedback keeps its
   `content_version_id`; a language suffix never implies a version; comment
-  threads keep their localized reference; `ok=false` keeps a kind (taxonomy)
-  out. `MyReactions`/`IsFavorited` accept route references and read under the
-  canonical one; `Counts` reads exactly the reference given (likes/favorites
-  under the canonical reference, comment counts under the thread's).
-- **Delivery**: schedule `rt.DeliverPreferences(ctx, after, pageSize, maxRows)` from
-  the host worker (e.g. a River periodic job every few seconds). It pages
-  pending rows in key order per sweep (no persisted high-water mark), writes
-  one `signal` event per subject × reference × axis (`Type` = axis,
-  `EventID` = `contentkit.PreferenceEventID`, `Revision` and `OccurredAt`
-  copied, `Value` = current value), and acknowledges exactly the revision sent
-  (`GREATEST` guarded by `sent <= revision`). A failing sink or a closed
-  ClickHouse leaves rows pending; a failing key never starves others;
-  at-least-once with convergence by revision.
-- **Erasure**: call `rt.EraseSubjects` (fence in the signal plane, then purge
-  the obligations) from the account-deletion handoff; a late delivery for a
-  fenced subject is the terminal `PreferenceSubjectErased`, never a retry.
-- **Bounded delivery**: keep the returned `Next` cursor for the current sweep
-  and pass it as `after` on the next call, including after a sink error. Reset
-  to zero when exhausted; never persist it as a global high-water mark.
-- **Repair**: `rt.ReplayPreferences(ctx, after, pageSize, maxRows)` re-delivers
-  every snapshot (acknowledged rows and zeros included) and resumes from the
-  returned `Next`; newer snapshots still win by revision.
-- **Cutover** (once per host, writers paused): `contentkit.Migrate` on the fresh target → stop the old callback bridge and drain its queues →
-  `rt.Content.SeedPreferenceRevisionFloor(maxExistingSinkRevision)` (fails
-  closed outside `[0, MaxInt64/2]`, only ever advances) →
-  `rt.Content.MigratePreferences(PreferenceMigrationOptions{ExportedKeys, DryRun})`
-  (archives the language-scoped rows, collapses them: dislike wins, else
-  like; favorite if any; recomputes counts; seeds snapshots at real source
-  times and zeros for previously exported keys) → retire the old
-  per-transition signal identities in the sink → start the delivery worker
-  → `ReplayPreferences` once from the zero key.
+  threads keep their localized reference; `ok=false` keeps a target out, and
+  is re-checked at sync time. `MyReactions`/`IsFavorited` accept route
+  references and read under the canonical one; `Counts` reads exactly the
+  reference given.
+- **Sync**: schedule `rt.SyncPreferences(ctx)` from the host worker (e.g.
+  every few seconds). It sends rows past the tenant's watermark in revision
+  order as one `signal` event per subject × reference × axis (`Type` = axis,
+  `EventID` = `contentkit.PreferenceEventID`, `Revision`, `OccurredAt` =
+  row `updated_at`, `Value`), then records a checkpoint; the newest revision
+  wins, so re-sends are harmless. Each scan restarts from the newest
+  checkpoint older than `Options.PreferenceSyncOverlap` (default 5m) before
+  the previous sync: a write is delivered if its transaction commits within
+  the overlap of allocating its revision. A failed sync advances nothing.
+- **Repair**: schedule `rt.ResyncPreferences(ctx)` (e.g. daily) and run it
+  after sink loss: a full re-send, zeros included.
+- **Erasure**: `rt.EraseSubjects` deletes the subject's rows behind the source
+  fence and fences the signal plane, which drops any late send.
+- **Restore**: after restoring PostgreSQL against a retained signal plane, run
+  `rt.Content.SeedPreferenceRevisionFloor(maxSinkRevision)` before writers
+  resume (only ever advances; fails closed outside `[0, MaxInt64/2]`).
 
 ## Attribution export (paged evaluation data)
 
@@ -476,20 +459,6 @@ priors, the judged fixture and the host adoption steps.
 - Page with `Offset`/`Limit` and `HasMore`; never fetch N documents and dedupe.
 - Apply the baselines with `contentkit.Migrate` per [docs/migration.md](docs/migration.md); gate startup on `signal.CheckSchema`.
 - Wire `Options.Moderator` (a `Chain` of `BasicModerator` and the AI moderator), `Options.Classifier` for free-text polls, `Perms.ModerationReview`, and schedule `ReclassifyPending`.
-- Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, implement `ContentCanonicalizer`, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, schedule `DeliverPreferences`, wire `EraseSubjects` into deletion, run the cutover above once, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id`.
+- Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, implement `ContentCanonicalizer`, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, schedule `SyncPreferences` (and `ResyncPreferences` as the periodic repair), wire `EraseSubjects` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.
 - Rename direct SQL on `social_*` tables to `content_*` (`social_entity_counts` → `content_interaction_counts`) and `content.Options.PrivateDataEraser` to `ProviderDataEraser`.
-
-### Bounded exported-key reconciliation at cutover
-
-After writers/callbacks are paused and retired, establish the sink/source revision
-floor and run MigratePreferences once to seed source truth. Then stream the
-persisted exported-key inventory in pages of at most
-content.MaxExportedPreferencesPerBatch (1000) through
-rt.Content.ReconcileExportedPreferences(ctx, keys). It inserts only missing zero
-snapshots; existing revisions/time/value and erased-subject fences are preserved.
-Retries are idempotent. Inventory adapters must map legacy work/version identity
-explicitly before this call; a locale suffix never implies a version. Declined
-kinds and invalid/foreign keys fail the entire page before mutation. Persist the
-inventory before retiring any old sink preference identity. No schema migration
-or additional delivery queue is introduced.

@@ -84,7 +84,7 @@ are not PostgreSQL foreign keys and have no cross-store FK enforcement.
 ## Retained state
 
 Back up authored content, moderation and retained-publication state,
-preference snapshots and their revision sequence, source erasure fences,
+reactions, favorites and their revision sequence, source erasure fences,
 and the ClickHouse signal plane. Search documents and taxonomy counts are
 rebuildable. The baseline contains only current signal tables, including
 `subject_content_state.last_view_at`; it does not install retired signal

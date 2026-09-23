@@ -35,7 +35,9 @@ type reactionCounts struct {
 
 // applyTx performs the 3-state upsert for (key, actor) inside tx and returns
 // the count deltas (each -1/0/+1) so the caller can denormalize a split counter
-// in the same transaction. Neutral (0) is a stored state, not a delete.
+// in the same transaction. Neutral (0) is a stored state, not a delete (neutral
+// with no row is a no-op). Every value change takes a fresh preference
+// revision under the row lock.
 //
 // Concurrency: SELECT ... FOR UPDATE locks the existing row; a lost insert race
 // re-selects and updates. Exact under concurrent double-like and switches.
@@ -58,10 +60,13 @@ func (r *reactions) applyTx(ctx context.Context, tx pgx.Tx, actor Actor, key con
 		dLikes, dDislikes = delta(prev, value)
 		return r.bumpAndReturn(ctx, tx, key, dLikes, dDislikes)
 	}
+	if value == 0 {
+		return 0, 0, nil
+	}
 	// ON CONFLICT DO NOTHING makes the losing racer block on the other tx then
 	// no-op; a bare INSERT would abort the whole transaction.
 	tag, err := tx.Exec(ctx, `INSERT INTO `+r.s.t.reactions+`
-		(`+keyCols+`, user_id, ip, value) VALUES ($1, $2, $3, $4, $5, $6, $7)`+onConflict(userID),
+		(`+keyCols+`, user_id, ip, value, revision) VALUES ($1, $2, $3, $4, $5, $6, $7, `+r.s.nextRevision()+`)`+onConflict(userID),
 		append(keyArgs(key), nullIf(userID), nullIf(ip), value)...)
 	if err != nil {
 		return 0, 0, err
@@ -86,7 +91,7 @@ func (r *reactions) applyTx(ctx context.Context, tx pgx.Tx, actor Actor, key con
 }
 
 func (r *reactions) update(ctx context.Context, tx pgx.Tx, userID, ip string, key contentref.ContentKey, value int16) error {
-	_, err := tx.Exec(ctx, `UPDATE `+r.s.t.reactions+` SET value = $1, updated_at = now()
+	_, err := tx.Exec(ctx, `UPDATE `+r.s.t.reactions+` SET value = $1, revision = `+r.s.nextRevision()+`, updated_at = now()
 		WHERE `+keyPred(2)+` AND `+actorPred(userID, 6), append([]any{value}, append(keyArgs(key), actorArg(userID, ip))...)...)
 	return err
 }
@@ -114,36 +119,26 @@ func (r *reactions) lockExisting(ctx context.Context, tx pgx.Tx, userID, ip stri
 }
 
 // react is the entry point for host-registered kinds: it gates on
-// accessibility, applies the reaction under the canonical preference
-// reference (or the resolver's for a declined target) and writes the
-// preference snapshot in the same transaction. Returns the reference callers
-// read counts by and the committed snapshot (nil when nothing changed or the
-// target is not exported).
-func (r *reactions) react(ctx context.Context, actor Actor, kind, id string, value int16) (contentref.ContentRef, *PreferenceSnapshot, error) {
+// accessibility and applies the reaction under the canonical preference
+// reference (or the resolver's for a declined target), which it returns.
+func (r *reactions) react(ctx context.Context, actor Actor, kind, id string, value int16) (contentref.ContentRef, error) {
 	ref, err := r.rt.gate(ctx, kind, id, actor, true)
 	if err != nil {
-		return contentref.ContentRef{}, nil, err
+		return contentref.ContentRef{}, err
 	}
-	storage, key, exportable := r.rt.preferences.target(actor, ref, PreferenceAxisReaction)
+	storage, _ := r.rt.preferences.work(ref)
 	tx, err := r.s.beginMutation(ctx)
 	if err != nil {
-		return contentref.ContentRef{}, nil, err
+		return contentref.ContentRef{}, err
 	}
 	defer tx.Rollback(ctx)
 	if err := r.rt.guardErasedSubject(ctx, tx, viewerID(actor)); err != nil {
-		return contentref.ContentRef{}, nil, err
+		return contentref.ContentRef{}, err
 	}
-	snap, err := r.rt.preferences.mutate(ctx, tx, key, exportable, value, func() (bool, error) {
-		dLikes, dDislikes, err := r.applyTx(ctx, tx, actor, storage.Key(), value)
-		return dLikes != 0 || dDislikes != 0, err
-	})
-	if err != nil {
-		return contentref.ContentRef{}, nil, err
+	if _, _, err := r.applyTx(ctx, tx, actor, storage.Key(), value); err != nil {
+		return contentref.ContentRef{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return contentref.ContentRef{}, nil, err
-	}
-	return storage, snap, nil
+	return storage, tx.Commit(ctx)
 }
 
 // counts returns the split tally plus the caller's own reaction: an O(1) read
@@ -179,7 +174,7 @@ func (r *reactions) mount(mux *http.ServeMux) {
 func (r *reactions) handleSet(value int16) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		actor := r.rt.actor(req.Context())
-		ref, _, err := r.react(req.Context(), actor, req.PathValue("kind"), req.PathValue("id"), value)
+		ref, err := r.react(req.Context(), actor, req.PathValue("kind"), req.PathValue("id"), value)
 		if err != nil {
 			writeErr(w, err)
 			return

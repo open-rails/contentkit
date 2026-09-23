@@ -13,8 +13,8 @@ into fresh stores.
 
 After restoring PostgreSQL, rebuild keyword documents from the host's current
 content and recompute taxonomy counts when the backup predates catalog
-changes. Do not rewind preference delivery revisions against a retained sink:
-run `SeedPreferenceRevisionFloor` before writers resume, as described in the
+changes. Do not rewind preference revisions against a retained sink: run
+`SeedPreferenceRevisionFloor` before writers resume, as described in the
 [host integration guide](../HOST_INTEGRATION.md#preference-boundary-reactions-and-favorites-into-the-signal-plane).
 
 After restoring ClickHouse, replay every subject deletion newer than the

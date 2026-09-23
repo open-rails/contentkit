@@ -226,10 +226,9 @@ top, _ := hub.Popular(ctx, "gallery", signal.PopularOptions{Window: signal.LastD
 - `EraseSubjects` is account erasure with a quorum-written fence; see
   [HOST_INTEGRATION.md](HOST_INTEGRATION.md#subject-erasure-completion-contract)
   and, for interaction data, [interaction erasure](HOST_INTEGRATION.md#interaction-erasure).
-- Reactions and favorites reach the signal plane through ContentKit's own
-  preference outbox (`rt.DeliverPreferences`, `rt.ReplayPreferences`): a
-  compact snapshot per subject × reference × axis, revisions from a sequence
-  under the source lock, revision-exact acknowledgment; see
+- Reactions and favorites reach the signal plane from their own revisioned
+  rows: schedule `rt.SyncPreferences` (watermark with a commit overlap) and
+  `rt.ResyncPreferences` (full re-send); see
   [HOST_INTEGRATION.md](HOST_INTEGRATION.md#preference-boundary-reactions-and-favorites-into-the-signal-plane).
 
 ## Testing
