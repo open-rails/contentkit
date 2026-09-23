@@ -48,6 +48,7 @@ another tenant is an error, never remapped.
 | `access` | `Actor`, the `ContentResolver` port and its `Resolution{Ref, Visible, Accessible, PreviewLimit}`, shared by `content` and media |
 | `media` | per-item folders and keys, kind registry, the `Store` port, manifests with conditional-write edits, direct uploads and their HTTP API, the optional `UploadLimiter`, sweep, folder deletion and processing as River jobs |
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
+| `media/image` | libvips (CGO) processor: WebP variants, public slots, zip downloads |
 | `media/token` | media access tokens, shared by hosts and the access worker |
 | `media/video` | ffmpeg encode jobs: byte-range fMP4 HLS ladder, AAC per audio track, WebVTT per text subtitle, sprite, per-quality MP4 downloads; River in schema `media_worker` (`cmd/media-worker`) |
 | `media/tiered` | optional `public`/`members`/`ppv`/`members_ppv`/`premium` policy over an entitlement `Checker` (hosts adapt OpenRails `CheckEntitlements`) |
@@ -203,6 +204,22 @@ Commit is one conditional manifest edit (`insert`, `replace`, `move`,
 `rename`, `remove`) that HEAD-checks each new original, re-hashes it when the
 store does not enforce checksums, and enqueues a `ProcessJob`.
 
+**Image processing** (`media/image`, CGO over libvips via govips; install
+`libvips-dev` to build it). `image.New(Config{Store, Kinds, Manifests, Specs,
+Hooks})` gives `Process(ctx, media.ProcessJob)`; register it with
+`jobs.AddProcessor(proc.Process)` and pass `jobs` as `UploadOptions.Queue`. It derives WebP variants per the kind's `Specs` (or a per-file
+`SpecChooser`) from each file's `master`, else `original`, only where a variant
+is missing or its `spec` hash differs, stores them as `blobs/sha256-…`, and
+records them in one manifest edit per pass that drops results for sources
+replaced meanwhile; it repeats until a commit that landed during the run is
+covered too. A kind with `Zip` set gets `downloads.zip`: a stored zip of that
+variant in file order, rebuilt only when its `inputs` hash changes; its
+display name comes from `Hooks.DownloadName` at read time. Slots re-encode
+`originals/{slot}` into `public/{output}.webp` in place (`no-cache`, ETag), with
+writes conditional on the output's previous ETag and skipped when its
+recorded source ETag and spec match. Undecodable sources go to
+`Hooks.Failed` and are not retried.
+
 The optional `UploadLimiter` (`media.NewPGLimiter` over the baseline's
 `content_media_*` tables) rate-limits uploaders (files/hour, bytes/day → 429)
 and reserves per-owner quota at presign (→ 413 `quota_exceeded`); commit
@@ -347,7 +364,8 @@ go test ./... -race -count=1 -p 2
 
 Media tests also need an S3 backend (`CONTENTKIT_TEST_S3_ENDPOINT`,
 `_ACCESS_KEY`, `_SECRET_KEY`, optional `_REGION`, `_BUCKET` and `_REQUIRE`; see
-`media/internal/s3test`). CI runs them on MinIO. To record a Ceph RGW
+`media/internal/s3test`). CI runs them on MinIO; `media/image` runs in its
+own CI job with libvips, and the other jobs exclude it. To record a Ceph RGW
 release's capabilities, point the same variables at an RGW bucket and run
 `go test ./media/... -v -count=1`; the log prints the probed capabilities.
 `media/video` tests also need `ffmpeg` and `ffprobe` on `PATH` (they skip
