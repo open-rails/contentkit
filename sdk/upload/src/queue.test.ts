@@ -58,3 +58,14 @@ it("marks a file failed on its own refusal and retries it", async () => {
   expect(q.getSnapshot().items).toEqual([]);
   expect(s.puts.length).toBe(0);
 });
+
+it("re-uploads a file whose original went stale before commit", async () => {
+  const { s, q } = setup();
+  const [, b] = q.add([png("a.png", 1), png("b.png", 2)]);
+  const snap = await until(q, (x) => x.ready);
+  s.stale.add(snap.items.find((i) => i.id === b!.id)!.result!.name);
+  const files = await q.commit();
+  expect(files.map((f) => f.name)).toEqual(["a.png", "b.png"]);
+  expect(s.puts.length).toBe(3);
+  expect(q.getSnapshot().items.every((i) => i.status === "committed")).toBe(true);
+});

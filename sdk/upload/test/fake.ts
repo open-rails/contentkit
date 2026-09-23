@@ -21,6 +21,8 @@ interface Upload {
  */
 export class FakeServer {
   objects = new Map<string, number>();
+  /** Originals the sweep may take: presign re-uploads them and commit refuses them. */
+  stale = new Set<string>();
   uploads = new Map<string, Upload>();
   calls: string[] = [];
   puts: string[] = [];
@@ -54,7 +56,10 @@ export class FakeServer {
     const sum = createHash("sha256").update(bytes).digest("base64");
     if (req.headers["X-Amz-Checksum-Sha256"] !== sum) throw new UploadError("storage", "BadDigest", 400);
     const [, kind, a, b] = new URL(req.url).pathname.split("/");
-    if (kind === "put") this.objects.set(a!, bytes.length);
+    if (kind === "put") {
+      this.objects.set(a!, bytes.length);
+      this.stale.delete(a!);
+    }
     else {
       const u = this.uploads.get(a!)!;
       const s = u.signed.get(Number(b))!;
@@ -75,7 +80,7 @@ export class FakeServer {
         if (p.size <= 64 * MiB || p.slot) {
           if (!p.sha256) throw new UploadError("invalid_request", "sha256 required", 400);
           const name = p.slot ?? "sha256-" + p.sha256;
-          if (!p.slot && this.objects.get(name) === p.size) return { name, exists: true };
+          if (!p.slot && this.objects.get(name) === p.size && !this.stale.has(name)) return { name, exists: true };
           return { name, put: req(`fake://s3/put/${name}`, { "Content-Type": p.type, "X-Amz-Checksum-Sha256": b64(p.sha256) }) };
         }
         const ticket = `t${++this.seq}`;
@@ -116,6 +121,11 @@ export class FakeServer {
         this.uploads.delete(b.ticket);
         return undefined;
       case "/commit":
+        for (const op of b.ops) {
+          if (op.original && (this.stale.has(op.original) || !this.objects.has(op.original))) {
+            throw new UploadError("not_uploaded", `${op.original} is due for cleanup; upload it again`, 409);
+          }
+        }
         return { files: b.ops.map((op: any) => ({ name: op.name, original: op.original, size: this.objects.get(op.original) })) };
       case "/commit-slot":
         return undefined;

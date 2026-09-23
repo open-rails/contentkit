@@ -54,6 +54,20 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
     expect([refused.code, refused.status]).toEqual(["type_not_allowed", 415]);
   });
 
+  it("uploads a stale original again when commit refuses it", async () => {
+    // The server's sweep grace is 8 s: commit accepts an unreferenced original for ~6 s.
+    const ref = { kind: "gallery", id: "2", version: "en" };
+    const body = bytes(2048, 8);
+    const file = new File([body], "b.png", { type: "image/png" });
+    const c = client();
+    const up = await c.upload(file, { ref });
+    await new Promise((r) => setTimeout(r, 9000));
+    const ops = [{ op: "insert" as const, name: "001.png", original: up.name }];
+    expect((await c.commit(ref, ops).catch((e) => e)).code).toBe("not_uploaded");
+    const files = await c.commit(ref, ops, { sources: { [up.name]: file } });
+    expect(files).toMatchObject([{ name: "001.png", original: up.name, size: 2048 }]);
+  });
+
   it("survives a killed connection mid-part, resumes and commits a >64 MiB file", async () => {
     const ref = { kind: "video", id: "1" };
     const body = bytes(72 * MiB + 4321, 9);

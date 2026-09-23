@@ -4,6 +4,8 @@ export {
   createUploadClient,
   backoff,
   type ClientOptions,
+  type CommitOptions,
+  type CommitSource,
   type PlannedPart,
   type Progress,
   type UploadOptions,
