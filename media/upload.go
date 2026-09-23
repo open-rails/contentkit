@@ -63,7 +63,9 @@ type UploadOptions struct {
 	Limiter    UploadLimiter // optional
 	Queue      ProcessQueue  // optional
 	PresignTTL time.Duration // PUT and part URLs; default 15m
-	TicketTTL  time.Duration // multipart ticket; default 24h, the abort-incomplete rule
+	// Grace is the sweep's (JobsConfig.Grace): Queue's when it is *Jobs, else 24h.
+	Grace     time.Duration
+	TicketTTL time.Duration // multipart ticket; default 24h, the abort-incomplete rule
 }
 
 // Uploads presigns direct-to-bucket uploads and commits them into manifests.
@@ -82,6 +84,12 @@ func NewUploads(o UploadOptions) (*Uploads, error) {
 	}
 	if o.TicketTTL <= 0 {
 		o.TicketTTL = 24 * time.Hour
+	}
+	if jobs, ok := o.Queue.(*Jobs); ok && o.Grace <= 0 {
+		o.Grace = jobs.cfg.Grace
+	}
+	if o.Grace <= 0 {
+		o.Grace = 24 * time.Hour
 	}
 	return &Uploads{o: o}, nil
 }
@@ -160,9 +168,16 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequ
 	case single:
 		name = SHA256Name(r.SHA256)
 		key, _ = item.Original(name)
-		// Hash-named: an identical object already in this folder needs no upload.
+		// Hash-named: an identical object already in this folder needs no
+		// upload, unless the sweep may soon take it; a PUT then refreshes it.
 		if obj, err := u.o.Store.Head(ctx, key); err == nil && obj.Size == r.Size && obj.ContentType == r.Type {
-			return Presigned{Name: name, Exists: true}, nil
+			ok, err := u.protected(ctx, item, name, obj, u.o.Grace/2)
+			if err != nil {
+				return Presigned{}, err
+			}
+			if ok {
+				return Presigned{Name: name, Exists: true}, nil
+			}
 		} else if err != nil && !errors.Is(err, ErrNotFound) {
 			return Presigned{}, err
 		}
@@ -374,12 +389,19 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		if err != nil {
 			return nil, err
 		}
+		if ok, err := u.protected(ctx, item, op.Original, obj, commitMargin(u.o.Grace)); err != nil {
+			return nil, err
+		} else if !ok {
+			return nil, uploadErr(CodeNotUploaded, "%s is due for cleanup; upload it again", op.Original)
+		}
 		uploaded[op.Original] = obj
 		keys = append(keys, obj.Key)
 	}
 
 	var before, after map[string]int64
-	man, err := u.o.Manifests.Edit(ctx, ref, func(m *Manifest) error {
+	editCtx, cancel := context.WithTimeout(ctx, commitMargin(u.o.Grace)/2)
+	defer cancel()
+	man, err := u.o.Manifests.Edit(editCtx, ref, func(m *Manifest) error {
 		before = m.originalSizes()
 		for _, op := range ops {
 			if err := m.apply(op, uploaded[op.Original]); err != nil {
@@ -445,6 +467,16 @@ func (u *Uploads) CommitSlot(ctx context.Context, actor access.Actor, ref conten
 		return u.o.Queue.Enqueue(ctx, ProcessJob{Ref: ref, Slot: slot})
 	}
 	return nil
+}
+
+// protected reports whether an existing original may be newly referenced:
+// it is referenced by a manifest in the folder, or the sweep cannot take it
+// within margin.
+func (u *Uploads) protected(ctx context.Context, item Item, name string, obj Object, margin time.Duration) (bool, error) {
+	if time.Now().Add(margin).Before(abandonedAt(name, obj.LastModified, u.o.Grace)) {
+		return true, nil
+	}
+	return u.o.Manifests.references(ctx, item, name)
 }
 
 // verify HEAD-checks an uploaded original in item's folder. A name from another

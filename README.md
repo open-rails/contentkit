@@ -231,7 +231,14 @@ _ = jobs.EraseUserTx(ctx, tx, "d", userID, deletions...)                  // the
 - **Sweep** (per folder, 24 h after each edit and in a daily pass over
   `Tenants`): deletes `blobs/` and hash-named `originals/` no manifest in the
   folder references, only once every manifest and the object itself are older
-  than `Grace` (24 h). Slot originals, `public/` and manifests are never swept.
+  than `Grace` (24 h; plus 1 day for `u-` multipart objects, which may be
+  dated at initiation). Slot originals, `public/` and manifests are never swept.
+  Invariant: it deletes only objects no manifest references and no in-flight
+  commit can newly reference. Presign reuses an existing original, and a
+  commit accepts one, only while a manifest references it or it is well
+  before the sweep's cutoff (grace/2 for presign; grace/4, at most 1 h, for
+  commit); otherwise the client uploads it again. Set `UploadOptions.Grace`
+  to the same grace (taken from `Queue` when it is the `*Jobs`).
 - **Deletion** removes the whole folder, manifests first, then again after
   `LateUploadWindow` (25 h) for PUTs and multipart completions that land late.
   With a `Limiter`, the owner's quota (the manifests' `OriginalBytes`) is
