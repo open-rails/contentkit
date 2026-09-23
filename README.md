@@ -245,6 +245,19 @@ database: hosts run `video.Migrate` and enqueue through `video.NewEnqueuer`
 (insert-only; register `enqueuer.Processor()` with `media.Jobs.AddProcessor`); the worker's environment is
 documented in `cmd/media-worker`.
 
+**Playback** is served by `Reader.Handler` next to the read API, generated per
+request after one `Resolve` (`private, no-store`; the folder cookie is set in
+cookie mode): `/{kind}/{id}/hls/{file}/master.m3u8?audio=&subs=` (optional
+id/language filters), `video/{height}.m3u8`, `audio/{id}.m3u8`,
+`subs/{id}.m3u8`, `sprite.vtt`, and `/{kind}/{id}/download/{key}` (302 to the
+signed `dl=` URL, full access only; name from `Hooks.DownloadName`). Media
+playlists are `EXT-X-BYTERANGE` lines over one blob URL per rendition. A file
+plays when the grant allows it (full access, inside a preview cut, or a
+teaser); preview viewers get per-file URL tokens. In the browser, hls.js needs
+`xhrSetup: xhr => { xhr.withCredentials = true }` in cookie mode and the
+worker's `Origins` must list the site; native Safari/iOS HLS should be checked
+in cookie mode and switched to URL mode if it does not send the cookie.
+
 Tokens are `kid.exp.base64url(HMAC-SHA256(secret, "{scope}|{exp}"))`: a scope
 is a folder (`…/blobs/`, covering the objects directly under it), one key, or
 `{key}#dl={name}` for a download name. Expiry is window-aligned (default 4 h);
