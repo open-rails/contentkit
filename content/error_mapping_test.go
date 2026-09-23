@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/open-rails/contentkit/access"
 )
 
 func decodeErr(t *testing.T, body string) errorBody {
@@ -24,7 +26,7 @@ func decodeErr(t *testing.T, body string) errorBody {
 // upload route, not a 500 indistinguishable from a crash.
 func TestErrorMapping_UnwiredMediaStoreIs501(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{Perms: Perms{PostWrite: "post", PollWrite: "poll"}})
-	admin := Actor{ID: "admin"}
+	admin := access.Actor{ID: "admin"}
 	poll, err := rt.polls.create(context.Background(), admin, createPollInput{Question: "Q?", Options: []createOptionInput{{Label: "A"}, {Label: "B"}}})
 	if err != nil {
 		t.Fatalf("create poll: %v", err)
@@ -59,7 +61,7 @@ func TestErrorMapping_ForeignTenantRefIsSanitized500(t *testing.T) {
 	})
 
 	req := httptest.NewRequest("GET", "/gallery/g1/comments", nil)
-	req = req.WithContext(withActor(req.Context(), Actor{ID: "u1"}))
+	req = req.WithContext(withActor(req.Context(), access.Actor{ID: "u1"}))
 	rec := httptest.NewRecorder()
 	rt.Handler().ServeHTTP(rec, req)
 
@@ -112,7 +114,7 @@ func TestErrorMapping_PublicCodes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
-			req = req.WithContext(withActor(req.Context(), Actor{ID: "u1"}))
+			req = req.WithContext(withActor(req.Context(), access.Actor{ID: "u1"}))
 			rec := httptest.NewRecorder()
 			rt.Handler().ServeHTTP(rec, req)
 			if rec.Code != tc.status {
@@ -140,7 +142,7 @@ func TestErrorMapping_ModerationRejection(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, Moderator: &fakeModerator{}})
 
 	req := httptest.NewRequest("POST", "/gallery/g1/comments", strings.NewReader(`{"body":"spam"}`))
-	req = req.WithContext(withActor(req.Context(), Actor{ID: "u1"}))
+	req = req.WithContext(withActor(req.Context(), access.Actor{ID: "u1"}))
 	rec := httptest.NewRecorder()
 	rt.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnprocessableEntity {

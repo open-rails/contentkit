@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 )
 
@@ -27,7 +28,7 @@ func TestFavorites_AddRemoveStatus(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	f := newFavorites(rt)
 	ctx := context.Background()
-	actor := Actor{ID: "u1", Kind: "user"}
+	actor := access.Actor{ID: "u1", Kind: "user"}
 	w := ref("widget", "1")
 
 	if err := f.add(ctx, actor, "widget", "1"); err != nil {
@@ -69,7 +70,7 @@ func TestFavorites_TransactionErrorRollsBack(t *testing.T) {
 	if _, err := pool.Exec(ctx, `DROP TABLE `+rt.store.t.counts); err != nil {
 		t.Fatalf("drop counts table: %v", err)
 	}
-	if err := rt.favorites.add(ctx, Actor{ID: "u1", Kind: "user"}, "widget", "1"); err == nil {
+	if err := rt.favorites.add(ctx, access.Actor{ID: "u1", Kind: "user"}, "widget", "1"); err == nil {
 		t.Fatal("favorite error = nil, want transaction failure")
 	}
 	var n int
@@ -86,7 +87,7 @@ func TestFavorites_BatchIsFavorited(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	f := newFavorites(rt)
 	ctx := context.Background()
-	actor := Actor{ID: "u1", Kind: "user"}
+	actor := access.Actor{ID: "u1", Kind: "user"}
 
 	if err := f.add(ctx, actor, "widget", "1"); err != nil {
 		t.Fatalf("add 1: %v", err)
@@ -120,7 +121,7 @@ func TestFavorites_WishlistVisibleNotAccessible(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	f := newFavorites(rt)
 	ctx := context.Background()
-	actor := Actor{ID: "u1", Kind: "user"}
+	actor := access.Actor{ID: "u1", Kind: "user"}
 
 	if err := f.add(ctx, actor, "widget", "premium"); err != nil {
 		t.Fatalf("favorite premium-locked: want success, got %v", err)
@@ -139,7 +140,7 @@ func TestFavorites_GatingHiddenMissing(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	f := newFavorites(rt)
 	ctx := context.Background()
-	actor := Actor{ID: "u1", Kind: "user"}
+	actor := access.Actor{ID: "u1", Kind: "user"}
 
 	if err := f.add(ctx, actor, "widget", "hidden"); !errors.Is(err, ErrNotVisible) {
 		t.Fatalf("favorite hidden: want ErrNotVisible, got %v", err)
@@ -159,7 +160,7 @@ func TestFavorites_AnonymousRejected(t *testing.T) {
 	mux := http.NewServeMux()
 	newFavorites(rt).mount(mux)
 
-	anon := Actor{Anonymous: true, IP: "10.0.0.9"}
+	anon := access.Actor{Anonymous: true, IP: "10.0.0.9"}
 	for _, c := range []struct{ method, path string }{
 		{"POST", "/widget/1/favorite"}, {"DELETE", "/widget/1/favorite"}, {"GET", "/widget/1/favorite"}, {"GET", "/favorites"},
 	} {
@@ -172,7 +173,7 @@ func TestFavorites_AnonymousRejected(t *testing.T) {
 		}
 	}
 	req := httptest.NewRequest("POST", "/widget/1/favorite", nil)
-	req = req.WithContext(withActor(req.Context(), Actor{ID: "u1", Kind: "user"}))
+	req = req.WithContext(withActor(req.Context(), access.Actor{ID: "u1", Kind: "user"}))
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -188,7 +189,7 @@ func TestFavorites_ListAndCounts(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	f := newFavorites(rt)
 	ctx := context.Background()
-	u1, u2 := Actor{ID: "u1", Kind: "user"}, Actor{ID: "u2", Kind: "user"}
+	u1, u2 := access.Actor{ID: "u1", Kind: "user"}, access.Actor{ID: "u2", Kind: "user"}
 
 	for _, id := range []string{"1", "2", "3"} {
 		if err := f.add(ctx, u1, "widget", id); err != nil {
@@ -225,5 +226,27 @@ func TestFavorites_ListAndCounts(t *testing.T) {
 	page, err := f.list(ctx, "u1", 2, 0)
 	if err != nil || len(page) != 2 || page[0].ContentID != "3" || page[1].ContentID != "2" {
 		t.Fatalf("paged list = %v err=%v, want [3 2]", page, err)
+	}
+}
+
+// A preview-limited resolution (media free preview, scheduled chapters) gates
+// interactions only by Visible/Accessible; content ignores PreviewLimit.
+func TestPreviewLimitIgnoredByInteractions(t *testing.T) {
+	res := &fakeResolver{entries: map[string]access.Resolution{
+		"widget:preview":   {Visible: true, PreviewLimit: 3},
+		"widget:scheduled": {Visible: true, Accessible: true, PreviewLimit: 7},
+	}}
+	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
+	ctx := context.Background()
+	actor := access.Actor{ID: "u1", Kind: "user"}
+
+	if err := newFavorites(rt).add(ctx, actor, "widget", "preview"); err != nil {
+		t.Fatalf("favorite preview: %v", err)
+	}
+	if _, err := rt.reactions.react(ctx, actor, "widget", "preview", 1); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("react preview: %v, want ErrForbidden", err)
+	}
+	if _, err := rt.reactions.react(ctx, actor, "widget", "scheduled", 1); err != nil {
+		t.Fatalf("react scheduled: %v", err)
 	}
 }

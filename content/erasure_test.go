@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/migrations"
 )
@@ -17,16 +18,16 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 	ctx := context.Background()
 	rt := newPreferenceRuntime(t)
 	rt.perms.PollWrite = pollWritePerm
-	u1, u2, anon := Actor{ID: "erase"}, Actor{ID: "keep"}, Actor{ID: "erase", Anonymous: true, IP: "erase"}
+	u1, u2, anon := access.Actor{ID: "erase"}, access.Actor{ID: "keep"}, access.Actor{ID: "erase", Anonymous: true, IP: "erase"}
 	target := ref("gallery", "42")
-	for _, a := range []Actor{u1, u2, anon} {
+	for _, a := range []access.Actor{u1, u2, anon} {
 		mustReact(t, rt, a, "gallery", "42:en", 1)
 	}
-	for _, a := range []Actor{u1, u2} {
+	for _, a := range []access.Actor{u1, u2} {
 		mustFavorite(t, rt, a, "gallery", "42:en", true)
 	}
 	cm := mustComment(t, rt, u2, "gallery", "42:en", createInput{Body: "keep author's comment"})
-	for _, a := range []Actor{u1, u2, anon} {
+	for _, a := range []access.Actor{u1, u2, anon} {
 		if _, err := rt.comments.reactTx(ctx, a, cm.ID, 1); err != nil {
 			t.Fatal(err)
 		}
@@ -35,7 +36,7 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 	if _, err := rt.store.pool.Exec(ctx, `UPDATE `+rt.store.t.posts+` SET is_draft=false WHERE id=$1`, post); err != nil {
 		t.Fatal(err)
 	}
-	for _, a := range []Actor{u1, u2, anon} {
+	for _, a := range []access.Actor{u1, u2, anon} {
 		if err := rt.posts.react(ctx, a, post, 1); err != nil {
 			t.Fatal(err)
 		}
@@ -44,7 +45,7 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, a := range []Actor{u1, u2, anon} {
+	for _, a := range []access.Actor{u1, u2, anon} {
 		if _, err := rt.polls.vote(ctx, a, poll.ID, poll.Options[0].ID); err != nil {
 			t.Fatal(err)
 		}
@@ -101,7 +102,7 @@ func TestSourceWritesRaceErasureWithoutResurrection(t *testing.T) {
 	ctx := context.Background()
 	rt := newPreferenceRuntime(t)
 	rt.perms.PollWrite = pollWritePerm
-	actor := Actor{ID: "racer"}
+	actor := access.Actor{ID: "racer"}
 	poll, err := rt.polls.create(ctx, pollAdmin, createPollInput{Question: "q", Options: []createOptionInput{{Label: "a"}, {Label: "b"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +151,7 @@ func TestSourceWritesRaceErasureWithoutResurrection(t *testing.T) {
 func TestConcurrentErasedActorsShareCountersWithoutDeadlock(t *testing.T) {
 	ctx := context.Background()
 	rt := newPreferenceRuntime(t)
-	for _, actor := range []Actor{{ID: "a"}, {ID: "b"}, {ID: "keep"}} {
+	for _, actor := range []access.Actor{{ID: "a"}, {ID: "b"}, {ID: "keep"}} {
 		for _, id := range []string{"42:en", "7:en"} {
 			mustReact(t, rt, actor, "gallery", id, 1)
 			mustFavorite(t, rt, actor, "gallery", id, true)
@@ -180,10 +181,10 @@ func TestConcurrentErasedActorsShareCountersWithoutDeadlock(t *testing.T) {
 func TestRestoreReappliesSourceErasureAndFencedRowsNeverExport(t *testing.T) {
 	ctx := context.Background()
 	rt := newPreferenceRuntime(t)
-	actor := Actor{ID: "gone"}
+	actor := access.Actor{ID: "gone"}
 	mustReact(t, rt, actor, "gallery", "42:en", 1)
-	mustReact(t, rt, Actor{ID: "keep"}, "gallery", "42:en", 1)
-	mustFavorite(t, rt, Actor{ID: "keep"}, "gallery", "42:en", true)
+	mustReact(t, rt, access.Actor{ID: "keep"}, "gallery", "42:en", 1)
+	mustFavorite(t, rt, access.Actor{ID: "keep"}, "gallery", "42:en", true)
 	if err := rt.EraseSubjects(ctx, []string{actor.ID}); err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +214,7 @@ func TestRestoreReappliesSourceErasureAndFencedRowsNeverExport(t *testing.T) {
 func TestConcurrentErasureWithCrossAuthoredReactionTargets(t *testing.T) {
 	ctx := context.Background()
 	rt := moderatedRuntime(t, &fakeModerator{})
-	a, b := Actor{ID: "a"}, Actor{ID: "b"}
+	a, b := access.Actor{ID: "a"}, access.Actor{ID: "b"}
 	ca := mustComment(t, rt, a, "gallery", "1", createInput{Body: "published a"})
 	cb := mustComment(t, rt, b, "gallery", "1", createInput{Body: "published b"})
 	if _, err := rt.comments.reactTx(ctx, a, cb.ID, 1); err != nil {
@@ -245,7 +246,7 @@ func TestConcurrentErasureWithCrossAuthoredReactionTargets(t *testing.T) {
 func TestInteractionErasureDoesNotRecreateRemovedRollups(t *testing.T) {
 	ctx := context.Background()
 	rt := newPreferenceRuntime(t)
-	mustReact(t, rt, Actor{ID: "gone"}, "gallery", "42:en", 1)
+	mustReact(t, rt, access.Actor{ID: "gone"}, "gallery", "42:en", 1)
 	if _, err := rt.store.pool.Exec(ctx, `DELETE FROM `+rt.store.t.counts); err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +287,10 @@ func TestSourceFenceSeesCommittedErasureWithRepeatableReadHostDefault(t *testing
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { _, err := rt.reactions.react(ctx, Actor{ID: "gone"}, "gallery", "42:en", 1); done <- err }()
+	go func() {
+		_, err := rt.reactions.react(ctx, access.Actor{ID: "gone"}, "gallery", "42:en", 1)
+		done <- err
+	}()
 	// Observe the writer's advisory-lock wait before committing the erasure.
 	for {
 		var waiting bool
@@ -317,7 +321,7 @@ func TestSourceFenceSeesCommittedErasureWithRepeatableReadHostDefault(t *testing
 func TestSourceErasureRedactsDraftAndScheduledPosts(t *testing.T) {
 	ctx := context.Background()
 	rt, _ := newPostRuntime(t, Options{})
-	author := Actor{ID: "gone"}
+	author := access.Actor{ID: "gone"}
 	future := time.Now().Add(time.Hour)
 	for _, in := range []postWriteReq{
 		{Title: ptr("unpublished draft"), Body: ptr("draft secret"), Excerpt: ptr("draft excerpt"), IsDraft: ptr(true)},
@@ -350,7 +354,7 @@ func TestSourceErasureRedactsDraftAndScheduledPosts(t *testing.T) {
 func TestErasureDoesNotRetainScheduledPostAsPublishedBackup(t *testing.T) {
 	ctx := context.Background()
 	rt := moderatedRuntime(t, &fakeModerator{})
-	actor := Actor{ID: "reviewer"}
+	actor := access.Actor{ID: "reviewer"}
 	future := time.Now().Add(time.Hour)
 	rec := doJSON(t, rt.Handler(), actor, "POST", "/posts", postWriteReq{Title: ptr("scheduled"), Body: ptr("unpublished scheduled original"), IsDraft: ptr(false), LiveAt: &future})
 	if rec.Code != 201 {
@@ -447,7 +451,7 @@ func TestErasureRetriesProviderAfterDurableSourceFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.answer(ctx, Actor{ID: "u1"}, poll.ID, "personal"); err != nil {
+	if _, err := p.answer(ctx, access.Actor{ID: "u1"}, poll.ID, "personal"); err != nil {
 		t.Fatal(err)
 	}
 	provider.down = true
@@ -458,7 +462,7 @@ func TestErasureRetriesProviderAfterDurableSourceFence(t *testing.T) {
 	if err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.pollAnswers).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("source not durably removed: %d %v", n, err)
 	}
-	if _, err := p.answer(ctx, Actor{ID: "u1"}, poll.ID, "new"); !errors.Is(err, ErrSubjectErased) {
+	if _, err := p.answer(ctx, access.Actor{ID: "u1"}, poll.ID, "new"); !errors.Is(err, ErrSubjectErased) {
 		t.Fatalf("source fence lost: %v", err)
 	}
 	provider.down = false
@@ -479,7 +483,7 @@ func TestErasureFencesPausedClassifierCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { _, err := p.answer(ctx, Actor{ID: "u1"}, poll.ID, "paused"); done <- err }()
+	go func() { _, err := p.answer(ctx, access.Actor{ID: "u1"}, poll.ID, "paused"); done <- err }()
 	<-provider.entered
 	if err := rt.EraseSubjects(ctx, []string{"u1"}); err != nil {
 		t.Fatal(err)
@@ -488,7 +492,7 @@ func TestErasureFencesPausedClassifierCompletion(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	got, err := p.get(ctx, Actor{ID: "u1"}, poll.ID)
+	got, err := p.get(ctx, access.Actor{ID: "u1"}, poll.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -505,7 +509,7 @@ func TestErasureFencesPausedModerationBeforeSourceCommit(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{Moderator: provider, ProviderDataEraser: provider, Resolver: res, ContentKinds: []string{"gallery"}})
 	done := make(chan error, 1)
 	go func() {
-		_, err := rt.comments.create(ctx, Actor{ID: "u1"}, "gallery", "1", createInput{Body: "paused"})
+		_, err := rt.comments.create(ctx, access.Actor{ID: "u1"}, "gallery", "1", createInput{Body: "paused"})
 		done <- err
 	}()
 	<-provider.entered
@@ -528,8 +532,8 @@ func TestErasureFencesPausedModerationBeforeSourceCommit(t *testing.T) {
 func TestErasurePreservesPublicationRepliesAndOtherTenant(t *testing.T) {
 	ctx := context.Background()
 	rt := moderatedRuntime(t, &fakeModerator{})
-	author := Actor{ID: "u1"}
-	sibling := Actor{ID: "u2"}
+	author := access.Actor{ID: "u1"}
+	sibling := access.Actor{ID: "u2"}
 	published := mustComment(t, rt, author, "gallery", "1", createInput{Body: "published original"})
 	reply := mustComment(t, rt, sibling, "gallery", "1", createInput{ReplyToID: published.ID, Body: "sibling reply"})
 	unpublished := mustComment(t, rt, author, "gallery", "1", createInput{Body: "iffy never published"})
@@ -565,7 +569,7 @@ func TestErasurePreservesPublicationRepliesAndOtherTenant(t *testing.T) {
 func TestErasurePreservesPublishedPostSnapshot(t *testing.T) {
 	ctx := context.Background()
 	rt := moderatedRuntime(t, &fakeModerator{})
-	author := Actor{ID: "reviewer"}
+	author := access.Actor{ID: "reviewer"}
 	rec := doJSON(t, rt.Handler(), author, "POST", "/posts", postWriteReq{Title: ptr("published"), Body: ptr("public body"), IsDraft: ptr(false)})
 	if rec.Code != 201 {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
@@ -591,7 +595,7 @@ func TestErasurePreservesPublishedPostSnapshot(t *testing.T) {
 func TestBasicModeratorCacheUsesTypedIdentityAndErasure(t *testing.T) {
 	m := &BasicModerator{}
 	ctx := context.Background()
-	for _, in := range []ModerationInput{{Tenant: "a", Actor: Actor{ID: "b|c"}, Text: "same"}, {Tenant: "a|b", Actor: Actor{ID: "c"}, Text: "same"}} {
+	for _, in := range []ModerationInput{{Tenant: "a", Actor: access.Actor{ID: "b|c"}, Text: "same"}, {Tenant: "a|b", Actor: access.Actor{ID: "c"}, Text: "same"}} {
 		v, err := m.Screen(ctx, in)
 		if err != nil || v.Decision != DecisionApprove {
 			t.Fatalf("opaque identity collision: %+v %v", v, err)
@@ -603,7 +607,7 @@ func TestBasicModeratorCacheUsesTypedIdentityAndErasure(t *testing.T) {
 	if len(m.recent) != 1 {
 		t.Fatalf("moderator cache cleanup crossed identities: %d", len(m.recent))
 	}
-	if _, err := m.Screen(ctx, ModerationInput{Tenant: "a", Actor: Actor{ID: "b|c"}, Text: "late"}); !errors.Is(err, ErrSubjectErased) {
+	if _, err := m.Screen(ctx, ModerationInput{Tenant: "a", Actor: access.Actor{ID: "b|c"}, Text: "late"}); !errors.Is(err, ErrSubjectErased) {
 		t.Fatalf("late completion recreated erased cache: %v", err)
 	}
 }
@@ -611,7 +615,7 @@ func TestBasicModeratorCacheUsesTypedIdentityAndErasure(t *testing.T) {
 func TestErasureFenceSurvivesRuntimeRestartAndReview(t *testing.T) {
 	ctx := context.Background()
 	rt := moderatedRuntime(t, &fakeModerator{})
-	author := Actor{ID: "u1"}
+	author := access.Actor{ID: "u1"}
 	cm := mustComment(t, rt, author, "gallery", "1", createInput{Body: "iffy held"})
 	page, err := rt.ListHeld(ctx, KindComment, "", 10)
 	if err != nil {

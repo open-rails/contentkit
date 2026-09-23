@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+
+	"github.com/open-rails/contentkit/access"
 )
 
 // commentsEnricher is a fake UserEnricher for the enrichment assertion.
@@ -33,7 +35,7 @@ func commentsRuntime(t *testing.T, opts Options) *Runtime {
 	return rt
 }
 
-func mustComment(t *testing.T, rt *Runtime, actor Actor, kind, id string, in createInput) Comment {
+func mustComment(t *testing.T, rt *Runtime, actor access.Actor, kind, id string, in createInput) Comment {
 	t.Helper()
 	cm, err := rt.comments.create(context.Background(), actor, kind, id, in)
 	if err != nil {
@@ -45,7 +47,7 @@ func mustComment(t *testing.T, rt *Runtime, actor Actor, kind, id string, in cre
 func TestComments_TopLevelRepliesAndReplyCount(t *testing.T) {
 	rt := commentsRuntime(t, Options{Users: commentsEnricher{}})
 	ctx := context.Background()
-	author := Actor{ID: "author"}
+	author := access.Actor{ID: "author"}
 
 	a := mustComment(t, rt, author, "gallery", "1", createInput{Body: "root A"})
 	r := mustComment(t, rt, author, "gallery", "1", createInput{Body: "reply to A", ReplyToID: a.ID})
@@ -85,7 +87,7 @@ func TestComments_ReplyConstraints(t *testing.T) {
 	res.set("gallery", "2", true, true)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}})
 	ctx := context.Background()
-	author := Actor{ID: "author"}
+	author := access.Actor{ID: "author"}
 
 	on1 := mustComment(t, rt, author, "gallery", "1", createInput{Body: "on content 1"})
 	if _, err := rt.comments.create(ctx, author, "gallery", "2", createInput{Body: "cross", ReplyToID: on1.ID}); err == nil {
@@ -103,7 +105,7 @@ func TestComments_AccessGating(t *testing.T) {
 	res.set("gallery", "hidden", false, false)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}})
 	ctx := context.Background()
-	author := Actor{ID: "author"}
+	author := access.Actor{ID: "author"}
 
 	if _, err := rt.comments.create(ctx, author, "gallery", "locked", createInput{Body: "x"}); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("premium-locked: want ErrForbidden, got %v", err)
@@ -121,7 +123,7 @@ func TestComments_AccessGating(t *testing.T) {
 func TestComments_EditSanitizesAndRejectionIs422(t *testing.T) {
 	rt := commentsRuntime(t, Options{})
 	ctx := context.Background()
-	author := Actor{ID: "author"}
+	author := access.Actor{ID: "author"}
 	cm := mustComment(t, rt, author, "gallery", "1", createInput{Body: "<b>fine</b>"})
 	if cm.Body != "fine" {
 		t.Fatalf("create body = %q, want tags stripped", cm.Body)
@@ -143,7 +145,7 @@ func TestComments_EditSanitizesAndRejectionIs422(t *testing.T) {
 func TestComments_AnonRequiresName(t *testing.T) {
 	rt := commentsRuntime(t, Options{})
 	ctx := context.Background()
-	anon := Actor{IP: "1.2.3.4", Anonymous: true}
+	anon := access.Actor{IP: "1.2.3.4", Anonymous: true}
 	if _, err := rt.comments.create(ctx, anon, "gallery", "1", createInput{Body: "hi"}); err == nil {
 		t.Fatal("anon without a name should be rejected")
 	}
@@ -155,7 +157,7 @@ func TestComments_AnonRequiresName(t *testing.T) {
 func TestComments_SoftDeleteKeepsThread(t *testing.T) {
 	rt := commentsRuntime(t, Options{})
 	ctx := context.Background()
-	author := Actor{ID: "author"}
+	author := access.Actor{ID: "author"}
 	top := mustComment(t, rt, author, "gallery", "1", createInput{Body: "top"})
 	reply := mustComment(t, rt, author, "gallery", "1", createInput{Body: "reply", ReplyToID: top.ID})
 
@@ -184,20 +186,20 @@ func TestComments_DeleteOwnerAndModerator(t *testing.T) {
 		Authz: denyAll{}, Perms: Perms{CommentModerate: "root:comment:moderate"},
 	})
 	ctx := context.Background()
-	c1 := mustComment(t, denyRt, Actor{ID: "author"}, "gallery", "1", createInput{Body: "mine"})
-	if err := denyRt.comments.softDelete(ctx, Actor{ID: "author"}, c1.ID); err != nil {
+	c1 := mustComment(t, denyRt, access.Actor{ID: "author"}, "gallery", "1", createInput{Body: "mine"})
+	if err := denyRt.comments.softDelete(ctx, access.Actor{ID: "author"}, c1.ID); err != nil {
 		t.Fatalf("owner delete should succeed: %v", err)
 	}
-	c2 := mustComment(t, denyRt, Actor{ID: "author"}, "gallery", "1", createInput{Body: "mine2"})
-	if err := denyRt.comments.softDelete(ctx, Actor{ID: "intruder"}, c2.ID); !errors.Is(err, errForbidden) {
+	c2 := mustComment(t, denyRt, access.Actor{ID: "author"}, "gallery", "1", createInput{Body: "mine2"})
+	if err := denyRt.comments.softDelete(ctx, access.Actor{ID: "intruder"}, c2.ID); !errors.Is(err, errForbidden) {
 		t.Fatalf("non-owner without perm: want forbidden, got %v", err)
 	}
 	modRt, _ := newTestRuntime(t, Options{
 		Resolver: resolverWith("gallery", "1"), ContentKinds: []string{"gallery"},
 		Authz: allowAll{}, Perms: Perms{CommentModerate: "root:comment:moderate"},
 	})
-	c3 := mustComment(t, modRt, Actor{ID: "author"}, "gallery", "1", createInput{Body: "theirs"})
-	if err := modRt.comments.softDelete(ctx, Actor{ID: "mod"}, c3.ID); err != nil {
+	c3 := mustComment(t, modRt, access.Actor{ID: "author"}, "gallery", "1", createInput{Body: "theirs"})
+	if err := modRt.comments.softDelete(ctx, access.Actor{ID: "mod"}, c3.ID); err != nil {
 		t.Fatalf("moderator delete should succeed: %v", err)
 	}
 }
@@ -205,9 +207,9 @@ func TestComments_DeleteOwnerAndModerator(t *testing.T) {
 func TestComments_ReactionCountersExact(t *testing.T) {
 	rt := commentsRuntime(t, Options{})
 	ctx := context.Background()
-	author := Actor{ID: "author"}
+	author := access.Actor{ID: "author"}
 	cm := mustComment(t, rt, author, "gallery", "1", createInput{Body: "react to me"})
-	reactor := Actor{ID: "reactor"}
+	reactor := access.Actor{ID: "reactor"}
 
 	var wg sync.WaitGroup
 	for i := 0; i < 15; i++ {
@@ -238,10 +240,10 @@ func TestComments_ReactionCountersExact(t *testing.T) {
 	// Same counters, totalled per author: only live published comments
 	// contribute and an anonymous comment has no author to credit.
 	second := mustComment(t, rt, author, "gallery", "1", createInput{Body: "and me"})
-	if _, err := rt.comments.reactTx(ctx, Actor{ID: "other"}, second.ID, 1); err != nil {
+	if _, err := rt.comments.reactTx(ctx, access.Actor{ID: "other"}, second.ID, 1); err != nil {
 		t.Fatalf("react to second comment: %v", err)
 	}
-	anon := mustComment(t, rt, Actor{Anonymous: true, IP: "9.9.9.9"}, "gallery", "1", createInput{Body: "anon", AnonName: "guest"})
+	anon := mustComment(t, rt, access.Actor{Anonymous: true, IP: "9.9.9.9"}, "gallery", "1", createInput{Body: "anon", AnonName: "guest"})
 	if _, err := rt.comments.reactTx(ctx, reactor, anon.ID, 1); err != nil {
 		t.Fatalf("react to anonymous comment: %v", err)
 	}
@@ -263,7 +265,7 @@ func TestComments_ReactionCountersExact(t *testing.T) {
 func TestComments_ReplyCountDecrementsOnDelete(t *testing.T) {
 	rt := commentsRuntime(t, Options{})
 	ctx := context.Background()
-	author := Actor{ID: "author"}
+	author := access.Actor{ID: "author"}
 	top := mustComment(t, rt, author, "gallery", "1", createInput{Body: "p"})
 	r1 := mustComment(t, rt, author, "gallery", "1", createInput{Body: "r1", ReplyToID: top.ID})
 	_ = mustComment(t, rt, author, "gallery", "1", createInput{Body: "r2", ReplyToID: top.ID})
@@ -312,7 +314,7 @@ func TestComments_LatestFeed(t *testing.T) {
 	res.set("gallery", "2", true, true)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, Users: commentsEnricher{}})
 	ctx := context.Background()
-	a := Actor{ID: "author"}
+	a := access.Actor{ID: "author"}
 
 	c1 := mustComment(t, rt, a, "gallery", "1", createInput{Body: "on g1"})
 	c2 := mustComment(t, rt, a, "gallery", "2", createInput{Body: "on g2"})
@@ -349,7 +351,7 @@ func TestComments_LatestFeedTotal(t *testing.T) {
 	mod := &fakeModerator{}
 	rt := moderatedRuntime(t, mod)
 	ctx := context.Background()
-	a := Actor{ID: "author"}
+	a := access.Actor{ID: "author"}
 
 	if n, err := rt.LatestCommentsTotal(ctx); err != nil || n != 0 {
 		t.Fatalf("empty total = %d, %v; want 0", n, err)
@@ -396,7 +398,7 @@ func TestComments_AdminListAndRestore(t *testing.T) {
 		Authz: pollAdminOnly{}, Perms: Perms{CommentModerate: "root:comments:delete"},
 	})
 	ctx := context.Background()
-	admin, user := Actor{ID: "admin"}, Actor{ID: "user1"}
+	admin, user := access.Actor{ID: "admin"}, access.Actor{ID: "user1"}
 
 	top := mustComment(t, rt, user, "gallery", "1", createInput{Body: "visible"})
 	hidden := mustComment(t, rt, user, "gallery", "1", createInput{Body: "hide me"})

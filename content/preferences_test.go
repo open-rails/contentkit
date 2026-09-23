@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 )
 
@@ -39,14 +40,14 @@ func newPreferenceRuntime(t *testing.T) *Runtime {
 	return rt
 }
 
-func mustReact(t *testing.T, rt *Runtime, actor Actor, kind, id string, value int16) {
+func mustReact(t *testing.T, rt *Runtime, actor access.Actor, kind, id string, value int16) {
 	t.Helper()
 	if _, err := rt.reactions.react(context.Background(), actor, kind, id, value); err != nil {
 		t.Fatalf("react %s/%s=%d: %v", kind, id, value, err)
 	}
 }
 
-func mustFavorite(t *testing.T, rt *Runtime, actor Actor, kind, id string, add bool) {
+func mustFavorite(t *testing.T, rt *Runtime, actor access.Actor, kind, id string, add bool) {
 	t.Helper()
 	var err error
 	if add {
@@ -88,7 +89,7 @@ func row(t *testing.T, rt *Runtime, table, user, id string) (value int16, revisi
 func TestPreferences_ConcurrentLocaleRoutesShareOneOrderedPreference(t *testing.T) {
 	rt := newPreferenceRuntime(t)
 	ctx := context.Background()
-	actor := Actor{ID: "u1", Kind: "user"}
+	actor := access.Actor{ID: "u1", Kind: "user"}
 	langs := []string{"42:en", "42:ja"}
 	values := []int16{1, -1, 0, 1}
 	var wg sync.WaitGroup
@@ -150,7 +151,7 @@ func TestPreferences_ConcurrentLocaleRoutesShareOneOrderedPreference(t *testing.
 func TestPreferences_OwnStateReadsUseTheSameIdentity(t *testing.T) {
 	rt := newPreferenceRuntime(t)
 	ctx := context.Background()
-	actor := Actor{ID: "u1", Kind: "user"}
+	actor := access.Actor{ID: "u1", Kind: "user"}
 	mustReact(t, rt, actor, "gallery", "42:en", 1)
 	mustFavorite(t, rt, actor, "gallery", "42:ja", true)
 	locale, work := ref("gallery", "42:ja"), ref("gallery", "42")
@@ -167,7 +168,7 @@ func TestPreferences_OwnStateReadsUseTheSameIdentity(t *testing.T) {
 // A no-op refreshes no revision and creates no row.
 func TestPreferences_NoOpAllocatesNothing(t *testing.T) {
 	rt := newPreferenceRuntime(t)
-	actor := Actor{ID: "u1", Kind: "user"}
+	actor := access.Actor{ID: "u1", Kind: "user"}
 	mustReact(t, rt, actor, "gallery", "42:en", 1)
 	_, before, _ := row(t, rt, rt.store.t.reactions, "u1", "42")
 	mustReact(t, rt, actor, "gallery", "42:ja", 1) // same value from the other route
@@ -189,7 +190,7 @@ func TestPreferences_NoOpAllocatesNothing(t *testing.T) {
 func TestPreferences_FavoritesAreSoftRows(t *testing.T) {
 	rt := newPreferenceRuntime(t)
 	ctx := context.Background()
-	actor := Actor{ID: "u1", Kind: "user"}
+	actor := access.Actor{ID: "u1", Kind: "user"}
 	work := ref("gallery", "42")
 	mustFavorite(t, rt, actor, "gallery", "42:en", true)
 	_, r1, _ := row(t, rt, rt.store.t.favorites, "u1", "42")
@@ -236,7 +237,7 @@ func TestPreferences_RolledBackMutationExportsNothing(t *testing.T) {
 	if _, err := rt.store.pool.Exec(ctx, `DROP TABLE `+rt.store.t.counts); err != nil {
 		t.Fatal(err)
 	}
-	err := reactErr(rt.reactions.react(ctx, Actor{ID: "u1", Kind: "user"}, "gallery", "42:en", 1))
+	err := reactErr(rt.reactions.react(ctx, access.Actor{ID: "u1", Kind: "user"}, "gallery", "42:en", 1))
 	var pgErr interface{ SQLState() string }
 	if err == nil || !errors.As(err, &pgErr) {
 		t.Fatalf("react with a broken rollup = %v, want the transaction to fail", err)
@@ -255,8 +256,8 @@ func TestPreferences_ExportScopeAndOptOut(t *testing.T) {
 	res.set("tag", "9", true, true)
 	rt, pool := newPostRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery", "tag"}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
 	ctx := context.Background()
-	u1 := Actor{ID: "u1", Kind: "user"}
-	mustReact(t, rt, Actor{IP: "10.0.0.1", Anonymous: true}, "gallery", "42:en", 1)
+	u1 := access.Actor{ID: "u1", Kind: "user"}
+	mustReact(t, rt, access.Actor{IP: "10.0.0.1", Anonymous: true}, "gallery", "42:en", 1)
 	mustReact(t, rt, u1, "tag", "9", 1)
 	var post, cid string
 	if err := pool.QueryRow(ctx, `INSERT INTO `+rt.store.t.posts+` (tenant_id, author_id, title, body, is_draft) VALUES ($1, 'a', 't', 'b', false) RETURNING id`, testTenant).Scan(&post); err != nil {
@@ -312,7 +313,7 @@ func TestPreferences_SyncSkipsTargetsTheCanonicalizerDeclines(t *testing.T) {
 			w, ok := galleryWork(r)
 			return w, ok && !(decline.Load() && w.ContentID == "7")
 		})})
-	u1 := Actor{ID: "u1", Kind: "user"}
+	u1 := access.Actor{ID: "u1", Kind: "user"}
 	mustReact(t, rt, u1, "gallery", "42:en", 1)
 	mustFavorite(t, rt, u1, "gallery", "7:en", true)
 	decline.Store(true)
@@ -332,7 +333,7 @@ func TestPreferences_SyncSkipsTargetsTheCanonicalizerDeclines(t *testing.T) {
 func TestPreferences_FailedSyncKeepsTheWatermark(t *testing.T) {
 	rt := newPreferenceRuntime(t)
 	ctx := context.Background()
-	mustReact(t, rt, Actor{ID: "u1"}, "gallery", "42:en", 1)
+	mustReact(t, rt, access.Actor{ID: "u1"}, "gallery", "42:en", 1)
 	if _, err := rt.SyncPreferences(ctx, func(context.Context, []Preference) error { return errors.New("sink down") }); err == nil {
 		t.Fatal("a failing send must surface")
 	}
@@ -351,7 +352,7 @@ func TestPreferences_FailedSyncKeepsTheWatermark(t *testing.T) {
 func TestPreferences_RevisionFloorOnlyAdvances(t *testing.T) {
 	rt := newPreferenceRuntime(t)
 	ctx := context.Background()
-	actor := Actor{ID: "u1", Kind: "user"}
+	actor := access.Actor{ID: "u1", Kind: "user"}
 	mustReact(t, rt, actor, "gallery", "42:en", 1)
 	floor := int64(1) << 40
 	got, err := rt.SeedPreferenceRevisionFloor(ctx, floor)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 )
 
@@ -71,7 +72,7 @@ type Comment struct {
 // A reply must target a published top-level comment on the same reference;
 // replies are one level deep. A held comment is stored author-only and
 // counted only once a reviewer approves it.
-func (c *comments) create(ctx context.Context, actor Actor, kind, id string, in createInput) (Comment, error) {
+func (c *comments) create(ctx context.Context, actor access.Actor, kind, id string, in createInput) (Comment, error) {
 	ref, err := c.rt.gate(ctx, kind, id, actor, true)
 	if err != nil {
 		return Comment{}, err
@@ -200,7 +201,7 @@ func scanComment(row pgx.Row, cm *Comment) (replyTo, userID, anonName *string, d
 // caller's own held/rejected ones), newest-first and paginated, each with
 // reply_count. Requires the content be visible (not accessible: reading is
 // allowed on premium-locked targets).
-func (c *comments) list(ctx context.Context, actor Actor, kind, id, sort string, limit, offset int) ([]Comment, error) {
+func (c *comments) list(ctx context.Context, actor access.Actor, kind, id, sort string, limit, offset int) ([]Comment, error) {
 	ref, err := c.rt.gate(ctx, kind, id, actor, false)
 	if err != nil {
 		return nil, err
@@ -217,7 +218,7 @@ func (c *comments) list(ctx context.Context, actor Actor, kind, id, sort string,
 
 // replies returns a comment's direct published replies (plus the caller's
 // own), oldest-first + paginated. Gated on the target content's visibility.
-func (c *comments) replies(ctx context.Context, actor Actor, replyToID string, limit, offset int) ([]Comment, error) {
+func (c *comments) replies(ctx context.Context, actor access.Actor, replyToID string, limit, offset int) ([]Comment, error) {
 	if !uuidRe.MatchString(replyToID) {
 		return nil, ErrNotFound
 	}
@@ -258,7 +259,7 @@ type FeedItem struct {
 // tenant (tombstones excluded), dropping ones whose target the resolver no
 // longer shows to this actor, so a page may under-fill. Each distinct
 // reference costs one resolver call per page.
-func (c *comments) latest(ctx context.Context, actor Actor, limit, offset int) ([]FeedItem, error) {
+func (c *comments) latest(ctx context.Context, actor access.Actor, limit, offset int) ([]FeedItem, error) {
 	rows, err := c.s.pool.Query(ctx, `SELECT `+commentCols+`, content_kind, content_id, content_version_id
 		FROM `+c.s.t.comments+` WHERE tenant_id = $1 AND deleted_at IS NULL AND moderation = 'approved'
 		ORDER BY created_at DESC LIMIT $2 OFFSET $3`, c.s.tenant, limit, offset)
@@ -424,7 +425,7 @@ func (c *comments) restore(ctx context.Context, cid string) error {
 
 // hydrate scans comment rows (tombstoning soft-deleted ones), then batch-attaches
 // authors + the caller's own reaction.
-func (c *comments) hydrate(ctx context.Context, actor Actor, rows pgx.Rows) ([]Comment, error) {
+func (c *comments) hydrate(ctx context.Context, actor access.Actor, rows pgx.Rows) ([]Comment, error) {
 	defer rows.Close()
 	var out []Comment
 	var authorIDs []string
@@ -480,7 +481,7 @@ func (c *comments) enrichAuthors(ctx context.Context, list []Comment, authorIDs 
 }
 
 // attachMine sets each comment's Mine via one query over the comment kind.
-func (c *comments) attachMine(ctx context.Context, actor Actor, list []Comment) error {
+func (c *comments) attachMine(ctx context.Context, actor access.Actor, list []Comment) error {
 	if len(list) == 0 {
 		return nil
 	}
@@ -521,7 +522,7 @@ func (c *comments) attachMine(ctx context.Context, actor Actor, list []Comment) 
 // the new text sets its state, so a held comment publishes on approval and a
 // published one is withdrawn on review. Allowed for the owner or a
 // moderator. 404 if missing or soft-deleted.
-func (c *comments) edit(ctx context.Context, actor Actor, cid, rawBody string) (Comment, error) {
+func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody string) (Comment, error) {
 	target, err := c.loadForWrite(ctx, actor, cid)
 	if err != nil {
 		return Comment{}, err
@@ -579,7 +580,7 @@ func (c *comments) edit(ctx context.Context, actor Actor, cid, rawBody string) (
 // for the owner or a moderator. Decrements the replied-to comment's
 // reply_count / the reference's comment_count when a published comment is
 // deleted.
-func (c *comments) softDelete(ctx context.Context, actor Actor, cid string) error {
+func (c *comments) softDelete(ctx context.Context, actor access.Actor, cid string) error {
 	if _, err := c.loadForWrite(ctx, actor, cid); err != nil {
 		return err
 	}
@@ -617,7 +618,7 @@ type writeTarget struct {
 }
 
 // loadForWrite resolves a live comment and authorizes actor as owner-or-moderator.
-func (c *comments) loadForWrite(ctx context.Context, actor Actor, cid string) (writeTarget, error) {
+func (c *comments) loadForWrite(ctx context.Context, actor access.Actor, cid string) (writeTarget, error) {
 	if !uuidRe.MatchString(cid) {
 		return writeTarget{}, ErrNotFound
 	}
@@ -647,7 +648,7 @@ func (c *comments) loadForWrite(ctx context.Context, actor Actor, cid string) (w
 // reactTx writes the caller's reaction to a comment and denormalizes the split
 // counter on the comment row in the same tx. The comment kind is internal, so
 // no gate: just a liveness check (published, not deleted).
-func (c *comments) reactTx(ctx context.Context, actor Actor, cid string, value int16) (reactionCounts, error) {
+func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, value int16) (reactionCounts, error) {
 	if !uuidRe.MatchString(cid) {
 		return reactionCounts{}, ErrNotFound
 	}

@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/open-rails/contentkit/access"
 )
 
 func multipartUpload(t *testing.T, method, path string, content []byte) *http.Request {
@@ -42,7 +44,7 @@ func insertPost(t *testing.T, rt *Runtime) string {
 func TestMedia_PollOptionImageUpload(t *testing.T) {
 	media := &fakeMedia{}
 	rt, _ := newTestRuntime(t, Options{Authz: allowAll{}, Perms: Perms{PollWrite: "root:polls:update"}, Media: media})
-	admin := Actor{ID: "admin"}
+	admin := access.Actor{ID: "admin"}
 	pv, err := rt.polls.create(context.Background(), admin, createPollInput{Question: "Q?", Options: []createOptionInput{{Label: "A"}, {Label: "B"}}})
 	if err != nil {
 		t.Fatalf("create poll: %v", err)
@@ -77,7 +79,7 @@ func TestMedia_PostCoverUpload(t *testing.T) {
 	id := insertPost(t, rt)
 
 	req := multipartUpload(t, "POST", "/posts/"+id+"/cover", []byte("IMGBYTES"))
-	req = req.WithContext(withActor(req.Context(), Actor{ID: "admin"}))
+	req = req.WithContext(withActor(req.Context(), access.Actor{ID: "admin"}))
 	rec := httptest.NewRecorder()
 	rt.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -99,7 +101,7 @@ func TestMedia_PostInlineUpload(t *testing.T) {
 	media := &fakeMedia{}
 	rt, _ := newTestRuntime(t, Options{Authz: allowAll{}, Perms: Perms{PostWrite: "root:post:update"}, Media: media})
 	req := multipartUpload(t, "POST", "/posts/media", []byte("INLINE-IMG"))
-	req = req.WithContext(withActor(req.Context(), Actor{ID: "admin"}))
+	req = req.WithContext(withActor(req.Context(), access.Actor{ID: "admin"}))
 	rec := httptest.NewRecorder()
 	rt.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -116,7 +118,7 @@ func TestMedia_ReplaceDeletesOldObject(t *testing.T) {
 	media := &fakeMedia{}
 	rt, _ := newTestRuntime(t, Options{Authz: allowAll{}, Perms: Perms{PostWrite: "root:post:update"}, Media: media})
 	id := insertPost(t, rt)
-	admin := Actor{ID: "admin"}
+	admin := access.Actor{ID: "admin"}
 
 	for _, name := range []string{"one.png", "two.jpg"} {
 		req := multipartUploadNamed(t, "POST", "/posts/"+id+"/cover", name, []byte("IMG-"+name))
@@ -154,7 +156,7 @@ func TestMedia_OversizeUploadRejected(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{Authz: allowAll{}, Perms: Perms{PostWrite: "root:post:update"}, Media: media})
 	big := bytes.Repeat([]byte("x"), maxUploadBytes+1)
 	req := multipartUpload(t, "POST", "/posts/media", big)
-	req = req.WithContext(withActor(req.Context(), Actor{ID: "admin"}))
+	req = req.WithContext(withActor(req.Context(), access.Actor{ID: "admin"}))
 	rec := httptest.NewRecorder()
 	rt.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -169,7 +171,7 @@ func TestMedia_UploadRequiresPerm(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{Authz: denyAll{}, Perms: Perms{PostWrite: "root:post:update"}, Media: &fakeMedia{}})
 	id := insertPost(t, rt)
 	req := multipartUpload(t, "POST", "/posts/"+id+"/cover", []byte("IMG"))
-	req = req.WithContext(withActor(req.Context(), Actor{ID: "nonadmin"}))
+	req = req.WithContext(withActor(req.Context(), access.Actor{ID: "nonadmin"}))
 	rec := httptest.NewRecorder()
 	rt.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {

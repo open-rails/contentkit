@@ -3,6 +3,8 @@ package content
 import (
 	"context"
 	"testing"
+
+	"github.com/open-rails/contentkit/access"
 )
 
 type delayedReviewClassifier struct {
@@ -27,9 +29,9 @@ func TestReviewC4DelayedClassifierCannotReplaceCurrentGroups(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { _, err := p.answer(ctx, Actor{ID: "user"}, poll.ID, "old"); done <- err }()
+	go func() { _, err := p.answer(ctx, access.Actor{ID: "user"}, poll.ID, "old"); done <- err }()
 	<-cl.started
-	newer, err := p.answer(ctx, Actor{ID: "user"}, poll.ID, "new")
+	newer, err := p.answer(ctx, access.Actor{ID: "user"}, poll.ID, "new")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +42,7 @@ func TestReviewC4DelayedClassifierCannotReplaceCurrentGroups(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	got, err := p.get(ctx, Actor{ID: "user"}, poll.ID)
+	got, err := p.get(ctx, access.Actor{ID: "user"}, poll.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +59,7 @@ func TestReviewC4DeletedPollIsNotSentForClassification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.answer(ctx, Actor{ID: "user"}, poll.ID, "free-text answer"); err != nil {
+	if _, err := p.answer(ctx, access.Actor{ID: "user"}, poll.ID, "free-text answer"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rt.store.pool.Exec(ctx, `UPDATE `+rt.store.t.pollQuestions+` SET deleted_at=now() WHERE id=$1`, poll.ID); err != nil {

@@ -2,7 +2,7 @@ package content
 
 import "errors"
 
-// Sentinel errors a ContentResolver returns to gate a target; mapped to HTTP
+// Sentinel errors an access.ContentResolver may return to gate a target; mapped to HTTP
 // status without leaking which one beyond the code.
 var (
 	// ErrNotFound: the reference does not exist. -> 404

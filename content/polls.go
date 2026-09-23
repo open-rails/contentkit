@@ -10,13 +10,14 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/contentkit/access"
 )
 
 // polls is the standalone site-wide poll module: admin-authored questions,
 // either multiple_choice (options, anon-capable one-vote-per-(poll,user)/
 // (poll,ip) tallying) or free_text (one editable answer per signed-in actor,
 // grouped by the host's AnswerClassifier). It is not tied to host content, so
-// it never gates on the ContentResolver: writes gate on the PollWrite perm;
+// it never gates on the access.ContentResolver: writes gate on the PollWrite perm;
 // reads/votes/answers are public until the poll closes. Questions carry the
 // tenant; options, votes and answers hang off their question.
 type polls struct {
@@ -104,7 +105,7 @@ type updatePollInput struct {
 
 // create inserts a question and its options atomically. Fail-closed on perm.
 // A free_text poll is refused without a registered AnswerClassifier.
-func (p *polls) create(ctx context.Context, actor Actor, in createPollInput) (pollView, error) {
+func (p *polls) create(ctx context.Context, actor access.Actor, in createPollInput) (pollView, error) {
 	if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PollWrite); err != nil {
 		return pollView{}, err
 	}
@@ -164,7 +165,7 @@ func (p *polls) create(ctx context.Context, actor Actor, in createPollInput) (po
 }
 
 // update mutates question/is_active; nil fields are left as-is via COALESCE.
-func (p *polls) update(ctx context.Context, actor Actor, id string, in updatePollInput) (pollView, error) {
+func (p *polls) update(ctx context.Context, actor access.Actor, id string, in updatePollInput) (pollView, error) {
 	if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PollWrite); err != nil {
 		return pollView{}, err
 	}
@@ -190,7 +191,7 @@ func (p *polls) update(ctx context.Context, actor Actor, id string, in updatePol
 }
 
 // softDelete flags deleted_at; the row (and its votes) stay for history.
-func (p *polls) softDelete(ctx context.Context, actor Actor, id string) error {
+func (p *polls) softDelete(ctx context.Context, actor access.Actor, id string) error {
 	if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PollWrite); err != nil {
 		return err
 	}
@@ -222,7 +223,7 @@ type listFilter struct {
 // month/date archive returns all live polls in that window regardless of
 // is_active, so historical polls stay readable once a newer poll becomes active.
 // Voting remains gated on is_active elsewhere (see vote()).
-func (p *polls) list(ctx context.Context, actor Actor, f listFilter) ([]pollView, error) {
+func (p *polls) list(ctx context.Context, actor access.Actor, f listFilter) ([]pollView, error) {
 	from, to, hasWindow := parseWindow(f.month, f.date)
 	sql := `SELECT ` + pollCols + ` FROM ` + p.s.t.pollQuestions + ` WHERE tenant_id = $1 AND deleted_at IS NULL`
 	if !f.admin {
@@ -301,7 +302,7 @@ func scanPoll(row pgx.Row) (pollView, error) {
 
 // get returns one non-deleted poll (any state) with options + caller vote; the
 // HTTP layer live-gates public access.
-func (p *polls) get(ctx context.Context, actor Actor, id string) (pollView, error) {
+func (p *polls) get(ctx context.Context, actor access.Actor, id string) (pollView, error) {
 	if !uuidRe.MatchString(id) {
 		return pollView{}, ErrNotFound
 	}
@@ -323,7 +324,7 @@ func (p *polls) get(ctx context.Context, actor Actor, id string) (pollView, erro
 // absolutizes stored-relative image paths (backfilled legacy rows) and, for
 // free_text polls, loads the answer count, the caller's answer and the
 // classifier's groups.
-func (p *polls) attach(ctx context.Context, actor Actor, views []pollView) error {
+func (p *polls) attach(ctx context.Context, actor access.Actor, views []pollView) error {
 	if len(views) == 0 {
 		return nil
 	}
@@ -397,7 +398,7 @@ func (p *polls) currentGroups(ctx context.Context, questionID string) ([]Group, 
 
 // answersFor batch-loads the answer count per question and the caller's own
 // answers (signed-in actors only).
-func (p *polls) answersFor(ctx context.Context, actor Actor, ids []string) (map[string]int, map[string]pollAnswer, error) {
+func (p *polls) answersFor(ctx context.Context, actor access.Actor, ids []string) (map[string]int, map[string]pollAnswer, error) {
 	counts, mine := map[string]int{}, map[string]pollAnswer{}
 	rows, err := p.s.pool.Query(ctx, `SELECT question_id::text, count(*) FROM `+p.s.t.pollAnswers+`
 		WHERE tenant_id = $1 AND question_id = ANY($2::uuid[]) GROUP BY question_id`, p.s.tenant, ids)
@@ -457,7 +458,7 @@ func (p *polls) optionsFor(ctx context.Context, q querier, ids []string) (map[st
 }
 
 // votesFor batch-loads the caller's chosen option per question (qid -> optionID).
-func (p *polls) votesFor(ctx context.Context, q querier, actor Actor, ids []string) (map[string]string, error) {
+func (p *polls) votesFor(ctx context.Context, q querier, actor access.Actor, ids []string) (map[string]string, error) {
 	userID, ip, ok := reactionKey(actor)
 	if !ok {
 		return map[string]string{}, nil
@@ -481,7 +482,7 @@ func (p *polls) votesFor(ctx context.Context, q querier, actor Actor, ids []stri
 
 // vote records one vote and bumps the option's counter — but only the winning
 // insert (RowsAffected==1) counts, so concurrent duplicates never double-count.
-func (p *polls) vote(ctx context.Context, actor Actor, pollID, optionID string) (pollView, error) {
+func (p *polls) vote(ctx context.Context, actor access.Actor, pollID, optionID string) (pollView, error) {
 	if optionID == "" {
 		return pollView{}, badRequest("option_id is required")
 	}
@@ -568,7 +569,7 @@ const maxAnswerLen = 2000
 // answer stores or replaces the signed-in caller's free-text answer while the
 // poll is open, then classifies it. A classifier failure keeps the answer
 // unclassified for ReclassifyPending.
-func (p *polls) answer(ctx context.Context, actor Actor, pollID, text string) (pollView, error) {
+func (p *polls) answer(ctx context.Context, actor access.Actor, pollID, text string) (pollView, error) {
 	if actor.Anonymous || actor.ID == "" {
 		return pollView{}, errUnauthorized
 	}

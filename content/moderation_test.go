@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 )
 
@@ -54,7 +55,7 @@ func (m *fakeModerator) last() ModerationInput {
 // reviewerOnly grants every perm to "reviewer" only.
 type reviewerOnly struct{}
 
-func (reviewerOnly) Can(_ context.Context, a Actor, _ string) (bool, error) {
+func (reviewerOnly) Can(_ context.Context, a access.Actor, _ string) (bool, error) {
 	return a.ID == "reviewer", nil
 }
 
@@ -69,7 +70,7 @@ func moderatedRuntime(t *testing.T, mod ContentModerator) *Runtime {
 	return rt
 }
 
-func listIDs(t *testing.T, rt *Runtime, actor Actor) []string {
+func listIDs(t *testing.T, rt *Runtime, actor access.Actor) []string {
 	t.Helper()
 	list, err := rt.comments.list(context.Background(), actor, "gallery", "1", "", 50, 0)
 	if err != nil {
@@ -103,18 +104,18 @@ func contains(ids []string, id string) bool {
 func TestModeration_WithoutModeratorPublishes(t *testing.T) {
 	rt := moderatedRuntime(t, nil)
 	ctx := context.Background()
-	author := Actor{ID: "author"}
+	author := access.Actor{ID: "author"}
 	cm := mustComment(t, rt, author, "gallery", "1", createInput{Body: "iffy spam or not, it publishes"})
 	if cm.Moderation != "" || countsOf(t, rt, ref("gallery", "1")).CommentCount != 1 {
 		t.Fatalf("without a moderator the comment must publish: %+v", cm)
 	}
-	if ids := listIDs(t, rt, Actor{ID: "other"}); !contains(ids, cm.ID) {
+	if ids := listIDs(t, rt, access.Actor{ID: "other"}); !contains(ids, cm.ID) {
 		t.Fatal("published comment missing from a reader's list")
 	}
 	if ids := heldIDs(t, rt, KindComment); len(ids) != 0 {
 		t.Fatalf("held queue = %v, want empty", ids)
 	}
-	rec := doJSON(t, rt.Handler(), Actor{ID: "reviewer"}, "POST", "/posts", postWriteReq{Title: ptr("iffy"), Body: ptr("spam"), IsDraft: ptr(false)})
+	rec := doJSON(t, rt.Handler(), access.Actor{ID: "reviewer"}, "POST", "/posts", postWriteReq{Title: ptr("iffy"), Body: ptr("spam"), IsDraft: ptr(false)})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("post without a moderator: %d %s", rec.Code, rec.Body.String())
 	}
@@ -126,7 +127,7 @@ func TestModeration_CommentVerdicts(t *testing.T) {
 	rt := moderatedRuntime(t, mod)
 	ctx := context.Background()
 	h := rt.Handler()
-	author, other, anon := Actor{ID: "author"}, Actor{ID: "other"}, Actor{Anonymous: true, IP: "9.9.9.9"}
+	author, other, anon := access.Actor{ID: "author"}, access.Actor{ID: "other"}, access.Actor{Anonymous: true, IP: "9.9.9.9"}
 	g1 := ref("gallery", "1")
 
 	// approve
@@ -271,7 +272,7 @@ func TestModeration_ListHeldPages(t *testing.T) {
 	ctx := context.Background()
 	var want []string
 	for i := 0; i < 5; i++ {
-		want = append(want, mustComment(t, rt, Actor{ID: "a"}, "gallery", "1", createInput{Body: fmt.Sprintf("iffy %d", i)}).ID)
+		want = append(want, mustComment(t, rt, access.Actor{ID: "a"}, "gallery", "1", createInput{Body: fmt.Sprintf("iffy %d", i)}).ID)
 	}
 	var got []string
 	cursor := ""
@@ -303,7 +304,7 @@ func TestModeration_FailClosed(t *testing.T) {
 	mod := &fakeModerator{fail: true}
 	rt := moderatedRuntime(t, mod)
 	ctx := context.Background()
-	author, other := Actor{ID: "author"}, Actor{ID: "other"}
+	author, other := access.Actor{ID: "author"}, access.Actor{ID: "other"}
 
 	cm := mustComment(t, rt, author, "gallery", "1", createInput{Body: "perfectly fine"})
 	if cm.Moderation != ModerationHeld || cm.ModerationReason != heldReason {
@@ -331,7 +332,7 @@ func TestModeration_FailClosed(t *testing.T) {
 	}
 	// Posts fail closed the same way.
 	mod.odd, mod.fail = false, true
-	rec := doJSON(t, rt.Handler(), Actor{ID: "reviewer"}, "POST", "/posts", postWriteReq{Title: ptr("t"), Body: ptr("b"), IsDraft: ptr(false)})
+	rec := doJSON(t, rt.Handler(), access.Actor{ID: "reviewer"}, "POST", "/posts", postWriteReq{Title: ptr("t"), Body: ptr("b"), IsDraft: ptr(false)})
 	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"moderation":"held"`) {
 		t.Fatalf("post under a failing moderator = %d %s, want 202 held", rec.Code, rec.Body.String())
 	}
@@ -340,7 +341,7 @@ func TestModeration_FailClosed(t *testing.T) {
 func TestModeration_EditRescreens(t *testing.T) {
 	rt := moderatedRuntime(t, &fakeModerator{})
 	ctx := context.Background()
-	author, other := Actor{ID: "author"}, Actor{ID: "other"}
+	author, other := access.Actor{ID: "author"}, access.Actor{ID: "other"}
 	g1 := ref("gallery", "1")
 
 	top := mustComment(t, rt, author, "gallery", "1", createInput{Body: "fine"})
@@ -413,7 +414,7 @@ func TestModeration_Posts(t *testing.T) {
 	rt := moderatedRuntime(t, mod)
 	ctx := context.Background()
 	h := rt.Handler()
-	editor, reader := Actor{ID: "reviewer"}, Actor{ID: "reader"}
+	editor, reader := access.Actor{ID: "reviewer"}, access.Actor{ID: "reader"}
 
 	rec := doJSON(t, h, editor, "POST", "/posts", postWriteReq{Title: ptr("Hello"), Body: ptr("an iffy body"), Language: ptr("en"), IsDraft: ptr(false)})
 	if rec.Code != http.StatusAccepted {
@@ -500,7 +501,7 @@ func TestModeration_BasicModeratorAndChain(t *testing.T) {
 	ai := &fakeModerator{}
 	rt := moderatedRuntime(t, Chain{basic, ai})
 	ctx := context.Background()
-	author := Actor{ID: "author"}
+	author := access.Actor{ID: "author"}
 	rejects := func(body, want string) {
 		t.Helper()
 		var rej RejectedError
@@ -516,7 +517,7 @@ func TestModeration_BasicModeratorAndChain(t *testing.T) {
 	if _, err := rt.comments.edit(ctx, author, first.ID, "hello there"); err != nil { // edits skip the dup guard
 		t.Fatalf("edit with the same text: %v", err)
 	}
-	if _, err := rt.comments.create(ctx, Actor{ID: "someone-else"}, "gallery", "1", createInput{Body: "hello there"}); err != nil {
+	if _, err := rt.comments.create(ctx, access.Actor{ID: "someone-else"}, "gallery", "1", createInput{Body: "hello there"}); err != nil {
 		t.Fatalf("another actor's identical text: %v", err)
 	}
 	now = now.Add(31 * time.Second)
@@ -550,7 +551,7 @@ func TestModeration_BasicModeratorAndChain(t *testing.T) {
 func TestModeration_ReviewRoutes(t *testing.T) {
 	rt := moderatedRuntime(t, &fakeModerator{})
 	h := rt.Handler()
-	author, reviewer, user := Actor{ID: "author"}, Actor{ID: "reviewer"}, Actor{ID: "user"}
+	author, reviewer, user := access.Actor{ID: "author"}, access.Actor{ID: "reviewer"}, access.Actor{ID: "user"}
 	held := mustComment(t, rt, author, "gallery", "1", createInput{Body: "iffy"})
 
 	if rec := doJSON(t, h, user, "GET", "/moderation/held?kind=comment", nil); rec.Code != http.StatusForbidden {
@@ -600,7 +601,7 @@ func TestModeration_TenantIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	author := Actor{ID: "shared-account"}
+	author := access.Actor{ID: "shared-account"}
 	held := mustComment(t, a, author, "gallery", "1", createInput{Body: "iffy"})
 	if in := mod.last(); in.Tenant != "site_a" {
 		t.Fatalf("moderator saw tenant %q", in.Tenant)

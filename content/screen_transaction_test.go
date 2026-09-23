@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/open-rails/contentkit/access"
 )
 
 type pausedScreen struct{ entered, release chan struct{} }
@@ -39,7 +40,7 @@ func oneConnectionPostRuntime(t *testing.T, mod ContentModerator) *Runtime {
 }
 func patchPostWithContext(rt *Runtime, ctx context.Context, id, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest("PATCH", "/posts/"+id, strings.NewReader(`{"body":"`+body+`"}`))
-	req = req.WithContext(withActor(ctx, Actor{ID: "author"}))
+	req = req.WithContext(withActor(ctx, access.Actor{ID: "author"}))
 	rec := httptest.NewRecorder()
 	rt.Handler().ServeHTTP(rec, req)
 	return rec
@@ -60,7 +61,7 @@ func TestPostScreeningNeedsOnlyOneConnection(t *testing.T) {
 func TestPausedPostScreeningDoesNotBlockErasure(t *testing.T) {
 	mod := &pausedScreen{make(chan struct{}), make(chan struct{})}
 	rt := oneConnectionPostRuntime(t, mod)
-	rec := doJSON(t, rt.Handler(), Actor{ID: "author"}, "POST", "/posts", postWriteReq{Title: ptr("title"), Body: ptr("public"), IsDraft: ptr(false)})
+	rec := doJSON(t, rt.Handler(), access.Actor{ID: "author"}, "POST", "/posts", postWriteReq{Title: ptr("title"), Body: ptr("public"), IsDraft: ptr(false)})
 	post := decodePost(t, rec)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -103,7 +104,7 @@ func TestPausedPostScreeningCannotOverwriteNewerEdit(t *testing.T) {
 func TestPausedCommentScreeningCannotOverwriteNewerEdit(t *testing.T) {
 	mod := &pausedScreen{make(chan struct{}), make(chan struct{})}
 	rt := moderatedRuntime(t, mod)
-	author := Actor{ID: "author"}
+	author := access.Actor{ID: "author"}
 	ctx := context.Background()
 	cm := mustComment(t, rt, author, "gallery", "1", createInput{Body: "public"})
 	done := make(chan error, 1)

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 )
 
@@ -16,7 +17,7 @@ func TestReactions_TransitionsAndCounts(t *testing.T) {
 	res.set("widget", "1", true, true)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	ctx := context.Background()
-	actor := Actor{ID: "u1", Kind: "user"}
+	actor := access.Actor{ID: "u1", Kind: "user"}
 
 	must := func(err error) {
 		t.Helper()
@@ -32,7 +33,7 @@ func TestReactions_TransitionsAndCounts(t *testing.T) {
 	assertCounts(t, rt, actor, ref("widget", "1"), 0, 0, 0)
 
 	// second distinct user likes -> independent row
-	must(reactErr(rt.reactions.react(ctx, Actor{ID: "u2", Kind: "user"}, "widget", "1", 1)))
+	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u2", Kind: "user"}, "widget", "1", 1)))
 	assertCounts(t, rt, actor, ref("widget", "1"), 1, 0, 0)
 }
 
@@ -40,7 +41,7 @@ func TestReactions_ConcurrentDoubleLikeIsExact(t *testing.T) {
 	res := &fakeResolver{}
 	res.set("widget", "42", true, true)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
-	actor := Actor{ID: "racer", Kind: "user"}
+	actor := access.Actor{ID: "racer", Kind: "user"}
 
 	var wg sync.WaitGroup
 	errs := make(chan error, 20)
@@ -68,7 +69,7 @@ func TestReactions_GatingRejectsInaccessibleAndMissing(t *testing.T) {
 	res.set("widget", "hidden", false, false) // unpublished/deleted
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	ctx := context.Background()
-	actor := Actor{ID: "u1", Kind: "user"}
+	actor := access.Actor{ID: "u1", Kind: "user"}
 
 	if err := reactErr(rt.reactions.react(ctx, actor, "widget", "locked", 1)); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("react on premium-locked: want ErrForbidden, got %v", err)
@@ -89,7 +90,7 @@ func TestReactions_AnonymousDedupByIP(t *testing.T) {
 	res.set("widget", "1", true, true)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	ctx := context.Background()
-	anon := Actor{IP: "10.0.0.1", Anonymous: true}
+	anon := access.Actor{IP: "10.0.0.1", Anonymous: true}
 
 	if err := reactErr(rt.reactions.react(ctx, anon, "widget", "1", 1)); err != nil {
 		t.Fatalf("anon like: %v", err)
@@ -100,7 +101,7 @@ func TestReactions_AnonymousDedupByIP(t *testing.T) {
 	assertCounts(t, rt, anon, ref("widget", "1"), 1, 0, 1) // one like from the IP
 
 	// unidentifiable actor (no id, no ip) is rejected
-	if err := reactErr(rt.reactions.react(ctx, Actor{Anonymous: true}, "widget", "1", 1)); err == nil {
+	if err := reactErr(rt.reactions.react(ctx, access.Actor{Anonymous: true}, "widget", "1", 1)); err == nil {
 		t.Fatal("expected rejection for unidentifiable actor")
 	}
 }
@@ -114,7 +115,7 @@ func TestReactions_TransactionErrorRollsBack(t *testing.T) {
 	if _, err := pool.Exec(ctx, `DROP TABLE `+rt.store.t.counts); err != nil {
 		t.Fatalf("drop counts table: %v", err)
 	}
-	if err := reactErr(rt.reactions.react(ctx, Actor{ID: "u1"}, "widget", "1", 1)); err == nil {
+	if err := reactErr(rt.reactions.react(ctx, access.Actor{ID: "u1"}, "widget", "1", 1)); err == nil {
 		t.Fatal("react error = nil, want transaction failure")
 	}
 	var n int
@@ -130,7 +131,7 @@ func TestReactions_HTTPRoute(t *testing.T) {
 	h := rt.Handler()
 
 	req := httptest.NewRequest("POST", "/widget/1/like", nil)
-	req = req.WithContext(withActor(req.Context(), Actor{ID: "u1", Kind: "user"}))
+	req = req.WithContext(withActor(req.Context(), access.Actor{ID: "u1", Kind: "user"}))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -144,7 +145,7 @@ func TestReactions_HTTPRoute(t *testing.T) {
 	}
 }
 
-func assertCounts(t *testing.T, rt *Runtime, actor Actor, r contentref.ContentRef, wantLikes, wantDislikes int, wantMine int16) {
+func assertCounts(t *testing.T, rt *Runtime, actor access.Actor, r contentref.ContentRef, wantLikes, wantDislikes int, wantMine int16) {
 	t.Helper()
 	c, err := rt.reactions.counts(context.Background(), rt.store.pool, actor, r.Key())
 	if err != nil {

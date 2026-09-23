@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/open-rails/contentkit/access"
 )
 
 func TestMediaForeignTenantCannotOverwriteObjects(t *testing.T) {
@@ -16,7 +18,7 @@ func TestMediaForeignTenantCannotOverwriteObjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	post := insertPost(t, a)
-	poll, err := a.polls.create(ctx, Actor{ID: "admin"}, createPollInput{Question: "Q", Options: []createOptionInput{{Label: "a"}, {Label: "b"}}})
+	poll, err := a.polls.create(ctx, access.Actor{ID: "admin"}, createPollInput{Question: "Q", Options: []createOptionInput{{Label: "a"}, {Label: "b"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +33,7 @@ func TestMediaForeignTenantCannotOverwriteObjects(t *testing.T) {
 				t.Fatal(err)
 			}
 			req := multipartUpload(t, "POST", tc.path, []byte("attacker"))
-			req = req.WithContext(withActor(req.Context(), Actor{ID: "other-tenant-admin"}))
+			req = req.WithContext(withActor(req.Context(), access.Actor{ID: "other-tenant-admin"}))
 			rec := httptest.NewRecorder()
 			b.Handler().ServeHTTP(rec, req)
 			if rec.Code != http.StatusNotFound {

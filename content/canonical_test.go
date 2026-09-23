@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 )
 
@@ -12,12 +13,12 @@ import (
 // the composite id "123:en"; the tenant is left for the runtime to pin.
 type aliasResolver struct{}
 
-func (aliasResolver) Resolve(_ context.Context, r contentref.ContentRef, _ Actor) (Resolution, error) {
+func (aliasResolver) Resolve(_ context.Context, r contentref.ContentRef, _ access.Actor) (access.Resolution, error) {
 	switch r.ContentID {
 	case "slug-123", "123", "123:en":
-		return Resolution{Ref: contentref.New("", r.ContentKind, "123:en"), Visible: true, Accessible: true}, nil
+		return access.Resolution{Ref: contentref.New("", r.ContentKind, "123:en"), Visible: true, Accessible: true}, nil
 	}
-	return Resolution{}, ErrNotFound
+	return access.Resolution{}, ErrNotFound
 }
 
 // Writes through any alias land on one canonical row; reads through any alias
@@ -25,7 +26,7 @@ func (aliasResolver) Resolve(_ context.Context, r contentref.ContentRef, _ Actor
 func TestCanonicalRef_UnifiesAliases(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{Resolver: aliasResolver{}, ContentKinds: []string{"gallery"}})
 	ctx := context.Background()
-	u := Actor{ID: "u1"}
+	u := access.Actor{ID: "u1"}
 	canonical := ref("gallery", "123:en")
 
 	if err := rt.favorites.add(ctx, u, "gallery", "slug-123"); err != nil {
@@ -63,20 +64,20 @@ func TestCanonicalRef_UnifiesAliases(t *testing.T) {
 // is a distinct key from the work's.
 type versionResolver struct{}
 
-func (versionResolver) Resolve(_ context.Context, r contentref.ContentRef, _ Actor) (Resolution, error) {
+func (versionResolver) Resolve(_ context.Context, r contentref.ContentRef, _ access.Actor) (access.Resolution, error) {
 	switch r.ContentID {
 	case "g1":
-		return Resolution{Visible: true, Accessible: true}, nil
+		return access.Resolution{Visible: true, Accessible: true}, nil
 	case "g1@v2":
-		return Resolution{Ref: contentref.NewVersion(r.TenantID, r.ContentKind, "g1", "v2"), Visible: true, Accessible: true}, nil
+		return access.Resolution{Ref: contentref.NewVersion(r.TenantID, r.ContentKind, "g1", "v2"), Visible: true, Accessible: true}, nil
 	}
-	return Resolution{}, ErrNotFound
+	return access.Resolution{}, ErrNotFound
 }
 
 func TestCanonicalRef_VersionIsADistinctKey(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{Resolver: versionResolver{}, ContentKinds: []string{"gallery"}})
 	ctx := context.Background()
-	u := Actor{ID: "u1"}
+	u := access.Actor{ID: "u1"}
 	work, version := ref("gallery", "g1"), contentref.NewVersion(testTenant, "gallery", "g1", "v2")
 
 	if _, err := rt.reactions.react(ctx, u, "gallery", "g1", 1); err != nil {
@@ -100,14 +101,14 @@ func TestCanonicalRef_VersionIsADistinctKey(t *testing.T) {
 // foreignResolver answers with another tenant's reference.
 type foreignResolver struct{}
 
-func (foreignResolver) Resolve(_ context.Context, r contentref.ContentRef, _ Actor) (Resolution, error) {
-	return Resolution{Ref: contentref.New("other", r.ContentKind, r.ContentID), Visible: true, Accessible: true}, nil
+func (foreignResolver) Resolve(_ context.Context, r contentref.ContentRef, _ access.Actor) (access.Resolution, error) {
+	return access.Resolution{Ref: contentref.New("other", r.ContentKind, r.ContentID), Visible: true, Accessible: true}, nil
 }
 
 func TestCanonicalRef_ForeignTenantIsRefused(t *testing.T) {
 	rt, pool := newTestRuntime(t, Options{Resolver: foreignResolver{}, ContentKinds: []string{"gallery"}})
 	ctx := context.Background()
-	if err := reactErr(rt.reactions.react(ctx, Actor{ID: "u1"}, "gallery", "g1", 1)); !errors.Is(err, ErrTenant) {
+	if err := reactErr(rt.reactions.react(ctx, access.Actor{ID: "u1"}, "gallery", "g1", 1)); !errors.Is(err, ErrTenant) {
 		t.Fatalf("react: want ErrTenant, got %v", err)
 	}
 	var n int
@@ -122,7 +123,7 @@ func TestRuntime_ListFavoritesExported(t *testing.T) {
 	res.set("gallery", "b", true, true)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}})
 	ctx := context.Background()
-	u := Actor{ID: "u1"}
+	u := access.Actor{ID: "u1"}
 	for _, id := range []string{"a", "b"} {
 		if err := rt.favorites.add(ctx, u, "gallery", id); err != nil {
 			t.Fatal(err)

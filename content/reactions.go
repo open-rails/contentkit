@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 )
 
@@ -41,7 +42,7 @@ type reactionCounts struct {
 //
 // Concurrency: SELECT ... FOR UPDATE locks the existing row; a lost insert race
 // re-selects and updates. Exact under concurrent double-like and switches.
-func (r *reactions) applyTx(ctx context.Context, tx pgx.Tx, actor Actor, key contentref.ContentKey, value int16) (dLikes, dDislikes int, err error) {
+func (r *reactions) applyTx(ctx context.Context, tx pgx.Tx, actor access.Actor, key contentref.ContentKey, value int16) (dLikes, dDislikes int, err error) {
 	userID, ip, ok := reactionKey(actor)
 	if !ok {
 		return 0, 0, badRequest("cannot identify reactor (no user id or ip)")
@@ -121,7 +122,7 @@ func (r *reactions) lockExisting(ctx context.Context, tx pgx.Tx, userID, ip stri
 // react is the entry point for host-registered kinds: it gates on
 // accessibility and applies the reaction under the canonical preference
 // reference (or the resolver's for a declined target), which it returns.
-func (r *reactions) react(ctx context.Context, actor Actor, kind, id string, value int16) (contentref.ContentRef, error) {
+func (r *reactions) react(ctx context.Context, actor access.Actor, kind, id string, value int16) (contentref.ContentRef, error) {
 	ref, err := r.rt.gate(ctx, kind, id, actor, true)
 	if err != nil {
 		return contentref.ContentRef{}, err
@@ -143,7 +144,7 @@ func (r *reactions) react(ctx context.Context, actor Actor, kind, id string, val
 
 // counts returns the split tally plus the caller's own reaction: an O(1) read
 // of the rollup applyTx maintains in-tx.
-func (r *reactions) counts(ctx context.Context, q querier, actor Actor, key contentref.ContentKey) (reactionCounts, error) {
+func (r *reactions) counts(ctx context.Context, q querier, actor access.Actor, key contentref.ContentKey) (reactionCounts, error) {
 	var out reactionCounts
 	if err := q.QueryRow(ctx, `SELECT likes, dislikes FROM `+r.s.t.counts+` WHERE `+keyPred(1), keyArgs(key)...).Scan(&out.Likes, &out.Dislikes); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return out, err
@@ -208,7 +209,7 @@ func (r *reactions) handleGet(w http.ResponseWriter, req *http.Request) {
 
 // reactionKey returns the dedup identity: a user id when present, else the IP.
 // ok=false when the actor is fully unidentifiable.
-func reactionKey(a Actor) (userID, ip string, ok bool) {
+func reactionKey(a access.Actor) (userID, ip string, ok bool) {
 	if a.ID != "" && !a.Anonymous {
 		return a.ID, a.IP, true
 	}

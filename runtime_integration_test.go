@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/open-rails/migratekit/chmigrate"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
@@ -29,26 +30,26 @@ type actorKey struct{}
 
 type ctxIdentity struct{}
 
-func (ctxIdentity) Actor(ctx context.Context) (content.Actor, bool) {
-	a, ok := ctx.Value(actorKey{}).(content.Actor)
+func (ctxIdentity) Actor(ctx context.Context) (access.Actor, bool) {
+	a, ok := ctx.Value(actorKey{}).(access.Actor)
 	return a, ok
 }
 
 type allowAuthz struct{}
 
-func (allowAuthz) Can(context.Context, content.Actor, string) (bool, error) { return true, nil }
+func (allowAuthz) Can(context.Context, access.Actor, string) (bool, error) { return true, nil }
 
 // galleryResolver knows gallery g1 (any alias "g1"/"g1:en" -> g1) and nothing else.
 type galleryResolver struct{}
 
-func (galleryResolver) Resolve(_ context.Context, r contentref.ContentRef, _ content.Actor) (content.Resolution, error) {
+func (galleryResolver) Resolve(_ context.Context, r contentref.ContentRef, _ access.Actor) (access.Resolution, error) {
 	if r.ContentKind == "gallery" && strings.HasPrefix(r.ContentID, "g1") {
-		return content.Resolution{Ref: contentref.New(r.TenantID, "gallery", "g1"), Visible: true, Accessible: true}, nil
+		return access.Resolution{Ref: contentref.New(r.TenantID, "gallery", "g1"), Visible: true, Accessible: true}, nil
 	}
-	return content.Resolution{}, content.ErrNotFound
+	return access.Resolution{}, content.ErrNotFound
 }
 
-func do(t *testing.T, h http.Handler, actor content.Actor, method, target string, body any) *httptest.ResponseRecorder {
+func do(t *testing.T, h http.Handler, actor access.Actor, method, target string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	var buf bytes.Buffer
 	if body != nil {
@@ -111,7 +112,7 @@ func TestRuntimeIntegration(t *testing.T) {
 		t.Fatal("a content tenant differing from the hub tenant was accepted")
 	}
 	h := rt.Handler()
-	user := content.Actor{ID: "u1", Kind: "user", IP: "10.0.0.1"}
+	user := access.Actor{ID: "u1", Kind: "user", IP: "10.0.0.1"}
 
 	// Interactions over one HTTP mount, keyed by the resolver's canonical reference.
 	if rec := do(t, h, user, "POST", "/gallery/g1:en/comments", map[string]string{"body": "first"}); rec.Code != http.StatusCreated {
@@ -126,7 +127,7 @@ func TestRuntimeIntegration(t *testing.T) {
 	if rec := do(t, h, user, "POST", "/video/1/like", nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("unregistered kind: %d, want 404", rec.Code)
 	}
-	if rec := do(t, h, content.Actor{Anonymous: true, IP: "10.0.0.2"}, "POST", "/gallery/g1/favorite", nil); rec.Code != http.StatusUnauthorized {
+	if rec := do(t, h, access.Actor{Anonymous: true, IP: "10.0.0.2"}, "POST", "/gallery/g1/favorite", nil); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous favorite: %d, want 401", rec.Code)
 	}
 	g1 := rt.Content.Ref("gallery", "g1")
