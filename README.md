@@ -244,7 +244,8 @@ _ = jobs.EraseUserTx(ctx, tx, "d", userID, deletions...)                  // the
   With a `Limiter`, the owner's quota (the manifests' `OriginalBytes`) is
   released once.
 - Processing: `jobs.Enqueue` (the uploads' `ProcessQueue`) runs one pending
-  job per ref and slot through every `AddProcessor` processor.
+  job per ref and slot through every `AddProcessor` processor; a commit
+  that lands during the run (its Enqueue absorbed) makes the job rerun them.
 - Media packages add workers with `jobs.Register(func(*river.Config) error)`
   before composition and enqueue with `jobs.Insert`/`InsertTx`.
 - Restore: [docs/restore.md](docs/restore.md#media).
