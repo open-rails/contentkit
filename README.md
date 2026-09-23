@@ -51,6 +51,7 @@ another tenant is an error, never remapped.
 | `taxonomy` | generic catalog: nodes (tags, artists, creators, characters, series, seasons, voice actors), localized names/aliases, edges, content assignments, effective tags, per-language counts, typeahead documents, admin routes |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
 | `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, taxonomy popularity through the host `Catalog` port |
+| `discovery` | `SimilarTo`/`Recommend`: the `Candidates` port, the default co-engagement source (`Engagement`), `Fallback`, and the shared exclusion/fill policy (`Recommender`) |
 | `eval` | lexical golden-case evaluation, reports, baselines |
 | `migrations` | one PostgreSQL baseline and one ClickHouse baseline |
 | root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (all PostgreSQL features and optional ClickHouse signals), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
@@ -219,6 +220,9 @@ top, _ := hub.Popular(ctx, "gallery", signal.PopularOptions{Window: signal.LastD
   `popularity.New(popularity.Config{Source: hub, Policy: policy})`, then
   `ranker.Popular` / `ranker.Scores` / `ranker.Taxonomy`
   ([docs/popularity-policy.md](docs/popularity-policy.md)).
+- `SimilarTo` and `Recommend` draw candidates from `EmbeddedConfig.Candidates`
+  (default: co-engagement); see
+  [discovery candidates](HOST_INTEGRATION.md#discovery-candidates).
 - `EraseSubjects` is account erasure with a quorum-written fence; see
   [HOST_INTEGRATION.md](HOST_INTEGRATION.md#subject-erasure-completion-contract)
   and, for interaction data, [interaction erasure](HOST_INTEGRATION.md#interaction-erasure).

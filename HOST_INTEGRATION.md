@@ -417,6 +417,30 @@ after the fence or came back with a restore) is unreadable; schedule
 subjects deleted since the backup. A shared account exists in every tenant:
 each host erases its own tenant.
 
+## Discovery candidates
+
+`SimilarTo` and `Recommend` get candidates from one port:
+
+```go
+type Candidates interface { // package discovery
+	Similar(ctx context.Context, anchor contentref.ContentRef, q Query) ([]Candidate, error)
+	ForSubject(ctx context.Context, subject signal.Subject, q Query) ([]Candidate, error)
+}
+```
+
+Candidates are ranked best-first; oversample past `q.Limit`. The hub then
+applies the same policy to every source: tenant and `ContentKinds`, never the
+anchor, seen works (per options), always disliked works, dedupe, limit, and the
+`Recommend` popularity fill. `EmbeddedConfig.Candidates` nil =
+`discovery.Engagement` (co-engagement seeded from the subject's top works).
+To switch sources, set that one field; wrap it in `Fallback` so errors and thin
+results fall back to engagement:
+
+```go
+engagement, err := discovery.NewEngagement(ch, "hub", "doujins")
+cfg.Candidates = discovery.Fallback{Primary: aiSource, Secondary: engagement, OnError: logErr}
+```
+
 ## Popularity (policy-ranked)
 
 Hosts rank by a named policy, never by the default rank: resolve the configured
