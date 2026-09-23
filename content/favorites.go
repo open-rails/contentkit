@@ -90,8 +90,8 @@ func (f *favorites) setTx(ctx context.Context, tx pgx.Tx, userID string, key con
 		return false, nil
 	}
 	// Re-favoriting restarts the bookmark's age, which orders the wishlist.
-	_, err = tx.Exec(ctx, `UPDATE `+f.s.t.favorites+` SET value = $6, revision = `+f.s.nextRevision()+`, updated_at = now(),
-		created_at = CASE WHEN $6 = 1 THEN now() ELSE created_at END WHERE `+keyPred(1)+` AND user_id = $5`, append(args, value)...)
+	_, err = tx.Exec(ctx, `UPDATE `+f.s.t.favorites+` SET value = $6::smallint, revision = `+f.s.nextRevision()+`, updated_at = now(),
+		created_at = CASE WHEN $6::smallint = 1 THEN now() ELSE created_at END WHERE `+keyPred(1)+` AND user_id = $5`, append(args, value)...)
 	return err == nil, err
 }
 
