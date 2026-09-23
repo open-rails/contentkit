@@ -21,6 +21,10 @@ interface Upload {
  */
 export class FakeServer {
   objects = new Map<string, number>();
+  /** Originals the sweep may take: presign re-uploads them and commit refuses them. */
+  stale = new Set<string>();
+  /** Answer not_uploaded without the originals field. */
+  omitOriginals = false;
   uploads = new Map<string, Upload>();
   calls: string[] = [];
   puts: string[] = [];
@@ -38,7 +42,7 @@ export class FakeServer {
     } catch (e) {
       if (!(e instanceof UploadError)) throw e;
       const headers: Record<string, string> = e.retryAfter ? { "Retry-After": String(e.retryAfter) } : {};
-      return json(e.status, { error: e.message, code: e.code, retry_after: e.retryAfter }, headers);
+      return json(e.status, { error: e.message, code: e.code, retry_after: e.retryAfter, originals: e.originals }, headers);
     }
   };
 
@@ -54,7 +58,10 @@ export class FakeServer {
     const sum = createHash("sha256").update(bytes).digest("base64");
     if (req.headers["X-Amz-Checksum-Sha256"] !== sum) throw new UploadError("storage", "BadDigest", 400);
     const [, kind, a, b] = new URL(req.url).pathname.split("/");
-    if (kind === "put") this.objects.set(a!, bytes.length);
+    if (kind === "put") {
+      this.objects.set(a!, bytes.length);
+      this.stale.delete(a!);
+    }
     else {
       const u = this.uploads.get(a!)!;
       const s = u.signed.get(Number(b))!;
@@ -75,7 +82,7 @@ export class FakeServer {
         if (p.size <= 64 * MiB || p.slot) {
           if (!p.sha256) throw new UploadError("invalid_request", "sha256 required", 400);
           const name = p.slot ?? "sha256-" + p.sha256;
-          if (!p.slot && this.objects.get(name) === p.size) return { name, exists: true };
+          if (!p.slot && this.objects.get(name) === p.size && !this.stale.has(name)) return { name, exists: true };
           return { name, put: req(`fake://s3/put/${name}`, { "Content-Type": p.type, "X-Amz-Checksum-Sha256": b64(p.sha256) }) };
         }
         const ticket = `t${++this.seq}`;
@@ -116,6 +123,14 @@ export class FakeServer {
         this.uploads.delete(b.ticket);
         return undefined;
       case "/commit":
+        {
+          const missing = [...new Set<string>(b.ops.map((op: any) => op.original))].filter(
+            (n) => n && (this.stale.has(n) || !this.objects.has(n)),
+          );
+          if (missing.length) {
+            throw new UploadError("not_uploaded", "upload again", 409, undefined, { originals: this.omitOriginals ? undefined : missing });
+          }
+        }
         return { files: b.ops.map((op: any) => ({ name: op.name, original: op.original, size: this.objects.get(op.original) })) };
       case "/commit-slot":
         return undefined;

@@ -237,7 +237,7 @@ func TestSingleUploadBindingsAndCommit(t *testing.T) {
 
 	// A commit before the object lands, or naming another item's upload, finds nothing.
 	other := e.upload(t, "alice", media.RefBody{Kind: "gallery", ID: "2", Version: "en"}, "image/png", data(2, 100))
-	if status, _, er := e.commit(t, "alice", ref, insert("x.png", other)); status != 409 || er.Code != media.CodeNotUploaded {
+	if status, _, er := e.commit(t, "alice", ref, insert("x.png", other)); status != 409 || er.Code != media.CodeNotUploaded || len(er.Originals) != 1 || er.Originals[0] != other {
 		t.Fatalf("foreign original: %d %+v", status, er)
 	}
 	if status, _, er := e.commit(t, "reader", ref, insert("001.png", p.Name)); status != 403 {

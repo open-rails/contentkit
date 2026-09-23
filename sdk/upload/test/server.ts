@@ -66,7 +66,7 @@ export async function startServer(publicEndpoint: string): Promise<{ url: string
   const root = resolve(import.meta.dirname, "../../..");
   const bin = join(mkdtempSync(join(tmpdir(), "ck-sdk-")), "uploadtestserver");
   execFileSync("go", ["build", "-o", bin, "./media/internal/uploadtestserver"], { cwd: root, stdio: "inherit" });
-  const proc = spawn(bin, ["-public", publicEndpoint], { stdio: ["pipe", "pipe", "inherit"] });
+  const proc = spawn(bin, ["-public", publicEndpoint, "-grace", "20s"], { stdio: ["pipe", "pipe", "inherit"] });
   const lines = createInterface({ input: proc.stdout! });
   const url = await new Promise<string>((resolve, reject) => {
     proc.once("exit", (code) => reject(new Error(`uploadtestserver exited ${code}`)));

@@ -137,3 +137,57 @@ describe("multipart", () => {
     expect(s.puts.length).toBe(2);
   });
 });
+
+describe("commit", () => {
+  const gallery = { kind: "gallery", id: "1", version: "en" };
+
+  it("uploads a file again when its original is due for cleanup, then commits once more", async () => {
+    const { s, c } = setup();
+    const a = file(1000, 11, "image/png");
+    const b = file(1000, 12, "image/png");
+    const ua = await c.upload(a, { ref: gallery });
+    const ub = await c.upload(b, { ref: gallery });
+    s.stale.add(ub.name);
+    const commits = () => s.calls.filter((x) => x === "/commit").length;
+    const files = await c.commit(
+      gallery,
+      [{ op: "insert", name: "1.png", original: ua.name }, { op: "insert", name: "2.png", original: ub.name }],
+      { sources: { [ua.name]: a, [ub.name]: b } },
+    );
+    expect(files.map((f) => f.original)).toEqual([ua.name, ub.name]);
+    expect([commits(), s.puts.length, s.stale.size]).toEqual([2, 3, 0]); // only b went up again
+  });
+
+  it("uploads every sourced file again when the refusal names none", async () => {
+    const { s, c } = setup();
+    s.omitOriginals = true;
+    const a = file(1000, 14, "image/png");
+    const b = file(1000, 15, "image/png");
+    const ua = await c.upload(a, { ref: gallery });
+    const ub = await c.upload(b, { ref: gallery });
+    s.stale.add(ub.name);
+    await c.commit(
+      gallery,
+      [{ op: "insert", name: "1.png", original: ua.name }, { op: "insert", name: "2.png", original: ub.name }],
+      { sources: { [ua.name]: a, [ub.name]: b } },
+    );
+    // Both went through presign again; only the stale one needed bytes.
+    expect([s.calls.filter((x) => x === "/presign").length, s.puts.length]).toEqual([4, 3]);
+  });
+
+  it("gives up after one retry, and without sources", async () => {
+    const { s, c } = setup();
+    const a = file(1000, 13, "image/png");
+    const ua = await c.upload(a, { ref: gallery });
+    s.stale.add(ua.name);
+    const ops = [{ op: "insert" as const, name: "1.png", original: ua.name }];
+    expect((await c.commit(gallery, ops).catch((e) => e)).code).toBe("not_uploaded");
+    s.objects.delete(ua.name); // gone even after the re-upload attempt below
+    const t = s.transport;
+    s.transport = async () => {}; // the PUT "succeeds" but nothing lands
+    const c2 = new UploadClient({ endpoint: "http://x/api", fetch: s.fetch, transport: s.transport, retryDelay: () => 0 });
+    expect((await c2.commit(gallery, ops, { sources: { [ua.name]: a } }).catch((e) => e)).code).toBe("not_uploaded");
+    expect(s.calls.filter((x) => x === "/commit").length).toBe(3);
+    s.transport = t;
+  });
+});

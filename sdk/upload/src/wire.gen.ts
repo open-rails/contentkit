@@ -111,4 +111,5 @@ export interface ErrorReply {
   error: string;
   code: ErrorCode;
   retry_after?: number;
+  originals?: string[];
 }

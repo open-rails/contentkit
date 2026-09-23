@@ -377,7 +377,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		return nil, err
 	}
 	uploaded := map[string]Object{}
-	var keys []string
+	var keys, missing []string
 	for _, op := range ops {
 		if err := op.validate(); err != nil {
 			return nil, err
@@ -386,16 +386,24 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 			continue
 		}
 		obj, err := u.verify(ctx, item, op.Original)
-		if err != nil {
+		if ue, ok := AsUploadError(err); ok && ue.Code == CodeNotUploaded {
+			missing = append(missing, op.Original)
+			continue
+		} else if err != nil {
 			return nil, err
 		}
 		if ok, err := u.protected(ctx, item, op.Original, obj, commitMargin(u.o.Grace)); err != nil {
 			return nil, err
 		} else if !ok {
-			return nil, uploadErr(CodeNotUploaded, "%s is due for cleanup; upload it again", op.Original)
+			missing = append(missing, op.Original)
+			continue
 		}
 		uploaded[op.Original] = obj
 		keys = append(keys, obj.Key)
+	}
+	if len(missing) > 0 {
+		return nil, &UploadError{Code: CodeNotUploaded, Originals: missing,
+			Message: fmt.Sprintf("not uploaded or due for cleanup; upload again: %s", strings.Join(missing, ", "))}
 	}
 
 	var before, after map[string]int64

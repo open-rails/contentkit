@@ -22,7 +22,9 @@ const client = createUploadClient({ endpoint: "/api/media/upload" });
 const ref = { kind: "gallery", id: "123", version: "en" };
 
 const up = await client.upload(file, { ref, onProgress: (p) => console.log(p.phase, p.loaded, p.total) });
-await client.commit(ref, [{ op: "insert", name: "001.png", original: up.name }]);
+await client.commit(ref, [{ op: "insert", name: "001.png", original: up.name }], {
+  sources: { [up.name]: file }, // re-upload and retry once if the original went stale (not_uploaded)
+});
 
 await client.uploadSlot(cover, { ref, slot: "cover" }); // upload + commit-slot
 ```
@@ -47,7 +49,7 @@ q.add(input.files!);           // uploads in the background, 2 at a time
 q.move(id, 0);                 // reorder before commit
 q.update(id, { name: "001.png" });
 q.blocked;                     // rate/quota/permission refusal: nothing new starts until q.start()
-await q.commit();              // inserts uploaded files in queue order
+await q.commit();              // inserts uploaded files in queue order; re-uploads stale ones
 
 const cover = useUpload(client);
 await cover.upload(file, { ref, slot: "cover" });

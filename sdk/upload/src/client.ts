@@ -68,6 +68,15 @@ export interface UploadState {
   parts: PlannedPart[];
 }
 
+/** A file to upload again when its original is gone at commit; type defaults to the file's. */
+export type CommitSource = Blob | { file: Blob; type?: string };
+
+export interface CommitOptions {
+  signal?: AbortSignal;
+  /** Original name → the file it was uploaded from. */
+  sources?: Record<string, CommitSource>;
+}
+
 type Uploadable = Blob & { name?: string; lastModified?: number };
 
 export class UploadClient {
@@ -122,9 +131,32 @@ export class UploadClient {
     return f;
   }
 
-  /** Applies manifest ops in one conditional write; returns the committed file order. */
-  async commit(ref: RefBody, ops: Op[], signal?: AbortSignal): Promise<CommitFile[]> {
-    return (await this.api.commit({ ref, ops }, signal)).files;
+  /**
+   * Applies manifest ops in one conditional write; returns the committed file
+   * order. With sources (original name → the file uploaded as it), a
+   * not_uploaded refusal (the original expired or is due for cleanup) uploads
+   * the affected files again and retries the commit once.
+   */
+  async commit(ref: RefBody, ops: Op[], o: CommitOptions = {}): Promise<CommitFile[]> {
+    try {
+      return (await this.api.commit({ ref, ops }, o.signal)).files;
+    } catch (e) {
+      const sources = o.sources ?? {};
+      if (!(e instanceof UploadError) || e.code !== "not_uploaded") throw e;
+      const originals = [...new Set(ops.map((op) => op.original).filter((n): n is string => !!n && n in sources))];
+      const stale = e.originals ? originals.filter((n) => e.originals!.includes(n)) : originals;
+      if (stale.length === 0) throw e;
+      const renamed = new Map<string, string>();
+      for (const name of stale) {
+        const src = sources[name]!;
+        const file = src instanceof Blob ? src : src.file;
+        const type = src instanceof Blob ? undefined : src.type;
+        const up = await this.upload(file, { ref, type, signal: o.signal });
+        renamed.set(name, up.name);
+      }
+      const retried = ops.map((op) => (op.original && renamed.has(op.original) ? { ...op, original: renamed.get(op.original) } : op));
+      return (await this.api.commit({ ref, ops: retried }, o.signal)).files;
+    }
   }
 
   /** Discards a paused multipart upload. */

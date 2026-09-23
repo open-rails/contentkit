@@ -135,8 +135,14 @@ export class UploadQueue {
     const ready = this.items.filter((i) => i.status === "uploaded");
     const ops: Op[] = ready.map((i) => ({ op: "insert", name: i.name, original: i.result!.name, meta: i.meta }));
     if (ops.length === 0) return [];
-    const files = await this.client.commit(this.o.ref, ops, signal);
-    for (const i of ready) this.set(i.id, { status: "committed" });
+    const sources = Object.fromEntries(ready.map((i) => [i.result!.name, { file: i.file, type: i.result!.type }]));
+    const files = await this.client.commit(this.o.ref, ops, { signal, sources });
+    const original = new Map(files.map((f) => [f.name, f.original]));
+    for (const i of ready) {
+      // An original uploaded again at commit may have a new name (multipart).
+      const name = original.get(i.name) ?? i.result!.name;
+      this.set(i.id, { status: "committed", result: { ...i.result!, name } });
+    }
     this.changed();
     return files;
   }

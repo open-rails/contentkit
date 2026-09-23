@@ -41,6 +41,7 @@ func (allow) CanUpload(_ context.Context, a access.Actor, _ contentref.ContentRe
 
 func main() {
 	public := flag.String("public", "", "presign endpoint the client reaches (default: the S3 endpoint)")
+	grace := flag.Duration("grace", 0, "sweep grace; short values let tests see originals go stale")
 	flag.Parse()
 	ctx := context.Background()
 
@@ -75,7 +76,7 @@ func main() {
 	must(err)
 	ring, err := token.NewRing(token.Key{ID: "k1", Secret: bytes.Repeat([]byte("s"), 32)}, nil)
 	must(err)
-	uploads, err := media.NewUploads(media.UploadOptions{Store: store, Kinds: kinds, Manifests: manifests, Tickets: &ring, Authorizer: allow{}})
+	uploads, err := media.NewUploads(media.UploadOptions{Store: store, Kinds: kinds, Manifests: manifests, Tickets: &ring, Authorizer: allow{}, Grace: *grace})
 	must(err)
 
 	mux := http.NewServeMux()
