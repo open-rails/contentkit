@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/search"
 	"github.com/open-rails/contentkit/signal"
 )
@@ -114,6 +115,10 @@ type EmbeddedConfig struct {
 
 	// Catalogs maps content kind → host ContentCatalog (the Unseen universe).
 	Catalogs map[string]ContentCatalog
+
+	// Candidates sources SimilarTo and Recommend (requires CH). Nil =
+	// discovery.Engagement (co-engagement) over this hub's signal store.
+	Candidates discovery.Candidates
 }
 
 // EmbeddedHub implements Hub in-process. Construct with NewEmbedded.
@@ -124,6 +129,7 @@ type EmbeddedHub struct {
 	tenant      string
 	scorers     map[string]signal.Scorer
 	catalogs    map[string]ContentCatalog
+	discovery   discovery.Recommender
 }
 
 var _ Hub = (*EmbeddedHub)(nil)
@@ -156,6 +162,19 @@ func NewEmbedded(cfg EmbeddedConfig) (*EmbeddedHub, error) {
 			return nil, err
 		}
 		h.store = store
+		candidates := cfg.Candidates
+		if candidates == nil {
+			candidates = discovery.Engagement{Store: store, Tenant: h.tenant, RRFK: h.defaultRRFK}
+		}
+		h.discovery = discovery.Recommender{
+			Candidates:   candidates,
+			Store:        store,
+			Tenant:       h.tenant,
+			DefaultLimit: client.defaultLimit,
+			RRFK:         h.defaultRRFK,
+		}
+	} else if cfg.Candidates != nil {
+		return nil, fmt.Errorf("contentkit: Candidates requires the signal plane (CH)")
 	}
 	return h, nil
 }
@@ -355,80 +374,32 @@ func (h *EmbeddedHub) Typeahead(ctx context.Context, userText string, opts Typea
 	return h.client.Typeahead(ctx, userText, opts)
 }
 
-// RecHit is one ranked work from co-engagement or recommendations.
-type RecHit struct {
-	ContentRef
-	Score float32
-}
+// RecHit is one ranked work of SimilarTo or Recommend.
+type RecHit = discovery.Hit
 
-// SimilarOptions controls SimilarTo: "more like this" from co-engagement,
-// subjects who engaged with the anchor also engaged with the result.
-type SimilarOptions struct {
-	Limit int
-	// ContentKinds limits result kinds (default: any).
-	ContentKinds []string
-	// Window bounds the co-engagement scan (default all time).
-	Window signal.Window
+// SimilarOptions controls SimilarTo (see discovery.SimilarOptions).
+type SimilarOptions = discovery.SimilarOptions
 
-	// ExcludeSeenFor drops works this subject has already seen (and always
-	// drops works they negatively reacted to).
-	ExcludeSeenFor *signal.Subject
-}
+// RecommendOptions controls Recommend (see discovery.RecommendOptions).
+type RecommendOptions = discovery.RecommendOptions
 
+// SimilarTo returns works like the anchor ("more like this") from the
+// configured Candidates source (default: co-engagement).
 func (h *EmbeddedHub) SimilarTo(ctx context.Context, ref ContentRef, opts SimilarOptions) ([]RecHit, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return nil, err
+	if h.store == nil {
+		return nil, ErrSignalPlaneDisabled
 	}
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = h.client.defaultLimit
+	return h.discovery.Similar(ctx, ref, opts)
+}
+
+// Recommend returns "for you" works for a subject from the configured
+// Candidates source, excluding seen (unless IncludeSeen) and disliked works,
+// with a popularity fill for cold start. The host hydrates the references.
+func (h *EmbeddedHub) Recommend(ctx context.Context, subject signal.Subject, opts RecommendOptions) ([]RecHit, error) {
+	if h.store == nil {
+		return nil, ErrSignalPlaneDisabled
 	}
-	co, err := store.CoEngaged(ctx, h.tenant, ref, signal.CoEngagedOptions{
-		ContentKinds: opts.ContentKinds,
-		Window:       opts.Window,
-		Limit:        clampInt(limit*2, limit, 200),
-	})
-	if err != nil {
-		return nil, err
-	}
-	var seen map[string]map[string]struct{}
-	var negative map[ContentKey]struct{}
-	if opts.ExcludeSeenFor != nil {
-		seen = map[string]map[string]struct{}{}
-		for _, c := range co {
-			if _, ok := seen[c.ContentKind]; ok {
-				continue
-			}
-			s, err := store.SeenIDs(ctx, h.tenant, *opts.ExcludeSeenFor, c.ContentKind)
-			if err != nil {
-				return nil, err
-			}
-			seen[c.ContentKind] = s
-		}
-		if negative, err = store.NegativeIDs(ctx, h.tenant, *opts.ExcludeSeenFor, opts.ContentKinds); err != nil {
-			return nil, err
-		}
-	}
-	candidates := make([]RecHit, 0, len(co))
-	for _, c := range co {
-		if c.Equal(ref.Content()) {
-			continue // drop the anchor
-		}
-		if seen != nil {
-			if _, ok := seen[c.ContentKind][c.ContentID]; ok {
-				continue
-			}
-		}
-		if _, ok := negative[c.Key()]; ok {
-			continue
-		}
-		candidates = append(candidates, RecHit{ContentRef: c.ContentRef, Score: float32(c.Strength)})
-	}
-	if len(candidates) > limit {
-		candidates = candidates[:limit]
-	}
-	return candidates, nil
+	return h.discovery.Recommend(ctx, subject, opts)
 }
 
 // RefreshCoEngagement (re)materializes the content_pairs co-engagement rollup
