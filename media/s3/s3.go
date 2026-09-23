@@ -295,7 +295,7 @@ func mapErr(op, key string, err error) error {
 		code = api.ErrorCode()
 	}
 	switch {
-	case code == "NoSuchKey" || code == "NotFound":
+	case code == "NoSuchKey" || code == "NotFound" || code == "NoSuchUpload":
 		sentinel = media.ErrNotFound
 	case code == "PreconditionFailed" || code == "ConditionalRequestConflict":
 		sentinel = media.ErrPreconditionFailed
