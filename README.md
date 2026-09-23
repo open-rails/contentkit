@@ -49,6 +49,7 @@ another tenant is an error, never remapped.
 | `media` | per-item folders and keys, kind registry, the `Store` port, manifests with conditional-write edits, direct uploads and their HTTP API, the optional `UploadLimiter`, sweep, folder deletion and processing as River jobs |
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
 | `media/token` | media access tokens, shared by hosts and the access worker |
+| `media/video` | ffmpeg encode jobs: byte-range fMP4 HLS ladder, AAC per audio track, WebVTT per text subtitle, sprite, per-quality MP4 downloads; River in schema `media_worker` (`cmd/media-worker`) |
 | `media/tiered` | optional `public`/`members`/`ppv`/`members_ppv`/`premium` policy over an entitlement `Checker` (hosts adapt OpenRails `CheckEntitlements`) |
 | `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; the `Identity`/`Authorizer`/`UserEnricher`/`MediaStore`/`ContentProcessor` ports, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, and the HTTP routes |
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
@@ -212,6 +213,21 @@ The bucket needs CORS allowing `PUT` from the app origins with the
 `Content-Type` and `x-amz-checksum-sha256` headers, and the
 `AbortIncompleteMultipartUpload: 1 day` rule `Store.Configure` sets.
 
+**Video** (`media/video`, run by `cmd/media-worker`) encodes each `video/*`
+manifest file in one ffmpeg pass: H.264 High (CRF 22, preset fast, keyframes
+every 4 s) at 2160/1440/1080/720/480 lines no taller than the source, AAC per
+audio track, WebVTT per text subtitle and a 10×10 sprite. Each rendition and
+audio track is one single-file fMP4 blob whose segments are
+`[offset, length, seconds]` (the init segment is `[0, segments[0].offset)`);
+each quality also gets a muxed MP4 in `downloads["{file}-{height}p"]` (video,
+every audio track, subtitles). Blobs are written first; one manifest edit then
+records `hls` and `downloads` only if the file still derives from the encoded
+original, so a replaced file keeps its previous `hls` until then. Outputs are
+byte-identical on retry. Jobs live in River schema `media_worker` in the host
+database: hosts run `video.Migrate` and enqueue through `video.NewEnqueuer`
+(insert-only; register `enqueuer.Processor()` with `media.Jobs.AddProcessor`); the worker's environment is
+documented in `cmd/media-worker`.
+
 Tokens are `kid.exp.base64url(HMAC-SHA256(secret, "{scope}|{exp}"))`: a scope
 is a folder (`…/blobs/`, covering the objects directly under it), one key, or
 `{key}#dl={name}` for a download name. Expiry is window-aligned (default 4 h);
@@ -326,6 +342,8 @@ Media tests also need an S3 backend (`CONTENTKIT_TEST_S3_ENDPOINT`,
 `media/internal/s3test`). CI runs them on MinIO. To record a Ceph RGW
 release's capabilities, point the same variables at an RGW bucket and run
 `go test ./media/... -v -count=1`; the log prints the probed capabilities.
+`media/video` tests also need `ffmpeg` and `ffprobe` on `PATH` (they skip
+without them unless `CONTENTKIT_TEST_FFMPEG=1`).
 
 | Backend | Conditional PUT | SHA-256 enforced | Notes |
 |---|---|---|---|
