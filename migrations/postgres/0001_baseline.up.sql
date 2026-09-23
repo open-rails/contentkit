@@ -297,6 +297,28 @@ CREATE TABLE content_reactions (
     CONSTRAINT content_reactions_value_ck CHECK ((value = ANY (ARRAY['-1'::integer, 0, 1])))
 );
 
+CREATE TABLE content_media_upload_rates (
+    tenant_id text NOT NULL,
+    uploader text NOT NULL,
+    hour timestamp with time zone NOT NULL,
+    files integer NOT NULL,
+    bytes bigint NOT NULL
+);
+
+CREATE TABLE content_media_usage (
+    tenant_id text NOT NULL,
+    owner_id text NOT NULL,
+    used_bytes bigint DEFAULT 0 NOT NULL
+);
+
+CREATE TABLE content_media_reservations (
+    tenant_id text NOT NULL,
+    object_key text NOT NULL,
+    owner_id text NOT NULL,
+    bytes bigint NOT NULL,
+    expires_at timestamp with time zone NOT NULL
+);
+
 ALTER TABLE ONLY content_search_dirty ALTER COLUMN revision SET DEFAULT nextval('content_search_dirty_revision_seq'::regclass);
 
 ALTER TABLE ONLY content_assignments
@@ -355,6 +377,17 @@ ALTER TABLE ONLY content_poll_votes
 
 ALTER TABLE ONLY content_posts
     ADD CONSTRAINT content_posts_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY content_media_upload_rates
+    ADD CONSTRAINT content_media_upload_rates_pkey PRIMARY KEY (tenant_id, uploader, hour);
+
+ALTER TABLE ONLY content_media_usage
+    ADD CONSTRAINT content_media_usage_pkey PRIMARY KEY (tenant_id, owner_id);
+
+ALTER TABLE ONLY content_media_reservations
+    ADD CONSTRAINT content_media_reservations_pkey PRIMARY KEY (tenant_id, object_key);
+
+CREATE INDEX content_media_reservations_owner ON content_media_reservations USING btree (tenant_id, owner_id, expires_at);
 
 CREATE INDEX content_assignments_node ON content_assignments USING btree (tenant_id, taxonomy_id, content_kind, content_id);
 

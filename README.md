@@ -46,7 +46,7 @@ another tenant is an error, never remapped.
 |---|---|
 | `contentref` | `ContentRef`, `ContentKey`, `TaxonomyID` |
 | `access` | `Actor`, the `ContentResolver` port and its `Resolution{Ref, Visible, Accessible, PreviewLimit}`, shared by `content` and media |
-| `media` | per-item folders and keys, kind registry, the `Store` port, manifests with conditional-write edits |
+| `media` | per-item folders and keys, kind registry, the `Store` port, manifests with conditional-write edits, direct uploads and their HTTP API, the optional `UploadLimiter` |
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests) |
 | `media/token` | media access tokens, shared by hosts and the access worker |
 | `media/tiered` | optional `public`/`members`/`ppv`/`members_ppv`/`premium` policy over an entitlement `Checker` (hosts adapt OpenRails `CheckEntitlements`) |
@@ -189,6 +189,28 @@ _, _ = manifests.Edit(ctx, ref, func(m *media.Manifest) error { m.Files = append
 without `Capabilities.ConditionalPut` it serializes on a Postgres advisory lock
 instead. Reads are cached in process and revalidated by ETag. Presigned PUTs
 bind `Content-Type`, `Content-Length` and `x-amz-checksum-sha256`.
+
+**Uploads** go straight to the bucket (`media.Uploads`, served by
+`media.UploadHandler`): the host's `UploadAuthorizer.CanUpload` (AuthKit) runs
+at presign and commit, and the kind's types and size cap bind every presign.
+Up to 64 MiB is one PUT to `originals/sha256-{hex}` signed with its type,
+length and SHA-256; larger files are multipart to `originals/u-{uuid}` with
+8–16 MiB parts, each signed with its length and SHA-256, resumed through
+`ListParts` and completed by the server (a signed ticket carries the S3
+UploadId; nothing is stored). Slot originals PUT to `originals/{slot}`.
+Commit is one conditional manifest edit (`insert`, `replace`, `move`,
+`rename`, `remove`) that HEAD-checks each new original, re-hashes it when the
+store does not enforce checksums, and enqueues a `ProcessJob`.
+
+The optional `UploadLimiter` (`media.NewPGLimiter` over the baseline's
+`content_media_*` tables) rate-limits uploaders (files/hour, bytes/day → 429)
+and reserves per-owner quota at presign (→ 413 `quota_exceeded`); commit
+settles usage to the change in the manifest's originals, and expired
+reservations lapse after a day. Exempt grants skip it.
+
+The bucket needs CORS allowing `PUT` from the app origins with the
+`Content-Type` and `x-amz-checksum-sha256` headers, and the
+`AbortIncompleteMultipartUpload: 1 day` rule `Store.Configure` sets.
 
 Tokens are `kid.exp.base64url(HMAC-SHA256(secret, "{scope}|{exp}"))`: a scope
 is a folder (`…/blobs/`, covering the objects directly under it), one key, or
