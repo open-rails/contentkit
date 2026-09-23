@@ -46,6 +46,9 @@ another tenant is an error, never remapped.
 |---|---|
 | `contentref` | `ContentRef`, `ContentKey`, `TaxonomyID` |
 | `access` | `Actor`, the `ContentResolver` port and its `Resolution{Ref, Visible, Accessible, PreviewLimit}`, shared by `content` and media |
+| `media` | per-item folders and keys, kind registry, the `Store` port, manifests with conditional-write edits |
+| `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests) |
+| `media/token` | media access tokens, shared by hosts and the access worker |
 | `media/tiered` | optional `public`/`members`/`ppv`/`members_ppv`/`premium` policy over an entitlement `Checker` (hosts adapt OpenRails `CheckEntitlements`) |
 | `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; the `Identity`/`Authorizer`/`UserEnricher`/`MediaStore`/`ContentProcessor` ports, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, and the HTTP routes |
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
@@ -56,9 +59,6 @@ another tenant is an error, never remapped.
 | `discovery` | `SimilarTo`/`Recommend`: the `Candidates` port, the default co-engagement source (`Engagement`), `Fallback`, and the shared exclusion/fill policy (`Recommender`) |
 | `eval` | lexical golden-case evaluation, reports, baselines |
 | `migrations` | one PostgreSQL baseline and one ClickHouse baseline |
-| `media` | per-item folders and keys, kind registry, the `Store` port, manifests with conditional-write edits |
-| `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests) |
-| `media/token` | media access tokens, shared by hosts and the access worker |
 | root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (all PostgreSQL features and optional ClickHouse signals), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
 
 ## Install
@@ -279,6 +279,12 @@ Media tests also need an S3 backend (`CONTENTKIT_TEST_S3_ENDPOINT`,
 `media/internal/s3test`). CI runs them on MinIO. To record a Ceph RGW
 release's capabilities, point the same variables at an RGW bucket and run
 `go test ./media/... -v -count=1`; the log prints the probed capabilities.
+
+| Backend | Conditional PUT | SHA-256 enforced | Notes |
+|---|---|---|---|
+| MinIO RELEASE.2025-09-07 | yes | yes | drops `AbortIncompleteMultipartUpload` (expires uploads itself) |
+| Ceph 19.2 / 20.2 standalone `dbstore` RGW | no | no | wrong Range bytes; not representative of RADOS-backed RGW |
+| production RGW (RADOS) | not yet measured | not yet measured | run the suite against the dev cluster |
 
 Tests run against real PGroonga Postgres and ClickHouse+Keeper and skip
 without the variables; `CONTENTKIT_PROFILE_URL` needs `CREATEDB`. Regenerate the eval baseline with
