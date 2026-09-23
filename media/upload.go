@@ -14,6 +14,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 )
 
@@ -453,7 +454,7 @@ func (u *Uploads) verify(ctx context.Context, item Item, name string) (Object, e
 	if err != nil {
 		return Object{}, uploadErr(CodeInvalid, "%v", err)
 	}
-	sum, _ := ParseSHA256Name(name)
+	sum, _ := layout.ParseSHA256Name(name)
 	return u.check(ctx, item, key, sum)
 }
 
@@ -539,7 +540,7 @@ func (op Op) validate() error {
 	}
 	switch op.Op {
 	case OpInsert, OpReplace:
-		if !ValidBlobName(op.Original) {
+		if !layout.ValidBlobName(op.Original) {
 			return bad("original must be sha256-{hex} or u-{uuid}")
 		}
 	case OpMove:

@@ -2,7 +2,6 @@ package media
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -104,10 +103,4 @@ func classify(err error) (int, string, string) {
 		return http.StatusBadRequest, "invalid_request", "invalid request"
 	}
 	return http.StatusInternalServerError, "internal_error", "internal error"
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
 }
