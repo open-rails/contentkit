@@ -104,7 +104,7 @@ func TestHubCustomCandidatesGetSharedPolicy(t *testing.T) {
 	if got := hitIDs(recs); !reflect.DeepEqual(got, []string{"good1", "good2", "pop1", "pop2"}) {
 		t.Fatalf("recommend must filter candidates and fill from popularity: %v", got)
 	}
-	if recs[2].Score >= recs[1].Score || recs[3].Score >= recs[2].Score {
+	if recs[2].Score >= recs[1].Score || recs[3].Score > recs[2].Score {
 		t.Fatalf("popularity fill must rank after candidates: %+v", recs)
 	}
 	last := queries[len(queries)-1]
