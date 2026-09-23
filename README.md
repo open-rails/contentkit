@@ -46,8 +46,8 @@ another tenant is an error, never remapped.
 |---|---|
 | `contentref` | `ContentRef`, `ContentKey`, `TaxonomyID` |
 | `access` | `Actor`, the `ContentResolver` port and its `Resolution{Ref, Visible, Accessible, PreviewLimit}`, shared by `content` and media |
-| `media` | per-item folders and keys, kind registry, the `Store` port, manifests with conditional-write edits, direct uploads and their HTTP API, the optional `UploadLimiter` |
-| `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests) |
+| `media` | per-item folders and keys, kind registry, the `Store` port, manifests with conditional-write edits, direct uploads and their HTTP API, the optional `UploadLimiter`, sweep, folder deletion and processing as River jobs |
+| `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
 | `media/token` | media access tokens, shared by hosts and the access worker |
 | `media/tiered` | optional `public`/`members`/`ppv`/`members_ppv`/`premium` policy over an entitlement `Checker` (hosts adapt OpenRails `CheckEntitlements`) |
 | `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; the `Identity`/`Authorizer`/`UserEnricher`/`MediaStore`/`ContentProcessor` ports, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, and the HTTP routes |
@@ -216,6 +216,31 @@ Tokens are `kid.exp.base64url(HMAC-SHA256(secret, "{scope}|{exp}"))`: a scope
 is a folder (`…/blobs/`, covering the objects directly under it), one key, or
 `{key}#dl={name}` for a download name. Expiry is window-aligned (default 4 h);
 `token.Ring` verifies the current and previous key.
+
+Media's River jobs compose into the host client through `helpers/river`:
+
+```go
+jobs, _ := media.NewJobs(media.JobsConfig{Store: store, Kinds: kinds, Tenants: []string{"d"}, Limiter: limiter})
+manifests, _ := media.NewManifests(store, kinds, media.ManifestOptions{Jobs: jobs}) // edits schedule a sweep
+uploads, _ := media.NewUploads(media.UploadOptions{ /* … */ Queue: jobs})       // commits enqueue processing
+client, _ := riverhelpers.New(ctx, pool, &river.Config{Schema: "public"}, runtime.RiverJobs(), jobs.RiverJobs())
+_ = jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref: ref, Owner: owner})  // in the host's delete transaction
+_ = jobs.EraseUserTx(ctx, tx, "d", userID, deletions...)                  // the user's items plus user/{id}/
+```
+
+- **Sweep** (per folder, 24 h after each edit and in a daily pass over
+  `Tenants`): deletes `blobs/` and hash-named `originals/` no manifest in the
+  folder references, only once every manifest and the object itself are older
+  than `Grace` (24 h). Slot originals, `public/` and manifests are never swept.
+- **Deletion** removes the whole folder, manifests first, then again after
+  `LateUploadWindow` (25 h) for PUTs and multipart completions that land late.
+  With a `Limiter`, the owner's quota (the manifests' `OriginalBytes`) is
+  released once.
+- Processing: `jobs.Enqueue` (the uploads' `ProcessQueue`) runs one pending
+  job per ref and slot through every `AddProcessor` processor.
+- Media packages add workers with `jobs.Register(func(*river.Config) error)`
+  before composition and enqueue with `jobs.Insert`/`InsertTx`.
+- Restore: [docs/restore.md](docs/restore.md#media).
 
 ## Taxonomy
 

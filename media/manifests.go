@@ -27,6 +27,9 @@ type ManifestOptions struct {
 	Locker     Locker
 	CacheSize  int // manifests kept in process, revalidated by ETag; default 4096
 	MaxRetries int // CAS attempts per edit; default 16
+	// Jobs, when set, schedules the folder's sweep after every written edit.
+	// Scheduling is best-effort (logged); the periodic sweep pass backs it up.
+	Jobs *Jobs
 }
 
 // Manifests reads and edits item manifests.
@@ -34,6 +37,7 @@ type Manifests struct {
 	store   Store
 	kinds   *Registry
 	locker  Locker
+	jobs    *Jobs
 	retries int
 	cache   *lru
 }
@@ -56,7 +60,7 @@ func NewManifests(store Store, kinds *Registry, opts ManifestOptions) (*Manifest
 	if opts.MaxRetries <= 0 {
 		opts.MaxRetries = 16
 	}
-	return &Manifests{store: store, kinds: kinds, locker: locker, retries: opts.MaxRetries, cache: newLRU(opts.CacheSize)}, nil
+	return &Manifests{store: store, kinds: kinds, locker: locker, jobs: opts.Jobs, retries: opts.MaxRetries, cache: newLRU(opts.CacheSize)}, nil
 }
 
 // Get returns the manifest and its ETag, or ErrNotFound. Cached copies are
@@ -84,11 +88,11 @@ func (m *Manifests) Edit(ctx context.Context, ref contentref.ContentRef, fn func
 			return nil, err
 		}
 		defer unlock()
-		man, _, err := m.apply(ctx, key, fn, false)
+		man, _, err := m.apply(ctx, ref, key, fn, false)
 		return man, err
 	}
 	for attempt := 0; attempt < m.retries; attempt++ {
-		man, conflict, err := m.apply(ctx, key, fn, true)
+		man, conflict, err := m.apply(ctx, ref, key, fn, true)
 		if !conflict {
 			return man, err
 		}
@@ -102,7 +106,7 @@ func (m *Manifests) Edit(ctx context.Context, ref contentref.ContentRef, fn func
 	return nil, fmt.Errorf("%w: %s", ErrManifestConflict, key)
 }
 
-func (m *Manifests) apply(ctx context.Context, key string, fn func(*Manifest) error, conditional bool) (*Manifest, bool, error) {
+func (m *Manifests) apply(ctx context.Context, ref contentref.ContentRef, key string, fn func(*Manifest) error, conditional bool) (*Manifest, bool, error) {
 	man, etag, err := m.get(ctx, key)
 	if errors.Is(err, ErrNotFound) {
 		man, etag = &Manifest{}, ""
@@ -143,6 +147,11 @@ func (m *Manifests) apply(ctx context.Context, key string, fn func(*Manifest) er
 		return nil, false, err
 	}
 	m.cache.put(key, obj.ETag, body)
+	if m.jobs != nil {
+		if err := m.jobs.ScheduleSweep(ctx, ref); err != nil {
+			m.jobs.cfg.Logger.WarnContext(ctx, "media: schedule sweep", "key", key, "error", err)
+		}
+	}
 	return man, false, nil
 }
 

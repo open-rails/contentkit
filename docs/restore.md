@@ -26,3 +26,22 @@ serving analytics.
 Erasures never roll back. Replay post-backup deletions and permanent source
 fences before reopening content writes; an AuthKit callback acknowledgement
 means durable acceptance, not completion of downstream erasure.
+
+## Media
+
+The media bucket is versioned with a 30-day noncurrent expiry
+(`s3.Store.Configure(ctx, 30)`), so sweeps and folder deletions stay
+recoverable for 30 days. To restore to time T:
+
+1. Restore PostgreSQL to T (the steps above).
+2. Run `store.Restore(ctx, "{tenant}/", T)`: manifests, public slots and slot
+   originals return to their versions at T (those created after T are
+   removed), and blobs and originals the restored manifests reference lose
+   their delete markers. `RestoreReport.Missing` lists references whose
+   versions have expired.
+3. Re-apply media erasures made after T (`EraseUserTx`/`DeleteItemsTx`) from
+   the host's deletion ledger.
+
+The RGW→R2 mirror must keep deleted objects at the destination for at least
+30 days to cover the same window. Erased files therefore remain as backup data
+(RGW versions and the R2 mirror) for 30 days; the privacy policy must say so.
