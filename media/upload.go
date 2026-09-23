@@ -326,7 +326,7 @@ func (u *Uploads) abort(ctx context.Context, t ticket, key string, cause error) 
 // Commit operations. Insert and Replace take an uploaded Original.
 const (
 	OpInsert  = "insert"  // add Name at Index (default: append); a retry with the same Original is a no-op
-	OpReplace = "replace" // swap Name's original; derived files are dropped and regenerated
+	OpReplace = "replace" // swap Name's original; variants are regenerated, a stale hls plays until re-encoded
 	OpMove    = "move"    // move Name to Index
 	OpRename  = "rename"  // rename Name to To
 	OpRemove  = "remove"  // drop Name
@@ -589,7 +589,8 @@ func (m *Manifest) apply(op Op, obj Object) error {
 		if op.Meta != nil {
 			meta = op.Meta
 		}
-		*f = File{Name: f.Name, Original: op.Original, Type: obj.ContentType, Size: obj.Size, Meta: meta}
+		// A stale hls keeps playing until the re-encode promotes its successor.
+		*f = File{Name: f.Name, Original: op.Original, Type: obj.ContentType, Size: obj.Size, Meta: meta, HLS: f.HLS}
 	case OpMove:
 		if *op.Index < 0 || *op.Index >= len(m.Files) {
 			return uploadErr(CodeInvalid, "index %d out of range 0-%d", *op.Index, len(m.Files)-1)

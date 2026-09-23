@@ -54,7 +54,9 @@ type Download struct {
 	Inputs string `json:"inputs,omitempty"` // hash of the ordered input blobs
 }
 
-// HLS is a byte-range ladder: each rendition is one fMP4 blob.
+// HLS is a byte-range ladder: each rendition is one fMP4 blob. Source is the
+// original it was encoded from; when it differs from the file's, the ladder is
+// stale but still served until its replacement is promoted.
 type HLS struct {
 	Source string       `json:"source"`
 	Spec   string       `json:"spec,omitempty"`
@@ -64,6 +66,8 @@ type HLS struct {
 	Sprite *Sprite      `json:"sprite,omitempty"`
 }
 
+// Rendition is one video-only fMP4 blob: its init segment is bytes
+// [0, Segments[0].Offset) and the segments follow contiguously.
 type Rendition struct {
 	Height    int       `json:"height"`
 	Width     int       `json:"w"`
