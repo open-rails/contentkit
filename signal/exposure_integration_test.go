@@ -203,3 +203,25 @@ func TestIntegrationExposureAttribution(t *testing.T) {
 		t.Fatalf("after forget only the anonymous render remains: %+v %v", served.Renders, err)
 	}
 }
+
+func TestIntegrationForgetExposuresBeforeKeepsLaterResults(t *testing.T) {
+	st, _ := freshStore(t)
+	ctx := context.Background()
+	subject := Subject{UserID: "u1"}
+	before := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
+	for _, exposure := range []Exposure{
+		{RenderID: "old", Stage: StageRendered, Surface: SurfaceSearch, Subject: subject, OccurredAt: before.Add(-time.Minute), Shown: []Placement{{ContentRef: gallery("t", "a"), Position: 1}}},
+		{RenderID: "new", Stage: StageRendered, Surface: SurfaceSearch, Subject: subject, OccurredAt: before.Add(time.Minute), Shown: []Placement{{ContentRef: gallery("t", "b"), Position: 1}}},
+	} {
+		if err := st.RecordExposures(ctx, "t", []Exposure{exposure}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.ForgetExposuresBefore(ctx, "t", subject, before); err != nil {
+		t.Fatal(err)
+	}
+	page, err := st.Attribution(ctx, "t", AttributionOptions{Stage: StageRendered, Window: Between(before.Add(-12*time.Hour), before.Add(12*time.Hour))})
+	if err != nil || len(page.Renders) != 1 || page.Renders[0].RenderID != "new" {
+		t.Fatalf("clear removed a later exposure: %+v %v", page.Renders, err)
+	}
+}
