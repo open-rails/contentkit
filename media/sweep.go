@@ -25,8 +25,13 @@ type SweepResult struct {
 
 // Sweep deletes the item folder's blobs/ and hash-named originals/ that no
 // manifest in the folder references, once every manifest is older than the
-// grace period, and only objects older than it. Slot originals, public/ and
+// grace period, and only objects past abandonedAt. Slot originals, public/ and
 // manifests are never swept.
+//
+// Invariant: the sweep deletes only objects that no manifest references and
+// that no in-flight commit can newly reference. Uploads keeps the second half:
+// presign reuses an existing original, and a commit accepts one, only while it
+// is referenced or well before abandonedAt (see protected).
 func (j *Jobs) Sweep(ctx context.Context, ref contentref.ContentRef) (SweepResult, error) {
 	item, err := j.cfg.Kinds.Item(ref.Content())
 	if err != nil {
@@ -86,7 +91,8 @@ func (j *Jobs) sweep(ctx context.Context, prefix string, objs []Object) (SweepRe
 			return SweepResult{}, err
 		}
 	}
-	cutoff := j.cfg.Now().Add(-j.cfg.Grace)
+	now := j.cfg.Now()
+	cutoff := now.Add(-j.cfg.Grace)
 	manifests, newest := manifestETags(objs)
 	if newest.After(cutoff) {
 		return SweepResult{Wait: newest.Sub(cutoff) + time.Second}, nil
@@ -113,7 +119,7 @@ func (j *Jobs) sweep(ctx context.Context, prefix string, objs []Object) (SweepRe
 		if !ok || !layout.ValidBlobName(k.Name) || (k.Area != AreaBlobs && k.Area != AreaOriginals) {
 			continue
 		}
-		if !refs[k.Area+"/"+k.Name] && !o.LastModified.After(cutoff) {
+		if !refs[k.Area+"/"+k.Name] && !now.Before(abandonedAt(k.Name, o.LastModified, j.cfg.Grace)) {
 			doomed = append(doomed, o.Key)
 		}
 	}
@@ -132,6 +138,22 @@ func (j *Jobs) sweep(ctx context.Context, prefix string, objs []Object) (SweepRe
 		return SweepResult{}, err
 	}
 	return SweepResult{Deleted: doomed}, nil
+}
+
+// multipartLife is the bucket's 1-day abort rule: backends may date a
+// completed multipart object at its initiation.
+const multipartLife = 24 * time.Hour
+
+// commitMargin bounds the time between a commit's check of an original and its
+// manifest edit landing (the edit runs under half of it): grace/4, at most 1 h.
+func commitMargin(grace time.Duration) time.Duration { return min(grace/4, time.Hour) }
+
+// abandonedAt is when the sweep may delete an unreferenced blob or original.
+func abandonedAt(name string, modified time.Time, grace time.Duration) time.Time {
+	if strings.HasPrefix(name, layout.UploadPrefix) {
+		return modified.Add(grace + multipartLife)
+	}
+	return modified.Add(grace)
 }
 
 func manifestKeys(objs []Object) map[string]string {
