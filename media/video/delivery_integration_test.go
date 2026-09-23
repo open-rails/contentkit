@@ -410,22 +410,23 @@ func TestPlaybackAccess(t *testing.T) {
 		t.Fatalf("preview download: %d", r.status)
 	}
 
-	// A viewer mid-stream keeps playing across a source replacement: the stale
-	// ladder is served until the new one is promoted, and its blobs outlive it.
+	// A viewer mid-stream keeps playing across a source replacement (a new tone,
+	// so new audio blobs): the stale ladder is served until the new one is
+	// promoted, and its blobs outlive it.
 	d.verdict.set(access.Resolution{Visible: true, Accessible: true})
-	old := parseMedia(t, d.playlist(t, d.url(paths[1]), media.HLSContentType))
+	old := parseMedia(t, d.playlist(t, d.url(paths[2]), media.HLSContentType))
 	e.commit(t, fixture{w: 640, h: 361, secs: 5, audio: 1, tone: 550}.make(t), media.OpReplace)
-	if stale := parseMedia(t, d.playlist(t, d.url(paths[1]), media.HLSContentType)); stale.init.uri != old.init.uri {
+	if stale := parseMedia(t, d.playlist(t, d.url(paths[2]), media.HLSContentType)); stale.init.uri != old.init.uri {
 		t.Fatal("stale ladder not served before re-encode")
 	}
 	e.encode(t)
-	fresh := parseMedia(t, d.playlist(t, d.url(paths[1]), media.HLSContentType))
+	fresh := parseMedia(t, d.playlist(t, d.url(paths[2]), media.HLSContentType))
 	if fresh.init.uri == old.init.uri {
 		t.Fatal("playlist still points at the replaced ladder")
 	}
 	last := old.segs[len(old.segs)-1]
 	if r := get(t, d.client, last.uri, last.offset, last.length); r.status != http.StatusPartialContent ||
-		!bytes.Equal(r.body, d.blob(t, h.Video[0].Blob)[last.offset:last.offset+last.length]) {
+		!bytes.Equal(r.body, d.blob(t, h.Audio[0].Blob)[last.offset:last.offset+last.length]) {
 		t.Fatalf("old segment after replacement: %d", r.status)
 	}
 }
