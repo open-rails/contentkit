@@ -3,8 +3,6 @@ package media
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -98,17 +96,10 @@ func (r HoverPreviewRecord) Key() string {
 
 // HoverPreviewResult is what the served outputs were rendered from.
 type HoverPreviewResult struct {
-	Of      string `json:"of"`      // HoverPreviewRecord.Key
-	Source  string `json:"source"`  // the file's original
-	Recipe  string `json:"recipe"`  // the renderer's identity
-	Version string `json:"version"` // URL version (?v=) the outputs carry
+	Of      string `json:"of"`     // HoverPreviewRecord.Key
+	Source  string `json:"source"` // the file's original
+	Recipe  string `json:"recipe"` // the renderer's identity
 	Outputs []Dims `json:"outputs"`
-}
-
-// HoverPreviewVersion is the URL version of a render.
-func HoverPreviewVersion(key, source, recipe string) string {
-	sum := sha256.Sum256([]byte(key + "|" + source + "|" + recipe))
-	return hex.EncodeToString(sum[:8])
 }
 
 // AutoHoverPreview is the default section: HoverPreviewDefault seconds from a
@@ -485,7 +476,6 @@ type PosterSelection struct {
 type HoverPreviewManifest struct {
 	File      string                 `json:"file,omitempty"` // the video the loop was cut from
 	Selection *HoverPreviewSelection `json:"selection,omitempty"`
-	Version   string                 `json:"version,omitempty"`
 	MP4       []PreviewImage         `json:"mp4"`
 	WebP      []PreviewImage         `json:"webp"`
 	Pending   bool                   `json:"pending"`
@@ -519,23 +509,22 @@ type VideoInfo struct {
 
 // HoverPreviewURLs are the public URLs of the smallest hover-preview loop,
 // which every rendered preview has; it reads nothing, so listings link
-// previews without reads (posters: SlotOutputs with PosterSlot). They answer
+// previews without reads (posters: ListedSlot with PosterSlot). They answer
 // only once the item's Exposure publishes the preview: link them only for
 // items anonymous viewers fully see (DefaultExposure), never for drafts or
-// paid items. version is HoverPreviewManifest.Version, or "" for URLs
-// revalidated on every view.
-func (r *Reader) HoverPreviewURLs(ref contentref.ContentRef, version string) (mp4, webp string, err error) {
+// paid items. Renders rewrite them in place (no-cache, ETag).
+func (r *Reader) HoverPreviewURLs(ref contentref.ContentRef) (mp4, webp string, err error) {
 	item, err := r.kinds.Item(ref.Content())
 	if err != nil || item.Kind().Video == nil {
 		return "", "", fmt.Errorf("%w: not a video item", ErrNotVisible)
 	}
 	w := HoverPreviewWidths[0]
 	base := r.base.String()
-	return previewURL(base, item, w, true, version), previewURL(base, item, w, false, version), nil
+	return previewURL(base, item, w, true), previewURL(base, item, w, false), nil
 }
 
-func previewURL(base string, item Item, w int, mp4 bool, version string) string {
-	return versioned(strings.TrimRight(base, "/")+"/"+item.HoverPreviewPublic(w, mp4), version)
+func previewURL(base string, item Item, w int, mp4 bool) string {
+	return strings.TrimRight(base, "/") + "/" + item.HoverPreviewPublic(w, mp4)
 }
 
 // VideoImages resolves ref for actor and reads a video item's poster and
@@ -587,11 +576,10 @@ func (m *Manifests) VideoImages(ctx context.Context, urls OutputURLs, ref conten
 		res := prev.Result
 		out.HoverPreview.Pending = res.Of != prev.Key()
 		out.HoverPreview.File = prev.File
-		out.HoverPreview.Version = res.Version
 		for _, o := range res.Outputs {
-			mp4, webp := previewURL(urls.BaseURL, item, o.W, true, res.Version), previewURL(urls.BaseURL, item, o.W, false, res.Version)
+			mp4, webp := previewURL(urls.BaseURL, item, o.W, true), previewURL(urls.BaseURL, item, o.W, false)
 			if editor {
-				mp4, webp = urls.editorURL(item.HoverPreviewOutput(o.W, true), res.Version), urls.editorURL(item.HoverPreviewOutput(o.W, false), res.Version)
+				mp4, webp = urls.editorURL(item.HoverPreviewOutput(o.W, true)), urls.editorURL(item.HoverPreviewOutput(o.W, false))
 			}
 			out.HoverPreview.MP4 = append(out.HoverPreview.MP4, PreviewImage{o.W, o.H, mp4})
 			out.HoverPreview.WebP = append(out.HoverPreview.WebP, PreviewImage{o.W, o.H, webp})

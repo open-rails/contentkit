@@ -1,3 +1,4 @@
+import { aspectOf, ratio, type AspectRatio } from "../aspect.js";
 import { Alert02Icon, Image01Icon, RotateClockwiseIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
@@ -26,8 +27,8 @@ export interface ImageCropDialogProps {
   onOpenChange: (open: boolean) => void;
   /** The image and its EXIF-oriented original size; edits are in those pixels. */
   source: CropSource | null;
-  /** Width / height of the output (after rotation). */
-  aspect: number;
+  /** The output's "W:H" (after rotation); "" is free. */
+  aspect: AspectRatio;
   /** Circular mask (avatars); the saved crop is still the square around it. */
   round?: boolean;
   /** Offer 90° rotation. Default true. */
@@ -74,7 +75,9 @@ export function ImageCropDialog(p: ImageCropDialogProps) {
 
 function CropBody(p: ImageCropDialogProps & { source: CropSource }) {
   const { t } = useMessages();
-  const { source, aspect } = p;
+  const { source } = p;
+  // A native slot ("") crops at the image's own shape.
+  const aspect = ratio(p.aspect) ? p.aspect : aspectOf(source.width, source.height);
   const size: Size = useMemo(() => ({ width: source.width, height: source.height }), [source.width, source.height]);
   const c = useCrop({ source: size, aspect, initial: p.initialEdit });
   const [pos, setPos] = useState<Point>({ x: 0, y: 0 });
@@ -146,7 +149,7 @@ function CropBody(p: ImageCropDialogProps & { source: CropSource }) {
             crop={pos}
             zoom={zoom}
             rotation={c.rotate}
-            aspect={aspect}
+            aspect={ratio(aspect)}
             minZoom={1}
             maxZoom={maxZoom}
             zoomSpeed={0.5}

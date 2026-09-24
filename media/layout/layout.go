@@ -30,10 +30,6 @@ const (
 	InlinePrefix = "i-"
 	PublicExt    = ".webp"
 	PublicMP4Ext = ".mp4" // hover previews
-	// VersionParam versions a public URL: served immutable while it matches
-	// the object's VersionMeta.
-	VersionParam = "v"
-	VersionMeta  = "of"
 )
 
 // Key is a parsed object key.

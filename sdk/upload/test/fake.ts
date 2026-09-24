@@ -43,7 +43,7 @@ export class FakeServer {
   private seq = 0;
   /** A video item's images (every ref shares it). */
   video: VideoImages = {
-    poster: { aspect: 16 / 9, outputs: [], pending: false, selection: { source: "auto", file: "clip.mp4", time: 3 } },
+    poster: { aspect: "16:9", outputs: [], pending: false, selection: { source: "auto", file: "clip.mp4", time: 3 } },
     hover_preview: { selection: { file: "clip.mp4", start: 3, duration: 3, auto: true }, mp4: [], webp: [], pending: false },
     video: { file: "clip.mp4", duration: 12, w: 1920, h: 1080, encoded: true },
   };
@@ -175,18 +175,18 @@ export class FakeServer {
         this.videoCalls.push(b);
         if (b.source === "upload" && !this.objects.has("poster")) throw new UploadError("not_uploaded", "upload the poster first", 409);
         const v = ++this.seq;
-        const outputs = [480, 960, 1920].map((w) => ({ name: `poster_${w}`, w, h: Math.round((w * 9) / 16), url: `fake://cdn/public/poster_${w}.webp?v=${v}` }));
+        const outputs = [480, 960, 1920].map((w) => ({ name: `poster_${w}`, w, h: Math.round((w * 9) / 16), url: `fake://cdn/public/poster_${w}.webp#${v}` }));
         const selection = { source: b.source, file: b.file ?? "clip.mp4", ...(b.time !== undefined ? { time: b.time } : {}) };
         this.pendingLeft = this.pendingReads;
-        this.video = { ...this.video, poster: { aspect: 16 / 9, ...(b.edit ? { edit: b.edit } : {}), dims: { w: 1920, h: 1080 }, version: String(v), outputs, pending: this.pendingReads > 0, selection } };
+        this.video = { ...this.video, poster: { aspect: "16:9", ...(b.edit ? { edit: b.edit } : {}), dims: { w: 1920, h: 1080 }, outputs, pending: this.pendingReads > 0, selection } };
         return this.video;
       }
       case "/video-preview": {
         this.videoCalls.push(b);
         const v = String(++this.seq);
-        const out = (ext: string) => [320, 640].map((w) => ({ w, h: Math.round((w * 9) / 16), url: `fake://cdn/public/hover_preview_${w}.${ext}?v=${v}` }));
+        const out = (ext: string) => [320, 640].map((w) => ({ w, h: Math.round((w * 9) / 16), url: `fake://cdn/public/hover_preview_${w}.${ext}#${v}` }));
         const selection = b.start === undefined ? { file: "clip.mp4", start: 3, duration: 3, auto: true } : { file: b.file ?? "clip.mp4", start: b.start, duration: b.duration ?? 3 };
-        this.video = { ...this.video, hover_preview: { selection, version: v, mp4: out("mp4"), webp: out("webp"), pending: false } };
+        this.video = { ...this.video, hover_preview: { selection, mp4: out("mp4"), webp: out("webp"), pending: false } };
         return this.video;
       }
       case "/slot": {
@@ -206,8 +206,7 @@ export class FakeServer {
       aspect,
       ...(edit ? { edit } : {}),
       dims: { w: 4000, h: 3000 },
-      version: String(v),
-      outputs: widths.map((w) => ({ name: `${slot}_${w}`, w, h: Math.round(w / aspect), url: `fake://cdn/public/${slot}_${w}.webp?v=${v}` })),
+      outputs: widths.map((w) => ({ name: `${slot}_${w}`, w, h: Math.round(w / (slot === "avatar" ? 1 : 3)), url: `fake://cdn/public/${slot}_${w}.webp#${v}` })),
       pending: false,
     };
     this.slotState.set(slotKey(ref, slot), m);
@@ -226,8 +225,8 @@ function slotKey(ref: { kind: string; id: string }, slot: string): string {
   return `${ref.kind}/${ref.id}#${slot}`;
 }
 
-function slotAspect(slot: string): number {
-  return slot === "avatar" ? 1 : 3;
+function slotAspect(slot: string): string {
+  return slot === "avatar" ? "1:1" : "3:1";
 }
 
 function req(url: string, headers: Record<string, string>): RequestReply {

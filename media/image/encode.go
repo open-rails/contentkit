@@ -347,8 +347,13 @@ func encodeSlot(src []byte, contentType string, s media.Slot, edit *media.Edit, 
 	defer img.Close()
 	edited := media.Dims{W: img.Width(), H: img.PageHeight()}
 	outs := map[int]slotOutput{}
-	for _, width := range s.OutputWidths(edited.W) {
-		d := s.Size(width, edited)
+	var last slotOutput
+	for _, rung := range s.Widths {
+		d := s.Size(s.OutputWidth(rung, edited.W), edited)
+		if d == last.dims {
+			outs[rung] = last // rungs past the edited width share its bytes
+			continue
+		}
 		out, err := img.Copy()
 		if err == nil {
 			out, err = eachFrame(out, func(f *vips.ImageRef) error {
@@ -365,7 +370,8 @@ func encodeSlot(src []byte, contentType string, s media.Slot, edit *media.Edit, 
 		if err != nil {
 			return nil, dims, permanentError{err}
 		}
-		outs[s.Rung(width)] = slotOutput{b, d}
+		last = slotOutput{b, d}
+		outs[rung] = last
 	}
 	return outs, dims, nil
 }

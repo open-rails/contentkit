@@ -158,7 +158,7 @@ func (j *Jobs) mirror(ctx context.Context, item Item, exp Exposure) error {
 	return j.recordExposure(ctx, item, exp)
 }
 
-// copyOutput copies src to dst unless dst already holds its version.
+// copyOutput copies src to dst unless dst already holds the same bytes (ETag).
 func (j *Jobs) copyOutput(ctx context.Context, src, dst string) error {
 	rc, obj, err := j.cfg.Store.Get(ctx, src, GetOptions{})
 	if errors.Is(err, ErrNotFound) {
@@ -167,8 +167,7 @@ func (j *Jobs) copyOutput(ctx context.Context, src, dst string) error {
 		return err
 	}
 	defer rc.Close()
-	version := obj.Metadata[layout.VersionMeta]
-	if cur, err := j.cfg.Store.Head(ctx, dst); err == nil && version != "" && cur.Metadata[layout.VersionMeta] == version && cur.Size == obj.Size {
+	if cur, err := j.cfg.Store.Head(ctx, dst); err == nil && obj.ETag != "" && cur.ETag == obj.ETag && cur.Size == obj.Size {
 		return nil
 	} else if err != nil && !errors.Is(err, ErrNotFound) {
 		return err
@@ -177,11 +176,7 @@ func (j *Jobs) copyOutput(ctx context.Context, src, dst string) error {
 	if err != nil {
 		return err
 	}
-	opts := PutOptions{ContentType: obj.ContentType, CacheControl: "no-cache"}
-	if version != "" {
-		opts.Metadata = map[string]string{layout.VersionMeta: version}
-	}
-	_, err = j.cfg.Store.Put(ctx, dst, bytes.NewReader(body), int64(len(body)), opts)
+	_, err = j.cfg.Store.Put(ctx, dst, bytes.NewReader(body), int64(len(body)), PutOptions{ContentType: obj.ContentType, CacheControl: "no-cache"})
 	return err
 }
 

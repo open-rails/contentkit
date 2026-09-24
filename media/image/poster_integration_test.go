@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	stdimage "image"
 	"image/color"
-	"math"
 	"os"
 	"slices"
 	"strings"
@@ -79,13 +78,13 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 	}
 	q := videotest.Quadrant
 
-	// Default: the first frame with detail (4.2 s, red), 640 wide: 480 and the
-	// 960 rung capped at 640, uncropped at the video's 16:9.
+	// Default: the first frame with detail (4.2 s, red), 640 wide: 480, and the
+	// 960 and 1920 rungs capped at 640, uncropped at the video's 16:9.
 	encode()
-	if v, _ := e.manifests.VideoImages(ctx, editorURLs, ref, true, ""); len(v.Poster.Outputs) != 2 || v.Poster.Outputs[0].H != 270 || v.Poster.Outputs[1].W != 640 || math.Abs(v.Poster.Aspect-16.0/9) > 0.01 {
+	if v, _ := e.manifests.VideoImages(ctx, editorURLs, ref, true, ""); len(v.Poster.Outputs) != 3 || v.Poster.Outputs[0].H != 270 || v.Poster.Outputs[2].W != 640 || v.Poster.Aspect != media.Aspect16x9 {
 		t.Fatalf("native auto poster %+v", v.Poster)
 	}
-	if img := poster(480, 640)[0]; q(img, 0) != "red" || q(img, 3) != "cyan" {
+	if img := poster(480, 640, 640)[0]; q(img, 0) != "red" || q(img, 3) != "cyan" {
 		t.Fatalf("auto poster %s / %s", q(img, 0), q(img, 3))
 	}
 
@@ -99,7 +98,7 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 		t.Fatal("frame selection not pending")
 	}
 	encode()
-	if img := poster(480, 640)[0]; q(img, 0) != "cyan" || q(img, 3) != "yellow" {
+	if img := poster(480, 640, 640)[0]; q(img, 0) != "cyan" || q(img, 3) != "yellow" {
 		t.Fatalf("rotated frame poster %s / %s", q(img, 0), q(img, 3))
 	}
 
@@ -108,7 +107,7 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.drain(t)
-	img := poster(480)[0]
+	img := poster(480, 480, 480)[0]
 	if q(img, 2) != "yellow" || q(img, 3) != "cyan" {
 		t.Fatalf("re-edited frame poster %s / %s", q(img, 2), q(img, 3))
 	}
@@ -133,7 +132,7 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.drain(t)
-	for i, img := range poster(480, 960) {
+	for i, img := range poster(480, 960, 960) {
 		for k := range 4 {
 			if q(img, k) != "blue" {
 				t.Fatalf("upload poster %d quadrant %d is %s", i, k, q(img, k))
@@ -144,8 +143,13 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 	if v.Poster.Selection == nil || v.Poster.Selection.Source != media.PosterSourceUpload || v.Poster.Dims == nil || *v.Poster.Dims != (media.Dims{W: 1920, H: 1080}) {
 		t.Fatalf("upload poster %+v", v.Poster)
 	}
+	slotState := func() string {
+		r, _ := e.manifests.Slot(ctx, ref.Content(), media.PosterSlot)
+		return r.Original + "|" + r.Result.Of
+	}
+	was := slotState()
 	encode() // the worker leaves an uploaded poster alone
-	if v2, _ := e.manifests.VideoImages(ctx, editorURLs, ref, true, ""); v2.Poster.Version != v.Poster.Version {
+	if slotState() != was {
 		t.Fatal("the worker replaced an uploaded poster")
 	}
 
@@ -154,7 +158,7 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 		t.Fatal(err)
 	}
 	encode()
-	if img := poster(480, 640)[0]; q(img, 0) != "red" {
+	if img := poster(480, 640, 640)[0]; q(img, 0) != "red" {
 		t.Fatalf("auto again %s", q(img, 0))
 	}
 }

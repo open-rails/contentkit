@@ -76,10 +76,10 @@ func main() {
 
 	kinds, err := media.NewRegistry(
 		media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
-			Slots: map[string]media.Slot{"cover": {Aspect: 3, Widths: []int{460}}}},
+			Slots: map[string]media.Slot{"cover": {Aspect: media.Aspect3x1, Widths: []int{460}}}},
 		media.Kind{Name: "video", Types: []string{"video/mp4"}, MaxBytes: 1 << 30},
 		media.Kind{Name: "post", Types: []string{"image/png"}, MaxBytes: 1 << 20, MaxFiles: 2, Inline: &media.Spec{Width: 1600},
-			Slots: map[string]media.Slot{"cover": {Aspect: 0.5, Widths: []int{50}}}},
+			Slots: map[string]media.Slot{"cover": {Aspect: media.Ratio("1:2"), Widths: []int{50}}}},
 	)
 	must(err)
 	manifests, err := media.NewManifests(store, kinds, media.ManifestOptions{})

@@ -10,7 +10,6 @@ import (
 	"slices"
 
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 // images brings the item's poster frame and hover preview up to their
@@ -246,8 +245,7 @@ func (e *Encoder) renderHoverPreview(ctx context.Context, ms *media.Manifests, i
 	if err != nil {
 		return err
 	}
-	res := &media.HoverPreviewResult{Of: sel.Key(), Source: f.Source(), Recipe: PreviewRecipe,
-		Version: media.HoverPreviewVersion(sel.Key(), f.Source(), PreviewRecipe)}
+	res := &media.HoverPreviewResult{Of: sel.Key(), Source: f.Source(), Recipe: PreviewRecipe}
 	for i, s := range sizes {
 		for _, out := range []struct {
 			path, ctype string
@@ -258,7 +256,7 @@ func (e *Encoder) renderHoverPreview(ctx context.Context, ms *media.Manifests, i
 				return err
 			}
 			if _, err := e.c.Store.Put(ctx, item.HoverPreviewOutput(s.W, out.mp4), bytes.NewReader(body), int64(len(body)),
-				media.PutOptions{ContentType: out.ctype, CacheControl: "no-cache", Metadata: map[string]string{layout.VersionMeta: res.Version}}); err != nil {
+				media.PutOptions{ContentType: out.ctype, CacheControl: "no-cache"}); err != nil {
 				return err
 			}
 		}

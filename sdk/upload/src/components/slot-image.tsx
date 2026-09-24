@@ -1,3 +1,4 @@
+import { ratio, type AspectRatio } from "../aspect.js";
 import { Image01Icon, UserIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
@@ -21,7 +22,7 @@ export interface SlotImageProps extends Omit<ComponentProps<"img">, "src" | "src
   density?: DensityRange;
   round?: boolean;
   /** Width / height of the box; default the manifest's aspect. */
-  aspect?: number;
+  aspect?: AspectRatio;
   /** Shown when the slot is empty; default a muted box with an icon. */
   placeholder?: ReactNode;
   /** Accessible name of the empty state. */
@@ -38,7 +39,7 @@ export function SlotImage({ manifest, item, slot, client, density, round, aspect
   });
   const m = fetched.manifest;
   const has = !!m?.outputs.some((o) => o.url);
-  const a = aspect ?? manifestAspect(m, 1);
+  const a = ratio(aspect ?? manifestAspect(m)) ?? 1;
   return (
     <UploadUiRoot
       className={cn("relative overflow-hidden bg-muted", round ? "rounded-full" : "rounded-lg", className)}

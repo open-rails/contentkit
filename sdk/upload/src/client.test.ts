@@ -238,7 +238,7 @@ describe("slots", () => {
     const { s, c } = setup();
     const up = await c.uploadSlot(file(1000, 4, "image/jpeg"), { ref, slot: "avatar", edit });
     expect(s.slotCalls).toEqual([{ ref, slot: "avatar", sha256: up.sha256, edit }]);
-    expect(up.manifest).toMatchObject({ aspect: 1, edit, dims: { w: 4000, h: 3000 }, outputs: [{ w: 128 }, { w: 256 }, { w: 512 }] });
+    expect(up.manifest).toMatchObject({ aspect: "1:1", edit, dims: { w: 4000, h: 3000 }, outputs: [{ w: 128 }, { w: 256 }, { w: 512 }] });
     expect(s.calls).toEqual(["/presign", "/commit-slot"]);
   });
 

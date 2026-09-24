@@ -180,17 +180,17 @@ func (e *env) preview(t *testing.T, length float64, widths []int, first, last st
 		t.Fatalf("hover preview not handed to the host: %+v", e.slotJobs)
 	}
 	v := e.images(t).HoverPreview
-	if v.Pending || v.Version == "" || len(v.MP4) != len(widths) || len(v.WebP) != len(widths) {
+	if v.Pending || len(v.MP4) != len(widths) || len(v.WebP) != len(widths) {
 		t.Fatalf("hover preview %+v, want widths %v", v, widths)
 	}
 	frames := int(math.Round(length * 12))
 	for i, w := range widths {
 		h := int(math.Round(float64(w) / media.HoverPreviewAspect))
-		if v.MP4[i].W != w || v.WebP[i].W != w || v.MP4[i].H != h || !strings.Contains(v.MP4[i].URL, "?v="+v.Version) {
+		if v.MP4[i].W != w || v.WebP[i].W != w || v.MP4[i].H != h || strings.Contains(v.MP4[i].URL, "?v=") {
 			t.Fatalf("outputs %+v %+v", v.MP4[i], v.WebP[i])
 		}
 		obj, err := e.store.Head(context.Background(), keyOf(v.MP4[i].URL))
-		if err != nil || obj.ContentType != "video/mp4" || obj.Metadata["of"] != v.Version {
+		if err != nil || obj.ContentType != "video/mp4" || obj.CacheControl != "no-cache" {
 			t.Fatalf("mp4 object %+v %v", obj, err)
 		}
 		anim := parseWebPAnim(t, e.get(t, keyOf(v.WebP[i].URL)))
@@ -251,9 +251,13 @@ func TestDefaultPosterFrameSkipsBlackIntroAndDefaultPreview(t *testing.T) {
 	}
 
 	// Nothing changed: the next job grabs and renders nothing.
-	before, pv := e.posterRecord(t), e.images(t).HoverPreview.Version
+	etag := func() string {
+		obj, _ := e.store.Head(context.Background(), keyOf(e.images(t).HoverPreview.MP4[0].URL))
+		return obj.ETag + obj.LastModified.String()
+	}
+	before, pv := e.posterRecord(t), etag()
 	e.encode(t)
-	if e.posterRecord(t).Original != before.Original || e.images(t).HoverPreview.Version != pv {
+	if e.posterRecord(t).Original != before.Original || etag() != pv {
 		t.Fatal("unchanged selections were redone")
 	}
 }
@@ -485,7 +489,7 @@ func TestVideoImageRoutesAndFrameEndpoint(t *testing.T) {
 	e.encode(t)
 	code, b, _ = call("admin", "POST", "/video-images", media.VideoImagesBody{Ref: ref})
 	if code != http.StatusOK || json.Unmarshal(b, &v) != nil || v.HoverPreview.Pending || len(v.HoverPreview.MP4) != 2 || v.Video == nil ||
-		!strings.HasPrefix(v.HoverPreview.MP4[0].URL, base+"/"+e.Tenant+"/video/88/editor/hover_preview_320.mp4?v="+v.HoverPreview.Version+"&t=") {
+		!strings.HasPrefix(v.HoverPreview.MP4[0].URL, base+"/"+e.Tenant+"/video/88/editor/hover_preview_320.mp4?t=") {
 		t.Fatalf("POST /video-images: %d %s", code, b)
 	}
 	if img := e.frame(t, 640, 360); quadrant(img, 0) != "blue" {
@@ -530,7 +534,7 @@ func TestVideoImageRoutesAndFrameEndpoint(t *testing.T) {
 			t.Fatalf("published preview %s: %v", p.URL, err)
 		}
 	}
-	mp4, webpURL, err := reader.HoverPreviewURLs(e.ref, public.HoverPreview.Version)
+	mp4, webpURL, err := reader.HoverPreviewURLs(e.ref)
 	if err != nil || mp4 != public.HoverPreview.MP4[0].URL || webpURL != public.HoverPreview.WebP[0].URL {
 		t.Fatalf("static preview urls %s %s %v", mp4, webpURL, err)
 	}

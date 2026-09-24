@@ -177,7 +177,7 @@ One private bucket; each item owns a folder the library keys:
                     /originals/{sha256-hex | u-uuid | slot | slot.json | i-uuid}   never served
                     /blobs/sha256-{hex}                                            immutable derivatives (viewer token)
                     /editor/{sha256-hex | poster_w.webp | hover_preview_w.mp4}     editor-only (editor token)
-                    /public/{slot_width | i-uuid}.webp | hover_preview_w.mp4       slots, inline images, published video images
+                    /public/{slot_width | i-uuid}.webp | hover_preview_w.mp4       slots, inline images, published video images (rewritten in place)
 ```
 
 Host wiring (one tenant; errors elided):
@@ -186,7 +186,7 @@ Host wiring (one tenant; errors elided):
 kinds, _ := media.NewRegistry(
 	media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
 		Specs: map[string]media.Spec{"thumb": {Width: 460, Height: 650, Fit: media.FitCover, Quality: 80}, "high": {Quality: 90}},
-		Slots: map[string]media.Slot{"cover": {Aspect: 460.0 / 650, Widths: []int{230, 460, 920}}},
+		Slots: map[string]media.Slot{"cover": {Aspect: media.Ratio("46:65"), Widths: []int{230, 460, 920}}},
 		Zip:   "high"},
 	media.Kind{Name: "video", Types: []string{"video/mp4", "video/x-matroska"}, MaxBytes: 20 << 30, Video: true})
 store, _ := s3.New(s3.Config{Bucket: "media", Endpoint: rgw, PublicEndpoint: "https://s3.doujins.ai", UsePathStyle: true,
@@ -279,13 +279,16 @@ several widths for high-density screens:
 
 ```go
 Slots: map[string]media.Slot{
-	"avatar": {Aspect: 1, Widths: []int{128, 512}},                // small, large
-	"cover":  {Aspect: 3, Widths: []int{900, 3000}, MinWidth: 600},
+	"avatar": {Aspect: media.Aspect1x1, Widths: []int{128, 512}}, // small, large
+	"cover":  {Aspect: media.Ratio("3:1"), Widths: []int{900, 3000}, MinWidth: 600},
 }
 ```
 
 A slot's `Edit` uses the same crop (original pixels, EXIF-oriented) and rotate;
-the crop's height follows its width at `Aspect` (the edited width/height), and
+the crop's height follows its width at `Aspect` (a `media.Aspect` ratio in
+lowest terms, written `"W:H"` in JSON and config: `media.Ratio("9:16")`,
+`ParseAspect`, constants `Aspect1x1`, `Aspect3x1`, `Aspect4x5`, `Aspect16x9`,
+`Aspect9x16`, `Aspect21x9`; all maths is integer, heights round half up), and
 no crop means the largest centred one. The original PUTs to `originals/{slot}`
 and `POST /commit-slot {ref, slot, sha256, edit}` commits it; `POST /edit-slot
 {ref, slot, edit}` re-edits the kept original without an upload;
@@ -295,21 +298,22 @@ manifest image (of `From`, default `Ref`: another item of the tenant needs
 `CanUpload` on both; default edit: the file's own); `POST /slot-original` returns the original to
 uploaders for the editor. The edit and the job's result live in
 `originals/{slot}.json`, so spec changes re-encode with it. Each width is
-`public/{slot}_{width}.webp`. Nothing is upscaled: the first width wider than
-the edited image is rendered at the edited width (under its own name, so the
-best available size always exists) and wider ones are skipped. An edit outside
+`{slot}_{width}.webp`, rewritten in place (one PUT per object) on every
+change: no versions. Nothing is upscaled: a width wider than the edited image
+is rendered at the edited width under its own name, so every width exists
+once the slot is set. An edit outside
 the original or narrower than `MinWidth` (default the smallest width) is refused (by the job when the original's size
 is not yet known: `Hooks.Failed`, keeping the served outputs). Slot routes and
 the read API's `GET /{kind}/{id}/slots/{slot}` answer `SlotManifest{aspect,
-edit, dims, version, outputs: [{name, w, h, url}], pending, error}`. Output URLs
-carry `?v={version}`, which the access worker serves immutable while current;
-listings build them without reads from one stored value per slot:
-`Hooks.SlotEncoded` reports each encode's `SlotStamp` (`"{version}:{w}x{h},…"`,
-the version and produced sizes) before the slot record shows that version, and `Reader.SlotOutputs(ref, slot, stamp)`
-returns exactly that encode's outputs (the zero stamp: the smallest width,
-unversioned); `Reader.StampedSlot` wraps them as a `SlotManifest` with its
-aspect. `Slot{Aspect: 0}` is native: outputs keep the edited image's own
-aspect, no crop by default, crops of any shape. `SlotManifest.Stamp()` backfills a stamp from a read.
+edit, dims, outputs: [{name, w, h, url}], pending, error}`. URLs are fixed;
+the access worker serves `public/` and editor outputs `no-cache` with the
+object's ETag, so browsers revalidate (304 when unchanged) and see a new crop
+on the next load. Listings link a slot without reads:
+`Hooks.SlotEncoded(ctx, ref, slot, aspect)` reports a written slot and the
+host records that it is set (and, for native slots, the aspect);
+`Reader.ListedSlot(ref, slot, aspect)` lists every width at its fixed URL.
+`Slot{Aspect: media.AspectNative}` keeps the edited image's own shape: no crop
+by default, crops of any shape.
 
 **Image processing** (`media/image`, CGO over libvips via govips; install
 `libvips-dev` to build it). `image.New(Config{Store, Kinds, Manifests, Specs,

@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -161,17 +160,17 @@ func (s Spec) Hash() string {
 	return hex.EncodeToString(sum[:4])
 }
 
-// Slot is a fixed public image at Aspect (the edited image's width/height),
-// or at the edited image's own aspect when Aspect is 0 (native: no crop by
+// Slot is a fixed public image at Aspect (the edited image's width:height),
+// or at the edited image's own shape when Aspect is AspectNative (no crop by
 // default, any crop shape), rendered at each of Widths (the host's rungs,
-// e.g. a small and a large one) to public/{slot}_{width}.webp (SlotOutput).
-// Its original is kept at originals/{slot} and its Edit in the slot record.
-// Nothing is upscaled: the first rung wider than the edited image is rendered
-// at the edited width instead (still named by its rung), and wider ones are
-// skipped, so the best available size always exists. An edit narrower than
+// e.g. a small and a large one) to {slot}_{width}.webp (SlotOutput), rewritten
+// in place on every change. Nothing is upscaled: a rung wider than the edited
+// image is rendered at the edited width, so every rung always exists once the
+// slot is set and listings can link them without reads. Its original is kept
+// at originals/{slot} and its Edit in the slot record. An edit narrower than
 // Min fails.
 type Slot struct {
-	Aspect    float64
+	Aspect    Aspect
 	Widths    []int
 	MinWidth  int
 	Quality   int // WebP quality; default 80
@@ -198,56 +197,29 @@ func (s Slot) Min() int {
 	return slices.Min(s.Widths)
 }
 
-// Rung is the width an output w pixels wide is stored under: the narrowest
-// of Widths at least w (0 when none is).
-func (s Slot) Rung(w int) int {
-	for _, r := range s.Widths {
-		if r >= w {
-			return r
-		}
-	}
-	return 0
-}
-
-// OutputWidths are the widths rendered from an edited image edited pixels
-// wide: every rung that fits, then the next rung capped at edited.
-func (s Slot) OutputWidths(edited int) []int {
-	var out []int
-	for _, r := range s.Widths {
-		if r <= edited {
-			out = append(out, r)
-			continue
-		}
-		if len(out) == 0 || out[len(out)-1] < edited {
-			out = append(out, edited)
-		}
-		break
-	}
-	return out
-}
+// OutputWidth is the width rendered for rung from an image edited pixels
+// wide: the rung, or edited when narrower (never upscaled).
+func (s Slot) OutputWidth(rung, edited int) int { return min(rung, edited) }
 
 // Native reports a slot at its edited image's own aspect.
-func (s Slot) Native() bool { return s.Aspect == 0 }
+func (s Slot) Native() bool { return s.Aspect.Native() }
 
 // Height is the output height of a width at Aspect (0 for a native slot).
 func (s Slot) Height(width int) int {
-	if s.Native() {
-		return 0
-	}
-	return max(1, int(math.Round(float64(width)/s.Aspect)))
+	return s.Aspect.Height(width)
 }
 
 // Size is the output of a width from an edited image of size edited.
 func (s Slot) Size(width int, edited Dims) Dims {
 	if s.Native() && edited.W > 0 {
-		return Dims{W: width, H: max(1, int(math.Round(float64(width)*float64(edited.H)/float64(edited.W))))}
+		return Dims{W: width, H: Aspect{edited.W, edited.H}.Height(width)}
 	}
 	return Dims{W: width, H: s.Height(width)}
 }
 
 // Hash is the slot spec's stable identity; outputs under another are stale.
 func (s Slot) Hash() string {
-	b := []byte(strconv.FormatFloat(s.Aspect, 'g', -1, 64) + "|" + strconv.Itoa(s.Min()) + "|q" + strconv.Itoa(s.Quality) + "|capped")
+	b := []byte(s.Aspect.String() + "|" + strconv.Itoa(s.Min()) + "|q" + strconv.Itoa(s.Quality) + "|capped")
 	for _, w := range s.Widths {
 		b = strconv.AppendInt(append(b, '|'), int64(w), 10)
 	}
@@ -355,8 +327,8 @@ func NewRegistry(kinds ...Kind) (*Registry, error) {
 			if !layout.ValidSegment(name) || layout.ValidBlobName(name) || layout.ValidInlineName(name) || strings.HasSuffix(name, slotRecordExt) {
 				return nil, fmt.Errorf("media: kind %q: invalid slot name %q", k.Name, name)
 			}
-			if !(slot.Aspect >= 0 && slot.Aspect < 100) || len(slot.Widths) == 0 || slot.MinWidth < 0 || slot.Quality < 0 || slot.Quality > 100 {
-				return nil, fmt.Errorf("media: kind %q slot %q: needs an Aspect (0: native) and Widths", k.Name, name)
+			if !slot.Aspect.Valid() || len(slot.Widths) == 0 || slot.MinWidth < 0 || slot.Quality < 0 || slot.Quality > 100 {
+				return nil, fmt.Errorf("media: kind %q slot %q: needs a valid Aspect (or AspectNative) and Widths", k.Name, name)
 			}
 			slot.Widths = slices.Sorted(slices.Values(slot.Widths))
 			for i, w := range slot.Widths {

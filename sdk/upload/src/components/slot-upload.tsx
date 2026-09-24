@@ -1,3 +1,4 @@
+import { ratio, type AspectRatio } from "../aspect.js";
 import { Camera01Icon, CropIcon, ImageUpload01Icon, Loading03Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
@@ -20,8 +21,8 @@ export interface SlotUploadProps {
   manifest?: SlotManifest | null;
   /** Called with the new manifest after every save. */
   onChange?: (m: SlotManifest) => void;
-  /** Width / height; default the manifest's aspect, else 1 (avatar) or 3 (cover). */
-  aspect?: number;
+  /** The output's "W:H"; default the manifest's aspect, else "1:1" (avatar) or "3:1" (cover). */
+  aspect?: AspectRatio;
   /** Crops narrower than this many source pixels get a sharpness warning; default the largest output. */
   targetWidth?: number;
   /** `accept` of the file input. Default "image/*". */
@@ -56,7 +57,7 @@ function SlotUpload({ variant, ...p }: SlotUploadProps & { variant: Variant }) {
         client={p.client}
         manifest={p.manifest}
         onChange={p.onChange}
-        aspect={p.aspect ?? (p.manifest === undefined ? undefined : (p.manifest?.aspect ?? (variant === "avatar" ? 1 : 3)))}
+        aspect={p.aspect ?? (p.manifest === undefined ? undefined : (p.manifest?.aspect || (variant === "avatar" ? "1:1" : "3:1")))}
         targetWidth={p.targetWidth ?? (variant === "avatar" ? 512 : 3000)}
         round={variant === "avatar"}
         accept={p.accept}
@@ -84,7 +85,7 @@ function SlotUploadLayout({ variant, ...p }: SlotUploadProps & { variant: Varian
   };
 
   const hint =
-    p.hint ?? (variant === "avatar" ? t("avatar.hint", { size: target }) : t("cover.hint", { width: target, height: Math.round(target / aspect) }));
+    p.hint ?? (variant === "avatar" ? t("avatar.hint", { size: target }) : t("cover.hint", { width: target, height: Math.round(target / (ratio(aspect) ?? 3)) }));
   const label = p.label ?? t(variant === "avatar" ? "avatar.label" : "cover.label");
 
   // overlay: buttons on top of the cover image; otherwise a plain row.

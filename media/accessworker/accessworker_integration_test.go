@@ -157,18 +157,26 @@ func TestAccessWorker(t *testing.T) {
 		}
 	})
 
-	t.Run("versioned public is immutable while current", func(t *testing.T) {
+	t.Run("public rewritten in place revalidates to the new bytes", func(t *testing.T) {
 		key := f.item + "public/avatar_128.webp"
-		if _, err := f.env.Store.Put(context.Background(), key, strings.NewReader("av"), 2,
-			media.PutOptions{ContentType: "image/webp", Metadata: map[string]string{"of": "abc"}}); err != nil {
-			t.Fatal(err)
-		}
-		for q, want := range map[string]string{"?v=abc": "public, max-age=31536000, immutable", "?v=old": "public, no-cache", "": "public, no-cache"} {
-			r := do(t, srv, "GET", "/"+key+q, nil)
-			expect(t, r, 200, "av")
-			if got := r.header.Get("Cache-Control"); got != want {
-				t.Fatalf("%q: Cache-Control %q, want %q", q, got, want)
+		put := func(body string) {
+			if _, err := f.env.Store.Put(context.Background(), key, strings.NewReader(body), int64(len(body)),
+				media.PutOptions{ContentType: "image/webp", CacheControl: "no-cache"}); err != nil {
+				t.Fatal(err)
 			}
+		}
+		put("av")
+		r := do(t, srv, "GET", "/"+key, nil)
+		expect(t, r, 200, "av")
+		if r.header.Get("Cache-Control") != "public, no-cache" {
+			t.Fatalf("Cache-Control %q", r.header.Get("Cache-Control"))
+		}
+		expect(t, do(t, srv, "GET", "/"+key, map[string]string{"If-None-Match": r.header.Get("ETag")}), 304, "")
+		put("new")
+		n := do(t, srv, "GET", "/"+key, map[string]string{"If-None-Match": r.header.Get("ETag")})
+		expect(t, n, 200, "new")
+		if n.header.Get("ETag") == r.header.Get("ETag") {
+			t.Fatal("rewrite kept the ETag")
 		}
 	})
 

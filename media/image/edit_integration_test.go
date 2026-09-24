@@ -158,7 +158,7 @@ func TestEditCropRotate(t *testing.T) {
 
 func TestSlotFromFileCrop(t *testing.T) {
 	k := galleryKind()
-	k.Slots = map[string]media.Slot{"cover": {Aspect: 0.5, Widths: []int{100}}}
+	k.Slots = map[string]media.Slot{"cover": {Aspect: media.Ratio("1:2"), Widths: []int{100}}}
 	e := newEnv(t, k)
 	ref := contentref.NewVersion(e.Tenant, "gallery", "e2", "en")
 	e.commit(t, ref, ins("001.png", e.upload(t, ref, "", quadrants(t))))

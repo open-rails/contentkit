@@ -16,6 +16,7 @@ export {
 } from "./client.js";
 export { centeredCrop, constrainCrop, editOf, editedSize, fromRotated, rotation, sameEdit, toOriginal, toRotated, type Rotation, type Size } from "./crop.js";
 export { decodeImage, isAnimatedImage, type CropSource, type DecodeOptions } from "./image.js";
+export { aspectOf, ratio, type AspectRatio } from "./aspect.js";
 export { hasOriginal, largestOutput, manifestAspect, slotSources, type SlotSources } from "./srcset.js";
 export { DEFAULT_DENSITY, densityFor, pickRendition, sortRenditions, type DensityRange, type Rendition } from "./rendition.js";
 export {

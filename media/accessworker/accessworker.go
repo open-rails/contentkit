@@ -33,10 +33,9 @@ const (
 	// HealthPath answers 200 without touching the bucket.
 	HealthPath = "/healthz"
 
-	blobCacheControl      = "private, max-age=31536000, immutable"
-	editorCacheControl    = "private, no-cache" // unpublished outputs, rewritten in place
-	publicCacheControl    = "public, no-cache"
-	versionedCacheControl = "public, max-age=31536000, immutable"
+	blobCacheControl   = "private, max-age=31536000, immutable"
+	editorCacheControl = "private, no-cache" // unpublished outputs, rewritten in place
+	publicCacheControl = "public, no-cache"  // rewritten in place; revalidated by ETag
 )
 
 // Config configures a Handler. The S3 key should only be able to read
@@ -255,13 +254,7 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, key string, k l
 	}
 	switch {
 	case k.Area == layout.AreaPublic:
-		// A versioned URL whose version the object still has is immutable.
-		v := r.URL.Query().Get(layout.VersionParam)
-		if v != "" && ok && resp.Header.Get("X-Amz-Meta-"+layout.VersionMeta) == v {
-			hdr.Set("Cache-Control", versionedCacheControl)
-		} else {
-			hdr.Set("Cache-Control", publicCacheControl)
-		}
+		hdr.Set("Cache-Control", publicCacheControl)
 	case k.Area == layout.AreaEditor && !layout.ValidBlobName(k.Name):
 		hdr.Set("Cache-Control", editorCacheControl)
 	default:

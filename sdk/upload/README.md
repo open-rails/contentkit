@@ -31,7 +31,7 @@ await client.commit(ref, [{ op: "insert", name: "001.png", original: up.name }],
 
 await client.uploadSlot(cover, { ref, slot: "cover", edit }); // upload + commit-slot → { manifest }
 await client.editSlot(ref, "cover", edit);                   // re-render from the committed original
-await client.getSlot(ref, "cover");                          // { aspect, edit, dims, version, outputs, pending }
+await client.getSlot(ref, "cover");                          // { aspect: "3:1", edit, dims, outputs, pending }
 
 await client.edit(ref, "001.png", { crop: { x: 0, y: 0, w: 800, h: 600 }, rotate: 90 }); // null clears
 await client.setSlotFromFile(ref, "cover", "001.png", { crop: { x: 40, y: 0, w: 460, h: 0 } }); // slot aspect sets h
@@ -42,9 +42,10 @@ const img = await client.uploadInline(file, { ref: { kind: "post", id: postId } 
 ```
 
 A slot `edit` is the same `Edit` as files: a crop in pixels of the EXIF-oriented
-original, then a clockwise `rotate`; the server derives `h` from `w` and the slot's aspect,
-and no crop means the largest centred one. Output URLs carry `?v={version}` and are
-immutable per version. `slotSources(manifest)` gives `src`/`srcSet`; `waitForSlot` polls
+original, then a clockwise `rotate`; the server derives `h` from `w` and the slot's aspect
+(`"W:H"`; `ratio("3:1")` gives the number for CSS, `aspectOf(w, h)` the reduced string),
+and no crop means the largest centred one. Output URLs are fixed and rewritten
+in place; the media host serves them `no-cache` with an ETag. `slotSources(manifest)` gives `src`/`srcSet`; `waitForSlot` polls
 while `pending`; `getSlotOriginal` returns the committed original for re-editing;
 `decodeImage` is the EXIF-aware preview the UI crops on.
 

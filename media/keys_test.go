@@ -2,6 +2,7 @@ package media_test
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -16,9 +17,9 @@ func registry(t testing.TB) *media.Registry {
 	r, err := media.NewRegistry(
 		media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
 			Specs: map[string]media.Spec{"thumb": {Width: 460, Height: 650, Fit: media.FitCover, Quality: 80}},
-			Slots: map[string]media.Slot{"cover": {Aspect: 3, Widths: []int{1500}}}},
+			Slots: map[string]media.Slot{"cover": {Aspect: media.Aspect3x1, Widths: []int{1500}}}},
 		media.Kind{Name: "post"},
-		media.Kind{Name: "user", Slots: map[string]media.Slot{"avatar": {Aspect: 1, Widths: []int{320, 80}}}},
+		media.Kind{Name: "user", Slots: map[string]media.Slot{"avatar": {Aspect: media.Aspect1x1, Widths: []int{320, 80}}}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -118,12 +119,12 @@ func TestKindRules(t *testing.T) {
 	if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{"cover": {}}}); err == nil {
 		t.Fatal("empty slot accepted")
 	}
-	for _, bad := range []media.Slot{{Aspect: 1}, {Aspect: -1, Widths: []int{64}}, {Aspect: 1, Widths: []int{64, 64}}, {Aspect: 1, Widths: []int{0}}} {
+	for _, bad := range []media.Slot{{Aspect: media.Aspect1x1}, {Aspect: media.Aspect{W: -1, H: 1}, Widths: []int{64}}, {Aspect: media.Aspect1x1, Widths: []int{64, 64}}, {Aspect: media.Aspect1x1, Widths: []int{0}}} {
 		if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{"cover": bad}}); err == nil {
 			t.Fatalf("slot %+v accepted", bad)
 		}
 	}
-	if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{"a.json": {Aspect: 1, Widths: []int{8}}}}); err == nil {
+	if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{"a.json": {Aspect: media.Aspect1x1, Widths: []int{8}}}}); err == nil {
 		t.Fatal("slot name colliding with a record accepted")
 	}
 	u, _ := r.Kind("user")
@@ -131,7 +132,7 @@ func TestKindRules(t *testing.T) {
 		t.Fatalf("widths not sorted: %v", w)
 	}
 	inline := media.NewInlineName()
-	if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{inline: {Aspect: 1, Widths: []int{8}}}}); err == nil {
+	if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{inline: {Aspect: media.Aspect1x1, Widths: []int{8}}}}); err == nil {
 		t.Fatal("inline-named slot accepted")
 	}
 	editor := media.Spec{Unedited: true, EditorOnly: true}
@@ -188,7 +189,7 @@ func TestInlineImageKeys(t *testing.T) {
 }
 
 func TestSlotResolve(t *testing.T) {
-	cover := media.Slot{Aspect: 3, Widths: []int{300, 600}}
+	cover := media.Slot{Aspect: media.Aspect3x1, Widths: []int{300, 600}}
 	crop := func(x, y, w, h int) *media.Edit { return &media.Edit{Crop: &media.Crop{X: x, Y: y, W: w, H: h}} }
 	for _, c := range []struct {
 		edit *media.Edit
@@ -218,7 +219,7 @@ func TestSlotResolve(t *testing.T) {
 
 func TestVideoKindSlots(t *testing.T) {
 	r, err := media.NewRegistry(media.Kind{Name: "video", Versioned: true, Video: &media.Video{},
-		Slots: map[string]media.Slot{"banner": {Aspect: 3, Widths: []int{600}}}})
+		Slots: map[string]media.Slot{"banner": {Aspect: media.Aspect3x1, Widths: []int{600}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +244,7 @@ func TestVideoKindSlots(t *testing.T) {
 	}
 	for _, name := range []string{media.PosterSlot, media.HoverPreview, "exposure"} {
 		if _, err := media.NewRegistry(media.Kind{Name: "video", Video: &media.Video{},
-			Slots: map[string]media.Slot{name: {Aspect: 16.0 / 9, Widths: []int{320}}}}); err == nil {
+			Slots: map[string]media.Slot{name: {Aspect: media.Aspect16x9, Widths: []int{320}}}}); err == nil {
 			t.Errorf("reserved slot %q accepted", name)
 		}
 	}
@@ -280,16 +281,6 @@ func TestNativeSlot(t *testing.T) {
 	if _, err := s.Resolve(&media.Edit{Crop: &media.Crop{W: 300, H: 600}}, 1080, 1920); err == nil {
 		t.Fatal("crop under Min accepted")
 	}
-	stamp := media.NewSlotStamp("v1", []media.Dims{{W: 480, H: 853}, {W: 960, H: 1707}})
-	if stamp != "v1:480x853,960x1707" {
-		t.Fatal(stamp)
-	}
-	if v, outs, err := stamp.Parse(); err != nil || v != "v1" || len(outs) != 2 || outs[1] != (media.Dims{W: 960, H: 1707}) {
-		t.Fatalf("parse %q %v %v", v, outs, err)
-	}
-	if _, outs, err := media.SlotStamp("v1:480,960").Parse(); err != nil || outs[0] != (media.Dims{W: 480}) {
-		t.Fatalf("bare widths %v %v", outs, err)
-	}
 }
 
 func TestPosterWidthsPolicy(t *testing.T) {
@@ -310,21 +301,64 @@ func TestPosterWidthsPolicy(t *testing.T) {
 }
 
 func TestSlotRungsCapAtTheEditedWidth(t *testing.T) {
-	s := media.Slot{Aspect: 3, Widths: []int{900, 3000}, MinWidth: 600}
+	s := media.Slot{Aspect: media.Aspect3x1, Widths: []int{900, 3000}, MinWidth: 600}
 	if s.Min() != 600 {
 		t.Fatalf("min %d", s.Min())
 	}
-	for edited, want := range map[int][]int{600: {600}, 900: {900}, 1200: {900, 1200}, 3000: {900, 3000}, 5000: {900, 3000}} {
-		if got := s.OutputWidths(edited); !slices.Equal(got, want) {
+	for edited, want := range map[int][]int{600: {600, 600}, 900: {900, 900}, 1200: {900, 1200}, 5000: {900, 3000}} {
+		got := []int{s.OutputWidth(900, edited), s.OutputWidth(3000, edited)}
+		if !slices.Equal(got, want) {
 			t.Errorf("edited %d: %v, want %v", edited, got, want)
-		}
-	}
-	for w, rung := range map[int]int{600: 900, 900: 900, 1200: 3000, 3000: 3000, 3001: 0} {
-		if s.Rung(w) != rung {
-			t.Errorf("rung of %d: %d, want %d", w, s.Rung(w), rung)
 		}
 	}
 	if _, err := s.Resolve(&media.Edit{Crop: &media.Crop{W: 550, H: 183}}, 1800, 1200); err == nil {
 		t.Fatal("crop under MinWidth accepted")
+	}
+}
+
+func TestAspect(t *testing.T) {
+	for in, want := range map[string]media.Aspect{"3:1": media.Aspect3x1, "6:2": media.Aspect3x1, "21:9": media.Aspect21x9, "9:16": media.Aspect9x16, "1080:1920": media.Aspect9x16, "": media.AspectNative, "native": media.AspectNative} {
+		if got, err := media.ParseAspect(in); err != nil || got != want {
+			t.Errorf("ParseAspect(%q) = %v %v, want %v", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"3", "3:", ":1", "0:1", "-3:1", "3.5:1", "a:b", "10001:1", "1:2:3"} {
+		if _, err := media.ParseAspect(bad); err == nil {
+			t.Errorf("ParseAspect(%q) accepted", bad)
+		}
+	}
+	if media.Ratio("21:9").String() != "7:3" || media.Aspect16x9.String() != "16:9" || media.AspectNative.String() != "native" {
+		t.Fatal("String")
+	}
+	// Heights at the widths hosts use, rounded half up.
+	for _, c := range []struct {
+		a    media.Aspect
+		w, h int
+	}{{media.Aspect3x1, 900, 300}, {media.Aspect3x1, 1100, 367}, {media.Aspect3x1, 3000, 1000}, {media.Aspect16x9, 640, 360}, {media.Aspect16x9, 1280, 720},
+		{media.Aspect16x9, 1098, 618}, {media.Aspect9x16, 640, 1138}, {media.Aspect1x1, 128, 128}, {media.Aspect4x5, 1080, 1350}, {media.Aspect21x9, 2560, 1097}} {
+		if got := c.a.Height(c.w); got != c.h {
+			t.Errorf("%v height of %d: %d, want %d", c.a, c.w, got, c.h)
+		}
+	}
+	if media.Aspect3x1.Width(300) != 900 || media.AspectNative.Height(100) != 0 || media.AspectOf(1920, 1080) != media.Aspect16x9 {
+		t.Fatal("Width/native/AspectOf")
+	}
+	type doc struct {
+		A media.Aspect `json:"a"`
+		N media.Aspect `json:"n"`
+	}
+	b, err := json.Marshal(doc{A: media.Aspect3x1})
+	if err != nil || string(b) != `{"a":"3:1","n":""}` {
+		t.Fatalf("marshal %s %v", b, err)
+	}
+	var back doc
+	if err := json.Unmarshal([]byte(`{"a":"6:2","n":""}`), &back); err != nil || back.A != media.Aspect3x1 || !back.N.Native() {
+		t.Fatalf("unmarshal %+v %v", back, err)
+	}
+	if json.Unmarshal([]byte(`{"a":3}`), &back) == nil || json.Unmarshal([]byte(`{"a":"0:1"}`), &back) == nil {
+		t.Fatal("invalid aspect JSON accepted")
+	}
+	if (media.Slot{Aspect: media.Aspect{W: 6, H: 2}, Widths: []int{1}}).Aspect.Valid() {
+		t.Fatal("unreduced aspect valid")
 	}
 }

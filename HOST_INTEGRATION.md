@@ -307,7 +307,7 @@ Cropping and rotating are ContentKit's: the host never decodes images.
   clockwise rotate. Variants re-derive; the original is never changed.
 - A cover from a page is `Uploads.SetSlotFromFile(ctx, actor, media.SlotFromFile{Ref: ref, Slot: "cover", File: "001.png", Edit: &media.Edit{Crop: &media.Crop{X: x, Y: y, W: w}}})`
   or `POST /commit-slot-from-file {"ref","slot","file","edit"}` (→ `SlotManifest`).
-  Give the slot `Aspect: 460.0 / 650` and send only the width; the height
+  Give the slot `Aspect: media.Ratio("46:65")` and send only the width; the height
   follows. `From` (`"from"`) takes the file from another item of the tenant,
   e.g. a channel avatar from a post image; `CanUpload` must allow both.
 - Slots and inline images belong to the work: `CanUpload` is asked for
@@ -315,20 +315,18 @@ Cropping and rotating are ContentKit's: the host never decodes images.
 - Avatars and covers are slots with density widths; see README "Slots":
 
   ```go
-  "avatar": {Aspect: 1, Widths: []int{128, 512}},                // small, large
-  "cover":  {Aspect: 3, Widths: []int{900, 3000}, MinWidth: 600},
+  "avatar": {Aspect: media.Aspect1x1, Widths: []int{128, 512}}, // small, large
+  "cover":  {Aspect: media.Aspect3x1, Widths: []int{900, 3000}, MinWidth: 600},
   ```
 
   Mount `UploadHandler` with `Reader` (its origin and editor tokens build
-  reply URLs). For `srcset` use `Reader.Slot(ctx, ref, actor, slot)` /
-  `GET /{kind}/{id}/slots/{slot}` (resolves; 404 for items the viewer cannot see). Listings store
-  the `SlotStamp` from `Hooks.SlotEncoded` (one text value per slot, e.g. a
-  `cover_stamp` column) and build every output's immutable URL without reads
-  with `Reader.StampedSlot(ref, slot, stamp)` (a `SlotManifest`, aspect
-  included) or `Reader.SlotOutputs`; with no stamp ("") it lists the
-  smallest width with a revalidated URL. Backfill with
-  `Reader.Slot(...).Stamp()`. After changing slot specs,
-  enqueue `ProcessJob{Ref}` per item; retired widths are deleted.
+  reply URLs). For one item use `Reader.Slot(ctx, ref, actor, slot)` /
+  `GET /{kind}/{id}/slots/{slot}` (resolves; 404 for items the viewer cannot see). Listings
+  record that a slot is set from `Hooks.SlotEncoded` (plus the aspect of
+  native slots) and link it with `Reader.ListedSlot(ref, slot, aspect)`:
+  fixed URLs, rewritten in place, served `no-cache` with an ETag. After
+  changing slot specs, enqueue `ProcessJob{Ref}` per item; retired widths
+  are deleted.
 - Editors (`Resolution.Editor`) read `dims` (original size) and `edit` from
   the read API and show a `Spec{Unedited: true, EditorOnly: true}` variant,
   which lives in `editor/` behind an editor-only token; the SDK's `useCrop` keeps the rect
@@ -413,8 +411,8 @@ the frame or upload); `poster` and `hover_preview` are reserved slot names.
     host image); `FrameConcurrency` (2) at once, then 429.
 - Viewers: `GET /{kind}/{id}/video-images` resolves (404 when hidden) and
   lists what is published (editors: everything, from `editor/`). Listings
-  build URLs without reads, `Reader.StampedSlot(ref, media.PosterSlot,
-  stamp)` and `Reader.HoverPreviewURLs(ref, version)`, only for items whose
+  build URLs without reads, `Reader.ListedSlot(ref, media.PosterSlot,
+  aspect)` and `Reader.HoverPreviewURLs(ref)`, only for items whose
   Exposure publishes them (default: posters of visible items, hover previews of free ones).
 
 ## Production media delivery
