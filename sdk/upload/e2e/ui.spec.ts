@@ -17,8 +17,8 @@ for (const theme of ["light", "dark"] as const) {
     await page.goto(`/?theme=${theme}`);
     const cover = page.locator("[data-ckui=cover-upload]").first();
     const avatar = page.locator("[data-ckui=avatar-upload]").first();
-    await expect(cover.locator("img")).toHaveAttribute("srcset", /1500w/);
-    await expect(avatar.locator("img")).toHaveAttribute("srcset", /512w/);
+    await expect(cover.locator("img")).toHaveAttribute("data-rendition", /^[0-9]+$/);
+    await expect(avatar.locator("img")).toHaveAttribute("data-rendition", /^[0-9]+$/);
     await expect(cover.locator("img")).toHaveJSProperty("complete", true);
     await shot(page, "profile", tag);
     const encode = page.locator("[data-demo=encode]");
@@ -54,7 +54,7 @@ for (const theme of ["light", "dark"] as const) {
     await page.screenshot({ path: `${dir}/crop-rotated-${tag}.png` });
     await dialog.getByRole("button", { name: "Save" }).click();
     await expect(dialog).toBeHidden({ timeout: 30_000 });
-    await expect(empty.locator("img")).toHaveAttribute("srcset", /512w/);
+    await expect(empty.locator("img")).toHaveAttribute("data-rendition", /^[0-9]+$/);
 
     // Too small for the largest output: the dialog warns.
     const emptyCover = page.locator("[data-ckui=cover-upload]").nth(1);
@@ -73,8 +73,8 @@ for (const theme of ["light", "dark"] as const) {
     const tag = `${theme}-${info.project.name}`;
     await page.goto(`/?theme=${theme}`);
     const header = page.locator("[data-demo=header]");
-    await expect(header.locator("img").first()).toHaveAttribute("srcset", /1500w/, { timeout: 20_000 });
-    await expect(header.locator("img").nth(1)).toHaveAttribute("srcset", /512w/);
+    await expect(header.locator("img").first()).toHaveAttribute("data-rendition", /^[0-9]+$/, { timeout: 20_000 });
+    await expect(header.locator("img").nth(1)).toHaveAttribute("data-rendition", /^[0-9]+$/);
     // Host-styled triggers: no kit wrapper, the menu popup is scoped.
     const coverTrigger = header.getByRole("button", { name: "Change cover" });
     await expect(coverTrigger).not.toHaveClass(/ckui/);
@@ -97,7 +97,7 @@ for (const theme of ["light", "dark"] as const) {
     await expect(dialog.getByText("Crop your avatar")).toBeVisible();
     await dialog.getByRole("button", { name: "Save" }).click();
     await expect(dialog).toBeHidden({ timeout: 30_000 });
-    await expect(header.locator("img").nth(1)).toHaveAttribute("srcset", /512w/);
+    await expect(header.locator("img").nth(1)).toHaveAttribute("data-rendition", /^[0-9]+$/);
   });
 }
 
@@ -107,7 +107,7 @@ for (const theme of ["light", "dark"] as const) {
     await page.goto(`/?theme=${theme}`);
     const card = page.locator("[data-demo=video]");
     const poster = card.locator("[data-ckui=video-poster]");
-    await expect(poster.locator("img")).toHaveAttribute("srcset", /1920w/, { timeout: 20_000 });
+    await expect(poster.locator("img")).toHaveAttribute("data-rendition", /^[0-9]+$/, { timeout: 20_000 });
     await poster.scrollIntoViewIfNeeded();
     await poster.hover();
     await expect(poster.locator("[data-ckui=hover-preview]")).toBeVisible();
@@ -131,7 +131,7 @@ for (const theme of ["light", "dark"] as const) {
     await page.screenshot({ path: `${dir}/poster-crop-${tag}.png` });
     await crop.getByRole("button", { name: "Save" }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0, { timeout: 30_000 });
-    await expect(poster.locator("img")).toHaveAttribute("srcset", /1920w/);
+    await expect(poster.locator("img")).toHaveAttribute("data-rendition", /^[0-9]+$/);
 
     await card.getByRole("button", { name: "Hover preview" }).click();
     await expect(dialog.locator("[data-ckui=frame-strip] img")).toHaveCount(10, { timeout: 20_000 });
