@@ -29,9 +29,10 @@ type HandlerOptions struct {
 	Identity Identity
 	Logger   *slog.Logger
 	// Limit is the per-viewer rate limit (default ViewerLimit{}: 2/s, burst
-	// 120). Viewers are keyed by Actor.ID, anonymous ones by Actor.IP, else
-	// by the connection's address: behind a proxy, set Actor.IP from the
-	// client address the proxy forwards.
+	// 120, per process; set Limit.Redis to share it across replicas).
+	// Viewers are keyed by tenant and Actor.ID, anonymous ones by Actor.IP,
+	// else by the connection's address: behind a proxy, set Actor.IP from
+	// the client address the proxy forwards.
 	Limit ViewerLimit
 }
 
@@ -112,19 +113,19 @@ func (r *Reader) Handler(o HandlerOptions) http.Handler {
 		}
 		log.Debug("media read", "path", req.URL.Path, "status", status, "duration", time.Since(start))
 	})
-	return r.limited(mux, o, log)
+	return limited(mux, o, log)
 }
 
 // limited applies HandlerOptions.Limit to every route.
-func (r *Reader) limited(next http.Handler, o HandlerOptions, log *slog.Logger) http.Handler {
-	lim := newViewerLimiter(o.Limit, time.Now)
+func limited(next http.Handler, o HandlerOptions, log *slog.Logger) http.Handler {
+	lim := newViewerLimiter(o.Limit, time.Now, log)
 	if lim == nil {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		_, actor := requestRef(req, o)
-		key := viewerKey(req, actor)
-		if ok, wait := lim.allow(key); !ok {
+		key := o.Tenant + "|" + viewerKey(req, actor)
+		if ok, wait := lim.allow(req.Context(), key); !ok {
 			log.Warn("media read rate limited", "viewer", actor.ID, "anonymous", actor.Anonymous, "path", req.URL.Path)
 			w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(wait.Seconds())))))
 			w.Header().Set("Cache-Control", "no-store")

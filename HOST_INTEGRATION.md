@@ -408,6 +408,16 @@ Every `Video` kind gets the `poster` slot (`media.VideoPoster`: 16:9, widths
 - **Scraping**: keep `HandlerOptions.Limit` on (default 2/s, burst 120 per
   viewer); behind a proxy set `Actor.IP` so anonymous viewers are not one key.
   Signed-URL logs name the viewer.
+- **Multiple replicas**: the limit is per process unless `Limit.Redis` is set
+  (logged at startup), so N replicas allow N times it. Pass the host's
+  go-redis client for Redis or Microsoft Garnet (`Limit.KeyPrefix`, default
+  `contentkit:media:rl:`); replicas then share one sliding-window count per
+  viewer (at most `Burst` per `Burst/PerSecond` window; plain INCR/PEXPIRE/GET
+  in MULTI, no Lua, keys expire after two windows; replica clocks need NTP).
+  A Redis error fails open to the per-process limit for 1 s, logs a warning
+  once per outage and increments expvar
+  `contentkit_media_ratelimit_redis_errors`: the limit is abuse protection,
+  tokens and visibility checks still gate every file.
 - **Visibility**: wire `JobsConfig.Resolver` and call `PublishTx` on every
   visibility change (see "Video posters and hover previews"); `DeleteItemsTx`
   removes `public/` first.
