@@ -79,13 +79,13 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 	}
 	q := videotest.Quadrant
 
-	// Default: the first frame with detail (4.2 s, red), 640 wide, so only 480,
-	// uncropped at the video's 16:9.
+	// Default: the first frame with detail (4.2 s, red), 640 wide: 480 and the
+	// 960 rung capped at 640, uncropped at the video's 16:9.
 	encode()
-	if v, _ := e.manifests.VideoImages(ctx, editorURLs, ref, true, ""); len(v.Poster.Outputs) != 1 || v.Poster.Outputs[0].H != 270 || math.Abs(v.Poster.Aspect-16.0/9) > 0.01 {
+	if v, _ := e.manifests.VideoImages(ctx, editorURLs, ref, true, ""); len(v.Poster.Outputs) != 2 || v.Poster.Outputs[0].H != 270 || v.Poster.Outputs[1].W != 640 || math.Abs(v.Poster.Aspect-16.0/9) > 0.01 {
 		t.Fatalf("native auto poster %+v", v.Poster)
 	}
-	if img := poster(480)[0]; q(img, 0) != "red" || q(img, 3) != "cyan" {
+	if img := poster(480, 640)[0]; q(img, 0) != "red" || q(img, 3) != "cyan" {
 		t.Fatalf("auto poster %s / %s", q(img, 0), q(img, 3))
 	}
 
@@ -99,7 +99,7 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 		t.Fatal("frame selection not pending")
 	}
 	encode()
-	if img := poster(480)[0]; q(img, 0) != "cyan" || q(img, 3) != "yellow" {
+	if img := poster(480, 640)[0]; q(img, 0) != "cyan" || q(img, 3) != "yellow" {
 		t.Fatalf("rotated frame poster %s / %s", q(img, 0), q(img, 3))
 	}
 
@@ -154,7 +154,7 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 		t.Fatal(err)
 	}
 	encode()
-	if img := poster(480)[0]; q(img, 0) != "red" {
+	if img := poster(480, 640)[0]; q(img, 0) != "red" {
 		t.Fatalf("auto again %s", q(img, 0))
 	}
 }

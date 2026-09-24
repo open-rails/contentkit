@@ -315,8 +315,8 @@ Cropping and rotating are ContentKit's: the host never decodes images.
 - Avatars and covers are slots with density widths; see README "Slots":
 
   ```go
-  "avatar": {Aspect: 1, Widths: []int{128, 256, 512}, MinWidth: 512},
-  "cover":  {Aspect: 3, Widths: []int{1500, 3000}, MinWidth: 1500},
+  "avatar": {Aspect: 1, Widths: []int{128, 512}},                // small, large
+  "cover":  {Aspect: 3, Widths: []int{900, 3000}, MinWidth: 600},
   ```
 
   Mount `UploadHandler` with `Reader` (its origin and editor tokens build
@@ -326,7 +326,7 @@ Cropping and rotating are ContentKit's: the host never decodes images.
   `cover_stamp` column) and build every output's immutable URL without reads
   with `Reader.StampedSlot(ref, slot, stamp)` (a `SlotManifest`, aspect
   included) or `Reader.SlotOutputs`; with no stamp ("") it lists the
-  widths up to `MinWidth` with revalidated URLs. Backfill with
+  smallest width with a revalidated URL. Backfill with
   `Reader.Slot(...).Stamp()`. After changing slot specs,
   enqueue `ProcessJob{Ref}` per item; retired widths are deleted.
 - Editors (`Resolution.Editor`) read `dims` (original size) and `edit` from

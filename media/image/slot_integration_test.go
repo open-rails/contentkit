@@ -140,8 +140,12 @@ func (e *env) checkOutputs(t *testing.T, ref contentref.ContentRef, m media.Slot
 		}
 	}
 	e.checkStamp(t, ref, "cover", m)
+	stored := map[string]bool{}
+	for _, o := range m.Outputs {
+		stored[o.Name] = true
+	}
 	for _, w := range []int{100, 150, 300, 400, 600} {
-		if !slices.Contains(want, w) {
+		if !stored[media.SlotOutput("cover", w)] {
 			if _, err := e.Env.Store.Head(context.Background(), prefix+media.SlotOutput("cover", w)+".webp"); !errors.Is(err, media.ErrNotFound) {
 				t.Fatalf("width %d not produced but stored: %v", w, err)
 			}
@@ -215,8 +219,8 @@ func TestSlotEditWidthsAndSpecChange(t *testing.T) {
 		t.Fatalf("unchanged slot re-encoded (reads %d)", e.store.reads.Load())
 	}
 
-	// Re-edit the kept original to the bottom-left, 450 wide: 600 is never
-	// upscaled, so it is deleted. Two jobs race. The version changes.
+	// Re-edit the kept original to the bottom-left, 450 wide: the 600 rung is
+	// never upscaled, so it holds the 450 px image. Two jobs race. The version changes.
 	orig, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/5/originals/cover")
 	if err := e.editSlot(t, ref, "cover", crop(0, 600, 450, 0)); err != nil {
 		t.Fatal(err)
@@ -231,7 +235,10 @@ func TestSlotEditWidthsAndSpecChange(t *testing.T) {
 	}
 	wg.Wait()
 	m = e.slotManifest(t, ref, "cover")
-	e.checkOutputs(t, ref, m, []int{150, 300}, green)
+	e.checkOutputs(t, ref, m, []int{150, 300, 450}, green)
+	if m.Outputs[2].Name != "cover_600" {
+		t.Fatalf("capped output %+v", m.Outputs[2])
+	}
 	if again, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/5/originals/cover"); again.ETag != orig.ETag || m.Version == first {
 		t.Fatalf("edit replaced the original or kept the version %s", m.Version)
 	}
@@ -266,12 +273,12 @@ func TestSlotOrientationCentreAndFailure(t *testing.T) {
 	bands := func(y int) color.RGBA { return []color.RGBA{red, green, blue}[y/400] }
 
 	// Portrait 400×1200, no edit: the centred 3:1 band (y 533..666) is
-	// green; 400px wide, so 600 is skipped.
+	// green; 400px wide, so the 600 rung is rendered 400 wide.
 	portrait := contentref.New(e.Tenant, "gallery", "7")
 	e.slot(t, portrait, "cover", encodePNG(t, paint(400, 1200, func(_, y int) color.RGBA { return bands(y) })), nil)
 	e.drain(t)
 	m := e.slotManifest(t, portrait, "cover")
-	e.checkOutputs(t, portrait, m, []int{150, 300}, green)
+	e.checkOutputs(t, portrait, m, []int{150, 300, 400}, green)
 	if m.Edit != nil || *m.Dims != (media.Dims{W: 400, H: 1200}) {
 		t.Fatalf("manifest %+v", m)
 	}

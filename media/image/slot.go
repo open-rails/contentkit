@@ -148,7 +148,7 @@ func (p *Processor) outputs(ctx context.Context, item media.Item, slot string, s
 	var want []int
 	if current {
 		for _, o := range res.Outputs {
-			want = append(want, o.W)
+			want = append(want, spec.Rung(o.W))
 		}
 	}
 	for _, w := range spec.Widths {

@@ -161,10 +161,7 @@ func encodeSlot(src []byte, contentType string, s media.Slot, edit *media.Edit, 
 		q = 80
 	}
 	outs := map[int]slotOutput{}
-	for _, width := range s.Widths {
-		if width > img.Width() {
-			break
-		}
+	for _, width := range s.OutputWidths(img.Width()) {
 		d := s.Size(width, media.Dims{W: img.Width(), H: img.Height()})
 		out, err := img.Copy()
 		if err == nil {
@@ -182,7 +179,7 @@ func encodeSlot(src []byte, contentType string, s media.Slot, edit *media.Edit, 
 		if err != nil {
 			return nil, dims, permanentError{err}
 		}
-		outs[width] = slotOutput{b, d}
+		outs[s.Rung(width)] = slotOutput{b, d}
 	}
 	return outs, dims, nil
 }

@@ -279,8 +279,8 @@ several widths for high-density screens:
 
 ```go
 Slots: map[string]media.Slot{
-	"avatar": {Aspect: 1, Widths: []int{128, 256, 512}},
-	"cover":  {Aspect: 3, Widths: []int{1500, 3000}, MinWidth: 1500},
+	"avatar": {Aspect: 1, Widths: []int{128, 512}},                // small, large
+	"cover":  {Aspect: 3, Widths: []int{900, 3000}, MinWidth: 600},
 }
 ```
 
@@ -295,9 +295,10 @@ manifest image (of `From`, default `Ref`: another item of the tenant needs
 `CanUpload` on both; default edit: the file's own); `POST /slot-original` returns the original to
 uploaders for the editor. The edit and the job's result live in
 `originals/{slot}.json`, so spec changes re-encode with it. Each width is
-`public/{slot}_{width}.webp`; widths wider than the edited image are skipped,
-never upscaled, and an edit outside the original or narrower than `MinWidth`
-(at least the smallest width) is refused (by the job when the original's size
+`public/{slot}_{width}.webp`. Nothing is upscaled: the first width wider than
+the edited image is rendered at the edited width (under its own name, so the
+best available size always exists) and wider ones are skipped. An edit outside
+the original or narrower than `MinWidth` (default the smallest width) is refused (by the job when the original's size
 is not yet known: `Hooks.Failed`, keeping the served outputs). Slot routes and
 the read API's `GET /{kind}/{id}/slots/{slot}` answer `SlotManifest{aspect,
 edit, dims, version, outputs: [{name, w, h, url}], pending, error}`. Output URLs
@@ -305,7 +306,7 @@ carry `?v={version}`, which the access worker serves immutable while current;
 listings build them without reads from one stored value per slot:
 `Hooks.SlotEncoded` reports each encode's `SlotStamp` (`"{version}:{w}x{h},…"`,
 the version and produced sizes) before the slot record shows that version, and `Reader.SlotOutputs(ref, slot, stamp)`
-returns exactly that encode's outputs (the zero stamp: widths up to `MinWidth`,
+returns exactly that encode's outputs (the zero stamp: the smallest width,
 unversioned); `Reader.StampedSlot` wraps them as a `SlotManifest` with its
 aspect. `Slot{Aspect: 0}` is native: outputs keep the edited image's own
 aspect, no crop by default, crops of any shape. `SlotManifest.Stamp()` backfills a stamp from a read.

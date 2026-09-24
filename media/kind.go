@@ -160,11 +160,13 @@ func (s Spec) Hash() string {
 
 // Slot is a fixed public image at Aspect (the edited image's width/height),
 // or at the edited image's own aspect when Aspect is 0 (native: no crop by
-// default, any crop shape), rendered at each of Widths to
-// public/{slot}_{width}.webp (SlotOutput). Its
-// original is kept at originals/{slot} and its Edit in the slot record. Widths
-// wider than the edited image are skipped, never upscaled; an edit narrower
-// than Min fails, so every width up to Min exists once the slot is processed.
+// default, any crop shape), rendered at each of Widths (the host's rungs,
+// e.g. a small and a large one) to public/{slot}_{width}.webp (SlotOutput).
+// Its original is kept at originals/{slot} and its Edit in the slot record.
+// Nothing is upscaled: the first rung wider than the edited image is rendered
+// at the edited width instead (still named by its rung), and wider ones are
+// skipped, so the best available size always exists. An edit narrower than
+// Min fails.
 type Slot struct {
 	Aspect   float64
 	Widths   []int
@@ -172,8 +174,41 @@ type Slot struct {
 	Quality  int // WebP quality; default 80
 }
 
-// Min is the narrowest edited width accepted: MinWidth, at least the smallest width.
-func (s Slot) Min() int { return max(s.MinWidth, slices.Min(s.Widths)) }
+// Min is the narrowest edited width accepted: MinWidth, else the smallest width.
+func (s Slot) Min() int {
+	if s.MinWidth > 0 {
+		return s.MinWidth
+	}
+	return slices.Min(s.Widths)
+}
+
+// Rung is the width an output w pixels wide is stored under: the narrowest
+// of Widths at least w (0 when none is).
+func (s Slot) Rung(w int) int {
+	for _, r := range s.Widths {
+		if r >= w {
+			return r
+		}
+	}
+	return 0
+}
+
+// OutputWidths are the widths rendered from an edited image edited pixels
+// wide: every rung that fits, then the next rung capped at edited.
+func (s Slot) OutputWidths(edited int) []int {
+	var out []int
+	for _, r := range s.Widths {
+		if r <= edited {
+			out = append(out, r)
+			continue
+		}
+		if len(out) == 0 || out[len(out)-1] < edited {
+			out = append(out, edited)
+		}
+		break
+	}
+	return out
+}
 
 // Native reports a slot at its edited image's own aspect.
 func (s Slot) Native() bool { return s.Aspect == 0 }
@@ -196,7 +231,7 @@ func (s Slot) Size(width int, edited Dims) Dims {
 
 // Hash is the slot spec's stable identity; outputs under another are stale.
 func (s Slot) Hash() string {
-	b := []byte(strconv.FormatFloat(s.Aspect, 'g', -1, 64) + "|" + strconv.Itoa(s.Min()) + "|q" + strconv.Itoa(s.Quality))
+	b := []byte(strconv.FormatFloat(s.Aspect, 'g', -1, 64) + "|" + strconv.Itoa(s.Min()) + "|q" + strconv.Itoa(s.Quality) + "|capped")
 	for _, w := range s.Widths {
 		b = strconv.AppendInt(append(b, '|'), int64(w), 10)
 	}
