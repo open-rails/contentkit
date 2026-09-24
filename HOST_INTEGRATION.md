@@ -49,10 +49,32 @@ Ports (in `content` unless qualified):
 | `Authorizer` | yes | `Can(actor, perm)` for `Perms{PostWrite, PollWrite, CommentModerate, ModerationReview}`; fail-closed on error and on an unset perm |
 | `access.ContentResolver` | yes | `Resolve(ref, actor) → access.Resolution{Ref, Visible, Accessible, PreviewLimit}`: the whole gating surface, shared with media. An error denies. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request; another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`; content ignores `PreviewLimit`. Media serves every file only when `Full()`, else the first `Units(n)` files (`PreviewLimit` N caps a `Visible` item to its first N files; free preview is `Accessible=false, PreviewLimit=3`) and `Visible` teasers |
 | `UserEnricher` | no | display data for author ids |
-| `MediaStore` / `Storage` | no | poll/post images; `Storage` is the built-in public-bucket S3 store |
+| `Media` | no | post and poll images in ContentKit media (see below); absent = image routes answer 501 |
 | `ContentProcessor` | no | rich-text sanitizer for comment/post bodies (default strips tags) |
 | `ContentModerator` | no | `Screen(ModerationInput) → Verdict{Decision, Reason, Model, PromptVersion, Confidence}` before a comment/post publishes; absent = publish (see Moderation) |
 | `AnswerClassifier` | no | `Classify(Answer) → GroupAssignment` when a free-text answer revision is stored; results are source-owned; absent = free-text polls are refused (see Free-text polls) |
+
+**Post and poll images** live in media folders `{tenant}/post/{post_id}/` and
+`{tenant}/poll/{poll_id}/` (`Media.PostKind`/`PollKind`). Register both kinds
+with `Inline` set, route their `CanUpload` to `rt.Content.CanUpload` (PostWrite
+or PollWrite, and the post or poll must exist), register the `media/image`
+processor, and pass `content.Media{URLs: reader, Folders: jobs}`. The editor
+uploads each image with the SDK's `uploadInline(file, {ref: {kind: "post", id}})`
+(browser to bucket; the original stays private and is re-encoded to
+`public/{id}.webp`), then hands the returned name to ContentKit, which stores
+the plain public URL:
+
+| Route | Body | Result |
+|---|---|---|
+| `POST /posts/{id}/images` | `{"image": "i-…"}` | `{"url"}` to place in the body |
+| `PUT /posts/{id}/cover` | `{"image": "i-…"}` (`""` clears) | `{"cover_url"}` |
+| `PUT /polls/{id}/image` | same | `{"image_url"}` |
+| `PUT /polls/{id}/options/{oid}/image` | same | `{"image_url"}` |
+
+Create and update bodies take no image URLs, so images are added once the post
+or poll exists. The public URL serves after the image job runs (seconds).
+Deleting a post or poll deletes its folder in the same transaction; replaced
+images stay in the folder until then.
 
 There is no `Recorder` and no `Moderation` port: reactions and favorites feed
 the signal plane through ContentKit's own preference outbox, and the
@@ -478,4 +500,5 @@ priors, the judged fixture and the host adoption steps.
 - Wire `Options.Moderator` (a `Chain` of `BasicModerator` and the AI moderator), `Options.Classifier` for free-text polls, `Perms.ModerationReview`, and schedule `ReclassifyPending`.
 - Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, implement `ContentCanonicalizer`, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, schedule `SyncPreferences` (and `ResyncPreferences` as the periodic repair), wire `EraseSubjects` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.
+- Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the `post` and `poll` kinds with `Inline`, and move image uploads to the SDK's `uploadInline` plus the image routes above (`POST /posts/media`, multipart `POST .../cover|image` and `image_url`/`cover_url` in write bodies are gone).
 - Rename direct SQL on `social_*` tables to `content_*` (`social_entity_counts` → `content_interaction_counts`) and `content.Options.PrivateDataEraser` to `ProviderDataEraser`.

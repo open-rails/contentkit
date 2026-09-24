@@ -29,6 +29,8 @@ export interface UploadOptions {
   type?: string;
   /** Upload the kind's slot original instead of a manifest file. */
   slot?: string;
+  /** Upload a new inline image (post bodies, poll options); the result's name is its id. */
+  inline?: boolean;
   /** Aborting pauses: the multipart upload stays resumable from the last state. */
   signal?: AbortSignal;
   onProgress?: (p: Progress) => void;
@@ -43,7 +45,7 @@ export interface UploadedFile {
   name: string;
   type: string;
   size: number;
-  /** Set for single-PUT uploads (and slots). */
+  /** Set for single-PUT uploads (and slots and inline images). */
   sha256?: string;
   /** The identical file was already in the item's folder; nothing was sent. */
   exists: boolean;
@@ -106,7 +108,7 @@ export class UploadClient {
     if (!type) throw new UploadError("invalid_request", "the file has no content type");
     throwIfAborted(o.signal);
     if (o.resume) return this.resumeMultipart(file, o.resume, o);
-    if (o.slot || file.size <= MAX_SINGLE_PUT) return this.single(file, type, o);
+    if (o.slot || o.inline || file.size <= MAX_SINGLE_PUT) return this.single(file, type, o);
 
     const p = await this.api.presign({ ref: o.ref, type, size: file.size }, o.signal);
     if (!p.multipart) throw new UploadError("invalid_request", "expected a multipart upload plan");
@@ -128,6 +130,13 @@ export class UploadClient {
   async uploadSlot(file: Uploadable, o: UploadOptions & { slot: string }): Promise<UploadedFile> {
     const f = await this.upload(file, o);
     await this.retry(() => this.api.commitSlot({ ref: o.ref, slot: o.slot, sha256: f.sha256! }, o.signal), o.signal);
+    return f;
+  }
+
+  /** Uploads a new inline image and commits it (re-encodes public/{name}.webp). */
+  async uploadInline(file: Uploadable, o: Omit<UploadOptions, "slot" | "inline" | "resume">): Promise<UploadedFile> {
+    const f = await this.upload(file, { ...o, inline: true });
+    await this.retry(() => this.api.commitSlot({ ref: o.ref, slot: f.name, sha256: f.sha256! }, o.signal), o.signal);
     return f;
   }
 
@@ -188,7 +197,7 @@ export class UploadClient {
       signal: o.signal,
       onProgress: (loaded) => o.onProgress?.({ phase: "hashing", loaded, total }),
     });
-    const presign = () => this.api.presign({ ref: o.ref, type, size: total, sha256, slot: o.slot }, o.signal);
+    const presign = () => this.api.presign({ ref: o.ref, type, size: total, sha256, slot: o.slot, inline: o.inline }, o.signal);
     const p = await presign();
     const out: UploadedFile = { name: p.name, type, size: total, sha256, exists: !!p.exists };
     if (p.exists) return out;
@@ -202,7 +211,11 @@ export class UploadClient {
       },
       o.signal,
       async (err) => {
-        if (err.code === "storage" && err.status === 403) put = (await presign()).put!; // expired URL
+        if (err.code === "storage" && err.status === 403) {
+          const again = await presign(); // expired URL; an inline image gets a new name
+          put = again.put!;
+          out.name = again.name;
+        }
       },
     );
     return out;

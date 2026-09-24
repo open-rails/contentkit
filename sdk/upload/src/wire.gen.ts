@@ -20,6 +20,7 @@ export interface PresignBody {
   size: number;
   sha256?: string;
   slot?: string;
+  inline?: boolean;
 }
 
 export interface RequestReply {

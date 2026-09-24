@@ -21,7 +21,7 @@ const (
 // Item is a validated content item and the keys of its folder:
 //
 //	{tenant}/{kind}/{content_id}/manifest.json | manifests/{version}.json
-//	                            /originals/{sha256-hex | u-uuid | slot}
+//	                            /originals/{sha256-hex | u-uuid | slot | i-uuid}
 //	                            /blobs/{sha256-hex | u-uuid}
 //	                            /public/{output}.webp
 type Item struct {
@@ -88,12 +88,25 @@ func (i Item) Blob(name string) (string, error) {
 	return i.BlobsPrefix() + name, nil
 }
 
-// SlotOriginal is the fixed, overwritten original of a registered public slot.
+// SlotOriginal is the original of a registered public slot, overwritten in
+// place, or of an inline image.
 func (i Item) SlotOriginal(slot string) (string, error) {
-	if _, ok := i.kind.Slots[slot]; !ok {
-		return "", fmt.Errorf("media: kind %q has no slot %q", i.kind.Name, slot)
+	if _, err := i.SlotOutputs(slot); err != nil {
+		return "", err
 	}
 	return i.OriginalsPrefix() + slot, nil
+}
+
+// SlotOutputs are the public outputs of a registered slot, or the single
+// output of an inline image, named by its id.
+func (i Item) SlotOutputs(slot string) (map[string]Spec, error) {
+	if s, ok := i.kind.Slots[slot]; ok {
+		return s.Outputs, nil
+	}
+	if i.kind.Inline != nil && layout.ValidInlineName(slot) {
+		return map[string]Spec{slot: *i.kind.Inline}, nil
+	}
+	return nil, fmt.Errorf("media: kind %q has no slot %q", i.kind.Name, slot)
 }
 
 // Public is public/{name}.webp: a slot output or a host-chosen inline image id.
@@ -106,6 +119,9 @@ func (i Item) Public(name string) (string, error) {
 
 // SHA256Name names content-addressed files: "sha256-{hex}".
 func SHA256Name(sum []byte) string { return layout.SHA256Prefix + hex.EncodeToString(sum) }
+
+// NewInlineName names a new inline image: "i-{uuid}".
+func NewInlineName() string { return layout.InlinePrefix + uuid.NewString() }
 
 // NewUploadName names a multipart upload whose hash is unknown: "u-{uuid}".
 func NewUploadName() string { return layout.UploadPrefix + uuid.NewString() }

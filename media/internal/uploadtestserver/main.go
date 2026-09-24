@@ -70,7 +70,7 @@ func main() {
 		media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
 			Slots: map[string]media.Slot{"cover": {Outputs: map[string]media.Spec{"cover": {Width: 460}}}}},
 		media.Kind{Name: "video", Types: []string{"video/mp4"}, MaxBytes: 1 << 30},
-		media.Kind{Name: "post", Types: []string{"image/png"}, MaxBytes: 1 << 20, MaxFiles: 2,
+		media.Kind{Name: "post", Types: []string{"image/png"}, MaxBytes: 1 << 20, MaxFiles: 2, Inline: &media.Spec{Width: 1600},
 			Slots: map[string]media.Slot{"cover": {Outputs: map[string]media.Spec{"cover": {Width: 100}}, Aspect: 0.5}}},
 	)
 	must(err)
@@ -99,6 +99,9 @@ func main() {
 		key, err := item.Original(q.Get("name"))
 		if q.Has("slot") {
 			key, err = item.SlotOriginal(q.Get("slot"))
+		}
+		if err != nil {
+			key, err = item.SlotOriginal(q.Get("name"))
 		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)

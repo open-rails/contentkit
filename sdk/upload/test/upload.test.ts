@@ -54,6 +54,14 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
     expect([refused.code, refused.status]).toEqual(["type_not_allowed", 415]);
   });
 
+  it("uploads an inline image under a server-chosen name and commits it", async () => {
+    const ref = { kind: "post", id: "p1" };
+    const body = bytes(2048, 9);
+    const up = await client().uploadInline(new File([body], "i.png", { type: "image/png" }), { ref });
+    expect(up.name).toMatch(/^i-[0-9a-f-]{36}$/);
+    expect(await stored(ref, up.name)).toMatchObject({ size: 2048, sha256: createHash("sha256").update(body).digest("hex") });
+  });
+
   it("edits a file, sets a slot from it and refuses files over the kind's cap", async () => {
     const ref = { kind: "post", id: "1" };
     const c = client();

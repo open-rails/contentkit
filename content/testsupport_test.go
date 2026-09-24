@@ -2,16 +2,17 @@ package content
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/migrations"
 )
 
@@ -118,45 +119,32 @@ func (f *fakeResolver) Resolve(_ context.Context, r contentref.ContentRef, _ acc
 	return res, nil
 }
 
-// fakeMedia is an in-memory MediaStore capturing uploads for assertions.
-type fakeMedia struct {
-	mu   sync.Mutex
-	puts map[string][]byte
+// testMedia is the Media port pair: URLs as media.Reader builds them, and the
+// folder deletions requested inside committed transactions.
+type testMedia struct {
+	mu      sync.Mutex
+	deleted []string
 }
 
-func (f *fakeMedia) Put(_ context.Context, key string, data []byte, _ string) (string, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.puts == nil {
-		f.puts = map[string][]byte{}
-	}
-	f.puts[key] = data
-	return "https://cdn.test/" + key, nil
+func (*testMedia) PublicURL(ref contentref.ContentRef, name string) (string, error) {
+	return "https://media.test/" + ref.TenantID + "/" + ref.ContentKind + "/" + ref.ContentID + "/public/" + name + ".webp", nil
 }
 
-// DeleteByURL mirrors s3Store's optional mediaURLDeleter.
-func (f *fakeMedia) DeleteByURL(_ context.Context, url string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	key, ok := strings.CutPrefix(url, "https://cdn.test/")
-	if !ok {
-		return nil
+func (m *testMedia) DeleteItemsTx(_ context.Context, tx pgx.Tx, items ...media.Deletion) error {
+	for _, d := range items {
+		m.mu.Lock()
+		m.deleted = append(m.deleted, d.Ref.String())
+		m.mu.Unlock()
 	}
-	delete(f.puts, key)
 	return nil
 }
 
-func (f *fakeMedia) stored(key string) ([]byte, bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	d, ok := f.puts[key]
-	return d, ok
-}
+func (m *testMedia) options() *Media { return &Media{URLs: m, Folders: m} }
 
-func (f *fakeMedia) count() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.puts)
+func (m *testMedia) deletions() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.deleted...)
 }
 
 // reactErr adapts react's (reference, error) return for error-only assertions.

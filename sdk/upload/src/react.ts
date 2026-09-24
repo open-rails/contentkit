@@ -51,7 +51,7 @@ export interface UploadStatus {
 }
 
 export interface UseUpload extends UploadStatus {
-  /** Uploads one file; with opts.slot it also commits the slot. */
+  /** Uploads one file; with opts.slot or opts.inline it also commits the slot or inline image. */
   upload: (file: File, opts: Omit<UploadOptions, "signal" | "onProgress">) => Promise<UploadedFile>;
   cancel: () => void;
 }
@@ -73,7 +73,11 @@ export function useUpload(client: UploadClient): UseUpload {
         onProgress: (progress) => c === ctl.current && set({ status: "uploading", progress }),
       };
       try {
-        const result = opts.slot ? await client.uploadSlot(file, { ...o, slot: opts.slot }) : await client.upload(file, o);
+        const result = opts.slot
+          ? await client.uploadSlot(file, { ...o, slot: opts.slot })
+          : opts.inline
+            ? await client.uploadInline(file, o)
+            : await client.upload(file, o);
         if (c === ctl.current) set((prev) => ({ status: "done", progress: prev.progress, result }));
         return result;
       } catch (e) {

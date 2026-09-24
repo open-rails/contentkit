@@ -3,6 +3,7 @@ package media_test
 import (
 	"crypto/sha256"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/open-rails/contentkit/contentref"
@@ -116,5 +117,39 @@ func TestKindRules(t *testing.T) {
 	}
 	if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{"cover": {}}}); err == nil {
 		t.Fatal("empty slot accepted")
+	}
+	inline := media.NewInlineName()
+	if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{inline: {Outputs: map[string]media.Spec{"a": {}}}}}); err == nil {
+		t.Fatal("inline-named slot accepted")
+	}
+}
+
+func TestInlineImageKeys(t *testing.T) {
+	spec := media.Spec{Width: 1600, Fit: media.FitInside, Quality: 85}
+	r, err := media.NewRegistry(media.Kind{Name: "post", Inline: &spec}, media.Kind{Name: "gallery"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := r.Item(contentref.New("h", "post", "p1"))
+	name := media.NewInlineName()
+	orig, err := p.SlotOriginal(name)
+	if err != nil || orig != "h/post/p1/originals/"+name {
+		t.Fatal(orig, err)
+	}
+	outs, err := p.SlotOutputs(name)
+	if err != nil || len(outs) != 1 || outs[name] != spec {
+		t.Fatal(outs, err)
+	}
+	if k, _ := p.Public(name); k != "h/post/p1/public/"+name+".webp" {
+		t.Fatal(k)
+	}
+	for _, bad := range []string{"i-1", "i-" + strings.ToUpper(name[2:]), "cover"} {
+		if _, err := p.SlotOriginal(bad); err == nil {
+			t.Errorf("inline name %q accepted", bad)
+		}
+	}
+	g, _ := r.Item(contentref.New("h", "gallery", "g1"))
+	if _, err := g.SlotOriginal(name); err == nil {
+		t.Fatal("inline image accepted by a kind without Inline")
 	}
 }

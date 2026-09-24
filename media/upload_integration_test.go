@@ -69,7 +69,7 @@ func newUploadEnv(t *testing.T, caps *media.Capabilities, limiter media.UploadLi
 		media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
 			Slots: map[string]media.Slot{"cover": {Outputs: map[string]media.Spec{"cover": {Width: 460}}}}},
 		media.Kind{Name: "video", Types: []string{"video/mp4"}, MaxBytes: 1 << 30},
-		media.Kind{Name: "post", Types: []string{"image/png"}, MaxBytes: 1 << 20},
+		media.Kind{Name: "post", Types: []string{"image/png"}, MaxBytes: 1 << 20, Inline: &media.Spec{Width: 1600}},
 		media.Kind{Name: "mixed", Versioned: true, Types: []string{"image/png", "video/mp4"}, MaxBytes: 1 << 20, MaxFiles: 3,
 			TypeLimits: map[string]media.Limit{"video": {MaxBytes: 1 << 30, MaxFiles: 1}}, Video: true,
 			Slots: map[string]media.Slot{"cover": {Outputs: map[string]media.Spec{"cover": {Width: 100}}, Aspect: 0.5}}},
@@ -351,6 +351,41 @@ func TestSlotUploadAndCommit(t *testing.T) {
 	obj, err := e.Store.Head(ctx, e.Tenant+"/gallery/9/originals/cover")
 	if err != nil || obj.Size != 1234 {
 		t.Fatalf("slot original %+v %v", obj, err)
+	}
+}
+
+func TestInlineUploadAndCommit(t *testing.T) {
+	e := newUploadEnv(t, nil, nil)
+	ctx := context.Background()
+	ref := media.RefBody{Kind: "post", ID: "p1"}
+	img := data(8, 2048)
+	body := media.PresignBody{Ref: ref, Type: "image/png", Size: 2048, SHA256: hexSum(img), Inline: true}
+	var p, again media.PresignReply
+	if status, er := e.call(t, "alice", "/presign", body, &p); status != 200 || !strings.HasPrefix(p.Name, "i-") || p.Put == nil {
+		t.Fatalf("inline presign %d %+v %+v", status, er, p)
+	}
+	if e.call(t, "alice", "/presign", body, &again); again.Name == p.Name {
+		t.Fatal("inline names must be fresh")
+	}
+	for _, bad := range []media.PresignBody{
+		{Ref: media.RefBody{Kind: "gallery", ID: "9"}, Type: "image/png", Size: 2048, SHA256: hexSum(img), Inline: true},
+		{Ref: ref, Type: "image/png", Size: 2048, SHA256: hexSum(img), Slot: p.Name}, // no overwriting an inline image
+	} {
+		if status, _ := e.call(t, "alice", "/presign", bad, nil); status < 400 {
+			t.Fatalf("accepted %+v", bad)
+		}
+	}
+	if code := put(t, p.Put, img, nil); code != 200 {
+		t.Fatalf("inline put %d", code)
+	}
+	if status, er := e.call(t, "alice", "/commit-slot", media.SlotBody{Ref: ref, Slot: p.Name, SHA256: hexSum(img)}, nil); status != 204 {
+		t.Fatalf("commit inline %d %+v", status, er)
+	}
+	if e.queue.count() != 1 || e.queue.jobs[0].Slot != p.Name {
+		t.Fatalf("jobs %+v", e.queue.jobs)
+	}
+	if obj, err := e.Store.Head(ctx, e.Tenant+"/post/p1/originals/"+p.Name); err != nil || obj.Size != 2048 {
+		t.Fatalf("inline original %+v %v", obj, err)
 	}
 }
 

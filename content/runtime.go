@@ -48,7 +48,6 @@ type Options struct {
 
 	// Optional ports (nil -> default).
 	Users             UserEnricher     // default: no enrichment (ids only)
-	Media             MediaStore       // explicit override; usually leave nil and set Storage
 	Processor         ContentProcessor // comments and post excerpts; default: strip tags
 	PostBodyProcessor ContentProcessor // post bodies; default: Processor
 	// Moderator screens comment/post writes; nil publishes everything.
@@ -57,9 +56,9 @@ type Options struct {
 	// Classifier groups free-text poll answers; nil refuses free-text polls.
 	Classifier AnswerClassifier
 
-	// Storage configures the built-in S3-backed media store (poll/post image
-	// upload to a public bucket); used when Media is nil. See StorageConfig.
-	Storage *StorageConfig
+	// Media stores post and poll images in ContentKit media; nil refuses
+	// image writes with 501 not_configured. See Media.
+	Media *Media
 
 	// ProviderDataEraser is required when moderator/classifier ports retain
 	// external personal data.
@@ -88,7 +87,7 @@ type Runtime struct {
 	authz             Authorizer
 	resolver          access.ContentResolver
 	users             UserEnricher
-	media             MediaStore
+	media             *Media
 	processor         ContentProcessor
 	postBodyProcessor ContentProcessor
 	moderator         ContentModerator
@@ -97,9 +96,6 @@ type Runtime struct {
 	perms             Perms
 	log               *slog.Logger
 	kinds             map[string]struct{}
-	// mediaBase absolutizes stored relative media paths (backfilled rows)
-	// against the public bucket origin; empty = serve values verbatim.
-	mediaBase string
 
 	preferences *preferences
 	reactions   *reactions
@@ -126,7 +122,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if opts.ProviderDataEraser == nil && (!policyIsStateless(opts.Moderator) || !policyIsStateless(opts.Classifier)) {
 		return nil, fmt.Errorf("content: retaining policy ports require ProviderDataEraser; stateless ports must declare StatelessPolicy")
 	}
-	media, err := resolveMedia(opts)
+	media, err := newMedia(opts.Media)
 	if err != nil {
 		return nil, err
 	}
@@ -148,9 +144,6 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		perms:             opts.Perms,
 		log:               orDefault[*slog.Logger](opts.Logger, slog.Default()),
 		kinds:             make(map[string]struct{}, len(opts.ContentKinds)),
-	}
-	if opts.Storage != nil {
-		rt.mediaBase = strings.TrimRight(opts.Storage.PublicBaseURL, "/")
 	}
 	for _, k := range opts.ContentKinds {
 		rt.kinds[k] = struct{}{}
@@ -313,15 +306,6 @@ func (rt *Runtime) requirePerm(ctx context.Context, actor access.Actor, perm str
 		return errForbidden
 	}
 	return nil
-}
-
-// absMediaURL absolutizes a stored relative media path against the public
-// bucket origin; absolute URLs and unset values pass through.
-func (rt *Runtime) absMediaURL(u string) string {
-	if u == "" || rt.mediaBase == "" || strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
-		return u
-	}
-	return rt.mediaBase + "/" + strings.TrimLeft(u, "/")
 }
 
 // actor reads the (possibly anonymous) authenticated actor from context.

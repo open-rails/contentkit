@@ -56,6 +56,14 @@ describe("single PUT", () => {
     expect(up.name).toBe("cover");
     expect(s.calls).toEqual(["/presign", "/commit-slot"]);
   });
+
+  it("uploads and commits an inline image under the name the server picks", async () => {
+    const { s, c } = setup();
+    const up = await c.uploadInline(file(MiB, 4, "image/png"), { ref });
+    expect(up.name).toMatch(/^i-/);
+    expect(s.calls).toEqual(["/presign", "/commit-slot"]);
+    expect(s.slots).toEqual([up.name]);
+  });
 });
 
 describe("multipart", () => {

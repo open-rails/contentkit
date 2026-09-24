@@ -27,6 +27,7 @@ export class FakeServer {
   omitOriginals = false;
   uploads = new Map<string, Upload>();
   calls: string[] = [];
+  slots: string[] = [];
   puts: string[] = [];
   refuse?: ErrorReply & { status: number };
   /** Fail the next n storage PUTs with a dropped connection. */
@@ -79,10 +80,10 @@ export class FakeServer {
           const r = this.refuse;
           throw new UploadError(r.code, r.error, r.status, r.retry_after);
         }
-        if (p.size <= 64 * MiB || p.slot) {
+        if (p.size <= 64 * MiB || p.slot || p.inline) {
           if (!p.sha256) throw new UploadError("invalid_request", "sha256 required", 400);
-          const name = p.slot ?? "sha256-" + p.sha256;
-          if (!p.slot && this.objects.get(name) === p.size && !this.stale.has(name)) return { name, exists: true };
+          const name = p.inline ? `i-${++this.seq}` : (p.slot ?? "sha256-" + p.sha256);
+          if (!p.slot && !p.inline && this.objects.get(name) === p.size && !this.stale.has(name)) return { name, exists: true };
           return { name, put: req(`fake://s3/put/${name}`, { "Content-Type": p.type, "X-Amz-Checksum-Sha256": b64(p.sha256) }) };
         }
         const ticket = `t${++this.seq}`;
@@ -133,6 +134,7 @@ export class FakeServer {
         }
         return { files: b.ops.map((op: any) => ({ name: op.name, original: op.original, size: this.objects.get(op.original) })) };
       case "/commit-slot":
+        this.slots.push(b.slot);
         return undefined;
     }
     throw new UploadError("not_found", path, 404);

@@ -52,7 +52,7 @@ another tenant is an error, never remapped.
 | `media/token` | media access tokens, shared by hosts and the access worker |
 | `media/video` | ffmpeg encode jobs: byte-range fMP4 HLS ladder, AAC per audio track, WebVTT per text subtitle, sprite, per-quality MP4 downloads; River in schema `media_worker` (`cmd/media-worker`) |
 | `media/tiered` | optional `public`/`members`/`ppv`/`members_ppv`/`premium` policy over an entitlement `Checker` (hosts adapt OpenRails `CheckEntitlements`) |
-| `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; the `Identity`/`Authorizer`/`UserEnricher`/`MediaStore`/`ContentProcessor` ports, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, and the HTTP routes |
+| `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; the `Identity`/`Authorizer`/`UserEnricher`/`ContentProcessor` ports, post and poll images through `Media`, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, and the HTTP routes |
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
 | `worker` | one tenant's document maintenance: dirty queue, bounded backfill, sink delivery |
 | `taxonomy` | generic catalog: nodes (tags, artists, creators, characters, series, seasons, voice actors), localized names/aliases, edges, content assignments, effective tags, per-language counts, typeahead documents, admin routes |
@@ -159,7 +159,7 @@ may change.
 | 404 | `not_found` | absent, unpublished or soft-deleted (existence is hidden) |
 | 409 | `conflict` | state or revision conflict |
 | 422 | `moderation_rejected` | a `ContentModerator` refused the write; `error` is the author-facing reason |
-| 501 | `not_configured` | the host never wired the port this route needs (`MediaStore`, `AnswerClassifier`) |
+| 501 | `not_configured` | the host never wired the port this route needs (`Media`, `AnswerClassifier`) |
 | 500 | `tenant_mismatch` | a host port answered with another tenant's data |
 | 500 | `internal_error` | anything else |
 
@@ -199,7 +199,10 @@ Up to 64 MiB is one PUT to `originals/sha256-{hex}` signed with its type,
 length and SHA-256; larger files are multipart to `originals/u-{uuid}` with
 8–16 MiB parts, each signed with its length and SHA-256, resumed through
 `ListParts` and completed by the server (a signed ticket carries the S3
-UploadId; nothing is stored). Slot originals PUT to `originals/{slot}`.
+UploadId; nothing is stored). Slot originals PUT to `originals/{slot}`. A kind
+with `Inline` takes inline images: presign with `inline: true` names a new
+`i-{uuid}`, whose original PUTs to `originals/{id}` and is committed with
+`commit-slot`; it is re-encoded with the `Inline` spec to `public/{id}.webp`.
 Commit is one conditional manifest edit (`insert`, `replace`, `move`,
 `rename`, `remove`, `edit`) that HEAD-checks each new original, re-hashes it when the
 store does not enforce checksums, and enqueues a `ProcessJob`. `Kind.MaxFiles`
@@ -234,8 +237,8 @@ records them in one manifest edit per pass that drops results for sources
 replaced meanwhile; it repeats until a commit that landed during the run is
 covered too. A kind with `Zip` set gets `downloads.zip`: a stored zip of that
 variant in file order, rebuilt only when its `inputs` hash changes; its
-display name comes from `Hooks.DownloadName` at read time. Slots re-encode
-`originals/{slot}` into `public/{output}.webp` in place (`no-cache`, ETag), with
+display name comes from `Hooks.DownloadName` at read time. Slots and inline
+images re-encode `originals/{slot}` into `public/{output}.webp` in place (`no-cache`, ETag), with
 writes conditional on the output's previous ETag and skipped when its
 recorded source ETag and spec match. Undecodable sources go to
 `Hooks.Failed` and are not retried.

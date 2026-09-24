@@ -61,8 +61,9 @@ type PresignBody struct {
 	Ref    RefBody `json:"ref"`
 	Type   string  `json:"type"`
 	Size   int64   `json:"size"`
-	SHA256 string  `json:"sha256,omitempty"` // required up to 64 MiB and for slots
+	SHA256 string  `json:"sha256,omitempty"` // required up to 64 MiB, for slots and inline images
 	Slot   string  `json:"slot,omitempty"`
+	Inline bool    `json:"inline,omitempty"` // a new inline image; the reply names it
 }
 
 // RequestReply is a presigned request: send exactly these headers (the
@@ -176,7 +177,7 @@ func (h uploadHandler) presign(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	req := PresignRequest{Ref: h.ref(b.Ref), Type: b.Type, Size: b.Size, Slot: b.Slot}
+	req := PresignRequest{Ref: h.ref(b.Ref), Type: b.Type, Size: b.Size, Slot: b.Slot, Inline: b.Inline}
 	if b.SHA256 != "" {
 		if req.SHA256, ok = h.digest(w, b.SHA256); !ok {
 			return

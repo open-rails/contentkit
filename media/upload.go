@@ -96,13 +96,15 @@ func NewUploads(o UploadOptions) (*Uploads, error) {
 }
 
 // PresignRequest declares one file. SHA256 is required up to MaxSinglePut and
-// for slots; Slot targets the kind's fixed slot original.
+// for slots; Slot targets the kind's fixed slot original, and Inline a new
+// inline image, named in Presigned.Name. Both commit with CommitSlot.
 type PresignRequest struct {
 	Ref    contentref.ContentRef
 	Type   string
 	Size   int64
 	SHA256 []byte
 	Slot   string
+	Inline bool
 }
 
 // Presigned is the upload plan: Exists (already in the folder; commit it),
@@ -147,6 +149,14 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequ
 	if err := item.Kind().Allows(r.Type, r.Size); err != nil {
 		return Presigned{}, err
 	}
+	if r.Inline {
+		if r.Slot != "" || item.Kind().Inline == nil {
+			return Presigned{}, uploadErr(CodeInvalid, "kind %q takes no inline images, or a slot was also named", item.Kind().Name)
+		}
+		r.Slot = NewInlineName()
+	} else if _, ok := item.Kind().Slots[r.Slot]; r.Slot != "" && !ok {
+		return Presigned{}, uploadErr(CodeNotFound, "kind %q has no slot %q", item.Kind().Name, r.Slot)
+	}
 	single := r.Slot != "" || r.Size <= MaxSinglePut
 	if single && len(r.SHA256) != sha256.Size {
 		return Presigned{}, uploadErr(CodeInvalid, "a SHA-256 is required for uploads up to %d bytes and slots", MaxSinglePut)
@@ -163,9 +173,7 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequ
 	switch {
 	case r.Slot != "":
 		name = r.Slot
-		if key, err = item.SlotOriginal(r.Slot); err != nil {
-			return Presigned{}, uploadErr(CodeNotFound, "%v", err)
-		}
+		key, _ = item.SlotOriginal(r.Slot)
 	case single:
 		name = SHA256Name(r.SHA256)
 		key, _ = item.Original(name)
@@ -189,7 +197,7 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequ
 
 	res := Reservation{Tenant: r.Ref.TenantID, Uploader: uploaderID(actor), Key: key, Size: r.Size}
 	if r.Slot == "" {
-		res.Owner = grant.Owner // slot originals are overwritten in place and not charged
+		res.Owner = grant.Owner // slot and inline originals are not charged
 	}
 	if u.o.Limiter != nil && !grant.Exempt {
 		if err := u.o.Limiter.Reserve(ctx, res); err != nil {
@@ -450,8 +458,8 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	return man, nil
 }
 
-// CommitSlot validates an uploaded slot original and enqueues the re-encode of
-// its public outputs. sum is the SHA-256 the upload was presigned with.
+// CommitSlot validates an uploaded slot or inline original and enqueues the
+// re-encode of its public outputs. sum is the SHA-256 the upload was presigned with.
 func (u *Uploads) CommitSlot(ctx context.Context, actor access.Actor, ref contentref.ContentRef, slot string, sum []byte) error {
 	item, err := u.item(ref)
 	if err != nil {
@@ -493,10 +501,10 @@ func (u *Uploads) SetSlotFromFile(ctx context.Context, actor access.Actor, ref c
 	if err != nil {
 		return err
 	}
-	key, err := item.SlotOriginal(slot)
-	if err != nil {
-		return uploadErr(CodeNotFound, "%v", err)
+	if _, ok := item.Kind().Slots[slot]; !ok { // inline images are write-once
+		return uploadErr(CodeNotFound, "kind %q has no slot %q", item.Kind().Name, slot)
 	}
+	key, _ := item.SlotOriginal(slot)
 	if _, err := item.ManifestKey(); err != nil {
 		return uploadErr(CodeInvalid, "%v", err)
 	}

@@ -64,7 +64,8 @@ type postView struct {
 }
 
 // postWriteReq is the create/update body. All-pointer so PATCH is partial (nil =
-// leave unchanged); create requires title+body.
+// leave unchanged); create requires title+body. The cover is set with
+// PUT /posts/{id}/cover.
 type postWriteReq struct {
 	Title    *string    `json:"title"`
 	Body     *string    `json:"body"`
@@ -73,7 +74,6 @@ type postWriteReq struct {
 	Slug     *string    `json:"slug"`
 	IsDraft  *bool      `json:"is_draft"`
 	LiveAt   *time.Time `json:"live_at"`
-	CoverURL *string    `json:"cover_url"`
 }
 
 // --- HTTP ---
@@ -88,64 +88,78 @@ func (p *posts) mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /posts/{id}/like", p.handleReact(1))
 	mux.HandleFunc("POST /posts/{id}/dislike", p.handleReact(-1))
 	mux.HandleFunc("POST /posts/{id}/neutral", p.handleReact(0))
-	mux.HandleFunc("POST /posts/{id}/cover", p.handleCover)
-	mux.HandleFunc("POST /posts/media", p.handleMedia)
+	mux.HandleFunc("PUT /posts/{id}/cover", p.handleCover)
+	mux.HandleFunc("POST /posts/{id}/images", p.handleImage)
 }
 
-// handleMedia uploads an inline post image (the editor drops the returned URL
-// into the body). Not post-scoped. PostWrite-gated.
-func (p *posts) handleMedia(w http.ResponseWriter, req *http.Request) {
-	actor := p.rt.actor(req.Context())
-	if err := p.rt.requirePerm(req.Context(), actor, p.rt.perms.PostWrite); err != nil {
+type imageReq struct {
+	Image *string `json:"image"` // an inline image name; "" clears
+}
+
+func decodeImage(req *http.Request) (string, error) {
+	var in imageReq
+	if err := decodeJSON(req, &in); err != nil {
+		return "", err
+	}
+	if in.Image == nil {
+		return "", badRequest("image is required")
+	}
+	return *in.Image, nil
+}
+
+// handleImage returns the public URL of an inline image uploaded to the
+// post's media folder, for the editor to place in the body. PostWrite-gated.
+func (p *posts) handleImage(w http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+	if err := p.rt.requirePerm(ctx, p.rt.actor(ctx), p.rt.perms.PostWrite); err != nil {
 		writeErr(w, err)
 		return
 	}
-	data, ct, ext, err := readUpload(req)
+	name, err := decodeImage(req)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	url, err := p.rt.media.Put(req.Context(), "posts/media/"+uuid.NewString()+"."+ext, data, ct)
+	id, err := p.liveID(ctx, req.PathValue("id"))
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"url": url})
+	url, err := p.rt.imageURL(postFolder, id, name)
+	if err == nil && url == nil {
+		err = badRequest("image is required")
+	}
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"url": *url})
 }
 
-// handleCover uploads a post cover and stores its public URL. PostWrite-gated.
+// handleCover sets (or with "" clears) the post cover to an inline image of
+// the post's media folder. PostWrite-gated.
 func (p *posts) handleCover(w http.ResponseWriter, req *http.Request) {
-	actor := p.rt.actor(req.Context())
-	if err := p.rt.requirePerm(req.Context(), actor, p.rt.perms.PostWrite); err != nil {
+	ctx := req.Context()
+	if err := p.rt.requirePerm(ctx, p.rt.actor(ctx), p.rt.perms.PostWrite); err != nil {
 		writeErr(w, err)
 		return
 	}
-	id := req.PathValue("id")
-	if id == "" || len(id) > 64 { // post ids are opaque text (uuid or legacy numeric)
-		writeErr(w, ErrNotFound)
-		return
-	}
-	data, ct, ext, err := readUpload(req)
+	name, err := decodeImage(req)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	// Check tenant ownership before touching the shared media object.
-	var prev *string
-	if err := p.s.pool.QueryRow(req.Context(), `SELECT cover_url FROM `+p.s.t.posts+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant).Scan(&prev); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			err = ErrNotFound
-		}
-		writeErr(w, err)
-		return
-	}
-	url, err := p.rt.media.Put(req.Context(), "posts/"+id+"/cover."+ext, data, ct)
+	id, err := p.liveID(ctx, req.PathValue("id"))
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	// Best-effort old-cover cleanup on a key-changing replace (extension changed).
-	tag, err := p.s.pool.Exec(req.Context(), `UPDATE `+p.s.t.posts+` SET cover_url = $2, updated_at = now() WHERE id = $1 AND tenant_id = $3 AND deleted_at IS NULL`, id, url, p.s.tenant)
+	url, err := p.rt.imageURL(postFolder, id, name)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	tag, err := p.s.pool.Exec(ctx, `UPDATE `+p.s.t.posts+` SET cover_url = $2, updated_at = now() WHERE id = $1 AND tenant_id = $3 AND deleted_at IS NULL`, id, url, p.s.tenant)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -154,10 +168,19 @@ func (p *posts) handleCover(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, ErrNotFound)
 		return
 	}
-	if prev != nil && *prev != url {
-		p.rt.deleteMediaByURL(req.Context(), *prev)
+	writeJSON(w, http.StatusOK, map[string]*string{"cover_url": url})
+}
+
+// liveID confirms a post exists in this tenant (not deleted).
+func (p *posts) liveID(ctx context.Context, id string) (string, error) {
+	if p.rt.media == nil {
+		return "", errMediaNotConfigured
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"cover_url": url})
+	err := p.s.pool.QueryRow(ctx, `SELECT id FROM `+p.s.t.posts+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = ErrNotFound
+	}
+	return id, err
 }
 
 func (p *posts) handleCreate(w http.ResponseWriter, req *http.Request) {
@@ -209,9 +232,9 @@ func (p *posts) handleCreate(w http.ResponseWriter, req *http.Request) {
 	}
 	var language string
 	err = tx.QueryRow(ctx, `INSERT INTO `+p.s.t.posts+`
-		(id, tenant_id, author_id, title, slug, body, excerpt, cover_url, language, is_draft, live_at, moderation, moderation_reason, moderation_verdict)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING language`,
-		id, p.s.tenant, actor.ID, title, in.Slug, body, excerpt, in.CoverURL,
+		(id, tenant_id, author_id, title, slug, body, excerpt, language, is_draft, live_at, moderation, moderation_reason, moderation_verdict)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING language`,
+		id, p.s.tenant, actor.ID, title, in.Slug, body, excerpt,
 		derefStr(in.Language), derefBool(in.IsDraft), in.LiveAt, sc.state, sc.reason, sc.meta).Scan(&language)
 	if err != nil {
 		writeErr(w, err)
@@ -322,12 +345,12 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 	if err := tx.QueryRow(ctx, `UPDATE `+p.s.t.posts+` SET
 		title = $2, body = $3,
 		excerpt = COALESCE($4, excerpt), slug = COALESCE($5, slug),
-		language = COALESCE($6, language), cover_url = COALESCE($7, cover_url),
-		is_draft = $8, live_at = COALESCE($9, live_at),
-		published_content = CASE WHEN $11='approved' THEN NULL WHEN moderation='approved' AND NOT is_draft AND (live_at IS NULL OR live_at <= clock_timestamp()) THEN jsonb_build_object('title',title,'body',body,'excerpt',excerpt) ELSE published_content END, moderation_revision = moderation_revision + 1, moderated_by = NULL, moderated_at = NULL, moderation = $11, moderation_reason = $12, moderation_verdict = $13,
+		language = COALESCE($6, language),
+		is_draft = $7, live_at = COALESCE($8, live_at),
+		published_content = CASE WHEN $10='approved' THEN NULL WHEN moderation='approved' AND NOT is_draft AND (live_at IS NULL OR live_at <= clock_timestamp()) THEN jsonb_build_object('title',title,'body',body,'excerpt',excerpt) ELSE published_content END, moderation_revision = moderation_revision + 1, moderated_by = NULL, moderated_at = NULL, moderation = $10, moderation_reason = $11, moderation_verdict = $12,
 		updated_at = now()
-		WHERE id = $1 AND tenant_id = $10 AND deleted_at IS NULL AND moderation_revision=$14 RETURNING language`,
-		id, curTitle, curBody, excerpt, in.Slug, in.Language, in.CoverURL, curDraft, in.LiveAt, p.s.tenant, sc.state, sc.reason, sc.meta, revision).Scan(&after); err != nil {
+		WHERE id = $1 AND tenant_id = $9 AND deleted_at IS NULL AND moderation_revision=$13 RETURNING language`,
+		id, curTitle, curBody, excerpt, in.Slug, in.Language, curDraft, in.LiveAt, p.s.tenant, sc.state, sc.reason, sc.meta, revision).Scan(&after); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = errContentChanged
 		}
@@ -386,6 +409,10 @@ func (p *posts) handleDelete(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if err := p.markDirty(ctx, tx, id, language, true); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if err := p.rt.deleteMediaTx(ctx, tx, postFolder, id); err != nil {
 		writeErr(w, err)
 		return
 	}

@@ -19,6 +19,7 @@ import (
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // SpecChooser returns the variants a file gets, by name: a host's per-file
@@ -63,9 +64,9 @@ func New(c Config) (*Processor, error) {
 	return &Processor{c: c}, nil
 }
 
-// Process runs one job: a Slot job re-encodes that slot; otherwise the
-// ref's manifest (when the ref addresses one) and every uploaded slot are
-// brought up to date.
+// Process runs one job: a Slot job re-encodes that slot or inline image;
+// otherwise the ref's manifest (when the ref addresses one), every uploaded
+// slot and every inline image are brought up to date.
 func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 	item, err := p.c.Kinds.Item(job.Ref)
 	if err != nil {
@@ -80,6 +81,16 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 	}
 	for slot := range item.Kind().Slots {
 		errs = append(errs, p.slot(ctx, item, slot))
+	}
+	if item.Kind().Inline != nil {
+		for obj, err := range p.c.Store.List(ctx, item.OriginalsPrefix()+layout.InlinePrefix) {
+			if err != nil {
+				return errors.Join(append(errs, err)...)
+			}
+			if name := strings.TrimPrefix(obj.Key, item.OriginalsPrefix()); layout.ValidInlineName(name) {
+				errs = append(errs, p.slot(ctx, item, name))
+			}
+		}
 	}
 	return errors.Join(errs...)
 }

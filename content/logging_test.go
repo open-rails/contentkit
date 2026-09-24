@@ -26,7 +26,7 @@ func TestAccessLog(t *testing.T) {
 		{"tenant mismatch 500", ErrTenant, http.StatusInternalServerError, "ERROR", ErrTenant.Error()},
 		// A 501 is a host-configuration fault: operators get it at ERROR with the
 		// cause, clients get the public not_configured code.
-		{"unwired media 501", errUnsupportedMedia, http.StatusNotImplemented, "ERROR", errUnsupportedMedia.Error()},
+		{"unwired media 501", errMediaNotConfigured, http.StatusNotImplemented, "ERROR", errMediaNotConfigured.Error()},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
