@@ -202,6 +202,50 @@ func (j *Jobs) InsertTx(ctx context.Context, tx pgx.Tx, args river.JobArgs, o *r
 var pendingOnce = river.UniqueOpts{ByArgs: true, ByState: []rivertype.JobState{rivertype.JobStateAvailable,
 	rivertype.JobStatePending, rivertype.JobStateRunning, rivertype.JobStateRetryable, rivertype.JobStateScheduled}}
 
+// rerunArgs are job args that can name the running job they follow.
+type rerunArgs interface {
+	river.JobArgs
+	after(id int64) river.JobArgs
+}
+
+// insertOnce enqueues args after the caller's change to their inputs. An
+// equal job still waiting to run absorbs it. River's uniqueness also covers
+// running jobs, which may have read the inputs before the change, so one
+// follow-up is queued behind a running equal job; a burst shares it.
+func (j *Jobs) insertOnce(ctx context.Context, args rerunArgs, o river.InsertOpts) error {
+	o.UniqueOpts = pendingOnce
+	var next river.JobArgs = args
+	for {
+		res, err := j.Insert(ctx, next, &o)
+		if err != nil || !res.UniqueSkippedAsDuplicate || res.Job.State != rivertype.JobStateRunning {
+			return err
+		}
+		next = args.after(res.Job.ID)
+	}
+}
+
+// waitFor snoozes a follow-up while the job it follows still runs, so jobs
+// for the same inputs do not overlap.
+func (j *Jobs) waitFor(ctx context.Context, id int64) error {
+	if id == 0 {
+		return nil
+	}
+	c, err := j.bound()
+	if err != nil {
+		return err
+	}
+	prev, err := c.JobGet(ctx, id)
+	if errors.Is(err, river.ErrNotFound) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if prev.State == rivertype.JobStateRunning {
+		return river.JobSnooze(time.Second)
+	}
+	return nil
+}
+
 // ScheduleSweep sweeps the item's folder after the grace period; a sweep
 // already waiting for the folder absorbs it. Manifests calls it on every edit.
 func (j *Jobs) ScheduleSweep(ctx context.Context, ref contentref.ContentRef) error {
@@ -209,9 +253,7 @@ func (j *Jobs) ScheduleSweep(ctx context.Context, ref contentref.ContentRef) err
 	if err != nil {
 		return err
 	}
-	_, err = j.Insert(ctx, sweepArgs{Prefix: item.Prefix()}, &river.InsertOpts{
-		ScheduledAt: j.cfg.Now().Add(j.cfg.Grace), UniqueOpts: pendingOnce})
-	return err
+	return j.insertOnce(ctx, sweepArgs{Prefix: item.Prefix()}, river.InsertOpts{ScheduledAt: j.cfg.Now().Add(j.cfg.Grace)})
 }
 
 // Deletion is one item to delete. Owner is its quota owner (UploadGrant.Owner),
@@ -284,8 +326,8 @@ func (j *Jobs) originalBytes(ctx context.Context, prefix string) (int64, error) 
 }
 
 // Processor derives an item's files after a commit (image variants, video
-// encodes). It must be idempotent. An Enqueue while its job runs is absorbed:
-// the job reruns the processors when its input changed during the run.
+// encodes). It must be idempotent. An Enqueue while its job runs queues one
+// rerun after it.
 type Processor func(ctx context.Context, job ProcessJob) error
 
 // AddProcessor registers a processor for Enqueue'd jobs, before composition.
@@ -305,8 +347,7 @@ func (j *Jobs) Enqueue(ctx context.Context, job ProcessJob) error {
 	if _, err := j.cfg.Kinds.Item(job.Ref); err != nil {
 		return err
 	}
-	_, err := j.Insert(ctx, processArgs{Ref: job.Ref, Slot: job.Slot}, &river.InsertOpts{UniqueOpts: pendingOnce})
-	return err
+	return j.insertOnce(ctx, processArgs{Ref: job.Ref, Slot: job.Slot}, river.InsertOpts{})
 }
 
 var _ ProcessQueue = (*Jobs)(nil)
@@ -332,9 +373,12 @@ func parseFolder(prefix string) (tenant, kind, id string, err error) {
 
 type sweepArgs struct {
 	Prefix string `json:"prefix"`
+	After  int64  `json:"after,omitempty"` // the running sweep this one follows
 }
 
 func (sweepArgs) Kind() string { return "contentkit_media_sweep" }
+
+func (a sweepArgs) after(id int64) river.JobArgs { a.After = id; return a }
 
 type sweepWorker struct {
 	river.WorkerDefaults[sweepArgs]
@@ -346,6 +390,9 @@ func (w *sweepWorker) Timeout(*river.Job[sweepArgs]) time.Duration { return 15 *
 func (w *sweepWorker) Work(ctx context.Context, job *river.Job[sweepArgs]) error {
 	if _, _, _, err := parseFolder(job.Args.Prefix); err != nil {
 		return river.JobCancel(err)
+	}
+	if err := w.j.waitFor(ctx, job.Args.After); err != nil {
+		return err
 	}
 	res, err := w.j.sweep(ctx, job.Args.Prefix, nil)
 	if err != nil {
@@ -412,11 +459,14 @@ func (w *deleteFolderWorker) Work(ctx context.Context, job *river.Job[deleteFold
 }
 
 type processArgs struct {
-	Ref  contentref.ContentRef `json:"ref"`
-	Slot string                `json:"slot,omitempty"`
+	Ref   contentref.ContentRef `json:"ref"`
+	Slot  string                `json:"slot,omitempty"`
+	After int64                 `json:"after,omitempty"` // the running job this one follows
 }
 
 func (processArgs) Kind() string { return "contentkit_media_process" }
+
+func (a processArgs) after(id int64) river.JobArgs { a.After = id; return a }
 
 type processWorker struct {
 	river.WorkerDefaults[processArgs]
@@ -427,56 +477,15 @@ func (w *processWorker) Timeout(*river.Job[processArgs]) time.Duration { return 
 
 func (w *processWorker) Work(ctx context.Context, job *river.Job[processArgs]) error {
 	pj := ProcessJob{Ref: job.Args.Ref, Slot: job.Args.Slot}
-	item, err := w.j.cfg.Kinds.Item(pj.Ref)
-	if err != nil {
+	if _, err := w.j.cfg.Kinds.Item(pj.Ref); err != nil {
 		return river.JobCancel(err)
 	}
-	// The input is the manifest, or the slot original; a commit that lands
-	// after the processors read it changes its version (a slot's original and record).
-	key, err := item.ManifestKey()
-	keys := []string{key}
-	if pj.Slot != "" {
-		key, err = item.SlotOriginal(pj.Slot)
-		keys = []string{key}
-		if rec, rerr := item.SlotRecord(pj.Slot); rerr == nil {
-			keys = append(keys, rec)
-		}
-	}
-	if err != nil {
-		return river.JobCancel(err)
-	}
-	before, err := w.j.etag(ctx, keys...)
-	if err != nil {
+	if err := w.j.waitFor(ctx, job.Args.After); err != nil {
 		return err
 	}
 	var errs []error
 	for _, p := range w.j.processors {
 		errs = append(errs, p(ctx, pj))
 	}
-	if err := errors.Join(errs...); err != nil {
-		return err
-	}
-	// A processor's own write also changes it; the rerun then finds no work
-	// and leaves the input unchanged.
-	after, err := w.j.etag(ctx, keys...)
-	if err != nil {
-		return err
-	}
-	if after != before {
-		return river.JobSnooze(0)
-	}
-	return nil
-}
-
-// etag is the inputs' version: their ETags ("" when absent).
-func (j *Jobs) etag(ctx context.Context, keys ...string) (string, error) {
-	var v string
-	for _, key := range keys {
-		obj, err := j.cfg.Store.Head(ctx, key)
-		if err != nil && !errors.Is(err, ErrNotFound) {
-			return "", err
-		}
-		v += obj.ETag + "|"
-	}
-	return v, nil
+	return errors.Join(errs...)
 }
