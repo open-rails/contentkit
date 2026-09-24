@@ -185,9 +185,17 @@ func (j *Jobs) copyOutput(ctx context.Context, src, dst string) error {
 	return err
 }
 
+// recordExposure stores exp; nothing published is no record, so publishing
+// a deleted item never writes into its erased folder.
 func (j *Jobs) recordExposure(ctx context.Context, item Item, exp Exposure) error {
-	body, _ := json.Marshal(exp)
 	key := item.ExposureRecord()
+	if exp == (Exposure{}) {
+		if err := j.cfg.Store.Delete(ctx, key); err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		return nil
+	}
+	body, _ := json.Marshal(exp)
 	if rc, _, err := j.cfg.Store.Get(ctx, key, GetOptions{}); err == nil {
 		cur, rerr := io.ReadAll(rc)
 		rc.Close()
