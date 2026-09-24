@@ -392,7 +392,9 @@ with a pending video.
 **Playback** is served by `Reader.Handler` next to the read API, generated per
 request after one `Resolve` (`private, no-store`; the folder cookie is set in
 cookie mode): `/{kind}/{id}/hls/{file}/master.m3u8?audio=&subs=` (optional
-id/language filters; `RESOLUTION` is the rung's true w×h), `video/{N}.m3u8`, `audio/{id}.m3u8`,
+id/language filters; `RESOLUTION` is the rung's true w×h; the first variant is
+the highest rung up to 1080p, where Safari/iOS native HLS starts, then the rest
+by descending bandwidth), `video/{N}.m3u8`, `audio/{id}.m3u8`,
 `subs/{id}.m3u8`, `sprite.vtt`, and `/{kind}/{id}/download/{key}` (302 to the
 signed `dl=` URL, full access only; name from `Hooks.DownloadName`). Media
 playlists are `EXT-X-BYTERANGE` lines over one blob URL per rendition. A file

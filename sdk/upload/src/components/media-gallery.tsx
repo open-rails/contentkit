@@ -24,7 +24,7 @@ import { SpriteFrame, VideoPlayer } from "./video-player.js";
 import { Button } from "#ckui/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "#ckui/ui/toggle-group";
 
-export interface MediaGalleryProps extends GalleryViewOptions, Pick<HlsPlayerOptions, "xhrSetup" | "refresh"> {
+export interface MediaGalleryProps extends GalleryViewOptions, Pick<HlsPlayerOptions, "xhrSetup" | "refresh" | "abr"> {
   /** The read API result: files in manifest order with this viewer's access. */
   read: ReadResult | null | undefined;
   /** A video file's HLS folder (e.g. `/media/post/1/hls/{name}/`). */
@@ -230,6 +230,7 @@ function Slide({ ctx, item, position, active, lightbox }: { ctx: Ctx; item: Gall
       active={active}
       xhrSetup={ctx.xhrSetup}
       refresh={ctx.refresh}
+      abr={ctx.abr}
       label={t("gallery.video", { index: position + 1 })}
       className={lightbox ? "bg-transparent" : undefined}
     />

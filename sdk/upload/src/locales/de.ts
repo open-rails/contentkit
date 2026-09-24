@@ -118,6 +118,9 @@ export const de: UploadUiMessageBundle = {
     loading: "Video wird geladen…",
     retry: "Erneut versuchen",
     code: "Code {code}",
+    quality: "Qualität",
+    auto: "Automatisch",
+    autoCurrent: "Automatisch ({quality})",
     failed: "Dieses Video konnte nicht verarbeitet werden.",
     errors: {
       network: "Der Videoserver ist nicht erreichbar.",

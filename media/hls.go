@@ -70,7 +70,7 @@ func (g *Grant) MasterPlaylist(file string, o MasterOptions) ([]byte, error) {
 		fmt.Fprintf(&b, "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=%q,NAME=%q%s,DEFAULT=NO,AUTOSELECT=YES,FORCED=%s,URI=%q\n",
 			subsGroup, uniqueName(names, s.Label, s.Lang, s.ID), language(s.Lang), yesNo(s.Forced), subsURI(s.ID))
 	}
-	for _, v := range h.Video {
+	for _, v := range variantOrder(h.Video) {
 		fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d", v.Bandwidth+audioBW)
 		if v.Average > 0 {
 			fmt.Fprintf(&b, ",AVERAGE-BANDWIDTH=%d", v.Average+audioBW)
@@ -88,6 +88,33 @@ func (g *Grant) MasterPlaylist(file string, o MasterOptions) ([]byte, error) {
 		b.WriteString(",CLOSED-CAPTIONS=NONE\n" + videoURI(v.Rung) + "\n")
 	}
 	return []byte(b.String()), nil
+}
+
+// StartRung is the short side of the variant listed first: native HLS
+// players (Safari, iOS) start there before measuring.
+const StartRung = 1080
+
+// variantOrder lists the highest rendition up to StartRung first (else the
+// smallest), then the rest by descending bandwidth.
+func variantOrder(video []Rendition) []Rendition {
+	out := slices.Clone(video)
+	slices.SortStableFunc(out, func(a, b Rendition) int { return b.Bandwidth - a.Bandwidth })
+	start := len(out) - 1
+	for i, v := range out {
+		if shortSide(v) <= StartRung {
+			start = i
+			break
+		}
+	}
+	first := out[start]
+	return append([]Rendition{first}, slices.Delete(out, start, start+1)...)
+}
+
+func shortSide(v Rendition) int {
+	if v.Width > 0 && v.Height > 0 {
+		return min(v.Width, v.Height)
+	}
+	return v.Rung
 }
 
 // VideoPlaylist is the byte-range media playlist of one video rung.

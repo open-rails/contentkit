@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -310,7 +311,11 @@ func TestPlaybackThroughWorker(t *testing.T) {
 				t.Fatalf("%d variants for %d renditions", len(pl.variants), len(h.Video))
 			}
 			for i, v := range pl.variants {
-				want := h.Video[i]
+				j := slices.IndexFunc(h.Video, func(r media.Rendition) bool { return v["URI"] == fmt.Sprintf("video/%d.m3u8", r.Rung) })
+				if j < 0 {
+					t.Fatalf("variant %d %v: no such rendition", i, v)
+				}
+				want := h.Video[j]
 				if v["BANDWIDTH"] != strconv.Itoa(want.Bandwidth+audioBW) || v["AVERAGE-BANDWIDTH"] != strconv.Itoa(want.Average+audioBW) ||
 					v["RESOLUTION"] != fmt.Sprintf("%dx%d", want.Width, want.Height) || v["CODECS"] != want.Codecs+",mp4a.40.2" ||
 					v["AUDIO"] != "audio" || v["SUBTITLES"] != "subs" || v["URI"] != fmt.Sprintf("video/%d.m3u8", want.Rung) {

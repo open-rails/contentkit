@@ -1,16 +1,17 @@
-import { AlertCircleIcon, PlayIcon, Refresh01Icon } from "@hugeicons/core-free-icons";
+import { AlertCircleIcon, PlayIcon, Refresh01Icon, Settings01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { UploadUiAppearance } from "../appearance.js";
 import { formatDuration } from "../gallery.js";
-import { useHlsPlayer, type HlsPlayerOptions } from "../gallery-react.js";
+import { useHlsPlayer, type HlsPlayerOptions, type PlayerQuality } from "../gallery-react.js";
 import { useMessages } from "../i18n/context.js";
 import { UploadUiRoot } from "../scope.js";
 import { slotSources } from "../srcset.js";
 import type { EncodeProgress as Progress, SlotManifest } from "../wire.gen.js";
 import { EncodeProgress } from "./encode-progress.js";
 import { Button } from "#ckui/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "#ckui/ui/dropdown-menu";
 
 type XhrSetup = HlsPlayerOptions["xhrSetup"];
 
@@ -192,6 +193,7 @@ export function VideoPlayer({
               ) : null}
             </>
           )}
+          {started && !error && player.quality.levels.length > 1 && <QualityMenu quality={player.quality} />}
           {started && busy && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
               <span className="flex size-14 items-center justify-center rounded-full bg-black/45">
@@ -210,6 +212,54 @@ export function VideoPlayer({
         </>
       )}
     </UploadUiRoot>
+  );
+}
+
+/** "2160p 4K", "1080p HD", "720p": a rung by its short side. */
+export function qualityLabel(height: number): string {
+  return `${height}p${height >= 2160 ? " 4K" : height === 1080 ? " HD" : ""}`;
+}
+
+function QualityMenu({ quality }: { quality: PlayerQuality }) {
+  const { t } = useMessages();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [container, setContainer] = useState<HTMLElement | undefined>();
+  const { levels, selected, current, select } = quality;
+  const playing = levels.find((l) => l.index === current);
+  return (
+    <DropdownMenu
+      onOpenChange={(open) => {
+        // In an element-fullscreen player the menu must render inside the fullscreen element.
+        const fs = typeof document === "undefined" ? null : document.fullscreenElement;
+        if (open) setContainer(fs instanceof HTMLElement && trigger.current && fs.contains(trigger.current) ? fs : undefined);
+      }}
+    >
+      <DropdownMenuTrigger
+        ref={trigger}
+        data-ckui="quality"
+        data-ckui-noswipe=""
+        aria-label={t("player.quality")}
+        title={t("player.quality")}
+        className="absolute top-2 right-2 flex size-9 items-center justify-center rounded-full bg-black/55 text-white outline-none backdrop-blur-sm hover:bg-black/70 focus-visible:ring-2 focus-visible:ring-white/70"
+      >
+        <HugeiconsIcon icon={Settings01Icon} className="size-5" strokeWidth={1.75} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" container={container} className="min-w-40" data-ckui="quality-menu">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>{t("player.quality")}</DropdownMenuLabel>
+          <DropdownMenuRadioGroup value={String(selected)} onValueChange={(v) => select(Number(v))}>
+            {[...levels].reverse().map((l) => (
+              <DropdownMenuRadioItem key={l.index} value={String(l.index)} closeOnClick>
+                {qualityLabel(l.height)}
+              </DropdownMenuRadioItem>
+            ))}
+            <DropdownMenuRadioItem value="-1" closeOnClick>
+              {playing && selected === -1 ? t("player.autoCurrent", { quality: qualityLabel(playing.height).split(" ")[0]! }) : t("player.auto")}
+            </DropdownMenuRadioItem>
+          </DropdownMenuRadioGroup>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

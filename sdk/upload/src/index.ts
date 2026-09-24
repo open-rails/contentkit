@@ -28,12 +28,20 @@ export {
   type GalleryView,
 } from "./gallery.js";
 export {
+  ABR_DEFAULTS,
   NETWORK_FAILURES_BEFORE_ERROR,
+  abrHlsConfig,
+  capRung,
   classifyHlsError,
   classifyMediaError,
   hlsConfig,
+  initialEstimate,
+  startRung,
   statusKind,
+  type AbrPolicy,
+  type ConnectionHint,
   type HlsErrorLike,
+  type Rung,
   type PlaybackError,
   type PlaybackErrorKind,
 } from "./playback.js";

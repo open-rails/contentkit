@@ -118,6 +118,9 @@ export const ko: UploadUiMessageBundle = {
     loading: "동영상 불러오는 중…",
     retry: "다시 시도",
     code: "코드 {code}",
+    quality: "화질",
+    auto: "자동",
+    autoCurrent: "자동({quality})",
     failed: "이 동영상을 처리하지 못했습니다.",
     errors: {
       network: "동영상 서버에 연결할 수 없습니다.",

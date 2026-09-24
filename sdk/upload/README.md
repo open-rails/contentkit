@@ -226,7 +226,30 @@ and a support code: unreachable or blocked (status 0, including missing
 `MEDIA_ACCESS_CORS_ORIGINS`, also logged to the console), no access
 (401/403 after one refresh), not found, rate limited (429), unsupported in
 this browser. Headless: `useHlsPlayer`, `useCarousel` and `useGalleryView` in
-`/react`; `galleryItems`, `classifyHlsError` and `hlsConfig` in the root entry.
+`/react`; `galleryItems`, `classifyHlsError`, `hlsConfig` and the ABR helpers
+(`capRung`, `startRung`, `initialEstimate`, `abrHlsConfig`) in the root entry.
+
+Adaptive bitrate (`abr` on `MediaGallery`, `VideoPlayer` and `useHlsPlayer`)
+defaults to high resolution: the first segment is the highest rung the
+connection sustains up to 1080p on a phone or small player (the estimate is
+this page's last measurement, else `navigator.connection.downlink`, else
+8 Mbps), and the display cap counts `devicePixelRatio` but never drops below
+1080p, so 1440p/2160p load only when the player (fullscreen, lightbox, a 4K or
+high-DPR screen) and bandwidth allow. It climbs after a couple of fast
+segments and drops before the buffer runs dry. Save-Data starts at the lowest
+rung with a strict display cap. Options: `minStartHeight` (1080),
+`maxHeight` (none), `defaultEstimate` (8e6 bits/s), `preferHighRes` (`false`
+restores stock hls.js: 500 kbps guess, strict cap). Heights are the short side,
+so portrait 1080×1920 is 1080p.
+
+Once playing, a quality menu (top right; keyboard accessible) lists Auto,
+showing the rung playing (“Auto (1080p)”), and every rung (“2160p 4K”,
+“1440p”, “1080p HD”, “720p”, “480p”). A rung locks until Auto is chosen; the
+choice is remembered per browser (`qualityKey`, default
+`ckui.player.quality`; `null` disables) and falls back to Auto on a video
+without that rung, so rungs published later are picked up on the next load.
+Safari's native HLS chooses for itself, so it shows no menu. Headless:
+`useHlsPlayer().quality` (`levels`, `selected`, `current`, `select`).
 
 ## Development
 
