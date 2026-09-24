@@ -98,7 +98,7 @@ func newReadFixture(t *testing.T) *readFixture {
 			{Name: "beach.jpg", Original: blobName("beach"), Type: "image/jpeg",
 				Variants: map[string]media.Variant{"large": {Blob: blobName("beach-large")}}},
 			{Name: "clip.mp4", Original: blobName("clip"), Type: "video/mp4", Meta: map[string]any{"duration": 12.5},
-				HLS: &media.HLS{Source: blobName("clip"), Video: []media.Rendition{{Height: 720, Blob: blobName("clip-720")}}}},
+				HLS: &media.HLS{Source: blobName("clip"), Video: []media.Rendition{{Rung: 720, Width: 1280, Height: 720, Blob: blobName("clip-720")}}}},
 		}
 		return nil
 	}); err != nil {

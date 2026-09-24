@@ -28,9 +28,9 @@ type MasterOptions struct {
 
 // Playlist URIs relative to the master playlist, which is served at
 // ".../hls/{file}/master.m3u8".
-func videoURI(height int) string { return "video/" + strconv.Itoa(height) + ".m3u8" }
-func audioURI(id string) string  { return "audio/" + id + ".m3u8" }
-func subsURI(id string) string   { return "subs/" + id + ".m3u8" }
+func videoURI(rung int) string  { return "video/" + strconv.Itoa(rung) + ".m3u8" }
+func audioURI(id string) string { return "audio/" + id + ".m3u8" }
+func subsURI(id string) string  { return "subs/" + id + ".m3u8" }
 
 // hlsFile returns the index and ladder of a file this viewer may play.
 func (g *Grant) hlsFile(name string) (int, *HLS, error) {
@@ -85,19 +85,19 @@ func (g *Grant) MasterPlaylist(file string, o MasterOptions) ([]byte, error) {
 		if len(subs) > 0 {
 			fmt.Fprintf(&b, ",SUBTITLES=%q", subsGroup)
 		}
-		b.WriteString(",CLOSED-CAPTIONS=NONE\n" + videoURI(v.Height) + "\n")
+		b.WriteString(",CLOSED-CAPTIONS=NONE\n" + videoURI(v.Rung) + "\n")
 	}
 	return []byte(b.String()), nil
 }
 
-// VideoPlaylist is the byte-range media playlist of one video rendition.
-func (g *Grant) VideoPlaylist(file string, height int) ([]byte, error) {
+// VideoPlaylist is the byte-range media playlist of one video rung.
+func (g *Grant) VideoPlaylist(file string, rung int) ([]byte, error) {
 	i, h, err := g.hlsFile(file)
 	if err != nil {
 		return nil, err
 	}
 	for _, v := range h.Video {
-		if v.Height == height {
+		if v.Rung == rung {
 			return g.mediaPlaylist(i, v.Blob, v.Segments)
 		}
 	}

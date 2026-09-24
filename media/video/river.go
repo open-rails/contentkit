@@ -92,7 +92,7 @@ func (q *Enqueuer) args(job media.ProcessJob) (Args, bool, error) {
 	if _, err := item.ManifestKey(); err != nil {
 		return Args{}, false, err
 	}
-	return Args{Ref: job.Ref, Versioned: item.Kind().Versioned, Ladder: v.Ladder}, true, nil
+	return Args{Ref: job.Ref, Versioned: item.Kind().Versioned, Video: *v}, true, nil
 }
 
 // Jobs are not unique: River's uniqueness always covers running jobs, which

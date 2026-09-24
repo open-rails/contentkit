@@ -21,7 +21,7 @@ import (
 
 // recipe is the encode's identity with the ladder: a manifest hls or
 // download whose spec differs is stale and re-encoded.
-const recipe = "h264-high-crf22-fast|k4|%s|aac-128k-48k-2ch|webvtt|sprite-10x10-160x90-jpg|mp4-all-audio-mov_text|v1"
+const recipe = "h264-high-crf22-fast|k4|short-side:%s|max-4096-3840x2160|lvl51-52|max60fps|sar1|aac-128k-48k-2ch|webvtt|sprite-10x10-short90-jpg|mp4-all-audio-mov_text|v2"
 
 // Spec identifies the recipe over ladder (empty: media.DefaultLadder) in
 // manifest hls and downloads entries.
@@ -50,8 +50,7 @@ const (
 	segmentSeconds = 4
 	spriteCols     = 10
 	spriteRows     = 10
-	spriteW        = 160
-	spriteH        = 90
+	spriteShort    = 90
 )
 
 // ladder runs the single ffmpeg pass: the source is decoded once and split
@@ -60,15 +59,19 @@ func ladder(ctx context.Context, src, dir string, p plan, threads int) error {
 	n := len(p.rungs)
 	interval := p.duration / (spriteCols * spriteRows)
 	var fc strings.Builder
-	fmt.Fprintf(&fc, "[0:%d]split=%d", p.video, n+1)
+	fmt.Fprintf(&fc, "[0:%d]", p.video)
+	if p.limitFPS {
+		fmt.Fprintf(&fc, "fps=%d,", maxFPS)
+	}
+	fmt.Fprintf(&fc, "split=%d", n+1)
 	for i := range n + 1 {
 		fmt.Fprintf(&fc, "[s%d]", i)
 	}
-	for i, h := range p.rungs {
-		fmt.Fprintf(&fc, ";[s%d]scale=-2:%d[v%d]", i, h, i)
+	for i, r := range p.rungs {
+		fmt.Fprintf(&fc, ";[s%d]scale=%d:%d,setsar=1[v%d]", i, r.w, r.h, i)
 	}
-	fmt.Fprintf(&fc, ";[s%d]fps=1/%.9f,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,tile=%dx%d[sprite]",
-		n, interval, spriteW, spriteH, spriteW, spriteH, spriteCols, spriteRows)
+	fmt.Fprintf(&fc, ";[s%d]fps=1/%.9f,scale=%d:%d,setsar=1,tile=%dx%d[sprite]",
+		n, interval, p.tileW, p.tileH, spriteCols, spriteRows)
 
 	t := strconv.Itoa(threads)
 	args := append([]string{"-v", "error", "-nostdin", "-threads", t}, inputOptions(sourceDemuxers)...)
@@ -84,8 +87,13 @@ func ladder(ctx context.Context, src, dir string, p plan, threads int) error {
 		streamMap = append(streamMap, fmt.Sprintf("v:%d", i))
 	}
 	args = append(args, "-c:v", "libx264", "-profile:v", "high", "-preset", "fast", "-crf", "22", "-pix_fmt", "yuv420p",
-		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segmentSeconds), "-threads", t,
-		"-var_stream_map", strings.Join(streamMap, " "))
+		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segmentSeconds), "-threads", t)
+	for i, r := range p.rungs {
+		if r.level != "" {
+			args = append(args, fmt.Sprintf("-level:v:%d", i), r.level)
+		}
+	}
+	args = append(args, "-var_stream_map", strings.Join(streamMap, " "))
 	args = append(args, hls(filepath.Join(dir, "v%v.mp4"), filepath.Join(dir, "v%v.m3u8"))...)
 	for i, a := range p.audio {
 		args = append(args, "-map", fmt.Sprintf("0:%d", a.index), "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2")

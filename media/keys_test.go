@@ -140,6 +140,9 @@ func TestKindRules(t *testing.T) {
 		"editor zip":           {Specs: map[string]media.Spec{"editor": editor}, Zip: "editor"},
 		"odd ladder":           {Video: &media.Video{Ladder: []int{720, 481}}},
 		"ascending ladder":     {Video: &media.Video{Ladder: []int{480, 720}}},
+		"wide min aspect":      {Video: &media.Video{MinAspect: 1.2}},
+		"narrow max aspect":    {Video: &media.Video{MaxAspect: 0.8}},
+		"negative aspect":      {Video: &media.Video{MinAspect: -1}},
 	} {
 		k.Name = "x"
 		if _, err := media.NewRegistry(k); err == nil {

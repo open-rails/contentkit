@@ -29,8 +29,9 @@ type Config struct {
 	// Locker serializes manifest edits when Store lacks conditional PUT; it
 	// must share the hosts' lock space (media.PGLocker on the host database).
 	Locker  media.Locker
-	TempDir string // scratch for the source and outputs; default os.TempDir()
-	Threads int    // ffmpeg threads; default GOMAXPROCS (the container's CPU limit)
+	TempDir string      // scratch for the source and outputs; default os.TempDir()
+	Threads int         // ffmpeg threads; default GOMAXPROCS (the container's CPU limit)
+	Hooks   media.Hooks // Failed: a source that can never be encoded
 	Logger  *slog.Logger
 }
 
@@ -41,13 +42,12 @@ type Encoder struct {
 	c Config
 }
 
-// Job encodes the video files of one manifest. Versioned and Ladder are the
-// kind's: the manifest's address and the rendition heights (empty:
-// media.DefaultLadder).
+// Job encodes the video files of one manifest. Versioned and Video are the
+// kind's: the manifest's address and its ladder and aspect bounds.
 type Job struct {
 	Ref       contentref.ContentRef `json:"ref"`
 	Versioned bool                  `json:"versioned,omitempty"`
-	Ladder    []int                 `json:"ladder,omitempty"`
+	Video     media.Video           `json:"video"`
 }
 
 func New(c Config) (*Encoder, error) {
@@ -75,7 +75,7 @@ func New(c Config) (*Encoder, error) {
 }
 
 // PermanentError marks a source that can never be encoded (no video stream,
-// unreadable container); retrying it is pointless.
+// unreadable container, aspect out of range); retrying it is pointless.
 type PermanentError struct{ Err error }
 
 func (e *PermanentError) Error() string { return "media/video: " + e.Err.Error() }
@@ -84,19 +84,19 @@ func (e *PermanentError) Unwrap() error { return e.Err }
 // IsVideo reports whether a manifest file is encoded by this package.
 func IsVideo(f media.File) bool { return strings.HasPrefix(f.Type, "video/") }
 
-// DownloadKey is the manifest downloads key of a file's quality, e.g. "source-1080p".
-func DownloadKey(file string, height int) string { return file + "-" + strconv.Itoa(height) + "p" }
+// DownloadKey is the manifest downloads key of a file's rung, e.g. "source-1080p".
+func DownloadKey(file string, rung int) string { return file + "-" + strconv.Itoa(rung) + "p" }
 
 var downloadKey = regexp.MustCompile(`^(.+)-(\d+)p$`)
 
 // Encode brings every video file of the job's manifest up to date, promoting
 // each file's outputs in its own manifest edit.
 func (e *Encoder) Encode(ctx context.Context, job Job) error {
-	kinds, err := media.NewRegistry(media.Kind{Name: job.Ref.ContentKind, Versioned: job.Versioned, Video: &media.Video{Ladder: job.Ladder}})
+	kinds, err := media.NewRegistry(media.Kind{Name: job.Ref.ContentKind, Versioned: job.Versioned, Video: &job.Video})
 	if err != nil {
 		return &PermanentError{err}
 	}
-	r := recipeOf(job.Ladder)
+	r := recipeOf(&job.Video)
 	item, err := kinds.Item(job.Ref)
 	if err != nil {
 		return &PermanentError{err}
@@ -115,17 +115,19 @@ func (e *Encoder) Encode(ctx context.Context, job Job) error {
 		return err
 	}
 	var errs []error
-	permanent := true
 	for _, f := range man.Files {
-		if !IsVideo(f) || fresh(man, f, r.spec) {
+		if !IsVideo(f) || fresh(man, f, r) {
 			continue
 		}
-		if err := e.file(ctx, ms, item, r, f.Name, f.Source()); err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			var perm *PermanentError
-			permanent = permanent && errors.As(err, &perm)
+		err := e.file(ctx, ms, item, r, f.Name, f.Source())
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var perm *PermanentError
+		if errors.As(err, &perm) {
+			err = e.fail(ctx, ms, item, r.failSpec, f.Name, f.Source(), perm.Err)
+		}
+		if err != nil {
 			errs = append(errs, fmt.Errorf("%s %q: %w", job.Ref, f.Name, err))
 		}
 	}
@@ -143,32 +145,64 @@ func (e *Encoder) Encode(ctx context.Context, job Job) error {
 		})
 		return err
 	}
-	if permanent {
-		return &PermanentError{errors.Join(errs...)}
-	}
 	return errors.Join(errs...)
 }
 
-// jobRecipe is a job's ladder and its Spec.
-type jobRecipe struct {
-	ladder []int
-	spec   string
-}
-
-func recipeOf(ladder []int) jobRecipe {
-	if len(ladder) == 0 {
-		ladder = media.DefaultLadder
+// fail records that a source can never be encoded: the file's hls becomes
+// {source, spec, error} with no renditions (fresh until the source or spec
+// changes), its downloads are dropped, and Hooks.Failed is told.
+func (e *Encoder) fail(ctx context.Context, ms *media.Manifests, item media.Item, spec, name, source string, cause error) error {
+	e.c.Logger.WarnContext(ctx, "media/video: cannot encode", "ref", item.Ref().String(), "file", name, "error", cause)
+	_, err := ms.Edit(ctx, item.Ref(), func(m *media.Manifest) error {
+		i := m.File(name)
+		if i < 0 || m.Files[i].Source() != source {
+			return errStale
+		}
+		m.Files[i].HLS = &media.HLS{Source: source, Spec: spec, Error: cause.Error()}
+		for k, d := range m.Downloads {
+			if n, ok := videoDownload(k, d); ok && n == name {
+				delete(m.Downloads, k)
+			}
+		}
+		return nil
+	})
+	if errors.Is(err, errStale) {
+		return nil
+	} else if err != nil {
+		return err
 	}
-	return jobRecipe{ladder: ladder, spec: Spec(ladder)}
+	if e.c.Hooks.Failed != nil {
+		e.c.Hooks.Failed(ctx, item.Ref(), name, &PermanentError{cause})
+	}
+	return nil
 }
 
-func fresh(m *media.Manifest, f media.File, spec string) bool {
-	h := f.HLS
-	if h == nil || h.Source != f.Source() || h.Spec != spec || len(h.Video) == 0 {
+// jobRecipe is a job's video settings and its Spec; failSpec also covers
+// the aspect bounds, so a failure is retried when they change.
+type jobRecipe struct {
+	video          *media.Video
+	spec, failSpec string
+}
+
+func recipeOf(v *media.Video) jobRecipe {
+	spec := Spec(v.Ladder)
+	lo, hi := v.Aspects()
+	return jobRecipe{video: v, spec: spec, failSpec: fmt.Sprintf("%s|aspect:%g-%g", spec, lo, hi)}
+}
+
+func fresh(m *media.Manifest, f media.File, r jobRecipe) bool {
+	h, spec := f.HLS, r.spec
+	if h == nil || h.Source != f.Source() {
+		return false
+	}
+	if h.Error != "" {
+		return h.Spec == r.failSpec
+	}
+	if h.Spec != spec || len(h.Video) == 0 {
 		return false
 	}
 	for _, r := range h.Video {
-		if d, ok := m.Downloads[DownloadKey(f.Name, r.Height)]; !ok || d.Spec != spec || d.Inputs != h.Source {
+		if d, ok := m.Downloads[DownloadKey(f.Name, r.Rung)]; !ok || d.Spec != spec || d.Inputs != h.Source {
 			return false
 		}
 	}
@@ -215,7 +249,7 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 		}
 		return &PermanentError{err}
 	}
-	p, err := newPlan(pr, r.ladder)
+	p, err := newPlan(pr, r.video)
 	if err != nil {
 		return &PermanentError{err}
 	}
@@ -254,13 +288,16 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 	if err != nil {
 		return err
 	}
-	hls.Sprite = &media.Sprite{Blob: blob, Cols: spriteCols, Rows: spriteRows, Width: spriteW, Height: spriteH,
+	hls.Sprite = &media.Sprite{Blob: blob, Cols: spriteCols, Rows: spriteRows, Width: p.tileW, Height: p.tileH,
 		Interval: p.duration / (spriteCols * spriteRows)}
-	for i, height := range p.rungs {
+	for i, rg := range p.rungs {
 		v := fmt.Sprintf("v%d", i)
 		codec, w, h, err := avcCodec(ctx, filepath.Join(out, v+".mp4"))
 		if err != nil {
 			return err
+		}
+		if w != rg.w || h != rg.h {
+			return fmt.Errorf("rung %dp encoded %dx%d, want %dx%d", rg.n, w, h, rg.w, rg.h)
 		}
 		dl := filepath.Join(out, "d"+v+".mp4")
 		if err := mux(ctx, out, i, p, dl); err != nil {
@@ -276,9 +313,9 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 			return err
 		}
 		peak, avg := bandwidth(pl.segments)
-		hls.Video = append(hls.Video, media.Rendition{Height: h, Width: w, Bandwidth: peak, Average: avg, Codecs: codec,
+		hls.Video = append(hls.Video, media.Rendition{Rung: rg.n, Width: w, Height: h, Bandwidth: peak, Average: avg, Codecs: codec,
 			Blob: blob, Segments: pl.segments})
-		downloads[DownloadKey(name, height)] = media.Download{Blob: dlBlob, Type: "video/mp4", Size: dlSize, Spec: r.spec, Inputs: source}
+		downloads[DownloadKey(name, rg.n)] = media.Download{Blob: dlBlob, Type: "video/mp4", Size: dlSize, Spec: r.spec, Inputs: source}
 	}
 
 	if testBeforePromote != nil {

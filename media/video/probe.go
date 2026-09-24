@@ -11,6 +11,8 @@ import (
 
 	"golang.org/x/text/language"
 	"golang.org/x/text/language/display"
+
+	"github.com/open-rails/contentkit/media"
 )
 
 type probeResult struct {
@@ -28,6 +30,9 @@ type probeStream struct {
 	Level     int    `json:"level"`
 	Width     int    `json:"width"`
 	Height    int    `json:"height"`
+	SAR       string `json:"sample_aspect_ratio"`
+	AvgRate   string `json:"avg_frame_rate"`
+	Rate      string `json:"r_frame_rate"`
 	Tags      struct {
 		Language string `json:"language"`
 		Title    string `json:"title"`
@@ -72,15 +77,18 @@ type track struct {
 // plan is what one encode produces from a probed source.
 type plan struct {
 	duration      float64
-	video         int // input stream index
-	width, height int // displayed (rotation applied)
-	rungs         []int
+	video         int     // input stream index
+	width, height int     // displayed: square pixels, rotation applied
+	fps           float64 // output rate: the source's, at most maxFPS
+	limitFPS      bool    // the source is faster than maxFPS
+	rungs         []rung
+	tileW, tileH  int // sprite tile
 	audio, subs   []track
 }
 
 var errNoVideo = errors.New("source has no video stream")
 
-func newPlan(p probeResult, ladder []int) (plan, error) {
+func newPlan(p probeResult, v *media.Video) (plan, error) {
 	var pl plan
 	d, err := strconv.ParseFloat(p.Format.Duration, 64)
 	if err != nil || d <= 0 || math.IsInf(d, 0) || math.IsNaN(d) {
@@ -101,6 +109,11 @@ func newPlan(p probeResult, ladder []int) (plan, error) {
 				return pl, errors.New("invalid video dimensions")
 			}
 			pl.video, pl.width, pl.height = s.Index, s.Width, s.Height
+			if n, d, ok := ratio(s.SAR); ok && n != d {
+				pl.width = max(2, int(math.Round(float64(s.Width)*float64(n)/float64(d))))
+			}
+			r := rate(s)
+			pl.fps, pl.limitFPS = min(r, maxFPS), r > maxFPS
 			if rotated(s) {
 				pl.width, pl.height = pl.height, pl.width
 			}
@@ -120,7 +133,12 @@ func newPlan(p probeResult, ladder []int) (plan, error) {
 	if pl.video < 0 {
 		return pl, errNoVideo
 	}
-	pl.rungs = rungs(ladder, pl.height)
+	lo, hi := v.Aspects()
+	if err := checkAspect(pl.width, pl.height, lo, hi); err != nil {
+		return pl, err
+	}
+	pl.rungs = rungs(v.Rungs(), pl.width, pl.height, pl.fps)
+	pl.tileW, pl.tileH = tile(pl.width, pl.height)
 	// Exactly one default audio track: the first flagged one, else the first.
 	def := 0
 	for i, a := range pl.audio {
@@ -135,19 +153,25 @@ func newPlan(p probeResult, ladder []int) (plan, error) {
 	return pl, nil
 }
 
-// rungs are the ladder heights no taller than the source; a source below the
-// lowest rung is encoded once at its own (even) height.
-func rungs(ladder []int, height int) []int {
-	var out []int
-	for _, h := range ladder {
-		if h <= height {
-			out = append(out, h)
+// ratio parses "n:d" or "n/d" with positive terms.
+func ratio(v string) (n, d int, ok bool) {
+	a, b, found := strings.Cut(v, ":")
+	if !found {
+		a, b, found = strings.Cut(v, "/")
+	}
+	n, err1 := strconv.Atoi(a)
+	d, err2 := strconv.Atoi(b)
+	return n, d, found && err1 == nil && err2 == nil && n > 0 && d > 0
+}
+
+// rate is the stream's frame rate; unknown is 30.
+func rate(s probeStream) float64 {
+	for _, v := range []string{s.AvgRate, s.Rate} {
+		if n, d, ok := ratio(v); ok {
+			return float64(n) / float64(d)
 		}
 	}
-	if len(out) == 0 {
-		out = []int{height - height%2}
-	}
-	return out
+	return 30
 }
 
 func rotated(s probeStream) bool {

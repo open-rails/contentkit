@@ -45,28 +45,55 @@ type Kind struct {
 
 // Video configures a kind's video encoding (media/video).
 type Video struct {
-	// Ladder is the rendition heights, tallest first; rungs taller than the
-	// source are dropped. Empty is DefaultLadder.
-	Ladder []int
+	// Ladder is the rendition short sides (height of landscape, width of
+	// vertical video), largest first; rungs above the source's short side
+	// are dropped. Empty is DefaultLadder.
+	Ladder []int `json:"ladder,omitempty"`
+	// MinAspect and MaxAspect bound a source's display width/height; a
+	// source outside fails permanently. Zero is DefaultMinAspect/DefaultMaxAspect.
+	MinAspect float64 `json:"min_aspect,omitempty"`
+	MaxAspect float64 `json:"max_aspect,omitempty"`
 }
 
-// DefaultLadder is the default H.264 ladder.
+// DefaultLadder is the default H.264 ladder by short side.
 var DefaultLadder = []int{2160, 1440, 1080, 720, 480}
 
-// Heights is the ladder in effect.
-func (v *Video) Heights() []int {
+// Default aspect bounds: 9:21 vertical to 21:9 wide.
+const (
+	DefaultMinAspect = 9.0 / 21
+	DefaultMaxAspect = 21.0 / 9
+)
+
+// Rungs is the ladder in effect.
+func (v *Video) Rungs() []int {
 	if v == nil || len(v.Ladder) == 0 {
 		return DefaultLadder
 	}
 	return v.Ladder
 }
 
-// ValidLadder requires even heights of 2–4320, tallest first, without repeats.
-func ValidLadder(ladder []int) error {
-	for i, h := range ladder {
-		if h < 2 || h > 4320 || h%2 != 0 || i > 0 && h >= ladder[i-1] {
-			return fmt.Errorf("media: invalid video ladder %v", ladder)
+// Aspects are the aspect bounds in effect.
+func (v *Video) Aspects() (lo, hi float64) {
+	lo, hi = DefaultMinAspect, DefaultMaxAspect
+	if v != nil && v.MinAspect > 0 {
+		lo = v.MinAspect
+	}
+	if v != nil && v.MaxAspect > 0 {
+		hi = v.MaxAspect
+	}
+	return lo, hi
+}
+
+// Validate requires even rungs of 2–4320, largest first, without repeats,
+// and aspect bounds with MinAspect ≤ 1 ≤ MaxAspect.
+func (v Video) Validate() error {
+	for i, n := range v.Ladder {
+		if n < 2 || n > 4320 || n%2 != 0 || i > 0 && n >= v.Ladder[i-1] {
+			return fmt.Errorf("media: invalid video ladder %v", v.Ladder)
 		}
+	}
+	if lo, hi := v.Aspects(); v.MinAspect < 0 || v.MaxAspect < 0 || lo > 1 || hi < 1 {
+		return fmt.Errorf("media: invalid video aspect bounds %g–%g", lo, hi)
 	}
 	return nil
 }
@@ -227,7 +254,7 @@ func NewRegistry(kinds ...Kind) (*Registry, error) {
 			return nil, fmt.Errorf("media: kind %q: inline images are public; their spec cannot be Unedited or EditorOnly", k.Name)
 		}
 		if k.Video != nil {
-			if err := ValidLadder(k.Video.Ladder); err != nil {
+			if err := k.Video.Validate(); err != nil {
 				return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
 			}
 		}

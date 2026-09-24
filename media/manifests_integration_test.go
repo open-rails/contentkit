@@ -114,7 +114,7 @@ func TestManifestCacheRevalidatesAndEditsAreValidated(t *testing.T) {
 		m.Files = []media.File{
 			{Name: "teaser", Original: blobName("t"), Type: "image/jpeg", Meta: map[string]any{"teaser": true},
 				Variants: map[string]media.Variant{"blurred": {Blob: blobName("tb"), Spec: "e2f0"}}},
-			{Name: "clip.mp4", Original: video, HLS: &media.HLS{Source: video, Video: []media.Rendition{{Height: 720, Width: 1280,
+			{Name: "clip.mp4", Original: video, HLS: &media.HLS{Source: video, Video: []media.Rendition{{Rung: 720, Width: 1280, Height: 720,
 				Bandwidth: 1, Codecs: "avc1.64001f", Blob: blobName("r720"), Segments: []media.Segment{{0, 1843212, 4}, {1843212, 1790021, 3.5}}}}}},
 		}
 		m.Downloads = map[string]media.Download{"720p": {Blob: blobName("d720"), Type: "video/mp4"}}
