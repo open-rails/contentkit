@@ -334,6 +334,41 @@ Cropping and rotating are ContentKit's: the host never decodes images.
 - Cap files per item with `Kind.MaxFiles` and `Kind.TypeLimits`
   (`{"video": {MaxFiles: 1}}`); commits over a cap get 409 `too_many_files`.
 
+## Video posters and hover previews
+
+Every `Video` kind gets the `poster` slot (`media.VideoPoster`: 16:9, widths
+480/960/1920); `poster` and `hover_preview` are reserved slot names.
+
+- **Poster**: a frame or an uploaded image, encoded by the image job through
+  the slot's edit like any slot. The video worker grabs frames from the widest
+  HLS rendition into `originals/poster` (PNG) and hands them to the host's
+  image job through `Config.Slots` (`media.NewProcessInserter`; the worker's
+  `MEDIA_HOST_RIVER_SCHEMA`/`MEDIA_HOST_QUEUE`). Default: the first of five
+  sampled frames (20–80 %) that is not black or flat. Frames whose centred
+  16:9 crop is under 480 px are upscaled, so every poster has 480.
+- **Hover preview**: a silent loop, default 3 s from a quarter in, bounded
+  1–6 s, centred 16:9 at 12 fps, as H.264 MP4 and animated WebP at 320
+  (always) and 640 px (when the video is that wide), rendered by the worker.
+  MP4 measured 2.1–2.9× smaller on real footage: prefer `<video muted loop
+  playsinline>`, WebP for `<img>`. `public/hover_preview_{w}.mp4|.webp?v=`.
+- Both cut from the HLS renditions (one segment range, confined ffmpeg
+  inputs), so selection changes never download the source.
+- Upload API (`CanUpload` on the work), each answering `VideoImages`:
+  - `POST /video-poster {ref, source: "frame"|"upload"|"auto", file?, time?, sha256?, edit?}`:
+    `frame` needs `time` and the ref's version, its edit in the frame's pixels
+    (`video.w×h`); `upload` needs the `sha256` of an image presigned with
+    `slot: "poster"`. `/edit-slot` re-edits either without a new grab.
+  - `POST /video-preview {ref, file?, start?, duration?}` (no `start`: automatic).
+  - `POST /video-images {ref, file?}`: outputs, selections, and the file's
+    duration and frame size for the picker.
+  - `GET /frame?kind=&id=&version=&file=&t=&w=`: a JPEG from one HLS
+    segment; `t` clamped into the video, `w` into 64–1280 and the widest
+    rendition. Needs `UploadOptions.Frames` (`video.NewFrames`, ffmpeg in the
+    host image); `FrameConcurrency` (2) at once, then 429.
+- Public: `GET /{kind}/{id}/video-images` (no selections, no resolve);
+  listings use `Reader.SlotOutputs(ref, media.PosterSlot, version)` and
+  `Reader.HoverPreviewURLs(ref, version)` without reads.
+
 ## Example: hentai0 (video versions)
 
 ```go

@@ -38,6 +38,7 @@ type HandlerOptions struct {
 //	GET /{kind}/{id}/hls/{file}/sprite.vtt
 //	GET /{kind}/{id}/download/{key} -> 302 to the signed download URL
 //	GET /{kind}/{id}/slots/{slot} -> SlotManifest (public; no resolve, no-cache)
+//	GET /{kind}/{id}/video-images -> VideoImages without selections (public; no resolve, no-cache)
 //
 // Every request resolves the item once; playlists and redirects are
 // "private, no-store" and carry the folder cookie in cookie mode.
@@ -62,6 +63,21 @@ func (r *Reader) Handler(o HandlerOptions) http.Handler {
 		}
 		w.Header().Set("Cache-Control", "no-cache")
 		writeJSON(w, http.StatusOK, m)
+	})
+	mux.HandleFunc("GET /{kind}/{id}/video-images", func(w http.ResponseWriter, req *http.Request) {
+		ref, _ := requestRef(req, o)
+		v, err := r.VideoImages(req.Context(), ref)
+		if err != nil {
+			status, code, msg := classify(err)
+			if status >= http.StatusInternalServerError {
+				log.Error("media video images read failed", "path", req.URL.Path, "err", err.Error())
+			}
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, status, map[string]string{"error": msg, "code": code})
+			return
+		}
+		w.Header().Set("Cache-Control", "no-cache")
+		writeJSON(w, http.StatusOK, v)
 	})
 	mux.HandleFunc("GET /{kind}/{id}", func(w http.ResponseWriter, req *http.Request) {
 		start := time.Now()

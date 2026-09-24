@@ -1,7 +1,9 @@
 // Package video encodes an item's video files with ffmpeg into a byte-range
 // HLS ladder (one single-file fMP4 blob per rendition and audio track),
 // WebVTT subtitles, a thumbnail sprite and one muxed MP4 download per
-// quality, and records them in the manifest's hls and downloads. Jobs run in
+// quality, and records them in the manifest's hls and downloads. It then
+// grabs the item's poster frame and renders its hover preview from their
+// selections; Frames serves the poster picker's frame grabs in the host. Jobs run in
 // cmd/media-worker on River schema Schema.
 package video
 
@@ -33,6 +35,10 @@ type Config struct {
 	Threads int         // ffmpeg threads; default GOMAXPROCS (the container's CPU limit)
 	Hooks   media.Hooks // Failed: a source that can never be encoded
 	Logger  *slog.Logger
+	// Slots is the host's media queue (media.NewProcessInserter): a grabbed
+	// poster frame is handed to the image job through it. Without it, frame
+	// posters are grabbed but not encoded.
+	Slots media.ProcessQueue
 }
 
 // Encoder runs encode jobs. It is idempotent: a file whose hls and downloads
@@ -133,7 +139,7 @@ func (e *Encoder) Encode(ctx context.Context, job Job) error {
 	}
 	if len(errs) == 0 {
 		// Drop downloads of files that are gone or no longer video.
-		_, err := ms.Edit(ctx, job.Ref, func(m *media.Manifest) error {
+		man, err := ms.Edit(ctx, job.Ref, func(m *media.Manifest) error {
 			for k, d := range m.Downloads {
 				if name, ok := videoDownload(k, d); ok {
 					if i := m.File(name); i < 0 || !IsVideo(m.Files[i]) {
@@ -143,7 +149,10 @@ func (e *Encoder) Encode(ctx context.Context, job Job) error {
 			}
 			return nil
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		return e.images(ctx, ms, item, man)
 	}
 	return errors.Join(errs...)
 }

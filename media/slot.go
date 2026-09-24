@@ -23,9 +23,10 @@ const slotRecordExt = ".json"
 // SlotRecord is originals/{slot}.json, private like the original. Commits
 // and edits set Original and Edit; the image job sets Result.
 type SlotRecord struct {
-	Original string      `json:"original"`       // ETag of originals/{slot} when committed
-	Edit     *Edit       `json:"edit,omitempty"` // nil: the centred crop at the slot's Aspect
-	Result   *SlotResult `json:"result,omitempty"`
+	Original string       `json:"original"`        // ETag of originals/{slot} when committed
+	Edit     *Edit        `json:"edit,omitempty"`  // nil: the centred crop at the slot's Aspect
+	Frame    *PosterFrame `json:"frame,omitempty"` // a video poster grabbed from a frame; nil for uploads
+	Result   *SlotResult  `json:"result,omitempty"`
 }
 
 // SlotResult is what the served outputs were derived from.
@@ -135,7 +136,7 @@ func (u *Uploads) CommitSlot(ctx context.Context, actor access.Actor, ref conten
 	}
 	if registered {
 		if err := u.o.Manifests.UpdateSlot(ctx, ref, slot, func(rec *SlotRecord) error {
-			rec.Original, rec.Edit = obj.ETag, edit
+			rec.Original, rec.Edit, rec.Frame = obj.ETag, edit, nil
 			return nil
 		}); err != nil {
 			return err
@@ -303,7 +304,7 @@ func (u *Uploads) SetSlotFromFile(ctx context.Context, actor access.Actor, r Slo
 		return err
 	}
 	if err := u.o.Manifests.UpdateSlot(ctx, r.Ref, r.Slot, func(rec *SlotRecord) error {
-		rec.Original, rec.Edit = put.ETag, edit
+		rec.Original, rec.Edit, rec.Frame = put.ETag, edit, nil
 		return nil
 	}); err != nil {
 		return err

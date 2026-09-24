@@ -280,6 +280,14 @@ func NewRegistry(kinds ...Kind) (*Registry, error) {
 			}
 			slots[name] = slot
 		}
+		if k.Video != nil {
+			for _, reserved := range []string{PosterSlot, HoverPreview} {
+				if _, ok := slots[reserved]; ok {
+					return nil, fmt.Errorf("media: kind %q: slot %q is reserved on video kinds", k.Name, reserved)
+				}
+			}
+			slots[PosterSlot] = VideoPoster
+		}
 		k.Slots = slots
 		r.kinds[k.Name] = k
 	}
