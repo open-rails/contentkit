@@ -15,6 +15,7 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/pglock"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -164,26 +165,15 @@ func (w *worker) Timeout(*river.Job[Args]) time.Duration { return w.c.Timeout }
 // Work runs one encode under a per-manifest lock; a duplicate job for a
 // manifest being encoded waits by snoozing.
 func (w *worker) Work(ctx context.Context, job *river.Job[Args]) error {
-	conn, err := w.c.Pool.Acquire(ctx)
+	// The lock's own connection lives outside Pool, which the encode uses.
+	release, ok, err := pglock.Acquire(ctx, w.c.Pool, "contentkit:media:video:"+job.Args.Ref.String(), false)
 	if err != nil {
-		return err
-	}
-	defer conn.Release()
-	lock := "contentkit:media:video:" + job.Args.Ref.String()
-	var ok bool
-	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock(hashtextextended($1, 0))", lock).Scan(&ok); err != nil {
 		return err
 	}
 	if !ok {
 		return river.JobSnooze(time.Minute)
 	}
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if _, err := conn.Exec(ctx, "SELECT pg_advisory_unlock(hashtextextended($1, 0))", lock); err != nil {
-			_ = conn.Conn().Close(ctx)
-		}
-	}()
+	defer release()
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()

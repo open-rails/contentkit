@@ -116,52 +116,47 @@ type PreferenceSyncReport struct {
 }
 
 // SyncPreferences sends every exportable row whose revision is past the
-// watermark, in revision order, then records a checkpoint. Syncs of one tenant
-// are serialized. Revisions are allocated before commit, so each scan restarts
-// from the newest checkpoint taken at least Options.PreferenceSyncOverlap before
-// the previous sync: a row is delivered as long as its transaction commits
+// watermark, in revision order, then records a checkpoint. No connection is
+// held across send. Revisions are allocated before commit, so each scan
+// restarts from the newest checkpoint taken at least Options.PreferenceSyncOverlap
+// before the latest one: a row is delivered as long as its transaction commits
 // within the overlap of allocating its revision (ResyncPreferences covers the
-// rest). Export disabled (nil Canonicalizer) sends nothing.
+// rest). A checkpoint is recorded only after its own scan was sent, so
+// overlapping syncs stay correct and only repeat sends. Export disabled (nil
+// Canonicalizer) sends nothing.
 func (rt *Runtime) SyncPreferences(ctx context.Context, send PreferenceSender) (PreferenceSyncReport, error) {
 	p := rt.preferences
 	if p.canon == nil {
 		return PreferenceSyncReport{}, nil
 	}
-	tx, err := rt.store.beginMutation(ctx)
-	if err != nil {
-		return PreferenceSyncReport{}, err
-	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, rt.schema+"\x1fpreference-sync\x1f"+rt.tenant); err != nil {
-		return PreferenceSyncReport{}, err
-	}
+	pool := rt.store.pool
 	var mark int64
 	var at time.Time
-	if err := tx.QueryRow(ctx, `SELECT CASE WHEN is_called THEN last_value ELSE 0 END, clock_timestamp() FROM `+rt.store.revisionSeq).Scan(&mark, &at); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT CASE WHEN is_called THEN last_value ELSE 0 END, clock_timestamp() FROM `+rt.store.revisionSeq).Scan(&mark, &at); err != nil {
 		return PreferenceSyncReport{}, err
 	}
 	var from int64
 	var fromAt time.Time
-	err = tx.QueryRow(ctx, `SELECT revision, taken_at FROM `+rt.store.t.preferenceSync+`
+	err := pool.QueryRow(ctx, `SELECT revision, taken_at FROM `+rt.store.t.preferenceSync+`
 		WHERE tenant_id = $1 AND taken_at <= (SELECT max(taken_at) FROM `+rt.store.t.preferenceSync+` WHERE tenant_id = $1) - make_interval(secs => $2)
 		ORDER BY taken_at DESC LIMIT 1`, rt.tenant, p.overlap.Seconds()).Scan(&from, &fromAt)
 	found := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return PreferenceSyncReport{}, err
 	}
-	report, err := p.export(ctx, tx, from, send)
+	report, err := p.export(ctx, pool, from, send)
 	if err != nil {
 		return report, err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO `+rt.store.t.preferenceSync+` (tenant_id, taken_at, revision) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, rt.tenant, at, mark); err != nil {
-		return report, err
-	}
-	if found {
-		if _, err := tx.Exec(ctx, `DELETE FROM `+rt.store.t.preferenceSync+` WHERE tenant_id = $1 AND taken_at < $2`, rt.tenant, fromAt); err != nil {
-			return report, err
+	return report, pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `INSERT INTO `+rt.store.t.preferenceSync+` (tenant_id, taken_at, revision) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, rt.tenant, at, mark); err != nil {
+			return err
 		}
-	}
-	return report, tx.Commit(ctx)
+		if found {
+			_, err = tx.Exec(ctx, `DELETE FROM `+rt.store.t.preferenceSync+` WHERE tenant_id = $1 AND taken_at < $2`, rt.tenant, fromAt)
+		}
+		return err
+	})
 }
 
 // ResyncPreferences re-sends every exportable row (zeros included): the
