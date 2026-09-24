@@ -7,6 +7,7 @@
 //	CONTENTKIT_BENCH_THREADS   Config.Threads (default: GOMAXPROCS)
 //	CONTENTKIT_BENCH_TMP       Config.TempDir (default: a test temp dir)
 //	CONTENTKIT_BENCH_ENCODER   Config.Encoder
+//	CONTENTKIT_BENCH_NVENC_CQ  NVENC -cq override
 //	CONTENTKIT_BENCH_VMAF      an ffmpeg with libvmaf; unset scores SSIM/PSNR only
 //	CONTENTKIT_BENCH_QUALITY   0 skips quality scoring
 //	CONTENTKIT_BENCH_OUT       JSON lines appended per sample
@@ -113,6 +114,9 @@ func benchSample(t *testing.T, src string) {
 	}
 	cfg.Threads, _ = strconv.Atoi(os.Getenv("CONTENTKIT_BENCH_THREADS"))
 	cfg.Encoder = os.Getenv("CONTENTKIT_BENCH_ENCODER")
+	if cq := os.Getenv("CONTENTKIT_BENCH_NVENC_CQ"); cq != "" {
+		defer video.SetNVENCCQ(cq)()
+	}
 	enc, err := video.New(cfg)
 	if err != nil {
 		t.Fatal(err)

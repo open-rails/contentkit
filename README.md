@@ -350,7 +350,7 @@ The bucket needs CORS allowing `PUT` from the app origins with the
 `AbortIncompleteMultipartUpload: 1 day` rule `Store.Configure` sets.
 
 **Video** (`media/video`, run by `cmd/media-worker`) encodes each `video/*`
-manifest file: H.264 High (CRF 22, preset fast, keyframes
+manifest file in one ffmpeg pass: H.264 High (CRF 22, preset fast, keyframes
 every 4 s) at the kind's ladder (`Kind.Video = &media.Video{Ladder: []int{1080, 720, 480}}`;
 default `media.DefaultLadder`, 2160/1440/1080/720/480), AAC per audio track,
 WebVTT per text subtitle and a 10×10 sprite whose tiles keep the source
@@ -374,17 +374,13 @@ each rung also gets a muxed MP4 in `downloads["{file}-{N}p"]` (video,
 every audio track, subtitles). Blobs are written first; one manifest edit then
 records `hls` and `downloads` only if the file still derives from the encoded
 original, so a replaced file keeps its previous `hls` until then. Outputs are
-byte-identical on retry (same encoder and `Threads`/`Parallel`). Sources in
-indexed containers (mov/mp4, matroska) are cut into up to `Config.Parallel`
-chunks of whole segments encoded by parallel ffmpeg processes (each decodes
-its range once for every rung and its sprite tiles) and joined per rung by
-stream copy; audio and subtitles encode alongside, and rungs mux and upload
-concurrently. `Config.Encoder` picks libx264 (default without a GPU) or NVENC
-(`auto` uses it when a probe encode works; a file it fails on re-encodes with
-x264). ffmpeg reads only local files
+byte-identical on retry (same encoder and `Threads`). One ffmpeg pass decodes
+the source once; each rung's x264 gets its frame-area share of
+`Config.Threads`, and rungs mux and upload concurrently. `Config.Encoder`
+picks libx264 (default without a GPU) or NVENC (`auto` uses it when a probe
+encode works; a file it fails on re-encodes with x264). ffmpeg reads only local files
 (`-protocol_whitelist file`) through container demuxers (mov/mp4, matroska/webm, avi,
-mpegts, flv, ogg, asf, mpeg): playlists and concat lists are refused (only the
-join concatenates, and only the worker's own MPEG-TS chunks). Changing
+mpegts, flv, ogg, asf, mpeg): playlists and concat lists are refused. Changing
 the ladder changes `video.Spec(ladder)`, so files re-encode. Jobs live in River schema `media_worker` in the host
 database: hosts run `video.Migrate` and enqueue through `video.NewEnqueuer`
 (insert-only; register `enqueuer.Processor()` with `media.Jobs.AddProcessor`); the worker's environment is

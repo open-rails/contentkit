@@ -12,3 +12,10 @@ func SetMultipart(above, part int64) func() {
 	multipartAbove, partSize = above, part
 	return func() { multipartAbove, partSize = a, p }
 }
+
+// SetNVENCCQ overrides NVENC's constant-quality target.
+func SetNVENCCQ(cq string) func() {
+	old := nvencCQ
+	nvencCQ = cq
+	return func() { nvencCQ = old }
+}
