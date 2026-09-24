@@ -84,11 +84,22 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 	return errors.Join(errs...)
 }
 
-// derived holds a source's new variants by name.
+// derived holds a source's new variants through one edit, by name.
 type derived struct {
 	variants map[string]media.Variant
-	w, h     int
+	dims     media.Dims // the source's
+	w, h     int        // edited
 }
+
+// work is one source and edit to derive into specs.
+type work struct {
+	source string
+	edit   *media.Edit
+	specs  map[string]media.Spec
+}
+
+// key groups files deriving from the same source through the same edit.
+func key(f media.File) string { return f.Source() + "." + f.Edit.Hash() }
 
 // manifest runs passes until the manifest needs no more work: a commit that
 // lands while a pass runs is absorbed by this job, not queued again.
@@ -99,7 +110,7 @@ func (p *Processor) manifest(ctx context.Context, item media.Item) error {
 	} else if err != nil {
 		return err
 	}
-	failed := map[string]bool{} // sources that cannot be derived; reported once
+	failed := map[string]bool{} // keys that cannot be derived; reported once
 	for range 8 {
 		if len(p.todo(item.Kind(), man, failed)) == 0 && !p.zipStale(item.Kind(), man) {
 			return nil
@@ -111,19 +122,23 @@ func (p *Processor) manifest(ctx context.Context, item media.Item) error {
 	return fmt.Errorf("media/image: manifest of %s kept changing", item.Ref())
 }
 
-// todo maps each source to the variants it lacks or has under another spec.
-func (p *Processor) todo(kind media.Kind, man *media.Manifest, failed map[string]bool) map[string]map[string]media.Spec {
-	todo := map[string]map[string]media.Spec{}
+// todo maps each source and edit to the variants its files lack or have
+// under another spec or edit.
+func (p *Processor) todo(kind media.Kind, man *media.Manifest, failed map[string]bool) map[string]work {
+	todo := map[string]work{}
 	for _, f := range man.Files {
-		if !isImage(f) || failed[f.Source()] {
+		k := key(f)
+		if !isImage(f) || failed[k] {
 			continue
 		}
 		for name, s := range p.c.Specs(kind, f) {
-			if v, ok := f.Variants[name]; !ok || v.Spec != s.Hash() {
-				if todo[f.Source()] == nil {
-					todo[f.Source()] = map[string]media.Spec{}
+			if v, ok := f.Variants[name]; !ok || v.Spec != s.For(f.Edit) {
+				w, ok := todo[k]
+				if !ok {
+					w = work{source: f.Source(), edit: f.Edit, specs: map[string]media.Spec{}}
+					todo[k] = w
 				}
-				todo[f.Source()][name] = s
+				w.specs[name] = s
 			}
 		}
 	}
@@ -153,21 +168,21 @@ func (p *Processor) pass(ctx context.Context, item media.Item, man *media.Manife
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(p.c.Workers)
-	for source, specs := range todo {
+	for k, w := range todo {
 		g.Go(func() error {
-			d, err := p.derive(gctx, item, source, specs)
+			d, err := p.derive(gctx, item, w)
 			if err != nil {
 				if !isPermanent(err) {
 					return err
 				}
-				p.failed(ctx, ref, fileOf(man, source), err)
+				p.failed(ctx, ref, fileOf(man, k), err)
 				mu.Lock()
-				failed[source] = true
+				failed[k] = true
 				mu.Unlock()
 				return nil
 			}
 			mu.Lock()
-			results[source] = d
+			results[k] = d
 			mu.Unlock()
 			return nil
 		})
@@ -186,12 +201,12 @@ func (p *Processor) pass(ctx context.Context, item media.Item, man *media.Manife
 					delete(f.Variants, name)
 				}
 			}
-			d, ok := results[f.Source()] // a replaced source keeps nothing derived from the old one
+			d, ok := results[key(*f)] // a replaced source or changed edit keeps nothing derived from the old one
 			if !ok {
 				continue
 			}
 			for name, s := range specs {
-				if v, ok := d.variants[name]; ok && v.Spec == s.Hash() {
+				if v, ok := d.variants[name]; ok && v.Spec == s.For(f.Edit) {
 					if f.Variants == nil {
 						f.Variants = map[string]media.Variant{}
 					}
@@ -202,6 +217,7 @@ func (p *Processor) pass(ctx context.Context, item media.Item, man *media.Manife
 				f.Meta = map[string]any{}
 			}
 			f.Meta["w"], f.Meta["h"] = d.w, d.h
+			f.Dims = &d.dims
 		}
 	}
 
@@ -240,9 +256,9 @@ func (p *Processor) pass(ctx context.Context, item media.Item, man *media.Manife
 	return edited, nil
 }
 
-// derive encodes one source into each spec and stores the blobs.
-func (p *Processor) derive(ctx context.Context, item media.Item, source string, specs map[string]media.Spec) (derived, error) {
-	key, err := item.Original(source)
+// derive encodes one source through its edit into each spec and stores the blobs.
+func (p *Processor) derive(ctx context.Context, item media.Item, w work) (derived, error) {
+	key, err := item.Original(w.source)
 	if err != nil {
 		return derived{}, err
 	}
@@ -252,12 +268,13 @@ func (p *Processor) derive(ctx context.Context, item media.Item, source string, 
 	} else if err != nil {
 		return derived{}, err
 	}
-	d := derived{variants: make(map[string]media.Variant, len(specs))}
-	if d.w, d.h, err = probe(src, p.c.MaxPixels); err != nil {
+	d := derived{variants: make(map[string]media.Variant, len(w.specs))}
+	if d.dims, err = p.probe(src, w.edit); err != nil {
 		return derived{}, err
 	}
-	for name, s := range specs {
-		out, err := encode(src, s)
+	d.w, d.h = w.edit.Size(d.dims.W, d.dims.H)
+	for name, s := range w.specs {
+		out, err := encode(src, s, w.edit)
 		if err != nil {
 			return derived{}, err
 		}
@@ -265,9 +282,21 @@ func (p *Processor) derive(ctx context.Context, item media.Item, source string, 
 		if err != nil {
 			return derived{}, err
 		}
-		d.variants[name] = media.Variant{Blob: blob, Spec: s.Hash(), Type: "image/webp", Size: int64(len(out))}
+		d.variants[name] = media.Variant{Blob: blob, Spec: s.For(w.edit), Type: "image/webp", Size: int64(len(out))}
 	}
 	return d, nil
+}
+
+// probe sizes src and checks edit against it.
+func (p *Processor) probe(src []byte, edit *media.Edit) (media.Dims, error) {
+	w, h, err := probe(src, p.c.MaxPixels)
+	if err != nil {
+		return media.Dims{}, err
+	}
+	if err := edit.Check(w, h); err != nil {
+		return media.Dims{}, permanentError{fmt.Errorf("edit: %w", err)}
+	}
+	return media.Dims{W: w, H: h}, nil
 }
 
 // putBlob stores an immutable, content-addressed blob unless it exists.
@@ -310,13 +339,13 @@ func (p *Processor) failed(ctx context.Context, ref contentref.ContentRef, file 
 
 func isImage(f media.File) bool { return strings.HasPrefix(f.Type, "image/") }
 
-func fileOf(m *media.Manifest, source string) string {
+func fileOf(m *media.Manifest, k string) string {
 	for _, f := range m.Files {
-		if f.Source() == source {
+		if key(f) == k {
 			return f.Name
 		}
 	}
-	return source
+	return k
 }
 
 func clone(m *media.Manifest) *media.Manifest {

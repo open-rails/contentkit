@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -345,6 +346,7 @@ const (
 	OpMove    = "move"    // move Name to Index
 	OpRename  = "rename"  // rename Name to To
 	OpRemove  = "remove"  // drop Name
+	OpEdit    = "edit"    // set Name's Edit (an image); nil clears it. Its variants are regenerated
 )
 
 // Op is one manifest edit.
@@ -355,6 +357,7 @@ type Op struct {
 	Index    *int           `json:"index,omitempty"`
 	To       string         `json:"to,omitempty"`
 	Meta     map[string]any `json:"meta,omitempty"` // insert, replace: the file's meta
+	Edit     *Edit          `json:"edit,omitempty"` // edit, insert, replace: the image's edit (replace drops the old one)
 }
 
 // Commit applies ops to the manifest in one conditional write. Every new
@@ -411,13 +414,14 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	defer cancel()
 	man, err := u.o.Manifests.Edit(editCtx, ref, func(m *Manifest) error {
 		before = m.originalSizes()
+		prev := &Manifest{Files: slices.Clone(m.Files)}
 		for _, op := range ops {
 			if err := m.apply(op, uploaded[op.Original]); err != nil {
 				return err
 			}
 		}
 		after = m.originalSizes()
-		return nil
+		return item.Kind().checkFiles(prev, m)
 	})
 	if err != nil {
 		return nil, err
@@ -473,6 +477,83 @@ func (u *Uploads) CommitSlot(ctx context.Context, actor access.Actor, ref conten
 	}
 	if u.o.Queue != nil {
 		return u.o.Queue.Enqueue(ctx, ProcessJob{Ref: ref, Slot: slot})
+	}
+	return nil
+}
+
+// SetSlotFromFile makes an image file of ref's manifest the slot's original:
+// its source is copied to originals/{slot} with edit (default: the file's
+// own edit; nil keeps it, an empty Edit clears it) recorded in the object's
+// metadata, and the slot's outputs are re-encoded through it. With a slot
+// Aspect the crop's height is derived from its width. The crop is checked
+// against the file's Dims once processing has recorded them, else by the
+// slot job.
+func (u *Uploads) SetSlotFromFile(ctx context.Context, actor access.Actor, ref contentref.ContentRef, slot, file string, edit *Edit) error {
+	item, err := u.item(ref)
+	if err != nil {
+		return err
+	}
+	key, err := item.SlotOriginal(slot)
+	if err != nil {
+		return uploadErr(CodeNotFound, "%v", err)
+	}
+	if _, err := item.ManifestKey(); err != nil {
+		return uploadErr(CodeInvalid, "%v", err)
+	}
+	if _, err := u.authorize(ctx, actor, ref); err != nil {
+		return err
+	}
+	man, _, err := u.o.Manifests.Get(ctx, ref)
+	if errors.Is(err, ErrNotFound) {
+		return uploadErr(CodeNotFound, "no file %q", file)
+	} else if err != nil {
+		return err
+	}
+	i := man.File(file)
+	if i < 0 {
+		return uploadErr(CodeNotFound, "no file %q", file)
+	}
+	f := man.Files[i]
+	if !strings.HasPrefix(f.Type, "image/") {
+		return uploadErr(CodeInvalid, "file %q is not an image", file)
+	}
+	if edit == nil {
+		edit = f.Edit
+	}
+	if err := f.setEdit(item.Kind().Slots[slot].fit(edit)); err != nil {
+		return err
+	}
+	srcKey, err := item.Original(f.Source())
+	if err != nil {
+		return err
+	}
+	rc, obj, err := u.o.Store.Get(ctx, srcKey, GetOptions{})
+	if errors.Is(err, ErrNotFound) {
+		return uploadErr(CodeNotUploaded, "%s has not been uploaded", f.Source())
+	} else if err != nil {
+		return err
+	}
+	defer rc.Close()
+	if obj.Size > MaxSinglePut {
+		return uploadErr(CodeTooLarge, "slot originals are at most %d bytes", MaxSinglePut)
+	}
+	body, err := io.ReadAll(rc) // the SDK signs a seekable body over plain HTTP
+	if err != nil {
+		return err
+	}
+	opts := PutOptions{ContentType: obj.ContentType}
+	if f.Edit != nil {
+		b, _ := json.Marshal(f.Edit)
+		opts.Metadata = map[string]string{SlotEditMeta: string(b)}
+	}
+	if sum, ok := layout.ParseSHA256Name(f.Source()); ok {
+		opts.ChecksumSHA256 = sum
+	}
+	if _, err := u.o.Store.Put(ctx, key, bytes.NewReader(body), int64(len(body)), opts); err != nil {
+		return err
+	}
+	if u.o.Queue != nil {
+		return u.o.Queue.Enqueue(ctx, ProcessJob{Ref: ref.Content(), Slot: slot})
 	}
 	return nil
 }
@@ -592,9 +673,33 @@ func (op Op) validate() error {
 			return bad("a new name is required")
 		}
 	case OpRemove:
+	case OpEdit:
 	default:
 		return uploadErr(CodeInvalid, "unknown op %q", op.Op)
 	}
+	if op.Edit != nil && op.Op != OpEdit && op.Op != OpInsert && op.Op != OpReplace {
+		return bad("only edit, insert and replace take an edit")
+	}
+	if err := op.Edit.Check(0, 0); err != nil {
+		return bad("%v", err)
+	}
+	return nil
+}
+
+// setEdit validates e against the file's type and known size.
+func (f *File) setEdit(e *Edit) error {
+	e = e.Normalize()
+	if e != nil && !strings.HasPrefix(f.Type, "image/") {
+		return uploadErr(CodeInvalid, "file %q: only images take an edit", f.Name)
+	}
+	var w, h int
+	if f.Dims != nil {
+		w, h = f.Dims.W, f.Dims.H
+	}
+	if err := e.Check(w, h); err != nil {
+		return uploadErr(CodeInvalid, "file %q: %v", f.Name, err)
+	}
+	f.Edit = e
 	return nil
 }
 
@@ -619,6 +724,9 @@ func (m *Manifest) apply(op Op, obj Object) error {
 			at = *op.Index
 		}
 		f := File{Name: op.Name, Original: op.Original, Type: obj.ContentType, Size: obj.Size, Meta: op.Meta}
+		if err := f.setEdit(op.Edit); err != nil {
+			return err
+		}
 		m.Files = append(m.Files[:at], append([]File{f}, m.Files[at:]...)...)
 	case OpReplace:
 		f := &m.Files[i]
@@ -631,6 +739,7 @@ func (m *Manifest) apply(op Op, obj Object) error {
 		}
 		// A stale hls keeps playing until the re-encode promotes its successor.
 		*f = File{Name: f.Name, Original: op.Original, Type: obj.ContentType, Size: obj.Size, Meta: meta, HLS: f.HLS}
+		return f.setEdit(op.Edit)
 	case OpMove:
 		if *op.Index < 0 || *op.Index >= len(m.Files) {
 			return uploadErr(CodeInvalid, "index %d out of range 0-%d", *op.Index, len(m.Files)-1)
@@ -645,6 +754,8 @@ func (m *Manifest) apply(op Op, obj Object) error {
 		m.Files[i].Name = op.To
 	case OpRemove:
 		m.Files = append(m.Files[:i], m.Files[i+1:]...)
+	case OpEdit:
+		return m.Files[i].setEdit(op.Edit)
 	}
 	return nil
 }

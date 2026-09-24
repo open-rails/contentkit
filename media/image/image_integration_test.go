@@ -131,11 +131,16 @@ func (e *env) useKind(t *testing.T, kind media.Kind) {
 	}
 }
 
-// upload presigns and PUTs body like a browser, returning its original name.
+// upload presigns and PUTs a PNG like a browser, returning its original name.
 func (e *env) upload(t *testing.T, ref contentref.ContentRef, slot string, body []byte) string {
 	t.Helper()
+	return e.uploadAs(t, ref, slot, "image/png", body)
+}
+
+func (e *env) uploadAs(t *testing.T, ref contentref.ContentRef, slot, typ string, body []byte) string {
+	t.Helper()
 	sum := sha256.Sum256(body)
-	p, err := e.uploads.Presign(context.Background(), access.Actor{ID: "u"}, media.PresignRequest{Ref: ref, Type: "image/png",
+	p, err := e.uploads.Presign(context.Background(), access.Actor{ID: "u"}, media.PresignRequest{Ref: ref, Type: typ,
 		Size: int64(len(body)), SHA256: sum[:], Slot: slot})
 	if err != nil {
 		t.Fatal(err)

@@ -354,6 +354,8 @@ type FileInfo struct {
 	Width    int     `json:"w,omitempty"`
 	Height   int     `json:"h,omitempty"`
 	Duration float64 `json:"duration,omitempty"`
+	Edit     *Edit   `json:"edit,omitempty"` // with Dims, what an editor needs to re-crop
+	Dims     *Dims   `json:"dims,omitempty"` // the source's size; w/h is the edited size
 	Teaser   bool    `json:"teaser,omitempty"`
 	Locked   bool    `json:"locked,omitempty"`
 	HLS      bool    `json:"hls,omitempty"`
@@ -397,7 +399,7 @@ func (r *Reader) Read(ctx context.Context, ref contentref.ContentRef, actor acce
 		if !g.Allowed(i) {
 			fi.Locked = true
 		} else {
-			fi.Name = f.Name
+			fi.Name, fi.Edit, fi.Dims = f.Name, f.Edit, f.Dims
 			if i >= o.Offset && i < o.Offset+o.Limit {
 				for _, v := range o.Variants {
 					if vr, ok := f.Variants[v]; ok {

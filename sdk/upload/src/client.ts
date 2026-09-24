@@ -3,7 +3,7 @@ import { UploadError, aborted, throwIfAborted } from "./errors.js";
 import { sha256Hex } from "./hash.js";
 import { Pacer } from "./pacer.js";
 import { defaultTransport, type Transport } from "./transport.js";
-import { MAX_SINGLE_PUT, type CommitFile, type Op, type RefBody, type RequestReply } from "./wire.gen.js";
+import { MAX_SINGLE_PUT, type CommitFile, type Edit, type Op, type RefBody, type RequestReply } from "./wire.gen.js";
 
 export interface ClientOptions extends ApiOptions {
   transport?: Transport;
@@ -157,6 +157,24 @@ export class UploadClient {
       const retried = ops.map((op) => (op.original && renamed.has(op.original) ? { ...op, original: renamed.get(op.original) } : op));
       return (await this.api.commit({ ref, ops: retried }, o.signal)).files;
     }
+  }
+
+  /**
+   * Sets a file's non-destructive edit (crop in original pixels, then a
+   * clockwise rotate); null clears it. Its variants are re-derived from the
+   * untouched original.
+   */
+  async edit(ref: RefBody, name: string, edit: Edit | null, o: { signal?: AbortSignal } = {}): Promise<CommitFile[]> {
+    return this.commit(ref, [{ op: "edit", name, ...(edit ? { edit } : {}) }], o);
+  }
+
+  /**
+   * Makes a manifest image the slot's original (a cover from a page), through
+   * edit: omitted uses the file's own edit, {} none. With a slot aspect the
+   * server derives the crop's height from its width.
+   */
+  async setSlotFromFile(ref: RefBody, slot: string, file: string, edit?: Edit, o: { signal?: AbortSignal } = {}): Promise<void> {
+    await this.retry(() => this.api.commitSlotFromFile({ ref, slot, file, ...(edit ? { edit } : {}) }, o.signal), o.signal);
   }
 
   /** Discards a paused multipart upload. */

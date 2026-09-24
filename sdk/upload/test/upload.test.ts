@@ -33,9 +33,9 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
       ...o,
     });
 
-  async function stored(ref: { kind: string; id: string; version?: string }, name: string) {
-    const q = new URLSearchParams({ ...ref, name });
-    return (await (await fetch(`${base}/object?${q}`)).json()) as { size: number; sha256: string };
+  async function stored(ref: { kind: string; id: string; version?: string }, name: string, key = "name") {
+    const q = new URLSearchParams({ ...ref, [key]: name });
+    return (await (await fetch(`${base}/object?${q}`)).json()) as { size: number; sha256: string; edit?: string };
   }
 
   it("uploads a small image and commits it", async () => {
@@ -52,6 +52,33 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
       .upload(new File([body], "a.gif", { type: "image/gif" }), { ref })
       .catch((e) => e);
     expect([refused.code, refused.status]).toEqual(["type_not_allowed", 415]);
+  });
+
+  it("edits a file, sets a slot from it and refuses files over the kind's cap", async () => {
+    const ref = { kind: "post", id: "1" };
+    const c = client();
+    const page = bytes(3000, 11);
+    const a = await c.upload(new File([page], "a.png", { type: "image/png" }), { ref });
+    const b = await c.upload(new File([bytes(3000, 12)], "b.png", { type: "image/png" }), { ref });
+    await c.commit(ref, [
+      { op: "insert", name: "a.png", original: a.name },
+      { op: "insert", name: "b.png", original: b.name },
+    ]);
+
+    const files = await c.edit(ref, "a.png", { crop: { x: 10, y: 20, w: 30, h: 40 }, rotate: 90 });
+    expect(files[0]).toMatchObject({ name: "a.png", edit: { crop: { x: 10, y: 20, w: 30, h: 40 }, rotate: 90 } });
+    expect((await c.edit(ref, "a.png", { rotate: 45 as 90 }).catch((e) => e)).code).toBe("invalid_request");
+    expect((await c.edit(ref, "a.png", null))[0]!.edit).toBeUndefined();
+
+    // The slot's 1:2 aspect sets the crop's height.
+    await c.setSlotFromFile(ref, "cover", "a.png", { crop: { x: 5, y: 0, w: 50, h: 0 } });
+    const slot = await stored(ref, "cover", "slot");
+    expect(slot.sha256).toBe(createHash("sha256").update(page).digest("hex"));
+    expect(JSON.parse(slot.edit!)).toEqual({ crop: { x: 5, y: 0, w: 50, h: 100 } });
+
+    const c3 = await c.upload(new File([bytes(3000, 13)], "c.png", { type: "image/png" }), { ref });
+    const refused = await c.commit(ref, [{ op: "insert", name: "c.png", original: c3.name }]).catch((e) => e);
+    expect([refused.code, refused.status, refused.isCeiling]).toEqual(["too_many_files", 409, true]);
   });
 
   it("uploads a stale original again when commit refuses it", async () => {

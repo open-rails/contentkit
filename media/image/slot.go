@@ -36,6 +36,11 @@ func (p *Processor) slot(ctx context.Context, item media.Item, slot string) erro
 			return err
 		}
 		source := strings.Trim(orig.ETag, `"`)
+		edit, err := media.SlotEdit(orig)
+		if err != nil {
+			p.failed(ctx, item.Ref(), slot, err)
+			return nil
+		}
 		stale := map[string]string{} // output key → its current ETag ("" when absent)
 		specs := map[string]media.Spec{}
 		for out, s := range outputs {
@@ -47,7 +52,7 @@ func (p *Processor) slot(ctx context.Context, item media.Item, slot string) erro
 			if err != nil && !errors.Is(err, media.ErrNotFound) {
 				return err
 			}
-			if err == nil && obj.Metadata[metaSource] == source && obj.Metadata[metaSpec] == s.Hash() {
+			if err == nil && obj.Metadata[metaSource] == source && obj.Metadata[metaSpec] == s.For(edit) {
 				continue
 			}
 			stale[outKey], specs[outKey] = obj.ETag, s
@@ -61,19 +66,23 @@ func (p *Processor) slot(ctx context.Context, item media.Item, slot string) erro
 		} else if err != nil {
 			return err
 		}
-		if got.ETag != orig.ETag {
+		if got.ETag != orig.ETag || got.Metadata[media.SlotEditMeta] != orig.Metadata[media.SlotEditMeta] {
 			continue // replaced while we looked
+		}
+		if _, err := p.probe(src, edit); err != nil {
+			p.failed(ctx, item.Ref(), slot, err)
+			return nil
 		}
 		conflict := false
 		for outKey, prev := range stale {
 			s := specs[outKey]
-			out, err := encode(src, s)
+			out, err := encode(src, s, edit)
 			if err != nil {
 				p.failed(ctx, item.Ref(), slot, err)
 				return nil
 			}
 			opts := media.PutOptions{ContentType: "image/webp", CacheControl: "no-cache",
-				Metadata: map[string]string{metaSource: source, metaSpec: s.Hash()}}
+				Metadata: map[string]string{metaSource: source, metaSpec: s.For(edit)}}
 			if conditional {
 				if prev == "" {
 					opts.IfNoneMatch = "*"

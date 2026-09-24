@@ -12,6 +12,7 @@ export {
   type UploadState,
   type UploadedFile,
 } from "./client.js";
+export { centeredCrop, constrainCrop, editOf, rotation, toOriginal, type Rotation, type Size } from "./crop.js";
 export { UploadError, type UploadErrorCode } from "./errors.js";
 export { sha256Hex } from "./hash.js";
 export { Pacer, type PacerOptions } from "./pacer.js";
