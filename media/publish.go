@@ -12,7 +12,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/rivertype"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -215,8 +214,10 @@ func (j *Jobs) PublishTx(ctx context.Context, tx pgx.Tx, refs ...contentref.Cont
 		if _, err := j.cfg.Kinds.Item(ref.Content()); err != nil {
 			return err
 		}
-		params = append(params, river.InsertManyParams{Args: publishArgs{Ref: ref.Content()},
-			InsertOpts: j.opts(&river.InsertOpts{UniqueOpts: waitingOnce})})
+		// Not unique: River's uniqueness always covers running jobs, and a
+		// running publish may have resolved before this change. Publish is
+		// idempotent, so a duplicate costs one listing.
+		params = append(params, river.InsertManyParams{Args: publishArgs{Ref: ref.Content()}, InsertOpts: j.opts(nil)})
 	}
 	if len(params) == 0 {
 		return nil
@@ -224,11 +225,6 @@ func (j *Jobs) PublishTx(ctx context.Context, tx pgx.Tx, refs ...contentref.Cont
 	_, err = c.InsertManyTx(ctx, tx, params)
 	return err
 }
-
-// waitingOnce dedupes a job only while it waits: a running publish may have
-// resolved before the caller's change, so a new one is queued behind it.
-var waitingOnce = river.UniqueOpts{ByArgs: true, ByState: []rivertype.JobState{rivertype.JobStateAvailable,
-	rivertype.JobStatePending, rivertype.JobStateRetryable, rivertype.JobStateScheduled}}
 
 type publishArgs struct {
 	Ref contentref.ContentRef `json:"ref"`

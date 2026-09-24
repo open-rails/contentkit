@@ -15,6 +15,7 @@ import (
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
@@ -369,4 +370,51 @@ func TestProcessingRerunsWhenACommitLandsDuringTheRun(t *testing.T) {
 	if n := calls.Load(); n != 2 {
 		t.Fatalf("%d processor runs, want 2", n)
 	}
+}
+
+// TestPublishTxThroughRiver publishes a video poster from a host transaction
+// through the composed River client, and unpublishes it the same way.
+func TestPublishTxThroughRiver(t *testing.T) {
+	env := s3test.Open(t)
+	ctx := context.Background()
+	r, err := media.NewRegistry(media.Kind{Name: "clip", Video: &media.Video{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := &flipVisible{}
+	res.visible.Store(true)
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: r, Resolver: res})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, pool, _ := riverHost(t, jobs, make(chan string, 4))
+	ref := contentref.New(env.Tenant, "clip", "1")
+	item, _ := r.Item(ref)
+	staged, _ := item.SlotOutput(media.PosterSlot, 480)
+	public, _ := item.SlotPublic(media.PosterSlot, 480)
+	putObject(t, env.Store, staged, "poster")
+	publish := func() {
+		t.Helper()
+		// Twice in one transaction: publishes are not deduplicated.
+		if err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+			if err := jobs.PublishTx(ctx, tx, ref); err != nil {
+				return err
+			}
+			return jobs.PublishTx(ctx, tx, ref)
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exists := func() bool { return slices.Contains(listKeys(t, env.Store, item.PublicPrefix()), public) }
+	publish()
+	waitFor(t, "poster published", exists)
+	res.visible.Store(false)
+	publish()
+	waitFor(t, "poster unpublished", func() bool { return !exists() })
+}
+
+type flipVisible struct{ visible atomic.Bool }
+
+func (f *flipVisible) Resolve(context.Context, contentref.ContentRef, access.Actor) (access.Resolution, error) {
+	return access.Resolution{Visible: f.visible.Load()}, nil
 }
