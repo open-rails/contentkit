@@ -23,8 +23,8 @@ type SweepResult struct {
 	Wait    time.Duration
 }
 
-// Sweep deletes the item folder's blobs/, editor/ blobs and hash-named originals/ that no
-// manifest in the folder references, once every manifest is older than the
+// Sweep deletes the item folder's blobs/, editor/ blobs, hash-named originals/
+// and staged uploads (staging/) that no manifest in the folder references, once every manifest is older than the
 // grace period, and only objects past abandonedAt. Slot originals, slot and
 // hover-preview outputs (public/, editor/) and manifests are never swept.
 //
@@ -113,14 +113,14 @@ func (j *Jobs) sweep(ctx context.Context, prefix string, objs []Object) (SweepRe
 			refs[AreaEditor+"/"+n] = true
 		}
 		for _, n := range man.Originals() {
-			refs[AreaOriginals+"/"+n] = true
+			refs[layout.SourceArea(n)+"/"+n] = true
 		}
 	}
 	abandoned := func(objs []Object) []string {
 		var keys []string
 		for _, o := range objs {
 			k, ok := layout.Parse(o.Key)
-			if !ok || !layout.ValidBlobName(k.Name) || (k.Area != AreaBlobs && k.Area != AreaEditor && k.Area != AreaOriginals) {
+			if !ok || !layout.ValidBlobName(k.Name) || (k.Area != AreaBlobs && k.Area != AreaEditor && k.Area != AreaOriginals && k.Area != AreaStaging) {
 				continue
 			}
 			if !refs[k.Area+"/"+k.Name] && !now.Before(abandonedAt(k.Name, o.LastModified, j.cfg.Grace)) {

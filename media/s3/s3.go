@@ -37,7 +37,13 @@ type Config struct {
 	// Capabilities of the backend, from media.Probe or the recorded results
 	// for its release. Without ConditionalPut, manifests need a Locker.
 	Capabilities media.Capabilities
+	// CopyPartSize is the part size of a multipart copy, used for objects
+	// larger than it; default MaxSingleCopy (tests set a few MiB).
+	CopyPartSize int64
 }
+
+// MaxSingleCopy is S3's CopyObject limit; larger objects copy in parts.
+const MaxSingleCopy = 5 << 30
 
 // Store is a media.Store over one bucket.
 type Store struct {
@@ -49,6 +55,7 @@ type Store struct {
 	public  *url.URL
 	pathSty bool
 	caps    media.Capabilities
+	part    int64
 }
 
 var _ media.Store = (*Store)(nil)
@@ -66,6 +73,9 @@ func New(cfg Config) (*Store, error) {
 	if cfg.PublicEndpoint == "" {
 		cfg.PublicEndpoint = cfg.Endpoint
 	}
+	if cfg.CopyPartSize <= 0 || cfg.CopyPartSize > MaxSingleCopy {
+		cfg.CopyPartSize = MaxSingleCopy
+	}
 	pub, err := url.Parse(strings.TrimRight(cfg.PublicEndpoint, "/"))
 	if err != nil || pub.Scheme == "" || pub.Host == "" {
 		return nil, fmt.Errorf("s3: invalid PublicEndpoint %q", cfg.PublicEndpoint)
@@ -82,7 +92,7 @@ func New(cfg Config) (*Store, error) {
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	})
 	return &Store{client: client, creds: creds, signer: v4.NewSigner(), bucket: cfg.Bucket, region: cfg.Region,
-		public: pub, pathSty: cfg.UsePathStyle, caps: cfg.Capabilities}, nil
+		public: pub, pathSty: cfg.UsePathStyle, caps: cfg.Capabilities, part: cfg.CopyPartSize}, nil
 }
 
 func (s *Store) Capabilities() media.Capabilities { return s.caps }
@@ -155,6 +165,60 @@ func (s *Store) List(ctx context.Context, prefix string) iter.Seq2[media.Object,
 			}
 		}
 	}
+}
+
+// Copy copies src to dst in the bucket: one CopyObject up to the copy part
+// size, else UploadPartCopy ranges of it, each conditional on the source ETag.
+func (s *Store) Copy(ctx context.Context, src, dst string, o media.CopyOptions) (media.Object, error) {
+	head, err := s.Head(ctx, src)
+	if err != nil {
+		return media.Object{}, err
+	}
+	if o.IfMatch != "" && head.ETag != o.IfMatch {
+		return media.Object{}, fmt.Errorf("%w: s3 copy %s: source changed", media.ErrPreconditionFailed, src)
+	}
+	source := s.bucket + "/" + src
+	ifMatch := optional(head.ETag)
+	if head.Size <= s.part {
+		out, err := s.client.CopyObject(ctx, &s3.CopyObjectInput{Bucket: &s.bucket, Key: &dst, CopySource: &source, CopySourceIfMatch: ifMatch})
+		if err != nil {
+			return media.Object{}, mapErr("copy", src, err)
+		}
+		var etag string
+		if out.CopyObjectResult != nil {
+			etag = aws.ToString(out.CopyObjectResult.ETag)
+		}
+		return media.Object{Key: dst, Size: head.Size, ETag: etag, ContentType: head.ContentType, CacheControl: head.CacheControl}, nil
+	}
+	up, err := s.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{Bucket: &s.bucket, Key: &dst,
+		ContentType: optional(head.ContentType), CacheControl: optional(head.CacheControl), Metadata: head.Metadata})
+	if err != nil {
+		return media.Object{}, mapErr("copy", dst, err)
+	}
+	abort := func(err error) (media.Object, error) {
+		_ = s.AbortMultipart(context.WithoutCancel(ctx), dst, aws.ToString(up.UploadId))
+		return media.Object{}, err
+	}
+	var parts []types.CompletedPart
+	for n, off := int32(1), int64(0); off < head.Size; n, off = n+1, off+s.part {
+		end := min(off+s.part, head.Size) - 1
+		out, err := s.client.UploadPartCopy(ctx, &s3.UploadPartCopyInput{Bucket: &s.bucket, Key: &dst, UploadId: up.UploadId,
+			PartNumber: aws.Int32(n), CopySource: &source, CopySourceIfMatch: ifMatch,
+			CopySourceRange: aws.String("bytes=" + strconv.FormatInt(off, 10) + "-" + strconv.FormatInt(end, 10))})
+		if err != nil {
+			return abort(mapErr("copy part", src, err))
+		}
+		if out.CopyPartResult == nil {
+			return abort(fmt.Errorf("s3 copy part %s: no result", src))
+		}
+		parts = append(parts, types.CompletedPart{PartNumber: aws.Int32(n), ETag: out.CopyPartResult.ETag})
+	}
+	out, err := s.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{Bucket: &s.bucket, Key: &dst,
+		UploadId: up.UploadId, MultipartUpload: &types.CompletedMultipartUpload{Parts: parts}})
+	if err != nil {
+		return abort(mapErr("complete copy", dst, err))
+	}
+	return media.Object{Key: dst, Size: head.Size, ETag: aws.ToString(out.ETag), ContentType: head.ContentType, CacheControl: head.CacheControl}, nil
 }
 
 // PresignPut signs Content-Type, Content-Length and x-amz-checksum-sha256, so

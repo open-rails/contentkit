@@ -174,7 +174,8 @@ One private bucket; each item owns a folder the library keys:
 
 ```text
 {tenant}/{kind}/{id}/manifest.json | manifests/{version}.json
-                    /originals/{sha256-hex | u-uuid | slot | slot.json | i-uuid}   never served
+                    /originals/{sha256-hex | slot | slot.json | i-uuid}            never served
+                    /staging/u-{uuid}                                              multipart uploads until placed; never served
                     /blobs/sha256-{hex}                                            immutable derivatives (viewer token)
                     /editor/{sha256-hex | poster_w.webp | hover_preview_w.mp4}     editor-only (editor token)
                     /public/{slot_width | i-uuid}.webp | hover_preview_w.mp4       slots, inline images, published video images (rewritten in place)
@@ -244,10 +245,16 @@ bind `Content-Type`, `Content-Length` and `x-amz-checksum-sha256`.
 at presign and commit for the folder written (slots and inline images: the
 work, `ref.Content()`), and the kind's types and size cap bind every presign.
 Up to 64 MiB is one PUT to `originals/sha256-{hex}` signed with its type,
-length and SHA-256; larger files are multipart to `originals/u-{uuid}` with
+length and SHA-256; larger files are multipart to `staging/u-{uuid}` with
 8–16 MiB parts, each signed with its length and SHA-256, resumed through
 `ListParts` and completed by the server (a signed ticket carries the S3
-UploadId; nothing is stored). Slot originals PUT to `originals/{slot}`. A kind
+UploadId; nothing is stored). The manifest names a staged upload `u-{uuid}`
+until `Manifests.Place` moves it to `originals/sha256-{hex}` with the hash
+computed while reading it (server-side copy, or none when the folder already
+holds the hash; every reference renamed; staging deleted; idempotent).
+Slot originals stay fixed-name (`originals/{slot}`): single checksum-bound
+PUTs pinned by ETag in the slot record, so hashing their names would only add
+garbage collection. Slot originals PUT to `originals/{slot}`. A kind
 with `Inline` takes inline images: presign with `inline: true` names a new
 `i-{uuid}`, whose original PUTs to `originals/{id}` and is committed with
 `commit-slot`; it is re-encoded with the `Inline` spec to `public/{id}.webp`.
@@ -427,10 +434,10 @@ Media's River jobs (`jobs.RiverJobs()`) compose into the host client through
 `helpers/river`; edits schedule a sweep and commits enqueue processing:
 
 - **Sweep** (per folder, 24 h after each edit and in a daily pass over
-  `Tenants`): deletes `blobs/` and hash-named `originals/` no manifest in the
-  folder references, only once every manifest and the object itself are older
-  than `Grace` (24 h; plus 1 day for `u-` multipart objects, which may be
-  dated at initiation). Also unreferenced `editor/` blobs. Slot originals,
+  `Tenants`): deletes `blobs/`, hash-named `originals/` and `staging/` no
+  manifest in the folder references, only once every manifest and the object
+  itself are older than `Grace` (24 h; plus 1 day for staged multipart
+  objects, which may be dated at initiation). Also unreferenced `editor/` blobs. Slot originals,
   slot and hover-preview outputs and manifests are never swept.
   Invariant: it deletes only objects no manifest references and no in-flight
   commit can newly reference. Presign reuses an existing original, and a

@@ -154,7 +154,7 @@ func (s *Store) collectRefs(ctx context.Context, key, versionID string, k layout
 		refs[folder+layout.AreaBlobs+"/"+n] = true
 	}
 	for _, n := range man.Originals() {
-		refs[folder+layout.AreaOriginals+"/"+n] = true
+		refs[folder+layout.SourceArea(n)+"/"+n] = true
 	}
 	return nil
 }

@@ -11,6 +11,7 @@ import (
 func TestParse(t *testing.T) {
 	sum := sha256.Sum256(nil)
 	blob := layout.SHA256Prefix + hex.EncodeToString(sum[:])
+	const staged = "u-0190f3b2-7c1e-7a3d-9e4f-0123456789ab"
 	for key, want := range map[string]layout.Key{
 		"d/gallery/1/manifest.json":              {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaManifest},
 		"d/gallery/1/manifests/v2.json":          {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaManifest, Name: "v2"},
@@ -21,6 +22,7 @@ func TestParse(t *testing.T) {
 		"h/video/9/editor/hover_preview_320.mp4": {Tenant: "h", Kind: "video", ID: "9", Area: layout.AreaEditor, Name: "hover_preview_320"},
 		"h/video/9/editor/poster_480.webp":       {Tenant: "h", Kind: "video", ID: "9", Area: layout.AreaEditor, Name: "poster_480"},
 		"d/gallery/1/editor/" + blob:             {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaEditor, Name: blob},
+		"d/gallery/1/staging/" + staged:          {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaStaging, Name: staged},
 	} {
 		got, ok := layout.Parse(key)
 		if !ok || got != want {
@@ -28,7 +30,7 @@ func TestParse(t *testing.T) {
 		}
 	}
 	for _, bad := range []string{"d/gallery/1", "d/gallery/1/blobs/x", "d/gallery/1/blobs/" + blob + "/x", "d/gallery/1/public/a.png", "d/gallery/1/editor/x", "d/gallery/1/editor/a.png",
-		"d/../1/manifest.json", "d/gallery/1/other/x"} {
+		"d/../1/manifest.json", "d/gallery/1/other/x", "d/gallery/1/staging/" + blob, "d/gallery/1/staging/cover"} {
 		if _, ok := layout.Parse(bad); ok {
 			t.Errorf("parsed %q", bad)
 		}
@@ -51,5 +53,11 @@ func TestUUIDNames(t *testing.T) {
 	}
 	if !layout.ValidInlineName("i-"+id) || layout.ValidInlineName("u-"+id) {
 		t.Error("ValidInlineName")
+	}
+	if !layout.ValidStagedName("u-"+id) || layout.ValidStagedName("i-"+id) {
+		t.Error("ValidStagedName")
+	}
+	if layout.SourceArea("u-"+id) != layout.AreaStaging || layout.SourceArea(layout.SHA256Prefix+id) != layout.AreaOriginals {
+		t.Error("SourceArea")
 	}
 }

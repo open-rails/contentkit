@@ -69,7 +69,7 @@ func TestItemKeys(t *testing.T) {
 		t.Fatal(k)
 	}
 	up := media.NewUploadName()
-	if k, err := p.Original(up); err != nil || k != "o/post/501/originals/"+up {
+	if k, err := p.Original(up); err != nil || k != "o/post/501/staging/"+up {
 		t.Fatal(k, err)
 	}
 
