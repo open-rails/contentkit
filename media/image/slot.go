@@ -40,11 +40,14 @@ func (p *Processor) slot(ctx context.Context, item media.Item, slot string) erro
 // record's fingerprint). Widths that do not fit, or that the slot no longer
 // declares, are deleted. Output writes are conditional on the ETag seen, and
 // every pass re-checks the current record, so jobs holding an older commit
-// or edit converge on the newest.
+// or edit converge on the newest. Hooks.SlotEncoded runs before the record
+// that makes the encode visible, so a host refetching on it gets the new stamp;
+// a pass whose stamp lost to a newer record re-reports the newest.
 func (p *Processor) registered(ctx context.Context, item media.Item, slot string, spec media.Slot) error {
 	key, _ := item.SlotOriginal(slot)
 	ref := item.Ref().Content()
 	conditional := p.c.Store.Capabilities().ConditionalPut
+	stale := false
 	for range 8 {
 		rec, err := p.c.Manifests.Slot(ctx, ref, slot)
 		if errors.Is(err, media.ErrNotFound) {
@@ -58,6 +61,9 @@ func (p *Processor) registered(ctx context.Context, item media.Item, slot string
 			return err
 		}
 		if current {
+			if stale && rec.Result.Version != "" {
+				p.slotEncoded(ctx, ref, slot, rec.Result)
+			}
 			return nil
 		}
 		src, got, err := p.read(ctx, key)
@@ -114,19 +120,25 @@ func (p *Processor) registered(ctx context.Context, item media.Item, slot string
 			return err
 		}
 		// A conflicting write or a newer record is settled by the next pass.
-		if err := p.record(ctx, ref, slot, spec, fp, res); err == nil {
-			if p.c.Hooks.SlotEncoded != nil {
-				widths := make([]int, len(res.Outputs))
-				for i, o := range res.Outputs {
-					widths[i] = o.W
-				}
-				p.c.Hooks.SlotEncoded(ctx, ref, slot, media.NewSlotStamp(fp, widths))
-			}
-		} else if !errors.Is(err, errSuperseded) {
+		p.slotEncoded(ctx, ref, slot, res)
+		if err := p.record(ctx, ref, slot, spec, fp, res); errors.Is(err, errSuperseded) {
+			stale = true
+		} else if err != nil {
 			return err
 		}
 	}
 	return fmt.Errorf("media/image: slot %s of %s kept changing", slot, item.Ref())
+}
+
+func (p *Processor) slotEncoded(ctx context.Context, ref contentref.ContentRef, slot string, res *media.SlotResult) {
+	if p.c.Hooks.SlotEncoded == nil {
+		return
+	}
+	widths := make([]int, len(res.Outputs))
+	for i, o := range res.Outputs {
+		widths[i] = o.W
+	}
+	p.c.Hooks.SlotEncoded(ctx, ref, slot, media.NewSlotStamp(res.Version, widths))
 }
 
 // outputs heads the slot's outputs: their ETags ("" when absent) and whether

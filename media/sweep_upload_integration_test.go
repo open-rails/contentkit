@@ -38,7 +38,7 @@ func TestPresignAndCommitNeverReuseAnOriginalTheSweepMayTake(t *testing.T) {
 	// commit accepts them until 3s before the sweep may take them (age 9s).
 	const grace = 12 * time.Second
 	jobs, _ := media.NewJobs(media.JobsConfig{Store: s, Kinds: kinds, Grace: grace})
-	manifests, _ := media.NewManifests(s, kinds, media.ManifestOptions{})
+	manifests := s3test.Manifests(t, s, kinds, media.ManifestOptions{})
 	uploads, err := media.NewUploads(media.UploadOptions{Store: s, Kinds: kinds, Manifests: manifests, Grace: grace,
 		Authorizer: grants{"alice": {Allowed: true}}})
 	if err != nil {
@@ -163,7 +163,7 @@ func TestSweepSparesAnOriginalRefreshedDuringTheSweep(t *testing.T) {
 	const grace = 4 * time.Second
 	hs := &hookStore{Store: env.Store}
 	jobs, _ := media.NewJobs(media.JobsConfig{Store: hs, Kinds: kinds, Grace: grace})
-	manifests, _ := media.NewManifests(env.Store, kinds, media.ManifestOptions{})
+	manifests := s3test.Manifests(t, env.Store, kinds, media.ManifestOptions{})
 	uploads, err := media.NewUploads(media.UploadOptions{Store: env.Store, Kinds: kinds, Manifests: manifests, Grace: grace,
 		Authorizer: grants{"alice": {Allowed: true}}})
 	if err != nil {

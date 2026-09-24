@@ -148,7 +148,7 @@ func TestJobsComposeWithHostRiverAndSweepAfterEdit(t *testing.T) {
 		t.Fatalf("processed %+v", got)
 	}
 
-	ms, _ := media.NewManifests(env.Store, r, media.ManifestOptions{Jobs: jobs})
+	ms := s3test.Manifests(t, env.Store, r, media.ManifestOptions{Jobs: jobs})
 	ref := contentref.New(env.Tenant, "post", "501")
 	item, _ := r.Item(ref)
 	orphan, kept := item.BlobsPrefix()+blobName("orphan"), item.BlobsPrefix()+blobName("kept")
@@ -304,7 +304,7 @@ func TestProcessingRerunsWhenACommitLandsDuringTheRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ms, _ := media.NewManifests(env.Store, r, media.ManifestOptions{})
+	ms := s3test.Manifests(t, env.Store, r, media.ManifestOptions{})
 	ref := contentref.New(env.Tenant, "post", "77")
 	insert := func(name string) {
 		if _, err := ms.Edit(ctx, ref, func(m *media.Manifest) error {

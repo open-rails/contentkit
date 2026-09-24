@@ -94,6 +94,8 @@ type env struct {
 	mu        sync.Mutex
 	failed    []string
 	stamps    map[string]media.SlotStamp // Hooks.SlotEncoded, by ref#slot
+	reported  map[media.SlotStamp]bool
+	late      map[media.SlotStamp]bool // first reported after the record showed it
 }
 
 func newEnv(t *testing.T, kind media.Kind) *env {
@@ -116,9 +118,7 @@ func (e *env) useKind(t *testing.T, kind media.Kind) {
 		t.Fatal(err)
 	}
 	e.kinds = kinds
-	if e.manifests, err = media.NewManifests(e.store, kinds, media.ManifestOptions{}); err != nil {
-		t.Fatal(err)
-	}
+	e.manifests = s3test.Manifests(t, e.store, kinds, media.ManifestOptions{})
 	if e.uploads, err = media.NewUploads(media.UploadOptions{Store: e.Env.Store, Kinds: kinds, Manifests: e.manifests,
 		Authorizer: allow{}, Queue: e.queue}); err != nil {
 		t.Fatal(err)
@@ -128,12 +128,19 @@ func (e *env) useKind(t *testing.T, kind media.Kind) {
 			e.mu.Lock()
 			e.failed = append(e.failed, file)
 			e.mu.Unlock()
-		}, SlotEncoded: func(_ context.Context, ref contentref.ContentRef, slot string, stamp media.SlotStamp) {
+		}, SlotEncoded: func(ctx context.Context, ref contentref.ContentRef, slot string, stamp media.SlotStamp) {
+			version, _, _ := stamp.Parse()
+			rec, err := e.manifests.Slot(ctx, ref, slot)
+			shown := err == nil && rec.Result != nil && rec.Result.Version == version
 			e.mu.Lock()
 			if e.stamps == nil {
-				e.stamps = map[string]media.SlotStamp{}
+				e.stamps, e.reported, e.late = map[string]media.SlotStamp{}, map[media.SlotStamp]bool{}, map[media.SlotStamp]bool{}
 			}
 			e.stamps[ref.String()+"#"+slot] = stamp
+			if shown && !e.reported[stamp] {
+				e.late[stamp] = true
+			}
+			e.reported[stamp] = true
 			e.mu.Unlock()
 		}}})
 	if err != nil {

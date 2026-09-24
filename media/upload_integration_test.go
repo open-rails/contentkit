@@ -84,10 +84,7 @@ func newUploadEnv(t *testing.T, caps *media.Capabilities, limiter media.UploadLi
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifests, err := media.NewManifests(store, kinds, media.ManifestOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	manifests := s3test.Manifests(t, store, kinds, media.ManifestOptions{})
 	ring, err := token.NewRing(token.Key{ID: "k1", Secret: bytes.Repeat([]byte("s"), 32)}, nil)
 	if err != nil {
 		t.Fatal(err)

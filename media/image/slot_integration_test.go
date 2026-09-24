@@ -155,14 +155,18 @@ func (visible) Resolve(context.Context, contentref.ContentRef, access.Actor) (ac
 	return access.Resolution{Visible: true}, nil
 }
 
-// checkStamp requires the host's stored stamp to rebuild m's outputs without reads.
+// checkStamp requires the host's stored stamp to rebuild m's outputs without
+// reads, and to have reached the host before the record showed it.
 func (e *env) checkStamp(t *testing.T, ref contentref.ContentRef, slot string, m media.SlotManifest) {
 	t.Helper()
 	e.mu.Lock()
-	stamp := e.stamps[ref.String()+"#"+slot]
+	stamp, late := e.stamps[ref.String()+"#"+slot], e.late[e.stamps[ref.String()+"#"+slot]]
 	e.mu.Unlock()
 	if stamp == "" || stamp != m.Stamp() {
 		t.Fatalf("stamp %q, manifest's %q", stamp, m.Stamp())
+	}
+	if late {
+		t.Fatalf("stamp %q reported after the slot record made it visible", stamp)
 	}
 	r, err := media.NewReader(media.ReaderOptions{Manifests: e.manifests, Kinds: e.kinds, Resolver: visible{},
 		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: slotBase, SigningKey: token.Key{ID: "k", Secret: make([]byte, 32)}}})

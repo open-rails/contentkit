@@ -41,7 +41,7 @@ func TestRestoreAfterSweepAndFolderDeletion(t *testing.T) {
 	const grace = 24 * time.Hour
 	clock := time.Now()
 	jobs, _ := media.NewJobs(media.JobsConfig{Store: s, Kinds: kinds, Grace: grace, Now: func() time.Time { return clock }})
-	ms, _ := media.NewManifests(s, kinds, media.ManifestOptions{})
+	ms := s3test.Manifests(t, s, kinds, media.ManifestOptions{})
 
 	name := func(v string) string { sum := sha256.Sum256([]byte(v)); return media.SHA256Name(sum[:]) }
 	put := func(key, body string) {

@@ -121,10 +121,7 @@ func newEnv(t *testing.T, store func(media.Store) media.Store, queue media.Proce
 	if e.kinds, err = media.NewRegistry(media.Kind{Name: "video", Versioned: true, Video: &media.Video{}, Types: []string{"video/x-matroska", "video/mp4"}}); err != nil {
 		t.Fatal(err)
 	}
-	var locker media.Locker
-	if !e.store.Capabilities().ConditionalPut {
-		locker = media.PGLocker(pgtest.Pool(t, nil))
-	}
+	locker := s3test.Locker(t, e.store)
 	if e.manifests, err = media.NewManifests(e.store, e.kinds, media.ManifestOptions{Locker: locker}); err != nil {
 		t.Fatal(err)
 	}
@@ -320,6 +317,13 @@ func checkByteRanges(t *testing.T, path string, segs []media.Segment, kind strin
 	}
 	if d := ffprobe(t, played).duration(t); math.Abs(d-total) > 0.5 {
 		t.Fatalf("byte-range playback lasts %.2fs, want %.0fs", d, total)
+	}
+}
+
+func TestEncoderRequiresLockerWithoutConditionalPut(t *testing.T) {
+	env := s3test.Open(t).WithoutConditionalPut(t)
+	if _, err := video.New(video.Config{Store: env.Store}); err == nil || !strings.Contains(err.Error(), "Config.Locker is required") {
+		t.Fatalf("no conditional PUT and no Locker: %v", err)
 	}
 }
 
