@@ -226,13 +226,21 @@ func TestVideoKindSlots(t *testing.T) {
 		t.Fatalf("slots %+v", k.Slots)
 	}
 	v, _ := r.Item(contentref.New("h", "video", "9"))
-	if v.HoverPreviewRecord() != "h/video/9/originals/hover_preview.json" || v.HoverPreviewOutput(640, true) != "h/video/9/public/hover_preview_640.mp4" {
+	// Posters and hover previews render to editor/ and are published to public/.
+	if v.HoverPreviewRecord() != "h/video/9/originals/hover_preview.json" || v.HoverPreviewOutput(640, true) != "h/video/9/editor/hover_preview_640.mp4" ||
+		v.HoverPreviewPublic(640, true) != "h/video/9/public/hover_preview_640.mp4" {
 		t.Fatal(v.HoverPreviewRecord(), v.HoverPreviewOutput(640, true))
 	}
-	if k, _ := v.SlotOutput(media.PosterSlot, 960); k != "h/video/9/public/poster_960.webp" {
+	if k, _ := v.SlotOutput(media.PosterSlot, 960); k != "h/video/9/editor/poster_960.webp" {
 		t.Fatal(k)
 	}
-	for _, name := range []string{media.PosterSlot, media.HoverPreview} {
+	if k, _ := v.SlotPublic(media.PosterSlot, 960); k != "h/video/9/public/poster_960.webp" {
+		t.Fatal(k)
+	}
+	if k, _ := v.SlotOutput("banner", 600); k != "h/video/9/public/banner_600.webp" {
+		t.Fatal("ungated slot", k)
+	}
+	for _, name := range []string{media.PosterSlot, media.HoverPreview, "exposure"} {
 		if _, err := media.NewRegistry(media.Kind{Name: "video", Video: &media.Video{},
 			Slots: map[string]media.Slot{name: {Aspect: 16.0 / 9, Widths: []int{320}}}}); err == nil {
 			t.Errorf("reserved slot %q accepted", name)

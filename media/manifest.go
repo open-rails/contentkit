@@ -16,7 +16,7 @@ type Manifest struct {
 }
 
 // File is one manifest entry. Original and Master live in originals/;
-// variants, HLS and downloads in blobs/. Image variants derive from Source()
+// variants, HLS and downloads in blobs/, EditorOnly variants in editor/. Image variants derive from Source()
 // through Edit; Dims is Source()'s size, recorded by processing, and edits
 // are validated against it. meta w/h is the edited size.
 type File struct {
@@ -48,7 +48,7 @@ type Variant struct {
 	Spec   string `json:"spec,omitempty"`
 	Type   string `json:"type,omitempty"`
 	Size   int64  `json:"size,omitempty"`
-	Editor bool   `json:"editor,omitempty"` // from Spec.EditorOnly: signed for editors only
+	Editor bool   `json:"editor,omitempty"` // from Spec.EditorOnly: in editor/, signed for editors only
 }
 
 type Download struct {
@@ -154,6 +154,9 @@ func (m *Manifest) File(name string) int {
 // Blobs returns every blobs/ name the manifest references.
 func (m *Manifest) Blobs() []string { return m.names(AreaBlobs) }
 
+// EditorBlobs returns every editor/ name the manifest references (EditorOnly variants).
+func (m *Manifest) EditorBlobs() []string { return m.names(AreaEditor) }
+
 // Originals returns every originals/ name the manifest references.
 func (m *Manifest) Originals() []string { return m.names(AreaOriginals) }
 
@@ -175,7 +178,11 @@ func (m *Manifest) walk(fn func(area, name string)) {
 			fn(AreaOriginals, f.Master)
 		}
 		for _, v := range f.Variants {
-			fn(AreaBlobs, v.Blob)
+			if v.Editor {
+				fn(AreaEditor, v.Blob)
+			} else {
+				fn(AreaBlobs, v.Blob)
+			}
 		}
 		if h := f.HLS; h != nil {
 			fn(AreaOriginals, h.Source)

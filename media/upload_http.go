@@ -21,9 +21,10 @@ type UploadHandlerOptions struct {
 	Tenant string                                   // every ref is scoped to it
 	Actor  func(*http.Request) (access.Actor, bool) // the host's authenticated caller; false answers 401
 	Logger *slog.Logger                             // 5xx causes; default slog.Default()
-	// PublicBaseURL is the access worker origin (Delivery.BaseURL) slot
-	// replies build output URLs on; required for slot routes.
-	PublicBaseURL string
+	// Reader builds slot and video-image reply URLs (the access worker
+	// origin; editor tokens for unpublished video posters and hover
+	// previews); required for slot and video routes.
+	Reader *Reader
 }
 
 // UploadHandler serves the upload API the browser SDK calls. All routes are
@@ -420,18 +421,27 @@ func (h uploadHandler) slotOriginal(w http.ResponseWriter, r *http.Request) {
 
 // slotReply answers a slot route with the slot's manifest once err is nil.
 func (h uploadHandler) slotReply(w http.ResponseWriter, r *http.Request, ref RefBody, slot string, err error) {
-	if err == nil && h.o.PublicBaseURL == "" {
-		err = errors.New("media: UploadHandlerOptions.PublicBaseURL is required for slot routes")
+	var urls OutputURLs
+	if err == nil {
+		urls, err = h.urls(ref)
 	}
 	var m SlotManifest
 	if err == nil {
-		m, err = h.u.o.Manifests.SlotManifest(r.Context(), h.o.PublicBaseURL, h.ref(ref), slot)
+		m, err = h.u.o.Manifests.SlotManifest(r.Context(), urls, h.ref(ref), slot)
 	}
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, m)
+}
+
+// urls are an uploader's reply URLs: uploaders edit the item.
+func (h uploadHandler) urls(ref RefBody) (OutputURLs, error) {
+	if h.o.Reader == nil {
+		return OutputURLs{}, errors.New("media: UploadHandlerOptions.Reader is required for slot and video routes")
+	}
+	return h.o.Reader.EditorURLs(h.ref(ref))
 }
 
 func (h uploadHandler) videoImages(w http.ResponseWriter, r *http.Request) {
@@ -477,12 +487,13 @@ func (h uploadHandler) videoPreview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h uploadHandler) videoReply(w http.ResponseWriter, r *http.Request, ref RefBody, file string, err error) {
-	if err == nil && h.o.PublicBaseURL == "" {
-		err = errors.New("media: UploadHandlerOptions.PublicBaseURL is required for video routes")
+	var urls OutputURLs
+	if err == nil {
+		urls, err = h.urls(ref)
 	}
 	var v VideoImages
 	if err == nil {
-		v, err = h.u.o.Manifests.VideoImages(r.Context(), h.o.PublicBaseURL, h.ref(ref), true, file)
+		v, err = h.u.o.Manifests.VideoImages(r.Context(), urls, h.ref(ref), true, file)
 	}
 	if err != nil {
 		h.fail(w, r, err)

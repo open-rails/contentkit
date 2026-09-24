@@ -3,7 +3,8 @@
 //
 //	{tenant}/{kind}/{content_id}/manifest.json | manifests/{version}.json
 //	                            /originals/{sha256-hex | u-uuid | slot | slot.json | i-uuid}
-//	                            /blobs/{sha256-hex | u-uuid}
+//	                            /blobs/{sha256-hex | u-uuid}                    viewer token
+//	                            /editor/{sha256-hex | name.webp | name.mp4}     editor token
 //	                            /public/{name}.webp | {name}.mp4 (hover previews)
 package layout
 
@@ -18,6 +19,9 @@ const (
 	AreaOriginals = "originals"
 	AreaBlobs     = "blobs"
 	AreaPublic    = "public"
+	// AreaEditor holds what only editors may fetch: EditorOnly variant blobs
+	// and video posters and hover previews before they are published.
+	AreaEditor = "editor"
 )
 
 const (
@@ -35,7 +39,7 @@ const (
 // Key is a parsed object key.
 type Key struct {
 	Tenant, Kind, ID string
-	Area             string // AreaManifest, AreaOriginals, AreaBlobs or AreaPublic
+	Area             string // AreaManifest, AreaOriginals, AreaBlobs, AreaEditor or AreaPublic
 	Name             string // file name within the area; the version id for manifests/
 }
 
@@ -61,7 +65,9 @@ func Parse(key string) (Key, bool) {
 		k.Area, k.Name = AreaOriginals, rest[1]
 	case len(rest) == 2 && rest[0] == AreaBlobs && ValidBlobName(rest[1]):
 		k.Area, k.Name = AreaBlobs, rest[1]
-	case len(rest) == 2 && rest[0] == AreaPublic:
+	case len(rest) == 2 && rest[0] == AreaEditor && ValidBlobName(rest[1]):
+		k.Area, k.Name = AreaEditor, rest[1]
+	case len(rest) == 2 && (rest[0] == AreaPublic || rest[0] == AreaEditor):
 		n, ok := strings.CutSuffix(rest[1], PublicExt)
 		if !ok {
 			n, ok = strings.CutSuffix(rest[1], PublicMP4Ext)
@@ -69,7 +75,7 @@ func Parse(key string) (Key, bool) {
 		if !ok || !ValidSegment(n) {
 			return Key{}, false
 		}
-		k.Area, k.Name = AreaPublic, n
+		k.Area, k.Name = rest[0], n
 	default:
 		return Key{}, false
 	}

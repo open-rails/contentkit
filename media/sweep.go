@@ -23,10 +23,10 @@ type SweepResult struct {
 	Wait    time.Duration
 }
 
-// Sweep deletes the item folder's blobs/ and hash-named originals/ that no
+// Sweep deletes the item folder's blobs/, editor/ blobs and hash-named originals/ that no
 // manifest in the folder references, once every manifest is older than the
-// grace period, and only objects past abandonedAt. Slot originals, public/ and
-// manifests are never swept.
+// grace period, and only objects past abandonedAt. Slot originals, slot and
+// hover-preview outputs (public/, editor/) and manifests are never swept.
 //
 // Invariant: the sweep deletes only objects that no manifest references and
 // that no in-flight commit can newly reference. Uploads keeps the second half:
@@ -109,6 +109,9 @@ func (j *Jobs) sweep(ctx context.Context, prefix string, objs []Object) (SweepRe
 		for _, n := range man.Blobs() {
 			refs[AreaBlobs+"/"+n] = true
 		}
+		for _, n := range man.EditorBlobs() {
+			refs[AreaEditor+"/"+n] = true
+		}
 		for _, n := range man.Originals() {
 			refs[AreaOriginals+"/"+n] = true
 		}
@@ -117,7 +120,7 @@ func (j *Jobs) sweep(ctx context.Context, prefix string, objs []Object) (SweepRe
 		var keys []string
 		for _, o := range objs {
 			k, ok := layout.Parse(o.Key)
-			if !ok || !layout.ValidBlobName(k.Name) || (k.Area != AreaBlobs && k.Area != AreaOriginals) {
+			if !ok || !layout.ValidBlobName(k.Name) || (k.Area != AreaBlobs && k.Area != AreaEditor && k.Area != AreaOriginals) {
 				continue
 			}
 			if !refs[k.Area+"/"+k.Name] && !now.Before(abandonedAt(k.Name, o.LastModified, j.cfg.Grace)) {
@@ -211,8 +214,9 @@ func (j *Jobs) list(ctx context.Context, prefix string) ([]Object, error) {
 	return objs, nil
 }
 
-// deleteFolder removes every object under prefix, manifests first so readers
-// stop resolving the item before its files go.
+// deleteFolder removes every object under prefix, manifests and public/ first
+// so readers stop resolving the item, and tokenless URLs stop answering,
+// before its other files go.
 func (j *Jobs) deleteFolder(ctx context.Context, prefix string) error {
 	objs, err := j.list(ctx, prefix)
 	if err != nil {
@@ -220,7 +224,7 @@ func (j *Jobs) deleteFolder(ctx context.Context, prefix string) error {
 	}
 	var manifests, rest []string
 	for _, o := range objs {
-		if k, ok := layout.Parse(o.Key); ok && k.Area == AreaManifest {
+		if k, ok := layout.Parse(o.Key); ok && (k.Area == AreaManifest || k.Area == AreaPublic) {
 			manifests = append(manifests, o.Key)
 		} else {
 			rest = append(rest, o.Key)

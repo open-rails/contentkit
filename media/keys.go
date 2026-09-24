@@ -16,14 +16,16 @@ const (
 	AreaOriginals = layout.AreaOriginals
 	AreaBlobs     = layout.AreaBlobs
 	AreaPublic    = layout.AreaPublic
+	AreaEditor    = layout.AreaEditor
 )
 
 // Item is a validated content item and the keys of its folder:
 //
 //	{tenant}/{kind}/{content_id}/manifest.json | manifests/{version}.json
 //	                            /originals/{sha256-hex | u-uuid | slot | slot.json | i-uuid}
-//	                            /blobs/{sha256-hex | u-uuid}
-//	                            /public/{output}.webp
+//	                            /blobs/{sha256-hex | u-uuid}                 viewers (folder or file token)
+//	                            /editor/{sha256-hex | output.webp | .mp4}    editors only (editor token)
+//	                            /public/{output}.webp | .mp4                 anyone
 type Item struct {
 	ref    contentref.ContentRef
 	kind   Kind
@@ -71,6 +73,7 @@ func (i Item) ManifestsPrefix() string { return i.prefix + "manifests/" }
 func (i Item) OriginalsPrefix() string { return i.prefix + AreaOriginals + "/" }
 func (i Item) BlobsPrefix() string     { return i.prefix + AreaBlobs + "/" }
 func (i Item) PublicPrefix() string    { return i.prefix + AreaPublic + "/" }
+func (i Item) EditorPrefix() string    { return i.prefix + AreaEditor + "/" }
 
 // Original is the key of an uploaded file or master (never served).
 func (i Item) Original(name string) (string, error) {
@@ -86,6 +89,15 @@ func (i Item) Blob(name string) (string, error) {
 		return "", fmt.Errorf("media: invalid blob name %q", name)
 	}
 	return i.BlobsPrefix() + name, nil
+}
+
+// EditorBlob is the key of an EditorOnly variant: outside the viewers' blobs/,
+// so no viewer token covers it.
+func (i Item) EditorBlob(name string) (string, error) {
+	if !layout.ValidBlobName(name) {
+		return "", fmt.Errorf("media: invalid blob name %q", name)
+	}
+	return i.EditorPrefix() + name, nil
 }
 
 // SlotOriginal is the original of a registered public slot, overwritten in
@@ -110,13 +122,28 @@ func (i Item) SlotRecord(slot string) (string, error) {
 	return i.OriginalsPrefix() + slot + slotRecordExt, nil
 }
 
-// SlotOutput is public/{slot}_{width}.webp.
+// SlotOutput is where the image job writes a slot's output of one width:
+// public/{slot}_{width}.webp, or editor/ for a Gated slot, which Publish
+// copies to public/ only as the item's Exposure allows.
 func (i Item) SlotOutput(slot string, width int) (string, error) {
+	key, err := i.SlotPublic(slot, width)
+	if err != nil || !i.Gated(slot) {
+		return key, err
+	}
+	return i.EditorPrefix() + SlotOutput(slot, width) + layout.PublicExt, nil
+}
+
+// SlotPublic is public/{slot}_{width}.webp, the output's tokenless URL key.
+func (i Item) SlotPublic(slot string, width int) (string, error) {
 	if _, ok := i.kind.Slots[slot]; !ok {
 		return "", fmt.Errorf("media: kind %q has no slot %q", i.kind.Name, slot)
 	}
 	return i.Public(SlotOutput(slot, width))
 }
+
+// Gated reports a slot whose outputs are published per the item's Exposure
+// rather than on encode: a video kind's poster.
+func (i Item) Gated(slot string) bool { return i.kind.Video != nil && slot == PosterSlot }
 
 // Public is public/{name}.webp: a slot output or a host-chosen inline image id.
 func (i Item) Public(name string) (string, error) {

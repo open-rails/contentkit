@@ -6,8 +6,12 @@
 //	-s3-endpoint   MEDIA_ACCESS_S3_ENDPOINT     path-style S3 endpoint (RGW or MinIO)
 //	-s3-bucket     MEDIA_ACCESS_S3_BUCKET
 //	-s3-region     MEDIA_ACCESS_S3_REGION       default us-east-1
-//	-hosts         MEDIA_ACCESS_HOSTS           comma list of allowed Host names; empty allows any
-//	-cors-origins  MEDIA_ACCESS_CORS_ORIGINS    comma list of exact origins allowed with credentials
+//	-hosts         MEDIA_ACCESS_HOSTS           comma list of allowed Host names, e.g. media.example.com;
+//	                                            empty allows any (warned; set it in production)
+//	-cors-origins  MEDIA_ACCESS_CORS_ORIGINS    comma list of exact site origins allowed with credentials,
+//	                                            e.g. https://example.com; empty breaks hls.js (warned)
+//	-resource-policy MEDIA_ACCESS_RESOURCE_POLICY  Cross-Origin-Resource-Policy: same-site (default),
+//	                                            same-origin, or cross-origin (pages on another site)
 //	               MEDIA_ACCESS_S3_ACCESS_KEY_ID, MEDIA_ACCESS_S3_SECRET_ACCESS_KEY   read-only key
 //	               MEDIA_ACCESS_TOKEN_KEY           current signing key "{kid}:{base64 secret}"
 //	               MEDIA_ACCESS_TOKEN_KEY_PREVIOUS  previous key, accepted during rotation; optional
@@ -47,6 +51,7 @@ func run(log *slog.Logger, args []string) error {
 	region := fs.String("s3-region", env("MEDIA_ACCESS_S3_REGION", "us-east-1"), "S3 region")
 	hosts := fs.String("hosts", env("MEDIA_ACCESS_HOSTS", ""), "allowed Host names")
 	origins := fs.String("cors-origins", env("MEDIA_ACCESS_CORS_ORIGINS", ""), "CORS origins")
+	policy := fs.String("resource-policy", env("MEDIA_ACCESS_RESOURCE_POLICY", "same-site"), "Cross-Origin-Resource-Policy")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -73,10 +78,16 @@ func run(log *slog.Logger, args []string) error {
 	h, err := accessworker.New(accessworker.Config{
 		Endpoint: *endpoint, Bucket: *bucket, Region: *region,
 		AccessKeyID: accessKey, SecretAccessKey: secretKey,
-		Ring: ring, Hosts: list(*hosts), Origins: list(*origins), Logger: log,
+		Ring: ring, Hosts: list(*hosts), Origins: list(*origins), ResourcePolicy: *policy, Logger: log,
 	})
 	if err != nil {
 		return err
+	}
+	if len(list(*origins)) == 0 {
+		log.Warn("MEDIA_ACCESS_CORS_ORIGINS is empty: browsers cannot read blobs with fetch/XHR, so hls.js playback fails; set it to the sites' exact origins")
+	}
+	if len(list(*hosts)) == 0 {
+		log.Warn("MEDIA_ACCESS_HOSTS is empty: any Host header is served; set it to the media host names")
 	}
 
 	ln, err := net.Listen("tcp", *listen)

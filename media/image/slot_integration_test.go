@@ -93,7 +93,7 @@ func (e *env) editSlot(t *testing.T, ref contentref.ContentRef, slot string, edi
 
 func (e *env) slotManifest(t *testing.T, ref contentref.ContentRef, slot string) media.SlotManifest {
 	t.Helper()
-	m, err := e.manifests.SlotManifest(context.Background(), slotBase+"/", ref, slot)
+	m, err := e.manifests.SlotManifest(context.Background(), media.OutputURLs{BaseURL: slotBase + "/"}, ref, slot)
 	if err != nil {
 		t.Fatal(err)
 	}

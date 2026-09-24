@@ -1,9 +1,10 @@
 // Package accessworker is the media access worker's HTTP handler, run by
-// cmd/media-access: it checks the token for a blob path (URL `?t=` or cookie
-// `mt`), serves public/ paths without one (immutable at a current ?v=
-// version), refuses manifests and originals/,
-// and streams the object from the private bucket with its own read-only key.
-// It has no database, no host calls and no cache.
+// cmd/media-access: it checks the token for a blobs/ or editor/ path (URL
+// `?t=` or cookie `mt`), serves public/ paths without one (immutable at a
+// current ?v= version), refuses manifests and originals/, and streams the
+// object from the private bucket with its own read-only key. Every object
+// carries Cross-Origin-Resource-Policy (default same-site), so other sites
+// cannot embed it. It has no database, no host calls and no cache.
 package accessworker
 
 import (
@@ -11,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -32,12 +34,13 @@ const (
 	HealthPath = "/healthz"
 
 	blobCacheControl      = "private, max-age=31536000, immutable"
+	editorCacheControl    = "private, no-cache" // unpublished outputs, rewritten in place
 	publicCacheControl    = "public, no-cache"
 	versionedCacheControl = "public, max-age=31536000, immutable"
 )
 
 // Config configures a Handler. The S3 key should only be able to read
-// */blobs/* and */public/*.
+// */blobs/*, */editor/* and */public/*.
 type Config struct {
 	Endpoint        string // path-style S3 endpoint, e.g. http://rook-ceph-rgw-external-rgw.rook-ceph.svc:7480
 	Bucket          string
@@ -45,10 +48,17 @@ type Config struct {
 	AccessKeyID     string
 	SecretAccessKey string
 	Ring            token.Ring
-	// Hosts limits the Host header (without port); empty accepts any.
+	// Hosts limits the Host header (without port); empty accepts any
+	// (not recommended in production).
 	Hosts []string
-	// Origins are exact CORS origins allowed with credentials.
+	// Origins are exact CORS origins ("https://example.com", no path or
+	// wildcard) allowed with credentials: the sites whose hls.js reads blobs.
 	Origins []string
+	// ResourcePolicy is the Cross-Origin-Resource-Policy on every object:
+	// "same-site" (default: only the site's own domain and subdomains may
+	// embed media), "same-origin", or "cross-origin" for a deployment whose
+	// pages are on another site than its media.
+	ResourcePolicy string
 	// Client reaches the bucket; default a transport without compression.
 	Client *http.Client
 	Logger *slog.Logger
@@ -92,6 +102,23 @@ func New(cfg Config) (*Handler, error) {
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
+	}
+	switch cfg.ResourcePolicy {
+	case "":
+		cfg.ResourcePolicy = "same-site"
+	case "same-site", "same-origin", "cross-origin":
+	default:
+		return nil, fmt.Errorf("accessworker: invalid ResourcePolicy %q", cfg.ResourcePolicy)
+	}
+	for _, o := range cfg.Origins {
+		if err := validOrigin(o); err != nil {
+			return nil, err
+		}
+	}
+	for _, h := range cfg.Hosts {
+		if h == "" || strings.ContainsAny(h, "/:*") {
+			return nil, fmt.Errorf("accessworker: invalid host %q (a bare host name)", h)
+		}
 	}
 	cfg.Hosts = slices.Clone(cfg.Hosts)
 	for i, h := range cfg.Hosts {
@@ -138,7 +165,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var disposition string
 	switch k.Area {
 	case layout.AreaPublic:
-	case layout.AreaBlobs:
+	case layout.AreaBlobs, layout.AreaEditor:
 		q := r.URL.Query()
 		dl := q.Get("dl")
 		if !h.authorized(r, q.Get("t"), key, dl) {
@@ -152,7 +179,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, http.StatusNotFound)
 		return
 	}
-	h.stream(w, r, key, k.Area, disposition)
+	h.stream(w, r, key, k, disposition)
 }
 
 // authorized accepts the URL token or any mt cookie (a browser may send
@@ -178,7 +205,7 @@ var (
 	forwardResponse = []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"}
 )
 
-func (h *Handler) stream(w http.ResponseWriter, r *http.Request, key, area, disposition string) {
+func (h *Handler) stream(w http.ResponseWriter, r *http.Request, key string, k layout.Key, disposition string) {
 	u := *h.base
 	u.Path = h.base.Path + "/" + h.cfg.Bucket + "/" + key
 	up, err := http.NewRequestWithContext(r.Context(), r.Method, u.String(), nil)
@@ -226,7 +253,8 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, key, area, disp
 			hdr[name] = v
 		}
 	}
-	if area == layout.AreaPublic {
+	switch {
+	case k.Area == layout.AreaPublic:
 		// A versioned URL whose version the object still has is immutable.
 		v := r.URL.Query().Get(layout.VersionParam)
 		if v != "" && ok && resp.Header.Get("X-Amz-Meta-"+layout.VersionMeta) == v {
@@ -234,12 +262,15 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, key, area, disp
 		} else {
 			hdr.Set("Cache-Control", publicCacheControl)
 		}
-	} else {
+	case k.Area == layout.AreaEditor && !layout.ValidBlobName(k.Name):
+		hdr.Set("Cache-Control", editorCacheControl)
+	default:
 		hdr.Set("Cache-Control", blobCacheControl)
 	}
 	if disposition != "" {
 		hdr.Set("Content-Disposition", disposition)
 	}
+	hdr.Set("Cross-Origin-Resource-Policy", h.cfg.ResourcePolicy)
 	hdr.Set("X-Content-Type-Options", "nosniff")
 	hdr.Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	w.WriteHeader(resp.StatusCode)
@@ -249,6 +280,16 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, key, area, disp
 	if _, err := io.Copy(w, resp.Body); err != nil && r.Context().Err() == nil && !errors.Is(err, context.Canceled) {
 		h.cfg.Logger.Warn("media-access: stream", "key", key, "err", err)
 	}
+}
+
+// validOrigin accepts exactly "scheme://host[:port]".
+func validOrigin(o string) error {
+	u, err := url.Parse(o)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || strings.Contains(u.Host, "*") ||
+		u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || o != u.Scheme+"://"+u.Host {
+		return fmt.Errorf("accessworker: invalid CORS origin %q (want exactly scheme://host[:port])", o)
+	}
+	return nil
 }
 
 func (h *Handler) hostAllowed(host string) bool {

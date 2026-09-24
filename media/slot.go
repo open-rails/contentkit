@@ -16,6 +16,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media/layout"
+	"github.com/open-rails/contentkit/media/token"
 )
 
 const slotRecordExt = ".json"
@@ -371,14 +372,45 @@ type SlotImage struct {
 	URL  string `json:"url"`
 }
 
-// SlotManifest reads a slot's manifest (one object), building output URLs on
-// baseURL, the access worker origin. A slot never committed has no outputs.
-func (m *Manifests) SlotManifest(ctx context.Context, baseURL string, ref contentref.ContentRef, slot string) (SlotManifest, error) {
+// OutputURLs builds slot and hover-preview output URLs for one caller.
+// Outputs of gated slots (video posters) and hover previews are served from
+// editor/ with EditorToken to editors, from public/ to others when Exposure
+// publishes them, and left out otherwise.
+type OutputURLs struct {
+	BaseURL     string   // the access worker origin
+	EditorToken string   // the item's editor/ folder token; editors only
+	Exposure    Exposure // what the item has published
+}
+
+// editorURL is an editor/ key's URL under the editor token; the version
+// makes a re-encode a new URL, as on public/.
+func (u OutputURLs) editorURL(key, version string) string {
+	u2 := versioned(strings.TrimRight(u.BaseURL, "/")+"/"+key, version)
+	if version != "" {
+		return u2 + "&t=" + u.EditorToken
+	}
+	return u2 + "?t=" + u.EditorToken
+}
+
+func versioned(u, version string) string {
+	if version != "" {
+		u += "?" + SlotVersionParam + "=" + version
+	}
+	return u
+}
+
+// SlotManifest reads a slot's manifest (one object), building output URLs
+// with urls. A slot never committed has no outputs, nor has a gated slot the
+// caller may not see.
+func (m *Manifests) SlotManifest(ctx context.Context, urls OutputURLs, ref contentref.ContentRef, slot string) (SlotManifest, error) {
 	item, s, err := m.kinds.slot(ref, slot)
 	if err != nil {
 		return SlotManifest{}, err
 	}
 	out := SlotManifest{Aspect: s.Aspect, Outputs: []SlotImage{}}
+	if item.Gated(slot) && urls.EditorToken == "" && !urls.Exposure.Poster {
+		return out, nil
+	}
 	rec, err := m.Slot(ctx, ref, slot)
 	if errors.Is(err, ErrNotFound) {
 		return out, nil
@@ -402,14 +434,61 @@ func (m *Manifests) SlotManifest(ctx context.Context, baseURL string, ref conten
 		out.Version = res.Version
 	}
 	for _, o := range res.Outputs {
-		out.Outputs = append(out.Outputs, slotImage(baseURL, item, slot, o, out.Version))
+		img := slotImage(urls.BaseURL, item, slot, o, out.Version)
+		if item.Gated(slot) && urls.EditorToken != "" {
+			key, _ := item.SlotOutput(slot, o.W)
+			img.URL = urls.editorURL(key, out.Version)
+		}
+		out.Outputs = append(out.Outputs, img)
 	}
 	return out, nil
 }
 
-// Slot reads a slot's manifest (no Resolve: outputs are public).
-func (r *Reader) Slot(ctx context.Context, ref contentref.ContentRef, slot string) (SlotManifest, error) {
-	return r.manifests.SlotManifest(ctx, r.base.String(), ref, slot)
+// Slot resolves ref for actor and reads a slot's manifest: ErrNotVisible for
+// an item actor may not see. A video poster is listed from editor/ for
+// editors, and from public/ for others once the item publishes it.
+func (r *Reader) Slot(ctx context.Context, ref contentref.ContentRef, actor access.Actor, slot string) (SlotManifest, error) {
+	urls, err := r.outputURLs(ctx, ref, actor)
+	if err != nil {
+		return SlotManifest{}, err
+	}
+	return r.manifests.SlotManifest(ctx, urls, ref, slot)
+}
+
+// outputURLs resolves ref for actor once: editors get an editor token, others
+// the item's published Exposure.
+func (r *Reader) outputURLs(ctx context.Context, ref contentref.ContentRef, actor access.Actor) (OutputURLs, error) {
+	item, err := r.kinds.Item(ref.Content())
+	if err != nil {
+		return OutputURLs{}, fmt.Errorf("%w: %v", ErrNotVisible, err)
+	}
+	res, err := r.resolver.Resolve(ctx, ref, actor)
+	if err != nil {
+		return OutputURLs{}, fmt.Errorf("%w: %w", ErrResolve, err)
+	}
+	if !res.Visible {
+		return OutputURLs{}, ErrNotVisible
+	}
+	urls := OutputURLs{BaseURL: r.base.String()}
+	if res.Editor {
+		urls.EditorToken = r.editorToken(item, token.Expiry(r.now(), r.delivery.TTL, r.delivery.Window))
+		return urls, nil
+	}
+	if item.Kind().Video != nil {
+		if urls.Exposure, err = r.manifests.Exposure(ctx, ref); err != nil {
+			return OutputURLs{}, err
+		}
+	}
+	return urls, nil
+}
+
+// EditorURLs are the OutputURLs of an item's editors (uploaders).
+func (r *Reader) EditorURLs(ref contentref.ContentRef) (OutputURLs, error) {
+	item, err := r.kinds.Item(ref.Content())
+	if err != nil {
+		return OutputURLs{}, err
+	}
+	return OutputURLs{BaseURL: r.base.String(), EditorToken: r.editorToken(item, token.Expiry(r.now(), r.delivery.TTL, r.delivery.Window))}, nil
 }
 
 // SlotStamp is the one value a host stores per slot to build its outputs
@@ -507,11 +586,8 @@ func (r *Registry) slot(ref contentref.ContentRef, slot string) (Item, Slot, err
 // SlotVersionParam is the query parameter carrying an output's version.
 const SlotVersionParam = layout.VersionParam
 
+// slotImage is an output at its public URL.
 func slotImage(base string, item Item, slot string, o Dims, version string) SlotImage {
-	key, _ := item.SlotOutput(slot, o.W)
-	u := strings.TrimRight(base, "/") + "/" + key
-	if version != "" {
-		u += "?" + SlotVersionParam + "=" + version
-	}
-	return SlotImage{Name: SlotOutput(slot, o.W), W: o.W, H: o.H, URL: u}
+	key, _ := item.SlotPublic(slot, o.W)
+	return SlotImage{Name: SlotOutput(slot, o.W), W: o.W, H: o.H, URL: versioned(strings.TrimRight(base, "/")+"/"+key, version)}
 }

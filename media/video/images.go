@@ -275,11 +275,19 @@ func (e *Encoder) renderHoverPreview(ctx context.Context, ms *media.Manifests, i
 		}
 	}
 	e.c.Logger.InfoContext(ctx, "media/video: hover preview", "ref", ref.String(), "file", f.Name, "start", from, "duration", length)
-	return ms.UpdateHoverPreview(ctx, ref, func(cur *media.HoverPreviewRecord) (*media.HoverPreviewRecord, error) {
+	if err := ms.UpdateHoverPreview(ctx, ref, func(cur *media.HoverPreviewRecord) (*media.HoverPreviewRecord, error) {
 		if cur == nil || cur.Key() != sel.Key() {
 			return nil, media.ErrSuperseded
 		}
 		cur.Result = res
 		return cur, nil
-	})
+	}); err != nil {
+		return err
+	}
+	// The host's process job publishes it (media.Jobs.Publish) as the item's exposure allows.
+	if e.c.Slots == nil {
+		e.c.Logger.WarnContext(ctx, "media/video: no Config.Slots; hover preview not published", "ref", ref.String())
+		return nil
+	}
+	return e.c.Slots.Enqueue(ctx, media.ProcessJob{Ref: ref.Content(), Slot: media.HoverPreview})
 }

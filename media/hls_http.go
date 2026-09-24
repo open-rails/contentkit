@@ -28,6 +28,7 @@ func (r *Reader) hlsRoutes(mux *http.ServeMux, o HandlerOptions, log *slog.Logge
 			if c := g.Cookie(); c != nil {
 				http.SetCookie(w, c)
 			}
+			g.logIssued(req, log)
 			if contentType == "" {
 				http.Redirect(w, req, string(b), http.StatusFound)
 				return

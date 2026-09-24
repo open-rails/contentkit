@@ -137,7 +137,7 @@ func (s Spec) Hash() string {
 		id += "|u"
 	}
 	if s.EditorOnly {
-		id += "|e"
+		id += "|editor/" // stored in editor/ (was blobs/ under "|e")
 	}
 	sum := sha256.Sum256([]byte(id))
 	return hex.EncodeToString(sum[:4])
@@ -281,7 +281,7 @@ func NewRegistry(kinds ...Kind) (*Registry, error) {
 			slots[name] = slot
 		}
 		if k.Video != nil {
-			for _, reserved := range []string{PosterSlot, HoverPreview} {
+			for _, reserved := range []string{PosterSlot, HoverPreview, exposureRecord} {
 				if _, ok := slots[reserved]; ok {
 					return nil, fmt.Errorf("media: kind %q: slot %q is reserved on video kinds", k.Name, reserved)
 				}
@@ -292,6 +292,15 @@ func NewRegistry(kinds ...Kind) (*Registry, error) {
 		r.kinds[k.Name] = k
 	}
 	return r, nil
+}
+
+func (r *Registry) hasVideo() bool {
+	for _, k := range r.kinds {
+		if k.Video != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // Kind returns a registered kind.

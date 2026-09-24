@@ -319,8 +319,9 @@ Cropping and rotating are ContentKit's: the host never decodes images.
   "cover":  {Aspect: 3, Widths: []int{1500, 3000}, MinWidth: 1500},
   ```
 
-  Mount `UploadHandler` with `PublicBaseURL` (the access worker origin). For
-  `srcset` use `Reader.Slot` / `GET /{kind}/{id}/slots/{slot}`. Listings store
+  Mount `UploadHandler` with `Reader` (its origin and editor tokens build
+  reply URLs). For `srcset` use `Reader.Slot(ctx, ref, actor, slot)` /
+  `GET /{kind}/{id}/slots/{slot}` (resolves; 404 for items the viewer cannot see). Listings store
   the `SlotStamp` from `Hooks.SlotEncoded` (one text value per slot, e.g. a
   `cover_stamp` column) and build every output's immutable URL without reads
   with `Reader.SlotOutputs(ref, slot, stamp)`; with no stamp ("") it lists the
@@ -329,7 +330,7 @@ Cropping and rotating are ContentKit's: the host never decodes images.
   enqueue `ProcessJob{Ref}` per item; retired widths are deleted.
 - Editors (`Resolution.Editor`) read `dims` (original size) and `edit` from
   the read API and show a `Spec{Unedited: true, EditorOnly: true}` variant,
-  which is never signed for other viewers; the SDK's `useCrop` keeps the rect
+  which lives in `editor/` behind an editor-only token; the SDK's `useCrop` keeps the rect
   in original pixels for any cropper UI.
 - Cap files per item with `Kind.MaxFiles` and `Kind.TypeLimits`
   (`{"video": {MaxFiles: 1}}`); commits over a cap get 409 `too_many_files`.
@@ -350,7 +351,19 @@ Every `Video` kind gets the `poster` slot (`media.VideoPoster`: 16:9, widths
   1–6 s, centred 16:9 at 12 fps, as H.264 MP4 and animated WebP at 320
   (always) and 640 px (when the video is that wide), rendered by the worker.
   MP4 measured 2.1–2.9× smaller on real footage: prefer `<video muted loop
-  playsinline>`, WebP for `<img>`. `public/hover_preview_{w}.mp4|.webp?v=`.
+  playsinline>`, WebP for `<img>`.
+- **Publishing**: both render to `editor/` (editors only) and are copied to
+  `public/` (tokenless, `public/poster_{w}.webp`,
+  `public/hover_preview_{w}.mp4|.webp?v=`) only as the item's `Exposure`
+  allows. `JobsConfig.Resolver` resolves the item for an anonymous actor and
+  `JobsConfig.Exposure` (default `media.DefaultExposure`) decides: not
+  visible (draft, deleted) → nothing; full access → poster and hover
+  preview; otherwise (paid, preview cut) → the poster alone as a teaser.
+  Pass a policy to vary it per item. Each poster encode and preview render
+  republishes; call `jobs.PublishTx(ctx, tx, ref)` in every transaction that
+  changes what anonymous viewers see (publish, unpublish, soft delete,
+  restore, price or access changes). It re-resolves after writing, so it
+  converges on the latest state. Without a `Resolver` nothing is published.
 - Both cut from the HLS renditions (one segment range, confined ffmpeg
   inputs), so selection changes never download the source.
 - Upload API (`CanUpload` on the work), each answering `VideoImages`:
@@ -365,9 +378,39 @@ Every `Video` kind gets the `poster` slot (`media.VideoPoster`: 16:9, widths
     segment; `t` clamped into the video, `w` into 64–1280 and the widest
     rendition. Needs `UploadOptions.Frames` (`video.NewFrames`, ffmpeg in the
     host image); `FrameConcurrency` (2) at once, then 429.
-- Public: `GET /{kind}/{id}/video-images` (no selections, no resolve);
-  listings use `Reader.SlotOutputs(ref, media.PosterSlot, version)` and
-  `Reader.HoverPreviewURLs(ref, version)` without reads.
+- Viewers: `GET /{kind}/{id}/video-images` resolves (404 when hidden) and
+  lists what is published (editors: everything, from `editor/`). Listings
+  build URLs without reads, `Reader.SlotOutputs(ref, media.PosterSlot,
+  version)` and `Reader.HoverPreviewURLs(ref, version)`, only for items whose
+  Exposure publishes them (default: posters of visible items, hover previews of free ones).
+
+## Production media delivery
+
+- **Media host**: serve `cmd/media-access` at `media.<site domain>` (same
+  site as the pages) and use cookie delivery (`Delivery{Mode: DeliverCookie,
+  CookieDomain: "<site domain>"}`); URL delivery only for apps without cookies.
+- **Access worker config**: `MEDIA_ACCESS_HOSTS=media.<domain>`;
+  `MEDIA_ACCESS_CORS_ORIGINS` exactly your sites' origins
+  (`https://<domain>,https://www.<domain>`; no wildcards, no third parties);
+  keep `Cross-Origin-Resource-Policy` at its `same-site` default so other
+  sites cannot hotlink media into `<img>`/`<video>`.
+- **Bucket**: private (no public ACL or policy); the worker's key is
+  read-only on `*/blobs/*`, `*/editor/*` and `*/public/*`; only the hosts
+  write.
+- **CDN**: may cache `public/` in a shared cache (URLs with a current `?v=`
+  are immutable). Never cache `blobs/` or `editor/` in a shared cache: the
+  token is not part of a cache key the CDN checks, so a cached object would be
+  served without one. They are `private` for the browser cache.
+- **Key rotation**: add the new key to every access worker as
+  `MEDIA_ACCESS_TOKEN_KEY` with the old one as `_TOKEN_KEY_PREVIOUS`, then
+  switch the hosts' `Delivery.SigningKey`, then drop the previous key after
+  the longest token lifetime (TTL rounded up to the window, about 5 h by default).
+- **Scraping**: keep `HandlerOptions.Limit` on (default 2/s, burst 120 per
+  viewer); behind a proxy set `Actor.IP` so anonymous viewers are not one key.
+  Signed-URL logs name the viewer.
+- **Visibility**: wire `JobsConfig.Resolver` and call `PublishTx` on every
+  visibility change (see "Video posters and hover previews"); `DeleteItemsTx`
+  removes `public/` first.
 
 ## Example: hentai0 (video versions)
 

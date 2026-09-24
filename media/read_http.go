@@ -2,8 +2,12 @@ package media
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"log/slog"
+	"math"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -24,24 +28,32 @@ type HandlerOptions struct {
 	Tenant   string
 	Identity Identity
 	Logger   *slog.Logger
+	// Limit is the per-viewer rate limit (default ViewerLimit{}: 2/s, burst
+	// 120). Viewers are keyed by Actor.ID, anonymous ones by Actor.IP, else
+	// by the connection's address: behind a proxy, set Actor.IP from the
+	// client address the proxy forwards.
+	Limit ViewerLimit
 }
 
 // Handler serves the read API. The host mounts it under a prefix such as
 // "/media/" after its auth middleware. {id} is "{content_id}" or
 // "{content_id}@{version_id}" for a versioned kind. Errors are JSON
 // {"error", "code"}: 400 invalid_request, 404 not_found (also for hidden
-// items), 500 internal_error (a resolver error denies this way).
+// items), 429 rate_limited (Retry-After; HandlerOptions.Limit), 500
+// internal_error (a resolver error denies this way).
 //
 //	GET /{kind}/{id}?variant=high,thumb&offset=0&limit=50 -> ReadResult (+ Set-Cookie mt)
 //	GET /{kind}/{id}/hls/{file}/master.m3u8?audio=ja&subs=en,s2 (filters optional; empty = none)
 //	GET /{kind}/{id}/hls/{file}/video/{height}.m3u8, audio/{track}.m3u8, subs/{track}.m3u8
 //	GET /{kind}/{id}/hls/{file}/sprite.vtt
 //	GET /{kind}/{id}/download/{key} -> 302 to the signed download URL
-//	GET /{kind}/{id}/slots/{slot} -> SlotManifest (public; no resolve, no-cache)
-//	GET /{kind}/{id}/video-images -> VideoImages without selections (public; no resolve, no-cache)
+//	GET /{kind}/{id}/slots/{slot} -> SlotManifest
+//	GET /{kind}/{id}/video-images -> VideoImages without selections
 //
-// Every request resolves the item once; playlists and redirects are
-// "private, no-store" and carry the folder cookie in cookie mode.
+// Every request resolves the item once and is "private, no-store";
+// playlists and redirects carry the folder cookie in cookie mode. Each
+// request that signs URLs logs the viewer, item, access and expiry, and a
+// short hash of a folder token, so a leaked URL can be traced to its viewer.
 func (r *Reader) Handler(o HandlerOptions) http.Handler {
 	log := o.Logger
 	if log == nil {
@@ -50,8 +62,8 @@ func (r *Reader) Handler(o HandlerOptions) http.Handler {
 	mux := http.NewServeMux()
 	r.hlsRoutes(mux, o, log)
 	mux.HandleFunc("GET /{kind}/{id}/slots/{slot}", func(w http.ResponseWriter, req *http.Request) {
-		ref, _ := requestRef(req, o)
-		m, err := r.Slot(req.Context(), ref, req.PathValue("slot"))
+		ref, actor := requestRef(req, o)
+		m, err := r.Slot(req.Context(), ref, actor, req.PathValue("slot"))
 		if err != nil {
 			status, code, msg := classify(err)
 			if status >= http.StatusInternalServerError {
@@ -61,12 +73,12 @@ func (r *Reader) Handler(o HandlerOptions) http.Handler {
 			writeJSON(w, status, map[string]string{"error": msg, "code": code})
 			return
 		}
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Cache-Control", "private, no-store")
 		writeJSON(w, http.StatusOK, m)
 	})
 	mux.HandleFunc("GET /{kind}/{id}/video-images", func(w http.ResponseWriter, req *http.Request) {
-		ref, _ := requestRef(req, o)
-		v, err := r.VideoImages(req.Context(), ref)
+		ref, actor := requestRef(req, o)
+		v, err := r.VideoImages(req.Context(), ref, actor)
 		if err != nil {
 			status, code, msg := classify(err)
 			if status >= http.StatusInternalServerError {
@@ -76,12 +88,12 @@ func (r *Reader) Handler(o HandlerOptions) http.Handler {
 			writeJSON(w, status, map[string]string{"error": msg, "code": code})
 			return
 		}
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Cache-Control", "private, no-store")
 		writeJSON(w, http.StatusOK, v)
 	})
 	mux.HandleFunc("GET /{kind}/{id}", func(w http.ResponseWriter, req *http.Request) {
 		start := time.Now()
-		res, err := r.serveRead(req, o)
+		res, g, err := r.serveRead(req, o)
 		status := http.StatusOK
 		w.Header().Set("Cache-Control", "private, no-store")
 		if err != nil {
@@ -96,13 +108,70 @@ func (r *Reader) Handler(o HandlerOptions) http.Handler {
 				http.SetCookie(w, res.Cookie)
 			}
 			writeJSON(w, status, res)
+			g.logIssued(req, log)
 		}
 		log.Debug("media read", "path", req.URL.Path, "status", status, "duration", time.Since(start))
 	})
-	return mux
+	return r.limited(mux, o, log)
 }
 
-func (r *Reader) serveRead(req *http.Request, o HandlerOptions) (*ReadResult, error) {
+// limited applies HandlerOptions.Limit to every route.
+func (r *Reader) limited(next http.Handler, o HandlerOptions, log *slog.Logger) http.Handler {
+	lim := newViewerLimiter(o.Limit, time.Now)
+	if lim == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_, actor := requestRef(req, o)
+		key := viewerKey(req, actor)
+		if ok, wait := lim.allow(key); !ok {
+			log.Warn("media read rate limited", "viewer", actor.ID, "anonymous", actor.Anonymous, "path", req.URL.Path)
+			w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(wait.Seconds())))))
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests", "code": "rate_limited"})
+			return
+		}
+		next.ServeHTTP(w, req)
+	})
+}
+
+// viewerKey is the rate-limit key: the actor, else its IP, else the peer address.
+func viewerKey(req *http.Request, a access.Actor) string {
+	switch {
+	case !a.Anonymous && a.ID != "":
+		return "a:" + a.ID
+	case a.IP != "":
+		return "ip:" + a.IP
+	}
+	host, _, err := net.SplitHostPort(req.RemoteAddr)
+	if err != nil {
+		host = req.RemoteAddr
+	}
+	return "ip:" + host
+}
+
+// logIssued records the URLs a grant signed for its viewer.
+func (g *Grant) logIssued(req *http.Request, log *slog.Logger) {
+	if g == nil {
+		return
+	}
+	access := AccessNone
+	switch {
+	case g.Full():
+		access = AccessFull
+	case g.units > 0:
+		access = AccessPreview
+	}
+	attrs := []any{"viewer", g.actor.ID, "anonymous", g.actor.Anonymous, "ref", g.Item.Ref().String(),
+		"path", req.URL.Path, "access", access, "editor", g.Editor(), "expires", g.Expires.Unix()}
+	if g.folder != "" {
+		sum := sha256.Sum256([]byte(g.folder))
+		attrs = append(attrs, "token", hex.EncodeToString(sum[:6]))
+	}
+	log.Info("media urls signed", attrs...)
+}
+
+func (r *Reader) serveRead(req *http.Request, o HandlerOptions) (*ReadResult, *Grant, error) {
 	ref, actor := requestRef(req, o)
 	q := req.URL.Query()
 	var opts ReadOptions
@@ -120,12 +189,12 @@ func (r *Reader) serveRead(req *http.Request, o HandlerOptions) (*ReadResult, er
 		if s := q.Get(p.name); s != "" {
 			n, err := strconv.Atoi(s)
 			if err != nil || n < 0 {
-				return nil, ErrInvalidRequest
+				return nil, nil, ErrInvalidRequest
 			}
 			*p.dst = n
 		}
 	}
-	return r.Read(req.Context(), ref, actor, opts)
+	return r.read(req.Context(), ref, actor, opts)
 }
 
 func requestRef(req *http.Request, o HandlerOptions) (contentref.ContentRef, access.Actor) {

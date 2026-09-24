@@ -100,7 +100,12 @@ func newUploadEnv(t *testing.T, caps *media.Capabilities, limiter media.UploadLi
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := media.UploadHandler(u, media.UploadHandlerOptions{Tenant: env.Tenant, PublicBaseURL: slotBase, Actor: func(r *http.Request) (access.Actor, bool) {
+	reader, err := media.NewReader(media.ReaderOptions{Manifests: manifests, Kinds: kinds, Resolver: &resolver{},
+		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: slotBase, SigningKey: token.Key{ID: "k1", Secret: bytes.Repeat([]byte("s"), 32)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := media.UploadHandler(u, media.UploadHandlerOptions{Tenant: env.Tenant, Reader: reader, Actor: func(r *http.Request) (access.Actor, bool) {
 		id := r.Header.Get("X-Test-Actor")
 		return access.Actor{ID: id, Kind: "user"}, id != ""
 	}})

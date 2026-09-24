@@ -159,6 +159,7 @@ type Grant struct {
 	Expires    time.Time
 	units      int
 	folder     string // folder token; full access only
+	actor      access.Actor
 	r          *Reader
 }
 
@@ -198,7 +199,7 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 		return nil, err
 	}
 	g := &Grant{Item: item, Resolution: res, Manifest: man, units: res.Units(len(man.Files)),
-		Expires: token.Expiry(r.now(), r.delivery.TTL, r.delivery.Window), r: r}
+		Expires: token.Expiry(r.now(), r.delivery.TTL, r.delivery.Window), actor: actor, r: r}
 	if res.Full() {
 		g.folder = r.ring.Sign(item.BlobsPrefix(), g.Expires)
 	}
@@ -256,10 +257,23 @@ var ErrNotAllowed = errors.New("media: not allowed")
 func (g *Grant) Editor() bool { return g.Resolution.Editor }
 
 // URL signs blob of file i: plain in cookie mode with full access, the
-// folder token in URL mode, else a token for exactly that key.
+// folder token in URL mode, else a token for exactly that key. An
+// EditorOnly variant (editors only) lives in editor/, which no viewer token
+// covers, and always carries an editor token.
 func (g *Grant) URL(i int, blob string) (string, error) {
-	if !g.Allowed(i) || !slices.Contains(fileBlobs(g.Manifest.Files[i], g.Editor()), blob) {
+	if !g.Allowed(i) {
 		return "", ErrNotAllowed
+	}
+	f := g.Manifest.Files[i]
+	if !slices.Contains(fileBlobs(f), blob) {
+		if !g.Editor() || !slices.Contains((&Manifest{Files: []File{f}}).EditorBlobs(), blob) {
+			return "", ErrNotAllowed
+		}
+		key, err := g.Item.EditorBlob(blob)
+		if err != nil {
+			return "", err
+		}
+		return g.r.objectURL(key) + "?t=" + g.r.editorToken(g.Item, g.Expires), nil
 	}
 	key, err := g.Item.Blob(blob)
 	if err != nil {
@@ -318,20 +332,17 @@ func extension(contentType string) string {
 
 func (r *Reader) objectURL(key string) string { return r.base.String() + "/" + key }
 
-// fileBlobs lists the blobs/ names one file references, without its
-// editor-only variants unless editor.
-func fileBlobs(f File, editor bool) []string {
-	if !editor {
-		vs := make(map[string]Variant, len(f.Variants))
-		for k, v := range f.Variants {
-			if !v.Editor {
-				vs[k] = v
-			}
-		}
-		f.Variants = vs
-	}
+// fileBlobs lists the blobs/ names one file references (EditorOnly
+// variants are in editor/).
+func fileBlobs(f File) []string {
 	m := Manifest{Files: []File{f}}
 	return m.Blobs()
+}
+
+// editorToken covers the item's editor/ folder: EditorOnly variants and
+// unpublished poster and hover-preview outputs. Only editors get it.
+func (r *Reader) editorToken(item Item, exp time.Time) string {
+	return r.ring.Sign(item.EditorPrefix(), exp)
 }
 
 // ReadOptions select the URLs a read returns.
@@ -397,8 +408,13 @@ type DownloadInfo struct {
 
 // Read resolves ref once and answers the read API.
 func (r *Reader) Read(ctx context.Context, ref contentref.ContentRef, actor access.Actor, o ReadOptions) (*ReadResult, error) {
+	res, _, err := r.read(ctx, ref, actor, o)
+	return res, err
+}
+
+func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor access.Actor, o ReadOptions) (*ReadResult, *Grant, error) {
 	if o.Offset < 0 || o.Limit < 0 {
-		return nil, fmt.Errorf("%w: negative offset or limit", ErrInvalidRequest)
+		return nil, nil, fmt.Errorf("%w: negative offset or limit", ErrInvalidRequest)
 	}
 	if o.Limit == 0 {
 		o.Limit = r.defLimit
@@ -406,7 +422,7 @@ func (r *Reader) Read(ctx context.Context, ref contentref.ContentRef, actor acce
 	o.Limit = min(o.Limit, r.maxLimit)
 	g, err := r.Grant(ctx, ref, actor)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	files := g.Manifest.Files
 	out := &ReadResult{Access: AccessNone, Total: len(files), Offset: o.Offset, Limit: o.Limit,
@@ -434,7 +450,7 @@ func (r *Reader) Read(ctx context.Context, ref contentref.ContentRef, actor acce
 				for _, v := range o.Variants {
 					if vr, ok := f.Variants[v]; ok && (!vr.Editor || g.Editor()) {
 						if fi.URL, err = g.URL(i, vr.Blob); err != nil {
-							return nil, err
+							return nil, nil, err
 						}
 						fi.Variant = v
 						break
@@ -455,12 +471,12 @@ func (r *Reader) Read(ctx context.Context, ref contentref.ContentRef, actor acce
 			d := g.Manifest.Downloads[k]
 			name, u, err := g.DownloadURL(ctx, k)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			out.Downloads = append(out.Downloads, DownloadInfo{Key: k, Name: name, Type: d.Type, Size: d.Size, URL: u})
 		}
 	}
-	return out, nil
+	return out, g, nil
 }
 
 // addProgress fills Progress on allowed, pending video files. A failed

@@ -36,7 +36,7 @@ func (p *Processor) slot(ctx context.Context, item media.Item, slot string) erro
 
 // registered brings a committed slot's outputs to its record: the committed
 // original, EXIF-oriented and edited, encoded at each width that fits and
-// written in place at public/{slot}_{width}.webp (no-cache, tagged with the
+// written in place at Item.SlotOutput (no-cache, tagged with the
 // record's fingerprint). Widths that do not fit, or that the slot no longer
 // declares, are deleted. Output writes are conditional on the ETag seen, and
 // every pass re-checks the current record, so jobs holding an older commit
@@ -183,7 +183,11 @@ func (p *Processor) record(ctx context.Context, ref contentref.ContentRef, slot 
 
 // dropRetired deletes outputs of widths the slot no longer declares.
 func (p *Processor) dropRetired(ctx context.Context, item media.Item, slot string, spec media.Slot) error {
-	prefix := item.PublicPrefix() + slot + "_"
+	first, err := item.SlotOutput(slot, spec.Widths[0])
+	if err != nil {
+		return err
+	}
+	prefix := first[:strings.LastIndexByte(first, '/')+1] + slot + "_"
 	for obj, err := range p.c.Store.List(ctx, prefix) {
 		if err != nil {
 			return err

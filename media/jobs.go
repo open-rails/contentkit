@@ -16,6 +16,7 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media/layout"
 )
@@ -42,10 +43,16 @@ type JobsConfig struct {
 	// abort rule. Default 25 h.
 	LateUploadWindow time.Duration
 	Limiter          UploadLimiter // releases a deleted item's quota; optional
-	Queue            string        // default "contentkit_media"
-	MaxWorkers       int           // default 2
-	Logger           *slog.Logger
-	Now              func() time.Time // clock for grace decisions; default time.Now
+	// Resolver decides, with an anonymous actor, what of a video item is
+	// public (Publish); without it no poster or hover preview is published.
+	Resolver access.ContentResolver
+	// Exposure maps that anonymous resolution to what is published; default
+	// DefaultExposure (drafts nothing, free items all, others the poster).
+	Exposure   ExposurePolicy
+	Queue      string // default "contentkit_media"
+	MaxWorkers int    // default 2
+	Logger     *slog.Logger
+	Now        func() time.Time // clock for grace decisions; default time.Now
 }
 
 // Jobs is media's River contribution: sweep, folder deletion, and the workers
@@ -92,6 +99,12 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.Exposure == nil {
+		cfg.Exposure = DefaultExposure
+	}
+	if cfg.Resolver == nil && cfg.Kinds.hasVideo() {
+		cfg.Logger.Warn("media: JobsConfig.Resolver is nil; video posters and hover previews are never published")
+	}
 	return &Jobs{cfg: cfg}, nil
 }
 
@@ -131,6 +144,7 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &sweepPassWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &deleteFolderWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &processWorker{j: j}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &publishWorker{j: j}) },
 		} {
 			if err := w(); err != nil {
 				return err
@@ -485,9 +499,14 @@ func (w *processWorker) Work(ctx context.Context, job *river.Job[processArgs]) e
 	if err := w.j.waitFor(ctx, job.Args.After); err != nil {
 		return err
 	}
+	item, _ := w.j.cfg.Kinds.Item(pj.Ref)
+	gated := item.Kind().Video != nil && (pj.Slot == PosterSlot || pj.Slot == HoverPreview)
 	var errs []error
 	for _, p := range w.j.processors {
 		errs = append(errs, p(ctx, pj))
+	}
+	if gated {
+		errs = append(errs, w.j.Publish(ctx, pj.Ref))
 	}
 	return errors.Join(errs...)
 }
