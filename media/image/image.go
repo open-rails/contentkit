@@ -35,8 +35,11 @@ type Config struct {
 	Specs     SpecChooser
 	Hooks     media.Hooks // Failed
 	Workers   int         // sources encoded at once; default 2
-	MaxPixels int         // largest source decoded; default 100 MP
-	TempDir   string      // zip scratch; default os.TempDir()
+	MaxPixels int         // largest source decoded, all frames of an animation together; default 100 MP
+	MaxFrames int         // frames an animation may have; default 1000
+	// MaxAnimationSeconds bounds an animation's running time; default 60.
+	MaxAnimationSeconds float64
+	TempDir             string // zip scratch; default os.TempDir()
 }
 
 // Processor derives images. It is safe for concurrent use and idempotent:
@@ -57,6 +60,12 @@ func New(c Config) (*Processor, error) {
 	}
 	if c.MaxPixels <= 0 {
 		c.MaxPixels = 100_000_000
+	}
+	if c.MaxFrames <= 0 {
+		c.MaxFrames = 1000
+	}
+	if c.MaxAnimationSeconds <= 0 {
+		c.MaxAnimationSeconds = 60
 	}
 	if err := start(); err != nil {
 		return nil, fmt.Errorf("media/image: libvips: %w", err)
@@ -125,7 +134,7 @@ func (p *Processor) manifest(ctx context.Context, item media.Item) error {
 	} else if err != nil {
 		return err
 	}
-	failed := map[string]bool{} // keys that cannot be derived; reported once
+	failed := map[string]error{} // keys that cannot be derived; reported once, recorded on their files
 	for range 8 {
 		if len(p.todo(item.Kind(), man, failed)) == 0 && !p.zipStale(item.Kind(), man) {
 			return nil
@@ -139,15 +148,15 @@ func (p *Processor) manifest(ctx context.Context, item media.Item) error {
 
 // todo maps each source and edit to the variants its files lack or have
 // under another spec or edit.
-func (p *Processor) todo(kind media.Kind, man *media.Manifest, failed map[string]bool) map[string]work {
+func (p *Processor) todo(kind media.Kind, man *media.Manifest, failed map[string]error) map[string]work {
 	todo := map[string]work{}
 	for _, f := range man.Files {
 		k := key(f)
-		if !isImage(f) || failed[k] {
+		if !isImage(f) || failed[k] != nil || f.Failed() != nil {
 			continue
 		}
 		for name, s := range p.c.Specs(kind, f) {
-			if v, ok := f.Variants[name]; !ok || v.Spec != s.For(f.Edit) {
+			if v, ok := f.Variants[name]; !ok || v.Spec != specFor(s, f.Type, f.Edit) {
 				w, ok := todo[k]
 				if !ok {
 					w = work{source: f.Source(), typ: f.Type, edit: f.Edit, specs: map[string]media.Spec{}}
@@ -173,7 +182,7 @@ func (p *Processor) zipStale(kind media.Kind, man *media.Manifest) bool {
 
 // pass derives what man lacks, builds the zip when its inputs are complete,
 // and records both in one manifest edit, returning the edited manifest.
-func (p *Processor) pass(ctx context.Context, item media.Item, man *media.Manifest, failed map[string]bool) (*media.Manifest, error) {
+func (p *Processor) pass(ctx context.Context, item media.Item, man *media.Manifest, failed map[string]error) (*media.Manifest, error) {
 	ref, kind := item.Ref(), item.Kind()
 	todo := p.todo(kind, man, failed)
 
@@ -192,7 +201,7 @@ func (p *Processor) pass(ctx context.Context, item media.Item, man *media.Manife
 				}
 				p.failed(ctx, ref, fileOf(man, k), err)
 				mu.Lock()
-				failed[k] = true
+				failed[k] = err
 				mu.Unlock()
 				return nil
 			}
@@ -216,12 +225,17 @@ func (p *Processor) pass(ctx context.Context, item media.Item, man *media.Manife
 					delete(f.Variants, name)
 				}
 			}
+			if err := failed[key(*f)]; err != nil {
+				f.Failure = media.NewFileFailure(*f, err)
+				continue
+			}
 			d, ok := results[key(*f)] // a replaced source or changed edit keeps nothing derived from the old one
 			if !ok {
 				continue
 			}
+			f.Failure = nil
 			for name, s := range specs {
-				if v, ok := d.variants[name]; ok && v.Spec == s.For(f.Edit) {
+				if v, ok := d.variants[name]; ok && v.Spec == specFor(s, f.Type, f.Edit) {
 					if f.Variants == nil {
 						f.Variants = map[string]media.Variant{}
 					}
@@ -307,6 +321,15 @@ func (p *Processor) drop(ctx context.Context, item media.Item, results map[strin
 	}
 }
 
+// specFor is a variant's recipe: animated formats carry a marker, so variants
+// derived as stills before frames were kept re-derive.
+func specFor(s media.Spec, typ string, edit *media.Edit) string {
+	if animated[typ] {
+		return s.For(edit) + ".frames"
+	}
+	return s.For(edit)
+}
+
 // derive encodes one source through its edit into each spec and stores the blobs.
 func (p *Processor) derive(ctx context.Context, item media.Item, w work) (derived, error) {
 	key, err := item.Original(w.source)
@@ -320,12 +343,12 @@ func (p *Processor) derive(ctx context.Context, item media.Item, w work) (derive
 		return derived{}, err
 	}
 	d := derived{variants: make(map[string]media.Variant, len(w.specs))}
-	if d.dims, err = p.probe(src, w.typ, w.edit); err != nil {
+	if d.dims, err = p.probe(src, w.typ, w.edit, item.Kind().Animation); err != nil {
 		return derived{}, err
 	}
 	d.w, d.h = w.edit.Size(d.dims.W, d.dims.H)
 	for name, s := range w.specs {
-		out, err := encode(src, s, w.edit)
+		out, err := encode(src, w.typ, s, w.edit)
 		if err != nil {
 			return derived{}, err
 		}
@@ -337,21 +360,25 @@ func (p *Processor) derive(ctx context.Context, item media.Item, w work) (derive
 		if err != nil {
 			return derived{}, err
 		}
-		d.variants[name] = media.Variant{Blob: blob, Spec: s.For(w.edit), Type: "image/webp", Size: int64(len(out)), Editor: s.EditorOnly || s.Unedited}
+		d.variants[name] = media.Variant{Blob: blob, Spec: specFor(s, w.typ, w.edit), Type: "image/webp", Size: int64(len(out)), Editor: s.EditorOnly || s.Unedited}
 	}
 	return d, nil
 }
 
 // probe checks src is contentType, sizes it and checks edit against it.
-func (p *Processor) probe(src []byte, contentType string, edit *media.Edit) (media.Dims, error) {
-	w, h, err := probe(src, contentType, p.c.MaxPixels)
+func (p *Processor) probe(src []byte, contentType string, edit *media.Edit, animation media.Animation) (media.Dims, error) {
+	s, err := probe(src, contentType, p.rules(animation))
 	if err != nil {
 		return media.Dims{}, err
 	}
-	if err := edit.Check(w, h); err != nil {
+	if err := edit.Check(s.w, s.h); err != nil {
 		return media.Dims{}, permanentError{fmt.Errorf("edit: %w", err)}
 	}
-	return media.Dims{W: w, H: h}, nil
+	return s.dims(), nil
+}
+
+func (p *Processor) rules(animation media.Animation) rules {
+	return rules{maxPixels: p.c.MaxPixels, maxFrames: p.c.MaxFrames, maxSeconds: p.c.MaxAnimationSeconds, animation: animation}
 }
 
 // putBlob stores an immutable, content-addressed blob unless it exists.

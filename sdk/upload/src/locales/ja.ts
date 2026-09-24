@@ -113,6 +113,7 @@ export const ja: UploadUiMessageBundle = {
     processingImage: "画像を処理中…",
     image: "画像 {index}",
     video: "動画 {index}",
+    failedImage: "この画像を処理できませんでした。",
   },
   player: {
     play: "動画を再生",
@@ -157,5 +158,10 @@ export const ja: UploadUiMessageBundle = {
     image_too_large: "この画像は {width}×{height} px です。画像は最大 {megapixels} メガピクセルまでです。",
     image_unreadable: "このファイルは有効な {format} 画像ではありません。",
     render_timeout: "サーバーでまだ処理中です。完了すると表示されます。しばらくしてから確認してください。",
+    animation_not_allowed: "ここではアニメーション画像は使用できません。静止画像をアップロードしてください。",
+    animation_unsupported: "アニメーション {format} 画像には対応していません。アニメーション WebP または GIF を使用してください。",
+    animationFrames: "アニメーションは最大 {maxFrames} フレームまでです（この画像は {frames} フレーム）。",
+    animationSeconds: "アニメーションは最大 {maxSeconds} 秒までです。",
+    animationTooLarge: "このアニメーションは大きすぎます：{width}×{height} px が {frames} フレーム。フレーム数かサイズを減らしてください。",
   },
 };

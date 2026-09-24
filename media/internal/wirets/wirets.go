@@ -30,7 +30,8 @@ var posterSources = []string{media.PosterSourceFrame, media.PosterSourceUpload, 
 var errorCodes = []string{
 	media.CodeInvalid, "unauthorized", media.CodeForbidden, media.CodeNotFound, media.CodeConflict,
 	media.CodeIncomplete, media.CodeNotUploaded, media.CodeTooManyFiles, media.CodeTooLarge, media.CodeQuota, media.CodeType,
-	media.CodeChecksum, media.CodeRate, media.CodeImageTooSmall, media.CodeImageTooLarge, media.CodeImageUnreadable, "internal_error",
+	media.CodeChecksum, media.CodeRate, media.CodeImageTooSmall, media.CodeImageTooLarge, media.CodeImageUnreadable,
+	media.CodeAnimationNotAllowed, media.CodeAnimationTooLong, media.CodeAnimationUnsupported, "internal_error",
 }
 
 var ops = []string{media.OpInsert, media.OpReplace, media.OpMove, media.OpRename, media.OpRemove, media.OpEdit}

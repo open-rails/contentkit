@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Progress, UploadClient } from "./client.js";
 import { centeredCrop, constrainCrop, editedSize, rotation, sameEdit, type Size } from "./crop.js";
 import { slotError, UploadError } from "./errors.js";
-import { decodeImage, type CropSource } from "./image.js";
+import { decodeImage, isAnimatedImage, type CropSource } from "./image.js";
 import { hasOriginal, manifestAspect, slotSources, type SlotSources } from "./srcset.js";
 import type { Edit, RefBody, SlotManifest } from "./wire.gen.js";
 
@@ -164,7 +164,15 @@ export function useSlotCrop(client: UploadClient, o: SlotCropOptions): UseSlotCr
     [set],
   );
 
-  const pick = useCallback((file: File) => open(() => (opts.current.decode ?? decodeImage)(file), "new", null), [open]);
+  const pick = useCallback(
+    (file: File) =>
+      open(async () => {
+        if (opts.current.manifest?.animation === "reject" && (await isAnimatedImage(file)))
+          throw new UploadError("animation_not_allowed", "animated images are not allowed here", 422);
+        return (opts.current.decode ?? decodeImage)(file);
+      }, "new", null),
+    [open],
+  );
 
   const canRecrop = hasOriginal(o.manifest);
   const recrop = useCallback(async () => {

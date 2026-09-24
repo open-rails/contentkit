@@ -336,6 +336,30 @@ Cropping and rotating are ContentKit's: the host never decodes images.
 - Cap files per item with `Kind.MaxFiles` and `Kind.TypeLimits`
   (`{"video": {MaxFiles: 1}}`); commits over a cap get 409 `too_many_files`.
 
+### Animated images and AVIF
+
+- GIF and WebP animations keep every frame, delay and the loop count in
+  every variant and slot output (animated WebP). Crops, rotations and
+  resizes apply per frame. `Kind.Animation` (files, inline images) and
+  `Slot.Animation` are `media.AnimationAllow` (default) or
+  `media.AnimationReject`, which refuses an animated upload with
+  `animation_not_allowed`. Nothing is flattened to its first frame.
+  Animations ignore EXIF orientation.
+- `image.Config` bounds sources: `MaxPixels` counts all frames (frames × w × h,
+  default 100 MP), `MaxFrames` (default 1000) and `MaxAnimationSeconds`
+  (default 60) refuse with `image_too_large` / `animation_too_long`.
+- AVIF and HEIF stills decode through libheif. The host's libvips needs
+  libheif with an AV1 decoder (Debian/Ubuntu: `libheif-plugin-dav1d` or
+  `libheif-plugin-aomdec`, which `--no-install-recommends` leaves out). libheif
+  before 1.19 reads only the first frame of an AVIF sequence, so sequences
+  are refused as `animation_unsupported`. Outputs stay WebP.
+- A file the processor refuses records `File.Failure` (`message`, `code`,
+  `details`) for its source and edit, and is not retried until either
+  changes. Editors see it in the read API as `failed`, `failed_code` and
+  `failed_details` (images and videos alike). Slots record theirs as
+  `SlotManifest.error_code`. GIF and WebP variants derived as stills before
+  this release re-derive on the item's next `ProcessJob{Ref}`.
+
 ## Video posters and hover previews
 
 Every `Video` kind gets the `poster` slot (`Video.Poster()`): native aspect,

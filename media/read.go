@@ -390,7 +390,11 @@ type FileInfo struct {
 	Teaser   bool    `json:"teaser,omitempty"`
 	Locked   bool    `json:"locked,omitempty"`
 	HLS      bool    `json:"hls,omitempty"`
-	Failed   string  `json:"failed,omitempty"` // editors only: why the video cannot be encoded
+	Failed   string  `json:"failed,omitempty"` // editors only: why the file cannot be processed (video encode, image derive)
+	// FailedCode and FailedDetails type an image refusal (image_too_large,
+	// animation_not_allowed, …); editors only.
+	FailedCode    string        `json:"failed_code,omitempty"`
+	FailedDetails *ErrorDetails `json:"failed_details,omitempty"`
 	// Progress of a pending encode (none yet, or a replaced source); served
 	// with the file, as it reveals only timing and queue depth.
 	Progress *EncodeProgress `json:"progress,omitempty"`
@@ -444,6 +448,9 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 				fi.Edit, fi.Dims = f.Edit, f.Dims
 				if f.HLS != nil && f.HLS.Source == f.Source() {
 					fi.Failed = f.HLS.Error
+				}
+				if ff := f.Failed(); ff != nil {
+					fi.Failed, fi.FailedCode, fi.FailedDetails = ff.Message, ff.Code, ff.Details
 				}
 			}
 			if i >= o.Offset && i < o.Offset+o.Limit {

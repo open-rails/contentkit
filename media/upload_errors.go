@@ -26,6 +26,10 @@ const (
 	CodeImageTooSmall   = "image_too_small"  // 422: edited narrower than the slot's minimum
 	CodeImageTooLarge   = "image_too_large"  // 413: more pixels than the processor decodes
 	CodeImageUnreadable = "image_unreadable" // 422: not a decodable image of its declared type
+
+	CodeAnimationNotAllowed  = "animation_not_allowed" // 422: an animated image where the policy is AnimationReject
+	CodeAnimationTooLong     = "animation_too_long"    // 422: more frames or seconds than the processor allows
+	CodeAnimationUnsupported = "animation_unsupported" // 415: an AVIF/HEIF image sequence (decoded as one frame)
 )
 
 var codeStatus = map[string]int{
@@ -45,18 +49,26 @@ var codeStatus = map[string]int{
 	CodeImageTooSmall:   http.StatusUnprocessableEntity,
 	CodeImageTooLarge:   http.StatusRequestEntityTooLarge,
 	CodeImageUnreadable: http.StatusUnprocessableEntity,
+
+	CodeAnimationNotAllowed:  http.StatusUnprocessableEntity,
+	CodeAnimationTooLong:     http.StatusUnprocessableEntity,
+	CodeAnimationUnsupported: http.StatusUnsupportedMediaType,
 }
 
 // ErrorDetails qualifies an image refusal so clients can state the rule.
 type ErrorDetails struct {
-	Width     int      `json:"width,omitempty"`      // image_too_small: the edited width; image_too_large: the source's
-	Height    int      `json:"height,omitempty"`     // image_too_large: the source's
-	MinWidth  int      `json:"min_width,omitempty"`  // image_too_small
-	MaxPixels int      `json:"max_pixels,omitempty"` // image_too_large
-	Type      string   `json:"type,omitempty"`       // the declared type (image_unreadable, type_not_allowed, too_large)
-	Allowed   []string `json:"allowed,omitempty"`    // type_not_allowed: the kind's types
-	Size      int64    `json:"size,omitempty"`       // too_large: bytes
-	MaxBytes  int64    `json:"max_bytes,omitempty"`  // too_large
+	Width      int      `json:"width,omitempty"`       // image_too_small: the edited width; image_too_large: the source's
+	Height     int      `json:"height,omitempty"`      // image_too_large: the source's
+	MinWidth   int      `json:"min_width,omitempty"`   // image_too_small
+	MaxPixels  int      `json:"max_pixels,omitempty"`  // image_too_large
+	Type       string   `json:"type,omitempty"`        // the declared type (image_unreadable, type_not_allowed, too_large)
+	Allowed    []string `json:"allowed,omitempty"`     // type_not_allowed: the kind's types
+	Size       int64    `json:"size,omitempty"`        // too_large: bytes
+	MaxBytes   int64    `json:"max_bytes,omitempty"`   // too_large
+	Frames     int      `json:"frames,omitempty"`      // animation_too_long, image_too_large: the animation's
+	MaxFrames  int      `json:"max_frames,omitempty"`  // animation_too_long
+	Seconds    float64  `json:"seconds,omitempty"`     // animation_too_long: running time
+	MaxSeconds float64  `json:"max_seconds,omitempty"` // animation_too_long
 }
 
 // ImageError is an image the rules refuse, synchronously (an edit checked

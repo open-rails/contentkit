@@ -30,6 +30,37 @@ type File struct {
 	Meta     map[string]any     `json:"meta,omitempty"`
 	Variants map[string]Variant `json:"variants,omitempty"`
 	HLS      *HLS               `json:"hls,omitempty"`
+	// Failure is why the image processor cannot derive this source through
+	// this edit (Of); a new source or edit clears it.
+	Failure *FileFailure `json:"failure,omitempty"`
+}
+
+// FileFailure is a file's permanent processing failure.
+type FileFailure struct {
+	Of      string        `json:"of"`             // File.FailureKey it was recorded for
+	Message string        `json:"message"`        // what went wrong, or the rule an ImageError states
+	Code    string        `json:"code,omitempty"` // an ImageError's code
+	Details *ErrorDetails `json:"details,omitempty"`
+}
+
+// FailureKey identifies the source and edit a Failure applies to.
+func (f File) FailureKey() string { return f.Source() + "." + f.Edit.Hash() }
+
+// Failed is the file's failure for its current source and edit, or nil.
+func (f File) Failed() *FileFailure {
+	if f.Failure != nil && f.Failure.Of == f.FailureKey() {
+		return f.Failure
+	}
+	return nil
+}
+
+// NewFileFailure records err for f: an ImageError keeps its code and details.
+func NewFileFailure(f File, err error) *FileFailure {
+	out := &FileFailure{Of: f.FailureKey(), Message: err.Error()}
+	if ie := AsImageError(err); ie != nil {
+		out.Message, out.Code, out.Details = ie.Message, ie.Code, &ie.Details
+	}
+	return out
 }
 
 // Source is the file variants derive from: Master when present, else Original.

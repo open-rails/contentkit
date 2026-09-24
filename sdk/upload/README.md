@@ -65,7 +65,12 @@ await client.waitForVideoImages(ref);                              // until noth
   `render_timeout`), `status`, `retryAfter` (seconds, on `rate_limited`) and
   `details` (image refusals: `image_too_small` `{ width, min_width }`,
   `image_too_large`, `image_unreadable`, `type_not_allowed` `{ allowed }`,
-  `too_large` `{ size, max_bytes }`). `refusal` is true when the request broke
+  `too_large` `{ size, max_bytes }`, `animation_not_allowed`,
+  `animation_too_long` `{ frames, max_frames | seconds, max_seconds }`,
+  `animation_unsupported`). `isAnimatedImage(file)` pre-checks a slot whose
+  manifest says `animation: "reject"` (the SDK's slot cropper does); the
+  server decides. Editors see an image the processor refused as the read
+  API's `failed`, `failed_code` and `failed_details`, and the gallery shows why. `refusal` is true when the request broke
   a stated rule (4xx, typed refusals) rather than hitting a fault. A slot
   render's failure is `slotError(manifest)` (`error_code`, `error_details`). `isLimit` is true for
   `rate_limited` and `quota_exceeded`; `isCeiling` for `too_many_files` (409,

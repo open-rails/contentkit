@@ -113,6 +113,7 @@ export const es: UploadUiMessageBundle = {
     processingImage: "Procesando imagen…",
     image: "Imagen {index}",
     video: "Vídeo {index}",
+    failedImage: "No se pudo procesar esta imagen.",
   },
   player: {
     play: "Reproducir vídeo",
@@ -157,5 +158,10 @@ export const es: UploadUiMessageBundle = {
     image_too_large: "Esta imagen mide {width}×{height} px; las imágenes pueden tener como máximo {megapixels} megapíxeles.",
     image_unreadable: "Este archivo no es una imagen {format} válida.",
     render_timeout: "El servidor aún lo está procesando. Aparecerá cuando esté listo; vuelve a comprobarlo en breve.",
+    animation_not_allowed: "Aquí no se permiten imágenes animadas. Sube una imagen sin animación.",
+    animation_unsupported: "Las imágenes {format} animadas no son compatibles. Usa un WebP o GIF animado.",
+    animationFrames: "Las animaciones pueden tener como máximo {maxFrames} fotogramas; esta tiene {frames}.",
+    animationSeconds: "Las animaciones pueden durar como máximo {maxSeconds} segundos.",
+    animationTooLarge: "Esta animación es demasiado grande: {frames} fotogramas de {width}×{height} px. Usa menos fotogramas o un tamaño menor.",
   },
 };

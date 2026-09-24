@@ -92,11 +92,16 @@ export function createTranslator(messages: UploadUiMessages, hostT?: UploadUiTra
         allowed: (d.allowed ?? []).map(formatName).join(", "),
         size: d.size ? megabytes(d.size) : "",
         max: d.max_bytes ? megabytes(d.max_bytes) : "",
+        frames: d.frames ?? "",
+        maxFrames: d.max_frames ?? "",
+        maxSeconds: d.max_seconds ?? "",
       };
       // A refusal the server words itself states its rule; show it rather than a vaguer line.
       if (code === "invalid_request" && server) return server;
       if (code === "type_not_allowed" && d.allowed?.length) return `${translate("errors.type_not_allowed", vars)} ${translate("errors.allowedTypes", vars)}`;
       if (code === "too_large" && d.max_bytes) return translate("errors.tooLargeBy", vars) ?? messages.errors.too_large;
+      if (code === "image_too_large" && (d.frames ?? 0) > 1) return translate("errors.animationTooLarge", vars) ?? messages.errors.image_too_large;
+      if (code === "animation_too_long") return translate(d.max_frames ? "errors.animationFrames" : "errors.animationSeconds", vars) ?? messages.errors.generic;
       const own = code && translate(`errors.${code}`, vars);
       if (own) return own;
       // An unknown refusal (4xx) says what is wrong; faults get the generic line.

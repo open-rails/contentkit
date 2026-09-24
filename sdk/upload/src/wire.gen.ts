@@ -4,7 +4,7 @@ export const MAX_SINGLE_PUT = 67108864;
 export const MIN_PART_SIZE = 8388608;
 export const MAX_PART_SIZE = 16777216;
 
-export type ErrorCode = "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "incomplete" | "not_uploaded" | "too_many_files" | "too_large" | "quota_exceeded" | "type_not_allowed" | "checksum_mismatch" | "rate_limited" | "image_too_small" | "image_too_large" | "image_unreadable" | "internal_error";
+export type ErrorCode = "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "incomplete" | "not_uploaded" | "too_many_files" | "too_large" | "quota_exceeded" | "type_not_allowed" | "checksum_mismatch" | "rate_limited" | "image_too_small" | "image_too_large" | "image_unreadable" | "animation_not_allowed" | "animation_too_long" | "animation_unsupported" | "internal_error";
 
 export type OpName = "insert" | "replace" | "move" | "rename" | "remove" | "edit";
 export type PosterSource = "frame" | "upload" | "auto";
@@ -169,6 +169,10 @@ export interface ErrorDetails {
   allowed?: string[];
   size?: number;
   max_bytes?: number;
+  frames?: number;
+  max_frames?: number;
+  seconds?: number;
+  max_seconds?: number;
 }
 
 export interface SlotManifest {
@@ -182,6 +186,7 @@ export interface SlotManifest {
   error_code?: string;
   error_details?: ErrorDetails;
   min_width?: number;
+  animation?: string;
 }
 
 export interface VideoImagesBody {
@@ -289,6 +294,8 @@ export interface FileInfo {
   locked?: boolean;
   hls?: boolean;
   failed?: string;
+  failed_code?: string;
+  failed_details?: ErrorDetails;
   progress?: EncodeProgress;
   variant?: string;
   url?: string;
