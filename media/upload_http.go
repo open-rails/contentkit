@@ -227,10 +227,11 @@ type VideoPreviewBody struct {
 // ErrorReply is the error body; Code is one of the media Code* constants,
 // "unauthorized" or "internal_error".
 type ErrorReply struct {
-	Error      string   `json:"error"`
-	Code       string   `json:"code"`
-	RetryAfter int      `json:"retry_after,omitempty"` // seconds, with 429
-	Originals  []string `json:"originals,omitempty"`   // not_uploaded at commit: the originals to upload again
+	Error      string        `json:"error"`
+	Code       string        `json:"code"`
+	RetryAfter int           `json:"retry_after,omitempty"` // seconds, with 429
+	Originals  []string      `json:"originals,omitempty"`   // not_uploaded at commit: the originals to upload again
+	Details    *ErrorDetails `json:"details,omitempty"`     // image refusals
 }
 
 type uploadHandler struct {
@@ -576,7 +577,7 @@ func (h uploadHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 			return
 		}
 	}
-	out := ErrorReply{Error: ue.Message, Code: ue.Code, Originals: ue.Originals}
+	out := ErrorReply{Error: ue.Message, Code: ue.Code, Originals: ue.Originals, Details: ue.Details}
 	if ue.RetryAfter > 0 {
 		out.RetryAfter = int(math.Ceil(ue.RetryAfter.Seconds()))
 		w.Header().Set("Retry-After", strconv.Itoa(out.RetryAfter))

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Progress, UploadClient } from "./client.js";
 import { centeredCrop, constrainCrop, editedSize, rotation, sameEdit, type Size } from "./crop.js";
-import { UploadError } from "./errors.js";
+import { slotError, UploadError } from "./errors.js";
 import { decodeImage, type CropSource } from "./image.js";
 import { hasOriginal, manifestAspect, slotSources, type SlotSources } from "./srcset.js";
 import type { Edit, RefBody, SlotManifest } from "./wire.gen.js";
@@ -88,6 +88,8 @@ export interface SlotCropOptions {
   decode?: (file: File) => Promise<CropSource>;
   /** How long save() waits for the server to encode the outputs. Default 60 s. */
   renderTimeout?: number;
+  /** Every failed decode or save (aborts excepted); the state shows it too. */
+  onError?: (e: UploadError, operation: "slot.decode" | "slot.save") => void;
 }
 
 export type UseSlotCrop = SlotCropState & {
@@ -154,7 +156,9 @@ export function useSlotCrop(client: UploadClient, o: SlotCropOptions): UseSlotCr
         set({ status: "cropping", source, edit, mode });
       } catch (e) {
         if (n !== picks.current) return;
-        set({ status: "error", error: e instanceof UploadError ? e : new UploadError("decode", String(e)) });
+        const error = e instanceof UploadError ? e : new UploadError("decode", String(e));
+        set({ status: "error", error });
+        opts.current.onError?.(error, "slot.decode");
       }
     },
     [set],
@@ -215,7 +219,8 @@ export function useSlotCrop(client: UploadClient, o: SlotCropOptions): UseSlotCr
           if (a === ctl.current) set({ status: "saving", source, edit, mode, rendering: true });
           manifest = await client.waitForSlot(ref, slot, { signal: a.signal, timeout: opts.current.renderTimeout });
         }
-        if (!manifest.pending && manifest.error) throw new UploadError("internal_error", manifest.error);
+        if (manifest.pending) throw new UploadError("render_timeout", "the slot is still rendering");
+        if (manifest.error) throw slotError(manifest);
         if (a !== ctl.current) return undefined;
         set({ status: "done", manifest });
         opts.current.onSaved?.(manifest);
@@ -224,6 +229,7 @@ export function useSlotCrop(client: UploadClient, o: SlotCropOptions): UseSlotCr
         if (a !== ctl.current) return undefined;
         const error = e instanceof UploadError ? e : new UploadError("network", String(e));
         set(error.code === "aborted" ? { status: "cropping", source, edit, mode } : { status: "error", error, source, edit, mode });
+        if (error.code !== "aborted") opts.current.onError?.(error, "slot.save");
         return undefined;
       }
     },

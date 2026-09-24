@@ -1,4 +1,5 @@
 import { en } from "../locales/en.js";
+import type { ErrorDetails } from "../wire.gen.js";
 
 type Widen<T> = { [K in keyof T]: T[K] extends string ? string : Widen<T[K]> };
 type DeepPartial<T> = { [K in keyof T]?: T[K] extends string ? string : DeepPartial<T[K]> };
@@ -76,10 +77,48 @@ export function createTranslator(messages: UploadUiMessages, hostT?: UploadUiTra
     messages,
     t: (key, vars) => translate(key, vars) ?? key,
     error(error) {
-      const code = typeof error === "string" ? error : (error as { code?: unknown } | null)?.code;
-      const retryAfter = (error as { retryAfter?: number } | null)?.retryAfter;
-      const vars = { seconds: retryAfter ?? 60 };
-      return (typeof code === "string" && translate(`errors.${code}`, vars)) || messages.errors.generic;
+      if (typeof error === "string") return translate(`errors.${error}`, { seconds: 60 }) ?? messages.errors.generic;
+      const e = (error ?? {}) as { code?: unknown; message?: unknown; status?: number; retryAfter?: number; details?: ErrorDetails; refusal?: boolean };
+      const code = typeof e.code === "string" ? e.code : undefined;
+      const server = typeof e.message === "string" && e.message ? sentence(e.message) : undefined;
+      const d = e.details ?? {};
+      const vars: MessageVars = {
+        seconds: e.retryAfter ?? 60,
+        width: d.width ?? "",
+        height: d.height ?? "",
+        min: d.min_width ?? "",
+        megapixels: d.max_pixels ? Math.round(d.max_pixels / 1e6) : "",
+        format: formatName(d.type),
+        allowed: (d.allowed ?? []).map(formatName).join(", "),
+        size: d.size ? megabytes(d.size) : "",
+        max: d.max_bytes ? megabytes(d.max_bytes) : "",
+      };
+      // A refusal the server words itself states its rule; show it rather than a vaguer line.
+      if (code === "invalid_request" && server) return server;
+      if (code === "type_not_allowed" && d.allowed?.length) return `${translate("errors.type_not_allowed", vars)} ${translate("errors.allowedTypes", vars)}`;
+      if (code === "too_large" && d.max_bytes) return translate("errors.tooLargeBy", vars) ?? messages.errors.too_large;
+      const own = code && translate(`errors.${code}`, vars);
+      if (own) return own;
+      // An unknown refusal (4xx) says what is wrong; faults get the generic line.
+      if (server && (e.refusal ?? (e.status !== undefined && e.status >= 400 && e.status < 500))) return server;
+      return messages.errors.generic;
     },
   };
+}
+
+/** "image/avif" → "AVIF". */
+export function formatName(type?: string): string {
+  if (!type) return "";
+  const sub = type.split("/")[1] ?? type;
+  return (sub.split("+")[0] ?? sub).replace(/^x-/, "").toUpperCase().replace(/^JPG$/, "JPEG").replace(/^WEBP$/, "WebP");
+}
+
+function megabytes(n: number): string {
+  const mb = n / (1024 * 1024);
+  return mb >= 1024 ? `${+(mb / 1024).toFixed(1)} GB` : `${+mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+}
+
+function sentence(s: string): string {
+  const t = s.replace(/^media(\/\w+)?: /, "");
+  return t.charAt(0).toUpperCase() + t.slice(1) + (/[.!?]$/.test(t) ? "" : ".");
 }

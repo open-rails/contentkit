@@ -147,7 +147,8 @@ func (s Slot) Resolve(e *Edit, w, h int) (*Edit, error) {
 		return nil, err
 	}
 	if ew, _ := e.Size(w, h); ew < s.Min() {
-		return nil, fmt.Errorf("edited width %dpx is under the slot's %dpx", ew, s.Min())
+		return nil, &ImageError{Code: CodeImageTooSmall, Message: fmt.Sprintf("the edited image must be at least %dpx wide; this one is %dpx", s.Min(), ew),
+			Details: ErrorDetails{Width: ew, MinWidth: s.Min()}}
 	}
 	return e, nil
 }

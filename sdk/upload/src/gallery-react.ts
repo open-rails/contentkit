@@ -130,8 +130,9 @@ export function useCarousel({ count, index: given, defaultIndex = 0, onIndexChan
     dragging,
     swipe: {
       onPointerDown: (e) => {
-        if (count < 2 || (e.pointerType === "mouse" && e.button !== 0) || onControls(e)) return;
+        // A touch swipe ends without a click, so the flag must not outlive the gesture: it would eat the next tap (a nav button's).
         swallowClick.current = false;
+        if (count < 2 || (e.pointerType === "mouse" && e.button !== 0) || onControls(e)) return;
         drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp, width: e.currentTarget.clientWidth || 1 };
       },
       onPointerMove: (e) => {

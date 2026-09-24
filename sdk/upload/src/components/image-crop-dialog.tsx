@@ -40,6 +40,8 @@ export interface ImageCropDialogProps {
   onConfirm: (edit: Edit | null) => void;
   /** Warns when the output is narrower than this many source pixels. */
   targetWidth?: number;
+  /** The narrowest output the server accepts (SlotManifest.min_width): zoom stops there, and a smaller image cannot be confirmed. */
+  minWidth?: number;
   title?: ReactNode;
   description?: ReactNode;
   confirmLabel?: ReactNode;
@@ -86,7 +88,16 @@ function CropBody(p: ImageCropDialogProps & { source: CropSource }) {
   useEffect(() => onEditChange.current?.(c.edit), [c.edit]);
 
   const out = editOutput(size, c.edit, aspect);
-  const undersized = !!(p.targetWidth && out.width < p.targetWidth);
+  const min = p.minWidth ?? 0;
+  // Zoom z shows 1/z of the widest crop; stop where the crop would fall under min.
+  const widest = editOutput(size, { rotate: c.rotate }, aspect).width;
+  const tooSmall = widest < min;
+  const maxZoom = tooSmall ? 1 : Math.max(1, Math.min(MAX_ZOOM, widest / Math.max(1, min)));
+  const belowMin = out.width < min;
+  const undersized = !tooSmall && !!(p.targetWidth && out.width < p.targetWidth);
+  useEffect(() => {
+    if (zoom > maxZoom) setZoom(maxZoom);
+  }, [zoom, maxZoom]);
 
   const complete = (area: Area) => {
     // Before the media has a size the cropper reports NaN areas.
@@ -115,7 +126,7 @@ function CropBody(p: ImageCropDialogProps & { source: CropSource }) {
 
   const onKeyDown = (e: KeyboardEvent) => {
     if (busy) return;
-    if (e.key === "+" || e.key === "=") setZoom((z) => Math.min(MAX_ZOOM, z + ZOOM_STEP));
+    if (e.key === "+" || e.key === "=") setZoom((z) => Math.min(maxZoom, z + ZOOM_STEP));
     else if (e.key === "-" || e.key === "_") setZoom((z) => Math.max(1, z - ZOOM_STEP));
     else if (p.rotatable !== false && (e.key === "r" || e.key === "R")) rotate(e.shiftKey ? -90 : 90);
     else return;
@@ -137,7 +148,7 @@ function CropBody(p: ImageCropDialogProps & { source: CropSource }) {
             rotation={c.rotate}
             aspect={aspect}
             minZoom={1}
-            maxZoom={MAX_ZOOM}
+            maxZoom={maxZoom}
             zoomSpeed={0.5}
             cropShape={p.round ? "round" : "rect"}
             showGrid={!p.round || interacting}
@@ -171,7 +182,7 @@ function CropBody(p: ImageCropDialogProps & { source: CropSource }) {
             aria-label={t("crop.zoom")}
             className="mx-1 flex-1"
             min={1}
-            max={MAX_ZOOM}
+            max={maxZoom}
             step={0.01}
             value={zoom}
             disabled={busy}
@@ -181,8 +192,8 @@ function CropBody(p: ImageCropDialogProps & { source: CropSource }) {
             variant="ghost"
             size="icon-sm"
             aria-label={t("crop.zoomIn")}
-            disabled={busy || zoom >= MAX_ZOOM}
-            onClick={() => setZoom((z) => Math.min(MAX_ZOOM, z + ZOOM_STEP))}
+            disabled={busy || zoom >= maxZoom}
+            onClick={() => setZoom((z) => Math.min(maxZoom, z + ZOOM_STEP))}
           >
             <HugeiconsIcon icon={Image01Icon} strokeWidth={2} className="size-5" />
           </Button>
@@ -202,6 +213,12 @@ function CropBody(p: ImageCropDialogProps & { source: CropSource }) {
           </Button>
         </div>
 
+        {tooSmall && (
+          <Alert variant="destructive" role="alert" data-ckui="too-small">
+            <HugeiconsIcon icon={Alert02Icon} strokeWidth={2} />
+            <AlertDescription>{t("crop.tooSmall", { width: widest, min })}</AlertDescription>
+          </Alert>
+        )}
         {undersized && (
           <Alert className="border-warning/30 bg-warning/10 text-warning" data-ckui="undersized">
             <HugeiconsIcon icon={Alert02Icon} strokeWidth={2} />
@@ -225,7 +242,7 @@ function CropBody(p: ImageCropDialogProps & { source: CropSource }) {
         <Button variant="outline" disabled={busy} onClick={() => p.onOpenChange(false)}>
           {t("common.cancel")}
         </Button>
-        <Button disabled={busy} onClick={() => p.onConfirm(c.edit)}>
+        <Button disabled={busy || tooSmall || belowMin} onClick={() => p.onConfirm(c.edit)}>
           {busy ? t("common.saving") : (p.confirmLabel ?? t("common.save"))}
         </Button>
       </DialogFooter>

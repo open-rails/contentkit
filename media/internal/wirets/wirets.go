@@ -18,7 +18,7 @@ var types = []any{
 	media.PartBody{}, media.PartsBody{}, media.TicketBody{}, media.PartReply{}, media.PartsReply{},
 	media.CompleteReply{}, media.Crop{}, media.Edit{}, media.Op{}, media.CommitBody{}, media.CommitFile{},
 	media.CommitReply{}, media.SlotBody{}, media.SlotFromFileBody{}, media.SlotEditBody{}, media.SlotRefBody{},
-	media.Dims{}, media.SlotImage{}, media.SlotManifest{},
+	media.Dims{}, media.SlotImage{}, media.ErrorDetails{}, media.SlotManifest{},
 	media.VideoImagesBody{}, media.VideoPosterBody{}, media.VideoPreviewBody{}, media.PosterSelection{},
 	media.PosterManifest{}, media.HoverPreviewSelection{}, media.PreviewImage{}, media.HoverPreviewManifest{},
 	media.VideoInfo{}, media.VideoImages{}, media.ErrorReply{},
@@ -30,7 +30,7 @@ var posterSources = []string{media.PosterSourceFrame, media.PosterSourceUpload, 
 var errorCodes = []string{
 	media.CodeInvalid, "unauthorized", media.CodeForbidden, media.CodeNotFound, media.CodeConflict,
 	media.CodeIncomplete, media.CodeNotUploaded, media.CodeTooManyFiles, media.CodeTooLarge, media.CodeQuota, media.CodeType,
-	media.CodeChecksum, media.CodeRate, "internal_error",
+	media.CodeChecksum, media.CodeRate, media.CodeImageTooSmall, media.CodeImageTooLarge, media.CodeImageUnreadable, "internal_error",
 }
 
 var ops = []string{media.OpInsert, media.OpReplace, media.OpMove, media.OpRename, media.OpRemove, media.OpEdit}

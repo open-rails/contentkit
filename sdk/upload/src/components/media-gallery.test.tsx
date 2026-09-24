@@ -72,6 +72,38 @@ it("carousel: a horizontal swipe changes item, a vertical one scrolls, a short o
   // The first item resists a swipe past the start.
   swipe(100, 350);
   expect(screen.getByText("1 / 4")).toBeInTheDocument();
+  // A touch swipe ends without a click: the next tap on an arrow still moves.
+  swipe(300, 100);
+  const next = screen.getByRole("button", { name: "Next" });
+  fireEvent.pointerDown(next, { pointerId: 2, clientX: 390, clientY: 100, button: 0, pointerType: "touch" });
+  fireEvent.pointerUp(next, { pointerId: 2, clientX: 390, clientY: 100, pointerType: "touch" });
+  fireEvent.click(next);
+  expect(screen.getByText("3 / 4")).toBeInTheDocument();
+});
+
+it("carousel: the arrow that reaches an end hands focus to the carousel, so arrow keys keep working", async () => {
+  const user = userEvent.setup();
+  render(<MediaGallery read={read("full", [img(0), img(1)])} />);
+  await user.click(screen.getByRole("button", { name: "Next" }));
+  expect(screen.getByText("2 / 2")).toBeInTheDocument();
+  expect(document.activeElement).toBe(screen.getByRole("group", { name: "Media" }));
+  await user.keyboard("{ArrowLeft}");
+  expect(screen.getByText("1 / 2")).toBeInTheDocument();
+});
+
+it("a multi-video gallery draws the poster on the video it was cut from, for any viewer", () => {
+  const two = read("full", [vid(0), vid(1)]);
+  const poster = { aspect: 16 / 9, outputs: [{ name: "poster_480", w: 480, h: 270, url: "https://m/poster.webp" }], pending: false, min_width: 480 };
+  const preview = { mp4: [], webp: [], pending: false };
+  const { rerender } = render(<MediaGallery read={two} hlsBase={hlsBase} videoImages={{ poster: { ...poster, file: "1.mp4" }, hover_preview: preview }} />);
+  const posterIn = (i: number) => document.querySelectorAll("[data-ckui=slide]")[i]!.querySelector("img[src*='poster.webp']");
+  expect(posterIn(0)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(posterIn(1)).not.toBeNull();
+  // An uploaded poster (no file) belongs to the first video.
+  rerender(<MediaGallery read={two} hlsBase={hlsBase} videoImages={{ poster, hover_preview: preview }} />);
+  fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+  expect(posterIn(0)).not.toBeNull();
 });
 
 it("the swiped-away video pauses; only the visible one is active", async () => {

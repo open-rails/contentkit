@@ -48,13 +48,17 @@ interface Ctx extends MediaGalleryProps {
   items: GalleryItem[];
 }
 
+// The item's poster and hover preview belong to the video they were cut from;
+// an uploaded poster (no file) to the first video.
 function videoArt(ctx: Ctx, f: FileInfo) {
   const v = ctx.videoImages;
   if (!v) return {};
-  const chosen = v.poster.selection?.file ?? v.hover_preview.selection?.file ?? v.video?.file;
-  const only = ctx.items.filter((i) => i.kind === "video").length === 1;
-  if (chosen ? chosen !== f.name : !only) return {};
-  return { poster: v.poster.outputs.length ? v.poster : undefined, preview: v.hover_preview };
+  const first = ctx.items.find((i): i is GalleryMediaItem => i.kind === "video")?.file.name;
+  const mine = (file?: string) => (file || first) === f.name;
+  return {
+    poster: v.poster.outputs.length && mine(v.poster.file ?? v.poster.selection?.file) ? v.poster : undefined,
+    preview: mine(v.hover_preview.file ?? v.hover_preview.selection?.file) ? v.hover_preview : undefined,
+  };
 }
 
 /**
@@ -154,8 +158,8 @@ function Carousel({ ctx, index: given, onIndex, lightbox }: { ctx: Ctx; index: n
         </div>
         {multi && (
           <>
-            <NavButton side="prev" hidden={index === 0} onClick={c.prev} label={t("gallery.previous")} lightbox={lightbox} />
-            <NavButton side="next" hidden={index === items.length - 1} onClick={c.next} label={t("gallery.next")} lightbox={lightbox} />
+            <NavButton side="prev" hidden={index === 0} last={index === 1} onClick={c.prev} label={t("gallery.previous")} lightbox={lightbox} />
+            <NavButton side="next" hidden={index === items.length - 1} last={index === items.length - 2} onClick={c.next} label={t("gallery.next")} lightbox={lightbox} />
           </>
         )}
       </div>
@@ -179,23 +183,38 @@ function Carousel({ ctx, index: given, onIndex, lightbox }: { ctx: Ctx; index: n
   );
 }
 
-function NavButton({ side, hidden, onClick, label, lightbox }: { side: "prev" | "next"; hidden: boolean; onClick: () => void; label: string; lightbox?: boolean }) {
+// A strip down the stage's side, clear of a video's control bar: the stage's
+// height follows each slide's aspect, so a centred-only target would move
+// between quick clicks. A swipe may start on it. The click that reaches an end
+// removes the button, so focus moves to the carousel and the arrow keys keep working.
+function NavButton({ side, hidden, last, onClick, label, lightbox }: { side: "prev" | "next"; hidden: boolean; last: boolean; onClick: () => void; label: string; lightbox?: boolean }) {
   if (hidden) return null;
   return (
-    <Button
-      variant="secondary"
-      size={lightbox ? "icon-lg" : "icon-sm"}
+    <button
+      type="button"
       aria-label={label}
-      data-ckui-noswipe=""
-      onClick={onClick}
+      data-ckui="gallery-nav"
+      data-side={side}
+      onClick={(e) => {
+        const root = e.currentTarget.closest<HTMLElement>("[data-ckui=lightbox], [data-ckui=carousel][tabindex]");
+        onClick();
+        if (last && document.activeElement === e.currentTarget) root?.focus({ preventScroll: true });
+      }}
       className={cn(
-        "absolute top-1/2 z-10 -translate-y-1/2 rounded-full backdrop-blur-sm",
-        lightbox ? "bg-white/10 text-white hover:bg-white/20 hover:text-white" : "bg-white/85 text-zinc-900 shadow-md hover:bg-white hover:text-zinc-900 dark:bg-white/85 dark:hover:bg-white",
-        side === "prev" ? (lightbox ? "left-3 sm:left-5" : "left-2") : lightbox ? "right-3 sm:right-5" : "right-2",
+        "group/nav absolute top-0 bottom-14 z-10 flex items-center outline-none",
+        lightbox ? "w-16 sm:w-20" : "w-12",
+        side === "prev" ? (lightbox ? "left-0 justify-start pl-3 sm:pl-5" : "left-0 justify-start pl-2") : lightbox ? "right-0 justify-end pr-3 sm:pr-5" : "right-0 justify-end pr-2",
       )}
     >
-      <HugeiconsIcon icon={side === "prev" ? ArrowLeft01Icon : ArrowRight01Icon} strokeWidth={2} />
-    </Button>
+      <span
+        className={cn(
+          "flex items-center justify-center rounded-full backdrop-blur-sm transition-colors group-focus-visible/nav:ring-3 group-focus-visible/nav:ring-ring/60",
+          lightbox ? "size-10 bg-white/10 text-white group-hover/nav:bg-white/20" : "size-8 bg-white/85 text-zinc-900 shadow-md group-hover/nav:bg-white",
+        )}
+      >
+        <HugeiconsIcon icon={side === "prev" ? ArrowLeft01Icon : ArrowRight01Icon} strokeWidth={2} className="size-4" />
+      </span>
+    </button>
   );
 }
 

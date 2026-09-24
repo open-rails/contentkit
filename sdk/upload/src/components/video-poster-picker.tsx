@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "rea
 import type { UploadClient } from "../client.js";
 import { useMessages } from "../i18n/context.js";
 import { decodeImage, type CropSource } from "../image.js";
-import { useUploadClient } from "../provider.js";
+import { useErrorReporter, useUploadClient, type UploadUiErrorHandler } from "../provider.js";
 import { useFrameStrip, useVideoFrame, useVideoImages, useVideoPoster, type VideoSaveState } from "../video-react.js";
 import type { RefBody, VideoImages } from "../wire.gen.js";
 import { Alert, AlertDescription } from "#ckui/ui/alert";
@@ -30,6 +30,8 @@ export interface VideoPickerProps {
   images?: VideoImages | null;
   /** Called with the rendered images after a save. */
   onChange?: (v: VideoImages) => void;
+  /** Every failure (load, frame grab, save or render); default the provider's. The dialog shows it too. */
+  onError?: UploadUiErrorHandler;
   title?: ReactNode;
   className?: string;
 }
@@ -73,7 +75,9 @@ export function VideoPosterPicker(p: VideoPosterPickerProps) {
 function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void }) {
   const { t, error: errorText } = useMessages();
   const client = useUploadClient(p.client);
+  const report = useErrorReporter(p.onError);
   const loaded = useVideoImages(client, { ref: p.item, file: p.file, images: p.images });
+  useEffect(() => void (loaded.error && report(loaded.error, "poster.load")), [loaded.error, report]);
   const video = loaded.images?.video;
   const selection = loaded.images?.poster.selection;
   const [mode, setMode] = useState<"frame" | "upload">(selection?.source === "upload" ? "upload" : "frame");
@@ -94,13 +98,15 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
       p.onChange?.(v);
       p.onOpenChange(false);
     },
+    onError: (e) => report(e, "poster.save"),
   });
   const busy = poster.state.status === "saving";
   const onSaving = useRef(p.onSaving);
   onSaving.current = p.onSaving;
   useEffect(() => onSaving.current(busy), [busy]);
-  const frame = useVideoFrame(client, { ref: p.item, file, time: duration > 0 ? shown : undefined, width: 960 });
-  const strip = useFrameStrip(client, { ref: p.item, file, duration, count: 8, width: 160 });
+  const onFrameError = (e: unknown) => report(e, "poster.frame");
+  const frame = useVideoFrame(client, { ref: p.item, file, time: duration > 0 ? shown : undefined, width: 960, onError: onFrameError });
+  const strip = useFrameStrip(client, { ref: p.item, file, duration, count: 8, width: 160, onError: onFrameError });
   useEffect(() => () => crop?.revoke?.(), [crop]);
 
   const openCrop = async (source: "frame" | "upload", f?: File) => {
@@ -116,6 +122,7 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
       setCropFor(source);
     } catch (e) {
       setDecodeError(errorText(e));
+      report(e, source === "upload" ? "slot.decode" : "poster.frame");
     }
   };
   const pickFile = (f?: File) => f && void openCrop("upload", f);
@@ -133,7 +140,8 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
       pickFile(e.dataTransfer.files[0]);
     },
   };
-  const error = poster.state.status === "error" ? errorText(poster.state.error) : (decodeError ?? (loaded.error ? errorText(loaded.error) : undefined));
+  const failed = poster.state.status === "error" ? poster.state.error : (loaded.error ?? (frame.error && !frame.url ? frame.error : undefined));
+  const error = decodeError ?? (failed ? errorText(failed) : undefined);
 
   return (
     <>
@@ -167,7 +175,7 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
             </p>
           ) : (
             <>
-              <Stage url={frame.url} loading={frame.loading || !frame.url} aspect={aspect} />
+              <Stage url={frame.url} loading={frame.loading || (!frame.url && !frame.error)} aspect={aspect} />
               <div className="grid gap-2">
                 <div className="flex items-center gap-1.5">
                   <Button variant="ghost" size="icon-sm" aria-label={t("poster.previousFrame")} disabled={busy || shown <= 0} onClick={() => setTime(Math.max(0, shown - FRAME_STEP))}>
