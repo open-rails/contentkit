@@ -117,7 +117,7 @@ func TestKindRules(t *testing.T) {
 	if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{"cover": {}}}); err == nil {
 		t.Fatal("empty slot accepted")
 	}
-	for _, bad := range []media.Slot{{Aspect: 1}, {Widths: []int{64}}, {Aspect: 1, Widths: []int{64, 64}}, {Aspect: 1, Widths: []int{0}}} {
+	for _, bad := range []media.Slot{{Aspect: 1}, {Aspect: -1, Widths: []int{64}}, {Aspect: 1, Widths: []int{64, 64}}, {Aspect: 1, Widths: []int{0}}} {
 		if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{"cover": bad}}); err == nil {
 			t.Fatalf("slot %+v accepted", bad)
 		}
@@ -261,5 +261,32 @@ func TestVideoKindSlots(t *testing.T) {
 		if s, l := media.AutoHoverPreview(d); s != want[0] || l != want[1] {
 			t.Errorf("auto preview of %gs: %g+%g", d, s, l)
 		}
+	}
+}
+
+func TestNativeSlot(t *testing.T) {
+	s := media.VideoPoster
+	if !s.Native() || s.Size(480, media.Dims{W: 1080, H: 1920}) != (media.Dims{W: 480, H: 853}) {
+		t.Fatalf("native size %v", s.Size(480, media.Dims{W: 1080, H: 1920}))
+	}
+	// Without a crop the whole image; a crop keeps its own shape.
+	if e, err := s.Resolve(nil, 1080, 1920); err != nil || e.Crop != nil {
+		t.Fatalf("uncropped %+v %v", e, err)
+	}
+	if e, err := s.Resolve(&media.Edit{Crop: &media.Crop{W: 600, H: 600}}, 1080, 1920); err != nil || e.Crop.H != 600 {
+		t.Fatalf("square crop %+v %v", e, err)
+	}
+	if _, err := s.Resolve(&media.Edit{Crop: &media.Crop{W: 300, H: 600}}, 1080, 1920); err == nil {
+		t.Fatal("crop under Min accepted")
+	}
+	stamp := media.NewSlotStamp("v1", []media.Dims{{W: 480, H: 853}, {W: 960, H: 1707}})
+	if stamp != "v1:480x853,960x1707" {
+		t.Fatal(stamp)
+	}
+	if v, outs, err := stamp.Parse(); err != nil || v != "v1" || len(outs) != 2 || outs[1] != (media.Dims{W: 960, H: 1707}) {
+		t.Fatalf("parse %q %v %v", v, outs, err)
+	}
+	if _, outs, err := media.SlotStamp("v1:480,960").Parse(); err != nil || outs[0] != (media.Dims{W: 480}) {
+		t.Fatalf("bare widths %v %v", outs, err)
 	}
 }

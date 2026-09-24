@@ -115,7 +115,7 @@ for (const theme of ["light", "dark"] as const) {
     await page.mouse.move(0, 0);
     await expect(poster.locator("[data-ckui=hover-preview]")).toHaveCount(0);
 
-    await card.getByRole("button", { name: "Choose poster" }).click();
+    await card.getByRole("button", { name: "Set cover" }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog.locator("[data-ckui=frame-strip] img")).toHaveCount(8, { timeout: 20_000 });
     await dialog.getByRole("button", { name: /Jump to 0:08/ }).click();
@@ -124,7 +124,7 @@ for (const theme of ["light", "dark"] as const) {
     await page.waitForTimeout(600);
     await page.screenshot({ path: `${dir}/poster-picker-${tag}.png` });
     await dialog.getByRole("button", { name: "Crop…" }).click();
-    const crop = page.getByRole("dialog", { name: "Crop the poster" });
+    const crop = page.getByRole("dialog", { name: "Crop the cover" });
     await expect(crop.locator(".reactEasyCrop_CropArea")).toBeVisible();
     await crop.getByRole("button", { name: "Zoom in" }).click();
     await page.waitForTimeout(300);

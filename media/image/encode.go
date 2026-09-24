@@ -165,7 +165,7 @@ func encodeSlot(src []byte, contentType string, s media.Slot, edit *media.Edit, 
 		if width > img.Width() {
 			break
 		}
-		d := media.Dims{W: width, H: s.Height(width)}
+		d := s.Size(width, media.Dims{W: img.Width(), H: img.Height()})
 		out, err := img.Copy()
 		if err == nil {
 			err = out.ThumbnailWithSize(d.W, d.H, vips.InterestingNone, vips.SizeForce)

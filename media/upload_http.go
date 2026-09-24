@@ -205,7 +205,7 @@ type VideoImagesBody struct {
 // the video) and a ref version for versioned kinds, its edit in the grabbed
 // frame's pixels (VideoInfo w×h); "upload" needs the sha256 of the image
 // presigned with slot "poster", its edit in that image's pixels; "auto"
-// returns to the default. Omitted edits centre the 16:9 crop.
+// returns to the default. Omitted edits keep the whole image (native aspect).
 type VideoPosterBody struct {
 	Ref    RefBody  `json:"ref"`
 	Source string   `json:"source"`

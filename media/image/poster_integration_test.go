@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	stdimage "image"
 	"image/color"
+	"math"
 	"os"
 	"slices"
 	"strings"
@@ -66,7 +67,7 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if img.Bounds().Dx() != o.W || img.Bounds().Dy() != o.H || o.H != media.VideoPoster.Height(o.W) {
+			if img.Bounds().Dx() != o.W || img.Bounds().Dy() != o.H {
 				t.Fatalf("%s is %v", o.URL, img.Bounds())
 			}
 			out = append(out, img)
@@ -78,8 +79,12 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 	}
 	q := videotest.Quadrant
 
-	// Default: the first frame with detail (4.2 s, red), 640 wide, so only 480.
+	// Default: the first frame with detail (4.2 s, red), 640 wide, so only 480,
+	// uncropped at the video's 16:9.
 	encode()
+	if v, _ := e.manifests.VideoImages(ctx, editorURLs, ref, true, ""); len(v.Poster.Outputs) != 1 || v.Poster.Outputs[0].H != 270 || math.Abs(v.Poster.Aspect-16.0/9) > 0.01 {
+		t.Fatalf("native auto poster %+v", v.Poster)
+	}
 	if img := poster(480)[0]; q(img, 0) != "red" || q(img, 3) != "cyan" {
 		t.Fatalf("auto poster %s / %s", q(img, 0), q(img, 3))
 	}
@@ -99,7 +104,7 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 	}
 
 	// Re-edit the grabbed frame without a new grab: its right three quarters.
-	if err := e.uploads.EditSlot(ctx, u, ref, media.PosterSlot, &media.Edit{Crop: &media.Crop{X: 160, Y: 90, W: 480}}); err != nil {
+	if err := e.uploads.EditSlot(ctx, u, ref, media.PosterSlot, &media.Edit{Crop: &media.Crop{X: 160, Y: 90, W: 480, H: 270}}); err != nil {
 		t.Fatal(err)
 	}
 	e.drain(t)
@@ -124,7 +129,7 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 	e.uploadAs(t, ref.Content(), media.PosterSlot, "image/jpeg", photo)
 	sum := sha256.Sum256(photo)
 	if err := e.uploads.SetVideoPoster(ctx, u, ref, media.PosterRequest{Source: media.PosterSourceUpload, SHA256: sum[:],
-		Edit: &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 960}}}); err != nil {
+		Edit: &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 960, H: 1080}}}); err != nil {
 		t.Fatal(err)
 	}
 	e.drain(t)

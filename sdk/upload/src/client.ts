@@ -245,7 +245,7 @@ export class UploadClient {
     return this.retry(() => this.api.videoPoster(body, signal), signal);
   }
 
-  /** Uploads an image as the poster, cropped by edit (its own pixels; omitted: centred 16:9). */
+  /** Uploads an image as the poster, cropped by edit (its own pixels; omitted: the whole image). */
   async uploadVideoPoster(image: Uploadable, o: { ref: RefBody; edit?: Edit | null; signal?: AbortSignal; onProgress?: (p: Progress) => void }): Promise<VideoImages> {
     const f = await this.upload(image, { ref: o.ref, slot: "poster", signal: o.signal, onProgress: o.onProgress });
     const body = { ref: o.ref, source: "upload" as const, sha256: f.sha256!, ...(o.edit ? { edit: o.edit } : {}) };

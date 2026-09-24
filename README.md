@@ -303,10 +303,12 @@ the read API's `GET /{kind}/{id}/slots/{slot}` answer `SlotManifest{aspect,
 edit, dims, version, outputs: [{name, w, h, url}], pending, error}`. Output URLs
 carry `?v={version}`, which the access worker serves immutable while current;
 listings build them without reads from one stored value per slot:
-`Hooks.SlotEncoded` reports each encode's `SlotStamp` (`"{version}:{w},{w}…"`,
-the version and produced widths) before the slot record shows that version, and `Reader.SlotOutputs(ref, slot, stamp)`
+`Hooks.SlotEncoded` reports each encode's `SlotStamp` (`"{version}:{w}x{h},…"`,
+the version and produced sizes) before the slot record shows that version, and `Reader.SlotOutputs(ref, slot, stamp)`
 returns exactly that encode's outputs (the zero stamp: widths up to `MinWidth`,
-unversioned). `SlotManifest.Stamp()` backfills a stamp from a read.
+unversioned); `Reader.StampedSlot` wraps them as a `SlotManifest` with its
+aspect. `Slot{Aspect: 0}` is native: outputs keep the edited image's own
+aspect, no crop by default, crops of any shape. `SlotManifest.Stamp()` backfills a stamp from a read.
 
 **Image processing** (`media/image`, CGO over libvips via govips; install
 `libvips-dev` to build it). `image.New(Config{Store, Kinds, Manifests, Specs,

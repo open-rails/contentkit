@@ -324,7 +324,8 @@ Cropping and rotating are ContentKit's: the host never decodes images.
   `GET /{kind}/{id}/slots/{slot}` (resolves; 404 for items the viewer cannot see). Listings store
   the `SlotStamp` from `Hooks.SlotEncoded` (one text value per slot, e.g. a
   `cover_stamp` column) and build every output's immutable URL without reads
-  with `Reader.SlotOutputs(ref, slot, stamp)`; with no stamp ("") it lists the
+  with `Reader.StampedSlot(ref, slot, stamp)` (a `SlotManifest`, aspect
+  included) or `Reader.SlotOutputs`; with no stamp ("") it lists the
   widths up to `MinWidth` with revalidated URLs. Backfill with
   `Reader.Slot(...).Stamp()`. After changing slot specs,
   enqueue `ProcessJob{Ref}` per item; retired widths are deleted.
@@ -337,16 +338,17 @@ Cropping and rotating are ContentKit's: the host never decodes images.
 
 ## Video posters and hover previews
 
-Every `Video` kind gets the `poster` slot (`media.VideoPoster`: 16:9, widths
-480/960/1920); `poster` and `hover_preview` are reserved slot names.
+Every `Video` kind gets the `poster` slot (`media.VideoPoster`: native aspect,
+the video's own shape unless an edit crops it, widths 480/960/1920); `poster` and `hover_preview` are reserved slot names.
 
 - **Poster**: a frame or an uploaded image, encoded by the image job through
   the slot's edit like any slot. The video worker grabs frames from the widest
   HLS rendition into `originals/poster` (PNG) and hands them to the host's
   image job through `Config.Slots` (`media.NewProcessInserter`; the worker's
   `MEDIA_HOST_RIVER_SCHEMA`/`MEDIA_HOST_QUEUE`). Default: the first of five
-  sampled frames (20–80 %) that is not black or flat. Frames whose centred
-  16:9 crop is under 480 px are upscaled, so every poster has 480.
+  sampled frames (20–80 %) that is not black or flat. Frames under 480 px
+  wide are upscaled, so every poster has 480. Posters encoded before native
+  aspect (v0.37) re-encode uncropped on their next `ProcessJob{Ref, Slot: "poster"}`.
 - **Hover preview**: a silent loop, default 3 s from a quarter in, bounded
   1–6 s, centred 16:9 at 12 fps, as H.264 MP4 and animated WebP at 320
   (always) and 640 px (when the video is that wide), rendered by the worker.
@@ -380,8 +382,8 @@ Every `Video` kind gets the `poster` slot (`media.VideoPoster`: 16:9, widths
     host image); `FrameConcurrency` (2) at once, then 429.
 - Viewers: `GET /{kind}/{id}/video-images` resolves (404 when hidden) and
   lists what is published (editors: everything, from `editor/`). Listings
-  build URLs without reads, `Reader.SlotOutputs(ref, media.PosterSlot,
-  version)` and `Reader.HoverPreviewURLs(ref, version)`, only for items whose
+  build URLs without reads, `Reader.StampedSlot(ref, media.PosterSlot,
+  stamp)` and `Reader.HoverPreviewURLs(ref, version)`, only for items whose
   Exposure publishes them (default: posters of visible items, hover previews of free ones).
 
 ## Production media delivery

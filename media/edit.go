@@ -103,9 +103,9 @@ func (s Spec) For(e *Edit) string {
 }
 
 // fit derives the crop height from its width so the edited image has the
-// slot's aspect (width/height).
+// slot's aspect (width/height); a native slot keeps the crop as given.
 func (s Slot) fit(e *Edit) *Edit {
-	if e = e.Normalize(); e == nil || e.Crop == nil {
+	if e = e.Normalize(); e == nil || e.Crop == nil || s.Native() {
 		return e
 	}
 	e.Crop.H = max(1, int(math.Round(float64(e.Crop.W)/s.cropRatio(e.Rotate))))
@@ -122,10 +122,15 @@ func (s Slot) cropRatio(rotate int) float64 {
 
 // Resolve is the edit the slot applies to a w×h source (EXIF-oriented): e
 // with its height fitted, or without a crop the largest centred one at
-// Aspect. It must lie inside the source and be at least Min wide once edited.
+// Aspect (a native slot: the whole source). It must lie inside the source and
+// be at least Min wide once edited.
 func (s Slot) Resolve(e *Edit, w, h int) (*Edit, error) {
 	e = s.fit(e)
-	if e == nil || e.Crop == nil {
+	if (e == nil || e.Crop == nil) && s.Native() {
+		if e == nil {
+			e = &Edit{}
+		}
+	} else if e == nil || e.Crop == nil {
 		rotate := 0
 		if e != nil {
 			rotate = e.Rotate

@@ -2,7 +2,7 @@ import { Video01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
-import { slotSources } from "../srcset.js";
+import { manifestAspect, slotSources } from "../srcset.js";
 import type { PreviewImage, SlotManifest } from "../wire.gen.js";
 import { UploadUiRoot } from "../scope.js";
 
@@ -65,6 +65,8 @@ export interface VideoPosterProps extends Omit<ComponentProps<"div">, "children"
   preview?: HoverPreviewSource | null;
   /** Controls playback (e.g. hover on a whole card); default hover or focus within this element. */
   playing?: boolean;
+  /** Width / height of the box; default the poster's own (native) aspect, else the video's. */
+  aspect?: number;
   /** `sizes` for the srcset. Default "100vw". */
   sizes?: string;
   alt?: string;
@@ -74,8 +76,11 @@ export interface VideoPosterProps extends Omit<ComponentProps<"div">, "children"
   children?: ReactNode;
 }
 
-/** A 16:9 poster (`srcset`) that plays the hover preview on hover or focus. */
-export function VideoPoster({ poster, preview, playing, sizes = "100vw", alt = "", placeholder, className, style, children, ...div }: VideoPosterProps) {
+/**
+ * A poster (`srcset`) at its native aspect, uncropped, that plays the hover
+ * preview on hover or focus. It spans its container's width.
+ */
+export function VideoPoster({ poster, preview, playing, aspect, sizes = "100vw", alt = "", placeholder, className, style, children, ...div }: VideoPosterProps) {
   const [hover, setHover] = useState(false);
   const [focus, setFocus] = useState(false);
   const src = slotSources(poster, 480);
@@ -83,8 +88,8 @@ export function VideoPoster({ poster, preview, playing, sizes = "100vw", alt = "
   return (
     <UploadUiRoot
       {...div}
-      className={cn("relative overflow-hidden rounded-lg bg-muted", className)}
-      style={{ aspectRatio: "16 / 9", ...style }}
+      className={cn("relative w-full overflow-hidden rounded-lg bg-muted", className)}
+      style={{ aspectRatio: String(aspect ?? manifestAspect(poster, 16 / 9)), ...style }}
       data-ckui="video-poster"
       data-playing={active && preview ? "" : undefined}
       onPointerEnter={(e) => {
@@ -114,7 +119,7 @@ export function VideoPoster({ poster, preview, playing, sizes = "100vw", alt = "
           height={src.height}
           decoding="async"
           loading="lazy"
-          className="absolute inset-0 size-full object-cover"
+          className="absolute inset-0 size-full object-contain"
         />
       ) : (
         (placeholder ?? (

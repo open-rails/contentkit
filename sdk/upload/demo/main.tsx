@@ -88,7 +88,7 @@ function VideoCard() {
     <div data-demo="video" style={{ display: "grid", gap: 12 }}>
       <VideoPoster poster={images.poster} preview={images.hover_preview} sizes="(min-width: 760px) 360px, 100vw" style={{ maxWidth: 360 }} tabIndex={0} />
       <div style={{ display: "flex", gap: 8 }}>
-        <button type="button" onClick={() => setOpen("poster")}>Choose poster</button>
+        <button type="button" onClick={() => setOpen("poster")}>Set cover</button>
         <button type="button" onClick={() => setOpen("preview")}>Hover preview</button>
       </div>
       <VideoPosterPicker open={open === "poster"} onOpenChange={(o) => setOpen(o ? "poster" : null)} item={video} images={images} onChange={setImages} />

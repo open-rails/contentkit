@@ -48,7 +48,7 @@ immutable per version. `slotSources(manifest)` gives `src`/`srcSet`; `waitForSlo
 while `pending`; `getSlotOriginal` returns the committed original for re-editing;
 `decodeImage` is the EXIF-aware preview the UI crops on.
 
-Video items (#32): a poster (slot `poster`, 16:9) and a hover preview.
+Video items (#32): a cover (slot `poster`, the video's native aspect) and a hover preview.
 
 ```ts
 await client.getVideoImages(ref);                                  // { poster, hover_preview, video: { file, duration, w, h, encoded } }
@@ -184,9 +184,9 @@ function Cover() {
 | `ImageCropDialog` | `open`, `onOpenChange`, `source` (`{ url, width, height }` of the oriented original), `aspect`, `round`, `initialEdit`, `onEditChange`, `onConfirm(edit)`, `targetWidth`, `busy`, `progress`, `error`, `title` |
 | `EncodeProgress` | `progress` (a read API file's `progress`; absent shows "Processing video"), `className`, `appearance`: bar, phase, `segment 5 / 27`, `~40 s left` or queue position; `data-ckui="encode-progress"`, `data-phase` |
 | `SlotImage` | `manifest` or `item` + `slot`, `sizes`, `round`, `aspect`, `placeholder`, `alt` |
-| `VideoPosterPicker` | `open`, `onOpenChange`, `item`, `file`, `client`, `images` (else fetched), `onChange(images)`, `title`, `accept`: frame strip + slider + frame steps over `/frame`, "Use this frame", "Crop…" (in `video.w×h` pixels), "Upload image" → `ImageCropDialog`, "Automatic" |
+| `VideoPosterPicker` | `open`, `onOpenChange`, `item`, `file`, `client`, `images` (else fetched), `onChange(images)`, `title` (default "Set cover"), `accept`: frame strip + slider + frame steps over `/frame`, "Use this frame", "Crop…" (in `video.w×h` pixels), "Upload image" → `ImageCropDialog` at the video's aspect, "Automatic" |
 | `HoverPreviewPicker` | same props: a 1–6 s range over the frame strip, an approximate flip-book of the section, the rendered loop once saved, "Automatic" |
-| `VideoPoster` | `poster` (`VideoImages.poster` or a listing's outputs), `preview` (`hover_preview` or `{ mp4, webp }` URLs), `playing` (default hover or focus within), `sizes`, `alt`, `children`: 16:9 `srcset` poster that plays the preview |
+| `VideoPoster` | `poster` (`VideoImages.poster` or a listing's outputs), `preview` (`hover_preview` or `{ mp4, webp }` URLs), `playing` (default hover or focus within), `aspect` (default the poster's own), `sizes`, `alt`, `children`: full-width, uncropped `srcset` cover at its native aspect that plays the preview |
 | `HoverPreview` | `preview`, `active`, `width`: muted looping MP4 (`playsinline`), WebP on error; nothing with `prefers-reduced-motion` |
 | `UploadUiProvider` | `client`, `appearance` (`theme`: `light`/`dark`/`auto`/`inherit`, `variables`), `messages` (bundle or list; locales `en de es ja ko zh`), `t` (host translate hook) |
 
@@ -197,8 +197,8 @@ Errors are mapped from `UploadError.code` to `errors.*` messages.
 `MediaGallery` renders a read API result: an Instagram-style carousel (swipe,
 arrows, ←/→, dots, counter) or a tile grid whose tiles open a lightbox carousel
 (Esc closes, focus is trapped and returns to the tile), with a view toggle in
-its header. One item renders alone. The carousel spans its column at the first
-item's aspect (9:16 to 2.4:1), capped at `maxHeight`, and letterboxes the rest;
+its header. One item renders alone. The carousel spans its column's full width at
+the current item's native aspect (uncropped; `maxHeight`, default none, caps it);
 only the current slide and its neighbours are mounted, and a video swiped away
 pauses. Viewers without access see the blurred teaser behind one locked item
 with the host's `renderLocked`; locked files carry no URLs.

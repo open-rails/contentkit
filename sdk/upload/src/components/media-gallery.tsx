@@ -37,7 +37,7 @@ export interface MediaGalleryProps extends GalleryViewOptions, Pick<HlsPlayerOpt
   renderDetails?: (item: GalleryItem) => ReactNode;
   /** `sizes` for carousel images. Default "(min-width: 768px) 720px, 100vw". */
   sizes?: string;
-  /** Tallest the carousel gets; taller media letterboxes. Default "80svh". */
+  /** Tallest the carousel gets; taller media letterboxes. Default none: every slide at its native aspect, full width. */
   maxHeight?: string;
   label?: string;
   className?: string;
@@ -109,7 +109,7 @@ function Carousel({ ctx, index: given, onIndex, lightbox }: { ctx: Ctx; index: n
   const c = useCarousel({ count: items.length, index: given, onIndexChange: onIndex });
   const { index } = c;
   const multi = items.length > 1;
-  const stage = lightbox ? {} : { aspectRatio: String(stageAspect(items)), maxHeight: ctx.maxHeight ?? "80svh" };
+  const stage = lightbox ? {} : { aspectRatio: String(stageAspect(items, index)), maxHeight: ctx.maxHeight };
   return (
     <div
       className={cn("group/carousel relative outline-none", lightbox ? "size-full" : "grid gap-2")}
@@ -121,7 +121,10 @@ function Carousel({ ctx, index: given, onIndex, lightbox }: { ctx: Ctx; index: n
       data-ckui="carousel"
     >
       <div
-        className={cn("relative w-full touch-pan-y overflow-hidden select-none", lightbox ? "h-full" : "rounded-lg bg-muted")}
+        className={cn(
+          "relative w-full touch-pan-y overflow-hidden select-none",
+          lightbox ? "h-full" : "rounded-lg bg-muted transition-[aspect-ratio] duration-300 ease-out motion-reduce:transition-none",
+        )}
         style={stage}
         {...(multi ? c.swipe : {})}
       >

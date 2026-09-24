@@ -23,10 +23,11 @@ it("preview access: allowed files, then the locked rest", () => {
   expect(items[2]).toMatchObject({ count: 1, teaser: undefined });
 });
 
-it("stage aspect follows the first item within 9:16..2.4:1; durations format", () => {
+it("stage aspect is the current item's native aspect; durations format", () => {
   expect(stageAspect([])).toBe(1);
-  expect(stageAspect(galleryItems(read("full", [img(0, { w: 300, h: 1000 })])))).toBeCloseTo(9 / 16);
-  expect(stageAspect(galleryItems(read("full", [img(0, { w: 3000, h: 1000 })])))).toBe(2.4);
+  const items = galleryItems(read("full", [img(0, { w: 300, h: 1000 }), img(1, { w: 3000, h: 1000 })]));
+  expect(stageAspect(items)).toBeCloseTo(0.3);
+  expect(stageAspect(items, 1)).toBe(3);
   expect(formatDuration(42.4)).toBe("0:42");
   expect(formatDuration(725)).toBe("12:05");
   expect(formatDuration(3729)).toBe("1:02:09");
