@@ -120,6 +120,7 @@ export interface SlotBody {
   ref: RefBody;
   slot: string;
   sha256: string;
+  edit?: Edit;
 }
 
 export interface SlotFromFileBody {
@@ -128,6 +129,39 @@ export interface SlotFromFileBody {
   from?: RefBody;
   file: string;
   edit?: Edit;
+}
+
+export interface SlotEditBody {
+  ref: RefBody;
+  slot: string;
+  edit?: Edit;
+}
+
+export interface SlotRefBody {
+  ref: RefBody;
+  slot: string;
+}
+
+export interface Dims {
+  w: number;
+  h: number;
+}
+
+export interface SlotImage {
+  name: string;
+  w: number;
+  h: number;
+  url: string;
+}
+
+export interface SlotManifest {
+  aspect: number;
+  edit?: Edit;
+  dims?: Dims;
+  version?: string;
+  outputs: SlotImage[];
+  pending: boolean;
+  error?: string;
 }
 
 export interface ErrorReply {

@@ -66,7 +66,7 @@ func TestRiverProcessing(t *testing.T) {
 	deadline := time.Now().Add(45 * time.Second)
 	for {
 		m, _, err := e.manifests.Get(ctx, ref)
-		_, cerr := e.Env.Store.Head(ctx, e.Tenant+"/gallery/6/public/cover.webp")
+		_, cerr := e.Env.Store.Head(ctx, e.Tenant+"/gallery/6/public/cover_150.webp")
 		if err == nil && len(m.Files[0].Variants) == 3 && m.Downloads["zip"].Blob != "" && cerr == nil {
 			return
 		}

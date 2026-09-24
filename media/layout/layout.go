@@ -2,7 +2,7 @@
 // worker can classify paths without importing the media runtime:
 //
 //	{tenant}/{kind}/{content_id}/manifest.json | manifests/{version}.json
-//	                            /originals/{sha256-hex | u-uuid | slot | i-uuid}
+//	                            /originals/{sha256-hex | u-uuid | slot | slot.json | i-uuid}
 //	                            /blobs/{sha256-hex | u-uuid}
 //	                            /public/{name}.webp
 package layout
@@ -25,6 +25,10 @@ const (
 	UploadPrefix = "u-"
 	InlinePrefix = "i-"
 	PublicExt    = ".webp"
+	// VersionParam versions a public URL: served immutable while it matches
+	// the object's VersionMeta.
+	VersionParam = "v"
+	VersionMeta  = "of"
 )
 
 // Key is a parsed object key.

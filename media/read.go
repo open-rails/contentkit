@@ -55,6 +55,9 @@ type Hooks struct {
 	// say); file is the manifest file name, or the slot name. The job does not
 	// retry it; a new commit does.
 	Failed func(ctx context.Context, ref contentref.ContentRef, file string, err error)
+	// SlotEncoded reports a slot's new outputs and their version
+	// (SlotManifest.Version), for hosts that build versioned URLs without reads.
+	SlotEncoded func(ctx context.Context, ref contentref.ContentRef, slot, version string)
 }
 
 // ReaderOptions configure a Reader.

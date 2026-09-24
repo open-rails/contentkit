@@ -174,9 +174,9 @@ One private bucket; each item owns a folder the library keys:
 
 ```text
 {tenant}/{kind}/{id}/manifest.json | manifests/{version}.json
-                    /originals/{sha256-hex | u-uuid | slot | i-uuid}   never served
-                    /blobs/sha256-{hex}                                immutable derivatives
-                    /public/{slot | i-uuid}.webp                       public slots, inline images
+                    /originals/{sha256-hex | u-uuid | slot | slot.json | i-uuid}   never served
+                    /blobs/sha256-{hex}                                            immutable derivatives
+                    /public/{slot_width | i-uuid}.webp                             slots, inline images
 ```
 
 Host wiring (one tenant; errors elided):
@@ -185,7 +185,7 @@ Host wiring (one tenant; errors elided):
 kinds, _ := media.NewRegistry(
 	media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
 		Specs: map[string]media.Spec{"thumb": {Width: 460, Height: 650, Fit: media.FitCover, Quality: 80}, "high": {Quality: 90}},
-		Slots: map[string]media.Slot{"cover": {Outputs: map[string]media.Spec{"cover": {Width: 460}}, Aspect: 460.0 / 650}},
+		Slots: map[string]media.Slot{"cover": {Aspect: 460.0 / 650, Widths: []int{230, 460, 920}}},
 		Zip:   "high"},
 	media.Kind{Name: "video", Types: []string{"video/mp4", "video/x-matroska"}, MaxBytes: 20 << 30, Video: true})
 store, _ := s3.New(s3.Config{Bucket: "media", Endpoint: rgw, PublicEndpoint: "https://s3.doujins.ai", UsePathStyle: true,
@@ -206,7 +206,8 @@ uploads, _ := media.NewUploads(media.UploadOptions{Store: store, Kinds: kinds, M
 	Authorizer: hostUploads, Tickets: &ring, Limiter: limiter, Queue: jobs})
 reader, _ := media.NewReader(media.ReaderOptions{Manifests: manifests, Kinds: kinds, Resolver: resolver, Hooks: hooks,
 	Delivery: media.Delivery{Mode: media.DeliverCookie, BaseURL: "https://media.doujins.com", CookieDomain: "doujins.com", SigningKey: key}})
-mux.Handle("/api/media/upload/", http.StripPrefix("/api/media/upload", media.UploadHandler(uploads, media.UploadHandlerOptions{Tenant: "d", Actor: actorOf})))
+mux.Handle("/api/media/upload/", http.StripPrefix("/api/media/upload", media.UploadHandler(uploads, media.UploadHandlerOptions{Tenant: "d", Actor: actorOf,
+	PublicBaseURL: "https://media.doujins.com"})))
 mux.Handle("/api/media/", http.StripPrefix("/api/media", reader.Handler(media.HandlerOptions{Tenant: "d", Identity: identity})))
 
 _ = jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref: ref, Owner: owner}) // in the host's delete transaction
@@ -263,12 +264,39 @@ variants (recorded `editor: true`) are signed only when the resolver's
 edits: an editor's view of the whole source. Under a folder cookie such a blob
 is unlisted, not locked: its content-hash name is never sent to other viewers.
 No master is written. `meta.w/h` is the edited size; the read API returns
-`edit` and `dims` to editors. `Uploads.SetSlotFromFile(ctx, actor,
-SlotFromFile{Ref, Slot, From, File, Edit})` (HTTP `/commit-slot-from-file`)
-copies a manifest image's source (of `From`, default `Ref`: another item of
-the tenant needs `CanUpload` on both) to `originals/{slot}` with the edit
-(default: the file's own) in its metadata and re-encodes the slot through it;
-with `Slot.Aspect` (width/height) the crop's height is derived from its width.
+`edit` and `dims` to editors.
+
+**Slots** are fixed public images such as avatars and covers, rendered at
+several widths for high-density screens:
+
+```go
+Slots: map[string]media.Slot{
+	"avatar": {Aspect: 1, Widths: []int{128, 256, 512}},
+	"cover":  {Aspect: 3, Widths: []int{1500, 3000}, MinWidth: 1500},
+}
+```
+
+A slot's `Edit` uses the same crop (original pixels, EXIF-oriented) and rotate;
+the crop's height follows its width at `Aspect` (the edited width/height), and
+no crop means the largest centred one. The original PUTs to `originals/{slot}`
+and `POST /commit-slot {ref, slot, sha256, edit}` commits it; `POST /edit-slot
+{ref, slot, edit}` re-edits the kept original without an upload;
+`Uploads.SetSlotFromFile(ctx, actor, SlotFromFile{Ref, Slot, From, File,
+Edit})` (`POST /commit-slot-from-file {ref, slot, from, file, edit}`) copies a
+manifest image (of `From`, default `Ref`: another item of the tenant needs
+`CanUpload` on both; default edit: the file's own); `POST /slot-original` returns the original to
+uploaders for the editor. The edit and the job's result live in
+`originals/{slot}.json`, so spec changes re-encode with it. Each width is
+`public/{slot}_{width}.webp`; widths wider than the edited image are skipped,
+never upscaled, and an edit outside the original or narrower than `MinWidth`
+(at least the smallest width) is refused (by the job when the original's size
+is not yet known: `Hooks.Failed`, keeping the served outputs). Slot routes and
+the read API's `GET /{kind}/{id}/slots/{slot}` answer `SlotManifest{aspect,
+edit, dims, version, outputs: [{name, w, h, url}], pending, error}`. Output URLs
+carry `?v={version}`, which the access worker serves immutable while current;
+`Reader.SlotOutputs(ref, slot, version)` builds them without reads for the
+widths up to `MinWidth` every processed slot has, and `Hooks.SlotEncoded`
+reports each new version.
 
 **Image processing** (`media/image`, CGO over libvips via govips; install
 `libvips-dev` to build it). `image.New(Config{Store, Kinds, Manifests, Specs,
@@ -281,10 +309,9 @@ replaced meanwhile; it repeats until a commit that landed during the run is
 covered too. A kind with `Zip` set gets `downloads.zip`: a stored zip of that
 variant in file order, rebuilt only when its `inputs` hash changes; its
 display name comes from `Hooks.DownloadName` at read time. Slots and inline
-images re-encode `originals/{slot}` into `public/{output}.webp` in place (`no-cache`, ETag), with
-writes conditional on the output's previous ETag and skipped when its
-recorded source ETag and spec match. Undecodable sources go to
-`Hooks.Failed` and are not retried.
+images re-encode `originals/{slot}` into `public/` in place (`no-cache`, ETag),
+with writes conditional on the output's previous ETag and skipped when they
+already match. Undecodable sources go to `Hooks.Failed` and are not retried.
 
 The optional `UploadLimiter` (`media.NewPGLimiter` over the baseline's
 `content_media_*` tables) rate-limits uploaders (files/hour, bytes/day → 429)

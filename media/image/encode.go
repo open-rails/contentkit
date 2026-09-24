@@ -126,6 +126,67 @@ func load(src []byte, s media.Spec, edit *media.Edit) (*vips.ImageRef, error) {
 	return img, err
 }
 
+// slotOutput is one encoded slot width.
+type slotOutput struct {
+	webp []byte
+	dims media.Dims
+}
+
+// encodeSlot checks src is contentType, decodes it, applies its EXIF orientation and the slot's
+// resolved edit, and encodes every width that fits the edited image, never
+// upscaling. dims is the oriented source's size once known.
+func encodeSlot(src []byte, contentType string, s media.Slot, edit *media.Edit, maxPixels int) (map[int]slotOutput, media.Dims, error) {
+	var dims media.Dims
+	w, h, err := probe(src, contentType, maxPixels)
+	if err != nil {
+		return nil, dims, err
+	}
+	dims = media.Dims{W: w, H: h}
+	if edit, err = s.Resolve(edit, w, h); err != nil {
+		return nil, dims, permanentError{fmt.Errorf("edit: %w", err)}
+	}
+	img, err := vips.NewImageFromBuffer(src)
+	if err != nil {
+		return nil, dims, permanentError{err}
+	}
+	defer img.Close()
+	if err = img.AutoRotate(); err == nil {
+		err = apply(img, edit)
+	}
+	if err != nil {
+		return nil, dims, permanentError{err}
+	}
+	q := s.Quality
+	if q <= 0 {
+		q = 80
+	}
+	outs := map[int]slotOutput{}
+	for _, width := range s.Widths {
+		if width > img.Width() {
+			break
+		}
+		d := media.Dims{W: width, H: s.Height(width)}
+		out, err := img.Copy()
+		if err == nil {
+			err = out.ThumbnailWithSize(d.W, d.H, vips.InterestingNone, vips.SizeForce)
+		}
+		var b []byte
+		if err == nil {
+			p := vips.NewWebpExportParams()
+			p.Quality, p.StripMetadata = q, true
+			b, _, err = out.ExportWebp(p)
+		}
+		if out != nil {
+			out.Close()
+		}
+		if err != nil {
+			return nil, dims, permanentError{err}
+		}
+		outs[width] = slotOutput{b, d}
+	}
+	return outs, dims, nil
+}
+
 func apply(img *vips.ImageRef, e *media.Edit) error {
 	if err := e.Check(img.Width(), img.Height()); err != nil {
 		return err

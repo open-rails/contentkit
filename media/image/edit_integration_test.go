@@ -158,12 +158,12 @@ func TestEditCropRotate(t *testing.T) {
 
 func TestSlotFromFileCrop(t *testing.T) {
 	k := galleryKind()
-	k.Slots = map[string]media.Slot{"cover": {Outputs: map[string]media.Spec{"cover": {Width: 100}}, Aspect: 0.5}}
+	k.Slots = map[string]media.Slot{"cover": {Aspect: 0.5, Widths: []int{100}}}
 	e := newEnv(t, k)
 	ref := contentref.NewVersion(e.Tenant, "gallery", "e2", "en")
 	e.commit(t, ref, ins("001.png", e.upload(t, ref, "", quadrants(t))))
 	e.drain(t)
-	cover := func() ([]byte, media.Object) { return e.object(t, e.Tenant+"/gallery/e2/public/cover.webp") }
+	cover := func() ([]byte, media.Object) { return e.object(t, e.Tenant+"/gallery/e2/public/cover_100.webp") }
 	set := func(edit *media.Edit) {
 		t.Helper()
 		if err := e.uploads.SetSlotFromFile(context.Background(), access.Actor{ID: "u"}, media.SlotFromFile{Ref: ref, Slot: "cover", File: "001.png", Edit: edit}); err != nil {

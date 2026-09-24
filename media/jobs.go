@@ -432,15 +432,20 @@ func (w *processWorker) Work(ctx context.Context, job *river.Job[processArgs]) e
 		return river.JobCancel(err)
 	}
 	// The input is the manifest, or the slot original; a commit that lands
-	// after the processors read it changes its version (a slot's ETag and edit).
+	// after the processors read it changes its version (a slot's original and record).
 	key, err := item.ManifestKey()
+	keys := []string{key}
 	if pj.Slot != "" {
 		key, err = item.SlotOriginal(pj.Slot)
+		keys = []string{key}
+		if rec, rerr := item.SlotRecord(pj.Slot); rerr == nil {
+			keys = append(keys, rec)
+		}
 	}
 	if err != nil {
 		return river.JobCancel(err)
 	}
-	before, err := w.j.etag(ctx, key)
+	before, err := w.j.etag(ctx, keys...)
 	if err != nil {
 		return err
 	}
@@ -453,7 +458,7 @@ func (w *processWorker) Work(ctx context.Context, job *river.Job[processArgs]) e
 	}
 	// A processor's own write also changes it; the rerun then finds no work
 	// and leaves the input unchanged.
-	after, err := w.j.etag(ctx, key)
+	after, err := w.j.etag(ctx, keys...)
 	if err != nil {
 		return err
 	}
@@ -463,10 +468,15 @@ func (w *processWorker) Work(ctx context.Context, job *river.Job[processArgs]) e
 	return nil
 }
 
-func (j *Jobs) etag(ctx context.Context, key string) (string, error) {
-	obj, err := j.cfg.Store.Head(ctx, key)
-	if errors.Is(err, ErrNotFound) {
-		return "", nil
+// etag is the inputs' version: their ETags ("" when absent).
+func (j *Jobs) etag(ctx context.Context, keys ...string) (string, error) {
+	var v string
+	for _, key := range keys {
+		obj, err := j.cfg.Store.Head(ctx, key)
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return "", err
+		}
+		v += obj.ETag + "|"
 	}
-	return obj.ETag + obj.Metadata[SlotEditMeta], err
+	return v, nil
 }

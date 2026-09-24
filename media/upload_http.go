@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // UploadHandlerOptions configure UploadHandler.
@@ -19,6 +21,9 @@ type UploadHandlerOptions struct {
 	Tenant string                                   // every ref is scoped to it
 	Actor  func(*http.Request) (access.Actor, bool) // the host's authenticated caller; false answers 401
 	Logger *slog.Logger                             // 5xx causes; default slog.Default()
+	// PublicBaseURL is the access worker origin (Delivery.BaseURL) slot
+	// replies build output URLs on; required for slot routes.
+	PublicBaseURL string
 }
 
 // UploadHandler serves the upload API the browser SDK calls. All routes are
@@ -31,8 +36,11 @@ type UploadHandlerOptions struct {
 //	POST /complete     TicketBody   -> CompleteReply
 //	POST /abort        TicketBody   -> 204
 //	POST /commit       CommitBody   -> CommitReply
-//	POST /commit-slot  SlotBody     -> 204
-//	POST /commit-slot-from-file  SlotFromFileBody -> 204
+//	POST /commit-slot            SlotBody         -> SlotManifest (204 for an inline image)
+//	POST /commit-slot-from-file  SlotFromFileBody -> SlotManifest
+//	POST /edit-slot              SlotEditBody     -> SlotManifest   re-edit the committed original
+//	POST /slot                   SlotRefBody      -> SlotManifest
+//	POST /slot-original          SlotRefBody      -> the committed original's bytes (editor)
 func UploadHandler(u *Uploads, o UploadHandlerOptions) http.Handler {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
@@ -47,6 +55,9 @@ func UploadHandler(u *Uploads, o UploadHandlerOptions) http.Handler {
 	mux.HandleFunc("POST /commit", h.commit)
 	mux.HandleFunc("POST /commit-slot", h.commitSlot)
 	mux.HandleFunc("POST /commit-slot-from-file", h.slotFromFile)
+	mux.HandleFunc("POST /edit-slot", h.editSlot)
+	mux.HandleFunc("POST /slot", h.slot)
+	mux.HandleFunc("POST /slot-original", h.slotOriginal)
 	return mux
 }
 
@@ -142,10 +153,26 @@ type CommitReply struct {
 	Files []CommitFile `json:"files"`
 }
 
+// SlotBody commits an uploaded slot (or inline image) original. Edit's crop
+// is in the EXIF-oriented original's pixels, its height derived from its
+// width at the slot's aspect; omitted crops centred at the aspect.
 type SlotBody struct {
 	Ref    RefBody `json:"ref"`
 	Slot   string  `json:"slot"`
 	SHA256 string  `json:"sha256"`
+	Edit   *Edit   `json:"edit,omitempty"`
+}
+
+// SlotEditBody re-edits the committed original; omitted crops centred.
+type SlotEditBody struct {
+	Ref  RefBody `json:"ref"`
+	Slot string  `json:"slot"`
+	Edit *Edit   `json:"edit,omitempty"`
+}
+
+type SlotRefBody struct {
+	Ref  RefBody `json:"ref"`
+	Slot string  `json:"slot"`
 }
 
 // SlotFromFileBody makes File (a manifest image of From, default Ref) the
@@ -297,11 +324,12 @@ func (h uploadHandler) commitSlot(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.u.CommitSlot(r.Context(), actor, h.ref(b.Ref), b.Slot, sum); err != nil {
-		h.fail(w, r, err)
+	err := h.u.CommitSlot(r.Context(), actor, h.ref(b.Ref), b.Slot, sum, b.Edit)
+	if err == nil && layout.ValidInlineName(b.Slot) {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	h.slotReply(w, r, b.Ref, b.Slot, err)
 }
 
 func (h uploadHandler) slotFromFile(w http.ResponseWriter, r *http.Request) {
@@ -314,11 +342,58 @@ func (h uploadHandler) slotFromFile(w http.ResponseWriter, r *http.Request) {
 	if b.From != nil {
 		req.From = h.ref(*b.From)
 	}
-	if err := h.u.SetSlotFromFile(r.Context(), actor, req); err != nil {
+	h.slotReply(w, r, b.Ref, b.Slot, h.u.SetSlotFromFile(r.Context(), actor, req))
+}
+
+func (h uploadHandler) editSlot(w http.ResponseWriter, r *http.Request) {
+	var b SlotEditBody
+	actor, ok := h.read(w, r, &b)
+	if !ok {
+		return
+	}
+	h.slotReply(w, r, b.Ref, b.Slot, h.u.EditSlot(r.Context(), actor, h.ref(b.Ref), b.Slot, b.Edit))
+}
+
+func (h uploadHandler) slot(w http.ResponseWriter, r *http.Request) {
+	var b SlotRefBody
+	if _, ok := h.read(w, r, &b); ok {
+		h.slotReply(w, r, b.Ref, b.Slot, nil)
+	}
+}
+
+func (h uploadHandler) slotOriginal(w http.ResponseWriter, r *http.Request) {
+	var b SlotRefBody
+	actor, ok := h.read(w, r, &b)
+	if !ok {
+		return
+	}
+	rc, obj, err := h.u.SlotOriginal(r.Context(), actor, h.ref(b.Ref), b.Slot)
+	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	defer rc.Close()
+	w.Header().Set("Content-Type", obj.ContentType)
+	w.Header().Set("Content-Length", strconv.FormatInt(obj.Size, 10))
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = io.Copy(w, rc)
+}
+
+// slotReply answers a slot route with the slot's manifest once err is nil.
+func (h uploadHandler) slotReply(w http.ResponseWriter, r *http.Request, ref RefBody, slot string, err error) {
+	if err == nil && h.o.PublicBaseURL == "" {
+		err = errors.New("media: UploadHandlerOptions.PublicBaseURL is required for slot routes")
+	}
+	var m SlotManifest
+	if err == nil {
+		m, err = h.u.o.Manifests.SlotManifest(r.Context(), h.o.PublicBaseURL, h.ref(ref), slot)
+	}
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
 }
 
 func (h uploadHandler) read(w http.ResponseWriter, r *http.Request, v any) (access.Actor, bool) {
@@ -352,9 +427,12 @@ func (h uploadHandler) ref(b RefBody) contentref.ContentRef {
 func (h uploadHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	ue, ok := AsUploadError(err)
 	if !ok {
-		if errors.Is(err, ErrManifestConflict) {
+		switch {
+		case errors.Is(err, ErrManifestConflict):
 			ue = &UploadError{Code: CodeConflict, Message: "manifest kept changing; retry"}
-		} else {
+		case errors.Is(err, ErrNotVisible):
+			ue = &UploadError{Code: CodeNotFound, Message: err.Error()}
+		default:
 			h.o.Logger.ErrorContext(r.Context(), "media upload", "method", r.Method, "path", r.URL.Path, "error", err)
 			writeJSON(w, http.StatusInternalServerError, ErrorReply{Error: "internal error", Code: "internal_error"})
 			return
