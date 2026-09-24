@@ -350,8 +350,11 @@ The bucket needs CORS allowing `PUT` from the app origins with the
 `AbortIncompleteMultipartUpload: 1 day` rule `Store.Configure` sets.
 
 **Video** (`media/video`, run by `cmd/media-worker`) encodes each `video/*`
-manifest file in one ffmpeg pass: H.264 High (CRF 22, preset fast, keyframes
-every 4 s) at the kind's ladder (`Kind.Video = &media.Video{Ladder: []int{1080, 720, 480}}`;
+manifest file: H.264 High with a capped CRF per rung (live action: 2160 CRF 23
+at most 16 Mbit/s, 1440 23/9M, 1080 23/6M, 720 22/3.5M, 480 21/1.5M; VBV
+buffer 2× the cap; `Video.Profile: media.VideoAnimation` adds `-tune animation`
+at CRF 20–21 and lower caps), keyframes every 2 s without scene cuts, 4 s
+segments, at the kind's ladder (`Kind.Video = &media.Video{Ladder: []int{1080, 720, 480}}`;
 default `media.DefaultLadder`, 2160/1440/1080/720/480), AAC per audio track,
 WebVTT per text subtitle and a 10×10 sprite whose tiles keep the source
 aspect (short side 90). A rung N is the output's **short side** (a 1080 rung
@@ -374,16 +377,32 @@ each rung also gets a muxed MP4 in `downloads["{file}-{N}p"]` (video,
 every audio track, subtitles). Blobs are written first; one manifest edit then
 records `hls` and `downloads` only if the file still derives from the encoded
 original, so a replaced file keeps its previous `hls` until then. Outputs are
-byte-identical on retry (same encoder and `Threads`). One ffmpeg pass decodes
-the source once; each rung's x264 gets its frame-area share of
-`Config.Threads`, and rungs mux and upload concurrently. `Config.Encoder`
-picks libx264 (default without a GPU) or NVENC (`auto` uses it when a probe
-encode works; a file it fails on re-encodes with x264). ffmpeg reads only local files
+byte-identical on retry (same encoder, presets and `Threads`). Each pass
+decodes the source once and scales a lanczos cascade (each rung from the one
+above; the sprite from the smallest); x264 runs preset `faster` up to 1080
+and `veryfast` above (`Config.Preset`, `TopPreset`), each rung with its
+frame-area share of `Config.Threads`; rungs mux and upload concurrently.
+**Two stages:** rungs up to 1080 (with audio, subtitles, sprite and their
+downloads) are published first with `hls.pending` listing the rungs above;
+the worker queues a follow-up job (same args, River priority 2) that encodes
+those and adds them to `hls.video` in one manifest edit. Both stages key
+frames at the same times, so players switch between their rungs seamlessly;
+progress reports `stage`/`stages`. **Passthrough:** when the source already
+is a compliant top rung (MP4/MOV constant-rate 8-bit 4:2:0 progressive
+H.264 High/Main ≤ level 5.2, unrotated, at the rung's exact frame, within its
+bitrate cap, with an IDR on each 2 s keyframe time) that rung is stream-copied
+and checked against a sibling rung's segments; otherwise it is encoded.
+`Config.Encoder` picks libx264 (default without a GPU) or NVENC (`auto` uses
+it when a probe encode works; a file it fails on re-encodes with x264).
+ffmpeg reads only local files
 (`-protocol_whitelist file`) through container demuxers (mov/mp4, matroska/webm, avi,
 mpegts, flv, ogg, asf, mpeg): playlists and concat lists are refused. Changing
-the ladder changes `video.Spec(ladder)`, so files re-encode. Jobs live in River schema `media_worker` in the host
+the ladder or profile changes `video.Spec(video)`, so files re-encode. Jobs live in River schema `media_worker` in the host
 database: hosts run `video.Migrate` and enqueue through `video.NewEnqueuer`
-(insert-only; register `enqueuer.Processor()` with `media.Jobs.AddProcessor`); the worker's environment is
+(insert-only; register `enqueuer.Processor()` with `media.Jobs.AddProcessor`;
+`enqueuer.Cancel(ctx, ref)` cancels an item's queued and running jobs of
+both stages). A job is `{ref, versioned, video}`; jobs are not unique, and a
+job for a fresh manifest is a no-op. The worker's environment is
 documented in `cmd/media-worker`.
 
 After each encode the job grabs the item's **poster** frame (the `poster`

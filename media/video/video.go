@@ -352,6 +352,16 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 	fp.probed(p.duration, out)
 	ps := pass{rungs: todo, sprite: !second, enc: encoding{codec: e.c.Encoder, threads: e.c.Threads, preset: e.c.Preset,
 		topPreset: e.c.TopPreset, animation: r.video.Profile == media.VideoAnimation}}
+	// The plan's top rung is copied from a compliant source (a stage keeps
+	// another rung to check its segments against).
+	var copied *rung
+	if len(todo) >= 2 && todo[0] == p.rungs[0] {
+		if ok, why := passthroughable(ctx, src, p, todo[0]); ok {
+			copied, ps.rungs = &todo[0], todo[1:]
+		} else {
+			e.c.Logger.DebugContext(ctx, "media/video: no passthrough", "key", srcKey, "reason", why)
+		}
+	}
 	err = ladder(ctx, src, out, p, ps, fp)
 	if err != nil && ps.enc.codec == EncoderNVENC && ctx.Err() == nil {
 		e.c.Logger.WarnContext(ctx, "media/video: NVENC failed; encoding with x264", "key", srcKey, "error", err)
@@ -362,6 +372,20 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 	}
 	if err != nil {
 		return nil, err
+	}
+	if copied != nil {
+		if err := copyRung(ctx, src, out, p, copied.n); err != nil {
+			return nil, err
+		}
+		if !sameSegments(out, copied.n, ps.rungs[0].n) {
+			e.c.Logger.WarnContext(ctx, "media/video: passthrough segments differ; encoding the rung", "key", srcKey, "rung", copied.n)
+			ps.rungs, ps.sprite, ps.noTracks = []rung{*copied}, false, true
+			if err := ladder(ctx, src, out, p, ps, fp); err != nil {
+				return nil, err
+			}
+		} else {
+			e.c.Logger.InfoContext(ctx, "media/video: top rung copied from the source", "key", srcKey, "rung", copied.n)
+		}
 	}
 	if err := os.Remove(src); err != nil {
 		return nil, err

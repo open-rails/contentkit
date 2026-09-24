@@ -17,6 +17,7 @@ import (
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
@@ -235,5 +236,77 @@ func TestWorkerQueuesSecondStage(t *testing.T) {
 	m, _ := e.manifest(t)
 	if h := m.Files[0].HLS; len(h.Video) != 2 || len(h.Pending) != 0 {
 		t.Fatalf("after the follow-up: %+v", h)
+	}
+}
+
+// A compliant source's top rung is its own video stream, copied: the same
+// packets, on the lower rungs' segments, switchable with them.
+func TestPassthroughTopRung(t *testing.T) {
+	e := newEnv(t, nil, nil)
+	src := filepath.Join(t.TempDir(), "source.mp4")
+	if b, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=9", "-f", "lavfi", "-i", "sine=duration=9",
+		"-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p",
+		"-force_key_frames", "expr:gte(t,n_forced*2)", "-sc_threshold", "0", "-c:a", "aac", "-y", src).CombinedOutput(); err != nil {
+		t.Fatalf("fixture: %v: %s", err, b)
+	}
+	e.commit(t, src, media.OpInsert)
+	e.encode(t)
+	m, _ := e.manifest(t)
+	h := m.Files[0].HLS
+	if len(h.Video) != 2 || h.Video[0].Rung != 720 {
+		t.Fatalf("hls %+v", h)
+	}
+	hash := func(path string) string {
+		out, err := exec.Command("ffmpeg", "-v", "error", "-i", path, "-map", "0:v", "-c", "copy", "-f", "streamhash", "-").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
+	}
+	top := e.blob(t, h.Video[0].Blob)
+	if hash(top) != hash(src) {
+		t.Fatal("the 720 rung is not the source's video stream")
+	}
+	paths := []string{top, e.blob(t, h.Video[1].Blob)}
+	for i, r := range h.Video {
+		checkByteRanges(t, paths[i], r.Segments, "video", 9)
+	}
+	switchRungs(t, paths, h.Video)
+}
+
+// Cancel removes an item's queued jobs (both stages share the job shape).
+func TestCancelJobs(t *testing.T) {
+	ctx := context.Background()
+	pool := pgtest.Pool(t, nil)
+	if err := video.Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM "+video.Schema+".river_job"); err != nil {
+		t.Fatal(err)
+	}
+	e := newEnv(t, nil, nil)
+	enq, err := video.NewEnqueuer(pool, e.kinds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := e.ref
+	other.ContentID = "99"
+	for _, ref := range []contentref.ContentRef{e.ref, e.ref, other} {
+		if err := enq.Enqueue(ctx, media.ProcessJob{Ref: ref}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, err := enq.Cancel(ctx, e.ref); err != nil || n != 2 {
+		t.Fatalf("cancelled %d: %v", n, err)
+	}
+	var states []string
+	rows, _ := pool.Query(ctx, "SELECT state FROM "+video.Schema+".river_job ORDER BY id")
+	for rows.Next() {
+		var s string
+		_ = rows.Scan(&s)
+		states = append(states, s)
+	}
+	if !slices.Equal(states, []string{"cancelled", "cancelled", "available"}) {
+		t.Fatalf("states %v", states)
 	}
 }

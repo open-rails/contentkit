@@ -18,22 +18,27 @@ import (
 type probeResult struct {
 	Streams []probeStream `json:"streams"`
 	Format  struct {
-		Duration string `json:"duration"`
+		Duration   string `json:"duration"`
+		StartTime  string `json:"start_time"`
+		FormatName string `json:"format_name"`
 	} `json:"format"`
 }
 
 type probeStream struct {
-	Index     int    `json:"index"`
-	CodecType string `json:"codec_type"`
-	CodecName string `json:"codec_name"`
-	Profile   string `json:"profile"`
-	Level     int    `json:"level"`
-	Width     int    `json:"width"`
-	Height    int    `json:"height"`
-	SAR       string `json:"sample_aspect_ratio"`
-	AvgRate   string `json:"avg_frame_rate"`
-	Rate      string `json:"r_frame_rate"`
-	Tags      struct {
+	Index      int    `json:"index"`
+	CodecType  string `json:"codec_type"`
+	CodecName  string `json:"codec_name"`
+	Profile    string `json:"profile"`
+	Level      int    `json:"level"`
+	Width      int    `json:"width"`
+	Height     int    `json:"height"`
+	SAR        string `json:"sample_aspect_ratio"`
+	PixFmt     string `json:"pix_fmt"`
+	FieldOrder string `json:"field_order"`
+	StartTime  string `json:"start_time"`
+	AvgRate    string `json:"avg_frame_rate"`
+	Rate       string `json:"r_frame_rate"`
+	Tags       struct {
 		Language string `json:"language"`
 		Title    string `json:"title"`
 		Rotate   string `json:"rotate"`
@@ -84,6 +89,9 @@ type plan struct {
 	rungs         []rung
 	tileW, tileH  int // sprite tile
 	audio, subs   []track
+	stream        probeStream // the video stream, for passthrough
+	formatName    string
+	start         float64 // the container's start time
 }
 
 var errNoVideo = errors.New("source has no video stream")
@@ -95,6 +103,8 @@ func newPlan(p probeResult, v *media.Video) (plan, error) {
 		return pl, errors.New("source has no valid duration")
 	}
 	pl.duration, pl.video = d, -1
+	pl.formatName = p.Format.FormatName
+	pl.start, _ = strconv.ParseFloat(p.Format.StartTime, 64)
 	labels := map[string]int{}
 	counts := map[string]int{}
 	for _, s := range p.Streams {
@@ -108,7 +118,7 @@ func newPlan(p probeResult, v *media.Video) (plan, error) {
 			if s.Width < 2 || s.Height < 2 {
 				return pl, errors.New("invalid video dimensions")
 			}
-			pl.video, pl.width, pl.height = s.Index, s.Width, s.Height
+			pl.video, pl.width, pl.height, pl.stream = s.Index, s.Width, s.Height, s
 			if n, d, ok := ratio(s.SAR); ok && n != d {
 				pl.width = max(2, int(math.Round(float64(s.Width)*float64(n)/float64(d))))
 			}

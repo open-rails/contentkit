@@ -33,3 +33,10 @@ func SetStageOneMax(n int) func() {
 func EncodeStage(ctx context.Context, e *Encoder, job Job, report Report) (bool, error) {
 	return e.encode(ctx, job, report, true)
 }
+
+// SetEqualRungThreads gives every rung all threads.
+func SetEqualRungThreads(on bool) func() {
+	old := equalRungThreads
+	equalRungThreads = on
+	return func() { equalRungThreads = old }
+}

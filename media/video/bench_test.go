@@ -6,9 +6,7 @@
 //	CONTENTKIT_BENCH_LABEL     row label, e.g. "before" or "after"
 //	CONTENTKIT_BENCH_THREADS   Config.Threads (default: GOMAXPROCS)
 //	CONTENTKIT_BENCH_TMP       Config.TempDir (default: a test temp dir)
-//	CONTENTKIT_BENCH_ENCODER   Config.Encoder
-//	CONTENTKIT_BENCH_NVENC_CQ_OFFSET  NVENC CQ over the rung CRF
-//	CONTENTKIT_BENCH_PRESET, CONTENTKIT_BENCH_TOP_PRESET  Config.Preset, TopPreset
+//	(and the knobs in bench_knobs_test.go)
 //	CONTENTKIT_BENCH_VMAF      an ffmpeg with libvmaf; unset scores SSIM/PSNR only
 //	CONTENTKIT_BENCH_QUALITY   0 skips quality scoring
 //	CONTENTKIT_BENCH_OUT       JSON lines appended per sample
@@ -32,6 +30,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,6 +50,8 @@ type benchRung struct {
 	H       int     `json:"h"`
 	AvgKbps int     `json:"avg_kbps"`
 	VMAF    float64 `json:"vmaf,omitempty"`
+	VMAF1   float64 `json:"vmaf_p1,omitempty"` // 1% low
+	VMAFMin float64 `json:"vmaf_min,omitempty"`
 	SSIM    float64 `json:"ssim"`
 	PSNR    float64 `json:"psnr"`
 }
@@ -60,7 +61,10 @@ type benchResult struct {
 	Sample     string             `json:"sample"`
 	Duration   float64            `json:"duration_s"`
 	Threads    int                `json:"threads"`
-	Encoder    string             `json:"encoder,omitempty"`
+	Knobs      string             `json:"knobs,omitempty"`
+	Playable   float64            `json:"first_playable_s,omitempty"` // a second stage started
+	Frames     int                `json:"frames"`
+	CPUPerOut  float64            `json:"cpu_ms_per_output_frame"`
 	FFmpeg     string             `json:"ffmpeg"`
 	Load1      float64            `json:"load1"`
 	Wall       float64            `json:"wall_s"`
@@ -114,17 +118,13 @@ func benchSample(t *testing.T, src string) {
 		cfg.TempDir = t.TempDir()
 	}
 	cfg.Threads, _ = strconv.Atoi(os.Getenv("CONTENTKIT_BENCH_THREADS"))
-	cfg.Encoder = os.Getenv("CONTENTKIT_BENCH_ENCODER")
-	if o, err := strconv.Atoi(os.Getenv("CONTENTKIT_BENCH_NVENC_CQ_OFFSET")); err == nil {
-		defer video.SetNVENCCQOffset(o)()
-	}
-	cfg.Preset, cfg.TopPreset = os.Getenv("CONTENTKIT_BENCH_PRESET"), os.Getenv("CONTENTKIT_BENCH_TOP_PRESET")
+	defer benchKnobs(&cfg)()
 	enc, err := video.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	res := benchResult{Label: os.Getenv("CONTENTKIT_BENCH_LABEL"), Sample: filepath.Base(src), Threads: cfg.Threads, Encoder: cfg.Encoder,
+	res := benchResult{Label: os.Getenv("CONTENTKIT_BENCH_LABEL"), Sample: filepath.Base(src), Threads: cfg.Threads,
 		FFmpeg: ffmpegVersion(), Load1: load1(), Phases: map[string]float64{}}
 	if res.Threads == 0 {
 		res.Threads = runtime.GOMAXPROCS(0)
@@ -133,12 +133,16 @@ func benchSample(t *testing.T, src string) {
 	stop := sampleResources(cfg.TempDir, &res)
 	var mu sync.Mutex
 	phase, at := "", time.Now()
+	start := time.Now()
 	report := func(_ context.Context, files map[string]media.EncodeProgress) {
 		mu.Lock()
 		defer mu.Unlock()
 		p, ok := files["source"]
 		if !ok {
 			p, ok = files[media.ItemProgressKey]
+		}
+		if ok && stageOf(p) == 2 && res.Playable == 0 {
+			res.Playable = time.Since(start).Seconds()
 		}
 		if !ok || p.Phase == phase {
 			return
@@ -150,8 +154,8 @@ func benchSample(t *testing.T, src string) {
 		phase, at = p.Phase, now
 	}
 	cpu0 := cpuSeconds()
-	start := time.Now()
-	if err := enc.Encode(ctx, video.Job{Ref: ref, Versioned: true}, report); err != nil {
+	start = time.Now()
+	if err := enc.Encode(ctx, video.Job{Ref: ref, Versioned: true, Video: benchVideo()}, report); err != nil {
 		t.Fatal(err)
 	}
 	res.Wall = time.Since(start).Seconds()
@@ -171,7 +175,10 @@ func benchSample(t *testing.T, src string) {
 	if f.HLS == nil || f.HLS.Error != "" || len(f.HLS.Video) == 0 {
 		t.Fatalf("no ladder: %+v", f.HLS)
 	}
+	res.Knobs = knobsNote()
 	res.Duration, _ = f.Meta["duration"].(float64)
+	res.Frames = frameCount(t, src)
+	res.CPUPerOut = res.CPU * 1000 / float64(res.Frames*len(f.HLS.Video))
 	res.Realtime = res.Duration / res.Wall
 	for _, d := range m.Downloads {
 		res.Downloads += d.Size >> 20
@@ -181,7 +188,7 @@ func benchSample(t *testing.T, src string) {
 		path := benchFetch(t, ctx, s3.Store, item, r.Blob, dir)
 		br := benchRung{Rung: r.Rung, W: r.Width, H: r.Height, AvgKbps: r.Average / 1000}
 		if os.Getenv("CONTENTKIT_BENCH_QUALITY") != "0" {
-			br.SSIM, br.PSNR, br.VMAF = quality(t, src, path, r.Width, r.Height)
+			br.SSIM, br.PSNR, br.VMAF, br.VMAF1, br.VMAFMin = quality(t, src, path, r.Width, r.Height)
 		}
 		res.Rungs = append(res.Rungs, br)
 		os.Remove(path)
@@ -268,7 +275,7 @@ var (
 // measures the encoder rather than the downscale. Frames pair by index after
 // skipping the rendition's leading frames that best align it (constant-rate
 // HLS output may repeat the first frame of a jittery-timestamp source).
-func quality(t *testing.T, src, dist string, w, h int) (ssim, psnr, vmaf float64) {
+func quality(t *testing.T, src, dist string, w, h int) (ssim, psnr, vmaf, p1, low float64) {
 	graph := func(skip, frames int) string {
 		limit := ""
 		if frames > 0 {
@@ -300,12 +307,38 @@ func quality(t *testing.T, src, dist string, w, h int) (ssim, psnr, vmaf float64
 		psnr, _ = strconv.ParseFloat(string(m[1]), 64)
 	}
 	if ff := os.Getenv("CONTENTKIT_BENCH_VMAF"); ff != "" {
-		out := score(ff, graph(skip, 0)+fmt.Sprintf(";[d][r]libvmaf=n_threads=%d:n_subsample=3", min(8, runtime.NumCPU())))
-		if m := vmafRe.FindSubmatch(out); m != nil {
-			vmaf, _ = strconv.ParseFloat(string(m[1]), 64)
+		log := filepath.Join(t.TempDir(), "vmaf.json")
+		score(ff, graph(skip, 0)+fmt.Sprintf(";[d][r]libvmaf=n_threads=%d:n_subsample=3:log_fmt=json:log_path=%s", min(8, runtime.NumCPU()), log))
+		var v struct {
+			Frames []struct {
+				Metrics struct {
+					VMAF float64 `json:"vmaf"`
+				} `json:"metrics"`
+			} `json:"frames"`
 		}
+		b, err := os.ReadFile(log)
+		if err != nil || json.Unmarshal(b, &v) != nil || len(v.Frames) == 0 {
+			t.Fatalf("vmaf log: %v", err)
+		}
+		scores := make([]float64, len(v.Frames))
+		for i, f := range v.Frames {
+			scores[i] = f.Metrics.VMAF
+			vmaf += f.Metrics.VMAF
+		}
+		slices.Sort(scores)
+		vmaf /= float64(len(scores))
+		p1, low = scores[len(scores)/100], scores[0]
 	}
-	return ssim, psnr, vmaf
+	return ssim, psnr, vmaf, p1, low
+}
+
+func frameCount(t *testing.T, src string) int {
+	out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets", "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", src).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	return n
 }
 
 func cpuSeconds() float64 {

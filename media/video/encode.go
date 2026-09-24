@@ -23,7 +23,7 @@ import (
 
 // recipe is the encode's identity with the ladder and profile: a manifest
 // hls or download whose spec differs is stale and re-encoded.
-const recipe = "h264-high-capped-crf:%s|k2-sc0|short-side:%s|cascade-lanczos|max-4096-3840x2160|lvl51-52|max60fps|sar1|aac-128k-48k-2ch|webvtt|sprite-10x10-short90-jpg|mp4-all-audio-mov_text|stages-1080|v3"
+const recipe = "h264-high-capped-crf:%s|k2-sc0|short-side:%s|cascade-lanczos|max-4096-3840x2160|lvl51-52|max60fps|sar1|aac-128k-48k-2ch|webvtt|sprite-10x10-short90-jpg|mp4-all-audio-mov_text|stages-1080|pt-top|v3"
 
 // Spec identifies the recipe over v's ladder (empty: media.DefaultLadder)
 // and profile in manifest hls and downloads entries.
@@ -64,9 +64,10 @@ const (
 // pass is one ffmpeg run of a file's stage: its rungs (largest first), and
 // whether it also makes the sprite frames.
 type pass struct {
-	rungs  []rung
-	sprite bool
-	enc    encoding
+	rungs    []rung
+	sprite   bool
+	noTracks bool // audio and subtitles are already encoded
+	enc      encoding
 }
 
 // ladder runs one ffmpeg pass: the source is decoded once and scaled down a
@@ -118,10 +119,16 @@ func ladder(ctx context.Context, src, dir string, p plan, ps pass, fp *fileProgr
 	args = append(args, "-var_stream_map", strings.Join(streamMap, " "))
 	args = append(args, hlsArgs(filepath.Join(dir, "v%v.mp4"), filepath.Join(dir, "v%v.m3u8"))...)
 	for i, a := range p.audio {
+		if ps.noTracks {
+			break
+		}
 		args = append(args, "-map", fmt.Sprintf("0:%d", a.index), "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2")
 		args = append(args, hlsArgs(filepath.Join(dir, fmt.Sprintf("a%d.mp4", i)), filepath.Join(dir, fmt.Sprintf("a%d.m3u8", i)))...)
 	}
 	for i, s := range p.subs {
+		if ps.noTracks {
+			break
+		}
 		args = append(args, "-map", fmt.Sprintf("0:%d", s.index), "-c:s", "webvtt", "-f", "webvtt", filepath.Join(dir, fmt.Sprintf("s%d.vtt", i)))
 	}
 	if ps.sprite {
@@ -145,12 +152,18 @@ func hlsArgs(segment, playlist string) []string {
 // rungThreads is rung i's share of threads by frame area, at least 2 (a
 // single-threaded x264 has no lookahead thread and stalls the pass).
 func rungThreads(rungs []rung, i, threads int) int {
+	if equalRungThreads {
+		return threads
+	}
 	var total float64
 	for _, r := range rungs {
 		total += float64(r.w * r.h)
 	}
 	return max(min(threads, 2), int(math.Ceil(float64(threads)*float64(rungs[i].w*rungs[i].h)/total)))
 }
+
+// equalRungThreads gives every rung all threads (bench comparison).
+var equalRungThreads bool
 
 // Config.Encoder values.
 const (

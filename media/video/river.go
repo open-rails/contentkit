@@ -41,6 +41,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 // Enqueuer is the host's insert-only client for video jobs.
 type Enqueuer struct {
 	client *river.Client[pgx.Tx]
+	pool   *pgxpool.Pool
 	kinds  *media.Registry
 }
 
@@ -52,7 +53,7 @@ func NewEnqueuer(pool *pgxpool.Pool, kinds *media.Registry) (*Enqueuer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Enqueuer{client: c, kinds: kinds}, nil
+	return &Enqueuer{client: c, pool: pool, kinds: kinds}, nil
 }
 
 // Enqueue inserts a job for a video kind's manifest; slot jobs and other
@@ -96,6 +97,50 @@ func (q *Enqueuer) args(job media.ProcessJob) (Args, bool, error) {
 		return Args{}, false, err
 	}
 	return Args{Ref: job.Ref, Versioned: item.Kind().Versioned, Video: *v}, true, nil
+}
+
+// Cancel cancels ref's queued and running jobs, both stages: a running
+// encode is killed and publishes nothing further, and no follow-up stage is
+// queued after a cancelled one. It returns how many jobs it cancelled.
+func (q *Enqueuer) Cancel(ctx context.Context, ref contentref.ContentRef) (int, error) {
+	match, err := refMatch(ref)
+	if err != nil {
+		return 0, err
+	}
+	var version *string
+	if v := ref.Version(); v != "" {
+		version = &v
+	}
+	rows, err := q.pool.Query(ctx, `SELECT id FROM `+Schema+`.river_job
+WHERE kind = $1 AND args @> $2 AND args->'ref'->>'content_version_id' IS NOT DISTINCT FROM $3
+  AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled')`, Args{}.Kind(), match, version)
+	if err != nil {
+		return 0, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, id := range ids {
+		if _, err := q.client.JobCancel(ctx, id); err != nil && !errors.Is(err, river.ErrNotFound) {
+			return 0, err
+		}
+	}
+	return len(ids), nil
+}
+
+func refMatch(ref contentref.ContentRef) ([]byte, error) {
+	return json.Marshal(map[string]any{"ref": map[string]string{
+		"tenant_id": ref.TenantID, "content_kind": ref.ContentKind, "content_id": ref.ContentID}})
 }
 
 // Jobs are not unique: River's uniqueness always covers running jobs, which
@@ -254,8 +299,7 @@ ORDER BY j.id`
 
 func (s *progressSource) EncodeProgress(ctx context.Context, ref contentref.ContentRef) (media.EncodeStatus, error) {
 	var st media.EncodeStatus
-	match, err := json.Marshal(map[string]any{"ref": map[string]string{
-		"tenant_id": ref.TenantID, "content_kind": ref.ContentKind, "content_id": ref.ContentID}})
+	match, err := refMatch(ref)
 	if err != nil {
 		return st, err
 	}
