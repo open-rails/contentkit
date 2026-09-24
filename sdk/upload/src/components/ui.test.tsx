@@ -224,3 +224,27 @@ it("SlotEditMenu defaults to the kit's scoped button and SlotEditError shows unr
   await user.upload(container.querySelector<HTMLInputElement>("input[type=file]")!, png(6));
   expect(await screen.findByRole("alert")).toHaveTextContent("This file can't be opened as an image.");
 });
+
+it("ImageCropDialog reports an edit once per change, so hosts can mirror it into state", async () => {
+  const seen = vi.fn();
+  function Host() {
+    const [, setEdit] = useState<unknown>(null);
+    return (
+      <ImageCropDialog
+        open
+        onOpenChange={() => {}}
+        source={{ url: "blob:x", width: 3000, height: 2000 }}
+        aspect={3}
+        onEditChange={(e) => {
+          seen(e);
+          setEdit(e);
+        }}
+        onConfirm={() => {}}
+      />
+    );
+  }
+  render(<Host />);
+  await screen.findByRole("dialog");
+  await new Promise((r) => setTimeout(r, 100));
+  expect(seen.mock.calls.length).toBeLessThanOrEqual(2);
+});

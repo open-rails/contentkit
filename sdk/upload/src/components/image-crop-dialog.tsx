@@ -1,7 +1,7 @@
 import { Alert02Icon, Image01Icon, RotateClockwiseIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import Cropper, { type Area, type Point } from "react-easy-crop";
 import type { Progress as UploadProgress } from "../client.js";
 import { editedSize, toRotated, type Size } from "../crop.js";
@@ -72,7 +72,8 @@ export function ImageCropDialog(p: ImageCropDialogProps) {
 function CropBody(p: ImageCropDialogProps & { source: CropSource }) {
   const { t } = useMessages();
   const { source, aspect } = p;
-  const size: Size = { width: source.width, height: source.height };
+  // Stable, so the edit keeps its identity across renders (onEditChange would loop).
+  const size: Size = useMemo(() => ({ width: source.width, height: source.height }), [source.width, source.height]);
   const c = useCrop({ source: size, aspect, initial: p.initialEdit });
   const [pos, setPos] = useState<Point>({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
