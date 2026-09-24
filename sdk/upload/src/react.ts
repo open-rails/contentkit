@@ -192,13 +192,16 @@ export {
 
 export {
   GALLERY_VIEW_KEY,
+  PLAYER_QUALITY_KEY,
   useCarousel,
   useGalleryView,
   useHlsPlayer,
   type CarouselOptions,
   type GalleryViewOptions,
   type HlsPlayerOptions,
+  type PlayerQuality,
   type PlayerStatus,
+  type QualityLevel,
   type UseCarousel,
   type UseHlsPlayer,
 } from "./gallery-react.js";

@@ -118,6 +118,9 @@ export const zh: UploadUiMessageBundle = {
     loading: "正在加载视频…",
     retry: "重试",
     code: "代码 {code}",
+    quality: "画质",
+    auto: "自动",
+    autoCurrent: "自动（{quality}）",
     failed: "无法处理此视频。",
     errors: {
       network: "无法连接到视频服务器。",

@@ -116,6 +116,9 @@ export const en = {
     loading: "Loading video…",
     retry: "Try again",
     code: "Code {code}",
+    quality: "Quality",
+    auto: "Auto",
+    autoCurrent: "Auto ({quality})",
     failed: "This video couldn't be processed.",
     errors: {
       network: "The video server couldn't be reached.",

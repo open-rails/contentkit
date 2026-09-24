@@ -118,6 +118,9 @@ export const ja: UploadUiMessageBundle = {
     loading: "動画を読み込み中…",
     retry: "再試行",
     code: "コード {code}",
+    quality: "画質",
+    auto: "自動",
+    autoCurrent: "自動（{quality}）",
     failed: "この動画を処理できませんでした。",
     errors: {
       network: "動画サーバーに接続できませんでした。",

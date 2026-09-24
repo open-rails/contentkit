@@ -1,7 +1,7 @@
 import { UploadUiProvider, type UploadUiTheme } from "@openrails/contentkit-upload/ui";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { GalleryDemo, PlayerDemo } from "./gallery";
+import { AbrDemo, GalleryDemo, PlayerDemo } from "./gallery";
 
 const q = new URLSearchParams(location.search);
 const theme = (q.get("theme") ?? "light") as UploadUiTheme;
@@ -11,6 +11,6 @@ document.body.style.cssText = `margin:0;font-family:Inter,ui-sans-serif,system-u
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <UploadUiProvider appearance={{ theme }}>{q.get("page") === "player" ? <PlayerDemo /> : <GalleryDemo />}</UploadUiProvider>
+    <UploadUiProvider appearance={{ theme }}>{q.get("page") === "player" ? <PlayerDemo /> : q.get("page") === "abr" ? <AbrDemo /> : <GalleryDemo />}</UploadUiProvider>
   </StrictMode>,
 );

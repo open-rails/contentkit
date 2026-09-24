@@ -71,3 +71,17 @@ export function PlayerDemo() {
     </main>
   );
 }
+
+// Adaptive bitrate against the synthetic 480–2160 ladder in e2e/media-server.ts.
+export function AbrDemo() {
+  return (
+    <main style={{ maxWidth: 680, margin: "0 auto", padding: "24px 16px", display: "grid", gap: 20 }}>
+      <Post title="abr" demo="abr">
+        <VideoPlayer base={`${media}/abr/landscape/`} width={1920} height={1080} duration={60} />
+        <button type="button" onClick={() => document.querySelector<HTMLElement>("[data-demo=abr] [data-ckui=video-player]")?.requestFullscreen()}>
+          Fullscreen
+        </button>
+      </Post>
+    </main>
+  );
+}

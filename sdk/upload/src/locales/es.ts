@@ -118,6 +118,9 @@ export const es: UploadUiMessageBundle = {
     loading: "Cargando vídeo…",
     retry: "Reintentar",
     code: "Código {code}",
+    quality: "Calidad",
+    auto: "Automática",
+    autoCurrent: "Automática ({quality})",
     failed: "No se pudo procesar este vídeo.",
     errors: {
       network: "No se pudo conectar con el servidor de vídeo.",
