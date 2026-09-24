@@ -10,7 +10,7 @@
 //	MEDIA_WORKER_TMP             scratch dir (default os.TempDir()); size for source + outputs (a tmpfs spares slow disks)
 //	MEDIA_WORKER_THREADS         CPU threads for ffmpeg (default: CPU limit)
 //	MEDIA_WORKER_PRESET          x264 preset of rungs up to 1080 (default faster)
-//	MEDIA_WORKER_TOP_PRESET      x264 preset of 1440/2160 (default veryfast)
+//	MEDIA_WORKER_TOP_PRESET      x264 preset of 1440/2160 (default faster)
 //	MEDIA_WORKER_ENCODER         auto (default: NVENC if a probe encode works, else x264), x264 or nvenc
 //	MEDIA_WORKER_CONCURRENCY     jobs per process (default 1)
 //	MEDIA_WORKER_JOB_TIMEOUT     per-job limit (default 48h)

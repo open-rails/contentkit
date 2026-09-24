@@ -76,11 +76,11 @@ func TestRungRates(t *testing.T) {
 	for _, r := range rungs([]int{2160, 1440, 1080, 720, 480, 360}, 3840, 2160, 30, media.VideoLive) {
 		got = append(got, rungRate{r.crf, r.maxrate})
 	}
-	want := []rungRate{{23, 16000}, {23, 9000}, {23, 6000}, {22, 3500}, {21, 1500}, {21, 1500}}
+	want := []rungRate{{23, 32000}, {23, 18000}, {23, 12000}, {22, 7000}, {21, 3000}, {21, 3000}}
 	if !slices.Equal(got, want) {
 		t.Fatalf("live rates %v, want %v", got, want)
 	}
-	if r := rungs([]int{1080}, 1920, 1080, 24, media.VideoAnimation)[0]; r.crf != 21 || r.maxrate != 4000 {
+	if r := rungs([]int{1080}, 1920, 1080, 24, media.VideoAnimation)[0]; r.crf != 21 || r.maxrate != 8000 {
 		t.Fatalf("animation 1080 %+v", r)
 	}
 }

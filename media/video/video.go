@@ -38,9 +38,9 @@ type Config struct {
 	Locker  media.Locker
 	TempDir string // scratch for the source and outputs; default os.TempDir()
 	Threads int    // CPU threads for ffmpeg; default GOMAXPROCS (the container's CPU limit)
-	// Preset is the x264 preset of rungs up to 1080 (default "faster");
-	// TopPreset of the rungs above (default "veryfast"): most of a 4K ladder's
-	// work for rungs few viewers select.
+	// Preset is the x264 preset of rungs up to 1080, TopPreset of the rungs
+	// above; both default "faster" (preset fast's quality at a third less
+	// CPU; veryfast cost 1440/2160 film grain 6 VMAF in its worst 1%).
 	Preset, TopPreset string
 	// Encoder is EncoderAuto (default), EncoderX264 or EncoderNVENC. NVENC
 	// is checked by a probe encode in New; a file it fails on is re-encoded
@@ -104,7 +104,7 @@ func New(c Config) (*Encoder, error) {
 		return nil, fmt.Errorf("media/video: unknown Encoder %q", c.Encoder)
 	}
 	c.Preset = cmp.Or(c.Preset, "faster")
-	c.TopPreset = cmp.Or(c.TopPreset, "veryfast")
+	c.TopPreset = cmp.Or(c.TopPreset, "faster")
 	if c.Logger == nil {
 		c.Logger = slog.Default()
 	}

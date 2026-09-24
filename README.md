@@ -351,7 +351,7 @@ The bucket needs CORS allowing `PUT` from the app origins with the
 
 **Video** (`media/video`, run by `cmd/media-worker`) encodes each `video/*`
 manifest file: H.264 High with a capped CRF per rung (live action: 2160 CRF 23
-at most 16 Mbit/s, 1440 23/9M, 1080 23/6M, 720 22/3.5M, 480 21/1.5M; VBV
+at most 32 Mbit/s, 1440 23/18M, 1080 23/12M, 720 22/7M, 480 21/3M; VBV
 buffer 2× the cap; `Video.Profile: media.VideoAnimation` adds `-tune animation`
 at CRF 20–21 and lower caps), keyframes every 2 s without scene cuts, 4 s
 segments, at the kind's ladder (`Kind.Video = &media.Video{Ladder: []int{1080, 720, 480}}`;
@@ -379,8 +379,8 @@ records `hls` and `downloads` only if the file still derives from the encoded
 original, so a replaced file keeps its previous `hls` until then. Outputs are
 byte-identical on retry (same encoder, presets and `Threads`). Each pass
 decodes the source once and scales a lanczos cascade (each rung from the one
-above; the sprite from the smallest); x264 runs preset `faster` up to 1080
-and `veryfast` above (`Config.Preset`, `TopPreset`), each rung with all of
+above; the sprite from the smallest); x264 runs preset `faster`
+(`Config.Preset` up to 1080, `TopPreset` above), each rung with all of
 `Config.Threads`; rungs mux and upload concurrently.
 **Two stages:** rungs up to 1080 (with audio, subtitles, sprite and their
 downloads) are published first with `hls.pending` listing the rungs above;

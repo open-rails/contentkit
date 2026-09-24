@@ -33,14 +33,15 @@ type rung struct {
 	maxrate int // kbit/s; the VBV buffer holds 2 s of it
 }
 
-// rungRate is a rung's capped CRF: Apple's HLS spec wants a VOD peak within 2×
-// the average, and a bounded low rung is what makes startup degrade instead of stall.
+// rungRate is a rung's capped CRF. The cap bounds bitrate spikes (Apple's
+// HLS spec wants a VOD peak within 2× the average) and the low rung's
+// startup cost; at half these caps film grain lost 8–14 VMAF (bench_test.go).
 type rungRate struct{ crf, maxrate int }
 
 // rates by rung class (2160, 1440, 1080, 720, ≤480) per media.Video profile.
 var rates = map[string][5]rungRate{
-	media.VideoLive:      {{23, 16000}, {23, 9000}, {23, 6000}, {22, 3500}, {21, 1500}},
-	media.VideoAnimation: {{21, 12000}, {21, 7000}, {21, 4000}, {21, 2500}, {20, 1200}},
+	media.VideoLive:      {{23, 32000}, {23, 18000}, {23, 12000}, {22, 7000}, {21, 3000}},
+	media.VideoAnimation: {{21, 24000}, {21, 14000}, {21, 8000}, {21, 5000}, {20, 2400}},
 }
 
 func rateOf(profile string, n int) rungRate {
