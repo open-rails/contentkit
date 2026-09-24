@@ -151,8 +151,8 @@ func codecArgs(codec string) []string {
 	return []string{"-c:v", "libx264", "-profile:v", "high", "-preset", "fast", "-crf", "22"}
 }
 
-// nvencCQ matches x264 CRF 22's VMAF (bench_test.go).
-var nvencCQ = "24"
+// nvencCQ matches x264 CRF 22's VMAF on the top rung; lower rungs cost NVENC 30-60% more bits (bench_test.go).
+var nvencCQ = "26"
 
 // nvencWorks encodes one frame with h264_nvenc.
 func nvencWorks(ctx context.Context) error {
