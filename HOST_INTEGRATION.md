@@ -338,17 +338,24 @@ Cropping and rotating are ContentKit's: the host never decodes images.
 
 ## Video posters and hover previews
 
-Every `Video` kind gets the `poster` slot (`media.VideoPoster`: native aspect,
-the video's own shape unless an edit crops it, widths 480/960/1920); `poster` and `hover_preview` are reserved slot names.
+Every `Video` kind gets the `poster` slot (`Video.Poster()`): native aspect,
+the video's own shape unless an edit crops it, at `Video.PosterWidths` (the
+host's policy: its display widths × 2–3× density; default
+`media.DefaultPosterWidths` 640/960/1280/1920/2560, skipping widths wider than
+the frame or upload); `poster` and `hover_preview` are reserved slot names.
 
 - **Poster**: a frame or an uploaded image, encoded by the image job through
   the slot's edit like any slot. The video worker grabs frames from the widest
   HLS rendition into `originals/poster` (PNG) and hands them to the host's
   image job through `Config.Slots` (`media.NewProcessInserter`; the worker's
   `MEDIA_HOST_RIVER_SCHEMA`/`MEDIA_HOST_QUEUE`). Default: the first of five
-  sampled frames (20–80 %) that is not black or flat. Frames under 480 px
-  wide are upscaled, so every poster has 480. Posters encoded before native
-  aspect (v0.37) re-encode uncropped on their next `ProcessJob{Ref, Slot: "poster"}`.
+  sampled frames (20–80 %) that is not black or flat. Frames narrower than
+  the smallest width are upscaled, so every poster has it. After changing
+  `PosterWidths` (or covers from before v0.37, which were 16:9 crops),
+  enqueue `ProcessJob{Ref, Slot: "poster"}` per video item: the slot's spec
+  hash changed, so the image job re-encodes every width from the kept
+  original and deletes retired ones. Frame edits narrower than the smallest
+  width are refused.
 - **Hover preview**: a silent loop, default 3 s from a quarter in, bounded
   1–6 s, centred 16:9 at 12 fps, as H.264 MP4 and animated WebP at 320
   (always) and 640 px (when the video is that wide), rendered by the worker.

@@ -50,7 +50,7 @@ const iconButton: React.CSSProperties = {
 
 function HeaderImage({ round }: { round?: boolean }) {
   const { image } = useSlotEditor();
-  return <SlotImage manifest={image.manifest} round={round} sizes={round ? "96px" : "760px"} style={{ width: "100%", height: "100%" }} />;
+  return <SlotImage manifest={image.manifest} round={round} style={{ width: "100%", height: "100%" }} />;
 }
 
 function ChannelHeader() {
@@ -86,7 +86,7 @@ function VideoCard() {
   const [open, setOpen] = useState<"poster" | "preview" | null>(null);
   return (
     <div data-demo="video" style={{ display: "grid", gap: 12 }}>
-      <VideoPoster poster={images.poster} preview={images.hover_preview} sizes="(min-width: 760px) 360px, 100vw" style={{ maxWidth: 360 }} tabIndex={0} />
+      <VideoPoster poster={images.poster} preview={images.hover_preview} style={{ maxWidth: 360 }} tabIndex={0} />
       <div style={{ display: "flex", gap: 8 }}>
         <button type="button" onClick={() => setOpen("poster")}>Set cover</button>
         <button type="button" onClick={() => setOpen("preview")}>Hover preview</button>

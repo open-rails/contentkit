@@ -2,7 +2,9 @@ import { Video01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
-import { manifestAspect, slotSources } from "../srcset.js";
+import { manifestAspect } from "../srcset.js";
+import type { DensityRange } from "../rendition.js";
+import { RenditionImg } from "./rendition-img.js";
 import type { PreviewImage, SlotManifest } from "../wire.gen.js";
 import { UploadUiRoot } from "../scope.js";
 
@@ -67,8 +69,8 @@ export interface VideoPosterProps extends Omit<ComponentProps<"div">, "children"
   playing?: boolean;
   /** Width / height of the box; default the poster's own (native) aspect, else the video's. */
   aspect?: number;
-  /** `sizes` for the srcset. Default "100vw". */
-  sizes?: string;
+  /** Density range for picking the cover's rendition; default the provider's (2–3×). */
+  density?: DensityRange;
   alt?: string;
   /** Shown without a poster; default a muted box with a video icon. */
   placeholder?: ReactNode;
@@ -77,13 +79,14 @@ export interface VideoPosterProps extends Omit<ComponentProps<"div">, "children"
 }
 
 /**
- * A poster (`srcset`) at its native aspect, uncropped, that plays the hover
- * preview on hover or focus. It spans its container's width.
+ * A cover at its native aspect, uncropped, spanning its container's width, at
+ * the rendition its rendered width × density needs; plays the hover preview
+ * on hover or focus.
  */
-export function VideoPoster({ poster, preview, playing, aspect, sizes = "100vw", alt = "", placeholder, className, style, children, ...div }: VideoPosterProps) {
+export function VideoPoster({ poster, preview, playing, aspect, density, alt = "", placeholder, className, style, children, ...div }: VideoPosterProps) {
   const [hover, setHover] = useState(false);
   const [focus, setFocus] = useState(false);
-  const src = slotSources(poster, 480);
+  const has = !!poster?.outputs.some((o) => o.url);
   const active = playing ?? (hover || focus);
   return (
     <UploadUiRoot
@@ -109,18 +112,8 @@ export function VideoPoster({ poster, preview, playing, aspect, sizes = "100vw",
         div.onBlur?.(e);
       }}
     >
-      {src.src ? (
-        <img
-          alt={alt}
-          src={src.src}
-          srcSet={src.srcSet}
-          sizes={sizes}
-          width={src.width}
-          height={src.height}
-          decoding="async"
-          loading="lazy"
-          className="absolute inset-0 size-full object-contain"
-        />
+      {has ? (
+        <RenditionImg outputs={poster!.outputs} density={density} alt={alt} loading="lazy" className="absolute inset-0 size-full object-contain" />
       ) : (
         (placeholder ?? (
           <div className="absolute inset-0 flex items-center justify-center text-muted-foreground/70">

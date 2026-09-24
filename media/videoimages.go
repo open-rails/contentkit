@@ -26,11 +26,15 @@ const (
 	HoverPreview = "hover_preview"
 )
 
-// VideoPoster is the poster slot every video kind gets. Its original is an
-// uploaded image or a frame the video worker grabbed; the image job encodes
-// either through the slot's Edit. It is native: the poster keeps the frame's
-// (or upload's) own aspect unless an edit crops it.
-var VideoPoster = Slot{Widths: []int{480, 960, 1920}}
+// VideoPoster is the default poster slot (Video.Poster): every video kind
+// gets one at its Video.PosterWidths. Its original is an uploaded image or a
+// frame the video worker grabbed; the image job encodes either through the
+// slot's Edit. It is native: the poster keeps the frame's (or upload's) own
+// aspect unless an edit crops it.
+var VideoPoster = (*Video)(nil).Poster()
+
+// Poster is the item's poster slot (zero for non-video kinds).
+func (i Item) Poster() Slot { return i.Kind().Slots[PosterSlot] }
 
 // Hover preview bounds (seconds) and output widths. The smallest width is
 // always rendered, so listings can link it without a read; wider ones only
@@ -58,10 +62,10 @@ func (f PosterFrame) Same(o PosterFrame) bool {
 }
 
 // PosterFrameSize is the size of a grabbed poster frame from a w×h rendition:
-// as is, or upscaled until it reaches VideoPoster.Min() wide, so every poster
-// has its smallest width. Poster edits are in these pixels.
-func PosterFrameSize(w, h int) Dims {
-	if min := float64(VideoPoster.Min()); w > 0 && float64(w) < min {
+// as is, or upscaled until it reaches the poster slot's Min() wide, so every
+// poster has its smallest width. Poster edits are in these pixels.
+func PosterFrameSize(poster Slot, w, h int) Dims {
+	if min := float64(poster.Min()); w > 0 && float64(w) < min {
 		f := min / float64(w)
 		return Dims{W: int(math.Ceil(float64(w) * f)), H: int(math.Ceil(float64(h) * f))}
 	}
@@ -266,11 +270,11 @@ func (u *Uploads) SetVideoPoster(ctx context.Context, actor access.Actor, ref co
 		if math.IsNaN(r.Time) || r.Time < 0 || r.Time >= d {
 			return uploadErr(CodeInvalid, "time must be within 0-%.3f seconds", d)
 		}
-		size := posterFrame(f)
-		if _, err := VideoPoster.Resolve(r.Edit, size.W, size.H); err != nil {
+		size := posterFrame(item, f)
+		if _, err := item.Poster().Resolve(r.Edit, size.W, size.H); err != nil {
 			return uploadErr(CodeInvalid, "edit: %v", err)
 		}
-		edit = VideoPoster.fit(r.Edit)
+		edit = item.Poster().fit(r.Edit)
 		frame.Auto, frame.Time = false, round3(r.Time)
 	} else if r.Edit.Normalize() != nil {
 		return uploadErr(CodeInvalid, "an automatic poster takes no edit")
@@ -289,9 +293,9 @@ func (u *Uploads) SetVideoPoster(ctx context.Context, actor access.Actor, ref co
 }
 
 // posterFrame is the size a frame of f is grabbed at.
-func posterFrame(f File) Dims {
+func posterFrame(item Item, f File) Dims {
 	r, _ := FrameRendition(f)
-	return PosterFrameSize(r.Width, r.Height)
+	return PosterFrameSize(item.Poster(), r.Width, r.Height)
 }
 
 // PreviewRequest selects the hover-preview section: Start nil is the
@@ -612,7 +616,7 @@ func (m *Manifests) VideoImages(ctx context.Context, urls OutputURLs, ref conten
 		}
 		if man != nil {
 			if f, ok := VideoFile(man, file); ok {
-				size := posterFrame(f)
+				size := posterFrame(item, f)
 				out.Video = &VideoInfo{Version: ref.Version(), File: f.Name, Duration: metaFloat(f.Meta, "duration"),
 					W: size.W, H: size.H, Encoded: Encoded(f)}
 			}

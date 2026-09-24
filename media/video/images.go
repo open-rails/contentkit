@@ -52,7 +52,7 @@ func (e *Encoder) poster(ctx context.Context, ms *media.Manifests, item media.It
 		}
 		if sel.Source == f.Source() && rec.Original != "" {
 			// Grabbed; the image job encodes it (again, if its hand-off was lost).
-			if rec.Result == nil || rec.Result.Of != rec.Fingerprint(media.VideoPoster) {
+			if rec.Result == nil || rec.Result.Of != rec.Fingerprint(item.Poster()) {
 				return e.encodePoster(ctx, item)
 			}
 			return nil
@@ -82,7 +82,7 @@ func (e *Encoder) grabPoster(ctx context.Context, ms *media.Manifests, item medi
 	}
 	defer os.RemoveAll(dir)
 	r, _ := media.FrameRendition(f)
-	size := media.PosterFrameSize(r.Width, r.Height)
+	size := media.PosterFrameSize(item.Poster(), r.Width, r.Height)
 	d := duration(f)
 	t := sel.Time
 	if sel.Auto {
@@ -106,7 +106,7 @@ func (e *Encoder) grabPoster(ctx context.Context, ms *media.Manifests, item medi
 	}
 	// An edit made for a replaced source of another shape falls back to centred.
 	edit := rec.Edit
-	if _, err := media.VideoPoster.Resolve(edit, size.W, size.H); err != nil {
+	if _, err := item.Poster().Resolve(edit, size.W, size.H); err != nil {
 		edit = nil
 	}
 

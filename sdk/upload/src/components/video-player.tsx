@@ -7,7 +7,7 @@ import { formatDuration } from "../gallery.js";
 import { useHlsPlayer, type HlsPlayerOptions, type PlayerQuality } from "../gallery-react.js";
 import { useMessages } from "../i18n/context.js";
 import { UploadUiRoot } from "../scope.js";
-import { slotSources } from "../srcset.js";
+import { RenditionImg } from "./rendition-img.js";
 import type { EncodeProgress as Progress, SlotManifest } from "../wire.gen.js";
 import { EncodeProgress } from "./encode-progress.js";
 import { Button } from "#ckui/ui/button";
@@ -133,7 +133,7 @@ export function VideoPlayer({
   const { status, error, started } = player;
   const aspect = width && height ? width / height : 16 / 9;
   const frame: CSSProperties = layout === "frame" ? { aspectRatio: String(aspect), maxHeight } : {};
-  const posterSrc = typeof poster === "string" ? { src: poster } : slotSources(poster, 960);
+  const posterOutputs = typeof poster === "string" ? [] : (poster?.outputs ?? []).filter((o) => o.url);
   const busy = !error && (status === "loading" || status === "buffering");
   return (
     <UploadUiRoot
@@ -163,15 +163,10 @@ export function VideoPlayer({
           />
           {!started && !error && (
             <>
-              {posterSrc.src ? (
-                <img
-                  alt=""
-                  src={posterSrc.src}
-                  srcSet={"srcSet" in posterSrc ? posterSrc.srcSet : undefined}
-                  sizes="100vw"
-                  decoding="async"
-                  className="pointer-events-none absolute inset-0 size-full object-contain"
-                />
+              {typeof poster === "string" ? (
+                <img alt="" src={poster} decoding="async" className="pointer-events-none absolute inset-0 size-full object-contain" />
+              ) : posterOutputs.length ? (
+                <RenditionImg outputs={posterOutputs} className="pointer-events-none absolute inset-0 size-full object-contain" />
               ) : (
                 <SpriteFrame vtt={`${base}sprite.vtt`} xhrSetup={options.xhrSetup} />
               )}

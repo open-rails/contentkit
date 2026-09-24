@@ -56,7 +56,7 @@ func (actorHeader) Actor(ctx context.Context) (access.Actor, bool) {
 func TestVideoExposure(t *testing.T) {
 	env := s3test.Open(t)
 	ctx := context.Background()
-	kinds, err := media.NewRegistry(media.Kind{Name: "clip", Video: &media.Video{}, Types: []string{"video/mp4"}})
+	kinds, err := media.NewRegistry(media.Kind{Name: "clip", Video: &media.Video{PosterWidths: []int{480, 960, 1920}}, Types: []string{"video/mp4"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestVideoExposure(t *testing.T) {
 	}
 	if err := ms.UpdateSlot(ctx, ref, media.PosterSlot, func(r *media.SlotRecord) error {
 		r.Original = `"etag"`
-		fp := r.Fingerprint(media.VideoPoster)
+		fp := r.Fingerprint((&media.Video{PosterWidths: []int{480, 960, 1920}}).Poster())
 		r.Result = &media.SlotResult{Of: fp, Version: fp, Source: r.Original, Outputs: []media.Dims{{W: 480, H: 270}}}
 		return nil
 	}); err != nil {

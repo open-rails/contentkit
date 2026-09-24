@@ -31,6 +31,10 @@ import (
 )
 
 // CONTENTKIT_TEST_FFMPEG=1 (the CI video job) fails instead of skipping without ffmpeg.
+
+// posterWidths keep the tests' small fixtures croppable (defaults start at 640).
+var posterWidths = []int{480, 960, 1920}
+
 func requireFFmpeg(t *testing.T) {
 	t.Helper()
 	for _, tool := range []string{"ffmpeg", "ffprobe"} {
@@ -118,7 +122,7 @@ func newEnv(t *testing.T, store func(media.Store) media.Store, queue media.Proce
 		e.store = store(s3.Store)
 	}
 	var err error
-	if e.kinds, err = media.NewRegistry(media.Kind{Name: "video", Versioned: true, Video: &media.Video{}, Types: []string{"video/x-matroska", "video/mp4"}}); err != nil {
+	if e.kinds, err = media.NewRegistry(media.Kind{Name: "video", Versioned: true, Video: &media.Video{PosterWidths: posterWidths}, Types: []string{"video/x-matroska", "video/mp4"}}); err != nil {
 		t.Fatal(err)
 	}
 	locker := s3test.Locker(t, e.store)
@@ -177,7 +181,7 @@ func (e *env) manifest(t *testing.T) (*media.Manifest, string) {
 
 func (e *env) encode(t *testing.T) {
 	t.Helper()
-	if err := e.encoder.Encode(context.Background(), video.Job{Ref: e.ref, Versioned: true}, nil); err != nil {
+	if err := e.encoder.Encode(context.Background(), video.Job{Ref: e.ref, Versioned: true, Video: media.Video{PosterWidths: posterWidths}}, nil); err != nil {
 		t.Fatal(err)
 	}
 }

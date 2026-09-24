@@ -26,8 +26,6 @@ export interface SlotUploadProps {
   targetWidth?: number;
   /** `accept` of the file input. Default "image/*". */
   accept?: string;
-  /** `sizes` for the rendered srcset. */
-  sizes?: string;
   disabled?: boolean;
   label?: ReactNode;
   hint?: ReactNode;
@@ -108,7 +106,7 @@ function SlotUploadLayout({ variant, ...p }: SlotUploadProps & { variant: Varian
   return variant === "avatar" ? (
     <div className="flex items-center gap-4">
       <div className="relative size-20 shrink-0">
-        <SlotImage manifest={image.manifest} round sizes={p.sizes ?? "80px"} emptyLabel={t("avatar.empty")} className="size-full ring-1 ring-foreground/10" />
+        <SlotImage manifest={image.manifest} round emptyLabel={t("avatar.empty")} className="size-full ring-1 ring-foreground/10" />
         {busy && <BusyOverlay round label={t(crop.status === "decoding" ? "progress.decoding" : "common.saving")} />}
       </div>
       <div className="grid min-w-0 gap-1">
@@ -135,7 +133,7 @@ function SlotUploadLayout({ variant, ...p }: SlotUploadProps & { variant: Varian
         <SlotImage
           manifest={image.manifest}
           aspect={aspect}
-          sizes={p.sizes ?? "(min-width: 768px) 768px, 100vw"}
+         
           className="w-full rounded-none"
           placeholder={
             <div aria-label={t("cover.empty")} role="group" className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-[repeating-linear-gradient(135deg,transparent_0_10px,color-mix(in_oklch,var(--ckui-foreground)_3%,transparent)_10px_20px)] p-4 text-center">
