@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const port = 4179;
+const port = Number(process.env.DEMO_PORT ?? 4179);
 
 // Visual check of the demo (demo/) against the built package: `pnpm build && pnpm screenshots`.
 export default defineConfig({

@@ -1,4 +1,4 @@
-import { centeredCrop, editedSize, rotation, type Edit, type SlotManifest, type Transport } from "@openrails/contentkit-upload";
+import { centeredCrop, editedSize, rotation, type Edit, type SlotManifest, type Transport, type VideoImages } from "@openrails/contentkit-upload";
 
 const WIDTHS: Record<string, number[]> = { avatar: [128, 256, 512], cover: [1500, 3000] };
 const ASPECT: Record<string, [number, number]> = { avatar: [1, 1], cover: [3, 1] };
@@ -16,8 +16,21 @@ export class DemoServer {
   }
   delay = 250;
 
+  /** One 16:9 demo video of VIDEO_SECONDS, drawn per frame. */
+  video: VideoImages = {
+    poster: { aspect: 16 / 9, outputs: [], pending: false, selection: { source: "auto", file: "clip.mp4", time: 3 } },
+    hover_preview: { selection: { file: "clip.mp4", start: 3, duration: 3, auto: true }, mp4: [], webp: [], pending: false },
+    video: { file: "clip.mp4", duration: VIDEO_SECONDS, w: 1920, h: 1080, encoded: true },
+  };
+
   fetch: typeof fetch = async (input, init) => {
-    const path = new URL(String(input), location.href).pathname.replace(/^\/api/, "");
+    const url = new URL(String(input), location.href);
+    const path = url.pathname.replace(/^\/api/, "");
+    if (path === "/frame") {
+      await sleep(this.delay / 2);
+      const w = Number(url.searchParams.get("w") ?? 640);
+      return new Response(await videoFrame(Number(url.searchParams.get("t")), w, "image/jpeg"), { status: 200 });
+    }
     const b = JSON.parse(String(init?.body));
     await sleep(this.delay);
     const key = `${b.ref?.kind}/${b.ref?.id}#${b.slot}`;
@@ -34,6 +47,24 @@ export class DemoServer {
         void done.then(() => this.encoding.delete(key));
         const prev = this.slots.get(key);
         return json({ aspect: this.aspect(b.slot), outputs: prev?.outputs ?? [], ...(b.edit ? { edit: b.edit } : {}), pending: true });
+      }
+      case "/video-images":
+        return json(this.video);
+      case "/video-poster": {
+        await sleep(this.delay * 3);
+        const t = b.source === "frame" ? b.time : 3;
+        const src = b.source === "upload" ? this.blobs.get(`${b.ref.kind}/${b.ref.id}#poster`)! : await videoFrame(t, 1920, "image/png");
+        const outputs = await renderPoster(src, b.edit);
+        this.video = { ...this.video, poster: { aspect: 16 / 9, ...(b.edit ? { edit: b.edit } : {}), dims: { w: 1920, h: 1080 }, version: String(++this.version), outputs, pending: false, selection: { source: b.source, file: "clip.mp4", ...(b.source === "frame" ? { time: t } : {}) } } };
+        return json(this.video);
+      }
+      case "/video-preview": {
+        await sleep(this.delay * 3);
+        const start = b.start ?? 3;
+        const duration = b.duration ?? 3;
+        const webp = [{ w: 320, h: 180, url: URL.createObjectURL(await videoFrame(start + duration / 2, 320, "image/webp")) }];
+        this.video = { ...this.video, hover_preview: { selection: { file: "clip.mp4", start, duration, ...(b.start === undefined ? { auto: true } : {}) }, version: String(++this.version), mp4: [], webp, pending: false } };
+        return json(this.video);
       }
       case "/slot": {
         const m = this.slots.get(key) ?? { aspect: this.aspect(b.slot), outputs: [], pending: false };
@@ -139,4 +170,45 @@ export async function sampleAvatar(size: number): Promise<Blob> {
   g.arc(size * 0.75, size * 0.37, size * 0.21, Math.PI, Math.PI * 2);
   g.fill();
   return cv.convertToBlob({ type: "image/jpeg", quality: 0.9 });
+}
+
+const VIDEO_SECONDS = 12;
+
+/** A frame of the demo video: colour bars that drift, with the timestamp burned in. */
+async function videoFrame(t: number, width: number, type: string): Promise<Blob> {
+  const w = Math.max(64, Math.min(1920, width));
+  const h = Math.round((w * 9) / 16);
+  const cv = new OffscreenCanvas(w, h);
+  const g = cv.getContext("2d")!;
+  const bars = 7;
+  for (let i = 0; i < bars; i++) {
+    g.fillStyle = `hsl(${(i * 360) / bars + t * 30} 70% 55%)`;
+    g.fillRect((i * w) / bars, 0, w / bars + 1, h);
+  }
+  g.fillStyle = "rgba(0,0,0,.55)";
+  g.beginPath();
+  g.arc(w * (0.15 + (0.7 * t) / VIDEO_SECONDS), h * 0.5, h * 0.18, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = "#fff";
+  g.font = `600 ${Math.round(h / 8)}px system-ui, sans-serif`;
+  g.fillText(`${t.toFixed(2)} s`, w * 0.05, h * 0.9);
+  return cv.convertToBlob({ type, quality: 0.85 });
+}
+
+async function renderPoster(src: Blob, edit?: Edit) {
+  const bmp = await createImageBitmap(src, { imageOrientation: "from-image" });
+  const rot = rotation(edit?.rotate ?? 0);
+  const c = edit?.crop ?? centeredCrop({ width: bmp.width, height: bmp.height }, 16 / 9, rot);
+  const outputs = [];
+  for (const width of [480, 960, 1920]) {
+    const height = Math.round((width * 9) / 16);
+    const cv = new OffscreenCanvas(width, height);
+    const g = cv.getContext("2d")!;
+    g.translate(width / 2, height / 2);
+    g.rotate((rot * Math.PI) / 180);
+    const [dw, dh] = rot === 90 || rot === 270 ? [height, width] : [width, height];
+    g.drawImage(bmp, c.x, c.y, c.w, c.h, -dw / 2, -dh / 2, dw, dh);
+    outputs.push({ name: `poster_${width}`, w: width, h: height, url: URL.createObjectURL(await cv.convertToBlob({ type: "image/webp", quality: 0.85 })) });
+  }
+  return outputs;
 }

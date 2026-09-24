@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { UploadError } from "../src/errors.js";
 import type { Transport } from "../src/transport.js";
-import type { SlotManifest } from "../src/wire.gen.js";
+import type { SlotManifest, VideoImages } from "../src/wire.gen.js";
 import type { ErrorReply, PartBody, PresignBody, RequestReply } from "../src/wire.gen.js";
 
 const MiB = 1 << 20;
@@ -41,12 +41,27 @@ export class FakeServer {
   pendingReads = 0;
   private pendingLeft = 0;
   private seq = 0;
+  /** A video item's images (every ref shares it). */
+  video: VideoImages = {
+    poster: { aspect: 16 / 9, outputs: [], pending: false, selection: { source: "auto", file: "clip.mp4", time: 3 } },
+    hover_preview: { selection: { file: "clip.mp4", start: 3, duration: 3, auto: true }, mp4: [], webp: [], pending: false },
+    video: { file: "clip.mp4", duration: 12, w: 1920, h: 1080, encoded: true },
+  };
+  /** Bodies of /video-poster and /video-preview. */
+  videoCalls: any[] = [];
+  /** Frame grabs as "t@w". */
+  frames: string[] = [];
 
   fetch: typeof fetch = async (input, init) => {
     const path = new URL(String(input)).pathname.replace(/^\/api/, "");
     this.calls.push(path);
-    const body = JSON.parse(String(init?.body));
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     try {
+      if (path === "/frame") {
+        const q = new URL(String(input)).searchParams;
+        this.frames.push(`${q.get("t")}@${q.get("w")}`);
+        return new Response(new Blob([bytes(32, 3)], { type: "image/jpeg" }), { status: 200 });
+      }
       if (path === "/slot-original") {
         if (!this.slotState.get(slotKey(body.ref, body.slot))?.dims) throw new UploadError("not_found", "no committed original", 404);
         return new Response(new Blob([bytes(64, 9)], { type: "image/jpeg" }), { status: 200 });
@@ -154,6 +169,26 @@ export class FakeServer {
         if (!this.slotState.has(slotKey(b.ref, b.slot))) throw new UploadError("not_found", "no original", 404);
         this.slotCalls.push(b);
         return this.render(b.ref, b.slot, b.edit);
+      case "/video-images":
+        return { ...this.video, poster: { ...this.video.poster, pending: this.video.poster.pending && this.pendingLeft-- > 0 } };
+      case "/video-poster": {
+        this.videoCalls.push(b);
+        if (b.source === "upload" && !this.objects.has("poster")) throw new UploadError("not_uploaded", "upload the poster first", 409);
+        const v = ++this.seq;
+        const outputs = [480, 960, 1920].map((w) => ({ name: `poster_${w}`, w, h: Math.round((w * 9) / 16), url: `fake://cdn/public/poster_${w}.webp?v=${v}` }));
+        const selection = { source: b.source, file: b.file ?? "clip.mp4", ...(b.time !== undefined ? { time: b.time } : {}) };
+        this.pendingLeft = this.pendingReads;
+        this.video = { ...this.video, poster: { aspect: 16 / 9, ...(b.edit ? { edit: b.edit } : {}), dims: { w: 1920, h: 1080 }, version: String(v), outputs, pending: this.pendingReads > 0, selection } };
+        return this.video;
+      }
+      case "/video-preview": {
+        this.videoCalls.push(b);
+        const v = String(++this.seq);
+        const out = (ext: string) => [320, 640].map((w) => ({ w, h: Math.round((w * 9) / 16), url: `fake://cdn/public/hover_preview_${w}.${ext}?v=${v}` }));
+        const selection = b.start === undefined ? { file: "clip.mp4", start: 3, duration: 3, auto: true } : { file: b.file ?? "clip.mp4", start: b.start, duration: b.duration ?? 3 };
+        this.video = { ...this.video, hover_preview: { selection, version: v, mp4: out("mp4"), webp: out("webp"), pending: false } };
+        return this.video;
+      }
       case "/slot": {
         const m = this.slotState.get(slotKey(b.ref, b.slot));
         if (!m) return { aspect: slotAspect(b.slot), outputs: [], pending: false };
