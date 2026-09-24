@@ -199,3 +199,44 @@ describe("commit", () => {
     s.transport = t;
   });
 });
+
+describe("slots", () => {
+  const edit = { crop: { x: 400, y: 600, w: 2000, h: 2000 }, rotate: 90 };
+
+  it("commits the crop with the original and returns the manifest", async () => {
+    const { s, c } = setup();
+    const up = await c.uploadSlot(file(1000, 4, "image/jpeg"), { ref, slot: "avatar", edit });
+    expect(s.slotCalls).toEqual([{ ref, slot: "avatar", sha256: up.sha256, edit }]);
+    expect(up.manifest).toMatchObject({ aspect: 1, edit, dims: { w: 4000, h: 3000 }, outputs: [{ w: 128 }, { w: 256 }, { w: 512 }] });
+    expect(s.calls).toEqual(["/presign", "/commit-slot"]);
+  });
+
+  it("omits the edit when not given", async () => {
+    const { s, c } = setup();
+    await c.uploadSlot(file(1000, 5, "image/jpeg"), { ref, slot: "cover" });
+    expect(s.slotCalls[0]).not.toHaveProperty("edit");
+  });
+
+  it("re-crops without uploading and reads the manifest", async () => {
+    const { s, c } = setup();
+    expect((await c.getSlot(ref, "cover")).outputs).toEqual([]);
+    await c.uploadSlot(file(1000, 6, "image/jpeg"), { ref, slot: "cover" });
+    const puts = s.puts.length;
+    const m = await c.editSlot(ref, "cover", edit);
+    expect([m.edit, s.puts.length]).toEqual([edit, puts]);
+    expect(await c.getSlot(ref, "cover")).toEqual(m);
+    expect((await c.getSlotOriginal(ref, "cover")).size).toBe(64);
+    expect((await c.editSlot(ref, "banner", edit).catch((e) => e)).code).toBe("not_found");
+    expect((await c.getSlotOriginal(ref, "banner").catch((e) => e)).code).toBe("not_found");
+  });
+
+  it("waits for the outputs to be encoded", async () => {
+    const { s, c } = setup();
+    s.pendingReads = 2;
+    const up = await c.uploadSlot(file(1000, 7, "image/jpeg"), { ref, slot: "avatar" });
+    expect(up.manifest.pending).toBe(true);
+    const m = await c.waitForSlot(ref, "avatar", { interval: 1 });
+    expect(m.pending).toBe(false);
+    expect(s.calls.filter((p) => p === "/slot")).toHaveLength(3);
+  });
+});

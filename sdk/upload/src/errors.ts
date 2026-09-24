@@ -3,9 +3,10 @@ import type { ErrorCode, ErrorReply } from "./wire.gen.js";
 /**
  * Server codes (ErrorReply.code) plus client-side ones:
  * network (no response), storage (the bucket refused a PUT), aborted
- * (the caller's signal) and resume_mismatch (saved state is not for this file).
+ * (the caller's signal), resume_mismatch (saved state is not for this file)
+ * and decode (the browser cannot read the file as an image).
  */
-export type UploadErrorCode = ErrorCode | "network" | "storage" | "aborted" | "resume_mismatch";
+export type UploadErrorCode = ErrorCode | "network" | "storage" | "aborted" | "resume_mismatch" | "decode";
 
 export class UploadError extends Error {
   override readonly name = "UploadError";

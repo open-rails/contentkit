@@ -7,7 +7,11 @@ import type {
   PartsReply,
   PresignBody,
   PresignReply,
+  Edit,
   SlotBody,
+  SlotEditBody,
+  SlotManifest,
+  SlotRefBody,
   SlotFromFileBody,
   TicketBody,
 } from "./wire.gen.js";
@@ -44,13 +48,23 @@ export class UploadApi {
     return this.call<CommitReply>("/commit", b, signal);
   }
   commitSlot(b: SlotBody, signal?: AbortSignal) {
-    return this.call<void>("/commit-slot", b, signal);
+    return this.call<SlotManifest>("/commit-slot", b, signal);
+  }
+  editSlot(b: SlotEditBody, signal?: AbortSignal) {
+    return this.call<SlotManifest>("/edit-slot", b, signal);
+  }
+  slot(b: SlotRefBody, signal?: AbortSignal) {
+    return this.call<SlotManifest>("/slot", b, signal);
+  }
+  /** The committed original's bytes (for the crop editor). */
+  slotOriginal(b: SlotRefBody, signal?: AbortSignal) {
+    return this.call<Blob>("/slot-original", b, signal, true);
   }
   commitSlotFromFile(b: SlotFromFileBody, signal?: AbortSignal) {
-    return this.call<void>("/commit-slot-from-file", b, signal);
+    return this.call<SlotManifest>("/commit-slot-from-file", b, signal);
   }
 
-  private async call<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  private async call<T>(path: string, body: unknown, signal?: AbortSignal, blob = false): Promise<T> {
     const f = this.o.fetch ?? fetch;
     const headers = new Headers(await this.o.headers?.());
     headers.set("Content-Type", "application/json");
@@ -68,6 +82,7 @@ export class UploadApi {
       throw new UploadError("network", `upload API ${path} unreachable`, 0, undefined, { cause: err });
     }
     if (!res.ok) throw await fromResponse(res);
+    if (blob) return (await res.blob()) as T;
     return (res.status === 204 ? undefined : await res.json()) as T;
   }
 }

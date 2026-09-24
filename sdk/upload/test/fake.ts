@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { UploadError } from "../src/errors.js";
 import type { Transport } from "../src/transport.js";
+import type { SlotManifest } from "../src/wire.gen.js";
 import type { ErrorReply, PartBody, PresignBody, RequestReply } from "../src/wire.gen.js";
 
 const MiB = 1 << 20;
@@ -32,6 +33,13 @@ export class FakeServer {
   refuse?: ErrorReply & { status: number };
   /** Fail the next n storage PUTs with a dropped connection. */
   dropPuts = 0;
+  /** Rendered slots by "kind/id#slot". */
+  slotState = new Map<string, SlotManifest>();
+  /** Bodies of commit-slot and recrop-slot calls. */
+  slotCalls: any[] = [];
+  /** Slot reads that answer pending after each commit or re-crop. */
+  pendingReads = 0;
+  private pendingLeft = 0;
   private seq = 0;
 
   fetch: typeof fetch = async (input, init) => {
@@ -39,6 +47,10 @@ export class FakeServer {
     this.calls.push(path);
     const body = JSON.parse(String(init?.body));
     try {
+      if (path === "/slot-original") {
+        if (!this.slotState.get(slotKey(body.ref, body.slot))?.dims) throw new UploadError("not_found", "no committed original", 404);
+        return new Response(new Blob([bytes(64, 9)], { type: "image/jpeg" }), { status: 200 });
+      }
       return json(200, this.route(path, body));
     } catch (e) {
       if (!(e instanceof UploadError)) throw e;
@@ -134,10 +146,38 @@ export class FakeServer {
         }
         return { files: b.ops.map((op: any) => ({ name: op.name, original: op.original, size: this.objects.get(op.original) })) };
       case "/commit-slot":
+        if (!this.objects.has(b.slot)) throw new UploadError("not_uploaded", "upload the original first", 409);
         this.slots.push(b.slot);
-        return undefined;
+        this.slotCalls.push(b);
+        return this.render(b.ref, b.slot, b.edit);
+      case "/edit-slot":
+        if (!this.slotState.has(slotKey(b.ref, b.slot))) throw new UploadError("not_found", "no original", 404);
+        this.slotCalls.push(b);
+        return this.render(b.ref, b.slot, b.edit);
+      case "/slot": {
+        const m = this.slotState.get(slotKey(b.ref, b.slot));
+        if (!m) return { aspect: slotAspect(b.slot), outputs: [], pending: false };
+        return { ...m, pending: this.pendingLeft-- > 0 };
+      }
     }
     throw new UploadError("not_found", path, 404);
+  }
+
+  private render(ref: { kind: string; id: string }, slot: string, edit?: SlotManifest["edit"]): SlotManifest {
+    const aspect = slotAspect(slot);
+    const widths = slot === "avatar" ? [128, 256, 512] : [1500, 3000];
+    const v = ++this.seq;
+    const m: SlotManifest = {
+      aspect,
+      ...(edit ? { edit } : {}),
+      dims: { w: 4000, h: 3000 },
+      version: String(v),
+      outputs: widths.map((w) => ({ name: `${slot}_${w}`, w, h: Math.round(w / aspect), url: `fake://cdn/public/${slot}_${w}.webp?v=${v}` })),
+      pending: false,
+    };
+    this.slotState.set(slotKey(ref, slot), m);
+    this.pendingLeft = this.pendingReads;
+    return { ...m, pending: this.pendingReads > 0 };
   }
 
   private ticket(t: string): Upload {
@@ -145,6 +185,14 @@ export class FakeServer {
     if (!u || u.complete) throw new UploadError("not_found", "multipart upload not found", 404);
     return u;
   }
+}
+
+function slotKey(ref: { kind: string; id: string }, slot: string): string {
+  return `${ref.kind}/${ref.id}#${slot}`;
+}
+
+function slotAspect(slot: string): number {
+  return slot === "avatar" ? 1 : 3;
 }
 
 function req(url: string, headers: Record<string, string>): RequestReply {
