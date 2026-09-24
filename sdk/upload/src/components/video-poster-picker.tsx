@@ -16,7 +16,6 @@ import { Slider } from "#ckui/ui/slider";
 import { ImageCropDialog } from "./image-crop-dialog.js";
 import { progressLabel, progressValue } from "./progress.js";
 
-const POSTER_ASPECT = 16 / 9;
 const FRAME_STEP = 1 / 30;
 
 export interface VideoPickerProps {
@@ -50,9 +49,10 @@ export function formatTime(s: number): string {
 }
 
 /**
- * Picks a video's poster: scrub to an exact frame (a coarse strip, a slider
- * and frame steps over the frame endpoint) and use it centred or cropped, or
- * upload an image and crop it at 16:9, or return to the automatic frame.
+ * Sets a video's cover (poster): scrub to an exact frame (a coarse strip, a
+ * slider and frame steps over the frame endpoint) and use it whole or cropped,
+ * or upload an image and crop it at the video's aspect, or return to the
+ * automatic frame. Covers keep the video's native aspect.
  */
 export function VideoPosterPicker(p: VideoPosterPickerProps) {
   const { t } = useMessages();
@@ -83,6 +83,7 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
   const [decodeError, setDecodeError] = useState<string>();
   const input = useRef<HTMLInputElement>(null);
   const duration = video?.encoded ? video.duration : 0;
+  const aspect = video?.w && video.h ? video.w / video.h : 16 / 9;
   const shown = time ?? (selection?.source === "frame" && selection.time !== undefined ? selection.time : duration * 0.25);
   const file = p.file ?? video?.file;
   const poster = useVideoPoster(client, {
@@ -159,14 +160,14 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
 
         {mode === "frame" &&
           (loaded.loading && !video ? (
-            <Stage loading />
+            <Stage loading aspect={aspect} />
           ) : !video?.encoded ? (
             <p className="rounded-lg bg-muted px-4 py-6 text-center text-sm text-muted-foreground" data-ckui="processing">
               {t("poster.processing")}
             </p>
           ) : (
             <>
-              <Stage url={frame.url} loading={frame.loading || !frame.url} />
+              <Stage url={frame.url} loading={frame.loading || !frame.url} aspect={aspect} />
               <div className="grid gap-2">
                 <div className="flex items-center gap-1.5">
                   <Button variant="ghost" size="icon-sm" aria-label={t("poster.previousFrame")} disabled={busy || shown <= 0} onClick={() => setTime(Math.max(0, shown - FRAME_STEP))}>
@@ -205,12 +206,13 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
                         disabled={busy}
                         aria-label={t("poster.jumpTo", { time: formatTime(f.time) })}
                         onClick={() => setTime(f.time)}
+                        style={{ aspectRatio: String(aspect) }}
                         className={cn(
-                          "relative aspect-video overflow-hidden rounded-md bg-muted outline-none ring-offset-1 ring-offset-background focus-visible:ring-2 focus-visible:ring-ring",
+                          "relative overflow-hidden rounded-md bg-muted outline-none ring-offset-1 ring-offset-background focus-visible:ring-2 focus-visible:ring-ring",
                           near && "ring-2 ring-primary",
                         )}
                       >
-                        {f.url && <img src={f.url} alt="" className="absolute inset-0 size-full object-cover" />}
+                        {f.url && <img src={f.url} alt="" className="absolute inset-0 size-full object-contain" />}
                       </button>
                     );
                   })}
@@ -281,7 +283,7 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
         open={!!crop}
         onOpenChange={(o) => !o && !busy && setCrop(null)}
         source={crop}
-        aspect={POSTER_ASPECT}
+        aspect={aspect}
         rotatable={cropFor === "upload"}
         targetWidth={1920}
         title={t("poster.cropTitle")}
@@ -298,10 +300,10 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
   );
 }
 
-function Stage({ url, loading }: { url?: string; loading?: boolean }) {
+function Stage({ url, loading, aspect }: { url?: string; loading?: boolean; aspect: number }) {
   return (
-    <div className="relative aspect-video overflow-hidden rounded-lg bg-zinc-950" data-ckui="frame-stage">
-      {url && <img src={url} alt="" className="absolute inset-0 size-full object-cover" />}
+    <div className="relative mx-auto max-h-[50svh] max-w-full overflow-hidden rounded-lg bg-zinc-950" style={{ aspectRatio: String(aspect), width: `min(100%, calc(50svh * ${aspect}))` }} data-ckui="frame-stage">
+      {url && <img src={url} alt="" className="absolute inset-0 size-full object-contain" />}
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center text-white/70">
           <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="size-6 animate-spin" />

@@ -28,8 +28,9 @@ const (
 
 // VideoPoster is the poster slot every video kind gets. Its original is an
 // uploaded image or a frame the video worker grabbed; the image job encodes
-// either through the slot's Edit.
-var VideoPoster = Slot{Aspect: 16.0 / 9, Widths: []int{480, 960, 1920}}
+// either through the slot's Edit. It is native: the poster keeps the frame's
+// (or upload's) own aspect unless an edit crops it.
+var VideoPoster = Slot{Widths: []int{480, 960, 1920}}
 
 // Hover preview bounds (seconds) and output widths. The smallest width is
 // always rendered, so listings can link it without a read; wider ones only
@@ -57,12 +58,11 @@ func (f PosterFrame) Same(o PosterFrame) bool {
 }
 
 // PosterFrameSize is the size of a grabbed poster frame from a w×h rendition:
-// as is, or upscaled until its centred 16:9 crop reaches VideoPoster.Min(), so
-// every poster has its smallest width. Poster edits are in these pixels.
+// as is, or upscaled until it reaches VideoPoster.Min() wide, so every poster
+// has its smallest width. Poster edits are in these pixels.
 func PosterFrameSize(w, h int) Dims {
-	cropW := min(float64(w), float64(h)*VideoPoster.Aspect)
-	if min := float64(VideoPoster.Min()); cropW > 0 && cropW < min {
-		f := min / cropW
+	if min := float64(VideoPoster.Min()); w > 0 && float64(w) < min {
+		f := min / float64(w)
 		return Dims{W: int(math.Ceil(float64(w) * f)), H: int(math.Ceil(float64(h) * f))}
 	}
 	return Dims{W: w, H: h}
@@ -117,14 +117,17 @@ func AutoHoverPreview(duration float64) (start, length float64) {
 
 func round3(v float64) float64 { return math.Round(v*1000) / 1000 }
 
-// HoverPreviewSizes are the output sizes for a w×h video: the centred 16:9
-// crop, never upscaled beyond the smallest width.
+// HoverPreviewAspect is the hover preview's centred crop.
+const HoverPreviewAspect = 16.0 / 9
+
+// HoverPreviewSizes are the output sizes for a w×h video: the centred
+// HoverPreviewAspect crop, never upscaled beyond the smallest width.
 func HoverPreviewSizes(w, h int) []Dims {
-	cropW := min(float64(w), float64(h)*VideoPoster.Aspect)
+	cropW := min(float64(w), float64(h)*HoverPreviewAspect)
 	var out []Dims
 	for i, pw := range HoverPreviewWidths {
 		if i == 0 || float64(pw) <= cropW {
-			out = append(out, Dims{W: pw, H: VideoPoster.Height(pw)})
+			out = append(out, Dims{W: pw, H: max(1, int(math.Round(float64(pw)/HoverPreviewAspect)))})
 		}
 	}
 	return out

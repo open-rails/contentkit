@@ -134,11 +134,7 @@ func (p *Processor) slotEncoded(ctx context.Context, ref contentref.ContentRef, 
 	if p.c.Hooks.SlotEncoded == nil {
 		return
 	}
-	widths := make([]int, len(res.Outputs))
-	for i, o := range res.Outputs {
-		widths[i] = o.W
-	}
-	p.c.Hooks.SlotEncoded(ctx, ref, slot, media.NewSlotStamp(res.Version, widths))
+	p.c.Hooks.SlotEncoded(ctx, ref, slot, media.NewSlotStamp(res.Version, res.Outputs))
 }
 
 // outputs heads the slot's outputs: their ETags ("" when absent) and whether

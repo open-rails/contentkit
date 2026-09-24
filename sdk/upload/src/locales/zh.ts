@@ -37,8 +37,8 @@ export const zh: UploadUiMessageBundle = {
     drop: "将图片拖放到此处",
   },
   poster: {
-    title: "选择封面",
-    description: "从视频中选取一帧，或上传一张图片。封面比例为 16:9。",
+    title: "设置封面",
+    description: "从视频中选取一帧，或上传一张图片。封面与视频比例相同。",
     frame: "视频画面",
     upload: "上传图片",
     time: "时间",

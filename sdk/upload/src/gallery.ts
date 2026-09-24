@@ -56,10 +56,9 @@ export function galleryItems(read: ReadResult | null | undefined): GalleryItem[]
   return items;
 }
 
-/** The carousel stage's width / height: the first item's, from 9:16 to 2.4:1. */
-export function stageAspect(items: readonly GalleryItem[]): number {
-  const a = items[0]?.aspect ?? 1;
-  return Math.min(2.4, Math.max(9 / 16, a));
+/** The carousel stage's width / height: the current item's native aspect. */
+export function stageAspect(items: readonly GalleryItem[], index = 0): number {
+  return items[index]?.aspect ?? 1;
 }
 
 /** "0:42", "12:05", "1:02:09". */

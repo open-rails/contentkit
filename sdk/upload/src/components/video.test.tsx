@@ -35,7 +35,14 @@ function reducedMotion(on: boolean) {
   window.matchMedia = vi.fn().mockImplementation((q: string) => ({ matches: on && q.includes("reduce"), addEventListener() {}, removeEventListener() {} }));
 }
 
-it("VideoPoster: srcset at 16:9, plays the muted MP4 loop on hover and focus, WebP on MP4 failure", () => {
+it("VideoPoster: native aspect from the poster, uncropped", () => {
+  const tall = { aspect: 0, pending: false, outputs: [{ name: "poster_480", w: 480, h: 853, url: "https://cdn/p.webp" }] };
+  const { container } = render(<VideoPoster poster={tall} alt="tall" />);
+  expect(container.firstElementChild).toHaveStyle({ aspectRatio: String(480 / 853) });
+  expect(screen.getByRole("img", { name: "tall" })).toHaveClass("object-contain");
+});
+
+it("VideoPoster: srcset at the poster's aspect, plays the muted MP4 loop on hover and focus, WebP on MP4 failure", () => {
   reducedMotion(false);
   const { container } = render(
     <VideoPoster poster={poster} preview={preview} sizes="320px" alt="clip">
@@ -109,12 +116,12 @@ it("VideoPosterPicker: crop a frame in the video's pixels, wait for the render",
   render(<VideoPosterPicker open onOpenChange={() => {}} item={item} client={client} onChange={onChange} />);
   const dialog = await screen.findByRole("dialog");
   await user.click(await within(dialog).findByRole("button", { name: "Crop…" }));
-  const crop = await screen.findByRole("dialog", { name: "Crop the poster" });
+  const crop = await screen.findByRole("dialog", { name: "Crop the cover" });
   expect(s.frames).toContain("3@1280");
   expect(within(crop).queryByRole("button", { name: "Rotate right" })).toBeNull();
   await user.click(within(crop).getByRole("button", { name: "Save" }));
   await waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 4000 });
-  // Centred 16:9 of the 1920×1080 frame.
+  // The whole 16:9 frame: the crop at the video's aspect is the full frame.
   expect(s.videoCalls.at(-1).edit ?? null).toBeNull();
   expect(s.calls.filter((c) => c === "/video-images").length).toBeGreaterThan(1);
 });
@@ -129,7 +136,7 @@ it("VideoPosterPicker: upload an image, crop it, and return to automatic", async
   const dialog = await screen.findByRole("dialog");
   await user.click(within(dialog).getByRole("tab", { name: "Upload image" }));
   await user.upload(document.querySelector<HTMLInputElement>("[data-ckui=poster-drop] input")!, new File([bytes(200, 4)], "p.png", { type: "image/png" }));
-  const crop = await screen.findByRole("dialog", { name: "Crop the poster" });
+  const crop = await screen.findByRole("dialog", { name: "Crop the cover" });
   expect(within(crop).getByText(/1600 px wide; 1920 px or more/)).toBeInTheDocument();
   await user.click(within(crop).getByRole("button", { name: "Save" }));
   await waitFor(() => expect(onChange).toHaveBeenCalled());

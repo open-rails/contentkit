@@ -37,8 +37,8 @@ export const es: UploadUiMessageBundle = {
     drop: "Suelta una imagen aquí",
   },
   poster: {
-    title: "Elegir una portada",
-    description: "Elige un fotograma del vídeo o sube una imagen. Las portadas son 16:9.",
+    title: "Establecer portada",
+    description: "Elige un fotograma del vídeo o sube una imagen. La portada conserva la forma del vídeo.",
     frame: "Fotograma",
     upload: "Subir imagen",
     time: "Tiempo",

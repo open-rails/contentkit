@@ -143,7 +143,8 @@ it("one item renders alone, without toggle or dots", () => {
   expect(screen.queryByRole("button", { name: "Grid" })).toBeNull();
   expect(screen.getByRole("img", { name: "Image 1" })).toHaveAttribute("src", "https://m/0.webp");
   const stage = document.querySelector("[data-ckui=slide]")!.parentElement!.parentElement!;
-  expect(stage).toHaveStyle({ aspectRatio: String(9 / 16), maxHeight: "80svh" });
+  expect(stage).toHaveStyle({ aspectRatio: String(1080 / 1920) });
+  expect(stage.style.maxHeight).toBe("");
 });
 
 it("locked items: blurred teaser with the host's unlock slot, no locked URLs", async () => {

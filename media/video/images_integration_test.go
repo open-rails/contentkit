@@ -185,7 +185,7 @@ func (e *env) preview(t *testing.T, length float64, widths []int, first, last st
 	}
 	frames := int(math.Round(length * 12))
 	for i, w := range widths {
-		h := media.VideoPoster.Height(w)
+		h := int(math.Round(float64(w) / media.HoverPreviewAspect))
 		if v.MP4[i].W != w || v.WebP[i].W != w || v.MP4[i].H != h || !strings.Contains(v.MP4[i].URL, "?v="+v.Version) {
 			t.Fatalf("outputs %+v %+v", v.MP4[i], v.WebP[i])
 		}
@@ -263,7 +263,7 @@ func TestFramePosterSelectionAndRegrab(t *testing.T) {
 	e.commit(t, videotest.Segments(t, 0), media.OpInsert)
 	e.encode(t)
 
-	edit := &media.Edit{Crop: &media.Crop{X: 160, Y: 90, W: 480}}
+	edit := &media.Edit{Crop: &media.Crop{X: 160, Y: 90, W: 480, H: 270}}
 	e.setPoster(t, media.PosterRequest{Source: media.PosterSourceFrame, Time: 9.5, Edit: edit})
 	if rec := e.posterRecord(t); rec.Original != "" || rec.Frame.Auto || rec.Frame.Time != 9.5 || rec.Frame.Source != "" ||
 		rec.Edit == nil || *rec.Edit.Crop != (media.Crop{X: 160, Y: 90, W: 480, H: 270}) {
@@ -280,8 +280,8 @@ func TestFramePosterSelectionAndRegrab(t *testing.T) {
 
 	// Refused: off-frame and too-narrow edits, times outside the video, unknown sources.
 	for _, r := range []media.PosterRequest{
-		{Source: media.PosterSourceFrame, Time: 1, Edit: &media.Edit{Crop: &media.Crop{X: 400, Y: 0, W: 480}}},
-		{Source: media.PosterSourceFrame, Time: 1, Edit: &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 200}}},
+		{Source: media.PosterSourceFrame, Time: 1, Edit: &media.Edit{Crop: &media.Crop{X: 400, Y: 0, W: 480, H: 270}}},
+		{Source: media.PosterSourceFrame, Time: 1, Edit: &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 200, H: 112}}},
 		{Source: media.PosterSourceFrame, Time: 12.5},
 		{Source: media.PosterSourceFrame, Time: -1},
 		{Source: media.PosterSourceAuto, Edit: edit},
@@ -345,8 +345,8 @@ func TestRotatedSourceFrame(t *testing.T) {
 	e.commit(t, videotest.Segments(t, 90), media.OpInsert)
 	e.encode(t)
 
-	// Displayed 360×640, encoded upright at 270×480: the frame is upscaled so
-	// its centred 16:9 crop is 480 wide, and the cyan box is top right.
+	// Displayed 360×640, encoded upright at 270×480: the frame is upscaled to
+	// 480 wide, and the cyan box is top right.
 	img := e.frame(t, 480, 854)
 	if quadrant(img, 1) != "cyan" || quadrant(img, 0) != "red" || quadrant(img, 3) != "red" {
 		t.Fatalf("rotated frame quadrants %s %s %s %s", quadrant(img, 0), quadrant(img, 1), quadrant(img, 2), quadrant(img, 3))
@@ -462,7 +462,7 @@ func TestVideoImageRoutesAndFrameEndpoint(t *testing.T) {
 	}
 
 	code, b, _ := call("admin", "POST", "/video-poster", media.VideoPosterBody{Ref: ref, Source: "frame", Time: ptr(7.5),
-		Edit: &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 480}}})
+		Edit: &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 480, H: 270}}})
 	var v media.VideoImages
 	if code != http.StatusOK || json.Unmarshal(b, &v) != nil || v.Poster.Selection == nil || *v.Poster.Selection.Time != 7.5 ||
 		!v.Poster.Pending || v.Poster.Edit == nil || v.Poster.Edit.Crop.H != 270 || v.Video == nil || v.Video.W != 640 {

@@ -18,9 +18,11 @@ export function slotSources(m: SlotManifest | null | undefined, fallbackWidth = 
   return { src: fallback.url, srcSet: outs.map((o) => `${o.url} ${o.w}w`).join(", "), width: fallback.w, height: fallback.h };
 }
 
-/** The manifest's width / height, or fallback. */
+/** The manifest's width / height (a native slot's from its outputs), or fallback. */
 export function manifestAspect(m: SlotManifest | null | undefined, fallback = 1): number {
-  return m && m.aspect > 0 ? m.aspect : fallback;
+  if (m && m.aspect > 0) return m.aspect;
+  const o = m?.outputs.find((o) => o.w > 0 && o.h > 0);
+  return o ? o.w / o.h : fallback;
 }
 
 /** Widest rendered output; with nothing rendered, undefined. */
