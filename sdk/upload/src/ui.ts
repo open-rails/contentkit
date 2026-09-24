@@ -1,5 +1,6 @@
 import "./styles.css";
 
+export { EncodeProgress, encodeLabel, formatRemaining, type EncodeProgressProps } from "./components/encode-progress.js";
 export { ImageCropDialog, type ImageCropDialogProps } from "./components/image-crop-dialog.js";
 export { SlotImage, type SlotImageProps } from "./components/slot-image.js";
 export {

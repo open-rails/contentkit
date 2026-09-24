@@ -177,7 +177,7 @@ func (e *env) manifest(t *testing.T) (*media.Manifest, string) {
 
 func (e *env) encode(t *testing.T) {
 	t.Helper()
-	if err := e.encoder.Encode(context.Background(), video.Job{Ref: e.ref, Versioned: true}); err != nil {
+	if err := e.encoder.Encode(context.Background(), video.Job{Ref: e.ref, Versioned: true}, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -399,7 +399,7 @@ func TestKindLadder(t *testing.T) {
 	e.commit(t, fixture{w: 640, h: 361, secs: 3, tone: 440}.make(t), media.OpInsert)
 	encode := func(ladder []int, want ...int) {
 		t.Helper()
-		if err := e.encoder.Encode(context.Background(), video.Job{Ref: e.ref, Versioned: true, Video: media.Video{Ladder: ladder}}); err != nil {
+		if err := e.encoder.Encode(context.Background(), video.Job{Ref: e.ref, Versioned: true, Video: media.Video{Ladder: ladder}}, nil); err != nil {
 			t.Fatal(err)
 		}
 		m, _ := e.manifest(t)
@@ -493,7 +493,7 @@ func TestRetriesAreIdempotent(t *testing.T) {
 	e.commit(t, fixture{w: 853, h: 481, secs: 5, audio: 1, subs: true, tone: 440}.make(t), media.OpInsert)
 
 	fail.armed.Store(true)
-	if err := e.encoder.Encode(context.Background(), video.Job{Ref: e.ref, Versioned: true}); err == nil {
+	if err := e.encoder.Encode(context.Background(), video.Job{Ref: e.ref, Versioned: true}, nil); err == nil {
 		t.Fatal("encode with a failing manifest write succeeded")
 	}
 	fail.armed.Store(false)

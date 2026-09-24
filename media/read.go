@@ -67,6 +67,8 @@ type ReaderOptions struct {
 	Resolver  access.ContentResolver
 	Delivery  Delivery
 	Hooks     Hooks
+	// Progress adds live encode progress to pending video files; optional.
+	Progress ProgressSource
 	// MaxLimit caps ReadOptions.Limit (default 200); DefaultLimit is used when
 	// Limit is 0 (default 50).
 	MaxLimit, DefaultLimit int
@@ -83,6 +85,7 @@ type Reader struct {
 	base      *url.URL
 	ring      token.Ring
 	hooks     Hooks
+	progress  ProgressSource
 	maxLimit  int
 	defLimit  int
 	now       func() time.Time
@@ -126,7 +129,7 @@ func NewReader(o ReaderOptions) (*Reader, error) {
 		d.Window = token.DefaultWindow
 	}
 	r := &Reader{manifests: o.Manifests, kinds: o.Kinds, resolver: o.Resolver, delivery: d, base: base, ring: ring,
-		hooks: o.Hooks, maxLimit: orDefault(o.MaxLimit, 200), defLimit: orDefault(o.DefaultLimit, 50), now: o.Now}
+		hooks: o.Hooks, progress: o.Progress, maxLimit: orDefault(o.MaxLimit, 200), defLimit: orDefault(o.DefaultLimit, 50), now: o.Now}
 	if r.now == nil {
 		r.now = time.Now
 	}
@@ -377,8 +380,11 @@ type FileInfo struct {
 	Locked   bool    `json:"locked,omitempty"`
 	HLS      bool    `json:"hls,omitempty"`
 	Failed   string  `json:"failed,omitempty"` // editors only: why the video cannot be encoded
-	Variant  string  `json:"variant,omitempty"`
-	URL      string  `json:"url,omitempty"`
+	// Progress of a pending encode (none yet, or a replaced source); served
+	// with the file, as it reveals only timing and queue depth.
+	Progress *EncodeProgress `json:"progress,omitempty"`
+	Variant  string          `json:"variant,omitempty"`
+	URL      string          `json:"url,omitempty"`
 }
 
 type DownloadInfo struct {
@@ -438,6 +444,7 @@ func (r *Reader) Read(ctx context.Context, ref contentref.ContentRef, actor acce
 		}
 		out.Files[i] = fi
 	}
+	r.addProgress(ctx, g, out.Files)
 	if g.Full() {
 		keys := make([]string, 0, len(g.Manifest.Downloads))
 		for k := range g.Manifest.Downloads {
@@ -454,6 +461,41 @@ func (r *Reader) Read(ctx context.Context, ref contentref.ContentRef, actor acce
 		}
 	}
 	return out, nil
+}
+
+// addProgress fills Progress on allowed, pending video files. A failed
+// progress read leaves it out rather than failing the read.
+func (r *Reader) addProgress(ctx context.Context, g *Grant, files []FileInfo) {
+	if r.progress == nil || g.Item.Kind().Video == nil {
+		return
+	}
+	var pending []int
+	for i, f := range g.Manifest.Files {
+		if g.Allowed(i) && encodePending(f) {
+			pending = append(pending, i)
+		}
+	}
+	if len(pending) == 0 {
+		return
+	}
+	st, err := r.progress.EncodeProgress(ctx, g.Item.Ref())
+	if err != nil {
+		return
+	}
+	for _, i := range pending {
+		if p, ok := st.Files[g.Manifest.Files[i].Name]; ok {
+			files[i].Progress = &p
+		} else if st.Queued != nil {
+			q := *st.Queued
+			files[i].Progress = &q
+		}
+	}
+}
+
+// encodePending reports a video file whose current source has no ladder or
+// failure recorded yet.
+func encodePending(f File) bool {
+	return strings.HasPrefix(f.Type, "video/") && (f.HLS == nil || f.HLS.Source != f.Source())
 }
 
 func metaFloat(m map[string]any, k string) float64 {

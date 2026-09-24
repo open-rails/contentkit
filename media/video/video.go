@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
@@ -39,6 +40,8 @@ type Config struct {
 	// poster frame is handed to the image job through it. Without it, frame
 	// posters are grabbed but not encoded.
 	Slots media.ProcessQueue
+	// ProgressInterval throttles progress reports; default 2 s.
+	ProgressInterval time.Duration
 }
 
 // Encoder runs encode jobs. It is idempotent: a file whose hls and downloads
@@ -77,6 +80,9 @@ func New(c Config) (*Encoder, error) {
 	if c.Logger == nil {
 		c.Logger = slog.Default()
 	}
+	if c.ProgressInterval <= 0 {
+		c.ProgressInterval = 2 * time.Second
+	}
 	return &Encoder{c: c}, nil
 }
 
@@ -96,8 +102,9 @@ func DownloadKey(file string, rung int) string { return file + "-" + strconv.Ito
 var downloadKey = regexp.MustCompile(`^(.+)-(\d+)p$`)
 
 // Encode brings every video file of the job's manifest up to date, promoting
-// each file's outputs in its own manifest edit.
-func (e *Encoder) Encode(ctx context.Context, job Job) error {
+// each file's outputs in its own manifest edit. report, when set, receives
+// the files' progress.
+func (e *Encoder) Encode(ctx context.Context, job Job, report Report) error {
 	kinds, err := media.NewRegistry(media.Kind{Name: job.Ref.ContentKind, Versioned: job.Versioned, Video: &job.Video})
 	if err != nil {
 		return &PermanentError{err}
@@ -120,12 +127,21 @@ func (e *Encoder) Encode(ctx context.Context, job Job) error {
 	} else if err != nil {
 		return err
 	}
-	var errs []error
+	var stale []media.File
 	for _, f := range man.Files {
-		if !IsVideo(f) || fresh(man, f, r) {
-			continue
+		if IsVideo(f) && !fresh(man, f, r) {
+			stale = append(stale, f)
 		}
-		err := e.file(ctx, ms, item, r, f.Name, f.Source())
+	}
+	names := make([]string, len(stale))
+	for i, f := range stale {
+		names[i] = f.Name
+	}
+	prog := newProgress(ctx, report, e.c.ProgressInterval, time.Now, names)
+	var errs []error
+	for _, f := range stale {
+		err := e.file(ctx, ms, item, r, f.Name, f.Source(), prog.file(f.Name))
+		prog.done(f.Name)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -152,6 +168,7 @@ func (e *Encoder) Encode(ctx context.Context, job Job) error {
 		if err != nil {
 			return err
 		}
+		defer prog.item(media.PhaseImages)()
 		return e.images(ctx, ms, item, man)
 	}
 	return errors.Join(errs...)
@@ -233,7 +250,7 @@ var errStale = errors.New("source changed during encode")
 // testBeforePromote runs between the blob uploads and the manifest edit.
 var testBeforePromote func()
 
-func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item, r jobRecipe, name, source string) error {
+func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item, r jobRecipe, name, source string, fp *fileProgress) error {
 	srcKey, err := item.Original(source)
 	if err != nil {
 		return &PermanentError{err}
@@ -245,12 +262,13 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 	defer os.RemoveAll(dir)
 
 	src := filepath.Join(dir, "source")
-	srcObj, err := e.fetch(ctx, srcKey, src)
+	srcObj, err := e.fetch(ctx, srcKey, src, fp)
 	if errors.Is(err, media.ErrNotFound) {
 		return e.stale(ctx, ms, item, name, source, err)
 	} else if err != nil {
 		return err
 	}
+	fp.set(media.PhaseProbing)
 	pr, err := probe(ctx, src)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -268,17 +286,20 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 	}
 	e.c.Logger.InfoContext(ctx, "media/video: encoding", "key", srcKey, "duration", p.duration, "rungs", p.rungs,
 		"audio", len(p.audio), "subs", len(p.subs), "threads", e.c.Threads)
-	if err := ladder(ctx, src, out, p, e.c.Threads); err != nil {
+	fp.probed(p.duration, out)
+	if err := ladder(ctx, src, out, p, e.c.Threads, fp); err != nil {
 		return err
 	}
 	if err := os.Remove(src); err != nil {
 		return err
 	}
+	fp.uploads(uploadBytes(out, len(p.rungs)))
+	fp.set(media.PhaseUploading)
 
 	hls := &media.HLS{Source: source, Spec: r.spec}
 	downloads := map[string]media.Download{}
 	for i, a := range p.audio {
-		blob, pl, err := e.stream(ctx, item, out, fmt.Sprintf("a%d", i), "audio/mp4")
+		blob, pl, err := e.stream(ctx, item, out, fmt.Sprintf("a%d", i), "audio/mp4", fp)
 		if err != nil {
 			return err
 		}
@@ -287,13 +308,13 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 			Bandwidth: peak, Codecs: "mp4a.40.2", Blob: blob, Segments: pl.segments})
 	}
 	for i, s := range p.subs {
-		blob, _, err := e.put(ctx, item, filepath.Join(out, fmt.Sprintf("s%d.vtt", i)), "text/vtt")
+		blob, _, err := e.put(ctx, item, filepath.Join(out, fmt.Sprintf("s%d.vtt", i)), "text/vtt", fp)
 		if err != nil {
 			return err
 		}
 		hls.Subs = append(hls.Subs, media.Subtitle{ID: s.id, Lang: s.lang, Label: s.label, Forced: s.forced, Blob: blob})
 	}
-	blob, _, err := e.put(ctx, item, filepath.Join(out, "sprite.jpg"), "image/jpeg")
+	blob, _, err := e.put(ctx, item, filepath.Join(out, "sprite.jpg"), "image/jpeg", fp)
 	if err != nil {
 		return err
 	}
@@ -309,15 +330,17 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 			return fmt.Errorf("rung %dp encoded %dx%d, want %dx%d", rg.n, w, h, rg.w, rg.h)
 		}
 		dl := filepath.Join(out, "d"+v+".mp4")
+		fp.set(media.PhaseMuxing)
 		if err := mux(ctx, out, i, p, dl); err != nil {
 			return err
 		}
-		dlBlob, dlSize, err := e.put(ctx, item, dl, "video/mp4")
+		fp.set(media.PhaseUploading)
+		dlBlob, dlSize, err := e.put(ctx, item, dl, "video/mp4", fp)
 		if err != nil {
 			return err
 		}
 		_ = os.Remove(dl)
-		blob, pl, err := e.stream(ctx, item, out, v, "video/mp4")
+		blob, pl, err := e.stream(ctx, item, out, v, "video/mp4", fp)
 		if err != nil {
 			return err
 		}
@@ -327,6 +350,7 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 		downloads[DownloadKey(name, rg.n)] = media.Download{Blob: dlBlob, Type: "video/mp4", Size: dlSize, Spec: r.spec, Inputs: source}
 	}
 
+	fp.set(media.PhasePublishing)
 	if testBeforePromote != nil {
 		testBeforePromote()
 	}
@@ -385,7 +409,7 @@ func (e *Encoder) stale(ctx context.Context, ms *media.Manifests, item media.Ite
 }
 
 // stream uploads a single-file fMP4 rendition after validating its byte ranges.
-func (e *Encoder) stream(ctx context.Context, item media.Item, dir, name, contentType string) (string, playlist, error) {
+func (e *Encoder) stream(ctx context.Context, item media.Item, dir, name, contentType string, fp *fileProgress) (string, playlist, error) {
 	path := filepath.Join(dir, name+".mp4")
 	st, err := os.Stat(path)
 	if err != nil {
@@ -395,11 +419,11 @@ func (e *Encoder) stream(ctx context.Context, item media.Item, dir, name, conten
 	if err != nil {
 		return "", playlist{}, err
 	}
-	blob, _, err := e.put(ctx, item, path, contentType)
+	blob, _, err := e.put(ctx, item, path, contentType, fp)
 	return blob, pl, err
 }
 
-func (e *Encoder) fetch(ctx context.Context, key, path string) (media.Object, error) {
+func (e *Encoder) fetch(ctx context.Context, key, path string, fp *fileProgress) (media.Object, error) {
 	rc, obj, err := e.c.Store.Get(ctx, key, media.GetOptions{})
 	if err != nil {
 		return obj, err
@@ -409,7 +433,7 @@ func (e *Encoder) fetch(ctx context.Context, key, path string) (media.Object, er
 	if err != nil {
 		return obj, err
 	}
-	n, err := io.Copy(f, rc)
+	n, err := io.Copy(f, fp.reader(rc, false))
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -417,6 +441,27 @@ func (e *Encoder) fetch(ctx context.Context, key, path string) (media.Object, er
 		err = fmt.Errorf("media/video: read %d of %d bytes of %s", n, obj.Size, key)
 	}
 	return obj, err
+}
+
+// uploadBytes is what remains to upload after the ladder pass: every output,
+// plus one muxed download per rung (its rendition and all audio).
+func uploadBytes(dir string, rungs int) int64 {
+	var total, audio int64
+	entries, _ := os.ReadDir(dir)
+	for _, d := range entries {
+		info, err := d.Info()
+		if err != nil || !info.Mode().IsRegular() || strings.HasSuffix(d.Name(), ".m3u8") {
+			continue
+		}
+		total += info.Size()
+		switch {
+		case strings.HasPrefix(d.Name(), "a"):
+			audio += info.Size()
+		case strings.HasPrefix(d.Name(), "v"):
+			total += info.Size()
+		}
+	}
+	return total + int64(rungs)*audio
 }
 
 // tempPattern names per-file scratch directories; Sweep removes leftovers.

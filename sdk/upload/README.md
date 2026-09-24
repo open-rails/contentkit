@@ -126,6 +126,10 @@ frame), `useVideoPoster(client, { ref, onSaved })` (`saveFrame(time, edit)`,
 { ref, duration, initial, onSaved })` (`start`, `length`, bounded setters,
 `save()`, `saveAuto()`).
 
+Video encode progress: the read API puts `progress` (`EncodeProgress`) on a
+pending video file; `useEncodeProgress(file.progress)` counts its ETA down
+between polls (`{ progress, remaining }`).
+
 ## UI
 
 `@openrails/contentkit-upload/ui`: shadcn (base-vega, Base UI, zinc) components
@@ -175,6 +179,7 @@ function Cover() {
 | `SlotEditMenu` | `label`, `iconOnly`, `render` (trigger element; default the kit's outline button), `className`, `align`; the trigger has `data-ckui="slot-edit"` and `data-busy` |
 | `SlotEditError` | `className`: the editor's error outside the dialog |
 | `ImageCropDialog` | `open`, `onOpenChange`, `source` (`{ url, width, height }` of the oriented original), `aspect`, `round`, `initialEdit`, `onEditChange`, `onConfirm(edit)`, `targetWidth`, `busy`, `progress`, `error`, `title` |
+| `EncodeProgress` | `progress` (a read API file's `progress`; absent shows "Processing video"), `className`, `appearance`: bar, phase, `segment 5 / 27`, `~40 s left` or queue position; `data-ckui="encode-progress"`, `data-phase` |
 | `SlotImage` | `manifest` or `item` + `slot`, `sizes`, `round`, `aspect`, `placeholder`, `alt` |
 | `VideoPosterPicker` | `open`, `onOpenChange`, `item`, `file`, `client`, `images` (else fetched), `onChange(images)`, `title`, `accept`: frame strip + slider + frame steps over `/frame`, "Use this frame", "Crop…" (in `video.w×h` pixels), "Upload image" → `ImageCropDialog`, "Automatic" |
 | `HoverPreviewPicker` | same props: a 1–6 s range over the frame strip, an approximate flip-book of the section, the rendered loop once saved, "Automatic" |

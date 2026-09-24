@@ -5,6 +5,7 @@ import {
   VideoPosterPicker,
   AvatarUpload,
   CoverUpload,
+  EncodeProgress,
   SlotEditError,
   SlotEditMenu,
   SlotEditor,
@@ -127,6 +128,13 @@ createRoot(document.getElementById("root")!).render(
         </Card>
         <Card title="Video poster and hover preview">
           <VideoCard />
+        </Card>
+        <Card title="Video encode progress">
+          <div data-demo="encode" style={{ display: "grid", gap: 16 }}>
+            <EncodeProgress progress={{ phase: "queued", queue_position: 3, percent: 0, at: Date.now() }} />
+            <EncodeProgress progress={{ phase: "encoding", segments_done: 5, segments_total: 27, percent: 22, speed: 2.4, eta: 40, at: Date.now() }} />
+            <EncodeProgress progress={{ phase: "uploading", segments_done: 27, segments_total: 27, percent: 91, eta: 6, at: Date.now() }} />
+          </div>
         </Card>
         <Card title="New channel">
           <CoverUpload item={empty} />

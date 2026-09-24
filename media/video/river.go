@@ -2,6 +2,7 @@ package video
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -182,11 +184,119 @@ func (w *worker) Work(ctx context.Context, job *river.Job[Args]) error {
 			_ = conn.Conn().Close(ctx)
 		}
 	}()
-	err = w.c.Encoder.Encode(ctx, Job(job.Args))
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if _, err := w.c.Pool.Exec(ctx, clearProgressSQL, job.ID); err != nil {
+			w.c.Logger.WarnContext(ctx, "media/video: clear progress", "job", job.ID, "error", err)
+		}
+	}()
+	err = w.c.Encoder.Encode(ctx, Job(job.Args), w.report(job.ID))
 	var perm *PermanentError
 	if errors.As(err, &perm) {
 		w.c.Logger.ErrorContext(ctx, "media/video: cannot encode", "ref", job.Args.Ref.String(), "error", err)
 		return river.JobCancel(err)
 	}
 	return err
+}
+
+// Progress lives on the running job's row (metadata.contentkit_progress):
+// no extra table, it dies with the job, and a job River rescues from a dead
+// worker stops being read as running.
+const (
+	progressKey      = "contentkit_progress"
+	setProgressSQL   = `UPDATE ` + Schema + `.river_job SET metadata = jsonb_set(metadata, '{` + progressKey + `}', $2) WHERE id = $1 AND state = 'running'`
+	clearProgressSQL = `UPDATE ` + Schema + `.river_job SET metadata = metadata - '` + progressKey + `' WHERE id = $1`
+)
+
+func (w *worker) report(id int64) Report {
+	return func(ctx context.Context, files map[string]media.EncodeProgress) {
+		b, err := json.Marshal(files)
+		if err == nil {
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			_, err = w.c.Pool.Exec(ctx, setProgressSQL, id, b)
+		}
+		if err != nil && ctx.Err() == nil {
+			w.c.Logger.WarnContext(ctx, "media/video: report progress", "job", id, "error", err)
+		}
+	}
+}
+
+// stalledAfter marks a running job's progress stale: reports come at least
+// every few seconds while ffmpeg or a transfer runs.
+const stalledAfter = time.Minute
+
+// NewProgressSource reads encode progress from the video jobs in the host
+// database, for media.ReaderOptions.Progress. One indexed query per read of
+// an item with a pending video.
+func NewProgressSource(pool *pgxpool.Pool) media.ProgressSource {
+	return &progressSource{pool: pool, now: time.Now}
+}
+
+type progressSource struct {
+	pool *pgxpool.Pool
+	now  func() time.Time
+}
+
+const progressSQL = `
+SELECT j.state, j.metadata->'` + progressKey + `',
+  CASE WHEN j.state = 'available' THEN 1 + (SELECT count(*) FROM ` + Schema + `.river_job a
+    WHERE a.state = 'available' AND a.queue = j.queue AND (a.priority, a.scheduled_at, a.id) < (j.priority, j.scheduled_at, j.id)) END
+FROM ` + Schema + `.river_job j
+WHERE j.kind = $1 AND j.args @> $2 AND j.args->'ref'->>'content_version_id' IS NOT DISTINCT FROM $3
+  AND j.state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
+ORDER BY j.id`
+
+func (s *progressSource) EncodeProgress(ctx context.Context, ref contentref.ContentRef) (media.EncodeStatus, error) {
+	var st media.EncodeStatus
+	match, err := json.Marshal(map[string]any{"ref": map[string]string{
+		"tenant_id": ref.TenantID, "content_kind": ref.ContentKind, "content_id": ref.ContentID}})
+	if err != nil {
+		return st, err
+	}
+	var version *string
+	if v := ref.Version(); v != "" {
+		version = &v
+	}
+	rows, err := s.pool.Query(ctx, progressSQL, Args{}.Kind(), match, version)
+	if err != nil {
+		return st, err
+	}
+	defer rows.Close()
+	now := s.now()
+	for rows.Next() {
+		var state string
+		var raw []byte
+		var position *int64
+		if err := rows.Scan(&state, &raw, &position); err != nil {
+			return st, err
+		}
+		if state == "running" {
+			var files map[string]media.EncodeProgress
+			if len(raw) > 0 && json.Unmarshal(raw, &files) == nil && st.Files == nil {
+				for n, p := range files {
+					if now.Sub(time.UnixMilli(p.At)) > stalledAfter {
+						p.Stalled, p.ETA, p.Speed = true, 0, 0
+					}
+					if n == media.ItemProgressKey {
+						st.Item = &p
+						delete(files, n)
+					} else {
+						files[n] = p
+					}
+				}
+				st.Files = files
+			}
+			continue
+		}
+		q := media.EncodeProgress{Phase: media.PhaseQueued, At: now.UnixMilli()}
+		if position != nil {
+			q.QueuePosition = int(*position)
+		}
+		if st.Queued == nil || q.QueuePosition > 0 && (st.Queued.QueuePosition == 0 || q.QueuePosition < st.Queued.QueuePosition) {
+			st.Queued = &q
+		}
+	}
+	return st, rows.Err()
 }

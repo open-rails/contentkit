@@ -18,6 +18,7 @@ export { centeredCrop, constrainCrop, editOf, editedSize, fromRotated, rotation,
 export { decodeImage, type CropSource, type DecodeOptions } from "./image.js";
 export { hasOriginal, largestOutput, manifestAspect, slotSources, type SlotSources } from "./srcset.js";
 export { UploadError, type UploadErrorCode } from "./errors.js";
+export { encodeRemaining } from "./encode.js";
 export { sha256Hex } from "./hash.js";
 export { Pacer, type PacerOptions } from "./pacer.js";
 export { UploadQueue, type ItemStatus, type QueueItem, type QueueOptions, type QueueSnapshot } from "./queue.js";
