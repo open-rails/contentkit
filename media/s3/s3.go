@@ -189,6 +189,19 @@ func (s *Store) PresignPart(ctx context.Context, key, uploadID string, number in
 	return s.presign(ctx, http.MethodPut, key, q, h, size, ttl)
 }
 
+func (s *Store) PutPart(ctx context.Context, key, uploadID string, number int32, body io.Reader, size int64, sum []byte) (media.Part, error) {
+	if uploadID == "" || number < 1 || number > 10000 || size <= 0 || len(sum) != 32 {
+		return media.Part{}, errors.New("s3: put part needs an upload id, part 1-10000, size and SHA-256")
+	}
+	out, err := s.client.UploadPart(ctx, &s3.UploadPartInput{Bucket: &s.bucket, Key: &key, UploadId: &uploadID,
+		PartNumber: aws.Int32(number), Body: body, ContentLength: aws.Int64(size),
+		ChecksumSHA256: aws.String(base64.StdEncoding.EncodeToString(sum))})
+	if err != nil {
+		return media.Part{}, mapErr("upload part", key, err)
+	}
+	return media.Part{Number: number, Size: size, ETag: aws.ToString(out.ETag), SHA256: sum}, nil
+}
+
 func (s *Store) ListParts(ctx context.Context, key, uploadID string) ([]media.Part, error) {
 	var parts []media.Part
 	p := s3.NewListPartsPaginator(s.client, &s3.ListPartsInput{Bucket: &s.bucket, Key: &key, UploadId: &uploadID})

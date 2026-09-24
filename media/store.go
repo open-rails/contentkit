@@ -90,6 +90,8 @@ type Store interface {
 	PresignPut(ctx context.Context, key string, p PresignPut) (PresignedRequest, error)
 	CreateMultipart(ctx context.Context, key, contentType string) (uploadID string, err error)
 	PresignPart(ctx context.Context, key, uploadID string, number int32, size int64, sha256 []byte, ttl time.Duration) (PresignedRequest, error)
+	// PutPart uploads one part from the server, bound to its length and SHA-256.
+	PutPart(ctx context.Context, key, uploadID string, number int32, body io.Reader, size int64, sha256 []byte) (Part, error)
 	ListParts(ctx context.Context, key, uploadID string) ([]Part, error)
 	CompleteMultipart(ctx context.Context, key, uploadID string, parts []Part) (Object, error)
 	AbortMultipart(ctx context.Context, key, uploadID string) error
