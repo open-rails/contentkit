@@ -294,9 +294,11 @@ is not yet known: `Hooks.Failed`, keeping the served outputs). Slot routes and
 the read API's `GET /{kind}/{id}/slots/{slot}` answer `SlotManifest{aspect,
 edit, dims, version, outputs: [{name, w, h, url}], pending, error}`. Output URLs
 carry `?v={version}`, which the access worker serves immutable while current;
-`Reader.SlotOutputs(ref, slot, version)` builds them without reads for the
-widths up to `MinWidth` every processed slot has, and `Hooks.SlotEncoded`
-reports each new version.
+listings build them without reads from one stored value per slot:
+`Hooks.SlotEncoded` reports each encode's `SlotStamp` (`"{version}:{w},{w}…"`,
+the version and produced widths), and `Reader.SlotOutputs(ref, slot, stamp)`
+returns exactly that encode's outputs (the zero stamp: widths up to `MinWidth`,
+unversioned). `SlotManifest.Stamp()` backfills a stamp from a read.
 
 **Image processing** (`media/image`, CGO over libvips via govips; install
 `libvips-dev` to build it). `image.New(Config{Store, Kinds, Manifests, Specs,

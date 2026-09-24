@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/open-rails/contentkit/access"
@@ -409,17 +411,80 @@ func (r *Reader) Slot(ctx context.Context, ref contentref.ContentRef, slot strin
 	return r.manifests.SlotManifest(ctx, r.base.String(), ref, slot)
 }
 
-// SlotOutputs lists, reading nothing, the outputs every processed slot has
-// (widths up to Min), for listings; version is SlotManifest.Version, or ""
-// for URLs revalidated on every view. A slot never uploaded answers 404.
-func (r *Reader) SlotOutputs(ref contentref.ContentRef, slot, version string) ([]SlotImage, error) {
+// SlotStamp is the one value a host stores per slot to build its outputs
+// without reads: the encode's version and the widths it produced,
+// "{version}:{w},{w}…". Hooks.SlotEncoded reports it; the zero stamp is a
+// slot the host never saw encoded.
+type SlotStamp string
+
+// NewSlotStamp stamps outputs of widths encoded under version.
+func NewSlotStamp(version string, widths []int) SlotStamp {
+	b := []byte(version + ":")
+	for i, w := range widths {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = strconv.AppendInt(b, int64(w), 10)
+	}
+	return SlotStamp(b)
+}
+
+// Parse splits the stamp; the zero stamp is ("", nil).
+func (s SlotStamp) Parse() (version string, widths []int, err error) {
+	if s == "" {
+		return "", nil, nil
+	}
+	version, list, ok := strings.Cut(string(s), ":")
+	if !ok || version == "" || list == "" {
+		return "", nil, fmt.Errorf("media: malformed slot stamp %q", s)
+	}
+	for f := range strings.SplitSeq(list, ",") {
+		w, err := strconv.Atoi(f)
+		if err != nil || w <= 0 || w > maxSlotWidth || strconv.Itoa(w) != f || (len(widths) > 0 && w <= widths[len(widths)-1]) {
+			return "", nil, fmt.Errorf("media: malformed slot stamp %q", s)
+		}
+		widths = append(widths, w)
+	}
+	return version, widths, nil
+}
+
+// Stamp is the manifest's SlotStamp ("" before the first encode), e.g. to
+// backfill hosts that adopt Hooks.SlotEncoded after slots were set.
+func (m SlotManifest) Stamp() SlotStamp {
+	if m.Version == "" || len(m.Outputs) == 0 {
+		return ""
+	}
+	widths := make([]int, len(m.Outputs))
+	for i, o := range m.Outputs {
+		widths[i] = o.W
+	}
+	return NewSlotStamp(m.Version, widths)
+}
+
+// SlotOutputs lists, reading nothing, the outputs of a slot encoded as stamp,
+// with immutable ?v= URLs: the SlotManifest.Outputs of that encode. Widths
+// the slot no longer declares are left out. The zero stamp lists the widths
+// up to Min, which every processed slot has, with URLs revalidated on every
+// view (a slot never uploaded answers 404).
+func (r *Reader) SlotOutputs(ref contentref.ContentRef, slot string, stamp SlotStamp) ([]SlotImage, error) {
 	item, s, err := r.kinds.slot(ref, slot)
 	if err != nil {
 		return nil, err
 	}
-	var out []SlotImage
-	for _, w := range s.Widths {
-		if w <= s.Min() {
+	version, widths, err := stamp.Parse()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
+	}
+	if stamp == "" {
+		for _, w := range s.Widths {
+			if w <= s.Min() {
+				widths = append(widths, w)
+			}
+		}
+	}
+	out := []SlotImage{}
+	for _, w := range widths {
+		if slices.Contains(s.Widths, w) {
 			out = append(out, slotImage(r.base.String(), item, slot, Dims{W: w, H: s.Height(w)}, version))
 		}
 	}

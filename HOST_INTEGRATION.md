@@ -320,10 +320,12 @@ Cropping and rotating are ContentKit's: the host never decodes images.
   ```
 
   Mount `UploadHandler` with `PublicBaseURL` (the access worker origin). For
-  `srcset` use `Reader.Slot` / `GET /{kind}/{id}/slots/{slot}`; listings build
-  URLs without reads with `Reader.SlotOutputs(ref, slot, version)` (widths up to
-  `MinWidth` always exist), storing `version` from `Hooks.SlotEncoded` for
-  immutable URLs or passing "" for revalidated ones. After changing slot specs,
+  `srcset` use `Reader.Slot` / `GET /{kind}/{id}/slots/{slot}`. Listings store
+  the `SlotStamp` from `Hooks.SlotEncoded` (one text value per slot, e.g. a
+  `cover_stamp` column) and build every output's immutable URL without reads
+  with `Reader.SlotOutputs(ref, slot, stamp)`; with no stamp ("") it lists the
+  widths up to `MinWidth` with revalidated URLs. Backfill with
+  `Reader.Slot(...).Stamp()`. After changing slot specs,
   enqueue `ProcessJob{Ref}` per item; retired widths are deleted.
 - Editors (`Resolution.Editor`) read `dims` (original size) and `edit` from
   the read API and show a `Spec{Unedited: true, EditorOnly: true}` variant,

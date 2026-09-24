@@ -90,8 +90,10 @@ type env struct {
 	uploads   *media.Uploads
 	queue     *queue
 	proc      *image.Processor
+	kinds     *media.Registry
 	mu        sync.Mutex
 	failed    []string
+	stamps    map[string]media.SlotStamp // Hooks.SlotEncoded, by ref#slot
 }
 
 func newEnv(t *testing.T, kind media.Kind) *env {
@@ -113,6 +115,7 @@ func (e *env) useKind(t *testing.T, kind media.Kind) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.kinds = kinds
 	if e.manifests, err = media.NewManifests(e.store, kinds, media.ManifestOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -124,6 +127,13 @@ func (e *env) useKind(t *testing.T, kind media.Kind) {
 		Hooks: media.Hooks{Failed: func(_ context.Context, _ contentref.ContentRef, file string, _ error) {
 			e.mu.Lock()
 			e.failed = append(e.failed, file)
+			e.mu.Unlock()
+		}, SlotEncoded: func(_ context.Context, ref contentref.ContentRef, slot string, stamp media.SlotStamp) {
+			e.mu.Lock()
+			if e.stamps == nil {
+				e.stamps = map[string]media.SlotStamp{}
+			}
+			e.stamps[ref.String()+"#"+slot] = stamp
 			e.mu.Unlock()
 		}}})
 	if err != nil {

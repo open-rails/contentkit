@@ -2,6 +2,15 @@ import "./styles.css";
 
 export { ImageCropDialog, type ImageCropDialogProps } from "./components/image-crop-dialog.js";
 export { SlotImage, type SlotImageProps } from "./components/slot-image.js";
+export {
+  SlotEditError,
+  SlotEditMenu,
+  SlotEditor,
+  useSlotEditor,
+  type SlotEditMenuProps,
+  type SlotEditorProps,
+  type SlotEditorState,
+} from "./components/slot-editor.js";
 export { AvatarUpload, CoverUpload, type SlotUploadProps } from "./components/slot-upload.js";
 export { UploadUiProvider, useUploadClient, type UploadUiProviderProps } from "./provider.js";
 export { UploadUiRoot } from "./scope.js";

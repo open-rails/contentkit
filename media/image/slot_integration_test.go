@@ -19,6 +19,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/token"
 )
 
 const slotBase = "https://media.example"
@@ -138,12 +139,39 @@ func (e *env) checkOutputs(t *testing.T, ref contentref.ContentRef, m media.Slot
 			}
 		}
 	}
+	e.checkStamp(t, ref, "cover", m)
 	for _, w := range []int{100, 150, 300, 400, 600} {
 		if !slices.Contains(want, w) {
 			if _, err := e.Env.Store.Head(context.Background(), prefix+media.SlotOutput("cover", w)+".webp"); !errors.Is(err, media.ErrNotFound) {
 				t.Fatalf("width %d not produced but stored: %v", w, err)
 			}
 		}
+	}
+}
+
+type visible struct{}
+
+func (visible) Resolve(context.Context, contentref.ContentRef, access.Actor) (access.Resolution, error) {
+	return access.Resolution{Visible: true}, nil
+}
+
+// checkStamp requires the host's stored stamp to rebuild m's outputs without reads.
+func (e *env) checkStamp(t *testing.T, ref contentref.ContentRef, slot string, m media.SlotManifest) {
+	t.Helper()
+	e.mu.Lock()
+	stamp := e.stamps[ref.String()+"#"+slot]
+	e.mu.Unlock()
+	if stamp == "" || stamp != m.Stamp() {
+		t.Fatalf("stamp %q, manifest's %q", stamp, m.Stamp())
+	}
+	r, err := media.NewReader(media.ReaderOptions{Manifests: e.manifests, Kinds: e.kinds, Resolver: visible{},
+		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: slotBase, SigningKey: token.Key{ID: "k", Secret: make([]byte, 32)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outs, err := r.SlotOutputs(ref, slot, stamp)
+	if err != nil || !slices.Equal(outs, m.Outputs) {
+		t.Fatalf("SlotOutputs(%q) = %+v %v, want %+v", stamp, outs, err, m.Outputs)
 	}
 }
 

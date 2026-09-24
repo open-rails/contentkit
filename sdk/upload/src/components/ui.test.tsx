@@ -2,12 +2,14 @@
 import "../test/dom.js";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { expect, it, vi } from "vitest";
 import { FakeServer, bytes } from "../../test/fake.js";
 import { UploadClient } from "../client.js";
 import type { CropSource } from "../image.js";
+import type { SlotManifest } from "../wire.gen.js";
 import { ja } from "../locales/ja.js";
-import { AvatarUpload, CoverUpload, ImageCropDialog, SlotImage, UploadUiProvider } from "../ui.js";
+import { AvatarUpload, CoverUpload, ImageCropDialog, SlotEditError, SlotEditMenu, SlotEditor, SlotImage, UploadUiProvider, useSlotEditor } from "../ui.js";
 
 const item = { kind: "channel", id: "7" };
 
@@ -140,4 +142,85 @@ it("ImageCropDialog confirms the initial edit, zooms from the keyboard and rotat
   const edit = onConfirm.mock.lastCall![0];
   expect(edit.rotate).toBe(90);
   expect(edit.crop.h / edit.crop.w).toBeCloseTo(3, 1); // the output stays 3:1 once turned
+});
+
+it("SlotEditor composes a host-styled overlay trigger: pick, then a Change / Edit crop menu", async () => {
+  const { s, client } = setup();
+  const user = userEvent.setup();
+  const onChange = vi.fn();
+  function Header() {
+    const { image } = useSlotEditor();
+    return <img alt="cover" srcSet={image.srcSet} />;
+  }
+  // The host owns the manifest (e.g. from its channel API) and stores each save.
+  function Host() {
+    const [manifest, setManifest] = useState<SlotManifest | null>(null);
+    return (
+      <div data-testid="overlay" className="host-overlay">
+        <SlotEditor
+          client={client}
+          item={item}
+          slot="cover"
+          manifest={manifest}
+          aspect={3}
+          decode={decodeAs(3000, 1500)}
+          onChange={(m) => {
+            onChange(m);
+            setManifest(m);
+          }}
+        >
+          <Header />
+          <SlotEditMenu label="Change cover" iconOnly render={<button className="host-btn" />} />
+          <SlotEditError />
+        </SlotEditor>
+      </div>
+    );
+  }
+  const { container } = render(<Host />);
+  const overlay = screen.getByTestId("overlay");
+  // No wrapper: the host's trigger sits directly in the host layout, unstyled by the kit.
+  const trigger = within(overlay).getByRole("button", { name: "Change cover" });
+  expect(trigger.parentElement).toBe(overlay);
+  expect(trigger.className).toBe("host-btn");
+  expect(trigger.closest(".ckui")).toBeNull();
+
+  await user.click(trigger);
+  await user.upload(container.querySelector<HTMLInputElement>("input[type=file]")!, png(5));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByText("Crop your cover")).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(onChange).toHaveBeenCalledOnce();
+  expect(screen.getByRole("img", { name: "cover" }).getAttribute("srcset")).toContain("3000w");
+
+  // Now the slot keeps an original: the same trigger opens a menu.
+  const puts = s.puts.length;
+  await user.click(within(overlay).getByRole("button", { name: "Change cover" }));
+  const menu = await screen.findByRole("menu");
+  expect(menu.closest(".ckui")).not.toBeNull();
+  expect(within(menu).getByRole("menuitem", { name: "Change" })).toBeInTheDocument();
+  await user.click(within(menu).getByRole("menuitem", { name: "Edit crop" }));
+  const again = await screen.findByRole("dialog");
+  await user.click(within(again).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(s.puts.length).toBe(puts);
+  expect(s.slotCalls.at(-1)).not.toHaveProperty("sha256");
+});
+
+it("SlotEditMenu defaults to the kit's scoped button and SlotEditError shows unreadable files", async () => {
+  const { client } = setup();
+  const user = userEvent.setup();
+  const bad = vi.fn(async () => {
+    throw new Error("bad");
+  });
+  const { container } = render(
+    <SlotEditor client={client} item={item} slot="avatar" manifest={null} decode={bad}>
+      <SlotEditMenu />
+      <SlotEditError />
+    </SlotEditor>,
+  );
+  const trigger = screen.getByRole("button", { name: "Upload" });
+  expect(trigger).toHaveClass("ckui");
+  await user.upload(container.querySelector<HTMLInputElement>("input[type=file]")!, png(6));
+  expect(await screen.findByRole("alert")).toHaveTextContent("This file can't be opened as an image.");
 });

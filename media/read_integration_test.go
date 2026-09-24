@@ -477,8 +477,13 @@ func TestReadHandler(t *testing.T) {
 	if outs, err := r.SlotOutputs(f.post, "cover", ""); err != nil || len(outs) != 1 || outs[0].URL != cover || outs[0].Name != "cover_64" {
 		t.Fatalf("slot outputs %+v %v", outs, err)
 	}
-	if outs, _ := r.SlotOutputs(f.post, "cover", fp); outs[0].URL != cover+"?v="+fp {
-		t.Fatalf("versioned slot outputs %+v", outs)
+	if outs, _ := r.SlotOutputs(f.post, "cover", media.NewSlotStamp(fp, []int{64, 128})); len(outs) != 1 || outs[0].URL != cover+"?v="+fp {
+		t.Fatalf("versioned slot outputs %+v (a retired width is left out)", outs)
+	}
+	for _, bad := range []media.SlotStamp{"abc", "abc:", ":64", "abc:64,64", "abc:0", "abc:x"} {
+		if _, err := r.SlotOutputs(f.post, "cover", bad); !errors.Is(err, media.ErrInvalidRequest) {
+			t.Fatalf("stamp %q: %v", bad, err)
+		}
 	}
 
 	u, err := r.PublicURL(f.post, "cover")
