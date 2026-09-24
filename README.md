@@ -365,6 +365,22 @@ slot; the image job encodes it) and renders its **hover preview** (silent MP4
 and animated WebP loops) from their selections; see HOST_INTEGRATION "Video
 posters and hover previews".
 
+**Encode progress**: with `ReaderOptions.Progress: video.NewProgressSource(pool)`
+the read API adds `progress` to each visible video file still pending (none
+yet, or a replaced source), and `GET /{kind}/{id}/video-images` adds the item's
+current step. The worker parses ffmpeg `-progress` and writes, at most every
+`Config.ProgressInterval` (2 s) plus on phase changes, a per-file map to its own
+River row (`metadata.contentkit_progress`, cleared when the job ends; no extra
+table). Contract (`media.EncodeProgress`): `phase` (`queued` downloading
+probing encoding muxing uploading publishing, then item-wide `images`),
+`queue_position` (1 = next; waiting jobs only), `segments_done`/`segments_total`
+(HLS segments, `ceil(duration/4)`), `percent` (time-based, never decreasing),
+`speed` (×realtime, smoothed over ~8 s), `eta` (seconds: remaining media /
+speed plus projected uploads / measured throughput), `at` (unix ms), `stalled`
+(a running job silent for a minute). It reveals only timing and queue depth,
+so every viewer allowed the file gets it; one indexed query, only for items
+with a pending video.
+
 **Playback** is served by `Reader.Handler` next to the read API, generated per
 request after one `Resolve` (`private, no-store`; the folder cookie is set in
 cookie mode): `/{kind}/{id}/hls/{file}/master.m3u8?audio=&subs=` (optional

@@ -41,7 +41,7 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 	e.queue.take() // the image job has nothing to do for a video file
 	encode := func() {
 		t.Helper()
-		if err := enc.Encode(ctx, video.Job{Ref: ref, Versioned: true}); err != nil {
+		if err := enc.Encode(ctx, video.Job{Ref: ref, Versioned: true}, nil); err != nil {
 			t.Fatal(err)
 		}
 		e.drain(t)

@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { Progress, SlotUploadOptions, UploadClient, UploadedFile, UploadOptions } from "./client.js";
 import { centeredCrop, constrainCrop, editOf, rotation, sameEdit, toOriginal, type Rotation, type Size } from "./crop.js";
 import { UploadError } from "./errors.js";
+import { encodeRemaining } from "./encode.js";
 import { UploadQueue, type QueueOptions, type QueueSnapshot } from "./queue.js";
-import type { Crop, Edit } from "./wire.gen.js";
+import type { Crop, Edit, EncodeProgress } from "./wire.gen.js";
 
 export {
   editOutput,
@@ -188,3 +189,27 @@ export {
   type VideoPosterOptions,
   type VideoSaveState,
 } from "./video-react.js";
+
+export interface UseEncodeProgress {
+  progress?: EncodeProgress;
+  /** Seconds left, counting down each second between reports; undefined while unknown. */
+  remaining?: number;
+}
+
+/**
+ * A pending video file's encode progress from the read API (`files[i].progress`),
+ * with the ETA counted down locally between polls.
+ */
+export function useEncodeProgress(progress?: EncodeProgress | null): UseEncodeProgress {
+  const [base, setBase] = useState(() => ({ at: progress?.at, received: Date.now() }));
+  if (progress?.at !== base.at) setBase({ at: progress?.at, received: Date.now() });
+  const [now, setNow] = useState(() => Date.now());
+  const ticking = !!progress?.eta && !progress.stalled;
+  useEffect(() => {
+    if (!ticking) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [ticking, base]);
+  return { progress: progress ?? undefined, remaining: encodeRemaining(progress, base.received, Math.max(now, base.received)) };
+}

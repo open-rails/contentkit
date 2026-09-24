@@ -2,11 +2,13 @@ package video
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"os/exec"
@@ -55,7 +57,7 @@ const (
 
 // ladder runs the single ffmpeg pass: the source is decoded once and split
 // into every rendition, audio track, subtitle and the sprite.
-func ladder(ctx context.Context, src, dir string, p plan, threads int) error {
+func ladder(ctx context.Context, src, dir string, p plan, threads int, fp *fileProgress) error {
 	n := len(p.rungs)
 	interval := p.duration / (spriteCols * spriteRows)
 	var fc strings.Builder
@@ -70,8 +72,10 @@ func ladder(ctx context.Context, src, dir string, p plan, threads int) error {
 	for i, r := range p.rungs {
 		fmt.Fprintf(&fc, ";[s%d]scale=%d:%d,setsar=1[v%d]", i, r.w, r.h, i)
 	}
-	fmt.Fprintf(&fc, ";[s%d]fps=1/%.9f,scale=%d:%d,setsar=1,tile=%dx%d[sprite]",
-		n, interval, p.tileW, p.tileH, spriteCols, spriteRows)
+	// Sprite frames leave the pass as PNGs and are tiled after: a tile filter
+	// emits only at the end, and ffmpeg reports no progress until every
+	// output has started.
+	fmt.Fprintf(&fc, ";[s%d]fps=1/%.9f,scale=%d:%d,setsar=1[sprite]", n, interval, p.tileW, p.tileH)
 
 	t := strconv.Itoa(threads)
 	args := append([]string{"-v", "error", "-nostdin", "-threads", t}, inputOptions(sourceDemuxers)...)
@@ -102,8 +106,27 @@ func ladder(ctx context.Context, src, dir string, p plan, threads int) error {
 	for i, s := range p.subs {
 		args = append(args, "-map", fmt.Sprintf("0:%d", s.index), "-c:s", "webvtt", "-f", "webvtt", filepath.Join(dir, fmt.Sprintf("s%d.vtt", i)))
 	}
-	args = append(args, "-map", "[sprite]", "-frames:v", "1", "-q:v", "4", "-f", "image2", filepath.Join(dir, "sprite.jpg"))
-	_, err := command(ctx, "ffmpeg", args...)
+	args = append(args, "-map", "[sprite]", "-frames:v", strconv.Itoa(spriteCols*spriteRows), "-f", "image2", filepath.Join(dir, spriteFrames))
+	if err := ffmpegProgress(ctx, fp.encoded, args...); err != nil {
+		return err
+	}
+	return sprite(ctx, dir)
+}
+
+const spriteFrames = "t%03d.png"
+
+// sprite tiles the pass's frames into sprite.jpg and removes them.
+func sprite(ctx context.Context, dir string) error {
+	args := append([]string{"-v", "error", "-nostdin"}, inputOptions([]string{"image2"})...)
+	args = append(args, "-framerate", "1", "-i", filepath.Join(dir, spriteFrames),
+		"-vf", fmt.Sprintf("tile=%dx%d", spriteCols, spriteRows), "-frames:v", "1", "-q:v", "4", "-f", "image2", "-y", filepath.Join(dir, "sprite.jpg"))
+	if _, err := command(ctx, "ffmpeg", args...); err != nil {
+		return err
+	}
+	frames, err := filepath.Glob(filepath.Join(dir, "t*.png"))
+	for _, f := range frames {
+		err = errors.Join(err, os.Remove(f))
+	}
 	return err
 }
 
@@ -254,19 +277,42 @@ func avcCodec(ctx context.Context, path string) (codec string, w, h int, err err
 
 // command runs a tool, killing it (SIGTERM, then SIGKILL) when ctx ends.
 func command(ctx context.Context, name string, args ...string) ([]byte, error) {
+	var out bytes.Buffer
+	if err := run(ctx, &out, name, args...); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+// ffmpegProgress runs ffmpeg with -progress on stdout, passing each report's
+// out_time in seconds to fn.
+func ffmpegProgress(ctx context.Context, fn func(outTime float64), args ...string) error {
+	pr, pw := io.Pipe()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = parseFFmpegProgress(pr, fn)
+		_, _ = io.Copy(io.Discard, pr)
+	}()
+	err := run(ctx, pw, "ffmpeg", append([]string{"-progress", "pipe:1", "-nostats"}, args...)...)
+	_ = pw.Close()
+	<-done
+	return err
+}
+
+func run(ctx context.Context, stdout io.Writer, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 10 * time.Second
 	var stderr tail
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
+	cmd.Stdout, cmd.Stderr = stdout, &stderr
+	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return ctx.Err()
 		}
-		return nil, fmt.Errorf("%s: %w: %s", name, err, stderr.b)
+		return fmt.Errorf("%s: %w: %s", name, err, stderr.b)
 	}
-	return out, nil
+	return nil
 }
 
 // tail keeps the last 16 KiB of a tool's diagnostics.

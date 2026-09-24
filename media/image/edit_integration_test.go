@@ -238,7 +238,7 @@ func TestMixedImagesAndVideo(t *testing.T) {
 	run := func() {
 		t.Helper()
 		e.drain(t)
-		if err := enc.Encode(context.Background(), video.Job{Ref: ref}); err != nil {
+		if err := enc.Encode(context.Background(), video.Job{Ref: ref}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -39,7 +39,7 @@ func TestAspectLadders(t *testing.T) {
 			}
 			e.commit(t, c.src.make(t), op)
 			job := video.Job{Ref: e.ref, Versioned: true, Video: media.Video{Ladder: c.ladder}}
-			if err := e.encoder.Encode(context.Background(), job); err != nil {
+			if err := e.encoder.Encode(context.Background(), job, nil); err != nil {
 				t.Fatal(err)
 			}
 			m, _ := e.manifest(t)
@@ -96,7 +96,7 @@ func TestAspectOutOfRangeFailsPermanently(t *testing.T) {
 	}
 	e.commit(t, fixture{w: 480, h: 180, secs: 1}.make(t), media.OpInsert) // 2.67:1, wider than 2.4:1
 	for range 2 {
-		if err := enc.Encode(context.Background(), video.Job{Ref: e.ref, Versioned: true}); err != nil {
+		if err := enc.Encode(context.Background(), video.Job{Ref: e.ref, Versioned: true}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -108,7 +108,7 @@ func TestAspectOutOfRangeFailsPermanently(t *testing.T) {
 	}
 
 	// Widening the kind's bounds retries it.
-	if err := enc.Encode(context.Background(), video.Job{Ref: e.ref, Versioned: true, Video: media.Video{MaxAspect: 3}}); err != nil {
+	if err := enc.Encode(context.Background(), video.Job{Ref: e.ref, Versioned: true, Video: media.Video{MaxAspect: 3}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if m, _ = e.manifest(t); m.Files[0].HLS.Error != "" || len(m.Files[0].HLS.Video) != 1 || m.Files[0].HLS.Video[0].Width != 480 {

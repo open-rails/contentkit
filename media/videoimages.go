@@ -439,6 +439,9 @@ type VideoImages struct {
 	Poster       PosterManifest       `json:"poster"`
 	HoverPreview HoverPreviewManifest `json:"hover_preview"`
 	Video        *VideoInfo           `json:"video,omitempty"`
+	// Progress of the encode the outputs wait on (GET only, with
+	// ReaderOptions.Progress): a file's run, then PhaseImages.
+	Progress *EncodeProgress `json:"progress,omitempty"`
 }
 
 // PosterManifest is the poster slot's manifest plus its selection.
@@ -516,7 +519,13 @@ func previewURL(base string, item Item, w int, mp4 bool, version string) string 
 // VideoImages reads a video item's poster and hover preview (two small
 // objects; no Resolve, as both are public).
 func (r *Reader) VideoImages(ctx context.Context, ref contentref.ContentRef) (VideoImages, error) {
-	return r.manifests.VideoImages(ctx, r.base.String(), ref, false, "")
+	out, err := r.manifests.VideoImages(ctx, r.base.String(), ref, false, "")
+	if err == nil && r.progress != nil {
+		if st, perr := r.progress.EncodeProgress(ctx, ref); perr == nil {
+			out.Progress = st.Current()
+		}
+	}
+	return out, err
 }
 
 // VideoImages builds output URLs on baseURL (the access worker origin). With

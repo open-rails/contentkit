@@ -22,6 +22,7 @@ var types = []any{
 	media.VideoImagesBody{}, media.VideoPosterBody{}, media.VideoPreviewBody{}, media.PosterSelection{},
 	media.PosterManifest{}, media.HoverPreviewSelection{}, media.PreviewImage{}, media.HoverPreviewManifest{},
 	media.VideoInfo{}, media.VideoImages{}, media.ErrorReply{},
+	media.ReadResult{}, media.FileInfo{}, media.DownloadInfo{}, media.EncodeProgress{},
 }
 
 var posterSources = []string{media.PosterSourceFrame, media.PosterSourceUpload, media.PosterSourceAuto}
@@ -43,6 +44,7 @@ func Render() string {
 	fmt.Fprintf(&b, "export type ErrorCode = %s;\n\n", union(errorCodes))
 	fmt.Fprintf(&b, "export type OpName = %s;\n", union(ops))
 	fmt.Fprintf(&b, "export type PosterSource = %s;\n", union(posterSources))
+	fmt.Fprintf(&b, "export type EncodePhase = %s;\n", union(media.EncodePhases))
 	fmt.Fprintf(&b, "\nexport const HOVER_PREVIEW_DEFAULT = %g;\nexport const HOVER_PREVIEW_MIN = %g;\nexport const HOVER_PREVIEW_MAX = %g;\n",
 		media.HoverPreviewDefault, media.HoverPreviewMin, media.HoverPreviewMax)
 	for _, v := range types {
@@ -79,6 +81,9 @@ func Render() string {
 			}
 			if (t.Name() == "VideoPosterBody" || t.Name() == "PosterSelection") && name == "source" {
 				typ = "PosterSource"
+			}
+			if t.Name() == "EncodeProgress" && name == "phase" {
+				typ = "EncodePhase"
 			}
 			opt := ""
 			if strings.Contains(opts, "omitempty") || f.Type.Kind() == reflect.Pointer {

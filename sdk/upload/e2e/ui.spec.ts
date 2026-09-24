@@ -21,6 +21,10 @@ for (const theme of ["light", "dark"] as const) {
     await expect(avatar.locator("img")).toHaveAttribute("srcset", /512w/);
     await expect(cover.locator("img")).toHaveJSProperty("complete", true);
     await shot(page, "profile", tag);
+    const encode = page.locator("[data-demo=encode]");
+    await expect(encode.getByText("Encoding · segment 5 / 27 · ~40 s left")).toBeVisible();
+    await expect(encode.getByText("Queued · #3 in line")).toBeVisible();
+    await encode.screenshot({ path: `${dir}/encode-progress-${tag}.png` });
 
     await cover.getByRole("button", { name: "Edit crop" }).click();
     const dialog = page.getByRole("dialog");

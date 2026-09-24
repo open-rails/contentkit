@@ -22,7 +22,7 @@ const blobCacheControl = "max-age=31536000, immutable"
 
 // put stores the file as a content-addressed blob unless it already exists,
 // which makes retries cheap: outputs are byte-identical.
-func (e *Encoder) put(ctx context.Context, item media.Item, path, contentType string) (string, int64, error) {
+func (e *Encoder) put(ctx context.Context, item media.Item, path, contentType string, fp *fileProgress) (string, int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", 0, err
@@ -37,18 +37,19 @@ func (e *Encoder) put(ctx context.Context, item media.Item, path, contentType st
 	name := media.SHA256Name(sum)
 	key, _ := item.Blob(name)
 	if obj, err := e.c.Store.Head(ctx, key); err == nil && obj.Size == size {
+		fp.skipped(size)
 		return name, size, nil
 	} else if err != nil && !errors.Is(err, media.ErrNotFound) {
 		return "", 0, err
 	}
 	if size > multipartAbove {
-		return name, size, e.putMultipart(ctx, key, f, size, contentType)
+		return name, size, e.putMultipart(ctx, key, f, size, contentType, fp)
 	}
 	opts := media.PutOptions{ContentType: contentType, CacheControl: blobCacheControl, ChecksumSHA256: sum}
 	if e.c.Store.Capabilities().ConditionalPut {
 		opts.IfNoneMatch = "*"
 	}
-	_, err = e.c.Store.Put(ctx, key, io.NewSectionReader(f, 0, size), size, opts)
+	_, err = e.c.Store.Put(ctx, key, fp.reader(io.NewSectionReader(f, 0, size), true), size, opts)
 	if err != nil && !errors.Is(err, media.ErrPreconditionFailed) {
 		return "", 0, err
 	}
@@ -58,7 +59,7 @@ func (e *Encoder) put(ctx context.Context, item media.Item, path, contentType st
 // putMultipart uploads parts through the Store, each bound to its length and
 // SHA-256. A failed upload is aborted (and the bucket's abort-incomplete rule
 // catches a killed process).
-func (e *Encoder) putMultipart(ctx context.Context, key string, f *os.File, size int64, contentType string) (err error) {
+func (e *Encoder) putMultipart(ctx context.Context, key string, f *os.File, size int64, contentType string, fp *fileProgress) (err error) {
 	id, err := e.c.Store.CreateMultipart(ctx, key, contentType)
 	if err != nil {
 		return err
@@ -75,7 +76,7 @@ func (e *Encoder) putMultipart(ctx context.Context, key string, f *os.File, size
 		if _, err := io.Copy(h, io.NewSectionReader(f, off, length)); err != nil {
 			return err
 		}
-		p, err := e.c.Store.PutPart(ctx, key, id, n, io.NewSectionReader(f, off, length), length, h.Sum(nil))
+		p, err := e.c.Store.PutPart(ctx, key, id, n, fp.reader(io.NewSectionReader(f, off, length), true), length, h.Sum(nil))
 		if err != nil {
 			return fmt.Errorf("media/video: part %d of %s: %w", n, key, err)
 		}

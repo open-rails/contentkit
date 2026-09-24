@@ -8,6 +8,7 @@ export type ErrorCode = "invalid_request" | "unauthorized" | "forbidden" | "not_
 
 export type OpName = "insert" | "replace" | "move" | "rename" | "remove" | "edit";
 export type PosterSource = "frame" | "upload" | "auto";
+export type EncodePhase = "queued" | "downloading" | "probing" | "encoding" | "muxing" | "uploading" | "publishing" | "images";
 
 export const HOVER_PREVIEW_DEFAULT = 3;
 export const HOVER_PREVIEW_MIN = 1;
@@ -236,6 +237,7 @@ export interface VideoImages {
   poster: PosterManifest;
   hover_preview: HoverPreviewManifest;
   video?: VideoInfo;
+  progress?: EncodeProgress;
 }
 
 export interface ErrorReply {
@@ -243,4 +245,54 @@ export interface ErrorReply {
   code: ErrorCode;
   retry_after?: number;
   originals?: string[];
+}
+
+export interface ReadResult {
+  access: string;
+  total: number;
+  preview_limit: number;
+  offset: number;
+  limit: number;
+  expires: number;
+  meta?: Record<string, unknown>;
+  files: FileInfo[];
+  downloads?: DownloadInfo[];
+}
+
+export interface FileInfo {
+  index: number;
+  name?: string;
+  type?: string;
+  w?: number;
+  h?: number;
+  duration?: number;
+  edit?: Edit;
+  dims?: Dims;
+  teaser?: boolean;
+  locked?: boolean;
+  hls?: boolean;
+  failed?: string;
+  progress?: EncodeProgress;
+  variant?: string;
+  url?: string;
+}
+
+export interface DownloadInfo {
+  key: string;
+  name: string;
+  type?: string;
+  size?: number;
+  url: string;
+}
+
+export interface EncodeProgress {
+  phase: EncodePhase;
+  queue_position?: number;
+  segments_done?: number;
+  segments_total?: number;
+  percent: number;
+  speed?: number;
+  eta?: number;
+  at: number;
+  stalled?: boolean;
 }
