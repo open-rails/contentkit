@@ -116,7 +116,11 @@ func (p *Processor) registered(ctx context.Context, item media.Item, slot string
 		// A conflicting write or a newer record is settled by the next pass.
 		if err := p.record(ctx, ref, slot, spec, fp, res); err == nil {
 			if p.c.Hooks.SlotEncoded != nil {
-				p.c.Hooks.SlotEncoded(ctx, ref, slot, fp)
+				widths := make([]int, len(res.Outputs))
+				for i, o := range res.Outputs {
+					widths[i] = o.W
+				}
+				p.c.Hooks.SlotEncoded(ctx, ref, slot, media.NewSlotStamp(fp, widths))
 			}
 		} else if !errors.Is(err, errSuperseded) {
 			return err

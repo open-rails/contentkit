@@ -1,6 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import path from "node:path";
 
+// Saves encode in the page; slow shared runners need the headroom.
+test.describe.configure({ timeout: 90_000 });
+
 const dir = process.env.SCREENSHOT_DIR ?? "test-results/screenshots";
 const fixture = (n: string) => path.join(import.meta.dirname, "fixtures", n);
 
@@ -58,5 +61,38 @@ for (const theme of ["light", "dark"] as const) {
     await dialog.getByRole("button", { name: "Save" }).click();
     await expect(dialog).toBeHidden({ timeout: 30_000 });
     await shot(page, "after-upload", tag);
+  });
+}
+
+for (const theme of ["light", "dark"] as const) {
+  test(`SlotEditor overlay header (${theme})`, async ({ page }, info) => {
+    const tag = `${theme}-${info.project.name}`;
+    await page.goto(`/?theme=${theme}`);
+    const header = page.locator("[data-demo=header]");
+    await expect(header.locator("img").first()).toHaveAttribute("srcset", /1500w/, { timeout: 20_000 });
+    await expect(header.locator("img").nth(1)).toHaveAttribute("srcset", /512w/);
+    // Host-styled triggers: no kit wrapper, the menu popup is scoped.
+    const coverTrigger = header.getByRole("button", { name: "Change cover" });
+    await expect(coverTrigger).not.toHaveClass(/ckui/);
+    await header.screenshot({ path: `${dir}/header-${tag}.png` });
+
+    await coverTrigger.click();
+    const menu = page.getByRole("menu");
+    await expect(menu.getByRole("menuitem", { name: "Edit crop" })).toBeVisible();
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: `${dir}/header-menu-${tag}.png` });
+    await menu.getByRole("menuitem", { name: "Edit crop" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText("Crop your cover")).toBeVisible();
+    await dialog.getByRole("button", { name: "Save" }).click();
+    await expect(dialog).toBeHidden({ timeout: 30_000 });
+
+    await header.getByRole("button", { name: "Change avatar" }).click();
+    await menu.getByRole("menuitem", { name: "Change" }).click();
+    await header.locator("input[type=file]").nth(1).setInputFiles(fixture("portrait-exif6.jpg"));
+    await expect(dialog.getByText("Crop your avatar")).toBeVisible();
+    await dialog.getByRole("button", { name: "Save" }).click();
+    await expect(dialog).toBeHidden({ timeout: 30_000 });
+    await expect(header.locator("img").nth(1)).toHaveAttribute("srcset", /512w/);
   });
 }

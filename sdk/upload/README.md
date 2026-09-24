@@ -123,9 +123,35 @@ import { ja } from "@openrails/contentkit-upload/locales/ja";
 </UploadUiProvider>
 ```
 
+`AvatarUpload` / `CoverUpload` are complete form fields. Layouts that draw the
+images themselves (a channel header with icon buttons over the cover) use
+`SlotEditor`: the same pick → crop → save / re-crop flow with no markup of its
+own. Its children draw the image from `useSlotEditor()` and put triggers where
+they belong; `SlotEditMenu` is one trigger (a file picker, or a Change / Edit crop
+menu once the slot keeps an original) and takes a host-styled element via `render`:
+
+```tsx
+import { SlotEditError, SlotEditMenu, SlotEditor, SlotImage, useSlotEditor } from "@openrails/contentkit-upload/ui";
+
+function Cover() {
+  const { image } = useSlotEditor();
+  return <SlotImage manifest={image.manifest} sizes="100vw" />;
+}
+
+<SlotEditor item={channel} slot="cover" manifest={channel.cover} aspect={3} onChange={saveCover}>
+  <Cover />
+  <SlotEditMenu label="Change cover" iconOnly render={<button className="my-overlay-button" />} />
+  <SlotEditError />
+</SlotEditor>
+```
+
 | Component | Props |
 | --- | --- |
 | `AvatarUpload`, `CoverUpload` | `item`, `slot` (default `avatar`/`cover`), `client`, `manifest` (else fetched), `onChange(manifest)`, `aspect` (default the manifest's, else 1 / 3), `targetWidth` (sharpness warning below it; default 512 / 3000), `accept`, `sizes`, `disabled`, `label`, `hint` |
+| `SlotEditor` | `item`, `slot`, `client`, `manifest` (else fetched), `onChange(manifest)`, `aspect` (default the manifest's, else 1), `targetWidth` (default the widest output), `round` (default aspect 1), `title`, `accept`, `disabled`, `children` |
+| `useSlotEditor()` | `{ image, crop, has, busy, disabled, error, choose(), pick(file), recrop() }` inside a `SlotEditor` |
+| `SlotEditMenu` | `label`, `iconOnly`, `render` (trigger element; default the kit's outline button), `className`, `align`; the trigger has `data-ckui="slot-edit"` and `data-busy` |
+| `SlotEditError` | `className`: the editor's error outside the dialog |
 | `ImageCropDialog` | `open`, `onOpenChange`, `source` (`{ url, width, height }` of the oriented original), `aspect`, `round`, `initialEdit`, `onEditChange`, `onConfirm(edit)`, `targetWidth`, `busy`, `progress`, `error`, `title` |
 | `SlotImage` | `manifest` or `item` + `slot`, `sizes`, `round`, `aspect`, `placeholder`, `alt` |
 | `UploadUiProvider` | `client`, `appearance` (`theme`: `light`/`dark`/`auto`/`inherit`, `variables`), `messages` (bundle or list; locales `en de es ja ko zh`), `t` (host translate hook) |
