@@ -505,3 +505,26 @@ func TestDeclaredTypeBindsTheDecoder(t *testing.T) {
 		t.Fatalf("cover derived from an SVG declared image/png: %v", err)
 	}
 }
+
+// TestProcessDoesNotResurrectADeletedItem deletes the manifest while a pass
+// derives: the pass records nothing and removes what it stored.
+func TestProcessDoesNotResurrectADeletedItem(t *testing.T) {
+	e := newEnv(t, galleryKind())
+	ctx := context.Background()
+	ref := contentref.NewVersion(e.Tenant, "gallery", "gone", "v1")
+	e.commit(t, ref, media.Op{Op: media.OpInsert, Name: "1.png", Original: e.uploadAs(t, ref, "", "image/png", pngImage(t, 64, 64, 1))})
+	item, _ := e.kinds.Item(ref)
+	key, _ := item.ManifestKey()
+	var once sync.Once
+	e.store.gate = func() { once.Do(func() { _ = e.Env.Store.Delete(ctx, key) }) }
+	e.drain(t)
+	e.store.gate = nil
+	for o, err := range e.Env.Store.List(ctx, item.Prefix()) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(o.Key, "/originals/") {
+			t.Errorf("a pass over a deleted item left %s", o.Key)
+		}
+	}
+}
