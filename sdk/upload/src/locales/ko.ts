@@ -113,6 +113,7 @@ export const ko: UploadUiMessageBundle = {
     processingImage: "이미지 처리 중…",
     image: "이미지 {index}",
     video: "동영상 {index}",
+    failedImage: "이 이미지를 처리할 수 없습니다.",
   },
   player: {
     play: "동영상 재생",
@@ -157,5 +158,10 @@ export const ko: UploadUiMessageBundle = {
     image_too_large: "이 이미지는 {width}×{height}px입니다. 이미지는 최대 {megapixels}메가픽셀까지 가능합니다.",
     image_unreadable: "이 파일은 올바른 {format} 이미지가 아닙니다.",
     render_timeout: "서버에서 아직 처리 중입니다. 준비되면 표시됩니다. 잠시 후 다시 확인하세요.",
+    animation_not_allowed: "여기에는 움직이는 이미지를 사용할 수 없습니다. 정지 이미지를 업로드하세요.",
+    animation_unsupported: "움직이는 {format} 이미지는 지원되지 않습니다. 움직이는 WebP 또는 GIF를 사용하세요.",
+    animationFrames: "애니메이션은 최대 {maxFrames}프레임까지 가능합니다. 이 이미지는 {frames}프레임입니다.",
+    animationSeconds: "애니메이션은 최대 {maxSeconds}초까지 가능합니다.",
+    animationTooLarge: "이 애니메이션이 너무 큽니다: {width}×{height}px, {frames}프레임. 프레임 수나 크기를 줄이세요.",
   },
 };

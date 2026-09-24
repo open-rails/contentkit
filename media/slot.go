@@ -371,6 +371,8 @@ type SlotManifest struct {
 	// MinWidth is the narrowest edited width the slot accepts: croppers
 	// keep crops at or above it.
 	MinWidth int `json:"min_width,omitempty"`
+	// Animation is the slot's policy: "reject" refuses animated images.
+	Animation Animation `json:"animation,omitempty"`
 }
 
 // SlotImage is one produced output.
@@ -423,7 +425,7 @@ func (m *Manifests) slotManifest(ctx context.Context, urls OutputURLs, ref conte
 	if err != nil {
 		return SlotManifest{}, nil, err
 	}
-	out := SlotManifest{Aspect: s.Aspect, Outputs: []SlotImage{}, MinWidth: s.Min()}
+	out := SlotManifest{Aspect: s.Aspect, Outputs: []SlotImage{}, MinWidth: s.Min(), Animation: s.Animation}
 	if item.Gated(slot) && urls.EditorToken == "" && !urls.Exposure.Poster {
 		return out, nil, nil
 	}

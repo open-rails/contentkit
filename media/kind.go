@@ -37,7 +37,10 @@ type Kind struct {
 	// ("i-{uuid}", from NewInlineName), each re-encoded with this spec from
 	// originals/{id} to public/{id}.webp. Post bodies and poll options use them.
 	Inline *Spec
-	Video  *Video // nil: no video encoding
+	// Animation is the policy for animated images (GIF, WebP) in files and
+	// inline images; slots set their own.
+	Animation Animation
+	Video     *Video // nil: no video encoding
 	// Zip names the variant packed, in file order, into downloads["zip"];
 	// "" offers no zip.
 	Zip string
@@ -168,11 +171,24 @@ func (s Spec) Hash() string {
 // skipped, so the best available size always exists. An edit narrower than
 // Min fails.
 type Slot struct {
-	Aspect   float64
-	Widths   []int
-	MinWidth int
-	Quality  int // WebP quality; default 80
+	Aspect    float64
+	Widths    []int
+	MinWidth  int
+	Quality   int // WebP quality; default 80
+	Animation Animation
 }
+
+// Animation is a policy for animated images (GIF, WebP; AVIF/HEIF sequences
+// are refused as animation_unsupported, never flattened).
+type Animation string
+
+const (
+	// AnimationAllow keeps every frame, delay and the loop count in each
+	// rendition; edits and resizes apply per frame. The default.
+	AnimationAllow Animation = ""
+	// AnimationReject refuses an animated upload with animation_not_allowed.
+	AnimationReject Animation = "reject"
+)
 
 // Min is the narrowest edited width accepted: MinWidth, else the smallest width.
 func (s Slot) Min() int {

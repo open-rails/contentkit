@@ -73,7 +73,7 @@ func (p *Processor) registered(ctx context.Context, item media.Item, slot string
 			return err
 		}
 		res := &media.SlotResult{Of: fp, Source: rec.Original}
-		outs, dims, err := encodeSlot(src, got.ContentType, spec, rec.Edit, p.c.MaxPixels)
+		outs, dims, err := encodeSlot(src, got.ContentType, spec, rec.Edit, p.rules(spec.Animation))
 		res.Dims = dims
 		if err != nil {
 			if !isPermanent(err) {
@@ -239,11 +239,11 @@ func (p *Processor) inline(ctx context.Context, item media.Item, id string) erro
 		if got.ETag != orig.ETag {
 			continue // replaced while we looked
 		}
-		if _, _, err := probe(src, got.ContentType, p.c.MaxPixels); err != nil {
+		if _, err := probe(src, got.ContentType, p.rules(item.Kind().Animation)); err != nil {
 			p.failed(ctx, item.Ref(), id, err)
 			return nil
 		}
-		out, err := encode(src, s, nil)
+		out, err := encode(src, got.ContentType, s, nil)
 		if err != nil {
 			p.failed(ctx, item.Ref(), id, err)
 			return nil

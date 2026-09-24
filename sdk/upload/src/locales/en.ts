@@ -111,6 +111,7 @@ export const en = {
     processingImage: "Processing image…",
     image: "Image {index}",
     video: "Video {index}",
+    failedImage: "This image couldn't be processed.",
   },
   player: {
     play: "Play video",
@@ -155,5 +156,10 @@ export const en = {
     image_too_large: "This image is {width}×{height} px; images may have at most {megapixels} megapixels.",
     image_unreadable: "This file isn't a valid {format} image.",
     render_timeout: "The server is still rendering this. It will appear once ready; check back shortly.",
+    animation_not_allowed: "Animated images aren't allowed here. Please upload a non-animated image.",
+    animation_unsupported: "Animated {format} isn't supported yet. Upload a GIF or animated WebP.",
+    animationFrames: "Animations can have at most {maxFrames} frames; this one has {frames}.",
+    animationSeconds: "Animations can run at most {maxSeconds} seconds.",
+    animationTooLarge: "This animation is too large: {frames} frames of {width}×{height} px. Use fewer frames or a smaller size.",
   },
 };

@@ -223,7 +223,7 @@ function Slide({ ctx, item, position, active, lightbox }: { ctx: Ctx; item: Gall
   if (item.kind === "locked") return <Locked ctx={ctx} item={item} />;
   const f = item.file;
   if (item.kind === "image") {
-    if (!f.url) return <Processing>{t("gallery.processingImage")}</Processing>;
+    if (!f.url) return f.failed ? <ImageFailed file={f} /> : <Processing>{t("gallery.processingImage")}</Processing>;
     return (
       <img
         src={f.url}
@@ -257,6 +257,18 @@ function Slide({ ctx, item, position, active, lightbox }: { ctx: Ctx; item: Gall
       label={t("gallery.video", { index: position + 1 })}
       className={lightbox ? "bg-transparent" : undefined}
     />
+  );
+}
+
+// Why an image cannot be shown (editors only: the read API's failed fields).
+function ImageFailed({ file }: { file: FileInfo }) {
+  const { t, error } = useMessages();
+  const text = file.failed_code ? error({ code: file.failed_code, message: file.failed, details: file.failed_details, refusal: true }) : t("gallery.failedImage");
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-muted p-4 text-center text-sm text-destructive" role="alert" data-ckui="image-failed">
+      <HugeiconsIcon icon={AlertCircleIcon} className="size-6" />
+      <p className="max-w-sm text-balance">{text}</p>
+    </div>
   );
 }
 
@@ -314,6 +326,10 @@ function Tile({ ctx, item, label, onOpen }: { ctx: Ctx; item: GalleryItem; label
   else if (item.kind === "image")
     body = item.file.url ? (
       <img src={item.file.url} alt="" loading="lazy" decoding="async" draggable={false} className="absolute inset-0 size-full object-cover transition-transform duration-300 motion-safe:group-hover:scale-[1.03]" />
+    ) : item.file.failed ? (
+      <span className="absolute inset-0 flex items-center justify-center bg-muted text-destructive">
+        <HugeiconsIcon icon={AlertCircleIcon} className="size-6" />
+      </span>
     ) : (
       <Processing>{""}</Processing>
     );

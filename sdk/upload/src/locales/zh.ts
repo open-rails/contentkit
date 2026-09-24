@@ -113,6 +113,7 @@ export const zh: UploadUiMessageBundle = {
     processingImage: "正在处理图片…",
     image: "图片 {index}",
     video: "视频 {index}",
+    failedImage: "无法处理此图片。",
   },
   player: {
     play: "播放视频",
@@ -157,5 +158,10 @@ export const zh: UploadUiMessageBundle = {
     image_too_large: "此图片为 {width}×{height} 像素；图片最多 {megapixels} 百万像素。",
     image_unreadable: "此文件不是有效的 {format} 图片。",
     render_timeout: "服务器仍在处理，完成后会显示；请稍后再查看。",
+    animation_not_allowed: "此处不允许动图。请上传静态图片。",
+    animation_unsupported: "不支持动态 {format} 图片。请使用动态 WebP 或 GIF。",
+    animationFrames: "动图最多 {maxFrames} 帧；此图有 {frames} 帧。",
+    animationSeconds: "动图最长 {maxSeconds} 秒。",
+    animationTooLarge: "此动图过大：{frames} 帧 {width}×{height} 像素。请减少帧数或缩小尺寸。",
   },
 };
