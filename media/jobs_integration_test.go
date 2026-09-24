@@ -411,6 +411,10 @@ func TestPublishTxThroughRiver(t *testing.T) {
 	res.visible.Store(false)
 	publish()
 	waitFor(t, "poster unpublished", func() bool { return !exists() })
+	// Unpublished leaves nothing of its own behind (a deleted item's folder stays empty).
+	if keys := listKeys(t, env.Store, item.Prefix()); len(keys) != 1 || keys[0] != staged {
+		t.Fatalf("after unpublishing: %v", keys)
+	}
 }
 
 type flipVisible struct{ visible atomic.Bool }
