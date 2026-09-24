@@ -321,10 +321,11 @@ func (s *Store) isKind(kind string) bool {
 	return ok
 }
 
+// validateID: a node is a search document whose content id is its
+// taxonomy_id, so taxonomy ids are UUIDv7s too (contentref.ValidateID).
 func validateID(id TaxonomyID) error {
-	v := string(id)
-	if v == "" || utf8.RuneCountInString(v) > 128 || strings.IndexFunc(v, unicode.IsSpace) >= 0 {
-		return fmt.Errorf("%w: taxonomy_id %q must be 1-128 characters without whitespace", ErrInvalid, v)
+	if err := contentref.ValidateID(string(id)); err != nil {
+		return fmt.Errorf("%w: taxonomy_id: %w", ErrInvalid, err)
 	}
 	return nil
 }

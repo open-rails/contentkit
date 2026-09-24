@@ -31,7 +31,7 @@ See [Go module retractions](https://go.dev/ref/mod#go-mod-file-retract).
 | Name | Meaning |
 |---|---|
 | `tenant_id` | one site: `doujins`, `hentai0`, the marketplace |
-| `content_id` | the host-owned work: a gallery, a video, a listing |
+| `content_id` | the host-owned work: a gallery, a video, a listing; a canonical UUIDv7, never reused ([Content ids](HOST_INTEGRATION.md#content-ids)) |
 | `content_version_id` | one selectable version of that work (optional) |
 | `taxonomy_id` | a generic ContentKit record: tag, artist, series, creator, character, voice actor |
 | `ContentRef` | `{TenantID, ContentKind, ContentID, ContentVersionID *string}` — the typed reference every API, key, index and cursor carries |

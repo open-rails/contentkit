@@ -1,4 +1,5 @@
 import { UploadError, aborted, fromResponse } from "./errors.js";
+import { checkRef } from "./ref.js";
 import type {
   CommitBody,
   CommitReply,
@@ -84,6 +85,7 @@ export class UploadApi {
   }
   /** A JPEG of one video frame (the poster picker's exact frame). */
   frame(q: { kind: string; id: string; version?: string; file?: string; t: number; w?: number }, signal?: AbortSignal) {
+    checkRef(q);
     const params = new URLSearchParams({ kind: q.kind, id: q.id, t: String(q.t) });
     if (q.version) params.set("version", q.version);
     if (q.file) params.set("file", q.file);
@@ -92,6 +94,9 @@ export class UploadApi {
   }
 
   private async call<T>(path: string, body: unknown, signal?: AbortSignal, blob = false): Promise<T> {
+    const refs = body as { ref?: { id: string }; from?: { id: string } } | undefined;
+    checkRef(refs?.ref);
+    checkRef(refs?.from);
     const f = this.o.fetch ?? fetch;
     const headers = new Headers(await this.o.headers?.());
     if (body !== undefined) headers.set("Content-Type", "application/json");

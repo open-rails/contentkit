@@ -24,14 +24,14 @@ func favIsFavorited(t *testing.T, f *favorites, userID string, r contentref.Cont
 
 func TestFavorites_AddRemoveStatus(t *testing.T) {
 	res := &fakeResolver{}
-	res.set("widget", "1", true, true)
+	res.set("widget", cid(1), true, true)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	f := newFavorites(rt)
 	ctx := context.Background()
 	actor := access.Actor{ID: "u1", Kind: "user"}
-	w := ref("widget", "1")
+	w := ref("widget", cid(1))
 
-	if err := f.add(ctx, actor, "widget", "1"); err != nil {
+	if err := f.add(ctx, actor, "widget", cid(1)); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 	if !favIsFavorited(t, f, "u1", w) {
@@ -41,13 +41,13 @@ func TestFavorites_AddRemoveStatus(t *testing.T) {
 		t.Fatalf("favorites count after add = %d, want 1", c.Favorites)
 	}
 	// re-add is idempotent: no error, still a single row.
-	if err := f.add(ctx, actor, "widget", "1"); err != nil {
+	if err := f.add(ctx, actor, "widget", cid(1)); err != nil {
 		t.Fatalf("re-add: %v", err)
 	}
 	if c := countsOf(t, rt, w); c.Favorites != 1 {
 		t.Fatalf("favorites count after re-add = %d, want 1 (idempotent)", c.Favorites)
 	}
-	if err := f.remove(ctx, actor, "widget", "1"); err != nil {
+	if err := f.remove(ctx, actor, "widget", cid(1)); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 	if favIsFavorited(t, f, "u1", w) {
@@ -57,20 +57,20 @@ func TestFavorites_AddRemoveStatus(t *testing.T) {
 		t.Fatalf("favorites count after remove = %d, want 0", c.Favorites)
 	}
 	// remove again is idempotent (no row) -> no error.
-	if err := f.remove(ctx, actor, "widget", "1"); err != nil {
+	if err := f.remove(ctx, actor, "widget", cid(1)); err != nil {
 		t.Fatalf("idempotent remove: %v", err)
 	}
 }
 
 func TestFavorites_TransactionErrorRollsBack(t *testing.T) {
 	res := &fakeResolver{}
-	res.set("widget", "1", true, true)
+	res.set("widget", cid(1), true, true)
 	rt, pool := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `DROP TABLE `+rt.store.t.counts); err != nil {
 		t.Fatalf("drop counts table: %v", err)
 	}
-	if err := rt.favorites.add(ctx, access.Actor{ID: "u1", Kind: "user"}, "widget", "1"); err == nil {
+	if err := rt.favorites.add(ctx, access.Actor{ID: "u1", Kind: "user"}, "widget", cid(1)); err == nil {
 		t.Fatal("favorite error = nil, want transaction failure")
 	}
 	var n int
@@ -81,7 +81,7 @@ func TestFavorites_TransactionErrorRollsBack(t *testing.T) {
 
 func TestFavorites_BatchIsFavorited(t *testing.T) {
 	res := &fakeResolver{}
-	for _, id := range []string{"1", "2", "3"} {
+	for _, id := range []string{cid(1), cid(2), cid(3)} {
 		res.set("widget", id, true, true)
 	}
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
@@ -89,26 +89,26 @@ func TestFavorites_BatchIsFavorited(t *testing.T) {
 	ctx := context.Background()
 	actor := access.Actor{ID: "u1", Kind: "user"}
 
-	if err := f.add(ctx, actor, "widget", "1"); err != nil {
+	if err := f.add(ctx, actor, "widget", cid(1)); err != nil {
 		t.Fatalf("add 1: %v", err)
 	}
-	if err := f.add(ctx, actor, "widget", "3"); err != nil {
+	if err := f.add(ctx, actor, "widget", cid(3)); err != nil {
 		t.Fatalf("add 3: %v", err)
 	}
-	targets := []contentref.ContentRef{ref("widget", "1"), ref("widget", "2"), ref("widget", "3"), ref("widget", "4")}
+	targets := []contentref.ContentRef{ref("widget", cid(1)), ref("widget", cid(2)), ref("widget", cid(3)), ref("widget", cid(4))}
 	got, err := f.IsFavorited(ctx, "u1", targets)
 	if err != nil {
 		t.Fatalf("IsFavorited: %v", err)
 	}
 	want := map[contentref.ContentKey]bool{
-		ref("widget", "1").Key(): true, ref("widget", "2").Key(): false,
-		ref("widget", "3").Key(): true, ref("widget", "4").Key(): false,
+		ref("widget", cid(1)).Key(): true, ref("widget", cid(2)).Key(): false,
+		ref("widget", cid(3)).Key(): true, ref("widget", cid(4)).Key(): false,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("IsFavorited = %v, want %v", got, want)
 	}
 	// A reference of another tenant is refused, never remapped.
-	if _, err := f.IsFavorited(ctx, "u1", []contentref.ContentRef{contentref.New("other", "widget", "1")}); !errors.Is(err, ErrTenant) {
+	if _, err := f.IsFavorited(ctx, "u1", []contentref.ContentRef{contentref.New("other", "widget", cid(1))}); !errors.Is(err, ErrTenant) {
 		t.Fatalf("foreign tenant: want ErrTenant, got %v", err)
 	}
 }
@@ -117,52 +117,52 @@ func TestFavorites_BatchIsFavorited(t *testing.T) {
 // which requires accessibility.
 func TestFavorites_WishlistVisibleNotAccessible(t *testing.T) {
 	res := &fakeResolver{}
-	res.set("widget", "premium", true, false)
+	res.set("widget", cid(904), true, false)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	f := newFavorites(rt)
 	ctx := context.Background()
 	actor := access.Actor{ID: "u1", Kind: "user"}
 
-	if err := f.add(ctx, actor, "widget", "premium"); err != nil {
+	if err := f.add(ctx, actor, "widget", cid(904)); err != nil {
 		t.Fatalf("favorite premium-locked: want success, got %v", err)
 	}
-	if !favIsFavorited(t, f, "u1", ref("widget", "premium")) {
+	if !favIsFavorited(t, f, "u1", ref("widget", cid(904))) {
 		t.Fatal("status after favoriting premium-locked: want favorited")
 	}
-	if err := reactErr(rt.reactions.react(ctx, actor, "widget", "premium", 1)); !errors.Is(err, ErrForbidden) {
+	if err := reactErr(rt.reactions.react(ctx, actor, "widget", cid(904), 1)); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("react on premium-locked: want ErrForbidden, got %v", err)
 	}
 }
 
 func TestFavorites_GatingHiddenMissing(t *testing.T) {
 	res := &fakeResolver{}
-	res.set("widget", "hidden", false, false)
+	res.set("widget", cid(902), false, false)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	f := newFavorites(rt)
 	ctx := context.Background()
 	actor := access.Actor{ID: "u1", Kind: "user"}
 
-	if err := f.add(ctx, actor, "widget", "hidden"); !errors.Is(err, ErrNotVisible) {
+	if err := f.add(ctx, actor, "widget", cid(902)); !errors.Is(err, ErrNotVisible) {
 		t.Fatalf("favorite hidden: want ErrNotVisible, got %v", err)
 	}
-	if err := f.add(ctx, actor, "widget", "ghost"); !errors.Is(err, ErrNotFound) {
+	if err := f.add(ctx, actor, "widget", cid(903)); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("favorite missing: want ErrNotFound, got %v", err)
 	}
-	if err := f.add(ctx, actor, "unregistered", "1"); !errors.Is(err, ErrNotFound) {
+	if err := f.add(ctx, actor, "unregistered", cid(1)); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("favorite unregistered kind: want ErrNotFound, got %v", err)
 	}
 }
 
 func TestFavorites_AnonymousRejected(t *testing.T) {
 	res := &fakeResolver{}
-	res.set("widget", "1", true, true)
+	res.set("widget", cid(1), true, true)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	mux := http.NewServeMux()
 	newFavorites(rt).mount(mux)
 
 	anon := access.Actor{Anonymous: true, IP: "10.0.0.9"}
 	for _, c := range []struct{ method, path string }{
-		{"POST", "/widget/1/favorite"}, {"DELETE", "/widget/1/favorite"}, {"GET", "/widget/1/favorite"}, {"GET", "/favorites"},
+		{"POST", "/widget/" + cid(1) + "/favorite"}, {"DELETE", "/widget/" + cid(1) + "/favorite"}, {"GET", "/widget/" + cid(1) + "/favorite"}, {"GET", "/favorites"},
 	} {
 		req := httptest.NewRequest(c.method, c.path, nil)
 		req = req.WithContext(withActor(req.Context(), anon))
@@ -172,7 +172,7 @@ func TestFavorites_AnonymousRejected(t *testing.T) {
 			t.Fatalf("%s %s: status %d, want 401 (body %s)", c.method, c.path, w.Code, w.Body.String())
 		}
 	}
-	req := httptest.NewRequest("POST", "/widget/1/favorite", nil)
+	req := httptest.NewRequest("POST", "/widget/"+cid(1)+"/favorite", nil)
 	req = req.WithContext(withActor(req.Context(), access.Actor{ID: "u1", Kind: "user"}))
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -183,7 +183,7 @@ func TestFavorites_AnonymousRejected(t *testing.T) {
 
 func TestFavorites_ListAndCounts(t *testing.T) {
 	res := &fakeResolver{}
-	for _, id := range []string{"1", "2", "3"} {
+	for _, id := range []string{cid(1), cid(2), cid(3)} {
 		res.set("widget", id, true, true)
 	}
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
@@ -191,7 +191,7 @@ func TestFavorites_ListAndCounts(t *testing.T) {
 	ctx := context.Background()
 	u1, u2 := access.Actor{ID: "u1", Kind: "user"}, access.Actor{ID: "u2", Kind: "user"}
 
-	for _, id := range []string{"1", "2", "3"} {
+	for _, id := range []string{cid(1), cid(2), cid(3)} {
 		if err := f.add(ctx, u1, "widget", id); err != nil {
 			t.Fatalf("add %s: %v", id, err)
 		}
@@ -207,24 +207,24 @@ func TestFavorites_ListAndCounts(t *testing.T) {
 		}
 		order = append(order, it.ContentID)
 	}
-	if want := []string{"3", "2", "1"}; !reflect.DeepEqual(order, want) {
+	if want := []string{cid(3), cid(2), cid(1)}; !reflect.DeepEqual(order, want) {
 		t.Fatalf("list order = %v, want %v (newest-first)", order, want)
 	}
-	if err := f.add(ctx, u2, "widget", "1"); err != nil {
+	if err := f.add(ctx, u2, "widget", cid(1)); err != nil {
 		t.Fatalf("u2 add: %v", err)
 	}
-	counts, err := rt.Counts(ctx, []contentref.ContentRef{ref("widget", "1"), ref("widget", "2"), ref("widget", "3"), ref("widget", "4")})
+	counts, err := rt.Counts(ctx, []contentref.ContentRef{ref("widget", cid(1)), ref("widget", cid(2)), ref("widget", cid(3)), ref("widget", cid(4))})
 	if err != nil {
 		t.Fatalf("Counts: %v", err)
 	}
-	if counts[ref("widget", "1").Key()].Favorites != 2 || counts[ref("widget", "2").Key()].Favorites != 1 || counts[ref("widget", "3").Key()].Favorites != 1 {
+	if counts[ref("widget", cid(1)).Key()].Favorites != 2 || counts[ref("widget", cid(2)).Key()].Favorites != 1 || counts[ref("widget", cid(3)).Key()].Favorites != 1 {
 		t.Fatalf("Counts favorites = %v, want 1:2 2:1 3:1", counts)
 	}
-	if _, ok := counts[ref("widget", "4").Key()]; ok {
+	if _, ok := counts[ref("widget", cid(4)).Key()]; ok {
 		t.Fatal("widget/4 has no engagement; it must be absent")
 	}
 	page, err := f.list(ctx, "u1", 2, 0)
-	if err != nil || len(page) != 2 || page[0].ContentID != "3" || page[1].ContentID != "2" {
+	if err != nil || len(page) != 2 || page[0].ContentID != cid(3) || page[1].ContentID != cid(2) {
 		t.Fatalf("paged list = %v err=%v, want [3 2]", page, err)
 	}
 }
@@ -233,20 +233,20 @@ func TestFavorites_ListAndCounts(t *testing.T) {
 // interactions only by Visible/Accessible; content ignores PreviewLimit.
 func TestPreviewLimitIgnoredByInteractions(t *testing.T) {
 	res := &fakeResolver{entries: map[string]access.Resolution{
-		"widget:preview":   {Visible: true, PreviewLimit: 3},
-		"widget:scheduled": {Visible: true, Accessible: true, PreviewLimit: 7},
+		"widget:" + cid(1): {Visible: true, PreviewLimit: 3},
+		"widget:" + cid(2): {Visible: true, Accessible: true, PreviewLimit: 7},
 	}}
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	ctx := context.Background()
 	actor := access.Actor{ID: "u1", Kind: "user"}
 
-	if err := newFavorites(rt).add(ctx, actor, "widget", "preview"); err != nil {
+	if err := newFavorites(rt).add(ctx, actor, "widget", cid(1)); err != nil {
 		t.Fatalf("favorite preview: %v", err)
 	}
-	if _, err := rt.reactions.react(ctx, actor, "widget", "preview", 1); !errors.Is(err, ErrForbidden) {
+	if _, err := rt.reactions.react(ctx, actor, "widget", cid(1), 1); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("react preview: %v, want ErrForbidden", err)
 	}
-	if _, err := rt.reactions.react(ctx, actor, "widget", "scheduled", 1); err != nil {
+	if _, err := rt.reactions.react(ctx, actor, "widget", cid(2), 1); err != nil {
 		t.Fatalf("react scheduled: %v", err)
 	}
 }

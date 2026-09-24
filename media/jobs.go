@@ -357,7 +357,7 @@ func (j *Jobs) originalBytes(ctx context.Context, prefix string) (int64, error) 
 }
 
 func folderPrefix(tenant, kind, id string) (string, error) {
-	if !layout.ValidSegment(tenant) || !layout.ValidSegment(kind) || !layout.ValidSegment(id) {
+	if !layout.ValidSegment(tenant) || !layout.ValidSegment(kind) || contentref.ValidateID(id) != nil {
 		return "", fmt.Errorf("media: invalid folder %q/%q/%q", tenant, kind, id)
 	}
 	return tenant + "/" + kind + "/" + id + "/", nil

@@ -14,20 +14,20 @@ func TestListNodesHostFilterIntegration(t *testing.T) {
 	second := newStore(t, pool, schema, "second", nil)
 	for _, store := range []*Store{first, second} {
 		_, err := store.CreateNodes(ctx, []NodeInput{
-			{TaxonomyID: "a", Kind: "artist", Slug: "a", Names: []Name{{Language: "en", Kind: NameCanonical, Name: "Alpha"}}},
-			{TaxonomyID: "b", Kind: "artist", Slug: "b", Names: []Name{{Language: "en", Kind: NameCanonical, Name: "Beta"}}},
-			{TaxonomyID: "c", Kind: "artist", Slug: "c", Names: []Name{{Language: "en", Kind: NameCanonical, Name: "Gamma"}}},
+			{TaxonomyID: tid("a"), Kind: "artist", Slug: "a", Names: []Name{{Language: "en", Kind: NameCanonical, Name: "Alpha"}}},
+			{TaxonomyID: tid("b"), Kind: "artist", Slug: "b", Names: []Name{{Language: "en", Kind: NameCanonical, Name: "Beta"}}},
+			{TaxonomyID: tid("c"), Kind: "artist", Slug: "c", Names: []Name{{Language: "en", Kind: NameCanonical, Name: "Gamma"}}},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := pool.Exec(ctx, fmt.Sprintf(`CREATE TABLE %s.host_meta(tenant_id text,taxonomy_id text,category text);
- INSERT INTO %[1]s.host_meta VALUES ('first','a','circle'),('first','b','individual'),('first','c','circle'),('second','b','circle')`, schema)); err != nil {
+	if _, err := pool.Exec(ctx, withIDs(fmt.Sprintf(`CREATE TABLE %s.host_meta(tenant_id text,taxonomy_id text,category text);
+ INSERT INTO %[1]s.host_meta VALUES ('first','{{a}}','circle'),('first','{{b}}','individual'),('first','{{c}}','circle'),('second','{{b}}','circle')`, schema))); err != nil {
 		t.Fatal(err)
 	}
 	opts := ListOptions{Kind: "artist", Sort: SortName, Limit: 1, FilterSQL: fmt.Sprintf(`EXISTS(SELECT 1 FROM %s.host_meta m WHERE m.tenant_id=n.tenant_id AND m.taxonomy_id=n.taxonomy_id AND m.category=@host_category)`, schema), FilterArgs: map[string]any{"host_category": "circle"}}
-	for offset, want := range []TaxonomyID{"a", "c"} {
+	for offset, want := range []TaxonomyID{tid("a"), tid("c")} {
 		opts.Offset = offset
 		page, err := first.ListNodes(ctx, opts)
 		if err != nil || page.Total != 2 || len(page.Nodes) != 1 || page.Nodes[0].TaxonomyID != want {
@@ -41,7 +41,7 @@ func TestListNodesHostFilterIntegration(t *testing.T) {
 	}
 	opts.Offset = 0
 	page, err = second.ListNodes(ctx, opts)
-	if err != nil || page.Total != 1 || len(page.Nodes) != 1 || page.Nodes[0].TaxonomyID != "b" {
+	if err != nil || page.Total != 1 || len(page.Nodes) != 1 || page.Nodes[0].TaxonomyID != tid("b") {
 		t.Fatalf("tenant sidecar scope: %+v %v", page, err)
 	}
 	opts.FilterArgs["host_category"] = "circle' OR true --"

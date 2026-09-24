@@ -61,7 +61,7 @@ func TestVideoExposure(t *testing.T) {
 		t.Fatal(err)
 	}
 	ms := s3test.Manifests(t, env.Store, kinds, media.ManifestOptions{})
-	ref := contentref.New(env.Tenant, "clip", "7")
+	ref := contentref.New(env.Tenant, "clip", cid(7))
 	item, _ := kinds.Item(ref)
 	vis := &visibility{}
 	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: kinds, Resolver: vis})
@@ -113,7 +113,7 @@ func TestVideoExposure(t *testing.T) {
 	api := reader.Handler(media.HandlerOptions{Tenant: env.Tenant, Identity: actorHeader{}, Limit: media.ViewerLimit{Disabled: true}})
 	images := func(actor string) (int, media.VideoImages) {
 		t.Helper()
-		req := httptest.NewRequest("GET", "/clip/7/video-images", nil)
+		req := httptest.NewRequest("GET", "/clip/"+cid(7)+"/video-images", nil)
 		if actor != "" {
 			req = req.WithContext(context.WithValue(req.Context(), actorHeader{}, access.Actor{ID: actor}))
 		}
@@ -233,7 +233,7 @@ func TestViewerRateLimit(t *testing.T) {
 	}
 	ms := s3test.Manifests(t, env.Store, kinds, media.ManifestOptions{})
 	reader, err := media.NewReader(media.ReaderOptions{Manifests: ms, Kinds: kinds,
-		Resolver: verdicts{"1": {Visible: true, Accessible: true}},
+		Resolver: verdicts{cid(1): {Visible: true, Accessible: true}},
 		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: "https://media.example", SigningKey: k2}})
 	if err != nil {
 		t.Fatal(err)
@@ -249,27 +249,27 @@ func TestViewerRateLimit(t *testing.T) {
 		return rec
 	}
 	for i := range 3 {
-		if rec := get("scraper", "/post/1"); rec.Code != http.StatusOK {
+		if rec := get("scraper", "/post/"+cid(1)); rec.Code != http.StatusOK {
 			t.Fatalf("request %d: %d %s", i, rec.Code, rec.Body)
 		}
 	}
-	rec := get("scraper", "/post/1/hls/a/master.m3u8")
+	rec := get("scraper", "/post/"+cid(1)+"/hls/a/master.m3u8")
 	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") == "" || !strings.Contains(rec.Body.String(), "rate_limited") {
 		t.Fatalf("over the limit: %d %v %s", rec.Code, rec.Header(), rec.Body)
 	}
-	if rec := get("someone-else", "/post/1"); rec.Code != http.StatusOK {
+	if rec := get("someone-else", "/post/"+cid(1)); rec.Code != http.StatusOK {
 		t.Fatalf("another viewer: %d", rec.Code)
 	}
 	for i := range 3 {
-		if rec := get("", "/post/1"); rec.Code != http.StatusOK {
+		if rec := get("", "/post/"+cid(1)); rec.Code != http.StatusOK {
 			t.Fatalf("anonymous %d: %d", i, rec.Code)
 		}
 	}
-	if rec := get("", "/post/1"); rec.Code != http.StatusTooManyRequests {
+	if rec := get("", "/post/"+cid(1)); rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("anonymous from one address over the limit: %d", rec.Code)
 	}
 	time.Sleep(300 * time.Millisecond)
-	if rec := get("scraper", "/post/1"); rec.Code != http.StatusOK {
+	if rec := get("scraper", "/post/"+cid(1)); rec.Code != http.StatusOK {
 		t.Fatalf("after refill: %d", rec.Code)
 	}
 }

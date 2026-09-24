@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contentref"
 )
 
 // posts is the generic authored-content primitive (a "blog post" is a post
@@ -214,7 +214,7 @@ func (p *posts) handleCreate(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	title := strings.TrimSpace(*in.Title)
-	id := uuid.NewString()
+	id := contentref.NewID()
 	sc, err := p.screen(ctx, actor, id, title, body, derefBool(in.IsDraft))
 	if err != nil {
 		writeErr(w, err)

@@ -26,6 +26,9 @@ func workerFixture(t *testing.T) (context.Context, *pgxpool.Pool, string) {
 	return ctx, pool, pgtest.Schema(t, ctx, pool)
 }
 
+// cid is a deterministic canonical UUIDv7 content id; cid(n) sorts in n order.
+func cid(n int) string { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) }
+
 func gallery(id string) contentref.ContentRef { return contentref.New(tenant, "gallery", id) }
 
 // titles builds documents titled by the map for the requested refs.
@@ -51,15 +54,15 @@ func workerOptions(pool *pgxpool.Pool, schema string, build BuildKeywordDocument
 // markDirty is a host write with a fixed timestamp: the queue trigger, not
 // updated_at, must fence generations.
 func markDirty(ctx context.Context, pool *pgxpool.Pool, schema string) error {
-	_, err := pool.Exec(ctx, `INSERT INTO `+schema+`.content_search_dirty(tenant_id,content_kind,content_id,content_version_id,language,updated_at) VALUES($1,'gallery','1','','en','2020-01-01')
- ON CONFLICT(tenant_id,content_kind,content_id,content_version_id,language) DO UPDATE SET updated_at=EXCLUDED.updated_at`, tenant)
+	_, err := pool.Exec(ctx, `INSERT INTO `+schema+`.content_search_dirty(tenant_id,content_kind,content_id,content_version_id,language,updated_at) VALUES($1,'gallery',$2,'','en','2020-01-01')
+ ON CONFLICT(tenant_id,content_kind,content_id,content_version_id,language) DO UPDATE SET updated_at=EXCLUDED.updated_at`, tenant, cid(1))
 	return err
 }
 
 func document(t *testing.T, ctx context.Context, pool *pgxpool.Pool, schema string) string {
 	t.Helper()
 	var s string
-	if err := pool.QueryRow(ctx, "SELECT raw_document FROM "+schema+".content_search_documents WHERE tenant_id=$1 AND content_id='1'", tenant).Scan(&s); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT raw_document FROM "+schema+".content_search_documents WHERE tenant_id=$1 AND content_id=$2", tenant, cid(1)).Scan(&s); err != nil {
 		t.Fatal(err)
 	}
 	return s
@@ -89,9 +92,9 @@ func TestIntegrationDirtyUpdateSurvivesConcurrentSync(t *testing.T) {
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
-			return titles(map[string]string{"1": "old"})(ctx, tenant, kind, lang, refs)
+			return titles(map[string]string{cid(1): "old"})(ctx, tenant, kind, lang, refs)
 		}
-		return titles(map[string]string{"1": "new"})(ctx, tenant, kind, lang, refs)
+		return titles(map[string]string{cid(1): "new"})(ctx, tenant, kind, lang, refs)
 	}
 	opts := workerOptions(pool, schema, build)
 	done := make(chan error, 1)
@@ -130,12 +133,12 @@ func TestIntegrationBackfillFailureKeepsCursor(t *testing.T) {
 	if err := markDirty(ctx, pool, schema); err != nil {
 		t.Fatal(err)
 	}
-	opts := workerOptions(pool, schema, titles(map[string]string{"1": "new", "2": "listed"}))
+	opts := workerOptions(pool, schema, titles(map[string]string{cid(1): "new", cid(2): "listed"}))
 	var cursors []string
 	opts.ListContent = func(_ context.Context, _, _, _, cursor string, _ int) ([]contentref.ContentRef, string, bool, error) {
 		cursors = append(cursors, cursor)
 		if len(cursors) == 1 {
-			return []contentref.ContentRef{gallery("2")}, "c1", false, nil
+			return []contentref.ContentRef{gallery(cid(2))}, "c1", false, nil
 		}
 		if len(cursors) == 2 {
 			return nil, "", false, errors.New("backfill failed")
@@ -154,7 +157,7 @@ func TestIntegrationBackfillFailureKeepsCursor(t *testing.T) {
 	if n := count(t, ctx, pool, schema, "content_search_backfill", "cursor='c1' AND state='failed' AND last_error='backfill failed'"); n != 1 {
 		t.Fatal("failure not recorded at the committed cursor")
 	}
-	if n := count(t, ctx, pool, schema, "content_search_documents", "content_id='2'"); n != 1 {
+	if n := count(t, ctx, pool, schema, "content_search_documents", "content_id='"+cid(2)+"'"); n != 1 {
 		t.Fatal("committed page not published")
 	}
 	if err := SyncOnce(ctx, opts); err != nil {
@@ -182,13 +185,13 @@ func TestIntegrationStaleWriterCannotOverwrite(t *testing.T) {
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
-			return titles(map[string]string{"1": "stale"})(ctx, tenant, kind, lang, refs)
+			return titles(map[string]string{cid(1): "stale"})(ctx, tenant, kind, lang, refs)
 		}
-		return titles(map[string]string{"1": "fresh"})(ctx, tenant, kind, lang, refs)
+		return titles(map[string]string{cid(1): "fresh"})(ctx, tenant, kind, lang, refs)
 	}
 	opts := workerOptions(pool, schema, build)
 	opts.ListContent = func(context.Context, string, string, string, string, int) ([]contentref.ContentRef, string, bool, error) {
-		return []contentref.ContentRef{gallery("1")}, "1", true, nil
+		return []contentref.ContentRef{gallery(cid(1))}, "1", true, nil
 	}
 	done := make(chan error, 1)
 	go func() { done <- SyncOnce(ctx, opts) }()
@@ -217,13 +220,13 @@ func TestIntegrationBackfillQueuesSameWriter(t *testing.T) {
 	var calls atomic.Int32
 	opts := workerOptions(pool, schema, func(ctx context.Context, tenant, kind, lang string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
 		calls.Add(1)
-		return titles(map[string]string{"1": "fresh"})(ctx, tenant, kind, lang, refs)
+		return titles(map[string]string{cid(1): "fresh"})(ctx, tenant, kind, lang, refs)
 	})
 	opts.ListContent = func(_ context.Context, gotTenant, kind, lang, cursor string, limit int) ([]contentref.ContentRef, string, bool, error) {
 		if gotTenant != tenant || kind != "gallery" || lang != "en" {
 			return nil, "", false, fmt.Errorf("unexpected page %s/%s/%s", gotTenant, kind, lang)
 		}
-		return []contentref.ContentRef{gallery("1"), gallery("1").WithVersion("v2")}, "1", true, nil
+		return []contentref.ContentRef{gallery(cid(1)), gallery(cid(1)).WithVersion("v2")}, "1", true, nil
 	}
 	if err := SyncOnce(ctx, opts); err != nil {
 		t.Fatal(err)
@@ -241,7 +244,7 @@ func TestIntegrationBackfillQueuesSameWriter(t *testing.T) {
 		t.Fatal(got)
 	}
 	// Both the work and its version document are keyed separately.
-	if n := count(t, ctx, pool, schema, "content_search_documents", "tenant_id=$1 AND content_id='1'", tenant); n != 2 {
+	if n := count(t, ctx, pool, schema, "content_search_documents", "tenant_id=$1 AND content_id=$2", tenant, cid(1)); n != 2 {
 		t.Fatalf("documents=%d", n)
 	}
 	var state string
@@ -307,12 +310,12 @@ func (s *recordingSink) Delete(_ context.Context, key search.DocumentKey, _ int6
 func TestIntegrationDocumentSinkAtLeastOnce(t *testing.T) {
 	ctx, pool, schema := workerFixture(t)
 	sink := &recordingSink{}
-	docs := map[string]string{"1": "Blue Ocean"}
+	docs := map[string]string{cid(1): "Blue Ocean"}
 	opts := workerOptions(pool, schema, titles(docs))
 	opts.Sink = sink
 	mark := func(deleted bool) {
 		t.Helper()
-		if err := search.MarkDirty(ctx, pool, schema, []search.DirtyMark{{DocumentKey: search.DocumentKey{ContentRef: gallery("1"), Language: "en"}, Deleted: deleted}}); err != nil {
+		if err := search.MarkDirty(ctx, pool, schema, []search.DirtyMark{{DocumentKey: search.DocumentKey{ContentRef: gallery(cid(1)), Language: "en"}, Deleted: deleted}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -329,7 +332,7 @@ func TestIntegrationDocumentSinkAtLeastOnce(t *testing.T) {
 	if err := SyncOnce(ctx, opts); err != nil {
 		t.Fatal(err)
 	}
-	if len(sink.upserts) != 1 || sink.upserts[0].Version != first || sink.upserts[0].Title != "Blue Ocean" || !sink.upserts[0].Equal(gallery("1")) || sink.upserts[0].Language != "en" {
+	if len(sink.upserts) != 1 || sink.upserts[0].Version != first || sink.upserts[0].Title != "Blue Ocean" || !sink.upserts[0].Equal(gallery(cid(1))) || sink.upserts[0].Language != "en" {
 		t.Fatalf("delivery: %+v", sink.upserts)
 	}
 	if n := count(t, ctx, pool, schema, "content_search_dirty", "true"); n != 0 {
@@ -337,7 +340,7 @@ func TestIntegrationDocumentSinkAtLeastOnce(t *testing.T) {
 	}
 
 	// Sink outage: the document still commits, the row stays queued.
-	docs["1"] = "Red Forest"
+	docs[cid(1)] = "Red Forest"
 	sink.failing = true
 	mark(false)
 	failed := revision()
@@ -376,12 +379,12 @@ func TestIntegrationDocumentSinkAtLeastOnce(t *testing.T) {
 	if err := SyncOnce(ctx, opts); err != nil {
 		t.Fatal(err)
 	}
-	delete(docs, "1")
+	delete(docs, cid(1))
 	mark(false)
 	if err := SyncOnce(ctx, opts); err != nil {
 		t.Fatal(err)
 	}
-	if len(sink.deletes) != 2 || !sink.deletes[0].Equal(gallery("1")) || sink.deletes[0].Language != "en" {
+	if len(sink.deletes) != 2 || !sink.deletes[0].Equal(gallery(cid(1))) || sink.deletes[0].Language != "en" {
 		t.Fatalf("deletes: %+v", sink.deletes)
 	}
 	if n := count(t, ctx, pool, schema, "content_search_documents", "true"); n != 0 {
@@ -397,7 +400,7 @@ func TestIntegrationBuilderMustStayInScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts := workerOptions(pool, schema, func(_ context.Context, _, _, lang string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
-		return []search.KeywordDocument{{DocumentKey: search.DocumentKey{ContentRef: contentref.New("hentai0", "gallery", "1"), Language: lang}, Title: "leak"}}, nil
+		return []search.KeywordDocument{{DocumentKey: search.DocumentKey{ContentRef: contentref.New("hentai0", "gallery", cid(1)), Language: lang}, Title: "leak"}}, nil
 	})
 	if err := SyncOnce(ctx, opts); err == nil {
 		t.Fatal("foreign-tenant document accepted")

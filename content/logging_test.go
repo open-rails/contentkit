@@ -37,7 +37,7 @@ func TestAccessLog(t *testing.T) {
 				writeErr(w, tc.err)
 			}))
 			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/gallery/1/comments", nil))
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/gallery/"+cid(1)+"/comments", nil))
 
 			if rec.Code != tc.wantCode {
 				t.Fatalf("status = %d, want %d", rec.Code, tc.wantCode)

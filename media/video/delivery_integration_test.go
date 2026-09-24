@@ -90,7 +90,9 @@ func newDelivery(t *testing.T, e *env, mode media.DeliveryMode) *delivery {
 	return d
 }
 
-func (d *delivery) url(path string) string { return d.api.URL + "/media/video/88@v1/" + path }
+func (d *delivery) url(path string) string {
+	return d.api.URL + "/media/video/" + cid(88) + "@v1/" + path
+}
 
 type response struct {
 	status int

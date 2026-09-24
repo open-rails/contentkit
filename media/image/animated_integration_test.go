@@ -123,7 +123,7 @@ func TestAnimatedRenditionsKeepEveryFrame(t *testing.T) {
 		return b
 	}()
 
-	ref := contentref.New(e.Tenant, "anim", "1")
+	ref := contentref.New(e.Tenant, "anim", cid(1))
 	crop := &media.Edit{Crop: &media.Crop{X: 40, Y: 0, W: 40, H: 80}, Rotate: 180}
 	gifName := e.uploadAs(t, ref, "", "image/gif", src)
 	webpName := e.uploadAs(t, ref, "", "image/webp", webpSrc)
@@ -163,7 +163,7 @@ func TestAnimatedRenditionsKeepEveryFrame(t *testing.T) {
 		t.Fatalf("cover: %+v", sm)
 	}
 	for _, w := range []string{"20", "40"} {
-		b, _ := e.object(t, e.Tenant+"/anim/1/public/cover_"+w+".webp")
+		b, _ := e.object(t, e.Tenant+"/anim/"+cid(1)+"/public/cover_"+w+".webp")
 		out := decodeAnimation(t, b)
 		if out.frames != 4 || !slices.Equal(out.delays, in.delays) || !near(out.centres[2], left[2]) {
 			t.Fatalf("cover %s: %+v", w, out)
@@ -174,7 +174,7 @@ func TestAnimatedRenditionsKeepEveryFrame(t *testing.T) {
 // AnimationReject refuses an animated upload, typed and recorded, with nothing written; a still passes.
 func TestAnimationRejectRefuses(t *testing.T) {
 	e := newEnv(t, animKind(media.AnimationReject))
-	ref := contentref.New(e.Tenant, "anim", "2")
+	ref := contentref.New(e.Tenant, "anim", cid(2))
 	e.commit(t, ref, ins("a.gif", e.uploadAs(t, ref, "", "image/gif", animatedGIF(t))), ins("b.png", e.upload(t, ref, "", pngImage(t, 64, 64, 1))))
 	e.slot(t, ref, "cover", animatedGIF(t), nil)
 	e.drain(t)
@@ -190,7 +190,7 @@ func TestAnimationRejectRefuses(t *testing.T) {
 		t.Fatalf("cover: %+v", sm)
 	}
 	for _, w := range []string{"20", "40"} {
-		if _, err := e.Env.Store.Head(context.Background(), e.Tenant+"/anim/2/public/cover_"+w+".webp"); err == nil {
+		if _, err := e.Env.Store.Head(context.Background(), e.Tenant+"/anim/"+cid(2)+"/public/cover_"+w+".webp"); err == nil {
 			t.Fatalf("cover_%s written for a refused animation", w)
 		}
 	}
@@ -221,7 +221,7 @@ func TestAnimationLimits(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ref := contentref.New(e.Tenant, "anim", "3")
+			ref := contentref.New(e.Tenant, "anim", cid(3))
 			e.commit(t, ref, ins("a.gif", e.uploadAs(t, ref, "", "image/gif", animatedGIF(t))))
 			for _, j := range e.queue.take() {
 				if err := proc.Process(context.Background(), j); err != nil {
@@ -250,7 +250,7 @@ func TestAVIF(t *testing.T) {
 	k := animKind(media.AnimationAllow)
 	k.Types = append(k.Types, "image/avif")
 	e := newEnv(t, k)
-	ref := contentref.New(e.Tenant, "anim", "4")
+	ref := contentref.New(e.Tenant, "anim", cid(4))
 	e.commit(t, ref, ins("a.avif", e.uploadAs(t, ref, "", "image/avif", avif)), ins("b.avif", e.uploadAs(t, ref, "", "image/avif", pngImage(t, 8, 8, 1))))
 	e.drain(t)
 	m, _ := e.manifest(t, ref)

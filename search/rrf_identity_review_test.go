@@ -6,8 +6,8 @@ import (
 )
 
 func TestRRFKeepsOpaqueContentKeysDistinct(t *testing.T) {
-	a := RRFKey{ContentKey: contentref.New("tenant", "gallery", "work\x1fversion").Key(), Language: "en"}
-	b := RRFKey{ContentKey: contentref.NewVersion("tenant", "gallery", "work", "version\x1f").Key(), Language: "en"}
+	a := RRFKey{ContentKey: contentref.NewVersion("tenant", "gallery", cid(1), "work\x1fversion").Key(), Language: "en"}
+	b := RRFKey{ContentKey: contentref.NewVersion("tenant", "gallery", cid(1), "work").Key(), Language: "version\x1fen"}
 	for _, key := range []RRFKey{a, b} {
 		if err := key.Ref().Validate(); err != nil {
 			t.Fatal(err)

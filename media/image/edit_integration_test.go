@@ -74,7 +74,7 @@ func TestEditCropRotate(t *testing.T) {
 	k := galleryKind()
 	k.Specs["editor"] = editor
 	e := newEnv(t, k)
-	ref := contentref.NewVersion(e.Tenant, "gallery", "e1", "en")
+	ref := contentref.NewVersion(e.Tenant, "gallery", cid(21), "en")
 	quad := quadrants(t)
 	e.commit(t, ref, ins("001.png", e.upload(t, ref, "", quad)), ins("002.png", e.upload(t, ref, "", pngImage(t, 300, 300, 1))))
 	e.drain(t)
@@ -139,7 +139,7 @@ func TestEditCropRotate(t *testing.T) {
 	if m3.Files[0].Edit != nil || m3.Files[0].Variants["high"] != m0.Files[0].Variants["high"] || m3.Files[0].Meta["w"] != float64(400) {
 		t.Fatalf("undo: %+v", m3.Files[0])
 	}
-	if orig, _ := e.object(t, e.Tenant+"/gallery/e1/originals/"+m3.Files[0].Original); !bytes.Equal(orig, quad) {
+	if orig, _ := e.object(t, e.Tenant+"/gallery/"+cid(21)+"/originals/"+m3.Files[0].Original); !bytes.Equal(orig, quad) {
 		t.Fatal("original modified")
 	}
 	e.store.reads.Store(0)
@@ -160,10 +160,12 @@ func TestSlotFromFileCrop(t *testing.T) {
 	k := galleryKind()
 	k.Slots = map[string]media.Slot{"cover": {Aspect: media.Ratio("1:2"), Widths: []int{100}}}
 	e := newEnv(t, k)
-	ref := contentref.NewVersion(e.Tenant, "gallery", "e2", "en")
+	ref := contentref.NewVersion(e.Tenant, "gallery", cid(22), "en")
 	e.commit(t, ref, ins("001.png", e.upload(t, ref, "", quadrants(t))))
 	e.drain(t)
-	cover := func() ([]byte, media.Object) { return e.object(t, e.Tenant+"/gallery/e2/public/cover_100.webp") }
+	cover := func() ([]byte, media.Object) {
+		return e.object(t, e.Tenant+"/gallery/"+cid(22)+"/public/cover_100.webp")
+	}
 	set := func(edit *media.Edit) {
 		t.Helper()
 		if err := e.uploads.SetSlotFromFile(context.Background(), access.Actor{ID: "u"}, media.SlotFromFile{Ref: ref, Slot: "cover", File: "001.png", Edit: edit}); err != nil {
@@ -220,7 +222,7 @@ func TestMixedImagesAndVideo(t *testing.T) {
 	k := media.Kind{Name: "post", Types: []string{"image/png", "video/x-matroska"}, MaxBytes: 10 << 20, Video: &media.Video{},
 		Specs: map[string]media.Spec{"thumb": thumb}, TypeLimits: map[string]media.Limit{"video": {MaxFiles: 1}}}
 	e := newEnv(t, k)
-	ref := contentref.New(e.Tenant, "post", "m1")
+	ref := contentref.New(e.Tenant, "post", cid(23))
 	clip := filepath.Join(t.TempDir(), "clip.mkv")
 	if b, err := exec.Command("ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10:duration=2",
 		"-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:v", "libx264", "-c:a", "aac", "-preset", "ultrafast", "-threads", "1", "-y", clip).CombinedOutput(); err != nil {

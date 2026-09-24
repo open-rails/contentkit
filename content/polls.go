@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contentref"
 )
 
 // polls is the standalone site-wide poll module: admin-authored questions,
@@ -144,8 +145,8 @@ func (p *polls) create(ctx context.Context, actor access.Actor, in createPollInp
 
 	var id string
 	if err := tx.QueryRow(ctx, `INSERT INTO `+p.s.t.pollQuestions+`
-		(tenant_id, kind, question, language, live_at, closes_at) VALUES ($1, $2, $3, $4, COALESCE($5, now()), $6)
-		RETURNING id::text`, p.s.tenant, in.Kind, in.Question, in.Language, in.LiveAt, in.ClosesAt).Scan(&id); err != nil {
+		(id, tenant_id, kind, question, language, live_at, closes_at) VALUES ($7, $1, $2, $3, $4, COALESCE($5, now()), $6)
+		RETURNING id::text`, p.s.tenant, in.Kind, in.Question, in.Language, in.LiveAt, in.ClosesAt, contentref.NewID()).Scan(&id); err != nil {
 		return pollView{}, err
 	}
 	for _, o := range in.Options {

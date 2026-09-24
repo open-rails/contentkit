@@ -11,10 +11,10 @@ func TestAddingEquivalentAliasKeepsCanonicalDocument(t *testing.T) {
 	pool, schema := testSchema(t, ctx)
 	s := newStore(t, pool, schema, tenant, nil)
 	mustCreate(t, ctx, s, tag("tag-a", "tag-a", name("en", "Cafe")))
-	if err := s.AddNames(ctx, "tag-a", []Name{alias("en", "CAFE")}); err != nil {
+	if err := s.AddNames(ctx, tid("tag-a"), []Name{alias("en", "CAFE")}); err != nil {
 		t.Fatal(err)
 	}
-	docs, err := s.BuildKeywordDocuments(ctx, tenant, "tag", "en", []contentref.ContentRef{contentref.New(tenant, "tag", "tag-a")})
+	docs, err := s.BuildKeywordDocuments(ctx, tenant, "tag", "en", []contentref.ContentRef{contentref.New(tenant, "tag", string(tid("tag-a")))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,13 +28,13 @@ func TestMergePreservesActiveAssignmentOverProposedDuplicate(t *testing.T) {
 	pool, schema := testSchema(t, ctx)
 	s := newStore(t, pool, schema, tenant, nil)
 	mustCreate(t, ctx, s, tag("source", "source", name("en", "Source")), tag("target", "target", name("en", "Target")))
-	ref := contentref.NewVersion(tenant, "gallery", "work", "version")
+	ref := contentref.NewVersion(tenant, "gallery", cid(31), "version")
 	source, target := assign(ref, "source", "tag"), assign(ref, "target", "tag")
 	target.State = AssignmentProposed
 	if err := s.Assign(ctx, []Assignment{source, target}, AssignOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Merge(ctx, "source", "target"); err != nil {
+	if _, err := s.Merge(ctx, tid("source"), tid("target")); err != nil {
 		t.Fatal(err)
 	}
 	effective, err := s.EffectiveTags(ctx, []contentref.ContentRef{ref})

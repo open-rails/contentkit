@@ -21,9 +21,9 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	schema := keywordSchema(t, ctx, pool)
 	upsertDocs(t, ctx, pool, schema,
-		doc("gallery", "g1", "en", "two factor authentication guide", nil, nil),
-		doc("gallery", "g2", "en", "two factor backup codes", nil, nil),
-		doc("gallery", "g3", "en", "cooking with cast iron", nil, nil),
+		doc("gallery", cid(1), "en", "two factor authentication guide", nil, nil),
+		doc("gallery", cid(2), "en", "two factor backup codes", nil, nil),
+		doc("gallery", cid(3), "en", "cooking with cast iron", nil, nil),
 	)
 	ch := chEnv.Fresh(t, hubTestCHDB)
 	if err := signal.CheckSchema(ctx, ch, hubTestCHDB); err != nil {
@@ -53,7 +53,7 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 		},
 		Catalogs: map[string]ContentCatalog{
 			"gallery": ContentCatalogFunc(func(context.Context, string, string, CatalogQuery) ([]string, error) {
-				return []string{"g3", "g2", "g1"}, nil // newest first
+				return []string{cid(3), cid(2), cid(1)}, nil // newest first
 			}),
 		},
 	})
@@ -63,7 +63,7 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 	var _ Hub = hub
 
 	user := signal.Subject{UserID: "u1"}
-	g1, g2 := hub.Content("gallery", "g1"), hub.Content("gallery", "g2")
+	g1, g2 := hub.Content("gallery", cid(1)), hub.Content("gallery", cid(2))
 	day := func(d, h int) time.Time { return time.Date(2026, 6, d, h, 0, 0, 0, time.UTC) }
 
 	// Record signals: u1 completes g1; many anons view g2 (popular); a0 views
@@ -102,7 +102,7 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unseen: %v", err)
 	}
-	if len(unseen) != 2 || unseen[0] != "g3" || unseen[1] != "g2" {
+	if len(unseen) != 2 || unseen[0] != cid(3) || unseen[1] != cid(2) {
 		t.Fatalf("unseen: %v", unseen)
 	}
 
@@ -146,7 +146,7 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 	for i, h := range pers.Hits {
 		rank[h.ContentID] = i
 	}
-	if rank["g2"] > rank["g1"] {
+	if rank[cid(2)] > rank[cid(1)] {
 		t.Fatalf("personalization must rank popular g2 above completed g1: %+v", pers)
 	}
 

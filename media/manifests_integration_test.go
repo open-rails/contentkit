@@ -72,7 +72,7 @@ func TestManifestEditCASUnderConcurrency(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := media.NewManifests(env.Store, r, media.ManifestOptions{})
-	ref := contentref.NewVersion(env.Tenant, "gallery", "1", "v1")
+	ref := contentref.NewVersion(env.Tenant, "gallery", cid(1), "v1")
 	concurrentInserts(t, []*media.Manifests{a, b}, ref, 12)
 }
 
@@ -92,7 +92,7 @@ func TestManifestEditAdvisoryLockFallback(t *testing.T) {
 		}
 		ms = append(ms, m)
 	}
-	concurrentInserts(t, ms, contentref.New(env.Tenant, "post", "7"), 12)
+	concurrentInserts(t, ms, contentref.New(env.Tenant, "post", cid(7)), 12)
 }
 
 func TestManifestCacheRevalidatesAndEditsAreValidated(t *testing.T) {
@@ -104,7 +104,7 @@ func TestManifestCacheRevalidatesAndEditsAreValidated(t *testing.T) {
 	r := registry(t)
 	reader, _ := media.NewManifests(env.Store, r, media.ManifestOptions{})
 	writer, _ := media.NewManifests(env.Store, r, media.ManifestOptions{})
-	ref := contentref.New(env.Tenant, "post", "501")
+	ref := contentref.New(env.Tenant, "post", cid(501))
 
 	if _, _, err := reader.Get(ctx, ref); !errors.Is(err, media.ErrNotFound) {
 		t.Fatalf("missing manifest: %v", err)
@@ -177,7 +177,7 @@ func TestManifestCacheRevalidatesAndEditsAreValidated(t *testing.T) {
 		t.Fatal("rejected edit was written")
 	}
 
-	if _, err := writer.Edit(ctx, contentref.New(env.Tenant, "gallery", "1"), func(*media.Manifest) error { return nil }); err == nil {
+	if _, err := writer.Edit(ctx, contentref.New(env.Tenant, "gallery", cid(1)), func(*media.Manifest) error { return nil }); err == nil {
 		t.Fatal("versioned kind edited without a version")
 	}
 }

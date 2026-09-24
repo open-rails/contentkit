@@ -96,11 +96,14 @@ func TestKeywordNativeIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Ids ascend in the fixtures' former lexical order.
+	accent, accentMany, alias, canonical, hyphen := cid(1), cid(2), cid(3), cid(4), cid(5)
+	keyword, native, negative, unvoiced, voiced := cid(6), cid(7), cid(8), cid(9), cid(10)
 	documents := map[string]map[string]KeywordDocument{
-		"en": {"canonical": doc("gallery", "canonical", "en", "Not Guilty", nil, nil), "alias": doc("gallery", "alias", "en", "Court Drama", []string{"Not Guilty"}, nil), "keyword": doc("gallery", "keyword", "en", "Trial Story", nil, []string{"Not Guilty"}), "negative": doc("gallery", "negative", "en", "Guilty", nil, nil), "accent": doc("gallery", "accent", "en", "Café Moon", nil, nil), "hyphen": doc("gallery", "hyphen", "en", "Two-Factor", nil, nil), "accent-many": doc("gallery", "accent-many", "en", "Résumé façonné", nil, nil)},
-		"ja": {"native": doc("gallery", "native", "ja", "鬼滅の刃", []string{"Demon Slayer"}, nil), "negative": doc("gallery", "negative", "ja", "魔法少女", nil, nil), "voiced": doc("gallery", "voiced", "ja", "ガンダム", nil, nil), "unvoiced": doc("gallery", "unvoiced", "ja", "カンタム", nil, nil)},
-		"zh": {"native": doc("gallery", "native", "zh", "魔法少女", nil, nil), "negative": doc("gallery", "negative", "zh", "鬼滅の刃", nil, nil)},
-		"ko": {"native": doc("gallery", "native", "ko", "마법소녀", nil, nil), "negative": doc("gallery", "negative", "ko", "바다소년", nil, nil)},
+		"en": {canonical: doc("gallery", canonical, "en", "Not Guilty", nil, nil), alias: doc("gallery", alias, "en", "Court Drama", []string{"Not Guilty"}, nil), keyword: doc("gallery", keyword, "en", "Trial Story", nil, []string{"Not Guilty"}), negative: doc("gallery", negative, "en", "Guilty", nil, nil), accent: doc("gallery", accent, "en", "Café Moon", nil, nil), hyphen: doc("gallery", hyphen, "en", "Two-Factor", nil, nil), accentMany: doc("gallery", accentMany, "en", "Résumé façonné", nil, nil)},
+		"ja": {native: doc("gallery", native, "ja", "鬼滅の刃", []string{"Demon Slayer"}, nil), negative: doc("gallery", negative, "ja", "魔法少女", nil, nil), voiced: doc("gallery", voiced, "ja", "ガンダム", nil, nil), unvoiced: doc("gallery", unvoiced, "ja", "カンタム", nil, nil)},
+		"zh": {native: doc("gallery", native, "zh", "魔法少女", nil, nil), negative: doc("gallery", negative, "zh", "鬼滅の刃", nil, nil)},
+		"ko": {native: doc("gallery", native, "ko", "마법소녀", nil, nil), negative: doc("gallery", negative, "ko", "바다소년", nil, nil)},
 	}
 	var all []KeywordDocument
 	for _, docs := range documents {
@@ -110,11 +113,11 @@ func TestKeywordNativeIntegration(t *testing.T) {
 	}
 	upsertDocs(t, ctx, pool, schema, all...)
 	for _, tc := range []struct{ lang, query, id string }{
-		{"en", "Not Guilty", "canonical"}, {"en", "not giulty", "canonical"}, {"en", "not guily", "canonical"}, {"en", "not guillty", "canonical"}, {"en", "not guxlty", "canonical"},
-		{"en", "ＮＯＴ　ＧＵＩＬＴＹ", "canonical"}, {"en", "not gui", "canonical"}, {"en", "ca", "accent"}, {"en", "Café Moon", "accent"}, {"en", "Two-Factor", "hyphen"}, {"en", "cafe moon", "accent"}, {"en", "resume faconne", "accent-many"},
-		{"ja", "鬼滅の刃", "native"}, {"ja", "鬼滅の刀", "native"}, {"ja", "鬼の刃", "native"}, {"ja", "鬼滅なの刃", "native"}, {"ja", "鬼の滅刃", "native"}, {"ja", "滅鬼の刃", "native"}, {"ja", "の刃", "native"}, {"ja", "demon slayer", "native"}, {"ja", "ｶﾞﾝﾀﾞﾑ", "voiced"}, {"ja", "ガンダム", "voiced"}, {"ja", "カンタム", "unvoiced"},
-		{"zh", "魔法少如", "native"}, {"zh", "魔少女", "native"}, {"zh", "魔法小少女", "native"}, {"zh", "魔法女少", "native"}, {"zh", "法魔少女", "native"},
-		{"ko", "마법소너", "native"}, {"ko", "마소녀", "native"}, {"ko", "마법작소녀", "native"}, {"ko", "마법녀소", "native"}, {"ko", "법마소녀", "native"}, {"ko", "마법소녀", "native"},
+		{"en", "Not Guilty", canonical}, {"en", "not giulty", canonical}, {"en", "not guily", canonical}, {"en", "not guillty", canonical}, {"en", "not guxlty", canonical},
+		{"en", "ＮＯＴ　ＧＵＩＬＴＹ", canonical}, {"en", "not gui", canonical}, {"en", "ca", accent}, {"en", "Café Moon", accent}, {"en", "Two-Factor", hyphen}, {"en", "cafe moon", accent}, {"en", "resume faconne", accentMany},
+		{"ja", "鬼滅の刃", native}, {"ja", "鬼滅の刀", native}, {"ja", "鬼の刃", native}, {"ja", "鬼滅なの刃", native}, {"ja", "鬼の滅刃", native}, {"ja", "滅鬼の刃", native}, {"ja", "の刃", native}, {"ja", "demon slayer", native}, {"ja", "ｶﾞﾝﾀﾞﾑ", voiced}, {"ja", "ガンダム", voiced}, {"ja", "カンタム", unvoiced},
+		{"zh", "魔法少如", native}, {"zh", "魔少女", native}, {"zh", "魔法小少女", native}, {"zh", "魔法女少", native}, {"zh", "法魔少女", native},
+		{"ko", "마법소너", native}, {"ko", "마소녀", native}, {"ko", "마법작소녀", native}, {"ko", "마법녀소", native}, {"ko", "법마소녀", native}, {"ko", "마법소녀", native},
 	} {
 		t.Run(tc.lang+"/"+tc.query, func(t *testing.T) {
 			page, trace, err := client.SearchWithTrace(ctx, tc.query, SearchOptions{Language: tc.lang, ContentKinds: []string{"gallery"}, Limit: 10})
@@ -170,25 +173,25 @@ func TestKeywordNativeIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	hits := page.Hits
-	if len(hits) != 3 || hits[0].ContentID != "canonical" || hits[1].ContentID != "alias" || hits[2].ContentID != "keyword" || page.HasMore {
+	if len(hits) != 3 || hits[0].ContentID != canonical || hits[1].ContentID != alias || hits[2].ContentID != keyword || page.HasMore {
 		t.Fatalf("tier order=%v", page)
 	}
 	if hits[0].Score != 1 || hits[1].Score != .9 || hits[2].Score != .75 {
 		t.Fatalf("lexical scores are match tiers: %+v", hits)
 	}
-	page, err = client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", ContentKinds: []string{"gallery"}, FilterSQL: "sd.content_id = @eligible", FilterArgs: map[string]any{"eligible": "alias"}})
-	if err != nil || len(page.Hits) != 1 || page.Hits[0].ContentID != "alias" {
+	page, err = client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", ContentKinds: []string{"gallery"}, FilterSQL: "sd.content_id = @eligible", FilterArgs: map[string]any{"eligible": alias}})
+	if err != nil || len(page.Hits) != 1 || page.Hits[0].ContentID != alias {
 		t.Fatalf("host filter page=%v err=%v", page, err)
 	}
 	// An update replaces old aliases/keywords atomically; an empty title deletes.
-	upsertDocs(t, ctx, pool, schema, doc("gallery", "alias", "en", "Court Drama", nil, nil), doc("gallery", "canonical", "en", "", nil, nil))
+	upsertDocs(t, ctx, pool, schema, doc("gallery", alias, "en", "Court Drama", nil, nil), doc("gallery", canonical, "en", "", nil, nil))
 	page, err = client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", ContentKinds: []string{"gallery"}})
-	if err != nil || len(page.Hits) != 1 || page.Hits[0].ContentID != "keyword" {
+	if err != nil || len(page.Hits) != 1 || page.Hits[0].ContentID != keyword {
 		t.Fatalf("update/delete page=%v err=%v", page, err)
 	}
 	// Real filler catalog. EXPLAIN must prove an indexed fuzzy scan without forcing
 	// enable_seqscan off; a query that only works on the tiny fixture is insufficient.
-	if _, err = pool.Exec(ctx, `INSERT INTO app.content_search_documents(tenant_id,content_kind,content_id,content_version_id,language,title,raw_document) SELECT 'doujins','gallery','filler-'||i,'','zh','占位内容'||md5(i::text),'filler' FROM generate_series(1,50000) i; ANALYZE app.content_search_documents`); err != nil {
+	if _, err = pool.Exec(ctx, `INSERT INTO app.content_search_documents(tenant_id,content_kind,content_id,content_version_id,language,title,raw_document) SELECT 'doujins','gallery','01920000-0000-7000-9000-'||lpad(i::text,12,'0'),'','zh','占位内容'||md5(i::text),'filler' FROM generate_series(1,50000) i; ANALYZE app.content_search_documents`); err != nil {
 		t.Fatal(err)
 	}
 	var trgm string
@@ -220,7 +223,7 @@ func TestKeywordNativeIntegration(t *testing.T) {
 		t.Fatalf("expected indexed bounded fuzzy path:\n%s", plan.String())
 	}
 	page, err = client.Search(ctx, "魔法女少", SearchOptions{Language: "zh", ContentKinds: []string{"gallery"}})
-	if err != nil || len(page.Hits) != 1 || page.Hits[0].ContentID != "native" || page.HasMore {
+	if err != nil || len(page.Hits) != 1 || page.Hits[0].ContentID != native || page.HasMore {
 		t.Fatalf("large catalog page=%v err=%v", page, err)
 	}
 	_ = search.MaxCandidateLimit

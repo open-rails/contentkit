@@ -16,22 +16,22 @@ import (
 func TestTenantIsolation(t *testing.T) {
 	ctx := context.Background()
 	res := &fakeResolver{}
-	res.set("gallery", "g1", true, true)
+	res.set("gallery", cid(1), true, true)
 	a, pool := newTestRuntime(t, Options{Tenant: "site_a", Resolver: res, ContentKinds: []string{"gallery"}, Perms: Perms{PollWrite: "poll", PostWrite: "post"}})
 	b, err := New(ctx, Options{Pool: pool, Schema: a.schema, Tenant: "site_b", Identity: &fakeIdentity{}, Authz: allowAll{}, Resolver: res, ContentKinds: []string{"gallery"}, Perms: Perms{PollWrite: "poll", PostWrite: "post"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	u := access.Actor{ID: "shared-account", Kind: "user"}
-	ga, gb := a.Ref("gallery", "g1"), b.Ref("gallery", "g1")
+	ga, gb := a.Ref("gallery", cid(1)), b.Ref("gallery", cid(1))
 
-	if _, err := a.reactions.react(ctx, u, "gallery", "g1", 1); err != nil {
+	if _, err := a.reactions.react(ctx, u, "gallery", cid(1), 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.favorites.add(ctx, u, "gallery", "g1"); err != nil {
+	if err := a.favorites.add(ctx, u, "gallery", cid(1)); err != nil {
 		t.Fatal(err)
 	}
-	cm := mustComment(t, a, u, "gallery", "g1", createInput{Body: "on a"})
+	cm := mustComment(t, a, u, "gallery", cid(1), createInput{Body: "on a"})
 	poll, err := a.polls.create(ctx, u, createPollInput{Question: "a?", Options: []createOptionInput{{Label: "x"}, {Label: "y"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestTenantIsolation(t *testing.T) {
 	if m, _ := b.IsFavorited(ctx, u.ID, []contentref.ContentRef{gb}); m[gb.Key()] {
 		t.Fatal("tenant b sees a's favorite")
 	}
-	if list, _ := b.comments.list(ctx, u, "gallery", "g1", "", 10, 0); len(list) != 0 {
+	if list, _ := b.comments.list(ctx, u, "gallery", cid(1), "", 10, 0); len(list) != 0 {
 		t.Fatalf("tenant b sees a's comments: %v", list)
 	}
 	if feed, _ := b.LatestComments(ctx, u, 10, 0); len(feed) != 0 {
@@ -98,7 +98,7 @@ func TestTenantIsolation(t *testing.T) {
 		}
 	}
 	// The shared account's tenant-b wishlist is its own.
-	if err := b.favorites.add(ctx, u, "gallery", "g1"); err != nil {
+	if err := b.favorites.add(ctx, u, "gallery", cid(1)); err != nil {
 		t.Fatal(err)
 	}
 	if items, _ := a.ListFavorites(ctx, u.ID, 0, 0); len(items) != 1 || items[0].TenantID != "site_a" {

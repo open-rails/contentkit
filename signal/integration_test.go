@@ -70,22 +70,23 @@ func metricsByID(t *testing.T, st *Store, tenant string, ids []string, w Window)
 }
 
 func TestIntegrationStateLifecycleAndReplay(t *testing.T) {
+	g1 := cid(1)
 	st, _ := freshStore(t)
 	ctx := context.Background()
 	tenant := "doujins"
 	user := Subject{UserID: "u1"}
-	ref := gallery(tenant, "g1")
+	ref := gallery(tenant, g1)
 
 	// First session: page 5 of 20.
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, "g1", user, 1, 10, 5, 20, 30, false)}); err != nil {
+	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, g1, user, 1, 10, 5, 20, 30, false)}); err != nil {
 		t.Fatal(err)
 	}
 	// Second session: page 19 of 20, completed.
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, "g1", user, 2, 11, 19, 20, 90, true)}); err != nil {
+	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, g1, user, 2, 11, 19, 20, 90, true)}); err != nil {
 		t.Fatal(err)
 	}
 	// REPLAY of the second session (identical content -> same event_id).
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, "g1", user, 2, 11, 19, 20, 90, true)}); err != nil {
+	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, g1, user, 2, 11, 19, 20, 90, true)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -114,7 +115,7 @@ func TestIntegrationStateLifecycleAndReplay(t *testing.T) {
 	}
 
 	// A later partial re-read must not regress completed/max_progress.
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, "g1", user, 3, 9, 3, 20, 10, false)}); err != nil {
+	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, g1, user, 3, 9, 3, 20, 10, false)}); err != nil {
 		t.Fatal(err)
 	}
 	states, err = st.States(ctx, tenant, user, []ContentRef{ref})
@@ -163,6 +164,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, testDB)
 }
 
 func TestIntegrationRepairProjectionsHealsCrashResidue(t *testing.T) {
+	g1, g2, g3 := cid(1), cid(2), cid(3)
 	st, conn := freshStore(t)
 	ctx := context.Background()
 	tenant := "doujins"
@@ -176,18 +178,18 @@ func TestIntegrationRepairProjectionsHealsCrashResidue(t *testing.T) {
 	}
 
 	// g1: projected at one event, then a second event lands without projection.
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, "g1", user, 1, 10, 5, 20, 30, false)}); err != nil {
+	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, g1, user, 1, 10, 5, 20, 30, false)}); err != nil {
 		t.Fatal(err)
 	}
-	insertRawSignal(t, conn, tenant, "g1", user, "g1-evt-2", at(2, 11), 19, 20, 90, true, "p:19")
+	insertRawSignal(t, conn, tenant, g1, user, "g1-evt-2", at(2, 11), 19, 20, 90, true, "p:19")
 	// g2: never projected at all.
-	insertRawSignal(t, conn, tenant, "g2", user, "g2-evt-1", at(3, 9), 7, 20, 40, false, "p:7")
+	insertRawSignal(t, conn, tenant, g2, user, "g2-evt-1", at(3, 9), 7, 20, 40, false, "p:7")
 	// g3: healthy, must not be rewritten.
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, "g3", user, 3, 10, 2, 20, 10, false)}); err != nil {
+	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, g3, user, 3, 10, 2, 20, 10, false)}); err != nil {
 		t.Fatal(err)
 	}
 
-	ref1, ref2 := gallery(tenant, "g1"), gallery(tenant, "g2")
+	ref1, ref2 := gallery(tenant, g1), gallery(tenant, g2)
 	pre, err := st.States(ctx, tenant, user, []ContentRef{ref1, ref2})
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +206,7 @@ func TestIntegrationRepairProjectionsHealsCrashResidue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page1.Examined != 2 || page1.Repaired != 2 || page1.Next == nil || page1.Next.ContentID != "g2" || page1.Next.TenantID != tenant {
+	if page1.Examined != 2 || page1.Repaired != 2 || page1.Next == nil || page1.Next.ContentID != g2 || page1.Next.TenantID != tenant {
 		t.Fatalf("page 1: %+v", page1)
 	}
 	page2, err := st.RepairProjections(ctx, tenant, RepairOptions{Limit: 2, After: page1.Next})
@@ -225,8 +227,8 @@ func TestIntegrationRepairProjectionsHealsCrashResidue(t *testing.T) {
 	if s, ok := post[ref2.Key()]; !ok || s.TotalEvents != 1 || s.Resume != "p:7" {
 		t.Fatalf("g2 not healed: %+v (ok=%v)", s, ok)
 	}
-	m := metricsByID(t, st, tenant, []string{"g1", "g2"}, AllTime())
-	if m["g1"].Views != 2 || m["g2"].Views != 1 || m["g1"].Completions != 1 {
+	m := metricsByID(t, st, tenant, []string{g1, g2}, AllTime())
+	if m[g1].Views != 2 || m[g2].Views != 1 || m[g1].Completions != 1 {
 		t.Fatalf("daily projection not healed: %+v", m)
 	}
 
@@ -247,20 +249,21 @@ func TestIntegrationRepairProjectionsHealsCrashResidue(t *testing.T) {
 }
 
 func TestIntegrationAnonVsUserSubjects(t *testing.T) {
+	g1 := cid(1)
 	st, _ := freshStore(t)
 	ctx := context.Background()
 	tenant := "t"
 	user := Subject{UserID: "u1"}
 	anon := Subject{AnonKey: "abc123"}
 
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, "g1", user, 1, 10, 5, 10, 50, false)}); err != nil {
+	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, g1, user, 1, 10, 5, 10, 50, false)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, "g1", anon, 1, 11, 10, 10, 80, true)}); err != nil {
+	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, g1, anon, 1, 11, 10, 10, 80, true)}); err != nil {
 		t.Fatal(err)
 	}
 
-	ref := gallery(tenant, "g1")
+	ref := gallery(tenant, g1)
 	us, err := st.States(ctx, tenant, user, []ContentRef{ref})
 	if err != nil {
 		t.Fatal(err)
@@ -273,16 +276,17 @@ func TestIntegrationAnonVsUserSubjects(t *testing.T) {
 		t.Fatalf("subject isolation broken: user=%+v anon=%+v", us[ref.Key()], as[ref.Key()])
 	}
 
-	g1 := metricsByID(t, st, tenant, []string{"g1"}, AllTime())["g1"]
-	if g1.UserViewers != 1 || g1.AnonViewers != 1 || g1.Viewers != 2 || g1.Views != 2 {
-		t.Fatalf("metrics: %+v", g1)
+	m1 := metricsByID(t, st, tenant, []string{g1}, AllTime())[g1]
+	if m1.UserViewers != 1 || m1.AnonViewers != 1 || m1.Viewers != 2 || m1.Views != 2 {
+		t.Fatalf("metrics: %+v", m1)
 	}
-	if g1.Completers != 1 || g1.Completions != 1 || g1.SignalCounts[TypeView] != 2 || g1.ScoreSum != 130 {
-		t.Fatalf("metrics: %+v", g1)
+	if m1.Completers != 1 || m1.Completions != 1 || m1.SignalCounts[TypeView] != 2 || m1.ScoreSum != 130 {
+		t.Fatalf("metrics: %+v", m1)
 	}
 }
 
 func TestIntegrationHistoryAndSeen(t *testing.T) {
+	g1, g2, g3, b1 := cid(1), cid(2), cid(3), cid(4)
 	st, _ := freshStore(t)
 	ctx := context.Background()
 	tenant := "t"
@@ -291,11 +295,11 @@ func TestIntegrationHistoryAndSeen(t *testing.T) {
 	// g1 completed, g2 in progress, g3 zero progress (event but unseen),
 	// blog b1 in progress.
 	signals := []Signal{
-		view(tenant, "g1", user, 1, 10, 20, 20, 90, true),
-		view(tenant, "g2", user, 2, 10, 5, 20, 40, false),
-		view(tenant, "g3", user, 3, 10, 0, 20, 0, false),
+		view(tenant, g1, user, 1, 10, 20, 20, 90, true),
+		view(tenant, g2, user, 2, 10, 5, 20, 40, false),
+		view(tenant, g3, user, 3, 10, 0, 20, 0, false),
 		{
-			ContentRef:  contentref.New(tenant, "blog_post", "b1"),
+			ContentRef:  contentref.New(tenant, "blog_post", b1),
 			Subject:     user,
 			Type:        "view",
 			OccurredAt:  at(4, 10),
@@ -317,7 +321,7 @@ func TestIntegrationHistoryAndSeen(t *testing.T) {
 	if len(all) != 4 {
 		t.Fatalf("history len=%d want 4: %+v", len(all), all)
 	}
-	if all[0].ContentID != "b1" || all[3].ContentID != "g1" || all[0].TenantID != tenant {
+	if all[0].ContentID != b1 || all[3].ContentID != g1 || all[0].TenantID != tenant {
 		t.Fatalf("history order wrong: %+v", all)
 	}
 	if !all[0].LastViewAt.Equal(at(4, 10)) || !all[3].LastViewAt.Equal(at(1, 10)) {
@@ -329,7 +333,7 @@ func TestIntegrationHistoryAndSeen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(inProg) != 1 || inProg[0].ContentID != "g2" {
+	if len(inProg) != 1 || inProg[0].ContentID != g2 {
 		t.Fatalf("in-progress: %+v", inProg)
 	}
 
@@ -337,7 +341,7 @@ func TestIntegrationHistoryAndSeen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(completed) != 1 || completed[0].ContentID != "g1" {
+	if len(completed) != 1 || completed[0].ContentID != g1 {
 		t.Fatalf("completed: %+v", completed)
 	}
 
@@ -346,20 +350,20 @@ func TestIntegrationHistoryAndSeen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := seen["g1"]; !ok {
+	if _, ok := seen[g1]; !ok {
 		t.Fatalf("g1 must be seen: %v", seen)
 	}
-	if _, ok := seen["g2"]; !ok {
+	if _, ok := seen[g2]; !ok {
 		t.Fatalf("g2 must be seen: %v", seen)
 	}
-	if _, ok := seen["g3"]; ok {
+	if _, ok := seen[g3]; ok {
 		t.Fatalf("g3 (zero progress) must not be seen: %v", seen)
 	}
 
 	// Later non-view activity affects the all-signals feed, but it must not
 	// resurrect an item cleared from watch history or change watch ordering.
 	click := Signal{
-		ContentRef: gallery(tenant, "g1"),
+		ContentRef: gallery(tenant, g1),
 		Subject:    user,
 		Type:       TypeClick,
 		EventID:    "g1-click",
@@ -372,14 +376,14 @@ func TestIntegrationHistoryAndSeen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if all[0].ContentID != "g1" {
+	if all[0].ContentID != g1 {
 		t.Fatalf("all-signals history did not use signal recency: %+v", all)
 	}
 	seenAfterClear, err := st.History(ctx, tenant, user, HistoryOptions{Status: HistorySeen, Since: at(2, 0)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(seenAfterClear) != 2 || seenAfterClear[0].ContentID != "b1" || seenAfterClear[1].ContentID != "g2" {
+	if len(seenAfterClear) != 2 || seenAfterClear[0].ContentID != b1 || seenAfterClear[1].ContentID != g2 {
 		t.Fatalf("watch history used non-view activity: %+v", seenAfterClear)
 	}
 
@@ -388,12 +392,13 @@ func TestIntegrationHistoryAndSeen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(top) != 2 || top[0].ContentID != "g1" || top[1].ContentID != "g2" {
+	if len(top) != 2 || top[0].ContentID != g1 || top[1].ContentID != g2 {
 		t.Fatalf("top states: %+v", top)
 	}
 }
 
 func TestIntegrationPopular(t *testing.T) {
+	gHot, gNiche, gMeh, gOld, missing := cid(11), cid(12), cid(13), cid(14), cid(99)
 	st, _ := freshStore(t)
 	ctx := context.Background()
 	tenant := "t"
@@ -402,22 +407,22 @@ func TestIntegrationPopular(t *testing.T) {
 	// gMeh: 5 subjects, low scores. gOld: 8 subjects but outside the window.
 	for i := 0; i < 10; i++ {
 		sub := Subject{AnonKey: fmt.Sprintf("hot%d", i)}
-		if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, "gHot", sub, 10, 8+i%4, 18, 20, 80, true)}); err != nil {
+		if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, gHot, sub, 10, 8+i%4, 18, 20, 80, true)}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, "gNiche", Subject{AnonKey: "n1"}, 10, 9, 20, 20, 100, true)}); err != nil {
+	if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, gNiche, Subject{AnonKey: "n1"}, 10, 9, 20, 20, 100, true)}); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 5; i++ {
 		sub := Subject{AnonKey: fmt.Sprintf("meh%d", i)}
-		if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, "gMeh", sub, 11, 8+i%4, 2, 20, 10, false)}); err != nil {
+		if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, gMeh, sub, 11, 8+i%4, 2, 20, 10, false)}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for i := 0; i < 8; i++ {
 		sub := Subject{AnonKey: fmt.Sprintf("old%d", i)}
-		if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, "gOld", sub, 1, 8+i%4, 18, 20, 90, true)}); err != nil {
+		if err := st.RecordSignals(ctx, tenant, []Signal{view(tenant, gOld, sub, 1, 8+i%4, 18, 20, 90, true)}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -431,7 +436,7 @@ func TestIntegrationPopular(t *testing.T) {
 	if len(hits) != 3 {
 		t.Fatalf("expected 3 in-window works, got %+v", hits)
 	}
-	if hits[0].ContentID != "gHot" || hits[0].TenantID != tenant || hits[0].ContentKind != "gallery" {
+	if hits[0].ContentID != gHot || hits[0].TenantID != tenant || hits[0].ContentKind != "gallery" {
 		t.Fatalf("gHot must rank first: %+v", hits)
 	}
 	// Bayesian prior: 1 perfect-score subject must not outrank 10 good ones.
@@ -439,10 +444,10 @@ func TestIntegrationPopular(t *testing.T) {
 	for i, h := range hits {
 		rank[h.ContentID] = i
 	}
-	if rank["gNiche"] < rank["gMeh"] {
+	if rank[gNiche] < rank[gMeh] {
 		// gNiche (1 subject) ranking above gMeh (5 subjects) is acceptable
 		// only because gMeh's scores are terrible; but it must never beat gHot.
-		if rank["gNiche"] == 0 {
+		if rank[gNiche] == 0 {
 			t.Fatalf("tiny-sample work outranked high-volume: %+v", hits)
 		}
 	}
@@ -467,21 +472,22 @@ func TestIntegrationPopular(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if byVolume[0].ContentID != "gHot" || byVolume[1].ContentID != "gOld" {
+	if byVolume[0].ContentID != gHot || byVolume[1].ContentID != gOld {
 		t.Fatalf("volume ranking: %+v", byVolume)
 	}
 
 	// PopularityFor scores only the requested candidates.
-	scores, err := st.PopularityFor(ctx, tenant, "gallery", []string{"gHot", "gNiche", "missing"}, AllTime())
+	scores, err := st.PopularityFor(ctx, tenant, "gallery", []string{gHot, gNiche, missing}, AllTime())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(scores) != 2 || scores["gHot"] <= 0 {
+	if len(scores) != 2 || scores[gHot] <= 0 {
 		t.Fatalf("popularity-for: %v", scores)
 	}
 }
 
 func TestIntegrationCoEngaged(t *testing.T) {
+	X, Y, Z := cid(21), cid(22), cid(23)
 	st, _ := freshStore(t)
 	ctx := context.Background()
 	tenant := "t"
@@ -491,10 +497,10 @@ func TestIntegrationCoEngaged(t *testing.T) {
 		sub string
 		ids []string
 	}{
-		{"s1", []string{"X", "Y"}},
-		{"s2", []string{"X", "Y"}},
-		{"s3", []string{"X", "Z"}},
-		{"s4", []string{"Y"}},
+		{"s1", []string{X, Y}},
+		{"s2", []string{X, Y}},
+		{"s3", []string{X, Z}},
+		{"s4", []string{Y}},
 	}
 	hour := 0
 	for _, p := range pairs {
@@ -506,22 +512,23 @@ func TestIntegrationCoEngaged(t *testing.T) {
 		}
 	}
 
-	co, err := st.CoEngaged(ctx, tenant, gallery(tenant, "X"), CoEngagedOptions{Limit: 10})
+	co, err := st.CoEngaged(ctx, tenant, gallery(tenant, X), CoEngagedOptions{Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(co) != 2 {
 		t.Fatalf("co-engaged: %+v", co)
 	}
-	if co[0].ContentID != "Y" || co[0].Strength != 2 || co[0].TenantID != tenant {
+	if co[0].ContentID != Y || co[0].Strength != 2 || co[0].TenantID != tenant {
 		t.Fatalf("Y should lead with strength 2: %+v", co)
 	}
-	if co[1].ContentID != "Z" || co[1].Strength != 1 {
+	if co[1].ContentID != Z || co[1].Strength != 1 {
 		t.Fatalf("Z should follow with strength 1: %+v", co)
 	}
 }
 
 func TestIntegrationNegativeSignalsAndContentPairs(t *testing.T) {
+	A, B, C := cid(31), cid(32), cid(33)
 	st, _ := freshStore(t)
 	ctx := context.Background()
 	tenant := "t"
@@ -540,16 +547,16 @@ func TestIntegrationNegativeSignalsAndContentPairs(t *testing.T) {
 	u1, u2, u3 := Subject{UserID: "u1"}, Subject{UserID: "u2"}, Subject{UserID: "u3"}
 	signals := []Signal{
 		// u1 likes A and B; u2 likes A and C; u3 likes A but DISLIKES B.
-		react(u1, "A", "like", 1, 1), react(u1, "B", "like", 1, 1),
-		react(u2, "A", "like", 1, 2), react(u2, "C", "like", 1, 2),
-		react(u3, "A", "like", 1, 3), react(u3, "B", "dislike", -1, 3),
+		react(u1, A, "like", 1, 1), react(u1, B, "like", 1, 1),
+		react(u2, A, "like", 1, 2), react(u2, C, "like", 1, 2),
+		react(u3, A, "like", 1, 3), react(u3, B, "dislike", -1, 3),
 	}
 	if err := st.RecordSignals(ctx, tenant, signals); err != nil {
 		t.Fatal(err)
 	}
 
 	// State carries net sentiment.
-	b := gallery(tenant, "B")
+	b := gallery(tenant, B)
 	states, err := st.States(ctx, tenant, u3, []ContentRef{b})
 	if err != nil {
 		t.Fatal(err)
@@ -573,14 +580,14 @@ func TestIntegrationNegativeSignalsAndContentPairs(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, r := range top {
-		if r.ContentID == "B" {
+		if r.ContentID == B {
 			t.Fatalf("disliked work must not seed: %+v", top)
 		}
 	}
 
 	// Query-time co-engagement from anchor A: B has 1 positive co-subject
 	// (u1) and 1 negative (u3) -> net 0 -> excluded; C has 1.
-	co, err := st.CoEngaged(ctx, tenant, gallery(tenant, "A"), CoEngagedOptions{Limit: 10, SkipRollup: true})
+	co, err := st.CoEngaged(ctx, tenant, gallery(tenant, A), CoEngagedOptions{Limit: 10, SkipRollup: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -592,10 +599,10 @@ func TestIntegrationNegativeSignalsAndContentPairs(t *testing.T) {
 		}
 		return 0
 	}
-	if strengthOf(co, "B") != 0 {
+	if strengthOf(co, B) != 0 {
 		t.Fatalf("B net strength should be 0 (excluded): %+v", co)
 	}
-	if strengthOf(co, "C") != 1 {
+	if strengthOf(co, C) != 1 {
 		t.Fatalf("C net strength should be 1: %+v", co)
 	}
 
@@ -603,15 +610,15 @@ func TestIntegrationNegativeSignalsAndContentPairs(t *testing.T) {
 	if err := st.RefreshCoEngagement(ctx, tenant, RefreshCoEngagementOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	coR, err := st.CoEngaged(ctx, tenant, gallery(tenant, "A"), CoEngagedOptions{Limit: 10})
+	coR, err := st.CoEngaged(ctx, tenant, gallery(tenant, A), CoEngagedOptions{Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strengthOf(coR, "C") != 1 {
+	if strengthOf(coR, C) != 1 {
 		t.Fatalf("rollup co-engagement for C should be 1: %+v", coR)
 	}
 	for _, h := range coR {
-		if h.ContentID == "B" && h.Strength > 0 {
+		if h.ContentID == B && h.Strength > 0 {
 			t.Fatalf("rollup must net out the dislike on B: %+v", coR)
 		}
 	}
@@ -620,7 +627,7 @@ func TestIntegrationNegativeSignalsAndContentPairs(t *testing.T) {
 	if err := st.RefreshCoEngagement(ctx, tenant, RefreshCoEngagementOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	coR2, err := st.CoEngaged(ctx, tenant, gallery(tenant, "A"), CoEngagedOptions{Limit: 10})
+	coR2, err := st.CoEngaged(ctx, tenant, gallery(tenant, A), CoEngagedOptions{Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}

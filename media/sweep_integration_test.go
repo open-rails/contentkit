@@ -64,8 +64,12 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	ms := s3test.Manifests(t, env.Store, r, media.ManifestOptions{})
 	s := env.Store
 
-	work := contentref.New(env.Tenant, "gallery", "1")
+	work := contentref.New(env.Tenant, "gallery", cid(1))
 	g, _ := r.Item(work)
+	// The host creates the item before any of its files land.
+	if _, err := ms.Create(ctx, work.WithVersion("v1")); err != nil {
+		t.Fatal(err)
+	}
 	key := func(area, name string) string { return g.Prefix() + area + "/" + name }
 	upOrphan, upRef := media.NewUploadName(), media.NewUploadName()
 	names := map[string]string{}
@@ -84,12 +88,12 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	putObject(t, s, g.PublicPrefix()+"cover.webp", "public slot")
 	putObject(t, s, g.Prefix()+"notes.txt", "not ours")
 	// Other folders: a registered kind is swept by SweepAll, an unknown kind is not.
-	post := contentref.New(env.Tenant, "post", "7")
+	post := contentref.New(env.Tenant, "post", cid(7))
 	p, _ := r.Item(post)
 	putObject(t, s, p.BlobsPrefix()+names["blobOrphan"], "post orphan")
-	foreign := env.Tenant + "/zzz/1/blobs/" + names["blobOrphan"]
+	foreign := env.Tenant + "/zzz/" + cid(1) + "/blobs/" + names["blobOrphan"]
 	putObject(t, s, foreign, "foreign orphan")
-	user, _ := r.Item(contentref.New(env.Tenant, "user", "u1"))
+	user, _ := r.Item(contentref.New(env.Tenant, "user", cid(11)))
 	putObject(t, s, user.OriginalsPrefix()+"avatar", "avatar original")
 	putObject(t, s, user.PublicPrefix()+"avatar_80.webp", "avatar")
 

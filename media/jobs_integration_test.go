@@ -134,8 +134,12 @@ func TestJobsComposeWithHostRiverAndSweepAfterEdit(t *testing.T) {
 	}
 
 	ms := s3test.Manifests(t, env.Store, r, media.ManifestOptions{Sweeps: jobs})
-	ref := contentref.New(env.Tenant, "post", "501")
+	ref := contentref.New(env.Tenant, "post", cid(501))
 	item, _ := r.Item(ref)
+	// The host creates the item before its first upload lands.
+	if _, err := ms.Create(ctx, ref); err != nil {
+		t.Fatal(err)
+	}
 	orphan, kept := item.BlobsPrefix()+blobName("orphan"), item.BlobsPrefix()+blobName("kept")
 	putObject(t, env.Store, orphan, "orphan")
 	putObject(t, env.Store, item.OriginalsPrefix()+blobName("orig"), "orig")
@@ -194,8 +198,8 @@ func TestDeleteAndEraseRemoveFoldersIncludingLateUploads(t *testing.T) {
 	_, pool, schema := riverHost(t, jobs, make(chan string, 4))
 	s := env.Store
 
-	post, other := contentref.New(env.Tenant, "post", "9"), contentref.New(env.Tenant, "post", "10")
-	g := contentref.New(env.Tenant, "gallery", "3")
+	post, other := contentref.New(env.Tenant, "post", cid(9)), contentref.New(env.Tenant, "post", cid(10))
+	g := contentref.New(env.Tenant, "gallery", cid(3))
 	for _, ref := range []contentref.ContentRef{post, other, g} {
 		item, _ := r.Item(ref)
 		putObject(t, s, item.BlobsPrefix()+blobName("b"), "b")
@@ -212,7 +216,7 @@ func TestDeleteAndEraseRemoveFoldersIncludingLateUploads(t *testing.T) {
 	if err := limiter.Settle(ctx, media.Settlement{Tenant: env.Tenant, Owner: "chan-a", Delta: 1000}); err != nil {
 		t.Fatal(err)
 	}
-	user, _ := r.Item(contentref.New(env.Tenant, "user", "u1"))
+	user, _ := r.Item(contentref.New(env.Tenant, "user", cid(11)))
 	putObject(t, s, user.OriginalsPrefix()+"avatar", "avatar original")
 	putObject(t, s, user.PublicPrefix()+"avatar_80.webp", "avatar")
 
@@ -244,7 +248,7 @@ func TestDeleteAndEraseRemoveFoldersIncludingLateUploads(t *testing.T) {
 
 	// User erasure: the host's items for the user plus user/{id}/.
 	inTx(func(tx pgx.Tx) error {
-		return jobs.EraseUserTx(ctx, tx, env.Tenant, "u1", media.Deletion{Ref: post, Owner: "chan-a"}, media.Deletion{Ref: g, Owner: "chan-a"})
+		return jobs.EraseUserTx(ctx, tx, env.Tenant, cid(11), media.Deletion{Ref: post, Owner: "chan-a"}, media.Deletion{Ref: g, Owner: "chan-a"})
 	}, true)
 	p, _ := r.Item(post)
 	gi, _ := r.Item(g)
@@ -300,7 +304,7 @@ func TestPublishTxThroughRiver(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, pool, _ := riverHost(t, jobs, make(chan string, 4))
-	ref := contentref.New(env.Tenant, "clip", "1")
+	ref := contentref.New(env.Tenant, "clip", cid(1))
 	item, _ := r.Item(ref)
 	staged, _ := item.SlotOutput(media.PosterSlot, 480)
 	public, _ := item.SlotPublic(media.PosterSlot, 480)

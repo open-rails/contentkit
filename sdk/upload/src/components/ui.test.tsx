@@ -11,7 +11,7 @@ import type { Edit, SlotManifest } from "../wire.gen.js";
 import { ja } from "../locales/ja.js";
 import { AvatarUpload, CoverUpload, ImageCropDialog, SlotEditError, SlotEditMenu, SlotEditor, SlotImage, UploadUiProvider, useSlotEditor } from "../ui.js";
 
-const item = { kind: "channel", id: "7" };
+const item = { kind: "channel", id: "0192f000-0000-7000-8000-000000000007" };
 
 function setup() {
   const s = new FakeServer();

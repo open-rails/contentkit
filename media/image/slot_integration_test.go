@@ -193,7 +193,7 @@ func (e *env) checkListed(t *testing.T, ref contentref.ContentRef, slot string, 
 func TestSlotEditWidthsAndSpecChange(t *testing.T) {
 	e := newEnv(t, galleryKind())
 	ctx := context.Background()
-	ref := contentref.New(e.Tenant, "gallery", "5")
+	ref := contentref.New(e.Tenant, "gallery", cid(5))
 	quads := paint(1800, 1200, func(x, y int) color.RGBA {
 		return [2][2]color.RGBA{{red, blue}, {green, white}}[y/600][x/900]
 	})
@@ -209,7 +209,7 @@ func TestSlotEditWidthsAndSpecChange(t *testing.T) {
 	if m.Dims == nil || *m.Dims != (media.Dims{W: 1800, H: 1200}) || m.Aspect != media.Aspect3x1 || *m.Edit.Crop != (media.Crop{X: 900, Y: 0, W: 900, H: 300}) {
 		t.Fatalf("manifest %+v", m)
 	}
-	firstTag, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/5/public/cover_150.webp")
+	firstTag, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/"+cid(5)+"/public/cover_150.webp")
 
 	// Unchanged: no read, no rewrite (a whole-item job also covers slots).
 	e.store.reads.Store(0)
@@ -224,7 +224,7 @@ func TestSlotEditWidthsAndSpecChange(t *testing.T) {
 
 	// Re-edit the kept original to the bottom-left, 450 wide: the 600 rung is
 	// never upscaled, so it holds the 450 px image. Two jobs race. The outputs are rewritten in place.
-	orig, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/5/originals/cover")
+	orig, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/"+cid(5)+"/originals/cover")
 	if err := e.editSlot(t, ref, "cover", crop(0, 600, 450, 0)); err != nil {
 		t.Fatal(err)
 	}
@@ -242,8 +242,8 @@ func TestSlotEditWidthsAndSpecChange(t *testing.T) {
 	if m.Outputs[2].Name != "cover_600" {
 		t.Fatalf("capped output %+v", m.Outputs[2])
 	}
-	nowTag, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/5/public/cover_150.webp")
-	if again, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/5/originals/cover"); again.ETag != orig.ETag || nowTag.ETag == firstTag.ETag {
+	nowTag, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/"+cid(5)+"/public/cover_150.webp")
+	if again, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/"+cid(5)+"/originals/cover"); again.ETag != orig.ETag || nowTag.ETag == firstTag.ETag {
 		t.Fatalf("edit replaced the original or kept the old cover_150 (%s)", nowTag.ETag)
 	}
 
@@ -280,7 +280,7 @@ func TestSlotOrientationCentreAndFailure(t *testing.T) {
 
 	// Portrait 400×1200, no edit: the centred 3:1 band (y 533..666) is
 	// green; 400px wide, so the 600 rung is rendered 400 wide.
-	portrait := contentref.New(e.Tenant, "gallery", "7")
+	portrait := contentref.New(e.Tenant, "gallery", cid(7))
 	e.slot(t, portrait, "cover", encodePNG(t, paint(400, 1200, func(_, y int) color.RGBA { return bands(y) })), nil)
 	e.drain(t)
 	m := e.slotManifest(t, portrait, "cover")
@@ -291,7 +291,7 @@ func TestSlotOrientationCentreAndFailure(t *testing.T) {
 
 	// Stored 1200×400 with EXIF orientation 6 displays as the same 400×1200
 	// portrait; the crop addresses the displayed image (its blue bottom band).
-	rotated := contentref.New(e.Tenant, "gallery", "8")
+	rotated := contentref.New(e.Tenant, "gallery", cid(8))
 	e.slot(t, rotated, "cover", orientedJPEG(t, paint(1200, 400, func(x, _ int) color.RGBA { return bands(x) }), 6), crop(0, 850, 300, 0))
 	e.drain(t)
 	m = e.slotManifest(t, rotated, "cover")

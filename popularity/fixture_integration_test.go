@@ -26,32 +26,33 @@ const (
 	typeReact  = "reaction"
 )
 
-// Fixture galleries (docs/popularity-policy.md lists them with the judgments).
+// Fixture galleries (docs/popularity-policy.md lists them with the judgments);
+// each id is a canonical UUIDv7 ending in the gallery's fixture number.
 const (
-	fxNoVotes      = "101"
-	fxOneLike      = "102"
-	fxOneDislike   = "103"
-	fxMixed        = "104"
-	fxLiked        = "105"
-	fxDisliked     = "106"
-	fxMoreViewers  = "107"
-	fxBigDisliked  = "108"
-	fxCrowdDislike = "109"
-	fxTenLikes     = "110"
-	fxRepeat       = "111"
-	fxFive         = "112"
-	fxReturn       = "113"
-	fxOnce         = "114"
-	fxShort        = "121"
-	fxLongSkim     = "122"
-	fxLongFull     = "123"
-	fxMulti        = "131"
-	fxDup          = "141"
-	fxSingle       = "142"
-	fxEarly        = "151"
-	fxLate         = "152"
-	fxOutside      = "153"
-	fxVoteChanges  = "161"
+	fxNoVotes      = "01920000-0000-7000-8000-000000000101"
+	fxOneLike      = "01920000-0000-7000-8000-000000000102"
+	fxOneDislike   = "01920000-0000-7000-8000-000000000103"
+	fxMixed        = "01920000-0000-7000-8000-000000000104"
+	fxLiked        = "01920000-0000-7000-8000-000000000105"
+	fxDisliked     = "01920000-0000-7000-8000-000000000106"
+	fxMoreViewers  = "01920000-0000-7000-8000-000000000107"
+	fxBigDisliked  = "01920000-0000-7000-8000-000000000108"
+	fxCrowdDislike = "01920000-0000-7000-8000-000000000109"
+	fxTenLikes     = "01920000-0000-7000-8000-000000000110"
+	fxRepeat       = "01920000-0000-7000-8000-000000000111"
+	fxFive         = "01920000-0000-7000-8000-000000000112"
+	fxReturn       = "01920000-0000-7000-8000-000000000113"
+	fxOnce         = "01920000-0000-7000-8000-000000000114"
+	fxShort        = "01920000-0000-7000-8000-000000000121"
+	fxLongSkim     = "01920000-0000-7000-8000-000000000122"
+	fxLongFull     = "01920000-0000-7000-8000-000000000123"
+	fxMulti        = "01920000-0000-7000-8000-000000000131"
+	fxDup          = "01920000-0000-7000-8000-000000000141"
+	fxSingle       = "01920000-0000-7000-8000-000000000142"
+	fxEarly        = "01920000-0000-7000-8000-000000000151"
+	fxLate         = "01920000-0000-7000-8000-000000000152"
+	fxOutside      = "01920000-0000-7000-8000-000000000153"
+	fxVoteChanges  = "01920000-0000-7000-8000-000000000161"
 )
 
 var fxNames = map[string]string{
@@ -238,6 +239,17 @@ func (fx popularityFixture) workIDs() []string {
 }
 
 func ref(id string) signal.ContentRef { return contentref.New(fxTenant, fxKind, id) }
+
+// cid is the nth deterministic content id: a canonical UUIDv7, ordered by n.
+func cid(n int) string { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) }
+
+// Fixture artists: taxonomy ids are canonical UUIDv7s too.
+const (
+	fxArtist1 = contentref.TaxonomyID("01930000-0000-7000-8000-000000000001")
+	fxArtist2 = contentref.TaxonomyID("01930000-0000-7000-8000-000000000002")
+	fxArtist3 = contentref.TaxonomyID("01930000-0000-7000-8000-000000000003")
+	fxArtist4 = contentref.TaxonomyID("01930000-0000-7000-8000-000000000004")
+)
 
 // record drives every delivery through the hub the way a host recorder does:
 // the work view and the selected version's view with one event id. Delivery
@@ -684,7 +696,7 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 	catalog := popularity.CatalogFunc(func(_ context.Context, tenant, contentKind, taxonomyKind string, contentIDs []string) (map[string][]contentref.TaxonomyID, error) {
 		catalogCalls = append(catalogCalls, fmt.Sprintf("%s/%s/%s/%d", tenant, contentKind, taxonomyKind, len(contentIDs)))
 		return map[string][]contentref.TaxonomyID{
-			fxCrowdDislike: {"a1"}, fxFive: {"a1"}, fxShort: {"a2", "a4", "a4"}, fxLongFull: {"a2"}, fxOutside: {"a3"},
+			fxCrowdDislike: {fxArtist1}, fxFive: {fxArtist1}, fxShort: {fxArtist2, fxArtist4, fxArtist4}, fxLongFull: {fxArtist2}, fxOutside: {fxArtist3},
 		}, nil
 	})
 	taxRanker, err := popularity.New(popularity.Config{Source: v1Hub, Policy: popularity.PolicyV1, Catalog: catalog})
@@ -696,9 +708,9 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantArtists := []popularity.TaxonomyHit{
-		{TaxonomyID: "a2", TaxonomyKind: "artist", Score: byID[fxShort] + byID[fxLongFull], ContentCount: 2, Viewers: 40, MeanScore: (byID[fxShort] + byID[fxLongFull]) / 2},
-		{TaxonomyID: "a1", TaxonomyKind: "artist", Score: byID[fxCrowdDislike] + byID[fxFive], ContentCount: 2, Viewers: 125, MeanScore: (byID[fxCrowdDislike] + byID[fxFive]) / 2},
-		{TaxonomyID: "a4", TaxonomyKind: "artist", Score: byID[fxShort], ContentCount: 1, Viewers: 20, MeanScore: byID[fxShort]},
+		{TaxonomyID: fxArtist2, TaxonomyKind: "artist", Score: byID[fxShort] + byID[fxLongFull], ContentCount: 2, Viewers: 40, MeanScore: (byID[fxShort] + byID[fxLongFull]) / 2},
+		{TaxonomyID: fxArtist1, TaxonomyKind: "artist", Score: byID[fxCrowdDislike] + byID[fxFive], ContentCount: 2, Viewers: 125, MeanScore: (byID[fxCrowdDislike] + byID[fxFive]) / 2},
+		{TaxonomyID: fxArtist4, TaxonomyKind: "artist", Score: byID[fxShort], ContentCount: 1, Viewers: 20, MeanScore: byID[fxShort]},
 	}
 	if fmt.Sprint(artists) != fmt.Sprint(wantArtists) {
 		t.Errorf("artist ranking:\n got %+v\nwant %+v", artists, wantArtists)
@@ -712,7 +724,7 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 	}
 	found := false
 	for _, a := range allTimeArtists {
-		if a.TaxonomyID == "a3" && a.ContentCount == 1 && a.Score > 0 {
+		if a.TaxonomyID == fxArtist3 && a.ContentCount == 1 && a.Score > 0 {
 			found = true
 		}
 	}
@@ -723,7 +735,7 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if top, err := bounded.Taxonomy(ctx, fxKind, "artist", fx.window); err != nil || len(top) != 1 || top[0].TaxonomyID != "a1" || top[0].ContentCount != 1 {
+	if top, err := bounded.Taxonomy(ctx, fxKind, "artist", fx.window); err != nil || len(top) != 1 || top[0].TaxonomyID != fxArtist1 || top[0].ContentCount != 1 {
 		t.Errorf("candidate bound 1: %+v %v", top, err)
 	}
 	if _, err := ranker.Taxonomy(ctx, fxKind, "artist", fx.window); err == nil {

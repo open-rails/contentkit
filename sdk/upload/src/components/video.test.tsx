@@ -10,7 +10,7 @@ import { ko } from "../locales/ko.js";
 import { useHoverSection } from "../video-react.js";
 import { HoverPreviewPicker, UploadUiProvider, VideoPoster, VideoPosterPicker } from "../ui.js";
 
-const item = { kind: "post", id: "9" };
+const item = { kind: "post", id: "0192f000-0000-7000-8000-000000000009" };
 
 function setup() {
   const s = new FakeServer();

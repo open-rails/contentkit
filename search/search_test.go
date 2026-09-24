@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"reflect"
 	"testing"
@@ -10,6 +11,9 @@ import (
 
 	"github.com/open-rails/contentkit/contentref"
 )
+
+// cid is a deterministic canonical UUIDv7 content id; cid(n) sorts in n order.
+func cid(n int) string { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) }
 
 func key(id string) RRFKey {
 	return RRFKey{ContentKey: contentref.ContentKey{TenantID: "t", ContentKind: "gallery", ContentID: id}, Language: "en"}
@@ -47,7 +51,7 @@ func TestKeywordSearchValidation(t *testing.T) {
 
 func TestFuseRRFWithTrace_MatchesFuseRRF(t *testing.T) {
 	t.Parallel()
-	lists := [][]RRFKey{{key("1"), key("2")}, {key("2"), key("3")}}
+	lists := [][]RRFKey{{key(cid(1)), key(cid(2))}, {key(cid(2)), key(cid(3))}}
 	opts := RRFOptions{K: 10, Weights: []float32{1, 2}}
 	want := FuseRRF(lists, opts)
 	traced, err := FuseRRFWithTrace(lists, opts)
@@ -65,7 +69,7 @@ func TestFuseRRFWithTrace_MatchesFuseRRF(t *testing.T) {
 			t.Fatalf("contributions sum = %v, score = %v", sum, hit.Hit.Score)
 		}
 	}
-	if !reflect.DeepEqual(got, want) || want[0].ContentID != "2" {
+	if !reflect.DeepEqual(got, want) || want[0].ContentID != cid(2) {
 		t.Fatalf("traced hits differ:\n got %#v\nwant %#v", got, want)
 	}
 	if len(traced[0].Contributions) != 2 || traced[0].Contributions[0].ListIndex != 0 || traced[0].Contributions[1].ListIndex != 1 {
@@ -75,7 +79,7 @@ func TestFuseRRFWithTrace_MatchesFuseRRF(t *testing.T) {
 
 func TestFuseRRFWithTrace_RejectsNonfiniteAndOverflowingScores(t *testing.T) {
 	t.Parallel()
-	lists := [][]RRFKey{{key("1")}}
+	lists := [][]RRFKey{{key(cid(1))}}
 	for _, weight := range []float32{float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))} {
 		if _, err := FuseRRFWithTrace(lists, RRFOptions{Weights: []float32{weight}}); err == nil {
 			t.Fatalf("FuseRRFWithTrace(weight=%v) error = nil", weight)
@@ -88,7 +92,7 @@ func TestFuseRRFWithTrace_RejectsNonfiniteAndOverflowingScores(t *testing.T) {
 
 func TestFuseRRF_DeterministicFullKeyTieBreak(t *testing.T) {
 	t.Parallel()
-	ja, en, v := key("1"), key("1"), key("1")
+	ja, en, v := key(cid(1)), key(cid(1)), key(cid(1))
 	ja.Language = "ja"
 	v.ContentVersionID = "v2"
 	lists := [][]RRFKey{{ja}, {v}, {en}}
@@ -106,7 +110,7 @@ func TestFuseRRF_DeterministicFullKeyTieBreak(t *testing.T) {
 
 func TestFuseRRF_LargeKDoesNotOverflow(t *testing.T) {
 	t.Parallel()
-	out := FuseRRF([][]RRFKey{{key("1")}}, RRFOptions{K: int(^uint(0) >> 1)})
+	out := FuseRRF([][]RRFKey{{key(cid(1))}}, RRFOptions{K: int(^uint(0) >> 1)})
 	if len(out) != 1 || out[0].Score < 0 || !finiteFloat32(out[0].Score) {
 		t.Fatalf("FuseRRF() produced invalid large-k score: %#v", out)
 	}

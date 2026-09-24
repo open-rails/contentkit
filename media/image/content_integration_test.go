@@ -218,7 +218,7 @@ func TestContentImages(t *testing.T) {
 	if _, code := e.uploadInline(t, "reader", postRef, pngImage(t, 300, 400, 3)); code != 403 {
 		t.Fatalf("non-editor upload: %d", code)
 	}
-	if _, code := e.uploadInline(t, "editor", media.RefBody{Kind: "post", ID: "00000000-0000-4000-8000-000000000000"}, pngImage(t, 30, 40, 3)); code != 403 {
+	if _, code := e.uploadInline(t, "editor", media.RefBody{Kind: "post", ID: contentref.NewID()}, pngImage(t, 30, 40, 3)); code != 403 {
 		t.Fatalf("upload to a missing post: %d", code)
 	}
 

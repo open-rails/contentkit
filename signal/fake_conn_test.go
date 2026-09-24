@@ -2,12 +2,36 @@ package signal
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"reflect"
 	"strings"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
+
+const testIDPrefix = "01920000-0000-7000-8000-"
+
+// cid is deterministic content id n: a canonical UUIDv7 that sorts in n order.
+func cid(n int) string { return fmt.Sprintf(testIDPrefix+"%012d", n) }
+
+// lid is the deterministic content id (a canonical UUIDv7) for a short test
+// label of at most 6 bytes; lname recovers the label.
+func lid(label string) string {
+	if len(label) == 0 || len(label) > 6 {
+		panic("lid: label must be 1-6 bytes: " + label)
+	}
+	h := hex.EncodeToString([]byte(label))
+	return testIDPrefix + strings.Repeat("0", 12-len(h)) + h
+}
+
+func lname(id string) string {
+	b, err := hex.DecodeString(strings.TrimPrefix(id, testIDPrefix))
+	if err != nil || !strings.HasPrefix(id, testIDPrefix) {
+		return id
+	}
+	return strings.TrimLeft(string(b), "\x00")
+}
 
 // fakeConn captures Exec/Query calls and serves canned rows, keyed by a
 // substring of the query.

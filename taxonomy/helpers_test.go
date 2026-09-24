@@ -3,6 +3,8 @@ package taxonomy
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"sort"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -84,8 +86,13 @@ func mustCreate(t *testing.T, ctx context.Context, s *Store, inputs ...NodeInput
 	return nodes
 }
 
+// tag is a tag node input; an empty id lets CreateNodes mint one.
 func tag(id, slug string, names ...Name) NodeInput {
-	return NodeInput{TaxonomyID: TaxonomyID(id), Kind: "tag", Slug: slug, Names: names}
+	in := NodeInput{Kind: "tag", Slug: slug, Names: names}
+	if id != "" {
+		in.TaxonomyID = tid(id)
+	}
+	return in
 }
 
 func name(lang, n string) Name  { return Name{Language: lang, Kind: NameCanonical, Name: n} }
@@ -93,8 +100,71 @@ func alias(lang, n string) Name { return Name{Language: lang, Kind: NameAlias, N
 
 func work(tenantID, kind, id string) contentref.ContentRef { return contentref.New(tenantID, kind, id) }
 
+// cid is the nth deterministic content id: a canonical UUIDv7, ordered by n.
+func cid(n int) string { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) }
+
+// workLabels names the fixture works in expected strings.
+var workLabels = map[string]string{
+	cid(1): "g1", cid(2): "g2", cid(3): "g3", cid(4): "g4",
+	cid(11): "m1", cid(18): "m8", cid(19): "m9", cid(21): "l1", cid(22): "l2",
+}
+
+// taxNames are the fixture taxonomy ids by name. tid maps a name to a
+// canonical UUIDv7; ids sort in the names' order, so id orders read as before.
+var taxNames = []string{
+	"a", "a1", "absent", "alpha", "b", "beta", "c", "c-rin",
+	"colored", "colour", "committed", "decensored", "delta", "etude", "exclusive", "fate",
+	"foreign-only", "gamma", "import-a", "import-b", "jp-only", "missing", "nameless", "only-a",
+	"rolled-back", "romance", "s-fate", "seller-1", "shindol", "shindol-dup", "solo", "source",
+	"sql-node", "t-colored", "t-colour", "t-colour-2", "t1", "tag", "tag-a", "target",
+}
+
+var taxIDs, taxLabels = func() (map[string]TaxonomyID, map[TaxonomyID]string) {
+	if !sort.StringsAreSorted(taxNames) {
+		panic("taxNames must stay sorted")
+	}
+	ids, labels := map[string]TaxonomyID{}, map[TaxonomyID]string{}
+	for i, n := range taxNames {
+		id := TaxonomyID(fmt.Sprintf("01930000-0000-7000-8000-%012d", i+1))
+		ids[n], labels[id] = id, n
+	}
+	return ids, labels
+}()
+
+// tid is the taxonomy id of a fixture name.
+func tid(name string) TaxonomyID {
+	id, ok := taxIDs[name]
+	if !ok {
+		panic("unknown taxonomy fixture " + name)
+	}
+	return id
+}
+
+// tname is a fixture taxonomy id's name, or the id itself.
+func tname(id TaxonomyID) string {
+	if n, ok := taxLabels[id]; ok {
+		return n
+	}
+	return string(id)
+}
+
+var taxPlaceholder = regexp.MustCompile(`\{\{([^{}]+)\}\}`)
+
+// withIDs replaces every {{name}} in s with tid(name).
+func withIDs(s string) string {
+	return taxPlaceholder.ReplaceAllStringFunc(s, func(m string) string { return string(tid(m[2 : len(m)-2])) })
+}
+
+// label is a fixture work's short name, or the id itself.
+func label(id string) string {
+	if l, ok := workLabels[id]; ok {
+		return l
+	}
+	return id
+}
+
 func assign(ref contentref.ContentRef, id string, relation string) Assignment {
-	return Assignment{ContentRef: ref, TaxonomyID: TaxonomyID(id), Relation: relation}
+	return Assignment{ContentRef: ref, TaxonomyID: tid(id), Relation: relation}
 }
 
 func tagIDs(tags []EffectiveTag) string {
@@ -103,7 +173,7 @@ func tagIDs(tags []EffectiveTag) string {
 		if out != "" {
 			out += ","
 		}
-		out += string(t.TaxonomyID) + ":" + t.Relation + ":" + string(t.Scope)
+		out += tname(t.TaxonomyID) + ":" + t.Relation + ":" + string(t.Scope)
 	}
 	return out
 }
@@ -114,7 +184,7 @@ func hitIDs(hits []BrowseHit) string {
 		if out != "" {
 			out += ","
 		}
-		out += h.ContentID + "@" + h.Version() + ":" + fmt.Sprint(h.Priority)
+		out += label(h.ContentID) + "@" + h.Version() + ":" + fmt.Sprint(h.Priority)
 	}
 	return out
 }

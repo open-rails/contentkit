@@ -65,10 +65,15 @@ func TestRestoreAfterSweepAndFolderDeletion(t *testing.T) {
 		}
 	}
 
-	channel := contentref.New(env.Tenant, "channel", "1")
+	channel := contentref.New(env.Tenant, "channel", cid(1))
 	ch, _ := kinds.Item(channel)
-	post := contentref.New(env.Tenant, "post", "2")
+	post := contentref.New(env.Tenant, "post", cid(2))
 	p, _ := kinds.Item(post)
+	for _, ref := range []contentref.ContentRef{channel, post} { // the host creates each item before its files land
+		if _, err := ms.Create(ctx, ref); err != nil {
+			t.Fatal(err)
+		}
+	}
 	put(ch.OriginalsPrefix()+name("origA"), "origA")
 	put(ch.BlobsPrefix()+name("blobA"), "blobA")
 	put(ch.OriginalsPrefix()+"avatar", "avatar v1")

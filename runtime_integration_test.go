@@ -39,14 +39,14 @@ type allowAuthz struct{}
 
 func (allowAuthz) Can(context.Context, access.Actor, string) (bool, error) { return true, nil }
 
-// galleryResolver knows gallery g1 (any alias "g1"/"g1:en" -> g1) and nothing else.
+// galleryResolver knows only gallery cid(1), under its id or any suffixed alias ("<id>:en").
 type galleryResolver struct{}
 
 func (galleryResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
 	out := map[contentref.ContentKey]access.Resolution{}
 	for _, r := range refs {
-		if r.ContentKind == "gallery" && strings.HasPrefix(r.ContentID, "g1") {
-			out[r.Key()] = access.Resolution{Ref: contentref.New(r.TenantID, "gallery", "g1"), Visible: true, Accessible: true}
+		if r.ContentKind == "gallery" && strings.HasPrefix(r.ContentID, cid(1)) {
+			out[r.Key()] = access.Resolution{Ref: contentref.New(r.TenantID, "gallery", cid(1)), Visible: true, Accessible: true}
 		}
 	}
 	return out, nil
@@ -118,27 +118,27 @@ func TestRuntimeIntegration(t *testing.T) {
 	user := access.Actor{ID: "u1", Kind: "user", IP: "10.0.0.1"}
 
 	// Interactions over one HTTP mount, keyed by the resolver's canonical reference.
-	if rec := do(t, h, user, "POST", "/gallery/g1:en/comments", map[string]string{"body": "first"}); rec.Code != http.StatusCreated {
+	if rec := do(t, h, user, "POST", galleryRoute(1, ":en/comments"), map[string]string{"body": "first"}); rec.Code != http.StatusCreated {
 		t.Fatalf("comment: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := do(t, h, user, "POST", "/gallery/g1/like", nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"likes":1`) {
+	if rec := do(t, h, user, "POST", galleryRoute(1, "/like"), nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"likes":1`) {
 		t.Fatalf("like: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := do(t, h, user, "POST", "/gallery/g1/favorite", nil); rec.Code != http.StatusOK {
+	if rec := do(t, h, user, "POST", galleryRoute(1, "/favorite"), nil); rec.Code != http.StatusOK {
 		t.Fatalf("favorite: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := do(t, h, user, "POST", "/video/1/like", nil); rec.Code != http.StatusNotFound {
+	if rec := do(t, h, user, "POST", "/video/"+cid(1)+"/like", nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("unregistered kind: %d, want 404", rec.Code)
 	}
-	if rec := do(t, h, access.Actor{Anonymous: true, IP: "10.0.0.2"}, "POST", "/gallery/g1/favorite", nil); rec.Code != http.StatusUnauthorized {
+	if rec := do(t, h, access.Actor{Anonymous: true, IP: "10.0.0.2"}, "POST", galleryRoute(1, "/favorite"), nil); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous favorite: %d, want 401", rec.Code)
 	}
-	g1 := rt.Content.Ref("gallery", "g1")
+	g1 := rt.Content.Ref("gallery", cid(1))
 	counts, err := rt.Content.Counts(ctx, []contentref.ContentRef{g1})
 	if err != nil || counts[g1.Key()] != (content.Counts{Likes: 1, Favorites: 1, CommentCount: 1}) {
 		t.Fatalf("counts = %+v err=%v", counts, err)
 	}
-	if _, err := rt.Content.Counts(ctx, []contentref.ContentRef{contentref.New("hentai0", "gallery", "g1")}); !errors.Is(err, content.ErrTenant) {
+	if _, err := rt.Content.Counts(ctx, []contentref.ContentRef{contentref.New("hentai0", "gallery", cid(1))}); !errors.Is(err, content.ErrTenant) {
 		t.Fatalf("foreign tenant: want ErrTenant, got %v", err)
 	}
 	rec := do(t, h, user, "POST", "/polls", map[string]any{"question": "Best?", "options": []map[string]any{{"label": "a"}, {"label": "b"}}})
@@ -166,7 +166,7 @@ func TestRuntimeIntegration(t *testing.T) {
 	opts := rt.WorkerOptions(worker.Options{
 		SupportedLanguages: []string{"en"}, ContentKinds: []string{"gallery"},
 		ListContent: func(_ context.Context, tenant, kind, _, _ string, _ int) ([]contentref.ContentRef, string, bool, error) {
-			return []contentref.ContentRef{contentref.New(tenant, kind, "g1")}, "", true, nil
+			return []contentref.ContentRef{contentref.New(tenant, kind, cid(1))}, "", true, nil
 		},
 		BuildKeywordDocuments: func(_ context.Context, tenant, kind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
 			var docs []search.KeywordDocument
@@ -181,7 +181,7 @@ func TestRuntimeIntegration(t *testing.T) {
 			t.Fatalf("worker tick %d: %v", i, err)
 		}
 	}
-	for _, c := range []struct{ q, kind, want string }{{"autumn festival", content.KindPost, "Autumn"}, {"moonlit", "gallery", "g1"}} {
+	for _, c := range []struct{ q, kind, want string }{{"autumn festival", content.KindPost, "Autumn"}, {"moonlit", "gallery", cid(1)}} {
 		res, err := rt.Search(ctx, c.q, HubSearchOptions{SearchOptions: SearchOptions{Language: "en", ContentKinds: []string{c.kind}}})
 		if err != nil || len(res.Hits) != 1 || res.Hits[0].ContentKind != c.kind {
 			t.Fatalf("search %q: %+v err=%v", c.q, res, err)
@@ -193,7 +193,7 @@ func TestRuntimeIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	top, err := rt.Popular(ctx, "gallery", signal.PopularOptions{Window: signal.LastDays(7, time.Now())})
-	if err != nil || len(top) != 1 || top[0].ContentID != "g1" {
+	if err != nil || len(top) != 1 || top[0].ContentID != cid(1) {
 		t.Fatalf("popular = %+v err=%v", top, err)
 	}
 }

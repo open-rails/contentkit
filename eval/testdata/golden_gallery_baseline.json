@@ -5,7 +5,7 @@
     "suite_id": "gallery-keyword-v2",
     "candidate_id": "keyword"
   },
-  "content_id": "sha256:89709cfe7983d29a67a278d12936954812d54f53a66fa04cb13a62b77cd28941",
+  "content_id": "sha256:6632a12f66f9b6539a62d1b3e62ff4abe9875ae57a7f47fcf9ecca74c651a170",
   "group_labels": [
     "query_type"
   ],
@@ -93,7 +93,7 @@
           {
             "key": {
               "content_kind": "gallery",
-              "content_id": "1"
+              "content_id": "01920000-0000-7000-8000-000000000001"
             },
             "relevance": 3
           }
@@ -107,7 +107,7 @@
         {
           "key": {
             "content_kind": "gallery",
-            "content_id": "1"
+            "content_id": "01920000-0000-7000-8000-000000000001"
           },
           "score": 0.77
         }
@@ -158,7 +158,7 @@
           {
             "key": {
               "content_kind": "gallery",
-              "content_id": "3"
+              "content_id": "01920000-0000-7000-8000-000000000003"
             },
             "relevance": 3
           }
@@ -172,7 +172,7 @@
         {
           "key": {
             "content_kind": "gallery",
-            "content_id": "3"
+            "content_id": "01920000-0000-7000-8000-000000000003"
           },
           "score": 0.77
         }
@@ -201,14 +201,14 @@
           {
             "key": {
               "content_kind": "gallery",
-              "content_id": "1"
+              "content_id": "01920000-0000-7000-8000-000000000001"
             },
             "relevance": 3
           },
           {
             "key": {
               "content_kind": "gallery",
-              "content_id": "2"
+              "content_id": "01920000-0000-7000-8000-000000000002"
             },
             "relevance": 2
           }
@@ -222,14 +222,14 @@
         {
           "key": {
             "content_kind": "gallery",
-            "content_id": "1"
+            "content_id": "01920000-0000-7000-8000-000000000001"
           },
           "score": 0.77
         },
         {
           "key": {
             "content_kind": "gallery",
-            "content_id": "2"
+            "content_id": "01920000-0000-7000-8000-000000000002"
           },
           "score": 0.77
         }

@@ -5,7 +5,7 @@ import { FakeServer, bytes } from "../test/fake.js";
 import { UploadClient } from "./client.js";
 import { useCrop, useUpload, useUploadQueue } from "./react.js";
 
-const ref = { kind: "gallery", id: "1", version: "en" };
+const ref = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000001", version: "en" };
 
 function client(s: FakeServer) {
   return new UploadClient({ endpoint: "http://x/api", fetch: s.fetch, transport: s.transport, retryDelay: () => 0 });

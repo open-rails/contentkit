@@ -19,14 +19,14 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 	rt := newPreferenceRuntime(t)
 	rt.perms.PollWrite = pollWritePerm
 	u1, u2, anon := access.Actor{ID: "erase"}, access.Actor{ID: "keep"}, access.Actor{ID: "erase", Anonymous: true, IP: "erase"}
-	target := ref("gallery", "42")
+	target := ref("gallery", cid(42))
 	for _, a := range []access.Actor{u1, u2, anon} {
-		mustReact(t, rt, a, "gallery", "42:en", 1)
+		mustReact(t, rt, a, "gallery", localeID(42, "en"), 1)
 	}
 	for _, a := range []access.Actor{u1, u2} {
-		mustFavorite(t, rt, a, "gallery", "42:en", true)
+		mustFavorite(t, rt, a, "gallery", localeID(42, "en"), true)
 	}
-	cm := mustComment(t, rt, u2, "gallery", "42:en", createInput{Body: "keep author's comment"})
+	cm := mustComment(t, rt, u2, "gallery", localeID(42, "en"), createInput{Body: "keep author's comment"})
 	for _, a := range []access.Actor{u1, u2, anon} {
 		if _, err := rt.comments.reactTx(ctx, a, cm.ID, 1); err != nil {
 			t.Fatal(err)
@@ -54,7 +54,7 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustReact(t, other, u1, "gallery", "42:en", 1)
+	mustReact(t, other, u1, "gallery", localeID(42, "en"), 1)
 	for i := 0; i < 2; i++ {
 		if err := rt.EraseSubjects(ctx, []string{u1.ID}); err != nil {
 			t.Fatal(err)
@@ -76,13 +76,13 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 			}
 		}
 	}
-	if got := countsOf(t, other, other.Ref("gallery", "42")); got.Likes != 1 {
+	if got := countsOf(t, other, other.Ref("gallery", cid(42))); got.Likes != 1 {
 		t.Fatalf("other tenant damaged: %+v", got)
 	}
 	for name, write := range map[string]func() error{
-		"reaction":         func() error { _, e := rt.reactions.react(ctx, u1, "gallery", "42:en", 1); return e },
-		"favorite":         func() error { return rt.favorites.add(ctx, u1, "gallery", "42:en") },
-		"unfavorite":       func() error { return rt.favorites.remove(ctx, u1, "gallery", "42:en") },
+		"reaction":         func() error { _, e := rt.reactions.react(ctx, u1, "gallery", localeID(42, "en"), 1); return e },
+		"favorite":         func() error { return rt.favorites.add(ctx, u1, "gallery", localeID(42, "en")) },
+		"unfavorite":       func() error { return rt.favorites.remove(ctx, u1, "gallery", localeID(42, "en")) },
 		"post reaction":    func() error { return rt.posts.react(ctx, u1, post, 1) },
 		"comment reaction": func() error { _, e := rt.comments.reactTx(ctx, u1, cm.ID, 1); return e },
 		"poll vote":        func() error { _, e := rt.polls.vote(ctx, u1, poll.ID, poll.Options[0].ID); return e },
@@ -118,9 +118,9 @@ func TestSourceWritesRaceErasureWithoutResurrection(t *testing.T) {
 			var err error
 			switch i % 3 {
 			case 0:
-				_, err = rt.reactions.react(ctx, actor, "gallery", "42:en", 1)
+				_, err = rt.reactions.react(ctx, actor, "gallery", localeID(42, "en"), 1)
 			case 1:
-				err = rt.favorites.add(ctx, actor, "gallery", "42:en")
+				err = rt.favorites.add(ctx, actor, "gallery", localeID(42, "en"))
 			case 2:
 				_, err = rt.polls.vote(ctx, actor, poll.ID, poll.Options[0].ID)
 			}
@@ -143,7 +143,7 @@ func TestSourceWritesRaceErasureWithoutResurrection(t *testing.T) {
 			t.Fatalf("race recreated %s: %d %v", table, n, err)
 		}
 	}
-	if got := countsOf(t, rt, ref("gallery", "42")); got.Likes != 0 || got.Favorites != 0 {
+	if got := countsOf(t, rt, ref("gallery", cid(42))); got.Likes != 0 || got.Favorites != 0 {
 		t.Fatalf("racing source counts retained: %+v", got)
 	}
 }
@@ -152,7 +152,7 @@ func TestConcurrentErasedActorsShareCountersWithoutDeadlock(t *testing.T) {
 	ctx := context.Background()
 	rt := newPreferenceRuntime(t)
 	for _, actor := range []access.Actor{{ID: "a"}, {ID: "b"}, {ID: "keep"}} {
-		for _, id := range []string{"42:en", "7:en"} {
+		for _, id := range []string{localeID(42, "en"), localeID(7, "en")} {
 			mustReact(t, rt, actor, "gallery", id, 1)
 			mustFavorite(t, rt, actor, "gallery", id, true)
 		}
@@ -170,7 +170,7 @@ func TestConcurrentErasedActorsShareCountersWithoutDeadlock(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, id := range []string{"42", "7"} {
+	for _, id := range []string{cid(42), cid(7)} {
 		got := countsOf(t, rt, ref("gallery", id))
 		if got.Likes != 1 || got.Favorites != 1 {
 			t.Fatalf("shared counters %s=%+v", id, got)
@@ -182,20 +182,20 @@ func TestRestoreReappliesSourceErasureAndFencedRowsNeverExport(t *testing.T) {
 	ctx := context.Background()
 	rt := newPreferenceRuntime(t)
 	actor := access.Actor{ID: "gone"}
-	mustReact(t, rt, actor, "gallery", "42:en", 1)
-	mustReact(t, rt, access.Actor{ID: "keep"}, "gallery", "42:en", 1)
-	mustFavorite(t, rt, access.Actor{ID: "keep"}, "gallery", "42:en", true)
+	mustReact(t, rt, actor, "gallery", localeID(42, "en"), 1)
+	mustReact(t, rt, access.Actor{ID: "keep"}, "gallery", localeID(42, "en"), 1)
+	mustFavorite(t, rt, access.Actor{ID: "keep"}, "gallery", localeID(42, "en"), true)
 	if err := rt.EraseSubjects(ctx, []string{actor.ID}); err != nil {
 		t.Fatal(err)
 	}
 	// Privileged restore loads old source/counters but retains the permanent fence.
-	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.reactions+` (`+keyCols+`,user_id,value,revision) VALUES ($1,'gallery','42','','gone',1,`+rt.store.nextRevision()+`)`, rt.tenant); err != nil {
+	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.reactions+` (`+keyCols+`,user_id,value,revision) VALUES ($1,'gallery','`+cid(42)+`','','gone',1,`+rt.store.nextRevision()+`)`, rt.tenant); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.favorites+` (`+keyCols+`,user_id,value,revision) VALUES ($1,'gallery','42','','gone',0,`+rt.store.nextRevision()+`)`, rt.tenant); err != nil {
+	if _, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.favorites+` (`+keyCols+`,user_id,value,revision) VALUES ($1,'gallery','`+cid(42)+`','','gone',0,`+rt.store.nextRevision()+`)`, rt.tenant); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.store.pool.Exec(ctx, `UPDATE `+rt.store.t.counts+` SET likes=likes+1 WHERE tenant_id=$1 AND content_kind='gallery' AND content_id='42'`, rt.tenant); err != nil {
+	if _, err := rt.store.pool.Exec(ctx, `UPDATE `+rt.store.t.counts+` SET likes=likes+1 WHERE tenant_id=$1 AND content_kind='gallery' AND content_id='`+cid(42)+`'`, rt.tenant); err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range exported(t, rt) {
@@ -206,7 +206,7 @@ func TestRestoreReappliesSourceErasureAndFencedRowsNeverExport(t *testing.T) {
 	if err := rt.EraseSubjects(ctx, []string{actor.ID}); err != nil {
 		t.Fatal(err)
 	}
-	if got := countsOf(t, rt, ref("gallery", "42")); got.Likes != 1 || got.Favorites != 1 {
+	if got := countsOf(t, rt, ref("gallery", cid(42))); got.Likes != 1 || got.Favorites != 1 {
 		t.Fatalf("recovery miscounted erased interactions: %+v", got)
 	}
 }
@@ -215,8 +215,8 @@ func TestConcurrentErasureWithCrossAuthoredReactionTargets(t *testing.T) {
 	ctx := context.Background()
 	rt := moderatedRuntime(t, &fakeModerator{})
 	a, b := access.Actor{ID: "a"}, access.Actor{ID: "b"}
-	ca := mustComment(t, rt, a, "gallery", "1", createInput{Body: "published a"})
-	cb := mustComment(t, rt, b, "gallery", "1", createInput{Body: "published b"})
+	ca := mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "published a"})
+	cb := mustComment(t, rt, b, "gallery", cid(1), createInput{Body: "published b"})
 	if _, err := rt.comments.reactTx(ctx, a, cb.ID, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestConcurrentErasureWithCrossAuthoredReactionTargets(t *testing.T) {
 func TestInteractionErasureDoesNotRecreateRemovedRollups(t *testing.T) {
 	ctx := context.Background()
 	rt := newPreferenceRuntime(t)
-	mustReact(t, rt, access.Actor{ID: "gone"}, "gallery", "42:en", 1)
+	mustReact(t, rt, access.Actor{ID: "gone"}, "gallery", localeID(42, "en"), 1)
 	if _, err := rt.store.pool.Exec(ctx, `DELETE FROM `+rt.store.t.counts); err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +288,7 @@ func TestSourceFenceSeesCommittedErasureWithRepeatableReadHostDefault(t *testing
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := rt.reactions.react(ctx, access.Actor{ID: "gone"}, "gallery", "42:en", 1)
+		_, err := rt.reactions.react(ctx, access.Actor{ID: "gone"}, "gallery", localeID(42, "en"), 1)
 		done <- err
 	}()
 	// Observe the writer's advisory-lock wait before committing the erasure.
@@ -505,11 +505,11 @@ func TestErasureFencesPausedModerationBeforeSourceCommit(t *testing.T) {
 	ctx := context.Background()
 	provider := &retainingPolicy{entered: make(chan struct{}), release: make(chan struct{})}
 	res := &fakeResolver{}
-	res.set("gallery", "1", true, true)
+	res.set("gallery", cid(1), true, true)
 	rt, _ := newTestRuntime(t, Options{Moderator: provider, ProviderDataEraser: provider, Resolver: res, ContentKinds: []string{"gallery"}})
 	done := make(chan error, 1)
 	go func() {
-		_, err := rt.comments.create(ctx, access.Actor{ID: "u1"}, "gallery", "1", createInput{Body: "paused"})
+		_, err := rt.comments.create(ctx, access.Actor{ID: "u1"}, "gallery", cid(1), createInput{Body: "paused"})
 		done <- err
 	}()
 	<-provider.entered
@@ -534,13 +534,13 @@ func TestErasurePreservesPublicationRepliesAndOtherTenant(t *testing.T) {
 	rt := moderatedRuntime(t, &fakeModerator{})
 	author := access.Actor{ID: "u1"}
 	sibling := access.Actor{ID: "u2"}
-	published := mustComment(t, rt, author, "gallery", "1", createInput{Body: "published original"})
-	reply := mustComment(t, rt, sibling, "gallery", "1", createInput{ReplyToID: published.ID, Body: "sibling reply"})
-	unpublished := mustComment(t, rt, author, "gallery", "1", createInput{Body: "iffy never published"})
+	published := mustComment(t, rt, author, "gallery", cid(1), createInput{Body: "published original"})
+	reply := mustComment(t, rt, sibling, "gallery", cid(1), createInput{ReplyToID: published.ID, Body: "sibling reply"})
+	unpublished := mustComment(t, rt, author, "gallery", cid(1), createInput{Body: "iffy never published"})
 	if _, err := rt.comments.edit(ctx, author, published.ID, "iffy unpublished replacement"); err != nil {
 		t.Fatal(err)
 	}
-	_, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.comments+` (tenant_id,content_kind,content_id,user_id,body,moderation) VALUES ('other','gallery','1','u1','other tenant unpublished','held')`)
+	_, err := rt.store.pool.Exec(ctx, `INSERT INTO `+rt.store.t.comments+` (tenant_id,content_kind,content_id,user_id,body,moderation) VALUES ('other','gallery','`+cid(1)+`','u1','other tenant unpublished','held')`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -616,7 +616,7 @@ func TestErasureFenceSurvivesRuntimeRestartAndReview(t *testing.T) {
 	ctx := context.Background()
 	rt := moderatedRuntime(t, &fakeModerator{})
 	author := access.Actor{ID: "u1"}
-	cm := mustComment(t, rt, author, "gallery", "1", createInput{Body: "iffy held"})
+	cm := mustComment(t, rt, author, "gallery", cid(1), createInput{Body: "iffy held"})
 	page, err := rt.ListHeld(ctx, KindComment, "", 10)
 	if err != nil {
 		t.Fatal(err)
@@ -629,7 +629,7 @@ func TestErasureFenceSurvivesRuntimeRestartAndReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := restarted.comments.create(ctx, author, "gallery", "1", createInput{Body: "new unpublished body"}); !errors.Is(err, ErrSubjectErased) {
+	if _, err := restarted.comments.create(ctx, author, "gallery", cid(1), createInput{Body: "new unpublished body"}); !errors.Is(err, ErrSubjectErased) {
 		t.Fatalf("new runtime forgot source fence: %v", err)
 	}
 	if err := restarted.Resolve(ctx, KindComment, cm.ID, ReviewDecision{Revision: page.Items[0].Revision, Decision: DecisionApprove, Reviewer: "reviewer"}); err == nil {
@@ -640,7 +640,7 @@ func TestErasureFenceSurvivesRuntimeRestartAndReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := other.comments.create(ctx, author, "gallery", "1", createInput{Body: "other tenant content"}); err != nil {
+	if _, err := other.comments.create(ctx, author, "gallery", cid(1), createInput{Body: "other tenant content"}); err != nil {
 		t.Fatalf("source fence crossed tenant runtime: %v", err)
 	}
 }
@@ -655,7 +655,7 @@ func TestBaselinePublishedContentSurvivesErasure(t *testing.T) {
 	if err := migrations.ApplyPostgres(ctx, db, schema); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO `+schema+`.content_comments (tenant_id,content_kind,content_id,user_id,body) VALUES ('hostapp','gallery','1','u1','legacy publication')`); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO `+schema+`.content_comments (tenant_id,content_kind,content_id,user_id,body) VALUES ('hostapp','gallery','`+cid(1)+`','u1','legacy publication')`); err != nil {
 		t.Fatal(err)
 	}
 	if err := migrations.ApplyPostgres(ctx, db, schema); err != nil {

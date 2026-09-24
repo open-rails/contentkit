@@ -27,6 +27,7 @@ func TestHandlerErrorContract(t *testing.T) {
 
 	post := func(path, body string) (int, string) {
 		t.Helper()
+		path, body = withIDs(path), withIDs(body)
 		res, err := http.Post(srv.URL+path, "application/json", strings.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
@@ -36,7 +37,7 @@ func TestHandlerErrorContract(t *testing.T) {
 		return res.StatusCode, strings.TrimSpace(string(b))
 	}
 
-	if code, body := post("/nodes", `[{"taxonomy_id":"colored","kind":"tag","slug":"colored"}]`); code != http.StatusCreated {
+	if code, body := post("/nodes", `[{"taxonomy_id":"{{colored}}","kind":"tag","slug":"colored"}]`); code != http.StatusCreated {
 		t.Fatalf("seed -> %d %s", code, body)
 	}
 
@@ -56,7 +57,7 @@ func TestHandlerErrorContract(t *testing.T) {
 
 	// 23503: the assignment/edge foreign key to an absent node.
 	logs.Reset()
-	code, body = post("/edges", `[{"from_taxonomy_id":"colored","relation":"synonym","to_taxonomy_id":"missing"}]`)
+	code, body = post("/edges", `[{"from_taxonomy_id":"{{colored}}","relation":"synonym","to_taxonomy_id":"{{missing}}"}]`)
 	if code != http.StatusNotFound || body != `{"error":"taxonomy: not found","code":"not_found"}` {
 		t.Fatalf("missing edge target -> %d %s", code, body)
 	}

@@ -47,12 +47,16 @@ func TestReaderThroughWorker(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	full := contentref.NewVersion(env.Tenant, "gallery", "1", "v1")
-	preview := contentref.NewVersion(env.Tenant, "gallery", "2", "v1")
-	post := contentref.New(env.Tenant, "post", "501")
+	full := contentref.NewVersion(env.Tenant, "gallery", cid(1), "v1")
+	preview := contentref.NewVersion(env.Tenant, "gallery", cid(2), "v1")
+	post := contentref.New(env.Tenant, "post", cid(501))
 	content := map[string]string{} // blob key -> body
 	for _, ref := range []contentref.ContentRef{full, preview} {
 		item, _ := kinds.Item(ref)
+		// The host creates the item before any of its files land.
+		if _, err := ms.Create(ctx, ref); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := ms.Edit(ctx, ref, func(m *media.Manifest) error {
 			for i := range 4 {
 				name := ref.ContentID + "-" + string(rune('a'+i))
@@ -100,9 +104,9 @@ func TestReaderThroughWorker(t *testing.T) {
 	base, _ := url.Parse(worker.URL)
 
 	res := verdicts{
-		"1":   {Visible: true, Accessible: true},
-		"2":   {Visible: true, PreviewLimit: 2},
-		"501": {Visible: true},
+		cid(1):   {Visible: true, Accessible: true},
+		cid(2):   {Visible: true, PreviewLimit: 2},
+		cid(501): {Visible: true},
 	}
 	reader := func(mode media.DeliveryMode) *media.Reader {
 		r, err := media.NewReader(media.ReaderOptions{Manifests: ms, Kinds: kinds, Resolver: res,
@@ -155,7 +159,7 @@ func TestReaderThroughWorker(t *testing.T) {
 				t.Fatalf("without the cookie: %d", st)
 			}
 		}
-		orig := worker.URL + "/" + fullItem.OriginalsPrefix() + sha("o1-a")
+		orig := worker.URL + "/" + fullItem.OriginalsPrefix() + sha("o"+cid(1)+"-a")
 		if cs := jar.Cookies(mustURL(t, orig)); len(cs) != 0 {
 			t.Fatal("cookie sent outside its blobs/ path")
 		}
@@ -175,7 +179,7 @@ func TestReaderThroughWorker(t *testing.T) {
 		}
 		d := out.Downloads[0]
 		st, body, hdr := get(bare, d.URL)
-		if st != 200 || body != "zip 1" || hdr.Get("Content-Disposition") != token.Attachment(d.Name) {
+		if st != 200 || body != "zip "+cid(1) || hdr.Get("Content-Disposition") != token.Attachment(d.Name) {
 			t.Fatalf("download: %d %q %v", st, body, hdr)
 		}
 	})
@@ -191,7 +195,7 @@ func TestReaderThroughWorker(t *testing.T) {
 			}
 		}
 		u := mustURL(t, out.Files[0].URL)
-		u.Path = "/" + fullItem.OriginalsPrefix() + sha("o1-a")
+		u.Path = "/" + fullItem.OriginalsPrefix() + sha("o"+cid(1)+"-a")
 		if st, _, _ := get(bare, u.String()); st != 404 {
 			t.Fatalf("folder token on originals: %d", st)
 		}
@@ -214,7 +218,7 @@ func TestReaderThroughWorker(t *testing.T) {
 			}
 		}
 		item, _ := kinds.Item(preview)
-		hidden, _ := item.Blob(sha("t2-c"))
+		hidden, _ := item.Blob(sha("t" + cid(2) + "-c"))
 		u := mustURL(t, out.Files[0].URL)
 		u.Path = "/" + hidden
 		if st, _, _ := get(bare, u.String()); st != 404 {

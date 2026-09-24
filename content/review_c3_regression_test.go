@@ -9,8 +9,8 @@ import (
 
 func TestReviewC3CountsFollowCanonicalPreference(t *testing.T) {
 	rt := newPreferenceRuntime(t)
-	mustReact(t, rt, access.Actor{ID: "u1"}, "gallery", "42:en", 1)
-	if got := countsOf(t, rt, ref("gallery", "42:en")); got.Likes != 1 {
+	mustReact(t, rt, access.Actor{ID: "u1"}, "gallery", localeID(42, "en"), 1)
+	if got := countsOf(t, rt, ref("gallery", localeID(42, "en"))); got.Likes != 1 {
 		t.Fatalf("locale hydration lost canonical preference count: %+v", got)
 	}
 }
@@ -18,13 +18,13 @@ func TestReviewC3CountsFollowCanonicalPreference(t *testing.T) {
 func TestReviewC3CountsKeepLocalizedCommentThreads(t *testing.T) {
 	rt := newPreferenceRuntime(t)
 	actor := access.Actor{ID: "u1"}
-	mustReact(t, rt, actor, "gallery", "42:en", 1)
-	mustFavorite(t, rt, actor, "gallery", "42:ja", true)
-	mustComment(t, rt, actor, "gallery", "42:en", createInput{Body: "English"})
-	for _, id := range []string{"42:en", "42:ja"} {
+	mustReact(t, rt, actor, "gallery", localeID(42, "en"), 1)
+	mustFavorite(t, rt, actor, "gallery", localeID(42, "ja"), true)
+	mustComment(t, rt, actor, "gallery", localeID(42, "en"), createInput{Body: "English"})
+	for _, id := range []string{localeID(42, "en"), localeID(42, "ja")} {
 		got := countsOf(t, rt, ref("gallery", id))
 		wantComments := 0
-		if id == "42:en" {
+		if id == localeID(42, "en") {
 			wantComments = 1
 		}
 		if got.Likes != 1 || got.Favorites != 1 || got.CommentCount != wantComments {
@@ -39,8 +39,8 @@ func TestReviewC3FreshSequenceStrictlyExceedsFloor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustReact(t, rt, access.Actor{ID: "u1"}, "gallery", "42:en", 1)
-	if _, rev, _ := row(t, rt, rt.store.t.reactions, "u1", "42"); rev <= floor {
+	mustReact(t, rt, access.Actor{ID: "u1"}, "gallery", localeID(42, "en"), 1)
+	if _, rev, _ := row(t, rt, rt.store.t.reactions, "u1", cid(42)); rev <= floor {
 		t.Fatalf("revision %d failed to exceed seeded floor %d", rev, floor)
 	}
 }

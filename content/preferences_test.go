@@ -3,7 +3,6 @@ package content
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,13 +14,26 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 )
 
-// galleryWork is a host canonical rule: the ":<lang>" route suffix is stripped
-// so every language route votes on one work; an explicit version stays; posts
-// export under their own id; taxonomy stays out of the boundary entirely.
+// localeID is the content id of work n's language route: every language
+// edition is its own content, and localeWorks maps it back to its work.
+func localeID(n int, lang string) string {
+	return cid(n*1000 + map[string]int{"en": 1, "ja": 2}[lang])
+}
+
+var localeWorks = map[string]string{
+	localeID(42, "en"): cid(42), localeID(42, "ja"): cid(42), localeID(7, "en"): cid(7), localeID(9, "en"): cid(9),
+}
+
+// galleryWork is a host canonical rule: every language edition votes on its
+// one work; an explicit version stays; posts export under their own id;
+// taxonomy stays out of the boundary entirely.
 func galleryWork(r contentref.ContentRef) (contentref.ContentRef, bool) {
 	switch r.ContentKind {
 	case "gallery":
-		id, _, _ := strings.Cut(r.ContentID, ":")
+		id := r.ContentID
+		if w, ok := localeWorks[id]; ok {
+			id = w
+		}
 		return contentref.New(r.TenantID, "gallery", id).WithVersion(r.Version()), true
 	case KindPost:
 		return r, true
@@ -32,10 +44,10 @@ func galleryWork(r contentref.ContentRef) (contentref.ContentRef, bool) {
 func newPreferenceRuntime(t *testing.T) *Runtime {
 	t.Helper()
 	res := &fakeResolver{}
-	for _, id := range []string{"42:en", "42:ja", "7:en", "9:en"} {
+	for _, id := range []string{localeID(42, "en"), localeID(42, "ja"), localeID(7, "en"), localeID(9, "en")} {
 		res.set("gallery", id, true, true)
 	}
-	res.set("tag", "9", true, true)
+	res.set("tag", cid(9), true, true)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery", "tag"}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
 	return rt
 }
@@ -90,7 +102,7 @@ func TestPreferences_ConcurrentLocaleRoutesShareOneOrderedPreference(t *testing.
 	rt := newPreferenceRuntime(t)
 	ctx := context.Background()
 	actor := access.Actor{ID: "u1", Kind: "user"}
-	langs := []string{"42:en", "42:ja"}
+	langs := []string{localeID(42, "en"), localeID(42, "ja")}
 	values := []int16{1, -1, 0, 1}
 	var wg sync.WaitGroup
 	errs := make(chan error, 48)
@@ -110,14 +122,14 @@ func TestPreferences_ConcurrentLocaleRoutesShareOneOrderedPreference(t *testing.
 		}
 	}
 	got := exported(t, rt)
-	if len(got) != 1 || got[0].ContentID != "42" || got[0].Version() != "" || got[0].Axis != PreferenceAxisReaction {
+	if len(got) != 1 || got[0].ContentID != cid(42) || got[0].Version() != "" || got[0].Axis != PreferenceAxisReaction {
 		t.Fatalf("exported = %+v, want one work row", got)
 	}
-	value, prev, _ := row(t, rt, rt.store.t.reactions, "u1", "42")
+	value, prev, _ := row(t, rt, rt.store.t.reactions, "u1", cid(42))
 	if got[0].Value != value || got[0].Revision != prev {
 		t.Fatalf("export %+v != stored (%d, %d)", got[0], value, prev)
 	}
-	c := countsOf(t, rt, ref("gallery", "42"))
+	c := countsOf(t, rt, ref("gallery", cid(42)))
 	if c.Likes != b2i(value == 1) || c.Dislikes != b2i(value == -1) {
 		t.Fatalf("work counts = %+v, want the one vote value %d implies", c, value)
 	}
@@ -138,8 +150,8 @@ func TestPreferences_ConcurrentLocaleRoutesShareOneOrderedPreference(t *testing.
 		next = -1
 	}
 	for _, backend := range []*Runtime{other, rt, other, rt} {
-		mustReact(t, backend, actor, "gallery", "42:en", next)
-		_, rev, _ := row(t, rt, rt.store.t.reactions, "u1", "42")
+		mustReact(t, backend, actor, "gallery", localeID(42, "en"), next)
+		_, rev, _ := row(t, rt, rt.store.t.reactions, "u1", cid(42))
 		if rev <= prev {
 			t.Fatalf("revision %d did not increase past %d across backends", rev, prev)
 		}
@@ -152,9 +164,9 @@ func TestPreferences_OwnStateReadsUseTheSameIdentity(t *testing.T) {
 	rt := newPreferenceRuntime(t)
 	ctx := context.Background()
 	actor := access.Actor{ID: "u1", Kind: "user"}
-	mustReact(t, rt, actor, "gallery", "42:en", 1)
-	mustFavorite(t, rt, actor, "gallery", "42:ja", true)
-	locale, work := ref("gallery", "42:ja"), ref("gallery", "42")
+	mustReact(t, rt, actor, "gallery", localeID(42, "en"), 1)
+	mustFavorite(t, rt, actor, "gallery", localeID(42, "ja"), true)
+	locale, work := ref("gallery", localeID(42, "ja")), ref("gallery", cid(42))
 	reactions, err := rt.MyReactions(ctx, actor, []contentref.ContentRef{locale, work})
 	if err != nil || reactions[locale.Key()] != 1 || reactions[work.Key()] != 1 {
 		t.Fatalf("MyReactions = %+v err=%v, want the like under both keys", reactions, err)
@@ -169,18 +181,18 @@ func TestPreferences_OwnStateReadsUseTheSameIdentity(t *testing.T) {
 func TestPreferences_NoOpAllocatesNothing(t *testing.T) {
 	rt := newPreferenceRuntime(t)
 	actor := access.Actor{ID: "u1", Kind: "user"}
-	mustReact(t, rt, actor, "gallery", "42:en", 1)
-	_, before, _ := row(t, rt, rt.store.t.reactions, "u1", "42")
-	mustReact(t, rt, actor, "gallery", "42:ja", 1) // same value from the other route
-	if _, after, _ := row(t, rt, rt.store.t.reactions, "u1", "42"); after != before {
+	mustReact(t, rt, actor, "gallery", localeID(42, "en"), 1)
+	_, before, _ := row(t, rt, rt.store.t.reactions, "u1", cid(42))
+	mustReact(t, rt, actor, "gallery", localeID(42, "ja"), 1) // same value from the other route
+	if _, after, _ := row(t, rt, rt.store.t.reactions, "u1", cid(42)); after != before {
 		t.Fatalf("a no-op moved the revision %d -> %d", before, after)
 	}
-	mustReact(t, rt, actor, "gallery", "7:en", 0)
-	mustFavorite(t, rt, actor, "gallery", "7:en", false)
-	if _, _, ok := row(t, rt, rt.store.t.reactions, "u1", "7"); ok {
+	mustReact(t, rt, actor, "gallery", localeID(7, "en"), 0)
+	mustFavorite(t, rt, actor, "gallery", localeID(7, "en"), false)
+	if _, _, ok := row(t, rt, rt.store.t.reactions, "u1", cid(7)); ok {
 		t.Fatal("neutral with no prior reaction stored a row")
 	}
-	if _, _, ok := row(t, rt, rt.store.t.favorites, "u1", "7"); ok {
+	if _, _, ok := row(t, rt, rt.store.t.favorites, "u1", cid(7)); ok {
 		t.Fatal("unfavorite with no prior favorite stored a row")
 	}
 }
@@ -191,11 +203,11 @@ func TestPreferences_FavoritesAreSoftRows(t *testing.T) {
 	rt := newPreferenceRuntime(t)
 	ctx := context.Background()
 	actor := access.Actor{ID: "u1", Kind: "user"}
-	work := ref("gallery", "42")
-	mustFavorite(t, rt, actor, "gallery", "42:en", true)
-	_, r1, _ := row(t, rt, rt.store.t.favorites, "u1", "42")
-	mustFavorite(t, rt, actor, "gallery", "42:ja", false)
-	v, r2, ok := row(t, rt, rt.store.t.favorites, "u1", "42")
+	work := ref("gallery", cid(42))
+	mustFavorite(t, rt, actor, "gallery", localeID(42, "en"), true)
+	_, r1, _ := row(t, rt, rt.store.t.favorites, "u1", cid(42))
+	mustFavorite(t, rt, actor, "gallery", localeID(42, "ja"), false)
+	v, r2, ok := row(t, rt, rt.store.t.favorites, "u1", cid(42))
 	if !ok || v != 0 || r2 <= r1 {
 		t.Fatalf("unfavorite row = (%d, %d) ok=%v, want value 0 above revision %d", v, r2, ok, r1)
 	}
@@ -208,15 +220,15 @@ func TestPreferences_FavoritesAreSoftRows(t *testing.T) {
 	if c := countsOf(t, rt, work); c.Favorites != 0 {
 		t.Fatalf("counts = %+v, want no favorite", c)
 	}
-	mustFavorite(t, rt, actor, "gallery", "42:ja", false)
-	if _, again, _ := row(t, rt, rt.store.t.favorites, "u1", "42"); again != r2 {
+	mustFavorite(t, rt, actor, "gallery", localeID(42, "ja"), false)
+	if _, again, _ := row(t, rt, rt.store.t.favorites, "u1", cid(42)); again != r2 {
 		t.Fatal("a repeated unfavorite took a revision")
 	}
 	time.Sleep(10 * time.Millisecond)
-	mustFavorite(t, rt, actor, "gallery", "42:en", true)
-	mustFavorite(t, rt, actor, "gallery", "7:en", true)
+	mustFavorite(t, rt, actor, "gallery", localeID(42, "en"), true)
+	mustFavorite(t, rt, actor, "gallery", localeID(7, "en"), true)
 	items, err := rt.ListFavorites(ctx, "u1", 0, 0)
-	if err != nil || len(items) != 2 || items[0].ContentID != "7" {
+	if err != nil || len(items) != 2 || items[0].ContentID != cid(7) {
 		t.Fatalf("ListFavorites = %+v err=%v", items, err)
 	}
 	if c := countsOf(t, rt, work); c.Favorites != 1 {
@@ -237,7 +249,7 @@ func TestPreferences_RolledBackMutationExportsNothing(t *testing.T) {
 	if _, err := rt.store.pool.Exec(ctx, `DROP TABLE `+rt.store.t.counts); err != nil {
 		t.Fatal(err)
 	}
-	err := reactErr(rt.reactions.react(ctx, access.Actor{ID: "u1", Kind: "user"}, "gallery", "42:en", 1))
+	err := reactErr(rt.reactions.react(ctx, access.Actor{ID: "u1", Kind: "user"}, "gallery", localeID(42, "en"), 1))
 	var pgErr interface{ SQLState() string }
 	if err == nil || !errors.As(err, &pgErr) {
 		t.Fatalf("react with a broken rollup = %v, want the transaction to fail", err)
@@ -252,21 +264,21 @@ func TestPreferences_RolledBackMutationExportsNothing(t *testing.T) {
 // tenant sees nothing; export disabled sends nothing while the source works.
 func TestPreferences_ExportScopeAndOptOut(t *testing.T) {
 	res := &fakeResolver{}
-	res.set("gallery", "42:en", true, true)
-	res.set("tag", "9", true, true)
+	res.set("gallery", localeID(42, "en"), true, true)
+	res.set("tag", cid(9), true, true)
 	rt, pool := newPostRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery", "tag"}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
 	ctx := context.Background()
 	u1 := access.Actor{ID: "u1", Kind: "user"}
-	mustReact(t, rt, access.Actor{IP: "10.0.0.1", Anonymous: true}, "gallery", "42:en", 1)
-	mustReact(t, rt, u1, "tag", "9", 1)
-	var post, cid string
-	if err := pool.QueryRow(ctx, `INSERT INTO `+rt.store.t.posts+` (tenant_id, author_id, title, body, is_draft) VALUES ($1, 'a', 't', 'b', false) RETURNING id`, testTenant).Scan(&post); err != nil {
+	mustReact(t, rt, access.Actor{IP: "10.0.0.1", Anonymous: true}, "gallery", localeID(42, "en"), 1)
+	mustReact(t, rt, u1, "tag", cid(9), 1)
+	post, commentID := cid(500), cid(501)
+	if _, err := pool.Exec(ctx, `INSERT INTO `+rt.store.t.posts+` (id, tenant_id, author_id, title, body, is_draft) VALUES ($2, $1, 'a', 't', 'b', false)`, testTenant, post); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `INSERT INTO `+rt.store.t.comments+` (tenant_id, content_kind, content_id, content_version_id, user_id, body) VALUES ($1, 'post', $2, '', 'a', 'hi') RETURNING id`, testTenant, post).Scan(&cid); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO `+rt.store.t.comments+` (id, tenant_id, content_kind, content_id, content_version_id, user_id, body) VALUES ($3, $1, 'post', $2, '', 'a', 'hi')`, testTenant, post, commentID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.comments.reactTx(ctx, u1, cid, 1); err != nil {
+	if _, err := rt.comments.reactTx(ctx, u1, commentID, 1); err != nil {
 		t.Fatal(err)
 	}
 	if got := exported(t, rt); len(got) != 0 {
@@ -275,9 +287,9 @@ func TestPreferences_ExportScopeAndOptOut(t *testing.T) {
 	if err := rt.posts.react(ctx, u1, post, -1); err != nil {
 		t.Fatal(err)
 	}
-	mustReact(t, rt, u1, "gallery", "42:en", 1)
+	mustReact(t, rt, u1, "gallery", localeID(42, "en"), 1)
 	got := exported(t, rt)
-	if len(got) != 2 || got[0].ContentKind != KindPost || got[0].Value != -1 || got[1].ContentID != "42" || got[1].ActorID != "u1" {
+	if len(got) != 2 || got[0].ContentKind != KindPost || got[0].Value != -1 || got[1].ContentID != cid(42) || got[1].ActorID != "u1" {
 		t.Fatalf("exported = %+v, want the post dislike then the work like", got)
 	}
 	other, err := New(ctx, Options{Pool: pool, Schema: rt.schema, Tenant: "other", Identity: &fakeIdentity{}, Authz: allowAll{},
@@ -290,9 +302,9 @@ func TestPreferences_ExportScopeAndOptOut(t *testing.T) {
 	}
 
 	plain, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}})
-	mustReact(t, plain, u1, "gallery", "42:en", 1)
-	mustFavorite(t, plain, u1, "gallery", "42:en", true)
-	if _, _, ok := row(t, plain, plain.store.t.reactions, "u1", "42:en"); !ok {
+	mustReact(t, plain, u1, "gallery", localeID(42, "en"), 1)
+	mustFavorite(t, plain, u1, "gallery", localeID(42, "en"), true)
+	if _, _, ok := row(t, plain, plain.store.t.reactions, "u1", localeID(42, "en")); !ok {
 		t.Fatal("export disabled: the reaction is not stored under the resolver reference")
 	}
 	report, err := plain.SyncPreferences(ctx, func(context.Context, []Preference) error { return errors.New("called") })
@@ -306,16 +318,16 @@ func TestPreferences_ExportScopeAndOptOut(t *testing.T) {
 func TestPreferences_SyncSkipsTargetsTheCanonicalizerDeclines(t *testing.T) {
 	var decline atomic.Bool
 	res := &fakeResolver{}
-	res.set("gallery", "42:en", true, true)
-	res.set("gallery", "7:en", true, true)
+	res.set("gallery", localeID(42, "en"), true, true)
+	res.set("gallery", localeID(7, "en"), true, true)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"},
 		Canonicalizer: ContentCanonicalizerFunc(func(r contentref.ContentRef) (contentref.ContentRef, bool) {
 			w, ok := galleryWork(r)
-			return w, ok && !(decline.Load() && w.ContentID == "7")
+			return w, ok && !(decline.Load() && w.ContentID == cid(7))
 		})})
 	u1 := access.Actor{ID: "u1", Kind: "user"}
-	mustReact(t, rt, u1, "gallery", "42:en", 1)
-	mustFavorite(t, rt, u1, "gallery", "7:en", true)
+	mustReact(t, rt, u1, "gallery", localeID(42, "en"), 1)
+	mustFavorite(t, rt, u1, "gallery", localeID(7, "en"), true)
 	decline.Store(true)
 	var sent []Preference
 	if _, err := rt.SyncPreferences(context.Background(), func(_ context.Context, page []Preference) error {
@@ -324,7 +336,7 @@ func TestPreferences_SyncSkipsTargetsTheCanonicalizerDeclines(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(sent) != 1 || sent[0].ContentID != "42" {
+	if len(sent) != 1 || sent[0].ContentID != cid(42) {
 		t.Fatalf("sent = %+v, want only the accepted target", sent)
 	}
 }
@@ -333,7 +345,7 @@ func TestPreferences_SyncSkipsTargetsTheCanonicalizerDeclines(t *testing.T) {
 func TestPreferences_FailedSyncKeepsTheWatermark(t *testing.T) {
 	rt := newPreferenceRuntime(t)
 	ctx := context.Background()
-	mustReact(t, rt, access.Actor{ID: "u1"}, "gallery", "42:en", 1)
+	mustReact(t, rt, access.Actor{ID: "u1"}, "gallery", localeID(42, "en"), 1)
 	if _, err := rt.SyncPreferences(ctx, func(context.Context, []Preference) error { return errors.New("sink down") }); err == nil {
 		t.Fatal("a failing send must surface")
 	}
@@ -353,14 +365,14 @@ func TestPreferences_RevisionFloorOnlyAdvances(t *testing.T) {
 	rt := newPreferenceRuntime(t)
 	ctx := context.Background()
 	actor := access.Actor{ID: "u1", Kind: "user"}
-	mustReact(t, rt, actor, "gallery", "42:en", 1)
+	mustReact(t, rt, actor, "gallery", localeID(42, "en"), 1)
 	floor := int64(1) << 40
 	got, err := rt.SeedPreferenceRevisionFloor(ctx, floor)
 	if err != nil || got < floor {
 		t.Fatalf("seed floor = %d err=%v, want >= %d", got, err, floor)
 	}
-	mustReact(t, rt, actor, "gallery", "42:en", -1)
-	_, rev, _ := row(t, rt, rt.store.t.reactions, "u1", "42")
+	mustReact(t, rt, actor, "gallery", localeID(42, "en"), -1)
+	_, rev, _ := row(t, rt, rt.store.t.reactions, "u1", cid(42))
 	if rev <= floor {
 		t.Fatalf("revision %d does not exceed the floor %d", rev, floor)
 	}

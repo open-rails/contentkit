@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -11,6 +12,9 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 )
+
+// cid is the n-th test content id, a canonical UUIDv7.
+func cid(n int) string { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) }
 
 func registry(t testing.TB) *media.Registry {
 	t.Helper()
@@ -32,7 +36,8 @@ func TestItemKeys(t *testing.T) {
 	sum := sha256.Sum256([]byte("page"))
 	blob := media.SHA256Name(sum[:])
 
-	g, err := r.Item(contentref.NewVersion("d", "gallery", "123", "0190c3"))
+	gid := cid(123)
+	g, err := r.Item(contentref.NewVersion("d", "gallery", gid, "0190c3"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,14 +47,14 @@ func TestItemKeys(t *testing.T) {
 	cover, _ := g.SlotOriginal("cover")
 	pub, _ := g.Public("cover")
 	for got, want := range map[string]string{
-		mk: "d/gallery/123/manifests/0190c3.json", bk: "d/gallery/123/blobs/" + blob, ok: "d/gallery/123/originals/" + blob,
-		cover: "d/gallery/123/originals/cover", pub: "d/gallery/123/public/cover.webp", g.BlobsPrefix(): "d/gallery/123/blobs/",
+		mk: "d/gallery/" + gid + "/manifests/0190c3.json", bk: "d/gallery/" + gid + "/blobs/" + blob, ok: "d/gallery/" + gid + "/originals/" + blob,
+		cover: "d/gallery/" + gid + "/originals/cover", pub: "d/gallery/" + gid + "/public/cover.webp", g.BlobsPrefix(): "d/gallery/" + gid + "/blobs/",
 	} {
 		if got != want {
 			t.Errorf("got %q want %q", got, want)
 		}
 	}
-	work, err := r.Item(contentref.New("d", "gallery", "123"))
+	work, err := r.Item(contentref.New("d", "gallery", gid))
 	if err != nil || work.BlobsPrefix() != g.BlobsPrefix() {
 		t.Fatalf("versions share the work folder: %v", err)
 	}
@@ -57,29 +62,31 @@ func TestItemKeys(t *testing.T) {
 		t.Fatal("versioned kind without version has no manifest")
 	}
 
-	p, _ := r.Item(contentref.New("o", "post", "501"))
-	if k, _ := p.ManifestKey(); k != "o/post/501/manifest.json" {
+	p, _ := r.Item(contentref.New("o", "post", cid(501)))
+	if k, _ := p.ManifestKey(); k != "o/post/"+cid(501)+"/manifest.json" {
 		t.Fatal(k)
 	}
-	u, _ := r.Item(contentref.New("o", "user", "42"))
-	if k, _ := u.Public("avatar_80"); k != "o/user/42/public/avatar_80.webp" {
+	u, _ := r.Item(contentref.New("o", "user", cid(42)))
+	if k, _ := u.Public("avatar_80"); k != "o/user/"+cid(42)+"/public/avatar_80.webp" {
 		t.Fatal(k)
 	}
-	if k, _ := u.SlotOriginal("avatar"); k != "o/user/42/originals/avatar" {
+	if k, _ := u.SlotOriginal("avatar"); k != "o/user/"+cid(42)+"/originals/avatar" {
 		t.Fatal(k)
 	}
 	up := media.NewUploadName()
-	if k, err := p.Original(up); err != nil || k != "o/post/501/staging/"+up {
+	if k, err := p.Original(up); err != nil || k != "o/post/"+cid(501)+"/staging/"+up {
 		t.Fatal(k, err)
 	}
 
 	for _, bad := range []contentref.ContentRef{
-		contentref.New("d", "nope", "1"),
-		contentref.New("d/x", "post", "1"),
+		contentref.New("d", "nope", cid(1)),
+		contentref.New("d/x", "post", cid(1)),
 		contentref.New("d", "post", "../1"),
 		contentref.New("d", "post", ".hidden"),
-		contentref.New("d", "post", "1").WithVersion("v1"),
+		contentref.New("d", "post", cid(1)).WithVersion("v1"),
 		contentref.New("d", "post", "é"),
+		contentref.New("d", "post", "1"),
+		contentref.New("d", "post", strings.ToUpper(cid(1))),
 	} {
 		if _, err := r.Item(bad); err == nil {
 			t.Errorf("accepted %s", bad)
@@ -162,10 +169,11 @@ func TestInlineImageKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, _ := r.Item(contentref.New("h", "post", "p1"))
+	pid := cid(1)
+	p, _ := r.Item(contentref.New("h", "post", pid))
 	name := media.NewInlineName()
 	orig, err := p.SlotOriginal(name)
-	if err != nil || orig != "h/post/p1/originals/"+name {
+	if err != nil || orig != "h/post/"+pid+"/originals/"+name {
 		t.Fatal(orig, err)
 	}
 	if !p.Inline(name) || p.Inline("cover") {
@@ -174,7 +182,7 @@ func TestInlineImageKeys(t *testing.T) {
 	if _, err := p.SlotRecord(name); err == nil {
 		t.Fatal("inline image has a slot record")
 	}
-	if k, _ := p.Public(name); k != "h/post/p1/public/"+name+".webp" {
+	if k, _ := p.Public(name); k != "h/post/"+pid+"/public/"+name+".webp" {
 		t.Fatal(k)
 	}
 	for _, bad := range []string{"i-1", "i-" + strings.ToUpper(name[2:]), "cover"} {
@@ -182,7 +190,7 @@ func TestInlineImageKeys(t *testing.T) {
 			t.Errorf("inline name %q accepted", bad)
 		}
 	}
-	g, _ := r.Item(contentref.New("h", "gallery", "g1"))
+	g, _ := r.Item(contentref.New("h", "gallery", cid(2)))
 	if _, err := g.SlotOriginal(name); err == nil {
 		t.Fatal("inline image accepted by a kind without Inline")
 	}
@@ -227,19 +235,20 @@ func TestVideoKindSlots(t *testing.T) {
 	if p, ok := k.Slots[media.PosterSlot]; !ok || p.Hash() != media.VideoPoster.Hash() || len(k.Slots) != 2 {
 		t.Fatalf("slots %+v", k.Slots)
 	}
-	v, _ := r.Item(contentref.New("h", "video", "9"))
+	vid := cid(9)
+	v, _ := r.Item(contentref.New("h", "video", vid))
 	// Posters and hover previews render to editor/ and are published to public/.
-	if v.HoverPreviewRecord() != "h/video/9/originals/hover_preview.json" || v.HoverPreviewOutput(640, true) != "h/video/9/editor/hover_preview_640.mp4" ||
-		v.HoverPreviewPublic(640, true) != "h/video/9/public/hover_preview_640.mp4" {
+	if v.HoverPreviewRecord() != "h/video/"+vid+"/originals/hover_preview.json" || v.HoverPreviewOutput(640, true) != "h/video/"+vid+"/editor/hover_preview_640.mp4" ||
+		v.HoverPreviewPublic(640, true) != "h/video/"+vid+"/public/hover_preview_640.mp4" {
 		t.Fatal(v.HoverPreviewRecord(), v.HoverPreviewOutput(640, true))
 	}
-	if k, _ := v.SlotOutput(media.PosterSlot, 960); k != "h/video/9/editor/poster_960.webp" {
+	if k, _ := v.SlotOutput(media.PosterSlot, 960); k != "h/video/"+vid+"/editor/poster_960.webp" {
 		t.Fatal(k)
 	}
-	if k, _ := v.SlotPublic(media.PosterSlot, 960); k != "h/video/9/public/poster_960.webp" {
+	if k, _ := v.SlotPublic(media.PosterSlot, 960); k != "h/video/"+vid+"/public/poster_960.webp" {
 		t.Fatal(k)
 	}
-	if k, _ := v.SlotOutput("banner", 600); k != "h/video/9/public/banner_600.webp" {
+	if k, _ := v.SlotOutput("banner", 600); k != "h/video/"+vid+"/public/banner_600.webp" {
 		t.Fatal("ungated slot", k)
 	}
 	for _, name := range []string{media.PosterSlot, media.HoverPreview, "exposure"} {

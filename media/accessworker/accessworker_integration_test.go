@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -33,6 +34,9 @@ var (
 	k2 = token.Key{ID: "k2", Secret: bytes.Repeat([]byte{2}, 32)}
 )
 
+// cid is the n-th test content id, a canonical UUIDv7.
+func cid(n int) string { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) }
+
 func sha(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return media.SHA256Name(sum[:])
@@ -56,12 +60,12 @@ type fixture struct {
 func seed(t *testing.T) *fixture {
 	t.Helper()
 	env := s3test.Open(t)
-	f := &fixture{env: env, item: env.Tenant + "/gallery/1/", bodyA: "0123456789abcdefghij"}
+	f := &fixture{env: env, item: env.Tenant + "/gallery/" + cid(1) + "/", bodyA: "0123456789abcdefghij"}
 	f.blobA = f.item + "blobs/" + sha("a")
 	f.blobB = f.item + "blobs/" + sha("b")
 	f.orig = f.item + "originals/" + sha("o")
 	f.public = f.item + "public/cover.webp"
-	f.other = env.Tenant + "/gallery/2/blobs/" + sha("c")
+	f.other = env.Tenant + "/gallery/" + cid(2) + "/blobs/" + sha("c")
 	ctx := context.Background()
 	for key, body := range map[string]string{
 		f.blobA: f.bodyA, f.blobB: "bee", f.other: "other", f.orig: "original",
@@ -228,7 +232,7 @@ func TestAccessWorker(t *testing.T) {
 
 	t.Run("cookie mode", func(t *testing.T) {
 		expect(t, do(t, srv, "GET", "/"+f.blobA, map[string]string{"Cookie": "mt=" + folder}), 200, f.bodyA)
-		otherFolder := cur.Sign(f.env.Tenant+"/gallery/2/blobs/", exp)
+		otherFolder := cur.Sign(f.env.Tenant+"/gallery/"+cid(2)+"/blobs/", exp)
 		denied(t, do(t, srv, "GET", "/"+f.blobA, map[string]string{"Cookie": "mt=" + otherFolder}))
 		expect(t, do(t, srv, "GET", "/"+f.blobA, map[string]string{"Cookie": "mt=" + otherFolder + "; mt=" + folder}), 200, f.bodyA)
 		denied(t, do(t, srv, "GET", "/"+f.blobA, map[string]string{"Cookie": "other=" + folder}))

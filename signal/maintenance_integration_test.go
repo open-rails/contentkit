@@ -20,6 +20,7 @@ func TestIntegrationInventoryAndPurgeContentKinds(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = conn.Exec(context.Background(), "SYSTEM START MERGES "+testDB+".signals") })
 	at := time.Date(2026, 5, 3, 9, 0, 0, 0, time.UTC)
+	videoID, tagID, creatorID := cid(1), cid(7), cid(9)
 	mk := func(tenant, kind, id, subject, typ, eventID string, rev uint64) Signal {
 		return Signal{ContentRef: contentref.New(tenant, kind, id), Subject: Subject{UserID: subject},
 			Type: typ, EventID: eventID, Revision: rev, OccurredAt: at, Progress: 1, ProgressMax: 2}
@@ -27,12 +28,12 @@ func TestIntegrationInventoryAndPurgeContentKinds(t *testing.T) {
 	for _, tenant := range []string{"hentai0", "doujins"} {
 		// A checkpoint revision arrives in a later request, so it is a separate raw row.
 		for _, batch := range [][]Signal{{
-			mk(tenant, "video", "1", "u1", TypeView, "s1", 1), mk(tenant, "tag", "7", "u1", TypeView, "s1:tag:7", 1),
-			mk(tenant, "creator", "9", "u1", TypeView, "s1:creator:9", 1),
-			mk(tenant, "video", "1", "u2", TypeView, "s2", 0), mk(tenant, "tag", "7", "u2", TypeView, "s2:tag:7", 0),
-			mk(tenant, "video", "1", "u2", "like", "l2", 0),
+			mk(tenant, "video", videoID, "u1", TypeView, "s1", 1), mk(tenant, "tag", tagID, "u1", TypeView, "s1:tag:7", 1),
+			mk(tenant, "creator", creatorID, "u1", TypeView, "s1:creator:9", 1),
+			mk(tenant, "video", videoID, "u2", TypeView, "s2", 0), mk(tenant, "tag", tagID, "u2", TypeView, "s2:tag:7", 0),
+			mk(tenant, "video", videoID, "u2", "like", "l2", 0),
 		}, {
-			mk(tenant, "video", "1", "u1", TypeView, "s1", 2), mk(tenant, "tag", "7", "u1", TypeView, "s1:tag:7", 2),
+			mk(tenant, "video", videoID, "u1", TypeView, "s1", 2), mk(tenant, "tag", tagID, "u1", TypeView, "s1:tag:7", 2),
 		}} {
 			if err := st.RecordSignals(ctx, tenant, batch); err != nil {
 				t.Fatal(err)
@@ -82,7 +83,7 @@ func TestIntegrationInventoryAndPurgeContentKinds(t *testing.T) {
 		t.Fatalf("video rows must remain: %+v", inv)
 	}
 	for _, tenant := range []string{"hentai0", "doujins"} {
-		co, err := st.CoEngaged(ctx, tenant, contentref.New(tenant, "video", "1"), CoEngagedOptions{Limit: 10})
+		co, err := st.CoEngaged(ctx, tenant, contentref.New(tenant, "video", videoID), CoEngagedOptions{Limit: 10})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -90,7 +91,7 @@ func TestIntegrationInventoryAndPurgeContentKinds(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		tag := contentref.New(tenant, "tag", "7")
+		tag := contentref.New(tenant, "tag", tagID)
 		m, err := st.Metrics(ctx, tenant, []ContentRef{tag}, AllTime())
 		if err != nil {
 			t.Fatal(err)
@@ -107,11 +108,11 @@ func TestIntegrationInventoryAndPurgeContentKinds(t *testing.T) {
 		t.Fatalf("purge is idempotent: %v", err)
 	}
 	// Forget clears one work (and its versions) for one subject only.
-	edition := contentref.NewVersion("doujins", "video", "1", "v1")
+	edition := contentref.NewVersion("doujins", "video", videoID, "v1")
 	if err := st.RecordSignals(ctx, "doujins", []Signal{{ContentRef: edition, Subject: Subject{UserID: "u1"}, Type: TypeView, EventID: "ed", OccurredAt: at, Progress: 1, ProgressMax: 2}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Forget(ctx, "doujins", Subject{UserID: "u1"}, "video", "1"); err != nil {
+	if err := st.Forget(ctx, "doujins", Subject{UserID: "u1"}, "video", videoID); err != nil {
 		t.Fatal(err)
 	}
 	states, err := st.States(ctx, "doujins", Subject{UserID: "u1"}, []ContentRef{edition, edition.Content()})

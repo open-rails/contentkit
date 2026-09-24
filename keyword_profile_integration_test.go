@@ -58,7 +58,7 @@ func TestKeywordProfileIntegration(t *testing.T) {
 		}
 	}
 
-	documents := map[string]string{"1": "Blue ocean"}
+	documents := map[string]string{cid(1): "Blue ocean"}
 	var buildErr error
 	opts := worker.Options{Pool: pool, Schema: "app", Tenant: testTenant, SupportedLanguages: []string{"en"}, ContentKinds: []string{"gallery"},
 		ListContent: func(context.Context, string, string, string, string, int) ([]ContentRef, string, bool, error) {
@@ -78,7 +78,7 @@ func TestKeywordProfileIntegration(t *testing.T) {
 		}}
 	mark := func(deleted bool) {
 		t.Helper()
-		if err := search.MarkDirty(ctx, pool, "app", []search.DirtyMark{{DocumentKey: DocumentKey{ContentRef: gallery("1"), Language: "en"}, Deleted: deleted}}); err != nil {
+		if err := search.MarkDirty(ctx, pool, "app", []search.DirtyMark{{DocumentKey: DocumentKey{ContentRef: gallery(cid(1)), Language: "en"}, Deleted: deleted}}); err != nil {
 			t.Fatal(err)
 		}
 		if err := worker.SyncOnce(ctx, opts); err != nil {
@@ -89,7 +89,7 @@ func TestKeywordProfileIntegration(t *testing.T) {
 	expectHits("Blue ocean", 1)
 	expectHits("azure", 1)
 	buildErr = errors.New("temporary source failure")
-	if err := search.MarkDirty(ctx, pool, "app", []search.DirtyMark{{DocumentKey: DocumentKey{ContentRef: gallery("1"), Language: "en"}, Reason: "retry"}}); err != nil {
+	if err := search.MarkDirty(ctx, pool, "app", []search.DirtyMark{{DocumentKey: DocumentKey{ContentRef: gallery(cid(1)), Language: "en"}, Reason: "retry"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := worker.SyncOnce(ctx, opts); !errors.Is(err, buildErr) {
@@ -100,15 +100,15 @@ func TestKeywordProfileIntegration(t *testing.T) {
 		t.Fatal("failed build lost pending retry")
 	}
 	buildErr = nil
-	documents["1"] = "Red forest"
+	documents[cid(1)] = "Red forest"
 	mark(false)
 	expectHits("Red forest", 1)
 	expectHits("Blue ocean", 0)
 	// Omitting a requested reference means the content no longer exists.
-	delete(documents, "1")
+	delete(documents, cid(1))
 	mark(false)
 	expectHits("Red forest", 0)
-	documents["1"] = "Amber field"
+	documents[cid(1)] = "Amber field"
 	mark(false)
 	expectHits("Amber field", 1)
 	mark(true)

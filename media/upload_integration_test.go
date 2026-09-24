@@ -26,7 +26,7 @@ import (
 )
 
 // grants is the host permission check: actor id → grant. "translator" may
-// upload to versions only; "owner2" to content id 2 only.
+// upload to versions only; "owner2" to content id cid(2) only.
 type grants map[string]media.UploadGrant
 
 func (g grants) CanUpload(_ context.Context, a access.Actor, ref contentref.ContentRef) (media.UploadGrant, error) {
@@ -34,7 +34,7 @@ func (g grants) CanUpload(_ context.Context, a access.Actor, ref contentref.Cont
 	case "translator":
 		return media.UploadGrant{Allowed: ref.Version() != ""}, nil
 	case "owner2":
-		return media.UploadGrant{Allowed: ref.ContentID == "2"}, nil
+		return media.UploadGrant{Allowed: ref.ContentID == cid(2)}, nil
 	}
 	return g[a.ID], nil
 }
@@ -208,7 +208,7 @@ func insert(name, original string) media.Op {
 func TestSingleUploadBindingsAndCommit(t *testing.T) {
 	e := newUploadEnv(t, nil, nil)
 	ctx := context.Background()
-	ref := media.RefBody{Kind: "gallery", ID: "1", Version: "en"}
+	ref := media.RefBody{Kind: "gallery", ID: cid(1), Version: "en"}
 	body := data(1, 4096)
 
 	for name, tc := range map[string]struct {
@@ -220,7 +220,8 @@ func TestSingleUploadBindingsAndCommit(t *testing.T) {
 		"over cap":        {"alice", media.PresignBody{Ref: ref, Type: "image/png", Size: 11 << 20, SHA256: hexSum(body)}, media.CodeTooLarge, 413},
 		"disallowed type": {"alice", media.PresignBody{Ref: ref, Type: "image/gif", Size: 10, SHA256: hexSum(body)}, media.CodeType, 415},
 		"missing hash":    {"alice", media.PresignBody{Ref: ref, Type: "image/png", Size: 10}, media.CodeInvalid, 400},
-		"unknown kind":    {"alice", media.PresignBody{Ref: media.RefBody{Kind: "nope", ID: "1"}, Type: "image/png", Size: 10, SHA256: hexSum(body)}, media.CodeNotFound, 404},
+		"unknown kind":    {"alice", media.PresignBody{Ref: media.RefBody{Kind: "nope", ID: cid(1)}, Type: "image/png", Size: 10, SHA256: hexSum(body)}, media.CodeNotFound, 404},
+		"invalid id":      {"alice", media.PresignBody{Ref: media.RefBody{Kind: "gallery", ID: "1", Version: "en"}, Type: "image/png", Size: 10, SHA256: hexSum(body)}, media.CodeInvalid, 400},
 		"not allowed":     {"reader", media.PresignBody{Ref: ref, Type: "image/png", Size: 10, SHA256: hexSum(body)}, media.CodeForbidden, 403},
 		"anonymous":       {"", media.PresignBody{Ref: ref, Type: "image/png", Size: 10, SHA256: hexSum(body)}, "unauthorized", 401},
 	} {
@@ -250,7 +251,7 @@ func TestSingleUploadBindingsAndCommit(t *testing.T) {
 	}
 
 	// A commit before the object lands, or naming another item's upload, finds nothing.
-	other := e.upload(t, "alice", media.RefBody{Kind: "gallery", ID: "2", Version: "en"}, "image/png", data(2, 100))
+	other := e.upload(t, "alice", media.RefBody{Kind: "gallery", ID: cid(2), Version: "en"}, "image/png", data(2, 100))
 	if status, _, er := e.commit(t, "alice", ref, insert("x.png", other)); status != 409 || er.Code != media.CodeNotUploaded || len(er.Originals) != 1 || er.Originals[0] != other {
 		t.Fatalf("foreign original: %d %+v", status, er)
 	}
@@ -298,7 +299,7 @@ func TestSingleUploadBindingsAndCommit(t *testing.T) {
 	if e.queue.count() != 4 {
 		t.Fatalf("%d processing jobs, want one per commit", e.queue.count())
 	}
-	man, _, err := e.manifests.Get(ctx, contentref.NewVersion(e.Tenant, "gallery", "1", "en"))
+	man, _, err := e.manifests.Get(ctx, contentref.NewVersion(e.Tenant, "gallery", cid(1), "en"))
 	if err != nil || len(man.Files) != 1 || man.Files[0].Name != "page-1.png" {
 		t.Fatalf("manifest %+v %v", man, err)
 	}
@@ -307,9 +308,9 @@ func TestSingleUploadBindingsAndCommit(t *testing.T) {
 func TestCommitRehashesWithoutChecksumEnforcement(t *testing.T) {
 	e := newUploadEnv(t, &media.Capabilities{ConditionalPut: true}, nil)
 	ctx := context.Background()
-	ref := media.RefBody{Kind: "post", ID: "7"}
+	ref := media.RefBody{Kind: "post", ID: cid(7)}
 	item, _ := media.NewRegistry(media.Kind{Name: "post"})
-	it, _ := item.Item(contentref.New(e.Tenant, "post", "7"))
+	it, _ := item.Item(contentref.New(e.Tenant, "post", cid(7)))
 
 	good := data(5, 5000)
 	name := e.upload(t, "alice", ref, "image/png", good)
@@ -335,13 +336,13 @@ func TestCommitRehashesWithoutChecksumEnforcement(t *testing.T) {
 func TestSlotUploadAndCommit(t *testing.T) {
 	e := newUploadEnv(t, nil, nil)
 	ctx := context.Background()
-	ref := media.RefBody{Kind: "gallery", ID: "9"}
+	ref := media.RefBody{Kind: "gallery", ID: cid(9)}
 	cover := data(7, 1234)
 	var p media.PresignReply
 	if status, er := e.call(t, "alice", "/presign", media.PresignBody{Ref: ref, Type: "image/png", Size: 1234, SHA256: hexSum(cover), Slot: "cover"}, &p); status != 200 {
 		t.Fatalf("slot presign %d %+v", status, er)
 	}
-	if !strings.HasSuffix(p.Put.URL[:strings.IndexByte(p.Put.URL, '?')], "/gallery/9/originals/cover") {
+	if !strings.HasSuffix(p.Put.URL[:strings.IndexByte(p.Put.URL, '?')], "/gallery/"+cid(9)+"/originals/cover") {
 		t.Fatalf("slot url %s", p.Put.URL)
 	}
 	if status, _ := e.call(t, "alice", "/presign", media.PresignBody{Ref: ref, Type: "image/png", Size: 1, SHA256: hexSum(cover), Slot: "banner"}, nil); status != 404 {
@@ -370,13 +371,13 @@ func TestSlotUploadAndCommit(t *testing.T) {
 	if e.queue.count() != 1 || e.queue.jobs[0].Slot != "cover" {
 		t.Fatalf("jobs %+v", e.queue.jobs)
 	}
-	obj, err := e.Store.Head(ctx, e.Tenant+"/gallery/9/originals/cover")
+	obj, err := e.Store.Head(ctx, e.Tenant+"/gallery/"+cid(9)+"/originals/cover")
 	if err != nil || obj.Size != 1234 {
 		t.Fatalf("slot original %+v %v", obj, err)
 	}
 
 	// The editor reads the committed original back; others may not.
-	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/slot-original", strings.NewReader(`{"ref":{"kind":"gallery","id":"9"},"slot":"cover"}`))
+	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/slot-original", strings.NewReader(`{"ref":{"kind":"gallery","id":"`+cid(9)+`"},"slot":"cover"}`))
 	req.Header.Set("X-Test-Actor", "alice")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -402,7 +403,7 @@ func TestSlotUploadAndCommit(t *testing.T) {
 	if status, er := e.call(t, "reader", "/edit-slot", media.SlotEditBody{Ref: ref, Slot: "cover", Edit: crop(0, 0, 300, 0)}, nil); status != 403 {
 		t.Fatalf("reader edited: %d %+v", status, er)
 	}
-	if status, er := e.call(t, "alice", "/edit-slot", media.SlotEditBody{Ref: media.RefBody{Kind: "gallery", ID: "10"}, Slot: "cover"}, nil); status != 404 {
+	if status, er := e.call(t, "alice", "/edit-slot", media.SlotEditBody{Ref: media.RefBody{Kind: "gallery", ID: cid(10)}, Slot: "cover"}, nil); status != 404 {
 		t.Fatalf("edit of an uncommitted slot: %d %+v", status, er)
 	}
 	// A new upload not committed yet cannot be edited or read back.
@@ -423,7 +424,7 @@ func TestSlotUploadAndCommit(t *testing.T) {
 	if status, er := e.call(t, "alice", "/slot", media.SlotRefBody{Ref: ref, Slot: "nope"}, nil); status != 404 {
 		t.Fatalf("unknown slot manifest: %d %+v", status, er)
 	}
-	rec, err := e.manifests.Slot(ctx, contentref.New(e.Tenant, "gallery", "9"), "cover")
+	rec, err := e.manifests.Slot(ctx, contentref.New(e.Tenant, "gallery", cid(9)), "cover")
 	if err != nil || rec.Original != obj.ETag || rec.Edit != nil {
 		t.Fatalf("record %+v %v", rec, err)
 	}
@@ -432,7 +433,7 @@ func TestSlotUploadAndCommit(t *testing.T) {
 func TestInlineUploadAndCommit(t *testing.T) {
 	e := newUploadEnv(t, nil, nil)
 	ctx := context.Background()
-	ref := media.RefBody{Kind: "post", ID: "p1"}
+	ref := media.RefBody{Kind: "post", ID: cid(101)}
 	img := data(8, 2048)
 	body := media.PresignBody{Ref: ref, Type: "image/png", Size: 2048, SHA256: hexSum(img), Inline: true}
 	var p, again media.PresignReply
@@ -443,7 +444,7 @@ func TestInlineUploadAndCommit(t *testing.T) {
 		t.Fatal("inline names must be fresh")
 	}
 	for _, bad := range []media.PresignBody{
-		{Ref: media.RefBody{Kind: "gallery", ID: "9"}, Type: "image/png", Size: 2048, SHA256: hexSum(img), Inline: true},
+		{Ref: media.RefBody{Kind: "gallery", ID: cid(9)}, Type: "image/png", Size: 2048, SHA256: hexSum(img), Inline: true},
 		{Ref: ref, Type: "image/png", Size: 2048, SHA256: hexSum(img), Slot: p.Name}, // no overwriting an inline image
 	} {
 		if status, _ := e.call(t, "alice", "/presign", bad, nil); status < 400 {
@@ -459,7 +460,7 @@ func TestInlineUploadAndCommit(t *testing.T) {
 	if e.queue.count() != 1 || e.queue.jobs[0].Slot != p.Name {
 		t.Fatalf("jobs %+v", e.queue.jobs)
 	}
-	if obj, err := e.Store.Head(ctx, e.Tenant+"/post/p1/originals/"+p.Name); err != nil || obj.Size != 2048 {
+	if obj, err := e.Store.Head(ctx, e.Tenant+"/post/"+cid(101)+"/originals/"+p.Name); err != nil || obj.Size != 2048 {
 		t.Fatalf("inline original %+v %v", obj, err)
 	}
 }
@@ -485,7 +486,7 @@ func (f *failingReader) Read(p []byte) (int, error) {
 func TestMultipartResumeAfterKilledPart(t *testing.T) {
 	e := newUploadEnv(t, nil, nil)
 	ctx := context.Background()
-	ref := media.RefBody{Kind: "video", ID: "88"}
+	ref := media.RefBody{Kind: "video", ID: cid(88)}
 	body := data(8, media.MaxSinglePut+(1<<20)+123)
 	var p media.PresignReply
 	if status, er := e.call(t, "alice", "/presign", media.PresignBody{Ref: ref, Type: "video/mp4", Size: int64(len(body))}, &p); status != 200 || p.Multipart == nil {
@@ -594,7 +595,7 @@ func TestMultipartResumeAfterKilledPart(t *testing.T) {
 	if status != 200 || c.Files[0].Size != int64(len(body)) || c.Files[0].Type != "video/mp4" {
 		t.Fatalf("commit %d %+v %+v", status, c, er)
 	}
-	stagedKey := e.Tenant + "/video/88/staging/" + p.Name
+	stagedKey := e.Tenant + "/video/"+cid(88)+"/staging/" + p.Name
 	rc, staged, err := e.Store.Get(ctx, stagedKey, media.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -607,7 +608,7 @@ func TestMultipartResumeAfterKilledPart(t *testing.T) {
 
 	// The worker places the staged upload under the SHA-256 it hashed; a rerun converges.
 	sum := sha256.Sum256(got)
-	cref := contentref.New(e.Tenant, "video", "88")
+	cref := contentref.New(e.Tenant, "video", cid(88))
 	for range 2 {
 		name, err := e.manifests.Place(ctx, cref, media.Staged{Name: p.Name, ETag: staged.ETag, SHA256: sum[:]})
 		if err != nil || name != media.SHA256Name(sum[:]) {
@@ -621,7 +622,7 @@ func TestMultipartResumeAfterKilledPart(t *testing.T) {
 	if _, err := e.Store.Head(ctx, stagedKey); !errors.Is(err, media.ErrNotFound) {
 		t.Fatalf("staging kept: %v", err)
 	}
-	placed, err := e.Store.Head(ctx, e.Tenant+"/video/88/originals/"+media.SHA256Name(sum[:]))
+	placed, err := e.Store.Head(ctx, e.Tenant+"/video/"+cid(88)+"/originals/"+media.SHA256Name(sum[:]))
 	if err != nil || placed.Size != int64(len(body)) || placed.ContentType != "video/mp4" {
 		t.Fatalf("placed original %+v %v", placed, err)
 	}
@@ -629,7 +630,7 @@ func TestMultipartResumeAfterKilledPart(t *testing.T) {
 
 func TestMultipartOverDeclaredSizeIsAborted(t *testing.T) {
 	e := newUploadEnv(t, nil, nil)
-	ref := media.RefBody{Kind: "video", ID: "89"}
+	ref := media.RefBody{Kind: "video", ID: cid(89)}
 	size := media.MaxSinglePut + 1
 	var p media.PresignReply
 	if status, _ := e.call(t, "alice", "/presign", media.PresignBody{Ref: ref, Type: "video/mp4", Size: int64(size)}, &p); status != 200 {
@@ -660,7 +661,7 @@ func TestMultipartOverDeclaredSizeIsAborted(t *testing.T) {
 
 func TestConcurrentCommitsToOneManifest(t *testing.T) {
 	e := newUploadEnv(t, nil, nil)
-	ref := media.RefBody{Kind: "gallery", ID: "3", Version: "ja"}
+	ref := media.RefBody{Kind: "gallery", ID: cid(3), Version: "ja"}
 	const n = 8
 	names := make([]string, n)
 	for i := range n {
@@ -677,7 +678,7 @@ func TestConcurrentCommitsToOneManifest(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	man, _, err := e.manifests.Get(context.Background(), contentref.NewVersion(e.Tenant, "gallery", "3", "ja"))
+	man, _, err := e.manifests.Get(context.Background(), contentref.NewVersion(e.Tenant, "gallery", cid(3), "ja"))
 	if err != nil || len(man.Files) != n {
 		t.Fatalf("%d of %d commits landed: %v", len(man.Files), n, err)
 	}
@@ -693,7 +694,7 @@ func TestUploadLimiter(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := newUploadEnv(t, nil, limiter)
-	ref := media.RefBody{Kind: "post", ID: "501"}
+	ref := media.RefBody{Kind: "post", ID: cid(501)}
 	usage := func() (int64, int64) {
 		used, pending, err := limiter.Usage(ctx, e.Tenant, "chan-a")
 		if err != nil {
@@ -769,7 +770,7 @@ func TestUploadLimiter(t *testing.T) {
 		}
 	}
 	var keys []string
-	for obj, err := range e.Store.List(ctx, e.Tenant+"/post/501/originals/") {
+	for obj, err := range e.Store.List(ctx, e.Tenant+"/post/"+cid(501)+"/originals/") {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -844,7 +845,7 @@ func TestUploadLimiterBytesPerDayAndExpiry(t *testing.T) {
 func TestSlotWritesAuthorizeTheWork(t *testing.T) {
 	e := newUploadEnv(t, nil, nil)
 	ctx := context.Background()
-	version := media.RefBody{Kind: "gallery", ID: "9", Version: "en"}
+	version := media.RefBody{Kind: "gallery", ID: cid(9), Version: "en"}
 	cover := data(9, 1500)
 
 	// A version uploader may commit pages but not write the work's slot.
@@ -868,7 +869,7 @@ func TestSlotWritesAuthorizeTheWork(t *testing.T) {
 	if status, er := e.call(t, "translator", "/commit-slot-from-file", media.SlotFromFileBody{Ref: version, Slot: "cover", File: "001.png"}, nil); status != 403 {
 		t.Fatalf("slot from a version file: %d %+v", status, er)
 	}
-	if status, er := e.call(t, "translator", "/presign", media.PresignBody{Ref: media.RefBody{Kind: "post", ID: "p9"}, Type: "image/png", Size: 1500, SHA256: hexSum(cover), Inline: true}, nil); status != 403 {
+	if status, er := e.call(t, "translator", "/presign", media.PresignBody{Ref: media.RefBody{Kind: "post", ID: cid(109)}, Type: "image/png", Size: 1500, SHA256: hexSum(cover), Inline: true}, nil); status != 403 {
 		t.Fatalf("inline presign: %d %+v", status, er)
 	}
 	if status, er := e.call(t, "alice", "/commit-slot-from-file", media.SlotFromFileBody{Ref: version, Slot: "cover", File: "001.png"}, nil); status != 200 {
@@ -876,7 +877,7 @@ func TestSlotWritesAuthorizeTheWork(t *testing.T) {
 	}
 
 	// From another item: both items must allow the actor.
-	other := media.RefBody{Kind: "gallery", ID: "2"}
+	other := media.RefBody{Kind: "gallery", ID: cid(2)}
 	from := media.SlotFromFileBody{Ref: other, Slot: "cover", From: &version, File: "001.png"}
 	if status, er := e.call(t, "owner2", "/commit-slot-from-file", from, nil); status != 403 {
 		t.Fatalf("slot from an unauthorized item: %d %+v", status, er)
@@ -884,11 +885,11 @@ func TestSlotWritesAuthorizeTheWork(t *testing.T) {
 	if status, er := e.call(t, "alice", "/commit-slot-from-file", from, nil); status != 200 {
 		t.Fatalf("slot from another item: %d %+v", status, er)
 	}
-	if obj, err := e.Store.Head(ctx, e.Tenant+"/gallery/2/originals/cover"); err != nil || obj.Size != 1500 {
+	if obj, err := e.Store.Head(ctx, e.Tenant+"/gallery/"+cid(2)+"/originals/cover"); err != nil || obj.Size != 1500 {
 		t.Fatalf("copied slot %+v %v", obj, err)
 	}
 	last := e.queue.jobs[e.queue.count()-1]
-	if last.Slot != "cover" || last.Ref.ContentID != "2" || last.Ref.Version() != "" {
+	if last.Slot != "cover" || last.Ref.ContentID != cid(2) || last.Ref.Version() != "" {
 		t.Fatalf("job %+v", last)
 	}
 }
@@ -904,7 +905,7 @@ func TestCommitEnforcesQuota(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := newUploadEnv(t, nil, limiter)
-	ref := media.RefBody{Kind: "post", ID: "q1"}
+	ref := media.RefBody{Kind: "post", ID: cid(117)}
 	a, b, c := data(401, 3000), data(402, 3000), data(403, 1000)
 	na, nb, nc := e.upload(t, "alice", ref, "image/png", a), e.upload(t, "alice", ref, "image/png", b), e.upload(t, "alice", ref, "image/png", c)
 	if status, _, er := e.commit(t, "alice", ref, insert("a.png", na)); status != 200 {
@@ -923,7 +924,7 @@ func TestCommitEnforcesQuota(t *testing.T) {
 	if used, _, err := limiter.Usage(ctx, e.Tenant, "chan-a"); err != nil || used != 4000 {
 		t.Fatalf("used %d %v", used, err)
 	}
-	man, _, err := e.manifests.Get(ctx, contentref.New(e.Tenant, "post", "q1"))
+	man, _, err := e.manifests.Get(ctx, contentref.New(e.Tenant, "post", cid(117)))
 	if err != nil || len(man.Files) != 2 || man.OriginalBytes() != 4000 {
 		t.Fatalf("manifest %+v %v", man, err)
 	}

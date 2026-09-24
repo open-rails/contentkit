@@ -16,7 +16,7 @@ import (
 func deliveries(tenant string) []Signal {
 	day := func(d, h int) time.Time { return time.Date(2026, 5, d, h, 0, 0, 0, time.UTC) }
 	u1, u2, u3, a1 := Subject{UserID: "u1"}, Subject{UserID: "u2"}, Subject{UserID: "u3"}, Subject{AnonKey: "a1"}
-	g := func(id string) ContentRef { return gallery(tenant, id) }
+	g := func(id string) ContentRef { return gallery(tenant, lid(id)) }
 	var out []Signal
 	for r := uint64(1); r <= 4; r++ {
 		out = append(out, Signal{ContentRef: g("g1"), Subject: u1, Type: TypeView, EventID: "s1", Revision: r,
@@ -55,38 +55,41 @@ func snapshot(t *testing.T, st *Store, tenant string) storeSnapshot {
 	subjects := []Subject{{UserID: "u1"}, {UserID: "u2"}, {UserID: "u3"}, {AnonKey: "a1"}}
 	snap := storeSnapshot{States: map[string]map[string]State{}, History: map[string][]string{}, Metrics: map[string]map[string]ContentMetrics{}, Popular: map[string][]string{}, CoEng: map[string]int64{}}
 	for _, s := range subjects {
-		states, err := st.States(ctx, tenant, s, refs(tenant, "g1", "g2", "g3"))
+		states, err := st.States(ctx, tenant, s, refs(tenant, lid("g1"), lid("g2"), lid("g3")))
 		if err != nil {
 			t.Fatal(err)
 		}
 		snap.States[s.Key()] = map[string]State{}
 		for k, v := range states {
-			snap.States[s.Key()][k.ContentID] = v
+			snap.States[s.Key()][lname(k.ContentID)] = v
 		}
 		hist, err := st.History(ctx, tenant, s, HistoryOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, h := range hist {
-			snap.History[s.Key()] = append(snap.History[s.Key()], fmt.Sprintf("%s:%+v", h.ContentID, h.State))
+			snap.History[s.Key()] = append(snap.History[s.Key()], fmt.Sprintf("%s:%+v", lname(h.ContentID), h.State))
 		}
 	}
 	for _, w := range []Window{AllTime(), Between(time.Date(2026, 5, 6, 0, 0, 0, 0, time.UTC), time.Date(2026, 5, 7, 0, 0, 0, 0, time.UTC)), LastDays(30, time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC))} {
-		snap.Metrics[w.String()] = metricsByID(t, st, tenant, []string{"g1", "g2", "g3"}, w)
+		snap.Metrics[w.String()] = map[string]ContentMetrics{}
+		for id, m := range metricsByID(t, st, tenant, []string{lid("g1"), lid("g2"), lid("g3")}, w) {
+			snap.Metrics[w.String()][lname(id)] = m
+		}
 		hits, err := st.Popular(ctx, tenant, "gallery", PopularOptions{Window: w, Limit: 10})
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, h := range hits {
-			snap.Popular[w.String()] = append(snap.Popular[w.String()], fmt.Sprintf("%s:%g:%+v", h.ContentID, h.Score, h.ContentMetrics))
+			snap.Popular[w.String()] = append(snap.Popular[w.String()], fmt.Sprintf("%s:%g:%+v", lname(h.ContentID), h.Score, h.ContentMetrics))
 		}
 	}
-	co, err := st.CoEngaged(ctx, tenant, gallery(tenant, "g1"), CoEngagedOptions{SkipRollup: true})
+	co, err := st.CoEngaged(ctx, tenant, gallery(tenant, lid("g1")), CoEngagedOptions{SkipRollup: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, h := range co {
-		snap.CoEng[h.ContentID] = h.Strength
+		snap.CoEng[lname(h.ContentID)] = h.Strength
 	}
 	return snap
 }
@@ -192,7 +195,7 @@ func TestIntegrationMetricsAreTruthful(t *testing.T) {
 	st, _ := freshStore(t)
 	ctx := context.Background()
 	day := func(d int) time.Time { return time.Date(2026, 5, d, 9, 0, 0, 0, time.UTC) }
-	w := gallery("t", "w")
+	w := gallery("t", lid("w"))
 	edition := func(v string) ContentRef { return w.WithVersion(v) }
 	var sigs []Signal
 	session := func(sub Subject, id, version string, d int, completed bool) {
@@ -258,14 +261,14 @@ func TestIntegrationProjectionVersionsAndOrphanDays(t *testing.T) {
 	st, conn := freshStore(t)
 	ctx := context.Background()
 	sub := Subject{UserID: "u"}
-	ref := gallery("t", "g")
+	ref := gallery("t", lid("g"))
 	d := func(day int) time.Time { return time.Date(2026, 5, day, 0, 0, 0, 0, time.UTC) }
 	rev := func(r uint64, occurred time.Time) Signal {
 		return Signal{ContentRef: ref, Subject: sub, Type: TypeView, EventID: "s", Revision: r, OccurredAt: occurred, DurationS: uint32(r), Progress: uint32(r), ProgressMax: 64}
 	}
 	viewsOn := func(day int) uint64 {
 		t.Helper()
-		return metricsByID(t, st, "t", []string{"g"}, Between(d(day), d(day+1)))["g"].Views
+		return metricsByID(t, st, "t", []string{lid("g")}, Between(d(day), d(day+1)))[lid("g")].Views
 	}
 	if err := st.RecordSignals(ctx, "t", []Signal{rev(1, d(5).Add(time.Hour))}); err != nil {
 		t.Fatal(err)
@@ -279,7 +282,7 @@ func TestIntegrationProjectionVersionsAndOrphanDays(t *testing.T) {
 
 	// A stale nonzero day row left by an interrupted projection.
 	if err := conn.Exec(ctx, `INSERT INTO `+testDB+`.subject_content_daily (tenant, content_kind, content_id, subject_kind, subject, day, events, views, completions, active_s, score_sum, value_sum, type_counts, version)
-VALUES ('t', 'gallery', 'g', 'user', 'u', '2026-05-03', 1, 1, 0, 0, 0, 0, map('view', 1), '2000-01-01 00:00:00')`); err != nil {
+VALUES ('t', 'gallery', '`+lid("g")+`', 'user', 'u', '2026-05-03', 1, 1, 0, 0, 0, 0, map('view', 1), '2000-01-01 00:00:00')`); err != nil {
 		t.Fatal(err)
 	}
 	if viewsOn(3) != 1 {

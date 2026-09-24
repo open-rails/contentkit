@@ -27,7 +27,7 @@ func limitReplicas(t *testing.T, n int, limit media.ViewerLimit) ([]http.Handler
 	}
 	ms := s3test.Manifests(t, env.Store, kinds, media.ManifestOptions{})
 	reader, err := media.NewReader(media.ReaderOptions{Manifests: ms, Kinds: kinds,
-		Resolver: verdicts{"1": {Visible: true, Accessible: true}},
+		Resolver: verdicts{cid(1): {Visible: true, Accessible: true}},
 		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: "https://media.example", SigningKey: k2}})
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func limitReplicas(t *testing.T, n int, limit media.ViewerLimit) ([]http.Handler
 		hs[i] = reader.Handler(media.HandlerOptions{Tenant: env.Tenant, Identity: actorHeader{}, Limit: limit})
 	}
 	return hs, func(h http.Handler, actor string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest("GET", "/post/1", nil)
+		req := httptest.NewRequest("GET", "/post/"+cid(1), nil)
 		req = req.WithContext(context.WithValue(req.Context(), actorHeader{}, access.Actor{ID: actor}))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)

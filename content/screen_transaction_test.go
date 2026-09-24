@@ -106,7 +106,7 @@ func TestPausedCommentScreeningCannotOverwriteNewerEdit(t *testing.T) {
 	rt := moderatedRuntime(t, mod)
 	author := access.Actor{ID: "author"}
 	ctx := context.Background()
-	cm := mustComment(t, rt, author, "gallery", "1", createInput{Body: "public"})
+	cm := mustComment(t, rt, author, "gallery", cid(1), createInput{Body: "public"})
 	done := make(chan error, 1)
 	go func() { _, err := rt.comments.edit(ctx, author, cm.ID, "paused edit"); done <- err }()
 	<-mod.entered

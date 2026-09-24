@@ -40,7 +40,7 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
   }
 
   it("uploads a small image and commits it", async () => {
-    const ref = { kind: "gallery", id: "1", version: "en" };
+    const ref = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000001", version: "en" };
     const body = bytes(4096, 7);
     const c = client();
     const up = await c.upload(new File([body], "a.png", { type: "image/png" }), { ref });
@@ -56,7 +56,7 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
   });
 
   it("uploads an inline image under a server-chosen name and commits it", async () => {
-    const ref = { kind: "post", id: "p1" };
+    const ref = { kind: "post", id: "0192f000-0000-7000-8000-000000000003" };
     const body = bytes(2048, 9);
     const up = await client().uploadInline(new File([body], "i.png", { type: "image/png" }), { ref });
     expect(up.name).toMatch(/^i-[0-9a-f-]{36}$/);
@@ -64,7 +64,7 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
   });
 
   it("edits a file, sets a slot from it and refuses files over the kind's cap", async () => {
-    const ref = { kind: "post", id: "1" };
+    const ref = { kind: "post", id: "0192f000-0000-7000-8000-000000000001" };
     const c = client();
     const page = bytes(3000, 11);
     const a = await c.upload(new File([page], "a.png", { type: "image/png" }), { ref });
@@ -93,7 +93,7 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
   it("uploads a slot original with an edit, re-edits it and serves the original back", async () => {
     // 360×240; the cover slot is 3:1, so a 360-wide crop is 120 high.
     const png = readFileSync(new URL("../e2e/fixtures/small.png", import.meta.url));
-    const ref = { kind: "gallery", id: "slots", version: "en" };
+    const ref = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000004", version: "en" };
     const c = client();
     const puts: string[] = [];
     const counting: Transport = async (req, blob, o) => {
@@ -119,13 +119,13 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
 
     expect((await c.editSlot(ref, "cover", { rotate: 45 }).catch((e) => e)).code).toBe("invalid_request");
     expect((await c.editSlot(ref, "banner", edit).catch((e) => e)).code).toBe("not_found");
-    expect((await c.getSlotOriginal({ ...ref, id: "empty" }, "cover").catch((e) => e)).code).toBe("not_found");
+    expect((await c.getSlotOriginal({ ...ref, id: "0192f000-0000-7000-8000-000000000005" }, "cover").catch((e) => e)).code).toBe("not_found");
   });
 
   it("uploads a stale original again when commit refuses it", async () => {
     // The server's sweep grace is 20 s: commit refuses an unreferenced original after 15 s,
     // and accepts a fresh one for 14 s (presign reuses one for 9 s).
-    const ref = { kind: "gallery", id: "2", version: "en" };
+    const ref = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000002", version: "en" };
     const body = bytes(2048, 8);
     const file = new File([body], "b.png", { type: "image/png" });
     const c = client();
@@ -138,7 +138,7 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
   });
 
   it("survives a killed connection mid-part, resumes and commits a >64 MiB file", async () => {
-    const ref = { kind: "video", id: "1" };
+    const ref = { kind: "video", id: "0192f000-0000-7000-8000-000000000001" };
     const body = bytes(72 * MiB + 4321, 9);
     const file = new File([body], "v.mp4", { type: "video/mp4", lastModified: 1 });
 

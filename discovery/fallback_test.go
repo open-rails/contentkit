@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -22,6 +23,9 @@ func (f fixed) Similar(context.Context, contentref.ContentRef, Query) ([]Candida
 func (f fixed) ForSubject(context.Context, signal.Subject, Query) ([]Candidate, error) {
 	return f.out, f.err
 }
+
+// cid is a deterministic canonical UUIDv7 content id; cid(n) sorts in n order.
+func cid(n int) string { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) }
 
 func refs(ids ...string) []Candidate {
 	out := make([]Candidate, 0, len(ids))
@@ -51,10 +55,10 @@ func TestFallback(t *testing.T) {
 		wantErr            bool
 		reports            int
 	}{
-		{"full primary", fixed{out: refs("a", "b")}, fixed{err: boom}, []string{"a", "b"}, false, 0},
-		{"primary error", fixed{err: boom}, fixed{out: refs("x")}, []string{"x"}, false, 1},
-		{"thin primary filled", fixed{out: refs("a")}, fixed{out: refs("a", "x")}, []string{"a", "x"}, false, 0},
-		{"thin primary, secondary error", fixed{out: refs("a")}, fixed{err: boom}, []string{"a"}, false, 1},
+		{"full primary", fixed{out: refs(cid(1), cid(2))}, fixed{err: boom}, []string{cid(1), cid(2)}, false, 0},
+		{"primary error", fixed{err: boom}, fixed{out: refs(cid(3))}, []string{cid(3)}, false, 1},
+		{"thin primary filled", fixed{out: refs(cid(1))}, fixed{out: refs(cid(1), cid(3))}, []string{cid(1), cid(3)}, false, 0},
+		{"thin primary, secondary error", fixed{out: refs(cid(1))}, fixed{err: boom}, []string{cid(1)}, false, 1},
 		{"both fail", fixed{err: boom}, fixed{err: boom}, nil, true, 1},
 	}
 	for _, tc := range cases {

@@ -49,6 +49,7 @@ export {
   type PlaybackErrorKind,
 } from "./playback.js";
 export { UploadError, slotError, type UploadErrorCode } from "./errors.js";
+export { checkRef, isContentId } from "./ref.js";
 export { encodeRemaining } from "./encode.js";
 export { sha256Hex } from "./hash.js";
 export { Pacer, type PacerOptions } from "./pacer.js";

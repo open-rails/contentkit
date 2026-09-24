@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/open-rails/contentkit/contentref"
 )
 
 // Stable upload error codes: clients (the browser SDK) branch on Code.
@@ -12,7 +14,7 @@ const (
 	CodeInvalid      = "invalid_request"   // 400
 	CodeForbidden    = "forbidden"         // 403
 	CodeNotFound     = "not_found"         // 404: unknown kind, file or upload
-	CodeConflict     = "conflict"          // 409: file name taken
+	CodeConflict     = "conflict"          // 409: file name taken, or a new item's folder not empty
 	CodeIncomplete   = "incomplete"        // 409: multipart parts missing
 	CodeNotUploaded  = "not_uploaded"      // 409: commit before the object landed
 	CodeTooManyFiles = "too_many_files"    // 409: the commit would exceed the kind's file caps
@@ -143,6 +145,10 @@ func AsUploadError(err error) (*UploadError, bool) {
 		return &UploadError{Code: CodeTooLarge, Message: err.Error()}, true
 	case errors.Is(err, ErrUnknownKind):
 		return &UploadError{Code: CodeNotFound, Message: err.Error()}, true
+	case errors.Is(err, contentref.ErrInvalidID):
+		return &UploadError{Code: CodeInvalid, Message: err.Error()}, true
+	case errors.Is(err, ErrFolderNotEmpty):
+		return &UploadError{Code: CodeConflict, Message: err.Error()}, true
 	}
 	return nil, false
 }

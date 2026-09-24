@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	stdimage "image"
 	"image/color"
 	"image/jpeg"
@@ -33,6 +34,9 @@ var (
 	high  = media.Spec{Quality: 90}
 	cover = media.Slot{Aspect: media.Aspect3x1, Widths: []int{150, 300, 600}}
 )
+
+// cid is the n-th test content id, a canonical UUIDv7.
+func cid(n int) string { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) }
 
 func galleryKind() media.Kind {
 	return media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
@@ -247,7 +251,7 @@ func ins(name, original string) media.Op {
 
 func TestVariantsZipAndSkip(t *testing.T) {
 	e := newEnv(t, galleryKind())
-	ref := contentref.NewVersion(e.Tenant, "gallery", "1", "en")
+	ref := contentref.NewVersion(e.Tenant, "gallery", cid(1), "en")
 	p1, p2 := pngImage(t, 800, 1200, 1), pngImage(t, 600, 900, 2)
 	e.commit(t, ref, ins("001.png", e.upload(t, ref, "", p1)), ins("002.png", e.upload(t, ref, "", p2)))
 	e.drain(t)
@@ -309,7 +313,7 @@ func TestVariantsZipAndSkip(t *testing.T) {
 
 func TestSpecChangeAndZipRebuild(t *testing.T) {
 	e := newEnv(t, galleryKind())
-	ref := contentref.NewVersion(e.Tenant, "gallery", "2", "en")
+	ref := contentref.NewVersion(e.Tenant, "gallery", cid(2), "en")
 	e.commit(t, ref, ins("001.png", e.upload(t, ref, "", pngImage(t, 400, 600, 3))),
 		ins("002.png", e.upload(t, ref, "", pngImage(t, 400, 600, 4))))
 	e.drain(t)
@@ -376,7 +380,7 @@ func TestSpecChangeAndZipRebuild(t *testing.T) {
 
 func TestConcurrentEdits(t *testing.T) {
 	e := newEnv(t, galleryKind())
-	ref := contentref.NewVersion(e.Tenant, "gallery", "3", "en")
+	ref := contentref.NewVersion(e.Tenant, "gallery", cid(3), "en")
 	e.commit(t, ref, ins("001.png", e.upload(t, ref, "", pngImage(t, 300, 400, 6))),
 		ins("002.png", e.upload(t, ref, "", pngImage(t, 300, 400, 7))))
 	e.queue.take()
@@ -456,7 +460,7 @@ func zipOf(t *testing.T, e *env, ref contentref.ContentRef, m *media.Manifest) {
 
 func TestUndecodableReportsFailed(t *testing.T) {
 	e := newEnv(t, galleryKind())
-	ref := contentref.NewVersion(e.Tenant, "gallery", "4", "en")
+	ref := contentref.NewVersion(e.Tenant, "gallery", cid(4), "en")
 	e.commit(t, ref, ins("001.png", e.upload(t, ref, "", pngImage(t, 200, 200, 1))),
 		ins("002.png", e.upload(t, ref, "", []byte("not an image at all"))))
 	e.drain(t)
@@ -474,7 +478,7 @@ func TestUndecodableReportsFailed(t *testing.T) {
 // loader sniffs them (PDF, SVG, ImageMagick...).
 func TestDeclaredTypeBindsTheDecoder(t *testing.T) {
 	e := newEnv(t, galleryKind())
-	ref := contentref.NewVersion(e.Tenant, "gallery", "7", "en")
+	ref := contentref.NewVersion(e.Tenant, "gallery", cid(7), "en")
 	var jpg bytes.Buffer
 	if err := jpeg.Encode(&jpg, stdimage.NewRGBA(stdimage.Rect(0, 0, 64, 64)), nil); err != nil {
 		t.Fatal(err)
@@ -492,7 +496,7 @@ func TestDeclaredTypeBindsTheDecoder(t *testing.T) {
 	if len(m.Files[0].Variants) != 3 || len(m.Files[1].Variants) != 0 || len(m.Files[2].Variants) != 0 {
 		t.Fatalf("manifest: %+v", m)
 	}
-	if _, err := e.Env.Store.Head(context.Background(), e.Tenant+"/gallery/7/public/cover_150.webp"); !errors.Is(err, media.ErrNotFound) {
+	if _, err := e.Env.Store.Head(context.Background(), e.Tenant+"/gallery/"+cid(7)+"/public/cover_150.webp"); !errors.Is(err, media.ErrNotFound) {
 		t.Fatalf("cover derived from an SVG declared image/png: %v", err)
 	}
 }
@@ -502,7 +506,7 @@ func TestDeclaredTypeBindsTheDecoder(t *testing.T) {
 func TestProcessDoesNotResurrectADeletedItem(t *testing.T) {
 	e := newEnv(t, galleryKind())
 	ctx := context.Background()
-	ref := contentref.NewVersion(e.Tenant, "gallery", "gone", "v1")
+	ref := contentref.NewVersion(e.Tenant, "gallery", cid(99), "v1")
 	e.commit(t, ref, media.Op{Op: media.OpInsert, Name: "1.png", Original: e.uploadAs(t, ref, "", "image/png", pngImage(t, 64, 64, 1))})
 	item, _ := e.kinds.Item(ref)
 	key, _ := item.ManifestKey()
