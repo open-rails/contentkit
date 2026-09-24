@@ -22,30 +22,34 @@ func decodeErr(t *testing.T, body string) errorBody {
 	return e
 }
 
-// A host that never wired Storage/Media must get 501 not_configured on every
-// upload route, not a 500 indistinguishable from a crash.
-func TestErrorMapping_UnwiredMediaStoreIs501(t *testing.T) {
+// A host that never wired Media must get 501 not_configured on every image
+// route, not a 500 indistinguishable from a crash.
+func TestErrorMapping_UnwiredMediaIs501(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{Perms: Perms{PostWrite: "post", PollWrite: "poll"}})
 	admin := access.Actor{ID: "admin"}
 	poll, err := rt.polls.create(context.Background(), admin, createPollInput{Question: "Q?", Options: []createOptionInput{{Label: "A"}, {Label: "B"}}})
 	if err != nil {
 		t.Fatalf("create poll: %v", err)
 	}
-
-	for _, path := range []string{"/posts/media", "/polls/" + poll.ID + "/image", "/polls/options/" + poll.Options[0].ID + "/image"} {
-		req := multipartUpload(t, "POST", path, []byte("PNGDATA"))
+	post := insertPost(t, rt)
+	name := image("i-00000000-0000-4000-8000-000000000000")
+	for _, route := range []string{"PUT /posts/" + post + "/cover", "POST /posts/" + post + "/images", "PUT /polls/" + poll.ID + "/image",
+		"PUT /polls/" + poll.ID + "/options/" + poll.Options[0].ID + "/image"} {
+		method, path, _ := strings.Cut(route, " ")
+		b, _ := json.Marshal(name)
+		req := httptest.NewRequest(method, path, bytes.NewReader(b))
 		req = req.WithContext(withActor(req.Context(), admin))
 		rec := httptest.NewRecorder()
 		rt.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusNotImplemented {
-			t.Fatalf("POST %s -> %d %s, want 501", path, rec.Code, rec.Body.String())
+			t.Fatalf("%s -> %d %s, want 501", route, rec.Code, rec.Body.String())
 		}
 		got := decodeErr(t, rec.Body.String())
 		if got.Code != CodeNotConfigured {
-			t.Fatalf("POST %s -> code %q, want %q", path, got.Code, CodeNotConfigured)
+			t.Fatalf("%s -> code %q, want %q", route, got.Code, CodeNotConfigured)
 		}
 		if strings.Contains(got.Error, "content:") {
-			t.Fatalf("POST %s leaks the internal error text: %q", path, got.Error)
+			t.Fatalf("%s leaks the internal error text: %q", route, got.Error)
 		}
 	}
 }

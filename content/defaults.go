@@ -13,13 +13,6 @@ func (noopEnricher) UsersByIDs(context.Context, []string) (map[string]PublicUser
 	return map[string]PublicUser{}, nil
 }
 
-// unsupportedMediaStore rejects uploads (no MediaStore wired).
-type unsupportedMediaStore struct{}
-
-func (unsupportedMediaStore) Put(context.Context, string, []byte, string) (string, error) {
-	return "", errUnsupportedMedia
-}
-
 // stripProcessor is the default ContentProcessor: strip HTML tags to plain text.
 type stripProcessor struct{}
 

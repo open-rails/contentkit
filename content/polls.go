@@ -78,17 +78,15 @@ type createPollInput struct {
 	Kind     string              `json:"kind,omitempty"` // default multiple_choice
 	Question string              `json:"question"`
 	Language string              `json:"language"`
-	ImageURL string              `json:"image_url,omitempty"`
 	LiveAt   *time.Time          `json:"live_at,omitempty"`   // nil = live now
 	ClosesAt *time.Time          `json:"closes_at,omitempty"` // nil = open until deactivated
 	Options  []createOptionInput `json:"options,omitempty"`
 }
 
-// createOptionInput takes image_url directly (the MediaStore upload path is the
-// host's job before calling — the kit stores the resolved url).
+// createOptionInput is one option of a new poll. Images are set once the poll
+// exists (PUT /polls/{id}/options/{oid}/image), since they live in its folder.
 type createOptionInput struct {
 	Label    string `json:"label"`
-	ImageURL string `json:"image_url"`
 	Position int    `json:"position"`
 }
 
@@ -98,7 +96,6 @@ type updatePollInput struct {
 	IsActive *bool      `json:"is_active"`
 	LiveAt   *time.Time `json:"live_at"`
 	ClosesAt *time.Time `json:"closes_at"`
-	ImageURL *string    `json:"image_url"`
 }
 
 // --- admin (PollWrite-gated) ---
@@ -147,14 +144,14 @@ func (p *polls) create(ctx context.Context, actor access.Actor, in createPollInp
 
 	var id string
 	if err := tx.QueryRow(ctx, `INSERT INTO `+p.s.t.pollQuestions+`
-		(tenant_id, kind, question, language, image_url, live_at, closes_at) VALUES ($1, $2, $3, $4, $5, COALESCE($6, now()), $7)
-		RETURNING id::text`, p.s.tenant, in.Kind, in.Question, in.Language, nullIf(in.ImageURL), in.LiveAt, in.ClosesAt).Scan(&id); err != nil {
+		(tenant_id, kind, question, language, live_at, closes_at) VALUES ($1, $2, $3, $4, COALESCE($5, now()), $6)
+		RETURNING id::text`, p.s.tenant, in.Kind, in.Question, in.Language, in.LiveAt, in.ClosesAt).Scan(&id); err != nil {
 		return pollView{}, err
 	}
 	for _, o := range in.Options {
 		if _, err := tx.Exec(ctx, `INSERT INTO `+p.s.t.pollOptions+`
-			(question_id, label, image_url, position) VALUES ($1, $2, $3, $4)`,
-			id, o.Label, nullIf(o.ImageURL), o.Position); err != nil {
+			(question_id, label, position) VALUES ($1, $2, $3)`,
+			id, o.Label, o.Position); err != nil {
 			return pollView{}, err
 		}
 	}
@@ -178,9 +175,8 @@ func (p *polls) update(ctx context.Context, actor access.Actor, id string, in up
 	}
 	tag, err := p.s.pool.Exec(ctx, `UPDATE `+p.s.t.pollQuestions+`
 		SET question = COALESCE($2, question), is_active = COALESCE($3, is_active),
-		    live_at = COALESCE($4, live_at), image_url = COALESCE($5, image_url),
-		    closes_at = COALESCE($7, closes_at), updated_at = now()
-		WHERE id = $1 AND tenant_id = $6 AND deleted_at IS NULL`, id, in.Question, in.IsActive, in.LiveAt, in.ImageURL, p.s.tenant, in.ClosesAt)
+		    live_at = COALESCE($4, live_at), closes_at = COALESCE($6, closes_at), updated_at = now()
+		WHERE id = $1 AND tenant_id = $5 AND deleted_at IS NULL`, id, in.Question, in.IsActive, in.LiveAt, p.s.tenant, in.ClosesAt)
 	if err != nil {
 		return pollView{}, err
 	}
@@ -190,20 +186,33 @@ func (p *polls) update(ctx context.Context, actor access.Actor, id string, in up
 	return p.get(ctx, actor, id)
 }
 
-// softDelete flags deleted_at; the row (and its votes) stay for history.
+// softDelete flags deleted_at; the row (and its votes) stay for history, and
+// its media folder is deleted.
 func (p *polls) softDelete(ctx context.Context, actor access.Actor, id string) error {
 	if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PollWrite); err != nil {
 		return err
 	}
-	tag, err := p.s.pool.Exec(ctx, `UPDATE `+p.s.t.pollQuestions+`
-		SET deleted_at = now(), updated_at = now() WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant)
+	if !uuidRe.MatchString(id) {
+		return ErrNotFound
+	}
+	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `UPDATE `+p.s.t.pollQuestions+`
+		SET deleted_at = now(), updated_at = now() WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+		RETURNING id::text`, id, p.s.tenant).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	if err := p.rt.deleteMediaTx(ctx, tx, pollFolder, id); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // --- public read ---
@@ -345,13 +354,11 @@ func (p *polls) attach(ctx context.Context, actor access.Actor, views []pollView
 		return err
 	}
 	for i := range views {
-		views[i].ImageURL = p.rt.absMediaURL(views[i].ImageURL)
 		if o := opts[views[i].ID]; o != nil {
 			views[i].Options = o
 		}
 		total := 0
 		for j := range views[i].Options {
-			views[i].Options[j].ImageURL = p.rt.absMediaURL(views[i].Options[j].ImageURL)
 			total += views[i].Options[j].VoteCount
 		}
 		views[i].TotalVotes = total
@@ -727,19 +734,18 @@ func (p *polls) mount(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /polls/{id}", p.handleDelete)
 	mux.HandleFunc("POST /polls/{id}/vote", p.handleVote)
 	mux.HandleFunc("POST /polls/{id}/answer", p.handleAnswer)
-	mux.HandleFunc("POST /polls/{id}/image", p.handleQuestionImage)
+	mux.HandleFunc("PUT /polls/{id}/image", p.handleQuestionImage)
 	mux.HandleFunc("POST /polls/{id}/options", p.handleAddOption)
 	// Nested under the poll: a bare /polls/options/{oid} DELETE would ambiguously
 	// overlap reactions' generic DELETE /{type}/{id}/reaction in ServeMux.
 	mux.HandleFunc("PATCH /polls/{id}/options/{oid}", p.handleUpdateOption)
 	mux.HandleFunc("DELETE /polls/{id}/options/{oid}", p.handleDeleteOption)
-	mux.HandleFunc("POST /polls/options/{oid}/image", p.handleOptionImage)
+	mux.HandleFunc("PUT /polls/{id}/options/{oid}/image", p.handleOptionImage)
 }
 
 // optionPatch is the add/update body; pointers so an absent field is untouched.
 type optionPatch struct {
 	Label    *string `json:"label"`
-	ImageURL *string `json:"image_url"`
 	Position *int    `json:"position"`
 }
 
@@ -767,11 +773,11 @@ func (p *polls) handleAddOption(w http.ResponseWriter, req *http.Request) {
 	}
 	var o pollOption
 	err := p.s.pool.QueryRow(req.Context(), `INSERT INTO `+p.s.t.pollOptions+`
-		(question_id, label, image_url, position)
-		SELECT q.id, $2, $3, COALESCE($4, (SELECT COALESCE(MAX(position)+1, 0) FROM `+p.s.t.pollOptions+` WHERE question_id = q.id))
-		FROM `+p.s.t.pollQuestions+` q WHERE q.id = $1 AND q.tenant_id = $5 AND q.deleted_at IS NULL AND q.kind = '`+PollMultipleChoice+`'
+		(question_id, label, position)
+		SELECT q.id, $2, COALESCE($3, (SELECT COALESCE(MAX(position)+1, 0) FROM `+p.s.t.pollOptions+` WHERE question_id = q.id))
+		FROM `+p.s.t.pollQuestions+` q WHERE q.id = $1 AND q.tenant_id = $4 AND q.deleted_at IS NULL AND q.kind = '`+PollMultipleChoice+`'
 		RETURNING id::text, label, coalesce(image_url,''), position, vote_count`,
-		id, strings.TrimSpace(*in.Label), in.ImageURL, in.Position, p.s.tenant).
+		id, strings.TrimSpace(*in.Label), in.Position, p.s.tenant).
 		Scan(&o.ID, &o.Label, &o.ImageURL, &o.Position, &o.VoteCount)
 	if errors.Is(err, pgx.ErrNoRows) { // poll missing/deleted, or free_text
 		var kind string
@@ -786,11 +792,10 @@ func (p *polls) handleAddOption(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	o.ImageURL = p.rt.absMediaURL(o.ImageURL)
 	writeJSON(w, http.StatusCreated, o)
 }
 
-// handleUpdateOption edits an option's label/image/position. PollWrite-gated.
+// handleUpdateOption edits an option's label/position. PollWrite-gated.
 func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 	actor := p.rt.actor(req.Context())
 	if err := p.rt.requirePerm(req.Context(), actor, p.rt.perms.PollWrite); err != nil {
@@ -817,10 +822,10 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 	}
 	var o pollOption
 	err := p.s.pool.QueryRow(req.Context(), `UPDATE `+p.s.t.pollOptions+`
-		SET label = COALESCE($2, label), image_url = COALESCE($3, image_url), position = COALESCE($4, position)
-		WHERE id = $1 AND question_id = $5 AND `+p.ownsQuestion("question_id", 6)+`
+		SET label = COALESCE($2, label), position = COALESCE($3, position)
+		WHERE id = $1 AND question_id = $4 AND `+p.ownsQuestion("question_id", 5)+`
 		RETURNING id::text, label, coalesce(image_url,''), position, vote_count`,
-		oid, in.Label, in.ImageURL, in.Position, pollID, p.s.tenant).
+		oid, in.Label, in.Position, pollID, p.s.tenant).
 		Scan(&o.ID, &o.Label, &o.ImageURL, &o.Position, &o.VoteCount)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeErr(w, ErrNotFound)
@@ -830,7 +835,6 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	o.ImageURL = p.rt.absMediaURL(o.ImageURL)
 	writeJSON(w, http.StatusOK, o)
 }
 
@@ -870,12 +874,33 @@ func (p *polls) handleDeleteOption(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusNoContent, nil)
 }
 
-// handleQuestionImage uploads a question-level image and stores its public URL.
-// PollWrite-gated.
+// handleQuestionImage sets (or with "" clears) the question image to an
+// inline image of the poll's media folder. PollWrite-gated.
 func (p *polls) handleQuestionImage(w http.ResponseWriter, req *http.Request) {
-	actor := p.rt.actor(req.Context())
-	if err := p.rt.requirePerm(req.Context(), actor, p.rt.perms.PollWrite); err != nil {
+	p.setImage(w, req, `UPDATE `+p.s.t.pollQuestions+` SET image_url = $3, updated_at = now()
+		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`)
+}
+
+// handleOptionImage sets (or with "" clears) an option image to an inline
+// image of the poll's media folder. PollWrite-gated.
+func (p *polls) handleOptionImage(w http.ResponseWriter, req *http.Request) {
+	if !uuidRe.MatchString(req.PathValue("oid")) {
+		writeErr(w, ErrNotFound)
+		return
+	}
+	p.setImage(w, req, `UPDATE `+p.s.t.pollOptions+` SET image_url = $3 WHERE id = $4 AND question_id = $1 AND `+p.ownsQuestion("question_id", 2), req.PathValue("oid"))
+}
+
+// setImage runs update with $1 the poll id, $2 the tenant, $3 the image URL
+// (NULL clears) and then extra.
+func (p *polls) setImage(w http.ResponseWriter, req *http.Request, update string, extra ...any) {
+	ctx := req.Context()
+	if err := p.rt.requirePerm(ctx, p.rt.actor(ctx), p.rt.perms.PollWrite); err != nil {
 		writeErr(w, err)
+		return
+	}
+	if p.rt.media == nil {
+		writeErr(w, errMediaNotConfigured)
 		return
 	}
 	id := req.PathValue("id")
@@ -883,30 +908,25 @@ func (p *polls) handleQuestionImage(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, ErrNotFound)
 		return
 	}
-	data, ct, ext, err := readUpload(req)
+	name, err := decodeImage(req)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	// Check tenant ownership before touching the shared media object.
-	var prev *string
-	if err := p.s.pool.QueryRow(req.Context(), `SELECT image_url FROM `+p.s.t.pollQuestions+`
-		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant).Scan(&prev); err != nil {
+	if err := p.s.pool.QueryRow(ctx, `SELECT id::text FROM `+p.s.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+		id, p.s.tenant).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = ErrNotFound
 		}
 		writeErr(w, err)
 		return
 	}
-	url, err := p.rt.media.Put(req.Context(), "polls/"+id+"."+ext, data, ct)
+	url, err := p.rt.imageURL(pollFolder, id, name)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	// Remember the previous image so a replace under a different key (extension
-	// changed) can drop the old object instead of orphaning it. Best-effort.
-	tag, err := p.s.pool.Exec(req.Context(), `UPDATE `+p.s.t.pollQuestions+`
-		SET image_url = $2, updated_at = now() WHERE id = $1 AND tenant_id = $3 AND deleted_at IS NULL`, id, url, p.s.tenant)
+	tag, err := p.s.pool.Exec(ctx, update, append([]any{id, p.s.tenant, url}, extra...)...)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -915,58 +935,7 @@ func (p *polls) handleQuestionImage(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, ErrNotFound)
 		return
 	}
-	if prev != nil && *prev != url {
-		p.rt.deleteMediaByURL(req.Context(), *prev)
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"image_url": url})
-}
-
-// handleOptionImage uploads an option image to the media store and
-// stores the resulting public URL on the option. PollWrite-gated.
-func (p *polls) handleOptionImage(w http.ResponseWriter, req *http.Request) {
-	actor := p.rt.actor(req.Context())
-	if err := p.rt.requirePerm(req.Context(), actor, p.rt.perms.PollWrite); err != nil {
-		writeErr(w, err)
-		return
-	}
-	oid := req.PathValue("oid")
-	if !uuidRe.MatchString(oid) {
-		writeErr(w, ErrNotFound)
-		return
-	}
-	data, ct, ext, err := readUpload(req)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	// Check tenant ownership before touching the shared media object.
-	var prev *string
-	if err := p.s.pool.QueryRow(req.Context(), `SELECT image_url FROM `+p.s.t.pollOptions+` WHERE id = $1 AND `+p.ownsQuestion("question_id", 2), oid, p.s.tenant).Scan(&prev); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			err = ErrNotFound
-		}
-		writeErr(w, err)
-		return
-	}
-	url, err := p.rt.media.Put(req.Context(), "polls/options/"+oid+"."+ext, data, ct)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	// Best-effort old-object cleanup on a key-changing replace (see question image).
-	tag, err := p.s.pool.Exec(req.Context(), `UPDATE `+p.s.t.pollOptions+` SET image_url = $2 WHERE id = $1 AND `+p.ownsQuestion("question_id", 3), oid, url, p.s.tenant)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	if tag.RowsAffected() == 0 {
-		writeErr(w, ErrNotFound)
-		return
-	}
-	if prev != nil && *prev != url {
-		p.rt.deleteMediaByURL(req.Context(), *prev)
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"image_url": url})
+	writeJSON(w, http.StatusOK, map[string]*string{"image_url": url})
 }
 
 func (p *polls) handleList(w http.ResponseWriter, req *http.Request) {

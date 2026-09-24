@@ -44,7 +44,7 @@ const (
 	CodeModerationRejected = "moderation_rejected"
 	CodeUnprocessable      = "unprocessable"
 	// CodeNotConfigured: the capability exists but the host never wired its
-	// port (MediaStore, AnswerClassifier). Retrying does not help. -> 501
+	// port (Media, AnswerClassifier). Retrying does not help. -> 501
 	CodeNotConfigured = "not_configured"
 	// CodeTenantMismatch: a host port answered with another tenant's data.
 	// A configuration fault, not a client fault; the cause stays in the log.
@@ -95,8 +95,8 @@ func classifyErr(err error) (status int, code, msg string) {
 		return http.StatusForbidden, CodeForbidden, "forbidden"
 	case errors.Is(err, ErrNoClassifier):
 		return http.StatusNotImplemented, CodeNotConfigured, "free-text polls need an AnswerClassifier"
-	case errors.Is(err, errUnsupportedMedia):
-		return http.StatusNotImplemented, CodeNotConfigured, "media uploads need a MediaStore"
+	case errors.Is(err, errMediaNotConfigured):
+		return http.StatusNotImplemented, CodeNotConfigured, "images need ContentKit media"
 	case errors.Is(err, ErrTenant):
 		return http.StatusInternalServerError, CodeTenantMismatch, "internal error"
 	}

@@ -16,7 +16,7 @@ const (
 	metaSpec   = "spec"
 )
 
-// slot re-encodes a slot original into each output at public/{output}.webp,
+// slot re-encodes a slot or inline original into each output at public/{output}.webp,
 // in place, served no-cache so the next view revalidates its ETag. An output
 // already derived from this original and spec is left alone. Writes are
 // conditional on the output's previous ETag, so a job holding an older
@@ -26,7 +26,10 @@ func (p *Processor) slot(ctx context.Context, item media.Item, slot string) erro
 	if err != nil {
 		return err
 	}
-	outputs := item.Kind().Slots[slot].Outputs
+	outputs, err := item.SlotOutputs(slot)
+	if err != nil {
+		return err
+	}
 	conditional := p.c.Store.Capabilities().ConditionalPut
 	for range 8 {
 		orig, err := p.c.Store.Head(ctx, key)

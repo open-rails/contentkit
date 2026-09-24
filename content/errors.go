@@ -16,6 +16,3 @@ var (
 	// ErrNoClassifier: a free-text poll needs an AnswerClassifier. -> 501
 	ErrNoClassifier = errors.New("content: free-text polls need an AnswerClassifier")
 )
-
-// errUnsupportedMedia is the default MediaStore's response (no store wired).
-var errUnsupportedMedia = errors.New("content: no MediaStore configured")

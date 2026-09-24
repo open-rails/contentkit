@@ -30,6 +30,10 @@ await client.uploadSlot(cover, { ref, slot: "cover" }); // upload + commit-slot
 
 await client.edit(ref, "001.png", { crop: { x: 0, y: 0, w: 800, h: 600 }, rotate: 90 }); // null clears
 await client.setSlotFromFile(ref, "cover", "001.png", { crop: { x: 40, y: 0, w: 460, h: 0 } }); // slot aspect sets h
+
+// A new inline image (post bodies, poll options): the server names it i-{uuid}.
+const img = await client.uploadInline(file, { ref: { kind: "post", id: postId } });
+// then e.g. POST /posts/{id}/images {"image": img.name} -> {"url"}
 ```
 
 - Errors are `UploadError` with `code` (the server's `ErrorReply.code`, or
@@ -56,7 +60,7 @@ q.blocked;                     // rate/quota/permission refusal: nothing new sta
 await q.commit();              // inserts uploaded files in queue order; re-uploads stale ones
 
 const cover = useUpload(client);
-await cover.upload(file, { ref, slot: "cover" });
+await cover.upload(file, { ref, slot: "cover" }); // or { ref, inline: true }
 ```
 
 `UploadQueue` is the framework-free queue behind the hook.

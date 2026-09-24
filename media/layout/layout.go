@@ -2,7 +2,7 @@
 // worker can classify paths without importing the media runtime:
 //
 //	{tenant}/{kind}/{content_id}/manifest.json | manifests/{version}.json
-//	                            /originals/{sha256-hex | u-uuid | slot}
+//	                            /originals/{sha256-hex | u-uuid | slot | i-uuid}
 //	                            /blobs/{sha256-hex | u-uuid}
 //	                            /public/{name}.webp
 package layout
@@ -25,6 +25,7 @@ const (
 const (
 	SHA256Prefix = "sha256-"
 	UploadPrefix = "u-"
+	InlinePrefix = "i-"
 	PublicExt    = ".webp"
 )
 
@@ -89,6 +90,16 @@ func ValidBlobName(name string) bool {
 		return true
 	}
 	id, ok := strings.CutPrefix(name, UploadPrefix)
+	if !ok {
+		return false
+	}
+	u, err := uuid.Parse(id)
+	return err == nil && u.String() == id
+}
+
+// ValidInlineName accepts "i-{uuid}", an inline image's id.
+func ValidInlineName(name string) bool {
+	id, ok := strings.CutPrefix(name, InlinePrefix)
 	if !ok {
 		return false
 	}

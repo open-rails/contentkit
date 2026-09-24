@@ -30,7 +30,11 @@ type Kind struct {
 	TypeLimits map[string]Limit
 	Specs      map[string]Spec // variant name → spec
 	Slots      map[string]Slot // public slot name → outputs
-	Video      bool
+	// Inline enables inline images: write-once public images with random ids
+	// ("i-{uuid}", from NewInlineName), each re-encoded with this spec from
+	// originals/{id} to public/{id}.webp. Post bodies and poll options use them.
+	Inline *Spec
+	Video  bool
 	// Zip names the variant packed, in file order, into downloads["zip"];
 	// "" offers no zip.
 	Zip string
@@ -163,11 +167,11 @@ func NewRegistry(kinds ...Kind) (*Registry, error) {
 			}
 		}
 		for name, slot := range k.Slots {
-			if !layout.ValidSegment(name) || layout.ValidBlobName(name) || len(slot.Outputs) == 0 || slot.Aspect < 0 {
+			if !layout.ValidSegment(name) || layout.ValidBlobName(name) || layout.ValidInlineName(name) || len(slot.Outputs) == 0 || slot.Aspect < 0 {
 				return nil, fmt.Errorf("media: kind %q: invalid slot %q", k.Name, name)
 			}
 			for out := range slot.Outputs {
-				if !layout.ValidSegment(out) {
+				if !layout.ValidSegment(out) || layout.ValidInlineName(out) {
 					return nil, fmt.Errorf("media: kind %q slot %q: invalid output %q", k.Name, name, out)
 				}
 			}

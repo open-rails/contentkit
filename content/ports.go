@@ -61,11 +61,6 @@ type UserEnricher interface {
 
 // --- optional ports (nil -> documented default) ---
 
-// MediaStore stores option/cover images. Default: uploads are unsupported.
-type MediaStore interface {
-	Put(ctx context.Context, key string, data []byte, contentType string) (url string, err error)
-}
-
 // ContentProcessor sanitizes rich text on write. Default: strip tags.
 type ContentProcessor interface {
 	Sanitize(ctx context.Context, raw string) (string, error)

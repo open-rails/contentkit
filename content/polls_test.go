@@ -374,8 +374,8 @@ func TestPolls_LiveGatingAndAdminList(t *testing.T) {
 	}
 }
 
-func TestPolls_MonthWindowsTotalsAndImageAbsolutization(t *testing.T) {
-	_, p := newPollTest(t, Options{Storage: &StorageConfig{Bucket: "b", PublicBaseURL: "https://cdn.test/"}})
+func TestPolls_MonthWindowsAndTotals(t *testing.T) {
+	_, p := newPollTest(t, Options{})
 	ctx := context.Background()
 
 	mk := func(lang, live string) pollView {
@@ -419,24 +419,6 @@ func TestPolls_MonthWindowsTotalsAndImageAbsolutization(t *testing.T) {
 		t.Fatalf("TotalVotes = %d (options sum %d), want 2", v.TotalVotes, totalVotes(v))
 	}
 
-	// A stored RELATIVE path (backfilled legacy row) absolutizes against the
-	// public bucket origin; an absolute URL passes through untouched.
-	rel := "assets/poll-images/legacy.webp"
-	if _, err := p.update(ctx, pollAdmin, may.ID, updatePollInput{ImageURL: &rel}); err != nil {
-		t.Fatal(err)
-	}
-	abs := "https://elsewhere.example/x.png"
-	if _, err := p.update(ctx, pollAdmin, jun.ID, updatePollInput{ImageURL: &abs}); err != nil {
-		t.Fatal(err)
-	}
-	v, _ = p.get(ctx, pollAdmin, may.ID)
-	if v.ImageURL != "https://cdn.test/assets/poll-images/legacy.webp" {
-		t.Fatalf("relative image not absolutized: %q", v.ImageURL)
-	}
-	v, _ = p.get(ctx, pollAdmin, jun.ID)
-	if v.ImageURL != abs {
-		t.Fatalf("absolute image mangled: %q", v.ImageURL)
-	}
 }
 
 func pollIDs(vs []pollView) []string {
