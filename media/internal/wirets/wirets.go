@@ -17,7 +17,8 @@ var types = []any{
 	media.RefBody{}, media.PresignBody{}, media.RequestReply{}, media.MultipartReply{}, media.PresignReply{},
 	media.PartBody{}, media.PartsBody{}, media.TicketBody{}, media.PartReply{}, media.PartsReply{},
 	media.CompleteReply{}, media.Crop{}, media.Edit{}, media.Op{}, media.CommitBody{}, media.CommitFile{},
-	media.CommitReply{}, media.SlotBody{}, media.SlotFromFileBody{}, media.ErrorReply{},
+	media.CommitReply{}, media.SlotBody{}, media.SlotFromFileBody{}, media.SlotEditBody{}, media.SlotRefBody{},
+	media.Dims{}, media.SlotImage{}, media.SlotManifest{}, media.ErrorReply{},
 }
 
 var errorCodes = []string{

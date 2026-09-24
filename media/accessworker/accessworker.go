@@ -1,6 +1,7 @@
 // Package accessworker is the media access worker's HTTP handler, run by
 // cmd/media-access: it checks the token for a blob path (URL `?t=` or cookie
-// `mt`), serves public/ paths without one, refuses manifests and originals/,
+// `mt`), serves public/ paths without one (immutable at a current ?v=
+// version), refuses manifests and originals/,
 // and streams the object from the private bucket with its own read-only key.
 // It has no database, no host calls and no cache.
 package accessworker
@@ -30,8 +31,9 @@ const (
 	// HealthPath answers 200 without touching the bucket.
 	HealthPath = "/healthz"
 
-	blobCacheControl   = "private, max-age=31536000, immutable"
-	publicCacheControl = "public, no-cache"
+	blobCacheControl      = "private, max-age=31536000, immutable"
+	publicCacheControl    = "public, no-cache"
+	versionedCacheControl = "public, max-age=31536000, immutable"
 )
 
 // Config configures a Handler. The S3 key should only be able to read
@@ -225,7 +227,13 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, key, area, disp
 		}
 	}
 	if area == layout.AreaPublic {
-		hdr.Set("Cache-Control", publicCacheControl)
+		// A versioned URL whose version the object still has is immutable.
+		v := r.URL.Query().Get(layout.VersionParam)
+		if v != "" && ok && resp.Header.Get("X-Amz-Meta-"+layout.VersionMeta) == v {
+			hdr.Set("Cache-Control", versionedCacheControl)
+		} else {
+			hdr.Set("Cache-Control", publicCacheControl)
+		}
 	} else {
 		hdr.Set("Cache-Control", blobCacheControl)
 	}

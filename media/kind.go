@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -114,14 +115,38 @@ func (s Spec) Hash() string {
 	return hex.EncodeToString(sum[:4])
 }
 
-// Slot is a fixed public image: its original is kept at originals/{slot} and
-// each output is written to public/{output}.webp.
+// Slot is a fixed public image at Aspect (the edited image's width/height),
+// rendered at each of Widths to public/{slot}_{width}.webp (SlotOutput). Its
+// original is kept at originals/{slot} and its Edit in the slot record. Widths
+// wider than the edited image are skipped, never upscaled; an edit narrower
+// than Min fails, so every width up to Min exists once the slot is processed.
 type Slot struct {
-	Outputs map[string]Spec
-	// Aspect (width/height), when set, constrains crops set with
-	// SetSlotFromFile: the crop's height is derived from its width.
-	Aspect float64
+	Aspect   float64
+	Widths   []int
+	MinWidth int
+	Quality  int // WebP quality; default 80
 }
+
+// Min is the narrowest edited width accepted: MinWidth, at least the smallest width.
+func (s Slot) Min() int { return max(s.MinWidth, slices.Min(s.Widths)) }
+
+// Height is the output height of a width at Aspect.
+func (s Slot) Height(width int) int { return max(1, int(math.Round(float64(width)/s.Aspect))) }
+
+// Hash is the slot spec's stable identity; outputs under another are stale.
+func (s Slot) Hash() string {
+	b := []byte(strconv.FormatFloat(s.Aspect, 'g', -1, 64) + "|" + strconv.Itoa(s.Min()) + "|q" + strconv.Itoa(s.Quality))
+	for _, w := range s.Widths {
+		b = strconv.AppendInt(append(b, '|'), int64(w), 10)
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:4])
+}
+
+// SlotOutput names a slot's output of one width: "{slot}_{width}".
+func SlotOutput(slot string, width int) string { return slot + "_" + strconv.Itoa(width) }
+
+const maxSlotWidth = 8192
 
 var (
 	ErrUnknownKind = errors.New("media: unknown kind")
@@ -211,16 +236,23 @@ func NewRegistry(kinds ...Kind) (*Registry, error) {
 				return nil, fmt.Errorf("media: kind %q: invalid type limit %q", k.Name, t)
 			}
 		}
+		slots := make(map[string]Slot, len(k.Slots))
 		for name, slot := range k.Slots {
-			if !layout.ValidSegment(name) || layout.ValidBlobName(name) || layout.ValidInlineName(name) || len(slot.Outputs) == 0 || slot.Aspect < 0 {
-				return nil, fmt.Errorf("media: kind %q: invalid slot %q", k.Name, name)
+			if !layout.ValidSegment(name) || layout.ValidBlobName(name) || layout.ValidInlineName(name) || strings.HasSuffix(name, slotRecordExt) {
+				return nil, fmt.Errorf("media: kind %q: invalid slot name %q", k.Name, name)
 			}
-			for out, s := range slot.Outputs {
-				if !layout.ValidSegment(out) || layout.ValidInlineName(out) || s.Unedited || s.EditorOnly {
-					return nil, fmt.Errorf("media: kind %q slot %q: invalid output %q", k.Name, name, out)
+			if !(slot.Aspect > 0 && slot.Aspect < 100) || len(slot.Widths) == 0 || slot.MinWidth < 0 || slot.Quality < 0 || slot.Quality > 100 {
+				return nil, fmt.Errorf("media: kind %q slot %q: needs an Aspect and Widths", k.Name, name)
+			}
+			slot.Widths = slices.Sorted(slices.Values(slot.Widths))
+			for i, w := range slot.Widths {
+				if w <= 0 || w > maxSlotWidth || (i > 0 && w == slot.Widths[i-1]) {
+					return nil, fmt.Errorf("media: kind %q slot %q: invalid width %d", k.Name, name, w)
 				}
 			}
+			slots[name] = slot
 		}
+		k.Slots = slots
 		r.kinds[k.Name] = k
 	}
 	return r, nil

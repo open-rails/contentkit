@@ -31,14 +31,11 @@ var (
 	thumb = media.Spec{Width: 100, Height: 150, Fit: media.FitCover, Quality: 80}
 	low   = media.Spec{Width: 300, Height: 300, Fit: media.FitInside, Quality: 90}
 	high  = media.Spec{Quality: 90}
-	cover = media.Slot{Outputs: map[string]media.Spec{
-		"cover":    {Width: 200},
-		"cover_sq": {Width: 64, Height: 64, Fit: media.FitCover},
-	}}
+	cover = media.Slot{Aspect: 3, Widths: []int{150, 300, 600}}
 )
 
 func galleryKind() media.Kind {
-	return media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png"}, MaxBytes: 10 << 20,
+	return media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
 		Specs: map[string]media.Spec{"thumb": thumb, "low": low, "high": high}, Zip: "high",
 		Slots: map[string]media.Slot{"cover": cover}}
 }
@@ -51,7 +48,7 @@ type countingStore struct {
 }
 
 func (s *countingStore) Get(ctx context.Context, key string, o media.GetOptions) (io.ReadCloser, media.Object, error) {
-	if strings.Contains(key, "/originals/") {
+	if strings.Contains(key, "/originals/") && !strings.HasSuffix(key, ".json") { // slot records are not originals
 		s.reads.Add(1)
 		if s.gate != nil {
 			s.gate()
@@ -163,7 +160,7 @@ func (e *env) uploadAs(t *testing.T, ref contentref.ContentRef, slot, typ string
 		}
 	}
 	if slot != "" {
-		if err := e.uploads.CommitSlot(context.Background(), access.Actor{ID: "u"}, ref, slot, sum[:]); err != nil {
+		if err := e.uploads.CommitSlot(context.Background(), access.Actor{ID: "u"}, ref, slot, sum[:], nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -487,79 +484,7 @@ func TestDeclaredTypeBindsTheDecoder(t *testing.T) {
 	if len(m.Files[0].Variants) != 3 || len(m.Files[1].Variants) != 0 || len(m.Files[2].Variants) != 0 {
 		t.Fatalf("manifest: %+v", m)
 	}
-	if _, err := e.Env.Store.Head(context.Background(), e.Tenant+"/gallery/7/public/cover.webp"); !errors.Is(err, media.ErrNotFound) {
+	if _, err := e.Env.Store.Head(context.Background(), e.Tenant+"/gallery/7/public/cover_150.webp"); !errors.Is(err, media.ErrNotFound) {
 		t.Fatalf("cover derived from an SVG declared image/png: %v", err)
-	}
-}
-
-func TestPublicSlot(t *testing.T) {
-	e := newEnv(t, galleryKind())
-	ref := contentref.New(e.Tenant, "gallery", "5")
-	public := func(name string) ([]byte, media.Object) {
-		return e.object(t, e.Tenant+"/gallery/5/public/"+name+".webp")
-	}
-	original := pngImage(t, 400, 600, 10)
-	e.upload(t, ref, "cover", original)
-	e.drain(t)
-
-	b, obj := public("cover")
-	if obj.ContentType != "image/webp" || obj.CacheControl != "no-cache" || obj.ETag == "" || bytes.Equal(b, original) {
-		t.Fatalf("cover: %+v", obj)
-	}
-	if w, h := webpSize(t, b); w != 200 || h != 300 {
-		t.Fatalf("cover %dx%d", w, h)
-	}
-	sq, _ := public("cover_sq")
-	if w, h := webpSize(t, sq); w != 64 || h != 64 {
-		t.Fatalf("cover_sq %dx%d", w, h)
-	}
-
-	// Unchanged: no read, no rewrite (a whole-item job also covers slots).
-	e.store.reads.Store(0)
-	for _, j := range []media.ProcessJob{{Ref: ref, Slot: "cover"}, {Ref: ref}} {
-		if err := e.proc.Process(context.Background(), j); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, again := public("cover"); again.ETag != obj.ETag || e.store.reads.Load() != 0 {
-		t.Fatalf("unchanged slot re-encoded (reads %d)", e.store.reads.Load())
-	}
-
-	// Overwrite: the next view sees a new ETag and image. Two jobs race.
-	e.upload(t, ref, "cover", pngImage(t, 300, 300, 11))
-	jobs := append(e.queue.take(), media.ProcessJob{Ref: ref, Slot: "cover"})
-	var wg sync.WaitGroup
-	for _, j := range jobs {
-		wg.Go(func() {
-			if err := e.proc.Process(context.Background(), j); err != nil {
-				t.Error(err)
-			}
-		})
-	}
-	wg.Wait()
-	b2, obj2 := public("cover")
-	if obj2.ETag == obj.ETag {
-		t.Fatal("overwritten slot kept its ETag")
-	}
-	if w, h := webpSize(t, b2); w != 200 || h != 200 {
-		t.Fatalf("overwritten cover %dx%d", w, h)
-	}
-
-	// A spec change regenerates the slot from its kept original.
-	k := galleryKind()
-	k.Slots = map[string]media.Slot{"cover": {Outputs: map[string]media.Spec{"cover": {Width: 100}, "cover_sq": cover.Outputs["cover_sq"]}}}
-	e.useKind(t, k)
-	if err := e.proc.Process(context.Background(), media.ProcessJob{Ref: ref}); err != nil {
-		t.Fatal(err)
-	}
-	b3, _ := public("cover")
-	if w, h := webpSize(t, b3); w != 100 || h != 100 {
-		t.Fatalf("regenerated cover %dx%d", w, h)
-	}
-	if _, err := e.Env.Store.Head(context.Background(), e.Tenant+"/gallery/5/originals/cover"); err != nil {
-		t.Fatalf("slot original not kept: %v", err)
-	}
-	if err := e.proc.Process(context.Background(), media.ProcessJob{Ref: ref, Slot: "missing"}); err == nil {
-		t.Fatal("unknown slot accepted")
 	}
 }

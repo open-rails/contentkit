@@ -68,10 +68,10 @@ func main() {
 
 	kinds, err := media.NewRegistry(
 		media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
-			Slots: map[string]media.Slot{"cover": {Outputs: map[string]media.Spec{"cover": {Width: 460}}}}},
+			Slots: map[string]media.Slot{"cover": {Aspect: 3, Widths: []int{460}}}},
 		media.Kind{Name: "video", Types: []string{"video/mp4"}, MaxBytes: 1 << 30},
 		media.Kind{Name: "post", Types: []string{"image/png"}, MaxBytes: 1 << 20, MaxFiles: 2, Inline: &media.Spec{Width: 1600},
-			Slots: map[string]media.Slot{"cover": {Outputs: map[string]media.Spec{"cover": {Width: 100}}, Aspect: 0.5}}},
+			Slots: map[string]media.Slot{"cover": {Aspect: 0.5, Widths: []int{50}}}},
 	)
 	must(err)
 	manifests, err := media.NewManifests(store, kinds, media.ManifestOptions{})
@@ -83,7 +83,8 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/upload/", http.StripPrefix("/upload", media.UploadHandler(uploads, media.UploadHandlerOptions{
-		Tenant: tenant,
+		Tenant:        tenant,
+		PublicBaseURL: "http://media.invalid",
 		Actor: func(r *http.Request) (access.Actor, bool) {
 			id := r.Header.Get("X-Test-Actor")
 			return access.Actor{ID: id, Kind: "user"}, id != ""
@@ -107,7 +108,7 @@ func main() {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		rc, obj, err := store.Get(r.Context(), key, media.GetOptions{})
+		rc, _, err := store.Get(r.Context(), key, media.GetOptions{})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
@@ -120,8 +121,11 @@ func main() {
 			return
 		}
 		out := map[string]any{"size": n, "sha256": hex.EncodeToString(h.Sum(nil))}
-		if e := obj.Metadata[media.SlotEditMeta]; e != "" {
-			out["edit"] = e
+		if q.Has("slot") {
+			if rec, err := manifests.Slot(r.Context(), item.Ref(), q.Get("slot")); err == nil && rec.Edit != nil {
+				b, _ := json.Marshal(rec.Edit)
+				out["edit"] = string(b)
+			}
 		}
 		_ = json.NewEncoder(w).Encode(out)
 	})

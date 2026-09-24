@@ -3,7 +3,6 @@ package media
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -30,9 +29,6 @@ type Dims struct {
 	W int `json:"w"`
 	H int `json:"h"`
 }
-
-// SlotEditMeta is the slot original's user metadata key holding its Edit (JSON).
-const SlotEditMeta = "edit"
 
 // Normalize returns nil for an identity edit, else a copy.
 func (e *Edit) Normalize() *Edit {
@@ -109,26 +105,44 @@ func (s Spec) For(e *Edit) string {
 // fit derives the crop height from its width so the edited image has the
 // slot's aspect (width/height).
 func (s Slot) fit(e *Edit) *Edit {
-	if e = e.Normalize(); e == nil || e.Crop == nil || s.Aspect <= 0 {
+	if e = e.Normalize(); e == nil || e.Crop == nil {
 		return e
 	}
-	if e.Rotate == 90 || e.Rotate == 270 {
-		e.Crop.H = int(math.Round(float64(e.Crop.W) * s.Aspect))
-	} else {
-		e.Crop.H = int(math.Round(float64(e.Crop.W) / s.Aspect))
-	}
+	e.Crop.H = max(1, int(math.Round(float64(e.Crop.W)/s.cropRatio(e.Rotate))))
 	return e
 }
 
-// SlotEdit reads a slot original's edit from its metadata.
-func SlotEdit(o Object) (*Edit, error) {
-	v := o.Metadata[SlotEditMeta]
-	if v == "" {
-		return nil, nil
+// cropRatio is the crop's width/height that yields Aspect after rotating.
+func (s Slot) cropRatio(rotate int) float64 {
+	if rotate == 90 || rotate == 270 {
+		return 1 / s.Aspect
 	}
-	var e Edit
-	if err := json.Unmarshal([]byte(v), &e); err != nil {
-		return nil, fmt.Errorf("media: slot edit %q: %w", v, err)
+	return s.Aspect
+}
+
+// Resolve is the edit the slot applies to a w×h source (EXIF-oriented): e
+// with its height fitted, or without a crop the largest centred one at
+// Aspect. It must lie inside the source and be at least Min wide once edited.
+func (s Slot) Resolve(e *Edit, w, h int) (*Edit, error) {
+	e = s.fit(e)
+	if e == nil || e.Crop == nil {
+		rotate := 0
+		if e != nil {
+			rotate = e.Rotate
+		}
+		r := s.cropRatio(rotate)
+		cw := w
+		if ch := int(math.Round(float64(cw) / r)); ch > h {
+			cw = max(1, min(w, int(math.Round(float64(h)*r))))
+		}
+		ch := min(h, max(1, int(math.Round(float64(cw)/r))))
+		e = &Edit{Crop: &Crop{X: (w - cw) / 2, Y: (h - ch) / 2, W: cw, H: ch}, Rotate: rotate}
 	}
-	return e.Normalize(), e.Check(0, 0)
+	if err := e.Check(w, h); err != nil {
+		return nil, err
+	}
+	if ew, _ := e.Size(w, h); ew < s.Min() {
+		return nil, fmt.Errorf("edited width %dpx is under the slot's %dpx", ew, s.Min())
+	}
+	return e, nil
 }

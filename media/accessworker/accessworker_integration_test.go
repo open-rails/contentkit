@@ -157,6 +157,21 @@ func TestAccessWorker(t *testing.T) {
 		}
 	})
 
+	t.Run("versioned public is immutable while current", func(t *testing.T) {
+		key := f.item + "public/avatar_128.webp"
+		if _, err := f.env.Store.Put(context.Background(), key, strings.NewReader("av"), 2,
+			media.PutOptions{ContentType: "image/webp", Metadata: map[string]string{"of": "abc"}}); err != nil {
+			t.Fatal(err)
+		}
+		for q, want := range map[string]string{"?v=abc": "public, max-age=31536000, immutable", "?v=old": "public, no-cache", "": "public, no-cache"} {
+			r := do(t, srv, "GET", "/"+key+q, nil)
+			expect(t, r, 200, "av")
+			if got := r.header.Get("Cache-Control"); got != want {
+				t.Fatalf("%q: Cache-Control %q, want %q", q, got, want)
+			}
+		}
+	})
+
 	t.Run("blob needs a token", func(t *testing.T) {
 		expect(t, do(t, srv, "GET", "/"+f.blobA, nil), 403, "")
 		expect(t, do(t, srv, "GET", withToken(f.blobA, "garbage"), nil), 403, "")

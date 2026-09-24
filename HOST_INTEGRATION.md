@@ -306,12 +306,25 @@ Cropping and rotating are ContentKit's: the host never decodes images.
   (omit `edit` to clear). Crop is in the original's pixels, before the
   clockwise rotate. Variants re-derive; the original is never changed.
 - A cover from a page is `Uploads.SetSlotFromFile(ctx, actor, media.SlotFromFile{Ref: ref, Slot: "cover", File: "001.png", Edit: &media.Edit{Crop: &media.Crop{X: x, Y: y, W: w}}})`
-  or `POST /commit-slot-from-file {"ref","slot","file","edit"}` (204). Give the
-  slot `Aspect: 460.0 / 650` and send only the width; the height follows.
-  `From` (`"from"`) takes the file from another item of the tenant, e.g. a
-  channel avatar from a post image; `CanUpload` must allow both.
+  or `POST /commit-slot-from-file {"ref","slot","file","edit"}` (→ `SlotManifest`).
+  Give the slot `Aspect: 460.0 / 650` and send only the width; the height
+  follows. `From` (`"from"`) takes the file from another item of the tenant,
+  e.g. a channel avatar from a post image; `CanUpload` must allow both.
 - Slots and inline images belong to the work: `CanUpload` is asked for
   `ref.Content()` even when a version ref is sent.
+- Avatars and covers are slots with density widths; see README "Slots":
+
+  ```go
+  "avatar": {Aspect: 1, Widths: []int{128, 256, 512}, MinWidth: 512},
+  "cover":  {Aspect: 3, Widths: []int{1500, 3000}, MinWidth: 1500},
+  ```
+
+  Mount `UploadHandler` with `PublicBaseURL` (the access worker origin). For
+  `srcset` use `Reader.Slot` / `GET /{kind}/{id}/slots/{slot}`; listings build
+  URLs without reads with `Reader.SlotOutputs(ref, slot, version)` (widths up to
+  `MinWidth` always exist), storing `version` from `Hooks.SlotEncoded` for
+  immutable URLs or passing "" for revalidated ones. After changing slot specs,
+  enqueue `ProcessJob{Ref}` per item; retired widths are deleted.
 - Editors (`Resolution.Editor`) read `dims` (original size) and `edit` from
   the read API and show a `Spec{Unedited: true, EditorOnly: true}` variant,
   which is never signed for other viewers; the SDK's `useCrop` keeps the rect

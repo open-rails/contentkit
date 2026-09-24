@@ -33,7 +33,7 @@ func TestRestoreAfterSweepAndFolderDeletion(t *testing.T) {
 	}
 	s := env.Store
 	kinds, err := media.NewRegistry(
-		media.Kind{Name: "channel", Slots: map[string]media.Slot{"avatar": {Outputs: map[string]media.Spec{"avatar": {Width: 80}}}}},
+		media.Kind{Name: "channel", Slots: map[string]media.Slot{"avatar": {Aspect: 1, Widths: []int{80}}}},
 		media.Kind{Name: "post"})
 	if err != nil {
 		t.Fatal(err)

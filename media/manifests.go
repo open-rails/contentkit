@@ -83,53 +83,79 @@ func (m *Manifests) Edit(ctx context.Context, ref contentref.ContentRef, fn func
 	if err != nil {
 		return nil, err
 	}
+	var man *Manifest
+	written, err := m.edit(ctx, key, func(body []byte) ([]byte, error) {
+		man = &Manifest{}
+		if body != nil {
+			if err := json.Unmarshal(body, man); err != nil {
+				return nil, fmt.Errorf("media: decode manifest %s: %w", key, err)
+			}
+		}
+		before, _ := json.Marshal(man)
+		if err := fn(man); err != nil {
+			return nil, err
+		}
+		if err := man.Validate(); err != nil {
+			return nil, err
+		}
+		if man.Files == nil {
+			man.Files = []File{}
+		}
+		out, err := json.Marshal(man)
+		if err != nil || (body != nil && bytes.Equal(before, out)) {
+			return nil, err
+		}
+		return out, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if written && m.jobs != nil {
+		if err := m.jobs.ScheduleSweep(ctx, ref); err != nil {
+			m.jobs.cfg.Logger.WarnContext(ctx, "media: schedule sweep", "key", key, "error", err)
+		}
+	}
+	return man, nil
+}
+
+// edit writes fn's replacement of the JSON object at key (body nil when
+// absent) with If-Match on the ETag read, or under the Locker, re-running fn
+// on conflict. fn returns nil to leave the object alone.
+func (m *Manifests) edit(ctx context.Context, key string, fn func(body []byte) ([]byte, error)) (written bool, err error) {
 	if m.locker != nil {
 		unlock, err := m.locker.Lock(ctx, key)
 		if err != nil {
-			return nil, err
+			return false, err
 		}
 		defer unlock()
-		man, _, err := m.apply(ctx, ref, key, fn, false)
-		return man, err
+		_, written, err := m.try(ctx, key, fn, false)
+		return written, err
 	}
 	for attempt := 0; attempt < m.retries; attempt++ {
-		man, conflict, err := m.apply(ctx, ref, key, fn, true)
+		conflict, written, err := m.try(ctx, key, fn, true)
 		if !conflict {
-			return man, err
+			return written, err
 		}
 		backoff := time.Duration(1<<min(attempt, 6)) * 5 * time.Millisecond
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return false, ctx.Err()
 		case <-time.After(backoff/2 + rand.N(backoff)):
 		}
 	}
-	return nil, fmt.Errorf("%w: %s", ErrManifestConflict, key)
+	return false, fmt.Errorf("%w: %s", ErrManifestConflict, key)
 }
 
-func (m *Manifests) apply(ctx context.Context, ref contentref.ContentRef, key string, fn func(*Manifest) error, conditional bool) (*Manifest, bool, error) {
-	man, etag, err := m.get(ctx, key)
+func (m *Manifests) try(ctx context.Context, key string, fn func([]byte) ([]byte, error), conditional bool) (conflict, written bool, err error) {
+	body, etag, err := m.raw(ctx, key)
 	if errors.Is(err, ErrNotFound) {
-		man, etag = &Manifest{}, ""
+		body, etag = nil, ""
 	} else if err != nil {
-		return nil, false, err
+		return false, false, err
 	}
-	before, _ := json.Marshal(man)
-	if err := fn(man); err != nil {
-		return nil, false, err
-	}
-	if err := man.Validate(); err != nil {
-		return nil, false, err
-	}
-	if man.Files == nil {
-		man.Files = []File{}
-	}
-	body, err := json.Marshal(man)
-	if err != nil {
-		return nil, false, err
-	}
-	if etag != "" && bytes.Equal(before, body) {
-		return man, false, nil
+	out, err := fn(body)
+	if err != nil || out == nil {
+		return false, false, err
 	}
 	opts := PutOptions{ContentType: "application/json", CacheControl: "no-store"}
 	if conditional {
@@ -139,48 +165,50 @@ func (m *Manifests) apply(ctx context.Context, ref contentref.ContentRef, key st
 			opts.IfMatch = etag
 		}
 	}
-	obj, err := m.store.Put(ctx, key, bytes.NewReader(body), int64(len(body)), opts)
+	obj, err := m.store.Put(ctx, key, bytes.NewReader(out), int64(len(out)), opts)
 	if errors.Is(err, ErrPreconditionFailed) {
 		m.cache.remove(key)
-		return nil, true, nil
+		return true, false, nil
 	}
 	if err != nil {
-		return nil, false, err
+		return false, false, err
 	}
-	m.cache.put(key, obj.ETag, body)
-	if m.jobs != nil {
-		if err := m.jobs.ScheduleSweep(ctx, ref); err != nil {
-			m.jobs.cfg.Logger.WarnContext(ctx, "media: schedule sweep", "key", key, "error", err)
-		}
-	}
-	return man, false, nil
+	m.cache.put(key, obj.ETag, out)
+	return false, true, nil
 }
 
 func (m *Manifests) get(ctx context.Context, key string) (*Manifest, string, error) {
-	cachedETag, cached := m.cache.get(key)
-	rc, obj, err := m.store.Get(ctx, key, GetOptions{IfNoneMatch: cachedETag})
-	var body []byte
-	switch {
-	case errors.Is(err, ErrNotModified) && cached != nil:
-		body, obj.ETag = cached, cachedETag
-	case errors.Is(err, ErrNotFound):
-		m.cache.remove(key)
+	body, etag, err := m.raw(ctx, key)
+	if err != nil {
 		return nil, "", err
-	case err != nil:
-		return nil, "", err
-	default:
-		body, err = io.ReadAll(rc)
-		rc.Close()
-		if err != nil {
-			return nil, "", err
-		}
-		m.cache.put(key, obj.ETag, body)
 	}
 	var man Manifest
 	if err := json.Unmarshal(body, &man); err != nil {
 		return nil, "", fmt.Errorf("media: decode manifest %s: %w", key, err)
 	}
-	return &man, obj.ETag, nil
+	return &man, etag, nil
+}
+
+// raw reads an object through the ETag-revalidated cache.
+func (m *Manifests) raw(ctx context.Context, key string) ([]byte, string, error) {
+	cachedETag, cached := m.cache.get(key)
+	rc, obj, err := m.store.Get(ctx, key, GetOptions{IfNoneMatch: cachedETag})
+	switch {
+	case errors.Is(err, ErrNotModified) && cached != nil:
+		return cached, cachedETag, nil
+	case errors.Is(err, ErrNotFound):
+		m.cache.remove(key)
+		return nil, "", err
+	case err != nil:
+		return nil, "", err
+	}
+	body, err := io.ReadAll(rc)
+	rc.Close()
+	if err != nil {
+		return nil, "", err
+	}
+	m.cache.put(key, obj.ETag, body)
+	return body, obj.ETag, nil
 }
 
 func (m *Manifests) key(ref contentref.ContentRef) (string, error) {

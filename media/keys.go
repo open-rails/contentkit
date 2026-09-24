@@ -21,7 +21,7 @@ const (
 // Item is a validated content item and the keys of its folder:
 //
 //	{tenant}/{kind}/{content_id}/manifest.json | manifests/{version}.json
-//	                            /originals/{sha256-hex | u-uuid | slot | i-uuid}
+//	                            /originals/{sha256-hex | u-uuid | slot | slot.json | i-uuid}
 //	                            /blobs/{sha256-hex | u-uuid}
 //	                            /public/{output}.webp
 type Item struct {
@@ -91,22 +91,31 @@ func (i Item) Blob(name string) (string, error) {
 // SlotOriginal is the original of a registered public slot, overwritten in
 // place, or of an inline image.
 func (i Item) SlotOriginal(slot string) (string, error) {
-	if _, err := i.SlotOutputs(slot); err != nil {
-		return "", err
+	if _, ok := i.kind.Slots[slot]; !ok && !i.Inline(slot) {
+		return "", fmt.Errorf("media: kind %q has no slot %q", i.kind.Name, slot)
 	}
 	return i.OriginalsPrefix() + slot, nil
 }
 
-// SlotOutputs are the public outputs of a registered slot, or the single
-// output of an inline image, named by its id.
-func (i Item) SlotOutputs(slot string) (map[string]Spec, error) {
-	if s, ok := i.kind.Slots[slot]; ok {
-		return s.Outputs, nil
+// Inline reports whether name is an inline image id the kind accepts.
+func (i Item) Inline(name string) bool {
+	return i.kind.Inline != nil && layout.ValidInlineName(name)
+}
+
+// SlotRecord is originals/{slot}.json, a registered slot's record (SlotRecord).
+func (i Item) SlotRecord(slot string) (string, error) {
+	if _, ok := i.kind.Slots[slot]; !ok {
+		return "", fmt.Errorf("media: kind %q has no slot %q", i.kind.Name, slot)
 	}
-	if i.kind.Inline != nil && layout.ValidInlineName(slot) {
-		return map[string]Spec{slot: *i.kind.Inline}, nil
+	return i.OriginalsPrefix() + slot + slotRecordExt, nil
+}
+
+// SlotOutput is public/{slot}_{width}.webp.
+func (i Item) SlotOutput(slot string, width int) (string, error) {
+	if _, ok := i.kind.Slots[slot]; !ok {
+		return "", fmt.Errorf("media: kind %q has no slot %q", i.kind.Name, slot)
 	}
-	return nil, fmt.Errorf("media: kind %q has no slot %q", i.kind.Name, slot)
+	return i.Public(SlotOutput(slot, width))
 }
 
 // Public is public/{name}.webp: a slot output or a host-chosen inline image id.

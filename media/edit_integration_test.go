@@ -95,8 +95,21 @@ func TestEditOpAndSlotFromFile(t *testing.T) {
 	slotBody := func(edit *media.Edit) media.SlotFromFileBody {
 		return media.SlotFromFileBody{Ref: ref, Slot: "cover", File: "p.png", Edit: edit}
 	}
-	if status, er := e.call(t, "alice", "/commit-slot-from-file", slotBody(crop(200, 0, 100, 0)), nil); status != 204 {
-		t.Fatalf("slot from file: %d %+v", status, er)
+	var sm media.SlotManifest
+	if status, er := e.call(t, "alice", "/commit-slot-from-file", slotBody(crop(200, 0, 100, 0)), &sm); status != 200 || !sm.Pending || sm.Aspect != 0.5 {
+		t.Fatalf("slot from file: %d %+v %+v", status, er, sm)
+	}
+	slotEdit := func() string {
+		t.Helper()
+		rec, err := e.manifests.Slot(ctx, contentref.New(e.Tenant, "mixed", "2"), "cover")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Edit == nil {
+			return ""
+		}
+		b, _ := json.Marshal(rec.Edit)
+		return string(b)
 	}
 	rc, obj, err := e.Store.Get(ctx, e.Tenant+"/mixed/2/originals/cover", media.GetOptions{})
 	if err != nil {
@@ -104,10 +117,9 @@ func TestEditOpAndSlotFromFile(t *testing.T) {
 	}
 	got, _ := io.ReadAll(rc)
 	rc.Close()
-	var edit media.Edit
-	if string(got) != string(page) || obj.ContentType != "image/png" || json.Unmarshal([]byte(obj.Metadata[media.SlotEditMeta]), &edit) != nil ||
-		*edit.Crop != (media.Crop{X: 200, Y: 0, W: 100, H: 200}) {
-		t.Fatalf("slot original: %d bytes %+v", len(got), obj)
+	if string(got) != string(page) || obj.ContentType != "image/png" || slotEdit() != `{"crop":{"x":200,"y":0,"w":100,"h":200}}` ||
+		*sm.Edit.Crop != (media.Crop{X: 200, Y: 0, W: 100, H: 200}) {
+		t.Fatalf("slot original: %d bytes %+v, edit %s", len(got), obj, slotEdit())
 	}
 	if len(e.queue.jobs) != 1 || e.queue.jobs[0].Slot != "cover" || e.queue.jobs[0].Ref.Version() != "" {
 		t.Fatalf("jobs: %+v", e.queue.jobs)
@@ -138,12 +150,11 @@ func TestEditOpAndSlotFromFile(t *testing.T) {
 		edit *media.Edit
 		want string
 	}{{nil, `{"rotate":90}`}, {&media.Edit{}, ""}} {
-		if status, er := e.call(t, "alice", "/commit-slot-from-file", slotBody(tc.edit), nil); status != 204 {
+		if status, er := e.call(t, "alice", "/commit-slot-from-file", slotBody(tc.edit), nil); status != 200 {
 			t.Fatalf("slot from file: %d %+v", status, er)
 		}
-		obj, err := e.Store.Head(ctx, e.Tenant+"/mixed/2/originals/cover")
-		if err != nil || obj.Metadata[media.SlotEditMeta] != tc.want {
-			t.Fatalf("slot edit %q, want %q (%v)", obj.Metadata[media.SlotEditMeta], tc.want, err)
+		if got := slotEdit(); got != tc.want {
+			t.Fatalf("slot edit %q, want %q", got, tc.want)
 		}
 	}
 }

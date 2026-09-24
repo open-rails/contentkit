@@ -15,10 +15,9 @@ func registry(t testing.TB) *media.Registry {
 	r, err := media.NewRegistry(
 		media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
 			Specs: map[string]media.Spec{"thumb": {Width: 460, Height: 650, Fit: media.FitCover, Quality: 80}},
-			Slots: map[string]media.Slot{"cover": {Outputs: map[string]media.Spec{"cover": {Width: 460, Quality: 80}}}}},
+			Slots: map[string]media.Slot{"cover": {Aspect: 3, Widths: []int{1500}}}},
 		media.Kind{Name: "post"},
-		media.Kind{Name: "user", Slots: map[string]media.Slot{"avatar": {Outputs: map[string]media.Spec{
-			"avatar_80": {Width: 80, Height: 80, Fit: media.FitCover}, "avatar_320": {Width: 320, Height: 320, Fit: media.FitCover}}}}},
+		media.Kind{Name: "user", Slots: map[string]media.Slot{"avatar": {Aspect: 1, Widths: []int{320, 80}}}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -118,14 +117,25 @@ func TestKindRules(t *testing.T) {
 	if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{"cover": {}}}); err == nil {
 		t.Fatal("empty slot accepted")
 	}
+	for _, bad := range []media.Slot{{Aspect: 1}, {Widths: []int{64}}, {Aspect: 1, Widths: []int{64, 64}}, {Aspect: 1, Widths: []int{0}}} {
+		if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{"cover": bad}}); err == nil {
+			t.Fatalf("slot %+v accepted", bad)
+		}
+	}
+	if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{"a.json": {Aspect: 1, Widths: []int{8}}}}); err == nil {
+		t.Fatal("slot name colliding with a record accepted")
+	}
+	u, _ := r.Kind("user")
+	if w := u.Slots["avatar"].Widths; w[0] != 80 || w[1] != 320 {
+		t.Fatalf("widths not sorted: %v", w)
+	}
 	inline := media.NewInlineName()
-	if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{inline: {Outputs: map[string]media.Spec{"a": {}}}}}); err == nil {
+	if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{inline: {Aspect: 1, Widths: []int{8}}}}); err == nil {
 		t.Fatal("inline-named slot accepted")
 	}
 	editor := media.Spec{Unedited: true, EditorOnly: true}
 	for name, k := range map[string]media.Kind{
 		"public unedited spec": {Specs: map[string]media.Spec{"editor": {Unedited: true}}},
-		"editor slot output":   {Slots: map[string]media.Slot{"cover": {Outputs: map[string]media.Spec{"cover": editor}}}},
 		"editor inline":        {Inline: &editor},
 		"editor zip":           {Specs: map[string]media.Spec{"editor": editor}, Zip: "editor"},
 		"odd ladder":           {Video: &media.Video{Ladder: []int{720, 481}}},
@@ -153,9 +163,11 @@ func TestInlineImageKeys(t *testing.T) {
 	if err != nil || orig != "h/post/p1/originals/"+name {
 		t.Fatal(orig, err)
 	}
-	outs, err := p.SlotOutputs(name)
-	if err != nil || len(outs) != 1 || outs[name] != spec {
-		t.Fatal(outs, err)
+	if !p.Inline(name) || p.Inline("cover") {
+		t.Fatal("inline names")
+	}
+	if _, err := p.SlotRecord(name); err == nil {
+		t.Fatal("inline image has a slot record")
 	}
 	if k, _ := p.Public(name); k != "h/post/p1/public/"+name+".webp" {
 		t.Fatal(k)
@@ -168,5 +180,34 @@ func TestInlineImageKeys(t *testing.T) {
 	g, _ := r.Item(contentref.New("h", "gallery", "g1"))
 	if _, err := g.SlotOriginal(name); err == nil {
 		t.Fatal("inline image accepted by a kind without Inline")
+	}
+}
+
+func TestSlotResolve(t *testing.T) {
+	cover := media.Slot{Aspect: 3, Widths: []int{300, 600}}
+	crop := func(x, y, w, h int) *media.Edit { return &media.Edit{Crop: &media.Crop{X: x, Y: y, W: w, H: h}} }
+	for _, c := range []struct {
+		edit *media.Edit
+		w, h int
+		want *media.Edit
+	}{
+		{nil, 900, 900, crop(0, 300, 900, 300)},                          // centred in a square
+		{nil, 3000, 600, crop(600, 0, 1800, 600)},                        // centred in a wider image
+		{crop(100, 200, 600, 0), 1000, 1000, crop(100, 200, 600, 200)},   // height follows width
+		{crop(100, 200, 600, 999), 1000, 1000, crop(100, 200, 600, 200)}, // whatever height is sent
+		{&media.Edit{Rotate: 90}, 900, 900, &media.Edit{Crop: &media.Crop{X: 300, Y: 0, W: 300, H: 900}, Rotate: 90}},
+		{crop(500, 0, 600, 0), 1000, 1000, nil}, // outside
+		{crop(0, 0, 200, 0), 1000, 1000, nil},   // under the smallest width
+	} {
+		got, err := cover.Resolve(c.edit, c.w, c.h)
+		if c.want == nil {
+			if err == nil {
+				t.Errorf("Resolve(%+v, %d, %d) accepted %+v", c.edit, c.w, c.h, got)
+			}
+			continue
+		}
+		if err != nil || got.Hash() != c.want.Hash() {
+			t.Errorf("Resolve(%+v, %d, %d) = %+v %+v, %v", c.edit, c.w, c.h, got, got.Crop, err)
+		}
 	}
 }

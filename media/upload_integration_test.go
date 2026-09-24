@@ -74,12 +74,12 @@ func newUploadEnv(t *testing.T, caps *media.Capabilities, limiter media.UploadLi
 	}
 	kinds, err := media.NewRegistry(
 		media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
-			Slots: map[string]media.Slot{"cover": {Outputs: map[string]media.Spec{"cover": {Width: 460}}}}},
+			Slots: map[string]media.Slot{"cover": {Aspect: 3, Widths: []int{460}}}},
 		media.Kind{Name: "video", Types: []string{"video/mp4"}, MaxBytes: 1 << 30},
 		media.Kind{Name: "post", Types: []string{"image/png"}, MaxBytes: 1 << 20, Inline: &media.Spec{Width: 1600}},
 		media.Kind{Name: "mixed", Versioned: true, Types: []string{"image/png", "video/mp4"}, MaxBytes: 1 << 20, MaxFiles: 3,
 			TypeLimits: map[string]media.Limit{"video": {MaxBytes: 1 << 30, MaxFiles: 1}}, Video: &media.Video{},
-			Slots: map[string]media.Slot{"cover": {Outputs: map[string]media.Spec{"cover": {Width: 100}}, Aspect: 0.5}}},
+			Slots: map[string]media.Slot{"cover": {Aspect: 0.5, Widths: []int{100}}}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -103,7 +103,7 @@ func newUploadEnv(t *testing.T, caps *media.Capabilities, limiter media.UploadLi
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := media.UploadHandler(u, media.UploadHandlerOptions{Tenant: env.Tenant, Actor: func(r *http.Request) (access.Actor, bool) {
+	h := media.UploadHandler(u, media.UploadHandlerOptions{Tenant: env.Tenant, PublicBaseURL: slotBase, Actor: func(r *http.Request) (access.Actor, bool) {
 		id := r.Header.Get("X-Test-Actor")
 		return access.Actor{ID: id, Kind: "user"}, id != ""
 	}})
@@ -111,6 +111,8 @@ func newUploadEnv(t *testing.T, caps *media.Capabilities, limiter media.UploadLi
 	t.Cleanup(srv.Close)
 	return &uploadEnv{Env: env, store: store, uploads: u, manifests: manifests, queue: q, srv: srv}
 }
+
+const slotBase = "https://media.example"
 
 // call posts body as actor and decodes a 2xx reply into out, or returns the error reply.
 func (e *uploadEnv) call(t *testing.T, actor, path string, body, out any) (int, media.ErrorReply) {
@@ -349,8 +351,19 @@ func TestSlotUploadAndCommit(t *testing.T) {
 	if code := put(t, p.Put, cover, nil); code != 200 {
 		t.Fatalf("slot put %d", code)
 	}
-	if status, er := e.call(t, "alice", "/commit-slot", media.SlotBody{Ref: ref, Slot: "cover", SHA256: hexSum(cover)}, nil); status != 204 {
+	crop := func(x, y, w, h int) *media.Edit { return &media.Edit{Crop: &media.Crop{X: x, Y: y, W: w, H: h}} }
+	for _, bad := range []*media.Edit{crop(-1, 0, 600, 0), crop(0, 0, 0, 0), {Rotate: 45}} {
+		if status, er := e.call(t, "alice", "/commit-slot", media.SlotBody{Ref: ref, Slot: "cover", SHA256: hexSum(cover), Edit: bad}, nil); status != 400 || er.Code != media.CodeInvalid {
+			t.Fatalf("edit %+v: %d %+v", bad, status, er)
+		}
+	}
+	// The crop's height follows its width at the slot's 3:1 aspect.
+	var m media.SlotManifest
+	if status, er := e.call(t, "alice", "/commit-slot", media.SlotBody{Ref: ref, Slot: "cover", SHA256: hexSum(cover), Edit: crop(10, 20, 600, 7)}, &m); status != 200 {
 		t.Fatalf("commit slot %d %+v", status, er)
+	}
+	if !m.Pending || m.Edit == nil || *m.Edit.Crop != (media.Crop{X: 10, Y: 20, W: 600, H: 200}) || m.Aspect != 3 || len(m.Outputs) != 0 || m.Version != "" {
+		t.Fatalf("manifest after commit %+v", m)
 	}
 	if e.queue.count() != 1 || e.queue.jobs[0].Slot != "cover" {
 		t.Fatalf("jobs %+v", e.queue.jobs)
@@ -358,6 +371,59 @@ func TestSlotUploadAndCommit(t *testing.T) {
 	obj, err := e.Store.Head(ctx, e.Tenant+"/gallery/9/originals/cover")
 	if err != nil || obj.Size != 1234 {
 		t.Fatalf("slot original %+v %v", obj, err)
+	}
+
+	// The editor reads the committed original back; others may not.
+	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/slot-original", strings.NewReader(`{"ref":{"kind":"gallery","id":"9"},"slot":"cover"}`))
+	req.Header.Set("X-Test-Actor", "alice")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !bytes.Equal(got, cover) || resp.Header.Get("Content-Type") != "image/png" || resp.Header.Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("slot original: %d %q", resp.StatusCode, resp.Header)
+	}
+	if status, er := e.call(t, "reader", "/slot-original", media.SlotRefBody{Ref: ref, Slot: "cover"}, nil); status != 403 {
+		t.Fatalf("reader read the original: %d %+v", status, er)
+	}
+
+	// Edit-slot reuses the original; no edit centres.
+	m = media.SlotManifest{}
+	if status, er := e.call(t, "alice", "/edit-slot", media.SlotEditBody{Ref: ref, Slot: "cover"}, &m); status != 200 || m.Edit != nil || !m.Pending {
+		t.Fatalf("edit-slot %d %+v %+v", status, er, m)
+	}
+	if e.queue.count() != 2 {
+		t.Fatalf("edit-slot enqueued %d", e.queue.count())
+	}
+	if status, er := e.call(t, "reader", "/edit-slot", media.SlotEditBody{Ref: ref, Slot: "cover", Edit: crop(0, 0, 300, 0)}, nil); status != 403 {
+		t.Fatalf("reader edited: %d %+v", status, er)
+	}
+	if status, er := e.call(t, "alice", "/edit-slot", media.SlotEditBody{Ref: media.RefBody{Kind: "gallery", ID: "10"}, Slot: "cover"}, nil); status != 404 {
+		t.Fatalf("edit of an uncommitted slot: %d %+v", status, er)
+	}
+	// A new upload not committed yet cannot be edited or read back.
+	next := data(8, 999)
+	var p2 media.PresignReply
+	if status, er := e.call(t, "alice", "/presign", media.PresignBody{Ref: ref, Type: "image/png", Size: 999, SHA256: hexSum(next), Slot: "cover"}, &p2); status != 200 {
+		t.Fatalf("presign %d %+v", status, er)
+	}
+	if code := put(t, p2.Put, next, nil); code != 200 {
+		t.Fatalf("put %d", code)
+	}
+	if status, er := e.call(t, "alice", "/edit-slot", media.SlotEditBody{Ref: ref, Slot: "cover"}, nil); status != 409 || er.Code != media.CodeNotUploaded {
+		t.Fatalf("edit of a replaced original: %d %+v", status, er)
+	}
+	if status, er := e.call(t, "alice", "/slot-original", media.SlotRefBody{Ref: ref, Slot: "cover"}, nil); status != 409 {
+		t.Fatalf("read of a replaced original: %d %+v", status, er)
+	}
+	if status, er := e.call(t, "alice", "/slot", media.SlotRefBody{Ref: ref, Slot: "nope"}, nil); status != 404 {
+		t.Fatalf("unknown slot manifest: %d %+v", status, er)
+	}
+	rec, err := e.manifests.Slot(ctx, contentref.New(e.Tenant, "gallery", "9"), "cover")
+	if err != nil || rec.Original != obj.ETag || rec.Edit != nil {
+		t.Fatalf("record %+v %v", rec, err)
 	}
 }
 
@@ -781,7 +847,7 @@ func TestSlotWritesAuthorizeTheWork(t *testing.T) {
 	if status, er := e.call(t, "translator", "/presign", media.PresignBody{Ref: media.RefBody{Kind: "post", ID: "p9"}, Type: "image/png", Size: 1500, SHA256: hexSum(cover), Inline: true}, nil); status != 403 {
 		t.Fatalf("inline presign: %d %+v", status, er)
 	}
-	if status, er := e.call(t, "alice", "/commit-slot-from-file", media.SlotFromFileBody{Ref: version, Slot: "cover", File: "001.png"}, nil); status != 204 {
+	if status, er := e.call(t, "alice", "/commit-slot-from-file", media.SlotFromFileBody{Ref: version, Slot: "cover", File: "001.png"}, nil); status != 200 {
 		t.Fatalf("slot from file: %d %+v", status, er)
 	}
 
@@ -791,7 +857,7 @@ func TestSlotWritesAuthorizeTheWork(t *testing.T) {
 	if status, er := e.call(t, "owner2", "/commit-slot-from-file", from, nil); status != 403 {
 		t.Fatalf("slot from an unauthorized item: %d %+v", status, er)
 	}
-	if status, er := e.call(t, "alice", "/commit-slot-from-file", from, nil); status != 204 {
+	if status, er := e.call(t, "alice", "/commit-slot-from-file", from, nil); status != 200 {
 		t.Fatalf("slot from another item: %d %+v", status, er)
 	}
 	if obj, err := e.Store.Head(ctx, e.Tenant+"/gallery/2/originals/cover"); err != nil || obj.Size != 1500 {
