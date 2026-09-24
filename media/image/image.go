@@ -249,6 +249,9 @@ func (p *Processor) pass(ctx context.Context, item media.Item, man *media.Manife
 	}
 
 	edited, err := p.c.Manifests.Edit(ctx, ref, func(m *media.Manifest) error {
+		if len(m.Files) == 0 {
+			return errGone // deleted (or emptied) during the pass: never recreate it
+		}
 		record(m)
 		if kind.Zip == "" {
 			return nil
@@ -265,10 +268,43 @@ func (p *Processor) pass(ctx context.Context, item media.Item, man *media.Manife
 		}
 		return nil
 	})
+	if errors.Is(err, errGone) {
+		// A deleted item keeps nothing this pass stored.
+		if _, _, gerr := p.c.Manifests.Get(ctx, ref); errors.Is(gerr, media.ErrNotFound) {
+			p.drop(ctx, item, results, zip)
+		}
+		return &media.Manifest{}, deriveErr
+	}
 	if err = errors.Join(deriveErr, err); err != nil {
 		return nil, err
 	}
 	return edited, nil
+}
+
+var errGone = errors.New("media/image: manifest gone")
+
+// drop deletes the blobs a pass stored for an item deleted meanwhile.
+func (p *Processor) drop(ctx context.Context, item media.Item, results map[string]derived, zip *media.Download) {
+	var keys []string
+	for _, d := range results {
+		for _, v := range d.variants {
+			key, err := item.Blob(v.Blob)
+			if v.Editor {
+				key, err = item.EditorBlob(v.Blob)
+			}
+			if err == nil {
+				keys = append(keys, key)
+			}
+		}
+	}
+	if zip != nil {
+		if key, err := item.Blob(zip.Blob); err == nil {
+			keys = append(keys, key)
+		}
+	}
+	for _, k := range keys {
+		_ = p.c.Store.Delete(ctx, k) // best effort: the sweep is the backstop
+	}
 }
 
 // derive encodes one source through its edit into each spec and stores the blobs.
