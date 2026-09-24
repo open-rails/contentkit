@@ -125,6 +125,7 @@ export interface SlotBody {
 export interface SlotFromFileBody {
   ref: RefBody;
   slot: string;
+  from?: RefBody;
   file: string;
   edit?: Edit;
 }

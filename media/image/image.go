@@ -294,7 +294,7 @@ func (p *Processor) derive(ctx context.Context, item media.Item, w work) (derive
 		if err != nil {
 			return derived{}, err
 		}
-		d.variants[name] = media.Variant{Blob: blob, Spec: s.For(w.edit), Type: "image/webp", Size: int64(len(out))}
+		d.variants[name] = media.Variant{Blob: blob, Spec: s.For(w.edit), Type: "image/webp", Size: int64(len(out)), Editor: s.EditorOnly || s.Unedited}
 	}
 	return d, nil
 }

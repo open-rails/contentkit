@@ -25,10 +25,17 @@ import (
 	"github.com/open-rails/contentkit/media/token"
 )
 
-// grants is the host permission check: actor id → grant.
+// grants is the host permission check: actor id → grant. "translator" may
+// upload to versions only; "owner2" to content id 2 only.
 type grants map[string]media.UploadGrant
 
-func (g grants) CanUpload(_ context.Context, a access.Actor, _ contentref.ContentRef) (media.UploadGrant, error) {
+func (g grants) CanUpload(_ context.Context, a access.Actor, ref contentref.ContentRef) (media.UploadGrant, error) {
+	switch a.ID {
+	case "translator":
+		return media.UploadGrant{Allowed: ref.Version() != ""}, nil
+	case "owner2":
+		return media.UploadGrant{Allowed: ref.ContentID == "2"}, nil
+	}
 	return g[a.ID], nil
 }
 
@@ -71,7 +78,7 @@ func newUploadEnv(t *testing.T, caps *media.Capabilities, limiter media.UploadLi
 		media.Kind{Name: "video", Types: []string{"video/mp4"}, MaxBytes: 1 << 30},
 		media.Kind{Name: "post", Types: []string{"image/png"}, MaxBytes: 1 << 20, Inline: &media.Spec{Width: 1600}},
 		media.Kind{Name: "mixed", Versioned: true, Types: []string{"image/png", "video/mp4"}, MaxBytes: 1 << 20, MaxFiles: 3,
-			TypeLimits: map[string]media.Limit{"video": {MaxBytes: 1 << 30, MaxFiles: 1}}, Video: true,
+			TypeLimits: map[string]media.Limit{"video": {MaxBytes: 1 << 30, MaxFiles: 1}}, Video: &media.Video{},
 			Slots: map[string]media.Slot{"cover": {Outputs: map[string]media.Spec{"cover": {Width: 100}}, Aspect: 0.5}}},
 	)
 	if err != nil {
@@ -741,5 +748,100 @@ func TestUploadLimiterBytesPerDayAndExpiry(t *testing.T) {
 	}
 	if used, pending, _ := limiter.Usage(ctx, "t", "o"); used != 0 || pending != 0 {
 		t.Fatalf("usage %d/%d", used, pending)
+	}
+}
+
+func TestSlotWritesAuthorizeTheWork(t *testing.T) {
+	e := newUploadEnv(t, nil, nil)
+	ctx := context.Background()
+	version := media.RefBody{Kind: "gallery", ID: "9", Version: "en"}
+	cover := data(9, 1500)
+
+	// A version uploader may commit pages but not write the work's slot.
+	page := e.upload(t, "translator", version, "image/png", cover)
+	if status, _, er := e.commit(t, "translator", version, insert("001.png", page)); status != 200 {
+		t.Fatalf("version commit %d %+v", status, er)
+	}
+	if status, er := e.call(t, "translator", "/presign", media.PresignBody{Ref: version, Type: "image/png", Size: 1500, SHA256: hexSum(cover), Slot: "cover"}, nil); status != 403 {
+		t.Fatalf("slot presign through a version: %d %+v", status, er)
+	}
+	var p media.PresignReply
+	if status, er := e.call(t, "alice", "/presign", media.PresignBody{Ref: version, Type: "image/png", Size: 1500, SHA256: hexSum(cover), Slot: "cover"}, &p); status != 200 {
+		t.Fatalf("slot presign %d %+v", status, er)
+	}
+	if code := put(t, p.Put, cover, nil); code != 200 {
+		t.Fatal(code)
+	}
+	if status, er := e.call(t, "translator", "/commit-slot", media.SlotBody{Ref: version, Slot: "cover", SHA256: hexSum(cover)}, nil); status != 403 {
+		t.Fatalf("slot commit through a version: %d %+v", status, er)
+	}
+	if status, er := e.call(t, "translator", "/commit-slot-from-file", media.SlotFromFileBody{Ref: version, Slot: "cover", File: "001.png"}, nil); status != 403 {
+		t.Fatalf("slot from a version file: %d %+v", status, er)
+	}
+	if status, er := e.call(t, "translator", "/presign", media.PresignBody{Ref: media.RefBody{Kind: "post", ID: "p9"}, Type: "image/png", Size: 1500, SHA256: hexSum(cover), Inline: true}, nil); status != 403 {
+		t.Fatalf("inline presign: %d %+v", status, er)
+	}
+	if status, er := e.call(t, "alice", "/commit-slot-from-file", media.SlotFromFileBody{Ref: version, Slot: "cover", File: "001.png"}, nil); status != 204 {
+		t.Fatalf("slot from file: %d %+v", status, er)
+	}
+
+	// From another item: both items must allow the actor.
+	other := media.RefBody{Kind: "gallery", ID: "2"}
+	from := media.SlotFromFileBody{Ref: other, Slot: "cover", From: &version, File: "001.png"}
+	if status, er := e.call(t, "owner2", "/commit-slot-from-file", from, nil); status != 403 {
+		t.Fatalf("slot from an unauthorized item: %d %+v", status, er)
+	}
+	if status, er := e.call(t, "alice", "/commit-slot-from-file", from, nil); status != 204 {
+		t.Fatalf("slot from another item: %d %+v", status, er)
+	}
+	if obj, err := e.Store.Head(ctx, e.Tenant+"/gallery/2/originals/cover"); err != nil || obj.Size != 1500 {
+		t.Fatalf("copied slot %+v %v", obj, err)
+	}
+	last := e.queue.jobs[e.queue.count()-1]
+	if last.Slot != "cover" || last.Ref.ContentID != "2" || last.Ref.Version() != "" {
+		t.Fatalf("job %+v", last)
+	}
+}
+
+func TestCommitEnforcesQuota(t *testing.T) {
+	pool := pgtest.Pool(t, nil)
+	ctx := context.Background()
+	schema := pgtest.Schema(t, ctx, pool)
+	// Reservations lapse at once: commit alone must hold the quota.
+	limiter, err := media.NewPGLimiter(pool, schema, media.PGLimits{ReservationTTL: time.Microsecond,
+		Quota: func(context.Context, string, string) (int64, error) { return 5000, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := newUploadEnv(t, nil, limiter)
+	ref := media.RefBody{Kind: "post", ID: "q1"}
+	a, b, c := data(401, 3000), data(402, 3000), data(403, 1000)
+	na, nb, nc := e.upload(t, "alice", ref, "image/png", a), e.upload(t, "alice", ref, "image/png", b), e.upload(t, "alice", ref, "image/png", c)
+	if status, _, er := e.commit(t, "alice", ref, insert("a.png", na)); status != 200 {
+		t.Fatalf("commit a %d %+v", status, er)
+	}
+	if status, _, er := e.commit(t, "bob", ref, insert("b.png", nb)); status != 413 || er.Code != media.CodeQuota {
+		t.Fatalf("commit over quota: %d %+v", status, er)
+	}
+	// Swapping within the quota nets out; a retried insert is free.
+	if status, _, er := e.commit(t, "alice", ref, media.Op{Op: media.OpRemove, Name: "a.png"}, insert("b.png", nb), insert("c.png", nc)); status != 200 {
+		t.Fatalf("swap %d %+v", status, er)
+	}
+	if status, _, er := e.commit(t, "alice", ref, insert("c.png", nc)); status != 200 {
+		t.Fatalf("retry %d %+v", status, er)
+	}
+	if used, _, err := limiter.Usage(ctx, e.Tenant, "chan-a"); err != nil || used != 4000 {
+		t.Fatalf("used %d %v", used, err)
+	}
+	man, _, err := e.manifests.Get(ctx, contentref.New(e.Tenant, "post", "q1"))
+	if err != nil || len(man.Files) != 2 || man.OriginalBytes() != 4000 {
+		t.Fatalf("manifest %+v %v", man, err)
+	}
+	// Exempt grants are charged but not refused.
+	if status, _, er := e.commit(t, "admin", ref, insert("a.png", na)); status != 200 {
+		t.Fatalf("exempt %d %+v", status, er)
+	}
+	if used, _, _ := limiter.Usage(ctx, e.Tenant, "chan-a"); used != 7000 {
+		t.Fatalf("used %d after exempt commit", used)
 	}
 }

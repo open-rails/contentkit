@@ -44,10 +44,11 @@ func (f File) Source() string {
 func (f File) Teaser() bool { t, _ := f.Meta["teaser"].(bool); return t }
 
 type Variant struct {
-	Blob string `json:"blob"`
-	Spec string `json:"spec,omitempty"`
-	Type string `json:"type,omitempty"`
-	Size int64  `json:"size,omitempty"`
+	Blob   string `json:"blob"`
+	Spec   string `json:"spec,omitempty"`
+	Type   string `json:"type,omitempty"`
+	Size   int64  `json:"size,omitempty"`
+	Editor bool   `json:"editor,omitempty"` // from Spec.EditorOnly: signed for editors only
 }
 
 type Download struct {

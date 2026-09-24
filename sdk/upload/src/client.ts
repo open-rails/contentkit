@@ -180,10 +180,12 @@ export class UploadClient {
   /**
    * Makes a manifest image the slot's original (a cover from a page), through
    * edit: omitted uses the file's own edit, {} none. With a slot aspect the
-   * server derives the crop's height from its width.
+   * server derives the crop's height from its width. o.from names another
+   * item holding file (e.g. a channel avatar from a post image).
    */
-  async setSlotFromFile(ref: RefBody, slot: string, file: string, edit?: Edit, o: { signal?: AbortSignal } = {}): Promise<void> {
-    await this.retry(() => this.api.commitSlotFromFile({ ref, slot, file, ...(edit ? { edit } : {}) }, o.signal), o.signal);
+  async setSlotFromFile(ref: RefBody, slot: string, file: string, edit?: Edit, o: { signal?: AbortSignal; from?: RefBody } = {}): Promise<void> {
+    const body = { ref, slot, file, ...(edit ? { edit } : {}), ...(o.from ? { from: o.from } : {}) };
+    await this.retry(() => this.api.commitSlotFromFile(body, o.signal), o.signal);
   }
 
   /** Discards a paused multipart upload. */

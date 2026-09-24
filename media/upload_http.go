@@ -148,13 +148,14 @@ type SlotBody struct {
 	SHA256 string  `json:"sha256"`
 }
 
-// SlotFromFileBody makes File (a manifest image of Ref) the slot's original,
-// through Edit (default: the file's edit; {} clears it).
+// SlotFromFileBody makes File (a manifest image of From, default Ref) the
+// slot's original, through Edit (default: the file's edit; {} clears it).
 type SlotFromFileBody struct {
-	Ref  RefBody `json:"ref"`
-	Slot string  `json:"slot"`
-	File string  `json:"file"`
-	Edit *Edit   `json:"edit,omitempty"`
+	Ref  RefBody  `json:"ref"`
+	Slot string   `json:"slot"`
+	From *RefBody `json:"from,omitempty"`
+	File string   `json:"file"`
+	Edit *Edit    `json:"edit,omitempty"`
 }
 
 // ErrorReply is the error body; Code is one of the media Code* constants,
@@ -309,7 +310,11 @@ func (h uploadHandler) slotFromFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.u.SetSlotFromFile(r.Context(), actor, h.ref(b.Ref), b.Slot, b.File, b.Edit); err != nil {
+	req := SlotFromFile{Ref: h.ref(b.Ref), Slot: b.Slot, File: b.File, Edit: b.Edit}
+	if b.From != nil {
+		req.From = h.ref(*b.From)
+	}
+	if err := h.u.SetSlotFromFile(r.Context(), actor, req); err != nil {
 		h.fail(w, r, err)
 		return
 	}

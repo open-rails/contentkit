@@ -246,10 +246,13 @@ func (g *Grant) Cookie() *http.Cookie {
 // blob that file does not reference.
 var ErrNotAllowed = errors.New("media: not allowed")
 
+// Editor reports an editor's grant: EditorOnly variants are signed.
+func (g *Grant) Editor() bool { return g.Resolution.Editor }
+
 // URL signs blob of file i: plain in cookie mode with full access, the
 // folder token in URL mode, else a token for exactly that key.
 func (g *Grant) URL(i int, blob string) (string, error) {
-	if !g.Allowed(i) || !slices.Contains(fileBlobs(g.Manifest.Files[i]), blob) {
+	if !g.Allowed(i) || !slices.Contains(fileBlobs(g.Manifest.Files[i], g.Editor()), blob) {
 		return "", ErrNotAllowed
 	}
 	key, err := g.Item.Blob(blob)
@@ -309,8 +312,18 @@ func extension(contentType string) string {
 
 func (r *Reader) objectURL(key string) string { return r.base.String() + "/" + key }
 
-// fileBlobs lists the blobs/ names one file references.
-func fileBlobs(f File) []string {
+// fileBlobs lists the blobs/ names one file references, without its
+// editor-only variants unless editor.
+func fileBlobs(f File, editor bool) []string {
+	if !editor {
+		vs := make(map[string]Variant, len(f.Variants))
+		for k, v := range f.Variants {
+			if !v.Editor {
+				vs[k] = v
+			}
+		}
+		f.Variants = vs
+	}
 	m := Manifest{Files: []File{f}}
 	return m.Blobs()
 }
@@ -318,7 +331,8 @@ func fileBlobs(f File) []string {
 // ReadOptions select the URLs a read returns.
 type ReadOptions struct {
 	// Variants in preference order: each file in range gets a URL for the
-	// first one it has. Empty returns metadata only.
+	// first one it has (EditorOnly ones only for editors). Empty returns
+	// metadata only.
 	Variants      []string
 	Offset, Limit int
 }
@@ -354,8 +368,8 @@ type FileInfo struct {
 	Width    int     `json:"w,omitempty"`
 	Height   int     `json:"h,omitempty"`
 	Duration float64 `json:"duration,omitempty"`
-	Edit     *Edit   `json:"edit,omitempty"` // with Dims, what an editor needs to re-crop
-	Dims     *Dims   `json:"dims,omitempty"` // the source's size; w/h is the edited size
+	Edit     *Edit   `json:"edit,omitempty"` // editors only: with Dims, what re-cropping needs
+	Dims     *Dims   `json:"dims,omitempty"` // editors only: the source's size; w/h is the edited size
 	Teaser   bool    `json:"teaser,omitempty"`
 	Locked   bool    `json:"locked,omitempty"`
 	HLS      bool    `json:"hls,omitempty"`
@@ -399,10 +413,13 @@ func (r *Reader) Read(ctx context.Context, ref contentref.ContentRef, actor acce
 		if !g.Allowed(i) {
 			fi.Locked = true
 		} else {
-			fi.Name, fi.Edit, fi.Dims = f.Name, f.Edit, f.Dims
+			fi.Name = f.Name
+			if g.Editor() {
+				fi.Edit, fi.Dims = f.Edit, f.Dims
+			}
 			if i >= o.Offset && i < o.Offset+o.Limit {
 				for _, v := range o.Variants {
-					if vr, ok := f.Variants[v]; ok {
+					if vr, ok := f.Variants[v]; ok && (!vr.Editor || g.Editor()) {
 						if fi.URL, err = g.URL(i, vr.Blob); err != nil {
 							return nil, err
 						}

@@ -47,7 +47,7 @@ Ports (in `content` unless qualified):
 |---|---|---|
 | `Identity` | yes | reads the already-authenticated `access.Actor` from context; ContentKit never authenticates |
 | `Authorizer` | yes | `Can(actor, perm)` for `Perms{PostWrite, PollWrite, CommentModerate, ModerationReview}`; fail-closed on error and on an unset perm |
-| `access.ContentResolver` | yes | `Resolve(ref, actor) → access.Resolution{Ref, Visible, Accessible, PreviewLimit}`: the whole gating surface, shared with media. An error denies. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request; another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`; content ignores `PreviewLimit`. Media serves every file only when `Full()`, else the first `Units(n)` files (`PreviewLimit` N caps a `Visible` item to its first N files; free preview is `Accessible=false, PreviewLimit=3`) and `Visible` teasers |
+| `access.ContentResolver` | yes | `Resolve(ref, actor) → access.Resolution{Ref, Visible, Accessible, PreviewLimit, Editor}`: the whole gating surface, shared with media. An error denies. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request; another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`; content ignores `PreviewLimit`. Media serves every file only when `Full()`, else the first `Units(n)` files (`PreviewLimit` N caps a `Visible` item to its first N files; free preview is `Accessible=false, PreviewLimit=3`) and `Visible` teasers; `Editor` (the actor may edit the item) unlocks `EditorOnly` variants and `edit`/`dims` in the read API |
 | `UserEnricher` | no | display data for author ids |
 | `Media` | no | post and poll images in ContentKit media (see below); absent = image routes answer 501 |
 | `ContentProcessor` | no | rich-text sanitizer for comment/post bodies (default strips tags) |
@@ -305,13 +305,17 @@ Cropping and rotating are ContentKit's: the host never decodes images.
 - A file edit is the commit op `{"op":"edit","name":"001.png","edit":{"crop":{"x":0,"y":0,"w":800,"h":600},"rotate":90}}`
   (omit `edit` to clear). Crop is in the original's pixels, before the
   clockwise rotate. Variants re-derive; the original is never changed.
-- A cover from a page is `Uploads.SetSlotFromFile(ctx, actor, ref, "cover", "001.png", &media.Edit{Crop: &media.Crop{X: x, Y: y, W: w}})`
+- A cover from a page is `Uploads.SetSlotFromFile(ctx, actor, media.SlotFromFile{Ref: ref, Slot: "cover", File: "001.png", Edit: &media.Edit{Crop: &media.Crop{X: x, Y: y, W: w}}})`
   or `POST /commit-slot-from-file {"ref","slot","file","edit"}` (204). Give the
   slot `Aspect: 460.0 / 650` and send only the width; the height follows.
-  This replaces Doujins' host-side `SetCoverFromPage` crop.
-- Editors read `dims` (original size) and `edit` from the read API and show a
-  `Spec.Unedited` variant; the SDK's `useCrop` keeps the rect in original
-  pixels for any cropper UI.
+  `From` (`"from"`) takes the file from another item of the tenant, e.g. a
+  channel avatar from a post image; `CanUpload` must allow both.
+- Slots and inline images belong to the work: `CanUpload` is asked for
+  `ref.Content()` even when a version ref is sent.
+- Editors (`Resolution.Editor`) read `dims` (original size) and `edit` from
+  the read API and show a `Spec{Unedited: true, EditorOnly: true}` variant,
+  which is never signed for other viewers; the SDK's `useCrop` keeps the rect
+  in original pixels for any cropper UI.
 - Cap files per item with `Kind.MaxFiles` and `Kind.TypeLimits`
   (`{"video": {MaxFiles: 1}}`); commits over a cap get 409 `too_many_files`.
 

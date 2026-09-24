@@ -85,13 +85,14 @@ func (q *Enqueuer) args(job media.ProcessJob) (Args, bool, error) {
 	if err != nil {
 		return Args{}, false, err
 	}
-	if !item.Kind().Video {
+	v := item.Kind().Video
+	if v == nil {
 		return Args{}, false, nil
 	}
 	if _, err := item.ManifestKey(); err != nil {
 		return Args{}, false, err
 	}
-	return Args{Ref: job.Ref, Versioned: item.Kind().Versioned}, true, nil
+	return Args{Ref: job.Ref, Versioned: item.Kind().Versioned, Ladder: v.Ladder}, true, nil
 }
 
 // Jobs are not unique: River's uniqueness always covers running jobs, which
