@@ -26,11 +26,14 @@ const prefTestCHDB = "contentkit_preference_test"
 // canonicalizer collapses the language suffix to the work.
 type routeResolver struct{}
 
-func (routeResolver) Resolve(_ context.Context, r contentref.ContentRef, _ access.Actor) (access.Resolution, error) {
-	if r.ContentKind != "gallery" {
-		return access.Resolution{}, content.ErrNotFound
+func (routeResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	out := map[contentref.ContentKey]access.Resolution{}
+	for _, r := range refs {
+		if r.ContentKind == "gallery" {
+			out[r.Key()] = access.Resolution{Visible: true, Accessible: true}
+		}
 	}
-	return access.Resolution{Visible: true, Accessible: true}, nil
+	return out, nil
 }
 
 func stripLanguage(r contentref.ContentRef) (contentref.ContentRef, bool) {

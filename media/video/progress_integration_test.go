@@ -19,8 +19,12 @@ import (
 
 type visible struct{}
 
-func (visible) Resolve(context.Context, contentref.ContentRef, access.Actor) (access.Resolution, error) {
-	return access.Resolution{Visible: true, Accessible: true}, nil
+func (visible) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	out := map[contentref.ContentKey]access.Resolution{}
+	for _, ref := range refs {
+		out[ref.Key()] = access.Resolution{Visible: true, Accessible: true}
+	}
+	return out, nil
 }
 
 // The production path: a committed upload's job waits in media_worker (queue
@@ -147,7 +151,9 @@ poll:
 		}
 	}
 	t.Logf("%d samples; encoding: %+v", len(seen), encoding)
-	if !phases[media.PhaseEncoding] || !phases[media.PhaseUploading] {
+	// Muxing and uploading alternate per rung; on a fast runner one can fall
+	// between two throttled progress writes.
+	if !phases[media.PhaseEncoding] || !phases[media.PhaseMuxing] && !phases[media.PhaseUploading] {
 		t.Fatalf("phases seen %v", phases)
 	}
 	if !imagePhases[media.PhaseEncoding] || !imagePhases[media.PhaseImages] {

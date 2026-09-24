@@ -44,8 +44,8 @@ func (editors) Can(_ context.Context, a access.Actor, _ string) (bool, error) {
 
 type noContent struct{}
 
-func (noContent) Resolve(context.Context, contentref.ContentRef, access.Actor) (access.Resolution, error) {
-	return access.Resolution{}, content.ErrNotFound
+func (noContent) Resolve(context.Context, []contentref.ContentRef, access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	return nil, nil
 }
 
 // contentEnv is a host: content and media mounted behind one auth

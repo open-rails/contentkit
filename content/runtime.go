@@ -255,13 +255,23 @@ func (rt *Runtime) canonicalRef(requested, resolved contentref.ContentRef) (cont
 // returned reference is the resolver's canonical identity; callers store and
 // query by it, never by the caller-supplied key, so aliases cannot fragment rows.
 func (rt *Runtime) gate(ctx context.Context, kind, id string, actor access.Actor, needAccessible bool) (contentref.ContentRef, error) {
-	if !contentKindRe.MatchString(kind) || !rt.isRegistered(kind) || id == "" {
+	if !rt.routable(kind, id) {
 		return contentref.ContentRef{}, ErrNotFound
 	}
 	requested := rt.Ref(kind, id)
-	res, err := rt.resolver.Resolve(ctx, requested, actor)
+	res, err := rt.resolver.Resolve(ctx, []contentref.ContentRef{requested}, actor)
 	if err != nil {
 		return contentref.ContentRef{}, err
+	}
+	return rt.admit(requested, res, needAccessible)
+}
+
+// admit applies requested's resolution from a batch: the canonical reference
+// if the target exists and is visible (and accessible when required).
+func (rt *Runtime) admit(requested contentref.ContentRef, batch map[contentref.ContentKey]access.Resolution, needAccessible bool) (contentref.ContentRef, error) {
+	res, ok := batch[requested.Key()]
+	if !ok {
+		return contentref.ContentRef{}, ErrNotFound
 	}
 	ref, err := rt.canonicalRef(requested, res.Ref)
 	if err != nil {
@@ -276,15 +286,19 @@ func (rt *Runtime) gate(ctx context.Context, kind, id string, actor access.Actor
 	return ref, nil
 }
 
+func (rt *Runtime) routable(kind, id string) bool {
+	return contentKindRe.MatchString(kind) && rt.isRegistered(kind) && id != ""
+}
+
 // canonical maps a caller-supplied key to the resolver's canonical one for
 // paths that must succeed even when the target is hidden (un-wishlisting
 // deleted content): a resolve failure falls back to the raw key.
 func (rt *Runtime) canonical(ctx context.Context, kind, id string, actor access.Actor) contentref.ContentRef {
 	requested := rt.Ref(kind, id)
-	if !contentKindRe.MatchString(kind) || !rt.isRegistered(kind) || id == "" {
+	if !rt.routable(kind, id) {
 		return requested
 	}
-	res, err := rt.resolver.Resolve(ctx, requested, actor)
+	res, err := access.ResolveOne(ctx, rt.resolver, requested, actor)
 	if err != nil {
 		return requested
 	}

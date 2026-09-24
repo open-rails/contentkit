@@ -58,8 +58,21 @@ func (r Resolution) Units(total int) int {
 }
 
 // ContentResolver is the one mandatory content hook and the whole gating
-// surface: it says whether a ContentRef exists, is visible and is accessible
-// to the actor. Callers invoke it once per item per request; an error denies.
+// surface: it says whether each ContentRef exists, is visible and is
+// accessible to the actor. It is batch-first: callers pass every ref a
+// request needs in one call (a single item is a batch of one). The map is
+// keyed by each requested ref's Key; a ref missing from it denies. An error
+// fails the whole batch and denies every ref.
 type ContentResolver interface {
-	Resolve(ctx context.Context, ref contentref.ContentRef, actor Actor) (Resolution, error)
+	Resolve(ctx context.Context, refs []contentref.ContentRef, actor Actor) (map[contentref.ContentKey]Resolution, error)
+}
+
+// ResolveOne resolves a single ref as a batch of one; an omitted ref yields
+// the zero (denying) Resolution.
+func ResolveOne(ctx context.Context, r ContentResolver, ref contentref.ContentRef, actor Actor) (Resolution, error) {
+	m, err := r.Resolve(ctx, []contentref.ContentRef{ref}, actor)
+	if err != nil {
+		return Resolution{}, err
+	}
+	return m[ref.Key()], nil
 }

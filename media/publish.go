@@ -116,7 +116,7 @@ func (j *Jobs) exposure(ctx context.Context, ref contentref.ContentRef) (Exposur
 	if j.cfg.Resolver == nil {
 		return Exposure{}, nil
 	}
-	res, err := j.cfg.Resolver.Resolve(ctx, ref, access.Actor{Anonymous: true})
+	res, err := access.ResolveOne(ctx, j.cfg.Resolver, ref, access.Actor{Anonymous: true})
 	if err != nil {
 		return Exposure{}, fmt.Errorf("media: resolve %s for publishing: %w", ref, err)
 	}

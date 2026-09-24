@@ -42,11 +42,14 @@ func (allowAuthz) Can(context.Context, access.Actor, string) (bool, error) { ret
 // galleryResolver knows gallery g1 (any alias "g1"/"g1:en" -> g1) and nothing else.
 type galleryResolver struct{}
 
-func (galleryResolver) Resolve(_ context.Context, r contentref.ContentRef, _ access.Actor) (access.Resolution, error) {
-	if r.ContentKind == "gallery" && strings.HasPrefix(r.ContentID, "g1") {
-		return access.Resolution{Ref: contentref.New(r.TenantID, "gallery", "g1"), Visible: true, Accessible: true}, nil
+func (galleryResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	out := map[contentref.ContentKey]access.Resolution{}
+	for _, r := range refs {
+		if r.ContentKind == "gallery" && strings.HasPrefix(r.ContentID, "g1") {
+			out[r.Key()] = access.Resolution{Ref: contentref.New(r.TenantID, "gallery", "g1"), Visible: true, Accessible: true}
+		}
 	}
-	return access.Resolution{}, content.ErrNotFound
+	return out, nil
 }
 
 func do(t *testing.T, h http.Handler, actor access.Actor, method, target string, body any) *httptest.ResponseRecorder {

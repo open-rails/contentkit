@@ -118,8 +118,8 @@ func (rt *Runtime) LatestComments(ctx context.Context, actor access.Actor, limit
 // approved comments the feed draws from in this tenant. Per-reference
 // visibility is applied per page (a page may under-fill), so this is the
 // upper bound a paged envelope reports, not a per-actor exact count —
-// filtering it exactly would cost one resolver call per distinct reference
-// in the whole table.
+// filtering it exactly would mean resolving every distinct reference in the
+// whole table.
 func (rt *Runtime) LatestCommentsTotal(ctx context.Context) (int, error) {
 	return rt.comments.latestTotal(ctx)
 }
@@ -204,8 +204,8 @@ func (rt *Runtime) ReactionsByActor(ctx context.Context, actor access.Actor, kin
 // comments have received: the profile stat behind "likes my comments got".
 // Like LatestCommentsTotal it takes no actor — held and rejected comments are
 // author-only and never counted, so every reader sees the same totals, and
-// filtering by per-reference visibility would cost one resolver call per
-// distinct reference the author ever commented on. An author with no published
+// filtering by per-reference visibility would mean resolving every distinct
+// reference the author ever commented on. An author with no published
 // comments is absent from the map.
 func (rt *Runtime) CommentReactionsByAuthor(ctx context.Context, userIDs []string) (map[string]AuthorReactions, error) {
 	return rt.comments.reactionsByAuthor(ctx, userIDs)
