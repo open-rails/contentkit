@@ -1,23 +1,27 @@
 name: images
 # Release tags publish ghcr.io/open-rails/contentkit-{name}:{tag} and
-# docker.io/openrails/contentkit-{name}:{tag}; pull requests only build.
+# docker.io/openrails/contentkit-{name}:{tag}. Pull requests that touch image
+# definitions build linux/amd64 only, without pushing.
 'on':
   push:
     tags:
     - 'v*'
   pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
-    - 'cmd/**'
-    - 'media/**'
-    - 'go.mod'
-    - 'go.sum'
+    - 'cmd/*/Dockerfile'
     - '.dockerignore'
     - '.github/workflows/images.yaml'
 permissions:
   contents: read
+concurrency:
+  group: images-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   image:
     name: ${{ matrix.name }}
+    if: '!github.event.pull_request.draft'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -51,7 +55,7 @@ jobs:
       with:
         context: .
         file: ${{ matrix.dockerfile }}
-        platforms: linux/amd64,linux/arm64
+        platforms: ${{ github.event_name == 'push' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
         push: ${{ github.event_name == 'push' }}
         tags: |
           ghcr.io/open-rails/contentkit-${{ matrix.name }}:${{ github.event_name == 'push' && github.ref_name || 'pr' }}
@@ -61,4 +65,4 @@ jobs:
           org.opencontainers.image.revision=${{ github.sha }}
           org.opencontainers.image.version=${{ github.ref_name }}
         cache-from: type=gha,scope=${{ matrix.name }}
-        cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+        cache-to: ${{ github.event_name == 'push' && format('type=gha,mode=max,scope={0}', matrix.name) || '' }}

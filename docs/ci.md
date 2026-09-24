@@ -1,6 +1,14 @@
 # CI execution
 
-- Branch pushes: build and vet only. Superseded runs are cancelled.
-- Pull requests: one Go test suite (`go test ./... -race`) against real PGroonga Postgres and ClickHouse+Keeper; pgvector is installed only so the legacy-lineage convergence test can apply the pre-ContentKit baseline. The injected-code scan remains a separate merge check, run by the shared [open-rails/helpers workflow](https://github.com/open-rails/helpers/blob/master/docs/injection-scan.md) pinned by commit SHA.
-- Expensive full-stack qualification is explicit `workflow_dispatch` or a local command, not an automatic per-merge run.
-- These are execution-policy choices, not measured timing claims. Do not treat a manual suite as already passed.
+GitHub Actions minutes are paid for; CI is a final check, not the test runner. Test locally first and push once.
+
+- Pull requests to `master` only; no branch-push runs. Superseded runs are cancelled. Draft PRs run only the injection scan.
+- Each workflow runs only when its paths change (docs and Markdown run nothing heavy):
+  - `scan`: injected-code scan, every PR ([open-rails/helpers](https://github.com/open-rails/helpers/blob/master/docs/injection-scan.md), pinned by SHA).
+  - `go`: vet + `go test -race` for everything except `media/image`, `media/video` and `cmd/media-worker`, against real PGroonga Postgres, ClickHouse+Keeper and MinIO.
+  - `media-video`: `media/**` (not `media/image`), `cmd/media-worker`, `go.mod`; ffmpeg.
+  - `media-image`: `media/**`, `go.mod`; libvips + ffmpeg.
+  - `sdk-upload`: `sdk/upload`, the upload-handler media packages, `go.mod`.
+  - `images`: PRs touching a Dockerfile or `.dockerignore` build linux/amd64 only; `v*` tags publish multi-arch.
+- `full` (manual `workflow_dispatch`) runs every suite regardless of paths. Run it on `master` for full-tree qualification; it also warms the caches PRs restore.
+- Nothing runs on pushes to `master`.

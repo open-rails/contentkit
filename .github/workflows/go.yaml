@@ -1,0 +1,84 @@
+name: go
+# Core Go packages. media/image, media/video and cmd/media-worker run in their own workflows.
+'on':
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+    - '**'
+    - '!**.md'
+    - '!docs/**'
+    - '!sdk/**'
+    - '!media/image/**'
+    - '!media/video/**'
+    - '!cmd/media-worker/**'
+    - '!cmd/*/Dockerfile'
+    - '!.github/**'
+    - '!LICENSE'
+    - '!.gitignore'
+    - '!.dockerignore'
+    - '.github/clickhouse/**'
+    - '.github/workflows/go.yaml'
+  workflow_call: {}
+permissions:
+  contents: read
+concurrency:
+  group: go-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    if: '!github.event.pull_request.draft'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: groonga/pgroonga:4.0.8-debian-18
+        env:
+          POSTGRES_USER: contentkit
+          POSTGRES_PASSWORD: contentkit
+          POSTGRES_DB: contentkit_test
+        ports:
+        - 5432:5432
+        options: --health-cmd "pg_isready -U contentkit" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      CONTENTKIT_TEST_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_test?sslmode=disable
+      CONTENTKIT_PROFILE_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_profiles?sslmode=disable
+      CONTENTKIT_TEST_CH_ADDR: localhost:9000
+      CONTENTKIT_TEST_CH_USER: contentkit
+      CONTENTKIT_TEST_CH_PASSWORD: contentkit
+      CONTENTKIT_TEST_CH_CLUSTER: contentkit
+      CONTENTKIT_TEST_S3_ENDPOINT: http://localhost:9100
+      CONTENTKIT_TEST_S3_ACCESS_KEY: contentkit
+      CONTENTKIT_TEST_S3_SECRET_KEY: contentkit-secret
+      CONTENTKIT_TEST_S3_REQUIRE: conditional,checksum
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - name: Start ClickHouse with Keeper and MinIO
+      run: |
+        docker run -d --name clickhouse -p 9000:9000 \
+          -e CLICKHOUSE_USER=contentkit -e CLICKHOUSE_PASSWORD=contentkit -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+          -v "$GITHUB_WORKSPACE/.github/clickhouse/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro" \
+          clickhouse/clickhouse-server:25.8
+        docker run -d --name minio -p 9100:9000 \
+          -e MINIO_ROOT_USER=contentkit -e MINIO_ROOT_PASSWORD=contentkit-secret \
+          quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+    - name: Wait for services
+      run: |
+        docker exec '${{ job.services.postgres.id }}' createdb -U contentkit contentkit_profiles
+        for i in $(seq 1 60); do
+          curl -fsS http://localhost:9100/minio/health/ready >/dev/null &&
+            docker exec clickhouse clickhouse-client --user contentkit --password contentkit -q "SELECT count() FROM system.zookeeper WHERE path = '/'" && exit 0
+          sleep 2
+        done
+        docker logs clickhouse; docker logs minio
+        exit 1
+    - name: vet, test
+      run: |
+        pkgs=$(go list ./... | grep -vE '/media/(image|video)$|/cmd/media-worker$')
+        go vet $pkgs
+        go test $pkgs -count=1 -race -p 2

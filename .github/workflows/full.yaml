@@ -1,0 +1,17 @@
+name: full
+# Manual full suite, ignoring path filters. Run on master to also warm the Go/pnpm caches that PRs restore.
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  scan:
+    uses: ./.github/workflows/scan.yaml
+  go:
+    uses: ./.github/workflows/go.yaml
+  media-image:
+    uses: ./.github/workflows/media-image.yaml
+  media-video:
+    uses: ./.github/workflows/media-video.yaml
+  sdk-upload:
+    uses: ./.github/workflows/sdk-upload.yaml

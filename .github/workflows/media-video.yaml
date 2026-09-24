@@ -1,0 +1,64 @@
+name: media-video
+'on':
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+    - 'media/**'
+    - '!media/image/**'
+    - '!**.md'
+    - 'cmd/media-worker/**'
+    - '!cmd/*/Dockerfile'
+    - 'go.mod'
+    - 'go.sum'
+    - '.github/workflows/media-video.yaml'
+  workflow_call: {}
+permissions:
+  contents: read
+concurrency:
+  group: media-video-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  media-video:
+    name: media/video (ffmpeg)
+    if: '!github.event.pull_request.draft'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: contentkit
+          POSTGRES_PASSWORD: contentkit
+          POSTGRES_DB: contentkit_test
+        ports:
+        - 5432:5432
+        options: --health-cmd "pg_isready -U contentkit" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      CONTENTKIT_TEST_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_test?sslmode=disable
+      CONTENTKIT_TEST_S3_ENDPOINT: http://localhost:9100
+      CONTENTKIT_TEST_S3_ACCESS_KEY: contentkit
+      CONTENTKIT_TEST_S3_SECRET_KEY: contentkit-secret
+      CONTENTKIT_TEST_S3_REQUIRE: conditional,checksum
+      CONTENTKIT_TEST_FFMPEG: '1'
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - name: Start MinIO
+      run: |
+        docker run -d --name minio -p 9100:9000 \
+          -e MINIO_ROOT_USER=contentkit -e MINIO_ROOT_PASSWORD=contentkit-secret \
+          quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+    - name: Install ffmpeg
+      run: |
+        sudo rm -f /var/lib/man-db/auto-update
+        sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+    - name: vet, test
+      run: |
+        timeout 60 sh -c "until curl -fsS http://localhost:9100/minio/health/ready; do sleep 1; done"
+        go vet ./media/video/... ./cmd/media-worker/...
+        go test ./media/video/... ./cmd/media-worker/... -count=1 -race -p 2 -v
