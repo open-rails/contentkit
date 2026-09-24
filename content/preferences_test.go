@@ -371,3 +371,41 @@ func TestPreferences_RevisionFloorOnlyAdvances(t *testing.T) {
 		t.Fatal("an unsafe floor was accepted")
 	}
 }
+
+// A sync holds no connection across send, so a sender writing through the
+// runtime's only connection (an outbox in the same database) completes.
+func TestPreferences_SyncSendsWithoutHoldingAConnection(t *testing.T) {
+	base := newPreferenceRuntime(t)
+	mustReact(t, base, access.Actor{ID: "u1"}, "gallery", "42:en", 1)
+	cfg := base.store.pool.Config()
+	cfg.MaxConns = 1
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	rt, err := New(context.Background(), Options{Pool: pool, Schema: base.schema, Tenant: base.tenant, Identity: &fakeIdentity{}, Authz: allowAll{},
+		Resolver: &fakeResolver{}, ContentKinds: []string{"gallery", "tag"}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	sent := 0
+	send := func(ctx context.Context, page []Preference) error {
+		if n := pool.Stat().AcquiredConns(); n != 0 {
+			t.Errorf("sync holds %d connections across send", n)
+		}
+		sent += len(page)
+		_, err := pool.Exec(ctx, "SELECT 1")
+		return err
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := rt.SyncPreferences(ctx, send); err != nil {
+			t.Fatalf("sync %d: %v", i, err)
+		}
+	}
+	if sent != 2 {
+		t.Fatalf("sent %d, want the row on both syncs (overlap window)", sent)
+	}
+}

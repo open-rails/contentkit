@@ -101,13 +101,6 @@ func TestIntegrationDirtyUpdateSurvivesConcurrentSync(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	// A competing tick must neither run the callback nor wait for this writer.
-	if err := SyncOnce(ctx, opts); err != nil {
-		t.Fatal(err)
-	}
-	if calls.Load() != 1 {
-		t.Fatal("overlapping writer entered callback")
-	}
 	// An equal-timestamp host update commits while the callback is in flight.
 	if err := markDirty(ctx, pool, schema); err != nil {
 		t.Fatal(err)
@@ -130,42 +123,55 @@ func TestIntegrationDirtyUpdateSurvivesConcurrentSync(t *testing.T) {
 	}
 }
 
-func TestIntegrationSyncRollbackAndSingleConnection(t *testing.T) {
+// A failed backfill page records its error without undoing the committed
+// dirty batch, and the next tick resumes from the same cursor.
+func TestIntegrationBackfillFailureKeepsCursor(t *testing.T) {
 	ctx, pool, schema := workerFixture(t)
 	if err := markDirty(ctx, pool, schema); err != nil {
 		t.Fatal(err)
 	}
-	opts := workerOptions(pool, schema, titles(map[string]string{"1": "new"}))
-	opts.ListContent = func(context.Context, string, string, string, string, int) ([]contentref.ContentRef, string, bool, error) {
-		return nil, "", false, errors.New("backfill failed")
+	opts := workerOptions(pool, schema, titles(map[string]string{"1": "new", "2": "listed"}))
+	var cursors []string
+	opts.ListContent = func(_ context.Context, _, _, _, cursor string, _ int) ([]contentref.ContentRef, string, bool, error) {
+		cursors = append(cursors, cursor)
+		if len(cursors) == 1 {
+			return []contentref.ContentRef{gallery("2")}, "c1", false, nil
+		}
+		if len(cursors) == 2 {
+			return nil, "", false, errors.New("backfill failed")
+		}
+		return nil, "", true, nil
+	}
+	if err := SyncOnce(ctx, opts); err != nil {
+		t.Fatal(err)
 	}
 	if err := SyncOnce(ctx, opts); err == nil {
 		t.Fatal("expected backfill failure")
 	}
-	for table, want := range map[string]int{"content_search_dirty": 1, "content_search_documents": 0, "content_search_backfill": 0} {
-		if n := count(t, ctx, pool, schema, table, "true"); n != want {
-			t.Fatalf("%s=%d want %d", table, n, want)
-		}
+	if got := document(t, ctx, pool, schema); got != "new" {
+		t.Fatal(got)
 	}
-	cfg := pool.Config()
-	cfg.MaxConns = 1
-	single, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
+	if n := count(t, ctx, pool, schema, "content_search_backfill", "cursor='c1' AND state='failed' AND last_error='backfill failed'"); n != 1 {
+		t.Fatal("failure not recorded at the committed cursor")
+	}
+	if n := count(t, ctx, pool, schema, "content_search_documents", "content_id='2'"); n != 1 {
+		t.Fatal("committed page not published")
+	}
+	if err := SyncOnce(ctx, opts); err != nil {
 		t.Fatal(err)
 	}
-	defer single.Close()
-	opts.Pool = single
-	if err := SyncOnce(ctx, opts); err == nil {
-		t.Fatal("one-connection pool must fail before callbacks")
+	if fmt.Sprint(cursors) != "[ c1 c1]" {
+		t.Fatalf("cursors: %q", cursors)
 	}
 }
 
-func TestIntegrationLostWriterCannotOverwrite(t *testing.T) {
+func TestIntegrationStaleWriterCannotOverwrite(t *testing.T) {
 	ctx, pool, schema := workerFixture(t)
 	if err := markDirty(ctx, pool, schema); err != nil {
 		t.Fatal(err)
 	}
-	// A disconnected writer must not publish after a replacement commits.
+	// A writer stalled in its callback must not publish after an overlapping
+	// tick publishes the newer generation.
 	entered, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32
 	build := func(ctx context.Context, tenant, kind, lang string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
@@ -191,13 +197,6 @@ func TestIntegrationLostWriterCannotOverwrite(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	// Wait for backend exit, not merely signal delivery: otherwise the next
-	// tick may correctly skip a lock that the terminating backend still holds.
-	var terminated bool
-	err := pool.QueryRow(ctx, `SELECT pg_terminate_backend(pid, 5000) FROM pg_locks WHERE locktype='advisory' AND granted AND classid=((hashtextextended($1,0)>>32)&4294967295)::oid AND objid=(hashtextextended($1,0)&4294967295)::oid AND objsubid=1`, LockKey(schema, tenant)).Scan(&terminated)
-	if err != nil || !terminated {
-		t.Fatalf("terminate: %v %v", terminated, err)
-	}
 	if err := markDirty(ctx, pool, schema); err != nil {
 		t.Fatal(err)
 	}
@@ -205,8 +204,8 @@ func TestIntegrationLostWriterCannotOverwrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	close(release)
-	if err := <-done; err == nil {
-		t.Fatal("lost writer must fail")
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 	if got := document(t, ctx, pool, schema); got != "fresh" {
 		t.Fatalf("stale writer overwrote: %q", got)

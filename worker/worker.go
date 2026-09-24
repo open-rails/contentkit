@@ -28,8 +28,8 @@ type BuildKeywordDocuments func(ctx context.Context, tenant, contentKind, langua
 
 // Options configures one tenant's worker.
 type Options struct {
-	// Pool needs at least two connections: SyncOnce reserves one transaction
-	// while read-only host callbacks may query through the pool. Required.
+	// Pool is released before every host callback, so one connection
+	// suffices. Required.
 	Pool   *pgxpool.Pool
 	Schema string
 	Tenant string
@@ -84,10 +84,12 @@ type dirtyRow struct {
 	Revision  int64
 }
 
-// SyncOnce runs one tick: drain the dirty queue, then a bounded backfill step.
-// One writer per schema and tenant: a competing tick returns without work.
-// Documents and queue acknowledgements share one Postgres transaction.
-// Sink calls run before acknowledgement but own their external transactions.
+// SyncOnce runs one tick: drain one dirty batch, then a bounded backfill step.
+// No connection or transaction is held across host callbacks or sink calls:
+// each write is a short transaction fenced by the dirty-queue revision, so
+// overlapping ticks are safe (only duplicated work) and a stale build never
+// overwrites a newer one. Sink calls run after the document commits and
+// before its row is acknowledged.
 func SyncOnce(ctx context.Context, opts Options) error {
 	cfg := opts.withDefaults()
 	if cfg.Pool == nil {
@@ -106,73 +108,78 @@ func SyncOnce(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
-	// One writer per schema/tenant, covering dirty work AND backfills. The
-	// transaction owns all document writes and acknowledgements: losing its
-	// connection cannot leave an old callback able to overwrite a newer writer.
-	// Host callbacks may read through Pool, so reserve another slot.
-	if cfg.Pool.Config().MaxConns < 2 {
-		return fmt.Errorf("worker: SyncOnce requires at least two pool connections")
-	}
-	tx, err := cfg.Pool.Begin(ctx)
-	if err != nil {
+	w := syncer{cfg: cfg, qs: qs}
+	if err := w.dirty(ctx); err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
-	var acquired bool
-	if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))`, LockKey(cfg.Schema, cfg.Tenant)).Scan(&acquired); err != nil {
-		return err
-	}
-	if !acquired {
-		return nil // Another tick owns this schema/tenant; retry next tick.
-	}
-
-	// 1) Drain dirty queue (fast path).
-	batch, retry, err := processDirtyOnce(ctx, tx, qs, cfg)
-	if err != nil {
-		return err
-	}
-
-	// 2) Bounded backfill tick (slow path).
-	if err := backfillOnce(ctx, tx, qs, cfg); err != nil {
-		return err
-	}
-
-	// Acknowledge only after every callback has finished; waiting on a host's
-	// concurrent UPSERT cannot hold queue locks while callbacks need the pool.
-	// A row whose sink delivery failed stays queued under a new revision.
-	for _, r := range batch {
-		var err error
-		if _, ok := retry[identity(r.DocumentKey)]; ok {
-			_, err = tx.Exec(ctx, fmt.Sprintf(`UPDATE %s.content_search_dirty SET reason='sink_retry', updated_at=now() WHERE tenant_id=$1 AND content_kind=$2 AND content_id=$3 AND content_version_id=$4 AND language=$5 AND revision=$6`, qs),
-				r.TenantID, r.ContentKind, r.ContentID, r.Version(), r.Language, r.Revision)
-		} else {
-			_, err = tx.Exec(ctx, fmt.Sprintf(`DELETE FROM %s.content_search_dirty WHERE tenant_id=$1 AND content_kind=$2 AND content_id=$3 AND content_version_id=$4 AND language=$5 AND revision=$6`, qs),
-				r.TenantID, r.ContentKind, r.ContentID, r.Version(), r.Language, r.Revision)
-		}
-		if err != nil {
-			return err
-		}
-	}
-	return tx.Commit(ctx)
+	return w.backfill(ctx)
 }
 
-// LockKey is the advisory-lock text of one schema/tenant writer.
-func LockKey(schema, tenant string) string { return "contentkit:sync:" + schema + ":" + tenant }
+type syncer struct {
+	cfg Options
+	qs  string
+}
 
 type buildGroup struct{ kind, language string }
 
-// processDirtyOnce builds and publishes one batch of dirty rows and returns
-// the batch plus the keys whose sink delivery failed.
-func processDirtyOnce(ctx context.Context, tx pgx.Tx, qs string, cfg Options) ([]dirtyRow, map[documentIdentity]struct{}, error) {
-	rows, err := tx.Query(ctx, fmt.Sprintf(`
+// dirty publishes one batch: deletions first, then rebuilds grouped per kind
+// and language for batch-shaped host callbacks.
+func (w syncer) dirty(ctx context.Context) error {
+	batch, err := w.readDirty(ctx)
+	if err != nil {
+		return err
+	}
+	var deletions []dirtyRow
+	grouped := map[buildGroup][]dirtyRow{}
+	var order []buildGroup
+	for _, r := range batch {
+		if r.IsDeleted {
+			deletions = append(deletions, r)
+			continue
+		}
+		g := buildGroup{r.ContentKind, r.Language}
+		if _, ok := grouped[g]; !ok {
+			order = append(order, g)
+		}
+		grouped[g] = append(grouped[g], r)
+	}
+	if err := w.publish(ctx, deletions, nil); err != nil {
+		return err
+	}
+	for _, g := range order {
+		members := grouped[g]
+		refs := make([]contentref.ContentRef, 0, len(members))
+		for _, r := range members {
+			refs = append(refs, r.ContentRef)
+		}
+		built, err := w.cfg.BuildKeywordDocuments(ctx, w.cfg.Tenant, g.kind, g.language, refs)
+		if err != nil {
+			return err
+		}
+		byKey := make(map[documentIdentity]search.KeywordDocument, len(built))
+		for _, doc := range built {
+			if doc.TenantID != w.cfg.Tenant || doc.ContentKind != g.kind || doc.Language != g.language {
+				return fmt.Errorf("worker: builder returned %s/%s outside the requested %s/%s", doc.ContentRef, doc.Language, g.kind, g.language)
+			}
+			byKey[identity(doc.DocumentKey)] = doc
+		}
+		if err := w.publish(ctx, members, byKey); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w syncer) readDirty(ctx context.Context) ([]dirtyRow, error) {
+	rows, err := w.cfg.Pool.Query(ctx, fmt.Sprintf(`
 		SELECT content_kind, content_id, content_version_id, language, is_deleted, reason, revision
 		FROM %s.content_search_dirty
 		WHERE tenant_id = $1
 		ORDER BY updated_at ASC
 		LIMIT $2
-	`, qs), cfg.Tenant, cfg.DirtyBatchSize)
+	`, w.qs), w.cfg.Tenant, w.cfg.DirtyBatchSize)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	defer rows.Close()
 	var batch []dirtyRow
@@ -182,165 +189,144 @@ func processDirtyOnce(ctx context.Context, tx pgx.Tx, qs string, cfg Options) ([
 			version string
 		)
 		if err := rows.Scan(&r.ContentKind, &r.ContentID, &version, &r.Language, &r.IsDeleted, &r.Reason, &r.Revision); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		r.ContentRef = contentref.NewVersion(cfg.Tenant, r.ContentKind, r.ContentID, version)
+		r.ContentRef = contentref.NewVersion(w.cfg.Tenant, r.ContentKind, r.ContentID, version)
 		batch = append(batch, r)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, nil, err
-	}
-	rows.Close()
-	retry := map[documentIdentity]struct{}{}
-	if len(batch) == 0 {
-		return nil, retry, nil
-	}
-	deliver := func(doc search.KeywordDocument, revision int64) {
-		if cfg.Sink == nil {
-			return
-		}
-		var err error
-		if doc.Title == "" {
-			err = cfg.Sink.Delete(ctx, doc.DocumentKey, revision)
-		} else {
-			err = cfg.Sink.Upsert(ctx, search.PublishedDocument{KeywordDocument: doc, Version: revision})
-		}
-		if err != nil {
-			retry[identity(doc.DocumentKey)] = struct{}{}
-		}
-	}
-
-	// Deletions first.
-	var removed []search.DocumentKey
-	var deletions []dirtyRow
-	for _, r := range batch {
-		if !r.IsDeleted {
-			continue
-		}
-		current, err := dirtyRevisionCurrent(ctx, tx, qs, r)
-		if err != nil {
-			return nil, nil, err
-		}
-		if current {
-			removed = append(removed, r.DocumentKey)
-			deletions = append(deletions, r)
-		}
-	}
-	if err := search.DeleteKeywordDocuments(ctx, tx, cfg.Schema, removed); err != nil {
-		return nil, nil, err
-	}
-	for _, r := range deletions {
-		deliver(search.KeywordDocument{DocumentKey: r.DocumentKey}, r.Revision)
-	}
-
-	// Rebuilds, grouped per kind and language for batch-shaped host callbacks.
-	grouped := map[buildGroup][]dirtyRow{}
-	var order []buildGroup
-	for _, r := range batch {
-		if r.IsDeleted {
-			continue
-		}
-		g := buildGroup{r.ContentKind, r.Language}
-		if _, ok := grouped[g]; !ok {
-			order = append(order, g)
-		}
-		grouped[g] = append(grouped[g], r)
-	}
-	for _, g := range order {
-		members := grouped[g]
-		refs := make([]contentref.ContentRef, 0, len(members))
-		for _, r := range members {
-			refs = append(refs, r.ContentRef)
-		}
-		built, err := cfg.BuildKeywordDocuments(ctx, cfg.Tenant, g.kind, g.language, refs)
-		if err != nil {
-			return nil, nil, err
-		}
-		byKey := make(map[documentIdentity]search.KeywordDocument, len(built))
-		for _, doc := range built {
-			if doc.TenantID != cfg.Tenant || doc.ContentKind != g.kind || doc.Language != g.language {
-				return nil, nil, fmt.Errorf("worker: builder returned %s/%s outside the requested %s/%s", doc.ContentRef, doc.Language, g.kind, g.language)
-			}
-			byKey[identity(doc.DocumentKey)] = doc
-		}
-		// Recheck generations after building. Changed or unsolicited keys are
-		// not published; their latest queue entry remains for the next tick.
-		// Missing requested keys mean the content no longer exists; an empty
-		// document deletes any stale indexed record.
-		type publish struct {
-			doc      search.KeywordDocument
-			revision int64
-		}
-		var eligible []publish
-		for _, r := range members {
-			current, err := dirtyRevisionCurrent(ctx, tx, qs, r)
-			if err != nil {
-				return nil, nil, err
-			}
-			if !current {
-				continue
-			}
-			doc, ok := byKey[identity(r.DocumentKey)]
-			if !ok {
-				doc = search.KeywordDocument{DocumentKey: r.DocumentKey}
-			}
-			eligible = append(eligible, publish{doc, r.Revision})
-		}
-		docs := make([]search.KeywordDocument, 0, len(eligible))
-		for _, p := range eligible {
-			docs = append(docs, p.doc)
-		}
-		if err := search.UpsertKeywordDocuments(ctx, tx, cfg.Schema, docs); err != nil {
-			return nil, nil, err
-		}
-		for _, p := range eligible {
-			deliver(p.doc, p.revision)
-		}
-	}
-	return batch, retry, nil
+	return batch, rows.Err()
 }
 
-func backfillOnce(ctx context.Context, tx pgx.Tx, qs string, cfg Options) (retErr error) {
+type queueRow struct {
+	ContentKind      string `json:"content_kind"`
+	ContentID        string `json:"content_id"`
+	ContentVersionID string `json:"content_version_id"`
+	Language         string `json:"language"`
+	Revision         int64  `json:"revision"`
+}
+
+const queueColumns = `(content_kind text,content_id text,content_version_id text,language text,revision bigint)`
+
+func queueRows(rows []dirtyRow) ([]byte, error) {
+	out := make([]queueRow, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, queueRow{r.ContentKind, r.ContentID, r.Version(), r.Language, r.Revision})
+	}
+	return json.Marshal(out)
+}
+
+// publish writes the documents of the rows whose revision is still current
+// (a row missing from built publishes an empty document, which deletes), then
+// delivers them to the sink and acknowledges them. Locking the current rows
+// holds back a concurrent host mark until the write commits, so its newer
+// revision is always published after this one.
+func (w syncer) publish(ctx context.Context, rows []dirtyRow, built map[documentIdentity]search.KeywordDocument) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	data, err := queueRows(rows)
+	if err != nil {
+		return err
+	}
+	type publication struct {
+		doc      search.KeywordDocument
+		revision int64
+	}
+	var eligible []publication
+	err = pgx.BeginFunc(ctx, w.cfg.Pool, func(tx pgx.Tx) error {
+		current := map[documentIdentity]bool{}
+		locked, err := tx.Query(ctx, fmt.Sprintf(`SELECT d.content_kind, d.content_id, d.content_version_id, d.language
+ FROM %s.content_search_dirty d JOIN jsonb_to_recordset($2::jsonb) AS r%s
+ ON d.content_kind=r.content_kind AND d.content_id=r.content_id AND d.content_version_id=r.content_version_id AND d.language=r.language AND d.revision=r.revision
+ WHERE d.tenant_id=$1 ORDER BY 1,2,3,4 FOR UPDATE OF d`, w.qs, queueColumns), w.cfg.Tenant, data)
+		if err != nil {
+			return err
+		}
+		defer locked.Close()
+		for locked.Next() {
+			var kind, id, version, language string
+			if err := locked.Scan(&kind, &id, &version, &language); err != nil {
+				return err
+			}
+			current[identity(search.DocumentKey{ContentRef: contentref.NewVersion(w.cfg.Tenant, kind, id, version), Language: language})] = true
+		}
+		if err := locked.Err(); err != nil {
+			return err
+		}
+		docs := make([]search.KeywordDocument, 0, len(current))
+		for _, r := range rows {
+			if !current[identity(r.DocumentKey)] {
+				continue
+			}
+			doc, ok := built[identity(r.DocumentKey)]
+			if !ok || r.IsDeleted {
+				doc = search.KeywordDocument{DocumentKey: r.DocumentKey}
+			}
+			docs = append(docs, doc)
+			eligible = append(eligible, publication{doc, r.Revision})
+		}
+		return search.UpsertKeywordDocuments(ctx, tx, w.cfg.Schema, docs)
+	})
+	if err != nil {
+		return err
+	}
+	var acked, retry []dirtyRow
+	for _, p := range eligible {
+		r := dirtyRow{DocumentKey: p.doc.DocumentKey, Revision: p.revision}
+		if w.deliver(ctx, p.doc, p.revision) {
+			acked = append(acked, r)
+		} else {
+			retry = append(retry, r)
+		}
+	}
+	return w.ack(ctx, acked, retry)
+}
+
+// deliver reports whether the sink accepted the document (or there is none).
+func (w syncer) deliver(ctx context.Context, doc search.KeywordDocument, revision int64) bool {
+	if w.cfg.Sink == nil {
+		return true
+	}
+	if strings.TrimSpace(doc.Title) == "" {
+		return w.cfg.Sink.Delete(ctx, doc.DocumentKey, revision) == nil
+	}
+	return w.cfg.Sink.Upsert(ctx, search.PublishedDocument{KeywordDocument: doc, Version: revision}) == nil
+}
+
+// ack removes delivered rows and requeues failed deliveries under a new
+// revision; either applies only while the published revision is current.
+func (w syncer) ack(ctx context.Context, acked, retry []dirtyRow) error {
+	match := `d.tenant_id=$1 AND d.content_kind=r.content_kind AND d.content_id=r.content_id AND d.content_version_id=r.content_version_id AND d.language=r.language AND d.revision=r.revision`
+	if len(acked) > 0 {
+		data, err := queueRows(acked)
+		if err != nil {
+			return err
+		}
+		if _, err := w.cfg.Pool.Exec(ctx, fmt.Sprintf(`DELETE FROM %s.content_search_dirty d USING jsonb_to_recordset($2::jsonb) AS r%s WHERE %s`, w.qs, queueColumns, match), w.cfg.Tenant, data); err != nil {
+			return err
+		}
+	}
+	if len(retry) > 0 {
+		data, err := queueRows(retry)
+		if err != nil {
+			return err
+		}
+		if _, err := w.cfg.Pool.Exec(ctx, fmt.Sprintf(`UPDATE %s.content_search_dirty d SET reason='sink_retry', updated_at=now() FROM jsonb_to_recordset($2::jsonb) AS r%s WHERE %s`, w.qs, queueColumns, match), w.cfg.Tenant, data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// backfill lists a bounded number of pages and queues them through the
+// revision-fenced dirty queue. Each page commits with a compare-and-set of
+// its cursor, so an overlapping tick never rewinds or re-queues a page.
+func (w syncer) backfill(ctx context.Context) error {
+	cfg := w.cfg
 	if cfg.BackfillMaxPages <= 0 || cfg.BackfillPageSize <= 0 {
 		return nil
 	}
 	pagesDone := 0
-	type request struct {
-		kind, language string
-		refs           []contentref.ContentRef
-	}
-	var pending []request
-	// Queue writes happen after all listing callbacks, avoiding pool starvation
-	// from host UPSERTs waiting for our newly inserted queue rows.
-	defer func() {
-		if retErr != nil {
-			return
-		}
-		for _, req := range pending {
-			rows := make([]map[string]string, 0, len(req.refs))
-			for _, ref := range req.refs {
-				if ref.TenantID != cfg.Tenant || ref.ContentKind != req.kind {
-					retErr = fmt.Errorf("worker: ListContent returned %s outside the requested %s/%s", ref, cfg.Tenant, req.kind)
-					return
-				}
-				rows = append(rows, map[string]string{"content_id": ref.ContentID, "content_version_id": ref.Version()})
-			}
-			data, err := json.Marshal(rows)
-			if err != nil {
-				retErr = err
-				return
-			}
-			// Backfill requests work through the same generation-fenced queue;
-			// a pending row keeps its revision.
-			if _, err := tx.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.content_search_dirty(tenant_id,content_kind,content_id,content_version_id,language,reason)
- SELECT $1, $2, r.content_id, r.content_version_id, $3, 'backfill' FROM jsonb_to_recordset($4::jsonb) AS r(content_id text, content_version_id text)
- ON CONFLICT(tenant_id,content_kind,content_id,content_version_id,language) DO NOTHING`, qs), cfg.Tenant, req.kind, req.language, data); err != nil {
-				retErr = err
-				return
-			}
-		}
-	}()
-
 	for _, kind := range cfg.ContentKinds {
 		for _, lang := range cfg.SupportedLanguages {
 			if pagesDone >= cfg.BackfillMaxPages {
@@ -349,28 +335,48 @@ func backfillOnce(ctx context.Context, tx pgx.Tx, qs string, cfg Options) (retEr
 			if strings.TrimSpace(lang) == "" || strings.TrimSpace(kind) == "" {
 				continue
 			}
-			cursor, state, err := backfillState(ctx, tx, qs, cfg.Tenant, kind, lang)
+			cursor, state, err := w.backfillState(ctx, kind, lang)
 			if err != nil {
 				return err
 			}
 			if state == "done" {
 				continue
 			}
+			where := `tenant_id = $1 AND content_kind = $2 AND language = $3 AND cursor = $4 AND state = $5`
 			refs, nextCursor, done, err := cfg.ListContent(ctx, cfg.Tenant, kind, lang, cursor, cfg.BackfillPageSize)
 			if err != nil {
-				_, _ = tx.Exec(ctx, fmt.Sprintf(`UPDATE %s.content_search_backfill SET last_error = $4, state = 'failed', updated_at = now()
- WHERE tenant_id = $1 AND content_kind = $2 AND language = $3`, qs), cfg.Tenant, kind, lang, err.Error())
+				_, _ = cfg.Pool.Exec(ctx, fmt.Sprintf(`UPDATE %s.content_search_backfill SET last_error = $6, state = 'failed', updated_at = now() WHERE %s`, w.qs, where),
+					cfg.Tenant, kind, lang, cursor, state, err.Error())
 				return err
 			}
-			if len(refs) > 0 {
-				pending = append(pending, request{kind, lang, refs})
+			rows := make([]map[string]string, 0, len(refs))
+			for _, ref := range refs {
+				if ref.TenantID != cfg.Tenant || ref.ContentKind != kind {
+					return fmt.Errorf("worker: ListContent returned %s outside the requested %s/%s", ref, cfg.Tenant, kind)
+				}
+				rows = append(rows, map[string]string{"content_id": ref.ContentID, "content_version_id": ref.Version()})
+			}
+			data, err := json.Marshal(rows)
+			if err != nil {
+				return err
 			}
 			next := "running"
 			if done {
 				next = "done"
 			}
-			if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s.content_search_backfill SET cursor = $4, state = $5, last_error = NULL, updated_at = now()
- WHERE tenant_id = $1 AND content_kind = $2 AND language = $3`, qs), cfg.Tenant, kind, lang, nextCursor, next); err != nil {
+			err = pgx.BeginFunc(ctx, cfg.Pool, func(tx pgx.Tx) error {
+				tag, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s.content_search_backfill SET cursor = $6, state = $7, last_error = NULL, updated_at = now() WHERE %s`, w.qs, where),
+					cfg.Tenant, kind, lang, cursor, state, nextCursor, next)
+				if err != nil || tag.RowsAffected() == 0 {
+					return err // Another tick advanced this cursor.
+				}
+				// A pending row keeps its revision.
+				_, err = tx.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.content_search_dirty(tenant_id,content_kind,content_id,content_version_id,language,reason)
+ SELECT $1, $2, r.content_id, r.content_version_id, $3, 'backfill' FROM jsonb_to_recordset($4::jsonb) AS r(content_id text, content_version_id text)
+ ON CONFLICT(tenant_id,content_kind,content_id,content_version_id,language) DO NOTHING`, w.qs), cfg.Tenant, kind, lang, data)
+				return err
+			})
+			if err != nil {
 				return err
 			}
 			pagesDone++
@@ -379,20 +385,11 @@ func backfillOnce(ctx context.Context, tx pgx.Tx, qs string, cfg Options) (retEr
 	return nil
 }
 
-func backfillState(ctx context.Context, tx pgx.Tx, qs, tenant, kind, language string) (cursor, state string, err error) {
-	if _, err := tx.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.content_search_backfill (tenant_id, content_kind, language) VALUES ($1, $2, $3)
- ON CONFLICT (tenant_id, content_kind, language) DO NOTHING`, qs), tenant, kind, language); err != nil {
-		return "", "", err
-	}
-	if err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT cursor, state FROM %s.content_search_backfill WHERE tenant_id = $1 AND content_kind = $2 AND language = $3`, qs), tenant, kind, language).Scan(&cursor, &state); err != nil {
-		return "", "", err
-	}
-	return cursor, state, nil
-}
-
-func dirtyRevisionCurrent(ctx context.Context, tx pgx.Tx, qs string, r dirtyRow) (bool, error) {
-	var current bool
-	err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s.content_search_dirty WHERE tenant_id=$1 AND content_kind=$2 AND content_id=$3 AND content_version_id=$4 AND language=$5 AND revision=$6)`, qs),
-		r.TenantID, r.ContentKind, r.ContentID, r.Version(), r.Language, r.Revision).Scan(&current)
-	return current, err
+func (w syncer) backfillState(ctx context.Context, kind, language string) (cursor, state string, err error) {
+	err = w.cfg.Pool.QueryRow(ctx, fmt.Sprintf(`WITH ins AS (
+ INSERT INTO %[1]s.content_search_backfill (tenant_id, content_kind, language) VALUES ($1, $2, $3)
+ ON CONFLICT (tenant_id, content_kind, language) DO NOTHING RETURNING cursor, state)
+ SELECT cursor, state FROM ins UNION ALL
+ SELECT cursor, state FROM %[1]s.content_search_backfill WHERE tenant_id = $1 AND content_kind = $2 AND language = $3`, w.qs), w.cfg.Tenant, kind, language).Scan(&cursor, &state)
+	return cursor, state, err
 }
