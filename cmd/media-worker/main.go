@@ -7,8 +7,10 @@
 //	MEDIA_S3_ENDPOINT            RGW endpoint, e.g. http://rook-ceph-rgw-external.svc
 //	MEDIA_S3_BUCKET, MEDIA_S3_REGION (default us-east-1), MEDIA_S3_PATH_STYLE (default true)
 //	MEDIA_S3_ACCESS_KEY_ID, MEDIA_S3_SECRET_ACCESS_KEY   host read/write key
-//	MEDIA_WORKER_TMP             scratch dir (default os.TempDir()); size for source + outputs
-//	MEDIA_WORKER_THREADS         ffmpeg threads (default: CPU limit)
+//	MEDIA_WORKER_TMP             scratch dir (default os.TempDir()); size for source + outputs (a tmpfs spares slow disks)
+//	MEDIA_WORKER_THREADS         CPU threads for ffmpeg (default: CPU limit)
+//	MEDIA_WORKER_PARALLEL        chunks of one video encoded at once (default: threads/4)
+//	MEDIA_WORKER_ENCODER         auto (default: NVENC if a probe encode works, else x264), x264 or nvenc
 //	MEDIA_WORKER_CONCURRENCY     jobs per process (default 1)
 //	MEDIA_WORKER_JOB_TIMEOUT     per-job limit (default 48h)
 //	MEDIA_WORKER_SHUTDOWN_GRACE  time running jobs get to finish on SIGTERM before cancel (default 30s)
@@ -49,6 +51,10 @@ func run(log *slog.Logger) error {
 	defer stop()
 
 	threads, err := intEnv("MEDIA_WORKER_THREADS", 0)
+	if err != nil {
+		return err
+	}
+	parallel, err := intEnv("MEDIA_WORKER_PARALLEL", 0)
 	if err != nil {
 		return err
 	}
@@ -107,7 +113,8 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	enc, err := video.New(video.Config{Store: store, Locker: media.PGLocker(pool), TempDir: tmp, Threads: threads, Logger: log, Slots: slots})
+	enc, err := video.New(video.Config{Store: store, Locker: media.PGLocker(pool), TempDir: tmp, Threads: threads,
+		Parallel: parallel, Encoder: os.Getenv("MEDIA_WORKER_ENCODER"), Logger: log, Slots: slots})
 	if err != nil {
 		return err
 	}

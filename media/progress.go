@@ -12,7 +12,7 @@ const (
 	PhaseQueued      = "queued"
 	PhaseDownloading = "downloading" // fetching the original
 	PhaseProbing     = "probing"
-	PhaseEncoding    = "encoding" // the single ffmpeg pass: ladder, audio, subtitles, sprite
+	PhaseEncoding    = "encoding" // ladder chunks, audio, subtitles, sprite
 	PhaseMuxing      = "muxing"   // per-quality MP4 downloads
 	PhaseUploading   = "uploading"
 	PhasePublishing  = "publishing" // the manifest edit

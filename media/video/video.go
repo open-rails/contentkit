@@ -22,6 +22,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 )
@@ -32,8 +34,15 @@ type Config struct {
 	// Locker serializes manifest edits when Store lacks conditional PUT; it
 	// must share the hosts' lock space (media.PGLocker on the host database).
 	Locker  media.Locker
-	TempDir string      // scratch for the source and outputs; default os.TempDir()
-	Threads int         // ffmpeg threads; default GOMAXPROCS (the container's CPU limit)
+	TempDir string // scratch for the source and outputs; default os.TempDir()
+	Threads int    // CPU threads for ffmpeg; default GOMAXPROCS (the container's CPU limit)
+	// Parallel caps the chunks of one video encoded at once, sharing Threads;
+	// default Threads/chunkThreads.
+	Parallel int
+	// Encoder is EncoderAuto (default), EncoderX264 or EncoderNVENC. NVENC
+	// is checked by a probe encode in New; a file it fails on is re-encoded
+	// with x264.
+	Encoder string
 	Hooks   media.Hooks // Failed: a source that can never be encoded
 	Logger  *slog.Logger
 	// Slots is the host's media queue (media.NewProcessInserter): a grabbed
@@ -76,6 +85,23 @@ func New(c Config) (*Encoder, error) {
 	}
 	if c.Threads <= 0 {
 		c.Threads = runtime.GOMAXPROCS(0)
+	}
+	if c.Parallel <= 0 {
+		c.Parallel = max(1, c.Threads/chunkThreads)
+	}
+	switch c.Encoder {
+	case "", EncoderAuto:
+		c.Encoder = EncoderX264
+		if nvencWorks(context.Background()) == nil {
+			c.Encoder = EncoderNVENC
+		}
+	case EncoderNVENC:
+		if err := nvencWorks(context.Background()); err != nil {
+			return nil, fmt.Errorf("media/video: NVENC unavailable: %w", err)
+		}
+	case EncoderX264:
+	default:
+		return nil, fmt.Errorf("media/video: unknown Encoder %q", c.Encoder)
 	}
 	if c.Logger == nil {
 		c.Logger = slog.Default()
@@ -285,69 +311,94 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 		return err
 	}
 	e.c.Logger.InfoContext(ctx, "media/video: encoding", "key", srcKey, "duration", p.duration, "rungs", p.rungs,
-		"audio", len(p.audio), "subs", len(p.subs), "threads", e.c.Threads)
+		"audio", len(p.audio), "subs", len(p.subs), "encoder", e.c.Encoder, "threads", e.c.Threads, "parallel", e.c.Parallel)
 	fp.probed(p.duration, out)
-	if err := ladder(ctx, src, out, p, e.c.Threads, fp); err != nil {
+	enc := encoding{codec: e.c.Encoder, threads: e.c.Threads, parallel: e.c.Parallel}
+	err = ladder(ctx, src, out, p, enc, fp)
+	if err != nil && enc.codec == EncoderNVENC && ctx.Err() == nil {
+		e.c.Logger.WarnContext(ctx, "media/video: NVENC failed; encoding with x264", "key", srcKey, "error", err)
+		enc.codec = EncoderX264
+		if err = errors.Join(os.RemoveAll(out), os.Mkdir(out, 0o700)); err == nil {
+			err = ladder(ctx, src, out, p, enc, fp)
+		}
+	}
+	if err != nil {
 		return err
 	}
 	if err := os.Remove(src); err != nil {
 		return err
 	}
 	fp.uploads(uploadBytes(out, len(p.rungs)))
-	fp.set(media.PhaseUploading)
+	fp.set(media.PhaseMuxing)
 
-	hls := &media.HLS{Source: source, Spec: r.spec}
-	downloads := map[string]media.Download{}
+	// Each rung is muxed and uploaded alongside the others and the tracks;
+	// its files are removed as soon as they are stored.
+	hls := &media.HLS{Source: source, Spec: r.spec, Audio: make([]media.AudioTrack, len(p.audio)),
+		Subs: make([]media.Subtitle, len(p.subs)), Video: make([]media.Rendition, len(p.rungs))}
+	dls := make([]media.Download, len(p.rungs))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(uploadParallel)
 	for i, a := range p.audio {
-		blob, pl, err := e.stream(ctx, item, out, fmt.Sprintf("a%d", i), "audio/mp4", fp)
-		if err != nil {
-			return err
-		}
-		peak, _ := bandwidth(pl.segments)
-		hls.Audio = append(hls.Audio, media.AudioTrack{ID: a.id, Lang: a.lang, Label: a.label, Default: a.def,
-			Bandwidth: peak, Codecs: "mp4a.40.2", Blob: blob, Segments: pl.segments})
+		g.Go(func() error {
+			blob, pl, err := e.stream(gctx, item, out, fmt.Sprintf("a%d", i), "audio/mp4", fp)
+			if err != nil {
+				return err
+			}
+			peak, _ := bandwidth(pl.segments)
+			hls.Audio[i] = media.AudioTrack{ID: a.id, Lang: a.lang, Label: a.label, Default: a.def,
+				Bandwidth: peak, Codecs: "mp4a.40.2", Blob: blob, Segments: pl.segments}
+			return nil
+		})
 	}
 	for i, s := range p.subs {
-		blob, _, err := e.put(ctx, item, filepath.Join(out, fmt.Sprintf("s%d.vtt", i)), "text/vtt", fp)
-		if err != nil {
+		g.Go(func() error {
+			blob, _, err := e.put(gctx, item, filepath.Join(out, fmt.Sprintf("s%d.vtt", i)), "text/vtt", fp)
+			hls.Subs[i] = media.Subtitle{ID: s.id, Lang: s.lang, Label: s.label, Forced: s.forced, Blob: blob}
 			return err
-		}
-		hls.Subs = append(hls.Subs, media.Subtitle{ID: s.id, Lang: s.lang, Label: s.label, Forced: s.forced, Blob: blob})
+		})
 	}
-	blob, _, err := e.put(ctx, item, filepath.Join(out, "sprite.jpg"), "image/jpeg", fp)
-	if err != nil {
+	g.Go(func() error {
+		blob, _, err := e.put(gctx, item, filepath.Join(out, "sprite.jpg"), "image/jpeg", fp)
+		hls.Sprite = &media.Sprite{Blob: blob, Cols: spriteCols, Rows: spriteRows, Width: p.tileW, Height: p.tileH,
+			Interval: p.duration / (spriteCols * spriteRows)}
+		return err
+	})
+	for i, rg := range p.rungs {
+		g.Go(func() error {
+			v := fmt.Sprintf("v%d", i)
+			codec, w, h, err := avcCodec(gctx, filepath.Join(out, v+".mp4"))
+			if err != nil {
+				return err
+			}
+			if w != rg.w || h != rg.h {
+				return fmt.Errorf("rung %dp encoded %dx%d, want %dx%d", rg.n, w, h, rg.w, rg.h)
+			}
+			dl := filepath.Join(out, "d"+v+".mp4")
+			if err := mux(gctx, out, i, p, dl); err != nil {
+				return err
+			}
+			fp.set(media.PhaseUploading)
+			dlBlob, dlSize, err := e.put(gctx, item, dl, "video/mp4", fp)
+			if err != nil {
+				return err
+			}
+			blob, pl, err := e.stream(gctx, item, out, v, "video/mp4", fp)
+			if err != nil {
+				return err
+			}
+			peak, avg := bandwidth(pl.segments)
+			hls.Video[i] = media.Rendition{Rung: rg.n, Width: w, Height: h, Bandwidth: peak, Average: avg, Codecs: codec,
+				Blob: blob, Segments: pl.segments}
+			dls[i] = media.Download{Blob: dlBlob, Type: "video/mp4", Size: dlSize, Spec: r.spec, Inputs: source}
+			return errors.Join(os.Remove(dl), os.Remove(filepath.Join(out, v+".mp4")))
+		})
+	}
+	if err := g.Wait(); err != nil {
 		return err
 	}
-	hls.Sprite = &media.Sprite{Blob: blob, Cols: spriteCols, Rows: spriteRows, Width: p.tileW, Height: p.tileH,
-		Interval: p.duration / (spriteCols * spriteRows)}
+	downloads := map[string]media.Download{}
 	for i, rg := range p.rungs {
-		v := fmt.Sprintf("v%d", i)
-		codec, w, h, err := avcCodec(ctx, filepath.Join(out, v+".mp4"))
-		if err != nil {
-			return err
-		}
-		if w != rg.w || h != rg.h {
-			return fmt.Errorf("rung %dp encoded %dx%d, want %dx%d", rg.n, w, h, rg.w, rg.h)
-		}
-		dl := filepath.Join(out, "d"+v+".mp4")
-		fp.set(media.PhaseMuxing)
-		if err := mux(ctx, out, i, p, dl); err != nil {
-			return err
-		}
-		fp.set(media.PhaseUploading)
-		dlBlob, dlSize, err := e.put(ctx, item, dl, "video/mp4", fp)
-		if err != nil {
-			return err
-		}
-		_ = os.Remove(dl)
-		blob, pl, err := e.stream(ctx, item, out, v, "video/mp4", fp)
-		if err != nil {
-			return err
-		}
-		peak, avg := bandwidth(pl.segments)
-		hls.Video = append(hls.Video, media.Rendition{Rung: rg.n, Width: w, Height: h, Bandwidth: peak, Average: avg, Codecs: codec,
-			Blob: blob, Segments: pl.segments})
-		downloads[DownloadKey(name, rg.n)] = media.Download{Blob: dlBlob, Type: "video/mp4", Size: dlSize, Spec: r.spec, Inputs: source}
+		downloads[DownloadKey(name, rg.n)] = dls[i]
 	}
 
 	fp.set(media.PhasePublishing)
@@ -465,6 +516,9 @@ func uploadBytes(dir string, rungs int) int64 {
 	}
 	return total + int64(rungs)*audio
 }
+
+// uploadParallel bounds the concurrent muxes and uploads of one file.
+const uploadParallel = 4
 
 // tempPattern names per-file scratch directories; Sweep removes leftovers.
 const tempPattern = "ck-video-*"
