@@ -10,8 +10,6 @@ package layout
 import (
 	"encoding/hex"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 // Folder areas.
@@ -93,8 +91,7 @@ func ValidBlobName(name string) bool {
 	if !ok {
 		return false
 	}
-	u, err := uuid.Parse(id)
-	return err == nil && u.String() == id
+	return canonicalUUID(id)
 }
 
 // ValidInlineName accepts "i-{uuid}", an inline image's id.
@@ -103,8 +100,25 @@ func ValidInlineName(name string) bool {
 	if !ok {
 		return false
 	}
-	u, err := uuid.Parse(id)
-	return err == nil && u.String() == id
+	return canonicalUUID(id)
+}
+
+// canonicalUUID accepts only the lowercase 8-4-4-4-12 hex form.
+func canonicalUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+		} else if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // ParseSHA256Name returns the digest of a "sha256-{hex}" name.
