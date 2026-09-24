@@ -190,6 +190,19 @@ export {
   type VideoSaveState,
 } from "./video-react.js";
 
+export {
+  GALLERY_VIEW_KEY,
+  useCarousel,
+  useGalleryView,
+  useHlsPlayer,
+  type CarouselOptions,
+  type GalleryViewOptions,
+  type HlsPlayerOptions,
+  type PlayerStatus,
+  type UseCarousel,
+  type UseHlsPlayer,
+} from "./gallery-react.js";
+
 export interface UseEncodeProgress {
   progress?: EncodeProgress;
   /** Seconds left, counting down each second between reports; undefined while unknown. */
