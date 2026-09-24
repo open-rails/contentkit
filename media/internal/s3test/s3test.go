@@ -6,6 +6,9 @@
 //	CONTENTKIT_TEST_S3_BUCKET     existing bucket; unset creates (and removes) one per test
 //	CONTENTKIT_TEST_S3_REQUIRE    comma list that must hold: conditional,checksum,abort-lifecycle
 //
+// A backend without conditional PUT (Ceph RGW) needs a Postgres PGLocker for
+// manifest edits, taken from CONTENTKIT_TEST_URL (see Manifests).
+//
 // Every test writes under its own tenant prefix, removed with all versions on cleanup.
 package s3test
 
@@ -22,6 +25,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/google/uuid"
 
+	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 )
@@ -104,6 +108,41 @@ func (e *Env) WithCapabilities(t testing.TB, caps media.Capabilities) *mediaS3.S
 		t.Fatal(err)
 	}
 	return s
+}
+
+// WithoutConditionalPut returns the env over a store claiming the probed
+// capabilities minus conditional PUT, as on Ceph RGW.
+func (e *Env) WithoutConditionalPut(t testing.TB) *Env {
+	caps := e.Store.Capabilities()
+	caps.ConditionalPut = false
+	c := *e
+	c.Store = e.WithCapabilities(t, caps)
+	c.Config.Capabilities = caps
+	return &c
+}
+
+// Locker is what a host wires for store: nil with conditional PUT, else a
+// PGLocker on CONTENTKIT_TEST_URL (skipping the test when it is unset).
+func Locker(t testing.TB, store media.Store) media.Locker {
+	t.Helper()
+	if store.Capabilities().ConditionalPut {
+		return nil
+	}
+	if os.Getenv("CONTENTKIT_TEST_URL") == "" {
+		t.Skip("backend lacks conditional PUT, so manifest edits need a Postgres PGLocker: set CONTENTKIT_TEST_URL")
+	}
+	return media.PGLocker(pgtest.Pool(t, nil))
+}
+
+// Manifests opens Manifests over store with opts and the Locker it needs.
+func Manifests(t testing.TB, store media.Store, kinds *media.Registry, opts media.ManifestOptions) *media.Manifests {
+	t.Helper()
+	opts.Locker = Locker(t, store)
+	ms, err := media.NewManifests(store, kinds, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ms
 }
 
 func (e *Env) cleanup(t testing.TB) {

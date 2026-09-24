@@ -53,7 +53,11 @@ type readFixture struct {
 
 func newReadFixture(t *testing.T) *readFixture {
 	t.Helper()
-	env := s3test.Open(t)
+	return newReadFixtureOn(t, s3test.Open(t))
+}
+
+func newReadFixtureOn(t *testing.T, env *s3test.Env) *readFixture {
+	t.Helper()
 	kinds, err := media.NewRegistry(
 		media.Kind{Name: "gallery", Versioned: true, Specs: map[string]media.Spec{"thumb": {Width: 460}, "high": {}}},
 		media.Kind{Name: "post", Specs: map[string]media.Spec{"large": {}, "blurred": {Blur: 20}},
@@ -62,10 +66,7 @@ func newReadFixture(t *testing.T) *readFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ms, err := media.NewManifests(env.Store, kinds, media.ManifestOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	ms := s3test.Manifests(t, env.Store, kinds, media.ManifestOptions{})
 	ring, err := token.NewRing(readKey, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -249,6 +250,17 @@ func TestReadFullAccess(t *testing.T) {
 			t.Fatal("url past limit")
 		}
 	})
+}
+
+// TestReadWithoutConditionalPut reads manifests edited under the PGLocker, as
+// on Ceph RGW.
+func TestReadWithoutConditionalPut(t *testing.T) {
+	f := newReadFixtureOn(t, s3test.Open(t).WithoutConditionalPut(t))
+	f.res.verdicts["1"] = access.Resolution{Visible: true, Accessible: true}
+	out := f.read(t, f.reader(t, media.DeliverURL, media.Hooks{}), f.gallery, media.ReadOptions{Variants: []string{"thumb"}, Limit: 10})
+	if out.Access != media.AccessFull || out.Total != 10 || len(out.Files) != 10 || out.Files[9].URL == "" {
+		t.Fatalf("result %+v", out)
+	}
 }
 
 func TestReadPreview(t *testing.T) {

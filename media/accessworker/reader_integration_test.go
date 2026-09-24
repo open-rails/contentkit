@@ -36,10 +36,7 @@ func TestReaderThroughWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ms, err := media.NewManifests(env.Store, kinds, media.ManifestOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	ms := s3test.Manifests(t, env.Store, kinds, media.ManifestOptions{})
 	put := func(key, body string) {
 		t.Helper()
 		if _, err := env.Store.Put(ctx, key, strings.NewReader(body), int64(len(body)), media.PutOptions{ContentType: "image/webp"}); err != nil {

@@ -61,7 +61,7 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ms, _ := media.NewManifests(env.Store, r, media.ManifestOptions{})
+	ms := s3test.Manifests(t, env.Store, r, media.ManifestOptions{})
 	s := env.Store
 
 	work := contentref.New(env.Tenant, "gallery", "1")

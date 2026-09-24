@@ -61,10 +61,7 @@ func newIngestEnv(t *testing.T) *ingestEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifests, err := media.NewManifests(store, kinds, media.ManifestOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	manifests := s3test.Manifests(t, store, kinds, media.ManifestOptions{})
 	q := &queue{}
 	u, err := media.NewUploads(media.UploadOptions{Store: store, Kinds: kinds, Manifests: manifests, Queue: q,
 		Authorizer: grants{"admin": {Allowed: true, Exempt: true}}})

@@ -296,7 +296,7 @@ edit, dims, version, outputs: [{name, w, h, url}], pending, error}`. Output URLs
 carry `?v={version}`, which the access worker serves immutable while current;
 listings build them without reads from one stored value per slot:
 `Hooks.SlotEncoded` reports each encode's `SlotStamp` (`"{version}:{w},{w}…"`,
-the version and produced widths), and `Reader.SlotOutputs(ref, slot, stamp)`
+the version and produced widths) before the slot record shows that version, and `Reader.SlotOutputs(ref, slot, stamp)`
 returns exactly that encode's outputs (the zero stamp: widths up to `MinWidth`,
 unversioned). `SlotManifest.Stamp()` backfills a stamp from a read.
 
@@ -495,6 +495,8 @@ Media tests also need an S3 backend (`CONTENTKIT_TEST_S3_ENDPOINT`,
 own CI job with libvips, and the other jobs exclude it. To record a Ceph RGW
 release's capabilities, point the same variables at an RGW bucket and run
 `go test ./media/... -v -count=1`; the log prints the probed capabilities.
+On a backend without conditional PUT the tests edit manifests under
+`PGLocker`, so they also need `CONTENTKIT_TEST_URL` (they skip without it).
 `media/video` tests also need `ffmpeg` and `ffprobe` on `PATH` (they skip
 without them unless `CONTENTKIT_TEST_FFMPEG=1`).
 
@@ -502,7 +504,7 @@ without them unless `CONTENTKIT_TEST_FFMPEG=1`).
 |---|---|---|---|
 | MinIO RELEASE.2025-09-07 | yes | yes | drops `AbortIncompleteMultipartUpload` (expires uploads itself) |
 | Ceph 19.2 / 20.2 standalone `dbstore` RGW | no | no | wrong Range bytes; not representative of RADOS-backed RGW |
-| production RGW (RADOS) | not yet measured | not yet measured | run the suite against the dev cluster |
+| production Ceph RGW (RADOS, 2026-09-24) | no (`If-Match` yes, `If-None-Match: *` ignored) | no | Range, `response-content-disposition`, versioning, lifecycle (incl. `AbortIncompleteMultipartUpload`) and multipart work; hosts wire `PGLocker` |
 
 Tests run against real PGroonga Postgres and ClickHouse+Keeper and skip
 without the variables; `CONTENTKIT_PROFILE_URL` needs `CREATEDB`. Regenerate the eval baseline with
