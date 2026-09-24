@@ -17,12 +17,14 @@ const (
 	AreaBlobs     = layout.AreaBlobs
 	AreaPublic    = layout.AreaPublic
 	AreaEditor    = layout.AreaEditor
+	AreaStaging   = layout.AreaStaging
 )
 
 // Item is a validated content item and the keys of its folder:
 //
 //	{tenant}/{kind}/{content_id}/manifest.json | manifests/{version}.json
-//	                            /originals/{sha256-hex | u-uuid | slot | slot.json | i-uuid}
+//	                            /originals/{sha256-hex | slot | slot.json | i-uuid}
+//	                            /staging/{u-uuid}                            multipart uploads until placed
 //	                            /blobs/{sha256-hex | u-uuid}                 viewers (folder or file token)
 //	                            /editor/{sha256-hex | output.webp | .mp4}    editors only (editor token)
 //	                            /public/{output}.webp | .mp4                 anyone
@@ -71,16 +73,19 @@ func (i Item) ManifestKey() (string, error) {
 // ManifestsPrefix lists every manifest of a versioned kind.
 func (i Item) ManifestsPrefix() string { return i.prefix + "manifests/" }
 func (i Item) OriginalsPrefix() string { return i.prefix + AreaOriginals + "/" }
+func (i Item) StagingPrefix() string   { return i.prefix + AreaStaging + "/" }
 func (i Item) BlobsPrefix() string     { return i.prefix + AreaBlobs + "/" }
 func (i Item) PublicPrefix() string    { return i.prefix + AreaPublic + "/" }
 func (i Item) EditorPrefix() string    { return i.prefix + AreaEditor + "/" }
 
-// Original is the key of an uploaded file or master (never served).
+// Original is the key of an uploaded file or master (never served):
+// originals/sha256-{hex}, or staging/u-{uuid} for a multipart upload the
+// worker has not placed yet.
 func (i Item) Original(name string) (string, error) {
 	if !layout.ValidBlobName(name) {
 		return "", fmt.Errorf("media: invalid original name %q", name)
 	}
-	return i.OriginalsPrefix() + name, nil
+	return i.prefix + layout.SourceArea(name) + "/" + name, nil
 }
 
 // Blob is the key of a served, immutable derivative.

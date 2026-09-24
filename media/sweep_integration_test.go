@@ -67,7 +67,7 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	work := contentref.New(env.Tenant, "gallery", "1")
 	g, _ := r.Item(work)
 	key := func(area, name string) string { return g.Prefix() + area + "/" + name }
-	upOrphan := media.NewUploadName()
+	upOrphan, upRef := media.NewUploadName(), media.NewUploadName()
 	names := map[string]string{}
 	for _, n := range []string{"origA", "origB", "origOrphan", "blobA", "blobA2", "blobB", "blobReplaced", "blobOrphan", "blobFresh"} {
 		names[n] = blobName(n)
@@ -78,7 +78,8 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	for _, n := range []string{"blobA", "blobA2", "blobB", "blobReplaced", "blobOrphan"} {
 		putObject(t, s, key(media.AreaBlobs, names[n]), n)
 	}
-	putObject(t, s, key(media.AreaOriginals, upOrphan), "abandoned multipart")
+	putObject(t, s, key(media.AreaStaging, upOrphan), "abandoned multipart")
+	putObject(t, s, key(media.AreaStaging, upRef), "committed multipart the worker has not placed")
 	putObject(t, s, key(media.AreaOriginals, "cover"), "slot original")
 	putObject(t, s, g.PublicPrefix()+"cover.webp", "public slot")
 	putObject(t, s, g.Prefix()+"notes.txt", "not ours")
@@ -101,6 +102,12 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if _, err := ms.Edit(ctx, work.WithVersion("v2"), func(m *media.Manifest) error {
+		m.Files = append(m.Files, media.File{Name: "clip.mp4", Original: upRef})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	// Replace v1's variant: viewers mid-stream on the old blob keep it through the grace.
 	if _, err := ms.Edit(ctx, work.WithVersion("v1"), func(m *media.Manifest) error {
 		m.Files[0].Variants = variant("blobA2")
@@ -119,7 +126,7 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	time.Sleep(2 * time.Second)
 	upFresh := media.NewUploadName()
 	putObject(t, s, key(media.AreaBlobs, names["blobFresh"]), "job output not yet in a manifest")
-	putObject(t, s, key(media.AreaOriginals, upFresh), "upload not yet committed")
+	putObject(t, s, key(media.AreaStaging, upFresh), "upload not yet committed")
 
 	clock = edited.Add(grace + time.Second)
 	res, err = jobs.Sweep(ctx, work)
@@ -136,8 +143,8 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	left := listKeys(t, s, g.Prefix())
 	for _, k := range []string{key(media.AreaOriginals, names["origA"]), key(media.AreaOriginals, names["origB"]),
 		key(media.AreaBlobs, names["blobA"]), key(media.AreaBlobs, names["blobA2"]), key(media.AreaBlobs, names["blobB"]),
-		key(media.AreaBlobs, names["blobFresh"]), key(media.AreaOriginals, upFresh), key(media.AreaOriginals, "cover"),
-		key(media.AreaOriginals, upOrphan),
+		key(media.AreaBlobs, names["blobFresh"]), key(media.AreaStaging, upFresh), key(media.AreaOriginals, "cover"),
+		key(media.AreaStaging, upOrphan), key(media.AreaStaging, upRef),
 		g.PublicPrefix() + "cover.webp", g.Prefix() + "notes.txt", g.ManifestsPrefix() + "v1.json", g.ManifestsPrefix() + "v2.json"} {
 		if !slices.Contains(left, k) {
 			t.Errorf("sweep removed %s", k)
@@ -169,7 +176,7 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	// Multipart objects may be dated at initiation: they get the 1-day abort rule on top.
 	clock = clock.Add(24 * time.Hour)
 	res, err = jobs.Sweep(ctx, work)
-	want = []string{key(media.AreaBlobs, names["blobFresh"]), key(media.AreaOriginals, upOrphan)}
+	want = []string{key(media.AreaBlobs, names["blobFresh"]), key(media.AreaStaging, upOrphan)}
 	slices.Sort(res.Deleted)
 	if err != nil || !slices.Equal(res.Deleted, want) {
 		t.Fatalf("second sweep deleted %v (%v), want %v", res.Deleted, err, want)

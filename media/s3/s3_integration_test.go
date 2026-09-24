@@ -18,6 +18,7 @@ import (
 
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
+	mediaS3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
 )
 
@@ -312,5 +313,45 @@ func TestBucketVersioningAndLifecycle(t *testing.T) {
 	}
 	if !ok {
 		t.Fatalf("lifecycle rules %+v", lc.Rules)
+	}
+}
+
+// Copy keeps the type and metadata, copies objects past the part size in
+// ranged parts (5 MiB here, 5 GiB in production), and honours IfMatch.
+func TestCopyInOneRequestOrInParts(t *testing.T) {
+	env := s3test.Open(t)
+	ctx := context.Background()
+	cfg := env.Config
+	cfg.CopyPartSize = 5 << 20
+	store, err := mediaS3.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, size := range []int{1 << 10, 12<<20 + 7} {
+		body := random(t, size)
+		src := env.Tenant + "/video/9/staging/" + media.NewUploadName()
+		sum := sha256.Sum256(body)
+		dst := env.Tenant + "/video/9/originals/" + media.SHA256Name(sum[:])
+		put, err := store.Put(ctx, src, bytes.NewReader(body), int64(size),
+			media.PutOptions{ContentType: "video/mp4", CacheControl: "no-cache", Metadata: map[string]string{"of": "x"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Copy(ctx, src, dst, media.CopyOptions{IfMatch: `"0123456789abcdef0123456789abcdef"`}); !errors.Is(err, media.ErrPreconditionFailed) {
+			t.Fatalf("%d: stale IfMatch: %v", size, err)
+		}
+		obj, err := store.Copy(ctx, src, dst, media.CopyOptions{IfMatch: put.ETag})
+		if err != nil || obj.Size != int64(size) {
+			t.Fatalf("%d: copy %+v %v", size, obj, err)
+		}
+		rc, got, err := store.Get(ctx, dst, media.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(rc)
+		rc.Close()
+		if !bytes.Equal(b, body) || got.ContentType != "video/mp4" || got.CacheControl != "no-cache" || got.Metadata["of"] != "x" {
+			t.Fatalf("%d: copied %d bytes, %+v", size, len(b), got)
+		}
 	}
 }

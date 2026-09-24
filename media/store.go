@@ -48,6 +48,12 @@ type GetOptions struct {
 	Range       string
 }
 
+// CopyOptions: IfMatch copies only while the source's ETag is this one
+// (ErrPreconditionFailed otherwise).
+type CopyOptions struct {
+	IfMatch string
+}
+
 // PresignedRequest is a request a browser sends as is, with exactly Header.
 type PresignedRequest struct {
 	Method  string
@@ -86,6 +92,10 @@ type Store interface {
 	Head(ctx context.Context, key string) (Object, error)
 	Delete(ctx context.Context, key string) error
 	List(ctx context.Context, prefix string) iter.Seq2[Object, error]
+	// Copy copies src to dst server-side, keeping its content type, cache
+	// control and metadata; objects past the backend's single-copy limit
+	// (5 GiB on S3) copy in parts. The returned Object has dst's size.
+	Copy(ctx context.Context, src, dst string, o CopyOptions) (Object, error)
 
 	PresignPut(ctx context.Context, key string, p PresignPut) (PresignedRequest, error)
 	CreateMultipart(ctx context.Context, key, contentType string) (uploadID string, err error)

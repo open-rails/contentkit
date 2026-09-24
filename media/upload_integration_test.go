@@ -594,7 +594,8 @@ func TestMultipartResumeAfterKilledPart(t *testing.T) {
 	if status != 200 || c.Files[0].Size != int64(len(body)) || c.Files[0].Type != "video/mp4" {
 		t.Fatalf("commit %d %+v %+v", status, c, er)
 	}
-	rc, _, err := e.Store.Get(ctx, e.Tenant+"/video/88/originals/"+p.Name, media.GetOptions{})
+	stagedKey := e.Tenant + "/video/88/staging/" + p.Name
+	rc, staged, err := e.Store.Get(ctx, stagedKey, media.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -602,6 +603,27 @@ func TestMultipartResumeAfterKilledPart(t *testing.T) {
 	rc.Close()
 	if !bytes.Equal(got, body) {
 		t.Fatal("assembled object differs from the upload")
+	}
+
+	// The worker places the staged upload under the SHA-256 it hashed; a rerun converges.
+	sum := sha256.Sum256(got)
+	cref := contentref.New(e.Tenant, "video", "88")
+	for range 2 {
+		name, err := e.manifests.Place(ctx, cref, media.Staged{Name: p.Name, ETag: staged.ETag, SHA256: sum[:]})
+		if err != nil || name != media.SHA256Name(sum[:]) {
+			t.Fatalf("place: %q %v", name, err)
+		}
+	}
+	man, _, err := e.manifests.Get(ctx, cref)
+	if err != nil || man.Files[0].Original != media.SHA256Name(sum[:]) {
+		t.Fatalf("manifest not switched: %+v %v", man, err)
+	}
+	if _, err := e.Store.Head(ctx, stagedKey); !errors.Is(err, media.ErrNotFound) {
+		t.Fatalf("staging kept: %v", err)
+	}
+	placed, err := e.Store.Head(ctx, e.Tenant+"/video/88/originals/"+media.SHA256Name(sum[:]))
+	if err != nil || placed.Size != int64(len(body)) || placed.ContentType != "video/mp4" {
+		t.Fatalf("placed original %+v %v", placed, err)
 	}
 }
 

@@ -20,8 +20,9 @@ import (
 )
 
 // Upload size rules. Files up to MaxSinglePut are one checksum-bound PUT to
-// originals/sha256-{hex}; larger ones are multipart to originals/u-{uuid} with
-// parts of MinPartSize growing up to MaxPartSize (the last part may be smaller).
+// originals/sha256-{hex}; larger ones are multipart to staging/u-{uuid} with
+// parts of MinPartSize growing up to MaxPartSize (the last part may be
+// smaller), until the media worker hashes and places them (Manifests.Place).
 const (
 	MaxSinglePut = 64 << 20
 	MinPartSize  = 8 << 20

@@ -2,7 +2,8 @@
 // worker can classify paths without importing the media runtime:
 //
 //	{tenant}/{kind}/{content_id}/manifest.json | manifests/{version}.json
-//	                            /originals/{sha256-hex | u-uuid | slot | slot.json | i-uuid}
+//	                            /originals/{sha256-hex | slot | slot.json | i-uuid}
+//	                            /staging/{u-uuid}                               multipart uploads until placed; never served
 //	                            /blobs/{sha256-hex | u-uuid}                    viewer token
 //	                            /editor/{sha256-hex | name.webp | name.mp4}     editor token
 //	                            /public/{name}.webp | {name}.mp4 (hover previews)
@@ -22,6 +23,9 @@ const (
 	// AreaEditor holds what only editors may fetch: EditorOnly variant blobs
 	// and video posters and hover previews before they are published.
 	AreaEditor = "editor"
+	// AreaStaging holds multipart uploads (u-{uuid}) until the media worker
+	// hashes them and places them in originals/ under their SHA-256.
+	AreaStaging = "staging"
 )
 
 const (
@@ -35,7 +39,7 @@ const (
 // Key is a parsed object key.
 type Key struct {
 	Tenant, Kind, ID string
-	Area             string // AreaManifest, AreaOriginals, AreaBlobs, AreaEditor or AreaPublic
+	Area             string // AreaManifest, AreaOriginals, AreaStaging, AreaBlobs, AreaEditor or AreaPublic
 	Name             string // file name within the area; the version id for manifests/
 }
 
@@ -59,6 +63,8 @@ func Parse(key string) (Key, bool) {
 		k.Area, k.Name = AreaManifest, v
 	case len(rest) == 2 && rest[0] == AreaOriginals && ValidSegment(rest[1]):
 		k.Area, k.Name = AreaOriginals, rest[1]
+	case len(rest) == 2 && rest[0] == AreaStaging && ValidStagedName(rest[1]):
+		k.Area, k.Name = AreaStaging, rest[1]
 	case len(rest) == 2 && rest[0] == AreaBlobs && ValidBlobName(rest[1]):
 		k.Area, k.Name = AreaBlobs, rest[1]
 	case len(rest) == 2 && rest[0] == AreaEditor && ValidBlobName(rest[1]):
@@ -94,14 +100,23 @@ func ValidSegment(s string) bool {
 
 // ValidBlobName accepts "sha256-{64 lowercase hex}" and "u-{uuid}".
 func ValidBlobName(name string) bool {
-	if _, ok := ParseSHA256Name(name); ok {
-		return true
-	}
+	_, ok := ParseSHA256Name(name)
+	return ok || ValidStagedName(name)
+}
+
+// ValidStagedName accepts "u-{uuid}", an upload whose hash is not yet known.
+func ValidStagedName(name string) bool {
 	id, ok := strings.CutPrefix(name, UploadPrefix)
-	if !ok {
-		return false
+	return ok && canonicalUUID(id)
+}
+
+// SourceArea is where an uploaded file named name lives: staging/ for a
+// "u-{uuid}" not yet placed, originals/ for a "sha256-{hex}".
+func SourceArea(name string) string {
+	if ValidStagedName(name) {
+		return AreaStaging
 	}
-	return canonicalUUID(id)
+	return AreaOriginals
 }
 
 // ValidInlineName accepts "i-{uuid}", an inline image's id.
