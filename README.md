@@ -340,7 +340,7 @@ one's is dropped. Output is square-pixel (SAR applied), at most 60 fps, and
 frames above 1080p-class carry the lowest fitting level (5.0/5.1/5.2);
 smaller ones keep x264's. `hls.video[]` records `rung` and the true `w`/`h`.
 Sources whose display aspect is outside `Video.MinAspect`–`MaxAspect`
-(default 9/21–21/9) fail permanently: the file's `hls` becomes
+(default 1/2.4–2.4, admitting 2560×1080 and 2.39:1 cinema; 0.5% slack) fail permanently: the file's `hls` becomes
 `{source, spec, error}` with no renditions, `Hooks.Failed` (in the encoder's
 process) gets `video.ErrAspect`, editors see `failed` in the read API, and
 it is retried only when the source or the kind's bounds change. Each rendition and

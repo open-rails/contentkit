@@ -94,7 +94,7 @@ func TestAspectOutOfRangeFailsPermanently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.commit(t, fixture{w: 480, h: 180, secs: 1}.make(t), media.OpInsert) // 2.67:1, wider than 21:9
+	e.commit(t, fixture{w: 480, h: 180, secs: 1}.make(t), media.OpInsert) // 2.67:1, wider than 2.4:1
 	for range 2 {
 		if err := enc.Encode(context.Background(), video.Job{Ref: e.ref, Versioned: true}); err != nil {
 			t.Fatal(err)

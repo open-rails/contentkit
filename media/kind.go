@@ -58,10 +58,11 @@ type Video struct {
 // DefaultLadder is the default H.264 ladder by short side.
 var DefaultLadder = []int{2160, 1440, 1080, 720, 480}
 
-// Default aspect bounds: 9:21 vertical to 21:9 wide.
+// Default aspect bounds: 1:2.4 vertical to 2.4:1 wide, which admits "21:9"
+// content (2560×1080 at 2.37, 2.39:1 cinema) and its vertical equivalents.
 const (
-	DefaultMinAspect = 9.0 / 21
-	DefaultMaxAspect = 21.0 / 9
+	DefaultMinAspect = 1 / 2.4
+	DefaultMaxAspect = 2.4
 )
 
 // Rungs is the ladder in effect.

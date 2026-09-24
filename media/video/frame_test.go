@@ -90,7 +90,8 @@ func TestAspectAndTile(t *testing.T) {
 		ok   bool
 	}{
 		{1920, 1080, true}, {2520, 1080, true}, {1080, 2520, true}, {5040, 2160, true},
-		{2560, 1080, false}, {1080, 2560, false}, {3000, 1000, false}, {1000, 3000, false}, {855, 366, true},
+		{2560, 1080, true}, {1080, 2560, true}, {3440, 1440, true}, {1920, 804, true}, {804, 1920, true}, {2410, 1000, true},
+		{2500, 1000, false}, {1000, 2500, false}, {3000, 1000, false}, {1000, 3000, false},
 	} {
 		err := checkAspect(c.w, c.h, lo, hi)
 		if (err == nil) != c.ok || err != nil && !errors.Is(err, ErrAspect) {
