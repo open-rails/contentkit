@@ -126,7 +126,7 @@ jobs:
         done
         docker logs minio
         exit 1
-    - run: pnpm install --frozen-lockfile
+    - run: pnpm install --frozen-lockfile --ignore-scripts
     - run: pnpm typecheck
     - run: pnpm test
     - run: pnpm build

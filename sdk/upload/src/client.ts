@@ -3,7 +3,7 @@ import { UploadError, aborted, throwIfAborted } from "./errors.js";
 import { sha256Hex } from "./hash.js";
 import { Pacer } from "./pacer.js";
 import { defaultTransport, type Transport } from "./transport.js";
-import { MAX_SINGLE_PUT, type CommitFile, type Edit, type Op, type RefBody, type RequestReply } from "./wire.gen.js";
+import { MAX_SINGLE_PUT, type CommitFile, type Edit, type Op, type RefBody, type RequestReply, type SlotManifest } from "./wire.gen.js";
 
 export interface ClientOptions extends ApiOptions {
   transport?: Transport;
@@ -38,6 +38,17 @@ export interface UploadOptions {
   resume?: UploadState;
   /** Resumable state after every change; null once the upload completed. Persist it to survive a reload. */
   onState?: (s: UploadState | null) => void;
+}
+
+export interface SlotUploadOptions extends UploadOptions {
+  slot: string;
+  /** Crop (EXIF-oriented original pixels) and rotation; omitted = centred at the slot's aspect. */
+  edit?: Edit | null;
+}
+
+/** A committed slot original and the slot as rendered from it. */
+export interface SlotUpload extends UploadedFile {
+  manifest: SlotManifest;
 }
 
 /** An uploaded original, ready for an insert or replace op. */
@@ -126,11 +137,40 @@ export class UploadClient {
     return this.multipart(file, state, new Set(), o);
   }
 
-  /** Uploads a slot original and commits it (re-encodes the slot's outputs). */
-  async uploadSlot(file: Uploadable, o: UploadOptions & { slot: string }): Promise<UploadedFile> {
+  /** Uploads a slot original and commits it with the edit; the server renders every size. */
+  async uploadSlot(file: Uploadable, o: SlotUploadOptions): Promise<SlotUpload> {
     const f = await this.upload(file, o);
-    await this.retry(() => this.api.commitSlot({ ref: o.ref, slot: o.slot, sha256: f.sha256! }, o.signal), o.signal);
-    return f;
+    const body = { ref: o.ref, slot: o.slot, sha256: f.sha256!, ...(o.edit ? { edit: o.edit } : {}) };
+    const manifest = await this.retry(() => this.api.commitSlot(body, o.signal), o.signal);
+    return { ...f, manifest };
+  }
+
+  /** Re-renders a slot from its committed original with a new edit (null: centred); nothing is uploaded. */
+  editSlot(ref: RefBody, slot: string, edit?: Edit | null, signal?: AbortSignal): Promise<SlotManifest> {
+    return this.retry(() => this.api.editSlot({ ref, slot, ...(edit ? { edit } : {}) }, signal), signal);
+  }
+
+  /** The slot's aspect, edit, dims and rendered sizes (no outputs before the first commit). */
+  getSlot(ref: RefBody, slot: string, signal?: AbortSignal): Promise<SlotManifest> {
+    return this.retry(() => this.api.slot({ ref, slot }, signal), signal);
+  }
+
+  /** The committed original, for re-cropping; not_found when the slot has none. */
+  getSlotOriginal(ref: RefBody, slot: string, signal?: AbortSignal): Promise<Blob> {
+    return this.retry(() => this.api.slotOriginal({ ref, slot }, signal), signal);
+  }
+
+  /**
+   * Polls until the slot's outputs are encoded (pending false) or timeout ms
+   * pass; returns the latest manifest either way.
+   */
+  async waitForSlot(ref: RefBody, slot: string, o: { signal?: AbortSignal; interval?: number; timeout?: number } = {}): Promise<SlotManifest> {
+    const until = Date.now() + (o.timeout ?? 60_000);
+    for (;;) {
+      const m = await this.getSlot(ref, slot, o.signal);
+      if (!m.pending || Date.now() >= until) return m;
+      await sleep(o.interval ?? 1000, o.signal);
+    }
   }
 
   /** Uploads a new inline image and commits it (re-encodes public/{name}.webp). */
@@ -183,9 +223,9 @@ export class UploadClient {
    * server derives the crop's height from its width. o.from names another
    * item holding file (e.g. a channel avatar from a post image).
    */
-  async setSlotFromFile(ref: RefBody, slot: string, file: string, edit?: Edit, o: { signal?: AbortSignal; from?: RefBody } = {}): Promise<void> {
+  async setSlotFromFile(ref: RefBody, slot: string, file: string, edit?: Edit, o: { signal?: AbortSignal; from?: RefBody } = {}): Promise<SlotManifest> {
     const body = { ref, slot, file, ...(edit ? { edit } : {}), ...(o.from ? { from: o.from } : {}) };
-    await this.retry(() => this.api.commitSlotFromFile(body, o.signal), o.signal);
+    return this.retry(() => this.api.commitSlotFromFile(body, o.signal), o.signal);
   }
 
   /** Discards a paused multipart upload. */

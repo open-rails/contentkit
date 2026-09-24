@@ -31,11 +31,39 @@ export function constrainCrop(rect: Crop, source: Size, aspect?: number, rotate:
   return { x: clamp(Math.round(rect.x), 0, W - w), y: clamp(Math.round(rect.y), 0, H - h), w, h };
 }
 
-/** Maps a rect on the image shown at display size (unrotated) to original pixels. */
-export function toOriginal(rect: Crop, display: Size, source: Size): Crop {
-  const sx = source.width / display.width;
-  const sy = source.height / display.height;
-  return { x: rect.x * sx, y: rect.y * sy, w: rect.w * sx, h: rect.h * sy };
+/**
+ * Maps a rect on the image shown at display size to original pixels. With a
+ * rotation, display is the rotated image (as a cropper shows it) and the rect
+ * is mapped back through the rotation.
+ */
+export function toOriginal(rect: Crop, display: Size, source: Size, rotate: Rotation = 0): Crop {
+  const shown = editedSize(source, rotate);
+  const sx = shown.width / display.width;
+  const sy = shown.height / display.height;
+  return fromRotated({ x: rect.x * sx, y: rect.y * sy, w: rect.w * sx, h: rect.h * sy }, source, rotate);
+}
+
+/** The image's size after a clockwise rotation. */
+export function editedSize(source: Size, rotate: Rotation = 0): Size {
+  return rotate === 90 || rotate === 270 ? { width: source.height, height: source.width } : source;
+}
+
+/** A rect in original pixels as it lies on the image turned clockwise by rotate. */
+export function toRotated(r: Crop, source: Size, rotate: Rotation): Crop {
+  const { width: W, height: H } = source;
+  if (rotate === 90) return { x: H - (r.y + r.h), y: r.x, w: r.h, h: r.w };
+  if (rotate === 180) return { x: W - (r.x + r.w), y: H - (r.y + r.h), w: r.w, h: r.h };
+  if (rotate === 270) return { x: r.y, y: W - (r.x + r.w), w: r.h, h: r.w };
+  return r;
+}
+
+/** Inverse of toRotated: a rect on the rotated image back in original pixels. */
+export function fromRotated(r: Crop, source: Size, rotate: Rotation): Crop {
+  const { width: W, height: H } = source;
+  if (rotate === 90) return { x: r.y, y: H - (r.x + r.w), w: r.h, h: r.w };
+  if (rotate === 180) return { x: W - (r.x + r.w), y: H - (r.y + r.h), w: r.w, h: r.h };
+  if (rotate === 270) return { x: W - (r.y + r.h), y: r.x, w: r.h, h: r.w };
+  return r;
 }
 
 /** The largest centred crop (at aspect, if any). */

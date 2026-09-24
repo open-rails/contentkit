@@ -1,9 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { Progress, UploadClient, UploadedFile, UploadOptions } from "./client.js";
+import type { Progress, SlotUploadOptions, UploadClient, UploadedFile, UploadOptions } from "./client.js";
 import { centeredCrop, constrainCrop, editOf, rotation, toOriginal, type Rotation, type Size } from "./crop.js";
 import { UploadError } from "./errors.js";
 import { UploadQueue, type QueueOptions, type QueueSnapshot } from "./queue.js";
 import type { Crop, Edit } from "./wire.gen.js";
+
+export {
+  editOutput,
+  useSlotCrop,
+  useSlotImage,
+  type SlotCropMode,
+  type SlotCropOptions,
+  type SlotCropState,
+  type SlotImageOptions,
+  type UseSlotCrop,
+  type UseSlotImage,
+} from "./slot-react.js";
 
 export interface UseUploadQueue extends QueueSnapshot {
   queue: UploadQueue;
@@ -51,8 +63,8 @@ export interface UploadStatus {
 }
 
 export interface UseUpload extends UploadStatus {
-  /** Uploads one file; with opts.slot or opts.inline it also commits the slot or inline image. */
-  upload: (file: File, opts: Omit<UploadOptions, "signal" | "onProgress">) => Promise<UploadedFile>;
+  /** Uploads one file; with opts.slot or opts.inline it also commits the slot or inline image (opts.edit crops a slot). */
+  upload: (file: File, opts: Omit<UploadOptions, "signal" | "onProgress"> & { edit?: SlotUploadOptions["edit"] }) => Promise<UploadedFile>;
   cancel: () => void;
 }
 
@@ -74,7 +86,7 @@ export function useUpload(client: UploadClient): UseUpload {
       };
       try {
         const result = opts.slot
-          ? await client.uploadSlot(file, { ...o, slot: opts.slot })
+          ? await client.uploadSlot(file, { ...o, slot: opts.slot, edit: opts.edit })
           : opts.inline
             ? await client.uploadInline(file, o)
             : await client.upload(file, o);
@@ -109,7 +121,7 @@ export interface UseCrop {
   edit: Edit | null;
   /** A rect in original pixels. */
   setCrop: (rect: Crop) => void;
-  /** A rect on the image as displayed at display size (a cropper's output). */
+  /** A rect on the image as displayed (after the rotation) at display size: a cropper's output. */
   setFromDisplay: (rect: Crop, display: Size) => void;
   /** Turns clockwise by deg (a multiple of 90); the crop keeps the aspect. */
   rotateBy: (deg: number) => void;
@@ -126,7 +138,10 @@ export function useCrop({ source, aspect, initial }: UseCropOptions): UseCrop {
   const [state, set] = useState(start);
   const [crop, rotate] = state;
   const setCrop = useCallback((r: Crop) => set(([, rot]) => [constrainCrop(r, source, aspect, rot), rot]), [source, aspect]);
-  const setFromDisplay = useCallback((r: Crop, display: Size) => setCrop(toOriginal(r, display, source)), [setCrop, source]);
+  const setFromDisplay = useCallback(
+    (r: Crop, display: Size) => set(([, rot]) => [constrainCrop(toOriginal(r, display, source, rot), source, aspect, rot), rot]),
+    [source, aspect],
+  );
   const rotateBy = useCallback(
     (deg: number) =>
       set(([c, rot]) => {
