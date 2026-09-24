@@ -168,3 +168,23 @@ export function useCrop({ source: given, aspect, initial }: UseCropOptions): Use
   }, [crop, source, rotate]);
   return { crop, rotate, edit, setCrop, setFromDisplay, rotateBy, reset };
 }
+
+export {
+  round3,
+  useFrameStrip,
+  useHoverSection,
+  useVideoFrame,
+  useVideoImages,
+  useVideoPoster,
+  type FrameStripOptions,
+  type HoverSectionOptions,
+  type StripFrame,
+  type UseHoverSection,
+  type UseVideoFrame,
+  type UseVideoImages,
+  type UseVideoPoster,
+  type VideoFrameOptions,
+  type VideoImagesOptions,
+  type VideoPosterOptions,
+  type VideoSaveState,
+} from "./video-react.js";

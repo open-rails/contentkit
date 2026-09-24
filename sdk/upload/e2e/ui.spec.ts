@@ -96,3 +96,49 @@ for (const theme of ["light", "dark"] as const) {
     await expect(header.locator("img").nth(1)).toHaveAttribute("srcset", /512w/);
   });
 }
+
+for (const theme of ["light", "dark"] as const) {
+  test(`video poster and hover preview pickers (${theme})`, async ({ page }, info) => {
+    const tag = `${theme}-${info.project.name}`;
+    await page.goto(`/?theme=${theme}`);
+    const card = page.locator("[data-demo=video]");
+    const poster = card.locator("[data-ckui=video-poster]");
+    await expect(poster.locator("img")).toHaveAttribute("srcset", /1920w/, { timeout: 20_000 });
+    await poster.scrollIntoViewIfNeeded();
+    await poster.hover();
+    await expect(poster.locator("[data-ckui=hover-preview]")).toBeVisible();
+    await card.screenshot({ path: `${dir}/video-card-hover-${tag}.png` });
+    await page.mouse.move(0, 0);
+    await expect(poster.locator("[data-ckui=hover-preview]")).toHaveCount(0);
+
+    await card.getByRole("button", { name: "Choose poster" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.locator("[data-ckui=frame-strip] img")).toHaveCount(8, { timeout: 20_000 });
+    await dialog.getByRole("button", { name: /Jump to 0:08/ }).click();
+    await dialog.getByRole("button", { name: "Next frame" }).click();
+    await expect(dialog.locator("[data-ckui=time]")).toHaveText("0:08.3");
+    await page.waitForTimeout(600);
+    await page.screenshot({ path: `${dir}/poster-picker-${tag}.png` });
+    await dialog.getByRole("button", { name: "Crop…" }).click();
+    const crop = page.getByRole("dialog", { name: "Crop the poster" });
+    await expect(crop.locator(".reactEasyCrop_CropArea")).toBeVisible();
+    await crop.getByRole("button", { name: "Zoom in" }).click();
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${dir}/poster-crop-${tag}.png` });
+    await crop.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0, { timeout: 30_000 });
+    await expect(poster.locator("img")).toHaveAttribute("srcset", /1920w/);
+
+    await card.getByRole("button", { name: "Hover preview" }).click();
+    await expect(dialog.locator("[data-ckui=frame-strip] img")).toHaveCount(10, { timeout: 20_000 });
+    const [, end] = await dialog.locator("input[type=range]").all();
+    await end!.focus();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await expect(dialog.locator("[data-ckui=flipbook]")).toBeVisible({ timeout: 20_000 });
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: `${dir}/preview-picker-${tag}.png` });
+    await dialog.getByRole("button", { name: "Save preview" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0, { timeout: 30_000 });
+  });
+}

@@ -3,7 +3,7 @@ import { UploadError, aborted, throwIfAborted } from "./errors.js";
 import { sha256Hex } from "./hash.js";
 import { Pacer } from "./pacer.js";
 import { defaultTransport, type Transport } from "./transport.js";
-import { MAX_SINGLE_PUT, type CommitFile, type Edit, type Op, type RefBody, type RequestReply, type SlotManifest } from "./wire.gen.js";
+import { MAX_SINGLE_PUT, type CommitFile, type Edit, type Op, type RefBody, type RequestReply, type SlotManifest, type VideoImages } from "./wire.gen.js";
 
 export interface ClientOptions extends ApiOptions {
   transport?: Transport;
@@ -226,6 +226,50 @@ export class UploadClient {
   async setSlotFromFile(ref: RefBody, slot: string, file: string, edit?: Edit, o: { signal?: AbortSignal; from?: RefBody } = {}): Promise<SlotManifest> {
     const body = { ref, slot, file, ...(edit ? { edit } : {}), ...(o.from ? { from: o.from } : {}) };
     return this.retry(() => this.api.commitSlotFromFile(body, o.signal), o.signal);
+  }
+
+  /** A video item's poster and hover preview, with selections and the video's duration and frame size. */
+  getVideoImages(ref: RefBody, file?: string, signal?: AbortSignal): Promise<VideoImages> {
+    return this.retry(() => this.api.videoImages({ ref, ...(file ? { file } : {}) }, signal), signal);
+  }
+
+  /**
+   * Sets the poster to a frame (seconds into file; edit in the frame's pixels,
+   * VideoInfo w×h) or back to the automatic frame; the worker grabs it and the
+   * image job renders the sizes.
+   */
+  setVideoPoster(ref: RefBody, poster: { source: "frame"; time: number; file?: string; edit?: Edit | null } | { source: "auto"; file?: string }, signal?: AbortSignal): Promise<VideoImages> {
+    const edit = "edit" in poster && poster.edit ? { edit: poster.edit } : {};
+    const time = poster.source === "frame" ? { time: poster.time } : {};
+    const body = { ref, source: poster.source, ...(poster.file ? { file: poster.file } : {}), ...time, ...edit };
+    return this.retry(() => this.api.videoPoster(body, signal), signal);
+  }
+
+  /** Uploads an image as the poster, cropped by edit (its own pixels; omitted: centred 16:9). */
+  async uploadVideoPoster(image: Uploadable, o: { ref: RefBody; edit?: Edit | null; signal?: AbortSignal; onProgress?: (p: Progress) => void }): Promise<VideoImages> {
+    const f = await this.upload(image, { ref: o.ref, slot: "poster", signal: o.signal, onProgress: o.onProgress });
+    const body = { ref: o.ref, source: "upload" as const, sha256: f.sha256!, ...(o.edit ? { edit: o.edit } : {}) };
+    return this.retry(() => this.api.videoPoster(body, o.signal), o.signal);
+  }
+
+  /** Selects the hover-preview section (start omitted: automatic); duration is bounded 1–6 s. */
+  setHoverPreview(ref: RefBody, section: { file?: string; start?: number; duration?: number }, signal?: AbortSignal): Promise<VideoImages> {
+    return this.retry(() => this.api.videoPreview({ ref, ...section }, signal), signal);
+  }
+
+  /** One frame as a JPEG w pixels wide (clamped by the server to 64–1280 and the video). */
+  getFrame(ref: RefBody, time: number, o: { file?: string; width?: number; signal?: AbortSignal } = {}): Promise<Blob> {
+    return this.retry(() => this.api.frame({ ...ref, file: o.file, t: time, w: o.width }, o.signal), o.signal);
+  }
+
+  /** Polls until the poster and hover preview are rendered, or timeout ms pass; returns the latest either way. */
+  async waitForVideoImages(ref: RefBody, o: { file?: string; signal?: AbortSignal; interval?: number; timeout?: number } = {}): Promise<VideoImages> {
+    const until = Date.now() + (o.timeout ?? 120_000);
+    for (;;) {
+      const v = await this.getVideoImages(ref, o.file, o.signal);
+      if ((!v.poster.pending && !v.hover_preview.pending) || Date.now() >= until) return v;
+      await sleep(o.interval ?? 1500, o.signal);
+    }
   }
 
   /** Discards a paused multipart upload. */

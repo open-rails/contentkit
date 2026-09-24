@@ -1,5 +1,8 @@
 import { createUploadClient } from "@openrails/contentkit-upload";
 import {
+  HoverPreviewPicker,
+  VideoPoster,
+  VideoPosterPicker,
   AvatarUpload,
   CoverUpload,
   SlotEditError,
@@ -10,7 +13,8 @@ import {
   useSlotEditor,
   type UploadUiTheme,
 } from "@openrails/contentkit-upload/ui";
-import { StrictMode } from "react";
+import { StrictMode, useState } from "react";
+import type { VideoImages } from "@openrails/contentkit-upload";
 import { createRoot } from "react-dom/client";
 import { DemoServer, sampleAvatar, sampleImage } from "./fake";
 
@@ -72,6 +76,26 @@ function ChannelHeader() {
   );
 }
 
+const video = { kind: "post", id: "1" };
+await client.setVideoPoster(video, { source: "auto" });
+const seededVideo = await client.setHoverPreview(video, {});
+
+function VideoCard() {
+  const [images, setImages] = useState<VideoImages>(seededVideo);
+  const [open, setOpen] = useState<"poster" | "preview" | null>(null);
+  return (
+    <div data-demo="video" style={{ display: "grid", gap: 12 }}>
+      <VideoPoster poster={images.poster} preview={images.hover_preview} sizes="(min-width: 760px) 360px, 100vw" style={{ maxWidth: 360 }} tabIndex={0} />
+      <div style={{ display: "flex", gap: 8 }}>
+        <button type="button" onClick={() => setOpen("poster")}>Choose poster</button>
+        <button type="button" onClick={() => setOpen("preview")}>Hover preview</button>
+      </div>
+      <VideoPosterPicker open={open === "poster"} onOpenChange={(o) => setOpen(o ? "poster" : null)} item={video} images={images} onChange={setImages} />
+      <HoverPreviewPicker open={open === "preview"} onOpenChange={(o) => setOpen(o ? "preview" : null)} item={video} images={images} onChange={setImages} />
+    </div>
+  );
+}
+
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section
@@ -100,6 +124,9 @@ createRoot(document.getElementById("root")!).render(
         <Card title="Channel profile">
           <CoverUpload item={channel} />
           <AvatarUpload item={channel} />
+        </Card>
+        <Card title="Video poster and hover preview">
+          <VideoCard />
         </Card>
         <Card title="New channel">
           <CoverUpload item={empty} />

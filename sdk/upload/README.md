@@ -48,6 +48,18 @@ immutable per version. `slotSources(manifest)` gives `src`/`srcSet`; `waitForSlo
 while `pending`; `getSlotOriginal` returns the committed original for re-editing;
 `decodeImage` is the EXIF-aware preview the UI crops on.
 
+Video items (#32): a poster (slot `poster`, 16:9) and a hover preview.
+
+```ts
+await client.getVideoImages(ref);                                  // { poster, hover_preview, video: { file, duration, w, h, encoded } }
+await client.setVideoPoster(ref, { source: "frame", time: 8.3, edit }); // edit in frame pixels (video.w × video.h)
+await client.uploadVideoPoster(image, { ref, edit });              // presign slot "poster" + /video-poster upload
+await client.setVideoPoster(ref, { source: "auto" });
+await client.setHoverPreview(ref, { start: 3, duration: 4 });     // {} = automatic
+await client.getFrame(ref, 8.3, { width: 640 });                   // JPEG Blob (GET /frame)
+await client.waitForVideoImages(ref);                              // until nothing is pending
+```
+
 - Errors are `UploadError` with `code` (the server's `ErrorReply.code`, or
   `network`, `storage`, `aborted`, `resume_mismatch`), `status` and
   `retryAfter` (seconds, on `rate_limited`). `isLimit` is true for
@@ -106,6 +118,14 @@ await crop.save();   // saving { progress, rendering } → done { manifest } | e
 crop.cancel();
 ```
 
+Headless video hooks: `useVideoImages(client, { ref, file?, images? })`,
+`useFrameStrip(client, { ref, duration, count, width })` (frames fetched one at
+a time), `useVideoFrame(client, { ref, time, width, delay })` (debounced exact
+frame), `useVideoPoster(client, { ref, onSaved })` (`saveFrame(time, edit)`,
+`saveUpload(blob, edit)`, `saveAuto()`, `state`) and `useHoverSection(client,
+{ ref, duration, initial, onSaved })` (`start`, `length`, bounded setters,
+`save()`, `saveAuto()`).
+
 ## UI
 
 `@openrails/contentkit-upload/ui`: shadcn (base-vega, Base UI, zinc) components
@@ -156,6 +176,10 @@ function Cover() {
 | `SlotEditError` | `className`: the editor's error outside the dialog |
 | `ImageCropDialog` | `open`, `onOpenChange`, `source` (`{ url, width, height }` of the oriented original), `aspect`, `round`, `initialEdit`, `onEditChange`, `onConfirm(edit)`, `targetWidth`, `busy`, `progress`, `error`, `title` |
 | `SlotImage` | `manifest` or `item` + `slot`, `sizes`, `round`, `aspect`, `placeholder`, `alt` |
+| `VideoPosterPicker` | `open`, `onOpenChange`, `item`, `file`, `client`, `images` (else fetched), `onChange(images)`, `title`, `accept`: frame strip + slider + frame steps over `/frame`, "Use this frame", "Crop…" (in `video.w×h` pixels), "Upload image" → `ImageCropDialog`, "Automatic" |
+| `HoverPreviewPicker` | same props: a 1–6 s range over the frame strip, an approximate flip-book of the section, the rendered loop once saved, "Automatic" |
+| `VideoPoster` | `poster` (`VideoImages.poster` or a listing's outputs), `preview` (`hover_preview` or `{ mp4, webp }` URLs), `playing` (default hover or focus within), `sizes`, `alt`, `children`: 16:9 `srcset` poster that plays the preview |
+| `HoverPreview` | `preview`, `active`, `width`: muted looping MP4 (`playsinline`), WebP on error; nothing with `prefers-reduced-motion` |
 | `UploadUiProvider` | `client`, `appearance` (`theme`: `light`/`dark`/`auto`/`inherit`, `variables`), `messages` (bundle or list; locales `en de es ja ko zh`), `t` (host translate hook) |
 
 Errors are mapped from `UploadError.code` to `errors.*` messages.

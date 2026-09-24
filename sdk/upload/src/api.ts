@@ -14,6 +14,10 @@ import type {
   SlotRefBody,
   SlotFromFileBody,
   TicketBody,
+  VideoImages,
+  VideoImagesBody,
+  VideoPosterBody,
+  VideoPreviewBody,
 } from "./wire.gen.js";
 
 export interface ApiOptions {
@@ -64,16 +68,34 @@ export class UploadApi {
     return this.call<SlotManifest>("/commit-slot-from-file", b, signal);
   }
 
+  videoImages(b: VideoImagesBody, signal?: AbortSignal) {
+    return this.call<VideoImages>("/video-images", b, signal);
+  }
+  videoPoster(b: VideoPosterBody, signal?: AbortSignal) {
+    return this.call<VideoImages>("/video-poster", b, signal);
+  }
+  videoPreview(b: VideoPreviewBody, signal?: AbortSignal) {
+    return this.call<VideoImages>("/video-preview", b, signal);
+  }
+  /** A JPEG of one video frame (the poster picker's exact frame). */
+  frame(q: { kind: string; id: string; version?: string; file?: string; t: number; w?: number }, signal?: AbortSignal) {
+    const params = new URLSearchParams({ kind: q.kind, id: q.id, t: String(q.t) });
+    if (q.version) params.set("version", q.version);
+    if (q.file) params.set("file", q.file);
+    if (q.w) params.set("w", String(q.w));
+    return this.call<Blob>("/frame?" + params.toString(), undefined, signal, true);
+  }
+
   private async call<T>(path: string, body: unknown, signal?: AbortSignal, blob = false): Promise<T> {
     const f = this.o.fetch ?? fetch;
     const headers = new Headers(await this.o.headers?.());
-    headers.set("Content-Type", "application/json");
+    if (body !== undefined) headers.set("Content-Type", "application/json");
     let res: Response;
     try {
       res = await f(this.o.endpoint.replace(/\/$/, "") + path, {
-        method: "POST",
+        method: body === undefined ? "GET" : "POST",
         headers,
-        body: JSON.stringify(body),
+        body: body === undefined ? null : JSON.stringify(body),
         credentials: this.o.credentials ?? "same-origin",
         signal: signal ?? null,
       });
