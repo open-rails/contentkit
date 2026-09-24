@@ -1,7 +1,7 @@
 import { Alert02Icon, Image01Icon, RotateClockwiseIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import Cropper, { type Area, type Point } from "react-easy-crop";
 import type { Progress as UploadProgress } from "../client.js";
 import { editedSize, toRotated, type Size } from "../crop.js";
@@ -34,6 +34,7 @@ export interface ImageCropDialogProps {
   rotatable?: boolean;
   /** Starting edit (re-crop); default centred at aspect, unrotated. */
   initialEdit?: Edit | null;
+  /** Called with the edit on open and whenever its value changes (safe to pass a state setter). */
   onEditChange?: (edit: Edit | null) => void;
   /** The chosen edit; null is the full centred crop, unrotated. */
   onConfirm: (edit: Edit | null) => void;
@@ -72,7 +73,7 @@ export function ImageCropDialog(p: ImageCropDialogProps) {
 function CropBody(p: ImageCropDialogProps & { source: CropSource }) {
   const { t } = useMessages();
   const { source, aspect } = p;
-  const size: Size = { width: source.width, height: source.height };
+  const size: Size = useMemo(() => ({ width: source.width, height: source.height }), [source.width, source.height]);
   const c = useCrop({ source: size, aspect, initial: p.initialEdit });
   const [pos, setPos] = useState<Point>({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);

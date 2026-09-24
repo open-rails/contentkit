@@ -79,6 +79,12 @@ export function editOf(crop: Crop | null, source: Size, rotate: Rotation = 0): E
   return { ...(full ? {} : { crop }), ...(rotate ? { rotate } : {}) };
 }
 
+/** Whether two edits are the same value (null and an empty edit are). */
+export function sameEdit(a: Edit | null | undefined, b: Edit | null | undefined): boolean {
+  const x = a?.crop, y = b?.crop;
+  return (a?.rotate ?? 0) === (b?.rotate ?? 0) && (x === y || (!!x && !!y && x.x === y.x && x.y === y.y && x.w === y.w && x.h === y.h));
+}
+
 export function rotation(deg: number): Rotation {
   return ((((Math.round(deg / 90) * 90) % 360) + 360) % 360) as Rotation;
 }

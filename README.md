@@ -397,8 +397,10 @@ Media's River jobs (`jobs.RiverJobs()`) compose into the host client through
   With a `Limiter`, the owner's quota (the manifests' `OriginalBytes`) is
   released once.
 - Processing: `jobs.Enqueue` (the uploads' `ProcessQueue`) runs one pending
-  job per ref and slot through every `AddProcessor` processor; a commit
-  that lands during the run (its Enqueue absorbed) makes the job rerun them.
+  job per ref and slot through every `AddProcessor` processor. An Enqueue
+  (or `ScheduleSweep`) while an equal job runs queues one follow-up that
+  starts after it, since the running job may have read its inputs before the
+  change; an equal job still waiting absorbs it.
 - Media packages add workers with `jobs.Register(func(*river.Config) error)`
   before composition and enqueue with `jobs.Insert`/`InsertTx`.
 - Restore: [docs/restore.md](docs/restore.md#media).

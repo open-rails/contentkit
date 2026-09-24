@@ -2,12 +2,12 @@
 import "../test/dom.js";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
+import { Profiler, useState } from "react";
 import { expect, it, vi } from "vitest";
 import { FakeServer, bytes } from "../../test/fake.js";
 import { UploadClient } from "../client.js";
 import type { CropSource } from "../image.js";
-import type { SlotManifest } from "../wire.gen.js";
+import type { Edit, SlotManifest } from "../wire.gen.js";
 import { ja } from "../locales/ja.js";
 import { AvatarUpload, CoverUpload, ImageCropDialog, SlotEditError, SlotEditMenu, SlotEditor, SlotImage, UploadUiProvider, useSlotEditor } from "../ui.js";
 
@@ -223,4 +223,55 @@ it("SlotEditMenu defaults to the kit's scoped button and SlotEditError shows unr
   expect(trigger).toHaveClass("ckui");
   await user.upload(container.querySelector<HTMLInputElement>("input[type=file]")!, png(6));
   expect(await screen.findByRole("alert")).toHaveTextContent("This file can't be opened as an image.");
+});
+
+const settle = () => new Promise((r) => setTimeout(r, 300));
+
+it("ImageCropDialog reports an edit only when it changes, so onEditChange can set state", async () => {
+  let renders = 0;
+  const reported: (Edit | null)[] = [];
+  const onConfirm = vi.fn();
+  function Host() {
+    const [, setEdit] = useState<Edit | null>(null);
+    renders++;
+    return (
+      <ImageCropDialog
+        open
+        onOpenChange={() => {}}
+        source={{ url: "blob:x", width: 400, height: 300 }}
+        aspect={1}
+        onEditChange={(e) => {
+          reported.push(e);
+          if (renders < 50) setEdit(e); // bounded so a loop fails instead of hanging
+        }}
+        onConfirm={onConfirm}
+      />
+    );
+  }
+  const user = userEvent.setup();
+  render(<Host />);
+  const dialog = await screen.findByRole("dialog");
+  await settle();
+  expect(renders).toBeLessThan(10);
+  expect(reported).toEqual([{ crop: { x: 50, y: 0, w: 300, h: 300 } }]);
+  await user.click(within(dialog).getByRole("button", { name: "Save" }));
+  expect(onConfirm).toHaveBeenLastCalledWith({ crop: { x: 50, y: 0, w: 300, h: 300 } });
+});
+
+it("CoverUpload's crop dialog settles instead of re-rendering forever", async () => {
+  const { client } = setup();
+  const { manifest } = await client.uploadSlot(png(5), { ref: item, slot: "cover" });
+  let commits = 0;
+  const user = userEvent.setup();
+  render(
+    <Profiler id="cover" onRender={() => commits++}>
+      <CoverUpload client={client} item={item} manifest={manifest} decode={decodeAs(4000, 3000)} />
+    </Profiler>,
+  );
+  await user.click(screen.getAllByRole("button", { name: "Edit crop" })[0]!);
+  await screen.findByRole("dialog");
+  await settle();
+  const settled = commits;
+  await settle();
+  expect(commits).toBe(settled);
 });
