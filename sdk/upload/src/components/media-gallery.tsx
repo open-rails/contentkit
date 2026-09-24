@@ -17,7 +17,7 @@ import { formatDuration, galleryItems, stageAspect, type GalleryItem, type Galle
 import { useCarousel, useGalleryView, type GalleryViewOptions, type HlsPlayerOptions } from "../gallery-react.js";
 import { useMessages } from "../i18n/context.js";
 import { UploadUiRoot, useScopeProps } from "../scope.js";
-import { slotSources } from "../srcset.js";
+import { RenditionImg } from "./rendition-img.js";
 import type { FileInfo, ReadResult, VideoImages } from "../wire.gen.js";
 import { HoverPreview } from "./video-poster.js";
 import { SpriteFrame, VideoPlayer } from "./video-player.js";
@@ -76,7 +76,7 @@ export function MediaGallery(props: MediaGalleryProps) {
   return (
     <UploadUiRoot appearance={appearance} className={cn("@container grid gap-2", className)} data-ckui="media-gallery" data-view={shown} role="region" aria-label={label ?? t("gallery.label")}>
       {multi && (
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center justify-between gap-2" data-ckui="gallery-header">
           <span className="text-sm text-muted-foreground tabular-nums" data-ckui="gallery-count">
             {shown === "carousel" ? t("gallery.counter", { current: current + 1, total: items.length }) : null}
           </span>
@@ -126,6 +126,7 @@ function Carousel({ ctx, index: given, onIndex, lightbox }: { ctx: Ctx; index: n
           lightbox ? "h-full" : "rounded-lg bg-muted transition-[aspect-ratio] duration-300 ease-out motion-reduce:transition-none",
         )}
         style={stage}
+        data-ckui="stage"
         {...(multi ? c.swipe : {})}
       >
         <div
@@ -300,12 +301,12 @@ function Tile({ ctx, item, label, onOpen }: { ctx: Ctx; item: GalleryItem; label
   else {
     const f = item.file;
     const { poster, preview } = videoArt(ctx, f);
-    const src = slotSources(poster, 480);
+    const covers = (poster?.outputs ?? []).filter((o) => o.url);
     const base = f.hls && f.name && ctx.hlsBase ? ctx.hlsBase(f) : null;
     body = (
       <>
-        {src.src ? (
-          <img src={src.src} srcSet={src.srcSet} sizes="(min-width: 768px) 240px, 50vw" alt="" loading="lazy" decoding="async" className="absolute inset-0 size-full object-cover" />
+        {covers.length ? (
+          <RenditionImg outputs={covers} loading="lazy" className="absolute inset-0 size-full object-cover" />
         ) : base ? (
           <SpriteFrame vtt={`${base}sprite.vtt`} xhrSetup={ctx.xhrSetup} fit="cover" />
         ) : null}

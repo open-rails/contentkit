@@ -53,6 +53,21 @@ type Video struct {
 	// source outside fails permanently. Zero is DefaultMinAspect/DefaultMaxAspect.
 	MinAspect float64 `json:"min_aspect,omitempty"`
 	MaxAspect float64 `json:"max_aspect,omitempty"`
+	// PosterWidths are the cover (poster slot) output widths, the host's
+	// display sizes × densities; widths wider than the frame or upload are
+	// skipped. Empty is DefaultPosterWidths.
+	PosterWidths []int `json:"poster_widths,omitempty"`
+}
+
+// DefaultPosterWidths cover a full-width column at 2–3× density.
+var DefaultPosterWidths = []int{640, 960, 1280, 1920, 2560}
+
+// Poster is the kind's poster slot: native aspect at PosterWidths.
+func (v *Video) Poster() Slot {
+	if v == nil || len(v.PosterWidths) == 0 {
+		return Slot{Widths: DefaultPosterWidths}
+	}
+	return Slot{Widths: slices.Sorted(slices.Values(v.PosterWidths))}
 }
 
 // DefaultLadder is the default H.264 ladder by short side.
@@ -304,7 +319,13 @@ func NewRegistry(kinds ...Kind) (*Registry, error) {
 					return nil, fmt.Errorf("media: kind %q: slot %q is reserved on video kinds", k.Name, reserved)
 				}
 			}
-			slots[PosterSlot] = VideoPoster
+			poster := k.Video.Poster()
+			for i, w := range poster.Widths {
+				if w <= 0 || w > maxSlotWidth || (i > 0 && w == poster.Widths[i-1]) {
+					return nil, fmt.Errorf("media: kind %q: invalid poster width %d", k.Name, w)
+				}
+			}
+			slots[PosterSlot] = poster
 		}
 		k.Slots = slots
 		r.kinds[k.Name] = k

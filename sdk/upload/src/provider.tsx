@@ -4,6 +4,8 @@ import type { UploadClient } from "./client.js";
 import { MessagesContext } from "./i18n/context.js";
 import { createTranslator, resolveMessages, type UploadUiMessageBundle, type UploadUiTranslate } from "./i18n/messages.js";
 import { AppearanceContext } from "./scope.js";
+import { DensityContext } from "./components/rendition-img.js";
+import { DEFAULT_DENSITY, type DensityRange } from "./rendition.js";
 
 const ClientContext = createContext<UploadClient | null>(null);
 
@@ -15,16 +17,20 @@ export interface UploadUiProviderProps {
   messages?: UploadUiMessageBundle | readonly UploadUiMessageBundle[];
   /** Host translation hook, consulted before the bundles. */
   t?: UploadUiTranslate;
+  /** Device-pixel density range images and covers are picked for. Default [2, 3]. */
+  density?: DensityRange;
   children?: ReactNode;
 }
 
 /** Renders no DOM; components create their own `.ckui` styling roots. */
-export function UploadUiProvider({ client, appearance, messages, t, children }: UploadUiProviderProps) {
+export function UploadUiProvider({ client, appearance, messages, t, density = DEFAULT_DENSITY, children }: UploadUiProviderProps) {
   const translator = useMemo(() => createTranslator(resolveMessages(messages), t), [messages, t]);
   return (
     <ClientContext.Provider value={client ?? null}>
       <AppearanceContext.Provider value={appearance}>
-        <MessagesContext.Provider value={translator}>{children}</MessagesContext.Provider>
+        <MessagesContext.Provider value={translator}>
+          <DensityContext.Provider value={density}>{children}</DensityContext.Provider>
+        </MessagesContext.Provider>
       </AppearanceContext.Provider>
     </ClientContext.Provider>
   );

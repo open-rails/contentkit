@@ -31,7 +31,7 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 	videotest.RequireFFmpeg(t)
 	ctx := context.Background()
 	u := access.Actor{ID: "u"}
-	e := newEnv(t, media.Kind{Name: "video", Versioned: true, Video: &media.Video{}, Types: []string{"video/mp4", "image/jpeg"}})
+	e := newEnv(t, media.Kind{Name: "video", Versioned: true, Video: &media.Video{PosterWidths: []int{480, 960, 1920}}, Types: []string{"video/mp4", "image/jpeg"}})
 	ref := contentref.NewVersion(e.Tenant, "video", "7", "v1")
 	enc, err := video.New(video.Config{Store: e.Env.Store, TempDir: t.TempDir(), Threads: 2, Slots: e.queue})
 	if err != nil {
@@ -45,7 +45,7 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 	e.queue.take() // the image job has nothing to do for a video file
 	encode := func() {
 		t.Helper()
-		if err := enc.Encode(ctx, video.Job{Ref: ref, Versioned: true}, nil); err != nil {
+		if err := enc.Encode(ctx, video.Job{Ref: ref, Versioned: true, Video: media.Video{PosterWidths: []int{480, 960, 1920}}}, nil); err != nil {
 			t.Fatal(err)
 		}
 		e.drain(t)

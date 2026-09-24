@@ -252,8 +252,8 @@ func TestVideoKindSlots(t *testing.T) {
 	if s := media.HoverPreviewSizes(1920, 1080); len(s) != 2 {
 		t.Fatalf("1080p sizes %v", s)
 	}
-	for in, want := range map[media.Dims]media.Dims{{W: 1920, H: 1080}: {W: 1920, H: 1080}, {W: 426, H: 240}: {W: 480, H: 271}, {W: 270, H: 480}: {W: 480, H: 854}} {
-		if got := media.PosterFrameSize(in.W, in.H); got != want {
+	for in, want := range map[media.Dims]media.Dims{{W: 1920, H: 1080}: {W: 1920, H: 1080}, {W: 426, H: 240}: {W: 640, H: 361}, {W: 270, H: 480}: {W: 640, H: 1138}} {
+		if got := media.PosterFrameSize(media.VideoPoster, in.W, in.H); got != want {
 			t.Errorf("poster frame of %v: %v, want %v", in, got, want)
 		}
 	}
@@ -273,7 +273,7 @@ func TestNativeSlot(t *testing.T) {
 	if e, err := s.Resolve(nil, 1080, 1920); err != nil || e.Crop != nil {
 		t.Fatalf("uncropped %+v %v", e, err)
 	}
-	if e, err := s.Resolve(&media.Edit{Crop: &media.Crop{W: 600, H: 600}}, 1080, 1920); err != nil || e.Crop.H != 600 {
+	if e, err := s.Resolve(&media.Edit{Crop: &media.Crop{W: 700, H: 700}}, 1080, 1920); err != nil || e.Crop.H != 700 {
 		t.Fatalf("square crop %+v %v", e, err)
 	}
 	if _, err := s.Resolve(&media.Edit{Crop: &media.Crop{W: 300, H: 600}}, 1080, 1920); err == nil {
@@ -288,5 +288,22 @@ func TestNativeSlot(t *testing.T) {
 	}
 	if _, outs, err := media.SlotStamp("v1:480,960").Parse(); err != nil || outs[0] != (media.Dims{W: 480}) {
 		t.Fatalf("bare widths %v %v", outs, err)
+	}
+}
+
+func TestPosterWidthsPolicy(t *testing.T) {
+	r, err := media.NewRegistry(media.Kind{Name: "v", Video: &media.Video{PosterWidths: []int{1440, 720}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, _ := r.Kind("v")
+	if p := k.Slots[media.PosterSlot]; !p.Native() || len(p.Widths) != 2 || p.Widths[0] != 720 || p.Min() != 720 {
+		t.Fatalf("poster %+v", p)
+	}
+	if got := media.PosterFrameSize(k.Slots[media.PosterSlot], 640, 360); got != (media.Dims{W: 720, H: 405}) {
+		t.Fatalf("frame %v", got)
+	}
+	if _, err := media.NewRegistry(media.Kind{Name: "v", Video: &media.Video{PosterWidths: []int{720, 720}}}); err == nil {
+		t.Fatal("duplicate poster widths accepted")
 	}
 }

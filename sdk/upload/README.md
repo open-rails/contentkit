@@ -183,14 +183,39 @@ function Cover() {
 | `SlotEditError` | `className`: the editor's error outside the dialog |
 | `ImageCropDialog` | `open`, `onOpenChange`, `source` (`{ url, width, height }` of the oriented original), `aspect`, `round`, `initialEdit`, `onEditChange`, `onConfirm(edit)`, `targetWidth`, `busy`, `progress`, `error`, `title` |
 | `EncodeProgress` | `progress` (a read API file's `progress`; absent shows "Processing video"), `className`, `appearance`: bar, phase, `segment 5 / 27`, `~40 s left` or queue position; `data-ckui="encode-progress"`, `data-phase` |
-| `SlotImage` | `manifest` or `item` + `slot`, `sizes`, `round`, `aspect`, `placeholder`, `alt` |
+| `SlotImage` | `manifest` or `item` + `slot`, `density`, `round`, `aspect`, `placeholder`, `alt` |
 | `VideoPosterPicker` | `open`, `onOpenChange`, `item`, `file`, `client`, `images` (else fetched), `onChange(images)`, `title` (default "Set cover"), `accept`: frame strip + slider + frame steps over `/frame`, "Use this frame", "Crop…" (in `video.w×h` pixels), "Upload image" → `ImageCropDialog` at the video's aspect, "Automatic" |
 | `HoverPreviewPicker` | same props: a 1–6 s range over the frame strip, an approximate flip-book of the section, the rendered loop once saved, "Automatic" |
-| `VideoPoster` | `poster` (`VideoImages.poster` or a listing's outputs), `preview` (`hover_preview` or `{ mp4, webp }` URLs), `playing` (default hover or focus within), `aspect` (default the poster's own), `sizes`, `alt`, `children`: full-width, uncropped `srcset` cover at its native aspect that plays the preview |
+| `VideoPoster` | `poster` (`VideoImages.poster` or a listing's outputs), `preview` (`hover_preview` or `{ mp4, webp }` URLs), `playing` (default hover or focus within), `aspect` (default the poster's own), `density`, `alt`, `children`: full-width, uncropped `srcset` cover at its native aspect that plays the preview |
 | `HoverPreview` | `preview`, `active`, `width`: muted looping MP4 (`playsinline`), WebP on error; nothing with `prefers-reduced-motion` |
-| `UploadUiProvider` | `client`, `appearance` (`theme`: `light`/`dark`/`auto`/`inherit`, `variables`), `messages` (bundle or list; locales `en de es ja ko zh`), `t` (host translate hook) |
+| `UploadUiProvider` | `client`, `appearance` (`theme`: `light`/`dark`/`auto`/`inherit`, `variables`), `messages` (bundle or list; locales `en de es ja ko zh`), `t` (host translate hook), `density` (default `[2, 3]`) |
 
 Errors are mapped from `UploadError.code` to `errors.*` messages.
+
+### Renditions
+
+Slot images and covers come in several widths (the host's policy, e.g.
+`media.Video{PosterWidths}`). `SlotImage`, `VideoPoster`, `VideoPlayer` and
+gallery tiles show the narrowest one at least their rendered CSS width ×
+density, where density is `devicePixelRatio` clamped to `[2, 3]` (so 1×
+screens get 2×): a 400 px box picks ≥ 800 px, ≥ 1200 px on a 3× phone. They
+re-pick when the box grows (fullscreen, resize), never step down, and keep
+the shown image until the wider one has loaded. Set the range for a subtree
+with `UploadUiProvider density`, or per component with `density`.
+
+Hosts rendering media themselves use the same logic:
+
+```tsx
+import { RenditionImg, useRendition } from "@openrails/contentkit-upload/ui";
+import { pickRendition, densityFor } from "@openrails/contentkit-upload";
+
+<RenditionImg outputs={manifest.outputs} alt="" className="size-full object-contain" />;
+
+const { ref, rendition, onLoad } = useRendition(manifest.outputs, { density: [1.5, 2] });
+<img ref={ref} src={rendition?.url} onLoad={onLoad} alt="" />;
+
+pickRendition(outputs, 400, densityFor()); // no React
+```
 
 ### Media gallery and player
 

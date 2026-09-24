@@ -32,10 +32,10 @@ it("SlotImage renders srcset and sizes, and a placeholder when empty", () => {
       { name: "b", w: 3000, h: 1000, url: "https://cdn/3000.webp" },
     ],
   };
-  const { container, rerender } = render(<SlotImage manifest={manifest} sizes="720px" alt="cover" />);
+  const { container, rerender } = render(<SlotImage manifest={manifest} alt="cover" />);
   const img = screen.getByRole("img", { name: "cover" });
-  expect(img).toHaveAttribute("srcset", "https://cdn/1500.webp 1500w, https://cdn/3000.webp 3000w");
-  expect(img).toHaveAttribute("sizes", "720px");
+  // jsdom lays nothing out: an unmeasured box gets the narrowest rendition.
+  expect(img).toHaveAttribute("src", "https://cdn/1500.webp");
   expect(container.firstElementChild).toHaveClass("ckui");
   expect(container.firstElementChild).toHaveStyle({ aspectRatio: "3" });
   rerender(<SlotImage manifest={null} round />);
