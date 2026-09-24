@@ -5,11 +5,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	stdimage "image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -458,6 +461,34 @@ func TestUndecodableReportsFailed(t *testing.T) {
 	}
 	if len(m.Files[0].Variants) != 3 || len(m.Files[1].Variants) != 0 || m.Downloads["zip"].Blob != "" {
 		t.Fatalf("manifest: %+v", m)
+	}
+}
+
+// A kind's Types bind the decoder: bytes of another format under a declared
+// image/png (a JPEG, an SVG) are refused, not handed to whichever libvips
+// loader sniffs them (PDF, SVG, ImageMagick...).
+func TestDeclaredTypeBindsTheDecoder(t *testing.T) {
+	e := newEnv(t, galleryKind())
+	ref := contentref.NewVersion(e.Tenant, "gallery", "7", "en")
+	var jpg bytes.Buffer
+	if err := jpeg.Encode(&jpg, stdimage.NewRGBA(stdimage.Rect(0, 0, 64, 64)), nil); err != nil {
+		t.Fatal(err)
+	}
+	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="red"/></svg>`)
+	e.commit(t, ref, ins("001.png", e.upload(t, ref, "", pngImage(t, 64, 64, 1))),
+		ins("002.png", e.upload(t, ref, "", jpg.Bytes())), ins("003.png", e.upload(t, ref, "", svg)))
+	e.upload(t, ref.Content(), "cover", svg)
+	e.drain(t)
+	m, _ := e.manifest(t, ref)
+	slices.Sort(e.failed)
+	if failed := slices.Compact(e.failed); !slices.Equal(failed, []string{"002.png", "003.png", "cover"}) {
+		t.Fatalf("failed: %v", failed)
+	}
+	if len(m.Files[0].Variants) != 3 || len(m.Files[1].Variants) != 0 || len(m.Files[2].Variants) != 0 {
+		t.Fatalf("manifest: %+v", m)
+	}
+	if _, err := e.Env.Store.Head(context.Background(), e.Tenant+"/gallery/7/public/cover.webp"); !errors.Is(err, media.ErrNotFound) {
+		t.Fatalf("cover derived from an SVG declared image/png: %v", err)
 	}
 }
 

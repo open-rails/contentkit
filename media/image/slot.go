@@ -72,7 +72,7 @@ func (p *Processor) slot(ctx context.Context, item media.Item, slot string) erro
 		if got.ETag != orig.ETag || got.Metadata[media.SlotEditMeta] != orig.Metadata[media.SlotEditMeta] {
 			continue // replaced while we looked
 		}
-		if _, err := p.probe(src, edit); err != nil {
+		if _, err := p.probe(src, orig.ContentType, edit); err != nil {
 			p.failed(ctx, item.Ref(), slot, err)
 			return nil
 		}
