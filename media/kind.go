@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/open-rails/contentkit/media/layout"
 )
@@ -21,12 +22,24 @@ type Kind struct {
 	Versioned bool // manifests live at manifests/{version_id}.json
 	Types     []string
 	MaxBytes  int64
-	Specs     map[string]Spec // variant name → spec
-	Slots     map[string]Slot // public slot name → outputs
-	Video     bool
+	// MaxFiles caps a manifest's files; 0 is unlimited.
+	MaxFiles int
+	// TypeLimits are caps per top-level type ("image", "video"): a set
+	// MaxBytes replaces the kind's for that type, and MaxFiles caps that
+	// type's files. A kind may mix images (Specs) and videos (Video).
+	TypeLimits map[string]Limit
+	Specs      map[string]Spec // variant name → spec
+	Slots      map[string]Slot // public slot name → outputs
+	Video      bool
 	// Zip names the variant packed, in file order, into downloads["zip"];
 	// "" offers no zip.
 	Zip string
+}
+
+// Limit is a per-type cap; zero values are unlimited.
+type Limit struct {
+	MaxBytes int64
+	MaxFiles int
 }
 
 // Fit is how an image spec fits its box.
@@ -44,12 +57,19 @@ type Spec struct {
 	Fit     Fit
 	Quality int
 	Blur    float64
+	// Unedited ignores the file's Edit: an editor's view of the whole source.
+	Unedited bool
 }
 
-// Hash is the spec's stable identity; a variant whose recorded spec differs is stale.
+// Hash is the spec's stable identity; a variant whose recorded spec differs is
+// stale (see For, which adds the file's edit).
 func (s Spec) Hash() string {
-	sum := sha256.Sum256([]byte(strconv.Itoa(s.Width) + "x" + strconv.Itoa(s.Height) + "|" + string(s.Fit) + "|q" +
-		strconv.Itoa(s.Quality) + "|b" + strconv.FormatFloat(s.Blur, 'g', -1, 64)))
+	id := strconv.Itoa(s.Width) + "x" + strconv.Itoa(s.Height) + "|" + string(s.Fit) + "|q" +
+		strconv.Itoa(s.Quality) + "|b" + strconv.FormatFloat(s.Blur, 'g', -1, 64)
+	if s.Unedited {
+		id += "|u"
+	}
+	sum := sha256.Sum256([]byte(id))
 	return hex.EncodeToString(sum[:4])
 }
 
@@ -57,6 +77,9 @@ func (s Spec) Hash() string {
 // each output is written to public/{output}.webp.
 type Slot struct {
 	Outputs map[string]Spec
+	// Aspect (width/height), when set, constrains crops set with
+	// SetSlotFromFile: the crop's height is derived from its width.
+	Aspect float64
 }
 
 var (
@@ -70,10 +93,45 @@ func (k Kind) Allows(contentType string, size int64) error {
 	if len(k.Types) > 0 && !slices.Contains(k.Types, contentType) {
 		return fmt.Errorf("%w: %q for kind %q", ErrType, contentType, k.Name)
 	}
-	if size < 0 || (k.MaxBytes > 0 && size > k.MaxBytes) {
-		return fmt.Errorf("%w: %d bytes for kind %q (max %d)", ErrTooLarge, size, k.Name, k.MaxBytes)
+	limit := k.MaxBytes
+	if l := k.TypeLimits[topType(contentType)]; l.MaxBytes > 0 {
+		limit = l.MaxBytes
+	}
+	if size < 0 || (limit > 0 && size > limit) {
+		return fmt.Errorf("%w: %d bytes of %s for kind %q (max %d)", ErrTooLarge, size, contentType, k.Name, limit)
 	}
 	return nil
+}
+
+// checkFiles refuses an edit that leaves more files than the kind's caps
+// allow and adds to them; a manifest already over a lowered cap can still
+// shrink or be reordered.
+func (k Kind) checkFiles(before, after *Manifest) error {
+	if k.MaxFiles > 0 && len(after.Files) > k.MaxFiles && len(after.Files) > len(before.Files) {
+		return uploadErr(CodeTooManyFiles, "kind %q allows at most %d files", k.Name, k.MaxFiles)
+	}
+	if len(k.TypeLimits) == 0 {
+		return nil
+	}
+	count := func(m *Manifest) map[string]int {
+		n := map[string]int{}
+		for _, f := range m.Files {
+			n[topType(f.Type)]++
+		}
+		return n
+	}
+	was, now := count(before), count(after)
+	for t, l := range k.TypeLimits {
+		if l.MaxFiles > 0 && now[t] > l.MaxFiles && now[t] > was[t] {
+			return uploadErr(CodeTooManyFiles, "kind %q allows at most %d %s files", k.Name, l.MaxFiles, t)
+		}
+	}
+	return nil
+}
+
+func topType(contentType string) string {
+	t, _, _ := strings.Cut(contentType, "/")
+	return t
 }
 
 // Registry is the host's set of kinds.
@@ -99,8 +157,13 @@ func NewRegistry(kinds ...Kind) (*Registry, error) {
 		if _, ok := k.Specs[k.Zip]; k.Zip != "" && !ok {
 			return nil, fmt.Errorf("media: kind %q: zip variant %q has no spec", k.Name, k.Zip)
 		}
+		for t, l := range k.TypeLimits {
+			if t == "" || strings.Contains(t, "/") || l.MaxBytes < 0 || l.MaxFiles < 0 {
+				return nil, fmt.Errorf("media: kind %q: invalid type limit %q", k.Name, t)
+			}
+		}
 		for name, slot := range k.Slots {
-			if !layout.ValidSegment(name) || layout.ValidBlobName(name) || len(slot.Outputs) == 0 {
+			if !layout.ValidSegment(name) || layout.ValidBlobName(name) || len(slot.Outputs) == 0 || slot.Aspect < 0 {
 				return nil, fmt.Errorf("media: kind %q: invalid slot %q", k.Name, name)
 			}
 			for out := range slot.Outputs {

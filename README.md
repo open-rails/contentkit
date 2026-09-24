@@ -201,15 +201,35 @@ length and SHA-256; larger files are multipart to `originals/u-{uuid}` with
 `ListParts` and completed by the server (a signed ticket carries the S3
 UploadId; nothing is stored). Slot originals PUT to `originals/{slot}`.
 Commit is one conditional manifest edit (`insert`, `replace`, `move`,
-`rename`, `remove`) that HEAD-checks each new original, re-hashes it when the
-store does not enforce checksums, and enqueues a `ProcessJob`.
+`rename`, `remove`, `edit`) that HEAD-checks each new original, re-hashes it when the
+store does not enforce checksums, and enqueues a `ProcessJob`. `Kind.MaxFiles`
+and per-type `Kind.TypeLimits` (`"image"`, `"video"`: `MaxBytes` replacing the
+kind's, `MaxFiles`) cap a manifest: a commit that ends over a cap and adds to
+it fails with 409 `too_many_files`. A kind may mix images (`Specs`) and videos
+(`Video`); each processor handles only its own files.
+
+**Edits** are non-destructive: `File.Edit{Crop{x,y,w,h}, Rotate}` crops in the
+source's pixels (EXIF orientation applied), then rotates clockwise by 0, 90,
+180 or 270. The `edit` op sets or (without `edit`) clears it; `insert` and
+`replace` may carry one. It is checked against `File.Dims`, the source's size
+recorded by processing (before that, by the processor, which reports an
+out-of-bounds edit to `Hooks.Failed`). A variant's `spec` is
+`Spec.For(edit)`, so changing or clearing an edit re-derives that file's
+variants (and the zip) from the untouched original; `Spec.Unedited` variants
+ignore edits (an editor's view of the whole source). No master is written.
+`meta.w/h` is the edited size; the read API also returns `edit` and `dims`.
+`Uploads.SetSlotFromFile(ctx, actor, ref, slot, file, edit)` (HTTP
+`/commit-slot-from-file`) copies a manifest image's source to
+`originals/{slot}` with the edit (default: the file's own) in its metadata and
+re-encodes the slot through it; with `Slot.Aspect` (width/height) the crop's
+height is derived from its width.
 
 **Image processing** (`media/image`, CGO over libvips via govips; install
 `libvips-dev` to build it). `image.New(Config{Store, Kinds, Manifests, Specs,
 Hooks})` gives `Process(ctx, media.ProcessJob)`; register it with
 `jobs.AddProcessor(proc.Process)` and pass `jobs` as `UploadOptions.Queue`. It derives WebP variants per the kind's `Specs` (or a per-file
-`SpecChooser`) from each file's `master`, else `original`, only where a variant
-is missing or its `spec` hash differs, stores them as `blobs/sha256-…`, and
+`SpecChooser`) from each file's `master`, else `original`, through its edit,
+only where a variant is missing or its `spec` differs, stores them as `blobs/sha256-…`, and
 records them in one manifest edit per pass that drops results for sources
 replaced meanwhile; it repeats until a commit that landed during the run is
 covered too. A kind with `Zip` set gets `downloads.zip`: a stored zip of that

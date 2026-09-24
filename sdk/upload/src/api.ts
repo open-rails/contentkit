@@ -8,6 +8,7 @@ import type {
   PresignBody,
   PresignReply,
   SlotBody,
+  SlotFromFileBody,
   TicketBody,
 } from "./wire.gen.js";
 
@@ -44,6 +45,9 @@ export class UploadApi {
   }
   commitSlot(b: SlotBody, signal?: AbortSignal) {
     return this.call<void>("/commit-slot", b, signal);
+  }
+  commitSlotFromFile(b: SlotFromFileBody, signal?: AbortSignal) {
+    return this.call<void>("/commit-slot-from-file", b, signal);
   }
 
   private async call<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {

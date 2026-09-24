@@ -16,13 +16,17 @@ type Manifest struct {
 }
 
 // File is one manifest entry. Original and Master live in originals/;
-// variants, HLS and downloads in blobs/.
+// variants, HLS and downloads in blobs/. Image variants derive from Source()
+// through Edit; Dims is Source()'s size, recorded by processing, and edits
+// are validated against it. meta w/h is the edited size.
 type File struct {
 	Name     string             `json:"name"`
 	Original string             `json:"original"`
 	Master   string             `json:"master,omitempty"`
 	Type     string             `json:"type,omitempty"`
 	Size     int64              `json:"size,omitempty"`
+	Edit     *Edit              `json:"edit,omitempty"`
+	Dims     *Dims              `json:"dims,omitempty"`
 	Meta     map[string]any     `json:"meta,omitempty"`
 	Variants map[string]Variant `json:"variants,omitempty"`
 	HLS      *HLS               `json:"hls,omitempty"`
@@ -196,6 +200,13 @@ func (m *Manifest) Validate() error {
 			return fmt.Errorf("media: manifest file %d: empty or duplicate name %q", i, f.Name)
 		}
 		seen[f.Name] = true
+		var w, h int
+		if f.Dims != nil {
+			w, h = f.Dims.W, f.Dims.H
+		}
+		if err := f.Edit.Check(w, h); err != nil {
+			return fmt.Errorf("media: manifest file %q: edit: %w", f.Name, err)
+		}
 	}
 	var err error
 	m.walk(func(area, name string) {

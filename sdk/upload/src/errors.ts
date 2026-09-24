@@ -29,6 +29,11 @@ export class UploadError extends Error {
     return this.code === "rate_limited" || this.code === "quota_exceeded";
   }
 
+  /** The commit would exceed the kind's file caps (too_many_files, 409): remove files first. */
+  get isCeiling(): boolean {
+    return this.code === "too_many_files";
+  }
+
   /** Refusals that apply to every upload of this caller, not just this file. */
   get blocksQueue(): boolean {
     return this.isLimit || this.code === "unauthorized" || this.code === "forbidden";

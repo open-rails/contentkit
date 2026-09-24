@@ -58,25 +58,14 @@ func probe(src []byte, maxPixels int) (w, h int, err error) {
 	return w, h, nil
 }
 
-// encode derives one WebP from src per spec. Inside never enlarges; cover
-// fills the box and crops the centre; a zero box keeps full resolution.
-func encode(src []byte, s media.Spec) ([]byte, error) {
-	var (
-		img *vips.ImageRef
-		err error
-	)
-	if s.Width == 0 && s.Height == 0 {
-		if img, err = vips.NewImageFromBuffer(src); err == nil {
-			err = img.AutoRotate()
-		}
-	} else {
-		w, h := orUnbounded(s.Width), orUnbounded(s.Height)
-		crop, size := vips.InterestingNone, vips.SizeDown
-		if s.Fit == media.FitCover && s.Width > 0 && s.Height > 0 {
-			crop, size = vips.InterestingCentre, vips.SizeBoth
-		}
-		img, err = vips.NewThumbnailWithSizeFromBuffer(src, w, h, crop, size)
+// encode derives one WebP from src through edit (unless the spec is
+// Unedited) per spec. Inside never enlarges; cover fills the box and crops the
+// centre; a zero box keeps full resolution.
+func encode(src []byte, s media.Spec, edit *media.Edit) ([]byte, error) {
+	if s.Unedited {
+		edit = nil
 	}
+	img, err := load(src, s, edit)
 	if img != nil {
 		defer img.Close()
 	}
@@ -97,6 +86,51 @@ func encode(src []byte, s media.Spec) ([]byte, error) {
 		return nil, permanentError{err}
 	}
 	return out, nil
+}
+
+// load decodes src, applies edit and sizes it to s. Without an edit, a sized
+// spec shrinks on load.
+func load(src []byte, s media.Spec, edit *media.Edit) (*vips.ImageRef, error) {
+	full := s.Width == 0 && s.Height == 0
+	w, h := orUnbounded(s.Width), orUnbounded(s.Height)
+	crop, size := vips.InterestingNone, vips.SizeDown
+	if s.Fit == media.FitCover && s.Width > 0 && s.Height > 0 {
+		crop, size = vips.InterestingCentre, vips.SizeBoth
+	}
+	if edit == nil && !full {
+		return vips.NewThumbnailWithSizeFromBuffer(src, w, h, crop, size)
+	}
+	img, err := vips.NewImageFromBuffer(src)
+	if err != nil {
+		return nil, err
+	}
+	if err = img.AutoRotate(); err == nil && edit != nil {
+		err = apply(img, edit)
+	}
+	if err == nil && !full {
+		err = img.ThumbnailWithSize(w, h, crop, size)
+	}
+	return img, err
+}
+
+func apply(img *vips.ImageRef, e *media.Edit) error {
+	if err := e.Check(img.Width(), img.Height()); err != nil {
+		return err
+	}
+	if c := e.Crop; c != nil {
+		if err := img.ExtractArea(c.X, c.Y, c.W, c.H); err != nil {
+			return err
+		}
+	}
+	switch e.Rotate {
+	case 90:
+		return img.Rotate(vips.Angle90)
+	case 180:
+		return img.Rotate(vips.Angle180)
+	case 270:
+		return img.Rotate(vips.Angle270)
+	}
+	return nil
 }
 
 func orUnbounded(n int) int {

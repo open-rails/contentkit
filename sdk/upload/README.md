@@ -27,12 +27,16 @@ await client.commit(ref, [{ op: "insert", name: "001.png", original: up.name }],
 });
 
 await client.uploadSlot(cover, { ref, slot: "cover" }); // upload + commit-slot
+
+await client.edit(ref, "001.png", { crop: { x: 0, y: 0, w: 800, h: 600 }, rotate: 90 }); // null clears
+await client.setSlotFromFile(ref, "cover", "001.png", { crop: { x: 40, y: 0, w: 460, h: 0 } }); // slot aspect sets h
 ```
 
 - Errors are `UploadError` with `code` (the server's `ErrorReply.code`, or
   `network`, `storage`, `aborted`, `resume_mismatch`), `status` and
   `retryAfter` (seconds, on `rate_limited`). `isLimit` is true for
-  `rate_limited` and `quota_exceeded`.
+  `rate_limited` and `quota_exceeded`; `isCeiling` for `too_many_files` (409,
+  the kind's file caps).
 - A refused presign throws before any bytes move; multipart files are
   presigned before they are hashed.
 - Aborting `signal` pauses a multipart upload. `onState` reports resumable
@@ -56,6 +60,19 @@ await cover.upload(file, { ref, slot: "cover" });
 ```
 
 `UploadQueue` is the framework-free queue behind the hook.
+
+`useCrop` is headless crop state for any cropper UI; crops are in original
+pixels (`dims` from the read API), before a clockwise rotation:
+
+```tsx
+const c = useCrop({ source: { width: dims.w, height: dims.h }, aspect: 460 / 650, initial: file.edit });
+<AnyCropper onChange={(rect) => c.setFromDisplay(rect, { width: img.width, height: img.height })} />;
+c.rotateBy(90);
+await client.setSlotFromFile(ref, "cover", name, c.edit ?? {});
+```
+
+`constrainCrop`, `toOriginal`, `centeredCrop` and `editOf` are the same math
+without React.
 
 ## Development
 

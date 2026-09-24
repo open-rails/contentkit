@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { expect, it } from "vitest";
 import { FakeServer, bytes } from "../test/fake.js";
 import { UploadClient } from "./client.js";
-import { useUpload, useUploadQueue } from "./react.js";
+import { useCrop, useUpload, useUploadQueue } from "./react.js";
 
 const ref = { kind: "gallery", id: "1", version: "en" };
 
@@ -37,4 +37,23 @@ it("useUpload reports progress and the result", async () => {
   expect(result.current.status).toBe("done");
   expect(result.current.result?.name).toBe("cover");
   expect(result.current.progress?.loaded).toBe(100);
+});
+
+it("useCrop keeps a crop in original pixels at the aspect and yields the edit", () => {
+  const source = { width: 400, height: 200 };
+  const { result } = renderHook(() => useCrop({ source, aspect: 0.5 }));
+  expect(result.current.crop).toEqual({ x: 150, y: 0, w: 100, h: 200 });
+  act(() => result.current.setFromDisplay({ x: 100, y: 0, w: 60, h: 999 }, { width: 200, height: 100 }));
+  expect(result.current.edit).toEqual({ crop: { x: 200, y: 0, w: 100, h: 200 } });
+  act(() => result.current.rotateBy(90));
+  expect(result.current.rotate).toBe(90);
+  expect(result.current.edit).toEqual({ crop: { x: 200, y: 0, w: 100, h: 50 }, rotate: 90 });
+  act(() => result.current.rotateBy(-90));
+  act(() => result.current.setCrop({ x: 0, y: 0, w: 1000, h: 0 }));
+  expect(result.current.crop).toEqual({ x: 0, y: 0, w: 100, h: 200 });
+
+  const free = renderHook(() => useCrop({ source, initial: { crop: { x: 10, y: 10, w: 50, h: 40 }, rotate: 180 } }));
+  expect(free.result.current.edit).toEqual({ crop: { x: 10, y: 10, w: 50, h: 40 }, rotate: 180 });
+  act(() => free.result.current.reset());
+  expect(free.result.current.edit).toBeNull();
 });

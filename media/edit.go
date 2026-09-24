@@ -1,0 +1,134 @@
+package media
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"math"
+	"strconv"
+)
+
+// Edit is a non-destructive image edit: Crop, in the source's pixels (EXIF
+// orientation applied), then a clockwise Rotate. Variants derive from the
+// source through it; the source is never modified.
+type Edit struct {
+	Crop   *Crop `json:"crop,omitempty"`
+	Rotate int   `json:"rotate,omitempty"` // clockwise degrees: 0, 90, 180 or 270
+}
+
+// Crop is a rectangle in source pixels.
+type Crop struct {
+	X int `json:"x"`
+	Y int `json:"y"`
+	W int `json:"w"`
+	H int `json:"h"`
+}
+
+// Dims is a source's size with EXIF orientation applied.
+type Dims struct {
+	W int `json:"w"`
+	H int `json:"h"`
+}
+
+// SlotEditMeta is the slot original's user metadata key holding its Edit (JSON).
+const SlotEditMeta = "edit"
+
+// Normalize returns nil for an identity edit, else a copy.
+func (e *Edit) Normalize() *Edit {
+	if e == nil || (e.Crop == nil && e.Rotate == 0) {
+		return nil
+	}
+	out := *e
+	if e.Crop != nil {
+		c := *e.Crop
+		out.Crop = &c
+	}
+	return &out
+}
+
+// Check validates the edit's shape and, with a known size (w, h > 0), that
+// the crop lies inside it.
+func (e *Edit) Check(w, h int) error {
+	if e == nil {
+		return nil
+	}
+	switch e.Rotate {
+	case 0, 90, 180, 270:
+	default:
+		return fmt.Errorf("rotate must be 0, 90, 180 or 270, not %d", e.Rotate)
+	}
+	if c := e.Crop; c != nil {
+		if c.X < 0 || c.Y < 0 || c.W <= 0 || c.H <= 0 {
+			return fmt.Errorf("crop %dx%d at %d,%d is empty or negative", c.W, c.H, c.X, c.Y)
+		}
+		if w > 0 && h > 0 && (c.X+c.W > w || c.Y+c.H > h) {
+			return fmt.Errorf("crop %dx%d at %d,%d is outside the %dx%d source", c.W, c.H, c.X, c.Y, w, h)
+		}
+	}
+	return nil
+}
+
+// Size is the edited size of a w×h source.
+func (e *Edit) Size(w, h int) (int, int) {
+	if e == nil {
+		return w, h
+	}
+	if e.Crop != nil {
+		w, h = e.Crop.W, e.Crop.H
+	}
+	if e.Rotate == 90 || e.Rotate == 270 {
+		return h, w
+	}
+	return w, h
+}
+
+// Hash is the edit's stable identity; "" for no edit.
+func (e *Edit) Hash() string {
+	if e = e.Normalize(); e == nil {
+		return ""
+	}
+	s := "r" + strconv.Itoa(e.Rotate)
+	if c := e.Crop; c != nil {
+		s += fmt.Sprintf("|c%d,%d,%d,%d", c.X, c.Y, c.W, c.H)
+	}
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:4])
+}
+
+// For is the identity of s derived through e, recorded as Variant.Spec: a
+// variant is stale when its spec or its file's edit changes. Unedited specs
+// ignore the edit.
+func (s Spec) For(e *Edit) string {
+	if h := e.Hash(); h != "" && !s.Unedited {
+		return s.Hash() + "." + h
+	}
+	return s.Hash()
+}
+
+// fit derives the crop height from its width so the edited image has the
+// slot's aspect (width/height).
+func (s Slot) fit(e *Edit) *Edit {
+	if e = e.Normalize(); e == nil || e.Crop == nil || s.Aspect <= 0 {
+		return e
+	}
+	if e.Rotate == 90 || e.Rotate == 270 {
+		e.Crop.H = int(math.Round(float64(e.Crop.W) * s.Aspect))
+	} else {
+		e.Crop.H = int(math.Round(float64(e.Crop.W) / s.Aspect))
+	}
+	return e
+}
+
+// SlotEdit reads a slot original's edit from its metadata.
+func SlotEdit(o Object) (*Edit, error) {
+	v := o.Metadata[SlotEditMeta]
+	if v == "" {
+		return nil, nil
+	}
+	var e Edit
+	if err := json.Unmarshal([]byte(v), &e); err != nil {
+		return nil, fmt.Errorf("media: slot edit %q: %w", v, err)
+	}
+	return e.Normalize(), e.Check(0, 0)
+}

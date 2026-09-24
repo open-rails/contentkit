@@ -4,9 +4,9 @@ export const MAX_SINGLE_PUT = 67108864;
 export const MIN_PART_SIZE = 8388608;
 export const MAX_PART_SIZE = 16777216;
 
-export type ErrorCode = "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "incomplete" | "not_uploaded" | "too_large" | "quota_exceeded" | "type_not_allowed" | "checksum_mismatch" | "rate_limited" | "internal_error";
+export type ErrorCode = "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "incomplete" | "not_uploaded" | "too_many_files" | "too_large" | "quota_exceeded" | "type_not_allowed" | "checksum_mismatch" | "rate_limited" | "internal_error";
 
-export type OpName = "insert" | "replace" | "move" | "rename" | "remove";
+export type OpName = "insert" | "replace" | "move" | "rename" | "remove" | "edit";
 
 export interface RefBody {
   kind: string;
@@ -75,6 +75,18 @@ export interface CompleteReply {
   size: number;
 }
 
+export interface Crop {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface Edit {
+  crop?: Crop;
+  rotate?: number;
+}
+
 export interface Op {
   op: OpName;
   name: string;
@@ -82,6 +94,7 @@ export interface Op {
   index?: number;
   to?: string;
   meta?: Record<string, unknown>;
+  edit?: Edit;
 }
 
 export interface CommitBody {
@@ -94,6 +107,7 @@ export interface CommitFile {
   original: string;
   type?: string;
   size?: number;
+  edit?: Edit;
   meta?: Record<string, unknown>;
 }
 
@@ -105,6 +119,13 @@ export interface SlotBody {
   ref: RefBody;
   slot: string;
   sha256: string;
+}
+
+export interface SlotFromFileBody {
+  ref: RefBody;
+  slot: string;
+  file: string;
+  edit?: Edit;
 }
 
 export interface ErrorReply {

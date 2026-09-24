@@ -276,6 +276,23 @@ that finish remotely after the caller sees a timeout. A failed sink stays queued
 new revision while its keyword row commits. The pool needs two connections;
 callbacks must be bounded, read-only and respect cancellation.
 
+## Media edits and slots from files
+
+Cropping and rotating are ContentKit's: the host never decodes images.
+
+- A file edit is the commit op `{"op":"edit","name":"001.png","edit":{"crop":{"x":0,"y":0,"w":800,"h":600},"rotate":90}}`
+  (omit `edit` to clear). Crop is in the original's pixels, before the
+  clockwise rotate. Variants re-derive; the original is never changed.
+- A cover from a page is `Uploads.SetSlotFromFile(ctx, actor, ref, "cover", "001.png", &media.Edit{Crop: &media.Crop{X: x, Y: y, W: w}})`
+  or `POST /commit-slot-from-file {"ref","slot","file","edit"}` (204). Give the
+  slot `Aspect: 460.0 / 650` and send only the width; the height follows.
+  This replaces Doujins' host-side `SetCoverFromPage` crop.
+- Editors read `dims` (original size) and `edit` from the read API and show a
+  `Spec.Unedited` variant; the SDK's `useCrop` keeps the rect in original
+  pixels for any cropper UI.
+- Cap files per item with `Kind.MaxFiles` and `Kind.TypeLimits`
+  (`{"video": {MaxFiles: 1}}`); commits over a cap get 409 `too_many_files`.
+
 ## Example: hentai0 (video versions)
 
 ```go

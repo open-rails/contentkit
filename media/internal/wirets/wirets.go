@@ -16,17 +16,17 @@ import (
 var types = []any{
 	media.RefBody{}, media.PresignBody{}, media.RequestReply{}, media.MultipartReply{}, media.PresignReply{},
 	media.PartBody{}, media.PartsBody{}, media.TicketBody{}, media.PartReply{}, media.PartsReply{},
-	media.CompleteReply{}, media.Op{}, media.CommitBody{}, media.CommitFile{}, media.CommitReply{},
-	media.SlotBody{}, media.ErrorReply{},
+	media.CompleteReply{}, media.Crop{}, media.Edit{}, media.Op{}, media.CommitBody{}, media.CommitFile{},
+	media.CommitReply{}, media.SlotBody{}, media.SlotFromFileBody{}, media.ErrorReply{},
 }
 
 var errorCodes = []string{
 	media.CodeInvalid, "unauthorized", media.CodeForbidden, media.CodeNotFound, media.CodeConflict,
-	media.CodeIncomplete, media.CodeNotUploaded, media.CodeTooLarge, media.CodeQuota, media.CodeType,
+	media.CodeIncomplete, media.CodeNotUploaded, media.CodeTooManyFiles, media.CodeTooLarge, media.CodeQuota, media.CodeType,
 	media.CodeChecksum, media.CodeRate, "internal_error",
 }
 
-var ops = []string{media.OpInsert, media.OpReplace, media.OpMove, media.OpRename, media.OpRemove}
+var ops = []string{media.OpInsert, media.OpReplace, media.OpMove, media.OpRename, media.OpRemove, media.OpEdit}
 
 // Render returns the TypeScript source.
 func Render() string {

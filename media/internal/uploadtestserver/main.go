@@ -4,7 +4,7 @@
 // controls), prints "READY <url>" and runs until stdin closes.
 //
 //	POST /upload/...          the upload API; X-Test-Actor names the caller
-//	GET  /object?kind&id&version&name   {"size","sha256"} of a stored original
+//	GET  /object?kind&id&version&name|slot   {"size","sha256","edit"} of a stored original
 package main
 
 import (
@@ -70,6 +70,8 @@ func main() {
 		media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
 			Slots: map[string]media.Slot{"cover": {Outputs: map[string]media.Spec{"cover": {Width: 460}}}}},
 		media.Kind{Name: "video", Types: []string{"video/mp4"}, MaxBytes: 1 << 30},
+		media.Kind{Name: "post", Types: []string{"image/png"}, MaxBytes: 1 << 20, MaxFiles: 2,
+			Slots: map[string]media.Slot{"cover": {Outputs: map[string]media.Spec{"cover": {Width: 100}}, Aspect: 0.5}}},
 	)
 	must(err)
 	manifests, err := media.NewManifests(store, kinds, media.ManifestOptions{})
@@ -95,11 +97,14 @@ func main() {
 			return
 		}
 		key, err := item.Original(q.Get("name"))
+		if q.Has("slot") {
+			key, err = item.SlotOriginal(q.Get("slot"))
+		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		rc, _, err := store.Get(r.Context(), key, media.GetOptions{})
+		rc, obj, err := store.Get(r.Context(), key, media.GetOptions{})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
@@ -111,7 +116,11 @@ func main() {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"size": n, "sha256": hex.EncodeToString(h.Sum(nil))})
+		out := map[string]any{"size": n, "sha256": hex.EncodeToString(h.Sum(nil))}
+		if e := obj.Metadata[media.SlotEditMeta]; e != "" {
+			out["edit"] = e
+		}
+		_ = json.NewEncoder(w).Encode(out)
 	})
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

@@ -432,7 +432,7 @@ func (w *processWorker) Work(ctx context.Context, job *river.Job[processArgs]) e
 		return river.JobCancel(err)
 	}
 	// The input is the manifest, or the slot original; a commit that lands
-	// after the processors read it changes its ETag.
+	// after the processors read it changes its version (a slot's ETag and edit).
 	key, err := item.ManifestKey()
 	if pj.Slot != "" {
 		key, err = item.SlotOriginal(pj.Slot)
@@ -468,5 +468,5 @@ func (j *Jobs) etag(ctx context.Context, key string) (string, error) {
 	if errors.Is(err, ErrNotFound) {
 		return "", nil
 	}
-	return obj.ETag, err
+	return obj.ETag + obj.Metadata[SlotEditMeta], err
 }

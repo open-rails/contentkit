@@ -32,6 +32,7 @@ type UploadHandlerOptions struct {
 //	POST /abort        TicketBody   -> 204
 //	POST /commit       CommitBody   -> CommitReply
 //	POST /commit-slot  SlotBody     -> 204
+//	POST /commit-slot-from-file  SlotFromFileBody -> 204
 func UploadHandler(u *Uploads, o UploadHandlerOptions) http.Handler {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
@@ -45,6 +46,7 @@ func UploadHandler(u *Uploads, o UploadHandlerOptions) http.Handler {
 	mux.HandleFunc("POST /abort", h.abort)
 	mux.HandleFunc("POST /commit", h.commit)
 	mux.HandleFunc("POST /commit-slot", h.commitSlot)
+	mux.HandleFunc("POST /commit-slot-from-file", h.slotFromFile)
 	return mux
 }
 
@@ -130,6 +132,7 @@ type CommitFile struct {
 	Original string         `json:"original"`
 	Type     string         `json:"type,omitempty"`
 	Size     int64          `json:"size,omitempty"`
+	Edit     *Edit          `json:"edit,omitempty"`
 	Meta     map[string]any `json:"meta,omitempty"`
 }
 
@@ -142,6 +145,15 @@ type SlotBody struct {
 	Ref    RefBody `json:"ref"`
 	Slot   string  `json:"slot"`
 	SHA256 string  `json:"sha256"`
+}
+
+// SlotFromFileBody makes File (a manifest image of Ref) the slot's original,
+// through Edit (default: the file's edit; {} clears it).
+type SlotFromFileBody struct {
+	Ref  RefBody `json:"ref"`
+	Slot string  `json:"slot"`
+	File string  `json:"file"`
+	Edit *Edit   `json:"edit,omitempty"`
 }
 
 // ErrorReply is the error body; Code is one of the media Code* constants,
@@ -268,7 +280,7 @@ func (h uploadHandler) commit(w http.ResponseWriter, r *http.Request) {
 	}
 	out := CommitReply{Files: make([]CommitFile, len(man.Files))}
 	for i, f := range man.Files {
-		out.Files[i] = CommitFile{Name: f.Name, Original: f.Original, Type: f.Type, Size: f.Size, Meta: f.Meta}
+		out.Files[i] = CommitFile{Name: f.Name, Original: f.Original, Type: f.Type, Size: f.Size, Edit: f.Edit, Meta: f.Meta}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -284,6 +296,19 @@ func (h uploadHandler) commitSlot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.u.CommitSlot(r.Context(), actor, h.ref(b.Ref), b.Slot, sum); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h uploadHandler) slotFromFile(w http.ResponseWriter, r *http.Request) {
+	var b SlotFromFileBody
+	actor, ok := h.read(w, r, &b)
+	if !ok {
+		return
+	}
+	if err := h.u.SetSlotFromFile(r.Context(), actor, h.ref(b.Ref), b.Slot, b.File, b.Edit); err != nil {
 		h.fail(w, r, err)
 		return
 	}
