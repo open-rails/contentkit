@@ -361,6 +361,30 @@ export class UploadClient {
 
     const stop = new AbortController();
     const signal = o.signal ? AbortSignal.any([o.signal, stop.signal]) : stop.signal;
+    // Parts hash and presign ahead of the PUT slots, so a freed slot starts
+    // its next PUT at once; pacer.concurrency bounds only the PUTs.
+    let putting = 0;
+    const waiting: (() => void)[] = [];
+    const acquire = () =>
+      new Promise<void>((resolve, reject) => {
+        const take = () => {
+          signal.removeEventListener("abort", drop);
+          putting++;
+          resolve();
+        };
+        const drop = () => {
+          waiting.splice(waiting.indexOf(take) >>> 0, 1);
+          reject(aborted(signal));
+        };
+        if (putting < pacer.concurrency) return take();
+        if (signal.aborted) return reject(aborted(signal));
+        signal.addEventListener("abort", drop, { once: true });
+        waiting.push(take);
+      });
+    const release = () => {
+      putting--;
+      while (putting < pacer.concurrency && waiting.length) waiting.shift()!();
+    };
     const run = async (part: PlannedPart) => {
       const body = file.slice(part.offset, part.offset + part.size);
       await this.retry(async () => {
@@ -373,8 +397,9 @@ export class UploadClient {
           signal,
         );
         const req = parts[0]?.request as RequestReply;
+        await acquire();
         const began = performance.now();
-        const alongside = inFlight.size;
+        const alongside = putting;
         try {
           await this.transport(req, body, {
             signal,
@@ -385,6 +410,7 @@ export class UploadClient {
           });
         } finally {
           sending.delete(part.number);
+          release();
         }
         pacer.record(part.size, performance.now() - began, alongside);
         sent += part.size;
@@ -398,7 +424,7 @@ export class UploadClient {
     let failure: unknown;
     for (;;) {
       let part: PlannedPart | undefined;
-      while (failure === undefined && inFlight.size < pacer.concurrency && (part = next())) {
+      while (failure === undefined && inFlight.size < pacer.concurrency + 2 && (part = next())) {
         emitState();
         const job: Promise<void> = run(part).then(
           () => void inFlight.delete(job),

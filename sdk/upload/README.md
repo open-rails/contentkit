@@ -67,6 +67,9 @@ await client.waitForVideoImages(ref);                              // until noth
   the kind's file caps).
 - A refused presign throws before any bytes move; multipart files are
   presigned before they are hashed.
+- Parts hash with WebCrypto (off the main thread; `@noble/hashes` in an
+  insecure context) and are hashed and presigned ahead of the PUT slots, so the
+  link stays busy. `bench/run.ts` measures a 1 GB upload from Chromium.
 - Aborting `signal` pauses a multipart upload. `onState` reports resumable
   state (JSON; `null` when done); pass it back as `resume` with the same file
   to continue after a reload, or `client.discard(state)` to drop it.

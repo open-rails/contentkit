@@ -95,6 +95,34 @@ describe("multipart", () => {
     expect(last).toBe(size);
   });
 
+  it("presigns parts ahead of the PUTs but never exceeds the PUT concurrency", async () => {
+    const s = new FakeServer();
+    let active = 0;
+    let peak = 0;
+    let ahead = 0;
+    let started = 0;
+    const c = new UploadClient({
+      endpoint: "http://x/api",
+      fetch: s.fetch,
+      retryDelay: () => 0,
+      concurrency: 2,
+      transport: async (req, body, o) => {
+        peak = Math.max(peak, ++active);
+        started++;
+        await new Promise((r) => setTimeout(r, 20));
+        ahead = Math.max(ahead, s.calls.filter((p) => p === "/parts").length - started);
+        try {
+          await s.transport(req, body, o);
+        } finally {
+          active--;
+        }
+      },
+    });
+    await c.upload(file(size, 3), { ref });
+    expect(peak).toBe(2);
+    expect(ahead).toBeGreaterThan(0);
+  });
+
   it("resumes from saved state, sending only the parts that did not land", async () => {
     const { s, c } = setup({ retries: 0, concurrency: 1 });
     const f = file(size, 5);
@@ -142,7 +170,10 @@ describe("multipart", () => {
     s.dropPuts = 100;
     const err = await c.upload(file(size), { ref }).catch((e) => e);
     expect(err.code).toBe("network");
-    expect(s.puts.length).toBe(2);
+    const n = s.puts.length; // a queued part may take the slot during the failing part's backoff
+    expect(n).toBeLessThanOrEqual(3);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(s.puts.length).toBe(n);
   });
 });
 
