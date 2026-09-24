@@ -263,15 +263,34 @@ var (
 )
 
 // quality scores the rendition against the source scaled to its size, so it
-// measures the encoder rather than the downscale.
+// measures the encoder rather than the downscale. Frames pair by index after
+// skipping the rendition's leading frames that best align it (constant-rate
+// HLS output may repeat the first frame of a jittery-timestamp source).
 func quality(t *testing.T, src, dist string, w, h int) (ssim, psnr, vmaf float64) {
-	// Frames pair by index: container timestamp rounding (Matroska's ms) would misalign them.
-	ref := fmt.Sprintf("[1:v]scale=%d:%d:flags=bicubic,setsar=1,format=yuv420p,settb=1/30,setpts=N[r];[0:v]format=yuv420p,settb=1/30,setpts=N[d]", w, h)
-	out, err := exec.Command("nice", "-n", "19", "ffmpeg", "-nostdin", "-i", dist, "-i", src, "-lavfi",
-		ref+";[d]split[d1][d2];[r]split[r1][r2];[d1][r1]ssim;[d2][r2]psnr", "-f", "null", "-").CombinedOutput()
-	if err != nil {
-		t.Fatalf("ssim: %v: %s", err, out)
+	graph := func(skip, frames int) string {
+		limit := ""
+		if frames > 0 {
+			limit = fmt.Sprintf(",trim=end_frame=%d", frames)
+		}
+		return fmt.Sprintf("[1:v]scale=%d:%d:flags=bicubic,setsar=1,format=yuv420p%s,settb=1/30,setpts=N[r];"+
+			"[0:v]format=yuv420p,trim=start_frame=%d%s,settb=1/30,setpts=N[d]", w, h, limit, skip, limit)
 	}
+	score := func(ff, lavfi string) []byte {
+		out, err := exec.Command("nice", "-n", "19", ff, "-nostdin", "-i", dist, "-i", src, "-lavfi", lavfi, "-f", "null", "-").CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: %v: %s", lavfi, err, out)
+		}
+		return out
+	}
+	skip, best := 0, -1.0
+	for k := range 4 {
+		if m := psnrRe.FindSubmatch(score("ffmpeg", graph(k, 60)+";[d][r]psnr")); m != nil {
+			if v, _ := strconv.ParseFloat(string(m[1]), 64); v > best {
+				skip, best = k, v
+			}
+		}
+	}
+	out := score("ffmpeg", graph(skip, 0)+";[d]split[d1][d2];[r]split[r1][r2];[d1][r1]ssim;[d2][r2]psnr")
 	if m := ssimRe.FindSubmatch(out); m != nil {
 		ssim, _ = strconv.ParseFloat(string(m[1]), 64)
 	}
@@ -279,11 +298,7 @@ func quality(t *testing.T, src, dist string, w, h int) (ssim, psnr, vmaf float64
 		psnr, _ = strconv.ParseFloat(string(m[1]), 64)
 	}
 	if ff := os.Getenv("CONTENTKIT_BENCH_VMAF"); ff != "" {
-		out, err := exec.Command("nice", "-n", "19", ff, "-nostdin", "-i", dist, "-i", src, "-lavfi",
-			ref+fmt.Sprintf(";[d][r]libvmaf=n_threads=%d:n_subsample=3", min(16, runtime.NumCPU())), "-f", "null", "-").CombinedOutput()
-		if err != nil {
-			t.Fatalf("vmaf: %v: %s", err, out)
-		}
+		out := score(ff, graph(skip, 0)+fmt.Sprintf(";[d][r]libvmaf=n_threads=%d:n_subsample=3", min(16, runtime.NumCPU())))
 		if m := vmafRe.FindSubmatch(out); m != nil {
 			vmaf, _ = strconv.ParseFloat(string(m[1]), 64)
 		}
