@@ -116,7 +116,7 @@ func TestRiverSlotEditLandingAsTheJobFinishes(t *testing.T) {
 	for {
 		m := e.slotManifest(t, ref, "cover")
 		if !m.Pending && m.Edit.Hash() == late.Hash() {
-			if !slices.Equal(widths(m), []int{150, 300}) {
+			if !slices.Equal(widths(m), []int{150, 300, 300}) { // the 600 rung capped at the 300 px edit
 				t.Fatalf("outputs %v", widths(m))
 			}
 			return
