@@ -7,8 +7,6 @@ package video
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -25,9 +23,6 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// Spec identifies Recipe in manifest hls and downloads entries.
-var Spec = func() string { s := sha256.Sum256([]byte(Recipe)); return hex.EncodeToString(s[:4]) }()
-
 // Config configures an Encoder.
 type Config struct {
 	Store media.Store
@@ -40,17 +35,19 @@ type Config struct {
 }
 
 // Encoder runs encode jobs. It is idempotent: a file whose hls and downloads
-// match its source and Spec is skipped, and outputs are byte-identical on
+// match its source and the job's Spec is skipped, and outputs are byte-identical on
 // retry, so blob names repeat.
 type Encoder struct {
 	c Config
 }
 
-// Job encodes the video files of one manifest. Versioned is the kind's flag,
-// needed to address the manifest.
+// Job encodes the video files of one manifest. Versioned and Ladder are the
+// kind's: the manifest's address and the rendition heights (empty:
+// media.DefaultLadder).
 type Job struct {
 	Ref       contentref.ContentRef `json:"ref"`
 	Versioned bool                  `json:"versioned,omitempty"`
+	Ladder    []int                 `json:"ladder,omitempty"`
 }
 
 func New(c Config) (*Encoder, error) {
@@ -95,10 +92,11 @@ var downloadKey = regexp.MustCompile(`^(.+)-(\d+)p$`)
 // Encode brings every video file of the job's manifest up to date, promoting
 // each file's outputs in its own manifest edit.
 func (e *Encoder) Encode(ctx context.Context, job Job) error {
-	kinds, err := media.NewRegistry(media.Kind{Name: job.Ref.ContentKind, Versioned: job.Versioned, Video: true})
+	kinds, err := media.NewRegistry(media.Kind{Name: job.Ref.ContentKind, Versioned: job.Versioned, Video: &media.Video{Ladder: job.Ladder}})
 	if err != nil {
 		return &PermanentError{err}
 	}
+	r := recipeOf(job.Ladder)
 	item, err := kinds.Item(job.Ref)
 	if err != nil {
 		return &PermanentError{err}
@@ -119,10 +117,10 @@ func (e *Encoder) Encode(ctx context.Context, job Job) error {
 	var errs []error
 	permanent := true
 	for _, f := range man.Files {
-		if !IsVideo(f) || fresh(man, f) {
+		if !IsVideo(f) || fresh(man, f, r.spec) {
 			continue
 		}
-		if err := e.file(ctx, ms, item, f.Name, f.Source()); err != nil {
+		if err := e.file(ctx, ms, item, r, f.Name, f.Source()); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -151,13 +149,26 @@ func (e *Encoder) Encode(ctx context.Context, job Job) error {
 	return errors.Join(errs...)
 }
 
-func fresh(m *media.Manifest, f media.File) bool {
+// jobRecipe is a job's ladder and its Spec.
+type jobRecipe struct {
+	ladder []int
+	spec   string
+}
+
+func recipeOf(ladder []int) jobRecipe {
+	if len(ladder) == 0 {
+		ladder = media.DefaultLadder
+	}
+	return jobRecipe{ladder: ladder, spec: Spec(ladder)}
+}
+
+func fresh(m *media.Manifest, f media.File, spec string) bool {
 	h := f.HLS
-	if h == nil || h.Source != f.Source() || h.Spec != Spec || len(h.Video) == 0 {
+	if h == nil || h.Source != f.Source() || h.Spec != spec || len(h.Video) == 0 {
 		return false
 	}
 	for _, r := range h.Video {
-		if d, ok := m.Downloads[DownloadKey(f.Name, r.Height)]; !ok || d.Spec != Spec || d.Inputs != h.Source {
+		if d, ok := m.Downloads[DownloadKey(f.Name, r.Height)]; !ok || d.Spec != spec || d.Inputs != h.Source {
 			return false
 		}
 	}
@@ -179,7 +190,7 @@ var errStale = errors.New("source changed during encode")
 // testBeforePromote runs between the blob uploads and the manifest edit.
 var testBeforePromote func()
 
-func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item, name, source string) error {
+func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item, r jobRecipe, name, source string) error {
 	srcKey, err := item.Original(source)
 	if err != nil {
 		return &PermanentError{err}
@@ -204,7 +215,7 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 		}
 		return &PermanentError{err}
 	}
-	p, err := newPlan(pr)
+	p, err := newPlan(pr, r.ladder)
 	if err != nil {
 		return &PermanentError{err}
 	}
@@ -221,7 +232,7 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 		return err
 	}
 
-	hls := &media.HLS{Source: source, Spec: Spec}
+	hls := &media.HLS{Source: source, Spec: r.spec}
 	downloads := map[string]media.Download{}
 	for i, a := range p.audio {
 		blob, pl, err := e.stream(ctx, item, out, fmt.Sprintf("a%d", i), "audio/mp4")
@@ -267,7 +278,7 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 		peak, avg := bandwidth(pl.segments)
 		hls.Video = append(hls.Video, media.Rendition{Height: h, Width: w, Bandwidth: peak, Average: avg, Codecs: codec,
 			Blob: blob, Segments: pl.segments})
-		downloads[DownloadKey(name, height)] = media.Download{Blob: dlBlob, Type: "video/mp4", Size: dlSize, Spec: Spec, Inputs: source}
+		downloads[DownloadKey(name, height)] = media.Download{Blob: dlBlob, Type: "video/mp4", Size: dlSize, Spec: r.spec, Inputs: source}
 	}
 
 	if testBeforePromote != nil {

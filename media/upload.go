@@ -29,7 +29,8 @@ const (
 )
 
 // UploadAuthorizer is the host's upload permission check (AuthKit), run at
-// presign and commit.
+// presign and commit against the ref whose folder is written: the version
+// for manifest uploads, the work (ref.Content()) for slots and inline images.
 type UploadAuthorizer interface {
 	CanUpload(ctx context.Context, actor access.Actor, ref contentref.ContentRef) (UploadGrant, error)
 }
@@ -164,7 +165,11 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequ
 	if r.Slot != "" && r.Size > MaxSinglePut {
 		return Presigned{}, uploadErr(CodeTooLarge, "slot originals are at most %d bytes", MaxSinglePut)
 	}
-	grant, err := u.authorize(ctx, actor, r.Ref)
+	target := r.Ref
+	if r.Slot != "" {
+		target = r.Ref.Content() // slots and inline images live in the work's folder
+	}
+	grant, err := u.authorize(ctx, actor, target)
 	if err != nil {
 		return Presigned{}, err
 	}
@@ -370,8 +375,9 @@ type Op struct {
 
 // Commit applies ops to the manifest in one conditional write. Every new
 // original is HEAD-checked against the kind's type and size cap (and re-hashed
-// when the store does not enforce checksums). Usage is settled by the change
-// in distinct originals the manifest references, then processing is enqueued.
+// when the store does not enforce checksums). The owner is charged the change
+// in distinct originals the manifest references; growth past its quota fails
+// with CodeQuota (not for exempt grants). Then processing is enqueued.
 func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref.ContentRef, ops []Op) (*Manifest, error) {
 	item, err := u.item(ref)
 	if err != nil {
@@ -417,38 +423,47 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 			Message: fmt.Sprintf("not uploaded or due for cleanup; upload again: %s", strings.Join(missing, ", "))}
 	}
 
-	var before, after map[string]int64
+	// Growth is charged (and checked) inside the edit, before the manifest is
+	// written; the final settlement refunds what a retried attempt no longer
+	// needs and drops the reservations.
+	var delta, charged int64
+	settle := func(ctx context.Context, s Settlement) error {
+		if u.o.Limiter == nil {
+			return nil
+		}
+		s.Tenant, s.Owner = ref.TenantID, grant.Owner
+		return u.o.Limiter.Settle(ctx, s)
+	}
 	editCtx, cancel := context.WithTimeout(ctx, commitMargin(u.o.Grace)/2)
 	defer cancel()
 	man, err := u.o.Manifests.Edit(editCtx, ref, func(m *Manifest) error {
-		before = m.originalSizes()
+		before := m.originalSizes()
 		prev := &Manifest{Files: slices.Clone(m.Files)}
 		for _, op := range ops {
 			if err := m.apply(op, uploaded[op.Original]); err != nil {
 				return err
 			}
 		}
-		after = m.originalSizes()
-		return item.Kind().checkFiles(prev, m)
+		if err := item.Kind().checkFiles(prev, m); err != nil {
+			return err
+		}
+		delta = sizeDelta(before, m.originalSizes())
+		if delta > charged && grant.Owner != "" {
+			if err := settle(editCtx, Settlement{Delta: delta - charged, Enforce: !grant.Exempt}); err != nil {
+				return err
+			}
+			charged = delta
+		}
+		return nil
 	})
 	if err != nil {
+		if charged > 0 {
+			err = errors.Join(err, settle(context.WithoutCancel(ctx), Settlement{Delta: -charged}))
+		}
 		return nil, err
 	}
-	if u.o.Limiter != nil {
-		var delta int64
-		for name, size := range after {
-			if _, ok := before[name]; !ok {
-				delta += size
-			}
-		}
-		for name, size := range before {
-			if _, ok := after[name]; !ok {
-				delta -= size
-			}
-		}
-		if err := u.o.Limiter.Settle(ctx, Settlement{Tenant: ref.TenantID, Owner: grant.Owner, Keys: keys, Delta: delta}); err != nil {
-			return nil, err
-		}
+	if err := settle(context.WithoutCancel(ctx), Settlement{Keys: keys, Delta: delta - charged}); err != nil {
+		return nil, err
 	}
 	if u.o.Queue != nil {
 		if err := u.o.Queue.Enqueue(ctx, ProcessJob{Ref: ref}); err != nil {
@@ -472,7 +487,7 @@ func (u *Uploads) CommitSlot(ctx context.Context, actor access.Actor, ref conten
 	if len(sum) != sha256.Size {
 		return uploadErr(CodeInvalid, "the slot's SHA-256 is required")
 	}
-	if _, err := u.authorize(ctx, actor, ref); err != nil {
+	if _, err := u.authorize(ctx, actor, ref.Content()); err != nil {
 		return err
 	}
 	if _, err := u.check(ctx, item, key, sum); err != nil {
@@ -484,54 +499,84 @@ func (u *Uploads) CommitSlot(ctx context.Context, actor access.Actor, ref conten
 		}
 	}
 	if u.o.Queue != nil {
-		return u.o.Queue.Enqueue(ctx, ProcessJob{Ref: ref, Slot: slot})
+		return u.o.Queue.Enqueue(ctx, ProcessJob{Ref: ref.Content(), Slot: slot})
 	}
 	return nil
 }
 
-// SetSlotFromFile makes an image file of ref's manifest the slot's original:
-// its source is copied to originals/{slot} with edit (default: the file's
-// own edit; nil keeps it, an empty Edit clears it) recorded in the object's
-// metadata, and the slot's outputs are re-encoded through it. With a slot
-// Aspect the crop's height is derived from its width. The crop is checked
-// against the file's Dims once processing has recorded them, else by the
-// slot job.
-func (u *Uploads) SetSlotFromFile(ctx context.Context, actor access.Actor, ref contentref.ContentRef, slot, file string, edit *Edit) error {
-	item, err := u.item(ref)
+// SlotFromFile names a slot and the manifest image to fill it from.
+type SlotFromFile struct {
+	Ref  contentref.ContentRef // the slot's item; a version ref also names From's manifest
+	Slot string
+	// From is the manifest holding File when it is not Ref's: another item
+	// (or version) of the same tenant, e.g. a post image for a channel avatar.
+	From contentref.ContentRef
+	File string
+	// Edit crops the copy (default: the file's own edit; an empty Edit clears it).
+	Edit *Edit
+}
+
+// SetSlotFromFile makes an image file the slot's original: its source is
+// copied to originals/{slot} with the edit recorded in the object's metadata,
+// and the slot's outputs are re-encoded through it. With a slot Aspect the
+// crop's height is derived from its width. The crop is checked against the
+// file's Dims once processing has recorded them, else by the slot job. The
+// actor must be allowed to upload to Ref's work and, when From names another
+// item, to From.
+func (u *Uploads) SetSlotFromFile(ctx context.Context, actor access.Actor, r SlotFromFile) error {
+	item, err := u.item(r.Ref)
 	if err != nil {
 		return err
 	}
-	if _, ok := item.Kind().Slots[slot]; !ok { // inline images are write-once
-		return uploadErr(CodeNotFound, "kind %q has no slot %q", item.Kind().Name, slot)
+	slot, ok := item.Kind().Slots[r.Slot] // inline images are write-once
+	if !ok {
+		return uploadErr(CodeNotFound, "kind %q has no slot %q", item.Kind().Name, r.Slot)
 	}
-	key, _ := item.SlotOriginal(slot)
-	if _, err := item.ManifestKey(); err != nil {
-		return uploadErr(CodeInvalid, "%v", err)
+	key, _ := item.SlotOriginal(r.Slot)
+	from := r.From
+	if from.ContentID == "" {
+		from = r.Ref
 	}
-	if _, err := u.authorize(ctx, actor, ref); err != nil {
+	if from.TenantID != r.Ref.TenantID {
+		return uploadErr(CodeInvalid, "a slot is filled from its own tenant")
+	}
+	src, err := u.item(from)
+	if err != nil {
 		return err
 	}
-	man, _, err := u.o.Manifests.Get(ctx, ref)
+	if _, err := src.ManifestKey(); err != nil {
+		return uploadErr(CodeInvalid, "%v", err)
+	}
+	if _, err := u.authorize(ctx, actor, r.Ref.Content()); err != nil {
+		return err
+	}
+	if src.Prefix() != item.Prefix() {
+		if _, err := u.authorize(ctx, actor, from); err != nil {
+			return err
+		}
+	}
+	man, _, err := u.o.Manifests.Get(ctx, from)
 	if errors.Is(err, ErrNotFound) {
-		return uploadErr(CodeNotFound, "no file %q", file)
+		return uploadErr(CodeNotFound, "no file %q", r.File)
 	} else if err != nil {
 		return err
 	}
-	i := man.File(file)
+	i := man.File(r.File)
 	if i < 0 {
-		return uploadErr(CodeNotFound, "no file %q", file)
+		return uploadErr(CodeNotFound, "no file %q", r.File)
 	}
 	f := man.Files[i]
 	if !strings.HasPrefix(f.Type, "image/") {
-		return uploadErr(CodeInvalid, "file %q is not an image", file)
+		return uploadErr(CodeInvalid, "file %q is not an image", r.File)
 	}
+	edit := r.Edit
 	if edit == nil {
 		edit = f.Edit
 	}
-	if err := f.setEdit(item.Kind().Slots[slot].fit(edit)); err != nil {
+	if err := f.setEdit(slot.fit(edit)); err != nil {
 		return err
 	}
-	srcKey, err := item.Original(f.Source())
+	srcKey, err := src.Original(f.Source())
 	if err != nil {
 		return err
 	}
@@ -544,6 +589,9 @@ func (u *Uploads) SetSlotFromFile(ctx context.Context, actor access.Actor, ref c
 	defer rc.Close()
 	if obj.Size > MaxSinglePut {
 		return uploadErr(CodeTooLarge, "slot originals are at most %d bytes", MaxSinglePut)
+	}
+	if err := item.Kind().Allows(obj.ContentType, obj.Size); err != nil {
+		return err
 	}
 	body, err := io.ReadAll(rc) // the SDK signs a seekable body over plain HTTP
 	if err != nil {
@@ -561,7 +609,7 @@ func (u *Uploads) SetSlotFromFile(ctx context.Context, actor access.Actor, ref c
 		return err
 	}
 	if u.o.Queue != nil {
-		return u.o.Queue.Enqueue(ctx, ProcessJob{Ref: ref.Content(), Slot: slot})
+		return u.o.Queue.Enqueue(ctx, ProcessJob{Ref: r.Ref.Content(), Slot: r.Slot})
 	}
 	return nil
 }
@@ -766,6 +814,22 @@ func (m *Manifest) apply(op Op, obj Object) error {
 		return m.Files[i].setEdit(op.Edit)
 	}
 	return nil
+}
+
+// sizeDelta is the change in stored bytes from before to after.
+func sizeDelta(before, after map[string]int64) int64 {
+	var d int64
+	for name, size := range after {
+		if _, ok := before[name]; !ok {
+			d += size
+		}
+	}
+	for name, size := range before {
+		if _, ok := after[name]; !ok {
+			d -= size
+		}
+	}
+	return d
 }
 
 // originalSizes maps each distinct original the manifest references to its size.

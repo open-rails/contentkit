@@ -114,7 +114,7 @@ func newEnv(t *testing.T, store func(media.Store) media.Store, queue media.Proce
 		e.store = store(s3.Store)
 	}
 	var err error
-	if e.kinds, err = media.NewRegistry(media.Kind{Name: "video", Versioned: true, Video: true, Types: []string{"video/x-matroska"}}); err != nil {
+	if e.kinds, err = media.NewRegistry(media.Kind{Name: "video", Versioned: true, Video: &media.Video{}, Types: []string{"video/x-matroska"}}); err != nil {
 		t.Fatal(err)
 	}
 	var locker media.Locker
@@ -327,7 +327,7 @@ func TestLadderFromMultiTrackSource(t *testing.T) {
 	m, _ := e.manifest(t)
 	f := m.Files[m.File("source")]
 	h := f.HLS
-	if h == nil || h.Source != source || h.Spec != video.Spec {
+	if h == nil || h.Source != source || h.Spec != video.Spec(nil) {
 		t.Fatalf("hls %+v", h)
 	}
 	var heights []int
@@ -367,7 +367,7 @@ func TestLadderFromMultiTrackSource(t *testing.T) {
 
 	for _, height := range heights {
 		d, ok := m.Downloads[video.DownloadKey("source", height)]
-		if !ok || d.Type != "video/mp4" || d.Spec != video.Spec || d.Inputs != source || d.Size <= 0 {
+		if !ok || d.Type != "video/mp4" || d.Spec != video.Spec(nil) || d.Inputs != source || d.Size <= 0 {
 			t.Fatalf("download %dp: %+v", height, d)
 		}
 		p := ffprobe(t, e.blob(t, d.Blob))
@@ -383,6 +383,33 @@ func TestLadderFromMultiTrackSource(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestKindLadder(t *testing.T) {
+	e := newEnv(t, nil, nil)
+	e.commit(t, fixture{w: 640, h: 361, secs: 3, tone: 440}.make(t), media.OpInsert)
+	encode := func(ladder []int, want ...int) {
+		t.Helper()
+		if err := e.encoder.Encode(context.Background(), video.Job{Ref: e.ref, Versioned: true, Ladder: ladder}); err != nil {
+			t.Fatal(err)
+		}
+		m, _ := e.manifest(t)
+		h := m.Files[0].HLS
+		var heights, downloads []int
+		for _, r := range h.Video {
+			heights = append(heights, r.Height)
+		}
+		for _, height := range want {
+			if d, ok := m.Downloads[video.DownloadKey("source", height)]; ok && d.Spec == video.Spec(ladder) {
+				downloads = append(downloads, height)
+			}
+		}
+		if h.Spec != video.Spec(ladder) || !slices.Equal(heights, want) || !slices.Equal(downloads, want) || len(m.Downloads) != len(want) {
+			t.Fatalf("ladder %v: hls %v %s, downloads %v", ladder, heights, h.Spec, m.Downloads)
+		}
+	}
+	encode([]int{1080, 360, 240}, 360, 240)
+	encode(nil, 360) // the default ladder is another recipe: re-encoded
 }
 
 func TestReplacedSourceKeepsPreviousHLSUntilPromotion(t *testing.T) {

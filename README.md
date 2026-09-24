@@ -232,7 +232,8 @@ bind `Content-Type`, `Content-Length` and `x-amz-checksum-sha256`.
 
 **Uploads** go straight to the bucket (`media.Uploads`, served by
 `media.UploadHandler`): the host's `UploadAuthorizer.CanUpload` (AuthKit) runs
-at presign and commit, and the kind's types and size cap bind every presign.
+at presign and commit for the folder written (slots and inline images: the
+work, `ref.Content()`), and the kind's types and size cap bind every presign.
 Up to 64 MiB is one PUT to `originals/sha256-{hex}` signed with its type,
 length and SHA-256; larger files are multipart to `originals/u-{uuid}` with
 8–16 MiB parts, each signed with its length and SHA-256, resumed through
@@ -256,14 +257,18 @@ source's pixels (EXIF orientation applied), then rotates clockwise by 0, 90,
 recorded by processing (before that, by the processor, which reports an
 out-of-bounds edit to `Hooks.Failed`). A variant's `spec` is
 `Spec.For(edit)`, so changing or clearing an edit re-derives that file's
-variants (and the zip) from the untouched original; `Spec.Unedited` variants
-ignore edits (an editor's view of the whole source). No master is written.
-`meta.w/h` is the edited size; the read API also returns `edit` and `dims`.
-`Uploads.SetSlotFromFile(ctx, actor, ref, slot, file, edit)` (HTTP
-`/commit-slot-from-file`) copies a manifest image's source to
-`originals/{slot}` with the edit (default: the file's own) in its metadata and
-re-encodes the slot through it; with `Slot.Aspect` (width/height) the crop's
-height is derived from its width.
+variants (and the zip) from the untouched original. `Spec.EditorOnly`
+variants (recorded `editor: true`) are signed only when the resolver's
+`Resolution.Editor` is set; `Spec.Unedited` (must be `EditorOnly`) ignores
+edits: an editor's view of the whole source. Under a folder cookie such a blob
+is unlisted, not locked: its content-hash name is never sent to other viewers.
+No master is written. `meta.w/h` is the edited size; the read API returns
+`edit` and `dims` to editors. `Uploads.SetSlotFromFile(ctx, actor,
+SlotFromFile{Ref, Slot, From, File, Edit})` (HTTP `/commit-slot-from-file`)
+copies a manifest image's source (of `From`, default `Ref`: another item of
+the tenant needs `CanUpload` on both) to `originals/{slot}` with the edit
+(default: the file's own) in its metadata and re-encodes the slot through it;
+with `Slot.Aspect` (width/height) the crop's height is derived from its width.
 
 **Image processing** (`media/image`, CGO over libvips via govips; install
 `libvips-dev` to build it). `image.New(Config{Store, Kinds, Manifests, Specs,
@@ -283,9 +288,11 @@ recorded source ETag and spec match. Undecodable sources go to
 
 The optional `UploadLimiter` (`media.NewPGLimiter` over the baseline's
 `content_media_*` tables) rate-limits uploaders (files/hour, bytes/day → 429)
-and reserves per-owner quota at presign (→ 413 `quota_exceeded`); commit
-settles usage to the change in the manifest's originals, and expired
-reservations lapse after a day. Exempt grants skip it.
+and enforces per-owner quota. The rule: a commit that grows the owner's stored
+originals (the change in the manifest's distinct originals) past its quota
+fails with 413 `quota_exceeded` and writes nothing. Presign reservations only
+refuse early (used + pending + size); they lapse after a day, which never lets
+a late commit past the quota. Exempt grants are charged but never refused.
 
 The bucket needs CORS allowing `PUT` from the app origins with the
 `Content-Type` and `x-amz-checksum-sha256` headers, and the
@@ -293,7 +300,8 @@ The bucket needs CORS allowing `PUT` from the app origins with the
 
 **Video** (`media/video`, run by `cmd/media-worker`) encodes each `video/*`
 manifest file in one ffmpeg pass: H.264 High (CRF 22, preset fast, keyframes
-every 4 s) at 2160/1440/1080/720/480 lines no taller than the source, AAC per
+every 4 s) at the kind's ladder (`Kind.Video = &media.Video{Ladder: []int{1080, 720, 480}}`;
+default `media.DefaultLadder`, 2160/1440/1080/720/480) rungs no taller than the source, AAC per
 audio track, WebVTT per text subtitle and a 10×10 sprite. Each rendition and
 audio track is one single-file fMP4 blob whose segments are
 `[offset, length, seconds]` (the init segment is `[0, segments[0].offset)`);
@@ -301,7 +309,10 @@ each quality also gets a muxed MP4 in `downloads["{file}-{height}p"]` (video,
 every audio track, subtitles). Blobs are written first; one manifest edit then
 records `hls` and `downloads` only if the file still derives from the encoded
 original, so a replaced file keeps its previous `hls` until then. Outputs are
-byte-identical on retry. Jobs live in River schema `media_worker` in the host
+byte-identical on retry. ffmpeg reads only local files
+(`-protocol_whitelist file`) through container demuxers (mov/mp4, matroska/webm, avi,
+mpegts, flv, ogg, asf, mpeg): playlists and concat lists are refused. Changing
+the ladder changes `video.Spec(ladder)`, so files re-encode. Jobs live in River schema `media_worker` in the host
 database: hosts run `video.Migrate` and enqueue through `video.NewEnqueuer`
 (insert-only; register `enqueuer.Processor()` with `media.Jobs.AddProcessor`); the worker's environment is
 documented in `cmd/media-worker`.

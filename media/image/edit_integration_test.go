@@ -70,7 +70,7 @@ func diff(a uint32, b uint8) uint32 {
 func crop(x, y, w, h int) *media.Edit { return &media.Edit{Crop: &media.Crop{X: x, Y: y, W: w, H: h}} }
 
 func TestEditCropRotate(t *testing.T) {
-	editor := media.Spec{Width: 200, Unedited: true}
+	editor := media.Spec{Width: 200, Unedited: true, EditorOnly: true}
 	k := galleryKind()
 	k.Specs["editor"] = editor
 	e := newEnv(t, k)
@@ -107,6 +107,9 @@ func TestEditCropRotate(t *testing.T) {
 		case name != "editor" && (v.Spec != s.For(edit) || v.Blob == m0.Files[0].Variants[name].Blob):
 			t.Fatalf("%s not regenerated: %+v", name, v)
 		}
+	}
+	if !f.Variants["editor"].Editor || f.Variants["high"].Editor {
+		t.Fatalf("editor flags %+v", f.Variants)
 	}
 	if f.Meta["w"] != float64(100) || f.Meta["h"] != float64(400) || *f.Dims != *m0.Files[0].Dims {
 		t.Fatalf("meta %v dims %+v", f.Meta, f.Dims)
@@ -163,7 +166,7 @@ func TestSlotFromFileCrop(t *testing.T) {
 	cover := func() ([]byte, media.Object) { return e.object(t, e.Tenant+"/gallery/e2/public/cover.webp") }
 	set := func(edit *media.Edit) {
 		t.Helper()
-		if err := e.uploads.SetSlotFromFile(context.Background(), access.Actor{ID: "u"}, ref, "cover", "001.png", edit); err != nil {
+		if err := e.uploads.SetSlotFromFile(context.Background(), access.Actor{ID: "u"}, media.SlotFromFile{Ref: ref, Slot: "cover", File: "001.png", Edit: edit}); err != nil {
 			t.Fatal(err)
 		}
 		e.drain(t)
@@ -193,7 +196,7 @@ func TestSlotFromFileCrop(t *testing.T) {
 	pixels(t, b3, 100, 200, map[[2]int]color.RGBA{{50, 50}: red, {50, 150}: blue})
 
 	// Out of the page's bounds.
-	err := e.uploads.SetSlotFromFile(context.Background(), access.Actor{ID: "u"}, ref, "cover", "001.png", crop(0, 150, 50, 0))
+	err := e.uploads.SetSlotFromFile(context.Background(), access.Actor{ID: "u"}, media.SlotFromFile{Ref: ref, Slot: "cover", File: "001.png", Edit: crop(0, 150, 50, 0)})
 	if ue, ok := media.AsUploadError(err); !ok || ue.Code != media.CodeInvalid {
 		t.Fatalf("outside: %v", err)
 	}
@@ -214,7 +217,7 @@ func requireFFmpeg(t *testing.T) {
 
 func TestMixedImagesAndVideo(t *testing.T) {
 	requireFFmpeg(t)
-	k := media.Kind{Name: "post", Types: []string{"image/png", "video/x-matroska"}, MaxBytes: 10 << 20, Video: true,
+	k := media.Kind{Name: "post", Types: []string{"image/png", "video/x-matroska"}, MaxBytes: 10 << 20, Video: &media.Video{},
 		Specs: map[string]media.Spec{"thumb": thumb}, TypeLimits: map[string]media.Limit{"video": {MaxFiles: 1}}}
 	e := newEnv(t, k)
 	ref := contentref.New(e.Tenant, "post", "m1")

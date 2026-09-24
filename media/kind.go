@@ -36,10 +36,38 @@ type Kind struct {
 	// ("i-{uuid}", from NewInlineName), each re-encoded with this spec from
 	// originals/{id} to public/{id}.webp. Post bodies and poll options use them.
 	Inline *Spec
-	Video  bool
+	Video  *Video // nil: no video encoding
 	// Zip names the variant packed, in file order, into downloads["zip"];
 	// "" offers no zip.
 	Zip string
+}
+
+// Video configures a kind's video encoding (media/video).
+type Video struct {
+	// Ladder is the rendition heights, tallest first; rungs taller than the
+	// source are dropped. Empty is DefaultLadder.
+	Ladder []int
+}
+
+// DefaultLadder is the default H.264 ladder.
+var DefaultLadder = []int{2160, 1440, 1080, 720, 480}
+
+// Heights is the ladder in effect.
+func (v *Video) Heights() []int {
+	if v == nil || len(v.Ladder) == 0 {
+		return DefaultLadder
+	}
+	return v.Ladder
+}
+
+// ValidLadder requires even heights of 2–4320, tallest first, without repeats.
+func ValidLadder(ladder []int) error {
+	for i, h := range ladder {
+		if h < 2 || h > 4320 || h%2 != 0 || i > 0 && h >= ladder[i-1] {
+			return fmt.Errorf("media: invalid video ladder %v", ladder)
+		}
+	}
+	return nil
 }
 
 // Limit is a per-type cap; zero values are unlimited.
@@ -64,7 +92,11 @@ type Spec struct {
 	Quality int
 	Blur    float64
 	// Unedited ignores the file's Edit: an editor's view of the whole source.
+	// It must be EditorOnly.
 	Unedited bool
+	// EditorOnly variants are signed by the read API only for actors whose
+	// Resolution is Editor; slots, inline images and zips cannot use them.
+	EditorOnly bool
 }
 
 // Hash is the spec's stable identity; a variant whose recorded spec differs is
@@ -74,6 +106,9 @@ func (s Spec) Hash() string {
 		strconv.Itoa(s.Quality) + "|b" + strconv.FormatFloat(s.Blur, 'g', -1, 64)
 	if s.Unedited {
 		id += "|u"
+	}
+	if s.EditorOnly {
+		id += "|e"
 	}
 	sum := sha256.Sum256([]byte(id))
 	return hex.EncodeToString(sum[:4])
@@ -155,13 +190,21 @@ func NewRegistry(kinds ...Kind) (*Registry, error) {
 		if _, dup := r.kinds[k.Name]; dup {
 			return nil, fmt.Errorf("media: duplicate kind %q", k.Name)
 		}
-		for name := range k.Specs {
-			if !layout.ValidSegment(name) {
-				return nil, fmt.Errorf("media: kind %q: invalid spec name %q", k.Name, name)
+		for name, s := range k.Specs {
+			if !layout.ValidSegment(name) || s.Unedited && !s.EditorOnly {
+				return nil, fmt.Errorf("media: kind %q: invalid spec %q (Unedited must be EditorOnly)", k.Name, name)
 			}
 		}
-		if _, ok := k.Specs[k.Zip]; k.Zip != "" && !ok {
-			return nil, fmt.Errorf("media: kind %q: zip variant %q has no spec", k.Name, k.Zip)
+		if s, ok := k.Specs[k.Zip]; k.Zip != "" && (!ok || s.EditorOnly) {
+			return nil, fmt.Errorf("media: kind %q: zip variant %q has no spec or is EditorOnly", k.Name, k.Zip)
+		}
+		if k.Inline != nil && (k.Inline.Unedited || k.Inline.EditorOnly) {
+			return nil, fmt.Errorf("media: kind %q: inline images are public; their spec cannot be Unedited or EditorOnly", k.Name)
+		}
+		if k.Video != nil {
+			if err := ValidLadder(k.Video.Ladder); err != nil {
+				return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
+			}
 		}
 		for t, l := range k.TypeLimits {
 			if t == "" || strings.Contains(t, "/") || l.MaxBytes < 0 || l.MaxFiles < 0 {
@@ -172,8 +215,8 @@ func NewRegistry(kinds ...Kind) (*Registry, error) {
 			if !layout.ValidSegment(name) || layout.ValidBlobName(name) || layout.ValidInlineName(name) || len(slot.Outputs) == 0 || slot.Aspect < 0 {
 				return nil, fmt.Errorf("media: kind %q: invalid slot %q", k.Name, name)
 			}
-			for out := range slot.Outputs {
-				if !layout.ValidSegment(out) || layout.ValidInlineName(out) {
+			for out, s := range slot.Outputs {
+				if !layout.ValidSegment(out) || layout.ValidInlineName(out) || s.Unedited || s.EditorOnly {
 					return nil, fmt.Errorf("media: kind %q slot %q: invalid output %q", k.Name, name, out)
 				}
 			}

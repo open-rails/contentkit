@@ -10,11 +10,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// UploadLimiter is the optional anti-abuse port. Reserve runs at presign
-// (skipped for exempt uploaders) and refuses with an *UploadError coded
-// CodeRate or CodeQuota before any bytes move. Settle runs at commit, abort
-// and item deletion: it drops the reservations of Keys and adds Delta (the
-// change in stored originals, negative on removal) to the owner's usage.
+// UploadLimiter is the optional anti-abuse port. Quota is enforced when bytes
+// are committed: a commit that grows its owner's stored originals past the
+// quota is refused. Reserve runs at presign (skipped for exempt uploaders) and
+// refuses with an *UploadError coded CodeRate or CodeQuota before any bytes
+// move; a reservation is only that early refusal and may expire. Settle runs
+// at commit, abort and item deletion: it drops the reservations of Keys and
+// adds Delta (the change in stored originals, negative on removal) to the
+// owner's usage.
 type UploadLimiter interface {
 	Reserve(ctx context.Context, r Reservation) error
 	Settle(ctx context.Context, s Settlement) error
@@ -31,12 +34,15 @@ type Reservation struct {
 	Size     int64
 }
 
-// Settlement releases reservations and moves an owner's usage.
+// Settlement releases reservations and moves an owner's usage. With Enforce,
+// a positive Delta that takes usage over the owner's quota is refused with
+// CodeQuota and changes nothing.
 type Settlement struct {
-	Tenant string
-	Owner  string
-	Keys   []string
-	Delta  int64
+	Tenant  string
+	Owner   string
+	Keys    []string
+	Delta   int64
+	Enforce bool
 }
 
 // PGLimits configure PGLimiter. Zero limits are off.
@@ -45,7 +51,8 @@ type PGLimits struct {
 	BytesPerDay  int64
 	// Quota is the owner's storage cap in bytes (<= 0 unlimited); nil disables quotas.
 	Quota func(ctx context.Context, tenant, owner string) (int64, error)
-	// ReservationTTL drops unsettled reservations; default 24h.
+	// ReservationTTL drops unsettled reservations (commit still enforces the
+	// quota); default 24h.
 	ReservationTTL time.Duration
 }
 
@@ -153,6 +160,13 @@ WHERE tenant_id = $1 AND uploader = $2`, r.Tenant, r.Uploader).Scan(&day, &oldes
 }
 
 func (l *PGLimiter) Settle(ctx context.Context, s Settlement) error {
+	var quota int64
+	if s.Enforce && s.Delta > 0 && s.Owner != "" && l.limits.Quota != nil {
+		var err error
+		if quota, err = l.limits.Quota(ctx, s.Tenant, s.Owner); err != nil {
+			return fmt.Errorf("media: quota for %s: %w", s.Owner, err)
+		}
+	}
 	return pgx.BeginFunc(ctx, l.pool, func(tx pgx.Tx) error {
 		if len(s.Keys) > 0 {
 			if _, err := tx.Exec(ctx, `DELETE FROM `+l.res+` WHERE tenant_id = $1 AND object_key = ANY($2)`, s.Tenant, s.Keys); err != nil {
@@ -161,6 +175,16 @@ func (l *PGLimiter) Settle(ctx context.Context, s Settlement) error {
 		}
 		if s.Owner == "" || s.Delta == 0 {
 			return nil
+		}
+		if quota > 0 {
+			var used int64
+			if err := tx.QueryRow(ctx, `INSERT INTO `+l.usage+` AS u (tenant_id, owner_id) VALUES ($1, $2)
+ON CONFLICT (tenant_id, owner_id) DO UPDATE SET used_bytes = u.used_bytes RETURNING used_bytes`, s.Tenant, s.Owner).Scan(&used); err != nil {
+				return err
+			}
+			if used+s.Delta > quota {
+				return &UploadError{Code: CodeQuota, Message: fmt.Sprintf("storage quota exceeded: %d used, %d more committed of %d", used, s.Delta, quota)}
+			}
 		}
 		_, err := tx.Exec(ctx, `INSERT INTO `+l.usage+` AS u (tenant_id, owner_id, used_bytes) VALUES ($1, $2, GREATEST($3, 0))
 ON CONFLICT (tenant_id, owner_id) DO UPDATE SET used_bytes = GREATEST(u.used_bytes + $3, 0)`, s.Tenant, s.Owner, s.Delta)

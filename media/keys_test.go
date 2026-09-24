@@ -122,6 +122,23 @@ func TestKindRules(t *testing.T) {
 	if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{inline: {Outputs: map[string]media.Spec{"a": {}}}}}); err == nil {
 		t.Fatal("inline-named slot accepted")
 	}
+	editor := media.Spec{Unedited: true, EditorOnly: true}
+	for name, k := range map[string]media.Kind{
+		"public unedited spec": {Specs: map[string]media.Spec{"editor": {Unedited: true}}},
+		"editor slot output":   {Slots: map[string]media.Slot{"cover": {Outputs: map[string]media.Spec{"cover": editor}}}},
+		"editor inline":        {Inline: &editor},
+		"editor zip":           {Specs: map[string]media.Spec{"editor": editor}, Zip: "editor"},
+		"odd ladder":           {Video: &media.Video{Ladder: []int{720, 481}}},
+		"ascending ladder":     {Video: &media.Video{Ladder: []int{480, 720}}},
+	} {
+		k.Name = "x"
+		if _, err := media.NewRegistry(k); err == nil {
+			t.Fatalf("%s accepted", name)
+		}
+	}
+	if _, err := media.NewRegistry(media.Kind{Name: "x", Specs: map[string]media.Spec{"editor": editor}, Video: &media.Video{Ladder: []int{720, 360}}}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestInlineImageKeys(t *testing.T) {

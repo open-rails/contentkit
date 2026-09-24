@@ -13,9 +13,6 @@ import (
 	"golang.org/x/text/language/display"
 )
 
-// Ladder is Hentai0's H.264 ladder; rungs taller than the source are dropped.
-var Ladder = []int{2160, 1440, 1080, 720, 480}
-
 type probeResult struct {
 	Streams []probeStream `json:"streams"`
 	Format  struct {
@@ -48,7 +45,8 @@ type probeStream struct {
 
 func probe(ctx context.Context, path string) (probeResult, error) {
 	var p probeResult
-	out, err := command(ctx, "ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", path)
+	out, err := command(ctx, "ffprobe", append(append([]string{"-v", "error"}, inputOptions(sourceDemuxers)...),
+		"-show_streams", "-show_format", "-of", "json", path)...)
 	if err != nil {
 		return p, err
 	}
@@ -82,7 +80,7 @@ type plan struct {
 
 var errNoVideo = errors.New("source has no video stream")
 
-func newPlan(p probeResult) (plan, error) {
+func newPlan(p probeResult, ladder []int) (plan, error) {
 	var pl plan
 	d, err := strconv.ParseFloat(p.Format.Duration, 64)
 	if err != nil || d <= 0 || math.IsInf(d, 0) || math.IsNaN(d) {
@@ -122,7 +120,7 @@ func newPlan(p probeResult) (plan, error) {
 	if pl.video < 0 {
 		return pl, errNoVideo
 	}
-	pl.rungs = rungs(pl.height)
+	pl.rungs = rungs(ladder, pl.height)
 	// Exactly one default audio track: the first flagged one, else the first.
 	def := 0
 	for i, a := range pl.audio {
@@ -139,9 +137,9 @@ func newPlan(p probeResult) (plan, error) {
 
 // rungs are the ladder heights no taller than the source; a source below the
 // lowest rung is encoded once at its own (even) height.
-func rungs(height int) []int {
+func rungs(ladder []int, height int) []int {
 	var out []int
-	for _, h := range Ladder {
+	for _, h := range ladder {
 		if h <= height {
 			out = append(out, h)
 		}

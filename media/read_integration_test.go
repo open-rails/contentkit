@@ -460,3 +460,53 @@ func TestReadHandler(t *testing.T) {
 		t.Fatalf("public url %q %v", u, err)
 	}
 }
+
+func TestReadEditorOnlyVariants(t *testing.T) {
+	f := newReadFixture(t)
+	ref := contentref.New(f.env.Tenant, "post", "502")
+	edit := &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 100, H: 100}}
+	if _, err := f.ms.Edit(context.Background(), ref, func(m *media.Manifest) error {
+		m.Files = []media.File{{Name: "a.png", Original: blobName("a"), Type: "image/png", Edit: edit, Dims: &media.Dims{W: 400, H: 200},
+			Variants: map[string]media.Variant{"large": {Blob: blobName("a-large")}, "editor": {Blob: blobName("a-editor"), Editor: true}}}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	editorKey := f.key(t, ref, media.AreaBlobs, blobName("a-editor"))
+	for _, mode := range []media.DeliveryMode{media.DeliverCookie, media.DeliverURL} {
+		for _, res := range []access.Resolution{
+			{Visible: true, Accessible: true},
+			{Visible: true, PreviewLimit: 1},
+			{Visible: true, Accessible: true, Editor: true},
+			{Visible: true, PreviewLimit: 1, Editor: true},
+		} {
+			t.Run(fmt.Sprintf("%s %+v", mode, res), func(t *testing.T) {
+				f.res.verdicts["502"] = res
+				r := f.reader(t, mode, media.Hooks{})
+				out := f.read(t, r, ref, media.ReadOptions{Variants: []string{"editor", "large"}})
+				fi := out.Files[0]
+				want := "large"
+				if res.Editor {
+					want = "editor"
+				}
+				if fi.Variant != want || (fi.Edit != nil) != res.Editor || (fi.Dims != nil) != res.Editor {
+					t.Fatalf("file %+v", fi)
+				}
+				g, err := r.Grant(context.Background(), ref, access.Actor{ID: "u1"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				u, err := g.URL(0, blobName("a-editor"))
+				if !res.Editor {
+					if !errors.Is(err, media.ErrNotAllowed) {
+						t.Fatalf("editor blob signed for a viewer: %q %v", u, err)
+					}
+					return
+				}
+				if key, _, _ := split(t, u); err != nil || key != editorKey {
+					t.Fatalf("editor url %q %v", u, err)
+				}
+			})
+		}
+	}
+}

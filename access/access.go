@@ -32,6 +32,10 @@ type Resolution struct {
 	// files), whatever Accessible says. 0 = no cap. Content interactions
 	// ignore it.
 	PreviewLimit int
+	// Editor = the actor may edit the item (its creator, staff): media signs
+	// EditorOnly variants and returns edit metadata only for editors. It
+	// grants nothing beyond what Visible, Accessible and PreviewLimit allow.
+	Editor bool
 }
 
 // Full reports unrestricted access: every unit is served.

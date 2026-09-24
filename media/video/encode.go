@@ -3,6 +3,8 @@ package video
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -17,9 +19,32 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// Recipe is the encode's identity: a manifest hls or download whose spec
-// differs is stale and re-encoded.
-const Recipe = "h264-high-crf22-fast|k4|2160,1440,1080,720,480|aac-128k-48k-2ch|webvtt|sprite-10x10-160x90-jpg|mp4-all-audio-mov_text|v1"
+// recipe is the encode's identity with the ladder: a manifest hls or
+// download whose spec differs is stale and re-encoded.
+const recipe = "h264-high-crf22-fast|k4|%s|aac-128k-48k-2ch|webvtt|sprite-10x10-160x90-jpg|mp4-all-audio-mov_text|v1"
+
+// Spec identifies the recipe over ladder (empty: media.DefaultLadder) in
+// manifest hls and downloads entries.
+func Spec(ladder []int) string {
+	if len(ladder) == 0 {
+		ladder = media.DefaultLadder
+	}
+	h := make([]string, len(ladder))
+	for i, v := range ladder {
+		h[i] = strconv.Itoa(v)
+	}
+	s := sha256.Sum256(fmt.Appendf(nil, recipe, strings.Join(h, ",")))
+	return hex.EncodeToString(s[:4])
+}
+
+// sourceDemuxers are the containers a source may be; playlists, concat lists,
+// image sequences and devices never reach ffmpeg.
+var sourceDemuxers = []string{"mov", "matroska", "avi", "mpegts", "flv", "ogg", "asf", "mpeg"}
+
+// inputOptions confine the next input to local files of the given demuxers.
+func inputOptions(demuxers []string) []string {
+	return []string{"-protocol_whitelist", "file", "-format_whitelist", strings.Join(demuxers, ",")}
+}
 
 const (
 	segmentSeconds = 4
@@ -46,7 +71,8 @@ func ladder(ctx context.Context, src, dir string, p plan, threads int) error {
 		n, interval, spriteW, spriteH, spriteW, spriteH, spriteCols, spriteRows)
 
 	t := strconv.Itoa(threads)
-	args := []string{"-v", "error", "-nostdin", "-threads", t, "-i", src, "-filter_complex_threads", t, "-filter_complex", fc.String()}
+	args := append([]string{"-v", "error", "-nostdin", "-threads", t}, inputOptions(sourceDemuxers)...)
+	args = append(args, "-i", src, "-filter_complex_threads", t, "-filter_complex", fc.String())
 	hls := func(segment, playlist string) []string {
 		return []string{"-fflags", "+bitexact", "-flags", "+bitexact", "-muxdelay", "0", "-muxpreload", "0",
 			"-f", "hls", "-hls_time", strconv.Itoa(segmentSeconds), "-hls_playlist_type", "vod",
@@ -76,7 +102,9 @@ func ladder(ctx context.Context, src, dir string, p plan, threads int) error {
 // mux stream-copies one rendition, every audio track (default first) and the
 // subtitles into a faststart MP4 download. Output is byte-identical on retry.
 func mux(ctx context.Context, dir string, rendition int, p plan, out string) error {
-	args := []string{"-v", "error", "-nostdin", "-i", filepath.Join(dir, fmt.Sprintf("v%d.mp4", rendition))}
+	own := inputOptions([]string{"mov", "webvtt"}) // our own renditions and subtitles
+	args := append([]string{"-v", "error", "-nostdin"}, own...)
+	args = append(args, "-i", filepath.Join(dir, fmt.Sprintf("v%d.mp4", rendition)))
 	order := make([]int, 0, len(p.audio))
 	for i, a := range p.audio {
 		if a.def {
@@ -86,10 +114,10 @@ func mux(ctx context.Context, dir string, rendition int, p plan, out string) err
 		}
 	}
 	for _, i := range order {
-		args = append(args, "-i", filepath.Join(dir, fmt.Sprintf("a%d.mp4", i)))
+		args = append(append(args, own...), "-i", filepath.Join(dir, fmt.Sprintf("a%d.mp4", i)))
 	}
 	for i := range p.subs {
-		args = append(args, "-i", filepath.Join(dir, fmt.Sprintf("s%d.vtt", i)))
+		args = append(append(args, own...), "-i", filepath.Join(dir, fmt.Sprintf("s%d.vtt", i)))
 	}
 	args = append(args, "-map", "0:v:0")
 	in := 1
