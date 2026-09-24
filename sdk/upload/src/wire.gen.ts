@@ -7,6 +7,11 @@ export const MAX_PART_SIZE = 16777216;
 export type ErrorCode = "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "incomplete" | "not_uploaded" | "too_many_files" | "too_large" | "quota_exceeded" | "type_not_allowed" | "checksum_mismatch" | "rate_limited" | "internal_error";
 
 export type OpName = "insert" | "replace" | "move" | "rename" | "remove" | "edit";
+export type PosterSource = "frame" | "upload" | "auto";
+
+export const HOVER_PREVIEW_DEFAULT = 3;
+export const HOVER_PREVIEW_MIN = 1;
+export const HOVER_PREVIEW_MAX = 6;
 
 export interface RefBody {
   kind: string;
@@ -162,6 +167,75 @@ export interface SlotManifest {
   outputs: SlotImage[];
   pending: boolean;
   error?: string;
+}
+
+export interface VideoImagesBody {
+  ref: RefBody;
+  file?: string;
+}
+
+export interface VideoPosterBody {
+  ref: RefBody;
+  source: PosterSource;
+  file?: string;
+  time?: number;
+  sha256?: string;
+  edit?: Edit;
+}
+
+export interface VideoPreviewBody {
+  ref: RefBody;
+  file?: string;
+  start?: number;
+  duration?: number;
+}
+
+export interface PosterSelection {
+  source: PosterSource;
+  version?: string;
+  file?: string;
+  time?: number;
+}
+
+export interface PosterManifest extends SlotManifest {
+  selection?: PosterSelection;
+}
+
+export interface HoverPreviewSelection {
+  version?: string;
+  file: string;
+  start: number;
+  duration: number;
+  auto?: boolean;
+}
+
+export interface PreviewImage {
+  w: number;
+  h: number;
+  url: string;
+}
+
+export interface HoverPreviewManifest {
+  selection?: HoverPreviewSelection;
+  version?: string;
+  mp4: PreviewImage[];
+  webp: PreviewImage[];
+  pending: boolean;
+}
+
+export interface VideoInfo {
+  version?: string;
+  file: string;
+  duration: number;
+  w: number;
+  h: number;
+  encoded: boolean;
+}
+
+export interface VideoImages {
+  poster: PosterManifest;
+  hover_preview: HoverPreviewManifest;
+  video?: VideoInfo;
 }
 
 export interface ErrorReply {

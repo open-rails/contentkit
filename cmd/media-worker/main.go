@@ -12,6 +12,9 @@
 //	MEDIA_WORKER_CONCURRENCY     jobs per process (default 1)
 //	MEDIA_WORKER_JOB_TIMEOUT     per-job limit (default 48h)
 //	MEDIA_WORKER_SHUTDOWN_GRACE  time running jobs get to finish on SIGTERM before cancel (default 30s)
+//	MEDIA_HOST_RIVER_SCHEMA      the host's River schema, where grabbed poster frames go to its image job
+//	                             (default: the connection's search path)
+//	MEDIA_HOST_QUEUE             the host's media queue (default contentkit_media)
 package main
 
 import (
@@ -100,7 +103,11 @@ func run(log *slog.Logger) error {
 	if err := video.SweepTemp(tmp); err != nil {
 		return fmt.Errorf("sweep scratch: %w", err)
 	}
-	enc, err := video.New(video.Config{Store: store, Locker: media.PGLocker(pool), TempDir: tmp, Threads: threads, Logger: log})
+	slots, err := media.NewProcessInserter(pool, os.Getenv("MEDIA_HOST_RIVER_SCHEMA"), os.Getenv("MEDIA_HOST_QUEUE"))
+	if err != nil {
+		return err
+	}
+	enc, err := video.New(video.Config{Store: store, Locker: media.PGLocker(pool), TempDir: tmp, Threads: threads, Logger: log, Slots: slots})
 	if err != nil {
 		return err
 	}

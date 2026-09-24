@@ -50,7 +50,7 @@ another tenant is an error, never remapped.
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
 | `media/image` | libvips (CGO) processor: WebP variants, public slots, zip downloads |
 | `media/token` | media access tokens, shared by hosts and the access worker |
-| `media/video` | ffmpeg encode jobs: byte-range fMP4 HLS ladder, AAC per audio track, WebVTT per text subtitle, sprite, per-quality MP4 downloads; River in schema `media_worker` (`cmd/media-worker`) |
+| `media/video` | ffmpeg encode jobs: byte-range fMP4 HLS ladder, AAC per audio track, WebVTT per text subtitle, sprite, per-quality MP4 downloads, poster frames and hover previews; `Frames` for the poster picker; River in schema `media_worker` (`cmd/media-worker`) |
 | `media/tiered` | optional `public`/`members`/`ppv`/`members_ppv`/`premium` policy over an entitlement `Checker` (hosts adapt OpenRails `CheckEntitlements`) |
 | `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; the `Identity`/`Authorizer`/`UserEnricher`/`ContentProcessor` ports, post and poll images through `Media`, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, and the HTTP routes |
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
@@ -359,6 +359,11 @@ the ladder changes `video.Spec(ladder)`, so files re-encode. Jobs live in River 
 database: hosts run `video.Migrate` and enqueue through `video.NewEnqueuer`
 (insert-only; register `enqueuer.Processor()` with `media.Jobs.AddProcessor`); the worker's environment is
 documented in `cmd/media-worker`.
+
+After each encode the job grabs the item's **poster** frame (the `poster`
+slot; the image job encodes it) and renders its **hover preview** (silent MP4
+and animated WebP loops) from their selections; see HOST_INTEGRATION "Video
+posters and hover previews".
 
 **Playback** is served by `Reader.Handler` next to the read API, generated per
 request after one `Resolve` (`private, no-store`; the folder cookie is set in

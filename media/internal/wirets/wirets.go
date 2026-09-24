@@ -18,8 +18,13 @@ var types = []any{
 	media.PartBody{}, media.PartsBody{}, media.TicketBody{}, media.PartReply{}, media.PartsReply{},
 	media.CompleteReply{}, media.Crop{}, media.Edit{}, media.Op{}, media.CommitBody{}, media.CommitFile{},
 	media.CommitReply{}, media.SlotBody{}, media.SlotFromFileBody{}, media.SlotEditBody{}, media.SlotRefBody{},
-	media.Dims{}, media.SlotImage{}, media.SlotManifest{}, media.ErrorReply{},
+	media.Dims{}, media.SlotImage{}, media.SlotManifest{},
+	media.VideoImagesBody{}, media.VideoPosterBody{}, media.VideoPreviewBody{}, media.PosterSelection{},
+	media.PosterManifest{}, media.HoverPreviewSelection{}, media.PreviewImage{}, media.HoverPreviewManifest{},
+	media.VideoInfo{}, media.VideoImages{}, media.ErrorReply{},
 }
+
+var posterSources = []string{media.PosterSourceFrame, media.PosterSourceUpload, media.PosterSourceAuto}
 
 var errorCodes = []string{
 	media.CodeInvalid, "unauthorized", media.CodeForbidden, media.CodeNotFound, media.CodeConflict,
@@ -37,11 +42,27 @@ func Render() string {
 		media.MaxSinglePut, media.MinPartSize, media.MaxPartSize)
 	fmt.Fprintf(&b, "export type ErrorCode = %s;\n\n", union(errorCodes))
 	fmt.Fprintf(&b, "export type OpName = %s;\n", union(ops))
+	fmt.Fprintf(&b, "export type PosterSource = %s;\n", union(posterSources))
+	fmt.Fprintf(&b, "\nexport const HOVER_PREVIEW_DEFAULT = %g;\nexport const HOVER_PREVIEW_MIN = %g;\nexport const HOVER_PREVIEW_MAX = %g;\n",
+		media.HoverPreviewDefault, media.HoverPreviewMin, media.HoverPreviewMax)
 	for _, v := range types {
 		t := reflect.TypeOf(v)
-		fmt.Fprintf(&b, "\nexport interface %s {\n", t.Name())
+		var extends []string
+		for i := range t.NumField() {
+			if f := t.Field(i); f.Anonymous {
+				extends = append(extends, f.Type.Name())
+			}
+		}
+		ext := ""
+		if len(extends) > 0 {
+			ext = " extends " + strings.Join(extends, ", ")
+		}
+		fmt.Fprintf(&b, "\nexport interface %s%s {\n", t.Name(), ext)
 		for i := range t.NumField() {
 			f := t.Field(i)
+			if f.Anonymous {
+				continue
+			}
 			name, opts, _ := strings.Cut(f.Tag.Get("json"), ",")
 			if name == "-" || !f.IsExported() {
 				continue
@@ -55,6 +76,9 @@ func Render() string {
 			}
 			if t.Name() == "ErrorReply" && name == "code" {
 				typ = "ErrorCode"
+			}
+			if (t.Name() == "VideoPosterBody" || t.Name() == "PosterSelection") && name == "source" {
+				typ = "PosterSource"
 			}
 			opt := ""
 			if strings.Contains(opts, "omitempty") || f.Type.Kind() == reflect.Pointer {

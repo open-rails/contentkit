@@ -4,7 +4,7 @@
 //	{tenant}/{kind}/{content_id}/manifest.json | manifests/{version}.json
 //	                            /originals/{sha256-hex | u-uuid | slot | slot.json | i-uuid}
 //	                            /blobs/{sha256-hex | u-uuid}
-//	                            /public/{name}.webp
+//	                            /public/{name}.webp | {name}.mp4 (hover previews)
 package layout
 
 import (
@@ -25,6 +25,7 @@ const (
 	UploadPrefix = "u-"
 	InlinePrefix = "i-"
 	PublicExt    = ".webp"
+	PublicMP4Ext = ".mp4" // hover previews
 	// VersionParam versions a public URL: served immutable while it matches
 	// the object's VersionMeta.
 	VersionParam = "v"
@@ -62,6 +63,9 @@ func Parse(key string) (Key, bool) {
 		k.Area, k.Name = AreaBlobs, rest[1]
 	case len(rest) == 2 && rest[0] == AreaPublic:
 		n, ok := strings.CutSuffix(rest[1], PublicExt)
+		if !ok {
+			n, ok = strings.CutSuffix(rest[1], PublicMP4Ext)
+		}
 		if !ok || !ValidSegment(n) {
 			return Key{}, false
 		}

@@ -41,6 +41,10 @@ type UploadHandlerOptions struct {
 //	POST /edit-slot              SlotEditBody     -> SlotManifest   re-edit the committed original
 //	POST /slot                   SlotRefBody      -> SlotManifest
 //	POST /slot-original          SlotRefBody      -> the committed original's bytes (editor)
+//	POST /video-images   VideoImagesBody  -> VideoImages   poster + hover preview, with selections
+//	POST /video-poster   VideoPosterBody  -> VideoImages
+//	POST /video-preview  VideoPreviewBody -> VideoImages
+//	GET  /frame?kind=&id=&version=&file=&t=&w= -> image/jpeg   poster picker frame (UploadOptions.Frames)
 func UploadHandler(u *Uploads, o UploadHandlerOptions) http.Handler {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
@@ -58,6 +62,10 @@ func UploadHandler(u *Uploads, o UploadHandlerOptions) http.Handler {
 	mux.HandleFunc("POST /edit-slot", h.editSlot)
 	mux.HandleFunc("POST /slot", h.slot)
 	mux.HandleFunc("POST /slot-original", h.slotOriginal)
+	mux.HandleFunc("POST /video-images", h.videoImages)
+	mux.HandleFunc("POST /video-poster", h.videoPoster)
+	mux.HandleFunc("POST /video-preview", h.videoPreview)
+	mux.HandleFunc("GET /frame", h.frame)
 	return mux
 }
 
@@ -183,6 +191,36 @@ type SlotFromFileBody struct {
 	From *RefBody `json:"from,omitempty"`
 	File string   `json:"file"`
 	Edit *Edit    `json:"edit,omitempty"`
+}
+
+// VideoImagesBody names a video item; with a version (versioned kinds) the
+// reply describes its file (file, default the first video file).
+type VideoImagesBody struct {
+	Ref  RefBody `json:"ref"`
+	File string  `json:"file,omitempty"`
+}
+
+// VideoPosterBody selects the poster. source "frame" needs time (seconds, in
+// the video) and a ref version for versioned kinds, its edit in the grabbed
+// frame's pixels (VideoInfo w×h); "upload" needs the sha256 of the image
+// presigned with slot "poster", its edit in that image's pixels; "auto"
+// returns to the default. Omitted edits centre the 16:9 crop.
+type VideoPosterBody struct {
+	Ref    RefBody  `json:"ref"`
+	Source string   `json:"source"`
+	File   string   `json:"file,omitempty"`
+	Time   *float64 `json:"time,omitempty"`
+	SHA256 string   `json:"sha256,omitempty"`
+	Edit   *Edit    `json:"edit,omitempty"`
+}
+
+// VideoPreviewBody selects the hover-preview section: start omitted is the
+// automatic section; duration defaults to 3 and is bounded 1-6 seconds.
+type VideoPreviewBody struct {
+	Ref      RefBody  `json:"ref"`
+	File     string   `json:"file,omitempty"`
+	Start    *float64 `json:"start,omitempty"`
+	Duration float64  `json:"duration,omitempty"`
 }
 
 // ErrorReply is the error body; Code is one of the media Code* constants,
@@ -394,6 +432,95 @@ func (h uploadHandler) slotReply(w http.ResponseWriter, r *http.Request, ref Ref
 		return
 	}
 	writeJSON(w, http.StatusOK, m)
+}
+
+func (h uploadHandler) videoImages(w http.ResponseWriter, r *http.Request) {
+	var b VideoImagesBody
+	actor, ok := h.read(w, r, &b)
+	if !ok {
+		return
+	}
+	_, err := h.u.authorize(r.Context(), actor, h.ref(b.Ref).Content())
+	h.videoReply(w, r, b.Ref, b.File, err)
+}
+
+func (h uploadHandler) videoPoster(w http.ResponseWriter, r *http.Request) {
+	var b VideoPosterBody
+	actor, ok := h.read(w, r, &b)
+	if !ok {
+		return
+	}
+	req := PosterRequest{Source: b.Source, File: b.File, Edit: b.Edit}
+	switch b.Source {
+	case PosterSourceFrame:
+		if b.Time == nil {
+			writeJSON(w, http.StatusBadRequest, ErrorReply{Error: "a frame poster needs time", Code: CodeInvalid})
+			return
+		}
+		req.Time = *b.Time
+	case PosterSourceUpload:
+		if req.SHA256, ok = h.digest(w, b.SHA256); !ok {
+			return
+		}
+	}
+	h.videoReply(w, r, b.Ref, b.File, h.u.SetVideoPoster(r.Context(), actor, h.ref(b.Ref), req))
+}
+
+func (h uploadHandler) videoPreview(w http.ResponseWriter, r *http.Request) {
+	var b VideoPreviewBody
+	actor, ok := h.read(w, r, &b)
+	if !ok {
+		return
+	}
+	err := h.u.SetHoverPreview(r.Context(), actor, h.ref(b.Ref), PreviewRequest{File: b.File, Start: b.Start, Duration: b.Duration})
+	h.videoReply(w, r, b.Ref, b.File, err)
+}
+
+func (h uploadHandler) videoReply(w http.ResponseWriter, r *http.Request, ref RefBody, file string, err error) {
+	if err == nil && h.o.PublicBaseURL == "" {
+		err = errors.New("media: UploadHandlerOptions.PublicBaseURL is required for video routes")
+	}
+	var v VideoImages
+	if err == nil {
+		v, err = h.u.o.Manifests.VideoImages(r.Context(), h.o.PublicBaseURL, h.ref(ref), true, file)
+	}
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+
+func (h uploadHandler) frame(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.o.Actor(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, ErrorReply{Error: "authentication required", Code: "unauthorized"})
+		return
+	}
+	q := r.URL.Query()
+	t, err := strconv.ParseFloat(q.Get("t"), 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, ErrorReply{Error: "t must be seconds", Code: CodeInvalid})
+		return
+	}
+	width := 0
+	if v := q.Get("w"); v != "" {
+		if width, err = strconv.Atoi(v); err != nil {
+			writeJSON(w, http.StatusBadRequest, ErrorReply{Error: "w must be pixels", Code: CodeInvalid})
+			return
+		}
+	}
+	ref := h.ref(RefBody{Kind: q.Get("kind"), ID: q.Get("id"), Version: q.Get("version")})
+	jpeg, err := h.u.Frame(r.Context(), actor, ref, q.Get("file"), t, width)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Content-Length", strconv.Itoa(len(jpeg)))
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(jpeg)
 }
 
 func (h uploadHandler) read(w http.ResponseWriter, r *http.Request, v any) (access.Actor, bool) {

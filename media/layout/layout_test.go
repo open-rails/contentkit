@@ -12,11 +12,12 @@ func TestParse(t *testing.T) {
 	sum := sha256.Sum256(nil)
 	blob := layout.SHA256Prefix + hex.EncodeToString(sum[:])
 	for key, want := range map[string]layout.Key{
-		"d/gallery/1/manifest.json":       {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaManifest},
-		"d/gallery/1/manifests/v2.json":   {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaManifest, Name: "v2"},
-		"d/gallery/1/blobs/" + blob:       {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaBlobs, Name: blob},
-		"d/gallery/1/originals/cover":     {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaOriginals, Name: "cover"},
-		"o/user/42/public/avatar_80.webp": {Tenant: "o", Kind: "user", ID: "42", Area: layout.AreaPublic, Name: "avatar_80"},
+		"d/gallery/1/manifest.json":              {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaManifest},
+		"d/gallery/1/manifests/v2.json":          {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaManifest, Name: "v2"},
+		"d/gallery/1/blobs/" + blob:              {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaBlobs, Name: blob},
+		"d/gallery/1/originals/cover":            {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaOriginals, Name: "cover"},
+		"o/user/42/public/avatar_80.webp":        {Tenant: "o", Kind: "user", ID: "42", Area: layout.AreaPublic, Name: "avatar_80"},
+		"h/video/9/public/hover_preview_320.mp4": {Tenant: "h", Kind: "video", ID: "9", Area: layout.AreaPublic, Name: "hover_preview_320"},
 	} {
 		got, ok := layout.Parse(key)
 		if !ok || got != want {

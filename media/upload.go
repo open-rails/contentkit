@@ -68,13 +68,19 @@ type UploadOptions struct {
 	// Grace is the sweep's (JobsConfig.Grace): Queue's when it is *Jobs, else 24h.
 	Grace     time.Duration
 	TicketTTL time.Duration // multipart ticket; default 24h, the abort-incomplete rule
+	// Frames serves the video poster picker's frame grabs (media/video.Frames;
+	// needs ffmpeg); nil answers not_found. FrameConcurrency bounds concurrent
+	// grabs per process; default 2.
+	Frames           FrameGrabber
+	FrameConcurrency int
 }
 
 // Uploads presigns direct-to-bucket uploads and commits them into manifests.
 // It keeps no state: a multipart upload is its S3 UploadId, carried in a
 // signed ticket.
 type Uploads struct {
-	o UploadOptions
+	o      UploadOptions
+	frames chan struct{}
 }
 
 func NewUploads(o UploadOptions) (*Uploads, error) {
@@ -93,7 +99,10 @@ func NewUploads(o UploadOptions) (*Uploads, error) {
 	if o.Grace <= 0 {
 		o.Grace = 24 * time.Hour
 	}
-	return &Uploads{o: o}, nil
+	if o.FrameConcurrency <= 0 {
+		o.FrameConcurrency = 2
+	}
+	return &Uploads{o: o, frames: make(chan struct{}, o.FrameConcurrency)}, nil
 }
 
 // PresignRequest declares one file. SHA256 is required up to MaxSinglePut and

@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
 
 	"github.com/open-rails/contentkit/contentref"
@@ -79,7 +81,7 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 		cfg.LateUploadWindow = 25 * time.Hour
 	}
 	if cfg.Queue == "" {
-		cfg.Queue = "contentkit_media"
+		cfg.Queue = DefaultQueue
 	}
 	if cfg.MaxWorkers <= 0 {
 		cfg.MaxWorkers = 2
@@ -489,3 +491,37 @@ func (w *processWorker) Work(ctx context.Context, job *river.Job[processArgs]) e
 	}
 	return errors.Join(errs...)
 }
+
+// DefaultQueue is JobsConfig.Queue's default.
+const DefaultQueue = "contentkit_media"
+
+// ProcessInserter enqueues media process jobs into the host's River schema
+// from another process: the video worker hands a grabbed poster frame to the
+// host's image job this way. It inserts only.
+type ProcessInserter struct {
+	client *river.Client[pgx.Tx]
+	queue  string
+}
+
+// NewProcessInserter targets the host's River schema ("" is the connection's
+// search path) and media queue ("" is DefaultQueue).
+func NewProcessInserter(pool *pgxpool.Pool, schema, queue string) (*ProcessInserter, error) {
+	if pool == nil {
+		return nil, errors.New("media: ProcessInserter needs a pool")
+	}
+	if queue == "" {
+		queue = DefaultQueue
+	}
+	c, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: schema})
+	if err != nil {
+		return nil, err
+	}
+	return &ProcessInserter{client: c, queue: queue}, nil
+}
+
+func (p *ProcessInserter) Enqueue(ctx context.Context, job ProcessJob) error {
+	_, err := p.client.Insert(ctx, processArgs{Ref: job.Ref, Slot: job.Slot}, &river.InsertOpts{Queue: p.queue, UniqueOpts: pendingOnce})
+	return err
+}
+
+var _ ProcessQueue = (*ProcessInserter)(nil)

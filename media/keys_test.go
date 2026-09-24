@@ -214,3 +214,44 @@ func TestSlotResolve(t *testing.T) {
 		}
 	}
 }
+
+func TestVideoKindSlots(t *testing.T) {
+	r, err := media.NewRegistry(media.Kind{Name: "video", Versioned: true, Video: &media.Video{},
+		Slots: map[string]media.Slot{"banner": {Aspect: 3, Widths: []int{600}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, _ := r.Kind("video")
+	if p, ok := k.Slots[media.PosterSlot]; !ok || p.Hash() != media.VideoPoster.Hash() || len(k.Slots) != 2 {
+		t.Fatalf("slots %+v", k.Slots)
+	}
+	v, _ := r.Item(contentref.New("h", "video", "9"))
+	if v.HoverPreviewRecord() != "h/video/9/originals/hover_preview.json" || v.HoverPreviewOutput(640, true) != "h/video/9/public/hover_preview_640.mp4" {
+		t.Fatal(v.HoverPreviewRecord(), v.HoverPreviewOutput(640, true))
+	}
+	if k, _ := v.SlotOutput(media.PosterSlot, 960); k != "h/video/9/public/poster_960.webp" {
+		t.Fatal(k)
+	}
+	for _, name := range []string{media.PosterSlot, media.HoverPreview} {
+		if _, err := media.NewRegistry(media.Kind{Name: "video", Video: &media.Video{},
+			Slots: map[string]media.Slot{name: {Aspect: 16.0 / 9, Widths: []int{320}}}}); err == nil {
+			t.Errorf("reserved slot %q accepted", name)
+		}
+	}
+	if s := media.HoverPreviewSizes(270, 480); len(s) != 1 || s[0] != (media.Dims{W: 320, H: 180}) {
+		t.Fatalf("portrait sizes %v", s)
+	}
+	if s := media.HoverPreviewSizes(1920, 1080); len(s) != 2 {
+		t.Fatalf("1080p sizes %v", s)
+	}
+	for in, want := range map[media.Dims]media.Dims{{W: 1920, H: 1080}: {W: 1920, H: 1080}, {W: 426, H: 240}: {W: 480, H: 271}, {W: 270, H: 480}: {W: 480, H: 854}} {
+		if got := media.PosterFrameSize(in.W, in.H); got != want {
+			t.Errorf("poster frame of %v: %v, want %v", in, got, want)
+		}
+	}
+	for d, want := range map[float64][2]float64{12: {3, 3}, 2: {0, 2}, 3.5: {0.5, 3}, 600: {150, 3}} {
+		if s, l := media.AutoHoverPreview(d); s != want[0] || l != want[1] {
+			t.Errorf("auto preview of %gs: %g+%g", d, s, l)
+		}
+	}
+}

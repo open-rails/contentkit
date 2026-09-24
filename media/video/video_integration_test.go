@@ -104,6 +104,7 @@ type env struct {
 	uploads   *media.Uploads
 	encoder   *video.Encoder
 	ref       contentref.ContentRef
+	slotJobs  []media.ProcessJob // poster frames handed to the image job
 }
 
 var admin = access.Actor{ID: "admin", Kind: "user"}
@@ -117,7 +118,7 @@ func newEnv(t *testing.T, store func(media.Store) media.Store, queue media.Proce
 		e.store = store(s3.Store)
 	}
 	var err error
-	if e.kinds, err = media.NewRegistry(media.Kind{Name: "video", Versioned: true, Video: &media.Video{}, Types: []string{"video/x-matroska"}}); err != nil {
+	if e.kinds, err = media.NewRegistry(media.Kind{Name: "video", Versioned: true, Video: &media.Video{}, Types: []string{"video/x-matroska", "video/mp4"}}); err != nil {
 		t.Fatal(err)
 	}
 	var locker media.Locker
@@ -131,7 +132,8 @@ func newEnv(t *testing.T, store func(media.Store) media.Store, queue media.Proce
 		Authorizer: grants{}, Queue: queue}); err != nil {
 		t.Fatal(err)
 	}
-	if e.encoder, err = video.New(video.Config{Store: e.store, Locker: locker, TempDir: t.TempDir(), Threads: 2}); err != nil {
+	slots := queueFunc(func(_ context.Context, j media.ProcessJob) error { e.slotJobs = append(e.slotJobs, j); return nil })
+	if e.encoder, err = video.New(video.Config{Store: e.store, Locker: locker, TempDir: t.TempDir(), Threads: 2, Slots: slots}); err != nil {
 		t.Fatal(err)
 	}
 	e.ref = contentref.NewVersion(s3.Tenant, "video", "88", "v1")
@@ -158,7 +160,7 @@ func (e *env) commit(t *testing.T, path, op string) string {
 	name := media.SHA256Name(sum[:])
 	key, _ := e.item(t).Original(name)
 	if _, err := e.store.Put(context.Background(), key, bytes.NewReader(body), int64(len(body)),
-		media.PutOptions{ContentType: "video/x-matroska", ChecksumSHA256: sum[:]}); err != nil {
+		media.PutOptions{ContentType: map[bool]string{true: "video/mp4", false: "video/x-matroska"}[filepath.Ext(path) == ".mp4"], ChecksumSHA256: sum[:]}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.uploads.Commit(context.Background(), admin, e.ref, []media.Op{{Op: op, Name: "source", Original: name}}); err != nil {
