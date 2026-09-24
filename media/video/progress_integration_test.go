@@ -111,7 +111,7 @@ poll:
 			if p := read().Progress; p != nil && (len(seen) == 0 || p.At != seen[len(seen)-1].At) {
 				seen = append(seen, *p)
 			}
-			vi, err := reader.VideoImages(ctx, e.ref)
+			vi, err := reader.VideoImages(ctx, e.ref, access.Actor{Anonymous: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -164,7 +164,7 @@ poll:
 	if f := read(); !f.HLS || f.Progress != nil {
 		t.Fatalf("after publish: %+v %+v", f, f.Progress)
 	}
-	if vi, err := reader.VideoImages(ctx, e.ref); err != nil || vi.Progress != nil {
+	if vi, err := reader.VideoImages(ctx, e.ref, access.Actor{Anonymous: true}); err != nil || vi.Progress != nil {
 		t.Fatalf("video-images after the job: %+v %v", vi.Progress, err)
 	}
 	var left int

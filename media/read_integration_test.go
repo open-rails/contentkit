@@ -165,7 +165,11 @@ func (f *readFixture) key(t *testing.T, ref contentref.ContentRef, area, name st
 		}
 		return k
 	}
-	k, err := item.Blob(name)
+	blob := item.Blob
+	if area == media.AreaEditor {
+		blob = item.EditorBlob
+	}
+	k, err := blob(name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,6 +471,17 @@ func TestReadHandler(t *testing.T) {
 		t.Fatalf("resolver error must deny: %d %v", resp.StatusCode, body)
 	}
 
+	if resp, _ := get("/media/post/501/slots/cover"); resp.StatusCode != 500 {
+		t.Fatalf("slot read must resolve: %d", resp.StatusCode)
+	}
+	f.res.err = nil
+	hidden := f.res.verdicts["501"]
+	f.res.verdicts["501"] = access.Resolution{}
+	if resp, _ := get("/media/post/501/slots/cover"); resp.StatusCode != 404 {
+		t.Fatalf("slot of a hidden item: %d", resp.StatusCode)
+	}
+	f.res.verdicts["501"] = access.Resolution{Visible: true}
+	defer func() { f.res.verdicts["501"] = hidden }()
 	if resp, body := get("/media/post/501/slots/cover"); resp.StatusCode != 200 || body["pending"] != false || len(body["outputs"].([]any)) != 0 {
 		t.Fatalf("uncommitted slot: %d %v", resp.StatusCode, body)
 	}
@@ -480,7 +495,7 @@ func TestReadHandler(t *testing.T) {
 	cover := readBase + "/" + f.env.Tenant + "/post/501/public/cover_64.webp"
 	resp, body = get("/media/post/501/slots/cover")
 	if outs := body["outputs"].([]any); resp.StatusCode != 200 || body["pending"] != false || len(outs) != 1 || body["version"] != fp ||
-		outs[0].(map[string]any)["url"] != cover+"?v="+fp || body["dims"].(map[string]any)["w"] != float64(200) || resp.Header.Get("Cache-Control") != "no-cache" {
+		outs[0].(map[string]any)["url"] != cover+"?v="+fp || body["dims"].(map[string]any)["w"] != float64(200) || resp.Header.Get("Cache-Control") != "private, no-store" {
 		t.Fatalf("slot: %d %v", resp.StatusCode, body)
 	}
 	if resp, _ := get("/media/post/501/slots/nope"); resp.StatusCode != 404 {
@@ -515,7 +530,8 @@ func TestReadEditorOnlyVariants(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	editorKey := f.key(t, ref, media.AreaBlobs, blobName("a-editor"))
+	editorKey := f.key(t, ref, media.AreaEditor, blobName("a-editor"))
+	largeKey := f.key(t, ref, media.AreaBlobs, blobName("a-large"))
 	for _, mode := range []media.DeliveryMode{media.DeliverCookie, media.DeliverURL} {
 		for _, res := range []access.Resolution{
 			{Visible: true, Accessible: true},
@@ -539,6 +555,16 @@ func TestReadEditorOnlyVariants(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				// The viewer token (folder cookie, folder or file URL token) never opens editor/.
+				viewer, err := g.URL(0, blobName("a-large"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, tok, _ := split(t, viewer)
+				if c := g.Cookie(); c != nil {
+					tok = c.Value
+				}
+				f.covers(t, tok, map[string]bool{largeKey: true}, largeKey, editorKey)
 				u, err := g.URL(0, blobName("a-editor"))
 				if !res.Editor {
 					if !errors.Is(err, media.ErrNotAllowed) {
@@ -546,9 +572,11 @@ func TestReadEditorOnlyVariants(t *testing.T) {
 					}
 					return
 				}
-				if key, _, _ := split(t, u); err != nil || key != editorKey {
+				key, tok, _ := split(t, u)
+				if err != nil || key != editorKey {
 					t.Fatalf("editor url %q %v", u, err)
 				}
+				f.covers(t, tok, map[string]bool{editorKey: true}, editorKey, largeKey)
 			})
 		}
 	}

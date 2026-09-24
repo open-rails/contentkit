@@ -304,6 +304,66 @@ func TestAccessWorker(t *testing.T) {
 		}
 	})
 
+	t.Run("cross-origin resource policy", func(t *testing.T) {
+		for _, r := range []result{do(t, srv, "GET", "/"+f.public, nil), do(t, srv, "GET", withToken(f.blobA, fileA), nil)} {
+			if r.status != 200 || r.header.Get("Cross-Origin-Resource-Policy") != "same-site" {
+				t.Fatalf("CORP: %d %v", r.status, r.header)
+			}
+		}
+		open := f.handler(t, func(c *accessworker.Config) { c.ResourcePolicy = "cross-origin" })
+		if r := do(t, open, "GET", "/"+f.public, nil); r.header.Get("Cross-Origin-Resource-Policy") != "cross-origin" {
+			t.Fatalf("configured CORP: %v", r.header)
+		}
+	})
+
+	t.Run("config validation", func(t *testing.T) {
+		base := accessworker.Config{Endpoint: f.env.Config.Endpoint, Bucket: f.env.Config.Bucket,
+			AccessKeyID: "a", SecretAccessKey: "s", Ring: cur}
+		for name, mut := range map[string]func(*accessworker.Config){
+			"wildcard origin":  func(c *accessworker.Config) { c.Origins = []string{"*"} },
+			"origin path":      func(c *accessworker.Config) { c.Origins = []string{"https://doujins.com/"} },
+			"wildcard host":    func(c *accessworker.Config) { c.Origins = []string{"https://*.doujins.com"} },
+			"origin no scheme": func(c *accessworker.Config) { c.Origins = []string{"doujins.com"} },
+			"host with port":   func(c *accessworker.Config) { c.Hosts = []string{"media.doujins.com:443"} },
+			"unknown policy":   func(c *accessworker.Config) { c.ResourcePolicy = "none" },
+		} {
+			c := base
+			mut(&c)
+			if _, err := accessworker.New(c); err == nil {
+				t.Errorf("%s accepted", name)
+			}
+		}
+		c := base
+		c.Origins = []string{"https://doujins.com", "http://localhost:5173"}
+		if _, err := accessworker.New(c); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("editor area needs an editor token", func(t *testing.T) {
+		variant := f.item + "editor/" + sha("editor")
+		staged := f.item + "editor/poster_480.webp"
+		for _, k := range []string{variant, staged} {
+			if _, err := f.env.Store.Put(context.Background(), k, strings.NewReader("ed"), 2, media.PutOptions{ContentType: "image/webp"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		editor := cur.Sign(f.item+"editor/", exp)
+		for _, k := range []string{variant, staged} {
+			expect(t, do(t, srv, "GET", "/"+k, nil), 403, "")
+			expect(t, do(t, srv, "GET", withToken(k, folder), nil), 403, "")
+			expect(t, do(t, srv, "GET", "/"+k, map[string]string{"Cookie": "mt=" + folder}), 403, "")
+			expect(t, do(t, srv, "GET", withToken(k, editor), nil), 200, "ed")
+		}
+		expect(t, do(t, srv, "GET", withToken(f.blobA, editor), nil), 403, "")
+		if r := do(t, srv, "GET", withToken(staged, editor), nil); r.header.Get("Cache-Control") != "private, no-cache" {
+			t.Fatalf("staged output headers: %v", r.header)
+		}
+		if r := do(t, srv, "GET", withToken(variant, editor), nil); r.header.Get("Cache-Control") != "private, max-age=31536000, immutable" {
+			t.Fatalf("editor variant headers: %v", r.header)
+		}
+	})
+
 	t.Run("hosts, methods and health", func(t *testing.T) {
 		hosted := f.handler(t, func(c *accessworker.Config) { c.Hosts = []string{"Media.Doujins.com"} })
 		expect(t, do(t, hosted, "GET", "/"+f.public, map[string]string{"Host": "media.doujins.com:443"}), 200, "cover")

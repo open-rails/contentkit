@@ -20,6 +20,9 @@ import (
 	"github.com/open-rails/contentkit/media/video"
 )
 
+// editorURLs lists posters from editor/, where the image job writes them.
+var editorURLs = media.OutputURLs{BaseURL: slotBase, EditorToken: "tok"}
+
 // The poster end to end: the video worker grabs frames into the poster slot
 // and hands them to this image job, which encodes them (and uploads) through
 // the slot's edit.
@@ -48,7 +51,7 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 	}
 	poster := func(widths ...int) []stdimage.Image {
 		t.Helper()
-		v, err := e.manifests.VideoImages(ctx, slotBase, ref, true, "")
+		v, err := e.manifests.VideoImages(ctx, editorURLs, ref, true, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -87,7 +90,7 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.drain(t) // the image job skips the slot until the frame is grabbed
-	if v, _ := e.manifests.VideoImages(ctx, slotBase, ref, true, ""); !v.Poster.Pending {
+	if v, _ := e.manifests.VideoImages(ctx, editorURLs, ref, true, ""); !v.Poster.Pending {
 		t.Fatal("frame selection not pending")
 	}
 	encode()
@@ -132,12 +135,12 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 			}
 		}
 	}
-	v, _ := e.manifests.VideoImages(ctx, slotBase, ref, true, "")
+	v, _ := e.manifests.VideoImages(ctx, editorURLs, ref, true, "")
 	if v.Poster.Selection == nil || v.Poster.Selection.Source != media.PosterSourceUpload || v.Poster.Dims == nil || *v.Poster.Dims != (media.Dims{W: 1920, H: 1080}) {
 		t.Fatalf("upload poster %+v", v.Poster)
 	}
 	encode() // the worker leaves an uploaded poster alone
-	if v2, _ := e.manifests.VideoImages(ctx, slotBase, ref, true, ""); v2.Poster.Version != v.Poster.Version {
+	if v2, _ := e.manifests.VideoImages(ctx, editorURLs, ref, true, ""); v2.Poster.Version != v.Poster.Version {
 		t.Fatal("the worker replaced an uploaded poster")
 	}
 

@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -54,7 +55,7 @@ func keyOf(u string) string {
 
 func (e *env) images(t *testing.T) media.VideoImages {
 	t.Helper()
-	v, err := e.manifests.VideoImages(context.Background(), base, e.ref, true, "")
+	v, err := e.manifests.VideoImages(context.Background(), media.OutputURLs{BaseURL: base, EditorToken: "tok"}, e.ref, true, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +88,7 @@ func (e *env) frame(t *testing.T, w, h int) image.Image {
 	if b := img.Bounds(); b.Dx() != w || b.Dy() != h {
 		t.Fatalf("frame is %v, want %dx%d", b, w, h)
 	}
-	if n := len(e.slotJobs); n == 0 || e.slotJobs[n-1] != (media.ProcessJob{Ref: e.ref.Content(), Slot: media.PosterSlot}) {
+	if !slices.Contains(e.slotJobs, media.ProcessJob{Ref: e.ref.Content(), Slot: media.PosterSlot}) {
 		t.Fatalf("frame not handed to the image job: %+v", e.slotJobs)
 	}
 	return img
@@ -174,6 +175,10 @@ func mp4Frame(t *testing.T, path string, last bool) image.Image {
 // of its first and last frames.
 func (e *env) preview(t *testing.T, length float64, widths []int, first, last string) {
 	t.Helper()
+	// A render is handed to the host's process job, which publishes it.
+	if !slices.Contains(e.slotJobs, media.ProcessJob{Ref: e.ref.Content(), Slot: media.HoverPreview}) {
+		t.Fatalf("hover preview not handed to the host: %+v", e.slotJobs)
+	}
 	v := e.images(t).HoverPreview
 	if v.Pending || v.Version == "" || len(v.MP4) != len(widths) || len(v.WebP) != len(widths) {
 		t.Fatalf("hover preview %+v, want widths %v", v, widths)
@@ -181,7 +186,7 @@ func (e *env) preview(t *testing.T, length float64, widths []int, first, last st
 	frames := int(math.Round(length * 12))
 	for i, w := range widths {
 		h := media.VideoPoster.Height(w)
-		if v.MP4[i].W != w || v.WebP[i].W != w || v.MP4[i].H != h || !strings.HasSuffix(v.MP4[i].URL, "?v="+v.Version) {
+		if v.MP4[i].W != w || v.WebP[i].W != w || v.MP4[i].H != h || !strings.Contains(v.MP4[i].URL, "?v="+v.Version) {
 			t.Fatalf("outputs %+v %+v", v.MP4[i], v.WebP[i])
 		}
 		obj, err := e.store.Head(context.Background(), keyOf(v.MP4[i].URL))
@@ -370,7 +375,14 @@ func TestVideoImageRoutesAndFrameEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(media.UploadHandler(uploads, media.UploadHandlerOptions{Tenant: e.Tenant, PublicBaseURL: base,
+	vis := &verdict{}
+	reader, err := media.NewReader(media.ReaderOptions{Manifests: e.manifests, Kinds: e.kinds, Resolver: vis,
+		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: base,
+			SigningKey: token.Key{ID: "k1", Secret: []byte("0123456789abcdef0123456789abcdef")}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(media.UploadHandler(uploads, media.UploadHandlerOptions{Tenant: e.Tenant, Reader: reader,
 		Actor: func(r *http.Request) (access.Actor, bool) {
 			id := r.Header.Get("X-Actor")
 			return access.Actor{ID: id, Kind: "user"}, id != ""
@@ -469,7 +481,7 @@ func TestVideoImageRoutesAndFrameEndpoint(t *testing.T) {
 	e.encode(t)
 	code, b, _ = call("admin", "POST", "/video-images", media.VideoImagesBody{Ref: ref})
 	if code != http.StatusOK || json.Unmarshal(b, &v) != nil || v.HoverPreview.Pending || len(v.HoverPreview.MP4) != 2 || v.Video == nil ||
-		v.HoverPreview.MP4[0].URL != base+"/"+e.Tenant+"/video/88/public/hover_preview_320.mp4?v="+v.HoverPreview.Version {
+		!strings.HasPrefix(v.HoverPreview.MP4[0].URL, base+"/"+e.Tenant+"/video/88/editor/hover_preview_320.mp4?v="+v.HoverPreview.Version+"&t=") {
 		t.Fatalf("POST /video-images: %d %s", code, b)
 	}
 	if img := e.frame(t, 640, 360); quadrant(img, 0) != "blue" {
@@ -477,35 +489,44 @@ func TestVideoImageRoutesAndFrameEndpoint(t *testing.T) {
 	}
 	e.preview(t, 2, []int{320, 640}, "lime", "lime")
 
-	// The public read: no selections, and no Resolve.
-	reader, err := media.NewReader(media.ReaderOptions{Manifests: e.manifests, Kinds: e.kinds, Resolver: noResolve{t},
-		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: base,
-			SigningKey: token.Key{ID: "k1", Secret: []byte("0123456789abcdef0123456789abcdef")}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// The viewer read resolves: a draft is hidden; once published and free,
+	// no selections and the published preview.
 	pub := httptest.NewServer(reader.Handler(media.HandlerOptions{Tenant: e.Tenant}))
 	defer pub.Close()
-	resp, err := http.Get(pub.URL + "/video/88@v1/video-images")
+	viewerImages := func() (int, []byte, http.Header) {
+		t.Helper()
+		resp, err := http.Get(pub.URL + "/video/88@v1/video-images")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, b, resp.Header
+	}
+	if code, b, _ := viewerImages(); code != http.StatusNotFound {
+		t.Fatalf("draft video images: %d %s", code, b)
+	}
+	vis.set(access.Resolution{Visible: true, Accessible: true})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: e.store, Kinds: e.kinds, Resolver: vis})
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ = io.ReadAll(resp.Body)
-	resp.Body.Close()
+	if err := jobs.Publish(context.Background(), e.ref); err != nil {
+		t.Fatal(err)
+	}
+	code, b, hdr := viewerImages()
 	var public media.VideoImages
-	if resp.StatusCode != http.StatusOK || resp.Header.Get("Cache-Control") != "no-cache" || json.Unmarshal(b, &public) != nil ||
+	if code != http.StatusOK || hdr.Get("Cache-Control") != "private, no-store" || json.Unmarshal(b, &public) != nil ||
 		public.Poster.Selection != nil || public.HoverPreview.Selection != nil || public.Video != nil || len(public.HoverPreview.WebP) != 2 {
-		t.Fatalf("public video images: %d %s", resp.StatusCode, b)
+		t.Fatalf("public video images: %d %s", code, b)
+	}
+	for _, p := range append(public.HoverPreview.MP4, public.HoverPreview.WebP...) {
+		if _, err := e.store.Head(context.Background(), keyOf(p.URL)); err != nil || !strings.Contains(p.URL, "/public/") {
+			t.Fatalf("published preview %s: %v", p.URL, err)
+		}
 	}
 	mp4, webpURL, err := reader.HoverPreviewURLs(e.ref, public.HoverPreview.Version)
 	if err != nil || mp4 != public.HoverPreview.MP4[0].URL || webpURL != public.HoverPreview.WebP[0].URL {
 		t.Fatalf("static preview urls %s %s %v", mp4, webpURL, err)
 	}
-}
-
-type noResolve struct{ t *testing.T }
-
-func (r noResolve) Resolve(context.Context, contentref.ContentRef, access.Actor) (access.Resolution, error) {
-	r.t.Error("public video images resolved the item")
-	return access.Resolution{}, nil
 }

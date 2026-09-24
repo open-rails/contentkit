@@ -72,6 +72,9 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 	if err != nil {
 		return err
 	}
+	if job.Slot == media.HoverPreview && item.Kind().Video != nil {
+		return nil // a rendered hover preview: only media.Jobs publishes it
+	}
 	if job.Slot != "" {
 		return p.slot(ctx, item, job.Slot)
 	}
@@ -290,7 +293,11 @@ func (p *Processor) derive(ctx context.Context, item media.Item, w work) (derive
 		if err != nil {
 			return derived{}, err
 		}
-		blob, err := p.putBlob(ctx, item, bytes.NewReader(out), int64(len(out)), sha(out), "image/webp")
+		put := p.putBlob
+		if s.EditorOnly || s.Unedited {
+			put = p.putEditorBlob
+		}
+		blob, err := put(ctx, item, bytes.NewReader(out), int64(len(out)), sha(out), "image/webp")
 		if err != nil {
 			return derived{}, err
 		}
@@ -313,8 +320,17 @@ func (p *Processor) probe(src []byte, contentType string, edit *media.Edit) (med
 
 // putBlob stores an immutable, content-addressed blob unless it exists.
 func (p *Processor) putBlob(ctx context.Context, item media.Item, body io.Reader, size int64, sum []byte, contentType string) (string, error) {
+	return p.storeBlob(ctx, item.Blob, body, size, sum, contentType)
+}
+
+// putEditorBlob stores an EditorOnly variant in editor/.
+func (p *Processor) putEditorBlob(ctx context.Context, item media.Item, body io.Reader, size int64, sum []byte, contentType string) (string, error) {
+	return p.storeBlob(ctx, item.EditorBlob, body, size, sum, contentType)
+}
+
+func (p *Processor) storeBlob(ctx context.Context, keyOf func(string) (string, error), body io.Reader, size int64, sum []byte, contentType string) (string, error) {
 	name := media.SHA256Name(sum)
-	key, err := item.Blob(name)
+	key, err := keyOf(name)
 	if err != nil {
 		return "", err
 	}

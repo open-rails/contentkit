@@ -175,8 +175,9 @@ One private bucket; each item owns a folder the library keys:
 ```text
 {tenant}/{kind}/{id}/manifest.json | manifests/{version}.json
                     /originals/{sha256-hex | u-uuid | slot | slot.json | i-uuid}   never served
-                    /blobs/sha256-{hex}                                            immutable derivatives
-                    /public/{slot_width | i-uuid}.webp                             slots, inline images
+                    /blobs/sha256-{hex}                                            immutable derivatives (viewer token)
+                    /editor/{sha256-hex | poster_w.webp | hover_preview_w.mp4}     editor-only (editor token)
+                    /public/{slot_width | i-uuid}.webp | hover_preview_w.mp4       slots, inline images, published video images
 ```
 
 Host wiring (one tenant; errors elided):
@@ -193,7 +194,7 @@ store, _ := s3.New(s3.Config{Bucket: "media", Endpoint: rgw, PublicEndpoint: "ht
 key, _ := token.ParseKey(os.Getenv("MEDIA_TOKEN_KEY")) // "{kid}:{base64}", shared with media-access
 ring, _ := token.NewRing(key, nil)
 
-jobs, _ := media.NewJobs(media.JobsConfig{Store: store, Kinds: kinds, Tenants: []string{"d"}, Limiter: limiter})
+jobs, _ := media.NewJobs(media.JobsConfig{Store: store, Kinds: kinds, Tenants: []string{"d"}, Limiter: limiter, Resolver: resolver})
 manifests, _ := media.NewManifests(store, kinds, media.ManifestOptions{Locker: media.PGLocker(pool), Jobs: jobs})
 images, _ := image.New(image.Config{Store: store, Kinds: kinds, Manifests: manifests})
 _ = jobs.AddProcessor(images.Process)
@@ -207,9 +208,10 @@ uploads, _ := media.NewUploads(media.UploadOptions{Store: store, Kinds: kinds, M
 reader, _ := media.NewReader(media.ReaderOptions{Manifests: manifests, Kinds: kinds, Resolver: resolver, Hooks: hooks,
 	Delivery: media.Delivery{Mode: media.DeliverCookie, BaseURL: "https://media.doujins.com", CookieDomain: "doujins.com", SigningKey: key}})
 mux.Handle("/api/media/upload/", http.StripPrefix("/api/media/upload", media.UploadHandler(uploads, media.UploadHandlerOptions{Tenant: "d", Actor: actorOf,
-	PublicBaseURL: "https://media.doujins.com"})))
+	Reader: reader})))
 mux.Handle("/api/media/", http.StripPrefix("/api/media", reader.Handler(media.HandlerOptions{Tenant: "d", Identity: identity})))
 
+_ = jobs.PublishTx(ctx, tx, ref)                                          // in any transaction that changes what anonymous viewers see
 _ = jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref: ref, Owner: owner}) // in the host's delete transaction
 _ = jobs.EraseUserTx(ctx, tx, "d", userID, deletions...)                 // the user's items plus user/{id}/
 ```
@@ -218,13 +220,19 @@ The access worker (`cmd/media-access`, image
 `ghcr.io/open-rails/contentkit-media-access:{tag}`, same tag as the hosts'
 ContentKit) serves `BaseURL`. It needs `MEDIA_ACCESS_S3_ENDPOINT`,
 `_S3_BUCKET`, a read-only key (`_S3_ACCESS_KEY_ID`, `_S3_SECRET_ACCESS_KEY`)
-allowed only `*/blobs/*` and `*/public/*`, `MEDIA_ACCESS_TOKEN_KEY` and
-`_TOKEN_KEY_PREVIOUS` (the hosts' `{kid}:{base64}` ring), and optionally
-`MEDIA_ACCESS_HOSTS` and `MEDIA_ACCESS_CORS_ORIGINS` (the sites, with
-credentials); secrets may be given as `{VAR}_FILE`. `public/` is served
-without a token (`no-cache`); `blobs/` needs `?t=` or an `mt` cookie
-(`private, immutable`; 403 without a valid token); manifests, `originals/`
-and unknown keys are 404. `cmd/media-worker` documents its environment.
+allowed only `*/blobs/*`, `*/editor/*` and `*/public/*`, `MEDIA_ACCESS_TOKEN_KEY` and
+`_TOKEN_KEY_PREVIOUS` (the hosts' `{kid}:{base64}` ring), `MEDIA_ACCESS_HOSTS`
+(the media host names; empty serves any Host, warned) and
+`MEDIA_ACCESS_CORS_ORIGINS` (the sites' exact origins, with credentials;
+empty breaks hls.js, warned; wildcards and paths are refused); secrets may be
+given as `{VAR}_FILE`. `public/` is served without a token (`no-cache`);
+`blobs/` needs `?t=` or an `mt` cookie (`private, immutable`; 403 without a
+valid token); `editor/` needs an editor token; manifests, `originals/` and
+unknown keys are 404. Every object carries `Cross-Origin-Resource-Policy:
+same-site` (`MEDIA_ACCESS_RESOURCE_POLICY=cross-origin` only when the pages
+live on another site than the media), so other sites cannot embed it with
+`<img>`/`<video>`. See HOST_INTEGRATION "Production media delivery".
+`cmd/media-worker` documents its environment.
 
 `Edit` writes with `If-Match` (or `If-None-Match: *`) and retries on conflict;
 without `Capabilities.ConditionalPut` it serializes on a Postgres advisory lock
@@ -261,8 +269,8 @@ out-of-bounds edit to `Hooks.Failed`). A variant's `spec` is
 variants (and the zip) from the untouched original. `Spec.EditorOnly`
 variants (recorded `editor: true`) are signed only when the resolver's
 `Resolution.Editor` is set; `Spec.Unedited` (must be `EditorOnly`) ignores
-edits: an editor's view of the whole source. Under a folder cookie such a blob
-is unlisted, not locked: its content-hash name is never sent to other viewers.
+edits: an editor's view of the whole source. Such blobs live in `editor/`,
+which no viewer token or cookie covers; editors' URLs carry an editor token.
 No master is written. `meta.w/h` is the edited size; the read API returns
 `edit` and `dims` to editors.
 
@@ -397,7 +405,14 @@ in cookie mode and switched to URL mode if it does not send the cookie.
 Tokens are `kid.exp.base64url(HMAC-SHA256(secret, "{scope}|{exp}"))`: a scope
 is a folder (`…/blobs/`, covering the objects directly under it), one key, or
 `{key}#dl={name}` for a download name. Expiry is window-aligned (default 4 h);
-`token.Ring` verifies the current and previous key.
+`token.Ring` verifies the current and previous key. Editors get a folder token
+for `…/editor/`.
+
+`Reader.Handler` limits each viewer (`HandlerOptions.Limit`, default 2
+requests/s, burst 120; keyed by `Actor.ID`, else `Actor.IP`, else the peer
+address) with 429 `rate_limited` + `Retry-After`, and logs every signed
+response (`media urls signed`: viewer, ref, access, expiry, and a short hash
+of a folder token) so a leaked URL traces to its viewer.
 
 Media's River jobs (`jobs.RiverJobs()`) compose into the host client through
 `helpers/river`; edits schedule a sweep and commits enqueue processing:
@@ -406,14 +421,15 @@ Media's River jobs (`jobs.RiverJobs()`) compose into the host client through
   `Tenants`): deletes `blobs/` and hash-named `originals/` no manifest in the
   folder references, only once every manifest and the object itself are older
   than `Grace` (24 h; plus 1 day for `u-` multipart objects, which may be
-  dated at initiation). Slot originals, `public/` and manifests are never swept.
+  dated at initiation). Also unreferenced `editor/` blobs. Slot originals,
+  slot and hover-preview outputs and manifests are never swept.
   Invariant: it deletes only objects no manifest references and no in-flight
   commit can newly reference. Presign reuses an existing original, and a
   commit accepts one, only while a manifest references it or it is well
   before the sweep's cutoff (grace/2 for presign; grace/4, at most 1 h, for
   commit); otherwise the client uploads it again. Set `UploadOptions.Grace`
   to the same grace (taken from `Queue` when it is the `*Jobs`).
-- **Deletion** removes the whole folder, manifests first, then again after
+- **Deletion** removes the whole folder, manifests and `public/` first, then again after
   `LateUploadWindow` (25 h) for PUTs and multipart completions that land late.
   With a `Limiter`, the owner's quota (the manifests' `OriginalBytes`) is
   released once.

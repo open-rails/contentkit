@@ -35,6 +35,10 @@ const tenant = "sdk"
 
 type allow struct{}
 
+func (allow) Resolve(context.Context, contentref.ContentRef, access.Actor) (access.Resolution, error) {
+	return access.Resolution{Visible: true, Accessible: true, Editor: true}, nil
+}
+
 func (allow) CanUpload(_ context.Context, a access.Actor, _ contentref.ContentRef) (media.UploadGrant, error) {
 	return media.UploadGrant{Allowed: a.ID != "reader", Owner: "owner"}, nil
 }
@@ -76,15 +80,19 @@ func main() {
 	must(err)
 	manifests, err := media.NewManifests(store, kinds, media.ManifestOptions{})
 	must(err)
-	ring, err := token.NewRing(token.Key{ID: "k1", Secret: bytes.Repeat([]byte("s"), 32)}, nil)
+	key := token.Key{ID: "k1", Secret: bytes.Repeat([]byte("s"), 32)}
+	ring, err := token.NewRing(key, nil)
+	must(err)
+	reader, err := media.NewReader(media.ReaderOptions{Manifests: manifests, Kinds: kinds, Resolver: allow{},
+		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: "http://media.invalid", SigningKey: key}})
 	must(err)
 	uploads, err := media.NewUploads(media.UploadOptions{Store: store, Kinds: kinds, Manifests: manifests, Tickets: &ring, Authorizer: allow{}, Grace: *grace})
 	must(err)
 
 	mux := http.NewServeMux()
 	mux.Handle("/upload/", http.StripPrefix("/upload", media.UploadHandler(uploads, media.UploadHandlerOptions{
-		Tenant:        tenant,
-		PublicBaseURL: "http://media.invalid",
+		Tenant: tenant,
+		Reader: reader,
 		Actor: func(r *http.Request) (access.Actor, bool) {
 			id := r.Header.Get("X-Test-Actor")
 			return access.Actor{ID: id, Kind: "user"}, id != ""

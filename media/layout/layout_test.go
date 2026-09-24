@@ -18,13 +18,16 @@ func TestParse(t *testing.T) {
 		"d/gallery/1/originals/cover":            {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaOriginals, Name: "cover"},
 		"o/user/42/public/avatar_80.webp":        {Tenant: "o", Kind: "user", ID: "42", Area: layout.AreaPublic, Name: "avatar_80"},
 		"h/video/9/public/hover_preview_320.mp4": {Tenant: "h", Kind: "video", ID: "9", Area: layout.AreaPublic, Name: "hover_preview_320"},
+		"h/video/9/editor/hover_preview_320.mp4": {Tenant: "h", Kind: "video", ID: "9", Area: layout.AreaEditor, Name: "hover_preview_320"},
+		"h/video/9/editor/poster_480.webp":       {Tenant: "h", Kind: "video", ID: "9", Area: layout.AreaEditor, Name: "poster_480"},
+		"d/gallery/1/editor/" + blob:             {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaEditor, Name: blob},
 	} {
 		got, ok := layout.Parse(key)
 		if !ok || got != want {
 			t.Errorf("%s: %+v %v", key, got, ok)
 		}
 	}
-	for _, bad := range []string{"d/gallery/1", "d/gallery/1/blobs/x", "d/gallery/1/blobs/" + blob + "/x", "d/gallery/1/public/a.png",
+	for _, bad := range []string{"d/gallery/1", "d/gallery/1/blobs/x", "d/gallery/1/blobs/" + blob + "/x", "d/gallery/1/public/a.png", "d/gallery/1/editor/x", "d/gallery/1/editor/a.png",
 		"d/../1/manifest.json", "d/gallery/1/other/x"} {
 		if _, ok := layout.Parse(bad); ok {
 			t.Errorf("parsed %q", bad)
