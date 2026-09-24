@@ -105,6 +105,7 @@ type derived struct {
 // work is one source and edit to derive into specs.
 type work struct {
 	source string
+	typ    string
 	edit   *media.Edit
 	specs  map[string]media.Spec
 }
@@ -146,7 +147,7 @@ func (p *Processor) todo(kind media.Kind, man *media.Manifest, failed map[string
 			if v, ok := f.Variants[name]; !ok || v.Spec != s.For(f.Edit) {
 				w, ok := todo[k]
 				if !ok {
-					w = work{source: f.Source(), edit: f.Edit, specs: map[string]media.Spec{}}
+					w = work{source: f.Source(), typ: f.Type, edit: f.Edit, specs: map[string]media.Spec{}}
 					todo[k] = w
 				}
 				w.specs[name] = s
@@ -280,7 +281,7 @@ func (p *Processor) derive(ctx context.Context, item media.Item, w work) (derive
 		return derived{}, err
 	}
 	d := derived{variants: make(map[string]media.Variant, len(w.specs))}
-	if d.dims, err = p.probe(src, w.edit); err != nil {
+	if d.dims, err = p.probe(src, w.typ, w.edit); err != nil {
 		return derived{}, err
 	}
 	d.w, d.h = w.edit.Size(d.dims.W, d.dims.H)
@@ -298,9 +299,9 @@ func (p *Processor) derive(ctx context.Context, item media.Item, w work) (derive
 	return d, nil
 }
 
-// probe sizes src and checks edit against it.
-func (p *Processor) probe(src []byte, edit *media.Edit) (media.Dims, error) {
-	w, h, err := probe(src, p.c.MaxPixels)
+// probe checks src is contentType, sizes it and checks edit against it.
+func (p *Processor) probe(src []byte, contentType string, edit *media.Edit) (media.Dims, error) {
+	w, h, err := probe(src, contentType, p.c.MaxPixels)
 	if err != nil {
 		return media.Dims{}, err
 	}

@@ -113,26 +113,34 @@ func (j *Jobs) sweep(ctx context.Context, prefix string, objs []Object) (SweepRe
 			refs[AreaOriginals+"/"+n] = true
 		}
 	}
-	var doomed []string
-	for _, o := range objs {
-		k, ok := layout.Parse(o.Key)
-		if !ok || !layout.ValidBlobName(k.Name) || (k.Area != AreaBlobs && k.Area != AreaOriginals) {
-			continue
+	abandoned := func(objs []Object) []string {
+		var keys []string
+		for _, o := range objs {
+			k, ok := layout.Parse(o.Key)
+			if !ok || !layout.ValidBlobName(k.Name) || (k.Area != AreaBlobs && k.Area != AreaOriginals) {
+				continue
+			}
+			if !refs[k.Area+"/"+k.Name] && !now.Before(abandonedAt(k.Name, o.LastModified, j.cfg.Grace)) {
+				keys = append(keys, o.Key)
+			}
 		}
-		if !refs[k.Area+"/"+k.Name] && !now.Before(abandonedAt(k.Name, o.LastModified, j.cfg.Grace)) {
-			doomed = append(doomed, o.Key)
-		}
+		return keys
 	}
-	if len(doomed) == 0 {
+	if len(abandoned(objs)) == 0 {
 		return SweepResult{}, nil
 	}
-	// A manifest written since the listing may reference a doomed object.
+	// A manifest written since the listing may reference a doomed object, and
+	// an upload may have refreshed one: only the second listing decides.
 	again, err := j.list(ctx, prefix)
 	if err != nil {
 		return SweepResult{}, err
 	}
 	if now, _ := manifestETags(again); !maps.Equal(now, manifests) {
 		return SweepResult{Wait: j.cfg.Grace}, nil
+	}
+	doomed := abandoned(again)
+	if len(doomed) == 0 {
+		return SweepResult{}, nil
 	}
 	if err := j.deleteKeys(ctx, doomed); err != nil {
 		return SweepResult{}, err
