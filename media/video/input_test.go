@@ -40,7 +40,7 @@ func TestInputsAreConfinedToContainerDemuxers(t *testing.T) {
 	if err := os.Mkdir(out, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	pl := plan{duration: 1, video: 0, width: 64, height: 48, rungs: []int{48}}
+	pl := plan{duration: 1, video: 0, width: 64, height: 48, rungs: []rung{{n: 48, w: 64, h: 48}}, tileW: 120, tileH: 90}
 	if err := ladder(ctx, list, out, pl, 1); err == nil {
 		t.Fatal("concat list encoded")
 	}

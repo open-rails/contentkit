@@ -309,7 +309,7 @@ func TestPlaybackThroughWorker(t *testing.T) {
 				want := h.Video[i]
 				if v["BANDWIDTH"] != strconv.Itoa(want.Bandwidth+audioBW) || v["AVERAGE-BANDWIDTH"] != strconv.Itoa(want.Average+audioBW) ||
 					v["RESOLUTION"] != fmt.Sprintf("%dx%d", want.Width, want.Height) || v["CODECS"] != want.Codecs+",mp4a.40.2" ||
-					v["AUDIO"] != "audio" || v["SUBTITLES"] != "subs" {
+					v["AUDIO"] != "audio" || v["SUBTITLES"] != "subs" || v["URI"] != fmt.Sprintf("video/%d.m3u8", want.Rung) {
 					t.Fatalf("variant %v for %+v", v, want)
 				}
 				d.checkRendition(t, resolve(v["URI"]), want.Blob, want.Segments, mode, true)
@@ -357,9 +357,9 @@ func TestPlaybackThroughWorker(t *testing.T) {
 
 			// Per-quality download under its display name.
 			for _, v := range h.Video {
-				key := video.DownloadKey("source", v.Height)
+				key := video.DownloadKey("source", v.Rung)
 				r := get(t, d.client, d.url("download/"+key))
-				name := fmt.Sprintf("Title (%dp).mp4", v.Height)
+				name := fmt.Sprintf("Title (%dp).mp4", v.Rung)
 				if r.status != 200 || r.header.Get("Content-Disposition") != token.Attachment(name) ||
 					int64(len(r.body)) != m.Downloads[key].Size {
 					t.Fatalf("download %s: %d %v", key, r.status, r.header)

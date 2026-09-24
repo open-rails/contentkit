@@ -328,11 +328,25 @@ The bucket needs CORS allowing `PUT` from the app origins with the
 **Video** (`media/video`, run by `cmd/media-worker`) encodes each `video/*`
 manifest file in one ffmpeg pass: H.264 High (CRF 22, preset fast, keyframes
 every 4 s) at the kind's ladder (`Kind.Video = &media.Video{Ladder: []int{1080, 720, 480}}`;
-default `media.DefaultLadder`, 2160/1440/1080/720/480) rungs no taller than the source, AAC per
-audio track, WebVTT per text subtitle and a 10×10 sprite. Each rendition and
+default `media.DefaultLadder`, 2160/1440/1080/720/480), AAC per audio track,
+WebVTT per text subtitle and a 10×10 sprite whose tiles keep the source
+aspect (short side 90). A rung N is the output's **short side** (a 1080 rung
+of a vertical video is 1080 wide); rungs above the source's short side are
+dropped (a smaller source gets one rung at its own short side). Every frame is
+then capped, aspect kept, at 4096 px per side and a 3840×2160 area (common
+H.264 hardware decode limits), so a 21:9 2160 rung is 4096×1756 and an 8K
+source is downscaled to 3840×2160; a rung whose capped frame repeats the next
+one's is dropped. Output is square-pixel (SAR applied), at most 60 fps, and
+frames above 1080p-class carry the lowest fitting level (5.0/5.1/5.2);
+smaller ones keep x264's. `hls.video[]` records `rung` and the true `w`/`h`.
+Sources whose display aspect is outside `Video.MinAspect`–`MaxAspect`
+(default 1/2.4–2.4, admitting 2560×1080 and 2.39:1 cinema; 0.5% slack) fail permanently: the file's `hls` becomes
+`{source, spec, error}` with no renditions, `Hooks.Failed` (in the encoder's
+process) gets `video.ErrAspect`, editors see `failed` in the read API, and
+it is retried only when the source or the kind's bounds change. Each rendition and
 audio track is one single-file fMP4 blob whose segments are
 `[offset, length, seconds]` (the init segment is `[0, segments[0].offset)`);
-each quality also gets a muxed MP4 in `downloads["{file}-{height}p"]` (video,
+each rung also gets a muxed MP4 in `downloads["{file}-{N}p"]` (video,
 every audio track, subtitles). Blobs are written first; one manifest edit then
 records `hls` and `downloads` only if the file still derives from the encoded
 original, so a replaced file keeps its previous `hls` until then. Outputs are
@@ -347,7 +361,7 @@ documented in `cmd/media-worker`.
 **Playback** is served by `Reader.Handler` next to the read API, generated per
 request after one `Resolve` (`private, no-store`; the folder cookie is set in
 cookie mode): `/{kind}/{id}/hls/{file}/master.m3u8?audio=&subs=` (optional
-id/language filters), `video/{height}.m3u8`, `audio/{id}.m3u8`,
+id/language filters; `RESOLUTION` is the rung's true w×h), `video/{N}.m3u8`, `audio/{id}.m3u8`,
 `subs/{id}.m3u8`, `sprite.vtt`, and `/{kind}/{id}/download/{key}` (302 to the
 signed `dl=` URL, full access only; name from `Hooks.DownloadName`). Media
 playlists are `EXT-X-BYTERANGE` lines over one blob URL per rendition. A file

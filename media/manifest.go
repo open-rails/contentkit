@@ -61,10 +61,12 @@ type Download struct {
 
 // HLS is a byte-range ladder: each rendition is one fMP4 blob. Source is the
 // original it was encoded from; when it differs from the file's, the ladder is
-// stale but still served until its replacement is promoted.
+// stale but still served until its replacement is promoted. Error, with no
+// renditions, records why Source can never be encoded.
 type HLS struct {
 	Source string       `json:"source"`
 	Spec   string       `json:"spec,omitempty"`
+	Error  string       `json:"error,omitempty"`
 	Video  []Rendition  `json:"video,omitempty"`
 	Audio  []AudioTrack `json:"audio,omitempty"`
 	Subs   []Subtitle   `json:"subs,omitempty"`
@@ -72,10 +74,13 @@ type HLS struct {
 }
 
 // Rendition is one video-only fMP4 blob: its init segment is bytes
-// [0, Segments[0].Offset) and the segments follow contiguously.
+// [0, Segments[0].Offset) and the segments follow contiguously. Rung is its
+// ladder label (the short side it was asked for, e.g. 1080 for "1080p");
+// Width and Height are the encoded frame.
 type Rendition struct {
-	Height    int       `json:"height"`
+	Rung      int       `json:"rung"`
 	Width     int       `json:"w"`
+	Height    int       `json:"h"`
 	Bandwidth int       `json:"bandwidth"`
 	Average   int       `json:"avg,omitempty"`
 	Codecs    string    `json:"codecs"`

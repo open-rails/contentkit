@@ -2,6 +2,7 @@ package video_test
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -44,6 +45,7 @@ func requireFFmpeg(t *testing.T) {
 
 type fixture struct {
 	w, h, secs int
+	rate       int // default 10
 	audio      int
 	subs       bool
 	tone       int
@@ -55,7 +57,8 @@ func (f fixture) make(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	out := filepath.Join(dir, "source.mkv")
-	args := []string{"-v", "error", "-nostdin", "-f", "lavfi", "-i", fmt.Sprintf("testsrc=size=%dx%d:rate=10:duration=%d", f.w, f.h, f.secs)}
+	rate := cmp.Or(f.rate, 10)
+	args := []string{"-v", "error", "-nostdin", "-f", "lavfi", "-i", fmt.Sprintf("testsrc=size=%dx%d:rate=%d:duration=%d", f.w, f.h, rate, f.secs)}
 	for i := range f.audio {
 		args = append(args, "-f", "lavfi", "-i", fmt.Sprintf("sine=frequency=%d:duration=%d", f.tone+220*i, f.secs))
 	}
@@ -332,8 +335,8 @@ func TestLadderFromMultiTrackSource(t *testing.T) {
 	}
 	var heights []int
 	for _, r := range h.Video {
-		heights = append(heights, r.Height)
-		if r.Width%2 != 0 || !strings.HasPrefix(r.Codecs, "avc1.64") || r.Bandwidth < r.Average || r.Average <= 0 {
+		heights = append(heights, r.Rung)
+		if r.Height != r.Rung || r.Width%2 != 0 || !strings.HasPrefix(r.Codecs, "avc1.64") || r.Bandwidth < r.Average || r.Average <= 0 {
 			t.Fatalf("rendition %+v", r)
 		}
 		checkByteRanges(t, e.blob(t, r.Blob), r.Segments, "video", 9)
@@ -390,14 +393,14 @@ func TestKindLadder(t *testing.T) {
 	e.commit(t, fixture{w: 640, h: 361, secs: 3, tone: 440}.make(t), media.OpInsert)
 	encode := func(ladder []int, want ...int) {
 		t.Helper()
-		if err := e.encoder.Encode(context.Background(), video.Job{Ref: e.ref, Versioned: true, Ladder: ladder}); err != nil {
+		if err := e.encoder.Encode(context.Background(), video.Job{Ref: e.ref, Versioned: true, Video: media.Video{Ladder: ladder}}); err != nil {
 			t.Fatal(err)
 		}
 		m, _ := e.manifest(t)
 		h := m.Files[0].HLS
 		var heights, downloads []int
 		for _, r := range h.Video {
-			heights = append(heights, r.Height)
+			heights = append(heights, r.Rung)
 		}
 		for _, height := range want {
 			if d, ok := m.Downloads[video.DownloadKey("source", height)]; ok && d.Spec == video.Spec(ladder) {
@@ -419,7 +422,7 @@ func TestReplacedSourceKeepsPreviousHLSUntilPromotion(t *testing.T) {
 	e.encode(t)
 	m, _ := e.manifest(t)
 	prev := m.Files[0].HLS
-	if prev == nil || prev.Source != a || prev.Video[0].Height != 360 {
+	if prev == nil || prev.Source != a || prev.Video[0].Rung != 360 {
 		t.Fatalf("hls %+v", prev)
 	}
 
@@ -504,7 +507,7 @@ func TestRetriesAreIdempotent(t *testing.T) {
 			t.Fatalf("manifest references %s, not written by the first attempt", name)
 		}
 	}
-	if m.Files[0].HLS.Video[0].Height != 480 || len(m.Downloads) != 1 {
+	if m.Files[0].HLS.Video[0].Rung != 480 || len(m.Downloads) != 1 {
 		t.Fatalf("manifest %+v", m)
 	}
 

@@ -376,6 +376,7 @@ type FileInfo struct {
 	Teaser   bool    `json:"teaser,omitempty"`
 	Locked   bool    `json:"locked,omitempty"`
 	HLS      bool    `json:"hls,omitempty"`
+	Failed   string  `json:"failed,omitempty"` // editors only: why the video cannot be encoded
 	Variant  string  `json:"variant,omitempty"`
 	URL      string  `json:"url,omitempty"`
 }
@@ -412,13 +413,16 @@ func (r *Reader) Read(ctx context.Context, ref contentref.ContentRef, actor acce
 	}
 	for i, f := range files {
 		fi := FileInfo{Index: i, Type: f.Type, Width: metaInt(f.Meta, "w"), Height: metaInt(f.Meta, "h"),
-			Duration: metaFloat(f.Meta, "duration"), Teaser: f.Teaser(), HLS: f.HLS != nil}
+			Duration: metaFloat(f.Meta, "duration"), Teaser: f.Teaser(), HLS: f.HLS != nil && len(f.HLS.Video) > 0}
 		if !g.Allowed(i) {
 			fi.Locked = true
 		} else {
 			fi.Name = f.Name
 			if g.Editor() {
 				fi.Edit, fi.Dims = f.Edit, f.Dims
+				if f.HLS != nil && f.HLS.Source == f.Source() {
+					fi.Failed = f.HLS.Error
+				}
 			}
 			if i >= o.Offset && i < o.Offset+o.Limit {
 				for _, v := range o.Variants {
