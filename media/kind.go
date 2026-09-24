@@ -218,14 +218,16 @@ var (
 // Allows checks a file against the kind's types and size cap.
 func (k Kind) Allows(contentType string, size int64) error {
 	if len(k.Types) > 0 && !slices.Contains(k.Types, contentType) {
-		return fmt.Errorf("%w: %q for kind %q", ErrType, contentType, k.Name)
+		return &UploadError{Code: CodeType, Message: fmt.Sprintf("%s files are not allowed here; allowed: %s", contentType, strings.Join(k.Types, ", ")),
+			Details: &ErrorDetails{Type: contentType, Allowed: k.Types}}
 	}
 	limit := k.MaxBytes
 	if l := k.TypeLimits[topType(contentType)]; l.MaxBytes > 0 {
 		limit = l.MaxBytes
 	}
 	if size < 0 || (limit > 0 && size > limit) {
-		return fmt.Errorf("%w: %d bytes of %s for kind %q (max %d)", ErrTooLarge, size, contentType, k.Name, limit)
+		return &UploadError{Code: CodeTooLarge, Message: fmt.Sprintf("%s files may be at most %d bytes; this one is %d", contentType, limit, size),
+			Details: &ErrorDetails{Type: contentType, Size: size, MaxBytes: limit}}
 	}
 	return nil
 }

@@ -272,7 +272,7 @@ func (u *Uploads) SetVideoPoster(ctx context.Context, actor access.Actor, ref co
 		}
 		size := posterFrame(item, f)
 		if _, err := item.Poster().Resolve(r.Edit, size.W, size.H); err != nil {
-			return uploadErr(CodeInvalid, "edit: %v", err)
+			return editErr(err, "edit: %v")
 		}
 		edit = item.Poster().fit(r.Edit)
 		frame.Auto, frame.Time = false, round3(r.Time)
@@ -462,9 +462,13 @@ type VideoImages struct {
 	Progress *EncodeProgress `json:"progress,omitempty"`
 }
 
-// PosterManifest is the poster slot's manifest plus its selection.
+// PosterManifest is the poster slot's manifest plus its selection. File is
+// the video a frame poster was cut from, for every caller that sees the
+// poster: a gallery draws it on that video only ("" for an uploaded poster,
+// which belongs to the first video).
 type PosterManifest struct {
 	SlotManifest
+	File      string           `json:"file,omitempty"`
 	Selection *PosterSelection `json:"selection,omitempty"`
 }
 
@@ -479,6 +483,7 @@ type PosterSelection struct {
 // HoverPreviewManifest lists the rendered loops by ascending width, at URLs
 // versioned like slot outputs: MP4 (H.264, 2-3× smaller) and animated WebP.
 type HoverPreviewManifest struct {
+	File      string                 `json:"file,omitempty"` // the video the loop was cut from
 	Selection *HoverPreviewSelection `json:"selection,omitempty"`
 	Version   string                 `json:"version,omitempty"`
 	MP4       []PreviewImage         `json:"mp4"`
@@ -559,8 +564,15 @@ func (m *Manifests) VideoImages(ctx context.Context, urls OutputURLs, ref conten
 		return VideoImages{}, fmt.Errorf("%w: not a video item", ErrNotVisible)
 	}
 	var out VideoImages
-	if out.Poster.SlotManifest, err = m.SlotManifest(ctx, urls, ref.Content(), PosterSlot); err != nil {
+	rec, err := func() (rec *SlotRecord, err error) {
+		out.Poster.SlotManifest, rec, err = m.slotManifest(ctx, urls, ref.Content(), PosterSlot)
+		return rec, err
+	}()
+	if err != nil {
 		return VideoImages{}, err
+	}
+	if rec != nil && rec.Frame != nil {
+		out.Poster.File = rec.Frame.File
 	}
 	out.HoverPreview = HoverPreviewManifest{MP4: []PreviewImage{}, WebP: []PreviewImage{}, Pending: true}
 	prev, err := m.HoverPreview(ctx, ref)
@@ -574,6 +586,7 @@ func (m *Manifests) VideoImages(ctx context.Context, urls OutputURLs, ref conten
 	case prev != nil && prev.Result != nil:
 		res := prev.Result
 		out.HoverPreview.Pending = res.Of != prev.Key()
+		out.HoverPreview.File = prev.File
 		out.HoverPreview.Version = res.Version
 		for _, o := range res.Outputs {
 			mp4, webp := previewURL(urls.BaseURL, item, o.W, true, res.Version), previewURL(urls.BaseURL, item, o.W, false, res.Version)
@@ -589,10 +602,6 @@ func (m *Manifests) VideoImages(ctx context.Context, urls OutputURLs, ref conten
 	}
 	if prev != nil {
 		out.HoverPreview.Selection = &HoverPreviewSelection{Version: prev.Version, File: prev.File, Start: prev.Start, Duration: prev.Duration, Auto: prev.Auto}
-	}
-	rec, err := m.Slot(ctx, ref.Content(), PosterSlot)
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		return VideoImages{}, err
 	}
 	switch {
 	case rec == nil:

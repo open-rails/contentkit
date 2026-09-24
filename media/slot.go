@@ -38,6 +38,9 @@ type SlotResult struct {
 	Dims    Dims   `json:"dims"`            // EXIF-oriented; zero when undecodable
 	Outputs []Dims `json:"outputs"`         // by ascending width
 	Error   string `json:"error,omitempty"` // Of failed; Outputs are older
+	// An image refusal's code and details; empty for a processing fault.
+	Code    string        `json:"code,omitempty"`
+	Details *ErrorDetails `json:"details,omitempty"`
 }
 
 // Fingerprint identifies the outputs the record yields under slot spec s.
@@ -179,7 +182,7 @@ func (u *Uploads) EditSlot(ctx context.Context, actor access.Actor, ref contentr
 		}
 		if d := rec.dims(); d.W > 0 {
 			if _, err := spec.Resolve(edit, d.W, d.H); err != nil {
-				return uploadErr(CodeInvalid, "edit: %v", err)
+				return editErr(err, "edit: %v")
 			}
 		}
 		rec.Edit = edit
@@ -272,7 +275,7 @@ func (u *Uploads) SetSlotFromFile(ctx context.Context, actor access.Actor, r Slo
 	}
 	if f.Dims != nil {
 		if _, err := spec.Resolve(edit, f.Dims.W, f.Dims.H); err != nil {
-			return uploadErr(CodeInvalid, "file %q: %v", r.File, err)
+			return editErr(err, "file %q: %v", r.File)
 		}
 	}
 	srcKey, err := src.Original(f.Source())
@@ -362,6 +365,13 @@ type SlotManifest struct {
 	Outputs []SlotImage `json:"outputs"`
 	Pending bool        `json:"pending"`         // a commit, edit or spec change is not encoded yet
 	Error   string      `json:"error,omitempty"` // the latest encode failed; the outputs are older
+	// ErrorCode is an image refusal's code (image_too_small, …) with its
+	// details; empty when Error is a processing fault.
+	ErrorCode    string        `json:"error_code,omitempty"`
+	ErrorDetails *ErrorDetails `json:"error_details,omitempty"`
+	// MinWidth is the narrowest edited width the slot accepts: croppers
+	// keep crops at or above it.
+	MinWidth int `json:"min_width,omitempty"`
 }
 
 // SlotImage is one produced output.
@@ -403,19 +413,26 @@ func versioned(u, version string) string {
 // with urls. A slot never committed has no outputs, nor has a gated slot the
 // caller may not see.
 func (m *Manifests) SlotManifest(ctx context.Context, urls OutputURLs, ref contentref.ContentRef, slot string) (SlotManifest, error) {
+	out, _, err := m.slotManifest(ctx, urls, ref, slot)
+	return out, err
+}
+
+// slotManifest is SlotManifest plus the record it was built from: nil when
+// the slot was never committed or the caller may not see it.
+func (m *Manifests) slotManifest(ctx context.Context, urls OutputURLs, ref contentref.ContentRef, slot string) (SlotManifest, *SlotRecord, error) {
 	item, s, err := m.kinds.slot(ref, slot)
 	if err != nil {
-		return SlotManifest{}, err
+		return SlotManifest{}, nil, err
 	}
-	out := SlotManifest{Aspect: s.Aspect, Outputs: []SlotImage{}}
+	out := SlotManifest{Aspect: s.Aspect, Outputs: []SlotImage{}, MinWidth: s.Min()}
 	if item.Gated(slot) && urls.EditorToken == "" && !urls.Exposure.Poster {
-		return out, nil
+		return out, nil, nil
 	}
 	rec, err := m.Slot(ctx, ref, slot)
 	if errors.Is(err, ErrNotFound) {
-		return out, nil
+		return out, nil, nil
 	} else if err != nil {
-		return SlotManifest{}, err
+		return SlotManifest{}, nil, err
 	}
 	out.Edit = rec.Edit
 	if d := rec.dims(); d.W > 0 {
@@ -425,10 +442,10 @@ func (m *Manifests) SlotManifest(ctx context.Context, urls OutputURLs, ref conte
 	res := rec.Result
 	out.Pending = res == nil || res.Of != fp
 	if res == nil {
-		return out, nil
+		return out, rec, nil
 	}
 	if res.Of == fp {
-		out.Error = res.Error
+		out.Error, out.ErrorCode, out.ErrorDetails = res.Error, res.Code, res.Details
 	}
 	if len(res.Outputs) > 0 {
 		out.Version = res.Version
@@ -442,7 +459,7 @@ func (m *Manifests) SlotManifest(ctx context.Context, urls OutputURLs, ref conte
 		out.Outputs = append(out.Outputs, img)
 	}
 	out.Aspect = outputAspect(s, out.Outputs)
-	return out, nil
+	return out, rec, nil
 }
 
 // Slot resolves ref for actor and reads a slot's manifest: ErrNotVisible for

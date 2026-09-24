@@ -83,6 +83,9 @@ func (p *Processor) registered(ctx context.Context, item media.Item, slot string
 				res.Version, res.Outputs = prev.Version, prev.Outputs
 			}
 			res.Error = err.Error()
+			if ie := media.AsImageError(err); ie != nil {
+				res.Error, res.Code, res.Details = ie.Message, ie.Code, &ie.Details
+			}
 			if err := p.record(ctx, ref, slot, spec, fp, res); errors.Is(err, errSuperseded) {
 				continue
 			} else if err != nil {

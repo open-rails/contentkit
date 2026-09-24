@@ -237,10 +237,12 @@ func TestSlotEditWidthsAndSpecChange(t *testing.T) {
 	}
 
 	// With the size known, an edit outside it or under the smallest width is refused at once.
-	for _, bad := range []*media.Edit{crop(1500, 0, 600, 0), crop(0, 0, 90, 0)} {
-		if ue, ok := media.AsUploadError(e.editSlot(t, ref, "cover", bad)); !ok || ue.Code != media.CodeInvalid {
-			t.Fatalf("edit %+v accepted", bad.Crop)
-		}
+	if ue, ok := media.AsUploadError(e.editSlot(t, ref, "cover", crop(1500, 0, 600, 0))); !ok || ue.Code != media.CodeInvalid {
+		t.Fatalf("outside edit accepted: %v", ue)
+	}
+	if ue, ok := media.AsUploadError(e.editSlot(t, ref, "cover", crop(0, 0, 90, 0))); !ok || ue.Code != media.CodeImageTooSmall ||
+		ue.Details == nil || ue.Details.Width != 90 || ue.Details.MinWidth != 150 {
+		t.Fatalf("narrow edit: %+v", ue)
 	}
 
 	// A spec change re-encodes from the original with the stored edit and
@@ -298,6 +300,13 @@ func TestSlotOrientationCentreAndFailure(t *testing.T) {
 	if bad.Error == "" || bad.Pending || bad.Version != m.Version || !slices.Equal(widths(bad), []int{150, 300}) ||
 		*bad.Dims != (media.Dims{W: 1200, H: 400}) || len(e.failed) != 1 {
 		t.Fatalf("failed edit: %+v, failed %v", bad, e.failed)
+	}
+	// A too-narrow crop the job refuses is recorded as a typed refusal.
+	e.slot(t, rotated, "cover", orientedJPEG(t, paint(1200, 400, func(x, _ int) color.RGBA { return bands(x) }), 1), crop(0, 0, 100, 0))
+	e.drain(t)
+	if narrow := e.slotManifest(t, rotated, "cover"); narrow.ErrorCode != media.CodeImageTooSmall || narrow.ErrorDetails == nil ||
+		narrow.ErrorDetails.Width != 100 || narrow.ErrorDetails.MinWidth != 150 || narrow.MinWidth != 150 {
+		t.Fatalf("narrow edit: %+v", narrow)
 	}
 
 	if err := e.proc.Process(context.Background(), media.ProcessJob{Ref: portrait, Slot: "missing"}); err == nil {

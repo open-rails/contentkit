@@ -288,7 +288,11 @@ func TestFramePosterSelectionAndRegrab(t *testing.T) {
 		{Source: "sprite"},
 	} {
 		err := e.uploads.SetVideoPoster(context.Background(), admin, e.ref, r)
-		if ue, ok := media.AsUploadError(err); !ok || ue.Code != media.CodeInvalid {
+		want := media.CodeInvalid
+		if r.Edit != nil && r.Edit.Crop != nil && r.Edit.Crop.W == 200 {
+			want = media.CodeImageTooSmall
+		}
+		if ue, ok := media.AsUploadError(err); !ok || ue.Code != want {
 			t.Fatalf("%+v: %v", r, err)
 		}
 	}
@@ -517,7 +521,8 @@ func TestVideoImageRoutesAndFrameEndpoint(t *testing.T) {
 	code, b, hdr := viewerImages()
 	var public media.VideoImages
 	if code != http.StatusOK || hdr.Get("Cache-Control") != "private, no-store" || json.Unmarshal(b, &public) != nil ||
-		public.Poster.Selection != nil || public.HoverPreview.Selection != nil || public.Video != nil || len(public.HoverPreview.WebP) != 2 {
+		public.Poster.Selection != nil || public.HoverPreview.Selection != nil || public.Video != nil || len(public.HoverPreview.WebP) != 2 ||
+		public.Poster.File != v.Video.File || public.HoverPreview.File != v.Video.File {
 		t.Fatalf("public video images: %d %s", code, b)
 	}
 	for _, p := range append(public.HoverPreview.MP4, public.HoverPreview.WebP...) {

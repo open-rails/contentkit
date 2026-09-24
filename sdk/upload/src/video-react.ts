@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Progress, UploadClient } from "./client.js";
-import { UploadError } from "./errors.js";
+import { slotError, UploadError } from "./errors.js";
 import { HOVER_PREVIEW_DEFAULT, HOVER_PREVIEW_MAX, HOVER_PREVIEW_MIN, type Edit, type RefBody, type VideoImages } from "./wire.gen.js";
 
 const asError = (e: unknown) => (e instanceof UploadError ? e : new UploadError("network", String(e)));
@@ -64,6 +64,8 @@ export interface FrameStripOptions {
   count?: number;
   /** Pixels. Default 160. */
   width?: number;
+  /** The first failed grab (the strip keeps going without it). */
+  onError?: (e: UploadError) => void;
 }
 
 export interface StripFrame {
@@ -84,9 +86,12 @@ export function useFrameStrip(client: UploadClient, o: FrameStripOptions): Strip
   const [state, setState] = useState<{ key: string; frames: StripFrame[] }>({ key: "", frames: [] });
   const ref = useRef(o.ref);
   ref.current = o.ref;
+  const onError = useRef(o.onError);
+  onError.current = o.onError;
   useEffect(() => {
     if (!(duration > 0)) return;
     const ctl = new AbortController();
+    let reported = false;
     const times = Array.from({ length: count }, (_, i) => round3(((i + 0.5) / count) * duration));
     const urls: string[] = [];
     setState({ key, frames: times.map((time) => ({ time })) });
@@ -98,8 +103,10 @@ export function useFrameStrip(client: UploadClient, o: FrameStripOptions): Strip
           const url = URL.createObjectURL(blob);
           urls.push(url);
           setState((s) => (s.key === key ? { key, frames: s.frames.map((f, j) => (j === i ? { ...f, url } : f)) } : s));
-        } catch {
+        } catch (e) {
           if (ctl.signal.aborted) return;
+          if (!reported) onError.current?.(asError(e));
+          reported = true;
         }
       }
     })();
@@ -120,6 +127,7 @@ export interface VideoFrameOptions {
   width?: number;
   /** Debounce while scrubbing, ms. Default 120. */
   delay?: number;
+  onError?: (e: UploadError) => void;
 }
 
 export interface UseVideoFrame {
@@ -139,6 +147,8 @@ export function useVideoFrame(client: UploadClient, o: VideoFrameOptions): UseVi
   const ref = useRef(o.ref);
   ref.current = o.ref;
   const last = useRef<string | undefined>(undefined);
+  const onError = useRef(o.onError);
+  onError.current = o.onError;
   const key = refKey(o.ref);
   useEffect(() => {
     if (o.time === undefined) return;
@@ -153,7 +163,11 @@ export function useVideoFrame(client: UploadClient, o: VideoFrameOptions): UseVi
           const url = (last.current = URL.createObjectURL(blob));
           setState({ url, time, loading: false });
         },
-        (e) => !ctl.signal.aborted && setState((s) => ({ ...s, loading: false, error: asError(e) })),
+        (e) => {
+          if (ctl.signal.aborted) return;
+          setState((s) => ({ ...s, loading: false, error: asError(e) }));
+          onError.current?.(asError(e));
+        },
       );
     }, delay);
     return () => {
@@ -182,6 +196,8 @@ export interface VideoPosterOptions {
   onSaved?: (v: VideoImages) => void;
   /** Polling limit for the render, ms. Default 120000. */
   timeout?: number;
+  /** Every failed save: the request, the render or the wait. */
+  onError?: (e: UploadError) => void;
 }
 
 export interface UseVideoPoster {
@@ -210,12 +226,14 @@ export function useVideoPoster(client: UploadClient, o: VideoPosterOptions): Use
           setState({ status: "saving", rendering: true });
           v = await waitFor(client, ref, file, (x) => !x.poster.pending, timeout);
         }
-        if (v.poster.error) throw new UploadError("internal_error", v.poster.error);
+        if (v.poster.error) throw slotError(v.poster);
         setState({ status: "idle" });
         opts.current.onSaved?.(v);
         return v;
       } catch (e) {
-        setState({ status: "error", error: asError(e) });
+        const error = asError(e);
+        setState({ status: "error", error });
+        opts.current.onError?.(error);
         return undefined;
       }
     },
@@ -282,7 +300,9 @@ export function useHoverSection(client: UploadClient, o: HoverSectionOptions): U
       opts.current.onSaved?.(v);
       return v;
     } catch (e) {
-      setState({ status: "error", error: asError(e) });
+      const error = asError(e);
+      setState({ status: "error", error });
+      opts.current.onError?.(error);
       return undefined;
     }
   };
@@ -307,7 +327,7 @@ async function waitFor(client: UploadClient, ref: RefBody, file: string | undefi
     await new Promise((r) => setTimeout(r, 1000));
     const v = await client.getVideoImages(ref, file);
     if (done(v)) return v;
-    if (Date.now() >= until) throw new UploadError("internal_error", "rendering is taking too long; check back later");
+    if (Date.now() >= until) throw new UploadError("render_timeout", "rendering is taking too long; check back later");
   }
 }
 

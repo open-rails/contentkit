@@ -19,7 +19,7 @@ export { HoverPreviewPicker, type HoverPreviewPickerProps } from "./components/h
 export { MediaGallery, type MediaGalleryProps } from "./components/media-gallery.js";
 export { SpriteFrame, VideoPlayer, qualityLabel, type VideoPlayerProps } from "./components/video-player.js";
 export { AvatarUpload, CoverUpload, type SlotUploadProps } from "./components/slot-upload.js";
-export { UploadUiProvider, useUploadClient, type UploadUiProviderProps } from "./provider.js";
+export { UploadUiProvider, useErrorReporter, useUploadClient, type UploadUiErrorHandler, type UploadUiOperation, type UploadUiProviderProps } from "./provider.js";
 export { UploadUiRoot } from "./scope.js";
 export type { UploadUiAppearance, UploadUiTheme, UploadUiVariables } from "./appearance.js";
 export {

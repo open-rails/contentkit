@@ -2,11 +2,11 @@ import { Alert02Icon, Camera01Icon, CropIcon, ImageUpload01Icon, Loading03Icon }
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { createContext, useContext, useRef, type ReactElement, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, type ReactElement, type ReactNode } from "react";
 import type { UploadClient } from "../client.js";
 import { useMessages } from "../i18n/context.js";
 import type { CropSource } from "../image.js";
-import { useUploadClient } from "../provider.js";
+import { useErrorReporter, useUploadClient, type UploadUiErrorHandler } from "../provider.js";
 import { useScopeProps } from "../scope.js";
 import { useSlotCrop, useSlotImage, type UseSlotCrop, type UseSlotImage } from "../slot-react.js";
 import type { RefBody, SlotManifest } from "../wire.gen.js";
@@ -23,6 +23,8 @@ export interface SlotEditorProps {
   manifest?: SlotManifest | null;
   /** Called with the new manifest after every save. */
   onChange?: (m: SlotManifest) => void;
+  /** Every failure (load, decode, save or render); default the provider's. */
+  onError?: UploadUiErrorHandler;
   /** Width / height; default the manifest's aspect, else 1. */
   aspect?: number;
   /** Crops narrower than this many source pixels get a sharpness warning; default the widest output, else 512. */
@@ -74,7 +76,9 @@ export function useSlotEditor(): SlotEditorState {
 export function SlotEditor(p: SlotEditorProps) {
   const { t, error: errorText } = useMessages();
   const client = useUploadClient(p.client);
+  const report = useErrorReporter(p.onError);
   const image = useSlotImage(client, { ref: p.item, slot: p.slot, manifest: p.manifest });
+  useEffect(() => void (image.error && report(image.error, "slot.load")), [image.error, report]);
   const aspect = p.aspect ?? image.aspect;
   const onChange = useRef(p.onChange);
   onChange.current = p.onChange;
@@ -84,6 +88,7 @@ export function SlotEditor(p: SlotEditorProps) {
     manifest: image.manifest,
     aspect,
     decode: p.decode,
+    onError: report,
     onSaved: (m) => {
       image.set(m);
       onChange.current?.(m);
@@ -129,6 +134,7 @@ export function SlotEditor(p: SlotEditorProps) {
         round={round}
         initialEdit={"edit" in crop && crop.mode === "recrop" ? crop.edit : undefined}
         targetWidth={target}
+        minWidth={image.manifest?.min_width}
         title={p.title ?? t(round ? "crop.avatarTitle" : "crop.coverTitle")}
         busy={crop.status === "saving"}
         progress={crop.status === "saving" ? crop.progress : undefined}

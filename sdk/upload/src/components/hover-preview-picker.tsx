@@ -4,7 +4,7 @@ import { cn } from "cn";
 import { useEffect, useRef, useState } from "react";
 import type { UploadClient } from "../client.js";
 import { useMessages } from "../i18n/context.js";
-import { useUploadClient } from "../provider.js";
+import { useErrorReporter, useUploadClient } from "../provider.js";
 import { round3, useFrameStrip, useHoverSection, useVideoImages } from "../video-react.js";
 import { HOVER_PREVIEW_MAX, HOVER_PREVIEW_MIN, type RefBody, type VideoImages } from "../wire.gen.js";
 import { Alert, AlertDescription } from "#ckui/ui/alert";
@@ -42,7 +42,9 @@ export function HoverPreviewPicker(p: HoverPreviewPickerProps) {
 function Loader(p: HoverPreviewPickerProps & { onSaving: (b: boolean) => void }) {
   const { t, error } = useMessages();
   const client = useUploadClient(p.client);
+  const report = useErrorReporter(p.onError);
   const loaded = useVideoImages(client, { ref: p.item, file: p.file, images: p.images });
+  useEffect(() => void (loaded.error && report(loaded.error, "preview.load")), [loaded.error, report]);
   const video = loaded.images?.video;
   if (!loaded.images || !video?.encoded) {
     return (
@@ -68,6 +70,7 @@ function SectionBody(p: HoverPreviewPickerProps & { client: UploadClient; images
   const video = images.video!;
   const file = p.file ?? video.file;
   const current = images.hover_preview.selection;
+  const report = useErrorReporter(p.onError);
   const s = useHoverSection(client, {
     ref: p.item,
     file,
@@ -78,12 +81,13 @@ function SectionBody(p: HoverPreviewPickerProps & { client: UploadClient; images
       p.onChange?.(v);
       p.onOpenChange(false);
     },
+    onError: (e) => report(e, "preview.save"),
   });
   const busy = s.state.status === "saving";
   const onSaving = useRef(p.onSaving);
   onSaving.current = p.onSaving;
   useEffect(() => onSaving.current(busy), [busy]);
-  const strip = useFrameStrip(client, { ref: p.item, file, duration: video.duration, count: 10, width: 128 });
+  const strip = useFrameStrip(client, { ref: p.item, file, duration: video.duration, count: 10, width: 128, onError: (e) => report(e, "preview.frame") });
   const unchanged = !!current && Math.abs(current.start - s.start) < 0.01 && Math.abs(current.duration - s.length) < 0.01;
   const rendered = unchanged && !images.hover_preview.pending && images.hover_preview.mp4.length + images.hover_preview.webp.length > 0;
   const end = s.start + s.length;

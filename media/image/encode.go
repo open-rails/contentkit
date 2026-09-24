@@ -53,17 +53,24 @@ var formats = map[string]vips.ImageType{
 // decoding its pixels, refusing bytes that are not contentType and sources
 // over maxPixels.
 func probe(src []byte, contentType string, maxPixels int) (w, h int, err error) {
+	unreadable := permanentError{&media.ImageError{Code: media.CodeImageUnreadable,
+		Message: fmt.Sprintf("the file is not a readable %s image", contentType), Details: media.ErrorDetails{Type: contentType}}}
 	if want, ok := formats[contentType]; !ok || vips.DetermineImageType(src) != want {
-		return 0, 0, permanentError{fmt.Errorf("content is not %q", contentType)}
+		return 0, 0, unreadable
 	}
 	img, err := vips.NewImageFromBuffer(src)
 	if err != nil {
-		return 0, 0, permanentError{err}
+		return 0, 0, unreadable
 	}
 	defer img.Close()
 	w, h = img.Width(), img.Height()
-	if w <= 0 || h <= 0 || w*h > maxPixels {
-		return 0, 0, permanentError{fmt.Errorf("%dx%d exceeds %d pixels", w, h, maxPixels)}
+	if w <= 0 || h <= 0 {
+		return 0, 0, unreadable
+	}
+	if w*h > maxPixels {
+		return 0, 0, permanentError{&media.ImageError{Code: media.CodeImageTooLarge,
+			Message: fmt.Sprintf("images may have at most %d pixels; this one is %dx%d", maxPixels, w, h),
+			Details: media.ErrorDetails{Width: w, Height: h, MaxPixels: maxPixels}}}
 	}
 	if o := img.Orientation(); o >= 5 && o <= 8 {
 		w, h = h, w

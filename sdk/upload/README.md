@@ -51,7 +51,7 @@ while `pending`; `getSlotOriginal` returns the committed original for re-editing
 Video items (#32): a cover (slot `poster`, the video's native aspect) and a hover preview.
 
 ```ts
-await client.getVideoImages(ref);                                  // { poster, hover_preview, video: { file, duration, w, h, encoded } }
+await client.getVideoImages(ref);                                  // { poster: { file, … }, hover_preview: { file, … }, video: { file, duration, w, h, encoded } }
 await client.setVideoPoster(ref, { source: "frame", time: 8.3, edit }); // edit in frame pixels (video.w × video.h)
 await client.uploadVideoPoster(image, { ref, edit });              // presign slot "poster" + /video-poster upload
 await client.setVideoPoster(ref, { source: "auto" });
@@ -61,8 +61,13 @@ await client.waitForVideoImages(ref);                              // until noth
 ```
 
 - Errors are `UploadError` with `code` (the server's `ErrorReply.code`, or
-  `network`, `storage`, `aborted`, `resume_mismatch`), `status` and
-  `retryAfter` (seconds, on `rate_limited`). `isLimit` is true for
+  `network`, `storage`, `aborted`, `resume_mismatch`, `decode`,
+  `render_timeout`), `status`, `retryAfter` (seconds, on `rate_limited`) and
+  `details` (image refusals: `image_too_small` `{ width, min_width }`,
+  `image_too_large`, `image_unreadable`, `type_not_allowed` `{ allowed }`,
+  `too_large` `{ size, max_bytes }`). `refusal` is true when the request broke
+  a stated rule (4xx, typed refusals) rather than hitting a fault. A slot
+  render's failure is `slotError(manifest)` (`error_code`, `error_details`). `isLimit` is true for
   `rate_limited` and `quota_exceeded`; `isCeiling` for `too_many_files` (409,
   the kind's file caps).
 - A refused presign throws before any bytes move; multipart files are
@@ -177,20 +182,23 @@ function Cover() {
 | Component | Props |
 | --- | --- |
 | `AvatarUpload`, `CoverUpload` | `item`, `slot` (default `avatar`/`cover`), `client`, `manifest` (else fetched), `onChange(manifest)`, `aspect` (default the manifest's, else 1 / 3), `targetWidth` (sharpness warning below it; default 512 / 3000), `accept`, `sizes`, `disabled`, `label`, `hint` |
-| `SlotEditor` | `item`, `slot`, `client`, `manifest` (else fetched), `onChange(manifest)`, `aspect` (default the manifest's, else 1), `targetWidth` (default the widest output), `round` (default aspect 1), `title`, `accept`, `disabled`, `children` |
+| `SlotEditor` | `item`, `slot`, `client`, `manifest` (else fetched), `onChange(manifest)`, `onError`, `aspect` (default the manifest's, else 1), `targetWidth` (default the widest output), `round` (default aspect 1), `title`, `accept`, `disabled`, `children` |
 | `useSlotEditor()` | `{ image, crop, has, busy, disabled, error, choose(), pick(file), recrop() }` inside a `SlotEditor` |
 | `SlotEditMenu` | `label`, `iconOnly`, `render` (trigger element; default the kit's outline button), `className`, `align`; the trigger has `data-ckui="slot-edit"` and `data-busy` |
 | `SlotEditError` | `className`: the editor's error outside the dialog |
-| `ImageCropDialog` | `open`, `onOpenChange`, `source` (`{ url, width, height }` of the oriented original), `aspect`, `round`, `initialEdit`, `onEditChange`, `onConfirm(edit)`, `targetWidth`, `busy`, `progress`, `error`, `title` |
+| `ImageCropDialog` | `open`, `onOpenChange`, `source` (`{ url, width, height }` of the oriented original), `aspect`, `round`, `initialEdit`, `onEditChange`, `onConfirm(edit)`, `targetWidth`, `minWidth` (the slot's `min_width`: zoom stops there, a smaller image cannot be confirmed), `busy`, `progress`, `error`, `title` |
 | `EncodeProgress` | `progress` (a read API file's `progress`; absent shows "Processing video"), `className`, `appearance`: bar, phase, `segment 5 / 27`, `~40 s left` or queue position; `data-ckui="encode-progress"`, `data-phase` |
 | `SlotImage` | `manifest` or `item` + `slot`, `density`, `round`, `aspect`, `placeholder`, `alt` |
-| `VideoPosterPicker` | `open`, `onOpenChange`, `item`, `file`, `client`, `images` (else fetched), `onChange(images)`, `title` (default "Set cover"), `accept`: frame strip + slider + frame steps over `/frame`, "Use this frame", "Crop…" (in `video.w×h` pixels), "Upload image" → `ImageCropDialog` at the video's aspect, "Automatic" |
+| `VideoPosterPicker` | `open`, `onOpenChange`, `item`, `file`, `client`, `images` (else fetched), `onChange(images)`, `onError`, `title` (default "Set cover"), `accept`: frame strip + slider + frame steps over `/frame`, "Use this frame", "Crop…" (in `video.w×h` pixels), "Upload image" → `ImageCropDialog` at the video's aspect, "Automatic" |
 | `HoverPreviewPicker` | same props: a 1–6 s range over the frame strip, an approximate flip-book of the section, the rendered loop once saved, "Automatic" |
 | `VideoPoster` | `poster` (`VideoImages.poster` or a listing's outputs), `preview` (`hover_preview` or `{ mp4, webp }` URLs), `playing` (default hover or focus within), `aspect` (default the poster's own), `density`, `alt`, `children`: full-width, uncropped `srcset` cover at its native aspect that plays the preview |
 | `HoverPreview` | `preview`, `active`, `width`: muted looping MP4 (`playsinline`), WebP on error; nothing with `prefers-reduced-motion` |
-| `UploadUiProvider` | `client`, `appearance` (`theme`: `light`/`dark`/`auto`/`inherit`, `variables`), `messages` (bundle or list; locales `en de es ja ko zh`), `t` (host translate hook), `density` (default `[2, 3]`) |
+| `UploadUiProvider` | `client`, `appearance` (`theme`: `light`/`dark`/`auto`/`inherit`, `variables`), `messages` (bundle or list; locales `en de es ja ko zh`), `t` (host translate hook), `density` (default `[2, 3]`), `onError(error, { operation })` |
 
-Errors are mapped from `UploadError.code` to `errors.*` messages.
+Errors are mapped from `UploadError.code` to `errors.*` messages; an unknown
+refusal shows the server's message, a fault the generic "try again" line.
+Every failure a component shows (load, frame grab, decode, save, render) also
+goes to its `onError` or the provider's, e.g. to toast it; aborts never do.
 
 ### Renditions
 
@@ -234,7 +242,7 @@ with the host's `renderLocked`; locked files carry no URLs.
   hlsBase={(f) => `/api/media/post/${id}/hls/${encodeURIComponent(f.name!)}/`}
   xhrSetup={(xhr) => xhr.setRequestHeader("Authorization", `Bearer ${token()}`)} // same-origin playlists only
   refresh={() => refetchRead()}                  // after a 401/403: re-grant, then the player retries once
-  videoImages={images}                           // optional poster + hover preview (GET …/video-images)
+  videoImages={images}                           // optional poster + hover preview (GET …/video-images): each drawn on its `file`
   renderLocked={({ count }) => <UnlockButton count={count} />}
   renderDetails={(item) => <Downloads item={item} />}
   defaultView="carousel"                         // or view + onViewChange; storageKey remembers the choice
