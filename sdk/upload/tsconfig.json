@@ -1,17 +1,25 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
     "jsx": "react-jsx",
     "strict": true,
+    "noEmit": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": false,
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
+    "moduleDetection": "force",
     "skipLibCheck": true,
-    "types": ["node"]
+    "allowImportingTsExtensions": true,
+    "types": ["node", "vite/client"],
+    "paths": {
+      "#ckui/*": ["./src/*"],
+      "@openrails/contentkit-upload": ["./src/index.ts"],
+      "@openrails/contentkit-upload/*": ["./src/*.ts"]
+    }
   },
-  "include": ["src", "test", "vitest.config.ts"]
+  "include": ["src", "test", "tooling", "demo", "e2e", "vitest.config.ts", "vite.config.ts", "playwright.config.ts"]
 }

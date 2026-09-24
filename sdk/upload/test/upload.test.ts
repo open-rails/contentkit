@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { UploadClient, fetchTransport, type Transport, type UploadState } from "../src/index.js";
 import { bytes } from "./fake.js";
@@ -87,6 +88,38 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
     const c3 = await c.upload(new File([bytes(3000, 13)], "c.png", { type: "image/png" }), { ref });
     const refused = await c.commit(ref, [{ op: "insert", name: "c.png", original: c3.name }]).catch((e) => e);
     expect([refused.code, refused.status, refused.isCeiling]).toEqual(["too_many_files", 409, true]);
+  });
+
+  it("uploads a slot original with an edit, re-edits it and serves the original back", async () => {
+    // 360×240; the cover slot is 3:1, so a 360-wide crop is 120 high.
+    const png = readFileSync(new URL("../e2e/fixtures/small.png", import.meta.url));
+    const ref = { kind: "gallery", id: "slots", version: "en" };
+    const c = client();
+    const puts: string[] = [];
+    const counting: Transport = async (req, blob, o) => {
+      puts.push(req.url);
+      await fetchTransport(req, blob, o);
+    };
+    const edit = { crop: { x: 0, y: 40, w: 360, h: 120 } };
+    const up = await client({ transport: counting }).uploadSlot(new File([png], "cover.png", { type: "image/png" }), { ref, slot: "cover", edit });
+    // This server has no encoder: the slot stays pending, and dims arrive with the first encode.
+    expect(up.manifest).toMatchObject({ aspect: 3, edit, pending: true, outputs: [] });
+    expect(puts).toHaveLength(1);
+    expect(JSON.parse((await stored(ref, "cover", "slot")).edit!)).toEqual(edit);
+
+    // Re-edit from the kept original: nothing is uploaded.
+    const turned = { crop: { x: 100, y: 0, w: 80, h: 240 }, rotate: 90 };
+    const m = await c.editSlot(ref, "cover", turned);
+    expect(m.edit).toEqual(turned);
+    expect(await c.getSlot(ref, "cover")).toMatchObject({ aspect: 3, edit: turned, pending: true });
+    expect(puts).toHaveLength(1);
+
+    const original = new Uint8Array(await (await c.getSlotOriginal(ref, "cover")).arrayBuffer());
+    expect(createHash("sha256").update(original).digest("hex")).toBe(createHash("sha256").update(png).digest("hex"));
+
+    expect((await c.editSlot(ref, "cover", { rotate: 45 }).catch((e) => e)).code).toBe("invalid_request");
+    expect((await c.editSlot(ref, "banner", edit).catch((e) => e)).code).toBe("not_found");
+    expect((await c.getSlotOriginal({ ...ref, id: "empty" }, "cover").catch((e) => e)).code).toBe("not_found");
   });
 
   it("uploads a stale original again when commit refuses it", async () => {

@@ -1,0 +1,172 @@
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@import "tw-animate-css";
+@import "react-easy-crop/react-easy-crop.css";
+@source "./ui";
+@source "./components";
+
+/* The build scopes every rule under `.ckui` (tooling/css). Components read only
+   `--ckui-*` tokens; `data-ckui-theme` picks the palette and appearance
+   variables land as inline custom properties that win over the blocks below. */
+
+@custom-variant data-horizontal (&[data-orientation="horizontal"]);
+@custom-variant data-vertical (&[data-orientation="vertical"]);
+
+@custom-variant dark {
+  &:where([data-ckui-theme="dark"], [data-ckui-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where([data-ckui-theme="auto"], [data-ckui-theme="auto"] *) {
+      @slot;
+    }
+  }
+  &:where(.dark [data-ckui-theme="inherit"], .dark [data-ckui-theme="inherit"] *) {
+    @slot;
+  }
+}
+
+@theme inline {
+  --color-background: var(--ckui-background);
+  --color-foreground: var(--ckui-foreground);
+  --color-card: var(--ckui-card);
+  --color-card-foreground: var(--ckui-card-foreground);
+  --color-popover: var(--ckui-popover);
+  --color-popover-foreground: var(--ckui-popover-foreground);
+  --color-primary: var(--ckui-primary);
+  --color-primary-foreground: var(--ckui-primary-foreground);
+  --color-secondary: var(--ckui-secondary);
+  --color-secondary-foreground: var(--ckui-secondary-foreground);
+  --color-muted: var(--ckui-muted);
+  --color-muted-foreground: var(--ckui-muted-foreground);
+  --color-accent: var(--ckui-accent);
+  --color-accent-foreground: var(--ckui-accent-foreground);
+  --color-destructive: var(--ckui-destructive);
+  --color-warning: var(--ckui-warning);
+  --color-border: var(--ckui-border);
+  --color-input: var(--ckui-input);
+  --color-ring: var(--ckui-ring);
+  --radius-sm: calc(var(--ckui-radius) - 4px);
+  --radius-md: calc(var(--ckui-radius) - 2px);
+  --radius-lg: var(--ckui-radius);
+  --radius-xl: calc(var(--ckui-radius) + 4px);
+}
+
+.ckui {
+  --ckui-background: oklch(1 0 0);
+  --ckui-foreground: oklch(0.141 0.005 285.823);
+  --ckui-card: oklch(1 0 0);
+  --ckui-card-foreground: oklch(0.141 0.005 285.823);
+  --ckui-popover: oklch(1 0 0);
+  --ckui-popover-foreground: oklch(0.141 0.005 285.823);
+  --ckui-primary: oklch(0.21 0.006 285.885);
+  --ckui-primary-foreground: oklch(0.985 0 0);
+  --ckui-secondary: oklch(0.967 0.001 286.375);
+  --ckui-secondary-foreground: oklch(0.21 0.006 285.885);
+  --ckui-muted: oklch(0.967 0.001 286.375);
+  --ckui-muted-foreground: oklch(0.552 0.016 285.938);
+  --ckui-accent: oklch(0.967 0.001 286.375);
+  --ckui-accent-foreground: oklch(0.21 0.006 285.885);
+  --ckui-destructive: oklch(0.577 0.245 27.325);
+  --ckui-warning: oklch(0.555 0.163 48.998);
+  --ckui-border: oklch(0.92 0.004 286.32);
+  --ckui-input: oklch(0.92 0.004 286.32);
+  --ckui-ring: oklch(0.705 0.015 286.067);
+  --ckui-radius: 0.625rem;
+
+  color-scheme: light;
+  color: var(--ckui-foreground);
+  /* Unset unless appearance.variables.fontFamily is given, so the host font inherits. */
+  font-family: var(--ckui-font);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.ckui[data-ckui-theme="dark"] {
+  --ckui-background: oklch(0.141 0.005 285.823);
+  --ckui-foreground: oklch(0.985 0 0);
+  --ckui-card: oklch(0.21 0.006 285.885);
+  --ckui-card-foreground: oklch(0.985 0 0);
+  --ckui-popover: oklch(0.21 0.006 285.885);
+  --ckui-popover-foreground: oklch(0.985 0 0);
+  --ckui-primary: oklch(0.92 0.004 286.32);
+  --ckui-primary-foreground: oklch(0.21 0.006 285.885);
+  --ckui-secondary: oklch(0.274 0.006 286.033);
+  --ckui-secondary-foreground: oklch(0.985 0 0);
+  --ckui-muted: oklch(0.274 0.006 286.033);
+  --ckui-muted-foreground: oklch(0.705 0.015 286.067);
+  --ckui-accent: oklch(0.274 0.006 286.033);
+  --ckui-accent-foreground: oklch(0.985 0 0);
+  --ckui-destructive: oklch(0.704 0.191 22.216);
+  --ckui-warning: oklch(0.828 0.189 84.429);
+  --ckui-border: oklch(1 0 0 / 10%);
+  --ckui-input: oklch(1 0 0 / 15%);
+  --ckui-ring: oklch(0.552 0.016 285.938);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  .ckui[data-ckui-theme="auto"] {
+    --ckui-background: oklch(0.141 0.005 285.823);
+    --ckui-foreground: oklch(0.985 0 0);
+    --ckui-card: oklch(0.21 0.006 285.885);
+    --ckui-card-foreground: oklch(0.985 0 0);
+    --ckui-popover: oklch(0.21 0.006 285.885);
+    --ckui-popover-foreground: oklch(0.985 0 0);
+    --ckui-primary: oklch(0.92 0.004 286.32);
+    --ckui-primary-foreground: oklch(0.21 0.006 285.885);
+    --ckui-secondary: oklch(0.274 0.006 286.033);
+    --ckui-secondary-foreground: oklch(0.985 0 0);
+    --ckui-muted: oklch(0.274 0.006 286.033);
+    --ckui-muted-foreground: oklch(0.705 0.015 286.067);
+    --ckui-accent: oklch(0.274 0.006 286.033);
+    --ckui-accent-foreground: oklch(0.985 0 0);
+    --ckui-destructive: oklch(0.704 0.191 22.216);
+    --ckui-warning: oklch(0.828 0.189 84.429);
+    --ckui-border: oklch(1 0 0 / 10%);
+    --ckui-input: oklch(1 0 0 / 15%);
+    --ckui-ring: oklch(0.552 0.016 285.938);
+    color-scheme: dark;
+  }
+}
+
+/* Host shadcn tokens flow through; zinc covers any the host lacks. */
+.ckui[data-ckui-theme="inherit"] {
+  --ckui-background: var(--background, oklch(1 0 0));
+  --ckui-foreground: var(--foreground, oklch(0.141 0.005 285.823));
+  --ckui-card: var(--card, oklch(1 0 0));
+  --ckui-card-foreground: var(--card-foreground, oklch(0.141 0.005 285.823));
+  --ckui-popover: var(--popover, oklch(1 0 0));
+  --ckui-popover-foreground: var(--popover-foreground, oklch(0.141 0.005 285.823));
+  --ckui-primary: var(--primary, oklch(0.21 0.006 285.885));
+  --ckui-primary-foreground: var(--primary-foreground, oklch(0.985 0 0));
+  --ckui-secondary: var(--secondary, oklch(0.967 0.001 286.375));
+  --ckui-secondary-foreground: var(--secondary-foreground, oklch(0.21 0.006 285.885));
+  --ckui-muted: var(--muted, oklch(0.967 0.001 286.375));
+  --ckui-muted-foreground: var(--muted-foreground, oklch(0.552 0.016 285.938));
+  --ckui-accent: var(--accent, oklch(0.967 0.001 286.375));
+  --ckui-accent-foreground: var(--accent-foreground, oklch(0.21 0.006 285.885));
+  --ckui-destructive: var(--destructive, oklch(0.577 0.245 27.325));
+  --ckui-warning: var(--warning, oklch(0.555 0.163 48.998));
+  --ckui-border: var(--border, oklch(0.92 0.004 286.32));
+  --ckui-input: var(--input, oklch(0.92 0.004 286.32));
+  --ckui-ring: var(--ring, oklch(0.705 0.015 286.067));
+  --ckui-radius: var(--radius, 0.625rem);
+  color-scheme: inherit;
+}
+
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--ckui-border);
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+}

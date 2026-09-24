@@ -1,5 +1,5 @@
-import { expect, it } from "vitest";
-import { centeredCrop, constrainCrop, editOf, rotation, toOriginal } from "./crop.js";
+import { describe, expect, it } from "vitest";
+import { centeredCrop, constrainCrop, editOf, editedSize, fromRotated, rotation, toOriginal, toRotated } from "./crop.js";
 
 const src = { width: 400, height: 200 };
 
@@ -29,4 +29,24 @@ it("maps display pixels to original pixels and builds edits", () => {
   expect(editOf(null, src, 90)).toEqual({ rotate: 90 });
   expect(editOf({ x: 1, y: 0, w: 10, h: 10 }, src, 0)).toEqual({ crop: { x: 1, y: 0, w: 10, h: 10 } });
   expect([rotation(-90), rotation(450), rotation(180)]).toEqual([270, 90, 180]);
+});
+
+describe("rotated frames", () => {
+  const source = { width: 400, height: 300 };
+  const r = { x: 10, y: 20, w: 100, h: 50 };
+
+  it("round-trips a rect through every quarter turn", () => {
+    for (const rot of [0, 90, 180, 270] as const) expect(fromRotated(toRotated(r, source, rot), source, rot)).toEqual(r);
+  });
+
+  it("maps the top-left corner of the original to the top-right after 90°", () => {
+    expect(toRotated({ x: 0, y: 0, w: 1, h: 1 }, source, 90)).toEqual({ x: 299, y: 0, w: 1, h: 1 });
+    expect(toRotated({ x: 0, y: 0, w: 1, h: 1 }, source, 270)).toEqual({ x: 0, y: 399, w: 1, h: 1 });
+    expect(editedSize(source, 90)).toEqual({ width: 300, height: 400 });
+  });
+
+  it("maps a rotated cropper rect at display scale back to original pixels", () => {
+    // Shown turned 90°: 300×400 at half size (150×200); the top half of what is shown.
+    expect(toOriginal({ x: 0, y: 0, w: 150, h: 100 }, { width: 150, height: 200 }, source, 90)).toEqual({ x: 0, y: 0, w: 200, h: 300 });
+  });
 });
