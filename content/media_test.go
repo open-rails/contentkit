@@ -75,9 +75,10 @@ func TestMedia_PostCoverAndInlineImages(t *testing.T) {
 	if code := send(t, rt, mediaAdmin, "PUT", "/posts/"+id+"/cover", image(""), nil); code != 200 {
 		t.Fatalf("clear %d", code)
 	}
-	send(t, rt, mediaAdmin, "GET", "/posts/"+id, nil, &v)
-	if v.CoverURL != nil {
-		t.Fatalf("cover not cleared: %v", *v.CoverURL)
+	var cleared postView
+	send(t, rt, mediaAdmin, "GET", "/posts/"+id, nil, &cleared)
+	if cleared.ID != id || cleared.CoverURL != nil {
+		t.Fatalf("cover not cleared: %+v", cleared)
 	}
 
 	var inline map[string]string
