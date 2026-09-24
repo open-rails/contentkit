@@ -83,7 +83,7 @@ func probe(src []byte, contentType string, r rules) (source, error) {
 			return source{}, notAllowed()
 		}
 		return source{}, permanentError{&media.ImageError{Code: media.CodeAnimationUnsupported,
-			Message: fmt.Sprintf("animated %s images are not supported; use an animated WebP or GIF", contentType),
+			Message: fmt.Sprintf("animated %s images are not supported yet; upload a GIF or animated WebP", contentType),
 			Details: media.ErrorDetails{Type: contentType}}}
 	}
 	img, err := decode(src, contentType)
