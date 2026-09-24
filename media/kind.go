@@ -20,8 +20,10 @@ import (
 type Kind struct {
 	Name      string
 	Versioned bool // manifests live at manifests/{version_id}.json
-	Types     []string
-	MaxBytes  int64
+	// Types are the accepted content types (empty: any); image processing
+	// also requires the bytes to be the declared format.
+	Types    []string
+	MaxBytes int64
 	// MaxFiles caps a manifest's files; 0 is unlimited.
 	MaxFiles int
 	// TypeLimits are caps per top-level type ("image", "video"): a set
