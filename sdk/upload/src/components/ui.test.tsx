@@ -191,7 +191,7 @@ it("SlotEditor composes a host-styled overlay trigger: pick, then a Change / Edi
   await user.click(within(dialog).getByRole("button", { name: "Save" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(onChange).toHaveBeenCalledOnce();
-  expect(screen.getByRole("img", { name: "cover" }).getAttribute("data-rendition")).toBeTruthy();
+  expect(screen.getByRole("img", { name: "cover" }).getAttribute("srcset")).toContain("3000w");
 
   // Now the slot keeps an original: the same trigger opens a menu.
   const puts = s.puts.length;
