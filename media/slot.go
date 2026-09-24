@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -434,9 +433,9 @@ func (m *Manifests) SlotManifest(ctx context.Context, urls OutputURLs, ref conte
 		out.Version = res.Version
 	}
 	for _, o := range res.Outputs {
-		img := slotImage(urls.BaseURL, item, slot, o, out.Version)
+		img := slotImage(urls.BaseURL, item, slot, s, o, out.Version)
 		if item.Gated(slot) && urls.EditorToken != "" {
-			key, _ := item.SlotOutput(slot, o.W)
+			key, _ := item.SlotOutput(slot, s.Rung(o.W))
 			img.URL = urls.editorURL(key, out.Version)
 		}
 		out.Outputs = append(out.Outputs, img)
@@ -572,21 +571,17 @@ func (r *Reader) SlotOutputs(ref contentref.ContentRef, slot string, stamp SlotS
 		return nil, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
 	}
 	if stamp == "" {
-		for _, w := range s.Widths {
-			if w <= s.Min() {
-				outputs = append(outputs, Dims{W: w})
-			}
-		}
+		outputs = append(outputs, Dims{W: s.Widths[0]})
 	}
 	out := []SlotImage{}
 	for _, d := range outputs {
-		if !slices.Contains(s.Widths, d.W) {
+		if s.Rung(d.W) == 0 {
 			continue
 		}
 		if d.H == 0 || !s.Native() {
 			d.H = s.Height(d.W)
 		}
-		out = append(out, slotImage(r.base.String(), item, slot, d, version))
+		out = append(out, slotImage(r.base.String(), item, slot, s, d, version))
 	}
 	return out, nil
 }
@@ -634,8 +629,8 @@ func (r *Registry) slot(ref contentref.ContentRef, slot string) (Item, Slot, err
 // SlotVersionParam is the query parameter carrying an output's version.
 const SlotVersionParam = layout.VersionParam
 
-// slotImage is an output at its public URL.
-func slotImage(base string, item Item, slot string, o Dims, version string) SlotImage {
-	key, _ := item.SlotPublic(slot, o.W)
-	return SlotImage{Name: SlotOutput(slot, o.W), W: o.W, H: o.H, URL: versioned(strings.TrimRight(base, "/")+"/"+key, version)}
+// slotImage is an output at its public URL, stored under its rung.
+func slotImage(base string, item Item, slot string, s Slot, o Dims, version string) SlotImage {
+	key, _ := item.SlotPublic(slot, s.Rung(o.W))
+	return SlotImage{Name: SlotOutput(slot, s.Rung(o.W)), W: o.W, H: o.H, URL: versioned(strings.TrimRight(base, "/")+"/"+key, version)}
 }

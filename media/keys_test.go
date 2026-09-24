@@ -3,6 +3,7 @@ package media_test
 import (
 	"crypto/sha256"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -305,5 +306,25 @@ func TestPosterWidthsPolicy(t *testing.T) {
 	}
 	if _, err := media.NewRegistry(media.Kind{Name: "v", Video: &media.Video{PosterWidths: []int{720, 720}}}); err == nil {
 		t.Fatal("duplicate poster widths accepted")
+	}
+}
+
+func TestSlotRungsCapAtTheEditedWidth(t *testing.T) {
+	s := media.Slot{Aspect: 3, Widths: []int{900, 3000}, MinWidth: 600}
+	if s.Min() != 600 {
+		t.Fatalf("min %d", s.Min())
+	}
+	for edited, want := range map[int][]int{600: {600}, 900: {900}, 1200: {900, 1200}, 3000: {900, 3000}, 5000: {900, 3000}} {
+		if got := s.OutputWidths(edited); !slices.Equal(got, want) {
+			t.Errorf("edited %d: %v, want %v", edited, got, want)
+		}
+	}
+	for w, rung := range map[int]int{600: 900, 900: 900, 1200: 3000, 3000: 3000, 3001: 0} {
+		if s.Rung(w) != rung {
+			t.Errorf("rung of %d: %d, want %d", w, s.Rung(w), rung)
+		}
+	}
+	if _, err := s.Resolve(&media.Edit{Crop: &media.Crop{W: 550, H: 183}}, 1800, 1200); err == nil {
+		t.Fatal("crop under MinWidth accepted")
 	}
 }

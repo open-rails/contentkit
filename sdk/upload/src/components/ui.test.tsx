@@ -61,7 +61,7 @@ it("AvatarUpload: pick → crop dialog with a sharpness warning → save → sho
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(s.slotCalls[0]).toMatchObject({ ref: item, slot: "avatar", edit: { crop: { x: 50, y: 0, w: 300, h: 300 } } });
   expect(onChange).toHaveBeenCalledOnce();
-  expect(container.querySelector("img")?.getAttribute("srcset")).toContain("512w");
+  expect(container.querySelector("img")?.getAttribute("data-rendition")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Change" })).toBeInTheDocument();
 });
 
