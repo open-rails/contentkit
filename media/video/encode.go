@@ -118,15 +118,16 @@ func ladder(ctx context.Context, src, dir string, p plan, enc encoding, fp *file
 	return sprite(ctx, dir)
 }
 
-// rungThreads is rung i's share of threads by frame area, at least 1: x264
-// given every thread per rung spends a quarter more CPU and a third more
-// memory on 4K for a slower pass (bench_test.go).
+// rungThreads is rung i's share of threads by frame area, at least 2 (a
+// single-threaded x264 has no lookahead thread and stalls the pass). Giving
+// every rung all threads costs a 4K ladder a third more CPU and memory for a
+// slower pass (bench_test.go).
 func rungThreads(rungs []rung, i, threads int) int {
 	var total float64
 	for _, r := range rungs {
 		total += float64(r.w * r.h)
 	}
-	return max(1, int(math.Round(float64(threads)*float64(rungs[i].w*rungs[i].h)/total)))
+	return max(min(threads, 2), int(math.Ceil(float64(threads)*float64(rungs[i].w*rungs[i].h)/total)))
 }
 
 // Config.Encoder values.
