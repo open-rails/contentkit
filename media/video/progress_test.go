@@ -52,9 +52,8 @@ func TestProgressEncodingETA(t *testing.T) {
 		t.Fatalf("initial %+v", reports)
 	}
 	f := p.file("a")
-	f.moved(10<<20, false) // download
 	c.seconds(1)
-	f.moved(10<<20, false)
+	f.transferred(20<<20, time.Second) // the fetch: 20 MiB/s
 	f.set(media.PhaseProbing)
 	f.probed(108, "")
 
@@ -101,8 +100,15 @@ func TestProgressEncodingETA(t *testing.T) {
 	f.uploads(100 << 20)
 	f.set(media.PhaseUploading)
 	up := reports[len(reports)-1]["a"]
-	if up.SegmentsDone != 27 || up.ETA <= 0 || up.Percent < last.Percent {
-		t.Fatalf("uploading %+v", up)
+	if up.SegmentsDone != 27 || up.ETA != 5 || up.Percent < last.Percent {
+		t.Fatalf("uploading at the fetch's 20 MiB/s: %+v", up)
+	}
+	// A slow first upload lowers the measured throughput: 20 MiB in 1 s + 20 MiB in 9 s.
+	f.moved(20 << 20)
+	f.transferred(20<<20, 9*time.Second)
+	f.set(media.PhaseUploading)
+	if up := reports[len(reports)-1]["a"]; up.ETA != 20 {
+		t.Fatalf("uploading at 4 MiB/s: %+v", up)
 	}
 	f.set(media.PhasePublishing)
 	if pub := reports[len(reports)-1]["a"]; pub.Percent != 99 || pub.ETA != 0 {
@@ -132,7 +138,7 @@ func TestCountingReaderHighWater(t *testing.T) {
 	p := newProgress(context.Background(), func(context.Context, map[string]media.EncodeProgress) {}, time.Hour, c.now, []string{"a"})
 	f := p.file("a")
 	f.uploads(1000)
-	r := f.reader(bytes.NewReader(make([]byte, 1000)), true).(io.ReadSeeker)
+	r := f.reader(bytes.NewReader(make([]byte, 1000))).(io.ReadSeeker)
 	if _, err := io.Copy(io.Discard, r); err != nil { // signing pass
 		t.Fatal(err)
 	}

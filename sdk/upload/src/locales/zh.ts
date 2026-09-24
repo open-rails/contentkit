@@ -83,6 +83,7 @@ export const zh: UploadUiMessageBundle = {
     remainingMinutes: "剩余约 {minutes} 分钟",
     remainingHours: "剩余约 {hours} 小时 {minutes} 分钟",
     almostDone: "即将完成",
+    estimating: "正在估算…",
     phase: {
       queued: "排队中",
       downloading: "准备中",

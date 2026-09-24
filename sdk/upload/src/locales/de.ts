@@ -83,6 +83,7 @@ export const de: UploadUiMessageBundle = {
     remainingMinutes: "noch ca. {minutes} Min.",
     remainingHours: "noch ca. {hours} Std. {minutes} Min.",
     almostDone: "fast fertig",
+    estimating: "wird geschätzt…",
     phase: {
       queued: "In der Warteschlange",
       downloading: "Vorbereiten",

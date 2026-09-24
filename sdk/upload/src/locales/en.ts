@@ -81,6 +81,7 @@ export const en = {
     remainingMinutes: "~{minutes} min left",
     remainingHours: "~{hours} h {minutes} min left",
     almostDone: "almost done",
+    estimating: "estimating…",
     phase: {
       queued: "Queued",
       downloading: "Preparing",

@@ -83,6 +83,7 @@ export const ko: UploadUiMessageBundle = {
     remainingMinutes: "약 {minutes}분 남음",
     remainingHours: "약 {hours}시간 {minutes}분 남음",
     almostDone: "거의 완료",
+    estimating: "남은 시간 계산 중…",
     phase: {
       queued: "대기 중",
       downloading: "준비 중",
