@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -87,7 +88,7 @@ func (e *env) frame(t *testing.T, w, h int) image.Image {
 	if b := img.Bounds(); b.Dx() != w || b.Dy() != h {
 		t.Fatalf("frame is %v, want %dx%d", b, w, h)
 	}
-	if n := len(e.slotJobs); n == 0 || e.slotJobs[n-1] != (media.ProcessJob{Ref: e.ref.Content(), Slot: media.PosterSlot}) {
+	if !slices.Contains(e.slotJobs, media.ProcessJob{Ref: e.ref.Content(), Slot: media.PosterSlot}) {
 		t.Fatalf("frame not handed to the image job: %+v", e.slotJobs)
 	}
 	return img
@@ -174,6 +175,10 @@ func mp4Frame(t *testing.T, path string, last bool) image.Image {
 // of its first and last frames.
 func (e *env) preview(t *testing.T, length float64, widths []int, first, last string) {
 	t.Helper()
+	// A render is handed to the host's process job, which publishes it.
+	if !slices.Contains(e.slotJobs, media.ProcessJob{Ref: e.ref.Content(), Slot: media.HoverPreview}) {
+		t.Fatalf("hover preview not handed to the host: %+v", e.slotJobs)
+	}
 	v := e.images(t).HoverPreview
 	if v.Pending || v.Version == "" || len(v.MP4) != len(widths) || len(v.WebP) != len(widths) {
 		t.Fatalf("hover preview %+v, want widths %v", v, widths)
