@@ -6,7 +6,7 @@
 //	CONTENTKIT_BENCH_LABEL     row label, e.g. "before" or "after"
 //	CONTENTKIT_BENCH_THREADS   Config.Threads (default: GOMAXPROCS)
 //	CONTENTKIT_BENCH_TMP       Config.TempDir (default: a test temp dir)
-//	CONTENTKIT_BENCH_PARALLEL  Config.Parallel
+//	CONTENTKIT_BENCH_ENCODER   Config.Encoder
 //	CONTENTKIT_BENCH_VMAF      an ffmpeg with libvmaf; unset scores SSIM/PSNR only
 //	CONTENTKIT_BENCH_QUALITY   0 skips quality scoring
 //	CONTENTKIT_BENCH_OUT       JSON lines appended per sample
@@ -58,7 +58,7 @@ type benchResult struct {
 	Sample     string             `json:"sample"`
 	Duration   float64            `json:"duration_s"`
 	Threads    int                `json:"threads"`
-	Parallel   int                `json:"parallel,omitempty"`
+	Encoder    string             `json:"encoder,omitempty"`
 	FFmpeg     string             `json:"ffmpeg"`
 	Load1      float64            `json:"load1"`
 	Wall       float64            `json:"wall_s"`
@@ -112,13 +112,13 @@ func benchSample(t *testing.T, src string) {
 		cfg.TempDir = t.TempDir()
 	}
 	cfg.Threads, _ = strconv.Atoi(os.Getenv("CONTENTKIT_BENCH_THREADS"))
-	cfg.Parallel, _ = strconv.Atoi(os.Getenv("CONTENTKIT_BENCH_PARALLEL"))
+	cfg.Encoder = os.Getenv("CONTENTKIT_BENCH_ENCODER")
 	enc, err := video.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	res := benchResult{Label: os.Getenv("CONTENTKIT_BENCH_LABEL"), Sample: filepath.Base(src), Threads: cfg.Threads, Parallel: cfg.Parallel,
+	res := benchResult{Label: os.Getenv("CONTENTKIT_BENCH_LABEL"), Sample: filepath.Base(src), Threads: cfg.Threads, Encoder: cfg.Encoder,
 		FFmpeg: ffmpegVersion(), Load1: load1(), Phases: map[string]float64{}}
 	if res.Threads == 0 {
 		res.Threads = runtime.GOMAXPROCS(0)
@@ -207,7 +207,25 @@ func benchCommit(t *testing.T, ctx context.Context, store media.Store, item medi
 	name := media.SHA256Name(sum)
 	key, _ := item.Original(name)
 	if size > 1<<30 {
-		t.Fatalf("%s: samples above 1 GiB need multipart", src)
+		id, err := store.CreateMultipart(ctx, key, "video/mp4")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var parts []media.Part
+		for off, n := int64(0), int32(1); off < size; off, n = off+256<<20, n+1 {
+			l := min(256<<20, size-off)
+			ph := sha256.New()
+			_, _ = io.Copy(ph, io.NewSectionReader(f, off, l))
+			p, err := store.PutPart(ctx, key, id, n, io.NewSectionReader(f, off, l), l, ph.Sum(nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			parts = append(parts, p)
+		}
+		if _, err := store.CompleteMultipart(ctx, key, id, parts); err != nil {
+			t.Fatal(err)
+		}
+		return name
 	}
 	if _, err := store.Put(ctx, key, io.NewSectionReader(f, 0, size), size, media.PutOptions{ContentType: "video/mp4", ChecksumSHA256: sum}); err != nil {
 		t.Fatal(err)
@@ -243,7 +261,8 @@ var (
 // quality scores the rendition against the source scaled to its size, so it
 // measures the encoder rather than the downscale.
 func quality(t *testing.T, src, dist string, w, h int) (ssim, psnr, vmaf float64) {
-	ref := fmt.Sprintf("[1:v]scale=%d:%d:flags=bicubic,setsar=1,format=yuv420p,setpts=PTS-STARTPTS[r];[0:v]format=yuv420p,setpts=PTS-STARTPTS[d]", w, h)
+	// Frames pair by index: container timestamp rounding (Matroska's ms) would misalign them.
+	ref := fmt.Sprintf("[1:v]scale=%d:%d:flags=bicubic,setsar=1,format=yuv420p,settb=1/30,setpts=N[r];[0:v]format=yuv420p,settb=1/30,setpts=N[d]", w, h)
 	out, err := exec.Command("nice", "-n", "19", "ffmpeg", "-nostdin", "-i", dist, "-i", src, "-lavfi",
 		ref+";[d]split[d1][d2];[r]split[r1][r2];[d1][r1]ssim;[d2][r2]psnr", "-f", "null", "-").CombinedOutput()
 	if err != nil {

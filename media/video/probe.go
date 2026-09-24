@@ -18,8 +18,7 @@ import (
 type probeResult struct {
 	Streams []probeStream `json:"streams"`
 	Format  struct {
-		Duration   string `json:"duration"`
-		FormatName string `json:"format_name"`
+		Duration string `json:"duration"`
 	} `json:"format"`
 }
 
@@ -62,9 +61,6 @@ func probe(ctx context.Context, path string) (probeResult, error) {
 	return p, nil
 }
 
-// indexed containers seek exactly; others (MPEG-TS, AVI, …) encode as one chunk.
-var indexed = map[string]bool{"mov": true, "matroska": true}
-
 // WebVTT carries text only; bitmap subtitles stay in the original.
 var textSubtitles = map[string]bool{"subrip": true, "srt": true, "ass": true, "ssa": true, "webvtt": true, "mov_text": true, "text": true}
 
@@ -86,8 +82,7 @@ type plan struct {
 	fps           float64 // output rate: the source's, at most maxFPS
 	limitFPS      bool    // the source is faster than maxFPS
 	rungs         []rung
-	tileW, tileH  int  // sprite tile
-	seekable      bool // indexed container: chunks seek to exact frames
+	tileW, tileH  int // sprite tile
 	audio, subs   []track
 }
 
@@ -100,7 +95,6 @@ func newPlan(p probeResult, v *media.Video) (plan, error) {
 		return pl, errors.New("source has no valid duration")
 	}
 	pl.duration, pl.video = d, -1
-	pl.seekable = indexed[strings.Split(p.Format.FormatName, ",")[0]]
 	labels := map[string]int{}
 	counts := map[string]int{}
 	for _, s := range p.Streams {

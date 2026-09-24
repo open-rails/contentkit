@@ -36,9 +36,6 @@ type Config struct {
 	Locker  media.Locker
 	TempDir string // scratch for the source and outputs; default os.TempDir()
 	Threads int    // CPU threads for ffmpeg; default GOMAXPROCS (the container's CPU limit)
-	// Parallel caps the chunks of one video encoded at once, sharing Threads;
-	// default Threads/chunkThreads.
-	Parallel int
 	// Encoder is EncoderAuto (default), EncoderX264 or EncoderNVENC. NVENC
 	// is checked by a probe encode in New; a file it fails on is re-encoded
 	// with x264.
@@ -85,9 +82,6 @@ func New(c Config) (*Encoder, error) {
 	}
 	if c.Threads <= 0 {
 		c.Threads = runtime.GOMAXPROCS(0)
-	}
-	if c.Parallel <= 0 {
-		c.Parallel = max(1, c.Threads/chunkThreads)
 	}
 	switch c.Encoder {
 	case "", EncoderAuto:
@@ -311,9 +305,9 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 		return err
 	}
 	e.c.Logger.InfoContext(ctx, "media/video: encoding", "key", srcKey, "duration", p.duration, "rungs", p.rungs,
-		"audio", len(p.audio), "subs", len(p.subs), "encoder", e.c.Encoder, "threads", e.c.Threads, "parallel", e.c.Parallel)
+		"audio", len(p.audio), "subs", len(p.subs), "encoder", e.c.Encoder, "threads", e.c.Threads)
 	fp.probed(p.duration, out)
-	enc := encoding{codec: e.c.Encoder, threads: e.c.Threads, parallel: e.c.Parallel}
+	enc := encoding{codec: e.c.Encoder, threads: e.c.Threads}
 	err = ladder(ctx, src, out, p, enc, fp)
 	if err != nil && enc.codec == EncoderNVENC && ctx.Err() == nil {
 		e.c.Logger.WarnContext(ctx, "media/video: NVENC failed; encoding with x264", "key", srcKey, "error", err)

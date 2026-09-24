@@ -15,11 +15,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
-
-	"golang.org/x/sync/errgroup"
 
 	"github.com/open-rails/contentkit/media"
 )
@@ -58,188 +55,109 @@ const (
 	spriteShort    = 90
 )
 
-// ladder encodes the source: chunks of whole segments run as parallel ffmpeg
-// processes, each decoding its range once and splitting it into every rung
-// (MPEG-TS) and its sprite frames, while one more process encodes the audio
-// tracks and subtitles. Each rung's chunks are then stream-copied into one
-// single-file fMP4.
+// ladder runs the single ffmpeg pass: the source is decoded once and split
+// into every rendition, audio track, subtitle and the sprite.
 func ladder(ctx context.Context, src, dir string, p plan, enc encoding, fp *fileProgress) error {
-	chunks := []chunk{{tiles: spriteCols * spriteRows}}
-	if p.seekable {
-		parallel := enc.parallel
-		if enc.codec == EncoderNVENC {
-			parallel = min(parallel, max(1, nvencSessions/len(p.rungs)))
-		}
-		chunks = planChunks(p.duration, parallel)
-	}
-	threads := enc.threads
-	g, gctx := errgroup.WithContext(ctx)
-	if len(p.audio)+len(p.subs) > 0 {
-		g.Go(func() error { return tracks(gctx, src, dir, p) })
-	}
-	var mu sync.Mutex
-	encoded := make([]float64, len(chunks))
-	for i, c := range chunks {
-		span := c.length
-		if span == 0 {
-			span = p.duration - c.start
-		}
-		t := threads / len(chunks)
-		if i < threads%len(chunks) {
-			t++
-		}
-		g.Go(func() error {
-			return ffmpegProgress(gctx, func(outTime float64) {
-				mu.Lock()
-				defer mu.Unlock()
-				encoded[i] = min(max(outTime, 0), span)
-				var sum float64
-				for _, v := range encoded {
-					sum += v
-				}
-				fp.encoded(sum)
-			}, chunkArgs(src, dir, p, i, c, enc.codec, max(1, t))...)
-		})
-	}
-	if err := g.Wait(); err != nil {
-		return err
-	}
-	for i := range p.rungs {
-		if err := join(ctx, dir, i, len(chunks)); err != nil {
-			return err
-		}
-	}
-	return sprite(ctx, dir)
-}
-
-// chunk is one parallel slice of the ladder: source seconds [start,
-// start+length) (length 0: to the end) and sprite tiles [first, first+tiles).
-type chunk struct {
-	start, length float64
-	first, tiles  int
-}
-
-// planChunks splits duration into at most parallel chunks of whole segments,
-// so every chunk starts on a forced keyframe of the joined rendition.
-func planChunks(duration float64, parallel int) []chunk {
-	segs := segments(duration)
-	per := (segs + max(1, parallel) - 1) / max(1, parallel)
-	n := (segs + per - 1) / per
-	interval := duration / (spriteCols * spriteRows)
-	tile := func(t float64) int { return min(spriteCols*spriteRows, int(math.Ceil(t/interval-1e-6))) }
-	out := make([]chunk, n)
-	for i := range out {
-		c := &out[i]
-		c.start = float64(i * per * segmentSeconds)
-		c.first = tile(c.start)
-		c.tiles = spriteCols*spriteRows - c.first
-		if i < n-1 {
-			c.length = float64(per * segmentSeconds)
-			c.tiles = tile(c.start+c.length) - c.first
-		}
-	}
-	return out
-}
-
-// tsBase offsets chunk timestamps so B-frame DTS stay positive in MPEG-TS;
-// join removes it.
-const tsBase = 10
-
-func chunkArgs(src, dir string, p plan, i int, c chunk, codec string, threads int) []string {
 	n := len(p.rungs)
+	interval := p.duration / (spriteCols * spriteRows)
 	var fc strings.Builder
 	fmt.Fprintf(&fc, "[0:%d]", p.video)
 	if p.limitFPS {
 		fmt.Fprintf(&fc, "fps=%d,", maxFPS)
 	}
-	outs := n
-	if c.tiles > 0 {
-		outs++
-	}
-	fmt.Fprintf(&fc, "split=%d", outs)
-	for i := range outs {
+	fmt.Fprintf(&fc, "split=%d", n+1)
+	for i := range n + 1 {
 		fmt.Fprintf(&fc, "[s%d]", i)
 	}
 	for i, r := range p.rungs {
 		fmt.Fprintf(&fc, ";[s%d]scale=%d:%d,setsar=1[v%d]", i, r.w, r.h, i)
 	}
-	if c.tiles > 0 {
-		// Sprite tile k is the frame nearest k×interval of the whole source.
-		fmt.Fprintf(&fc, ";[s%d]setpts=PTS+%g/TB,fps=1/%.9f,trim=start_pts=%d:end_pts=%d,scale=%d:%d,setsar=1[sprite]",
-			n, c.start, p.duration/(spriteCols*spriteRows), c.first, c.first+c.tiles, p.tileW, p.tileH)
-	}
+	// Sprite frames leave the pass as PNGs and are tiled after: a tile filter
+	// emits only at the end, and ffmpeg reports no progress until every
+	// output has started.
+	fmt.Fprintf(&fc, ";[s%d]fps=1/%.9f,scale=%d:%d,setsar=1[sprite]", n, interval, p.tileW, p.tileH)
 
-	t := strconv.Itoa(threads)
-	args := []string{"-v", "error", "-nostdin", "-threads", t}
-	if c.start > 0 {
-		args = append(args, "-ss", strconv.FormatFloat(c.start, 'f', -1, 64))
+	// Decoding and scaling gain little past 8 threads; each extra frame
+	// thread holds more decoded frames.
+	t := strconv.Itoa(min(enc.threads, 8))
+	args := append([]string{"-v", "error", "-nostdin", "-threads", t}, inputOptions(sourceDemuxers)...)
+	args = append(args, "-i", src, "-filter_complex_threads", t, "-filter_complex", fc.String())
+	hls := func(segment, playlist string) []string {
+		return []string{"-fflags", "+bitexact", "-flags", "+bitexact", "-muxdelay", "0", "-muxpreload", "0",
+			"-f", "hls", "-hls_time", strconv.Itoa(segmentSeconds), "-hls_playlist_type", "vod",
+			"-hls_segment_type", "fmp4", "-hls_flags", "single_file", "-hls_segment_filename", segment, playlist}
 	}
-	if c.length > 0 {
-		args = append(args, "-t", strconv.FormatFloat(c.length, 'f', -1, 64))
+	var streamMap []string
+	for i := range n {
+		args = append(args, "-map", fmt.Sprintf("[v%d]", i))
+		streamMap = append(streamMap, fmt.Sprintf("v:%d", i))
 	}
-	args = append(append(args, inputOptions(sourceDemuxers)...), "-i", src, "-filter_complex_threads", t, "-filter_complex", fc.String())
-	for r, rg := range p.rungs {
-		args = append(args, "-map", fmt.Sprintf("[v%d]", r))
-		args = append(args, codecArgs(codec, t)...)
-		args = append(args, "-pix_fmt", "yuv420p", "-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segmentSeconds))
-		if rg.level != "" {
-			args = append(args, "-level:v", rg.level)
+	args = append(args, codecArgs(enc.codec)...)
+	args = append(args, "-pix_fmt", "yuv420p", "-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segmentSeconds))
+	for i, r := range p.rungs {
+		if enc.codec == EncoderX264 {
+			args = append(args, fmt.Sprintf("-threads:v:%d", i), strconv.Itoa(rungThreads(p.rungs, i, enc.threads)))
 		}
-		args = append(args, "-output_ts_offset", strconv.FormatFloat(c.start+tsBase, 'f', -1, 64), "-muxdelay", "0", "-muxpreload", "0",
-			"-f", "mpegts", chunkFile(dir, r, i))
+		if r.level != "" {
+			args = append(args, fmt.Sprintf("-level:v:%d", i), r.level)
+		}
 	}
-	if c.tiles > 0 {
-		args = append(args, "-map", "[sprite]", "-frames:v", strconv.Itoa(c.tiles), "-start_number", strconv.Itoa(c.first),
-			"-f", "image2", filepath.Join(dir, spriteFrames))
-	}
-	return args
-}
-
-func chunkFile(dir string, rung, chunk int) string {
-	return filepath.Join(dir, fmt.Sprintf("v%d.c%d.ts", rung, chunk))
-}
-
-func hlsArgs(segment, playlist string) []string {
-	return []string{"-fflags", "+bitexact", "-flags", "+bitexact", "-muxdelay", "0", "-muxpreload", "0",
-		"-f", "hls", "-hls_time", strconv.Itoa(segmentSeconds), "-hls_playlist_type", "vod",
-		"-hls_segment_type", "fmp4", "-hls_flags", "single_file", "-hls_segment_filename", segment, playlist}
-}
-
-// tracks encodes every audio track to single-file fMP4 and every text
-// subtitle track to WebVTT.
-func tracks(ctx context.Context, src, dir string, p plan) error {
-	args := append(append([]string{"-v", "error", "-nostdin"}, inputOptions(sourceDemuxers)...), "-i", src)
+	args = append(args, "-var_stream_map", strings.Join(streamMap, " "))
+	args = append(args, hls(filepath.Join(dir, "v%v.mp4"), filepath.Join(dir, "v%v.m3u8"))...)
 	for i, a := range p.audio {
 		args = append(args, "-map", fmt.Sprintf("0:%d", a.index), "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2")
-		args = append(args, hlsArgs(filepath.Join(dir, fmt.Sprintf("a%d.mp4", i)), filepath.Join(dir, fmt.Sprintf("a%d.m3u8", i)))...)
+		args = append(args, hls(filepath.Join(dir, fmt.Sprintf("a%d.mp4", i)), filepath.Join(dir, fmt.Sprintf("a%d.m3u8", i)))...)
 	}
 	for i, s := range p.subs {
 		args = append(args, "-map", fmt.Sprintf("0:%d", s.index), "-c:s", "webvtt", "-f", "webvtt", filepath.Join(dir, fmt.Sprintf("s%d.vtt", i)))
 	}
-	_, err := command(ctx, "ffmpeg", args...)
-	return err
-}
-
-// join stream-copies a rung's chunks, in order, into its single-file fMP4
-// and removes them.
-func join(ctx context.Context, dir string, rung, chunks int) error {
-	parts := make([]string, chunks)
-	for i := range parts {
-		parts[i] = chunkFile(dir, rung, i)
-		if strings.Contains(parts[i], "|") {
-			return fmt.Errorf("media/video: scratch path %q contains '|'", parts[i])
-		}
-	}
-	args := []string{"-v", "error", "-nostdin", "-copyts", "-protocol_whitelist", "file,concat", "-format_whitelist", "mpegts",
-		"-i", "concat:" + strings.Join(parts, "|"), "-map", "0:v", "-c", "copy", "-output_ts_offset", strconv.Itoa(-tsBase)}
-	args = append(args, hlsArgs(filepath.Join(dir, fmt.Sprintf("v%d.mp4", rung)), filepath.Join(dir, fmt.Sprintf("v%d.m3u8", rung)))...)
-	if _, err := command(ctx, "ffmpeg", args...); err != nil {
+	args = append(args, "-map", "[sprite]", "-frames:v", strconv.Itoa(spriteCols*spriteRows), "-f", "image2", filepath.Join(dir, spriteFrames))
+	if err := ffmpegProgress(ctx, fp.encoded, args...); err != nil {
 		return err
 	}
-	var err error
-	for _, f := range parts {
-		err = errors.Join(err, os.Remove(f))
+	return sprite(ctx, dir)
+}
+
+// rungThreads is rung i's share of threads by frame area, at least 1: x264
+// given every thread per rung spends a quarter more CPU and a third more
+// memory on 4K for a slower pass (bench_test.go).
+func rungThreads(rungs []rung, i, threads int) int {
+	var total float64
+	for _, r := range rungs {
+		total += float64(r.w * r.h)
 	}
+	return max(1, int(math.Round(float64(threads)*float64(rungs[i].w*rungs[i].h)/total)))
+}
+
+// Config.Encoder values.
+const (
+	EncoderAuto  = "auto"  // NVENC when a probe encode succeeds, else x264
+	EncoderX264  = "x264"  // libx264 on the CPU
+	EncoderNVENC = "nvenc" // NVIDIA h264_nvenc; decoding and scaling stay on the CPU
+)
+
+// encoding is how a file's ladder is encoded.
+type encoding struct {
+	codec   string // EncoderX264 or EncoderNVENC
+	threads int
+}
+
+// codecArgs are the recipe's H.264 High settings for codec.
+func codecArgs(codec string) []string {
+	if codec == EncoderNVENC {
+		return []string{"-c:v", "h264_nvenc", "-profile:v", "high", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", nvencCQ,
+			"-b:v", "0", "-spatial-aq", "1", "-temporal-aq", "1", "-rc-lookahead", "20", "-bf", "3", "-b_ref_mode", "middle", "-forced-idr", "1"}
+	}
+	return []string{"-c:v", "libx264", "-profile:v", "high", "-preset", "fast", "-crf", "22"}
+}
+
+// nvencCQ matches x264 CRF 22's VMAF (bench_test.go).
+var nvencCQ = "24"
+
+// nvencWorks encodes one frame with h264_nvenc.
+func nvencWorks(ctx context.Context) error {
+	_, err := command(ctx, "ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=s=256x256:d=0.1", "-frames:v", "1",
+		"-c:v", "h264_nvenc", "-f", "null", "-")
 	return err
 }
 
@@ -455,42 +373,3 @@ func (t *tail) Write(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
-
-// Config.Encoder values.
-const (
-	EncoderAuto  = "auto"  // NVENC when a probe encode succeeds, else x264
-	EncoderX264  = "x264"  // libx264 on the CPU
-	EncoderNVENC = "nvenc" // NVIDIA h264_nvenc; decoding and scaling stay on the CPU
-)
-
-// nvencSessions bounds concurrent NVENC sessions (one per rung per chunk);
-// consumer GPUs allow 8.
-const nvencSessions = 8
-
-// encoding is how a file's ladder is encoded.
-type encoding struct {
-	codec             string // EncoderX264 or EncoderNVENC
-	threads, parallel int
-}
-
-// codecArgs are the H.264 High settings of the recipe for codec.
-func codecArgs(codec, threads string) []string {
-	if codec == EncoderNVENC {
-		return []string{"-c:v", "h264_nvenc", "-profile:v", "high", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", nvencCQ,
-			"-b:v", "0", "-spatial-aq", "1", "-temporal-aq", "1", "-rc-lookahead", "20", "-bf", "3", "-b_ref_mode", "middle", "-forced-idr", "1"}
-	}
-	return []string{"-c:v", "libx264", "-profile:v", "high", "-preset", "fast", "-crf", "22", "-threads", threads}
-}
-
-// nvencCQ matches x264 CRF 22's VMAF (see bench_test.go).
-var nvencCQ = "24"
-
-// nvencWorks encodes one frame with h264_nvenc.
-func nvencWorks(ctx context.Context) error {
-	_, err := command(ctx, "ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=s=256x256:d=0.1", "-frames:v", "1",
-		"-c:v", "h264_nvenc", "-f", "null", "-")
-	return err
-}
-
-// chunkThreads is the default share of Config.Threads per parallel chunk.
-const chunkThreads = 4

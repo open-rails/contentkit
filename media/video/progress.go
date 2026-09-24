@@ -295,7 +295,7 @@ func (f *fileProgress) projectedUpload() int64 {
 		return 0
 	}
 	var n int64
-	for _, pat := range []string{"v*.ts", "v*.mp4", "a*.mp4"} {
+	for _, pat := range []string{"v*.mp4", "a*.mp4"} {
 		matches, _ := filepath.Glob(filepath.Join(f.outDir, pat))
 		for _, m := range matches {
 			if st, err := os.Stat(m); err == nil {
