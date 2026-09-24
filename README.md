@@ -174,18 +174,56 @@ One private bucket; each item owns a folder the library keys:
 
 ```text
 {tenant}/{kind}/{id}/manifest.json | manifests/{version}.json
-                    /originals/{sha256-hex | u-uuid | slot}   never served
-                    /blobs/{sha256-hex | u-uuid}              immutable derivatives
-                    /public/{name}.webp                       public slots
+                    /originals/{sha256-hex | u-uuid | slot | i-uuid}   never served
+                    /blobs/sha256-{hex}                                immutable derivatives
+                    /public/{slot | i-uuid}.webp                       public slots, inline images
 ```
 
+Host wiring (one tenant; errors elided):
+
 ```go
-kinds, _ := media.NewRegistry(media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png"}, MaxBytes: 10 << 20})
+kinds, _ := media.NewRegistry(
+	media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
+		Specs: map[string]media.Spec{"thumb": {Width: 460, Height: 650, Fit: media.FitCover, Quality: 80}, "high": {Quality: 90}},
+		Slots: map[string]media.Slot{"cover": {Outputs: map[string]media.Spec{"cover": {Width: 460}}, Aspect: 460.0 / 650}},
+		Zip:   "high"},
+	media.Kind{Name: "video", Types: []string{"video/mp4", "video/x-matroska"}, MaxBytes: 20 << 30, Video: true})
 store, _ := s3.New(s3.Config{Bucket: "media", Endpoint: rgw, PublicEndpoint: "https://s3.doujins.ai", UsePathStyle: true,
 	AccessKeyID: id, SecretAccessKey: secret, Capabilities: caps}) // caps from media.Probe
-manifests, _ := media.NewManifests(store, kinds, media.ManifestOptions{Locker: media.PGLocker(pool)})
-_, _ = manifests.Edit(ctx, ref, func(m *media.Manifest) error { m.Files = append(m.Files, f); return nil })
+key, _ := token.ParseKey(os.Getenv("MEDIA_TOKEN_KEY")) // "{kid}:{base64}", shared with media-access
+ring, _ := token.NewRing(key, nil)
+
+jobs, _ := media.NewJobs(media.JobsConfig{Store: store, Kinds: kinds, Tenants: []string{"d"}, Limiter: limiter})
+manifests, _ := media.NewManifests(store, kinds, media.ManifestOptions{Locker: media.PGLocker(pool), Jobs: jobs})
+images, _ := image.New(image.Config{Store: store, Kinds: kinds, Manifests: manifests})
+_ = jobs.AddProcessor(images.Process)
+_ = video.Migrate(ctx, pool) // River schema media_worker, run by cmd/media-worker
+videos, _ := video.NewEnqueuer(pool, kinds)
+_ = jobs.AddProcessor(videos.Processor())
+client, _ := riverhelpers.New(ctx, pool, &river.Config{Schema: "public"}, runtime.RiverJobs(), jobs.RiverJobs())
+
+uploads, _ := media.NewUploads(media.UploadOptions{Store: store, Kinds: kinds, Manifests: manifests,
+	Authorizer: hostUploads, Tickets: &ring, Limiter: limiter, Queue: jobs})
+reader, _ := media.NewReader(media.ReaderOptions{Manifests: manifests, Kinds: kinds, Resolver: resolver, Hooks: hooks,
+	Delivery: media.Delivery{Mode: media.DeliverCookie, BaseURL: "https://media.doujins.com", CookieDomain: "doujins.com", SigningKey: key}})
+mux.Handle("/api/media/upload/", http.StripPrefix("/api/media/upload", media.UploadHandler(uploads, media.UploadHandlerOptions{Tenant: "d", Actor: actorOf})))
+mux.Handle("/api/media/", http.StripPrefix("/api/media", reader.Handler(media.HandlerOptions{Tenant: "d", Identity: identity})))
+
+_ = jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref: ref, Owner: owner}) // in the host's delete transaction
+_ = jobs.EraseUserTx(ctx, tx, "d", userID, deletions...)                 // the user's items plus user/{id}/
 ```
+
+The access worker (`cmd/media-access`, image
+`ghcr.io/open-rails/contentkit-media-access:{tag}`, same tag as the hosts'
+ContentKit) serves `BaseURL`. It needs `MEDIA_ACCESS_S3_ENDPOINT`,
+`_S3_BUCKET`, a read-only key (`_S3_ACCESS_KEY_ID`, `_S3_SECRET_ACCESS_KEY`)
+allowed only `*/blobs/*` and `*/public/*`, `MEDIA_ACCESS_TOKEN_KEY` and
+`_TOKEN_KEY_PREVIOUS` (the hosts' `{kid}:{base64}` ring), and optionally
+`MEDIA_ACCESS_HOSTS` and `MEDIA_ACCESS_CORS_ORIGINS` (the sites, with
+credentials); secrets may be given as `{VAR}_FILE`. `public/` is served
+without a token (`no-cache`); `blobs/` needs `?t=` or an `mt` cookie
+(`private, immutable`; 403 without a valid token); manifests, `originals/`
+and unknown keys are 404. `cmd/media-worker` documents its environment.
 
 `Edit` writes with `If-Match` (or `If-None-Match: *`) and retries on conflict;
 without `Capabilities.ConditionalPut` it serializes on a Postgres advisory lock
@@ -286,16 +324,8 @@ is a folder (`…/blobs/`, covering the objects directly under it), one key, or
 `{key}#dl={name}` for a download name. Expiry is window-aligned (default 4 h);
 `token.Ring` verifies the current and previous key.
 
-Media's River jobs compose into the host client through `helpers/river`:
-
-```go
-jobs, _ := media.NewJobs(media.JobsConfig{Store: store, Kinds: kinds, Tenants: []string{"d"}, Limiter: limiter})
-manifests, _ := media.NewManifests(store, kinds, media.ManifestOptions{Jobs: jobs}) // edits schedule a sweep
-uploads, _ := media.NewUploads(media.UploadOptions{ /* … */ Queue: jobs})       // commits enqueue processing
-client, _ := riverhelpers.New(ctx, pool, &river.Config{Schema: "public"}, runtime.RiverJobs(), jobs.RiverJobs())
-_ = jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref: ref, Owner: owner})  // in the host's delete transaction
-_ = jobs.EraseUserTx(ctx, tx, "d", userID, deletions...)                  // the user's items plus user/{id}/
-```
+Media's River jobs (`jobs.RiverJobs()`) compose into the host client through
+`helpers/river`; edits schedule a sweep and commits enqueue processing:
 
 - **Sweep** (per folder, 24 h after each edit and in a daily pass over
   `Tenants`): deletes `blobs/` and hash-named `originals/` no manifest in the

@@ -13,7 +13,7 @@ _ = contentkit.Migrate(ctx, contentkit.MigrateConfig{DB: sqlDB, Schema: "doujins
 rt, _ := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
 	EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: "doujins", Tenant: "doujins", CH: ch, CHDatabase: "hub"},
 	Content: content.Options{Schema: "doujins", Identity: identity, Authz: authz, Resolver: resolver, Users: users,
-		Storage: storage, Processor: sanitizer, Perms: content.Perms{...}, ContentKinds: []string{"gallery", "post", "tag"}},
+		Media: &content.Media{URLs: reader, Folders: jobs}, Processor: sanitizer, Perms: content.Perms{...}, ContentKinds: []string{"gallery", "post", "tag"}},
 })
 mux.Handle("/api/social/", http.StripPrefix("/api/social", rt.Handler()))
 ```

@@ -30,3 +30,22 @@ func TestParse(t *testing.T) {
 		}
 	}
 }
+
+func TestUUIDNames(t *testing.T) {
+	const id = "0190f3b2-7c1e-7a3d-9e4f-0123456789ab"
+	for name, want := range map[string]bool{
+		"u-" + id:                                true,
+		"u-0190F3B2-7C1E-7A3D-9E4F-0123456789AB": false,
+		"u-0190f3b27c1e7a3d9e4f0123456789ab":     false,
+		"u-0190f3b2-7c1e-7a3d-9e4f-0123456789ag": false,
+		"u-0190f3b2x7c1e-7a3d-9e4f-0123456789ab": false,
+		"i-" + id:                                false,
+	} {
+		if got := layout.ValidBlobName(name); got != want {
+			t.Errorf("ValidBlobName(%q) = %v", name, got)
+		}
+	}
+	if !layout.ValidInlineName("i-"+id) || layout.ValidInlineName("u-"+id) {
+		t.Error("ValidInlineName")
+	}
+}
