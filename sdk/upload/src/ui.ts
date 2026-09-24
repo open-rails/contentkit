@@ -15,6 +15,8 @@ export {
 export { HoverPreview, VideoPoster, useReducedMotion, type HoverPreviewProps, type HoverPreviewSource, type VideoPosterProps } from "./components/video-poster.js";
 export { VideoPosterPicker, formatTime, type VideoPickerProps, type VideoPosterPickerProps } from "./components/video-poster-picker.js";
 export { HoverPreviewPicker, type HoverPreviewPickerProps } from "./components/hover-preview-picker.js";
+export { MediaGallery, type MediaGalleryProps } from "./components/media-gallery.js";
+export { SpriteFrame, VideoPlayer, type VideoPlayerProps } from "./components/video-player.js";
 export { AvatarUpload, CoverUpload, type SlotUploadProps } from "./components/slot-upload.js";
 export { UploadUiProvider, useUploadClient, type UploadUiProviderProps } from "./provider.js";
 export { UploadUiRoot } from "./scope.js";

@@ -139,7 +139,7 @@ between polls (`{ progress, remaining }`).
 whose CSS is scoped under `.ckui` and installed on import (also shipped as
 `./styles.css`). Crop the picked image in a dialog (drag, wheel/pinch/slider zoom,
 arrow keys and +/−, 90° rotation), upload the original with the crop, and let the server
-render every size.
+render every size; show a post's media with `MediaGallery` and `VideoPlayer`.
 
 ```tsx
 import { AvatarUpload, CoverUpload, SlotImage, UploadUiProvider } from "@openrails/contentkit-upload/ui";
@@ -191,6 +191,42 @@ function Cover() {
 | `UploadUiProvider` | `client`, `appearance` (`theme`: `light`/`dark`/`auto`/`inherit`, `variables`), `messages` (bundle or list; locales `en de es ja ko zh`), `t` (host translate hook) |
 
 Errors are mapped from `UploadError.code` to `errors.*` messages.
+
+### Media gallery and player
+
+`MediaGallery` renders a read API result: an Instagram-style carousel (swipe,
+arrows, ←/→, dots, counter) or a tile grid whose tiles open a lightbox carousel
+(Esc closes, focus is trapped and returns to the tile), with a view toggle in
+its header. One item renders alone. The carousel spans its column at the first
+item's aspect (9:16 to 2.4:1), capped at `maxHeight`, and letterboxes the rest;
+only the current slide and its neighbours are mounted, and a video swiped away
+pauses. Viewers without access see the blurred teaser behind one locked item
+with the host's `renderLocked`; locked files carry no URLs.
+
+```tsx
+<MediaGallery
+  read={read}                                    // GET /{kind}/{id}?variant=large,blurred
+  hlsBase={(f) => `/api/media/post/${id}/hls/${encodeURIComponent(f.name!)}/`}
+  xhrSetup={(xhr) => xhr.setRequestHeader("Authorization", `Bearer ${token()}`)} // same-origin playlists only
+  refresh={() => refetchRead()}                  // after a 401/403: re-grant, then the player retries once
+  videoImages={images}                           // optional poster + hover preview (GET …/video-images)
+  renderLocked={({ count }) => <UnlockButton count={count} />}
+  renderDetails={(item) => <Downloads item={item} />}
+  defaultView="carousel"                         // or view + onViewChange; storageKey remembers the choice
+/>
+```
+
+`VideoPlayer` (`base`, `width`/`height` reserve the box, `poster`, `duration`,
+`pending`/`progress` show `EncodeProgress`, `failed`, `layout` `frame`|`fill`,
+`maxHeight` default `80svh`, `active`, `xhrSetup`, `refresh`) loads nothing
+until played (hls.js imported then; native HLS on Safari), and never spins
+forever: tuned retries surface a dead endpoint within seconds, a watchdog
+catches 10 s without progress, and each failure has its own message, a Retry
+and a support code: unreachable or blocked (status 0, including missing
+`MEDIA_ACCESS_CORS_ORIGINS`, also logged to the console), no access
+(401/403 after one refresh), not found, rate limited (429), unsupported in
+this browser. Headless: `useHlsPlayer`, `useCarousel` and `useGalleryView` in
+`/react`; `galleryItems`, `classifyHlsError` and `hlsConfig` in the root entry.
 
 ## Development
 

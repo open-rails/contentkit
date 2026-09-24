@@ -70,6 +70,7 @@
     "@noble/hashes": "^2.4.0",
     "class-variance-authority": "0.7.1",
     "cn": "0.4.0",
+    "hls.js": "1.7.3",
     "react-easy-crop": "6.2.3"
   },
   "devDependencies": {

@@ -20,6 +20,7 @@ const EXTERNAL = [
   "@noble/hashes",
   "class-variance-authority",
   "cn",
+  "hls.js",
   "react-easy-crop",
 ];
 

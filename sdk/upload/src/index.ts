@@ -17,6 +17,26 @@ export {
 export { centeredCrop, constrainCrop, editOf, editedSize, fromRotated, rotation, sameEdit, toOriginal, toRotated, type Rotation, type Size } from "./crop.js";
 export { decodeImage, type CropSource, type DecodeOptions } from "./image.js";
 export { hasOriginal, largestOutput, manifestAspect, slotSources, type SlotSources } from "./srcset.js";
+export {
+  formatDuration,
+  galleryItems,
+  isVideoType,
+  stageAspect,
+  type GalleryItem,
+  type GalleryLockedItem,
+  type GalleryMediaItem,
+  type GalleryView,
+} from "./gallery.js";
+export {
+  NETWORK_FAILURES_BEFORE_ERROR,
+  classifyHlsError,
+  classifyMediaError,
+  hlsConfig,
+  statusKind,
+  type HlsErrorLike,
+  type PlaybackError,
+  type PlaybackErrorKind,
+} from "./playback.js";
 export { UploadError, type UploadErrorCode } from "./errors.js";
 export { encodeRemaining } from "./encode.js";
 export { sha256Hex } from "./hash.js";
