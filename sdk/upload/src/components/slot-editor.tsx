@@ -1,3 +1,4 @@
+import { ratio, type AspectRatio } from "../aspect.js";
 import { Alert02Icon, Camera01Icon, CropIcon, ImageUpload01Icon, Loading03Icon } from "@hugeicons/core-free-icons";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -25,8 +26,8 @@ export interface SlotEditorProps {
   onChange?: (m: SlotManifest) => void;
   /** Every failure (load, decode, save or render); default the provider's. */
   onError?: UploadUiErrorHandler;
-  /** Width / height; default the manifest's aspect, else 1. */
-  aspect?: number;
+  /** The output's "W:H"; default the manifest's aspect, else "1:1". */
+  aspect?: AspectRatio;
   /** Crops narrower than this many source pixels get a sharpness warning; default the widest output, else 512. */
   targetWidth?: number;
   /** Round crop mask; default aspect 1. */
@@ -97,7 +98,7 @@ export function SlotEditor(p: SlotEditorProps) {
   const input = useRef<HTMLInputElement>(null);
   const busy = crop.status === "decoding" || crop.status === "saving";
   const disabled = !!p.disabled || busy;
-  const round = p.round ?? aspect === 1;
+  const round = p.round ?? ratio(aspect) === 1;
   const target = p.targetWidth ?? image.manifest?.outputs.at(-1)?.w ?? 512;
   const error = crop.status === "error" && !crop.source ? errorText(crop.error) : image.error ? errorText(image.error) : undefined;
   const state: SlotEditorState = {

@@ -1,3 +1,4 @@
+import { ratio, type AspectRatio } from "../aspect.js";
 import { Video01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
@@ -67,8 +68,8 @@ export interface VideoPosterProps extends Omit<ComponentProps<"div">, "children"
   preview?: HoverPreviewSource | null;
   /** Controls playback (e.g. hover on a whole card); default hover or focus within this element. */
   playing?: boolean;
-  /** Width / height of the box; default the poster's own (native) aspect, else the video's. */
-  aspect?: number;
+  /** The box's "W:H"; default the cover's own (native) aspect, else "16:9". */
+  aspect?: AspectRatio;
   /** Density range for picking the cover's rendition; default the provider's (2–3×). */
   density?: DensityRange;
   alt?: string;
@@ -92,7 +93,7 @@ export function VideoPoster({ poster, preview, playing, aspect, density, alt = "
     <UploadUiRoot
       {...div}
       className={cn("relative w-full overflow-hidden rounded-lg bg-muted", className)}
-      style={{ aspectRatio: String(aspect ?? manifestAspect(poster, 16 / 9)), ...style }}
+      style={{ aspectRatio: String(ratio(aspect ?? manifestAspect(poster, "16:9")) ?? 16 / 9), ...style }}
       data-ckui="video-poster"
       data-playing={active && preview ? "" : undefined}
       onPointerEnter={(e) => {

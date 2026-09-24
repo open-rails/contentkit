@@ -56,7 +56,7 @@ function HeaderImage({ round }: { round?: boolean }) {
 function ChannelHeader() {
   return (
     <div data-demo="header" style={{ position: "relative", paddingBottom: 56 }}>
-      <SlotEditor item={channel} slot="cover" aspect={3}>
+      <SlotEditor item={channel} slot="cover" aspect="3:1">
         <div style={{ position: "relative", borderRadius: 14, overflow: "hidden", aspectRatio: "3" }}>
           <HeaderImage />
           <div style={{ position: "absolute", top: 10, right: 10 }}>
@@ -65,7 +65,7 @@ function ChannelHeader() {
         </div>
         <SlotEditError />
       </SlotEditor>
-      <SlotEditor item={channel} slot="avatar" aspect={1}>
+      <SlotEditor item={channel} slot="avatar" aspect="1:1">
         <div style={{ position: "absolute", left: 20, bottom: 0, width: 112, height: 112, borderRadius: 999, border: `4px solid ${dark ? "#18181b" : "#fff"}` }}>
           <HeaderImage round />
           <div style={{ position: "absolute", right: -2, bottom: -2 }}>

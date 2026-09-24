@@ -1,3 +1,4 @@
+import { aspectOf, ratio, type AspectRatio } from "./aspect.js";
 import type { SlotImage, SlotManifest } from "./wire.gen.js";
 
 export interface SlotSources {
@@ -8,8 +9,8 @@ export interface SlotSources {
 }
 
 /**
- * `srcset` from a slot manifest's outputs (URLs are versioned, so cache
- * freely); src is the smallest output at least fallbackWidth wide.
+ * `srcset` from a slot manifest's outputs (fixed URLs, revalidated by
+ * ETag); src is the smallest output at least fallbackWidth wide.
  */
 export function slotSources(m: SlotManifest | null | undefined, fallbackWidth = 512): SlotSources {
   const outs = [...(m?.outputs ?? [])].filter((o) => o.url && o.w > 0).sort((a, b) => a.w - b.w);
@@ -18,11 +19,11 @@ export function slotSources(m: SlotManifest | null | undefined, fallbackWidth = 
   return { src: fallback.url, srcSet: outs.map((o) => `${o.url} ${o.w}w`).join(", "), width: fallback.w, height: fallback.h };
 }
 
-/** The manifest's width / height (a native slot's from its outputs), or fallback. */
-export function manifestAspect(m: SlotManifest | null | undefined, fallback = 1): number {
-  if (m && m.aspect > 0) return m.aspect;
-  const o = m?.outputs.find((o) => o.w > 0 && o.h > 0);
-  return o ? o.w / o.h : fallback;
+/** The manifest's "W:H" (a native slot's from its widest output), or fallback. */
+export function manifestAspect(m: SlotManifest | null | undefined, fallback: AspectRatio = "1:1"): AspectRatio {
+  if (m && ratio(m.aspect)) return m.aspect;
+  const o = [...(m?.outputs ?? [])].reverse().find((o) => o.w > 0 && o.h > 0);
+  return o ? aspectOf(o.w, o.h) : fallback;
 }
 
 /** Widest rendered output; with nothing rendered, undefined. */

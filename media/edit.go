@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"strconv"
 )
 
@@ -108,14 +107,14 @@ func (s Slot) fit(e *Edit) *Edit {
 	if e = e.Normalize(); e == nil || e.Crop == nil || s.Native() {
 		return e
 	}
-	e.Crop.H = max(1, int(math.Round(float64(e.Crop.W)/s.cropRatio(e.Rotate))))
+	e.Crop.H = s.cropAspect(e.Rotate).Height(e.Crop.W)
 	return e
 }
 
-// cropRatio is the crop's width/height that yields Aspect after rotating.
-func (s Slot) cropRatio(rotate int) float64 {
+// cropAspect is the crop's shape that yields Aspect after rotating.
+func (s Slot) cropAspect(rotate int) Aspect {
 	if rotate == 90 || rotate == 270 {
-		return 1 / s.Aspect
+		return s.Aspect.Rotated()
 	}
 	return s.Aspect
 }
@@ -135,12 +134,12 @@ func (s Slot) Resolve(e *Edit, w, h int) (*Edit, error) {
 		if e != nil {
 			rotate = e.Rotate
 		}
-		r := s.cropRatio(rotate)
+		r := s.cropAspect(rotate)
 		cw := w
-		if ch := int(math.Round(float64(cw) / r)); ch > h {
-			cw = max(1, min(w, int(math.Round(float64(h)*r))))
+		if r.Height(cw) > h {
+			cw = min(w, r.Width(h))
 		}
-		ch := min(h, max(1, int(math.Round(float64(cw)/r))))
+		ch := min(h, r.Height(cw))
 		e = &Edit{Crop: &Crop{X: (w - cw) / 2, Y: (h - ch) / 2, W: cw, H: ch}, Rotate: rotate}
 	}
 	if err := e.Check(w, h); err != nil {

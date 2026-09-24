@@ -55,9 +55,10 @@ type Hooks struct {
 	// say); file is the manifest file name, or the slot name. The job does not
 	// retry it; a new commit does.
 	Failed func(ctx context.Context, ref contentref.ContentRef, file string, err error)
-	// SlotEncoded reports a slot's new outputs as the stamp a host stores
-	// (one value per slot) and passes to Reader.SlotOutputs for listings.
-	SlotEncoded func(ctx context.Context, ref contentref.ContentRef, slot string, stamp SlotStamp)
+	// SlotEncoded reports that a slot's outputs are written, with their
+	// aspect (for native slots, whose shape follows the image): hosts record
+	// it to list the slot with Reader.ListedSlot without reads.
+	SlotEncoded func(ctx context.Context, ref contentref.ContentRef, slot string, aspect Aspect)
 }
 
 // ReaderOptions configure a Reader.

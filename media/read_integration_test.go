@@ -65,7 +65,7 @@ func newReadFixtureOn(t *testing.T, env *s3test.Env) *readFixture {
 	kinds, err := media.NewRegistry(
 		media.Kind{Name: "gallery", Versioned: true, Specs: map[string]media.Spec{"thumb": {Width: 460}, "high": {}}},
 		media.Kind{Name: "post", Specs: map[string]media.Spec{"large": {}, "blurred": {Blur: 20}},
-			Slots: map[string]media.Slot{"cover": {Aspect: 1, Widths: []int{64}}}},
+			Slots: map[string]media.Slot{"cover": {Aspect: media.Aspect1x1, Widths: []int{64}}}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -489,32 +489,25 @@ func TestReadHandler(t *testing.T) {
 	if resp, body := get("/media/post/501/slots/cover"); resp.StatusCode != 200 || body["pending"] != false || len(body["outputs"].([]any)) != 0 {
 		t.Fatalf("uncommitted slot: %d %v", resp.StatusCode, body)
 	}
-	spec := media.Slot{Aspect: 1, Widths: []int{64}}
+	spec := media.Slot{Aspect: media.Aspect1x1, Widths: []int{64}}
 	rec := media.SlotRecord{Original: `"e1"`, Edit: &media.Edit{Crop: &media.Crop{X: 10, Y: 10, W: 100, H: 100}}}
 	fp := rec.Fingerprint(spec)
-	rec.Result = &media.SlotResult{Of: fp, Version: fp, Source: rec.Original, Dims: media.Dims{W: 200, H: 200}, Outputs: []media.Dims{{W: 64, H: 64}}}
+	rec.Result = &media.SlotResult{Of: fp, Source: rec.Original, Dims: media.Dims{W: 200, H: 200}, Outputs: []media.SlotRendition{{Rung: 64, W: 64, H: 64}}}
 	if err := f.ms.UpdateSlot(context.Background(), f.post, "cover", func(r *media.SlotRecord) error { *r = rec; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	cover := readBase + "/" + f.env.Tenant + "/post/501/public/cover_64.webp"
 	resp, body = get("/media/post/501/slots/cover")
-	if outs := body["outputs"].([]any); resp.StatusCode != 200 || body["pending"] != false || len(outs) != 1 || body["version"] != fp ||
-		outs[0].(map[string]any)["url"] != cover+"?v="+fp || body["dims"].(map[string]any)["w"] != float64(200) || resp.Header.Get("Cache-Control") != "private, no-store" {
+	if outs := body["outputs"].([]any); resp.StatusCode != 200 || body["pending"] != false || len(outs) != 1 || body["aspect"] != "1:1" ||
+		outs[0].(map[string]any)["url"] != cover || body["dims"].(map[string]any)["w"] != float64(200) || resp.Header.Get("Cache-Control") != "private, no-store" {
 		t.Fatalf("slot: %d %v", resp.StatusCode, body)
 	}
 	if resp, _ := get("/media/post/501/slots/nope"); resp.StatusCode != 404 {
 		t.Fatalf("unknown slot: %d", resp.StatusCode)
 	}
-	if outs, err := r.SlotOutputs(f.post, "cover", ""); err != nil || len(outs) != 1 || outs[0].URL != cover || outs[0].Name != "cover_64" {
-		t.Fatalf("slot outputs %+v %v", outs, err)
-	}
-	if outs, _ := r.SlotOutputs(f.post, "cover", media.NewSlotStamp(fp, []media.Dims{{W: 64}, {W: 128}})); len(outs) != 1 || outs[0].URL != cover+"?v="+fp {
-		t.Fatalf("versioned slot outputs %+v (a retired width is left out)", outs)
-	}
-	for _, bad := range []media.SlotStamp{"abc", "abc:", ":64", "abc:64,64", "abc:0", "abc:x", "abc:64x", "abc:64x0", "abc:64x1x2"} {
-		if _, err := r.SlotOutputs(f.post, "cover", bad); !errors.Is(err, media.ErrInvalidRequest) {
-			t.Fatalf("stamp %q: %v", bad, err)
-		}
+	if listed, err := r.ListedSlot(f.post, "cover", media.AspectNative); err != nil || len(listed.Outputs) != 1 || listed.Outputs[0].URL != cover ||
+		listed.Outputs[0].Name != "cover_64" || listed.Outputs[0].H != 64 || listed.Aspect != media.Aspect1x1 {
+		t.Fatalf("listed slot %+v %v", listed, err)
 	}
 
 	u, err := r.PublicURL(f.post, "cover")

@@ -78,21 +78,21 @@ func TestVideoExposure(t *testing.T) {
 			t.Fatalf("rendered output outside editor/: %s", k)
 		}
 		if _, err := env.Store.Put(ctx, k, strings.NewReader(body), int64(len(body)),
-			media.PutOptions{ContentType: "image/webp", CacheControl: "no-cache", Metadata: map[string]string{"of": "v1"}}); err != nil {
+			media.PutOptions{ContentType: "image/webp", CacheControl: "no-cache"}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := ms.UpdateSlot(ctx, ref, media.PosterSlot, func(r *media.SlotRecord) error {
 		r.Original = `"etag"`
 		fp := r.Fingerprint((&media.Video{PosterWidths: []int{480, 960, 1920}}).Poster())
-		r.Result = &media.SlotResult{Of: fp, Version: fp, Source: r.Original, Outputs: []media.Dims{{W: 480, H: 270}}}
+		r.Result = &media.SlotResult{Of: fp, Source: r.Original, Outputs: []media.SlotRendition{{Rung: 480, W: 480, H: 270}}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ms.UpdateHoverPreview(ctx, ref, func(*media.HoverPreviewRecord) (*media.HoverPreviewRecord, error) {
 		rec := &media.HoverPreviewRecord{File: "source", Start: 1, Duration: 3}
-		rec.Result = &media.HoverPreviewResult{Of: rec.Key(), Version: "v1", Outputs: []media.Dims{{W: 320, H: 180}}}
+		rec.Result = &media.HoverPreviewResult{Of: rec.Key(), Outputs: []media.Dims{{W: 320, H: 180}}}
 		return rec, nil
 	}); err != nil {
 		t.Fatal(err)

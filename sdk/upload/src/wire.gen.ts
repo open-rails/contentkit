@@ -176,10 +176,9 @@ export interface ErrorDetails {
 }
 
 export interface SlotManifest {
-  aspect: number;
+  aspect: string;
   edit?: Edit;
   dims?: Dims;
-  version?: string;
   outputs: SlotImage[];
   pending: boolean;
   error?: string;
@@ -239,7 +238,6 @@ export interface PreviewImage {
 export interface HoverPreviewManifest {
   file?: string;
   selection?: HoverPreviewSelection;
-  version?: string;
   mp4: PreviewImage[];
   webp: PreviewImage[];
   pending: boolean;

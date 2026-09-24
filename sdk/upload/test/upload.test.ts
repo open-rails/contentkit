@@ -103,7 +103,7 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
     const edit = { crop: { x: 0, y: 40, w: 360, h: 120 } };
     const up = await client({ transport: counting }).uploadSlot(new File([png], "cover.png", { type: "image/png" }), { ref, slot: "cover", edit });
     // This server has no encoder: the slot stays pending, and dims arrive with the first encode.
-    expect(up.manifest).toMatchObject({ aspect: 3, edit, pending: true, outputs: [] });
+    expect(up.manifest).toMatchObject({ aspect: "3:1", edit, pending: true, outputs: [] });
     expect(puts).toHaveLength(1);
     expect(JSON.parse((await stored(ref, "cover", "slot")).edit!)).toEqual(edit);
 
@@ -111,7 +111,7 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
     const turned = { crop: { x: 100, y: 0, w: 80, h: 240 }, rotate: 90 };
     const m = await c.editSlot(ref, "cover", turned);
     expect(m.edit).toEqual(turned);
-    expect(await c.getSlot(ref, "cover")).toMatchObject({ aspect: 3, edit: turned, pending: true });
+    expect(await c.getSlot(ref, "cover")).toMatchObject({ aspect: "3:1", edit: turned, pending: true });
     expect(puts).toHaveLength(1);
 
     const original = new Uint8Array(await (await c.getSlotOriginal(ref, "cover")).arrayBuffer());

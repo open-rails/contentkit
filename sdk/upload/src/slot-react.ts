@@ -1,3 +1,4 @@
+import { ratio, type AspectRatio } from "./aspect.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Progress, UploadClient } from "./client.js";
 import { centeredCrop, constrainCrop, editedSize, rotation, sameEdit, type Size } from "./crop.js";
@@ -15,7 +16,8 @@ export interface SlotImageOptions {
 
 export interface UseSlotImage extends SlotSources {
   manifest: SlotManifest | null;
-  aspect: number;
+  /** "W:H"; the manifest's, else "1:1". */
+  aspect: AspectRatio;
   loading: boolean;
   error?: UploadError;
   reload: () => void;
@@ -57,7 +59,7 @@ export function useSlotImage(client: UploadClient | null | undefined, o: SlotIma
   return {
     ...slotSources(manifest),
     manifest,
-    aspect: manifestAspect(manifest, 1),
+    aspect: manifestAspect(manifest),
     loading: given === undefined && state.loading,
     error: given === undefined ? state.error : undefined,
     reload,
@@ -81,8 +83,8 @@ export interface SlotCropOptions {
   slot: string;
   /** The slot's current manifest: its aspect, source size and edit for recrop(). */
   manifest?: SlotManifest | null;
-  /** Width / height of the output; default the manifest's aspect, else 1. */
-  aspect?: number;
+  /** The output's "W:H"; default the manifest's aspect, else "1:1". */
+  aspect?: AspectRatio;
   onSaved?: (m: SlotManifest) => void;
   /** Replaces decodeImage (tests, custom decoders). */
   decode?: (file: File) => Promise<CropSource>;
@@ -93,7 +95,7 @@ export interface SlotCropOptions {
 }
 
 export type UseSlotCrop = SlotCropState & {
-  aspect: number;
+  aspect: AspectRatio;
   /** The output's size in source pixels (crop, then rotation) while a source is open. */
   cropped?: Size;
   /** Opens a picked file for cropping. */
@@ -109,7 +111,8 @@ export type UseSlotCrop = SlotCropState & {
 };
 
 /** The edit's output size: its crop (or the centred crop at aspect), turned. */
-export function editOutput(source: Size, edit: Edit | null | undefined, aspect: number): Size {
+export function editOutput(source: Size, edit: Edit | null | undefined, shape: AspectRatio): Size {
+  const aspect = ratio(shape);
   const rot = rotation(edit?.rotate ?? 0);
   const c = edit?.crop ? constrainCrop(edit.crop, source, aspect, rot) : centeredCrop(source, aspect, rot);
   return editedSize({ width: c.w, height: c.h }, rot);
@@ -124,7 +127,7 @@ export function useSlotCrop(client: UploadClient, o: SlotCropOptions): UseSlotCr
   const picks = useRef(0);
   const opts = useRef(o);
   opts.current = o;
-  const aspect = o.aspect ?? manifestAspect(o.manifest, 1);
+  const aspect = o.aspect ?? manifestAspect(o.manifest);
 
   const set = useCallback((next: SlotCropState) => {
     const prev = cur.current;

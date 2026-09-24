@@ -25,7 +25,7 @@ const png = (seed = 1) => new File([bytes(300, seed)], "a.png", { type: "image/p
 
 it("SlotImage renders srcset and sizes, and a placeholder when empty", () => {
   const manifest = {
-    aspect: 3,
+    aspect: "3:1",
     pending: false,
     outputs: [
       { name: "a", w: 1500, h: 500, url: "https://cdn/1500.webp" },
@@ -124,7 +124,7 @@ it("ImageCropDialog confirms the initial edit, zooms from the keyboard and rotat
       open
       onOpenChange={() => {}}
       source={{ url: "blob:x", width: 3000, height: 2000 }}
-      aspect={3}
+      aspect="3:1"
       initialEdit={{ crop: { x: 0, y: 500, w: 3000, h: 1000 } }}
       onConfirm={onConfirm}
     />,
@@ -162,7 +162,7 @@ it("SlotEditor composes a host-styled overlay trigger: pick, then a Change / Edi
           item={item}
           slot="cover"
           manifest={manifest}
-          aspect={3}
+          aspect="3:1"
           decode={decodeAs(3000, 1500)}
           onChange={(m) => {
             onChange(m);
@@ -239,7 +239,7 @@ it("ImageCropDialog reports an edit only when it changes, so onEditChange can se
         open
         onOpenChange={() => {}}
         source={{ url: "blob:x", width: 400, height: 300 }}
-        aspect={1}
+        aspect="1:1"
         onEditChange={(e) => {
           reported.push(e);
           if (renders < 50) setEdit(e); // bounded so a loop fails instead of hanging

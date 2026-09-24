@@ -96,7 +96,7 @@ func TestEditOpAndSlotFromFile(t *testing.T) {
 		return media.SlotFromFileBody{Ref: ref, Slot: "cover", File: "p.png", Edit: edit}
 	}
 	var sm media.SlotManifest
-	if status, er := e.call(t, "alice", "/commit-slot-from-file", slotBody(crop(200, 0, 100, 0)), &sm); status != 200 || !sm.Pending || sm.Aspect != 0.5 {
+	if status, er := e.call(t, "alice", "/commit-slot-from-file", slotBody(crop(200, 0, 100, 0)), &sm); status != 200 || !sm.Pending || sm.Aspect != media.Ratio("1:2") {
 		t.Fatalf("slot from file: %d %+v %+v", status, er, sm)
 	}
 	slotEdit := func() string {

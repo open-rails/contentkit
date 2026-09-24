@@ -41,7 +41,7 @@ it("useUpload reports progress and the result", async () => {
 
 it("useCrop keeps a crop in original pixels at the aspect and yields the edit", () => {
   const source = { width: 400, height: 200 };
-  const { result } = renderHook(() => useCrop({ source, aspect: 0.5 }));
+  const { result } = renderHook(() => useCrop({ source, aspect: "1:2" }));
   expect(result.current.crop).toEqual({ x: 150, y: 0, w: 100, h: 200 });
   act(() => result.current.setFromDisplay({ x: 100, y: 0, w: 60, h: 999 }, { width: 200, height: 100 }));
   expect(result.current.edit).toEqual({ crop: { x: 200, y: 0, w: 100, h: 200 } });

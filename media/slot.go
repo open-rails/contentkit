@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 
 	"github.com/open-rails/contentkit/access"
@@ -31,15 +30,22 @@ type SlotRecord struct {
 
 // SlotResult is what the served outputs were derived from.
 type SlotResult struct {
-	Of      string `json:"of"`              // the Fingerprint last encoded
-	Version string `json:"version"`         // the Fingerprint Outputs were encoded under (Of, unless it failed)
-	Source  string `json:"source"`          // the original (ETag) Dims measure
-	Dims    Dims   `json:"dims"`            // EXIF-oriented; zero when undecodable
-	Outputs []Dims `json:"outputs"`         // by ascending width
-	Error   string `json:"error,omitempty"` // Of failed; Outputs are older
+	Of      string          `json:"of"`              // the Fingerprint last encoded
+	Source  string          `json:"source"`          // the original (ETag) Dims measure
+	Dims    Dims            `json:"dims"`            // EXIF-oriented; zero when undecodable
+	Outputs []SlotRendition `json:"outputs"`         // one per rung, ascending
+	Error   string          `json:"error,omitempty"` // Of failed; Outputs are older
 	// An image refusal's code and details; empty for a processing fault.
 	Code    string        `json:"code,omitempty"`
 	Details *ErrorDetails `json:"details,omitempty"`
+}
+
+// SlotRendition is one output: the rung it is stored under and its size
+// (narrower than the rung when the edited image is).
+type SlotRendition struct {
+	Rung int `json:"rung"`
+	W    int `json:"w"`
+	H    int `json:"h"`
 }
 
 // Fingerprint identifies the outputs the record yields under slot spec s.
@@ -353,14 +359,13 @@ func (u *Uploads) enqueueSlot(ctx context.Context, ref contentref.ContentRef, sl
 	return u.o.Queue.Enqueue(ctx, ProcessJob{Ref: ref.Content(), Slot: slot})
 }
 
-// SlotManifest describes a slot for srcset: its produced outputs by ascending
-// width. Output URLs carry ?v={version}; the access worker serves a matching
-// version as immutable, so a re-encode is a new URL.
+// SlotManifest describes a slot: its outputs by ascending width. Outputs are
+// rewritten in place at fixed URLs, served no-cache with an ETag, so a new
+// crop shows on the next revalidation.
 type SlotManifest struct {
-	Aspect  float64     `json:"aspect"`            // width/height; a native slot's from its outputs (0 before any)
-	Edit    *Edit       `json:"edit,omitempty"`    // nil: the centred crop at aspect (native: the whole image)
-	Dims    *Dims       `json:"dims,omitempty"`    // the committed original, EXIF-oriented, once measured
-	Version string      `json:"version,omitempty"` // of the outputs listed
+	Aspect  Aspect      `json:"aspect"`         // "W:H"; a native slot's from its outputs ("" before any)
+	Edit    *Edit       `json:"edit,omitempty"` // nil: the centred crop at aspect (native: the whole image)
+	Dims    *Dims       `json:"dims,omitempty"` // the committed original, EXIF-oriented, once measured
 	Outputs []SlotImage `json:"outputs"`
 	Pending bool        `json:"pending"`         // a commit, edit or spec change is not encoded yet
 	Error   string      `json:"error,omitempty"` // the latest encode failed; the outputs are older
@@ -393,21 +398,9 @@ type OutputURLs struct {
 	Exposure    Exposure // what the item has published
 }
 
-// editorURL is an editor/ key's URL under the editor token; the version
-// makes a re-encode a new URL, as on public/.
-func (u OutputURLs) editorURL(key, version string) string {
-	u2 := versioned(strings.TrimRight(u.BaseURL, "/")+"/"+key, version)
-	if version != "" {
-		return u2 + "&t=" + u.EditorToken
-	}
-	return u2 + "?t=" + u.EditorToken
-}
-
-func versioned(u, version string) string {
-	if version != "" {
-		u += "?" + SlotVersionParam + "=" + version
-	}
-	return u
+// editorURL is an editor/ key's URL under the editor token.
+func (u OutputURLs) editorURL(key string) string {
+	return strings.TrimRight(u.BaseURL, "/") + "/" + key + "?t=" + u.EditorToken
 }
 
 // SlotManifest reads a slot's manifest (one object), building output URLs
@@ -448,14 +441,11 @@ func (m *Manifests) slotManifest(ctx context.Context, urls OutputURLs, ref conte
 	if res.Of == fp {
 		out.Error, out.ErrorCode, out.ErrorDetails = res.Error, res.Code, res.Details
 	}
-	if len(res.Outputs) > 0 {
-		out.Version = res.Version
-	}
 	for _, o := range res.Outputs {
-		img := slotImage(urls.BaseURL, item, slot, s, o, out.Version)
+		img := slotImage(urls.BaseURL, item, slot, o)
 		if item.Gated(slot) && urls.EditorToken != "" {
-			key, _ := item.SlotOutput(slot, s.Rung(o.W))
-			img.URL = urls.editorURL(key, out.Version)
+			key, _ := item.SlotOutput(slot, o.Rung)
+			img.URL = urls.editorURL(key)
 		}
 		out.Outputs = append(out.Outputs, img)
 	}
@@ -510,127 +500,38 @@ func (r *Reader) EditorURLs(ref contentref.ContentRef) (OutputURLs, error) {
 	return OutputURLs{BaseURL: r.base.String(), EditorToken: r.editorToken(item, token.Expiry(r.now(), r.delivery.TTL, r.delivery.Window))}, nil
 }
 
-// SlotStamp is the one value a host stores per slot to build its outputs
-// without reads: the encode's version and the sizes it produced,
-// "{version}:{w}x{h},{w}x{h}…" (a bare "{w}" takes its height from the
-// slot's Aspect). Hooks.SlotEncoded reports it; the zero stamp is a slot the
-// host never saw encoded.
-type SlotStamp string
-
-// NewSlotStamp stamps outputs encoded under version, by ascending width.
-func NewSlotStamp(version string, outputs []Dims) SlotStamp {
-	b := []byte(version + ":")
-	for i, o := range outputs {
-		if i > 0 {
-			b = append(b, ',')
-		}
-		b = strconv.AppendInt(b, int64(o.W), 10)
-		if o.H > 0 {
-			b = strconv.AppendInt(append(b, 'x'), int64(o.H), 10)
-		}
-	}
-	return SlotStamp(b)
-}
-
-// Parse splits the stamp; the zero stamp is ("", nil). H is 0 for a bare width.
-func (s SlotStamp) Parse() (version string, outputs []Dims, err error) {
-	if s == "" {
-		return "", nil, nil
-	}
-	version, list, ok := strings.Cut(string(s), ":")
-	if !ok || version == "" || list == "" {
-		return "", nil, fmt.Errorf("media: malformed slot stamp %q", s)
-	}
-	num := func(f string) int {
-		n, err := strconv.Atoi(f)
-		if err != nil || n <= 0 || n > maxSlotWidth || strconv.Itoa(n) != f {
-			return 0
-		}
-		return n
-	}
-	for f := range strings.SplitSeq(list, ",") {
-		ws, hs, sized := strings.Cut(f, "x")
-		d := Dims{W: num(ws)}
-		if sized {
-			d.H = num(hs)
-		}
-		if d.W == 0 || (sized && d.H == 0) || (len(outputs) > 0 && d.W <= outputs[len(outputs)-1].W) {
-			return "", nil, fmt.Errorf("media: malformed slot stamp %q", s)
-		}
-		outputs = append(outputs, d)
-	}
-	return version, outputs, nil
-}
-
-// Stamp is the manifest's SlotStamp ("" before the first encode), e.g. to
-// backfill hosts that adopt Hooks.SlotEncoded after slots were set.
-func (m SlotManifest) Stamp() SlotStamp {
-	if m.Version == "" || len(m.Outputs) == 0 {
-		return ""
-	}
-	outs := make([]Dims, len(m.Outputs))
-	for i, o := range m.Outputs {
-		outs[i] = Dims{W: o.W, H: o.H}
-	}
-	return NewSlotStamp(m.Version, outs)
-}
-
-// SlotOutputs lists, reading nothing, the outputs of a slot encoded as stamp,
-// with immutable ?v= URLs: the SlotManifest.Outputs of that encode. Widths
-// the slot no longer declares are left out. The zero stamp lists the widths
-// up to Min, which every processed slot has, with URLs revalidated on every
-// view (a slot never uploaded answers 404; a native slot's heights are 0).
-func (r *Reader) SlotOutputs(ref contentref.ContentRef, slot string, stamp SlotStamp) ([]SlotImage, error) {
+// ListedSlot is a slot's manifest built without reads, for listings: every
+// rung at its fixed URL (the image job renders each one, capped at the edited
+// width, so none is missing once the slot is set). W is the rung, an upper
+// bound; H follows aspect: the slot's, or for a native slot the one the host
+// recorded from Hooks.SlotEncoded (unknown: 0). Hosts list it only for slots
+// they know are set, and for gated slots only when the item publishes them.
+func (r *Reader) ListedSlot(ref contentref.ContentRef, slot string, aspect Aspect) (SlotManifest, error) {
 	item, s, err := r.kinds.slot(ref, slot)
 	if err != nil {
-		return nil, err
+		return SlotManifest{}, err
 	}
-	version, outputs, err := stamp.Parse()
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
+	if !s.Native() {
+		aspect = s.Aspect
 	}
-	if stamp == "" {
-		outputs = append(outputs, Dims{W: s.Widths[0]})
-	}
-	out := []SlotImage{}
-	for _, d := range outputs {
-		if s.Rung(d.W) == 0 {
-			continue
-		}
-		if d.H == 0 || !s.Native() {
-			d.H = s.Height(d.W)
-		}
-		out = append(out, slotImage(r.base.String(), item, slot, s, d, version))
+	out := SlotManifest{Aspect: aspect, Outputs: []SlotImage{}, MinWidth: s.Min(), Animation: s.Animation}
+	for _, w := range s.Widths {
+		out.Outputs = append(out.Outputs, slotImage(r.base.String(), item, slot, SlotRendition{Rung: w, W: w, H: aspect.Height(w)}))
 	}
 	return out, nil
 }
 
-// StampedSlot is the SlotManifest a listing builds from a stored stamp
-// without reads: SlotOutputs plus the aspect and version.
-func (r *Reader) StampedSlot(ref contentref.ContentRef, slot string, stamp SlotStamp) (SlotManifest, error) {
-	_, s, err := r.kinds.slot(ref, slot)
-	if err != nil {
-		return SlotManifest{}, err
-	}
-	outs, err := r.SlotOutputs(ref, slot, stamp)
-	if err != nil {
-		return SlotManifest{}, err
-	}
-	version, _, _ := stamp.Parse()
-	return SlotManifest{Aspect: outputAspect(s, outs), Version: version, Outputs: outs}, nil
-}
-
-// outputAspect is the slot's Aspect, or a native slot's from its outputs (0 when unknown).
-func outputAspect(s Slot, outs []SlotImage) float64 {
+// outputAspect is the slot's Aspect, or a native slot's from its widest output.
+func outputAspect(s Slot, outs []SlotImage) Aspect {
 	if !s.Native() {
 		return s.Aspect
 	}
-	for _, o := range outs {
-		if o.W > 0 && o.H > 0 {
-			return float64(o.W) / float64(o.H)
+	for i := len(outs) - 1; i >= 0; i-- {
+		if outs[i].W > 0 && outs[i].H > 0 {
+			return AspectOf(outs[i].W, outs[i].H)
 		}
 	}
-	return 0
+	return AspectNative
 }
 
 func (r *Registry) slot(ref contentref.ContentRef, slot string) (Item, Slot, error) {
@@ -645,11 +546,8 @@ func (r *Registry) slot(ref contentref.ContentRef, slot string) (Item, Slot, err
 	return item, s, nil
 }
 
-// SlotVersionParam is the query parameter carrying an output's version.
-const SlotVersionParam = layout.VersionParam
-
 // slotImage is an output at its public URL, stored under its rung.
-func slotImage(base string, item Item, slot string, s Slot, o Dims, version string) SlotImage {
-	key, _ := item.SlotPublic(slot, s.Rung(o.W))
-	return SlotImage{Name: SlotOutput(slot, s.Rung(o.W)), W: o.W, H: o.H, URL: versioned(strings.TrimRight(base, "/")+"/"+key, version)}
+func slotImage(base string, item Item, slot string, o SlotRendition) SlotImage {
+	key, _ := item.SlotPublic(slot, o.Rung)
+	return SlotImage{Name: SlotOutput(slot, o.Rung), W: o.W, H: o.H, URL: strings.TrimRight(base, "/") + "/" + key}
 }

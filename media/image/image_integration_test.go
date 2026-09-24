@@ -31,7 +31,7 @@ var (
 	thumb = media.Spec{Width: 100, Height: 150, Fit: media.FitCover, Quality: 80}
 	low   = media.Spec{Width: 300, Height: 300, Fit: media.FitInside, Quality: 90}
 	high  = media.Spec{Quality: 90}
-	cover = media.Slot{Aspect: 3, Widths: []int{150, 300, 600}}
+	cover = media.Slot{Aspect: media.Aspect3x1, Widths: []int{150, 300, 600}}
 )
 
 func galleryKind() media.Kind {
@@ -93,9 +93,7 @@ type env struct {
 	kinds     *media.Registry
 	mu        sync.Mutex
 	failed    []string
-	stamps    map[string]media.SlotStamp // Hooks.SlotEncoded, by ref#slot
-	reported  map[media.SlotStamp]bool
-	late      map[media.SlotStamp]bool // first reported after the record showed it
+	encoded   map[string]media.Aspect // Hooks.SlotEncoded, by ref#slot
 }
 
 func newEnv(t *testing.T, kind media.Kind) *env {
@@ -128,19 +126,12 @@ func (e *env) useKind(t *testing.T, kind media.Kind) {
 			e.mu.Lock()
 			e.failed = append(e.failed, file)
 			e.mu.Unlock()
-		}, SlotEncoded: func(ctx context.Context, ref contentref.ContentRef, slot string, stamp media.SlotStamp) {
-			version, _, _ := stamp.Parse()
-			rec, err := e.manifests.Slot(ctx, ref, slot)
-			shown := err == nil && rec.Result != nil && rec.Result.Version == version
+		}, SlotEncoded: func(_ context.Context, ref contentref.ContentRef, slot string, aspect media.Aspect) {
 			e.mu.Lock()
-			if e.stamps == nil {
-				e.stamps, e.reported, e.late = map[string]media.SlotStamp{}, map[media.SlotStamp]bool{}, map[media.SlotStamp]bool{}
+			if e.encoded == nil {
+				e.encoded = map[string]media.Aspect{}
 			}
-			e.stamps[ref.String()+"#"+slot] = stamp
-			if shown && !e.reported[stamp] {
-				e.late[stamp] = true
-			}
-			e.reported[stamp] = true
+			e.encoded[ref.String()+"#"+slot] = aspect
 			e.mu.Unlock()
 		}}})
 	if err != nil {

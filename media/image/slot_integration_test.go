@@ -108,21 +108,22 @@ func widths(m media.SlotManifest) []int {
 	return w
 }
 
-// checkOutputs requires m to be settled and list exactly want (at 3:1), each
-// stored at its versioned URL with those dimensions and sampled pixels c.
+// checkOutputs requires m to be settled and list exactly want (one per rung,
+// at 3:1), each stored in place at its fixed URL with those dimensions and
+// sampled pixels c.
 func (e *env) checkOutputs(t *testing.T, ref contentref.ContentRef, m media.SlotManifest, want []int, c color.RGBA) {
 	t.Helper()
-	if m.Pending || m.Error != "" || m.Version == "" || !slices.Equal(widths(m), want) {
+	if m.Pending || m.Error != "" || !slices.Equal(widths(m), want) {
 		t.Fatalf("manifest %+v, want widths %v", m, want)
 	}
 	prefix := e.Tenant + "/" + ref.ContentKind + "/" + ref.ContentID + "/public/"
 	for _, o := range m.Outputs {
 		key := prefix + o.Name + ".webp"
-		if o.URL != slotBase+"/"+key+"?v="+m.Version || o.H != cover.Height(o.W) {
+		if o.URL != slotBase+"/"+key || o.H != media.Aspect3x1.Height(o.W) {
 			t.Fatalf("output %+v", o)
 		}
 		b, obj := e.object(t, key)
-		if obj.ContentType != "image/webp" || obj.CacheControl != "no-cache" || obj.Metadata["of"] != m.Version {
+		if obj.ContentType != "image/webp" || obj.CacheControl != "no-cache" || len(obj.Metadata) != 0 {
 			t.Fatalf("%s: %+v", key, obj)
 		}
 		img, err := webp.Decode(bytes.NewReader(b))
@@ -139,7 +140,7 @@ func (e *env) checkOutputs(t *testing.T, ref contentref.ContentRef, m media.Slot
 			}
 		}
 	}
-	e.checkStamp(t, ref, "cover", m)
+	e.checkListed(t, ref, "cover", m)
 	stored := map[string]bool{}
 	for _, o := range m.Outputs {
 		stored[o.Name] = true
@@ -163,27 +164,29 @@ func (visible) Resolve(_ context.Context, refs []contentref.ContentRef, _ access
 	return out, nil
 }
 
-// checkStamp requires the host's stored stamp to rebuild m's outputs without
-// reads, and to have reached the host before the record showed it.
-func (e *env) checkStamp(t *testing.T, ref contentref.ContentRef, slot string, m media.SlotManifest) {
+// checkListed requires the host's SlotEncoded record and ListedSlot to link
+// exactly m's outputs without reads.
+func (e *env) checkListed(t *testing.T, ref contentref.ContentRef, slot string, m media.SlotManifest) {
 	t.Helper()
 	e.mu.Lock()
-	stamp, late := e.stamps[ref.String()+"#"+slot], e.late[e.stamps[ref.String()+"#"+slot]]
+	aspect, ok := e.encoded[ref.String()+"#"+slot]
 	e.mu.Unlock()
-	if stamp == "" || stamp != m.Stamp() {
-		t.Fatalf("stamp %q, manifest's %q", stamp, m.Stamp())
-	}
-	if late {
-		t.Fatalf("stamp %q reported after the slot record made it visible", stamp)
+	if !ok || aspect != m.Aspect {
+		t.Fatalf("encoded aspect %v (reported %v), manifest's %v", aspect, ok, m.Aspect)
 	}
 	r, err := media.NewReader(media.ReaderOptions{Manifests: e.manifests, Kinds: e.kinds, Resolver: visible{},
 		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: slotBase, SigningKey: token.Key{ID: "k", Secret: make([]byte, 32)}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	outs, err := r.SlotOutputs(ref, slot, stamp)
-	if err != nil || !slices.Equal(outs, m.Outputs) {
-		t.Fatalf("SlotOutputs(%q) = %+v %v, want %+v", stamp, outs, err, m.Outputs)
+	listed, err := r.ListedSlot(ref, slot, aspect)
+	if err != nil || len(listed.Outputs) != len(m.Outputs) {
+		t.Fatalf("ListedSlot = %+v %v, want %+v", listed, err, m.Outputs)
+	}
+	for i, o := range listed.Outputs {
+		if o.Name != m.Outputs[i].Name || o.URL != m.Outputs[i].URL || o.W < m.Outputs[i].W {
+			t.Fatalf("listed %+v, read %+v", o, m.Outputs[i])
+		}
 	}
 }
 
@@ -203,10 +206,10 @@ func TestSlotEditWidthsAndSpecChange(t *testing.T) {
 	e.drain(t)
 	m := e.slotManifest(t, ref, "cover")
 	e.checkOutputs(t, ref, m, []int{150, 300, 600}, blue)
-	if m.Dims == nil || *m.Dims != (media.Dims{W: 1800, H: 1200}) || m.Aspect != 3 || *m.Edit.Crop != (media.Crop{X: 900, Y: 0, W: 900, H: 300}) {
+	if m.Dims == nil || *m.Dims != (media.Dims{W: 1800, H: 1200}) || m.Aspect != media.Aspect3x1 || *m.Edit.Crop != (media.Crop{X: 900, Y: 0, W: 900, H: 300}) {
 		t.Fatalf("manifest %+v", m)
 	}
-	first := m.Version
+	firstTag, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/5/public/cover_150.webp")
 
 	// Unchanged: no read, no rewrite (a whole-item job also covers slots).
 	e.store.reads.Store(0)
@@ -220,7 +223,7 @@ func TestSlotEditWidthsAndSpecChange(t *testing.T) {
 	}
 
 	// Re-edit the kept original to the bottom-left, 450 wide: the 600 rung is
-	// never upscaled, so it holds the 450 px image. Two jobs race. The version changes.
+	// never upscaled, so it holds the 450 px image. Two jobs race. The outputs are rewritten in place.
 	orig, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/5/originals/cover")
 	if err := e.editSlot(t, ref, "cover", crop(0, 600, 450, 0)); err != nil {
 		t.Fatal(err)
@@ -239,8 +242,9 @@ func TestSlotEditWidthsAndSpecChange(t *testing.T) {
 	if m.Outputs[2].Name != "cover_600" {
 		t.Fatalf("capped output %+v", m.Outputs[2])
 	}
-	if again, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/5/originals/cover"); again.ETag != orig.ETag || m.Version == first {
-		t.Fatalf("edit replaced the original or kept the version %s", m.Version)
+	nowTag, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/5/public/cover_150.webp")
+	if again, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/5/originals/cover"); again.ETag != orig.ETag || nowTag.ETag == firstTag.ETag {
+		t.Fatalf("edit replaced the original or kept the old cover_150 (%s)", nowTag.ETag)
 	}
 
 	// With the size known, an edit outside it or under the smallest width is refused at once.
@@ -255,7 +259,7 @@ func TestSlotEditWidthsAndSpecChange(t *testing.T) {
 	// A spec change re-encodes from the original with the stored edit and
 	// drops retired widths.
 	k := galleryKind()
-	k.Slots = map[string]media.Slot{"cover": {Aspect: 3, Widths: []int{100, 400}}}
+	k.Slots = map[string]media.Slot{"cover": {Aspect: media.Aspect3x1, Widths: []int{100, 400}}}
 	e.useKind(t, k)
 	if m := e.slotManifest(t, ref, "cover"); !m.Pending {
 		t.Fatal("spec change not pending")
@@ -291,7 +295,7 @@ func TestSlotOrientationCentreAndFailure(t *testing.T) {
 	e.slot(t, rotated, "cover", orientedJPEG(t, paint(1200, 400, func(x, _ int) color.RGBA { return bands(x) }), 6), crop(0, 850, 300, 0))
 	e.drain(t)
 	m = e.slotManifest(t, rotated, "cover")
-	e.checkOutputs(t, rotated, m, []int{150, 300}, blue)
+	e.checkOutputs(t, rotated, m, []int{150, 300, 300}, blue)
 	if *m.Dims != (media.Dims{W: 400, H: 1200}) || len(e.failed) != 0 {
 		t.Fatalf("manifest %+v, failed %v", m, e.failed)
 	}
@@ -304,7 +308,7 @@ func TestSlotOrientationCentreAndFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad := e.slotManifest(t, rotated, "cover")
-	if bad.Error == "" || bad.Pending || bad.Version != m.Version || !slices.Equal(widths(bad), []int{150, 300}) ||
+	if bad.Error == "" || bad.Pending || !slices.Equal(widths(bad), []int{150, 300, 300}) ||
 		*bad.Dims != (media.Dims{W: 1200, H: 400}) || len(e.failed) != 1 {
 		t.Fatalf("failed edit: %+v, failed %v", bad, e.failed)
 	}

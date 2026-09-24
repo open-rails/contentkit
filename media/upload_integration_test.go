@@ -74,12 +74,12 @@ func newUploadEnv(t *testing.T, caps *media.Capabilities, limiter media.UploadLi
 	}
 	kinds, err := media.NewRegistry(
 		media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
-			Slots: map[string]media.Slot{"cover": {Aspect: 3, Widths: []int{460}}}},
+			Slots: map[string]media.Slot{"cover": {Aspect: media.Aspect3x1, Widths: []int{460}}}},
 		media.Kind{Name: "video", Types: []string{"video/mp4"}, MaxBytes: 1 << 30},
 		media.Kind{Name: "post", Types: []string{"image/png"}, MaxBytes: 1 << 20, Inline: &media.Spec{Width: 1600}},
 		media.Kind{Name: "mixed", Versioned: true, Types: []string{"image/png", "video/mp4"}, MaxBytes: 1 << 20, MaxFiles: 3,
 			TypeLimits: map[string]media.Limit{"video": {MaxBytes: 1 << 30, MaxFiles: 1}}, Video: &media.Video{},
-			Slots: map[string]media.Slot{"cover": {Aspect: 0.5, Widths: []int{100}}}},
+			Slots: map[string]media.Slot{"cover": {Aspect: media.Ratio("1:2"), Widths: []int{100}}}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -364,7 +364,7 @@ func TestSlotUploadAndCommit(t *testing.T) {
 	if status, er := e.call(t, "alice", "/commit-slot", media.SlotBody{Ref: ref, Slot: "cover", SHA256: hexSum(cover), Edit: crop(10, 20, 600, 7)}, &m); status != 200 {
 		t.Fatalf("commit slot %d %+v", status, er)
 	}
-	if !m.Pending || m.Edit == nil || *m.Edit.Crop != (media.Crop{X: 10, Y: 20, W: 600, H: 200}) || m.Aspect != 3 || len(m.Outputs) != 0 || m.Version != "" {
+	if !m.Pending || m.Edit == nil || *m.Edit.Crop != (media.Crop{X: 10, Y: 20, W: 600, H: 200}) || m.Aspect != media.Aspect3x1 || len(m.Outputs) != 0 {
 		t.Fatalf("manifest after commit %+v", m)
 	}
 	if e.queue.count() != 1 || e.queue.jobs[0].Slot != "cover" {

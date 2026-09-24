@@ -26,7 +26,7 @@ var (
 func animKind(a media.Animation) media.Kind {
 	return media.Kind{Name: "anim", Types: []string{"image/gif", "image/webp", "image/png"}, MaxBytes: 10 << 20, Animation: a,
 		Specs: map[string]media.Spec{"large": {Width: 40, Quality: 90}},
-		Slots: map[string]media.Slot{"cover": {Aspect: 1, Widths: []int{20, 40}, Animation: a}}}
+		Slots: map[string]media.Slot{"cover": {Aspect: media.Aspect1x1, Widths: []int{20, 40}, Animation: a}}}
 }
 
 // animatedGIF is 4 frames of 80×80, 100-400 ms each, looping 3 times.

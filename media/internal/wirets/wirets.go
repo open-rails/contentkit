@@ -5,6 +5,7 @@
 package wirets
 
 import (
+	"encoding"
 	"fmt"
 	"reflect"
 	"strings"
@@ -108,6 +109,9 @@ func union(vs []string) string {
 func ts(t reflect.Type) string {
 	if t == reflect.TypeOf(time.Time{}) {
 		return "string"
+	}
+	if t.Kind() == reflect.Struct && t.Implements(reflect.TypeOf((*encoding.TextMarshaler)(nil)).Elem()) {
+		return "string" // e.g. media.Aspect, "W:H"
 	}
 	switch t.Kind() {
 	case reflect.Pointer:

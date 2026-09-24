@@ -1,3 +1,4 @@
+import { aspectOf, ratio, type AspectRatio } from "../aspect.js";
 import { Alert02Icon, ArrowLeft01Icon, ArrowRight01Icon, ImageUpload01Icon, Loading03Icon, Video01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
@@ -87,7 +88,7 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
   const [decodeError, setDecodeError] = useState<string>();
   const input = useRef<HTMLInputElement>(null);
   const duration = video?.encoded ? video.duration : 0;
-  const aspect = video?.w && video.h ? video.w / video.h : 16 / 9;
+  const aspect = video?.w && video.h ? aspectOf(video.w, video.h) : "16:9";
   const shown = time ?? (selection?.source === "frame" && selection.time !== undefined ? selection.time : duration * 0.25);
   const file = p.file ?? video?.file;
   const poster = useVideoPoster(client, {
@@ -214,7 +215,7 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
                         disabled={busy}
                         aria-label={t("poster.jumpTo", { time: formatTime(f.time) })}
                         onClick={() => setTime(f.time)}
-                        style={{ aspectRatio: String(aspect) }}
+                        style={{ aspectRatio: String(ratio(aspect)) }}
                         className={cn(
                           "relative overflow-hidden rounded-md bg-muted outline-none ring-offset-1 ring-offset-background focus-visible:ring-2 focus-visible:ring-ring",
                           near && "ring-2 ring-primary",
@@ -308,7 +309,8 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
   );
 }
 
-function Stage({ url, loading, aspect }: { url?: string; loading?: boolean; aspect: number }) {
+function Stage({ url, loading, aspect: shape }: { url?: string; loading?: boolean; aspect: AspectRatio }) {
+  const aspect = ratio(shape) ?? 16 / 9;
   return (
     <div className="relative mx-auto max-h-[50svh] max-w-full overflow-hidden rounded-lg bg-zinc-950" style={{ aspectRatio: String(aspect), width: `min(100%, calc(50svh * ${aspect}))` }} data-ckui="frame-stage">
       {url && <img src={url} alt="" className="absolute inset-0 size-full object-contain" />}

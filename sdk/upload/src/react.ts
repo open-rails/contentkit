@@ -1,3 +1,4 @@
+import { ratio, type AspectRatio } from "./aspect.js";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Progress, SlotUploadOptions, UploadClient, UploadedFile, UploadOptions } from "./client.js";
 import { centeredCrop, constrainCrop, editOf, rotation, sameEdit, toOriginal, type Rotation, type Size } from "./crop.js";
@@ -108,8 +109,8 @@ export function useUpload(client: UploadClient): UseUpload {
 export interface UseCropOptions {
   /** The original's size (read API dims). */
   source: Size;
-  /** The edited image's width/height, e.g. the slot's aspect. */
-  aspect?: number;
+  /** The edited image's "W:H", e.g. the slot's aspect; "" or omitted is free. */
+  aspect?: AspectRatio;
   /** The current edit to start from. */
   initial?: Edit | null;
 }
@@ -130,7 +131,8 @@ export interface UseCrop {
 }
 
 /** Headless crop state for any cropper UI: a rect in original pixels, a rotation and the resulting edit. */
-export function useCrop({ source: given, aspect, initial }: UseCropOptions): UseCrop {
+export function useCrop({ source: given, aspect: shape, initial }: UseCropOptions): UseCrop {
+  const aspect = ratio(shape);
   const { width, height } = given;
   const source = useMemo(() => ({ width, height }), [width, height]);
   const start = (): [Crop, Rotation] => {
