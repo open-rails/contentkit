@@ -34,13 +34,6 @@ func EncodeStage(ctx context.Context, e *Encoder, job Job, report Report) (bool,
 	return e.encode(ctx, job, report, true)
 }
 
-// SetEqualRungThreads gives every rung all threads.
-func SetEqualRungThreads(on bool) func() {
-	old := equalRungThreads
-	equalRungThreads = on
-	return func() { equalRungThreads = old }
-}
-
 // SetCapScale multiplies every rung's bitrate cap.
 func SetCapScale(f float64) func() {
 	old := rates

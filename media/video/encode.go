@@ -113,7 +113,7 @@ func ladder(ctx context.Context, src, dir string, p plan, ps pass, fp *fileProgr
 		streamMap = append(streamMap, fmt.Sprintf("v:%d,name:%d", i, ps.rungs[i].n))
 	}
 	for i, r := range ps.rungs {
-		args = append(args, ps.enc.rungArgs(i, r, ps.rungs)...)
+		args = append(args, ps.enc.rungArgs(i, r)...)
 	}
 	args = append(args, "-pix_fmt", "yuv420p", "-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", keyframeSeconds))
 	args = append(args, "-var_stream_map", strings.Join(streamMap, " "))
@@ -149,22 +149,6 @@ func hlsArgs(segment, playlist string) []string {
 		"-hls_segment_type", "fmp4", "-hls_flags", "single_file", "-hls_segment_filename", segment, playlist}
 }
 
-// rungThreads is rung i's share of threads by frame area, at least 2 (a
-// single-threaded x264 has no lookahead thread and stalls the pass).
-func rungThreads(rungs []rung, i, threads int) int {
-	if equalRungThreads {
-		return threads
-	}
-	var total float64
-	for _, r := range rungs {
-		total += float64(r.w * r.h)
-	}
-	return max(min(threads, 2), int(math.Ceil(float64(threads)*float64(rungs[i].w*rungs[i].h)/total)))
-}
-
-// equalRungThreads gives every rung all threads (bench comparison).
-var equalRungThreads bool
-
 // Config.Encoder values.
 const (
 	EncoderAuto  = "auto"  // NVENC when a probe encode succeeds, else x264
@@ -183,8 +167,10 @@ type encoding struct {
 
 // rungArgs are output stream i's H.264 High settings: the rung's capped CRF
 // (NVENC: CQ) with a 2 s VBV buffer and no scene-cut keyframes, so every
-// rung, in either stage, has keyframes at the same times.
-func (e encoding) rungArgs(i int, r rung, rungs []rung) []string {
+// rung, in either stage, has keyframes at the same times. Every x264 gets
+// all threads: splitting them by frame area cost 15–40% more wall time and
+// CPU at 8 threads (bench_test.go).
+func (e encoding) rungArgs(i int, r rung) []string {
 	o := func(name string) string { return fmt.Sprintf("-%s:v:%d", name, i) }
 	args := []string{o("profile"), "high", o("maxrate"), fmt.Sprintf("%dk", r.maxrate), o("bufsize"), fmt.Sprintf("%dk", 2*r.maxrate)}
 	if r.level != "" {
@@ -200,7 +186,7 @@ func (e encoding) rungArgs(i int, r rung, rungs []rung) []string {
 		preset = e.topPreset
 	}
 	args = append(args, o("c"), "libx264", o("preset"), preset, o("crf"), strconv.Itoa(r.crf), o("sc_threshold"), "0",
-		o("threads"), strconv.Itoa(rungThreads(rungs, i, e.threads)))
+		o("threads"), strconv.Itoa(e.threads))
 	if e.animation {
 		args = append(args, o("tune"), "animation")
 	}

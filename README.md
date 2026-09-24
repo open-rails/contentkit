@@ -380,8 +380,8 @@ original, so a replaced file keeps its previous `hls` until then. Outputs are
 byte-identical on retry (same encoder, presets and `Threads`). Each pass
 decodes the source once and scales a lanczos cascade (each rung from the one
 above; the sprite from the smallest); x264 runs preset `faster` up to 1080
-and `veryfast` above (`Config.Preset`, `TopPreset`), each rung with its
-frame-area share of `Config.Threads`; rungs mux and upload concurrently.
+and `veryfast` above (`Config.Preset`, `TopPreset`), each rung with all of
+`Config.Threads`; rungs mux and upload concurrently.
 **Two stages:** rungs up to 1080 (with audio, subtitles, sprite and their
 downloads) are published first with `hls.pending` listing the rungs above;
 the worker queues a follow-up job (same args, River priority 2) that encodes
