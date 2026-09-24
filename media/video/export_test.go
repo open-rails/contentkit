@@ -40,3 +40,16 @@ func SetEqualRungThreads(on bool) func() {
 	equalRungThreads = on
 	return func() { equalRungThreads = old }
 }
+
+// SetCapScale multiplies every rung's bitrate cap.
+func SetCapScale(f float64) func() {
+	old := rates
+	rates = map[string][5]rungRate{}
+	for k, rs := range old {
+		for i := range rs {
+			rs[i].maxrate = int(float64(rs[i].maxrate) * f)
+		}
+		rates[k] = rs
+	}
+	return func() { rates = old }
+}

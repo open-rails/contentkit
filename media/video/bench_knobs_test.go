@@ -18,10 +18,16 @@ import (
 //	CONTENTKIT_BENCH_EQUAL_THREADS  every rung gets all threads
 //	CONTENTKIT_BENCH_NVENC_CQ_OFFSET  NVENC CQ over the rung CRF
 //	CONTENTKIT_BENCH_PROFILE   media.Video.Profile
+//	CONTENTKIT_BENCH_CAP_SCALE multiplies the rung bitrate caps
 func benchKnobs(cfg *video.Config) func() {
 	cfg.Encoder = os.Getenv("CONTENTKIT_BENCH_ENCODER")
 	cfg.Preset, cfg.TopPreset = os.Getenv("CONTENTKIT_BENCH_PRESET"), os.Getenv("CONTENTKIT_BENCH_TOP_PRESET")
 	undo := video.SetEqualRungThreads(os.Getenv("CONTENTKIT_BENCH_EQUAL_THREADS") != "")
+	if f, err := strconv.ParseFloat(os.Getenv("CONTENTKIT_BENCH_CAP_SCALE"), 64); err == nil {
+		u0 := undo
+		u := video.SetCapScale(f)
+		undo = func() { u(); u0() }
+	}
 	if o, err := strconv.Atoi(os.Getenv("CONTENTKIT_BENCH_NVENC_CQ_OFFSET")); err == nil {
 		u := video.SetNVENCCQOffset(o)
 		return func() { u(); undo() }
@@ -33,7 +39,7 @@ func benchVideo() media.Video { return media.Video{Profile: os.Getenv("CONTENTKI
 
 func knobsNote() string {
 	var out []string
-	for _, k := range []string{"ENCODER", "PRESET", "TOP_PRESET", "EQUAL_THREADS", "NVENC_CQ_OFFSET", "PROFILE"} {
+	for _, k := range []string{"ENCODER", "PRESET", "TOP_PRESET", "EQUAL_THREADS", "NVENC_CQ_OFFSET", "PROFILE", "CAP_SCALE"} {
 		if v := os.Getenv("CONTENTKIT_BENCH_" + k); v != "" {
 			out = append(out, strings.ToLower(k)+"="+v)
 		}
