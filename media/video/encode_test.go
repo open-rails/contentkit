@@ -3,10 +3,12 @@ package video
 import (
 	"slices"
 	"testing"
+
+	"github.com/open-rails/contentkit/media"
 )
 
 func TestRungThreads(t *testing.T) {
-	ladder := rungs([]int{2160, 1440, 1080, 720, 480}, 3840, 2160, 30)
+	ladder := rungs([]int{2160, 1440, 1080, 720, 480}, 3840, 2160, 30, media.VideoLive)
 	var got []int
 	for i := range ladder {
 		got = append(got, rungThreads(ladder, i, 32))

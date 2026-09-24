@@ -80,6 +80,7 @@ export const zh: UploadUiMessageBundle = {
     queuedPosition: "排队中 · 第 {position} 位",
     stalled: "处理已暂停，正在等待服务器…",
     segments: "片段 {done} / {total}",
+    higherQualities: "更高画质",
     remainingSeconds: "剩余约 {seconds} 秒",
     remainingMinutes: "剩余约 {minutes} 分钟",
     remainingHours: "剩余约 {hours} 小时 {minutes} 分钟",

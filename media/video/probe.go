@@ -137,7 +137,7 @@ func newPlan(p probeResult, v *media.Video) (plan, error) {
 	if err := checkAspect(pl.width, pl.height, lo, hi); err != nil {
 		return pl, err
 	}
-	pl.rungs = rungs(v.Rungs(), pl.width, pl.height, pl.fps)
+	pl.rungs = rungs(v.Rungs(), pl.width, pl.height, pl.fps, v.Profile)
 	pl.tileW, pl.tileH = tile(pl.width, pl.height)
 	// Exactly one default audio track: the first flagged one, else the first.
 	def := 0

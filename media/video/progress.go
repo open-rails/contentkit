@@ -125,6 +125,7 @@ type fileProgress struct {
 	xferTime        time.Duration
 	upTotal, upDone int64
 	percent         float64
+	stageN, stages  int
 }
 
 func (f *fileProgress) set(phase string) {
@@ -135,6 +136,16 @@ func (f *fileProgress) set(phase string) {
 	f.phase = phase
 	f.p.mu.Unlock()
 	f.p.emit(true)
+}
+
+// stage records which encode stage the run is.
+func (f *fileProgress) stage(n, of int) {
+	if f == nil {
+		return
+	}
+	f.p.mu.Lock()
+	f.stageN, f.stages = n, of
+	f.p.mu.Unlock()
 }
 
 // probed records the duration and output directory before encoding.
@@ -254,7 +265,7 @@ func (c *countingReadSeeker) Seek(off int64, whence int) (int64, error) {
 
 // snapshot is the wire progress at now; p.mu is held.
 func (f *fileProgress) snapshot(now time.Time) media.EncodeProgress {
-	out := media.EncodeProgress{Phase: f.phase, At: now.UnixMilli()}
+	out := media.EncodeProgress{Phase: f.phase, At: now.UnixMilli(), Stage: f.stageN, Stages: f.stages}
 	if f.duration > 0 {
 		out.SegmentsTotal = segments(f.duration)
 		out.SegmentsDone = min(out.SegmentsTotal, int(f.outTime/segmentSeconds))

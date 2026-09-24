@@ -1,5 +1,7 @@
 package video
 
+import "context"
+
 // SetBeforePromote runs fn between the blob uploads and the manifest edit.
 func SetBeforePromote(fn func()) func() {
 	testBeforePromote = fn
@@ -13,9 +15,21 @@ func SetMultipart(above, part int64) func() {
 	return func() { multipartAbove, partSize = a, p }
 }
 
-// SetNVENCCQ overrides NVENC's constant-quality target.
-func SetNVENCCQ(cq string) func() {
-	old := nvencCQ
-	nvencCQ = cq
-	return func() { nvencCQ = old }
+// SetNVENCCQOffset overrides NVENC's CQ offset over the rung CRF.
+func SetNVENCCQOffset(o int) func() {
+	old := nvencCQOffset
+	nvencCQOffset = o
+	return func() { nvencCQOffset = old }
+}
+
+// SetStageOneMax lowers the first stage's largest rung.
+func SetStageOneMax(n int) func() {
+	old := stageOneMax
+	stageOneMax = n
+	return func() { stageOneMax = old }
+}
+
+// EncodeStage runs the stale files' next stage and reports whether one remains.
+func EncodeStage(ctx context.Context, e *Encoder, job Job, report Report) (bool, error) {
+	return e.encode(ctx, job, report, true)
 }

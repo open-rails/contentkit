@@ -105,6 +105,12 @@ func insertOpts() *river.InsertOpts {
 	return &river.InsertOpts{Queue: Queue, MaxAttempts: MaxAttempts}
 }
 
+func followUpOpts() *river.InsertOpts {
+	o := insertOpts()
+	o.Priority = 2
+	return o
+}
+
 // WorkerConfig configures the River side of cmd/media-worker.
 type WorkerConfig struct {
 	Encoder *Encoder
@@ -162,9 +168,17 @@ type worker struct {
 
 func (w *worker) Timeout(*river.Job[Args]) time.Duration { return w.c.Timeout }
 
-// Work runs one encode under a per-manifest lock; a duplicate job for a
-// manifest being encoded waits by snoozing.
-func (w *worker) Work(ctx context.Context, job *river.Job[Args]) error {
+// Work runs one encode stage under a per-manifest lock; a duplicate job for
+// a manifest being encoded waits by snoozing. A file left with a second
+// stage gets a follow-up job at a lower priority, inserted after the lock is
+// released, so other uploads' first stages run before it.
+func (w *worker) Work(ctx context.Context, job *river.Job[Args]) (err error) {
+	var more bool
+	defer func() {
+		if err == nil && more {
+			_, err = river.ClientFromContext[pgx.Tx](ctx).Insert(ctx, job.Args, followUpOpts())
+		}
+	}()
 	// The lock's own connection lives outside Pool, which the encode uses.
 	release, ok, err := pglock.Acquire(ctx, w.c.Pool, "contentkit:media:video:"+job.Args.Ref.String(), false)
 	if err != nil {
@@ -181,7 +195,7 @@ func (w *worker) Work(ctx context.Context, job *river.Job[Args]) error {
 			w.c.Logger.WarnContext(ctx, "media/video: clear progress", "job", job.ID, "error", err)
 		}
 	}()
-	err = w.c.Encoder.Encode(ctx, Job(job.Args), w.report(job.ID))
+	more, err = w.c.Encoder.encode(ctx, Job(job.Args), w.report(job.ID), true)
 	var perm *PermanentError
 	if errors.As(err, &perm) {
 		w.c.Logger.ErrorContext(ctx, "media/video: cannot encode", "ref", job.Args.Ref.String(), "error", err)

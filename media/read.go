@@ -511,15 +511,18 @@ func (r *Reader) addProgress(ctx context.Context, g *Grant, files []FileInfo) {
 			files[i].Progress = &p
 		} else if st.Queued != nil {
 			q := *st.Queued
+			if h := g.Manifest.Files[i].HLS; h != nil && len(h.Pending) > 0 {
+				q.Stage, q.Stages = 2, 2
+			}
 			files[i].Progress = &q
 		}
 	}
 }
 
 // encodePending reports a video file whose current source has no ladder or
-// failure recorded yet.
+// failure recorded yet, or a ladder still missing a later stage's rungs.
 func encodePending(f File) bool {
-	return strings.HasPrefix(f.Type, "video/") && (f.HLS == nil || f.HLS.Source != f.Source())
+	return strings.HasPrefix(f.Type, "video/") && (f.HLS == nil || f.HLS.Source != f.Source() || len(f.HLS.Pending) > 0)
 }
 
 func metaFloat(m map[string]any, k string) float64 {

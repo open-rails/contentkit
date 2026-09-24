@@ -54,3 +54,10 @@ it("is translated", () => {
   );
   expect(screen.getByText("エンコード中 · セグメント 5 / 27 · 残り約 1 時間 2 分")).toBeInTheDocument();
 });
+
+it("labels a second stage as higher qualities", () => {
+  const { rerender } = render(<EncodeProgress progress={encoding({ stage: 2, stages: 2 })} />);
+  expect(screen.getByText("Higher qualities · Encoding · segment 5 / 27 · ~40 s left")).toBeInTheDocument();
+  rerender(<EncodeProgress progress={{ phase: "queued", queue_position: 2, stage: 2, stages: 2, percent: 0, at: 3 }} />);
+  expect(screen.getByText(/^Higher qualities · /)).toBeInTheDocument();
+});

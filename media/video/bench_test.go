@@ -7,7 +7,8 @@
 //	CONTENTKIT_BENCH_THREADS   Config.Threads (default: GOMAXPROCS)
 //	CONTENTKIT_BENCH_TMP       Config.TempDir (default: a test temp dir)
 //	CONTENTKIT_BENCH_ENCODER   Config.Encoder
-//	CONTENTKIT_BENCH_NVENC_CQ  NVENC -cq override
+//	CONTENTKIT_BENCH_NVENC_CQ_OFFSET  NVENC CQ over the rung CRF
+//	CONTENTKIT_BENCH_PRESET, CONTENTKIT_BENCH_TOP_PRESET  Config.Preset, TopPreset
 //	CONTENTKIT_BENCH_VMAF      an ffmpeg with libvmaf; unset scores SSIM/PSNR only
 //	CONTENTKIT_BENCH_QUALITY   0 skips quality scoring
 //	CONTENTKIT_BENCH_OUT       JSON lines appended per sample
@@ -114,9 +115,10 @@ func benchSample(t *testing.T, src string) {
 	}
 	cfg.Threads, _ = strconv.Atoi(os.Getenv("CONTENTKIT_BENCH_THREADS"))
 	cfg.Encoder = os.Getenv("CONTENTKIT_BENCH_ENCODER")
-	if cq := os.Getenv("CONTENTKIT_BENCH_NVENC_CQ"); cq != "" {
-		defer video.SetNVENCCQ(cq)()
+	if o, err := strconv.Atoi(os.Getenv("CONTENTKIT_BENCH_NVENC_CQ_OFFSET")); err == nil {
+		defer video.SetNVENCCQOffset(o)()
 	}
+	cfg.Preset, cfg.TopPreset = os.Getenv("CONTENTKIT_BENCH_PRESET"), os.Getenv("CONTENTKIT_BENCH_TOP_PRESET")
 	enc, err := video.New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -298,7 +300,7 @@ func quality(t *testing.T, src, dist string, w, h int) (ssim, psnr, vmaf float64
 		psnr, _ = strconv.ParseFloat(string(m[1]), 64)
 	}
 	if ff := os.Getenv("CONTENTKIT_BENCH_VMAF"); ff != "" {
-		out := score(ff, graph(skip, 0)+fmt.Sprintf(";[d][r]libvmaf=n_threads=%d:n_subsample=3", min(16, runtime.NumCPU())))
+		out := score(ff, graph(skip, 0)+fmt.Sprintf(";[d][r]libvmaf=n_threads=%d:n_subsample=3", min(8, runtime.NumCPU())))
 		if m := vmafRe.FindSubmatch(out); m != nil {
 			vmaf, _ = strconv.ParseFloat(string(m[1]), 64)
 		}

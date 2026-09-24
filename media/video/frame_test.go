@@ -51,20 +51,37 @@ func TestRungs(t *testing.T) {
 		want   []rung
 	}{
 		{"4K 16:9", media.DefaultLadder, 3840, 2160, 30, []rung{
-			{2160, 3840, 2160, "5.1"}, {1440, 2560, 1440, "5.0"}, {1080, 1920, 1080, ""}, {720, 1280, 720, ""}, {480, 854, 480, ""}}},
-		{"4K 60 fps", []int{2160}, 3840, 2160, 60, []rung{{2160, 3840, 2160, "5.2"}}},
+			{n: 2160, w: 3840, h: 2160, level: "5.1"}, {n: 1440, w: 2560, h: 1440, level: "5.0"}, {n: 1080, w: 1920, h: 1080, level: ""}, {n: 720, w: 1280, h: 720, level: ""}, {n: 480, w: 854, h: 480, level: ""}}},
+		{"4K 60 fps", []int{2160}, 3840, 2160, 60, []rung{{n: 2160, w: 3840, h: 2160, level: "5.2"}}},
 		{"9:21 4K", media.DefaultLadder, 2160, 5040, 30, []rung{
-			{2160, 1756, 4096, "5.1"}, {1440, 1440, 3360, "5.0"}, {1080, 1080, 2520, "5.0"}, {720, 720, 1680, ""}, {480, 480, 1120, ""}}},
+			{n: 2160, w: 1756, h: 4096, level: "5.1"}, {n: 1440, w: 1440, h: 3360, level: "5.0"}, {n: 1080, w: 1080, h: 2520, level: "5.0"}, {n: 720, w: 720, h: 1680, level: ""}, {n: 480, w: 480, h: 1120, level: ""}}},
 		{"21:9 1080", media.DefaultLadder, 2520, 1080, 24, []rung{
-			{1080, 2520, 1080, "5.0"}, {720, 1680, 720, ""}, {480, 1120, 480, ""}}},
-		{"8K", []int{4320, 2160, 1080}, 7680, 4320, 30, []rung{{2160, 3840, 2160, "5.1"}, {1080, 1920, 1080, ""}}},
-		{"below the ladder", media.DefaultLadder, 427, 241, 30, []rung{{240, 426, 240, ""}}},
-		{"vertical below", media.DefaultLadder, 361, 640, 30, []rung{{360, 360, 638, ""}}},
+			{n: 1080, w: 2520, h: 1080, level: "5.0"}, {n: 720, w: 1680, h: 720, level: ""}, {n: 480, w: 1120, h: 480, level: ""}}},
+		{"8K", []int{4320, 2160, 1080}, 7680, 4320, 30, []rung{{n: 2160, w: 3840, h: 2160, level: "5.1"}, {n: 1080, w: 1920, h: 1080, level: ""}}},
+		{"below the ladder", media.DefaultLadder, 427, 241, 30, []rung{{n: 240, w: 426, h: 240, level: ""}}},
+		{"vertical below", media.DefaultLadder, 361, 640, 30, []rung{{n: 360, w: 360, h: 638, level: ""}}},
 	} {
-		got := rungs(c.ladder, c.w, c.h, c.fps)
+		got := rungs(c.ladder, c.w, c.h, c.fps, media.VideoLive)
+		for i := range got {
+			got[i].crf, got[i].maxrate = 0, 0
+		}
 		if !slices.Equal(got, c.want) {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+func TestRungRates(t *testing.T) {
+	var got []rungRate
+	for _, r := range rungs([]int{2160, 1440, 1080, 720, 480, 360}, 3840, 2160, 30, media.VideoLive) {
+		got = append(got, rungRate{r.crf, r.maxrate})
+	}
+	want := []rungRate{{23, 16000}, {23, 9000}, {23, 6000}, {22, 3500}, {21, 1500}, {21, 1500}}
+	if !slices.Equal(got, want) {
+		t.Fatalf("live rates %v, want %v", got, want)
+	}
+	if r := rungs([]int{1080}, 1920, 1080, 24, media.VideoAnimation)[0]; r.crf != 21 || r.maxrate != 4000 {
+		t.Fatalf("animation 1080 %+v", r)
 	}
 }
 
