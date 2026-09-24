@@ -433,7 +433,9 @@ func (e *Encoder) fetch(ctx context.Context, key, path string, fp *fileProgress)
 	if err != nil {
 		return obj, err
 	}
-	n, err := io.Copy(f, fp.reader(rc, false))
+	start := time.Now()
+	n, err := io.Copy(f, rc)
+	fp.transferred(n, time.Since(start))
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}

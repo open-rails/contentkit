@@ -83,6 +83,7 @@ export const ja: UploadUiMessageBundle = {
     remainingMinutes: "残り約 {minutes} 分",
     remainingHours: "残り約 {hours} 時間 {minutes} 分",
     almostDone: "まもなく完了",
+    estimating: "残り時間を計算中…",
     phase: {
       queued: "順番待ち",
       downloading: "準備中",

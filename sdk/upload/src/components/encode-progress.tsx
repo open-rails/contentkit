@@ -17,7 +17,7 @@ export interface EncodeProgressProps {
 /** "~40 s left", "~3 min left", "~1 h 5 min left"; "almost done" under 5 s. */
 export function formatRemaining(t: Translator["t"], seconds: number): string {
   if (seconds < 5) return t("encode.almostDone");
-  if (seconds < 60) return t("encode.remainingSeconds", { seconds: seconds < 20 ? Math.ceil(seconds) : Math.ceil(seconds / 5) * 5 });
+  if (seconds < 55) return t("encode.remainingSeconds", { seconds: seconds < 20 ? Math.ceil(seconds) : Math.ceil(seconds / 5) * 5 });
   const minutes = Math.ceil(seconds / 60);
   if (minutes < 60) return t("encode.remainingMinutes", { minutes });
   return t("encode.remainingHours", { hours: Math.floor(minutes / 60), minutes: minutes % 60 });
@@ -31,6 +31,7 @@ export function encodeLabel(t: Translator["t"], p: Progress | undefined, remaini
   const parts = [t(`encode.phase.${p.phase}`)];
   if (p.phase === "encoding" && p.segments_total) parts.push(t("encode.segments", { done: p.segments_done ?? 0, total: p.segments_total }));
   if (remaining !== undefined) parts.push(formatRemaining(t, remaining));
+  else if (p.phase === "encoding") parts.push(t("encode.estimating"));
   return parts.join(" · ");
 }
 

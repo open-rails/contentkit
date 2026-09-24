@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/open-rails/contentkit/media"
 )
@@ -42,17 +43,23 @@ func (e *Encoder) put(ctx context.Context, item media.Item, path, contentType st
 	} else if err != nil && !errors.Is(err, media.ErrNotFound) {
 		return "", 0, err
 	}
+	start := time.Now()
 	if size > multipartAbove {
-		return name, size, e.putMultipart(ctx, key, f, size, contentType, fp)
+		if err := e.putMultipart(ctx, key, f, size, contentType, fp); err != nil {
+			return "", 0, err
+		}
+		fp.transferred(size, time.Since(start))
+		return name, size, nil
 	}
 	opts := media.PutOptions{ContentType: contentType, CacheControl: blobCacheControl, ChecksumSHA256: sum}
 	if e.c.Store.Capabilities().ConditionalPut {
 		opts.IfNoneMatch = "*"
 	}
-	_, err = e.c.Store.Put(ctx, key, fp.reader(io.NewSectionReader(f, 0, size), true), size, opts)
+	_, err = e.c.Store.Put(ctx, key, fp.reader(io.NewSectionReader(f, 0, size)), size, opts)
 	if err != nil && !errors.Is(err, media.ErrPreconditionFailed) {
 		return "", 0, err
 	}
+	fp.transferred(size, time.Since(start))
 	return name, size, nil
 }
 
@@ -76,7 +83,7 @@ func (e *Encoder) putMultipart(ctx context.Context, key string, f *os.File, size
 		if _, err := io.Copy(h, io.NewSectionReader(f, off, length)); err != nil {
 			return err
 		}
-		p, err := e.c.Store.PutPart(ctx, key, id, n, fp.reader(io.NewSectionReader(f, off, length), true), length, h.Sum(nil))
+		p, err := e.c.Store.PutPart(ctx, key, id, n, fp.reader(io.NewSectionReader(f, off, length)), length, h.Sum(nil))
 		if err != nil {
 			return fmt.Errorf("media/video: part %d of %s: %w", n, key, err)
 		}

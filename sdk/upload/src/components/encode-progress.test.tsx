@@ -39,6 +39,8 @@ it("shows the queue position, an indeterminate bar before progress, and stalls",
   expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
   rerender(<EncodeProgress progress={encoding({ stalled: true, eta: undefined })} />);
   expect(screen.getByText("Processing paused, waiting for the server…")).toBeInTheDocument();
+  rerender(<EncodeProgress progress={encoding({ eta: undefined, at: 9 })} />);
+  expect(screen.getByText("Encoding · segment 5 / 27 · estimating…")).toBeInTheDocument();
   rerender(<EncodeProgress />);
   expect(screen.getByText("Processing video")).toBeInTheDocument();
 });

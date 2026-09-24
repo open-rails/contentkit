@@ -83,6 +83,7 @@ export const es: UploadUiMessageBundle = {
     remainingMinutes: "quedan ~{minutes} min",
     remainingHours: "quedan ~{hours} h {minutes} min",
     almostDone: "casi listo",
+    estimating: "calculando…",
     phase: {
       queued: "En cola",
       downloading: "Preparando",

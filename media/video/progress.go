@@ -121,10 +121,8 @@ type fileProgress struct {
 	lastOut  float64
 	started  bool
 
-	rate            float64 // smoothed bytes/s of the latest transfer
-	rateAt          time.Time
-	rateBytes       int64
-	measured        int64 // bytes behind rate; small transfers show latency, not throughput
+	xferBytes       int64 // finished fetches and uploads
+	xferTime        time.Duration
 	upTotal, upDone int64
 	percent         float64
 }
@@ -180,27 +178,28 @@ func (f *fileProgress) uploads(total int64) {
 	f.p.mu.Unlock()
 }
 
-// moved counts transferred bytes; skipped marks upload bytes a retry found stored.
-func (f *fileProgress) moved(n int64, upload bool) {
+// moved counts bytes of an upload in flight.
+func (f *fileProgress) moved(n int64) {
 	if f == nil || n <= 0 {
 		return
 	}
 	f.p.mu.Lock()
-	now := f.p.now()
-	if f.rateAt.IsZero() {
-		f.rateAt = now
-	}
-	f.rateBytes += n
-	f.measured += n
-	if dt := now.Sub(f.rateAt).Seconds(); dt >= 0.5 {
-		f.rate = smooth(f.rate, float64(f.rateBytes)/dt, dt)
-		f.rateAt, f.rateBytes = now, 0
-	}
-	if upload {
-		f.upDone += n
-	}
+	f.upDone += n
 	f.p.mu.Unlock()
 	f.p.emit(false)
+}
+
+// transferred records a finished fetch or upload: throughput is whole
+// transfers' bytes over their wall time, so latency and an SDK's signing
+// pass count and a lucky first read does not.
+func (f *fileProgress) transferred(n int64, d time.Duration) {
+	if f == nil || n <= 0 || d <= 0 {
+		return
+	}
+	f.p.mu.Lock()
+	f.xferBytes += n
+	f.xferTime += d
+	f.p.mu.Unlock()
 }
 
 func (f *fileProgress) skipped(n int64) {
@@ -212,13 +211,13 @@ func (f *fileProgress) skipped(n int64) {
 	f.p.mu.Unlock()
 }
 
-// reader counts a transfer's bytes. A seekable body stays seekable (the S3
+// reader counts an upload's bytes. A seekable body stays seekable (the S3
 // client rewinds to sign and retry); only its high-water mark counts.
-func (f *fileProgress) reader(r io.Reader, upload bool) io.Reader {
+func (f *fileProgress) reader(r io.Reader) io.Reader {
 	if f == nil {
 		return r
 	}
-	c := &countingReader{r: r, f: f, upload: upload}
+	c := &countingReader{r: r, f: f}
 	if s, ok := r.(io.ReadSeeker); ok {
 		return &countingReadSeeker{countingReader: c, s: s}
 	}
@@ -228,14 +227,13 @@ func (f *fileProgress) reader(r io.Reader, upload bool) io.Reader {
 type countingReader struct {
 	r        io.Reader
 	f        *fileProgress
-	upload   bool
 	pos, top int64
 }
 
 func (c *countingReader) Read(b []byte) (int, error) {
 	n, err := c.r.Read(b)
 	if c.pos += int64(n); c.pos > c.top {
-		c.f.moved(c.pos-c.top, c.upload)
+		c.f.moved(c.pos - c.top)
 		c.top = c.pos
 	}
 	return n, err
@@ -264,9 +262,9 @@ func (f *fileProgress) snapshot(now time.Time) media.EncodeProgress {
 			out.SegmentsDone = out.SegmentsTotal
 		}
 	}
-	rate := f.rate
-	if f.measured < minMeasured || rate <= 0 {
-		rate = defaultRate
+	rate := float64(defaultRate)
+	if f.xferBytes >= minMeasured {
+		rate = float64(f.xferBytes) / f.xferTime.Seconds()
 	}
 	var eta float64
 	switch f.phase {
@@ -293,7 +291,7 @@ func (f *fileProgress) snapshot(now time.Time) media.EncodeProgress {
 // duration, doubled for the muxed downloads.
 func (f *fileProgress) projectedUpload() int64 {
 	frac := f.outTime / f.duration
-	if f.outDir == "" || frac < 0.02 {
+	if f.outDir == "" || frac < 0.1 {
 		return 0
 	}
 	var n int64
