@@ -40,7 +40,13 @@ jobs:
         ports:
         - 5432:5432
         options: --health-cmd "pg_isready -U contentkit" --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:8-alpine
+        ports:
+        - 6379:6379
+        options: --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 20
     env:
+      CONTENTKIT_TEST_REDIS_URLS: redis://localhost:6379/0,redis://localhost:6380/0
       CONTENTKIT_TEST_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_test?sslmode=disable
       CONTENTKIT_PROFILE_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_profiles?sslmode=disable
       CONTENTKIT_TEST_CH_ADDR: localhost:9000
@@ -55,8 +61,9 @@ jobs:
     - uses: actions/checkout@v4
       with:
         persist-credentials: false
-    - name: Start ClickHouse with Keeper and MinIO
+    - name: Start ClickHouse with Keeper, MinIO and Garnet
       run: |
+        docker run -d --name garnet -p 6380:6379 ghcr.io/microsoft/garnet:latest
         docker run -d --name clickhouse -p 9000:9000 \
           -e CLICKHOUSE_USER=contentkit -e CLICKHOUSE_PASSWORD=contentkit -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
           -v "$GITHUB_WORKSPACE/.github/clickhouse/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro" \
@@ -72,10 +79,11 @@ jobs:
         docker exec '${{ job.services.postgres.id }}' createdb -U contentkit contentkit_profiles
         for i in $(seq 1 60); do
           curl -fsS http://localhost:9100/minio/health/ready >/dev/null &&
+            (exec 3<>/dev/tcp/localhost/6380) 2>/dev/null &&
             docker exec clickhouse clickhouse-client --user contentkit --password contentkit -q "SELECT count() FROM system.zookeeper WHERE path = '/'" && exit 0
           sleep 2
         done
-        docker logs clickhouse; docker logs minio
+        docker logs clickhouse; docker logs minio; docker logs garnet
         exit 1
     - name: vet, test
       run: |
