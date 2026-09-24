@@ -87,8 +87,10 @@ c.rotateBy(90);
 await client.setSlotFromFile(ref, "cover", name, c.edit ?? {});
 ```
 
-`constrainCrop`, `toOriginal`, `centeredCrop` and `editOf` are the same math
-without React.
+`c.edit` keeps its identity until its value changes, so it can feed effects
+and state setters (`ImageCropDialog`'s `onEditChange` fires only on a change).
+`constrainCrop`, `toOriginal`, `centeredCrop`, `editOf` and `sameEdit` are the
+same math without React.
 
 Headless slot hooks:
 

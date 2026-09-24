@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Progress, SlotUploadOptions, UploadClient, UploadedFile, UploadOptions } from "./client.js";
-import { centeredCrop, constrainCrop, editOf, rotation, toOriginal, type Rotation, type Size } from "./crop.js";
+import { centeredCrop, constrainCrop, editOf, rotation, sameEdit, toOriginal, type Rotation, type Size } from "./crop.js";
 import { UploadError } from "./errors.js";
 import { UploadQueue, type QueueOptions, type QueueSnapshot } from "./queue.js";
 import type { Crop, Edit } from "./wire.gen.js";
@@ -117,7 +117,7 @@ export interface UseCrop {
   /** In original pixels, inside the source and at the aspect. */
   crop: Crop;
   rotate: Rotation;
-  /** Ready for client.edit or setSlotFromFile; null when nothing changes. */
+  /** Ready for client.edit or setSlotFromFile; null when nothing changes. Its identity changes only with its value. */
   edit: Edit | null;
   /** A rect in original pixels. */
   setCrop: (rect: Crop) => void;
@@ -129,18 +129,28 @@ export interface UseCrop {
 }
 
 /** Headless crop state for any cropper UI: a rect in original pixels, a rotation and the resulting edit. */
-export function useCrop({ source, aspect, initial }: UseCropOptions): UseCrop {
+export function useCrop({ source: given, aspect, initial }: UseCropOptions): UseCrop {
+  const { width, height } = given;
+  const source = useMemo(() => ({ width, height }), [width, height]);
   const start = (): [Crop, Rotation] => {
     const rotate = rotation(initial?.rotate ?? 0);
     const c = initial?.crop;
     return [c ? constrainCrop(c, source, aspect, rotate) : centeredCrop(source, aspect, rotate), rotate];
   };
-  const [state, set] = useState(start);
+  const [state, setState] = useState(start);
   const [crop, rotate] = state;
-  const setCrop = useCallback((r: Crop) => set(([, rot]) => [constrainCrop(r, source, aspect, rot), rot]), [source, aspect]);
+  const set = useCallback(
+    (next: [Crop, Rotation] | ((s: [Crop, Rotation]) => [Crop, Rotation])) =>
+      setState((s) => {
+        const n = typeof next === "function" ? next(s) : next;
+        return sameEdit({ crop: n[0], rotate: n[1] }, { crop: s[0], rotate: s[1] }) ? s : n;
+      }),
+    [],
+  );
+  const setCrop = useCallback((r: Crop) => set(([, rot]) => [constrainCrop(r, source, aspect, rot), rot]), [set, source, aspect]);
   const setFromDisplay = useCallback(
     (r: Crop, display: Size) => set(([, rot]) => [constrainCrop(toOriginal(r, display, source, rot), source, aspect, rot), rot]),
-    [source, aspect],
+    [set, source, aspect],
   );
   const rotateBy = useCallback(
     (deg: number) =>
@@ -148,9 +158,13 @@ export function useCrop({ source, aspect, initial }: UseCropOptions): UseCrop {
         const next = rotation(rot + deg);
         return [constrainCrop(c, source, aspect, next), next];
       }),
-    [source, aspect],
+    [set, source, aspect],
   );
-  const reset = useCallback(() => set([centeredCrop(source, aspect), 0]), [source, aspect]);
-  const edit = useMemo(() => editOf(crop, source, rotate), [crop, source, rotate]);
+  const reset = useCallback(() => set([centeredCrop(source, aspect), 0]), [set, source, aspect]);
+  const last = useRef<Edit | null>(null);
+  const edit = useMemo(() => {
+    const e = editOf(crop, source, rotate);
+    return sameEdit(e, last.current) ? last.current : (last.current = e);
+  }, [crop, source, rotate]);
   return { crop, rotate, edit, setCrop, setFromDisplay, rotateBy, reset };
 }

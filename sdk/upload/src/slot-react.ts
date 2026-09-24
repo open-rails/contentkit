@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Progress, UploadClient } from "./client.js";
-import { centeredCrop, constrainCrop, editedSize, rotation, type Size } from "./crop.js";
+import { centeredCrop, constrainCrop, editedSize, rotation, sameEdit, type Size } from "./crop.js";
 import { UploadError } from "./errors.js";
 import { decodeImage, type CropSource } from "./image.js";
 import { hasOriginal, manifestAspect, slotSources, type SlotSources } from "./srcset.js";
@@ -180,7 +180,9 @@ export function useSlotCrop(client: UploadClient, o: SlotCropOptions): UseSlotCr
   const setEdit = useCallback(
     (edit: Edit | null) => {
       const c = cur.current;
-      if (c.status === "cropping") set({ ...c, edit });
+      if (c.status === "cropping") {
+        if (!sameEdit(c.edit, edit)) set({ ...c, edit });
+      }
       else if (c.status === "error" && c.source && c.mode) set({ status: "cropping", source: c.source, edit, mode: c.mode });
     },
     [set],
