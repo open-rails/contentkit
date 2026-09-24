@@ -415,6 +415,10 @@ func TestPublishTxThroughRiver(t *testing.T) {
 
 type flipVisible struct{ visible atomic.Bool }
 
-func (f *flipVisible) Resolve(context.Context, contentref.ContentRef, access.Actor) (access.Resolution, error) {
-	return access.Resolution{Visible: f.visible.Load()}, nil
+func (f *flipVisible) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	out := map[contentref.ContentKey]access.Resolution{}
+	for _, ref := range refs {
+		out[ref.Key()] = access.Resolution{Visible: f.visible.Load()}
+	}
+	return out, nil
 }

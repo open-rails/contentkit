@@ -151,7 +151,9 @@ poll:
 		}
 	}
 	t.Logf("%d samples; encoding: %+v", len(seen), encoding)
-	if !phases[media.PhaseEncoding] || !phases[media.PhaseUploading] {
+	// Muxing and uploading alternate per rung; on a fast runner one can fall
+	// between two throttled progress writes.
+	if !phases[media.PhaseEncoding] || !phases[media.PhaseMuxing] && !phases[media.PhaseUploading] {
 		t.Fatalf("phases seen %v", phases)
 	}
 	if !imagePhases[media.PhaseEncoding] || !imagePhases[media.PhaseImages] {
