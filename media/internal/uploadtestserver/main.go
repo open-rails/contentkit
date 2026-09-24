@@ -35,8 +35,12 @@ const tenant = "sdk"
 
 type allow struct{}
 
-func (allow) Resolve(context.Context, contentref.ContentRef, access.Actor) (access.Resolution, error) {
-	return access.Resolution{Visible: true, Accessible: true, Editor: true}, nil
+func (allow) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	out := map[contentref.ContentKey]access.Resolution{}
+	for _, ref := range refs {
+		out[ref.Key()] = access.Resolution{Visible: true, Accessible: true, Editor: true}
+	}
+	return out, nil
 }
 
 func (allow) CanUpload(_ context.Context, a access.Actor, _ contentref.ContentRef) (media.UploadGrant, error) {

@@ -257,8 +257,8 @@ type FeedItem struct {
 
 // latest returns the newest published comments across all content of the
 // tenant (tombstones excluded), dropping ones whose target the resolver no
-// longer shows to this actor, so a page may under-fill. Each distinct
-// reference costs one resolver call per page.
+// longer shows to this actor, so a page may under-fill. The page's distinct
+// references are resolved in one resolver call.
 func (c *comments) latest(ctx context.Context, actor access.Actor, limit, offset int) ([]FeedItem, error) {
 	rows, err := c.s.pool.Query(ctx, `SELECT `+commentCols+`, content_kind, content_id, content_version_id
 		FROM `+c.s.t.comments+` WHERE tenant_id = $1 AND deleted_at IS NULL AND moderation = 'approved'
@@ -285,19 +285,29 @@ func (c *comments) latest(ctx context.Context, actor access.Actor, limit, offset
 		return nil, err
 	}
 
-	visible := map[contentref.ContentKey]bool{}
+	var refs []contentref.ContentRef
+	seen := map[contentref.ContentKey]bool{}
 	for _, it := range items {
-		k := it.ContentRef.Key()
-		if _, done := visible[k]; done {
-			continue
+		if ref := it.ContentRef.Content(); !seen[ref.Key()] && c.rt.routable(ref.ContentKind, ref.ContentID) {
+			seen[ref.Key()] = true
+			refs = append(refs, ref)
 		}
-		_, err := c.rt.gate(ctx, it.ContentKind, it.ContentID, actor, false)
-		visible[k] = err == nil
+	}
+	visible := map[contentref.ContentKey]bool{}
+	if len(refs) > 0 {
+		res, err := c.rt.resolver.Resolve(ctx, refs, actor)
+		if err != nil {
+			return nil, err
+		}
+		for _, ref := range refs {
+			_, err := c.rt.admit(ref, res, false)
+			visible[ref.Key()] = err == nil
+		}
 	}
 	kept := items[:0]
 	var flat []Comment
 	for _, it := range items {
-		if visible[it.ContentRef.Key()] {
+		if visible[it.ContentRef.Content().Key()] {
 			kept = append(kept, it)
 			flat = append(flat, it.Comment)
 		}

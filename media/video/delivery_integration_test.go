@@ -33,10 +33,14 @@ type verdict struct {
 
 func (v *verdict) set(r access.Resolution) { v.mu.Lock(); v.res = r; v.mu.Unlock() }
 
-func (v *verdict) Resolve(context.Context, contentref.ContentRef, access.Actor) (access.Resolution, error) {
+func (v *verdict) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	return v.res, nil
+	out := map[contentref.ContentKey]access.Resolution{}
+	for _, ref := range refs {
+		out[ref.Key()] = v.res
+	}
+	return out, nil
 }
 
 // delivery serves the read API (host) and the access worker over TLS, as

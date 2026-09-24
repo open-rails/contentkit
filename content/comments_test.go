@@ -2,9 +2,11 @@ package content
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -342,6 +344,45 @@ func TestComments_LatestFeed(t *testing.T) {
 	}
 	if len(feed) != 1 || feed[0].ID != c1.ID {
 		t.Fatalf("feed after hide = %v, want [c1]", commentFeedIDs(feed))
+	}
+}
+
+// A full /comments/latest page resolves all its distinct references in one
+// resolver call and keeps only the visible ones.
+func TestComments_LatestResolvesPageOnce(t *testing.T) {
+	res := &fakeResolver{}
+	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}})
+	a := access.Actor{ID: "author"}
+	for i := range 40 {
+		id := strconv.Itoa(i)
+		res.set("gallery", id, true, true)
+		mustComment(t, rt, a, "gallery", id, createInput{Body: "one on " + id})
+		mustComment(t, rt, a, "gallery", id, createInput{Body: "two on " + id})
+		if i%4 == 0 {
+			res.set("gallery", id, false, false)
+		} else if i%4 == 1 {
+			delete(res.entries, "gallery:"+id)
+		}
+	}
+	res.calls = 0
+	rec := doJSON(t, rt.Handler(), a, "GET", "/comments/latest?limit=100", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("latest: %d %s", rec.Code, rec.Body)
+	}
+	var feed []FeedItem
+	if err := json.Unmarshal(rec.Body.Bytes(), &feed); err != nil {
+		t.Fatal(err)
+	}
+	if res.calls != 1 {
+		t.Fatalf("resolver calls = %d, want 1", res.calls)
+	}
+	if len(feed) != 40 {
+		t.Fatalf("feed has %d items, want 40 (two on each of 20 visible galleries)", len(feed))
+	}
+	for _, it := range feed {
+		if n, _ := strconv.Atoi(it.ContentID); n%4 < 2 {
+			t.Fatalf("hidden gallery %s in feed", it.ContentID)
+		}
 	}
 }
 

@@ -174,7 +174,7 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	if _, err := requested.ManifestKey(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
 	}
-	res, err := r.resolver.Resolve(ctx, ref, actor)
+	res, err := access.ResolveOne(ctx, r.resolver, ref, actor)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrResolve, err)
 	}

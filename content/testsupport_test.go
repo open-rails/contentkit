@@ -93,11 +93,13 @@ type denyAll struct{}
 
 func (denyAll) Can(context.Context, access.Actor, string) (bool, error) { return false, nil }
 
-// fakeResolver answers from an in-memory map keyed by "kind:id"; missing =>
-// not found. It ignores the tenant and keeps the caller's reference.
+// fakeResolver answers from an in-memory map keyed by "kind:id"; missing refs
+// are omitted. It ignores the tenant, keeps the caller's reference and counts
+// calls.
 type fakeResolver struct {
 	mu      sync.Mutex
 	entries map[string]access.Resolution
+	calls   int
 }
 
 func (f *fakeResolver) set(kind, id string, visible, accessible bool) {
@@ -109,14 +111,17 @@ func (f *fakeResolver) set(kind, id string, visible, accessible bool) {
 	f.entries[kind+":"+id] = access.Resolution{Visible: visible, Accessible: accessible}
 }
 
-func (f *fakeResolver) Resolve(_ context.Context, r contentref.ContentRef, _ access.Actor) (access.Resolution, error) {
+func (f *fakeResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	res, ok := f.entries[r.ContentKind+":"+r.ContentID]
-	if !ok {
-		return access.Resolution{}, ErrNotFound
+	f.calls++
+	out := map[contentref.ContentKey]access.Resolution{}
+	for _, r := range refs {
+		if res, ok := f.entries[r.ContentKind+":"+r.ContentID]; ok {
+			out[r.Key()] = res
+		}
 	}
-	return res, nil
+	return out, nil
 }
 
 // testMedia is the Media port pair: URLs as media.Reader builds them, and the

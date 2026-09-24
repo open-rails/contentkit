@@ -151,8 +151,12 @@ func (e *env) checkOutputs(t *testing.T, ref contentref.ContentRef, m media.Slot
 
 type visible struct{}
 
-func (visible) Resolve(context.Context, contentref.ContentRef, access.Actor) (access.Resolution, error) {
-	return access.Resolution{Visible: true}, nil
+func (visible) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	out := map[contentref.ContentKey]access.Resolution{}
+	for _, ref := range refs {
+		out[ref.Key()] = access.Resolution{Visible: true}
+	}
+	return out, nil
 }
 
 // checkStamp requires the host's stored stamp to rebuild m's outputs without

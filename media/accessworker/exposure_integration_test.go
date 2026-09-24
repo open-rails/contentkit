@@ -27,7 +27,7 @@ type visibility struct {
 
 func (v *visibility) set(r access.Resolution) { v.mu.Lock(); v.res = r; v.mu.Unlock() }
 
-func (v *visibility) Resolve(_ context.Context, _ contentref.ContentRef, a access.Actor) (access.Resolution, error) {
+func (v *visibility) Resolve(_ context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	r := v.res
@@ -35,7 +35,11 @@ func (v *visibility) Resolve(_ context.Context, _ contentref.ContentRef, a acces
 	if r.Editor {
 		r.Visible = true
 	}
-	return r, nil
+	out := map[contentref.ContentKey]access.Resolution{}
+	for _, ref := range refs {
+		out[ref.Key()] = r
+	}
+	return out, nil
 }
 
 type actorHeader struct{}

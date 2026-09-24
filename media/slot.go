@@ -462,7 +462,7 @@ func (r *Reader) outputURLs(ctx context.Context, ref contentref.ContentRef, acto
 	if err != nil {
 		return OutputURLs{}, fmt.Errorf("%w: %v", ErrNotVisible, err)
 	}
-	res, err := r.resolver.Resolve(ctx, ref, actor)
+	res, err := access.ResolveOne(ctx, r.resolver, ref, actor)
 	if err != nil {
 		return OutputURLs{}, fmt.Errorf("%w: %w", ErrResolve, err)
 	}

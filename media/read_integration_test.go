@@ -31,12 +31,16 @@ type resolver struct {
 	err      error
 }
 
-func (r *resolver) Resolve(_ context.Context, ref contentref.ContentRef, _ access.Actor) (access.Resolution, error) {
+func (r *resolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
 	r.calls.Add(1)
 	if r.err != nil {
-		return access.Resolution{}, r.err
+		return nil, r.err
 	}
-	return r.verdicts[ref.ContentID], nil
+	out := map[contentref.ContentKey]access.Resolution{}
+	for _, ref := range refs {
+		out[ref.Key()] = r.verdicts[ref.ContentID]
+	}
+	return out, nil
 }
 
 type readFixture struct {

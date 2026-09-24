@@ -20,8 +20,12 @@ import (
 
 type verdicts map[string]access.Resolution
 
-func (v verdicts) Resolve(_ context.Context, ref contentref.ContentRef, _ access.Actor) (access.Resolution, error) {
-	return v[ref.ContentID], nil
+func (v verdicts) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	out := map[contentref.ContentKey]access.Resolution{}
+	for _, ref := range refs {
+		out[ref.Key()] = v[ref.ContentID]
+	}
+	return out, nil
 }
 
 // TestReaderThroughWorker serves media.Reader output (URLs, download links
