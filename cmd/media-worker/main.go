@@ -63,6 +63,7 @@ func run(log *slog.Logger) error {
 	if err := registry.Register(queueCollector); err != nil {
 		return err
 	}
+	cfg.RiverHooks = append(cfg.RiverHooks, queueCollector.LeaderHook())
 	w, err := worker.New(ctx, cfg)
 	if err != nil {
 		return err
