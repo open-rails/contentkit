@@ -135,8 +135,7 @@ func newEnv(t *testing.T, store func(media.Store) media.Store, queue media.Proce
 		t.Fatal(err)
 	}
 	slots := queueFunc(func(_ context.Context, j media.ProcessJob) error { e.slotJobs = append(e.slotJobs, j); return nil })
-	if e.encoder, err = video.New(video.Config{Store: e.store, Locker: locker, TempDir: t.TempDir(), Threads: 2,
-		Encoder: video.EncoderX264, Slots: slots}); err != nil {
+	if e.encoder, err = video.New(video.Config{Store: e.store, Locker: locker, TempDir: t.TempDir(), Threads: 2, Slots: slots}); err != nil {
 		t.Fatal(err)
 	}
 	e.ref = contentref.NewVersion(s3.Tenant, "video", cid(88), "v1")
