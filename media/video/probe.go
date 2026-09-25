@@ -28,6 +28,7 @@ type probeStream struct {
 	Index      int    `json:"index"`
 	CodecType  string `json:"codec_type"`
 	CodecName  string `json:"codec_name"`
+	CodecTag   string `json:"codec_tag_string"`
 	Profile    string `json:"profile"`
 	Level      int    `json:"level"`
 	Width      int    `json:"width"`

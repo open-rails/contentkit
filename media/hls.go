@@ -28,7 +28,9 @@ type MasterOptions struct {
 
 // Playlist URIs relative to the master playlist, which is served at
 // ".../hls/{file}/master.m3u8".
-func videoURI(rung int) string  { return "video/" + strconv.Itoa(rung) + ".m3u8" }
+func videoURI(v Rendition) string {
+	return "video/" + strconv.Itoa(v.Rung) + "-" + string(v.Codec) + ".m3u8"
+}
 func audioURI(id string) string { return "audio/" + id + ".m3u8" }
 func subsURI(id string) string  { return "subs/" + id + ".m3u8" }
 
@@ -42,7 +44,9 @@ func (g *Grant) hlsFile(name string) (int, *HLS, error) {
 }
 
 // MasterPlaylist is the multivariant playlist of file: one variant per video
-// rendition, with alternative audio and subtitle groups.
+// rendition (rung and codec), with alternative audio and subtitle groups.
+// Codecs are listed in the ladder's order, so a player that decodes the
+// first starts on it; players drop variants whose CODECS they cannot decode.
 func (g *Grant) MasterPlaylist(file string, o MasterOptions) ([]byte, error) {
 	_, h, err := g.hlsFile(file)
 	if err != nil {
@@ -70,7 +74,11 @@ func (g *Grant) MasterPlaylist(file string, o MasterOptions) ([]byte, error) {
 		fmt.Fprintf(&b, "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=%q,NAME=%q%s,DEFAULT=NO,AUTOSELECT=YES,FORCED=%s,URI=%q\n",
 			subsGroup, uniqueName(names, s.Label, s.Lang, s.ID), language(s.Lang), yesNo(s.Forced), subsURI(s.ID))
 	}
-	for _, v := range variantOrder(h.Video) {
+	var variants []Rendition
+	for _, c := range codecOrder(h.Video) {
+		variants = append(variants, variantOrder(slices.DeleteFunc(slices.Clone(h.Video), func(v Rendition) bool { return v.Codec != c }))...)
+	}
+	for _, v := range variants {
 		fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d", v.Bandwidth+audioBW)
 		if v.Average > 0 {
 			fmt.Fprintf(&b, ",AVERAGE-BANDWIDTH=%d", v.Average+audioBW)
@@ -85,14 +93,25 @@ func (g *Grant) MasterPlaylist(file string, o MasterOptions) ([]byte, error) {
 		if len(subs) > 0 {
 			fmt.Fprintf(&b, ",SUBTITLES=%q", subsGroup)
 		}
-		b.WriteString(",CLOSED-CAPTIONS=NONE\n" + videoURI(v.Rung) + "\n")
+		b.WriteString(",CLOSED-CAPTIONS=NONE\n" + videoURI(v) + "\n")
 	}
 	return []byte(b.String()), nil
 }
 
-// StartRung is the short side of the variant listed first: native HLS
-// players (Safari, iOS) start there before measuring.
+// StartRung is the short side of the variant listed first in each codec:
+// native HLS players (Safari, iOS) start there before measuring.
 const StartRung = 1080
+
+// codecOrder lists the ladder's codecs in first-appearance order.
+func codecOrder(video []Rendition) []Codec {
+	var out []Codec
+	for _, v := range video {
+		if !slices.Contains(out, v.Codec) {
+			out = append(out, v.Codec)
+		}
+	}
+	return out
+}
 
 // variantOrder lists the highest rendition up to StartRung first (else the
 // smallest), then the rest by descending bandwidth.
@@ -117,14 +136,14 @@ func shortSide(v Rendition) int {
 	return v.Rung
 }
 
-// VideoPlaylist is the byte-range media playlist of one video rung.
-func (g *Grant) VideoPlaylist(file string, rung int) ([]byte, error) {
+// VideoPlaylist is the byte-range media playlist of one video rung in codec.
+func (g *Grant) VideoPlaylist(file string, rung int, codec Codec) ([]byte, error) {
 	i, h, err := g.hlsFile(file)
 	if err != nil {
 		return nil, err
 	}
 	for _, v := range h.Video {
-		if v.Rung == rung {
+		if v.Rung == rung && v.Codec == codec {
 			return g.mediaPlaylist(i, v.Blob, v.Segments)
 		}
 	}

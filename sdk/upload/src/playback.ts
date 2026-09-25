@@ -165,6 +165,17 @@ export function capRung(rungs: readonly Rung[], width: number, height: number, p
   return cap;
 }
 
+/**
+ * Levels to remove (indices, descending) so one codec set remains: the set of
+ * the level hls.js lists first, which is the master playlist's first playable
+ * codec (HEVC or AV1 before H.264 when the browser decodes them). hls.js never
+ * switches codec sets for bandwidth, and the quality menu lists each rung once.
+ */
+export function otherCodecLevels(levels: readonly { codecSet?: string }[], first: number): number[] {
+  const keep = (levels[first] ?? levels[0])?.codecSet;
+  return levels.flatMap((l, i) => (l.codecSet === keep ? [] : [i])).reverse();
+}
+
 /** Bits/s to seed the estimator with: a measurement from this page, the browser's downlink, else the policy default. */
 export function initialEstimate(policy?: AbrPolicy, conn?: ConnectionHint | null, measured?: number): number {
   const p = resolve(policy);

@@ -53,14 +53,13 @@ func keyframes(t *testing.T, path string) []int {
 	return keys
 }
 
-// A ladder with rungs above stageOneMax publishes the lower rungs first
-// (playable, the rest pending), then adds the others in one edit. Every
-// rung has keyframes at the same times (one per 4 s segment) and the same
-// segments, so a player switches between the stages' rungs seamlessly.
-func TestTwoStagePublish(t *testing.T) {
-	defer video.SetStageOneMax(480)()
+// A 1080p source publishes 480p in both codecs first (with the tracks and
+// the sprite, 1080 pending), then adds 1080p in both codecs. Every
+// rendition has keyframes every 4 s and the same segments, so a player
+// switches between the stages' rungs seamlessly.
+func TestProgressivePublish(t *testing.T) {
 	e := newEnv(t, nil, nil)
-	source := e.commit(t, fixture{w: 1280, h: 720, secs: 13, rate: 30, audio: 1, subs: true, tone: 440}.make(t), media.OpInsert)
+	source := e.commit(t, fixture{w: 1920, h: 1080, secs: 9, audio: 1, subs: true, tone: 440}.make(t), media.OpInsert)
 	job := video.Job{Ref: e.ref, Versioned: true}
 	var mu sync.Mutex
 	var stages [][2]int
@@ -71,6 +70,13 @@ func TestTwoStagePublish(t *testing.T) {
 			stages = append(stages, [2]int{p.Stage, p.Stages})
 		}
 	}
+	ladder := func(h *media.HLS) []string {
+		var out []string
+		for _, r := range h.Video {
+			out = append(out, fmt.Sprintf("%d-%s", r.Rung, r.Codec))
+		}
+		return out
+	}
 
 	more, err := video.EncodeStage(context.Background(), e.encoder, job, report)
 	if err != nil || !more {
@@ -78,12 +84,15 @@ func TestTwoStagePublish(t *testing.T) {
 	}
 	m, _ := e.manifest(t)
 	h := m.Files[0].HLS
-	if h == nil || h.Source != source || len(h.Video) != 1 || h.Video[0].Rung != 480 || !slices.Equal(h.Pending, []int{720}) ||
+	if h == nil || h.Source != source || !slices.Equal(ladder(h), []string{"480-hevc", "480-h264"}) || !slices.Equal(h.Pending, []int{1080}) ||
 		len(h.Audio) != 1 || len(h.Subs) != 1 || h.Sprite == nil {
 		t.Fatalf("stage 1 hls %+v", h)
 	}
 	if _, ok := m.Downloads[video.DownloadKey("source", 480)]; !ok || len(m.Downloads) != 1 {
 		t.Fatalf("stage 1 downloads %v", m.Downloads)
+	}
+	if r := m.Readiness(); r.State != media.StateProcessing {
+		t.Fatalf("stage 1 readiness %+v", r)
 	}
 	audio, sprite := h.Audio[0].Blob, h.Sprite.Blob
 
@@ -93,10 +102,11 @@ func TestTwoStagePublish(t *testing.T) {
 	}
 	m, _ = e.manifest(t)
 	h = m.Files[0].HLS
-	if len(h.Video) != 2 || h.Video[0].Rung != 720 || h.Video[1].Rung != 480 || len(h.Pending) != 0 || h.Audio[0].Blob != audio || h.Sprite.Blob != sprite {
+	if !slices.Equal(ladder(h), []string{"1080-hevc", "480-hevc", "1080-h264", "480-h264"}) || len(h.Pending) != 0 ||
+		h.Audio[0].Blob != audio || h.Sprite.Blob != sprite {
 		t.Fatalf("stage 2 hls %+v", h)
 	}
-	for _, n := range []int{720, 480} {
+	for _, n := range []int{1080, 480} {
 		if d, ok := m.Downloads[video.DownloadKey("source", n)]; !ok || d.Spec != h.Spec {
 			t.Fatalf("stage 2 downloads %v", m.Downloads)
 		}
@@ -108,27 +118,28 @@ func TestTwoStagePublish(t *testing.T) {
 		t.Fatalf("progress stages %v", stages)
 	}
 
-	var paths []string
+	// Keyframes every 4 s (the first may carry the B-frame delay), the same
+	// in each codec's rungs; segments the same in every rendition.
+	paths := map[media.Codec][]string{}
+	var byCodec = map[media.Codec][]media.Rendition{}
 	for _, r := range h.Video {
-		paths = append(paths, e.blob(t, r.Blob))
-		checkByteRanges(t, paths[len(paths)-1], r.Segments, "video", 13)
-	}
-	// Keyframes every 4 s (the first may carry the B-frame delay), the same in both rungs.
-	a, b := keyframes(t, paths[0]), keyframes(t, paths[1])
-	if !slices.Equal(a, b) || len(a) != 4 {
-		t.Fatalf("keyframes %v and %v", a, b)
-	}
-	for j := 2; j < len(a); j++ {
-		if a[j]-a[j-1] != 4000 {
-			t.Fatalf("keyframes %v are not every 4 s", a)
+		path := e.blob(t, r.Blob)
+		checkByteRanges(t, path, r.Segments, "video", 9)
+		paths[r.Codec] = append(paths[r.Codec], path)
+		byCodec[r.Codec] = append(byCodec[r.Codec], r)
+		for j, s := range r.Segments {
+			if s.Seconds != h.Video[0].Segments[j].Seconds {
+				t.Fatalf("%dp %s segment %d: %gs vs %gs", r.Rung, r.Codec, j, s.Seconds, h.Video[0].Segments[j].Seconds)
+			}
 		}
 	}
-	for j, s := range h.Video[0].Segments {
-		if s.Seconds != h.Video[1].Segments[j].Seconds {
-			t.Fatalf("segment %d: %gs vs %gs", j, s.Seconds, h.Video[1].Segments[j].Seconds)
+	for c, ps := range paths {
+		a, b := keyframes(t, ps[0]), keyframes(t, ps[1])
+		if !slices.Equal(a, b) || len(a) != 3 || a[2]-a[1] != 4000 {
+			t.Fatalf("%s keyframes %v and %v", c, a, b)
 		}
+		switchRungs(t, ps, byCodec[c])
 	}
-	switchRungs(t, paths, h.Video)
 }
 
 // switchRungs decodes segments alternating between the stages' rungs, each
@@ -167,10 +178,9 @@ func switchRungs(t *testing.T, paths []string, rs []media.Rendition) {
 	}
 }
 
-// The worker runs one stage per job: the second stage is a follow-up job at
-// a lower priority, and the read API reports it as stage 2 of 2.
+// The worker runs one stage per job: the 720p source's 720 stage is a
+// follow-up job at a lower priority, after 480 is published.
 func TestWorkerQueuesSecondStage(t *testing.T) {
-	defer video.SetStageOneMax(480)()
 	requireFFmpeg(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -188,7 +198,7 @@ func TestWorkerQueuesSecondStage(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.commit(t, fixture{w: 1280, h: 720, secs: 5, rate: 30, audio: 1, tone: 440}.make(t), media.OpInsert)
-	enc, err := video.New(video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(), Threads: 2, Encoder: video.EncoderX264})
+	enc, err := video.New(video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(), Threads: 2, Encoder: video.EncoderCPU})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +233,7 @@ func TestWorkerQueuesSecondStage(t *testing.T) {
 			priorities = append(priorities, ev.Job.Priority)
 			if len(priorities) == 1 {
 				m, _ := e.manifest(t)
-				if h := m.Files[0].HLS; h == nil || len(h.Video) != 1 || !slices.Equal(h.Pending, []int{720}) {
+				if h := m.Files[0].HLS; h == nil || len(h.Video) != 2 || h.Video[0].Rung != 480 || !slices.Equal(h.Pending, []int{720}) {
 					t.Fatalf("after the first job: %+v", h)
 				}
 			}
@@ -235,44 +245,66 @@ func TestWorkerQueuesSecondStage(t *testing.T) {
 		t.Fatalf("job priorities %v", priorities)
 	}
 	m, _ := e.manifest(t)
-	if h := m.Files[0].HLS; len(h.Video) != 2 || len(h.Pending) != 0 {
+	if h := m.Files[0].HLS; len(h.Video) != 4 || len(h.Pending) != 0 {
 		t.Fatalf("after the follow-up: %+v", h)
 	}
 }
 
-// A compliant source's top rung is its own video stream, copied: the same
-// packets, on the lower rungs' segments, switchable with them.
+// A compliant source's top rung in its own codec is its video stream,
+// copied: the same packets, on the lower rung's segments, switchable with
+// it. The other codec's top rung is encoded.
 func TestPassthroughTopRung(t *testing.T) {
-	e := newEnv(t, nil, nil)
-	src := filepath.Join(t.TempDir(), "source.mp4")
-	if b, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=9", "-f", "lavfi", "-i", "sine=duration=9",
-		"-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p",
-		"-force_key_frames", "expr:gte(t,n_forced*4)", "-sc_threshold", "0", "-c:a", "aac", "-y", src).CombinedOutput(); err != nil {
-		t.Fatalf("fixture: %v: %s", err, b)
+	for _, c := range []struct {
+		codec media.Codec
+		args  []string
+	}{
+		{media.CodecH264, []string{"-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-sc_threshold", "0"}},
+		{media.CodecHEVC, []string{"-c:v", "libx265", "-preset", "ultrafast", "-crf", "30", "-tag:v", "hvc1", "-forced-idr", "1",
+			"-x265-params", "open-gop=0:scenecut=0:log-level=error"}},
+	} {
+		t.Run(string(c.codec), func(t *testing.T) {
+			e := newEnv(t, nil, nil)
+			src := filepath.Join(t.TempDir(), "source.mp4")
+			args := append([]string{"-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=9", "-f", "lavfi", "-i", "sine=duration=9",
+				"-map", "0:v", "-map", "1:a", "-pix_fmt", "yuv420p", "-force_key_frames", "expr:gte(t,n_forced*4)"}, c.args...)
+			if b, err := exec.Command("ffmpeg", append(args, "-c:a", "aac", "-y", src)...).CombinedOutput(); err != nil {
+				t.Fatalf("fixture: %v: %s", err, b)
+			}
+			e.commit(t, src, media.OpInsert)
+			e.encode(t)
+			m, _ := e.manifest(t)
+			h := m.Files[0].HLS
+			find := func(rung int, codec media.Codec) media.Rendition {
+				i := slices.IndexFunc(h.Video, func(r media.Rendition) bool { return r.Rung == rung && r.Codec == codec })
+				if i < 0 {
+					t.Fatalf("no %dp %s in %+v", rung, codec, h.Video)
+				}
+				return h.Video[i]
+			}
+			hash := func(path string) string {
+				out, err := exec.Command("ffmpeg", "-v", "error", "-i", path, "-map", "0:v", "-c", "copy", "-f", "streamhash", "-").Output()
+				if err != nil {
+					t.Fatal(err)
+				}
+				return string(out)
+			}
+			if len(h.Video) != 4 {
+				t.Fatalf("hls %+v", h)
+			}
+			for _, codec := range []media.Codec{media.CodecH264, media.CodecHEVC} {
+				top, low := find(720, codec), find(480, codec)
+				paths := []string{e.blob(t, top.Blob), e.blob(t, low.Blob)}
+				if copied := hash(paths[0]) == hash(src); copied != (codec == c.codec) {
+					t.Fatalf("%s 720 rung copied from the source: %v", codec, copied)
+				}
+				if codec == media.CodecHEVC && !strings.HasPrefix(top.Codecs, "hvc1.") {
+					t.Fatalf("hevc codecs %q", top.Codecs)
+				}
+				checkByteRanges(t, paths[0], top.Segments, "video", 9)
+				switchRungs(t, paths, []media.Rendition{top, low})
+			}
+		})
 	}
-	e.commit(t, src, media.OpInsert)
-	e.encode(t)
-	m, _ := e.manifest(t)
-	h := m.Files[0].HLS
-	if len(h.Video) != 2 || h.Video[0].Rung != 720 {
-		t.Fatalf("hls %+v", h)
-	}
-	hash := func(path string) string {
-		out, err := exec.Command("ffmpeg", "-v", "error", "-i", path, "-map", "0:v", "-c", "copy", "-f", "streamhash", "-").Output()
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(out)
-	}
-	top := e.blob(t, h.Video[0].Blob)
-	if hash(top) != hash(src) {
-		t.Fatal("the 720 rung is not the source's video stream")
-	}
-	paths := []string{top, e.blob(t, h.Video[1].Blob)}
-	for i, r := range h.Video {
-		checkByteRanges(t, paths[i], r.Segments, "video", 9)
-	}
-	switchRungs(t, paths, h.Video)
 }
 
 // Cancel removes an item's queued image and video jobs (both stages share the job shape).

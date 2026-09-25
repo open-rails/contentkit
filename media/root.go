@@ -131,7 +131,7 @@ func (r *Root) index() {
 					return PrivateEntry{File: f.Name, Version: v, Rendition: rendition, W: w, Type: typ}
 				}
 				for _, x := range h.Video {
-					private(x.Blob, h.Source, e("hls-"+strconv.Itoa(x.Rung)+"p", x.Width, "video/mp4"))
+					private(x.Blob, h.Source, e("hls-"+strconv.Itoa(x.Rung)+"p-"+string(x.Codec), x.Width, "video/mp4"))
 				}
 				for _, x := range h.Audio {
 					private(x.Blob, h.Source, e("audio-"+x.ID, 0, "audio/mp4"))

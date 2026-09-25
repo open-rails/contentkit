@@ -45,9 +45,19 @@ func TestAspectLadders(t *testing.T) {
 			m, _ := e.manifest(t)
 			f := m.Files[m.File("source")]
 			var got [][3]int
+			top := map[media.Codec]string{}
 			for _, r := range f.HLS.Video {
-				got = append(got, [3]int{r.Rung, r.Width, r.Height})
+				if _, ok := top[r.Codec]; !ok {
+					top[r.Codec] = r.Codecs
+				}
 				p := ffprobe(t, e.blob(t, r.Blob))
+				if s := p.Streams[0]; s.Width != r.Width || s.Height != r.Height {
+					t.Fatalf("rendition %dp %s is %dx%d, manifest %dx%d", r.Rung, r.Codec, s.Width, s.Height, r.Width, r.Height)
+				}
+				if r.Codec != media.CodecH264 {
+					continue
+				}
+				got = append(got, [3]int{r.Rung, r.Width, r.Height})
 				if s := p.Streams[0]; s.Width != r.Width || s.Height != r.Height {
 					t.Fatalf("rendition %dp is %dx%d, manifest %dx%d", r.Rung, s.Width, s.Height, r.Width, r.Height)
 				}
@@ -61,8 +71,9 @@ func TestAspectLadders(t *testing.T) {
 					}
 				}
 			}
-			if !slices.Equal(got, c.want) || !strings.HasPrefix(f.HLS.Video[0].Codecs, c.codec) {
-				t.Fatalf("ladder %v %s, want %v %s", got, f.HLS.Video[0].Codecs, c.want, c.codec)
+			if !slices.Equal(got, c.want) || !strings.HasPrefix(top[media.CodecH264], c.codec) || !strings.HasPrefix(top[media.CodecHEVC], "hvc1.1.6.L") ||
+				len(f.HLS.Video) != 2*len(c.want) {
+				t.Fatalf("ladder %v %v, want %v %s", got, top, c.want, c.codec)
 			}
 			sp := f.HLS.Sprite
 			if sp.Width != c.tileW || sp.Height != c.tileH {
@@ -111,7 +122,7 @@ func TestAspectOutOfRangeFailsPermanently(t *testing.T) {
 	if err := enc.Encode(context.Background(), video.Job{Ref: e.ref, Versioned: true, Video: media.Video{MaxAspect: 3}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if m, _ = e.manifest(t); m.Files[0].HLS.Error != "" || len(m.Files[0].HLS.Video) != 1 || m.Files[0].HLS.Video[0].Width != 480 {
+	if m, _ = e.manifest(t); m.Files[0].HLS.Error != "" || len(m.Files[0].HLS.Video) != 2 || m.Files[0].HLS.Video[0].Width != 480 {
 		t.Fatalf("hls %+v", m.Files[0].HLS)
 	}
 }

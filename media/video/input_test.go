@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/open-rails/contentkit/media"
 )
 
 // A concat list (or any non-container input) must never be demuxed: it would
@@ -41,7 +43,8 @@ func TestInputsAreConfinedToContainerDemuxers(t *testing.T) {
 		t.Fatal(err)
 	}
 	pl := plan{duration: 1, video: 0, width: 64, height: 48, rungs: []rung{{n: 48, w: 64, h: 48}}, tileW: 120, tileH: 90}
-	if err := ladder(ctx, list, out, pl, pass{rungs: pl.rungs, sprite: true, enc: encoding{codec: EncoderX264, threads: 1, preset: "fast"}}, nil); err == nil {
+	if err := ladder(ctx, list, out, pl, pass{rung: pl.rungs[0], codecs: []media.Codec{media.CodecH264}, sprite: true,
+		enc: encoding{encoders: map[media.Codec]string{media.CodecH264: "libx264"}, threads: 1, preset: "fast"}}, nil); err == nil {
 		t.Fatal("concat list encoded")
 	}
 }

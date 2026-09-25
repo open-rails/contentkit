@@ -45,7 +45,7 @@ type HandlerOptions struct {
 //
 //	GET /{kind}/{id}?variant=high,thumb&offset=0&limit=50 -> ReadResult (+ Set-Cookie mt)
 //	GET /{kind}/{id}/hls/{file}/master.m3u8?audio=ja&subs=en,s2 (filters optional; empty = none)
-//	GET /{kind}/{id}/hls/{file}/video/{height}.m3u8, audio/{track}.m3u8, subs/{track}.m3u8
+//	GET /{kind}/{id}/hls/{file}/video/{rung}-{codec}.m3u8, audio/{track}.m3u8, subs/{track}.m3u8
 //	GET /{kind}/{id}/hls/{file}/sprite.vtt
 //	GET /{kind}/{id}/download/{key} -> 302 to the signed download URL
 //	GET /{kind}/{id}/slots/{slot} -> SlotManifest

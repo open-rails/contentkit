@@ -43,11 +43,12 @@ func (r *Reader) hlsRoutes(mux *http.ServeMux, o HandlerOptions, log *slog.Logge
 		return g.MasterPlaylist(req.PathValue("file"), MasterOptions{Audio: queryList(q, "audio"), Subs: queryList(q, "subs")})
 	})
 	serve(hls+"video/{track}", HLSContentType, func(req *http.Request, g *Grant) ([]byte, error) {
-		h, err := strconv.Atoi(playlist(req))
+		rung, codec, _ := strings.Cut(playlist(req), "-")
+		n, err := strconv.Atoi(rung)
 		if err != nil {
 			return nil, ErrNotAllowed
 		}
-		return g.VideoPlaylist(req.PathValue("file"), h)
+		return g.VideoPlaylist(req.PathValue("file"), n, Codec(codec))
 	})
 	serve(hls+"audio/{track}", HLSContentType, func(req *http.Request, g *Grant) ([]byte, error) {
 		return g.AudioPlaylist(req.PathValue("file"), playlist(req))

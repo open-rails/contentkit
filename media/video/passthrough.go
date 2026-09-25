@@ -11,14 +11,17 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/open-rails/contentkit/media"
 )
 
 // Passthrough: a source that already is a compliant rendition of the top
-// rung is stream-copied instead of encoded. Every check is strict; any
-// doubt encodes. The copy keeps the source's frames and timestamps, so the
-// source must be constant-rate H.264 High/Main (8-bit 4:2:0, progressive,
-// level ≤ 5.2, square pixels, unrotated) at exactly the rung's frame, within
-// the rung's bitrate cap, in MP4/MOV, and IDR-coded (closed GOP) on the
+// rung in one of the ladder's codecs is stream-copied instead of encoded in
+// that codec. Every check is strict; any doubt encodes. The copy keeps the
+// source's frames and timestamps, so the source must be constant-rate H.264
+// High/Main or HEVC Main tagged hvc1 (8-bit 4:2:0, progressive, level ≤ 5.2,
+// square pixels, unrotated) at exactly the rung's frame, within the rung's
+// bitrate cap in its codec, in MP4/MOV, and IDR-coded (closed GOP) on the
 // frame that starts each segment, where the encoded rungs put theirs.
 
 type sourcePacket struct {
@@ -27,48 +30,56 @@ type sourcePacket struct {
 	pos, size int64
 }
 
-// passthroughable reports whether top can be copied from src, and why not.
-func passthroughable(ctx context.Context, src string, p plan, top rung) (bool, string) {
+// passthroughable reports whether top can be copied from src as a
+// rendition in codec c, and why not.
+func passthroughable(ctx context.Context, src string, p plan, top rung) (c media.Codec, ok bool, why string) {
 	s := p.stream
+	c, maxLevel := media.CodecH264, 52
+	if s.CodecName == "hevc" {
+		c, maxLevel = media.CodecHEVC, 156 // general_level_idc: 30 × level
+	}
 	switch {
 	case !strings.HasPrefix(p.formatName, "mov,"):
-		return false, "container " + p.formatName
-	case s.CodecName != "h264" || s.Profile != "High" && s.Profile != "Main":
-		return false, "codec " + s.CodecName + " " + s.Profile
+		return c, false, "container " + p.formatName
+	case s.CodecName == "h264" && s.Profile != "High" && s.Profile != "Main",
+		s.CodecName == "hevc" && (s.Profile != "Main" || s.CodecTag != "hvc1"),
+		s.CodecName != "h264" && s.CodecName != "hevc":
+		return c, false, "codec " + s.CodecName + " " + s.Profile + " " + s.CodecTag
 	case s.PixFmt != "yuv420p" || s.FieldOrder != "progressive":
-		return false, "format " + s.PixFmt + " " + s.FieldOrder
-	case s.Level <= 0 || s.Level > 52:
-		return false, "level " + strconv.Itoa(s.Level)
+		return c, false, "format " + s.PixFmt + " " + s.FieldOrder
+	case s.Level <= 0 || s.Level > maxLevel:
+		return c, false, "level " + strconv.Itoa(s.Level)
 	case rotated(s) || p.limitFPS:
-		return false, "rotated or above the frame-rate cap"
+		return c, false, "rotated or above the frame-rate cap"
 	case s.Width != top.w || s.Height != top.h || p.width != top.w || p.height != top.h:
-		return false, fmt.Sprintf("frame %dx%d, rung %dx%d", s.Width, s.Height, top.w, top.h)
+		return c, false, fmt.Sprintf("frame %dx%d, rung %dx%d", s.Width, s.Height, top.w, top.h)
 	}
 	if st, err := strconv.ParseFloat(s.StartTime, 64); err != nil || math.Abs(st-p.start) > 1e-6 {
-		return false, "video starts after the container"
+		return c, false, "video starts after the container"
 	}
 	pkts, err := sourcePackets(ctx, src, p)
 	if err != nil || len(pkts) < 2 {
-		return false, fmt.Sprintf("packets: %v", err)
+		return c, false, fmt.Sprintf("packets: %v", err)
 	}
+	maxrate := top.rate(c).maxrate
 	// Constant rate: every frame one interval after the one before.
 	frame := pkts[1].t - pkts[0].t
 	var bytes int64
 	for i, pk := range pkts {
 		if i > 0 && math.Abs(pk.t-pkts[i-1].t-frame) > frame/100 {
-			return false, fmt.Sprintf("variable frame rate at %.3f s", pk.t)
+			return c, false, fmt.Sprintf("variable frame rate at %.3f s", pk.t)
 		}
 		bytes += pk.size
 	}
 	if frame <= 0 || math.Abs(1/frame-p.fps) > 0.01*p.fps {
-		return false, "frame rate"
+		return c, false, "frame rate"
 	}
-	if avg := float64(bytes*8) / p.duration / 1000; avg > float64(top.maxrate) {
-		return false, fmt.Sprintf("%.0f kbit/s over the rung's %d", avg, top.maxrate)
+	if avg := float64(bytes*8) / p.duration / 1000; avg > float64(maxrate) {
+		return c, false, fmt.Sprintf("%.0f kbit/s over the rung's %d", avg, maxrate)
 	}
 	f, err := os.Open(src)
 	if err != nil {
-		return false, err.Error()
+		return c, false, err.Error()
 	}
 	defer f.Close()
 	next := 0.0
@@ -77,10 +88,10 @@ func passthroughable(ctx context.Context, src string, p plan, top rung) (bool, s
 	for _, pk := range pkts {
 		if pk.t >= next-1e-9 {
 			if !pk.key {
-				return false, fmt.Sprintf("no keyframe at %.3f s", pk.t)
+				return c, false, fmt.Sprintf("no keyframe at %.3f s", pk.t)
 			}
-			if idr, err := isIDR(f, pk); err != nil || !idr {
-				return false, fmt.Sprintf("keyframe at %.3f s is not an IDR (%v)", pk.t, err)
+			if idr, err := isIDR(f, pk, c); err != nil || !idr {
+				return c, false, fmt.Sprintf("keyframe at %.3f s is not an IDR (%v)", pk.t, err)
 			}
 			next += segmentSeconds
 			for pk.t >= next-1e-9 {
@@ -88,14 +99,14 @@ func passthroughable(ctx context.Context, src string, p plan, top rung) (bool, s
 			}
 		}
 		if pk.t-windowStart >= segmentSeconds {
-			if kbit := float64(window*8) / segmentSeconds / 1000; kbit > 2*float64(top.maxrate) {
-				return false, fmt.Sprintf("%.0f kbit/s peak near %.0f s", kbit, windowStart)
+			if kbit := float64(window*8) / segmentSeconds / 1000; kbit > 2*float64(maxrate) {
+				return c, false, fmt.Sprintf("%.0f kbit/s peak near %.0f s", kbit, windowStart)
 			}
 			window, windowStart = 0, pk.t
 		}
 		window += pk.size
 	}
-	return true, ""
+	return c, true, ""
 }
 
 // sourcePackets lists the video stream's packets in presentation order.
@@ -132,9 +143,10 @@ func sourcePackets(ctx context.Context, src string, p plan) ([]sourcePacket, err
 	return pkts, nil
 }
 
-// isIDR reports whether a length-prefixed (MP4) H.264 packet's first slice
-// is an IDR slice.
-func isIDR(f *os.File, pk sourcePacket) (bool, error) {
+// isIDR reports whether a length-prefixed (MP4) H.264 or HEVC packet's
+// first slice is an IDR slice (HEVC: IDR_W_RADL or IDR_N_LP; a CRA opens a
+// GOP).
+func isIDR(f *os.File, pk sourcePacket, c media.Codec) (bool, error) {
 	b := make([]byte, pk.size)
 	if _, err := f.ReadAt(b, pk.pos); err != nil {
 		return false, err
@@ -144,45 +156,48 @@ func isIDR(f *os.File, pk sourcePacket) (bool, error) {
 		if n <= 0 || n > len(b)-4 {
 			return false, fmt.Errorf("NAL length %d", n)
 		}
-		switch b[4] & 0x1f {
-		case 5:
-			return true, nil
-		case 1, 2, 3, 4:
-			return false, nil
+		if c == media.CodecHEVC {
+			if t := b[4] >> 1 & 0x3f; t < 32 {
+				return t == 19 || t == 20, nil
+			}
+		} else {
+			switch b[4] & 0x1f {
+			case 5:
+				return true, nil
+			case 1, 2, 3, 4:
+				return false, nil
+			}
 		}
 		b = b[4+n:]
 	}
 	return false, fmt.Errorf("no slice")
 }
 
-// copyRung stream-copies the source's video into rung n's single-file fMP4.
-func copyRung(ctx context.Context, src, dir string, p plan, n int) error {
+// copyRung stream-copies the source's video into the single-file fMP4 v.
+func copyRung(ctx context.Context, src, dir string, p plan, v string, c media.Codec) error {
 	args := append(append([]string{"-v", "error", "-nostdin"}, inputOptions(sourceDemuxers)...), "-i", src,
 		"-map", fmt.Sprintf("0:%d", p.video), "-c", "copy", "-map_metadata", "-1")
-	args = append(args, hlsArgs(filepath.Join(dir, fmt.Sprintf("v%d.mp4", n)), filepath.Join(dir, fmt.Sprintf("v%d.m3u8", n)))...)
+	if c == media.CodecHEVC {
+		args = append(args, "-tag:v", "hvc1")
+	}
+	args = append(args, hlsArgs(filepath.Join(dir, v+".mp4"), filepath.Join(dir, v+".m3u8"))...)
 	_, err := command(ctx, "ffmpeg", args...)
 	return err
 }
 
-// sameSegments reports whether rungs a and b in dir have the same segment
-// durations, so players switch between them at the same times.
-func sameSegments(dir string, a, b int) bool {
-	var pls [2]playlist
-	for i, n := range []int{a, b} {
-		v := filepath.Join(dir, fmt.Sprintf("v%d", n))
-		st, err := os.Stat(v + ".mp4")
-		if err != nil {
-			return false
-		}
-		if pls[i], err = parsePlaylist(v+".m3u8", st.Size()); err != nil {
-			return false
-		}
-	}
-	if len(pls[0].segments) != len(pls[1].segments) {
+// sameSegments reports whether rendition v in dir has the segment durations
+// of want, so players switch between them at the same times.
+func sameSegments(dir, v string, want []media.Segment) bool {
+	st, err := os.Stat(filepath.Join(dir, v+".mp4"))
+	if err != nil {
 		return false
 	}
-	for i, s := range pls[0].segments {
-		if math.Abs(s.Seconds-pls[1].segments[i].Seconds) > 1e-3 {
+	pl, err := parsePlaylist(filepath.Join(dir, v+".m3u8"), st.Size())
+	if err != nil || len(pl.segments) != len(want) {
+		return false
+	}
+	for i, s := range pl.segments {
+		if math.Abs(s.Seconds-want[i].Seconds) > 1e-3 {
 			return false
 		}
 	}

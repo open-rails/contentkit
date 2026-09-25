@@ -21,7 +21,7 @@ jobs:
     name: media/video (ffmpeg)
     if: '!github.event.pull_request.draft'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:18-alpine
@@ -48,15 +48,13 @@ jobs:
         docker run -d --name minio -p 9100:9000 \
           -e MINIO_ROOT_USER=contentkit -e MINIO_ROOT_PASSWORD=contentkit-secret \
           cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1 server /data
-    - name: Install ffmpeg
-      run: |
-        sudo rm -f /var/lib/man-db/auto-update
-        sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
-    - uses: actions/setup-go@v5
-      with:
-        go-version-file: go.mod
-    - name: vet, test
+    - name: vet, test (Debian trixie's ffmpeg 7.1 with libx264, libx265 and libsvtav1, as in the media-worker image)
       run: |
         timeout 60 sh -c "until curl -fsS http://localhost:9100/minio/health/ready; do sleep 1; done"
-        go vet ./media/video/...
-        go test ./media/video/... -count=1 -race -p 2 -v
+        docker run --rm --network host -v "$PWD:/src" -w /src \
+          -e CONTENTKIT_TEST_URL -e CONTENTKIT_TEST_S3_ENDPOINT -e CONTENTKIT_TEST_S3_ACCESS_KEY \
+          -e CONTENTKIT_TEST_S3_SECRET_KEY -e CONTENTKIT_TEST_S3_REQUIRE -e CONTENTKIT_TEST_FFMPEG -e GOFLAGS=-buildvcs=false \
+          golang:1.26.6-trixie sh -ec '
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends ffmpeg >/dev/null
+            go vet ./media/video/...
+            go test ./media/video/... -count=1 -race -p 2 -v'

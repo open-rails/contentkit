@@ -9,6 +9,7 @@ import {
   classifyMediaError,
   hlsConfig,
   initialEstimate,
+  otherCodecLevels,
   refreshable,
   startRung,
   statusKind,
@@ -458,6 +459,7 @@ export function useHlsPlayer({
           };
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             parsed = true;
+            for (const i of otherCodecLevels(hls.levels, hls.firstLevel)) hls.removeLevel(i);
             const max = policy?.maxHeight ?? Infinity;
             const list = hls.levels
               .map((l, index) => ({ index, height: Math.min(l.width, l.height) || l.height, width: l.width, bitrate: l.bitrate }))

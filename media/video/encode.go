@@ -23,24 +23,33 @@ import (
 
 // recipe is the encode's identity with the ladder and profile: a manifest
 // hls or download whose spec differs is stale and re-encoded.
-const recipe = "h264-high-capped-crf:%s|k4-sc0|short-side:%s|cascade-lanczos|max-4096-3840x2160|lvl51-52|max60fps|sar1|aac-128k-48k-2ch|webvtt|sprite-10x10-short90-jpg|mp4-all-audio-mov_text|stages-1080|pt-top|v4"
+const recipe = "codecs:%s|h264-high,hevc-main-hvc1-x265-closed,av1-svt-p%d|capped-crf:%s|k4-sc0|short-side:%s|native-below-%d|lanczos|max-4096-3840x2160|lvl51-52|max60fps|sar1|aac-128k-48k-2ch|webvtt|sprite-10x10-short90-jpg|mp4-%s-all-audio-mov_text|stage-per-rung|pt-top|v5"
 
 // Spec identifies the recipe over v's ladder (empty: media.DefaultLadder)
-// and profile in manifest hls and downloads entries.
-func Spec(v media.Video) string {
+// and profile and the encoder's codecs in manifest hls and downloads
+// entries. The encoders (CPU or NVENC) are not part of it.
+func (e *Encoder) Spec(v media.Video) string {
 	ladder := v.Rungs()
 	h := make([]string, len(ladder))
 	for i, n := range ladder {
 		h[i] = strconv.Itoa(n)
 	}
 	var rs []string
-	for _, r := range rates[v.Profile] {
-		rs = append(rs, fmt.Sprintf("%d/%d", r.crf, r.maxrate))
+	for _, c := range e.c.Codecs {
+		for _, n := range []int{2160, 1440, 1080, 720, 480} {
+			r := rung{n: n, profile: v.Profile}.rate(c)
+			rs = append(rs, fmt.Sprintf("%d/%d", r.crf, r.maxrate))
+		}
 	}
 	if v.Profile != "" {
 		rs = append(rs, "tune-"+v.Profile)
 	}
-	s := sha256.Sum256(fmt.Appendf(nil, recipe, strings.Join(rs, ","), strings.Join(h, ",")))
+	codecs := make([]string, len(e.c.Codecs))
+	for i, c := range e.c.Codecs {
+		codecs[i] = string(c)
+	}
+	s := sha256.Sum256(fmt.Appendf(nil, recipe, strings.Join(codecs, ","), svtAV1Preset, strings.Join(rs, ","), strings.Join(h, ","),
+		nativeBelow, e.downloadCodec()))
 	return hex.EncodeToString(s[:4])
 }
 
@@ -60,63 +69,69 @@ const (
 	spriteShort    = 90
 )
 
-// pass is one ffmpeg run of a file's stage: its rungs (largest first), and
-// whether it also makes the sprite frames.
+// pass is one ffmpeg run of a file's stage: its rung in codecs, and whether
+// it also makes the sprite frames.
 type pass struct {
-	rungs    []rung
+	rung     rung
+	codecs   []media.Codec
 	sprite   bool
 	noTracks bool // audio and subtitles are already encoded
 	enc      encoding
 }
 
-// ladder runs one ffmpeg pass: the source is decoded once and scaled down a
-// cascade (each rung from the one above, lanczos) into the pass's rungs; the
-// smallest also feeds the sprite. Every audio track and subtitle is encoded
-// alongside, for the downloads' mux.
+// renditionName is a rendition's file name stem in a pass's directory.
+func renditionName(n int, c media.Codec) string { return fmt.Sprintf("v%d-%s", n, c) }
+
+// ladder runs one ffmpeg pass: the source is decoded once and scaled
+// (lanczos) to the pass's rung, which is encoded in each codec and also
+// feeds the sprite. Every audio track and subtitle is encoded alongside, for
+// the downloads' mux.
 func ladder(ctx context.Context, src, dir string, p plan, ps pass, fp *fileProgress) error {
 	var fc strings.Builder
-	in := fmt.Sprintf("[0:%d]", p.video)
+	fmt.Fprintf(&fc, "[0:%d]", p.video)
 	if p.limitFPS {
-		fmt.Fprintf(&fc, "%sfps=%d[in];", in, maxFPS)
-		in = "[in]"
+		fmt.Fprintf(&fc, "fps=%d,", maxFPS)
 	}
-	for i, r := range ps.rungs {
-		outs := []string{fmt.Sprintf("[v%d]", i)}
-		if i < len(ps.rungs)-1 {
-			outs = append(outs, fmt.Sprintf("[c%d]", i))
-		} else if ps.sprite {
-			outs = append(outs, "[sp]")
-		}
-		fmt.Fprintf(&fc, "%sscale=%d:%d:flags=lanczos,setsar=1", in, r.w, r.h)
-		if len(outs) > 1 {
-			fmt.Fprintf(&fc, ",split=%d", len(outs))
-		}
-		fc.WriteString(strings.Join(outs, "") + ";")
-		in = fmt.Sprintf("[c%d]", i)
+	var outs []string
+	for i := range ps.codecs {
+		outs = append(outs, fmt.Sprintf("[v%d]", i))
 	}
+	if ps.sprite {
+		outs = append(outs, "[sp]")
+	}
+	fmt.Fprintf(&fc, "scale=%d:%d:flags=lanczos,setsar=1", ps.rung.w, ps.rung.h)
+	if len(outs) > 1 {
+		fmt.Fprintf(&fc, ",split=%d", len(outs))
+	}
+	fc.WriteString(strings.Join(outs, ""))
 	if ps.sprite {
 		// Sprite frames leave the pass as PNGs and are tiled after: a tile filter
 		// emits only at the end, and ffmpeg reports no progress until every
 		// output has started.
-		fmt.Fprintf(&fc, "[sp]fps=1/%.9f,scale=%d:%d:flags=lanczos,setsar=1[sprite]", p.duration/(spriteCols*spriteRows), p.tileW, p.tileH)
+		fmt.Fprintf(&fc, ";[sp]fps=1/%.9f,scale=%d:%d:flags=lanczos,setsar=1[sprite]", p.duration/(spriteCols*spriteRows), p.tileW, p.tileH)
 	}
 
 	// Decoding and scaling gain little past 8 threads; each extra frame
 	// thread holds more decoded frames.
 	t := strconv.Itoa(min(ps.enc.threads, 8))
 	args := append([]string{"-v", "error", "-nostdin", "-threads", t}, inputOptions(sourceDemuxers)...)
-	args = append(args, "-i", src, "-filter_complex_threads", t, "-filter_complex", strings.TrimSuffix(fc.String(), ";"))
-	var streamMap []string
-	for i := range ps.rungs {
-		args = append(args, "-map", fmt.Sprintf("[v%d]", i))
-		streamMap = append(streamMap, fmt.Sprintf("v:%d,name:%d", i, ps.rungs[i].n))
+	args = append(args, "-i", src)
+	if len(outs) > 0 {
+		args = append(args, "-filter_complex_threads", t, "-filter_complex", fc.String())
 	}
-	for i, r := range ps.rungs {
-		args = append(args, ps.enc.rungArgs(i, r)...)
+	if len(ps.codecs) > 0 {
+		var streamMap []string
+		for i, c := range ps.codecs {
+			args = append(args, "-map", fmt.Sprintf("[v%d]", i))
+			streamMap = append(streamMap, fmt.Sprintf("v:%d,name:%d-%s", i, ps.rung.n, c))
+		}
+		for i, c := range ps.codecs {
+			args = append(args, ps.enc.streamArgs(i, ps.rung, c)...)
+		}
+		args = append(args, "-pix_fmt", "yuv420p", "-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segmentSeconds))
+		args = append(args, "-var_stream_map", strings.Join(streamMap, " "))
+		args = append(args, hlsArgs(filepath.Join(dir, "v%v.mp4"), filepath.Join(dir, "v%v.m3u8"))...)
 	}
-	args = append(args, "-pix_fmt", "yuv420p", "-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segmentSeconds))
-	args = append(args, "-var_stream_map", strings.Join(streamMap, " "))
-	args = append(args, hlsArgs(filepath.Join(dir, "v%v.mp4"), filepath.Join(dir, "v%v.m3u8"))...)
 	for i, a := range p.audio {
 		if ps.noTracks {
 			break
@@ -148,61 +163,6 @@ func hlsArgs(segment, playlist string) []string {
 		"-hls_segment_type", "fmp4", "-hls_flags", "single_file", "-hls_segment_filename", segment, playlist}
 }
 
-// Config.Encoder values.
-const (
-	EncoderAuto  = "auto"  // NVENC when a probe encode succeeds, else x264
-	EncoderX264  = "x264"  // libx264 on the CPU
-	EncoderNVENC = "nvenc" // NVIDIA h264_nvenc; decoding and scaling stay on the CPU
-)
-
-// encoding is how a file's ladder is encoded.
-type encoding struct {
-	codec     string // EncoderX264 or EncoderNVENC
-	threads   int
-	preset    string // x264 preset of rungs up to 1080
-	topPreset string // x264 preset of the rungs above
-	animation bool
-}
-
-// rungArgs are output stream i's H.264 High settings: the rung's capped CRF
-// (NVENC: CQ) with a 2 s VBV buffer and no scene-cut keyframes, so every
-// rung, in either stage, has keyframes at the same times. Every x264 gets
-// all threads: splitting them by frame area cost 15–40% more wall time and
-// CPU at 8 threads (bench_test.go).
-func (e encoding) rungArgs(i int, r rung) []string {
-	o := func(name string) string { return fmt.Sprintf("-%s:v:%d", name, i) }
-	args := []string{o("profile"), "high", o("maxrate"), fmt.Sprintf("%dk", r.maxrate), o("bufsize"), fmt.Sprintf("%dk", 2*r.maxrate)}
-	if r.level != "" {
-		args = append(args, o("level"), r.level)
-	}
-	if e.codec == EncoderNVENC {
-		return append(args, o("c"), "h264_nvenc", o("preset"), "p5", o("tune"), "hq", o("rc"), "vbr", o("cq"), strconv.Itoa(r.crf+nvencCQOffset),
-			o("b"), "0", o("spatial-aq"), "1", o("temporal-aq"), "1", o("rc-lookahead"), "20", o("bf"), "3", o("b_ref_mode"), "middle",
-			o("forced-idr"), "1", o("no-scenecut"), "1")
-	}
-	preset := e.preset
-	if r.n > 1080 {
-		preset = e.topPreset
-	}
-	args = append(args, o("c"), "libx264", o("preset"), preset, o("crf"), strconv.Itoa(r.crf), o("sc_threshold"), "0",
-		o("threads"), strconv.Itoa(e.threads))
-	if e.animation {
-		args = append(args, o("tune"), "animation")
-	}
-	return args
-}
-
-// nvencCQOffset maps a rung's CRF to an NVENC CQ of about the same top-rung
-// VMAF; lower rungs cost NVENC 30-60% more bits (bench_test.go).
-var nvencCQOffset = 4
-
-// nvencWorks encodes one frame with h264_nvenc.
-func nvencWorks(ctx context.Context) error {
-	_, err := command(ctx, "ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=s=256x256:d=0.1", "-frames:v", "1",
-		"-c:v", "h264_nvenc", "-f", "null", "-")
-	return err
-}
-
 const spriteFrames = "t%03d.png"
 
 // sprite tiles the pass's frames into sprite.jpg and removes them.
@@ -220,12 +180,13 @@ func sprite(ctx context.Context, dir string) error {
 	return err
 }
 
-// mux stream-copies one rendition, every audio track (default first) and the
-// subtitles into a faststart MP4 download. Output is byte-identical on retry.
-func mux(ctx context.Context, dir string, rung int, p plan, out string) error {
+// mux stream-copies one rendition (the file stem v in dir), every audio
+// track (default first) and the subtitles into a faststart MP4 download.
+// Output is byte-identical on retry.
+func mux(ctx context.Context, dir, v string, p plan, out string) error {
 	own := inputOptions([]string{"mov", "webvtt"}) // our own renditions and subtitles
 	args := append([]string{"-v", "error", "-nostdin"}, own...)
-	args = append(args, "-i", filepath.Join(dir, fmt.Sprintf("v%d.mp4", rung)))
+	args = append(args, "-i", filepath.Join(dir, v+".mp4"))
 	order := make([]int, 0, len(p.audio))
 	for i, a := range p.audio {
 		if a.def {
@@ -346,23 +307,18 @@ func bandwidth(segs []media.Segment) (peak, avg int) {
 	return int(math.Ceil(top)), int(math.Ceil(bits / secs))
 }
 
-// avcCodec is the RFC 6381 codecs value of an encoded rendition.
-func avcCodec(ctx context.Context, path string) (codec string, w, h int, err error) {
+// renditionFrame is an encoded rendition's frame size.
+func renditionFrame(ctx context.Context, path string) (w, h int, err error) {
 	p, err := probe(ctx, path)
 	if err != nil {
-		return "", 0, 0, err
+		return 0, 0, err
 	}
 	for _, s := range p.Streams {
-		if s.CodecType != "video" || s.CodecName != "h264" {
-			continue
+		if s.CodecType == "video" {
+			return s.Width, s.Height, nil
 		}
-		profile := map[string]string{"High": "6400", "Main": "4d40", "Constrained Baseline": "42e0", "Baseline": "4200"}[s.Profile]
-		if profile == "" || s.Level <= 0 || s.Level > 255 {
-			return "", 0, 0, fmt.Errorf("%s: unsupported H.264 profile %q level %d", path, s.Profile, s.Level)
-		}
-		return fmt.Sprintf("avc1.%s%02x", profile, s.Level), s.Width, s.Height, nil
 	}
-	return "", 0, 0, fmt.Errorf("%s: no H.264 stream", path)
+	return 0, 0, fmt.Errorf("%s: no video stream", path)
 }
 
 // command runs a tool, killing it (SIGTERM, then SIGKILL) when ctx ends.

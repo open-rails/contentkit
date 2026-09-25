@@ -136,7 +136,7 @@ func newEnv(t *testing.T, store func(media.Store) media.Store, queue media.Proce
 	}
 	slots := queueFunc(func(_ context.Context, j media.ProcessJob) error { e.slotJobs = append(e.slotJobs, j); return nil })
 	if e.encoder, err = video.New(video.Config{Store: e.store, Locker: locker, TempDir: t.TempDir(), Threads: 2,
-		Encoder: video.EncoderX264, Slots: slots}); err != nil {
+		Encoder: video.EncoderCPU, Slots: slots}); err != nil {
 		t.Fatal(err)
 	}
 	e.ref = contentref.NewVersion(s3.Tenant, "video", cid(88), "v1")
@@ -342,20 +342,24 @@ func TestLadderFromMultiTrackSource(t *testing.T) {
 	m, _ := e.manifest(t)
 	f := m.Files[m.File("source")]
 	h := f.HLS
-	if h == nil || h.Source != source || h.Spec != video.Spec(media.Video{}) {
+	if h == nil || h.Source != source || h.Spec != e.encoder.Spec(media.Video{}) {
 		t.Fatalf("hls %+v", h)
 	}
-	var heights []int
+	// The 721-line source is below 1080 and not a rung: its own 720 rung and
+	// 480, each in HEVC and H.264, HEVC first.
+	var ladder []string
 	for _, r := range h.Video {
-		heights = append(heights, r.Rung)
-		if r.Height != r.Rung || r.Width%2 != 0 || !strings.HasPrefix(r.Codecs, "avc1.64") || r.Bandwidth < r.Average || r.Average <= 0 {
+		ladder = append(ladder, fmt.Sprintf("%d-%s", r.Rung, r.Codec))
+		prefix := map[media.Codec]string{media.CodecHEVC: "hvc1.1.6.L", media.CodecH264: "avc1.64"}[r.Codec]
+		if r.Height != r.Rung || r.Width%2 != 0 || !strings.HasPrefix(r.Codecs, prefix) || r.Bandwidth < r.Average || r.Average <= 0 {
 			t.Fatalf("rendition %+v", r)
 		}
 		checkByteRanges(t, e.blob(t, r.Blob), r.Segments, "video", 9)
 	}
-	if !slices.Equal(heights, []int{720, 480}) {
-		t.Fatalf("ladder %v, want [720 480] (capped at the 721-line source)", heights)
+	if !slices.Equal(ladder, []string{"720-hevc", "480-hevc", "720-h264", "480-h264"}) {
+		t.Fatalf("ladder %v", ladder)
 	}
+	heights := []int{720, 480}
 	if len(h.Audio) != 2 || h.Audio[0].Lang != "ja" || h.Audio[0].Label != "Japanese" || !h.Audio[0].Default ||
 		h.Audio[1].Lang != "en" || h.Audio[1].Label != "Commentary" || h.Audio[1].Default {
 		t.Fatalf("audio %+v", h.Audio)
@@ -382,7 +386,7 @@ func TestLadderFromMultiTrackSource(t *testing.T) {
 
 	for _, height := range heights {
 		d, ok := m.Downloads[video.DownloadKey("source", height)]
-		if !ok || d.Type != "video/mp4" || d.Spec != video.Spec(media.Video{}) || d.Inputs != source || d.Size <= 0 {
+		if !ok || d.Type != "video/mp4" || d.Spec != e.encoder.Spec(media.Video{}) || d.Inputs != source || d.Size <= 0 {
 			t.Fatalf("download %dp: %+v", height, d)
 		}
 		p := ffprobe(t, e.blob(t, d.Blob))
@@ -390,8 +394,8 @@ func TestLadderFromMultiTrackSource(t *testing.T) {
 			t.Fatalf("download %dp streams %+v", height, p)
 		}
 		for _, s := range p.Streams {
-			if s.CodecType == "video" && s.Height != height {
-				t.Fatalf("download %dp has height %d", height, s.Height)
+			if s.CodecType == "video" && (s.Height != height || s.CodecName != "h264") {
+				t.Fatalf("download %dp is %s at height %d", height, s.CodecName, s.Height)
 			}
 			if s.CodecType == "audio" && s.Disposition.Default == 1 && s.Tags["language"] != "jpn" {
 				t.Fatalf("download default audio %+v", s)
@@ -412,14 +416,16 @@ func TestKindLadder(t *testing.T) {
 		h := m.Files[0].HLS
 		var heights, downloads []int
 		for _, r := range h.Video {
-			heights = append(heights, r.Rung)
+			if r.Codec == media.CodecH264 {
+				heights = append(heights, r.Rung)
+			}
 		}
 		for _, height := range want {
-			if d, ok := m.Downloads[video.DownloadKey("source", height)]; ok && d.Spec == video.Spec(media.Video{Ladder: ladder}) {
+			if d, ok := m.Downloads[video.DownloadKey("source", height)]; ok && d.Spec == e.encoder.Spec(media.Video{Ladder: ladder}) {
 				downloads = append(downloads, height)
 			}
 		}
-		if h.Spec != video.Spec(media.Video{Ladder: ladder}) || !slices.Equal(heights, want) || !slices.Equal(downloads, want) || len(m.Downloads) != len(want) {
+		if h.Spec != e.encoder.Spec(media.Video{Ladder: ladder}) || len(h.Video) != 2*len(want) || !slices.Equal(heights, want) || !slices.Equal(downloads, want) || len(m.Downloads) != len(want) {
 			t.Fatalf("ladder %v: hls %v %s, downloads %v", ladder, heights, h.Spec, m.Downloads)
 		}
 	}

@@ -1,6 +1,7 @@
 package media
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -52,12 +53,22 @@ func PosterFrameSize(poster Slot, w, h int) Dims {
 	return Dims{W: w, H: h}
 }
 
-// FrameRendition is the rendition poster frames are grabbed from: the widest.
+// FrameRendition is the rendition poster frames are grabbed from: the
+// widest, H.264 when there is one (any ffmpeg decodes it).
 func FrameRendition(f File) (Rendition, bool) {
 	if f.HLS == nil || len(f.HLS.Video) == 0 {
 		return Rendition{}, false
 	}
-	return slices.MaxFunc(f.HLS.Video, func(a, b Rendition) int { return a.Width - b.Width }), true
+	return slices.MaxFunc(f.HLS.Video, func(a, b Rendition) int {
+		return cmp.Or(a.Width-b.Width, cmp.Compare(boolInt(a.Codec == CodecH264), boolInt(b.Codec == CodecH264)))
+	}), true
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func round3(v float64) float64 { return math.Round(v*1000) / 1000 }
