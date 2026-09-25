@@ -28,7 +28,7 @@ const unavailableCheck = 5 * time.Second
 // attempt); River's snooze count in job metadata is capped by
 // MaxOutageSnoozes. Other errors pass through.
 func SnoozeUnavailable(ctx context.Context, store Store, job *rivertype.JobRow, err error) error {
-	if !errors.Is(err, ErrUnavailable) || ctx.Err() != nil || snoozes(job) >= MaxOutageSnoozes {
+	if store == nil || !errors.Is(err, ErrUnavailable) || ctx.Err() != nil || snoozes(job) >= MaxOutageSnoozes {
 		return err
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, unavailableCheck)
