@@ -43,8 +43,8 @@ func hostRead(ctx context.Context, t *testing.T, pool *pgxpool.Pool) error {
 func TestIntegrationSyncOnSingleConnectionPool(t *testing.T) {
 	ctx, base, schema := workerFixture(t)
 	pool := singlePool(t, ctx, base)
-	for _, id := range []string{"1", "2"} {
-		if err := search.MarkDirty(ctx, pool, schema, []search.DirtyMark{{DocumentKey: search.DocumentKey{ContentRef: gallery(id), Language: "en"}, Deleted: id == "2"}}); err != nil {
+	for _, id := range []string{cid(1), cid(2)} {
+		if err := search.MarkDirty(ctx, pool, schema, []search.DirtyMark{{DocumentKey: search.DocumentKey{ContentRef: gallery(id), Language: "en"}, Deleted: id == cid(2)}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -52,10 +52,10 @@ func TestIntegrationSyncOnSingleConnectionPool(t *testing.T) {
 		if err := hostRead(ctx, t, pool); err != nil {
 			return nil, err
 		}
-		return titles(map[string]string{"1": "fresh", "3": "listed"})(ctx, tenant, kind, lang, refs)
+		return titles(map[string]string{cid(1): "fresh", cid(3): "listed"})(ctx, tenant, kind, lang, refs)
 	})
 	opts.ListContent = func(ctx context.Context, _, _, _, _ string, _ int) ([]contentref.ContentRef, string, bool, error) {
-		return []contentref.ContentRef{gallery("3")}, "3", true, hostRead(ctx, t, pool)
+		return []contentref.ContentRef{gallery(cid(3))}, "3", true, hostRead(ctx, t, pool)
 	}
 	sink := &poolSink{t: t, pool: pool}
 	opts.Sink = sink
@@ -69,7 +69,7 @@ func TestIntegrationSyncOnSingleConnectionPool(t *testing.T) {
 	if got := document(t, ctx, pool, schema); got != "fresh" {
 		t.Fatal(got)
 	}
-	if n := count(t, ctx, pool, schema, "content_search_documents", "content_id='3'"); n != 1 {
+	if n := count(t, ctx, pool, schema, "content_search_documents", "content_id='"+cid(3)+"'"); n != 1 {
 		t.Fatal("backfilled document missing")
 	}
 	if n := count(t, ctx, pool, schema, "content_search_dirty", "true"); n != 0 {
@@ -97,7 +97,7 @@ func TestIntegrationSyncBesideHostHeldConnection(t *testing.T) {
 		if err := pool.QueryRow(ctx, "SELECT 1").Scan(&one); err != nil {
 			return nil, fmt.Errorf("host read: %w", err)
 		}
-		return titles(map[string]string{"1": "fresh"})(ctx, tenant, kind, lang, refs)
+		return titles(map[string]string{cid(1): "fresh"})(ctx, tenant, kind, lang, refs)
 	})
 	tick, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
