@@ -7,15 +7,18 @@ package workqueue
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	riverhelpers "github.com/open-rails/helpers/river"
+	"github.com/open-rails/migratekit"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
@@ -30,11 +33,15 @@ import (
 // sharing a database must not share one, or one host's worker takes the
 // other's jobs. Queue names are fixed within a schema.
 const (
-	ImageQueue  = "media_image" // image variants, slots, inline images; placement of staged images
-	VideoQueue  = "media_video" // video encodes and subtitle sidecars; placement of staged videos
-	AudioQueue  = "media_audio" // audio file encodes (minutes, never behind hours of video); placement of staged audio
-	MaxAttempts = 5
+	ImageQueue       = "media_image"        // image variants, slots and inline images
+	VideoLightQueue  = "media_video_light"  // video probe, tracks and assembly
+	VideoEncodeQueue = "media_video_encode" // bounded video chunks
+	AudioQueue       = "media_audio"        // audio-only files
+	MaxAttempts      = 5
 )
+
+//go:embed migrations/*.sql
+var migrationFiles embed.FS
 
 var schemaName = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 
@@ -46,13 +53,32 @@ func ValidSchema(schema string) error {
 	return nil
 }
 
-// Migrate creates schema and applies River's migrations. Hosts run it in
-// their migrate step; the worker also runs it at start.
+// Migrate creates the worker schema and applies River and video-run migrations.
+// Hosts run it in their migrate step; the worker also runs it at start.
 func Migrate(ctx context.Context, pool *pgxpool.Pool, schema string) error {
 	if err := ValidSchema(schema); err != nil {
 		return err
 	}
-	return riverhelpers.ApplyMigrations(ctx, pool, schema)
+	if err := riverhelpers.ApplyMigrations(ctx, pool, schema); err != nil {
+		return err
+	}
+	scripts, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		return err
+	}
+	baseline, err := migratekit.Load(scripts, ".", migratekit.RequireParentLinks())
+	if err != nil {
+		return fmt.Errorf("media/workqueue: load migrations: %w", err)
+	}
+	migrator, err := migratekit.NewPostgresFromPGXPool(pool, "contentkit-media-worker")
+	if err != nil {
+		return err
+	}
+	defer migrator.Close()
+	if err := migrator.WithSchema(schema).ApplyMigrations(ctx, baseline); err != nil {
+		return fmt.Errorf("media/workqueue: migrate %s: %w", schema, err)
+	}
+	return nil
 }
 
 // jobs is the schema's river_job table.
@@ -70,12 +96,31 @@ func (ImageArgs) Kind() string { return "contentkit_media_image" }
 
 func (a ImageArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
 
-// VideoArgs encodes a manifest's video files.
-type VideoArgs struct {
-	Ref contentref.ContentRef `json:"ref"`
+// VideoPlanArgs plans a manifest's stale video files. Its River kind stays
+// stable so queued jobs from before the queue split can be moved and run.
+type VideoPlanArgs struct {
+	Ref   contentref.ContentRef `json:"ref"`
+	Class media.VideoJobClass   `json:"class,omitempty"`
 }
 
-func (VideoArgs) Kind() string { return "contentkit_media_video" }
+func (VideoPlanArgs) Kind() string { return "contentkit_media_video" }
+
+// VideoChunkArgs encodes one bounded range of a video run.
+type VideoChunkArgs struct {
+	Ref   contentref.ContentRef `json:"ref"`
+	RunID string                `json:"run_id"`
+	Index int                   `json:"index"`
+}
+
+func (VideoChunkArgs) Kind() string { return "contentkit_media_video_chunk" }
+
+// VideoAssembleArgs publishes a tier after its chunks finish.
+type VideoAssembleArgs struct {
+	Ref   contentref.ContentRef `json:"ref"`
+	RunID string                `json:"run_id"`
+}
+
+func (VideoAssembleArgs) Kind() string { return "contentkit_media_video_assemble" }
 
 // AudioArgs encodes a manifest's audio files (media.Audio kinds).
 type AudioArgs struct {
@@ -85,7 +130,7 @@ type AudioArgs struct {
 func (AudioArgs) Kind() string { return "contentkit_media_audio" }
 
 // EncodeKinds are the job kinds that report encode progress.
-var EncodeKinds = []string{VideoArgs{}.Kind(), AudioArgs{}.Kind()}
+var EncodeKinds = []string{VideoPlanArgs{}.Kind(), VideoChunkArgs{}.Kind(), VideoAssembleArgs{}.Kind(), AudioArgs{}.Kind()}
 
 // Queue is the host's insert-only client for the worker's jobs; it is the
 // uploads' media.ProcessQueue.
@@ -132,6 +177,9 @@ func (q *Queue) EnqueueTx(ctx context.Context, tx pgx.Tx, job media.ProcessJob) 
 }
 
 func (q *Queue) enqueue(ctx context.Context, insert media.InsertFunc, job media.ProcessJob) error {
+	if job.Class != "" && job.Class != media.VideoReencode && job.Class != media.VideoBackfill {
+		return fmt.Errorf("media/workqueue: invalid video job class %q", job.Class)
+	}
 	item, err := q.kinds.Item(job.Ref)
 	if err != nil {
 		return err
@@ -153,7 +201,7 @@ func (q *Queue) enqueue(ctx context.Context, insert media.InsertFunc, job media.
 	// drop the job for a source replaced mid-encode. Duplicates serialize on
 	// the worker's per-manifest lock and are no-ops once the manifest is fresh.
 	if k.Video != nil {
-		if _, err := insert(ctx, VideoArgs{Ref: job.Ref}, VideoInsertOpts()); err != nil {
+		if _, err := insert(ctx, VideoPlanArgs{Ref: job.Ref, Class: job.Class}, VideoPlanInsertOpts(job.Class)); err != nil {
 			return err
 		}
 	}
@@ -170,9 +218,16 @@ func AudioInsertOpts() *river.InsertOpts {
 	return &river.InsertOpts{Queue: AudioQueue, MaxAttempts: MaxAttempts}
 }
 
-// VideoInsertOpts are a video job's insert options.
-func VideoInsertOpts() *river.InsertOpts {
-	return &river.InsertOpts{Queue: VideoQueue, MaxAttempts: MaxAttempts}
+// VideoPlanInsertOpts are a video plan's insert options.
+func VideoPlanInsertOpts(class media.VideoJobClass) *river.InsertOpts {
+	priority := 1
+	switch class {
+	case media.VideoReencode:
+		priority = 3
+	case media.VideoBackfill:
+		priority = 4
+	}
+	return &river.InsertOpts{Queue: VideoLightQueue, Priority: priority, MaxAttempts: MaxAttempts}
 }
 
 // Cancel cancels ref's queued and running image and video jobs, every stage:

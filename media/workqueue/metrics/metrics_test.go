@@ -35,8 +35,8 @@ func TestCollector(t *testing.T) {
 	ref := func(tenant, kind string) contentref.ContentRef {
 		return contentref.New(tenant, kind, contentref.NewID())
 	}
-	aged, err := client.Insert(ctx, workqueue.VideoArgs{Ref: ref("tenant-a", "video")},
-		&river.InsertOpts{Queue: workqueue.VideoQueue, Priority: 1})
+	aged, err := client.Insert(ctx, workqueue.VideoPlanArgs{Ref: ref("tenant-a", "video")},
+		&river.InsertOpts{Queue: workqueue.VideoLightQueue, Priority: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,8 +44,8 @@ func TestCollector(t *testing.T) {
 		args river.JobArgs
 		opts river.InsertOpts
 	}{
-		{workqueue.VideoArgs{Ref: ref("tenant-a", "video")}, river.InsertOpts{Queue: workqueue.VideoQueue, Priority: 2}},
-		{workqueue.VideoArgs{Ref: ref("tenant-b", "video")}, river.InsertOpts{Queue: workqueue.VideoQueue, Priority: 1, Pending: true}},
+		{workqueue.VideoPlanArgs{Ref: ref("tenant-a", "video")}, river.InsertOpts{Queue: workqueue.VideoLightQueue, Priority: 2}},
+		{workqueue.VideoPlanArgs{Ref: ref("tenant-b", "video")}, river.InsertOpts{Queue: workqueue.VideoLightQueue, Priority: 1, Pending: true}},
 		{workqueue.ImageArgs{Ref: ref("tenant-b", "gallery")}, river.InsertOpts{Queue: workqueue.ImageQueue, Priority: 1}},
 		{workqueue.AudioArgs{Ref: ref("tenant-c", "audio")}, river.InsertOpts{Queue: workqueue.AudioQueue, Priority: 4}},
 	} {
@@ -74,12 +74,12 @@ func TestCollector(t *testing.T) {
 	}
 	for _, metric := range []string{
 		"media_video_queue_collection_success 1",
-		`media_video_jobs{priority="1",queue="media_video",state="available"} 1`,
-		`media_video_jobs{priority="2",queue="media_video",state="available"} 1`,
-		`media_video_jobs{priority="1",queue="media_video",state="pending"} 1`,
+		`media_video_jobs{priority="1",queue="media_video_light",state="available"} 1`,
+		`media_video_jobs{priority="2",queue="media_video_light",state="available"} 1`,
+		`media_video_jobs{priority="1",queue="media_video_light",state="pending"} 1`,
 		`media_video_jobs{priority="1",queue="media_image",state="available"} 1`,
 		`media_video_jobs{priority="4",queue="media_audio",state="available"} 1`,
-		`media_video_high_attempt_jobs{priority="1",queue="media_video",state="available"} 1`,
+		`media_video_high_attempt_jobs{priority="1",queue="media_video_light",state="available"} 1`,
 		`media_video_tenant_backlog{tenant="tenant-a"} 2`,
 		`media_video_tenant_backlog{tenant="tenant-b"} 1`,
 	} {
@@ -87,7 +87,7 @@ func TestCollector(t *testing.T) {
 			t.Errorf("missing %q in metrics", metric)
 		}
 	}
-	oldest := regexp.MustCompile(`media_video_oldest_available_seconds\{priority="1",queue="media_video"\} ([0-9.]+)`).FindStringSubmatch(rec.Body.String())
+	oldest := regexp.MustCompile(`media_video_oldest_available_seconds\{priority="1",queue="media_video_light"\} ([0-9.]+)`).FindStringSubmatch(rec.Body.String())
 	if len(oldest) != 2 {
 		t.Fatal("missing oldest video job age")
 	}

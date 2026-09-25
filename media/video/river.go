@@ -18,7 +18,7 @@ import (
 )
 
 // WorkerConfig configures the River side of the media worker's video and
-// audio jobs (workqueue.VideoArgs on workqueue.VideoQueue, workqueue.AudioArgs
+// audio jobs (workqueue.VideoPlanArgs on workqueue.VideoLightQueue, workqueue.AudioArgs
 // on workqueue.AudioQueue, so audio never waits behind hours of video).
 type WorkerConfig struct {
 	Encoder *Encoder
@@ -53,12 +53,12 @@ func Contribution(c WorkerConfig) (riverhelpers.Contribution, error) {
 		if cfg.JobTimeout < c.Timeout {
 			return fmt.Errorf("media/video: client JobTimeout %s is below the video timeout %s", cfg.JobTimeout, c.Timeout)
 		}
-		for _, q := range []string{workqueue.VideoQueue, workqueue.AudioQueue} {
+		for _, q := range []string{workqueue.VideoLightQueue, workqueue.AudioQueue} {
 			if _, ok := cfg.Queues[q]; ok {
 				return fmt.Errorf("media/video: queue %q already registered", q)
 			}
 		}
-		cfg.Queues[workqueue.VideoQueue] = river.QueueConfig{MaxWorkers: c.MaxWorkers}
+		cfg.Queues[workqueue.VideoLightQueue] = river.QueueConfig{MaxWorkers: c.MaxWorkers}
 		cfg.Queues[workqueue.AudioQueue] = river.QueueConfig{MaxWorkers: c.AudioWorkers}
 		if err := river.AddWorkerSafely(cfg.Workers, &worker{c: c}); err != nil {
 			return err
@@ -90,17 +90,17 @@ func ClientConfig(c WorkerConfig) *river.Config {
 }
 
 type worker struct {
-	river.WorkerDefaults[workqueue.VideoArgs]
+	river.WorkerDefaults[workqueue.VideoPlanArgs]
 	c WorkerConfig
 }
 
-func (w *worker) Timeout(*river.Job[workqueue.VideoArgs]) time.Duration { return w.c.Timeout }
+func (w *worker) Timeout(*river.Job[workqueue.VideoPlanArgs]) time.Duration { return w.c.Timeout }
 
 // Work runs one encode stage under a per-manifest lock; a duplicate job for
 // a manifest being encoded waits by snoozing. A file left with a second
 // stage gets a follow-up job at a lower priority, inserted after the lock is
 // released, so other uploads' first stages run before it.
-func (w *worker) Work(ctx context.Context, job *river.Job[workqueue.VideoArgs]) (err error) {
+func (w *worker) Work(ctx context.Context, job *river.Job[workqueue.VideoPlanArgs]) (err error) {
 	item, err := w.c.Kinds.Item(job.Args.Ref)
 	if err == nil && item.Kind().Video == nil {
 		err = fmt.Errorf("media/video: kind %q has no video", item.Kind().Name)
@@ -111,7 +111,7 @@ func (w *worker) Work(ctx context.Context, job *river.Job[workqueue.VideoArgs]) 
 	var more bool
 	defer func() {
 		if err == nil && more {
-			o := workqueue.VideoInsertOpts()
+			o := workqueue.VideoPlanInsertOpts(job.Args.Class)
 			o.Priority = 2
 			_, err = river.ClientFromContext[pgx.Tx](ctx).Insert(ctx, job.Args, o)
 		}

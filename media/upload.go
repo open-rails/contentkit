@@ -48,9 +48,19 @@ type UploadGrant struct {
 // ProcessJob asks for derivatives after a commit: the item's manifest, or one
 // public slot when Slot is set.
 type ProcessJob struct {
-	Ref  contentref.ContentRef
-	Slot string
+	Ref   contentref.ContentRef
+	Slot  string
+	Class VideoJobClass
 }
+
+// VideoJobClass selects the priority of a new video run. An empty class is
+// an upload; re-encodes and backfills yield to new playable videos.
+type VideoJobClass string
+
+const (
+	VideoReencode VideoJobClass = "reencode"
+	VideoBackfill VideoJobClass = "backfill"
+)
 
 // ProcessQueue enqueues processing in the media worker (workqueue.Queue).
 type ProcessQueue interface {

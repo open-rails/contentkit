@@ -513,7 +513,7 @@ func TestProcessOnUploadAttachAndDiscard(t *testing.T) {
 	eventually(t, "the encode cancelled", 30*time.Second, func() bool {
 		var n int
 		err := h.pool.QueryRow(ctx, "SELECT count(*) FROM "+h.workers+".river_job WHERE kind = $1 AND args @> $2 AND state = 'cancelled'",
-			(workqueue.VideoArgs{}).Kind(), match).Scan(&n)
+			(workqueue.VideoPlanArgs{}).Kind(), match).Scan(&n)
 		return err == nil && n > 0
 	})
 	item, _ := h.kinds.Item(clip)

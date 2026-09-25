@@ -27,7 +27,7 @@ func TestMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job := &rivertype.JobRow{Queue: workqueue.VideoQueue, Attempt: 3}
+	job := &rivertype.JobRow{Queue: workqueue.VideoLightQueue, Attempt: 3}
 	for _, result := range []error{nil, river.JobSnooze(time.Minute), river.JobCancel(errors.New("cancelled")), errors.New("failed")} {
 		if got := metrics.Work(context.Background(), job, func(context.Context) error { return result }); got != result {
 			t.Fatalf("Work changed the job result: %v", got)
@@ -57,10 +57,10 @@ func TestMetrics(t *testing.T) {
 		t.Fatalf("metrics status = %d: %s", rec.Code, rec.Body.String())
 	}
 	for _, metric := range []string{
-		`media_video_attempt_bucket{outcome="success",queue="media_video",le="3"} 1`,
-		`media_video_attempt_count{outcome="snoozed",queue="media_video"} 1`,
-		`media_video_attempt_count{outcome="cancelled",queue="media_video"} 2`,
-		`media_video_attempt_count{outcome="error",queue="media_video"} 2`,
+		`media_video_attempt_bucket{outcome="success",queue="media_video_light",le="3"} 1`,
+		`media_video_attempt_count{outcome="snoozed",queue="media_video_light"} 1`,
+		`media_video_attempt_count{outcome="cancelled",queue="media_video_light"} 2`,
+		`media_video_attempt_count{outcome="error",queue="media_video_light"} 2`,
 		`media_video_encode_cpu_seconds_total{class="hd",outcome="success"} 1.25`,
 		`media_video_encode_cpu_seconds_total{class="hd",outcome="error"} 0.5`,
 		`media_video_encoded_output_seconds_total{class="hd"} 2`,
@@ -107,7 +107,7 @@ func TestMetricsRemoteCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: schema, Workers: workers,
-		Queues:     map[string]river.QueueConfig{workqueue.VideoQueue: {MaxWorkers: 1}},
+		Queues:     map[string]river.QueueConfig{workqueue.VideoLightQueue: {MaxWorkers: 1}},
 		Middleware: []rivertype.Middleware{metrics}, FetchPollInterval: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestMetricsRemoteCancellation(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	inserted, err := client.Insert(ctx, blockingArgs{}, &river.InsertOpts{Queue: workqueue.VideoQueue})
+	inserted, err := client.Insert(ctx, blockingArgs{}, &river.InsertOpts{Queue: workqueue.VideoLightQueue})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestMetricsRemoteCancellation(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	promhttp.HandlerFor(registry, promhttp.HandlerOpts{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	if !strings.Contains(rec.Body.String(), `media_video_attempt_count{outcome="cancelled",queue="media_video"} 1`) {
+	if !strings.Contains(rec.Body.String(), `media_video_attempt_count{outcome="cancelled",queue="media_video_light"} 1`) {
 		t.Fatalf("remote cancellation was not counted as cancelled: %s", rec.Body.String())
 	}
 }

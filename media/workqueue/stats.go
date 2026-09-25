@@ -30,7 +30,7 @@ SELECT queue, state::text, priority, count(*), count(*) FILTER (WHERE attempt >=
   coalesce(greatest(0, extract(epoch FROM now() - min(scheduled_at)
     FILTER (WHERE state = 'available' AND scheduled_at <= now()))), 0)::float8
 FROM `+jobs(schema)+`
-WHERE queue IN ('media_image', 'media_video', 'media_audio')
+WHERE queue IN ('media_image', 'media_video_light', 'media_video_encode', 'media_audio')
   AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
 GROUP BY queue, state, priority`,
 	)
@@ -63,7 +63,7 @@ func TenantBacklog(ctx context.Context, pool *pgxpool.Pool, schema string) (map[
 	rows, err := pool.Query(ctx, `
 SELECT args->'ref'->>'tenant_id', count(*)
 FROM `+jobs(schema)+`
-WHERE queue = 'media_video'
+WHERE queue IN ('media_video_light', 'media_video_encode')
   AND state IN ('available', 'pending', 'retryable', 'scheduled')
   AND nullif(args->'ref'->>'tenant_id', '') IS NOT NULL
 GROUP BY 1`)
