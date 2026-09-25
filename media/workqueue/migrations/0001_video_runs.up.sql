@@ -11,6 +11,7 @@ CREATE TABLE encode_run (
     rung integer NOT NULL CHECK (rung > 0),
     class text NOT NULL,
     probe jsonb NOT NULL,
+    passthrough_codec text NOT NULL DEFAULT '' CHECK (passthrough_codec IN ('', 'h264', 'hevc')),
     state text NOT NULL DEFAULT 'planned' CHECK (state IN ('planned', 'encoding', 'assembling', 'complete', 'cancelled')),
     released integer NOT NULL DEFAULT 0,
     completed integer NOT NULL DEFAULT 0,
@@ -42,4 +43,10 @@ CREATE INDEX encode_chunk_pending_idx ON encode_chunk (run_id, ordinal)
 -- arguments and run on the new light queue after the worker is upgraded.
 UPDATE river_job SET queue = 'media_video_light'
 WHERE queue = 'media_video' AND kind = 'contentkit_media_video'
+  AND state IN ('available', 'scheduled', 'retryable', 'pending', 'running');
+
+-- Existing plan jobs used River's five-attempt ceiling. River rescues hard-killed
+-- jobs before Work can restore that count; the worker tracks actual failures.
+UPDATE river_job SET max_attempts = 32767
+WHERE kind = 'contentkit_media_video' AND max_attempts < 32767
   AND state IN ('available', 'scheduled', 'retryable', 'pending', 'running');
