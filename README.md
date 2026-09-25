@@ -392,8 +392,8 @@ The bucket needs CORS allowing `PUT` from the app origins with the
 manifest file: H.264 High with a capped CRF per rung (live action: 2160 CRF 23
 at most 32 Mbit/s, 1440 23/18M, 1080 23/12M, 720 22/7M, 480 21/3M; VBV
 buffer 2× the cap; `Video.Profile: media.VideoAnimation` adds `-tune animation`
-at CRF 20–21 and lower caps), keyframes every 2 s without scene cuts, 4 s
-segments, at the kind's ladder (`Kind.Video = &media.Video{Ladder: []int{1080, 720, 480}}`;
+at CRF 20–21 and lower caps), an IDR every 4 s without scene cuts (one per
+4 s segment), at the kind's ladder (`Kind.Video = &media.Video{Ladder: []int{1080, 720, 480}}`;
 default `media.DefaultLadder`, 2160/1440/1080/720/480), AAC per audio track,
 WebVTT per text subtitle and a 10×10 sprite whose tiles keep the source
 aspect (short side 90). A rung N is the output's **short side** (a 1080 rung
@@ -429,7 +429,7 @@ frames at the same times, so players switch between their rungs seamlessly;
 progress reports `stage`/`stages`. **Passthrough:** when the source already
 is a compliant top rung (MP4/MOV constant-rate 8-bit 4:2:0 progressive
 H.264 High/Main ≤ level 5.2, unrotated, at the rung's exact frame, within its
-bitrate cap, with an IDR on each 2 s keyframe time) that rung is stream-copied
+bitrate cap, with an IDR starting each 4 s segment) that rung is stream-copied
 and checked against a sibling rung's segments; otherwise it is encoded.
 `Config.Encoder` picks libx264 (default without a GPU) or NVENC (`auto` uses
 it when a probe encode works; a file it fails on re-encodes with x264).

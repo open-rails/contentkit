@@ -55,8 +55,8 @@ func keyframes(t *testing.T, path string) []int {
 
 // A ladder with rungs above stageOneMax publishes the lower rungs first
 // (playable, the rest pending), then adds the others in one edit. Every
-// rung has keyframes at the same 2 s times and the same segments, so a
-// player switches between the stages' rungs seamlessly.
+// rung has keyframes at the same times (one per 4 s segment) and the same
+// segments, so a player switches between the stages' rungs seamlessly.
 func TestTwoStagePublish(t *testing.T) {
 	defer video.SetStageOneMax(480)()
 	e := newEnv(t, nil, nil)
@@ -113,14 +113,14 @@ func TestTwoStagePublish(t *testing.T) {
 		paths = append(paths, e.blob(t, r.Blob))
 		checkByteRanges(t, paths[len(paths)-1], r.Segments, "video", 13)
 	}
-	// Keyframes every 2 s (the first may carry the B-frame delay), the same in both rungs.
+	// Keyframes every 4 s (the first may carry the B-frame delay), the same in both rungs.
 	a, b := keyframes(t, paths[0]), keyframes(t, paths[1])
-	if !slices.Equal(a, b) || len(a) != 7 {
+	if !slices.Equal(a, b) || len(a) != 4 {
 		t.Fatalf("keyframes %v and %v", a, b)
 	}
 	for j := 2; j < len(a); j++ {
-		if a[j]-a[j-1] != 2000 {
-			t.Fatalf("keyframes %v are not every 2 s", a)
+		if a[j]-a[j-1] != 4000 {
+			t.Fatalf("keyframes %v are not every 4 s", a)
 		}
 	}
 	for j, s := range h.Video[0].Segments {
@@ -247,7 +247,7 @@ func TestPassthroughTopRung(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "source.mp4")
 	if b, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=9", "-f", "lavfi", "-i", "sine=duration=9",
 		"-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p",
-		"-force_key_frames", "expr:gte(t,n_forced*2)", "-sc_threshold", "0", "-c:a", "aac", "-y", src).CombinedOutput(); err != nil {
+		"-force_key_frames", "expr:gte(t,n_forced*4)", "-sc_threshold", "0", "-c:a", "aac", "-y", src).CombinedOutput(); err != nil {
 		t.Fatalf("fixture: %v: %s", err, b)
 	}
 	e.commit(t, src, media.OpInsert)
