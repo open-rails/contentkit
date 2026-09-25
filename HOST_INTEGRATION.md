@@ -471,6 +471,11 @@ queue and job kinds) and fail them against its own registry and bucket. Queue
 names (`media_image`, `media_video`) are fixed within a schema. Autoscalers
 (KEDA) count `{schema}.river_job`.
 
+It is never the host's own River schema either: River elects one leader per
+schema, and only the leader enqueues periodic jobs and runs maintenance, from
+its own client's config. A media worker leading the host's schema would stop
+the host's periodic jobs. The worker migrates its schema itself.
+
 ## Production media delivery
 
 - **Media host**: serve `cmd/media-access` at `media.<site domain>` (same
