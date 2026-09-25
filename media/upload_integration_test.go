@@ -595,7 +595,7 @@ func TestMultipartResumeAfterKilledPart(t *testing.T) {
 	if status != 200 || c.Files[0].Size != int64(len(body)) || c.Files[0].Type != "video/mp4" {
 		t.Fatalf("commit %d %+v %+v", status, c, er)
 	}
-	stagedKey := e.Tenant + "/video/"+cid(88)+"/staging/" + p.Name
+	stagedKey := e.Tenant + "/video/" + cid(88) + "/staging/" + p.Name
 	rc, staged, err := e.Store.Get(ctx, stagedKey, media.GetOptions{})
 	if err != nil {
 		t.Fatal(err)

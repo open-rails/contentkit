@@ -3,11 +3,10 @@ package contentref
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // ErrInvalidID is a content id that is not a canonical UUIDv7.
@@ -40,8 +39,7 @@ func ValidateID(id string) error {
 			}
 		}
 	}
-	u := uuid.MustParse(id)
-	if u.Version() != 7 || u.Variant() != uuid.RFC4122 {
+	if id[14] != '7' || (id[19] != '8' && id[19] != '9' && id[19] != 'a' && id[19] != 'b') {
 		return &IDError{ID: id}
 	}
 	return nil
@@ -54,15 +52,15 @@ func NewID() string { return IDAt(time.Now()) }
 // remaining 74 bits are random. Backfills derive ids from each legacy row's
 // created_at so the new ids keep the legacy order.
 func IDAt(t time.Time) string {
-	var u uuid.UUID
+	var u [16]byte
 	if _, err := rand.Read(u[6:]); err != nil {
 		panic(err)
 	}
-	ms := uint64(t.UnixMilli())
 	var ts [8]byte
-	binary.BigEndian.PutUint64(ts[:], ms<<16)
+	binary.BigEndian.PutUint64(ts[:], uint64(t.UnixMilli())<<16)
 	copy(u[:6], ts[:6])
 	u[6] = 0x70 | u[6]&0x0f
 	u[8] = 0x80 | u[8]&0x3f
-	return u.String()
+	h := hex.EncodeToString(u[:])
+	return h[:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:]
 }

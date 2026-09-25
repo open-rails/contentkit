@@ -86,7 +86,7 @@ func TestItemKeys(t *testing.T) {
 		contentref.New("d", "post", cid(1)).WithVersion("v1"),
 		contentref.New("d", "post", "é"),
 		contentref.New("d", "post", "1"),
-		contentref.New("d", "post", strings.ToUpper(cid(1))),
+		contentref.New("d", "post", "0192ABCD-0000-7000-8000-000000000001"),
 	} {
 		if _, err := r.Item(bad); err == nil {
 			t.Errorf("accepted %s", bad)
