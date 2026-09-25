@@ -7,20 +7,13 @@ import (
 	"io"
 	"math"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
-	"strings"
 
 	"github.com/open-rails/contentkit/media"
 )
 
-// PreviewRecipe is the hover preview's identity; a result under another is re-rendered.
-const PreviewRecipe = "hls-top|fps12|webp_anim-q70-loop|h264-high-crf28-slow-faststart|v1"
-
-const previewFPS = 12
-
-// Posters and previews are cut from an HLS rendition, not the source: the
+// Posters are cut from an HLS rendition, not the source: the
 // init segment plus the segments covering the section are one small local
 // fMP4, so nothing downloads the source and ffmpeg reads only our own output.
 var ownMP4 = inputOptions([]string{"mov"})
@@ -137,33 +130,6 @@ const minDetail = 12
 // clampTime keeps t off the container's end, past the last frame's start.
 func clampTime(t, duration float64) float64 {
 	return math.Round(math.Min(math.Max(0, t), math.Max(0, duration-0.25))*1000) / 1000
-}
-
-// renderPreview cuts [offset, offset+length) from input, crops the centred
-// 16:9 and encodes a silent looping animated WebP and H.264 MP4 per size.
-func renderPreview(ctx context.Context, input string, offset, length float64, sizes []media.Dims, dir string, threads int) (webp, mp4 []string, err error) {
-	var fc strings.Builder
-	fmt.Fprintf(&fc, "[0:v:0]fps=%d,crop='trunc(min(iw,ih*16/9)/2)*2':'trunc(min(ih,iw*9/16)/2)*2',setsar=1,split=%d", previewFPS, len(sizes))
-	for i := range sizes {
-		fmt.Fprintf(&fc, "[c%d]", i)
-	}
-	t := strconv.Itoa(threads)
-	var out []string
-	for i, s := range sizes {
-		fmt.Fprintf(&fc, ";[c%d]scale=%d:%d:flags=lanczos,format=yuv420p,split[w%d][m%d]", i, s.W, s.H, i, i)
-		w, m := filepath.Join(dir, fmt.Sprintf("p%d.webp", s.W)), filepath.Join(dir, fmt.Sprintf("p%d.mp4", s.W))
-		out = append(out,
-			"-map", fmt.Sprintf("[w%d]", i), "-an", "-c:v", "libwebp_anim", "-loop", "0", "-quality", "70", "-compression_level", "4",
-			"-map_metadata", "-1", "-fflags", "+bitexact", "-f", "webp", "-y", w,
-			"-map", fmt.Sprintf("[m%d]", i), "-an", "-c:v", "libx264", "-profile:v", "high", "-preset", "slow", "-crf", "28",
-			"-pix_fmt", "yuv420p", "-threads", t, "-map_metadata", "-1", "-movflags", "+faststart", "-fflags", "+bitexact",
-			"-flags:v", "+bitexact", "-f", "mp4", "-y", m)
-		webp, mp4 = append(webp, w), append(mp4, m)
-	}
-	args := append(ffmpegIn(threads, "-ss", seek(offset), "-t", seek(length), "-i", input),
-		"-filter_complex_threads", t, "-filter_complex", fc.String())
-	_, err = command(ctx, "ffmpeg", append(args, out...)...)
-	return webp, mp4, err
 }
 
 // frameJPEG decodes the frame at offset into input as a JPEG width px wide.

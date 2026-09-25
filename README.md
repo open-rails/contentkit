@@ -50,7 +50,7 @@ another tenant is an error, never remapped.
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
 | `media/image` | libvips (CGO) processor: WebP variants, public slots, zip downloads |
 | `media/token` | media access tokens, shared by hosts and the access worker |
-| `media/video` | ffmpeg encode: byte-range fMP4 HLS ladder, AAC per audio track, WebVTT per text subtitle, sprite, per-quality MP4 downloads, poster frames and hover previews; `Frames` for the poster picker |
+| `media/video` | ffmpeg encode: byte-range fMP4 HLS ladder, AAC per audio track, WebVTT per text subtitle, sprite, per-quality MP4 downloads, poster frames; `Frames` for the poster picker |
 | `media/worker` | the media worker: one process for placement, images and video, built by the host from its media config (`cmd/media-worker` is the stock build) |
 | `media/workqueue` | the host's side of the worker: River schema `media_worker`, insert-only `Queue` (enqueue, cancel), encode progress |
 | `media/tiered` | optional `public`/`members`/`ppv`/`members_ppv`/`premium` policy over an entitlement `Checker` (hosts adapt OpenRails `CheckEntitlements`) |
@@ -179,8 +179,8 @@ One private bucket; each item owns a folder the library keys:
                     /originals/{sha256-hex | slot | slot.json | i-uuid}            never served
                     /staging/u-{uuid}                                              multipart uploads until placed; never served
                     /blobs/sha256-{hex}                                            immutable derivatives (viewer token)
-                    /editor/{sha256-hex | poster_w.webp | hover_preview_w.mp4}     editor-only (editor token)
-                    /public/{slot_width | i-uuid}.webp | hover_preview_w.mp4       slots, inline images, published video images (rewritten in place)
+                    /editor/{sha256-hex | poster_w.webp}                           editor-only (editor token)
+                    /public/{slot_width | i-uuid}.webp                             slots, inline images, published posters (rewritten in place)
 ```
 
 Host wiring (one tenant; errors elided):
@@ -237,8 +237,8 @@ live on another site than the media), so other sites cannot embed it with
 
 **The media worker** (`media/worker`) is the one process that does media
 work: it hashes and places staged uploads, derives image variants, zips, slot
-outputs and inline images (libvips) and encodes video, posters and hover
-previews (ffmpeg), from River schema `media_worker` (`media/workqueue`) in the
+outputs and inline images (libvips) and encodes video and poster frames
+(ffmpeg), from River schema `media_worker` (`media/workqueue`) in the
 host database. The host presigns, commits, publishes and reads, and links only
 `media/workqueue` (no libvips, no ffmpeg). The worker must apply the host's
 exact kinds and policy, so the host builds it from the same code that builds
@@ -255,7 +255,7 @@ _ = w.Run(ctx) // until SIGTERM; running jobs get MEDIA_WORKER_SHUTDOWN_GRACE
 `cmd/media-worker` (image `ghcr.io/open-rails/contentkit-media-worker`) is
 the stock build for hosts whose kinds are plain data: it reads them from
 `MEDIA_KINDS_FILE` (a JSON array of `media.Kind`). The worker hands a video
-item's poster and hover-preview publish, and folder sweeps after its edits,
+item's poster publish, and folder sweeps after its edits,
 back to the host's River schema (`MEDIA_HOST_RIVER_SCHEMA`), where
 `jobs.RiverJobs()` runs them with the host's `Resolver`.
 
@@ -444,9 +444,9 @@ unique, and a job for a fresh manifest is a no-op; `workqueue.Queue.Cancel`
 cancels an item's queued and running jobs of both stages.
 
 After each encode the job grabs the item's **poster** frame (the `poster`
-slot; the image job encodes it) and renders its **hover preview** (silent MP4
-and animated WebP loops) from their selections; see HOST_INTEGRATION "Video
-posters and hover previews".
+slot; the image job encodes it) from its selection. There is no preview clip:
+the SDK previews the HLS itself inline; see HOST_INTEGRATION "Video posters
+and inline previews".
 
 **Encode progress**: with `ReaderOptions.Progress: workqueue.NewProgressSource(pool)`
 the read API adds `progress` to each visible video file still pending (none
@@ -499,7 +499,7 @@ Media's River jobs (`jobs.RiverJobs()`) compose into the host client through
   manifest in the folder references, only once every manifest and the object
   itself are older than `Grace` (24 h; plus 1 day for staged multipart
   objects, which may be dated at initiation). Also unreferenced `editor/` blobs. Slot originals,
-  slot and hover-preview outputs and manifests are never swept.
+  slot outputs and manifests are never swept.
   Invariant: it deletes only objects no manifest references and no in-flight
   commit can newly reference. Presign reuses an existing original, and a
   commit accepts one, only while a manifest references it or it is well

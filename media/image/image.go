@@ -81,9 +81,6 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 	if err != nil {
 		return err
 	}
-	if job.Slot == media.HoverPreview && item.Kind().Video != nil {
-		return nil // a rendered hover preview: only media.Jobs publishes it
-	}
 	if job.Slot != "" {
 		return p.slot(ctx, item, job.Slot)
 	}

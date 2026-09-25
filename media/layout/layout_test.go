@@ -13,16 +13,14 @@ func TestParse(t *testing.T) {
 	blob := layout.SHA256Prefix + hex.EncodeToString(sum[:])
 	const staged = "u-0190f3b2-7c1e-7a3d-9e4f-0123456789ab"
 	for key, want := range map[string]layout.Key{
-		"d/gallery/1/manifest.json":              {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaManifest},
-		"d/gallery/1/manifests/v2.json":          {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaManifest, Name: "v2"},
-		"d/gallery/1/blobs/" + blob:              {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaBlobs, Name: blob},
-		"d/gallery/1/originals/cover":            {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaOriginals, Name: "cover"},
-		"o/user/42/public/avatar_80.webp":        {Tenant: "o", Kind: "user", ID: "42", Area: layout.AreaPublic, Name: "avatar_80"},
-		"h/video/9/public/hover_preview_320.mp4": {Tenant: "h", Kind: "video", ID: "9", Area: layout.AreaPublic, Name: "hover_preview_320"},
-		"h/video/9/editor/hover_preview_320.mp4": {Tenant: "h", Kind: "video", ID: "9", Area: layout.AreaEditor, Name: "hover_preview_320"},
-		"h/video/9/editor/poster_480.webp":       {Tenant: "h", Kind: "video", ID: "9", Area: layout.AreaEditor, Name: "poster_480"},
-		"d/gallery/1/editor/" + blob:             {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaEditor, Name: blob},
-		"d/gallery/1/staging/" + staged:          {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaStaging, Name: staged},
+		"d/gallery/1/manifest.json":        {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaManifest},
+		"d/gallery/1/manifests/v2.json":    {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaManifest, Name: "v2"},
+		"d/gallery/1/blobs/" + blob:        {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaBlobs, Name: blob},
+		"d/gallery/1/originals/cover":      {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaOriginals, Name: "cover"},
+		"o/user/42/public/avatar_80.webp":  {Tenant: "o", Kind: "user", ID: "42", Area: layout.AreaPublic, Name: "avatar_80"},
+		"h/video/9/editor/poster_480.webp": {Tenant: "h", Kind: "video", ID: "9", Area: layout.AreaEditor, Name: "poster_480"},
+		"d/gallery/1/editor/" + blob:       {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaEditor, Name: blob},
+		"d/gallery/1/staging/" + staged:    {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaStaging, Name: staged},
 	} {
 		got, ok := layout.Parse(key)
 		if !ok || got != want {

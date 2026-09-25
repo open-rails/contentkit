@@ -5,8 +5,8 @@
 //	                            /originals/{sha256-hex | slot | slot.json | i-uuid}
 //	                            /staging/{u-uuid}                               multipart uploads until placed; never served
 //	                            /blobs/{sha256-hex | u-uuid}                    viewer token
-//	                            /editor/{sha256-hex | name.webp | name.mp4}     editor token
-//	                            /public/{name}.webp | {name}.mp4 (hover previews)
+//	                            /editor/{sha256-hex | name.webp}                editor token
+//	                            /public/{name}.webp
 package layout
 
 import (
@@ -21,7 +21,7 @@ const (
 	AreaBlobs     = "blobs"
 	AreaPublic    = "public"
 	// AreaEditor holds what only editors may fetch: EditorOnly variant blobs
-	// and video posters and hover previews before they are published.
+	// and video posters before they are published.
 	AreaEditor = "editor"
 	// AreaStaging holds multipart uploads (u-{uuid}) until the media worker
 	// hashes them and places them in originals/ under their SHA-256.
@@ -33,7 +33,6 @@ const (
 	UploadPrefix = "u-"
 	InlinePrefix = "i-"
 	PublicExt    = ".webp"
-	PublicMP4Ext = ".mp4" // hover previews
 )
 
 // Key is a parsed object key.
@@ -71,9 +70,6 @@ func Parse(key string) (Key, bool) {
 		k.Area, k.Name = AreaEditor, rest[1]
 	case len(rest) == 2 && (rest[0] == AreaPublic || rest[0] == AreaEditor):
 		n, ok := strings.CutSuffix(rest[1], PublicExt)
-		if !ok {
-			n, ok = strings.CutSuffix(rest[1], PublicMP4Ext)
-		}
 		if !ok || !ValidSegment(n) {
 			return Key{}, false
 		}

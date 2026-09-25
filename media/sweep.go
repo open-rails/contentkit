@@ -26,7 +26,7 @@ type SweepResult struct {
 // Sweep deletes the item folder's blobs/, editor/ blobs, hash-named originals/
 // and staged uploads (staging/) that no manifest in the folder references, once every manifest is older than the
 // grace period, and only objects past abandonedAt. Slot originals, slot and
-// hover-preview outputs (public/, editor/) and manifests are never swept.
+// outputs (public/, editor/) and manifests are never swept.
 //
 // Invariant: the sweep deletes only objects that no manifest references and
 // that no in-flight commit can newly reference. Uploads keeps the second half:

@@ -3,24 +3,18 @@ package video_test
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"image"
 	"image/jpeg"
 	"image/png"
 	"io"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
-
-	"golang.org/x/image/webp"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -104,127 +98,24 @@ func (e *env) setPoster(t *testing.T, r media.PosterRequest) {
 	}
 }
 
-func (e *env) setPreview(t *testing.T, r media.PreviewRequest) {
+// noPreviewClips fails if anything was rendered besides the poster: the
+// hover-clip pipeline is gone (players preview the HLS itself).
+func (e *env) noPreviewClips(t *testing.T) {
 	t.Helper()
-	if err := e.uploads.SetHoverPreview(context.Background(), admin, e.ref, r); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// webpAnim parses an animated WebP: canvas, loop count, frame count and total
-// milliseconds, plus the first frame decoded.
-type webpAnim struct {
-	w, h, loops, frames, ms int
-	first                   image.Image
-}
-
-func parseWebPAnim(t *testing.T, b []byte) webpAnim {
-	t.Helper()
-	if len(b) < 16 || string(b[:4]) != "RIFF" || string(b[8:12]) != "WEBP" {
-		t.Fatal("not a WebP")
-	}
-	if c := string(b[12:16]); c == "VP8 " || c == "VP8L" {
-		// libwebp writes a still when every frame is identical.
-		img, err := webp.Decode(bytes.NewReader(b))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return webpAnim{w: img.Bounds().Dx(), h: img.Bounds().Dy(), frames: 1, ms: -1, first: img}
-	}
-	u24 := func(p []byte) int { return int(p[0]) | int(p[1])<<8 | int(p[2])<<16 }
-	a := webpAnim{loops: -1}
-	for p := b[12:]; len(p) >= 8; {
-		id, n := string(p[:4]), int(binary.LittleEndian.Uint32(p[4:8]))
-		body := p[8 : 8+n]
-		switch id {
-		case "VP8X":
-			a.w, a.h = u24(body[4:])+1, u24(body[7:])+1
-		case "ANIM":
-			a.loops = int(binary.LittleEndian.Uint16(body[4:6]))
-		case "ANMF":
-			a.frames++
-			a.ms += u24(body[12:])
-			if a.first == nil {
-				riff := append([]byte("RIFF\x00\x00\x00\x00WEBP"), body[16:]...)
-				binary.LittleEndian.PutUint32(riff[4:], uint32(len(riff)-8))
-				img, err := webp.Decode(bytes.NewReader(riff))
-				if err != nil {
-					t.Fatalf("first frame: %v", err)
-				}
-				a.first = img
+	item := e.item(t)
+	for _, prefix := range []string{item.OriginalsPrefix(), item.EditorPrefix(), item.PublicPrefix()} {
+		for o, err := range e.store.List(context.Background(), prefix) {
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
-		p = p[8+n+n%2:]
-	}
-	return a
-}
-
-// mp4Frame decodes the MP4's first or last frame.
-func mp4Frame(t *testing.T, path string, last bool) image.Image {
-	t.Helper()
-	args := []string{"-v", "error", "-nostdin"}
-	if last {
-		args = append(args, "-sseof", "-0.2")
-	}
-	args = append(args, "-i", path, "-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "pipe:1")
-	img, err := png.Decode(bytes.NewReader(videotest.Run(t, "ffmpeg", args...)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return img
-}
-
-// preview checks every hover-preview output: sizes, length, and the colours
-// of its first and last frames.
-func (e *env) preview(t *testing.T, length float64, widths []int, first, last string) {
-	t.Helper()
-	// A render is handed to the host's process job, which publishes it.
-	if !slices.Contains(e.slotJobs, media.ProcessJob{Ref: e.ref.Content(), Slot: media.HoverPreview}) {
-		t.Fatalf("hover preview not handed to the host: %+v", e.slotJobs)
-	}
-	v := e.images(t).HoverPreview
-	if v.Pending || len(v.MP4) != len(widths) || len(v.WebP) != len(widths) {
-		t.Fatalf("hover preview %+v, want widths %v", v, widths)
-	}
-	frames := int(math.Round(length * 12))
-	for i, w := range widths {
-		h := int(math.Round(float64(w) / media.HoverPreviewAspect))
-		if v.MP4[i].W != w || v.WebP[i].W != w || v.MP4[i].H != h || strings.Contains(v.MP4[i].URL, "?v=") {
-			t.Fatalf("outputs %+v %+v", v.MP4[i], v.WebP[i])
-		}
-		obj, err := e.store.Head(context.Background(), keyOf(v.MP4[i].URL))
-		if err != nil || obj.ContentType != "video/mp4" || obj.CacheControl != "no-cache" {
-			t.Fatalf("mp4 object %+v %v", obj, err)
-		}
-		anim := parseWebPAnim(t, e.get(t, keyOf(v.WebP[i].URL)))
-		// libwebp merges identical frames, so only the total time is fixed.
-		if anim.w != w || anim.h != h || (anim.ms >= 0 && (anim.loops != 0 || math.Abs(float64(anim.ms)/1000-length) > 0.15)) {
-			t.Fatalf("webp %d: %+v, want %dx%d looping over %.1fs", w, anim, w, h, length)
-		}
-		if got := videotest.Dominant(anim.first, image.Rect(0, 0, w/2, h/2)); got != first {
-			t.Fatalf("webp %d first frame is %s, want %s", w, got, first)
-		}
-		path := filepath.Join(t.TempDir(), "p.mp4")
-		if err := os.WriteFile(path, e.get(t, keyOf(v.MP4[i].URL)), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		p := ffprobe(t, path, "-count_packets")
-		if p.count("audio") != 0 || p.count("video") != 1 || p.Streams[0].CodecName != "h264" || p.Streams[0].Width != w ||
-			p.Streams[0].Height != h || math.Abs(p.duration(t)-length) > 0.15 {
-			t.Fatalf("mp4 %d: %+v", w, p)
-		}
-		if n := p.Streams[0].NbPackets; n != fmt.Sprint(frames) && n != fmt.Sprint(frames+1) && n != fmt.Sprint(frames-1) {
-			t.Fatalf("mp4 %d has %s frames, want %d", w, n, frames)
-		}
-		for j, want := range []string{first, last} {
-			if got := videotest.Dominant(mp4Frame(t, path, j == 1), image.Rect(0, 0, w/2, h/2)); got != want {
-				t.Fatalf("mp4 %d frame %d is %s, want %s", w, j, got, want)
+			if strings.Contains(o.Key, "hover_preview") || prefix == item.PublicPrefix() && strings.HasSuffix(o.Key, ".mp4") {
+				t.Fatalf("preview clip rendered: %s", o.Key)
 			}
 		}
 	}
 }
 
-func TestDefaultPosterFrameSkipsBlackIntroAndDefaultPreview(t *testing.T) {
+func TestDefaultPosterFrameSkipsBlackIntro(t *testing.T) {
 	e := newEnv(t, nil, nil)
 	source := e.commit(t, videotest.Segments(t, 0), media.OpInsert)
 	e.encode(t)
@@ -238,30 +129,22 @@ func TestDefaultPosterFrameSkipsBlackIntroAndDefaultPreview(t *testing.T) {
 		t.Fatalf("auto frame: %s / %s, want red (the first frame with detail) / cyan", quadrant(img, 0), quadrant(img, 3))
 	}
 
-	// A quarter in (3 s) for 3 s: red, then lime from 5 s.
-	pr, err := e.manifests.HoverPreview(context.Background(), e.ref)
-	if err != nil || !pr.Auto || pr.Start != 3 || pr.Duration != 3 {
-		t.Fatalf("auto preview %+v %v", pr, err)
-	}
-	e.preview(t, 3, []int{320, 640}, "red", "lime")
+	e.noPreviewClips(t)
 
 	v := e.images(t)
-	if s := v.Poster.Selection; s == nil || s.Source != media.PosterSourceAuto || s.Time == nil || *s.Time != 4.2 || !v.Poster.Pending {
+	if s := v.Poster.Selection; s == nil || s.Source != media.PosterSourceAuto || s.Time == nil || *s.Time != 4.2 || !v.Poster.Pending ||
+		v.Poster.Time == nil || *v.Poster.Time != 4.2 || v.Poster.File != "source" {
 		t.Fatalf("poster %+v (the image job has not run)", v.Poster)
 	}
 	if v.Video == nil || v.Video.Duration < 11.9 || v.Video.W != 640 || v.Video.H != 360 || !v.Video.Encoded {
 		t.Fatalf("video info %+v", v.Video)
 	}
 
-	// Nothing changed: the next job grabs and renders nothing.
-	etag := func() string {
-		obj, _ := e.store.Head(context.Background(), keyOf(e.images(t).HoverPreview.MP4[0].URL))
-		return obj.ETag + obj.LastModified.String()
-	}
-	before, pv := e.posterRecord(t), etag()
+	// Nothing changed: the next job grabs nothing.
+	before := e.posterRecord(t)
 	e.encode(t)
-	if e.posterRecord(t).Original != before.Original || etag() != pv {
-		t.Fatal("unchanged selections were redone")
+	if e.posterRecord(t).Original != before.Original {
+		t.Fatal("unchanged selection was redone")
 	}
 }
 
@@ -317,38 +200,6 @@ func TestFramePosterSelectionAndRegrab(t *testing.T) {
 	}
 }
 
-func TestPreviewSectionAndRerender(t *testing.T) {
-	e := newEnv(t, nil, nil)
-	e.commit(t, videotest.Segments(t, 0), media.OpInsert)
-	e.encode(t)
-
-	start := 7.2
-	e.setPreview(t, media.PreviewRequest{Start: &start, Duration: 1.5})
-	if v := e.images(t).HoverPreview; !v.Pending || v.Selection == nil || v.Selection.Start != 7.2 || v.Selection.Duration != 1.5 || v.Selection.Auto {
-		t.Fatalf("before the job: %+v", v)
-	}
-	e.encode(t)
-	e.preview(t, 1.5, []int{320, 640}, "blue", "blue")
-
-	start = 5 // default length: [5, 8)
-	e.setPreview(t, media.PreviewRequest{Start: &start})
-	e.encode(t)
-	e.preview(t, 3, []int{320, 640}, "lime", "blue")
-
-	for _, r := range []media.PreviewRequest{
-		{Start: ptr(1.0), Duration: 7},
-		{Start: ptr(1.0), Duration: 0.5},
-		{Start: ptr(10.0), Duration: 3},
-		{Start: ptr(-1.0)},
-		{Duration: 2},
-	} {
-		err := e.uploads.SetHoverPreview(context.Background(), admin, e.ref, r)
-		if ue, ok := media.AsUploadError(err); !ok || ue.Code != media.CodeInvalid {
-			t.Fatalf("%+v: %v", r, err)
-		}
-	}
-}
-
 func ptr[T any](v T) *T { return &v }
 
 func TestRotatedSourceFrame(t *testing.T) {
@@ -365,8 +216,6 @@ func TestRotatedSourceFrame(t *testing.T) {
 	if v := e.images(t); v.Video.W != 480 || v.Video.H != 854 {
 		t.Fatalf("rotated video info %+v", v.Video)
 	}
-	// The preview's centred 16:9 is 270 wide: only the 320 output.
-	e.preview(t, 3, []int{320}, "red", "lime")
 }
 
 type authz map[string]bool
@@ -482,26 +331,21 @@ func TestVideoImageRoutesAndFrameEndpoint(t *testing.T) {
 	if code, _, _ := call("viewer", "POST", "/video-poster", media.VideoPosterBody{Ref: ref, Source: "frame", Time: ptr(7.5)}); code != http.StatusForbidden {
 		t.Fatalf("viewer poster: %d", code)
 	}
-	code, b, _ = call("admin", "POST", "/video-preview", media.VideoPreviewBody{Ref: ref, Start: ptr(5.0), Duration: 2})
-	if code != http.StatusOK || json.Unmarshal(b, &v) != nil || v.HoverPreview.Selection.Start != 5 || !v.HoverPreview.Pending {
-		t.Fatalf("POST /video-preview: %d %s", code, b)
-	}
-	if code, b, _ := call("admin", "POST", "/video-preview", media.VideoPreviewBody{Ref: ref, Start: ptr(11.0), Duration: 2}); code != http.StatusBadRequest {
-		t.Fatalf("preview past the end: %d %s", code, b)
+	if code, _, _ := call("admin", "POST", "/video-preview", map[string]any{"ref": ref}); code != http.StatusNotFound && code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /video-preview still routed: %d", code)
 	}
 	e.encode(t)
 	code, b, _ = call("admin", "POST", "/video-images", media.VideoImagesBody{Ref: ref})
-	if code != http.StatusOK || json.Unmarshal(b, &v) != nil || v.HoverPreview.Pending || len(v.HoverPreview.MP4) != 2 || v.Video == nil ||
-		!strings.HasPrefix(v.HoverPreview.MP4[0].URL, base+"/"+e.Tenant+"/video/"+cid(88)+"/editor/hover_preview_320.mp4?t=") {
+	if code != http.StatusOK || json.Unmarshal(b, &v) != nil || v.Video == nil || v.Poster.Time == nil || *v.Poster.Time != 7.5 {
 		t.Fatalf("POST /video-images: %d %s", code, b)
 	}
 	if img := e.frame(t, 640, 360); quadrant(img, 0) != "blue" {
 		t.Fatalf("frame after API selection: %s", quadrant(img, 0))
 	}
-	e.preview(t, 2, []int{320, 640}, "lime", "lime")
+	e.noPreviewClips(t)
 
 	// The viewer read resolves: a draft is hidden; once published and free,
-	// no selections and the published preview.
+	// no selections, and the cover's file and time (inline previews start there).
 	pub := httptest.NewServer(reader.Handler(media.HandlerOptions{Tenant: e.Tenant}))
 	defer pub.Close()
 	viewerImages := func() (int, []byte, http.Header) {
@@ -528,17 +372,8 @@ func TestVideoImageRoutesAndFrameEndpoint(t *testing.T) {
 	code, b, hdr := viewerImages()
 	var public media.VideoImages
 	if code != http.StatusOK || hdr.Get("Cache-Control") != "private, no-store" || json.Unmarshal(b, &public) != nil ||
-		public.Poster.Selection != nil || public.HoverPreview.Selection != nil || public.Video != nil || len(public.HoverPreview.WebP) != 2 ||
-		public.Poster.File != v.Video.File || public.HoverPreview.File != v.Video.File {
+		public.Poster.Selection != nil || public.Video != nil || public.Poster.File != v.Video.File ||
+		public.Poster.Time == nil || *public.Poster.Time != 7.5 {
 		t.Fatalf("public video images: %d %s", code, b)
-	}
-	for _, p := range append(public.HoverPreview.MP4, public.HoverPreview.WebP...) {
-		if _, err := e.store.Head(context.Background(), keyOf(p.URL)); err != nil || !strings.Contains(p.URL, "/public/") {
-			t.Fatalf("published preview %s: %v", p.URL, err)
-		}
-	}
-	mp4, webpURL, err := reader.HoverPreviewURLs(e.ref)
-	if err != nil || mp4 != public.HoverPreview.MP4[0].URL || webpURL != public.HoverPreview.WebP[0].URL {
-		t.Fatalf("static preview urls %s %s %v", mp4, webpURL, err)
 	}
 }

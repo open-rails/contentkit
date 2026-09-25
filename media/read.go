@@ -349,7 +349,7 @@ func fileBlobs(f File) []string {
 }
 
 // editorToken covers the item's editor/ folder: EditorOnly variants and
-// unpublished poster and hover-preview outputs. Only editors get it.
+// unpublished poster outputs. Only editors get it.
 func (r *Reader) editorToken(item Item, exp time.Time) string {
 	return r.ring.Sign(item.EditorPrefix(), exp)
 }

@@ -19,11 +19,10 @@ import (
 )
 
 // Exposure is what a video item publishes to public/, where anyone can fetch
-// it without a token. Its poster and hover preview are rendered to editor/
-// and copied to public/ only as its Exposure allows.
+// it without a token. Its poster is rendered to editor/ and copied to
+// public/ only as its Exposure allows.
 type Exposure struct {
-	Poster       bool `json:"poster"`
-	HoverPreview bool `json:"hover_preview"`
+	Poster bool `json:"poster"`
 }
 
 // ExposurePolicy decides an item's Exposure from its anonymous Resolution;
@@ -31,16 +30,10 @@ type Exposure struct {
 type ExposurePolicy func(ctx context.Context, ref contentref.ContentRef, anonymous access.Resolution) Exposure
 
 // DefaultExposure publishes nothing for an item anonymous viewers cannot see
-// (a draft, a deleted item), everything for one they fully can, and the
-// poster alone as the teaser of any other visible item (paid, preview-cut).
+// (a draft, a deleted item) and the poster of every visible one (for paid or
+// preview-cut items, as their teaser).
 func DefaultExposure(_ context.Context, _ contentref.ContentRef, res access.Resolution) Exposure {
-	switch {
-	case !res.Visible:
-		return Exposure{}
-	case res.Full():
-		return Exposure{Poster: true, HoverPreview: true}
-	}
-	return Exposure{Poster: true}
+	return Exposure{Poster: res.Visible}
 }
 
 const exposureRecord = "exposure"
@@ -67,21 +60,13 @@ func (m *Manifests) Exposure(ctx context.Context, ref contentref.ContentRef) (Ex
 	return e, nil
 }
 
-// gatedOutput reports a poster or hover-preview output name in public/ or
-// editor/ ("poster_480.webp", "hover_preview_320.mp4") and which it is.
-func gatedOutput(name string) (poster, preview bool) {
+// posterOutput reports a poster output name in public/ or editor/ ("poster_480.webp").
+func posterOutput(name string) bool {
 	base, ok := strings.CutSuffix(name, layout.PublicExt)
-	if !ok {
-		base, ok = strings.CutSuffix(name, layout.PublicMP4Ext)
-		if !ok {
-			return false, false
-		}
-		return false, strings.HasPrefix(base, HoverPreview+"_")
-	}
-	return strings.HasPrefix(base, PosterSlot+"_"), strings.HasPrefix(base, HoverPreview+"_")
+	return ok && strings.HasPrefix(base, PosterSlot+"_")
 }
 
-// Publish brings a video item's public/ poster and hover preview to its
+// Publish brings a video item's public/ poster to its
 // Exposure: it resolves the item for an anonymous actor, applies
 // JobsConfig.Exposure, copies the allowed outputs from editor/ and deletes
 // the rest. It re-resolves after writing and repeats until the Exposure
@@ -123,7 +108,7 @@ func (j *Jobs) exposure(ctx context.Context, ref contentref.ContentRef) (Exposur
 	return j.cfg.Exposure(ctx, ref, res), nil
 }
 
-// mirror makes public/'s poster and hover-preview outputs the exposed subset
+// mirror makes public/'s poster outputs the exposed subset
 // of editor/'s, then records exp.
 func (j *Jobs) mirror(ctx context.Context, item Item, exp Exposure) error {
 	want := map[string]Object{} // name → staged output
@@ -132,7 +117,7 @@ func (j *Jobs) mirror(ctx context.Context, item Item, exp Exposure) error {
 			return err
 		}
 		name := strings.TrimPrefix(o.Key, item.EditorPrefix())
-		if poster, preview := gatedOutput(name); poster && exp.Poster || preview && exp.HoverPreview {
+		if exp.Poster && posterOutput(name) {
 			want[name] = o
 		}
 	}
@@ -141,7 +126,7 @@ func (j *Jobs) mirror(ctx context.Context, item Item, exp Exposure) error {
 			return err
 		}
 		name := strings.TrimPrefix(o.Key, item.PublicPrefix())
-		if poster, preview := gatedOutput(name); !poster && !preview {
+		if !posterOutput(name) {
 			continue
 		}
 		if _, ok := want[name]; !ok {
