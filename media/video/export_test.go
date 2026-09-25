@@ -15,6 +15,13 @@ func SetMultipart(above, part int64) func() {
 	return func() { multipartAbove, partSize = a, p }
 }
 
+// SetNVENCCQOffset overrides NVENC's CQ offset over the rung CRF.
+func SetNVENCCQOffset(o int) func() {
+	old := nvencCQOffset
+	nvencCQOffset = o
+	return func() { nvencCQOffset = old }
+}
+
 // SetStageOneMax lowers the first stage's largest rung.
 func SetStageOneMax(n int) func() {
 	old := stageOneMax
