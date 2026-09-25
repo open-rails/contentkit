@@ -38,6 +38,9 @@ const (
 	VideoEncodeQueue = "media_video_encode" // bounded video chunks
 	AudioQueue       = "media_audio"        // audio-only files
 	MaxAttempts      = 5
+	// River counts a rescued hard kill before Work can restore the attempt.
+	// Video jobs enforce MaxAttempts on actual failures inside Work instead.
+	VideoRiverMaxAttempts = 32767
 )
 
 //go:embed migrations/*.sql
@@ -227,7 +230,7 @@ func VideoPlanInsertOpts(class media.VideoJobClass) *river.InsertOpts {
 	case media.VideoBackfill:
 		priority = 4
 	}
-	return &river.InsertOpts{Queue: VideoLightQueue, Priority: priority, MaxAttempts: MaxAttempts}
+	return &river.InsertOpts{Queue: VideoLightQueue, Priority: priority, MaxAttempts: VideoRiverMaxAttempts}
 }
 
 // Cancel cancels ref's queued and running image and video jobs, every stage:

@@ -38,8 +38,9 @@ type Config struct {
 	// Schema is the host's worker River schema, the one its workqueue.Queue
 	// inserts into; required, and never shared with another host.
 	Schema string
-	// Queue limits this process to one video queue and one task. Empty keeps
-	// the existing long-running worker for video, image and audio jobs.
+	// Queue selects a one-task process: encode runs video chunks; light runs
+	// video planning/assembly plus the existing image and audio queues.
+	// Empty keeps the long-running all-queue worker.
 	Queue string
 	Store media.Store
 	// Kinds, Specs and Hooks are the host's: build them with the code the
@@ -103,6 +104,8 @@ func (c *Config) defaults() error {
 	}
 	if c.Queue != "" {
 		c.VideoWorkers = 1
+		c.AudioWorkers = 1
+		c.ImageWorkers = 1
 	}
 	if c.ImageWorkers <= 0 {
 		c.ImageWorkers = 2
@@ -130,8 +133,7 @@ type Worker struct {
 	singleDone    <-chan struct{}
 }
 
-// New migrates Schema, clears scratch left by a killed worker and
-// builds the River client with the image and video workers.
+// New migrates Schema and builds the River client with the image and video workers.
 func New(ctx context.Context, c Config) (*Worker, error) {
 	if err := c.defaults(); err != nil {
 		return nil, err
@@ -139,8 +141,13 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err := workqueue.Migrate(ctx, c.Pool, c.Schema); err != nil {
 		return nil, err
 	}
-	if err := video.SweepTemp(c.TempDir); err != nil {
-		return nil, fmt.Errorf("media/worker: sweep scratch: %w", err)
+	// One-shot workers use pod-private scratch, which Kubernetes removes with
+	// the pod. Sweeping a shared path here could erase another active worker's
+	// chunk when multiple one-shot processes start on the same host.
+	if c.Queue == "" {
+		if err := video.SweepTemp(c.TempDir); err != nil {
+			return nil, fmt.Errorf("media/worker: sweep scratch: %w", err)
+		}
 	}
 	host, err := media.NewHostQueue(c.Pool, c.Kinds, c.HostSchema, c.HostQueue, c.Grace)
 	if err != nil {
@@ -180,7 +187,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	contributions := []riverhelpers.Contribution{videos}
 	var singleStarted *atomic.Bool
 	var singleDone <-chan struct{}
-	if c.Queue == "" {
+	if c.Queue != workqueue.VideoEncodeQueue {
 		images, err := image.New(image.Config{Store: c.Store, Kinds: c.Kinds, Manifests: manifests, Specs: c.Specs, Hooks: c.Hooks,
 			Workers: c.ImageSources, MaxPixels: c.MaxPixels, MaxFrames: c.MaxFrames, MaxAnimationSeconds: c.MaxAnimationSeconds})
 		if err != nil {
@@ -194,13 +201,14 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 			return river.AddWorkerSafely(cfg.Workers, &imageWorker{c: c, images: images})
 		}, nil, nil)
 		contributions = append(contributions, imageJobs)
-	} else {
+	}
+	if c.Queue != "" {
 		started := &atomic.Bool{}
 		done := make(chan struct{})
 		singleStarted, singleDone = started, done
 		middleware = append(middleware, river.WorkerMiddlewareFunc(func(ctx context.Context, _ *rivertype.JobRow, work func(context.Context) error) error {
 			if !started.CompareAndSwap(false, true) {
-				return river.JobSnooze(0)
+				return river.JobSnooze(5 * time.Second)
 			}
 			defer close(done)
 			return work(ctx)

@@ -281,7 +281,7 @@ WHERE kind = $1 AND args->>'run_id' = $2 AND state IN ('available', 'pending', '
 						return errors.New("media/video: worker River client missing from context")
 					}
 					if _, err := client.InsertTx(ctx, tx, workqueue.VideoAssembleArgs{Ref: ref, RunID: id},
-						&river.InsertOpts{Queue: workqueue.VideoLightQueue, Priority: priority, MaxAttempts: workqueue.MaxAttempts}); err != nil {
+						&river.InsertOpts{Queue: workqueue.VideoLightQueue, Priority: priority, MaxAttempts: workqueue.VideoRiverMaxAttempts}); err != nil {
 						return err
 					}
 				}
@@ -331,7 +331,7 @@ WHERE run_id = $1 AND state = 'planned' ORDER BY ordinal LIMIT $2`, id, chunkWin
 	}
 	for _, ordinal := range ordinals {
 		result, err := client.InsertTx(ctx, tx, workqueue.VideoChunkArgs{Ref: ref, RunID: id, Index: ordinal},
-			&river.InsertOpts{Queue: workqueue.VideoEncodeQueue, Priority: priority, MaxAttempts: workqueue.MaxAttempts})
+			&river.InsertOpts{Queue: workqueue.VideoEncodeQueue, Priority: priority, MaxAttempts: workqueue.VideoRiverMaxAttempts})
 		if err != nil {
 			return err
 		}

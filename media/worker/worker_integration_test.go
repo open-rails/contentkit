@@ -265,29 +265,47 @@ func pngImage(t *testing.T, w, h int, seed uint8) []byte {
 
 func newID() string { return uuid.Must(uuid.NewV7()).String() }
 
-func TestSingleQueueWorkerStopsAfterOneJob(t *testing.T) {
-	for _, queue := range []string{workqueue.VideoLightQueue, workqueue.VideoEncodeQueue} {
-		t.Run(queue, func(t *testing.T) {
+func TestOneShotWorkerStopsAfterOneJob(t *testing.T) {
+	for _, tc := range []struct{ workerQueue, jobQueue string }{
+		{workqueue.VideoLightQueue, workqueue.VideoLightQueue},
+		{workqueue.VideoLightQueue, workqueue.ImageQueue},
+		{workqueue.VideoLightQueue, workqueue.AudioQueue},
+		{workqueue.VideoEncodeQueue, workqueue.VideoEncodeQueue},
+	} {
+		t.Run(tc.jobQueue, func(t *testing.T) {
 			env := s3test.Open(t)
 			pool := pgtest.Pool(t, nil)
 			schema := workerSchema(t, pool)
+			scratch := t.TempDir()
+			active := filepath.Join(scratch, "ck-video-active")
+			if err := os.Mkdir(active, 0o700); err != nil {
+				t.Fatal(err)
+			}
 			kinds, err := media.NewRegistry(media.Kind{Name: "clip", Types: []string{"video/mp4"}, Video: &media.Video{Ladder: []int{240}}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			w, err := worker.New(context.Background(), worker.Config{Pool: pool, Schema: schema, Store: env.Store, Kinds: kinds,
-				Queue: queue, TempDir: t.TempDir(), Threads: 2})
+				Queue: tc.workerQueue, TempDir: scratch, Threads: 2})
 			if err != nil {
 				t.Fatal(err)
 			}
+			if _, err := os.Stat(active); err != nil {
+				t.Fatalf("one-shot worker swept another process's scratch: %v", err)
+			}
 			ref := contentref.New(env.Tenant, "clip", newID())
 			var args river.JobArgs = workqueue.VideoPlanArgs{Ref: ref}
-			if queue == workqueue.VideoEncodeQueue {
+			switch tc.jobQueue {
+			case workqueue.VideoEncodeQueue:
 				args = workqueue.VideoChunkArgs{Ref: ref, RunID: uuid.NewString(), Index: 0}
+			case workqueue.ImageQueue:
+				args = workqueue.ImageArgs{Ref: contentref.New(env.Tenant, "missing", newID())}
+			case workqueue.AudioQueue:
+				args = workqueue.AudioArgs{Ref: ref}
 			}
 			var ids []int64
 			for range 2 {
-				result, err := w.Client().Insert(context.Background(), args, &river.InsertOpts{Queue: queue})
+				result, err := w.Client().Insert(context.Background(), args, &river.InsertOpts{Queue: tc.jobQueue})
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -145,7 +145,7 @@ func (c WorkerConfig) encodeChunk(ctx context.Context, job *river.Job[workqueue.
 }
 
 func snoozeOnShutdown(ctx context.Context, err error) error {
-	if ctx.Err() != nil && !errors.Is(context.Cause(ctx), river.ErrJobCancelledRemotely) {
+	if errors.Is(ctx.Err(), context.Canceled) && !errors.Is(context.Cause(ctx), river.ErrJobCancelledRemotely) {
 		return river.JobSnooze(0)
 	}
 	return err
@@ -244,7 +244,7 @@ SET state = 'assembling', completed = completed + 1, updated_at = now() WHERE id
 		}
 		client := river.ClientFromContext[pgx.Tx](ctx)
 		if _, err := client.InsertTx(ctx, tx, workqueue.VideoAssembleArgs{Ref: run.Ref, RunID: run.ID},
-			&river.InsertOpts{Queue: workqueue.VideoLightQueue, Priority: priority, MaxAttempts: workqueue.MaxAttempts}); err != nil {
+			&river.InsertOpts{Queue: workqueue.VideoLightQueue, Priority: priority, MaxAttempts: workqueue.VideoRiverMaxAttempts}); err != nil {
 			return err
 		}
 	} else {

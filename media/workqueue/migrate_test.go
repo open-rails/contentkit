@@ -28,11 +28,15 @@ VALUES ('contentkit_media_video', '{}', 5, 'media_video', 'available') RETURNING
 		}
 	}
 	var queue string
-	if err := pool.QueryRow(ctx, `SELECT queue FROM `+jobs(schema)+` WHERE id = $1`, id).Scan(&queue); err != nil {
+	var maxAttempts int
+	if err := pool.QueryRow(ctx, `SELECT queue, max_attempts FROM `+jobs(schema)+` WHERE id = $1`, id).Scan(&queue, &maxAttempts); err != nil {
 		t.Fatal(err)
 	}
 	if queue != VideoLightQueue {
 		t.Fatalf("queued video job moved to %q, want %q", queue, VideoLightQueue)
+	}
+	if maxAttempts != VideoRiverMaxAttempts {
+		t.Fatalf("queued video job max attempts = %d, want %d", maxAttempts, VideoRiverMaxAttempts)
 	}
 	for _, table := range []string{"encode_run", "encode_chunk"} {
 		var exists bool

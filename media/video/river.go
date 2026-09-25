@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 
 	"github.com/open-rails/contentkit/internal/pglock"
 	"github.com/open-rails/contentkit/media"
@@ -31,7 +32,7 @@ type WorkerConfig struct {
 	MaxWorkers   int           // concurrent video jobs per process; default 1 (ffmpeg uses every core)
 	AudioWorkers int           // concurrent audio jobs per process; default 2
 	ChunkTarget  time.Duration // estimated CPU work per chunk; default 5 minutes
-	Queue        string        // empty for all queues, or one video queue for a single-job process
+	Queue        string        // empty for all queues; light also handles audio, encode only chunks
 	Logger       *slog.Logger
 }
 
@@ -53,7 +54,7 @@ func Contribution(c WorkerConfig) (riverhelpers.Contribution, error) {
 			return fmt.Errorf("media/video: River schema must be %q, not %q", c.Schema, cfg.Schema)
 		}
 		for _, q := range []string{workqueue.VideoLightQueue, workqueue.VideoEncodeQueue, workqueue.AudioQueue} {
-			if c.Queue != "" && c.Queue != q {
+			if c.Queue != "" && c.Queue != q && !(c.Queue == workqueue.VideoLightQueue && q == workqueue.AudioQueue) {
 				continue
 			}
 			if _, ok := cfg.Queues[q]; ok {
@@ -66,7 +67,7 @@ func Contribution(c WorkerConfig) (riverhelpers.Contribution, error) {
 		if c.Queue == "" || c.Queue == workqueue.VideoEncodeQueue {
 			cfg.Queues[workqueue.VideoEncodeQueue] = river.QueueConfig{MaxWorkers: c.MaxWorkers}
 		}
-		if c.Queue == "" {
+		if c.Queue == "" || c.Queue == workqueue.VideoLightQueue {
 			cfg.Queues[workqueue.AudioQueue] = river.QueueConfig{MaxWorkers: c.AudioWorkers}
 		}
 		if err := river.AddWorkerSafely(cfg.Workers, &planWorker{c: c}); err != nil {
@@ -116,7 +117,7 @@ type planWorker struct {
 func (w *planWorker) Timeout(*river.Job[workqueue.VideoPlanArgs]) time.Duration { return time.Hour }
 
 func (w *planWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoPlanArgs]) error {
-	return snoozeOnShutdown(ctx, w.c.planVideo(ctx, job.Args))
+	return w.c.runVideoJob(ctx, job.JobRow, func() error { return w.c.planVideo(ctx, job.Args) })
 }
 
 type chunkWorker struct {
@@ -127,7 +128,7 @@ type chunkWorker struct {
 func (w *chunkWorker) Timeout(*river.Job[workqueue.VideoChunkArgs]) time.Duration { return time.Hour }
 
 func (w *chunkWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoChunkArgs]) error {
-	return snoozeOnShutdown(ctx, w.c.encodeChunk(ctx, job))
+	return w.c.runVideoJob(ctx, job.JobRow, func() error { return w.c.encodeChunk(ctx, job) })
 }
 
 type assembleWorker struct {
@@ -140,7 +141,48 @@ func (w *assembleWorker) Timeout(*river.Job[workqueue.VideoAssembleArgs]) time.D
 }
 
 func (w *assembleWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoAssembleArgs]) error {
-	return snoozeOnShutdown(ctx, w.c.assemble(ctx, job.Args))
+	return w.c.runVideoJob(ctx, job.JobRow, func() error { return w.c.assemble(ctx, job.Args) })
+}
+
+func (c WorkerConfig) runVideoJob(ctx context.Context, row *rivertype.JobRow, work func() error) error {
+	if err := c.restoreRescuedAttempt(ctx, row); err != nil {
+		return snoozeOnShutdown(ctx, err)
+	}
+	if row.Attempt > workqueue.MaxAttempts {
+		return river.JobCancel(fmt.Errorf("media/video: %d failed attempts", row.Attempt-1))
+	}
+	err := snoozeOnShutdown(ctx, work())
+	var snooze *river.JobSnoozeError
+	var cancelled *river.JobCancelError
+	if err != nil && row.Attempt >= workqueue.MaxAttempts && !errors.As(err, &snooze) && !errors.As(err, &cancelled) {
+		return river.JobCancel(err)
+	}
+	return err
+}
+
+// River records a rescued hard-killed job as an error and keeps its attempt.
+// Only failures returned by a worker should consume the bounded retry budget.
+func (c WorkerConfig) restoreRescuedAttempt(ctx context.Context, job *rivertype.JobRow) error {
+	failures := 0
+	for _, attempt := range job.Errors {
+		if attempt.Error != "Stuck job rescued by JobRescuer" {
+			failures++
+		}
+	}
+	want := failures + 1
+	if job.Attempt <= want {
+		return nil
+	}
+	result, err := c.Pool.Exec(ctx, `UPDATE `+c.jobTable()+`
+SET attempt = $2 WHERE id = $1 AND state = 'running' AND attempt = $3`, job.ID, want, job.Attempt)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return fmt.Errorf("media/video: job %d changed while restoring rescued attempt", job.ID)
+	}
+	job.Attempt = want
+	return nil
 }
 
 type audioWorker struct {

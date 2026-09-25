@@ -59,7 +59,7 @@ func FromEnv(ctx context.Context) (Config, error) {
 // environment, leaving the others as they are:
 //
 //	MEDIA_WORKER_SCHEMA          the host's worker River schema (required, one per host, e.g. doujins_media_worker)
-//	MEDIA_WORKER_QUEUE           empty for all queues, or media_video_light / media_video_encode for one-task processes
+//	MEDIA_WORKER_QUEUE           empty for all queues; media_video_light also handles image/audio, media_video_encode only chunks
 //	MEDIA_HOST_RIVER_SCHEMA      the host's River schema (default: the connection's search path)
 //	MEDIA_HOST_QUEUE             the host's media queue (default contentkit_media)
 //	MEDIA_HOST_GRACE             the host's sweep grace (default 24h)
