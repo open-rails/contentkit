@@ -254,7 +254,7 @@ func TestMixedImagesAndVideo(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.commit(t, ref, ins("a.png", e.upload(t, ref, "", quadrants(t))), ins("clip.mkv", e.uploadAs(t, ref, "", "video/x-matroska", body)))
-	enc, err := video.New(video.Config{Store: e.Env.Store, TempDir: t.TempDir(), Threads: 1})
+	enc, err := video.New(video.Config{Store: e.Env.Store, TempDir: t.TempDir(), Threads: 1, Codecs: []media.Codec{media.CodecH264}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -415,22 +415,33 @@ The bucket needs CORS allowing `PUT` from the app origins with the
 `AbortIncompleteMultipartUpload: 1 day` rule `Store.Configure` sets.
 
 **Video** (`media/video`, run by the media worker) encodes each `video/*`
-manifest file: H.264 High with a capped CRF per rung (live action: 2160 CRF 23
-at most 32 Mbit/s, 1440 23/18M, 1080 23/12M, 720 22/7M, 480 21/3M; VBV
-buffer 2× the cap; `Video.Profile: media.VideoAnimation` adds `-tune animation`
-at CRF 20–21 and lower caps), an IDR every 4 s without scene cuts (one per
-4 s segment), at the kind's ladder (`Kind.Video = &media.Video{Ladder: []int{1080, 720, 480}}`;
-default `media.DefaultLadder`, 2160/1440/1080/720/480), AAC per audio track,
-WebVTT per text subtitle and a 10×10 sprite whose tiles keep the source
-aspect (short side 90). A rung N is the output's **short side** (a 1080 rung
-of a vertical video is 1080 wide); rungs above the source's short side are
-dropped (a smaller source gets one rung at its own short side). Every frame is
+manifest file at the kind's ladder (`Kind.Video = &media.Video{Ladder: []int{1080, 480}}`;
+default `media.DefaultLadder`, 2160/1080/480) in each of the worker's codecs
+(`video.Config.Codecs`, `MEDIA_WORKER_CODECS`; default `av1,h264`, `hevc`
+optional), plus AAC per audio track, WebVTT per text subtitle and a 10×10
+sprite whose tiles keep the source aspect (short side 90). A rung N is the
+output's **short side** (a 1080 rung of a vertical video is 1080 wide); rungs
+above the source's short side are dropped, and a source below 1080 that is
+not a rung gets one at its own short side (720p: 720 + 480). Every frame is
 then capped, aspect kept, at 4096 px per side and a 3840×2160 area (common
-H.264 hardware decode limits), so a 21:9 2160 rung is 4096×1756 and an 8K
-source is downscaled to 3840×2160; a rung whose capped frame repeats the next
-one's is dropped. Output is square-pixel (SAR applied), at most 60 fps, and
-frames above 1080p-class carry the lowest fitting level (5.0/5.1/5.2);
-smaller ones keep x264's. `hls.video[]` records `rung` and the true `w`/`h`.
+hardware decode limits), so a 21:9 2160 rung is 4096×1756 and an 8K source
+is downscaled to 3840×2160; a rung whose capped frame repeats the next one's
+is dropped. Output is square-pixel (SAR applied), 8-bit 4:2:0, at most
+60 fps, an IDR every 4 s without scene cuts (one per 4 s segment), closed
+GOPs. Rates are a capped CRF per rung (live-action H.264: 2160 CRF 23 at most
+32 Mbit/s, 1440 23/18M, 1080 23/12M, 720 22/7M, 480 21/3M; VBV buffer 2× the
+cap; HEVC one CRF lower and AV1 CRF 34–30, both at 0.6× the caps;
+`Video.Profile: media.VideoAnimation` tunes for animation at lower CRFs and
+caps). H.264 is High (frames above 1080p-class carry the lowest fitting level
+5.0/5.1/5.2), HEVC Main tagged `hvc1` (Safari requires it), AV1 Main.
+`Config.Encoder` `auto` (default) uses NVENC for each codec whose probe
+encode works and the CPU otherwise (libx264 and libx265 preset `fast`,
+`Config.Preset` up to 1080 and `TopPreset` above; SVT-AV1 preset 8), `cpu`
+never NVENC, `nvenc` requires it; a file NVENC fails on re-encodes on the
+CPU. `New` probe-encodes each codec and fails when its encoder is missing or
+ignores forced keyframes (libsvtav1 needs ffmpeg ≥ 7 with SVT-AV1 ≥ 2).
+`hls.video[]` records `rung`, `codec`, CODECS and the true `w`/`h`, ordered by
+codec (as configured), then largest rung first.
 Sources whose display aspect is outside `Video.MinAspect`–`MaxAspect`
 (default 1/2.4–2.4, admitting 2560×1080 and 2.39:1 cinema; 0.5% slack) fail permanently: the file's `hls` becomes
 `{source, spec, error}` with no renditions, `Hooks.Failed` (in the encoder's
@@ -438,38 +449,43 @@ process) gets `video.ErrAspect`, editors see `failed` in the read API, and
 it is retried only when the source or the kind's bounds change. Each rendition and
 audio track is one single-file fMP4 blob whose segments are
 `[offset, length, seconds]` (the init segment is `[0, segments[0].offset)`);
-each rung also gets a muxed MP4 in `downloads["{file}-{N}p"]` (video,
-every audio track, subtitles). Blobs are written first; one manifest edit then
-records `hls` and `downloads` only if the file still derives from the encoded
-original, so a replaced file keeps its previous `hls` until then. Outputs are
-byte-identical on retry (same encoder, presets and `Threads`). Each pass
-decodes the source once and scales a lanczos cascade (each rung from the one
-above; the sprite from the smallest); x264 runs preset `fast`
-(`Config.Preset` up to 1080, `TopPreset` above), each rung with all of
-`Config.Threads`; rungs mux and upload concurrently.
-**Two stages:** rungs up to 1080 (with audio, subtitles, sprite and their
-downloads) are published first with `hls.pending` listing the rungs above;
-the worker queues a follow-up job (same args, River priority 2) that encodes
-those and adds them to `hls.video` in one manifest edit. Both stages key
-frames at the same times, so players switch between their rungs seamlessly;
-progress reports `stage`/`stages`. **Passthrough:** when the source already
-is a compliant top rung (MP4/MOV constant-rate 8-bit 4:2:0 progressive
-H.264 High/Main ≤ level 5.2, unrotated, at the rung's exact frame, within its
-bitrate cap, with an IDR starting each 4 s segment) that rung is stream-copied
-and checked against a sibling rung's segments; otherwise it is encoded.
-`Config.Encoder` picks libx264 (default without a GPU) or NVENC (`auto` uses
-it when a probe encode works; a file it fails on re-encodes with x264).
+each rung also gets a muxed H.264 MP4 (the first codec when H.264 is not
+configured) in `downloads["{file}-{N}p"]` (video, every audio track,
+subtitles). Blobs are written first; one manifest edit then records `hls`
+and `downloads` only if the file still derives from the encoded original,
+so a replaced file keeps its previous `hls` until then. Outputs are
+byte-identical on retry (same encoders, presets and `Threads`).
+**Progressive stages:** one stage per rung, smallest first. A stage decodes
+the source once, scales it (lanczos) to its rung and encodes it in every
+codec; the first also makes the tracks and the sprite. Each stage is
+published at once (`hls.pending` lists the rungs to come), so a viewer plays
+480p while 1080p and 2160p encode; the worker queues each next stage as a
+follow-up job (same args, River priority 2), behind other uploads' first
+stages. Every codec advances together because hls.js picks one codec set at
+start and never switches it for bandwidth. Progress reports
+`stage`/`stages`. **Passthrough:** when the source already is a compliant
+top rung (MP4/MOV constant-rate 8-bit 4:2:0 progressive H.264 High/Main or
+HEVC Main tagged `hvc1`, ≤ level 5.2, unrotated, at the rung's exact frame,
+within its bitrate cap in that codec, with an IDR starting each 4 s segment)
+that rung is stream-copied in its codec, provided its segments match the
+published rung below; otherwise it is encoded.
+**Playback:** the master playlist lists every rung in every codec with its
+`CODECS` (`avc1…`, `hvc1…`, `av01…`), codecs in configured order, each
+starting at its 1080 rung; media playlists are `video/{rung}-{codec}.m3u8`.
+hls.js drops variants `MediaSource.isTypeSupported` refuses and Safari those
+it cannot decode, so H.264 is the fallback; the SDK player keeps one codec
+set (see sdk/upload).
 ffmpeg reads only local files
 (`-protocol_whitelist file`) through container demuxers (mov/mp4, matroska/webm, avi,
 mpegts, flv, ogg, asf, mpeg): playlists and concat lists are refused. Changing
-the ladder, profile or recipe (versioned; bumped when the encode defaults
-change) changes `video.Spec(video)`, so files re-encode once; encoder and
-preset choices are not part of it. A
+the ladder, profile, codecs or recipe (versioned; bumped when the encode
+defaults change) changes `Encoder.Spec(video)`, so files re-encode once;
+encoder (CPU/NVENC) and preset choices are not part of it. A
 staged source is hashed while it downloads for ffmpeg and placed before the
 encode, so `hls.source` names the placed original. Jobs are `{ref}`
 (`workqueue.VideoArgs`; the worker takes the kind from its registry), not
 unique, and a job for a fresh manifest is a no-op; `workqueue.Queue.Cancel`
-cancels an item's queued and running jobs of both stages.
+cancels an item's queued and running jobs of every stage.
 
 After each encode the job grabs the item's **poster** frame (the `poster`
 slot; the image job encodes it) from its selection. There is no preview clip:

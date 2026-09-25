@@ -56,7 +56,8 @@ type Kind struct {
 type Video struct {
 	// Ladder is the rendition short sides (height of landscape, width of
 	// vertical video), largest first; rungs above the source's short side
-	// are dropped. Empty is DefaultLadder.
+	// are dropped, and a source below 1080 that is not a rung also gets one
+	// at its own short side. Empty is DefaultLadder.
 	Ladder []int `json:"ladder,omitempty"`
 	// MinAspect and MaxAspect bound a source's display width/height; a
 	// source outside fails permanently. Zero is DefaultMinAspect/DefaultMaxAspect.
@@ -88,8 +89,18 @@ const (
 	VideoAnimation = "animation"
 )
 
-// DefaultLadder is the default H.264 ladder by short side.
-var DefaultLadder = []int{2160, 1440, 1080, 720, 480}
+// DefaultLadder is the default ladder by short side.
+var DefaultLadder = []int{2160, 1080, 480}
+
+// Codec is a video codec of a ladder: each rung is encoded in each codec
+// the media worker is configured with.
+type Codec string
+
+const (
+	CodecH264 Codec = "h264"
+	CodecHEVC Codec = "hevc"
+	CodecAV1  Codec = "av1"
+)
 
 // Default aspect bounds: 1:2.4 vertical to 2.4:1 wide, which admits "21:9"
 // content (2560×1080 at 2.37, 2.39:1 cinema) and its vertical equivalents.

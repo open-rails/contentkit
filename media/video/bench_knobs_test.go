@@ -15,7 +15,7 @@ import (
 //
 //	CONTENTKIT_BENCH_ENCODER   Config.Encoder
 //	CONTENTKIT_BENCH_PRESET, CONTENTKIT_BENCH_TOP_PRESET  Config.Preset, TopPreset
-//	CONTENTKIT_BENCH_NVENC_CQ_OFFSET  NVENC CQ over the rung CRF
+//	CONTENTKIT_BENCH_NVENC_CQ_OFFSET  NVENC H.264 CQ over the rung CRF
 //	CONTENTKIT_BENCH_PROFILE   media.Video.Profile
 //	CONTENTKIT_BENCH_CAP_SCALE multiplies the rung bitrate caps
 func benchKnobs(cfg *video.Config) func() {
@@ -28,7 +28,7 @@ func benchKnobs(cfg *video.Config) func() {
 		undo = func() { u(); u0() }
 	}
 	if o, err := strconv.Atoi(os.Getenv("CONTENTKIT_BENCH_NVENC_CQ_OFFSET")); err == nil {
-		u := video.SetNVENCCQOffset(o)
+		u := video.SetNVENCCQOffset(media.CodecH264, o)
 		return func() { u(); undo() }
 	}
 	return undo

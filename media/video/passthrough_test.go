@@ -21,17 +21,25 @@ func TestPassthroughChecks(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	cadence := []string{"-force_key_frames", "expr:gte(t,n_forced*4)", "-sc_threshold", "0"}
+	x265 := func(params string, more ...string) []string {
+		return append([]string{"-c:v", "libx265", "-preset", "ultrafast", "-crf", "28", "-x265-params", params + ":log-level=error"}, more...)
+	}
+	hevc := x265("open-gop=0:scenecut=0", "-tag:v", "hvc1", "-forced-idr", "1", "-force_key_frames", "expr:gte(t,n_forced*4)")
 	for _, c := range []struct {
 		name, ext string
 		args      []string
 		want      string // "" passes; else a fragment of the reason
+		codec     media.Codec
 	}{
-		{"compliant", "mp4", cadence, ""},
-		{"matroska", "mkv", cadence, "container"},
-		{"scene-cut keyframes only", "mp4", nil, "no keyframe"},
-		{"open GOP", "mp4", []string{"-x264-params", "open-gop=1:keyint=60:min-keyint=60:scenecut=0"}, "not an IDR"},
-		{"4:4:4", "mp4", append([]string{"-pix_fmt", "yuv444p", "-profile:v", "high444"}, cadence...), "codec"},
-		{"over the cap", "mp4", append([]string{"-crf", "4"}, cadence...), "over the rung"},
+		{"compliant", "mp4", cadence, "", media.CodecH264},
+		{"matroska", "mkv", cadence, "container", media.CodecH264},
+		{"scene-cut keyframes only", "mp4", nil, "no keyframe", media.CodecH264},
+		{"open GOP", "mp4", []string{"-x264-params", "open-gop=1:keyint=60:min-keyint=60:scenecut=0"}, "not an IDR", media.CodecH264},
+		{"4:4:4", "mp4", append([]string{"-pix_fmt", "yuv444p", "-profile:v", "high444"}, cadence...), "codec", media.CodecH264},
+		{"over the cap", "mp4", append([]string{"-crf", "4"}, cadence...), "over the rung", media.CodecH264},
+		{"HEVC compliant", "mp4", hevc, "", media.CodecHEVC},
+		{"HEVC hev1", "mp4", x265("open-gop=0:scenecut=0", "-tag:v", "hev1", "-forced-idr", "1", "-force_key_frames", "expr:gte(t,n_forced*4)"), "codec", media.CodecHEVC},
+		{"HEVC open GOP", "mp4", x265("open-gop=1:keyint=120:min-keyint=120:scenecut=0", "-tag:v", "hvc1"), "not an IDR", media.CodecHEVC},
 	} {
 		src := filepath.Join(dir, c.name+"."+c.ext)
 		args := []string{"-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=9", "-f", "lavfi", "-i", "sine=duration=9",
@@ -48,9 +56,9 @@ func TestPassthroughChecks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ok, why := passthroughable(ctx, src, p, p.rungs[0])
-		if c.want == "" && !ok || c.want != "" && (ok || !strings.Contains(why, c.want)) {
-			t.Errorf("%s: passthrough %v (%s), want %q", c.name, ok, why, c.want)
+		codec, ok, why := passthroughable(ctx, src, p, p.rungs[0])
+		if c.want == "" && !ok || c.want != "" && (ok || !strings.Contains(why, c.want)) || codec != c.codec {
+			t.Errorf("%s: passthrough %v %s (%s), want %q %s", c.name, ok, codec, why, c.want, c.codec)
 		}
 	}
 }

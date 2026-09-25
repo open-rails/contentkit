@@ -113,17 +113,19 @@ type HLS struct {
 	Audio  []AudioTrack `json:"audio,omitempty"`
 	Subs   []Subtitle   `json:"subs,omitempty"`
 	Sprite *Sprite      `json:"sprite,omitempty"`
-	// Pending lists the rungs of a later encode stage: the file plays at the
-	// rungs in Video until they are added.
+	// Pending lists the rungs of later encode stages, smallest first: the
+	// file plays at the rungs in Video until they are added.
 	Pending []int `json:"pending,omitempty"`
 }
 
 // Rendition is one video-only fMP4 blob: its init segment is bytes
 // [0, Segments[0].Offset) and the segments follow contiguously. Rung is its
 // ladder label (the short side it was asked for, e.g. 1080 for "1080p");
-// Width and Height are the encoded frame.
+// Width and Height are the encoded frame. Each rung has one rendition per
+// codec; Codecs is its RFC 6381 value.
 type Rendition struct {
 	Rung      int       `json:"rung"`
+	Codec     Codec     `json:"codec"`
 	Width     int       `json:"w"`
 	Height    int       `json:"h"`
 	Bandwidth int       `json:"bandwidth"`

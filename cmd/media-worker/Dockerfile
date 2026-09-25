@@ -9,6 +9,7 @@ COPY . .
 RUN CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/media-worker ./cmd/media-worker
 
 FROM debian:trixie-slim
+# ffmpeg 7.1: libx264, libx265 and libsvtav1 (forced keyframes need ffmpeg ≥ 7 with SVT-AV1 ≥ 2).
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libvips42t64 libheif-plugin-dav1d ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/media-worker /media-worker
 USER 65532:65532

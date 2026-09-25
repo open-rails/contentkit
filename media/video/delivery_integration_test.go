@@ -309,18 +309,20 @@ func TestPlaybackThroughWorker(t *testing.T) {
 			for _, a := range h.Audio {
 				audioBW = max(audioBW, a.Bandwidth)
 			}
-			if len(pl.variants) != len(h.Video) {
-				t.Fatalf("%d variants for %d renditions", len(pl.variants), len(h.Video))
+			// Both codecs' variants, AV1's first: a player that decodes AV1 starts on it.
+			if len(pl.variants) != len(h.Video) || len(h.Video) != 2 || !strings.HasPrefix(pl.variants[0]["CODECS"], "av01.") ||
+				!strings.HasPrefix(pl.variants[1]["CODECS"], "avc1.") {
+				t.Fatalf("%d variants for %d renditions: %v", len(pl.variants), len(h.Video), pl.variants)
 			}
 			for i, v := range pl.variants {
-				j := slices.IndexFunc(h.Video, func(r media.Rendition) bool { return v["URI"] == fmt.Sprintf("video/%d.m3u8", r.Rung) })
+				j := slices.IndexFunc(h.Video, func(r media.Rendition) bool { return v["URI"] == fmt.Sprintf("video/%d-%s.m3u8", r.Rung, r.Codec) })
 				if j < 0 {
 					t.Fatalf("variant %d %v: no such rendition", i, v)
 				}
 				want := h.Video[j]
 				if v["BANDWIDTH"] != strconv.Itoa(want.Bandwidth+audioBW) || v["AVERAGE-BANDWIDTH"] != strconv.Itoa(want.Average+audioBW) ||
 					v["RESOLUTION"] != fmt.Sprintf("%dx%d", want.Width, want.Height) || v["CODECS"] != want.Codecs+",mp4a.40.2" ||
-					v["AUDIO"] != "audio" || v["SUBTITLES"] != "subs" || v["URI"] != fmt.Sprintf("video/%d.m3u8", want.Rung) {
+					v["AUDIO"] != "audio" || v["SUBTITLES"] != "subs" || v["URI"] != fmt.Sprintf("video/%d-%s.m3u8", want.Rung, want.Codec) {
 					t.Fatalf("variant %v for %+v", v, want)
 				}
 				d.checkRendition(t, resolve(v["URI"]), want.Blob, want.Segments, mode, true)
@@ -368,6 +370,9 @@ func TestPlaybackThroughWorker(t *testing.T) {
 
 			// Per-quality download under its display name.
 			for _, v := range h.Video {
+				if v.Codec != media.CodecH264 {
+					continue
+				}
 				key := video.DownloadKey("source", v.Rung)
 				r := get(t, d.client, d.url("download/"+key))
 				name := fmt.Sprintf("Title (%dp).mp4", v.Rung)
@@ -380,8 +385,12 @@ func TestPlaybackThroughWorker(t *testing.T) {
 			// ffmpeg plays the master playlist over HTTPS with byte ranges.
 			if mode == media.DeliverURL {
 				out := filepath.Join(t.TempDir(), "played.mp4")
-				if b, err := exec.Command("ffmpeg", "-v", "error", "-nostdin", "-i", masterURL,
-					"-map", "0:v:0", "-map", "0:a:0", "-c", "copy", "-y", out).CombinedOutput(); err != nil {
+				args := []string{"-v", "error", "-nostdin"}
+				if h, _ := exec.Command("ffmpeg", "-h", "demuxer=hls").Output(); bytes.Contains(h, []byte("allowed_segment_extensions")) {
+					args = append(args, "-allowed_segment_extensions", "ALL", "-extension_picky", "0") // ffmpeg 7: our blobs have no extension
+				}
+				if b, err := exec.Command("ffmpeg", append(args, "-i", masterURL,
+					"-map", "0:v:0", "-map", "0:a:0", "-c", "copy", "-y", out)...).CombinedOutput(); err != nil {
 					t.Fatalf("ffmpeg: %v: %s", err, b)
 				}
 				if p := ffprobe(t, out); p.count("video") != 1 || p.count("audio") != 1 || math.Abs(p.duration(t)-9) > 0.5 {
@@ -398,7 +407,7 @@ func TestPlaybackAccess(t *testing.T) {
 	e.encode(t)
 	d := newDelivery(t, e, media.DeliverCookie)
 	_, h := d.manifest(t)
-	paths := []string{"hls/source/master.m3u8", "hls/source/video/360.m3u8", "hls/source/audio/a1.m3u8",
+	paths := []string{"hls/source/master.m3u8", "hls/source/video/360-av1.m3u8", "hls/source/audio/a1.m3u8",
 		"hls/source/sprite.vtt", "download/" + video.DownloadKey("source", 360)}
 
 	for name, res := range map[string]access.Resolution{"hidden": {}, "locked": {Visible: true}} {

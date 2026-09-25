@@ -3,15 +3,16 @@ package media
 import (
 	"regexp"
 	"slices"
+	"strings"
 	"testing"
 )
 
 func TestMasterPlaylistStartsAt1080(t *testing.T) {
 	land := func(rung int) Rendition {
-		return Rendition{Rung: rung, Width: rung * 16 / 9, Height: rung, Bandwidth: rung * 5000, Codecs: "avc1.640028"}
+		return Rendition{Rung: rung, Width: rung * 16 / 9, Height: rung, Bandwidth: rung * 5000, Codec: CodecH264, Codecs: "avc1.640028"}
 	}
 	port := func(rung int) Rendition { r := land(rung); r.Width, r.Height = r.Height, r.Width; return r }
-	uris := regexp.MustCompile(`(?m)^video/(\d+)\.m3u8$`)
+	uris := regexp.MustCompile(`(?m)^video/(\d+)-h264\.m3u8$`)
 	for _, tc := range []struct {
 		name  string
 		video []Rendition
@@ -43,5 +44,33 @@ func TestMasterPlaylistStartsAt1080(t *testing.T) {
 				t.Fatal("reordered the manifest's renditions")
 			}
 		})
+	}
+}
+
+// Each codec's variants follow the ladder's codec order, each group starting
+// at its 1080 rung, with the codec's CODECS and its own media playlist URI.
+func TestMasterPlaylistCodecs(t *testing.T) {
+	r := func(rung int, c Codec, codecs string) Rendition {
+		return Rendition{Rung: rung, Codec: c, Width: rung * 16 / 9, Height: rung, Bandwidth: rung * 5000, Codecs: codecs}
+	}
+	video := []Rendition{r(2160, CodecAV1, "av01.0.12M.08"), r(1080, CodecAV1, "av01.0.08M.08"), r(480, CodecAV1, "av01.0.04M.08"),
+		r(2160, CodecH264, "avc1.640033"), r(1080, CodecH264, "avc1.640028"), r(480, CodecH264, "avc1.64001e")}
+	g := &Grant{units: 1, Manifest: &Manifest{Files: []File{{Name: "v", HLS: &HLS{Video: video,
+		Audio: []AudioTrack{{ID: "a1", Default: true, Codecs: "mp4a.40.2"}}}}}}}
+	pl, err := g.MasterPlaylist("v", MasterOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`(?m)CODECS="([^"]+)".*\n(video/\S+)$`)
+	var got []string
+	for _, m := range re.FindAllStringSubmatch(string(pl), -1) {
+		got = append(got, m[1]+" "+m[2])
+	}
+	want := []string{
+		"av01.0.08M.08,mp4a.40.2 video/1080-av1.m3u8", "av01.0.12M.08,mp4a.40.2 video/2160-av1.m3u8", "av01.0.04M.08,mp4a.40.2 video/480-av1.m3u8",
+		"avc1.640028,mp4a.40.2 video/1080-h264.m3u8", "avc1.640033,mp4a.40.2 video/2160-h264.m3u8", "avc1.64001e,mp4a.40.2 video/480-h264.m3u8",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("variants\n%s\nwant\n%s\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"), pl)
 	}
 }

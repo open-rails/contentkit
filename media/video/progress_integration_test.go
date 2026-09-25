@@ -109,14 +109,14 @@ func TestEncodeProgressThroughReadAPI(t *testing.T) {
 	imagePhases := map[string]bool{}
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
-poll:
-	for {
+	// Two stages (480, then 720), each its own job.
+	for completed := 0; completed < 2; {
 		select {
 		case ev := <-done:
 			if ev.Kind != river.EventKindJobCompleted {
 				t.Fatalf("job %s: %+v", ev.Kind, ev.Job.Errors)
 			}
-			break poll
+			completed++
 		case <-tick.C:
 			if p := read().Progress; p != nil && (len(seen) == 0 || p.At != seen[len(seen)-1].At) {
 				seen = append(seen, *p)
@@ -146,7 +146,8 @@ poll:
 	phases := map[string]bool{}
 	for i, p := range seen {
 		phases[p.Phase] = true
-		if i > 0 && (p.Percent < seen[i-1].Percent || p.SegmentsDone < seen[i-1].SegmentsDone) {
+		// Each stage restarts (stage 0 until its source is probed).
+		if i > 0 && p.Stage == seen[i-1].Stage && (p.Percent < seen[i-1].Percent || p.SegmentsDone < seen[i-1].SegmentsDone) {
 			t.Fatalf("progress went backwards: %+v then %+v", seen[i-1], p)
 		}
 		if p.Phase == media.PhaseEncoding && p.ETA > 0 {

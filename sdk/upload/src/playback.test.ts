@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { abrHlsConfig, capRung, classifyHlsError, classifyMediaError, hlsConfig, initialEstimate, startRung, type Rung } from "./playback.js";
+import { abrHlsConfig, capRung, classifyHlsError, classifyMediaError, hlsConfig, initialEstimate, otherCodecLevels, startRung, type Rung } from "./playback.js";
 
 it("classifies hls.js errors by status and detail", () => {
   const net = (details: string, code?: number) => classifyHlsError({ type: "networkError", details, fatal: false, response: code === undefined ? undefined : { code } });
@@ -107,4 +107,15 @@ it("starts at the highest rung the estimate sustains under the cap", () => {
   expect(H(portrait, startRung(portrait, 8e6, capRung(portrait, 1170, 2079)))).toBe(1080);
   // Save-Data starts at the bottom whatever the estimate.
   expect(startRung(landscape, 50e6, 4, { saveData: true })).toBe(0);
+});
+
+it("keeps the codec set of the first listed level", () => {
+  // hls.js sorts levels by bitrate; firstLevel is the master's first playable variant.
+  const levels = [{ codecSet: "av01,mp4a" }, { codecSet: "avc1,mp4a" }, { codecSet: "av01,mp4a" }, { codecSet: "avc1,mp4a" }];
+  expect(otherCodecLevels(levels, 2)).toEqual([3, 1]);
+  expect(otherCodecLevels(levels, 1)).toEqual([2, 0]);
+  // Without AV1 decode hls.js has already dropped the av01 levels: H.264 stays whole.
+  expect(otherCodecLevels([{ codecSet: "avc1,mp4a" }, { codecSet: "avc1,mp4a" }, { codecSet: "avc1,mp4a" }], 1)).toEqual([]);
+  expect(otherCodecLevels([{ codecSet: "avc1,mp4a" }, { codecSet: "avc1,mp4a" }], 0)).toEqual([]);
+  expect(otherCodecLevels([{}, {}], -1)).toEqual([]);
 });

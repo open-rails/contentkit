@@ -1,6 +1,10 @@
 package video
 
-import "context"
+import (
+	"context"
+
+	"github.com/open-rails/contentkit/media"
+)
 
 // SetBeforePromote runs fn between the blob uploads and the manifest edit.
 func SetBeforePromote(fn func()) func() {
@@ -15,18 +19,11 @@ func SetMultipart(above, part int64) func() {
 	return func() { multipartAbove, partSize = a, p }
 }
 
-// SetNVENCCQOffset overrides NVENC's CQ offset over the rung CRF.
-func SetNVENCCQOffset(o int) func() {
-	old := nvencCQOffset
-	nvencCQOffset = o
-	return func() { nvencCQOffset = old }
-}
-
-// SetStageOneMax lowers the first stage's largest rung.
-func SetStageOneMax(n int) func() {
-	old := stageOneMax
-	stageOneMax = n
-	return func() { stageOneMax = old }
+// SetNVENCCQOffset overrides NVENC's CQ offset over the rung CRF of codec c.
+func SetNVENCCQOffset(c media.Codec, o int) func() {
+	old := nvencCQOffset[c]
+	nvencCQOffset[c] = o
+	return func() { nvencCQOffset[c] = old }
 }
 
 // EncodeStage runs the stale files' next stage and reports whether one remains.
@@ -45,4 +42,13 @@ func SetCapScale(f float64) func() {
 		rates[k] = rs
 	}
 	return func() { rates = old }
+}
+
+// FailNVENC makes e's codec c encoder an NVENC stand-in that fails on the
+// first frame (h264_vaapi without a device), so a pass takes the CPU fallback.
+func FailNVENC(e *Encoder, c media.Codec) func() {
+	old := nvencEncoders[c]
+	nvencEncoders[c] = "h264_vaapi"
+	e.encoders[c] = nvencEncoders[c]
+	return func() { nvencEncoders[c] = old }
 }
