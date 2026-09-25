@@ -74,8 +74,6 @@ type Config struct {
 	Logger        *slog.Logger
 	// RiverHooks are added to the worker's River client (observability).
 	RiverHooks []rivertype.Hook
-	// HostJobs run host-specific media work in the same worker schema.
-	HostJobs []riverhelpers.Contribution
 	// SkipMigrations is for hosts that migrate the worker schema before
 	// starting a worker under an unprivileged runtime database role.
 	SkipMigrations bool
@@ -171,7 +169,6 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 		hooks = append(hooks[:len(hooks):len(hooks)], &readyHook{pool: c.Pool, manifests: manifests, ready: c.Hooks.ItemReady})
 	}
 	contributions = append(contributions, imageJobs)
-	contributions = append(contributions, c.HostJobs...)
 	client, err := riverhelpers.New(ctx, c.Pool, &river.Config{Schema: workqueue.Schema,
 		JobTimeout: max(c.VideoTimeout, c.ImageTimeout), Logger: c.Logger, Hooks: hooks}, contributions...)
 	if err != nil {
