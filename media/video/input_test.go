@@ -47,4 +47,13 @@ func TestInputsAreConfinedToContainerDemuxers(t *testing.T) {
 		enc: encoding{encoders: map[media.Codec]string{media.CodecH264: "libx264"}, threads: 1, preset: "fast"}}, nil); err == nil {
 		t.Fatal("concat list encoded")
 	}
+	var observed EncodeObservation
+	if err := ladder(ctx, clip, out, pl, pass{rung: pl.rungs[0], codecs: []media.Codec{media.CodecH264},
+		enc:     encoding{encoders: map[media.Codec]string{media.CodecH264: "libx264"}, threads: 1, preset: "fast"},
+		observe: func(o EncodeObservation) { observed = o }}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !observed.Succeeded || observed.SourceClass != "sd" || observed.OutputSeconds != pl.duration || observed.Duration <= 0 || observed.CPU <= 0 {
+		t.Fatalf("encode observation: %+v", observed)
+	}
 }

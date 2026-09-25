@@ -77,6 +77,7 @@ type pass struct {
 	sprite   bool
 	noTracks bool // audio and subtitles are already encoded
 	enc      encoding
+	observe  func(EncodeObservation)
 }
 
 // renditionName is a rendition's file name stem in a pass's directory.
@@ -147,13 +148,34 @@ func ladder(ctx context.Context, src, dir string, p plan, ps pass, fp *fileProgr
 	if ps.sprite {
 		args = append(args, "-map", "[sprite]", "-frames:v", strconv.Itoa(spriteCols*spriteRows), "-f", "image2", filepath.Join(dir, spriteFrames))
 	}
-	if err := ffmpegProgress(ctx, fp.encoded, args...); err != nil {
+	started := time.Now()
+	cpu, err := ffmpegProgress(ctx, fp.encoded, args...)
+	if ps.observe != nil {
+		outputSeconds := 0.0
+		if err == nil {
+			outputSeconds = p.duration * float64(len(ps.codecs))
+		}
+		ps.observe(EncodeObservation{SourceClass: sourceClass(p.width, p.height), Duration: time.Since(started),
+			CPU: cpu, OutputSeconds: outputSeconds, Succeeded: err == nil})
+	}
+	if err != nil {
 		return err
 	}
 	if !ps.sprite {
 		return nil
 	}
 	return sprite(ctx, dir)
+}
+
+func sourceClass(width, height int) string {
+	switch {
+	case max(width, height) <= 720:
+		return "sd"
+	case max(width, height) <= 1920:
+		return "hd"
+	default:
+		return "uhd"
+	}
 }
 
 func hlsArgs(segment, playlist string) []string {
@@ -331,13 +353,13 @@ func command(ctx context.Context, name string, args ...string) ([]byte, error) {
 
 // ffmpegProgress runs ffmpeg with -progress on stdout, passing each report's
 // out_time in seconds to fn.
-func ffmpegProgress(ctx context.Context, fn func(outTime float64), args ...string) error {
-	_, err := ffmpegProgressTail(ctx, fn, args...)
-	return err
+func ffmpegProgress(ctx context.Context, fn func(outTime float64), args ...string) (time.Duration, error) {
+	_, cpu, err := ffmpegProgressTail(ctx, fn, args...)
+	return cpu, err
 }
 
 // ffmpegProgressTail is ffmpegProgress returning the tail of ffmpeg's stderr.
-func ffmpegProgressTail(ctx context.Context, fn func(outTime float64), args ...string) ([]byte, error) {
+func ffmpegProgressTail(ctx context.Context, fn func(outTime float64), args ...string) ([]byte, time.Duration, error) {
 	pr, pw := io.Pipe()
 	done := make(chan struct{})
 	go func() {
@@ -345,31 +367,36 @@ func ffmpegProgressTail(ctx context.Context, fn func(outTime float64), args ...s
 		_ = parseFFmpegProgress(pr, fn)
 		_, _ = io.Copy(io.Discard, pr)
 	}()
-	stderr, err := runTail(ctx, pw, "ffmpeg", append([]string{"-progress", "pipe:1", "-nostats"}, args...)...)
+	stderr, cpu, err := runTail(ctx, pw, "ffmpeg", append([]string{"-progress", "pipe:1", "-nostats"}, args...)...)
 	_ = pw.Close()
 	<-done
-	return stderr, err
+	return stderr, cpu, err
 }
 
 func run(ctx context.Context, stdout io.Writer, name string, args ...string) error {
-	_, err := runTail(ctx, stdout, name, args...)
+	_, _, err := runTail(ctx, stdout, name, args...)
 	return err
 }
 
 // runTail runs a tool, returning the tail of its stderr.
-func runTail(ctx context.Context, stdout io.Writer, name string, args ...string) ([]byte, error) {
+func runTail(ctx context.Context, stdout io.Writer, name string, args ...string) ([]byte, time.Duration, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 10 * time.Second
 	var stderr tail
 	cmd.Stdout, cmd.Stderr = stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, fmt.Errorf("%s: %w: %s", name, err, stderr.b)
+	err := cmd.Run()
+	var cpu time.Duration
+	if cmd.ProcessState != nil {
+		cpu = cmd.ProcessState.UserTime() + cmd.ProcessState.SystemTime()
 	}
-	return stderr.b, nil
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, cpu, ctx.Err()
+		}
+		return nil, cpu, fmt.Errorf("%s: %w: %s", name, err, stderr.b)
+	}
+	return stderr.b, cpu, nil
 }
 
 // tail keeps the last 16 KiB of a tool's diagnostics.
