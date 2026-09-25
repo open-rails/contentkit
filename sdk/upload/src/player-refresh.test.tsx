@@ -9,7 +9,7 @@ import { refreshable } from "./playback.js";
 // player asks of it and lets the test deliver its events.
 const hls = vi.hoisted(() => {
   const instances: FakeHls[] = [];
-  const Events = { ERROR: "hlsError", MANIFEST_PARSED: "hlsManifestParsed", LEVEL_SWITCHED: "hlsLevelSwitched", FRAG_LOADED: "hlsFragLoaded" };
+  const Events = { ERROR: "hlsError", MANIFEST_PARSED: "hlsManifestParsed", LEVEL_SWITCHED: "hlsLevelSwitched", FRAG_LOADED: "hlsFragLoaded", BUFFER_FLUSHED: "hlsBufferFlushed" };
   class FakeHls {
     static Events = Events;
     static DefaultConfig = {};
@@ -160,8 +160,15 @@ it("a manual quality choice flushes to that level at once; Auto hands back to AB
   act(() => live().emit("hlsManifestParsed"));
   await playing(m.video);
 
+  const set = vi.fn();
+  Object.defineProperty(m.video, "currentTime", { get: () => 12.5, set, configurable: true });
   act(() => m.result.current.quality.select(0));
   expect(live().flushes).toEqual([0]);
+  // Once flushed, it seeks in place so the old rendition's frames are dropped.
+  act(() => live().emit("hlsBufferFlushed"));
+  expect(set).toHaveBeenLastCalledWith(12.5);
+  act(() => live().emit("hlsBufferFlushed"));
+  expect(set).toHaveBeenCalledTimes(1);
   expect(m.result.current.quality.selected).toBe(0);
   act(() => m.result.current.quality.select(2));
   expect(live().flushes).toEqual([0, 2]);
