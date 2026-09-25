@@ -305,6 +305,7 @@ func (r *Reader) VideoImages(ctx context.Context, ref contentref.ContentRef, act
 		return VideoImages{}, err
 	}
 	out, err := r.manifests.VideoImages(ctx, urls, ref, false, "")
+	r.renderMissing(ctx, ProcessJob{Ref: ref.Content(), Slot: PosterSlot}, out.Poster.editorMissing)
 	if err == nil && r.progress != nil {
 		if st, perr := r.progress.EncodeProgress(ctx, ref); perr == nil {
 			out.Progress = st.Current()

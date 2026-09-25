@@ -61,10 +61,6 @@ export class FakeServer {
         this.frames.push(`${q.get("t")}@${q.get("w")}`);
         return new Response(new Blob([bytes(32, 3)], { type: "image/jpeg" }), { status: 200 });
       }
-      if (path === "/slot-original") {
-        if (!this.slotState.get(slotKey(body.ref, body.slot))?.dims) throw new UploadError("not_found", "no committed original", 404);
-        return new Response(new Blob([bytes(64, 9)], { type: "image/jpeg" }), { status: 200 });
-      }
       return json(200, this.route(path, body));
     } catch (e) {
       if (!(e instanceof UploadError)) throw e;
@@ -199,6 +195,7 @@ export class FakeServer {
       aspect,
       ...(edit ? { edit } : {}),
       dims: { w: 4000, h: 3000 },
+      editor_url: `fake://cdn/temp/e-${slot}`,
       outputs: widths.map((w) => ({ w, h: Math.round(w / (slot === "avatar" ? 1 : 3)), url: `fake://cdn/public/sha256-${slot}${w}v${v}` })),
       pending: false,
     };

@@ -81,6 +81,10 @@ type ReaderOptions struct {
 	Hooks     Hooks
 	// Progress adds live encode progress to pending video files; optional.
 	Progress ProgressSource
+	// Queue renders an editor view an editor asks for that is missing
+	// (never rendered, or swept); optional (the editor then waits for the
+	// next processing job).
+	Queue ProcessQueue
 	// MaxLimit caps ReadOptions.Limit (default 200); DefaultLimit is used when
 	// Limit is 0 (default 50).
 	MaxLimit, DefaultLimit int
@@ -98,6 +102,7 @@ type Reader struct {
 	ring      token.Ring
 	hooks     Hooks
 	progress  ProgressSource
+	queue     ProcessQueue
 	maxLimit  int
 	defLimit  int
 	now       func() time.Time
@@ -141,7 +146,7 @@ func NewReader(o ReaderOptions) (*Reader, error) {
 		d.Window = token.DefaultWindow
 	}
 	r := &Reader{manifests: o.Manifests, kinds: o.Kinds, resolver: o.Resolver, delivery: d, base: base, ring: ring,
-		hooks: o.Hooks, progress: o.Progress, maxLimit: orDefault(o.MaxLimit, 200), defLimit: orDefault(o.DefaultLimit, 50), now: o.Now}
+		hooks: o.Hooks, progress: o.Progress, queue: o.Queue, maxLimit: orDefault(o.MaxLimit, 200), defLimit: orDefault(o.DefaultLimit, 50), now: o.Now}
 	if r.now == nil {
 		r.now = time.Now
 	}
@@ -157,6 +162,7 @@ type Grant struct {
 	Expires    time.Time
 	units      int
 	folder     string // folder token; full access only
+	editor     string // editor token for temp/; editors only
 	actor      access.Actor
 	r          *Reader
 }
@@ -212,6 +218,9 @@ func (r *Reader) grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	if res.Full() {
 		g.folder = r.ring.Sign(item.PrivatePrefix(), g.Expires)
 	}
+	if res.Editor {
+		g.editor = r.ring.Sign(token.EditorScope(item.TempPrefix()), g.Expires)
+	}
 	return g, nil
 }
 
@@ -262,18 +271,16 @@ func (g *Grant) Cookie() *http.Cookie {
 // blob that file does not reference.
 var ErrNotAllowed = errors.New("media: not allowed")
 
-// Editor reports an editor's grant: EditorOnly variants are signed.
+// Editor reports an editor's grant: editor views are signed.
 func (g *Grant) Editor() bool { return g.Resolution.Editor }
 
 // URL signs rendition blob of file i: plain in cookie mode with full
 // access, the folder token in URL mode, else a token for exactly that key.
-// EditorOnly variants are signed for editors only.
 func (g *Grant) URL(i int, blob string) (string, error) {
 	if !g.Allowed(i) {
 		return "", ErrNotAllowed
 	}
-	f := g.Manifest.Files[i]
-	if !slices.Contains(fileBlobs(f), blob) || !g.Editor() && editorOnly(f, blob) {
+	if !slices.Contains(fileBlobs(g.Manifest.Files[i]), blob) {
 		return "", ErrNotAllowed
 	}
 	key, err := g.Item.Private(blob)
@@ -339,25 +346,50 @@ func fileBlobs(f File) []string {
 	return m.Renditions()
 }
 
-// editorOnly reports a rendition only an EditorOnly variant of f uses.
-func editorOnly(f File, blob string) bool {
-	only := false
-	for _, v := range f.Variants {
-		if v.Blob == blob {
-			if !v.Editor {
-				return false
+// editorViews finds the item's editor views: one listing of temp/ per read.
+type editorViews struct {
+	g       *Grant
+	have    map[string]bool
+	missing bool // an editor view the read wanted is not there
+}
+
+// url is the editor view of file f under the editor token: "" for a file
+// without one (not an image, not placed yet, failed) or when it is missing.
+func (e *editorViews) url(ctx context.Context, f File) (string, error) {
+	key := e.g.Item.EditorView(f.Source())
+	if e.g.editor == "" || key == "" || !isImageType(f.Type) || f.Failed() != nil {
+		return "", nil
+	}
+	if e.have == nil {
+		e.have = map[string]bool{}
+		for o, err := range e.g.r.manifests.store.List(ctx, e.g.Item.TempPrefix()) {
+			if err != nil {
+				return "", err
 			}
-			only = true
+			e.have[o.Key] = true
 		}
 	}
-	return only
+	if !e.have[key] {
+		e.missing = true
+		return "", nil
+	}
+	return e.g.r.objectURL(key) + "?t=" + e.g.editor, nil
+}
+
+// renderMissing asks the image job for missing editor views. Best effort:
+// the editor's next read asks again.
+func (r *Reader) renderMissing(ctx context.Context, job ProcessJob, missing bool) {
+	if missing && r.queue != nil {
+		_ = r.queue.Enqueue(ctx, job)
+	}
 }
 
 // ReadOptions select the URLs a read returns.
 type ReadOptions struct {
 	// Variants in preference order: each file in range gets a URL for the
-	// first one it has (EditorOnly ones only for editors). Empty returns
-	// metadata only.
+	// first one it has. EditorVariant is the editor view, for editors only:
+	// a missing one is rendered again (ReaderOptions.Queue) and the file
+	// falls through to the next variant meanwhile. Empty returns metadata only.
 	Variants      []string
 	Offset, Limit int
 	// Unattached also lists an editor's unattached files (FileInfo.Unattached).
@@ -450,6 +482,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	case g.units > 0:
 		out.Access, out.PreviewLimit = AccessPreview, g.units
 	}
+	views := &editorViews{g: g}
 	for i, f := range files {
 		fi := FileInfo{Index: i, Type: f.Type, Width: metaInt(f.Meta, "w"), Height: metaInt(f.Meta, "h"),
 			Duration: metaFloat(f.Meta, "duration"), Teaser: f.Teaser(), HLS: f.HLS != nil && len(f.HLS.Video) > 0, Unattached: f.Unattached}
@@ -468,10 +501,16 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 			}
 			if i >= o.Offset && i < o.Offset+o.Limit {
 				for _, v := range o.Variants {
-					if vr, ok := f.Variants[v]; ok && (!vr.Editor || g.Editor()) {
+					if v == EditorVariant {
+						if fi.URL, err = views.url(ctx, f); err != nil {
+							return nil, nil, err
+						}
+					} else if vr, ok := f.Variants[v]; ok {
 						if fi.URL, err = g.URL(i, vr.Blob); err != nil {
 							return nil, nil, err
 						}
+					}
+					if fi.URL != "" {
 						fi.Variant = v
 						break
 					}
@@ -480,6 +519,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		}
 		out.Files[i] = fi
 	}
+	r.renderMissing(ctx, ProcessJob{Ref: g.Item.Ref()}, views.missing)
 	r.addProgress(ctx, g, out.Files)
 	if g.Full() {
 		keys := make([]string, 0, len(g.Manifest.Downloads))

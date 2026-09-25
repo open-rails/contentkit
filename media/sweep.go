@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,15 +25,18 @@ type SweepResult struct {
 }
 
 // Sweep deletes what the item's manifest does not keep: originals/,
-// private/ and public/ objects outside its index and staged uploads no file
-// references, once the manifest is older than the grace period, and only
-// objects past abandonedAt. Removed public/ keys go to Hooks.PublicRemoved.
+// private/ and public/ objects outside its index once the manifest is older
+// than the grace period, and temp/ at any time: editor views past
+// JobsConfig.EditorTTL and staged uploads no file references past
+// JobsConfig.TempUploadTTL. Only objects past their retention (deleteAt) go.
+// Removed public/ keys go to Hooks.PublicRemoved.
 //
 // Invariant: the sweep deletes only objects the manifest does not reference
 // and that no in-flight commit or job can newly reference. Uploads keeps the
 // second half: presign reuses an existing original, and a commit accepts one,
-// only while it is referenced or well before abandonedAt (see protected);
-// jobs write renditions before the edit that lists them, well within grace.
+// only while it is referenced or well before deleteAt (see protected); jobs
+// write renditions before the edit that lists them, well within grace.
+// Nothing references an editor view: it is rendered again when missing.
 func (j *Jobs) Sweep(ctx context.Context, ref contentref.ContentRef) (SweepResult, error) {
 	item, err := j.cfg.Kinds.Item(ref.Content())
 	if err != nil {
@@ -95,8 +99,12 @@ func (j *Jobs) sweep(ctx context.Context, prefix string, objs []Object) (SweepRe
 	now := j.cfg.Now()
 	cutoff := now.Add(-j.cfg.Grace)
 	manifests, newest := manifestETags(objs)
+	var wait time.Duration // the manifest is within grace: only temp/ is swept
 	if newest.After(cutoff) {
-		return SweepResult{Wait: newest.Sub(cutoff) + time.Second}, nil
+		wait = newest.Sub(cutoff) + time.Second
+		if !slices.ContainsFunc(objs, isTemp) {
+			return SweepResult{Wait: wait}, nil
+		}
 	}
 	refs := map[string]bool{}
 	for key := range manifests {
@@ -113,17 +121,17 @@ func (j *Jobs) sweep(ctx context.Context, prefix string, objs []Object) (SweepRe
 		var keys []string
 		for _, o := range objs {
 			k, ok := layout.Parse(o.Key)
-			if !ok || k.Area == AreaManifest {
+			if !ok || k.Area == AreaManifest || wait > 0 && k.Area != AreaTemp {
 				continue
 			}
-			if !refs[k.Area+"/"+k.Name] && !now.Before(abandonedAt(k.Name, o.LastModified, j.cfg.Grace)) {
+			if !refs[k.Area+"/"+k.Name] && !now.Before(j.retention().deleteAt(k.Name, o.LastModified)) {
 				keys = append(keys, o.Key)
 			}
 		}
 		return keys
 	}
 	if len(abandoned(objs)) == 0 {
-		return SweepResult{}, nil
+		return SweepResult{Wait: wait}, nil
 	}
 	// A manifest written since the listing may reference a doomed object, and
 	// an upload may have refreshed one: only the second listing decides.
@@ -135,31 +143,50 @@ func (j *Jobs) sweep(ctx context.Context, prefix string, objs []Object) (SweepRe
 		return SweepResult{Wait: j.cfg.Grace}, nil
 	}
 	doomed := abandoned(again)
-	if len(doomed) == 0 {
-		return SweepResult{}, nil
+	if len(doomed) > 0 {
+		if err := j.deleteKeys(ctx, doomed); err != nil {
+			return SweepResult{}, err
+		}
+		j.publicRemoved(ctx, doomed)
 	}
-	if err := j.deleteKeys(ctx, doomed); err != nil {
-		return SweepResult{}, err
-	}
-	j.publicRemoved(ctx, doomed)
-	return SweepResult{Deleted: doomed}, nil
+	return SweepResult{Deleted: doomed, Wait: wait}, nil
 }
 
-// multipartLife is the bucket's 1-day abort rule: backends may date a
-// completed multipart object at its initiation.
-const multipartLife = 24 * time.Hour
+func isTemp(o Object) bool {
+	k, ok := layout.Parse(o.Key)
+	return ok && k.Area == AreaTemp
+}
+
+// retention is how long the sweep keeps an object nothing references.
+type retention struct{ grace, upload, editor time.Duration }
+
+func (j *Jobs) retention() retention {
+	return retention{grace: j.cfg.Grace, upload: j.cfg.TempUploadTTL, editor: j.cfg.EditorTTL}
+}
+
+// deleteAt is when the sweep may delete an unreferenced object named name.
+func (r retention) deleteAt(name string, modified time.Time) time.Time {
+	switch {
+	case layout.ValidStagedName(name):
+		return modified.Add(r.upload)
+	case layout.ValidEditorName(name):
+		return modified.Add(r.editor)
+	}
+	return modified.Add(r.grace)
+}
+
+// margin is commitMargin for name's retention.
+func (r retention) margin(name string) time.Duration {
+	if layout.ValidStagedName(name) {
+		return commitMargin(r.upload)
+	}
+	return commitMargin(r.grace)
+}
 
 // commitMargin bounds the time between a commit's check of an original and its
-// manifest edit landing (the edit runs under half of it): grace/4, at most 1 h.
-func commitMargin(grace time.Duration) time.Duration { return min(grace/4, time.Hour) }
-
-// abandonedAt is when the sweep may delete an unreferenced blob or original.
-func abandonedAt(name string, modified time.Time, grace time.Duration) time.Time {
-	if strings.HasPrefix(name, layout.UploadPrefix) {
-		return modified.Add(grace + multipartLife)
-	}
-	return modified.Add(grace)
-}
+// manifest edit landing (the edit runs under half of it): a quarter of the
+// original's retention, at most 1 h.
+func commitMargin(ttl time.Duration) time.Duration { return min(ttl/4, time.Hour) }
 
 func manifestKeys(objs []Object) map[string]string {
 	m, _ := manifestETags(objs)

@@ -30,8 +30,15 @@ type Kind struct {
 	// MaxBytes replaces the kind's for that type, and MaxFiles caps that
 	// type's files. A kind may mix images (Specs) and videos (Video).
 	TypeLimits map[string]Limit
-	Specs      map[string]Spec // variant name → spec
+	Specs      map[string]Spec // variant name → spec ("editor" is reserved)
 	Slots      map[string]Slot // public slot name → outputs
+	// Editor is the editor view: the whole source (EXIF-oriented, ignoring
+	// crop and rotate) the cropper draws on, for image files and slot
+	// originals. It is an input-keyed cache in temp/ (Item.EditorView), never
+	// in the manifest: the image job renders it, the sweep deletes it after
+	// JobsConfig.EditorTTL, and an editor's read renders it again. Only
+	// editors get its URL, under an editor token. nil: no editor views.
+	Editor *Spec
 	// Inline enables inline images: write-once public images with random ids
 	// ("i-{uuid}", from NewInlineName), each re-encoded with this spec from
 	// originals/{id} to public/{id}.webp. Post bodies and poll options use them.
@@ -134,6 +141,9 @@ type Limit struct {
 	MaxFiles int
 }
 
+// EditorVariant is the read API's name for the editor view (Kind.Editor).
+const EditorVariant = "editor"
+
 // Fit is how an image spec fits its box.
 type Fit string
 
@@ -149,12 +159,6 @@ type Spec struct {
 	Fit     Fit
 	Quality int
 	Blur    float64
-	// Unedited ignores the file's Edit: an editor's view of the whole source.
-	// It must be EditorOnly.
-	Unedited bool
-	// EditorOnly variants are signed by the read API only for actors whose
-	// Resolution is Editor; slots, inline images and zips cannot use them.
-	EditorOnly bool
 }
 
 // Hash is the spec's stable identity; a variant whose recorded spec differs is
@@ -162,12 +166,6 @@ type Spec struct {
 func (s Spec) Hash() string {
 	id := strconv.Itoa(s.Width) + "x" + strconv.Itoa(s.Height) + "|" + string(s.Fit) + "|q" +
 		strconv.Itoa(s.Quality) + "|b" + strconv.FormatFloat(s.Blur, 'g', -1, 64)
-	if s.Unedited {
-		id += "|u"
-	}
-	if s.EditorOnly {
-		id += "|e"
-	}
 	sum := sha256.Sum256([]byte(id))
 	return hex.EncodeToString(sum[:4])
 }
@@ -310,16 +308,13 @@ func NewRegistry(kinds ...Kind) (*Registry, error) {
 		if _, dup := r.kinds[k.Name]; dup {
 			return nil, fmt.Errorf("media: duplicate kind %q", k.Name)
 		}
-		for name, s := range k.Specs {
-			if !layout.ValidSegment(name) || s.Unedited && !s.EditorOnly {
-				return nil, fmt.Errorf("media: kind %q: invalid spec %q (Unedited must be EditorOnly)", k.Name, name)
+		for name := range k.Specs {
+			if !layout.ValidSegment(name) || name == EditorVariant {
+				return nil, fmt.Errorf("media: kind %q: invalid spec name %q (%q is the editor view)", k.Name, name, EditorVariant)
 			}
 		}
-		if s, ok := k.Specs[k.Zip]; k.Zip != "" && (!ok || s.EditorOnly) {
-			return nil, fmt.Errorf("media: kind %q: zip variant %q has no spec or is EditorOnly", k.Name, k.Zip)
-		}
-		if k.Inline != nil && (k.Inline.Unedited || k.Inline.EditorOnly) {
-			return nil, fmt.Errorf("media: kind %q: inline images are public; their spec cannot be Unedited or EditorOnly", k.Name)
+		if _, ok := k.Specs[k.Zip]; k.Zip != "" && !ok {
+			return nil, fmt.Errorf("media: kind %q: zip variant %q has no spec", k.Name, k.Zip)
 		}
 		if k.Video != nil {
 			if err := k.Video.Validate(); err != nil {

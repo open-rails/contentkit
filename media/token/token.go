@@ -5,8 +5,10 @@
 //
 // A scope is either a folder prefix ending in "/", which covers the objects
 // directly under it, or one object key. A download scope binds a
-// Content-Disposition name: "{key}#dl={name}". Tokens are bearer tokens,
-// revoked only by expiry.
+// Content-Disposition name: "{key}#dl={name}". An editor scope,
+// "{folder}#editor", covers the objects directly under a temp/ folder and is
+// accepted only by VerifyEditor; Verify never accepts it, nor VerifyEditor any
+// other scope. Tokens are bearer tokens, revoked only by expiry.
 package token
 
 import (
@@ -111,6 +113,9 @@ func FileScope(key string) string { return key }
 // DownloadScope scopes a token to one key served under a download name.
 func DownloadScope(key, name string) string { return key + "#dl=" + name }
 
+// EditorScope scopes a token to the editor views directly under folder.
+func EditorScope(folder string) string { return folder + "#editor" }
+
 // Sign signs scope until exp with the current key.
 func (r Ring) Sign(scope string, exp time.Time) string {
 	e := strconv.FormatInt(exp.Unix(), 10)
@@ -121,6 +126,32 @@ func (r Ring) Sign(scope string, exp time.Time) string {
 // scope for exactly that name; otherwise the token must cover the key itself
 // or the folder directly containing it.
 func (r Ring) Verify(tok, key, dl string, now time.Time) error {
+	if key == "" || strings.HasSuffix(key, "/") {
+		return ErrInvalid
+	}
+	var scopes []string
+	if dl != "" {
+		scopes = []string{DownloadScope(key, dl)}
+	} else {
+		scopes = []string{key}
+		if i := strings.LastIndexByte(key, '/'); i >= 0 {
+			scopes = append(scopes, key[:i+1])
+		}
+	}
+	return r.verify(tok, scopes, now)
+}
+
+// VerifyEditor checks tok for object key at now under an editor scope for
+// the folder directly containing key, and nothing else.
+func (r Ring) VerifyEditor(tok, key string, now time.Time) error {
+	i := strings.LastIndexByte(key, '/')
+	if i < 0 || i == len(key)-1 {
+		return ErrInvalid
+	}
+	return r.verify(tok, []string{EditorScope(key[:i+1])}, now)
+}
+
+func (r Ring) verify(tok string, scopes []string, now time.Time) error {
 	kid, rest, ok := strings.Cut(tok, ".")
 	if !ok {
 		return ErrMalformed
@@ -144,18 +175,6 @@ func (r Ring) Verify(tok, key, dl string, now time.Time) error {
 	}
 	if now.Unix() >= exp {
 		return ErrExpired
-	}
-	if key == "" || strings.HasSuffix(key, "/") {
-		return ErrInvalid
-	}
-	var scopes []string
-	if dl != "" {
-		scopes = []string{DownloadScope(key, dl)}
-	} else {
-		scopes = []string{key}
-		if i := strings.LastIndexByte(key, '/'); i >= 0 {
-			scopes = append(scopes, key[:i+1])
-		}
 	}
 	got, err := base64.RawURLEncoding.DecodeString(sig)
 	if err != nil {

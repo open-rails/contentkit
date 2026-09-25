@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/open-rails/contentkit/access"
@@ -304,36 +303,6 @@ func (u *Uploads) SetSlotFromFile(ctx context.Context, actor access.Actor, r Slo
 	return u.enqueueSlot(ctx, r.Ref, r.Slot)
 }
 
-// SlotOriginal opens a slot's committed original for its uploaders (the
-// editor); originals are never served.
-func (u *Uploads) SlotOriginal(ctx context.Context, actor access.Actor, ref contentref.ContentRef, slot string) (io.ReadCloser, Object, error) {
-	item, err := u.item(ref)
-	if err != nil {
-		return nil, Object{}, err
-	}
-	if _, ok := item.Kind().Slots[slot]; !ok {
-		return nil, Object{}, uploadErr(CodeNotFound, "kind %q has no slot %q", item.Kind().Name, slot)
-	}
-	if _, err := u.authorize(ctx, actor, ref.Content()); err != nil {
-		return nil, Object{}, err
-	}
-	rec, err := u.o.Manifests.Slot(ctx, ref, slot)
-	if errors.Is(err, ErrNotFound) || err == nil && rec.Original == "" {
-		return nil, Object{}, uploadErr(CodeNotFound, "slot %q has no committed original", slot)
-	} else if err != nil {
-		return nil, Object{}, err
-	}
-	key, err := item.Original(rec.Original)
-	if err != nil {
-		return nil, Object{}, err
-	}
-	rc, obj, err := u.o.Store.Get(ctx, key, GetOptions{})
-	if errors.Is(err, ErrNotFound) {
-		return nil, Object{}, uploadErr(CodeNotUploaded, "slot %q original is missing; commit a new one", slot)
-	}
-	return rc, obj, err
-}
-
 func (u *Uploads) enqueueSlot(ctx context.Context, ref contentref.ContentRef, slot string) error {
 	if u.o.Queue == nil {
 		return nil
@@ -359,6 +328,11 @@ type SlotManifest struct {
 	MinWidth int `json:"min_width,omitempty"`
 	// Animation is the slot's policy: "reject" refuses animated images.
 	Animation Animation `json:"animation,omitempty"`
+	// EditorURL is the committed original's editor view (Kind.Editor), what
+	// the cropper draws on; editors only, "" while it renders.
+	EditorURL string `json:"editor_url,omitempty"`
+
+	editorMissing bool // the editor view is not there: render it (Reader.renderMissing)
 }
 
 // SlotImage is one produced output.
@@ -369,10 +343,12 @@ type SlotImage struct {
 }
 
 // OutputURLs builds slot output URLs for one caller: public/ copies for an
-// item that is not hidden; private/ files under Token (editors) otherwise.
+// item that is not hidden; private/ files under Token (editors) otherwise,
+// and editor views under Editor.
 type OutputURLs struct {
 	BaseURL string // the access worker origin
 	Token   string // the item's private/ folder token; editors only
+	Editor  string // the item's temp/ editor token; editors only
 }
 
 // url is the output's URL for this caller, or "" when it may not see it.
@@ -433,7 +409,27 @@ func (m *Manifests) slotManifest(ctx context.Context, urls OutputURLs, ref conte
 		}
 	}
 	out.Aspect = outputAspect(s, out.Outputs)
+	if err := m.slotEditorView(ctx, urls, item, slot, rec, &out); err != nil {
+		return SlotManifest{}, nil, err
+	}
 	return out, rec, nil
+}
+
+// slotEditorView sets an editor's EditorURL for a registered slot's measured
+// original, or editorMissing when it is not rendered.
+func (m *Manifests) slotEditorView(ctx context.Context, urls OutputURLs, item Item, slot string, rec *SlotRecord, out *SlotManifest) error {
+	key := item.EditorView(rec.Original)
+	if _, registered := item.Kind().Slots[slot]; urls.Editor == "" || key == "" || !registered || rec.dims().W == 0 {
+		return nil
+	}
+	if _, err := m.store.Head(ctx, key); errors.Is(err, ErrNotFound) {
+		out.editorMissing = true
+		return nil
+	} else if err != nil {
+		return err
+	}
+	out.EditorURL = strings.TrimRight(urls.BaseURL, "/") + "/" + key + "?t=" + urls.Editor
+	return nil
 }
 
 // Slot resolves ref for actor and reads a slot: ErrNotVisible for an item
@@ -443,10 +439,12 @@ func (r *Reader) Slot(ctx context.Context, ref contentref.ContentRef, actor acce
 	if err != nil {
 		return SlotManifest{}, err
 	}
-	return r.manifests.SlotManifest(ctx, urls, ref, slot)
+	out, err := r.manifests.SlotManifest(ctx, urls, ref, slot)
+	r.renderMissing(ctx, ProcessJob{Ref: ref.Content(), Slot: slot}, out.editorMissing)
+	return out, err
 }
 
-// outputURLs resolves ref for actor once: editors get a private/ token.
+// outputURLs resolves ref for actor once: editors get private/ and temp/ tokens.
 func (r *Reader) outputURLs(ctx context.Context, ref contentref.ContentRef, actor access.Actor) (OutputURLs, error) {
 	if _, err := r.kinds.Item(ref.Content()); err != nil {
 		return OutputURLs{}, fmt.Errorf("%w: %v", ErrNotVisible, err)
@@ -470,7 +468,9 @@ func (r *Reader) EditorURLs(ref contentref.ContentRef) (OutputURLs, error) {
 	if err != nil {
 		return OutputURLs{}, err
 	}
-	return OutputURLs{BaseURL: r.base.String(), Token: r.ring.Sign(item.PrivatePrefix(), token.Expiry(r.now(), r.delivery.TTL, r.delivery.Window))}, nil
+	exp := token.Expiry(r.now(), r.delivery.TTL, r.delivery.Window)
+	return OutputURLs{BaseURL: r.base.String(), Token: r.ring.Sign(item.PrivatePrefix(), exp),
+		Editor: r.ring.Sign(token.EditorScope(item.TempPrefix()), exp)}, nil
 }
 
 // SlotListing is what a host stores from Hooks.SlotEncoded to list a slot

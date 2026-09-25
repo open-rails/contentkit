@@ -11,6 +11,7 @@ import (
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // cid is the n-th test content id, a canonical UUIDv7.
@@ -67,7 +68,7 @@ func TestItemKeys(t *testing.T) {
 		t.Fatal(v, err)
 	}
 	up := media.NewUploadName()
-	if k, err := p.Original(up); err != nil || k != "o/post/"+cid(501)+"/staging/"+up {
+	if k, err := p.Original(up); err != nil || k != "o/post/"+cid(501)+"/temp/"+up {
 		t.Fatal(k, err)
 	}
 
@@ -129,24 +130,35 @@ func TestKindRules(t *testing.T) {
 	if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{inline: {Aspect: media.Aspect1x1, Widths: []int{8}}}}); err == nil {
 		t.Fatal("inline-named slot accepted")
 	}
-	editor := media.Spec{Unedited: true, EditorOnly: true}
+	editor := media.Spec{Width: 1200}
 	for name, k := range map[string]media.Kind{
-		"public unedited spec": {Specs: map[string]media.Spec{"editor": {Unedited: true}}},
-		"editor inline":        {Inline: &editor},
-		"editor zip":           {Specs: map[string]media.Spec{"editor": editor}, Zip: "editor"},
-		"odd ladder":           {Video: &media.Video{Ladder: []int{720, 481}}},
-		"ascending ladder":     {Video: &media.Video{Ladder: []int{480, 720}}},
-		"wide min aspect":      {Video: &media.Video{MinAspect: 1.2}},
-		"narrow max aspect":    {Video: &media.Video{MaxAspect: 0.8}},
-		"negative aspect":      {Video: &media.Video{MinAspect: -1}},
+		"editor spec name":  {Specs: map[string]media.Spec{media.EditorVariant: editor}},
+		"zip without spec":  {Zip: "high"},
+		"odd ladder":        {Video: &media.Video{Ladder: []int{720, 481}}},
+		"ascending ladder":  {Video: &media.Video{Ladder: []int{480, 720}}},
+		"wide min aspect":   {Video: &media.Video{MinAspect: 1.2}},
+		"narrow max aspect": {Video: &media.Video{MaxAspect: 0.8}},
+		"negative aspect":   {Video: &media.Video{MinAspect: -1}},
 	} {
 		k.Name = "x"
 		if _, err := media.NewRegistry(k); err == nil {
 			t.Fatalf("%s accepted", name)
 		}
 	}
-	if _, err := media.NewRegistry(media.Kind{Name: "x", Specs: map[string]media.Spec{"editor": editor}, Video: &media.Video{Ladder: []int{720, 360}}}); err != nil {
+	r2, err := media.NewRegistry(media.Kind{Name: "x", Editor: &editor, Video: &media.Video{Ladder: []int{720, 360}}}, media.Kind{Name: "y"})
+	if err != nil {
 		t.Fatal(err)
+	}
+	// Editor views are keyed by source and spec, in temp/; none without Kind.Editor.
+	x, _ := r2.Item(contentref.New("h", "x", cid(1)))
+	y, _ := r2.Item(contentref.New("h", "y", cid(1)))
+	src := media.SHA256Name(make([]byte, 32))
+	view := x.EditorView(src)
+	if k, ok := layout.Parse(view); !ok || k.Area != media.AreaTemp || !layout.ValidEditorName(k.Name) {
+		t.Fatalf("editor view %q", view)
+	}
+	if x.EditorView(media.NewUploadName()) != "" || y.EditorView(src) != "" || x.EditorView(src) != view {
+		t.Fatal("EditorView")
 	}
 }
 

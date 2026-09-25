@@ -87,7 +87,7 @@ func TestPlaceConvergesAndDedupes(t *testing.T) {
 		t.Fatalf("references not renamed: %+v %+v", m1, m2)
 	}
 	if exists(a.Name) || !exists(name) {
-		t.Fatal("staging kept or original missing")
+		t.Fatal("temp upload kept or original missing")
 	}
 
 	// Crash after the copy: the next run renames and deletes.
@@ -103,7 +103,7 @@ func TestPlaceConvergesAndDedupes(t *testing.T) {
 		t.Fatal("did not converge after a crash past the copy")
 	}
 
-	// Crash after deleting staging but before the second version switched.
+	// Crash after deleting the temp upload but before the second version switched.
 	c := stage("page c")
 	set("v1", media.File{Name: "c.png", Original: c.Name, Type: "image/png"})
 	set("v2", media.File{Name: "c.png", Original: c.Name, Type: "image/png"})
@@ -135,11 +135,11 @@ func TestPlaceConvergesAndDedupes(t *testing.T) {
 	// A staged upload changed after hashing is refused; one gone with no original is typed.
 	e := stage("page e")
 	if _, err := ms.Place(ctx, work, media.Staged{Name: e.Name, ETag: `"0123"`, SHA256: e.SHA256}); !errors.Is(err, media.ErrPreconditionFailed) {
-		t.Fatalf("changed staging: %v", err)
+		t.Fatalf("changed temp upload: %v", err)
 	}
 	gone := media.Staged{Name: media.NewUploadName(), SHA256: e.SHA256}
 	if _, err := ms.Place(ctx, work, gone); !errors.Is(err, media.ErrStagedGone) {
-		t.Fatalf("gone staging: %v", err)
+		t.Fatalf("gone temp upload: %v", err)
 	}
 
 	// The placed bytes are the staged ones.

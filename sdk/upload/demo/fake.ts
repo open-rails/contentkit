@@ -33,8 +33,6 @@ export class DemoServer {
     await sleep(this.delay);
     const key = `${b.ref?.kind}/${b.ref?.id}#${b.slot}`;
     switch (path) {
-      case "/slot-original":
-        return new Response(this.blobs.get(key)!, { status: 200 });
       case "/presign":
         return json({ name: b.slot, put: { method: "PUT", url: `demo://${key}`, headers: {}, expires: "" } });
       case "/commit-slot":
@@ -99,7 +97,8 @@ export class DemoServer {
       const url = URL.createObjectURL(await cv.convertToBlob({ type: "image/webp", quality: 0.9 }));
       outputs.push({ w: width, h: height, url });
     }
-    const m: SlotManifest = { aspect: `${aw}:${ah}`, ...(edit ? { edit } : {}), dims: { w: src.width, h: src.height }, outputs, pending: false };
+    const editor_url = URL.createObjectURL(this.blobs.get(key)!);
+    const m: SlotManifest = { aspect: `${aw}:${ah}`, ...(edit ? { edit } : {}), dims: { w: src.width, h: src.height }, editor_url, outputs, pending: false };
     this.slots.set(key, m);
     return m;
   }

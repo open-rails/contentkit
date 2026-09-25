@@ -3,12 +3,14 @@
 //
 //	{tenant}/{kind}/{content_id}/manifest.json         the item's one manifest; never served
 //	                            /originals/sha256-{hex} uploads; never served
-//	                            /staging/u-{uuid}       multipart uploads until placed; never served
+//	                            /temp/u-{uuid}          staged multipart uploads until placed; never served
+//	                            /temp/e-{hex}           editor views; editor token only
 //	                            /private/sha256-{hex}   every rendition; token-gated
 //	                            /public/sha256-{hex}    copies of the exposed renditions; anyone
 //
-// Every name but staging's is the SHA-256 of the object, so objects are
-// immutable: a change writes a new name.
+// originals/, private/ and public/ names are the SHA-256 of the object, so
+// objects are immutable: a change writes a new name. temp/ is discardable:
+// nothing a viewer needs lives there, and the sweep wipes it by age.
 package layout
 
 import (
@@ -20,7 +22,7 @@ import (
 const (
 	AreaManifest  = "manifest"
 	AreaOriginals = "originals"
-	AreaStaging   = "staging"
+	AreaTemp      = "temp"
 	AreaPrivate   = "private"
 	AreaPublic    = "public"
 )
@@ -32,6 +34,7 @@ const (
 	SHA256Prefix = "sha256-"
 	UploadPrefix = "u-"
 	InlinePrefix = "i-"
+	EditorPrefix = "e-"
 )
 
 // Key is a parsed object key.
@@ -53,8 +56,8 @@ func Parse(key string) (Key, bool) {
 	switch {
 	case len(rest) == 1 && rest[0] == ManifestName:
 		k.Area = AreaManifest
-	case len(rest) == 2 && rest[0] == AreaStaging && ValidStagedName(rest[1]):
-		k.Area, k.Name = AreaStaging, rest[1]
+	case len(rest) == 2 && rest[0] == AreaTemp && (ValidStagedName(rest[1]) || ValidEditorName(rest[1])):
+		k.Area, k.Name = AreaTemp, rest[1]
 	case len(rest) == 2 && (rest[0] == AreaOriginals || rest[0] == AreaPrivate || rest[0] == AreaPublic) && ValidHashName(rest[1]):
 		k.Area, k.Name = rest[0], rest[1]
 	default:
@@ -93,11 +96,22 @@ func ValidStagedName(name string) bool {
 	return ok && canonicalUUID(id)
 }
 
-// SourceArea is where an uploaded file named name lives: staging/ for a
+// ValidEditorName accepts "e-{64 lowercase hex}", an editor view.
+func ValidEditorName(name string) bool {
+	h, ok := strings.CutPrefix(name, EditorPrefix)
+	return ok && len(h) == 64 && strings.ToLower(h) == h && validHex(h)
+}
+
+func validHex(s string) bool {
+	_, err := hex.DecodeString(s)
+	return err == nil
+}
+
+// SourceArea is where an uploaded file named name lives: temp/ for a
 // "u-{uuid}" not yet placed, originals/ for a "sha256-{hex}".
 func SourceArea(name string) string {
 	if ValidStagedName(name) {
-		return AreaStaging
+		return AreaTemp
 	}
 	return AreaOriginals
 }

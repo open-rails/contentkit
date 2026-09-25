@@ -65,7 +65,7 @@ func newReadFixtureOn(t *testing.T, env *s3test.Env) *readFixture {
 	t.Helper()
 	kinds, err := media.NewRegistry(
 		media.Kind{Name: "gallery", Versioned: true, Specs: map[string]media.Spec{"thumb": {Width: 460}, "high": {}}},
-		media.Kind{Name: "post", Specs: map[string]media.Spec{"large": {}, "blurred": {Blur: 20}},
+		media.Kind{Name: "post", Specs: map[string]media.Spec{"large": {}, "blurred": {Blur: 20}}, Editor: &media.Spec{Width: 1200},
 			Slots: map[string]media.Slot{"cover": {Aspect: media.Aspect1x1, Widths: []int{64}}}},
 	)
 	if err != nil {
@@ -115,7 +115,17 @@ func newReadFixtureOn(t *testing.T, env *s3test.Env) *readFixture {
 
 func (f *readFixture) reader(t *testing.T, mode media.DeliveryMode, hooks media.Hooks) *media.Reader {
 	t.Helper()
-	r, err := media.NewReader(media.ReaderOptions{Manifests: f.ms, Kinds: f.kinds, Resolver: f.res, Hooks: hooks,
+	return f.newReader(t, media.ReaderOptions{Hooks: hooks}, mode)
+}
+
+func (f *readFixture) readerWith(t *testing.T, mode media.DeliveryMode, q media.ProcessQueue) *media.Reader {
+	t.Helper()
+	return f.newReader(t, media.ReaderOptions{Queue: q}, mode)
+}
+
+func (f *readFixture) newReader(t *testing.T, o media.ReaderOptions, mode media.DeliveryMode) *media.Reader {
+	t.Helper()
+	r, err := media.NewReader(media.ReaderOptions{Manifests: f.ms, Kinds: f.kinds, Resolver: f.res, Hooks: o.Hooks, Queue: o.Queue,
 		Delivery: media.Delivery{Mode: mode, BaseURL: readBase, CookieDomain: "doujins.com", SigningKey: readKey},
 		Now:      func() time.Time { return f.now }})
 	if err != nil {
@@ -515,18 +525,23 @@ func TestReadHandler(t *testing.T) {
 	}
 }
 
-func TestReadEditorOnlyVariants(t *testing.T) {
+// Editor views live in temp/, outside the manifest: only editors get them,
+// under an editor token no viewer token equals; a missing one is rendered
+// again and the read falls through to the next variant meanwhile.
+func TestReadEditorViews(t *testing.T) {
 	f := newReadFixture(t)
 	ref := contentref.New(f.env.Tenant, "post", cid(502))
 	edit := &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 100, H: 100}}
 	if _, err := f.ms.Edit(context.Background(), ref, func(m *media.Manifest) error {
 		m.Files = []media.File{{Name: "a.png", Original: blobName("a"), Type: "image/png", Edit: edit, Dims: &media.Dims{W: 400, H: 200},
-			Variants: map[string]media.Variant{"large": {Blob: blobName("a-large")}, "editor": {Blob: blobName("a-editor"), Editor: true}}}}
+			Variants: map[string]media.Variant{"large": {Blob: blobName("a-large")}}}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	editorKey := f.key(t, ref, media.AreaPrivate, blobName("a-editor"))
+	item, _ := f.kinds.Item(ref)
+	view := item.EditorView(blobName("a"))
+	putObject(t, f.env.Store, view, "editor view")
 	largeKey := f.key(t, ref, media.AreaPrivate, blobName("a-large"))
 	for _, mode := range []media.DeliveryMode{media.DeliverCookie, media.DeliverURL} {
 		for _, res := range []access.Resolution{
@@ -537,48 +552,56 @@ func TestReadEditorOnlyVariants(t *testing.T) {
 		} {
 			t.Run(fmt.Sprintf("%s %+v", mode, res), func(t *testing.T) {
 				f.res.verdicts[cid(502)] = res
-				r := f.reader(t, mode, media.Hooks{})
-				out := f.read(t, r, ref, media.ReadOptions{Variants: []string{"editor", "large"}})
+				q := &queue{}
+				r := f.readerWith(t, mode, q)
+				out := f.read(t, r, ref, media.ReadOptions{Variants: []string{media.EditorVariant, "large"}})
 				fi := out.Files[0]
-				want := "large"
-				if res.Editor {
-					want = "editor"
-				}
-				if fi.Variant != want || (fi.Edit != nil) != res.Editor || (fi.Dims != nil) != res.Editor {
+				if (fi.Edit != nil) != res.Editor || (fi.Dims != nil) != res.Editor {
 					t.Fatalf("file %+v", fi)
 				}
+				key, tok, _ := split(t, fi.URL)
+				if !res.Editor {
+					if fi.Variant != "large" || key != largeKey {
+						t.Fatalf("viewer got %+v", fi)
+					}
+					return
+				}
+				if fi.Variant != media.EditorVariant || key != view || q.count() != 0 {
+					t.Fatalf("editor got %+v (%d jobs)", fi, q.count())
+				}
+				at := f.now.Add(time.Minute)
+				if err := f.verifier.VerifyEditor(tok, view, at); err != nil {
+					t.Fatal(err)
+				}
+				if err := f.verifier.Verify(tok, largeKey, "", at); err == nil {
+					t.Fatal("editor token opens private/")
+				}
+				// No token a viewer can hold opens the editor view.
 				g, err := r.Grant(context.Background(), ref, access.Actor{ID: "u1"})
 				if err != nil {
 					t.Fatal(err)
 				}
-				// EditorOnly renditions live in private/ like the rest; only
-				// editors get them signed.
-				viewer, err := g.URL(0, blobName("a-large"))
-				if err != nil {
-					t.Fatal(err)
-				}
-				_, tok, _ := split(t, viewer)
+				u, _ := g.URL(0, blobName("a-large"))
+				_, viewer, _ := split(t, u)
 				if c := g.Cookie(); c != nil {
-					tok = c.Value
+					viewer = c.Value
 				}
-				f.covers(t, tok, map[string]bool{largeKey: true}, largeKey)
-				u, err := g.URL(0, blobName("a-editor"))
-				if !res.Editor {
-					if !errors.Is(err, media.ErrNotAllowed) {
-						t.Fatalf("editor blob signed for a viewer: %q %v", u, err)
-					}
-					return
+				if err := f.verifier.VerifyEditor(viewer, view, at); err == nil {
+					t.Fatal("viewer token opens temp/")
 				}
-				key, tok, _ := split(t, u)
-				if err != nil || key != editorKey {
-					t.Fatalf("editor url %q %v", u, err)
-				}
-				if c := g.Cookie(); c != nil {
-					tok = c.Value
-				}
-				f.covers(t, tok, map[string]bool{editorKey: true}, editorKey)
 			})
 		}
+	}
+
+	// Swept: the editor read falls back and asks for a render.
+	if err := f.env.Store.Delete(context.Background(), view); err != nil {
+		t.Fatal(err)
+	}
+	f.res.verdicts[cid(502)] = access.Resolution{Visible: true, Accessible: true, Editor: true}
+	q := &queue{}
+	out := f.read(t, f.readerWith(t, media.DeliverURL, q), ref, media.ReadOptions{Variants: []string{media.EditorVariant}})
+	if out.Files[0].URL != "" || q.count() != 1 || q.jobs[0].Ref != ref {
+		t.Fatalf("missing view: %+v, jobs %+v", out.Files[0], q.jobs)
 	}
 }
 

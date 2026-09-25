@@ -21,7 +21,7 @@ import (
 )
 
 // Upload size rules. Files up to MaxSinglePut are one checksum-bound PUT to
-// originals/sha256-{hex}; larger ones are multipart to staging/u-{uuid} with
+// originals/sha256-{hex}; larger ones are multipart to temp/u-{uuid} with
 // parts of MinPartSize growing up to MaxPartSize (the last part may be
 // smaller), until the media worker hashes and places them (Manifests.Place).
 const (
@@ -73,10 +73,11 @@ type UploadOptions struct {
 	Limiter    UploadLimiter // optional
 	Queue      ProcessQueue  // optional
 	PresignTTL time.Duration // PUT and part URLs; default 15m
-	// Grace is the sweep's (JobsConfig.Grace): the Manifests' Sweeps when it
-	// is *Jobs, else 24h.
-	Grace     time.Duration
-	TicketTTL time.Duration // multipart ticket; default 24h, the abort-incomplete rule
+	// Grace and TempUploadTTL are the sweep's (JobsConfig): the Manifests'
+	// Sweeps' when it is *Jobs, else 24 h and 48 h.
+	Grace         time.Duration
+	TempUploadTTL time.Duration
+	TicketTTL     time.Duration // multipart ticket; default 24h, the abort-incomplete rule
 	// Frames serves the video poster picker's frame grabs (media/video.Frames;
 	// needs ffmpeg); nil answers not_found. FrameConcurrency bounds concurrent
 	// grabs per process; default 2.
@@ -108,11 +109,19 @@ func NewUploads(o UploadOptions) (*Uploads, error) {
 	if o.TicketTTL <= 0 {
 		o.TicketTTL = 24 * time.Hour
 	}
-	if jobs, ok := o.Manifests.sweeps.(*Jobs); ok && o.Grace <= 0 {
-		o.Grace = jobs.cfg.Grace
+	if jobs, ok := o.Manifests.sweeps.(*Jobs); ok {
+		if o.Grace <= 0 {
+			o.Grace = jobs.cfg.Grace
+		}
+		if o.TempUploadTTL <= 0 {
+			o.TempUploadTTL = jobs.cfg.TempUploadTTL
+		}
 	}
 	if o.Grace <= 0 {
 		o.Grace = 24 * time.Hour
+	}
+	if o.TempUploadTTL <= 0 {
+		o.TempUploadTTL = 48 * time.Hour
 	}
 	if o.FrameConcurrency <= 0 {
 		o.FrameConcurrency = 2
@@ -451,7 +460,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		} else if err != nil {
 			return nil, err
 		}
-		if ok, err := u.protected(ctx, item, op.Original, obj, commitMargin(u.o.Grace)); err != nil {
+		if ok, err := u.protected(ctx, item, op.Original, obj, u.retention().margin(op.Original)); err != nil {
 			return nil, err
 		} else if !ok {
 			missing = append(missing, op.Original)
@@ -477,7 +486,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		s.Tenant, s.Owner = ref.TenantID, grant.Owner
 		return u.o.Limiter.Settle(ctx, s)
 	}
-	editCtx, cancel := context.WithTimeout(ctx, commitMargin(u.o.Grace)/2)
+	editCtx, cancel := context.WithTimeout(ctx, min(commitMargin(u.o.Grace), commitMargin(u.o.TempUploadTTL))/2)
 	defer cancel()
 	man, err := u.o.Manifests.Edit(editCtx, ref, func(m *Manifest) error {
 		before := m.originalSizes()
@@ -526,10 +535,14 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 // it is referenced by a manifest in the folder, or the sweep cannot take it
 // within margin.
 func (u *Uploads) protected(ctx context.Context, item Item, name string, obj Object, margin time.Duration) (bool, error) {
-	if time.Now().Add(margin).Before(abandonedAt(name, obj.LastModified, u.o.Grace)) {
+	if time.Now().Add(margin).Before(u.retention().deleteAt(name, obj.LastModified)) {
 		return true, nil
 	}
 	return u.o.Manifests.references(ctx, item, name)
+}
+
+func (u *Uploads) retention() retention {
+	return retention{grace: u.o.Grace, upload: u.o.TempUploadTTL}
 }
 
 // verify HEAD-checks an uploaded original in item's folder. A name from another

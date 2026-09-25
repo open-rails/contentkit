@@ -59,6 +59,37 @@ func TestFolderAndFileScopes(t *testing.T) {
 	}
 }
 
+// Editor tokens open temp/ only through VerifyEditor; viewer tokens never do.
+func TestEditorScope(t *testing.T) {
+	r := ring(t, k1, nil)
+	now := time.Unix(1_800_000_000, 0)
+	exp := token.Expiry(now, time.Hour, 0)
+	const temp = "d/gallery/123/temp/"
+	view := temp + "e-3a"
+
+	editor := r.Sign(token.EditorScope(temp), exp)
+	if err := r.VerifyEditor(editor, view, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"d/gallery/124/temp/e-3a", temp + "nested/e-3a", temp, "d/gallery/123/private/sha256-3a"} {
+		if err := r.VerifyEditor(editor, key, now); !errors.Is(err, token.ErrInvalid) {
+			t.Fatalf("editor token opened %s: %v", key, err)
+		}
+	}
+	if err := r.Verify(editor, view, "", now); !errors.Is(err, token.ErrInvalid) {
+		t.Fatalf("Verify accepted an editor token: %v", err)
+	}
+	for _, viewer := range []string{r.Sign(temp, exp), r.Sign(token.FileScope(view), exp), r.Sign("d/gallery/123/private/", exp),
+		r.Sign(token.DownloadScope(view, "editor"), exp)} {
+		if err := r.VerifyEditor(viewer, view, now); !errors.Is(err, token.ErrInvalid) {
+			t.Fatalf("VerifyEditor accepted a viewer token: %v", err)
+		}
+	}
+	if err := r.VerifyEditor(editor, view, exp); !errors.Is(err, token.ErrExpired) {
+		t.Fatalf("expired editor token: %v", err)
+	}
+}
+
 func TestDownloadNameBinding(t *testing.T) {
 	r := ring(t, k1, nil)
 	now := time.Unix(1_800_000_000, 0)

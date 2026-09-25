@@ -65,10 +65,6 @@ export class UploadApi {
   slot(b: SlotRefBody, signal?: AbortSignal) {
     return this.call<SlotManifest>("/slot", b, signal);
   }
-  /** The committed original's bytes (for the crop editor). */
-  slotOriginal(b: SlotRefBody, signal?: AbortSignal) {
-    return this.call<Blob>("/slot-original", b, signal, true);
-  }
   commitSlotFromFile(b: SlotFromFileBody, signal?: AbortSignal) {
     return this.call<SlotManifest>("/commit-slot-from-file", b, signal);
   }

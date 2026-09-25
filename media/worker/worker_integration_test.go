@@ -284,7 +284,7 @@ func TestWorkerProcessesImagesAndPlacesStagedUploads(t *testing.T) {
 			m.Files[1].Original == media.SHA256Name(sum[:]) && h.exists(t, cover)
 	})
 	if key, _ := item.Original(name); h.exists(t, key) {
-		t.Fatal("staging kept after placement")
+		t.Fatal("temp upload kept after placement")
 	}
 	var listing media.SlotListing
 	var ok bool
@@ -333,7 +333,7 @@ func TestWorkerPlacesAndEncodesStagedVideo(t *testing.T) {
 	}
 	item, _ := h.kinds.Item(ref)
 	if key, _ := item.Original(name); h.exists(t, key) {
-		t.Fatal("staging kept after placement")
+		t.Fatal("temp upload kept after placement")
 	}
 	// Ready only once the poster is grabbed and rendered too.
 	eventually(t, "ItemReady", time.Minute, func() bool { r, ok := h.lastSettled(ref); return ok && r.Ready() })

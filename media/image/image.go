@@ -12,6 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 
@@ -82,7 +84,7 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 		return err
 	}
 	if job.Slot != "" {
-		return p.slot(ctx, item, job.Slot)
+		return errors.Join(p.slot(ctx, item, job.Slot), p.editorViews(ctx, item, job.Slot))
 	}
 	var errs []error
 	if _, err := item.Section(); err == nil {
@@ -104,7 +106,79 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 			}
 		}
 	}
+	errs = append(errs, p.editorViews(ctx, item, ""))
 	return errors.Join(errs...)
+}
+
+// editorViews renders the item's missing editor views (Kind.Editor) into
+// temp/: every image file's placed source and every registered slot's
+// measured original, or only slot's when set. Sources that cannot be decoded
+// are skipped; their files and slots record the failure.
+func (p *Processor) editorViews(ctx context.Context, item media.Item, slot string) error {
+	spec := item.Kind().Editor
+	if spec == nil {
+		return nil
+	}
+	root, _, err := p.c.Manifests.Root(ctx, item.Ref())
+	if errors.Is(err, media.ErrNotFound) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	want := map[string]string{} // key → source
+	add := func(source string) {
+		if key := item.EditorView(source); key != "" {
+			want[key] = source
+		}
+	}
+	if slot == "" {
+		for _, m := range append([]*media.Manifest{&root.Manifest}, slices.Collect(maps.Values(root.Versions))...) {
+			for _, f := range m.Files {
+				if isImage(f) && f.Failed() == nil {
+					add(f.Source())
+				}
+			}
+		}
+	}
+	for name, rec := range root.Slots {
+		if _, registered := item.Kind().Slots[name]; registered && (slot == "" || slot == name) &&
+			rec.Result != nil && rec.Result.Source == rec.Original && rec.Result.Dims.W > 0 {
+			add(rec.Original)
+		}
+	}
+	if len(want) == 0 {
+		return nil
+	}
+	for o, err := range p.c.Store.List(ctx, item.TempPrefix()) {
+		if err != nil {
+			return err
+		}
+		delete(want, o.Key)
+	}
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(p.c.Workers)
+	for key, source := range want {
+		g.Go(func() error {
+			orig, _ := item.Original(source)
+			src, obj, err := p.read(gctx, orig)
+			if errors.Is(err, media.ErrNotFound) {
+				return nil // replaced meanwhile
+			} else if err != nil {
+				return err
+			}
+			if _, err := probe(src, obj.ContentType, p.rules(media.AnimationAllow)); err != nil {
+				return nil
+			}
+			out, _, err := encode(src, obj.ContentType, *spec, nil)
+			if err != nil {
+				return nil
+			}
+			_, err = p.c.Store.Put(gctx, key, bytes.NewReader(out), int64(len(out)),
+				media.PutOptions{ContentType: "image/webp", CacheControl: "private, max-age=3600", ChecksumSHA256: sha(out)})
+			return err
+		})
+	}
+	return g.Wait()
 }
 
 // derived holds a source's new variants through one edit, by name.
@@ -393,7 +467,7 @@ func (p *Processor) derive(ctx context.Context, item media.Item, w work) (derive
 			return derived{placed: d.placed}, err
 		}
 		d.variants[name] = media.Variant{Blob: blob, Spec: specFor(s, w.typ, w.edit), Type: "image/webp", Size: int64(len(out)),
-			W: dims.W, H: dims.H, Editor: s.EditorOnly || s.Unedited}
+			W: dims.W, H: dims.H}
 	}
 	return d, nil
 }

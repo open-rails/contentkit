@@ -115,12 +115,12 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
     expect(await c.getSlot(ref, "cover")).toMatchObject({ aspect: "3:1", edit: turned, pending: true });
     expect(puts).toHaveLength(1);
 
-    const original = new Uint8Array(await (await c.getSlotOriginal(ref, "cover")).arrayBuffer());
-    expect(createHash("sha256").update(original).digest("hex")).toBe(createHash("sha256").update(png).digest("hex"));
+    // Originals never leave the server; without an encoder the editor view never renders.
+    expect((await c.getEditorView(ref, "cover", { timeout: 0 }).catch((e) => e)).code).toBe("render_timeout");
 
     expect((await c.editSlot(ref, "cover", { rotate: 45 }).catch((e) => e)).code).toBe("invalid_request");
     expect((await c.editSlot(ref, "banner", edit).catch((e) => e)).code).toBe("not_found");
-    expect((await c.getSlotOriginal({ ...ref, id: "0192f000-0000-7000-8000-000000000005" }, "cover").catch((e) => e)).code).toBe("not_found");
+    expect((await c.getEditorView({ ...ref, id: "0192f000-0000-7000-8000-000000000005" }, "cover").catch((e) => e)).code).toBe("not_found");
   });
 
   it("uploads a stale original again when commit refuses it", async () => {

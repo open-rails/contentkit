@@ -42,7 +42,7 @@ func TestStagedImageIsPlacedWhileDerived(t *testing.T) {
 		t.Fatalf("not placed and derived in one run: %+v", f)
 	}
 	if key, _ := item.Original(first); e.exists(t, key) {
-		t.Fatal("staging kept after placement")
+		t.Fatal("temp upload kept after placement")
 	}
 
 	second := stage()
@@ -53,7 +53,7 @@ func TestStagedImageIsPlacedWhileDerived(t *testing.T) {
 		t.Fatalf("duplicate not deduplicated: %+v", f)
 	}
 	if key, _ := item.Original(second); e.exists(t, key) {
-		t.Fatal("duplicate staging kept")
+		t.Fatal("duplicate temp upload kept")
 	}
 }
 

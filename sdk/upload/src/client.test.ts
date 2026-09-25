@@ -258,9 +258,9 @@ describe("slots", () => {
     const m = await c.editSlot(ref, "cover", edit);
     expect([m.edit, s.puts.length]).toEqual([edit, puts]);
     expect(await c.getSlot(ref, "cover")).toEqual(m);
-    expect((await c.getSlotOriginal(ref, "cover")).size).toBe(64);
+    expect(await c.getEditorView(ref, "cover")).toEqual({ url: "fake://cdn/temp/e-cover", width: 4000, height: 3000 });
     expect((await c.editSlot(ref, "banner", edit).catch((e) => e)).code).toBe("not_found");
-    expect((await c.getSlotOriginal(ref, "banner").catch((e) => e)).code).toBe("not_found");
+    expect((await c.getEditorView(ref, "banner").catch((e) => e)).code).toBe("not_found");
   });
 
   it("waits for the outputs to be encoded", async () => {

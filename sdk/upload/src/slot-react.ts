@@ -182,14 +182,7 @@ export function useSlotCrop(client: UploadClient, o: SlotCropOptions): UseSlotCr
     const m = opts.current.manifest;
     if (!m || !hasOriginal(m)) return;
     const { ref, slot } = opts.current;
-    await open(
-      async () => {
-        const blob = await client.getSlotOriginal(ref, slot);
-        return (opts.current.decode ?? decodeImage)(new File([blob], slot, { type: blob.type }));
-      },
-      "recrop",
-      m.edit ?? null,
-    );
+    await open(() => client.getEditorView(ref, slot), "recrop", m.edit ?? null);
   }, [client, open]);
 
   const setEdit = useCallback(

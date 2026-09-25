@@ -33,8 +33,9 @@ type Resolution struct {
 	// ignore it.
 	PreviewLimit int
 	// Editor = the actor may edit the item (its creator, staff): media signs
-	// EditorOnly variants and returns edit metadata only for editors. It
-	// grants nothing beyond what Visible, Accessible and PreviewLimit allow.
+	// editor views (the item's temp/, one editor token) and returns edit
+	// metadata only for editors. Its read API URLs stay within what Visible,
+	// Accessible and PreviewLimit allow.
 	Editor bool
 }
 

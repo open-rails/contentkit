@@ -54,6 +54,7 @@ func mustRing(t *testing.T, cur token.Key, prev *token.Key) token.Ring {
 type fixture struct {
 	env                                     *s3test.Env
 	item, blobA, blobB, other, orig, public string
+	editor                                  string
 	bodyA                                   string
 }
 
@@ -67,11 +68,12 @@ func seed(t *testing.T) *fixture {
 	f.blobB = f.item + "private/" + sha("b")
 	f.orig = f.item + "originals/" + sha("o")
 	f.public = f.item + "public/" + sha("cover")
+	f.editor = f.item + "temp/e-" + strings.TrimPrefix(sha("editor"), "sha256-")
 	f.other = env.Tenant + "/gallery/" + cid(2) + "/private/" + sha("c")
 	ctx := context.Background()
 	for key, body := range map[string]string{
 		f.blobA: f.bodyA, f.blobB: "bee", f.other: "other", f.orig: "original",
-		f.public: "cover", f.item + "manifest.json": "{}", f.item + "staging/" + staged: "staged",
+		f.public: "cover", f.item + "manifest.json": "{}", f.item + "temp/" + staged: "staged", f.editor: "editor view",
 	} {
 		if _, err := env.Store.Put(ctx, key, strings.NewReader(body), int64(len(body)), media.PutOptions{ContentType: "image/webp"}); err != nil {
 			t.Fatal(err)
@@ -196,7 +198,24 @@ func TestAccessWorker(t *testing.T) {
 		expect(t, do(t, srv, "GET", withToken(f.blobA+"/x", folder), nil), 404, "")
 		expect(t, do(t, srv, "GET", withToken(f.orig, folder), nil), 404, "")
 		expect(t, do(t, srv, "GET", withToken(f.item+"manifest.json", folder), nil), 404, "")
-		expect(t, do(t, srv, "GET", withToken(f.item+"staging/"+staged, folder), nil), 404, "")
+		expect(t, do(t, srv, "GET", withToken(f.item+"temp/"+staged, folder), nil), 404, "")
+	})
+
+	t.Run("editor views need an editor token", func(t *testing.T) {
+		editor := cur.Sign(token.EditorScope(f.item+"temp/"), exp)
+		r := do(t, srv, "GET", withToken(f.editor, editor), nil)
+		expect(t, r, 200, "editor view")
+		if r.header.Get("Cache-Control") != "private, max-age=3600" {
+			t.Fatalf("editor view headers: %v", r.header)
+		}
+		for _, viewer := range []string{folder, cur.Sign(f.item+"temp/", exp), cur.Sign(token.FileScope(f.editor), exp), cur.Sign(f.item, exp)} {
+			denied(t, do(t, srv, "GET", withToken(f.editor, viewer), nil))
+			denied(t, do(t, srv, "GET", "/"+f.editor, map[string]string{"Cookie": "mt=" + viewer}))
+		}
+		denied(t, do(t, srv, "GET", "/"+f.editor, map[string]string{"Cookie": "mt=" + editor}))
+		denied(t, do(t, srv, "GET", withToken(f.item+"temp/"+staged, editor), nil))
+		denied(t, do(t, srv, "GET", withToken(f.env.Tenant+"/gallery/"+cid(2)+"/temp/"+strings.TrimPrefix(f.editor, f.item+"temp/"), editor), nil))
+		denied(t, do(t, srv, "GET", withToken(f.blobA, editor), nil))
 	})
 
 	t.Run("originals and manifests are never served", func(t *testing.T) {
@@ -300,7 +319,8 @@ func TestAccessWorker(t *testing.T) {
 			"expired":        do(t, srv, "GET", withToken(f.blobA, expired), nil),
 			"other item":     do(t, srv, "GET", withToken(f.blobA, cur.Sign(f.env.Tenant+"/gallery/"+cid(2)+"/private/", exp)), nil),
 			"unknown key":    do(t, srv, "GET", withToken(f.blobA, mustRing(t, k0, nil).Sign(f.blobA, exp)), nil),
-			"staging":        do(t, srv, "GET", withToken(f.item+"staging/"+staged, cur.Sign(f.item, exp)), nil),
+			"staged upload":  do(t, srv, "GET", withToken(f.item+"temp/"+staged, cur.Sign(token.EditorScope(f.item+"temp/"), exp)), nil),
+			"viewer on temp": do(t, srv, "GET", withToken(f.editor, cur.Sign(f.item+"temp/", exp)), nil),
 			"missing public": do(t, srv, "GET", "/"+f.item+"public/"+sha("none"), nil),
 			"original":       do(t, srv, "GET", withToken(f.orig, cur.Sign(f.orig, exp)), nil),
 			"manifest":       do(t, srv, "GET", withToken(f.item+"manifest.json", folder), nil),

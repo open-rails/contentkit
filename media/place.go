@@ -24,11 +24,11 @@ type Staged struct {
 	SHA256 []byte
 }
 
-// Place moves a staged upload (staging/u-{uuid}) to its content address,
+// Place moves a staged upload (temp/u-{uuid}) to its content address,
 // originals/sha256-{hex}, and returns that name. The media worker calls it
 // with the hash it computed while reading the upload for processing:
 //
-//  1. copy staging → originals server-side, unless the folder already holds
+//  1. copy temp → originals server-side, unless the folder already holds
 //     the hash (dedupe), and verify the copy's size (and full-object SHA-256
 //     when the store reports one);
 //  2. rename every reference in the manifest (original, master, hls source,
@@ -145,7 +145,7 @@ func (m *Manifest) renameSource(from, to string) bool {
 }
 
 // folderRefs is every object the manifest references, as "{area}/{name}"
-// (a staged original under staging/).
+// (a staged original under temp/).
 func (m *Manifests) folderRefs(ctx context.Context, item Item) (map[string]bool, error) {
 	root, _, err := m.root(ctx, item.ManifestKey())
 	if errors.Is(err, ErrNotFound) {

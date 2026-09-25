@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -42,7 +41,6 @@ type UploadHandlerOptions struct {
 //	POST /commit-slot-from-file  SlotFromFileBody -> SlotManifest
 //	POST /edit-slot              SlotEditBody     -> SlotManifest   re-edit the committed original
 //	POST /slot                   SlotRefBody      -> SlotManifest
-//	POST /slot-original          SlotRefBody      -> the committed original's bytes (editor)
 //	POST /video-images   VideoImagesBody  -> VideoImages   poster, with selections
 //	POST /video-poster   VideoPosterBody  -> VideoImages
 //	GET  /frame?kind=&id=&version=&file=&t=&w= -> image/jpeg   poster picker frame (UploadOptions.Frames)
@@ -63,7 +61,6 @@ func UploadHandler(u *Uploads, o UploadHandlerOptions) http.Handler {
 	mux.HandleFunc("POST /commit-slot-from-file", h.slotFromFile)
 	mux.HandleFunc("POST /edit-slot", h.editSlot)
 	mux.HandleFunc("POST /slot", h.slot)
-	mux.HandleFunc("POST /slot-original", h.slotOriginal)
 	mux.HandleFunc("POST /video-images", h.videoImages)
 	mux.HandleFunc("POST /video-poster", h.videoPoster)
 	mux.HandleFunc("GET /frame", h.frame)
@@ -424,28 +421,12 @@ func (h uploadHandler) editSlot(w http.ResponseWriter, r *http.Request) {
 
 func (h uploadHandler) slot(w http.ResponseWriter, r *http.Request) {
 	var b SlotRefBody
-	if _, ok := h.read(w, r, &b); ok {
-		h.slotReply(w, r, b.Ref, b.Slot, nil)
-	}
-}
-
-func (h uploadHandler) slotOriginal(w http.ResponseWriter, r *http.Request) {
-	var b SlotRefBody
 	actor, ok := h.read(w, r, &b)
 	if !ok {
 		return
 	}
-	rc, obj, err := h.u.SlotOriginal(r.Context(), actor, h.ref(b.Ref), b.Slot)
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	defer rc.Close()
-	w.Header().Set("Content-Type", obj.ContentType)
-	w.Header().Set("Content-Length", strconv.FormatInt(obj.Size, 10))
-	w.Header().Set("Cache-Control", "private, no-store")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	_, _ = io.Copy(w, rc)
+	_, err := h.u.authorize(r.Context(), actor, h.ref(b.Ref).Content())
+	h.slotReply(w, r, b.Ref, b.Slot, err)
 }
 
 // slotReply answers a slot route with the slot's manifest once err is nil.
@@ -462,7 +443,15 @@ func (h uploadHandler) slotReply(w http.ResponseWriter, r *http.Request, ref Ref
 		h.fail(w, r, err)
 		return
 	}
+	h.renderMissing(r, ProcessJob{Ref: h.ref(ref).Content(), Slot: slot}, m.editorMissing)
 	writeJSON(w, http.StatusOK, m)
+}
+
+// renderMissing asks the image job for a missing editor view; best effort.
+func (h uploadHandler) renderMissing(r *http.Request, job ProcessJob, missing bool) {
+	if missing && h.u.o.Queue != nil {
+		_ = h.u.o.Queue.Enqueue(r.Context(), job)
+	}
 }
 
 // urls are an uploader's reply URLs: uploaders edit the item.
@@ -518,6 +507,7 @@ func (h uploadHandler) videoReply(w http.ResponseWriter, r *http.Request, ref Re
 		h.fail(w, r, err)
 		return
 	}
+	h.renderMissing(r, ProcessJob{Ref: h.ref(ref).Content(), Slot: PosterSlot}, v.Poster.editorMissing)
 	writeJSON(w, http.StatusOK, v)
 }
 

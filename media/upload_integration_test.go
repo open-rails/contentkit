@@ -376,20 +376,13 @@ func TestSlotUploadAndCommit(t *testing.T) {
 		t.Fatalf("slot original %+v %v", obj, err)
 	}
 
-	// The editor reads the committed original back; others may not.
-	req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/slot-original", strings.NewReader(`{"ref":{"kind":"gallery","id":"`+cid(9)+`"},"slot":"cover"}`))
-	req.Header.Set("X-Test-Actor", "alice")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
+	// Originals never leave the server (editors crop on the editor view), and
+	// only uploaders read a slot's manifest with its editor tokens.
+	if status, _ := e.call(t, "alice", "/slot-original", media.SlotRefBody{Ref: ref, Slot: "cover"}, nil); status != 404 {
+		t.Fatalf("slot-original answered %d", status)
 	}
-	got, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != 200 || !bytes.Equal(got, cover) || resp.Header.Get("Content-Type") != "image/png" || resp.Header.Get("Cache-Control") != "private, no-store" {
-		t.Fatalf("slot original: %d %q", resp.StatusCode, resp.Header)
-	}
-	if status, er := e.call(t, "reader", "/slot-original", media.SlotRefBody{Ref: ref, Slot: "cover"}, nil); status != 403 {
-		t.Fatalf("reader read the original: %d %+v", status, er)
+	if status, er := e.call(t, "reader", "/slot", media.SlotRefBody{Ref: ref, Slot: "cover"}, nil); status != 403 {
+		t.Fatalf("reader read the slot's editor manifest: %d %+v", status, er)
 	}
 
 	// Edit-slot reuses the original; no edit centres.
@@ -417,16 +410,6 @@ func TestSlotUploadAndCommit(t *testing.T) {
 	}
 	if status, er := e.call(t, "alice", "/edit-slot", media.SlotEditBody{Ref: ref, Slot: "cover"}, nil); status != 200 {
 		t.Fatalf("edit with an uncommitted upload pending: %d %+v", status, er)
-	}
-	req, _ = http.NewRequest(http.MethodPost, e.srv.URL+"/slot-original", strings.NewReader(`{"ref":{"kind":"gallery","id":"`+cid(9)+`"},"slot":"cover"}`))
-	req.Header.Set("X-Test-Actor", "alice")
-	if resp, err = http.DefaultClient.Do(req); err != nil {
-		t.Fatal(err)
-	}
-	got, _ = io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != 200 || !bytes.Equal(got, cover) {
-		t.Fatalf("committed original after a new upload: %d", resp.StatusCode)
 	}
 	if status, er := e.call(t, "alice", "/slot", media.SlotRefBody{Ref: ref, Slot: "nope"}, nil); status != 404 {
 		t.Fatalf("unknown slot manifest: %d %+v", status, er)
@@ -602,7 +585,7 @@ func TestMultipartResumeAfterKilledPart(t *testing.T) {
 	if status != 200 || c.Files[0].Size != int64(len(body)) || c.Files[0].Type != "video/mp4" {
 		t.Fatalf("commit %d %+v %+v", status, c, er)
 	}
-	stagedKey := e.Tenant + "/video/" + cid(88) + "/staging/" + p.Name
+	stagedKey := e.Tenant + "/video/" + cid(88) + "/temp/" + p.Name
 	rc, staged, err := e.Store.Get(ctx, stagedKey, media.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -627,7 +610,7 @@ func TestMultipartResumeAfterKilledPart(t *testing.T) {
 		t.Fatalf("manifest not switched: %+v %v", man, err)
 	}
 	if _, err := e.Store.Head(ctx, stagedKey); !errors.Is(err, media.ErrNotFound) {
-		t.Fatalf("staging kept: %v", err)
+		t.Fatalf("temp upload kept: %v", err)
 	}
 	placed, err := e.Store.Head(ctx, e.Tenant+"/video/"+cid(88)+"/originals/"+media.SHA256Name(sum[:]))
 	if err != nil || placed.Size != int64(len(body)) || placed.ContentType != "video/mp4" {

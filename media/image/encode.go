@@ -272,13 +272,10 @@ func webp(img *vips.ImageRef, quality int) ([]byte, error) {
 	return out, err
 }
 
-// encode derives one WebP from src through edit (unless the spec is
-// Unedited) per spec, frame by frame. Inside never enlarges; cover fills the
-// box and crops the centre; a zero box keeps full resolution.
+// encode derives one WebP from src through edit per spec, frame by frame
+// (nil edit: the whole source). Inside never enlarges; cover fills the box
+// and crops the centre; a zero box keeps full resolution.
 func encode(src []byte, contentType string, s media.Spec, edit *media.Edit) ([]byte, media.Dims, error) {
-	if s.Unedited {
-		edit = nil
-	}
 	full := s.Width == 0 && s.Height == 0
 	w, h := orUnbounded(s.Width), orUnbounded(s.Height)
 	crop, size := vips.InterestingNone, vips.SizeDown

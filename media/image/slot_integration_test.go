@@ -269,6 +269,60 @@ func TestSlotEditWidthsAndSpecChange(t *testing.T) {
 	}
 }
 
+// A slot's editor view is the whole committed original in temp/, listed to
+// editors only and rendered again once swept; edits leave it alone.
+func TestSlotEditorView(t *testing.T) {
+	k := galleryKind()
+	k.Editor = &media.Spec{Width: 300}
+	e := newEnv(t, k)
+	ctx := context.Background()
+	ref := contentref.New(e.Tenant, "gallery", cid(6))
+	e.slot(t, ref, "cover", encodePNG(t, paint(1800, 1200, func(int, int) color.RGBA { return red })), crop(900, 0, 900, 0))
+	e.drain(t)
+	rec, err := e.manifests.Slot(ctx, ref, "cover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, _ := e.kinds.Item(ref)
+	view := item.EditorView(rec.Original)
+	b, _ := e.object(t, view)
+	if w, h := webpSize(t, b); w != 300 || h != 200 {
+		t.Fatalf("editor view %dx%d", w, h)
+	}
+	editor := func() string {
+		m, err := e.manifests.SlotManifest(ctx, media.OutputURLs{BaseURL: slotBase, Token: "p", Editor: "tok"}, ref, "cover")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m.EditorURL
+	}
+	if u := editor(); u != slotBase+"/"+view+"?t=tok" {
+		t.Fatalf("editor url %q", u)
+	}
+	if m := e.slotManifest(t, ref, "cover"); m.EditorURL != "" {
+		t.Fatalf("viewer got the editor view: %q", m.EditorURL)
+	}
+	if err := e.editSlot(t, ref, "cover", crop(0, 0, 600, 0)); err != nil {
+		t.Fatal(err)
+	}
+	e.drain(t)
+	if u := editor(); u != slotBase+"/"+view+"?t=tok" {
+		t.Fatalf("editor url after an edit %q", u)
+	}
+	if err := e.Env.Store.Delete(ctx, view); err != nil {
+		t.Fatal(err)
+	}
+	if u := editor(); u != "" {
+		t.Fatalf("swept editor view listed: %q", u)
+	}
+	if err := e.proc.Process(ctx, media.ProcessJob{Ref: ref, Slot: "cover"}); err != nil {
+		t.Fatal(err)
+	}
+	if u := editor(); u == "" {
+		t.Fatal("editor view not rendered again")
+	}
+}
+
 func TestSlotOrientationCentreAndFailure(t *testing.T) {
 	e := newEnv(t, galleryKind())
 	bands := func(y int) color.RGBA { return []color.RGBA{red, green, blue}[y/400] }
