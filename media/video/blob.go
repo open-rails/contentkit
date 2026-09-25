@@ -36,7 +36,7 @@ func (e *Encoder) put(ctx context.Context, item media.Item, path, contentType st
 	}
 	sum := h.Sum(nil)
 	name := media.SHA256Name(sum)
-	key, _ := item.Blob(name)
+	key, _ := item.Private(name)
 	if obj, err := e.c.Store.Head(ctx, key); err == nil && obj.Size == size {
 		fp.skipped(size)
 		return name, size, nil

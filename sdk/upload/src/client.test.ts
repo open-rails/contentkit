@@ -53,7 +53,8 @@ describe("single PUT", () => {
   it("uploads and commits a slot", async () => {
     const { s, c } = setup();
     const up = await c.uploadSlot(file(MiB, 3, "image/png"), { ref, slot: "cover" });
-    expect(up.name).toBe("cover");
+    expect(up.name).toMatch(/^sha256-/);
+    expect(s.slotCalls.at(-1)).toMatchObject({ slot: "cover", sha256: up.name.slice(7), filename: "f3.bin" });
     expect(s.calls).toEqual(["/presign", "/commit-slot"]);
   });
 
@@ -61,6 +62,7 @@ describe("single PUT", () => {
     const { s, c } = setup();
     const up = await c.uploadInline(file(MiB, 4, "image/png"), { ref });
     expect(up.name).toMatch(/^i-/);
+    expect(up.url).toMatch(/^fake:\/\/cdn\/public\/sha256-/);
     expect(s.calls).toEqual(["/presign", "/commit-slot"]);
     expect(s.slots).toEqual([up.name]);
   });
@@ -237,7 +239,7 @@ describe("slots", () => {
   it("commits the crop with the original and returns the manifest", async () => {
     const { s, c } = setup();
     const up = await c.uploadSlot(file(1000, 4, "image/jpeg"), { ref, slot: "avatar", edit });
-    expect(s.slotCalls).toEqual([{ ref, slot: "avatar", sha256: up.sha256, edit }]);
+    expect(s.slotCalls).toEqual([{ ref, slot: "avatar", filename: "f4.bin", sha256: up.sha256, edit }]);
     expect(up.manifest).toMatchObject({ aspect: "1:1", edit, dims: { w: 4000, h: 3000 }, outputs: [{ w: 128 }, { w: 256 }, { w: 512 }] });
     expect(s.calls).toEqual(["/presign", "/commit-slot"]);
   });

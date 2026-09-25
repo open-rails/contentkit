@@ -73,29 +73,45 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	key := func(area, name string) string { return g.Prefix() + area + "/" + name }
 	upOrphan, upRef := media.NewUploadName(), media.NewUploadName()
 	names := map[string]string{}
-	for _, n := range []string{"origA", "origB", "origOrphan", "blobA", "blobA2", "blobB", "blobReplaced", "blobOrphan", "blobFresh"} {
+	for _, n := range []string{"origA", "origB", "origOrphan", "blobA", "blobA2", "blobB", "blobReplaced", "blobOrphan", "blobFresh",
+		"coverOrig", "coverOut", "coverOld", "avatarOrig", "avatarOut"} {
 		names[n] = blobName(n)
 	}
 	for _, n := range []string{"origA", "origB", "origOrphan"} {
 		putObject(t, s, key(media.AreaOriginals, names[n]), n)
 	}
 	for _, n := range []string{"blobA", "blobA2", "blobB", "blobReplaced", "blobOrphan"} {
-		putObject(t, s, key(media.AreaBlobs, names[n]), n)
+		putObject(t, s, key(media.AreaPrivate, names[n]), n)
 	}
 	putObject(t, s, key(media.AreaStaging, upOrphan), "abandoned multipart")
 	putObject(t, s, key(media.AreaStaging, upRef), "committed multipart the worker has not placed")
-	putObject(t, s, key(media.AreaOriginals, "cover"), "slot original")
-	putObject(t, s, g.PublicPrefix()+"cover.webp", "public slot")
+	putObject(t, s, key(media.AreaOriginals, names["coverOrig"]), "slot original")
+	putObject(t, s, key(media.AreaPrivate, names["coverOut"]), "slot output")
+	putObject(t, s, key(media.AreaPublic, names["coverOut"]), "slot output")
+	putObject(t, s, key(media.AreaPublic, names["coverOld"]), "replaced slot output")
 	putObject(t, s, g.Prefix()+"notes.txt", "not ours")
 	// Other folders: a registered kind is swept by SweepAll, an unknown kind is not.
 	post := contentref.New(env.Tenant, "post", cid(7))
 	p, _ := r.Item(post)
-	putObject(t, s, p.BlobsPrefix()+names["blobOrphan"], "post orphan")
-	foreign := env.Tenant + "/zzz/" + cid(1) + "/blobs/" + names["blobOrphan"]
+	putObject(t, s, p.PrivatePrefix()+names["blobOrphan"], "post orphan")
+	foreign := env.Tenant + "/zzz/" + cid(1) + "/private/" + names["blobOrphan"]
 	putObject(t, s, foreign, "foreign orphan")
 	user, _ := r.Item(contentref.New(env.Tenant, "user", cid(11)))
-	putObject(t, s, user.OriginalsPrefix()+"avatar", "avatar original")
-	putObject(t, s, user.PublicPrefix()+"avatar_80.webp", "avatar")
+	slot := func(ref contentref.ContentRef, name, orig, out string) {
+		t.Helper()
+		if err := ms.UpdateSlot(ctx, ref, name, func(rec *media.SlotRecord) error {
+			*rec = media.SlotRecord{Original: names[orig], Result: &media.SlotResult{Source: names[orig],
+				Outputs: []media.SlotRendition{{Rung: 80, W: 80, H: 80, Blob: names[out]}}}}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	slot(work, "cover", "coverOrig", "coverOut")
+	slot(user.Ref(), "avatar", "avatarOrig", "avatarOut") // committed first; the job renders after
+	putObject(t, s, user.OriginalsPrefix()+names["avatarOrig"], "avatar original")
+	putObject(t, s, user.PrivatePrefix()+names["avatarOut"], "avatar")
+	putObject(t, s, user.PublicPrefix()+names["avatarOut"], "avatar")
 
 	variant := func(n string) map[string]media.Variant { return map[string]media.Variant{"thumb": {Blob: names[n]}} }
 	for v, f := range map[string]media.File{
@@ -129,7 +145,7 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 
 	time.Sleep(2 * time.Second)
 	upFresh := media.NewUploadName()
-	putObject(t, s, key(media.AreaBlobs, names["blobFresh"]), "job output not yet in a manifest")
+	putObject(t, s, key(media.AreaPrivate, names["blobFresh"]), "job output not yet in a manifest")
 	putObject(t, s, key(media.AreaStaging, upFresh), "upload not yet committed")
 
 	clock = edited.Add(grace + time.Second)
@@ -137,8 +153,8 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	if err != nil || res.Wait != 0 {
 		t.Fatalf("sweep: %+v %v", res, err)
 	}
-	want := []string{key(media.AreaBlobs, names["blobOrphan"]), key(media.AreaBlobs, names["blobReplaced"]),
-		key(media.AreaOriginals, names["origOrphan"])}
+	want := []string{key(media.AreaPrivate, names["blobOrphan"]), key(media.AreaPrivate, names["blobReplaced"]),
+		key(media.AreaOriginals, names["origOrphan"]), key(media.AreaPublic, names["coverOld"])}
 	slices.Sort(want)
 	slices.Sort(res.Deleted)
 	if !slices.Equal(res.Deleted, want) {
@@ -146,10 +162,10 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	}
 	left := listKeys(t, s, g.Prefix())
 	for _, k := range []string{key(media.AreaOriginals, names["origA"]), key(media.AreaOriginals, names["origB"]),
-		key(media.AreaBlobs, names["blobA"]), key(media.AreaBlobs, names["blobA2"]), key(media.AreaBlobs, names["blobB"]),
-		key(media.AreaBlobs, names["blobFresh"]), key(media.AreaStaging, upFresh), key(media.AreaOriginals, "cover"),
-		key(media.AreaStaging, upOrphan), key(media.AreaStaging, upRef),
-		g.PublicPrefix() + "cover.webp", g.Prefix() + "notes.txt", g.ManifestsPrefix() + "v1.json", g.ManifestsPrefix() + "v2.json"} {
+		key(media.AreaPrivate, names["blobA"]), key(media.AreaPrivate, names["blobA2"]), key(media.AreaPrivate, names["blobB"]),
+		key(media.AreaPrivate, names["blobFresh"]), key(media.AreaStaging, upFresh), key(media.AreaOriginals, names["coverOrig"]),
+		key(media.AreaStaging, upOrphan), key(media.AreaStaging, upRef), key(media.AreaPrivate, names["coverOut"]),
+		key(media.AreaPublic, names["coverOut"]), g.Prefix() + "notes.txt", g.ManifestKey()} {
 		if !slices.Contains(left, k) {
 			t.Errorf("sweep removed %s", k)
 		}
@@ -170,7 +186,7 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	if got := listKeys(t, s, env.Tenant+"/zzz/"); len(got) != 1 {
 		t.Fatalf("unregistered kind was swept: %v", got)
 	}
-	if got := listKeys(t, s, user.Prefix()); len(got) != 2 {
+	if got := listKeys(t, s, user.Prefix()); len(got) != 4 {
 		t.Fatalf("user slot files were swept: %v", got)
 	}
 	if got := listKeys(t, s, g.Prefix()); len(got) != len(left) {
@@ -180,7 +196,7 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	// Multipart objects may be dated at initiation: they get the 1-day abort rule on top.
 	clock = clock.Add(24 * time.Hour)
 	res, err = jobs.Sweep(ctx, work)
-	want = []string{key(media.AreaBlobs, names["blobFresh"]), key(media.AreaStaging, upOrphan)}
+	want = []string{key(media.AreaPrivate, names["blobFresh"]), key(media.AreaStaging, upOrphan)}
 	slices.Sort(res.Deleted)
 	if err != nil || !slices.Equal(res.Deleted, want) {
 		t.Fatalf("second sweep deleted %v (%v), want %v", res.Deleted, err, want)

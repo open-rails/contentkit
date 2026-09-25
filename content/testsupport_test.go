@@ -135,7 +135,7 @@ type testMedia struct {
 	deleted []string
 }
 
-func (*testMedia) PublicURL(ref contentref.ContentRef, name string) (string, error) {
+func (*testMedia) InlineURL(_ context.Context, ref contentref.ContentRef, name string) (string, error) {
 	return "https://media.test/" + ref.TenantID + "/" + ref.ContentKind + "/" + ref.ContentID + "/public/" + name + ".webp", nil
 }
 

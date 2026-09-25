@@ -24,8 +24,8 @@ const poster = {
   aspect: "16:9",
   pending: false,
   outputs: [
-    { name: "poster_480", w: 480, h: 270, url: "https://cdn/poster_480.webp?v=1" },
-    { name: "poster_960", w: 960, h: 540, url: "https://cdn/poster_960.webp?v=1" },
+    { w: 480, h: 270, url: "https://cdn/poster_480.webp?v=1" },
+    { w: 960, h: 540, url: "https://cdn/poster_960.webp?v=1" },
   ],
 };
 
@@ -34,7 +34,7 @@ function reducedMotion(on: boolean) {
 }
 
 it("VideoPoster: native aspect from the poster, uncropped", () => {
-  const tall = { aspect: "", pending: false, outputs: [{ name: "poster_480", w: 480, h: 853, url: "https://cdn/p.webp" }] };
+  const tall = { aspect: "", pending: false, outputs: [{ w: 480, h: 853, url: "https://cdn/p.webp" }] };
   const { container } = render(<VideoPoster poster={tall} alt="tall" />);
   expect(container.firstElementChild).toHaveStyle({ aspectRatio: String(480 / 853) });
   expect(screen.getByRole("img", { name: "tall" })).toHaveClass("object-contain");

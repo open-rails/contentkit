@@ -164,7 +164,7 @@ func TestSlotFromFileCrop(t *testing.T) {
 	e.commit(t, ref, ins("001.png", e.upload(t, ref, "", quadrants(t))))
 	e.drain(t)
 	cover := func() ([]byte, media.Object) {
-		return e.object(t, e.Tenant+"/gallery/"+cid(22)+"/public/cover_100.webp")
+		return e.object(t, e.slotOutput(t, ref, "cover", 100))
 	}
 	set := func(edit *media.Edit) {
 		t.Helper()
@@ -241,6 +241,10 @@ func TestMixedImagesAndVideo(t *testing.T) {
 		t.Helper()
 		e.drain(t)
 		if err := enc.Encode(context.Background(), video.Job{Ref: ref}, nil); err != nil {
+			t.Fatal(err)
+		}
+		// The grabbed poster frame's render, which the video worker hands to the image job.
+		if err := e.proc.Process(context.Background(), media.ProcessJob{Ref: ref, Slot: media.PosterSlot}); err != nil {
 			t.Fatal(err)
 		}
 	}

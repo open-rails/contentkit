@@ -108,9 +108,11 @@ export class FakeServer {
         }
         if (p.size <= 64 * MiB || p.slot || p.inline) {
           if (!p.sha256) throw new UploadError("invalid_request", "sha256 required", 400);
-          const name = p.inline ? `i-${++this.seq}` : (p.slot ?? "sha256-" + p.sha256);
-          if (!p.slot && !p.inline && this.objects.get(name) === p.size && !this.stale.has(name)) return { name, exists: true };
-          return { name, put: req(`fake://s3/put/${name}`, { "Content-Type": p.type, "X-Amz-Checksum-Sha256": b64(p.sha256) }) };
+          // Every original is hash-named; an inline image is named by its new id.
+          const key = "sha256-" + p.sha256;
+          const name = p.inline ? `i-${++this.seq}` : key;
+          if (this.objects.get(key) === p.size && !this.stale.has(key)) return { name, exists: true };
+          return { name, put: req(`fake://s3/put/${key}`, { "Content-Type": p.type, "X-Amz-Checksum-Sha256": b64(p.sha256) }) };
         }
         const ticket = `t${++this.seq}`;
         const name = `u-${this.seq}`;
@@ -160,7 +162,7 @@ export class FakeServer {
         }
         return { files: b.ops.map((op: any) => ({ name: op.name, original: op.original, size: this.objects.get(op.original) })) };
       case "/commit-slot":
-        if (!this.objects.has(b.slot)) throw new UploadError("not_uploaded", "upload the original first", 409);
+        if (!this.objects.has("sha256-" + b.sha256)) throw new UploadError("not_uploaded", "upload the original first", 409);
         this.slots.push(b.slot);
         this.slotCalls.push(b);
         return this.render(b.ref, b.slot, b.edit);
@@ -172,9 +174,9 @@ export class FakeServer {
         return { ...this.video, poster: { ...this.video.poster, pending: this.video.poster.pending && this.pendingLeft-- > 0 } };
       case "/video-poster": {
         this.videoCalls.push(b);
-        if (b.source === "upload" && !this.objects.has("poster")) throw new UploadError("not_uploaded", "upload the poster first", 409);
+        if (b.source === "upload" && !this.objects.has("sha256-" + b.sha256)) throw new UploadError("not_uploaded", "upload the poster first", 409);
         const v = ++this.seq;
-        const outputs = [480, 960, 1920].map((w) => ({ name: `poster_${w}`, w, h: Math.round((w * 9) / 16), url: `fake://cdn/public/poster_${w}.webp#${v}` }));
+        const outputs = [480, 960, 1920].map((w) => ({ w, h: Math.round((w * 9) / 16), url: `fake://cdn/public/sha256-poster${w}v${v}` }));
         const selection = { source: b.source, file: b.file ?? "clip.mp4", ...(b.time !== undefined ? { time: b.time } : {}) };
         this.pendingLeft = this.pendingReads;
         this.video = { ...this.video, poster: { aspect: "16:9", ...(b.edit ? { edit: b.edit } : {}), dims: { w: 1920, h: 1080 }, outputs, pending: this.pendingReads > 0, selection } };
@@ -197,7 +199,7 @@ export class FakeServer {
       aspect,
       ...(edit ? { edit } : {}),
       dims: { w: 4000, h: 3000 },
-      outputs: widths.map((w) => ({ name: `${slot}_${w}`, w, h: Math.round(w / (slot === "avatar" ? 1 : 3)), url: `fake://cdn/public/${slot}_${w}.webp#${v}` })),
+      outputs: widths.map((w) => ({ w, h: Math.round(w / (slot === "avatar" ? 1 : 3)), url: `fake://cdn/public/sha256-${slot}${w}v${v}` })),
       pending: false,
     };
     this.slotState.set(slotKey(ref, slot), m);

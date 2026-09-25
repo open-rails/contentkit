@@ -108,7 +108,7 @@ func (u *Uploads) SetVideoPoster(ctx context.Context, actor access.Actor, ref co
 		return err
 	}
 	if r.Source == PosterSourceUpload {
-		return u.CommitSlot(ctx, actor, ref.Content(), PosterSlot, r.SHA256, r.Edit)
+		return u.CommitSlot(ctx, actor, SlotCommit{Ref: ref.Content(), Slot: PosterSlot, SHA256: r.SHA256, Edit: r.Edit})
 	}
 	if r.Source != PosterSourceFrame && r.Source != PosterSourceAuto {
 		return uploadErr(CodeInvalid, "poster source must be frame, upload or auto")
@@ -211,7 +211,7 @@ func (u *Uploads) videoItem(ref contentref.ContentRef) (Item, error) {
 
 // encodedVideo is the named file, or the manifest's first video file, once encoded.
 func (u *Uploads) encodedVideo(ctx context.Context, item Item, name string) (File, error) {
-	if _, err := item.ManifestKey(); err != nil {
+	if _, err := item.Section(); err != nil {
 		return File{}, uploadErr(CodeInvalid, "%v", err)
 	}
 	man, _, err := u.o.Manifests.Get(ctx, item.Ref())
@@ -297,8 +297,8 @@ type VideoInfo struct {
 }
 
 // VideoImages resolves ref for actor and reads a video item's poster:
-// ErrNotVisible for an item actor may not see; editors get it from editor/,
-// others what the item has published (see Exposure).
+// ErrNotVisible for an item actor may not see; editors also see a hidden
+// item's poster.
 func (r *Reader) VideoImages(ctx context.Context, ref contentref.ContentRef, actor access.Actor) (VideoImages, error) {
 	urls, err := r.outputURLs(ctx, ref, actor)
 	if err != nil {
@@ -351,7 +351,7 @@ func (m *Manifests) VideoImages(ctx context.Context, urls OutputURLs, ref conten
 	case rec.Original != "":
 		out.Poster.Selection = &PosterSelection{Source: PosterSourceUpload}
 	}
-	if _, err := item.ManifestKey(); err == nil {
+	if _, err := item.Section(); err == nil {
 		man, _, err := m.Get(ctx, ref)
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return VideoImages{}, err

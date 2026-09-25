@@ -34,10 +34,10 @@ The media bucket is versioned with a 30-day noncurrent expiry
 recoverable for 30 days. To restore to time T:
 
 1. Restore PostgreSQL to T (the steps above).
-2. Run `store.Restore(ctx, "{tenant}/", T)`: manifests, public slots and slot
-   originals return to their versions at T (those created after T are
-   removed), and blobs and originals the restored manifests reference lose
-   their delete markers. `RestoreReport.Missing` lists references whose
+2. Run `store.Restore(ctx, "{tenant}/", T)`: manifests return to their
+   versions at T (those created after T are removed), and the originals,
+   renditions and public copies the restored manifests list lose their delete
+   markers (every other object is hash-named and never rewritten). `RestoreReport.Missing` lists references whose
    versions have expired.
 3. Re-apply media erasures made after T (`EraseUserTx`/`DeleteItemsTx`) from
    the host's deletion ledger.

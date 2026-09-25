@@ -53,7 +53,7 @@ func (p *Processor) buildZip(ctx context.Context, item media.Item, entries []zip
 	h := sha256.New()
 	zw := zip.NewWriter(io.MultiWriter(f, h))
 	for _, e := range entries {
-		key, err := item.Blob(e.blob)
+		key, err := item.Private(e.blob)
 		if err != nil {
 			return nil, err
 		}

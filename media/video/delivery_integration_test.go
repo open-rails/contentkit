@@ -255,7 +255,7 @@ func (d *delivery) checkRendition(t *testing.T, playlistURL string, blob string,
 		t.Fatalf("%s: init %+v, %d segments, want %d", playlistURL, p.init, len(p.segs), len(want))
 	}
 	u, _ := url.Parse(p.init.uri)
-	if !strings.HasSuffix(u.Path, "/blobs/"+blob) {
+	if !strings.HasSuffix(u.Path, "/private/"+blob) {
 		t.Fatalf("init URI %s is not blob %s", p.init.uri, blob)
 	}
 	if tokenized := u.RawQuery != ""; tokenized != (mode == media.DeliverURL || !full) {

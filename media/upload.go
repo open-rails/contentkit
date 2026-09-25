@@ -206,11 +206,16 @@ func (u *Uploads) presignFile(ctx context.Context, actor access.Actor, r Presign
 		return Presigned{}, err
 	}
 
+	// An inline image is named by its new id; its original, like a slot's,
+	// is hash-named.
+	shown := func(name string) string {
+		if r.Inline {
+			return r.Slot
+		}
+		return name
+	}
 	var name, key string
 	switch {
-	case r.Slot != "":
-		name = r.Slot
-		key, _ = item.SlotOriginal(r.Slot)
 	case single:
 		name = SHA256Name(r.SHA256)
 		key, _ = item.Original(name)
@@ -222,7 +227,7 @@ func (u *Uploads) presignFile(ctx context.Context, actor access.Actor, r Presign
 				return Presigned{}, err
 			}
 			if ok {
-				return Presigned{Name: name, Exists: true}, nil
+				return Presigned{Name: shown(name), Exists: true}, nil
 			}
 		} else if err != nil && !errors.Is(err, ErrNotFound) {
 			return Presigned{}, err
@@ -242,6 +247,7 @@ func (u *Uploads) presignFile(ctx context.Context, actor access.Actor, r Presign
 		}
 	}
 	out, err := u.presign(ctx, item, name, key, res.Uploader, r, single)
+	out.Name = shown(out.Name)
 	if err != nil && u.o.Limiter != nil && !grant.Exempt {
 		_ = u.o.Limiter.Settle(context.WithoutCancel(ctx), Settlement{Tenant: r.Ref.TenantID, Keys: []string{key}})
 	}
@@ -419,7 +425,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	if err != nil {
 		return nil, err
 	}
-	if _, err := item.ManifestKey(); err != nil {
+	if _, err := item.Section(); err != nil {
 		return nil, uploadErr(CodeInvalid, "%v", err)
 	}
 	if len(ops) == 0 || len(ops) > 1000 {
@@ -619,7 +625,7 @@ func (op Op) validate() error {
 	}
 	switch op.Op {
 	case OpInsert, OpReplace:
-		if !layout.ValidBlobName(op.Original) {
+		if !layout.ValidSourceName(op.Original) {
 			return bad("original must be sha256-{hex} or u-{uuid}")
 		}
 	case OpMove:

@@ -55,10 +55,12 @@ type Hooks struct {
 	// say); file is the manifest file name, or the slot name. The job does not
 	// retry it; a new commit does.
 	Failed func(ctx context.Context, ref contentref.ContentRef, file string, err error)
-	// SlotEncoded reports that a slot's outputs are written, with their
-	// aspect (for native slots, whose shape follows the image): hosts record
-	// it to list the slot with Reader.ListedSlot without reads.
-	SlotEncoded func(ctx context.Context, ref contentref.ContentRef, slot string, aspect Aspect)
+	// SlotEncoded reports a slot's new outputs: hosts store the listing to
+	// list the slot with Reader.ListedSlot without reads.
+	SlotEncoded func(ctx context.Context, ref contentref.ContentRef, slot string, l SlotListing)
+	// PublicRemoved reports public/ keys deleted (a hidden item, replaced
+	// outputs), for a CDN purge; optional.
+	PublicRemoved func(ctx context.Context, ref contentref.ContentRef, keys []string)
 }
 
 // ReaderOptions configure a Reader.
@@ -137,20 +139,6 @@ func NewReader(o ReaderOptions) (*Reader, error) {
 	return r, nil
 }
 
-// PublicURL is the plain URL of a public slot output or inline image; it
-// reads nothing.
-func (r *Reader) PublicURL(ref contentref.ContentRef, name string) (string, error) {
-	item, err := r.kinds.Item(ref.Content())
-	if err != nil {
-		return "", err
-	}
-	key, err := item.Public(name)
-	if err != nil {
-		return "", err
-	}
-	return r.objectURL(key), nil
-}
-
 // Grant is one viewer's resolved access to one item or version: the read API
 // and HLS playlists sign every URL through it.
 type Grant struct {
@@ -177,7 +165,7 @@ func (r *Reader) grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNotVisible, err)
 	}
-	if _, err := requested.ManifestKey(); err != nil {
+	if _, err := requested.Section(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
 	}
 	res, err := access.ResolveOne(ctx, r.resolver, ref, actor)
@@ -193,7 +181,7 @@ func (r *Reader) grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	}
 	item, err := r.kinds.Item(canon)
 	if err == nil {
-		_, err = item.ManifestKey()
+		_, err = item.Section()
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: resolver ref: %w", ErrResolve, err)
@@ -210,7 +198,7 @@ func (r *Reader) grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	g := &Grant{Item: item, Resolution: res, Manifest: man, units: res.Units(len(man.Files)),
 		Expires: token.Expiry(r.now(), r.delivery.TTL, r.delivery.Window), actor: actor, r: r}
 	if res.Full() {
-		g.folder = r.ring.Sign(item.BlobsPrefix(), g.Expires)
+		g.folder = r.ring.Sign(item.PrivatePrefix(), g.Expires)
 	}
 	return g, nil
 }
@@ -252,7 +240,7 @@ func (g *Grant) Cookie() *http.Cookie {
 	}
 	return &http.Cookie{
 		Name: CookieName, Value: g.folder,
-		Domain: g.r.delivery.CookieDomain, Path: g.r.base.Path + "/" + g.Item.BlobsPrefix(),
+		Domain: g.r.delivery.CookieDomain, Path: g.r.base.Path + "/" + g.Item.PrivatePrefix(),
 		Expires: g.Expires, MaxAge: max(1, int(g.Expires.Sub(g.r.now()).Seconds())),
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
 	}
@@ -265,26 +253,18 @@ var ErrNotAllowed = errors.New("media: not allowed")
 // Editor reports an editor's grant: EditorOnly variants are signed.
 func (g *Grant) Editor() bool { return g.Resolution.Editor }
 
-// URL signs blob of file i: plain in cookie mode with full access, the
-// folder token in URL mode, else a token for exactly that key. An
-// EditorOnly variant (editors only) lives in editor/, which no viewer token
-// covers, and always carries an editor token.
+// URL signs rendition blob of file i: plain in cookie mode with full
+// access, the folder token in URL mode, else a token for exactly that key.
+// EditorOnly variants are signed for editors only.
 func (g *Grant) URL(i int, blob string) (string, error) {
 	if !g.Allowed(i) {
 		return "", ErrNotAllowed
 	}
 	f := g.Manifest.Files[i]
-	if !slices.Contains(fileBlobs(f), blob) {
-		if !g.Editor() || !slices.Contains((&Manifest{Files: []File{f}}).EditorBlobs(), blob) {
-			return "", ErrNotAllowed
-		}
-		key, err := g.Item.EditorBlob(blob)
-		if err != nil {
-			return "", err
-		}
-		return g.r.objectURL(key) + "?t=" + g.r.editorToken(g.Item, g.Expires), nil
+	if !slices.Contains(fileBlobs(f), blob) || !g.Editor() && editorOnly(f, blob) {
+		return "", ErrNotAllowed
 	}
-	key, err := g.Item.Blob(blob)
+	key, err := g.Item.Private(blob)
 	if err != nil {
 		return "", err
 	}
@@ -308,7 +288,7 @@ func (g *Grant) DownloadURL(ctx context.Context, key string) (name, u string, er
 	if name, err = g.r.downloadName(ctx, g.Item.Ref(), key, d); err != nil {
 		return "", "", err
 	}
-	blob, err := g.Item.Blob(d.Blob)
+	blob, err := g.Item.Private(d.Blob)
 	if err != nil {
 		return "", "", err
 	}
@@ -341,17 +321,24 @@ func extension(contentType string) string {
 
 func (r *Reader) objectURL(key string) string { return r.base.String() + "/" + key }
 
-// fileBlobs lists the blobs/ names one file references (EditorOnly
-// variants are in editor/).
+// fileBlobs lists the renditions one file references.
 func fileBlobs(f File) []string {
 	m := Manifest{Files: []File{f}}
-	return m.Blobs()
+	return m.Renditions()
 }
 
-// editorToken covers the item's editor/ folder: EditorOnly variants and
-// unpublished poster outputs. Only editors get it.
-func (r *Reader) editorToken(item Item, exp time.Time) string {
-	return r.ring.Sign(item.EditorPrefix(), exp)
+// editorOnly reports a rendition only an EditorOnly variant of f uses.
+func editorOnly(f File, blob string) bool {
+	only := false
+	for _, v := range f.Variants {
+		if v.Blob == blob {
+			if !v.Editor {
+				return false
+			}
+			only = true
+		}
+	}
+	return only
 }
 
 // ReadOptions select the URLs a read returns.

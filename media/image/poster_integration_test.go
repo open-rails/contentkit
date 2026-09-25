@@ -20,8 +20,8 @@ import (
 	"github.com/open-rails/contentkit/media/video"
 )
 
-// editorURLs lists posters from editor/, where the image job writes them.
-var editorURLs = media.OutputURLs{BaseURL: slotBase, EditorToken: "tok"}
+// editorURLs lists posters as editors see them.
+var editorURLs = media.OutputURLs{BaseURL: slotBase, Token: "tok"}
 
 // The poster end to end: the video worker grabs frames into the poster slot
 // and hands them to this image job, which encodes them (and uploads) through

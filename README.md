@@ -175,13 +175,17 @@ Design: [MEDIA-DESIGN.md](https://github.com/open-rails/tracker/blob/master/cont
 One private bucket; each item owns a folder the library keys:
 
 ```text
-{tenant}/{kind}/{id}/manifest.json | manifests/{version}.json
-                    /originals/{sha256-hex | slot | slot.json | i-uuid}            never served
-                    /staging/u-{uuid}                                              multipart uploads until placed; never served
-                    /blobs/sha256-{hex}                                            immutable derivatives (viewer token)
-                    /editor/{sha256-hex | poster_w.webp}                           editor-only (editor token)
-                    /public/{slot_width | i-uuid}.webp                             slots, inline images, published posters (rewritten in place)
+{tenant}/{kind}/{id}/manifest.json            the one manifest (versions, slots, index); never served
+                    /originals/sha256-{hex}   uploads, deduped per item; never served
+                    /staging/u-{uuid}         multipart uploads until placed; never served
+                    /private/sha256-{hex}     every rendition (token)
+                    /public/sha256-{hex}      copies of the exposed renditions: slots and inline images of an item that is not hidden
 ```
+
+Every name but staging's is its content's SHA-256, so every served object is
+immutable: a change writes new names and the manifest-driven sweep deletes
+what the manifest no longer lists. Clients never build URLs; the API returns
+them.
 
 Host wiring (one tenant; errors elided):
 
@@ -212,7 +216,7 @@ mux.Handle("/api/media/upload/", http.StripPrefix("/api/media/upload", media.Upl
 	Reader: reader})))
 mux.Handle("/api/media/", http.StripPrefix("/api/media", reader.Handler(media.HandlerOptions{Tenant: "d", Identity: identity})))
 
-_ = jobs.PublishTx(ctx, tx, ref)                                          // in any transaction that changes what anonymous viewers see
+_ = jobs.ExposeTx(ctx, tx, ref)                                           // in any transaction that changes whether anonymous viewers see it
 _ = jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref: ref, Owner: owner}) // in the host's delete transaction
 _ = jobs.EraseUserTx(ctx, tx, "d", userID, deletions...)                 // the user's items plus user/{id}/
 ```
@@ -221,15 +225,15 @@ The access worker (`cmd/media-access`, image
 `ghcr.io/open-rails/contentkit-media-access:{tag}`, same tag as the hosts'
 ContentKit) serves `BaseURL`. It needs `MEDIA_ACCESS_S3_ENDPOINT`,
 `_S3_BUCKET`, a read-only key (`_S3_ACCESS_KEY_ID`, `_S3_SECRET_ACCESS_KEY`)
-allowed only `*/blobs/*`, `*/editor/*` and `*/public/*`, `MEDIA_ACCESS_TOKEN_KEY` and
+allowed only `*/private/*` and `*/public/*`, `MEDIA_ACCESS_TOKEN_KEY` and
 `_TOKEN_KEY_PREVIOUS` (the hosts' `{kid}:{base64}` ring), `MEDIA_ACCESS_HOSTS`
 (the media host names; empty serves any Host, warned) and
 `MEDIA_ACCESS_CORS_ORIGINS` (the sites' exact origins, with credentials;
 empty breaks hls.js, warned; wildcards and paths are refused); secrets may be
-given as `{VAR}_FILE`. `public/` is served without a token (`no-cache`);
-`blobs/` needs `?t=` or an `mt` cookie (`private, immutable`); `editor/`
-needs an editor token. Everything refused (no or bad token, manifests,
-`originals/`, unknown keys) is one identical `no-store` 404, so denials look
+given as `{VAR}_FILE`. `public/` is served without a token (`public,
+immutable`); `private/` needs `?t=` or an `mt` cookie (`private,
+immutable`). Everything refused (no or bad token, the manifest, `originals/`,
+`staging/`, unknown keys) is one identical `no-store` 404, so denials look
 like absence. Every object carries `Cross-Origin-Resource-Policy:
 same-site` (`MEDIA_ACCESS_RESOURCE_POLICY=cross-origin` only when the pages
 live on another site than the media), so other sites cannot embed it with
@@ -291,12 +295,11 @@ UploadId; nothing is stored). The manifest names a staged upload `u-{uuid}`
 until `Manifests.Place` moves it to `originals/sha256-{hex}` with the hash
 computed while reading it (server-side copy, or none when the folder already
 holds the hash; every reference renamed; staging deleted; idempotent).
-Slot originals stay fixed-name (`originals/{slot}`): single checksum-bound
-PUTs pinned by ETag in the slot record, so hashing their names would only add
-garbage collection. Slot originals PUT to `originals/{slot}`. A kind
-with `Inline` takes inline images: presign with `inline: true` names a new
-`i-{uuid}`, whose original PUTs to `originals/{id}` and is committed with
-`commit-slot`; it is re-encoded with the `Inline` spec to `public/{id}.webp`.
+Slot and inline originals are hash-named too (`originals/sha256-{hex}`,
+deduped). A kind with `Inline` takes inline images: presign with
+`inline: true` names a new `i-{uuid}`, committed with `commit-slot`; it is
+rendered with the `Inline` spec to `private/` and copied to `public/`, and
+`Reader.InlineURL` returns its URL (`ErrPending` until rendered).
 Commit is one conditional manifest edit (`insert`, `replace`, `move`,
 `rename`, `remove`, `edit`) that HEAD-checks each new original, re-hashes it when the
 store does not enforce checksums, and enqueues a `ProcessJob`. `Kind.MaxFiles`
@@ -315,9 +318,9 @@ out-of-bounds edit to `Hooks.Failed`). A variant's `spec` is
 variants (and the zip) from the untouched original. `Spec.EditorOnly`
 variants (recorded `editor: true`) are signed only when the resolver's
 `Resolution.Editor` is set; `Spec.Unedited` (must be `EditorOnly`) ignores
-edits: an editor's view of the whole source. Such blobs live in `editor/`,
-which no viewer token or cookie covers; editors' URLs carry an editor token.
-No master is written. `meta.w/h` is the edited size; the read API returns
+edits: an editor's view of the whole source. They live in `private/` like
+every rendition; the read API lists them to editors only. No master is
+written. `meta.w/h` is the edited size; the read API returns
 `edit` and `dims` to editors.
 
 **Slots** are fixed public images such as avatars and covers, rendered at
@@ -335,29 +338,28 @@ the crop's height follows its width at `Aspect` (a `media.Aspect` ratio in
 lowest terms, written `"W:H"` in JSON and config: `media.Ratio("9:16")`,
 `ParseAspect`, constants `Aspect1x1`, `Aspect3x1`, `Aspect4x5`, `Aspect16x9`,
 `Aspect9x16`, `Aspect21x9`; all maths is integer, heights round half up), and
-no crop means the largest centred one. The original PUTs to `originals/{slot}`
-and `POST /commit-slot {ref, slot, sha256, edit}` commits it; `POST /edit-slot
+no crop means the largest centred one. The original PUTs to
+`originals/sha256-{hex}` and `POST /commit-slot {ref, slot, sha256, edit,
+filename}` commits it; `POST /edit-slot
 {ref, slot, edit}` re-edits the kept original without an upload;
 `Uploads.SetSlotFromFile(ctx, actor, SlotFromFile{Ref, Slot, From, File,
 Edit})` (`POST /commit-slot-from-file {ref, slot, from, file, edit}`) copies a
 manifest image (of `From`, default `Ref`: another item of the tenant needs
 `CanUpload` on both; default edit: the file's own); `POST /slot-original` returns the original to
-uploaders for the editor. The edit and the job's result live in
-`originals/{slot}.json`, so spec changes re-encode with it. Each width is
-`{slot}_{width}.webp`, rewritten in place (one PUT per object) on every
-change: no versions. Nothing is upscaled: a width wider than the edited image
-is rendered at the edited width under its own name, so every width exists
-once the slot is set. An edit outside
+uploaders for the editor. The record (original, edit, result) lives in the
+manifest's `slots`, so spec changes re-encode with it. Each width is a new
+`private/sha256-{hex}`, copied to `public/` unless the item is hidden; a
+change writes new names and swaps the record. Nothing is upscaled: a width
+wider than the edited image is rendered at the edited width, so every width
+exists once the slot is set. An edit outside
 the original or narrower than `MinWidth` (default the smallest width) is refused (by the job when the original's size
 is not yet known: `Hooks.Failed`, keeping the served outputs). Slot routes and
 the read API's `GET /{kind}/{id}/slots/{slot}` answer `SlotManifest{aspect,
-edit, dims, outputs: [{name, w, h, url}], pending, error}`. URLs are fixed;
-the access worker serves `public/` and editor outputs `no-cache` with the
-object's ETag, so browsers revalidate (304 when unchanged) and see a new crop
-on the next load. Listings link a slot without reads:
-`Hooks.SlotEncoded(ctx, ref, slot, aspect)` reports a written slot and the
-host records that it is set (and, for native slots, the aspect);
-`Reader.ListedSlot(ref, slot, aspect)` lists every width at its fixed URL.
+edit, dims, outputs: [{w, h, url}], pending, error}`: public URLs for
+viewers, `private/` URLs with a token for editors of a hidden item. Listings
+link a slot without reads: `Hooks.SlotEncoded(ctx, ref, slot, listing)` hands
+the host a `SlotListing` to store, and `Reader.ListedSlot(ref, slot,
+listing)` builds its URLs.
 `Slot{Aspect: media.AspectNative}` keeps the edited image's own shape: no crop
 by default, crops of any shape.
 
@@ -366,15 +368,14 @@ by default, crops of any shape.
 Kinds, Manifests, Specs, Hooks})` gives `Process(ctx, media.ProcessJob)`. A
 staged source is hashed from the bytes read for decoding and placed first. It derives WebP variants per the kind's `Specs` (or a per-file
 `SpecChooser`) from each file's `master`, else `original`, through its edit,
-only where a variant is missing or its `spec` differs, stores them as `blobs/sha256-…`, and
+only where a variant is missing or its `spec` differs, stores them as `private/sha256-…`, and
 records them in one manifest edit per pass that drops results for sources
 replaced meanwhile; it repeats until a commit that landed during the run is
 covered too. A kind with `Zip` set gets `downloads.zip`: a stored zip of that
 variant in file order, rebuilt only when its `inputs` hash changes; its
 display name comes from `Hooks.DownloadName` at read time. Slots and inline
-images re-encode `originals/{slot}` into `public/` in place (`no-cache`, ETag),
-with writes conditional on the output's previous ETag and skipped when they
-already match. Undecodable sources go to `Hooks.Failed` and are not retried.
+images render from their original only when the record's fingerprint changed.
+Undecodable sources go to `Hooks.Failed` and are not retried.
 
 The optional `UploadLimiter` (`media.NewPGLimiter` over the baseline's
 `content_media_*` tables) rate-limits uploaders (files/hour, bytes/day → 429)
@@ -480,10 +481,9 @@ worker's `Origins` must list the site; native Safari/iOS HLS should be checked
 in cookie mode and switched to URL mode if it does not send the cookie.
 
 Tokens are `kid.exp.base64url(HMAC-SHA256(secret, "{scope}|{exp}"))`: a scope
-is a folder (`…/blobs/`, covering the objects directly under it), one key, or
-`{key}#dl={name}` for a download name. Expiry is window-aligned (default 4 h);
-`token.Ring` verifies the current and previous key. Editors get a folder token
-for `…/editor/`.
+is a folder (`…/private/`, covering the objects directly under it), one key,
+or `{key}#dl={name}` for a download name. Expiry is window-aligned (default
+4 h); `token.Ring` verifies the current and previous key.
 
 `Reader.Handler` limits each viewer (`HandlerOptions.Limit`, default 2
 requests/s, burst 120; keyed by `Actor.ID`, else `Actor.IP`, else the peer
@@ -495,11 +495,11 @@ Media's River jobs (`jobs.RiverJobs()`) compose into the host client through
 `helpers/river`; edits schedule a sweep and commits enqueue processing:
 
 - **Sweep** (per folder, 24 h after each edit and in a daily pass over
-  `Tenants`): deletes `blobs/`, hash-named `originals/` and `staging/` no
-  manifest in the folder references, only once every manifest and the object
-  itself are older than `Grace` (24 h; plus 1 day for staged multipart
-  objects, which may be dated at initiation). Also unreferenced `editor/` blobs. Slot originals,
-  slot outputs and manifests are never swept.
+  `Tenants`): deletes `originals/`, `private/` and `public/` objects outside
+  the manifest's index and `staging/` uploads no file references, only once
+  the manifest and the object itself are older than `Grace` (24 h; plus 1 day
+  for staged multipart objects, which may be dated at initiation). Deleted
+  `public/` keys go to `Hooks.PublicRemoved` (CDN purge).
   Invariant: it deletes only objects no manifest references and no in-flight
   commit can newly reference. Presign reuses an existing original, and a
   commit accepts one, only while a manifest references it or it is well
@@ -510,6 +510,12 @@ Media's River jobs (`jobs.RiverJobs()`) compose into the host client through
   `LateUploadWindow` (25 h) for PUTs and multipart completions that land late.
   With a `Limiter`, the owner's quota (the manifests' `OriginalBytes`) is
   released once.
+- **Expose** (`jobs.ExposeTx` in every transaction that changes whether
+  anonymous viewers see an item: create a draft, publish, hide, delete,
+  restore) resolves the item anonymously. Hidden: the manifest records it,
+  `public/` is emptied at once and the keys go to `Hooks.PublicRemoved`.
+  Visible: the slot and inline outputs are copied back. `private/` is never
+  touched; free vs members-only is only whether the host grants a token.
 - Processing: `workqueue.Queue` (the uploads' `ProcessQueue`) inserts one
   pending image job per ref and slot, and a video job for a video kind's
   manifest, into the worker's schema. An Enqueue (or `ScheduleSweep`) while an

@@ -71,50 +71,93 @@ func NewManifests(store Store, kinds *Registry, opts ManifestOptions) (*Manifest
 	return &Manifests{store: store, kinds: kinds, locker: locker, sweeps: opts.Sweeps, retries: opts.MaxRetries, cache: newLRU(opts.CacheSize)}, nil
 }
 
-// Get returns the manifest and its ETag, or ErrNotFound. Cached copies are
-// revalidated with a conditional GET, so a read is never stale.
+// Get returns ref's files (its version's section for a versioned kind) and
+// the manifest's ETag, or ErrNotFound. Cached copies are revalidated with a
+// conditional GET, so a read is never stale.
 func (m *Manifests) Get(ctx context.Context, ref contentref.ContentRef) (*Manifest, string, error) {
-	key, err := m.key(ref)
+	item, err := m.kinds.Item(ref)
 	if err != nil {
 		return nil, "", err
 	}
-	return m.get(ctx, key)
+	v, err := item.Section()
+	if err != nil {
+		return nil, "", err
+	}
+	root, etag, err := m.root(ctx, item.ManifestKey())
+	if err != nil {
+		return nil, "", err
+	}
+	man := root.Section(v)
+	if man == nil {
+		return nil, "", ErrNotFound
+	}
+	return man, etag, nil
 }
 
-// Edit applies fn to the current manifest (empty if none) and writes it with
-// If-Match on the ETag it read (If-None-Match for a new one), re-reading and
-// re-applying fn on conflict. fn must be safe to run more than once; an error
-// from fn aborts the edit. An unchanged manifest is not written. A folder's
-// first manifest is refused (ErrFolderNotEmpty) over a previous item's blobs.
+// Root returns the item's manifest.json and its ETag, or ErrNotFound.
+func (m *Manifests) Root(ctx context.Context, ref contentref.ContentRef) (*Root, string, error) {
+	item, err := m.kinds.Item(ref.Content())
+	if err != nil {
+		return nil, "", err
+	}
+	return m.root(ctx, item.ManifestKey())
+}
+
+// Edit applies fn to ref's files (see Get; a new version starts empty) like
+// EditRoot.
 func (m *Manifests) Edit(ctx context.Context, ref contentref.ContentRef, fn func(*Manifest) error) (*Manifest, error) {
 	item, err := m.kinds.Item(ref)
 	if err != nil {
 		return nil, err
 	}
-	key, err := item.ManifestKey()
+	v, err := item.Section()
 	if err != nil {
 		return nil, err
 	}
 	var man *Manifest
+	if _, err := m.editRoot(ctx, item, func(r *Root) error {
+		man = r.section(v)
+		return fn(man)
+	}); err != nil {
+		return nil, err
+	}
+	return man, nil
+}
+
+// EditRoot applies fn to the item's manifest (empty if none) and writes it
+// with If-Match on the ETag it read (If-None-Match for a new one),
+// re-reading and re-applying fn on conflict. fn must be safe to run more
+// than once; an error from fn aborts the edit. The index is rebuilt; an
+// unchanged manifest is not written. A folder's first manifest is refused
+// (ErrFolderNotEmpty) over a previous item's renditions.
+func (m *Manifests) EditRoot(ctx context.Context, ref contentref.ContentRef, fn func(*Root) error) (*Root, error) {
+	item, err := m.kinds.Item(ref.Content())
+	if err != nil {
+		return nil, err
+	}
+	return m.editRoot(ctx, item, fn)
+}
+
+func (m *Manifests) editRoot(ctx context.Context, item Item, fn func(*Root) error) (*Root, error) {
+	key := item.ManifestKey()
+	var root *Root
 	written, err := m.edit(ctx, key, func(body []byte) ([]byte, error) {
-		man = &Manifest{}
+		root = &Root{}
 		if body != nil {
-			if err := json.Unmarshal(body, man); err != nil {
+			if err := json.Unmarshal(body, root); err != nil {
 				return nil, fmt.Errorf("media: decode manifest %s: %w", key, err)
 			}
 		}
-		before, _ := json.Marshal(man)
-		if err := fn(man); err != nil {
+		if err := fn(root); err != nil {
 			return nil, err
 		}
-		if err := man.Validate(); err != nil {
+		if err := root.validate(); err != nil {
 			return nil, err
 		}
-		if man.Files == nil {
-			man.Files = []File{}
-		}
-		out, err := json.Marshal(man)
-		if err != nil || (body != nil && bytes.Equal(before, out)) {
+		root.normalize()
+		root.index()
+		out, err := json.Marshal(root)
+		if err != nil || (body != nil && bytes.Equal(body, out)) {
 			return nil, err
 		}
 		if body == nil {
@@ -128,11 +171,11 @@ func (m *Manifests) Edit(ctx context.Context, ref contentref.ContentRef, fn func
 		return nil, err
 	}
 	if written && m.sweeps != nil {
-		if err := m.sweeps.ScheduleSweep(ctx, ref); err != nil {
+		if err := m.sweeps.ScheduleSweep(ctx, item.Ref().Content()); err != nil {
 			slog.WarnContext(ctx, "media: schedule sweep", "key", key, "error", err)
 		}
 	}
-	return man, nil
+	return root, nil
 }
 
 // edit writes fn's replacement of the JSON object at key (body nil when
@@ -194,16 +237,16 @@ func (m *Manifests) try(ctx context.Context, key string, fn func([]byte) ([]byte
 	return false, true, nil
 }
 
-func (m *Manifests) get(ctx context.Context, key string) (*Manifest, string, error) {
+func (m *Manifests) root(ctx context.Context, key string) (*Root, string, error) {
 	body, etag, err := m.raw(ctx, key)
 	if err != nil {
 		return nil, "", err
 	}
-	var man Manifest
-	if err := json.Unmarshal(body, &man); err != nil {
+	var root Root
+	if err := json.Unmarshal(body, &root); err != nil {
 		return nil, "", fmt.Errorf("media: decode manifest %s: %w", key, err)
 	}
-	return &man, etag, nil
+	return &root, etag, nil
 }
 
 // raw reads an object through the ETag-revalidated cache.
@@ -226,14 +269,6 @@ func (m *Manifests) raw(ctx context.Context, key string) ([]byte, string, error)
 	}
 	m.cache.put(key, obj.ETag, body)
 	return body, obj.ETag, nil
-}
-
-func (m *Manifests) key(ref contentref.ContentRef) (string, error) {
-	item, err := m.kinds.Item(ref)
-	if err != nil {
-		return "", err
-	}
-	return item.ManifestKey()
 }
 
 type lru struct {
@@ -291,24 +326,19 @@ func (c *lru) remove(key string) {
 	}
 }
 
-// references reports whether any manifest in the item's folder references the
-// original name.
+// references reports whether the item's manifest references the original
+// name.
 func (m *Manifests) references(ctx context.Context, item Item, name string) (bool, error) {
-	keys, err := m.manifestKeys(ctx, item)
-	if err != nil {
+	root, _, err := m.root(ctx, item.ManifestKey())
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	} else if err != nil {
 		return false, err
 	}
-	for _, key := range keys {
-		man, _, err := m.get(ctx, key)
-		if errors.Is(err, ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return false, err
-		}
-		if slices.Contains(man.Originals(), name) {
-			return true, nil
-		}
+	if _, ok := root.Originals[name]; ok {
+		return true, nil
 	}
-	return false, nil
+	found := false
+	root.sections(func(_ string, man *Manifest) { found = found || slices.Contains(man.Sources(), name) })
+	return found, nil
 }

@@ -73,7 +73,7 @@ func TestNewItemNeverAdoptsLeftovers(t *testing.T) {
 	reused := contentref.New(env.Tenant, "post", contentref.NewID())
 	old, _ := r.Item(reused)
 	putObject(t, env.Store, old.OriginalsPrefix()+blobName("old"), "old upload")
-	putObject(t, env.Store, old.PublicPrefix()+"poster.webp", "old poster")
+	putObject(t, env.Store, old.PublicPrefix()+blobName("old poster"), "old poster")
 	_, err = ms.Create(ctx, reused)
 	notEmpty("create over leftovers", err, old.Prefix())
 	if err := jobs.Purge(ctx, media.Deletion{Ref: reused}); err != nil {
@@ -93,7 +93,7 @@ func TestNewItemNeverAdoptsLeftovers(t *testing.T) {
 	// blobs, but not uploads waiting for their first commit.
 	stale := contentref.New(env.Tenant, "post", contentref.NewID())
 	s, _ := r.Item(stale)
-	putObject(t, env.Store, s.BlobsPrefix()+blobName("old variant"), "old variant")
+	putObject(t, env.Store, s.PrivatePrefix()+blobName("old variant"), "old variant")
 	putObject(t, env.Store, s.OriginalsPrefix()+blobName("new"), "new upload")
 	insert := func(m *media.Manifest) error {
 		m.Files = append(m.Files, media.File{Name: "a.png", Original: blobName("new"), Type: "image/png"})
@@ -110,13 +110,13 @@ func TestNewItemNeverAdoptsLeftovers(t *testing.T) {
 	if man, err := ms.Edit(ctx, pending, insert); err != nil || len(man.Files) != 1 {
 		t.Fatalf("first commit of pending uploads: %+v %v", man, err)
 	}
-	// Versioned kinds: a new version's manifest beside existing ones is fine.
+	// Versioned kinds: a new version beside existing ones is fine.
 	g := contentref.New(env.Tenant, "gallery", contentref.NewID())
 	gi, _ := r.Item(g)
 	if _, err := ms.Edit(ctx, g.WithVersion("v1"), insert); err != nil {
 		t.Fatal(err)
 	}
-	putObject(t, env.Store, gi.BlobsPrefix()+blobName("v1 variant"), "v1 variant")
+	putObject(t, env.Store, gi.PrivatePrefix()+blobName("v1 variant"), "v1 variant")
 	if _, err := ms.Edit(ctx, g.WithVersion("v2"), insert); err != nil {
 		t.Fatalf("second version: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestSweepOrphansReportsThenDeletesAfterGrace(t *testing.T) {
 		putObject(t, env.Store, folder(id)+"manifest.json", `{"files":[]}`)
 		putObject(t, env.Store, folder(id)+"originals/"+blobName(id), id)
 	}
-	other := env.Tenant + "/gallery/" + gone + "/manifests/v1.json"
+	other := env.Tenant + "/gallery/" + gone + "/manifest.json"
 	putObject(t, env.Store, other, `{"files":[]}`)
 	var asked []string
 	exists := func(_ context.Context, ids []string) (map[string]bool, error) {

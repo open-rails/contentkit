@@ -247,7 +247,7 @@ func benchCommit(t *testing.T, ctx context.Context, store media.Store, item medi
 }
 
 func benchFetch(t *testing.T, ctx context.Context, store media.Store, item media.Item, blob, dir string) string {
-	key, _ := item.Blob(blob)
+	key, _ := item.Private(blob)
 	rc, _, err := store.Get(ctx, key, media.GetOptions{})
 	if err != nil {
 		t.Fatal(err)

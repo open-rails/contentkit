@@ -25,8 +25,8 @@ it("useSlotImage fetches the manifest and builds srcset", async () => {
   expect(result.current.loading).toBe(true);
   await waitFor(() => expect(result.current.loading).toBe(false));
   expect(result.current.aspect).toBe("1:1");
-  expect(result.current.srcSet).toMatch(/avatar_128\.webp#\d+ 128w, .* 256w, .* 512w$/);
-  expect(result.current.src).toContain("avatar_512");
+  expect(result.current.srcSet).toMatch(/avatar128v\d+ 128w, .* 256w, .* 512w$/);
+  expect(result.current.src).toContain("avatar512");
   expect(s.calls.filter((p) => p === "/slot")).toHaveLength(1);
 });
 

@@ -1,5 +1,5 @@
 import { UploadApi, type ApiOptions } from "./api.js";
-import { UploadError, aborted, throwIfAborted } from "./errors.js";
+import { UploadError, aborted, throwIfAborted, type UploadErrorCode } from "./errors.js";
 import { sha256Hex } from "./hash.js";
 import { Pacer } from "./pacer.js";
 import { defaultTransport, type Transport } from "./transport.js";
@@ -144,7 +144,7 @@ export class UploadClient {
   /** Uploads a slot original and commits it with the edit; the server renders every size. */
   async uploadSlot(file: Uploadable, o: SlotUploadOptions): Promise<SlotUpload> {
     const f = await this.upload(file, o);
-    const body = { ref: o.ref, slot: o.slot, sha256: f.sha256!, ...(o.edit ? { edit: o.edit } : {}) };
+    const body = { ref: o.ref, slot: o.slot, sha256: f.sha256!, ...(o.edit ? { edit: o.edit } : {}), ...fileName(file) };
     const manifest = await this.retry(() => this.api.commitSlot(body, o.signal), o.signal);
     return { ...f, manifest };
   }
@@ -177,11 +177,17 @@ export class UploadClient {
     }
   }
 
-  /** Uploads a new inline image and commits it (re-encodes public/{name}.webp). */
-  async uploadInline(file: Uploadable, o: Omit<UploadOptions, "slot" | "inline" | "resume">): Promise<UploadedFile> {
+  /**
+   * Uploads a new inline image, commits it and waits until it is rendered;
+   * url is its public URL. Hand name to the host (a post body, a cover).
+   */
+  async uploadInline(file: Uploadable, o: Omit<UploadOptions, "slot" | "inline" | "resume">): Promise<UploadedFile & { url: string }> {
     const f = await this.upload(file, { ...o, inline: true });
-    await this.retry(() => this.api.commitSlot({ ref: o.ref, slot: f.name, sha256: f.sha256! }, o.signal), o.signal);
-    return f;
+    let m = await this.retry(() => this.api.commitSlot({ ref: o.ref, slot: f.name, sha256: f.sha256!, ...fileName(file) }, o.signal), o.signal);
+    if (m.pending) m = await this.waitForSlot(o.ref, f.name, { signal: o.signal, interval: 500 });
+    const url = m.outputs.at(-1)?.url;
+    if (!url) throw new UploadError((m.error_code ?? "internal_error") as UploadErrorCode, m.error ?? "the image was not rendered", 422);
+    return { ...f, url };
   }
 
   /**
@@ -501,4 +507,9 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     };
     signal?.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+/** The uploaded file's name for commit-slot, when it has one. */
+function fileName(file: Uploadable): { filename?: string } {
+  return file.name ? { filename: file.name } : {};
 }

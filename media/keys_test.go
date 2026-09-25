@@ -41,37 +41,30 @@ func TestItemKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mk, _ := g.ManifestKey()
-	bk, _ := g.Blob(blob)
+	pk, _ := g.Private(blob)
 	ok, _ := g.Original(blob)
-	cover, _ := g.SlotOriginal("cover")
-	pub, _ := g.Public("cover")
+	pub, _ := g.Public(blob)
+	v, _ := g.Section()
 	for got, want := range map[string]string{
-		mk: "d/gallery/" + gid + "/manifests/0190c3.json", bk: "d/gallery/" + gid + "/blobs/" + blob, ok: "d/gallery/" + gid + "/originals/" + blob,
-		cover: "d/gallery/" + gid + "/originals/cover", pub: "d/gallery/" + gid + "/public/cover.webp", g.BlobsPrefix(): "d/gallery/" + gid + "/blobs/",
+		g.ManifestKey(): "d/gallery/" + gid + "/manifest.json", pk: "d/gallery/" + gid + "/private/" + blob,
+		ok: "d/gallery/" + gid + "/originals/" + blob, pub: "d/gallery/" + gid + "/public/" + blob,
+		g.PrivatePrefix(): "d/gallery/" + gid + "/private/", v: "0190c3",
 	} {
 		if got != want {
 			t.Errorf("got %q want %q", got, want)
 		}
 	}
 	work, err := r.Item(contentref.New("d", "gallery", gid))
-	if err != nil || work.BlobsPrefix() != g.BlobsPrefix() {
-		t.Fatalf("versions share the work folder: %v", err)
+	if err != nil || work.ManifestKey() != g.ManifestKey() {
+		t.Fatalf("versions share the work's manifest: %v", err)
 	}
-	if _, err := work.ManifestKey(); err == nil {
-		t.Fatal("versioned kind without version has no manifest")
+	if _, err := work.Section(); err == nil {
+		t.Fatal("versioned kind without version has no section")
 	}
 
 	p, _ := r.Item(contentref.New("o", "post", cid(501)))
-	if k, _ := p.ManifestKey(); k != "o/post/"+cid(501)+"/manifest.json" {
-		t.Fatal(k)
-	}
-	u, _ := r.Item(contentref.New("o", "user", cid(42)))
-	if k, _ := u.Public("avatar_80"); k != "o/user/"+cid(42)+"/public/avatar_80.webp" {
-		t.Fatal(k)
-	}
-	if k, _ := u.SlotOriginal("avatar"); k != "o/user/"+cid(42)+"/originals/avatar" {
-		t.Fatal(k)
+	if v, err := p.Section(); v != "" || err != nil {
+		t.Fatal(v, err)
 	}
 	up := media.NewUploadName()
 	if k, err := p.Original(up); err != nil || k != "o/post/"+cid(501)+"/staging/"+up {
@@ -92,16 +85,13 @@ func TestItemKeys(t *testing.T) {
 			t.Errorf("accepted %s", bad)
 		}
 	}
-	for _, bad := range []string{"", "sha256-XYZ", "sha256-" + blob[7:20], "u-not-a-uuid", "../x", "cover"} {
-		if _, err := p.Blob(bad); err == nil {
-			t.Errorf("blob name %q accepted", bad)
+	for _, bad := range []string{"", "sha256-XYZ", "sha256-" + blob[7:20], "u-not-a-uuid", "../x", "cover", up} {
+		if _, err := p.Private(bad); err == nil {
+			t.Errorf("rendition name %q accepted", bad)
 		}
-	}
-	if _, err := p.SlotOriginal("cover"); err == nil {
-		t.Error("unregistered slot accepted")
-	}
-	if _, err := p.Public(blob); err == nil {
-		t.Error("blob-like public name accepted")
+		if _, err := p.Public(bad); err == nil {
+			t.Errorf("public name %q accepted", bad)
+		}
 	}
 }
 
@@ -130,9 +120,6 @@ func TestKindRules(t *testing.T) {
 		if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{"cover": bad}}); err == nil {
 			t.Fatalf("slot %+v accepted", bad)
 		}
-	}
-	if _, err := media.NewRegistry(media.Kind{Name: "x", Slots: map[string]media.Slot{"a.json": {Aspect: media.Aspect1x1, Widths: []int{8}}}}); err == nil {
-		t.Fatal("slot name colliding with a record accepted")
 	}
 	u, _ := r.Kind("user")
 	if w := u.Slots["avatar"].Widths; w[0] != 80 || w[1] != 320 {
@@ -169,29 +156,13 @@ func TestInlineImageKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pid := cid(1)
-	p, _ := r.Item(contentref.New("h", "post", pid))
+	p, _ := r.Item(contentref.New("h", "post", cid(1)))
 	name := media.NewInlineName()
-	orig, err := p.SlotOriginal(name)
-	if err != nil || orig != "h/post/"+pid+"/originals/"+name {
-		t.Fatal(orig, err)
-	}
-	if !p.Inline(name) || p.Inline("cover") {
+	if !p.Inline(name) || p.Inline("cover") || p.Inline("i-1") || p.Inline("i-"+strings.ToUpper(name[2:])) {
 		t.Fatal("inline names")
 	}
-	if _, err := p.SlotRecord(name); err == nil {
-		t.Fatal("inline image has a slot record")
-	}
-	if k, _ := p.Public(name); k != "h/post/"+pid+"/public/"+name+".webp" {
-		t.Fatal(k)
-	}
-	for _, bad := range []string{"i-1", "i-" + strings.ToUpper(name[2:]), "cover"} {
-		if _, err := p.SlotOriginal(bad); err == nil {
-			t.Errorf("inline name %q accepted", bad)
-		}
-	}
 	g, _ := r.Item(contentref.New("h", "gallery", cid(2)))
-	if _, err := g.SlotOriginal(name); err == nil {
+	if g.Inline(name) {
 		t.Fatal("inline image accepted by a kind without Inline")
 	}
 }
@@ -235,19 +206,7 @@ func TestVideoKindSlots(t *testing.T) {
 	if p, ok := k.Slots[media.PosterSlot]; !ok || p.Hash() != media.VideoPoster.Hash() || len(k.Slots) != 2 {
 		t.Fatalf("slots %+v", k.Slots)
 	}
-	vid := cid(9)
-	v, _ := r.Item(contentref.New("h", "video", vid))
-	// Posters render to editor/ and are published to public/.
-	if k, _ := v.SlotOutput(media.PosterSlot, 960); k != "h/video/"+vid+"/editor/poster_960.webp" {
-		t.Fatal(k)
-	}
-	if k, _ := v.SlotPublic(media.PosterSlot, 960); k != "h/video/"+vid+"/public/poster_960.webp" {
-		t.Fatal(k)
-	}
-	if k, _ := v.SlotOutput("banner", 600); k != "h/video/"+vid+"/public/banner_600.webp" {
-		t.Fatal("ungated slot", k)
-	}
-	for _, name := range []string{media.PosterSlot, "exposure"} {
+	for _, name := range []string{media.PosterSlot} {
 		if _, err := media.NewRegistry(media.Kind{Name: "video", Video: &media.Video{},
 			Slots: map[string]media.Slot{name: {Aspect: media.Aspect16x9, Widths: []int{320}}}}); err == nil {
 			t.Errorf("reserved slot %q accepted", name)

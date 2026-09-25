@@ -43,12 +43,14 @@ type JobsConfig struct {
 	// abort rule. Default 25 h.
 	LateUploadWindow time.Duration
 	Limiter          UploadLimiter // releases a deleted item's quota; optional
-	// Resolver decides, with an anonymous actor, what of a video item is
-	// public (Publish); without it no poster is published.
+	// Locker serializes Expose's manifest edits on a store without
+	// conditional PUT (ManifestOptions.Locker).
+	Locker Locker
+	// Resolver decides, with an anonymous actor, whether an item is hidden
+	// (Expose); required for Expose.
 	Resolver access.ContentResolver
-	// Exposure maps that anonymous resolution to what is published; default
-	// DefaultExposure (drafts nothing, free items all, others the poster).
-	Exposure   ExposurePolicy
+	// Hooks.PublicRemoved hears of deleted public/ keys (CDN purge).
+	Hooks      Hooks
 	Queue      string // default "contentkit_media"
 	MaxWorkers int    // default 2
 	Logger     *slog.Logger
@@ -59,7 +61,8 @@ type JobsConfig struct {
 // publishing. Processing runs in the media worker (media/worker). Compose
 // RiverJobs once into the host client.
 type Jobs struct {
-	cfg JobsConfig
+	cfg       JobsConfig
+	manifests *Manifests
 
 	mu       sync.Mutex
 	regs     []func(*river.Config) error
@@ -99,13 +102,12 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	if cfg.Exposure == nil {
-		cfg.Exposure = DefaultExposure
+	j := &Jobs{cfg: cfg}
+	var err error
+	if j.manifests, err = NewManifests(cfg.Store, cfg.Kinds, ManifestOptions{Locker: cfg.Locker, CacheSize: 256, Sweeps: j}); err != nil {
+		return nil, err
 	}
-	if cfg.Resolver == nil && cfg.Kinds.hasVideo() {
-		cfg.Logger.Warn("media: JobsConfig.Resolver is nil; video posters are never published")
-	}
-	return &Jobs{cfg: cfg}, nil
+	return j, nil
 }
 
 // Queue is the shared media queue; registered workers may use it or add their own.
@@ -143,7 +145,7 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &sweepWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &sweepPassWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &deleteFolderWorker{j: j}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &publishWorker{j: j}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &exposeWorker{j: j}) },
 		} {
 			if err := w(); err != nil {
 				return err
@@ -344,14 +346,14 @@ func (j *Jobs) originalBytes(ctx context.Context, prefix string) (int64, error) 
 	}
 	var n int64
 	for key := range manifestKeys(objs) {
-		man, err := j.readManifest(ctx, key)
+		root, err := j.readRoot(ctx, key)
 		if errors.Is(err, ErrNotFound) {
 			continue
 		}
 		if err != nil {
 			return 0, err
 		}
-		n += man.OriginalBytes()
+		root.sections(func(_ string, m *Manifest) { n += m.OriginalBytes() })
 	}
 	return n, nil
 }
@@ -466,8 +468,7 @@ func (w *deleteFolderWorker) Work(ctx context.Context, job *river.Job[deleteFold
 const DefaultQueue = "contentkit_media"
 
 // HostQueue is the media worker's handle on the host's River schema: it
-// inserts the jobs the host runs on the worker's behalf, a video item's
-// Publish after its poster changes and a folder's sweep
+// inserts the jobs the host runs on the worker's behalf: a folder's sweep
 // after the worker edits a manifest. It inserts only.
 type HostQueue struct {
 	client *river.Client[pgx.Tx]
@@ -499,15 +500,6 @@ func NewHostQueue(pool *pgxpool.Pool, kinds *Registry, schema, queue string, gra
 func (h *HostQueue) insert(ctx context.Context, args river.JobArgs, o *river.InsertOpts) (*rivertype.JobInsertResult, error) {
 	o.Queue = h.queue
 	return h.client.Insert(ctx, args, o)
-}
-
-// Publish enqueues the host's Publish of a video item.
-func (h *HostQueue) Publish(ctx context.Context, ref contentref.ContentRef) error {
-	if _, err := h.kinds.Item(ref.Content()); err != nil {
-		return err
-	}
-	_, err := h.insert(ctx, publishArgs{Ref: ref.Content()}, &river.InsertOpts{})
-	return err
 }
 
 // ScheduleSweep implements SweepScheduler like Jobs.ScheduleSweep.

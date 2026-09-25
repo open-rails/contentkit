@@ -342,7 +342,7 @@ func TestSlotUploadAndCommit(t *testing.T) {
 	if status, er := e.call(t, "alice", "/presign", media.PresignBody{Ref: ref, Type: "image/png", Size: 1234, SHA256: hexSum(cover), Slot: "cover"}, &p); status != 200 {
 		t.Fatalf("slot presign %d %+v", status, er)
 	}
-	if !strings.HasSuffix(p.Put.URL[:strings.IndexByte(p.Put.URL, '?')], "/gallery/"+cid(9)+"/originals/cover") {
+	if !strings.HasSuffix(p.Put.URL[:strings.IndexByte(p.Put.URL, '?')], "/gallery/"+cid(9)+"/originals/sha256-"+hexSum(cover)) {
 		t.Fatalf("slot url %s", p.Put.URL)
 	}
 	if status, _ := e.call(t, "alice", "/presign", media.PresignBody{Ref: ref, Type: "image/png", Size: 1, SHA256: hexSum(cover), Slot: "banner"}, nil); status != 404 {
@@ -371,7 +371,7 @@ func TestSlotUploadAndCommit(t *testing.T) {
 	if e.queue.count() != 1 || e.queue.jobs[0].Slot != "cover" {
 		t.Fatalf("jobs %+v", e.queue.jobs)
 	}
-	obj, err := e.Store.Head(ctx, e.Tenant+"/gallery/"+cid(9)+"/originals/cover")
+	obj, err := e.Store.Head(ctx, e.Tenant+"/gallery/"+cid(9)+"/originals/sha256-"+hexSum(cover))
 	if err != nil || obj.Size != 1234 {
 		t.Fatalf("slot original %+v %v", obj, err)
 	}
@@ -406,7 +406,7 @@ func TestSlotUploadAndCommit(t *testing.T) {
 	if status, er := e.call(t, "alice", "/edit-slot", media.SlotEditBody{Ref: media.RefBody{Kind: "gallery", ID: cid(10)}, Slot: "cover"}, nil); status != 404 {
 		t.Fatalf("edit of an uncommitted slot: %d %+v", status, er)
 	}
-	// A new upload not committed yet cannot be edited or read back.
+	// A new upload not committed yet leaves the committed original in use.
 	next := data(8, 999)
 	var p2 media.PresignReply
 	if status, er := e.call(t, "alice", "/presign", media.PresignBody{Ref: ref, Type: "image/png", Size: 999, SHA256: hexSum(next), Slot: "cover"}, &p2); status != 200 {
@@ -415,17 +415,24 @@ func TestSlotUploadAndCommit(t *testing.T) {
 	if code := put(t, p2.Put, next, nil); code != 200 {
 		t.Fatalf("put %d", code)
 	}
-	if status, er := e.call(t, "alice", "/edit-slot", media.SlotEditBody{Ref: ref, Slot: "cover"}, nil); status != 409 || er.Code != media.CodeNotUploaded {
-		t.Fatalf("edit of a replaced original: %d %+v", status, er)
+	if status, er := e.call(t, "alice", "/edit-slot", media.SlotEditBody{Ref: ref, Slot: "cover"}, nil); status != 200 {
+		t.Fatalf("edit with an uncommitted upload pending: %d %+v", status, er)
 	}
-	if status, er := e.call(t, "alice", "/slot-original", media.SlotRefBody{Ref: ref, Slot: "cover"}, nil); status != 409 {
-		t.Fatalf("read of a replaced original: %d %+v", status, er)
+	req, _ = http.NewRequest(http.MethodPost, e.srv.URL+"/slot-original", strings.NewReader(`{"ref":{"kind":"gallery","id":"`+cid(9)+`"},"slot":"cover"}`))
+	req.Header.Set("X-Test-Actor", "alice")
+	if resp, err = http.DefaultClient.Do(req); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !bytes.Equal(got, cover) {
+		t.Fatalf("committed original after a new upload: %d", resp.StatusCode)
 	}
 	if status, er := e.call(t, "alice", "/slot", media.SlotRefBody{Ref: ref, Slot: "nope"}, nil); status != 404 {
 		t.Fatalf("unknown slot manifest: %d %+v", status, er)
 	}
 	rec, err := e.manifests.Slot(ctx, contentref.New(e.Tenant, "gallery", cid(9)), "cover")
-	if err != nil || rec.Original != obj.ETag || rec.Edit != nil {
+	if err != nil || rec.Original != "sha256-"+hexSum(cover) || rec.Type != "image/png" || rec.Size != 1234 || rec.Edit != nil {
 		t.Fatalf("record %+v %v", rec, err)
 	}
 }
@@ -454,13 +461,13 @@ func TestInlineUploadAndCommit(t *testing.T) {
 	if code := put(t, p.Put, img, nil); code != 200 {
 		t.Fatalf("inline put %d", code)
 	}
-	if status, er := e.call(t, "alice", "/commit-slot", media.SlotBody{Ref: ref, Slot: p.Name, SHA256: hexSum(img)}, nil); status != 204 {
+	if status, er := e.call(t, "alice", "/commit-slot", media.SlotBody{Ref: ref, Slot: p.Name, SHA256: hexSum(img)}, nil); status != 200 {
 		t.Fatalf("commit inline %d %+v", status, er)
 	}
 	if e.queue.count() != 1 || e.queue.jobs[0].Slot != p.Name {
 		t.Fatalf("jobs %+v", e.queue.jobs)
 	}
-	if obj, err := e.Store.Head(ctx, e.Tenant+"/post/"+cid(101)+"/originals/"+p.Name); err != nil || obj.Size != 2048 {
+	if obj, err := e.Store.Head(ctx, e.Tenant+"/post/"+cid(101)+"/originals/sha256-"+hexSum(img)); err != nil || obj.Size != 2048 {
 		t.Fatalf("inline original %+v %v", obj, err)
 	}
 }
@@ -856,12 +863,10 @@ func TestSlotWritesAuthorizeTheWork(t *testing.T) {
 	if status, er := e.call(t, "translator", "/presign", media.PresignBody{Ref: version, Type: "image/png", Size: 1500, SHA256: hexSum(cover), Slot: "cover"}, nil); status != 403 {
 		t.Fatalf("slot presign through a version: %d %+v", status, er)
 	}
+	// The page's bytes are in the folder already: the slot's presign dedupes.
 	var p media.PresignReply
-	if status, er := e.call(t, "alice", "/presign", media.PresignBody{Ref: version, Type: "image/png", Size: 1500, SHA256: hexSum(cover), Slot: "cover"}, &p); status != 200 {
-		t.Fatalf("slot presign %d %+v", status, er)
-	}
-	if code := put(t, p.Put, cover, nil); code != 200 {
-		t.Fatal(code)
+	if status, er := e.call(t, "alice", "/presign", media.PresignBody{Ref: version, Type: "image/png", Size: 1500, SHA256: hexSum(cover), Slot: "cover"}, &p); status != 200 || !p.Exists {
+		t.Fatalf("slot presign %d %+v %+v", status, er, p)
 	}
 	if status, er := e.call(t, "translator", "/commit-slot", media.SlotBody{Ref: version, Slot: "cover", SHA256: hexSum(cover)}, nil); status != 403 {
 		t.Fatalf("slot commit through a version: %d %+v", status, er)
@@ -885,7 +890,7 @@ func TestSlotWritesAuthorizeTheWork(t *testing.T) {
 	if status, er := e.call(t, "alice", "/commit-slot-from-file", from, nil); status != 200 {
 		t.Fatalf("slot from another item: %d %+v", status, er)
 	}
-	if obj, err := e.Store.Head(ctx, e.Tenant+"/gallery/"+cid(2)+"/originals/cover"); err != nil || obj.Size != 1500 {
+	if obj, err := e.Store.Head(ctx, e.Tenant+"/gallery/"+cid(2)+"/originals/sha256-"+hexSum(cover)); err != nil || obj.Size != 1500 {
 		t.Fatalf("copied slot %+v %v", obj, err)
 	}
 	last := e.queue.jobs[e.queue.count()-1]

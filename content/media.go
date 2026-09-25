@@ -15,9 +15,9 @@ import (
 
 // Media connects post and poll images to ContentKit media. The browser uploads
 // an image through media's upload API as an inline image of the post's or
-// poll's folder ({tenant}/{kind}/{id}/, whose media.Kind sets Inline) and hands
-// its name ("i-{uuid}") to ContentKit, which stores the plain public URL and
-// deletes the folder with the post or poll. Runtime.CanUpload authorizes those
+// poll's folder ({tenant}/{kind}/{id}/, whose media.Kind sets Inline), waits
+// for it to render and hands its name ("i-{uuid}") to ContentKit, which
+// stores the public URL and deletes the folder with the post or poll. Runtime.CanUpload authorizes those
 // uploads.
 type Media struct {
 	URLs     MediaURLs    // *media.Reader
@@ -26,9 +26,10 @@ type Media struct {
 	PollKind string       // media kind of poll folders; default "poll"
 }
 
-// MediaURLs builds public image URLs without reads; *media.Reader implements it.
+// MediaURLs resolves inline images to their public URLs (media.ErrPending
+// until rendered); *media.Reader implements it.
 type MediaURLs interface {
-	PublicURL(ref contentref.ContentRef, name string) (string, error)
+	InlineURL(ctx context.Context, ref contentref.ContentRef, name string) (string, error)
 }
 
 // MediaFolders deletes item folders from the host's transaction; *media.Jobs
@@ -76,7 +77,7 @@ func (m *Media) kind(f folder) string {
 
 // imageURL resolves an inline image name of a post or poll folder to its
 // public URL; "" clears the image (nil).
-func (rt *Runtime) imageURL(f folder, id, name string) (*string, error) {
+func (rt *Runtime) imageURL(ctx context.Context, f folder, id, name string) (*string, error) {
 	if rt.media == nil {
 		return nil, errMediaNotConfigured
 	}
@@ -86,7 +87,10 @@ func (rt *Runtime) imageURL(f folder, id, name string) (*string, error) {
 	if !layout.ValidInlineName(name) {
 		return nil, badRequest("image must be an inline image name (i-{uuid})")
 	}
-	u, err := rt.media.URLs.PublicURL(rt.Ref(rt.media.kind(f), id), name)
+	u, err := rt.media.URLs.InlineURL(ctx, rt.Ref(rt.media.kind(f), id), name)
+	if errors.Is(err, media.ErrPending) {
+		return nil, badRequest("image %s is not rendered yet", name)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -153,7 +153,7 @@ func (e *Encoder) encode(ctx context.Context, job Job, report Report, oneStage b
 	if err != nil {
 		return false, &PermanentError{err}
 	}
-	if _, err := item.ManifestKey(); err != nil {
+	if _, err := item.Section(); err != nil {
 		return false, &PermanentError{err}
 	}
 	ms, err := media.NewManifests(e.c.Store, kinds, media.ManifestOptions{Locker: e.c.Locker, CacheSize: 1, Sweeps: e.c.Sweeps})

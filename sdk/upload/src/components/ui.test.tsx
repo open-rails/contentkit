@@ -28,8 +28,8 @@ it("SlotImage renders srcset and sizes, and a placeholder when empty", () => {
     aspect: "3:1",
     pending: false,
     outputs: [
-      { name: "a", w: 1500, h: 500, url: "https://cdn/1500.webp" },
-      { name: "b", w: 3000, h: 1000, url: "https://cdn/3000.webp" },
+      { w: 1500, h: 500, url: "https://cdn/1500.webp" },
+      { w: 3000, h: 1000, url: "https://cdn/3000.webp" },
     ],
   };
   const { container, rerender } = render(<SlotImage manifest={manifest} alt="cover" />);

@@ -125,7 +125,7 @@ func (p *posts) handleImage(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	url, err := p.rt.imageURL(postFolder, id, name)
+	url, err := p.rt.imageURL(ctx, postFolder, id, name)
 	if err == nil && url == nil {
 		err = badRequest("image is required")
 	}
@@ -154,7 +154,7 @@ func (p *posts) handleCover(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	url, err := p.rt.imageURL(postFolder, id, name)
+	url, err := p.rt.imageURL(ctx, postFolder, id, name)
 	if err != nil {
 		writeErr(w, err)
 		return

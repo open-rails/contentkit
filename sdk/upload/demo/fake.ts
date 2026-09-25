@@ -97,7 +97,7 @@ export class DemoServer {
       const [dw, dh] = rot === 90 || rot === 270 ? [height, width] : [width, height];
       g.drawImage(bmp, c.x, c.y, c.w, c.h, -dw / 2, -dh / 2, dw, dh);
       const url = URL.createObjectURL(await cv.convertToBlob({ type: "image/webp", quality: 0.9 }));
-      outputs.push({ name: `${slot}_${width}`, w: width, h: height, url });
+      outputs.push({ w: width, h: height, url });
     }
     const m: SlotManifest = { aspect: `${aw}:${ah}`, ...(edit ? { edit } : {}), dims: { w: src.width, h: src.height }, outputs, pending: false };
     this.slots.set(key, m);
@@ -197,7 +197,7 @@ async function renderPoster(src: Blob, edit?: Edit) {
     g.rotate((rot * Math.PI) / 180);
     const [dw, dh] = rot === 90 || rot === 270 ? [height, width] : [width, height];
     g.drawImage(bmp, c.x, c.y, c.w, c.h, -dw / 2, -dh / 2, dw, dh);
-    outputs.push({ name: `poster_${width}`, w: width, h: height, url: URL.createObjectURL(await cv.convertToBlob({ type: "image/webp", quality: 0.85 })) });
+    outputs.push({ w: width, h: height, url: URL.createObjectURL(await cv.convertToBlob({ type: "image/webp", quality: 0.85 })) });
   }
   return outputs;
 }

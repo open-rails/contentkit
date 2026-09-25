@@ -162,11 +162,11 @@ func TestAnimatedRenditionsKeepEveryFrame(t *testing.T) {
 	if sm := e.slotManifest(t, ref, "cover"); sm.Error != "" || len(sm.Outputs) != 2 {
 		t.Fatalf("cover: %+v", sm)
 	}
-	for _, w := range []string{"20", "40"} {
-		b, _ := e.object(t, e.Tenant+"/anim/"+cid(1)+"/public/cover_"+w+".webp")
+	for _, w := range []int{20, 40} {
+		b, _ := e.object(t, e.slotOutput(t, ref, "cover", w))
 		out := decodeAnimation(t, b)
 		if out.frames != 4 || !slices.Equal(out.delays, in.delays) || !near(out.centres[2], left[2]) {
-			t.Fatalf("cover %s: %+v", w, out)
+			t.Fatalf("cover %d: %+v", w, out)
 		}
 	}
 }
@@ -189,9 +189,9 @@ func TestAnimationRejectRefuses(t *testing.T) {
 	if sm.ErrorCode != media.CodeAnimationNotAllowed || len(sm.Outputs) != 0 || sm.Animation != media.AnimationReject {
 		t.Fatalf("cover: %+v", sm)
 	}
-	for _, w := range []string{"20", "40"} {
-		if _, err := e.Env.Store.Head(context.Background(), e.Tenant+"/anim/"+cid(2)+"/public/cover_"+w+".webp"); err == nil {
-			t.Fatalf("cover_%s written for a refused animation", w)
+	for _, w := range []int{20, 40} {
+		if k := e.slotOutput(t, ref, "cover", w); k != "" {
+			t.Fatalf("cover %d written for a refused animation", w)
 		}
 	}
 	// A refused file is not retried until its source or edit changes.

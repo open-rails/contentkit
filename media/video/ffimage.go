@@ -36,7 +36,7 @@ func snippet(ctx context.Context, store media.Store, item media.Item, r media.Re
 		}
 		t += s.Seconds
 	}
-	key, err := item.Blob(r.Blob)
+	key, err := item.Private(r.Blob)
 	if err != nil {
 		return 0, err
 	}

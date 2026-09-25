@@ -190,7 +190,7 @@ func (e *env) encode(t *testing.T) {
 
 func (e *env) blob(t *testing.T, name string) string {
 	t.Helper()
-	key, _ := e.item(t).Blob(name)
+	key, _ := e.item(t).Private(name)
 	rc, _, err := e.store.Get(context.Background(), key, media.GetOptions{})
 	if err != nil {
 		t.Fatalf("blob %s: %v", name, err)
@@ -211,7 +211,7 @@ func (e *env) blob(t *testing.T, name string) string {
 func (e *env) blobs(t *testing.T) []string {
 	t.Helper()
 	var out []string
-	for obj, err := range e.store.List(context.Background(), e.item(t).BlobsPrefix()) {
+	for obj, err := range e.store.List(context.Background(), e.item(t).PrivatePrefix()) {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -445,7 +445,7 @@ func TestReplacedSourceKeepsPreviousHLSUntilPromotion(t *testing.T) {
 			t.Fatalf("%s: previous hls gone: %+v", when, h)
 		}
 		for _, blob := range []string{prev.Video[0].Blob, prev.Audio[0].Blob} {
-			key, _ := e.item(t).Blob(blob)
+			key, _ := e.item(t).Private(blob)
 			if _, err := e.store.Head(ctx, key); err != nil {
 				t.Fatalf("%s: %s: %v", when, blob, err)
 			}
@@ -486,7 +486,7 @@ type failManifest struct {
 }
 
 func (s *failManifest) Put(ctx context.Context, key string, body io.Reader, size int64, o media.PutOptions) (media.Object, error) {
-	if s.armed.Load() && strings.Contains(key, "/manifests/") {
+	if s.armed.Load() && strings.HasSuffix(key, "/manifest.json") {
 		return media.Object{}, errors.New("injected manifest failure")
 	}
 	return s.Store.Put(ctx, key, body, size, o)
@@ -513,8 +513,8 @@ func TestRetriesAreIdempotent(t *testing.T) {
 		t.Fatalf("retry wrote new blobs:\n%v\n%v", first, again)
 	}
 	m, etag := e.manifest(t)
-	for _, name := range m.Blobs() {
-		key, _ := e.item(t).Blob(name)
+	for _, name := range m.Renditions() {
+		key, _ := e.item(t).Private(name)
 		if !slices.Contains(first, key) {
 			t.Fatalf("manifest references %s, not written by the first attempt", name)
 		}

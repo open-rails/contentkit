@@ -35,7 +35,7 @@ it("useUpload reports progress and the result", async () => {
     await result.current.upload(new File([bytes(100)], "c.png", { type: "image/png" }), { ref, slot: "cover" });
   });
   expect(result.current.status).toBe("done");
-  expect(result.current.result?.name).toBe("cover");
+  expect(result.current.result?.name).toMatch(/^sha256-/);
   expect(result.current.progress?.loaded).toBe(100);
 });
 

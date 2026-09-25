@@ -126,6 +126,7 @@ export interface SlotBody {
   slot: string;
   sha256: string;
   edit?: Edit;
+  filename?: string;
 }
 
 export interface SlotFromFileBody {
@@ -153,7 +154,6 @@ export interface Dims {
 }
 
 export interface SlotImage {
-  name: string;
   w: number;
   h: number;
   url: string;

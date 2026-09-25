@@ -49,11 +49,11 @@ func (actorHeader) Actor(ctx context.Context) (access.Actor, bool) {
 	return a, ok
 }
 
-// TestVideoExposure publishes a video item's poster per its visibility and
-// serves it through the real worker: nothing for a draft, the poster for a
-// paid or free item, nothing again once unpublished; editors see the
-// unpublished outputs. Every viewer of the poster gets its frame time.
-func TestVideoExposure(t *testing.T) {
+// TestExposure serves a video item's poster through the real worker as its
+// visibility changes: nothing public for a draft (editors read private/),
+// the public/ copy for a paid or free item, gone at once when hidden.
+// Every viewer of the poster gets its frame time.
+func TestExposure(t *testing.T) {
 	env := s3test.Open(t)
 	ctx := context.Background()
 	kinds, err := media.NewRegistry(media.Kind{Name: "clip", Video: &media.Video{PosterWidths: []int{480, 960, 1920}}, Types: []string{"video/mp4"}})
@@ -64,31 +64,25 @@ func TestVideoExposure(t *testing.T) {
 	ref := contentref.New(env.Tenant, "clip", cid(7))
 	item, _ := kinds.Item(ref)
 	vis := &visibility{}
-	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: kinds, Resolver: vis})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: kinds, Resolver: vis, Locker: s3test.Locker(t, env.Store)})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// What the image job and the video worker render: editor/ outputs, plus
-	// the records that list them.
-	poster, _ := item.SlotOutput(media.PosterSlot, 480)
-	outputs := map[string]string{poster: "poster"}
-	for k, body := range outputs {
-		if !strings.HasPrefix(k, item.EditorPrefix()) {
-			t.Fatalf("rendered output outside editor/: %s", k)
-		}
-		if _, err := env.Store.Put(ctx, k, strings.NewReader(body), int64(len(body)),
-			media.PutOptions{ContentType: "image/webp", CacheControl: "no-cache"}); err != nil {
-			t.Fatal(err)
-		}
-	}
+	// What the image job renders: a private/ output and the record listing it.
+	blob := sha("poster")
+	private, _ := item.Private(blob)
+	orig := sha("frame")
 	if err := ms.UpdateSlot(ctx, ref, media.PosterSlot, func(r *media.SlotRecord) error {
-		r.Original = `"etag"`
-		r.Frame = &media.PosterFrame{File: "source", Time: 2.5, Auto: true, Source: `"etag"`}
+		r.Original = orig
+		r.Frame = &media.PosterFrame{File: "source", Time: 2.5, Auto: true, Source: orig}
 		fp := r.Fingerprint((&media.Video{PosterWidths: []int{480, 960, 1920}}).Poster())
-		r.Result = &media.SlotResult{Of: fp, Source: r.Original, Outputs: []media.SlotRendition{{Rung: 480, W: 480, H: 270}}}
+		r.Result = &media.SlotResult{Of: fp, Source: r.Original, Outputs: []media.SlotRendition{{Rung: 480, W: 480, H: 270, Blob: blob}}}
 		return nil
 	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.Store.Put(ctx, private, strings.NewReader("poster"), 6, media.PutOptions{ContentType: "image/webp"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -117,7 +111,7 @@ func TestVideoExposure(t *testing.T) {
 		_ = json.Unmarshal(rec.Body.Bytes(), &v)
 		return rec.Code, v
 	}
-	fetch := func(u string) int {
+	fetch := func(u string) (int, string) {
 		t.Helper()
 		resp, err := http.Get(u)
 		if err != nil {
@@ -125,26 +119,26 @@ func TestVideoExposure(t *testing.T) {
 		}
 		defer resp.Body.Close()
 		_, _ = io.ReadAll(resp.Body)
-		return resp.StatusCode
+		return resp.StatusCode, resp.Header.Get("Cache-Control")
 	}
-	public := func(key string) int { return fetch(mediaSrv.URL + "/" + key) }
-	posterURL, _ := item.SlotPublic(media.PosterSlot, 480)
-	publish := func(res access.Resolution) {
+	publicKey, _ := item.Public(blob)
+	public := func() int { code, _ := fetch(mediaSrv.URL + "/" + publicKey); return code }
+	expose := func(res access.Resolution) {
 		t.Helper()
 		vis.set(res)
-		if err := jobs.Publish(ctx, ref); err != nil {
+		if err := jobs.Expose(ctx, ref); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for k := range outputs {
-		if code := public(k); code != http.StatusNotFound {
-			t.Fatalf("editor/ output %s without a token: %d", k, code)
+	for _, k := range []string{private, item.ManifestKey(), item.OriginalsPrefix() + orig} {
+		if code, _ := fetch(mediaSrv.URL + "/" + k); code != http.StatusNotFound {
+			t.Fatalf("%s without a token: %d", k, code)
 		}
 	}
 
-	// A draft: nothing public, the read API hides it, editors see everything.
-	publish(access.Resolution{})
-	if code := public(posterURL); code != http.StatusNotFound {
+	// A draft: nothing public, the read API hides it, editors see private/.
+	expose(access.Resolution{})
+	if code := public(); code != http.StatusNotFound {
 		t.Fatalf("draft poster: %d", code)
 	}
 	if code, _ := images(""); code != http.StatusNotFound {
@@ -154,54 +148,39 @@ func TestVideoExposure(t *testing.T) {
 	if code != http.StatusOK || len(ed.Poster.Outputs) != 1 {
 		t.Fatalf("editor video-images: %d %+v", code, ed)
 	}
-	if u := ed.Poster.Outputs[0].URL; !strings.Contains(u, "/editor/") || fetch(u) != http.StatusOK {
+	if u := ed.Poster.Outputs[0].URL; !strings.Contains(u, "/private/"+blob+"?t=") {
 		t.Fatalf("editor url %s", u)
+	} else if code, cc := fetch(u); code != http.StatusOK || cc != "private, max-age=31536000, immutable" {
+		t.Fatalf("editor fetch %d %q", code, cc)
 	}
 
-	// Paid: the poster is the teaser.
-	publish(access.Resolution{Visible: true})
-	if code := public(posterURL); code != http.StatusOK {
-		t.Fatalf("paid poster: %d", code)
+	// Paid: the poster is public.
+	expose(access.Resolution{Visible: true})
+	if code, cc := fetch(mediaSrv.URL + "/" + publicKey); code != http.StatusOK || cc != "public, max-age=31536000, immutable" {
+		t.Fatalf("paid poster: %d %q", code, cc)
 	}
 	code, v := images("viewer")
-	if code != http.StatusOK || len(v.Poster.Outputs) != 1 || !strings.HasPrefix(v.Poster.Outputs[0].URL, mediaSrv.URL+"/"+posterURL) ||
+	if code != http.StatusOK || len(v.Poster.Outputs) != 1 || v.Poster.Outputs[0].URL != mediaSrv.URL+"/"+publicKey ||
 		v.Poster.File != "source" || v.Poster.Time == nil || *v.Poster.Time != 2.5 || v.Poster.Selection != nil {
 		t.Fatalf("paid video-images: %d %+v", code, v)
 	}
-	if fetch(v.Poster.Outputs[0].URL) != http.StatusOK {
-		t.Fatal("published poster url")
-	}
 
-	// Free: the poster.
-	publish(access.Resolution{Visible: true, Accessible: true})
-	if code, v := images(""); code != http.StatusOK || public(posterURL) != http.StatusOK || len(v.Poster.Outputs) != 1 {
+	// Free: the same public copy.
+	expose(access.Resolution{Visible: true, Accessible: true})
+	if code, v := images(""); code != http.StatusOK || public() != http.StatusOK || len(v.Poster.Outputs) != 1 {
 		t.Fatalf("free video-images: %d %+v", code, v)
 	}
 
-	// A host policy that allows no teaser for paid items.
-	strict, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: kinds, Resolver: vis,
-		Exposure: func(_ context.Context, _ contentref.ContentRef, res access.Resolution) media.Exposure {
-			return media.Exposure{Poster: res.Full()}
-		}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	vis.set(access.Resolution{Visible: true})
-	if err := strict.Publish(ctx, ref); err != nil {
-		t.Fatal(err)
-	}
-	if public(posterURL) != http.StatusNotFound {
-		t.Fatal("strict policy published the poster of a paid item")
-	}
-
-	// Unpublished (or deleted): gone at once.
-	publish(access.Resolution{Visible: true, Accessible: true})
-	publish(access.Resolution{})
-	if code := public(posterURL); code != http.StatusNotFound {
-		t.Fatalf("unpublished poster: %d", code)
+	// Hidden (unpublished, deleted): gone at once; private/ is untouched.
+	expose(access.Resolution{})
+	if code := public(); code != http.StatusNotFound {
+		t.Fatalf("hidden poster: %d", code)
 	}
 	if code, _ := images("viewer"); code != http.StatusNotFound {
-		t.Fatalf("unpublished video-images: %d", code)
+		t.Fatalf("hidden video-images: %d", code)
+	}
+	if code, ed := images("editor"); code != http.StatusOK || len(ed.Poster.Outputs) != 1 {
+		t.Fatalf("editor after hiding: %d %+v", code, ed)
 	}
 }
 

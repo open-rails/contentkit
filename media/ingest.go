@@ -75,7 +75,7 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 	if err != nil {
 		return IngestResult{}, err
 	}
-	if _, err := item.ManifestKey(); err != nil {
+	if _, err := item.Section(); err != nil {
 		return IngestResult{}, uploadErr(CodeInvalid, "%v", err)
 	}
 	if req.Op == "" {
@@ -120,7 +120,7 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 	if single {
 		sum := sha256.Sum256(first)
 		name = SHA256Name(sum[:])
-	} else if req.Resume != nil && layout.ValidBlobName(req.Resume.Original) {
+	} else if req.Resume != nil && layout.ValidSourceName(req.Resume.Original) {
 		name = req.Resume.Original
 	} else {
 		name = NewUploadName()

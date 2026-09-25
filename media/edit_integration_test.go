@@ -111,7 +111,11 @@ func TestEditOpAndSlotFromFile(t *testing.T) {
 		b, _ := json.Marshal(rec.Edit)
 		return string(b)
 	}
-	rc, obj, err := e.Store.Get(ctx, e.Tenant+"/mixed/"+cid(2)+"/originals/cover", media.GetOptions{})
+	rec, err := e.manifests.Slot(ctx, contentref.New(e.Tenant, "mixed", cid(2)), "cover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, obj, err := e.Store.Get(ctx, e.Tenant+"/mixed/"+cid(2)+"/originals/"+rec.Original, media.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

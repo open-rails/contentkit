@@ -20,9 +20,9 @@ import (
 
 // RestoreReport lists what Restore changed, by key.
 type RestoreReport struct {
-	Reverted  []string // manifests, public slots and slot originals set to their version at T
+	Reverted  []string // manifests set to their version at T
 	Removed   []string // such keys that did not exist at T
-	Undeleted []string // referenced blobs and originals whose delete markers were removed
+	Undeleted []string // referenced originals, renditions and public copies whose delete markers were removed
 	Missing   []string // referenced at T but no version is left
 }
 
@@ -34,9 +34,9 @@ type version struct {
 }
 
 // Restore returns the folders under prefix to time at, on a versioned bucket
-// (see Configure): manifests, public slots and slot originals take their
-// version at T, then the blobs and originals those manifests reference lose
-// the delete markers the sweep or a folder deletion left. Restore the host
+// (see Configure): manifests take their version at T, then the objects
+// those manifests keep lose the delete markers the sweep or a folder
+// deletion left. Restore the host
 // database to T first, and re-apply erasures made after T afterwards.
 func (s *Store) Restore(ctx context.Context, prefix string, at time.Time) (RestoreReport, error) {
 	var rep RestoreReport
@@ -68,7 +68,7 @@ func (s *Store) Restore(ctx context.Context, prefix string, at time.Time) (Resto
 	refs := map[string]bool{}
 	for _, key := range slices.Sorted(maps.Keys(history)) {
 		k, ok := layout.Parse(key)
-		if !ok || !pointInTime(k) {
+		if !ok || k.Area != layout.AreaManifest {
 			continue
 		}
 		vs := history[key]
@@ -89,10 +89,8 @@ func (s *Store) Restore(ctx context.Context, prefix string, at time.Time) (Resto
 				}
 				rep.Reverted = append(rep.Reverted, key)
 			}
-			if k.Area == layout.AreaManifest {
-				if err := s.collectRefs(ctx, key, then.id, k, refs); err != nil {
-					return rep, err
-				}
+			if err := s.collectRefs(ctx, key, then.id, k, refs); err != nil {
+				return rep, err
 			}
 		case !now.marker:
 			if err := s.Delete(ctx, key); err != nil {
@@ -128,13 +126,6 @@ func (s *Store) Restore(ctx context.Context, prefix string, at time.Time) (Resto
 	return rep, nil
 }
 
-// pointInTime keys are overwritten in place, so they return to their version
-// at T; content-addressed blobs and originals never change and are undeleted.
-func pointInTime(k layout.Key) bool {
-	return k.Area == layout.AreaManifest || k.Area == layout.AreaPublic ||
-		(k.Area == layout.AreaOriginals && !layout.ValidBlobName(k.Name))
-}
-
 func (s *Store) collectRefs(ctx context.Context, key, versionID string, k layout.Key, refs map[string]bool) error {
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: &s.bucket, Key: &key, VersionId: &versionID})
 	if err != nil {
@@ -145,16 +136,13 @@ func (s *Store) collectRefs(ctx context.Context, key, versionID string, k layout
 	if err != nil {
 		return err
 	}
-	var man media.Manifest
-	if err := json.Unmarshal(body, &man); err != nil {
+	var root media.Root
+	if err := json.Unmarshal(body, &root); err != nil {
 		return fmt.Errorf("s3: restore: decode %s@%s: %w", key, versionID, err)
 	}
 	folder := strings.Join([]string{k.Tenant, k.Kind, k.ID}, "/") + "/"
-	for _, n := range man.Blobs() {
-		refs[folder+layout.AreaBlobs+"/"+n] = true
-	}
-	for _, n := range man.Originals() {
-		refs[folder+layout.SourceArea(n)+"/"+n] = true
+	for ref := range root.Refs() {
+		refs[folder+ref] = true
 	}
 	return nil
 }

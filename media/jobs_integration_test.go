@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -140,7 +141,7 @@ func TestJobsComposeWithHostRiverAndSweepAfterEdit(t *testing.T) {
 	if _, err := ms.Create(ctx, ref); err != nil {
 		t.Fatal(err)
 	}
-	orphan, kept := item.BlobsPrefix()+blobName("orphan"), item.BlobsPrefix()+blobName("kept")
+	orphan, kept := item.PrivatePrefix()+blobName("orphan"), item.PrivatePrefix()+blobName("kept")
 	putObject(t, env.Store, orphan, "orphan")
 	putObject(t, env.Store, item.OriginalsPrefix()+blobName("orig"), "orig")
 	putObject(t, env.Store, kept, "kept")
@@ -202,7 +203,7 @@ func TestDeleteAndEraseRemoveFoldersIncludingLateUploads(t *testing.T) {
 	g := contentref.New(env.Tenant, "gallery", cid(3))
 	for _, ref := range []contentref.ContentRef{post, other, g} {
 		item, _ := r.Item(ref)
-		putObject(t, s, item.BlobsPrefix()+blobName("b"), "b")
+		putObject(t, s, item.PrivatePrefix()+blobName("b"), "b")
 		putObject(t, s, item.OriginalsPrefix()+blobName("o"), "o")
 	}
 	// The post's commits charged its owner 700 bytes of originals; a gallery version 50.
@@ -212,13 +213,13 @@ func TestDeleteAndEraseRemoveFoldersIncludingLateUploads(t *testing.T) {
 	oi, _ := r.Item(other)
 	putObject(t, s, oi.Prefix()+"manifest.json", `{"files":[]}`)
 	gi0, _ := r.Item(g)
-	putObject(t, s, gi0.ManifestsPrefix()+"v1.json", `{"files":[{"name":"p","original":"`+blobName("o")+`","size":50}]}`)
+	putObject(t, s, gi0.ManifestKey(), `{"files":[],"versions":{"v1":{"files":[{"name":"p","original":"`+blobName("o")+`","size":50}]}}}`)
 	if err := limiter.Settle(ctx, media.Settlement{Tenant: env.Tenant, Owner: "chan-a", Delta: 1000}); err != nil {
 		t.Fatal(err)
 	}
 	user, _ := r.Item(contentref.New(env.Tenant, "user", cid(11)))
-	putObject(t, s, user.OriginalsPrefix()+"avatar", "avatar original")
-	putObject(t, s, user.PublicPrefix()+"avatar_80.webp", "avatar")
+	putObject(t, s, user.OriginalsPrefix()+blobName("avatar original"), "avatar original")
+	putObject(t, s, user.PublicPrefix()+blobName("avatar"), "avatar")
 
 	inTx := func(fn func(pgx.Tx) error, commit bool) {
 		tx, err := pool.Begin(ctx)
@@ -288,9 +289,10 @@ func TestDeleteAndEraseRemoveFoldersIncludingLateUploads(t *testing.T) {
 	}
 }
 
-// TestPublishTxThroughRiver publishes a video poster from a host transaction
-// through the composed River client, and unpublishes it the same way.
-func TestPublishTxThroughRiver(t *testing.T) {
+// TestExposeTxThroughRiver hides and unhides an item from a host
+// transaction through the composed River client: its cover's public/ copy is
+// deleted (and reported for a CDN purge), then copied back.
+func TestExposeTxThroughRiver(t *testing.T) {
 	env := s3test.Open(t)
 	ctx := context.Background()
 	r, err := media.NewRegistry(media.Kind{Name: "clip", Video: &media.Video{}})
@@ -299,38 +301,65 @@ func TestPublishTxThroughRiver(t *testing.T) {
 	}
 	res := &flipVisible{}
 	res.visible.Store(true)
-	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: r, Resolver: res})
+	var mu sync.Mutex
+	var purged []string
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: r, Resolver: res, Locker: s3test.Locker(t, env.Store),
+		Hooks: media.Hooks{PublicRemoved: func(_ context.Context, _ contentref.ContentRef, keys []string) {
+			mu.Lock()
+			defer mu.Unlock()
+			purged = append(purged, keys...)
+		}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, pool, _ := riverHost(t, jobs, make(chan string, 4))
 	ref := contentref.New(env.Tenant, "clip", cid(1))
 	item, _ := r.Item(ref)
-	staged, _ := item.SlotOutput(media.PosterSlot, 480)
-	public, _ := item.SlotPublic(media.PosterSlot, 480)
-	putObject(t, env.Store, staged, "poster")
-	publish := func() {
+	blob := blobName("poster")
+	private, _ := item.Private(blob)
+	public, _ := item.Public(blob)
+	ms := s3test.Manifests(t, env.Store, r, media.ManifestOptions{})
+	if err := ms.UpdateSlot(ctx, ref, media.PosterSlot, func(rec *media.SlotRecord) error {
+		*rec = media.SlotRecord{Original: blobName("frame"), Result: &media.SlotResult{Source: blobName("frame"),
+			Outputs: []media.SlotRendition{{Rung: 480, W: 480, H: 270, Blob: blob}}}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	putObject(t, env.Store, private, "poster") // the image job renders after the commit
+	expose := func() {
 		t.Helper()
-		// Twice in one transaction: publishes are not deduplicated.
+		// Twice in one transaction: exposes are not deduplicated.
 		if err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
-			if err := jobs.PublishTx(ctx, tx, ref); err != nil {
+			if err := jobs.ExposeTx(ctx, tx, ref); err != nil {
 				return err
 			}
-			return jobs.PublishTx(ctx, tx, ref)
+			return jobs.ExposeTx(ctx, tx, ref)
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	exists := func() bool { return slices.Contains(listKeys(t, env.Store, item.PublicPrefix()), public) }
-	publish()
-	waitFor(t, "poster published", exists)
+	expose()
+	waitFor(t, "cover exposed", exists)
 	res.visible.Store(false)
-	publish()
-	waitFor(t, "poster unpublished", func() bool { return !exists() })
-	// Unpublished leaves nothing of its own behind (a deleted item's folder stays empty).
-	if keys := listKeys(t, env.Store, item.Prefix()); len(keys) != 1 || keys[0] != staged {
-		t.Fatalf("after unpublishing: %v", keys)
+	expose()
+	waitFor(t, "cover hidden", func() bool { return !exists() })
+	root, _, err := ms.Root(ctx, ref)
+	if err != nil || !root.Hidden {
+		t.Fatalf("hidden not recorded: %v", err)
 	}
+	mu.Lock()
+	if !slices.Contains(purged, public) {
+		t.Fatalf("purge hook got %v", purged)
+	}
+	mu.Unlock()
+	if !slices.Contains(listKeys(t, env.Store, item.PrivatePrefix()), private) {
+		t.Fatal("hiding touched private/")
+	}
+	res.visible.Store(true)
+	expose()
+	waitFor(t, "cover unhidden", exists)
 }
 
 type flipVisible struct{ visible atomic.Bool }

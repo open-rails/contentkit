@@ -60,6 +60,7 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
     const body = bytes(2048, 9);
     const up = await client().uploadInline(new File([body], "i.png", { type: "image/png" }), { ref });
     expect(up.name).toMatch(/^i-[0-9a-f-]{36}$/);
+    expect(up.url).toBe(`http://media.invalid/sdk/post/${ref.id}/public/sha256-${createHash("sha256").update(body).digest("hex")}`);
     expect(await stored(ref, up.name)).toMatchObject({ size: 2048, sha256: createHash("sha256").update(body).digest("hex") });
   });
 

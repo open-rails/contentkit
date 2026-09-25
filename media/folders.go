@@ -3,6 +3,7 @@ package media
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -37,15 +38,22 @@ func (m *Manifests) Create(ctx context.Context, ref contentref.ContentRef) (*Man
 	if err != nil {
 		return nil, err
 	}
-	key, err := item.ManifestKey()
-	if err != nil {
+	v, err := item.Section()
+	if err != nil && ref.Version() != "" {
 		return nil, err
 	}
+	key := item.ManifestKey()
 	if err := m.requireEmpty(ctx, item.Prefix()); err != nil {
 		return nil, err
 	}
-	man := &Manifest{Files: []File{}}
-	body := []byte(`{"files":[]}`)
+	root := &Root{}
+	man := root.section(v)
+	root.normalize()
+	root.index()
+	body, err := json.Marshal(root)
+	if err != nil {
+		return nil, err
+	}
 	obj, err := m.store.Put(ctx, key, bytes.NewReader(body), int64(len(body)), PutOptions{ContentType: "application/json", CacheControl: "no-store", IfNoneMatch: "*"})
 	if errors.Is(err, ErrPreconditionFailed) {
 		return nil, &FolderNotEmptyError{Prefix: item.Prefix(), Keys: []string{key}}
@@ -57,9 +65,9 @@ func (m *Manifests) Create(ctx context.Context, ref contentref.ContentRef) (*Man
 	return man, nil
 }
 
-// requireFresh backs Edit's first manifest of a folder: derived blobs with no
-// manifest are a previous item's leftovers (uploads and slots may precede a
-// first commit; blobs never do).
+// requireFresh backs the first manifest of a folder: renditions with no
+// manifest are a previous item's leftovers (uploads may precede a first
+// commit; renditions never do).
 func (m *Manifests) requireFresh(ctx context.Context, item Item) error {
 	var blobs []string
 	for o, err := range m.store.List(ctx, item.Prefix()) {
@@ -70,7 +78,7 @@ func (m *Manifests) requireFresh(ctx context.Context, item Item) error {
 		if ok && k.Area == AreaManifest {
 			return nil
 		}
-		if ok && k.Area == AreaBlobs && len(blobs) < 3 {
+		if ok && (k.Area == AreaPrivate || k.Area == AreaPublic) && len(blobs) < 3 {
 			blobs = append(blobs, o.Key)
 		}
 	}
