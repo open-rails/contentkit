@@ -66,6 +66,7 @@ func newReadFixtureOn(t *testing.T, env *s3test.Env) *readFixture {
 	kinds, err := media.NewRegistry(
 		media.Kind{Name: "gallery", Versioned: true, Specs: map[string]media.Spec{"thumb": {Width: 460}, "high": {}}},
 		media.Kind{Name: "post", Specs: map[string]media.Spec{"large": {}, "blurred": {Blur: 20}}, Editor: &media.Spec{Width: 1200},
+			Video: &media.Video{Ladder: []int{2160, 1080, 480}},
 			Slots: map[string]media.Slot{"cover": {Aspect: media.Aspect1x1, Widths: []int{64}}}},
 	)
 	if err != nil {
@@ -126,12 +127,43 @@ func (f *readFixture) readerWith(t *testing.T, mode media.DeliveryMode, q media.
 func (f *readFixture) newReader(t *testing.T, o media.ReaderOptions, mode media.DeliveryMode) *media.Reader {
 	t.Helper()
 	r, err := media.NewReader(media.ReaderOptions{Manifests: f.ms, Kinds: f.kinds, Resolver: f.res, Hooks: o.Hooks, Queue: o.Queue,
+		Progress: o.Progress,
 		Delivery: media.Delivery{Mode: mode, BaseURL: readBase, CookieDomain: "doujins.com", SigningKey: readKey},
 		Now:      func() time.Time { return f.now }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return r
+}
+
+type fixedProgress media.EncodeStatus
+
+func (p fixedProgress) EncodeProgress(context.Context, contentref.ContentRef) (media.EncodeStatus, error) {
+	return media.EncodeStatus(p), nil
+}
+
+func TestQueuedProgressCountsPublishedRungs(t *testing.T) {
+	f := newReadFixture(t)
+	source := blobName("queued-video")
+	if _, err := f.ms.Edit(context.Background(), f.post, func(m *media.Manifest) error {
+		m.Files = append(m.Files, media.File{Name: "queued.mp4", Original: source, Type: "video/mp4",
+			HLS: &media.HLS{Source: source, Pending: []int{2160}, Video: []media.Rendition{
+				{Rung: 480, Codec: media.CodecH264, Blob: blobName("queued-480-h264")},
+				{Rung: 480, Codec: media.CodecAV1, Blob: blobName("queued-480-av1")},
+				{Rung: 1080, Codec: media.CodecH264, Blob: blobName("queued-1080-h264")},
+				{Rung: 1080, Codec: media.CodecAV1, Blob: blobName("queued-1080-av1")},
+			}}})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.res.verdicts[cid(501)] = access.Resolution{Visible: true, Accessible: true, Editor: true}
+	r := f.newReader(t, media.ReaderOptions{Progress: fixedProgress{Queued: &media.EncodeProgress{Phase: media.PhaseQueued}}}, media.DeliverURL)
+	out := f.read(t, r, f.post, media.ReadOptions{})
+	i := slices.IndexFunc(out.Files, func(file media.FileInfo) bool { return file.Name == "queued.mp4" })
+	if i < 0 || out.Files[i].Progress == nil || out.Files[i].Progress.Stage != 3 || out.Files[i].Progress.Stages != 3 {
+		t.Fatalf("queued progress for published rungs: %+v", out.Files)
+	}
 }
 
 func (f *readFixture) read(t *testing.T, r *media.Reader, ref contentref.ContentRef, o media.ReadOptions) *media.ReadResult {
