@@ -417,11 +417,11 @@ each rung also gets a muxed MP4 in `downloads["{file}-{N}p"]` (video,
 every audio track, subtitles). Blobs are written first; one manifest edit then
 records `hls` and `downloads` only if the file still derives from the encoded
 original, so a replaced file keeps its previous `hls` until then. Outputs are
-byte-identical on retry (same encoder, presets and `Threads`). Each pass
+byte-identical on retry (same presets and `Threads`). Each pass
 decodes the source once and scales a lanczos cascade (each rung from the one
-above; the sprite from the smallest); x264 runs preset `faster`
-(`Config.Preset` up to 1080, `TopPreset` above), each rung with all of
-`Config.Threads`; rungs mux and upload concurrently.
+above; the sprite from the smallest); libx264 on the CPU (no GPU encoding)
+runs preset `fast` (`Config.Preset` up to 1080, `TopPreset` above), each
+rung with all of `Config.Threads`; rungs mux and upload concurrently.
 **Two stages:** rungs up to 1080 (with audio, subtitles, sprite and their
 downloads) are published first with `hls.pending` listing the rungs above;
 the worker queues a follow-up job (same args, River priority 2) that encodes
@@ -432,12 +432,12 @@ is a compliant top rung (MP4/MOV constant-rate 8-bit 4:2:0 progressive
 H.264 High/Main ≤ level 5.2, unrotated, at the rung's exact frame, within its
 bitrate cap, with an IDR starting each 4 s segment) that rung is stream-copied
 and checked against a sibling rung's segments; otherwise it is encoded.
-`Config.Encoder` picks libx264 (default without a GPU) or NVENC (`auto` uses
-it when a probe encode works; a file it fails on re-encodes with x264).
 ffmpeg reads only local files
 (`-protocol_whitelist file`) through container demuxers (mov/mp4, matroska/webm, avi,
 mpegts, flv, ogg, asf, mpeg): playlists and concat lists are refused. Changing
-the ladder or profile changes `video.Spec(video)`, so files re-encode. A
+the ladder, profile or recipe (versioned; bumped when the encode defaults
+change) changes `video.Spec(video)`, so files re-encode once; preset
+overrides are not part of it. A
 staged source is hashed while it downloads for ffmpeg and placed before the
 encode, so `hls.source` names the placed original. Jobs are `{ref}`
 (`workqueue.VideoArgs`; the worker takes the kind from its registry), not

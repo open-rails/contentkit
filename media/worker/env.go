@@ -62,16 +62,15 @@ func FromEnv(ctx context.Context) (Config, error) {
 //	MEDIA_HOST_GRACE             the host's sweep grace (default 24h)
 //	MEDIA_WORKER_TMP             scratch dir (default os.TempDir()); size for a video source plus outputs
 //	MEDIA_WORKER_THREADS         ffmpeg threads (default: CPU limit)
-//	MEDIA_WORKER_PRESET          x264 preset of rungs up to 1080 (default faster)
-//	MEDIA_WORKER_TOP_PRESET      x264 preset of 1440/2160 (default faster)
-//	MEDIA_WORKER_ENCODER         auto (default: NVENC if a probe encode works, else x264), x264 or nvenc
+//	MEDIA_WORKER_PRESET          x264 preset of rungs up to 1080 (default fast)
+//	MEDIA_WORKER_TOP_PRESET      x264 preset of 1440/2160 (default fast)
 //	MEDIA_WORKER_CONCURRENCY     video jobs per process (default 1)
 //	MEDIA_WORKER_IMAGE_CONCURRENCY  image jobs per process (default 2)
 //	MEDIA_WORKER_JOB_TIMEOUT     per video job (default 48h)
 //	MEDIA_WORKER_SHUTDOWN_GRACE  time running jobs get on SIGTERM before cancel (default 30s)
 func (c *Config) TuningFromEnv() error {
 	for k, p := range map[string]*string{"MEDIA_HOST_RIVER_SCHEMA": &c.HostSchema, "MEDIA_HOST_QUEUE": &c.HostQueue, "MEDIA_WORKER_TMP": &c.TempDir,
-		"MEDIA_WORKER_PRESET": &c.Preset, "MEDIA_WORKER_TOP_PRESET": &c.TopPreset, "MEDIA_WORKER_ENCODER": &c.VideoEncoder} {
+		"MEDIA_WORKER_PRESET": &c.Preset, "MEDIA_WORKER_TOP_PRESET": &c.TopPreset} {
 		if v := os.Getenv(k); v != "" {
 			*p = v
 		}

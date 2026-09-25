@@ -51,8 +51,8 @@ type Config struct {
 
 	TempDir string // scratch for video sources and outputs; default os.TempDir()
 	Threads int    // ffmpeg threads; default GOMAXPROCS
-	// Preset, TopPreset and VideoEncoder are video.Config's.
-	Preset, TopPreset, VideoEncoder string
+	// Preset and TopPreset are video.Config's.
+	Preset, TopPreset string
 	// VideoWorkers and ImageWorkers are concurrent jobs per process
 	// (defaults 1 and 2); ImageSources bounds sources decoded at once per
 	// image job (default 2).
@@ -137,7 +137,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 		return nil, err
 	}
 	enc, err := video.New(video.Config{Store: c.Store, Locker: media.PGLocker(c.Pool), Sweeps: host, TempDir: c.TempDir,
-		Threads: c.Threads, Preset: c.Preset, TopPreset: c.TopPreset, Encoder: c.VideoEncoder, Hooks: c.Hooks, Logger: c.Logger, Slots: queue})
+		Threads: c.Threads, Preset: c.Preset, TopPreset: c.TopPreset, Hooks: c.Hooks, Logger: c.Logger, Slots: queue})
 	if err != nil {
 		return nil, err
 	}

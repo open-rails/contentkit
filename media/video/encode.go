@@ -23,7 +23,7 @@ import (
 
 // recipe is the encode's identity with the ladder and profile: a manifest
 // hls or download whose spec differs is stale and re-encoded.
-const recipe = "h264-high-capped-crf:%s|k4-sc0|short-side:%s|cascade-lanczos|max-4096-3840x2160|lvl51-52|max60fps|sar1|aac-128k-48k-2ch|webvtt|sprite-10x10-short90-jpg|mp4-all-audio-mov_text|stages-1080|pt-top|v3"
+const recipe = "h264-high-capped-crf:%s|k4-sc0|short-side:%s|cascade-lanczos|max-4096-3840x2160|lvl51-52|max60fps|sar1|aac-128k-48k-2ch|webvtt|sprite-10x10-short90-jpg|mp4-all-audio-mov_text|stages-1080|pt-top|v4"
 
 // Spec identifies the recipe over v's ladder (empty: media.DefaultLadder)
 // and profile in manifest hls and downloads entries.
@@ -148,16 +148,8 @@ func hlsArgs(segment, playlist string) []string {
 		"-hls_segment_type", "fmp4", "-hls_flags", "single_file", "-hls_segment_filename", segment, playlist}
 }
 
-// Config.Encoder values.
-const (
-	EncoderAuto  = "auto"  // NVENC when a probe encode succeeds, else x264
-	EncoderX264  = "x264"  // libx264 on the CPU
-	EncoderNVENC = "nvenc" // NVIDIA h264_nvenc; decoding and scaling stay on the CPU
-)
-
 // encoding is how a file's ladder is encoded.
 type encoding struct {
-	codec     string // EncoderX264 or EncoderNVENC
 	threads   int
 	preset    string // x264 preset of rungs up to 1080
 	topPreset string // x264 preset of the rungs above
@@ -165,7 +157,7 @@ type encoding struct {
 }
 
 // rungArgs are output stream i's H.264 High settings: the rung's capped CRF
-// (NVENC: CQ) with a 2 s VBV buffer and no scene-cut keyframes, so every
+// with a 2 s VBV buffer and no scene-cut keyframes, so every
 // rung, in either stage, has keyframes at the same times. Every x264 gets
 // all threads: splitting them by frame area cost 15–40% more wall time and
 // CPU at 8 threads (bench_test.go).
@@ -174,11 +166,6 @@ func (e encoding) rungArgs(i int, r rung) []string {
 	args := []string{o("profile"), "high", o("maxrate"), fmt.Sprintf("%dk", r.maxrate), o("bufsize"), fmt.Sprintf("%dk", 2*r.maxrate)}
 	if r.level != "" {
 		args = append(args, o("level"), r.level)
-	}
-	if e.codec == EncoderNVENC {
-		return append(args, o("c"), "h264_nvenc", o("preset"), "p5", o("tune"), "hq", o("rc"), "vbr", o("cq"), strconv.Itoa(r.crf+nvencCQOffset),
-			o("b"), "0", o("spatial-aq"), "1", o("temporal-aq"), "1", o("rc-lookahead"), "20", o("bf"), "3", o("b_ref_mode"), "middle",
-			o("forced-idr"), "1", o("no-scenecut"), "1")
 	}
 	preset := e.preset
 	if r.n > 1080 {
@@ -190,17 +177,6 @@ func (e encoding) rungArgs(i int, r rung) []string {
 		args = append(args, o("tune"), "animation")
 	}
 	return args
-}
-
-// nvencCQOffset maps a rung's CRF to an NVENC CQ of about the same top-rung
-// VMAF; lower rungs cost NVENC 30-60% more bits (bench_test.go).
-var nvencCQOffset = 4
-
-// nvencWorks encodes one frame with h264_nvenc.
-func nvencWorks(ctx context.Context) error {
-	_, err := command(ctx, "ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=s=256x256:d=0.1", "-frames:v", "1",
-		"-c:v", "h264_nvenc", "-f", "null", "-")
-	return err
 }
 
 const spriteFrames = "t%03d.png"

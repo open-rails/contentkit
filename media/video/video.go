@@ -39,16 +39,11 @@ type Config struct {
 	Locker  media.Locker
 	TempDir string // scratch for the source and outputs; default os.TempDir()
 	Threads int    // CPU threads for ffmpeg; default GOMAXPROCS (the container's CPU limit)
-	// Preset is the x264 preset of rungs up to 1080, TopPreset of the rungs
-	// above; both default "faster" (preset fast's quality at a third less
-	// CPU; veryfast cost 1440/2160 film grain 6 VMAF in its worst 1%).
+	// Preset is the libx264 preset of rungs up to 1080, TopPreset of the
+	// rungs above; both default "fast".
 	Preset, TopPreset string
-	// Encoder is EncoderAuto (default), EncoderX264 or EncoderNVENC. NVENC
-	// is checked by a probe encode in New; a file it fails on is re-encoded
-	// with x264.
-	Encoder string
-	Hooks   media.Hooks // Failed: a source that can never be encoded
-	Logger  *slog.Logger
+	Hooks             media.Hooks // Failed: a source that can never be encoded
+	Logger            *slog.Logger
 	// Slots is the worker's queue (workqueue.Queue): a grabbed poster frame
 	// is handed to its image job through it.
 	// Without it, frame posters are grabbed but not encoded.
@@ -93,22 +88,8 @@ func New(c Config) (*Encoder, error) {
 	if c.Threads <= 0 {
 		c.Threads = runtime.GOMAXPROCS(0)
 	}
-	switch c.Encoder {
-	case "", EncoderAuto:
-		c.Encoder = EncoderX264
-		if nvencWorks(context.Background()) == nil {
-			c.Encoder = EncoderNVENC
-		}
-	case EncoderNVENC:
-		if err := nvencWorks(context.Background()); err != nil {
-			return nil, fmt.Errorf("media/video: NVENC unavailable: %w", err)
-		}
-	case EncoderX264:
-	default:
-		return nil, fmt.Errorf("media/video: unknown Encoder %q", c.Encoder)
-	}
-	c.Preset = cmp.Or(c.Preset, "faster")
-	c.TopPreset = cmp.Or(c.TopPreset, "faster")
+	c.Preset = cmp.Or(c.Preset, "fast")
+	c.TopPreset = cmp.Or(c.TopPreset, "fast")
 	if c.Logger == nil {
 		c.Logger = slog.Default()
 	}
@@ -369,10 +350,10 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 		return nil, err
 	}
 	e.c.Logger.InfoContext(ctx, "media/video: encoding", "key", srcKey, "duration", p.duration, "rungs", todo, "stage", stage, "stages", stages,
-		"audio", len(p.audio), "subs", len(p.subs), "encoder", e.c.Encoder, "threads", e.c.Threads)
+		"audio", len(p.audio), "subs", len(p.subs), "threads", e.c.Threads)
 	fp.stage(stage, stages)
 	fp.probed(p.duration, out)
-	ps := pass{rungs: todo, sprite: !second, enc: encoding{codec: e.c.Encoder, threads: e.c.Threads, preset: e.c.Preset,
+	ps := pass{rungs: todo, sprite: !second, enc: encoding{threads: e.c.Threads, preset: e.c.Preset,
 		topPreset: e.c.TopPreset, animation: r.video.Profile == media.VideoAnimation}}
 	// The plan's top rung is copied from a compliant source (a stage keeps
 	// another rung to check its segments against).
@@ -385,13 +366,6 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 		}
 	}
 	err = ladder(ctx, src, out, p, ps, fp)
-	if err != nil && ps.enc.codec == EncoderNVENC && ctx.Err() == nil {
-		e.c.Logger.WarnContext(ctx, "media/video: NVENC failed; encoding with x264", "key", srcKey, "error", err)
-		ps.enc.codec = EncoderX264
-		if err = errors.Join(os.RemoveAll(out), os.Mkdir(out, 0o700)); err == nil {
-			err = ladder(ctx, src, out, p, ps, fp)
-		}
-	}
 	if err != nil {
 		return nil, err
 	}
