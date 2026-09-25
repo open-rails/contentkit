@@ -16,6 +16,7 @@ import (
 
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
@@ -200,7 +201,13 @@ func TestWorkerAssemblesPlayableChunks(t *testing.T) {
 	if enq, err = workqueue.New(pool, e.kinds, schema); err != nil {
 		t.Fatal(err)
 	}
-	e.commit(t, fixture{w: 1280, h: 720, secs: 9, rate: 30, audio: 1, tone: 440}.make(t), media.OpInsert)
+	src := filepath.Join(t.TempDir(), "audio-outlasts-video.mp4")
+	if output, err := exec.Command("ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=9",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=12", "-map", "0:v", "-map", "1:a",
+		"-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-y", src).CombinedOutput(); err != nil {
+		t.Fatalf("fixture: %v: %s", err, output)
+	}
+	e.commit(t, src, media.OpInsert)
 	enc, err := video.New(video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(), Threads: 2, Encoder: video.EncoderCPU})
 	if err != nil {
 		t.Fatal(err)
@@ -555,6 +562,24 @@ WHERE kind = $1 AND state = 'running' LIMIT 1), 0)`, chunkKind).Scan(&chunkID); 
 	if attempt != 0 || state != "available" {
 		t.Fatalf("interrupted chunk attempt %d, state %q", attempt, state)
 	}
+	// Model five hard kills before a worker reaches Work. River records each
+	// rescue as an error and would discard the fifth with MaxAttempts = 5.
+	rescue, err := json.Marshal(rivertype.AttemptError{At: time.Now(), Attempt: 1,
+		Error: "Stuck job rescued by JobRescuer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE `+schema+`.river_job
+SET attempt = 5, errors = array_fill($2::jsonb, ARRAY[5]) WHERE id = $1`, chunkID, rescue); err != nil {
+		t.Fatal(err)
+	}
+	var maxAttempts int
+	if err := pool.QueryRow(ctx, `SELECT max_attempts FROM `+schema+`.river_job WHERE id = $1`, chunkID).Scan(&maxAttempts); err != nil {
+		t.Fatal(err)
+	}
+	if maxAttempts != workqueue.VideoRiverMaxAttempts {
+		t.Fatalf("video job River limit %d", maxAttempts)
+	}
 	secondContribution, err := video.Contribution(wc)
 	if err != nil {
 		t.Fatal(err)
@@ -581,6 +606,12 @@ WHERE kind = $1 AND state = 'running' LIMIT 1), 0)`, chunkKind).Scan(&chunkID); 
 			}
 			m, _ := e.manifest(t)
 			if m.Files[0].State() == media.StateReady {
+				if err := pool.QueryRow(ctx, `SELECT attempt FROM `+schema+`.river_job WHERE id = $1`, chunkID).Scan(&attempt); err != nil {
+					t.Fatal(err)
+				}
+				if attempt != 1 {
+					t.Fatalf("rescued chunk consumed %d attempts, want 1", attempt)
+				}
 				return
 			}
 		case <-ctx.Done():
@@ -651,6 +682,97 @@ func TestPassthroughTopRung(t *testing.T) {
 				}
 				checkByteRanges(t, paths[0], top.Segments, "video", 9)
 				switchRungs(t, paths, []media.Rendition{top, low})
+			}
+
+			// The queued worker preserves the source frames when the top rung
+			// fits in one bounded chunk.
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			pool := pgtest.Pool(t, nil)
+			schema := pgtest.EmptySchema(t, ctx, pool)
+			if err := workqueue.Migrate(ctx, pool, schema); err != nil {
+				t.Fatal(err)
+			}
+			var enq *workqueue.Queue
+			queued := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return enq.Enqueue(ctx, j) }))
+			enq, err := workqueue.New(pool, queued.kinds, schema)
+			if err != nil {
+				t.Fatal(err)
+			}
+			queued.commit(t, src, media.OpInsert)
+			workerEncoder, err := video.New(video.Config{Store: queued.store, Locker: s3test.Locker(t, queued.store),
+				TempDir: t.TempDir(), Threads: 2, Encoder: video.EncoderCPU, Codecs: codecs})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wc := video.WorkerConfig{Encoder: workerEncoder, Pool: pool, Schema: schema, Kinds: queued.kinds,
+				Timeout: time.Hour, ChunkTarget: 5 * time.Minute}
+			contribution, err := video.Contribution(wc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := video.ClientConfig(wc)
+			cfg.FetchPollInterval = 100 * time.Millisecond
+			worker, err := riverhelpers.New(ctx, pool, cfg, contribution)
+			if err != nil {
+				t.Fatal(err)
+			}
+			completed, unsubscribe := worker.Subscribe(river.EventKindJobCompleted, river.EventKindJobFailed, river.EventKindJobCancelled)
+			defer unsubscribe()
+			if err := worker.Start(ctx); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				stopCtx, stop := context.WithTimeout(context.Background(), 30*time.Second)
+				defer stop()
+				_ = worker.StopAndCancel(stopCtx)
+			}()
+			for {
+				select {
+				case event := <-completed:
+					if event.Kind != river.EventKindJobCompleted {
+						t.Fatalf("worker job %s: %+v", event.Kind, event.Job.Errors)
+					}
+					m, _ := queued.manifest(t)
+					if m.Files[0].State() != media.StateReady {
+						continue
+					}
+					h := m.Files[0].HLS
+					for _, rendition := range h.Video {
+						if rendition.Rung != 720 || rendition.Codec != c.codec {
+							continue
+						}
+						path := queued.blob(t, rendition.Blob)
+						var planned string
+						if err := pool.QueryRow(ctx, "SELECT passthrough_codec FROM "+schema+".encode_run WHERE rung = 720").Scan(&planned); err != nil {
+							t.Fatal(err)
+						}
+						if planned != string(c.codec) {
+							t.Fatalf("queued %s top rung planned %q", c.codec, planned)
+						}
+						decoded := func(path string) string {
+							b, err := exec.Command("ffmpeg", "-v", "error", "-i", path, "-map", "0:v:0", "-an", "-pix_fmt", "yuv420p", "-f", "md5", "-").CombinedOutput()
+							if err != nil {
+								t.Fatal(err)
+							}
+							return string(b)
+						}
+						if decoded(path) != decoded(src) {
+							t.Fatalf("queued %s top rung changed frames", c.codec)
+						}
+						low := slices.IndexFunc(h.Video, func(r media.Rendition) bool {
+							return r.Rung == 480 && r.Codec == c.codec
+						})
+						if low < 0 {
+							t.Fatalf("queued %s lower rung missing", c.codec)
+						}
+						switchRungs(t, []string{path, queued.blob(t, h.Video[low].Blob)}, []media.Rendition{rendition, h.Video[low]})
+						return
+					}
+					t.Fatalf("queued %s top rung missing from %+v", c.codec, h.Video)
+				case <-ctx.Done():
+					t.Fatal("queued passthrough did not complete")
+				}
 			}
 		})
 	}

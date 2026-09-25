@@ -100,7 +100,47 @@ func (c WorkerConfig) encodeChunk(ctx context.Context, job *river.Job[workqueue.
 			enc: encoding{encoders: maps.Clone(c.Encoder.encoders), threads: c.Encoder.c.Threads,
 				preset: c.Encoder.c.Preset, topPreset: c.Encoder.c.TopPreset,
 				animation: item.Kind().Video.Profile == media.VideoAnimation}, observe: c.Encoder.c.ObserveEncode}
-		err := ladder(ctx, url.URL, dir, p, ps, nil)
+		if run.Passthrough != "" && len(p.rungs) > 1 && r.n == p.rungs[0].n {
+			var lower *media.Rendition
+			if h := man.Files[man.File(run.File)].HLS; h != nil {
+				for i := range h.Video {
+					if h.Video[i].Rung == p.rungs[1].n && h.Video[i].Codec == run.Passthrough {
+						lower = &h.Video[i]
+						break
+					}
+				}
+			}
+			if lower != nil {
+				name := renditionName(r.n, run.Passthrough)
+				path := filepath.Join(dir, name+".mp4")
+				copyErr := copyRungRemote(ctx, url.URL, dir, p, name, run.Passthrough)
+				valid := false
+				if copyErr == nil && sameSegments(dir, name, lower.Segments) {
+					if copiedProbe, probeErr := probe(ctx, path); probeErr == nil {
+						if copiedPlan, planErr := newPlan(copiedProbe, item.Kind().Video); planErr == nil {
+							codec, ok, _ := passthroughable(ctx, path, copiedPlan, r)
+							valid = ok && codec == run.Passthrough
+						}
+					}
+				}
+				if valid {
+					ps.codecs = slices.DeleteFunc(ps.codecs, func(codec media.Codec) bool { return codec == run.Passthrough })
+				} else {
+					if ctx.Err() != nil {
+						return snoozeOnShutdown(ctx, ctx.Err())
+					}
+					c.Encoder.c.Logger.DebugContext(ctx, "media/video: chunk passthrough unavailable", "run", run.ID,
+						"chunk", ch.Ordinal, "error", copyErr)
+					if err := removeRendition(dir, name); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		var err error
+		if len(ps.codecs) > 0 {
+			err = ladder(ctx, url.URL, dir, p, ps, nil)
+		}
 		if err != nil && ctx.Err() == nil {
 			cpu := false
 			for codec, encoder := range ps.enc.encoders {
@@ -120,7 +160,7 @@ func (c WorkerConfig) encodeChunk(ctx context.Context, job *river.Job[workqueue.
 		if err != nil {
 			return snoozeOnShutdown(ctx, err)
 		}
-		for _, codec := range ps.codecs {
+		for _, codec := range c.Encoder.c.Codecs {
 			name := renditionName(r.n, codec)
 			path := filepath.Join(dir, name+".mp4")
 			st, err := os.Stat(path)
@@ -158,7 +198,7 @@ func (c WorkerConfig) overTenantShare(ctx context.Context, tenant string) (bool,
   (SELECT count(*) FROM `+c.jobTable()+` WHERE kind = $1 AND state = 'running' AND args->'ref'->>'tenant_id' = $2),
   (SELECT count(*) FROM `+c.jobTable()+` WHERE kind = $1 AND state = 'running'),
   EXISTS (SELECT 1 FROM `+c.jobTable()+` WHERE kind = $1
-    AND state IN ('available', 'pending', 'retryable', 'scheduled')
+    AND (state = 'available' OR state IN ('retryable', 'scheduled') AND scheduled_at <= now())
     AND args->'ref'->>'tenant_id' IS DISTINCT FROM $2)`,
 		(workqueue.VideoChunkArgs{}).Kind(), tenant).Scan(&own, &running, &otherWaiting)
 	if err != nil {

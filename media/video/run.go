@@ -22,21 +22,23 @@ import (
 )
 
 const (
-	chunkWindow = 2
+	chunkWindow          = 2
+	maxVideoChunksPerRun = 5000
 )
 
 type encodeRun struct {
-	ID         string
-	Ref        contentref.ContentRef
-	File       string
-	Source     string
-	SourceKey  string
-	SourceETag string
-	Spec       string
-	Rung       int
-	Class      media.VideoJobClass
-	State      string
-	Probe      probeResult
+	ID          string
+	Ref         contentref.ContentRef
+	File        string
+	Source      string
+	SourceKey   string
+	SourceETag  string
+	Spec        string
+	Rung        int
+	Class       media.VideoJobClass
+	State       string
+	Probe       probeResult
+	Passthrough media.Codec
 }
 
 type encodeChunk struct {
@@ -138,6 +140,18 @@ func (c WorkerConfig) planFile(ctx context.Context, ms *media.Manifests, item me
 	if err != nil {
 		return &PermanentError{err}
 	}
+	stages := slices.Clone(plan.rungs)
+	slices.Reverse(stages)
+	if len(stages) == 0 {
+		return &PermanentError{fmt.Errorf("video has no applicable rendition rung")}
+	}
+	bounds := make([][][2]int64, len(stages))
+	for i, stage := range stages {
+		bounds[i], err = chunkBounds(plan, []rung{stage}, len(c.Encoder.c.Codecs), c.ChunkTarget)
+		if err != nil {
+			return &PermanentError{err}
+		}
+	}
 	// A staged upload has no immutable key yet. Stream it once for its hash,
 	// without storing a local copy, then atomically point the manifest at it.
 	if layout.ValidStagedName(source) {
@@ -178,15 +192,24 @@ func (c WorkerConfig) planFile(ctx context.Context, ms *media.Manifests, item me
 	if i < 0 || current.Files[i].Source() != source {
 		return nil
 	}
-	stages := slices.Clone(plan.rungs)
-	slices.Reverse(stages)
 	done := c.Encoder.stagesDone(current.Files[i].HLS, source, r.spec, stages)
-	return c.insertRuns(ctx, item.Ref(), f.Name, source, key, obj.ETag, r.spec, class, pr, plan, done)
+	var passthrough media.Codec
+	sourceCodec := media.Codec(plan.stream.CodecName)
+	if len(plan.rungs) > 1 && len(bounds[len(bounds)-1]) == 1 && slices.Contains(c.Encoder.c.Codecs, sourceCodec) &&
+		(sourceCodec == media.CodecH264 || sourceCodec == media.CodecHEVC) {
+		codec, ok, why := passthroughCandidate(plan, plan.rungs[0])
+		if ok && slices.Contains(c.Encoder.c.Codecs, codec) {
+			passthrough = codec
+		} else {
+			c.Encoder.c.Logger.DebugContext(ctx, "media/video: no passthrough", "key", key, "codec", codec, "reason", why)
+		}
+	}
+	return c.insertRuns(ctx, item.Ref(), f.Name, source, key, obj.ETag, r.spec, class, pr, stages, bounds, done, passthrough)
 }
 
 // chunkBounds sizes work by output pixels and frames, then rounds boundaries
 // to the HLS keyframe grid. A run always has at least one nonempty chunk.
-func chunkBounds(p plan, rungs []rung, codecs int, target time.Duration) [][2]int64 {
+func chunkBounds(p plan, rungs []rung, codecs int, target time.Duration) ([][2]int64, error) {
 	var pixelFactor float64
 	for _, r := range rungs {
 		pixelFactor += float64(r.w*r.h) / (1920 * 1080)
@@ -194,15 +217,22 @@ func chunkBounds(p plan, rungs []rung, codecs int, target time.Duration) [][2]in
 	cost := math.Max(0.25, pixelFactor*float64(codecs)*p.fps/30)
 	seconds := min(240.0, max(8.0, target.Seconds()/cost))
 	step := max(int64(segmentSeconds*1000), int64(seconds/segmentSeconds)*segmentSeconds*1000)
+	if p.duration > float64(math.MaxInt64)/1000 {
+		return nil, fmt.Errorf("video duration exceeds the supported range")
+	}
 	end := max(int64(1), int64(math.Ceil(p.duration*1000)))
-	var bounds [][2]int64
+	count := (end-1)/step + 1
+	if count > maxVideoChunksPerRun {
+		return nil, fmt.Errorf("video needs %d chunks, above the %d-chunk limit", count, maxVideoChunksPerRun)
+	}
+	bounds := make([][2]int64, 0, int(count))
 	for start := int64(0); start < end; start += step {
 		bounds = append(bounds, [2]int64{start, min(start+step, end)})
 	}
-	return bounds
+	return bounds, nil
 }
 
-func (c WorkerConfig) insertRuns(ctx context.Context, ref contentref.ContentRef, file, source, key, etag, spec string, class media.VideoJobClass, pr probeResult, p plan, done int) error {
+func (c WorkerConfig) insertRuns(ctx context.Context, ref contentref.ContentRef, file, source, key, etag, spec string, class media.VideoJobClass, pr probeResult, stages []rung, bounds [][][2]int64, done int, passthrough media.Codec) error {
 	probeJSON, err := json.Marshal(pr)
 	if err != nil {
 		return err
@@ -216,20 +246,22 @@ func (c WorkerConfig) insertRuns(ctx context.Context, ref contentref.ContentRef,
 		return err
 	}
 	defer tx.Rollback(ctx)
-	stages := slices.Clone(p.rungs)
-	slices.Reverse(stages)
 	previousComplete := true
 	for i, stage := range stages {
+		var copyCodec media.Codec
+		if i == len(stages)-1 {
+			copyCodec = passthrough
+		}
 		priority := workqueue.VideoPlanInsertOpts(class).Priority
 		if i > 0 && priority == 1 {
 			priority = 2
 		}
 		var id string
 		err := tx.QueryRow(ctx, `INSERT INTO `+c.runTable()+`
-  (tenant_id, ref, file_name, source_name, source_key, source_etag, spec, rung, class, probe)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+  (tenant_id, ref, file_name, source_name, source_key, source_etag, spec, rung, class, probe, passthrough_codec)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT (ref, file_name, source_name, source_etag, spec, rung) DO NOTHING
-RETURNING id::text`, ref.TenantID, refJSON, file, source, key, etag, spec, stage.n, string(class), probeJSON).Scan(&id)
+RETURNING id::text`, ref.TenantID, refJSON, file, source, key, etag, spec, stage.n, string(class), probeJSON, string(copyCodec)).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			if err := tx.QueryRow(ctx, `SELECT id::text FROM `+c.runTable()+`
 WHERE ref = $1 AND file_name = $2 AND source_name = $3 AND source_etag = $4 AND spec = $5 AND rung = $6`,
@@ -239,7 +271,7 @@ WHERE ref = $1 AND file_name = $2 AND source_name = $3 AND source_etag = $4 AND 
 		} else if err != nil {
 			return err
 		} else if i >= done {
-			for ordinal, bound := range chunkBounds(p, []rung{stage}, len(c.Encoder.c.Codecs), c.ChunkTarget) {
+			for ordinal, bound := range bounds[i] {
 				if _, err := tx.Exec(ctx, `INSERT INTO `+c.chunkTable()+`
   (run_id, ordinal, start_ms, end_ms) VALUES ($1, $2, $3, $4)`, id, ordinal, bound[0], bound[1]); err != nil {
 					return err
@@ -351,9 +383,9 @@ func (c WorkerConfig) loadRun(ctx context.Context, id string) (encodeRun, error)
 	var run encodeRun
 	var refJSON, probeJSON []byte
 	err := c.Pool.QueryRow(ctx, `SELECT id::text, ref, file_name, source_name, source_key, source_etag,
-  spec, rung, class, state, probe FROM `+c.runTable()+` WHERE id = $1`, id).Scan(
+  spec, rung, class, state, probe, passthrough_codec FROM `+c.runTable()+` WHERE id = $1`, id).Scan(
 		&run.ID, &refJSON, &run.File, &run.Source, &run.SourceKey, &run.SourceETag,
-		&run.Spec, &run.Rung, &run.Class, &run.State, &probeJSON)
+		&run.Spec, &run.Rung, &run.Class, &run.State, &probeJSON, &run.Passthrough)
 	if err != nil {
 		return run, err
 	}

@@ -33,30 +33,15 @@ type sourcePacket struct {
 // passthroughable reports whether top can be copied from src as a
 // rendition in codec c, and why not.
 func passthroughable(ctx context.Context, src string, p plan, top rung) (c media.Codec, ok bool, why string) {
-	s := p.stream
-	c, maxLevel := media.CodecH264, 52
-	if s.CodecName == "hevc" {
-		c, maxLevel = media.CodecHEVC, 156 // general_level_idc: 30 × level
+	c, ok, why = passthroughCandidate(p, top)
+	if !ok {
+		return c, false, why
 	}
-	switch {
-	case !strings.HasPrefix(p.formatName, "mov,"):
-		return c, false, "container " + p.formatName
-	case s.CodecName == "h264" && s.Profile != "High" && s.Profile != "Main",
-		s.CodecName == "hevc" && (s.Profile != "Main" || s.CodecTag != "hvc1"),
-		s.CodecName != "h264" && s.CodecName != "hevc":
-		return c, false, "codec " + s.CodecName + " " + s.Profile + " " + s.CodecTag
-	case s.PixFmt != "yuv420p" || s.FieldOrder != "progressive":
-		return c, false, "format " + s.PixFmt + " " + s.FieldOrder
-	case s.Level <= 0 || s.Level > maxLevel:
-		return c, false, "level " + strconv.Itoa(s.Level)
-	case rotated(s) || p.limitFPS:
-		return c, false, "rotated or above the frame-rate cap"
-	case s.Width != top.w || s.Height != top.h || p.width != top.w || p.height != top.h:
-		return c, false, fmt.Sprintf("frame %dx%d, rung %dx%d", s.Width, s.Height, top.w, top.h)
+	f, err := os.Open(src)
+	if err != nil {
+		return c, false, err.Error()
 	}
-	if st, err := strconv.ParseFloat(s.StartTime, 64); err != nil || math.Abs(st-p.start) > 1e-6 {
-		return c, false, "video starts after the container"
-	}
+	defer f.Close()
 	pkts, err := sourcePackets(ctx, src, p)
 	if err != nil || len(pkts) < 2 {
 		return c, false, fmt.Sprintf("packets: %v", err)
@@ -77,11 +62,6 @@ func passthroughable(ctx context.Context, src string, p plan, top rung) (c media
 	if avg := float64(bytes*8) / p.duration / 1000; avg > float64(maxrate) {
 		return c, false, fmt.Sprintf("%.0f kbit/s over the rung's %d", avg, maxrate)
 	}
-	f, err := os.Open(src)
-	if err != nil {
-		return c, false, err.Error()
-	}
-	defer f.Close()
 	next := 0.0
 	var window int64
 	windowStart := 0.0
@@ -109,6 +89,36 @@ func passthroughable(ctx context.Context, src string, p plan, top rung) (c media
 	return c, true, ""
 }
 
+// The planner only checks probe metadata. Packet and IDR validation belongs
+// to the encode worker, where a complete local output is available.
+func passthroughCandidate(p plan, top rung) (c media.Codec, ok bool, why string) {
+	s := p.stream
+	c, maxLevel := media.CodecH264, 52
+	if s.CodecName == "hevc" {
+		c, maxLevel = media.CodecHEVC, 156 // general_level_idc: 30 × level
+	}
+	switch {
+	case !strings.HasPrefix(p.formatName, "mov,"):
+		return c, false, "container " + p.formatName
+	case s.CodecName == "h264" && s.Profile != "High" && s.Profile != "Main",
+		s.CodecName == "hevc" && (s.Profile != "Main" || s.CodecTag != "hvc1"),
+		s.CodecName != "h264" && s.CodecName != "hevc":
+		return c, false, "codec " + s.CodecName + " " + s.Profile + " " + s.CodecTag
+	case s.PixFmt != "yuv420p" || s.FieldOrder != "progressive":
+		return c, false, "format " + s.PixFmt + " " + s.FieldOrder
+	case s.Level <= 0 || s.Level > maxLevel:
+		return c, false, "level " + strconv.Itoa(s.Level)
+	case rotated(s) || p.limitFPS:
+		return c, false, "rotated or above the frame-rate cap"
+	case s.Width != top.w || s.Height != top.h || p.width != top.w || p.height != top.h:
+		return c, false, fmt.Sprintf("frame %dx%d, rung %dx%d", s.Width, s.Height, top.w, top.h)
+	}
+	if st, err := strconv.ParseFloat(s.StartTime, 64); err != nil || math.Abs(st-p.start) > 1e-6 {
+		return c, false, "video starts after the container"
+	}
+	return c, true, ""
+}
+
 // sourcePackets lists the video stream's packets in presentation order.
 func sourcePackets(ctx context.Context, src string, p plan) ([]sourcePacket, error) {
 	out, err := command(ctx, "ffprobe", append(append([]string{"-v", "error"}, inputOptions(sourceDemuxers)...),
@@ -129,7 +139,7 @@ func sourcePackets(ctx context.Context, src string, p plan) ([]sourcePacket, err
 		t, err1 := strconv.ParseFloat(r[0], 64)
 		size, err2 := strconv.ParseInt(r[1], 10, 64)
 		pos, err3 := strconv.ParseInt(r[2], 10, 64)
-		if err1 != nil || err2 != nil || err3 != nil {
+		if err1 != nil || err2 != nil || err3 != nil || size <= 0 || size > 16<<20 || pos < 0 {
 			return nil, fmt.Errorf("packet %v", r)
 		}
 		pk.t, pk.size, pk.pos, pk.key = t-p.start, size, pos, strings.HasPrefix(r[3], "K")
@@ -177,6 +187,19 @@ func isIDR(f *os.File, pk sourcePacket, c media.Codec) (bool, error) {
 func copyRung(ctx context.Context, src, dir string, p plan, v string, c media.Codec) error {
 	args := append(append([]string{"-v", "error", "-nostdin"}, inputOptions(sourceDemuxers)...), "-i", src,
 		"-map", fmt.Sprintf("0:%d", p.video), "-c", "copy", "-map_metadata", "-1")
+	if c == media.CodecHEVC {
+		args = append(args, "-tag:v", "hvc1")
+	}
+	args = append(args, hlsArgs(filepath.Join(dir, v+".mp4"), filepath.Join(dir, v+".m3u8"))...)
+	_, err := command(ctx, "ffmpeg", args...)
+	return err
+}
+
+// copyRungRemote stream-copies a short source into its single queued chunk.
+func copyRungRemote(ctx context.Context, src, dir string, p plan, v string, c media.Codec) error {
+	args := append([]string{"-v", "error", "-nostdin"}, remoteInputOptions(sourceDemuxers)...)
+	args = append(args, "-i", src, "-map", fmt.Sprintf("0:%d", p.video),
+		"-c", "copy", "-map_metadata", "-1")
 	if c == media.CodecHEVC {
 		args = append(args, "-tag:v", "hvc1")
 	}
