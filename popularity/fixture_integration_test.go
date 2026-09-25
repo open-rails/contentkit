@@ -635,7 +635,7 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 			t.Errorf("ClickHouse ranks %s and %s differently: %v vs %v", fxNames[pair[0]], fxNames[pair[1]], byID[pair[0]], byID[pair[1]])
 		}
 	}
-	candidates, err := ranker.Candidates(ctx, fxKind, append(append([]string{}, ids...), fxOutside, " ", "missing"), fx.window)
+	candidates, err := ranker.Candidates(ctx, fxKind, append(append([]string{}, ids...), fxOutside, " ", cid(987654)), fx.window)
 	if err != nil {
 		t.Fatal(err)
 	}

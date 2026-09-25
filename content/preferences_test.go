@@ -388,7 +388,7 @@ func TestPreferences_RevisionFloorOnlyAdvances(t *testing.T) {
 // runtime's only connection (an outbox in the same database) completes.
 func TestPreferences_SyncSendsWithoutHoldingAConnection(t *testing.T) {
 	base := newPreferenceRuntime(t)
-	mustReact(t, base, access.Actor{ID: "u1"}, "gallery", "42:en", 1)
+	mustReact(t, base, access.Actor{ID: "u1"}, "gallery", localeID(42, "en"), 1)
 	cfg := base.store.pool.Config()
 	cfg.MaxConns = 1
 	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
