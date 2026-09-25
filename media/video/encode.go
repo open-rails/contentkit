@@ -23,7 +23,7 @@ import (
 
 // recipe is the encode's identity with the ladder and profile: a manifest
 // hls or download whose spec differs is stale and re-encoded.
-const recipe = "h264-high-capped-crf:%s|k2-sc0|short-side:%s|cascade-lanczos|max-4096-3840x2160|lvl51-52|max60fps|sar1|aac-128k-48k-2ch|webvtt|sprite-10x10-short90-jpg|mp4-all-audio-mov_text|stages-1080|pt-top|v3"
+const recipe = "h264-high-capped-crf:%s|k4-sc0|short-side:%s|cascade-lanczos|max-4096-3840x2160|lvl51-52|max60fps|sar1|aac-128k-48k-2ch|webvtt|sprite-10x10-short90-jpg|mp4-all-audio-mov_text|stages-1080|pt-top|v3"
 
 // Spec identifies the recipe over v's ladder (empty: media.DefaultLadder)
 // and profile in manifest hls and downloads entries.
@@ -54,11 +54,10 @@ func inputOptions(demuxers []string) []string {
 }
 
 const (
-	segmentSeconds  = 4
-	keyframeSeconds = 2
-	spriteCols      = 10
-	spriteRows      = 10
-	spriteShort     = 90
+	segmentSeconds = 4 // also the keyframe interval: one IDR starts each segment
+	spriteCols     = 10
+	spriteRows     = 10
+	spriteShort    = 90
 )
 
 // pass is one ffmpeg run of a file's stage: its rungs (largest first), and
@@ -115,7 +114,7 @@ func ladder(ctx context.Context, src, dir string, p plan, ps pass, fp *fileProgr
 	for i, r := range ps.rungs {
 		args = append(args, ps.enc.rungArgs(i, r)...)
 	}
-	args = append(args, "-pix_fmt", "yuv420p", "-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", keyframeSeconds))
+	args = append(args, "-pix_fmt", "yuv420p", "-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segmentSeconds))
 	args = append(args, "-var_stream_map", strings.Join(streamMap, " "))
 	args = append(args, hlsArgs(filepath.Join(dir, "v%v.mp4"), filepath.Join(dir, "v%v.m3u8"))...)
 	for i, a := range p.audio {

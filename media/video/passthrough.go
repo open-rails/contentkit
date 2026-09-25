@@ -19,8 +19,7 @@ import (
 // source must be constant-rate H.264 High/Main (8-bit 4:2:0, progressive,
 // level ≤ 5.2, square pixels, unrotated) at exactly the rung's frame, within
 // the rung's bitrate cap, in MP4/MOV, and IDR-coded (closed GOP) on the
-// frame that starts each 2 s keyframe interval, where the encoded rungs put
-// theirs.
+// frame that starts each segment, where the encoded rungs put theirs.
 
 type sourcePacket struct {
 	t         float64 // seconds from the container start
@@ -83,9 +82,9 @@ func passthroughable(ctx context.Context, src string, p plan, top rung) (bool, s
 			if idr, err := isIDR(f, pk); err != nil || !idr {
 				return false, fmt.Sprintf("keyframe at %.3f s is not an IDR (%v)", pk.t, err)
 			}
-			next += keyframeSeconds
+			next += segmentSeconds
 			for pk.t >= next-1e-9 {
-				next += keyframeSeconds
+				next += segmentSeconds
 			}
 		}
 		if pk.t-windowStart >= segmentSeconds {

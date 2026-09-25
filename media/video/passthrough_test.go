@@ -20,7 +20,7 @@ func TestPassthroughChecks(t *testing.T) {
 	}
 	ctx := context.Background()
 	dir := t.TempDir()
-	cadence := []string{"-force_key_frames", "expr:gte(t,n_forced*2)", "-sc_threshold", "0"}
+	cadence := []string{"-force_key_frames", "expr:gte(t,n_forced*4)", "-sc_threshold", "0"}
 	for _, c := range []struct {
 		name, ext string
 		args      []string
