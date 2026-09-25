@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -423,13 +424,22 @@ func runTail(ctx context.Context, stdout io.Writer, name string, args ...string)
 	if cmd.ProcessState != nil {
 		cpu = cmd.ProcessState.UserTime() + cmd.ProcessState.SystemTime()
 	}
+	diagnostics := redactToolURLs(stderr.b)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, cpu, ctx.Err()
 		}
-		return nil, cpu, fmt.Errorf("%s: %w: %s", name, err, stderr.b)
+		return nil, cpu, fmt.Errorf("%s: %w: %s", name, err, diagnostics)
 	}
-	return stderr.b, cpu, nil
+	return diagnostics, cpu, nil
+}
+
+// ffmpeg and ffprobe echo failed input URLs. Those URLs can carry a signed
+// read token, including when the input came from an internal concat list.
+var toolURL = regexp.MustCompile(`(?i)https?://[^\s'"<>]+`)
+
+func redactToolURLs(stderr []byte) []byte {
+	return toolURL.ReplaceAll(stderr, []byte("[redacted URL]"))
 }
 
 // tail keeps the last 16 KiB of a tool's diagnostics.

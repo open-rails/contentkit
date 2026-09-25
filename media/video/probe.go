@@ -41,12 +41,14 @@ type probeStream struct {
 	PixFmt     string `json:"pix_fmt"`
 	FieldOrder string `json:"field_order"`
 	StartTime  string `json:"start_time"`
+	Duration   string `json:"duration"`
 	AvgRate    string `json:"avg_frame_rate"`
 	Rate       string `json:"r_frame_rate"`
 	Tags       struct {
 		Language string `json:"language"`
 		Title    string `json:"title"`
 		Rotate   string `json:"rotate"`
+		Duration string `json:"DURATION"`
 	} `json:"tags"`
 	Disposition struct {
 		Default     int `json:"default"`
@@ -136,6 +138,9 @@ func newPlan(p probeResult, v *media.Video) (plan, error) {
 				return pl, errors.New("invalid video dimensions")
 			}
 			pl.video, pl.width, pl.height, pl.stream = s.Index, s.Width, s.Height, s
+			if d := selectedVideoEnd(s, pl.start, p.Format.FormatName); d > 0 {
+				pl.duration = d
+			}
 			if n, d, ok := ratio(s.SAR); ok && n != d {
 				pl.width = max(2, int(math.Round(float64(s.Width)*float64(n)/float64(d))))
 			}
@@ -178,6 +183,36 @@ func newPlan(p probeResult, v *media.Video) (plan, error) {
 		pl.audio[i].def = i == def
 	}
 	return pl, nil
+}
+
+// The container may outlast the selected video because it also carries audio.
+// Some Matroska probes report the container duration on streams, while the
+// DURATION tag records the selected stream's actual length.
+func selectedVideoEnd(s probeStream, containerStart float64, format string) float64 {
+	d, _ := strconv.ParseFloat(s.Duration, 64)
+	if strings.HasPrefix(format, "matroska,") && s.Tags.Duration != "" {
+		parts := strings.Split(s.Tags.Duration, ":")
+		if len(parts) == 3 {
+			hours, e1 := strconv.ParseFloat(parts[0], 64)
+			minutes, e2 := strconv.ParseFloat(parts[1], 64)
+			seconds, e3 := strconv.ParseFloat(parts[2], 64)
+			if e1 == nil && e2 == nil && e3 == nil && hours >= 0 && minutes >= 0 && minutes < 60 && seconds >= 0 && seconds < 60 {
+				d = hours*3600 + minutes*60 + seconds
+			}
+		}
+	}
+	if d <= 0 || math.IsInf(d, 0) || math.IsNaN(d) {
+		return 0
+	}
+	start, err := strconv.ParseFloat(s.StartTime, 64)
+	if err != nil || math.IsInf(start, 0) || math.IsNaN(start) {
+		start = containerStart
+	}
+	end := start - containerStart + d
+	if end <= 0 || math.IsInf(end, 0) || math.IsNaN(end) {
+		return 0
+	}
+	return end
 }
 
 // ratio parses "n:d" or "n/d" with positive terms.
