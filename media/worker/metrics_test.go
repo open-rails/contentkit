@@ -55,13 +55,15 @@ func TestMetrics(t *testing.T) {
 		t.Fatalf("metrics status = %d: %s", rec.Code, rec.Body.String())
 	}
 	for _, metric := range []string{
-		`contentkit_media_job_attempts_total{attempt="3+",outcome="success",queue="media_video"} 1`,
-		`contentkit_media_job_attempts_total{attempt="3+",outcome="snoozed",queue="media_video"} 1`,
-		`contentkit_media_job_attempts_total{attempt="3+",outcome="cancelled",queue="media_video"} 2`,
-		`contentkit_media_job_attempts_total{attempt="3+",outcome="error",queue="media_video"} 2`,
-		`contentkit_media_video_encode_cpu_seconds_total{outcome="success",source_class="hd"} 1.25`,
-		`contentkit_media_video_encode_cpu_seconds_total{outcome="error",source_class="hd"} 0.5`,
-		`contentkit_media_video_encoded_output_seconds_total{source_class="hd"} 2`,
+		`media_video_attempt_bucket{outcome="success",queue="media_video",le="3"} 1`,
+		`media_video_attempt_count{outcome="snoozed",queue="media_video"} 1`,
+		`media_video_attempt_count{outcome="cancelled",queue="media_video"} 2`,
+		`media_video_attempt_count{outcome="error",queue="media_video"} 2`,
+		`media_video_encode_cpu_seconds_total{class="hd",outcome="success"} 1.25`,
+		`media_video_encode_cpu_seconds_total{class="hd",outcome="error"} 0.5`,
+		`media_video_encoded_output_seconds_total{class="hd"} 2`,
+		`media_video_core_seconds_per_output_second_count{class="hd"} 1`,
+		`media_video_core_seconds_per_output_second_sum{class="hd"} 0.625`,
 	} {
 		if !strings.Contains(rec.Body.String(), metric) {
 			t.Errorf("missing %q in metrics", metric)

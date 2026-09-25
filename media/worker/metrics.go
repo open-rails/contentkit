@@ -3,7 +3,6 @@ package worker
 import (
 	"context"
 	"errors"
-	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -17,35 +16,41 @@ import (
 // worker process; queue backlog metrics belong on an always-on host process.
 type Metrics struct {
 	river.MiddlewareDefaults
-	jobs     *prometheus.CounterVec
+	attempts *prometheus.HistogramVec
 	duration *prometheus.HistogramVec
 	encode   *prometheus.HistogramVec
 	cpu      *prometheus.CounterVec
 	output   *prometheus.CounterVec
+	coreRate *prometheus.HistogramVec
 }
 
 // NewMetrics registers one worker process's metrics with registerer.
 func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 	m := &Metrics{
-		jobs: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "contentkit_media_job_attempts_total", Help: "Media job work attempts by queue, outcome, and attempt number.",
-		}, []string{"queue", "outcome", "attempt"}),
+		attempts: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "media_video_attempt", Help: "Attempt number of executed media jobs.",
+			Buckets: []float64{1, 2, 3, 4, 5},
+		}, []string{"queue", "outcome"}),
 		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "contentkit_media_job_duration_seconds", Help: "Elapsed duration of a media job work attempt.",
+			Name: "media_video_job_duration_seconds", Help: "Elapsed duration of a media job work attempt.",
 			Buckets: []float64{1, 5, 15, 30, 60, 300, 900, 1800, 3600, 7200, 14400, 28800, 57600},
 		}, []string{"queue", "outcome"}),
 		encode: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "contentkit_media_video_encode_duration_seconds", Help: "Elapsed duration of an ffmpeg video ladder pass.",
+			Name: "media_video_encode_seconds", Help: "Elapsed duration of an ffmpeg video ladder pass.",
 			Buckets: []float64{1, 5, 15, 30, 60, 300, 900, 1800, 3600, 7200, 14400, 28800, 57600},
-		}, []string{"source_class", "outcome"}),
+		}, []string{"class", "outcome"}),
 		cpu: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "contentkit_media_video_encode_cpu_seconds_total", Help: "User and system CPU seconds spent in ffmpeg video ladder passes.",
-		}, []string{"source_class", "outcome"}),
+			Name: "media_video_encode_cpu_seconds_total", Help: "User and system CPU seconds spent in ffmpeg video ladder passes.",
+		}, []string{"class", "outcome"}),
 		output: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "contentkit_media_video_encoded_output_seconds_total", Help: "Successful encoded video rendition seconds.",
-		}, []string{"source_class"}),
+			Name: "media_video_encoded_output_seconds_total", Help: "Successful encoded video rendition seconds.",
+		}, []string{"class"}),
+		coreRate: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "media_video_core_seconds_per_output_second", Help: "FFmpeg CPU seconds per encoded video rendition second.",
+			Buckets: []float64{0.1, 0.5, 1, 2, 5, 10, 25, 50, 100, 250, 500},
+		}, []string{"class"}),
 	}
-	for _, collector := range []prometheus.Collector{m.jobs, m.duration, m.encode, m.cpu, m.output} {
+	for _, collector := range []prometheus.Collector{m.attempts, m.duration, m.encode, m.cpu, m.output, m.coreRate} {
 		if err := registerer.Register(collector); err != nil {
 			return nil, err
 		}
@@ -83,11 +88,7 @@ func workOutcome(ctx context.Context, err error) string {
 }
 
 func (m *Metrics) recordWork(job *rivertype.JobRow, outcome string, duration time.Duration) {
-	attempt := strconv.Itoa(job.Attempt)
-	if job.Attempt >= 3 {
-		attempt = "3+"
-	}
-	m.jobs.WithLabelValues(job.Queue, outcome, attempt).Inc()
+	m.attempts.WithLabelValues(job.Queue, outcome).Observe(float64(job.Attempt))
 	m.duration.WithLabelValues(job.Queue, outcome).Observe(duration.Seconds())
 }
 
@@ -96,6 +97,9 @@ func (m *Metrics) ObserveEncode(o video.EncodeObservation) {
 	if o.Succeeded {
 		outcome = "success"
 		m.output.WithLabelValues(o.SourceClass).Add(o.OutputSeconds)
+		if o.OutputSeconds > 0 {
+			m.coreRate.WithLabelValues(o.SourceClass).Observe(o.CPU.Seconds() / o.OutputSeconds)
+		}
 	}
 	m.encode.WithLabelValues(o.SourceClass, outcome).Observe(o.Duration.Seconds())
 	m.cpu.WithLabelValues(o.SourceClass, outcome).Add(o.CPU.Seconds())
