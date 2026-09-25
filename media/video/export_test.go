@@ -43,3 +43,12 @@ func SetCapScale(f float64) func() {
 	}
 	return func() { rates = old }
 }
+
+// FailNVENC makes e's codec c encoder an NVENC stand-in that fails on the
+// first frame (h264_vaapi without a device), so a pass takes the CPU fallback.
+func FailNVENC(e *Encoder, c media.Codec) func() {
+	old := nvencEncoders[c]
+	nvencEncoders[c] = "h264_vaapi"
+	e.encoders[c] = nvencEncoders[c]
+	return func() { nvencEncoders[c] = old }
+}

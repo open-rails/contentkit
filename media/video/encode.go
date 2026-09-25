@@ -114,7 +114,8 @@ func ladder(ctx context.Context, src, dir string, p plan, ps pass, fp *fileProgr
 	// Decoding and scaling gain little past 8 threads; each extra frame
 	// thread holds more decoded frames.
 	t := strconv.Itoa(min(ps.enc.threads, 8))
-	args := append([]string{"-v", "error", "-nostdin", "-threads", t}, inputOptions(sourceDemuxers)...)
+	// -y: a CPU retry after NVENC failed overwrites the failed pass's outputs.
+	args := append([]string{"-v", "error", "-nostdin", "-y", "-threads", t}, inputOptions(sourceDemuxers)...)
 	args = append(args, "-i", src)
 	if len(outs) > 0 {
 		args = append(args, "-filter_complex_threads", t, "-filter_complex", fc.String())

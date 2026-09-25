@@ -172,10 +172,16 @@ describe("multipart", () => {
     s.dropPuts = 100;
     const err = await c.upload(file(size), { ref }).catch((e) => e);
     expect(err.code).toBe("network");
-    const n = s.puts.length; // a queued part may take the slot during the failing part's backoff
-    expect(n).toBeLessThanOrEqual(3);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(s.puts.length).toBe(n);
+    // Before the failing part's second PUT, other parts may take the slot
+    // (how many depends on hashing speed). The deterministic bounds: at most
+    // pacer concurrency (1) + 2 parts in flight, one PUT each, and the part
+    // that failed for good PUT last; upload() settles every part first.
+    const tries = new Map<string, number>();
+    for (const u of s.puts) tries.set(u, (tries.get(u) ?? 0) + 1);
+    expect(tries.size).toBeLessThanOrEqual(3);
+    expect([...tries.values()].filter((n) => n === 2)).toHaveLength(1);
+    expect([...tries.values()].every((n) => n <= 2)).toBe(true);
+    expect(tries.get(s.puts.at(-1)!)).toBe(2);
   });
 });
 

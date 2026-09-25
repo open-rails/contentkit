@@ -82,3 +82,17 @@ func TestUnknownEncoderOrCodec(t *testing.T) {
 		}
 	}
 }
+
+// A pass NVENC fails on is encoded again on the CPU in the same scratch
+// directory, over the tracks the failed pass already wrote.
+func TestNVENCFallbackToCPU(t *testing.T) {
+	e := newEnv(t, nil, nil)
+	defer video.FailNVENC(e.encoder, media.CodecH264)()
+	e.commit(t, fixture{w: 854, h: 480, secs: 5, audio: 1, subs: true, tone: 440}.make(t), media.OpInsert)
+	e.encode(t)
+	m, _ := e.manifest(t)
+	h := m.Files[0].HLS
+	if h == nil || len(h.Video) != 2 || len(h.Audio) != 1 || len(h.Subs) != 1 || !strings.HasPrefix(h.Video[1].Codecs, "avc1.64") {
+		t.Fatalf("hls %+v", h)
+	}
+}
