@@ -407,7 +407,7 @@ type sweepWorker struct {
 func (w *sweepWorker) Timeout(*river.Job[sweepArgs]) time.Duration { return 15 * time.Minute }
 
 func (w *sweepWorker) Work(ctx context.Context, job *river.Job[sweepArgs]) (err error) {
-	defer func() { err = SnoozeUnavailable(err) }()
+	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
 	if _, _, _, err := parseFolder(job.Args.Prefix); err != nil {
 		return river.JobCancel(err)
 	}
@@ -435,8 +435,8 @@ type sweepPassWorker struct {
 
 func (w *sweepPassWorker) Timeout(*river.Job[sweepPassArgs]) time.Duration { return 6 * time.Hour }
 
-func (w *sweepPassWorker) Work(ctx context.Context, _ *river.Job[sweepPassArgs]) (err error) {
-	defer func() { err = SnoozeUnavailable(err) }()
+func (w *sweepPassWorker) Work(ctx context.Context, job *river.Job[sweepPassArgs]) (err error) {
+	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
 	return w.j.SweepAll(ctx)
 }
 
@@ -459,7 +459,7 @@ func (w *deleteFolderWorker) Timeout(*river.Job[deleteFolderArgs]) time.Duration
 }
 
 func (w *deleteFolderWorker) Work(ctx context.Context, job *river.Job[deleteFolderArgs]) (err error) {
-	defer func() { err = SnoozeUnavailable(err) }()
+	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
 	if _, _, _, err := parseFolder(job.Args.Prefix); err != nil {
 		return river.JobCancel(err)
 	}

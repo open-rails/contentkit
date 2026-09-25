@@ -115,3 +115,42 @@ func Schema(t testing.TB, ctx context.Context, pool *pgxpool.Pool) string {
 	}
 	return schema
 }
+
+// MediaWorkerRole creates a login with exactly the grants production gives
+// a host's media worker (doujins-gitops bind-roles: database CONNECT and
+// CREATE, USAGE and CREATE on its schema, DML on its tables and sequences,
+// USAGE on public and the host schemas) and returns its DSN. The role is
+// dropped on cleanup.
+func MediaWorkerRole(t testing.TB, ctx context.Context, admin *pgxpool.Pool, schema string, hostSchemas ...string) string {
+	t.Helper()
+	role := "ck_mw_" + fmt.Sprint(time.Now().UnixNano())
+	var db string
+	if err := admin.QueryRow(ctx, "SELECT current_database()").Scan(&db); err != nil {
+		t.Fatal(err)
+	}
+	id := func(s string) string { return pgx.Identifier{s}.Sanitize() }
+	stmts := []string{
+		"CREATE ROLE " + id(role) + " LOGIN PASSWORD 'worker'",
+		"GRANT CONNECT, CREATE ON DATABASE " + id(db) + " TO " + id(role),
+		"GRANT USAGE, CREATE ON SCHEMA " + id(schema) + " TO " + id(role),
+		"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA " + id(schema) + " TO " + id(role),
+		"GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA " + id(schema) + " TO " + id(role),
+		"GRANT USAGE ON SCHEMA public TO " + id(role),
+	}
+	for _, h := range hostSchemas {
+		stmts = append(stmts, "GRANT USAGE ON SCHEMA "+id(h)+" TO "+id(role))
+	}
+	for _, q := range stmts {
+		if _, err := admin.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, _ = admin.Exec(ctx, "DROP OWNED BY "+id(role))
+		_, _ = admin.Exec(ctx, "DROP ROLE "+id(role))
+	})
+	cfg := admin.Config().ConnConfig
+	return fmt.Sprintf("postgres://%s:worker@%s:%d/%s?sslmode=disable", role, cfg.Host, cfg.Port, db)
+}

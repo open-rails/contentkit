@@ -545,12 +545,15 @@ const (
 var errModeratorOpen = errors.New("content: moderator failing; writes held for review")
 
 // moderatorBreaker bounds each Screen call and, after consecutive failures,
-// skips the moderator for a cooldown; the next call after it is a trial.
+// skips the moderator for a cooldown. Then it is half-open: one trial call
+// reaches the moderator while the others are held without calling it; the
+// trial closes the breaker or reopens it for another cooldown.
 type moderatorBreaker struct {
 	timeout, cooldown time.Duration
 	mu                sync.Mutex
 	failures          int
 	openUntil         time.Time
+	trial             bool // a half-open trial call is in flight
 	lastErr           error
 }
 
@@ -566,21 +569,29 @@ func newModeratorBreaker(timeout, cooldown time.Duration) *moderatorBreaker {
 
 func (b *moderatorBreaker) screen(ctx context.Context, m ContentModerator, in ModerationInput) (Verdict, error) {
 	b.mu.Lock()
-	open := time.Now().Before(b.openUntil)
-	b.mu.Unlock()
-	if open {
+	tripped := b.failures >= moderatorBreakerFailures
+	if tripped && (b.trial || time.Now().Before(b.openUntil)) {
+		b.mu.Unlock()
 		return Verdict{}, errModeratorOpen
 	}
+	b.trial = tripped
+	b.mu.Unlock()
 	sctx, cancel := context.WithTimeout(ctx, b.timeout)
 	v, err := m.Screen(sctx, in)
 	cancel()
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if tripped {
+		b.trial = false
+	}
 	if err == nil {
 		b.failures, b.lastErr = 0, nil
 		return v, nil
 	}
 	if ctx.Err() != nil {
+		if tripped {
+			b.openUntil = time.Time{} // the trial's caller gave up: let the next caller try
+		}
 		return v, err // the caller gave up; not the moderator's failure
 	}
 	b.failures++

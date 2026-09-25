@@ -19,8 +19,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/tcpproxy"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
+	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 // The worker binary starts with Postgres and the bucket both unreachable:
@@ -50,6 +54,17 @@ func TestStartsWithoutItsDependencies(t *testing.T) {
 		}
 	})
 
+	// The host's migration step, then the worker's own least-privilege login
+	// (the production grants): the binary itself runs no DDL.
+	adminPool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(adminPool.Close)
+	if err := workqueue.Migrate(ctx, adminPool, schema); err != nil {
+		t.Fatal(err)
+	}
+	dsn = pgtest.MediaWorkerRole(t, ctx, adminPool, schema)
 	pg, bucketProxy := tcpproxy.New(t, dsn), tcpproxy.New(t, endpoint)
 	pg.Down()
 	bucketProxy.Down()

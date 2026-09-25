@@ -187,7 +187,9 @@ set `Perms.ModerationReview` and point the admin review page at
 
 Each `Screen` is bounded by `Options.ModeratorTimeout` (5s); a failure holds
 the write. After 3 consecutive failures the moderator is skipped (writes held
-at once) for `Options.ModeratorCooldown` (30s), then retried. Register
+at once) for `Options.ModeratorCooldown` (30s); then one trial call reaches
+it while other writes are still held, and its result closes or reopens the
+breaker. Register
 `Runtime.CheckModerator` as an optional dependency (helpers `deps`) so a
 tripped moderator shows on statusz and `app_dependency_up`.
 

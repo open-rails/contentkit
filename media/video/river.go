@@ -161,7 +161,7 @@ func (c WorkerConfig) runVideoJob(ctx context.Context, row *rivertype.JobRow, wo
 	if row.Attempt > workqueue.MaxAttempts {
 		return river.JobCancel(fmt.Errorf("media/video: %d failed attempts", row.Attempt-1))
 	}
-	err := snoozeOnShutdown(ctx, work())
+	err := media.SnoozeUnavailable(ctx, c.Encoder.c.Store, row, snoozeOnShutdown(ctx, work()))
 	var snooze *river.JobSnoozeError
 	var cancelled *river.JobCancelError
 	if err != nil && row.Attempt >= workqueue.MaxAttempts && !errors.As(err, &snooze) && !errors.As(err, &cancelled) {
@@ -204,7 +204,8 @@ func (w *audioWorker) Timeout(*river.Job[workqueue.AudioArgs]) time.Duration { r
 
 // Work encodes the manifest's stale audio files under its own per-manifest
 // lock, so a video encode of the same item does not hold it back.
-func (w *audioWorker) Work(ctx context.Context, job *river.Job[workqueue.AudioArgs]) error {
+func (w *audioWorker) Work(ctx context.Context, job *river.Job[workqueue.AudioArgs]) (err error) {
+	defer func() { err = media.SnoozeUnavailable(ctx, w.c.Encoder.c.Store, job.JobRow, err) }()
 	item, err := w.c.Kinds.Item(job.Args.Ref)
 	if err == nil && item.Kind().Audio == nil {
 		err = fmt.Errorf("media/video: kind %q has no audio", item.Kind().Name)
@@ -218,7 +219,6 @@ func (w *audioWorker) Work(ctx context.Context, job *river.Job[workqueue.AudioAr
 
 // run encodes an audio job under its per-manifest lock and clears progress.
 func (c WorkerConfig) run(ctx context.Context, id int64, work string, job Job, more *bool) (err error) {
-	defer func() { err = media.SnoozeUnavailable(err) }()
 	// The lock's own connection lives outside Pool, which the encode uses.
 	release, ok, err := pglock.Acquire(ctx, c.Pool, "contentkit:media:"+work+":"+job.Ref.String(), false)
 	if err != nil {

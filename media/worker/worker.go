@@ -294,7 +294,7 @@ func (w *imageWorker) Timeout(*river.Job[workqueue.ImageArgs]) time.Duration { r
 
 // Work runs one image job, after any equal job it follows.
 func (w *imageWorker) Work(ctx context.Context, job *river.Job[workqueue.ImageArgs]) (err error) {
-	defer func() { err = media.SnoozeUnavailable(err) }()
+	defer func() { err = media.SnoozeUnavailable(ctx, w.c.Store, job.JobRow, err) }()
 	pj := media.ProcessJob{Ref: job.Args.Ref, Slot: job.Args.Slot}
 	if _, err := w.c.Kinds.Item(pj.Ref); err != nil {
 		return river.JobCancel(err)

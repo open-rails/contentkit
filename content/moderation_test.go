@@ -694,3 +694,48 @@ func TestModeration_HungModeratorBreaker(t *testing.T) {
 		t.Fatalf("CheckModerator after recovery: %v", err)
 	}
 }
+
+// slowModerator approves after a delay, counting calls.
+type slowModerator struct{ calls atomic.Int32 }
+
+func (*slowModerator) StatelessPolicy() {}
+
+func (m *slowModerator) Screen(ctx context.Context, _ ModerationInput) (Verdict, error) {
+	m.calls.Add(1)
+	select {
+	case <-time.After(300 * time.Millisecond):
+		return Verdict{Decision: DecisionApprove, Model: "fake-llm"}, nil
+	case <-ctx.Done():
+		return Verdict{}, ctx.Err()
+	}
+}
+
+// After the cooldown the breaker is half-open: one trial caller reaches the
+// moderator and the rest are held without calling it until the trial passes.
+func TestModeration_BreakerHalfOpenAdmitsOneTrial(t *testing.T) {
+	mod := &slowModerator{}
+	res := &fakeResolver{}
+	res.set("gallery", cid(1), true, true)
+	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, Moderator: mod,
+		ModeratorTimeout: time.Second, ModeratorCooldown: 200 * time.Millisecond,
+		Authz: reviewerOnly{}, Perms: Perms{ModerationReview: reviewPerm, CommentModerate: "comment:moderate", PostWrite: postPerm}})
+	b := rt.breaker
+	b.mu.Lock()
+	b.failures, b.openUntil = moderatorBreakerFailures, time.Now().Add(-time.Millisecond) // tripped, cooldown over
+	b.mu.Unlock()
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			mustComment(t, rt, access.Actor{ID: "author"}, "gallery", cid(1), createInput{Body: "hello"})
+		}()
+	}
+	wg.Wait()
+	if n := mod.calls.Load(); n != 1 {
+		t.Fatalf("half-open breaker let %d callers reach the moderator, want 1", n)
+	}
+	if err := rt.CheckModerator(context.Background()); err != nil {
+		t.Fatalf("breaker still open after a passing trial: %v", err)
+	}
+}

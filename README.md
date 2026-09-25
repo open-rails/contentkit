@@ -274,7 +274,7 @@ the stock build for hosts whose kinds are plain data: it reads them from
 item's poster publish, and folder sweeps after its edits,
 back to the host's River schema (`MEDIA_HOST_RIVER_SCHEMA`), where
 `jobs.RiverJobs()` runs them with the host's `Resolver`. It never exits for a
-missing dependency: it migrates its schema and builds, retried while Postgres is down; `Run`
+missing dependency: it runs no DDL (the host migrates `MEDIA_WORKER_SCHEMA`) and its build is retried while Postgres is down; `Run`
 takes no jobs until the bucket answers, and `MEDIA_METRICS_ADDR` serves
 `/livez`, `/readyz` (built), `/statusz` and `app_dependency_up` with /metrics.
 
@@ -319,7 +319,10 @@ step succeeded or was refused cleanly (412, checksum mismatch, 501), so a
 throttled or cut-off probe is retried. Until then the store claims none
 (locked unconditional edits, server-side rehash). An unreachable or 5xx
 bucket surfaces as `media.ErrUnavailable`: 503 `unavailable` from the read
-and upload handlers, and a River snooze (not an attempt) in media jobs
+and upload handlers. In media jobs it becomes a River snooze (not an
+attempt) only when the job's own context is live and a fresh bounded
+`Check` confirms the bucket is down, capped by `MaxOutageSnoozes`; a job
+that outran its timeout or one broken object spends attempts
 (`media.SnoozeUnavailable`). Reads are cached in process and revalidated by ETag. Presigned PUTs
 bind `Content-Type`, `Content-Length` and `x-amz-checksum-sha256`.
 

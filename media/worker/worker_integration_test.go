@@ -9,7 +9,11 @@ import (
 	stdimage "image"
 	"image/color"
 	"image/png"
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -80,6 +84,9 @@ func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
 	return newHostOn(t, nil, riverHooks...)
 }
 
+// imageTimeout overrides the worker's image job timeout in newHostOn (0: default).
+var imageTimeout time.Duration
+
 // newHostOn is newHost with the worker on workerStore(env) instead of env.Store.
 func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHooks ...rivertype.Hook) *host {
 	t.Helper()
@@ -146,7 +153,7 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 		store = workerStore(env)
 	}
 	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Schema: h.workers, Store: store, Kinds: kinds, HostSchema: schema,
-		TempDir: t.TempDir(), Threads: 2, RiverHooks: riverHooks,
+		TempDir: t.TempDir(), Threads: 2, RiverHooks: riverHooks, ImageTimeout: imageTimeout,
 		Hooks: media.Hooks{SlotEncoded: func(_ context.Context, ref contentref.ContentRef, slot string, l media.SlotListing) {
 			h.mu.Lock()
 			h.encoded[ref.String()+"#"+slot] = l
@@ -520,7 +527,9 @@ func TestWorkerSnoozesJobsDuringAnOutage(t *testing.T) {
 		t.Fatal(err)
 	}
 	if attempts > 1 || errs > 0 {
-		t.Fatalf("outage spent job attempts: attempt %d, %d errors", attempts, errs)
+		var e string
+		_ = h.pool.QueryRow(ctx, "SELECT errors::text FROM "+h.workers+".river_job WHERE state <> 'completed' LIMIT 1").Scan(&e)
+		t.Fatalf("outage spent job attempts: attempt %d, %d errors: %s", attempts, errs, e)
 	}
 	proxy.Up(t)
 	eventually(t, "the variant after the outage", time.Minute, h.thumbed(t, ref))
@@ -789,23 +798,12 @@ func TestWorkerRunsAsAnUnprivilegedRole(t *testing.T) {
 	if err := workqueue.Migrate(ctx, admin, schema); err != nil {
 		t.Fatal(err)
 	}
-	role := "ck_app_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
-	for _, q := range []string{
-		"CREATE ROLE " + role + " LOGIN PASSWORD 'app'",
-		"GRANT USAGE ON SCHEMA " + schema + ", " + host + " TO " + role,
-		"GRANT ALL ON ALL TABLES IN SCHEMA " + schema + ", " + host + " TO " + role,
-		"GRANT ALL ON ALL SEQUENCES IN SCHEMA " + schema + ", " + host + " TO " + role,
-		"GRANT SELECT ON public.migrations TO " + role,
-	} {
-		if _, err := admin.Exec(ctx, q); err != nil {
-			t.Fatal(err)
-		}
+	dsn := pgtest.MediaWorkerRole(t, ctx, admin, schema, host)
+	app, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = admin.Exec(context.Background(), "DROP OWNED BY "+role)
-		_, _ = admin.Exec(context.Background(), "DROP ROLE "+role)
-	})
-	app := pgtest.Pool(t, func(c *pgxpool.Config) { c.ConnConfig.User, c.ConnConfig.Password = role, "app" })
+	t.Cleanup(app.Close)
 	kinds, err := media.NewRegistry(media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png"}, MaxBytes: 1 << 20})
 	if err != nil {
 		t.Fatal(err)
@@ -814,4 +812,114 @@ func TestWorkerRunsAsAnUnprivilegedRole(t *testing.T) {
 		TempDir: t.TempDir(), Threads: 1}); err != nil {
 		t.Fatalf("worker as the app role: %v", err)
 	}
+}
+
+// faultyWorker is newHost with the worker's store behind an HTTP proxy whose
+// fault answers a request itself (true) or lets it through.
+func faultyWorker(t *testing.T, fault func(w http.ResponseWriter, r *http.Request) bool) *host {
+	return newHostOn(t, func(env *s3test.Env) media.Store {
+		target, _ := url.Parse(env.Config.Endpoint)
+		proxy := httputil.NewSingleHostReverseProxy(target)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !fault(w, r) {
+				proxy.ServeHTTP(w, r)
+			}
+		}))
+		t.Cleanup(srv.Close)
+		cfg := env.Config
+		cfg.Endpoint, cfg.PublicEndpoint = srv.URL, ""
+		store, err := mediaS3.New(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return store
+	})
+}
+
+// imageJob reports the state of the worker's one unfinished image job.
+func (h *host) imageJob(t *testing.T) (state string, attempt, errs, snoozes int) {
+	t.Helper()
+	err := h.pool.QueryRow(context.Background(), `SELECT state, attempt, coalesce(cardinality(errors), 0), coalesce((metadata->>'snoozes')::int, 0)
+		FROM `+h.workers+`.river_job WHERE kind = 'contentkit_media_image' ORDER BY id DESC LIMIT 1`).Scan(&state, &attempt, &errs, &snoozes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state, attempt, errs, snoozes
+}
+
+// discardNext makes the job's next failure its last and runs it now.
+func (h *host) discardNext(t *testing.T) {
+	t.Helper()
+	if _, err := h.pool.Exec(context.Background(), `UPDATE `+h.workers+`.river_job SET max_attempts = attempt + 1, scheduled_at = now()
+		WHERE kind = 'contentkit_media_image' AND state IN ('retryable', 'available')`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A job that outruns its own timeout spends its attempts (the bucket is
+// fine; the job is not), and is discarded when they run out.
+func TestWorkerTimedOutJobSpendsAttempts(t *testing.T) {
+	defer func(d time.Duration) { imageTimeout = d }(imageTimeout)
+	imageTimeout = 2 * time.Second
+	var name atomic.Value
+	name.Store("\x00")
+	h := faultyWorker(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, name.Load().(string)) {
+			<-r.Context().Done() // this one object never answers
+			return true
+		}
+		return false
+	})
+	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	original := h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 61))
+	name.Store(original)
+	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: original})
+	eventually(t, "the timed-out attempt recorded", time.Minute, func() bool { _, _, errs, _ := h.imageJob(t); return errs > 0 })
+	if state, _, _, snoozes := h.imageJob(t); state == "scheduled" || snoozes != 0 {
+		t.Fatalf("timed-out job: state %s, snoozes %d; want an attempt spent, no snooze", state, snoozes)
+	}
+	h.discardNext(t)
+	eventually(t, "discarded after its attempts", time.Minute, func() bool { state, _, _, _ := h.imageJob(t); return state == "discarded" })
+}
+
+// A deterministic 500 on one object of a healthy bucket spends attempts too.
+func TestWorkerBrokenObjectSpendsAttempts(t *testing.T) {
+	var name atomic.Value
+	name.Store("\x00")
+	h := faultyWorker(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, name.Load().(string)) {
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `<Error><Code>InternalError</Code></Error>`)
+			return true
+		}
+		return false
+	})
+	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	original := h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 62))
+	name.Store(original)
+	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: original})
+	eventually(t, "the failed attempt recorded", time.Minute, func() bool { _, _, errs, _ := h.imageJob(t); return errs > 0 })
+	if state, _, _, snoozes := h.imageJob(t); state == "scheduled" || snoozes != 0 {
+		t.Fatalf("broken object: state %s, snoozes %d; want an attempt spent, no snooze", state, snoozes)
+	}
+	h.discardNext(t)
+	eventually(t, "discarded after its attempts", time.Minute, func() bool { state, _, _, _ := h.imageJob(t); return state == "discarded" })
+}
+
+// Past MaxOutageSnoozes an outage spends attempts again (the backstop).
+func TestWorkerOutageSnoozesAreCapped(t *testing.T) {
+	defer func(d time.Duration, n int) { media.UnavailableSnooze, media.MaxOutageSnoozes = d, n }(media.UnavailableSnooze, media.MaxOutageSnoozes)
+	media.UnavailableSnooze, media.MaxOutageSnoozes = time.Second, 2
+	h, proxy := proxiedWorker(t, func(*tcpproxy.Proxy) {})
+	first := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	h.commit(t, first, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, first, "", "image/png", pngImage(t, 300, 450, 71))})
+	eventually(t, "the worker running", time.Minute, h.thumbed(t, first))
+	proxy.Down()
+	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 72))})
+	eventually(t, "an attempt spent after the snooze cap", time.Minute, func() bool {
+		_, _, errs, snoozes := h.imageJob(t)
+		return errs > 0 && snoozes >= 2
+	})
 }

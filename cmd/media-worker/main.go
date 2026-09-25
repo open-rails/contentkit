@@ -10,6 +10,8 @@
 //
 // The process never exits for a missing dependency: it waits for Postgres and
 // the bucket with backoff, reporting both on /statusz and app_dependency_up.
+// It runs no DDL: the host's migration step applies workqueue.Migrate to
+// MEDIA_WORKER_SCHEMA, so DATABASE_URL can be an unprivileged role.
 package main
 
 import (
@@ -32,7 +34,6 @@ import (
 
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/worker"
-	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 func main() {
@@ -90,7 +91,7 @@ func run(log *slog.Logger) error {
 	var w *worker.Worker
 	var buildErr error
 	err = sup.Retry(ctx, "postgres", func(ctx context.Context) error {
-		if buildErr = workqueue.Migrate(ctx, cfg.Pool, cfg.Schema); buildErr == nil {
+		if buildErr = cfg.Pool.Ping(ctx); buildErr == nil {
 			w, buildErr = worker.New(ctx, cfg)
 		}
 		if deps.PostgresUnavailable(buildErr) {
