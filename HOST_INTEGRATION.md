@@ -457,6 +457,20 @@ the frame or upload); `poster` is a reserved slot name.
   `Reader.ListedSlot(ref, media.PosterSlot, listing)`, for items that are not
   hidden.
 
+## Media worker schema
+
+Each host names its own media worker River schema, e.g. `doujins_media_worker`
+and `hentai0_media_worker`, and passes it everywhere:
+- `workqueue.Migrate(ctx, pool, schema)` and `workqueue.New(pool, kinds, schema)`;
+- `workqueue.NewProgressSource(pool, schema)`;
+- `worker.Config.Schema` (`MEDIA_WORKER_SCHEMA`).
+
+It is required. Hosts sharing a database must never share one: a worker
+drains every job in its schema, so it would take another host's jobs (same
+queue and job kinds) and fail them against its own registry and bucket. Queue
+names (`media_image`, `media_video`) are fixed within a schema. Autoscalers
+(KEDA) count `{schema}.river_job`.
+
 ## Production media delivery
 
 - **Media host**: serve `cmd/media-access` at `media.<site domain>` (same

@@ -1,5 +1,5 @@
 // Package worker is the media worker: the one process that does all media
-// work, from River schema workqueue.Schema in the host database. It hashes a
+// work, from the host's worker River schema (Config.Schema) in its database. It hashes a
 // staged upload while reading it for processing and places it at its content
 // address (media.Manifests.Place), derives image variants, zips, slot outputs
 // and inline images (media/image, libvips) and encodes video, posters and
@@ -33,8 +33,11 @@ import (
 
 // Config configures the worker.
 type Config struct {
-	Pool  *pgxpool.Pool // the host database: workqueue.Schema, manifest locks, progress
-	Store media.Store
+	Pool *pgxpool.Pool // the host database: Schema, manifest locks, progress
+	// Schema is the host's worker River schema, the one its workqueue.Queue
+	// inserts into; required, and never shared with another host.
+	Schema string
+	Store  media.Store
 	// Kinds, Specs and Hooks are the host's: build them with the code the
 	// host's media setup uses. Hooks.Failed, Hooks.SlotEncoded,
 	// Hooks.PublicRemoved and Hooks.ItemReady run here.
@@ -82,6 +85,9 @@ func (c *Config) defaults() error {
 	if c.Pool == nil || c.Store == nil || c.Kinds == nil {
 		return errors.New("media/worker: Config needs a Pool, a Store and the host's Kinds")
 	}
+	if err := workqueue.ValidSchema(c.Schema); err != nil {
+		return err
+	}
 	if c.VideoWorkers <= 0 {
 		c.VideoWorkers = 1
 	}
@@ -109,13 +115,13 @@ type Worker struct {
 	client *river.Client[pgx.Tx]
 }
 
-// New migrates workqueue.Schema, clears scratch left by a killed worker and
+// New migrates Schema, clears scratch left by a killed worker and
 // builds the River client with the image and video workers.
 func New(ctx context.Context, c Config) (*Worker, error) {
 	if err := c.defaults(); err != nil {
 		return nil, err
 	}
-	if err := workqueue.Migrate(ctx, c.Pool); err != nil {
+	if err := workqueue.Migrate(ctx, c.Pool, c.Schema); err != nil {
 		return nil, err
 	}
 	if err := video.SweepTemp(c.TempDir); err != nil {
@@ -129,7 +135,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	queue, err := workqueue.New(c.Pool, c.Kinds)
+	queue, err := workqueue.New(c.Pool, c.Kinds, c.Schema)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +149,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	videos, err := video.Contribution(video.WorkerConfig{Encoder: enc, Pool: c.Pool, Kinds: c.Kinds, Timeout: c.VideoTimeout,
+	videos, err := video.Contribution(video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, Kinds: c.Kinds, Timeout: c.VideoTimeout,
 		MaxWorkers: c.VideoWorkers, Logger: c.Logger})
 	if err != nil {
 		return nil, err
@@ -159,7 +165,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if c.Hooks.ItemReady != nil {
 		hooks = append(hooks[:len(hooks):len(hooks)], &readyHook{pool: c.Pool, manifests: manifests, ready: c.Hooks.ItemReady})
 	}
-	client, err := riverhelpers.New(ctx, c.Pool, &river.Config{Schema: workqueue.Schema,
+	client, err := riverhelpers.New(ctx, c.Pool, &river.Config{Schema: c.Schema,
 		JobTimeout: max(c.VideoTimeout, c.ImageTimeout), Logger: c.Logger, Hooks: hooks}, videos, imageJobs)
 	if err != nil {
 		return nil, err
@@ -177,7 +183,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	if err := w.client.Start(ctx); err != nil {
 		return err
 	}
-	w.c.Logger.Info("media-worker: started", "schema", workqueue.Schema, "video_workers", w.c.VideoWorkers, "image_workers", w.c.ImageWorkers)
+	w.c.Logger.Info("media-worker: started", "schema", w.c.Schema, "video_workers", w.c.VideoWorkers, "image_workers", w.c.ImageWorkers)
 	<-ctx.Done()
 	soft, cancel := context.WithTimeout(context.Background(), w.c.ShutdownGrace)
 	defer cancel()

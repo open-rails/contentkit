@@ -18,7 +18,7 @@ import (
 // TuningFromEnv; the host then sets Kinds, Specs and Hooks. Close the Pool
 // when done.
 //
-//	DATABASE_URL                 host Postgres (holds workqueue.Schema)
+//	DATABASE_URL                 host Postgres (holds MEDIA_WORKER_SCHEMA)
 //	MEDIA_S3_ENDPOINT            e.g. http://rook-ceph-rgw-external.svc
 //	MEDIA_S3_BUCKET, MEDIA_S3_REGION (default us-east-1), MEDIA_S3_PATH_STYLE (default true)
 //	MEDIA_S3_ACCESS_KEY_ID, MEDIA_S3_SECRET_ACCESS_KEY   read/write key
@@ -58,6 +58,7 @@ func FromEnv(ctx context.Context) (Config, error) {
 // TuningFromEnv sets the host queue and tuning fields present in the
 // environment, leaving the others as they are:
 //
+//	MEDIA_WORKER_SCHEMA          the host's worker River schema (required, one per host, e.g. doujins_media_worker)
 //	MEDIA_HOST_RIVER_SCHEMA      the host's River schema (default: the connection's search path)
 //	MEDIA_HOST_QUEUE             the host's media queue (default contentkit_media)
 //	MEDIA_HOST_GRACE             the host's sweep grace (default 24h)
@@ -72,7 +73,7 @@ func FromEnv(ctx context.Context) (Config, error) {
 //	MEDIA_WORKER_JOB_TIMEOUT     per video job (default 48h)
 //	MEDIA_WORKER_SHUTDOWN_GRACE  time running jobs get on SIGTERM before cancel (default 30s)
 func (c *Config) TuningFromEnv() error {
-	for k, p := range map[string]*string{"MEDIA_HOST_RIVER_SCHEMA": &c.HostSchema, "MEDIA_HOST_QUEUE": &c.HostQueue, "MEDIA_WORKER_TMP": &c.TempDir,
+	for k, p := range map[string]*string{"MEDIA_WORKER_SCHEMA": &c.Schema, "MEDIA_HOST_RIVER_SCHEMA": &c.HostSchema, "MEDIA_HOST_QUEUE": &c.HostQueue, "MEDIA_WORKER_TMP": &c.TempDir,
 		"MEDIA_WORKER_PRESET": &c.Preset, "MEDIA_WORKER_TOP_PRESET": &c.TopPreset, "MEDIA_WORKER_ENCODER": &c.VideoEncoder} {
 		if v := os.Getenv(k); v != "" {
 			*p = v
