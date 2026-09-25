@@ -1,7 +1,9 @@
 name: images
 # Release tags publish ghcr.io/open-rails/contentkit-{name}:{tag} and
-# docker.io/openrails/contentkit-{name}:{tag}. Pull requests that touch image
-# definitions build linux/amd64 only, without pushing.
+# docker.io/openrails/contentkit-{name}:{tag} for linux/amd64 and linux/arm64,
+# each built on a native runner (QEMU arm64 builds exceeded the timeout), then
+# merged into one multi-arch tag. Pull requests that touch image definitions
+# build linux/amd64 only, without pushing. workflow_dispatch rebuilds a tag.
 'on':
   push:
     tags:
@@ -13,56 +15,112 @@ name: images
     - 'cmd/*/Dockerfile'
     - '.dockerignore'
     - '.github/workflows/images.yaml'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to (re)publish images for (e.g. v0.53.0)
+        required: true
 permissions:
   contents: read
 concurrency:
-  group: images-${{ github.event.pull_request.number || github.ref }}
+  group: images-${{ github.event.pull_request.number || inputs.tag || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  PUBLISH: ${{ github.event_name != 'pull_request' }}
+  TAG: ${{ inputs.tag || github.ref_name }}
 jobs:
-  image:
-    name: ${{ matrix.name }}
+  build:
+    name: ${{ matrix.name }} (${{ matrix.arch }})
     if: '!github.event.pull_request.draft'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
     strategy:
       fail-fast: false
       matrix:
-        include:
-        - name: media-access
-          dockerfile: cmd/media-access/Dockerfile
-        - name: media-worker
-          dockerfile: cmd/media-worker/Dockerfile
+        name: [media-access, media-worker]
+        arch: ${{ fromJSON(github.event_name == 'pull_request' && '["amd64"]' || '["amd64","arm64"]') }}
     steps:
     - uses: actions/checkout@v4
       with:
+        ref: ${{ inputs.tag || github.ref }}
         persist-credentials: false
+    - id: rev
+      run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
     - uses: docker/setup-buildx-action@v3
-    - if: github.event_name == 'push'
+    - if: env.PUBLISH == 'true'
       uses: docker/login-action@v3
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-    - if: github.event_name == 'push'
+    - if: env.PUBLISH == 'true'
       uses: docker/login-action@v3
       with:
         username: openrails
         password: ${{ secrets.DOCKERHUB_TOKEN }}
-    - uses: docker/build-push-action@v6
+    - id: build
+      uses: docker/build-push-action@v6
       with:
         context: .
-        file: ${{ matrix.dockerfile }}
-        platforms: ${{ github.event_name == 'push' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
-        push: ${{ github.event_name == 'push' }}
-        tags: |
-          ghcr.io/open-rails/contentkit-${{ matrix.name }}:${{ github.event_name == 'push' && github.ref_name || 'pr' }}
-          docker.io/openrails/contentkit-${{ matrix.name }}:${{ github.event_name == 'push' && github.ref_name || 'pr' }}
+        file: cmd/${{ matrix.name }}/Dockerfile
+        platforms: linux/${{ matrix.arch }}
         labels: |
           org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          org.opencontainers.image.revision=${{ github.sha }}
-          org.opencontainers.image.version=${{ github.ref_name }}
-        cache-from: type=gha,scope=${{ matrix.name }}
-        cache-to: ${{ github.event_name == 'push' && format('type=gha,mode=max,scope={0}', matrix.name) || '' }}
+          org.opencontainers.image.revision=${{ steps.rev.outputs.sha }}
+          org.opencontainers.image.version=${{ env.TAG }}
+        outputs: ${{ env.PUBLISH == 'true' && format('type=image,"name=ghcr.io/open-rails/contentkit-{0},docker.io/openrails/contentkit-{0}",push-by-digest=true,name-canonical=true,push=true', matrix.name) || 'type=cacheonly' }}
+        cache-from: type=gha,scope=${{ matrix.name }}-${{ matrix.arch }}
+        cache-to: ${{ env.PUBLISH == 'true' && format('type=gha,mode=max,scope={0}-{1}', matrix.name, matrix.arch) || '' }}
+    - if: env.PUBLISH == 'true'
+      run: |
+        mkdir -p digests
+        touch "digests/${DIGEST#sha256:}"
+      env:
+        DIGEST: ${{ steps.build.outputs.digest }}
+    - if: env.PUBLISH == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: digest-${{ matrix.name }}-${{ matrix.arch }}
+        path: digests/*
+        retention-days: 1
+  publish:
+    name: ${{ matrix.name }} (multi-arch)
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [media-access, media-worker]
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        pattern: digest-${{ matrix.name }}-*
+        path: digests
+        merge-multiple: true
+    - uses: docker/setup-buildx-action@v3
+    - uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - uses: docker/login-action@v3
+      with:
+        username: openrails
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+    - working-directory: digests
+      run: |
+        test "$(ls | wc -l)" -eq 2
+        for repo in ghcr.io/open-rails/contentkit-$NAME docker.io/openrails/contentkit-$NAME; do
+          docker buildx imagetools create -t "$repo:$TAG" $(printf "$repo@sha256:%s " *)
+          docker buildx imagetools inspect "$repo:$TAG"
+        done
+      env:
+        NAME: ${{ matrix.name }}
