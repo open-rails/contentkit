@@ -59,6 +59,9 @@ type Video struct {
 	// display sizes × densities; widths wider than the frame or upload are
 	// skipped. Empty is DefaultPosterWidths.
 	PosterWidths []int `json:"poster_widths,omitempty"`
+	// Profile tunes the encode to the content: VideoLive (default) or
+	// VideoAnimation (x264 tune animation, lower CRF, lower caps).
+	Profile string `json:"profile,omitempty"`
 }
 
 // DefaultPosterWidths cover a full-width column at 2–3× density.
@@ -71,6 +74,12 @@ func (v *Video) Poster() Slot {
 	}
 	return Slot{Widths: slices.Sorted(slices.Values(v.PosterWidths))}
 }
+
+// Video.Profile values.
+const (
+	VideoLive      = ""
+	VideoAnimation = "animation"
+)
 
 // DefaultLadder is the default H.264 ladder by short side.
 var DefaultLadder = []int{2160, 1440, 1080, 720, 480}
@@ -103,7 +112,7 @@ func (v *Video) Aspects() (lo, hi float64) {
 }
 
 // Validate requires even rungs of 2–4320, largest first, without repeats,
-// and aspect bounds with MinAspect ≤ 1 ≤ MaxAspect.
+// aspect bounds with MinAspect ≤ 1 ≤ MaxAspect, and a known Profile.
 func (v Video) Validate() error {
 	for i, n := range v.Ladder {
 		if n < 2 || n > 4320 || n%2 != 0 || i > 0 && n >= v.Ladder[i-1] {
@@ -112,6 +121,9 @@ func (v Video) Validate() error {
 	}
 	if lo, hi := v.Aspects(); v.MinAspect < 0 || v.MaxAspect < 0 || lo > 1 || hi < 1 {
 		return fmt.Errorf("media: invalid video aspect bounds %g–%g", lo, hi)
+	}
+	if v.Profile != VideoLive && v.Profile != VideoAnimation {
+		return fmt.Errorf("media: unknown video profile %q", v.Profile)
 	}
 	return nil
 }

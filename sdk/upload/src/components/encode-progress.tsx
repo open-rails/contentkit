@@ -27,8 +27,11 @@ export function formatRemaining(t: Translator["t"], seconds: number): string {
 export function encodeLabel(t: Translator["t"], p: Progress | undefined, remaining?: number): string {
   if (!p) return t("encode.processing");
   if (p.stalled) return t("encode.stalled");
-  if (p.phase === "queued") return p.queue_position ? t("encode.queuedPosition", { position: p.queue_position }) : t("encode.queued");
-  const parts = [t(`encode.phase.${p.phase}`)];
+  // A second stage adds the rungs above 1080 to a video that already plays.
+  const stage = p.stage && p.stage > 1 ? [t("encode.higherQualities")] : [];
+  if (p.phase === "queued")
+    return [...stage, p.queue_position ? t("encode.queuedPosition", { position: p.queue_position }) : t("encode.queued")].join(" · ");
+  const parts = [...stage, t(`encode.phase.${p.phase}`)];
   if (p.phase === "encoding" && p.segments_total) parts.push(t("encode.segments", { done: p.segments_done ?? 0, total: p.segments_total }));
   if (remaining !== undefined) parts.push(formatRemaining(t, remaining));
   else if (p.phase === "encoding") parts.push(t("encode.estimating"));

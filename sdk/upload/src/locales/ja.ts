@@ -80,6 +80,7 @@ export const ja: UploadUiMessageBundle = {
     queuedPosition: "順番待ち · {position} 番目",
     stalled: "処理が一時停止しています。サーバーを待っています…",
     segments: "セグメント {done} / {total}",
+    higherQualities: "高画質",
     remainingSeconds: "残り約 {seconds} 秒",
     remainingMinutes: "残り約 {minutes} 分",
     remainingHours: "残り約 {hours} 時間 {minutes} 分",

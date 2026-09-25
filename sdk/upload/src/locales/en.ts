@@ -78,6 +78,7 @@ export const en = {
     queuedPosition: "Queued · #{position} in line",
     stalled: "Processing paused, waiting for the server…",
     segments: "segment {done} / {total}",
+    higherQualities: "Higher qualities",
     remainingSeconds: "~{seconds} s left",
     remainingMinutes: "~{minutes} min left",
     remainingHours: "~{hours} h {minutes} min left",

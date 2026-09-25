@@ -102,6 +102,9 @@ type HLS struct {
 	Audio  []AudioTrack `json:"audio,omitempty"`
 	Subs   []Subtitle   `json:"subs,omitempty"`
 	Sprite *Sprite      `json:"sprite,omitempty"`
+	// Pending lists the rungs of a later encode stage: the file plays at the
+	// rungs in Video until they are added.
+	Pending []int `json:"pending,omitempty"`
 }
 
 // Rendition is one video-only fMP4 blob: its init segment is bytes

@@ -37,7 +37,7 @@ func snippet(ctx context.Context, store media.Store, item media.Item, r media.Re
 		if first < 0 && (from < t+s.Seconds || i == last) {
 			first, start = i, t
 		}
-		if to <= t+s.Seconds {
+		if to < t+s.Seconds { // a time on a boundary starts the next segment
 			last = max(i, first)
 			break
 		}

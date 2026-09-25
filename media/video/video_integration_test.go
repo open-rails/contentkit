@@ -134,7 +134,8 @@ func newEnv(t *testing.T, store func(media.Store) media.Store, queue media.Proce
 		t.Fatal(err)
 	}
 	slots := queueFunc(func(_ context.Context, j media.ProcessJob) error { e.slotJobs = append(e.slotJobs, j); return nil })
-	if e.encoder, err = video.New(video.Config{Store: e.store, Locker: locker, TempDir: t.TempDir(), Threads: 2, Slots: slots}); err != nil {
+	if e.encoder, err = video.New(video.Config{Store: e.store, Locker: locker, TempDir: t.TempDir(), Threads: 2,
+		Encoder: video.EncoderX264, Slots: slots}); err != nil {
 		t.Fatal(err)
 	}
 	e.ref = contentref.NewVersion(s3.Tenant, "video", "88", "v1")
@@ -340,7 +341,7 @@ func TestLadderFromMultiTrackSource(t *testing.T) {
 	m, _ := e.manifest(t)
 	f := m.Files[m.File("source")]
 	h := f.HLS
-	if h == nil || h.Source != source || h.Spec != video.Spec(nil) {
+	if h == nil || h.Source != source || h.Spec != video.Spec(media.Video{}) {
 		t.Fatalf("hls %+v", h)
 	}
 	var heights []int
@@ -380,7 +381,7 @@ func TestLadderFromMultiTrackSource(t *testing.T) {
 
 	for _, height := range heights {
 		d, ok := m.Downloads[video.DownloadKey("source", height)]
-		if !ok || d.Type != "video/mp4" || d.Spec != video.Spec(nil) || d.Inputs != source || d.Size <= 0 {
+		if !ok || d.Type != "video/mp4" || d.Spec != video.Spec(media.Video{}) || d.Inputs != source || d.Size <= 0 {
 			t.Fatalf("download %dp: %+v", height, d)
 		}
 		p := ffprobe(t, e.blob(t, d.Blob))
@@ -413,11 +414,11 @@ func TestKindLadder(t *testing.T) {
 			heights = append(heights, r.Rung)
 		}
 		for _, height := range want {
-			if d, ok := m.Downloads[video.DownloadKey("source", height)]; ok && d.Spec == video.Spec(ladder) {
+			if d, ok := m.Downloads[video.DownloadKey("source", height)]; ok && d.Spec == video.Spec(media.Video{Ladder: ladder}) {
 				downloads = append(downloads, height)
 			}
 		}
-		if h.Spec != video.Spec(ladder) || !slices.Equal(heights, want) || !slices.Equal(downloads, want) || len(m.Downloads) != len(want) {
+		if h.Spec != video.Spec(media.Video{Ladder: ladder}) || !slices.Equal(heights, want) || !slices.Equal(downloads, want) || len(m.Downloads) != len(want) {
 			t.Fatalf("ladder %v: hls %v %s, downloads %v", ladder, heights, h.Spec, m.Downloads)
 		}
 	}

@@ -80,6 +80,7 @@ export const es: UploadUiMessageBundle = {
     queuedPosition: "En cola · puesto {position}",
     stalled: "Procesamiento en pausa, esperando al servidor…",
     segments: "segmento {done} / {total}",
+    higherQualities: "Calidades superiores",
     remainingSeconds: "quedan ~{seconds} s",
     remainingMinutes: "quedan ~{minutes} min",
     remainingHours: "quedan ~{hours} h {minutes} min",

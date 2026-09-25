@@ -317,4 +317,6 @@ export interface EncodeProgress {
   eta?: number;
   at: number;
   stalled?: boolean;
+  stage?: number;
+  stages?: number;
 }

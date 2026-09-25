@@ -37,6 +37,10 @@ type EncodeProgress struct {
 	ETA           float64 `json:"eta,omitempty"`
 	At            int64   `json:"at"` // unix milliseconds of the measurement
 	Stalled       bool    `json:"stalled,omitempty"`
+	// Stage of Stages: a file with rungs above 1080 plays after stage 1 while
+	// stage 2 encodes them.
+	Stage  int `json:"stage,omitempty"`
+	Stages int `json:"stages,omitempty"`
 }
 
 // EncodeStatus is an item's encode progress: Files from the running job,

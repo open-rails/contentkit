@@ -41,6 +41,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 // Enqueuer is the host's insert-only client for video jobs.
 type Enqueuer struct {
 	client *river.Client[pgx.Tx]
+	pool   *pgxpool.Pool
 	kinds  *media.Registry
 }
 
@@ -52,7 +53,7 @@ func NewEnqueuer(pool *pgxpool.Pool, kinds *media.Registry) (*Enqueuer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Enqueuer{client: c, kinds: kinds}, nil
+	return &Enqueuer{client: c, pool: pool, kinds: kinds}, nil
 }
 
 // Enqueue inserts a job for a video kind's manifest; slot jobs and other
@@ -98,11 +99,61 @@ func (q *Enqueuer) args(job media.ProcessJob) (Args, bool, error) {
 	return Args{Ref: job.Ref, Versioned: item.Kind().Versioned, Video: *v}, true, nil
 }
 
+// Cancel cancels ref's queued and running jobs, both stages: a running
+// encode is killed and publishes nothing further, and no follow-up stage is
+// queued after a cancelled one. It returns how many jobs it cancelled.
+func (q *Enqueuer) Cancel(ctx context.Context, ref contentref.ContentRef) (int, error) {
+	match, err := refMatch(ref)
+	if err != nil {
+		return 0, err
+	}
+	var version *string
+	if v := ref.Version(); v != "" {
+		version = &v
+	}
+	rows, err := q.pool.Query(ctx, `SELECT id FROM `+Schema+`.river_job
+WHERE kind = $1 AND args @> $2 AND args->'ref'->>'content_version_id' IS NOT DISTINCT FROM $3
+  AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled')`, Args{}.Kind(), match, version)
+	if err != nil {
+		return 0, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, id := range ids {
+		if _, err := q.client.JobCancel(ctx, id); err != nil && !errors.Is(err, river.ErrNotFound) {
+			return 0, err
+		}
+	}
+	return len(ids), nil
+}
+
+func refMatch(ref contentref.ContentRef) ([]byte, error) {
+	return json.Marshal(map[string]any{"ref": map[string]string{
+		"tenant_id": ref.TenantID, "content_kind": ref.ContentKind, "content_id": ref.ContentID}})
+}
+
 // Jobs are not unique: River's uniqueness always covers running jobs, which
 // would drop the job for a source replaced mid-encode. Duplicates serialize
 // on a per-manifest lock and are no-ops once the manifest is fresh.
 func insertOpts() *river.InsertOpts {
 	return &river.InsertOpts{Queue: Queue, MaxAttempts: MaxAttempts}
+}
+
+func followUpOpts() *river.InsertOpts {
+	o := insertOpts()
+	o.Priority = 2
+	return o
 }
 
 // WorkerConfig configures the River side of cmd/media-worker.
@@ -162,9 +213,17 @@ type worker struct {
 
 func (w *worker) Timeout(*river.Job[Args]) time.Duration { return w.c.Timeout }
 
-// Work runs one encode under a per-manifest lock; a duplicate job for a
-// manifest being encoded waits by snoozing.
-func (w *worker) Work(ctx context.Context, job *river.Job[Args]) error {
+// Work runs one encode stage under a per-manifest lock; a duplicate job for
+// a manifest being encoded waits by snoozing. A file left with a second
+// stage gets a follow-up job at a lower priority, inserted after the lock is
+// released, so other uploads' first stages run before it.
+func (w *worker) Work(ctx context.Context, job *river.Job[Args]) (err error) {
+	var more bool
+	defer func() {
+		if err == nil && more {
+			_, err = river.ClientFromContext[pgx.Tx](ctx).Insert(ctx, job.Args, followUpOpts())
+		}
+	}()
 	// The lock's own connection lives outside Pool, which the encode uses.
 	release, ok, err := pglock.Acquire(ctx, w.c.Pool, "contentkit:media:video:"+job.Args.Ref.String(), false)
 	if err != nil {
@@ -181,7 +240,7 @@ func (w *worker) Work(ctx context.Context, job *river.Job[Args]) error {
 			w.c.Logger.WarnContext(ctx, "media/video: clear progress", "job", job.ID, "error", err)
 		}
 	}()
-	err = w.c.Encoder.Encode(ctx, Job(job.Args), w.report(job.ID))
+	more, err = w.c.Encoder.encode(ctx, Job(job.Args), w.report(job.ID), true)
 	var perm *PermanentError
 	if errors.As(err, &perm) {
 		w.c.Logger.ErrorContext(ctx, "media/video: cannot encode", "ref", job.Args.Ref.String(), "error", err)
@@ -240,8 +299,7 @@ ORDER BY j.id`
 
 func (s *progressSource) EncodeProgress(ctx context.Context, ref contentref.ContentRef) (media.EncodeStatus, error) {
 	var st media.EncodeStatus
-	match, err := json.Marshal(map[string]any{"ref": map[string]string{
-		"tenant_id": ref.TenantID, "content_kind": ref.ContentKind, "content_id": ref.ContentID}})
+	match, err := refMatch(ref)
 	if err != nil {
 		return st, err
 	}

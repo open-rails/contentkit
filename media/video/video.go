@@ -8,6 +8,7 @@
 package video
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -18,9 +19,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
@@ -32,8 +36,16 @@ type Config struct {
 	// Locker serializes manifest edits when Store lacks conditional PUT; it
 	// must share the hosts' lock space (media.PGLocker on the host database).
 	Locker  media.Locker
-	TempDir string      // scratch for the source and outputs; default os.TempDir()
-	Threads int         // ffmpeg threads; default GOMAXPROCS (the container's CPU limit)
+	TempDir string // scratch for the source and outputs; default os.TempDir()
+	Threads int    // CPU threads for ffmpeg; default GOMAXPROCS (the container's CPU limit)
+	// Preset is the x264 preset of rungs up to 1080, TopPreset of the rungs
+	// above; both default "faster" (preset fast's quality at a third less
+	// CPU; veryfast cost 1440/2160 film grain 6 VMAF in its worst 1%).
+	Preset, TopPreset string
+	// Encoder is EncoderAuto (default), EncoderX264 or EncoderNVENC. NVENC
+	// is checked by a probe encode in New; a file it fails on is re-encoded
+	// with x264.
+	Encoder string
 	Hooks   media.Hooks // Failed: a source that can never be encoded
 	Logger  *slog.Logger
 	// Slots is the host's media queue (media.NewProcessInserter): a grabbed
@@ -77,6 +89,22 @@ func New(c Config) (*Encoder, error) {
 	if c.Threads <= 0 {
 		c.Threads = runtime.GOMAXPROCS(0)
 	}
+	switch c.Encoder {
+	case "", EncoderAuto:
+		c.Encoder = EncoderX264
+		if nvencWorks(context.Background()) == nil {
+			c.Encoder = EncoderNVENC
+		}
+	case EncoderNVENC:
+		if err := nvencWorks(context.Background()); err != nil {
+			return nil, fmt.Errorf("media/video: NVENC unavailable: %w", err)
+		}
+	case EncoderX264:
+	default:
+		return nil, fmt.Errorf("media/video: unknown Encoder %q", c.Encoder)
+	}
+	c.Preset = cmp.Or(c.Preset, "faster")
+	c.TopPreset = cmp.Or(c.TopPreset, "faster")
 	if c.Logger == nil {
 		c.Logger = slog.Default()
 	}
@@ -102,30 +130,37 @@ func DownloadKey(file string, rung int) string { return file + "-" + strconv.Ito
 var downloadKey = regexp.MustCompile(`^(.+)-(\d+)p$`)
 
 // Encode brings every video file of the job's manifest up to date, promoting
-// each file's outputs in its own manifest edit. report, when set, receives
-// the files' progress.
+// each file's outputs in its own manifest edit, stage by stage (see
+// stageOneMax). report, when set, receives the files' progress.
 func (e *Encoder) Encode(ctx context.Context, job Job, report Report) error {
+	_, err := e.encode(ctx, job, report, false)
+	return err
+}
+
+// encode runs the stale files' next stage, or every stage, and reports
+// whether a file still has a stage to run.
+func (e *Encoder) encode(ctx context.Context, job Job, report Report, oneStage bool) (more bool, err error) {
 	kinds, err := media.NewRegistry(media.Kind{Name: job.Ref.ContentKind, Versioned: job.Versioned, Video: &job.Video})
 	if err != nil {
-		return &PermanentError{err}
+		return false, &PermanentError{err}
 	}
 	r := recipeOf(&job.Video)
 	item, err := kinds.Item(job.Ref)
 	if err != nil {
-		return &PermanentError{err}
+		return false, &PermanentError{err}
 	}
 	if _, err := item.ManifestKey(); err != nil {
-		return &PermanentError{err}
+		return false, &PermanentError{err}
 	}
 	ms, err := media.NewManifests(e.c.Store, kinds, media.ManifestOptions{Locker: e.c.Locker, CacheSize: 1})
 	if err != nil {
-		return err
+		return false, err
 	}
 	man, _, err := ms.Get(ctx, job.Ref)
 	if errors.Is(err, media.ErrNotFound) {
-		return nil
+		return false, nil
 	} else if err != nil {
-		return err
+		return false, err
 	}
 	var stale []media.File
 	for _, f := range man.Files {
@@ -140,10 +175,20 @@ func (e *Encoder) Encode(ctx context.Context, job Job, report Report) error {
 	prog := newProgress(ctx, report, e.c.ProgressInterval, time.Now, names)
 	var errs []error
 	for _, f := range stale {
-		err := e.file(ctx, ms, item, r, f.Name, f.Source(), prog.file(f.Name))
+		cur := f.HLS
+		for {
+			cur, err = e.file(ctx, ms, item, r, f.Name, f.Source(), cur, prog.file(f.Name))
+			if err != nil || cur == nil || len(cur.Pending) == 0 {
+				break
+			}
+			if oneStage {
+				more = true
+				break
+			}
+		}
 		prog.done(f.Name)
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return false, ctx.Err()
 		}
 		var perm *PermanentError
 		if errors.As(err, &perm) {
@@ -166,12 +211,12 @@ func (e *Encoder) Encode(ctx context.Context, job Job, report Report) error {
 			return nil
 		})
 		if err != nil {
-			return err
+			return more, err
 		}
 		defer prog.item(media.PhaseImages)()
-		return e.images(ctx, ms, item, man)
+		return more, e.images(ctx, ms, item, man)
 	}
-	return errors.Join(errs...)
+	return more, errors.Join(errs...)
 }
 
 // fail records that a source can never be encoded: the file's hls becomes
@@ -211,7 +256,7 @@ type jobRecipe struct {
 }
 
 func recipeOf(v *media.Video) jobRecipe {
-	spec := Spec(v.Ladder)
+	spec := Spec(*v)
 	lo, hi := v.Aspects()
 	return jobRecipe{video: v, spec: spec, failSpec: fmt.Sprintf("%s|aspect:%g-%g", spec, lo, hi)}
 }
@@ -224,7 +269,7 @@ func fresh(m *media.Manifest, f media.File, r jobRecipe) bool {
 	if h.Error != "" {
 		return h.Spec == r.failSpec
 	}
-	if h.Spec != spec || len(h.Video) == 0 {
+	if h.Spec != spec || len(h.Video) == 0 || len(h.Pending) > 0 {
 		return false
 	}
 	for _, r := range h.Video {
@@ -250,104 +295,175 @@ var errStale = errors.New("source changed during encode")
 // testBeforePromote runs between the blob uploads and the manifest edit.
 var testBeforePromote func()
 
-func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item, r jobRecipe, name, source string, fp *fileProgress) error {
+// stageOneMax is the largest rung of a file's first stage: rungs up to it
+// are published first, so the file plays while the costlier rungs above
+// (most of a 4K ladder's work) encode in a second stage.
+var stageOneMax = 1080
+
+// file runs a file's next stage: the first when cur (its manifest hls) is
+// not a first stage of this source and spec, else the pending rungs. It
+// returns the published hls, nil if the result was dropped.
+func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item, r jobRecipe, name, source string, cur *media.HLS, fp *fileProgress) (*media.HLS, error) {
 	srcKey, err := item.Original(source)
 	if err != nil {
-		return &PermanentError{err}
+		return nil, &PermanentError{err}
 	}
 	dir, err := os.MkdirTemp(e.c.TempDir, tempPattern)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer os.RemoveAll(dir)
 
 	src := filepath.Join(dir, "source")
 	srcObj, err := e.fetch(ctx, srcKey, src, fp)
 	if errors.Is(err, media.ErrNotFound) {
-		return e.stale(ctx, ms, item, name, source, err)
+		return nil, e.stale(ctx, ms, item, name, source, err)
 	} else if err != nil {
-		return err
+		return nil, err
 	}
 	fp.set(media.PhaseProbing)
 	pr, err := probe(ctx, src)
 	if err != nil {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
-		return &PermanentError{err}
+		return nil, &PermanentError{err}
 	}
 	p, err := newPlan(pr, r.video)
 	if err != nil {
-		return &PermanentError{err}
+		return nil, &PermanentError{err}
+	}
+	first, rest := splitStages(p.rungs)
+	second := cur != nil && cur.Source == source && cur.Spec == r.spec && cur.Error == "" && len(cur.Pending) > 0 &&
+		slices.Equal(cur.Pending, rungNames(rest))
+	stage, stages, todo := 1, 1, first
+	if second {
+		stage, stages, todo = 2, 2, rest
+	} else if len(rest) > 0 {
+		stages = 2
 	}
 	out := filepath.Join(dir, "out")
 	if err := os.Mkdir(out, 0o700); err != nil {
-		return err
+		return nil, err
 	}
-	e.c.Logger.InfoContext(ctx, "media/video: encoding", "key", srcKey, "duration", p.duration, "rungs", p.rungs,
-		"audio", len(p.audio), "subs", len(p.subs), "threads", e.c.Threads)
+	e.c.Logger.InfoContext(ctx, "media/video: encoding", "key", srcKey, "duration", p.duration, "rungs", todo, "stage", stage, "stages", stages,
+		"audio", len(p.audio), "subs", len(p.subs), "encoder", e.c.Encoder, "threads", e.c.Threads)
+	fp.stage(stage, stages)
 	fp.probed(p.duration, out)
-	if err := ladder(ctx, src, out, p, e.c.Threads, fp); err != nil {
-		return err
+	ps := pass{rungs: todo, sprite: !second, enc: encoding{codec: e.c.Encoder, threads: e.c.Threads, preset: e.c.Preset,
+		topPreset: e.c.TopPreset, animation: r.video.Profile == media.VideoAnimation}}
+	// The plan's top rung is copied from a compliant source (a stage keeps
+	// another rung to check its segments against).
+	var copied *rung
+	if len(todo) >= 2 && todo[0] == p.rungs[0] {
+		if ok, why := passthroughable(ctx, src, p, todo[0]); ok {
+			copied, ps.rungs = &todo[0], todo[1:]
+		} else {
+			e.c.Logger.DebugContext(ctx, "media/video: no passthrough", "key", srcKey, "reason", why)
+		}
+	}
+	err = ladder(ctx, src, out, p, ps, fp)
+	if err != nil && ps.enc.codec == EncoderNVENC && ctx.Err() == nil {
+		e.c.Logger.WarnContext(ctx, "media/video: NVENC failed; encoding with x264", "key", srcKey, "error", err)
+		ps.enc.codec = EncoderX264
+		if err = errors.Join(os.RemoveAll(out), os.Mkdir(out, 0o700)); err == nil {
+			err = ladder(ctx, src, out, p, ps, fp)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if copied != nil {
+		if err := copyRung(ctx, src, out, p, copied.n); err != nil {
+			return nil, err
+		}
+		if !sameSegments(out, copied.n, ps.rungs[0].n) {
+			e.c.Logger.WarnContext(ctx, "media/video: passthrough segments differ; encoding the rung", "key", srcKey, "rung", copied.n)
+			ps.rungs, ps.sprite, ps.noTracks = []rung{*copied}, false, true
+			if err := ladder(ctx, src, out, p, ps, fp); err != nil {
+				return nil, err
+			}
+		} else {
+			e.c.Logger.InfoContext(ctx, "media/video: top rung copied from the source", "key", srcKey, "rung", copied.n)
+		}
 	}
 	if err := os.Remove(src); err != nil {
-		return err
+		return nil, err
 	}
-	fp.uploads(uploadBytes(out, len(p.rungs)))
-	fp.set(media.PhaseUploading)
+	fp.uploads(uploadBytes(out, len(todo), !second))
+	fp.set(media.PhaseMuxing)
 
-	hls := &media.HLS{Source: source, Spec: r.spec}
+	// Each rung is muxed and uploaded alongside the others and the tracks;
+	// its files are removed as soon as they are stored. A second stage's
+	// tracks only feed its downloads: the first stage stored them.
+	hls := &media.HLS{Source: source, Spec: r.spec, Audio: make([]media.AudioTrack, len(p.audio)),
+		Subs: make([]media.Subtitle, len(p.subs)), Video: make([]media.Rendition, len(todo)), Pending: rungNames(rest)}
+	dls := make([]media.Download, len(todo))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(uploadParallel)
+	if !second {
+		for i, a := range p.audio {
+			g.Go(func() error {
+				blob, pl, err := e.stream(gctx, item, out, fmt.Sprintf("a%d", i), "audio/mp4", fp)
+				if err != nil {
+					return err
+				}
+				peak, _ := bandwidth(pl.segments)
+				hls.Audio[i] = media.AudioTrack{ID: a.id, Lang: a.lang, Label: a.label, Default: a.def,
+					Bandwidth: peak, Codecs: "mp4a.40.2", Blob: blob, Segments: pl.segments}
+				return nil
+			})
+		}
+		for i, s := range p.subs {
+			g.Go(func() error {
+				blob, _, err := e.put(gctx, item, filepath.Join(out, fmt.Sprintf("s%d.vtt", i)), "text/vtt", fp)
+				hls.Subs[i] = media.Subtitle{ID: s.id, Lang: s.lang, Label: s.label, Forced: s.forced, Blob: blob}
+				return err
+			})
+		}
+		g.Go(func() error {
+			blob, _, err := e.put(gctx, item, filepath.Join(out, "sprite.jpg"), "image/jpeg", fp)
+			hls.Sprite = &media.Sprite{Blob: blob, Cols: spriteCols, Rows: spriteRows, Width: p.tileW, Height: p.tileH,
+				Interval: p.duration / (spriteCols * spriteRows)}
+			return err
+		})
+	}
+	for i, rg := range todo {
+		g.Go(func() error {
+			v := fmt.Sprintf("v%d", rg.n)
+			codec, w, h, err := avcCodec(gctx, filepath.Join(out, v+".mp4"))
+			if err != nil {
+				return err
+			}
+			if w != rg.w || h != rg.h {
+				return fmt.Errorf("rung %dp encoded %dx%d, want %dx%d", rg.n, w, h, rg.w, rg.h)
+			}
+			dl := filepath.Join(out, "d"+v+".mp4")
+			if err := mux(gctx, out, rg.n, p, dl); err != nil {
+				return err
+			}
+			fp.set(media.PhaseUploading)
+			dlBlob, dlSize, err := e.put(gctx, item, dl, "video/mp4", fp)
+			if err != nil {
+				return err
+			}
+			blob, pl, err := e.stream(gctx, item, out, v, "video/mp4", fp)
+			if err != nil {
+				return err
+			}
+			peak, avg := bandwidth(pl.segments)
+			hls.Video[i] = media.Rendition{Rung: rg.n, Width: w, Height: h, Bandwidth: peak, Average: avg, Codecs: codec,
+				Blob: blob, Segments: pl.segments}
+			dls[i] = media.Download{Blob: dlBlob, Type: "video/mp4", Size: dlSize, Spec: r.spec, Inputs: source}
+			return errors.Join(os.Remove(dl), os.Remove(filepath.Join(out, v+".mp4")))
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
 	downloads := map[string]media.Download{}
-	for i, a := range p.audio {
-		blob, pl, err := e.stream(ctx, item, out, fmt.Sprintf("a%d", i), "audio/mp4", fp)
-		if err != nil {
-			return err
-		}
-		peak, _ := bandwidth(pl.segments)
-		hls.Audio = append(hls.Audio, media.AudioTrack{ID: a.id, Lang: a.lang, Label: a.label, Default: a.def,
-			Bandwidth: peak, Codecs: "mp4a.40.2", Blob: blob, Segments: pl.segments})
-	}
-	for i, s := range p.subs {
-		blob, _, err := e.put(ctx, item, filepath.Join(out, fmt.Sprintf("s%d.vtt", i)), "text/vtt", fp)
-		if err != nil {
-			return err
-		}
-		hls.Subs = append(hls.Subs, media.Subtitle{ID: s.id, Lang: s.lang, Label: s.label, Forced: s.forced, Blob: blob})
-	}
-	blob, _, err := e.put(ctx, item, filepath.Join(out, "sprite.jpg"), "image/jpeg", fp)
-	if err != nil {
-		return err
-	}
-	hls.Sprite = &media.Sprite{Blob: blob, Cols: spriteCols, Rows: spriteRows, Width: p.tileW, Height: p.tileH,
-		Interval: p.duration / (spriteCols * spriteRows)}
-	for i, rg := range p.rungs {
-		v := fmt.Sprintf("v%d", i)
-		codec, w, h, err := avcCodec(ctx, filepath.Join(out, v+".mp4"))
-		if err != nil {
-			return err
-		}
-		if w != rg.w || h != rg.h {
-			return fmt.Errorf("rung %dp encoded %dx%d, want %dx%d", rg.n, w, h, rg.w, rg.h)
-		}
-		dl := filepath.Join(out, "d"+v+".mp4")
-		fp.set(media.PhaseMuxing)
-		if err := mux(ctx, out, i, p, dl); err != nil {
-			return err
-		}
-		fp.set(media.PhaseUploading)
-		dlBlob, dlSize, err := e.put(ctx, item, dl, "video/mp4", fp)
-		if err != nil {
-			return err
-		}
-		_ = os.Remove(dl)
-		blob, pl, err := e.stream(ctx, item, out, v, "video/mp4", fp)
-		if err != nil {
-			return err
-		}
-		peak, avg := bandwidth(pl.segments)
-		hls.Video = append(hls.Video, media.Rendition{Rung: rg.n, Width: w, Height: h, Bandwidth: peak, Average: avg, Codecs: codec,
-			Blob: blob, Segments: pl.segments})
-		downloads[DownloadKey(name, rg.n)] = media.Download{Blob: dlBlob, Type: "video/mp4", Size: dlSize, Spec: r.spec, Inputs: source}
+	for i, rg := range todo {
+		downloads[DownloadKey(name, rg.n)] = dls[i]
 	}
 
 	fp.set(media.PhasePublishing)
@@ -355,27 +471,40 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 		testBeforePromote()
 	}
 	// Fence: promote only if the original is unchanged and the manifest file
-	// still derives from it.
+	// still derives from it (a second stage: from the first stage it extends).
 	if obj, err := e.c.Store.Head(ctx, srcKey); errors.Is(err, media.ErrNotFound) || err == nil && obj.ETag != srcObj.ETag {
-		return e.stale(ctx, ms, item, name, source, errStale)
+		return nil, e.stale(ctx, ms, item, name, source, errStale)
 	} else if err != nil {
-		return err
+		return nil, err
 	}
+	var published *media.HLS
 	_, err = ms.Edit(ctx, item.Ref(), func(m *media.Manifest) error {
 		i := m.File(name)
 		if i < 0 || m.Files[i].Source() != source {
 			return errStale
 		}
 		f := &m.Files[i]
-		f.HLS = hls
-		if f.Meta == nil {
-			f.Meta = map[string]any{}
-		}
-		f.Meta["duration"] = p.duration
-		f.Meta["w"], f.Meta["h"] = p.width, p.height
-		for k, d := range m.Downloads {
-			if n, ok := videoDownload(k, d); ok && n == name {
-				delete(m.Downloads, k)
+		if second {
+			h := f.HLS
+			if h == nil || h.Source != source || h.Spec != r.spec || !slices.Equal(h.Pending, cur.Pending) {
+				return errStale
+			}
+			next := *h
+			next.Video = append(slices.Clone(h.Video), hls.Video...)
+			slices.SortFunc(next.Video, func(a, b media.Rendition) int { return b.Rung - a.Rung })
+			next.Pending = nil
+			f.HLS = &next
+		} else {
+			f.HLS = hls
+			if f.Meta == nil {
+				f.Meta = map[string]any{}
+			}
+			f.Meta["duration"] = p.duration
+			f.Meta["w"], f.Meta["h"] = p.width, p.height
+			for k, d := range m.Downloads {
+				if n, ok := videoDownload(k, d); ok && n == name {
+					delete(m.Downloads, k)
+				}
 			}
 		}
 		if m.Downloads == nil {
@@ -384,12 +513,31 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 		for k, d := range downloads {
 			m.Downloads[k] = d
 		}
+		published = f.HLS
 		return nil
 	})
 	if errors.Is(err, errStale) {
-		return e.stale(ctx, ms, item, name, source, err)
+		return nil, e.stale(ctx, ms, item, name, source, err)
 	}
-	return err
+	return published, err
+}
+
+// splitStages splits a plan's rungs (largest first) into the first stage's
+// (up to stageOneMax; all when none is) and the second's.
+func splitStages(rungs []rung) (first, rest []rung) {
+	i := slices.IndexFunc(rungs, func(r rung) bool { return r.n <= stageOneMax })
+	if i <= 0 {
+		return rungs, nil
+	}
+	return rungs[i:], rungs[:i]
+}
+
+func rungNames(rungs []rung) []int {
+	var out []int
+	for _, r := range rungs {
+		out = append(out, r.n)
+	}
+	return out
 }
 
 // stale drops a result whose source is no longer the file's; it is an error
@@ -445,9 +593,10 @@ func (e *Encoder) fetch(ctx context.Context, key, path string, fp *fileProgress)
 	return obj, err
 }
 
-// uploadBytes is what remains to upload after the ladder pass: every output,
-// plus one muxed download per rung (its rendition and all audio).
-func uploadBytes(dir string, rungs int) int64 {
+// uploadBytes is what remains to upload after a pass: every rendition,
+// the tracks and sprite of a first stage, and one muxed download per rung
+// (its rendition and all audio).
+func uploadBytes(dir string, rungs int, tracks bool) int64 {
 	var total, audio int64
 	entries, _ := os.ReadDir(dir)
 	for _, d := range entries {
@@ -455,16 +604,25 @@ func uploadBytes(dir string, rungs int) int64 {
 		if err != nil || !info.Mode().IsRegular() || strings.HasSuffix(d.Name(), ".m3u8") {
 			continue
 		}
-		total += info.Size()
 		switch {
 		case strings.HasPrefix(d.Name(), "a"):
 			audio += info.Size()
 		case strings.HasPrefix(d.Name(), "v"):
-			total += info.Size()
+			total += 2 * info.Size()
+		default:
+			if tracks {
+				total += info.Size()
+			}
 		}
+	}
+	if tracks {
+		total += audio
 	}
 	return total + int64(rungs)*audio
 }
+
+// uploadParallel bounds the concurrent muxes and uploads of one file.
+const uploadParallel = 4
 
 // tempPattern names per-file scratch directories; Sweep removes leftovers.
 const tempPattern = "ck-video-*"

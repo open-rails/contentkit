@@ -80,6 +80,7 @@ export const ko: UploadUiMessageBundle = {
     queuedPosition: "대기 중 · {position}번째",
     stalled: "처리가 일시 중지되었습니다. 서버를 기다리는 중…",
     segments: "세그먼트 {done} / {total}",
+    higherQualities: "고화질",
     remainingSeconds: "약 {seconds}초 남음",
     remainingMinutes: "약 {minutes}분 남음",
     remainingHours: "약 {hours}시간 {minutes}분 남음",

@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
+
+	"github.com/open-rails/contentkit/media"
 )
 
 // Frame caps: every rung decodes on common H.264 hardware (level 5.1/5.2
@@ -26,6 +29,34 @@ const aspectSlack = 0.005
 type rung struct {
 	n, w, h int
 	level   string // H.264 level; "" lets x264 choose
+	crf     int
+	maxrate int // kbit/s; the VBV buffer holds 2 s of it
+}
+
+// rungRate is a rung's capped CRF. The cap bounds bitrate spikes (Apple's
+// HLS spec wants a VOD peak within 2× the average) and the low rung's
+// startup cost; at half these caps film grain lost 8–14 VMAF (bench_test.go).
+type rungRate struct{ crf, maxrate int }
+
+// rates by rung class (2160, 1440, 1080, 720, ≤480) per media.Video profile.
+var rates = map[string][5]rungRate{
+	media.VideoLive:      {{23, 32000}, {23, 18000}, {23, 12000}, {22, 7000}, {21, 3000}},
+	media.VideoAnimation: {{21, 24000}, {21, 14000}, {21, 8000}, {21, 5000}, {20, 2400}},
+}
+
+func rateOf(profile string, n int) rungRate {
+	r := rates[profile]
+	switch {
+	case n > 1440:
+		return r[0]
+	case n > 1080:
+		return r[1]
+	case n > 720:
+		return r[2]
+	case n > 480:
+		return r[3]
+	}
+	return r[4]
 }
 
 // checkAspect refuses a w×h display outside [lo, hi].
@@ -62,7 +93,7 @@ func even(v float64) int { return max(2, 2*int(math.Round(v/2))) }
 // are dropped (a source below the lowest rung is encoded once at its own
 // short side), and a rung whose capped frame repeats the next one's is
 // dropped.
-func rungs(ladder []int, w, h int, fps float64) []rung {
+func rungs(ladder []int, w, h int, fps float64, profile string) []rung {
 	short := min(w, h)
 	var ns []int
 	for _, n := range ladder {
@@ -70,6 +101,7 @@ func rungs(ladder []int, w, h int, fps float64) []rung {
 			ns = append(ns, n)
 		}
 	}
+	slices.SortFunc(ns, func(a, b int) int { return b - a })
 	if len(ns) == 0 {
 		ns = []int{max(2, short-short%2)}
 	}
@@ -81,7 +113,8 @@ func rungs(ladder []int, w, h int, fps float64) []rung {
 				continue
 			}
 		}
-		out = append(out, rung{n: n, w: rw, h: rh, level: level(rw, rh, fps)})
+		r := rateOf(profile, n)
+		out = append(out, rung{n: n, w: rw, h: rh, level: level(rw, rh, fps), crf: r.crf, maxrate: r.maxrate})
 	}
 	return out
 }
