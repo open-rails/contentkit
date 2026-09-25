@@ -222,7 +222,7 @@ func TestReadFullAccess(t *testing.T) {
 			t.Fatalf("cookie mode url must be plain: %s", out.Files[3].URL)
 		}
 		c := out.Cookie
-		if c == nil || c.Name != "mt" || c.Domain != "doujins.com" || c.Path != "/"+f.env.Tenant+"/gallery/"+cid(1)+"/blobs/" ||
+		if c == nil || c.Name != "mt" || c.Domain != "doujins.com" || c.Path != "/"+f.env.Tenant+"/gallery/"+cid(1)+"/private/" ||
 			!c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteLaxMode || !c.Expires.Equal(time.Unix(out.Expires, 0)) {
 			t.Fatalf("cookie %+v", c)
 		}
@@ -436,7 +436,7 @@ func TestReadHandler(t *testing.T) {
 		t.Fatalf("%d %v", resp.StatusCode, body)
 	}
 	sc := resp.Header.Get("Set-Cookie")
-	for _, want := range []string{"mt=k1.", "Domain=doujins.com", "Path=/" + f.env.Tenant + "/gallery/" + cid(1) + "/blobs/", "Max-Age=", "HttpOnly", "Secure", "SameSite=Lax"} {
+	for _, want := range []string{"mt=k1.", "Domain=doujins.com", "Path=/" + f.env.Tenant + "/gallery/" + cid(1) + "/private/", "Max-Age=", "HttpOnly", "Secure", "SameSite=Lax"} {
 		if !strings.Contains(sc, want) {
 			t.Fatalf("Set-Cookie %q lacks %q", sc, want)
 		}

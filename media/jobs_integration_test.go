@@ -318,7 +318,6 @@ func TestExposeTxThroughRiver(t *testing.T) {
 	blob := blobName("poster")
 	private, _ := item.Private(blob)
 	public, _ := item.Public(blob)
-	putObject(t, env.Store, private, "poster")
 	ms := s3test.Manifests(t, env.Store, r, media.ManifestOptions{})
 	if err := ms.UpdateSlot(ctx, ref, media.PosterSlot, func(rec *media.SlotRecord) error {
 		*rec = media.SlotRecord{Original: blobName("frame"), Result: &media.SlotResult{Source: blobName("frame"),
@@ -327,6 +326,7 @@ func TestExposeTxThroughRiver(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	putObject(t, env.Store, private, "poster") // the image job renders after the commit
 	expose := func() {
 		t.Helper()
 		// Twice in one transaction: exposes are not deduplicated.

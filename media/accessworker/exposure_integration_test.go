@@ -72,9 +72,6 @@ func TestExposure(t *testing.T) {
 	// What the image job renders: a private/ output and the record listing it.
 	blob := sha("poster")
 	private, _ := item.Private(blob)
-	if _, err := env.Store.Put(ctx, private, strings.NewReader("poster"), 6, media.PutOptions{ContentType: "image/webp"}); err != nil {
-		t.Fatal(err)
-	}
 	orig := sha("frame")
 	if err := ms.UpdateSlot(ctx, ref, media.PosterSlot, func(r *media.SlotRecord) error {
 		r.Original = orig
@@ -83,6 +80,9 @@ func TestExposure(t *testing.T) {
 		r.Result = &media.SlotResult{Of: fp, Source: r.Original, Outputs: []media.SlotRendition{{Rung: 480, W: 480, H: 270, Blob: blob}}}
 		return nil
 	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.Store.Put(ctx, private, strings.NewReader("poster"), 6, media.PutOptions{ContentType: "image/webp"}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -69,17 +69,19 @@ func (e *env) slot(t *testing.T, ref contentref.ContentRef, slot string, body []
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, _ := http.NewRequest(p.Put.Method, p.Put.URL, bytes.NewReader(body))
-	for k := range p.Put.Header {
-		req.Header.Set(k, p.Put.Header.Get(k))
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("put: %d", resp.StatusCode)
+	if p.Put != nil { // else the bytes are already in the folder
+		req, _ := http.NewRequest(p.Put.Method, p.Put.URL, bytes.NewReader(body))
+		for k := range p.Put.Header {
+			req.Header.Set(k, p.Put.Header.Get(k))
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("put: %d", resp.StatusCode)
+		}
 	}
 	if err := e.uploads.CommitSlot(context.Background(), access.Actor{ID: "u"}, media.SlotCommit{Ref: ref, Slot: slot, SHA256: sum[:], Edit: edit}); err != nil {
 		t.Fatal(err)

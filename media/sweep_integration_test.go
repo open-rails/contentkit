@@ -97,9 +97,6 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	foreign := env.Tenant + "/zzz/" + cid(1) + "/private/" + names["blobOrphan"]
 	putObject(t, s, foreign, "foreign orphan")
 	user, _ := r.Item(contentref.New(env.Tenant, "user", cid(11)))
-	putObject(t, s, user.OriginalsPrefix()+names["avatarOrig"], "avatar original")
-	putObject(t, s, user.PrivatePrefix()+names["avatarOut"], "avatar")
-	putObject(t, s, user.PublicPrefix()+names["avatarOut"], "avatar")
 	slot := func(ref contentref.ContentRef, name, orig, out string) {
 		t.Helper()
 		if err := ms.UpdateSlot(ctx, ref, name, func(rec *media.SlotRecord) error {
@@ -111,7 +108,10 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 		}
 	}
 	slot(work, "cover", "coverOrig", "coverOut")
-	slot(user.Ref(), "avatar", "avatarOrig", "avatarOut")
+	slot(user.Ref(), "avatar", "avatarOrig", "avatarOut") // committed first; the job renders after
+	putObject(t, s, user.OriginalsPrefix()+names["avatarOrig"], "avatar original")
+	putObject(t, s, user.PrivatePrefix()+names["avatarOut"], "avatar")
+	putObject(t, s, user.PublicPrefix()+names["avatarOut"], "avatar")
 
 	variant := func(n string) map[string]media.Variant { return map[string]media.Variant{"thumb": {Blob: names[n]}} }
 	for v, f := range map[string]media.File{

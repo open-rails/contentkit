@@ -40,8 +40,11 @@ func (r *Registry) Item(ref contentref.ContentRef) (Item, error) {
 	if err != nil {
 		return Item{}, err
 	}
-	if !layout.ValidSegment(ref.TenantID) || !layout.ValidSegment(ref.ContentID) {
+	if !layout.ValidSegment(ref.TenantID) {
 		return Item{}, fmt.Errorf("media: invalid ref %s", ref)
+	}
+	if err := contentref.ValidateID(ref.ContentID); err != nil {
+		return Item{}, fmt.Errorf("media: invalid ref %s: %w", ref, err)
 	}
 	if v := ref.Version(); v != "" && (!k.Versioned || !layout.ValidSegment(v)) {
 		return Item{}, fmt.Errorf("media: invalid version in ref %s", ref)
