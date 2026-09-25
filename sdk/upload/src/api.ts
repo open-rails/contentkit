@@ -20,7 +20,6 @@ import type {
   VideoImages,
   VideoImagesBody,
   VideoPosterBody,
-  VideoPreviewBody,
 } from "./wire.gen.js";
 
 export interface ApiOptions {
@@ -79,9 +78,6 @@ export class UploadApi {
   }
   videoPoster(b: VideoPosterBody, signal?: AbortSignal) {
     return this.call<VideoImages>("/video-poster", b, signal);
-  }
-  videoPreview(b: VideoPreviewBody, signal?: AbortSignal) {
-    return this.call<VideoImages>("/video-preview", b, signal);
   }
   /** A JPEG of one video frame (the poster picker's exact frame). */
   frame(q: { kind: string; id: string; version?: string; file?: string; t: number; w?: number }, signal?: AbortSignal) {

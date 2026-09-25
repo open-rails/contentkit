@@ -2,8 +2,7 @@
 // HLS ladder (one single-file fMP4 blob per rendition and audio track),
 // WebVTT subtitles, a thumbnail sprite and one muxed MP4 download per
 // quality, and records them in the manifest's hls and downloads. It then
-// grabs the item's poster frame and renders its hover preview from their
-// selections; Frames serves the poster picker's frame grabs in the host. Jobs run in
+// grabs the item's poster frame from its selection; Frames serves the poster picker's frame grabs in the host. Jobs run in
 // cmd/media-worker on River schema Schema.
 package video
 
@@ -51,7 +50,7 @@ type Config struct {
 	Hooks   media.Hooks // Failed: a source that can never be encoded
 	Logger  *slog.Logger
 	// Slots is the worker's queue (workqueue.Queue): a grabbed poster frame
-	// and a rendered hover preview are handed to its image job through it.
+	// is handed to its image job through it.
 	// Without it, frame posters are grabbed but not encoded.
 	Slots media.ProcessQueue
 	// Sweeps schedules the folder's sweep after the encoder's manifest edits

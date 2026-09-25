@@ -20,8 +20,7 @@ var types = []any{
 	media.CompleteReply{}, media.Crop{}, media.Edit{}, media.Op{}, media.CommitBody{}, media.CommitFile{},
 	media.CommitReply{}, media.SlotBody{}, media.SlotFromFileBody{}, media.SlotEditBody{}, media.SlotRefBody{},
 	media.Dims{}, media.SlotImage{}, media.ErrorDetails{}, media.SlotManifest{},
-	media.VideoImagesBody{}, media.VideoPosterBody{}, media.VideoPreviewBody{}, media.PosterSelection{},
-	media.PosterManifest{}, media.HoverPreviewSelection{}, media.PreviewImage{}, media.HoverPreviewManifest{},
+	media.VideoImagesBody{}, media.VideoPosterBody{}, media.PosterSelection{}, media.PosterManifest{},
 	media.VideoInfo{}, media.VideoImages{}, media.ErrorReply{},
 	media.ReadResult{}, media.FileInfo{}, media.DownloadInfo{}, media.EncodeProgress{},
 	media.FilesBody{}, media.FilesReply{},
@@ -48,8 +47,6 @@ func Render() string {
 	fmt.Fprintf(&b, "export type OpName = %s;\n", union(ops))
 	fmt.Fprintf(&b, "export type PosterSource = %s;\n", union(posterSources))
 	fmt.Fprintf(&b, "export type EncodePhase = %s;\n", union(media.EncodePhases))
-	fmt.Fprintf(&b, "\nexport const HOVER_PREVIEW_DEFAULT = %g;\nexport const HOVER_PREVIEW_MIN = %g;\nexport const HOVER_PREVIEW_MAX = %g;\n",
-		media.HoverPreviewDefault, media.HoverPreviewMin, media.HoverPreviewMax)
 	for _, v := range types {
 		t := reflect.TypeOf(v)
 		var extends []string

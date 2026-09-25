@@ -16,7 +16,7 @@ const (
 	PhaseMuxing      = "muxing"   // per-quality MP4 downloads
 	PhaseUploading   = "uploading"
 	PhasePublishing  = "publishing" // the manifest edit
-	PhaseImages      = "images"     // item-wide, after every file: poster frame and hover preview from the renditions
+	PhaseImages      = "images"     // item-wide, after every file: poster frame from the renditions
 )
 
 // EncodePhases lists every phase in order.

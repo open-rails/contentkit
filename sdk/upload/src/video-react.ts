@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Progress, UploadClient } from "./client.js";
 import { slotError, UploadError } from "./errors.js";
-import { HOVER_PREVIEW_DEFAULT, HOVER_PREVIEW_MAX, HOVER_PREVIEW_MIN, type Edit, type RefBody, type VideoImages } from "./wire.gen.js";
+import type { Edit, RefBody, VideoImages } from "./wire.gen.js";
 
 const asError = (e: unknown) => (e instanceof UploadError ? e : new UploadError("network", String(e)));
 const refKey = (ref: RefBody) => `${ref.kind}/${ref.id}/${ref.version ?? ""}`;
@@ -23,7 +23,7 @@ export interface UseVideoImages {
   set: (v: VideoImages) => void;
 }
 
-/** A video item's poster, hover preview and selections (client.getVideoImages unless given). */
+/** A video item's poster and selection (client.getVideoImages unless given). */
 export function useVideoImages(client: UploadClient | null | undefined, o: VideoImagesOptions): UseVideoImages {
   const given = o.images;
   const key = `${refKey(o.ref)}#${o.file ?? ""}`;
@@ -251,73 +251,6 @@ export function useVideoPoster(client: UploadClient, o: VideoPosterOptions): Use
     ),
     saveAuto: useCallback(() => run(() => client.setVideoPoster(opts.current.ref, { source: "auto", file: opts.current.file })), [client, run]),
     reset: useCallback(() => setState({ status: "idle" }), []),
-  };
-}
-
-export interface HoverSectionOptions extends VideoPosterOptions {
-  /** The video's length, seconds. */
-  duration: number;
-  /** The current selection. */
-  initial?: { start: number; duration: number } | null;
-}
-
-export interface UseHoverSection {
-  start: number;
-  length: number;
-  /** Moves the section, kept inside the video. */
-  setStart: (s: number) => void;
-  /** Resizes it within 1–6 s (and the video), keeping the start where it fits. */
-  setLength: (d: number) => void;
-  state: VideoSaveState;
-  save: () => Promise<VideoImages | undefined>;
-  saveAuto: () => Promise<VideoImages | undefined>;
-}
-
-/** Headless hover-preview section: bounded start and length, save and wait for the render. */
-export function useHoverSection(client: UploadClient, o: HoverSectionOptions): UseHoverSection {
-  const total = Math.max(0, o.duration);
-  const maxLen = Math.min(HOVER_PREVIEW_MAX, total);
-  const minLen = Math.min(HOVER_PREVIEW_MIN, maxLen);
-  const clampLen = (d: number) => Math.min(maxLen, Math.max(minLen, d));
-  const clampStart = (s: number, d: number) => Math.min(Math.max(0, total - d), Math.max(0, s));
-  const [sel, setSel] = useState(() => {
-    const d = clampLen(o.initial?.duration ?? HOVER_PREVIEW_DEFAULT);
-    return { start: clampStart(o.initial?.start ?? total * 0.25, d), length: d };
-  });
-  const [state, setState] = useState<VideoSaveState>({ status: "idle" });
-  const opts = useRef(o);
-  opts.current = o;
-  const run = async (section: { start?: number; duration?: number }) => {
-    const { ref, file, timeout } = opts.current;
-    setState({ status: "saving" });
-    try {
-      let v = await client.setHoverPreview(ref, { file, ...section });
-      if (v.hover_preview.pending) {
-        setState({ status: "saving", rendering: true });
-        v = await waitFor(client, ref, file, (x) => !x.hover_preview.pending, timeout);
-      }
-      setState({ status: "idle" });
-      opts.current.onSaved?.(v);
-      return v;
-    } catch (e) {
-      const error = asError(e);
-      setState({ status: "error", error });
-      opts.current.onError?.(error);
-      return undefined;
-    }
-  };
-  return {
-    start: sel.start,
-    length: sel.length,
-    setStart: (s) => setSel((x) => ({ ...x, start: round3(clampStart(s, x.length)) })),
-    setLength: (d) =>
-      setSel((x) => {
-        const length = round3(clampLen(d));
-        return { length, start: round3(clampStart(x.start, length)) };
-      }),
-    state,
-    save: () => run({ start: sel.start, duration: sel.length }),
-    saveAuto: () => run({}),
   };
 }
 

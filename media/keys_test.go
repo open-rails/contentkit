@@ -237,11 +237,7 @@ func TestVideoKindSlots(t *testing.T) {
 	}
 	vid := cid(9)
 	v, _ := r.Item(contentref.New("h", "video", vid))
-	// Posters and hover previews render to editor/ and are published to public/.
-	if v.HoverPreviewRecord() != "h/video/"+vid+"/originals/hover_preview.json" || v.HoverPreviewOutput(640, true) != "h/video/"+vid+"/editor/hover_preview_640.mp4" ||
-		v.HoverPreviewPublic(640, true) != "h/video/"+vid+"/public/hover_preview_640.mp4" {
-		t.Fatal(v.HoverPreviewRecord(), v.HoverPreviewOutput(640, true))
-	}
+	// Posters render to editor/ and are published to public/.
 	if k, _ := v.SlotOutput(media.PosterSlot, 960); k != "h/video/"+vid+"/editor/poster_960.webp" {
 		t.Fatal(k)
 	}
@@ -251,26 +247,15 @@ func TestVideoKindSlots(t *testing.T) {
 	if k, _ := v.SlotOutput("banner", 600); k != "h/video/"+vid+"/public/banner_600.webp" {
 		t.Fatal("ungated slot", k)
 	}
-	for _, name := range []string{media.PosterSlot, media.HoverPreview, "exposure"} {
+	for _, name := range []string{media.PosterSlot, "exposure"} {
 		if _, err := media.NewRegistry(media.Kind{Name: "video", Video: &media.Video{},
 			Slots: map[string]media.Slot{name: {Aspect: media.Aspect16x9, Widths: []int{320}}}}); err == nil {
 			t.Errorf("reserved slot %q accepted", name)
 		}
 	}
-	if s := media.HoverPreviewSizes(270, 480); len(s) != 1 || s[0] != (media.Dims{W: 320, H: 180}) {
-		t.Fatalf("portrait sizes %v", s)
-	}
-	if s := media.HoverPreviewSizes(1920, 1080); len(s) != 2 {
-		t.Fatalf("1080p sizes %v", s)
-	}
 	for in, want := range map[media.Dims]media.Dims{{W: 1920, H: 1080}: {W: 1920, H: 1080}, {W: 426, H: 240}: {W: 640, H: 361}, {W: 270, H: 480}: {W: 640, H: 1138}} {
 		if got := media.PosterFrameSize(media.VideoPoster, in.W, in.H); got != want {
 			t.Errorf("poster frame of %v: %v, want %v", in, got, want)
-		}
-	}
-	for d, want := range map[float64][2]float64{12: {3, 3}, 2: {0, 2}, 3.5: {0.5, 3}, 600: {150, 3}} {
-		if s, l := media.AutoHoverPreview(d); s != want[0] || l != want[1] {
-			t.Errorf("auto preview of %gs: %g+%g", d, s, l)
 		}
 	}
 }

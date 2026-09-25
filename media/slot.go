@@ -388,8 +388,8 @@ type SlotImage struct {
 	URL  string `json:"url"`
 }
 
-// OutputURLs builds slot and hover-preview output URLs for one caller.
-// Outputs of gated slots (video posters) and hover previews are served from
+// OutputURLs builds slot output URLs for one caller.
+// Outputs of gated slots (video posters) are served from
 // editor/ with EditorToken to editors, from public/ to others when Exposure
 // publishes them, and left out otherwise.
 type OutputURLs struct {

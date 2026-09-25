@@ -3,7 +3,7 @@
 // staged upload while reading it for processing and places it at its content
 // address (media.Manifests.Place), derives image variants, zips, slot outputs
 // and inline images (media/image, libvips) and encodes video, posters and
-// hover previews (media/video, ffmpeg). The host only presigns, commits,
+// (media/video, ffmpeg). The host only presigns, commits,
 // publishes and reads.
 //
 // The host builds the worker from the same code that builds its
@@ -195,7 +195,7 @@ type imageWorker struct {
 func (w *imageWorker) Timeout(*river.Job[workqueue.ImageArgs]) time.Duration { return w.c.ImageTimeout }
 
 // Work runs one image job, after any equal job it follows. A video item's
-// poster or hover preview is then handed to the host's Publish, which copies
+// poster is then handed to the host's Publish, which copies
 // what its Exposure allows to public/.
 func (w *imageWorker) Work(ctx context.Context, job *river.Job[workqueue.ImageArgs]) error {
 	pj := media.ProcessJob{Ref: job.Args.Ref, Slot: job.Args.Slot}
@@ -207,7 +207,7 @@ func (w *imageWorker) Work(ctx context.Context, job *river.Job[workqueue.ImageAr
 		return err
 	}
 	err = w.images.Process(ctx, pj)
-	if item.Kind().Video != nil && (pj.Slot == media.PosterSlot || pj.Slot == media.HoverPreview) {
+	if item.Kind().Video != nil && pj.Slot == media.PosterSlot {
 		err = errors.Join(err, w.host.Publish(ctx, pj.Ref))
 	}
 	return err

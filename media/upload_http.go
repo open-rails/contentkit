@@ -23,8 +23,8 @@ type UploadHandlerOptions struct {
 	Actor  func(*http.Request) (access.Actor, bool) // the host's authenticated caller; false answers 401
 	Logger *slog.Logger                             // 5xx causes; default slog.Default()
 	// Reader builds slot and video-image reply URLs (the access worker
-	// origin; editor tokens for unpublished video posters and hover
-	// previews); required for slot and video routes.
+	// origin; editor tokens for unpublished video posters); required for
+	// slot and video routes.
 	Reader *Reader
 }
 
@@ -44,9 +44,8 @@ type UploadHandlerOptions struct {
 //	POST /edit-slot              SlotEditBody     -> SlotManifest   re-edit the committed original
 //	POST /slot                   SlotRefBody      -> SlotManifest
 //	POST /slot-original          SlotRefBody      -> the committed original's bytes (editor)
-//	POST /video-images   VideoImagesBody  -> VideoImages   poster + hover preview, with selections
+//	POST /video-images   VideoImagesBody  -> VideoImages   poster, with selections
 //	POST /video-poster   VideoPosterBody  -> VideoImages
-//	POST /video-preview  VideoPreviewBody -> VideoImages
 //	GET  /frame?kind=&id=&version=&file=&t=&w= -> image/jpeg   poster picker frame (UploadOptions.Frames)
 func UploadHandler(u *Uploads, o UploadHandlerOptions) http.Handler {
 	if o.Logger == nil {
@@ -68,7 +67,6 @@ func UploadHandler(u *Uploads, o UploadHandlerOptions) http.Handler {
 	mux.HandleFunc("POST /slot-original", h.slotOriginal)
 	mux.HandleFunc("POST /video-images", h.videoImages)
 	mux.HandleFunc("POST /video-poster", h.videoPoster)
-	mux.HandleFunc("POST /video-preview", h.videoPreview)
 	mux.HandleFunc("GET /frame", h.frame)
 	return mux
 }
@@ -220,15 +218,6 @@ type VideoPosterBody struct {
 	Time   *float64 `json:"time,omitempty"`
 	SHA256 string   `json:"sha256,omitempty"`
 	Edit   *Edit    `json:"edit,omitempty"`
-}
-
-// VideoPreviewBody selects the hover-preview section: start omitted is the
-// automatic section; duration defaults to 3 and is bounded 1-6 seconds.
-type VideoPreviewBody struct {
-	Ref      RefBody  `json:"ref"`
-	File     string   `json:"file,omitempty"`
-	Start    *float64 `json:"start,omitempty"`
-	Duration float64  `json:"duration,omitempty"`
 }
 
 // ErrorReply is the error body; Code is one of the media Code* constants,
@@ -518,16 +507,6 @@ func (h uploadHandler) videoPoster(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.videoReply(w, r, b.Ref, b.File, h.u.SetVideoPoster(r.Context(), actor, h.ref(b.Ref), req))
-}
-
-func (h uploadHandler) videoPreview(w http.ResponseWriter, r *http.Request) {
-	var b VideoPreviewBody
-	actor, ok := h.read(w, r, &b)
-	if !ok {
-		return
-	}
-	err := h.u.SetHoverPreview(r.Context(), actor, h.ref(b.Ref), PreviewRequest{File: b.File, Start: b.Start, Duration: b.Duration})
-	h.videoReply(w, r, b.Ref, b.File, err)
 }
 
 func (h uploadHandler) videoReply(w http.ResponseWriter, r *http.Request, ref RefBody, file string, err error) {

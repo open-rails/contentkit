@@ -49,10 +49,10 @@ func (actorHeader) Actor(ctx context.Context) (access.Actor, bool) {
 	return a, ok
 }
 
-// TestVideoExposure publishes a video item's poster and hover preview per
-// its visibility and serves them through the real worker: nothing for a
-// draft, the poster alone for a paid item, both for a free one, nothing
-// again once unpublished; editors see the unpublished outputs.
+// TestVideoExposure publishes a video item's poster per its visibility and
+// serves it through the real worker: nothing for a draft, the poster for a
+// paid or free item, nothing again once unpublished; editors see the
+// unpublished outputs. Every viewer of the poster gets its frame time.
 func TestVideoExposure(t *testing.T) {
 	env := s3test.Open(t)
 	ctx := context.Background()
@@ -72,7 +72,7 @@ func TestVideoExposure(t *testing.T) {
 	// What the image job and the video worker render: editor/ outputs, plus
 	// the records that list them.
 	poster, _ := item.SlotOutput(media.PosterSlot, 480)
-	outputs := map[string]string{poster: "poster", item.HoverPreviewOutput(320, true): "clip mp4", item.HoverPreviewOutput(320, false): "clip webp"}
+	outputs := map[string]string{poster: "poster"}
 	for k, body := range outputs {
 		if !strings.HasPrefix(k, item.EditorPrefix()) {
 			t.Fatalf("rendered output outside editor/: %s", k)
@@ -84,16 +84,10 @@ func TestVideoExposure(t *testing.T) {
 	}
 	if err := ms.UpdateSlot(ctx, ref, media.PosterSlot, func(r *media.SlotRecord) error {
 		r.Original = `"etag"`
+		r.Frame = &media.PosterFrame{File: "source", Time: 2.5, Auto: true, Source: `"etag"`}
 		fp := r.Fingerprint((&media.Video{PosterWidths: []int{480, 960, 1920}}).Poster())
 		r.Result = &media.SlotResult{Of: fp, Source: r.Original, Outputs: []media.SlotRendition{{Rung: 480, W: 480, H: 270}}}
 		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := ms.UpdateHoverPreview(ctx, ref, func(*media.HoverPreviewRecord) (*media.HoverPreviewRecord, error) {
-		rec := &media.HoverPreviewRecord{File: "source", Start: 1, Duration: 3}
-		rec.Result = &media.HoverPreviewResult{Of: rec.Key(), Outputs: []media.Dims{{W: 320, H: 180}}}
-		return rec, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +129,6 @@ func TestVideoExposure(t *testing.T) {
 	}
 	public := func(key string) int { return fetch(mediaSrv.URL + "/" + key) }
 	posterURL, _ := item.SlotPublic(media.PosterSlot, 480)
-	mp4URL, webpURL := item.HoverPreviewPublic(320, true), item.HoverPreviewPublic(320, false)
 	publish := func(res access.Resolution) {
 		t.Helper()
 		vis.set(res)
@@ -151,53 +144,44 @@ func TestVideoExposure(t *testing.T) {
 
 	// A draft: nothing public, the read API hides it, editors see everything.
 	publish(access.Resolution{})
-	for _, k := range []string{posterURL, mp4URL, webpURL} {
-		if code := public(k); code != http.StatusNotFound {
-			t.Fatalf("draft %s: %d", k, code)
-		}
+	if code := public(posterURL); code != http.StatusNotFound {
+		t.Fatalf("draft poster: %d", code)
 	}
 	if code, _ := images(""); code != http.StatusNotFound {
 		t.Fatalf("draft video-images: %d", code)
 	}
 	code, ed := images("editor")
-	if code != http.StatusOK || len(ed.Poster.Outputs) != 1 || len(ed.HoverPreview.MP4) != 1 {
+	if code != http.StatusOK || len(ed.Poster.Outputs) != 1 {
 		t.Fatalf("editor video-images: %d %+v", code, ed)
 	}
-	for _, u := range []string{ed.Poster.Outputs[0].URL, ed.HoverPreview.MP4[0].URL, ed.HoverPreview.WebP[0].URL} {
-		if !strings.Contains(u, "/editor/") || fetch(u) != http.StatusOK {
-			t.Fatalf("editor url %s", u)
-		}
+	if u := ed.Poster.Outputs[0].URL; !strings.Contains(u, "/editor/") || fetch(u) != http.StatusOK {
+		t.Fatalf("editor url %s", u)
 	}
 
-	// Paid: the poster is the teaser; no hover clip.
+	// Paid: the poster is the teaser.
 	publish(access.Resolution{Visible: true})
-	if public(posterURL) != http.StatusOK || public(mp4URL) != http.StatusNotFound || public(webpURL) != http.StatusNotFound {
-		t.Fatalf("paid: poster %d mp4 %d webp %d", public(posterURL), public(mp4URL), public(webpURL))
+	if code := public(posterURL); code != http.StatusOK {
+		t.Fatalf("paid poster: %d", code)
 	}
 	code, v := images("viewer")
 	if code != http.StatusOK || len(v.Poster.Outputs) != 1 || !strings.HasPrefix(v.Poster.Outputs[0].URL, mediaSrv.URL+"/"+posterURL) ||
-		len(v.HoverPreview.MP4) != 0 || v.HoverPreview.Pending {
+		v.Poster.File != "source" || v.Poster.Time == nil || *v.Poster.Time != 2.5 || v.Poster.Selection != nil {
 		t.Fatalf("paid video-images: %d %+v", code, v)
 	}
 	if fetch(v.Poster.Outputs[0].URL) != http.StatusOK {
 		t.Fatal("published poster url")
 	}
 
-	// Free: both.
+	// Free: the poster.
 	publish(access.Resolution{Visible: true, Accessible: true})
-	for _, k := range []string{posterURL, mp4URL, webpURL} {
-		if code := public(k); code != http.StatusOK {
-			t.Fatalf("free %s: %d", k, code)
-		}
-	}
-	if code, v := images(""); code != http.StatusOK || len(v.HoverPreview.WebP) != 1 || fetch(v.HoverPreview.WebP[0].URL) != http.StatusOK {
+	if code, v := images(""); code != http.StatusOK || public(posterURL) != http.StatusOK || len(v.Poster.Outputs) != 1 {
 		t.Fatalf("free video-images: %d %+v", code, v)
 	}
 
 	// A host policy that allows no teaser for paid items.
 	strict, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: kinds, Resolver: vis,
 		Exposure: func(_ context.Context, _ contentref.ContentRef, res access.Resolution) media.Exposure {
-			return media.Exposure{Poster: res.Full(), HoverPreview: res.Full()}
+			return media.Exposure{Poster: res.Full()}
 		}})
 	if err != nil {
 		t.Fatal(err)
@@ -213,10 +197,8 @@ func TestVideoExposure(t *testing.T) {
 	// Unpublished (or deleted): gone at once.
 	publish(access.Resolution{Visible: true, Accessible: true})
 	publish(access.Resolution{})
-	for _, k := range []string{posterURL, mp4URL, webpURL} {
-		if code := public(k); code != http.StatusNotFound {
-			t.Fatalf("unpublished %s: %d", k, code)
-		}
+	if code := public(posterURL); code != http.StatusNotFound {
+		t.Fatalf("unpublished poster: %d", code)
 	}
 	if code, _ := images("viewer"); code != http.StatusNotFound {
 		t.Fatalf("unpublished video-images: %d", code)

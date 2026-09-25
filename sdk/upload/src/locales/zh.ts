@@ -55,18 +55,6 @@ export const zh: UploadUiMessageBundle = {
     processing: "视频仍在处理中。编码完成后即可选择封面。",
     rendering: "正在生成封面…",
   },
-  preview: {
-    title: "悬停预览",
-    description: "选择鼠标悬停在视频上时静音播放的片段（{min}–{max} 秒）。",
-    section: "片段",
-    start: "从 {time} 开始",
-    length: "{seconds} 秒",
-    approximate: "大致预览",
-    rendered: "已生成的预览",
-    save: "保存预览",
-    auto: "自动",
-    rendering: "正在生成预览…",
-  },
   progress: {
     decoding: "正在打开图片…",
     hashing: "正在准备…",
@@ -94,7 +82,7 @@ export const zh: UploadUiMessageBundle = {
       muxing: "封装中",
       uploading: "保存中",
       publishing: "发布中",
-      images: "正在生成封面和预览",
+      images: "正在生成封面",
     },
   },
   gallery: {

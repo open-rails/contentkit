@@ -7,16 +7,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 
 	"github.com/open-rails/contentkit/media"
 )
 
-// images brings the item's poster frame and hover preview up to their
-// selections from this manifest's video file. Selections of another version
-// are left to that version's job; uploaded posters to the image job.
+// images brings the item's poster frame up to its selection from this
+// manifest's video file. A selection of another version is left to that
+// version's job; an uploaded poster to the image job.
 func (e *Encoder) images(ctx context.Context, ms *media.Manifests, item media.Item, man *media.Manifest) error {
-	return errors.Join(e.poster(ctx, ms, item, man), e.preview(ctx, ms, item, man))
+	return e.poster(ctx, ms, item, man)
 }
 
 func duration(f media.File) float64 { d, _ := f.Meta["duration"].(float64); return d }
@@ -166,126 +165,4 @@ func (e *Encoder) autoFrame(ctx context.Context, item media.Item, r media.Rendit
 		}
 	}
 	return bestT, nil
-}
-
-func (e *Encoder) preview(ctx context.Context, ms *media.Manifests, item media.Item, man *media.Manifest) error {
-	ref := item.Ref()
-	for range 4 {
-		rec, err := ms.HoverPreview(ctx, ref)
-		if errors.Is(err, media.ErrNotFound) {
-			rec = nil
-		} else if err != nil {
-			return err
-		}
-		sel := media.HoverPreviewRecord{Auto: true, Version: ref.Version()}
-		if rec != nil {
-			sel = *rec
-			sel.Result = nil
-		}
-		if sel.Version != ref.Version() {
-			return nil
-		}
-		f, ok := media.VideoFile(man, sel.File)
-		if !ok && sel.Auto {
-			f, ok = media.VideoFile(man, "")
-		}
-		if !ok || !media.Encoded(f) {
-			return nil
-		}
-		if sel.Auto {
-			sel.File = f.Name
-			sel.Start, sel.Duration = media.AutoHoverPreview(duration(f))
-		}
-		if rec != nil && rec.Key() == sel.Key() && rec.Result != nil && rec.Result.Of == sel.Key() &&
-			rec.Result.Source == f.Source() && rec.Result.Recipe == PreviewRecipe {
-			return nil
-		}
-		err = e.renderHoverPreview(ctx, ms, item, rec, sel, f)
-		if !errors.Is(err, media.ErrSuperseded) {
-			return err
-		}
-	}
-	return fmt.Errorf("media/video: hover preview of %s kept changing", ref)
-}
-
-func (e *Encoder) renderHoverPreview(ctx context.Context, ms *media.Manifests, item media.Item, rec *media.HoverPreviewRecord, sel media.HoverPreviewRecord, f media.File) error {
-	ref := item.Ref()
-	if rec == nil || rec.Key() != sel.Key() {
-		if err := ms.UpdateHoverPreview(ctx, ref, func(cur *media.HoverPreviewRecord) (*media.HoverPreviewRecord, error) {
-			if (cur == nil) != (rec == nil) || cur != nil && cur.Key() != rec.Key() {
-				return nil, media.ErrSuperseded
-			}
-			next := sel
-			if cur != nil {
-				next.Result = cur.Result
-			}
-			return &next, nil
-		}); err != nil {
-			return err
-		}
-	}
-
-	dir, err := os.MkdirTemp(e.c.TempDir, tempPattern)
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(dir)
-	top, _ := media.FrameRendition(f)
-	sizes := media.HoverPreviewSizes(top.Width, top.Height)
-	r := narrowest(f, sizes[len(sizes)-1].W)
-	d := duration(f)
-	length := min(sel.Duration, d)
-	from := max(0, min(sel.Start, d-length))
-	clip := filepath.Join(dir, "section.mp4")
-	start, err := snippet(ctx, e.c.Store, item, r, from, from+length, clip)
-	if err != nil {
-		return err
-	}
-	webp, mp4, err := renderPreview(ctx, clip, from-start, length, sizes, dir, e.c.Threads)
-	if err != nil {
-		return err
-	}
-	res := &media.HoverPreviewResult{Of: sel.Key(), Source: f.Source(), Recipe: PreviewRecipe}
-	for i, s := range sizes {
-		for _, out := range []struct {
-			path, ctype string
-			mp4         bool
-		}{{webp[i], "image/webp", false}, {mp4[i], "video/mp4", true}} {
-			body, err := os.ReadFile(out.path)
-			if err != nil {
-				return err
-			}
-			if _, err := e.c.Store.Put(ctx, item.HoverPreviewOutput(s.W, out.mp4), bytes.NewReader(body), int64(len(body)),
-				media.PutOptions{ContentType: out.ctype, CacheControl: "no-cache"}); err != nil {
-				return err
-			}
-		}
-		res.Outputs = append(res.Outputs, s)
-	}
-	for _, w := range media.HoverPreviewWidths {
-		if slices.ContainsFunc(sizes, func(s media.Dims) bool { return s.W == w }) {
-			continue
-		}
-		for _, isMP4 := range []bool{false, true} {
-			if err := e.c.Store.Delete(ctx, item.HoverPreviewOutput(w, isMP4)); err != nil && !errors.Is(err, media.ErrNotFound) {
-				return err
-			}
-		}
-	}
-	e.c.Logger.InfoContext(ctx, "media/video: hover preview", "ref", ref.String(), "file", f.Name, "start", from, "duration", length)
-	if err := ms.UpdateHoverPreview(ctx, ref, func(cur *media.HoverPreviewRecord) (*media.HoverPreviewRecord, error) {
-		if cur == nil || cur.Key() != sel.Key() {
-			return nil, media.ErrSuperseded
-		}
-		cur.Result = res
-		return cur, nil
-	}); err != nil {
-		return err
-	}
-	// The host's process job publishes it (media.Jobs.Publish) as the item's exposure allows.
-	if e.c.Slots == nil {
-		e.c.Logger.WarnContext(ctx, "media/video: no Config.Slots; hover preview not published", "ref", ref.String())
-		return nil
-	}
-	return e.c.Slots.Enqueue(ctx, media.ProcessJob{Ref: ref.Content(), Slot: media.HoverPreview})
 }

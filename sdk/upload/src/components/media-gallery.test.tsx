@@ -94,14 +94,13 @@ it("carousel: the arrow that reaches an end hands focus to the carousel, so arro
 it("a multi-video gallery draws the poster on the video it was cut from, for any viewer", () => {
   const two = read("full", [vid(0), vid(1)]);
   const poster = { aspect: "16:9", outputs: [{ name: "poster_480", w: 480, h: 270, url: "https://m/poster.webp" }], pending: false, min_width: 480 };
-  const preview = { mp4: [], webp: [], pending: false };
-  const { rerender } = render(<MediaGallery read={two} hlsBase={hlsBase} videoImages={{ poster: { ...poster, file: "1.mp4" }, hover_preview: preview }} />);
+  const { rerender } = render(<MediaGallery read={two} hlsBase={hlsBase} videoImages={{ poster: { ...poster, file: "1.mp4" } }} />);
   const posterIn = (i: number) => document.querySelectorAll("[data-ckui=slide]")[i]!.querySelector("img[src*='poster.webp']");
   expect(posterIn(0)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
   expect(posterIn(1)).not.toBeNull();
   // An uploaded poster (no file) belongs to the first video.
-  rerender(<MediaGallery read={two} hlsBase={hlsBase} videoImages={{ poster, hover_preview: preview }} />);
+  rerender(<MediaGallery read={two} hlsBase={hlsBase} videoImages={{ poster }} />);
   fireEvent.click(screen.getByRole("button", { name: "Previous" }));
   expect(posterIn(0)).not.toBeNull();
 });

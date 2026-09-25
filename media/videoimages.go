@@ -1,28 +1,21 @@
 package media
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
-// Video kinds carry two public images besides the HLS sprite: the poster
-// slot and a hover preview, a short silent loop. Both are item-level.
-const (
-	PosterSlot   = "poster"
-	HoverPreview = "hover_preview"
-)
+// PosterSlot is the video kinds' item-level cover. Players preview the video
+// itself (the SDK plays its HLS inline), so there is no separate preview clip.
+const PosterSlot = "poster"
 
 // VideoPoster is the default poster slot (Video.Poster): every video kind
 // gets one at its Video.PosterWidths. Its original is an uploaded image or a
@@ -33,17 +26,6 @@ var VideoPoster = (*Video)(nil).Poster()
 
 // Poster is the item's poster slot (zero for non-video kinds).
 func (i Item) Poster() Slot { return i.Kind().Slots[PosterSlot] }
-
-// Hover preview bounds (seconds) and output widths. The smallest width is
-// always rendered, so listings can link it without a read; wider ones only
-// when the video is at least that wide.
-const (
-	HoverPreviewDefault = 3.0
-	HoverPreviewMin     = 1.0
-	HoverPreviewMax     = 6.0
-)
-
-var HoverPreviewWidths = []int{320, 640}
 
 // PosterFrame is a poster grabbed from a video frame (SlotRecord.Frame).
 type PosterFrame struct {
@@ -78,123 +60,7 @@ func FrameRendition(f File) (Rendition, bool) {
 	return slices.MaxFunc(f.HLS.Video, func(a, b Rendition) int { return a.Width - b.Width }), true
 }
 
-// HoverPreviewRecord is originals/hover_preview.json: the selected section and
-// the last render.
-type HoverPreviewRecord struct {
-	Version  string              `json:"version,omitempty"`
-	File     string              `json:"file"`
-	Start    float64             `json:"start"`
-	Duration float64             `json:"duration"`
-	Auto     bool                `json:"auto,omitempty"`
-	Result   *HoverPreviewResult `json:"result,omitempty"`
-}
-
-// Key identifies the selection a result was rendered for.
-func (r HoverPreviewRecord) Key() string {
-	return r.Version + "|" + r.File + "|" + strconv.FormatFloat(r.Start, 'f', 3, 64) + "|" + strconv.FormatFloat(r.Duration, 'f', 3, 64)
-}
-
-// HoverPreviewResult is what the served outputs were rendered from.
-type HoverPreviewResult struct {
-	Of      string `json:"of"`     // HoverPreviewRecord.Key
-	Source  string `json:"source"` // the file's original
-	Recipe  string `json:"recipe"` // the renderer's identity
-	Outputs []Dims `json:"outputs"`
-}
-
-// AutoHoverPreview is the default section: HoverPreviewDefault seconds from a
-// quarter in, inside the video.
-func AutoHoverPreview(duration float64) (start, length float64) {
-	length = math.Min(HoverPreviewDefault, duration)
-	start = math.Max(0, math.Min(duration*0.25, duration-length))
-	return round3(start), round3(length)
-}
-
 func round3(v float64) float64 { return math.Round(v*1000) / 1000 }
-
-// HoverPreviewAspect is the hover preview's centred crop.
-const HoverPreviewAspect = 16.0 / 9
-
-// HoverPreviewSizes are the output sizes for a w×h video: the centred
-// HoverPreviewAspect crop, never upscaled beyond the smallest width.
-func HoverPreviewSizes(w, h int) []Dims {
-	cropW := min(float64(w), float64(h)*HoverPreviewAspect)
-	var out []Dims
-	for i, pw := range HoverPreviewWidths {
-		if i == 0 || float64(pw) <= cropW {
-			out = append(out, Dims{W: pw, H: max(1, int(math.Round(float64(pw)/HoverPreviewAspect)))})
-		}
-	}
-	return out
-}
-
-// HoverPreviewRecord is originals/hover_preview.json.
-func (i Item) HoverPreviewRecord() string { return i.OriginalsPrefix() + HoverPreview + slotRecordExt }
-
-// HoverPreviewOutput is where the worker renders a hover preview:
-// editor/hover_preview_{width}.webp or .mp4. Publish copies it to
-// HoverPreviewPublic as the item's Exposure allows.
-func (i Item) HoverPreviewOutput(width int, mp4 bool) string {
-	return i.EditorPrefix() + hoverPreviewName(width, mp4)
-}
-
-// HoverPreviewPublic is public/hover_preview_{width}.webp or .mp4.
-func (i Item) HoverPreviewPublic(width int, mp4 bool) string {
-	return i.PublicPrefix() + hoverPreviewName(width, mp4)
-}
-
-func hoverPreviewName(width int, mp4 bool) string {
-	ext := layout.PublicExt
-	if mp4 {
-		ext = layout.PublicMP4Ext
-	}
-	return HoverPreview + "_" + strconv.Itoa(width) + ext
-}
-
-// HoverPreview returns an item's hover-preview record, or ErrNotFound.
-func (m *Manifests) HoverPreview(ctx context.Context, ref contentref.ContentRef) (*HoverPreviewRecord, error) {
-	item, err := m.kinds.Item(ref.Content())
-	if err != nil {
-		return nil, err
-	}
-	body, _, err := m.raw(ctx, item.HoverPreviewRecord())
-	if err != nil {
-		return nil, err
-	}
-	var rec HoverPreviewRecord
-	if err := json.Unmarshal(body, &rec); err != nil {
-		return nil, fmt.Errorf("media: decode hover preview record: %w", err)
-	}
-	return &rec, nil
-}
-
-// UpdateHoverPreview applies fn to the record (nil before the first write)
-// like UpdateSlot. fn returns the record to write, or nil to leave it alone.
-func (m *Manifests) UpdateHoverPreview(ctx context.Context, ref contentref.ContentRef, fn func(*HoverPreviewRecord) (*HoverPreviewRecord, error)) error {
-	item, err := m.kinds.Item(ref.Content())
-	if err != nil {
-		return err
-	}
-	_, err = m.edit(ctx, item.HoverPreviewRecord(), func(body []byte) ([]byte, error) {
-		var cur *HoverPreviewRecord
-		if body != nil {
-			cur = &HoverPreviewRecord{}
-			if err := json.Unmarshal(body, cur); err != nil {
-				return nil, fmt.Errorf("media: decode hover preview record: %w", err)
-			}
-		}
-		next, err := fn(cur)
-		if err != nil || next == nil {
-			return nil, err
-		}
-		out, err := json.Marshal(next)
-		if err != nil || bytes.Equal(out, body) {
-			return nil, err
-		}
-		return out, nil
-	})
-	return err
-}
 
 // ErrSuperseded reports a record that changed while a job worked from it; the
 // job for the newer record does the work instead.
@@ -287,61 +153,6 @@ func (u *Uploads) SetVideoPoster(ctx context.Context, actor access.Actor, ref co
 func posterFrame(item Item, f File) Dims {
 	r, _ := FrameRendition(f)
 	return PosterFrameSize(item.Poster(), r.Width, r.Height)
-}
-
-// PreviewRequest selects the hover-preview section: Start nil is the
-// automatic section; Duration 0 is HoverPreviewDefault.
-type PreviewRequest struct {
-	File     string
-	Start    *float64
-	Duration float64
-}
-
-// SetHoverPreview records a hover-preview selection and enqueues its render.
-func (u *Uploads) SetHoverPreview(ctx context.Context, actor access.Actor, ref contentref.ContentRef, r PreviewRequest) error {
-	item, err := u.videoItem(ref)
-	if err != nil {
-		return err
-	}
-	if _, err := u.authorize(ctx, actor, ref.Content()); err != nil {
-		return err
-	}
-	f, err := u.encodedVideo(ctx, item, r.File)
-	if err != nil {
-		return err
-	}
-	d := metaFloat(f.Meta, "duration")
-	rec := HoverPreviewRecord{Version: ref.Version(), File: f.Name}
-	if r.Start == nil {
-		if r.Duration != 0 {
-			return uploadErr(CodeInvalid, "duration needs a start")
-		}
-		rec.Auto = true
-		rec.Start, rec.Duration = AutoHoverPreview(d)
-	} else {
-		length := r.Duration
-		if length == 0 {
-			length = HoverPreviewDefault
-		}
-		length = math.Min(length, d)
-		start := *r.Start
-		switch {
-		case math.IsNaN(length) || length < math.Min(HoverPreviewMin, d) || length > HoverPreviewMax:
-			return uploadErr(CodeInvalid, "duration must be %g-%g seconds", HoverPreviewMin, HoverPreviewMax)
-		case math.IsNaN(start) || start < 0 || start+length > d+0.001:
-			return uploadErr(CodeInvalid, "the section must lie within 0-%.3f seconds", d)
-		}
-		rec.Start, rec.Duration = round3(start), round3(length)
-	}
-	if err := u.o.Manifests.UpdateHoverPreview(ctx, ref, func(cur *HoverPreviewRecord) (*HoverPreviewRecord, error) {
-		if cur != nil {
-			rec.Result = cur.Result
-		}
-		return &rec, nil
-	}); err != nil {
-		return err
-	}
-	return u.enqueueVideo(ctx, ref)
 }
 
 // Frame renders a small JPEG of the encoded file's frame at t for the poster
@@ -443,24 +254,25 @@ func (u *Uploads) enqueueVideo(ctx context.Context, ref contentref.ContentRef) e
 	return u.o.Queue.Enqueue(ctx, ProcessJob{Ref: ref})
 }
 
-// VideoImages is a video item's poster and hover preview. Selections and
-// Video are only in the uploader's reply (POST /video-images).
+// VideoImages is a video item's poster. Selections and Video are only in the
+// uploader's reply (POST /video-images).
 type VideoImages struct {
-	Poster       PosterManifest       `json:"poster"`
-	HoverPreview HoverPreviewManifest `json:"hover_preview"`
-	Video        *VideoInfo           `json:"video,omitempty"`
+	Poster PosterManifest `json:"poster"`
+	Video  *VideoInfo     `json:"video,omitempty"`
 	// Progress of the encode the outputs wait on (GET only, with
 	// ReaderOptions.Progress): a file's run, then PhaseImages.
 	Progress *EncodeProgress `json:"progress,omitempty"`
 }
 
-// PosterManifest is the poster slot's manifest plus its selection. File is
-// the video a frame poster was cut from, for every caller that sees the
-// poster: a gallery draws it on that video only ("" for an uploaded poster,
-// which belongs to the first video).
+// PosterManifest is the poster slot's manifest plus its selection. File and
+// Time are the video and second a frame poster was cut from, for every caller
+// that sees the poster: a gallery draws it on that video only and starts its
+// inline preview there ("" for an uploaded poster, which belongs to the first
+// video).
 type PosterManifest struct {
 	SlotManifest
 	File      string           `json:"file,omitempty"`
+	Time      *float64         `json:"time,omitempty"`
 	Selection *PosterSelection `json:"selection,omitempty"`
 }
 
@@ -470,30 +282,6 @@ type PosterSelection struct {
 	Version string   `json:"version,omitempty"`
 	File    string   `json:"file,omitempty"`
 	Time    *float64 `json:"time,omitempty"`
-}
-
-// HoverPreviewManifest lists the rendered loops by ascending width, at URLs
-// versioned like slot outputs: MP4 (H.264, 2-3× smaller) and animated WebP.
-type HoverPreviewManifest struct {
-	File      string                 `json:"file,omitempty"` // the video the loop was cut from
-	Selection *HoverPreviewSelection `json:"selection,omitempty"`
-	MP4       []PreviewImage         `json:"mp4"`
-	WebP      []PreviewImage         `json:"webp"`
-	Pending   bool                   `json:"pending"`
-}
-
-type HoverPreviewSelection struct {
-	Version  string  `json:"version,omitempty"`
-	File     string  `json:"file"`
-	Start    float64 `json:"start"`
-	Duration float64 `json:"duration"`
-	Auto     bool    `json:"auto,omitempty"`
-}
-
-type PreviewImage struct {
-	W   int    `json:"w"`
-	H   int    `json:"h"`
-	URL string `json:"url"`
 }
 
 // VideoInfo is the picker's video: the selected (or first) file of the ref's
@@ -508,29 +296,9 @@ type VideoInfo struct {
 	Encoded  bool    `json:"encoded"`
 }
 
-// HoverPreviewURLs are the public URLs of the smallest hover-preview loop,
-// which every rendered preview has; it reads nothing, so listings link
-// previews without reads (posters: ListedSlot with PosterSlot). They answer
-// only once the item's Exposure publishes the preview: link them only for
-// items anonymous viewers fully see (DefaultExposure), never for drafts or
-// paid items. Renders rewrite them in place (no-cache, ETag).
-func (r *Reader) HoverPreviewURLs(ref contentref.ContentRef) (mp4, webp string, err error) {
-	item, err := r.kinds.Item(ref.Content())
-	if err != nil || item.Kind().Video == nil {
-		return "", "", fmt.Errorf("%w: not a video item", ErrNotVisible)
-	}
-	w := HoverPreviewWidths[0]
-	base := r.base.String()
-	return previewURL(base, item, w, true), previewURL(base, item, w, false), nil
-}
-
-func previewURL(base string, item Item, w int, mp4 bool) string {
-	return strings.TrimRight(base, "/") + "/" + item.HoverPreviewPublic(w, mp4)
-}
-
-// VideoImages resolves ref for actor and reads a video item's poster and
-// hover preview: ErrNotVisible for an item actor may not see; editors get
-// both from editor/, others what the item has published (see Exposure).
+// VideoImages resolves ref for actor and reads a video item's poster:
+// ErrNotVisible for an item actor may not see; editors get it from editor/,
+// others what the item has published (see Exposure).
 func (r *Reader) VideoImages(ctx context.Context, ref contentref.ContentRef, actor access.Actor) (VideoImages, error) {
 	urls, err := r.outputURLs(ctx, ref, actor)
 	if err != nil {
@@ -563,34 +331,13 @@ func (m *Manifests) VideoImages(ctx context.Context, urls OutputURLs, ref conten
 	}
 	if rec != nil && rec.Frame != nil {
 		out.Poster.File = rec.Frame.File
-	}
-	out.HoverPreview = HoverPreviewManifest{MP4: []PreviewImage{}, WebP: []PreviewImage{}, Pending: true}
-	prev, err := m.HoverPreview(ctx, ref)
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		return VideoImages{}, err
-	}
-	editor := urls.EditorToken != ""
-	switch {
-	case !editor && !urls.Exposure.HoverPreview:
-		out.HoverPreview.Pending = false // not this caller's
-	case prev != nil && prev.Result != nil:
-		res := prev.Result
-		out.HoverPreview.Pending = res.Of != prev.Key()
-		out.HoverPreview.File = prev.File
-		for _, o := range res.Outputs {
-			mp4, webp := previewURL(urls.BaseURL, item, o.W, true), previewURL(urls.BaseURL, item, o.W, false)
-			if editor {
-				mp4, webp = urls.editorURL(item.HoverPreviewOutput(o.W, true)), urls.editorURL(item.HoverPreviewOutput(o.W, false))
-			}
-			out.HoverPreview.MP4 = append(out.HoverPreview.MP4, PreviewImage{o.W, o.H, mp4})
-			out.HoverPreview.WebP = append(out.HoverPreview.WebP, PreviewImage{o.W, o.H, webp})
+		if !rec.Frame.Auto || rec.Frame.Source != "" {
+			t := rec.Frame.Time
+			out.Poster.Time = &t
 		}
 	}
 	if !uploader {
 		return out, nil
-	}
-	if prev != nil {
-		out.HoverPreview.Selection = &HoverPreviewSelection{Version: prev.Version, File: prev.File, Start: prev.Start, Duration: prev.Duration, Auto: prev.Auto}
 	}
 	switch {
 	case rec == nil:
@@ -599,10 +346,7 @@ func (m *Manifests) VideoImages(ctx context.Context, urls OutputURLs, ref conten
 		if rec.Frame.Auto {
 			s.Source = PosterSourceAuto
 		}
-		if !rec.Frame.Auto || rec.Frame.Source != "" {
-			t := rec.Frame.Time
-			s.Time = &t
-		}
+		s.Time = out.Poster.Time
 		out.Poster.Selection = s
 	case rec.Original != "":
 		out.Poster.Selection = &PosterSelection{Source: PosterSourceUpload}

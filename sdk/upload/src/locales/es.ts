@@ -55,18 +55,6 @@ export const es: UploadUiMessageBundle = {
     processing: "El vídeo aún se está procesando. Podrás elegir la portada cuando esté codificado.",
     rendering: "Generando la portada…",
   },
-  preview: {
-    title: "Vista previa al pasar el cursor",
-    description: "Elige el fragmento que se reproduce sin sonido al pasar el cursor por el vídeo ({min}–{max} s).",
-    section: "Fragmento",
-    start: "Empieza en {time}",
-    length: "{seconds} s",
-    approximate: "Vista previa aproximada",
-    rendered: "Vista previa generada",
-    save: "Guardar vista previa",
-    auto: "Automática",
-    rendering: "Generando la vista previa…",
-  },
   progress: {
     decoding: "Abriendo imagen…",
     hashing: "Preparando…",
@@ -94,7 +82,7 @@ export const es: UploadUiMessageBundle = {
       muxing: "Empaquetando",
       uploading: "Guardando",
       publishing: "Publicando",
-      images: "Creando póster y vista previa",
+      images: "Creando póster",
     },
   },
   gallery: {

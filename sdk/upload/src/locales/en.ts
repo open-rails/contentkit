@@ -53,18 +53,6 @@ export const en = {
     processing: "The video is still processing. You can set a cover once it is encoded.",
     rendering: "Rendering cover…",
   },
-  preview: {
-    title: "Hover preview",
-    description: "Choose the section that plays silently when viewers hover over the video ({min}–{max} s).",
-    section: "Section",
-    start: "Starts at {time}",
-    length: "{seconds} s",
-    approximate: "Approximate preview",
-    rendered: "Rendered preview",
-    save: "Save preview",
-    auto: "Automatic",
-    rendering: "Rendering preview…",
-  },
   progress: {
     decoding: "Opening image…",
     hashing: "Preparing…",
@@ -92,7 +80,7 @@ export const en = {
       muxing: "Packaging",
       uploading: "Saving",
       publishing: "Publishing",
-      images: "Making cover and preview",
+      images: "Making cover",
     },
   },
   gallery: {

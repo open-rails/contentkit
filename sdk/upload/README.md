@@ -49,14 +49,13 @@ in place; the media host serves them `no-cache` with an ETag. `slotSources(manif
 while `pending`; `getSlotOriginal` returns the committed original for re-editing;
 `decodeImage` is the EXIF-aware preview the UI crops on.
 
-Video items (#32): a cover (slot `poster`, the video's native aspect) and a hover preview.
+Video items (#32): a cover (slot `poster`, the video's native aspect). There is no preview clip: players preview the HLS itself inline.
 
 ```ts
-await client.getVideoImages(ref);                                  // { poster: { file, … }, hover_preview: { file, … }, video: { file, duration, w, h, encoded } }
+await client.getVideoImages(ref);                                  // { poster: { file, time, … }, video: { file, duration, w, h, encoded } }
 await client.setVideoPoster(ref, { source: "frame", time: 8.3, edit }); // edit in frame pixels (video.w × video.h)
 await client.uploadVideoPoster(image, { ref, edit });              // presign slot "poster" + /video-poster upload
 await client.setVideoPoster(ref, { source: "auto" });
-await client.setHoverPreview(ref, { start: 3, duration: 4 });     // {} = automatic
 await client.getFrame(ref, 8.3, { width: 640 });                   // JPEG Blob (GET /frame)
 await client.waitForVideoImages(ref);                              // until nothing is pending
 ```
@@ -136,9 +135,7 @@ Headless video hooks: `useVideoImages(client, { ref, file?, images? })`,
 `useFrameStrip(client, { ref, duration, count, width })` (frames fetched one at
 a time), `useVideoFrame(client, { ref, time, width, delay })` (debounced exact
 frame), `useVideoPoster(client, { ref, onSaved })` (`saveFrame(time, edit)`,
-`saveUpload(blob, edit)`, `saveAuto()`, `state`) and `useHoverSection(client,
-{ ref, duration, initial, onSaved })` (`start`, `length`, bounded setters,
-`save()`, `saveAuto()`).
+`saveUpload(blob, edit)`, `saveAuto()`, `state`).
 
 Video encode progress: the read API puts `progress` (`EncodeProgress`) on a
 pending video file; `useEncodeProgress(file.progress)` counts its ETA down
@@ -196,10 +193,8 @@ function Cover() {
 | `EncodeProgress` | `progress` (a read API file's `progress`; absent shows "Processing video"), `className`, `appearance`: bar, phase, `segment 5 / 27`, `~40 s left` or queue position; `data-ckui="encode-progress"`, `data-phase` |
 | `SlotImage` | `manifest` or `item` + `slot`, `density`, `round`, `aspect`, `placeholder`, `alt` |
 | `VideoPosterPicker` | `open`, `onOpenChange`, `item`, `file`, `client`, `images` (else fetched), `onChange(images)`, `onError`, `title` (default "Set cover"), `accept`: frame strip + slider + frame steps over `/frame`, "Use this frame", "Crop…" (in `video.w×h` pixels), "Upload image" → `ImageCropDialog` at the video's aspect, "Automatic" |
-| `HoverPreviewPicker` | same props: a 1–6 s range over the frame strip, an approximate flip-book of the section, the rendered loop once saved, "Automatic" |
-| `VideoPoster` | `poster` (`VideoImages.poster` or a listing's outputs), `preview` (`hover_preview` or `{ mp4, webp }` URLs), `playing` (default hover or focus within), `aspect` (default the poster's own), `density`, `alt`, `children`: full-width, uncropped `srcset` cover at its native aspect that plays the preview |
-| `HoverPreview` | `preview`, `active`, `width`: muted looping MP4 (`playsinline`), WebP on error; nothing with `prefers-reduced-motion` |
-| `UploadUiProvider` | `client`, `appearance` (`theme`: `light`/`dark`/`auto`/`inherit`, `variables`), `messages` (bundle or list; locales `en de es ja ko zh`), `t` (host translate hook), `density` (default `[2, 3]`), `onError(error, { operation })` |
+| `VideoPoster` | `poster` (`VideoImages.poster` or a listing's outputs), `aspect` (default the poster's own), `density`, `alt`, `children`: full-width, uncropped `srcset` cover at its native aspect; never plays (for videos the viewer cannot play) |
+| `UploadUiProvider` | `client`, `appearance` (`theme`: `light`/`dark`/`auto`/`inherit`, `variables`), `messages` (bundle or list; locales `en de es ja ko zh`), `t` (host translate hook), `density` (default `[2, 3]`), `onError(error, { operation })`, `inlinePreview` (default true) |
 
 Errors are mapped from `UploadError.code` to `errors.*` messages; an unknown
 refusal shows the server's message, a fault the generic "try again" line.
@@ -242,13 +237,24 @@ only the current slide and its neighbours are mounted, and a video swiped away
 pauses. Viewers without access see the blurred teaser behind one locked item
 with the host's `renderLocked`; locked files carry no URLs.
 
+**Inline preview.** A playable video (read API `hls`) previews in place: with a
+mouse, after 500 ms of hover; on touch, the most visible video in view. It is
+the real HLS player, muted, from the cover's frame (`poster.time`) or 10 % in,
+starting at the lowest rendition (ABR then takes over). One plays page-wide,
+none while a video plays for real, and leaving unloads the player. Clicking
+commits: the same player restarts from 0 with sound and controls. Locked or
+unencoded files have no stream, so they never preview. Off with
+`UploadUiProvider inlinePreview={false}` or the `inlinePreview` prop
+(`MediaGallery`, `VideoPlayer`), and always with reduced motion or Save-Data.
+Headless: `useInlinePreview` with `useHlsPlayer`'s `preview(at)`/`unload()`.
+
 ```tsx
 <MediaGallery
   read={read}                                    // GET /{kind}/{id}?variant=large,blurred
   hlsBase={(f) => `/api/media/post/${id}/hls/${encodeURIComponent(f.name!)}/`}
   xhrSetup={(xhr) => xhr.setRequestHeader("Authorization", `Bearer ${token()}`)} // same-origin playlists only
   refresh={() => refetchRead()}                  // after a 401/403/404: re-grant, then the player resumes once
-  videoImages={images}                           // optional poster + hover preview (GET …/video-images): each drawn on its `file`
+  videoImages={images}                           // optional poster (GET …/video-images): drawn on its `file`; previews start at its `time`
   renderLocked={({ count }) => <UnlockButton count={count} />}
   renderDetails={(item) => <Downloads item={item} />}
   defaultView="carousel"                         // or view + onViewChange; storageKey remembers the choice
@@ -257,8 +263,8 @@ with the host's `renderLocked`; locked files carry no URLs.
 
 `VideoPlayer` (`base`, `width`/`height` reserve the box, `poster`, `duration`,
 `pending`/`progress` show `EncodeProgress`, `failed`, `layout` `frame`|`fill`,
-`maxHeight` default `80svh`, `active`, `xhrSetup`, `refresh`) loads nothing
-until played (hls.js imported then; native HLS on Safari), and never spins
+`maxHeight` default `80svh`, `active`, `xhrSetup`, `refresh`, `inlinePreview`,
+`previewStart`) loads nothing until previewed or played (hls.js imported then; native HLS on Safari), and never spins
 forever: tuned retries surface a dead endpoint within seconds, a watchdog
 catches 10 s without progress, and each failure has its own message, a Retry
 and a support code: unreachable or blocked (status 0, including missing

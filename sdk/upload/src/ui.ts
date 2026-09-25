@@ -13,9 +13,9 @@ export {
   type SlotEditorProps,
   type SlotEditorState,
 } from "./components/slot-editor.js";
-export { HoverPreview, VideoPoster, useReducedMotion, type HoverPreviewProps, type HoverPreviewSource, type VideoPosterProps } from "./components/video-poster.js";
+export { VideoPoster, type VideoPosterProps } from "./components/video-poster.js";
+export { HOVER_DELAY, InlinePreviewContext, useInlinePreview, useReducedMotion, type InlinePreviewOptions } from "./inline-preview.js";
 export { VideoPosterPicker, formatTime, type VideoPickerProps, type VideoPosterPickerProps } from "./components/video-poster-picker.js";
-export { HoverPreviewPicker, type HoverPreviewPickerProps } from "./components/hover-preview-picker.js";
 export { MediaGallery, type MediaGalleryProps } from "./components/media-gallery.js";
 export { SpriteFrame, VideoPlayer, qualityLabel, type VideoPlayerProps } from "./components/video-player.js";
 export { AvatarUpload, CoverUpload, type SlotUploadProps } from "./components/slot-upload.js";

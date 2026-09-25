@@ -44,7 +44,7 @@ type JobsConfig struct {
 	LateUploadWindow time.Duration
 	Limiter          UploadLimiter // releases a deleted item's quota; optional
 	// Resolver decides, with an anonymous actor, what of a video item is
-	// public (Publish); without it no poster or hover preview is published.
+	// public (Publish); without it no poster is published.
 	Resolver access.ContentResolver
 	// Exposure maps that anonymous resolution to what is published; default
 	// DefaultExposure (drafts nothing, free items all, others the poster).
@@ -103,7 +103,7 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 		cfg.Exposure = DefaultExposure
 	}
 	if cfg.Resolver == nil && cfg.Kinds.hasVideo() {
-		cfg.Logger.Warn("media: JobsConfig.Resolver is nil; video posters and hover previews are never published")
+		cfg.Logger.Warn("media: JobsConfig.Resolver is nil; video posters are never published")
 	}
 	return &Jobs{cfg: cfg}, nil
 }
@@ -467,7 +467,7 @@ const DefaultQueue = "contentkit_media"
 
 // HostQueue is the media worker's handle on the host's River schema: it
 // inserts the jobs the host runs on the worker's behalf, a video item's
-// Publish after its poster or hover preview changes and a folder's sweep
+// Publish after its poster changes and a folder's sweep
 // after the worker edits a manifest. It inserts only.
 type HostQueue struct {
 	client *river.Client[pgx.Tx]

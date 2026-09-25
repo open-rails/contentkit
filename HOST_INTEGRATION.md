@@ -395,13 +395,13 @@ Cropping and rotating are ContentKit's: the host never decodes images.
   `SlotManifest.error_code`. GIF and WebP variants derived as stills before
   this release re-derive on the item's next `ProcessJob{Ref}`.
 
-## Video posters and hover previews
+## Video posters and inline previews
 
 Every `Video` kind gets the `poster` slot (`Video.Poster()`): native aspect,
 the video's own shape unless an edit crops it, at `Video.PosterWidths` (the
 host's policy: its display widths × 2–3× density; default
 `media.DefaultPosterWidths` 640/960/1280/1920/2560, skipping widths wider than
-the frame or upload); `poster` and `hover_preview` are reserved slot names.
+the frame or upload); `poster` is a reserved slot name.
 
 - **Poster**: a frame or an uploaded image, encoded by the media worker's
   image job through the slot's edit like any slot. The worker grabs frames
@@ -415,31 +415,31 @@ the frame or upload); `poster` and `hover_preview` are reserved slot names.
   hash changed, so the image job re-encodes every width from the kept
   original and deletes retired ones. Frame edits narrower than the smallest
   width are refused.
-- **Hover preview**: a silent loop, default 3 s from a quarter in, bounded
-  1–6 s, centred 16:9 at 12 fps, as H.264 MP4 and animated WebP at 320
-  (always) and 640 px (when the video is that wide), rendered by the worker.
-  MP4 measured 2.1–2.9× smaller on real footage: prefer `<video muted loop
-  playsinline>`, WebP for `<img>`.
-- **Publishing**: both render to `editor/` (editors only) and are copied to
-  `public/` (tokenless, `public/poster_{w}.webp`,
-  `public/hover_preview_{w}.mp4|.webp?v=`) only as the item's `Exposure`
-  allows. `JobsConfig.Resolver` resolves the item for an anonymous actor and
-  `JobsConfig.Exposure` (default `media.DefaultExposure`) decides: not
-  visible (draft, deleted) → nothing; full access → poster and hover
-  preview; otherwise (paid, preview cut) → the poster alone as a teaser.
-  Pass a policy to vary it per item. Each poster encode and preview render
-  republishes; call `jobs.PublishTx(ctx, tx, ref)` in every transaction that
+- **Inline preview**: there is no preview clip. The SDK's `MediaGallery`
+  plays the video's own HLS muted inline (desktop: after 500 ms of hover;
+  touch: the most visible video in view), one at a time, from the cover's
+  frame (`poster.time`) or 10 % in, at the lowest rendition before ABR takes
+  over, and unloads it when the viewer moves on. Only files the viewer may
+  play (read API `hls`) preview, so locked items show their cover alone.
+  Turn it off with `UploadUiProvider inlinePreview={false}` (or the
+  component prop).
+- **Publishing**: the poster renders to `editor/` (editors only) and is
+  copied to `public/` (tokenless, `public/poster_{w}.webp`) only as the
+  item's `Exposure` allows. `JobsConfig.Resolver` resolves the item for an
+  anonymous actor and `JobsConfig.Exposure` (default
+  `media.DefaultExposure`) decides: not visible (draft, deleted) → nothing;
+  otherwise the poster (the teaser of paid or preview-cut items). Pass a
+  policy to vary it per item. Each poster encode republishes; call `jobs.PublishTx(ctx, tx, ref)` in every transaction that
   changes what anonymous viewers see (publish, unpublish, soft delete,
   restore, price or access changes). It re-resolves after writing, so it
   converges on the latest state. Without a `Resolver` nothing is published.
-- Both cut from the HLS renditions (one segment range, confined ffmpeg
+- Frames are cut from the HLS renditions (one segment range, confined ffmpeg
   inputs), so selection changes never download the source.
 - Upload API (`CanUpload` on the work), each answering `VideoImages`:
   - `POST /video-poster {ref, source: "frame"|"upload"|"auto", file?, time?, sha256?, edit?}`:
     `frame` needs `time` and the ref's version, its edit in the frame's pixels
     (`video.w×h`); `upload` needs the `sha256` of an image presigned with
     `slot: "poster"`. `/edit-slot` re-edits either without a new grab.
-  - `POST /video-preview {ref, file?, start?, duration?}` (no `start`: automatic).
   - `POST /video-images {ref, file?}`: outputs, selections, and the file's
     duration and frame size for the picker.
   - `GET /frame?kind=&id=&version=&file=&t=&w=`: a JPEG from one HLS
@@ -447,10 +447,10 @@ the frame or upload); `poster` and `hover_preview` are reserved slot names.
     rendition. Needs `UploadOptions.Frames` (`video.NewFrames`, ffmpeg in the
     host image); `FrameConcurrency` (2) at once, then 429.
 - Viewers: `GET /{kind}/{id}/video-images` resolves (404 when hidden) and
-  lists what is published (editors: everything, from `editor/`). Listings
-  build URLs without reads, `Reader.ListedSlot(ref, media.PosterSlot,
-  aspect)` and `Reader.HoverPreviewURLs(ref)`, only for items whose
-  Exposure publishes them (default: posters of visible items, hover previews of free ones).
+  lists what is published (editors: everything, from `editor/`), with the
+  cover's `file` and `time`. Listings build poster URLs without reads,
+  `Reader.ListedSlot(ref, media.PosterSlot, aspect)`, only for items whose
+  Exposure publishes them (default: visible items).
 
 ## Production media delivery
 
@@ -494,7 +494,7 @@ the frame or upload); `poster` and `hover_preview` are reserved slot names.
   `contentkit_media_ratelimit_redis_errors`: the limit is abuse protection,
   tokens and visibility checks still gate every file.
 - **Visibility**: wire `JobsConfig.Resolver` and call `PublishTx` on every
-  visibility change (see "Video posters and hover previews"); `DeleteItemsTx`
+  visibility change (see "Video posters and inline previews"); `DeleteItemsTx`
   removes `public/` first.
 
 ## Example: hentai0 (video versions)

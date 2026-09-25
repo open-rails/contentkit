@@ -55,18 +55,6 @@ export const de: UploadUiMessageBundle = {
     processing: "Das Video wird noch verarbeitet. Ein Cover kannst du festlegen, sobald es kodiert ist.",
     rendering: "Cover wird erstellt…",
   },
-  preview: {
-    title: "Hover-Vorschau",
-    description: "Wähle den Abschnitt, der beim Überfahren des Videos stumm abgespielt wird ({min}–{max} s).",
-    section: "Abschnitt",
-    start: "Beginnt bei {time}",
-    length: "{seconds} s",
-    approximate: "Ungefähre Vorschau",
-    rendered: "Erstellte Vorschau",
-    save: "Vorschau speichern",
-    auto: "Automatisch",
-    rendering: "Vorschau wird erstellt…",
-  },
   progress: {
     decoding: "Bild wird geöffnet…",
     hashing: "Wird vorbereitet…",
@@ -94,7 +82,7 @@ export const de: UploadUiMessageBundle = {
       muxing: "Verpacken",
       uploading: "Speichern",
       publishing: "Veröffentlichen",
-      images: "Cover und Vorschau werden erstellt",
+      images: "Cover wird erstellt",
     },
   },
   gallery: {

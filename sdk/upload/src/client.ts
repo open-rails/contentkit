@@ -232,7 +232,7 @@ export class UploadClient {
     return this.retry(() => this.api.commitSlotFromFile(body, o.signal), o.signal);
   }
 
-  /** A video item's poster and hover preview, with selections and the video's duration and frame size. */
+  /** A video item's poster, with its selection and the video's duration and frame size. */
   getVideoImages(ref: RefBody, file?: string, signal?: AbortSignal): Promise<VideoImages> {
     return this.retry(() => this.api.videoImages({ ref, ...(file ? { file } : {}) }, signal), signal);
   }
@@ -256,22 +256,17 @@ export class UploadClient {
     return this.retry(() => this.api.videoPoster(body, o.signal), o.signal);
   }
 
-  /** Selects the hover-preview section (start omitted: automatic); duration is bounded 1–6 s. */
-  setHoverPreview(ref: RefBody, section: { file?: string; start?: number; duration?: number }, signal?: AbortSignal): Promise<VideoImages> {
-    return this.retry(() => this.api.videoPreview({ ref, ...section }, signal), signal);
-  }
-
   /** One frame as a JPEG w pixels wide (clamped by the server to 64–1280 and the video). */
   getFrame(ref: RefBody, time: number, o: { file?: string; width?: number; signal?: AbortSignal } = {}): Promise<Blob> {
     return this.retry(() => this.api.frame({ ...ref, file: o.file, t: time, w: o.width }, o.signal), o.signal);
   }
 
-  /** Polls until the poster and hover preview are rendered, or timeout ms pass; returns the latest either way. */
+  /** Polls until the poster is rendered, or timeout ms pass; returns the latest either way. */
   async waitForVideoImages(ref: RefBody, o: { file?: string; signal?: AbortSignal; interval?: number; timeout?: number } = {}): Promise<VideoImages> {
     const until = Date.now() + (o.timeout ?? 120_000);
     for (;;) {
       const v = await this.getVideoImages(ref, o.file, o.signal);
-      if ((!v.poster.pending && !v.hover_preview.pending) || Date.now() >= until) return v;
+      if (!v.poster.pending || Date.now() >= until) return v;
       await sleep(o.interval ?? 1500, o.signal);
     }
   }

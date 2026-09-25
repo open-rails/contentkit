@@ -10,10 +10,6 @@ export type OpName = "insert" | "attach" | "replace" | "move" | "rename" | "remo
 export type PosterSource = "frame" | "upload" | "auto";
 export type EncodePhase = "queued" | "downloading" | "probing" | "encoding" | "muxing" | "uploading" | "publishing" | "images";
 
-export const HOVER_PREVIEW_DEFAULT = 3;
-export const HOVER_PREVIEW_MIN = 1;
-export const HOVER_PREVIEW_MAX = 6;
-
 export interface RefBody {
   kind: string;
   id: string;
@@ -205,13 +201,6 @@ export interface VideoPosterBody {
   edit?: Edit;
 }
 
-export interface VideoPreviewBody {
-  ref: RefBody;
-  file?: string;
-  start?: number;
-  duration?: number;
-}
-
 export interface PosterSelection {
   source: PosterSource;
   version?: string;
@@ -221,29 +210,8 @@ export interface PosterSelection {
 
 export interface PosterManifest extends SlotManifest {
   file?: string;
+  time?: number;
   selection?: PosterSelection;
-}
-
-export interface HoverPreviewSelection {
-  version?: string;
-  file: string;
-  start: number;
-  duration: number;
-  auto?: boolean;
-}
-
-export interface PreviewImage {
-  w: number;
-  h: number;
-  url: string;
-}
-
-export interface HoverPreviewManifest {
-  file?: string;
-  selection?: HoverPreviewSelection;
-  mp4: PreviewImage[];
-  webp: PreviewImage[];
-  pending: boolean;
 }
 
 export interface VideoInfo {
@@ -257,7 +225,6 @@ export interface VideoInfo {
 
 export interface VideoImages {
   poster: PosterManifest;
-  hover_preview: HoverPreviewManifest;
   video?: VideoInfo;
   progress?: EncodeProgress;
 }
