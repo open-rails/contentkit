@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/riverqueue/river"
@@ -27,6 +28,10 @@ func TestCollector(t *testing.T) {
 	pool := pgtest.Pool(t, nil)
 	schema := pgtest.EmptySchema(t, ctx, pool)
 	if err := workqueue.Migrate(ctx, pool, schema); err != nil {
+		t.Fatal(err)
+	}
+	hostSchema := pgtest.EmptySchema(t, ctx, pool)
+	if err := riverhelpers.ApplyMigrations(ctx, pool, hostSchema); err != nil {
 		t.Fatal(err)
 	}
 	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: schema})
@@ -80,7 +85,7 @@ func TestCollector(t *testing.T) {
 		t.Fatal(err)
 	}
 	leader, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
-		Schema:  schema,
+		Schema:  hostSchema,
 		Queues:  map[string]river.QueueConfig{"metrics_test": {MaxWorkers: 1}},
 		Workers: workers,
 		Hooks:   []rivertype.Hook{collector.LeaderHook()},
