@@ -18,12 +18,13 @@ import (
 	"github.com/open-rails/contentkit/media/workqueue"
 )
 
+// visible shows the item to anyone; signed-in actors edit it.
 type visible struct{}
 
-func (visible) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+func (visible) Resolve(_ context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
 	out := map[contentref.ContentKey]access.Resolution{}
 	for _, ref := range refs {
-		out[ref.Key()] = access.Resolution{Visible: true, Accessible: true}
+		out[ref.Key()] = access.Resolution{Visible: true, Accessible: true, Editor: !a.Anonymous}
 	}
 	return out, nil
 }
@@ -63,9 +64,10 @@ func TestEncodeProgressThroughReadAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	editor := access.Actor{ID: "editor"} // viewers are not shown a file before it is encoded
 	read := func() media.FileInfo {
 		t.Helper()
-		res, err := reader.Read(ctx, e.ref, access.Actor{Anonymous: true}, media.ReadOptions{})
+		res, err := reader.Read(ctx, e.ref, editor, media.ReadOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -76,6 +78,9 @@ func TestEncodeProgressThroughReadAPI(t *testing.T) {
 	e.commit(t, fixture{w: 1280, h: 720, secs: secs, rate: 30, audio: 1, tone: 440}.make(t), media.OpInsert)
 	if f := read(); f.HLS || f.Progress == nil || f.Progress.Phase != media.PhaseQueued || f.Progress.QueuePosition != 1 {
 		t.Fatalf("before the worker: %+v %+v", f, f.Progress)
+	}
+	if res, err := reader.Read(ctx, e.ref, access.Actor{Anonymous: true}, media.ReadOptions{}); err != nil || res.Total != 0 {
+		t.Fatalf("a viewer reads an unencoded file: %+v %v", res, err)
 	}
 
 	wc := video.WorkerConfig{Encoder: enc, Pool: pool, Kinds: e.kinds, Timeout: time.Hour}
@@ -116,7 +121,7 @@ poll:
 			if p := read().Progress; p != nil && (len(seen) == 0 || p.At != seen[len(seen)-1].At) {
 				seen = append(seen, *p)
 			}
-			vi, err := reader.VideoImages(ctx, e.ref, access.Actor{Anonymous: true})
+			vi, err := reader.VideoImages(ctx, e.ref, editor)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -171,7 +176,7 @@ poll:
 	if f := read(); !f.HLS || f.Progress != nil {
 		t.Fatalf("after publish: %+v %+v", f, f.Progress)
 	}
-	if vi, err := reader.VideoImages(ctx, e.ref, access.Actor{Anonymous: true}); err != nil || vi.Progress != nil {
+	if vi, err := reader.VideoImages(ctx, e.ref, editor); err != nil || vi.Progress != nil {
 		t.Fatalf("video-images after the job: %+v %v", vi.Progress, err)
 	}
 	var left int
