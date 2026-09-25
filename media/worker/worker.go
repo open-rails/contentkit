@@ -36,8 +36,8 @@ type Config struct {
 	Pool  *pgxpool.Pool // the host database: workqueue.Schema, manifest locks, progress
 	Store media.Store
 	// Kinds, Specs and Hooks are the host's: build them with the code the
-	// host's media setup uses. Hooks.Failed, Hooks.SlotEncoded and
-	// Hooks.PublicRemoved run here.
+	// host's media setup uses. Hooks.Failed, Hooks.SlotEncoded,
+	// Hooks.PublicRemoved and Hooks.ItemReady run here.
 	Kinds *media.Registry
 	Specs image.SpecChooser
 	Hooks media.Hooks
@@ -153,8 +153,12 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 		cfg.Queues[workqueue.ImageQueue] = river.QueueConfig{MaxWorkers: c.ImageWorkers}
 		return river.AddWorkerSafely(cfg.Workers, &imageWorker{c: c, images: images})
 	}, nil, nil)
+	hooks := c.RiverHooks
+	if c.Hooks.ItemReady != nil {
+		hooks = append(hooks[:len(hooks):len(hooks)], &readyHook{pool: c.Pool, manifests: manifests, ready: c.Hooks.ItemReady})
+	}
 	client, err := riverhelpers.New(ctx, c.Pool, &river.Config{Schema: workqueue.Schema,
-		JobTimeout: max(c.VideoTimeout, c.ImageTimeout), Logger: c.Logger, Hooks: c.RiverHooks}, videos, imageJobs)
+		JobTimeout: max(c.VideoTimeout, c.ImageTimeout), Logger: c.Logger, Hooks: hooks}, videos, imageJobs)
 	if err != nil {
 		return nil, err
 	}

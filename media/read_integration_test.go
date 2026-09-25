@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -578,5 +579,53 @@ func TestReadEditorOnlyVariants(t *testing.T) {
 				f.covers(t, tok, map[string]bool{editorKey: true}, editorKey)
 			})
 		}
+	}
+}
+
+// Viewers are never shown a file before it is processed, nor a failed one;
+// a replaced source keeps its stale ladder playing. Editors see every file.
+func TestReadHidesUnprocessedFilesFromViewers(t *testing.T) {
+	f := newReadFixture(t)
+	r := f.reader(t, media.DeliverURL, media.Hooks{})
+	ladder := func(source string, pending ...int) *media.HLS {
+		return &media.HLS{Source: source, Pending: pending, Video: []media.Rendition{{Rung: 720, Width: 1280, Height: 720, Blob: blobName("l" + source)}}}
+	}
+	if _, err := f.ms.Edit(context.Background(), f.post, func(m *media.Manifest) error {
+		m.Files = append(m.Files,
+			media.File{Name: "new.mp4", Original: blobName("new"), Type: "video/mp4"},
+			media.File{Name: "stage2.mp4", Original: blobName("s2"), Type: "video/mp4", HLS: ladder(blobName("s2"), 2160)},
+			media.File{Name: "replaced.mp4", Original: blobName("r2"), Type: "video/mp4", HLS: ladder(blobName("r1"))},
+			media.File{Name: "broken.mp4", Original: blobName("b"), Type: "video/mp4", HLS: &media.HLS{Source: blobName("b"), Error: "no video stream"}},
+			media.File{Name: "rendering.jpg", Original: blobName("rj"), Type: "image/jpeg"})
+		m.Downloads = map[string]media.Download{"new.mp4-720p": {Blob: blobName("dl"), Type: "video/mp4"}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	names := func(files []media.FileInfo) []string {
+		var out []string
+		for _, fi := range files {
+			out = append(out, fi.Name)
+		}
+		return out
+	}
+	f.res.verdicts[cid(501)] = access.Resolution{Visible: true, Accessible: true}
+	out := f.read(t, r, f.post, media.ReadOptions{})
+	if got := names(out.Files); !slices.Equal(got, []string{"teaser", "beach.jpg", "clip.mp4", "replaced.mp4"}) || len(out.Downloads) != 0 {
+		t.Fatalf("a viewer reads %v %+v", got, out.Downloads)
+	}
+	f.res.verdicts[cid(501)] = access.Resolution{Visible: true, Accessible: true, Editor: true}
+	if out := f.read(t, r, f.post, media.ReadOptions{}); len(out.Files) != 8 || out.Files[6].Failed == "" {
+		t.Fatalf("the editor reads %v", names(out.Files))
+	}
+	root, _, err := f.ms.Root(context.Background(), f.post)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, _ := f.kinds.Kind("post")
+	got := root.Readiness(k)
+	if got.State != media.StateProcessing || !slices.Equal(got.Processing, []string{"teaser", "beach.jpg", "new.mp4", "stage2.mp4", "replaced.mp4", "rendering.jpg"}) ||
+		!slices.Equal(got.Failed, []string{"broken.mp4"}) {
+		t.Fatalf("readiness %+v", got)
 	}
 }

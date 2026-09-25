@@ -246,8 +246,8 @@ outputs and inline images (libvips) and encodes video and poster frames
 host database. The host presigns, commits, publishes and reads, and links only
 `media/workqueue` (no libvips, no ffmpeg). The worker must apply the host's
 exact kinds and policy, so the host builds it from the same code that builds
-its `media.Registry`, `image.SpecChooser` and `media.Hooks` (`Failed` and
-`SlotEncoded` run in the worker), e.g. as a subcommand of the host binary:
+its `media.Registry`, `image.SpecChooser` and `media.Hooks` (`Failed`,
+`SlotEncoded` and `ItemReady` run in the worker), e.g. as a subcommand of the host binary:
 
 ```go
 cfg, _ := worker.FromEnv(ctx) // DATABASE_URL, MEDIA_S3_*, MEDIA_HOST_RIVER_SCHEMA, MEDIA_WORKER_* (see worker.FromEnv)
@@ -277,6 +277,19 @@ and derivatives no manifest references are deleted at once. The SDK's
 `UploadQueue` does all of this: `commit()` attaches in queue order, `remove()`
 discards, and `item.processing` (dims, `hls`, `failed`, `progress`) is polled
 until `item.processed`.
+
+**Readiness.** `Manifests.Readiness(ctx, ref)` (`Root.Readiness(kind)`) is
+`ready` when every attached file, set slot and video poster is processed
+(videos: every stage, no `hls.pending`; images: variants for the current
+source and edit), `processing` while any is not, and `failed` once nothing is
+processing and some could not be (`Failed` names them). After every image or
+video job that leaves an item settled, the worker calls
+`Hooks.ItemReady(ctx, tx, ref, readiness)` in a transaction on the host
+database; an error retries the job, so it must be idempotent. A host that
+holds content back until its media is ready publishes it there (and enqueues
+its Expose with `HostQueue.ExposeTx` in the same `tx`). Independently, reads
+never show a non-editor a file with nothing processed to serve, or a failed
+one (`File.Servable`): media added to live content appears once processed.
 
 `Edit` writes with `If-Match` (or `If-None-Match: *`) and retries on conflict;
 without `Capabilities.ConditionalPut` it serializes on a Postgres advisory lock

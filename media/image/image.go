@@ -148,7 +148,8 @@ func (p *Processor) manifest(ctx context.Context, item media.Item) error {
 }
 
 // todo maps each source and edit to the variants its files lack or have
-// under another spec or edit.
+// under another spec or edit; a file whose variants are all current but not
+// yet marked Derived for them gets an entry without specs (a probe).
 func (p *Processor) todo(kind media.Kind, man *media.Manifest, failed map[string]error) map[string]work {
 	todo := map[string]work{}
 	for _, f := range man.Files {
@@ -156,18 +157,34 @@ func (p *Processor) todo(kind media.Kind, man *media.Manifest, failed map[string
 		if !isImage(f) || failed[k] != nil || f.Failed() != nil {
 			continue
 		}
+		entry := func() work {
+			w, ok := todo[k]
+			if !ok {
+				w = work{source: f.Source(), typ: f.Type, edit: f.Edit, specs: map[string]media.Spec{}}
+				todo[k] = w
+			}
+			return w
+		}
 		for name, s := range p.c.Specs(kind, f) {
 			if v, ok := f.Variants[name]; !ok || v.Spec != specFor(s, f.Type, f.Edit) {
-				w, ok := todo[k]
-				if !ok {
-					w = work{source: f.Source(), typ: f.Type, edit: f.Edit, specs: map[string]media.Spec{}}
-					todo[k] = w
-				}
-				w.specs[name] = s
+				entry().specs[name] = s
 			}
+		}
+		if f.Derived != f.FailureKey() {
+			entry()
 		}
 	}
 	return todo
+}
+
+// derivedAll reports f holding every spec's variant for its current edit.
+func derivedAll(f media.File, specs map[string]media.Spec) bool {
+	for name, s := range specs {
+		if v, ok := f.Variants[name]; !ok || v.Spec != specFor(s, f.Type, f.Edit) {
+			return false
+		}
+	}
+	return true
 }
 
 // zipStale reports a zip whose inputs are complete but differ from the recorded
@@ -257,6 +274,9 @@ func (p *Processor) pass(ctx context.Context, item media.Item, man *media.Manife
 			}
 			f.Meta["w"], f.Meta["h"] = d.w, d.h
 			f.Dims = &d.dims
+			if derivedAll(*f, specs) {
+				f.Derived = f.FailureKey()
+			}
 		}
 	}
 
