@@ -46,6 +46,10 @@ var rules = []rule{
 		"github.com/aws/...", m + "/media/image/...", m + "/media/video/...", m + "/media/s3/...",
 		m + "/content/...", m + "/search/...", m + "/signal/...", m + "/taxonomy/...",
 	}},
+	// The host's side of the media worker: no libvips, ffmpeg or S3 client.
+	{pkgs: []string{m + "/media/workqueue"}, deny: []string{
+		"github.com/aws/...", m + "/media/image/...", m + "/media/video/...", m + "/media/worker/...", m + "/media/s3/...",
+	}},
 	{pkgs: []string{m + "/search", m + "/signal", m + "/taxonomy"}, deny: []string{
 		m + "/media/...", m + "/content/...",
 	}},
@@ -141,8 +145,9 @@ func TestBoundaries(t *testing.T) {
 		if !strings.HasPrefix(path, m) {
 			continue
 		}
-		// Only media/image may pull in CGO; nothing depends on the root hub.
-		if path != m+"/media/image" {
+		// Only media/image, and the media worker built on it, may pull in CGO;
+		// nothing depends on the root hub.
+		if path != m+"/media/image" && path != m+"/media/worker" && path != m+"/cmd/media-worker" {
 			for _, dep := range p.Deps {
 				if matchAny(dep, cgo) {
 					t.Errorf("%s depends on CGO package %s", path, dep)
