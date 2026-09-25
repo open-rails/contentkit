@@ -12,8 +12,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
 
+	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media/video"
 	"github.com/open-rails/contentkit/media/worker"
 	"github.com/open-rails/contentkit/media/workqueue"
@@ -68,5 +70,82 @@ func TestMetrics(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), metric) {
 			t.Errorf("missing %q in metrics", metric)
 		}
+	}
+}
+
+type blockingArgs struct{}
+
+func (blockingArgs) Kind() string { return "metrics_blocking" }
+
+type blockingWorker struct {
+	river.WorkerDefaults[blockingArgs]
+	started chan struct{}
+}
+
+func (w *blockingWorker) Work(ctx context.Context, _ *river.Job[blockingArgs]) error {
+	close(w.started)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestMetricsRemoteCancellation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	pool := pgtest.Pool(t, nil)
+	schema := pgtest.EmptySchema(t, ctx, pool)
+	if err := workqueue.Migrate(ctx, pool, schema); err != nil {
+		t.Fatal(err)
+	}
+	registry := prometheus.NewRegistry()
+	metrics, err := worker.NewMetrics(registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workers := river.NewWorkers()
+	started := make(chan struct{})
+	if err := river.AddWorkerSafely(workers, &blockingWorker{started: started}); err != nil {
+		t.Fatal(err)
+	}
+	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: schema, Workers: workers,
+		Queues:     map[string]river.QueueConfig{workqueue.VideoQueue: {MaxWorkers: 1}},
+		Middleware: []rivertype.Middleware{metrics}, FetchPollInterval: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, unsubscribe := client.Subscribe(river.EventKindJobCancelled)
+	defer unsubscribe()
+	if err := client.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		stopCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		if err := client.StopAndCancel(stopCtx); err != nil {
+			t.Error(err)
+		}
+	})
+	inserted, err := client.Insert(ctx, blockingArgs{}, &river.InsertOpts{Queue: workqueue.VideoQueue})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("River did not start the job")
+	}
+	// River's notifier starts asynchronously after the client starts.
+	time.Sleep(500 * time.Millisecond)
+	if _, err := client.JobCancel(ctx, inserted.Job.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-events:
+	case <-ctx.Done():
+		t.Fatal("River did not cancel the running job")
+	}
+	rec := httptest.NewRecorder()
+	promhttp.HandlerFor(registry, promhttp.HandlerOpts{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(rec.Body.String(), `media_video_attempt_count{outcome="cancelled",queue="media_video"} 1`) {
+		t.Fatalf("remote cancellation was not counted as cancelled: %s", rec.Body.String())
 	}
 }
