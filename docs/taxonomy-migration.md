@@ -31,7 +31,7 @@ assigned or counted inside its own tenant. `taxonomy_id` is a UUIDv7 (a node
 is a search document keyed by it; see
 [Content ids](../HOST_INTEGRATION.md#content-ids)) and `content_nodes` is
 `PRIMARY KEY (tenant_id, taxonomy_id)`. Give each host row a UUIDv7 from its
-`created_at` (`contentref.IDAt`) and keep the host id (`tag:42`, `creator:42`)
+`created_at` (`contentref.LegacyID`, deterministic across import runs) and keep the host id (`tag:42`, `creator:42`)
 in a host `legacy_id` column, so public ids and URLs are unchanged. Below,
 `<tag_id>` etc. mean that mapped UUIDv7. Product metadata that is
 not a name, alias, edge or assignment (descriptions, `restricted`, creator

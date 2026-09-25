@@ -57,9 +57,16 @@ Media never adopts leftovers:
 
 ### Migrating legacy integer ids
 
-Give each legacy item a UUIDv7 derived from its original `created_at`
-(`contentref.IDAt(createdAt)`, preserving order) and keep the old integer in a
-host `legacy_id` column for redirects and references only. Import its media
+Give each legacy item a UUIDv7 derived from its original `created_at`,
+preserving order, and keep the old integer in a host `legacy_id` column for
+redirects and references only. Use `contentref.LegacyID(namespace, kind,
+legacyID, createdAt)` when an import is re-run or ids are derived in more than
+one place (same inputs, same id; rows without `created_at` get 2010-01-01 plus
+the id in milliseconds). `namespace` is the host's own constant (`"doujins"`,
+`"hentai0"`; lowercase letters, digits, `_`, `-`) and is hashed with the kind
+and id, so hosts importing the same kind and id get different ids; never change
+it after an import; `contentref.IDAt(createdAt)` (random low bits) only when the id
+is generated once and stored. Import its media
 from the old system straight into ContentKit under the UUID `content_id`,
 idempotently (skip items whose manifest already exists). No integer content ids
 in storage, no permanent aliases.
