@@ -368,11 +368,11 @@ host's policy: its display widths × 2–3× density; default
 `media.DefaultPosterWidths` 640/960/1280/1920/2560, skipping widths wider than
 the frame or upload); `poster` and `hover_preview` are reserved slot names.
 
-- **Poster**: a frame or an uploaded image, encoded by the image job through
-  the slot's edit like any slot. The video worker grabs frames from the widest
-  HLS rendition into `originals/poster` (PNG) and hands them to the host's
-  image job through `Config.Slots` (`media.NewProcessInserter`; the worker's
-  `MEDIA_HOST_RIVER_SCHEMA`/`MEDIA_HOST_QUEUE`). Default: the first of five
+- **Poster**: a frame or an uploaded image, encoded by the media worker's
+  image job through the slot's edit like any slot. The worker grabs frames
+  from the widest HLS rendition into `originals/poster` (PNG) and queues its
+  own image job for them; publishing then runs in the host's River schema
+  (`MEDIA_HOST_RIVER_SCHEMA`/`MEDIA_HOST_QUEUE`). Default: the first of five
   sampled frames (20–80 %) that is not black or flat. Frames narrower than
   the smallest width are upscaled, so every poster has it. After changing
   `PosterWidths` (or covers from before v0.37, which were 16:9 crops),

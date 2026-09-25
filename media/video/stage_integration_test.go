@@ -22,6 +22,7 @@ import (
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 	"github.com/open-rails/contentkit/media/video"
+	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 type packet struct {
@@ -174,16 +175,16 @@ func TestWorkerQueuesSecondStage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	pool := pgtest.Pool(t, nil)
-	if err := video.Migrate(ctx, pool); err != nil {
+	if err := workqueue.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "DELETE FROM "+video.Schema+".river_job"); err != nil {
+	if _, err := pool.Exec(ctx, "DELETE FROM "+workqueue.Schema+".river_job"); err != nil {
 		t.Fatal(err)
 	}
-	var enq *video.Enqueuer
+	var enq *workqueue.Queue
 	e := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return enq.Enqueue(ctx, j) }))
 	var err error
-	if enq, err = video.NewEnqueuer(pool, e.kinds); err != nil {
+	if enq, err = workqueue.New(pool, e.kinds); err != nil {
 		t.Fatal(err)
 	}
 	e.commit(t, fixture{w: 1280, h: 720, secs: 5, rate: 30, audio: 1, tone: 440}.make(t), media.OpInsert)
@@ -191,7 +192,7 @@ func TestWorkerQueuesSecondStage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wc := video.WorkerConfig{Encoder: enc, Pool: pool, Timeout: time.Hour}
+	wc := video.WorkerConfig{Encoder: enc, Pool: pool, Kinds: e.kinds, Timeout: time.Hour}
 	contribution, err := video.Contribution(wc)
 	if err != nil {
 		t.Fatal(err)
@@ -274,18 +275,18 @@ func TestPassthroughTopRung(t *testing.T) {
 	switchRungs(t, paths, h.Video)
 }
 
-// Cancel removes an item's queued jobs (both stages share the job shape).
+// Cancel removes an item's queued image and video jobs (both stages share the job shape).
 func TestCancelJobs(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Pool(t, nil)
-	if err := video.Migrate(ctx, pool); err != nil {
+	if err := workqueue.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "DELETE FROM "+video.Schema+".river_job"); err != nil {
+	if _, err := pool.Exec(ctx, "DELETE FROM "+workqueue.Schema+".river_job"); err != nil {
 		t.Fatal(err)
 	}
 	e := newEnv(t, nil, nil)
-	enq, err := video.NewEnqueuer(pool, e.kinds)
+	enq, err := workqueue.New(pool, e.kinds)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,17 +297,18 @@ func TestCancelJobs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if n, err := enq.Cancel(ctx, e.ref); err != nil || n != 2 {
+	// Each commit of a video kind queues a video job and (one pending) image job.
+	if n, err := enq.Cancel(ctx, e.ref); err != nil || n != 3 {
 		t.Fatalf("cancelled %d: %v", n, err)
 	}
 	var states []string
-	rows, _ := pool.Query(ctx, "SELECT state FROM "+video.Schema+".river_job ORDER BY id")
+	rows, _ := pool.Query(ctx, "SELECT state FROM "+workqueue.Schema+".river_job ORDER BY id")
 	for rows.Next() {
 		var s string
 		_ = rows.Scan(&s)
 		states = append(states, s)
 	}
-	if !slices.Equal(states, []string{"cancelled", "cancelled", "available"}) {
+	if !slices.Equal(states, []string{"cancelled", "cancelled", "cancelled", "available", "available"}) {
 		t.Fatalf("states %v", states)
 	}
 }

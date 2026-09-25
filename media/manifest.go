@@ -3,6 +3,7 @@ package media
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/open-rails/contentkit/media/layout"
 )
@@ -33,6 +34,10 @@ type File struct {
 	// Failure is why the image processor cannot derive this source through
 	// this edit (Of); a new source or edit clears it.
 	Failure *FileFailure `json:"failure,omitempty"`
+	// Unattached marks a file processed on upload (UploadOptions.ProcessOnUpload)
+	// that is not part of the item yet: reads leave it out (editors may ask
+	// for it) until an attach op. Removing it discards its objects at once.
+	Unattached bool `json:"unattached,omitempty"`
 }
 
 // FileFailure is a file's permanent processing failure.
@@ -173,6 +178,48 @@ func (s *Segment) UnmarshalJSON(b []byte) error {
 		}
 	}
 	return err
+}
+
+// Attached is the manifest without its unattached files and their video
+// downloads ("{file}-{rung}p"), as readers see it; m itself when it has none.
+func (m *Manifest) Attached() *Manifest {
+	gone := map[string]bool{}
+	for _, f := range m.Files {
+		if f.Unattached {
+			gone[f.Name] = true
+		}
+	}
+	if len(gone) == 0 {
+		return m
+	}
+	out := *m
+	out.Files = make([]File, 0, len(m.Files))
+	for _, f := range m.Files {
+		if !f.Unattached {
+			out.Files = append(out.Files, f)
+		}
+	}
+	out.Downloads = map[string]Download{}
+	for k, d := range m.Downloads {
+		if !gone[downloadFile(k)] {
+			out.Downloads[k] = d
+		}
+	}
+	return &out
+}
+
+// downloadFile is the file a video download key names ("{file}-{rung}p"), else "".
+func downloadFile(key string) string {
+	i := strings.LastIndexByte(key, '-')
+	if i <= 0 || !strings.HasSuffix(key, "p") || len(key) < i+3 {
+		return ""
+	}
+	for _, c := range key[i+1 : len(key)-1] {
+		if c < '0' || c > '9' {
+			return ""
+		}
+	}
+	return key[:i]
 }
 
 // File returns the index of the named file, or -1.

@@ -107,10 +107,6 @@ func TestJobsComposeWithHostRiverAndSweepAfterEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan string, 4)
-	processed := make(chan media.ProcessJob, 4)
-	if err := jobs.AddProcessor(func(_ context.Context, job media.ProcessJob) error { processed <- job; return nil }); err != nil {
-		t.Fatal(err)
-	}
 	client, pool, schema := riverHost(t, jobs, done)
 
 	// One composition only; a failed second one leaves the first bound.
@@ -136,20 +132,8 @@ func TestJobsComposeWithHostRiverAndSweepAfterEdit(t *testing.T) {
 	if !slices.Equal(ran, []string{"host", "image"}) {
 		t.Fatalf("workers ran %v", ran)
 	}
-	// Jobs is the uploads' ProcessQueue.
-	var _ media.ProcessQueue = jobs
-	gv := contentref.NewVersion(env.Tenant, "gallery", "4", "v1")
-	if err := jobs.Enqueue(ctx, media.ProcessJob{Ref: gv}); err != nil {
-		t.Fatal(err)
-	}
-	if err := jobs.Enqueue(ctx, media.ProcessJob{Ref: contentref.New(env.Tenant, "nope", "1")}); err == nil {
-		t.Fatal("unregistered kind enqueued")
-	}
-	if got := <-processed; !got.Ref.Equal(gv) || got.Slot != "" {
-		t.Fatalf("processed %+v", got)
-	}
 
-	ms := s3test.Manifests(t, env.Store, r, media.ManifestOptions{Jobs: jobs})
+	ms := s3test.Manifests(t, env.Store, r, media.ManifestOptions{Sweeps: jobs})
 	ref := contentref.New(env.Tenant, "post", "501")
 	item, _ := r.Item(ref)
 	orphan, kept := item.BlobsPrefix()+blobName("orphan"), item.BlobsPrefix()+blobName("kept")
@@ -172,6 +156,14 @@ func TestJobsComposeWithHostRiverAndSweepAfterEdit(t *testing.T) {
 	}
 	// A second edit inside the grace is absorbed by the waiting sweep.
 	if _, err := ms.Edit(ctx, ref, func(m *media.Manifest) error { m.Meta = map[string]any{"k": 1}; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	// The media worker schedules into the host schema the same way.
+	host, err := media.NewHostQueue(pool, r, schema, "", 3*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := host.ScheduleSweep(ctx, ref); err != nil {
 		t.Fatal(err)
 	}
 	var n int
@@ -289,86 +281,6 @@ func TestDeleteAndEraseRemoveFoldersIncludingLateUploads(t *testing.T) {
 	}
 	if got := listKeys(t, s, oi.Prefix()); len(got) != 3 {
 		t.Fatalf("unrelated folder changed: %v", got)
-	}
-}
-
-// A commit that lands after a processor read the manifest, while its job is
-// running, is absorbed by that job and must still be processed.
-func TestProcessingRerunsWhenACommitLandsDuringTheRun(t *testing.T) {
-	env := s3test.Open(t)
-	if !env.Store.Capabilities().ConditionalPut {
-		t.Skip("backend lacks conditional PUT")
-	}
-	ctx := context.Background()
-	r := registry(t)
-	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: r})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ms := s3test.Manifests(t, env.Store, r, media.ManifestOptions{})
-	ref := contentref.New(env.Tenant, "post", "77")
-	insert := func(name string) {
-		if _, err := ms.Edit(ctx, ref, func(m *media.Manifest) error {
-			m.Files = append(m.Files, media.File{Name: name, Original: blobName(name)})
-			return nil
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	seen := make(chan []string, 8)
-	var calls atomic.Int32
-	if err := jobs.AddProcessor(func(ctx context.Context, job media.ProcessJob) error {
-		calls.Add(1)
-		man, _, err := ms.Get(ctx, job.Ref)
-		if err != nil {
-			return err
-		}
-		var names []string
-		for _, f := range man.Files {
-			names = append(names, f.Name)
-		}
-		if calls.Load() == 1 {
-			// The late commit: its Enqueue is absorbed by this running job.
-			insert("late.jpg")
-			if err := jobs.Enqueue(ctx, job); err != nil {
-				return err
-			}
-		}
-		seen <- names
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	client, _, _ := riverHost(t, jobs, make(chan string, 4))
-	completed, cancel := client.Subscribe(river.EventKindJobCompleted)
-	defer cancel()
-
-	insert("first.jpg")
-	if err := jobs.Enqueue(ctx, media.ProcessJob{Ref: ref}); err != nil {
-		t.Fatal(err)
-	}
-	next := func() []string {
-		select {
-		case got := <-seen:
-			return got
-		case <-time.After(45 * time.Second):
-			t.Fatal("timed out waiting for a processor run")
-			return nil
-		}
-	}
-	if got := next(); !slices.Equal(got, []string{"first.jpg"}) {
-		t.Fatalf("first run saw %v", got)
-	}
-	if got := next(); !slices.Equal(got, []string{"first.jpg", "late.jpg"}) {
-		t.Fatalf("the late commit was not processed: %v", got)
-	}
-	for ev := range completed {
-		if ev.Job.Kind == "contentkit_media_process" {
-			break
-		}
-	}
-	if n := calls.Load(); n != 2 {
-		t.Fatalf("%d processor runs, want 2", n)
 	}
 }
 

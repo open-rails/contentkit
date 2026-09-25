@@ -1,5 +1,5 @@
 name: go
-# Core Go packages. media/image, media/video and cmd/media-worker run in their own workflows.
+# Core Go packages. media/image, media/video, media/worker and cmd/media-worker run in their own workflows.
 'on':
   pull_request:
     branches: [master]
@@ -11,6 +11,7 @@ name: go
     - '!sdk/**'
     - '!media/image/**'
     - '!media/video/**'
+    - '!media/worker/**'
     - '!cmd/media-worker/**'
     - '!cmd/*/Dockerfile'
     - '!.github/**'
@@ -87,6 +88,6 @@ jobs:
         exit 1
     - name: vet, test
       run: |
-        pkgs=$(go list ./... | grep -vE '/media/(image|video)$|/cmd/media-worker$')
+        pkgs=$(go list ./... | grep -vE '/media/(image|video|worker)$|/cmd/media-worker$')
         go vet $pkgs
         go test $pkgs -count=1 -race -p 2

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -37,6 +38,7 @@ type UploadHandlerOptions struct {
 //	POST /complete     TicketBody   -> CompleteReply
 //	POST /abort        TicketBody   -> 204
 //	POST /commit       CommitBody   -> CommitReply
+//	POST /files        FilesBody    -> FilesReply     an editor's files, unattached ones included: processing state and progress
 //	POST /commit-slot            SlotBody         -> SlotManifest (204 for an inline image)
 //	POST /commit-slot-from-file  SlotFromFileBody -> SlotManifest
 //	POST /edit-slot              SlotEditBody     -> SlotManifest   re-edit the committed original
@@ -58,6 +60,7 @@ func UploadHandler(u *Uploads, o UploadHandlerOptions) http.Handler {
 	mux.HandleFunc("POST /complete", h.complete)
 	mux.HandleFunc("POST /abort", h.abort)
 	mux.HandleFunc("POST /commit", h.commit)
+	mux.HandleFunc("POST /files", h.files)
 	mux.HandleFunc("POST /commit-slot", h.commitSlot)
 	mux.HandleFunc("POST /commit-slot-from-file", h.slotFromFile)
 	mux.HandleFunc("POST /edit-slot", h.editSlot)
@@ -103,11 +106,14 @@ type MultipartReply struct {
 }
 
 // PresignReply: exists (commit directly), put (one PUT) or multipart.
+// ProcessOnUpload asks the client to commit the file unattached as soon as
+// it is uploaded (UploadOptions.ProcessOnUpload).
 type PresignReply struct {
-	Name      string          `json:"name"`
-	Exists    bool            `json:"exists,omitempty"`
-	Put       *RequestReply   `json:"put,omitempty"`
-	Multipart *MultipartReply `json:"multipart,omitempty"`
+	Name            string          `json:"name"`
+	Exists          bool            `json:"exists,omitempty"`
+	Put             *RequestReply   `json:"put,omitempty"`
+	Multipart       *MultipartReply `json:"multipart,omitempty"`
+	ProcessOnUpload bool            `json:"process_on_upload,omitempty"`
 }
 
 type PartBody struct {
@@ -149,12 +155,13 @@ type CommitBody struct {
 }
 
 type CommitFile struct {
-	Name     string         `json:"name"`
-	Original string         `json:"original"`
-	Type     string         `json:"type,omitempty"`
-	Size     int64          `json:"size,omitempty"`
-	Edit     *Edit          `json:"edit,omitempty"`
-	Meta     map[string]any `json:"meta,omitempty"`
+	Name       string         `json:"name"`
+	Original   string         `json:"original"`
+	Type       string         `json:"type,omitempty"`
+	Size       int64          `json:"size,omitempty"`
+	Edit       *Edit          `json:"edit,omitempty"`
+	Meta       map[string]any `json:"meta,omitempty"`
+	Unattached bool           `json:"unattached,omitempty"`
 }
 
 // CommitReply is the committed file order.
@@ -256,7 +263,7 @@ func (h uploadHandler) presign(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	out := PresignReply{Name: p.Name, Exists: p.Exists}
+	out := PresignReply{Name: p.Name, Exists: p.Exists, ProcessOnUpload: p.ProcessOnUpload}
 	if p.Put != nil {
 		out.Put = request(*p.Put)
 	}
@@ -349,7 +356,43 @@ func (h uploadHandler) commit(w http.ResponseWriter, r *http.Request) {
 	}
 	out := CommitReply{Files: make([]CommitFile, len(man.Files))}
 	for i, f := range man.Files {
-		out.Files[i] = CommitFile{Name: f.Name, Original: f.Original, Type: f.Type, Size: f.Size, Edit: f.Edit, Meta: f.Meta}
+		out.Files[i] = CommitFile{Name: f.Name, Original: f.Original, Type: f.Type, Size: f.Size, Edit: f.Edit, Meta: f.Meta, Unattached: f.Unattached}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// FilesBody names files of an item; empty names lists them all.
+type FilesBody struct {
+	Ref   RefBody  `json:"ref"`
+	Names []string `json:"names,omitempty"`
+}
+
+// FilesReply is the named files as an editor reads them (unattached ones
+// included): dimensions once derived, hls once encoded, failed, progress.
+type FilesReply struct {
+	Files []FileInfo `json:"files"`
+}
+
+func (h uploadHandler) files(w http.ResponseWriter, r *http.Request) {
+	var b FilesBody
+	actor, ok := h.read(w, r, &b)
+	if !ok {
+		return
+	}
+	if h.o.Reader == nil {
+		h.fail(w, r, uploadErr(CodeNotFound, "files are not served here"))
+		return
+	}
+	res, err := h.o.Reader.Read(r.Context(), h.ref(b.Ref), actor, ReadOptions{Unattached: true, Limit: h.o.Reader.maxLimit})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	out := FilesReply{Files: []FileInfo{}}
+	for _, f := range res.Files {
+		if len(b.Names) == 0 || slices.Contains(b.Names, f.Name) {
+			out.Files = append(out.Files, f)
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

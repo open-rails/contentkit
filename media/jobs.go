@@ -55,16 +55,16 @@ type JobsConfig struct {
 	Now        func() time.Time // clock for grace decisions; default time.Now
 }
 
-// Jobs is media's River contribution: sweep, folder deletion, and the workers
-// other media packages register. Compose RiverJobs once into the host client.
+// Jobs is media's River contribution to the host: sweep, folder deletion and
+// publishing. Processing runs in the media worker (media/worker). Compose
+// RiverJobs once into the host client.
 type Jobs struct {
 	cfg JobsConfig
 
-	mu         sync.Mutex
-	regs       []func(*river.Config) error
-	processors []Processor
-	composed   bool
-	client     *river.Client[pgx.Tx]
+	mu       sync.Mutex
+	regs     []func(*river.Config) error
+	composed bool
+	client   *river.Client[pgx.Tx]
 }
 
 var ErrJobsNotBound = errors.New("media: River jobs are not composed into a client")
@@ -143,7 +143,6 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &sweepWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &sweepPassWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &deleteFolderWorker{j: j}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &processWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &publishWorker{j: j}) },
 		} {
 			if err := w(); err != nil {
@@ -214,41 +213,42 @@ func (j *Jobs) InsertTx(ctx context.Context, tx pgx.Tx, args river.JobArgs, o *r
 	return c.InsertTx(ctx, tx, args, j.opts(o))
 }
 
-// pendingOnce dedupes a job per args while one is waiting or running.
-var pendingOnce = river.UniqueOpts{ByArgs: true, ByState: []rivertype.JobState{rivertype.JobStateAvailable,
+// PendingOnce dedupes a job per args while one is waiting or running.
+var PendingOnce = river.UniqueOpts{ByArgs: true, ByState: []rivertype.JobState{rivertype.JobStateAvailable,
 	rivertype.JobStatePending, rivertype.JobStateRunning, rivertype.JobStateRetryable, rivertype.JobStateScheduled}}
 
-// rerunArgs are job args that can name the running job they follow.
-type rerunArgs interface {
+// RerunArgs are job args that can name the running job they follow.
+type RerunArgs interface {
 	river.JobArgs
-	after(id int64) river.JobArgs
+	FollowUp(id int64) river.JobArgs
 }
 
-// insertOnce enqueues args after the caller's change to their inputs. An
+// InsertFunc inserts one job (a River client's Insert, or InsertTx bound to a transaction).
+type InsertFunc func(ctx context.Context, args river.JobArgs, o *river.InsertOpts) (*rivertype.JobInsertResult, error)
+
+// InsertOnce enqueues args after the caller's change to their inputs. An
 // equal job still waiting to run absorbs it. River's uniqueness also covers
 // running jobs, which may have read the inputs before the change, so one
-// follow-up is queued behind a running equal job; a burst shares it.
-func (j *Jobs) insertOnce(ctx context.Context, args rerunArgs, o river.InsertOpts) error {
-	o.UniqueOpts = pendingOnce
+// follow-up is queued behind a running equal job; a burst shares it. The
+// follow-up's worker calls WaitFor first.
+func InsertOnce(ctx context.Context, insert InsertFunc, args RerunArgs, o river.InsertOpts) error {
+	o.UniqueOpts = PendingOnce
 	var next river.JobArgs = args
 	for {
-		res, err := j.Insert(ctx, next, &o)
+		res, err := insert(ctx, next, &o)
 		if err != nil || !res.UniqueSkippedAsDuplicate || res.Job.State != rivertype.JobStateRunning {
 			return err
 		}
-		next = args.after(res.Job.ID)
+		next = args.FollowUp(res.Job.ID)
 	}
 }
 
-// waitFor snoozes a follow-up while the job it follows still runs, so jobs
-// for the same inputs do not overlap.
-func (j *Jobs) waitFor(ctx context.Context, id int64) error {
+// WaitFor snoozes a follow-up (InsertOnce) while the job it follows still
+// runs, so jobs for the same inputs do not overlap. The client is the one
+// running the job (river.ClientFromContext).
+func WaitFor(ctx context.Context, c *river.Client[pgx.Tx], id int64) error {
 	if id == 0 {
 		return nil
-	}
-	c, err := j.bound()
-	if err != nil {
-		return err
 	}
 	prev, err := c.JobGet(ctx, id)
 	if errors.Is(err, river.ErrNotFound) {
@@ -260,6 +260,21 @@ func (j *Jobs) waitFor(ctx context.Context, id int64) error {
 		return river.JobSnooze(time.Second)
 	}
 	return nil
+}
+
+func (j *Jobs) insertOnce(ctx context.Context, args RerunArgs, o river.InsertOpts) error {
+	return InsertOnce(ctx, j.Insert, args, o)
+}
+
+func (j *Jobs) waitFor(ctx context.Context, id int64) error {
+	if id == 0 {
+		return nil
+	}
+	c, err := j.bound()
+	if err != nil {
+		return err
+	}
+	return WaitFor(ctx, c, id)
 }
 
 // ScheduleSweep sweeps the item's folder after the grace period; a sweep
@@ -306,7 +321,7 @@ func (j *Jobs) DeleteItemsTx(ctx context.Context, tx pgx.Tx, items ...Deletion) 
 			}
 			args.Owner = d.Owner
 		}
-		params = append(params, river.InsertManyParams{Args: args, InsertOpts: j.opts(&river.InsertOpts{UniqueOpts: pendingOnce})})
+		params = append(params, river.InsertManyParams{Args: args, InsertOpts: j.opts(&river.InsertOpts{UniqueOpts: PendingOnce})})
 	}
 	if len(params) == 0 {
 		return nil
@@ -341,33 +356,6 @@ func (j *Jobs) originalBytes(ctx context.Context, prefix string) (int64, error) 
 	return n, nil
 }
 
-// Processor derives an item's files after a commit (image variants, video
-// encodes). It must be idempotent. An Enqueue while its job runs queues one
-// rerun after it.
-type Processor func(ctx context.Context, job ProcessJob) error
-
-// AddProcessor registers a processor for Enqueue'd jobs, before composition.
-func (j *Jobs) AddProcessor(p Processor) error {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if j.composed {
-		return errors.New("media: AddProcessor after RiverJobs was composed")
-	}
-	j.processors = append(j.processors, p)
-	return nil
-}
-
-// Enqueue implements ProcessQueue: one pending job per ref and slot, run by
-// every registered processor.
-func (j *Jobs) Enqueue(ctx context.Context, job ProcessJob) error {
-	if _, err := j.cfg.Kinds.Item(job.Ref); err != nil {
-		return err
-	}
-	return j.insertOnce(ctx, processArgs{Ref: job.Ref, Slot: job.Slot}, river.InsertOpts{})
-}
-
-var _ ProcessQueue = (*Jobs)(nil)
-
 func folderPrefix(tenant, kind, id string) (string, error) {
 	if !layout.ValidSegment(tenant) || !layout.ValidSegment(kind) || !layout.ValidSegment(id) {
 		return "", fmt.Errorf("media: invalid folder %q/%q/%q", tenant, kind, id)
@@ -394,7 +382,7 @@ type sweepArgs struct {
 
 func (sweepArgs) Kind() string { return "contentkit_media_sweep" }
 
-func (a sweepArgs) after(id int64) river.JobArgs { a.After = id; return a }
+func (a sweepArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
 
 type sweepWorker struct {
 	river.WorkerDefaults[sweepArgs]
@@ -464,7 +452,7 @@ func (w *deleteFolderWorker) Work(ctx context.Context, job *river.Job[deleteFold
 		return nil
 	}
 	if _, err := w.j.Insert(ctx, deleteFolderArgs{Prefix: job.Args.Prefix, Final: true}, &river.InsertOpts{
-		ScheduledAt: w.j.cfg.Now().Add(w.j.cfg.LateUploadWindow), UniqueOpts: pendingOnce}); err != nil {
+		ScheduledAt: w.j.cfg.Now().Add(w.j.cfg.LateUploadWindow), UniqueOpts: PendingOnce}); err != nil {
 		return err
 	}
 	if w.j.cfg.Limiter != nil && job.Args.Owner != "" && job.Args.Release > 0 {
@@ -474,73 +462,59 @@ func (w *deleteFolderWorker) Work(ctx context.Context, job *river.Job[deleteFold
 	return nil
 }
 
-type processArgs struct {
-	Ref   contentref.ContentRef `json:"ref"`
-	Slot  string                `json:"slot,omitempty"`
-	After int64                 `json:"after,omitempty"` // the running job this one follows
-}
-
-func (processArgs) Kind() string { return "contentkit_media_process" }
-
-func (a processArgs) after(id int64) river.JobArgs { a.After = id; return a }
-
-type processWorker struct {
-	river.WorkerDefaults[processArgs]
-	j *Jobs
-}
-
-func (w *processWorker) Timeout(*river.Job[processArgs]) time.Duration { return time.Hour }
-
-func (w *processWorker) Work(ctx context.Context, job *river.Job[processArgs]) error {
-	pj := ProcessJob{Ref: job.Args.Ref, Slot: job.Args.Slot}
-	if _, err := w.j.cfg.Kinds.Item(pj.Ref); err != nil {
-		return river.JobCancel(err)
-	}
-	if err := w.j.waitFor(ctx, job.Args.After); err != nil {
-		return err
-	}
-	item, _ := w.j.cfg.Kinds.Item(pj.Ref)
-	gated := item.Kind().Video != nil && (pj.Slot == PosterSlot || pj.Slot == HoverPreview)
-	var errs []error
-	for _, p := range w.j.processors {
-		errs = append(errs, p(ctx, pj))
-	}
-	if gated {
-		errs = append(errs, w.j.Publish(ctx, pj.Ref))
-	}
-	return errors.Join(errs...)
-}
-
 // DefaultQueue is JobsConfig.Queue's default.
 const DefaultQueue = "contentkit_media"
 
-// ProcessInserter enqueues media process jobs into the host's River schema
-// from another process: the video worker hands a grabbed poster frame to the
-// host's image job this way. It inserts only.
-type ProcessInserter struct {
+// HostQueue is the media worker's handle on the host's River schema: it
+// inserts the jobs the host runs on the worker's behalf, a video item's
+// Publish after its poster or hover preview changes and a folder's sweep
+// after the worker edits a manifest. It inserts only.
+type HostQueue struct {
 	client *river.Client[pgx.Tx]
+	kinds  *Registry
 	queue  string
+	grace  time.Duration
 }
 
-// NewProcessInserter targets the host's River schema ("" is the connection's
-// search path) and media queue ("" is DefaultQueue).
-func NewProcessInserter(pool *pgxpool.Pool, schema, queue string) (*ProcessInserter, error) {
-	if pool == nil {
-		return nil, errors.New("media: ProcessInserter needs a pool")
+// NewHostQueue targets the host's River schema ("" is the connection's
+// search path) and media queue ("" is DefaultQueue); grace is the host's
+// JobsConfig.Grace (default 24 h).
+func NewHostQueue(pool *pgxpool.Pool, kinds *Registry, schema, queue string, grace time.Duration) (*HostQueue, error) {
+	if pool == nil || kinds == nil {
+		return nil, errors.New("media: HostQueue needs a pool and a Registry")
 	}
 	if queue == "" {
 		queue = DefaultQueue
+	}
+	if grace <= 0 {
+		grace = 24 * time.Hour
 	}
 	c, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: schema})
 	if err != nil {
 		return nil, err
 	}
-	return &ProcessInserter{client: c, queue: queue}, nil
+	return &HostQueue{client: c, kinds: kinds, queue: queue, grace: grace}, nil
 }
 
-func (p *ProcessInserter) Enqueue(ctx context.Context, job ProcessJob) error {
-	_, err := p.client.Insert(ctx, processArgs{Ref: job.Ref, Slot: job.Slot}, &river.InsertOpts{Queue: p.queue, UniqueOpts: pendingOnce})
+func (h *HostQueue) insert(ctx context.Context, args river.JobArgs, o *river.InsertOpts) (*rivertype.JobInsertResult, error) {
+	o.Queue = h.queue
+	return h.client.Insert(ctx, args, o)
+}
+
+// Publish enqueues the host's Publish of a video item.
+func (h *HostQueue) Publish(ctx context.Context, ref contentref.ContentRef) error {
+	if _, err := h.kinds.Item(ref.Content()); err != nil {
+		return err
+	}
+	_, err := h.insert(ctx, publishArgs{Ref: ref.Content()}, &river.InsertOpts{})
 	return err
 }
 
-var _ ProcessQueue = (*ProcessInserter)(nil)
+// ScheduleSweep implements SweepScheduler like Jobs.ScheduleSweep.
+func (h *HostQueue) ScheduleSweep(ctx context.Context, ref contentref.ContentRef) error {
+	item, err := h.kinds.Item(ref.Content())
+	if err != nil {
+		return err
+	}
+	return InsertOnce(ctx, h.insert, sweepArgs{Prefix: item.Prefix()}, river.InsertOpts{ScheduledAt: time.Now().Add(h.grace)})
+}

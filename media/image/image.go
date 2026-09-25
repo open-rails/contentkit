@@ -112,6 +112,7 @@ type derived struct {
 	variants map[string]media.Variant
 	dims     media.Dims // the source's
 	w, h     int        // edited
+	placed   string     // the staged source's content address, once placed
 }
 
 // work is one source and edit to derive into specs.
@@ -195,18 +196,27 @@ func (p *Processor) pass(ctx context.Context, item media.Item, man *media.Manife
 	for k, w := range todo {
 		g.Go(func() error {
 			d, err := p.derive(gctx, item, w)
+			// A placed source is renamed in the manifest: record under both keys.
+			keys := []string{k}
+			if d.placed != "" {
+				keys = append(keys, d.placed+"."+w.edit.Hash())
+			}
 			if err != nil {
 				if !isPermanent(err) {
 					return err
 				}
 				p.failed(ctx, ref, fileOf(man, k), err)
 				mu.Lock()
-				failed[k] = err
+				for _, k := range keys {
+					failed[k] = err
+				}
 				mu.Unlock()
 				return nil
 			}
 			mu.Lock()
-			results[k] = d
+			for _, k := range keys {
+				results[k] = d
+			}
 			mu.Unlock()
 			return nil
 		})
@@ -330,27 +340,37 @@ func specFor(s media.Spec, typ string, edit *media.Edit) string {
 	return s.For(edit)
 }
 
-// derive encodes one source through its edit into each spec and stores the blobs.
+// derive encodes one source through its edit into each spec and stores the
+// blobs. A staged source (a multipart upload) is hashed from the bytes read
+// for decoding and placed at its content address first.
 func (p *Processor) derive(ctx context.Context, item media.Item, w work) (derived, error) {
 	key, err := item.Original(w.source)
 	if err != nil {
 		return derived{}, err
 	}
-	src, _, err := p.read(ctx, key)
+	src, obj, err := p.read(ctx, key)
 	if errors.Is(err, media.ErrNotFound) {
 		return derived{}, permanentError{err}
 	} else if err != nil {
 		return derived{}, err
 	}
 	d := derived{variants: make(map[string]media.Variant, len(w.specs))}
+	if layout.ValidStagedName(w.source) {
+		if d.placed, err = p.c.Manifests.Place(ctx, item.Ref(), media.Staged{Name: w.source, ETag: obj.ETag, SHA256: sha(src)}); err != nil {
+			if errors.Is(err, media.ErrStagedGone) {
+				return derived{}, permanentError{err}
+			}
+			return derived{}, err
+		}
+	}
 	if d.dims, err = p.probe(src, w.typ, w.edit, item.Kind().Animation); err != nil {
-		return derived{}, err
+		return derived{placed: d.placed}, err
 	}
 	d.w, d.h = w.edit.Size(d.dims.W, d.dims.H)
 	for name, s := range w.specs {
 		out, err := encode(src, w.typ, s, w.edit)
 		if err != nil {
-			return derived{}, err
+			return derived{placed: d.placed}, err
 		}
 		put := p.putBlob
 		if s.EditorOnly || s.Unedited {
@@ -358,7 +378,7 @@ func (p *Processor) derive(ctx context.Context, item media.Item, w work) (derive
 		}
 		blob, err := put(ctx, item, bytes.NewReader(out), int64(len(out)), sha(out), "image/webp")
 		if err != nil {
-			return derived{}, err
+			return derived{placed: d.placed}, err
 		}
 		d.variants[name] = media.Variant{Blob: blob, Spec: specFor(s, w.typ, w.edit), Type: "image/webp", Size: int64(len(out)), Editor: s.EditorOnly || s.Unedited}
 	}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -51,9 +52,15 @@ type ProcessJob struct {
 	Slot string
 }
 
-// ProcessQueue enqueues processing (River in the image and video lanes).
+// ProcessQueue enqueues processing in the media worker (workqueue.Queue).
 type ProcessQueue interface {
 	Enqueue(ctx context.Context, job ProcessJob) error
+}
+
+// ProcessCanceler is a ProcessQueue that can cancel an item's queued and
+// running jobs (workqueue.Queue); a discard uses it.
+type ProcessCanceler interface {
+	Cancel(ctx context.Context, ref contentref.ContentRef) (int, error)
 }
 
 // UploadOptions configure Uploads.
@@ -66,7 +73,8 @@ type UploadOptions struct {
 	Limiter    UploadLimiter // optional
 	Queue      ProcessQueue  // optional
 	PresignTTL time.Duration // PUT and part URLs; default 15m
-	// Grace is the sweep's (JobsConfig.Grace): Queue's when it is *Jobs, else 24h.
+	// Grace is the sweep's (JobsConfig.Grace): the Manifests' Sweeps when it
+	// is *Jobs, else 24h.
 	Grace     time.Duration
 	TicketTTL time.Duration // multipart ticket; default 24h, the abort-incomplete rule
 	// Frames serves the video poster picker's frame grabs (media/video.Frames;
@@ -74,6 +82,12 @@ type UploadOptions struct {
 	// grabs per process; default 2.
 	Frames           FrameGrabber
 	FrameConcurrency int
+	// ProcessOnUpload tells the SDK to commit each manifest file as soon as
+	// it is uploaded, unattached (Op.Unattached): the worker processes it
+	// while the user is still arranging the upload, readers leave it out
+	// until an attach op, and removing it discards its jobs and objects.
+	// Quota is charged at that commit.
+	ProcessOnUpload bool
 }
 
 // Uploads presigns direct-to-bucket uploads and commits them into manifests.
@@ -94,7 +108,7 @@ func NewUploads(o UploadOptions) (*Uploads, error) {
 	if o.TicketTTL <= 0 {
 		o.TicketTTL = 24 * time.Hour
 	}
-	if jobs, ok := o.Queue.(*Jobs); ok && o.Grace <= 0 {
+	if jobs, ok := o.Manifests.sweeps.(*Jobs); ok && o.Grace <= 0 {
 		o.Grace = jobs.cfg.Grace
 	}
 	if o.Grace <= 0 {
@@ -119,12 +133,14 @@ type PresignRequest struct {
 }
 
 // Presigned is the upload plan: Exists (already in the folder; commit it),
-// a single Put, or a Multipart upload.
+// a single Put, or a Multipart upload. ProcessOnUpload is the host's
+// UploadOptions.ProcessOnUpload, for manifest files.
 type Presigned struct {
-	Name      string
-	Exists    bool
-	Put       *PresignedRequest
-	Multipart *Multipart
+	Name            string
+	Exists          bool
+	Put             *PresignedRequest
+	Multipart       *Multipart
+	ProcessOnUpload bool
 }
 
 // Multipart carries the opaque ticket for PresignParts, ListParts, Complete
@@ -150,6 +166,12 @@ type PresignedPart struct {
 }
 
 func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequest) (Presigned, error) {
+	p, err := u.presignFile(ctx, actor, r)
+	p.ProcessOnUpload = err == nil && u.o.ProcessOnUpload && r.Slot == "" && !r.Inline
+	return p, err
+}
+
+func (u *Uploads) presignFile(ctx context.Context, actor access.Actor, r PresignRequest) (Presigned, error) {
 	item, err := u.item(r.Ref)
 	if err != nil {
 		return Presigned{}, err
@@ -364,7 +386,8 @@ func (u *Uploads) abort(ctx context.Context, t ticket, key string, cause error) 
 
 // Commit operations. Insert and Replace take an uploaded Original.
 const (
-	OpInsert  = "insert"  // add Name at Index (default: append); a retry with the same Original is a no-op
+	OpInsert  = "insert"  // add Name at Index (default: append), Unattached if set; a retry with the same Original is a no-op
+	OpAttach  = "attach"  // make an unattached Name part of the item, after the attached files or at Index, merging Meta; idempotent
 	OpReplace = "replace" // swap Name's original; variants are regenerated, a stale hls plays until re-encoded
 	OpMove    = "move"    // move Name to Index
 	OpRename  = "rename"  // rename Name to To
@@ -379,8 +402,11 @@ type Op struct {
 	Original string         `json:"original,omitempty"`
 	Index    *int           `json:"index,omitempty"`
 	To       string         `json:"to,omitempty"`
-	Meta     map[string]any `json:"meta,omitempty"` // insert, replace: the file's meta
+	Meta     map[string]any `json:"meta,omitempty"` // insert, replace: the file's meta; attach: merged into it
 	Edit     *Edit          `json:"edit,omitempty"` // edit, insert, replace: the image's edit (replace drops the old one)
+	// Unattached inserts the file processed but not yet part of the item
+	// (UploadOptions.ProcessOnUpload); attach makes it one, remove discards it.
+	Unattached bool `json:"unattached,omitempty"`
 }
 
 // Commit applies ops to the manifest in one conditional write. Every new
@@ -437,6 +463,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	// written; the final settlement refunds what a retried attempt no longer
 	// needs and drops the reservations.
 	var delta, charged int64
+	var discarded *Manifest // unattached files the ops removed, and their downloads
 	settle := func(ctx context.Context, s Settlement) error {
 		if u.o.Limiter == nil {
 			return nil
@@ -448,12 +475,13 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	defer cancel()
 	man, err := u.o.Manifests.Edit(editCtx, ref, func(m *Manifest) error {
 		before := m.originalSizes()
-		prev := &Manifest{Files: slices.Clone(m.Files)}
+		prev := &Manifest{Files: slices.Clone(m.Files), Downloads: maps.Clone(m.Downloads)}
 		for _, op := range ops {
 			if err := m.apply(op, uploaded[op.Original]); err != nil {
 				return err
 			}
 		}
+		discarded = m.dropDiscarded(prev)
 		if err := item.Kind().checkFiles(prev, m); err != nil {
 			return err
 		}
@@ -474,6 +502,11 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	}
 	if err := settle(context.WithoutCancel(ctx), Settlement{Keys: keys, Delta: delta - charged}); err != nil {
 		return nil, err
+	}
+	if len(discarded.Files) > 0 {
+		if err := u.discard(ctx, item, discarded); err != nil {
+			return nil, err
+		}
 	}
 	if u.o.Queue != nil {
 		if err := u.o.Queue.Enqueue(ctx, ProcessJob{Ref: ref}); err != nil {
@@ -597,13 +630,15 @@ func (op Op) validate() error {
 		if op.To == "" {
 			return bad("a new name is required")
 		}
-	case OpRemove:
-	case OpEdit:
+	case OpRemove, OpEdit, OpAttach:
 	default:
 		return uploadErr(CodeInvalid, "unknown op %q", op.Op)
 	}
 	if op.Edit != nil && op.Op != OpEdit && op.Op != OpInsert && op.Op != OpReplace {
 		return bad("only edit, insert and replace take an edit")
+	}
+	if op.Unattached && op.Op != OpInsert {
+		return bad("only insert takes unattached")
 	}
 	if err := op.Edit.Check(0, 0); err != nil {
 		return bad("%v", err)
@@ -648,7 +683,7 @@ func (m *Manifest) apply(op Op, obj Object) error {
 			}
 			at = *op.Index
 		}
-		f := File{Name: op.Name, Original: op.Original, Type: obj.ContentType, Size: obj.Size, Meta: op.Meta}
+		f := File{Name: op.Name, Original: op.Original, Type: obj.ContentType, Size: obj.Size, Meta: op.Meta, Unattached: op.Unattached}
 		if err := f.setEdit(op.Edit); err != nil {
 			return err
 		}
@@ -663,7 +698,7 @@ func (m *Manifest) apply(op Op, obj Object) error {
 			meta = op.Meta
 		}
 		// A stale hls keeps playing until the re-encode promotes its successor.
-		*f = File{Name: f.Name, Original: op.Original, Type: obj.ContentType, Size: obj.Size, Meta: meta, HLS: f.HLS}
+		*f = File{Name: f.Name, Original: op.Original, Type: obj.ContentType, Size: obj.Size, Meta: meta, HLS: f.HLS, Unattached: f.Unattached}
 		return f.setEdit(op.Edit)
 	case OpMove:
 		if *op.Index < 0 || *op.Index >= len(m.Files) {
@@ -681,8 +716,88 @@ func (m *Manifest) apply(op Op, obj Object) error {
 		m.Files = append(m.Files[:i], m.Files[i+1:]...)
 	case OpEdit:
 		return m.Files[i].setEdit(op.Edit)
+	case OpAttach:
+		f := m.Files[i]
+		if !f.Unattached {
+			return nil // attached already: a retry
+		}
+		f.Unattached = false
+		for k, v := range op.Meta {
+			if f.Meta == nil {
+				f.Meta = map[string]any{}
+			}
+			f.Meta[k] = v
+		}
+		m.Files = append(m.Files[:i], m.Files[i+1:]...)
+		// After the attached files (before the other unattached ones), or at Index.
+		at := slices.IndexFunc(m.Files, func(f File) bool { return f.Unattached })
+		if at < 0 {
+			at = len(m.Files)
+		}
+		if op.Index != nil {
+			if *op.Index < 0 || *op.Index > len(m.Files) {
+				return uploadErr(CodeInvalid, "index %d out of range 0-%d", *op.Index, len(m.Files))
+			}
+			at = *op.Index
+		}
+		m.Files = append(m.Files[:at], append([]File{f}, m.Files[at:]...)...)
 	}
 	return nil
+}
+
+// dropDiscarded removes the video downloads of unattached files the edit
+// from prev removed, and returns those files and downloads.
+func (m *Manifest) dropDiscarded(prev *Manifest) *Manifest {
+	out := &Manifest{}
+	for _, f := range prev.Files {
+		if f.Unattached && m.File(f.Name) < 0 {
+			out.Files = append(out.Files, f)
+		}
+	}
+	for _, f := range out.Files {
+		for k, d := range m.Downloads {
+			if downloadFile(k) == f.Name {
+				if out.Downloads == nil {
+					out.Downloads = map[string]Download{}
+				}
+				out.Downloads[k] = d
+				delete(m.Downloads, k)
+			}
+		}
+	}
+	return out
+}
+
+// discard cancels the item's processing (the worker's jobs for every file;
+// Commit re-enqueues the rest) and deletes the discarded files' staged or
+// placed originals and derivatives that no manifest in the folder
+// references. Unattached files were never served, so nothing waits out the
+// sweep's grace; a job still finishing leaves at most orphans the sweep takes.
+func (u *Uploads) discard(ctx context.Context, item Item, gone *Manifest) error {
+	ctx = context.WithoutCancel(ctx)
+	if c, ok := u.o.Queue.(ProcessCanceler); ok {
+		if _, err := c.Cancel(ctx, item.Ref()); err != nil {
+			return err
+		}
+	}
+	refs, err := u.o.Manifests.folderRefs(ctx, item)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	gone.walk(func(area, name string) {
+		if area == AreaOriginals {
+			area = layout.SourceArea(name)
+		}
+		if name == "" || refs[area+"/"+name] {
+			return
+		}
+		refs[area+"/"+name] = true // once
+		if err := u.o.Store.Delete(ctx, item.Prefix()+area+"/"+name); err != nil && !errors.Is(err, ErrNotFound) {
+			errs = append(errs, err)
+		}
+	})
+	return errors.Join(errs...)
 }
 
 // sizeDelta is the change in stored bytes from before to after.

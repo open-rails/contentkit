@@ -10,6 +10,7 @@ package video
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Config configures an Encoder.
@@ -48,10 +50,13 @@ type Config struct {
 	Encoder string
 	Hooks   media.Hooks // Failed: a source that can never be encoded
 	Logger  *slog.Logger
-	// Slots is the host's media queue (media.NewProcessInserter): a grabbed
-	// poster frame is handed to the image job through it. Without it, frame
-	// posters are grabbed but not encoded.
+	// Slots is the worker's queue (workqueue.Queue): a grabbed poster frame
+	// and a rendered hover preview are handed to its image job through it.
+	// Without it, frame posters are grabbed but not encoded.
 	Slots media.ProcessQueue
+	// Sweeps schedules the folder's sweep after the encoder's manifest edits
+	// (media.HostQueue); optional.
+	Sweeps media.SweepScheduler
 	// ProgressInterval throttles progress reports; default 2 s.
 	ProgressInterval time.Duration
 }
@@ -152,7 +157,7 @@ func (e *Encoder) encode(ctx context.Context, job Job, report Report, oneStage b
 	if _, err := item.ManifestKey(); err != nil {
 		return false, &PermanentError{err}
 	}
-	ms, err := media.NewManifests(e.c.Store, kinds, media.ManifestOptions{Locker: e.c.Locker, CacheSize: 1})
+	ms, err := media.NewManifests(e.c.Store, kinds, media.ManifestOptions{Locker: e.c.Locker, CacheSize: 1, Sweeps: e.c.Sweeps})
 	if err != nil {
 		return false, err
 	}
@@ -175,9 +180,12 @@ func (e *Encoder) encode(ctx context.Context, job Job, report Report, oneStage b
 	prog := newProgress(ctx, report, e.c.ProgressInterval, time.Now, names)
 	var errs []error
 	for _, f := range stale {
-		cur := f.HLS
+		cur, source := f.HLS, f.Source()
 		for {
-			cur, err = e.file(ctx, ms, item, r, f.Name, f.Source(), cur, prog.file(f.Name))
+			cur, err = e.file(ctx, ms, item, r, f.Name, source, cur, prog.file(f.Name))
+			if cur != nil {
+				source = cur.Source // a staged source is placed by its first stage
+			}
 			if err != nil || cur == nil || len(cur.Pending) == 0 {
 				break
 			}
@@ -192,7 +200,7 @@ func (e *Encoder) encode(ctx context.Context, job Job, report Report, oneStage b
 		}
 		var perm *PermanentError
 		if errors.As(err, &perm) {
-			err = e.fail(ctx, ms, item, r.failSpec, f.Name, f.Source(), perm.Err)
+			err = e.fail(ctx, ms, item, r.failSpec, f.Name, source, perm.Err)
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s %q: %w", job.Ref, f.Name, err))
@@ -315,11 +323,26 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 	defer os.RemoveAll(dir)
 
 	src := filepath.Join(dir, "source")
-	srcObj, err := e.fetch(ctx, srcKey, src, fp)
+	srcObj, sum, err := e.fetch(ctx, srcKey, src, fp)
 	if errors.Is(err, media.ErrNotFound) {
 		return nil, e.stale(ctx, ms, item, name, source, err)
 	} else if err != nil {
 		return nil, err
+	}
+	if layout.ValidStagedName(source) {
+		// Hashed while it downloaded: place it at its content address before
+		// encoding, so the outputs record the placed original.
+		placed, err := ms.Place(ctx, item.Ref(), media.Staged{Name: source, ETag: srcObj.ETag, SHA256: sum})
+		if errors.Is(err, media.ErrStagedGone) {
+			return nil, e.stale(ctx, ms, item, name, source, err)
+		} else if err != nil {
+			return nil, err
+		}
+		source = placed
+		srcKey, _ = item.Original(source)
+		if srcObj, err = e.c.Store.Head(ctx, srcKey); err != nil {
+			return nil, err
+		}
 	}
 	fp.set(media.PhaseProbing)
 	pr, err := probe(ctx, src)
@@ -571,18 +594,20 @@ func (e *Encoder) stream(ctx context.Context, item media.Item, dir, name, conten
 	return blob, pl, err
 }
 
-func (e *Encoder) fetch(ctx context.Context, key, path string, fp *fileProgress) (media.Object, error) {
+// fetch downloads key to path, returning its SHA-256 computed on the way.
+func (e *Encoder) fetch(ctx context.Context, key, path string, fp *fileProgress) (media.Object, []byte, error) {
 	rc, obj, err := e.c.Store.Get(ctx, key, media.GetOptions{})
 	if err != nil {
-		return obj, err
+		return obj, nil, err
 	}
 	defer rc.Close()
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		return obj, err
+		return obj, nil, err
 	}
+	h := sha256.New()
 	start := time.Now()
-	n, err := io.Copy(f, rc)
+	n, err := io.Copy(io.MultiWriter(f, h), rc)
 	fp.transferred(n, time.Since(start))
 	if cerr := f.Close(); err == nil {
 		err = cerr
@@ -590,7 +615,7 @@ func (e *Encoder) fetch(ctx context.Context, key, path string, fp *fileProgress)
 	if err == nil && n != obj.Size {
 		err = fmt.Errorf("media/video: read %d of %d bytes of %s", n, obj.Size, key)
 	}
-	return obj, err
+	return obj, h.Sum(nil), err
 }
 
 // uploadBytes is what remains to upload after a pass: every rendition,

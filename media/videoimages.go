@@ -425,10 +425,11 @@ func Encoded(f File) bool {
 	return ok && f.HLS.Source == f.Source() && metaFloat(f.Meta, "duration") > 0
 }
 
-// VideoFile is the named file when it is a video, or with name "" the first video file.
+// VideoFile is the named file when it is a video, or with name "" the first
+// attached video file.
 func VideoFile(m *Manifest, name string) (File, bool) {
 	for _, f := range m.Files {
-		if strings.HasPrefix(f.Type, "video/") && (name == "" || f.Name == name) {
+		if strings.HasPrefix(f.Type, "video/") && (name == "" && !f.Unattached || name != "" && f.Name == name) {
 			return f, true
 		}
 	}

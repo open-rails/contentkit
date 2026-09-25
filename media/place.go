@@ -182,3 +182,28 @@ func (m *Manifest) renameSource(from, to string) bool {
 	}
 	return changed
 }
+
+// folderRefs is every object the folder's manifests reference, as
+// "{area}/{name}" (a staged original under staging/).
+func (m *Manifests) folderRefs(ctx context.Context, item Item) (map[string]bool, error) {
+	keys, err := m.manifestKeys(ctx, item)
+	if err != nil {
+		return nil, err
+	}
+	refs := map[string]bool{}
+	for _, key := range keys {
+		man, _, err := m.get(ctx, key)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		man.walk(func(area, name string) {
+			if area == AreaOriginals {
+				area = layout.SourceArea(name)
+			}
+			refs[area+"/"+name] = true
+		})
+	}
+	return refs, nil
+}

@@ -2,7 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { UploadClient, fetchTransport, type Transport, type UploadState } from "../src/index.js";
+import { UploadClient, UploadQueue, fetchTransport, type QueueSnapshot, type Transport, type UploadState } from "../src/index.js";
 import { bytes } from "./fake.js";
 import { KillProxy, startServer, stopServer } from "./server.js";
 
@@ -173,5 +173,43 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
       size: body.length,
       sha256: createHash("sha256").update(body).digest("hex"),
     });
+  });
+  it("processes on upload: stages files unattached, attaches them in queue order, discards a removed one", async () => {
+    const ref = { kind: "gallery", id: "on-upload", version: "en" };
+    const c = new UploadClient({ endpoint: `${base}/upload-on-upload`, headers: () => ({ "X-Test-Actor": "alice" }), retryDelay: () => 200 });
+    const q = new UploadQueue(c, { ref, pollInterval: 100 });
+    const until = (ok: (s: QueueSnapshot) => boolean) =>
+      new Promise<QueueSnapshot>((resolve) => {
+        const check = () => ok(q.getSnapshot()) && (off(), resolve(q.getSnapshot()));
+        const off = q.subscribe(check);
+        check();
+      });
+    const png = (name: string, seed: number) => new File([bytes(3000, seed)], name, { type: "image/png" });
+    const [, b, d] = q.add([png("a.png", 21), png("b.png", 22), png("d.png", 23)]);
+    const staged = await until((x) => x.items.every((i) => i.unattached));
+    expect((await c.files(ref)).map((f) => [f.name, f.unattached]).sort()).toEqual([
+      ["a.png", true],
+      ["b.png", true],
+      ["d.png", true],
+    ]);
+
+    const discarded = staged.items.find((i) => i.id === d!.id)!.result!.name;
+    q.remove(d!.id);
+    for (let i = 0; (await c.files(ref)).some((f) => f.name === "d.png"); i++) {
+      if (i > 50) throw new Error("d.png was not discarded");
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const q2 = new URLSearchParams({ ...ref, name: discarded });
+    expect((await fetch(`${base}/object?${q2}`)).status).toBe(404);
+
+    q.move(b!.id, 0);
+    const files = await q.commit();
+    expect(files.map((f) => f.name)).toEqual(["b.png", "a.png"]);
+    expect((await c.files(ref)).map((f) => [f.name, !!f.unattached])).toEqual([
+      ["b.png", false],
+      ["a.png", false],
+    ]);
+    expect(q.getSnapshot().items.every((i) => i.status === "committed")).toBe(true);
+    q.dispose();
   });
 });

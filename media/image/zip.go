@@ -18,7 +18,7 @@ type zipEntry struct{ name, blob string }
 func zipInputs(m *media.Manifest, variant string) ([]zipEntry, string, bool) {
 	var blobs []string
 	for _, f := range m.Files {
-		if !isImage(f) {
+		if !isImage(f) || f.Unattached {
 			continue
 		}
 		v, ok := f.Variants[variant]

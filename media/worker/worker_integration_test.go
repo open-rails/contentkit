@@ -1,0 +1,440 @@
+package worker_test
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"errors"
+	stdimage "image"
+	"image/color"
+	"image/png"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+	riverhelpers "github.com/open-rails/helpers/river"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
+
+	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/internal/s3test"
+	"github.com/open-rails/contentkit/media/token"
+	"github.com/open-rails/contentkit/media/worker"
+	"github.com/open-rails/contentkit/media/workqueue"
+)
+
+type allow struct{}
+
+func (allow) CanUpload(context.Context, access.Actor, contentref.ContentRef) (media.UploadGrant, error) {
+	return media.UploadGrant{Allowed: true}, nil
+}
+
+var alice = access.Actor{ID: "alice", Kind: "user"}
+
+// host is a host that only presigns, commits and reads, with the worker
+// running beside it on the same database and bucket.
+type host struct {
+	*s3test.Env
+	pool      *pgxpool.Pool
+	kinds     *media.Registry
+	manifests *media.Manifests
+	uploads   *media.Uploads
+	queue     *workqueue.Queue
+	worker    *worker.Worker
+
+	mu      sync.Mutex
+	encoded map[string]media.Aspect // Hooks.SlotEncoded, by ref#slot
+}
+
+func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
+	t.Helper()
+	env := s3test.Open(t)
+	if !env.Store.Capabilities().ConditionalPut {
+		t.Skip("backend lacks conditional PUT")
+	}
+	ctx := context.Background()
+	pool := pgtest.Pool(t, nil)
+	kinds, err := media.NewRegistry(
+		media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png"}, MaxBytes: 10 << 20,
+			Specs: map[string]media.Spec{"thumb": {Width: 100, Height: 150, Fit: media.FitCover, Quality: 80}},
+			Slots: map[string]media.Slot{"cover": {Aspect: media.Aspect3x1, Widths: []int{150, 300}}}},
+		media.Kind{Name: "clip", Types: []string{"video/mp4"}, MaxBytes: 1 << 30, Video: &media.Video{Ladder: []int{240}}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &host{Env: env, pool: pool, kinds: kinds, encoded: map[string]media.Aspect{}}
+
+	// The host's River: publishes and sweeps the worker hands back run here.
+	schema := pgtest.EmptySchema(t, ctx, pool)
+	if err := riverhelpers.ApplyMigrations(ctx, pool, schema); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: kinds, Tenants: []string{env.Tenant}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostClient, err := riverhelpers.New(ctx, pool, &river.Config{Schema: schema, FetchPollInterval: 100 * time.Millisecond,
+		FetchCooldown: 50 * time.Millisecond}, jobs.RiverJobs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := hostClient.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = hostClient.StopAndCancel(ctx)
+	})
+	h.manifests = s3test.Manifests(t, env.Store, kinds, media.ManifestOptions{Sweeps: jobs})
+	if err := workqueue.Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM "+workqueue.Schema+".river_job"); err != nil {
+		t.Fatal(err)
+	}
+	if h.queue, err = workqueue.New(pool, kinds); err != nil {
+		t.Fatal(err)
+	}
+	if h.uploads, err = media.NewUploads(media.UploadOptions{Store: env.Store, Kinds: kinds, Manifests: h.manifests,
+		Authorizer: allow{}, Queue: h.queue}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The worker, built from the same registry, with the host's hooks.
+	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Store: env.Store, Kinds: kinds, HostSchema: schema,
+		TempDir: t.TempDir(), Threads: 2, RiverHooks: riverHooks,
+		Hooks: media.Hooks{SlotEncoded: func(_ context.Context, ref contentref.ContentRef, slot string, a media.Aspect) {
+			h.mu.Lock()
+			h.encoded[ref.String()+"#"+slot] = a
+			h.mu.Unlock()
+		}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runCtx, stop := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- h.worker.Run(runCtx) }()
+	t.Cleanup(func() {
+		stop()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	})
+	return h
+}
+
+func (h *host) put(t *testing.T, p *media.PresignedRequest, body []byte) {
+	t.Helper()
+	req, _ := http.NewRequest(p.Method, p.URL, bytes.NewReader(body))
+	for k := range p.Header {
+		req.Header.Set(k, p.Header.Get(k))
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("put: %d", resp.StatusCode)
+	}
+}
+
+// upload presigns and PUTs body like a browser (slot: and commits the slot).
+func (h *host) upload(t *testing.T, ref contentref.ContentRef, slot, typ string, body []byte) string {
+	t.Helper()
+	sum := sha256.Sum256(body)
+	p, err := h.uploads.Presign(context.Background(), alice, media.PresignRequest{Ref: ref, Type: typ, Size: int64(len(body)), SHA256: sum[:], Slot: slot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Put != nil {
+		h.put(t, p.Put, body)
+	}
+	if slot != "" {
+		if err := h.uploads.CommitSlot(context.Background(), alice, ref, slot, sum[:], nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return p.Name
+}
+
+// stage puts body where a completed multipart upload lands, returning its name.
+func (h *host) stage(t *testing.T, ref contentref.ContentRef, typ string, body []byte) string {
+	t.Helper()
+	item, _ := h.kinds.Item(ref)
+	name := media.NewUploadName()
+	key, _ := item.Original(name)
+	if _, err := h.Store.Put(context.Background(), key, bytes.NewReader(body), int64(len(body)), media.PutOptions{ContentType: typ}); err != nil {
+		t.Fatal(err)
+	}
+	return name
+}
+
+func (h *host) commit(t *testing.T, ref contentref.ContentRef, ops ...media.Op) {
+	t.Helper()
+	if _, err := h.uploads.Commit(context.Background(), alice, ref, ops); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (h *host) exists(t *testing.T, key string) bool {
+	t.Helper()
+	_, err := h.Store.Head(context.Background(), key)
+	if err != nil && !errors.Is(err, media.ErrNotFound) {
+		t.Fatal(err)
+	}
+	return err == nil
+}
+
+func eventually(t *testing.T, what string, within time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func pngImage(t *testing.T, w, h int, seed uint8) []byte {
+	t.Helper()
+	img := stdimage.NewRGBA(stdimage.Rect(0, 0, w, h))
+	for y := range h {
+		for x := range w {
+			img.Set(x, y, color.RGBA{uint8(x) + seed, uint8(y) * seed, seed, 255})
+		}
+	}
+	var b bytes.Buffer
+	if err := png.Encode(&b, img); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
+}
+
+func newID() string { return uuid.Must(uuid.NewV7()).String() }
+
+// The host enqueues; the worker derives variants and slot outputs (running
+// the host's SlotEncoded hook), and places a staged upload at its SHA-256.
+func TestWorkerProcessesImagesAndPlacesStagedUploads(t *testing.T) {
+	h := newHost(t)
+	ctx := context.Background()
+	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 1))})
+	staged := pngImage(t, 400, 600, 2)
+	sum := sha256.Sum256(staged)
+	name := h.stage(t, ref, "image/png", staged)
+	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "002.png", Original: name})
+	work := ref.Content()
+	h.upload(t, work, "cover", "image/png", pngImage(t, 600, 200, 3))
+
+	item, _ := h.kinds.Item(ref)
+	eventually(t, "variants, placement and the cover", time.Minute, func() bool {
+		m, _, err := h.manifests.Get(ctx, ref)
+		if err != nil || len(m.Files) != 2 {
+			return false
+		}
+		cover, _ := item.SlotOutput("cover", 300)
+		return m.Files[0].Variants["thumb"].Blob != "" && m.Files[1].Variants["thumb"].Blob != "" &&
+			m.Files[1].Original == media.SHA256Name(sum[:]) && h.exists(t, cover)
+	})
+	if key, _ := item.Original(name); h.exists(t, key) {
+		t.Fatal("staging kept after placement")
+	}
+	h.mu.Lock()
+	aspect, ok := h.encoded[work.String()+"#cover"]
+	h.mu.Unlock()
+	if !ok || aspect != media.Aspect3x1 {
+		t.Fatalf("the host's SlotEncoded hook did not run in the worker: %v %v", aspect, ok)
+	}
+}
+
+// A staged video is hashed while the worker downloads it for ffmpeg, placed,
+// then encoded; the manifest names the placed original throughout.
+func TestWorkerPlacesAndEncodesStagedVideo(t *testing.T) {
+	if os.Getenv("CONTENTKIT_TEST_FFMPEG") == "" {
+		t.Skip("CONTENTKIT_TEST_FFMPEG not set")
+	}
+	h := newHost(t)
+	ctx := context.Background()
+	src := filepath.Join(t.TempDir(), "clip.mp4")
+	if out, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=3:size=426x240:rate=24",
+		"-f", "lavfi", "-i", "sine=duration=3", "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", src).CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg: %v %s", err, out)
+	}
+	body, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(body)
+	ref := contentref.New(h.Tenant, "clip", newID())
+	name := h.stage(t, ref, "video/mp4", body)
+	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "source", Original: name})
+	eventually(t, "the encode", 2*time.Minute, func() bool {
+		m, _, err := h.manifests.Get(ctx, ref)
+		return err == nil && m.Files[0].HLS != nil && len(m.Files[0].HLS.Video) > 0
+	})
+	m, _, _ := h.manifests.Get(ctx, ref)
+	if f := m.Files[0]; f.Original != media.SHA256Name(sum[:]) || f.HLS.Source != f.Original {
+		t.Fatalf("not placed before the encode: %+v", f)
+	}
+	item, _ := h.kinds.Item(ref)
+	if key, _ := item.Original(name); h.exists(t, key) {
+		t.Fatal("staging kept after placement")
+	}
+}
+
+// An edit that lands as a slot job finishes, while River still has it
+// running, is absorbed as a follow-up job and still rendered.
+func TestWorkerRendersASlotEditLandingAsTheJobFinishes(t *testing.T) {
+	type target struct {
+		h   *host
+		ref contentref.ContentRef
+	}
+	var tg atomic.Pointer[target]
+	var once sync.Once
+	edited := make(chan error, 1)
+	late := &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 300, H: 100}}
+	h := newHost(t, river.HookWorkEndFunc(func(ctx context.Context, job *rivertype.JobRow, err error) error {
+		if cur := tg.Load(); cur != nil && job.Kind == (workqueue.ImageArgs{}).Kind() && err == nil {
+			once.Do(func() { edited <- cur.h.uploads.EditSlot(context.Background(), alice, cur.ref, "cover", late) })
+		}
+		return err
+	}))
+	ref := contentref.New(h.Tenant, "gallery", newID())
+	tg.Store(&target{h: h, ref: ref})
+	h.upload(t, ref, "cover", "image/png", pngImage(t, 300, 400, 13))
+	select {
+	case err := <-edited:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Minute):
+		t.Fatal("the slot job did not run")
+	}
+	eventually(t, "the late edit rendered", time.Minute, func() bool {
+		rec, err := h.manifests.Slot(context.Background(), ref, "cover")
+		return err == nil && rec.Result != nil && rec.Edit.Hash() == late.Hash() && rec.Result.Of == rec.Fingerprint(h.cover(t))
+	})
+}
+
+func (h *host) cover(t *testing.T) media.Slot {
+	t.Helper()
+	k, err := h.kinds.Kind("gallery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return k.Slots["cover"]
+}
+
+type editorResolver struct{}
+
+func (editorResolver) Resolve(_ context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	out := map[contentref.ContentKey]access.Resolution{}
+	for _, ref := range refs {
+		out[ref.Key()] = access.Resolution{Visible: true, Accessible: true, Editor: a.ID == alice.ID}
+	}
+	return out, nil
+}
+
+func (h *host) read(t *testing.T, ref contentref.ContentRef, actor access.Actor, unattached bool) []media.FileInfo {
+	t.Helper()
+	r, err := media.NewReader(media.ReaderOptions{Manifests: h.manifests, Kinds: h.kinds, Resolver: editorResolver{},
+		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: "https://media.invalid", SigningKey: token.Key{ID: "k", Secret: bytes.Repeat([]byte("k"), 32)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := r.Read(context.Background(), ref, actor, media.ReadOptions{Unattached: unattached})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res.Files
+}
+
+// ProcessOnUpload: an unattached file is processed before it is attached and
+// readers leave it out until then; attaching does not reprocess; discarding a
+// file mid-encode cancels the job and deletes its objects.
+func TestProcessOnUploadAttachAndDiscard(t *testing.T) {
+	if os.Getenv("CONTENTKIT_TEST_FFMPEG") == "" {
+		t.Skip("CONTENTKIT_TEST_FFMPEG not set")
+	}
+	h := newHost(t)
+	ctx := context.Background()
+	gallery := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	name := h.upload(t, gallery, "", "image/png", pngImage(t, 300, 450, 7))
+	h.commit(t, gallery, media.Op{Op: media.OpInsert, Name: "001.png", Original: name, Unattached: true})
+	eventually(t, "the unattached image derived", time.Minute, func() bool {
+		m, _, err := h.manifests.Get(ctx, gallery)
+		return err == nil && m.Files[0].Unattached && m.Files[0].Variants["thumb"].Blob != ""
+	})
+	if got := h.read(t, gallery, access.Actor{Anonymous: true}, true); len(got) != 0 {
+		t.Fatalf("a viewer sees an unattached file: %+v", got)
+	}
+	if got := h.read(t, gallery, alice, false); len(got) != 0 {
+		t.Fatalf("an editor's plain read lists an unattached file: %+v", got)
+	}
+	if got := h.read(t, gallery, alice, true); len(got) != 1 || !got[0].Unattached || got[0].Width == 0 {
+		t.Fatalf("the editor's unattached file: %+v", got)
+	}
+	before, _, _ := h.manifests.Get(ctx, gallery)
+	h.commit(t, gallery, media.Op{Op: media.OpAttach, Name: "001.png"})
+	h.commit(t, gallery, media.Op{Op: media.OpAttach, Name: "001.png"}) // idempotent
+	after, _, _ := h.manifests.Get(ctx, gallery)
+	if f := after.Files[0]; f.Unattached || f.Variants["thumb"] != before.Files[0].Variants["thumb"] {
+		t.Fatalf("attach changed the derived file: %+v", f)
+	}
+	if got := h.read(t, gallery, access.Actor{Anonymous: true}, false); len(got) != 1 {
+		t.Fatalf("the attached file is not read: %+v", got)
+	}
+
+	// A long staged video, discarded while its encode runs.
+	src := filepath.Join(t.TempDir(), "long.mp4")
+	if out, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=90:size=426x240:rate=30",
+		"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", src).CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg: %v %s", err, out)
+	}
+	body, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(body)
+	clip := contentref.New(h.Tenant, "clip", newID())
+	staged := h.stage(t, clip, "video/mp4", body)
+	h.commit(t, clip, media.Op{Op: media.OpInsert, Name: "long", Original: staged, Unattached: true})
+	progress := workqueue.NewProgressSource(h.pool)
+	eventually(t, "the encode running", time.Minute, func() bool {
+		st, err := progress.EncodeProgress(ctx, clip)
+		p, ok := st.Files["long"]
+		return err == nil && ok && p.Phase == media.PhaseEncoding
+	})
+	h.commit(t, clip, media.Op{Op: media.OpRemove, Name: "long"})
+	match, _, _ := workqueue.RefMatch(clip)
+	eventually(t, "the encode cancelled", 30*time.Second, func() bool {
+		var n int
+		err := h.pool.QueryRow(ctx, "SELECT count(*) FROM "+workqueue.Schema+".river_job WHERE kind = $1 AND args @> $2 AND state = 'cancelled'",
+			(workqueue.VideoArgs{}).Kind(), match).Scan(&n)
+		return err == nil && n > 0
+	})
+	item, _ := h.kinds.Item(clip)
+	stagedKey, _ := item.Original(staged)
+	placedKey, _ := item.Original(media.SHA256Name(sum[:]))
+	if h.exists(t, stagedKey) || h.exists(t, placedKey) {
+		t.Fatal("the discarded video's original was kept")
+	}
+	time.Sleep(2 * time.Second) // a cancelled job must not write back
+	if m, _, err := h.manifests.Get(ctx, clip); err != nil || len(m.Files) != 0 {
+		t.Fatalf("after discard: %+v %v", m, err)
+	}
+}

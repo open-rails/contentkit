@@ -6,7 +6,7 @@ export const MAX_PART_SIZE = 16777216;
 
 export type ErrorCode = "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "incomplete" | "not_uploaded" | "too_many_files" | "too_large" | "quota_exceeded" | "type_not_allowed" | "checksum_mismatch" | "rate_limited" | "image_too_small" | "image_too_large" | "image_unreadable" | "animation_not_allowed" | "animation_too_long" | "animation_unsupported" | "internal_error";
 
-export type OpName = "insert" | "replace" | "move" | "rename" | "remove" | "edit";
+export type OpName = "insert" | "attach" | "replace" | "move" | "rename" | "remove" | "edit";
 export type PosterSource = "frame" | "upload" | "auto";
 export type EncodePhase = "queued" | "downloading" | "probing" | "encoding" | "muxing" | "uploading" | "publishing" | "images";
 
@@ -48,6 +48,7 @@ export interface PresignReply {
   exists?: boolean;
   put?: RequestReply;
   multipart?: MultipartReply;
+  process_on_upload?: boolean;
 }
 
 export interface PartBody {
@@ -102,6 +103,7 @@ export interface Op {
   to?: string;
   meta?: Record<string, unknown>;
   edit?: Edit;
+  unattached?: boolean;
 }
 
 export interface CommitBody {
@@ -116,6 +118,7 @@ export interface CommitFile {
   size?: number;
   edit?: Edit;
   meta?: Record<string, unknown>;
+  unattached?: boolean;
 }
 
 export interface CommitReply {
@@ -291,6 +294,7 @@ export interface FileInfo {
   teaser?: boolean;
   locked?: boolean;
   hls?: boolean;
+  unattached?: boolean;
   failed?: string;
   failed_code?: string;
   failed_details?: ErrorDetails;
@@ -319,4 +323,13 @@ export interface EncodeProgress {
   stalled?: boolean;
   stage?: number;
   stages?: number;
+}
+
+export interface FilesBody {
+  ref: RefBody;
+  names?: string[];
+}
+
+export interface FilesReply {
+  files: FileInfo[];
 }

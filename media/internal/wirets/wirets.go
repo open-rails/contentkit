@@ -24,6 +24,7 @@ var types = []any{
 	media.PosterManifest{}, media.HoverPreviewSelection{}, media.PreviewImage{}, media.HoverPreviewManifest{},
 	media.VideoInfo{}, media.VideoImages{}, media.ErrorReply{},
 	media.ReadResult{}, media.FileInfo{}, media.DownloadInfo{}, media.EncodeProgress{},
+	media.FilesBody{}, media.FilesReply{},
 }
 
 var posterSources = []string{media.PosterSourceFrame, media.PosterSourceUpload, media.PosterSourceAuto}
@@ -35,7 +36,7 @@ var errorCodes = []string{
 	media.CodeAnimationNotAllowed, media.CodeAnimationTooLong, media.CodeAnimationUnsupported, "internal_error",
 }
 
-var ops = []string{media.OpInsert, media.OpReplace, media.OpMove, media.OpRename, media.OpRemove, media.OpEdit}
+var ops = []string{media.OpInsert, media.OpAttach, media.OpReplace, media.OpMove, media.OpRename, media.OpRemove, media.OpEdit}
 
 // Render returns the TypeScript source.
 func Render() string {

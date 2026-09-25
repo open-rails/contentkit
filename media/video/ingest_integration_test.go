@@ -6,12 +6,9 @@ import (
 	"testing"
 	"time"
 
-	riverhelpers "github.com/open-rails/helpers/river"
-	"github.com/riverqueue/river"
-
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/video"
+	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 // A host import (legacy migration) streams a source through Uploads.Ingest;
@@ -21,37 +18,15 @@ func TestIngestEnqueuesEncode(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	pool := pgtest.Pool(t, nil)
-	if err := video.Migrate(ctx, pool); err != nil {
+	if err := workqueue.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	var jobs *media.Jobs
-	e := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return jobs.Enqueue(ctx, j) }))
-	enq, err := video.NewEnqueuer(pool, e.kinds)
+	var enq *workqueue.Queue
+	e := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return enq.Enqueue(ctx, j) }))
+	enq, err := workqueue.New(pool, e.kinds)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if jobs, err = media.NewJobs(media.JobsConfig{Store: e.store, Kinds: e.kinds}); err != nil {
-		t.Fatal(err)
-	}
-	if err := jobs.AddProcessor(enq.Processor()); err != nil {
-		t.Fatal(err)
-	}
-	hostSchema := pgtest.EmptySchema(t, ctx, pool)
-	if err := riverhelpers.ApplyMigrations(ctx, pool, hostSchema); err != nil {
-		t.Fatal(err)
-	}
-	host, err := riverhelpers.New(ctx, pool, &river.Config{Schema: hostSchema, FetchPollInterval: 100 * time.Millisecond}, jobs.RiverJobs())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := host.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		stopCtx, c := context.WithTimeout(context.Background(), 30*time.Second)
-		defer c()
-		_ = host.StopAndCancel(stopCtx)
-	}()
 
 	src, err := os.Open(fixture{w: 640, h: 360, secs: 4, audio: 1, tone: 440}.make(t))
 	if err != nil {
@@ -65,13 +40,13 @@ func TestIngestEnqueuesEncode(t *testing.T) {
 
 	var encodes int
 	for encodes == 0 {
-		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+video.Schema+`.river_job
-			WHERE kind = $1 AND args->'ref'->>'tenant_id' = $2`, video.Args{}.Kind(), e.Tenant).Scan(&encodes); err != nil {
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+workqueue.Schema+`.river_job
+			WHERE kind = $1 AND args->'ref'->>'tenant_id' = $2`, workqueue.VideoArgs{}.Kind(), e.Tenant).Scan(&encodes); err != nil {
 			t.Fatal(err)
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatal("the ingest's commit enqueued no encode on " + video.Schema)
+			t.Fatal("the ingest's commit enqueued no encode on " + workqueue.Schema)
 		case <-time.After(100 * time.Millisecond):
 		}
 	}

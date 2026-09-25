@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/rand/v2"
 	"slices"
 	"sync"
@@ -28,9 +29,15 @@ type ManifestOptions struct {
 	Locker     Locker
 	CacheSize  int // manifests kept in process, revalidated by ETag; default 4096
 	MaxRetries int // CAS attempts per edit; default 16
-	// Jobs, when set, schedules the folder's sweep after every written edit.
-	// Scheduling is best-effort (logged); the periodic sweep pass backs it up.
-	Jobs *Jobs
+	// Sweeps, when set, schedules the folder's sweep after every written
+	// edit: the host's *Jobs, or in the media worker a *HostQueue. Scheduling
+	// is best-effort (logged); the periodic sweep pass backs it up.
+	Sweeps SweepScheduler
+}
+
+// SweepScheduler schedules a folder's sweep after an edit.
+type SweepScheduler interface {
+	ScheduleSweep(ctx context.Context, ref contentref.ContentRef) error
 }
 
 // Manifests reads and edits item manifests.
@@ -38,7 +45,7 @@ type Manifests struct {
 	store   Store
 	kinds   *Registry
 	locker  Locker
-	jobs    *Jobs
+	sweeps  SweepScheduler
 	retries int
 	cache   *lru
 }
@@ -61,7 +68,7 @@ func NewManifests(store Store, kinds *Registry, opts ManifestOptions) (*Manifest
 	if opts.MaxRetries <= 0 {
 		opts.MaxRetries = 16
 	}
-	return &Manifests{store: store, kinds: kinds, locker: locker, jobs: opts.Jobs, retries: opts.MaxRetries, cache: newLRU(opts.CacheSize)}, nil
+	return &Manifests{store: store, kinds: kinds, locker: locker, sweeps: opts.Sweeps, retries: opts.MaxRetries, cache: newLRU(opts.CacheSize)}, nil
 }
 
 // Get returns the manifest and its ETag, or ErrNotFound. Cached copies are
@@ -110,9 +117,9 @@ func (m *Manifests) Edit(ctx context.Context, ref contentref.ContentRef, fn func
 	if err != nil {
 		return nil, err
 	}
-	if written && m.jobs != nil {
-		if err := m.jobs.ScheduleSweep(ctx, ref); err != nil {
-			m.jobs.cfg.Logger.WarnContext(ctx, "media: schedule sweep", "key", key, "error", err)
+	if written && m.sweeps != nil {
+		if err := m.sweeps.ScheduleSweep(ctx, ref); err != nil {
+			slog.WarnContext(ctx, "media: schedule sweep", "key", key, "error", err)
 		}
 	}
 	return man, nil

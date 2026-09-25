@@ -3,7 +3,7 @@ import { UploadError, aborted, throwIfAborted } from "./errors.js";
 import { sha256Hex } from "./hash.js";
 import { Pacer } from "./pacer.js";
 import { defaultTransport, type Transport } from "./transport.js";
-import { MAX_SINGLE_PUT, type CommitFile, type Edit, type Op, type RefBody, type RequestReply, type SlotManifest, type VideoImages } from "./wire.gen.js";
+import { MAX_SINGLE_PUT, type CommitFile, type Edit, type FileInfo, type Op, type RefBody, type RequestReply, type SlotManifest, type VideoImages } from "./wire.gen.js";
 
 export interface ClientOptions extends ApiOptions {
   transport?: Transport;
@@ -60,6 +60,8 @@ export interface UploadedFile {
   sha256?: string;
   /** The identical file was already in the item's folder; nothing was sent. */
   exists: boolean;
+  /** The host processes files on upload: commit it unattached now (the queue does). */
+  processOnUpload?: boolean;
 }
 
 export interface PlannedPart {
@@ -79,6 +81,7 @@ export interface UploadState {
   file: { name?: string; lastModified?: number; size: number };
   limits: { minPartSize: number; maxPartSize: number; maxParts: number };
   parts: PlannedPart[];
+  processOnUpload?: boolean;
 }
 
 /** A file to upload again when its original is gone at commit; type defaults to the file's. */
@@ -133,6 +136,7 @@ export class UploadClient {
       file: fingerprint(file),
       limits: { minPartSize: m.min_part_size, maxPartSize: m.max_part_size, maxParts: m.max_parts },
       parts: [],
+      processOnUpload: !!p.process_on_upload,
     };
     return this.multipart(file, state, new Set(), o);
   }
@@ -272,6 +276,11 @@ export class UploadClient {
     }
   }
 
+  /** The item's named files as their editor reads them, unattached ones included (processing state, progress). */
+  files(ref: RefBody, names?: string[], signal?: AbortSignal): Promise<FileInfo[]> {
+    return this.retry(async () => (await this.api.files({ ref, ...(names?.length ? { names } : {}) }, signal)).files, signal);
+  }
+
   /** Discards a paused multipart upload. */
   async discard(state: UploadState): Promise<void> {
     await this.api.abort({ ticket: state.ticket });
@@ -285,7 +294,7 @@ export class UploadClient {
     });
     const presign = () => this.api.presign({ ref: o.ref, type, size: total, sha256, slot: o.slot, inline: o.inline }, o.signal);
     const p = await presign();
-    const out: UploadedFile = { name: p.name, type, size: total, sha256, exists: !!p.exists };
+    const out: UploadedFile = { name: p.name, type, size: total, sha256, exists: !!p.exists, processOnUpload: !!p.process_on_upload };
     if (p.exists) return out;
     let put = p.put!;
     await this.retry(
@@ -451,7 +460,7 @@ export class UploadClient {
     o.onProgress?.({ phase: "completing", loaded: state.size, total: state.size });
     const c = await this.retry(() => this.api.complete({ ticket: state.ticket }, o.signal), o.signal);
     o.onState?.(null);
-    return { name: c.name, type: c.type, size: c.size, exists: false };
+    return { name: c.name, type: c.type, size: c.size, exists: false, processOnUpload: state.processOnUpload };
   }
 
   private async retry<T>(fn: () => Promise<T>, signal?: AbortSignal, before?: (err: UploadError) => Promise<void>): Promise<T> {

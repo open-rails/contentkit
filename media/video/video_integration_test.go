@@ -28,6 +28,7 @@ import (
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 	"github.com/open-rails/contentkit/media/video"
+	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 // CONTENTKIT_TEST_FFMPEG=1 (the CI video job) fails instead of skipping without ffmpeg.
@@ -528,45 +529,27 @@ func TestRetriesAreIdempotent(t *testing.T) {
 	}
 }
 
-// The host flow: an upload commit enqueues media's process job in the host
-// schema, whose video processor inserts into media_worker, where the worker
-// encodes it.
+// The host flow: an upload commit enqueues into media_worker, where the
+// worker encodes it.
 func TestWorkerEncodesCommittedUploads(t *testing.T) {
 	requireFFmpeg(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	pool := pgtest.Pool(t, nil)
-	if err := video.Migrate(ctx, pool); err != nil {
+	if err := workqueue.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "DELETE FROM "+video.Schema+".river_job"); err != nil {
+	if _, err := pool.Exec(ctx, "DELETE FROM "+workqueue.Schema+".river_job"); err != nil {
 		t.Fatal(err)
 	}
-	var jobs *media.Jobs
-	e := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return jobs.Enqueue(ctx, j) }))
-	enq, err := video.NewEnqueuer(pool, e.kinds)
+	var enq *workqueue.Queue
+	e := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return enq.Enqueue(ctx, j) }))
+	enq, err := workqueue.New(pool, e.kinds)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if jobs, err = media.NewJobs(media.JobsConfig{Store: e.store, Kinds: e.kinds}); err != nil {
-		t.Fatal(err)
-	}
-	if err := jobs.AddProcessor(enq.Processor()); err != nil {
-		t.Fatal(err)
-	}
-	hostSchema := pgtest.EmptySchema(t, ctx, pool)
-	if err := riverhelpers.ApplyMigrations(ctx, pool, hostSchema); err != nil {
-		t.Fatal(err)
-	}
-	host, err := riverhelpers.New(ctx, pool, &river.Config{Schema: hostSchema, FetchPollInterval: 100 * time.Millisecond}, jobs.RiverJobs())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := host.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
 
-	wc := video.WorkerConfig{Encoder: e.encoder, Pool: pool, Timeout: time.Hour}
+	wc := video.WorkerConfig{Encoder: e.encoder, Pool: pool, Kinds: e.kinds, Timeout: time.Hour}
 	contribution, err := video.Contribution(wc)
 	if err != nil {
 		t.Fatal(err)
@@ -586,7 +569,6 @@ func TestWorkerEncodesCommittedUploads(t *testing.T) {
 		stopCtx, c := context.WithTimeout(context.Background(), 30*time.Second)
 		defer c()
 		_ = worker.StopAndCancel(stopCtx)
-		_ = host.StopAndCancel(stopCtx)
 	}()
 
 	source := e.commit(t, fixture{w: 640, h: 361, secs: 5, audio: 1, tone: 440}.make(t), media.OpInsert)
