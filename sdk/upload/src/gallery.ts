@@ -34,6 +34,10 @@ export const audioDownloadKey = (name: string) => `${name}-audio`;
 /** The stage aspect of an audio slide. */
 export const AUDIO_ASPECT = 3;
 
+/** Subtitle sidecars are a video's text tracks, not gallery items. */
+export const isSubtitleType = (type?: string) =>
+  ["text/vtt", "application/x-subrip", "text/x-ssa", "text/x-ass"].includes(type ?? "");
+
 function aspectOf(f: FileInfo | undefined, fallback: number) {
   return f?.w && f.h ? f.w / f.h : fallback;
 }
@@ -46,10 +50,11 @@ function aspectOf(f: FileInfo | undefined, fallback: number) {
 export function galleryItems(read: ReadResult | null | undefined): GalleryItem[] {
   if (!read) return [];
   const full = read.access === "full";
-  const locked = read.files.filter((f) => f.locked);
-  const teaser = full || locked.length === 0 ? undefined : read.files.find((f) => f.teaser && !f.locked && f.url);
+  const files = read.files.filter((f) => !isSubtitleType(f.type));
+  const locked = files.filter((f) => f.locked);
+  const teaser = full || locked.length === 0 ? undefined : files.find((f) => f.teaser && !f.locked && f.url);
   const items: GalleryItem[] = [];
-  for (const f of read.files) {
+  for (const f of files) {
     if (f.locked || (f.teaser && (full || f === teaser))) continue;
     if (isAudioType(f.type)) {
       items.push({ kind: "audio", key: `f${f.index}`, file: f, aspect: AUDIO_ASPECT });

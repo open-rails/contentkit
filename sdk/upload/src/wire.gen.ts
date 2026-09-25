@@ -262,6 +262,7 @@ export interface FileInfo {
   teaser?: boolean;
   locked?: boolean;
   hls?: boolean;
+  ready?: boolean;
   unattached?: boolean;
   failed?: string;
   failed_code?: string;

@@ -195,11 +195,13 @@ func (e *Encoder) encode(ctx context.Context, job Job, report Report, oneStage b
 	}
 	var stale []media.File
 	for _, f := range man.Files {
-		if job.only != encodeAudio && IsVideo(f) && !fresh(man, f, r) ||
+		if job.only != encodeAudio && (IsVideo(f) && (!fresh(man, f, r) || subsStale(f)) || IsSubtitle(f) && !subtitleFresh(f)) ||
 			job.only != encodeVideo && job.Audio != nil && IsAudio(f) && !audioFresh(man, f, aspec) {
 			stale = append(stale, f)
 		}
 	}
+	// Subtitles first: they take a moment, a video may take hours.
+	slices.SortStableFunc(stale, func(a, b media.File) int { return cmp.Compare(btoi(!IsSubtitle(a)), btoi(!IsSubtitle(b))) })
 	names := make([]string, len(stale))
 	for i, f := range stale {
 		names[i] = f.Name
@@ -209,11 +211,17 @@ func (e *Encoder) encode(ctx context.Context, job Job, report Report, oneStage b
 	for _, f := range stale {
 		cur, source := f.HLS, f.Source()
 		failSpec := r.failSpec
+		if IsSubtitle(f) {
+			err = e.subtitleFile(ctx, ms, item, f, prog.file(f.Name))
+		}
+		if IsVideo(f) && fresh(man, f, r) {
+			err = e.sourceSubs(ctx, ms, item, r.video, f, prog.file(f.Name))
+		}
 		if IsAudio(f) {
 			failSpec = aspec
 			source, err = e.audioFile(ctx, ms, item, *job.Audio, f.Name, source, prog.file(f.Name))
 		}
-		for IsVideo(f) {
+		for IsVideo(f) && !fresh(man, f, r) {
 			cur, err = e.file(ctx, ms, item, r, f.Name, source, cur, prog.file(f.Name))
 			if cur != nil {
 				source = cur.Source // a staged source is placed by its first stage
@@ -433,6 +441,9 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 	if err != nil {
 		return nil, err
 	}
+	if p.subs, err = keepSubs(ctx, e.c.Logger, out, p.subs); err != nil {
+		return nil, err
+	}
 	if err := os.Remove(src); err != nil {
 		return nil, err
 	}
@@ -442,7 +453,7 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 	// Each rendition is muxed and uploaded alongside the others and the
 	// tracks; its files are removed as soon as they are stored. A later
 	// stage's tracks only feed its download: the first stage stored them.
-	hls := &media.HLS{Source: source, Spec: r.spec, Audio: make([]media.AudioTrack, len(p.audio)),
+	hls := &media.HLS{Source: source, Spec: r.spec, SubsSpec: SubsSpec, Audio: make([]media.AudioTrack, len(p.audio)),
 		Subs: make([]media.Subtitle, len(p.subs)), Video: make([]media.Rendition, len(e.c.Codecs)), Pending: rungNames(stages[k+1:])}
 	var download media.Download
 	g, gctx := errgroup.WithContext(ctx)
@@ -718,4 +729,11 @@ func SweepTemp(dir string) error {
 		errs = append(errs, os.RemoveAll(m))
 	}
 	return errors.Join(errs...)
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

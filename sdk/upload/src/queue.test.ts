@@ -79,3 +79,17 @@ it("commits only the uploaded head of the queue with head", async () => {
   const status = (id: string) => q.getSnapshot().items.find((i) => i.id === id)!.status;
   expect([status(a!.id), status(bad!.id), status(c!.id)]).toEqual(["committed", "failed", "uploaded"]);
 });
+
+it("an unattached subtitle sidecar is processed once the server reports it ready", async () => {
+  const s = new FakeServer();
+  s.processOnUpload = true;
+  const c = new UploadClient({ endpoint: "http://x/api", fetch: s.fetch, transport: s.transport, retryDelay: () => 0 });
+  const q = new UploadQueue(c, { ref, pollInterval: 5 });
+  const [sub] = q.add([new File(["1\n00:00:01,000 --> 00:00:02,000\nHi\n"], "en.srt", { type: "application/x-subrip" })]);
+  s.fileInfos.set("en.srt", { type: "application/x-subrip" });
+  await until(q, (x) => x.items[0]!.processing?.name === "en.srt");
+  expect(q.getSnapshot().items[0]!.processed).toBeFalsy();
+  s.fileInfos.set("en.srt", { type: "application/x-subrip", ready: true });
+  await until(q, (x) => !!x.items.find((i) => i.id === sub!.id)?.processed);
+  q.dispose();
+});

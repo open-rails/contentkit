@@ -31,6 +31,9 @@ export class FakeServer {
   slots: string[] = [];
   puts: string[] = [];
   refuse?: ErrorReply & { status: number };
+  /** Presigns answer process_on_upload; /files answers these, by name. */
+  processOnUpload = false;
+  fileInfos = new Map<string, Record<string, unknown>>();
   /** Fail the next n storage PUTs with a dropped connection. */
   dropPuts = 0;
   /** Rendered slots by "kind/id#slot". */
@@ -107,8 +110,8 @@ export class FakeServer {
           // Every original is hash-named; an inline image is named by its new id.
           const key = "sha256-" + p.sha256;
           const name = p.inline ? `i-${++this.seq}` : key;
-          if (this.objects.get(key) === p.size && !this.stale.has(key)) return { name, exists: true };
-          return { name, put: req(`fake://s3/put/${key}`, { "Content-Type": p.type, "X-Amz-Checksum-Sha256": b64(p.sha256) }) };
+          if (this.objects.get(key) === p.size && !this.stale.has(key)) return { name, exists: true, process_on_upload: this.processOnUpload };
+          return { name, process_on_upload: this.processOnUpload, put: req(`fake://s3/put/${key}`, { "Content-Type": p.type, "X-Amz-Checksum-Sha256": b64(p.sha256) }) };
         }
         const ticket = `t${++this.seq}`;
         const name = `u-${this.seq}`;
@@ -157,6 +160,8 @@ export class FakeServer {
           }
         }
         return { files: b.ops.map((op: any) => ({ name: op.name, original: op.original, size: this.objects.get(op.original) })) };
+      case "/files":
+        return { files: (b.names ?? []).flatMap((n: string) => (this.fileInfos.has(n) ? [{ index: 0, name: n, ...this.fileInfos.get(n) }] : [])) };
       case "/commit-slot":
         if (!this.objects.has("sha256-" + b.sha256)) throw new UploadError("not_uploaded", "upload the original first", 409);
         this.slots.push(b.slot);

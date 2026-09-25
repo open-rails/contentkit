@@ -50,7 +50,7 @@ another tenant is an error, never remapped.
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
 | `media/image` | libvips (CGO) processor: WebP variants, public slots, zip downloads |
 | `media/token` | media access tokens, shared by hosts and the access worker |
-| `media/video` | ffmpeg encode: byte-range fMP4 HLS ladder, AAC per audio track, WebVTT per text subtitle, sprite, per-quality MP4 downloads, poster frames; `Frames` for the poster picker |
+| `media/video` | ffmpeg encode: byte-range fMP4 HLS ladder, AAC per audio track, WebVTT per text subtitle and subtitle sidecar, audio files, sprite, per-quality MP4 downloads, poster frames; `Frames` for the poster picker |
 | `media/worker` | the media worker: one process for placement, images and video, built by the host from its media config (`cmd/media-worker` is the stock build) |
 | `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
 | `media/tiered` | optional `public`/`members`/`ppv`/`members_ppv`/`premium` policy over an entitlement `Checker` (hosts adapt OpenRails `CheckEntitlements`) |
@@ -506,6 +506,38 @@ processing, so a quiet source limited by its peak stays below the target.
 The SDK `MediaGallery` plays audio items from their `audio` variant (request
 it in the read) with the file's download. An unreadable source fails like video (`hls.error`,
 `Hooks.Failed`). A kind that lists `audio/` types must set `Audio`.
+
+**Subtitle sidecars** (`media.SubtitleTypes`: WebVTT, SRT, SSA/ASS; a video
+kind only) are manifest files beside the video. The worker's video job converts
+each one to WebVTT, which becomes the file's `vtt` variant. The parser follows
+the file's type, never its content:
+- SRT goes through ffmpeg's WebVTT encoder (the one used for a source's own
+  text tracks) after its timings are normalized (`01:02,5` → `00:01:02,500`);
+- SSA/ASS goes through ffmpeg after vector drawings (`{\p1}…{\p0}`) and
+  `{comment}` blocks are stripped;
+- WebVTT is read directly.
+
+Sidecars over 32 MB fail before they are downloaded. The charset comes from
+`meta.charset`, else a BOM, BOM-less UTF-16 or valid UTF-8, else the legacy
+charsets of `meta.lang` (Shift_JIS, GB18030, Big5, EUC-KR, Windows-125x). Without
+a hint, a CJK charset needs most high bytes to pair as its common characters
+(kana, Hangul, frequent Han), else Cyrillic scoring, else Windows-1252.
+
+Every WebVTT output, sidecar or source track, is then cleaned:
+- only `b`/`i`/`u` markup stays (other tags are dropped and their text kept);
+- text is escaped and safe cue settings are kept;
+- `NOTE`, `STYLE` and `REGION` blocks are dropped, along with ASS positioning
+  and colors and ASS vector drawings;
+- cues are sorted by start time.
+
+A source track over 32 MB, or with no cues, is dropped; a sidecar with no cues
+fails (`Failure`, `Hooks.Failed`); the read API's `ready` marks a converted one.
+A source's tracks carry `hls.subs_spec`: a new cleaning recipe re-extracts them
+from the source without re-encoding the ladder. The master playlist lists the
+video's own tracks and then its sidecars (`meta.for` names the video, default
+the first, and follows a rename; `meta.lang`, `label`, `forced`; track id = file
+name). Adding, replacing or removing a sidecar re-encodes nothing, because
+playlists are built per request. MP4 downloads carry only the source's tracks.
 
 After each encode the job grabs the item's **poster** frame (the `poster`
 slot; the image job encodes it) from its selection. There is no preview clip:

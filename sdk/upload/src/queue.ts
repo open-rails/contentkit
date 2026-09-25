@@ -1,5 +1,6 @@
 import type { Progress, UploadClient, UploadedFile, UploadState } from "./client.js";
 import { UploadError } from "./errors.js";
+import { isSubtitleType } from "./gallery.js";
 import type { CommitFile, FileInfo, Op, RefBody } from "./wire.gen.js";
 
 export type ItemStatus = "queued" | "uploading" | "uploaded" | "failed" | "committed";
@@ -247,7 +248,7 @@ export class UploadQueue {
       const f = byName.get(i.name);
       if (!f) continue;
       const encoded = /^(video|audio)\//.test(f.type ?? "");
-      const processed = !!f.failed || (encoded ? f.hls && !f.progress : (f.w ?? 0) > 0);
+      const processed = !!f.failed || (isSubtitleType(f.type) ? !!f.ready : encoded ? f.hls && !f.progress : (f.w ?? 0) > 0);
       changed = this.set(i.id, { processing: f, processed }) || changed;
     }
     if (changed) this.changed();

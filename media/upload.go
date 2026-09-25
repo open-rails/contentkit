@@ -731,6 +731,12 @@ func (m *Manifest) apply(op Op, obj Object) error {
 			return uploadErr(CodeConflict, "file %q exists", op.To)
 		}
 		m.Files[i].Name = op.To
+		// Sidecar subtitles follow their video (meta.for) through a rename.
+		for j := range m.Files {
+			if isSubtitleType(m.Files[j].Type) && m.Files[j].Meta[MetaFor] == op.Name {
+				m.Files[j].Meta[MetaFor] = op.To
+			}
+		}
 	case OpRemove:
 		m.Files = append(m.Files[:i], m.Files[i+1:]...)
 	case OpEdit:

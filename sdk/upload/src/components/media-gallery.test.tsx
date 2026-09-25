@@ -158,10 +158,13 @@ it("grid → lightbox at the clicked item; arrows move, Esc closes and focus ret
   await user.keyboard("{ArrowRight}");
   expect(within(dialog).getByText("3 / 4")).toBeInTheDocument();
   // Tab never reaches the page behind (a browser wraps via the guards; see e2e).
+  // Focus moves into the dialog after it opens: wait for it before tabbing,
+  // and for each Tab's focus to settle.
   const page = tile.closest("[data-ckui=media-gallery]")!;
+  await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
   for (let i = 0; i < 8; i++) {
     await user.tab();
-    expect(page.contains(document.activeElement)).toBe(false);
+    await waitFor(() => expect(page.contains(document.activeElement)).toBe(false));
   }
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
