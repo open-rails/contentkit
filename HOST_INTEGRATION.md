@@ -82,7 +82,7 @@ Ports (in `content` unless qualified):
 |---|---|---|
 | `Identity` | yes | reads the already-authenticated `access.Actor` from context; ContentKit never authenticates |
 | `Authorizer` | yes | `Can(actor, perm)` for `Perms{PostWrite, PollWrite, CommentModerate, ModerationReview}`; fail-closed on error and on an unset perm |
-| `access.ContentResolver` | yes | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, PreviewLimit, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request; another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`; content ignores `PreviewLimit`. Media serves every file only when `Full()`, else the first `Units(n)` files (`PreviewLimit` N caps a `Visible` item to its first N files; free preview is `Accessible=false, PreviewLimit=3`) and `Visible` teasers; `Editor` (the actor may edit the item) unlocks `EditorOnly` variants and `edit`/`dims` in the read API |
+| `access.ContentResolver` | yes | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, PreviewLimit, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request; another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`; content ignores `PreviewLimit`. Media serves every file only when `Full()`, else the first `Units(n)` files (`PreviewLimit` N caps a `Visible` item to its first N files; free preview is `Accessible=false, PreviewLimit=3`) and `Visible` teasers; `Editor` (the actor may edit the item) unlocks editor views (`Kind.Editor`, `variant=editor`, slot `editor_url`) and `edit`/`dims` in the read API |
 | `UserEnricher` | no | display data for author ids |
 | `Media` | no | post and poll images in ContentKit media (see below); absent = image routes answer 501 |
 | `ContentProcessor` | no | rich-text sanitizer for comment/post bodies (default strips tags) |
@@ -365,9 +365,15 @@ Cropping and rotating are ContentKit's: the host never decodes images.
   a change reports new ones. After changing slot specs, enqueue
   `ProcessJob{Ref}` per item; the sweep removes the old renditions.
 - Editors (`Resolution.Editor`) read `dims` (original size) and `edit` from
-  the read API and show a `Spec{Unedited: true, EditorOnly: true}` variant,
-  which the read API lists to editors only; the SDK's `useCrop` keeps the rect
-  in original pixels for any cropper UI.
+  the read API and crop on the editor view: set `Kind.Editor` (e.g.
+  `&media.Spec{Width: 1200, Height: 1200, Fit: media.FitInside}`) and read
+  with `variant=editor` (files) or a slot's `editor_url` (the SDK's
+  `getEditorView`, used by `useSlotCrop`'s recrop). Editor views live in
+  `temp/`: pass `ReaderOptions.Queue` so a swept one is rendered again, and
+  expect a file without an editor URL while it renders. The SDK's `useCrop`
+  keeps the rect in original pixels for any cropper UI.
+- `temp/` retention is the sweep's: `JobsConfig.EditorTTL` (7 days) and
+  `TempUploadTTL` (48 h; keep it above the bucket's multipart abort age).
 - Cap files per item with `Kind.MaxFiles` and `Kind.TypeLimits`
   (`{"video": {MaxFiles: 1}}`); commits over a cap get 409 `too_many_files`.
 
@@ -462,7 +468,9 @@ the frame or upload); `poster` is a reserved slot name.
   keep `Cross-Origin-Resource-Policy` at its `same-site` default so other
   sites cannot hotlink media into `<img>`/`<video>`.
 - **Bucket**: private (no public ACL or policy); the worker's key is
-  read-only on `*/private/*` and `*/public/*`; only the hosts write.
+  read-only on `*/private/*`, `*/public/*` and `*/temp/e-*` (editor views,
+  served only under an editor token); `temp/` is never public and nothing
+  else in it is readable by the worker; only the hosts write.
 - **CDN**: may cache `public/` in a shared cache (every name is immutable);
   wire `Hooks.PublicRemoved` (Jobs and the media worker) to purge the keys a
   hide or sweep deletes. Never cache `private/` in a shared cache: the token

@@ -333,7 +333,7 @@ func TestCopyInOneRequestOrInParts(t *testing.T) {
 	}
 	for _, size := range []int{1 << 10, 12<<20 + 7} {
 		body := random(t, size)
-		src := env.Tenant + "/video/9/staging/" + media.NewUploadName()
+		src := env.Tenant + "/video/9/temp/" + media.NewUploadName()
 		sum := sha256.Sum256(body)
 		dst := env.Tenant + "/video/9/originals/" + media.SHA256Name(sum[:])
 		put, err := store.Put(ctx, src, bytes.NewReader(body), int64(size),

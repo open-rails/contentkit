@@ -92,10 +92,9 @@ func (e *Edit) Hash() string {
 }
 
 // For is the identity of s derived through e, recorded as Variant.Spec: a
-// variant is stale when its spec or its file's edit changes. Unedited specs
-// ignore the edit.
+// variant is stale when its spec or its file's edit changes.
 func (s Spec) For(e *Edit) string {
-	if h := e.Hash(); h != "" && !s.Unedited {
+	if h := e.Hash(); h != "" {
 		return s.Hash() + "." + h
 	}
 	return s.Hash()

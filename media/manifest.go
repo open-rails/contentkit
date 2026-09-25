@@ -18,7 +18,7 @@ type Manifest struct {
 }
 
 // File is one manifest entry. Original and Master live in originals/ (a
-// multipart upload's Original is its staging/ "u-{uuid}" until the worker
+// multipart upload's Original is its temp/ "u-{uuid}" until the worker
 // places it); variants, HLS and downloads in private/. Image variants derive from Source()
 // through Edit; Dims is Source()'s size, recorded by processing, and edits
 // are validated against it. meta w/h is the edited size.
@@ -85,13 +85,12 @@ func (f File) Source() string {
 func (f File) Teaser() bool { t, _ := f.Meta["teaser"].(bool); return t }
 
 type Variant struct {
-	Blob   string `json:"blob"`
-	Spec   string `json:"spec,omitempty"`
-	Type   string `json:"type,omitempty"`
-	Size   int64  `json:"size,omitempty"`
-	W      int    `json:"w,omitempty"`
-	H      int    `json:"h,omitempty"`
-	Editor bool   `json:"editor,omitempty"` // from Spec.EditorOnly: listed to editors only
+	Blob string `json:"blob"`
+	Spec string `json:"spec,omitempty"`
+	Type string `json:"type,omitempty"`
+	Size int64  `json:"size,omitempty"`
+	W    int    `json:"w,omitempty"`
+	H    int    `json:"h,omitempty"`
 }
 
 type Download struct {

@@ -229,7 +229,7 @@ func TestRootIndex(t *testing.T) {
 		t.Fatalf("slot output: %+v", p)
 	}
 	refs := root.Refs()
-	for _, want := range []string{"originals/" + blobName("a.png"), "private/" + blobName("c1500"), "public/" + blobName("c1500"), "staging/" + staged} {
+	for _, want := range []string{"originals/" + blobName("a.png"), "private/" + blobName("c1500"), "public/" + blobName("c1500"), "temp/" + staged} {
 		if !refs[want] {
 			t.Errorf("refs lack %s", want)
 		}

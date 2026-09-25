@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/image/webp"
@@ -70,9 +71,8 @@ func diff(a uint32, b uint8) uint32 {
 func crop(x, y, w, h int) *media.Edit { return &media.Edit{Crop: &media.Crop{X: x, Y: y, W: w, H: h}} }
 
 func TestEditCropRotate(t *testing.T) {
-	editor := media.Spec{Width: 200, Unedited: true, EditorOnly: true}
 	k := galleryKind()
-	k.Specs["editor"] = editor
+	k.Editor = &media.Spec{Width: 200}
 	e := newEnv(t, k)
 	ref := contentref.NewVersion(e.Tenant, "gallery", cid(21), "en")
 	quad := quadrants(t)
@@ -82,13 +82,28 @@ func TestEditCropRotate(t *testing.T) {
 	if d := m0.Files[0].Dims; d == nil || *d != (media.Dims{W: 400, H: 200}) {
 		t.Fatalf("dims %+v", d)
 	}
+	// Editor views are the whole sources in temp/, outside the manifest.
+	item, _ := e.kinds.Item(ref)
+	view := item.EditorView(m0.Files[0].Source())
+	b, _ := e.object(t, view)
+	if w, h := webpSize(t, b); w != 200 || h != 100 {
+		t.Fatalf("editor view %dx%d", w, h)
+	}
+	if !strings.HasPrefix(view, item.TempPrefix()+"e-") {
+		t.Fatalf("editor view key %s", view)
+	}
+	for _, f := range m0.Files {
+		if _, ok := f.Variants["editor"]; ok {
+			t.Fatalf("editor view in the manifest: %+v", f.Variants)
+		}
+	}
 	high := func(m *media.Manifest, i int) []byte {
 		b, _ := e.blob(t, ref, m.Files[i].Variants["high"].Blob)
 		return b
 	}
 
 	// Top half, rotated clockwise: red on top, blue below. Only 001 is re-derived,
-	// and not its unedited variant.
+	// and its editor view is kept.
 	edit := &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 400, H: 100}, Rotate: 90}
 	e.commit(t, ref, media.Op{Op: media.OpEdit, Name: "001.png", Edit: edit})
 	e.store.reads.Store(0)
@@ -101,16 +116,22 @@ func TestEditCropRotate(t *testing.T) {
 	pixels(t, high(m1, 0), 100, 400, map[[2]int]color.RGBA{{50, 50}: red, {50, 350}: blue})
 	for name, s := range k.Specs {
 		v := f.Variants[name]
-		switch {
-		case name == "editor" && v != m0.Files[0].Variants[name]:
-			t.Fatalf("unedited variant regenerated: %+v", v)
-		case name != "editor" && (v.Spec != s.For(edit) || v.Blob == m0.Files[0].Variants[name].Blob):
+		if v.Spec != s.For(edit) || v.Blob == m0.Files[0].Variants[name].Blob {
 			t.Fatalf("%s not regenerated: %+v", name, v)
 		}
 	}
-	if !f.Variants["editor"].Editor || f.Variants["high"].Editor {
-		t.Fatalf("editor flags %+v", f.Variants)
+	if item.EditorView(f.Source()) != view {
+		t.Fatal("an edit changed the editor view")
 	}
+
+	// A swept editor view is rendered again by the next job.
+	if err := e.Env.Store.Delete(context.Background(), view); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.proc.Process(context.Background(), media.ProcessJob{Ref: ref}); err != nil {
+		t.Fatal(err)
+	}
+	e.object(t, view) // rendered again
 	if f.Meta["w"] != float64(100) || f.Meta["h"] != float64(400) || *f.Dims != *m0.Files[0].Dims {
 		t.Fatalf("meta %v dims %+v", f.Meta, f.Dims)
 	}

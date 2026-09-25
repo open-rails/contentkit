@@ -1,6 +1,7 @@
 import { UploadApi, type ApiOptions } from "./api.js";
 import { UploadError, aborted, throwIfAborted, type UploadErrorCode } from "./errors.js";
 import { sha256Hex } from "./hash.js";
+import type { CropSource } from "./image.js";
 import { Pacer } from "./pacer.js";
 import { defaultTransport, type Transport } from "./transport.js";
 import { MAX_SINGLE_PUT, type CommitFile, type Edit, type FileInfo, type Op, type RefBody, type RequestReply, type SlotManifest, type VideoImages } from "./wire.gen.js";
@@ -159,9 +160,20 @@ export class UploadClient {
     return this.retry(() => this.api.slot({ ref, slot }, signal), signal);
   }
 
-  /** The committed original, for re-cropping; not_found when the slot has none. */
-  getSlotOriginal(ref: RefBody, slot: string, signal?: AbortSignal): Promise<Blob> {
-    return this.retry(() => this.api.slotOriginal({ ref, slot }, signal), signal);
+  /**
+   * The committed original's editor view, for re-cropping: its URL (editors
+   * only) and the original's size. Waits while it renders; not_found when
+   * the slot has no measured original, render_timeout after timeout ms.
+   */
+  async getEditorView(ref: RefBody, slot: string, o: { signal?: AbortSignal; interval?: number; timeout?: number } = {}): Promise<CropSource> {
+    const until = Date.now() + (o.timeout ?? 30_000);
+    for (;;) {
+      const m = await this.getSlot(ref, slot, o.signal);
+      if (m.editor_url && m.dims) return { url: m.editor_url, width: m.dims.w, height: m.dims.h };
+      if (!m.dims && !m.pending) throw new UploadError("not_found", "the slot has no committed original", 404);
+      if (Date.now() >= until) throw new UploadError("render_timeout", "the editor view is still rendering");
+      await sleep(o.interval ?? 1000, o.signal);
+    }
   }
 
   /**

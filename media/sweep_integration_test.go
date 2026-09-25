@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 func putObject(t *testing.T, s media.Store, key, body string) media.Object {
@@ -57,7 +59,7 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	const grace = 24 * time.Hour
 	clock := time.Now()
 	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: r, Tenants: []string{env.Tenant}, Grace: grace,
-		Now: func() time.Time { return clock }})
+		EditorTTL: time.Hour, Now: func() time.Time { return clock }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,8 +85,10 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	for _, n := range []string{"blobA", "blobA2", "blobB", "blobReplaced", "blobOrphan"} {
 		putObject(t, s, key(media.AreaPrivate, names[n]), n)
 	}
-	putObject(t, s, key(media.AreaStaging, upOrphan), "abandoned multipart")
-	putObject(t, s, key(media.AreaStaging, upRef), "committed multipart the worker has not placed")
+	putObject(t, s, key(media.AreaTemp, upOrphan), "abandoned multipart")
+	editorView := g.TempPrefix() + layout.EditorPrefix + strings.Repeat("ab", 32)
+	putObject(t, s, editorView, "editor view")
+	putObject(t, s, key(media.AreaTemp, upRef), "committed multipart the worker has not placed")
 	putObject(t, s, key(media.AreaOriginals, names["coverOrig"]), "slot original")
 	putObject(t, s, key(media.AreaPrivate, names["coverOut"]), "slot output")
 	putObject(t, s, key(media.AreaPublic, names["coverOut"]), "slot output")
@@ -146,7 +150,7 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	time.Sleep(2 * time.Second)
 	upFresh := media.NewUploadName()
 	putObject(t, s, key(media.AreaPrivate, names["blobFresh"]), "job output not yet in a manifest")
-	putObject(t, s, key(media.AreaStaging, upFresh), "upload not yet committed")
+	putObject(t, s, key(media.AreaTemp, upFresh), "upload not yet committed")
 
 	clock = edited.Add(grace + time.Second)
 	res, err = jobs.Sweep(ctx, work)
@@ -154,7 +158,7 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 		t.Fatalf("sweep: %+v %v", res, err)
 	}
 	want := []string{key(media.AreaPrivate, names["blobOrphan"]), key(media.AreaPrivate, names["blobReplaced"]),
-		key(media.AreaOriginals, names["origOrphan"]), key(media.AreaPublic, names["coverOld"])}
+		key(media.AreaOriginals, names["origOrphan"]), key(media.AreaPublic, names["coverOld"]), editorView}
 	slices.Sort(want)
 	slices.Sort(res.Deleted)
 	if !slices.Equal(res.Deleted, want) {
@@ -163,8 +167,8 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	left := listKeys(t, s, g.Prefix())
 	for _, k := range []string{key(media.AreaOriginals, names["origA"]), key(media.AreaOriginals, names["origB"]),
 		key(media.AreaPrivate, names["blobA"]), key(media.AreaPrivate, names["blobA2"]), key(media.AreaPrivate, names["blobB"]),
-		key(media.AreaPrivate, names["blobFresh"]), key(media.AreaStaging, upFresh), key(media.AreaOriginals, names["coverOrig"]),
-		key(media.AreaStaging, upOrphan), key(media.AreaStaging, upRef), key(media.AreaPrivate, names["coverOut"]),
+		key(media.AreaPrivate, names["blobFresh"]), key(media.AreaTemp, upFresh), key(media.AreaOriginals, names["coverOrig"]),
+		key(media.AreaTemp, upOrphan), key(media.AreaTemp, upRef), key(media.AreaPrivate, names["coverOut"]),
 		key(media.AreaPublic, names["coverOut"]), g.Prefix() + "notes.txt", g.ManifestKey()} {
 		if !slices.Contains(left, k) {
 			t.Errorf("sweep removed %s", k)
@@ -193,12 +197,32 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 		t.Fatalf("pass changed the swept folder: %v", got)
 	}
 
-	// Multipart objects may be dated at initiation: they get the 1-day abort rule on top.
+	// Staged uploads are kept TempUploadTTL (default 48 h: multipart objects
+	// may be dated at initiation).
 	clock = clock.Add(24 * time.Hour)
 	res, err = jobs.Sweep(ctx, work)
-	want = []string{key(media.AreaPrivate, names["blobFresh"]), key(media.AreaStaging, upOrphan)}
+	want = []string{key(media.AreaPrivate, names["blobFresh"]), key(media.AreaTemp, upOrphan)}
 	slices.Sort(res.Deleted)
 	if err != nil || !slices.Equal(res.Deleted, want) {
 		t.Fatalf("second sweep deleted %v (%v), want %v", res.Deleted, err, want)
+	}
+
+	// temp/ is swept while the manifest is fresh; the rest waits for grace.
+	if _, err := ms.Edit(ctx, work.WithVersion("v2"), func(m *media.Manifest) error {
+		m.Files = m.Files[:1]
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	putObject(t, s, editorView, "editor view")
+	clock = time.Now().Add(time.Hour + time.Second)
+	res, err = jobs.Sweep(ctx, work)
+	if err != nil || res.Wait <= 0 || !slices.Equal(res.Deleted, []string{editorView}) {
+		t.Fatalf("fresh-manifest temp sweep: %+v %v", res, err)
+	}
+	want = []string{key(media.AreaTemp, upRef), key(media.AreaTemp, upFresh)}
+	slices.Sort(want)
+	if left := listKeys(t, s, g.TempPrefix()); !slices.Equal(left, want) {
+		t.Fatalf("temp/ after a fresh sweep: %v", left)
 	}
 }

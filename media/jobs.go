@@ -35,6 +35,14 @@ type JobsConfig struct {
 	// is swept only when its manifests are this old, and only objects this old
 	// are deleted. Default 24 h.
 	Grace time.Duration
+	// TempUploadTTL is how long a staged upload (temp/u-) no file references
+	// is kept. Keep it above the bucket's AbortIncompleteMultipartUpload age
+	// (1 day) plus the longest commit delay: backends may date a completed
+	// multipart object at its initiation. Default 48 h.
+	TempUploadTTL time.Duration
+	// EditorTTL is how long an editor view (temp/e-) is kept; an editor's
+	// read renders a swept one again. Default 7 days.
+	EditorTTL time.Duration
 	// SweepInterval is the periodic pass interval. Default 24 h.
 	SweepInterval time.Duration
 	// LateUploadWindow delays the second pass of a folder deletion, which
@@ -83,6 +91,12 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 	}
 	if cfg.Grace <= 0 {
 		cfg.Grace = 24 * time.Hour
+	}
+	if cfg.TempUploadTTL <= 0 {
+		cfg.TempUploadTTL = 48 * time.Hour
+	}
+	if cfg.EditorTTL <= 0 {
+		cfg.EditorTTL = 7 * 24 * time.Hour
 	}
 	if cfg.SweepInterval <= 0 {
 		cfg.SweepInterval = 24 * time.Hour

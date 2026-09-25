@@ -1,6 +1,7 @@
 package media
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 
@@ -14,7 +15,7 @@ import (
 const (
 	AreaManifest  = layout.AreaManifest
 	AreaOriginals = layout.AreaOriginals
-	AreaStaging   = layout.AreaStaging
+	AreaTemp      = layout.AreaTemp
 	AreaPrivate   = layout.AreaPrivate
 	AreaPublic    = layout.AreaPublic
 )
@@ -24,7 +25,7 @@ const (
 //
 //	{tenant}/{kind}/{content_id}/manifest.json
 //	                            /originals/sha256-{hex}
-//	                            /staging/u-{uuid}
+//	                            /temp/u-{uuid}, temp/e-{hex}
 //	                            /private/sha256-{hex}
 //	                            /public/sha256-{hex}
 type Item struct {
@@ -77,12 +78,12 @@ func (i Item) Section() (string, error) {
 }
 
 func (i Item) OriginalsPrefix() string { return i.prefix + AreaOriginals + "/" }
-func (i Item) StagingPrefix() string   { return i.prefix + AreaStaging + "/" }
+func (i Item) TempPrefix() string      { return i.prefix + AreaTemp + "/" }
 func (i Item) PrivatePrefix() string   { return i.prefix + AreaPrivate + "/" }
 func (i Item) PublicPrefix() string    { return i.prefix + AreaPublic + "/" }
 
 // Original is the key of an uploaded file (never served):
-// originals/sha256-{hex}, or staging/u-{uuid} for a multipart upload the
+// originals/sha256-{hex}, or temp/u-{uuid} for a multipart upload the
 // worker has not placed yet.
 func (i Item) Original(name string) (string, error) {
 	if !layout.ValidSourceName(name) {
@@ -105,6 +106,18 @@ func (i Item) Public(name string) (string, error) {
 		return "", fmt.Errorf("media: invalid rendition name %q", name)
 	}
 	return i.PublicPrefix() + name, nil
+}
+
+// EditorView is the key of source's editor view (Kind.Editor), temp/e-{hex}
+// keyed by the source and the spec, or "" when the kind has none or source is
+// not a placed original.
+func (i Item) EditorView(source string) string {
+	s := i.kind.Editor
+	if s == nil || !layout.ValidHashName(source) {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(source + "|" + s.Hash()))
+	return i.TempPrefix() + layout.EditorPrefix + hex.EncodeToString(sum[:])
 }
 
 // Inline reports whether name is an inline image id the kind accepts.

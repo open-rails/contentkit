@@ -177,15 +177,17 @@ One private bucket; each item owns a folder the library keys:
 ```text
 {tenant}/{kind}/{id}/manifest.json            the one manifest (versions, slots, index); never served
                     /originals/sha256-{hex}   uploads, deduped per item; never served
-                    /staging/u-{uuid}         multipart uploads until placed; never served
+                    /temp/u-{uuid}            staged multipart uploads until placed; never served
+                    /temp/e-{hex}             editor views (Kind.Editor); editor token only
                     /private/sha256-{hex}     every rendition (token)
                     /public/sha256-{hex}      copies of the exposed renditions: slots and inline images of an item that is not hidden
 ```
 
-Every name but staging's is its content's SHA-256, so every served object is
-immutable: a change writes new names and the manifest-driven sweep deletes
-what the manifest no longer lists. Clients never build URLs; the API returns
-them.
+`originals/`, `private/` and `public/` names are their content's SHA-256, so
+those objects are immutable: a change writes new names and the
+manifest-driven sweep deletes what the manifest no longer lists. `temp/` is
+intermediary and discardable: nothing a viewer needs lives there, and the
+sweep wipes it by age. Clients never build URLs; the API returns them.
 
 Host wiring (one tenant; errors elided):
 
@@ -193,8 +195,9 @@ Host wiring (one tenant; errors elided):
 kinds, _ := media.NewRegistry(
 	media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
 		Specs: map[string]media.Spec{"thumb": {Width: 460, Height: 650, Fit: media.FitCover, Quality: 80}, "high": {Quality: 90}},
-		Slots: map[string]media.Slot{"cover": {Aspect: media.Ratio("46:65"), Widths: []int{230, 460, 920}}},
-		Zip:   "high"},
+		Slots:  map[string]media.Slot{"cover": {Aspect: media.Ratio("46:65"), Widths: []int{230, 460, 920}}},
+		Editor: &media.Spec{Width: 1200, Height: 1200, Fit: media.FitInside, Quality: 80},
+		Zip:    "high"},
 	media.Kind{Name: "video", Types: []string{"video/mp4", "video/x-matroska"}, MaxBytes: 20 << 30, Video: true})
 store, _ := s3.New(s3.Config{Bucket: "media", Endpoint: rgw, PublicEndpoint: "https://s3.doujins.ai", UsePathStyle: true,
 	AccessKeyID: id, SecretAccessKey: secret, Capabilities: caps}) // caps from media.Probe
@@ -210,7 +213,7 @@ client, _ := riverhelpers.New(ctx, pool, &river.Config{Schema: "public"}, runtim
 uploads, _ := media.NewUploads(media.UploadOptions{Store: store, Kinds: kinds, Manifests: manifests,
 	Authorizer: hostUploads, Tickets: &ring, Limiter: limiter, Queue: queue, ProcessOnUpload: true})
 reader, _ := media.NewReader(media.ReaderOptions{Manifests: manifests, Kinds: kinds, Resolver: resolver, Hooks: hooks,
-	Progress: workqueue.NewProgressSource(pool),
+	Progress: workqueue.NewProgressSource(pool), Queue: queue,
 	Delivery: media.Delivery{Mode: media.DeliverCookie, BaseURL: "https://media.doujins.com", CookieDomain: "doujins.com", SigningKey: key}})
 mux.Handle("/api/media/upload/", http.StripPrefix("/api/media/upload", media.UploadHandler(uploads, media.UploadHandlerOptions{Tenant: "d", Actor: actorOf,
 	Reader: reader})))
@@ -225,15 +228,17 @@ The access worker (`cmd/media-access`, image
 `ghcr.io/open-rails/contentkit-media-access:{tag}`, same tag as the hosts'
 ContentKit) serves `BaseURL`. It needs `MEDIA_ACCESS_S3_ENDPOINT`,
 `_S3_BUCKET`, a read-only key (`_S3_ACCESS_KEY_ID`, `_S3_SECRET_ACCESS_KEY`)
-allowed only `*/private/*` and `*/public/*`, `MEDIA_ACCESS_TOKEN_KEY` and
+allowed only `*/private/*`, `*/public/*` and `*/temp/e-*`, `MEDIA_ACCESS_TOKEN_KEY` and
 `_TOKEN_KEY_PREVIOUS` (the hosts' `{kid}:{base64}` ring), `MEDIA_ACCESS_HOSTS`
 (the media host names; empty serves any Host, warned) and
 `MEDIA_ACCESS_CORS_ORIGINS` (the sites' exact origins, with credentials;
 empty breaks hls.js, warned; wildcards and paths are refused); secrets may be
 given as `{VAR}_FILE`. `public/` is served without a token (`public,
 immutable`); `private/` needs `?t=` or an `mt` cookie (`private,
-immutable`). Everything refused (no or bad token, the manifest, `originals/`,
-`staging/`, unknown keys) is one identical `no-store` 404, so denials look
+immutable`); a `temp/e-` editor view needs `?t=` with an editor token
+(`token.EditorScope`, which no viewer token carries). Everything refused (no
+or bad token, the manifest, `originals/`, staged uploads, unknown keys) is
+one identical `no-store` 404, so denials look
 like absence. Every object carries `Cross-Origin-Resource-Policy:
 same-site` (`MEDIA_ACCESS_RESOURCE_POLICY=cross-origin` only when the pages
 live on another site than the media), so other sites cannot embed it with
@@ -301,13 +306,13 @@ bind `Content-Type`, `Content-Length` and `x-amz-checksum-sha256`.
 at presign and commit for the folder written (slots and inline images: the
 work, `ref.Content()`), and the kind's types and size cap bind every presign.
 Up to 64 MiB is one PUT to `originals/sha256-{hex}` signed with its type,
-length and SHA-256; larger files are multipart to `staging/u-{uuid}` with
+length and SHA-256; larger files are multipart to `temp/u-{uuid}` with
 8–16 MiB parts, each signed with its length and SHA-256, resumed through
 `ListParts` and completed by the server (a signed ticket carries the S3
 UploadId; nothing is stored). The manifest names a staged upload `u-{uuid}`
 until `Manifests.Place` moves it to `originals/sha256-{hex}` with the hash
 computed while reading it (server-side copy, or none when the folder already
-holds the hash; every reference renamed; staging deleted; idempotent).
+holds the hash; every reference renamed; the temp upload deleted; idempotent).
 Slot and inline originals are hash-named too (`originals/sha256-{hex}`,
 deduped). A kind with `Inline` takes inline images: presign with
 `inline: true` names a new `i-{uuid}`, committed with `commit-slot`; it is
@@ -328,13 +333,20 @@ source's pixels (EXIF orientation applied), then rotates clockwise by 0, 90,
 recorded by processing (before that, by the processor, which reports an
 out-of-bounds edit to `Hooks.Failed`). A variant's `spec` is
 `Spec.For(edit)`, so changing or clearing an edit re-derives that file's
-variants (and the zip) from the untouched original. `Spec.EditorOnly`
-variants (recorded `editor: true`) are signed only when the resolver's
-`Resolution.Editor` is set; `Spec.Unedited` (must be `EditorOnly`) ignores
-edits: an editor's view of the whole source. They live in `private/` like
-every rendition; the read API lists them to editors only. No master is
-written. `meta.w/h` is the edited size; the read API returns
-`edit` and `dims` to editors.
+variants (and the zip) from the untouched original. No master is written.
+`meta.w/h` is the edited size; the read API returns `edit` and `dims` to
+editors.
+
+**Editor views** (`Kind.Editor`, a `Spec`) are what croppers draw on: the
+whole source, EXIF-oriented, ignoring crop and rotate, for image files and
+slot originals. They are an input-keyed cache, `temp/e-{hex}` of (source,
+spec) (`Item.EditorView`), never in the manifest: the image job renders them,
+the sweep deletes them after `JobsConfig.EditorTTL`, and a missing one is
+rendered again when an editor asks (`ReaderOptions.Queue`; the slot routes
+use `UploadOptions.Queue`). Editors (`Resolution.Editor`) get them as the
+read API's `variant=editor` and as `editor_url` in slot manifests, signed
+with an editor token no viewer token equals; a crop in progress is drawn by
+the client, so nothing uncommitted is stored.
 
 **Slots** are fixed public images such as avatars and covers, rendered at
 several widths for high-density screens:
@@ -358,8 +370,8 @@ filename}` commits it; `POST /edit-slot
 `Uploads.SetSlotFromFile(ctx, actor, SlotFromFile{Ref, Slot, From, File,
 Edit})` (`POST /commit-slot-from-file {ref, slot, from, file, edit}`) copies a
 manifest image (of `From`, default `Ref`: another item of the tenant needs
-`CanUpload` on both; default edit: the file's own); `POST /slot-original` returns the original to
-uploaders for the editor. The record (original, edit, result) lives in the
+`CanUpload` on both; default edit: the file's own). Originals never leave the
+server: editors re-crop on the slot's `editor_url`. The record (original, edit, result) lives in the
 manifest's `slots`, so spec changes re-encode with it. Each width is a new
 `private/sha256-{hex}`, copied to `public/` unless the item is hidden; a
 change writes new names and swaps the record. Nothing is upscaled: a width
@@ -511,16 +523,23 @@ Media's River jobs (`jobs.RiverJobs()`) compose into the host client through
 
 - **Sweep** (per folder, 24 h after each edit and in a daily pass over
   `Tenants`): deletes `originals/`, `private/` and `public/` objects outside
-  the manifest's index and `staging/` uploads no file references, only once
-  the manifest and the object itself are older than `Grace` (24 h; plus 1 day
-  for staged multipart objects, which may be dated at initiation). Deleted
-  `public/` keys go to `Hooks.PublicRemoved` (CDN purge).
+  the manifest's index once the manifest and the object are older than
+  `Grace` (24 h), and `temp/` whatever the manifest's age: editor views older
+  than `EditorTTL` (7 days) and staged uploads no file references older than
+  `TempUploadTTL` (48 h: above the bucket's 1-day multipart abort rule, since
+  multipart objects may be dated at initiation). A staged upload still being
+  uploaded is not an object yet, and one being processed is referenced.
+  Deleted `public/` keys go to `Hooks.PublicRemoved` (CDN purge). S3
+  lifecycle rules cannot match `*/temp/*` (filters are prefixes), so the
+  sweep is the mechanism; `AbortIncompleteMultipartUpload` stays the backstop
+  for uploads never completed.
   Invariant: it deletes only objects no manifest references and no in-flight
   commit can newly reference. Presign reuses an existing original, and a
   commit accepts one, only while a manifest references it or it is well
-  before the sweep's cutoff (grace/2 for presign; grace/4, at most 1 h, for
-  commit); otherwise the client uploads it again. Set `UploadOptions.Grace`
-  to the same grace (taken from `Queue` when it is the `*Jobs`).
+  before the sweep's cutoff (grace/2 for presign; a quarter of its retention,
+  at most 1 h, for commit); otherwise the client uploads it again. Set
+  `UploadOptions.Grace` and `TempUploadTTL` to the sweep's (taken from the
+  Manifests' `Sweeps` when it is the `*Jobs`).
 - **Deletion** removes the whole folder, manifests and `public/` first, then again after
   `LateUploadWindow` (25 h) for PUTs and multipart completions that land late.
   With a `Limiter`, the owner's quota (the manifests' `OriginalBytes`) is

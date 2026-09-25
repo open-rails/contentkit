@@ -88,7 +88,7 @@ func (f File) Servable() bool {
 		h := f.HLS
 		return h != nil && h.Error == "" && len(h.Video) > 0 && (h.Source != f.Source() || len(h.Pending) == 0)
 	case isImageType(f.Type):
-		return f.Failed() == nil && slices.ContainsFunc(slices.Collect(maps.Values(f.Variants)), func(v Variant) bool { return !v.Editor })
+		return f.Failed() == nil && len(f.Variants) > 0
 	}
 	return true
 }

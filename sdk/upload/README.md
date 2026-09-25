@@ -47,8 +47,9 @@ original, then a clockwise `rotate`; the server derives `h` from `w` and the slo
 (`"W:H"`; `ratio("3:1")` gives the number for CSS, `aspectOf(w, h)` the reduced string),
 and no crop means the largest centred one. Output URLs name immutable files; a
 new crop or upload returns new URLs. `slotSources(manifest)` gives `src`/`srcSet`; `waitForSlot` polls
-while `pending`; `getSlotOriginal` returns the committed original for re-editing;
-`decodeImage` is the EXIF-aware preview the UI crops on.
+while `pending`; `getEditorView` returns the committed original's editor view (URL and
+original size, editors only) to re-crop on; `decodeImage` is the EXIF-aware preview of a
+picked file.
 
 Video items (#32): a cover (slot `poster`, the video's native aspect). There is no preview clip: players preview the HLS itself inline.
 

@@ -185,6 +185,7 @@ export interface SlotManifest {
   error_details?: ErrorDetails;
   min_width?: number;
   animation?: string;
+  editor_url?: string;
 }
 
 export interface VideoImagesBody {

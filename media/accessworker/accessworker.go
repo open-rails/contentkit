@@ -1,7 +1,8 @@
 // Package accessworker is the media access worker's HTTP handler, run by
 // cmd/media-access: it checks the token for a private/ path (URL `?t=` or
-// cookie `mt`), serves public/ paths without one, refuses the manifest,
-// originals/ and staging/, and streams the object from the private bucket
+// cookie `mt`), serves public/ paths without one and temp/ editor views only
+// under an editor token (URL `?t=`, token.EditorScope, which viewer tokens
+// never carry), refuses the manifest, originals/ and staged uploads, and streams the object from the private bucket
 // with its own read-only key. Every refusal (no or bad token, unservable
 // area, missing object) is the same 404, so a response never reveals that
 // protected content exists; token denials are decided before any bucket
@@ -37,13 +38,15 @@ const (
 	// HealthPath answers 200 without touching the bucket.
 	HealthPath = "/healthz"
 
-	// Every served name is its content's SHA-256: nothing is rewritten.
+	// Every private/ and public/ name is its content's SHA-256: nothing is
+	// rewritten. Editor views are discardable, and never shared.
 	privateCacheControl = "private, max-age=31536000, immutable"
 	publicCacheControl  = "public, max-age=31536000, immutable"
+	tempCacheControl    = "private, max-age=3600"
 )
 
 // Config configures a Handler. The S3 key should only be able to read
-// */private/* and */public/*.
+// */private/*, */public/* and */temp/e-*.
 type Config struct {
 	Endpoint        string // path-style S3 endpoint, e.g. http://rook-ceph-rgw-external-rgw.rook-ceph.svc:7480
 	Bucket          string
@@ -179,7 +182,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if dl != "" {
 			disposition = token.Attachment(dl)
 		}
-	default: // the manifest, originals and staging are never served
+	case layout.AreaTemp:
+		t := r.URL.Query().Get("t")
+		err := errNoToken
+		if layout.ValidEditorName(k.Name) && t != "" {
+			err = h.cfg.Ring.VerifyEditor(t, key, time.Now())
+		}
+		if err != nil {
+			h.cfg.Logger.Debug("media-access: denied", "key", key, "reason", err)
+			h.fail(w, http.StatusNotFound)
+			return
+		}
+	default: // the manifest, originals and staged uploads are never served
 		h.fail(w, http.StatusNotFound)
 		return
 	}
@@ -266,9 +280,12 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, key string, k l
 			hdr[name] = v
 		}
 	}
-	if k.Area == layout.AreaPublic {
+	switch k.Area {
+	case layout.AreaPublic:
 		hdr.Set("Cache-Control", publicCacheControl)
-	} else {
+	case layout.AreaTemp:
+		hdr.Set("Cache-Control", tempCacheControl)
+	default:
 		hdr.Set("Cache-Control", privateCacheControl)
 	}
 	if disposition != "" {

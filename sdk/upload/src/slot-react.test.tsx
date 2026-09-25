@@ -67,8 +67,8 @@ it("useSlotCrop: recrop re-edits the committed original and waits for the encode
   const { result } = renderHook(() => useSlotCrop(c, { ref, slot: "cover", manifest, decode }));
   expect([result.current.canRecrop, result.current.aspect]).toEqual([true, "3:1"]);
   await act(() => result.current.recrop());
-  expect(s.calls).toContain("/slot-original");
-  expect(result.current).toMatchObject({ status: "cropping", mode: "recrop", edit: first, source: { url: "blob:preview" } });
+  expect(s.calls).not.toContain("/slot-original");
+  expect(result.current).toMatchObject({ status: "cropping", mode: "recrop", edit: first, source: { url: "fake://cdn/temp/e-cover", width: 4000, height: 3000 } });
   s.pendingReads = 1;
   const puts = s.puts.length;
   const next = { crop: { x: 0, y: 100, w: 800, h: 266 }, rotate: 180 };
