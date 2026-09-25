@@ -94,7 +94,7 @@ func (f File) Servable() bool {
 	switch {
 	case isVideoType(f.Type):
 		h := f.HLS
-		return h != nil && h.Error == "" && len(h.Video) > 0 && (h.Source != f.Source() || len(h.Pending) == 0)
+		return h != nil && h.Error == "" && len(h.Video) > 0
 	case isAudioType(f.Type):
 		h := f.HLS
 		return h != nil && h.Error == "" && len(h.Audio) > 0

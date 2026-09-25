@@ -634,7 +634,7 @@ func TestReadHidesUnprocessedFilesFromViewers(t *testing.T) {
 	}
 	f.res.verdicts[cid(501)] = access.Resolution{Visible: true, Accessible: true}
 	out := f.read(t, r, f.post, media.ReadOptions{})
-	if got := names(out.Files); !slices.Equal(got, []string{"teaser", "beach.jpg", "clip.mp4", "replaced.mp4"}) || len(out.Downloads) != 0 {
+	if got := names(out.Files); !slices.Equal(got, []string{"teaser", "beach.jpg", "clip.mp4", "stage2.mp4", "replaced.mp4"}) || len(out.Downloads) != 0 {
 		t.Fatalf("a viewer reads %v %+v", got, out.Downloads)
 	}
 	f.res.verdicts[cid(501)] = access.Resolution{Visible: true, Accessible: true, Editor: true}
