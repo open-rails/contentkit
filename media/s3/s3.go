@@ -315,7 +315,8 @@ func (s *Store) AbortMultipart(ctx context.Context, key, uploadID string) error 
 }
 
 // Configure applies the media bucket policy: versioning on, noncurrent
-// versions kept restoreDays, incomplete multipart uploads aborted after 1 day.
+// versions kept restoreDays, incomplete multipart uploads aborted after 1 day,
+// and unservable video work fragments expired after 7 days.
 func (s *Store) Configure(ctx context.Context, restoreDays int32) error {
 	if _, err := s.client.PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{Bucket: &s.bucket,
 		VersioningConfiguration: &types.VersioningConfiguration{Status: types.BucketVersioningStatusEnabled}}); err != nil {
@@ -328,6 +329,11 @@ func (s *Store) Configure(ctx context.Context, restoreDays int32) error {
 			Filter:                         &types.LifecycleRuleFilter{Prefix: aws.String("")},
 			NoncurrentVersionExpiration:    &types.NoncurrentVersionExpiration{NoncurrentDays: aws.Int32(restoreDays)},
 			AbortIncompleteMultipartUpload: &types.AbortIncompleteMultipartUpload{DaysAfterInitiation: aws.Int32(1)},
+		}, {
+			ID:         aws.String("contentkit-video-work"),
+			Status:     types.ExpirationStatusEnabled,
+			Filter:     &types.LifecycleRuleFilter{Prefix: aws.String("work/")},
+			Expiration: &types.LifecycleExpiration{Days: aws.Int32(7)},
 		}}}})
 	if err != nil {
 		return fmt.Errorf("s3: put lifecycle: %w", err)

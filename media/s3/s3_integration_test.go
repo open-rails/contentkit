@@ -357,10 +357,12 @@ func TestBucketVersioningAndLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ok, abort := false, false
+	ok, abort, work := false, false, false
 	for _, r := range lc.Rules {
 		ok = ok || (r.NoncurrentVersionExpiration != nil && aws.ToInt32(r.NoncurrentVersionExpiration.NoncurrentDays) >= 30)
 		abort = abort || (r.AbortIncompleteMultipartUpload != nil && aws.ToInt32(r.AbortIncompleteMultipartUpload.DaysAfterInitiation) == 1)
+		work = work || (r.Filter != nil && aws.ToString(r.Filter.Prefix) == "work/" &&
+			r.Expiration != nil && aws.ToInt32(r.Expiration.Days) == 7)
 	}
 	if !abort {
 		// MinIO drops this rule and expires stale uploads itself; RGW keeps it.
@@ -371,6 +373,9 @@ func TestBucketVersioningAndLifecycle(t *testing.T) {
 	}
 	if !ok {
 		t.Fatalf("lifecycle rules %+v", lc.Rules)
+	}
+	if !work {
+		t.Fatalf("video work expiration rule missing: %+v", lc.Rules)
 	}
 }
 
