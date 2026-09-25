@@ -407,18 +407,29 @@ export function useHlsPlayer({
             const cap = capRung(hls.levels, box.width * dpr, box.height * dpr, policy);
             return startRung(hls.levels, hls.bandwidthEstimate || estimate, cap, conn);
           };
+          // Flush everything buffered and reload at the playhead (-1: ABR's pick).
+          let reseek = false;
+          const flush = (level: number) => {
+            reseek = true;
+            hls.currentLevel = level;
+          };
+          // Browsers keep playing the GOP already decoding after a flush; seeking in place drops it.
+          hls.on(Hls.Events.BUFFER_FLUSHED, () => {
+            if (!reseek) return;
+            reseek = false;
+            el.currentTime = el.currentTime;
+          });
           choose.current = (i) => {
             locked = i;
             setSelected(i);
             if (!loading) return;
-            // A level: flush everything buffered and reload it at the playhead.
-            // Auto: hand back to ABR without a flush.
-            if (i >= 0) hls.currentLevel = i;
+            // Auto hands back to ABR without a flush.
+            if (i >= 0) flush(i);
             else hls.nextLevel = -1;
           };
           commit.current = () => {
             if (!loading) return;
-            hls.currentLevel = locked;
+            flush(locked);
             if (locked < 0) hls.nextAutoLevel = autoStart();
           };
           hls.on(Hls.Events.LEVEL_SWITCHED, (_, d) => setCurrent(d.level));
