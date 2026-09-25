@@ -18,12 +18,12 @@ func TestIngestEnqueuesEncode(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	pool := pgtest.Pool(t, nil)
-	if err := workqueue.Migrate(ctx, pool); err != nil {
+	if err := workqueue.Migrate(ctx, pool, workqueue.Schema); err != nil {
 		t.Fatal(err)
 	}
 	var enq *workqueue.Queue
 	e := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return enq.Enqueue(ctx, j) }))
-	enq, err := workqueue.New(pool, e.kinds)
+	enq, err := workqueue.New(pool, e.kinds, workqueue.Schema)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package video
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 type WorkerConfig struct {
 	Encoder *Encoder
 	Pool    *pgxpool.Pool
+	Schema  string // worker River schema; default workqueue.Schema
 	// Kinds is the host's registry: a job names only its ref, and the encode
 	// takes the kind's ladder and bounds from here.
 	Kinds *media.Registry
@@ -34,15 +36,15 @@ type WorkerConfig struct {
 }
 
 // Contribution registers the video worker and queue for riverhelpers.New on
-// a client with workqueue.Schema.
+// a client using c.Schema.
 func Contribution(c WorkerConfig) (riverhelpers.Contribution, error) {
 	if c.Encoder == nil || c.Pool == nil || c.Kinds == nil {
 		return riverhelpers.Contribution{}, errors.New("media/video: WorkerConfig needs an Encoder, a Pool and Kinds")
 	}
 	c = c.defaults()
 	return riverhelpers.NewContribution("contentkit-media-video", func(_ context.Context, cfg *river.Config) error {
-		if cfg.Schema != workqueue.Schema {
-			return fmt.Errorf("media/video: River schema must be %q, not %q", workqueue.Schema, cfg.Schema)
+		if cfg.Schema != c.Schema {
+			return fmt.Errorf("media/video: River schema must be %q, not %q", c.Schema, cfg.Schema)
 		}
 		if cfg.JobTimeout < c.Timeout {
 			return fmt.Errorf("media/video: client JobTimeout %s is below the video timeout %s", cfg.JobTimeout, c.Timeout)
@@ -56,6 +58,7 @@ func Contribution(c WorkerConfig) (riverhelpers.Contribution, error) {
 }
 
 func (c WorkerConfig) defaults() WorkerConfig {
+	c.Schema = cmp.Or(c.Schema, workqueue.Schema)
 	if c.Timeout <= 0 {
 		c.Timeout = 48 * time.Hour
 	}
@@ -71,7 +74,7 @@ func (c WorkerConfig) defaults() WorkerConfig {
 // ClientConfig is a River client configuration running only c's video jobs.
 func ClientConfig(c WorkerConfig) *river.Config {
 	c = c.defaults()
-	return &river.Config{Schema: workqueue.Schema, JobTimeout: c.Timeout, Logger: c.Logger}
+	return &river.Config{Schema: c.Schema, JobTimeout: c.Timeout, Logger: c.Logger}
 }
 
 type worker struct {
@@ -113,7 +116,7 @@ func (w *worker) Work(ctx context.Context, job *river.Job[workqueue.VideoArgs]) 
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		if err := workqueue.ClearProgress(ctx, w.c.Pool, job.ID); err != nil {
+		if err := workqueue.ClearProgress(ctx, w.c.Pool, w.c.Schema, job.ID); err != nil {
 			w.c.Logger.WarnContext(ctx, "media/video: clear progress", "job", job.ID, "error", err)
 		}
 	}()
@@ -131,7 +134,7 @@ func (w *worker) report(id int64) Report {
 	return func(ctx context.Context, files map[string]media.EncodeProgress) {
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		if err := workqueue.SetProgress(ctx, w.c.Pool, id, files); err != nil && ctx.Err() == nil {
+		if err := workqueue.SetProgress(ctx, w.c.Pool, w.c.Schema, id, files); err != nil && ctx.Err() == nil {
 			w.c.Logger.WarnContext(ctx, "media/video: report progress", "job", id, "error", err)
 		}
 	}

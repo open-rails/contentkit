@@ -37,7 +37,7 @@ func TestEncodeProgressThroughReadAPI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	pool := pgtest.Pool(t, nil)
-	if err := workqueue.Migrate(ctx, pool); err != nil {
+	if err := workqueue.Migrate(ctx, pool, workqueue.Schema); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, "DELETE FROM "+workqueue.Schema+".river_job"); err != nil {
@@ -46,7 +46,7 @@ func TestEncodeProgressThroughReadAPI(t *testing.T) {
 	var enq *workqueue.Queue
 	e := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return enq.Enqueue(ctx, j) }))
 	var err error
-	if enq, err = workqueue.New(pool, e.kinds); err != nil {
+	if enq, err = workqueue.New(pool, e.kinds, workqueue.Schema); err != nil {
 		t.Fatal(err)
 	}
 	var locker media.Locker
@@ -58,7 +58,7 @@ func TestEncodeProgressThroughReadAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	reader, err := media.NewReader(media.ReaderOptions{Manifests: e.manifests, Kinds: e.kinds, Resolver: visible{},
-		Progress: workqueue.NewProgressSource(pool),
+		Progress: workqueue.NewProgressSource(pool, workqueue.Schema),
 		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: "https://media.test",
 			SigningKey: token.Key{ID: "k1", Secret: []byte("0123456789abcdef0123456789abcdef")}}})
 	if err != nil {

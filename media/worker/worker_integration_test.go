@@ -53,10 +53,11 @@ type host struct {
 	queue     *workqueue.Queue
 	worker    *worker.Worker
 
-	mu      sync.Mutex
-	encoded map[string]media.SlotListing // Hooks.SlotEncoded, by ref#slot
-	settled map[string][]media.Readiness // Hooks.ItemReady, by ref
-	schema  string                       // the host's River schema
+	mu           sync.Mutex
+	encoded      map[string]media.SlotListing // Hooks.SlotEncoded, by ref#slot
+	settled      map[string][]media.Readiness // Hooks.ItemReady, by ref
+	schema       string                       // the host's River schema
+	workerSchema string                       // this host's media worker schema
 }
 
 // lastSettled is the latest ItemReady report for ref.
@@ -114,13 +115,11 @@ func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
 		_ = hostClient.StopAndCancel(ctx)
 	})
 	h.manifests = s3test.Manifests(t, env.Store, kinds, media.ManifestOptions{Sweeps: jobs})
-	if err := workqueue.Migrate(ctx, pool); err != nil {
+	h.workerSchema = pgtest.EmptySchema(t, ctx, pool)
+	if err := workqueue.Migrate(ctx, pool, h.workerSchema); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "DELETE FROM "+workqueue.Schema+".river_job"); err != nil {
-		t.Fatal(err)
-	}
-	if h.queue, err = workqueue.New(pool, kinds); err != nil {
+	if h.queue, err = workqueue.New(pool, kinds, h.workerSchema); err != nil {
 		t.Fatal(err)
 	}
 	if h.uploads, err = media.NewUploads(media.UploadOptions{Store: env.Store, Kinds: kinds, Manifests: h.manifests,
@@ -133,7 +132,7 @@ func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Store: env.Store, Kinds: kinds, HostSchema: schema,
+	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Store: env.Store, Kinds: kinds, HostSchema: schema, WorkerSchema: h.workerSchema,
 		TempDir: t.TempDir(), Threads: 2, RiverHooks: riverHooks,
 		Hooks: media.Hooks{SlotEncoded: func(_ context.Context, ref contentref.ContentRef, slot string, l media.SlotListing) {
 			h.mu.Lock()
@@ -490,7 +489,7 @@ func TestProcessOnUploadAttachAndDiscard(t *testing.T) {
 	clip := contentref.New(h.Tenant, "clip", newID())
 	staged := h.stage(t, clip, "video/mp4", body)
 	h.commit(t, clip, media.Op{Op: media.OpInsert, Name: "long", Original: staged, Unattached: true})
-	progress := workqueue.NewProgressSource(h.pool)
+	progress := workqueue.NewProgressSource(h.pool, h.workerSchema)
 	eventually(t, "the encode running", time.Minute, func() bool {
 		st, err := progress.EncodeProgress(ctx, clip)
 		p, ok := st.Files["long"]
@@ -500,7 +499,7 @@ func TestProcessOnUploadAttachAndDiscard(t *testing.T) {
 	match, _, _ := workqueue.RefMatch(clip)
 	eventually(t, "the encode cancelled", 30*time.Second, func() bool {
 		var n int
-		err := h.pool.QueryRow(ctx, "SELECT count(*) FROM "+workqueue.Schema+".river_job WHERE kind = $1 AND args @> $2 AND state = 'cancelled'",
+		err := h.pool.QueryRow(ctx, "SELECT count(*) FROM "+pgx.Identifier{h.workerSchema, "river_job"}.Sanitize()+" WHERE kind = $1 AND args @> $2 AND state = 'cancelled'",
 			(workqueue.VideoArgs{}).Kind(), match).Scan(&n)
 		return err == nil && n > 0
 	})
