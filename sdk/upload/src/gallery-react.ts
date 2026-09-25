@@ -9,6 +9,7 @@ import {
   classifyMediaError,
   hlsConfig,
   initialEstimate,
+  refreshable,
   startRung,
   statusKind,
   type AbrPolicy,
@@ -178,7 +179,11 @@ export interface HlsPlayerOptions {
   src?: string | null;
   /** Adds auth to playlist and segment requests (e.g. a bearer header for the app's read API). */
   xhrSetup?: (xhr: XMLHttpRequest, url: string) => void | Promise<void>;
-  /** Re-grants access after a 401/403 (refetch the read API); the player then retries once. */
+  /**
+   * Re-grants access (refetch the read API) after a 401, 403 or 404 — media-access
+   * answers an expired token with 404 — then the player retries once, resuming
+   * where it was.
+   */
   refresh?: () => unknown;
   /** Inactive pauses (a swiped-away slide). Default true. */
   active?: boolean;
@@ -291,7 +296,7 @@ function capController(Base: typeof CapLevelController | undefined, policy: AbrP
 
 /**
  * HLS playback that fails fast with a reason: hls.js (lazy-loaded) or native
- * HLS, tuned retries, one grant refresh on 401/403, and a stall watchdog.
+ * HLS, tuned retries, one grant refresh on 401/403/404, and a stall watchdog.
  */
 export function useHlsPlayer({
   src,
@@ -312,6 +317,7 @@ export function useHlsPlayer({
   const want = useRef(false);
   const start = useRef<(() => void) | null>(null);
   const refreshed = useRef(false);
+  const resumeAt = useRef(0);
   const lastProgress = useRef(0);
   const [levels, setLevels] = useState<QualityLevel[]>([]);
   const [selected, setSelected] = useState(-1);
@@ -335,8 +341,9 @@ export function useHlsPlayer({
     const fail = (e: PlaybackError) => {
       if (dead) return;
       const again = opts.current.refresh;
-      if (e.kind === "access" && again && !refreshed.current) {
+      if (refreshable(e) && again && !refreshed.current) {
         refreshed.current = true;
+        resumeAt.current = el.currentTime || 0;
         dead = true;
         destroy();
         setStatus("loading");
@@ -401,7 +408,8 @@ export function useHlsPlayer({
               const cap = capRung(hls.levels, box.width * dpr, box.height * dpr, policy);
               hls.startLevel = locked >= 0 ? locked : startRung(hls.levels, estimate, cap, conn);
               if (locked >= 0) hls.loadLevel = locked;
-              hls.startLoad(-1);
+              hls.startLoad(resumeAt.current || -1);
+              resumeAt.current = 0;
             }
             el.play().catch(() => {});
           };
@@ -428,6 +436,8 @@ export function useHlsPlayer({
           if (code < 200 || code >= 400) return fail({ kind: statusKind(code), code: `probe/${code}`, status: code });
           native = true;
           el.src = src;
+          if (resumeAt.current) el.currentTime = resumeAt.current;
+          resumeAt.current = 0;
           destroy = () => {
             el.removeAttribute("src");
             el.load();

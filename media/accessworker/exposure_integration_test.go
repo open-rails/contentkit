@@ -144,7 +144,7 @@ func TestVideoExposure(t *testing.T) {
 		}
 	}
 	for k := range outputs {
-		if code := public(k); code != http.StatusForbidden {
+		if code := public(k); code != http.StatusNotFound {
 			t.Fatalf("editor/ output %s without a token: %d", k, code)
 		}
 	}

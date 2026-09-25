@@ -434,6 +434,13 @@ the frame or upload); `poster` and `hover_preview` are reserved slot names.
   are immutable). Never cache `blobs/` or `editor/` in a shared cache: the
   token is not part of a cache key the CDN checks, so a cached object would be
   served without one. They are `private` for the browser cache.
+- **Denials are 404 by design**: a missing, malformed, expired, wrong-scope
+  or unknown-key token on `blobs/` or `editor/` gets the same response as a
+  missing object (status, headers, body; `Cache-Control: no-store`), decided
+  before any bucket request, so a response never reveals that protected
+  content exists. The reason is logged at debug (`media-access: denied`).
+  Clients that re-grant on expiry must treat 404 on these URLs as "refresh
+  and retry once"; the SDK player's `refresh` does.
 - **Key rotation**: add the new key to every access worker as
   `MEDIA_ACCESS_TOKEN_KEY` with the old one as `_TOKEN_KEY_PREVIOUS`, then
   switch the hosts' `Delivery.SigningKey`, then drop the previous key after
