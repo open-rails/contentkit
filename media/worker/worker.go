@@ -4,7 +4,7 @@
 // address (media.Manifests.Place), derives image variants, zips, slot outputs
 // and inline images (media/image, libvips) and encodes video, posters and
 // (media/video, ffmpeg). The host only presigns, commits,
-// publishes and reads.
+// exposes and reads.
 //
 // The host builds the worker from the same code that builds its
 // media.Registry, image.SpecChooser and media.Hooks, so the worker applies
@@ -36,13 +36,14 @@ type Config struct {
 	Pool  *pgxpool.Pool // the host database: workqueue.Schema, manifest locks, progress
 	Store media.Store
 	// Kinds, Specs and Hooks are the host's: build them with the code the
-	// host's media setup uses. Hooks.Failed and Hooks.SlotEncoded run here.
+	// host's media setup uses. Hooks.Failed, Hooks.SlotEncoded and
+	// Hooks.PublicRemoved run here.
 	Kinds *media.Registry
 	Specs image.SpecChooser
 	Hooks media.Hooks
 	// HostSchema and HostQueue are the host's River schema ("" is the
 	// connection's search path) and media queue (default media.DefaultQueue):
-	// video publishes and folder sweeps after edits run there. Grace is the
+	// folder sweeps after edits run there. Grace is the
 	// host's JobsConfig.Grace (default 24 h).
 	HostSchema string
 	HostQueue  string
@@ -150,7 +151,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 			return fmt.Errorf("media/worker: queue %q already registered", workqueue.ImageQueue)
 		}
 		cfg.Queues[workqueue.ImageQueue] = river.QueueConfig{MaxWorkers: c.ImageWorkers}
-		return river.AddWorkerSafely(cfg.Workers, &imageWorker{c: c, images: images, host: host})
+		return river.AddWorkerSafely(cfg.Workers, &imageWorker{c: c, images: images})
 	}, nil, nil)
 	client, err := riverhelpers.New(ctx, c.Pool, &river.Config{Schema: workqueue.Schema,
 		JobTimeout: max(c.VideoTimeout, c.ImageTimeout), Logger: c.Logger, Hooks: c.RiverHooks}, videos, imageJobs)
@@ -189,26 +190,18 @@ type imageWorker struct {
 	river.WorkerDefaults[workqueue.ImageArgs]
 	c      Config
 	images *image.Processor
-	host   *media.HostQueue
 }
 
 func (w *imageWorker) Timeout(*river.Job[workqueue.ImageArgs]) time.Duration { return w.c.ImageTimeout }
 
-// Work runs one image job, after any equal job it follows. A video item's
-// poster is then handed to the host's Publish, which copies
-// what its Exposure allows to public/.
+// Work runs one image job, after any equal job it follows.
 func (w *imageWorker) Work(ctx context.Context, job *river.Job[workqueue.ImageArgs]) error {
 	pj := media.ProcessJob{Ref: job.Args.Ref, Slot: job.Args.Slot}
-	item, err := w.c.Kinds.Item(pj.Ref)
-	if err != nil {
+	if _, err := w.c.Kinds.Item(pj.Ref); err != nil {
 		return river.JobCancel(err)
 	}
 	if err := media.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), job.Args.After); err != nil {
 		return err
 	}
-	err = w.images.Process(ctx, pj)
-	if item.Kind().Video != nil && pj.Slot == media.PosterSlot {
-		err = errors.Join(err, w.host.Publish(ctx, pj.Ref))
-	}
-	return err
+	return w.images.Process(ctx, pj)
 }

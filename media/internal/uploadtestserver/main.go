@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -46,6 +47,41 @@ func (allow) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.A
 
 func (allow) CanUpload(_ context.Context, a access.Actor, _ contentref.ContentRef) (media.UploadGrant, error) {
 	return media.UploadGrant{Allowed: a.ID != "reader", Owner: "owner"}, nil
+}
+
+// inlineRenderer stands in for the media worker's image job for inline
+// images (this server has no libvips): the rendition is the original's bytes.
+// Other jobs are dropped, so slots stay pending.
+type inlineRenderer struct {
+	store     media.Store
+	kinds     *media.Registry
+	manifests *media.Manifests
+}
+
+func (q inlineRenderer) Enqueue(ctx context.Context, j media.ProcessJob) error {
+	item, err := q.kinds.Item(j.Ref)
+	if err != nil || !item.Inline(j.Slot) {
+		return err
+	}
+	rec, err := q.manifests.Slot(ctx, j.Ref, j.Slot)
+	if err != nil {
+		return err
+	}
+	src, _ := item.Original(rec.Original)
+	dst, _ := item.Private(rec.Original)
+	if _, err := q.store.Copy(ctx, src, dst, media.CopyOptions{}); err != nil {
+		return err
+	}
+	spec := media.InlineSlot(*item.Kind().Inline)
+	if err := q.manifests.UpdateSlot(ctx, j.Ref, j.Slot, func(r *media.SlotRecord) error {
+		r.Result = &media.SlotResult{Of: r.Fingerprint(spec), Source: r.Original,
+			Outputs: []media.SlotRendition{{Rung: spec.Widths[0], Blob: r.Original, Size: r.Size}}}
+		return nil
+	}); err != nil {
+		return err
+	}
+	_, err = q.manifests.SyncPublic(ctx, j.Ref)
+	return err
 }
 
 func main() {
@@ -91,7 +127,8 @@ func main() {
 	reader, err := media.NewReader(media.ReaderOptions{Manifests: manifests, Kinds: kinds, Resolver: allow{},
 		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: "http://media.invalid", SigningKey: key}})
 	must(err)
-	uploads, err := media.NewUploads(media.UploadOptions{Store: store, Kinds: kinds, Manifests: manifests, Tickets: &ring, Authorizer: allow{}, Grace: *grace})
+	uploads, err := media.NewUploads(media.UploadOptions{Store: store, Kinds: kinds, Manifests: manifests, Tickets: &ring, Authorizer: allow{}, Grace: *grace,
+		Queue: inlineRenderer{store, kinds, manifests}})
 	must(err)
 
 	// The same API with UploadOptions.ProcessOnUpload.
@@ -119,13 +156,20 @@ func main() {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		key, err := item.Original(q.Get("name"))
-		if q.Has("slot") {
-			key, err = item.SlotOriginal(q.Get("slot"))
+		name := q.Get("name")
+		slot := q.Get("slot")
+		if slot == "" && strings.HasPrefix(name, "i-") {
+			slot = name
 		}
-		if err != nil {
-			key, err = item.SlotOriginal(q.Get("name"))
+		if slot != "" {
+			rec, err := manifests.Slot(r.Context(), item.Ref().Content(), slot)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusNotFound)
+				return
+			}
+			name = rec.Original
 		}
+		key, err := item.Original(name)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

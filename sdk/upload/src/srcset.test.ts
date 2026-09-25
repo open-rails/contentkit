@@ -6,8 +6,8 @@ const m: SlotManifest = {
   aspect: "3:1",
   pending: false,
   outputs: [
-    { name: "cover_3000", w: 3000, h: 1000, url: "https://cdn/cover_3000.webp" },
-    { name: "cover_1500", w: 1500, h: 500, url: "https://cdn/cover_1500.webp" },
+    { w: 3000, h: 1000, url: "https://cdn/cover_3000.webp" },
+    { w: 1500, h: 500, url: "https://cdn/cover_1500.webp" },
   ],
 };
 
@@ -26,7 +26,7 @@ it("is empty for an empty slot and reads aspect and the largest output", () => {
   expect(slotSources(null)).toEqual({});
   expect(manifestAspect(m)).toBe("3:1");
   expect(manifestAspect(undefined, "2:1")).toBe("2:1");
-  expect(manifestAspect({ aspect: "", pending: false, outputs: [{ name: "p", w: 480, h: 853, url: "u" }] })).toBe("480:853");
+  expect(manifestAspect({ aspect: "", pending: false, outputs: [{ w: 480, h: 853, url: "u" }] })).toBe("480:853");
   expect(largestOutput(m)?.w).toBe(3000);
 });
 

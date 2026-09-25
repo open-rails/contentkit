@@ -57,19 +57,21 @@ type fixture struct {
 	bodyA                                   string
 }
 
+const staged = "u-0190f3b2-7c1e-7a3d-9e4f-0123456789ab"
+
 func seed(t *testing.T) *fixture {
 	t.Helper()
 	env := s3test.Open(t)
 	f := &fixture{env: env, item: env.Tenant + "/gallery/" + cid(1) + "/", bodyA: "0123456789abcdefghij"}
-	f.blobA = f.item + "blobs/" + sha("a")
-	f.blobB = f.item + "blobs/" + sha("b")
+	f.blobA = f.item + "private/" + sha("a")
+	f.blobB = f.item + "private/" + sha("b")
 	f.orig = f.item + "originals/" + sha("o")
-	f.public = f.item + "public/cover.webp"
-	f.other = env.Tenant + "/gallery/" + cid(2) + "/blobs/" + sha("c")
+	f.public = f.item + "public/" + sha("cover")
+	f.other = env.Tenant + "/gallery/" + cid(2) + "/private/" + sha("c")
 	ctx := context.Background()
 	for key, body := range map[string]string{
 		f.blobA: f.bodyA, f.blobB: "bee", f.other: "other", f.orig: "original",
-		f.public: "cover", f.item + "manifest.json": "{}", f.item + "manifests/v1.json": "{}",
+		f.public: "cover", f.item + "manifest.json": "{}", f.item + "staging/" + staged: "staged",
 	} {
 		if _, err := env.Store.Put(ctx, key, strings.NewReader(body), int64(len(body)), media.PutOptions{ContentType: "image/webp"}); err != nil {
 			t.Fatal(err)
@@ -140,7 +142,7 @@ func TestAccessWorker(t *testing.T) {
 	srv := f.handler(t, nil)
 	exp := token.Expiry(time.Now(), time.Hour, 0)
 	cur := mustRing(t, k2, nil)
-	folder := cur.Sign(f.item+"blobs/", exp)
+	folder := cur.Sign(f.item+"private/", exp)
 	fileA := cur.Sign(token.FileScope(f.blobA), exp)
 
 	expect := func(t *testing.T, r result, status int, body string) {
@@ -150,7 +152,7 @@ func TestAccessWorker(t *testing.T) {
 		}
 	}
 	// A denial is byte-identical to a valid token's request for a missing object.
-	missing := f.item + "blobs/" + sha("missing")
+	missing := f.item + "private/" + sha("missing")
 	notFound := func(method string, hdr map[string]string) result {
 		return do(t, srv, method, withToken(missing, folder), hdr)
 	}
@@ -162,36 +164,13 @@ func TestAccessWorker(t *testing.T) {
 	t.Run("public passthrough", func(t *testing.T) {
 		r := do(t, srv, "GET", "/"+f.public, nil)
 		expect(t, r, 200, "cover")
-		if r.header.Get("Cache-Control") != "public, no-cache" || r.header.Get("ETag") == "" {
+		if r.header.Get("Cache-Control") != "public, max-age=31536000, immutable" || r.header.Get("ETag") == "" {
 			t.Fatalf("public headers: %v", r.header)
 		}
 		nm := do(t, srv, "GET", "/"+f.public, map[string]string{"If-None-Match": r.header.Get("ETag")})
 		expect(t, nm, 304, "")
 		if nm.header.Get("ETag") != r.header.Get("ETag") || nm.body != "" {
 			t.Fatalf("304: %v %q", nm.header, nm.body)
-		}
-	})
-
-	t.Run("public rewritten in place revalidates to the new bytes", func(t *testing.T) {
-		key := f.item + "public/avatar_128.webp"
-		put := func(body string) {
-			if _, err := f.env.Store.Put(context.Background(), key, strings.NewReader(body), int64(len(body)),
-				media.PutOptions{ContentType: "image/webp", CacheControl: "no-cache"}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		put("av")
-		r := do(t, srv, "GET", "/"+key, nil)
-		expect(t, r, 200, "av")
-		if r.header.Get("Cache-Control") != "public, no-cache" {
-			t.Fatalf("Cache-Control %q", r.header.Get("Cache-Control"))
-		}
-		expect(t, do(t, srv, "GET", "/"+key, map[string]string{"If-None-Match": r.header.Get("ETag")}), 304, "")
-		put("new")
-		n := do(t, srv, "GET", "/"+key, map[string]string{"If-None-Match": r.header.Get("ETag")})
-		expect(t, n, 200, "new")
-		if n.header.Get("ETag") == r.header.Get("ETag") {
-			t.Fatal("rewrite kept the ETag")
 		}
 	})
 
@@ -217,7 +196,7 @@ func TestAccessWorker(t *testing.T) {
 		expect(t, do(t, srv, "GET", withToken(f.blobA+"/x", folder), nil), 404, "")
 		expect(t, do(t, srv, "GET", withToken(f.orig, folder), nil), 404, "")
 		expect(t, do(t, srv, "GET", withToken(f.item+"manifest.json", folder), nil), 404, "")
-		expect(t, do(t, srv, "GET", withToken(f.item+"manifests/v1.json", folder), nil), 404, "")
+		expect(t, do(t, srv, "GET", withToken(f.item+"staging/"+staged, folder), nil), 404, "")
 	})
 
 	t.Run("originals and manifests are never served", func(t *testing.T) {
@@ -232,7 +211,7 @@ func TestAccessWorker(t *testing.T) {
 
 	t.Run("cookie mode", func(t *testing.T) {
 		expect(t, do(t, srv, "GET", "/"+f.blobA, map[string]string{"Cookie": "mt=" + folder}), 200, f.bodyA)
-		otherFolder := cur.Sign(f.env.Tenant+"/gallery/"+cid(2)+"/blobs/", exp)
+		otherFolder := cur.Sign(f.env.Tenant+"/gallery/"+cid(2)+"/private/", exp)
 		denied(t, do(t, srv, "GET", "/"+f.blobA, map[string]string{"Cookie": "mt=" + otherFolder}))
 		expect(t, do(t, srv, "GET", "/"+f.blobA, map[string]string{"Cookie": "mt=" + otherFolder + "; mt=" + folder}), 200, f.bodyA)
 		denied(t, do(t, srv, "GET", "/"+f.blobA, map[string]string{"Cookie": "other=" + folder}))
@@ -288,14 +267,17 @@ func TestAccessWorker(t *testing.T) {
 
 	t.Run("non-canonical paths", func(t *testing.T) {
 		for _, p := range []string{
-			f.item + "blobs/../originals/" + sha("o"),
-			f.item + "blobs/%2e%2e/originals/" + sha("o"),
-			f.item + "blobs/%2E%2E%2Foriginals%2F" + sha("o"),
-			strings.Replace(f.blobA, "/blobs/", "//blobs/", 1),
-			strings.Replace(f.blobA, "/blobs/", "/blobs%2F", 1),
-			f.item + "blobs/" + strings.ToUpper(sha("a")),
+			f.item + "private/../originals/" + sha("o"),
+			f.item + "private/%2e%2e/originals/" + sha("o"),
+			f.item + "private/%2E%2E%2Foriginals%2F" + sha("o"),
+			strings.Replace(f.blobA, "/private/", "//private/", 1),
+			strings.Replace(f.blobA, "/private/", "/private%2F", 1),
+			f.item + "private/" + strings.ToUpper(sha("a")),
 			f.item + "public/../originals/" + sha("o"),
 			f.item + "public/cover.png",
+			f.blobA + "/x",
+			f.item + "blobs/" + sha("a"), // retired areas
+			f.item + "editor/" + sha("a"),
 			"./" + f.blobA,
 		} {
 			r := do(t, srv, "GET", withToken(p, folder), map[string]string{"Cookie": "mt=" + folder})
@@ -312,19 +294,14 @@ func TestAccessWorker(t *testing.T) {
 			t.Fatalf("not-found: %d %v", nf.status, nf.header)
 		}
 		expired := cur.Sign(f.blobA, time.Now().Add(-time.Second))
-		editorArea := f.item + "editor/" + sha("a")
-		if _, err := f.env.Store.Put(context.Background(), editorArea, strings.NewReader("ed"), 2, media.PutOptions{ContentType: "image/webp"}); err != nil {
-			t.Fatal(err)
-		}
-		expect(t, do(t, srv, "GET", withToken(editorArea, cur.Sign(f.item+"editor/", exp)), nil), 200, "ed")
 		for name, r := range map[string]result{
 			"no token":       do(t, srv, "GET", "/"+f.blobA, nil),
 			"tampered":       do(t, srv, "GET", withToken(f.blobA, fileA[:len(fileA)-2]+"xx"), nil),
 			"expired":        do(t, srv, "GET", withToken(f.blobA, expired), nil),
-			"other item":     do(t, srv, "GET", withToken(f.blobA, cur.Sign(f.env.Tenant+"/gallery/"+cid(2)+"/blobs/", exp)), nil),
+			"other item":     do(t, srv, "GET", withToken(f.blobA, cur.Sign(f.env.Tenant+"/gallery/"+cid(2)+"/private/", exp)), nil),
 			"unknown key":    do(t, srv, "GET", withToken(f.blobA, mustRing(t, k0, nil).Sign(f.blobA, exp)), nil),
-			"viewer editor":  do(t, srv, "GET", withToken(editorArea, folder), nil),
-			"missing public": do(t, srv, "GET", "/"+f.item+"public/none.webp", nil),
+			"staging":        do(t, srv, "GET", withToken(f.item+"staging/"+staged, cur.Sign(f.item, exp)), nil),
+			"missing public": do(t, srv, "GET", "/"+f.item+"public/"+sha("none"), nil),
 			"original":       do(t, srv, "GET", withToken(f.orig, cur.Sign(f.orig, exp)), nil),
 			"manifest":       do(t, srv, "GET", withToken(f.item+"manifest.json", folder), nil),
 		} {
@@ -407,30 +384,6 @@ func TestAccessWorker(t *testing.T) {
 		c.Origins = []string{"https://doujins.com", "http://localhost:5173"}
 		if _, err := accessworker.New(c); err != nil {
 			t.Fatal(err)
-		}
-	})
-
-	t.Run("editor area needs an editor token", func(t *testing.T) {
-		variant := f.item + "editor/" + sha("editor")
-		staged := f.item + "editor/poster_480.webp"
-		for _, k := range []string{variant, staged} {
-			if _, err := f.env.Store.Put(context.Background(), k, strings.NewReader("ed"), 2, media.PutOptions{ContentType: "image/webp"}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		editor := cur.Sign(f.item+"editor/", exp)
-		for _, k := range []string{variant, staged} {
-			denied(t, do(t, srv, "GET", "/"+k, nil))
-			denied(t, do(t, srv, "GET", withToken(k, folder), nil))
-			denied(t, do(t, srv, "GET", "/"+k, map[string]string{"Cookie": "mt=" + folder}))
-			expect(t, do(t, srv, "GET", withToken(k, editor), nil), 200, "ed")
-		}
-		denied(t, do(t, srv, "GET", withToken(f.blobA, editor), nil))
-		if r := do(t, srv, "GET", withToken(staged, editor), nil); r.header.Get("Cache-Control") != "private, no-cache" {
-			t.Fatalf("staged output headers: %v", r.header)
-		}
-		if r := do(t, srv, "GET", withToken(variant, editor), nil); r.header.Get("Cache-Control") != "private, max-age=31536000, immutable" {
-			t.Fatalf("editor variant headers: %v", r.header)
 		}
 	})
 

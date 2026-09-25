@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"io"
 	"testing"
 	"time"
@@ -69,20 +68,33 @@ func TestRestoreAfterSweepAndFolderDeletion(t *testing.T) {
 	ch, _ := kinds.Item(channel)
 	post := contentref.New(env.Tenant, "post", cid(2))
 	p, _ := kinds.Item(post)
+	avatar := func(v string) {
+		t.Helper()
+		put(ch.OriginalsPrefix()+name(v), v)
+		put(ch.PrivatePrefix()+name(v+" out"), v+" out")
+		put(ch.PublicPrefix()+name(v+" out"), v+" out")
+		if err := ms.UpdateSlot(ctx, channel, "avatar", func(rec *media.SlotRecord) error {
+			*rec = media.SlotRecord{Original: name(v), Result: &media.SlotResult{Source: name(v),
+				Outputs: []media.SlotRendition{{Rung: 80, W: 80, H: 80, Blob: name(v + " out")}}}}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	for _, ref := range []contentref.ContentRef{channel, post} { // the host creates each item before its files land
 		if _, err := ms.Create(ctx, ref); err != nil {
 			t.Fatal(err)
 		}
 	}
 	put(ch.OriginalsPrefix()+name("origA"), "origA")
-	put(ch.BlobsPrefix()+name("blobA"), "blobA")
-	put(ch.OriginalsPrefix()+"avatar", "avatar v1")
-	put(ch.PublicPrefix()+"avatar.webp", "public avatar v1")
+	put(ch.PrivatePrefix()+name("blobA"), "blobA")
 	if _, err := ms.Edit(ctx, channel, file("origA", "blobA")); err != nil {
 		t.Fatal(err)
 	}
+	avatar("avatar v1")
 	put(p.OriginalsPrefix()+name("origP"), "origP")
-	put(p.BlobsPrefix()+name("blobP"), "blobP")
+	put(p.PrivatePrefix()+name("blobP"), "blobP")
 	if _, err := ms.Edit(ctx, post, file("origP", "blobP")); err != nil {
 		t.Fatal(err)
 	}
@@ -92,16 +104,14 @@ func TestRestoreAfterSweepAndFolderDeletion(t *testing.T) {
 	time.Sleep(1500 * time.Millisecond)
 
 	put(ch.OriginalsPrefix()+name("origB"), "origB")
-	put(ch.BlobsPrefix()+name("blobB"), "blobB")
+	put(ch.PrivatePrefix()+name("blobB"), "blobB")
 	if _, err := ms.Edit(ctx, channel, file("origB", "blobB")); err != nil {
 		t.Fatal(err)
 	}
-	put(ch.OriginalsPrefix()+"avatar", "avatar v2")
-	put(ch.PublicPrefix()+"avatar.webp", "public avatar v2")
-	put(ch.PublicPrefix()+"banner.webp", "added after T")
+	avatar("avatar v2")
 	clock = time.Now().Add(grace + time.Minute)
 	res, err := jobs.Sweep(ctx, channel)
-	if err != nil || len(res.Deleted) != 2 {
+	if err != nil || len(res.Deleted) != 5 { // A's file and v1's avatar: original, rendition, public copy
 		t.Fatalf("sweep: %+v %v", res, err)
 	}
 	for o, err := range s.List(ctx, p.Prefix()) { // an erased item: its folder deleted
@@ -127,16 +137,17 @@ func TestRestoreAfterSweepAndFolderDeletion(t *testing.T) {
 	raw, _ := json.Marshal(man)
 	t.Logf("restored manifest %s; report %+v", raw, rep)
 	for key, want := range map[string]string{
-		ch.OriginalsPrefix() + name("origA"): "origA", ch.BlobsPrefix() + name("blobA"): "blobA",
-		ch.OriginalsPrefix() + "avatar": "avatar v1", ch.PublicPrefix() + "avatar.webp": "public avatar v1",
-		p.OriginalsPrefix() + name("origP"): "origP", p.BlobsPrefix() + name("blobP"): "blobP",
+		ch.OriginalsPrefix() + name("origA"): "origA", ch.PrivatePrefix() + name("blobA"): "blobA",
+		ch.OriginalsPrefix() + name("avatar v1"): "avatar v1", ch.PrivatePrefix() + name("avatar v1 out"): "avatar v1 out",
+		ch.PublicPrefix() + name("avatar v1 out"): "avatar v1 out",
+		p.OriginalsPrefix() + name("origP"):       "origP", p.PrivatePrefix() + name("blobP"): "blobP",
 	} {
 		if got, err := read(key); err != nil || got != want {
 			t.Errorf("%s: %q %v, want %q", key, got, err, want)
 		}
 	}
-	if _, err := read(ch.PublicPrefix() + "banner.webp"); !errors.Is(err, media.ErrNotFound) {
-		t.Errorf("slot added after T survived restore: %v", err)
+	if rec, err := ms.Slot(ctx, channel, "avatar"); err != nil || rec.Original != name("avatar v1") {
+		t.Errorf("avatar record not restored: %+v %v", rec, err)
 	}
 	if man, _, err := ms.Get(ctx, post); err != nil || man.Files[0].Original != name("origP") {
 		t.Fatalf("deleted folder's manifest not restored: %v", err)

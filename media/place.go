@@ -31,8 +31,8 @@ type Staged struct {
 //  1. copy staging → originals server-side, unless the folder already holds
 //     the hash (dedupe), and verify the copy's size (and full-object SHA-256
 //     when the store reports one);
-//  2. rename every reference in the folder's manifests (original, master,
-//     hls source, download inputs), one conditional edit per manifest;
+//  2. rename every reference in the manifest (original, master, hls source,
+//     download inputs) in one conditional edit;
 //  3. delete the staged object.
 //
 // Each step is idempotent and the manifests switch only after a verified
@@ -79,8 +79,8 @@ func (m *Manifests) Place(ctx context.Context, ref contentref.ContentRef, s Stag
 	return name, nil
 }
 
-// copyStaged puts the staged object at dst unless a manifest in the folder
-// already references dst: an unreferenced one may be near the sweep, and
+// copyStaged puts the staged object at dst unless the manifest already
+// references dst: an unreferenced one may be near the sweep, and
 // copying over it refreshes it.
 func (m *Manifests) copyStaged(ctx context.Context, item Item, staged Object, dst, name string, sum []byte) error {
 	if cur, err := m.store.Head(ctx, dst); err == nil && cur.Size == staged.Size {
@@ -104,52 +104,13 @@ func (m *Manifests) copyStaged(ctx context.Context, item Item, staged Object, ds
 	return nil
 }
 
-// renameSource points every manifest in the folder that references from at to.
+// renameSource points every reference to from at to.
 func (m *Manifests) renameSource(ctx context.Context, item Item, from, to string) error {
-	keys, err := m.manifestKeys(ctx, item)
-	if err != nil {
-		return err
-	}
-	for _, key := range keys {
-		man, _, err := m.get(ctx, key)
-		if errors.Is(err, ErrNotFound) {
-			continue
-		} else if err != nil {
-			return err
-		}
-		if !man.renameSource(from, to) {
-			continue
-		}
-		ref := item.Ref().Content()
-		if item.Kind().Versioned {
-			v := strings.TrimSuffix(strings.TrimPrefix(key, item.ManifestsPrefix()), ".json")
-			ref = ref.WithVersion(v)
-		}
-		if _, err := m.Edit(ctx, ref, func(man *Manifest) error {
-			man.renameSource(from, to)
-			return nil
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// manifestKeys lists the folder's manifests.
-func (m *Manifests) manifestKeys(ctx context.Context, item Item) ([]string, error) {
-	if !item.Kind().Versioned {
-		return []string{item.Prefix() + "manifest.json"}, nil
-	}
-	var keys []string
-	for o, err := range m.store.List(ctx, item.ManifestsPrefix()) {
-		if err != nil {
-			return nil, err
-		}
-		if k, ok := layout.Parse(o.Key); ok && k.Area == AreaManifest {
-			keys = append(keys, o.Key)
-		}
-	}
-	return keys, nil
+	_, err := m.editRoot(ctx, item, func(r *Root) error {
+		r.sections(func(_ string, man *Manifest) { man.renameSource(from, to) })
+		return nil
+	})
+	return err
 }
 
 // renameSource replaces the original name from with to wherever the
@@ -183,27 +144,14 @@ func (m *Manifest) renameSource(from, to string) bool {
 	return changed
 }
 
-// folderRefs is every object the folder's manifests reference, as
-// "{area}/{name}" (a staged original under staging/).
+// folderRefs is every object the manifest references, as "{area}/{name}"
+// (a staged original under staging/).
 func (m *Manifests) folderRefs(ctx context.Context, item Item) (map[string]bool, error) {
-	keys, err := m.manifestKeys(ctx, item)
-	if err != nil {
+	root, _, err := m.root(ctx, item.ManifestKey())
+	if errors.Is(err, ErrNotFound) {
+		return map[string]bool{}, nil
+	} else if err != nil {
 		return nil, err
 	}
-	refs := map[string]bool{}
-	for _, key := range keys {
-		man, _, err := m.get(ctx, key)
-		if errors.Is(err, ErrNotFound) {
-			continue
-		} else if err != nil {
-			return nil, err
-		}
-		man.walk(func(area, name string) {
-			if area == AreaOriginals {
-				area = layout.SourceArea(name)
-			}
-			refs[area+"/"+name] = true
-		})
-	}
-	return refs, nil
+	return root.Refs(), nil
 }

@@ -133,7 +133,7 @@ func TestManifestCacheRevalidatesAndEditsAreValidated(t *testing.T) {
 	if string(raw) != "[0,1843212,4]" {
 		t.Fatalf("segment encoding %s", raw)
 	}
-	if got := first.Blobs(); len(got) != 3 {
+	if got := first.Renditions(); len(got) != 3 {
 		t.Fatalf("blobs %v", got)
 	}
 
@@ -179,5 +179,75 @@ func TestManifestCacheRevalidatesAndEditsAreValidated(t *testing.T) {
 
 	if _, err := writer.Edit(ctx, contentref.New(env.Tenant, "gallery", cid(1)), func(*media.Manifest) error { return nil }); err == nil {
 		t.Fatal("versioned kind edited without a version")
+	}
+}
+
+// TestRootIndex: every write rebuilds the manifest's index of originals/,
+// private/ and public/ from its files, versions and slots.
+func TestRootIndex(t *testing.T) {
+	env := s3test.Open(t)
+	ctx := context.Background()
+	ms := s3test.Manifests(t, env.Store, registry(t), media.ManifestOptions{})
+	work := contentref.New(env.Tenant, "gallery", cid(7))
+	staged := media.NewUploadName()
+	for v, file := range map[string]string{"v1": "a.png", "v2": "b.png"} {
+		if _, err := ms.Edit(ctx, work.WithVersion(v), func(m *media.Manifest) error {
+			m.Files = append(m.Files, media.File{Name: file, Original: blobName(file), Type: "image/png", Size: 10,
+				Variants: map[string]media.Variant{"thumb": {Blob: blobName(file + "/thumb"), Type: "image/webp", Size: 3, W: 460}}})
+			if v == "v2" {
+				m.Files = append(m.Files, media.File{Name: "big.png", Original: staged, Type: "image/png"})
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ms.UpdateSlot(ctx, work, "cover", func(rec *media.SlotRecord) error {
+		*rec = media.SlotRecord{Original: blobName("cover"), Filename: "c.png", Type: "image/png", Size: 7,
+			Result: &media.SlotResult{Source: blobName("cover"), Outputs: []media.SlotRendition{{Rung: 1500, W: 1500, H: 500, Blob: blobName("c1500")}}}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	root, _, err := ms.Root(ctx, work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := root.Originals[blobName("a.png")]; o.Name != "a.png" || o.Size != 10 || len(o.Renditions) != 1 || o.Renditions[0] != blobName("a.png/thumb") {
+		t.Fatalf("original a.png: %+v", o)
+	}
+	if o := root.Originals[blobName("cover")]; o.Slot != "cover" || o.Name != "c.png" || len(o.Renditions) != 1 {
+		t.Fatalf("slot original: %+v", o)
+	}
+	if len(root.Originals) != 3 {
+		t.Fatalf("staged uploads are not indexed: %v", root.Originals)
+	}
+	if p := root.Private[blobName("b.png/thumb")]; p.File != "b.png" || p.Version != "v2" || p.Rendition != "thumb" || p.W != 460 || p.Public {
+		t.Fatalf("variant: %+v", p)
+	}
+	if p := root.Private[blobName("c1500")]; p.Slot != "cover" || p.Rendition != "1500" || !p.Public {
+		t.Fatalf("slot output: %+v", p)
+	}
+	refs := root.Refs()
+	for _, want := range []string{"originals/" + blobName("a.png"), "private/" + blobName("c1500"), "public/" + blobName("c1500"), "staging/" + staged} {
+		if !refs[want] {
+			t.Errorf("refs lack %s", want)
+		}
+	}
+	if refs["public/"+blobName("a.png/thumb")] {
+		t.Error("a file variant is public")
+	}
+	root, err = ms.EditRoot(ctx, work, func(r *media.Root) error { r.Hidden = true; return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root.Private[blobName("c1500")].Public || len(root.PublicNames()) != 0 {
+		t.Fatal("a hidden item exposes its cover")
+	}
+	if man, _, err := ms.Get(ctx, work.WithVersion("v1")); err != nil || len(man.Files) != 1 {
+		t.Fatalf("v1 section: %v %v", man, err)
+	}
+	if _, _, err := ms.Get(ctx, work.WithVersion("v3")); !errors.Is(err, media.ErrNotFound) {
+		t.Fatalf("missing version: %v", err)
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/internal/s3test"
 	"github.com/open-rails/contentkit/media/internal/videotest"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/video"
@@ -52,7 +53,7 @@ func keyOf(u string) string {
 
 func (e *env) images(t *testing.T) media.VideoImages {
 	t.Helper()
-	v, err := e.manifests.VideoImages(context.Background(), media.OutputURLs{BaseURL: base, EditorToken: "tok"}, e.ref, true, "")
+	v, err := e.manifests.VideoImages(context.Background(), media.OutputURLs{BaseURL: base, Token: "tok"}, e.ref, true, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,10 +73,10 @@ func (e *env) posterRecord(t *testing.T) *media.SlotRecord {
 func (e *env) frame(t *testing.T, w, h int) image.Image {
 	t.Helper()
 	rec := e.posterRecord(t)
-	key := e.item(t).OriginalsPrefix() + media.PosterSlot
+	key := e.item(t).OriginalsPrefix() + rec.Original
 	body := e.get(t, key)
 	obj, err := e.store.Head(context.Background(), key)
-	if err != nil || obj.ETag != rec.Original || obj.ContentType != "image/png" {
+	if err != nil || rec.Type != "image/png" || obj.ContentType != "image/png" {
 		t.Fatalf("poster original %+v %v, record %+v", obj, err, rec)
 	}
 	img, err := png.Decode(bytes.NewReader(body))
@@ -103,7 +104,7 @@ func (e *env) setPoster(t *testing.T, r media.PosterRequest) {
 func (e *env) noPreviewClips(t *testing.T) {
 	t.Helper()
 	item := e.item(t)
-	for _, prefix := range []string{item.OriginalsPrefix(), item.EditorPrefix(), item.PublicPrefix()} {
+	for _, prefix := range []string{item.OriginalsPrefix(), item.PrivatePrefix(), item.PublicPrefix()} {
 		for o, err := range e.store.List(context.Background(), prefix) {
 			if err != nil {
 				t.Fatal(err)
@@ -362,11 +363,11 @@ func TestVideoImageRoutesAndFrameEndpoint(t *testing.T) {
 		t.Fatalf("draft video images: %d %s", code, b)
 	}
 	vis.set(access.Resolution{Visible: true, Accessible: true})
-	jobs, err := media.NewJobs(media.JobsConfig{Store: e.store, Kinds: e.kinds, Resolver: vis})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: e.store, Kinds: e.kinds, Resolver: vis, Locker: s3test.Locker(t, e.store)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := jobs.Publish(context.Background(), e.ref); err != nil {
+	if err := jobs.Expose(context.Background(), e.ref); err != nil {
 		t.Fatal(err)
 	}
 	code, b, hdr := viewerImages()

@@ -53,7 +53,7 @@ type host struct {
 	worker    *worker.Worker
 
 	mu      sync.Mutex
-	encoded map[string]media.Aspect // Hooks.SlotEncoded, by ref#slot
+	encoded map[string]media.SlotListing // Hooks.SlotEncoded, by ref#slot
 }
 
 func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
@@ -73,7 +73,7 @@ func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &host{Env: env, pool: pool, kinds: kinds, encoded: map[string]media.Aspect{}}
+	h := &host{Env: env, pool: pool, kinds: kinds, encoded: map[string]media.SlotListing{}}
 
 	// The host's River: publishes and sweeps the worker hands back run here.
 	schema := pgtest.EmptySchema(t, ctx, pool)
@@ -115,9 +115,9 @@ func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
 	// The worker, built from the same registry, with the host's hooks.
 	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Store: env.Store, Kinds: kinds, HostSchema: schema,
 		TempDir: t.TempDir(), Threads: 2, RiverHooks: riverHooks,
-		Hooks: media.Hooks{SlotEncoded: func(_ context.Context, ref contentref.ContentRef, slot string, a media.Aspect) {
+		Hooks: media.Hooks{SlotEncoded: func(_ context.Context, ref contentref.ContentRef, slot string, l media.SlotListing) {
 			h.mu.Lock()
-			h.encoded[ref.String()+"#"+slot] = a
+			h.encoded[ref.String()+"#"+slot] = l
 			h.mu.Unlock()
 		}}})
 	if err != nil {
@@ -163,7 +163,7 @@ func (h *host) upload(t *testing.T, ref contentref.ContentRef, slot, typ string,
 		h.put(t, p.Put, body)
 	}
 	if slot != "" {
-		if err := h.uploads.CommitSlot(context.Background(), alice, ref, slot, sum[:], nil); err != nil {
+		if err := h.uploads.CommitSlot(context.Background(), alice, media.SlotCommit{Ref: ref, Slot: slot, SHA256: sum[:]}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -246,7 +246,11 @@ func TestWorkerProcessesImagesAndPlacesStagedUploads(t *testing.T) {
 		if err != nil || len(m.Files) != 2 {
 			return false
 		}
-		cover, _ := item.SlotOutput("cover", 300)
+		rec, err := h.manifests.Slot(ctx, work, "cover")
+		if err != nil || rec.Result == nil || len(rec.Result.Outputs) == 0 {
+			return false
+		}
+		cover, _ := item.Public(rec.Result.Outputs[0].Blob)
 		return m.Files[0].Variants["thumb"].Blob != "" && m.Files[1].Variants["thumb"].Blob != "" &&
 			m.Files[1].Original == media.SHA256Name(sum[:]) && h.exists(t, cover)
 	})
@@ -254,10 +258,10 @@ func TestWorkerProcessesImagesAndPlacesStagedUploads(t *testing.T) {
 		t.Fatal("staging kept after placement")
 	}
 	h.mu.Lock()
-	aspect, ok := h.encoded[work.String()+"#cover"]
+	listing, ok := h.encoded[work.String()+"#cover"]
 	h.mu.Unlock()
-	if !ok || aspect != media.Aspect3x1 {
-		t.Fatalf("the host's SlotEncoded hook did not run in the worker: %v %v", aspect, ok)
+	if !ok || listing.Aspect != media.Aspect3x1 || len(listing.Outputs) == 0 {
+		t.Fatalf("the host's SlotEncoded hook did not run in the worker: %+v %v", listing, ok)
 	}
 }
 

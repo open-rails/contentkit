@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"errors"
 	stdimage "image"
 	"image/color"
 	"image/jpeg"
 	"image/png"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -81,7 +81,7 @@ func (e *env) slot(t *testing.T, ref contentref.ContentRef, slot string, body []
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("put: %d", resp.StatusCode)
 	}
-	if err := e.uploads.CommitSlot(context.Background(), access.Actor{ID: "u"}, ref, slot, sum[:], edit); err != nil {
+	if err := e.uploads.CommitSlot(context.Background(), access.Actor{ID: "u"}, media.SlotCommit{Ref: ref, Slot: slot, SHA256: sum[:], Edit: edit}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -109,21 +109,25 @@ func widths(m media.SlotManifest) []int {
 }
 
 // checkOutputs requires m to be settled and list exactly want (one per rung,
-// at 3:1), each stored in place at its fixed URL with those dimensions and
-// sampled pixels c.
+// at 3:1), each an immutable hash-named file in private/ and its public/ copy
+// with those dimensions and sampled pixels c.
 func (e *env) checkOutputs(t *testing.T, ref contentref.ContentRef, m media.SlotManifest, want []int, c color.RGBA) {
 	t.Helper()
 	if m.Pending || m.Error != "" || !slices.Equal(widths(m), want) {
 		t.Fatalf("manifest %+v, want widths %v", m, want)
 	}
-	prefix := e.Tenant + "/" + ref.ContentKind + "/" + ref.ContentID + "/public/"
+	prefix := e.Tenant + "/" + ref.ContentKind + "/" + ref.ContentID + "/"
 	for _, o := range m.Outputs {
-		key := prefix + o.Name + ".webp"
-		if o.URL != slotBase+"/"+key || o.H != media.Aspect3x1.Height(o.W) {
+		name, ok := strings.CutPrefix(o.URL, slotBase+"/"+prefix+"public/")
+		if !ok || !strings.HasPrefix(name, "sha256-") || o.H != media.Aspect3x1.Height(o.W) {
 			t.Fatalf("output %+v", o)
 		}
+		key := prefix + "public/" + name
 		b, obj := e.object(t, key)
-		if obj.ContentType != "image/webp" || obj.CacheControl != "no-cache" || len(obj.Metadata) != 0 {
+		if priv, _ := e.object(t, prefix+"private/"+name); !bytes.Equal(priv, b) {
+			t.Fatalf("%s is not a copy of its private/ file", key)
+		}
+		if obj.ContentType != "image/webp" || obj.CacheControl != "max-age=31536000, immutable" {
 			t.Fatalf("%s: %+v", key, obj)
 		}
 		img, err := webp.Decode(bytes.NewReader(b))
@@ -141,17 +145,6 @@ func (e *env) checkOutputs(t *testing.T, ref contentref.ContentRef, m media.Slot
 		}
 	}
 	e.checkListed(t, ref, "cover", m)
-	stored := map[string]bool{}
-	for _, o := range m.Outputs {
-		stored[o.Name] = true
-	}
-	for _, w := range []int{100, 150, 300, 400, 600} {
-		if !stored[media.SlotOutput("cover", w)] {
-			if _, err := e.Env.Store.Head(context.Background(), prefix+media.SlotOutput("cover", w)+".webp"); !errors.Is(err, media.ErrNotFound) {
-				t.Fatalf("width %d not produced but stored: %v", w, err)
-			}
-		}
-	}
 }
 
 type visible struct{}
@@ -169,22 +162,22 @@ func (visible) Resolve(_ context.Context, refs []contentref.ContentRef, _ access
 func (e *env) checkListed(t *testing.T, ref contentref.ContentRef, slot string, m media.SlotManifest) {
 	t.Helper()
 	e.mu.Lock()
-	aspect, ok := e.encoded[ref.String()+"#"+slot]
+	listing, ok := e.encoded[ref.String()+"#"+slot]
 	e.mu.Unlock()
-	if !ok || aspect != m.Aspect {
-		t.Fatalf("encoded aspect %v (reported %v), manifest's %v", aspect, ok, m.Aspect)
+	if !ok || listing.Aspect != m.Aspect {
+		t.Fatalf("encoded listing %+v (reported %v), manifest's aspect %v", listing, ok, m.Aspect)
 	}
 	r, err := media.NewReader(media.ReaderOptions{Manifests: e.manifests, Kinds: e.kinds, Resolver: visible{},
 		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: slotBase, SigningKey: token.Key{ID: "k", Secret: make([]byte, 32)}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	listed, err := r.ListedSlot(ref, slot, aspect)
+	listed, err := r.ListedSlot(ref, slot, listing)
 	if err != nil || len(listed.Outputs) != len(m.Outputs) {
 		t.Fatalf("ListedSlot = %+v %v, want %+v", listed, err, m.Outputs)
 	}
 	for i, o := range listed.Outputs {
-		if o.Name != m.Outputs[i].Name || o.URL != m.Outputs[i].URL || o.W < m.Outputs[i].W {
+		if o.URL != m.Outputs[i].URL || o.W != m.Outputs[i].W {
 			t.Fatalf("listed %+v, read %+v", o, m.Outputs[i])
 		}
 	}
@@ -209,7 +202,7 @@ func TestSlotEditWidthsAndSpecChange(t *testing.T) {
 	if m.Dims == nil || *m.Dims != (media.Dims{W: 1800, H: 1200}) || m.Aspect != media.Aspect3x1 || *m.Edit.Crop != (media.Crop{X: 900, Y: 0, W: 900, H: 300}) {
 		t.Fatalf("manifest %+v", m)
 	}
-	firstTag, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/"+cid(5)+"/public/cover_150.webp")
+	first := m.Outputs[0].URL
 
 	// Unchanged: no read, no rewrite (a whole-item job also covers slots).
 	e.store.reads.Store(0)
@@ -223,8 +216,12 @@ func TestSlotEditWidthsAndSpecChange(t *testing.T) {
 	}
 
 	// Re-edit the kept original to the bottom-left, 450 wide: the 600 rung is
-	// never upscaled, so it holds the 450 px image. Two jobs race. The outputs are rewritten in place.
-	orig, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/"+cid(5)+"/originals/cover")
+	// never upscaled, so it holds the 450 px image. Two jobs race. The new
+	// outputs have new names; the original is kept.
+	orig, err := e.manifests.Slot(ctx, ref, "cover")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := e.editSlot(t, ref, "cover", crop(0, 600, 450, 0)); err != nil {
 		t.Fatal(err)
 	}
@@ -239,12 +236,8 @@ func TestSlotEditWidthsAndSpecChange(t *testing.T) {
 	wg.Wait()
 	m = e.slotManifest(t, ref, "cover")
 	e.checkOutputs(t, ref, m, []int{150, 300, 450}, green)
-	if m.Outputs[2].Name != "cover_600" {
-		t.Fatalf("capped output %+v", m.Outputs[2])
-	}
-	nowTag, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/"+cid(5)+"/public/cover_150.webp")
-	if again, _ := e.Env.Store.Head(ctx, e.Tenant+"/gallery/"+cid(5)+"/originals/cover"); again.ETag != orig.ETag || nowTag.ETag == firstTag.ETag {
-		t.Fatalf("edit replaced the original or kept the old cover_150 (%s)", nowTag.ETag)
+	if again, _ := e.manifests.Slot(ctx, ref, "cover"); again.Original != orig.Original || m.Outputs[0].URL == first {
+		t.Fatalf("edit replaced the original or kept the old 150 output (%s)", m.Outputs[0].URL)
 	}
 
 	// With the size known, an edit outside it or under the smallest width is refused at once.

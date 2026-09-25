@@ -107,7 +107,7 @@ func (q *Queue) enqueue(ctx context.Context, insert media.InsertFunc, job media.
 	if job.Slot != "" || k.Video == nil {
 		return nil
 	}
-	if _, err := item.ManifestKey(); err != nil {
+	if _, err := item.Section(); err != nil {
 		return err
 	}
 	// Not unique: River's uniqueness always covers running jobs, which would

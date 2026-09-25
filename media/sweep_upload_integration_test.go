@@ -213,7 +213,7 @@ func TestSweepSparesAnOriginalRefreshedDuringTheSweep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, n := range m.Originals() {
+	for _, n := range m.Sources() {
 		key, _ := item.Original(n)
 		if _, err := env.Store.Head(ctx, key); err != nil {
 			t.Fatalf("the manifest references %s, which the sweep deleted: %v", n, err)

@@ -5,48 +5,45 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
-	"strconv"
-	"strings"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/layout"
-)
-
-// Inline image outputs record what they were derived from.
-const (
-	metaSource = "source" // ETag of the inline original
-	metaSpec   = "spec"
 )
 
 // errSuperseded aborts recording a result for a slot record that changed meanwhile.
 var errSuperseded = errors.New("media/image: slot record changed")
 
-// slot re-encodes a registered slot or an inline image.
+// slot renders a registered slot or an inline image.
 func (p *Processor) slot(ctx context.Context, item media.Item, slot string) error {
 	if spec, ok := item.Kind().Slots[slot]; ok {
-		return p.registered(ctx, item, slot, spec)
+		return p.render(ctx, item, slot, spec, func(src []byte, typ string, rec *media.SlotRecord) (map[int]slotOutput, media.Dims, error) {
+			return encodeSlot(src, typ, spec, rec.Edit, p.rules(spec.Animation))
+		})
 	}
 	if item.Inline(slot) {
-		return p.inline(ctx, item, slot)
+		s := *item.Kind().Inline
+		return p.render(ctx, item, slot, media.InlineSlot(s), func(src []byte, typ string, _ *media.SlotRecord) (map[int]slotOutput, media.Dims, error) {
+			info, err := probe(src, typ, p.rules(item.Kind().Animation))
+			if err != nil {
+				return nil, media.Dims{}, err
+			}
+			out, d, err := encode(src, typ, s, nil)
+			return map[int]slotOutput{s.Width: {webp: out, dims: d}}, info.dims(), err
+		})
 	}
 	return fmt.Errorf("media/image: kind %q has no slot %q", item.Kind().Name, slot)
 }
 
-// registered brings a committed slot's outputs to its record: the committed
-// original, EXIF-oriented and edited, encoded at every rung (capped at the
-// edited width) and rewritten in place at Item.SlotOutput, one PUT per
-// object (no-cache; clients revalidate by ETag). Rungs the slot no longer
-// declares are deleted. Output writes are conditional on the ETag seen, and
-// every pass re-checks the current record, so jobs holding an older commit
-// or edit converge on the newest. Hooks.SlotEncoded reports the written
-// slot and its aspect.
-func (p *Processor) registered(ctx context.Context, item media.Item, slot string, spec media.Slot) error {
-	key, _ := item.SlotOriginal(slot)
+type slotEncoder func(src []byte, typ string, rec *media.SlotRecord) (map[int]slotOutput, media.Dims, error)
+
+// render brings a committed slot's renditions to its record: the original,
+// EXIF-oriented and edited, encoded at every rung (capped at the edited
+// width) to private/{sha256}, copied to public/ unless the item is hidden,
+// then recorded. Every pass re-checks the record, so jobs holding an older
+// commit or edit converge on the newest; the replaced renditions are left to
+// the sweep. Hooks.SlotEncoded reports the new outputs.
+func (p *Processor) render(ctx context.Context, item media.Item, slot string, spec media.Slot, enc slotEncoder) error {
 	ref := item.Ref().Content()
-	conditional := p.c.Store.Capabilities().ConditionalPut
-	stale := false
 	for range 8 {
 		rec, err := p.c.Manifests.Slot(ctx, ref, slot)
 		if errors.Is(err, media.ErrNotFound) {
@@ -54,25 +51,23 @@ func (p *Processor) registered(ctx context.Context, item media.Item, slot string
 		} else if err != nil {
 			return err
 		}
+		if rec.Original == "" {
+			return nil // a poster frame not grabbed yet
+		}
 		fp := rec.Fingerprint(spec)
-		etags, current, err := p.outputs(ctx, item, slot, spec, fp, rec.Result)
+		if rec.Result != nil && rec.Result.Of == fp {
+			return nil // current, or failed for this commit and edit
+		}
+		key, err := item.Original(rec.Original)
 		if err != nil {
 			return err
 		}
-		if current {
-			if stale && len(rec.Result.Outputs) > 0 {
-				p.slotEncoded(ctx, ref, slot, spec, rec.Result)
-			}
-			return nil
-		}
 		src, got, err := p.read(ctx, key)
-		if errors.Is(err, media.ErrNotFound) || (err == nil && got.ETag != rec.Original) {
-			return nil // replaced by an upload not committed yet; its commit re-enqueues
-		} else if err != nil {
+		if err != nil {
 			return err
 		}
 		res := &media.SlotResult{Of: fp, Source: rec.Original}
-		outs, dims, err := encodeSlot(src, got.ContentType, spec, rec.Edit, p.rules(spec.Animation))
+		outs, dims, err := enc(src, got.ContentType, rec)
 		res.Dims = dims
 		if err != nil {
 			if !isPermanent(err) {
@@ -93,82 +88,70 @@ func (p *Processor) registered(ctx context.Context, item media.Item, slot string
 			p.failed(ctx, item.Ref(), slot, err)
 			return nil
 		}
+		var blobs []string
 		for _, w := range spec.Widths {
-			outKey, _ := item.SlotOutput(slot, w)
 			out, fits := outs[w]
 			if !fits {
-				if etags[w] != "" {
-					if err := p.c.Store.Delete(ctx, outKey); err != nil {
-						return err
-					}
-				}
 				continue
 			}
-			opts := media.PutOptions{ContentType: "image/webp", CacheControl: "no-cache"}
-			if conditional {
-				if etags[w] == "" {
-					opts.IfNoneMatch = "*"
-				} else {
-					opts.IfMatch = etags[w]
-				}
-			}
-			if _, err := p.c.Store.Put(ctx, outKey, bytes.NewReader(out.webp), int64(len(out.webp)), opts); err != nil && !errors.Is(err, media.ErrPreconditionFailed) {
+			blob, err := p.putBlob(ctx, item, bytes.NewReader(out.webp), int64(len(out.webp)), sha(out.webp), "image/webp")
+			if err != nil {
 				return err
 			}
-			res.Outputs = append(res.Outputs, media.SlotRendition{Rung: w, W: out.dims.W, H: out.dims.H})
+			blobs = append(blobs, blob)
+			res.Outputs = append(res.Outputs, media.SlotRendition{Rung: w, W: out.dims.W, H: out.dims.H, Blob: blob, Size: int64(len(out.webp))})
 		}
-		if err := p.dropRetired(ctx, item, slot, spec); err != nil {
+		if err := p.prepublish(ctx, item, blobs); err != nil {
 			return err
 		}
-		// A conflicting write or a newer record is settled by the next pass.
-		p.slotEncoded(ctx, ref, slot, spec, res)
 		if err := p.record(ctx, ref, slot, spec, fp, res); errors.Is(err, errSuperseded) {
-			stale = true
+			continue
 		} else if err != nil {
 			return err
 		}
+		if err := p.syncPublic(ctx, ref); err != nil {
+			return err
+		}
+		if p.c.Hooks.SlotEncoded != nil && len(res.Outputs) > 0 {
+			p.c.Hooks.SlotEncoded(ctx, ref, slot, res.Listing(spec))
+		}
+		return nil
 	}
 	return fmt.Errorf("media/image: slot %s of %s kept changing", slot, item.Ref())
 }
 
-func (p *Processor) slotEncoded(ctx context.Context, ref contentref.ContentRef, slot string, spec media.Slot, res *media.SlotResult) {
-	if p.c.Hooks.SlotEncoded == nil {
-		return
+// prepublish copies new renditions to public/ before they are recorded,
+// unless the item is hidden, so a listed public URL never misses.
+func (p *Processor) prepublish(ctx context.Context, item media.Item, blobs []string) error {
+	root, _, err := p.c.Manifests.Root(ctx, item.Ref())
+	if err != nil && !errors.Is(err, media.ErrNotFound) {
+		return err
 	}
-	aspect := spec.Aspect
-	if last := res.Outputs[len(res.Outputs)-1]; spec.Native() {
-		aspect = media.AspectOf(last.W, last.H)
+	if root == nil || root.Hidden {
+		return nil
 	}
-	p.c.Hooks.SlotEncoded(ctx, ref, slot, aspect)
+	for _, b := range blobs {
+		src, _ := item.Private(b)
+		dst, _ := item.Public(b)
+		if _, err := p.c.Store.Head(ctx, dst); err == nil {
+			continue
+		} else if !errors.Is(err, media.ErrNotFound) {
+			return err
+		}
+		if _, err := p.c.Store.Copy(ctx, src, dst, media.CopyOptions{}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// outputs heads the slot's outputs: their ETags ("" when absent) and whether
-// the recorded result already matches fp with every output present.
-func (p *Processor) outputs(ctx context.Context, item media.Item, slot string, spec media.Slot, fp string, res *media.SlotResult) (map[int]string, bool, error) {
-	etags := map[int]string{}
-	if res != nil && res.Of == fp && res.Error != "" {
-		return etags, true, nil // failed for this commit, edit and spec; a new one retries
+// syncPublic brings public/ to the recorded state (media.Manifests.SyncPublic).
+func (p *Processor) syncPublic(ctx context.Context, ref contentref.ContentRef) error {
+	removed, err := p.c.Manifests.SyncPublic(ctx, ref)
+	if len(removed) > 0 && p.c.Hooks.PublicRemoved != nil {
+		p.c.Hooks.PublicRemoved(ctx, ref, removed)
 	}
-	current := res != nil && res.Of == fp
-	var want []int
-	if current {
-		for _, o := range res.Outputs {
-			want = append(want, o.Rung)
-		}
-	}
-	for _, w := range spec.Widths {
-		key, _ := item.SlotOutput(slot, w)
-		obj, err := p.c.Store.Head(ctx, key)
-		if errors.Is(err, media.ErrNotFound) {
-			current = current && !slices.Contains(want, w)
-			continue
-		} else if err != nil {
-			return nil, false, err
-		}
-		etags[w] = obj.ETag
-		current = current && slices.Contains(want, w)
-	}
-	return etags, current, nil
+	return err
 }
 
 // record stores res unless the record moved past fp.
@@ -180,88 +163,4 @@ func (p *Processor) record(ctx context.Context, ref contentref.ContentRef, slot 
 		rec.Result = res
 		return nil
 	})
-}
-
-// dropRetired deletes outputs of widths the slot no longer declares.
-func (p *Processor) dropRetired(ctx context.Context, item media.Item, slot string, spec media.Slot) error {
-	first, err := item.SlotOutput(slot, spec.Widths[0])
-	if err != nil {
-		return err
-	}
-	prefix := first[:strings.LastIndexByte(first, '/')+1] + slot + "_"
-	for obj, err := range p.c.Store.List(ctx, prefix) {
-		if err != nil {
-			return err
-		}
-		n, ok := strings.CutSuffix(strings.TrimPrefix(obj.Key, prefix), layout.PublicExt)
-		w, err := strconv.Atoi(n)
-		if !ok || err != nil || strconv.Itoa(w) != n || slices.Contains(spec.Widths, w) {
-			continue
-		}
-		if err := p.c.Store.Delete(ctx, obj.Key); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// inline re-encodes an inline original into public/{id}.webp with the kind's
-// Inline spec, in place (no-cache). An output already derived from this
-// original and spec is left alone; writes are conditional on the output's
-// previous ETag.
-func (p *Processor) inline(ctx context.Context, item media.Item, id string) error {
-	key, _ := item.SlotOriginal(id)
-	outKey, err := item.Public(id)
-	if err != nil {
-		return err
-	}
-	s := *item.Kind().Inline
-	conditional := p.c.Store.Capabilities().ConditionalPut
-	for range 8 {
-		orig, err := p.c.Store.Head(ctx, key)
-		if errors.Is(err, media.ErrNotFound) {
-			return nil
-		} else if err != nil {
-			return err
-		}
-		source := strings.Trim(orig.ETag, `"`)
-		obj, err := p.c.Store.Head(ctx, outKey)
-		if err != nil && !errors.Is(err, media.ErrNotFound) {
-			return err
-		}
-		if err == nil && obj.Metadata[metaSource] == source && obj.Metadata[metaSpec] == s.Hash() {
-			return nil
-		}
-		src, got, err := p.read(ctx, key)
-		if errors.Is(err, media.ErrNotFound) {
-			return nil
-		} else if err != nil {
-			return err
-		}
-		if got.ETag != orig.ETag {
-			continue // replaced while we looked
-		}
-		if _, err := probe(src, got.ContentType, p.rules(item.Kind().Animation)); err != nil {
-			p.failed(ctx, item.Ref(), id, err)
-			return nil
-		}
-		out, err := encode(src, got.ContentType, s, nil)
-		if err != nil {
-			p.failed(ctx, item.Ref(), id, err)
-			return nil
-		}
-		opts := media.PutOptions{ContentType: "image/webp", CacheControl: "no-cache",
-			Metadata: map[string]string{metaSource: source, metaSpec: s.Hash()}}
-		if conditional {
-			if obj.ETag == "" {
-				opts.IfNoneMatch = "*"
-			} else {
-				opts.IfMatch = obj.ETag
-			}
-		}
-		if _, err := p.c.Store.Put(ctx, outKey, bytes.NewReader(out), int64(len(out)), opts); err != nil && !errors.Is(err, media.ErrPreconditionFailed) {
-			return err
-		}
-	}
-	return fmt.Errorf("media/image: inline image %s of %s kept changing", id, item.Ref())
 }

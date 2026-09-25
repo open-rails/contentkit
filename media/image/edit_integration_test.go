@@ -164,7 +164,7 @@ func TestSlotFromFileCrop(t *testing.T) {
 	e.commit(t, ref, ins("001.png", e.upload(t, ref, "", quadrants(t))))
 	e.drain(t)
 	cover := func() ([]byte, media.Object) {
-		return e.object(t, e.Tenant+"/gallery/"+cid(22)+"/public/cover_100.webp")
+		return e.object(t, e.slotOutput(t, ref, "cover", 100))
 	}
 	set := func(edit *media.Edit) {
 		t.Helper()

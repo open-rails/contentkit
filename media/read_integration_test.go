@@ -163,17 +163,9 @@ func (f *readFixture) key(t *testing.T, ref contentref.ContentRef, area, name st
 		}
 		return k
 	case media.AreaManifest:
-		k, err := item.ManifestKey()
-		if err != nil {
-			t.Fatal(err)
-		}
-		return k
+		return item.ManifestKey()
 	}
-	blob := item.Blob
-	if area == media.AreaEditor {
-		blob = item.EditorBlob
-	}
-	k, err := blob(name)
+	k, err := item.Private(name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,12 +191,12 @@ func TestReadFullAccess(t *testing.T) {
 	f := newReadFixture(t)
 	f.res.verdicts[cid(1)] = access.Resolution{Visible: true, Accessible: true}
 	page3 := cid(1) + "-003.png"
-	thumb3 := f.key(t, f.gallery, media.AreaBlobs, blobName("t"+page3))
-	high3 := f.key(t, f.gallery, media.AreaBlobs, blobName("h"+page3))
+	thumb3 := f.key(t, f.gallery, media.AreaPrivate, blobName("t"+page3))
+	high3 := f.key(t, f.gallery, media.AreaPrivate, blobName("h"+page3))
 	forbidden := []string{
 		f.key(t, f.gallery, media.AreaOriginals, blobName("o"+page3)),
 		f.key(t, f.gallery, media.AreaManifest, ""),
-		f.key(t, f.other, media.AreaBlobs, blobName("t"+cid(2)+"-003.png")),
+		f.key(t, f.other, media.AreaPrivate, blobName("t"+cid(2)+"-003.png")),
 	}
 
 	t.Run("cookie", func(t *testing.T) {
@@ -303,10 +295,10 @@ func TestReadPreview(t *testing.T) {
 			key1, tok1, _ := split(t, out.Files[1].URL)
 			key2, _, _ := split(t, out.Files[2].URL)
 			f.covers(t, tok1, map[string]bool{key1: true}, key1, key2,
-				f.key(t, f.gallery, media.AreaBlobs, blobName("t"+cid(1)+"-001.png")),
-				f.key(t, f.gallery, media.AreaBlobs, blobName("h"+cid(1)+"-003.png")),
+				f.key(t, f.gallery, media.AreaPrivate, blobName("t"+cid(1)+"-001.png")),
+				f.key(t, f.gallery, media.AreaPrivate, blobName("h"+cid(1)+"-003.png")),
 				f.key(t, f.gallery, media.AreaOriginals, blobName("o"+cid(1)+"-001.png")),
-				f.key(t, f.other, media.AreaBlobs, blobName("h"+cid(2)+"-001.png")))
+				f.key(t, f.other, media.AreaPrivate, blobName("h"+cid(2)+"-001.png")))
 		})
 	}
 }
@@ -330,7 +322,7 @@ func TestReadTeaserAndDeny(t *testing.T) {
 	}
 	key, tok, _ := split(t, teaser.URL)
 	f.covers(t, tok, map[string]bool{key: true}, key,
-		f.key(t, f.post, media.AreaBlobs, blobName("beach-large")),
+		f.key(t, f.post, media.AreaPrivate, blobName("beach-large")),
 		f.key(t, f.post, media.AreaOriginals, blobName("teaser")))
 
 	g, err := r.Grant(ctx, f.post, access.Actor{})
@@ -398,7 +390,7 @@ func TestReadDownloadNames(t *testing.T) {
 	d := out.Downloads[0]
 	key, tok, dl := split(t, d.URL)
 	at := f.now.Add(time.Minute)
-	if d.Name != name || dl != name || d.Size != 42 || key != f.key(t, f.gallery, media.AreaBlobs, blobName("zip"+cid(1))) {
+	if d.Name != name || dl != name || d.Size != 42 || key != f.key(t, f.gallery, media.AreaPrivate, blobName("zip"+cid(1))) {
 		t.Fatalf("download %+v (dl %q)", d, dl)
 	}
 	if err := f.verifier.Verify(tok, key, dl, at); err != nil {
@@ -409,7 +401,7 @@ func TestReadDownloadNames(t *testing.T) {
 			t.Fatalf("download token must not verify with dl=%q", bad)
 		}
 	}
-	if f.verifier.Verify(tok, f.key(t, f.gallery, media.AreaBlobs, blobName("h"+cid(1)+"-000.png")), dl, at) == nil {
+	if f.verifier.Verify(tok, f.key(t, f.gallery, media.AreaPrivate, blobName("h"+cid(1)+"-000.png")), dl, at) == nil {
 		t.Fatal("download token opened another blob")
 	}
 	for _, fi := range out.Files {
@@ -491,13 +483,14 @@ func TestReadHandler(t *testing.T) {
 		t.Fatalf("uncommitted slot: %d %v", resp.StatusCode, body)
 	}
 	spec := media.Slot{Aspect: media.Aspect1x1, Widths: []int{64}}
-	rec := media.SlotRecord{Original: `"e1"`, Edit: &media.Edit{Crop: &media.Crop{X: 10, Y: 10, W: 100, H: 100}}}
+	rec := media.SlotRecord{Original: blobName("cover-original"), Edit: &media.Edit{Crop: &media.Crop{X: 10, Y: 10, W: 100, H: 100}}}
 	fp := rec.Fingerprint(spec)
-	rec.Result = &media.SlotResult{Of: fp, Source: rec.Original, Dims: media.Dims{W: 200, H: 200}, Outputs: []media.SlotRendition{{Rung: 64, W: 64, H: 64}}}
+	rec.Result = &media.SlotResult{Of: fp, Source: rec.Original, Dims: media.Dims{W: 200, H: 200},
+		Outputs: []media.SlotRendition{{Rung: 64, W: 64, H: 64, Blob: blobName("cover-64")}}}
 	if err := f.ms.UpdateSlot(context.Background(), f.post, "cover", func(r *media.SlotRecord) error { *r = rec; return nil }); err != nil {
 		t.Fatal(err)
 	}
-	cover := readBase + "/" + f.env.Tenant + "/post/" + cid(501) + "/public/cover_64.webp"
+	cover := readBase + "/" + f.env.Tenant + "/post/" + cid(501) + "/public/" + blobName("cover-64")
 	resp, body = get("/media/post/" + cid(501) + "/slots/cover")
 	if outs := body["outputs"].([]any); resp.StatusCode != 200 || body["pending"] != false || len(outs) != 1 || body["aspect"] != "1:1" ||
 		outs[0].(map[string]any)["url"] != cover || body["dims"].(map[string]any)["w"] != float64(200) || resp.Header.Get("Cache-Control") != "private, no-store" {
@@ -506,14 +499,18 @@ func TestReadHandler(t *testing.T) {
 	if resp, _ := get("/media/post/" + cid(501) + "/slots/nope"); resp.StatusCode != 404 {
 		t.Fatalf("unknown slot: %d", resp.StatusCode)
 	}
-	if listed, err := r.ListedSlot(f.post, "cover", media.AspectNative); err != nil || len(listed.Outputs) != 1 || listed.Outputs[0].URL != cover ||
-		listed.Outputs[0].Name != "cover_64" || listed.Outputs[0].H != 64 || listed.Aspect != media.Aspect1x1 {
+	listing := rec.Result.Listing(spec)
+	if listed, err := r.ListedSlot(f.post, "cover", listing); err != nil || len(listed.Outputs) != 1 || listed.Outputs[0].URL != cover ||
+		listed.Outputs[0].H != 64 || listed.Aspect != media.Aspect1x1 {
 		t.Fatalf("listed slot %+v %v", listed, err)
 	}
 
-	u, err := r.PublicURL(f.post, "cover")
-	if err != nil || u != readBase+"/"+f.env.Tenant+"/post/"+cid(501)+"/public/cover.webp" {
-		t.Fatalf("public url %q %v", u, err)
+	// A hidden item's cover is listed to no viewer.
+	if _, err := f.ms.EditRoot(context.Background(), f.post, func(r *media.Root) error { r.Hidden = true; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if resp, body := get("/media/post/" + cid(501) + "/slots/cover"); resp.StatusCode != 200 || len(body["outputs"].([]any)) != 0 {
+		t.Fatalf("hidden slot: %d %v", resp.StatusCode, body)
 	}
 }
 
@@ -528,8 +525,8 @@ func TestReadEditorOnlyVariants(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	editorKey := f.key(t, ref, media.AreaEditor, blobName("a-editor"))
-	largeKey := f.key(t, ref, media.AreaBlobs, blobName("a-large"))
+	editorKey := f.key(t, ref, media.AreaPrivate, blobName("a-editor"))
+	largeKey := f.key(t, ref, media.AreaPrivate, blobName("a-large"))
 	for _, mode := range []media.DeliveryMode{media.DeliverCookie, media.DeliverURL} {
 		for _, res := range []access.Resolution{
 			{Visible: true, Accessible: true},
@@ -553,7 +550,8 @@ func TestReadEditorOnlyVariants(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				// The viewer token (folder cookie, folder or file URL token) never opens editor/.
+				// EditorOnly renditions live in private/ like the rest; only
+				// editors get them signed.
 				viewer, err := g.URL(0, blobName("a-large"))
 				if err != nil {
 					t.Fatal(err)
@@ -562,7 +560,7 @@ func TestReadEditorOnlyVariants(t *testing.T) {
 				if c := g.Cookie(); c != nil {
 					tok = c.Value
 				}
-				f.covers(t, tok, map[string]bool{largeKey: true}, largeKey, editorKey)
+				f.covers(t, tok, map[string]bool{largeKey: true}, largeKey)
 				u, err := g.URL(0, blobName("a-editor"))
 				if !res.Editor {
 					if !errors.Is(err, media.ErrNotAllowed) {
@@ -574,7 +572,10 @@ func TestReadEditorOnlyVariants(t *testing.T) {
 				if err != nil || key != editorKey {
 					t.Fatalf("editor url %q %v", u, err)
 				}
-				f.covers(t, tok, map[string]bool{editorKey: true}, editorKey, largeKey)
+				if c := g.Cookie(); c != nil {
+					tok = c.Value
+				}
+				f.covers(t, tok, map[string]bool{editorKey: true}, editorKey)
 			})
 		}
 	}

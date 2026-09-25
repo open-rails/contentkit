@@ -1,7 +1,7 @@
-// Package image derives WebP variants, public slots and zip downloads with
-// libvips (CGO). A Processor runs one media.ProcessJob: it fills an item's
-// missing or stale variants in one manifest edit and re-encodes its public
-// slots. Originals are read, never served.
+// Package image derives WebP variants, slot and inline renditions and zip
+// downloads with libvips (CGO). A Processor runs one media.ProcessJob: it
+// fills an item's missing or stale variants in one manifest edit and
+// re-encodes its slots. Originals are read, never served.
 package image
 
 import (
@@ -85,19 +85,22 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 		return p.slot(ctx, item, job.Slot)
 	}
 	var errs []error
-	if _, err := item.ManifestKey(); err == nil {
+	if _, err := item.Section(); err == nil {
 		errs = append(errs, p.manifest(ctx, item))
 	}
 	for slot := range item.Kind().Slots {
 		errs = append(errs, p.slot(ctx, item, slot))
 	}
 	if item.Kind().Inline != nil {
-		for obj, err := range p.c.Store.List(ctx, item.OriginalsPrefix()+layout.InlinePrefix) {
-			if err != nil {
-				return errors.Join(append(errs, err)...)
-			}
-			if name := strings.TrimPrefix(obj.Key, item.OriginalsPrefix()); layout.ValidInlineName(name) {
-				errs = append(errs, p.slot(ctx, item, name))
+		root, _, err := p.c.Manifests.Root(ctx, item.Ref())
+		if err != nil && !errors.Is(err, media.ErrNotFound) {
+			return errors.Join(append(errs, err)...)
+		}
+		if root != nil {
+			for name := range root.Slots {
+				if item.Inline(name) {
+					errs = append(errs, p.slot(ctx, item, name))
+				}
 			}
 		}
 	}
@@ -304,22 +307,18 @@ func (p *Processor) pass(ctx context.Context, item media.Item, man *media.Manife
 
 var errGone = errors.New("media/image: manifest gone")
 
-// drop deletes the blobs a pass stored for an item deleted meanwhile.
+// drop deletes the renditions a pass stored for an item deleted meanwhile.
 func (p *Processor) drop(ctx context.Context, item media.Item, results map[string]derived, zip *media.Download) {
 	var keys []string
 	for _, d := range results {
 		for _, v := range d.variants {
-			key, err := item.Blob(v.Blob)
-			if v.Editor {
-				key, err = item.EditorBlob(v.Blob)
-			}
-			if err == nil {
+			if key, err := item.Private(v.Blob); err == nil {
 				keys = append(keys, key)
 			}
 		}
 	}
 	if zip != nil {
-		if key, err := item.Blob(zip.Blob); err == nil {
+		if key, err := item.Private(zip.Blob); err == nil {
 			keys = append(keys, key)
 		}
 	}
@@ -365,19 +364,16 @@ func (p *Processor) derive(ctx context.Context, item media.Item, w work) (derive
 	}
 	d.w, d.h = w.edit.Size(d.dims.W, d.dims.H)
 	for name, s := range w.specs {
-		out, err := encode(src, w.typ, s, w.edit)
+		out, dims, err := encode(src, w.typ, s, w.edit)
 		if err != nil {
 			return derived{placed: d.placed}, err
 		}
-		put := p.putBlob
-		if s.EditorOnly || s.Unedited {
-			put = p.putEditorBlob
-		}
-		blob, err := put(ctx, item, bytes.NewReader(out), int64(len(out)), sha(out), "image/webp")
+		blob, err := p.putBlob(ctx, item, bytes.NewReader(out), int64(len(out)), sha(out), "image/webp")
 		if err != nil {
 			return derived{placed: d.placed}, err
 		}
-		d.variants[name] = media.Variant{Blob: blob, Spec: specFor(s, w.typ, w.edit), Type: "image/webp", Size: int64(len(out)), Editor: s.EditorOnly || s.Unedited}
+		d.variants[name] = media.Variant{Blob: blob, Spec: specFor(s, w.typ, w.edit), Type: "image/webp", Size: int64(len(out)),
+			W: dims.W, H: dims.H, Editor: s.EditorOnly || s.Unedited}
 	}
 	return d, nil
 }
@@ -398,19 +394,10 @@ func (p *Processor) rules(animation media.Animation) rules {
 	return rules{maxPixels: p.c.MaxPixels, maxFrames: p.c.MaxFrames, maxSeconds: p.c.MaxAnimationSeconds, animation: animation}
 }
 
-// putBlob stores an immutable, content-addressed blob unless it exists.
+// putBlob stores an immutable rendition at private/{sha256} unless it exists.
 func (p *Processor) putBlob(ctx context.Context, item media.Item, body io.Reader, size int64, sum []byte, contentType string) (string, error) {
-	return p.storeBlob(ctx, item.Blob, body, size, sum, contentType)
-}
-
-// putEditorBlob stores an EditorOnly variant in editor/.
-func (p *Processor) putEditorBlob(ctx context.Context, item media.Item, body io.Reader, size int64, sum []byte, contentType string) (string, error) {
-	return p.storeBlob(ctx, item.EditorBlob, body, size, sum, contentType)
-}
-
-func (p *Processor) storeBlob(ctx context.Context, keyOf func(string) (string, error), body io.Reader, size int64, sum []byte, contentType string) (string, error) {
 	name := media.SHA256Name(sum)
-	key, err := keyOf(name)
+	key, err := item.Private(name)
 	if err != nil {
 		return "", err
 	}

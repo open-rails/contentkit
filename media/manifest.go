@@ -8,16 +8,18 @@ import (
 	"github.com/open-rails/contentkit/media/layout"
 )
 
-// Manifest is the ordered file list of an item or version. List order is
-// display order. Blob references are names within the item's folder.
+// Manifest is the ordered file list of an item or of one version (a section
+// of the item's Root). List order is display order. References are names
+// within the item's folder.
 type Manifest struct {
 	Files     []File              `json:"files"`
 	Meta      map[string]any      `json:"meta,omitempty"`
 	Downloads map[string]Download `json:"downloads,omitempty"`
 }
 
-// File is one manifest entry. Original and Master live in originals/;
-// variants, HLS and downloads in blobs/, EditorOnly variants in editor/. Image variants derive from Source()
+// File is one manifest entry. Original and Master live in originals/ (a
+// multipart upload's Original is its staging/ "u-{uuid}" until the worker
+// places it); variants, HLS and downloads in private/. Image variants derive from Source()
 // through Edit; Dims is Source()'s size, recorded by processing, and edits
 // are validated against it. meta w/h is the edited size.
 type File struct {
@@ -84,7 +86,9 @@ type Variant struct {
 	Spec   string `json:"spec,omitempty"`
 	Type   string `json:"type,omitempty"`
 	Size   int64  `json:"size,omitempty"`
-	Editor bool   `json:"editor,omitempty"` // from Spec.EditorOnly: in editor/, signed for editors only
+	W      int    `json:"w,omitempty"`
+	H      int    `json:"h,omitempty"`
+	Editor bool   `json:"editor,omitempty"` // from Spec.EditorOnly: listed to editors only
 }
 
 type Download struct {
@@ -232,14 +236,12 @@ func (m *Manifest) File(name string) int {
 	return -1
 }
 
-// Blobs returns every blobs/ name the manifest references.
-func (m *Manifest) Blobs() []string { return m.names(AreaBlobs) }
+// Renditions returns every private/ name the manifest references.
+func (m *Manifest) Renditions() []string { return m.names(AreaPrivate) }
 
-// EditorBlobs returns every editor/ name the manifest references (EditorOnly variants).
-func (m *Manifest) EditorBlobs() []string { return m.names(AreaEditor) }
-
-// Originals returns every originals/ name the manifest references.
-func (m *Manifest) Originals() []string { return m.names(AreaOriginals) }
+// Sources returns every uploaded file's name the manifest references
+// (originals/ hashes and staged "u-{uuid}" names).
+func (m *Manifest) Sources() []string { return m.names(AreaOriginals) }
 
 func (m *Manifest) names(area string) []string {
 	var out []string
@@ -259,30 +261,26 @@ func (m *Manifest) walk(fn func(area, name string)) {
 			fn(AreaOriginals, f.Master)
 		}
 		for _, v := range f.Variants {
-			if v.Editor {
-				fn(AreaEditor, v.Blob)
-			} else {
-				fn(AreaBlobs, v.Blob)
-			}
+			fn(AreaPrivate, v.Blob)
 		}
 		if h := f.HLS; h != nil {
 			fn(AreaOriginals, h.Source)
 			for _, r := range h.Video {
-				fn(AreaBlobs, r.Blob)
+				fn(AreaPrivate, r.Blob)
 			}
 			for _, a := range h.Audio {
-				fn(AreaBlobs, a.Blob)
+				fn(AreaPrivate, a.Blob)
 			}
 			for _, s := range h.Subs {
-				fn(AreaBlobs, s.Blob)
+				fn(AreaPrivate, s.Blob)
 			}
 			if h.Sprite != nil {
-				fn(AreaBlobs, h.Sprite.Blob)
+				fn(AreaPrivate, h.Sprite.Blob)
 			}
 		}
 	}
 	for _, d := range m.Downloads {
-		fn(AreaBlobs, d.Blob)
+		fn(AreaPrivate, d.Blob)
 	}
 }
 
@@ -304,7 +302,11 @@ func (m *Manifest) Validate() error {
 	}
 	var err error
 	m.walk(func(area, name string) {
-		if err == nil && !layout.ValidBlobName(name) {
+		valid := layout.ValidHashName(name)
+		if area == AreaOriginals {
+			valid = layout.ValidSourceName(name)
+		}
+		if err == nil && !valid {
 			err = fmt.Errorf("media: manifest: invalid %s reference %q", area, name)
 		}
 	})

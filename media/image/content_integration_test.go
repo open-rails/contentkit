@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,7 +53,9 @@ func (noContent) Resolve(context.Context, []contentref.ContentRef, access.Actor)
 // middleware, River running media's jobs with the libvips processor, MinIO.
 type contentEnv struct {
 	*s3test.Env
-	srv *httptest.Server
+	srv       *httptest.Server
+	urls      map[string]string // inline image name → its rendered URL
+	originals map[string]string // inline image name → its original's key
 }
 
 func newContentEnv(t *testing.T) *contentEnv {
@@ -124,14 +127,14 @@ func newContentEnv(t *testing.T) *contentEnv {
 		return access.Actor{ID: id, Kind: "user"}, id != ""
 	}
 	mux := http.NewServeMux()
-	mux.Handle("/upload/", http.StripPrefix("/upload", media.UploadHandler(uploads, media.UploadHandlerOptions{Tenant: s.Tenant, Actor: actor})))
+	mux.Handle("/upload/", http.StripPrefix("/upload", media.UploadHandler(uploads, media.UploadHandlerOptions{Tenant: s.Tenant, Actor: actor, Reader: reader})))
 	mux.Handle("/api/", http.StripPrefix("/api", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		a, _ := actor(r)
 		rt.Handler().ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorKey{}, a)))
 	})))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return &contentEnv{Env: s, srv: srv}
+	return &contentEnv{Env: s, srv: srv, urls: map[string]string{}, originals: map[string]string{}}
 }
 
 func (e *contentEnv) call(t *testing.T, actor, method, path string, body, out any) int {
@@ -153,7 +156,8 @@ func (e *contentEnv) call(t *testing.T, actor, method, path string, body, out an
 }
 
 // uploadInline plays the browser SDK's uploadInline: presign, PUT to the
-// bucket, commit-slot. It returns the image name, or "" with the refusal.
+// bucket, commit-slot (rendered at once here), recording its URL. It
+// returns the image name, or "" with the refusal.
 func (e *contentEnv) uploadInline(t *testing.T, actor string, ref media.RefBody, body []byte) (string, int) {
 	t.Helper()
 	sum := sha256.Sum256(body)
@@ -174,9 +178,13 @@ func (e *contentEnv) uploadInline(t *testing.T, actor string, ref media.RefBody,
 	if resp.StatusCode != 200 {
 		t.Fatalf("put: %d", resp.StatusCode)
 	}
-	if code := e.call(t, actor, "POST", "/upload/commit-slot", media.SlotBody{Ref: ref, Slot: p.Name, SHA256: hex.EncodeToString(sum[:])}, nil); code != 204 {
-		t.Fatalf("commit-slot: %d", code)
+	var m media.SlotManifest
+	if code := e.call(t, actor, "POST", "/upload/commit-slot", media.SlotBody{Ref: ref, Slot: p.Name, SHA256: hex.EncodeToString(sum[:])}, &m); code != 200 ||
+		m.Pending || len(m.Outputs) != 1 {
+		t.Fatalf("commit-slot: %d %+v", code, m)
 	}
+	e.urls[p.Name] = m.Outputs[0].URL
+	e.originals[p.Name] = e.Tenant + "/" + ref.Kind + "/" + ref.ID + "/originals/" + media.SHA256Name(sum[:])
 	return p.Name, 200
 }
 
@@ -189,7 +197,7 @@ func (e *contentEnv) public(t *testing.T, key string) []byte {
 			defer rc.Close()
 			var b bytes.Buffer
 			_, _ = b.ReadFrom(rc)
-			if obj.ContentType != "image/webp" || obj.CacheControl != "no-cache" {
+			if obj.ContentType != "image/webp" || obj.CacheControl != "max-age=31536000, immutable" {
 				t.Fatalf("%s: %+v", key, obj)
 			}
 			return b.Bytes()
@@ -226,13 +234,16 @@ func TestContentImages(t *testing.T) {
 	folder := e.Tenant + "/post/" + post.ID + "/"
 	var inline struct{ URL string }
 	if code := e.call(t, "editor", "POST", "/api/posts/"+post.ID+"/images", map[string]string{"image": name}, &inline); code != 200 ||
-		inline.URL != url(folder+"public/"+name+".webp") {
+		inline.URL != e.urls[name] || !strings.HasPrefix(inline.URL, url(folder+"public/sha256-")) {
 		t.Fatalf("inline url %d %q", code, inline.URL)
 	}
-	if w, h := webpSize(t, e.public(t, folder+"public/"+name+".webp")); w != 64 || h < 85 || h > 86 {
+	if w, h := webpSize(t, e.public(t, strings.TrimPrefix(inline.URL, url("")))); w != 64 || h < 85 || h > 86 {
 		t.Fatalf("inline image %dx%d", w, h)
 	}
-	if obj, err := e.Store.Head(ctx, folder+"originals/"+name); err != nil || obj.ContentType != "image/png" {
+	if code := e.call(t, "editor", "POST", "/api/posts/"+post.ID+"/images", map[string]string{"image": media.NewInlineName()}, nil); code != 400 {
+		t.Fatalf("unrendered inline image: %d", code)
+	}
+	if obj, err := e.Store.Head(ctx, e.originals[name]); err != nil || obj.ContentType != "image/png" {
 		t.Fatalf("original kept private in originals/: %+v %v", obj, err)
 	}
 
@@ -241,7 +252,7 @@ func TestContentImages(t *testing.T) {
 		CoverURL string `json:"cover_url"`
 	}
 	if code := e.call(t, "editor", "PUT", "/api/posts/"+post.ID+"/cover", map[string]string{"image": cover}, &set); code != 200 ||
-		set.CoverURL != url(folder+"public/"+cover+".webp") {
+		set.CoverURL != e.urls[cover] {
 		t.Fatalf("cover %d %q", code, set.CoverURL)
 	}
 	var got struct {
@@ -251,7 +262,7 @@ func TestContentImages(t *testing.T) {
 	if got.CoverURL != set.CoverURL {
 		t.Fatalf("stored cover %q", got.CoverURL)
 	}
-	e.public(t, folder+"public/"+cover+".webp")
+	e.public(t, strings.TrimPrefix(set.CoverURL, url("")))
 
 	var poll struct {
 		ID      string
@@ -266,10 +277,11 @@ func TestContentImages(t *testing.T) {
 	}
 	pollFolder := e.Tenant + "/poll/" + poll.ID + "/"
 	if code := e.call(t, "editor", "PUT", "/api/polls/"+poll.ID+"/options/"+poll.Options[1].ID+"/image", map[string]string{"image": option}, &img); code != 200 ||
-		img.ImageURL != url(pollFolder+"public/"+option+".webp") {
+		img.ImageURL != e.urls[option] {
 		t.Fatalf("option image %d %q", code, img.ImageURL)
 	}
-	if w, h := webpSize(t, e.public(t, pollFolder+"public/"+option+".webp")); w != 64 || h != 64 {
+	optionKey := strings.TrimPrefix(img.ImageURL, url(""))
+	if w, h := webpSize(t, e.public(t, optionKey)); w != 64 || h != 64 || !strings.HasPrefix(optionKey, pollFolder+"public/") {
 		t.Fatalf("option image %dx%d", w, h)
 	}
 	var view struct {
@@ -305,7 +317,7 @@ func TestContentImages(t *testing.T) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if _, err := e.Store.Head(ctx, pollFolder+"public/"+option+".webp"); err != nil {
+	if _, err := e.Store.Head(ctx, optionKey); err != nil {
 		t.Fatalf("the poll's folder must stay: %v", err)
 	}
 }

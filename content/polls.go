@@ -922,7 +922,7 @@ func (p *polls) setImage(w http.ResponseWriter, req *http.Request, update string
 		writeErr(w, err)
 		return
 	}
-	url, err := p.rt.imageURL(pollFolder, id, name)
+	url, err := p.rt.imageURL(ctx, pollFolder, id, name)
 	if err != nil {
 		writeErr(w, err)
 		return

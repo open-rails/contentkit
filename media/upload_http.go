@@ -14,7 +14,6 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 // UploadHandlerOptions configure UploadHandler.
@@ -39,7 +38,7 @@ type UploadHandlerOptions struct {
 //	POST /abort        TicketBody   -> 204
 //	POST /commit       CommitBody   -> CommitReply
 //	POST /files        FilesBody    -> FilesReply     an editor's files, unattached ones included: processing state and progress
-//	POST /commit-slot            SlotBody         -> SlotManifest (204 for an inline image)
+//	POST /commit-slot            SlotBody         -> SlotManifest
 //	POST /commit-slot-from-file  SlotFromFileBody -> SlotManifest
 //	POST /edit-slot              SlotEditBody     -> SlotManifest   re-edit the committed original
 //	POST /slot                   SlotRefBody      -> SlotManifest
@@ -171,10 +170,11 @@ type CommitReply struct {
 // is in the EXIF-oriented original's pixels, its height derived from its
 // width at the slot's aspect; omitted crops centred at the aspect.
 type SlotBody struct {
-	Ref    RefBody `json:"ref"`
-	Slot   string  `json:"slot"`
-	SHA256 string  `json:"sha256"`
-	Edit   *Edit   `json:"edit,omitempty"`
+	Ref      RefBody `json:"ref"`
+	Slot     string  `json:"slot"`
+	SHA256   string  `json:"sha256"`
+	Edit     *Edit   `json:"edit,omitempty"`
+	Filename string  `json:"filename,omitempty"`
 }
 
 // SlotEditBody re-edits the committed original; omitted crops centred.
@@ -396,11 +396,7 @@ func (h uploadHandler) commitSlot(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	err := h.u.CommitSlot(r.Context(), actor, h.ref(b.Ref), b.Slot, sum, b.Edit)
-	if err == nil && layout.ValidInlineName(b.Slot) {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
+	err := h.u.CommitSlot(r.Context(), actor, SlotCommit{Ref: h.ref(b.Ref), Slot: b.Slot, SHA256: sum, Edit: b.Edit, Filename: b.Filename})
 	h.slotReply(w, r, b.Ref, b.Slot, err)
 }
 

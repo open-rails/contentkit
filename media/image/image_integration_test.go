@@ -97,7 +97,7 @@ type env struct {
 	kinds     *media.Registry
 	mu        sync.Mutex
 	failed    []string
-	encoded   map[string]media.Aspect // Hooks.SlotEncoded, by ref#slot
+	encoded   map[string]media.SlotListing // Hooks.SlotEncoded, by ref#slot
 }
 
 func newEnv(t *testing.T, kind media.Kind) *env {
@@ -130,12 +130,12 @@ func (e *env) useKind(t *testing.T, kind media.Kind) {
 			e.mu.Lock()
 			e.failed = append(e.failed, file)
 			e.mu.Unlock()
-		}, SlotEncoded: func(_ context.Context, ref contentref.ContentRef, slot string, aspect media.Aspect) {
+		}, SlotEncoded: func(_ context.Context, ref contentref.ContentRef, slot string, l media.SlotListing) {
 			e.mu.Lock()
 			if e.encoded == nil {
-				e.encoded = map[string]media.Aspect{}
+				e.encoded = map[string]media.SlotListing{}
 			}
-			e.encoded[ref.String()+"#"+slot] = aspect
+			e.encoded[ref.String()+"#"+slot] = l
 			e.mu.Unlock()
 		}}})
 	if err != nil {
@@ -172,7 +172,7 @@ func (e *env) uploadAs(t *testing.T, ref contentref.ContentRef, slot, typ string
 		}
 	}
 	if slot != "" {
-		if err := e.uploads.CommitSlot(context.Background(), access.Actor{ID: "u"}, ref, slot, sum[:], nil); err != nil {
+		if err := e.uploads.CommitSlot(context.Background(), access.Actor{ID: "u"}, media.SlotCommit{Ref: ref, Slot: slot, SHA256: sum[:]}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -216,9 +216,26 @@ func (e *env) object(t *testing.T, key string) ([]byte, media.Object) {
 	return b, obj
 }
 
+// slotOutput is the public/ key of a slot's current output at rung, or "".
+func (e *env) slotOutput(t *testing.T, ref contentref.ContentRef, slot string, rung int) string {
+	t.Helper()
+	rec, err := e.manifests.Slot(context.Background(), ref.Content(), slot)
+	if errors.Is(err, media.ErrNotFound) || err == nil && rec.Result == nil {
+		return ""
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range rec.Result.Outputs {
+		if o.Rung == rung {
+			return e.Tenant + "/" + ref.ContentKind + "/" + ref.ContentID + "/public/" + o.Blob
+		}
+	}
+	return ""
+}
+
 func (e *env) blob(t *testing.T, ref contentref.ContentRef, name string) ([]byte, media.Object) {
 	t.Helper()
-	return e.object(t, e.Tenant+"/"+ref.ContentKind+"/"+ref.ContentID+"/blobs/"+name)
+	return e.object(t, e.Tenant+"/"+ref.ContentKind+"/"+ref.ContentID+"/private/"+name)
 }
 
 func pngImage(t *testing.T, w, h int, seed uint8) []byte {
@@ -496,8 +513,8 @@ func TestDeclaredTypeBindsTheDecoder(t *testing.T) {
 	if len(m.Files[0].Variants) != 3 || len(m.Files[1].Variants) != 0 || len(m.Files[2].Variants) != 0 {
 		t.Fatalf("manifest: %+v", m)
 	}
-	if _, err := e.Env.Store.Head(context.Background(), e.Tenant+"/gallery/"+cid(7)+"/public/cover_150.webp"); !errors.Is(err, media.ErrNotFound) {
-		t.Fatalf("cover derived from an SVG declared image/png: %v", err)
+	if k := e.slotOutput(t, ref, "cover", 150); k != "" {
+		t.Fatalf("cover derived from an SVG declared image/png: %s", k)
 	}
 }
 
@@ -509,7 +526,7 @@ func TestProcessDoesNotResurrectADeletedItem(t *testing.T) {
 	ref := contentref.NewVersion(e.Tenant, "gallery", cid(99), "v1")
 	e.commit(t, ref, media.Op{Op: media.OpInsert, Name: "1.png", Original: e.uploadAs(t, ref, "", "image/png", pngImage(t, 64, 64, 1))})
 	item, _ := e.kinds.Item(ref)
-	key, _ := item.ManifestKey()
+	key := item.ManifestKey()
 	var once sync.Once
 	e.store.gate = func() { once.Do(func() { _ = e.Env.Store.Delete(ctx, key) }) }
 	e.drain(t)

@@ -166,7 +166,7 @@ func (s Spec) Hash() string {
 		id += "|u"
 	}
 	if s.EditorOnly {
-		id += "|editor/" // stored in editor/ (was blobs/ under "|e")
+		id += "|e"
 	}
 	sum := sha256.Sum256([]byte(id))
 	return hex.EncodeToString(sum[:4])
@@ -175,12 +175,12 @@ func (s Spec) Hash() string {
 // Slot is a fixed public image at Aspect (the edited image's width:height),
 // or at the edited image's own shape when Aspect is AspectNative (no crop by
 // default, any crop shape), rendered at each of Widths (the host's rungs,
-// e.g. a small and a large one) to {slot}_{width}.webp (SlotOutput), rewritten
-// in place on every change. Nothing is upscaled: a rung wider than the edited
-// image is rendered at the edited width, so every rung always exists once the
-// slot is set and listings can link them without reads. Its original is kept
-// at originals/{slot} and its Edit in the slot record. An edit narrower than
-// Min fails.
+// e.g. a small and a large one) to hash-named WebP renditions in private/,
+// copied to public/ unless the item is hidden. A change writes new names.
+// Nothing is upscaled: a rung wider than the edited image is rendered at the
+// edited width, so every rung exists once the slot is set. Its original and
+// Edit are recorded in the manifest (Root.Slots). An edit narrower than Min
+// fails.
 type Slot struct {
 	Aspect    Aspect
 	Widths    []int
@@ -238,9 +238,6 @@ func (s Slot) Hash() string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:4])
 }
-
-// SlotOutput names a slot's output of one width: "{slot}_{width}".
-func SlotOutput(slot string, width int) string { return slot + "_" + strconv.Itoa(width) }
 
 const maxSlotWidth = 8192
 
@@ -336,7 +333,7 @@ func NewRegistry(kinds ...Kind) (*Registry, error) {
 		}
 		slots := make(map[string]Slot, len(k.Slots))
 		for name, slot := range k.Slots {
-			if !layout.ValidSegment(name) || layout.ValidBlobName(name) || layout.ValidInlineName(name) || strings.HasSuffix(name, slotRecordExt) {
+			if !layout.ValidSegment(name) || layout.ValidSourceName(name) || layout.ValidInlineName(name) {
 				return nil, fmt.Errorf("media: kind %q: invalid slot name %q", k.Name, name)
 			}
 			if !slot.Aspect.Valid() || len(slot.Widths) == 0 || slot.MinWidth < 0 || slot.Quality < 0 || slot.Quality > 100 {
@@ -351,7 +348,7 @@ func NewRegistry(kinds ...Kind) (*Registry, error) {
 			slots[name] = slot
 		}
 		if k.Video != nil {
-			for _, reserved := range []string{PosterSlot, exposureRecord} {
+			for _, reserved := range []string{PosterSlot} {
 				if _, ok := slots[reserved]; ok {
 					return nil, fmt.Errorf("media: kind %q: slot %q is reserved on video kinds", k.Name, reserved)
 				}

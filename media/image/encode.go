@@ -275,7 +275,7 @@ func webp(img *vips.ImageRef, quality int) ([]byte, error) {
 // encode derives one WebP from src through edit (unless the spec is
 // Unedited) per spec, frame by frame. Inside never enlarges; cover fills the
 // box and crops the centre; a zero box keeps full resolution.
-func encode(src []byte, contentType string, s media.Spec, edit *media.Edit) ([]byte, error) {
+func encode(src []byte, contentType string, s media.Spec, edit *media.Edit) ([]byte, media.Dims, error) {
 	if s.Unedited {
 		edit = nil
 	}
@@ -308,13 +308,13 @@ func encode(src []byte, contentType string, s media.Spec, edit *media.Edit) ([]b
 		defer img.Close()
 	}
 	if err != nil {
-		return nil, permanentError{err}
+		return nil, media.Dims{}, permanentError{err}
 	}
 	out, err := webp(img, s.Quality)
 	if err != nil {
-		return nil, permanentError{err}
+		return nil, media.Dims{}, permanentError{err}
 	}
-	return out, nil
+	return out, media.Dims{W: img.Width(), H: img.PageHeight()}, nil
 }
 
 // slotOutput is one encoded slot width.

@@ -23,15 +23,16 @@ type SweepResult struct {
 	Wait    time.Duration
 }
 
-// Sweep deletes the item folder's blobs/, editor/ blobs, hash-named originals/
-// and staged uploads (staging/) that no manifest in the folder references, once every manifest is older than the
-// grace period, and only objects past abandonedAt. Slot originals, slot and
-// outputs (public/, editor/) and manifests are never swept.
+// Sweep deletes what the item's manifest does not keep: originals/,
+// private/ and public/ objects outside its index and staged uploads no file
+// references, once the manifest is older than the grace period, and only
+// objects past abandonedAt. Removed public/ keys go to Hooks.PublicRemoved.
 //
-// Invariant: the sweep deletes only objects that no manifest references and
-// that no in-flight commit can newly reference. Uploads keeps the second half:
-// presign reuses an existing original, and a commit accepts one, only while it
-// is referenced or well before abandonedAt (see protected).
+// Invariant: the sweep deletes only objects the manifest does not reference
+// and that no in-flight commit or job can newly reference. Uploads keeps the
+// second half: presign reuses an existing original, and a commit accepts one,
+// only while it is referenced or well before abandonedAt (see protected);
+// jobs write renditions before the edit that lists them, well within grace.
 func (j *Jobs) Sweep(ctx context.Context, ref contentref.ContentRef) (SweepResult, error) {
 	item, err := j.cfg.Kinds.Item(ref.Content())
 	if err != nil {
@@ -99,28 +100,20 @@ func (j *Jobs) sweep(ctx context.Context, prefix string, objs []Object) (SweepRe
 	}
 	refs := map[string]bool{}
 	for key := range manifests {
-		man, err := j.readManifest(ctx, key)
+		root, err := j.readRoot(ctx, key)
 		if errors.Is(err, ErrNotFound) {
 			return SweepResult{Wait: j.cfg.Grace}, nil
 		}
 		if err != nil {
 			return SweepResult{}, err
 		}
-		for _, n := range man.Blobs() {
-			refs[AreaBlobs+"/"+n] = true
-		}
-		for _, n := range man.EditorBlobs() {
-			refs[AreaEditor+"/"+n] = true
-		}
-		for _, n := range man.Originals() {
-			refs[layout.SourceArea(n)+"/"+n] = true
-		}
+		refs = root.Refs()
 	}
 	abandoned := func(objs []Object) []string {
 		var keys []string
 		for _, o := range objs {
 			k, ok := layout.Parse(o.Key)
-			if !ok || !layout.ValidBlobName(k.Name) || (k.Area != AreaBlobs && k.Area != AreaEditor && k.Area != AreaOriginals && k.Area != AreaStaging) {
+			if !ok || k.Area == AreaManifest {
 				continue
 			}
 			if !refs[k.Area+"/"+k.Name] && !now.Before(abandonedAt(k.Name, o.LastModified, j.cfg.Grace)) {
@@ -148,6 +141,7 @@ func (j *Jobs) sweep(ctx context.Context, prefix string, objs []Object) (SweepRe
 	if err := j.deleteKeys(ctx, doomed); err != nil {
 		return SweepResult{}, err
 	}
+	j.publicRemoved(ctx, doomed)
 	return SweepResult{Deleted: doomed}, nil
 }
 
@@ -186,7 +180,7 @@ func manifestETags(objs []Object) (map[string]string, time.Time) {
 	return etags, newest
 }
 
-func (j *Jobs) readManifest(ctx context.Context, key string) (*Manifest, error) {
+func (j *Jobs) readRoot(ctx context.Context, key string) (*Root, error) {
 	rc, _, err := j.cfg.Store.Get(ctx, key, GetOptions{})
 	if err != nil {
 		return nil, err
@@ -196,11 +190,29 @@ func (j *Jobs) readManifest(ctx context.Context, key string) (*Manifest, error) 
 	if err != nil {
 		return nil, err
 	}
-	var man Manifest
-	if err := json.Unmarshal(body, &man); err != nil {
+	var root Root
+	if err := json.Unmarshal(body, &root); err != nil {
 		return nil, fmt.Errorf("media: decode manifest %s: %w", key, err)
 	}
-	return &man, nil
+	return &root, nil
+}
+
+// publicRemoved reports deleted public/ keys, grouped by item, to
+// Hooks.PublicRemoved.
+func (j *Jobs) publicRemoved(ctx context.Context, keys []string) {
+	if j.cfg.Hooks.PublicRemoved == nil {
+		return
+	}
+	byItem := map[contentref.ContentRef][]string{}
+	for _, key := range keys {
+		if k, ok := layout.Parse(key); ok && k.Area == AreaPublic {
+			ref := contentref.New(k.Tenant, k.Kind, k.ID)
+			byItem[ref] = append(byItem[ref], key)
+		}
+	}
+	for ref, keys := range byItem {
+		j.cfg.Hooks.PublicRemoved(ctx, ref, keys)
+	}
 }
 
 func (j *Jobs) list(ctx context.Context, prefix string) ([]Object, error) {
@@ -233,6 +245,7 @@ func (j *Jobs) deleteFolder(ctx context.Context, prefix string) error {
 	if err := j.deleteKeys(ctx, manifests); err != nil {
 		return err
 	}
+	j.publicRemoved(ctx, manifests)
 	return j.deleteKeys(ctx, rest)
 }
 

@@ -1,11 +1,9 @@
 package media
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,21 +15,23 @@ import (
 	"github.com/open-rails/contentkit/media/token"
 )
 
-const slotRecordExt = ".json"
-
-// SlotRecord is originals/{slot}.json, private like the original. Commits
-// and edits set Original and Edit; the image job sets Result.
+// SlotRecord is a registered slot's or inline image's entry in Root.Slots.
+// Commits and edits set Original (with its upload name, type and size) and
+// Edit; the image job sets Result.
 type SlotRecord struct {
-	Original string       `json:"original"`        // ETag of originals/{slot} when committed
+	Original string       `json:"original"` // originals/ name
+	Filename string       `json:"filename,omitempty"`
+	Type     string       `json:"type,omitempty"`
+	Size     int64        `json:"size,omitempty"`
 	Edit     *Edit        `json:"edit,omitempty"`  // nil: the centred crop at the slot's Aspect
 	Frame    *PosterFrame `json:"frame,omitempty"` // a video poster grabbed from a frame; nil for uploads
 	Result   *SlotResult  `json:"result,omitempty"`
 }
 
-// SlotResult is what the served outputs were derived from.
+// SlotResult is what the current renditions were derived from.
 type SlotResult struct {
 	Of      string          `json:"of"`              // the Fingerprint last encoded
-	Source  string          `json:"source"`          // the original (ETag) Dims measure
+	Source  string          `json:"source"`          // the original Dims measure
 	Dims    Dims            `json:"dims"`            // EXIF-oriented; zero when undecodable
 	Outputs []SlotRendition `json:"outputs"`         // one per rung, ascending
 	Error   string          `json:"error,omitempty"` // Of failed; Outputs are older
@@ -40,12 +40,14 @@ type SlotResult struct {
 	Details *ErrorDetails `json:"details,omitempty"`
 }
 
-// SlotRendition is one output: the rung it is stored under and its size
-// (narrower than the rung when the edited image is).
+// SlotRendition is one output: private/{Blob}, the rung it renders and its
+// size (narrower than the rung when the edited image is).
 type SlotRendition struct {
-	Rung int `json:"rung"`
-	W    int `json:"w"`
-	H    int `json:"h"`
+	Rung int    `json:"rung"`
+	W    int    `json:"w"`
+	H    int    `json:"h"`
+	Blob string `json:"blob"`
+	Size int64  `json:"size,omitempty"`
 }
 
 // Fingerprint identifies the outputs the record yields under slot spec s.
@@ -56,102 +58,100 @@ func (rec SlotRecord) Fingerprint(s Slot) string {
 
 // Slot returns a slot's record, or ErrNotFound before its first commit.
 func (m *Manifests) Slot(ctx context.Context, ref contentref.ContentRef, slot string) (*SlotRecord, error) {
-	key, err := m.slotKey(ref, slot)
+	root, _, err := m.Root(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
-	body, _, err := m.raw(ctx, key)
-	if err != nil {
-		return nil, err
+	rec, ok := root.Slots[slot]
+	if !ok {
+		return nil, ErrNotFound
 	}
-	var rec SlotRecord
-	if err := json.Unmarshal(body, &rec); err != nil {
-		return nil, fmt.Errorf("media: decode slot record %s: %w", key, err)
-	}
-	return &rec, nil
+	return rec, nil
 }
 
 // UpdateSlot applies fn to the slot record (zero before the first commit)
-// and writes it like Edit: conditionally, re-running fn on conflict, and only
-// when changed.
+// in one EditRoot; a record left zero is not added.
 func (m *Manifests) UpdateSlot(ctx context.Context, ref contentref.ContentRef, slot string, fn func(*SlotRecord) error) error {
-	key, err := m.slotKey(ref, slot)
-	if err != nil {
-		return err
-	}
-	_, err = m.edit(ctx, key, func(body []byte) ([]byte, error) {
-		var rec SlotRecord
-		if body != nil {
-			if err := json.Unmarshal(body, &rec); err != nil {
-				return nil, fmt.Errorf("media: decode slot record %s: %w", key, err)
-			}
+	_, err := m.EditRoot(ctx, ref, func(r *Root) error {
+		rec := r.Slots[slot]
+		if rec == nil {
+			rec = &SlotRecord{}
 		}
-		before, _ := json.Marshal(rec)
-		if err := fn(&rec); err != nil {
-			return nil, err
+		if err := fn(rec); err != nil {
+			return err
 		}
-		out, err := json.Marshal(rec)
-		if err != nil || bytes.Equal(out, before) {
-			return nil, err
+		if rec.Original == "" && rec.Result == nil && rec.Frame == nil {
+			return nil
 		}
-		return out, nil
+		if r.Slots == nil {
+			r.Slots = map[string]*SlotRecord{}
+		}
+		r.Slots[slot] = rec
+		return nil
 	})
 	return err
 }
 
-func (m *Manifests) slotKey(ref contentref.ContentRef, slot string) (string, error) {
-	item, err := m.kinds.Item(ref.Content())
-	if err != nil {
-		return "", err
-	}
-	return item.SlotRecord(slot)
+// SlotCommit names an uploaded slot or inline original: SHA256 is the one
+// its upload was presigned with, Filename the uploaded file's name.
+type SlotCommit struct {
+	Ref      contentref.ContentRef
+	Slot     string
+	SHA256   []byte
+	Edit     *Edit // registered slots; nil: centred
+	Filename string
 }
 
 // CommitSlot validates an uploaded slot or inline original and enqueues the
-// re-encode of its outputs. A registered slot records it with edit (nil: the
-// centred crop at the slot's Aspect); its crop's height follows its width.
-// Inline images take no edit. sum is the SHA-256 the upload was presigned with.
-func (u *Uploads) CommitSlot(ctx context.Context, actor access.Actor, ref contentref.ContentRef, slot string, sum []byte, edit *Edit) error {
-	item, err := u.item(ref)
+// encode of its renditions. A registered slot records it with its edit (nil:
+// the centred crop at the slot's Aspect); its crop's height follows its
+// width. Inline images take no edit.
+func (u *Uploads) CommitSlot(ctx context.Context, actor access.Actor, c SlotCommit) error {
+	item, err := u.item(c.Ref)
 	if err != nil {
 		return err
 	}
-	key, err := item.SlotOriginal(slot)
-	if err != nil {
-		return uploadErr(CodeNotFound, "%v", err)
+	spec, registered := item.Kind().Slots[c.Slot]
+	if !registered && !item.Inline(c.Slot) {
+		return uploadErr(CodeNotFound, "kind %q has no slot %q", item.Kind().Name, c.Slot)
 	}
-	if len(sum) != sha256.Size {
+	if len(c.SHA256) != sha256.Size {
 		return uploadErr(CodeInvalid, "the slot's SHA-256 is required")
 	}
-	spec, registered := item.Kind().Slots[slot]
-	if !registered && edit.Normalize() != nil {
+	if !registered && c.Edit.Normalize() != nil {
 		return uploadErr(CodeInvalid, "inline images take no edit")
 	}
-	edit = spec.fit(edit)
+	edit := c.Edit
+	if registered {
+		edit = spec.fit(edit)
+	}
 	if err := edit.Check(0, 0); err != nil {
 		return uploadErr(CodeInvalid, "edit: %v", err)
 	}
-	if _, err := u.authorize(ctx, actor, ref.Content()); err != nil {
+	if _, err := u.authorize(ctx, actor, c.Ref.Content()); err != nil {
 		return err
 	}
-	obj, err := u.check(ctx, item, key, sum)
+	name := SHA256Name(c.SHA256)
+	key, _ := item.Original(name)
+	obj, err := u.check(ctx, item, key, c.SHA256)
 	if err != nil {
 		return err
 	}
 	if u.o.Limiter != nil {
-		if err := u.o.Limiter.Settle(ctx, Settlement{Tenant: ref.TenantID, Keys: []string{key}}); err != nil {
+		if err := u.o.Limiter.Settle(ctx, Settlement{Tenant: c.Ref.TenantID, Keys: []string{key}}); err != nil {
 			return err
 		}
 	}
-	if registered {
-		if err := u.o.Manifests.UpdateSlot(ctx, ref, slot, func(rec *SlotRecord) error {
-			rec.Original, rec.Edit, rec.Frame = obj.ETag, edit, nil
-			return nil
-		}); err != nil {
-			return err
+	if err := u.o.Manifests.UpdateSlot(ctx, c.Ref.Content(), c.Slot, func(rec *SlotRecord) error {
+		if !registered && rec.Original != "" && rec.Original != name {
+			return uploadErr(CodeInvalid, "inline image %q is already set", c.Slot)
 		}
+		*rec = SlotRecord{Original: name, Filename: c.Filename, Type: obj.ContentType, Size: obj.Size, Edit: edit, Result: rec.Result}
+		return nil
+	}); err != nil {
+		return err
 	}
-	return u.enqueueSlot(ctx, ref, slot)
+	return u.enqueueSlot(ctx, c.Ref, c.Slot)
 }
 
 // EditSlot re-edits the committed original (nil: centred) without a new
@@ -166,7 +166,6 @@ func (u *Uploads) EditSlot(ctx context.Context, actor access.Actor, ref contentr
 	if !ok {
 		return uploadErr(CodeNotFound, "kind %q has no slot %q", item.Kind().Name, slot)
 	}
-	key, _ := item.SlotOriginal(slot)
 	edit = spec.fit(edit)
 	if err := edit.Check(0, 0); err != nil {
 		return uploadErr(CodeInvalid, "edit: %v", err)
@@ -177,13 +176,6 @@ func (u *Uploads) EditSlot(ctx context.Context, actor access.Actor, ref contentr
 	if err := u.o.Manifests.UpdateSlot(ctx, ref, slot, func(rec *SlotRecord) error {
 		if rec.Original == "" {
 			return uploadErr(CodeNotFound, "slot %q has no committed original", slot)
-		}
-		obj, err := u.o.Store.Head(ctx, key)
-		if err != nil && !errors.Is(err, ErrNotFound) {
-			return err
-		}
-		if err != nil || obj.ETag != rec.Original {
-			return uploadErr(CodeNotUploaded, "slot %q original was replaced; commit the new one", slot)
 		}
 		if d := rec.dims(); d.W > 0 {
 			if _, err := spec.Resolve(edit, d.W, d.H); err != nil {
@@ -218,12 +210,12 @@ type SlotFromFile struct {
 	Edit *Edit
 }
 
-// SetSlotFromFile makes an image file the slot's original: its source is
-// copied to originals/{slot} and recorded with the edit, and the slot's
-// outputs are re-encoded through it. The crop's height follows its width at
-// the slot's Aspect; it is checked against the file's Dims once processing
-// has recorded them, else by the slot job. The actor must be allowed to
-// upload to Ref's work and, when From names another item, to From.
+// SetSlotFromFile makes an image file's source the slot's original (copied
+// into the slot's folder when From is another item) with the edit, and
+// re-encodes the slot's renditions through it. The crop's height follows its
+// width at the slot's Aspect; it is checked against the file's Dims once
+// processing has recorded them, else by the slot job. The actor must be
+// allowed to upload to Ref's work and, when From names another item, to From.
 func (u *Uploads) SetSlotFromFile(ctx context.Context, actor access.Actor, r SlotFromFile) error {
 	item, err := u.item(r.Ref)
 	if err != nil {
@@ -233,7 +225,6 @@ func (u *Uploads) SetSlotFromFile(ctx context.Context, actor access.Actor, r Slo
 	if !ok {
 		return uploadErr(CodeNotFound, "kind %q has no slot %q", item.Kind().Name, r.Slot)
 	}
-	key, _ := item.SlotOriginal(r.Slot)
 	from := r.From
 	if from.ContentID == "" {
 		from = r.Ref
@@ -245,7 +236,7 @@ func (u *Uploads) SetSlotFromFile(ctx context.Context, actor access.Actor, r Slo
 	if err != nil {
 		return err
 	}
-	if _, err := src.ManifestKey(); err != nil {
+	if _, err := src.Section(); err != nil {
 		return uploadErr(CodeInvalid, "%v", err)
 	}
 	if _, err := u.authorize(ctx, actor, r.Ref.Content()); err != nil {
@@ -270,6 +261,9 @@ func (u *Uploads) SetSlotFromFile(ctx context.Context, actor access.Actor, r Slo
 	if !strings.HasPrefix(f.Type, "image/") {
 		return uploadErr(CodeInvalid, "file %q is not an image", r.File)
 	}
+	if !layout.ValidHashName(f.Source()) {
+		return uploadErr(CodeNotUploaded, "file %q is still being processed", r.File)
+	}
 	edit := r.Edit
 	if edit == nil {
 		edit = f.Edit
@@ -283,37 +277,26 @@ func (u *Uploads) SetSlotFromFile(ctx context.Context, actor access.Actor, r Slo
 			return editErr(err, "file %q: %v", r.File)
 		}
 	}
-	srcKey, err := src.Original(f.Source())
-	if err != nil {
-		return err
-	}
-	rc, obj, err := u.o.Store.Get(ctx, srcKey, GetOptions{})
+	srcKey, _ := src.Original(f.Source())
+	obj, err := u.o.Store.Head(ctx, srcKey)
 	if errors.Is(err, ErrNotFound) {
 		return uploadErr(CodeNotUploaded, "%s has not been uploaded", f.Source())
 	} else if err != nil {
 		return err
 	}
-	defer rc.Close()
 	if obj.Size > MaxSinglePut {
 		return uploadErr(CodeTooLarge, "slot originals are at most %d bytes", MaxSinglePut)
 	}
 	if err := item.Kind().Allows(obj.ContentType, obj.Size); err != nil {
 		return err
 	}
-	body, err := io.ReadAll(rc) // the SDK signs a seekable body over plain HTTP
-	if err != nil {
-		return err
+	if dst, _ := item.Original(f.Source()); dst != srcKey {
+		if _, err := u.o.Store.Copy(ctx, srcKey, dst, CopyOptions{IfMatch: obj.ETag}); err != nil {
+			return err
+		}
 	}
-	opts := PutOptions{ContentType: obj.ContentType}
-	if sum, ok := layout.ParseSHA256Name(f.Source()); ok {
-		opts.ChecksumSHA256 = sum
-	}
-	put, err := u.o.Store.Put(ctx, key, bytes.NewReader(body), int64(len(body)), opts)
-	if err != nil {
-		return err
-	}
-	if err := u.o.Manifests.UpdateSlot(ctx, r.Ref, r.Slot, func(rec *SlotRecord) error {
-		rec.Original, rec.Edit, rec.Frame = put.ETag, edit, nil
+	if err := u.o.Manifests.UpdateSlot(ctx, r.Ref.Content(), r.Slot, func(rec *SlotRecord) error {
+		*rec = SlotRecord{Original: f.Source(), Filename: f.Name, Type: obj.ContentType, Size: obj.Size, Edit: edit, Result: rec.Result}
 		return nil
 	}); err != nil {
 		return err
@@ -322,7 +305,7 @@ func (u *Uploads) SetSlotFromFile(ctx context.Context, actor access.Actor, r Slo
 }
 
 // SlotOriginal opens a slot's committed original for its uploaders (the
-// editor); originals are never public.
+// editor); originals are never served.
 func (u *Uploads) SlotOriginal(ctx context.Context, actor access.Actor, ref contentref.ContentRef, slot string) (io.ReadCloser, Object, error) {
 	item, err := u.item(ref)
 	if err != nil {
@@ -331,23 +314,22 @@ func (u *Uploads) SlotOriginal(ctx context.Context, actor access.Actor, ref cont
 	if _, ok := item.Kind().Slots[slot]; !ok {
 		return nil, Object{}, uploadErr(CodeNotFound, "kind %q has no slot %q", item.Kind().Name, slot)
 	}
-	key, _ := item.SlotOriginal(slot)
 	if _, err := u.authorize(ctx, actor, ref.Content()); err != nil {
 		return nil, Object{}, err
 	}
 	rec, err := u.o.Manifests.Slot(ctx, ref, slot)
-	if errors.Is(err, ErrNotFound) {
+	if errors.Is(err, ErrNotFound) || err == nil && rec.Original == "" {
 		return nil, Object{}, uploadErr(CodeNotFound, "slot %q has no committed original", slot)
 	} else if err != nil {
 		return nil, Object{}, err
 	}
-	rc, obj, err := u.o.Store.Get(ctx, key, GetOptions{})
-	if err == nil && obj.ETag != rec.Original {
-		rc.Close()
-		err = ErrNotFound
+	key, err := item.Original(rec.Original)
+	if err != nil {
+		return nil, Object{}, err
 	}
+	rc, obj, err := u.o.Store.Get(ctx, key, GetOptions{})
 	if errors.Is(err, ErrNotFound) {
-		return nil, Object{}, uploadErr(CodeNotUploaded, "slot %q original was replaced; commit the new one", slot)
+		return nil, Object{}, uploadErr(CodeNotUploaded, "slot %q original is missing; commit a new one", slot)
 	}
 	return rc, obj, err
 }
@@ -359,9 +341,8 @@ func (u *Uploads) enqueueSlot(ctx context.Context, ref contentref.ContentRef, sl
 	return u.o.Queue.Enqueue(ctx, ProcessJob{Ref: ref.Content(), Slot: slot})
 }
 
-// SlotManifest describes a slot: its outputs by ascending width. Outputs are
-// rewritten in place at fixed URLs, served no-cache with an ETag, so a new
-// crop shows on the next revalidation.
+// SlotManifest describes a slot: its outputs by ascending width. Every
+// output URL names an immutable file; a change lists new URLs.
 type SlotManifest struct {
 	Aspect  Aspect      `json:"aspect"`         // "W:H"; a native slot's from its outputs ("" before any)
 	Edit    *Edit       `json:"edit,omitempty"` // nil: the centred crop at aspect (native: the whole image)
@@ -382,57 +363,62 @@ type SlotManifest struct {
 
 // SlotImage is one produced output.
 type SlotImage struct {
-	Name string `json:"name"`
-	W    int    `json:"w"`
-	H    int    `json:"h"`
-	URL  string `json:"url"`
+	W   int    `json:"w"`
+	H   int    `json:"h"`
+	URL string `json:"url"`
 }
 
-// OutputURLs builds slot output URLs for one caller.
-// Outputs of gated slots (video posters) are served from
-// editor/ with EditorToken to editors, from public/ to others when Exposure
-// publishes them, and left out otherwise.
+// OutputURLs builds slot output URLs for one caller: public/ copies for an
+// item that is not hidden; private/ files under Token (editors) otherwise.
 type OutputURLs struct {
-	BaseURL     string   // the access worker origin
-	EditorToken string   // the item's editor/ folder token; editors only
-	Exposure    Exposure // what the item has published
+	BaseURL string // the access worker origin
+	Token   string // the item's private/ folder token; editors only
 }
 
-// editorURL is an editor/ key's URL under the editor token.
-func (u OutputURLs) editorURL(key string) string {
-	return strings.TrimRight(u.BaseURL, "/") + "/" + key + "?t=" + u.EditorToken
+// url is the output's URL for this caller, or "" when it may not see it.
+func (u OutputURLs) url(item Item, blob string, public bool) string {
+	base := strings.TrimRight(u.BaseURL, "/") + "/"
+	switch {
+	case public:
+		key, _ := item.Public(blob)
+		return base + key
+	case u.Token != "":
+		key, _ := item.Private(blob)
+		return base + key + "?t=" + u.Token
+	}
+	return ""
 }
 
-// SlotManifest reads a slot's manifest (one object), building output URLs
-// with urls. A slot never committed has no outputs, nor has a gated slot the
-// caller may not see.
+// SlotManifest reads a slot (or inline image) from the item's manifest,
+// building output URLs with urls. A slot never committed has no outputs.
 func (m *Manifests) SlotManifest(ctx context.Context, urls OutputURLs, ref contentref.ContentRef, slot string) (SlotManifest, error) {
 	out, _, err := m.slotManifest(ctx, urls, ref, slot)
 	return out, err
 }
 
 // slotManifest is SlotManifest plus the record it was built from: nil when
-// the slot was never committed or the caller may not see it.
+// the slot was never committed.
 func (m *Manifests) slotManifest(ctx context.Context, urls OutputURLs, ref contentref.ContentRef, slot string) (SlotManifest, *SlotRecord, error) {
 	item, s, err := m.kinds.slot(ref, slot)
 	if err != nil {
 		return SlotManifest{}, nil, err
 	}
 	out := SlotManifest{Aspect: s.Aspect, Outputs: []SlotImage{}, MinWidth: s.Min(), Animation: s.Animation}
-	if item.Gated(slot) && urls.EditorToken == "" && !urls.Exposure.Poster {
-		return out, nil, nil
-	}
-	rec, err := m.Slot(ctx, ref, slot)
+	root, _, err := m.Root(ctx, ref)
 	if errors.Is(err, ErrNotFound) {
 		return out, nil, nil
 	} else if err != nil {
 		return SlotManifest{}, nil, err
 	}
+	rec := root.Slots[slot]
+	if rec == nil {
+		return out, nil, nil
+	}
 	out.Edit = rec.Edit
 	if d := rec.dims(); d.W > 0 {
 		out.Dims = &d
 	}
-	fp := rec.Fingerprint(s)
+	fp := m.kinds.fingerprint(item, slot, *rec)
 	res := rec.Result
 	out.Pending = res == nil || res.Of != fp
 	if res == nil {
@@ -442,20 +428,16 @@ func (m *Manifests) slotManifest(ctx context.Context, urls OutputURLs, ref conte
 		out.Error, out.ErrorCode, out.ErrorDetails = res.Error, res.Code, res.Details
 	}
 	for _, o := range res.Outputs {
-		img := slotImage(urls.BaseURL, item, slot, o)
-		if item.Gated(slot) && urls.EditorToken != "" {
-			key, _ := item.SlotOutput(slot, o.Rung)
-			img.URL = urls.editorURL(key)
+		if u := urls.url(item, o.Blob, root.Private[o.Blob].Public); u != "" {
+			out.Outputs = append(out.Outputs, SlotImage{W: o.W, H: o.H, URL: u})
 		}
-		out.Outputs = append(out.Outputs, img)
 	}
 	out.Aspect = outputAspect(s, out.Outputs)
 	return out, rec, nil
 }
 
-// Slot resolves ref for actor and reads a slot's manifest: ErrNotVisible for
-// an item actor may not see. A video poster is listed from editor/ for
-// editors, and from public/ for others once the item publishes it.
+// Slot resolves ref for actor and reads a slot: ErrNotVisible for an item
+// actor may not see. Editors also see a hidden item's outputs.
 func (r *Reader) Slot(ctx context.Context, ref contentref.ContentRef, actor access.Actor, slot string) (SlotManifest, error) {
 	urls, err := r.outputURLs(ctx, ref, actor)
 	if err != nil {
@@ -464,11 +446,9 @@ func (r *Reader) Slot(ctx context.Context, ref contentref.ContentRef, actor acce
 	return r.manifests.SlotManifest(ctx, urls, ref, slot)
 }
 
-// outputURLs resolves ref for actor once: editors get an editor token, others
-// the item's published Exposure.
+// outputURLs resolves ref for actor once: editors get a private/ token.
 func (r *Reader) outputURLs(ctx context.Context, ref contentref.ContentRef, actor access.Actor) (OutputURLs, error) {
-	item, err := r.kinds.Item(ref.Content())
-	if err != nil {
+	if _, err := r.kinds.Item(ref.Content()); err != nil {
 		return OutputURLs{}, fmt.Errorf("%w: %v", ErrNotVisible, err)
 	}
 	res, err := access.ResolveOne(ctx, r.resolver, ref, actor)
@@ -478,17 +458,10 @@ func (r *Reader) outputURLs(ctx context.Context, ref contentref.ContentRef, acto
 	if !res.Visible {
 		return OutputURLs{}, ErrNotVisible
 	}
-	urls := OutputURLs{BaseURL: r.base.String()}
 	if res.Editor {
-		urls.EditorToken = r.editorToken(item, token.Expiry(r.now(), r.delivery.TTL, r.delivery.Window))
-		return urls, nil
+		return r.EditorURLs(ref)
 	}
-	if item.Kind().Video != nil {
-		if urls.Exposure, err = r.manifests.Exposure(ctx, ref); err != nil {
-			return OutputURLs{}, err
-		}
-	}
-	return urls, nil
+	return OutputURLs{BaseURL: r.base.String()}, nil
 }
 
 // EditorURLs are the OutputURLs of an item's editors (uploaders).
@@ -497,29 +470,76 @@ func (r *Reader) EditorURLs(ref contentref.ContentRef) (OutputURLs, error) {
 	if err != nil {
 		return OutputURLs{}, err
 	}
-	return OutputURLs{BaseURL: r.base.String(), EditorToken: r.editorToken(item, token.Expiry(r.now(), r.delivery.TTL, r.delivery.Window))}, nil
+	return OutputURLs{BaseURL: r.base.String(), Token: r.ring.Sign(item.PrivatePrefix(), token.Expiry(r.now(), r.delivery.TTL, r.delivery.Window))}, nil
 }
 
-// ListedSlot is a slot's manifest built without reads, for listings: every
-// rung at its fixed URL (the image job renders each one, capped at the edited
-// width, so none is missing once the slot is set). W is the rung, an upper
-// bound; H follows aspect: the slot's, or for a native slot the one the host
-// recorded from Hooks.SlotEncoded (unknown: 0). Hosts list it only for slots
-// they know are set, and for gated slots only when the item publishes them.
-func (r *Reader) ListedSlot(ref contentref.ContentRef, slot string, aspect Aspect) (SlotManifest, error) {
+// SlotListing is what a host stores from Hooks.SlotEncoded to list a slot
+// without reads (Reader.ListedSlot).
+type SlotListing struct {
+	Aspect  Aspect          `json:"aspect"`
+	Outputs []SlotRendition `json:"outputs"`
+}
+
+// Listing is the slot's current outputs, for Hooks.SlotEncoded.
+func (res *SlotResult) Listing(s Slot) SlotListing {
+	l := SlotListing{Aspect: s.Aspect, Outputs: res.Outputs}
+	if n := len(res.Outputs); n > 0 && s.Native() {
+		l.Aspect = AspectOf(res.Outputs[n-1].W, res.Outputs[n-1].H)
+	}
+	return l
+}
+
+// ListedSlot is a slot's manifest built without reads, for listings, from
+// the SlotListing the host stored: every output's public URL. Hosts list only
+// items that are not hidden.
+func (r *Reader) ListedSlot(ref contentref.ContentRef, slot string, l SlotListing) (SlotManifest, error) {
 	item, s, err := r.kinds.slot(ref, slot)
 	if err != nil {
 		return SlotManifest{}, err
 	}
-	if !s.Native() {
-		aspect = s.Aspect
+	aspect := s.Aspect
+	if s.Native() {
+		aspect = l.Aspect
 	}
 	out := SlotManifest{Aspect: aspect, Outputs: []SlotImage{}, MinWidth: s.Min(), Animation: s.Animation}
-	for _, w := range s.Widths {
-		out.Outputs = append(out.Outputs, slotImage(r.base.String(), item, slot, SlotRendition{Rung: w, W: w, H: aspect.Height(w)}))
+	urls := OutputURLs{BaseURL: r.base.String()}
+	for _, o := range l.Outputs {
+		if layout.ValidHashName(o.Blob) {
+			out.Outputs = append(out.Outputs, SlotImage{W: o.W, H: o.H, URL: urls.url(item, o.Blob, true)})
+		}
 	}
 	return out, nil
 }
+
+// InlineURL is an inline image's public URL, or ErrPending until the worker
+// has rendered it.
+func (r *Reader) InlineURL(ctx context.Context, ref contentref.ContentRef, id string) (string, error) {
+	item, err := r.kinds.Item(ref.Content())
+	if err != nil {
+		return "", err
+	}
+	if !item.Inline(id) {
+		return "", fmt.Errorf("media: kind %q takes no inline image %q", item.Kind().Name, id)
+	}
+	root, _, err := r.manifests.Root(ctx, ref)
+	if errors.Is(err, ErrNotFound) {
+		return "", ErrPending
+	} else if err != nil {
+		return "", err
+	}
+	rec := root.Slots[id]
+	if rec == nil || rec.Result == nil || len(rec.Result.Outputs) == 0 {
+		return "", ErrPending
+	}
+	blob := rec.Result.Outputs[len(rec.Result.Outputs)-1].Blob
+	if !root.Private[blob].Public {
+		return "", ErrPending
+	}
+	return OutputURLs{BaseURL: r.base.String()}.url(item, blob, true), nil
+}
+
+// ErrPending: an inline image is not rendered (or exposed) yet.
+var ErrPending = errors.New("media: not rendered yet")
 
 // outputAspect is the slot's Aspect, or a native slot's from its widest output.
 func outputAspect(s Slot, outs []SlotImage) Aspect {
@@ -534,20 +554,32 @@ func outputAspect(s Slot, outs []SlotImage) Aspect {
 	return AspectNative
 }
 
+// slot resolves a registered slot or an inline image, which renders as a
+// native slot with one width.
 func (r *Registry) slot(ref contentref.ContentRef, slot string) (Item, Slot, error) {
 	item, err := r.Item(ref.Content())
 	if err != nil {
 		return Item{}, Slot{}, fmt.Errorf("%w: %v", ErrNotVisible, err)
 	}
-	s, ok := item.Kind().Slots[slot]
-	if !ok {
-		return Item{}, Slot{}, fmt.Errorf("%w: kind %q has no slot %q", ErrNotVisible, item.Kind().Name, slot)
+	if s, ok := item.Kind().Slots[slot]; ok {
+		return item, s, nil
 	}
-	return item, s, nil
+	if item.Inline(slot) {
+		return item, InlineSlot(*item.Kind().Inline), nil
+	}
+	return Item{}, Slot{}, fmt.Errorf("%w: kind %q has no slot %q", ErrNotVisible, item.Kind().Name, slot)
 }
 
-// slotImage is an output at its public URL, stored under its rung.
-func slotImage(base string, item Item, slot string, o SlotRendition) SlotImage {
-	key, _ := item.SlotPublic(slot, o.Rung)
-	return SlotImage{Name: SlotOutput(slot, o.Rung), W: o.W, H: o.H, URL: strings.TrimRight(base, "/") + "/" + key}
+// fingerprint is the record's Fingerprint under its slot's spec.
+func (r *Registry) fingerprint(item Item, slot string, rec SlotRecord) string {
+	if s, ok := item.Kind().Slots[slot]; ok {
+		return rec.Fingerprint(s)
+	}
+	return rec.Fingerprint(InlineSlot(*item.Kind().Inline))
+}
+
+// InlineSlot is the Slot an inline image renders as: its spec's width at its
+// own aspect.
+func InlineSlot(s Spec) Slot {
+	return Slot{Aspect: AspectNative, Widths: []int{s.Width}, Quality: s.Quality}
 }

@@ -63,12 +63,12 @@ func TestReaderThroughWorker(t *testing.T) {
 				m.Files = append(m.Files, media.File{Name: name + ".png", Original: sha("o" + name), Type: "image/png",
 					Variants: map[string]media.Variant{"thumb": {Blob: sha("t" + name)}}})
 				put(item.OriginalsPrefix()+sha("o"+name), "original "+name)
-				k, _ := item.Blob(sha("t" + name))
+				k, _ := item.Private(sha("t" + name))
 				content[k] = "thumb " + name
 				put(k, content[k])
 			}
 			m.Downloads = map[string]media.Download{"zip": {Blob: sha("zip" + ref.ContentID), Type: "application/zip"}}
-			k, _ := item.Blob(sha("zip" + ref.ContentID))
+			k, _ := item.Private(sha("zip" + ref.ContentID))
 			put(k, "zip "+ref.ContentID)
 			return nil
 		}); err != nil {
@@ -87,7 +87,7 @@ func TestReaderThroughWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, n := range []string{"blurred", "locked-b"} {
-		k, _ := postItem.Blob(sha(n))
+		k, _ := postItem.Private(sha(n))
 		put(k, n)
 	}
 
@@ -161,12 +161,12 @@ func TestReaderThroughWorker(t *testing.T) {
 		}
 		orig := worker.URL + "/" + fullItem.OriginalsPrefix() + sha("o"+cid(1)+"-a")
 		if cs := jar.Cookies(mustURL(t, orig)); len(cs) != 0 {
-			t.Fatal("cookie sent outside its blobs/ path")
+			t.Fatal("cookie sent outside its private/ path")
 		}
 		if st, _, _ := get(c, orig); st != 404 {
 			t.Fatalf("original through worker: %d", st)
 		}
-		manifest, _ := fullItem.ManifestKey()
+		manifest := fullItem.ManifestKey()
 		if st, _, _ := get(c, worker.URL+"/"+manifest); st != 404 {
 			t.Fatalf("manifest through worker: %d", st)
 		}
@@ -218,7 +218,7 @@ func TestReaderThroughWorker(t *testing.T) {
 			}
 		}
 		item, _ := kinds.Item(preview)
-		hidden, _ := item.Blob(sha("t" + cid(2) + "-c"))
+		hidden, _ := item.Private(sha("t" + cid(2) + "-c"))
 		u := mustURL(t, out.Files[0].URL)
 		u.Path = "/" + hidden
 		if st, _, _ := get(bare, u.String()); st != 404 {
@@ -237,7 +237,7 @@ func TestReaderThroughWorker(t *testing.T) {
 		if st, body, _ := get(bare, out.Files[0].URL); st != 200 || body != "blurred" {
 			t.Fatalf("teaser: %d %q", st, body)
 		}
-		locked, _ := postItem.Blob(sha("locked-b"))
+		locked, _ := postItem.Private(sha("locked-b"))
 		u := mustURL(t, out.Files[0].URL)
 		u.Path = "/" + locked
 		if st, _, _ := get(bare, u.String()); st != 404 {

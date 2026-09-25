@@ -3,6 +3,7 @@ package video
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -72,7 +73,7 @@ func (e *Encoder) encodePoster(ctx context.Context, item media.Item) error {
 }
 
 // grabPoster grabs the selected (or automatic) frame from the widest
-// rendition into originals/poster, records it and hands it to the image job.
+// rendition into originals/, records it and hands it to the image job.
 func (e *Encoder) grabPoster(ctx context.Context, ms *media.Manifests, item media.Item, rec *media.SlotRecord, sel media.PosterFrame, f media.File) error {
 	dir, err := os.MkdirTemp(e.c.TempDir, tempPattern)
 	if err != nil {
@@ -108,23 +109,14 @@ func (e *Encoder) grabPoster(ctx context.Context, ms *media.Manifests, item medi
 		edit = nil
 	}
 
-	key, _ := item.SlotOriginal(media.PosterSlot)
-	opts := media.PutOptions{ContentType: "image/png"}
+	sum := sha256.Sum256(body)
+	name := media.SHA256Name(sum[:])
+	key, _ := item.Original(name)
+	opts := media.PutOptions{ContentType: "image/png", ChecksumSHA256: sum[:]}
 	if e.c.Store.Capabilities().ConditionalPut {
-		prev, err := e.c.Store.Head(ctx, key)
-		switch {
-		case errors.Is(err, media.ErrNotFound):
-			opts.IfNoneMatch = "*"
-		case err != nil:
-			return err
-		default:
-			opts.IfMatch = prev.ETag
-		}
+		opts.IfNoneMatch = "*"
 	}
-	obj, err := e.c.Store.Put(ctx, key, bytes.NewReader(body), int64(len(body)), opts)
-	if errors.Is(err, media.ErrPreconditionFailed) {
-		return media.ErrSuperseded // an upload landed meanwhile
-	} else if err != nil {
+	if _, err := e.c.Store.Put(ctx, key, bytes.NewReader(body), int64(len(body)), opts); err != nil && !errors.Is(err, media.ErrPreconditionFailed) {
 		return err
 	}
 	if err := ms.UpdateSlot(ctx, item.Ref().Content(), media.PosterSlot, func(cur *media.SlotRecord) error {
@@ -133,7 +125,7 @@ func (e *Encoder) grabPoster(ctx context.Context, ms *media.Manifests, item medi
 		if !unchanged {
 			return media.ErrSuperseded
 		}
-		cur.Original, cur.Edit = obj.ETag, edit
+		cur.Original, cur.Type, cur.Size, cur.Filename, cur.Edit = name, "image/png", int64(len(body)), "", edit
 		cur.Frame = &media.PosterFrame{Version: sel.Version, File: f.Name, Time: t, Auto: sel.Auto, Source: f.Source()}
 		return nil
 	}); err != nil {

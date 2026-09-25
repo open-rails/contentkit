@@ -1,12 +1,14 @@
 // Package layout defines media object keys, dependency-free so the access
 // worker can classify paths without importing the media runtime:
 //
-//	{tenant}/{kind}/{content_id}/manifest.json | manifests/{version}.json
-//	                            /originals/{sha256-hex | slot | slot.json | i-uuid}
-//	                            /staging/{u-uuid}                               multipart uploads until placed; never served
-//	                            /blobs/{sha256-hex | u-uuid}                    viewer token
-//	                            /editor/{sha256-hex | name.webp}                editor token
-//	                            /public/{name}.webp
+//	{tenant}/{kind}/{content_id}/manifest.json         the item's one manifest; never served
+//	                            /originals/sha256-{hex} uploads; never served
+//	                            /staging/u-{uuid}       multipart uploads until placed; never served
+//	                            /private/sha256-{hex}   every rendition; token-gated
+//	                            /public/sha256-{hex}    copies of the exposed renditions; anyone
+//
+// Every name but staging's is the SHA-256 of the object, so objects are
+// immutable: a change writes a new name.
 package layout
 
 import (
@@ -16,64 +18,45 @@ import (
 
 // Folder areas.
 const (
-	AreaManifest  = "manifest" // manifest.json and manifests/{version}.json
+	AreaManifest  = "manifest"
 	AreaOriginals = "originals"
-	AreaBlobs     = "blobs"
+	AreaStaging   = "staging"
+	AreaPrivate   = "private"
 	AreaPublic    = "public"
-	// AreaEditor holds what only editors may fetch: EditorOnly variant blobs
-	// and video posters before they are published.
-	AreaEditor = "editor"
-	// AreaStaging holds multipart uploads (u-{uuid}) until the media worker
-	// hashes them and places them in originals/ under their SHA-256.
-	AreaStaging = "staging"
 )
+
+// ManifestName is the manifest's key within the folder.
+const ManifestName = "manifest.json"
 
 const (
 	SHA256Prefix = "sha256-"
 	UploadPrefix = "u-"
 	InlinePrefix = "i-"
-	PublicExt    = ".webp"
 )
 
 // Key is a parsed object key.
 type Key struct {
 	Tenant, Kind, ID string
-	Area             string // AreaManifest, AreaOriginals, AreaStaging, AreaBlobs, AreaEditor or AreaPublic
-	Name             string // file name within the area; the version id for manifests/
+	Area             string
+	Name             string // file name within the area; "" for the manifest
 }
 
 // Parse classifies an object key; ok is false for anything outside the
-// layout, including keys nested deeper than it allows.
+// layout.
 func Parse(key string) (Key, bool) {
 	parts := strings.Split(key, "/")
-	if len(parts) < 4 || !ValidSegment(parts[0]) || !ValidSegment(parts[1]) || !ValidSegment(parts[2]) {
+	if len(parts) < 4 || len(parts) > 5 || !ValidSegment(parts[0]) || !ValidSegment(parts[1]) || !ValidSegment(parts[2]) {
 		return Key{}, false
 	}
 	k := Key{Tenant: parts[0], Kind: parts[1], ID: parts[2]}
 	rest := parts[3:]
 	switch {
-	case len(rest) == 1 && rest[0] == "manifest.json":
+	case len(rest) == 1 && rest[0] == ManifestName:
 		k.Area = AreaManifest
-	case len(rest) == 2 && rest[0] == "manifests":
-		v, ok := strings.CutSuffix(rest[1], ".json")
-		if !ok || !ValidSegment(v) {
-			return Key{}, false
-		}
-		k.Area, k.Name = AreaManifest, v
-	case len(rest) == 2 && rest[0] == AreaOriginals && ValidSegment(rest[1]):
-		k.Area, k.Name = AreaOriginals, rest[1]
 	case len(rest) == 2 && rest[0] == AreaStaging && ValidStagedName(rest[1]):
 		k.Area, k.Name = AreaStaging, rest[1]
-	case len(rest) == 2 && rest[0] == AreaBlobs && ValidBlobName(rest[1]):
-		k.Area, k.Name = AreaBlobs, rest[1]
-	case len(rest) == 2 && rest[0] == AreaEditor && ValidBlobName(rest[1]):
-		k.Area, k.Name = AreaEditor, rest[1]
-	case len(rest) == 2 && (rest[0] == AreaPublic || rest[0] == AreaEditor):
-		n, ok := strings.CutSuffix(rest[1], PublicExt)
-		if !ok || !ValidSegment(n) {
-			return Key{}, false
-		}
-		k.Area, k.Name = rest[0], n
+	case len(rest) == 2 && (rest[0] == AreaOriginals || rest[0] == AreaPrivate || rest[0] == AreaPublic) && ValidHashName(rest[1]):
+		k.Area, k.Name = rest[0], rest[1]
 	default:
 		return Key{}, false
 	}
@@ -94,11 +77,15 @@ func ValidSegment(s string) bool {
 	return true
 }
 
-// ValidBlobName accepts "sha256-{64 lowercase hex}" and "u-{uuid}".
-func ValidBlobName(name string) bool {
+// ValidHashName accepts "sha256-{64 lowercase hex}".
+func ValidHashName(name string) bool {
 	_, ok := ParseSHA256Name(name)
-	return ok || ValidStagedName(name)
+	return ok
 }
+
+// ValidSourceName accepts an uploaded file's name: a hash, or "u-{uuid}"
+// until the worker places it.
+func ValidSourceName(name string) bool { return ValidHashName(name) || ValidStagedName(name) }
 
 // ValidStagedName accepts "u-{uuid}", an upload whose hash is not yet known.
 func ValidStagedName(name string) bool {

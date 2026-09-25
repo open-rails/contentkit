@@ -95,9 +95,10 @@ with `Inline` set, route their `CanUpload` to `rt.Content.CanUpload` (PostWrite
 or PollWrite, and the post or poll must exist), register the `media/image`
 processor, and pass `content.Media{URLs: reader, Folders: jobs}`. The editor
 uploads each image with the SDK's `uploadInline(file, {ref: {kind: "post", id}})`
-(browser to bucket; the original stays private and is re-encoded to
-`public/{id}.webp`), then hands the returned name to ContentKit, which stores
-the plain public URL:
+(browser to bucket; the original stays private; the call returns once the
+worker has rendered it to `public/sha256-{hex}`), then hands the returned name
+to ContentKit, which stores the public URL (`Reader.InlineURL`; 400 until
+rendered):
 
 | Route | Body | Result |
 |---|---|---|
@@ -359,14 +360,13 @@ Cropping and rotating are ContentKit's: the host never decodes images.
   Mount `UploadHandler` with `Reader` (its origin and editor tokens build
   reply URLs). For one item use `Reader.Slot(ctx, ref, actor, slot)` /
   `GET /{kind}/{id}/slots/{slot}` (resolves; 404 for items the viewer cannot see). Listings
-  record that a slot is set from `Hooks.SlotEncoded` (plus the aspect of
-  native slots) and link it with `Reader.ListedSlot(ref, slot, aspect)`:
-  fixed URLs, rewritten in place, served `no-cache` with an ETag. After
-  changing slot specs, enqueue `ProcessJob{Ref}` per item; retired widths
-  are deleted.
+  store the `SlotListing` that `Hooks.SlotEncoded` hands over and link it
+  with `Reader.ListedSlot(ref, slot, listing)`: hash-named, immutable URLs;
+  a change reports new ones. After changing slot specs, enqueue
+  `ProcessJob{Ref}` per item; the sweep removes the old renditions.
 - Editors (`Resolution.Editor`) read `dims` (original size) and `edit` from
   the read API and show a `Spec{Unedited: true, EditorOnly: true}` variant,
-  which lives in `editor/` behind an editor-only token; the SDK's `useCrop` keeps the rect
+  which the read API lists to editors only; the SDK's `useCrop` keeps the rect
   in original pixels for any cropper UI.
 - Cap files per item with `Kind.MaxFiles` and `Kind.TypeLimits`
   (`{"video": {MaxFiles: 1}}`); commits over a cap get 409 `too_many_files`.
@@ -423,16 +423,15 @@ the frame or upload); `poster` is a reserved slot name.
   play (read API `hls`) preview, so locked items show their cover alone.
   Turn it off with `UploadUiProvider inlinePreview={false}` (or the
   component prop).
-- **Publishing**: the poster renders to `editor/` (editors only) and is
-  copied to `public/` (tokenless, `public/poster_{w}.webp`) only as the
-  item's `Exposure` allows. `JobsConfig.Resolver` resolves the item for an
-  anonymous actor and `JobsConfig.Exposure` (default
-  `media.DefaultExposure`) decides: not visible (draft, deleted) → nothing;
-  otherwise the poster (the teaser of paid or preview-cut items). Pass a
-  policy to vary it per item. Each poster encode republishes; call `jobs.PublishTx(ctx, tx, ref)` in every transaction that
-  changes what anonymous viewers see (publish, unpublish, soft delete,
-  restore, price or access changes). It re-resolves after writing, so it
-  converges on the latest state. Without a `Resolver` nothing is published.
+- **Exposure**: every item's covers (the poster, other slots, inline
+  images) render to `private/` and are copied to `public/` unless the item is
+  hidden. Call `jobs.ExposeTx(ctx, tx, ref)` in every transaction that
+  changes whether anonymous viewers see the item (create a draft, publish,
+  unpublish, soft delete, restore): it resolves the item anonymously
+  (`JobsConfig.Resolver`) and either deletes its public copies at once
+  (reporting them to `Hooks.PublicRemoved` for a CDN purge) or copies them
+  back. Paid and members-only items keep public covers; what they gate is
+  the `private/` token the read API grants.
 - Frames are cut from the HLS renditions (one segment range, confined ffmpeg
   inputs), so selection changes never download the source.
 - Upload API (`CanUpload` on the work), each answering `VideoImages`:
@@ -447,10 +446,10 @@ the frame or upload); `poster` is a reserved slot name.
     rendition. Needs `UploadOptions.Frames` (`video.NewFrames`, ffmpeg in the
     host image); `FrameConcurrency` (2) at once, then 429.
 - Viewers: `GET /{kind}/{id}/video-images` resolves (404 when hidden) and
-  lists what is published (editors: everything, from `editor/`), with the
-  cover's `file` and `time`. Listings build poster URLs without reads,
-  `Reader.ListedSlot(ref, media.PosterSlot, aspect)`, only for items whose
-  Exposure publishes them (default: visible items).
+  lists the public cover (editors of a hidden item: its `private/` URLs), with
+  the cover's `file` and `time`. Listings build poster URLs without reads,
+  `Reader.ListedSlot(ref, media.PosterSlot, listing)`, for items that are not
+  hidden.
 
 ## Production media delivery
 
@@ -463,14 +462,14 @@ the frame or upload); `poster` is a reserved slot name.
   keep `Cross-Origin-Resource-Policy` at its `same-site` default so other
   sites cannot hotlink media into `<img>`/`<video>`.
 - **Bucket**: private (no public ACL or policy); the worker's key is
-  read-only on `*/blobs/*`, `*/editor/*` and `*/public/*`; only the hosts
-  write.
-- **CDN**: may cache `public/` in a shared cache (URLs with a current `?v=`
-  are immutable). Never cache `blobs/` or `editor/` in a shared cache: the
-  token is not part of a cache key the CDN checks, so a cached object would be
-  served without one. They are `private` for the browser cache.
+  read-only on `*/private/*` and `*/public/*`; only the hosts write.
+- **CDN**: may cache `public/` in a shared cache (every name is immutable);
+  wire `Hooks.PublicRemoved` (Jobs and the media worker) to purge the keys a
+  hide or sweep deletes. Never cache `private/` in a shared cache: the token
+  is not part of a cache key the CDN checks, so a cached object would be
+  served without one. It is `private` for the browser cache.
 - **Denials are 404 by design**: a missing, malformed, expired, wrong-scope
-  or unknown-key token on `blobs/` or `editor/` gets the same response as a
+  or unknown-key token on `private/` gets the same response as a
   missing object (status, headers, body; `Cache-Control: no-store`), decided
   before any bucket request, so a response never reveals that protected
   content exists. The reason is logged at debug (`media-access: denied`).
@@ -493,9 +492,8 @@ the frame or upload); `poster` is a reserved slot name.
   once per outage and increments expvar
   `contentkit_media_ratelimit_redis_errors`: the limit is abuse protection,
   tokens and visibility checks still gate every file.
-- **Visibility**: wire `JobsConfig.Resolver` and call `PublishTx` on every
-  visibility change (see "Video posters and inline previews"); `DeleteItemsTx`
-  removes `public/` first.
+- **Visibility**: wire `JobsConfig.Resolver` and call `ExposeTx` on every
+  visibility change (see "Exposure"); `DeleteItemsTx` removes `public/` first.
 
 ## Example: hentai0 (video versions)
 

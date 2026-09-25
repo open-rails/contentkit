@@ -52,7 +52,7 @@ const read = (files: FileInfo[]): ReadResult => ({ access: "full", total: files.
 const vid = (index: number): FileInfo => ({ index, name: `${index}.mp4`, type: "video/mp4", w: 1920, h: 1080, duration: 40, hls: true });
 const hlsBase = (f: FileInfo) => `/hls/${f.name}/`;
 const poster = (file: string, time: number): VideoImages => ({
-  poster: { aspect: "16:9", pending: false, file, time, outputs: [{ name: "poster_480", w: 480, h: 270, url: "https://m/poster.webp" }] },
+  poster: { aspect: "16:9", pending: false, file, time, outputs: [{ w: 480, h: 270, url: "https://m/poster.webp" }] },
 });
 
 let io: { cb: IntersectionObserverCallback; el?: Element }[] = [];

@@ -1,7 +1,7 @@
 // Package accessworker is the media access worker's HTTP handler, run by
-// cmd/media-access: it checks the token for a blobs/ or editor/ path (URL
-// `?t=` or cookie `mt`), serves public/ paths without one, refuses
-// manifests and originals/, and streams the object from the private bucket
+// cmd/media-access: it checks the token for a private/ path (URL `?t=` or
+// cookie `mt`), serves public/ paths without one, refuses the manifest,
+// originals/ and staging/, and streams the object from the private bucket
 // with its own read-only key. Every refusal (no or bad token, unservable
 // area, missing object) is the same 404, so a response never reveals that
 // protected content exists; token denials are decided before any bucket
@@ -37,13 +37,13 @@ const (
 	// HealthPath answers 200 without touching the bucket.
 	HealthPath = "/healthz"
 
-	blobCacheControl   = "private, max-age=31536000, immutable"
-	editorCacheControl = "private, no-cache" // unpublished outputs, rewritten in place
-	publicCacheControl = "public, no-cache"  // rewritten in place; revalidated by ETag
+	// Every served name is its content's SHA-256: nothing is rewritten.
+	privateCacheControl = "private, max-age=31536000, immutable"
+	publicCacheControl  = "public, max-age=31536000, immutable"
 )
 
 // Config configures a Handler. The S3 key should only be able to read
-// */blobs/*, */editor/* and */public/*.
+// */private/* and */public/*.
 type Config struct {
 	Endpoint        string // path-style S3 endpoint, e.g. http://rook-ceph-rgw-external-rgw.rook-ceph.svc:7480
 	Bucket          string
@@ -168,7 +168,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var disposition string
 	switch k.Area {
 	case layout.AreaPublic:
-	case layout.AreaBlobs, layout.AreaEditor:
+	case layout.AreaPrivate:
 		q := r.URL.Query()
 		dl := q.Get("dl")
 		if err := h.authorize(r, q.Get("t"), key, dl); err != nil {
@@ -179,7 +179,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if dl != "" {
 			disposition = token.Attachment(dl)
 		}
-	default: // manifests and originals are never served
+	default: // the manifest, originals and staging are never served
 		h.fail(w, http.StatusNotFound)
 		return
 	}
@@ -266,13 +266,10 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, key string, k l
 			hdr[name] = v
 		}
 	}
-	switch {
-	case k.Area == layout.AreaPublic:
+	if k.Area == layout.AreaPublic {
 		hdr.Set("Cache-Control", publicCacheControl)
-	case k.Area == layout.AreaEditor && !layout.ValidBlobName(k.Name):
-		hdr.Set("Cache-Control", editorCacheControl)
-	default:
-		hdr.Set("Cache-Control", blobCacheControl)
+	} else {
+		hdr.Set("Cache-Control", privateCacheControl)
 	}
 	if disposition != "" {
 		hdr.Set("Content-Disposition", disposition)
