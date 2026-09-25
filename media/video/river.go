@@ -128,6 +128,7 @@ type chunkWorker struct {
 func (w *chunkWorker) Timeout(*river.Job[workqueue.VideoChunkArgs]) time.Duration { return time.Hour }
 
 func (w *chunkWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoChunkArgs]) error {
+	defer w.c.clearProgress(ctx, job.ID)
 	return w.c.runVideoJob(ctx, job.JobRow, func() error { return w.c.encodeChunk(ctx, job) })
 }
 
@@ -141,17 +142,19 @@ func (w *assembleWorker) Timeout(*river.Job[workqueue.VideoAssembleArgs]) time.D
 }
 
 func (w *assembleWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoAssembleArgs]) error {
+	defer w.c.clearProgress(ctx, job.ID)
 	return w.c.runVideoJob(ctx, job.JobRow, func() error { return w.c.assemble(ctx, job.Args, job.ID) })
 }
 
+func (c WorkerConfig) clearProgress(ctx context.Context, id int64) {
+	clearCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := workqueue.ClearProgress(clearCtx, c.Pool, c.Schema, id); err != nil {
+		c.Logger.WarnContext(clearCtx, "media/video: clear progress", "job", id, "error", err)
+	}
+}
+
 func (c WorkerConfig) runVideoJob(ctx context.Context, row *rivertype.JobRow, work func() error) error {
-	defer func() {
-		clearCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		defer cancel()
-		if err := workqueue.ClearProgress(clearCtx, c.Pool, c.Schema, row.ID); err != nil {
-			c.Logger.WarnContext(clearCtx, "media/video: clear progress", "job", row.ID, "error", err)
-		}
-	}()
 	if err := c.restoreRescuedAttempt(ctx, row); err != nil {
 		return snoozeOnShutdown(ctx, err)
 	}
