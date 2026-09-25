@@ -69,3 +69,13 @@ it("re-uploads a file whose original went stale before commit", async () => {
   expect(s.puts.length).toBe(3);
   expect(q.getSnapshot().items.every((i) => i.status === "committed")).toBe(true);
 });
+
+it("commits only the uploaded head of the queue with head", async () => {
+  const { q } = setup();
+  const [a, bad, c] = q.add([png("a.png", 1), new File([bytes(10)], "x.gif", { type: "" }), png("c.png", 3)]);
+  await until(q, (x) => x.items.every((i) => i.status !== "queued" && i.status !== "uploading"));
+  const files = await q.commit(undefined, { head: true });
+  expect(files.map((f) => f.name)).toEqual(["a.png"]);
+  const status = (id: string) => q.getSnapshot().items.find((i) => i.id === id)!.status;
+  expect([status(a!.id), status(bad!.id), status(c!.id)]).toEqual(["committed", "failed", "uploaded"]);
+});
