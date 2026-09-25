@@ -106,16 +106,13 @@ func (c WorkerConfig) assemble(ctx context.Context, args workqueue.VideoAssemble
 			return fmt.Errorf("media/video: rung %d cannot extend the current manifest", run.Rung)
 		}
 	}
-	if err := c.Encoder.assembleTracks(ctx, item, url.URL, dir, &p, k == 0, current, stages[0]); err != nil {
+	if err := c.Encoder.assembleTracks(ctx, item, url.URL, dir, &p, k == 0, current); err != nil {
 		return snoozeOnShutdown(ctx, err)
 	}
 	rungs := []rung{stages[k]}
 	hls := &media.HLS{Source: run.Source, Spec: run.Spec, SubsSpec: SubsSpec}
 	if k == 0 {
 		hls.Pending = rungNames(stages[1:])
-		if err := c.Encoder.storeTracks(ctx, item, dir, p, hls); err != nil {
-			return err
-		}
 	} else {
 		*hls = *current
 		hls.Video = slices.Clone(current.Video)
@@ -138,6 +135,14 @@ func (c WorkerConfig) assemble(ctx context.Context, args workqueue.VideoAssemble
 				return err
 			}
 			if codec == c.Encoder.downloadCodec() {
+				if k == 0 {
+					if err := c.Encoder.spriteFromRendition(ctx, path, dir, p, rung); err != nil {
+						return err
+					}
+					if err := c.Encoder.storeTracks(ctx, item, dir, p, hls); err != nil {
+						return err
+					}
+				}
 				download := filepath.Join(dir, "d"+name+".mp4")
 				if err := mux(ctx, dir, name, p, download); err != nil {
 					return err
@@ -377,7 +382,7 @@ func (e *Encoder) fetchWork(ctx context.Context, key, path string) error {
 	return err
 }
 
-func (e *Encoder) assembleTracks(ctx context.Context, item media.Item, src, dir string, p *plan, first bool, current *media.HLS, firstRung rung) error {
+func (e *Encoder) assembleTracks(ctx context.Context, item media.Item, src, dir string, p *plan, first bool, current *media.HLS) error {
 	if !first {
 		for i, audio := range current.Audio {
 			key, err := item.Private(audio.Blob)
@@ -409,15 +414,24 @@ func (e *Encoder) assembleTracks(ctx context.Context, item media.Item, src, dir 
 		p.subs = tracks
 		return nil
 	}
-	ps := pass{rung: firstRung, sprite: true,
-		enc: encoding{encoders: e.encoders, threads: e.c.Threads, preset: e.c.Preset,
-			topPreset: e.c.TopPreset}}
-	if err := ladder(ctx, src, dir, *p, ps, nil); err != nil {
-		return err
+	if len(p.audio)+len(p.subs) > 0 {
+		ps := pass{enc: encoding{threads: e.c.Threads}}
+		if err := ladder(ctx, src, dir, *p, ps, nil); err != nil {
+			return err
+		}
 	}
 	var err error
 	p.subs, err = keepSubs(ctx, e.c.Logger, dir, p.subs)
 	return err
+}
+
+// spriteFromRendition samples the already-assembled first rung, so the light
+// job never decodes a whole 4K source merely to produce thumbnails.
+func (e *Encoder) spriteFromRendition(ctx context.Context, path, dir string, p plan, rung rung) error {
+	p.video, p.audio, p.subs = 0, nil, nil
+	ps := pass{rung: rung, sprite: true, noTracks: true,
+		enc: encoding{threads: e.c.Threads}}
+	return ladder(ctx, path, dir, p, ps, nil)
 }
 
 func (e *Encoder) storeTracks(ctx context.Context, item media.Item, dir string, p plan, hls *media.HLS) error {
