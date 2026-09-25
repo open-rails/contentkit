@@ -15,8 +15,8 @@ import (
 )
 
 // FromEnv builds a Config's database and bucket from the environment, with
-// TuningFromEnv; the host then sets Kinds, Specs and Hooks. Close the Pool
-// when done.
+// TuningFromEnv; the host then sets Kinds, Specs and Hooks. Neither is dialed.
+// Close the Pool when done.
 //
 //	DATABASE_URL                 host Postgres (holds MEDIA_WORKER_SCHEMA)
 //	MEDIA_S3_ENDPOINT            e.g. http://rook-ceph-rgw-external.svc
@@ -38,13 +38,6 @@ func FromEnv(ctx context.Context) (Config, error) {
 		AccessKeyID:     os.Getenv("MEDIA_S3_ACCESS_KEY_ID"),
 		SecretAccessKey: os.Getenv("MEDIA_S3_SECRET_ACCESS_KEY"),
 		UsePathStyle:    pathStyle,
-	}
-	probe, err := mediaS3.New(s3)
-	if err != nil {
-		return c, err
-	}
-	if s3.Capabilities, err = media.Probe(ctx, probe, "_media-worker/"); err != nil {
-		return c, err
 	}
 	if c.Store, err = mediaS3.New(s3); err != nil {
 		return c, err

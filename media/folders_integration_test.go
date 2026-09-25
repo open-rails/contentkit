@@ -42,7 +42,7 @@ func TestNewItemNeverAdoptsLeftovers(t *testing.T) {
 	ctx := context.Background()
 	r := registry(t)
 	ms := s3test.Manifests(t, env.Store, r, media.ManifestOptions{})
-	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: r, Tenants: []string{env.Tenant}})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Locker: s3test.Locker(t, env.Store), Kinds: r, Tenants: []string{env.Tenant}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestSweepOrphansReportsThenDeletesAfterGrace(t *testing.T) {
 	ctx := context.Background()
 	r := registry(t)
 	clock := time.Now().Add(2 * time.Hour)
-	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: r, Tenants: []string{env.Tenant}, Now: func() time.Time { return clock }})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Locker: s3test.Locker(t, env.Store), Kinds: r, Tenants: []string{env.Tenant}, Now: func() time.Time { return clock }})
 	if err != nil {
 		t.Fatal(err)
 	}

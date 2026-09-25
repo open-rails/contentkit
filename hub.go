@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -240,7 +241,7 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 	}
 	store, err := h.requireStore()
 	if err != nil {
-		return SearchResult{}, err
+		return h.client.Search(ctx, userText, opts.SearchOptions) // no signal plane: unpersonalized
 	}
 	p := *opts.Personalize
 	if err := p.Subject.Validate(); err != nil {
@@ -284,7 +285,7 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 	for kind, ids := range idsByKind {
 		scores, err := store.PopularityFor(ctx, h.tenant, kind, ids, p.PopularityWindow)
 		if err != nil {
-			return SearchResult{}, err
+			return unpersonalized(ctx, content, offset, limit, err), nil
 		}
 		for id, s := range scores {
 			popularity[h.Content(kind, id).Key()] = s
@@ -322,7 +323,7 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 		}
 		states, err = store.States(ctx, h.tenant, p.Subject, refs)
 		if err != nil {
-			return SearchResult{}, err
+			return unpersonalized(ctx, content, offset, limit, err), nil
 		}
 	}
 
@@ -368,6 +369,19 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 	}
 	result.HasMore = result.HasMore || content.HasMore
 	return result, nil
+}
+
+// unpersonalized pages the oversampled content ranking when the signal plane
+// cannot personalize it: the signal plane is optional, search is not.
+func unpersonalized(ctx context.Context, content SearchResult, offset, limit int, err error) SearchResult {
+	slog.WarnContext(ctx, "contentkit: search personalization unavailable", "error", err)
+	out := SearchResult{Hits: []SearchHit{}, Truncated: content.Truncated, HasMore: content.HasMore}
+	if offset < len(content.Hits) {
+		end := min(offset+limit, len(content.Hits))
+		out.Hits = content.Hits[offset:end]
+		out.HasMore = out.HasMore || end < len(content.Hits)
+	}
+	return out
 }
 
 func (h *EmbeddedHub) Typeahead(ctx context.Context, userText string, opts TypeaheadOptions) ([]TypeaheadHit, error) {

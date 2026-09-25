@@ -215,6 +215,8 @@ func classify(err error) (int, string, string) {
 		return http.StatusNotFound, "not_found", "not found"
 	case errors.Is(err, ErrInvalidRequest):
 		return http.StatusBadRequest, "invalid_request", "invalid request"
+	case errors.Is(err, ErrUnavailable):
+		return http.StatusServiceUnavailable, "unavailable", "media storage is unavailable"
 	}
 	return http.StatusInternalServerError, "internal_error", "internal error"
 }

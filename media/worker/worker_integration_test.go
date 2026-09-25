@@ -9,7 +9,11 @@ import (
 	stdimage "image"
 	"image/color"
 	"image/png"
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,8 +33,10 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/tcpproxy"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
+	mediaS3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/worker"
 	"github.com/open-rails/contentkit/media/workqueue"
@@ -75,6 +81,15 @@ func (h *host) lastSettled(ref contentref.ContentRef) (media.Readiness, bool) {
 
 func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
 	t.Helper()
+	return newHostOn(t, nil, riverHooks...)
+}
+
+// imageTimeout overrides the worker's image job timeout in newHostOn (0: default).
+var imageTimeout time.Duration
+
+// newHostOn is newHost with the worker on workerStore(env) instead of env.Store.
+func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHooks ...rivertype.Hook) *host {
+	t.Helper()
 	env := s3test.Open(t)
 	if !env.Store.Capabilities().ConditionalPut {
 		t.Skip("backend lacks conditional PUT")
@@ -98,7 +113,7 @@ func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
 	if err := riverhelpers.ApplyMigrations(ctx, pool, schema); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: kinds, Tenants: []string{env.Tenant}, Resolver: editorResolver{}})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Locker: s3test.Locker(t, env.Store), Kinds: kinds, Tenants: []string{env.Tenant}, Resolver: editorResolver{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,8 +148,12 @@ func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Schema: h.workers, Store: env.Store, Kinds: kinds, HostSchema: schema,
-		TempDir: t.TempDir(), Threads: 2, RiverHooks: riverHooks,
+	var store media.Store = env.Store
+	if workerStore != nil {
+		store = workerStore(env)
+	}
+	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Schema: h.workers, Store: store, Kinds: kinds, HostSchema: schema,
+		TempDir: t.TempDir(), Threads: 2, RiverHooks: riverHooks, ImageTimeout: imageTimeout,
 		Hooks: media.Hooks{SlotEncoded: func(_ context.Context, ref contentref.ContentRef, slot string, l media.SlotListing) {
 			h.mu.Lock()
 			h.encoded[ref.String()+"#"+slot] = l
@@ -276,6 +295,9 @@ func TestOneShotWorkerStopsAfterOneJob(t *testing.T) {
 			env := s3test.Open(t)
 			pool := pgtest.Pool(t, nil)
 			schema := workerSchema(t, pool)
+			if err := workqueue.Migrate(context.Background(), pool, schema); err != nil {
+				t.Fatal(err)
+			}
 			scratch := t.TempDir()
 			active := filepath.Join(scratch, "ck-video-active")
 			if err := os.Mkdir(active, 0o700); err != nil {
@@ -423,6 +445,96 @@ func TestWorkerPlacesAndEncodesStagedVideo(t *testing.T) {
 // file cannot be processed (viewers never see it; its editor does), ready once
 // it is removed, with HostQueue.ExposeTx enqueuing the host's Expose in the
 // hook's transaction.
+// A worker started while the bucket is down waits (taking no jobs, so none
+// burn attempts), then works the queue once the bucket answers.
+func TestWorkerWaitsForTheBucket(t *testing.T) {
+	h, proxy := proxiedWorker(t, func(p *tcpproxy.Proxy) { p.Down() })
+	ctx := context.Background()
+	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 31))})
+	attempted := func() int {
+		var n int
+		if err := h.pool.QueryRow(ctx, "SELECT coalesce(sum(attempt), 0) FROM "+h.workers+".river_job").Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	time.Sleep(3 * time.Second)
+	if n := attempted(); n != 0 {
+		t.Fatalf("%d job attempts while the bucket was down", n)
+	}
+	proxy.Up(t)
+	eventually(t, "the variant after the bucket returned", time.Minute, func() bool {
+		m, _, err := h.manifests.Get(ctx, ref)
+		return err == nil && len(m.Files) == 1 && m.Files[0].Variants["thumb"].Blob != ""
+	})
+}
+
+// proxiedWorker is newHostOn with the worker's store behind proxy.
+func proxiedWorker(t *testing.T, setup func(*tcpproxy.Proxy)) (*host, *tcpproxy.Proxy) {
+	var proxy *tcpproxy.Proxy
+	h := newHostOn(t, func(env *s3test.Env) media.Store {
+		proxy = tcpproxy.New(t, env.Config.Endpoint)
+		setup(proxy)
+		cfg := env.Config
+		cfg.Endpoint, cfg.PublicEndpoint, cfg.Capabilities = proxy.URL, "", nil
+		store, err := mediaS3.New(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return store
+	})
+	return h, proxy
+}
+
+func (h *host) thumbed(t *testing.T, ref contentref.ContentRef) func() bool {
+	return func() bool {
+		m, _, err := h.manifests.Get(context.Background(), ref)
+		return err == nil && len(m.Files) == 1 && m.Files[0].Variants["thumb"].Blob != ""
+	}
+}
+
+// A bucket that accepts connections and never answers does not wedge the
+// worker: each readiness check has a deadline, and it starts once the bucket
+// answers.
+func TestWorkerSurvivesAHungBucket(t *testing.T) {
+	h, proxy := proxiedWorker(t, func(p *tcpproxy.Proxy) { p.Hang(t) })
+	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 41))})
+	time.Sleep(2 * time.Second)
+	proxy.Up(t)
+	eventually(t, "the variant after the bucket answered", 90*time.Second, h.thumbed(t, ref))
+}
+
+// A bucket outage after the worker started snoozes jobs instead of spending
+// their attempts, so a long outage never discards them.
+func TestWorkerSnoozesJobsDuringAnOutage(t *testing.T) {
+	defer func(d time.Duration) { media.UnavailableSnooze = d }(media.UnavailableSnooze)
+	media.UnavailableSnooze = 2 * time.Second
+	h, proxy := proxiedWorker(t, func(*tcpproxy.Proxy) {})
+	ctx := context.Background()
+	first := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	h.commit(t, first, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, first, "", "image/png", pngImage(t, 300, 450, 51))})
+	eventually(t, "the worker running", time.Minute, h.thumbed(t, first))
+
+	proxy.Down()
+	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 52))})
+	time.Sleep(8 * time.Second)
+	var attempts, errs int
+	if err := h.pool.QueryRow(ctx, "SELECT coalesce(max(attempt), 0), coalesce(max(cardinality(errors)), 0) FROM "+h.workers+
+		".river_job WHERE state <> 'completed'").Scan(&attempts, &errs); err != nil {
+		t.Fatal(err)
+	}
+	if attempts > 1 || errs > 0 {
+		var e string
+		_ = h.pool.QueryRow(ctx, "SELECT errors::text FROM "+h.workers+".river_job WHERE state <> 'completed' LIMIT 1").Scan(&e)
+		t.Fatalf("outage spent job attempts: attempt %d, %d errors: %s", attempts, errs, e)
+	}
+	proxy.Up(t)
+	eventually(t, "the variant after the outage", time.Minute, h.thumbed(t, ref))
+}
+
 func TestItemReadyAfterProcessing(t *testing.T) {
 	h := newHost(t)
 	ctx := context.Background()
@@ -669,4 +781,145 @@ func TestHostsShareADatabase(t *testing.T) {
 			t.Fatalf("schema %q accepted", bad)
 		}
 	}
+}
+
+// A host runs its media worker as its unprivileged app role; the worker
+// schema is migrated by the host's migration step, so worker.New must not
+// need DDL rights (CREATE on public for migration tracking).
+func TestWorkerRunsAsAnUnprivilegedRole(t *testing.T) {
+	env := s3test.Open(t)
+	ctx := context.Background()
+	admin := pgtest.Pool(t, nil)
+	host := pgtest.EmptySchema(t, ctx, admin)
+	if err := riverhelpers.ApplyMigrations(ctx, admin, host); err != nil {
+		t.Fatal(err)
+	}
+	schema := workerSchema(t, admin)
+	if err := workqueue.Migrate(ctx, admin, schema); err != nil {
+		t.Fatal(err)
+	}
+	dsn := pgtest.MediaWorkerRole(t, ctx, admin, schema, host)
+	app, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.Close)
+	kinds, err := media.NewRegistry(media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png"}, MaxBytes: 1 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := worker.New(ctx, worker.Config{Pool: app, Schema: schema, Store: env.Store, Kinds: kinds, HostSchema: host,
+		TempDir: t.TempDir(), Threads: 1}); err != nil {
+		t.Fatalf("worker as the app role: %v", err)
+	}
+}
+
+// faultyWorker is newHost with the worker's store behind an HTTP proxy whose
+// fault answers a request itself (true) or lets it through.
+func faultyWorker(t *testing.T, fault func(w http.ResponseWriter, r *http.Request) bool) *host {
+	return newHostOn(t, func(env *s3test.Env) media.Store {
+		target, _ := url.Parse(env.Config.Endpoint)
+		proxy := httputil.NewSingleHostReverseProxy(target)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !fault(w, r) {
+				proxy.ServeHTTP(w, r)
+			}
+		}))
+		t.Cleanup(srv.Close)
+		cfg := env.Config
+		cfg.Endpoint, cfg.PublicEndpoint = srv.URL, ""
+		store, err := mediaS3.New(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return store
+	})
+}
+
+// imageJob reports the state of the worker's one unfinished image job.
+func (h *host) imageJob(t *testing.T) (state string, attempt, errs, snoozes int) {
+	t.Helper()
+	err := h.pool.QueryRow(context.Background(), `SELECT state, attempt, coalesce(cardinality(errors), 0), coalesce((metadata->>'snoozes')::int, 0)
+		FROM `+h.workers+`.river_job WHERE kind = 'contentkit_media_image' ORDER BY id DESC LIMIT 1`).Scan(&state, &attempt, &errs, &snoozes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state, attempt, errs, snoozes
+}
+
+// discardNext makes the job's next failure its last and runs it now.
+func (h *host) discardNext(t *testing.T) {
+	t.Helper()
+	if _, err := h.pool.Exec(context.Background(), `UPDATE `+h.workers+`.river_job SET max_attempts = attempt + 1, scheduled_at = now()
+		WHERE kind = 'contentkit_media_image' AND state IN ('retryable', 'available')`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A job that outruns its own timeout spends its attempts (the bucket is
+// fine; the job is not), and is discarded when they run out.
+func TestWorkerTimedOutJobSpendsAttempts(t *testing.T) {
+	defer func(d time.Duration) { imageTimeout = d }(imageTimeout)
+	imageTimeout = 2 * time.Second
+	var name atomic.Value
+	name.Store("\x00")
+	h := faultyWorker(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, name.Load().(string)) {
+			<-r.Context().Done() // this one object never answers
+			return true
+		}
+		return false
+	})
+	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	original := h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 61))
+	name.Store(original)
+	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: original})
+	eventually(t, "the timed-out attempt recorded", time.Minute, func() bool { _, _, errs, _ := h.imageJob(t); return errs > 0 })
+	if state, _, _, snoozes := h.imageJob(t); state == "scheduled" || snoozes != 0 {
+		t.Fatalf("timed-out job: state %s, snoozes %d; want an attempt spent, no snooze", state, snoozes)
+	}
+	h.discardNext(t)
+	eventually(t, "discarded after its attempts", time.Minute, func() bool { state, _, _, _ := h.imageJob(t); return state == "discarded" })
+}
+
+// A deterministic 500 on one object of a healthy bucket spends attempts too.
+func TestWorkerBrokenObjectSpendsAttempts(t *testing.T) {
+	var name atomic.Value
+	name.Store("\x00")
+	h := faultyWorker(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, name.Load().(string)) {
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `<Error><Code>InternalError</Code></Error>`)
+			return true
+		}
+		return false
+	})
+	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	original := h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 62))
+	name.Store(original)
+	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: original})
+	eventually(t, "the failed attempt recorded", time.Minute, func() bool { _, _, errs, _ := h.imageJob(t); return errs > 0 })
+	if state, _, _, snoozes := h.imageJob(t); state == "scheduled" || snoozes != 0 {
+		t.Fatalf("broken object: state %s, snoozes %d; want an attempt spent, no snooze", state, snoozes)
+	}
+	h.discardNext(t)
+	eventually(t, "discarded after its attempts", time.Minute, func() bool { state, _, _, _ := h.imageJob(t); return state == "discarded" })
+}
+
+// Past MaxOutageSnoozes an outage spends attempts again (the backstop).
+func TestWorkerOutageSnoozesAreCapped(t *testing.T) {
+	defer func(d time.Duration, n int) { media.UnavailableSnooze, media.MaxOutageSnoozes = d, n }(media.UnavailableSnooze, media.MaxOutageSnoozes)
+	media.UnavailableSnooze, media.MaxOutageSnoozes = time.Second, 2
+	h, proxy := proxiedWorker(t, func(*tcpproxy.Proxy) {})
+	first := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	h.commit(t, first, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, first, "", "image/png", pngImage(t, 300, 450, 71))})
+	eventually(t, "the worker running", time.Minute, h.thumbed(t, first))
+	proxy.Down()
+	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 72))})
+	eventually(t, "an attempt spent after the snooze cap", time.Minute, func() bool {
+		_, _, errs, snoozes := h.imageJob(t)
+		return errs > 0 && snoozes >= 2
+	})
 }

@@ -91,7 +91,7 @@ func Open(t testing.TB) *Env {
 	if Require("checksum") && !caps.ChecksumSHA256 {
 		t.Fatal("backend lacks required x-amz-checksum-sha256 enforcement")
 	}
-	cfg.Capabilities = caps
+	cfg.Capabilities = &caps
 	if env.Store, err = mediaS3.New(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func Open(t testing.TB) *Env {
 // WithCapabilities returns a store over the same bucket claiming caps.
 func (e *Env) WithCapabilities(t testing.TB, caps media.Capabilities) *mediaS3.Store {
 	cfg := e.Config
-	cfg.Capabilities = caps
+	cfg.Capabilities = &caps
 	s, err := mediaS3.New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -117,19 +117,16 @@ func (e *Env) WithoutConditionalPut(t testing.TB) *Env {
 	caps.ConditionalPut = false
 	c := *e
 	c.Store = e.WithCapabilities(t, caps)
-	c.Config.Capabilities = caps
+	c.Config.Capabilities = &caps
 	return &c
 }
 
-// Locker is what a host wires for store: nil with conditional PUT, else a
-// PGLocker on CONTENTKIT_TEST_URL (skipping the test when it is unset).
+// Locker is what a host wires: a PGLocker on CONTENTKIT_TEST_URL (skipping
+// the test when it is unset).
 func Locker(t testing.TB, store media.Store) media.Locker {
 	t.Helper()
-	if store.Capabilities().ConditionalPut {
-		return nil
-	}
 	if os.Getenv("CONTENTKIT_TEST_URL") == "" {
-		t.Skip("backend lacks conditional PUT, so manifest edits need a Postgres PGLocker: set CONTENTKIT_TEST_URL")
+		t.Skip("manifest edits need a Postgres PGLocker: set CONTENTKIT_TEST_URL")
 	}
 	return media.PGLocker(pgtest.Pool(t, nil))
 }

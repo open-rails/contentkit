@@ -159,7 +159,8 @@ type exposeWorker struct {
 
 func (w *exposeWorker) Timeout(*river.Job[exposeArgs]) time.Duration { return 5 * time.Minute }
 
-func (w *exposeWorker) Work(ctx context.Context, job *river.Job[exposeArgs]) error {
+func (w *exposeWorker) Work(ctx context.Context, job *river.Job[exposeArgs]) (err error) {
+	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
 	if _, err := w.j.cfg.Kinds.Item(job.Args.Ref); err != nil {
 		return river.JobCancel(err)
 	}

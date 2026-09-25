@@ -84,7 +84,7 @@ func newContentEnv(t *testing.T) *contentEnv {
 		t.Fatal(err)
 	}
 	manifests := s3test.Manifests(t, s.Store, kinds, media.ManifestOptions{})
-	jobs, err := media.NewJobs(media.JobsConfig{Store: s.Store, Kinds: kinds})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: s.Store, Locker: s3test.Locker(t, s.Store), Kinds: kinds})
 	if err != nil {
 		t.Fatal(err)
 	}

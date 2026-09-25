@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -106,10 +107,7 @@ func main() {
 	_, err = store.Client().CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &cfg.Bucket})
 	must(err)
 	defer drop(store)
-	cfg.Capabilities, err = media.Probe(ctx, store, "probe/")
-	must(err)
-	store, err = mediaS3.New(cfg)
-	must(err)
+	must(store.Check(ctx, "probe/"))
 
 	kinds, err := media.NewRegistry(
 		media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
@@ -119,7 +117,7 @@ func main() {
 			Slots: map[string]media.Slot{"cover": {Aspect: media.Ratio("1:2"), Widths: []int{50}}}},
 	)
 	must(err)
-	manifests, err := media.NewManifests(store, kinds, media.ManifestOptions{})
+	manifests, err := media.NewManifests(store, kinds, media.ManifestOptions{Locker: &procLocker{}})
 	must(err)
 	key := token.Key{ID: "k1", Secret: bytes.Repeat([]byte("s"), 32)}
 	ring, err := token.NewRing(key, nil)
@@ -241,4 +239,14 @@ func must(err error) {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+// procLocker serializes edits within this single process (no Postgres here).
+type procLocker struct{ locks sync.Map }
+
+func (l *procLocker) Lock(ctx context.Context, key string) (func(), error) {
+	m, _ := l.locks.LoadOrStore(key, &sync.Mutex{})
+	mu := m.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock, nil
 }

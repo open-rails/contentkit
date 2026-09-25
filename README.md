@@ -200,11 +200,11 @@ kinds, _ := media.NewRegistry(
 		Zip:    "high"},
 	media.Kind{Name: "video", Types: []string{"video/mp4", "video/x-matroska"}, MaxBytes: 20 << 30, Video: true})
 store, _ := s3.New(s3.Config{Bucket: "media", Endpoint: rgw, PublicEndpoint: "https://s3.doujins.ai", UsePathStyle: true,
-	AccessKeyID: id, SecretAccessKey: secret, Capabilities: caps}) // caps from media.Probe
+	AccessKeyID: id, SecretAccessKey: secret}) // never dials; capabilities come from the first Check
 key, _ := token.ParseKey(os.Getenv("MEDIA_TOKEN_KEY")) // "{kid}:{base64}", shared with media-access
 ring, _ := token.NewRing(key, nil)
 
-jobs, _ := media.NewJobs(media.JobsConfig{Store: store, Kinds: kinds, Tenants: []string{"d"}, Limiter: limiter, Resolver: resolver})
+jobs, _ := media.NewJobs(media.JobsConfig{Store: store, Locker: media.PGLocker(pool), Kinds: kinds, Tenants: []string{"d"}, Limiter: limiter, Resolver: resolver})
 manifests, _ := media.NewManifests(store, kinds, media.ManifestOptions{Locker: media.PGLocker(pool), Sweeps: jobs})
 _ = workqueue.Migrate(ctx, pool, "doujins_media_worker") // this host's worker schema, drained by its media worker
 queue, _ := workqueue.New(pool, kinds, "doujins_media_worker")
@@ -260,16 +260,23 @@ its `media.Registry`, `image.SpecChooser` and `media.Hooks` (`Failed`,
 ```go
 cfg, _ := worker.FromEnv(ctx) // DATABASE_URL, MEDIA_S3_*, MEDIA_WORKER_SCHEMA, MEDIA_HOST_RIVER_SCHEMA, MEDIA_WORKER_* (see worker.FromEnv)
 cfg.Kinds, cfg.Specs, cfg.Hooks = kinds, specs, hooks // the host's media config package
-w, _ := worker.New(ctx, cfg)
+w, _ := worker.New(ctx, cfg) // no DDL: the host's migrate step runs workqueue.Migrate(ctx, pool, schema)
 _ = w.Run(ctx) // until SIGTERM; running jobs get MEDIA_WORKER_SHUTDOWN_GRACE
 ```
+
+`worker.New` needs no DDL rights, so the worker runs as the host's
+unprivileged app role; the host applies `workqueue.Migrate` with its other
+migrations.
 
 `cmd/media-worker` (image `ghcr.io/open-rails/contentkit-media-worker`) is
 the stock build for hosts whose kinds are plain data: it reads them from
 `MEDIA_KINDS_FILE` (a JSON array of `media.Kind`). The worker hands a video
 item's poster publish, and folder sweeps after its edits,
 back to the host's River schema (`MEDIA_HOST_RIVER_SCHEMA`), where
-`jobs.RiverJobs()` runs them with the host's `Resolver`.
+`jobs.RiverJobs()` runs them with the host's `Resolver`. It never exits for a
+missing dependency: it runs no DDL (the host migrates `MEDIA_WORKER_SCHEMA`) and its build is retried while Postgres is down; `Run`
+takes no jobs until the bucket answers, and `MEDIA_METRICS_ADDR` serves
+`/livez`, `/readyz` (built), `/statusz` and `app_dependency_up` with /metrics.
 
 **Process on upload** (`UploadOptions.ProcessOnUpload`, default false): the
 presign reply tells the SDK to commit each file as soon as it is uploaded,
@@ -299,9 +306,24 @@ its Expose with `HostQueue.ExposeTx` in the same `tx`). Independently, reads
 never show a non-editor a file with nothing processed to serve, or a failed
 one (`File.Servable`): media added to live content appears once processed.
 
-`Edit` writes with `If-Match` (or `If-None-Match: *`) and retries on conflict;
-without `Capabilities.ConditionalPut` it serializes on a Postgres advisory lock
-instead. Reads are cached in process and revalidated by ETag. Presigned PUTs
+`Edit` always runs under the `Locker` (required: a Postgres advisory lock,
+`PGLocker`, shared by every process on the bucket), and writes with
+`If-Match` (or `If-None-Match: *`) once the store reports conditional PUT,
+retrying on conflict.
+
+**The bucket is optional at startup.** `s3.New` never dials; register
+`store.Check(ctx, prefix)` as the host's optional S3 dependency probe
+(helpers `deps`). Its first success probes the backend's capabilities unless
+`Config.Capabilities` declares them; a probe records nothing unless every
+step succeeded or was refused cleanly (412, checksum mismatch, 501), so a
+throttled or cut-off probe is retried. Until then the store claims none
+(locked unconditional edits, server-side rehash). An unreachable or 5xx
+bucket surfaces as `media.ErrUnavailable`: 503 `unavailable` from the read
+and upload handlers. In media jobs it becomes a River snooze (not an
+attempt) only when the job's own context is live and a fresh bounded
+`Check` confirms the bucket is down, capped by `MaxOutageSnoozes`; a job
+that outran its timeout or one broken object spends attempts
+(`media.SnoozeUnavailable`). Reads are cached in process and revalidated by ETag. Presigned PUTs
 bind `Content-Type`, `Content-Length` and `x-amz-checksum-sha256`.
 
 **Uploads** go straight to the bucket (`media.Uploads`, served by
@@ -713,8 +735,8 @@ Media tests also need an S3 backend (`CONTENTKIT_TEST_S3_ENDPOINT`,
 own CI job with libvips, and the other jobs exclude it. To record a Ceph RGW
 release's capabilities, point the same variables at an RGW bucket and run
 `go test ./media/... -v -count=1`; the log prints the probed capabilities.
-On a backend without conditional PUT the tests edit manifests under
-`PGLocker`, so they also need `CONTENTKIT_TEST_URL` (they skip without it).
+Manifest edits run under `PGLocker`, so the tests also need
+`CONTENTKIT_TEST_URL` (they skip without it).
 `media/video` tests also need `ffmpeg` and `ffprobe` on `PATH` (they skip
 without them unless `CONTENTKIT_TEST_FFMPEG=1`).
 

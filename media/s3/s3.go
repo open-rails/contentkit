@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -21,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+	"github.com/open-rails/helpers/deps"
 
 	"github.com/open-rails/contentkit/media"
 )
@@ -34,9 +36,10 @@ type Config struct {
 	AccessKeyID     string
 	SecretAccessKey string
 	UsePathStyle    bool
-	// Capabilities of the backend, from media.Probe or the recorded results
-	// for its release. Without ConditionalPut, manifests need a Locker.
-	Capabilities media.Capabilities
+	// Capabilities of the backend as recorded for its release. Nil: Check
+	// probes them once the bucket answers; until then the store claims none
+	// (edits write unconditionally under the Locker, uploads rehash).
+	Capabilities *media.Capabilities
 	// CopyPartSize is the part size of a multipart copy, used for objects
 	// larger than it; default MaxSingleCopy (tests set a few MiB).
 	CopyPartSize int64
@@ -55,7 +58,8 @@ type Store struct {
 	internal *url.URL
 	public   *url.URL
 	pathSty  bool
-	caps     media.Capabilities
+	caps     atomic.Pointer[media.Capabilities]
+	probed   atomic.Bool
 	part     int64
 }
 
@@ -96,11 +100,38 @@ func New(cfg Config) (*Store, error) {
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	})
-	return &Store{client: client, creds: creds, signer: v4.NewSigner(), bucket: cfg.Bucket, region: cfg.Region,
-		internal: internal, public: pub, pathSty: cfg.UsePathStyle, caps: cfg.Capabilities, part: cfg.CopyPartSize}, nil
+	st := &Store{client: client, creds: creds, signer: v4.NewSigner(), bucket: cfg.Bucket, region: cfg.Region,
+		internal: internal, public: pub, pathSty: cfg.UsePathStyle, part: cfg.CopyPartSize}
+	caps := media.Capabilities{}
+	if cfg.Capabilities != nil {
+		caps = *cfg.Capabilities
+	}
+	st.caps.Store(&caps)
+	st.probed.Store(cfg.Capabilities != nil)
+	return st, nil
 }
 
-func (s *Store) Capabilities() media.Capabilities { return s.caps }
+func (s *Store) Capabilities() media.Capabilities { return *s.caps.Load() }
+
+// Check reports whether the bucket answers, probing the backend's
+// capabilities (media.Probe under prefix) until that has succeeded once. New
+// never dials, so hosts start without the bucket and run Check as their S3
+// dependency probe.
+func (s *Store) Check(ctx context.Context, prefix string) error {
+	if s.probed.Load() {
+		for _, err := range s.List(ctx, prefix+"_health/") {
+			return err
+		}
+		return nil
+	}
+	caps, err := media.Probe(ctx, s, prefix)
+	if err != nil {
+		return err
+	}
+	s.caps.Store(&caps)
+	s.probed.Store(true)
+	return nil
+}
 
 // Client exposes the SDK client for bucket administration and tests.
 func (s *Store) Client() *s3.Client { return s.client }
@@ -397,6 +428,10 @@ func mapErr(op, key string, err error) error {
 		sentinel = media.ErrNotFound
 	case code == "PreconditionFailed" || code == "ConditionalRequestConflict":
 		sentinel = media.ErrPreconditionFailed
+	case code == "XAmzContentChecksumMismatch" || code == "BadDigest" || code == "InvalidDigest":
+		sentinel = media.ErrChecksumMismatch
+	case code == "NotImplemented":
+		sentinel = media.ErrNotImplemented
 	case errors.As(err, &re):
 		switch re.HTTPStatusCode() {
 		case http.StatusNotFound:
@@ -407,7 +442,16 @@ func mapErr(op, key string, err error) error {
 			sentinel = media.ErrPreconditionFailed
 		case http.StatusNotModified:
 			sentinel = media.ErrNotModified
+		case http.StatusNotImplemented:
+			sentinel = media.ErrNotImplemented
+		default:
+			if re.HTTPStatusCode() >= 500 {
+				sentinel = media.ErrUnavailable
+			}
 		}
+	}
+	if sentinel == nil && deps.IsConnectivity(err) {
+		return fmt.Errorf("%w: s3 %s %s: %w", media.ErrUnavailable, op, key, err)
 	}
 	if sentinel != nil {
 		return fmt.Errorf("%w: s3 %s %s", sentinel, op, key)

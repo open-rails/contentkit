@@ -22,6 +22,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/open-rails/helpers/deps"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
@@ -133,12 +134,11 @@ type Worker struct {
 	singleDone    <-chan struct{}
 }
 
-// New migrates Schema and builds the River client with the image and video workers.
+// New builds the River client with the image and video workers. It needs no
+// DDL rights: the host applies workqueue.Migrate(Schema) in its migration
+// step, so the worker can run as the host's unprivileged app role.
 func New(ctx context.Context, c Config) (*Worker, error) {
 	if err := c.defaults(); err != nil {
-		return nil, err
-	}
-	if err := workqueue.Migrate(ctx, c.Pool, c.Schema); err != nil {
 		return nil, err
 	}
 	// One-shot workers use pod-private scratch, which Kubernetes removes with
@@ -226,9 +226,30 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 // Client is the worker's River client (tests subscribe to its events).
 func (w *Worker) Client() *river.Client[pgx.Tx] { return w.client }
 
-// Run works jobs until ctx is done. Single-queue workers exit after one task
-// or one idle minute. Running jobs get ShutdownGrace before cancellation.
+// checkTimeout bounds one readiness check, so a bucket that accepts
+// connections and never answers cannot wedge Run.
+const checkTimeout = 10 * time.Second
+
+// Run waits for the bucket (every job needs it; waiting burns no job
+// attempts), then works jobs until ctx is done. Single-queue workers exit
+// after one task or one idle minute. Running jobs get ShutdownGrace before
+// cancellation.
 func (w *Worker) Run(ctx context.Context) error {
+	for attempt := 0; ; attempt++ {
+		checkCtx, cancel := context.WithTimeout(ctx, checkTimeout)
+		err := w.c.Store.Check(checkCtx, "_media-worker/")
+		cancel()
+		if err == nil {
+			break
+		}
+		wait := deps.Backoff(attempt, 500*time.Millisecond, 30*time.Second)
+		w.c.Logger.Warn("media-worker: waiting for the bucket", "attempt", attempt+1, "retry_in", wait.Round(time.Millisecond), "error", err.Error())
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(wait):
+		}
+	}
 	if err := w.client.Start(ctx); err != nil {
 		return err
 	}
@@ -272,7 +293,8 @@ type imageWorker struct {
 func (w *imageWorker) Timeout(*river.Job[workqueue.ImageArgs]) time.Duration { return w.c.ImageTimeout }
 
 // Work runs one image job, after any equal job it follows.
-func (w *imageWorker) Work(ctx context.Context, job *river.Job[workqueue.ImageArgs]) error {
+func (w *imageWorker) Work(ctx context.Context, job *river.Job[workqueue.ImageArgs]) (err error) {
+	defer func() { err = media.SnoozeUnavailable(ctx, w.c.Store, job.JobRow, err) }()
 	pj := media.ProcessJob{Ref: job.Args.Ref, Slot: job.Args.Slot}
 	if _, err := w.c.Kinds.Item(pj.Ref); err != nil {
 		return river.JobCancel(err)

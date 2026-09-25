@@ -11,6 +11,7 @@ import (
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/internal/s3test"
 	"github.com/open-rails/contentkit/media/video"
 )
 
@@ -95,7 +96,7 @@ func TestAspectOutOfRangeFailsPermanently(t *testing.T) {
 	e := newEnv(t, nil, nil)
 	var failed atomic.Int32
 	var reason error
-	enc, err := video.New(video.Config{Store: e.store, TempDir: t.TempDir(), Threads: 2,
+	enc, err := video.New(video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(), Threads: 2,
 		Hooks: media.Hooks{Failed: func(_ context.Context, ref contentref.ContentRef, file string, err error) {
 			if ref == e.ref && file == "source" {
 				failed.Add(1)

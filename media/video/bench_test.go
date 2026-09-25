@@ -96,7 +96,7 @@ func benchSample(t *testing.T, src string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ms, err := media.NewManifests(s3.Store, kinds, media.ManifestOptions{})
+	ms, err := media.NewManifests(s3.Store, kinds, media.ManifestOptions{Locker: s3test.Locker(t, s3.Store)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func benchSample(t *testing.T, src string) {
 		t.Fatal(err)
 	}
 
-	cfg := video.Config{Store: s3.Store, TempDir: os.Getenv("CONTENTKIT_BENCH_TMP")}
+	cfg := video.Config{Store: s3.Store, Locker: s3test.Locker(t, s3.Store), TempDir: os.Getenv("CONTENTKIT_BENCH_TMP")}
 	if cfg.TempDir == "" {
 		cfg.TempDir = t.TempDir()
 	}

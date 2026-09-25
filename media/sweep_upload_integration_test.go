@@ -37,7 +37,7 @@ func TestPresignAndCommitNeverReuseAnOriginalTheSweepMayTake(t *testing.T) {
 	// Grace 12s: presign reuses unreferenced objects younger than 6s; a
 	// commit accepts them until 3s before the sweep may take them (age 9s).
 	const grace = 12 * time.Second
-	jobs, _ := media.NewJobs(media.JobsConfig{Store: s, Kinds: kinds, Grace: grace})
+	jobs, _ := media.NewJobs(media.JobsConfig{Store: s, Locker: s3test.Locker(t, s), Kinds: kinds, Grace: grace})
 	manifests := s3test.Manifests(t, s, kinds, media.ManifestOptions{})
 	uploads, err := media.NewUploads(media.UploadOptions{Store: s, Kinds: kinds, Manifests: manifests, Grace: grace,
 		Authorizer: grants{"alice": {Allowed: true}}})
@@ -162,7 +162,7 @@ func TestSweepSparesAnOriginalRefreshedDuringTheSweep(t *testing.T) {
 	}
 	const grace = 4 * time.Second
 	hs := &hookStore{Store: env.Store}
-	jobs, _ := media.NewJobs(media.JobsConfig{Store: hs, Kinds: kinds, Grace: grace})
+	jobs, _ := media.NewJobs(media.JobsConfig{Store: hs, Locker: s3test.Locker(t, hs), Kinds: kinds, Grace: grace})
 	manifests := s3test.Manifests(t, env.Store, kinds, media.ManifestOptions{})
 	uploads, err := media.NewUploads(media.UploadOptions{Store: env.Store, Kinds: kinds, Manifests: manifests, Grace: grace,
 		Authorizer: grants{"alice": {Allowed: true}}})

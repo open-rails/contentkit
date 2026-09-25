@@ -146,6 +146,14 @@ func (w *assembleWorker) Work(ctx context.Context, job *river.Job[workqueue.Vide
 	return w.c.runVideoJob(ctx, job.JobRow, func() error { return w.c.assemble(ctx, job.Args, job.ID) })
 }
 
+// store is the bucket the encoder writes, nil without an encoder.
+func (c WorkerConfig) store() media.Store {
+	if c.Encoder == nil {
+		return nil
+	}
+	return c.Encoder.c.Store
+}
+
 func (c WorkerConfig) clearProgress(ctx context.Context, id int64) {
 	clearCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
@@ -161,7 +169,7 @@ func (c WorkerConfig) runVideoJob(ctx context.Context, row *rivertype.JobRow, wo
 	if row.Attempt > workqueue.MaxAttempts {
 		return river.JobCancel(fmt.Errorf("media/video: %d failed attempts", row.Attempt-1))
 	}
-	err := snoozeOnShutdown(ctx, work())
+	err := media.SnoozeUnavailable(ctx, c.store(), row, snoozeOnShutdown(ctx, work()))
 	var snooze *river.JobSnoozeError
 	var cancelled *river.JobCancelError
 	if err != nil && row.Attempt >= workqueue.MaxAttempts && !errors.As(err, &snooze) && !errors.As(err, &cancelled) {
@@ -204,7 +212,8 @@ func (w *audioWorker) Timeout(*river.Job[workqueue.AudioArgs]) time.Duration { r
 
 // Work encodes the manifest's stale audio files under its own per-manifest
 // lock, so a video encode of the same item does not hold it back.
-func (w *audioWorker) Work(ctx context.Context, job *river.Job[workqueue.AudioArgs]) error {
+func (w *audioWorker) Work(ctx context.Context, job *river.Job[workqueue.AudioArgs]) (err error) {
+	defer func() { err = media.SnoozeUnavailable(ctx, w.c.store(), job.JobRow, err) }()
 	item, err := w.c.Kinds.Item(job.Args.Ref)
 	if err == nil && item.Kind().Audio == nil {
 		err = fmt.Errorf("media/video: kind %q has no audio", item.Kind().Name)
