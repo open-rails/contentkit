@@ -191,16 +191,16 @@ func TestWorkerQueuesSecondStage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	pool := pgtest.Pool(t, nil)
-	if err := workqueue.Migrate(ctx, pool); err != nil {
+	if err := workqueue.Migrate(ctx, pool, testSchema); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "DELETE FROM "+workqueue.Schema+".river_job"); err != nil {
+	if _, err := pool.Exec(ctx, "DELETE FROM "+testSchema+".river_job"); err != nil {
 		t.Fatal(err)
 	}
 	var enq *workqueue.Queue
 	e := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return enq.Enqueue(ctx, j) }))
 	var err error
-	if enq, err = workqueue.New(pool, e.kinds); err != nil {
+	if enq, err = workqueue.New(pool, e.kinds, testSchema); err != nil {
 		t.Fatal(err)
 	}
 	e.commit(t, fixture{w: 1280, h: 720, secs: 5, rate: 30, audio: 1, tone: 440}.make(t), media.OpInsert)
@@ -208,7 +208,7 @@ func TestWorkerQueuesSecondStage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wc := video.WorkerConfig{Encoder: enc, Pool: pool, Kinds: e.kinds, Timeout: time.Hour}
+	wc := video.WorkerConfig{Encoder: enc, Pool: pool, Schema: testSchema, Kinds: e.kinds, Timeout: time.Hour}
 	contribution, err := video.Contribution(wc)
 	if err != nil {
 		t.Fatal(err)
@@ -327,14 +327,14 @@ func TestPassthroughTopRung(t *testing.T) {
 func TestCancelJobs(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Pool(t, nil)
-	if err := workqueue.Migrate(ctx, pool); err != nil {
+	if err := workqueue.Migrate(ctx, pool, testSchema); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "DELETE FROM "+workqueue.Schema+".river_job"); err != nil {
+	if _, err := pool.Exec(ctx, "DELETE FROM "+testSchema+".river_job"); err != nil {
 		t.Fatal(err)
 	}
 	e := newEnv(t, nil, nil)
-	enq, err := workqueue.New(pool, e.kinds)
+	enq, err := workqueue.New(pool, e.kinds, testSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +350,7 @@ func TestCancelJobs(t *testing.T) {
 		t.Fatalf("cancelled %d: %v", n, err)
 	}
 	var states []string
-	rows, _ := pool.Query(ctx, "SELECT state FROM "+workqueue.Schema+".river_job ORDER BY id")
+	rows, _ := pool.Query(ctx, "SELECT state FROM "+testSchema+".river_job ORDER BY id")
 	for rows.Next() {
 		var s string
 		_ = rows.Scan(&s)

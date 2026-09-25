@@ -114,6 +114,9 @@ type env struct {
 
 var admin = access.Actor{ID: "admin", Kind: "user"}
 
+// testSchema is this package's worker schema.
+const testSchema = "ck_test_video_worker"
+
 func newEnv(t *testing.T, store func(media.Store) media.Store, queue media.ProcessQueue) *env {
 	t.Helper()
 	requireFFmpeg(t)
@@ -542,20 +545,20 @@ func TestWorkerEncodesCommittedUploads(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	pool := pgtest.Pool(t, nil)
-	if err := workqueue.Migrate(ctx, pool); err != nil {
+	if err := workqueue.Migrate(ctx, pool, testSchema); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "DELETE FROM "+workqueue.Schema+".river_job"); err != nil {
+	if _, err := pool.Exec(ctx, "DELETE FROM "+testSchema+".river_job"); err != nil {
 		t.Fatal(err)
 	}
 	var enq *workqueue.Queue
 	e := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return enq.Enqueue(ctx, j) }))
-	enq, err := workqueue.New(pool, e.kinds)
+	enq, err := workqueue.New(pool, e.kinds, testSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	wc := video.WorkerConfig{Encoder: e.encoder, Pool: pool, Kinds: e.kinds, Timeout: time.Hour}
+	wc := video.WorkerConfig{Encoder: e.encoder, Pool: pool, Schema: testSchema, Kinds: e.kinds, Timeout: time.Hour}
 	contribution, err := video.Contribution(wc)
 	if err != nil {
 		t.Fatal(err)

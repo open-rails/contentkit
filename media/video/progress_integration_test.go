@@ -37,16 +37,16 @@ func TestEncodeProgressThroughReadAPI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	pool := pgtest.Pool(t, nil)
-	if err := workqueue.Migrate(ctx, pool); err != nil {
+	if err := workqueue.Migrate(ctx, pool, testSchema); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "DELETE FROM "+workqueue.Schema+".river_job"); err != nil {
+	if _, err := pool.Exec(ctx, "DELETE FROM "+testSchema+".river_job"); err != nil {
 		t.Fatal(err)
 	}
 	var enq *workqueue.Queue
 	e := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return enq.Enqueue(ctx, j) }))
 	var err error
-	if enq, err = workqueue.New(pool, e.kinds); err != nil {
+	if enq, err = workqueue.New(pool, e.kinds, testSchema); err != nil {
 		t.Fatal(err)
 	}
 	var locker media.Locker
@@ -57,8 +57,12 @@ func TestEncodeProgressThroughReadAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	progress, err := workqueue.NewProgressSource(pool, testSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
 	reader, err := media.NewReader(media.ReaderOptions{Manifests: e.manifests, Kinds: e.kinds, Resolver: visible{},
-		Progress: workqueue.NewProgressSource(pool),
+		Progress: progress,
 		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: "https://media.test",
 			SigningKey: token.Key{ID: "k1", Secret: []byte("0123456789abcdef0123456789abcdef")}}})
 	if err != nil {
@@ -83,7 +87,7 @@ func TestEncodeProgressThroughReadAPI(t *testing.T) {
 		t.Fatalf("a viewer reads an unencoded file: %+v %v", res, err)
 	}
 
-	wc := video.WorkerConfig{Encoder: enc, Pool: pool, Kinds: e.kinds, Timeout: time.Hour}
+	wc := video.WorkerConfig{Encoder: enc, Pool: pool, Schema: testSchema, Kinds: e.kinds, Timeout: time.Hour}
 	contribution, err := video.Contribution(wc)
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +185,7 @@ func TestEncodeProgressThroughReadAPI(t *testing.T) {
 		t.Fatalf("video-images after the job: %+v %v", vi.Progress, err)
 	}
 	var left int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM "+workqueue.Schema+".river_job WHERE metadata ? 'contentkit_progress'").Scan(&left); err != nil || left != 0 {
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM "+testSchema+".river_job WHERE metadata ? 'contentkit_progress'").Scan(&left); err != nil || left != 0 {
 		t.Fatalf("progress left on %d jobs (%v)", left, err)
 	}
 }

@@ -9,6 +9,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -23,19 +25,37 @@ import (
 )
 
 // The worker's jobs live in their own River schema in the host database, so
-// the heavy worker never joins (or wins leadership of) the host's River client.
+// the heavy worker never joins (or wins leadership of) the host's River
+// client. Each host names its schema (e.g. "doujins_media_worker"): hosts
+// sharing a database must not share one, or one host's worker takes the
+// other's jobs. Queue names are fixed within a schema.
 const (
-	Schema      = "media_worker"
 	ImageQueue  = "media_image" // image variants, slots, inline images; placement of staged images
 	VideoQueue  = "media_video" // encodes; placement of staged videos
 	MaxAttempts = 5
 )
 
-// Migrate creates Schema and applies River's migrations. Hosts run it in
-// their migrate step; the worker also runs it at start.
-func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
-	return riverhelpers.ApplyMigrations(ctx, pool, Schema)
+var schemaName = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
+
+// ValidSchema requires a lowercase Postgres identifier for the worker's schema.
+func ValidSchema(schema string) error {
+	if !schemaName.MatchString(schema) {
+		return fmt.Errorf("media/workqueue: schema %q must be a lowercase identifier (e.g. \"doujins_media_worker\")", schema)
+	}
+	return nil
 }
+
+// Migrate creates schema and applies River's migrations. Hosts run it in
+// their migrate step; the worker also runs it at start.
+func Migrate(ctx context.Context, pool *pgxpool.Pool, schema string) error {
+	if err := ValidSchema(schema); err != nil {
+		return err
+	}
+	return riverhelpers.ApplyMigrations(ctx, pool, schema)
+}
+
+// jobs is the schema's river_job table.
+func jobs(schema string) string { return pgx.Identifier{schema, "river_job"}.Sanitize() }
 
 // ImageArgs derives a ref's image variants, zip, slots and inline images, or
 // one slot or inline image when Slot is set.
@@ -62,20 +82,28 @@ type Queue struct {
 	client *river.Client[pgx.Tx]
 	pool   *pgxpool.Pool
 	kinds  *media.Registry
+	schema string
 }
 
 var _ media.ProcessQueue = (*Queue)(nil)
 
-func New(pool *pgxpool.Pool, kinds *media.Registry) (*Queue, error) {
+// New is the host's queue into its worker schema (see ValidSchema).
+func New(pool *pgxpool.Pool, kinds *media.Registry, schema string) (*Queue, error) {
 	if pool == nil || kinds == nil {
 		return nil, errors.New("media/workqueue: Queue needs a pool and a Registry")
 	}
-	c, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: Schema})
+	if err := ValidSchema(schema); err != nil {
+		return nil, err
+	}
+	c, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: schema})
 	if err != nil {
 		return nil, err
 	}
-	return &Queue{client: c, pool: pool, kinds: kinds}, nil
+	return &Queue{client: c, pool: pool, kinds: kinds, schema: schema}, nil
 }
+
+// Schema is the worker schema the queue inserts into.
+func (q *Queue) Schema() string { return q.schema }
 
 // Enqueue asks the worker to process job: an image job for kinds with image
 // variants, slots or inline images (one pending job per ref and slot, with a
@@ -130,7 +158,7 @@ func (q *Queue) Cancel(ctx context.Context, ref contentref.ContentRef) (int, err
 	if err != nil {
 		return 0, err
 	}
-	rows, err := q.pool.Query(ctx, `SELECT id FROM `+Schema+`.river_job
+	rows, err := q.pool.Query(ctx, `SELECT id FROM `+jobs(q.schema)+`
 WHERE kind = ANY($1) AND args @> $2 AND args->'ref'->>'content_version_id' IS NOT DISTINCT FROM $3
   AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled')`,
 		[]string{ImageArgs{}.Kind(), VideoArgs{}.Kind()}, match, version)
@@ -166,25 +194,21 @@ func RefMatch(ref contentref.ContentRef) ([]byte, *string, error) {
 // Progress lives on the running video job's row (metadata.contentkit_progress):
 // no extra table, it dies with the job, and a job River rescues from a dead
 // worker stops being read as running.
-const (
-	progressKey      = "contentkit_progress"
-	setProgressSQL   = `UPDATE ` + Schema + `.river_job SET metadata = jsonb_set(metadata, '{` + progressKey + `}', $2) WHERE id = $1 AND state = 'running'`
-	clearProgressSQL = `UPDATE ` + Schema + `.river_job SET metadata = metadata - '` + progressKey + `' WHERE id = $1`
-)
+const progressKey = "contentkit_progress"
 
 // SetProgress records a running job's per-file progress (the worker's reports).
-func SetProgress(ctx context.Context, pool *pgxpool.Pool, id int64, files map[string]media.EncodeProgress) error {
+func SetProgress(ctx context.Context, pool *pgxpool.Pool, schema string, id int64, files map[string]media.EncodeProgress) error {
 	b, err := json.Marshal(files)
 	if err != nil {
 		return err
 	}
-	_, err = pool.Exec(ctx, setProgressSQL, id, b)
+	_, err = pool.Exec(ctx, `UPDATE `+jobs(schema)+` SET metadata = jsonb_set(metadata, '{`+progressKey+`}', $2) WHERE id = $1 AND state = 'running'`, id, b)
 	return err
 }
 
 // ClearProgress drops a finished job's progress.
-func ClearProgress(ctx context.Context, pool *pgxpool.Pool, id int64) error {
-	_, err := pool.Exec(ctx, clearProgressSQL, id)
+func ClearProgress(ctx context.Context, pool *pgxpool.Pool, schema string, id int64) error {
+	_, err := pool.Exec(ctx, `UPDATE `+jobs(schema)+` SET metadata = metadata - '`+progressKey+`' WHERE id = $1`, id)
 	return err
 }
 
@@ -192,26 +216,28 @@ func ClearProgress(ctx context.Context, pool *pgxpool.Pool, id int64) error {
 // every few seconds while ffmpeg or a transfer runs.
 const stalledAfter = time.Minute
 
-// NewProgressSource reads encode progress from the worker's video jobs, for
-// media.ReaderOptions.Progress. One indexed query per read of an item with a
-// pending video.
-func NewProgressSource(pool *pgxpool.Pool) media.ProgressSource {
-	return &progressSource{pool: pool, now: time.Now}
+// NewProgressSource reads encode progress from the video jobs in the host's
+// worker schema, for media.ReaderOptions.Progress. One indexed query per read
+// of an item with a pending video.
+func NewProgressSource(pool *pgxpool.Pool, schema string) (media.ProgressSource, error) {
+	if err := ValidSchema(schema); err != nil {
+		return nil, err
+	}
+	return &progressSource{pool: pool, now: time.Now, sql: `
+SELECT j.state, j.metadata->'` + progressKey + `',
+  CASE WHEN j.state = 'available' THEN 1 + (SELECT count(*) FROM ` + jobs(schema) + ` a
+    WHERE a.state = 'available' AND a.queue = j.queue AND (a.priority, a.scheduled_at, a.id) < (j.priority, j.scheduled_at, j.id)) END
+FROM ` + jobs(schema) + ` j
+WHERE j.kind = $1 AND j.args @> $2 AND j.args->'ref'->>'content_version_id' IS NOT DISTINCT FROM $3
+  AND j.state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
+ORDER BY j.id`}, nil
 }
 
 type progressSource struct {
 	pool *pgxpool.Pool
 	now  func() time.Time
+	sql  string
 }
-
-const progressSQL = `
-SELECT j.state, j.metadata->'` + progressKey + `',
-  CASE WHEN j.state = 'available' THEN 1 + (SELECT count(*) FROM ` + Schema + `.river_job a
-    WHERE a.state = 'available' AND a.queue = j.queue AND (a.priority, a.scheduled_at, a.id) < (j.priority, j.scheduled_at, j.id)) END
-FROM ` + Schema + `.river_job j
-WHERE j.kind = $1 AND j.args @> $2 AND j.args->'ref'->>'content_version_id' IS NOT DISTINCT FROM $3
-  AND j.state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
-ORDER BY j.id`
 
 func (s *progressSource) EncodeProgress(ctx context.Context, ref contentref.ContentRef) (media.EncodeStatus, error) {
 	var st media.EncodeStatus
@@ -219,7 +245,7 @@ func (s *progressSource) EncodeProgress(ctx context.Context, ref contentref.Cont
 	if err != nil {
 		return st, err
 	}
-	rows, err := s.pool.Query(ctx, progressSQL, VideoArgs{}.Kind(), match, version)
+	rows, err := s.pool.Query(ctx, s.sql, VideoArgs{}.Kind(), match, version)
 	if err != nil {
 		return st, err
 	}

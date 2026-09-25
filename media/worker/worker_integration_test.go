@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	stdimage "image"
 	"image/color"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -57,6 +59,7 @@ type host struct {
 	encoded map[string]media.SlotListing // Hooks.SlotEncoded, by ref#slot
 	settled map[string][]media.Readiness // Hooks.ItemReady, by ref
 	schema  string                       // the host's River schema
+	workers string                       // the host's worker schema
 }
 
 // lastSettled is the latest ItemReady report for ref.
@@ -113,13 +116,11 @@ func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
 		_ = hostClient.StopAndCancel(ctx)
 	})
 	h.manifests = s3test.Manifests(t, env.Store, kinds, media.ManifestOptions{Sweeps: jobs})
-	if err := workqueue.Migrate(ctx, pool); err != nil {
+	h.workers = workerSchema(t, pool)
+	if err := workqueue.Migrate(ctx, pool, h.workers); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "DELETE FROM "+workqueue.Schema+".river_job"); err != nil {
-		t.Fatal(err)
-	}
-	if h.queue, err = workqueue.New(pool, kinds); err != nil {
+	if h.queue, err = workqueue.New(pool, kinds, h.workers); err != nil {
 		t.Fatal(err)
 	}
 	if h.uploads, err = media.NewUploads(media.UploadOptions{Store: env.Store, Kinds: kinds, Manifests: h.manifests,
@@ -132,7 +133,7 @@ func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Store: env.Store, Kinds: kinds, HostSchema: schema,
+	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Schema: h.workers, Store: env.Store, Kinds: kinds, HostSchema: schema,
 		TempDir: t.TempDir(), Threads: 2, RiverHooks: riverHooks,
 		Hooks: media.Hooks{SlotEncoded: func(_ context.Context, ref contentref.ContentRef, slot string, l media.SlotListing) {
 			h.mu.Lock()
@@ -225,6 +226,15 @@ func (h *host) exists(t *testing.T, key string) bool {
 		t.Fatal(err)
 	}
 	return err == nil
+}
+
+// workerSchema is a fresh worker schema name, dropped after the test: each
+// host has its own, as hosts sharing a database must.
+func workerSchema(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+	s := "ck_mw_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+s+" CASCADE") })
+	return s
 }
 
 func eventually(t *testing.T, what string, within time.Duration, cond func() bool) {
@@ -489,7 +499,10 @@ func TestProcessOnUploadAttachAndDiscard(t *testing.T) {
 	clip := contentref.New(h.Tenant, "clip", newID())
 	staged := h.stage(t, clip, "video/mp4", body)
 	h.commit(t, clip, media.Op{Op: media.OpInsert, Name: "long", Original: staged, Unattached: true})
-	progress := workqueue.NewProgressSource(h.pool)
+	progress, err := workqueue.NewProgressSource(h.pool, h.workers)
+	if err != nil {
+		t.Fatal(err)
+	}
 	eventually(t, "the encode running", time.Minute, func() bool {
 		st, err := progress.EncodeProgress(ctx, clip)
 		p, ok := st.Files["long"]
@@ -499,7 +512,7 @@ func TestProcessOnUploadAttachAndDiscard(t *testing.T) {
 	match, _, _ := workqueue.RefMatch(clip)
 	eventually(t, "the encode cancelled", 30*time.Second, func() bool {
 		var n int
-		err := h.pool.QueryRow(ctx, "SELECT count(*) FROM "+workqueue.Schema+".river_job WHERE kind = $1 AND args @> $2 AND state = 'cancelled'",
+		err := h.pool.QueryRow(ctx, "SELECT count(*) FROM "+h.workers+".river_job WHERE kind = $1 AND args @> $2 AND state = 'cancelled'",
 			(workqueue.VideoArgs{}).Kind(), match).Scan(&n)
 		return err == nil && n > 0
 	})
@@ -512,5 +525,82 @@ func TestProcessOnUploadAttachAndDiscard(t *testing.T) {
 	time.Sleep(2 * time.Second) // a cancelled job must not write back
 	if m, _, err := h.manifests.Get(ctx, clip); err != nil || len(m.Files) != 0 {
 		t.Fatalf("after discard: %+v %v", m, err)
+	}
+}
+
+// Two hosts on one database, with the same kind names: each worker drains
+// only its host's schema, and progress and cancel read only their own.
+func TestHostsShareADatabase(t *testing.T) {
+	ctx := context.Background()
+	var mu sync.Mutex
+	ran := map[string][]string{} // worker → tenants of the jobs it ran
+	record := func(name string) rivertype.Hook {
+		return river.HookWorkEndFunc(func(_ context.Context, job *rivertype.JobRow, err error) error {
+			var args struct {
+				Ref contentref.ContentRef `json:"ref"`
+			}
+			_ = json.Unmarshal(job.EncodedArgs, &args)
+			mu.Lock()
+			ran[name] = append(ran[name], args.Ref.TenantID)
+			mu.Unlock()
+			return err
+		})
+	}
+	a, b := newHost(t, record("a")), newHost(t, record("b"))
+	if a.workers == b.workers {
+		t.Fatal("hosts share a worker schema")
+	}
+	refA, refB := contentref.New(a.Tenant, "gallery", newID()), contentref.New(b.Tenant, "gallery", newID())
+	a.upload(t, refA, "cover", "image/png", pngImage(t, 300, 400, 3))
+	b.upload(t, refB, "cover", "image/png", pngImage(t, 300, 400, 4))
+	eventually(t, "both covers", time.Minute, func() bool {
+		ra, oka := a.lastSettled(refA)
+		rb, okb := b.lastSettled(refB)
+		return oka && okb && ra.Ready() && rb.Ready()
+	})
+	mu.Lock()
+	for name, tenant := range map[string]string{"a": a.Tenant, "b": b.Tenant} {
+		if len(ran[name]) == 0 {
+			t.Fatalf("worker %s ran nothing", name)
+		}
+		for _, got := range ran[name] {
+			if got != tenant {
+				t.Fatalf("worker %s ran a job of tenant %s: %v", name, got, ran)
+			}
+		}
+	}
+	mu.Unlock()
+
+	// A third host without a running worker: its queued encode is its own.
+	c := workerSchema(t, a.pool)
+	if err := workqueue.Migrate(ctx, a.pool, c); err != nil {
+		t.Fatal(err)
+	}
+	qc, err := workqueue.New(a.pool, a.kinds, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clip := contentref.New(a.Tenant, "clip", newID())
+	if err := qc.Enqueue(ctx, media.ProcessJob{Ref: clip}); err != nil {
+		t.Fatal(err)
+	}
+	pa, _ := workqueue.NewProgressSource(a.pool, a.workers)
+	pc, _ := workqueue.NewProgressSource(a.pool, c)
+	if st, err := pa.EncodeProgress(ctx, clip); err != nil || st.Queued != nil || st.Files != nil {
+		t.Fatalf("host a sees host c's encode: %+v %v", st, err)
+	}
+	if st, err := pc.EncodeProgress(ctx, clip); err != nil || st.Queued == nil {
+		t.Fatalf("host c's encode not queued: %+v %v", st, err)
+	}
+	if n, err := a.queue.Cancel(ctx, clip); err != nil || n != 0 {
+		t.Fatalf("host a cancelled %d of host c's jobs: %v", n, err)
+	}
+	if n, err := qc.Cancel(ctx, clip); err != nil || n == 0 {
+		t.Fatalf("host c cancelled %d: %v", n, err)
+	}
+	for _, bad := range []string{"", "Media", "media-worker", "a.b", strings.Repeat("x", 64)} {
+		if _, err := workqueue.New(a.pool, a.kinds, bad); err == nil {
+			t.Fatalf("schema %q accepted", bad)
+		}
 	}
 }

@@ -52,7 +52,7 @@ another tenant is an error, never remapped.
 | `media/token` | media access tokens, shared by hosts and the access worker |
 | `media/video` | ffmpeg encode: byte-range fMP4 HLS ladder, AAC per audio track, WebVTT per text subtitle, sprite, per-quality MP4 downloads, poster frames; `Frames` for the poster picker |
 | `media/worker` | the media worker: one process for placement, images and video, built by the host from its media config (`cmd/media-worker` is the stock build) |
-| `media/workqueue` | the host's side of the worker: River schema `media_worker`, insert-only `Queue` (enqueue, cancel), encode progress |
+| `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
 | `media/tiered` | optional `public`/`members`/`ppv`/`members_ppv`/`premium` policy over an entitlement `Checker` (hosts adapt OpenRails `CheckEntitlements`) |
 | `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; the `Identity`/`Authorizer`/`UserEnricher`/`ContentProcessor` ports, post and poll images through `Media`, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, and the HTTP routes |
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
@@ -206,8 +206,8 @@ ring, _ := token.NewRing(key, nil)
 
 jobs, _ := media.NewJobs(media.JobsConfig{Store: store, Kinds: kinds, Tenants: []string{"d"}, Limiter: limiter, Resolver: resolver})
 manifests, _ := media.NewManifests(store, kinds, media.ManifestOptions{Locker: media.PGLocker(pool), Sweeps: jobs})
-_ = workqueue.Migrate(ctx, pool) // River schema media_worker, drained by the media worker
-queue, _ := workqueue.New(pool, kinds)
+_ = workqueue.Migrate(ctx, pool, "doujins_media_worker") // this host's worker schema, drained by its media worker
+queue, _ := workqueue.New(pool, kinds, "doujins_media_worker")
 client, _ := riverhelpers.New(ctx, pool, &river.Config{Schema: "public"}, runtime.RiverJobs(), jobs.RiverJobs())
 
 uploads, _ := media.NewUploads(media.UploadOptions{Store: store, Kinds: kinds, Manifests: manifests,
@@ -247,15 +247,18 @@ live on another site than the media), so other sites cannot embed it with
 **The media worker** (`media/worker`) is the one process that does media
 work: it hashes and places staged uploads, derives image variants, zips, slot
 outputs and inline images (libvips) and encodes video and poster frames
-(ffmpeg), from River schema `media_worker` (`media/workqueue`) in the
-host database. The host presigns, commits, publishes and reads, and links only
+(ffmpeg), from the host's worker River schema (`media/workqueue`,
+`worker.Config.Schema`, `MEDIA_WORKER_SCHEMA`) in the host database. The
+schema is required and per host (e.g. `doujins_media_worker`,
+`hentai0_media_worker`): hosts sharing a database must not share one, or each
+worker takes the other's jobs. Queue names are fixed within it. The host presigns, commits, publishes and reads, and links only
 `media/workqueue` (no libvips, no ffmpeg). The worker must apply the host's
 exact kinds and policy, so the host builds it from the same code that builds
 its `media.Registry`, `image.SpecChooser` and `media.Hooks` (`Failed`,
 `SlotEncoded` and `ItemReady` run in the worker), e.g. as a subcommand of the host binary:
 
 ```go
-cfg, _ := worker.FromEnv(ctx) // DATABASE_URL, MEDIA_S3_*, MEDIA_HOST_RIVER_SCHEMA, MEDIA_WORKER_* (see worker.FromEnv)
+cfg, _ := worker.FromEnv(ctx) // DATABASE_URL, MEDIA_S3_*, MEDIA_WORKER_SCHEMA, MEDIA_HOST_RIVER_SCHEMA, MEDIA_WORKER_* (see worker.FromEnv)
 cfg.Kinds, cfg.Specs, cfg.Hooks = kinds, specs, hooks // the host's media config package
 w, _ := worker.New(ctx, cfg)
 _ = w.Run(ctx) // until SIGTERM; running jobs get MEDIA_WORKER_SHUTDOWN_GRACE

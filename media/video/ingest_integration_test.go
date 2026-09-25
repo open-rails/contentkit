@@ -18,12 +18,12 @@ func TestIngestEnqueuesEncode(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	pool := pgtest.Pool(t, nil)
-	if err := workqueue.Migrate(ctx, pool); err != nil {
+	if err := workqueue.Migrate(ctx, pool, testSchema); err != nil {
 		t.Fatal(err)
 	}
 	var enq *workqueue.Queue
 	e := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return enq.Enqueue(ctx, j) }))
-	enq, err := workqueue.New(pool, e.kinds)
+	enq, err := workqueue.New(pool, e.kinds, testSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,13 +40,13 @@ func TestIngestEnqueuesEncode(t *testing.T) {
 
 	var encodes int
 	for encodes == 0 {
-		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+workqueue.Schema+`.river_job
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+testSchema+`.river_job
 			WHERE kind = $1 AND args->'ref'->>'tenant_id' = $2`, workqueue.VideoArgs{}.Kind(), e.Tenant).Scan(&encodes); err != nil {
 			t.Fatal(err)
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatal("the ingest's commit enqueued no encode on " + workqueue.Schema)
+			t.Fatal("the ingest's commit enqueued no encode on " + testSchema)
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
