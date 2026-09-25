@@ -2,6 +2,7 @@ package video
 
 import (
 	"context"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,5 +56,48 @@ func TestInputsAreConfinedToContainerDemuxers(t *testing.T) {
 	}
 	if !observed.Succeeded || observed.SourceClass != "sd" || observed.OutputSeconds != pl.duration || observed.Duration <= 0 || observed.CPU <= 0 {
 		t.Fatalf("encode observation: %+v", observed)
+	}
+}
+
+func TestEncodeObservationUsesVideoDuration(t *testing.T) {
+	for _, tool := range []string{"ffmpeg", "ffprobe"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			if os.Getenv("CONTENTKIT_TEST_FFMPEG") != "" {
+				t.Fatal(err)
+			}
+			t.Skip(err)
+		}
+	}
+	ctx := context.Background()
+	dir := t.TempDir()
+	clip := filepath.Join(dir, "audio-outlasts-video.mkv")
+	if b, err := exec.Command("ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=5:duration=1",
+		"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=3",
+		"-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-y", clip).CombinedOutput(); err != nil {
+		t.Fatalf("fixture: %v: %s", err, b)
+	}
+	probed, err := probe(ctx, clip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pl, err := newPlan(probed, &media.Video{Ladder: []int{48}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pl.duration < 2.5 || len(pl.audio) != 1 {
+		t.Fatalf("fixture needs audio longer than video: %+v", pl)
+	}
+	out := filepath.Join(dir, "out")
+	if err := os.Mkdir(out, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var observed EncodeObservation
+	if err := ladder(ctx, clip, out, pl, pass{rung: pl.rungs[0], codecs: []media.Codec{media.CodecH264},
+		enc:     encoding{encoders: map[media.Codec]string{media.CodecH264: "libx264"}, threads: 1, preset: "fast"},
+		observe: func(o EncodeObservation) { observed = o }}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !observed.Succeeded || math.Abs(observed.OutputSeconds-1) > 0.2 || observed.OutputSeconds >= pl.duration {
+		t.Fatalf("output seconds must reflect encoded video, not container: %+v (container %.2fs)", observed, pl.duration)
 	}
 }

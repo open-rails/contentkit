@@ -153,7 +153,22 @@ func ladder(ctx context.Context, src, dir string, p plan, ps pass, fp *fileProgr
 	if ps.observe != nil {
 		outputSeconds := 0.0
 		if err == nil {
-			outputSeconds = p.duration * float64(len(ps.codecs))
+			for _, c := range ps.codecs {
+				name := filepath.Join(dir, renditionName(ps.rung.n, c))
+				st, statErr := os.Stat(name + ".mp4")
+				if statErr != nil {
+					err = statErr
+					break
+				}
+				pl, parseErr := parsePlaylist(name+".m3u8", st.Size())
+				if parseErr != nil {
+					err = parseErr
+					break
+				}
+				for _, segment := range pl.segments {
+					outputSeconds += segment.Seconds
+				}
+			}
 		}
 		ps.observe(EncodeObservation{SourceClass: sourceClass(p.width, p.height), Duration: time.Since(started),
 			CPU: cpu, OutputSeconds: outputSeconds, Succeeded: err == nil})
