@@ -243,6 +243,10 @@ func TestMixedImagesAndVideo(t *testing.T) {
 		if err := enc.Encode(context.Background(), video.Job{Ref: ref}, nil); err != nil {
 			t.Fatal(err)
 		}
+		// The grabbed poster frame's render, which the video worker hands to the image job.
+		if err := e.proc.Process(context.Background(), media.ProcessJob{Ref: ref, Slot: media.PosterSlot}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	run()
 	m, etag := e.manifest(t, ref)
