@@ -5,20 +5,29 @@
 //
 // Environment: worker.FromEnv and Config.TuningFromEnv, plus
 //
-//	MEDIA_KINDS_FILE   JSON array of media.Kind, the host's registry (e.g. [{"Name":"clip","Video":{}}])
+//	MEDIA_KINDS_FILE    JSON array of media.Kind, the host's registry (e.g. [{"Name":"clip","Video":{}}])
+//	MEDIA_METRICS_ADDR  metrics listen address (default :9090)
 package main
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/worker"
+	queuemetrics "github.com/open-rails/contentkit/media/workqueue/metrics"
 )
 
 func main() {
@@ -42,11 +51,56 @@ func run(log *slog.Logger) error {
 	}
 	defer cfg.Pool.Close()
 	cfg.Kinds, cfg.Logger = kinds, log
+	registry := prometheus.NewRegistry()
+	cfg.Metrics, err = worker.NewMetrics(registry)
+	if err != nil {
+		return err
+	}
+	queueCollector, err := queuemetrics.NewCollector(cfg.Pool, cfg.Schema)
+	if err != nil {
+		return err
+	}
+	if err := registry.Register(queueCollector); err != nil {
+		return err
+	}
 	w, err := worker.New(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	return w.Run(ctx)
+	addr := os.Getenv("MEDIA_METRICS_ADDR")
+	if addr == "" {
+		addr = ":9090"
+	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("media-worker: listen for metrics: %w", err)
+	}
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
+	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- server.Serve(listener) }()
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	workerDone := make(chan error, 1)
+	go func() { workerDone <- w.Run(runCtx) }()
+	var serveErr error
+	select {
+	case err = <-workerDone:
+	case serveErr = <-serveDone:
+		cancelRun()
+		err = <-workerDone
+	}
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelShutdown()
+	shutdownErr := server.Shutdown(shutdownCtx)
+	if serveErr == nil {
+		serveErr = <-serveDone
+	}
+	if errors.Is(serveErr, http.ErrServerClosed) {
+		serveErr = nil
+	}
+	return errors.Join(err, serveErr, shutdownErr)
 }
 
 func loadKinds(path string) (*media.Registry, error) {

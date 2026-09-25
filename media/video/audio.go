@@ -110,7 +110,7 @@ func (e *Encoder) audioFile(ctx context.Context, ms *media.Manifests, item media
 	args = append(args, "-i", src, "-map", fmt.Sprintf("0:%d", t.index), "-map_metadata", "-1", "-af", filter)
 	args = append(args, "-c:a", "aac", "-b:a", "128k")
 	args = append(args, hlsArgs(filepath.Join(out, "a1.mp4"), filepath.Join(out, "a1.m3u8"))...)
-	if err := ffmpegProgress(ctx, encoded, args...); err != nil {
+	if _, err := ffmpegProgress(ctx, encoded, args...); err != nil {
 		return source, err
 	}
 	if err := os.Remove(src); err != nil {
@@ -219,7 +219,7 @@ func measureGain(ctx context.Context, src string, stream int, target float64, pr
 	args := append([]string{"-hide_banner", "-nostdin"}, inputOptions(audioDemuxers)...)
 	args = append(args, "-i", src, "-map", fmt.Sprintf("0:%d", stream),
 		"-af", fmt.Sprintf("%s,loudnorm=I=%g:TP=-1.5:LRA=11:print_format=json", audioFormat, target), "-f", "null", "-")
-	b, err := ffmpegProgressTail(ctx, progress, args...)
+	b, _, err := ffmpegProgressTail(ctx, progress, args...)
 	if err != nil {
 		if ctx.Err() != nil {
 			return 0, ctx.Err()

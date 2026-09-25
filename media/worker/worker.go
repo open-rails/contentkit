@@ -80,6 +80,7 @@ type Config struct {
 	Logger        *slog.Logger
 	// RiverHooks are added to the worker's River client (observability).
 	RiverHooks []rivertype.Hook
+	Metrics    *Metrics
 }
 
 func (c *Config) defaults() error {
@@ -145,8 +146,13 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
+	var observeEncode func(video.EncodeObservation)
+	if c.Metrics != nil {
+		observeEncode = c.Metrics.ObserveEncode
+	}
 	enc, err := video.New(video.Config{Store: c.Store, Locker: media.PGLocker(c.Pool), Sweeps: host, TempDir: c.TempDir,
-		Threads: c.Threads, Preset: c.Preset, TopPreset: c.TopPreset, Encoder: c.VideoEncoder, Codecs: c.VideoCodecs, Hooks: c.Hooks, Logger: c.Logger, Slots: queue})
+		Threads: c.Threads, Preset: c.Preset, TopPreset: c.TopPreset, Encoder: c.VideoEncoder, Codecs: c.VideoCodecs, Hooks: c.Hooks, Logger: c.Logger, Slots: queue,
+		ObserveEncode: observeEncode})
 	if err != nil {
 		return nil, err
 	}
@@ -166,8 +172,12 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if c.Hooks.ItemReady != nil {
 		hooks = append(hooks[:len(hooks):len(hooks)], &readyHook{pool: c.Pool, manifests: manifests, ready: c.Hooks.ItemReady})
 	}
+	var middleware []rivertype.Middleware
+	if c.Metrics != nil {
+		middleware = []rivertype.Middleware{c.Metrics}
+	}
 	client, err := riverhelpers.New(ctx, c.Pool, &river.Config{Schema: c.Schema,
-		JobTimeout: max(c.VideoTimeout, c.ImageTimeout), Logger: c.Logger, Hooks: hooks}, videos, imageJobs)
+		JobTimeout: max(c.VideoTimeout, c.ImageTimeout), Logger: c.Logger, Hooks: hooks, Middleware: middleware}, videos, imageJobs)
 	if err != nil {
 		return nil, err
 	}

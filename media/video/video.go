@@ -61,6 +61,19 @@ type Config struct {
 	Sweeps media.SweepScheduler
 	// ProgressInterval throttles progress reports; default 2 s.
 	ProgressInterval time.Duration
+	// ObserveEncode receives one measurement per ffmpeg video ladder pass.
+	ObserveEncode func(EncodeObservation)
+}
+
+// EncodeObservation measures one ffmpeg video ladder pass. OutputSeconds
+// counts successful rendition seconds, so CPU cost per output second can be
+// derived from the exported counters without averaging ratios.
+type EncodeObservation struct {
+	SourceClass   string
+	Duration      time.Duration
+	CPU           time.Duration
+	OutputSeconds float64
+	Succeeded     bool
 }
 
 // Encoder runs encode jobs. It is idempotent: a file whose hls and downloads
@@ -395,7 +408,7 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 	fp.stage(k+1, len(stages))
 	fp.probed(p.duration, out)
 	ps := pass{rung: todo, codecs: slices.Clone(e.c.Codecs), sprite: !extend, enc: encoding{encoders: maps.Clone(e.encoders), threads: e.c.Threads,
-		preset: e.c.Preset, topPreset: e.c.TopPreset, animation: r.video.Profile == media.VideoAnimation}}
+		preset: e.c.Preset, topPreset: e.c.TopPreset, animation: r.video.Profile == media.VideoAnimation}, observe: e.c.ObserveEncode}
 	// The plan's top rung is copied from a source compliant in one of the
 	// codecs, on the segments of that codec's published rung below.
 	if extend && todo.n == p.rungs[0].n {
