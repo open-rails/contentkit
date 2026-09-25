@@ -679,7 +679,7 @@ func TestReadHidesUnprocessedFilesFromViewers(t *testing.T) {
 	}
 	k, _ := f.kinds.Kind("post")
 	got := root.Readiness(k)
-	if got.State != media.StateProcessing || !slices.Equal(got.Processing, []string{"teaser", "beach.jpg", "new.mp4", "stage2.mp4", "replaced.mp4", "rendering.jpg"}) ||
+	if got.State != media.StateProcessing || !slices.Equal(got.Processing, []string{"teaser", "beach.jpg", "new.mp4", "stage2.mp4", "replaced.mp4", "rendering.jpg", "poster"}) ||
 		!slices.Equal(got.Failed, []string{"broken.mp4"}) {
 		t.Fatalf("readiness %+v", got)
 	}
