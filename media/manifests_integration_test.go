@@ -67,11 +67,11 @@ func TestManifestEditCASUnderConcurrency(t *testing.T) {
 	}
 	r := registry(t)
 	// Two processes, each with its own cache, editing the same manifest.
-	a, err := media.NewManifests(env.Store, r, media.ManifestOptions{})
+	a, err := media.NewManifests(env.Store, r, media.ManifestOptions{Locker: s3test.Locker(t, env.Store)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := media.NewManifests(env.Store, r, media.ManifestOptions{})
+	b, _ := media.NewManifests(env.Store, r, media.ManifestOptions{Locker: s3test.Locker(t, env.Store)})
 	ref := contentref.NewVersion(env.Tenant, "gallery", cid(1), "v1")
 	concurrentInserts(t, []*media.Manifests{a, b}, ref, 12)
 }
@@ -82,7 +82,7 @@ func TestManifestEditAdvisoryLockFallback(t *testing.T) {
 	r := registry(t)
 	store := env.WithCapabilities(t, media.Capabilities{})
 	if _, err := media.NewManifests(store, r, media.ManifestOptions{}); err == nil {
-		t.Fatal("no conditional PUT and no Locker must be refused")
+		t.Fatal("Manifests without a Locker must be refused")
 	}
 	var ms []*media.Manifests
 	for range 2 {
@@ -102,8 +102,8 @@ func TestManifestCacheRevalidatesAndEditsAreValidated(t *testing.T) {
 	}
 	ctx := context.Background()
 	r := registry(t)
-	reader, _ := media.NewManifests(env.Store, r, media.ManifestOptions{})
-	writer, _ := media.NewManifests(env.Store, r, media.ManifestOptions{})
+	reader, _ := media.NewManifests(env.Store, r, media.ManifestOptions{Locker: s3test.Locker(t, env.Store)})
+	writer, _ := media.NewManifests(env.Store, r, media.ManifestOptions{Locker: s3test.Locker(t, env.Store)})
 	ref := contentref.New(env.Tenant, "post", cid(501))
 
 	if _, _, err := reader.Get(ctx, ref); !errors.Is(err, media.ErrNotFound) {

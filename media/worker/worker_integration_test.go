@@ -29,8 +29,10 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/tcpproxy"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
+	mediaS3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/worker"
 	"github.com/open-rails/contentkit/media/workqueue"
@@ -75,6 +77,12 @@ func (h *host) lastSettled(ref contentref.ContentRef) (media.Readiness, bool) {
 
 func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
 	t.Helper()
+	return newHostOn(t, nil, riverHooks...)
+}
+
+// newHostOn is newHost with the worker on workerStore(env) instead of env.Store.
+func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHooks ...rivertype.Hook) *host {
+	t.Helper()
 	env := s3test.Open(t)
 	if !env.Store.Capabilities().ConditionalPut {
 		t.Skip("backend lacks conditional PUT")
@@ -98,7 +106,7 @@ func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
 	if err := riverhelpers.ApplyMigrations(ctx, pool, schema); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: kinds, Tenants: []string{env.Tenant}, Resolver: editorResolver{}})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Locker: s3test.Locker(t, env.Store), Kinds: kinds, Tenants: []string{env.Tenant}, Resolver: editorResolver{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +141,11 @@ func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Schema: h.workers, Store: env.Store, Kinds: kinds, HostSchema: schema,
+	var store media.Store = env.Store
+	if workerStore != nil {
+		store = workerStore(env)
+	}
+	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Schema: h.workers, Store: store, Kinds: kinds, HostSchema: schema,
 		TempDir: t.TempDir(), Threads: 2, RiverHooks: riverHooks,
 		Hooks: media.Hooks{SlotEncoded: func(_ context.Context, ref contentref.ContentRef, slot string, l media.SlotListing) {
 			h.mu.Lock()
@@ -423,6 +435,94 @@ func TestWorkerPlacesAndEncodesStagedVideo(t *testing.T) {
 // file cannot be processed (viewers never see it; its editor does), ready once
 // it is removed, with HostQueue.ExposeTx enqueuing the host's Expose in the
 // hook's transaction.
+// A worker started while the bucket is down waits (taking no jobs, so none
+// burn attempts), then works the queue once the bucket answers.
+func TestWorkerWaitsForTheBucket(t *testing.T) {
+	h, proxy := proxiedWorker(t, func(p *tcpproxy.Proxy) { p.Down() })
+	ctx := context.Background()
+	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 31))})
+	attempted := func() int {
+		var n int
+		if err := h.pool.QueryRow(ctx, "SELECT coalesce(sum(attempt), 0) FROM "+h.workers+".river_job").Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	time.Sleep(3 * time.Second)
+	if n := attempted(); n != 0 {
+		t.Fatalf("%d job attempts while the bucket was down", n)
+	}
+	proxy.Up(t)
+	eventually(t, "the variant after the bucket returned", time.Minute, func() bool {
+		m, _, err := h.manifests.Get(ctx, ref)
+		return err == nil && len(m.Files) == 1 && m.Files[0].Variants["thumb"].Blob != ""
+	})
+}
+
+// proxiedWorker is newHostOn with the worker's store behind proxy.
+func proxiedWorker(t *testing.T, setup func(*tcpproxy.Proxy)) (*host, *tcpproxy.Proxy) {
+	var proxy *tcpproxy.Proxy
+	h := newHostOn(t, func(env *s3test.Env) media.Store {
+		proxy = tcpproxy.New(t, env.Config.Endpoint)
+		setup(proxy)
+		cfg := env.Config
+		cfg.Endpoint, cfg.PublicEndpoint, cfg.Capabilities = proxy.URL, "", nil
+		store, err := mediaS3.New(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return store
+	})
+	return h, proxy
+}
+
+func (h *host) thumbed(t *testing.T, ref contentref.ContentRef) func() bool {
+	return func() bool {
+		m, _, err := h.manifests.Get(context.Background(), ref)
+		return err == nil && len(m.Files) == 1 && m.Files[0].Variants["thumb"].Blob != ""
+	}
+}
+
+// A bucket that accepts connections and never answers does not wedge the
+// worker: each readiness check has a deadline, and it starts once the bucket
+// answers.
+func TestWorkerSurvivesAHungBucket(t *testing.T) {
+	h, proxy := proxiedWorker(t, func(p *tcpproxy.Proxy) { p.Hang(t) })
+	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 41))})
+	time.Sleep(2 * time.Second)
+	proxy.Up(t)
+	eventually(t, "the variant after the bucket answered", 90*time.Second, h.thumbed(t, ref))
+}
+
+// A bucket outage after the worker started snoozes jobs instead of spending
+// their attempts, so a long outage never discards them.
+func TestWorkerSnoozesJobsDuringAnOutage(t *testing.T) {
+	defer func(d time.Duration) { media.UnavailableSnooze = d }(media.UnavailableSnooze)
+	media.UnavailableSnooze = 2 * time.Second
+	h, proxy := proxiedWorker(t, func(*tcpproxy.Proxy) {})
+	ctx := context.Background()
+	first := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	h.commit(t, first, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, first, "", "image/png", pngImage(t, 300, 450, 51))})
+	eventually(t, "the worker running", time.Minute, h.thumbed(t, first))
+
+	proxy.Down()
+	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 52))})
+	time.Sleep(8 * time.Second)
+	var attempts, errs int
+	if err := h.pool.QueryRow(ctx, "SELECT coalesce(max(attempt), 0), coalesce(max(cardinality(errors)), 0) FROM "+h.workers+
+		".river_job WHERE state <> 'completed'").Scan(&attempts, &errs); err != nil {
+		t.Fatal(err)
+	}
+	if attempts > 1 || errs > 0 {
+		t.Fatalf("outage spent job attempts: attempt %d, %d errors", attempts, errs)
+	}
+	proxy.Up(t)
+	eventually(t, "the variant after the outage", time.Minute, h.thumbed(t, ref))
+}
+
 func TestItemReadyAfterProcessing(t *testing.T) {
 	h := newHost(t)
 	ctx := context.Background()

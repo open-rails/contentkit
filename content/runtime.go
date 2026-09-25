@@ -53,6 +53,12 @@ type Options struct {
 	// Moderator screens comment/post writes; nil publishes everything.
 	// Compose a BasicModerator in front of an AI moderator with Chain.
 	Moderator ContentModerator
+	// ModeratorTimeout bounds one Screen call (default 5s); a slower
+	// moderator counts as failed and the write is held.
+	ModeratorTimeout time.Duration
+	// ModeratorCooldown is how long writes are held without calling the
+	// moderator after it failed repeatedly (default 30s); see CheckModerator.
+	ModeratorCooldown time.Duration
 	// Classifier groups free-text poll answers; nil refuses free-text polls.
 	Classifier AnswerClassifier
 
@@ -91,6 +97,7 @@ type Runtime struct {
 	processor         ContentProcessor
 	postBodyProcessor ContentProcessor
 	moderator         ContentModerator
+	breaker           *moderatorBreaker
 	classifier        AnswerClassifier
 	providerEraser    ProviderDataEraser
 	perms             Perms
@@ -139,6 +146,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		processor:         processor,
 		postBodyProcessor: orDefault[ContentProcessor](opts.PostBodyProcessor, processor),
 		moderator:         opts.Moderator,
+		breaker:           newModeratorBreaker(opts.ModeratorTimeout, opts.ModeratorCooldown),
 		classifier:        opts.Classifier,
 		providerEraser:    opts.ProviderDataEraser,
 		perms:             opts.Perms,

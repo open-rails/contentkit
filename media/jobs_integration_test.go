@@ -103,7 +103,7 @@ func TestJobsComposeWithHostRiverAndSweepAfterEdit(t *testing.T) {
 	}
 	ctx := context.Background()
 	r := registry(t)
-	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: r, Tenants: []string{env.Tenant}, Grace: 3 * time.Second})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Locker: s3test.Locker(t, env.Store), Kinds: r, Tenants: []string{env.Tenant}, Grace: 3 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestDeleteAndEraseRemoveFoldersIncludingLateUploads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: r, Limiter: limiter, LateUploadWindow: 2 * time.Second})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Locker: s3test.Locker(t, env.Store), Kinds: r, Limiter: limiter, LateUploadWindow: 2 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}

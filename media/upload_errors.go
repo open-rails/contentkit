@@ -23,6 +23,7 @@ const (
 	CodeType         = "type_not_allowed"  // 415
 	CodeChecksum     = "checksum_mismatch" // 422: stored bytes differ from the declared hash
 	CodeRate         = "rate_limited"      // 429
+	CodeUnavailable  = "unavailable"       // 503: the bucket cannot be reached; retry
 
 	// Image refusals (ImageError): the rules refuse the image; never a server fault.
 	CodeImageTooSmall   = "image_too_small"  // 422: edited narrower than the slot's minimum
@@ -47,6 +48,7 @@ var codeStatus = map[string]int{
 	CodeType:         http.StatusUnsupportedMediaType,
 	CodeChecksum:     http.StatusUnprocessableEntity,
 	CodeRate:         http.StatusTooManyRequests,
+	CodeUnavailable:  http.StatusServiceUnavailable,
 
 	CodeImageTooSmall:   http.StatusUnprocessableEntity,
 	CodeImageTooLarge:   http.StatusRequestEntityTooLarge,

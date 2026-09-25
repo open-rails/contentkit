@@ -17,6 +17,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/internal/s3test"
 	"github.com/open-rails/contentkit/media/video"
 )
 
@@ -254,7 +255,7 @@ func TestMixedImagesAndVideo(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.commit(t, ref, ins("a.png", e.upload(t, ref, "", quadrants(t))), ins("clip.mkv", e.uploadAs(t, ref, "", "video/x-matroska", body)))
-	enc, err := video.New(video.Config{Store: e.Env.Store, TempDir: t.TempDir(), Threads: 1, Codecs: []media.Codec{media.CodecH264}})
+	enc, err := video.New(video.Config{Store: e.Env.Store, Locker: s3test.Locker(t, e.Env.Store), TempDir: t.TempDir(), Threads: 1, Codecs: []media.Codec{media.CodecH264}})
 	if err != nil {
 		t.Fatal(err)
 	}

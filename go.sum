@@ -82,6 +82,8 @@ github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/open-rails/helpers v0.3.0 h1:SE5YuAO3mOwcUF5ttkffHn2KNHPRQv9q83OUsoH6IMs=
 github.com/open-rails/helpers v0.3.0/go.mod h1:SGBErWMyTPllcGAfiHvZf5qvEBDZpT17c7KS/s11Y/Y=
+github.com/open-rails/helpers v0.4.0 h1:pcMtdWlMW7Kx/lmw5/1dnl04Y+qmI2cdwdBKPicSwOw=
+github.com/open-rails/helpers v0.4.0/go.mod h1:hvWWCFGDon9Ra4eJLkfdXIFYOWooLm1MwChuRyvTBSo=
 github.com/open-rails/migratekit v1.0.5 h1:5D9b+Yp8+q5PQWl1U4fYrh+dcVcUTg3ROQAx26fhy/Y=
 github.com/open-rails/migratekit v1.0.5/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
 github.com/paulmach/orb v0.12.0 h1:z+zOwjmG3MyEEqzv92UN49Lg1JFYx0L9GpGKNVDKk1s=

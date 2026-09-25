@@ -35,8 +35,8 @@ import (
 // Config configures an Encoder.
 type Config struct {
 	Store media.Store
-	// Locker serializes manifest edits when Store lacks conditional PUT; it
-	// must share the hosts' lock space (media.PGLocker on the host database).
+	// Locker serializes manifest edits; required, and must share the hosts'
+	// lock space (media.PGLocker on the host database).
 	Locker  media.Locker
 	TempDir string // scratch for the source and outputs; default os.TempDir()
 	Threads int    // CPU threads for ffmpeg; default GOMAXPROCS (the container's CPU limit)
@@ -107,8 +107,8 @@ func New(c Config) (*Encoder, error) {
 	if c.Store == nil {
 		return nil, errors.New("media/video: Encoder needs a Store")
 	}
-	if !c.Store.Capabilities().ConditionalPut && c.Locker == nil {
-		return nil, errors.New("media/video: store lacks conditional PUT; Config.Locker is required")
+	if c.Locker == nil {
+		return nil, errors.New("media/video: Config.Locker is required")
 	}
 	for _, tool := range []string{"ffmpeg", "ffprobe"} {
 		if _, err := exec.LookPath(tool); err != nil {

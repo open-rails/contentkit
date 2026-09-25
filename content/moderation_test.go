@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -633,3 +634,63 @@ func TestModeration_TenantIsolation(t *testing.T) {
 }
 
 func (*fakeModerator) StatelessPolicy() {}
+
+// hungModerator never answers until its context ends; healthy switches it
+// to approving.
+type hungModerator struct {
+	calls   atomic.Int32
+	healthy atomic.Bool
+}
+
+func (*hungModerator) StatelessPolicy() {}
+
+func (m *hungModerator) Screen(ctx context.Context, _ ModerationInput) (Verdict, error) {
+	m.calls.Add(1)
+	if m.healthy.Load() {
+		return Verdict{Decision: DecisionApprove, Model: "fake-llm"}, nil
+	}
+	<-ctx.Done()
+	return Verdict{}, ctx.Err()
+}
+
+// A hung moderator holds each write after the bound; after repeated
+// failures the breaker opens: writes are held at once without calling it,
+// CheckModerator reports it down, and it closes again once a trial passes.
+func TestModeration_HungModeratorBreaker(t *testing.T) {
+	mod := &hungModerator{}
+	res := &fakeResolver{}
+	res.set("gallery", cid(1), true, true)
+	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, Moderator: mod,
+		ModeratorTimeout: 200 * time.Millisecond, ModeratorCooldown: time.Second,
+		Authz: reviewerOnly{}, Perms: Perms{ModerationReview: reviewPerm, CommentModerate: "comment:moderate", PostWrite: postPerm}})
+	author := access.Actor{ID: "author"}
+	ctx := context.Background()
+	start := time.Now()
+	var ids []string
+	for range 6 {
+		ids = append(ids, mustComment(t, rt, author, "gallery", cid(1), createInput{Body: "hello"}).ID)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("six writes took %v", took)
+	}
+	if n := mod.calls.Load(); n != moderatorBreakerFailures {
+		t.Fatalf("moderator called %d times, want the breaker to stop after %d", n, moderatorBreakerFailures)
+	}
+	held := heldIDs(t, rt, KindComment)
+	for _, id := range ids {
+		if !contains(held, id) {
+			t.Fatalf("comment %s not held: %v", id, held)
+		}
+	}
+	if err := rt.CheckModerator(ctx); err == nil {
+		t.Fatal("CheckModerator reports a tripped moderator as up")
+	}
+	mod.healthy.Store(true)
+	time.Sleep(1100 * time.Millisecond)
+	if cm := mustComment(t, rt, author, "gallery", cid(1), createInput{Body: "hello again"}); cm.Moderation != "" {
+		t.Fatalf("trial write after the cooldown: %+v", cm)
+	}
+	if err := rt.CheckModerator(ctx); err != nil {
+		t.Fatalf("CheckModerator after recovery: %v", err)
+	}
+}

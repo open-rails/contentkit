@@ -218,6 +218,7 @@ func (w *audioWorker) Work(ctx context.Context, job *river.Job[workqueue.AudioAr
 
 // run encodes an audio job under its per-manifest lock and clears progress.
 func (c WorkerConfig) run(ctx context.Context, id int64, work string, job Job, more *bool) (err error) {
+	defer func() { err = media.SnoozeUnavailable(err) }()
 	// The lock's own connection lives outside Pool, which the encode uses.
 	release, ok, err := pglock.Acquire(ctx, c.Pool, "contentkit:media:"+work+":"+job.Ref.String(), false)
 	if err != nil {

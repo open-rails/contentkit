@@ -58,7 +58,7 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	r := registry(t)
 	const grace = 24 * time.Hour
 	clock := time.Now()
-	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: r, Tenants: []string{env.Tenant}, Grace: grace,
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Locker: s3test.Locker(t, env.Store), Kinds: r, Tenants: []string{env.Tenant}, Grace: grace,
 		EditorTTL: time.Hour, Now: func() time.Time { return clock }})
 	if err != nil {
 		t.Fatal(err)

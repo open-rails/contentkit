@@ -579,6 +579,9 @@ func (h uploadHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 			ue = &UploadError{Code: CodeConflict, Message: "manifest kept changing; retry"}
 		case errors.Is(err, ErrNotVisible):
 			ue = &UploadError{Code: CodeNotFound, Message: err.Error()}
+		case errors.Is(err, ErrUnavailable):
+			h.o.Logger.WarnContext(r.Context(), "media upload", "method", r.Method, "path", r.URL.Path, "error", err)
+			ue = &UploadError{Code: CodeUnavailable, Message: "media storage is unavailable; retry", RetryAfter: 5 * time.Second}
 		default:
 			h.o.Logger.ErrorContext(r.Context(), "media upload", "method", r.Method, "path", r.URL.Path, "error", err)
 			writeJSON(w, http.StatusInternalServerError, ErrorReply{Error: "internal error", Code: "internal_error"})

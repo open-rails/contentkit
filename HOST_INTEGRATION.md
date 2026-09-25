@@ -185,6 +185,12 @@ userIntelligence.Moderator}` once User Intelligence's `moderate` module exists;
 set `Perms.ModerationReview` and point the admin review page at
 `/moderation/held` and `/moderation/{kind}/{id}/resolve`.
 
+Each `Screen` is bounded by `Options.ModeratorTimeout` (5s); a failure holds
+the write. After 3 consecutive failures the moderator is skipped (writes held
+at once) for `Options.ModeratorCooldown` (30s), then retried. Register
+`Runtime.CheckModerator` as an optional dependency (helpers `deps`) so a
+tripped moderator shows on statusz and `app_dependency_up`.
+
 ## Free-text polls
 
 `content_poll_questions.kind` is `multiple_choice` (options + votes, as

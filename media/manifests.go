@@ -17,15 +17,16 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 )
 
-// Locker serializes manifest edits on backends without conditional PUT.
+// Locker serializes manifest edits across every process sharing the bucket.
 type Locker interface {
 	Lock(ctx context.Context, key string) (unlock func(), err error)
 }
 
 // ManifestOptions configure Manifests.
 type ManifestOptions struct {
-	// Locker is required when the store lacks ConditionalPut; edits then run
-	// under it and write unconditionally. See PGLocker.
+	// Locker is required: every edit runs under it (so processes that have
+	// and have not probed the store never diverge), and also writes with
+	// If-Match once the store reports ConditionalPut. See PGLocker.
 	Locker     Locker
 	CacheSize  int // manifests kept in process, revalidated by ETag; default 4096
 	MaxRetries int // CAS attempts per edit; default 16
@@ -57,10 +58,8 @@ func NewManifests(store Store, kinds *Registry, opts ManifestOptions) (*Manifest
 		return nil, errors.New("media: Manifests needs a Store and a Registry")
 	}
 	locker := opts.Locker
-	if store.Capabilities().ConditionalPut {
-		locker = nil
-	} else if locker == nil {
-		return nil, errors.New("media: store lacks conditional PUT; ManifestOptions.Locker is required")
+	if locker == nil {
+		return nil, errors.New("media: ManifestOptions.Locker is required")
 	}
 	if opts.CacheSize <= 0 {
 		opts.CacheSize = 4096
@@ -179,20 +178,18 @@ func (m *Manifests) editRoot(ctx context.Context, item Item, fn func(*Root) erro
 }
 
 // edit writes fn's replacement of the JSON object at key (body nil when
-// absent) with If-Match on the ETag read, or under the Locker, re-running fn
-// on conflict. fn returns nil to leave the object alone.
+// absent) under the Locker, with If-Match on the ETag read
+// when the store has conditional PUT, re-running fn on conflict. fn returns
+// nil to leave the object alone.
 func (m *Manifests) edit(ctx context.Context, key string, fn func(body []byte) ([]byte, error)) (written bool, err error) {
-	if m.locker != nil {
-		unlock, err := m.locker.Lock(ctx, key)
-		if err != nil {
-			return false, err
-		}
-		defer unlock()
-		_, written, err := m.try(ctx, key, fn, false)
-		return written, err
+	unlock, err := m.locker.Lock(ctx, key)
+	if err != nil {
+		return false, err
 	}
+	defer unlock()
+	conditional := m.store.Capabilities().ConditionalPut
 	for attempt := 0; attempt < m.retries; attempt++ {
-		conflict, written, err := m.try(ctx, key, fn, true)
+		conflict, written, err := m.try(ctx, key, fn, conditional)
 		if !conflict {
 			return written, err
 		}

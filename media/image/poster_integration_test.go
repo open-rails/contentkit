@@ -16,6 +16,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/internal/s3test"
 	"github.com/open-rails/contentkit/media/internal/videotest"
 	"github.com/open-rails/contentkit/media/video"
 )
@@ -32,7 +33,7 @@ func TestVideoPosterFramesAndUploads(t *testing.T) {
 	u := access.Actor{ID: "u"}
 	e := newEnv(t, media.Kind{Name: "video", Versioned: true, Video: &media.Video{PosterWidths: []int{480, 960, 1920}}, Types: []string{"video/mp4", "image/jpeg"}})
 	ref := contentref.NewVersion(e.Tenant, "video", cid(7), "v1")
-	enc, err := video.New(video.Config{Store: e.Env.Store, TempDir: t.TempDir(), Threads: 2, Slots: e.queue, Codecs: []media.Codec{media.CodecH264}})
+	enc, err := video.New(video.Config{Store: e.Env.Store, Locker: s3test.Locker(t, e.Env.Store), TempDir: t.TempDir(), Threads: 2, Slots: e.queue, Codecs: []media.Codec{media.CodecH264}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -45,7 +45,8 @@ func TestHubSignalPlaneDisabled(t *testing.T) {
 	if _, err := h.SimilarTo(ctx, g1, SimilarOptions{}); !errors.Is(err, ErrSignalPlaneDisabled) {
 		t.Fatalf("SimilarTo: %v", err)
 	}
-	if _, err := h.Search(ctx, "query", HubSearchOptions{Personalize: &Personalization{Subject: sub}}); !errors.Is(err, ErrSignalPlaneDisabled) {
+	// Personalized search falls back to the content ranking (here: the lazy pool's error).
+	if _, err := h.Search(ctx, "query", HubSearchOptions{Personalize: &Personalization{Subject: sub}}); err == nil || errors.Is(err, ErrSignalPlaneDisabled) {
 		t.Fatalf("personalized Search: %v", err)
 	}
 	if err := h.PurgeContentKinds(ctx, []string{"gallery"}); !errors.Is(err, ErrSignalPlaneDisabled) {

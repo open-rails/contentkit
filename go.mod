@@ -15,7 +15,7 @@ require (
 	github.com/davidbyttow/govips/v2 v2.19.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/helpers v0.3.0
+	github.com/open-rails/helpers v0.4.0
 	github.com/open-rails/migratekit v1.0.5
 	github.com/prometheus/client_golang v1.24.1
 	github.com/redis/go-redis/v9 v9.22.0

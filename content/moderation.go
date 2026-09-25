@@ -48,6 +48,9 @@ type screening struct {
 // screen runs the moderator over one write. A reject verdict is returned as
 // RejectedError (nothing stored). An error or unknown decision fails closed to
 // a hold. Without a moderator every write is approved.
+//
+// A moderator slower than ModeratorTimeout counts as failed (held); after
+// repeated failures the breaker holds writes without calling it.
 func (rt *Runtime) screen(ctx context.Context, in ModerationInput) (screening, error) {
 	if in.SubjectID == "" {
 		in.SubjectID = viewerID(in.Actor)
@@ -59,7 +62,7 @@ func (rt *Runtime) screen(ctx context.Context, in ModerationInput) (screening, e
 		return screening{state: ModerationApproved}, nil
 	}
 	in.Tenant = rt.tenant
-	v, err := rt.moderator.Screen(ctx, in)
+	v, err := rt.breaker.screen(ctx, rt.moderator, in)
 	if err != nil {
 		rt.log.Warn("content moderator failed; holding for review", "kind", in.Kind)
 		meta, _ := json.Marshal(verdictMeta{Error: "moderator unavailable"})
@@ -530,4 +533,76 @@ func eraseLocalPolicy(ctx context.Context, p any, tenant string, ids []string) {
 			eraseLocalPolicy(ctx, part, tenant, ids)
 		}
 	}
+}
+
+// Moderator breaker defaults.
+const (
+	moderatorBreakerFailures = 3
+	defaultModeratorTimeout  = 5 * time.Second
+	defaultModeratorCooldown = 30 * time.Second
+)
+
+var errModeratorOpen = errors.New("content: moderator failing; writes held for review")
+
+// moderatorBreaker bounds each Screen call and, after consecutive failures,
+// skips the moderator for a cooldown; the next call after it is a trial.
+type moderatorBreaker struct {
+	timeout, cooldown time.Duration
+	mu                sync.Mutex
+	failures          int
+	openUntil         time.Time
+	lastErr           error
+}
+
+func newModeratorBreaker(timeout, cooldown time.Duration) *moderatorBreaker {
+	if timeout <= 0 {
+		timeout = defaultModeratorTimeout
+	}
+	if cooldown <= 0 {
+		cooldown = defaultModeratorCooldown
+	}
+	return &moderatorBreaker{timeout: timeout, cooldown: cooldown}
+}
+
+func (b *moderatorBreaker) screen(ctx context.Context, m ContentModerator, in ModerationInput) (Verdict, error) {
+	b.mu.Lock()
+	open := time.Now().Before(b.openUntil)
+	b.mu.Unlock()
+	if open {
+		return Verdict{}, errModeratorOpen
+	}
+	sctx, cancel := context.WithTimeout(ctx, b.timeout)
+	v, err := m.Screen(sctx, in)
+	cancel()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err == nil {
+		b.failures, b.lastErr = 0, nil
+		return v, nil
+	}
+	if ctx.Err() != nil {
+		return v, err // the caller gave up; not the moderator's failure
+	}
+	b.failures++
+	b.lastErr = err
+	if b.failures >= moderatorBreakerFailures {
+		b.openUntil = time.Now().Add(b.cooldown)
+	}
+	return v, err
+}
+
+// CheckModerator reports the moderator's state without calling it: an error
+// while repeated failures hold writes for review. Hosts register it as an
+// optional dependency (helpers deps) for statusz and app_dependency_up.
+func (rt *Runtime) CheckModerator(context.Context) error {
+	if rt.moderator == nil {
+		return nil
+	}
+	b := rt.breaker
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.failures >= moderatorBreakerFailures {
+		return fmt.Errorf("%w: %d consecutive failures, last: %v", errModeratorOpen, b.failures, b.lastErr)
+	}
+	return nil
 }
