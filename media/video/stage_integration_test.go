@@ -188,7 +188,7 @@ func TestWorkerQueuesSecondStage(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.commit(t, fixture{w: 1280, h: 720, secs: 5, rate: 30, audio: 1, tone: 440}.make(t), media.OpInsert)
-	enc, err := video.New(video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(), Threads: 2})
+	enc, err := video.New(video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(), Threads: 2, Encoder: video.EncoderX264})
 	if err != nil {
 		t.Fatal(err)
 	}
