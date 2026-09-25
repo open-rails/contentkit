@@ -172,11 +172,12 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if c.Hooks.ItemReady != nil {
 		hooks = append(hooks[:len(hooks):len(hooks)], &readyHook{pool: c.Pool, manifests: manifests, ready: c.Hooks.ItemReady})
 	}
+	var middleware []rivertype.Middleware
 	if c.Metrics != nil {
-		hooks = append(hooks, c.Metrics)
+		middleware = []rivertype.Middleware{c.Metrics}
 	}
 	client, err := riverhelpers.New(ctx, c.Pool, &river.Config{Schema: c.Schema,
-		JobTimeout: max(c.VideoTimeout, c.ImageTimeout), Logger: c.Logger, Hooks: hooks}, videos, imageJobs)
+		JobTimeout: max(c.VideoTimeout, c.ImageTimeout), Logger: c.Logger, Hooks: hooks, Middleware: middleware}, videos, imageJobs)
 	if err != nil {
 		return nil, err
 	}

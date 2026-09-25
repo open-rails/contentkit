@@ -25,13 +25,25 @@ func TestMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	attempted := time.Now().Add(-time.Second)
-	job := &rivertype.JobRow{Queue: workqueue.VideoQueue, Attempt: 3, AttemptedAt: &attempted}
+	job := &rivertype.JobRow{Queue: workqueue.VideoQueue, Attempt: 3}
 	for _, result := range []error{nil, river.JobSnooze(time.Minute), river.JobCancel(errors.New("cancelled")), errors.New("failed")} {
-		if got := metrics.WorkEnd(context.Background(), job, result); got != result {
-			t.Fatalf("WorkEnd changed the job result: %v", got)
+		if got := metrics.Work(context.Background(), job, func(context.Context) error { return result }); got != result {
+			t.Fatalf("Work changed the job result: %v", got)
 		}
 	}
+	remote, cancel := context.WithCancelCause(context.Background())
+	cancel(river.ErrJobCancelledRemotely)
+	if got := metrics.Work(remote, job, func(context.Context) error { return context.Canceled }); got != context.Canceled {
+		t.Fatalf("Work changed remote cancellation: %v", got)
+	}
+	func() {
+		defer func() {
+			if got := recover(); got != "panic before WorkEnd" {
+				t.Fatalf("Work did not propagate panic: %v", got)
+			}
+		}()
+		_ = metrics.Work(context.Background(), job, func(context.Context) error { panic("panic before WorkEnd") })
+	}()
 	metrics.ObserveEncode(video.EncodeObservation{SourceClass: "hd", Duration: 3 * time.Second,
 		CPU: 1250 * time.Millisecond, OutputSeconds: 2, Succeeded: true})
 	metrics.ObserveEncode(video.EncodeObservation{SourceClass: "hd", Duration: time.Second,
@@ -45,8 +57,8 @@ func TestMetrics(t *testing.T) {
 	for _, metric := range []string{
 		`contentkit_media_job_attempts_total{attempt="3+",outcome="success",queue="media_video"} 1`,
 		`contentkit_media_job_attempts_total{attempt="3+",outcome="snoozed",queue="media_video"} 1`,
-		`contentkit_media_job_attempts_total{attempt="3+",outcome="cancelled",queue="media_video"} 1`,
-		`contentkit_media_job_attempts_total{attempt="3+",outcome="error",queue="media_video"} 1`,
+		`contentkit_media_job_attempts_total{attempt="3+",outcome="cancelled",queue="media_video"} 2`,
+		`contentkit_media_job_attempts_total{attempt="3+",outcome="error",queue="media_video"} 2`,
 		`contentkit_media_video_encode_cpu_seconds_total{outcome="success",source_class="hd"} 1.25`,
 		`contentkit_media_video_encode_cpu_seconds_total{outcome="error",source_class="hd"} 0.5`,
 		`contentkit_media_video_encoded_output_seconds_total{source_class="hd"} 2`,

@@ -16,7 +16,7 @@ import (
 // Metrics records work attempts and video encode passes. Register it once per
 // worker process; queue backlog metrics belong on an always-on host process.
 type Metrics struct {
-	river.HookDefaults
+	river.MiddlewareDefaults
 	jobs     *prometheus.CounterVec
 	duration *prometheus.HistogramVec
 	encode   *prometheus.HistogramVec
@@ -53,25 +53,42 @@ func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 	return m, nil
 }
 
-func (m *Metrics) WorkEnd(_ context.Context, job *rivertype.JobRow, err error) error {
-	outcome := "success"
+// Work wraps the full River execution, including WorkBegin and argument
+// decoding, which can fail before WorkEnd is called.
+func (m *Metrics) Work(ctx context.Context, job *rivertype.JobRow, doInner func(context.Context) error) (err error) {
+	started := time.Now()
+	defer func() {
+		if p := recover(); p != nil {
+			m.recordWork(job, "error", time.Since(started))
+			panic(p)
+		}
+		m.recordWork(job, workOutcome(ctx, err), time.Since(started))
+	}()
+	return doInner(ctx)
+}
+
+func workOutcome(ctx context.Context, err error) string {
 	var snooze *river.JobSnoozeError
 	var cancel *river.JobCancelError
 	switch {
 	case errors.As(err, &snooze):
-		outcome = "snoozed"
-	case errors.As(err, &cancel), errors.Is(err, river.ErrJobCancelledRemotely):
-		outcome = "cancelled"
+		return "snoozed"
+	case errors.As(err, &cancel), errors.Is(err, river.ErrJobCancelledRemotely), err != nil && errors.Is(context.Cause(ctx), river.ErrJobCancelledRemotely):
+		return "cancelled"
 	case err != nil:
-		outcome = "error"
+		return "error"
+	default:
+		return "success"
 	}
+}
+
+func (m *Metrics) recordWork(job *rivertype.JobRow, outcome string, duration time.Duration) {
 	attempt := strconv.Itoa(job.Attempt)
 	if job.Attempt >= 3 {
 		attempt = "3+"
 	}
 	m.jobs.WithLabelValues(job.Queue, outcome, attempt).Inc()
-	m.duration.WithLabelValues(job.Queue, outcome).Observe(max(0, time.Since(*job.AttemptedAt).Seconds()))
-	return err
+	m.duration.WithLabelValues(job.Queue, outcome).Observe(duration.Seconds())
 }
 
 func (m *Metrics) ObserveEncode(o video.EncodeObservation) {
