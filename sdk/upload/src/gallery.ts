@@ -3,7 +3,7 @@ import type { FileInfo, ReadResult } from "./wire.gen.js";
 export type GalleryView = "carousel" | "grid";
 
 export interface GalleryMediaItem {
-  kind: "image" | "video";
+  kind: "image" | "video" | "audio";
   key: string;
   file: FileInfo;
   /** Width / height from the read API; a default when unknown. */
@@ -23,6 +23,16 @@ export interface GalleryLockedItem {
 export type GalleryItem = GalleryMediaItem | GalleryLockedItem;
 
 export const isVideoType = (type?: string) => !!type?.startsWith("video/");
+export const isAudioType = (type?: string) => !!type?.startsWith("audio/");
+
+/** An audio file's M4A variant name: request it in the read (`variants`) for `<audio>` playback. */
+export const AUDIO_VARIANT = "audio";
+
+/** An audio file's download key in `read.downloads`. */
+export const audioDownloadKey = (name: string) => `${name}-audio`;
+
+/** The stage aspect of an audio slide. */
+export const AUDIO_ASPECT = 3;
 
 function aspectOf(f: FileInfo | undefined, fallback: number) {
   return f?.w && f.h ? f.w / f.h : fallback;
@@ -41,6 +51,10 @@ export function galleryItems(read: ReadResult | null | undefined): GalleryItem[]
   const items: GalleryItem[] = [];
   for (const f of read.files) {
     if (f.locked || (f.teaser && (full || f === teaser))) continue;
+    if (isAudioType(f.type)) {
+      items.push({ kind: "audio", key: `f${f.index}`, file: f, aspect: AUDIO_ASPECT });
+      continue;
+    }
     const video = isVideoType(f.type);
     items.push({ kind: video ? "video" : "image", key: `f${f.index}`, file: f, aspect: aspectOf(f, video ? 16 / 9 : 1) });
   }

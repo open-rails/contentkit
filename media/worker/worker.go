@@ -62,6 +62,7 @@ type Config struct {
 	// (defaults 1 and 2); ImageSources bounds sources decoded at once per
 	// image job (default 2).
 	VideoWorkers int
+	AudioWorkers int // default 2
 	ImageWorkers int
 	ImageSources int
 	// MaxPixels, MaxFrames and MaxAnimationSeconds bound decoded images
@@ -150,7 +151,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 		return nil, err
 	}
 	videos, err := video.Contribution(video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, Kinds: c.Kinds, Timeout: c.VideoTimeout,
-		MaxWorkers: c.VideoWorkers, Logger: c.Logger})
+		MaxWorkers: c.VideoWorkers, AudioWorkers: c.AudioWorkers, Logger: c.Logger})
 	if err != nil {
 		return nil, err
 	}

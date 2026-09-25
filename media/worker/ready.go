@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,7 +26,7 @@ type readyHook struct {
 }
 
 func (h *readyHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err error) error {
-	if err != nil || job.Kind != (workqueue.ImageArgs{}).Kind() && job.Kind != (workqueue.VideoArgs{}).Kind() {
+	if err != nil || job.Kind != (workqueue.ImageArgs{}).Kind() && !slices.Contains(workqueue.EncodeKinds, job.Kind) {
 		return err
 	}
 	var args struct {

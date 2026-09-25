@@ -102,6 +102,10 @@ export const ko: UploadUiMessageBundle = {
     processingImage: "이미지 처리 중…",
     image: "이미지 {index}",
     video: "동영상 {index}",
+    audio: "오디오 {index}",
+    processingAudio: "오디오 처리 중…",
+    download: "다운로드",
+    failedAudio: "이 오디오를 처리할 수 없습니다.",
     failedImage: "이 이미지를 처리할 수 없습니다.",
   },
   player: {

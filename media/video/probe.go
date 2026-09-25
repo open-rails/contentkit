@@ -21,6 +21,10 @@ type probeResult struct {
 		Duration   string `json:"duration"`
 		StartTime  string `json:"start_time"`
 		FormatName string `json:"format_name"`
+		Tags       struct {
+			Language string `json:"language"`
+			Title    string `json:"title"`
+		} `json:"tags"`
 	} `json:"format"`
 }
 
@@ -55,8 +59,12 @@ type probeStream struct {
 }
 
 func probe(ctx context.Context, path string) (probeResult, error) {
+	return probeWith(ctx, path, sourceDemuxers)
+}
+
+func probeWith(ctx context.Context, path string, demuxers []string) (probeResult, error) {
 	var p probeResult
-	out, err := command(ctx, "ffprobe", append(append([]string{"-v", "error"}, inputOptions(sourceDemuxers)...),
+	out, err := command(ctx, "ffprobe", append(append([]string{"-v", "error"}, inputOptions(demuxers)...),
 		"-show_streams", "-show_format", "-of", "json", path)...)
 	if err != nil {
 		return p, err

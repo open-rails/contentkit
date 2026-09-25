@@ -102,6 +102,10 @@ export const es: UploadUiMessageBundle = {
     processingImage: "Procesando imagen…",
     image: "Imagen {index}",
     video: "Vídeo {index}",
+    audio: "Audio {index}",
+    processingAudio: "Procesando audio…",
+    download: "Descargar",
+    failedAudio: "No se pudo procesar este audio.",
     failedImage: "No se pudo procesar esta imagen.",
   },
   player: {

@@ -431,7 +431,7 @@ type FileInfo struct {
 	Dims     *Dims   `json:"dims,omitempty"` // editors only: the source's size; w/h is the edited size
 	Teaser   bool    `json:"teaser,omitempty"`
 	Locked   bool    `json:"locked,omitempty"`
-	HLS      bool    `json:"hls,omitempty"`
+	HLS      bool    `json:"hls,omitempty"` // playable at .../hls/{file}/master.m3u8 (video, or audio only)
 	// Unattached is an editor's file processed on upload, not yet attached
 	// (ReadOptions.Unattached).
 	Unattached bool   `json:"unattached,omitempty"`
@@ -485,7 +485,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	views := &editorViews{g: g}
 	for i, f := range files {
 		fi := FileInfo{Index: i, Type: f.Type, Width: metaInt(f.Meta, "w"), Height: metaInt(f.Meta, "h"),
-			Duration: metaFloat(f.Meta, "duration"), Teaser: f.Teaser(), HLS: f.HLS != nil && len(f.HLS.Video) > 0, Unattached: f.Unattached}
+			Duration: metaFloat(f.Meta, "duration"), Teaser: f.Teaser(), HLS: f.HLS.playable(), Unattached: f.Unattached}
 		if !g.Allowed(i) {
 			fi.Locked = true
 		} else {
@@ -539,10 +539,10 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	return out, g, nil
 }
 
-// addProgress fills Progress on allowed, pending video files. A failed
-// progress read leaves it out rather than failing the read.
+// addProgress fills Progress on allowed, pending video and audio files. A
+// failed progress read leaves it out rather than failing the read.
 func (r *Reader) addProgress(ctx context.Context, g *Grant, files []FileInfo) {
-	if r.progress == nil || g.Item.Kind().Video == nil {
+	if k := g.Item.Kind(); r.progress == nil || k.Video == nil && k.Audio == nil {
 		return
 	}
 	var pending []int
@@ -571,10 +571,10 @@ func (r *Reader) addProgress(ctx context.Context, g *Grant, files []FileInfo) {
 	}
 }
 
-// encodePending reports a video file whose current source has no ladder or
-// failure recorded yet, or a ladder still missing a later stage's rungs.
+// encodePending reports a video or audio file whose current source has no
+// ladder or failure recorded yet, or a ladder still missing a later stage's rungs.
 func encodePending(f File) bool {
-	return strings.HasPrefix(f.Type, "video/") && (f.HLS == nil || f.HLS.Source != f.Source() || len(f.HLS.Pending) > 0)
+	return isEncodedType(f.Type) && (f.HLS == nil || f.HLS.Source != f.Source() || len(f.HLS.Pending) > 0)
 }
 
 func metaFloat(m map[string]any, k string) float64 {

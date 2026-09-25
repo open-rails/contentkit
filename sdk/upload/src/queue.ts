@@ -246,8 +246,8 @@ export class UploadQueue {
     for (const i of pending) {
       const f = byName.get(i.name);
       if (!f) continue;
-      const video = (f.type ?? "").startsWith("video/");
-      const processed = !!f.failed || (video ? f.hls && !f.progress : (f.w ?? 0) > 0);
+      const encoded = /^(video|audio)\//.test(f.type ?? "");
+      const processed = !!f.failed || (encoded ? f.hls && !f.progress : (f.w ?? 0) > 0);
       changed = this.set(i.id, { processing: f, processed }) || changed;
     }
     if (changed) this.changed();

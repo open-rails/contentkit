@@ -102,6 +102,10 @@ export const zh: UploadUiMessageBundle = {
     processingImage: "正在处理图片…",
     image: "图片 {index}",
     video: "视频 {index}",
+    audio: "音频 {index}",
+    processingAudio: "正在处理音频…",
+    download: "下载",
+    failedAudio: "无法处理此音频。",
     failedImage: "无法处理此图片。",
   },
   player: {

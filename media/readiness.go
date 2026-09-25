@@ -53,7 +53,7 @@ func (r Readiness) settle() Readiness {
 
 // State is the file's processing state. A video is ready when its current
 // source's ladder has every stage (no hls.pending) and failed on hls.error;
-// an image when its variants were derived from its current source and edit
+// audio when its current source's track is encoded, failed on hls.error; an image when its variants were derived from its current source and edit
 // (Derived) and failed on Failure; a staged upload is processing. Other
 // types need no processing.
 func (f File) State() string { return f.state(true) }
@@ -62,14 +62,18 @@ func (f File) State() string { return f.state(true) }
 func (f File) state(images bool) string {
 	h := f.HLS
 	switch {
-	case isVideoType(f.Type) && h != nil && h.Source == f.Source() && h.Error != "":
+	case isEncodedType(f.Type) && h != nil && h.Source == f.Source() && h.Error != "":
 		return StateFailed
 	case isImageType(f.Type) && f.Failed() != nil:
 		return StateFailed
-	case layout.ValidStagedName(f.Original) && (images || isVideoType(f.Type)):
+	case layout.ValidStagedName(f.Original) && (images || isEncodedType(f.Type)):
 		return StateProcessing
 	case isVideoType(f.Type):
 		if h == nil || h.Source != f.Source() || len(h.Video) == 0 || len(h.Pending) > 0 {
+			return StateProcessing
+		}
+	case isAudioType(f.Type):
+		if h == nil || h.Source != f.Source() || len(h.Audio) == 0 {
 			return StateProcessing
 		}
 	case isImageType(f.Type) && images && f.Derived != f.FailureKey():
@@ -87,6 +91,9 @@ func (f File) Servable() bool {
 	case isVideoType(f.Type):
 		h := f.HLS
 		return h != nil && h.Error == "" && len(h.Video) > 0 && (h.Source != f.Source() || len(h.Pending) == 0)
+	case isAudioType(f.Type):
+		h := f.HLS
+		return h != nil && h.Error == "" && len(h.Audio) > 0
 	case isImageType(f.Type):
 		return f.Failed() == nil && len(f.Variants) > 0
 	}
@@ -209,3 +216,7 @@ func (m *Manifests) Readiness(ctx context.Context, ref contentref.ContentRef) (R
 
 func isVideoType(t string) bool { return strings.HasPrefix(t, "video/") }
 func isImageType(t string) bool { return strings.HasPrefix(t, "image/") }
+func isAudioType(t string) bool { return strings.HasPrefix(t, "audio/") }
+
+// isEncodedType is a type the media worker encodes with ffmpeg.
+func isEncodedType(t string) bool { return isVideoType(t) || isAudioType(t) }

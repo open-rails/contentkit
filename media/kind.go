@@ -47,6 +47,7 @@ type Kind struct {
 	// inline images; slots set their own.
 	Animation Animation
 	Video     *Video // nil: no video encoding
+	Audio     *Audio // nil: no audio encoding; required to accept audio/ types
 	// Zip names the variant packed, in file order, into downloads["zip"];
 	// "" offers no zip.
 	Zip string
@@ -71,6 +72,32 @@ type Video struct {
 	// VideoAnimation (x264 tune animation, lower CRF, lower caps).
 	Profile string `json:"profile,omitempty"`
 }
+
+// Audio configures a kind's audio files, encoded by the media worker
+// (media/video) to AAC-LC at 128 kbit/s, 48 kHz stereo: a one-track HLS
+// audio ladder (File.HLS.Audio, played through the master playlist) and a
+// faststart M4A, the file's AudioVariant and its download
+// AudioDownloadKey(file).
+type Audio struct {
+	// Loudness normalizes each file to this integrated loudness in LUFS
+	// (EBU R128 two-pass linear loudnorm, true peak at most -1.5 dBTP), e.g.
+	// -16; 0 keeps the source's level.
+	Loudness float64 `json:"loudness,omitempty"`
+}
+
+// Validate requires Loudness 0 or within -70..-5 LUFS.
+func (a Audio) Validate() error {
+	if a.Loudness != 0 && (a.Loudness < -70 || a.Loudness > -5) {
+		return fmt.Errorf("media: invalid audio loudness %g LUFS", a.Loudness)
+	}
+	return nil
+}
+
+// AudioVariant is an encoded audio file's M4A variant (read API ?variant=audio).
+const AudioVariant = "audio"
+
+// AudioDownloadKey is the manifest downloads key of an audio file's M4A.
+func AudioDownloadKey(file string) string { return file + "-audio" }
 
 // DefaultPosterWidths cover a full-width column at 2–3× density.
 var DefaultPosterWidths = []int{640, 960, 1280, 1920, 2560}
@@ -331,6 +358,16 @@ func NewRegistry(kinds ...Kind) (*Registry, error) {
 			if err := k.Video.Validate(); err != nil {
 				return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
 			}
+		}
+		if k.Audio != nil {
+			if err := k.Audio.Validate(); err != nil {
+				return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
+			}
+			if _, ok := k.Specs[AudioVariant]; ok {
+				return nil, fmt.Errorf("media: kind %q: spec name %q is the audio variant", k.Name, AudioVariant)
+			}
+		} else if slices.ContainsFunc(k.Types, isAudioType) {
+			return nil, fmt.Errorf("media: kind %q accepts audio types but has no Audio", k.Name)
 		}
 		for t, l := range k.TypeLimits {
 			if t == "" || strings.Contains(t, "/") || l.MaxBytes < 0 || l.MaxFiles < 0 {

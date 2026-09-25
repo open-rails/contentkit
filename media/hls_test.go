@@ -74,3 +74,40 @@ func TestMasterPlaylistCodecs(t *testing.T) {
 		t.Fatalf("variants\n%s\nwant\n%s\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"), pl)
 	}
 }
+
+func TestAudioKind(t *testing.T) {
+	types := []string{"audio/mpeg"}
+	for _, bad := range []Kind{
+		{Name: "a", Types: types},
+		{Name: "a", Types: types, Audio: &Audio{Loudness: -80}},
+		{Name: "a", Types: types, Audio: &Audio{}, Specs: map[string]Spec{AudioVariant: {Width: 10}}},
+	} {
+		if _, err := NewRegistry(bad); err == nil {
+			t.Fatalf("registered %+v", bad)
+		}
+	}
+	if _, err := NewRegistry(Kind{Name: "a", Types: types, Audio: &Audio{Loudness: -16}}); err != nil {
+		t.Fatal(err)
+	}
+
+	src := "sha256-" + strings.Repeat("a", 64)
+	track := []AudioTrack{{ID: "a1", Blob: "sha256-" + strings.Repeat("b", 64), Segments: []Segment{{Offset: 10, Length: 5, Seconds: 1}}}}
+	for _, tc := range []struct {
+		hls      *HLS
+		state    string
+		servable bool
+	}{
+		{nil, StateProcessing, false},
+		{&HLS{Source: src, Audio: track}, StateReady, true},
+		{&HLS{Source: src, Error: "no audio"}, StateFailed, false},
+		{&HLS{Source: "sha256-" + strings.Repeat("c", 64), Audio: track}, StateProcessing, true}, // replaced: the old track plays
+	} {
+		f := File{Name: "x.mp3", Original: src, Type: "audio/mpeg", HLS: tc.hls}
+		if f.State() != tc.state || f.Servable() != tc.servable || tc.hls.playable() != (tc.servable) {
+			t.Fatalf("%+v: state %s servable %v", tc.hls, f.State(), f.Servable())
+		}
+	}
+	if downloadFile(AudioDownloadKey("x.mp3")) != "x.mp3" || downloadFile("x-1080p") != "x" {
+		t.Fatal("download keys")
+	}
+}

@@ -22,7 +22,10 @@ export { DEFAULT_DENSITY, densityFor, pickRendition, sortRenditions, type Densit
 export {
   formatDuration,
   galleryItems,
+  isAudioType,
   isVideoType,
+  audioDownloadKey,
+  AUDIO_VARIANT,
   stageAspect,
   type GalleryItem,
   type GalleryLockedItem,

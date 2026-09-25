@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Blobs above multipartAbove upload in partSize parts (a 2 h 4K rendition
@@ -91,4 +92,32 @@ func (e *Encoder) putMultipart(ctx context.Context, key string, f *os.File, size
 	}
 	_, err = e.c.Store.CompleteMultipart(ctx, key, id, parts)
 	return err
+}
+
+// source downloads a file's source to path and places a staged one at its
+// content address. An empty key means the source is gone and the result
+// would be stale.
+func (e *Encoder) source(ctx context.Context, ms *media.Manifests, item media.Item, name, source, path string, fp *fileProgress) (string, string, media.Object, error) {
+	srcKey, err := item.Original(source)
+	if err != nil {
+		return "", "", media.Object{}, &PermanentError{err}
+	}
+	obj, sum, err := e.fetch(ctx, srcKey, path, fp)
+	if errors.Is(err, media.ErrNotFound) {
+		return "", "", obj, e.stale(ctx, ms, item, name, source, err)
+	} else if err != nil {
+		return "", "", obj, err
+	}
+	if !layout.ValidStagedName(source) {
+		return srcKey, source, obj, nil
+	}
+	placed, err := ms.Place(ctx, item.Ref(), media.Staged{Name: source, ETag: obj.ETag, SHA256: sum})
+	if errors.Is(err, media.ErrStagedGone) {
+		return "", "", obj, e.stale(ctx, ms, item, name, source, err)
+	} else if err != nil {
+		return "", "", obj, err
+	}
+	srcKey, _ = item.Original(placed)
+	obj, err = e.c.Store.Head(ctx, srcKey)
+	return srcKey, placed, obj, err
 }

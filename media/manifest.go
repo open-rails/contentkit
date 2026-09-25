@@ -188,13 +188,13 @@ func (s *Segment) UnmarshalJSON(b []byte) error {
 	return err
 }
 
-// Attached is the manifest without its unattached files and their video
-// downloads ("{file}-{rung}p"), as readers see it; m itself when it has none.
+// Attached is the manifest without its unattached files and their
+// downloads, as readers see it; m itself when it has none.
 func (m *Manifest) Attached() *Manifest {
 	return m.without(func(f File) bool { return f.Unattached })
 }
 
-// without is the manifest without the files drop reports and their video
+// without is the manifest without the files drop reports and their
 // downloads; m itself when it drops none.
 func (m *Manifest) without(drop func(File) bool) *Manifest {
 	gone := map[string]bool{}
@@ -222,8 +222,12 @@ func (m *Manifest) without(drop func(File) bool) *Manifest {
 	return &out
 }
 
-// downloadFile is the file a video download key names ("{file}-{rung}p"), else "".
+// downloadFile is the file a download key names ("{file}-{rung}p" for
+// video, "{file}-audio"), else "".
 func downloadFile(key string) string {
+	if f, ok := strings.CutSuffix(key, "-audio"); ok && f != "" {
+		return f
+	}
 	i := strings.LastIndexByte(key, '-')
 	if i <= 0 || !strings.HasSuffix(key, "p") || len(key) < i+3 {
 		return ""

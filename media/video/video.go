@@ -30,7 +30,6 @@ import (
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Config configures an Encoder.
@@ -72,13 +71,24 @@ type Encoder struct {
 	encoders map[media.Codec]string // ffmpeg encoder per codec
 }
 
-// Job encodes the video files of one manifest. Versioned and Video are the
-// kind's: the manifest's address and its ladder and aspect bounds.
+// Job encodes the video files of one manifest, and its audio files when
+// Audio is set. Versioned, Video and Audio are the kind's: the manifest's
+// address, its ladder and aspect bounds, and its audio settings.
 type Job struct {
 	Ref       contentref.ContentRef `json:"ref"`
 	Versioned bool                  `json:"versioned,omitempty"`
 	Video     media.Video           `json:"video"`
+	Audio     *media.Audio          `json:"audio,omitempty"`
+	only      encodeOnly            // the worker's job kinds: video or audio files only
 }
+
+type encodeOnly int
+
+const (
+	encodeAll encodeOnly = iota
+	encodeVideo
+	encodeAudio
+)
 
 func New(c Config) (*Encoder, error) {
 	if c.Store == nil {
@@ -179,9 +189,14 @@ func (e *Encoder) encode(ctx context.Context, job Job, report Report, oneStage b
 	} else if err != nil {
 		return false, err
 	}
+	var aspec string
+	if job.Audio != nil {
+		aspec = AudioSpec(*job.Audio)
+	}
 	var stale []media.File
 	for _, f := range man.Files {
-		if IsVideo(f) && !fresh(man, f, r) {
+		if job.only != encodeAudio && IsVideo(f) && !fresh(man, f, r) ||
+			job.only != encodeVideo && job.Audio != nil && IsAudio(f) && !audioFresh(man, f, aspec) {
 			stale = append(stale, f)
 		}
 	}
@@ -193,7 +208,12 @@ func (e *Encoder) encode(ctx context.Context, job Job, report Report, oneStage b
 	var errs []error
 	for _, f := range stale {
 		cur, source := f.HLS, f.Source()
-		for {
+		failSpec := r.failSpec
+		if IsAudio(f) {
+			failSpec = aspec
+			source, err = e.audioFile(ctx, ms, item, *job.Audio, f.Name, source, prog.file(f.Name))
+		}
+		for IsVideo(f) {
 			cur, err = e.file(ctx, ms, item, r, f.Name, source, cur, prog.file(f.Name))
 			if cur != nil {
 				source = cur.Source // a staged source is placed by its first stage
@@ -212,18 +232,22 @@ func (e *Encoder) encode(ctx context.Context, job Job, report Report, oneStage b
 		}
 		var perm *PermanentError
 		if errors.As(err, &perm) {
-			err = e.fail(ctx, ms, item, r.failSpec, f.Name, source, perm.Err)
+			err = e.fail(ctx, ms, item, failSpec, f.Name, source, perm.Err)
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s %q: %w", job.Ref, f.Name, err))
 		}
 	}
 	if len(errs) == 0 {
-		// Drop downloads of files that are gone or no longer video.
+		// Drop downloads of files that are gone or no longer video or audio.
 		man, err := ms.Edit(ctx, job.Ref, func(m *media.Manifest) error {
 			for k, d := range m.Downloads {
 				if name, ok := videoDownload(k, d); ok {
 					if i := m.File(name); i < 0 || !IsVideo(m.Files[i]) {
+						delete(m.Downloads, k)
+					}
+				} else if name, ok := audioDownload(k, d); ok {
+					if i := m.File(name); i < 0 || !IsAudio(m.Files[i]) {
 						delete(m.Downloads, k)
 					}
 				}
@@ -233,6 +257,9 @@ func (e *Encoder) encode(ctx context.Context, job Job, report Report, oneStage b
 		if err != nil {
 			return more, err
 		}
+		if job.only == encodeAudio || !slices.ContainsFunc(man.Files, IsVideo) {
+			return more, nil
+		}
 		defer prog.item(media.PhaseImages)()
 		return more, e.images(ctx, ms, item, man)
 	}
@@ -241,7 +268,7 @@ func (e *Encoder) encode(ctx context.Context, job Job, report Report, oneStage b
 
 // fail records that a source can never be encoded: the file's hls becomes
 // {source, spec, error} with no renditions (fresh until the source or spec
-// changes), its downloads are dropped, and Hooks.Failed is told.
+// changes), its downloads and audio variant are dropped, and Hooks.Failed is told.
 func (e *Encoder) fail(ctx context.Context, ms *media.Manifests, item media.Item, spec, name, source string, cause error) error {
 	e.c.Logger.WarnContext(ctx, "media/video: cannot encode", "ref", item.Ref().String(), "file", name, "error", cause)
 	_, err := ms.Edit(ctx, item.Ref(), func(m *media.Manifest) error {
@@ -250,6 +277,8 @@ func (e *Encoder) fail(ctx context.Context, ms *media.Manifests, item media.Item
 			return errStale
 		}
 		m.Files[i].HLS = &media.HLS{Source: source, Spec: spec, Error: cause.Error()}
+		delete(m.Files[i].Variants, media.AudioVariant)
+		delete(m.Downloads, media.AudioDownloadKey(name))
 		for k, d := range m.Downloads {
 			if n, ok := videoDownload(k, d); ok && n == name {
 				delete(m.Downloads, k)
@@ -321,10 +350,6 @@ var testBeforePromote func()
 // starts over at stage 1, which also makes the tracks and the sprite. It
 // returns the published hls, nil if the result was dropped.
 func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item, r jobRecipe, name, source string, cur *media.HLS, fp *fileProgress) (*media.HLS, error) {
-	srcKey, err := item.Original(source)
-	if err != nil {
-		return nil, &PermanentError{err}
-	}
 	dir, err := os.MkdirTemp(e.c.TempDir, tempPattern)
 	if err != nil {
 		return nil, err
@@ -332,27 +357,11 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 	defer os.RemoveAll(dir)
 
 	src := filepath.Join(dir, "source")
-	srcObj, sum, err := e.fetch(ctx, srcKey, src, fp)
-	if errors.Is(err, media.ErrNotFound) {
-		return nil, e.stale(ctx, ms, item, name, source, err)
-	} else if err != nil {
+	srcKey, placed, srcObj, err := e.source(ctx, ms, item, name, source, src, fp)
+	if err != nil || srcKey == "" {
 		return nil, err
 	}
-	if layout.ValidStagedName(source) {
-		// Hashed while it downloaded: place it at its content address before
-		// encoding, so the outputs record the placed original.
-		placed, err := ms.Place(ctx, item.Ref(), media.Staged{Name: source, ETag: srcObj.ETag, SHA256: sum})
-		if errors.Is(err, media.ErrStagedGone) {
-			return nil, e.stale(ctx, ms, item, name, source, err)
-		} else if err != nil {
-			return nil, err
-		}
-		source = placed
-		srcKey, _ = item.Original(source)
-		if srcObj, err = e.c.Store.Head(ctx, srcKey); err != nil {
-			return nil, err
-		}
-	}
+	source = placed
 	fp.set(media.PhaseProbing)
 	pr, err := probe(ctx, src)
 	if err != nil {

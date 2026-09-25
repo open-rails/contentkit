@@ -331,6 +331,12 @@ func command(ctx context.Context, name string, args ...string) ([]byte, error) {
 // ffmpegProgress runs ffmpeg with -progress on stdout, passing each report's
 // out_time in seconds to fn.
 func ffmpegProgress(ctx context.Context, fn func(outTime float64), args ...string) error {
+	_, err := ffmpegProgressTail(ctx, fn, args...)
+	return err
+}
+
+// ffmpegProgressTail is ffmpegProgress returning the tail of ffmpeg's stderr.
+func ffmpegProgressTail(ctx context.Context, fn func(outTime float64), args ...string) ([]byte, error) {
 	pr, pw := io.Pipe()
 	done := make(chan struct{})
 	go func() {
@@ -338,13 +344,19 @@ func ffmpegProgress(ctx context.Context, fn func(outTime float64), args ...strin
 		_ = parseFFmpegProgress(pr, fn)
 		_, _ = io.Copy(io.Discard, pr)
 	}()
-	err := run(ctx, pw, "ffmpeg", append([]string{"-progress", "pipe:1", "-nostats"}, args...)...)
+	stderr, err := runTail(ctx, pw, "ffmpeg", append([]string{"-progress", "pipe:1", "-nostats"}, args...)...)
 	_ = pw.Close()
 	<-done
-	return err
+	return stderr, err
 }
 
 func run(ctx context.Context, stdout io.Writer, name string, args ...string) error {
+	_, err := runTail(ctx, stdout, name, args...)
+	return err
+}
+
+// runTail runs a tool, returning the tail of its stderr.
+func runTail(ctx context.Context, stdout io.Writer, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 10 * time.Second
@@ -352,11 +364,11 @@ func run(ctx context.Context, stdout io.Writer, name string, args ...string) err
 	cmd.Stdout, cmd.Stderr = stdout, &stderr
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
-		return fmt.Errorf("%s: %w: %s", name, err, stderr.b)
+		return nil, fmt.Errorf("%s: %w: %s", name, err, stderr.b)
 	}
-	return nil
+	return stderr.b, nil
 }
 
 // tail keeps the last 16 KiB of a tool's diagnostics.

@@ -102,6 +102,10 @@ export const ja: UploadUiMessageBundle = {
     processingImage: "画像を処理中…",
     image: "画像 {index}",
     video: "動画 {index}",
+    audio: "音声 {index}",
+    processingAudio: "音声を処理中…",
+    download: "ダウンロード",
+    failedAudio: "この音声を処理できませんでした。",
     failedImage: "この画像を処理できませんでした。",
   },
   player: {
