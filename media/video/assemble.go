@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -169,6 +170,10 @@ func (c WorkerConfig) assemble(ctx context.Context, args workqueue.VideoAssemble
 			}
 		}
 	}
+	var newRenditions []media.Rendition
+	if k > 0 {
+		newRenditions = slices.Clone(hls.Video[len(current.Video):])
+	}
 	orderVideo(hls.Video, c.Encoder.c.Codecs)
 	// An object can change between the encode and publish. The manifest edit
 	// below also fences the logical source name.
@@ -186,13 +191,21 @@ func (c WorkerConfig) assemble(ctx context.Context, args workqueue.VideoAssemble
 		if k > 0 {
 			old := m.Files[i].HLS
 			if old == nil || old.Source != run.Source || old.Spec != run.Spec ||
-				!slices.Equal(old.Pending, current.Pending) || len(old.Video) != len(current.Video) {
+				!slices.Equal(old.Pending, current.Pending) || len(old.Video) != len(current.Video) ||
+				old.SubsSpec != current.SubsSpec || !reflect.DeepEqual(old.Audio, current.Audio) ||
+				!reflect.DeepEqual(old.Subs, current.Subs) {
 				return errStale
 			}
+			next := *old
+			next.Video = append(slices.Clone(old.Video), newRenditions...)
+			orderVideo(next.Video, c.Encoder.c.Codecs)
+			next.Pending = hls.Pending
+			m.Files[i].HLS = &next
 		} else if c.Encoder.stagesDone(m.Files[i].HLS, run.Source, run.Spec, stages) > 0 {
 			return errStale
+		} else {
+			m.Files[i].HLS = hls
 		}
-		m.Files[i].HLS = hls
 		if k == 0 {
 			if m.Files[i].Meta == nil {
 				m.Files[i].Meta = map[string]any{}
