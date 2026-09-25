@@ -265,6 +265,54 @@ func pngImage(t *testing.T, w, h int, seed uint8) []byte {
 
 func newID() string { return uuid.Must(uuid.NewV7()).String() }
 
+func TestSingleQueueWorkerStopsAfterOneJob(t *testing.T) {
+	for _, queue := range []string{workqueue.VideoLightQueue, workqueue.VideoEncodeQueue} {
+		t.Run(queue, func(t *testing.T) {
+			env := s3test.Open(t)
+			pool := pgtest.Pool(t, nil)
+			schema := workerSchema(t, pool)
+			kinds, err := media.NewRegistry(media.Kind{Name: "clip", Types: []string{"video/mp4"}, Video: &media.Video{Ladder: []int{240}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			w, err := worker.New(context.Background(), worker.Config{Pool: pool, Schema: schema, Store: env.Store, Kinds: kinds,
+				Queue: queue, TempDir: t.TempDir(), Threads: 2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ref := contentref.New(env.Tenant, "clip", newID())
+			var args river.JobArgs = workqueue.VideoPlanArgs{Ref: ref}
+			if queue == workqueue.VideoEncodeQueue {
+				args = workqueue.VideoChunkArgs{Ref: ref, RunID: uuid.NewString(), Index: 0}
+			}
+			var ids []int64
+			for range 2 {
+				result, err := w.Client().Insert(context.Background(), args, &river.InsertOpts{Queue: queue})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ids = append(ids, result.Job.ID)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			if err := w.Run(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if ctx.Err() != nil {
+				t.Fatal("worker did not exit after its first job")
+			}
+			var terminal int
+			if err := pool.QueryRow(context.Background(), "SELECT count(*) FROM "+pgx.Identifier{schema, "river_job"}.Sanitize()+
+				" WHERE id = ANY($1) AND state IN ('completed', 'cancelled', 'discarded')", ids).Scan(&terminal); err != nil {
+				t.Fatal(err)
+			}
+			if terminal != 1 {
+				t.Fatalf("expected one processed job, got %d", terminal)
+			}
+		})
+	}
+}
+
 // The host enqueues; the worker derives variants and slot outputs (running
 // the host's SlotEncoded hook), and places a staged upload at its SHA-256.
 func TestWorkerProcessesImagesAndPlacesStagedUploads(t *testing.T) {

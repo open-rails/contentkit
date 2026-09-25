@@ -59,6 +59,7 @@ func FromEnv(ctx context.Context) (Config, error) {
 // environment, leaving the others as they are:
 //
 //	MEDIA_WORKER_SCHEMA          the host's worker River schema (required, one per host, e.g. doujins_media_worker)
+//	MEDIA_WORKER_QUEUE           empty for all queues, or media_video_light / media_video_encode for one-task processes
 //	MEDIA_HOST_RIVER_SCHEMA      the host's River schema (default: the connection's search path)
 //	MEDIA_HOST_QUEUE             the host's media queue (default contentkit_media)
 //	MEDIA_HOST_GRACE             the host's sweep grace (default 24h)
@@ -71,10 +72,10 @@ func FromEnv(ctx context.Context) (Config, error) {
 //	MEDIA_WORKER_CONCURRENCY     video jobs per process (default 1)
 //	MEDIA_WORKER_IMAGE_CONCURRENCY  image jobs per process (default 2)
 //	MEDIA_WORKER_AUDIO_CONCURRENCY  audio jobs per process (default 2)
-//	MEDIA_WORKER_JOB_TIMEOUT     per video job (default 48h)
+//	MEDIA_WORKER_JOB_TIMEOUT     per audio job (default 48h); video tasks use 1h
 //	MEDIA_WORKER_SHUTDOWN_GRACE  time running jobs get on SIGTERM before cancel (default 30s)
 func (c *Config) TuningFromEnv() error {
-	for k, p := range map[string]*string{"MEDIA_WORKER_SCHEMA": &c.Schema, "MEDIA_HOST_RIVER_SCHEMA": &c.HostSchema, "MEDIA_HOST_QUEUE": &c.HostQueue, "MEDIA_WORKER_TMP": &c.TempDir,
+	for k, p := range map[string]*string{"MEDIA_WORKER_SCHEMA": &c.Schema, "MEDIA_WORKER_QUEUE": &c.Queue, "MEDIA_HOST_RIVER_SCHEMA": &c.HostSchema, "MEDIA_HOST_QUEUE": &c.HostQueue, "MEDIA_WORKER_TMP": &c.TempDir,
 		"MEDIA_WORKER_PRESET": &c.Preset, "MEDIA_WORKER_TOP_PRESET": &c.TopPreset, "MEDIA_WORKER_ENCODER": &c.VideoEncoder} {
 		if v := os.Getenv(k); v != "" {
 			*p = v
