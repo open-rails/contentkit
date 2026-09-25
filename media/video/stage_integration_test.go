@@ -53,7 +53,7 @@ func keyframes(t *testing.T, path string) []int {
 	return keys
 }
 
-// A 1080p source publishes 480p in both codecs first (with the tracks and
+// A 1080p source publishes 480p in AV1 and H.264 first (with the tracks and
 // the sprite, 1080 pending), then adds 1080p in both codecs. Every
 // rendition has keyframes every 4 s and the same segments, so a player
 // switches between the stages' rungs seamlessly.
@@ -84,7 +84,7 @@ func TestProgressivePublish(t *testing.T) {
 	}
 	m, _ := e.manifest(t)
 	h := m.Files[0].HLS
-	if h == nil || h.Source != source || !slices.Equal(ladder(h), []string{"480-hevc", "480-h264"}) || !slices.Equal(h.Pending, []int{1080}) ||
+	if h == nil || h.Source != source || !slices.Equal(ladder(h), []string{"480-av1", "480-h264"}) || !slices.Equal(h.Pending, []int{1080}) ||
 		len(h.Audio) != 1 || len(h.Subs) != 1 || h.Sprite == nil {
 		t.Fatalf("stage 1 hls %+v", h)
 	}
@@ -102,7 +102,7 @@ func TestProgressivePublish(t *testing.T) {
 	}
 	m, _ = e.manifest(t)
 	h = m.Files[0].HLS
-	if !slices.Equal(ladder(h), []string{"1080-hevc", "480-hevc", "1080-h264", "480-h264"}) || len(h.Pending) != 0 ||
+	if !slices.Equal(ladder(h), []string{"1080-av1", "480-av1", "1080-h264", "480-h264"}) || len(h.Pending) != 0 ||
 		h.Audio[0].Blob != audio || h.Sprite.Blob != sprite {
 		t.Fatalf("stage 2 hls %+v", h)
 	}
@@ -173,6 +173,12 @@ func switchRungs(t *testing.T, paths []string, rs []media.Rendition) {
 	switched := play(func(j int) int { return j % len(rs) })
 	for i := range rs {
 		if alone := play(func(int) int { return i }); !slices.Equal(switched, alone) {
+			for k := range switched {
+				if switched[k] != alone[k] {
+					t.Logf("first difference at frame %d: %v vs %v", k, switched[max(0, k-2):min(len(switched), k+3)], alone[max(0, k-2):min(len(alone), k+3)])
+					break
+				}
+			}
 			t.Fatalf("switching rungs plays %d frames %v…, rung %d alone %d %v…", len(switched), switched[:5], rs[i].Rung, len(alone), alone[:5])
 		}
 	}
@@ -252,7 +258,8 @@ func TestWorkerQueuesSecondStage(t *testing.T) {
 
 // A compliant source's top rung in its own codec is its video stream,
 // copied: the same packets, on the lower rung's segments, switchable with
-// it. The other codec's top rung is encoded.
+// it. The other codec's top rung is encoded. HEVC is configured for the
+// HEVC source (the default is AV1 + H.264).
 func TestPassthroughTopRung(t *testing.T) {
 	for _, c := range []struct {
 		codec media.Codec
@@ -264,6 +271,15 @@ func TestPassthroughTopRung(t *testing.T) {
 	} {
 		t.Run(string(c.codec), func(t *testing.T) {
 			e := newEnv(t, nil, nil)
+			codecs := []media.Codec{media.CodecAV1, media.CodecH264}
+			if c.codec == media.CodecHEVC {
+				codecs = []media.Codec{media.CodecHEVC, media.CodecH264}
+				var err error
+				if e.encoder, err = video.New(video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(), Threads: 2,
+					Encoder: video.EncoderCPU, Codecs: codecs}); err != nil {
+					t.Fatal(err)
+				}
+			}
 			src := filepath.Join(t.TempDir(), "source.mp4")
 			args := append([]string{"-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=9", "-f", "lavfi", "-i", "sine=duration=9",
 				"-map", "0:v", "-map", "1:a", "-pix_fmt", "yuv420p", "-force_key_frames", "expr:gte(t,n_forced*4)"}, c.args...)
@@ -291,7 +307,7 @@ func TestPassthroughTopRung(t *testing.T) {
 			if len(h.Video) != 4 {
 				t.Fatalf("hls %+v", h)
 			}
-			for _, codec := range []media.Codec{media.CodecH264, media.CodecHEVC} {
+			for _, codec := range codecs {
 				top, low := find(720, codec), find(480, codec)
 				paths := []string{e.blob(t, top.Blob), e.blob(t, low.Blob)}
 				if copied := hash(paths[0]) == hash(src); copied != (codec == c.codec) {

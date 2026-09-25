@@ -71,7 +71,7 @@ func TestAspectLadders(t *testing.T) {
 					}
 				}
 			}
-			if !slices.Equal(got, c.want) || !strings.HasPrefix(top[media.CodecH264], c.codec) || !strings.HasPrefix(top[media.CodecHEVC], "hvc1.1.6.L") ||
+			if !slices.Equal(got, c.want) || !strings.HasPrefix(top[media.CodecH264], c.codec) || !strings.HasPrefix(top[media.CodecAV1], "av01.0.") ||
 				len(f.HLS.Video) != 2*len(c.want) {
 				t.Fatalf("ladder %v %v, want %v %s", got, top, c.want, c.codec)
 			}

@@ -16,9 +16,10 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// DefaultCodecs is the ladder's codecs when Config.Codecs is empty: HEVC,
-// which players that decode it prefer, and H.264, which plays everywhere.
-var DefaultCodecs = []media.Codec{media.CodecHEVC, media.CodecH264}
+// DefaultCodecs is the ladder's codecs when Config.Codecs is empty: AV1,
+// which players that decode it prefer (64% fewer bits than H.264 at 1.34×
+// its CPU), and H.264, which plays everywhere.
+var DefaultCodecs = []media.Codec{media.CodecAV1, media.CodecH264}
 
 // Config.Encoder values.
 const (

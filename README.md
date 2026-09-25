@@ -417,7 +417,7 @@ The bucket needs CORS allowing `PUT` from the app origins with the
 **Video** (`media/video`, run by the media worker) encodes each `video/*`
 manifest file at the kind's ladder (`Kind.Video = &media.Video{Ladder: []int{1080, 480}}`;
 default `media.DefaultLadder`, 2160/1080/480) in each of the worker's codecs
-(`video.Config.Codecs`, `MEDIA_WORKER_CODECS`; default `hevc,h264`, `av1`
+(`video.Config.Codecs`, `MEDIA_WORKER_CODECS`; default `av1,h264`, `hevc`
 optional), plus AAC per audio track, WebVTT per text subtitle and a 10×10
 sprite whose tiles keep the source aspect (short side 90). A rung N is the
 output's **short side** (a 1080 rung of a vertical video is 1080 wide); rungs

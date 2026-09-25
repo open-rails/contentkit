@@ -53,7 +53,7 @@ func TestMasterPlaylistCodecs(t *testing.T) {
 	r := func(rung int, c Codec, codecs string) Rendition {
 		return Rendition{Rung: rung, Codec: c, Width: rung * 16 / 9, Height: rung, Bandwidth: rung * 5000, Codecs: codecs}
 	}
-	video := []Rendition{r(2160, CodecHEVC, "hvc1.1.6.L153.90"), r(1080, CodecHEVC, "hvc1.1.6.L120.90"), r(480, CodecHEVC, "hvc1.1.6.L90.90"),
+	video := []Rendition{r(2160, CodecAV1, "av01.0.12M.08"), r(1080, CodecAV1, "av01.0.08M.08"), r(480, CodecAV1, "av01.0.04M.08"),
 		r(2160, CodecH264, "avc1.640033"), r(1080, CodecH264, "avc1.640028"), r(480, CodecH264, "avc1.64001e")}
 	g := &Grant{units: 1, Manifest: &Manifest{Files: []File{{Name: "v", HLS: &HLS{Video: video,
 		Audio: []AudioTrack{{ID: "a1", Default: true, Codecs: "mp4a.40.2"}}}}}}}
@@ -67,7 +67,7 @@ func TestMasterPlaylistCodecs(t *testing.T) {
 		got = append(got, m[1]+" "+m[2])
 	}
 	want := []string{
-		"hvc1.1.6.L120.90,mp4a.40.2 video/1080-hevc.m3u8", "hvc1.1.6.L153.90,mp4a.40.2 video/2160-hevc.m3u8", "hvc1.1.6.L90.90,mp4a.40.2 video/480-hevc.m3u8",
+		"av01.0.08M.08,mp4a.40.2 video/1080-av1.m3u8", "av01.0.12M.08,mp4a.40.2 video/2160-av1.m3u8", "av01.0.04M.08,mp4a.40.2 video/480-av1.m3u8",
 		"avc1.640028,mp4a.40.2 video/1080-h264.m3u8", "avc1.640033,mp4a.40.2 video/2160-h264.m3u8", "avc1.64001e,mp4a.40.2 video/480-h264.m3u8",
 	}
 	if !slices.Equal(got, want) {

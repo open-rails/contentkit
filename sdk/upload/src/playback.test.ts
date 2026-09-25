@@ -111,9 +111,11 @@ it("starts at the highest rung the estimate sustains under the cap", () => {
 
 it("keeps the codec set of the first listed level", () => {
   // hls.js sorts levels by bitrate; firstLevel is the master's first playable variant.
-  const levels = [{ codecSet: "hvc1,mp4a" }, { codecSet: "avc1,mp4a" }, { codecSet: "hvc1,mp4a" }, { codecSet: "avc1,mp4a" }];
+  const levels = [{ codecSet: "av01,mp4a" }, { codecSet: "avc1,mp4a" }, { codecSet: "av01,mp4a" }, { codecSet: "avc1,mp4a" }];
   expect(otherCodecLevels(levels, 2)).toEqual([3, 1]);
   expect(otherCodecLevels(levels, 1)).toEqual([2, 0]);
+  // Without AV1 decode hls.js has already dropped the av01 levels: H.264 stays whole.
+  expect(otherCodecLevels([{ codecSet: "avc1,mp4a" }, { codecSet: "avc1,mp4a" }, { codecSet: "avc1,mp4a" }], 1)).toEqual([]);
   expect(otherCodecLevels([{ codecSet: "avc1,mp4a" }, { codecSet: "avc1,mp4a" }], 0)).toEqual([]);
   expect(otherCodecLevels([{}, {}], -1)).toEqual([]);
 });

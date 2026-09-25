@@ -120,18 +120,15 @@ func ladder(ctx context.Context, src, dir string, p plan, ps pass, fp *fileProgr
 	if len(outs) > 0 {
 		args = append(args, "-filter_complex_threads", t, "-filter_complex", fc.String())
 	}
-	if len(ps.codecs) > 0 {
-		var streamMap []string
-		for i, c := range ps.codecs {
-			args = append(args, "-map", fmt.Sprintf("[v%d]", i))
-			streamMap = append(streamMap, fmt.Sprintf("v:%d,name:%d-%s", i, ps.rung.n, c))
-		}
-		for i, c := range ps.codecs {
-			args = append(args, ps.enc.streamArgs(i, ps.rung, c)...)
-		}
+	// One muxer per rendition: a muxer shifts all its streams by the most
+	// negative DTS (x264's and x265's B-frame delay), which would move an AV1
+	// rendition sharing it and misalign it with its rungs from other passes.
+	for i, c := range ps.codecs {
+		v := filepath.Join(dir, renditionName(ps.rung.n, c))
+		args = append(args, "-map", fmt.Sprintf("[v%d]", i))
+		args = append(args, ps.enc.streamArgs(0, ps.rung, c)...)
 		args = append(args, "-pix_fmt", "yuv420p", "-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segmentSeconds))
-		args = append(args, "-var_stream_map", strings.Join(streamMap, " "))
-		args = append(args, hlsArgs(filepath.Join(dir, "v%v.mp4"), filepath.Join(dir, "v%v.m3u8"))...)
+		args = append(args, hlsArgs(v+".mp4", v+".m3u8")...)
 	}
 	for i, a := range p.audio {
 		if ps.noTracks {

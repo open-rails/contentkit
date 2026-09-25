@@ -309,8 +309,8 @@ func TestPlaybackThroughWorker(t *testing.T) {
 			for _, a := range h.Audio {
 				audioBW = max(audioBW, a.Bandwidth)
 			}
-			// Both codecs' variants, HEVC's first: a player that decodes HEVC starts on it.
-			if len(pl.variants) != len(h.Video) || len(h.Video) != 2 || !strings.HasPrefix(pl.variants[0]["CODECS"], "hvc1.") ||
+			// Both codecs' variants, AV1's first: a player that decodes AV1 starts on it.
+			if len(pl.variants) != len(h.Video) || len(h.Video) != 2 || !strings.HasPrefix(pl.variants[0]["CODECS"], "av01.") ||
 				!strings.HasPrefix(pl.variants[1]["CODECS"], "avc1.") {
 				t.Fatalf("%d variants for %d renditions: %v", len(pl.variants), len(h.Video), pl.variants)
 			}
@@ -407,7 +407,7 @@ func TestPlaybackAccess(t *testing.T) {
 	e.encode(t)
 	d := newDelivery(t, e, media.DeliverCookie)
 	_, h := d.manifest(t)
-	paths := []string{"hls/source/master.m3u8", "hls/source/video/360-hevc.m3u8", "hls/source/audio/a1.m3u8",
+	paths := []string{"hls/source/master.m3u8", "hls/source/video/360-av1.m3u8", "hls/source/audio/a1.m3u8",
 		"hls/source/sprite.vtt", "download/" + video.DownloadKey("source", 360)}
 
 	for name, res := range map[string]access.Resolution{"hidden": {}, "locked": {Visible: true}} {

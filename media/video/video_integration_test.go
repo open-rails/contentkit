@@ -346,17 +346,17 @@ func TestLadderFromMultiTrackSource(t *testing.T) {
 		t.Fatalf("hls %+v", h)
 	}
 	// The 721-line source is below 1080 and not a rung: its own 720 rung and
-	// 480, each in HEVC and H.264, HEVC first.
+	// 480, each in AV1 and H.264, AV1 first.
 	var ladder []string
 	for _, r := range h.Video {
 		ladder = append(ladder, fmt.Sprintf("%d-%s", r.Rung, r.Codec))
-		prefix := map[media.Codec]string{media.CodecHEVC: "hvc1.1.6.L", media.CodecH264: "avc1.64"}[r.Codec]
+		prefix := map[media.Codec]string{media.CodecAV1: "av01.0.", media.CodecH264: "avc1.64"}[r.Codec]
 		if r.Height != r.Rung || r.Width%2 != 0 || !strings.HasPrefix(r.Codecs, prefix) || r.Bandwidth < r.Average || r.Average <= 0 {
 			t.Fatalf("rendition %+v", r)
 		}
 		checkByteRanges(t, e.blob(t, r.Blob), r.Segments, "video", 9)
 	}
-	if !slices.Equal(ladder, []string{"720-hevc", "480-hevc", "720-h264", "480-h264"}) {
+	if !slices.Equal(ladder, []string{"720-av1", "480-av1", "720-h264", "480-h264"}) {
 		t.Fatalf("ladder %v", ladder)
 	}
 	heights := []int{720, 480}

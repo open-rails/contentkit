@@ -168,7 +168,7 @@ export function capRung(rungs: readonly Rung[], width: number, height: number, p
 /**
  * Levels to remove (indices, descending) so one codec set remains: the set of
  * the level hls.js lists first, which is the master playlist's first playable
- * codec (HEVC or AV1 before H.264 when the browser decodes them). hls.js never
+ * codec (AV1 or HEVC before H.264 when the browser decodes them). hls.js never
  * switches codec sets for bandwidth, and the quality menu lists each rung once.
  */
 export function otherCodecLevels(levels: readonly { codecSet?: string }[], first: number): number[] {

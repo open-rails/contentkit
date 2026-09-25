@@ -50,11 +50,11 @@ func TestNVENCLadder(t *testing.T) {
 	}
 }
 
-// AV1 (SVT-AV1 on the CPU) is an optional codec: av01 CODECS, on the other
+// HEVC (libx265 on the CPU) is an optional codec: hvc1 CODECS, on the other
 // codecs' segments.
-func TestAV1Ladder(t *testing.T) {
-	vs := encodeWith(t, video.Config{Encoder: video.EncoderCPU, Threads: 2, Codecs: []media.Codec{media.CodecAV1, media.CodecH264}})
-	if vs[0].Codec != media.CodecAV1 || vs[0].Rung != 720 || vs[2].Codec != media.CodecH264 {
+func TestHEVCLadder(t *testing.T) {
+	vs := encodeWith(t, video.Config{Encoder: video.EncoderCPU, Threads: 2, Codecs: []media.Codec{media.CodecHEVC, media.CodecH264}})
+	if vs[0].Codec != media.CodecHEVC || vs[0].Rung != 720 || vs[2].Codec != media.CodecH264 {
 		t.Fatalf("ladder %+v", vs)
 	}
 	for _, r := range vs {

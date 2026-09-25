@@ -65,7 +65,7 @@ func FromEnv(ctx context.Context) (Config, error) {
 //	MEDIA_WORKER_THREADS         ffmpeg threads (default: CPU limit)
 //	MEDIA_WORKER_PRESET          x264/x265 preset of rungs up to 1080 (default fast)
 //	MEDIA_WORKER_TOP_PRESET      x264/x265 preset of the rungs above (default fast)
-//	MEDIA_WORKER_CODECS          the ladder's codecs, preferred first: h264, hevc, av1 (default hevc,h264)
+//	MEDIA_WORKER_CODECS          the ladder's codecs, preferred first: h264, hevc, av1 (default av1,h264)
 //	MEDIA_WORKER_ENCODER         auto (default: per codec NVENC if a probe encode works, else CPU), cpu or nvenc
 //	MEDIA_WORKER_CONCURRENCY     video jobs per process (default 1)
 //	MEDIA_WORKER_IMAGE_CONCURRENCY  image jobs per process (default 2)
