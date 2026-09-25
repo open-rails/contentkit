@@ -37,8 +37,7 @@ type EncodeProgress struct {
 	ETA           float64 `json:"eta,omitempty"`
 	At            int64   `json:"at"` // unix milliseconds of the measurement
 	Stalled       bool    `json:"stalled,omitempty"`
-	// Stage of Stages: a file with rungs above 1080 plays after stage 1 while
-	// stage 2 encodes them.
+	// Stage of Stages: each rung is published before the next one starts.
 	Stage  int `json:"stage,omitempty"`
 	Stages int `json:"stages,omitempty"`
 }

@@ -47,15 +47,16 @@ const MaxSingleCopy = 5 << 30
 
 // Store is a media.Store over one bucket.
 type Store struct {
-	client  *s3.Client
-	creds   aws.CredentialsProvider
-	signer  *v4.Signer
-	bucket  string
-	region  string
-	public  *url.URL
-	pathSty bool
-	caps    media.Capabilities
-	part    int64
+	client   *s3.Client
+	creds    aws.CredentialsProvider
+	signer   *v4.Signer
+	bucket   string
+	region   string
+	internal *url.URL
+	public   *url.URL
+	pathSty  bool
+	caps     media.Capabilities
+	part     int64
 }
 
 var _ media.Store = (*Store)(nil)
@@ -76,6 +77,10 @@ func New(cfg Config) (*Store, error) {
 	if cfg.CopyPartSize <= 0 || cfg.CopyPartSize > MaxSingleCopy {
 		cfg.CopyPartSize = MaxSingleCopy
 	}
+	internal, err := url.Parse(strings.TrimRight(cfg.Endpoint, "/"))
+	if err != nil || (internal.Scheme != "http" && internal.Scheme != "https") || internal.Host == "" {
+		return nil, fmt.Errorf("s3: invalid Endpoint %q", cfg.Endpoint)
+	}
 	pub, err := url.Parse(strings.TrimRight(cfg.PublicEndpoint, "/"))
 	if err != nil || pub.Scheme == "" || pub.Host == "" {
 		return nil, fmt.Errorf("s3: invalid PublicEndpoint %q", cfg.PublicEndpoint)
@@ -92,7 +97,7 @@ func New(cfg Config) (*Store, error) {
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	})
 	return &Store{client: client, creds: creds, signer: v4.NewSigner(), bucket: cfg.Bucket, region: cfg.Region,
-		public: pub, pathSty: cfg.UsePathStyle, caps: cfg.Capabilities, part: cfg.CopyPartSize}, nil
+		internal: internal, public: pub, pathSty: cfg.UsePathStyle, caps: cfg.Capabilities, part: cfg.CopyPartSize}, nil
 }
 
 func (s *Store) Capabilities() media.Capabilities { return s.caps }
@@ -230,7 +235,13 @@ func (s *Store) PresignPut(ctx context.Context, key string, p media.PresignPut) 
 	h := http.Header{}
 	h.Set("Content-Type", p.ContentType)
 	h.Set("X-Amz-Checksum-Sha256", base64.StdEncoding.EncodeToString(p.SHA256))
-	return s.presign(ctx, http.MethodPut, key, nil, h, p.Size, p.TTL)
+	return s.presign(ctx, s.public, http.MethodPut, key, nil, h, p.Size, p.TTL)
+}
+
+// PresignGet gives the media worker a read-only URL on the internal S3
+// endpoint. Range is deliberately not signed, so ffprobe and ffmpeg can seek.
+func (s *Store) PresignGet(ctx context.Context, key string, ttl time.Duration) (media.PresignedRequest, error) {
+	return s.presign(ctx, s.internal, http.MethodGet, key, nil, nil, -1, ttl)
 }
 
 func (s *Store) CreateMultipart(ctx context.Context, key, contentType string) (string, error) {
@@ -250,7 +261,7 @@ func (s *Store) PresignPart(ctx context.Context, key, uploadID string, number in
 	q := url.Values{"partNumber": {strconv.Itoa(int(number))}, "uploadId": {uploadID}}
 	h := http.Header{}
 	h.Set("X-Amz-Checksum-Sha256", base64.StdEncoding.EncodeToString(sum))
-	return s.presign(ctx, http.MethodPut, key, q, h, size, ttl)
+	return s.presign(ctx, s.public, http.MethodPut, key, q, h, size, ttl)
 }
 
 func (s *Store) PutPart(ctx context.Context, key, uploadID string, number int32, body io.Reader, size int64, sum []byte) (media.Part, error) {
@@ -304,7 +315,8 @@ func (s *Store) AbortMultipart(ctx context.Context, key, uploadID string) error 
 }
 
 // Configure applies the media bucket policy: versioning on, noncurrent
-// versions kept restoreDays, incomplete multipart uploads aborted after 1 day.
+// versions kept restoreDays, incomplete multipart uploads aborted after 1 day,
+// and unservable video work fragments expired after 7 days.
 func (s *Store) Configure(ctx context.Context, restoreDays int32) error {
 	if _, err := s.client.PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{Bucket: &s.bucket,
 		VersioningConfiguration: &types.VersioningConfiguration{Status: types.BucketVersioningStatusEnabled}}); err != nil {
@@ -317,6 +329,11 @@ func (s *Store) Configure(ctx context.Context, restoreDays int32) error {
 			Filter:                         &types.LifecycleRuleFilter{Prefix: aws.String("")},
 			NoncurrentVersionExpiration:    &types.NoncurrentVersionExpiration{NoncurrentDays: aws.Int32(restoreDays)},
 			AbortIncompleteMultipartUpload: &types.AbortIncompleteMultipartUpload{DaysAfterInitiation: aws.Int32(1)},
+		}, {
+			ID:         aws.String("contentkit-video-work"),
+			Status:     types.ExpirationStatusEnabled,
+			Filter:     &types.LifecycleRuleFilter{Prefix: aws.String("work/")},
+			Expiration: &types.LifecycleExpiration{Days: aws.Int32(7)},
 		}}}})
 	if err != nil {
 		return fmt.Errorf("s3: put lifecycle: %w", err)
@@ -327,11 +344,11 @@ func (s *Store) Configure(ctx context.Context, restoreDays int32) error {
 // presign signs with header hoisting disabled so every header in h (and the
 // length) is a signed header the client must send verbatim. The SDK
 // presigner would drop or hoist them.
-func (s *Store) presign(ctx context.Context, method, key string, q url.Values, h http.Header, size int64, ttl time.Duration) (media.PresignedRequest, error) {
+func (s *Store) presign(ctx context.Context, base *url.URL, method, key string, q url.Values, h http.Header, size int64, ttl time.Duration) (media.PresignedRequest, error) {
 	if ttl <= 0 || ttl > MaxPresignTTL {
 		return media.PresignedRequest{}, fmt.Errorf("s3: presign ttl must be in (0, %s]", MaxPresignTTL)
 	}
-	u := *s.public
+	u := *base
 	if s.pathSty {
 		u.Path = u.Path + "/" + s.bucket + "/" + key
 	} else {
@@ -348,7 +365,9 @@ func (s *Store) presign(ctx context.Context, method, key string, q url.Values, h
 		return media.PresignedRequest{}, err
 	}
 	req.Header = h
-	req.ContentLength = size
+	if size >= 0 {
+		req.ContentLength = size
+	}
 	creds, err := s.creds.Retrieve(ctx)
 	if err != nil {
 		return media.PresignedRequest{}, err

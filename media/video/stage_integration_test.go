@@ -16,6 +16,7 @@ import (
 
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
@@ -184,31 +185,35 @@ func switchRungs(t *testing.T, paths []string, rs []media.Rendition) {
 	}
 }
 
-// The worker runs one stage per job: the 720p source's 720 stage is a
-// follow-up job at a lower priority, after 480 is published.
-func TestWorkerQueuesSecondStage(t *testing.T) {
+// The worker plans, encodes bounded chunks, then assembles a playable tier.
+func TestWorkerAssemblesPlayableChunks(t *testing.T) {
 	requireFFmpeg(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	pool := pgtest.Pool(t, nil)
-	if err := workqueue.Migrate(ctx, pool, testSchema); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, "DELETE FROM "+testSchema+".river_job"); err != nil {
+	schema := pgtest.EmptySchema(t, ctx, pool)
+	if err := workqueue.Migrate(ctx, pool, schema); err != nil {
 		t.Fatal(err)
 	}
 	var enq *workqueue.Queue
 	e := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return enq.Enqueue(ctx, j) }))
 	var err error
-	if enq, err = workqueue.New(pool, e.kinds, testSchema); err != nil {
+	if enq, err = workqueue.New(pool, e.kinds, schema); err != nil {
 		t.Fatal(err)
 	}
-	e.commit(t, fixture{w: 1280, h: 720, secs: 5, rate: 30, audio: 1, tone: 440}.make(t), media.OpInsert)
+	src := filepath.Join(t.TempDir(), "audio-outlasts-video.mp4")
+	if output, err := exec.Command("ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=9",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=12", "-map", "0:v", "-map", "1:a",
+		"-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-y", src).CombinedOutput(); err != nil {
+		t.Fatalf("fixture: %v: %s", err, output)
+	}
+	e.commit(t, src, media.OpInsert)
 	enc, err := video.New(video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(), Threads: 2, Encoder: video.EncoderCPU})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wc := video.WorkerConfig{Encoder: enc, Pool: pool, Schema: testSchema, Kinds: e.kinds, Timeout: time.Hour}
+	wc := video.WorkerConfig{Encoder: enc, Pool: pool, Schema: schema, Kinds: e.kinds,
+		Timeout: time.Hour, ChunkTarget: 8 * time.Second}
 	contribution, err := video.Contribution(wc)
 	if err != nil {
 		t.Fatal(err)
@@ -229,30 +234,389 @@ func TestWorkerQueuesSecondStage(t *testing.T) {
 		defer c()
 		_ = worker.StopAndCancel(stopCtx)
 	}()
-	var priorities []int
-	for len(priorities) < 2 {
+	var kinds []string
+	for len(kinds) < 6 {
 		select {
 		case ev := <-done:
 			if ev.Kind != river.EventKindJobCompleted {
 				t.Fatalf("job %s: %+v", ev.Kind, ev.Job.Errors)
 			}
-			priorities = append(priorities, ev.Job.Priority)
-			if len(priorities) == 1 {
-				m, _ := e.manifest(t)
-				if h := m.Files[0].HLS; h == nil || len(h.Video) != 2 || h.Video[0].Rung != 480 || !slices.Equal(h.Pending, []int{720}) {
-					t.Fatalf("after the first job: %+v", h)
-				}
-			}
+			kinds = append(kinds, ev.Job.Kind)
 		case <-ctx.Done():
 			t.Fatal("jobs did not complete")
 		}
 	}
-	if !slices.Equal(priorities, []int{1, 2}) {
-		t.Fatalf("job priorities %v", priorities)
+	if !slices.Equal(kinds, []string{(workqueue.VideoPlanArgs{}).Kind(),
+		(workqueue.VideoChunkArgs{}).Kind(), (workqueue.VideoAssembleArgs{}).Kind(),
+		(workqueue.VideoChunkArgs{}).Kind(), (workqueue.VideoChunkArgs{}).Kind(),
+		(workqueue.VideoAssembleArgs{}).Kind()}) {
+		t.Fatalf("job sequence %v", kinds)
 	}
 	m, _ := e.manifest(t)
-	if h := m.Files[0].HLS; len(h.Video) != 4 || len(h.Pending) != 0 {
-		t.Fatalf("after the follow-up: %+v", h)
+	h := m.Files[0].HLS
+	if h == nil || len(h.Video) != 4 || len(h.Pending) != 0 || !m.Files[0].Servable() {
+		t.Fatalf("after assembly: %+v", h)
+	}
+	for _, rendition := range h.Video {
+		checkByteRanges(t, e.blob(t, rendition.Blob), rendition.Segments, "video", 9)
+	}
+}
+
+func TestWorkerPublishesEachRung(t *testing.T) {
+	requireFFmpeg(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	pool := pgtest.Pool(t, nil)
+	schema := pgtest.EmptySchema(t, ctx, pool)
+	if err := workqueue.Migrate(ctx, pool, schema); err != nil {
+		t.Fatal(err)
+	}
+	var enq *workqueue.Queue
+	e := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return enq.Enqueue(ctx, j) }))
+	var err error
+	if enq, err = workqueue.New(pool, e.kinds, schema); err != nil {
+		t.Fatal(err)
+	}
+	e.commit(t, fixture{w: 3840, h: 2160, secs: 5, rate: 10, audio: 1, tone: 440}.make(t), media.OpInsert)
+	enc, err := video.New(video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(),
+		Threads: 2, Encoder: video.EncoderCPU, Codecs: []media.Codec{media.CodecH264}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wc := video.WorkerConfig{Encoder: enc, Pool: pool, Schema: schema, Kinds: e.kinds, Timeout: time.Hour}
+	contribution, err := video.Contribution(wc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := video.ClientConfig(wc)
+	cfg.FetchPollInterval = 100 * time.Millisecond
+	worker, err := riverhelpers.New(ctx, pool, cfg, contribution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, stop := worker.Subscribe(river.EventKindJobCompleted, river.EventKindJobFailed, river.EventKindJobCancelled)
+	defer stop()
+	if err := worker.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = worker.StopAndCancel(stopCtx)
+	}()
+	assembled := 0
+	for assembled < 3 {
+		select {
+		case ev := <-done:
+			if ev.Kind != river.EventKindJobCompleted {
+				t.Fatalf("job %s %s: %+v", ev.Kind, ev.Job.Kind, ev.Job.Errors)
+			}
+			if ev.Job.Kind != (workqueue.VideoAssembleArgs{}).Kind() {
+				continue
+			}
+			assembled++
+			m, _ := e.manifest(t)
+			h := m.Files[0].HLS
+			if h == nil {
+				t.Fatal("assemble completed without HLS")
+			}
+			if assembled == 1 {
+				if len(h.Video) != 1 || h.Video[0].Rung != 480 || !slices.Equal(h.Pending, []int{1080, 2160}) ||
+					!m.Files[0].Servable() || m.Files[0].State() != media.StateProcessing || h.Sprite == nil {
+					t.Fatalf("first rung: %+v", h)
+				}
+			} else if assembled == 2 {
+				if len(h.Video) != 2 || !slices.Equal(h.Pending, []int{2160}) || m.Files[0].State() != media.StateProcessing {
+					t.Fatalf("second rung: %+v", h)
+				}
+			} else if len(h.Video) != 3 || len(h.Pending) != 0 || m.Files[0].State() != media.StateReady {
+				t.Fatalf("final rung: %+v", h)
+			}
+		case <-ctx.Done():
+			t.Fatal("rungs did not complete")
+		}
+	}
+	m, _ := e.manifest(t)
+	for _, rendition := range m.Files[0].HLS.Video {
+		checkByteRanges(t, e.blob(t, rendition.Blob), rendition.Segments, "video", 5)
+	}
+}
+
+func TestWorkerResumesPublishedRung(t *testing.T) {
+	requireFFmpeg(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	pool := pgtest.Pool(t, nil)
+	schema := pgtest.EmptySchema(t, ctx, pool)
+	if err := workqueue.Migrate(ctx, pool, schema); err != nil {
+		t.Fatal(err)
+	}
+	var enq *workqueue.Queue
+	e := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return enq.Enqueue(ctx, j) }))
+	var err error
+	if enq, err = workqueue.New(pool, e.kinds, schema); err != nil {
+		t.Fatal(err)
+	}
+	e.commit(t, fixture{w: 1280, h: 720, secs: 5, audio: 1, tone: 440}.make(t), media.OpInsert)
+	if more, err := video.EncodeStage(ctx, e.encoder, video.Job{Ref: e.ref, Versioned: true}, nil); err != nil || !more {
+		t.Fatalf("first rung: more %v, %v", more, err)
+	}
+	partial, _ := e.manifest(t)
+	before := partial.Files[0].HLS
+	if before == nil || !slices.Equal(before.Pending, []int{720}) {
+		t.Fatalf("partial ladder: %+v", before)
+	}
+	wc := video.WorkerConfig{Encoder: e.encoder, Pool: pool, Schema: schema, Kinds: e.kinds}
+	contribution, err := video.Contribution(wc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := video.ClientConfig(wc)
+	cfg.FetchPollInterval = 100 * time.Millisecond
+	worker, err := riverhelpers.New(ctx, pool, cfg, contribution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, stop := worker.Subscribe(river.EventKindJobCompleted, river.EventKindJobFailed, river.EventKindJobCancelled)
+	defer stop()
+	if err := worker.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = worker.StopAndCancel(stopCtx)
+	}()
+	for {
+		select {
+		case event := <-done:
+			if event.Kind != river.EventKindJobCompleted {
+				t.Fatalf("job %s %s: %+v", event.Kind, event.Job.Kind, event.Job.Errors)
+			}
+			m, _ := e.manifest(t)
+			h := m.Files[0].HLS
+			if h == nil || len(h.Pending) != 0 {
+				continue
+			}
+			low := slices.IndexFunc(h.Video, func(r media.Rendition) bool { return r.Rung == 480 && r.Codec == before.Video[0].Codec })
+			if len(h.Video) != 4 || low < 0 || h.Video[low].Blob != before.Video[0].Blob ||
+				h.Audio[0].Blob != before.Audio[0].Blob || h.Sprite.Blob != before.Sprite.Blob {
+				t.Fatalf("published rung changed during resume: before %+v after %+v", before, h)
+			}
+			var released int
+			if err := pool.QueryRow(ctx, `SELECT released FROM `+schema+`.encode_run WHERE rung = 480`).Scan(&released); err != nil || released != 0 {
+				t.Fatalf("already-published rung released %d chunks: %v", released, err)
+			}
+			return
+		case <-ctx.Done():
+			t.Fatal("resumed rung did not complete")
+		}
+	}
+}
+
+func TestWorkerShortVideoOvertakesLongVideo(t *testing.T) {
+	requireFFmpeg(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	pool := pgtest.Pool(t, nil)
+	schema := pgtest.EmptySchema(t, ctx, pool)
+	if err := workqueue.Migrate(ctx, pool, schema); err != nil {
+		t.Fatal(err)
+	}
+	var enq *workqueue.Queue
+	e := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return enq.Enqueue(ctx, j) }))
+	var err error
+	if enq, err = workqueue.New(pool, e.kinds, schema); err != nil {
+		t.Fatal(err)
+	}
+	longRef := e.ref
+	e.commit(t, fixture{w: 1280, h: 720, secs: 40, rate: 10}.make(t), media.OpInsert)
+	shortRef := contentref.NewVersion(e.Env.Tenant+"other", "video", cid(89), "v1")
+	e.ref = shortRef
+	e.commit(t, fixture{w: 640, h: 360, secs: 5, rate: 10}.make(t), media.OpInsert)
+	enc, err := video.New(video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(),
+		Threads: 2, Encoder: video.EncoderCPU, Codecs: []media.Codec{media.CodecH264}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wc := video.WorkerConfig{Encoder: enc, Pool: pool, Schema: schema, Kinds: e.kinds, ChunkTarget: 8 * time.Second}
+	contribution, err := video.Contribution(wc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := video.ClientConfig(wc)
+	cfg.FetchPollInterval = 100 * time.Millisecond
+	worker, err := riverhelpers.New(ctx, pool, cfg, contribution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, stop := worker.Subscribe(river.EventKindJobCompleted, river.EventKindJobFailed, river.EventKindJobCancelled)
+	defer stop()
+	if err := worker.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = worker.StopAndCancel(stopCtx)
+	}()
+	for {
+		select {
+		case event := <-done:
+			if event.Kind != river.EventKindJobCompleted {
+				t.Fatalf("job %s %s: %+v", event.Kind, event.Job.Kind, event.Job.Errors)
+			}
+			short, _, err := e.manifests.Get(ctx, shortRef)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if short.Files[0].HLS == nil || len(short.Files[0].HLS.Video) == 0 {
+				continue
+			}
+			long, _, err := e.manifests.Get(ctx, longRef)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if long.Files[0].State() == media.StateReady {
+				t.Fatal("long video finished before the short tenant's video")
+			}
+			return
+		case <-ctx.Done():
+			t.Fatal("short video did not overtake long video")
+		}
+	}
+}
+
+func TestInterruptedChunkRetriesWithoutAttempt(t *testing.T) {
+	requireFFmpeg(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	pool := pgtest.Pool(t, nil)
+	schema := pgtest.EmptySchema(t, ctx, pool)
+	if err := workqueue.Migrate(ctx, pool, schema); err != nil {
+		t.Fatal(err)
+	}
+	var enq *workqueue.Queue
+	e := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return enq.Enqueue(ctx, j) }))
+	var err error
+	if enq, err = workqueue.New(pool, e.kinds, schema); err != nil {
+		t.Fatal(err)
+	}
+	e.commit(t, fixture{w: 1280, h: 720, secs: 120, rate: 10}.make(t), media.OpInsert)
+	enc, err := video.New(video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(),
+		Threads: 2, Encoder: video.EncoderCPU, Codecs: []media.Codec{media.CodecH264}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wc := video.WorkerConfig{Encoder: enc, Pool: pool, Schema: schema, Kinds: e.kinds}
+	contribution, err := video.Contribution(wc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientConfig := func() *river.Config {
+		cfg := video.ClientConfig(wc)
+		cfg.FetchPollInterval = 100 * time.Millisecond
+		return cfg
+	}
+	first, err := riverhelpers.New(ctx, pool, clientConfig(), contribution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	chunkKind := (workqueue.VideoChunkArgs{}).Kind()
+	var chunkID int64
+	for chunkID == 0 {
+		if err := pool.QueryRow(ctx, `SELECT COALESCE((SELECT id FROM `+schema+`.river_job
+WHERE kind = $1 AND state = 'running' LIMIT 1), 0)`, chunkKind).Scan(&chunkID); err != nil {
+			t.Fatal(err)
+		}
+		if chunkID == 0 {
+			select {
+			case <-time.After(20 * time.Millisecond):
+			case <-ctx.Done():
+				t.Fatal("chunk did not start")
+			}
+		}
+	}
+	progress, err := workqueue.NewProgressSource(pool, schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := progress.EncodeProgress(ctx, e.ref)
+	if err != nil || status.Files["source"].Phase != media.PhaseEncoding {
+		t.Fatalf("running chunk progress %+v: %v", status, err)
+	}
+	stopCtx, stop := context.WithTimeout(context.Background(), 30*time.Second)
+	if err := first.StopAndCancel(stopCtx); err != nil {
+		stop()
+		t.Fatal(err)
+	}
+	stop()
+	var attempt int
+	var state string
+	if err := pool.QueryRow(ctx, `SELECT attempt, state FROM `+schema+`.river_job WHERE id = $1`, chunkID).Scan(&attempt, &state); err != nil {
+		t.Fatal(err)
+	}
+	if attempt != 0 || state != "available" {
+		t.Fatalf("interrupted chunk attempt %d, state %q", attempt, state)
+	}
+	// Model five hard kills before a worker reaches Work. River records each
+	// rescue as an error and would discard the fifth with MaxAttempts = 5.
+	rescue, err := json.Marshal(rivertype.AttemptError{At: time.Now(), Attempt: 1,
+		Error: "Stuck job rescued by JobRescuer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE `+schema+`.river_job
+SET attempt = 5, errors = array_fill($2::jsonb, ARRAY[5]) WHERE id = $1`, chunkID, rescue); err != nil {
+		t.Fatal(err)
+	}
+	var maxAttempts int
+	if err := pool.QueryRow(ctx, `SELECT max_attempts FROM `+schema+`.river_job WHERE id = $1`, chunkID).Scan(&maxAttempts); err != nil {
+		t.Fatal(err)
+	}
+	if maxAttempts != workqueue.VideoRiverMaxAttempts {
+		t.Fatalf("video job River limit %d", maxAttempts)
+	}
+	secondContribution, err := video.Contribution(wc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := riverhelpers.New(ctx, pool, clientConfig(), secondContribution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, unsubscribe := second.Subscribe(river.EventKindJobCompleted, river.EventKindJobFailed, river.EventKindJobCancelled)
+	defer unsubscribe()
+	if err := second.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		stopCtx, stop := context.WithTimeout(context.Background(), 30*time.Second)
+		defer stop()
+		_ = second.StopAndCancel(stopCtx)
+	}()
+	for {
+		select {
+		case event := <-done:
+			if event.Kind != river.EventKindJobCompleted {
+				t.Fatalf("retry job %s %s: %+v", event.Kind, event.Job.Kind, event.Job.Errors)
+			}
+			m, _ := e.manifest(t)
+			if m.Files[0].State() == media.StateReady {
+				if err := pool.QueryRow(ctx, `SELECT attempt FROM `+schema+`.river_job WHERE id = $1`, chunkID).Scan(&attempt); err != nil {
+					t.Fatal(err)
+				}
+				if attempt != 1 {
+					t.Fatalf("rescued chunk consumed %d attempts, want 1", attempt)
+				}
+				return
+			}
+		case <-ctx.Done():
+			t.Fatal("interrupted chunk did not resume")
+		}
 	}
 }
 
@@ -318,6 +682,97 @@ func TestPassthroughTopRung(t *testing.T) {
 				}
 				checkByteRanges(t, paths[0], top.Segments, "video", 9)
 				switchRungs(t, paths, []media.Rendition{top, low})
+			}
+
+			// The queued worker preserves the source frames when the top rung
+			// fits in one bounded chunk.
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			pool := pgtest.Pool(t, nil)
+			schema := pgtest.EmptySchema(t, ctx, pool)
+			if err := workqueue.Migrate(ctx, pool, schema); err != nil {
+				t.Fatal(err)
+			}
+			var enq *workqueue.Queue
+			queued := newEnv(t, nil, queueFunc(func(ctx context.Context, j media.ProcessJob) error { return enq.Enqueue(ctx, j) }))
+			enq, err := workqueue.New(pool, queued.kinds, schema)
+			if err != nil {
+				t.Fatal(err)
+			}
+			queued.commit(t, src, media.OpInsert)
+			workerEncoder, err := video.New(video.Config{Store: queued.store, Locker: s3test.Locker(t, queued.store),
+				TempDir: t.TempDir(), Threads: 2, Encoder: video.EncoderCPU, Codecs: codecs})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wc := video.WorkerConfig{Encoder: workerEncoder, Pool: pool, Schema: schema, Kinds: queued.kinds,
+				Timeout: time.Hour, ChunkTarget: 5 * time.Minute}
+			contribution, err := video.Contribution(wc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := video.ClientConfig(wc)
+			cfg.FetchPollInterval = 100 * time.Millisecond
+			worker, err := riverhelpers.New(ctx, pool, cfg, contribution)
+			if err != nil {
+				t.Fatal(err)
+			}
+			completed, unsubscribe := worker.Subscribe(river.EventKindJobCompleted, river.EventKindJobFailed, river.EventKindJobCancelled)
+			defer unsubscribe()
+			if err := worker.Start(ctx); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				stopCtx, stop := context.WithTimeout(context.Background(), 30*time.Second)
+				defer stop()
+				_ = worker.StopAndCancel(stopCtx)
+			}()
+			for {
+				select {
+				case event := <-completed:
+					if event.Kind != river.EventKindJobCompleted {
+						t.Fatalf("worker job %s: %+v", event.Kind, event.Job.Errors)
+					}
+					m, _ := queued.manifest(t)
+					if m.Files[0].State() != media.StateReady {
+						continue
+					}
+					h := m.Files[0].HLS
+					for _, rendition := range h.Video {
+						if rendition.Rung != 720 || rendition.Codec != c.codec {
+							continue
+						}
+						path := queued.blob(t, rendition.Blob)
+						var planned string
+						if err := pool.QueryRow(ctx, "SELECT passthrough_codec FROM "+schema+".encode_run WHERE rung = 720").Scan(&planned); err != nil {
+							t.Fatal(err)
+						}
+						if planned != string(c.codec) {
+							t.Fatalf("queued %s top rung planned %q", c.codec, planned)
+						}
+						decoded := func(path string) string {
+							b, err := exec.Command("ffmpeg", "-v", "error", "-i", path, "-map", "0:v:0", "-an", "-pix_fmt", "yuv420p", "-f", "md5", "-").CombinedOutput()
+							if err != nil {
+								t.Fatal(err)
+							}
+							return string(b)
+						}
+						if decoded(path) != decoded(src) {
+							t.Fatalf("queued %s top rung changed frames", c.codec)
+						}
+						low := slices.IndexFunc(h.Video, func(r media.Rendition) bool {
+							return r.Rung == 480 && r.Codec == c.codec
+						})
+						if low < 0 {
+							t.Fatalf("queued %s lower rung missing", c.codec)
+						}
+						switchRungs(t, []string{path, queued.blob(t, h.Video[low].Blob)}, []media.Rendition{rendition, h.Video[low]})
+						return
+					}
+					t.Fatalf("queued %s top rung missing from %+v", c.codec, h.Video)
+				case <-ctx.Done():
+					t.Fatal("queued passthrough did not complete")
+				}
 			}
 		})
 	}

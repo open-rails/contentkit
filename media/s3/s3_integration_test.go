@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,6 +91,59 @@ func TestPresignedPutIsBoundToTypeLengthAndChecksum(t *testing.T) {
 	}
 	if env.Store.Capabilities().ChecksumSHA256 && !bytes.Equal(obj.ChecksumSHA256, sum[:]) {
 		t.Fatalf("stored checksum %x, want %x", obj.ChecksumSHA256, sum)
+	}
+}
+
+func TestPresignedGetReadsRangesFromInternalEndpoint(t *testing.T) {
+	env := s3test.Open(t)
+	ctx := context.Background()
+	body := []byte("0123456789")
+	sum := sha256.Sum256(body)
+	key := env.Tenant + "/video/" + cid(7) + "/originals/" + media.SHA256Name(sum[:])
+	if _, err := env.Store.Put(ctx, key, bytes.NewReader(body), int64(len(body)), media.PutOptions{ContentType: "video/mp4"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := env.Config
+	cfg.PublicEndpoint = "https://public.invalid"
+	store, err := mediaS3.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := store.PresignGet(ctx, key, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Method != http.MethodGet || strings.Contains(p.URL, "public.invalid") {
+		t.Fatalf("worker URL uses public endpoint: %+v", p)
+	}
+	for _, tc := range []struct {
+		name, byteRange, want string
+		status                int
+	}{
+		{name: "full", want: "0123456789", status: http.StatusOK},
+		{name: "range", byteRange: "bytes=2-4", want: "234", status: http.StatusPartialContent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequestWithContext(ctx, p.Method, p.URL, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.byteRange != "" {
+				req.Header.Set("Range", tc.byteRange)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			got, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != tc.status || string(got) != tc.want {
+				t.Fatalf("status %d, body %q; want %d, %q", resp.StatusCode, got, tc.status, tc.want)
+			}
+		})
 	}
 }
 
@@ -303,10 +357,12 @@ func TestBucketVersioningAndLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ok, abort := false, false
+	ok, abort, work := false, false, false
 	for _, r := range lc.Rules {
 		ok = ok || (r.NoncurrentVersionExpiration != nil && aws.ToInt32(r.NoncurrentVersionExpiration.NoncurrentDays) >= 30)
 		abort = abort || (r.AbortIncompleteMultipartUpload != nil && aws.ToInt32(r.AbortIncompleteMultipartUpload.DaysAfterInitiation) == 1)
+		work = work || (r.Filter != nil && aws.ToString(r.Filter.Prefix) == "work/" &&
+			r.Expiration != nil && aws.ToInt32(r.Expiration.Days) == 7)
 	}
 	if !abort {
 		// MinIO drops this rule and expires stale uploads itself; RGW keeps it.
@@ -317,6 +373,9 @@ func TestBucketVersioningAndLifecycle(t *testing.T) {
 	}
 	if !ok {
 		t.Fatalf("lifecycle rules %+v", lc.Rules)
+	}
+	if !work {
+		t.Fatalf("video work expiration rule missing: %+v", lc.Rules)
 	}
 }
 

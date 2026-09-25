@@ -584,20 +584,20 @@ func TestWorkerEncodesCommittedUploads(t *testing.T) {
 	if err := enq.Enqueue(ctx, media.ProcessJob{Ref: e.ref}); err != nil { // a duplicate: serialized, then a no-op
 		t.Fatal(err)
 	}
-	for completed := 0; completed < 2; {
+	for {
 		select {
 		case ev := <-done:
 			if ev.Kind != river.EventKindJobCompleted {
 				t.Fatalf("job %s: %+v", ev.Kind, ev.Job.Errors)
 			}
-			completed++
+			m, _ := e.manifest(t)
+			if h := m.Files[0].HLS; h != nil && h.Source == source && len(h.Video) > 0 &&
+				len(h.Pending) == 0 && len(m.Downloads) == 1 {
+				return
+			}
 		case <-ctx.Done():
 			t.Fatal("jobs did not complete")
 		}
-	}
-	m, _ := e.manifest(t)
-	if h := m.Files[0].HLS; h == nil || h.Source != source || len(m.Downloads) != 1 {
-		t.Fatalf("manifest after worker: %+v", m)
 	}
 }
 

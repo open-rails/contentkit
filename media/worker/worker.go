@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -37,7 +38,11 @@ type Config struct {
 	// Schema is the host's worker River schema, the one its workqueue.Queue
 	// inserts into; required, and never shared with another host.
 	Schema string
-	Store  media.Store
+	// Queue selects a one-task process: encode runs video chunks; light runs
+	// video planning/assembly plus the existing image and audio queues.
+	// Empty keeps the long-running all-queue worker.
+	Queue string
+	Store media.Store
 	// Kinds, Specs and Hooks are the host's: build them with the code the
 	// host's media setup uses. Hooks.Failed, Hooks.SlotEncoded,
 	// Hooks.PublicRemoved and Hooks.ItemReady run here.
@@ -70,8 +75,9 @@ type Config struct {
 	MaxPixels           int
 	MaxFrames           int
 	MaxAnimationSeconds float64
-	// VideoTimeout bounds one encode (default 48 h; a 2 h 4K ladder on 2 CPU
-	// runs for many hours); ImageTimeout one image job (default 1 h).
+	// VideoTimeout bounds audio-only encoding (default 48 h); video chunks,
+	// planning and assembly each have a one-hour timeout. ImageTimeout bounds
+	// one image job (default 1 h).
 	VideoTimeout time.Duration
 	ImageTimeout time.Duration
 	// ShutdownGrace is how long running jobs get to finish on shutdown
@@ -90,8 +96,16 @@ func (c *Config) defaults() error {
 	if err := workqueue.ValidSchema(c.Schema); err != nil {
 		return err
 	}
+	if c.Queue != "" && c.Queue != workqueue.VideoLightQueue && c.Queue != workqueue.VideoEncodeQueue {
+		return fmt.Errorf("media/worker: unsupported queue %q", c.Queue)
+	}
 	if c.VideoWorkers <= 0 {
 		c.VideoWorkers = 1
+	}
+	if c.Queue != "" {
+		c.VideoWorkers = 1
+		c.AudioWorkers = 1
+		c.ImageWorkers = 1
 	}
 	if c.ImageWorkers <= 0 {
 		c.ImageWorkers = 2
@@ -111,14 +125,15 @@ func (c *Config) defaults() error {
 	return nil
 }
 
-// Worker is a configured worker; Run drains its jobs.
+// Worker is a configured worker; Run drains jobs or exits after one queued job.
 type Worker struct {
-	c      Config
-	client *river.Client[pgx.Tx]
+	c             Config
+	client        *river.Client[pgx.Tx]
+	singleStarted *atomic.Bool
+	singleDone    <-chan struct{}
 }
 
-// New migrates Schema, clears scratch left by a killed worker and
-// builds the River client with the image and video workers.
+// New migrates Schema and builds the River client with the image and video workers.
 func New(ctx context.Context, c Config) (*Worker, error) {
 	if err := c.defaults(); err != nil {
 		return nil, err
@@ -126,8 +141,13 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err := workqueue.Migrate(ctx, c.Pool, c.Schema); err != nil {
 		return nil, err
 	}
-	if err := video.SweepTemp(c.TempDir); err != nil {
-		return nil, fmt.Errorf("media/worker: sweep scratch: %w", err)
+	// One-shot workers use pod-private scratch, which Kubernetes removes with
+	// the pod. Sweeping a shared path here could erase another active worker's
+	// chunk when multiple one-shot processes start on the same host.
+	if c.Queue == "" {
+		if err := video.SweepTemp(c.TempDir); err != nil {
+			return nil, fmt.Errorf("media/worker: sweep scratch: %w", err)
+		}
 	}
 	host, err := media.NewHostQueue(c.Pool, c.Kinds, c.HostSchema, c.HostQueue, c.Grace)
 	if err != nil {
@@ -138,11 +158,6 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 		return nil, err
 	}
 	queue, err := workqueue.New(c.Pool, c.Kinds, c.Schema)
-	if err != nil {
-		return nil, err
-	}
-	images, err := image.New(image.Config{Store: c.Store, Kinds: c.Kinds, Manifests: manifests, Specs: c.Specs, Hooks: c.Hooks,
-		Workers: c.ImageSources, MaxPixels: c.MaxPixels, MaxFrames: c.MaxFrames, MaxAnimationSeconds: c.MaxAnimationSeconds})
 	if err != nil {
 		return nil, err
 	}
@@ -157,17 +172,10 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 		return nil, err
 	}
 	videos, err := video.Contribution(video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, Kinds: c.Kinds, Timeout: c.VideoTimeout,
-		MaxWorkers: c.VideoWorkers, AudioWorkers: c.AudioWorkers, Logger: c.Logger})
+		MaxWorkers: c.VideoWorkers, AudioWorkers: c.AudioWorkers, Queue: c.Queue, Logger: c.Logger})
 	if err != nil {
 		return nil, err
 	}
-	imageJobs := riverhelpers.NewContribution("contentkit-media-image", func(_ context.Context, cfg *river.Config) error {
-		if _, ok := cfg.Queues[workqueue.ImageQueue]; ok {
-			return fmt.Errorf("media/worker: queue %q already registered", workqueue.ImageQueue)
-		}
-		cfg.Queues[workqueue.ImageQueue] = river.QueueConfig{MaxWorkers: c.ImageWorkers}
-		return river.AddWorkerSafely(cfg.Workers, &imageWorker{c: c, images: images})
-	}, nil, nil)
 	hooks := c.RiverHooks
 	if c.Hooks.ItemReady != nil {
 		hooks = append(hooks[:len(hooks):len(hooks)], &readyHook{pool: c.Pool, manifests: manifests, ready: c.Hooks.ItemReady})
@@ -176,26 +184,72 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if c.Metrics != nil {
 		middleware = []rivertype.Middleware{c.Metrics}
 	}
+	contributions := []riverhelpers.Contribution{videos}
+	var singleStarted *atomic.Bool
+	var singleDone <-chan struct{}
+	if c.Queue != workqueue.VideoEncodeQueue {
+		images, err := image.New(image.Config{Store: c.Store, Kinds: c.Kinds, Manifests: manifests, Specs: c.Specs, Hooks: c.Hooks,
+			Workers: c.ImageSources, MaxPixels: c.MaxPixels, MaxFrames: c.MaxFrames, MaxAnimationSeconds: c.MaxAnimationSeconds})
+		if err != nil {
+			return nil, err
+		}
+		imageJobs := riverhelpers.NewContribution("contentkit-media-image", func(_ context.Context, cfg *river.Config) error {
+			if _, ok := cfg.Queues[workqueue.ImageQueue]; ok {
+				return fmt.Errorf("media/worker: queue %q already registered", workqueue.ImageQueue)
+			}
+			cfg.Queues[workqueue.ImageQueue] = river.QueueConfig{MaxWorkers: c.ImageWorkers}
+			return river.AddWorkerSafely(cfg.Workers, &imageWorker{c: c, images: images})
+		}, nil, nil)
+		contributions = append(contributions, imageJobs)
+	}
+	if c.Queue != "" {
+		started := &atomic.Bool{}
+		done := make(chan struct{})
+		singleStarted, singleDone = started, done
+		middleware = append(middleware, river.WorkerMiddlewareFunc(func(ctx context.Context, _ *rivertype.JobRow, work func(context.Context) error) error {
+			if !started.CompareAndSwap(false, true) {
+				return river.JobSnooze(5 * time.Second)
+			}
+			defer close(done)
+			return work(ctx)
+		}))
+	}
 	client, err := riverhelpers.New(ctx, c.Pool, &river.Config{Schema: c.Schema,
-		JobTimeout: max(c.VideoTimeout, c.ImageTimeout), Logger: c.Logger, Hooks: hooks, Middleware: middleware}, videos, imageJobs)
+		JobTimeout: time.Hour, RescueStuckJobsAfter: 2 * time.Hour,
+		Logger: c.Logger, Hooks: hooks, Middleware: middleware}, contributions...)
 	if err != nil {
 		return nil, err
 	}
-	return &Worker{c: c, client: client}, nil
+	return &Worker{c: c, client: client, singleStarted: singleStarted, singleDone: singleDone}, nil
 }
 
 // Client is the worker's River client (tests subscribe to its events).
 func (w *Worker) Client() *river.Client[pgx.Tx] { return w.client }
 
-// Run works jobs until ctx is done, then lets running jobs finish within
-// ShutdownGrace before cancelling them (ffmpeg is killed, scratch removed;
-// the job retries from scratch elsewhere).
+// Run works jobs until ctx is done. Single-queue workers exit after one task
+// or one idle minute. Running jobs get ShutdownGrace before cancellation.
 func (w *Worker) Run(ctx context.Context) error {
 	if err := w.client.Start(ctx); err != nil {
 		return err
 	}
 	w.c.Logger.Info("media-worker: started", "schema", w.c.Schema, "video_workers", w.c.VideoWorkers, "image_workers", w.c.ImageWorkers)
-	<-ctx.Done()
+	if w.c.Queue == "" {
+		<-ctx.Done()
+	} else {
+		idle := time.NewTimer(time.Minute)
+		defer idle.Stop()
+		select {
+		case <-ctx.Done():
+		case <-w.singleDone:
+		case <-idle.C:
+			if w.singleStarted.Load() {
+				select {
+				case <-ctx.Done():
+				case <-w.singleDone:
+				}
+			}
+		}
+	}
 	soft, cancel := context.WithTimeout(context.Background(), w.c.ShutdownGrace)
 	defer cancel()
 	if err := w.client.Stop(soft); err == nil {

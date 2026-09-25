@@ -113,14 +113,15 @@ func TestEncodeProgressThroughReadAPI(t *testing.T) {
 	imagePhases := map[string]bool{}
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
-	// Two stages (480, then 720), each its own job.
-	for completed := 0; completed < 2; {
+	// Planning, chunks, and assembly finish before the ladder is ready.
+	for ready := false; !ready; {
 		select {
 		case ev := <-done:
 			if ev.Kind != river.EventKindJobCompleted {
 				t.Fatalf("job %s: %+v", ev.Kind, ev.Job.Errors)
 			}
-			completed++
+			m, _ := e.manifest(t)
+			ready = m.Files[0].State() == media.StateReady
 		case <-tick.C:
 			if p := read().Progress; p != nil && (len(seen) == 0 || p.At != seen[len(seen)-1].At) {
 				seen = append(seen, *p)

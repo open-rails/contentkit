@@ -41,7 +41,7 @@ func TestIngestEnqueuesEncode(t *testing.T) {
 	var encodes int
 	for encodes == 0 {
 		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+testSchema+`.river_job
-			WHERE kind = $1 AND args->'ref'->>'tenant_id' = $2`, workqueue.VideoArgs{}.Kind(), e.Tenant).Scan(&encodes); err != nil {
+			WHERE kind = $1 AND args->'ref'->>'tenant_id' = $2`, workqueue.VideoPlanArgs{}.Kind(), e.Tenant).Scan(&encodes); err != nil {
 			t.Fatal(err)
 		}
 		select {

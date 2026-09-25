@@ -566,7 +566,11 @@ func (r *Reader) addProgress(ctx context.Context, g *Grant, files []FileInfo) {
 		} else if st.Queued != nil {
 			q := *st.Queued
 			if h := g.Manifest.Files[i].HLS; h != nil && len(h.Pending) > 0 {
-				q.Stage, q.Stages = 2, 2
+				published := make(map[int]bool, len(h.Video))
+				for _, rendition := range h.Video {
+					published[rendition.Rung] = true
+				}
+				q.Stage, q.Stages = len(published)+1, len(published)+len(h.Pending)
 			}
 			files[i].Progress = &q
 		}

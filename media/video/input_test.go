@@ -1,15 +1,26 @@
 package video
 
 import (
+	"bytes"
 	"context"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/open-rails/contentkit/media"
 )
+
+func TestToolDiagnosticsRedactSignedURL(t *testing.T) {
+	stderr := []byte("https://s3.local/bucket/video.mp4?X-Amz-Credential=private-id&X-Amz-Signature=private-signature: forbidden")
+	redacted := redactToolURLs(stderr)
+	if bytes.Contains(redacted, []byte("private-id")) || bytes.Contains(redacted, []byte("private-signature")) ||
+		!bytes.Contains(redacted, []byte("[redacted URL]")) {
+		t.Fatalf("signed URL appeared in tool diagnostics: %s", redacted)
+	}
+}
 
 // A concat list (or any non-container input) must never be demuxed: it would
 // let an upload make ffmpeg read other local files.
@@ -84,8 +95,9 @@ func TestEncodeObservationUsesVideoDuration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pl.duration < 2.5 || len(pl.audio) != 1 {
-		t.Fatalf("fixture needs audio longer than video: %+v", pl)
+	containerDuration, _ := strconv.ParseFloat(probed.Format.Duration, 64)
+	if containerDuration < 2.5 || math.Abs(pl.duration-1) > 0.2 || len(pl.audio) != 1 {
+		t.Fatalf("video duration %.2f, container duration %.2f: %+v", pl.duration, containerDuration, pl)
 	}
 	out := filepath.Join(dir, "out")
 	if err := os.Mkdir(out, 0o700); err != nil {
@@ -97,7 +109,7 @@ func TestEncodeObservationUsesVideoDuration(t *testing.T) {
 		observe: func(o EncodeObservation) { observed = o }}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if !observed.Succeeded || math.Abs(observed.OutputSeconds-1) > 0.2 || observed.OutputSeconds >= pl.duration {
-		t.Fatalf("output seconds must reflect encoded video, not container: %+v (container %.2fs)", observed, pl.duration)
+	if !observed.Succeeded || math.Abs(observed.OutputSeconds-pl.duration) > 0.2 {
+		t.Fatalf("output seconds must reflect selected video: %+v (video %.2fs, container %.2fs)", observed, pl.duration, containerDuration)
 	}
 }

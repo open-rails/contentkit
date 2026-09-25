@@ -7,15 +7,19 @@ package workqueue
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"math"
 	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	riverhelpers "github.com/open-rails/helpers/river"
+	"github.com/open-rails/migratekit"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
@@ -30,11 +34,18 @@ import (
 // sharing a database must not share one, or one host's worker takes the
 // other's jobs. Queue names are fixed within a schema.
 const (
-	ImageQueue  = "media_image" // image variants, slots, inline images; placement of staged images
-	VideoQueue  = "media_video" // video encodes and subtitle sidecars; placement of staged videos
-	AudioQueue  = "media_audio" // audio file encodes (minutes, never behind hours of video); placement of staged audio
-	MaxAttempts = 5
+	ImageQueue       = "media_image"        // image variants, slots and inline images
+	VideoLightQueue  = "media_video_light"  // video probe, tracks and assembly
+	VideoEncodeQueue = "media_video_encode" // bounded video chunks
+	AudioQueue       = "media_audio"        // audio-only files
+	MaxAttempts      = 5
+	// River counts a rescued hard kill before Work can restore the attempt.
+	// Video jobs enforce MaxAttempts on actual failures inside Work instead.
+	VideoRiverMaxAttempts = 32767
 )
+
+//go:embed migrations/*.sql
+var migrationFiles embed.FS
 
 var schemaName = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 
@@ -46,13 +57,32 @@ func ValidSchema(schema string) error {
 	return nil
 }
 
-// Migrate creates schema and applies River's migrations. Hosts run it in
-// their migrate step; the worker also runs it at start.
+// Migrate creates the worker schema and applies River and video-run migrations.
+// Hosts run it in their migrate step; the worker also runs it at start.
 func Migrate(ctx context.Context, pool *pgxpool.Pool, schema string) error {
 	if err := ValidSchema(schema); err != nil {
 		return err
 	}
-	return riverhelpers.ApplyMigrations(ctx, pool, schema)
+	if err := riverhelpers.ApplyMigrations(ctx, pool, schema); err != nil {
+		return err
+	}
+	scripts, err := fs.Sub(migrationFiles, "migrations")
+	if err != nil {
+		return err
+	}
+	baseline, err := migratekit.Load(scripts, ".", migratekit.RequireParentLinks())
+	if err != nil {
+		return fmt.Errorf("media/workqueue: load migrations: %w", err)
+	}
+	migrator, err := migratekit.NewPostgresFromPGXPool(pool, "contentkit-media-worker")
+	if err != nil {
+		return err
+	}
+	defer migrator.Close()
+	if err := migrator.WithSchema(schema).ApplyMigrations(ctx, baseline); err != nil {
+		return fmt.Errorf("media/workqueue: migrate %s: %w", schema, err)
+	}
+	return nil
 }
 
 // jobs is the schema's river_job table.
@@ -70,12 +100,31 @@ func (ImageArgs) Kind() string { return "contentkit_media_image" }
 
 func (a ImageArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
 
-// VideoArgs encodes a manifest's video files.
-type VideoArgs struct {
-	Ref contentref.ContentRef `json:"ref"`
+// VideoPlanArgs plans a manifest's stale video files. Its River kind stays
+// stable so queued jobs from before the queue split can be moved and run.
+type VideoPlanArgs struct {
+	Ref   contentref.ContentRef `json:"ref"`
+	Class media.VideoJobClass   `json:"class,omitempty"`
 }
 
-func (VideoArgs) Kind() string { return "contentkit_media_video" }
+func (VideoPlanArgs) Kind() string { return "contentkit_media_video" }
+
+// VideoChunkArgs encodes one bounded range of a video run.
+type VideoChunkArgs struct {
+	Ref   contentref.ContentRef `json:"ref"`
+	RunID string                `json:"run_id"`
+	Index int                   `json:"index"`
+}
+
+func (VideoChunkArgs) Kind() string { return "contentkit_media_video_chunk" }
+
+// VideoAssembleArgs publishes one rung after its chunks finish.
+type VideoAssembleArgs struct {
+	Ref   contentref.ContentRef `json:"ref"`
+	RunID string                `json:"run_id"`
+}
+
+func (VideoAssembleArgs) Kind() string { return "contentkit_media_video_assemble" }
 
 // AudioArgs encodes a manifest's audio files (media.Audio kinds).
 type AudioArgs struct {
@@ -85,7 +134,7 @@ type AudioArgs struct {
 func (AudioArgs) Kind() string { return "contentkit_media_audio" }
 
 // EncodeKinds are the job kinds that report encode progress.
-var EncodeKinds = []string{VideoArgs{}.Kind(), AudioArgs{}.Kind()}
+var EncodeKinds = []string{VideoPlanArgs{}.Kind(), VideoChunkArgs{}.Kind(), VideoAssembleArgs{}.Kind(), AudioArgs{}.Kind()}
 
 // Queue is the host's insert-only client for the worker's jobs; it is the
 // uploads' media.ProcessQueue.
@@ -132,6 +181,9 @@ func (q *Queue) EnqueueTx(ctx context.Context, tx pgx.Tx, job media.ProcessJob) 
 }
 
 func (q *Queue) enqueue(ctx context.Context, insert media.InsertFunc, job media.ProcessJob) error {
+	if job.Class != "" && job.Class != media.VideoReencode && job.Class != media.VideoBackfill {
+		return fmt.Errorf("media/workqueue: invalid video job class %q", job.Class)
+	}
 	item, err := q.kinds.Item(job.Ref)
 	if err != nil {
 		return err
@@ -153,7 +205,7 @@ func (q *Queue) enqueue(ctx context.Context, insert media.InsertFunc, job media.
 	// drop the job for a source replaced mid-encode. Duplicates serialize on
 	// the worker's per-manifest lock and are no-ops once the manifest is fresh.
 	if k.Video != nil {
-		if _, err := insert(ctx, VideoArgs{Ref: job.Ref}, VideoInsertOpts()); err != nil {
+		if _, err := insert(ctx, VideoPlanArgs{Ref: job.Ref, Class: job.Class}, VideoPlanInsertOpts(job.Class)); err != nil {
 			return err
 		}
 	}
@@ -170,9 +222,16 @@ func AudioInsertOpts() *river.InsertOpts {
 	return &river.InsertOpts{Queue: AudioQueue, MaxAttempts: MaxAttempts}
 }
 
-// VideoInsertOpts are a video job's insert options.
-func VideoInsertOpts() *river.InsertOpts {
-	return &river.InsertOpts{Queue: VideoQueue, MaxAttempts: MaxAttempts}
+// VideoPlanInsertOpts are a video plan's insert options.
+func VideoPlanInsertOpts(class media.VideoJobClass) *river.InsertOpts {
+	priority := 1
+	switch class {
+	case media.VideoReencode:
+		priority = 3
+	case media.VideoBackfill:
+		priority = 4
+	}
+	return &river.InsertOpts{Queue: VideoLightQueue, Priority: priority, MaxAttempts: VideoRiverMaxAttempts}
 }
 
 // Cancel cancels ref's queued and running image and video jobs, every stage:
@@ -198,6 +257,16 @@ WHERE kind = ANY($1) AND args @> $2 AND args->'ref'->>'content_version_id' IS NO
 		if _, err := q.client.JobCancel(ctx, id); err != nil && !errors.Is(err, river.ErrNotFound) {
 			return 0, err
 		}
+	}
+	refJSON, err := json.Marshal(ref)
+	if err != nil {
+		return 0, err
+	}
+	_, err = q.pool.Exec(ctx, `UPDATE `+pgx.Identifier{q.schema, "encode_run"}.Sanitize()+`
+SET state = 'cancelled', updated_at = now()
+WHERE ref = $1 AND state IN ('planned', 'encoding', 'assembling')`, refJSON)
+	if err != nil {
+		return 0, err
 	}
 	return len(ids), nil
 }
@@ -241,9 +310,8 @@ func ClearProgress(ctx context.Context, pool *pgxpool.Pool, schema string, id in
 // every few seconds while ffmpeg or a transfer runs.
 const stalledAfter = time.Minute
 
-// NewProgressSource reads encode progress from the video and audio jobs in
-// the host's worker schema, for media.ReaderOptions.Progress. One indexed
-// query per read of an item with a pending video or audio file.
+// NewProgressSource reads job and per-rung progress from the host's worker
+// schema for media.ReaderOptions.Progress.
 func NewProgressSource(pool *pgxpool.Pool, schema string) (media.ProgressSource, error) {
 	if err := ValidSchema(schema); err != nil {
 		return nil, err
@@ -255,13 +323,29 @@ SELECT j.state, j.metadata->'` + progressKey + `',
 FROM ` + jobs(schema) + ` j
 WHERE j.kind = ANY($1) AND j.args @> $2 AND j.args->'ref'->>'content_version_id' IS NOT DISTINCT FROM $3
   AND j.state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
-ORDER BY j.id`}, nil
+ORDER BY j.id`, runSQL: `
+SELECT DISTINCT ON (r.file_name) r.file_name, r.state,
+  (SELECT count(*) FROM ` + pgx.Identifier{schema, "encode_run"}.Sanitize() + ` prior
+    WHERE prior.ref = r.ref AND prior.file_name = r.file_name AND prior.source_name = r.source_name
+      AND prior.source_etag = r.source_etag AND prior.spec = r.spec AND prior.rung <= r.rung),
+  (SELECT count(*) FROM ` + pgx.Identifier{schema, "encode_run"}.Sanitize() + ` all_rungs
+    WHERE all_rungs.ref = r.ref AND all_rungs.file_name = r.file_name AND all_rungs.source_name = r.source_name
+      AND all_rungs.source_etag = r.source_etag AND all_rungs.spec = r.spec),
+  COALESCE((SELECT sum(end_ms - start_ms) FROM ` + pgx.Identifier{schema, "encode_chunk"}.Sanitize() + `
+    WHERE run_id = r.id AND state = 'done'), 0),
+  COALESCE((SELECT max(end_ms) FROM ` + pgx.Identifier{schema, "encode_chunk"}.Sanitize() + `
+    WHERE run_id = r.id), 0),
+  EXISTS (SELECT 1 FROM ` + jobs(schema) + ` j WHERE j.kind = $2 AND j.args->>'run_id' = r.id::text AND j.state = 'running')
+FROM ` + pgx.Identifier{schema, "encode_run"}.Sanitize() + ` r
+WHERE r.ref = $1 AND r.state IN ('planned', 'encoding', 'assembling')
+ORDER BY r.file_name, r.rung`}, nil
 }
 
 type progressSource struct {
-	pool *pgxpool.Pool
-	now  func() time.Time
-	sql  string
+	pool   *pgxpool.Pool
+	now    func() time.Time
+	sql    string
+	runSQL string
 }
 
 func (s *progressSource) EncodeProgress(ctx context.Context, ref contentref.ContentRef) (media.EncodeStatus, error) {
@@ -314,5 +398,57 @@ func (s *progressSource) EncodeProgress(ctx context.Context, ref contentref.Cont
 			st.Queued = &q
 		}
 	}
-	return st, rows.Err()
+	if err := rows.Err(); err != nil {
+		return st, err
+	}
+	rows.Close()
+	refJSON, err := json.Marshal(ref)
+	if err != nil {
+		return st, err
+	}
+	runs, err := s.pool.Query(ctx, s.runSQL, refJSON, (VideoChunkArgs{}).Kind())
+	if err != nil {
+		return st, err
+	}
+	defer runs.Close()
+	for runs.Next() {
+		var name, state string
+		var stage, stages, doneMS, totalMS int64
+		var running bool
+		if err := runs.Scan(&name, &state, &stage, &stages, &doneMS, &totalMS, &running); err != nil {
+			return st, err
+		}
+		phase := media.PhaseQueued
+		switch {
+		case state == "assembling":
+			phase = media.PhasePublishing
+		case running:
+			phase = media.PhaseEncoding
+		}
+		p := media.EncodeProgress{Phase: phase, At: now.UnixMilli(), Stage: int(stage), Stages: int(stages)}
+		if totalMS > 0 {
+			p.SegmentsTotal = int((totalMS + 3999) / 4000)
+			p.SegmentsDone = min(p.SegmentsTotal, int(doneMS/4000))
+			p.Percent = min(99, 100*float64(doneMS)/float64(totalMS))
+		}
+		if live, ok := st.Files[name]; ok {
+			p.Phase, p.At, p.Speed, p.ETA, p.Stalled = live.Phase, live.At, live.Speed, live.ETA, live.Stalled
+			if totalMS > 0 {
+				activeMS := min(max(0, totalMS-doneMS), int64(live.SegmentsDone)*4000)
+				p.SegmentsDone = min(p.SegmentsTotal, int((doneMS+activeMS)/4000))
+				if doneMS+activeMS == totalMS {
+					p.SegmentsDone = p.SegmentsTotal
+				}
+				p.Percent = min(99, 100*float64(doneMS+activeMS)/float64(totalMS))
+				if live.Phase == media.PhaseEncoding && live.Speed > 0 {
+					p.ETA = math.Ceil(float64(totalMS-doneMS-activeMS) / 1000 / live.Speed)
+				}
+			}
+		}
+		if st.Files == nil {
+			st.Files = make(map[string]media.EncodeProgress)
+		}
+		st.Files[name] = p
+	}
+	return st, runs.Err()
 }
