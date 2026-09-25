@@ -334,6 +334,8 @@ export function useHlsPlayer({
   const [selected, setSelected] = useState(-1);
   const [current, setCurrent] = useState(-1);
   const choose = useRef<(index: number) => void>(() => {});
+  // A preview becoming real playback: drop its buffer so the chosen level or ABR takes over.
+  const commit = useRef<() => void>(() => {});
   const opts = useRef({ xhrSetup, refresh, abr, qualityKey });
   opts.current = { xhrSetup, refresh, abr, qualityKey };
 
@@ -348,6 +350,7 @@ export function useHlsPlayer({
     setSelected(-1);
     setCurrent(-1);
     choose.current = () => {};
+    commit.current = () => {};
     setStatus(want.current ? "loading" : "idle");
     const fail = (e: PlaybackError) => {
       if (dead) return;
@@ -398,12 +401,25 @@ export function useHlsPlayer({
           });
           // A manual choice before loading applies at start.
           let locked = -1;
+          const autoStart = () => {
+            const box = el.getBoundingClientRect();
+            const dpr = globalThis.devicePixelRatio || 1;
+            const cap = capRung(hls.levels, box.width * dpr, box.height * dpr, policy);
+            return startRung(hls.levels, hls.bandwidthEstimate || estimate, cap, conn);
+          };
           choose.current = (i) => {
             locked = i;
             setSelected(i);
             if (!loading) return;
-            // Flushes the buffer ahead so the choice shows within a segment.
-            hls.nextLevel = i;
+            // A level: flush everything buffered and reload it at the playhead.
+            // Auto: hand back to ABR without a flush.
+            if (i >= 0) hls.currentLevel = i;
+            else hls.nextLevel = -1;
+          };
+          commit.current = () => {
+            if (!loading) return;
+            hls.currentLevel = locked;
+            if (locked < 0) hls.nextAutoLevel = autoStart();
           };
           hls.on(Hls.Events.LEVEL_SWITCHED, (_, d) => setCurrent(d.level));
           hls.on(Hls.Events.FRAG_LOADED, () => {
@@ -421,10 +437,7 @@ export function useHlsPlayer({
                 hls.startLevel = 0;
                 hls.startLoad(at);
               } else {
-                const box = el.getBoundingClientRect();
-                const dpr = globalThis.devicePixelRatio || 1;
-                const cap = capRung(hls.levels, box.width * dpr, box.height * dpr, policy);
-                hls.startLevel = locked >= 0 ? locked : startRung(hls.levels, estimate, cap, conn);
+                hls.startLevel = locked >= 0 ? locked : autoStart();
                 if (locked >= 0) hls.loadLevel = locked;
                 hls.startLoad(resumeAt.current || -1);
               }
@@ -580,6 +593,7 @@ export function useHlsPlayer({
         el.muted = false;
         el.currentTime = 0;
       }
+      commit.current();
       setStarted(true);
     }
     want.current = true;

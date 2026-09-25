@@ -19,6 +19,12 @@ const hls = vi.hoisted(() => {
     startLevel = -1;
     loadLevel = -1;
     nextLevel = -1;
+    nextAutoLevel = -1;
+    // Every hls.currentLevel assignment: the flushing switch.
+    flushes: number[] = [];
+    set currentLevel(i: number) {
+      this.flushes.push(i);
+    }
     src = "";
     startedAt: number | undefined;
     destroyed = false;
@@ -138,4 +144,67 @@ it("without a refresh a 404 fails at once", async () => {
   await waitFor(() => expect(hls.instances.length).toBe(1));
   act(() => live().emit("hlsError", segment404));
   await waitFor(() => expect(m.result.current.error).toMatchObject({ kind: "not_found" }));
+});
+
+const ladder = [
+  { width: 854, height: 480, bitrate: 1_000_000 },
+  { width: 1280, height: 720, bitrate: 2_500_000 },
+  { width: 1920, height: 1080, bitrate: 5_000_000 },
+];
+
+it("a manual quality choice flushes to that level at once; Auto hands back to ABR", async () => {
+  const m = mount({ src: "https://media/item/master.m3u8", qualityKey: null });
+  act(() => m.result.current.play());
+  await waitFor(() => expect(hls.instances.length).toBe(1));
+  live().levels = ladder;
+  act(() => live().emit("hlsManifestParsed"));
+  await playing(m.video);
+
+  act(() => m.result.current.quality.select(0));
+  expect(live().flushes).toEqual([0]);
+  expect(m.result.current.quality.selected).toBe(0);
+  act(() => m.result.current.quality.select(2));
+  expect(live().flushes).toEqual([0, 2]);
+
+  act(() => m.result.current.quality.select(-1));
+  expect(live().flushes).toEqual([0, 2]);
+  expect(live().nextLevel).toBe(-1);
+  expect(m.result.current.quality.selected).toBe(-1);
+
+  // The menu's "current" follows what is actually playing.
+  act(() => live().emit("hlsLevelSwitched", { level: 1 }));
+  expect(m.result.current.quality.current).toBe(1);
+});
+
+it("a choice made before loading starts at that level without a flush", async () => {
+  localStorage.setItem("ckui.player.quality", "1080");
+  try {
+    const n = mount({ src: "https://media/item/master.m3u8" });
+    act(() => n.result.current.play());
+    await waitFor(() => expect(hls.instances.length).toBe(1));
+    live().levels = ladder;
+    act(() => live().emit("hlsManifestParsed"));
+    expect(live().startLevel).toBe(2);
+    expect(live().loadLevel).toBe(2);
+    expect(live().flushes).toEqual([]);
+    expect(n.result.current.quality.selected).toBe(2);
+  } finally {
+    localStorage.removeItem("ckui.player.quality");
+  }
+});
+
+it("a preview committed to playback drops its low start rung for ABR", async () => {
+  const m = mount({ src: "https://media/item/master.m3u8" });
+  act(() => m.result.current.preview(3));
+  await waitFor(() => expect(hls.instances.length).toBe(1));
+  live().levels = ladder;
+  live().bandwidthEstimate = 50_000_000;
+  act(() => live().emit("hlsManifestParsed"));
+  expect(live().startLevel).toBe(0);
+  expect(live().startedAt).toBe(3);
+
+  act(() => m.result.current.play());
+  expect(live().flushes).toEqual([-1]);
+  expect(live().nextAutoLevel).toBeGreaterThan(0);
+  expect(m.video.currentTime).toBe(0);
 });
