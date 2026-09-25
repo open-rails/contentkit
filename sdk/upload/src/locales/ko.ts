@@ -55,18 +55,6 @@ export const ko: UploadUiMessageBundle = {
     processing: "동영상을 아직 처리 중입니다. 인코딩이 끝나면 커버를 설정할 수 있습니다.",
     rendering: "커버 생성 중…",
   },
-  preview: {
-    title: "호버 미리보기",
-    description: "동영상에 마우스를 올리면 소리 없이 재생될 구간을 고르세요({min}–{max}초).",
-    section: "구간",
-    start: "{time}부터",
-    length: "{seconds}초",
-    approximate: "대략적인 미리보기",
-    rendered: "생성된 미리보기",
-    save: "미리보기 저장",
-    auto: "자동",
-    rendering: "미리보기 생성 중…",
-  },
   progress: {
     decoding: "이미지 여는 중…",
     hashing: "준비 중…",
@@ -94,7 +82,7 @@ export const ko: UploadUiMessageBundle = {
       muxing: "패키징 중",
       uploading: "저장 중",
       publishing: "게시 중",
-      images: "커버와 미리보기 만드는 중",
+      images: "커버 만드는 중",
     },
   },
   gallery: {

@@ -223,7 +223,14 @@ export interface UseHlsPlayer {
   error?: PlaybackError;
   /** Playback began at least once (show native controls). */
   started: boolean;
+  /** Plays unmuted with controls; during a preview, restarts it from 0. */
   play: () => void;
+  /** Loads and plays muted from `at` seconds at the lowest rendition (ABR then takes over); not after play. */
+  preview: (at: number) => void;
+  /** Stops a preview and unloads the player; failures during one are silent. */
+  unload: () => void;
+  /** A preview is loaded or playing. */
+  previewing: boolean;
   /** Reloads from scratch and plays. */
   retry: () => void;
   quality: PlayerQuality;
@@ -314,6 +321,10 @@ export function useHlsPlayer({
   // Nothing loads until the first play.
   const [armed, setArmed] = useState(false);
   const [session, setSession] = useState(0);
+  const [previewing, setPreviewing] = useState(false);
+  // The preview's start while one is loaded; null otherwise.
+  const previewAt = useRef<number | null>(null);
+  const stopPreview = useRef<() => void>(() => {});
   const want = useRef(false);
   const start = useRef<(() => void) | null>(null);
   const refreshed = useRef(false);
@@ -344,6 +355,7 @@ export function useHlsPlayer({
       if (refreshable(e) && again && !refreshed.current) {
         refreshed.current = true;
         resumeAt.current = el.currentTime || 0;
+        if (previewAt.current !== null) previewAt.current = resumeAt.current || previewAt.current;
         dead = true;
         destroy();
         setStatus("loading");
@@ -353,6 +365,7 @@ export function useHlsPlayer({
           .finally(() => setSession((s) => s + 1));
         return;
       }
+      if (previewAt.current !== null) return stopPreview.current();
       if (e.kind === "network") corsHint();
       dead = true;
       destroy();
@@ -403,12 +416,18 @@ export function useHlsPlayer({
             if (!parsed) return;
             if (!loading) {
               loading = true;
-              const box = el.getBoundingClientRect();
-              const dpr = globalThis.devicePixelRatio || 1;
-              const cap = capRung(hls.levels, box.width * dpr, box.height * dpr, policy);
-              hls.startLevel = locked >= 0 ? locked : startRung(hls.levels, estimate, cap, conn);
-              if (locked >= 0) hls.loadLevel = locked;
-              hls.startLoad(resumeAt.current || -1);
+              const at = previewAt.current;
+              if (at !== null) {
+                hls.startLevel = 0;
+                hls.startLoad(at);
+              } else {
+                const box = el.getBoundingClientRect();
+                const dpr = globalThis.devicePixelRatio || 1;
+                const cap = capRung(hls.levels, box.width * dpr, box.height * dpr, policy);
+                hls.startLevel = locked >= 0 ? locked : startRung(hls.levels, estimate, cap, conn);
+                if (locked >= 0) hls.loadLevel = locked;
+                hls.startLoad(resumeAt.current || -1);
+              }
               resumeAt.current = 0;
             }
             el.play().catch(() => {});
@@ -436,7 +455,8 @@ export function useHlsPlayer({
           if (code < 200 || code >= 400) return fail({ kind: statusKind(code), code: `probe/${code}`, status: code });
           native = true;
           el.src = src;
-          if (resumeAt.current) el.currentTime = resumeAt.current;
+          if (previewAt.current !== null) el.currentTime = previewAt.current;
+          else if (resumeAt.current) el.currentTime = resumeAt.current;
           resumeAt.current = 0;
           destroy = () => {
             el.removeAttribute("src");
@@ -462,7 +482,7 @@ export function useHlsPlayer({
     const set = (s: PlayerStatus) => () => setStatus((cur) => (cur === "error" ? cur : s));
     const handlers: Record<string, () => void> = {
       playing: () => {
-        setStarted(true);
+        if (previewAt.current === null) setStarted(true);
         refreshed.current = false;
         lastProgress.current = Date.now();
         set("playing")();
@@ -471,7 +491,7 @@ export function useHlsPlayer({
         if (!el.ended) set("paused")();
       },
       waiting: () => want.current && set("buffering")(),
-      ended: set("ended"),
+      ended: () => (previewAt.current !== null ? stopPreview.current() : set("ended")()),
       progress: () => (lastProgress.current = Date.now()),
       play: () => {
         want.current = true;
@@ -502,6 +522,7 @@ export function useHlsPlayer({
         time = el.currentTime;
         lastProgress.current = Date.now();
       } else if (Date.now() - lastProgress.current > stallTimeout) {
+        if (previewAt.current !== null) return stopPreview.current();
         el.pause();
         want.current = false;
         setError({ kind: "stalled", code: "stall" });
@@ -521,14 +542,52 @@ export function useHlsPlayer({
     setSession((s) => s + 1);
   }, []);
 
+  const unload = useCallback(() => {
+    if (previewAt.current === null) return;
+    previewAt.current = null;
+    want.current = false;
+    setPreviewing(false);
+    setArmed(false); // the load effect's cleanup destroys hls and detaches the media
+    setStatus("idle");
+    if (el) {
+      el.pause();
+      el.muted = false;
+    }
+  }, [el]);
+  stopPreview.current = unload;
+
+  const preview = useCallback(
+    (at: number) => {
+      if (!el || started || error || previewAt.current !== null) return;
+      previewAt.current = Math.max(0, at);
+      el.muted = true;
+      want.current = true;
+      lastProgress.current = Date.now();
+      setPreviewing(true);
+      setArmed(true);
+      start.current?.();
+    },
+    [el, started, error],
+  );
+
   const play = useCallback(() => {
     if (error) return retry();
+    if (previewAt.current !== null) {
+      // Committed: the preview's player becomes the real one, from the start.
+      previewAt.current = null;
+      setPreviewing(false);
+      if (el) {
+        el.muted = false;
+        el.currentTime = 0;
+      }
+      setStarted(true);
+    }
     want.current = true;
     lastProgress.current = Date.now();
     setStatus("loading");
     setArmed(true);
     start.current?.();
-  }, [error, retry]);
+  }, [error, retry, el]);
 
   const levelsRef = useRef(levels);
   levelsRef.current = levels;
@@ -538,5 +597,5 @@ export function useHlsPlayer({
     storeQuality(opts.current.qualityKey, index === -1 || !h ? "auto" : h);
   }, []);
 
-  return { ref: setEl, status, error, started, play, retry, quality: { levels, selected, current, select } };
+  return { ref: setEl, status, error, started, play, preview, unload, previewing, retry, quality: { levels, selected, current, select } };
 }

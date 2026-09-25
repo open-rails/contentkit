@@ -102,18 +102,14 @@ for (const theme of ["light", "dark"] as const) {
 }
 
 for (const theme of ["light", "dark"] as const) {
-  test(`video poster and hover preview pickers (${theme})`, async ({ page }, info) => {
+  test(`video poster picker (${theme})`, async ({ page }, info) => {
     const tag = `${theme}-${info.project.name}`;
     await page.goto(`/?theme=${theme}`);
     const card = page.locator("[data-demo=video]");
     const poster = card.locator("[data-ckui=video-poster]");
     await expect(poster.locator("img")).toHaveAttribute("data-rendition", /^[0-9]+$/, { timeout: 20_000 });
     await poster.scrollIntoViewIfNeeded();
-    await poster.hover();
-    await expect(poster.locator("[data-ckui=hover-preview]")).toBeVisible();
-    await card.screenshot({ path: `${dir}/video-card-hover-${tag}.png` });
-    await page.mouse.move(0, 0);
-    await expect(poster.locator("[data-ckui=hover-preview]")).toHaveCount(0);
+    await card.screenshot({ path: `${dir}/video-card-${tag}.png` });
 
     await card.getByRole("button", { name: "Set cover" }).click();
     const dialog = page.getByRole("dialog");
@@ -132,17 +128,5 @@ for (const theme of ["light", "dark"] as const) {
     await crop.getByRole("button", { name: "Save" }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0, { timeout: 30_000 });
     await expect(poster.locator("img")).toHaveAttribute("data-rendition", /^[0-9]+$/);
-
-    await card.getByRole("button", { name: "Hover preview" }).click();
-    await expect(dialog.locator("[data-ckui=frame-strip] img")).toHaveCount(10, { timeout: 20_000 });
-    const [, end] = await dialog.locator("input[type=range]").all();
-    await end!.focus();
-    await page.keyboard.press("ArrowRight");
-    await page.keyboard.press("ArrowRight");
-    await expect(dialog.locator("[data-ckui=flipbook]")).toBeVisible({ timeout: 20_000 });
-    await page.waitForTimeout(400);
-    await page.screenshot({ path: `${dir}/preview-picker-${tag}.png` });
-    await dialog.getByRole("button", { name: "Save preview" }).click();
-    await expect(page.getByRole("dialog")).toHaveCount(0, { timeout: 30_000 });
   });
 }

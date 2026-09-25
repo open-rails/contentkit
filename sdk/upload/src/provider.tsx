@@ -7,6 +7,7 @@ import { createTranslator, resolveMessages, type UploadUiMessageBundle, type Upl
 import { AppearanceContext } from "./scope.js";
 import { DensityContext } from "./components/rendition-img.js";
 import { DEFAULT_DENSITY, type DensityRange } from "./rendition.js";
+import { InlinePreviewContext } from "./inline-preview.js";
 
 const ClientContext = createContext<UploadClient | null>(null);
 
@@ -15,9 +16,6 @@ export type UploadUiOperation =
   | "poster.load"
   | "poster.frame"
   | "poster.save"
-  | "preview.load"
-  | "preview.frame"
-  | "preview.save"
   | "slot.load"
   | "slot.decode"
   | "slot.save"
@@ -57,18 +55,22 @@ export interface UploadUiProviderProps {
   density?: DensityRange;
   /** Receives every failure the components show (a component's own `onError` wins). */
   onError?: UploadUiErrorHandler;
+  /** Playable videos preview muted inline (hover, or in view on touch). Default true. */
+  inlinePreview?: boolean;
   children?: ReactNode;
 }
 
 /** Renders no DOM; components create their own `.ckui` styling roots. */
-export function UploadUiProvider({ client, appearance, messages, t, density = DEFAULT_DENSITY, onError, children }: UploadUiProviderProps) {
+export function UploadUiProvider({ client, appearance, messages, t, density = DEFAULT_DENSITY, onError, inlinePreview = true, children }: UploadUiProviderProps) {
   const translator = useMemo(() => createTranslator(resolveMessages(messages), t), [messages, t]);
   return (
     <ClientContext.Provider value={client ?? null}>
       <AppearanceContext.Provider value={appearance}>
         <MessagesContext.Provider value={translator}>
           <DensityContext.Provider value={density}>
-            <ErrorContext.Provider value={onError}>{children}</ErrorContext.Provider>
+            <ErrorContext.Provider value={onError}>
+              <InlinePreviewContext.Provider value={inlinePreview}>{children}</InlinePreviewContext.Provider>
+            </ErrorContext.Provider>
           </DensityContext.Provider>
         </MessagesContext.Provider>
       </AppearanceContext.Provider>

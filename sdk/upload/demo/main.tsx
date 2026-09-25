@@ -1,6 +1,5 @@
 import { createUploadClient } from "@openrails/contentkit-upload";
 import {
-  HoverPreviewPicker,
   VideoPoster,
   VideoPosterPicker,
   AvatarUpload,
@@ -79,20 +78,18 @@ function ChannelHeader() {
 
 const video = { kind: "post", id: "0192f000-0000-7000-8000-000000000001" };
 await client.setVideoPoster(video, { source: "auto" });
-const seededVideo = await client.setHoverPreview(video, {});
+const seededVideo = await client.getVideoImages(video);
 
 function VideoCard() {
   const [images, setImages] = useState<VideoImages>(seededVideo);
-  const [open, setOpen] = useState<"poster" | "preview" | null>(null);
+  const [open, setOpen] = useState(false);
   return (
     <div data-demo="video" style={{ display: "grid", gap: 12 }}>
-      <VideoPoster poster={images.poster} preview={images.hover_preview} style={{ maxWidth: 360 }} tabIndex={0} />
+      <VideoPoster poster={images.poster} style={{ maxWidth: 360 }} />
       <div style={{ display: "flex", gap: 8 }}>
-        <button type="button" onClick={() => setOpen("poster")}>Set cover</button>
-        <button type="button" onClick={() => setOpen("preview")}>Hover preview</button>
+        <button type="button" onClick={() => setOpen(true)}>Set cover</button>
       </div>
-      <VideoPosterPicker open={open === "poster"} onOpenChange={(o) => setOpen(o ? "poster" : null)} item={video} images={images} onChange={setImages} />
-      <HoverPreviewPicker open={open === "preview"} onOpenChange={(o) => setOpen(o ? "preview" : null)} item={video} images={images} onChange={setImages} />
+      <VideoPosterPicker open={open} onOpenChange={setOpen} item={video} images={images} onChange={setImages} />
     </div>
   );
 }
@@ -126,7 +123,7 @@ createRoot(document.getElementById("root")!).render(
           <CoverUpload item={channel} />
           <AvatarUpload item={channel} />
         </Card>
-        <Card title="Video poster and hover preview">
+        <Card title="Video poster">
           <VideoCard />
         </Card>
         <Card title="Video encode progress">

@@ -18,7 +18,6 @@ export class DemoServer {
   /** One 16:9 demo video of VIDEO_SECONDS, drawn per frame. */
   video: VideoImages = {
     poster: { aspect: "16:9", outputs: [], pending: false, selection: { source: "auto", file: "clip.mp4", time: 3 } },
-    hover_preview: { selection: { file: "clip.mp4", start: 3, duration: 3, auto: true }, mp4: [], webp: [], pending: false },
     video: { file: "clip.mp4", duration: VIDEO_SECONDS, w: 1920, h: 1080, encoded: true },
   };
 
@@ -55,14 +54,6 @@ export class DemoServer {
         const src = b.source === "upload" ? this.blobs.get(`${b.ref.kind}/${b.ref.id}#poster`)! : await videoFrame(t, 1920, "image/png");
         const outputs = await renderPoster(src, b.edit);
         this.video = { ...this.video, poster: { aspect: "16:9", ...(b.edit ? { edit: b.edit } : {}), dims: { w: 1920, h: 1080 }, outputs, pending: false, selection: { source: b.source, file: "clip.mp4", ...(b.source === "frame" ? { time: t } : {}) } } };
-        return json(this.video);
-      }
-      case "/video-preview": {
-        await sleep(this.delay * 3);
-        const start = b.start ?? 3;
-        const duration = b.duration ?? 3;
-        const webp = [{ w: 320, h: 180, url: URL.createObjectURL(await videoFrame(start + duration / 2, 320, "image/webp")) }];
-        this.video = { ...this.video, hover_preview: { selection: { file: "clip.mp4", start, duration, ...(b.start === undefined ? { auto: true } : {}) }, mp4: [], webp, pending: false } };
         return json(this.video);
       }
       case "/slot": {

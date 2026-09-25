@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { UploadUiAppearance } from "../appearance.js";
 import { formatDuration } from "../gallery.js";
 import { useHlsPlayer, type HlsPlayerOptions, type PlayerQuality } from "../gallery-react.js";
+import { useInlinePreview } from "../inline-preview.js";
 import { useMessages } from "../i18n/context.js";
 import { UploadUiRoot } from "../scope.js";
 import { RenditionImg } from "./rendition-img.js";
@@ -100,6 +101,10 @@ export interface VideoPlayerProps extends Omit<HlsPlayerOptions, "src"> {
    */
   layout?: "frame" | "fill";
   maxHeight?: string;
+  /** Preview muted inline before play (hover, or in view on touch); default the provider's. */
+  inlinePreview?: boolean;
+  /** Where the preview starts, seconds; default 10% in. */
+  previewStart?: number;
   label?: string;
   className?: string;
   style?: CSSProperties;
@@ -121,6 +126,8 @@ export function VideoPlayer({
   failed,
   layout = "frame",
   maxHeight = "80svh",
+  inlinePreview,
+  previewStart,
   label,
   className,
   style,
@@ -130,11 +137,23 @@ export function VideoPlayer({
   const { t } = useMessages();
   const playable = !!base && !pending && !failed;
   const player = useHlsPlayer({ ...options, src: playable ? `${base}master.m3u8` : null });
-  const { status, error, started } = player;
+  const { status, error, started, previewing } = player;
+  const [root, setRoot] = useState<HTMLDivElement | null>(null);
+  useInlinePreview({
+    setting: inlinePreview,
+    available: playable && !started && !error && options.active !== false,
+    target: root,
+    playing: started && status === "playing",
+    start: () => player.preview(previewStartAt(previewStart, duration)),
+    stop: player.unload,
+  });
   const aspect = width && height ? width / height : 16 / 9;
   const frame: CSSProperties = layout === "frame" ? { aspectRatio: String(aspect), maxHeight } : {};
   const posterOutputs = typeof poster === "string" ? [] : (poster?.outputs ?? []).filter((o) => o.url);
-  const busy = !error && (status === "loading" || status === "buffering");
+  const busy = !error && !previewing && (status === "loading" || status === "buffering");
+  // The preview shows once frames play; the cover stays until then.
+  const shown = previewing && status === "playing";
+  const fade = cn("transition-opacity duration-300 motion-reduce:transition-none", shown && "opacity-0");
   return (
     <UploadUiRoot
       appearance={appearance}
@@ -142,6 +161,8 @@ export function VideoPlayer({
       style={{ ...frame, ...style }}
       data-ckui="video-player"
       data-status={failed ? "failed" : pending ? "pending" : status}
+      data-previewing={previewing ? "" : undefined}
+      ref={setRoot}
       aria-label={label}
       role={label ? "group" : undefined}
     >
@@ -164,11 +185,11 @@ export function VideoPlayer({
           {!started && !error && (
             <>
               {typeof poster === "string" ? (
-                <img alt="" src={poster} decoding="async" className="pointer-events-none absolute inset-0 size-full object-contain" />
+                <img alt="" src={poster} decoding="async" className={cn("pointer-events-none absolute inset-0 size-full object-contain", fade)} />
               ) : posterOutputs.length ? (
-                <RenditionImg outputs={posterOutputs} className="pointer-events-none absolute inset-0 size-full object-contain" />
+                <RenditionImg outputs={posterOutputs} className={cn("pointer-events-none absolute inset-0 size-full object-contain", fade)} />
               ) : (
-                <SpriteFrame vtt={`${base}sprite.vtt`} xhrSetup={options.xhrSetup} />
+                <SpriteFrame vtt={`${base}sprite.vtt`} xhrSetup={options.xhrSetup} className={fade} />
               )}
               <button
                 type="button"
@@ -177,7 +198,7 @@ export function VideoPlayer({
                 aria-label={t("player.play")}
                 disabled={busy}
               >
-                <span className="flex size-16 items-center justify-center rounded-full bg-black/55 shadow-lg backdrop-blur-sm transition-transform motion-safe:hover:scale-105">
+                <span className={cn("flex size-16 items-center justify-center rounded-full bg-black/55 shadow-lg backdrop-blur-sm transition motion-safe:hover:scale-105", fade)}>
                   {busy ? <Spinner /> : <HugeiconsIcon icon={PlayIcon} className="ml-1 size-7 fill-current" strokeWidth={1.5} />}
                 </span>
               </button>
@@ -208,6 +229,13 @@ export function VideoPlayer({
       )}
     </UploadUiRoot>
   );
+}
+
+/** A preview's start: the given second, else 10% in, kept a second before the end. */
+export function previewStartAt(start: number | undefined, duration: number | undefined): number {
+  const d = duration ?? 0;
+  const t = start ?? d * 0.1;
+  return Math.max(0, d > 1 ? Math.min(t, d - 1) : 0);
 }
 
 /** "2160p 4K", "1080p HD", "720p": a rung by its short side. */

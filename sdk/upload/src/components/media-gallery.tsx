@@ -14,13 +14,13 @@ import { cn } from "cn";
 import { useMemo, useState, type ReactNode } from "react";
 import type { UploadUiAppearance } from "../appearance.js";
 import { formatDuration, galleryItems, stageAspect, type GalleryItem, type GalleryLockedItem, type GalleryMediaItem } from "../gallery.js";
-import { useCarousel, useGalleryView, type GalleryViewOptions, type HlsPlayerOptions } from "../gallery-react.js";
+import { useCarousel, useGalleryView, useHlsPlayer, type GalleryViewOptions, type HlsPlayerOptions } from "../gallery-react.js";
+import { useInlinePreview } from "../inline-preview.js";
 import { useMessages } from "../i18n/context.js";
 import { UploadUiRoot, useScopeProps } from "../scope.js";
 import { RenditionImg } from "./rendition-img.js";
 import type { FileInfo, ReadResult, VideoImages } from "../wire.gen.js";
-import { HoverPreview } from "./video-poster.js";
-import { SpriteFrame, VideoPlayer } from "./video-player.js";
+import { previewStartAt, SpriteFrame, VideoPlayer } from "./video-player.js";
 import { Button } from "#ckui/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "#ckui/ui/toggle-group";
 
@@ -29,8 +29,10 @@ export interface MediaGalleryProps extends GalleryViewOptions, Pick<HlsPlayerOpt
   read: ReadResult | null | undefined;
   /** A video file's HLS folder (e.g. `/media/post/1/hls/{name}/`). */
   hlsBase?: (file: FileInfo) => string;
-  /** The item's poster and hover preview; drawn for the video they were cut from (or the only video). */
+  /** The item's poster; drawn for the video it was cut from (or the first video), whose preview starts at its frame. */
   videoImages?: VideoImages | null;
+  /** Playable videos preview muted inline (hover, or in view on touch); default the provider's. */
+  inlinePreview?: boolean;
   /** The host's unlock call to action, drawn over the locked item. */
   renderLocked?: (locked: { count: number; videos: number }) => ReactNode;
   /** Below the carousel, for its current item (e.g. downloads). */
@@ -48,17 +50,15 @@ interface Ctx extends MediaGalleryProps {
   items: GalleryItem[];
 }
 
-// The item's poster and hover preview belong to the video they were cut from;
-// an uploaded poster (no file) to the first video.
-function videoArt(ctx: Ctx, f: FileInfo) {
+// The item's poster belongs to the video it was cut from, whose preview starts
+// at its frame; an uploaded poster (no file) to the first video.
+function videoArt(ctx: Ctx, f: FileInfo): { poster?: VideoImages["poster"]; start: number } {
   const v = ctx.videoImages;
-  if (!v) return {};
   const first = ctx.items.find((i): i is GalleryMediaItem => i.kind === "video")?.file.name;
-  const mine = (file?: string) => (file || first) === f.name;
-  return {
-    poster: v.poster.outputs.length && mine(v.poster.file ?? v.poster.selection?.file) ? v.poster : undefined,
-    preview: mine(v.hover_preview.file ?? v.hover_preview.selection?.file) ? v.hover_preview : undefined,
-  };
+  const file = v?.poster.file ?? v?.poster.selection?.file;
+  const mine = !!v && (file || first) === f.name;
+  const time = mine && file ? v?.poster.time : undefined;
+  return { poster: mine && v.poster.outputs.length ? v.poster : undefined, start: previewStartAt(time, f.duration) };
 }
 
 /**
@@ -238,9 +238,11 @@ function Slide({ ctx, item, position, active, lightbox }: { ctx: Ctx; item: Gall
       />
     );
   }
-  const { poster } = videoArt(ctx, f);
+  const { poster, start } = videoArt(ctx, f);
   return (
     <VideoPlayer
+      inlinePreview={lightbox ? false : ctx.inlinePreview}
+      previewStart={start}
       layout="fill"
       base={f.hls && f.name && ctx.hlsBase ? ctx.hlsBase(f) : null}
       pending={!f.hls && !f.failed}
@@ -320,7 +322,7 @@ function Grid({ ctx, onOpen }: { ctx: Ctx; onOpen: (i: number) => void }) {
 }
 
 function Tile({ ctx, item, label, onOpen }: { ctx: Ctx; item: GalleryItem; label: string; onOpen: () => void }) {
-  const [hover, setHover] = useState(false);
+  const [el, setEl] = useState<HTMLButtonElement | null>(null);
   let body: ReactNode;
   if (item.kind === "locked") body = <Locked ctx={ctx} item={item} tile />;
   else if (item.kind === "image")
@@ -335,7 +337,7 @@ function Tile({ ctx, item, label, onOpen }: { ctx: Ctx; item: GalleryItem; label
     );
   else {
     const f = item.file;
-    const { poster, preview } = videoArt(ctx, f);
+    const { poster, start } = videoArt(ctx, f);
     const covers = (poster?.outputs ?? []).filter((o) => o.url);
     const base = f.hls && f.name && ctx.hlsBase ? ctx.hlsBase(f) : null;
     body = (
@@ -345,7 +347,7 @@ function Tile({ ctx, item, label, onOpen }: { ctx: Ctx; item: GalleryItem; label
         ) : base ? (
           <SpriteFrame vtt={`${base}sprite.vtt`} xhrSetup={ctx.xhrSetup} fit="cover" />
         ) : null}
-        <HoverPreview preview={preview} active={hover} width={240} />
+        {base && <TilePreview ctx={ctx} base={base} start={start} target={el} />}
         {f.failed ? (
           <span className="absolute inset-0 flex items-center justify-center bg-muted text-destructive">
             <HugeiconsIcon icon={AlertCircleIcon} className="size-6" />
@@ -370,16 +372,34 @@ function Tile({ ctx, item, label, onOpen }: { ctx: Ctx; item: GalleryItem; label
       type="button"
       aria-label={label}
       onClick={onOpen}
-      onPointerEnter={() => setHover(true)}
-      onPointerLeave={() => setHover(false)}
-      onFocus={() => setHover(true)}
-      onBlur={() => setHover(false)}
+      ref={setEl}
       className="group relative block aspect-square w-full overflow-hidden rounded-md bg-muted outline-none focus-visible:ring-3 focus-visible:ring-ring/60"
       data-ckui="tile"
       data-kind={item.kind}
     >
       {body}
     </button>
+  );
+}
+
+// A grid tile's inline preview; the tile opens the lightbox for real playback.
+function TilePreview({ ctx, base, start, target }: { ctx: Ctx; base: string; start: number; target: HTMLElement | null }) {
+  const player = useHlsPlayer({ src: `${base}master.m3u8`, xhrSetup: ctx.xhrSetup, refresh: ctx.refresh, abr: ctx.abr, qualityKey: null });
+  useInlinePreview({ setting: ctx.inlinePreview, available: true, target, start: () => player.preview(start), stop: player.unload });
+  return (
+    <video
+      ref={player.ref}
+      muted
+      playsInline
+      preload="none"
+      aria-hidden
+      tabIndex={-1}
+      className={cn(
+        "pointer-events-none absolute inset-0 size-full object-cover opacity-0 transition-opacity duration-300 motion-reduce:transition-none",
+        player.previewing && player.status === "playing" && "opacity-100",
+      )}
+      data-ckui="tile-preview"
+    />
   );
 }
 

@@ -44,10 +44,9 @@ export class FakeServer {
   /** A video item's images (every ref shares it). */
   video: VideoImages = {
     poster: { aspect: "16:9", outputs: [], pending: false, selection: { source: "auto", file: "clip.mp4", time: 3 } },
-    hover_preview: { selection: { file: "clip.mp4", start: 3, duration: 3, auto: true }, mp4: [], webp: [], pending: false },
     video: { file: "clip.mp4", duration: 12, w: 1920, h: 1080, encoded: true },
   };
-  /** Bodies of /video-poster and /video-preview. */
+  /** Bodies of /video-poster. */
   videoCalls: any[] = [];
   /** Frame grabs as "t@w". */
   frames: string[] = [];
@@ -179,14 +178,6 @@ export class FakeServer {
         const selection = { source: b.source, file: b.file ?? "clip.mp4", ...(b.time !== undefined ? { time: b.time } : {}) };
         this.pendingLeft = this.pendingReads;
         this.video = { ...this.video, poster: { aspect: "16:9", ...(b.edit ? { edit: b.edit } : {}), dims: { w: 1920, h: 1080 }, outputs, pending: this.pendingReads > 0, selection } };
-        return this.video;
-      }
-      case "/video-preview": {
-        this.videoCalls.push(b);
-        const v = String(++this.seq);
-        const out = (ext: string) => [320, 640].map((w) => ({ w, h: Math.round((w * 9) / 16), url: `fake://cdn/public/hover_preview_${w}.${ext}#${v}` }));
-        const selection = b.start === undefined ? { file: "clip.mp4", start: 3, duration: 3, auto: true } : { file: b.file ?? "clip.mp4", start: b.start, duration: b.duration ?? 3 };
-        this.video = { ...this.video, hover_preview: { selection, mp4: out("mp4"), webp: out("webp"), pending: false } };
         return this.video;
       }
       case "/slot": {

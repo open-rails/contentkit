@@ -55,18 +55,6 @@ export const ja: UploadUiMessageBundle = {
     processing: "動画を処理中です。エンコードが完了するとカバーを設定できます。",
     rendering: "カバーを生成中…",
   },
-  preview: {
-    title: "ホバープレビュー",
-    description: "動画にカーソルを合わせたときに無音で再生される区間を選びます（{min}〜{max} 秒）。",
-    section: "区間",
-    start: "{time} から",
-    length: "{seconds} 秒",
-    approximate: "おおよそのプレビュー",
-    rendered: "生成済みプレビュー",
-    save: "プレビューを保存",
-    auto: "自動",
-    rendering: "プレビューを生成中…",
-  },
   progress: {
     decoding: "画像を開いています…",
     hashing: "準備中…",
@@ -94,7 +82,7 @@ export const ja: UploadUiMessageBundle = {
       muxing: "パッケージ中",
       uploading: "保存中",
       publishing: "公開中",
-      images: "カバーとプレビューを作成中",
+      images: "カバーを作成中",
     },
   },
   gallery: {
