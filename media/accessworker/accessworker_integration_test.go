@@ -321,7 +321,7 @@ func TestAccessWorker(t *testing.T) {
 			"no token":       do(t, srv, "GET", "/"+f.blobA, nil),
 			"tampered":       do(t, srv, "GET", withToken(f.blobA, fileA[:len(fileA)-2]+"xx"), nil),
 			"expired":        do(t, srv, "GET", withToken(f.blobA, expired), nil),
-			"other item":     do(t, srv, "GET", withToken(f.blobA, cur.Sign(f.env.Tenant+"/gallery/2/blobs/", exp)), nil),
+			"other item":     do(t, srv, "GET", withToken(f.blobA, cur.Sign(f.env.Tenant+"/gallery/"+cid(2)+"/blobs/", exp)), nil),
 			"unknown key":    do(t, srv, "GET", withToken(f.blobA, mustRing(t, k0, nil).Sign(f.blobA, exp)), nil),
 			"viewer editor":  do(t, srv, "GET", withToken(editorArea, folder), nil),
 			"missing public": do(t, srv, "GET", "/"+f.item+"public/none.webp", nil),
