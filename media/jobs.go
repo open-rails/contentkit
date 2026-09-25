@@ -510,3 +510,20 @@ func (h *HostQueue) ScheduleSweep(ctx context.Context, ref contentref.ContentRef
 	}
 	return InsertOnce(ctx, h.insert, sweepArgs{Prefix: item.Prefix()}, river.InsertOpts{ScheduledAt: time.Now().Add(h.grace)})
 }
+
+// ExposeTx enqueues the host's Expose of refs in tx, a transaction on the
+// host database, like Jobs.ExposeTx: Hooks.ItemReady making an item visible.
+func (h *HostQueue) ExposeTx(ctx context.Context, tx pgx.Tx, refs ...contentref.ContentRef) error {
+	params := make([]river.InsertManyParams, 0, len(refs))
+	for _, ref := range refs {
+		if _, err := h.kinds.Item(ref.Content()); err != nil {
+			return err
+		}
+		params = append(params, river.InsertManyParams{Args: exposeArgs{Ref: ref.Content()}, InsertOpts: &river.InsertOpts{Queue: h.queue}})
+	}
+	if len(params) == 0 {
+		return nil
+	}
+	_, err := h.client.InsertManyTx(ctx, tx, params)
+	return err
+}

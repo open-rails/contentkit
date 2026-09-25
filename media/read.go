@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media/token"
@@ -61,6 +63,13 @@ type Hooks struct {
 	// PublicRemoved reports public/ keys deleted (a hidden item, replaced
 	// outputs), for a CDN purge; optional.
 	PublicRemoved func(ctx context.Context, ref contentref.ContentRef, keys []string)
+	// ItemReady reports an item whose processing settled (Readiness ready,
+	// or failed with nothing still processing) after a media worker job, in a
+	// transaction on the host database (worker.Config.Pool), e.g. to publish
+	// it and enqueue HostQueue.ExposeTx. It runs after every job that leaves
+	// the item settled, so it must be idempotent; an error rolls back and
+	// retries the job.
+	ItemReady func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r Readiness) error
 }
 
 // ReaderOptions configure a Reader.
@@ -194,6 +203,9 @@ func (r *Reader) grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	}
 	if !unattached || !res.Editor {
 		man = man.Attached()
+	}
+	if !res.Editor {
+		man = man.Servable() // viewers never see a file before it is processed
 	}
 	g := &Grant{Item: item, Resolution: res, Manifest: man, units: res.Units(len(man.Files)),
 		Expires: token.Expiry(r.now(), r.delivery.TTL, r.delivery.Window), actor: actor, r: r}

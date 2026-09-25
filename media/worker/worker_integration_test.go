@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
@@ -54,6 +55,19 @@ type host struct {
 
 	mu      sync.Mutex
 	encoded map[string]media.SlotListing // Hooks.SlotEncoded, by ref#slot
+	settled map[string][]media.Readiness // Hooks.ItemReady, by ref
+	schema  string                       // the host's River schema
+}
+
+// lastSettled is the latest ItemReady report for ref.
+func (h *host) lastSettled(ref contentref.ContentRef) (media.Readiness, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	all := h.settled[ref.Content().String()]
+	if len(all) == 0 {
+		return media.Readiness{}, false
+	}
+	return all[len(all)-1], true
 }
 
 func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
@@ -73,14 +87,15 @@ func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &host{Env: env, pool: pool, kinds: kinds, encoded: map[string]media.SlotListing{}}
+	h := &host{Env: env, pool: pool, kinds: kinds, encoded: map[string]media.SlotListing{}, settled: map[string][]media.Readiness{}}
 
 	// The host's River: publishes and sweeps the worker hands back run here.
 	schema := pgtest.EmptySchema(t, ctx, pool)
+	h.schema = schema
 	if err := riverhelpers.ApplyMigrations(ctx, pool, schema); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: kinds, Tenants: []string{env.Tenant}})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: kinds, Tenants: []string{env.Tenant}, Resolver: editorResolver{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,12 +128,26 @@ func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
 	}
 
 	// The worker, built from the same registry, with the host's hooks.
+	hostQueue, err := media.NewHostQueue(pool, kinds, schema, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Store: env.Store, Kinds: kinds, HostSchema: schema,
 		TempDir: t.TempDir(), Threads: 2, RiverHooks: riverHooks,
 		Hooks: media.Hooks{SlotEncoded: func(_ context.Context, ref contentref.ContentRef, slot string, l media.SlotListing) {
 			h.mu.Lock()
 			h.encoded[ref.String()+"#"+slot] = l
 			h.mu.Unlock()
+		}, ItemReady: func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r media.Readiness) error {
+			if r.Ready() {
+				if err := hostQueue.ExposeTx(ctx, tx, ref); err != nil {
+					return err
+				}
+			}
+			h.mu.Lock()
+			h.settled[ref.String()] = append(h.settled[ref.String()], r)
+			h.mu.Unlock()
+			return nil
 		}}})
 	if err != nil {
 		t.Fatal(err)
@@ -257,9 +286,14 @@ func TestWorkerProcessesImagesAndPlacesStagedUploads(t *testing.T) {
 	if key, _ := item.Original(name); h.exists(t, key) {
 		t.Fatal("staging kept after placement")
 	}
-	h.mu.Lock()
-	listing, ok := h.encoded[work.String()+"#cover"]
-	h.mu.Unlock()
+	var listing media.SlotListing
+	var ok bool
+	eventually(t, "SlotEncoded", 10*time.Second, func() bool { // it runs just after the outputs are recorded
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		listing, ok = h.encoded[work.String()+"#cover"]
+		return ok
+	})
 	if !ok || listing.Aspect != media.Aspect3x1 || len(listing.Outputs) == 0 {
 		t.Fatalf("the host's SlotEncoded hook did not run in the worker: %+v %v", listing, ok)
 	}
@@ -286,6 +320,9 @@ func TestWorkerPlacesAndEncodesStagedVideo(t *testing.T) {
 	ref := contentref.New(h.Tenant, "clip", newID())
 	name := h.stage(t, ref, "video/mp4", body)
 	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "source", Original: name})
+	if r, err := h.manifests.Readiness(ctx, ref); err != nil || r.State != media.StateProcessing {
+		t.Fatalf("a staged video is %+v, %v; want processing", r, err)
+	}
 	eventually(t, "the encode", 2*time.Minute, func() bool {
 		m, _, err := h.manifests.Get(ctx, ref)
 		return err == nil && m.Files[0].HLS != nil && len(m.Files[0].HLS.Video) > 0
@@ -297,6 +334,41 @@ func TestWorkerPlacesAndEncodesStagedVideo(t *testing.T) {
 	item, _ := h.kinds.Item(ref)
 	if key, _ := item.Original(name); h.exists(t, key) {
 		t.Fatal("staging kept after placement")
+	}
+	// Ready only once the poster is grabbed and rendered too.
+	eventually(t, "ItemReady", time.Minute, func() bool { r, ok := h.lastSettled(ref); return ok && r.Ready() })
+	rec, err := h.manifests.Slot(ctx, ref, media.PosterSlot)
+	if err != nil || rec.Result == nil || len(rec.Result.Outputs) == 0 {
+		t.Fatalf("ready before the poster rendered: %+v %v", rec, err)
+	}
+}
+
+// Hooks.ItemReady runs in the worker once an item settles: failed while a
+// file cannot be processed (viewers never see it; its editor does), ready once
+// it is removed, with HostQueue.ExposeTx enqueuing the host's Expose in the
+// hook's transaction.
+func TestItemReadyAfterProcessing(t *testing.T) {
+	h := newHost(t)
+	ctx := context.Background()
+	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
+	h.commit(t, ref,
+		media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 21))},
+		media.Op{Op: media.OpInsert, Name: "002.png", Original: h.upload(t, ref, "", "image/png", []byte("not a png at all"))})
+	eventually(t, "the failure reported", time.Minute, func() bool { r, ok := h.lastSettled(ref); return ok && r.State == media.StateFailed })
+	if r, _ := h.lastSettled(ref); len(r.Failed) != 1 || r.Failed[0] != "en/002.png" || len(r.Processing) != 0 {
+		t.Fatalf("readiness: %+v", r)
+	}
+	if got := h.read(t, ref, access.Actor{Anonymous: true}, false); len(got) != 1 || got[0].Name != "001.png" {
+		t.Fatalf("a viewer reads %+v; want only the processed file", got)
+	}
+	if got := h.read(t, ref, alice, false); len(got) != 2 || got[1].Failed == "" {
+		t.Fatalf("the editor reads %+v; want both, the failure named", got)
+	}
+	h.commit(t, ref, media.Op{Op: media.OpRemove, Name: "002.png"})
+	eventually(t, "ready after the removal", time.Minute, func() bool { r, ok := h.lastSettled(ref); return ok && r.Ready() })
+	var n int
+	if err := h.pool.QueryRow(ctx, "SELECT count(*) FROM "+h.schema+".river_job WHERE kind = 'contentkit_media_expose'").Scan(&n); err != nil || n == 0 {
+		t.Fatalf("no Expose enqueued in the host schema: %d %v", n, err)
 	}
 }
 

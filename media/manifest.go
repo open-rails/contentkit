@@ -36,6 +36,9 @@ type File struct {
 	// Failure is why the image processor cannot derive this source through
 	// this edit (Of); a new source or edit clears it.
 	Failure *FileFailure `json:"failure,omitempty"`
+	// Derived is the FailureKey the image processor last derived every
+	// variant for; the file's images are current while it matches.
+	Derived string `json:"derived,omitempty"`
 	// Unattached marks a file processed on upload (UploadOptions.ProcessOnUpload)
 	// that is not part of the item yet: reads leave it out (editors may ask
 	// for it) until an attach op. Removing it discards its objects at once.
@@ -187,9 +190,15 @@ func (s *Segment) UnmarshalJSON(b []byte) error {
 // Attached is the manifest without its unattached files and their video
 // downloads ("{file}-{rung}p"), as readers see it; m itself when it has none.
 func (m *Manifest) Attached() *Manifest {
+	return m.without(func(f File) bool { return f.Unattached })
+}
+
+// without is the manifest without the files drop reports and their video
+// downloads; m itself when it drops none.
+func (m *Manifest) without(drop func(File) bool) *Manifest {
 	gone := map[string]bool{}
 	for _, f := range m.Files {
-		if f.Unattached {
+		if drop(f) {
 			gone[f.Name] = true
 		}
 	}
@@ -199,7 +208,7 @@ func (m *Manifest) Attached() *Manifest {
 	out := *m
 	out.Files = make([]File, 0, len(m.Files))
 	for _, f := range m.Files {
-		if !f.Unattached {
+		if !gone[f.Name] {
 			out.Files = append(out.Files, f)
 		}
 	}
