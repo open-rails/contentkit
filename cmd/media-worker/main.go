@@ -27,7 +27,6 @@ import (
 
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/worker"
-	queuemetrics "github.com/open-rails/contentkit/media/workqueue/metrics"
 )
 
 func main() {
@@ -54,13 +53,6 @@ func run(log *slog.Logger) error {
 	registry := prometheus.NewRegistry()
 	cfg.Metrics, err = worker.NewMetrics(registry)
 	if err != nil {
-		return err
-	}
-	queueCollector, err := queuemetrics.NewCollector(cfg.Pool, cfg.Schema)
-	if err != nil {
-		return err
-	}
-	if err := registry.Register(queueCollector); err != nil {
 		return err
 	}
 	w, err := worker.New(ctx, cfg)
