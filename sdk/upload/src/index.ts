@@ -38,6 +38,7 @@ export {
   classifyMediaError,
   hlsConfig,
   initialEstimate,
+  refreshable,
   startRung,
   statusKind,
   type AbrPolicy,

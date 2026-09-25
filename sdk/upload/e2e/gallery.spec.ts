@@ -112,12 +112,12 @@ test("player fails fast with a specific reason", async ({ page }, info) => {
   await alert.getByRole("button", { name: "Try again" }).click();
   await expect(player("no-cors").getByRole("alert")).toBeVisible({ timeout: 10_000 });
 
-  // 403 → the host refreshes the grant → plays.
+  // 404 (expired token) → the host refreshes the grant → plays.
   await player("refresh").getByRole("button", { name: "Play video" }).click();
   await expect(player("refresh")).toHaveAttribute("data-status", "playing", { timeout: 10_000 });
 
   await player("denied").getByRole("button", { name: "Play video" }).click();
-  await expect(player("denied").getByRole("alert")).toContainText("You no longer have access to this video.", { timeout: 10_000 });
+  await expect(player("denied").getByRole("alert")).toContainText("This video isn't available.", { timeout: 10_000 });
 
   await player("busy").getByRole("button", { name: "Play video" }).click();
   await expect(player("busy").getByRole("alert")).toContainText("Too many requests. Try again shortly.", { timeout: 10_000 });

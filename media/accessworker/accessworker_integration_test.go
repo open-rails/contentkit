@@ -14,7 +14,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -143,6 +145,15 @@ func TestAccessWorker(t *testing.T) {
 			t.Fatalf("got %d %q; want %d %q", r.status, r.body, status, body)
 		}
 	}
+	// A denial is byte-identical to a valid token's request for a missing object.
+	missing := f.item + "blobs/" + sha("missing")
+	notFound := func(method string, hdr map[string]string) result {
+		return do(t, srv, method, withToken(missing, folder), hdr)
+	}
+	denied := func(t *testing.T, r result) {
+		t.Helper()
+		sameResponse(t, r, notFound("GET", nil))
+	}
 
 	t.Run("public passthrough", func(t *testing.T) {
 		r := do(t, srv, "GET", "/"+f.public, nil)
@@ -181,8 +192,8 @@ func TestAccessWorker(t *testing.T) {
 	})
 
 	t.Run("blob needs a token", func(t *testing.T) {
-		expect(t, do(t, srv, "GET", "/"+f.blobA, nil), 403, "")
-		expect(t, do(t, srv, "GET", withToken(f.blobA, "garbage"), nil), 403, "")
+		denied(t, do(t, srv, "GET", "/"+f.blobA, nil))
+		denied(t, do(t, srv, "GET", withToken(f.blobA, "garbage"), nil))
 	})
 
 	t.Run("URL mode per-file token", func(t *testing.T) {
@@ -192,13 +203,13 @@ func TestAccessWorker(t *testing.T) {
 			r.header.Get("X-Content-Type-Options") != "nosniff" {
 			t.Fatalf("blob headers: %v", r.header)
 		}
-		expect(t, do(t, srv, "GET", withToken(f.blobB, fileA), nil), 403, "")
+		denied(t, do(t, srv, "GET", withToken(f.blobB, fileA), nil))
 	})
 
 	t.Run("URL mode folder token", func(t *testing.T) {
 		expect(t, do(t, srv, "GET", withToken(f.blobA, folder), nil), 200, f.bodyA)
 		expect(t, do(t, srv, "GET", withToken(f.blobB, folder), nil), 200, "bee")
-		expect(t, do(t, srv, "GET", withToken(f.other, folder), nil), 403, "")
+		denied(t, do(t, srv, "GET", withToken(f.other, folder), nil))
 		expect(t, do(t, srv, "GET", withToken(f.blobA+"/x", folder), nil), 404, "")
 		expect(t, do(t, srv, "GET", withToken(f.orig, folder), nil), 404, "")
 		expect(t, do(t, srv, "GET", withToken(f.item+"manifest.json", folder), nil), 404, "")
@@ -212,28 +223,28 @@ func TestAccessWorker(t *testing.T) {
 			expect(t, do(t, srv, "GET", "/"+f.orig, map[string]string{"Cookie": "mt=" + tok}), 404, "")
 		}
 		expect(t, do(t, srv, "GET", "/"+f.orig, nil), 404, "")
-		expect(t, do(t, srv, "GET", withToken(f.blobA, cur.Sign(f.item, exp)), nil), 403, "")
+		denied(t, do(t, srv, "GET", withToken(f.blobA, cur.Sign(f.item, exp)), nil))
 	})
 
 	t.Run("cookie mode", func(t *testing.T) {
 		expect(t, do(t, srv, "GET", "/"+f.blobA, map[string]string{"Cookie": "mt=" + folder}), 200, f.bodyA)
 		otherFolder := cur.Sign(f.env.Tenant+"/gallery/2/blobs/", exp)
-		expect(t, do(t, srv, "GET", "/"+f.blobA, map[string]string{"Cookie": "mt=" + otherFolder}), 403, "")
+		denied(t, do(t, srv, "GET", "/"+f.blobA, map[string]string{"Cookie": "mt=" + otherFolder}))
 		expect(t, do(t, srv, "GET", "/"+f.blobA, map[string]string{"Cookie": "mt=" + otherFolder + "; mt=" + folder}), 200, f.bodyA)
-		expect(t, do(t, srv, "GET", "/"+f.blobA, map[string]string{"Cookie": "other=" + folder}), 403, "")
+		denied(t, do(t, srv, "GET", "/"+f.blobA, map[string]string{"Cookie": "other=" + folder}))
 	})
 
 	t.Run("expiry and key rotation", func(t *testing.T) {
 		expired := cur.Sign(f.blobA, time.Now().Add(-time.Second))
-		expect(t, do(t, srv, "GET", withToken(f.blobA, expired), nil), 403, "")
-		expect(t, do(t, srv, "GET", "/"+f.blobA, map[string]string{"Cookie": "mt=" + expired}), 403, "")
+		denied(t, do(t, srv, "GET", withToken(f.blobA, expired), nil))
+		denied(t, do(t, srv, "GET", "/"+f.blobA, map[string]string{"Cookie": "mt=" + expired}))
 		prev := mustRing(t, k1, nil).Sign(f.blobA, exp)
 		expect(t, do(t, srv, "GET", withToken(f.blobA, prev), nil), 200, f.bodyA)
 		unknown := mustRing(t, k0, nil).Sign(f.blobA, exp)
-		expect(t, do(t, srv, "GET", withToken(f.blobA, unknown), nil), 403, "")
+		denied(t, do(t, srv, "GET", withToken(f.blobA, unknown), nil))
 		rotated := f.handler(t, func(c *accessworker.Config) { c.Ring = mustRing(t, k0, &k2) })
 		expect(t, do(t, rotated, "GET", withToken(f.blobA, fileA), nil), 200, f.bodyA)
-		expect(t, do(t, rotated, "GET", withToken(f.blobA, prev), nil), 403, "")
+		denied(t, do(t, rotated, "GET", withToken(f.blobA, prev), nil))
 	})
 
 	t.Run("signed download name", func(t *testing.T) {
@@ -244,11 +255,11 @@ func TestAccessWorker(t *testing.T) {
 		if got := r.header.Get("Content-Disposition"); got != token.Attachment(name) {
 			t.Fatalf("Content-Disposition %q", got)
 		}
-		expect(t, do(t, srv, "GET", withToken(f.blobA, dl, "dl", "Other.mp4"), nil), 403, "")
-		expect(t, do(t, srv, "GET", withToken(f.blobA, dl), nil), 403, "")
-		expect(t, do(t, srv, "GET", withToken(f.blobA, fileA, "dl", name), nil), 403, "")
+		denied(t, do(t, srv, "GET", withToken(f.blobA, dl, "dl", "Other.mp4"), nil))
+		denied(t, do(t, srv, "GET", withToken(f.blobA, dl), nil))
+		denied(t, do(t, srv, "GET", withToken(f.blobA, fileA, "dl", name), nil))
 		cookie := do(t, srv, "GET", "/"+f.blobA+"?dl="+url.QueryEscape(name), map[string]string{"Cookie": "mt=" + folder})
-		expect(t, cookie, 403, "")
+		denied(t, cookie)
 		if plain := do(t, srv, "GET", withToken(f.blobA, fileA), nil); plain.header.Get("Content-Disposition") != "" {
 			t.Fatal("no dl, no Content-Disposition")
 		}
@@ -268,7 +279,7 @@ func TestAccessWorker(t *testing.T) {
 		}
 		nm := do(t, srv, "GET", withToken(f.blobA, fileA), map[string]string{"If-None-Match": h.header.Get("ETag")})
 		expect(t, nm, 304, "")
-		expect(t, do(t, srv, "HEAD", "/"+f.blobA, nil), 403, "")
+		sameResponse(t, do(t, srv, "HEAD", "/"+f.blobA, nil), notFound("HEAD", nil))
 	})
 
 	t.Run("non-canonical paths", func(t *testing.T) {
@@ -290,9 +301,56 @@ func TestAccessWorker(t *testing.T) {
 		}
 	})
 
-	t.Run("missing blob", func(t *testing.T) {
-		missing := f.item + "blobs/" + sha("missing")
-		expect(t, do(t, srv, "GET", withToken(missing, folder), nil), 404, "")
+	t.Run("denials are indistinguishable from not-found", func(t *testing.T) {
+		nf := notFound("GET", nil)
+		if nf.status != 404 || nf.header.Get("Cache-Control") != "no-store" ||
+			nf.header.Get("Cross-Origin-Resource-Policy") != "same-site" {
+			t.Fatalf("not-found: %d %v", nf.status, nf.header)
+		}
+		expired := cur.Sign(f.blobA, time.Now().Add(-time.Second))
+		editorArea := f.item + "editor/" + sha("a")
+		if _, err := f.env.Store.Put(context.Background(), editorArea, strings.NewReader("ed"), 2, media.PutOptions{ContentType: "image/webp"}); err != nil {
+			t.Fatal(err)
+		}
+		expect(t, do(t, srv, "GET", withToken(editorArea, cur.Sign(f.item+"editor/", exp)), nil), 200, "ed")
+		for name, r := range map[string]result{
+			"no token":       do(t, srv, "GET", "/"+f.blobA, nil),
+			"tampered":       do(t, srv, "GET", withToken(f.blobA, fileA[:len(fileA)-2]+"xx"), nil),
+			"expired":        do(t, srv, "GET", withToken(f.blobA, expired), nil),
+			"other item":     do(t, srv, "GET", withToken(f.blobA, cur.Sign(f.env.Tenant+"/gallery/2/blobs/", exp)), nil),
+			"unknown key":    do(t, srv, "GET", withToken(f.blobA, mustRing(t, k0, nil).Sign(f.blobA, exp)), nil),
+			"viewer editor":  do(t, srv, "GET", withToken(editorArea, folder), nil),
+			"missing public": do(t, srv, "GET", "/"+f.item+"public/none.webp", nil),
+			"original":       do(t, srv, "GET", withToken(f.orig, cur.Sign(f.orig, exp)), nil),
+			"manifest":       do(t, srv, "GET", withToken(f.item+"manifest.json", folder), nil),
+		} {
+			t.Run(name, func(t *testing.T) { sameResponse(t, r, nf) })
+		}
+		cors := map[string]string{"Origin": "https://doujins.com"}
+		sameResponse(t, do(t, srv, "GET", "/"+f.blobA, cors), notFound("GET", cors))
+		sameResponse(t, do(t, srv, "HEAD", withToken(f.blobA, expired), nil), notFound("HEAD", nil))
+		// A token denied before its object 404s does not stick: the same URL
+		// with a valid token is served.
+		expect(t, do(t, srv, "GET", withToken(f.blobA, fileA), nil), 200, f.bodyA)
+	})
+
+	t.Run("a denial never reaches the bucket", func(t *testing.T) {
+		var calls atomic.Int64
+		counted := f.handler(t, func(c *accessworker.Config) {
+			c.Client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls.Add(1)
+				return http.DefaultTransport.RoundTrip(r)
+			})}
+		})
+		denied(t, do(t, counted, "GET", "/"+f.blobA, nil))
+		denied(t, do(t, counted, "GET", withToken(f.blobA, "garbage"), nil))
+		if n := calls.Load(); n != 0 {
+			t.Fatalf("denials made %d bucket requests", n)
+		}
+		expect(t, do(t, counted, "GET", withToken(f.blobA, fileA), nil), 200, f.bodyA)
+		if calls.Load() != 1 {
+			t.Fatal("authorized request did not reach the bucket")
+		}
 	})
 
 	t.Run("CORS", func(t *testing.T) {
@@ -358,12 +416,12 @@ func TestAccessWorker(t *testing.T) {
 		}
 		editor := cur.Sign(f.item+"editor/", exp)
 		for _, k := range []string{variant, staged} {
-			expect(t, do(t, srv, "GET", "/"+k, nil), 403, "")
-			expect(t, do(t, srv, "GET", withToken(k, folder), nil), 403, "")
-			expect(t, do(t, srv, "GET", "/"+k, map[string]string{"Cookie": "mt=" + folder}), 403, "")
+			denied(t, do(t, srv, "GET", "/"+k, nil))
+			denied(t, do(t, srv, "GET", withToken(k, folder), nil))
+			denied(t, do(t, srv, "GET", "/"+k, map[string]string{"Cookie": "mt=" + folder}))
 			expect(t, do(t, srv, "GET", withToken(k, editor), nil), 200, "ed")
 		}
-		expect(t, do(t, srv, "GET", withToken(f.blobA, editor), nil), 403, "")
+		denied(t, do(t, srv, "GET", withToken(f.blobA, editor), nil))
 		if r := do(t, srv, "GET", withToken(staged, editor), nil); r.header.Get("Cache-Control") != "private, no-cache" {
 			t.Fatalf("staged output headers: %v", r.header)
 		}
@@ -380,6 +438,22 @@ func TestAccessWorker(t *testing.T) {
 		expect(t, do(t, srv, "POST", "/"+f.public, nil), 405, "")
 		expect(t, do(t, srv, "DELETE", withToken(f.blobA, fileA), nil), 405, "")
 	})
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// sameResponse fails unless got and want match in status, body and every
+// header but Date.
+func sameResponse(t *testing.T, got, want result) {
+	t.Helper()
+	g, w := got.header.Clone(), want.header.Clone()
+	g.Del("Date")
+	w.Del("Date")
+	if got.status != want.status || got.body != want.body || !reflect.DeepEqual(g, w) {
+		t.Fatalf("response differs from not-found:\n got %d %q %v\nwant %d %q %v", got.status, got.body, g, want.status, want.body, w)
+	}
 }
 
 // TestBinary runs the built cmd/media-access with its environment config.
@@ -454,7 +528,7 @@ func TestBinary(t *testing.T) {
 		withToken(f.blobA, mustRing(t, k2, nil).Sign(f.blobA, exp)): 200,
 		withToken(f.blobA, mustRing(t, k1, nil).Sign(f.blobA, exp)): 200,
 		withToken(f.orig, mustRing(t, k2, nil).Sign(f.orig, exp)):   404,
-		"/" + f.blobA: 403,
+		"/" + f.blobA: 404,
 	} {
 		if got, body := get(path); got != want {
 			t.Errorf("%s: %d %q, want %d", path, got, body, want)

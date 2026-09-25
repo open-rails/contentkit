@@ -247,7 +247,7 @@ with the host's `renderLocked`; locked files carry no URLs.
   read={read}                                    // GET /{kind}/{id}?variant=large,blurred
   hlsBase={(f) => `/api/media/post/${id}/hls/${encodeURIComponent(f.name!)}/`}
   xhrSetup={(xhr) => xhr.setRequestHeader("Authorization", `Bearer ${token()}`)} // same-origin playlists only
-  refresh={() => refetchRead()}                  // after a 401/403: re-grant, then the player retries once
+  refresh={() => refetchRead()}                  // after a 401/403/404: re-grant, then the player resumes once
   videoImages={images}                           // optional poster + hover preview (GET …/video-images): each drawn on its `file`
   renderLocked={({ count }) => <UnlockButton count={count} />}
   renderDetails={(item) => <Downloads item={item} />}
@@ -263,7 +263,8 @@ forever: tuned retries surface a dead endpoint within seconds, a watchdog
 catches 10 s without progress, and each failure has its own message, a Retry
 and a support code: unreachable or blocked (status 0, including missing
 `MEDIA_ACCESS_CORS_ORIGINS`, also logged to the console), no access
-(401/403 after one refresh), not found, rate limited (429), unsupported in
+(401/403 after one refresh), not found (404 after one refresh: media-access
+answers an expired or wrong token like a missing object), rate limited (429), unsupported in
 this browser. Headless: `useHlsPlayer`, `useCarousel` and `useGalleryView` in
 `/react`; `galleryItems`, `classifyHlsError`, `hlsConfig` and the ABR helpers
 (`capRung`, `startRung`, `initialEstimate`, `abrHlsConfig`) in the root entry.

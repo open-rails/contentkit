@@ -227,9 +227,10 @@ allowed only `*/blobs/*`, `*/editor/*` and `*/public/*`, `MEDIA_ACCESS_TOKEN_KEY
 `MEDIA_ACCESS_CORS_ORIGINS` (the sites' exact origins, with credentials;
 empty breaks hls.js, warned; wildcards and paths are refused); secrets may be
 given as `{VAR}_FILE`. `public/` is served without a token (`no-cache`);
-`blobs/` needs `?t=` or an `mt` cookie (`private, immutable`; 403 without a
-valid token); `editor/` needs an editor token; manifests, `originals/` and
-unknown keys are 404. Every object carries `Cross-Origin-Resource-Policy:
+`blobs/` needs `?t=` or an `mt` cookie (`private, immutable`); `editor/`
+needs an editor token. Everything refused (no or bad token, manifests,
+`originals/`, unknown keys) is one identical `no-store` 404, so denials look
+like absence. Every object carries `Cross-Origin-Resource-Policy:
 same-site` (`MEDIA_ACCESS_RESOURCE_POLICY=cross-origin` only when the pages
 live on another site than the media), so other sites cannot embed it with
 `<img>`/`<video>`. See HOST_INTEGRATION "Production media delivery".

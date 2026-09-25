@@ -1,7 +1,7 @@
 // Serves e2e/fixtures/media like media-access, with failure modes by prefix:
 //   /cors/…        CORS for the requesting origin (the healthy path)
 //   /nocors/…      playlists with CORS, segments and sprites without (the missing MEDIA_ACCESS_CORS_ORIGINS incident)
-//   /auth/{token}/ 403 unless token is "fresh"
+//   /auth/{token}/ 404 unless token is "fresh" (media-access answers a bad token like a missing object)
 //   /missing/…     404
 //   /busy/…        429
 //   /abr/{name}/   a synthetic 480–2160 ladder over {name}'s segments, repeated to 60 s,
@@ -78,7 +78,7 @@ createServer(async (req, res) => {
     const [token, ...f] = rest;
     file = f;
     cors();
-    if (token !== "fresh") return res.writeHead(403).end("forbidden");
+    if (token !== "fresh") return res.writeHead(404).end("not found");
   } else if (mode === "abr") {
     cors();
     const out = await abr(rest[0]!, rest.slice(1), url).catch(() => null);

@@ -40,6 +40,14 @@ export function statusKind(status: number | undefined): PlaybackErrorKind {
   return "network";
 }
 
+/**
+ * Worth one grant refresh and retry: 401/403, or a 404 — media-access answers a
+ * missing, expired or wrong token exactly like a missing object.
+ */
+export function refreshable(e: PlaybackError): boolean {
+  return e.kind === "access" || e.status === 404;
+}
+
 function hlsStatus(d: HlsErrorLike): number | undefined {
   const code = d.response?.code;
   if (typeof code === "number") return code;

@@ -151,7 +151,7 @@ func TestReaderThroughWorker(t *testing.T) {
 			if st, body, hdr := get(c, f.URL); st != 200 || body != content[keyOf(f.URL)] || !strings.Contains(hdr.Get("Cache-Control"), "immutable") {
 				t.Fatalf("%s: %d %q", f.URL, st, body)
 			}
-			if st, _, _ := get(bare, f.URL); st != 403 {
+			if st, _, _ := get(bare, f.URL); st != 404 {
 				t.Fatalf("without the cookie: %d", st)
 			}
 		}
@@ -167,7 +167,7 @@ func TestReaderThroughWorker(t *testing.T) {
 			t.Fatalf("manifest through worker: %d", st)
 		}
 		other := read(reader(media.DeliverURL), preview).Files[0].URL
-		if st, _, _ := get(c, strings.Split(other, "?")[0]); st != 403 {
+		if st, _, _ := get(c, strings.Split(other, "?")[0]); st != 404 {
 			t.Fatalf("cookie opened another item: %d", st)
 		}
 		if len(out.Downloads) != 1 {
@@ -217,7 +217,7 @@ func TestReaderThroughWorker(t *testing.T) {
 		hidden, _ := item.Blob(sha("t2-c"))
 		u := mustURL(t, out.Files[0].URL)
 		u.Path = "/" + hidden
-		if st, _, _ := get(bare, u.String()); st != 403 {
+		if st, _, _ := get(bare, u.String()); st != 404 {
 			t.Fatalf("per-file token opened a page past the cut: %d", st)
 		}
 		if len(out.Downloads) != 0 {
@@ -236,7 +236,7 @@ func TestReaderThroughWorker(t *testing.T) {
 		locked, _ := postItem.Blob(sha("locked-b"))
 		u := mustURL(t, out.Files[0].URL)
 		u.Path = "/" + locked
-		if st, _, _ := get(bare, u.String()); st != 403 {
+		if st, _, _ := get(bare, u.String()); st != 404 {
 			t.Fatalf("teaser token opened a locked file: %d", st)
 		}
 	})

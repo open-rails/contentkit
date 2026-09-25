@@ -1,13 +1,17 @@
 // Package accessworker is the media access worker's HTTP handler, run by
 // cmd/media-access: it checks the token for a blobs/ or editor/ path (URL
-// `?t=` or cookie `mt`), serves public/ paths without one (immutable at a
-// current ?v= version), refuses manifests and originals/, and streams the
-// object from the private bucket with its own read-only key. Every object
+// `?t=` or cookie `mt`), serves public/ paths without one, refuses
+// manifests and originals/, and streams the object from the private bucket
+// with its own read-only key. Every refusal (no or bad token, unservable
+// area, missing object) is the same 404, so a response never reveals that
+// protected content exists; token denials are decided before any bucket
+// access and their reason is logged at debug. Every object
 // carries Cross-Origin-Resource-Policy (default same-site), so other sites
 // cannot embed it. It has no database, no host calls and no cache.
 package accessworker
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -167,8 +171,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case layout.AreaBlobs, layout.AreaEditor:
 		q := r.URL.Query()
 		dl := q.Get("dl")
-		if !h.authorized(r, q.Get("t"), key, dl) {
-			h.fail(w, http.StatusForbidden)
+		if err := h.authorize(r, q.Get("t"), key, dl); err != nil {
+			h.cfg.Logger.Debug("media-access: denied", "key", key, "reason", err)
+			h.fail(w, http.StatusNotFound)
 			return
 		}
 		if dl != "" {
@@ -181,22 +186,30 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.stream(w, r, key, k, disposition)
 }
 
-// authorized accepts the URL token or any mt cookie (a browser may send
-// several for nested paths or domains) that covers key.
-func (h *Handler) authorized(r *http.Request, t, key, dl string) bool {
+var errNoToken = errors.New("no token")
+
+// authorize accepts the URL token or any mt cookie (a browser may send
+// several for nested paths or domains) that covers key; the error is the
+// first rejection's reason, for logs only.
+func (h *Handler) authorize(r *http.Request, t, key, dl string) error {
 	now := time.Now()
-	if t != "" && h.cfg.Ring.Verify(t, key, dl, now) == nil {
-		return true
-	}
-	if dl != "" { // download names are only signed into URL tokens
-		return false
-	}
-	for _, c := range r.CookiesNamed(token.CookieName) {
-		if h.cfg.Ring.Verify(c.Value, key, "", now) == nil {
-			return true
+	var first error
+	if t != "" {
+		if first = h.cfg.Ring.Verify(t, key, dl, now); first == nil {
+			return nil
 		}
 	}
-	return false
+	if dl != "" { // download names are only signed into URL tokens
+		return cmp.Or(first, errNoToken)
+	}
+	for _, c := range r.CookiesNamed(token.CookieName) {
+		err := h.cfg.Ring.Verify(c.Value, key, "", now)
+		if err == nil {
+			return nil
+		}
+		first = cmp.Or(first, err)
+	}
+	return cmp.Or(first, errNoToken)
 }
 
 var (
@@ -235,6 +248,7 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, key string, k l
 	case http.StatusOK, http.StatusPartialContent, http.StatusNotModified,
 		http.StatusPreconditionFailed, http.StatusRequestedRangeNotSatisfiable:
 	case http.StatusNotFound, http.StatusForbidden: // 403: missing key without ListBucket
+		h.cfg.Logger.Debug("media-access: not found", "key", key, "status", resp.StatusCode)
 		h.fail(w, http.StatusNotFound)
 		return
 	default:
@@ -316,7 +330,13 @@ func (h *Handler) cors(w http.ResponseWriter, r *http.Request) {
 	hdr.Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, ETag, Content-Disposition")
 }
 
+// fail writes the one error response per status: no-store so a denial
+// never masks a later authorized request, and the same security headers as
+// an object.
 func (h *Handler) fail(w http.ResponseWriter, status int) {
-	w.Header().Set("Cache-Control", "no-store")
+	hdr := w.Header()
+	hdr.Set("Cache-Control", "no-store")
+	hdr.Set("Cross-Origin-Resource-Policy", h.cfg.ResourcePolicy)
+	hdr.Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	http.Error(w, http.StatusText(status), status)
 }
