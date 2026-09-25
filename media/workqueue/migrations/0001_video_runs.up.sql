@@ -8,7 +8,7 @@ CREATE TABLE encode_run (
     source_key text NOT NULL,
     source_etag text NOT NULL,
     spec text NOT NULL,
-    tier text NOT NULL CHECK (tier IN ('playable', 'full')),
+    rung integer NOT NULL CHECK (rung > 0),
     class text NOT NULL,
     probe jsonb NOT NULL,
     state text NOT NULL DEFAULT 'planned' CHECK (state IN ('planned', 'encoding', 'assembling', 'complete', 'cancelled')),
@@ -16,7 +16,7 @@ CREATE TABLE encode_run (
     completed integer NOT NULL DEFAULT 0,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (ref, file_name, source_name, source_etag, spec, tier)
+    UNIQUE (ref, file_name, source_name, source_etag, spec, rung)
 );
 
 CREATE INDEX encode_run_active_tenant_idx ON encode_run (tenant_id, state)
@@ -29,6 +29,7 @@ CREATE TABLE encode_chunk (
     end_ms bigint NOT NULL,
     state text NOT NULL DEFAULT 'planned' CHECK (state IN ('planned', 'queued', 'done')),
     job_id bigint,
+    output jsonb,
     finished_at timestamptz,
     PRIMARY KEY (run_id, ordinal),
     CHECK (ordinal >= 0 AND start_ms >= 0 AND end_ms > start_ms)

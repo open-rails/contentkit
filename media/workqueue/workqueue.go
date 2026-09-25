@@ -114,7 +114,7 @@ type VideoChunkArgs struct {
 
 func (VideoChunkArgs) Kind() string { return "contentkit_media_video_chunk" }
 
-// VideoAssembleArgs publishes a tier after its chunks finish.
+// VideoAssembleArgs publishes one rung after its chunks finish.
 type VideoAssembleArgs struct {
 	Ref   contentref.ContentRef `json:"ref"`
 	RunID string                `json:"run_id"`
@@ -254,6 +254,16 @@ WHERE kind = ANY($1) AND args @> $2 AND args->'ref'->>'content_version_id' IS NO
 			return 0, err
 		}
 	}
+	refJSON, err := json.Marshal(ref)
+	if err != nil {
+		return 0, err
+	}
+	_, err = q.pool.Exec(ctx, `UPDATE `+pgx.Identifier{q.schema, "encode_run"}.Sanitize()+`
+SET state = 'cancelled', updated_at = now()
+WHERE ref = $1 AND state IN ('planned', 'encoding', 'assembling')`, refJSON)
+	if err != nil {
+		return 0, err
+	}
 	return len(ids), nil
 }
 
@@ -296,9 +306,8 @@ func ClearProgress(ctx context.Context, pool *pgxpool.Pool, schema string, id in
 // every few seconds while ffmpeg or a transfer runs.
 const stalledAfter = time.Minute
 
-// NewProgressSource reads encode progress from the video and audio jobs in
-// the host's worker schema, for media.ReaderOptions.Progress. One indexed
-// query per read of an item with a pending video or audio file.
+// NewProgressSource reads job and per-rung progress from the host's worker
+// schema for media.ReaderOptions.Progress.
 func NewProgressSource(pool *pgxpool.Pool, schema string) (media.ProgressSource, error) {
 	if err := ValidSchema(schema); err != nil {
 		return nil, err
@@ -310,13 +319,29 @@ SELECT j.state, j.metadata->'` + progressKey + `',
 FROM ` + jobs(schema) + ` j
 WHERE j.kind = ANY($1) AND j.args @> $2 AND j.args->'ref'->>'content_version_id' IS NOT DISTINCT FROM $3
   AND j.state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
-ORDER BY j.id`}, nil
+ORDER BY j.id`, runSQL: `
+SELECT DISTINCT ON (r.file_name) r.file_name, r.state,
+  (SELECT count(*) FROM ` + pgx.Identifier{schema, "encode_run"}.Sanitize() + ` prior
+    WHERE prior.ref = r.ref AND prior.file_name = r.file_name AND prior.source_name = r.source_name
+      AND prior.source_etag = r.source_etag AND prior.spec = r.spec AND prior.rung <= r.rung),
+  (SELECT count(*) FROM ` + pgx.Identifier{schema, "encode_run"}.Sanitize() + ` all_rungs
+    WHERE all_rungs.ref = r.ref AND all_rungs.file_name = r.file_name AND all_rungs.source_name = r.source_name
+      AND all_rungs.source_etag = r.source_etag AND all_rungs.spec = r.spec),
+  COALESCE((SELECT sum(end_ms - start_ms) FROM ` + pgx.Identifier{schema, "encode_chunk"}.Sanitize() + `
+    WHERE run_id = r.id AND state = 'done'), 0),
+  COALESCE((SELECT max(end_ms) FROM ` + pgx.Identifier{schema, "encode_chunk"}.Sanitize() + `
+    WHERE run_id = r.id), 0),
+  EXISTS (SELECT 1 FROM ` + jobs(schema) + ` j WHERE j.kind = $2 AND j.args->>'run_id' = r.id::text AND j.state = 'running')
+FROM ` + pgx.Identifier{schema, "encode_run"}.Sanitize() + ` r
+WHERE r.ref = $1 AND r.state IN ('planned', 'encoding', 'assembling')
+ORDER BY r.file_name, r.rung`}, nil
 }
 
 type progressSource struct {
-	pool *pgxpool.Pool
-	now  func() time.Time
-	sql  string
+	pool   *pgxpool.Pool
+	now    func() time.Time
+	sql    string
+	runSQL string
 }
 
 func (s *progressSource) EncodeProgress(ctx context.Context, ref contentref.ContentRef) (media.EncodeStatus, error) {
@@ -369,5 +394,43 @@ func (s *progressSource) EncodeProgress(ctx context.Context, ref contentref.Cont
 			st.Queued = &q
 		}
 	}
-	return st, rows.Err()
+	if err := rows.Err(); err != nil {
+		return st, err
+	}
+	rows.Close()
+	refJSON, err := json.Marshal(ref)
+	if err != nil {
+		return st, err
+	}
+	runs, err := s.pool.Query(ctx, s.runSQL, refJSON, (VideoChunkArgs{}).Kind())
+	if err != nil {
+		return st, err
+	}
+	defer runs.Close()
+	for runs.Next() {
+		var name, state string
+		var stage, stages, doneMS, totalMS int64
+		var running bool
+		if err := runs.Scan(&name, &state, &stage, &stages, &doneMS, &totalMS, &running); err != nil {
+			return st, err
+		}
+		phase := media.PhaseQueued
+		switch {
+		case state == "assembling":
+			phase = media.PhasePublishing
+		case running:
+			phase = media.PhaseEncoding
+		}
+		p := media.EncodeProgress{Phase: phase, At: now.UnixMilli(), Stage: int(stage), Stages: int(stages)}
+		if totalMS > 0 {
+			p.SegmentsTotal = int((totalMS + 3999) / 4000)
+			p.SegmentsDone = min(p.SegmentsTotal, int(doneMS/4000))
+			p.Percent = min(99, 100*float64(doneMS)/float64(totalMS))
+		}
+		if st.Files == nil {
+			st.Files = make(map[string]media.EncodeProgress)
+		}
+		st.Files[name] = p
+	}
+	return st, runs.Err()
 }

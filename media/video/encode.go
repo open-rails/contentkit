@@ -62,6 +62,12 @@ func inputOptions(demuxers []string) []string {
 	return []string{"-protocol_whitelist", "file", "-format_whitelist", strings.Join(demuxers, ",")}
 }
 
+// remoteInputOptions permit only the protocols needed to read the worker's
+// internally presigned object URL. The URL never comes from a job argument.
+func remoteInputOptions(demuxers []string) []string {
+	return []string{"-protocol_whitelist", "http,https,tcp,tls,crypto", "-format_whitelist", strings.Join(demuxers, ",")}
+}
+
 const (
 	segmentSeconds = 4 // also the keyframe interval: one IDR starts each segment
 	spriteCols     = 10
@@ -75,7 +81,9 @@ type pass struct {
 	rung     rung
 	codecs   []media.Codec
 	sprite   bool
-	noTracks bool // audio and subtitles are already encoded
+	noTracks bool    // audio and subtitles are already encoded
+	start    float64 // zero for a whole-file pass
+	duration float64 // zero for a whole-file pass
 	enc      encoding
 	observe  func(EncodeObservation)
 }
@@ -116,7 +124,17 @@ func ladder(ctx context.Context, src, dir string, p plan, ps pass, fp *fileProgr
 	// thread holds more decoded frames.
 	t := strconv.Itoa(min(ps.enc.threads, 8))
 	// -y: a CPU retry after NVENC failed overwrites the failed pass's outputs.
-	args := append([]string{"-v", "error", "-nostdin", "-y", "-threads", t}, inputOptions(sourceDemuxers)...)
+	input := inputOptions(sourceDemuxers)
+	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+		input = remoteInputOptions(sourceDemuxers)
+	}
+	args := append([]string{"-v", "error", "-nostdin", "-y", "-threads", t}, input...)
+	if ps.start > 0 {
+		args = append(args, "-ss", strconv.FormatFloat(ps.start, 'f', 3, 64))
+	}
+	if ps.duration > 0 {
+		args = append(args, "-t", strconv.FormatFloat(ps.duration, 'f', 3, 64))
+	}
 	args = append(args, "-i", src)
 	if len(outs) > 0 {
 		args = append(args, "-filter_complex_threads", t, "-filter_complex", fc.String())

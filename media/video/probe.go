@@ -62,9 +62,17 @@ func probe(ctx context.Context, path string) (probeResult, error) {
 	return probeWith(ctx, path, sourceDemuxers)
 }
 
+func probeRemote(ctx context.Context, url string) (probeResult, error) {
+	return probeOptions(ctx, url, remoteInputOptions(sourceDemuxers))
+}
+
 func probeWith(ctx context.Context, path string, demuxers []string) (probeResult, error) {
+	return probeOptions(ctx, path, inputOptions(demuxers))
+}
+
+func probeOptions(ctx context.Context, path string, opts []string) (probeResult, error) {
 	var p probeResult
-	out, err := command(ctx, "ffprobe", append(append([]string{"-v", "error"}, inputOptions(demuxers)...),
+	out, err := command(ctx, "ffprobe", append(append([]string{"-v", "error"}, opts...),
 		"-show_streams", "-show_format", "-of", "json", path)...)
 	if err != nil {
 		return p, err

@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
@@ -17,9 +16,8 @@ import (
 	"github.com/open-rails/contentkit/media/workqueue"
 )
 
-// WorkerConfig configures the River side of the media worker's video and
-// audio jobs (workqueue.VideoPlanArgs on workqueue.VideoLightQueue, workqueue.AudioArgs
-// on workqueue.AudioQueue, so audio never waits behind hours of video).
+// WorkerConfig configures the River side of video planning, bounded encoding,
+// assembly and audio jobs.
 type WorkerConfig struct {
 	Encoder *Encoder
 	Pool    *pgxpool.Pool
@@ -27,12 +25,13 @@ type WorkerConfig struct {
 	// Kinds is the host's registry: a job names only its ref, and the encode
 	// takes the kind's ladder and bounds from here.
 	Kinds *media.Registry
-	// Timeout bounds one job. It must exceed the worst case: a 2 h 4K ladder on
-	// 2 CPU runs for many hours. Default 48 h; River rescues a job stuck an
-	// hour past it.
+	// Timeout bounds an audio-only job. Video chunks, planning and assembly
+	// each have a one-hour timeout; audio keeps its 48-hour default.
 	Timeout      time.Duration
-	MaxWorkers   int // concurrent video jobs per process; default 1 (ffmpeg uses every core)
-	AudioWorkers int // concurrent audio jobs per process; default 2
+	MaxWorkers   int           // concurrent video jobs per process; default 1 (ffmpeg uses every core)
+	AudioWorkers int           // concurrent audio jobs per process; default 2
+	ChunkTarget  time.Duration // estimated CPU work per chunk; default 5 minutes
+	Queue        string        // empty for all queues, or one video queue for a single-job process
 	Logger       *slog.Logger
 }
 
@@ -45,22 +44,38 @@ func Contribution(c WorkerConfig) (riverhelpers.Contribution, error) {
 	if err := workqueue.ValidSchema(c.Schema); err != nil {
 		return riverhelpers.Contribution{}, err
 	}
+	if c.Queue != "" && c.Queue != workqueue.VideoLightQueue && c.Queue != workqueue.VideoEncodeQueue {
+		return riverhelpers.Contribution{}, fmt.Errorf("media/video: unsupported queue %q", c.Queue)
+	}
 	c = c.defaults()
 	return riverhelpers.NewContribution("contentkit-media-video", func(_ context.Context, cfg *river.Config) error {
 		if cfg.Schema != c.Schema {
 			return fmt.Errorf("media/video: River schema must be %q, not %q", c.Schema, cfg.Schema)
 		}
-		if cfg.JobTimeout < c.Timeout {
-			return fmt.Errorf("media/video: client JobTimeout %s is below the video timeout %s", cfg.JobTimeout, c.Timeout)
-		}
-		for _, q := range []string{workqueue.VideoLightQueue, workqueue.AudioQueue} {
+		for _, q := range []string{workqueue.VideoLightQueue, workqueue.VideoEncodeQueue, workqueue.AudioQueue} {
+			if c.Queue != "" && c.Queue != q {
+				continue
+			}
 			if _, ok := cfg.Queues[q]; ok {
 				return fmt.Errorf("media/video: queue %q already registered", q)
 			}
 		}
-		cfg.Queues[workqueue.VideoLightQueue] = river.QueueConfig{MaxWorkers: c.MaxWorkers}
-		cfg.Queues[workqueue.AudioQueue] = river.QueueConfig{MaxWorkers: c.AudioWorkers}
-		if err := river.AddWorkerSafely(cfg.Workers, &worker{c: c}); err != nil {
+		if c.Queue == "" || c.Queue == workqueue.VideoLightQueue {
+			cfg.Queues[workqueue.VideoLightQueue] = river.QueueConfig{MaxWorkers: c.MaxWorkers}
+		}
+		if c.Queue == "" || c.Queue == workqueue.VideoEncodeQueue {
+			cfg.Queues[workqueue.VideoEncodeQueue] = river.QueueConfig{MaxWorkers: c.MaxWorkers}
+		}
+		if c.Queue == "" {
+			cfg.Queues[workqueue.AudioQueue] = river.QueueConfig{MaxWorkers: c.AudioWorkers}
+		}
+		if err := river.AddWorkerSafely(cfg.Workers, &planWorker{c: c}); err != nil {
+			return err
+		}
+		if err := river.AddWorkerSafely(cfg.Workers, &chunkWorker{c: c}); err != nil {
+			return err
+		}
+		if err := river.AddWorkerSafely(cfg.Workers, &assembleWorker{c: c}); err != nil {
 			return err
 		}
 		return river.AddWorkerSafely(cfg.Workers, &audioWorker{c: c})
@@ -77,6 +92,9 @@ func (c WorkerConfig) defaults() WorkerConfig {
 	if c.AudioWorkers <= 0 {
 		c.AudioWorkers = 2
 	}
+	if c.ChunkTarget <= 0 {
+		c.ChunkTarget = 5 * time.Minute
+	}
 	if c.Logger == nil {
 		c.Logger = slog.Default()
 	}
@@ -86,38 +104,43 @@ func (c WorkerConfig) defaults() WorkerConfig {
 // ClientConfig is a River client configuration running only c's video and audio jobs.
 func ClientConfig(c WorkerConfig) *river.Config {
 	c = c.defaults()
-	return &river.Config{Schema: c.Schema, JobTimeout: c.Timeout, Logger: c.Logger}
+	return &river.Config{Schema: c.Schema, JobTimeout: time.Hour,
+		RescueStuckJobsAfter: 2 * time.Hour, Logger: c.Logger}
 }
 
-type worker struct {
+type planWorker struct {
 	river.WorkerDefaults[workqueue.VideoPlanArgs]
 	c WorkerConfig
 }
 
-func (w *worker) Timeout(*river.Job[workqueue.VideoPlanArgs]) time.Duration { return w.c.Timeout }
+func (w *planWorker) Timeout(*river.Job[workqueue.VideoPlanArgs]) time.Duration { return time.Hour }
 
-// Work runs one encode stage under a per-manifest lock; a duplicate job for
-// a manifest being encoded waits by snoozing. A file left with a second
-// stage gets a follow-up job at a lower priority, inserted after the lock is
-// released, so other uploads' first stages run before it.
-func (w *worker) Work(ctx context.Context, job *river.Job[workqueue.VideoPlanArgs]) (err error) {
-	item, err := w.c.Kinds.Item(job.Args.Ref)
-	if err == nil && item.Kind().Video == nil {
-		err = fmt.Errorf("media/video: kind %q has no video", item.Kind().Name)
-	}
-	if err != nil {
-		return river.JobCancel(err)
-	}
-	var more bool
-	defer func() {
-		if err == nil && more {
-			o := workqueue.VideoPlanInsertOpts(job.Args.Class)
-			o.Priority = 2
-			_, err = river.ClientFromContext[pgx.Tx](ctx).Insert(ctx, job.Args, o)
-		}
-	}()
-	k := item.Kind()
-	return w.c.run(ctx, job.ID, "video", Job{Ref: job.Args.Ref, Versioned: k.Versioned, Video: *k.Video, only: encodeVideo}, &more)
+func (w *planWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoPlanArgs]) error {
+	return snoozeOnShutdown(ctx, w.c.planVideo(ctx, job.Args))
+}
+
+type chunkWorker struct {
+	river.WorkerDefaults[workqueue.VideoChunkArgs]
+	c WorkerConfig
+}
+
+func (w *chunkWorker) Timeout(*river.Job[workqueue.VideoChunkArgs]) time.Duration { return time.Hour }
+
+func (w *chunkWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoChunkArgs]) error {
+	return snoozeOnShutdown(ctx, w.c.encodeChunk(ctx, job))
+}
+
+type assembleWorker struct {
+	river.WorkerDefaults[workqueue.VideoAssembleArgs]
+	c WorkerConfig
+}
+
+func (w *assembleWorker) Timeout(*river.Job[workqueue.VideoAssembleArgs]) time.Duration {
+	return time.Hour
+}
+
+func (w *assembleWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoAssembleArgs]) error {
+	return snoozeOnShutdown(ctx, w.c.assemble(ctx, job.Args))
 }
 
 type audioWorker struct {
@@ -141,8 +164,7 @@ func (w *audioWorker) Work(ctx context.Context, job *river.Job[workqueue.AudioAr
 	return w.c.run(ctx, job.ID, "audio", Job{Ref: job.Args.Ref, Versioned: k.Versioned, Audio: k.Audio, only: encodeAudio}, nil)
 }
 
-// run encodes job under the per-manifest lock of its kind of work, clearing
-// the job's progress after; more, when set, reports a stage left to run.
+// run encodes an audio job under its per-manifest lock and clears progress.
 func (c WorkerConfig) run(ctx context.Context, id int64, work string, job Job, more *bool) (err error) {
 	// The lock's own connection lives outside Pool, which the encode uses.
 	release, ok, err := pglock.Acquire(ctx, c.Pool, "contentkit:media:"+work+":"+job.Ref.String(), false)
