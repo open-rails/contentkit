@@ -2,6 +2,7 @@ package contentref
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -49,13 +50,51 @@ func ValidateID(id string) error {
 func NewID() string { return IDAt(time.Now()) }
 
 // IDAt returns a UUIDv7 whose timestamp is t (millisecond precision) and whose
-// remaining 74 bits are random. Backfills derive ids from each legacy row's
-// created_at so the new ids keep the legacy order.
+// remaining 74 bits are random, for ids generated once and stored. Imports
+// that must derive the same id on every run use LegacyID.
 func IDAt(t time.Time) string {
 	var u [16]byte
 	if _, err := rand.Read(u[6:]); err != nil {
 		panic(err)
 	}
+	return v7(t, u)
+}
+
+// legacyEpoch dates legacy rows without a created_at, in legacy id order.
+var legacyEpoch = time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// LegacyID is the deterministic content id of a legacy row: a UUIDv7 whose
+// timestamp is createdAt (zero: 2010-01-01 UTC plus legacyID milliseconds) and
+// whose other 74 bits hash "{namespace}/{kind}/{legacyID}", so re-running an
+// import (media included) yields the same ids and folders. namespace is the
+// host's import namespace ("doujins", "hentai0"): lowercase letters, digits,
+// '_' or '-'; LegacyID panics on another (a host constant).
+func LegacyID(namespace, kind string, legacyID int64, createdAt time.Time) string {
+	if !validNamespace(namespace) {
+		panic(fmt.Sprintf("contentref: invalid LegacyID namespace %q", namespace))
+	}
+	if createdAt.IsZero() {
+		createdAt = legacyEpoch.Add(time.Duration(legacyID) * time.Millisecond)
+	}
+	var u [16]byte
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s/%s/%d", namespace, kind, legacyID)))
+	copy(u[6:], h[:10])
+	return v7(createdAt, u)
+}
+
+func validNamespace(ns string) bool {
+	if ns == "" || len(ns) > 64 {
+		return false
+	}
+	for _, c := range ns {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func v7(t time.Time, u [16]byte) string {
 	var ts [8]byte
 	binary.BigEndian.PutUint64(ts[:], uint64(t.UnixMilli())<<16)
 	copy(u[:6], ts[:6])
