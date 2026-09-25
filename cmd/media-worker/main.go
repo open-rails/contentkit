@@ -27,7 +27,6 @@ import (
 
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/worker"
-	queuemetrics "github.com/open-rails/contentkit/media/workqueue/metrics"
 )
 
 func main() {
@@ -56,14 +55,6 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	queueCollector, err := queuemetrics.NewCollector(cfg.Pool, cfg.Schema)
-	if err != nil {
-		return err
-	}
-	if err := registry.Register(queueCollector); err != nil {
-		return err
-	}
-	cfg.RiverHooks = append(cfg.RiverHooks, queueCollector.LeaderHook())
 	w, err := worker.New(ctx, cfg)
 	if err != nil {
 		return err

@@ -32,7 +32,8 @@ var (
 var queues = [...]string{workqueue.ImageQueue, workqueue.VideoLightQueue, workqueue.VideoEncodeQueue, workqueue.AudioQueue}
 var activeStates = [...]string{"available", "pending", "retryable", "running", "scheduled"}
 
-// Collector serves the latest queue snapshot read by the worker's River leader.
+// Collector serves the latest queue snapshot read by an always-on host's River
+// leader. A one-shot media worker can scale to zero and cannot expose backlog.
 type Collector struct {
 	pool      *pgxpool.Pool
 	schema    string
