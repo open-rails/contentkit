@@ -98,6 +98,9 @@ type Store interface {
 	Copy(ctx context.Context, src, dst string, o CopyOptions) (Object, error)
 
 	PresignPut(ctx context.Context, key string, p PresignPut) (PresignedRequest, error)
+	// PresignGet is for a worker reading an original over HTTP ranges. Its URL
+	// uses the store's internal endpoint and must not be returned to browsers.
+	PresignGet(ctx context.Context, key string, ttl time.Duration) (PresignedRequest, error)
 	CreateMultipart(ctx context.Context, key, contentType string) (uploadID string, err error)
 	PresignPart(ctx context.Context, key, uploadID string, number int32, size int64, sha256 []byte, ttl time.Duration) (PresignedRequest, error)
 	// PutPart uploads one part from the server, bound to its length and SHA-256.
