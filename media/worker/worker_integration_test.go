@@ -71,6 +71,10 @@ func (h *host) lastSettled(ref contentref.ContentRef) (media.Readiness, bool) {
 }
 
 func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
+	return newHostWithJobs(t, true, nil, riverHooks...)
+}
+
+func newHostWithJobs(t *testing.T, withVideo bool, hostJobs []riverhelpers.Contribution, riverHooks ...rivertype.Hook) *host {
 	t.Helper()
 	env := s3test.Open(t)
 	if !env.Store.Capabilities().ConditionalPut {
@@ -78,12 +82,15 @@ func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
 	}
 	ctx := context.Background()
 	pool := pgtest.Pool(t, nil)
-	kinds, err := media.NewRegistry(
+	registered := []media.Kind{
 		media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png"}, MaxBytes: 10 << 20,
 			Specs: map[string]media.Spec{"thumb": {Width: 100, Height: 150, Fit: media.FitCover, Quality: 80}},
 			Slots: map[string]media.Slot{"cover": {Aspect: media.Aspect3x1, Widths: []int{150, 300}}}},
-		media.Kind{Name: "clip", Types: []string{"video/mp4"}, MaxBytes: 1 << 30, Video: &media.Video{Ladder: []int{240}}},
-	)
+	}
+	if withVideo {
+		registered = append(registered, media.Kind{Name: "clip", Types: []string{"video/mp4"}, MaxBytes: 1 << 30, Video: &media.Video{Ladder: []int{240}}})
+	}
+	kinds, err := media.NewRegistry(registered...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +139,7 @@ func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Store: env.Store, Kinds: kinds, HostSchema: schema,
+	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Store: env.Store, Kinds: kinds, HostSchema: schema, HostJobs: hostJobs,
 		TempDir: t.TempDir(), Threads: 2, RiverHooks: riverHooks,
 		Hooks: media.Hooks{SlotEncoded: func(_ context.Context, ref contentref.ContentRef, slot string, l media.SlotListing) {
 			h.mu.Lock()
@@ -162,6 +169,33 @@ func newHost(t *testing.T, riverHooks ...rivertype.Hook) *host {
 		}
 	})
 	return h
+}
+
+type hostTestArgs struct{}
+
+func (hostTestArgs) Kind() string { return "contentkit_host_test" }
+
+type hostTestWorker struct {
+	river.WorkerDefaults[hostTestArgs]
+	ran *atomic.Int64
+}
+
+func (w *hostTestWorker) Work(context.Context, *river.Job[hostTestArgs]) error {
+	w.ran.Add(1)
+	return nil
+}
+
+func TestHostJobRunsInMediaWorker(t *testing.T) {
+	var ran atomic.Int64
+	hostJobs := riverhelpers.NewContribution("host-test", func(_ context.Context, c *river.Config) error {
+		c.Queues["host_test"] = river.QueueConfig{MaxWorkers: 1}
+		return river.AddWorkerSafely(c.Workers, &hostTestWorker{ran: &ran})
+	}, nil, nil)
+	h := newHostWithJobs(t, false, []riverhelpers.Contribution{hostJobs})
+	if _, err := h.worker.Client().Insert(context.Background(), hostTestArgs{}, &river.InsertOpts{Queue: "host_test"}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "host job", 10*time.Second, func() bool { return ran.Load() == 1 })
 }
 
 func (h *host) put(t *testing.T, p *media.PresignedRequest, body []byte) {

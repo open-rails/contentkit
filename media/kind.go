@@ -362,7 +362,8 @@ func NewRegistry(kinds ...Kind) (*Registry, error) {
 	return r, nil
 }
 
-func (r *Registry) hasVideo() bool {
+// HasVideo reports whether any registered kind needs the video encoder.
+func (r *Registry) HasVideo() bool {
 	for _, k := range r.kinds {
 		if k.Video != nil {
 			return true

@@ -74,6 +74,11 @@ type Config struct {
 	Logger        *slog.Logger
 	// RiverHooks are added to the worker's River client (observability).
 	RiverHooks []rivertype.Hook
+	// HostJobs run host-specific media work in the same worker schema.
+	HostJobs []riverhelpers.Contribution
+	// SkipMigrations is for hosts that migrate the worker schema before
+	// starting a worker under an unprivileged runtime database role.
+	SkipMigrations bool
 }
 
 func (c *Config) defaults() error {
@@ -113,11 +118,15 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err := c.defaults(); err != nil {
 		return nil, err
 	}
-	if err := workqueue.Migrate(ctx, c.Pool); err != nil {
-		return nil, err
+	if !c.SkipMigrations {
+		if err := workqueue.Migrate(ctx, c.Pool); err != nil {
+			return nil, err
+		}
 	}
-	if err := video.SweepTemp(c.TempDir); err != nil {
-		return nil, fmt.Errorf("media/worker: sweep scratch: %w", err)
+	if c.Kinds.HasVideo() {
+		if err := video.SweepTemp(c.TempDir); err != nil {
+			return nil, fmt.Errorf("media/worker: sweep scratch: %w", err)
+		}
 	}
 	host, err := media.NewHostQueue(c.Pool, c.Kinds, c.HostSchema, c.HostQueue, c.Grace)
 	if err != nil {
@@ -136,15 +145,19 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	enc, err := video.New(video.Config{Store: c.Store, Locker: media.PGLocker(c.Pool), Sweeps: host, TempDir: c.TempDir,
-		Threads: c.Threads, Preset: c.Preset, TopPreset: c.TopPreset, Encoder: c.VideoEncoder, Hooks: c.Hooks, Logger: c.Logger, Slots: queue})
-	if err != nil {
-		return nil, err
-	}
-	videos, err := video.Contribution(video.WorkerConfig{Encoder: enc, Pool: c.Pool, Kinds: c.Kinds, Timeout: c.VideoTimeout,
-		MaxWorkers: c.VideoWorkers, Logger: c.Logger})
-	if err != nil {
-		return nil, err
+	var contributions []riverhelpers.Contribution
+	if c.Kinds.HasVideo() {
+		enc, err := video.New(video.Config{Store: c.Store, Locker: media.PGLocker(c.Pool), Sweeps: host, TempDir: c.TempDir,
+			Threads: c.Threads, Preset: c.Preset, TopPreset: c.TopPreset, Encoder: c.VideoEncoder, Hooks: c.Hooks, Logger: c.Logger, Slots: queue})
+		if err != nil {
+			return nil, err
+		}
+		videos, err := video.Contribution(video.WorkerConfig{Encoder: enc, Pool: c.Pool, Kinds: c.Kinds, Timeout: c.VideoTimeout,
+			MaxWorkers: c.VideoWorkers, Logger: c.Logger})
+		if err != nil {
+			return nil, err
+		}
+		contributions = append(contributions, videos)
 	}
 	imageJobs := riverhelpers.NewContribution("contentkit-media-image", func(_ context.Context, cfg *river.Config) error {
 		if _, ok := cfg.Queues[workqueue.ImageQueue]; ok {
@@ -157,8 +170,10 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if c.Hooks.ItemReady != nil {
 		hooks = append(hooks[:len(hooks):len(hooks)], &readyHook{pool: c.Pool, manifests: manifests, ready: c.Hooks.ItemReady})
 	}
+	contributions = append(contributions, imageJobs)
+	contributions = append(contributions, c.HostJobs...)
 	client, err := riverhelpers.New(ctx, c.Pool, &river.Config{Schema: workqueue.Schema,
-		JobTimeout: max(c.VideoTimeout, c.ImageTimeout), Logger: c.Logger, Hooks: hooks}, videos, imageJobs)
+		JobTimeout: max(c.VideoTimeout, c.ImageTimeout), Logger: c.Logger, Hooks: hooks}, contributions...)
 	if err != nil {
 		return nil, err
 	}
