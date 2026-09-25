@@ -369,6 +369,12 @@ func NewRegistry(kinds ...Kind) (*Registry, error) {
 		} else if slices.ContainsFunc(k.Types, isAudioType) {
 			return nil, fmt.Errorf("media: kind %q accepts audio types but has no Audio", k.Name)
 		}
+		if k.Video == nil && slices.ContainsFunc(k.Types, isSubtitleType) {
+			return nil, fmt.Errorf("media: kind %q accepts subtitles but has no Video", k.Name)
+		}
+		if _, ok := k.Specs[SubtitleVariant]; ok && k.Video != nil {
+			return nil, fmt.Errorf("media: kind %q: spec name %q is the subtitle variant", k.Name, SubtitleVariant)
+		}
 		for t, l := range k.TypeLimits {
 			if t == "" || strings.Contains(t, "/") || l.MaxBytes < 0 || l.MaxFiles < 0 {
 				return nil, fmt.Errorf("media: kind %q: invalid type limit %q", k.Name, t)

@@ -44,7 +44,7 @@ func newAudioEnv(t *testing.T, a media.Audio, queue media.ProcessQueue) (*env, *
 	e := &env{Env: s3, store: s3.Store}
 	var err error
 	if e.kinds, err = media.NewRegistry(media.Kind{Name: "video", Versioned: true, Video: &media.Video{PosterWidths: posterWidths},
-		Audio: &a, Types: append([]string{"video/x-matroska"}, audioTypes...)}); err != nil {
+		Audio: &a, Types: slices.Concat([]string{"video/x-matroska"}, audioTypes, media.SubtitleTypes)}); err != nil {
 		t.Fatal(err)
 	}
 	locker := s3test.Locker(t, e.store)

@@ -26,6 +26,7 @@ export {
   isVideoType,
   audioDownloadKey,
   AUDIO_VARIANT,
+  isSubtitleType,
   stageAspect,
   type GalleryItem,
   type GalleryLockedItem,

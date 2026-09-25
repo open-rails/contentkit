@@ -141,7 +141,8 @@ func ladder(ctx context.Context, src, dir string, p plan, ps pass, fp *fileProgr
 		if ps.noTracks {
 			break
 		}
-		args = append(args, "-map", fmt.Sprintf("0:%d", s.index), "-c:s", "webvtt", "-f", "webvtt", filepath.Join(dir, fmt.Sprintf("s%d.vtt", i)))
+		args = append(args, "-map", fmt.Sprintf("0:%d", s.index))
+		args = append(args, webvttArgs(filepath.Join(dir, fmt.Sprintf("s%d.vtt", i)))...)
 	}
 	if ps.sprite {
 		args = append(args, "-map", "[sprite]", "-frames:v", strconv.Itoa(spriteCols*spriteRows), "-f", "image2", filepath.Join(dir, spriteFrames))

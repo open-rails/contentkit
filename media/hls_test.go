@@ -111,3 +111,29 @@ func TestAudioKind(t *testing.T) {
 		t.Fatal("download keys")
 	}
 }
+
+func TestSubtitleKind(t *testing.T) {
+	if _, err := NewRegistry(Kind{Name: "k", Types: []string{"text/vtt"}}); err == nil {
+		t.Fatal("subtitles without Video registered")
+	}
+	if _, err := NewRegistry(Kind{Name: "k", Types: SubtitleTypes, Video: &Video{}, Specs: map[string]Spec{SubtitleVariant: {}}}); err == nil {
+		t.Fatal("spec named after the subtitle variant registered")
+	}
+	if _, err := NewRegistry(Kind{Name: "k", Types: append([]string{"video/mp4"}, SubtitleTypes...), Video: &Video{}}); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"a.SRT": "application/x-subrip", "b.ass": "text/x-ass", "c.ssa": "text/x-ssa", "d.vtt": "text/vtt", "e.txt": ""} {
+		if got := SubtitleType(name); got != want {
+			t.Fatalf("%s: %q", name, got)
+		}
+	}
+	src := "sha256-" + strings.Repeat("a", 64)
+	f := File{Name: "en.srt", Original: src, Type: "application/x-subrip"}
+	if f.State() != StateProcessing || f.Servable() {
+		t.Fatal("unconverted subtitle")
+	}
+	f.Derived, f.Variants = f.FailureKey(), map[string]Variant{SubtitleVariant: {Blob: "sha256-" + strings.Repeat("b", 64)}}
+	if f.State() != StateReady || !f.Servable() {
+		t.Fatal("converted subtitle")
+	}
+}

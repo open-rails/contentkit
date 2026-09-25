@@ -112,7 +112,10 @@ type HLS struct {
 	Video  []Rendition  `json:"video,omitempty"`
 	Audio  []AudioTrack `json:"audio,omitempty"`
 	Subs   []Subtitle   `json:"subs,omitempty"`
-	Sprite *Sprite      `json:"sprite,omitempty"`
+	// SubsSpec is the conversion of the source's text tracks in Subs: a new
+	// one re-extracts them without re-encoding the ladder.
+	SubsSpec string  `json:"subs_spec,omitempty"`
+	Sprite   *Sprite `json:"sprite,omitempty"`
 	// Pending lists the rungs of later encode stages, smallest first: the
 	// file plays at the rungs in Video until they are added.
 	Pending []int `json:"pending,omitempty"`

@@ -3,6 +3,7 @@ package media
 import (
 	"fmt"
 	"math"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -32,7 +33,7 @@ func videoURI(v Rendition) string {
 	return "video/" + strconv.Itoa(v.Rung) + "-" + string(v.Codec) + ".m3u8"
 }
 func audioURI(id string) string { return "audio/" + id + ".m3u8" }
-func subsURI(id string) string  { return "subs/" + id + ".m3u8" }
+func subsURI(id string) string  { return "subs/" + url.PathEscape(id) + ".m3u8" }
 
 // playable reports a ladder with renditions: video, or an audio file's track.
 func (h *HLS) playable() bool { return h != nil && (len(h.Video) > 0 || len(h.Audio) > 0) }
@@ -50,9 +51,10 @@ func (g *Grant) hlsFile(name string) (int, *HLS, error) {
 // rendition (rung and codec), with alternative audio and subtitle groups.
 // Codecs are listed in the ladder's order, so a player that decodes the
 // first starts on it; players drop variants whose CODECS they cannot decode.
-// An audio file's is one audio-only variant over its track.
+// Subtitles are the source's tracks, then its sidecar subtitle files. An
+// audio file's is one audio-only variant over its track.
 func (g *Grant) MasterPlaylist(file string, o MasterOptions) ([]byte, error) {
-	_, h, err := g.hlsFile(file)
+	i, h, err := g.hlsFile(file)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +64,7 @@ func (g *Grant) MasterPlaylist(file string, o MasterOptions) ([]byte, error) {
 			a.Bandwidth, orDefaultString(a.Codecs, "mp4a.40.2"), audioURI(a.ID)), nil
 	}
 	audio := pick(h.Audio, o.Audio, func(a AudioTrack) (string, string) { return a.ID, a.Lang })
-	subs := pick(h.Subs, o.Subs, func(s Subtitle) (string, string) { return s.ID, s.Lang })
+	subs := pick(g.subtitles(i, h), o.Subs, func(s subtitleTrack) (string, string) { return s.ID, s.Lang })
 
 	var b strings.Builder
 	b.WriteString("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n")
@@ -173,17 +175,18 @@ func (g *Grant) AudioPlaylist(file, id string) ([]byte, error) {
 	return nil, ErrNotAllowed
 }
 
-// SubtitlePlaylist is a one-segment playlist over the whole WebVTT blob.
+// SubtitlePlaylist is a one-segment playlist over the whole WebVTT blob of
+// one of the file's tracks (its source's or a sidecar's).
 func (g *Grant) SubtitlePlaylist(file, id string) ([]byte, error) {
 	i, h, err := g.hlsFile(file)
 	if err != nil {
 		return nil, err
 	}
-	for _, s := range h.Subs {
+	for _, s := range g.subtitles(i, h) {
 		if s.ID != id {
 			continue
 		}
-		u, err := g.URL(i, s.Blob)
+		u, err := g.URL(s.File, s.Blob)
 		if err != nil {
 			return nil, err
 		}

@@ -53,7 +53,9 @@ func (r Readiness) settle() Readiness {
 
 // State is the file's processing state. A video is ready when its current
 // source's ladder has every stage (no hls.pending) and failed on hls.error;
-// audio when its current source's track is encoded, failed on hls.error; an image when its variants were derived from its current source and edit
+// audio when its current source's track is encoded, failed on hls.error; a
+// subtitle when converted from its current source (Derived), failed on
+// Failure; an image when its variants were derived from its current source and edit
 // (Derived) and failed on Failure; a staged upload is processing. Other
 // types need no processing.
 func (f File) State() string { return f.state(true) }
@@ -64,9 +66,11 @@ func (f File) state(images bool) string {
 	switch {
 	case isEncodedType(f.Type) && h != nil && h.Source == f.Source() && h.Error != "":
 		return StateFailed
-	case isImageType(f.Type) && f.Failed() != nil:
+	case (isImageType(f.Type) || isSubtitleType(f.Type)) && f.Failed() != nil:
 		return StateFailed
-	case layout.ValidStagedName(f.Original) && (images || isEncodedType(f.Type)):
+	case layout.ValidStagedName(f.Original) && (images || isEncodedType(f.Type) || isSubtitleType(f.Type)):
+		return StateProcessing
+	case isSubtitleType(f.Type) && f.Derived != f.FailureKey():
 		return StateProcessing
 	case isVideoType(f.Type):
 		if h == nil || h.Source != f.Source() || len(h.Video) == 0 || len(h.Pending) > 0 {
@@ -96,6 +100,9 @@ func (f File) Servable() bool {
 		return h != nil && h.Error == "" && len(h.Audio) > 0
 	case isImageType(f.Type):
 		return f.Failed() == nil && len(f.Variants) > 0
+	case isSubtitleType(f.Type):
+		_, ok := f.Variants[SubtitleVariant]
+		return f.Failed() == nil && ok
 	}
 	return true
 }

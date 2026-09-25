@@ -52,3 +52,10 @@ func FailNVENC(e *Encoder, c media.Codec) func() {
 	e.encoders[c] = nvencEncoders[c]
 	return func() { nvencEncoders[c] = old }
 }
+
+// SetMaxSubtitleBytes lowers the subtitle size cap.
+func SetMaxSubtitleBytes(n int64) func() {
+	old := maxSubtitleBytes
+	maxSubtitleBytes = n
+	return func() { maxSubtitleBytes = old }
+}

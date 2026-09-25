@@ -432,6 +432,8 @@ type FileInfo struct {
 	Teaser   bool    `json:"teaser,omitempty"`
 	Locked   bool    `json:"locked,omitempty"`
 	HLS      bool    `json:"hls,omitempty"` // playable at .../hls/{file}/master.m3u8 (video, or audio only)
+	// Ready: the file is processed (File.State): encoded, derived or converted.
+	Ready bool `json:"ready,omitempty"`
 	// Unattached is an editor's file processed on upload, not yet attached
 	// (ReadOptions.Unattached).
 	Unattached bool   `json:"unattached,omitempty"`
@@ -485,7 +487,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	views := &editorViews{g: g}
 	for i, f := range files {
 		fi := FileInfo{Index: i, Type: f.Type, Width: metaInt(f.Meta, "w"), Height: metaInt(f.Meta, "h"),
-			Duration: metaFloat(f.Meta, "duration"), Teaser: f.Teaser(), HLS: f.HLS.playable(), Unattached: f.Unattached}
+			Duration: metaFloat(f.Meta, "duration"), Teaser: f.Teaser(), HLS: f.HLS.playable(), Ready: f.State() == StateReady, Unattached: f.Unattached}
 		if !g.Allowed(i) {
 			fi.Locked = true
 		} else {
