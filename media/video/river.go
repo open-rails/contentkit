@@ -17,8 +17,9 @@ import (
 	"github.com/open-rails/contentkit/media/workqueue"
 )
 
-// WorkerConfig configures the River side of the media worker's video jobs
-// (workqueue.VideoArgs on workqueue.VideoQueue).
+// WorkerConfig configures the River side of the media worker's video and
+// audio jobs (workqueue.VideoArgs on workqueue.VideoQueue, workqueue.AudioArgs
+// on workqueue.AudioQueue, so audio never waits behind hours of video).
 type WorkerConfig struct {
 	Encoder *Encoder
 	Pool    *pgxpool.Pool
@@ -29,13 +30,14 @@ type WorkerConfig struct {
 	// Timeout bounds one job. It must exceed the worst case: a 2 h 4K ladder on
 	// 2 CPU runs for many hours. Default 48 h; River rescues a job stuck an
 	// hour past it.
-	Timeout    time.Duration
-	MaxWorkers int // concurrent jobs per process; default 1 (ffmpeg uses every core)
-	Logger     *slog.Logger
+	Timeout      time.Duration
+	MaxWorkers   int // concurrent video jobs per process; default 1 (ffmpeg uses every core)
+	AudioWorkers int // concurrent audio jobs per process; default 2
+	Logger       *slog.Logger
 }
 
-// Contribution registers the video worker and queue for riverhelpers.New on
-// a client with c.Schema.
+// Contribution registers the video and audio workers and queues for
+// riverhelpers.New on a client with c.Schema.
 func Contribution(c WorkerConfig) (riverhelpers.Contribution, error) {
 	if c.Encoder == nil || c.Pool == nil || c.Kinds == nil {
 		return riverhelpers.Contribution{}, errors.New("media/video: WorkerConfig needs an Encoder, a Pool and Kinds")
@@ -51,11 +53,17 @@ func Contribution(c WorkerConfig) (riverhelpers.Contribution, error) {
 		if cfg.JobTimeout < c.Timeout {
 			return fmt.Errorf("media/video: client JobTimeout %s is below the video timeout %s", cfg.JobTimeout, c.Timeout)
 		}
-		if _, ok := cfg.Queues[workqueue.VideoQueue]; ok {
-			return fmt.Errorf("media/video: queue %q already registered", workqueue.VideoQueue)
+		for _, q := range []string{workqueue.VideoQueue, workqueue.AudioQueue} {
+			if _, ok := cfg.Queues[q]; ok {
+				return fmt.Errorf("media/video: queue %q already registered", q)
+			}
 		}
 		cfg.Queues[workqueue.VideoQueue] = river.QueueConfig{MaxWorkers: c.MaxWorkers}
-		return river.AddWorkerSafely(cfg.Workers, &worker{c: c})
+		cfg.Queues[workqueue.AudioQueue] = river.QueueConfig{MaxWorkers: c.AudioWorkers}
+		if err := river.AddWorkerSafely(cfg.Workers, &worker{c: c}); err != nil {
+			return err
+		}
+		return river.AddWorkerSafely(cfg.Workers, &audioWorker{c: c})
 	}, nil, nil), nil
 }
 
@@ -66,13 +74,16 @@ func (c WorkerConfig) defaults() WorkerConfig {
 	if c.MaxWorkers <= 0 {
 		c.MaxWorkers = 1
 	}
+	if c.AudioWorkers <= 0 {
+		c.AudioWorkers = 2
+	}
 	if c.Logger == nil {
 		c.Logger = slog.Default()
 	}
 	return c
 }
 
-// ClientConfig is a River client configuration running only c's video jobs.
+// ClientConfig is a River client configuration running only c's video and audio jobs.
 func ClientConfig(c WorkerConfig) *river.Config {
 	c = c.defaults()
 	return &river.Config{Schema: c.Schema, JobTimeout: c.Timeout, Logger: c.Logger}
@@ -105,8 +116,36 @@ func (w *worker) Work(ctx context.Context, job *river.Job[workqueue.VideoArgs]) 
 			_, err = river.ClientFromContext[pgx.Tx](ctx).Insert(ctx, job.Args, o)
 		}
 	}()
+	k := item.Kind()
+	return w.c.run(ctx, job.ID, "video", Job{Ref: job.Args.Ref, Versioned: k.Versioned, Video: *k.Video, only: encodeVideo}, &more)
+}
+
+type audioWorker struct {
+	river.WorkerDefaults[workqueue.AudioArgs]
+	c WorkerConfig
+}
+
+func (w *audioWorker) Timeout(*river.Job[workqueue.AudioArgs]) time.Duration { return w.c.Timeout }
+
+// Work encodes the manifest's stale audio files under its own per-manifest
+// lock, so a video encode of the same item does not hold it back.
+func (w *audioWorker) Work(ctx context.Context, job *river.Job[workqueue.AudioArgs]) error {
+	item, err := w.c.Kinds.Item(job.Args.Ref)
+	if err == nil && item.Kind().Audio == nil {
+		err = fmt.Errorf("media/video: kind %q has no audio", item.Kind().Name)
+	}
+	if err != nil {
+		return river.JobCancel(err)
+	}
+	k := item.Kind()
+	return w.c.run(ctx, job.ID, "audio", Job{Ref: job.Args.Ref, Versioned: k.Versioned, Audio: k.Audio, only: encodeAudio}, nil)
+}
+
+// run encodes job under the per-manifest lock of its kind of work, clearing
+// the job's progress after; more, when set, reports a stage left to run.
+func (c WorkerConfig) run(ctx context.Context, id int64, work string, job Job, more *bool) (err error) {
 	// The lock's own connection lives outside Pool, which the encode uses.
-	release, ok, err := pglock.Acquire(ctx, w.c.Pool, "contentkit:media:video:"+job.Args.Ref.String(), false)
+	release, ok, err := pglock.Acquire(ctx, c.Pool, "contentkit:media:"+work+":"+job.Ref.String(), false)
 	if err != nil {
 		return err
 	}
@@ -117,26 +156,28 @@ func (w *worker) Work(ctx context.Context, job *river.Job[workqueue.VideoArgs]) 
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		if err := workqueue.ClearProgress(ctx, w.c.Pool, w.c.Schema, job.ID); err != nil {
-			w.c.Logger.WarnContext(ctx, "media/video: clear progress", "job", job.ID, "error", err)
+		if err := workqueue.ClearProgress(ctx, c.Pool, c.Schema, id); err != nil {
+			c.Logger.WarnContext(ctx, "media/video: clear progress", "job", id, "error", err)
 		}
 	}()
-	k := item.Kind()
-	more, err = w.c.Encoder.encode(ctx, Job{Ref: job.Args.Ref, Versioned: k.Versioned, Video: *k.Video}, w.report(job.ID), true)
+	m, err := c.Encoder.encode(ctx, job, c.report(id), true)
+	if more != nil {
+		*more = m
+	}
 	var perm *PermanentError
 	if errors.As(err, &perm) {
-		w.c.Logger.ErrorContext(ctx, "media/video: cannot encode", "ref", job.Args.Ref.String(), "error", err)
+		c.Logger.ErrorContext(ctx, "media/video: cannot encode", "ref", job.Ref.String(), "error", err)
 		return river.JobCancel(err)
 	}
 	return err
 }
 
-func (w *worker) report(id int64) Report {
+func (w WorkerConfig) report(id int64) Report {
 	return func(ctx context.Context, files map[string]media.EncodeProgress) {
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		if err := workqueue.SetProgress(ctx, w.c.Pool, w.c.Schema, id, files); err != nil && ctx.Err() == nil {
-			w.c.Logger.WarnContext(ctx, "media/video: report progress", "job", id, "error", err)
+		if err := workqueue.SetProgress(ctx, w.Pool, w.Schema, id, files); err != nil && ctx.Err() == nil {
+			w.Logger.WarnContext(ctx, "media/video: report progress", "job", id, "error", err)
 		}
 	}
 }

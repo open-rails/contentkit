@@ -31,7 +31,8 @@ import (
 // other's jobs. Queue names are fixed within a schema.
 const (
 	ImageQueue  = "media_image" // image variants, slots, inline images; placement of staged images
-	VideoQueue  = "media_video" // encodes; placement of staged videos
+	VideoQueue  = "media_video" // video encodes and subtitle sidecars; placement of staged videos
+	AudioQueue  = "media_audio" // audio file encodes (minutes, never behind hours of video); placement of staged audio
 	MaxAttempts = 5
 )
 
@@ -76,6 +77,16 @@ type VideoArgs struct {
 
 func (VideoArgs) Kind() string { return "contentkit_media_video" }
 
+// AudioArgs encodes a manifest's audio files (media.Audio kinds).
+type AudioArgs struct {
+	Ref contentref.ContentRef `json:"ref"`
+}
+
+func (AudioArgs) Kind() string { return "contentkit_media_audio" }
+
+// EncodeKinds are the job kinds that report encode progress.
+var EncodeKinds = []string{VideoArgs{}.Kind(), AudioArgs{}.Kind()}
+
 // Queue is the host's insert-only client for the worker's jobs; it is the
 // uploads' media.ProcessQueue.
 type Queue struct {
@@ -107,8 +118,8 @@ func (q *Queue) Schema() string { return q.schema }
 
 // Enqueue asks the worker to process job: an image job for kinds with image
 // variants, slots or inline images (one pending job per ref and slot, with a
-// follow-up behind a running one), and a video job for a video kind's
-// manifest.
+// follow-up behind a running one), and a video job for a video or audio
+// kind's manifest.
 func (q *Queue) Enqueue(ctx context.Context, job media.ProcessJob) error {
 	return q.enqueue(ctx, q.client.Insert, job)
 }
@@ -132,7 +143,7 @@ func (q *Queue) enqueue(ctx context.Context, insert media.InsertFunc, job media.
 			return err
 		}
 	}
-	if job.Slot != "" || k.Video == nil {
+	if job.Slot != "" || k.Video == nil && k.Audio == nil {
 		return nil
 	}
 	if _, err := item.Section(); err != nil {
@@ -141,8 +152,22 @@ func (q *Queue) enqueue(ctx context.Context, insert media.InsertFunc, job media.
 	// Not unique: River's uniqueness always covers running jobs, which would
 	// drop the job for a source replaced mid-encode. Duplicates serialize on
 	// the worker's per-manifest lock and are no-ops once the manifest is fresh.
-	_, err = insert(ctx, VideoArgs{Ref: job.Ref}, VideoInsertOpts())
-	return err
+	if k.Video != nil {
+		if _, err := insert(ctx, VideoArgs{Ref: job.Ref}, VideoInsertOpts()); err != nil {
+			return err
+		}
+	}
+	if k.Audio != nil {
+		if _, err := insert(ctx, AudioArgs{Ref: job.Ref}, AudioInsertOpts()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// AudioInsertOpts are an audio job's insert options.
+func AudioInsertOpts() *river.InsertOpts {
+	return &river.InsertOpts{Queue: AudioQueue, MaxAttempts: MaxAttempts}
 }
 
 // VideoInsertOpts are a video job's insert options.
@@ -161,7 +186,7 @@ func (q *Queue) Cancel(ctx context.Context, ref contentref.ContentRef) (int, err
 	rows, err := q.pool.Query(ctx, `SELECT id FROM `+jobs(q.schema)+`
 WHERE kind = ANY($1) AND args @> $2 AND args->'ref'->>'content_version_id' IS NOT DISTINCT FROM $3
   AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled')`,
-		[]string{ImageArgs{}.Kind(), VideoArgs{}.Kind()}, match, version)
+		append([]string{ImageArgs{}.Kind()}, EncodeKinds...), match, version)
 	if err != nil {
 		return 0, err
 	}
@@ -216,9 +241,9 @@ func ClearProgress(ctx context.Context, pool *pgxpool.Pool, schema string, id in
 // every few seconds while ffmpeg or a transfer runs.
 const stalledAfter = time.Minute
 
-// NewProgressSource reads encode progress from the video jobs in the host's
-// worker schema, for media.ReaderOptions.Progress. One indexed query per read
-// of an item with a pending video.
+// NewProgressSource reads encode progress from the video and audio jobs in
+// the host's worker schema, for media.ReaderOptions.Progress. One indexed
+// query per read of an item with a pending video or audio file.
 func NewProgressSource(pool *pgxpool.Pool, schema string) (media.ProgressSource, error) {
 	if err := ValidSchema(schema); err != nil {
 		return nil, err
@@ -228,7 +253,7 @@ SELECT j.state, j.metadata->'` + progressKey + `',
   CASE WHEN j.state = 'available' THEN 1 + (SELECT count(*) FROM ` + jobs(schema) + ` a
     WHERE a.state = 'available' AND a.queue = j.queue AND (a.priority, a.scheduled_at, a.id) < (j.priority, j.scheduled_at, j.id)) END
 FROM ` + jobs(schema) + ` j
-WHERE j.kind = $1 AND j.args @> $2 AND j.args->'ref'->>'content_version_id' IS NOT DISTINCT FROM $3
+WHERE j.kind = ANY($1) AND j.args @> $2 AND j.args->'ref'->>'content_version_id' IS NOT DISTINCT FROM $3
   AND j.state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
 ORDER BY j.id`}, nil
 }
@@ -245,7 +270,7 @@ func (s *progressSource) EncodeProgress(ctx context.Context, ref contentref.Cont
 	if err != nil {
 		return st, err
 	}
-	rows, err := s.pool.Query(ctx, s.sql, VideoArgs{}.Kind(), match, version)
+	rows, err := s.pool.Query(ctx, s.sql, EncodeKinds, match, version)
 	if err != nil {
 		return st, err
 	}
@@ -259,20 +284,25 @@ func (s *progressSource) EncodeProgress(ctx context.Context, ref contentref.Cont
 			return st, err
 		}
 		if state == "running" {
+			// The item's video and audio jobs may both be running; each
+			// reports its own files.
 			var files map[string]media.EncodeProgress
-			if len(raw) > 0 && json.Unmarshal(raw, &files) == nil && st.Files == nil {
+			if len(raw) > 0 && json.Unmarshal(raw, &files) == nil {
 				for n, p := range files {
 					if now.Sub(time.UnixMilli(p.At)) > stalledAfter {
 						p.Stalled, p.ETA, p.Speed = true, 0, 0
 					}
 					if n == media.ItemProgressKey {
-						st.Item = &p
-						delete(files, n)
-					} else {
-						files[n] = p
+						if st.Item == nil {
+							st.Item = &p
+						}
+					} else if _, ok := st.Files[n]; !ok {
+						if st.Files == nil {
+							st.Files = map[string]media.EncodeProgress{}
+						}
+						st.Files[n] = p
 					}
 				}
-				st.Files = files
 			}
 			continue
 		}

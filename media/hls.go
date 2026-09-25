@@ -34,10 +34,13 @@ func videoURI(v Rendition) string {
 func audioURI(id string) string { return "audio/" + id + ".m3u8" }
 func subsURI(id string) string  { return "subs/" + id + ".m3u8" }
 
+// playable reports a ladder with renditions: video, or an audio file's track.
+func (h *HLS) playable() bool { return h != nil && (len(h.Video) > 0 || len(h.Audio) > 0) }
+
 // hlsFile returns the index and ladder of a file this viewer may play.
 func (g *Grant) hlsFile(name string) (int, *HLS, error) {
 	i := g.Manifest.File(name)
-	if !g.Allowed(i) || g.Manifest.Files[i].HLS == nil || len(g.Manifest.Files[i].HLS.Video) == 0 {
+	if !g.Allowed(i) || !g.Manifest.Files[i].HLS.playable() {
 		return 0, nil, ErrNotAllowed
 	}
 	return i, g.Manifest.Files[i].HLS, nil
@@ -47,10 +50,16 @@ func (g *Grant) hlsFile(name string) (int, *HLS, error) {
 // rendition (rung and codec), with alternative audio and subtitle groups.
 // Codecs are listed in the ladder's order, so a player that decodes the
 // first starts on it; players drop variants whose CODECS they cannot decode.
+// An audio file's is one audio-only variant over its track.
 func (g *Grant) MasterPlaylist(file string, o MasterOptions) ([]byte, error) {
 	_, h, err := g.hlsFile(file)
 	if err != nil {
 		return nil, err
+	}
+	if len(h.Video) == 0 {
+		a := h.Audio[0]
+		return fmt.Appendf(nil, "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-STREAM-INF:BANDWIDTH=%d,CODECS=%q\n%s\n",
+			a.Bandwidth, orDefaultString(a.Codecs, "mp4a.40.2"), audioURI(a.ID)), nil
 	}
 	audio := pick(h.Audio, o.Audio, func(a AudioTrack) (string, string) { return a.ID, a.Lang })
 	subs := pick(h.Subs, o.Subs, func(s Subtitle) (string, string) { return s.ID, s.Lang })
@@ -242,10 +251,17 @@ func (g *Grant) mediaPlaylist(i int, blob string, segs []Segment) ([]byte, error
 	return []byte(b.String()), nil
 }
 
-// duration is the ladder's length: its first rendition's segments, else meta.
+// duration is the ladder's length: its first rendition's (or track's)
+// segments, else meta.
 func duration(f File, h *HLS) float64 {
+	segs := []Segment(nil)
+	if len(h.Video) > 0 {
+		segs = h.Video[0].Segments
+	} else if len(h.Audio) > 0 {
+		segs = h.Audio[0].Segments
+	}
 	var d float64
-	for _, s := range h.Video[0].Segments {
+	for _, s := range segs {
 		d += s.Seconds
 	}
 	if d > 0 {

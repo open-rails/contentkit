@@ -225,3 +225,22 @@ it("a browser without HLS says so, with a code and Retry", async () => {
   expect(alert).toHaveTextContent("Code no-hls");
   expect(within(alert).getByRole("button", { name: "Try again" })).toBeInTheDocument();
 });
+
+it("audio: a player over the M4A variant with its duration and download; a music tile in the grid", () => {
+  const song: FileInfo = { index: 0, name: "song.mp3", type: "audio/mpeg", duration: 125, hls: true, url: "https://m/song.m4a", variant: "audio" };
+  const pending: FileInfo = { index: 1, name: "wip.mp3", type: "audio/mpeg" };
+  const r = { ...read("full", [song, pending]), downloads: [{ key: "song.mp3-audio", name: "Song.m4a", type: "audio/mp4", url: "https://m/dl" }] };
+  render(<MediaGallery read={r} view="carousel" />);
+  const slide = within(current() as HTMLElement);
+  const audio = current().querySelector("audio")!;
+  expect(audio).toHaveAttribute("src", "https://m/song.m4a");
+  expect(audio).toHaveAccessibleName("Audio 1");
+  expect(slide.getByText("2:05")).toBeInTheDocument();
+  expect(slide.getByRole("link", { name: "Download" })).toHaveAttribute("href", "https://m/dl");
+  expect(current().querySelector("img")).toBeNull();
+
+  render(<MediaGallery read={r} view="grid" />);
+  const tiles = document.querySelectorAll("[data-ckui=tile][data-kind=audio]");
+  expect(tiles).toHaveLength(2);
+  expect(tiles[0]!.querySelector("img")).toBeNull();
+});

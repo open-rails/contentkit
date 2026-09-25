@@ -5,7 +5,9 @@ import {
   ArrowRight01Icon,
   Cancel01Icon,
   CarouselHorizontalIcon,
+  Download01Icon,
   GridViewIcon,
+  MusicNote01Icon,
   PlayIcon,
   SquareLock02Icon,
 } from "@hugeicons/core-free-icons";
@@ -13,7 +15,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useMemo, useState, type ReactNode } from "react";
 import type { UploadUiAppearance } from "../appearance.js";
-import { formatDuration, galleryItems, stageAspect, type GalleryItem, type GalleryLockedItem, type GalleryMediaItem } from "../gallery.js";
+import { audioDownloadKey, formatDuration, galleryItems, stageAspect, type GalleryItem, type GalleryLockedItem, type GalleryMediaItem } from "../gallery.js";
 import { useCarousel, useGalleryView, useHlsPlayer, type GalleryViewOptions, type HlsPlayerOptions } from "../gallery-react.js";
 import { useInlinePreview } from "../inline-preview.js";
 import { useMessages } from "../i18n/context.js";
@@ -25,7 +27,11 @@ import { Button } from "#ckui/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "#ckui/ui/toggle-group";
 
 export interface MediaGalleryProps extends GalleryViewOptions, Pick<HlsPlayerOptions, "xhrSetup" | "refresh" | "abr"> {
-  /** The read API result: files in manifest order with this viewer's access. */
+  /**
+   * The read API result: files in manifest order with this viewer's access.
+   * Audio files play from their `audio` variant (AUDIO_VARIANT), so include it
+   * in the read's variants; full access adds their download.
+   */
   read: ReadResult | null | undefined;
   /** A video file's HLS folder (e.g. `/media/post/1/hls/{name}/`). */
   hlsBase?: (file: FileInfo) => string;
@@ -222,6 +228,7 @@ function Slide({ ctx, item, position, active, lightbox }: { ctx: Ctx; item: Gall
   const { t } = useMessages();
   if (item.kind === "locked") return <Locked ctx={ctx} item={item} />;
   const f = item.file;
+  if (item.kind === "audio") return <AudioSlide ctx={ctx} file={f} position={position} />;
   if (item.kind === "image") {
     if (!f.url) return f.failed ? <ImageFailed file={f} /> : <Processing>{t("gallery.processingImage")}</Processing>;
     return (
@@ -259,6 +266,38 @@ function Slide({ ctx, item, position, active, lightbox }: { ctx: Ctx; item: Gall
       label={t("gallery.video", { index: position + 1 })}
       className={lightbox ? "bg-transparent" : undefined}
     />
+  );
+}
+
+// An audio file: a native player over its M4A variant, its duration and,
+// with full access, its download.
+function AudioSlide({ ctx, file: f, position }: { ctx: Ctx; file: FileInfo; position: number }) {
+  const { t } = useMessages();
+  const download = f.name ? ctx.read?.downloads?.find((d) => d.key === audioDownloadKey(f.name!)) : undefined;
+  const label = t("gallery.audio", { index: position + 1 });
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-muted p-4" data-ckui="audio">
+      <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+        <HugeiconsIcon icon={MusicNote01Icon} className="size-5 shrink-0" strokeWidth={1.75} />
+        {f.name && <span className="truncate">{f.name}</span>}
+        {f.duration ? <span className="tabular-nums">{formatDuration(f.duration)}</span> : null}
+      </div>
+      {f.failed ? (
+        <p className="text-sm text-destructive" role="alert">
+          {t("gallery.failedAudio")}
+        </p>
+      ) : f.url ? (
+        <audio src={f.url} controls preload="metadata" aria-label={label} className="w-full max-w-md" data-ckui-noswipe="" />
+      ) : (
+        <p className="text-sm text-muted-foreground">{t("gallery.processingAudio")}</p>
+      )}
+      {download && (
+        <a href={download.url} download={download.name} className="inline-flex items-center gap-1.5 text-sm underline-offset-4 hover:underline" data-ckui-noswipe="">
+          <HugeiconsIcon icon={Download01Icon} className="size-4" strokeWidth={2} />
+          {t("gallery.download")}
+        </a>
+      )}
+    </div>
   );
 }
 
@@ -325,6 +364,13 @@ function Tile({ ctx, item, label, onOpen }: { ctx: Ctx; item: GalleryItem; label
   const [el, setEl] = useState<HTMLButtonElement | null>(null);
   let body: ReactNode;
   if (item.kind === "locked") body = <Locked ctx={ctx} item={item} tile />;
+  else if (item.kind === "audio")
+    body = (
+      <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-muted text-muted-foreground">
+        <HugeiconsIcon icon={item.file.failed ? AlertCircleIcon : MusicNote01Icon} className={cn("size-7", item.file.failed && "text-destructive")} strokeWidth={1.75} />
+        {item.file.duration ? <span className="text-[11px] font-medium tabular-nums">{formatDuration(item.file.duration)}</span> : null}
+      </span>
+    );
   else if (item.kind === "image")
     body = item.file.url ? (
       <img src={item.file.url} alt="" loading="lazy" decoding="async" draggable={false} className="absolute inset-0 size-full object-cover transition-transform duration-300 motion-safe:group-hover:scale-[1.03]" />

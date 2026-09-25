@@ -70,6 +70,7 @@ func FromEnv(ctx context.Context) (Config, error) {
 //	MEDIA_WORKER_ENCODER         auto (default: per codec NVENC if a probe encode works, else CPU), cpu or nvenc
 //	MEDIA_WORKER_CONCURRENCY     video jobs per process (default 1)
 //	MEDIA_WORKER_IMAGE_CONCURRENCY  image jobs per process (default 2)
+//	MEDIA_WORKER_AUDIO_CONCURRENCY  audio jobs per process (default 2)
 //	MEDIA_WORKER_JOB_TIMEOUT     per video job (default 48h)
 //	MEDIA_WORKER_SHUTDOWN_GRACE  time running jobs get on SIGTERM before cancel (default 30s)
 func (c *Config) TuningFromEnv() error {
@@ -86,7 +87,7 @@ func (c *Config) TuningFromEnv() error {
 		}
 	}
 	for k, p := range map[string]*int{"MEDIA_WORKER_THREADS": &c.Threads, "MEDIA_WORKER_CONCURRENCY": &c.VideoWorkers,
-		"MEDIA_WORKER_IMAGE_CONCURRENCY": &c.ImageWorkers} {
+		"MEDIA_WORKER_IMAGE_CONCURRENCY": &c.ImageWorkers, "MEDIA_WORKER_AUDIO_CONCURRENCY": &c.AudioWorkers} {
 		n, err := intEnv(k, *p)
 		if err != nil {
 			return err

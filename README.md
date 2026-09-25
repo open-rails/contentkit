@@ -490,6 +490,23 @@ encode, so `hls.source` names the placed original. Jobs are `{ref}`
 unique, and a job for a fresh manifest is a no-op; `workqueue.Queue.Cancel`
 cancels an item's queued and running jobs of every stage.
 
+**Audio** (`Kind.Audio = &media.Audio{}`; the media worker's own `media_audio`
+queue and per-manifest lock, so audio never waits behind video encodes;
+`MEDIA_WORKER_AUDIO_CONCURRENCY`, default 2) encodes each
+`audio/*` file (mp3, m4a/mp4, wav, flac, ogg/opus, aac, mka/webm, aiff, caf,
+wma): its default (else first) audio stream to AAC-LC 128 kbit/s, 48 kHz
+stereo (downmixed before any measuring), as a one-track HLS ladder (`hls.audio`, no video; the master
+playlist is one audio-only variant) and a faststart M4A remuxed from it, the
+file's `audio` variant (`?variant=audio`, for an `<audio>` element) and its
+download `{file}-audio`. Language and label come from the stream or container
+tags. `Audio.Loudness` (LUFS, e.g. -16; default 0 = off) measures EBU R128
+loudness and true peak of the stereo mix, then applies one linear gain,
+min(target − I, −1.5 − TP) dB (`volume`): one extra decode, no dynamics
+processing, so a quiet source limited by its peak stays below the target.
+The SDK `MediaGallery` plays audio items from their `audio` variant (request
+it in the read) with the file's download. An unreadable source fails like video (`hls.error`,
+`Hooks.Failed`). A kind that lists `audio/` types must set `Audio`.
+
 After each encode the job grabs the item's **poster** frame (the `poster`
 slot; the image job encodes it) from its selection. There is no preview clip:
 the SDK previews the HLS itself inline; see HOST_INTEGRATION "Video posters
@@ -570,7 +587,7 @@ Media's River jobs (`jobs.RiverJobs()`) compose into the host client through
   Visible: the slot and inline outputs are copied back. `private/` is never
   touched; free vs members-only is only whether the host grants a token.
 - Processing: `workqueue.Queue` (the uploads' `ProcessQueue`) inserts one
-  pending image job per ref and slot, and a video job for a video kind's
+  pending image job per ref and slot, and a video job for a video or audio kind's
   manifest, into the worker's schema. An Enqueue (or `ScheduleSweep`) while an
   equal job runs queues one follow-up that starts after it, since the running
   job may have read its inputs before the change; an equal job still waiting

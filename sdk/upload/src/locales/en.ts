@@ -100,6 +100,10 @@ export const en = {
     processingImage: "Processing image…",
     image: "Image {index}",
     video: "Video {index}",
+    audio: "Audio {index}",
+    processingAudio: "Processing audio…",
+    download: "Download",
+    failedAudio: "This audio couldn't be processed.",
     failedImage: "This image couldn't be processed.",
   },
   player: {
