@@ -158,11 +158,19 @@ export class UploadQueue {
   /**
    * Commits every uploaded item, in queue order, appended to the manifest's
    * files: unattached ones are attached (no reprocessing), the rest inserted.
-   * Returns the committed file order.
+   * With head, only the uploaded items before the first one still uploading
+   * or failed (a draft committing files as they finish). Returns the
+   * committed file order.
    */
-  async commit(signal?: AbortSignal): Promise<CommitFile[]> {
+  async commit(signal?: AbortSignal, o: { head?: boolean } = {}): Promise<CommitFile[]> {
     await Promise.all(this.staging.values());
-    const ready = this.items.filter((i) => i.status === "uploaded");
+    let items = this.items;
+    if (o.head) {
+      // Only the uploaded head of the queue, so files land in the order added.
+      const end = items.findIndex((i) => i.status !== "uploaded" && i.status !== "committed");
+      if (end >= 0) items = items.slice(0, end);
+    }
+    const ready = items.filter((i) => i.status === "uploaded");
     if (ready.length === 0) return [];
     let ops: Op[] = ready.map((i) => ({ op: "insert", name: i.name, original: i.result!.name, meta: i.meta }));
     if (ready.some((i) => i.unattached)) {
