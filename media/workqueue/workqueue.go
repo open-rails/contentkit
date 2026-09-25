@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"regexp"
 	"time"
 
@@ -429,6 +430,20 @@ func (s *progressSource) EncodeProgress(ctx context.Context, ref contentref.Cont
 			p.SegmentsTotal = int((totalMS + 3999) / 4000)
 			p.SegmentsDone = min(p.SegmentsTotal, int(doneMS/4000))
 			p.Percent = min(99, 100*float64(doneMS)/float64(totalMS))
+		}
+		if live, ok := st.Files[name]; ok {
+			p.Phase, p.At, p.Speed, p.ETA, p.Stalled = live.Phase, live.At, live.Speed, live.ETA, live.Stalled
+			if totalMS > 0 {
+				activeMS := min(max(0, totalMS-doneMS), int64(live.SegmentsDone)*4000)
+				p.SegmentsDone = min(p.SegmentsTotal, int((doneMS+activeMS)/4000))
+				if doneMS+activeMS == totalMS {
+					p.SegmentsDone = p.SegmentsTotal
+				}
+				p.Percent = min(99, 100*float64(doneMS+activeMS)/float64(totalMS))
+				if live.Phase == media.PhaseEncoding && live.Speed > 0 {
+					p.ETA = math.Ceil(float64(totalMS-doneMS-activeMS) / 1000 / live.Speed)
+				}
+			}
 		}
 		if st.Files == nil {
 			st.Files = make(map[string]media.EncodeProgress)

@@ -88,6 +88,10 @@ func (c WorkerConfig) encodeChunk(ctx context.Context, job *river.Job[workqueue.
 		return err
 	}
 	defer os.RemoveAll(dir)
+	progress := newProgress(ctx, c.report(job.ID), c.Encoder.c.ProgressInterval, time.Now, nil)
+	fp := progress.file(run.File)
+	defer progress.done(run.File)
+	fp.probed(float64(ch.EndMS-ch.StartMS)/1000, dir)
 	output := make(map[string]string)
 	found := false
 	for _, r := range p.rungs {
@@ -139,7 +143,7 @@ func (c WorkerConfig) encodeChunk(ctx context.Context, job *river.Job[workqueue.
 		}
 		var err error
 		if len(ps.codecs) > 0 {
-			err = ladder(ctx, url.URL, dir, p, ps, nil)
+			err = ladder(ctx, url.URL, dir, p, ps, fp)
 		}
 		if err != nil && ctx.Err() == nil {
 			cpu := false
@@ -154,12 +158,13 @@ func (c WorkerConfig) encodeChunk(ctx context.Context, job *river.Job[workqueue.
 						return err
 					}
 				}
-				err = ladder(ctx, url.URL, dir, p, ps, nil)
+				err = ladder(ctx, url.URL, dir, p, ps, fp)
 			}
 		}
 		if err != nil {
 			return snoozeOnShutdown(ctx, err)
 		}
+		fp.set(media.PhaseUploading)
 		for _, codec := range c.Encoder.c.Codecs {
 			name := renditionName(r.n, codec)
 			path := filepath.Join(dir, name+".mp4")

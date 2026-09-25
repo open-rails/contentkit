@@ -20,7 +20,7 @@ import (
 	"github.com/open-rails/contentkit/media/workqueue"
 )
 
-func (c WorkerConfig) assemble(ctx context.Context, args workqueue.VideoAssembleArgs) error {
+func (c WorkerConfig) assemble(ctx context.Context, args workqueue.VideoAssembleArgs, jobID int64) error {
 	run, err := c.loadRun(ctx, args.RunID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return river.JobCancel(err)
@@ -71,7 +71,12 @@ func (c WorkerConfig) assemble(ctx context.Context, args workqueue.VideoAssemble
 	if k < 0 {
 		return c.cancelRun(ctx, run.ID)
 	}
+	progress := newProgress(ctx, c.report(jobID), c.Encoder.c.ProgressInterval, time.Now, nil)
+	fp := progress.file(run.File)
+	defer progress.done(run.File)
+	fp.set(media.PhaseMuxing)
 	if rungPublished(man, run, c.Encoder.c.Codecs) {
+		defer progress.item(media.PhaseImages)()
 		if err := c.Encoder.images(ctx, ms, item, man); err != nil {
 			return err
 		}
@@ -148,7 +153,8 @@ func (c WorkerConfig) assemble(ctx context.Context, args workqueue.VideoAssemble
 				if err := mux(ctx, dir, name, p, download); err != nil {
 					return err
 				}
-				blob, size, err := c.Encoder.put(ctx, item, download, "video/mp4", nil)
+				fp.set(media.PhaseUploading)
+				blob, size, err := c.Encoder.put(ctx, item, download, "video/mp4", fp)
 				if err != nil {
 					return err
 				}
@@ -158,7 +164,7 @@ func (c WorkerConfig) assemble(ctx context.Context, args workqueue.VideoAssemble
 					return err
 				}
 			}
-			blob, pl, err := c.Encoder.stream(ctx, item, dir, name, "video/mp4", nil)
+			blob, pl, err := c.Encoder.stream(ctx, item, dir, name, "video/mp4", fp)
 			if err != nil {
 				return err
 			}
@@ -183,6 +189,7 @@ func (c WorkerConfig) assemble(ctx context.Context, args workqueue.VideoAssemble
 	} else if err != nil {
 		return err
 	}
+	fp.set(media.PhasePublishing)
 	man, err = ms.Edit(ctx, run.Ref, func(m *media.Manifest) error {
 		i := m.File(run.File)
 		if i < 0 || m.Files[i].Source() != run.Source {
@@ -231,6 +238,7 @@ func (c WorkerConfig) assemble(ctx context.Context, args workqueue.VideoAssemble
 	} else if err != nil {
 		return err
 	}
+	defer progress.item(media.PhaseImages)()
 	if err := c.Encoder.images(ctx, ms, item, man); err != nil {
 		return err
 	}
