@@ -260,9 +260,13 @@ its `media.Registry`, `image.SpecChooser` and `media.Hooks` (`Failed`,
 ```go
 cfg, _ := worker.FromEnv(ctx) // DATABASE_URL, MEDIA_S3_*, MEDIA_WORKER_SCHEMA, MEDIA_HOST_RIVER_SCHEMA, MEDIA_WORKER_* (see worker.FromEnv)
 cfg.Kinds, cfg.Specs, cfg.Hooks = kinds, specs, hooks // the host's media config package
-w, _ := worker.New(ctx, cfg)
+w, _ := worker.New(ctx, cfg) // no DDL: the host's migrate step runs workqueue.Migrate(ctx, pool, schema)
 _ = w.Run(ctx) // until SIGTERM; running jobs get MEDIA_WORKER_SHUTDOWN_GRACE
 ```
+
+`worker.New` needs no DDL rights, so the worker runs as the host's
+unprivileged app role; the host applies `workqueue.Migrate` with its other
+migrations.
 
 `cmd/media-worker` (image `ghcr.io/open-rails/contentkit-media-worker`) is
 the stock build for hosts whose kinds are plain data: it reads them from
@@ -270,7 +274,7 @@ the stock build for hosts whose kinds are plain data: it reads them from
 item's poster publish, and folder sweeps after its edits,
 back to the host's River schema (`MEDIA_HOST_RIVER_SCHEMA`), where
 `jobs.RiverJobs()` runs them with the host's `Resolver`. It never exits for a
-missing dependency: `worker.New` is retried while Postgres is down, `Run`
+missing dependency: it migrates its schema and builds, retried while Postgres is down; `Run`
 takes no jobs until the bucket answers, and `MEDIA_METRICS_ADDR` serves
 `/livez`, `/readyz` (built), `/statusz` and `app_dependency_up` with /metrics.
 

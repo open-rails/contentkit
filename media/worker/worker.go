@@ -134,12 +134,11 @@ type Worker struct {
 	singleDone    <-chan struct{}
 }
 
-// New migrates Schema and builds the River client with the image and video workers.
+// New builds the River client with the image and video workers. It needs no
+// DDL rights: the host applies workqueue.Migrate(Schema) in its migration
+// step, so the worker can run as the host's unprivileged app role.
 func New(ctx context.Context, c Config) (*Worker, error) {
 	if err := c.defaults(); err != nil {
-		return nil, err
-	}
-	if err := workqueue.Migrate(ctx, c.Pool, c.Schema); err != nil {
 		return nil, err
 	}
 	// One-shot workers use pod-private scratch, which Kubernetes removes with

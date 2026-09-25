@@ -288,6 +288,9 @@ func TestOneShotWorkerStopsAfterOneJob(t *testing.T) {
 			env := s3test.Open(t)
 			pool := pgtest.Pool(t, nil)
 			schema := workerSchema(t, pool)
+			if err := workqueue.Migrate(context.Background(), pool, schema); err != nil {
+				t.Fatal(err)
+			}
 			scratch := t.TempDir()
 			active := filepath.Join(scratch, "ck-video-active")
 			if err := os.Mkdir(active, 0o700); err != nil {
@@ -768,5 +771,47 @@ func TestHostsShareADatabase(t *testing.T) {
 		if _, err := workqueue.New(a.pool, a.kinds, bad); err == nil {
 			t.Fatalf("schema %q accepted", bad)
 		}
+	}
+}
+
+// A host runs its media worker as its unprivileged app role; the worker
+// schema is migrated by the host's migration step, so worker.New must not
+// need DDL rights (CREATE on public for migration tracking).
+func TestWorkerRunsAsAnUnprivilegedRole(t *testing.T) {
+	env := s3test.Open(t)
+	ctx := context.Background()
+	admin := pgtest.Pool(t, nil)
+	host := pgtest.EmptySchema(t, ctx, admin)
+	if err := riverhelpers.ApplyMigrations(ctx, admin, host); err != nil {
+		t.Fatal(err)
+	}
+	schema := workerSchema(t, admin)
+	if err := workqueue.Migrate(ctx, admin, schema); err != nil {
+		t.Fatal(err)
+	}
+	role := "ck_app_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	for _, q := range []string{
+		"CREATE ROLE " + role + " LOGIN PASSWORD 'app'",
+		"GRANT USAGE ON SCHEMA " + schema + ", " + host + " TO " + role,
+		"GRANT ALL ON ALL TABLES IN SCHEMA " + schema + ", " + host + " TO " + role,
+		"GRANT ALL ON ALL SEQUENCES IN SCHEMA " + schema + ", " + host + " TO " + role,
+		"GRANT SELECT ON public.migrations TO " + role,
+	} {
+		if _, err := admin.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec(context.Background(), "DROP OWNED BY "+role)
+		_, _ = admin.Exec(context.Background(), "DROP ROLE "+role)
+	})
+	app := pgtest.Pool(t, func(c *pgxpool.Config) { c.ConnConfig.User, c.ConnConfig.Password = role, "app" })
+	kinds, err := media.NewRegistry(media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png"}, MaxBytes: 1 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := worker.New(ctx, worker.Config{Pool: app, Schema: schema, Store: env.Store, Kinds: kinds, HostSchema: host,
+		TempDir: t.TempDir(), Threads: 1}); err != nil {
+		t.Fatalf("worker as the app role: %v", err)
 	}
 }

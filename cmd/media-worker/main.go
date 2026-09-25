@@ -32,6 +32,7 @@ import (
 
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/worker"
+	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 func main() {
@@ -89,7 +90,9 @@ func run(log *slog.Logger) error {
 	var w *worker.Worker
 	var buildErr error
 	err = sup.Retry(ctx, "postgres", func(ctx context.Context) error {
-		w, buildErr = worker.New(ctx, cfg)
+		if buildErr = workqueue.Migrate(ctx, cfg.Pool, cfg.Schema); buildErr == nil {
+			w, buildErr = worker.New(ctx, cfg)
+		}
 		if deps.PostgresUnavailable(buildErr) {
 			return buildErr
 		}
