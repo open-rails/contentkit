@@ -45,7 +45,7 @@ func TestPresignAndCommitNeverReuseAnOriginalTheSweepMayTake(t *testing.T) {
 		t.Fatal(err)
 	}
 	alice := access.Actor{ID: "alice", Kind: "user"}
-	ref := contentref.New(env.Tenant, "post", "1")
+	ref := contentref.New(env.Tenant, "post", cid(1))
 	item, _ := kinds.Item(ref)
 
 	body := []byte("an earlier, abandoned upload")
@@ -170,7 +170,7 @@ func TestSweepSparesAnOriginalRefreshedDuringTheSweep(t *testing.T) {
 		t.Fatal(err)
 	}
 	alice := access.Actor{ID: "alice", Kind: "user"}
-	ref := contentref.New(env.Tenant, "post", "1")
+	ref := contentref.New(env.Tenant, "post", cid(1))
 	item, _ := kinds.Item(ref)
 	put := func(body string) string {
 		t.Helper()

@@ -12,21 +12,21 @@ func TestHostOrderPreservesPagedDirectory(t *testing.T) {
 	pool, schema := testSchema(t, ctx)
 	store := newStore(t, pool, schema, "first", nil)
 	_, err := store.CreateNodes(ctx, []NodeInput{
-		{TaxonomyID: "a", Kind: "artist", Slug: "a"},
-		{TaxonomyID: "b", Kind: "artist", Slug: "b"},
-		{TaxonomyID: "c", Kind: "artist", Slug: "c"},
+		{TaxonomyID: tid("a"), Kind: "artist", Slug: "a"},
+		{TaxonomyID: tid("b"), Kind: "artist", Slug: "b"},
+		{TaxonomyID: tid("c"), Kind: "artist", Slug: "c"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = pool.Exec(ctx, fmt.Sprintf(`CREATE TABLE %s.host_order(tenant_id text,taxonomy_id text,language text,sort_key text);
-INSERT INTO %[1]s.host_order VALUES('first','a','ja','かな'),('first','b','ja','あい'),('first','c','ja','あい'),('other','a','ja','ああ');
-UPDATE %[1]s.content_nodes SET created_at=CASE taxonomy_id WHEN 'a' THEN '2020-01-03'::timestamptz WHEN 'b' THEN '2020-01-01'::timestamptz ELSE '2020-01-02'::timestamptz END WHERE tenant_id='first'`, schema))
+	_, err = pool.Exec(ctx, withIDs(fmt.Sprintf(`CREATE TABLE %s.host_order(tenant_id text,taxonomy_id text,language text,sort_key text);
+INSERT INTO %[1]s.host_order VALUES('first','{{a}}','ja','かな'),('first','{{b}}','ja','あい'),('first','{{c}}','ja','あい'),('other','{{a}}','ja','ああ');
+UPDATE %[1]s.content_nodes SET created_at=CASE taxonomy_id WHEN '{{a}}' THEN '2020-01-03'::timestamptz WHEN '{{b}}' THEN '2020-01-01'::timestamptz ELSE '2020-01-02'::timestamptz END WHERE tenant_id='first'`, schema)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	opts := ListOptions{Kind: "artist", Limit: 1, OrderSQL: fmt.Sprintf(`(SELECT m.sort_key FROM %s.host_order m WHERE m.tenant_id=n.tenant_id AND m.taxonomy_id=n.taxonomy_id AND m.language=@host_language) ASC NULLS LAST`, schema), FilterArgs: map[string]any{"host_language": "ja"}}
-	for offset, want := range []TaxonomyID{"b", "c", "a"} {
+	for offset, want := range []TaxonomyID{tid("b"), tid("c"), tid("a")} {
 		opts.Offset = offset
 		page, err := store.ListNodes(ctx, opts)
 		if err != nil || page.Total != 3 || len(page.Nodes) != 1 || page.Nodes[0].TaxonomyID != want || page.NextCursor != "" {
@@ -42,11 +42,11 @@ UPDATE %[1]s.content_nodes SET created_at=CASE taxonomy_id WHEN 'a' THEN '2020-0
 	opts.Offset = 0
 	opts.FilterArgs["host_language"] = "ja' OR true --"
 	page, err = store.ListNodes(ctx, opts)
-	if err != nil || len(page.Nodes) != 1 || page.Nodes[0].TaxonomyID != "a" {
+	if err != nil || len(page.Nodes) != 1 || page.Nodes[0].TaxonomyID != tid("a") {
 		t.Fatalf("bound ordering value: %+v %v", page, err)
 	}
 	page, err = store.ListNodes(ctx, ListOptions{Kind: "artist", Sort: SortOldest, Limit: 3})
-	if err != nil || len(page.Nodes) != 3 || page.Nodes[0].TaxonomyID != "b" || page.Nodes[1].TaxonomyID != "c" || page.Nodes[2].TaxonomyID != "a" {
+	if err != nil || len(page.Nodes) != 3 || page.Nodes[0].TaxonomyID != tid("b") || page.Nodes[1].TaxonomyID != tid("c") || page.Nodes[2].TaxonomyID != tid("a") {
 		t.Fatalf("oldest: %+v %v", page, err)
 	}
 }

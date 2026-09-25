@@ -69,7 +69,7 @@ func newIngestEnv(t *testing.T) *ingestEnv {
 		t.Fatal(err)
 	}
 	return &ingestEnv{Env: env, store: store, uploads: u, manifests: manifests, queue: q,
-		ref: contentref.NewVersion(env.Tenant, "video", "88", "v1")}
+		ref: contentref.NewVersion(env.Tenant, "video", cid(88), "v1")}
 }
 
 // stream hides any Seeker/ReaderAt: ingest reads a pipe-like body.

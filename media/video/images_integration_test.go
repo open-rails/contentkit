@@ -34,6 +34,9 @@ const base = "https://media.example"
 
 var quadrant = videotest.Quadrant
 
+// cid is the n-th test content id, a canonical UUIDv7.
+func cid(n int) string { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) }
+
 func (e *env) get(t *testing.T, key string) []byte {
 	t.Helper()
 	rc, _, err := e.store.Get(context.Background(), key, media.GetOptions{})
@@ -415,10 +418,10 @@ func TestVideoImageRoutesAndFrameEndpoint(t *testing.T) {
 		b, _ := io.ReadAll(resp.Body)
 		return resp.StatusCode, b, resp.Header
 	}
-	ref := media.RefBody{Kind: "video", ID: "88", Version: "v1"}
+	ref := media.RefBody{Kind: "video", ID: cid(88), Version: "v1"}
 	frame := func(actor string, q url.Values) (int, []byte, http.Header) {
 		q.Set("kind", "video")
-		q.Set("id", "88")
+		q.Set("id", cid(88))
 		q.Set("version", "v1")
 		return call(actor, "GET", "/frame?"+q.Encode(), nil)
 	}
@@ -489,7 +492,7 @@ func TestVideoImageRoutesAndFrameEndpoint(t *testing.T) {
 	e.encode(t)
 	code, b, _ = call("admin", "POST", "/video-images", media.VideoImagesBody{Ref: ref})
 	if code != http.StatusOK || json.Unmarshal(b, &v) != nil || v.HoverPreview.Pending || len(v.HoverPreview.MP4) != 2 || v.Video == nil ||
-		!strings.HasPrefix(v.HoverPreview.MP4[0].URL, base+"/"+e.Tenant+"/video/88/editor/hover_preview_320.mp4?t=") {
+		!strings.HasPrefix(v.HoverPreview.MP4[0].URL, base+"/"+e.Tenant+"/video/"+cid(88)+"/editor/hover_preview_320.mp4?t=") {
 		t.Fatalf("POST /video-images: %d %s", code, b)
 	}
 	if img := e.frame(t, 640, 360); quadrant(img, 0) != "blue" {
@@ -503,7 +506,7 @@ func TestVideoImageRoutesAndFrameEndpoint(t *testing.T) {
 	defer pub.Close()
 	viewerImages := func() (int, []byte, http.Header) {
 		t.Helper()
-		resp, err := http.Get(pub.URL + "/video/88@v1/video-images")
+		resp, err := http.Get(pub.URL + "/video/" + cid(88) + "@v1/video-images")
 		if err != nil {
 			t.Fatal(err)
 		}

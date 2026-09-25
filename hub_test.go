@@ -13,7 +13,7 @@ func TestHubSignalPlaneDisabled(t *testing.T) {
 	h := newTestHub(t, nil, "", nil)
 	ctx := context.Background()
 	sub := signal.Subject{UserID: "u1"}
-	g1 := h.Content("gallery", "g1")
+	g1 := h.Content("gallery", cid(1))
 
 	if err := h.RecordSignals(ctx, []signal.Signal{{}}); !errors.Is(err, ErrSignalPlaneDisabled) {
 		t.Fatalf("RecordSignals: %v", err)
@@ -59,7 +59,7 @@ func TestHubRequiresTenant(t *testing.T) {
 		t.Fatalf("NewEmbedded without a tenant: %v", err)
 	}
 	h := newTestHub(t, nil, "", nil)
-	if h.Tenant() != testTenant || h.Content("gallery", "1").TenantID != testTenant {
+	if h.Tenant() != testTenant || h.Content("gallery", cid(1)).TenantID != testTenant {
 		t.Fatalf("tenant: %q", h.Tenant())
 	}
 }

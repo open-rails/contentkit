@@ -79,8 +79,8 @@ func TestRuntimeErasureIncludesContentPlaneIntegration(t *testing.T) {
 				status int
 			}{
 				{"/polls/" + poll.ID + "/answer", map[string]string{"text": "unpublished answer"}, http.StatusOK},
-				{"/gallery/42:en/comments", map[string]string{"body": "unpublished held body"}, http.StatusAccepted},
-				{"/gallery/42:en/like", nil, http.StatusOK},
+				{galleryRoute(42, ":en/comments"), map[string]string{"body": "unpublished held body"}, http.StatusAccepted},
+				{galleryRoute(42, ":en/like"), nil, http.StatusOK},
 			} {
 				res := do(t, rt.Handler(), actor, "POST", action.path, action.body)
 				if res.Code != action.status {

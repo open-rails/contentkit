@@ -291,7 +291,7 @@ func TestCancelJobs(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := e.ref
-	other.ContentID = "99"
+	other.ContentID = cid(99)
 	for _, ref := range []contentref.ContentRef{e.ref, e.ref, other} {
 		if err := enq.Enqueue(ctx, media.ProcessJob{Ref: ref}); err != nil {
 			t.Fatal(err)

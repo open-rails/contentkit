@@ -9,7 +9,7 @@ import (
 
 func TestIntegrationVersionedBuilderIdentityAndSinkRetry(t *testing.T) {
 	ctx, pool, schema := workerFixture(t)
-	ref := contentref.NewVersion(tenant, "gallery", "1", "edition-ja")
+	ref := contentref.NewVersion(tenant, "gallery", cid(1), "edition-ja")
 	key := search.DocumentKey{ContentRef: ref, Language: "en"}
 	if err := search.MarkDirty(ctx, pool, schema, []search.DirtyMark{{DocumentKey: key}}); err != nil {
 		t.Fatal(err)

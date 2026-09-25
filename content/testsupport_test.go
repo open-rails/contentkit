@@ -2,6 +2,7 @@ package content
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -54,6 +55,9 @@ func newTestRuntime(t *testing.T, opts Options) (*Runtime, *pgxpool.Pool) {
 	}
 	return rt, pool
 }
+
+// cid is the nth deterministic content id: a canonical UUIDv7, ordered by n.
+func cid(n int) string { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) }
 
 // ref builds a work reference of the test tenant.
 func ref(kind, id string) contentref.ContentRef { return contentref.New(testTenant, kind, id) }

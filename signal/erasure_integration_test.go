@@ -34,9 +34,10 @@ func TestIntegrationEraseSubjectsCompletely(t *testing.T) {
 	ctx := context.Background()
 	// Include an earlier distinct session alongside the current sessions.
 	conn := env.Fresh(t, testDB)
+	c1, c2, c3, c9 := cid(1), cid(2), cid(3), cid(9)
 	if err := conn.Exec(ctx, `INSERT INTO signals (tenant, content_kind, content_id, subject_kind, subject, signal_type, event_id, occurred_at, progress, progress_max) VALUES
-('doujins', 'gallery', '1', 'user', 'gone', 'view', 'legacy-gone', '2026-04-01 10:00:00', 1, 2),
-('doujins', 'gallery', '1', 'user', 'kept', 'view', 'legacy-kept', '2026-04-01 10:00:00', 1, 2)`); err != nil {
+('doujins', 'gallery', '`+c1+`', 'user', 'gone', 'view', 'legacy-gone', '2026-04-01 10:00:00', 1, 2),
+('doujins', 'gallery', '`+c1+`', 'user', 'kept', 'view', 'legacy-kept', '2026-04-01 10:00:00', 1, 2)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := CheckSchema(ctx, conn, testDB); err != nil {
@@ -53,14 +54,14 @@ func TestIntegrationEraseSubjectsCompletely(t *testing.T) {
 			EventID: sub.Kind() + sub.Key() + id, OccurredAt: at.AddDate(0, 0, day), Progress: 2, ProgressMax: 2, Score: 50, Completed: true}
 	}
 	for _, tenant := range []string{"doujins", "hentai0"} {
-		batch := []Signal{view(tenant, gone, "1", 0), view(tenant, gone, "2", 1), view(tenant, kept, "1", 0), view(tenant, kept, "2", 0), view(tenant, anonGone, "2", 0)}
-		like := view(tenant, gone, "1", 0)
+		batch := []Signal{view(tenant, gone, c1, 0), view(tenant, gone, c2, 1), view(tenant, kept, c1, 0), view(tenant, kept, c2, 0), view(tenant, anonGone, c2, 0)}
+		like := view(tenant, gone, c1, 0)
 		like.Type, like.EventID, like.Value = "reaction", "pref", 1
 		batch = append(batch, like)
 		if err := st.RecordSignals(ctx, tenant, batch); err != nil {
 			t.Fatal(err)
 		}
-		shown := []Placement{{ContentRef: gallery(tenant, "1"), Position: 1}}
+		shown := []Placement{{ContentRef: gallery(tenant, c1), Position: 1}}
 		if err := st.RecordExposures(ctx, tenant, []Exposure{
 			{RenderID: tenant + "-gone", Stage: StageServed, Subject: gone, Shown: shown, OccurredAt: at},
 			{RenderID: tenant + "-kept", Stage: StageServed, Subject: kept, Shown: shown, OccurredAt: at},
@@ -75,8 +76,8 @@ func TestIntegrationEraseSubjectsCompletely(t *testing.T) {
 	if _, err := st.RepairProjections(ctx, "doujins", RepairOptions{Rebuild: true}); err != nil {
 		t.Fatal(err)
 	}
-	before := metricsByID(t, st, "doujins", []string{"1", "2"}, AllTime())
-	if before["1"].Viewers != 2 || before["2"].Viewers != 3 || before["1"].PositiveSubjects != 1 {
+	before := metricsByID(t, st, "doujins", []string{c1, c2}, AllTime())
+	if before[c1].Viewers != 2 || before[c2].Viewers != 3 || before[c1].PositiveSubjects != 1 {
 		t.Fatalf("precondition metrics: %+v", before)
 	}
 
@@ -117,9 +118,9 @@ func TestIntegrationEraseSubjectsCompletely(t *testing.T) {
 			t.Fatalf("pairs involving erased contributions must be removed until refreshed: %d", n)
 		}
 	}
-	after := metricsByID(t, st, "doujins", []string{"1", "2"}, AllTime())
+	after := metricsByID(t, st, "doujins", []string{c1, c2}, AllTime())
 	// kept retains both distinct sessions on gallery 1.
-	if after["1"].Viewers != 1 || after["2"].Viewers != 2 || after["1"].PositiveSubjects != 0 || after["1"].Views != 2 {
+	if after[c1].Viewers != 1 || after[c2].Viewers != 2 || after[c1].PositiveSubjects != 0 || after[c1].Views != 2 {
 		t.Fatalf("aggregates must exclude exactly the erased subject: %+v", after)
 	}
 	if n := countWhere(t, conn, "exposures", "tenant = 'doujins'"); n != 2 {
@@ -128,20 +129,20 @@ func TestIntegrationEraseSubjectsCompletely(t *testing.T) {
 	if err := st.RefreshCoEngagement(ctx, "doujins", RefreshCoEngagementOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	co, err := st.CoEngaged(ctx, "doujins", gallery("doujins", "1"), CoEngagedOptions{})
+	co, err := st.CoEngaged(ctx, "doujins", gallery("doujins", c1), CoEngagedOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(co) != 1 || co[0].ContentID != "2" || co[0].Strength != 1 {
+	if len(co) != 1 || co[0].ContentID != c2 || co[0].Strength != 1 {
 		t.Fatalf("rebuilt pairs must count only kept: %+v", co)
 	}
 
 	// Ingestion fence: later writes and impressions for the subject vanish;
 	// repair never resurrects.
-	if err := st.RecordSignals(ctx, "doujins", []Signal{view("doujins", gone, "3", 2), view("doujins", kept, "3", 2)}); err != nil {
+	if err := st.RecordSignals(ctx, "doujins", []Signal{view("doujins", gone, c3, 2), view("doujins", kept, c3, 2)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RecordExposures(ctx, "doujins", []Exposure{{RenderID: "late", Stage: StageServed, Subject: gone, Shown: []Placement{{ContentRef: gallery("doujins", "3"), Position: 1}}, OccurredAt: at}}); err != nil {
+	if err := st.RecordExposures(ctx, "doujins", []Exposure{{RenderID: "late", Stage: StageServed, Subject: gone, Shown: []Placement{{ContentRef: gallery("doujins", c3), Position: 1}}, OccurredAt: at}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.RepairProjections(ctx, "doujins", RepairOptions{Rebuild: true}); err != nil {
@@ -152,18 +153,18 @@ func TestIntegrationEraseSubjectsCompletely(t *testing.T) {
 			t.Fatalf("fence leaked into %s: %d", table, n)
 		}
 	}
-	if m3 := metricsByID(t, st, "doujins", []string{"3"}, AllTime()); m3["3"].Viewers != 1 {
+	if m3 := metricsByID(t, st, "doujins", []string{c3}, AllTime()); m3[c3].Viewers != 1 {
 		t.Fatalf("kept subject's write in the same batch must land: %+v", m3)
 	}
 
 	// Residue: a writer that passed the fence before it existed, or a restored
 	// backup, re-introduces rows; enforcement removes them.
 	if err := conn.Exec(ctx, `INSERT INTO signals (tenant, content_kind, content_id, subject_kind, subject, signal_type, event_id, occurred_at)
-VALUES ('doujins', 'gallery', '9', 'user', 'gone', 'view', 'residue', '2026-05-09 00:00:00')`); err != nil {
+VALUES ('doujins', 'gallery', '`+c9+`', 'user', 'gone', 'view', 'residue', '2026-05-09 00:00:00')`); err != nil {
 		t.Fatal(err)
 	}
 	if err := conn.Exec(ctx, `INSERT INTO exposures (tenant, render_id, stage, surface, subject_kind, subject, content_kinds, content_ids, positions, occurred_at)
-VALUES ('doujins', 'residue', 'served', 'search', 'user', 'gone', ['gallery'], ['9'], [1], '2026-05-09 00:00:00')`); err != nil {
+VALUES ('doujins', 'residue', 'served', 'search', 'user', 'gone', ['gallery'], ['`+c9+`'], [1], '2026-05-09 00:00:00')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.RepairProjections(ctx, "doujins", RepairOptions{Rebuild: true}); err != nil {
@@ -200,15 +201,16 @@ func TestIntegrationRekeySubjectPreservesHistoryAndErasure(t *testing.T) {
 	old := Subject{AnonKey: "anon_old"}
 	next := Subject{AnonKey: "anon_v1_hashed"}
 	at := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
+	c1, c2, c3 := cid(1), cid(2), cid(3)
 	view := func(subject Subject, id string) Signal {
 		return Signal{ContentRef: gallery(tenant, id), Subject: subject, Type: TypeView,
 			EventID: "view-" + id, OccurredAt: at, Progress: 1, ProgressMax: 2}
 	}
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(old, "1"), view(next, "2")}); err != nil {
+	if err := st.RecordSignals(ctx, tenant, []Signal{view(old, c1), view(next, c2)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.RecordExposures(ctx, tenant, []Exposure{{RenderID: "old-render", Stage: StageRendered,
-		Subject: old, Surface: SurfaceSearch, Shown: []Placement{{ContentRef: gallery(tenant, "1"), Position: 1}}, OccurredAt: at}}); err != nil {
+		Subject: old, Surface: SurfaceSearch, Shown: []Placement{{ContentRef: gallery(tenant, c1), Position: 1}}, OccurredAt: at}}); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
@@ -228,7 +230,7 @@ func TestIntegrationRekeySubjectPreservesHistoryAndErasure(t *testing.T) {
 	if n := countWhere(t, conn, "exposures", "tenant = ? AND subject_kind = 'anon' AND subject = ?", tenant, next.Key()); n != 1 {
 		t.Fatalf("rekeyed exposures: %d", n)
 	}
-	if err := st.RecordSignals(ctx, tenant, []Signal{view(old, "3")}); err != nil {
+	if err := st.RecordSignals(ctx, tenant, []Signal{view(old, c3)}); err != nil {
 		t.Fatal(err)
 	}
 	if n := countWhere(t, conn, "signals", "tenant = ? AND subject_kind = 'anon' AND subject = ?", tenant, old.Key()); n != 0 {

@@ -84,9 +84,14 @@ func (m *Manifests) Get(ctx context.Context, ref contentref.ContentRef) (*Manife
 // Edit applies fn to the current manifest (empty if none) and writes it with
 // If-Match on the ETag it read (If-None-Match for a new one), re-reading and
 // re-applying fn on conflict. fn must be safe to run more than once; an error
-// from fn aborts the edit. An unchanged manifest is not written.
+// from fn aborts the edit. An unchanged manifest is not written. A folder's
+// first manifest is refused (ErrFolderNotEmpty) over a previous item's blobs.
 func (m *Manifests) Edit(ctx context.Context, ref contentref.ContentRef, fn func(*Manifest) error) (*Manifest, error) {
-	key, err := m.key(ref)
+	item, err := m.kinds.Item(ref)
+	if err != nil {
+		return nil, err
+	}
+	key, err := item.ManifestKey()
 	if err != nil {
 		return nil, err
 	}
@@ -111,6 +116,11 @@ func (m *Manifests) Edit(ctx context.Context, ref contentref.ContentRef, fn func
 		out, err := json.Marshal(man)
 		if err != nil || (body != nil && bytes.Equal(before, out)) {
 			return nil, err
+		}
+		if body == nil {
+			if err := m.requireFresh(ctx, item); err != nil {
+				return nil, err
+			}
 		}
 		return out, nil
 	})

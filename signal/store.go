@@ -83,6 +83,9 @@ func keyFilter(keys []ProjectionKey) (string, []any) {
 // incremented. Signals of erased subjects (EraseSubjects) are dropped. If the
 // process stops between the insert and the projections, the events are durable
 // and RepairProjections restores the projections.
+// insertChunk bounds the rows of one signals INSERT.
+const insertChunk = 200
+
 func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Signal) error {
 	if strings.TrimSpace(tenant) == "" {
 		return fmt.Errorf("signal: tenant is required")
@@ -138,15 +141,22 @@ func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Sig
 	if len(rows) == 0 {
 		return nil
 	}
-	insert := fmt.Sprintf(`INSERT INTO %s.signals
+	// The driver inlines arguments, so chunks keep each statement well under
+	// ClickHouse's max_query_size (256 KiB). Events are idempotent by
+	// event_id, so a retry after a partial insert converges.
+	const perRow = 18
+	for start := 0; start < len(rows); start += insertChunk {
+		end := min(start+insertChunk, len(rows))
+		insert := fmt.Sprintf(`INSERT INTO %s.signals
 (tenant, content_kind, content_id, content_version_id, subject_kind, subject, signal_type, event_id, revision, occurred_at,
  duration_s, progress, progress_max, value, score, completed, resume, payload)
 SELECT tenant, content_kind, content_id, content_version_id, subject_kind, subject, signal_type, event_id, revision, occurred_at,
        duration_s, progress, progress_max, value, score, completed, resume, payload
 FROM (%s) AS incoming
-WHERE %s`, st.db, strings.Join(rows, " UNION ALL "), st.notErased())
-	if err := st.conn.Exec(ctx, insert, args...); err != nil {
-		return fmt.Errorf("signal: insert signals: %w", err)
+WHERE %s`, st.db, strings.Join(rows[start:end], " UNION ALL "), st.notErased())
+		if err := st.conn.Exec(ctx, insert, args[start*perRow:end*perRow]...); err != nil {
+			return fmt.Errorf("signal: insert signals: %w", err)
+		}
 	}
 	keys := make([]ProjectionKey, 0, len(touched))
 	for k := range touched {

@@ -12,7 +12,7 @@ func TestReviewC4StaleReviewCannotPublishEditedText(t *testing.T) {
 	rt := moderatedRuntime(t, &fakeModerator{})
 	ctx := context.Background()
 	author := access.Actor{ID: "author"}
-	held := mustComment(t, rt, author, "gallery", "1", createInput{Body: "iffy original"})
+	held := mustComment(t, rt, author, "gallery", cid(1), createInput{Body: "iffy original"})
 	page, err := rt.ListHeld(ctx, KindComment, "", 10)
 	if err != nil {
 		t.Fatal(err)
@@ -30,7 +30,7 @@ func TestReviewC4StaleReviewCannotPublishEditedText(t *testing.T) {
 func TestReviewC4HeldEditsReturnAccepted(t *testing.T) {
 	rt := moderatedRuntime(t, &fakeModerator{})
 	author := access.Actor{ID: "author"}
-	cm := mustComment(t, rt, author, "gallery", "1", createInput{Body: "fine"})
+	cm := mustComment(t, rt, author, "gallery", cid(1), createInput{Body: "fine"})
 	res := doJSON(t, rt.Handler(), author, "PATCH", "/comments/"+cm.ID, map[string]string{"body": "iffy edit"})
 	if res.Code != http.StatusAccepted {
 		t.Fatalf("held edit status=%d body=%s", res.Code, res.Body.String())
@@ -41,7 +41,7 @@ func TestReviewC4DeletedHeldCommentLeavesReviewQueue(t *testing.T) {
 	rt := moderatedRuntime(t, &fakeModerator{})
 	actor := access.Actor{ID: "author"}
 	ctx := context.Background()
-	cm := mustComment(t, rt, actor, "gallery", "1", createInput{Body: "iffy"})
+	cm := mustComment(t, rt, actor, "gallery", cid(1), createInput{Body: "iffy"})
 	if err := rt.comments.softDelete(ctx, actor, cm.ID); err != nil {
 		t.Fatal(err)
 	}

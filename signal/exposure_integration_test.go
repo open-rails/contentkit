@@ -18,10 +18,10 @@ func TestIntegrationExposureAttribution(t *testing.T) {
 	user := Subject{UserID: "u1"}
 	at := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 	g := func(id string, pos uint32) Placement {
-		return Placement{ContentRef: gallery(tenant, id), Position: pos}
+		return Placement{ContentRef: gallery(tenant, lid(id)), Position: pos}
 	}
 	click := func(renderID, id string, pos uint32, eventID string, when time.Time) Signal {
-		return Signal{ContentRef: gallery(tenant, id), Subject: user, Type: "click",
+		return Signal{ContentRef: gallery(tenant, lid(id)), Subject: user, Type: "click",
 			EventID: eventID, OccurredAt: when}.WithAttribution(Attribution{RenderID: renderID, Surface: SurfaceSearch, Position: pos})
 	}
 	// Keep superseded rows physically present.
@@ -48,9 +48,9 @@ func TestIntegrationExposureAttribution(t *testing.T) {
 			Shown: []Placement{g("b", 1), g("a", 2)}},
 		// r2: page 2 of the same query, absolute positions; f is a version document.
 		{RenderID: "r2", Stage: StageServed, QueryID: "q1", Surface: SurfaceSearch, Ranker: "baseline", Language: "en", Subject: user, OccurredAt: at.Add(time.Minute),
-			Shown: []Placement{g("e", 11), {ContentRef: gallery(tenant, "f").WithVersion("v1"), Position: 12}}},
+			Shown: []Placement{g("e", 11), {ContentRef: gallery(tenant, lid("f")).WithVersion("v1"), Position: 12}}},
 		{RenderID: "r2", Stage: StageRendered, QueryID: "q1", Surface: SurfaceSearch, Ranker: "baseline", Language: "en", Subject: user, OccurredAt: at.Add(time.Minute),
-			Shown: []Placement{g("e", 11), {ContentRef: gallery(tenant, "f").WithVersion("v1"), Position: 12}}},
+			Shown: []Placement{g("e", 11), {ContentRef: gallery(tenant, lid("f")).WithVersion("v1"), Position: 12}}},
 		// r3: prefetched/cancelled: served, never rendered.
 		{RenderID: "r3", Stage: StageServed, QueryID: "q2", Surface: SurfaceSearch, Subject: user, OccurredAt: at.Add(2 * time.Minute),
 			Shown: []Placement{g("x", 1)}},
@@ -97,7 +97,7 @@ func TestIntegrationExposureAttribution(t *testing.T) {
 	ids := func(cs []AttributedClick) []string {
 		var out []string
 		for _, c := range cs {
-			out = append(out, c.ContentID+":"+c.EventID)
+			out = append(out, lname(c.ContentID)+":"+c.EventID)
 		}
 		return out
 	}
@@ -210,8 +210,8 @@ func TestIntegrationForgetExposuresBeforeKeepsLaterResults(t *testing.T) {
 	subject := Subject{UserID: "u1"}
 	before := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 	for _, exposure := range []Exposure{
-		{RenderID: "old", Stage: StageRendered, Surface: SurfaceSearch, Subject: subject, OccurredAt: before.Add(-time.Minute), Shown: []Placement{{ContentRef: gallery("t", "a"), Position: 1}}},
-		{RenderID: "new", Stage: StageRendered, Surface: SurfaceSearch, Subject: subject, OccurredAt: before.Add(time.Minute), Shown: []Placement{{ContentRef: gallery("t", "b"), Position: 1}}},
+		{RenderID: "old", Stage: StageRendered, Surface: SurfaceSearch, Subject: subject, OccurredAt: before.Add(-time.Minute), Shown: []Placement{{ContentRef: gallery("t", lid("a")), Position: 1}}},
+		{RenderID: "new", Stage: StageRendered, Surface: SurfaceSearch, Subject: subject, OccurredAt: before.Add(time.Minute), Shown: []Placement{{ContentRef: gallery("t", lid("b")), Position: 1}}},
 	} {
 		if err := st.RecordExposures(ctx, "t", []Exposure{exposure}); err != nil {
 			t.Fatal(err)

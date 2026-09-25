@@ -3,7 +3,7 @@ import { FakeServer, bytes } from "../test/fake.js";
 import { UploadClient } from "./client.js";
 import { UploadQueue, type QueueSnapshot } from "./queue.js";
 
-const ref = { kind: "gallery", id: "1", version: "en" };
+const ref = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000001", version: "en" };
 
 function setup() {
   const s = new FakeServer();

@@ -104,7 +104,7 @@ func benchSample(t *testing.T, src string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := contentref.NewVersion(s3.Tenant, "video", "1", "v1")
+	ref := contentref.NewVersion(s3.Tenant, "video", cid(1), "v1")
 	item, _ := kinds.Item(ref)
 	ctx := context.Background()
 

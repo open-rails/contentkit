@@ -115,83 +115,83 @@ CREATE TABLE host.versions(id text PRIMARY KEY, item_id text NOT NULL REFERENCES
 	f.add(
 		// One work translated three times; the English original is the default
 		// but sorts after its colored sibling.
-		version{"g1-en-a", "g1", "en", true, false, colored, "Not Guilty", nil, []string{"Drama", "Colored"}},
-		version{"g1-en-b", "g1", "en", true, true, nil, "Not Guilty", nil, []string{"Drama"}},
-		version{"g1-es-1", "g1", "es", true, true, nil, "No Culpable", []string{"Not Guilty"}, []string{"Drama"}},
-		version{"g1-es-2", "g1", "es", true, false, colored, "No Culpable", []string{"Not Guilty"}, []string{"Drama", "Colored"}},
-		version{"g1-ja-1", "g1", "ja", true, true, nil, "無罪", []string{"Not Guilty"}, nil},
+		version{"g1-en-a", cid(1), "en", true, false, colored, "Not Guilty", nil, []string{"Drama", "Colored"}},
+		version{"g1-en-b", cid(1), "en", true, true, nil, "Not Guilty", nil, []string{"Drama"}},
+		version{"g1-es-1", cid(1), "es", true, true, nil, "No Culpable", []string{"Not Guilty"}, []string{"Drama"}},
+		version{"g1-es-2", cid(1), "es", true, false, colored, "No Culpable", []string{"Not Guilty"}, []string{"Drama", "Colored"}},
+		version{"g1-ja-1", cid(1), "ja", true, true, nil, "無罪", []string{"Not Guilty"}, nil},
 		// English Colored plus Spanish Original: no Spanish Colored exists.
-		version{"g2-en-col", "g2", "en", true, true, colored, "Spring Story", nil, []string{"Colored"}},
-		version{"g2-es-orig", "g2", "es", true, true, nil, "Historia de Primavera", []string{"Spring Story"}, nil},
+		version{"g2-en-col", cid(2), "en", true, true, colored, "Spring Story", nil, []string{"Colored"}},
+		version{"g2-es-orig", cid(2), "es", true, true, nil, "Historia de Primavera", []string{"Spring Story"}, nil},
 		// A real Spanish Colored edition.
-		version{"g3-es-col", "g3", "es", true, true, colored, "Verano", []string{"Summer Story"}, []string{"Colored"}},
+		version{"g3-es-col", cid(3), "es", true, true, colored, "Verano", []string{"Summer Story"}, []string{"Colored"}},
 		// A draft colored sibling that must stay invisible.
-		version{"g4-en-1", "g4", "en", true, true, nil, "Autumn Story", nil, nil},
-		version{"g4-en-2", "g4", "en", false, false, colored, "Autumn Story Secret", nil, []string{"Colored"}},
+		version{"g4-en-1", cid(4), "en", true, true, nil, "Autumn Story", nil, nil},
+		version{"g4-en-2", cid(4), "en", false, false, colored, "Autumn Story Secret", nil, []string{"Colored"}},
 		// A deleted work with a live version.
-		version{"g5-en-1", "g5", "en", true, true, nil, "Winter Story", nil, nil},
+		version{"g5-en-1", cid(5), "en", true, true, nil, "Winter Story", nil, nil},
 		// Native-script versions of one work.
-		version{"g6-ja-1", "g6", "ja", true, true, nil, "鬼滅の刃", nil, nil},
-		version{"g6-ja-2", "g6", "ja", true, false, colored, "鬼滅の刃", nil, []string{"カラー"}},
-		version{"g6-zh-1", "g6", "zh", true, true, nil, "鬼灭之刃", nil, nil},
-		version{"g6-zh-2", "g6", "zh", true, false, nil, "鬼灭之刃", nil, nil},
-		version{"g6-ko-1", "g6", "ko", true, true, nil, "귀멸의 칼날", nil, nil},
-		version{"g6-ko-2", "g6", "ko", true, false, nil, "귀멸의 칼날", nil, nil},
+		version{"g6-ja-1", cid(6), "ja", true, true, nil, "鬼滅の刃", nil, nil},
+		version{"g6-ja-2", cid(6), "ja", true, false, colored, "鬼滅の刃", nil, []string{"カラー"}},
+		version{"g6-zh-1", cid(6), "zh", true, true, nil, "鬼灭之刃", nil, nil},
+		version{"g6-zh-2", cid(6), "zh", true, false, nil, "鬼灭之刃", nil, nil},
+		version{"g6-ko-1", cid(6), "ko", true, true, nil, "귀멸의 칼날", nil, nil},
+		version{"g6-ko-2", cid(6), "ko", true, false, nil, "귀멸의 칼날", nil, nil},
 	)
-	f.exec(`UPDATE host.items SET deleted=true WHERE id='g5'`)
+	f.exec(`UPDATE host.items SET deleted=true WHERE id=$1`, cid(5))
 
 	t.Run("one card per item", func(t *testing.T) {
 		page := search("Not Guilty", "en", LanguageModeExact, SearchOptions{})
-		expect(page, "g1=g1-en-b/en")
+		expect(page, cid(1)+"=g1-en-b/en")
 		if page.Hits[0].Score != 1 || page.HasMore || page.Truncated {
 			t.Fatalf("page=%+v", page)
 		}
-		expect(search("Not Guilty", "es", LanguageModeExact, SearchOptions{}), "g1=g1-es-1/es")
-		expect(search("Not Guilty", "ja", LanguageModeExact, SearchOptions{}), "g1=g1-ja-1/ja")
+		expect(search("Not Guilty", "es", LanguageModeExact, SearchOptions{}), cid(1)+"=g1-es-1/es")
+		expect(search("Not Guilty", "ja", LanguageModeExact, SearchOptions{}), cid(1)+"=g1-ja-1/ja")
 		// Fallback returns the item once, represented by the requested language,
 		// ranked by its best match in any searched language.
 		page = search("Not Guilty", "es", LanguageModeFallbackEnglish, SearchOptions{})
-		expect(page, "g1=g1-es-1/es")
+		expect(page, cid(1)+"=g1-es-1/es")
 		if page.Hits[0].Score != 1 {
 			t.Fatalf("fallback rank score=%v", page.Hits[0].Score)
 		}
 		suggestions, err := client.Typeahead(ctx, "not gui", TypeaheadOptions{Language: "es", LanguageMode: LanguageModeFallbackEnglish, ContentKinds: kinds, Eligibility: groupedEligibility()})
-		if err != nil || len(suggestions) != 1 || suggestions[0].ContentID != "g1" || suggestions[0].Version() != "g1-es-1" || suggestions[0].Language != "es" {
+		if err != nil || len(suggestions) != 1 || suggestions[0].ContentID != cid(1) || suggestions[0].Version() != "g1-es-1" || suggestions[0].Language != "es" {
 			t.Fatalf("typeahead=%+v err=%v", suggestions, err)
 		}
 		// Native-script typo/prefix matches also collapse to one card.
 		for _, tc := range []struct{ lang, query, want string }{
-			{"ja", "鬼滅の刀", "g6=g6-ja-1/ja"}, {"zh", "鬼灭刃", "g6=g6-zh-1/zh"}, {"ko", "귀멸의 칼", "g6=g6-ko-1/ko"},
+			{"ja", "鬼滅の刀", cid(6) + "=g6-ja-1/ja"}, {"zh", "鬼灭刃", cid(6) + "=g6-zh-1/zh"}, {"ko", "귀멸의 칼", cid(6) + "=g6-ko-1/ko"},
 		} {
 			expect(search(tc.query, tc.lang, LanguageModeExact, SearchOptions{}), tc.want)
 		}
 	})
 
 	t.Run("spanish colored is not english colored plus spanish original", func(t *testing.T) {
-		expect(search("colored", "en", LanguageModeExact, SearchOptions{}), "g1=g1-en-a/en", "g2=g2-en-col/en")
-		expect(search("colored", "es", LanguageModeExact, SearchOptions{}), "g1=g1-es-2/es", "g3=g3-es-col/es")
-		expect(search("Not Guilty", "es", LanguageModeExact, SearchOptions{Eligibility: groupedEligibility("colored")}), "g1=g1-es-2/es")
-		expect(search("Spring Story", "es", LanguageModeExact, SearchOptions{}), "g2=g2-es-orig/es")
+		expect(search("colored", "en", LanguageModeExact, SearchOptions{}), cid(1)+"=g1-en-a/en", cid(2)+"=g2-en-col/en")
+		expect(search("colored", "es", LanguageModeExact, SearchOptions{}), cid(1)+"=g1-es-2/es", cid(3)+"=g3-es-col/es")
+		expect(search("Not Guilty", "es", LanguageModeExact, SearchOptions{Eligibility: groupedEligibility("colored")}), cid(1)+"=g1-es-2/es")
+		expect(search("Spring Story", "es", LanguageModeExact, SearchOptions{}), cid(2)+"=g2-es-orig/es")
 		expect(search("Spring Story", "es", LanguageModeExact, SearchOptions{Eligibility: groupedEligibility("colored")}))
-		expect(search("Summer Story", "es", LanguageModeExact, SearchOptions{Eligibility: groupedEligibility("colored")}), "g3=g3-es-col/es")
+		expect(search("Summer Story", "es", LanguageModeExact, SearchOptions{Eligibility: groupedEligibility("colored")}), cid(3)+"=g3-es-col/es")
 		// Explicit fallback may surface the English colored edition, labelled as such.
-		expect(search("Spring Story", "es", LanguageModeFallbackEnglish, SearchOptions{Eligibility: groupedEligibility("colored")}), "g2=g2-en-col/en")
-		expect(search("Not Guilty", "es", LanguageModeFallbackEnglish, SearchOptions{Eligibility: groupedEligibility("colored")}), "g1=g1-es-2/es")
+		expect(search("Spring Story", "es", LanguageModeFallbackEnglish, SearchOptions{Eligibility: groupedEligibility("colored")}), cid(2)+"=g2-en-col/en")
+		expect(search("Not Guilty", "es", LanguageModeFallbackEnglish, SearchOptions{Eligibility: groupedEligibility("colored")}), cid(1)+"=g1-es-2/es")
 	})
 
 	t.Run("invisible siblings never influence eligibility", func(t *testing.T) {
-		expect(search("Autumn", "en", LanguageModeExact, SearchOptions{}), "g4=g4-en-1/en")
+		expect(search("Autumn", "en", LanguageModeExact, SearchOptions{}), cid(4)+"=g4-en-1/en")
 		expect(search("Secret", "en", LanguageModeExact, SearchOptions{}))
 		expect(search("Autumn Story Secret", "en", LanguageModeExact, SearchOptions{}))
 		expect(search("Autumn", "en", LanguageModeExact, SearchOptions{Eligibility: groupedEligibility("colored")}))
 		expect(search("Winter", "en", LanguageModeExact, SearchOptions{}))
 		f.exec(`UPDATE host.versions SET live=true WHERE id='g4-en-2'`)
-		f.exec(`UPDATE host.items SET deleted=false WHERE id='g5'`)
-		expect(search("Autumn Story Secret", "en", LanguageModeExact, SearchOptions{}), "g4=g4-en-2/en")
-		expect(search("Autumn", "en", LanguageModeExact, SearchOptions{Eligibility: groupedEligibility("colored")}), "g4=g4-en-2/en")
-		expect(search("Winter", "en", LanguageModeExact, SearchOptions{}), "g5=g5-en-1/en")
+		f.exec(`UPDATE host.items SET deleted=false WHERE id=$1`, cid(5))
+		expect(search("Autumn Story Secret", "en", LanguageModeExact, SearchOptions{}), cid(4)+"=g4-en-2/en")
+		expect(search("Autumn", "en", LanguageModeExact, SearchOptions{Eligibility: groupedEligibility("colored")}), cid(4)+"=g4-en-2/en")
+		expect(search("Winter", "en", LanguageModeExact, SearchOptions{}), cid(5)+"=g5-en-1/en")
 		f.exec(`UPDATE host.versions SET live=false WHERE id='g4-en-2'`)
-		f.exec(`UPDATE host.items SET deleted=true WHERE id='g5'`)
+		f.exec(`UPDATE host.items SET deleted=true WHERE id=$1`, cid(5))
 	})
 
 	t.Run("pages and has_more over grouped retrieval", func(t *testing.T) {
@@ -199,11 +199,15 @@ CREATE TABLE host.versions(id text PRIMARY KEY, item_id text NOT NULL REFERENCES
 		// default version of every item sorts last by id.
 		for v := 1; v <= 3; v++ {
 			for i := 1; i <= 12; i++ {
-				item := fmt.Sprintf("p%02d", i)
+				item := cid(100 + i)
 				f.add(version{fmt.Sprintf("pv%d-%s", v, item), item, "en", true, v == 3, nil, "Blue Ocean", nil, nil})
 			}
 		}
-		var seen []string
+		pv := func(v, i int) string { return fmt.Sprintf("%s=pv%d-%s/en", cid(100+i), v, cid(100+i)) }
+		var seen, want []string
+		for i := 1; i <= 12; i++ {
+			want = append(want, cid(100+i))
+		}
 		for offset := 0; ; offset += 5 {
 			page := search("blue ocean", "en", LanguageModeExact, SearchOptions{Limit: 5, Offset: offset})
 			if page.Truncated {
@@ -222,7 +226,7 @@ CREATE TABLE host.versions(id text PRIMARY KEY, item_id text NOT NULL REFERENCES
 				break
 			}
 		}
-		if want := "p01 p02 p03 p04 p05 p06 p07 p08 p09 p10 p11 p12"; strings.Join(seen, " ") != want {
+		if strings.Join(seen, " ") != strings.Join(want, " ") {
 			t.Fatalf("pages=%v", seen)
 		}
 		// A window smaller than the matching documents is reported, keeps one
@@ -234,22 +238,22 @@ CREATE TABLE host.versions(id text PRIMARY KEY, item_id text NOT NULL REFERENCES
 		if !first.Truncated || !first.HasMore {
 			t.Fatalf("truncated page=%+v", first)
 		}
-		expect(first, "p01=pv3-p01/en", "p02=pv3-p02/en", "p03=pv3-p03/en", "p04=pv3-p04/en", "p05=pv3-p05/en")
+		expect(first, pv(3, 1), pv(3, 2), pv(3, 3), pv(3, 4), pv(3, 5))
 		second := search("blue ocean", "en", LanguageModeExact, SearchOptions{Limit: 5, Offset: 5, CandidateLimit: 25})
 		if !second.Truncated || !second.HasMore {
 			t.Fatalf("second truncated page=%+v", second)
 		}
-		expect(second, "p06=pv3-p06/en", "p07=pv3-p07/en", "p08=pv3-p08/en", "p09=pv1-p09/en")
+		expect(second, pv(3, 6), pv(3, 7), pv(3, 8), pv(1, 9))
 		beyond := search("blue ocean", "en", LanguageModeExact, SearchOptions{Limit: 5, Offset: 12, CandidateLimit: 25})
 		if len(beyond.Hits) != 0 || !beyond.HasMore || !beyond.Truncated {
 			t.Fatalf("page beyond window=%+v", beyond)
 		}
 		// Traced pages report the same items and their best document positions.
 		traced, trace, err := client.SearchWithTrace(ctx, "blue ocean", SearchOptions{Language: "en", ContentKinds: kinds, Limit: 5, Offset: 5, Eligibility: groupedEligibility()})
-		if err != nil || len(trace.Results) != 5 || trace.Results[0].Rank != 6 || trace.Results[0].Key.ContentID != "p06" || trace.Results[0].ScoreKind != ScoreKeywordMatch || trace.Results[0].Contributions[0].SourceRank != 16 {
+		if err != nil || len(trace.Results) != 5 || trace.Results[0].Rank != 6 || trace.Results[0].Key.ContentID != cid(106) || trace.Results[0].ScoreKind != ScoreKeywordMatch || trace.Results[0].Contributions[0].SourceRank != 16 {
 			t.Fatalf("trace=%+v err=%v", trace, err)
 		}
-		if len(traced.Hits) != 5 || traced.Hits[0].ContentID != "p06" || trace.Sources[0].Candidates[0].Key.ContentID != "p01" {
+		if len(traced.Hits) != 5 || traced.Hits[0].ContentID != cid(106) || trace.Sources[0].Candidates[0].Key.ContentID != cid(101) {
 			t.Fatalf("traced=%+v", traced)
 		}
 		for _, opts := range []SearchOptions{{Offset: -1}, {Offset: 9990, Limit: 20}} {
@@ -276,9 +280,9 @@ CREATE TABLE host.versions(id text PRIMARY KEY, item_id text NOT NULL REFERENCES
 	})
 
 	t.Run("index plan with eligibility join", func(t *testing.T) {
-		f.exec(`INSERT INTO host.items(id) SELECT 'filler-'||i FROM generate_series(1,50000) i;
-INSERT INTO host.versions(id,item_id,language,live,is_default) SELECT 'fv-'||i,'filler-'||i,'zh',true,true FROM generate_series(1,50000) i;
-INSERT INTO app.content_search_documents(tenant_id,content_kind,content_id,content_version_id,language,title,raw_document) SELECT 'doujins','gallery','filler-'||i,'fv-'||i,'zh','占位内容'||md5(i::text),'filler' FROM generate_series(1,50000) i;
+		f.exec(`INSERT INTO host.items(id) SELECT '01920000-0000-7000-9000-'||lpad(i::text,12,'0') FROM generate_series(1,50000) i;
+INSERT INTO host.versions(id,item_id,language,live,is_default) SELECT 'fv-'||i,'01920000-0000-7000-9000-'||lpad(i::text,12,'0'),'zh',true,true FROM generate_series(1,50000) i;
+INSERT INTO app.content_search_documents(tenant_id,content_kind,content_id,content_version_id,language,title,raw_document) SELECT 'doujins','gallery','01920000-0000-7000-9000-'||lpad(i::text,12,'0'),'fv-'||i,'zh','占位内容'||md5(i::text),'filler' FROM generate_series(1,50000) i;
 ANALYZE app.content_search_documents; ANALYZE host.versions; ANALYZE host.items`)
 		var trgm string
 		if err := pool.QueryRow(ctx, `SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE extname='pg_trgm'`).Scan(&trgm); err != nil {
@@ -308,7 +312,7 @@ ORDER BY app.contentkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_docu
 			t.Fatalf("expected indexed bounded fuzzy path with lateral join:\n%s", plan.String())
 		}
 		started := time.Now()
-		expect(search("鬼灭刃", "zh", LanguageModeExact, SearchOptions{}), "g6=g6-zh-1/zh")
+		expect(search("鬼灭刃", "zh", LanguageModeExact, SearchOptions{}), cid(6)+"=g6-zh-1/zh")
 		t.Logf("grouped search over 50k joined documents: %s", time.Since(started))
 	})
 }

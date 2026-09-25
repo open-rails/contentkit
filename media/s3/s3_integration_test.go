@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"slices"
@@ -21,6 +22,9 @@ import (
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
 )
+
+// cid is the n-th test content id, a canonical UUIDv7.
+func cid(n int) string { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) }
 
 func send(t *testing.T, p media.PresignedRequest, body []byte, override http.Header) *http.Response {
 	t.Helper()
@@ -54,7 +58,7 @@ func TestPresignedPutIsBoundToTypeLengthAndChecksum(t *testing.T) {
 	ctx := context.Background()
 	body := random(t, 4096)
 	sum := sha256.Sum256(body)
-	key := env.Tenant + "/gallery/1/originals/" + media.SHA256Name(sum[:])
+	key := env.Tenant + "/gallery/" + cid(1) + "/originals/" + media.SHA256Name(sum[:])
 	p, err := env.Store.PresignPut(ctx, key, media.PresignPut{ContentType: "image/png", Size: int64(len(body)), SHA256: sum[:], TTL: time.Minute})
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +99,7 @@ func TestConditionalWritesAndReads(t *testing.T) {
 		t.Skip("backend lacks conditional PUT: manifests use the advisory-lock fallback")
 	}
 	ctx := context.Background()
-	key := env.Tenant + "/post/1/manifest.json"
+	key := env.Tenant + "/post/" + cid(1) + "/manifest.json"
 	put := func(body string, o media.PutOptions) (media.Object, error) {
 		return env.Store.Put(ctx, key, bytes.NewReader([]byte(body)), int64(len(body)), o)
 	}
@@ -130,7 +134,7 @@ func TestConditionalWritesAndReads(t *testing.T) {
 func TestDirectPutChecksumAndObjectOps(t *testing.T) {
 	env := s3test.Open(t)
 	ctx := context.Background()
-	prefix := env.Tenant + "/video/9/blobs/"
+	prefix := env.Tenant + "/video/" + cid(9) + "/blobs/"
 	body := []byte("0123456789")
 	sum := sha256.Sum256(body)
 	key := prefix + media.SHA256Name(sum[:])
@@ -153,7 +157,7 @@ func TestDirectPutChecksumAndObjectOps(t *testing.T) {
 		t.Fatalf("range get %q %+v", b, obj)
 	}
 	var keys []string
-	for o, err := range env.Store.List(ctx, env.Tenant+"/video/9/") {
+	for o, err := range env.Store.List(ctx, env.Tenant+"/video/"+cid(9)+"/") {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -176,7 +180,7 @@ func TestDirectPutChecksumAndObjectOps(t *testing.T) {
 func TestResponseContentDisposition(t *testing.T) {
 	env := s3test.Open(t)
 	ctx := context.Background()
-	key := env.Tenant + "/gallery/2/blobs/" + media.NewUploadName()
+	key := env.Tenant + "/gallery/" + cid(2) + "/blobs/" + media.NewUploadName()
 	if _, err := env.Store.Put(ctx, key, bytes.NewReader([]byte("zip")), 3, media.PutOptions{ContentType: "application/zip"}); err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +203,7 @@ func TestResponseContentDisposition(t *testing.T) {
 func TestMultipartPartsAreChecksumBoundAndResumable(t *testing.T) {
 	env := s3test.Open(t)
 	ctx := context.Background()
-	key := env.Tenant + "/video/3/originals/" + media.NewUploadName()
+	key := env.Tenant + "/video/" + cid(3) + "/originals/" + media.NewUploadName()
 	id, err := env.Store.CreateMultipart(ctx, key, "video/mp4")
 	if err != nil {
 		t.Fatal(err)
@@ -247,7 +251,7 @@ func TestMultipartPartsAreChecksumBoundAndResumable(t *testing.T) {
 		t.Fatalf("completed %+v %v", obj, err)
 	}
 
-	abortKey := env.Tenant + "/video/3/originals/" + media.NewUploadName()
+	abortKey := env.Tenant + "/video/" + cid(3) + "/originals/" + media.NewUploadName()
 	abortID, err := env.Store.CreateMultipart(ctx, abortKey, "video/mp4")
 	if err != nil {
 		t.Fatal(err)
@@ -279,7 +283,7 @@ func TestBucketVersioningAndLifecycle(t *testing.T) {
 	if status != types.BucketVersioningStatusEnabled {
 		t.Skipf("bucket versioning is %q; enable it (Store.Configure) for the restore window", status)
 	}
-	key := env.Tenant + "/gallery/5/manifest.json"
+	key := env.Tenant + "/gallery/" + cid(5) + "/manifest.json"
 	for _, b := range []string{"a", "b"} {
 		if _, err := env.Store.Put(ctx, key, bytes.NewReader([]byte(b)), 1, media.PutOptions{}); err != nil {
 			t.Fatal(err)

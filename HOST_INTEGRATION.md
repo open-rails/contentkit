@@ -29,6 +29,41 @@ Hosts use:
 
 Do not call `search` package SQL helpers from request paths.
 
+## Content ids
+
+`content_id` is a canonical lowercase UUIDv7 (`contentref.ValidateID`), never
+reused. Every boundary refuses anything else with `contentref.ErrInvalidID`:
+`ContentRef.Validate`, media refs, HTTP routes (400 `invalid_request`), jobs
+and the upload SDK. Mint ids with Postgres 18 `uuidv7()` or
+`contentref.NewID()`; `contentref.Parse` validates untrusted input. A content
+id names the media folder `{tenant}/{kind}/{id}/`, so a reused id (an integer
+sequence restarted after a reset) would hand a new item another's files.
+Taxonomy ids follow the same rule: a node is a search document keyed by its
+`taxonomy_id` (`CreateNodes` mints one when omitted).
+
+Media never adopts leftovers:
+
+- `Manifests.Create(ctx, ref)` starts an item: it writes the empty manifest and
+  fails with `media.ErrFolderNotEmpty` (`*FolderNotEmptyError`) if the folder
+  holds any object. Call it when the host row is created.
+- A folder's first manifest edit (a commit) is refused the same way over a
+  previous item's blobs.
+- `Jobs.Purge(ctx, media.Deletion{Ref, Owner})` deletes a folder now, the
+  explicit reset for deliberate reuse. Deleting content stays `DeleteItemsTx`.
+- `Jobs.SweepOrphans(ctx, media.OrphanSweep{Tenant, Kind, Exists, Grace, Delete})`
+  lists a kind's folders and reports (or deletes) those the host's `Exists`
+  check omits and whose newest object is older than `Grace`. Folders whose id
+  is not a content id are always orphans. Run it from a host command or job.
+
+### Migrating legacy integer ids
+
+Give each legacy item a UUIDv7 derived from its original `created_at`
+(`contentref.IDAt(createdAt)`, preserving order) and keep the old integer in a
+host `legacy_id` column for redirects and references only. Import its media
+from the old system straight into ContentKit under the UUID `content_id`,
+idempotently (skip items whose manifest already exists). No integer content ids
+in storage, no permanent aliases.
+
 ## Interactions (`content`)
 
 The content module owns posts, comments, reactions, favorites and polls in the

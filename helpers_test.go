@@ -2,6 +2,7 @@ package contentkit
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,6 +14,12 @@ import (
 )
 
 const testTenant = "doujins"
+
+// cid is a deterministic canonical UUIDv7 content id; cid(n) sorts in n order.
+func cid(n int) string { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) }
+
+// tax is a deterministic canonical UUIDv7 taxonomy id.
+func tax(n int) string { return fmt.Sprintf("01930000-0000-7000-8000-%012d", n) }
 
 func gallery(id string) ContentRef { return contentref.New(testTenant, "gallery", id) }
 

@@ -41,11 +41,11 @@ func TestIntegrationDelayedSinkDeleteCannotEraseNewerUpsert(t *testing.T) {
 
 func testDelayedSinkDelete(t *testing.T, kind string) {
 	ctx, pool, schema := workerFixture(t)
-	docs := map[string]string{"1": "original"}
+	docs := map[string]string{cid(1): "original"}
 	opts := workerOptions(pool, schema, titles(docs))
 	sink := &delayedDeleteSink{}
 	opts.Sink = sink
-	key := search.DocumentKey{ContentRef: gallery("1"), Language: "en"}
+	key := search.DocumentKey{ContentRef: gallery(cid(1)), Language: "en"}
 	mark := func(deleted bool) {
 		t.Helper()
 		if err := search.MarkDirty(ctx, pool, schema, []search.DirtyMark{{DocumentKey: key, Deleted: deleted}}); err != nil {
@@ -64,10 +64,10 @@ func testDelayedSinkDelete(t *testing.T, kind string) {
 	case "explicit":
 		mark(true)
 	case "missing":
-		delete(docs, "1")
+		delete(docs, cid(1))
 		mark(false)
 	case "empty":
-		docs["1"] = ""
+		docs[cid(1)] = ""
 		mark(false)
 	}
 	var deleteRevision int64
@@ -84,7 +84,7 @@ func testDelayedSinkDelete(t *testing.T, kind string) {
 	if n := count(t, ctx, pool, schema, "content_search_dirty", "true"); n != 1 {
 		t.Fatalf("timed-out deletion must remain queued: %d", n)
 	}
-	docs["1"] = "republished"
+	docs[cid(1)] = "republished"
 	mark(false)
 	tick()
 	if sink.title != "republished" {

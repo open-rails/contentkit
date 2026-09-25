@@ -11,6 +11,7 @@ import (
 func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 	st, conn := freshStore(t)
 	ctx := context.Background()
+	earlyID, lateID, outsideID, reactionID := cid(1), cid(2), cid(3), cid(4)
 	// Keep duplicate rows physically present so FINAL, not merge timing, must
 	// make retries contribute once to scores and completions.
 	if err := conn.Exec(ctx, "SYSTEM STOP MERGES "+testDB+".signals"); err != nil {
@@ -20,7 +21,7 @@ func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 	for _, cohort := range []struct {
 		id  string
 		day int
-	}{{"early", 2}, {"late", 28}} {
+	}{{earlyID, 2}, {lateID, 28}} {
 		for i, score := range []int16{80, 0} {
 			s := view("t", cohort.id, Subject{UserID: fmt.Sprintf("u%d", i)}, cohort.day, 8, 10, 10, score, true)
 			s.EventID = fmt.Sprintf("%s-%d", cohort.id, i)
@@ -29,18 +30,18 @@ func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 			}
 		}
 	}
-	click := view("t", "early", Subject{UserID: "click-only"}, 10, 8, 0, 0, 100, false)
+	click := view("t", earlyID, Subject{UserID: "click-only"}, 10, 8, 0, 0, 100, false)
 	click.Type, click.EventID = "click", "click"
 	like := click
-	like.ContentRef, like.Type, like.EventID = gallery("t", "reaction-only"), "like", "like"
-	outside := view("t", "outside", Subject{UserID: "u3"}, 1, 8, 10, 10, 100, true)
+	like.ContentRef, like.Type, like.EventID = gallery("t", reactionID), "like", "like"
+	outside := view("t", outsideID, Subject{UserID: "u3"}, 1, 8, 10, 10, 100, true)
 	// A version view of "early" never counts as a work view.
-	edition := view("t", "early", Subject{UserID: "u9"}, 10, 8, 10, 10, 100, true)
+	edition := view("t", earlyID, Subject{UserID: "u9"}, 10, 8, 10, 10, 100, true)
 	edition.ContentRef, edition.EventID = edition.WithVersion("v2"), "edition"
 	if err := st.RecordSignals(ctx, "t", []Signal{click, like, outside, edition}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RecordSignals(ctx, "other-tenant", []Signal{view("other-tenant", "early", Subject{UserID: "foreign"}, 20, 8, 10, 10, 100, true)}); err != nil {
+	if err := st.RecordSignals(ctx, "other-tenant", []Signal{view("other-tenant", earlyID, Subject{UserID: "foreign"}, 20, 8, 10, 10, 100, true)}); err != nil {
 		t.Fatal(err)
 	}
 	window := Between(at(2, 0), at(29, 0))
@@ -66,12 +67,12 @@ func TestIntegrationPopularityCountsConsumptionWithoutAgeBias(t *testing.T) {
 		return hits
 	}
 	before := read()
-	metrics := metricsByID(t, st, "t", []string{"early", "late", "outside", "reaction-only"}, window)
+	metrics := metricsByID(t, st, "t", []string{earlyID, lateID, outsideID, reactionID}, window)
 	counts := map[string]uint64{}
 	for id, m := range metrics {
 		counts[id] = m.Viewers
 	}
-	if !reflect.DeepEqual(counts, map[string]uint64{"early": 2, "late": 2, "reaction-only": 0}) {
+	if !reflect.DeepEqual(counts, map[string]uint64{earlyID: 2, lateID: 2, reactionID: 0}) {
 		t.Fatalf("card counts disagree with popularity: %v", counts)
 	}
 	if err := conn.Exec(ctx, "SYSTEM START MERGES "+testDB+".signals"); err != nil {

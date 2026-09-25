@@ -139,7 +139,7 @@ func newEnv(t *testing.T, store func(media.Store) media.Store, queue media.Proce
 		Encoder: video.EncoderX264, Slots: slots}); err != nil {
 		t.Fatal(err)
 	}
-	e.ref = contentref.NewVersion(s3.Tenant, "video", "88", "v1")
+	e.ref = contentref.NewVersion(s3.Tenant, "video", cid(88), "v1")
 	return e
 }
 

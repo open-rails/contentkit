@@ -27,8 +27,8 @@ document.body.style.cssText = `margin:0;font-family:Inter,ui-sans-serif,system-u
 
 const server = new DemoServer();
 const client = createUploadClient({ endpoint: "/api", fetch: server.fetch, transport: server.transport });
-const channel = { kind: "channel", id: "1" };
-const empty = { kind: "channel", id: "2" };
+const channel = { kind: "channel", id: "0192f000-0000-7000-8000-000000000001" };
+const empty = { kind: "channel", id: "0192f000-0000-7000-8000-000000000002" };
 
 await server.seed(channel, "cover", await sampleImage(3600, 1600, 210), { crop: { x: 0, y: 320, w: 3600, h: 1200 } });
 await server.seed(channel, "avatar", await sampleAvatar(900));
@@ -77,7 +77,7 @@ function ChannelHeader() {
   );
 }
 
-const video = { kind: "post", id: "1" };
+const video = { kind: "post", id: "0192f000-0000-7000-8000-000000000001" };
 await client.setVideoPoster(video, { source: "auto" });
 const seededVideo = await client.setHoverPreview(video, {});
 

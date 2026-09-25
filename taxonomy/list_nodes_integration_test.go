@@ -20,7 +20,7 @@ func pageString(p NodePage) string {
 		if out != "" {
 			out += ","
 		}
-		out += fmt.Sprintf("%s:%s@%s=%d", n.TaxonomyID, n.Name, n.NameLanguage, n.Count)
+		out += fmt.Sprintf("%s:%s@%s=%d", tname(n.TaxonomyID), n.Name, n.NameLanguage, n.Count)
 	}
 	return out
 }
@@ -31,7 +31,7 @@ func ids(p NodePage) string {
 		if out != "" {
 			out += ","
 		}
-		out += string(n.TaxonomyID)
+		out += tname(n.TaxonomyID)
 	}
 	return out
 }
@@ -51,23 +51,23 @@ func catalogFixture(t *testing.T, ctx context.Context) (*pgxpool.Pool, string, *
 		tag("gamma", "gamma"),
 	)
 	indexVersions(t, ctx, pool, schema, tenant,
-		version{"gallery", "g1", "v1", "en", "Blue Ocean", true, true},
-		version{"gallery", "g2", "v2", "en", "Green Field", true, true},
-		version{"video", "m1", "w1", "en", "Red Sky", true, true},
+		version{"gallery", cid(1), "v1", "en", "Blue Ocean", true, true},
+		version{"gallery", cid(2), "v2", "en", "Green Field", true, true},
+		version{"video", cid(11), "w1", "en", "Red Sky", true, true},
 	)
 	if err := s.Assign(ctx, []Assignment{
-		assign(work(tenant, "gallery", "g1"), "alpha", ""),
-		assign(work(tenant, "gallery", "g2"), "alpha", ""),
-		assign(work(tenant, "video", "m1"), "alpha", ""),
-		assign(work(tenant, "gallery", "g1"), "etude", ""),
-		assign(work(tenant, "gallery", "g1"), "delta", ""),
+		assign(work(tenant, "gallery", cid(1)), "alpha", ""),
+		assign(work(tenant, "gallery", cid(2)), "alpha", ""),
+		assign(work(tenant, "video", cid(11)), "alpha", ""),
+		assign(work(tenant, "gallery", cid(1)), "etude", ""),
+		assign(work(tenant, "gallery", cid(1)), "delta", ""),
 	}, AssignOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	// Distinct timestamps: created descends alpha..gamma, updated ascends, so
 	// the two orders are exact reverses and cannot pass by accident.
 	for i, id := range []string{"alpha", "beta", "delta", "etude", "gamma"} {
-		if _, err := pool.Exec(ctx, fmt.Sprintf(`UPDATE %s.content_nodes SET created_at = now() - make_interval(days => $2), updated_at = now() - make_interval(days => $3) WHERE tenant_id=$1 AND taxonomy_id=$4`, schema), tenant, i, 4-i, id); err != nil {
+		if _, err := pool.Exec(ctx, fmt.Sprintf(`UPDATE %s.content_nodes SET created_at = now() - make_interval(days => $2), updated_at = now() - make_interval(days => $3) WHERE tenant_id=$1 AND taxonomy_id=$4`, schema), tenant, i, 4-i, string(tid(id))); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -224,11 +224,11 @@ func TestListNodes_Paging(t *testing.T) {
 
 	// Cursor paging: unchanged contract, and it does not pay for a count.
 	first, err := s.ListNodes(ctx, ListOptions{Limit: 2})
-	if err != nil || ids(first) != "alpha,beta" || first.NextCursor != "beta" || first.Total != 5 {
+	if err != nil || ids(first) != "alpha,beta" || first.NextCursor != string(tid("beta")) || first.Total != 5 {
 		t.Fatalf("cursor page 1: %s cursor=%q total=%d %v", ids(first), first.NextCursor, first.Total, err)
 	}
 	second, err := s.ListNodes(ctx, ListOptions{Limit: 2, Cursor: first.NextCursor})
-	if err != nil || ids(second) != "delta,etude" || second.NextCursor != "etude" || second.Total != 0 {
+	if err != nil || ids(second) != "delta,etude" || second.NextCursor != string(tid("etude")) || second.Total != 0 {
 		t.Fatalf("cursor page 2: %s total=%d %v", ids(second), second.Total, err)
 	}
 	last, err := s.ListNodes(ctx, ListOptions{Limit: 2, Cursor: second.NextCursor})
@@ -242,7 +242,7 @@ func TestListNodes_StatesIDsAndValidation(t *testing.T) {
 	ctx := context.Background()
 	_, _, s := catalogFixture(t, ctx)
 	deleted := StateDeleted
-	if _, err := s.UpdateNode(ctx, "gamma", NodeUpdate{State: &deleted}); err != nil {
+	if _, err := s.UpdateNode(ctx, tid("gamma"), NodeUpdate{State: &deleted}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -258,17 +258,17 @@ func TestListNodes_StatesIDsAndValidation(t *testing.T) {
 	if err != nil || ids(page) != "alpha,beta,delta,etude,gamma" {
 		t.Fatalf("active and deleted: %s %v", ids(page), err)
 	}
-	page, err = s.ListNodes(ctx, ListOptions{IDs: []TaxonomyID{"alpha", "etude", "absent"}, Sort: SortName})
+	page, err = s.ListNodes(ctx, ListOptions{IDs: []TaxonomyID{tid("alpha"), tid("etude"), tid("absent")}, Sort: SortName})
 	if err != nil || ids(page) != "alpha,etude" {
 		t.Fatalf("by ids: %s %v", ids(page), err)
 	}
-	page, err = s.ListNodes(ctx, ListOptions{IDs: []TaxonomyID{"alpha"}, Kind: "series"})
+	page, err = s.ListNodes(ctx, ListOptions{IDs: []TaxonomyID{tid("alpha")}, Kind: "series"})
 	if err != nil || len(page.Nodes) != 0 {
 		t.Fatalf("ids stay filtered: %s %v", ids(page), err)
 	}
 
 	for name, opts := range map[string]ListOptions{
-		"unknown relation":      {Related: "alpha", Relation: "likes"},
+		"unknown relation":      {Related: tid("alpha"), Relation: "likes"},
 		"relation without node": {Relation: RelationMemberOf},
 		"bad related id":        {Related: "has space"},
 		"unknown sort":          {Sort: "popularity"},
@@ -291,27 +291,27 @@ func TestListNodes_StatesIDsAndValidation(t *testing.T) {
 func TestListNodes_Related(t *testing.T) {
 	ctx := context.Background()
 	_, _, s := catalogFixture(t, ctx)
-	mustCreate(t, ctx, s, NodeInput{TaxonomyID: "fate", Kind: "series", Slug: "fate", Names: []Name{name("en", "Fate")}})
+	mustCreate(t, ctx, s, NodeInput{TaxonomyID: tid("fate"), Kind: "series", Slug: "fate", Names: []Name{name("en", "Fate")}})
 	if err := s.AddEdges(ctx, []Edge{
-		{From: "alpha", Relation: RelationMemberOf, To: "fate"},
-		{From: "delta", Relation: RelationMemberOf, To: "fate"},
-		{From: "beta", Relation: RelationSynonym, To: "fate"},
+		{From: tid("alpha"), Relation: RelationMemberOf, To: tid("fate")},
+		{From: tid("delta"), Relation: RelationMemberOf, To: tid("fate")},
+		{From: tid("beta"), Relation: RelationSynonym, To: tid("fate")},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	page, err := s.ListNodes(ctx, ListOptions{Language: "en", Related: "fate", Sort: SortName})
+	page, err := s.ListNodes(ctx, ListOptions{Language: "en", Related: tid("fate"), Sort: SortName})
 	if err != nil || ids(page) != "alpha,beta,delta" || page.Total != 3 {
 		t.Fatalf("any relation: %s total=%d %v", ids(page), page.Total, err)
 	}
-	page, err = s.ListNodes(ctx, ListOptions{Language: "en", Related: "fate", Relation: RelationMemberOf, Sort: SortName})
+	page, err = s.ListNodes(ctx, ListOptions{Language: "en", Related: tid("fate"), Relation: RelationMemberOf, Sort: SortName})
 	if err != nil || ids(page) != "alpha,delta" || page.Total != 2 {
 		t.Fatalf("member_of: %s total=%d %v", ids(page), page.Total, err)
 	}
-	page, err = s.ListNodes(ctx, ListOptions{Language: "en", Related: "fate", Relation: RelationMemberOf, Kind: "tag", MinCount: 2, Sort: SortName})
+	page, err = s.ListNodes(ctx, ListOptions{Language: "en", Related: tid("fate"), Relation: RelationMemberOf, Kind: "tag", MinCount: 2, Sort: SortName})
 	if err != nil || ids(page) != "alpha" {
 		t.Fatalf("combined with the other filters: %s %v", ids(page), err)
 	}
-	page, err = s.ListNodes(ctx, ListOptions{Related: "gamma"})
+	page, err = s.ListNodes(ctx, ListOptions{Related: tid("gamma")})
 	if err != nil || len(page.Nodes) != 0 {
 		t.Fatalf("no members: %s %v", ids(page), err)
 	}
@@ -326,13 +326,13 @@ func TestListNodes_TenantScoping(t *testing.T) {
 	b := newStore(t, pool, schema, other, nil)
 	mustCreate(t, ctx, b, tag("alpha", "alpha", name("en", "Other Alpha"), alias("en", "first letter")), tag("solo", "solo", name("en", "Solo")))
 	indexVersions(t, ctx, pool, schema, other,
-		version{"video", "m9", "w9", "en", "Their Work", true, true},
-		version{"video", "m8", "w8", "en", "Their Other Work", true, true},
+		version{"video", cid(19), "w9", "en", "Their Work", true, true},
+		version{"video", cid(18), "w8", "en", "Their Other Work", true, true},
 	)
 	if err := b.Assign(ctx, []Assignment{
-		assign(work(other, "video", "m9"), "alpha", ""),
-		assign(work(other, "video", "m8"), "alpha", ""),
-		assign(work(other, "video", "m9"), "solo", ""),
+		assign(work(other, "video", cid(19)), "alpha", ""),
+		assign(work(other, "video", cid(18)), "alpha", ""),
+		assign(work(other, "video", cid(19)), "solo", ""),
 	}, AssignOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +397,7 @@ func TestListNodes_HTTP(t *testing.T) {
 	if page := get("?language=en&language_mode=required&sort=name"); ids(page) != "alpha,delta,etude" {
 		t.Fatalf("required language: %s", ids(page))
 	}
-	if page := get("?id=alpha&id=gamma&sort=name"); ids(page) != "alpha,gamma" {
+	if page := get(withIDs("?id={{alpha}}&id={{gamma}}&sort=name")); ids(page) != "alpha,gamma" {
 		t.Fatalf("by id: %s", ids(page))
 	}
 	if page := get("?state=active&state=deleted&sort=name"); ids(page) != "alpha,beta,delta,etude,gamma" {

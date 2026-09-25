@@ -25,11 +25,11 @@ func newEvalTestClient(t *testing.T) (context.Context, *Client) {
 	ctx := context.Background()
 	schema := keywordSchema(t, ctx, pool)
 	upsertDocs(t, ctx, pool, schema,
-		doc("gallery", "1", "en", "two factor authentication", nil, nil),
-		doc("gallery", "2", "en", "two factor backup codes", nil, nil),
-		doc("gallery", "3", "en", "single sign on saml", nil, nil),
-		doc("gallery", "4", "en", "password reset email flow", nil, nil),
-		doc("gallery", "5", "en", "unrelated cooking recipe", nil, nil),
+		doc("gallery", cid(1), "en", "two factor authentication", nil, nil),
+		doc("gallery", cid(2), "en", "two factor backup codes", nil, nil),
+		doc("gallery", cid(3), "en", "single sign on saml", nil, nil),
+		doc("gallery", cid(4), "en", "password reset email flow", nil, nil),
+		doc("gallery", cid(5), "en", "unrelated cooking recipe", nil, nil),
 	)
 	client, err := NewClient(ClientConfig{Pool: pool, Schema: schema, Tenant: testTenant})
 	if err != nil {
@@ -121,7 +121,7 @@ func TestEvalConfigDiff_Integration(t *testing.T) {
 	suite := loadGoldenSuite(t)
 
 	full := runGolden(ctx, t, client, suite, "keyword", SearchOptions{})
-	filtered := runGolden(ctx, t, client, suite, "keyword-without-1", SearchOptions{FilterSQL: "sd.content_id <> @hidden", FilterArgs: map[string]any{"hidden": "1"}})
+	filtered := runGolden(ctx, t, client, suite, "keyword-without-1", SearchOptions{FilterSQL: "sd.content_id <> @hidden", FilterArgs: map[string]any{"hidden": cid(1)}})
 	if full.Metrics.RecallAtK != 1 || filtered.Metrics.RecallAtK >= 1 {
 		t.Fatalf("recall full=%v filtered=%v", full.Metrics.RecallAtK, filtered.Metrics.RecallAtK)
 	}

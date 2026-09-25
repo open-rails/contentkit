@@ -4,7 +4,7 @@ import { UploadClient, type UploadState } from "./client.js";
 import { UploadError } from "./errors.js";
 
 const MiB = 1 << 20;
-const ref = { kind: "video", id: "1" };
+const ref = { kind: "video", id: "0192f000-0000-7000-8000-000000000001" };
 
 function setup(o: { retries?: number; concurrency?: number } = {}) {
   const s = new FakeServer();
@@ -178,7 +178,7 @@ describe("multipart", () => {
 });
 
 describe("commit", () => {
-  const gallery = { kind: "gallery", id: "1", version: "en" };
+  const gallery = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000001", version: "en" };
 
   it("uploads a file again when its original is due for cleanup, then commits once more", async () => {
     const { s, c } = setup();
@@ -270,4 +270,15 @@ describe("slots", () => {
     expect(m.pending).toBe(false);
     expect(s.calls.filter((p) => p === "/slot")).toHaveLength(3);
   });
+});
+
+it("refuses a ref whose content id is not a UUIDv7 before any request", async () => {
+  const { isContentId } = await import("./ref.js");
+  const { UploadApi } = await import("./api.js");
+  expect(isContentId("0192f000-0000-7000-8000-000000000001")).toBe(true);
+  for (const bad of ["1", "0192f000-0000-4000-8000-000000000001", "0192F000-0000-7000-8000-000000000001", "0192f000-0000-7000-c000-000000000001"]) expect(isContentId(bad)).toBe(false);
+  let called = false;
+  const api = new UploadApi({ endpoint: "/u", fetch: (async () => ((called = true), new Response("{}"))) as typeof fetch });
+  await expect(api.presign({ ref: { kind: "post", id: "18" }, type: "image/png", size: 1 })).rejects.toMatchObject({ code: "invalid_request" });
+  expect(called).toBe(false);
 });

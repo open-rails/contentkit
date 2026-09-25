@@ -22,7 +22,7 @@ import (
 
 const prefTestCHDB = "contentkit_preference_test"
 
-// routeResolver accepts any gallery route id ("42:en", "42:ja"); the
+// routeResolver accepts any gallery route id ("<id>:en", "<id>:ja"); the
 // canonicalizer collapses the language suffix to the work.
 type routeResolver struct{}
 
@@ -72,7 +72,7 @@ func (e prefEnv) runtime(t *testing.T, conn signal.Conn, overlap time.Duration) 
 	t.Helper()
 	canon := func(r contentref.ContentRef) (contentref.ContentRef, bool) {
 		w, ok := stripLanguage(r)
-		return w, ok && !(e.declined.Load() && w.ContentID == "8")
+		return w, ok && !(e.declined.Load() && w.ContentID == cid(8))
 	}
 	rt, err := NewRuntime(context.Background(), RuntimeConfig{
 		EmbeddedConfig: EmbeddedConfig{PG: e.pool, PGSchema: e.schema, Tenant: testTenant, CH: conn, CHDatabase: e.chDB},
@@ -84,6 +84,10 @@ func (e prefEnv) runtime(t *testing.T, conn signal.Conn, overlap time.Duration) 
 	}
 	return rt
 }
+
+// galleryRoute is a gallery route whose id carries a language suffix: n's
+// canonical id plus rest (":en/like").
+func galleryRoute(n int, rest string) string { return "/gallery/" + cid(n) + rest }
 
 func state(t *testing.T, rt *Runtime, user, id string) signal.State {
 	t.Helper()
@@ -130,52 +134,52 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 	}
 
 	// like → neutral → like, then a dislike on another language route.
-	post(u1, "POST", "/gallery/42:en/like")
+	post(u1, "POST", galleryRoute(42, ":en/like"))
 	mustSync(t, rt)
-	post(u1, "POST", "/gallery/42:ja/neutral")
+	post(u1, "POST", galleryRoute(42, ":ja/neutral"))
 	mustSync(t, rt)
-	if s := state(t, rt, "u1", "42"); s.NetValue != 0 || s.Feedback != 0 {
+	if s := state(t, rt, "u1", cid(42)); s.NetValue != 0 || s.Feedback != 0 {
 		t.Fatalf("state after neutral = %+v, want zero", s)
 	}
-	post(u1, "POST", "/gallery/42:en/like")
-	post(u1, "POST", "/gallery/42:ja/dislike")
+	post(u1, "POST", galleryRoute(42, ":en/like"))
+	post(u1, "POST", galleryRoute(42, ":ja/dislike"))
 	mustSync(t, rt)
 	mustSync(t, rt) // re-sends inside the overlap converge
-	if m := metrics(t, rt, "42"); m.NegativeSubjects != 1 || m.PositiveSubjects != 0 || m.SignalCounts["reaction"] != 1 || m.Events != 1 {
+	if m := metrics(t, rt, cid(42)); m.NegativeSubjects != 1 || m.PositiveSubjects != 0 || m.SignalCounts["reaction"] != 1 || m.Events != 1 {
 		t.Fatalf("metrics = %+v, want one negative subject and one reaction event", m)
 	}
 
 	// favorite → unfavorite reaches the sink as neutral; re-favorite returns.
-	post(u1, "POST", "/gallery/42:en/neutral")
-	post(u1, "POST", "/gallery/42:ja/favorite")
+	post(u1, "POST", galleryRoute(42, ":en/neutral"))
+	post(u1, "POST", galleryRoute(42, ":ja/favorite"))
 	mustSync(t, rt)
-	if s := state(t, rt, "u1", "42"); s.NetValue != 1 || s.Feedback != 1 {
+	if s := state(t, rt, "u1", cid(42)); s.NetValue != 1 || s.Feedback != 1 {
 		t.Fatalf("state after neutral + favorite = %+v", s)
 	}
-	post(u1, "DELETE", "/gallery/42:en/favorite")
+	post(u1, "DELETE", galleryRoute(42, ":en/favorite"))
 	mustSync(t, rt)
-	if s := state(t, rt, "u1", "42"); s.NetValue != 0 || s.Feedback != 0 {
+	if s := state(t, rt, "u1", cid(42)); s.NetValue != 0 || s.Feedback != 0 {
 		t.Fatalf("state after unfavorite = %+v, want zero", s)
 	}
-	post(u1, "POST", "/gallery/42:ja/favorite")
+	post(u1, "POST", galleryRoute(42, ":ja/favorite"))
 	mustSync(t, rt)
-	if s := state(t, rt, "u1", "42"); s.NetValue != 1 || s.Feedback != 1 {
+	if s := state(t, rt, "u1", cid(42)); s.NetValue != 1 || s.Feedback != 1 {
 		t.Fatalf("state after re-favorite = %+v", s)
 	}
-	if m := metrics(t, rt, "42"); m.SignalCounts["favorite"] != 1 || m.SignalCounts["reaction"] != 1 {
+	if m := metrics(t, rt, cid(42)); m.SignalCounts["favorite"] != 1 || m.SignalCounts["reaction"] != 1 {
 		t.Fatalf("metrics after the favorite cycle = %+v, want one identity per axis", m)
 	}
 
 	// Anonymous rows and targets the canonicalizer declines at sync time stay out.
-	post(access.Actor{IP: "10.0.0.1", Anonymous: true}, "POST", "/gallery/7:en/like")
-	post(u1, "POST", "/gallery/8:en/like")
+	post(access.Actor{IP: "10.0.0.1", Anonymous: true}, "POST", galleryRoute(7, ":en/like"))
+	post(u1, "POST", galleryRoute(8, ":en/like"))
 	e.declined.Store(true)
 	mustSync(t, rt)
 	e.declined.Store(false)
-	if m := metrics(t, rt, "7"); m.Events != 0 {
+	if m := metrics(t, rt, cid(7)); m.Events != 0 {
 		t.Fatalf("anonymous reaction exported: %+v", m)
 	}
-	if s := state(t, rt, "u1", "8"); s.Feedback != 0 {
+	if s := state(t, rt, "u1", cid(8)); s.Feedback != 0 {
 		t.Fatalf("declined target exported: %+v", s)
 	}
 
@@ -186,28 +190,28 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	down := e.runtime(t, unreachable, 0)
-	post(u1, "POST", "/gallery/9:en/like")
+	post(u1, "POST", galleryRoute(9, ":en/like"))
 	if _, err := down.SyncPreferences(ctx); err == nil {
 		t.Fatal("sync over a closed connection succeeded")
 	}
 	mustSync(t, rt)
-	if s := state(t, rt, "u1", "9"); s.NetValue != 1 {
+	if s := state(t, rt, "u1", cid(9)); s.NetValue != 1 {
 		t.Fatalf("after the outage: %+v", s)
 	}
 
 	// Restore floor: old revisions already in the sink lose to new ones.
 	u2 := access.Actor{ID: "u2", Kind: "user"}
 	old := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	if err := rt.RecordSignals(ctx, []signal.Signal{{ContentRef: gallery("9"), Subject: signal.Subject{UserID: "u2"}, Type: "reaction", EventID: PreferenceEventID,
+	if err := rt.RecordSignals(ctx, []signal.Signal{{ContentRef: gallery(cid(9)), Subject: signal.Subject{UserID: "u2"}, Type: "reaction", EventID: PreferenceEventID,
 		Revision: uint64(old.UnixMicro()), OccurredAt: old, Value: 1}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rt.Content.SeedPreferenceRevisionFloor(ctx, old.UnixMicro()); err != nil {
 		t.Fatal(err)
 	}
-	post(u2, "POST", "/gallery/9:en/dislike")
+	post(u2, "POST", galleryRoute(9, ":en/dislike"))
 	mustSync(t, rt)
-	if s := state(t, rt, "u2", "9"); s.NetValue != -1 {
+	if s := state(t, rt, "u2", cid(9)); s.NetValue != -1 {
 		t.Fatalf("new revision lost to the old one: %+v", s)
 	}
 
@@ -221,20 +225,20 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 			t.Fatalf("resync = %+v err=%v, want 5 rows", rep, err)
 		}
 	}
-	if s := state(t, rt, "u1", "42"); s.NetValue != 1 || s.Feedback != 1 {
+	if s := state(t, rt, "u1", cid(42)); s.NetValue != 1 || s.Feedback != 1 {
 		t.Fatalf("state after resync = %+v, want neutral reaction + favorite", s)
 	}
-	if s := state(t, rt, "u1", "8"); s.NetValue != 1 {
+	if s := state(t, rt, "u1", cid(8)); s.NetValue != 1 {
 		t.Fatalf("accepted-again target after resync = %+v", s)
 	}
-	if m := metrics(t, rt, "42"); m.Events != 2 || m.PositiveSubjects != 1 {
+	if m := metrics(t, rt, cid(42)); m.Events != 2 || m.PositiveSubjects != 1 {
 		t.Fatalf("metrics after resync = %+v", m)
 	}
 
 	// Erasure: the source rows go, the sink fences, a late send of a row read
 	// before the erasure is dropped, and nothing re-ingests.
 	u3 := access.Actor{ID: "u3", Kind: "user"}
-	post(u3, "POST", "/gallery/42:en/like")
+	post(u3, "POST", galleryRoute(42, ":en/like"))
 	var late []content.Preference
 	if _, err := rt.Content.ResyncPreferences(ctx, func(_ context.Context, page []content.Preference) error {
 		for _, p := range page {
@@ -253,7 +257,7 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 	if err := rt.sendPreferences(ctx, late); err != nil {
 		t.Fatal(err)
 	}
-	if rec := do(t, h, u3, "POST", "/gallery/42:en/dislike", nil); rec.Code != http.StatusForbidden {
+	if rec := do(t, h, u3, "POST", galleryRoute(42, ":en/dislike"), nil); rec.Code != http.StatusForbidden {
 		t.Fatalf("source write after erasure: %d", rec.Code)
 	}
 	mustSync(t, rt)
@@ -275,7 +279,7 @@ func TestPreferenceSyncSlowCommitOverlapIntegration(t *testing.T) {
 	rt := e.runtime(t, e.conn, overlap)
 	h := rt.Handler()
 	u1 := access.Actor{ID: "u1", Kind: "user"}
-	do(t, h, u1, "POST", "/gallery/4:en/like", nil)
+	do(t, h, u1, "POST", galleryRoute(4, ":en/like"), nil)
 	mustSync(t, rt)
 	time.Sleep(overlap + 200*time.Millisecond)
 
@@ -286,12 +290,12 @@ func TestPreferenceSyncSlowCommitOverlapIntegration(t *testing.T) {
 	defer held.Rollback(ctx)
 	var slow int64
 	if err := held.QueryRow(ctx, `INSERT INTO `+e.schema+`.content_reactions (tenant_id, content_kind, content_id, content_version_id, user_id, value, revision)
-		VALUES ($1, 'gallery', '5', '', 'slow', 1, nextval('`+e.schema+`.content_preference_revision_seq')) RETURNING revision`, testTenant).Scan(&slow); err != nil {
+		VALUES ($1, 'gallery', $2, '', 'slow', 1, nextval('`+e.schema+`.content_preference_revision_seq')) RETURNING revision`, testTenant, cid(5)).Scan(&slow); err != nil {
 		t.Fatal(err)
 	}
-	do(t, h, u1, "POST", "/gallery/6:en/like", nil)
+	do(t, h, u1, "POST", galleryRoute(6, ":en/like"), nil)
 	mustSync(t, rt)
-	if s := state(t, rt, "u1", "6"); s.NetValue != 1 {
+	if s := state(t, rt, "u1", cid(6)); s.NetValue != 1 {
 		t.Fatalf("later commit not synced: %+v", s)
 	}
 	mustSync(t, rt)
@@ -305,7 +309,7 @@ func TestPreferenceSyncSlowCommitOverlapIntegration(t *testing.T) {
 	if rep := mustSync(t, rt); rep.From >= slow {
 		t.Fatalf("sync started at %d, past the held revision %d", rep.From, slow)
 	}
-	if s := state(t, rt, "slow", "5"); s.NetValue != 1 {
+	if s := state(t, rt, "slow", cid(5)); s.NetValue != 1 {
 		t.Fatalf("slow commit lost: %+v", s)
 	}
 

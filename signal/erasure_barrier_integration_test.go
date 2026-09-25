@@ -86,7 +86,7 @@ type barrierFixture struct {
 
 func newBarrierFixture(tenant string) barrierFixture {
 	return barrierFixture{tenant: tenant, gone: Subject{UserID: "barrier-gone"}, keeper: Subject{UserID: "barrier-keeper"},
-		e1: gallery(tenant, "b1"), e2: gallery(tenant, "b2"),
+		e1: gallery(tenant, lid("b1")), e2: gallery(tenant, lid("b2")),
 		at: time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)}
 }
 
@@ -575,7 +575,7 @@ func TestEveryReadCarriesTheErasureBarrier(t *testing.T) {
 	st, _ := NewStore(fc, "hub")
 	ctx := context.Background()
 	sub := Subject{UserID: "u"}
-	ref := gallery("t", "1")
+	ref := gallery("t", cid(1))
 	_, _ = st.States(ctx, "t", sub, []ContentRef{ref})
 	_, _ = st.History(ctx, "t", sub, HistoryOptions{})
 	_, _ = st.HistoryCount(ctx, "t", sub, HistoryOptions{})

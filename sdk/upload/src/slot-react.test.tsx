@@ -7,7 +7,7 @@ import { UploadClient } from "./client.js";
 import type { CropSource } from "./image.js";
 import { useSlotCrop, useSlotImage } from "./slot-react.js";
 
-const ref = { kind: "channel", id: "7" };
+const ref = { kind: "channel", id: "0192f000-0000-7000-8000-000000000007" };
 
 function setup() {
   const s = new FakeServer();

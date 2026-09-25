@@ -255,9 +255,9 @@ func TestPostLikeBumpsCountersConcurrentExact(t *testing.T) {
 	ctx := context.Background()
 
 	// Insert a published post directly (react has no perm gate; it needs a target).
-	var id string
-	if err := pool.QueryRow(ctx, `INSERT INTO `+rt.store.t.posts+`
-		(tenant_id, author_id, title, body, is_draft) VALUES ($1, 'a', 't', 'b', false) RETURNING id`, testTenant).Scan(&id); err != nil {
+	id := cid(1)
+	if _, err := pool.Exec(ctx, `INSERT INTO `+rt.store.t.posts+`
+		(id, tenant_id, author_id, title, body, is_draft) VALUES ($2, $1, 'a', 't', 'b', false)`, testTenant, id); err != nil {
 		t.Fatalf("seed post: %v", err)
 	}
 
@@ -299,9 +299,9 @@ func TestPostLikeBumpsCountersConcurrentExact(t *testing.T) {
 	}
 
 	// reacting on a draft/absent target is 404 (ErrNotFound)
-	var draftID string
-	if err := pool.QueryRow(ctx, `INSERT INTO `+rt.store.t.posts+`
-		(tenant_id, author_id, title, body, is_draft) VALUES ($1, 'a', 't', 'b', true) RETURNING id`, testTenant).Scan(&draftID); err != nil {
+	draftID := cid(2)
+	if _, err := pool.Exec(ctx, `INSERT INTO `+rt.store.t.posts+`
+		(id, tenant_id, author_id, title, body, is_draft) VALUES ($2, $1, 'a', 't', 'b', true)`, testTenant, draftID); err != nil {
 		t.Fatalf("seed draft: %v", err)
 	}
 	if err := p.react(ctx, actor, draftID, 1); err == nil {

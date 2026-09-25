@@ -10,8 +10,8 @@ import (
 
 func TestCounts_RollupAggregates(t *testing.T) {
 	res := &fakeResolver{}
-	res.set("gallery", "g1", true, true)
-	res.set("gallery", "g2", true, true)
+	res.set("gallery", cid(1), true, true)
+	res.set("gallery", cid(2), true, true)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}})
 	ctx := context.Background()
 	must := func(err error) {
@@ -20,37 +20,37 @@ func TestCounts_RollupAggregates(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u1"}, "gallery", "g1", 1)))
-	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u2"}, "gallery", "g1", -1)))
-	must(rt.favorites.add(ctx, access.Actor{ID: "u1"}, "gallery", "g1"))
-	if _, err := rt.comments.create(ctx, access.Actor{ID: "u1"}, "gallery", "g1", createInput{Body: "hi"}); err != nil {
+	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u1"}, "gallery", cid(1), 1)))
+	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u2"}, "gallery", cid(1), -1)))
+	must(rt.favorites.add(ctx, access.Actor{ID: "u1"}, "gallery", cid(1)))
+	if _, err := rt.comments.create(ctx, access.Actor{ID: "u1"}, "gallery", cid(1), createInput{Body: "hi"}); err != nil {
 		t.Fatal(err)
 	}
-	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u3"}, "gallery", "g2", 1)))
+	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u3"}, "gallery", cid(2), 1)))
 
-	if c := countsOf(t, rt, ref("gallery", "g1")); c.Likes != 1 || c.Dislikes != 1 || c.Favorites != 1 || c.CommentCount != 1 {
+	if c := countsOf(t, rt, ref("gallery", cid(1))); c.Likes != 1 || c.Dislikes != 1 || c.Favorites != 1 || c.CommentCount != 1 {
 		t.Fatalf("g1 counts = %+v, want 1/1/1/1", c)
 	}
-	m, err := rt.Counts(ctx, []contentref.ContentRef{ref("gallery", "g1"), ref("gallery", "g2"), ref("gallery", "g3")})
+	m, err := rt.Counts(ctx, []contentref.ContentRef{ref("gallery", cid(1)), ref("gallery", cid(2)), ref("gallery", cid(3))})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m[ref("gallery", "g1").Key()].Likes != 1 || m[ref("gallery", "g2").Key()].Likes != 1 {
+	if m[ref("gallery", cid(1)).Key()].Likes != 1 || m[ref("gallery", cid(2)).Key()].Likes != 1 {
 		t.Fatalf("batch counts = %+v", m)
 	}
-	if _, ok := m[ref("gallery", "g3").Key()]; ok {
+	if _, ok := m[ref("gallery", cid(3)).Key()]; ok {
 		t.Fatal("g3 has no engagement; it should be absent from the batch map")
 	}
-	must(rt.favorites.remove(ctx, access.Actor{ID: "u1"}, "gallery", "g1"))
-	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u2"}, "gallery", "g1", 1)))
-	if c := countsOf(t, rt, ref("gallery", "g1")); c.Favorites != 0 || c.Likes != 2 || c.Dislikes != 0 {
+	must(rt.favorites.remove(ctx, access.Actor{ID: "u1"}, "gallery", cid(1)))
+	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u2"}, "gallery", cid(1), 1)))
+	if c := countsOf(t, rt, ref("gallery", cid(1))); c.Favorites != 0 || c.Likes != 2 || c.Dislikes != 0 {
 		t.Fatalf("after unfavorite + switch: %+v, want favorites=0 likes=2 dislikes=0", c)
 	}
 }
 
 func TestMyReactions_BatchAndByActor(t *testing.T) {
 	res := &fakeResolver{}
-	for _, id := range []string{"t1", "t2", "t3"} {
+	for _, id := range []string{cid(1), cid(2), cid(3)} {
 		res.set("tag", id, true, true)
 	}
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"tag"}})
@@ -62,11 +62,11 @@ func TestMyReactions_BatchAndByActor(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	must(reactErr(rt.reactions.react(ctx, u, "tag", "t1", 1)))
-	must(reactErr(rt.reactions.react(ctx, u, "tag", "t2", -1)))
-	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u2"}, "tag", "t3", 1)))
+	must(reactErr(rt.reactions.react(ctx, u, "tag", cid(1), 1)))
+	must(reactErr(rt.reactions.react(ctx, u, "tag", cid(2), -1)))
+	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u2"}, "tag", cid(3), 1)))
 
-	t1, t2, t3 := ref("tag", "t1"), ref("tag", "t2"), ref("tag", "t3")
+	t1, t2, t3 := ref("tag", cid(1)), ref("tag", cid(2)), ref("tag", cid(3))
 	m, err := rt.MyReactions(ctx, u, []contentref.ContentRef{t1, t2, t3})
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestMyReactions_BatchAndByActor(t *testing.T) {
 	if _, ok := m[t3.Key()]; ok {
 		t.Fatal("t3 belongs to another actor; it must be absent")
 	}
-	must(reactErr(rt.reactions.react(ctx, u, "tag", "t2", 0)))
+	must(reactErr(rt.reactions.react(ctx, u, "tag", cid(2), 0)))
 	list, err := rt.ReactionsByActor(ctx, u, "tag", 0, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +86,7 @@ func TestMyReactions_BatchAndByActor(t *testing.T) {
 		t.Fatalf("ReactionsByActor = %+v, want only t1=1", list)
 	}
 	anon := access.Actor{Anonymous: true, IP: "10.0.0.9"}
-	must(reactErr(rt.reactions.react(ctx, anon, "tag", "t3", 1)))
+	must(reactErr(rt.reactions.react(ctx, anon, "tag", cid(3), 1)))
 	am, err := rt.MyReactions(ctx, anon, []contentref.ContentRef{t3})
 	if err != nil || am[t3.Key()] != 1 {
 		t.Fatalf("anon MyReactions = %+v err=%v, want t3=1", am, err)
@@ -97,14 +97,14 @@ func TestCounts_CommentCountLifecycle(t *testing.T) {
 	rt := commentsRuntime(t, Options{})
 	ctx := context.Background()
 	a := access.Actor{ID: "u1"}
-	g := ref("gallery", "1")
+	g := ref("gallery", cid(1))
 
-	top := mustComment(t, rt, a, "gallery", "1", createInput{Body: "top"})
-	mustComment(t, rt, a, "gallery", "1", createInput{Body: "reply", ReplyToID: top.ID}) // reply: no rollup bump
+	top := mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "top"})
+	mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "reply", ReplyToID: top.ID}) // reply: no rollup bump
 	if c := countsOf(t, rt, g); c.CommentCount != 1 {
 		t.Fatalf("comment_count = %d, want 1 (reply excluded)", c.CommentCount)
 	}
-	top2 := mustComment(t, rt, a, "gallery", "1", createInput{Body: "top2"})
+	top2 := mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "top2"})
 	if c := countsOf(t, rt, g); c.CommentCount != 2 {
 		t.Fatalf("comment_count = %d, want 2", c.CommentCount)
 	}
@@ -121,9 +121,9 @@ func TestComments_SortByBest(t *testing.T) {
 	rt := commentsRuntime(t, Options{})
 	ctx := context.Background()
 	a := access.Actor{ID: "author"}
-	small := mustComment(t, rt, a, "gallery", "1", createInput{Body: "1/0"})
-	big := mustComment(t, rt, a, "gallery", "1", createInput{Body: "9/1"})
-	none := mustComment(t, rt, a, "gallery", "1", createInput{Body: "0/0"})
+	small := mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "1/0"})
+	big := mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "9/1"})
+	none := mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "0/0"})
 
 	if _, err := rt.comments.reactTx(ctx, access.Actor{ID: "v0"}, small.ID, 1); err != nil {
 		t.Fatal(err)
@@ -136,7 +136,7 @@ func TestComments_SortByBest(t *testing.T) {
 	if _, err := rt.comments.reactTx(ctx, access.Actor{ID: "hater"}, big.ID, -1); err != nil {
 		t.Fatal(err)
 	}
-	top, err := rt.comments.list(ctx, a, "gallery", "1", "best", 10, 0)
+	top, err := rt.comments.list(ctx, a, "gallery", cid(1), "best", 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,9 +149,9 @@ func TestComments_SortByLikes(t *testing.T) {
 	rt := commentsRuntime(t, Options{})
 	ctx := context.Background()
 	a := access.Actor{ID: "author"}
-	c1 := mustComment(t, rt, a, "gallery", "1", createInput{Body: "c1"})
-	c2 := mustComment(t, rt, a, "gallery", "1", createInput{Body: "c2"})
-	c3 := mustComment(t, rt, a, "gallery", "1", createInput{Body: "c3"})
+	c1 := mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "c1"})
+	c2 := mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "c2"})
+	c3 := mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "c3"})
 	for _, actor := range []access.Actor{{ID: "x1"}, {ID: "x2"}} {
 		if _, err := rt.comments.reactTx(ctx, actor, c2.ID, 1); err != nil {
 			t.Fatal(err)
@@ -160,7 +160,7 @@ func TestComments_SortByLikes(t *testing.T) {
 	if _, err := rt.comments.reactTx(ctx, access.Actor{ID: "x1"}, c1.ID, 1); err != nil {
 		t.Fatal(err)
 	}
-	top, err := rt.comments.list(ctx, a, "gallery", "1", "likes", 10, 0)
+	top, err := rt.comments.list(ctx, a, "gallery", cid(1), "likes", 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -64,7 +64,7 @@ func TestErrorMapping_ForeignTenantRefIsSanitized500(t *testing.T) {
 		Logger:       slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
 
-	req := httptest.NewRequest("GET", "/gallery/g1/comments", nil)
+	req := httptest.NewRequest("GET", "/gallery/"+cid(1)+"/comments", nil)
 	req = req.WithContext(withActor(req.Context(), access.Actor{ID: "u1"}))
 	rec := httptest.NewRecorder()
 	rt.Handler().ServeHTTP(rec, req)
@@ -92,9 +92,9 @@ func TestErrorMapping_ForeignTenantRefIsSanitized500(t *testing.T) {
 // carries an internal cause.
 func TestErrorMapping_PublicCodes(t *testing.T) {
 	res := &fakeResolver{}
-	res.set("gallery", "g1", true, true)
-	res.set("gallery", "hidden", false, false)
-	res.set("gallery", "locked", true, false)
+	res.set("gallery", cid(1), true, true)
+	res.set("gallery", cid(902), false, false)
+	res.set("gallery", cid(901), true, false)
 	var logs bytes.Buffer
 	rt, _ := newTestRuntime(t, Options{
 		Resolver:     res,
@@ -109,10 +109,10 @@ func TestErrorMapping_PublicCodes(t *testing.T) {
 		status                   int
 		code                     string
 	}{
-		{"unregistered kind", "GET", "/widget/w1/comments", "", http.StatusNotFound, CodeNotFound},
-		{"not visible", "GET", "/gallery/hidden/comments", "", http.StatusNotFound, CodeNotFound},
-		{"not accessible", "POST", "/gallery/locked/comments", `{"body":"hi"}`, http.StatusForbidden, CodeForbidden},
-		{"invalid body", "POST", "/gallery/g1/comments", `{"nope":1}`, http.StatusBadRequest, CodeInvalidRequest},
+		{"unregistered kind", "GET", "/widget/" + cid(1) + "/comments", "", http.StatusNotFound, CodeNotFound},
+		{"not visible", "GET", "/gallery/" + cid(902) + "/comments", "", http.StatusNotFound, CodeNotFound},
+		{"not accessible", "POST", "/gallery/" + cid(901) + "/comments", `{"body":"hi"}`, http.StatusForbidden, CodeForbidden},
+		{"invalid body", "POST", "/gallery/" + cid(1) + "/comments", `{"nope":1}`, http.StatusBadRequest, CodeInvalidRequest},
 		{"denied perm", "POST", "/posts", `{"title":"t","body":"b"}`, http.StatusForbidden, CodeForbidden},
 	}
 	for _, tc := range cases {
@@ -142,10 +142,10 @@ func TestErrorMapping_PublicCodes(t *testing.T) {
 // stable moderation code.
 func TestErrorMapping_ModerationRejection(t *testing.T) {
 	res := &fakeResolver{}
-	res.set("gallery", "g1", true, true)
+	res.set("gallery", cid(1), true, true)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, Moderator: &fakeModerator{}})
 
-	req := httptest.NewRequest("POST", "/gallery/g1/comments", strings.NewReader(`{"body":"spam"}`))
+	req := httptest.NewRequest("POST", "/gallery/"+cid(1)+"/comments", strings.NewReader(`{"body":"spam"}`))
 	req = req.WithContext(withActor(req.Context(), access.Actor{ID: "u1"}))
 	rec := httptest.NewRecorder()
 	rt.Handler().ServeHTTP(rec, req)

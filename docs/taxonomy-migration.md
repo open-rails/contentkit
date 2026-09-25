@@ -27,12 +27,13 @@ with the store builder/lister and mount its handler behind host authorization.
 | `content_node_counts` (derived) | tenant_id, taxonomy_id, content_kind, language, content_count, updated_at | rebuilt by `RebuildCounts`, recomputed on write |
 
 Every foreign key carries `tenant_id`, so a node can only be named, linked,
-assigned or counted inside its own tenant. `taxonomy_id` is opaque text and
-`content_nodes` is `PRIMARY KEY (tenant_id, taxonomy_id)`; `kind` is outside
-that key, so it does not separate two host tables that both number from 1.
-Adopt every host id as `'<kind>:<id>'` (`tag:42`, `creator:42`), uuid ids
-included — one rule per host, and public ids and URLs are unchanged because
-the host id stays in the value. Product metadata that is
+assigned or counted inside its own tenant. `taxonomy_id` is a UUIDv7 (a node
+is a search document keyed by it; see
+[Content ids](../HOST_INTEGRATION.md#content-ids)) and `content_nodes` is
+`PRIMARY KEY (tenant_id, taxonomy_id)`. Give each host row a UUIDv7 from its
+`created_at` (`contentref.IDAt`) and keep the host id (`tag:42`, `creator:42`)
+in a host `legacy_id` column, so public ids and URLs are unchanged. Below,
+`<tag_id>` etc. mean that mapped UUIDv7. Product metadata that is
 not a name, alias, edge or assignment (descriptions, `restricted`, creator
 `type`, `cover_key`, `indexable_buckets`, `sort_key`) stays in a host sidecar
 table keyed by `(tenant_id, taxonomy_id[, language])`.
@@ -67,16 +68,16 @@ table keyed by `(tenant_id, taxonomy_id[, language])`.
 
 | Existing | Becomes |
 |---|---|
-| `tags(id, slug, deleted_at)` | node kind `tag`, `taxonomy_id = 'tag:<id>'`; `deleted_at` → state `deleted` |
+| `tags(id, slug, deleted_at)` | node kind `tag`, `taxonomy_id` = the tag's UUIDv7; `deleted_at` → state `deleted` |
 | `tags.display_name`, `tag_i18n.localized_name` | names: `en` canonical from `display_name` unless `tag_i18n` has `en`; every `tag_i18n` row a canonical name in its language |
 | `tag_i18n_aliases.alias` | alias in the `tag_i18n` row's language |
 | `artists(id, slug, romanized_name, native_name, native_name_lang, type)` | kind `artist`; `en` canonical = romanized_name, `native_name_lang` canonical = native_name; `type` → sidecar |
 | `artist_aliases.alias` | `en` alias |
 | `characters(id, slug, series_id, …)` | kind `character`; edge `(character, member_of, series)`; slugs are unique per series today, so re-slug collisions as `<series-slug>-<slug>` before the cut |
 | `series(id, slug, parent_id, is_categorical)` | kind `series`; edge `(child, child, parent)` for `parent_id`; `is_categorical` → sidecar |
-| `voice_actors(id uuid, display_name)` | kind `voice_actor`, `taxonomy_id = 'voice_actor:<id>'`, `en` canonical name |
-| `gallery_tags` | assignments `(gallery, gallery_id, NULL, 'tag:<tag_id>', 'tag')` |
-| `gallery_version_tags` | assignments `(gallery, gallery_id via gallery_versions, version_id, 'tag:<tag_id>', 'tag')` |
+| `voice_actors(id uuid, display_name)` | kind `voice_actor`, `taxonomy_id` = the voice actor's UUIDv7, `en` canonical name |
+| `gallery_tags` | assignments `(gallery, gallery_id, NULL, <tag_id>, 'tag')` |
+| `gallery_version_tags` | assignments `(gallery, gallery_id via gallery_versions, version_id, <tag_id>, 'tag')` |
 | `gallery_artists` / `galleries.publisher_id` | relations `artist` / `publisher` to `artist` nodes |
 | `gallery_characters`, `gallery_series` | relations `character`, `series` |
 | `voice_actor_gallery_versions` | assignments with `content_version_id`, relation `voice_actor` |
@@ -126,7 +127,7 @@ document with the function over the live-version join:
 
 1. Apply the complete ContentKit PostgreSQL baseline in the host migrate step.
 2. In one transaction with `AssignOptions{SuppressCounts: true}`: create nodes
-   (ids as `'<kind>:<id>'`), names, edges, assignments from the tables above, keeping
+   (UUIDv7 ids, host ids kept as `legacy_id`), names, edges, assignments from the tables above, keeping
    `source_revision` = the host row's version where one exists. After the node's
    other mutations, use `SetImportedTimestamps(ctx, id, &createdAt, &updatedAt)`
    to preserve valid source chronology. A nil timestamp leaves that field alone;

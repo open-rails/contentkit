@@ -13,7 +13,7 @@ import (
 
 func TestFileCeilings(t *testing.T) {
 	e := newUploadEnv(t, nil, nil)
-	ref := media.RefBody{Kind: "mixed", ID: "1", Version: "v1"}
+	ref := media.RefBody{Kind: "mixed", ID: cid(1), Version: "v1"}
 	png := func(seed uint64) string { return e.upload(t, "alice", ref, "image/png", data(seed, 1000)) }
 	mp4 := func(seed uint64) string { return e.upload(t, "alice", ref, "video/mp4", data(seed, 2<<20)) }
 
@@ -41,7 +41,7 @@ func TestFileCeilings(t *testing.T) {
 func TestEditOpAndSlotFromFile(t *testing.T) {
 	e := newUploadEnv(t, nil, nil)
 	ctx := context.Background()
-	ref := media.RefBody{Kind: "mixed", ID: "2", Version: "v1"}
+	ref := media.RefBody{Kind: "mixed", ID: cid(2), Version: "v1"}
 	page := data(10, 3000)
 	pageName := e.upload(t, "alice", ref, "image/png", page)
 	clip := e.upload(t, "alice", ref, "video/mp4", data(11, 5000))
@@ -71,7 +71,7 @@ func TestEditOpAndSlotFromFile(t *testing.T) {
 	if status != 200 || out.Files[0].Edit == nil || out.Files[0].Edit.Crop.W != 900 {
 		t.Fatalf("edit: %d %+v %+v", status, er, out)
 	}
-	cref := contentref.NewVersion(e.Tenant, "mixed", "2", "v1")
+	cref := contentref.NewVersion(e.Tenant, "mixed", cid(2), "v1")
 	if _, err := e.manifests.Edit(ctx, cref, func(m *media.Manifest) error {
 		m.Files[0].Dims, m.Files[0].Edit = &media.Dims{W: 400, H: 200}, nil
 		return nil
@@ -101,7 +101,7 @@ func TestEditOpAndSlotFromFile(t *testing.T) {
 	}
 	slotEdit := func() string {
 		t.Helper()
-		rec, err := e.manifests.Slot(ctx, contentref.New(e.Tenant, "mixed", "2"), "cover")
+		rec, err := e.manifests.Slot(ctx, contentref.New(e.Tenant, "mixed", cid(2)), "cover")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -111,7 +111,7 @@ func TestEditOpAndSlotFromFile(t *testing.T) {
 		b, _ := json.Marshal(rec.Edit)
 		return string(b)
 	}
-	rc, obj, err := e.Store.Get(ctx, e.Tenant+"/mixed/2/originals/cover", media.GetOptions{})
+	rc, obj, err := e.Store.Get(ctx, e.Tenant+"/mixed/"+cid(2)+"/originals/cover", media.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

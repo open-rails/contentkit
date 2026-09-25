@@ -40,10 +40,10 @@ func TestTenantIsolationIntegration(t *testing.T) {
 
 	// Search documents: the same title in both tenants; each sees only its own.
 	upsertDocs(t, ctx, pool, schema,
-		KeywordDocument{DocumentKey: key(a, "g1", "en"), Title: "Blue Ocean"},
-		KeywordDocument{DocumentKey: key(b, "h1", "en"), Title: "Blue Ocean"},
+		KeywordDocument{DocumentKey: key(a, cid(1), "en"), Title: "Blue Ocean"},
+		KeywordDocument{DocumentKey: key(b, cid(11), "en"), Title: "Blue Ocean"},
 	)
-	for tenant, want := range map[string]string{a: "g1", b: "h1"} {
+	for tenant, want := range map[string]string{a: cid(1), b: cid(11)} {
 		page, err := hubs[tenant].Search(ctx, "blue ocean", HubSearchOptions{SearchOptions: SearchOptions{Language: "en", ContentKinds: []string{"gallery"}}})
 		if err != nil || len(page.Hits) != 1 || page.Hits[0].ContentID != want || page.Hits[0].TenantID != tenant {
 			t.Fatalf("%s search: %+v %v", tenant, page, err)
@@ -54,18 +54,18 @@ func TestTenantIsolationIntegration(t *testing.T) {
 		}
 	}
 	// Candidate verification never admits another tenant's document.
-	if _, err := search.Eligible(ctx, pool, search.Options{Schema: schema, Tenant: a, Language: "en"}, []search.Candidate{{ContentRef: contentref.New(b, "gallery", "h1"), Language: "en"}}); err == nil {
+	if _, err := search.Eligible(ctx, pool, search.Options{Schema: schema, Tenant: a, Language: "en"}, []search.Candidate{{ContentRef: contentref.New(b, "gallery", cid(11)), Language: "en"}}); err == nil {
 		t.Fatal("foreign candidate verified")
 	}
 
 	// Dirty rows and backfill state: tenant A's worker never touches B's rows.
-	if err := search.MarkDirty(ctx, pool, schema, []search.DirtyMark{{DocumentKey: key(a, "g2", "en")}, {DocumentKey: key(b, "h2", "en")}}); err != nil {
+	if err := search.MarkDirty(ctx, pool, schema, []search.DirtyMark{{DocumentKey: key(a, cid(2), "en")}, {DocumentKey: key(b, cid(12), "en")}}); err != nil {
 		t.Fatal(err)
 	}
 	var requested []ContentRef
 	opts := worker.Options{Pool: pool, Schema: schema, Tenant: a, SupportedLanguages: []string{"en"}, ContentKinds: []string{"gallery"},
 		ListContent: func(_ context.Context, tenant, _, _, _ string, _ int) ([]ContentRef, string, bool, error) {
-			return []ContentRef{contentref.New(tenant, "gallery", "g3")}, "", true, nil
+			return []ContentRef{contentref.New(tenant, "gallery", cid(3))}, "", true, nil
 		},
 		BuildKeywordDocuments: func(_ context.Context, tenant, kind, lang string, refs []ContentRef) ([]KeywordDocument, error) {
 			var out []KeywordDocument
@@ -83,7 +83,7 @@ func TestTenantIsolationIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if len(requested) != 2 || requested[0].ContentID != "g2" || requested[1].ContentID != "g3" {
+	if len(requested) != 2 || requested[0].ContentID != cid(2) || requested[1].ContentID != cid(3) {
 		t.Fatalf("tenant A worker built %+v", requested)
 	}
 	var dirtyB, dirtyA, backfillB, docsB int
@@ -99,11 +99,11 @@ func TestTenantIsolationIntegration(t *testing.T) {
 	at := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
 	for _, tenant := range []string{a, b} {
 		h := hubs[tenant]
-		g := h.Content("gallery", "g1")
+		g := h.Content("gallery", cid(1))
 		if err := h.RecordSignals(ctx, []signal.Signal{
 			{ContentRef: g, Subject: u, Type: signal.TypeView, EventID: "v", OccurredAt: at, Progress: 10, ProgressMax: 10, Score: 50, Completed: true},
-			{ContentRef: h.Content("gallery", "g2"), Subject: signal.Subject{AnonKey: "x"}, Type: signal.TypeView, EventID: "v2", OccurredAt: at, Progress: 10, ProgressMax: 10, Score: 50, Completed: true},
-			{ContentRef: h.Content("gallery", "g2"), Subject: u, Type: signal.TypeView, EventID: "v3", OccurredAt: at, Progress: 10, ProgressMax: 10, Score: 50, Completed: true},
+			{ContentRef: h.Content("gallery", cid(2)), Subject: signal.Subject{AnonKey: "x"}, Type: signal.TypeView, EventID: "v2", OccurredAt: at, Progress: 10, ProgressMax: 10, Score: 50, Completed: true},
+			{ContentRef: h.Content("gallery", cid(2)), Subject: u, Type: signal.TypeView, EventID: "v3", OccurredAt: at, Progress: 10, ProgressMax: 10, Score: 50, Completed: true},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -112,12 +112,12 @@ func TestTenantIsolationIntegration(t *testing.T) {
 		}
 	}
 	// A dislike only in A.
-	if err := hubs[a].RecordSignals(ctx, []signal.Signal{{ContentRef: hubs[a].Content("gallery", "g1"), Subject: u, Type: "reaction", EventID: "pref", OccurredAt: at, Value: -1}}); err != nil {
+	if err := hubs[a].RecordSignals(ctx, []signal.Signal{{ContentRef: hubs[a].Content("gallery", cid(1)), Subject: u, Type: "reaction", EventID: "pref", OccurredAt: at, Value: -1}}); err != nil {
 		t.Fatal(err)
 	}
 	for _, tenant := range []string{a, b} {
 		h := hubs[tenant]
-		g1 := h.Content("gallery", "g1")
+		g1 := h.Content("gallery", cid(1))
 		hist, err := h.History(ctx, u, signal.HistoryOptions{})
 		if err != nil || len(hist) != 2 || hist[0].TenantID != tenant {
 			t.Fatalf("%s history: %+v %v", tenant, hist, err)
@@ -148,7 +148,7 @@ func TestTenantIsolationIntegration(t *testing.T) {
 		t.Fatalf("B must not see A's dislike: %+v %v", negB, err)
 	}
 	// Cross-tenant references are refused everywhere, never silently remapped.
-	foreign := hubs[b].Content("gallery", "g1")
+	foreign := hubs[b].Content("gallery", cid(1))
 	if err := hubs[a].RecordSignals(ctx, []signal.Signal{{ContentRef: foreign, Subject: u, Type: signal.TypeView, EventID: "x", OccurredAt: at}}); err == nil {
 		t.Fatal("A recorded a signal for B's content")
 	}

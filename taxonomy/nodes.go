@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/contentkit/contentref"
 )
 
 // NodeInput creates one node with its initial names.
@@ -266,10 +267,10 @@ func (s *Store) CreateNodes(ctx context.Context, inputs []NodeInput) ([]Node, er
 		if err != nil {
 			return nil, err
 		}
-		if in.TaxonomyID != "" {
-			if err := validateID(in.TaxonomyID); err != nil {
-				return nil, err
-			}
+		if in.TaxonomyID == "" {
+			in.TaxonomyID = TaxonomyID(contentref.NewID())
+		} else if err := validateID(in.TaxonomyID); err != nil {
+			return nil, err
 		}
 		rows = append(rows, nodeRow{Ordinal: i, TaxonomyID: string(in.TaxonomyID), Kind: kind, Slug: slug, SourceRevision: in.SourceRevision})
 	}
@@ -280,7 +281,7 @@ func (s *Store) CreateNodes(ctx context.Context, inputs []NodeInput) ([]Node, er
 	out := make([]Node, len(inputs))
 	err = s.run(ctx, func(q querier) error {
 		res, err := q.Query(ctx, fmt.Sprintf(`INSERT INTO %s (tenant_id, taxonomy_id, kind, slug, state, source_revision)
- SELECT $1, coalesce(nullif(r.taxonomy_id, ''), gen_random_uuid()::text), r.kind, r.slug, 'active', r.source_revision
+ SELECT $1, r.taxonomy_id, r.kind, r.slug, 'active', r.source_revision
  FROM jsonb_to_recordset($2::jsonb) AS r(ordinal int, taxonomy_id text, kind text, slug text, source_revision bigint) ORDER BY r.ordinal
  RETURNING `+nodeColumns, s.table("content_nodes")), s.tenant, data)
 		if err != nil {

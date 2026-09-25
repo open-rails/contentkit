@@ -20,9 +20,9 @@ var mediaAdmin = access.Actor{ID: "admin", Kind: "user"}
 
 func insertPost(t *testing.T, rt *Runtime) string {
 	t.Helper()
-	var id string
-	if err := rt.store.pool.QueryRow(context.Background(),
-		`INSERT INTO `+rt.store.t.posts+` (tenant_id, author_id, title, body) VALUES ($1,'admin','t','b') RETURNING id::text`, rt.tenant).Scan(&id); err != nil {
+	id := contentref.NewID()
+	if _, err := rt.store.pool.Exec(context.Background(),
+		`INSERT INTO `+rt.store.t.posts+` (id, tenant_id, author_id, title, body) VALUES ($2,$1,'admin','t','b')`, rt.tenant, id); err != nil {
 		t.Fatalf("insert post: %v", err)
 	}
 	return id
@@ -94,7 +94,7 @@ func TestMedia_PostCoverAndInlineImages(t *testing.T) {
 		{"/posts/" + id + "/images", image("cover"), 400},
 		{"/posts/" + id + "/images", image(""), 400},
 		{"/posts/" + id + "/images", map[string]string{}, 400},
-		{"/posts/" + uuid.NewString() + "/images", image(name), 404},
+		{"/posts/" + contentref.NewID() + "/images", image(name), 404},
 	} {
 		if code := send(t, rt, mediaAdmin, "POST", tc.path, tc.body, nil); code != tc.want {
 			t.Errorf("POST %s %v: %d, want %d", tc.path, tc.body, code, tc.want)
@@ -183,8 +183,8 @@ func TestMedia_CanUpload(t *testing.T) {
 	}{
 		{rt.Ref("post", post), true},
 		{rt.Ref("poll", poll.ID), true},
-		{rt.Ref("post", uuid.NewString()), false},
-		{rt.Ref("poll", uuid.NewString()), false},
+		{rt.Ref("post", contentref.NewID()), false},
+		{rt.Ref("poll", contentref.NewID()), false},
 		{rt.Ref("gallery", post), false},
 		{contentref.New("other", "post", post), false},
 		{rt.Ref("post", post).WithVersion("v1"), false},
