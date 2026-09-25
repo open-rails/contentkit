@@ -73,7 +73,7 @@ func (s EncodeStatus) Current() *EncodeProgress {
 	return best
 }
 
-// ProgressSource reads encode progress (video.NewProgressSource). The read
+// ProgressSource reads encode progress (workqueue.NewProgressSource). The read
 // API asks only when a visible video file is pending.
 type ProgressSource interface {
 	EncodeProgress(ctx context.Context, ref contentref.ContentRef) (EncodeStatus, error)

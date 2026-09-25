@@ -7,8 +7,6 @@ name: media-video
     - 'media/**'
     - '!media/image/**'
     - '!**.md'
-    - 'cmd/media-worker/**'
-    - '!cmd/*/Dockerfile'
     - 'go.mod'
     - 'go.sum'
     - '.github/workflows/media-video.yaml'
@@ -60,5 +58,5 @@ jobs:
     - name: vet, test
       run: |
         timeout 60 sh -c "until curl -fsS http://localhost:9100/minio/health/ready; do sleep 1; done"
-        go vet ./media/video/... ./cmd/media-worker/...
-        go test ./media/video/... ./cmd/media-worker/... -count=1 -race -p 2 -v
+        go vet ./media/video/...
+        go test ./media/video/... -count=1 -race -p 2 -v

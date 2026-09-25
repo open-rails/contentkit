@@ -50,7 +50,9 @@ another tenant is an error, never remapped.
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
 | `media/image` | libvips (CGO) processor: WebP variants, public slots, zip downloads |
 | `media/token` | media access tokens, shared by hosts and the access worker |
-| `media/video` | ffmpeg encode jobs: byte-range fMP4 HLS ladder, AAC per audio track, WebVTT per text subtitle, sprite, per-quality MP4 downloads, poster frames and hover previews; `Frames` for the poster picker; River in schema `media_worker` (`cmd/media-worker`) |
+| `media/video` | ffmpeg encode: byte-range fMP4 HLS ladder, AAC per audio track, WebVTT per text subtitle, sprite, per-quality MP4 downloads, poster frames and hover previews; `Frames` for the poster picker |
+| `media/worker` | the media worker: one process for placement, images and video, built by the host from its media config (`cmd/media-worker` is the stock build) |
+| `media/workqueue` | the host's side of the worker: River schema `media_worker`, insert-only `Queue` (enqueue, cancel), encode progress |
 | `media/tiered` | optional `public`/`members`/`ppv`/`members_ppv`/`premium` policy over an entitlement `Checker` (hosts adapt OpenRails `CheckEntitlements`) |
 | `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; the `Identity`/`Authorizer`/`UserEnricher`/`ContentProcessor` ports, post and poll images through `Media`, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, and the HTTP routes |
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
@@ -196,17 +198,15 @@ key, _ := token.ParseKey(os.Getenv("MEDIA_TOKEN_KEY")) // "{kid}:{base64}", shar
 ring, _ := token.NewRing(key, nil)
 
 jobs, _ := media.NewJobs(media.JobsConfig{Store: store, Kinds: kinds, Tenants: []string{"d"}, Limiter: limiter, Resolver: resolver})
-manifests, _ := media.NewManifests(store, kinds, media.ManifestOptions{Locker: media.PGLocker(pool), Jobs: jobs})
-images, _ := image.New(image.Config{Store: store, Kinds: kinds, Manifests: manifests})
-_ = jobs.AddProcessor(images.Process)
-_ = video.Migrate(ctx, pool) // River schema media_worker, run by cmd/media-worker
-videos, _ := video.NewEnqueuer(pool, kinds)
-_ = jobs.AddProcessor(videos.Processor())
+manifests, _ := media.NewManifests(store, kinds, media.ManifestOptions{Locker: media.PGLocker(pool), Sweeps: jobs})
+_ = workqueue.Migrate(ctx, pool) // River schema media_worker, drained by the media worker
+queue, _ := workqueue.New(pool, kinds)
 client, _ := riverhelpers.New(ctx, pool, &river.Config{Schema: "public"}, runtime.RiverJobs(), jobs.RiverJobs())
 
 uploads, _ := media.NewUploads(media.UploadOptions{Store: store, Kinds: kinds, Manifests: manifests,
-	Authorizer: hostUploads, Tickets: &ring, Limiter: limiter, Queue: jobs})
+	Authorizer: hostUploads, Tickets: &ring, Limiter: limiter, Queue: queue, ProcessOnUpload: true})
 reader, _ := media.NewReader(media.ReaderOptions{Manifests: manifests, Kinds: kinds, Resolver: resolver, Hooks: hooks,
+	Progress: workqueue.NewProgressSource(pool),
 	Delivery: media.Delivery{Mode: media.DeliverCookie, BaseURL: "https://media.doujins.com", CookieDomain: "doujins.com", SigningKey: key}})
 mux.Handle("/api/media/upload/", http.StripPrefix("/api/media/upload", media.UploadHandler(uploads, media.UploadHandlerOptions{Tenant: "d", Actor: actorOf,
 	Reader: reader})))
@@ -233,7 +233,45 @@ unknown keys are 404. Every object carries `Cross-Origin-Resource-Policy:
 same-site` (`MEDIA_ACCESS_RESOURCE_POLICY=cross-origin` only when the pages
 live on another site than the media), so other sites cannot embed it with
 `<img>`/`<video>`. See HOST_INTEGRATION "Production media delivery".
-`cmd/media-worker` documents its environment.
+
+**The media worker** (`media/worker`) is the one process that does media
+work: it hashes and places staged uploads, derives image variants, zips, slot
+outputs and inline images (libvips) and encodes video, posters and hover
+previews (ffmpeg), from River schema `media_worker` (`media/workqueue`) in the
+host database. The host presigns, commits, publishes and reads, and links only
+`media/workqueue` (no libvips, no ffmpeg). The worker must apply the host's
+exact kinds and policy, so the host builds it from the same code that builds
+its `media.Registry`, `image.SpecChooser` and `media.Hooks` (`Failed` and
+`SlotEncoded` run in the worker), e.g. as a subcommand of the host binary:
+
+```go
+cfg, _ := worker.FromEnv(ctx) // DATABASE_URL, MEDIA_S3_*, MEDIA_HOST_RIVER_SCHEMA, MEDIA_WORKER_* (see worker.FromEnv)
+cfg.Kinds, cfg.Specs, cfg.Hooks = kinds, specs, hooks // the host's media config package
+w, _ := worker.New(ctx, cfg)
+_ = w.Run(ctx) // until SIGTERM; running jobs get MEDIA_WORKER_SHUTDOWN_GRACE
+```
+
+`cmd/media-worker` (image `ghcr.io/open-rails/contentkit-media-worker`) is
+the stock build for hosts whose kinds are plain data: it reads them from
+`MEDIA_KINDS_FILE` (a JSON array of `media.Kind`). The worker hands a video
+item's poster and hover-preview publish, and folder sweeps after its edits,
+back to the host's River schema (`MEDIA_HOST_RIVER_SCHEMA`), where
+`jobs.RiverJobs()` runs them with the host's `Resolver`.
+
+**Process on upload** (`UploadOptions.ProcessOnUpload`, default false): the
+presign reply tells the SDK to commit each file as soon as it is uploaded,
+`{op: "insert", unattached: true}`, so the worker processes it while the user
+is still arranging the upload. Unattached files are charged to the quota,
+count against the kind's caps and are left out of every read (editors ask for
+them with `ReadOptions.Unattached`, `POST /files`), zips and the automatic
+poster. `{op: "attach", name}` makes one part of the item after the attached
+files (or at `index`), without reprocessing; `remove` of an unattached file
+discards it: the item's worker jobs are cancelled (`workqueue.Queue.Cancel`,
+every stage) and re-enqueued for the rest, and its staged or placed original
+and derivatives no manifest references are deleted at once. The SDK's
+`UploadQueue` does all of this: `commit()` attaches in queue order, `remove()`
+discards, and `item.processing` (dims, `hls`, `failed`, `progress`) is polled
+until `item.processed`.
 
 `Edit` writes with `If-Match` (or `If-None-Match: *`) and retries on conflict;
 without `Capabilities.ConditionalPut` it serializes on a Postgres advisory lock
@@ -323,9 +361,9 @@ host records that it is set (and, for native slots, the aspect);
 by default, crops of any shape.
 
 **Image processing** (`media/image`, CGO over libvips via govips; install
-`libvips-dev` to build it). `image.New(Config{Store, Kinds, Manifests, Specs,
-Hooks})` gives `Process(ctx, media.ProcessJob)`; register it with
-`jobs.AddProcessor(proc.Process)` and pass `jobs` as `UploadOptions.Queue`. It derives WebP variants per the kind's `Specs` (or a per-file
+`libvips-dev` to build it; run by the media worker). `image.New(Config{Store,
+Kinds, Manifests, Specs, Hooks})` gives `Process(ctx, media.ProcessJob)`. A
+staged source is hashed from the bytes read for decoding and placed first. It derives WebP variants per the kind's `Specs` (or a per-file
 `SpecChooser`) from each file's `master`, else `original`, through its edit,
 only where a variant is missing or its `spec` differs, stores them as `blobs/sha256-…`, and
 records them in one manifest edit per pass that drops results for sources
@@ -349,7 +387,7 @@ The bucket needs CORS allowing `PUT` from the app origins with the
 `Content-Type` and `x-amz-checksum-sha256` headers, and the
 `AbortIncompleteMultipartUpload: 1 day` rule `Store.Configure` sets.
 
-**Video** (`media/video`, run by `cmd/media-worker`) encodes each `video/*`
+**Video** (`media/video`, run by the media worker) encodes each `video/*`
 manifest file: H.264 High with a capped CRF per rung (live action: 2160 CRF 23
 at most 32 Mbit/s, 1440 23/18M, 1080 23/12M, 720 22/7M, 480 21/3M; VBV
 buffer 2× the cap; `Video.Profile: media.VideoAnimation` adds `-tune animation`
@@ -397,20 +435,19 @@ it when a probe encode works; a file it fails on re-encodes with x264).
 ffmpeg reads only local files
 (`-protocol_whitelist file`) through container demuxers (mov/mp4, matroska/webm, avi,
 mpegts, flv, ogg, asf, mpeg): playlists and concat lists are refused. Changing
-the ladder or profile changes `video.Spec(video)`, so files re-encode. Jobs live in River schema `media_worker` in the host
-database: hosts run `video.Migrate` and enqueue through `video.NewEnqueuer`
-(insert-only; register `enqueuer.Processor()` with `media.Jobs.AddProcessor`;
-`enqueuer.Cancel(ctx, ref)` cancels an item's queued and running jobs of
-both stages). A job is `{ref, versioned, video}`; jobs are not unique, and a
-job for a fresh manifest is a no-op. The worker's environment is
-documented in `cmd/media-worker`.
+the ladder or profile changes `video.Spec(video)`, so files re-encode. A
+staged source is hashed while it downloads for ffmpeg and placed before the
+encode, so `hls.source` names the placed original. Jobs are `{ref}`
+(`workqueue.VideoArgs`; the worker takes the kind from its registry), not
+unique, and a job for a fresh manifest is a no-op; `workqueue.Queue.Cancel`
+cancels an item's queued and running jobs of both stages.
 
 After each encode the job grabs the item's **poster** frame (the `poster`
 slot; the image job encodes it) and renders its **hover preview** (silent MP4
 and animated WebP loops) from their selections; see HOST_INTEGRATION "Video
 posters and hover previews".
 
-**Encode progress**: with `ReaderOptions.Progress: video.NewProgressSource(pool)`
+**Encode progress**: with `ReaderOptions.Progress: workqueue.NewProgressSource(pool)`
 the read API adds `progress` to each visible video file still pending (none
 yet, or a replaced source), and `GET /{kind}/{id}/video-images` adds the item's
 current step. The worker parses ffmpeg `-progress` and writes, at most every
@@ -472,11 +509,12 @@ Media's River jobs (`jobs.RiverJobs()`) compose into the host client through
   `LateUploadWindow` (25 h) for PUTs and multipart completions that land late.
   With a `Limiter`, the owner's quota (the manifests' `OriginalBytes`) is
   released once.
-- Processing: `jobs.Enqueue` (the uploads' `ProcessQueue`) runs one pending
-  job per ref and slot through every `AddProcessor` processor. An Enqueue
-  (or `ScheduleSweep`) while an equal job runs queues one follow-up that
-  starts after it, since the running job may have read its inputs before the
-  change; an equal job still waiting absorbs it.
+- Processing: `workqueue.Queue` (the uploads' `ProcessQueue`) inserts one
+  pending image job per ref and slot, and a video job for a video kind's
+  manifest, into the worker's schema. An Enqueue (or `ScheduleSweep`) while an
+  equal job runs queues one follow-up that starts after it, since the running
+  job may have read its inputs before the change; an equal job still waiting
+  absorbs it.
 - Media packages add workers with `jobs.Register(func(*river.Config) error)`
   before composition and enqueue with `jobs.Insert`/`InsertTx`.
 - Restore: [docs/restore.md](docs/restore.md#media).

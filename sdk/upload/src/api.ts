@@ -3,6 +3,8 @@ import type {
   CommitBody,
   CommitReply,
   CompleteReply,
+  FilesBody,
+  FilesReply,
   PartsBody,
   PartsReply,
   PresignBody,
@@ -50,6 +52,9 @@ export class UploadApi {
   }
   commit(b: CommitBody, signal?: AbortSignal) {
     return this.call<CommitReply>("/commit", b, signal);
+  }
+  files(b: FilesBody, signal?: AbortSignal) {
+    return this.call<FilesReply>("/files", b, signal);
   }
   commitSlot(b: SlotBody, signal?: AbortSignal) {
     return this.call<SlotManifest>("/commit-slot", b, signal);

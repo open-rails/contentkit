@@ -4,6 +4,7 @@
 // controls), prints "READY <url>" and runs until stdin closes.
 //
 //	POST /upload/...          the upload API; X-Test-Actor names the caller
+//	POST /upload-on-upload/...  the same with ProcessOnUpload
 //	GET  /object?kind&id&version&name|slot   {"size","sha256","edit"} of a stored original
 package main
 
@@ -93,15 +94,24 @@ func main() {
 	uploads, err := media.NewUploads(media.UploadOptions{Store: store, Kinds: kinds, Manifests: manifests, Tickets: &ring, Authorizer: allow{}, Grace: *grace})
 	must(err)
 
+	// The same API with UploadOptions.ProcessOnUpload.
+	onUpload, err := media.NewUploads(media.UploadOptions{Store: store, Kinds: kinds, Manifests: manifests, Tickets: &ring, Authorizer: allow{},
+		Grace: *grace, ProcessOnUpload: true})
+	must(err)
+
 	mux := http.NewServeMux()
-	mux.Handle("/upload/", http.StripPrefix("/upload", media.UploadHandler(uploads, media.UploadHandlerOptions{
-		Tenant: tenant,
-		Reader: reader,
-		Actor: func(r *http.Request) (access.Actor, bool) {
-			id := r.Header.Get("X-Test-Actor")
-			return access.Actor{ID: id, Kind: "user"}, id != ""
-		},
-	})))
+	handler := func(u *media.Uploads) http.Handler {
+		return media.UploadHandler(u, media.UploadHandlerOptions{
+			Tenant: tenant,
+			Reader: reader,
+			Actor: func(r *http.Request) (access.Actor, bool) {
+				id := r.Header.Get("X-Test-Actor")
+				return access.Actor{ID: id, Kind: "user"}, id != ""
+			},
+		})
+	}
+	mux.Handle("/upload/", http.StripPrefix("/upload", handler(uploads)))
+	mux.Handle("/upload-on-upload/", http.StripPrefix("/upload-on-upload", handler(onUpload)))
 	mux.HandleFunc("GET /object", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		item, err := kinds.Item(contentref.NewVersion(tenant, q.Get("kind"), q.Get("id"), q.Get("version")))

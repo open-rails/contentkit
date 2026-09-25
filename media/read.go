@@ -168,6 +168,11 @@ type Grant struct {
 // resolver error denies (ErrResolve); an invisible item is ErrNotVisible. A
 // visible item without a manifest yet has no files.
 func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor access.Actor) (*Grant, error) {
+	return r.grant(ctx, ref, actor, false)
+}
+
+// grant is Grant; unattached keeps an editor's unattached files.
+func (r *Reader) grant(ctx context.Context, ref contentref.ContentRef, actor access.Actor, unattached bool) (*Grant, error) {
 	requested, err := r.kinds.Item(ref)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNotVisible, err)
@@ -198,6 +203,9 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 		man = &Manifest{}
 	} else if err != nil {
 		return nil, err
+	}
+	if !unattached || !res.Editor {
+		man = man.Attached()
 	}
 	g := &Grant{Item: item, Resolution: res, Manifest: man, units: res.Units(len(man.Files)),
 		Expires: token.Expiry(r.now(), r.delivery.TTL, r.delivery.Window), actor: actor, r: r}
@@ -353,6 +361,8 @@ type ReadOptions struct {
 	// metadata only.
 	Variants      []string
 	Offset, Limit int
+	// Unattached also lists an editor's unattached files (FileInfo.Unattached).
+	Unattached bool
 }
 
 // Access levels in ReadResult.
@@ -391,7 +401,10 @@ type FileInfo struct {
 	Teaser   bool    `json:"teaser,omitempty"`
 	Locked   bool    `json:"locked,omitempty"`
 	HLS      bool    `json:"hls,omitempty"`
-	Failed   string  `json:"failed,omitempty"` // editors only: why the file cannot be processed (video encode, image derive)
+	// Unattached is an editor's file processed on upload, not yet attached
+	// (ReadOptions.Unattached).
+	Unattached bool   `json:"unattached,omitempty"`
+	Failed     string `json:"failed,omitempty"` // editors only: why the file cannot be processed (video encode, image derive)
 	// FailedCode and FailedDetails type an image refusal (image_too_large,
 	// animation_not_allowed, …); editors only.
 	FailedCode    string        `json:"failed_code,omitempty"`
@@ -425,7 +438,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		o.Limit = r.defLimit
 	}
 	o.Limit = min(o.Limit, r.maxLimit)
-	g, err := r.Grant(ctx, ref, actor)
+	g, err := r.grant(ctx, ref, actor, o.Unattached)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -440,7 +453,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	}
 	for i, f := range files {
 		fi := FileInfo{Index: i, Type: f.Type, Width: metaInt(f.Meta, "w"), Height: metaInt(f.Meta, "h"),
-			Duration: metaFloat(f.Meta, "duration"), Teaser: f.Teaser(), HLS: f.HLS != nil && len(f.HLS.Video) > 0}
+			Duration: metaFloat(f.Meta, "duration"), Teaser: f.Teaser(), HLS: f.HLS != nil && len(f.HLS.Video) > 0, Unattached: f.Unattached}
 		if !g.Allowed(i) {
 			fi.Locked = true
 		} else {

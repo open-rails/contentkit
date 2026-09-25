@@ -89,9 +89,6 @@ func newContentEnv(t *testing.T) *contentEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := jobs.AddProcessor(proc.Process); err != nil {
-		t.Fatal(err)
-	}
 	reader, err := media.NewReader(media.ReaderOptions{Manifests: manifests, Kinds: kinds, Resolver: noContent{},
 		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: "https://media.test",
 			SigningKey: token.Key{ID: "k1", Secret: bytes.Repeat([]byte("s"), 32)}}})
@@ -104,7 +101,7 @@ func newContentEnv(t *testing.T) *contentEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uploads, err := media.NewUploads(media.UploadOptions{Store: s.Store, Kinds: kinds, Manifests: manifests, Authorizer: rt, Queue: jobs})
+	uploads, err := media.NewUploads(media.UploadOptions{Store: s.Store, Kinds: kinds, Manifests: manifests, Authorizer: rt, Queue: processNow{proc}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,4 +308,11 @@ func TestContentImages(t *testing.T) {
 	if _, err := e.Store.Head(ctx, pollFolder+"public/"+option+".webp"); err != nil {
 		t.Fatalf("the poll's folder must stay: %v", err)
 	}
+}
+
+// processNow processes a job as it is enqueued, as the media worker would.
+type processNow struct{ p *image.Processor }
+
+func (q processNow) Enqueue(ctx context.Context, j media.ProcessJob) error {
+	return q.p.Process(ctx, j)
 }
