@@ -1,4 +1,4 @@
-package workqueue
+package metrics
 
 import (
 	"context"
@@ -8,20 +8,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 func TestCollector(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Pool(t, nil)
 	schema := pgtest.EmptySchema(t, ctx, pool)
-	if err := Migrate(ctx, pool, schema); err != nil {
+	if err := workqueue.Migrate(ctx, pool, schema); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO `+jobs(schema)+`
+	jobs := pgx.Identifier{schema, "river_job"}.Sanitize()
+	if _, err := pool.Exec(ctx, `INSERT INTO `+jobs+`
   (kind, args, max_attempts, queue, state, priority, attempt, scheduled_at)
 VALUES ('contentkit_media_video', '{}', 5, 'media_video', 'available', 1, 3, $1)`, time.Now().Add(-time.Hour)); err != nil {
 		t.Fatal(err)

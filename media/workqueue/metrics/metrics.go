@@ -1,4 +1,6 @@
-package workqueue
+// Package metrics exports the host's media worker queue health. It is kept
+// separate from workqueue so a host can enqueue without linking Prometheus.
+package metrics
 
 import (
 	"context"
@@ -8,6 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 var (
@@ -20,7 +24,7 @@ var (
 	collectionSuccessDesc = prometheus.NewDesc("contentkit_media_queue_collection_success", "Whether the current queue snapshot was read successfully (1) or failed (0).", nil, nil)
 )
 
-var queues = [...]string{ImageQueue, VideoQueue, AudioQueue}
+var queues = [...]string{workqueue.ImageQueue, workqueue.VideoQueue, workqueue.AudioQueue}
 var activeStates = [...]string{"available", "retryable", "running", "scheduled"}
 
 // Collector reads queue health from the host database at scrape time. Hosts
@@ -35,9 +39,9 @@ var _ prometheus.Collector = (*Collector)(nil)
 // NewCollector returns queue metrics for one worker schema.
 func NewCollector(pool *pgxpool.Pool, schema string) (*Collector, error) {
 	if pool == nil {
-		return nil, errors.New("media/workqueue: Collector needs a pool")
+		return nil, errors.New("media/workqueue/metrics: Collector needs a pool")
 	}
-	if err := ValidSchema(schema); err != nil {
+	if err := workqueue.ValidSchema(schema); err != nil {
 		return nil, err
 	}
 	return &Collector{pool: pool, schema: schema}, nil
@@ -53,7 +57,7 @@ func (*Collector) Describe(ch chan<- *prometheus.Desc) {
 func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	statuses, err := Snapshot(ctx, c.pool, c.schema)
+	statuses, err := workqueue.Snapshot(ctx, c.pool, c.schema)
 	if err != nil {
 		ch <- prometheus.MustNewConstMetric(collectionSuccessDesc, prometheus.GaugeValue, 0)
 		return
@@ -64,7 +68,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		queue, state string
 		priority     int
 	}
-	byGroup := make(map[group]JobStatus, len(statuses))
+	byGroup := make(map[group]workqueue.JobStatus, len(statuses))
 	for _, status := range statuses {
 		byGroup[group{status.Queue, status.State, status.Priority}] = status
 	}

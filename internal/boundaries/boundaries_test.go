@@ -145,9 +145,9 @@ func TestBoundaries(t *testing.T) {
 		if !strings.HasPrefix(path, m) {
 			continue
 		}
-		// Only media/image, and the media worker built on it, may pull in CGO;
-		// nothing depends on the root hub.
-		if path != m+"/media/image" && path != m+"/media/worker" && path != m+"/cmd/media-worker" {
+		// The worker and opt-in metrics exporter may pull in CGO; the
+		// host's core workqueue and video packages must remain CGO-free.
+		if path != m+"/media/image" && path != m+"/media/worker" && path != m+"/cmd/media-worker" && path != m+"/media/workqueue/metrics" {
 			for _, dep := range p.Deps {
 				if matchAny(dep, cgo) {
 					t.Errorf("%s depends on CGO package %s", path, dep)
