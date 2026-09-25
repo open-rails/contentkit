@@ -175,7 +175,7 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
     });
   });
   it("processes on upload: stages files unattached, attaches them in queue order, discards a removed one", async () => {
-    const ref = { kind: "gallery", id: "on-upload", version: "en" };
+    const ref = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000006", version: "en" };
     const c = new UploadClient({ endpoint: `${base}/upload-on-upload`, headers: () => ({ "X-Test-Actor": "alice" }), retryDelay: () => 200 });
     const q = new UploadQueue(c, { ref, pollInterval: 100 });
     const until = (ok: (s: QueueSnapshot) => boolean) =>
