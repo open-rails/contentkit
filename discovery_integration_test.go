@@ -167,3 +167,52 @@ func TestHubFallbackCandidatesOverEngagement(t *testing.T) {
 		t.Fatalf("thin primary must be filled from engagement, deduplicated: %v", got)
 	}
 }
+
+func TestHubFallbackFillsAfterPolicyFiltering(t *testing.T) {
+	ctx := t.Context()
+	user := signal.Subject{UserID: "u1"}
+	primary := &fixedCandidates{
+		similar:    cands(gallery(cid(1)), gallery(cid(5))),
+		forSubject: cands(gallery(cid(2)), gallery(cid(3))),
+	}
+	secondary := &fixedCandidates{
+		similar:    cands(gallery(cid(5)), gallery(cid(3)), gallery(cid(4))),
+		forSubject: cands(gallery(cid(3)), gallery(cid(5)), gallery(cid(4))),
+	}
+	h := signalHub(t, func(cfg *EmbeddedConfig) {
+		cfg.Candidates = discovery.Fallback{Primary: primary, Secondary: secondary}
+	})
+	if err := h.RecordSignals(ctx, []signal.Signal{
+		hubView(testTenant, cid(2), "u1", 1, 10),
+		{
+			ContentRef: gallery(cid(5)), Subject: user, Type: "reaction", EventID: "dislike",
+			OccurredAt: time.Date(2026, 6, 1, 11, 0, 0, 0, time.UTC), Value: -1,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("similar", func(t *testing.T) {
+		hits, err := h.SimilarTo(ctx, gallery(cid(1)), SimilarOptions{
+			ContentKinds: []string{"gallery"}, ExcludeSeenFor: &user, Limit: 2,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := hitIDs(hits), []string{cid(3), cid(4)}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("similar = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("recommend", func(t *testing.T) {
+		hits, err := h.Recommend(ctx, user, RecommendOptions{
+			ContentKinds: []string{"gallery"}, Limit: 2, PopularWindow: signal.AllTime(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := hitIDs(hits), []string{cid(3), cid(4)}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("recommend = %v, want %v", got, want)
+		}
+	})
+}
