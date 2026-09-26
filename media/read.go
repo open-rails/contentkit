@@ -79,6 +79,10 @@ type ReaderOptions struct {
 	Resolver  access.ContentResolver
 	Delivery  Delivery
 	Hooks     Hooks
+	// AllowGenericDownload controls download URLs issued by Read and Handler.
+	// Nil permits all kinds. Grant.DownloadURL remains available to hosts that
+	// govern downloads through their own endpoint.
+	AllowGenericDownload func(contentKind string) bool
 	// Progress adds live encode progress to pending video files; optional.
 	Progress ProgressSource
 	// Queue renders an editor view an editor asks for that is missing
@@ -94,18 +98,19 @@ type ReaderOptions struct {
 // Reader answers the read API: one Resolve per item, metadata for every file,
 // and signed URLs for the requested range.
 type Reader struct {
-	manifests *Manifests
-	kinds     *Registry
-	resolver  access.ContentResolver
-	delivery  Delivery
-	base      *url.URL
-	ring      token.Ring
-	hooks     Hooks
-	progress  ProgressSource
-	queue     ProcessQueue
-	maxLimit  int
-	defLimit  int
-	now       func() time.Time
+	manifests            *Manifests
+	kinds                *Registry
+	resolver             access.ContentResolver
+	delivery             Delivery
+	base                 *url.URL
+	ring                 token.Ring
+	hooks                Hooks
+	allowGenericDownload func(contentKind string) bool
+	progress             ProgressSource
+	queue                ProcessQueue
+	maxLimit             int
+	defLimit             int
+	now                  func() time.Time
 }
 
 var (
@@ -146,7 +151,7 @@ func NewReader(o ReaderOptions) (*Reader, error) {
 		d.Window = token.DefaultWindow
 	}
 	r := &Reader{manifests: o.Manifests, kinds: o.Kinds, resolver: o.Resolver, delivery: d, base: base, ring: ring,
-		hooks: o.Hooks, progress: o.Progress, queue: o.Queue, maxLimit: orDefault(o.MaxLimit, 200), defLimit: orDefault(o.DefaultLimit, 50), now: o.Now}
+		hooks: o.Hooks, allowGenericDownload: o.AllowGenericDownload, progress: o.Progress, queue: o.Queue, maxLimit: orDefault(o.MaxLimit, 200), defLimit: orDefault(o.DefaultLimit, 50), now: o.Now}
 	if r.now == nil {
 		r.now = time.Now
 	}
@@ -324,6 +329,10 @@ func (r *Reader) downloadName(ctx context.Context, ref contentref.ContentRef, ke
 		return name, nil
 	}
 	return ref.ContentID + "-" + key + extension(d.Type), nil
+}
+
+func (r *Reader) genericDownloadAllowed(kind string) bool {
+	return r.allowGenericDownload == nil || r.allowGenericDownload(kind)
 }
 
 func extension(contentType string) string {
@@ -523,7 +532,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	}
 	r.renderMissing(ctx, ProcessJob{Ref: g.Item.Ref()}, views.missing)
 	r.addProgress(ctx, g, out.Files)
-	if g.Full() {
+	if g.Full() && r.genericDownloadAllowed(g.Item.Ref().ContentKind) {
 		keys := make([]string, 0, len(g.Manifest.Downloads))
 		for k := range g.Manifest.Downloads {
 			keys = append(keys, k)
