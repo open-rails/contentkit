@@ -40,7 +40,8 @@ type Candidate struct {
 }
 
 // Fallback serves Primary and uses Secondary when Primary fails (after
-// OnError) or returns fewer than Limit candidates (appended, deduplicated).
+// OnError) or returns fewer than Limit candidates. Recommender decides whether
+// to fill after its policy filters, so excluded candidates do not count.
 type Fallback struct {
 	Primary, Secondary Candidates
 	OnError            func(error)
