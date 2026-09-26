@@ -182,6 +182,24 @@ func TestExpiryWindowsAndRotation(t *testing.T) {
 	}
 }
 
+func TestExpiryFractionalBoundary(t *testing.T) {
+	base := time.Date(2026, 9, 26, 8, 0, 0, 0, time.UTC)
+	now := base.Add(500 * time.Millisecond)
+	want := base.Add(8 * time.Hour)
+	if got := token.Expiry(now, 4*time.Hour, 4*time.Hour); !got.Equal(want) {
+		t.Fatalf("Expiry(%s) = %s, want %s", now, got, want)
+	}
+}
+
+func TestExpirySubsecondWindow(t *testing.T) {
+	base := time.Date(2026, 9, 26, 8, 0, 0, 0, time.UTC)
+	now := base.Add(100 * time.Millisecond)
+	want := base.Add(time.Second)
+	if got := token.Expiry(now, 200*time.Millisecond, 500*time.Millisecond); !got.Equal(want) {
+		t.Fatalf("Expiry(%s) = %s, want %s", now, got, want)
+	}
+}
+
 func TestParseRing(t *testing.T) {
 	std := "k2:" + base64.StdEncoding.EncodeToString(k2.Secret)
 	url := "k1:" + base64.RawURLEncoding.EncodeToString(k1.Secret)
