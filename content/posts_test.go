@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -270,7 +271,8 @@ func TestPostLikeBumpsCountersConcurrentExact(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs <- p.react(context.Background(), actor, id, 1)
+			_, err := p.react(context.Background(), actor, id, 1)
+			errs <- err
 		}()
 	}
 	wg.Wait()
@@ -291,7 +293,7 @@ func TestPostLikeBumpsCountersConcurrentExact(t *testing.T) {
 	}
 
 	// switch to dislike -> split counters move exactly
-	if err := p.react(ctx, actor, id, -1); err != nil {
+	if _, err := p.react(ctx, actor, id, -1); err != nil {
 		t.Fatalf("switch to dislike: %v", err)
 	}
 	if v, _ = p.loadByID(ctx, pool, id); v.TotalLikes != 0 || v.TotalDislikes != 1 {
@@ -304,7 +306,7 @@ func TestPostLikeBumpsCountersConcurrentExact(t *testing.T) {
 		(id, tenant_id, author_id, title, body, is_draft) VALUES ($2, $1, 'a', 't', 'b', true)`, testTenant, draftID); err != nil {
 		t.Fatalf("seed draft: %v", err)
 	}
-	if err := p.react(ctx, actor, draftID, 1); err == nil {
+	if _, err := p.react(ctx, actor, draftID, 1); err == nil {
 		t.Fatal("expected react on draft to fail")
 	}
 }
@@ -349,6 +351,7 @@ func TestPostReactionRoutesShareCounters(t *testing.T) {
 	}{
 		{name: "generic then dedicated", steps: []step{
 			{"/post/%s/like", 1, 1, 0},
+			{"/posts/%s/like", 1, 1, 0},
 			{"/posts/%s/neutral", 0, 0, 0},
 			{"/posts/%s/dislike", -1, 0, 1},
 			{"/post/%s/like", 1, 1, 0},
@@ -356,6 +359,7 @@ func TestPostReactionRoutesShareCounters(t *testing.T) {
 		}},
 		{name: "dedicated then generic", steps: []step{
 			{"/posts/%s/like", 1, 1, 0},
+			{"/post/%s/like", 1, 1, 0},
 			{"/post/%s/neutral", 0, 0, 0},
 			{"/post/%s/dislike", -1, 0, 1},
 			{"/posts/%s/like", 1, 1, 0},
@@ -375,6 +379,22 @@ func TestPostReactionRoutesShareCounters(t *testing.T) {
 				rec := doJSON(t, h, actor, http.MethodPost, path, nil)
 				if rec.Code != http.StatusOK {
 					t.Fatalf("%s: %d %s", path, rec.Code, rec.Body.String())
+				}
+				if strings.HasPrefix(path, "/posts/") {
+					got := decodePost(t, rec)
+					if got.TotalLikes != step.likes || got.TotalDislikes != step.dislikes {
+						t.Fatalf("%s response: counts = (%d,%d), want (%d,%d)", path,
+							got.TotalLikes, got.TotalDislikes, step.likes, step.dislikes)
+					}
+				} else {
+					var got reactionCounts
+					if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+						t.Fatalf("%s response: %v", path, err)
+					}
+					if got.Likes != step.likes || got.Dislikes != step.dislikes || got.Mine != step.mine {
+						t.Fatalf("%s response: %+v, want (%d,%d,%d)", path, got,
+							step.likes, step.dislikes, step.mine)
+					}
 				}
 				post, err := rt.posts.loadByID(context.Background(), pool, id)
 				if err != nil {
@@ -399,6 +419,101 @@ func TestPostReactionRoutesShareCounters(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPostReactionRoutesRespectAccessAndPublication(t *testing.T) {
+	resolver := &fakeResolver{}
+	rt, pool := newPostRuntime(t, Options{Resolver: resolver, ContentKinds: []string{KindPost}})
+	h := rt.Handler()
+	actor := access.Actor{ID: "reactor", Kind: "user"}
+	rec := doJSON(t, h, actor, http.MethodPost, "/posts", postWriteReq{
+		Title: ptr("access"), Body: ptr("body"), IsDraft: ptr(false),
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create post: %d %s", rec.Code, rec.Body.String())
+	}
+	id := decodePost(t, rec).ID
+	resolver.set(KindPost, id, true, false)
+	if rec := doJSON(t, h, actor, http.MethodPost, "/post/"+id+"/like", nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("inaccessible generic post: %d %s", rec.Code, rec.Body.String())
+	}
+
+	resolver.set(KindPost, id, true, true)
+	if rec := doJSON(t, h, actor, http.MethodPost, "/post/"+id+"/like", nil); rec.Code != http.StatusOK {
+		t.Fatalf("accessible generic post: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, state := range []struct {
+		name, query string
+	}{
+		{"draft", `UPDATE ` + rt.store.t.posts + ` SET is_draft = true WHERE id = $1 AND tenant_id = $2`},
+		{"held", `UPDATE ` + rt.store.t.posts + ` SET is_draft = false, moderation = 'held' WHERE id = $1 AND tenant_id = $2`},
+		{"scheduled", `UPDATE ` + rt.store.t.posts + ` SET moderation = 'approved', live_at = now() + interval '1 day' WHERE id = $1 AND tenant_id = $2`},
+	} {
+		t.Run(state.name, func(t *testing.T) {
+			if _, err := pool.Exec(context.Background(), state.query, id, rt.tenant); err != nil {
+				t.Fatal(err)
+			}
+			for _, path := range []string{"/post/" + id + "/dislike", "/posts/" + id + "/dislike"} {
+				if rec := doJSON(t, h, actor, http.MethodPost, path, nil); rec.Code != http.StatusNotFound {
+					t.Fatalf("%s: status %d body %s, want 404", path, rec.Code, rec.Body.String())
+				}
+			}
+			post, err := rt.posts.loadByID(context.Background(), pool, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			counts, err := rt.reactions.counts(context.Background(), pool, actor, rt.Ref(KindPost, id).Key())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if post.TotalLikes != 1 || post.TotalDislikes != 0 || counts.Likes != 1 || counts.Dislikes != 0 || counts.Mine != 1 {
+				t.Fatalf("denied reaction changed counters: post=(%d,%d), rollup=%+v", post.TotalLikes, post.TotalDislikes, counts)
+			}
+		})
+	}
+}
+
+func TestPostReactionMixedRoutesConcurrentExact(t *testing.T) {
+	resolver := &fakeResolver{}
+	rt, pool := newPostRuntime(t, Options{Resolver: resolver, ContentKinds: []string{KindPost}})
+	h := rt.Handler()
+	actor := access.Actor{ID: "reactor", Kind: "user"}
+	rec := doJSON(t, h, actor, http.MethodPost, "/posts", postWriteReq{
+		Title: ptr("concurrent"), Body: ptr("body"), IsDraft: ptr(false),
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create post: %d %s", rec.Code, rec.Body.String())
+	}
+	id := decodePost(t, rec).ID
+	resolver.set(KindPost, id, true, true)
+	paths := []string{"/post/" + id + "/like", "/posts/" + id + "/like"}
+	var wg sync.WaitGroup
+	statuses := make(chan int, 20)
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(path string) {
+			defer wg.Done()
+			statuses <- doJSON(t, h, actor, http.MethodPost, path, nil).Code
+		}(paths[i%len(paths)])
+	}
+	wg.Wait()
+	close(statuses)
+	for status := range statuses {
+		if status != http.StatusOK {
+			t.Fatalf("concurrent mixed-route like: status %d", status)
+		}
+	}
+	post, err := rt.posts.loadByID(context.Background(), pool, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts, err := rt.reactions.counts(context.Background(), pool, actor, rt.Ref(KindPost, id).Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if post.TotalLikes != 1 || post.TotalDislikes != 0 || counts.Likes != 1 || counts.Dislikes != 0 || counts.Mine != 1 {
+		t.Fatalf("concurrent like: post=(%d,%d), rollup=%+v", post.TotalLikes, post.TotalDislikes, counts)
 	}
 }
 

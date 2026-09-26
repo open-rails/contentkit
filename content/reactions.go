@@ -127,6 +127,12 @@ func (r *reactions) react(ctx context.Context, actor access.Actor, kind, id stri
 	if err != nil {
 		return contentref.ContentRef{}, err
 	}
+	if ref.ContentKind == KindPost {
+		if ref.Version() != "" {
+			return contentref.ContentRef{}, ErrNotFound
+		}
+		return r.rt.posts.react(ctx, actor, ref.ContentID, value)
+	}
 	storage, _ := r.rt.preferences.work(ref)
 	tx, err := r.s.beginMutation(ctx)
 	if err != nil {

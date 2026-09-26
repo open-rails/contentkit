@@ -284,7 +284,7 @@ func TestPreferences_ExportScopeAndOptOut(t *testing.T) {
 	if got := exported(t, rt); len(got) != 0 {
 		t.Fatalf("exported = %+v, want nothing", got)
 	}
-	if err := rt.posts.react(ctx, u1, post, -1); err != nil {
+	if _, err := rt.posts.react(ctx, u1, post, -1); err != nil {
 		t.Fatal(err)
 	}
 	mustReact(t, rt, u1, "gallery", localeID(42, "en"), 1)

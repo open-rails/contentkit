@@ -37,7 +37,7 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, a := range []access.Actor{u1, u2, anon} {
-		if err := rt.posts.react(ctx, a, post, 1); err != nil {
+		if _, err := rt.posts.react(ctx, a, post, 1); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -83,7 +83,7 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 		"reaction":         func() error { _, e := rt.reactions.react(ctx, u1, "gallery", localeID(42, "en"), 1); return e },
 		"favorite":         func() error { return rt.favorites.add(ctx, u1, "gallery", localeID(42, "en")) },
 		"unfavorite":       func() error { return rt.favorites.remove(ctx, u1, "gallery", localeID(42, "en")) },
-		"post reaction":    func() error { return rt.posts.react(ctx, u1, post, 1) },
+		"post reaction":    func() error { _, err := rt.posts.react(ctx, u1, post, 1); return err },
 		"comment reaction": func() error { _, e := rt.comments.reactTx(ctx, u1, cm.ID, 1); return e },
 		"poll vote":        func() error { _, e := rt.polls.vote(ctx, u1, poll.ID, poll.Options[0].ID); return e },
 	} {

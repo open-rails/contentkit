@@ -479,7 +479,7 @@ func (p *posts) handleReact(value int16) http.HandlerFunc {
 		ctx := req.Context()
 		actor := p.rt.actor(ctx)
 		id := req.PathValue("id")
-		if err := p.react(ctx, actor, id, value); err != nil {
+		if _, err := p.react(ctx, actor, id, value); err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -497,31 +497,31 @@ func (p *posts) handleReact(value int16) http.HandlerFunc {
 // react applies a like/dislike/neutral to a post. The post kind is internal
 // (no host gate): it verifies the post is published inside the tx, reuses
 // reactions.applyTx and bumps the split counter by the exact returned deltas.
-func (p *posts) react(ctx context.Context, actor access.Actor, id string, value int16) error {
+func (p *posts) react(ctx context.Context, actor access.Actor, id string, value int16) (contentref.ContentRef, error) {
 	tx, err := p.s.beginMutation(ctx)
 	if err != nil {
-		return err
+		return contentref.ContentRef{}, err
 	}
 	defer tx.Rollback(ctx)
 	if err := p.rt.guardErasedSubject(ctx, tx, viewerID(actor)); err != nil {
-		return err
+		return contentref.ContentRef{}, err
 	}
 	if err := p.requirePublished(ctx, tx, id); err != nil {
-		return err
+		return contentref.ContentRef{}, err
 	}
 	storage, _ := p.rt.preferences.work(p.rt.Ref(KindPost, id))
 	dLikes, dDislikes, err := p.rt.reactions.applyTx(ctx, tx, actor, storage.Key(), value)
 	if err != nil {
-		return err
+		return contentref.ContentRef{}, err
 	}
 	if dLikes != 0 || dDislikes != 0 {
 		if _, err := tx.Exec(ctx, `UPDATE `+p.s.t.posts+`
 			SET total_likes = total_likes + $1, total_dislikes = total_dislikes + $2, updated_at = now()
 			WHERE id = $3 AND tenant_id = $4`, dLikes, dDislikes, id, p.s.tenant); err != nil {
-			return err
+			return contentref.ContentRef{}, err
 		}
 	}
-	return tx.Commit(ctx)
+	return storage, tx.Commit(ctx)
 }
 
 // loadByID returns a single non-deleted post (draft or published) of the tenant.
