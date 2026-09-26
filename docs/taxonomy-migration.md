@@ -125,7 +125,7 @@ document with the function over the live-version join:
 
 ## Order of work per host
 
-1. Apply the complete ContentKit PostgreSQL baseline in the host migrate step.
+1. Apply the complete ContentKit PostgreSQL migration chain in the host migrate step.
 2. In one transaction with `AssignOptions{SuppressCounts: true}`: create nodes
    (UUIDv7 ids, host ids kept as `legacy_id`), names, edges, assignments from the tables above, keeping
    `source_revision` = the host row's version where one exists. After the node's

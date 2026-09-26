@@ -1,16 +1,19 @@
 # Database initialization
 
-ContentKit has exactly two baseline migrations:
+ContentKit has a PostgreSQL migration chain and a ClickHouse baseline:
 
 | Store | Embedded filesystem | File | Contents |
 |---|---|---|---|
 | PostgreSQL | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | interactions, moderation, polls, preferences, keyword search and taxonomy |
+| PostgreSQL | `migrations.Postgres` | `postgres/0002_search_invalid.up.sql` | durable invalid search-document state |
 | ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, subject state, daily contributions, exposures, co-engagement and erasure fences |
 
-These baselines initialize fresh stores. They replace the old feature-specific
-migration chains; they are not an in-place upgrade of an existing migration
-ledger. Restore old installations with the matching library version and use a
-host-owned, verified data import when moving their data into fresh stores.
+The baselines initialize fresh stores; PostgreSQL `0002` also upgrades an
+existing installation of the current ContentKit lineage. The baselines replace
+older feature-specific migration chains; they are not an in-place upgrade of
+those retired ledgers. Restore old installations with the matching library
+version and use a host-owned, verified data import when moving their data into
+fresh stores.
 
 ## One PostgreSQL schema
 
@@ -50,12 +53,12 @@ represents one logical ClickHouse deployment.
 MigrateKit owns tracking and locks in PostgreSQL `public.migrations`; this is
 migration metadata, separate from ContentKit's application tables.
 
-PostgreSQL commits its baseline transaction before ClickHouse begins. There
+PostgreSQL commits its migrations before ClickHouse begins. There
 is no cross-store transaction, and ClickHouse DDL can partially succeed.
 MigrateKit records the exact filename and source digest before starting the
 ClickHouse migration; rerunning the identical baseline retries its idempotent
 DDL. A changed source or an old unbound ClickHouse ledger is rejected. A
-failed ClickHouse step does not roll back the PostgreSQL baseline.
+failed ClickHouse step does not roll back PostgreSQL migrations.
 
 ## Extensions and runtime privileges
 
@@ -71,6 +74,8 @@ schema, required table privileges and sequence usage; keep DDL privileges on
 the migration role. ContentKit does not create application roles or grant
 access to another application's schema. Migration SQL contains the complete
 indexes, checks, internal foreign keys and dirty-queue trigger.
+Before deploying a worker that uses `0002`, apply the migration and grant its
+runtime role read/write access to `content_search_invalid`.
 
 ## Host relationships
 

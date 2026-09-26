@@ -32,7 +32,7 @@ reference against the tenant of the call. Nothing is defaulted.
 ## Storage
 
 - Postgres, host schema: `content_search_documents`, `content_search_dirty`,
-  `content_search_backfill` (keyword profile). Interaction tables (`content_posts`, `content_comments`, ...) arrive with C2.
+  `content_search_invalid`, `content_search_backfill` (keyword profile). Interaction tables (`content_posts`, `content_comments`, ...) arrive with C2.
 - ClickHouse, dedicated database: `signals` (canonical, versioned), the
   rebuildable `subject_content_state` and `subject_content_daily`
   projections, `content_pairs`, `exposures`, `erasures`. See
