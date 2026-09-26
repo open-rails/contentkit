@@ -182,6 +182,34 @@ func TestExpiryWindowsAndRotation(t *testing.T) {
 	}
 }
 
+func TestExpiryFractionalBoundary(t *testing.T) {
+	base := time.Date(2026, 9, 26, 8, 0, 0, 0, time.UTC)
+	now := base.Add(500 * time.Millisecond)
+	want := base.Add(8 * time.Hour)
+	if got := token.Expiry(now, 4*time.Hour, 4*time.Hour); !got.Equal(want) {
+		t.Fatalf("Expiry(%s) = %s, want %s", now, got, want)
+	}
+}
+
+func TestExpiryFractionalWindows(t *testing.T) {
+	base := time.Date(2026, 9, 26, 8, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name   string
+		now    time.Time
+		window time.Duration
+		want   time.Time
+	}{
+		{name: "subsecond", now: base.Add(100 * time.Millisecond), window: 500 * time.Millisecond, want: base.Add(time.Second)},
+		{name: "fractional second", now: base.Add(1100 * time.Millisecond), window: 1500 * time.Millisecond, want: base.Add(2 * time.Second)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := token.Expiry(tc.now, 200*time.Millisecond, tc.window); !got.Equal(tc.want) {
+				t.Fatalf("Expiry(%s) = %s, want %s", tc.now, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseRing(t *testing.T) {
 	std := "k2:" + base64.StdEncoding.EncodeToString(k2.Secret)
 	url := "k1:" + base64.RawURLEncoding.EncodeToString(k1.Secret)

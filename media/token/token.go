@@ -97,14 +97,26 @@ func ParseRing(current, previous string) (Ring, error) {
 	return NewRing(cur, prev)
 }
 
-// Expiry is ceil((now + ttl) / window) * window.
+// Expiry rounds now+ttl up to a window. Token timestamps store whole Unix
+// seconds, so fractional-second windows round up to whole seconds.
 func Expiry(now time.Time, ttl, window time.Duration) time.Time {
 	if window <= 0 {
 		window = DefaultWindow
 	}
 	w := int64(window / time.Second)
-	t := now.Add(ttl).Unix()
-	return time.Unix((t+w-1)/w*w, 0).UTC()
+	if window%time.Second != 0 {
+		w++
+	}
+	target := now.Add(ttl)
+	seconds := target.Unix()
+	if target.Nanosecond() != 0 {
+		seconds++
+	}
+	intervals := seconds / w
+	if seconds%w > 0 {
+		intervals++
+	}
+	return time.Unix(intervals*w, 0).UTC()
 }
 
 // FileScope scopes a token to one object key.

@@ -44,7 +44,8 @@ type Delivery struct {
 	SigningKey token.Key
 	// TTL is the minimum token lifetime (default 1h); expiries round up to
 	// Window (default token.DefaultWindow).
-	TTL    time.Duration
+	TTL time.Duration
+	// Window must be a whole number of seconds when set.
 	Window time.Duration
 }
 
@@ -149,6 +150,9 @@ func NewReader(o ReaderOptions) (*Reader, error) {
 	}
 	if d.Window <= 0 {
 		d.Window = token.DefaultWindow
+	}
+	if d.Window%time.Second != 0 {
+		return nil, errors.New("media: Delivery.Window must be a whole number of seconds")
 	}
 	r := &Reader{manifests: o.Manifests, kinds: o.Kinds, resolver: o.Resolver, delivery: d, base: base, ring: ring,
 		hooks: o.Hooks, allowGenericDownload: o.AllowGenericDownload, progress: o.Progress, queue: o.Queue, maxLimit: orDefault(o.MaxLimit, 200), defLimit: orDefault(o.DefaultLimit, 50), now: o.Now}
