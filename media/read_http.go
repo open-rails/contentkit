@@ -52,7 +52,8 @@ type HandlerOptions struct {
 //	GET /{kind}/{id}/video-images -> VideoImages without selections
 //
 // Every request resolves the item once and is "private, no-store";
-// playlists and redirects carry the folder cookie in cookie mode. Each
+// playlists and redirects carry the folder cookie in cookie mode. Disabled
+// generic downloads return 404 and are omitted from read results. Each
 // request that signs URLs logs the viewer, item, access and expiry, and a
 // short hash of a folder token, so a leaked URL can be traced to its viewer.
 func (r *Reader) Handler(o HandlerOptions) http.Handler {

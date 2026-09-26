@@ -60,6 +60,9 @@ func (r *Reader) hlsRoutes(mux *http.ServeMux, o HandlerOptions, log *slog.Logge
 		return g.SpriteVTT(req.PathValue("file"))
 	})
 	serve("/{kind}/{id}/download/{key}", "", func(req *http.Request, g *Grant) ([]byte, error) {
+		if !r.genericDownloadAllowed(g.Item.Ref().ContentKind) {
+			return nil, ErrNotAllowed
+		}
 		_, u, err := g.DownloadURL(req.Context(), req.PathValue("key"))
 		return []byte(u), err
 	})

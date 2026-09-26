@@ -127,7 +127,7 @@ func (f *readFixture) readerWith(t *testing.T, mode media.DeliveryMode, q media.
 func (f *readFixture) newReader(t *testing.T, o media.ReaderOptions, mode media.DeliveryMode) *media.Reader {
 	t.Helper()
 	r, err := media.NewReader(media.ReaderOptions{Manifests: f.ms, Kinds: f.kinds, Resolver: f.res, Hooks: o.Hooks, Queue: o.Queue,
-		Progress: o.Progress,
+		Progress: o.Progress, AllowGenericDownload: o.AllowGenericDownload,
 		Delivery: media.Delivery{Mode: mode, BaseURL: readBase, CookieDomain: "doujins.com", SigningKey: readKey},
 		Now:      func() time.Time { return f.now }})
 	if err != nil {
@@ -451,6 +451,74 @@ func TestReadDownloadNames(t *testing.T) {
 		if fi.URL != "" {
 			t.Fatal("no variant requested: metadata only")
 		}
+	}
+}
+
+func TestGenericDownloadPolicy(t *testing.T) {
+	f := newReadFixture(t)
+	f.res.verdicts[cid(1)] = access.Resolution{Visible: true, Accessible: true}
+	f.res.verdicts[cid(501)] = access.Resolution{Visible: true, Accessible: true}
+	if _, err := f.ms.Edit(t.Context(), f.post, func(m *media.Manifest) error {
+		m.Downloads = map[string]media.Download{"zip": {Blob: blobName("post-zip"), Type: "application/zip"}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	actor := access.Actor{ID: "viewer"}
+	allowed := f.reader(t, media.DeliverURL, media.Hooks{})
+	governed := f.newReader(t, media.ReaderOptions{AllowGenericDownload: func(kind string) bool { return kind != "gallery" }}, media.DeliverURL)
+	for _, tc := range []struct {
+		name string
+		r    *media.Reader
+		ref  contentref.ContentRef
+		want int
+	}{
+		{name: "default gallery", r: allowed, ref: f.gallery, want: http.StatusFound},
+		{name: "governed gallery", r: governed, ref: f.gallery, want: http.StatusNotFound},
+		{name: "other kind", r: governed, ref: f.post, want: http.StatusFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := tc.r.Read(t.Context(), tc.ref, actor, media.ReadOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantDownloads := tc.want == http.StatusFound
+			wantCount := 0
+			if wantDownloads {
+				wantCount = 1
+			}
+			if len(result.Downloads) != wantCount {
+				t.Fatalf("direct read downloads: %+v", result.Downloads)
+			}
+			h := tc.r.Handler(media.HandlerOptions{Tenant: f.env.Tenant})
+			path := "/" + tc.ref.ContentKind + "/" + tc.ref.ContentID
+			if tc.ref.Version() != "" {
+				path += "@" + tc.ref.Version()
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			var body media.ReadResult
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusOK {
+				t.Fatalf("HTTP read: %d %s: %v", rec.Code, rec.Body.String(), err)
+			}
+			if len(body.Downloads) != wantCount {
+				t.Fatalf("HTTP read downloads: %+v", body.Downloads)
+			}
+			rec = httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path+"/download/zip", nil))
+			if rec.Code != tc.want || (rec.Header().Get("Location") != "") != wantDownloads {
+				t.Fatalf("download route: %d, Location %q", rec.Code, rec.Header().Get("Location"))
+			}
+		})
+	}
+
+	grant, err := governed.Grant(t.Context(), f.gallery, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, downloadURL, err := grant.DownloadURL(t.Context(), "zip"); err != nil || downloadURL == "" {
+		t.Fatalf("governed download: %q, %v", downloadURL, err)
 	}
 }
 
