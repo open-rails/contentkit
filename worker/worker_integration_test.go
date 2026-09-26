@@ -458,13 +458,46 @@ func TestIntegrationInvalidDocumentDoesNotBlockDirtyQueue(t *testing.T) {
 	if badBuilds != 1 {
 		t.Fatalf("invalid document rebuilt %d times, want 1", badBuilds)
 	}
-	var failure string
-	if err := pool.QueryRow(ctx, "SELECT last_error FROM "+schema+".content_search_invalid WHERE tenant_id=$1 AND content_id=$2", tenant, cid(1)).Scan(&failure); err != nil {
+	var backfillState string
+	if err := pool.QueryRow(ctx, "SELECT state FROM "+schema+".content_search_backfill WHERE tenant_id=$1 AND content_kind='gallery' AND language='en'", tenant).Scan(&backfillState); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(failure, "exceeds keyword input limits") {
-		t.Fatalf("invalid document error = %q", failure)
+	if backfillState != "done" {
+		t.Fatalf("backfill state = %q, want done", backfillState)
 	}
+	var failure string
+	var invalidRevision int64
+	var failedAt time.Time
+	if err := pool.QueryRow(ctx, "SELECT revision,last_error,failed_at FROM "+schema+".content_search_invalid WHERE tenant_id=$1 AND content_id=$2", tenant, cid(1)).Scan(&invalidRevision, &failure, &failedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(failure, "exceeds keyword input limits") || failedAt.IsZero() {
+		t.Fatalf("invalid document error = %q, failed_at = %v", failure, failedAt)
+	}
+	var dirtyRevision int64
+	if err := pool.QueryRow(ctx, "SELECT revision FROM "+schema+".content_search_dirty WHERE tenant_id=$1 AND content_id=$2", tenant, cid(1)).Scan(&dirtyRevision); err != nil {
+		t.Fatal(err)
+	}
+	if invalidRevision != dirtyRevision {
+		t.Fatalf("invalid revision %d does not match dirty revision %d", invalidRevision, dirtyRevision)
+	}
+	if err := search.MarkDirty(ctx, pool, schema, []search.DirtyMark{{
+		DocumentKey: search.DocumentKey{ContentRef: gallery(cid(1)), Language: "en"},
+		Reason:      "source changed",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SyncOnce(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	var retriedRevision int64
+	if err := pool.QueryRow(ctx, "SELECT revision FROM "+schema+".content_search_invalid WHERE tenant_id=$1 AND content_id=$2", tenant, cid(1)).Scan(&retriedRevision); err != nil {
+		t.Fatal(err)
+	}
+	if retriedRevision <= invalidRevision || badBuilds != 2 {
+		t.Fatalf("new invalid revision %d after %d, builds %d", retriedRevision, invalidRevision, badBuilds)
+	}
+	invalidRevision = retriedRevision
 
 	invalid = false
 	if err := search.MarkDirty(ctx, pool, schema, []search.DirtyMark{{
@@ -472,6 +505,12 @@ func TestIntegrationInvalidDocumentDoesNotBlockDirtyQueue(t *testing.T) {
 		Reason:      "repaired",
 	}}); err != nil {
 		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT revision FROM "+schema+".content_search_dirty WHERE tenant_id=$1 AND content_id=$2", tenant, cid(1)).Scan(&dirtyRevision); err != nil {
+		t.Fatal(err)
+	}
+	if dirtyRevision <= invalidRevision {
+		t.Fatalf("repair did not advance revision: %d after %d", dirtyRevision, invalidRevision)
 	}
 	if err := SyncOnce(ctx, opts); err != nil {
 		t.Fatal(err)
@@ -481,5 +520,149 @@ func TestIntegrationInvalidDocumentDoesNotBlockDirtyQueue(t *testing.T) {
 	}
 	if n := count(t, ctx, pool, schema, "content_search_invalid", "tenant_id=$1 AND content_id=$2", tenant, cid(1)); n != 0 {
 		t.Fatalf("repaired document retains %d invalid records", n)
+	}
+}
+
+func TestIntegrationDeletingInvalidDocumentClearsQuarantine(t *testing.T) {
+	ctx, pool, schema := workerFixture(t)
+	key := search.DocumentKey{ContentRef: gallery(cid(1)), Language: "en"}
+	if err := search.UpsertKeywordDocuments(ctx, pool, schema, []search.KeywordDocument{{DocumentKey: key, Title: "old"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := markDirty(ctx, pool, schema); err != nil {
+		t.Fatal(err)
+	}
+	opts := workerOptions(pool, schema, func(_ context.Context, _, _, _ string, _ []contentref.ContentRef) ([]search.KeywordDocument, error) {
+		return []search.KeywordDocument{{DocumentKey: key, Title: "invalid", Keywords: make([]string, 257)}}, nil
+	})
+	if err := SyncOnce(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, ctx, pool, schema, "content_search_invalid", "tenant_id=$1", tenant); n != 1 {
+		t.Fatalf("invalid records = %d, want 1", n)
+	}
+	if err := search.MarkDirty(ctx, pool, schema, []search.DirtyMark{{DocumentKey: key, Deleted: true, Reason: "deleted"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SyncOnce(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"content_search_documents", "content_search_dirty", "content_search_invalid"} {
+		if n := count(t, ctx, pool, schema, table, "tenant_id=$1", tenant); n != 0 {
+			t.Fatalf("%s retains %d rows after deletion", table, n)
+		}
+	}
+}
+
+func TestIntegrationStaleInvalidBuildCannotQuarantineNewRevision(t *testing.T) {
+	ctx, pool, schema := workerFixture(t)
+	if err := markDirty(ctx, pool, schema); err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	var calls atomic.Int32
+	opts := workerOptions(pool, schema, func(_ context.Context, _, _, lang string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
+		doc := search.KeywordDocument{DocumentKey: search.DocumentKey{ContentRef: refs[0], Language: lang}, Title: "repaired"}
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-release
+			doc.Keywords = make([]string, 257)
+		}
+		return []search.KeywordDocument{doc}, nil
+	})
+	done := make(chan error, 1)
+	go func() { done <- SyncOnce(ctx, opts) }()
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if err := search.MarkDirty(ctx, pool, schema, []search.DirtyMark{{
+		DocumentKey: search.DocumentKey{ContentRef: gallery(cid(1)), Language: "en"},
+		Reason:      "repaired",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, ctx, pool, schema, "content_search_invalid", "tenant_id=$1", tenant); n != 0 {
+		t.Fatalf("stale build quarantined new revision: %d rows", n)
+	}
+	if err := SyncOnce(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, ctx, pool, schema, "content_search_documents", "tenant_id=$1", tenant); n != 1 {
+		t.Fatalf("repaired document indexed %d times, want 1", n)
+	}
+}
+
+func TestIntegrationBuilderErrorRemainsRetryable(t *testing.T) {
+	ctx, pool, schema := workerFixture(t)
+	if err := markDirty(ctx, pool, schema); err != nil {
+		t.Fatal(err)
+	}
+	offline := true
+	opts := workerOptions(pool, schema, func(_ context.Context, _, _, lang string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
+		if offline {
+			return nil, errors.New("source unavailable")
+		}
+		return []search.KeywordDocument{{DocumentKey: search.DocumentKey{ContentRef: refs[0], Language: lang}, Title: "ready"}}, nil
+	})
+	if err := SyncOnce(ctx, opts); err == nil {
+		t.Fatal("transient builder error was swallowed")
+	}
+	if n := count(t, ctx, pool, schema, "content_search_dirty", "tenant_id=$1", tenant); n != 1 {
+		t.Fatalf("dirty rows after builder error = %d, want 1", n)
+	}
+	if n := count(t, ctx, pool, schema, "content_search_invalid", "tenant_id=$1", tenant); n != 0 {
+		t.Fatalf("transient builder error quarantined %d rows", n)
+	}
+	offline = false
+	if err := SyncOnce(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, ctx, pool, schema, "content_search_documents", "tenant_id=$1", tenant); n != 1 {
+		t.Fatalf("recovered document indexed %d times, want 1", n)
+	}
+}
+
+func TestIntegrationInvalidDirtyIDDoesNotBlockValidDocument(t *testing.T) {
+	ctx, pool, schema := workerFixture(t)
+	const invalidID = "10000000-0000-4000-8000-000000000001"
+	if _, err := pool.Exec(ctx, `INSERT INTO `+schema+`.content_search_dirty
+ (tenant_id,content_kind,content_id,content_version_id,language,updated_at)
+ VALUES ($1,'gallery',$2,'','en','2020-01-01'),
+        ($1,'gallery',$3,'','en','2020-01-02')`, tenant, invalidID, cid(2)); err != nil {
+		t.Fatal(err)
+	}
+	opts := workerOptions(pool, schema, func(_ context.Context, _, _, lang string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
+		var docs []search.KeywordDocument
+		for _, ref := range refs {
+			docs = append(docs, search.KeywordDocument{DocumentKey: search.DocumentKey{ContentRef: ref, Language: lang}, Title: "valid"})
+		}
+		return docs, nil
+	})
+	if err := SyncOnce(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, ctx, pool, schema, "content_search_documents", "tenant_id=$1 AND content_id=$2", tenant, cid(2)); n != 1 {
+		t.Fatalf("valid document indexed %d times, want 1", n)
+	}
+	var failure string
+	if err := pool.QueryRow(ctx, "SELECT last_error FROM "+schema+".content_search_invalid WHERE tenant_id=$1 AND content_id=$2", tenant, invalidID).Scan(&failure); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(failure, "canonical lowercase UUIDv7") {
+		t.Fatalf("invalid ID error = %q", failure)
 	}
 }
