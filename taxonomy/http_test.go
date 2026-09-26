@@ -8,16 +8,18 @@ import (
 )
 
 func TestDecode(t *testing.T) {
+	const value = `{"slug":"x"}`
 	tests := []struct {
 		name    string
 		body    string
 		invalid bool
 	}{
-		{name: "single value", body: `{"slug":"x"}`},
+		{name: "single value", body: value},
 		{name: "trailing whitespace", body: " {\"slug\":\"x\"} \n\t"},
 		{name: "second value", body: `{"slug":"x"}{}`, invalid: true},
 		{name: "trailing garbage", body: `{"slug":"x"}x`, invalid: true},
-		{name: "oversized suffix", body: `{"slug":"x"}` + strings.Repeat(" ", maxBody), invalid: true},
+		{name: "exact body limit", body: value + strings.Repeat(" ", maxBody-len(value))},
+		{name: "over body limit", body: value + strings.Repeat(" ", maxBody-len(value)+1), invalid: true},
 		{name: "unknown field", body: `{"slug":"x","unknown":1}`, invalid: true},
 		{name: "empty body", body: "", invalid: true},
 	}
