@@ -80,6 +80,17 @@ func (r Recommender) rrfK() int {
 	return 60
 }
 
+func fallbackSource(source Candidates) (Fallback, bool) {
+	switch source := source.(type) {
+	case Fallback:
+		return source, true
+	case *Fallback:
+		return *source, true
+	default:
+		return Fallback{}, false
+	}
+}
+
 // Similar returns works like the anchor, never the anchor itself.
 func (r Recommender) Similar(ctx context.Context, anchor contentref.ContentRef, opts SimilarOptions) ([]Hit, error) {
 	if err := anchor.Validate(); err != nil {
@@ -90,23 +101,57 @@ func (r Recommender) Similar(ctx context.Context, anchor contentref.ContentRef, 
 	}
 	limit := r.limit(opts.Limit)
 	kinds := trimAll(opts.ContentKinds)
-	cands, err := r.Candidates.Similar(ctx, anchor, Query{ContentKinds: kinds, Limit: limit, Window: opts.Window})
+	q := Query{ContentKinds: kinds, Limit: limit, Window: opts.Window}
+	fallback, hasFallback := fallbackSource(r.Candidates)
+	source := r.Candidates
+	if hasFallback {
+		source = fallback.Primary
+	}
+	cands, err := source.Similar(ctx, anchor, q)
+	if err != nil && hasFallback {
+		fallback.report(err)
+		cands, err = fallback.Secondary.Similar(ctx, anchor, q)
+		hasFallback = false
+	}
 	if err != nil {
 		return nil, err
 	}
 	f := r.newFilter(limit, kinds)
 	f.exclude[anchor.Content().Key()] = struct{}{}
-	if opts.ExcludeSeenFor != nil {
-		present := []string{}
-		for _, c := range cands {
-			present = append(present, c.Ref.ContentKind)
+	apply := func(cands []Candidate, first bool) error {
+		if opts.ExcludeSeenFor != nil {
+			present := make([]string, 0, len(cands))
+			for _, c := range cands {
+				present = append(present, c.Ref.ContentKind)
+			}
+			if first {
+				if err := f.loadSubject(ctx, r, *opts.ExcludeSeenFor, present, kinds, false); err != nil {
+					return err
+				}
+			} else if err := f.loadSeen(ctx, r, *opts.ExcludeSeenFor, present); err != nil {
+				return err
+			}
 		}
-		if err := f.loadSubject(ctx, r, *opts.ExcludeSeenFor, present, kinds, false); err != nil {
+		for _, c := range cands {
+			f.push(c.Ref, float32(c.Score))
+		}
+		return nil
+	}
+	if err := apply(cands, true); err != nil {
+		return nil, err
+	}
+	if hasFallback && !f.full() {
+		secondary, err := fallback.Secondary.Similar(ctx, anchor, q)
+		if err != nil {
+			if len(cands) == 0 {
+				return nil, err
+			}
+			fallback.report(err)
+			return f.out, nil
+		}
+		if err := apply(secondary, false); err != nil {
 			return nil, err
 		}
-	}
-	for _, c := range cands {
-		f.push(c.Ref, float32(c.Score))
 	}
 	return f.out, nil
 }
@@ -123,12 +168,23 @@ func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts
 		return nil, fmt.Errorf("discovery: RecommendOptions.ContentKinds is required")
 	}
 	limit := r.limit(opts.Limit)
-	cands, err := r.Candidates.ForSubject(ctx, subject, Query{
+	q := Query{
 		ContentKinds:     kinds,
 		Limit:            limit,
 		SeedLimit:        opts.SeedLimit,
 		SeedContentKinds: trimAll(opts.SeedContentKinds),
-	})
+	}
+	fallback, hasFallback := fallbackSource(r.Candidates)
+	source := r.Candidates
+	if hasFallback {
+		source = fallback.Primary
+	}
+	cands, err := source.ForSubject(ctx, subject, q)
+	if err != nil && hasFallback {
+		fallback.report(err)
+		cands, err = fallback.Secondary.ForSubject(ctx, subject, q)
+		hasFallback = false
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -138,6 +194,20 @@ func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts
 	}
 	for _, c := range cands {
 		f.push(c.Ref, float32(c.Score))
+	}
+	// Fallback fullness is based on eligible hits, not raw candidates.
+	if hasFallback && !f.full() {
+		secondary, err := fallback.Secondary.ForSubject(ctx, subject, q)
+		if err != nil {
+			if len(cands) == 0 {
+				return nil, err
+			}
+			fallback.report(err)
+		} else {
+			for _, c := range secondary {
+				f.push(c.Ref, float32(c.Score))
+			}
+		}
 	}
 
 	// Popular scores live on another scale, so fill hits follow the

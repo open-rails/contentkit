@@ -171,6 +171,8 @@ func TestHubFallbackCandidatesOverEngagement(t *testing.T) {
 func TestHubFallbackFillsAfterPolicyFiltering(t *testing.T) {
 	ctx := t.Context()
 	user := signal.Subject{UserID: "u1"}
+	var secondaryQueries []discovery.Query
+	var reported []error
 	primary := &fixedCandidates{
 		similar:    cands(gallery(cid(1)), gallery(cid(5))),
 		forSubject: cands(gallery(cid(2)), gallery(cid(3))),
@@ -178,9 +180,13 @@ func TestHubFallbackFillsAfterPolicyFiltering(t *testing.T) {
 	secondary := &fixedCandidates{
 		similar:    cands(gallery(cid(5)), gallery(cid(3)), gallery(cid(4))),
 		forSubject: cands(gallery(cid(3)), gallery(cid(5)), gallery(cid(4))),
+		queries:    &secondaryQueries,
 	}
 	h := signalHub(t, func(cfg *EmbeddedConfig) {
-		cfg.Candidates = discovery.Fallback{Primary: primary, Secondary: secondary}
+		cfg.Candidates = &discovery.Fallback{
+			Primary: primary, Secondary: secondary,
+			OnError: func(err error) { reported = append(reported, err) },
+		}
 	})
 	if err := h.RecordSignals(ctx, []signal.Signal{
 		hubView(testTenant, cid(2), "u1", 1, 10),
@@ -213,6 +219,138 @@ func TestHubFallbackFillsAfterPolicyFiltering(t *testing.T) {
 		}
 		if got, want := hitIDs(hits), []string{cid(3), cid(4)}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("recommend = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("full eligible primary", func(t *testing.T) {
+		primary.similar = cands(gallery(cid(3)), gallery(cid(4)))
+		primary.forSubject = cands(gallery(cid(3)), gallery(cid(4)))
+		before := len(secondaryQueries)
+		similar, err := h.SimilarTo(ctx, gallery(cid(1)), SimilarOptions{
+			ContentKinds: []string{"gallery"}, ExcludeSeenFor: &user, Limit: 2,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		recommended, err := h.Recommend(ctx, user, RecommendOptions{
+			ContentKinds: []string{"gallery"}, Limit: 2, PopularWindow: signal.AllTime(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []string{cid(3), cid(4)}
+		if !reflect.DeepEqual(hitIDs(similar), want) || !reflect.DeepEqual(hitIDs(recommended), want) {
+			t.Fatalf("full primary: similar=%v recommend=%v, want %v", hitIDs(similar), hitIDs(recommended), want)
+		}
+		if len(secondaryQueries) != before {
+			t.Fatalf("secondary called for full eligible primary: %d new calls", len(secondaryQueries)-before)
+		}
+	})
+
+	t.Run("secondary seen kind", func(t *testing.T) {
+		primary.similar = cands(contentref.New(testTenant, "video", cid(6)))
+		secondary.similar = cands(gallery(cid(2)), gallery(cid(4)))
+		hits, err := h.SimilarTo(ctx, gallery(cid(1)), SimilarOptions{
+			ContentKinds: []string{"gallery"}, ExcludeSeenFor: &user, Limit: 2,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := hitIDs(hits), []string{cid(4)}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("secondary seen filtering = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("secondary error with no eligible primary", func(t *testing.T) {
+		primary.similar = cands(gallery(cid(1)), gallery(cid(5)))
+		primary.forSubject = cands(gallery(cid(2)), gallery(cid(5)))
+		secondary.err = errors.New("secondary offline")
+		reported = nil
+		similar, err := h.SimilarTo(ctx, gallery(cid(1)), SimilarOptions{
+			ContentKinds: []string{"gallery"}, ExcludeSeenFor: &user, Limit: 2,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		recommended, err := h.Recommend(ctx, user, RecommendOptions{
+			ContentKinds: []string{"gallery"}, Limit: 2, PopularWindow: signal.AllTime(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(similar) != 0 || len(recommended) != 0 {
+			t.Fatalf("filtered primary leaked: similar=%v recommend=%v", hitIDs(similar), hitIDs(recommended))
+		}
+		if len(reported) != 2 {
+			t.Fatalf("secondary errors reported %d times, want 2", len(reported))
+		}
+	})
+
+	t.Run("secondary error with empty primary", func(t *testing.T) {
+		primary.similar = nil
+		primary.forSubject = nil
+		boom := errors.New("secondary offline")
+		secondary.err = boom
+		reported = nil
+		if _, err := h.SimilarTo(ctx, gallery(cid(1)), SimilarOptions{
+			ContentKinds: []string{"gallery"}, ExcludeSeenFor: &user, Limit: 2,
+		}); !errors.Is(err, boom) {
+			t.Fatalf("similar error = %v, want %v", err, boom)
+		}
+		if _, err := h.Recommend(ctx, user, RecommendOptions{
+			ContentKinds: []string{"gallery"}, Limit: 2, PopularWindow: signal.AllTime(),
+		}); !errors.Is(err, boom) {
+			t.Fatalf("recommend error = %v, want %v", err, boom)
+		}
+		if len(reported) != 0 {
+			t.Fatalf("reported fatal fallback errors: %v", reported)
+		}
+	})
+
+	t.Run("secondary error with eligible primary", func(t *testing.T) {
+		primary.similar = cands(gallery(cid(3)))
+		primary.forSubject = cands(gallery(cid(3)))
+		secondary.err = errors.New("secondary offline")
+		reported = nil
+		similar, err := h.SimilarTo(ctx, gallery(cid(1)), SimilarOptions{
+			ContentKinds: []string{"gallery"}, ExcludeSeenFor: &user, Limit: 2,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		recommended, err := h.Recommend(ctx, user, RecommendOptions{
+			ContentKinds: []string{"gallery"}, Limit: 2, PopularWindow: signal.AllTime(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []string{cid(3)}
+		if !reflect.DeepEqual(hitIDs(similar), want) || !reflect.DeepEqual(hitIDs(recommended), want) {
+			t.Fatalf("partial primary: similar=%v recommend=%v, want %v", hitIDs(similar), hitIDs(recommended), want)
+		}
+		if len(reported) != 2 {
+			t.Fatalf("secondary errors reported %d times, want 2", len(reported))
+		}
+	})
+
+	t.Run("popularity fill survives secondary error", func(t *testing.T) {
+		if err := h.RecordSignals(ctx, []signal.Signal{
+			hubView(testTenant, cid(6), "p1", 1, 10),
+			hubView(testTenant, cid(6), "p2", 1, 10),
+			hubView(testTenant, cid(6), "p3", 1, 10),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		primary.forSubject = cands(gallery(cid(3)))
+		secondary.err = errors.New("secondary offline")
+		hits, err := h.Recommend(ctx, user, RecommendOptions{
+			ContentKinds: []string{"gallery"}, Limit: 2, PopularWindow: signal.AllTime(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := hitIDs(hits), []string{cid(3), cid(6)}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("popularity fill = %v, want %v", got, want)
 		}
 	})
 }
