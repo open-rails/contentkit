@@ -22,8 +22,9 @@ type ListContentPage func(ctx context.Context, tenant, contentKind, language, cu
 
 // BuildKeywordDocuments returns the current keyword document of every
 // requested reference that exists in the given language. A missing reference
-// means the content no longer exists and deletes its document. Return an
-// error for failed or incomplete reads; never a partial result.
+// means the content no longer exists and deletes its document. The worker
+// records invalid documents individually; return an error only for failed or
+// incomplete reads, never a partial result.
 type BuildKeywordDocuments func(ctx context.Context, tenant, contentKind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error)
 
 // Options configures one tenant's worker.
@@ -172,12 +173,15 @@ func (w syncer) dirty(ctx context.Context) error {
 
 func (w syncer) readDirty(ctx context.Context) ([]dirtyRow, error) {
 	rows, err := w.cfg.Pool.Query(ctx, fmt.Sprintf(`
-		SELECT content_kind, content_id, content_version_id, language, is_deleted, reason, revision
-		FROM %s.content_search_dirty
-		WHERE tenant_id = $1
-		ORDER BY updated_at ASC
+		SELECT d.content_kind, d.content_id, d.content_version_id, d.language, d.is_deleted, d.reason, d.revision
+		FROM %s.content_search_dirty d
+		LEFT JOIN %s.content_search_invalid i
+		  ON i.tenant_id=d.tenant_id AND i.content_kind=d.content_kind AND i.content_id=d.content_id
+		 AND i.content_version_id=d.content_version_id AND i.language=d.language AND i.revision=d.revision
+		WHERE d.tenant_id = $1 AND i.tenant_id IS NULL
+		ORDER BY d.updated_at ASC, d.content_kind, d.content_id, d.content_version_id, d.language
 		LIMIT $2
-	`, w.qs), w.cfg.Tenant, w.cfg.DirtyBatchSize)
+	`, w.qs, w.qs), w.cfg.Tenant, w.cfg.DirtyBatchSize)
 	if err != nil {
 		return nil, err
 	}
@@ -203,6 +207,11 @@ type queueRow struct {
 	ContentVersionID string `json:"content_version_id"`
 	Language         string `json:"language"`
 	Revision         int64  `json:"revision"`
+}
+
+type invalidDocumentRow struct {
+	queueRow
+	LastError string `json:"last_error"`
 }
 
 const queueColumns = `(content_kind text,content_id text,content_version_id text,language text,revision bigint)`
@@ -254,6 +263,8 @@ func (w syncer) publish(ctx context.Context, rows []dirtyRow, built map[document
 			return err
 		}
 		docs := make([]search.KeywordDocument, 0, len(current))
+		var valid []dirtyRow
+		var invalid []invalidDocumentRow
 		for _, r := range rows {
 			if !current[identity(r.DocumentKey)] {
 				continue
@@ -262,10 +273,52 @@ func (w syncer) publish(ctx context.Context, rows []dirtyRow, built map[document
 			if !ok || r.IsDeleted {
 				doc = search.KeywordDocument{DocumentKey: r.DocumentKey}
 			}
+			if err := doc.Validate(); err != nil {
+				invalid = append(invalid, invalidDocumentRow{
+					queueRow: queueRow{
+						ContentKind: r.ContentKind, ContentID: r.ContentID,
+						ContentVersionID: r.Version(), Language: r.Language, Revision: r.Revision,
+					},
+					LastError: err.Error(),
+				})
+				continue
+			}
 			docs = append(docs, doc)
+			valid = append(valid, r)
 			eligible = append(eligible, publication{doc, r.Revision})
 		}
-		return search.UpsertKeywordDocuments(ctx, tx, w.cfg.Schema, docs)
+		if err := search.UpsertKeywordDocuments(ctx, tx, w.cfg.Schema, docs); err != nil {
+			return err
+		}
+		if len(invalid) > 0 {
+			data, err := json.Marshal(invalid)
+			if err != nil {
+				return err
+			}
+			_, err = tx.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.content_search_invalid
+ (tenant_id,content_kind,content_id,content_version_id,language,revision,last_error)
+ SELECT $1,r.content_kind,r.content_id,r.content_version_id,r.language,r.revision,r.last_error
+ FROM jsonb_to_recordset($2::jsonb) AS r
+ (content_kind text,content_id text,content_version_id text,language text,revision bigint,last_error text)
+ ON CONFLICT (tenant_id,content_kind,content_id,content_version_id,language)
+ DO UPDATE SET revision=EXCLUDED.revision,last_error=EXCLUDED.last_error,failed_at=now()`, w.qs), w.cfg.Tenant, data)
+			if err != nil {
+				return err
+			}
+		}
+		if len(valid) > 0 {
+			data, err := queueRows(valid)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, fmt.Sprintf(`DELETE FROM %s.content_search_invalid i
+ USING jsonb_to_recordset($2::jsonb) AS r%s
+ WHERE i.tenant_id=$1 AND i.content_kind=r.content_kind AND i.content_id=r.content_id
+ AND i.content_version_id=r.content_version_id AND i.language=r.language`, w.qs, queueColumns), w.cfg.Tenant, data); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return err

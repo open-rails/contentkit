@@ -109,7 +109,7 @@ func (r *Runtime) WorkerOptions(host worker.Options) worker.Options {
 	return out
 }
 
-// MigrateConfig selects the host-owned stores for the two ContentKit baselines.
+// MigrateConfig selects the host-owned stores for ContentKit migrations.
 type MigrateConfig struct {
 	// DB holds PostgreSQL DDL credentials. Required.
 	DB *sql.DB
@@ -120,8 +120,8 @@ type MigrateConfig struct {
 	ClickHouse *chmigrate.Config
 }
 
-// Migrate installs all PostgreSQL features in one host-selected schema and the
-// optional ClickHouse signal plane. This baseline initializes fresh stores.
+// Migrate applies PostgreSQL migrations in one host-selected schema and the
+// optional ClickHouse signal baseline.
 func Migrate(ctx context.Context, cfg MigrateConfig) error {
 	if err := migrations.ApplyPostgres(ctx, cfg.DB, cfg.Schema); err != nil {
 		return err

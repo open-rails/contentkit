@@ -45,6 +45,29 @@ type KeywordDocument struct {
 	Keywords []string
 }
 
+// Validate checks a document before it crosses into the keyword index.
+// An empty title is a deletion, so only its key needs validation.
+func (d KeywordDocument) Validate() error {
+	if err := d.DocumentKey.validate(); err != nil {
+		return err
+	}
+	title := strings.TrimSpace(d.Title)
+	if title == "" {
+		return nil
+	}
+	if utf8.RuneCountInString(title) > 512 || len(d.Aliases) > 64 || len(d.Keywords) > 256 {
+		return fmt.Errorf("search: document %s exceeds keyword input limits", d.ContentRef)
+	}
+	for _, values := range [][]string{d.Aliases, d.Keywords} {
+		for _, value := range values {
+			if utf8.RuneCountInString(value) > 512 {
+				return fmt.Errorf("search: document %s term exceeds 512 characters", d.ContentRef)
+			}
+		}
+	}
+	return nil
+}
+
 // PublishedDocument is one keyword document as delivered to a DocumentSink.
 type PublishedDocument struct {
 	KeywordDocument
@@ -102,23 +125,13 @@ func UpsertKeywordDocuments(ctx context.Context, db Executor, schema string, doc
 	rows := make([]documentRow, 0, len(docs))
 	var removed []DocumentKey
 	for _, doc := range docs {
-		if err := doc.validate(); err != nil {
+		if err := doc.Validate(); err != nil {
 			return err
 		}
 		doc.Title = strings.TrimSpace(doc.Title)
 		if doc.Title == "" {
 			removed = append(removed, doc.DocumentKey)
 			continue
-		}
-		if utf8.RuneCountInString(doc.Title) > 512 || len(doc.Aliases) > 64 || len(doc.Keywords) > 256 {
-			return fmt.Errorf("search: document %s exceeds keyword input limits", doc.ContentRef)
-		}
-		for _, values := range [][]string{doc.Aliases, doc.Keywords} {
-			for _, value := range values {
-				if utf8.RuneCountInString(value) > 512 {
-					return fmt.Errorf("search: document %s term exceeds 512 characters", doc.ContentRef)
-				}
-			}
 		}
 		row := keyRow(doc.DocumentKey)
 		row.Title, row.Aliases, row.Keywords = doc.Title, append([]string{}, doc.Aliases...), append([]string{}, doc.Keywords...)

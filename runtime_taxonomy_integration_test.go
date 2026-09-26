@@ -26,7 +26,7 @@ func TestMigrateHostSchemaAndForeignKeysIntegration(t *testing.T) {
 	db := stdlib.OpenDBFromPool(pool)
 	defer db.Close()
 	cfg := MigrateConfig{DB: db, Schema: schema}
-	// Both first callers target a missing schema; creation and baseline apply
+	// Both first callers target a missing schema; creation and migrations
 	// must serialize under the same migration lock.
 	results := make(chan error, 2)
 	for range 2 {
@@ -63,16 +63,16 @@ func TestMigrateHostSchemaAndForeignKeysIntegration(t *testing.T) {
 		}
 	}
 	if err := Migrate(ctx, cfg); err != nil {
-		t.Fatalf("repeat baseline: %v", err)
+		t.Fatalf("repeat migrations: %v", err)
 	}
 	var count int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM public.migrations WHERE app='contentkit' AND schema=$1", schema).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("one baseline ledger row: %d %v", count, err)
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM public.migrations WHERE app='contentkit' AND schema=$1", schema).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("two migration ledger rows: %d %v", count, err)
 	}
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM "+q+".content_node_names WHERE taxonomy_id=$1 AND normalized='color'", tax(1)).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("catalog preserved on rerun: %d %v", count, err)
 	}
-	for _, table := range []string{"host_entities", "content_comments", "content_posts", "content_preference_sync", "content_search_documents", "content_nodes"} {
+	for _, table := range []string{"host_entities", "content_comments", "content_posts", "content_preference_sync", "content_search_documents", "content_search_invalid", "content_nodes"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, pgx.Identifier{schema, table}.Sanitize()).Scan(&exists); err != nil || !exists {
 			t.Fatalf("missing same-schema table %s: %v", table, err)

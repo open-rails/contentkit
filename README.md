@@ -62,7 +62,7 @@ another tenant is an error, never remapped.
 | `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, taxonomy popularity through the host `Catalog` port |
 | `discovery` | `SimilarTo`/`Recommend`: the `Candidates` port, the default co-engagement source (`Engagement`), `Fallback`, and the shared exclusion/fill policy (`Recommender`) |
 | `eval` | lexical golden-case evaluation, reports, baselines |
-| `migrations` | one PostgreSQL baseline and one ClickHouse baseline |
+| `migrations` | PostgreSQL migration chain and ClickHouse baseline |
 | root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (all PostgreSQL features and optional ClickHouse signals), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
 
 ## Install
@@ -79,8 +79,8 @@ _ = contentkit.Migrate(ctx, contentkit.MigrateConfig{
 })
 ```
 
-These are fresh-store baselines, not an in-place upgrade of old migration
-chains; see [docs/migration.md](docs/migration.md).
+The baselines initialize fresh stores; newer PostgreSQL migrations upgrade the
+current lineage, not retired migration chains. See [docs/migration.md](docs/migration.md).
 
 ## Runtime
 
@@ -115,6 +115,14 @@ _ = worker.SyncOnce(ctx, worker.Options{
 	Sink:                  nil,                    // optional DocumentSink
 })
 ```
+
+The worker records rejected host documents in `content_search_invalid` with
+their dirty-queue revision, validation error and failure time. It continues
+with other documents and backfill, but does not acknowledge the rejected row.
+Inspect that table for repair; marking the document dirty after correcting its
+source advances the revision and retries it. A deletion clears the invalid
+record. Run the PostgreSQL migrations before starting a worker built against
+this schema.
 
 Querying groups documents per work before paging; the host's eligibility join
 decides, per document, whether that one row is visible and which is preferred:

@@ -1,4 +1,4 @@
-// Package migrations owns ContentKit's PostgreSQL and ClickHouse baselines.
+// Package migrations owns ContentKit's PostgreSQL and ClickHouse migrations.
 package migrations
 
 import (
@@ -29,9 +29,8 @@ func mustSubFS(dir string) fs.FS {
 	return sub
 }
 
-// ApplyPostgres installs the complete baseline in schema and records it under
-// the contentkit ledger identity. The schema may also hold the host's tables.
-// Repeating the initializer preserves existing data and migration identity.
+// ApplyPostgres applies ContentKit's migrations in schema under its ledger
+// identity. The schema may also hold the host's tables.
 func ApplyPostgres(ctx context.Context, db *sql.DB, schema string) error {
 	if db == nil {
 		return fmt.Errorf("contentkit: DB is required")
@@ -40,12 +39,12 @@ func ApplyPostgres(ctx context.Context, db *sql.DB, schema string) error {
 		return fmt.Errorf("contentkit: Schema: %w", err)
 	}
 	// MigrateKit creates the selected schema under its migration lock.
-	baseline, err := migratekit.Load(Postgres, ".", migratekit.RequireParentLinks())
+	steps, err := migratekit.Load(Postgres, ".", migratekit.RequireParentLinks())
 	if err != nil {
-		return fmt.Errorf("contentkit: load PostgreSQL baseline: %w", err)
+		return fmt.Errorf("contentkit: load PostgreSQL migrations: %w", err)
 	}
-	if err := migratekit.NewPostgres(db, "contentkit").WithSchema(schema).ApplyMigrations(ctx, baseline); err != nil {
-		return fmt.Errorf("contentkit: apply PostgreSQL baseline: %w", err)
+	if err := migratekit.NewPostgres(db, "contentkit").WithSchema(schema).ApplyMigrations(ctx, steps); err != nil {
+		return fmt.Errorf("contentkit: apply PostgreSQL migrations: %w", err)
 	}
 	return nil
 }
