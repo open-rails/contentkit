@@ -135,6 +135,52 @@ func TestHubUnseenDiffsUniverseAgainstSeen(t *testing.T) {
 	}
 }
 
+func TestHubUnseenPagesPastSeenCatalogWindow(t *testing.T) {
+	const window = 1000
+	ids := make([]string, window+2)
+	for i := range ids {
+		ids[i] = cid(i + 1)
+	}
+	calls := 0
+	h := signalHub(t, func(c *EmbeddedConfig) {
+		c.Catalogs = map[string]ContentCatalog{
+			"gallery": ContentCatalogFunc(func(_ context.Context, tenant, kind string, q CatalogQuery) ([]string, error) {
+				if tenant != testTenant || kind != "gallery" || q.Limit != window {
+					return nil, fmt.Errorf("unexpected catalog query: %s/%s %+v", tenant, kind, q)
+				}
+				calls++
+				switch calls {
+				case 1:
+					return ids[:window], nil
+				case 2:
+					return ids[window:], nil
+				default:
+					return nil, fmt.Errorf("unexpected third catalog page")
+				}
+			}),
+		}
+	})
+	ctx := context.Background()
+	user := signal.Subject{UserID: "u1"}
+	views := make([]signal.Signal, window)
+	for i, id := range ids[:window] {
+		views[i] = hubView(testTenant, id, user.UserID, 1, 10)
+	}
+	for start := 0; start < len(views); start += signal.MaxSignalsPerBatch {
+		end := min(start+signal.MaxSignalsPerBatch, len(views))
+		if err := h.RecordSignals(ctx, views[start:end]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := h.Unseen(ctx, user, UnseenOptions{ContentKind: "gallery", Limit: 2, CatalogLimit: window})
+	if err != nil || !slices.Equal(got, ids[window:]) {
+		t.Fatalf("unseen past the first catalog page: %v, %v", got, err)
+	}
+	if calls != 2 {
+		t.Fatalf("catalog pages: %d, want 2", calls)
+	}
+}
+
 func TestHubRecommendFromCanonicalSignals(t *testing.T) {
 	h := signalHub(t, nil)
 	ctx := context.Background()
