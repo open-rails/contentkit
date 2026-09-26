@@ -80,6 +80,16 @@ func TestHandlerIntegration(t *testing.T) {
 		return out
 	}
 
+	const rejectedID = "01930000-0000-7000-8000-000000000999"
+	rejectedNode := `[{"taxonomy_id":"` + rejectedID + `","kind":"tag","slug":"rejected"}]`
+	expect("POST", "/nodes", rejectedNode+" {}", http.StatusBadRequest, `"code":"invalid_request"`)
+	expect("GET", "/nodes/"+rejectedID, "", http.StatusNotFound, `"code":"not_found"`)
+	expect(
+		"POST", "/nodes", rejectedNode+strings.Repeat(" ", maxBody),
+		http.StatusBadRequest, `"code":"invalid_request"`,
+	)
+	expect("GET", "/nodes/"+rejectedID, "", http.StatusNotFound, `"code":"not_found"`)
+
 	expect("POST", "/nodes", `[{"taxonomy_id":"{{colored}}","kind":"tag","slug":"colored","names":[{"language":"en","kind":"name","name":"Colored"}]},{"taxonomy_id":"{{colour}}","kind":"tag","slug":"colour"},{"taxonomy_id":"{{fate}}","kind":"series","slug":"fate"}]`, http.StatusCreated, `"taxonomy_id":"{{colored}}"`)
 	expect("POST", "/nodes", `[{"kind":"tag","slug":"colored"}]`, http.StatusConflict, `{"error":"taxonomy: conflict","code":"conflict"}`)
 	expect("POST", "/nodes", `[{"kind":"studio","slug":"x"}]`, http.StatusBadRequest, "not registered")
