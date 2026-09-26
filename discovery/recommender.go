@@ -194,15 +194,8 @@ func (r Recommender) newFilter(limit int, kinds []string) *filter {
 // unless includeSeen, their seen works of seenKinds.
 func (f *filter) loadSubject(ctx context.Context, r Recommender, subject signal.Subject, seenKinds, negativeKinds []string, includeSeen bool) error {
 	if !includeSeen {
-		for _, kind := range seenKinds {
-			if _, ok := f.seen[kind]; ok {
-				continue
-			}
-			s, err := r.Store.SeenIDs(ctx, r.Tenant, subject, kind)
-			if err != nil {
-				return err
-			}
-			f.seen[kind] = s
+		if err := f.loadSeen(ctx, r, subject, seenKinds); err != nil {
+			return err
 		}
 	}
 	negative, err := r.Store.NegativeIDs(ctx, r.Tenant, subject, negativeKinds)
@@ -211,6 +204,20 @@ func (f *filter) loadSubject(ctx context.Context, r Recommender, subject signal.
 	}
 	for key := range negative {
 		f.exclude[key] = struct{}{}
+	}
+	return nil
+}
+
+func (f *filter) loadSeen(ctx context.Context, r Recommender, subject signal.Subject, kinds []string) error {
+	for _, kind := range kinds {
+		if _, ok := f.seen[kind]; ok {
+			continue
+		}
+		seen, err := r.Store.SeenIDs(ctx, r.Tenant, subject, kind)
+		if err != nil {
+			return err
+		}
+		f.seen[kind] = seen
 	}
 	return nil
 }
