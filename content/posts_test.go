@@ -333,6 +333,75 @@ func TestPostLikeHTTPRoute(t *testing.T) {
 	}
 }
 
+func TestPostReactionRoutesShareCounters(t *testing.T) {
+	resolver := &fakeResolver{}
+	rt, pool := newPostRuntime(t, Options{Resolver: resolver, ContentKinds: []string{KindPost}})
+	h := rt.Handler()
+	actor := access.Actor{ID: "reactor", Kind: "user"}
+	type step struct {
+		path            string
+		mine            int16
+		likes, dislikes int
+	}
+	cases := []struct {
+		name  string
+		steps []step
+	}{
+		{name: "generic then dedicated", steps: []step{
+			{"/post/%s/like", 1, 1, 0},
+			{"/posts/%s/neutral", 0, 0, 0},
+			{"/posts/%s/dislike", -1, 0, 1},
+			{"/post/%s/like", 1, 1, 0},
+			{"/post/%s/neutral", 0, 0, 0},
+		}},
+		{name: "dedicated then generic", steps: []step{
+			{"/posts/%s/like", 1, 1, 0},
+			{"/post/%s/neutral", 0, 0, 0},
+			{"/post/%s/dislike", -1, 0, 1},
+			{"/posts/%s/like", 1, 1, 0},
+			{"/posts/%s/neutral", 0, 0, 0},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := doJSON(t, h, actor, http.MethodPost, "/posts", postWriteReq{Title: ptr(tc.name), Body: ptr("body"), IsDraft: ptr(false)})
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("create post: %d %s", rec.Code, rec.Body.String())
+			}
+			id := decodePost(t, rec).ID
+			resolver.set(KindPost, id, true, true)
+			for _, step := range tc.steps {
+				path := fmt.Sprintf(step.path, id)
+				rec := doJSON(t, h, actor, http.MethodPost, path, nil)
+				if rec.Code != http.StatusOK {
+					t.Fatalf("%s: %d %s", path, rec.Code, rec.Body.String())
+				}
+				post, err := rt.posts.loadByID(context.Background(), pool, id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				counts, err := rt.reactions.counts(context.Background(), pool, actor, rt.Ref(KindPost, id).Key())
+				if err != nil {
+					t.Fatal(err)
+				}
+				var stored int16
+				err = pool.QueryRow(context.Background(), `SELECT value FROM `+rt.store.t.reactions+`
+					WHERE tenant_id = $1 AND content_kind = $2 AND content_id = $3 AND content_version_id = '' AND user_id = $4`,
+					rt.tenant, KindPost, id, actor.ID).Scan(&stored)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if post.TotalLikes != step.likes || post.TotalDislikes != step.dislikes ||
+					counts.Likes != step.likes || counts.Dislikes != step.dislikes || counts.Mine != step.mine || stored != step.mine {
+					t.Fatalf("%s: post=(%d,%d), rollup=(%d,%d), mine=%d, row=%d; want (%d,%d), mine=%d",
+						path, post.TotalLikes, post.TotalDislikes, counts.Likes, counts.Dislikes, counts.Mine, stored,
+						step.likes, step.dislikes, step.mine)
+				}
+			}
+		})
+	}
+}
+
 // listPosts fetches GET /posts (optionally filtered by language) and decodes it.
 func listPosts(t *testing.T, h http.Handler, language string) []postView {
 	t.Helper()
