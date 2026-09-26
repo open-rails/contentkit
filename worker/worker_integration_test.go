@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -407,5 +408,78 @@ func TestIntegrationBuilderMustStayInScope(t *testing.T) {
 	}
 	if n := count(t, ctx, pool, schema, "content_search_documents", "true"); n != 0 {
 		t.Fatal("foreign document written")
+	}
+}
+
+func TestIntegrationInvalidDocumentDoesNotBlockDirtyQueue(t *testing.T) {
+	ctx, pool, schema := workerFixture(t)
+	if _, err := pool.Exec(ctx, `INSERT INTO `+schema+`.content_search_dirty
+ (tenant_id,content_kind,content_id,content_version_id,language,updated_at)
+ VALUES ($1,'gallery',$2,'','en','2020-01-01'),
+        ($1,'gallery',$3,'','en','2020-01-02')`, tenant, cid(1), cid(2)); err != nil {
+		t.Fatal(err)
+	}
+
+	invalid := true
+	badBuilds := 0
+	opts := workerOptions(pool, schema, func(_ context.Context, _, _, lang string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
+		var docs []search.KeywordDocument
+		for _, ref := range refs {
+			doc := search.KeywordDocument{DocumentKey: search.DocumentKey{ContentRef: ref, Language: lang}, Title: "valid"}
+			if ref.ContentID == cid(1) {
+				badBuilds++
+				if invalid {
+					doc.Keywords = make([]string, 257)
+					for i := range doc.Keywords {
+						doc.Keywords[i] = fmt.Sprintf("term-%d", i)
+					}
+				}
+			}
+			docs = append(docs, doc)
+		}
+		return docs, nil
+	})
+
+	var tickErrors []error
+	for range 2 {
+		if err := SyncOnce(ctx, opts); err != nil {
+			tickErrors = append(tickErrors, err)
+		}
+	}
+	if len(tickErrors) > 0 {
+		t.Fatalf("two ticks returned %d errors: %v", len(tickErrors), tickErrors)
+	}
+	if n := count(t, ctx, pool, schema, "content_search_documents", "tenant_id=$1 AND content_id=$2", tenant, cid(2)); n != 1 {
+		t.Fatalf("valid document indexed %d times, want 1", n)
+	}
+	if n := count(t, ctx, pool, schema, "content_search_documents", "tenant_id=$1 AND content_id=$2", tenant, cid(1)); n != 0 {
+		t.Fatalf("invalid document indexed %d times", n)
+	}
+	if badBuilds != 1 {
+		t.Fatalf("invalid document rebuilt %d times, want 1", badBuilds)
+	}
+	var failure string
+	if err := pool.QueryRow(ctx, "SELECT last_error FROM "+schema+".content_search_invalid WHERE tenant_id=$1 AND content_id=$2", tenant, cid(1)).Scan(&failure); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(failure, "exceeds keyword input limits") {
+		t.Fatalf("invalid document error = %q", failure)
+	}
+
+	invalid = false
+	if err := search.MarkDirty(ctx, pool, schema, []search.DirtyMark{{
+		DocumentKey: search.DocumentKey{ContentRef: gallery(cid(1)), Language: "en"},
+		Reason:      "repaired",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SyncOnce(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, ctx, pool, schema, "content_search_documents", "tenant_id=$1 AND content_id=$2", tenant, cid(1)); n != 1 {
+		t.Fatalf("repaired document indexed %d times, want 1", n)
+	}
+	if n := count(t, ctx, pool, schema, "content_search_invalid", "tenant_id=$1 AND content_id=$2", tenant, cid(1)); n != 0 {
+		t.Fatalf("repaired document retains %d invalid records", n)
 	}
 }
