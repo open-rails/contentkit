@@ -191,12 +191,22 @@ func TestExpiryFractionalBoundary(t *testing.T) {
 	}
 }
 
-func TestExpirySubsecondWindow(t *testing.T) {
+func TestExpiryFractionalWindows(t *testing.T) {
 	base := time.Date(2026, 9, 26, 8, 0, 0, 0, time.UTC)
-	now := base.Add(100 * time.Millisecond)
-	want := base.Add(time.Second)
-	if got := token.Expiry(now, 200*time.Millisecond, 500*time.Millisecond); !got.Equal(want) {
-		t.Fatalf("Expiry(%s) = %s, want %s", now, got, want)
+	for _, tc := range []struct {
+		name   string
+		now    time.Time
+		window time.Duration
+		want   time.Time
+	}{
+		{name: "subsecond", now: base.Add(100 * time.Millisecond), window: 500 * time.Millisecond, want: base.Add(time.Second)},
+		{name: "fractional second", now: base.Add(1100 * time.Millisecond), window: 1500 * time.Millisecond, want: base.Add(2 * time.Second)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := token.Expiry(tc.now, 200*time.Millisecond, tc.window); !got.Equal(tc.want) {
+				t.Fatalf("Expiry(%s) = %s, want %s", tc.now, got, tc.want)
+			}
+		})
 	}
 }
 
