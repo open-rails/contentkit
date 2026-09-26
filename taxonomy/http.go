@@ -96,9 +96,16 @@ type handler struct{ s *Store }
 const maxBody = 4 << 20
 
 func decode(r *http.Request, v any) error {
-	dec := json.NewDecoder(io.LimitReader(r.Body, maxBody))
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, maxBody))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
+		return fmt.Errorf("%w: body: %v", ErrInvalid, err)
+	}
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("%w: body: multiple JSON values", ErrInvalid)
+		}
 		return fmt.Errorf("%w: body: %v", ErrInvalid, err)
 	}
 	return nil
