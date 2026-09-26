@@ -158,7 +158,9 @@ func Probe(ctx context.Context, s Store, prefix string) (Capabilities, error) {
 	}{
 		{createErr, []error{ErrPreconditionFailed, ErrNotImplemented}},
 		{staleErr, []error{ErrPreconditionFailed, ErrNotImplemented}},
-		{matchErr, []error{ErrNotImplemented}},
+		// 412 is clean here too: a backend ignoring If-None-Match (Ceph RGW)
+		// overwrote the object above, so the first ETag no longer matches.
+		{matchErr, []error{ErrPreconditionFailed, ErrNotImplemented}},
 		{badErr, []error{ErrChecksumMismatch, ErrNotImplemented}},
 		{goodErr, nil},
 	} {

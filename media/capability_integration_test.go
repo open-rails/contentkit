@@ -1,8 +1,10 @@
 package media_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -162,5 +164,42 @@ func TestDeclaredCapabilitiesAreNotReprobed(t *testing.T) {
 	}
 	if store.Capabilities() != (media.Capabilities{}) {
 		t.Fatalf("declared capabilities re-probed: %+v", store.Capabilities())
+	}
+}
+
+// Ceph RGW ignores If-None-Match: * (the create overwrites, so the If-Match
+// with the first ETag then answers 412). That backend has no conditional PUT,
+// and the probe must say so instead of failing forever.
+func TestProbeAcceptsABackendIgnoringIfNoneMatch(t *testing.T) {
+	env := s3test.Open(t)
+	target, _ := url.Parse(env.Config.Endpoint)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	bucketPrefix := "/" + env.Config.Bucket + "/"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.Header.Get("If-None-Match") != "*" || !strings.HasPrefix(r.URL.Path, bucketPrefix) {
+			proxy.ServeHTTP(w, r)
+			return
+		}
+		// As RGW: If-None-Match is ignored and the PUT overwrites.
+		body, _ := io.ReadAll(r.Body)
+		obj, err := env.Store.Put(r.Context(), strings.TrimPrefix(r.URL.Path, bucketPrefix), bytes.NewReader(body), int64(len(body)), media.PutOptions{})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("ETag", obj.ETag)
+	}))
+	defer srv.Close()
+	cfg := env.Config
+	cfg.Endpoint, cfg.PublicEndpoint, cfg.Capabilities = srv.URL, "", nil
+	store, err := mediaS3.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Check(context.Background(), env.Tenant+"/"); err != nil {
+		t.Fatalf("probe against an If-None-Match-ignoring backend: %v", err)
+	}
+	if caps := store.Capabilities(); caps.ConditionalPut || caps.ChecksumSHA256 != env.Store.Capabilities().ChecksumSHA256 {
+		t.Fatalf("capabilities %+v; want no conditional PUT, checksum as the backend", caps)
 	}
 }
