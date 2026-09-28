@@ -591,8 +591,9 @@ so every viewer allowed the file gets it; one indexed query, only for items
 with a pending video.
 
 **Playback** is served by `Reader.Handler` next to the read API, generated per
-request after one `Resolve` (`private, no-store`; the folder cookie is set in
-cookie mode): `/{kind}/{id}/hls/{file}/master.m3u8?audio=&subs=` (optional
+request after one `Resolve` (`private, no-store`; unversioned full-access
+items get a folder cookie in cookie mode):
+`/{kind}/{id}/hls/{file}/master.m3u8?audio=&subs=` (optional
 id/language filters; `RESOLUTION` is the rung's true w×h; the first variant is
 the highest rung up to 1080p, where Safari/iOS native HLS starts, then the rest
 by descending bandwidth), `video/{N}.m3u8`, `audio/{id}.m3u8`,
@@ -600,10 +601,13 @@ by descending bandwidth), `video/{N}.m3u8`, `audio/{id}.m3u8`,
 signed `dl=` URL, full access only; name from `Hooks.DownloadName`). Media
 playlists are `EXT-X-BYTERANGE` lines over one blob URL per rendition. A file
 plays when the grant allows it (full access, inside a preview cut, or a
-teaser); preview viewers get per-file URL tokens. In the browser, hls.js needs
-`xhrSetup: xhr => { xhr.withCredentials = true }` in cookie mode and the
-worker's `Origins` must list the site; native Safari/iOS HLS should be checked
-in cookie mode and switched to URL mode if it does not send the cookie.
+teaser). Versioned items always get per-file URL tokens, including for full
+access in cookie mode: their versions share `private/`, so a folder token
+would also open another version's restricted files. Unversioned full-access
+items retain plain URLs and a folder cookie in cookie mode. For those items,
+hls.js needs `xhrSetup: xhr => { xhr.withCredentials = true }` and the worker's
+`Origins` must list the site; native Safari/iOS HLS should be checked in
+cookie mode and switched to URL mode if it does not send the cookie.
 
 Tokens are `kid.exp.base64url(HMAC-SHA256(secret, "{scope}|{exp}"))`: a scope
 is a folder (`…/private/`, covering the objects directly under it), one key,
@@ -614,7 +618,7 @@ or `{key}#dl={name}` for a download name. Expiry is window-aligned (default
 requests/s, burst 120; keyed by `Actor.ID`, else `Actor.IP`, else the peer
 address) with 429 `rate_limited` + `Retry-After`, and logs every signed
 response (`media urls signed`: viewer, ref, access, expiry, and a short hash
-of a folder token) so a leaked URL traces to its viewer.
+when a folder token is issued).
 
 Media's River jobs (`jobs.RiverJobs()`) compose into the host client through
 `helpers/river`; edits schedule a sweep and commits enqueue processing:

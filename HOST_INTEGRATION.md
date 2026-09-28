@@ -497,6 +497,9 @@ the host's periodic jobs. The worker migrates its schema itself.
 - **Media host**: serve `cmd/media-access` at `media.<site domain>` (same
   site as the pages) and use cookie delivery (`Delivery{Mode: DeliverCookie,
   CookieDomain: "<site domain>"}`); URL delivery only for apps without cookies.
+  Cookie mode issues a folder cookie only for unversioned full-access items.
+  Versioned items use per-file URL tokens even in cookie mode because versions
+  share the same `private/` folder and may have different access decisions.
 - **Access worker config**: `MEDIA_ACCESS_HOSTS=media.<domain>`;
   `MEDIA_ACCESS_CORS_ORIGINS` exactly your sites' origins
   (`https://<domain>,https://www.<domain>`; no wildcards, no third parties);
@@ -522,6 +525,10 @@ the host's periodic jobs. The worker migrates its schema itself.
   `MEDIA_ACCESS_TOKEN_KEY` with the old one as `_TOKEN_KEY_PREVIOUS`, then
   switch the hosts' `Delivery.SigningKey`, then drop the previous key after
   the longest token lifetime (TTL rounded up to the window, about 5 h by default).
+  A scope change does not revoke already-issued folder tokens: they remain
+  valid until expiry while their signing key is accepted. If immediate
+  revocation is required, coordinate a key replacement without accepting the
+  old key and have clients refresh their media grants.
 - **Scraping**: keep `HandlerOptions.Limit` on (default 2/s, burst 120 per
   viewer); behind a proxy set `Actor.IP` so anonymous viewers are not one key.
   Signed-URL logs name the viewer.
