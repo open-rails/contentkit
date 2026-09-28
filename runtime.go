@@ -68,7 +68,8 @@ func (r *Runtime) Handler() http.Handler { return r.Content.Handler() }
 
 // WorkerOptions returns the host's keyword worker options extended with
 // ContentKit's own documents: posts (content.KindPost) are listed and built by
-// the content module, every other kind by the host callbacks.
+// the content module, every other kind by the host callbacks. Missing host
+// callbacks for configured kinds fail backfill.
 func (r *Runtime) WorkerOptions(host worker.Options) worker.Options {
 	out := host
 	if out.Pool == nil {
@@ -93,7 +94,7 @@ func (r *Runtime) WorkerOptions(host worker.Options) worker.Options {
 			return r.Content.ListContent(ctx, tenant, kind, language, cursor, limit)
 		}
 		if list == nil {
-			return nil, "", true, nil
+			return nil, "", false, fmt.Errorf("contentkit: no ListContent for kind %q", kind)
 		}
 		return list(ctx, tenant, kind, language, cursor, limit)
 	}
