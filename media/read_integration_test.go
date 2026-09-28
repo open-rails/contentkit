@@ -261,15 +261,10 @@ func TestReadFullAccess(t *testing.T) {
 			}
 		}
 		key, tok, _ := split(t, out.Files[3].URL)
-		if key != thumb3 || tok != "" {
-			t.Fatalf("cookie mode url must be plain: %s", out.Files[3].URL)
+		if key != thumb3 || tok == "" || out.Cookie != nil {
+			t.Fatalf("versioned cookie delivery needs a file token, not a cookie: %s, %+v", out.Files[3].URL, out.Cookie)
 		}
-		c := out.Cookie
-		if c == nil || c.Name != "mt" || c.Domain != "doujins.com" || c.Path != "/"+f.env.Tenant+"/gallery/"+cid(1)+"/private/" ||
-			!c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteLaxMode || !c.Expires.Equal(time.Unix(out.Expires, 0)) {
-			t.Fatalf("cookie %+v", c)
-		}
-		f.covers(t, c.Value, map[string]bool{thumb3: true, high3: true}, append([]string{thumb3, high3}, forbidden...)...)
+		f.covers(t, tok, map[string]bool{thumb3: true}, append([]string{thumb3, high3}, forbidden...)...)
 		if len(out.Downloads) != 1 || out.Downloads[0].Name != cid(1)+"-zip.zip" {
 			t.Fatalf("downloads %+v", out.Downloads)
 		}
@@ -285,14 +280,32 @@ func TestReadFullAccess(t *testing.T) {
 		if key != high3 || tok == "" {
 			t.Fatalf("url mode needs ?t=: %s", out.Files[3].URL)
 		}
-		if _, tok0, _ := split(t, out.Files[0].URL); tok0 != tok {
-			t.Fatal("full access uses one folder token")
+		if _, tok0, _ := split(t, out.Files[0].URL); tok0 == tok {
+			t.Fatal("different versioned files share a token")
 		}
-		f.covers(t, tok, map[string]bool{thumb3: true, high3: true}, append([]string{thumb3, high3}, forbidden...)...)
+		f.covers(t, tok, map[string]bool{high3: true}, append([]string{thumb3, high3}, forbidden...)...)
 		if out.Files[4].URL != "" {
 			t.Fatal("url past limit")
 		}
 	})
+}
+
+func TestReadUnversionedFullAccessCookie(t *testing.T) {
+	f := newReadFixture(t)
+	f.res.verdicts[cid(501)] = access.Resolution{Visible: true, Accessible: true}
+	out := f.read(t, f.reader(t, media.DeliverCookie, media.Hooks{}), f.post, media.ReadOptions{Variants: []string{"large", "blurred"}})
+	c := out.Cookie
+	if out.Access != media.AccessFull || c == nil || c.Name != "mt" || c.Domain != "doujins.com" ||
+		c.Path != "/"+f.env.Tenant+"/post/"+cid(501)+"/private/" || !c.HttpOnly || !c.Secure ||
+		c.SameSite != http.SameSiteLaxMode || !c.Expires.Equal(time.Unix(out.Expires, 0)) {
+		t.Fatalf("unversioned full access: %+v, cookie %+v", out, c)
+	}
+	key, tok, _ := split(t, out.Files[1].URL)
+	if key != f.key(t, f.post, media.AreaPrivate, blobName("beach-large")) || tok != "" {
+		t.Fatalf("unversioned cookie delivery must return a plain URL: %s", out.Files[1].URL)
+	}
+	preview := f.key(t, f.post, media.AreaPrivate, blobName("blurred"))
+	f.covers(t, c.Value, map[string]bool{key: true, preview: true}, key, preview)
 }
 
 // TestReadWithoutConditionalPut reads manifests edited under the PGLocker, as
@@ -546,15 +559,15 @@ func TestReadHandler(t *testing.T) {
 	if resp.StatusCode != 200 || body["access"] != "full" || body["total"] != float64(10) || resp.Header.Get("Cache-Control") != "private, no-store" {
 		t.Fatalf("%d %v", resp.StatusCode, body)
 	}
-	sc := resp.Header.Get("Set-Cookie")
-	for _, want := range []string{"mt=k1.", "Domain=doujins.com", "Path=/" + f.env.Tenant + "/gallery/" + cid(1) + "/private/", "Max-Age=", "HttpOnly", "Secure", "SameSite=Lax"} {
-		if !strings.Contains(sc, want) {
-			t.Fatalf("Set-Cookie %q lacks %q", sc, want)
-		}
+	if sc := resp.Header.Get("Set-Cookie"); sc != "" {
+		t.Fatalf("versioned full access set a folder cookie: %s", sc)
 	}
 	files := body["files"].([]any)
 	if len(files) != 10 || files[1].(map[string]any)["url"] == nil || files[2].(map[string]any)["url"] != nil {
 		t.Fatalf("files %v", files)
+	}
+	if _, tok, _ := split(t, files[1].(map[string]any)["url"].(string)); tok == "" {
+		t.Fatal("versioned full-access URL lacks a file token")
 	}
 
 	f.res.verdicts[cid(1)] = access.Resolution{Visible: true, PreviewLimit: 3}

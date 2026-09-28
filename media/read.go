@@ -21,8 +21,8 @@ import (
 type DeliveryMode string
 
 const (
-	// DeliverCookie (default) returns plain URLs plus a folder cookie scoped to
-	// the item's blobs/, so browsers cache immutable blobs normally.
+	// DeliverCookie (default) returns plain URLs plus a folder cookie for
+	// unversioned items. Versioned items use per-file URL tokens.
 	DeliverCookie DeliveryMode = "cookie"
 	// DeliverURL appends ?t= to every URL: apps and clients without cookies.
 	DeliverURL DeliveryMode = "url"
@@ -170,7 +170,7 @@ type Grant struct {
 	Manifest   *Manifest
 	Expires    time.Time
 	units      int
-	folder     string // folder token; full access only
+	folder     string // folder token for full access to an unversioned item
 	editor     string // editor token for temp/; editors only
 	actor      access.Actor
 	r          *Reader
@@ -224,7 +224,7 @@ func (r *Reader) grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	}
 	g := &Grant{Item: item, Resolution: res, Manifest: man, units: res.Units(len(man.Files)),
 		Expires: token.Expiry(r.now(), r.delivery.TTL, r.delivery.Window), actor: actor, r: r}
-	if res.Full() {
+	if res.Full() && !item.Kind().Versioned {
 		g.folder = r.ring.Sign(item.PrivatePrefix(), g.Expires)
 	}
 	if res.Editor {
@@ -251,8 +251,8 @@ func canonical(requested, resolved contentref.ContentRef) (contentref.ContentRef
 	return resolved, nil
 }
 
-// Full reports full access: one folder token covers every blob.
-func (g *Grant) Full() bool { return g.folder != "" }
+// Full reports the resolver's full-access decision.
+func (g *Grant) Full() bool { return g.Resolution.Full() }
 
 // Allowed reports whether file i is served to this viewer: within the
 // preview cut, or a teaser of a visible item.
@@ -263,9 +263,10 @@ func (g *Grant) Allowed(i int) bool {
 	return i < g.units || g.Manifest.Files[i].Teaser()
 }
 
-// Cookie is the folder cookie to set in cookie mode with full access, else nil.
+// Cookie is the folder cookie for an unversioned full-access item in cookie
+// mode, else nil.
 func (g *Grant) Cookie() *http.Cookie {
-	if !g.Full() || g.r.delivery.Mode != DeliverCookie {
+	if g.folder == "" || g.r.delivery.Mode != DeliverCookie {
 		return nil
 	}
 	return &http.Cookie{
@@ -283,8 +284,8 @@ var ErrNotAllowed = errors.New("media: not allowed")
 // Editor reports an editor's grant: editor views are signed.
 func (g *Grant) Editor() bool { return g.Resolution.Editor }
 
-// URL signs rendition blob of file i: plain in cookie mode with full
-// access, the folder token in URL mode, else a token for exactly that key.
+// URL signs rendition blob of file i. Folder tokens are used only for
+// unversioned full-access items; versioned items use exact-key tokens.
 func (g *Grant) URL(i int, blob string) (string, error) {
 	if !g.Allowed(i) {
 		return "", ErrNotAllowed
@@ -298,9 +299,9 @@ func (g *Grant) URL(i int, blob string) (string, error) {
 	}
 	u := g.r.objectURL(key)
 	switch {
-	case g.Full() && g.r.delivery.Mode == DeliverCookie:
+	case g.folder != "" && g.r.delivery.Mode == DeliverCookie:
 		return u, nil
-	case g.Full():
+	case g.folder != "":
 		return u + "?t=" + g.folder, nil
 	}
 	return u + "?t=" + g.r.ring.Sign(token.FileScope(key), g.Expires), nil
@@ -429,7 +430,8 @@ type ReadResult struct {
 	Meta         map[string]any `json:"meta,omitempty"`
 	Files        []FileInfo     `json:"files"`
 	Downloads    []DownloadInfo `json:"downloads,omitempty"`
-	// Cookie must be set on the response (cookie mode, full access).
+	// Cookie must be set on the response when an unversioned full-access item
+	// uses cookie delivery.
 	Cookie *http.Cookie `json:"-"`
 }
 

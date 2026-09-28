@@ -44,8 +44,7 @@ func (v *verdict) Resolve(_ context.Context, refs []contentref.ContentRef, _ acc
 	return out, nil
 }
 
-// delivery serves the read API (host) and the access worker over TLS, as
-// the site and media hosts; one client with a cookie jar plays the browser.
+// delivery serves the read API and access worker over TLS.
 type delivery struct {
 	e       *env
 	verdict *verdict
@@ -70,7 +69,7 @@ func newDelivery(t *testing.T, e *env, mode media.DeliveryMode) *delivery {
 		t.Fatal(err)
 	}
 	d := &delivery{e: e, verdict: &verdict{res: access.Resolution{Visible: true, Accessible: true}}, blobs: map[string][]byte{}}
-	d.worker = httptest.NewTLSServer(h) // the cookie is Secure
+	d.worker = httptest.NewTLSServer(h)
 	t.Cleanup(d.worker.Close)
 	host, _ := url.Parse(d.worker.URL)
 	r, err := media.NewReader(media.ReaderOptions{Manifests: e.manifests, Kinds: e.kinds, Resolver: d.verdict,
@@ -247,7 +246,7 @@ func parseMedia(t *testing.T, body string) mediaPlaylist {
 
 // checkRendition requires playlist to list want as byte ranges of one blob
 // URL and every range to return the blob's bytes through the worker.
-func (d *delivery) checkRendition(t *testing.T, playlistURL string, blob string, want []media.Segment, mode media.DeliveryMode, full bool) {
+func (d *delivery) checkRendition(t *testing.T, playlistURL string, blob string, want []media.Segment) {
 	t.Helper()
 	p := parseMedia(t, d.playlist(t, playlistURL, media.HLSContentType))
 	data := d.blob(t, blob)
@@ -258,8 +257,8 @@ func (d *delivery) checkRendition(t *testing.T, playlistURL string, blob string,
 	if !strings.HasSuffix(u.Path, "/private/"+blob) {
 		t.Fatalf("init URI %s is not blob %s", p.init.uri, blob)
 	}
-	if tokenized := u.RawQuery != ""; tokenized != (mode == media.DeliverURL || !full) {
-		t.Fatalf("%s mode (full %v) URI %s", mode, full, p.init.uri)
+	if u.Query().Get("t") == "" {
+		t.Fatalf("versioned rendition lacks a file token: %s", p.init.uri)
 	}
 	for i, s := range append([]segment{p.init}, p.segs...) {
 		if s.uri != p.init.uri {
@@ -276,8 +275,12 @@ func (d *delivery) checkRendition(t *testing.T, playlistURL string, blob string,
 			t.Fatalf("segment %d of %s: %d, %d bytes", i, blob, r.status, len(r.body))
 		}
 	}
-	if st := get(t, d.bare, p.init.uri, 0, 16).status; (st == http.StatusPartialContent) != (mode == media.DeliverURL || !full) {
-		t.Fatalf("%s without the cookie: %d", p.init.uri, st)
+	if st := get(t, d.bare, p.init.uri, 0, 16).status; st != http.StatusPartialContent {
+		t.Fatalf("signed rendition without cookies: %d", st)
+	}
+	u.RawQuery = ""
+	if st := get(t, d.bare, u.String(), 0, 16).status; st != http.StatusNotFound {
+		t.Fatalf("rendition without its file token: %d", st)
 	}
 }
 
@@ -298,8 +301,8 @@ func TestPlaybackThroughWorker(t *testing.T) {
 			m, h := d.manifest(t)
 			masterURL := d.url("hls/source/master.m3u8")
 			r := get(t, d.client, masterURL)
-			if cookie := r.header.Get("Set-Cookie"); (cookie != "") != (mode == media.DeliverCookie) {
-				t.Fatalf("%s mode Set-Cookie %q", mode, cookie)
+			if cookie := r.header.Get("Set-Cookie"); cookie != "" {
+				t.Fatalf("versioned playback set a folder cookie: %q", cookie)
 			}
 			pl := parseMaster(t, d.playlist(t, masterURL, media.HLSContentType))
 			base, _ := url.Parse(masterURL)
@@ -325,7 +328,7 @@ func TestPlaybackThroughWorker(t *testing.T) {
 					v["AUDIO"] != "audio" || v["SUBTITLES"] != "subs" || v["URI"] != fmt.Sprintf("video/%d-%s.m3u8", want.Rung, want.Codec) {
 					t.Fatalf("variant %v for %+v", v, want)
 				}
-				d.checkRendition(t, resolve(v["URI"]), want.Blob, want.Segments, mode, true)
+				d.checkRendition(t, resolve(v["URI"]), want.Blob, want.Segments)
 			}
 			var audio, subs []map[string]string
 			for _, x := range pl.media {
@@ -341,7 +344,7 @@ func TestPlaybackThroughWorker(t *testing.T) {
 				t.Fatalf("renditions %v", pl.media)
 			}
 			for i, a := range audio {
-				d.checkRendition(t, resolve(a["URI"]), h.Audio[i].Blob, h.Audio[i].Segments, mode, true)
+				d.checkRendition(t, resolve(a["URI"]), h.Audio[i].Blob, h.Audio[i].Segments)
 			}
 			sub := parseMedia(t, d.playlist(t, resolve(subs[0]["URI"]), media.HLSContentType))
 			if len(sub.segs) != 1 || math.Abs(sub.segs[0].seconds-9) > 0.5 {
@@ -419,13 +422,13 @@ func TestPlaybackAccess(t *testing.T) {
 		}
 	}
 
-	// A preview cut covering the file plays it on per-file URL tokens (never
-	// the folder cookie) and offers no downloads.
+	// A preview cut covering the file plays it on per-file URL tokens and
+	// offers no downloads.
 	d.verdict.set(access.Resolution{Visible: true, PreviewLimit: 1})
 	if r := get(t, d.client, d.url(paths[0])); r.status != 200 || r.header.Get("Set-Cookie") != "" {
 		t.Fatalf("preview master: %d %v", r.status, r.header)
 	}
-	d.checkRendition(t, d.url(paths[1]), h.Video[0].Blob, h.Video[0].Segments, media.DeliverCookie, false)
+	d.checkRendition(t, d.url(paths[1]), h.Video[0].Blob, h.Video[0].Segments)
 	if r := get(t, d.client, d.url(paths[4])); r.status != 404 {
 		t.Fatalf("preview download: %d", r.status)
 	}

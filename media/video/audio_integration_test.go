@@ -354,7 +354,7 @@ func TestAudioPlaybackThroughWorker(t *testing.T) {
 			}
 			base, _ := url.Parse(masterURL)
 			u, _ := url.Parse(pl.variants[0]["URI"])
-			d.checkRendition(t, base.ResolveReference(u).String(), a.Blob, a.Segments, mode, true)
+			d.checkRendition(t, base.ResolveReference(u).String(), a.Blob, a.Segments)
 			if r := get(t, d.client, d.url("hls/source/video/360.m3u8")); r.status != 404 {
 				t.Fatalf("video playlist of an audio file: %d", r.status)
 			}

@@ -28,8 +28,8 @@ func (v verdicts) Resolve(_ context.Context, refs []contentref.ContentRef, _ acc
 	return out, nil
 }
 
-// TestReaderThroughWorker serves media.Reader output (URLs, download links
-// and the folder cookie) through the real worker over the bucket.
+// TestReaderThroughWorker serves media.Reader output (file tokens, download
+// links and unversioned folder cookies) through the real worker over the bucket.
 func TestReaderThroughWorker(t *testing.T) {
 	env := s3test.Open(t)
 	ctx := context.Background()
@@ -142,37 +142,36 @@ func TestReaderThroughWorker(t *testing.T) {
 
 	t.Run("cookie mode", func(t *testing.T) {
 		out := read(reader(media.DeliverCookie), full)
-		if out.Cookie == nil {
-			t.Fatal("full access in cookie mode sets the folder cookie")
+		if out.Access != media.AccessFull || out.Cookie != nil {
+			t.Fatalf("versioned full access must not set a folder cookie: %+v", out.Cookie)
 		}
-		jar, _ := cookiejar.New(nil)
-		jar.SetCookies(base, []*http.Cookie{out.Cookie})
-		c := &http.Client{Transport: worker.Client().Transport, Jar: jar}
 		for _, f := range out.Files {
-			if strings.Contains(f.URL, "?") {
-				t.Fatalf("cookie mode URL carries a token: %s", f.URL)
+			u := mustURL(t, f.URL)
+			if u.Query().Get("t") == "" {
+				t.Fatalf("versioned cookie mode URL lacks a file token: %s", f.URL)
 			}
-			if st, body, hdr := get(c, f.URL); st != 200 || body != content[keyOf(f.URL)] || !strings.Contains(hdr.Get("Cache-Control"), "immutable") {
+			if st, body, hdr := get(bare, f.URL); st != 200 || body != content[keyOf(f.URL)] || !strings.Contains(hdr.Get("Cache-Control"), "immutable") {
 				t.Fatalf("%s: %d %q", f.URL, st, body)
 			}
-			if st, _, _ := get(bare, f.URL); st != 404 {
-				t.Fatalf("without the cookie: %d", st)
+			u.RawQuery = ""
+			if st, _, _ := get(bare, u.String()); st != 404 {
+				t.Fatalf("without the file token: %d", st)
 			}
 		}
-		orig := worker.URL + "/" + fullItem.OriginalsPrefix() + sha("o"+cid(1)+"-a")
-		if cs := jar.Cookies(mustURL(t, orig)); len(cs) != 0 {
-			t.Fatal("cookie sent outside its private/ path")
-		}
-		if st, _, _ := get(c, orig); st != 404 {
+		signed := mustURL(t, out.Files[0].URL)
+		signed.Path = "/" + fullItem.OriginalsPrefix() + sha("o"+cid(1)+"-a")
+		if st, _, _ := get(bare, signed.String()); st != 404 {
 			t.Fatalf("original through worker: %d", st)
 		}
 		manifest := fullItem.ManifestKey()
-		if st, _, _ := get(c, worker.URL+"/"+manifest); st != 404 {
+		signed.Path = "/" + manifest
+		if st, _, _ := get(bare, signed.String()); st != 404 {
 			t.Fatalf("manifest through worker: %d", st)
 		}
 		other := read(reader(media.DeliverURL), preview).Files[0].URL
-		if st, _, _ := get(c, strings.Split(other, "?")[0]); st != 404 {
-			t.Fatalf("cookie opened another item: %d", st)
+		signed.Path = mustURL(t, other).Path
+		if st, _, _ := get(bare, signed.String()); st != 404 {
+			t.Fatalf("file token opened another item: %d", st)
 		}
 		if len(out.Downloads) != 1 {
 			t.Fatalf("downloads: %+v", out.Downloads)
@@ -242,6 +241,31 @@ func TestReaderThroughWorker(t *testing.T) {
 		u.Path = "/" + locked
 		if st, _, _ := get(bare, u.String()); st != 404 {
 			t.Fatalf("teaser token opened a locked file: %d", st)
+		}
+	})
+
+	t.Run("unversioned full access keeps the folder cookie", func(t *testing.T) {
+		res[cid(501)] = access.Resolution{Visible: true, Accessible: true}
+		out := read(reader(media.DeliverCookie), post)
+		if out.Access != media.AccessFull || out.Cookie == nil {
+			t.Fatalf("unversioned full access: access %s, cookie %+v", out.Access, out.Cookie)
+		}
+		jar, _ := cookiejar.New(nil)
+		jar.SetCookies(base, []*http.Cookie{out.Cookie})
+		c := &http.Client{Transport: worker.Client().Transport, Jar: jar}
+		for _, f := range out.Files {
+			if strings.Contains(f.URL, "?") {
+				t.Fatalf("unversioned cookie mode URL carries a token: %s", f.URL)
+			}
+			if st, _, _ := get(c, f.URL); st != 200 {
+				t.Fatalf("page with cookie: %d", st)
+			}
+			if st, _, _ := get(bare, f.URL); st != 404 {
+				t.Fatalf("page without cookie: %d", st)
+			}
+		}
+		if cs := jar.Cookies(mustURL(t, worker.URL+"/"+postItem.OriginalsPrefix()+sha("teaser"))); len(cs) != 0 {
+			t.Fatal("folder cookie sent outside private/")
 		}
 	})
 }
