@@ -52,8 +52,8 @@ func TestHubIntegrationRoundTrip(t *testing.T) {
 			}),
 		},
 		Catalogs: map[string]ContentCatalog{
-			"gallery": ContentCatalogFunc(func(context.Context, string, string, CatalogQuery) ([]string, error) {
-				return []string{cid(3), cid(2), cid(1)}, nil // newest first
+			"gallery": ContentCatalogFunc(func(context.Context, string, string, CatalogQuery) (CatalogPage, error) {
+				return CatalogPage{IDs: []string{cid(3), cid(2), cid(1)}}, nil // newest first
 			}),
 		},
 	})

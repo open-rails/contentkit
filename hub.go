@@ -21,23 +21,31 @@ import (
 // was constructed without a ClickHouse connection.
 var ErrSignalPlaneDisabled = errors.New("contentkit: signal plane disabled (no ClickHouse configured)")
 
-// ContentCatalog supplies the content "universe" for Unseen: live, non-deleted
-// content ids of a kind, read from the host's own tables. The host owns
-// visibility and gating (premium, region, ...) — ContentKit never interprets
-// them. Order defines Unseen order (recommended: newest first).
+// ContentCatalog pages live, visible content ids of a kind from the host's
+// tables. The host owns visibility and ordering; a cursor must continue that
+// same stable order without repeating or skipping ids.
 type ContentCatalog interface {
-	Universe(ctx context.Context, tenant string, contentKind string, q CatalogQuery) ([]string, error)
+	Page(ctx context.Context, tenant string, contentKind string, q CatalogQuery) (CatalogPage, error)
 }
 
-// CatalogQuery bounds a Universe read. Limit 0 = host-defined default.
+// CatalogQuery requests one bounded page. An empty Cursor starts at the first
+// page; subsequent cursors are opaque to ContentKit and owned by the host.
 type CatalogQuery struct {
-	Limit int
+	Limit  int
+	Cursor string
+}
+
+// CatalogPage contains ids in catalog order and the cursor for the next page.
+// An empty NextCursor means the catalog is exhausted.
+type CatalogPage struct {
+	IDs        []string
+	NextCursor string
 }
 
 // ContentCatalogFunc adapts a function to the ContentCatalog interface.
-type ContentCatalogFunc func(ctx context.Context, tenant string, contentKind string, q CatalogQuery) ([]string, error)
+type ContentCatalogFunc func(ctx context.Context, tenant string, contentKind string, q CatalogQuery) (CatalogPage, error)
 
-func (f ContentCatalogFunc) Universe(ctx context.Context, tenant string, contentKind string, q CatalogQuery) ([]string, error) {
+func (f ContentCatalogFunc) Page(ctx context.Context, tenant string, contentKind string, q CatalogQuery) (CatalogPage, error) {
 	return f(ctx, tenant, contentKind, q)
 }
 
@@ -587,19 +595,17 @@ func (h *EmbeddedHub) SeenIDs(ctx context.Context, subject signal.Subject, conte
 
 // UnseenOptions controls Unseen reads.
 type UnseenOptions struct {
-	// ContentKind selects which catalog universe to diff against. Required.
+	// ContentKind selects the catalog to read. Required.
 	ContentKind string
-	// Limit caps the returned ids (default 50). Order follows the host
-	// catalog's Universe order.
+	// Limit caps the returned ids (default 50). Order follows the host catalog.
 	Limit int
-	// CatalogLimit is passed through to the host catalog's Universe call
-	// (0 = host default).
+	// CatalogLimit is the per-page candidate count (default and max 1,000).
 	CatalogLimit int
 }
 
 // Unseen returns catalog ids the subject has not seen (max_progress > 0
-// defines "seen"): host universe MINUS the subject's seen-set. The host
-// catalog applies its own visibility/premium gating against its own tables.
+// defines "seen"). The host catalog applies its own visibility decisions;
+// ContentKit checks the subject's state only for each bounded candidate page.
 func (h *EmbeddedHub) Unseen(ctx context.Context, subject signal.Subject, opts UnseenOptions) ([]string, error) {
 	store, err := h.requireStore()
 	if err != nil {
@@ -613,31 +619,52 @@ func (h *EmbeddedHub) Unseen(ctx context.Context, subject signal.Subject, opts U
 	if !ok || catalog == nil {
 		return nil, fmt.Errorf("contentkit: no ContentCatalog registered for content kind %q", contentKind)
 	}
+	if err := subject.Validate(); err != nil {
+		return nil, err
+	}
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = 50
 	}
-
-	universe, err := catalog.Universe(ctx, h.tenant, contentKind, CatalogQuery{Limit: opts.CatalogLimit})
-	if err != nil {
-		return nil, fmt.Errorf("contentkit: catalog universe for %q: %w", contentKind, err)
+	pageSize := opts.CatalogLimit
+	if pageSize <= 0 || pageSize > 1000 {
+		pageSize = 1000
 	}
-	seen, err := store.SeenIDs(ctx, h.tenant, subject, contentKind)
-	if err != nil {
-		return nil, err
-	}
-
-	out := make([]string, 0, limit)
-	for _, id := range universe {
-		if _, ok := seen[id]; ok {
-			continue
+	out := make([]string, 0, min(limit, pageSize))
+	cursor := ""
+	for {
+		page, err := catalog.Page(ctx, h.tenant, contentKind, CatalogQuery{Limit: pageSize, Cursor: cursor})
+		if err != nil {
+			return nil, fmt.Errorf("contentkit: catalog page for %q: %w", contentKind, err)
 		}
-		out = append(out, id)
-		if len(out) >= limit {
-			break
+		if len(page.IDs) > pageSize || (len(page.IDs) == 0 && page.NextCursor != "") {
+			return nil, fmt.Errorf("contentkit: invalid catalog page for %q", contentKind)
 		}
+		refs := make([]ContentRef, len(page.IDs))
+		for i, id := range page.IDs {
+			refs[i] = h.Content(contentKind, id)
+		}
+		states, err := store.States(ctx, h.tenant, subject, refs)
+		if err != nil {
+			return nil, err
+		}
+		for i, ref := range refs {
+			if states[ref.Key()].Seen {
+				continue
+			}
+			out = append(out, page.IDs[i])
+			if len(out) >= limit {
+				return out, nil
+			}
+		}
+		if page.NextCursor == "" {
+			return out, nil
+		}
+		if page.NextCursor == cursor {
+			return nil, fmt.Errorf("contentkit: catalog cursor did not advance for %q", contentKind)
+		}
+		cursor = page.NextCursor
 	}
-	return out, nil
 }
 
 func (h *EmbeddedHub) States(ctx context.Context, subject signal.Subject, refs []ContentRef) (map[ContentKey]signal.State, error) {

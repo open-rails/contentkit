@@ -96,16 +96,16 @@ func TestHubRecordSignalsAppliesScorersAtomically(t *testing.T) {
 	}
 }
 
-func TestHubUnseenDiffsUniverseAgainstSeen(t *testing.T) {
-	universeCalls := 0
+func TestHubUnseenFiltersSeenCatalogIDs(t *testing.T) {
+	pageCalls := 0
 	h := signalHub(t, func(c *EmbeddedConfig) {
 		c.Catalogs = map[string]ContentCatalog{
-			"gallery": ContentCatalogFunc(func(_ context.Context, tenant, contentKind string, q CatalogQuery) ([]string, error) {
-				universeCalls++
+			"gallery": ContentCatalogFunc(func(_ context.Context, tenant, contentKind string, q CatalogQuery) (CatalogPage, error) {
+				pageCalls++
 				if tenant != testTenant || contentKind != "gallery" {
-					return nil, fmt.Errorf("unexpected catalog call %s/%s", tenant, contentKind)
+					return CatalogPage{}, fmt.Errorf("unexpected catalog call %s/%s", tenant, contentKind)
 				}
-				return []string{cid(1), cid(2), cid(3), cid(4), cid(5)}, nil
+				return CatalogPage{IDs: []string{cid(1), cid(2), cid(3), cid(4), cid(5)}}, nil
 			}),
 		}
 	})
@@ -127,8 +127,8 @@ func TestHubUnseenDiffsUniverseAgainstSeen(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, []string{cid(1), cid(3)}) {
 		t.Fatalf("unseen limited: %v %v", got, err)
 	}
-	if universeCalls != 2 {
-		t.Fatalf("universe calls: %d", universeCalls)
+	if pageCalls != 2 {
+		t.Fatalf("catalog pages: %d", pageCalls)
 	}
 	if _, err := h.Unseen(ctx, user, UnseenOptions{ContentKind: "video"}); err == nil {
 		t.Fatal("missing catalog must error")
@@ -144,18 +144,24 @@ func TestHubUnseenPagesPastSeenCatalogWindow(t *testing.T) {
 	calls := 0
 	h := signalHub(t, func(c *EmbeddedConfig) {
 		c.Catalogs = map[string]ContentCatalog{
-			"gallery": ContentCatalogFunc(func(_ context.Context, tenant, kind string, q CatalogQuery) ([]string, error) {
+			"gallery": ContentCatalogFunc(func(_ context.Context, tenant, kind string, q CatalogQuery) (CatalogPage, error) {
 				if tenant != testTenant || kind != "gallery" || q.Limit != window {
-					return nil, fmt.Errorf("unexpected catalog query: %s/%s %+v", tenant, kind, q)
+					return CatalogPage{}, fmt.Errorf("unexpected catalog query: %s/%s %+v", tenant, kind, q)
 				}
 				calls++
 				switch calls {
 				case 1:
-					return ids[:window], nil
+					if q.Cursor != "" {
+						return CatalogPage{}, fmt.Errorf("unexpected first cursor %q", q.Cursor)
+					}
+					return CatalogPage{IDs: ids[:window], NextCursor: "older"}, nil
 				case 2:
-					return ids[window:], nil
+					if q.Cursor != "older" {
+						return CatalogPage{}, fmt.Errorf("unexpected second cursor %q", q.Cursor)
+					}
+					return CatalogPage{IDs: ids[window:]}, nil
 				default:
-					return nil, fmt.Errorf("unexpected third catalog page")
+					return CatalogPage{}, fmt.Errorf("unexpected third catalog page")
 				}
 			}),
 		}
