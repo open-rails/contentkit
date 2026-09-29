@@ -149,9 +149,7 @@ func TestPresignedGetReadsRangesFromInternalEndpoint(t *testing.T) {
 
 func TestConditionalWritesAndReads(t *testing.T) {
 	env := s3test.Open(t)
-	if !env.Store.Capabilities().ConditionalPut {
-		t.Skip("backend lacks conditional PUT: manifests use the advisory-lock fallback")
-	}
+	caps := env.Store.Capabilities()
 	ctx := context.Background()
 	key := env.Tenant + "/post/" + cid(1) + "/manifest.json"
 	put := func(body string, o media.PutOptions) (media.Object, error) {
@@ -161,26 +159,55 @@ func TestConditionalWritesAndReads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := put("2", media.PutOptions{IfNoneMatch: "*"}); !errors.Is(err, media.ErrPreconditionFailed) {
-		t.Fatalf("create over existing: %v", err)
+	current := first
+	wantBody := "1"
+	second, err := put("2", media.PutOptions{IfNoneMatch: "*"})
+	if caps.ConditionalPut {
+		if !errors.Is(err, media.ErrPreconditionFailed) {
+			t.Fatalf("create over existing: %v", err)
+		}
+	} else {
+		switch {
+		case err == nil:
+			t.Log("backend ignored If-None-Match on PUT; manifests require the advisory lock")
+			current = second
+			wantBody = "2"
+		case errors.Is(err, media.ErrPreconditionFailed), errors.Is(err, media.ErrNotImplemented):
+			t.Logf("backend refused conditional create on an existing object: %v", err)
+		default:
+			t.Fatalf("conditional create on an existing object: %v", err)
+		}
 	}
-	second, err := put("3", media.PutOptions{IfMatch: first.ETag})
-	if err != nil {
-		t.Fatal(err)
+	third, err := put("3", media.PutOptions{IfMatch: current.ETag})
+	switch {
+	case err == nil:
+		current = third
+		wantBody = "3"
+	case caps.ConditionalPut:
+		t.Fatalf("matching If-Match: %v", err)
+	case errors.Is(err, media.ErrPreconditionFailed), errors.Is(err, media.ErrNotImplemented):
+		t.Logf("backend rejected matching If-Match on PUT: %v", err)
+	default:
+		t.Fatalf("matching If-Match: %v", err)
 	}
-	if _, err := put("4", media.PutOptions{IfMatch: first.ETag}); !errors.Is(err, media.ErrPreconditionFailed) {
-		t.Fatalf("stale If-Match: %v", err)
+	_, err = put("4", media.PutOptions{IfMatch: `"0123456789abcdef0123456789abcdef"`})
+	if caps.ConditionalPut {
+		if !errors.Is(err, media.ErrPreconditionFailed) {
+			t.Fatalf("nonmatching If-Match: %v", err)
+		}
+	} else if !errors.Is(err, media.ErrPreconditionFailed) && !errors.Is(err, media.ErrNotImplemented) {
+		t.Fatalf("nonmatching If-Match: %v", err)
 	}
-	if _, _, err := env.Store.Get(ctx, key, media.GetOptions{IfNoneMatch: second.ETag}); !errors.Is(err, media.ErrNotModified) {
+	if _, _, err := env.Store.Get(ctx, key, media.GetOptions{IfNoneMatch: current.ETag}); !errors.Is(err, media.ErrNotModified) {
 		t.Fatalf("conditional get: %v", err)
 	}
-	rc, obj, err := env.Store.Get(ctx, key, media.GetOptions{IfNoneMatch: first.ETag})
+	rc, obj, err := env.Store.Get(ctx, key, media.GetOptions{IfNoneMatch: `"0123456789abcdef0123456789abcdef"`})
 	if err != nil {
 		t.Fatal(err)
 	}
 	b, _ := io.ReadAll(rc)
 	rc.Close()
-	if string(b) != "3" || obj.ETag != second.ETag {
+	if string(b) != wantBody || obj.ETag != current.ETag {
 		t.Fatalf("got %q %s", b, obj.ETag)
 	}
 }
@@ -335,7 +362,7 @@ func TestBucketVersioningAndLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	if status != types.BucketVersioningStatusEnabled {
-		t.Skipf("bucket versioning is %q; enable it (Store.Configure) for the restore window", status)
+		t.Fatalf("bucket versioning is %q, want enabled for the restore window", status)
 	}
 	key := env.Tenant + "/gallery/" + cid(5) + "/manifest.json"
 	for _, b := range []string{"a", "b"} {
@@ -359,9 +386,25 @@ func TestBucketVersioningAndLifecycle(t *testing.T) {
 	}
 	ok, abort, work := false, false, false
 	for _, r := range lc.Rules {
-		ok = ok || (r.NoncurrentVersionExpiration != nil && aws.ToInt32(r.NoncurrentVersionExpiration.NoncurrentDays) >= 30)
-		abort = abort || (r.AbortIncompleteMultipartUpload != nil && aws.ToInt32(r.AbortIncompleteMultipartUpload.DaysAfterInitiation) == 1)
-		work = work || (r.Filter != nil && aws.ToString(r.Filter.Prefix) == "work/" &&
+		prefix := aws.ToString(r.Prefix)
+		if r.Filter != nil {
+			prefix = aws.ToString(r.Filter.Prefix)
+		}
+		ok = ok || (prefix == "" && r.NoncurrentVersionExpiration != nil && aws.ToInt32(r.NoncurrentVersionExpiration.NoncurrentDays) >= 30)
+		abort = abort || (prefix == "" && r.AbortIncompleteMultipartUpload != nil && aws.ToInt32(r.AbortIncompleteMultipartUpload.DaysAfterInitiation) == 1)
+		var expiration, noncurrent, abortDays int32
+		if r.Expiration != nil {
+			expiration = aws.ToInt32(r.Expiration.Days)
+		}
+		if r.NoncurrentVersionExpiration != nil {
+			noncurrent = aws.ToInt32(r.NoncurrentVersionExpiration.NoncurrentDays)
+		}
+		if r.AbortIncompleteMultipartUpload != nil {
+			abortDays = aws.ToInt32(r.AbortIncompleteMultipartUpload.DaysAfterInitiation)
+		}
+		t.Logf("lifecycle rule %q prefix %q expiration %d noncurrent %d abort %d", aws.ToString(r.ID), prefix,
+			expiration, noncurrent, abortDays)
+		work = work || (prefix == "work/" &&
 			r.Expiration != nil && aws.ToInt32(r.Expiration.Days) == 7)
 	}
 	if !abort {
@@ -375,7 +418,7 @@ func TestBucketVersioningAndLifecycle(t *testing.T) {
 		t.Fatalf("lifecycle rules %+v", lc.Rules)
 	}
 	if !work {
-		t.Fatalf("video work expiration rule missing: %+v", lc.Rules)
+		t.Fatal("video work expiration rule missing")
 	}
 }
 

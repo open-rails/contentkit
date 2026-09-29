@@ -25,10 +25,7 @@ func TestRestoreAfterSweepAndFolderDeletion(t *testing.T) {
 		}
 	}
 	if status, err := env.VersioningStatus(ctx); err != nil || status != types.BucketVersioningStatusEnabled {
-		t.Skipf("bucket versioning is %q (%v)", status, err)
-	}
-	if !env.Store.Capabilities().ConditionalPut {
-		t.Skip("backend lacks conditional PUT")
+		t.Fatalf("bucket versioning is %q (%v), want enabled", status, err)
 	}
 	s := env.Store
 	kinds, err := media.NewRegistry(
