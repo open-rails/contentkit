@@ -107,7 +107,9 @@ func (m *Manifests) requireEmpty(ctx context.Context, prefix string) error {
 // Purge deletes an item's whole folder (every version) now: the explicit
 // reset before deliberately recreating an item, or an operator cleanup. It
 // releases the owner's quota for the folder's manifests when Owner is set.
-// Hosts deleting content use DeleteItemsTx.
+// A quota-owned purge needs a caller-stable OperationID; retry a failed purge
+// with that ID before recreating the folder. Hosts deleting content use
+// DeleteItemsTx.
 func (j *Jobs) Purge(ctx context.Context, d Deletion) error {
 	if d.Ref.Version() != "" {
 		return fmt.Errorf("media: purge %s: folders hold every version; pass the work ref", d.Ref)
@@ -116,17 +118,40 @@ func (j *Jobs) Purge(ctx context.Context, d Deletion) error {
 	if err != nil {
 		return err
 	}
+	if j.cfg.Limiter != nil && d.Owner != "" && d.OperationID == "" {
+		return errors.New("media: purge with a quota owner needs an operation id")
+	}
+	unlock, err := j.cfg.Locker.Lock(ctx, prefix+layout.ManifestName)
+	if err != nil {
+		return err
+	}
+	var removed []string
+	defer func() {
+		unlock()
+		j.publicRemoved(ctx, removed)
+	}()
 	var release int64
+	operation := "purge:" + prefix + d.OperationID
 	if j.cfg.Limiter != nil && d.Owner != "" {
 		if release, err = j.originalBytes(ctx, prefix); err != nil {
 			return err
 		}
+		applied, err := j.cfg.Limiter.PrepareRelease(ctx, QuotaRelease{
+			Tenant: d.Ref.TenantID, Folder: prefix, Owner: d.Owner, Operation: operation, Bytes: release,
+		})
+		if err != nil {
+			return err
+		}
+		if applied {
+			return nil
+		}
 	}
-	if err := j.deleteFolder(ctx, prefix); err != nil {
+	removed, err = j.deleteFolderObjects(ctx, prefix)
+	if err != nil {
 		return err
 	}
-	if release > 0 {
-		return j.cfg.Limiter.Settle(ctx, Settlement{Tenant: d.Ref.TenantID, Owner: d.Owner, Delta: -release})
+	if j.cfg.Limiter != nil && d.Owner != "" {
+		return j.cfg.Limiter.Release(ctx, d.Ref.TenantID, operation)
 	}
 	return nil
 }

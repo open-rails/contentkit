@@ -4,15 +4,155 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 )
+
+var errReleaseInjected = errors.New("injected release failure")
+var errDeleteInjected = errors.New("injected delete failure")
+
+type failingDeleteStore struct {
+	media.Store
+	failed atomic.Bool
+}
+
+func (s *failingDeleteStore) Delete(ctx context.Context, key string) error {
+	if !s.failed.Swap(true) {
+		return errDeleteInjected
+	}
+	return s.Store.Delete(ctx, key)
+}
+
+type failingReleaser struct {
+	media.QuotaReleaser
+	after  bool
+	failed atomic.Bool
+	calls  atomic.Int32
+}
+
+func (r *failingReleaser) Release(ctx context.Context, tenant, operation string) error {
+	r.calls.Add(1)
+	if !r.failed.Swap(true) {
+		if !r.after {
+			return errReleaseInjected
+		}
+		if err := r.QuotaReleaser.Release(ctx, tenant, operation); err != nil {
+			return err
+		}
+		return errReleaseInjected
+	}
+	return r.QuotaReleaser.Release(ctx, tenant, operation)
+}
+
+func TestPurgeReleasesQuotaAcrossRetries(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		after      bool
+		failDelete bool
+	}{
+		{name: "failure before settlement"},
+		{name: "failure after settlement", after: true},
+		{name: "failure deleting objects", failDelete: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := s3test.Open(t)
+			ctx := context.Background()
+			pool := pgtest.Pool(t, nil)
+			limiter, err := media.NewPGLimiter(pool, pgtest.Schema(t, ctx, pool), media.PGLimits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := limiter.Settle(ctx, media.Settlement{Tenant: env.Tenant, Owner: "owner", Delta: 100}); err != nil {
+				t.Fatal(err)
+			}
+			kinds := registry(t)
+			manifests := s3test.Manifests(t, env.Store, kinds, media.ManifestOptions{})
+			ref := contentref.New(env.Tenant, "post", contentref.NewID())
+			item, _ := kinds.Item(ref)
+			if _, err := manifests.Create(ctx, ref); err != nil {
+				t.Fatal(err)
+			}
+			body := strings.Repeat("o", 70)
+			original := blobName(body)
+			key, _ := item.Original(original)
+			putObject(t, env.Store, key, body)
+			if _, err := manifests.Edit(ctx, ref, func(m *media.Manifest) error {
+				m.Files = []media.File{{Name: "file", Original: original, Type: "image/png", Size: int64(len(body))}}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			var store media.Store = env.Store
+			var releaser media.QuotaReleaser = limiter
+			if tc.failDelete {
+				store = &failingDeleteStore{Store: store}
+			} else {
+				releaser = &failingReleaser{QuotaReleaser: limiter, after: tc.after}
+			}
+			jobs, err := media.NewJobs(media.JobsConfig{Store: store, Kinds: kinds,
+				Locker: s3test.Locker(t, store), Limiter: releaser})
+			if err != nil {
+				t.Fatal(err)
+			}
+			deletion := media.Deletion{Ref: ref, Owner: "owner", OperationID: "purge-request"}
+			if err := jobs.Purge(ctx, media.Deletion{Ref: ref, Owner: "owner"}); err == nil {
+				t.Fatal("purge without an operation id deleted the folder")
+			}
+			err = jobs.Purge(ctx, deletion)
+			want := errReleaseInjected
+			if tc.failDelete {
+				want = errDeleteInjected
+			}
+			if !errors.Is(err, want) {
+				t.Fatalf("first purge: %v", err)
+			}
+			if keys := listKeys(t, env.Store, item.Prefix()); !tc.failDelete && len(keys) != 0 {
+				t.Fatalf("purge left %v", keys)
+			}
+			otherDeletion := deletion
+			otherDeletion.OperationID = "second-request"
+			err = jobs.Purge(ctx, otherDeletion)
+			if tc.after {
+				if err != nil {
+					t.Fatalf("second purge after settlement: %v", err)
+				}
+			} else if !errors.Is(err, media.ErrQuotaReleasePending) {
+				t.Fatalf("second purge with a pending refund: %v", err)
+			}
+			if err := jobs.Purge(ctx, deletion); err != nil {
+				t.Fatalf("retry purge: %v", err)
+			}
+			if keys := listKeys(t, env.Store, item.Prefix()); len(keys) != 0 {
+				t.Fatalf("retry left %v", keys)
+			}
+			if err := jobs.Purge(ctx, otherDeletion); err != nil {
+				t.Fatalf("second purge of an empty folder: %v", err)
+			}
+			used, _, err := limiter.Usage(ctx, env.Tenant, "owner")
+			if err != nil || used != 30 {
+				t.Fatalf("replayed purge: used=%d err=%v", used, err)
+			}
+			if _, err := manifests.Create(ctx, ref); err != nil {
+				t.Fatal(err)
+			}
+			if err := jobs.Purge(ctx, deletion); err != nil {
+				t.Fatalf("late retry: %v", err)
+			}
+			if _, _, err := manifests.Get(ctx, ref); err != nil {
+				t.Fatalf("late retry removed a new manifest: %v", err)
+			}
+		})
+	}
+}
 
 func TestContentIDsMustBeUUIDv7(t *testing.T) {
 	env := s3test.Open(t)

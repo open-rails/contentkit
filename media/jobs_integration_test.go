@@ -23,6 +23,62 @@ import (
 	"github.com/open-rails/contentkit/media/internal/s3test"
 )
 
+func TestDeleteJobQuotaReleaseReplayed(t *testing.T) {
+	env := s3test.Open(t)
+	ctx := context.Background()
+	quotaPool := pgtest.Pool(t, nil)
+	limiter, err := media.NewPGLimiter(quotaPool, pgtest.Schema(t, ctx, quotaPool), media.PGLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := limiter.Settle(ctx, media.Settlement{Tenant: env.Tenant, Owner: "owner", Delta: 100}); err != nil {
+		t.Fatal(err)
+	}
+	kinds := registry(t)
+	manifests := s3test.Manifests(t, env.Store, kinds, media.ManifestOptions{})
+	ref := contentref.New(env.Tenant, "post", contentref.NewID())
+	if _, err := manifests.Create(ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+	item, _ := kinds.Item(ref)
+	body := strings.Repeat("o", 70)
+	name := blobName(body)
+	original, _ := item.Original(name)
+	putObject(t, env.Store, original, body)
+	if _, err := manifests.Edit(ctx, ref, func(m *media.Manifest) error {
+		m.Files = []media.File{{Name: "file", Original: name, Type: "image/png", Size: int64(len(body))}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	releaser := &failingReleaser{QuotaReleaser: limiter, after: true}
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: kinds,
+		Locker: s3test.Locker(t, env.Store), Limiter: releaser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, pool, schema := riverHost(t, jobs, make(chan string, 4))
+	if err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		return jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref: ref, Owner: "owner"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	jobTable := pgx.Identifier{schema, "river_job"}.Sanitize()
+	waitFor(t, "deletion replay", func() bool {
+		var state string
+		var attempt int
+		return pool.QueryRow(ctx, "SELECT state, attempt FROM "+jobTable+" WHERE kind = $1 AND args->>'final' IS NULL",
+			"contentkit_media_delete_folder").Scan(&state, &attempt) == nil && state == "completed" && attempt >= 2
+	})
+	if n := releaser.calls.Load(); n != 1 {
+		t.Fatalf("release called %d times, want replay to observe the applied record", n)
+	}
+	used, _, err := limiter.Usage(ctx, env.Tenant, "owner")
+	if err != nil || used != 30 {
+		t.Fatalf("replayed release: used=%d err=%v", used, err)
+	}
+}
+
 type hostArgs struct{}
 
 func (hostArgs) Kind() string { return "host_job" }

@@ -50,7 +50,7 @@ type JobsConfig struct {
 	// must exceed the longest upload presign TTL and the 1-day multipart
 	// abort rule. Default 25 h.
 	LateUploadWindow time.Duration
-	Limiter          UploadLimiter // releases a deleted item's quota; optional
+	Limiter          QuotaReleaser // releases a deleted item's quota; optional
 	// Locker serializes Expose's manifest edits (ManifestOptions.Locker); required.
 	Locker Locker
 	// Resolver decides, with an anonymous actor, whether an item is hidden
@@ -304,16 +304,17 @@ func (j *Jobs) ScheduleSweep(ctx context.Context, ref contentref.ContentRef) err
 
 // Deletion is one item to delete. Owner is its quota owner (UploadGrant.Owner),
 // "" for none; with a Limiter configured the owner's usage is released.
+// OperationID is only for Purge; queued deletion uses its River job ID.
 type Deletion struct {
-	Ref   contentref.ContentRef
-	Owner string
+	Ref         contentref.ContentRef
+	Owner       string
+	OperationID string // required by Purge with a quota owner; stable across retries
 }
 
 // DeleteItemsTx deletes each item's whole folder (every version) through a
 // job enqueued in the host's delete transaction. A second pass after
-// LateUploadWindow removes uploads that land after the first. The quota to
-// release is measured here from the item's manifests, so a retried job
-// settles it once.
+// LateUploadWindow removes uploads that land after the first. The worker
+// records the refund from the manifest before deleting any objects.
 func (j *Jobs) DeleteItemsTx(ctx context.Context, tx pgx.Tx, items ...Deletion) error {
 	c, err := j.bound()
 	if err != nil {
@@ -330,10 +331,7 @@ func (j *Jobs) DeleteItemsTx(ctx context.Context, tx pgx.Tx, items ...Deletion) 
 			return err
 		}
 		args := deleteFolderArgs{Prefix: prefix}
-		if j.cfg.Limiter != nil && d.Owner != "" {
-			if args.Release, err = j.originalBytes(ctx, prefix); err != nil {
-				return err
-			}
+		if j.cfg.Limiter != nil {
 			args.Owner = d.Owner
 		}
 		params = append(params, river.InsertManyParams{Args: args, InsertOpts: j.opts(&river.InsertOpts{UniqueOpts: PendingOnce})})
@@ -441,10 +439,9 @@ func (w *sweepPassWorker) Work(ctx context.Context, job *river.Job[sweepPassArgs
 }
 
 type deleteFolderArgs struct {
-	Prefix  string `json:"prefix"`
-	Final   bool   `json:"final,omitempty"`
-	Owner   string `json:"owner,omitempty"`
-	Release int64  `json:"release,omitempty"`
+	Prefix string `json:"prefix"`
+	Final  bool   `json:"final,omitempty"`
+	Owner  string `json:"owner,omitempty"`
 }
 
 func (deleteFolderArgs) Kind() string { return "contentkit_media_delete_folder" }
@@ -460,10 +457,37 @@ func (w *deleteFolderWorker) Timeout(*river.Job[deleteFolderArgs]) time.Duration
 
 func (w *deleteFolderWorker) Work(ctx context.Context, job *river.Job[deleteFolderArgs]) (err error) {
 	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
-	if _, _, _, err := parseFolder(job.Args.Prefix); err != nil {
+	tenant, _, _, err := parseFolder(job.Args.Prefix)
+	if err != nil {
 		return river.JobCancel(err)
 	}
-	if err := w.j.deleteFolder(ctx, job.Args.Prefix); err != nil {
+	unlock, err := w.j.cfg.Locker.Lock(ctx, job.Args.Prefix+layout.ManifestName)
+	if err != nil {
+		return err
+	}
+	var removed []string
+	defer func() {
+		unlock()
+		w.j.publicRemoved(ctx, removed)
+	}()
+	operation := fmt.Sprintf("folder-delete:%s:%d", job.Args.Prefix, job.JobRow.ID)
+	if !job.Args.Final && w.j.cfg.Limiter != nil && job.Args.Owner != "" {
+		release, err := w.j.originalBytes(ctx, job.Args.Prefix)
+		if err != nil {
+			return err
+		}
+		applied, err := w.j.cfg.Limiter.PrepareRelease(ctx, QuotaRelease{
+			Tenant: tenant, Folder: job.Args.Prefix, Owner: job.Args.Owner, Operation: operation, Bytes: release,
+		})
+		if err != nil {
+			return err
+		}
+		if applied {
+			return nil
+		}
+	}
+	removed, err = w.j.deleteFolderObjects(ctx, job.Args.Prefix)
+	if err != nil {
 		return err
 	}
 	if job.Args.Final {
@@ -473,9 +497,8 @@ func (w *deleteFolderWorker) Work(ctx context.Context, job *river.Job[deleteFold
 		ScheduledAt: w.j.cfg.Now().Add(w.j.cfg.LateUploadWindow), UniqueOpts: PendingOnce}); err != nil {
 		return err
 	}
-	if w.j.cfg.Limiter != nil && job.Args.Owner != "" && job.Args.Release > 0 {
-		tenant, _, _, _ := parseFolder(job.Args.Prefix)
-		return w.j.cfg.Limiter.Settle(ctx, Settlement{Tenant: tenant, Owner: job.Args.Owner, Delta: -job.Args.Release})
+	if w.j.cfg.Limiter != nil && job.Args.Owner != "" {
+		return w.j.cfg.Limiter.Release(ctx, tenant, operation)
 	}
 	return nil
 }
