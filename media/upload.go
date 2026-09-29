@@ -454,40 +454,23 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	if err != nil {
 		return nil, err
 	}
-	uploaded := map[string]Object{}
-	var keys, missing []string
+	var originals []string
+	seen := map[string]bool{}
 	for _, op := range ops {
 		if err := op.validate(); err != nil {
 			return nil, err
 		}
-		if op.Original == "" || uploaded[op.Original].Key != "" {
-			continue
+		if op.Original != "" && !seen[op.Original] {
+			originals = append(originals, op.Original)
+			seen[op.Original] = true
 		}
-		obj, err := u.verify(ctx, item, op.Original)
-		if ue, ok := AsUploadError(err); ok && ue.Code == CodeNotUploaded {
-			missing = append(missing, op.Original)
-			continue
-		} else if err != nil {
-			return nil, err
-		}
-		if ok, err := u.protected(ctx, item, op.Original, obj, u.retention().margin(op.Original)); err != nil {
-			return nil, err
-		} else if !ok {
-			missing = append(missing, op.Original)
-			continue
-		}
-		uploaded[op.Original] = obj
-		keys = append(keys, obj.Key)
-	}
-	if len(missing) > 0 {
-		return nil, &UploadError{Code: CodeNotUploaded, Originals: missing,
-			Message: fmt.Sprintf("not uploaded or due for cleanup; upload again: %s", strings.Join(missing, ", "))}
 	}
 
 	// Growth is charged (and checked) inside the edit, before the manifest is
 	// written; the final settlement refunds what a retried attempt no longer
 	// needs and drops the reservations.
 	var delta, charged int64
+	var keys []string
 	var discarded *Manifest // unattached files the ops removed, and their downloads
 	settle := func(ctx context.Context, s Settlement) error {
 		if u.o.Limiter == nil {
@@ -499,6 +482,30 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	editCtx, cancel := context.WithTimeout(ctx, min(commitMargin(u.o.Grace), commitMargin(u.o.TempUploadTTL))/2)
 	defer cancel()
 	man, err := u.o.Manifests.Edit(editCtx, ref, func(m *Manifest) error {
+		uploaded := make(map[string]Object, len(originals))
+		keys = keys[:0]
+		var missing []string
+		for _, name := range originals {
+			obj, err := u.verify(editCtx, item, name)
+			if ue, ok := AsUploadError(err); ok && ue.Code == CodeNotUploaded {
+				missing = append(missing, name)
+				continue
+			} else if err != nil {
+				return err
+			}
+			if ok, err := u.protected(editCtx, item, name, obj, u.retention().margin(name)); err != nil {
+				return err
+			} else if !ok {
+				missing = append(missing, name)
+				continue
+			}
+			uploaded[name] = obj
+			keys = append(keys, obj.Key)
+		}
+		if len(missing) > 0 {
+			return &UploadError{Code: CodeNotUploaded, Originals: missing,
+				Message: fmt.Sprintf("not uploaded or due for cleanup; upload again: %s", strings.Join(missing, ", "))}
+		}
 		before := m.originalSizes()
 		prev := &Manifest{Files: slices.Clone(m.Files), Downloads: maps.Clone(m.Downloads)}
 		for _, op := range ops {
@@ -810,6 +817,11 @@ func (m *Manifest) dropDiscarded(prev *Manifest) *Manifest {
 // sweep's grace; a job still finishing leaves at most orphans the sweep takes.
 func (u *Uploads) discard(ctx context.Context, item Item, gone *Manifest) error {
 	ctx = context.WithoutCancel(ctx)
+	unlock, err := u.o.Manifests.locker.Lock(ctx, item.ManifestKey())
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if c, ok := u.o.Queue.(ProcessCanceler); ok {
 		if _, err := c.Cancel(ctx, item.Ref()); err != nil {
 			return err

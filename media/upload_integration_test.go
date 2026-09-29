@@ -12,8 +12,10 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -53,6 +55,43 @@ func (q *queue) Enqueue(_ context.Context, j media.ProcessJob) error {
 
 func (q *queue) count() int { q.mu.Lock(); defer q.mu.Unlock(); return len(q.jobs) }
 
+type blockingDiscardStore struct {
+	media.Store
+	key        string
+	deleting   chan struct{}
+	resume     chan struct{}
+	deleteOnce sync.Once
+	resumeOnce sync.Once
+}
+
+func (s *blockingDiscardStore) Delete(ctx context.Context, key string) error {
+	if key == s.key {
+		s.deleteOnce.Do(func() { close(s.deleting) })
+		select {
+		case <-s.resume:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return s.Store.Delete(ctx, key)
+}
+
+func (s *blockingDiscardStore) release() { s.resumeOnce.Do(func() { close(s.resume) }) }
+
+type notifyingLocker struct {
+	media.Locker
+	watch   atomic.Bool
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (l *notifyingLocker) Lock(ctx context.Context, key string) (func(), error) {
+	if l.watch.Load() {
+		l.once.Do(func() { close(l.entered) })
+	}
+	return l.Locker.Lock(ctx, key)
+}
+
 type uploadEnv struct {
 	*s3test.Env
 	store     media.Store
@@ -63,6 +102,10 @@ type uploadEnv struct {
 }
 
 func newUploadEnv(t *testing.T, caps *media.Capabilities, limiter media.UploadLimiter) *uploadEnv {
+	return newUploadEnvWithStore(t, caps, limiter, nil)
+}
+
+func newUploadEnvWithStore(t *testing.T, caps *media.Capabilities, limiter media.UploadLimiter, wrap func(media.Store) media.Store) *uploadEnv {
 	t.Helper()
 	env := s3test.Open(t)
 	if !env.Store.Capabilities().ConditionalPut {
@@ -71,6 +114,9 @@ func newUploadEnv(t *testing.T, caps *media.Capabilities, limiter media.UploadLi
 	var store media.Store = env.Store
 	if caps != nil {
 		store = env.WithCapabilities(t, *caps)
+	}
+	if wrap != nil {
+		store = wrap(store)
 	}
 	kinds, err := media.NewRegistry(
 		media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
@@ -203,6 +249,120 @@ func data(seed uint64, n int) []byte {
 
 func insert(name, original string) media.Op {
 	return media.Op{Op: media.OpInsert, Name: name, Original: original}
+}
+
+func TestDiscardCannotDeleteAConcurrentCommittedReference(t *testing.T) {
+	var blocked *blockingDiscardStore
+	e := newUploadEnvWithStore(t, nil, nil, func(store media.Store) media.Store {
+		blocked = &blockingDiscardStore{Store: store, deleting: make(chan struct{}), resume: make(chan struct{})}
+		return blocked
+	})
+	defer blocked.release()
+	ctx := context.Background()
+	actor := access.Actor{ID: "alice", Kind: "user"}
+	ref := contentref.New(e.Tenant, "post", cid(118))
+	refBody := media.RefBody{Kind: ref.ContentKind, ID: ref.ContentID}
+	name := e.upload(t, "alice", refBody, "image/png", data(404, 1024))
+	blocked.key = e.Tenant + "/post/" + ref.ContentID + "/originals/" + name
+	if _, err := e.uploads.Commit(ctx, actor, ref, []media.Op{{Op: media.OpInsert, Name: "staged", Original: name, Unattached: true}}); err != nil {
+		t.Fatal(err)
+	}
+	kinds, err := media.NewRegistry(media.Kind{Name: "post", Types: []string{"image/png"}, MaxBytes: 1 << 20, Inline: &media.Spec{Width: 1600}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	locker := &notifyingLocker{Locker: s3test.Locker(t, e.store), entered: make(chan struct{})}
+	manifests, err := media.NewManifests(e.store, kinds, media.ManifestOptions{Locker: locker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploads, err := media.NewUploads(media.UploadOptions{Store: e.store, Kinds: kinds, Manifests: manifests,
+		Authorizer: grants{"alice": {Allowed: true, Owner: "chan-a"}}, Queue: e.queue})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	removed := make(chan error, 1)
+	go func() {
+		_, err := uploads.Commit(ctx, actor, ref, []media.Op{{Op: media.OpRemove, Name: "staged"}})
+		removed <- err
+	}()
+	select {
+	case <-blocked.deleting:
+	case <-time.After(10 * time.Second):
+		t.Fatal("discard did not reach object deletion")
+	}
+	locker.watch.Store(true)
+	referenced := make(chan error, 1)
+	go func() {
+		_, err := uploads.Commit(ctx, actor, ref, []media.Op{insert("new", name)})
+		referenced <- err
+	}()
+	select {
+	case <-locker.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("concurrent commit did not reach the manifest lock")
+	}
+	blocked.release()
+	if err := <-removed; err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	insertErr := <-referenced
+	man, _, err := manifests.Get(ctx, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if insertErr == nil {
+		if len(man.Files) != 1 || man.Files[0].Original != name {
+			t.Fatalf("committed reference changed: %+v", man.Files)
+		}
+		if _, err := e.store.Head(ctx, blocked.key); err != nil {
+			t.Fatalf("committed reference was deleted: %v", err)
+		}
+	} else if ue, ok := media.AsUploadError(insertErr); !ok || ue.Code != media.CodeNotUploaded || len(man.Files) != 0 {
+		t.Fatalf("concurrent commit: %v, manifest: %+v", insertErr, man.Files)
+	}
+}
+
+func TestFailedDiscardIsReclaimedBySweep(t *testing.T) {
+	e := newUploadEnvWithStore(t, nil, nil, func(store media.Store) media.Store {
+		return &failingDeleteStore{Store: store}
+	})
+	ctx := context.Background()
+	actor := access.Actor{ID: "alice", Kind: "user"}
+	ref := contentref.New(e.Tenant, "post", cid(119))
+	refBody := media.RefBody{Kind: ref.ContentKind, ID: ref.ContentID}
+	name := e.upload(t, "alice", refBody, "image/png", data(405, 1024))
+	if _, err := e.uploads.Commit(ctx, actor, ref, []media.Op{{Op: media.OpInsert, Name: "staged", Original: name, Unattached: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.uploads.Commit(ctx, actor, ref, []media.Op{{Op: media.OpRemove, Name: "staged"}}); !errors.Is(err, errDeleteInjected) {
+		t.Fatalf("remove: %v", err)
+	}
+	man, _, err := e.manifests.Get(ctx, ref)
+	if err != nil || len(man.Files) != 0 {
+		t.Fatalf("remove did not persist: %+v %v", man, err)
+	}
+	key := e.Tenant + "/post/" + ref.ContentID + "/originals/" + name
+	if _, err := e.store.Head(ctx, key); err != nil {
+		t.Fatalf("failed deletion removed the object: %v", err)
+	}
+	kinds, err := media.NewRegistry(media.Kind{Name: "post", Types: []string{"image/png"}, MaxBytes: 1 << 20, Inline: &media.Spec{Width: 1600}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := media.NewJobs(media.JobsConfig{Store: e.store, Kinds: kinds, Locker: s3test.Locker(t, e.store),
+		Grace: time.Hour, Now: func() time.Time { return time.Now().Add(2 * time.Hour) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := jobs.Sweep(ctx, ref)
+	if err != nil || !slices.Contains(result.Deleted, key) {
+		t.Fatalf("sweep did not reclaim discarded original: %+v %v", result, err)
+	}
+	if _, err := e.store.Head(ctx, key); !errors.Is(err, media.ErrNotFound) {
+		t.Fatalf("discarded original remained: %v", err)
+	}
 }
 
 func TestSingleUploadBindingsAndCommit(t *testing.T) {
