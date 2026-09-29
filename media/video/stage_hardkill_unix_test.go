@@ -76,7 +76,8 @@ func TestHardKilledChunkResumesWithIdenticalOutput(t *testing.T) {
 	}()
 	for {
 		m, _ := e.manifest(t)
-		if h := m.Files[0].HLS; h != nil && len(h.Video) == 2 && h.Sprite != nil && len(h.Pending) == 0 && m.Files[0].State() == media.StateReady {
+		if h := m.Files[0].HLS; h != nil && len(h.Video) == 2 && h.Sprite != nil &&
+			len(m.Downloads) > 0 && len(h.Pending) == 0 && m.Files[0].State() == media.StateReady {
 			break
 		}
 		select {
@@ -190,7 +191,8 @@ WHERE kind = $1 AND state = 'running' AND args->'ref'->>'content_id' = $2 LIMIT 
 	}()
 	for {
 		m, _ := e.manifest(t)
-		if h := m.Files[0].HLS; h != nil && len(h.Video) == 2 && h.Sprite != nil && len(h.Pending) == 0 && m.Files[0].State() == media.StateReady {
+		if h := m.Files[0].HLS; h != nil && len(h.Video) == 2 && h.Sprite != nil &&
+			len(m.Downloads) > 0 && len(h.Pending) == 0 && m.Files[0].State() == media.StateReady {
 			break
 		}
 		select {
