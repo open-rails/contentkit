@@ -257,9 +257,15 @@ func (j *Jobs) list(ctx context.Context, prefix string) ([]Object, error) {
 // so readers stop resolving the item, and tokenless URLs stop answering,
 // before its other files go.
 func (j *Jobs) deleteFolder(ctx context.Context, prefix string) error {
+	removed, err := j.deleteFolderObjects(ctx, prefix)
+	j.publicRemoved(ctx, removed)
+	return err
+}
+
+func (j *Jobs) deleteFolderObjects(ctx context.Context, prefix string) ([]string, error) {
 	objs, err := j.list(ctx, prefix)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var manifests, rest []string
 	for _, o := range objs {
@@ -270,10 +276,9 @@ func (j *Jobs) deleteFolder(ctx context.Context, prefix string) error {
 		}
 	}
 	if err := j.deleteKeys(ctx, manifests); err != nil {
-		return err
+		return nil, err
 	}
-	j.publicRemoved(ctx, manifests)
-	return j.deleteKeys(ctx, rest)
+	return manifests, j.deleteKeys(ctx, rest)
 }
 
 func (j *Jobs) deleteKeys(ctx context.Context, keys []string) error {
