@@ -140,6 +140,40 @@ func loudness(t *testing.T, path string) float64 {
 	return v
 }
 
+func TestDeletedFolderAfterAudioUploadsDoesNotRecreateManifest(t *testing.T) {
+	a := media.Audio{}
+	e, _ := newAudioEnv(t, a, nil)
+	jobs, err := media.NewJobs(media.JobsConfig{
+		Store: e.store, Kinds: e.kinds, Locker: s3test.Locker(t, e.store),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.commitFile(
+		t,
+		audioFixture{ext: "wav", codec: "pcm_s16le", secs: 2, rate: 48000}.make(t),
+		"audio",
+		"audio/wav",
+		media.OpInsert,
+	)
+	restore := video.SetBeforePromote(func() {
+		if err := jobs.Purge(context.Background(), media.Deletion{Ref: e.ref.Content()}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	defer restore()
+	job := video.Job{Ref: e.ref, Versioned: true, Audio: &a}
+	if err := e.encoder.Encode(context.Background(), job, nil); err != nil {
+		t.Fatal(err)
+	}
+	for obj, err := range e.store.List(context.Background(), e.item(t).Prefix()) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Fatalf("deleted folder retained %s", obj.Key)
+	}
+}
+
 func TestAudioEncode(t *testing.T) {
 	e, failed := newAudioEnv(t, media.Audio{}, nil)
 	files := map[string]audioFixture{

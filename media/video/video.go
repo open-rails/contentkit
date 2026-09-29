@@ -261,7 +261,7 @@ func (e *Encoder) encode(ctx context.Context, job Job, report Report, oneStage b
 	}
 	if len(errs) == 0 {
 		// Drop downloads of files that are gone or no longer video or audio.
-		man, err := ms.Edit(ctx, job.Ref, func(m *media.Manifest) error {
+		man, err := ms.EditExisting(ctx, job.Ref, func(m *media.Manifest) error {
 			for k, d := range m.Downloads {
 				if name, ok := videoDownload(k, d); ok {
 					if i := m.File(name); i < 0 || !IsVideo(m.Files[i]) {
@@ -275,6 +275,9 @@ func (e *Encoder) encode(ctx context.Context, job Job, report Report, oneStage b
 			}
 			return nil
 		})
+		if errors.Is(err, media.ErrNotFound) {
+			return more, nil
+		}
 		if err != nil {
 			return more, err
 		}
@@ -542,6 +545,10 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
+	produced := (&media.Manifest{
+		Files:     []media.File{{HLS: hls}},
+		Downloads: map[string]media.Download{DownloadKey(name, todo.n): download},
+	}).Renditions()
 
 	fp.set(media.PhasePublishing)
 	if testBeforePromote != nil {
@@ -550,7 +557,7 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 	// Fence: promote only if the original is unchanged and the manifest file
 	// still derives from it (a later stage: from the stages it extends).
 	if obj, err := e.c.Store.Head(ctx, srcKey); errors.Is(err, media.ErrNotFound) || err == nil && obj.ETag != srcObj.ETag {
-		return nil, e.stale(ctx, ms, item, name, source, errStale)
+		return nil, e.stale(ctx, ms, item, name, source, errStale, produced...)
 	} else if err != nil {
 		return nil, err
 	}
@@ -592,7 +599,7 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 		return nil
 	})
 	if errors.Is(err, errStale) {
-		return nil, e.stale(ctx, ms, item, name, source, err)
+		return nil, e.stale(ctx, ms, item, name, source, err, produced...)
 	}
 	return published, err
 }
@@ -636,12 +643,24 @@ func removeRendition(dir, v string) error {
 	return nil
 }
 
-// stale drops a result whose source is no longer the file's; it is an error
-// only if the manifest still points at that source.
-func (e *Encoder) stale(ctx context.Context, ms *media.Manifests, item media.Item, name, source string, cause error) error {
+// stale rejects a result only while its source is still current. If the folder
+// was deleted, it also removes this run's unpublished outputs.
+func (e *Encoder) stale(
+	ctx context.Context,
+	ms *media.Manifests,
+	item media.Item,
+	name, source string,
+	cause error,
+	outputs ...string,
+) error {
 	man, _, err := ms.Get(ctx, item.Ref())
 	if err != nil && !errors.Is(err, media.ErrNotFound) {
 		return err
+	}
+	if man == nil {
+		if err := ms.DropOutputsIfDeleted(ctx, item.Ref(), outputs); err != nil {
+			return err
+		}
 	}
 	if man != nil {
 		if i := man.File(name); i >= 0 && man.Files[i].Source() == source {

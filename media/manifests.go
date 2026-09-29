@@ -105,6 +105,16 @@ func (m *Manifests) Root(ctx context.Context, ref contentref.ContentRef) (*Root,
 // Edit applies fn to ref's files (see Get; a new version starts empty) like
 // EditRoot.
 func (m *Manifests) Edit(ctx context.Context, ref contentref.ContentRef, fn func(*Manifest) error) (*Manifest, error) {
+	return m.editSection(ctx, ref, false, fn)
+}
+
+// EditExisting edits a section only while its folder manifest still exists.
+// Workers use it after processing so a concurrent folder deletion stays deleted.
+func (m *Manifests) EditExisting(ctx context.Context, ref contentref.ContentRef, fn func(*Manifest) error) (*Manifest, error) {
+	return m.editSection(ctx, ref, true, fn)
+}
+
+func (m *Manifests) editSection(ctx context.Context, ref contentref.ContentRef, existing bool, fn func(*Manifest) error) (*Manifest, error) {
 	item, err := m.kinds.Item(ref)
 	if err != nil {
 		return nil, err
@@ -114,8 +124,15 @@ func (m *Manifests) Edit(ctx context.Context, ref contentref.ContentRef, fn func
 		return nil, err
 	}
 	var man *Manifest
-	if _, err := m.editRoot(ctx, item, func(r *Root) error {
-		man = r.section(v)
+	if _, err := m.editRoot(ctx, item, existing, func(r *Root) error {
+		if existing {
+			man = r.Section(v)
+			if man == nil {
+				return ErrNotFound
+			}
+		} else {
+			man = r.section(v)
+		}
 		return fn(man)
 	}); err != nil {
 		return nil, err
@@ -134,13 +151,16 @@ func (m *Manifests) EditRoot(ctx context.Context, ref contentref.ContentRef, fn 
 	if err != nil {
 		return nil, err
 	}
-	return m.editRoot(ctx, item, fn)
+	return m.editRoot(ctx, item, false, fn)
 }
 
-func (m *Manifests) editRoot(ctx context.Context, item Item, fn func(*Root) error) (*Root, error) {
+func (m *Manifests) editRoot(ctx context.Context, item Item, existing bool, fn func(*Root) error) (*Root, error) {
 	key := item.ManifestKey()
 	var root *Root
 	written, err := m.edit(ctx, key, func(body []byte) ([]byte, error) {
+		if existing && body == nil {
+			return nil, ErrNotFound
+		}
 		root = &Root{}
 		if body != nil {
 			if err := json.Unmarshal(body, root); err != nil {
@@ -338,4 +358,43 @@ func (m *Manifests) references(ctx context.Context, item Item, name string) (boo
 	found := false
 	root.sections(func(_ string, man *Manifest) { found = found || slices.Contains(man.Sources(), name) })
 	return found, nil
+}
+
+// DropOutputsIfDeleted removes unpublished private blobs only if the folder's
+// manifest is still absent. The folder lock serializes that check and the
+// deletes with normal manifest edits and folder deletion.
+func (m *Manifests) DropOutputsIfDeleted(ctx context.Context, ref contentref.ContentRef, names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	item, err := m.kinds.Item(ref)
+	if err != nil {
+		return err
+	}
+	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if _, _, err := m.root(ctx, item.ManifestKey()); err == nil {
+		return nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	seen := make(map[string]bool, len(names))
+	var errs []error
+	for _, name := range names {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		key, err := item.Private(name)
+		if err != nil {
+			return err
+		}
+		if err := m.store.Delete(ctx, key); err != nil && !errors.Is(err, ErrNotFound) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
