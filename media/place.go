@@ -106,7 +106,7 @@ func (m *Manifests) copyStaged(ctx context.Context, item Item, staged Object, ds
 
 // renameSource points every reference to from at to.
 func (m *Manifests) renameSource(ctx context.Context, item Item, from, to string) error {
-	_, err := m.editRoot(ctx, item, func(r *Root) error {
+	_, err := m.editRoot(ctx, item, false, func(r *Root) error {
 		r.sections(func(_ string, man *Manifest) { man.renameSource(from, to) })
 		return nil
 	})

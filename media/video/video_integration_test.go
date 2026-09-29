@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -499,6 +500,91 @@ func (s *failManifest) Put(ctx context.Context, key string, body io.Reader, size
 		return media.Object{}, errors.New("injected manifest failure")
 	}
 	return s.Store.Put(ctx, key, body, size, o)
+}
+
+type purgeBeforeBlobStore struct {
+	media.Store
+	mu        sync.Mutex
+	purge     func() error
+	hasPurged bool
+}
+
+func (s *purgeBeforeBlobStore) Put(
+	ctx context.Context,
+	key string,
+	body io.Reader,
+	size int64,
+	o media.PutOptions,
+) (media.Object, error) {
+	if strings.Contains(key, "/private/") {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if !s.hasPurged {
+			s.hasPurged = true
+			if err := s.purge(); err != nil {
+				return media.Object{}, err
+			}
+		}
+	}
+	return s.Store.Put(ctx, key, body, size, o)
+}
+
+func TestDeletedFolderDoesNotKeepInFlightVideoOutputs(t *testing.T) {
+	var store *purgeBeforeBlobStore
+	e := newEnv(t, func(s media.Store) media.Store {
+		store = &purgeBeforeBlobStore{Store: s}
+		return store
+	}, nil)
+	jobs, err := media.NewJobs(media.JobsConfig{
+		Store: e.store, Kinds: e.kinds, Locker: s3test.Locker(t, e.store),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.purge = func() error {
+		return jobs.Purge(context.Background(), media.Deletion{Ref: e.ref.Content()})
+	}
+	e.commit(t, fixture{w: 640, h: 360, secs: 2, tone: 440}.make(t), media.OpInsert)
+	job := video.Job{Ref: e.ref, Versioned: true, Video: media.Video{}}
+	if err := e.encoder.Encode(context.Background(), job, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !store.hasPurged {
+		t.Fatal("the folder was not deleted during the encode")
+	}
+	for obj, err := range e.store.List(context.Background(), e.item(t).Prefix()) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Fatalf("deleted folder retained %s", obj.Key)
+	}
+}
+
+func TestDeletedFolderAfterVideoUploadsDoesNotRecreateManifest(t *testing.T) {
+	e := newEnv(t, nil, nil)
+	jobs, err := media.NewJobs(media.JobsConfig{
+		Store: e.store, Kinds: e.kinds, Locker: s3test.Locker(t, e.store),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.commit(t, fixture{w: 640, h: 360, secs: 2, tone: 440}.make(t), media.OpInsert)
+	restore := video.SetBeforePromote(func() {
+		if err := jobs.Purge(context.Background(), media.Deletion{Ref: e.ref.Content()}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	defer restore()
+	job := video.Job{Ref: e.ref, Versioned: true, Video: media.Video{}}
+	if err := e.encoder.Encode(context.Background(), job, nil); err != nil {
+		t.Fatal(err)
+	}
+	for obj, err := range e.store.List(context.Background(), e.item(t).Prefix()) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Fatalf("deleted folder retained %s", obj.Key)
+	}
 }
 
 func TestRetriesAreIdempotent(t *testing.T) {

@@ -139,13 +139,15 @@ func (e *Encoder) audioFile(ctx context.Context, ms *media.Manifests, item media
 		Bandwidth: peak, Codecs: "mp4a.40.2", Blob: blob, Segments: pl.segments}}}
 	variant := media.Variant{Blob: m4aBlob, Spec: spec, Type: "audio/mp4", Size: m4aSize}
 	download := media.Download{Blob: m4aBlob, Type: "audio/mp4", Size: m4aSize, Spec: spec, Inputs: source}
+	produced := (&media.Manifest{Files: []media.File{{HLS: hls, Variants: map[string]media.Variant{media.AudioVariant: variant}}},
+		Downloads: map[string]media.Download{media.AudioDownloadKey(name): download}}).Renditions()
 
 	fp.set(media.PhasePublishing)
 	if testBeforePromote != nil {
 		testBeforePromote()
 	}
 	if obj, err := e.c.Store.Head(ctx, srcKey); errors.Is(err, media.ErrNotFound) || err == nil && obj.ETag != srcObj.ETag {
-		return source, e.stale(ctx, ms, item, name, source, errStale)
+		return source, e.stale(ctx, ms, item, name, source, errStale, produced...)
 	} else if err != nil {
 		return source, err
 	}
@@ -171,7 +173,7 @@ func (e *Encoder) audioFile(ctx context.Context, ms *media.Manifests, item media
 		return nil
 	})
 	if errors.Is(err, errStale) {
-		return source, e.stale(ctx, ms, item, name, source, err)
+		return source, e.stale(ctx, ms, item, name, source, err, produced...)
 	}
 	return source, err
 }
