@@ -123,11 +123,14 @@ type PreferenceSyncReport struct {
 // within the overlap of allocating its revision (ResyncPreferences covers the
 // rest). A checkpoint is recorded only after its own scan was sent, so
 // overlapping syncs stay correct and only repeat sends. Export disabled (nil
-// Canonicalizer) sends nothing.
+// Canonicalizer) sends nothing; otherwise send is required.
 func (rt *Runtime) SyncPreferences(ctx context.Context, send PreferenceSender) (PreferenceSyncReport, error) {
 	p := rt.preferences
 	if p.canon == nil {
 		return PreferenceSyncReport{}, nil
+	}
+	if send == nil {
+		return PreferenceSyncReport{}, fmt.Errorf("content: preference sender is required")
 	}
 	pool := rt.store.pool
 	var mark int64
@@ -161,9 +164,13 @@ func (rt *Runtime) SyncPreferences(ctx context.Context, send PreferenceSender) (
 
 // ResyncPreferences re-sends every exportable row (zeros included): the
 // periodic safety net for sink loss and slower-than-overlap commits.
+// A sender is required unless preference export is disabled.
 func (rt *Runtime) ResyncPreferences(ctx context.Context, send PreferenceSender) (PreferenceSyncReport, error) {
 	if rt.preferences.canon == nil {
 		return PreferenceSyncReport{}, nil
+	}
+	if send == nil {
+		return PreferenceSyncReport{}, fmt.Errorf("content: preference sender is required")
 	}
 	return rt.preferences.export(ctx, rt.store.pool, 0, send)
 }

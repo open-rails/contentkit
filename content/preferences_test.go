@@ -311,6 +311,12 @@ func TestPreferences_ExportScopeAndOptOut(t *testing.T) {
 	if err != nil || report.Sent != 0 {
 		t.Fatalf("sync with export disabled = %+v err=%v", report, err)
 	}
+	if report, err := plain.SyncPreferences(ctx, nil); err != nil || report != (PreferenceSyncReport{}) {
+		t.Fatalf("disabled sync with nil sender = %+v, error=%v", report, err)
+	}
+	if report, err := plain.ResyncPreferences(ctx, nil); err != nil || report != (PreferenceSyncReport{}) {
+		t.Fatalf("disabled resync with nil sender = %+v, error=%v", report, err)
+	}
 }
 
 // The canonicalizer decides at sync time: a stored row whose target the host
@@ -338,6 +344,40 @@ func TestPreferences_SyncSkipsTargetsTheCanonicalizerDeclines(t *testing.T) {
 	}
 	if len(sent) != 1 || sent[0].ContentID != cid(42) {
 		t.Fatalf("sent = %+v, want only the accepted target", sent)
+	}
+}
+
+func TestPreferences_NilSenderCannotCheckpoint(t *testing.T) {
+	for _, name := range []string{"sync", "resync"} {
+		t.Run(name, func(t *testing.T) {
+			rt := newPreferenceRuntime(t)
+			send := rt.SyncPreferences
+			if name == "resync" {
+				send = rt.ResyncPreferences
+			}
+			ctx := t.Context()
+			if _, err := send(ctx, nil); err == nil {
+				t.Fatal("enabled export accepted a missing sender with no rows")
+			}
+			actor := access.Actor{ID: "u1", Kind: "user"}
+			mustReact(t, rt, actor, "gallery", localeID(42, "en"), 1)
+			mustFavorite(t, rt, actor, "gallery", localeID(42, "en"), true)
+			if _, err := send(ctx, nil); err == nil {
+				t.Fatal("enabled export accepted a missing sender with rows")
+			}
+			var checkpoints int
+			if err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.preferenceSync).Scan(&checkpoints); err != nil || checkpoints != 0 {
+				t.Fatalf("missing sender recorded checkpoints=%d, error=%v", checkpoints, err)
+			}
+			var sent []Preference
+			report, err := send(ctx, func(_ context.Context, page []Preference) error {
+				sent = append(sent, page...)
+				return nil
+			})
+			if err != nil || report.Sent != 2 || len(sent) != 2 {
+				t.Fatalf("valid retry lost preferences: report=%+v, sent=%+v, error=%v", report, sent, err)
+			}
+		})
 	}
 }
 
