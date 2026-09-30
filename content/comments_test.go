@@ -19,7 +19,11 @@ type commentsEnricher struct{}
 func (commentsEnricher) UsersByIDs(_ context.Context, ids []string) (map[string]PublicUser, error) {
 	out := make(map[string]PublicUser, len(ids))
 	for _, id := range ids {
-		out[id] = PublicUser{ID: id, Username: "name-" + id}
+		out[id] = PublicUser{
+			ID: id, Username: "name-" + id,
+			Avatar:       "/avatars/" + id + "-80.webp",
+			AvatarSrcSet: "/avatars/" + id + "-80.webp 80w, /avatars/" + id + "-160.webp 160w",
+		}
 	}
 	return out, nil
 }
@@ -71,7 +75,12 @@ func TestComments_TopLevelRepliesAndReplyCount(t *testing.T) {
 	if ai < 0 || top[ai].ReplyCount != 1 {
 		t.Fatalf("root A = %+v, want reply_count 1", top)
 	}
-	if top[ai].Author == nil || top[ai].Author.Username != "name-author" {
+	wantAuthor := PublicUser{
+		ID: "author", Username: "name-author",
+		Avatar:       "/avatars/author-80.webp",
+		AvatarSrcSet: "/avatars/author-80.webp 80w, /avatars/author-160.webp 160w",
+	}
+	if top[ai].Author == nil || *top[ai].Author != wantAuthor {
 		t.Fatalf("author not enriched: %+v", top[ai].Author)
 	}
 	reps, err := rt.comments.replies(ctx, author, a.ID, 10, 0)
@@ -80,6 +89,9 @@ func TestComments_TopLevelRepliesAndReplyCount(t *testing.T) {
 	}
 	if len(reps) != 1 || reps[0].ID != r.ID || reps[0].ReplyToID != a.ID {
 		t.Fatalf("replies = %+v, want [reply %s]", commentIDs(reps), r.ID)
+	}
+	if reps[0].Author == nil || *reps[0].Author != wantAuthor {
+		t.Fatalf("reply author = %+v, want %+v", reps[0].Author, wantAuthor)
 	}
 }
 
