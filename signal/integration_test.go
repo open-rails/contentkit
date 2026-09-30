@@ -3,6 +3,7 @@ package signal
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -529,9 +530,19 @@ func TestIntegrationCoEngaged(t *testing.T) {
 
 func TestIntegrationNegativeSignalsAndContentPairs(t *testing.T) {
 	A, B, C := cid(31), cid(32), cid(33)
-	st, _ := freshStore(t)
+	_, conn := freshStore(t)
 	ctx := context.Background()
 	tenant := "t"
+	// Fix the snapshot clock so identical rebuilds exercise insert deduplication.
+	gate := newGate(conn, "INSERT INTO "+testDB+".content_pairs")
+	close(gate.release)
+	gate.dispatch = func(ctx context.Context, query string, args ...any) error {
+		return conn.Exec(ctx, strings.ReplaceAll(query, "now()", "toDateTime(0)"), args...)
+	}
+	st, err := NewStore(gate, testDB)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	react := func(sub Subject, id string, kind string, value float64, day int) Signal {
 		return Signal{
@@ -624,8 +635,15 @@ func TestIntegrationNegativeSignalsAndContentPairs(t *testing.T) {
 	}
 
 	// Refresh is idempotent (DELETE + INSERT).
+	storedPairs := countWhere(t, conn, "content_pairs", "tenant = ?", tenant)
+	if storedPairs == 0 {
+		t.Fatal("first refresh did not store any pairs")
+	}
 	if err := st.RefreshCoEngagement(ctx, tenant, RefreshCoEngagementOptions{}); err != nil {
 		t.Fatal(err)
+	}
+	if got := countWhere(t, conn, "content_pairs", "tenant = ?", tenant); got != storedPairs {
+		t.Fatalf("identical refresh lost stored pairs: got %d, want %d", got, storedPairs)
 	}
 	coR2, err := st.CoEngaged(ctx, tenant, gallery(tenant, A), CoEngagedOptions{Limit: 10})
 	if err != nil {
