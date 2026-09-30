@@ -3,6 +3,7 @@ package media_test
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -342,6 +343,91 @@ func TestDeleteAndEraseRemoveFoldersIncludingLateUploads(t *testing.T) {
 	}
 	if got := listKeys(t, s, oi.Prefix()); len(got) != 3 {
 		t.Fatalf("unrelated folder changed: %v", got)
+	}
+}
+
+type pausedPublicCopyStore struct {
+	media.Store
+	key     string
+	copying chan struct{}
+	resume  chan struct{}
+	paused  atomic.Bool
+}
+
+func (s *pausedPublicCopyStore) Copy(ctx context.Context, src, dst string, opts media.CopyOptions) (media.Object, error) {
+	if dst == s.key && s.paused.CompareAndSwap(false, true) {
+		close(s.copying)
+		select {
+		case <-s.resume:
+		case <-ctx.Done():
+			return media.Object{}, ctx.Err()
+		}
+	}
+	return s.Store.Copy(ctx, src, dst, opts)
+}
+
+func TestPublicSyncCannotUndoCompletedHide(t *testing.T) {
+	env := s3test.Open(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	store := &pausedPublicCopyStore{Store: env.Store, copying: make(chan struct{}), resume: make(chan struct{})}
+	resume := sync.OnceFunc(func() { close(store.resume) })
+	var workers sync.WaitGroup
+	defer func() { resume(); cancel(); workers.Wait() }()
+	kinds, err := media.NewRegistry(media.Kind{Name: "clip", Video: &media.Video{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := contentref.New(env.Tenant, "clip", cid(2))
+	item, _ := kinds.Item(ref)
+	blob := blobName("poster")
+	private, _ := item.Private(blob)
+	store.key, _ = item.Public(blob)
+	manifests := s3test.Manifests(t, store, kinds, media.ManifestOptions{})
+	if err := manifests.UpdateSlot(ctx, ref, media.PosterSlot, func(rec *media.SlotRecord) error {
+		*rec = media.SlotRecord{Original: blobName("frame"), Result: &media.SlotResult{Source: blobName("frame"),
+			Outputs: []media.SlotRendition{{Rung: 480, W: 480, H: 270, Blob: blob}}}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	putObject(t, env.Store, private, "poster")
+	jobs, err := media.NewJobs(media.JobsConfig{Store: store, Kinds: kinds, Resolver: &flipVisible{}, Locker: s3test.Locker(t, store)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	synced := make(chan error, 1)
+	workers.Go(func() { _, err := manifests.SyncPublic(ctx, ref); synced <- err })
+	select {
+	case <-store.copying:
+	case err := <-synced:
+		t.Fatalf("sync never reached public copy: %v", err)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	hideCtx, cancelHide := context.WithTimeout(ctx, time.Second)
+	hideErr := jobs.Expose(hideCtx, ref)
+	cancelHide()
+	resume()
+	if err := <-synced; err != nil {
+		t.Fatal(err)
+	}
+	if hideErr == nil {
+		if _, err := env.Store.Head(ctx, store.key); err == nil {
+			t.Error("stale public sync restored an object after hide completed")
+		} else {
+			t.Fatalf("hide did not wait for the in-flight copy: %v", err)
+		}
+	} else if !errors.Is(hideErr, context.DeadlineExceeded) {
+		t.Fatal(hideErr)
+	}
+	if err := jobs.Expose(ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.Store.Head(ctx, store.key); !errors.Is(err, media.ErrNotFound) {
+		t.Fatalf("completed hide left public object: %v", err)
+	}
+	if _, err := env.Store.Head(ctx, private); err != nil {
+		t.Fatalf("hide removed the private rendition: %v", err)
 	}
 }
 

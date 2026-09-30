@@ -22,6 +22,54 @@ func decodeErr(t *testing.T, body string) errorBody {
 	return e
 }
 
+func TestErrorMapping_PostSlugsAndPollIDs(t *testing.T) {
+	rt, _ := newTestRuntime(t, Options{Perms: Perms{PostWrite: "post", PollWrite: "poll"}})
+	h := rt.Handler()
+	ctx := context.Background()
+	admin := access.Actor{ID: "admin"}
+	poll, err := rt.polls.create(ctx, admin, twoOptionPoll("en"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, slug := range []string{"taken", "available"} {
+		rec := doJSON(t, h, admin, "POST", "/posts", postWriteReq{Title: ptr(slug), Body: ptr("body"), Slug: ptr(slug)})
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create post: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+	var postID string
+	if err := rt.store.pool.QueryRow(ctx, "SELECT id FROM "+rt.store.t.posts+" WHERE tenant_id=$1 AND slug='available'", rt.tenant).Scan(&postID); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name, method, path string
+		body               any
+		status             int
+		code               string
+	}{
+		{"duplicate slug create", "POST", "/posts", postWriteReq{Title: ptr("new"), Body: ptr("body"), Slug: ptr("taken")}, http.StatusConflict, CodeConflict},
+		{"duplicate slug update", "PATCH", "/posts/" + postID, postWriteReq{Title: ptr("changed"), Slug: ptr("taken")}, http.StatusConflict, CodeConflict},
+		{"malformed poll update", "PATCH", "/polls/not-a-uuid", updatePollInput{Question: ptr("changed")}, http.StatusNotFound, CodeNotFound},
+		{"malformed vote option", "POST", "/polls/" + poll.ID + "/vote", map[string]string{"option_id": "not-a-uuid"}, http.StatusBadRequest, CodeInvalidRequest},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rec := doJSON(t, h, admin, c.method, c.path, c.body)
+			got := decodeErr(t, rec.Body.String())
+			if rec.Code != c.status || got.Code != c.code {
+				t.Errorf("got %d %s; want %d %s", rec.Code, rec.Body.String(), c.status, c.code)
+			}
+		})
+	}
+	var count int
+	var title, slug string
+	if err := rt.store.pool.QueryRow(ctx, "SELECT title,slug,(SELECT count(*) FROM "+rt.store.t.posts+" WHERE tenant_id=$2) FROM "+rt.store.t.posts+" WHERE id=$1 AND tenant_id=$2", postID, rt.tenant).Scan(&title, &slug, &count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 || title != "available" || slug != "available" {
+		t.Errorf("failed slug writes changed stored posts: count=%d title=%q slug=%q", count, title, slug)
+	}
+}
+
 // A host that never wired Media must get 501 not_configured on every image
 // route, not a 500 indistinguishable from a crash.
 func TestErrorMapping_UnwiredMediaIs501(t *testing.T) {

@@ -125,6 +125,9 @@ func (e *Encoder) grabPoster(ctx context.Context, ms *media.Manifests, item medi
 		if !unchanged {
 			return media.ErrSuperseded
 		}
+		if _, err := e.c.Store.Head(ctx, key); err != nil {
+			return fmt.Errorf("media/video: publish poster original %s: %w", key, err)
+		}
 		cur.Original, cur.Type, cur.Size, cur.Filename, cur.Edit = name, "image/png", int64(len(body)), "", edit
 		cur.Frame = &media.PosterFrame{Version: sel.Version, File: f.Name, Time: t, Auto: sel.Auto, Source: f.Source()}
 		return nil
