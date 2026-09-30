@@ -8,11 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/ext"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 // Conn is the minimal ClickHouse surface the Store needs; clickhouse-go's
-// driver.Conn satisfies it.
+// driver.Conn satisfies it. Implementations must forward the context unchanged
+// so clickhouse-go receives query options, including external tables.
 type Conn interface {
 	Exec(ctx context.Context, query string, args ...any) error
 	Query(ctx context.Context, query string, args ...any) (driver.Rows, error)
@@ -65,16 +68,30 @@ func (k ProjectionKey) less(o ProjectionKey) bool {
 	return false
 }
 
-// keyFilter renders "(content_kind, content_id, content_version_id,
-// subject_kind, subject) IN (...)" for sorted, deduplicated keys.
-func keyFilter(keys []ProjectionKey) (string, []any) {
-	tuples := make([]string, len(keys))
-	args := make([]any, 0, len(keys)*5)
-	for i, k := range keys {
-		tuples[i] = "(?, ?, ?, ?, ?)"
-		args = append(args, k.args()...)
+const projectionKeyFilter = "(" + refColumns + ", subject_kind, subject) IN " +
+	"(SELECT " + refColumns + ", subject_kind, subject FROM contentkit_projection_keys)"
+
+// Send keys as query-local data, not SQL literals repeated in each subquery.
+func projectionKeyContext(ctx context.Context, keys []ProjectionKey) (context.Context, error) {
+	table, err := ext.NewTable("contentkit_projection_keys",
+		ext.Column("content_kind", "String"),
+		ext.Column("content_id", "String"),
+		ext.Column("content_version_id", "String"),
+		ext.Column("subject_kind", "String"),
+		ext.Column("subject", "String"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("signal: projection keys: %w", err)
 	}
-	return "(" + refColumns + ", subject_kind, subject) IN (" + strings.Join(tuples, ", ") + ")", args
+	for _, k := range keys {
+		if err := table.Append(
+			k.ContentKind, k.ContentID, k.ContentVersionID,
+			k.Subject.Kind(), k.Subject.Key(),
+		); err != nil {
+			return nil, fmt.Errorf("signal: projection keys: %w", err)
+		}
+	}
+	return clickhouse.Context(ctx, clickhouse.WithExternalTable(table)), nil
 }
 
 // RecordSignals appends source events, then rebuilds the compact state and
@@ -190,8 +207,11 @@ func (st *Store) project(ctx context.Context, tenant string, keys []ProjectionKe
 		return nil
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i].less(keys[j]) })
-	filter, keyArgs := keyFilter(keys)
-	canon := st.canonicalEvents(filter)
+	ctx, err := projectionKeyContext(ctx, keys)
+	if err != nil {
+		return err
+	}
+	canon := st.canonicalEvents(projectionKeyFilter)
 
 	state := fmt.Sprintf(`INSERT INTO %[1]s.subject_content_state
 (tenant, subject_kind, subject, %[4]s, first_seen_at, last_signal_at, last_view_at, total_events, views,
@@ -211,7 +231,7 @@ SELECT ?, subject_kind, subject, %[4]s,
     max(ing)
 FROM (%[2]s)
 GROUP BY subject_kind, subject, %[4]s`, st.db, canon, TypeView, refColumns)
-	if err := st.conn.Exec(ctx, state, append([]any{tenant, tenant}, keyArgs...)...); err != nil {
+	if err := st.conn.Exec(ctx, state, tenant, tenant); err != nil {
 		return fmt.Errorf("signal: project state: %w", err)
 	}
 
@@ -241,11 +261,8 @@ FROM (
     GROUP BY %[5]s, subject_kind, subject, day
     HAVING events > 0 OR prior_events > 0
 )
-WHERE version > toDateTime64(0, 6, 'UTC')`, st.db, canon, filter, TypeView, refColumns)
-	dailyArgs := append([]any{tenant, tenant}, keyArgs...)
-	dailyArgs = append(dailyArgs, tenant)
-	dailyArgs = append(dailyArgs, keyArgs...)
-	if err := st.conn.Exec(ctx, daily, dailyArgs...); err != nil {
+WHERE version > toDateTime64(0, 6, 'UTC')`, st.db, canon, projectionKeyFilter, TypeView, refColumns)
+	if err := st.conn.Exec(ctx, daily, tenant, tenant, tenant); err != nil {
 		return fmt.Errorf("signal: project daily: %w", err)
 	}
 	return nil
@@ -335,7 +352,10 @@ func (st *Store) RepairProjections(ctx context.Context, tenant string, opts Repa
 }
 
 func (st *Store) staleKeys(ctx context.Context, tenant string, keys []ProjectionKey) ([]ProjectionKey, error) {
-	filter, keyArgs := keyFilter(keys)
+	ctx, err := projectionKeyContext(ctx, keys)
+	if err != nil {
+		return nil, err
+	}
 	const cols = refColumns + ", subject_kind, subject"
 	q := fmt.Sprintf(`SELECT r.content_kind, r.content_id, r.content_version_id, r.subject_kind, r.subject
 FROM (SELECT %[4]s, max(ingested_at) AS raw
@@ -347,13 +367,8 @@ LEFT JOIN (SELECT %[4]s, max(version) AS projected
       FROM %[1]s.subject_content_daily WHERE tenant = ? AND %[2]s AND %[3]s GROUP BY %[4]s) AS d
   USING (%[4]s)
 WHERE s.projected < r.raw OR d.projected < r.raw
-ORDER BY r.content_kind, r.content_id, r.content_version_id, r.subject_kind, r.subject`, st.db, filter, st.notErased(), cols)
-	args := make([]any, 0, 3+3*len(keyArgs))
-	for i := 0; i < 3; i++ {
-		args = append(args, tenant)
-		args = append(args, keyArgs...)
-	}
-	keys, err := st.scanKeys(ctx, tenant, q, args...)
+ORDER BY r.content_kind, r.content_id, r.content_version_id, r.subject_kind, r.subject`, st.db, projectionKeyFilter, st.notErased(), cols)
+	keys, err = st.scanKeys(ctx, tenant, q, tenant, tenant, tenant)
 	if err != nil {
 		return nil, fmt.Errorf("signal: detect stale projections: %w", err)
 	}
