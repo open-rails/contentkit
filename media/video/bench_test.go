@@ -11,10 +11,11 @@
 //	CONTENTKIT_BENCH_QUALITY   0 skips quality scoring
 //	CONTENTKIT_BENCH_OUT       JSON lines appended per sample
 //
-// plus the s3test variables. Each sample reports wall time, CPU seconds of
-// the worker and its ffmpeg children, peak RSS (sum of live ffmpeg children;
-// the worker), peak scratch bytes, per-phase seconds and per-rung quality and
-// bitrate.
+// plus CONTENTKIT_TEST_URL and the s3test variables. Runs the queued plan,
+// chunk and assembly workers on Linux. Each sample reports wall time, CPU seconds
+// of the worker and its ffmpeg children, peak RSS (sum of live ffmpeg children;
+// the worker), peak scratch bytes, cumulative job time and per-codec/rung quality
+// and bitrate.
 package video_test
 
 import (
@@ -38,22 +39,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	riverhelpers "github.com/open-rails/helpers/river"
+	"github.com/riverqueue/river"
+
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 	"github.com/open-rails/contentkit/media/video"
+	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 type benchRung struct {
-	Rung    int     `json:"rung"`
-	W       int     `json:"w"`
-	H       int     `json:"h"`
-	AvgKbps int     `json:"avg_kbps"`
-	VMAF    float64 `json:"vmaf,omitempty"`
-	VMAF1   float64 `json:"vmaf_p1,omitempty"` // 1% low
-	VMAFMin float64 `json:"vmaf_min,omitempty"`
-	SSIM    float64 `json:"ssim"`
-	PSNR    float64 `json:"psnr"`
+	Codec   media.Codec `json:"codec"`
+	Rung    int         `json:"rung"`
+	W       int         `json:"w"`
+	H       int         `json:"h"`
+	AvgKbps int         `json:"avg_kbps"`
+	VMAF    float64     `json:"vmaf,omitempty"`
+	VMAF1   float64     `json:"vmaf_p1,omitempty"` // 1% low
+	VMAFMin float64     `json:"vmaf_min,omitempty"`
+	SSIM    float64     `json:"ssim"`
+	PSNR    float64     `json:"psnr"`
 }
 
 type benchResult struct {
@@ -62,7 +70,7 @@ type benchResult struct {
 	Duration   float64            `json:"duration_s"`
 	Threads    int                `json:"threads"`
 	Knobs      string             `json:"knobs,omitempty"`
-	Playable   float64            `json:"first_playable_s,omitempty"` // a second stage started
+	Playable   float64            `json:"first_playable_s,omitempty"` // first observed playable manifest (100 ms polling)
 	Frames     int                `json:"frames"`
 	CPUPerOut  float64            `json:"cpu_ms_per_output_frame"`
 	FFmpeg     string             `json:"ffmpeg"`
@@ -72,7 +80,7 @@ type benchResult struct {
 	FFmpegRSS  int64              `json:"ffmpeg_peak_rss_mb"`
 	WorkerRSS  int64              `json:"worker_peak_rss_mb"`
 	TempPeak   int64              `json:"temp_peak_mb"`
-	Phases     map[string]float64 `json:"phases_s"`
+	Phases     map[string]float64 `json:"phases_s"` // cumulative worker time by job kind
 	Rungs      []benchRung        `json:"rungs"`
 	Downloads  int64              `json:"downloads_mb"`
 	Realtime   float64            `json:"x_realtime"`
@@ -80,6 +88,9 @@ type benchResult struct {
 }
 
 func TestBenchEncode(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("resource sampling requires Linux /proc")
+	}
 	requireFFmpeg(t)
 	samples := strings.Split(os.Getenv("CONTENTKIT_BENCH_SAMPLES"), ",")
 	if samples[0] == "" {
@@ -91,8 +102,16 @@ func TestBenchEncode(t *testing.T) {
 }
 
 func benchSample(t *testing.T, src string) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	pool := pgtest.Pool(t, nil)
+	schema := pgtest.EmptySchema(t, ctx, pool)
+	if err := workqueue.Migrate(ctx, pool, schema); err != nil {
+		t.Fatal(err)
+	}
 	s3 := s3test.Open(t)
-	kinds, err := media.NewRegistry(media.Kind{Name: "video", Versioned: true, Video: &media.Video{}, Types: []string{"video/x-matroska", "video/mp4", "video/quicktime"}})
+	policy := benchVideo()
+	kinds, err := media.NewRegistry(media.Kind{Name: "video", Versioned: true, Video: &policy, Types: []string{"video/x-matroska", "video/mp4", "video/quicktime"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,14 +119,16 @@ func benchSample(t *testing.T, src string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uploads, err := media.NewUploads(media.UploadOptions{Store: s3.Store, Kinds: kinds, Manifests: ms, Authorizer: grants{}})
+	queue, err := workqueue.New(pool, kinds, schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploads, err := media.NewUploads(media.UploadOptions{Store: s3.Store, Kinds: kinds, Manifests: ms, Authorizer: grants{}, Queue: queue})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ref := contentref.NewVersion(s3.Tenant, "video", cid(1), "v1")
 	item, _ := kinds.Item(ref)
-	ctx := context.Background()
-
 	name := benchCommit(t, ctx, s3.Store, item, src)
 	if _, err := uploads.Commit(ctx, admin, ref, []media.Op{{Op: "insert", Name: "source", Original: name}}); err != nil {
 		t.Fatal(err)
@@ -123,6 +144,19 @@ func benchSample(t *testing.T, src string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	wc := video.WorkerConfig{Encoder: enc, Pool: pool, Schema: schema, Kinds: kinds}
+	contribution, err := video.Contribution(wc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientConfig := video.ClientConfig(wc)
+	clientConfig.FetchPollInterval = 100 * time.Millisecond
+	worker, err := riverhelpers.New(ctx, pool, clientConfig, contribution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, unsubscribe := worker.Subscribe(river.EventKindJobCompleted, river.EventKindJobFailed, river.EventKindJobCancelled)
+	defer unsubscribe()
 
 	res := benchResult{Label: os.Getenv("CONTENTKIT_BENCH_LABEL"), Sample: filepath.Base(src), Threads: cfg.Threads,
 		FFmpeg: ffmpegVersion(), Load1: load1(), Phases: map[string]float64{}}
@@ -130,42 +164,76 @@ func benchSample(t *testing.T, src string) {
 		res.Threads = runtime.GOMAXPROCS(0)
 	}
 	runtime.GC()
-	stop := sampleResources(cfg.TempDir, &res)
-	var mu sync.Mutex
-	phase, at := "", time.Now()
-	start := time.Now()
-	report := func(_ context.Context, files map[string]media.EncodeProgress) {
-		mu.Lock()
-		defer mu.Unlock()
-		p, ok := files["source"]
-		if !ok {
-			p, ok = files[media.ItemProgressKey]
+	func() {
+		stop := sampleResources(cfg.TempDir, &res)
+		defer stop()
+		start, cpu0 := time.Now(), cpuSeconds()
+		if err := worker.Start(ctx); err != nil {
+			t.Fatal(err)
 		}
-		if ok && stageOf(p) == 2 && res.Playable == 0 {
-			res.Playable = time.Since(start).Seconds()
+		defer func() {
+			stopCtx, stopWorker := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer stopWorker()
+			if err := worker.StopAndCancel(stopCtx); err != nil {
+				t.Errorf("stop benchmark worker: %v", err)
+			}
+		}()
+		tick := time.NewTicker(100 * time.Millisecond)
+		defer tick.Stop()
+		jobTable := pgx.Identifier{schema, "river_job"}.Sanitize()
+		for {
+			select {
+			case event := <-events:
+				if event.Kind != river.EventKindJobCompleted {
+					t.Fatalf("job %s %s: %+v", event.Kind, event.Job.Kind, event.Job.Errors)
+				}
+			case <-tick.C:
+				m, _, err := ms.Get(ctx, ref)
+				if err != nil {
+					t.Fatal(err)
+				}
+				file := m.Files[m.File("source")]
+				if file.Servable() && res.Playable == 0 {
+					res.Playable = time.Since(start).Seconds()
+				}
+				switch file.State() {
+				case media.StateFailed:
+					t.Fatalf("video failed: %s", file.HLS.Error)
+				case media.StateReady:
+				default:
+					continue
+				}
+				// Publication precedes assembly completion. Wait for every video job
+				// in this sample's private schema, independently of event delivery order.
+				rows, err := pool.Query(ctx, `SELECT kind, bool_and(state = 'completed'),
+COALESCE(sum(extract(epoch FROM finalized_at - attempted_at)), 0)
+FROM `+jobTable+` WHERE queue IN ($1, $2) GROUP BY kind`, workqueue.VideoLightQueue, workqueue.VideoEncodeQueue)
+				if err != nil {
+					t.Fatal(err)
+				}
+				done := true
+				var kind string
+				var completed bool
+				var seconds float64
+				_, err = pgx.ForEachRow(rows, []any{&kind, &completed, &seconds}, func() error {
+					done = done && completed
+					res.Phases[kind] = seconds
+					return nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !done {
+					continue
+				}
+				res.Wall = time.Since(start).Seconds()
+				res.CPU = cpuSeconds() - cpu0
+				return
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
 		}
-		if !ok || p.Phase == phase {
-			return
-		}
-		now := time.Now()
-		if phase != "" {
-			res.Phases[phase] += now.Sub(at).Seconds()
-		}
-		phase, at = p.Phase, now
-	}
-	cpu0 := cpuSeconds()
-	start = time.Now()
-	if err := enc.Encode(ctx, video.Job{Ref: ref, Versioned: true, Video: benchVideo()}, report); err != nil {
-		t.Fatal(err)
-	}
-	res.Wall = time.Since(start).Seconds()
-	res.CPU = cpuSeconds() - cpu0
-	stop()
-	mu.Lock()
-	if phase != "" {
-		res.Phases[phase] += time.Since(at).Seconds()
-	}
-	mu.Unlock()
+	}()
 
 	m, _, err := ms.Get(ctx, ref)
 	if err != nil {
@@ -186,7 +254,7 @@ func benchSample(t *testing.T, src string) {
 	dir := t.TempDir()
 	for _, r := range f.HLS.Video {
 		path := benchFetch(t, ctx, s3.Store, item, r.Blob, dir)
-		br := benchRung{Rung: r.Rung, W: r.Width, H: r.Height, AvgKbps: r.Average / 1000}
+		br := benchRung{Codec: r.Codec, Rung: r.Rung, W: r.Width, H: r.Height, AvgKbps: r.Average / 1000}
 		if os.Getenv("CONTENTKIT_BENCH_QUALITY") != "0" {
 			br.SSIM, br.PSNR, br.VMAF, br.VMAF1, br.VMAFMin = quality(t, src, path, r.Width, r.Height)
 		}

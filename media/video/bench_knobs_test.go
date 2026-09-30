@@ -45,5 +45,3 @@ func knobsNote() string {
 	}
 	return strings.Join(out, " ")
 }
-
-func stageOf(p media.EncodeProgress) int { return p.Stage }
