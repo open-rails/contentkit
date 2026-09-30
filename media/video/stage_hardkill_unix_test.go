@@ -46,7 +46,7 @@ func TestHardKilledChunkResumesWithIdenticalOutput(t *testing.T) {
 	}
 	source := fixture{w: 1280, h: 720, secs: 120, rate: 10}.make(t)
 	e.commit(t, source, media.OpInsert)
-	enc, err := video.New(video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(),
+	enc, err := video.New(ctx, video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(),
 		Threads: 2, Encoder: video.EncoderCPU, Codecs: []media.Codec{media.CodecH264}, ProgressInterval: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
@@ -244,7 +244,7 @@ func runHardKilledChunkWorkerChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enc, err := video.New(video.Config{Store: store, Locker: media.PGLocker(pool), TempDir: os.Getenv("CONTENTKIT_HARDKILL_TEMP_DIR"),
+	enc, err := video.New(ctx, video.Config{Store: store, Locker: media.PGLocker(pool), TempDir: os.Getenv("CONTENTKIT_HARDKILL_TEMP_DIR"),
 		Threads: 2, Encoder: video.EncoderCPU, Codecs: []media.Codec{media.CodecH264}, ProgressInterval: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)

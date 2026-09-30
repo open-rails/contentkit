@@ -62,7 +62,7 @@ func newAudioEnv(t *testing.T, a media.Audio, queue media.ProcessQueue) (*env, *
 		*failed = append(*failed, file)
 		mu.Unlock()
 	}}
-	if e.encoder, err = video.New(video.Config{Store: e.store, Locker: locker, TempDir: t.TempDir(), Threads: 2,
+	if e.encoder, err = video.New(t.Context(), video.Config{Store: e.store, Locker: locker, TempDir: t.TempDir(), Threads: 2,
 		Encoder: video.EncoderCPU, Hooks: hooks}); err != nil {
 		t.Fatal(err)
 	}
@@ -451,7 +451,7 @@ func TestAudioOnlyKindWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enc, err := video.New(video.Config{Store: s3.Store, Locker: locker, TempDir: t.TempDir(), Threads: 2, Encoder: video.EncoderCPU})
+	enc, err := video.New(ctx, video.Config{Store: s3.Store, Locker: locker, TempDir: t.TempDir(), Threads: 2, Encoder: video.EncoderCPU})
 	if err != nil {
 		t.Fatal(err)
 	}

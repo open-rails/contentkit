@@ -208,7 +208,7 @@ func TestWorkerAssemblesPlayableChunks(t *testing.T) {
 		t.Fatalf("fixture: %v: %s", err, output)
 	}
 	e.commit(t, src, media.OpInsert)
-	enc, err := video.New(video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(), Threads: 2, Encoder: video.EncoderCPU})
+	enc, err := video.New(ctx, video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(), Threads: 2, Encoder: video.EncoderCPU})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestWorkerPublishesEachRung(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.commit(t, fixture{w: 3840, h: 2160, secs: 5, rate: 10, audio: 1, tone: 440}.make(t), media.OpInsert)
-	enc, err := video.New(video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(),
+	enc, err := video.New(ctx, video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(),
 		Threads: 2, Encoder: video.EncoderCPU, Codecs: []media.Codec{media.CodecH264}})
 	if err != nil {
 		t.Fatal(err)
@@ -434,7 +434,7 @@ func TestWorkerShortVideoOvertakesLongVideo(t *testing.T) {
 	shortRef := contentref.NewVersion(e.Env.Tenant+"other", "video", cid(89), "v1")
 	e.ref = shortRef
 	e.commit(t, fixture{w: 640, h: 360, secs: 5, rate: 10}.make(t), media.OpInsert)
-	enc, err := video.New(video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(),
+	enc, err := video.New(ctx, video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(),
 		Threads: 2, Encoder: video.EncoderCPU, Codecs: []media.Codec{media.CodecH264}})
 	if err != nil {
 		t.Fatal(err)
@@ -503,7 +503,7 @@ func TestInterruptedChunkRetriesWithoutAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.commit(t, fixture{w: 1280, h: 720, secs: 120, rate: 10}.make(t), media.OpInsert)
-	enc, err := video.New(video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(),
+	enc, err := video.New(ctx, video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(),
 		Threads: 2, Encoder: video.EncoderCPU, Codecs: []media.Codec{media.CodecH264}})
 	if err != nil {
 		t.Fatal(err)
@@ -639,7 +639,7 @@ func TestPassthroughTopRung(t *testing.T) {
 			if c.codec == media.CodecHEVC {
 				codecs = []media.Codec{media.CodecHEVC, media.CodecH264}
 				var err error
-				if e.encoder, err = video.New(video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(), Threads: 2,
+				if e.encoder, err = video.New(t.Context(), video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(), Threads: 2,
 					Encoder: video.EncoderCPU, Codecs: codecs}); err != nil {
 					t.Fatal(err)
 				}
@@ -700,7 +700,7 @@ func TestPassthroughTopRung(t *testing.T) {
 				t.Fatal(err)
 			}
 			queued.commit(t, src, media.OpInsert)
-			workerEncoder, err := video.New(video.Config{Store: queued.store, Locker: s3test.Locker(t, queued.store),
+			workerEncoder, err := video.New(ctx, video.Config{Store: queued.store, Locker: s3test.Locker(t, queued.store),
 				TempDir: t.TempDir(), Threads: 2, Encoder: video.EncoderCPU, Codecs: codecs})
 			if err != nil {
 				t.Fatal(err)

@@ -177,7 +177,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if c.Metrics != nil {
 		observeEncode = c.Metrics.ObserveEncode
 	}
-	enc, err := video.New(video.Config{Store: c.Store, Locker: media.PGLocker(c.Pool), Sweeps: host, TempDir: c.TempDir,
+	enc, err := video.New(ctx, video.Config{Store: c.Store, Locker: media.PGLocker(c.Pool), Sweeps: host, TempDir: c.TempDir,
 		Threads: c.Threads, Preset: c.Preset, TopPreset: c.TopPreset, Encoder: c.VideoEncoder, Codecs: c.VideoCodecs, Hooks: c.Hooks, Logger: c.Logger, Slots: queue,
 		ObserveEncode: observeEncode})
 	if err != nil {

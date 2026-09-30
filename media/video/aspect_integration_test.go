@@ -96,7 +96,7 @@ func TestAspectOutOfRangeFailsPermanently(t *testing.T) {
 	e := newEnv(t, nil, nil)
 	var failed atomic.Int32
 	var reason error
-	enc, err := video.New(video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(), Threads: 2,
+	enc, err := video.New(t.Context(), video.Config{Store: e.store, Locker: s3test.Locker(t, e.store), TempDir: t.TempDir(), Threads: 2,
 		Hooks: media.Hooks{Failed: func(_ context.Context, ref contentref.ContentRef, file string, err error) {
 			if ref == e.ref && file == "source" {
 				failed.Add(1)

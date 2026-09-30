@@ -140,7 +140,7 @@ func benchSample(t *testing.T, src string) {
 	}
 	cfg.Threads, _ = strconv.Atoi(os.Getenv("CONTENTKIT_BENCH_THREADS"))
 	defer benchKnobs(&cfg)()
-	enc, err := video.New(cfg)
+	enc, err := video.New(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
