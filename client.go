@@ -153,21 +153,42 @@ func (c *Client) effectiveLimits(opts SearchOptions) (limit, offset, candidateLi
 }
 
 func (c *Client) search(ctx context.Context, userText string, opts SearchOptions, trace *SearchTrace) (SearchResult, error) {
-	var result SearchResult
+	groups, truncated, err := c.searchGroups(ctx, userText, opts, trace)
+	result := SearchResult{Truncated: truncated}
+	if err != nil {
+		return result, err
+	}
+	limit, offset, _ := c.effectiveLimits(opts)
+	selected, hasMore := page(groups, offset, limit)
+	result.HasMore = hasMore || truncated
+	result.Hits = make([]SearchHit, 0, len(selected))
+	for i, g := range selected {
+		result.Hits = append(result.Hits, hitFromGroup(g))
+		if trace != nil {
+			trace.Results = append(trace.Results, resultTraceFromGroup(offset+i+1, g))
+		}
+	}
+	return result, nil
+}
+
+// searchGroups retrieves and groups the complete bounded document windows,
+// before either ordinary pagination or personalized ranking.
+func (c *Client) searchGroups(ctx context.Context, userText string, opts SearchOptions, trace *SearchTrace) ([]group, bool, error) {
+	var truncated bool
 	q := normalize.Query(userText)
 	if trace != nil {
 		*trace = initializeSearchTrace(c, q, opts)
 	}
-	fail := func(category string, err error) (SearchResult, error) {
+	fail := func(category string, err error) ([]group, bool, error) {
 		if trace != nil {
 			trace.ErrorCategory = category
 		}
-		return result, err
+		return nil, truncated, err
 	}
 	if opts.Offset < 0 {
 		return fail("validation", fmt.Errorf("Offset must not be negative"))
 	}
-	limit, offset, candidateLimit := c.effectiveLimits(opts)
+	_, _, candidateLimit := c.effectiveLimits(opts)
 	if candidateLimit > search.MaxCandidateLimit {
 		return fail("validation", fmt.Errorf("effective CandidateLimit must not exceed %d", search.MaxCandidateLimit))
 	}
@@ -183,12 +204,11 @@ func (c *Client) search(ctx context.Context, userText string, opts SearchOptions
 	if len(kinds) == 0 {
 		return fail("validation", fmt.Errorf("ContentKinds is required"))
 	}
-	result.Hits = []SearchHit{}
 	if q == "" || !normalize.HasAnyLetterOrNumber(q) {
 		if trace != nil {
 			trace.EmptyReason = EmptyReasonNormalizedQuery
 		}
-		return result, nil
+		return nil, false, nil
 	}
 
 	var docs []groupedDoc
@@ -196,9 +216,9 @@ func (c *Client) search(ctx context.Context, userText string, opts SearchOptions
 		requested := i == 0
 		keyword, keywordIndex, err := c.searchKeyword(ctx, userText, lang, candidateLimit, kinds, opts, trace)
 		if err != nil {
-			return result, err
+			return nil, truncated, err
 		}
-		result.Truncated = result.Truncated || keyword.Truncated
+		truncated = truncated || keyword.Truncated
 		for rank, h := range keyword.Hits {
 			docs = append(docs, groupedDoc{ref: h.ContentRef, language: h.Language, priority: h.Priority, score: h.Score, requested: requested,
 				scoreKind: ScoreKeywordMatch, contributions: []ContributionTrace{{SourceIndex: keywordIndex, SourceRank: rank + 1, Weight: 1, Contribution: h.Score}}})
@@ -208,16 +228,7 @@ func (c *Client) search(ctx context.Context, userText string, opts SearchOptions
 	if len(groups) == 0 && trace != nil {
 		trace.EmptyReason = EmptyReasonNoCandidates
 	}
-	selected, hasMore := page(groups, offset, limit)
-	result.HasMore = hasMore || result.Truncated
-	result.Hits = make([]SearchHit, 0, len(selected))
-	for i, g := range selected {
-		result.Hits = append(result.Hits, hitFromGroup(g))
-		if trace != nil {
-			trace.Results = append(trace.Results, resultTraceFromGroup(offset+i+1, g))
-		}
-	}
-	return result, nil
+	return groups, truncated, nil
 }
 
 func hitFromGroup(g group) SearchHit {
