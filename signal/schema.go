@@ -49,7 +49,7 @@ type tableSpec struct {
 var refColumnSpecs = []columnSpec{{"content_kind", "LowCardinality(String)"}, {"content_id", "String"}, {"content_version_id", "String"}}
 
 // expectedSchema is the schema this library version reads and writes. It must
-// match the baseline in migrations/clickhouse.
+// match the applied lineage in migrations/clickhouse.
 var expectedSchema = map[string]tableSpec{
 	"signals": {
 		engine: "ReplacingMergeTree", version: "version",
@@ -72,7 +72,7 @@ var expectedSchema = map[string]tableSpec{
 			columnSpec{"total_events", "UInt32"}, columnSpec{"views", "UInt32"},
 			columnSpec{"completions", "UInt32"}, columnSpec{"active_s", "UInt64"}, columnSpec{"max_progress", "UInt32"}, columnSpec{"progress_max", "UInt32"},
 			columnSpec{"completed", "Bool"}, columnSpec{"resume", "String"}, columnSpec{"last_score", "Int16"}, columnSpec{"net_value", "Float64"},
-			columnSpec{"feedback", "UInt32"}, columnSpec{"version", "DateTime64(6, 'UTC')"},
+			columnSpec{"feedback", "UInt32"}, columnSpec{"version", "UInt256"},
 		),
 	},
 	"subject_content_daily": {
@@ -83,7 +83,7 @@ var expectedSchema = map[string]tableSpec{
 			columnSpec{"subject_kind", "LowCardinality(String)"}, columnSpec{"subject", "String"}, columnSpec{"day", "Date"}, columnSpec{"events", "UInt32"},
 			columnSpec{"views", "UInt32"}, columnSpec{"completions", "UInt32"}, columnSpec{"active_s", "UInt64"}, columnSpec{"score_sum", "Int64"},
 			columnSpec{"value_sum", "Float64"}, columnSpec{"type_counts", "Map(LowCardinality(String), UInt32)"},
-			columnSpec{"version", "DateTime64(6, 'UTC')"},
+			columnSpec{"version", "UInt256"},
 		),
 	},
 	"erasures": {

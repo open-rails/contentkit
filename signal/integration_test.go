@@ -171,6 +171,11 @@ func TestIntegrationRepairProjectionsHealsCrashResidue(t *testing.T) {
 	tenant := "doujins"
 	user := Subject{UserID: "u1"}
 
+	// A crash residue can share the timestamp of an already-projected event.
+	if err := conn.Exec(ctx, "ALTER TABLE "+testDB+".signals MODIFY COLUMN ingested_at DateTime64(6, 'UTC') DEFAULT toDateTime64('2026-05-01 00:00:00', 6, 'UTC')"); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, err := st.RepairProjections(ctx, "", RepairOptions{}); err == nil {
 		t.Fatal("empty tenant must error")
 	}
@@ -239,6 +244,17 @@ func TestIntegrationRepairProjectionsHealsCrashResidue(t *testing.T) {
 	}
 	if res.Examined != 3 || res.Repaired != 0 {
 		t.Fatalf("second sweep must be a no-op: %+v", res)
+	}
+	// Losing one day must be detected even when another day has the current generation.
+	if err := conn.Exec(ctx, "DELETE FROM "+testDB+".subject_content_daily WHERE tenant = ? AND content_id = ? AND day = toDate(?)", tenant, g1, at(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	res, err = st.RepairProjections(ctx, tenant, RepairOptions{})
+	if err != nil || res.Repaired != 1 {
+		t.Fatalf("missing daily row: %+v %v", res, err)
+	}
+	if m := metricsByID(t, st, tenant, []string{g1}, AllTime()); m[g1].Views != 2 {
+		t.Fatalf("missing day was not restored: %+v", m)
 	}
 	res, err = st.RepairProjections(ctx, tenant, RepairOptions{Rebuild: true, Window: Between(at(3, 0), at(4, 0))})
 	if err != nil {
