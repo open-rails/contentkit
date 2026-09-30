@@ -136,10 +136,22 @@ type Worker struct {
 
 // New builds the River client with the image and video workers. It needs no
 // DDL rights: the host applies workqueue.Migrate(Schema) in its migration
-// step, so the worker can run as the host's unprivileged app role.
+// step, so the worker can run as the host's unprivileged app role. Missing
+// encode tables are reported before the worker is built.
 func New(ctx context.Context, c Config) (*Worker, error) {
 	if err := c.defaults(); err != nil {
 		return nil, err
+	}
+	for _, table := range []string{"encode_run", "encode_chunk"} {
+		var exists bool
+		name := pgx.Identifier{c.Schema, table}.Sanitize()
+		if err := c.Pool.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", name).Scan(&exists); err != nil {
+			return nil, fmt.Errorf("media/worker: check %s.%s: %w", c.Schema, table, err)
+		}
+		if !exists {
+			return nil, fmt.Errorf("media/worker: missing %s.%s; the host must run workqueue.Migrate",
+				c.Schema, table)
+		}
 	}
 	// One-shot workers use pod-private scratch, which Kubernetes removes with
 	// the pod. Sweeping a shared path here could erase another active worker's
