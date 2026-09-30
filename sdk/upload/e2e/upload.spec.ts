@@ -60,7 +60,8 @@ test.describe("browser uploads", () => {
     const first = await page.evaluate(async ({ modulePath, ref, size }) => {
       const { UploadClient } = (await import(/* @vite-ignore */ modulePath)) as typeof import("../src/index.js");
       const file = new File([new Uint8Array(size).fill(9)], "video.mp4", { type: "video/mp4", lastModified: 1 });
-      const client = new UploadClient({ endpoint: "/upload", headers: () => ({ "X-Test-Actor": "alice" }), retries: 0 });
+      // Land earlier parts before interruption, regardless of backend latency.
+      const client = new UploadClient({ endpoint: "/upload", headers: () => ({ "X-Test-Actor": "alice" }), retries: 0, concurrency: 1 });
       try {
         await client.upload(file, {
           ref,

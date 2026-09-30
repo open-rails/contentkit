@@ -19,12 +19,15 @@ export class KillProxy {
   private browser?: { app: URL; api: URL };
 
   constructor(upstream: URL) {
+    const bucketPath = process.env.CONTENTKIT_TEST_S3_BUCKET
+      ? `/${process.env.CONTENTKIT_TEST_S3_BUCKET}/`
+      : "/ck-sdk-";
     this.server = http.createServer((req, res) => {
       let destination = upstream;
       if (this.browser) {
         const path = new URL(req.url!, "http://x").pathname;
         if (path.startsWith("/upload/") || path === "/object") destination = this.browser.api;
-        else if (!path.startsWith("/ck-sdk-")) destination = this.browser.app;
+        else if (!path.startsWith(bucketPath)) destination = this.browser.app;
       }
       const up = http.request(
         { host: destination.hostname, port: destination.port, method: req.method, path: req.url, headers: req.headers },
@@ -95,8 +98,8 @@ export async function startServer(publicEndpoint: string): Promise<{ url: string
 }
 
 export function stopServer(proc: ChildProcess): Promise<void> {
-  return new Promise((r) => {
-    proc.once("exit", () => r());
+  return new Promise((resolve, reject) => {
+    proc.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`uploadtestserver cleanup exited ${code}`)));
     proc.stdin!.end();
   });
 }

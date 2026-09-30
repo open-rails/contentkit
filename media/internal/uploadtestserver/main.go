@@ -1,7 +1,8 @@
-// Command uploadtestserver serves media.UploadHandler over a fresh MinIO/RGW
-// bucket for the browser SDK's integration tests (sdk/upload/test). It reads
+// Command uploadtestserver serves media.UploadHandler over an isolated MinIO/RGW
+// tenant for the browser SDK's integration tests (sdk/upload/test). It reads
 // the CONTENTKIT_TEST_S3_* variables, presigns for -public (a proxy the test
 // controls), prints "READY <url>" and runs until stdin closes.
+// CONTENTKIT_TEST_S3_BUCKET selects an existing bucket; cleanup removes only the test tenant.
 //
 //	POST /upload/...          the upload API; X-Test-Actor names the caller
 //	POST /upload-on-upload/...  the same with ProcessOnUpload
@@ -15,6 +16,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -34,9 +36,26 @@ import (
 	"github.com/open-rails/contentkit/media/token"
 )
 
-const tenant = "sdk"
-
 type allow struct{}
+
+// uploadStore records this fixture's sessions; MinIO cannot list uploads by tenant prefix.
+type uploadStore struct {
+	*mediaS3.Store
+	mu      sync.Mutex
+	uploads []multipart
+}
+
+type multipart struct{ key, id string }
+
+func (s *uploadStore) CreateMultipart(ctx context.Context, key, contentType string) (string, error) {
+	id, err := s.Store.CreateMultipart(ctx, key, contentType)
+	if err == nil {
+		s.mu.Lock()
+		s.uploads = append(s.uploads, multipart{key, id})
+		s.mu.Unlock()
+	}
+	return id, err
+}
 
 func (allow) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
 	out := map[contentref.ContentKey]access.Resolution{}
@@ -92,9 +111,11 @@ func main() {
 	ctx := context.Background()
 
 	suffix := make([]byte, 6)
-	_, _ = rand.Read(suffix)
+	_, err := rand.Read(suffix)
+	must(err)
+	tenant := "sdk-" + hex.EncodeToString(suffix)
 	cfg := mediaS3.Config{
-		Bucket:          "ck-sdk-" + hex.EncodeToString(suffix),
+		Bucket:          os.Getenv("CONTENTKIT_TEST_S3_BUCKET"),
 		Region:          os.Getenv("CONTENTKIT_TEST_S3_REGION"),
 		Endpoint:        os.Getenv("CONTENTKIT_TEST_S3_ENDPOINT"),
 		PublicEndpoint:  *public,
@@ -102,12 +123,25 @@ func main() {
 		SecretAccessKey: os.Getenv("CONTENTKIT_TEST_S3_SECRET_KEY"),
 		UsePathStyle:    true,
 	}
-	store, err := mediaS3.New(cfg)
+	created := cfg.Bucket == ""
+	if created {
+		cfg.Bucket = "ck-" + tenant
+	}
+	s3store, err := mediaS3.New(cfg)
 	must(err)
-	_, err = store.Client().CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &cfg.Bucket})
-	must(err)
-	defer drop(store)
-	must(store.Check(ctx, "probe/"))
+	store := &uploadStore{Store: s3store}
+	if created {
+		_, err = store.Client().CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &cfg.Bucket})
+		must(err)
+	}
+	defer func() {
+		if err := drop(store, tenant+"/", created); err != nil {
+			log.Print(err)
+			os.Exit(1)
+		}
+	}()
+	must(store.Check(ctx, tenant+"/probe/"))
+	log.Printf("upload fixture bucket=%s prefix=%s/", cfg.Bucket, tenant)
 
 	kinds, err := media.NewRegistry(
 		media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
@@ -210,34 +244,49 @@ func main() {
 	_ = srv.Close()
 }
 
-// drop removes the bucket with its objects and unfinished uploads.
-func drop(store *mediaS3.Store) {
+// drop removes only this fixture's uploads and object versions. Existing buckets stay intact.
+func drop(store *uploadStore, prefix string, created bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	c, bucket := store.Client(), store.Bucket()
-	if ups, err := c.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{Bucket: &bucket}); err == nil {
-		for _, u := range ups.Uploads {
-			_, _ = c.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{Bucket: &bucket, Key: u.Key, UploadId: u.UploadId})
+	var errs []error
+	store.mu.Lock()
+	uploads := append([]multipart(nil), store.uploads...)
+	store.mu.Unlock()
+	for _, u := range uploads {
+		if err := store.AbortMultipart(ctx, u.key, u.id); err != nil && !errors.Is(err, media.ErrNotFound) {
+			errs = append(errs, err)
 		}
 	}
-	p := s3.NewListObjectsV2Paginator(c, &s3.ListObjectsV2Input{Bucket: &bucket})
+	p := s3.NewListObjectVersionsPaginator(c, &s3.ListObjectVersionsInput{Bucket: &bucket, Prefix: &prefix})
 	for p.HasMorePages() {
 		page, err := p.NextPage(ctx)
 		if err != nil {
-			break
+			return errors.Join(append(errs, fmt.Errorf("list fixture versions: %w", err))...)
 		}
-		for _, o := range page.Contents {
-			_, _ = c.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &bucket, Key: o.Key})
+		del := func(key, version *string) {
+			if _, err := c.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &bucket, Key: key, VersionId: version}); err != nil {
+				errs = append(errs, fmt.Errorf("delete fixture version %s: %w", *key, err))
+			}
+		}
+		for _, v := range page.Versions {
+			del(v.Key, v.VersionId)
+		}
+		for _, m := range page.DeleteMarkers {
+			del(m.Key, m.VersionId)
 		}
 	}
-	if _, err := c.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: &bucket}); err != nil {
-		log.Printf("drop bucket %s: %v", bucket, err)
+	if created {
+		if _, err := c.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: &bucket}); err != nil {
+			errs = append(errs, fmt.Errorf("drop fixture bucket %s: %w", bucket, err))
+		}
 	}
+	return errors.Join(errs...)
 }
 
 func must(err error) {
 	if err != nil {
-		log.Fatal(err)
+		panic(err)
 	}
 }
 
