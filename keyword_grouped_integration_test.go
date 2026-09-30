@@ -279,6 +279,35 @@ CREATE TABLE host.versions(id text PRIMARY KEY, item_id text NOT NULL REFERENCES
 		}
 	})
 
+	t.Run("complete grouped traversal", func(t *testing.T) {
+		f.exec(`INSERT INTO host.items(id) SELECT '01930000-0000-7000-9000-'||lpad(i::text,12,'0') FROM generate_series(1,10001) i;
+INSERT INTO host.versions(id,item_id,language,live,is_default)
+SELECT 'walk-'||i||'-'||v,'01930000-0000-7000-9000-'||lpad(i::text,12,'0'),'en',true,v=1 FROM generate_series(1,10001) i CROSS JOIN generate_series(1,2) v;
+INSERT INTO app.content_search_documents(tenant_id,content_kind,content_id,content_version_id,language,title,raw_document)
+SELECT 'doujins','gallery',item_id,id,language,'Catalogneedle','Catalogneedle' FROM host.versions WHERE id LIKE 'walk-%';`)
+		count := 0
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx)
+		err = client.WalkSearchMatches(ctx, tx, "Catalogneedle", SearchMatchOptions{Language: "en", ContentKinds: kinds, Eligibility: groupedEligibility()}, func(ctx context.Context, batch []SearchHit) error {
+			if len(batch) > 256 || ctx.Err() != nil {
+				t.Fatalf("invalid match batch: size=%d err=%v", len(batch), ctx.Err())
+			}
+			for _, hit := range batch {
+				count++
+				if hit.ContentID != fmt.Sprintf("01930000-0000-7000-9000-%012d", count) || hit.Version() != fmt.Sprintf("walk-%d-1", count) || hit.Score != 1 {
+					t.Fatalf("grouped match %d: %+v", count, hit)
+				}
+			}
+			return nil
+		})
+		if err != nil || count != 10001 {
+			t.Fatalf("complete traversal: count=%d err=%v", count, err)
+		}
+	})
+
 	t.Run("index plan with eligibility join", func(t *testing.T) {
 		f.exec(`INSERT INTO host.items(id) SELECT '01920000-0000-7000-9000-'||lpad(i::text,12,'0') FROM generate_series(1,50000) i;
 INSERT INTO host.versions(id,item_id,language,live,is_default) SELECT 'fv-'||i,'01920000-0000-7000-9000-'||lpad(i::text,12,'0'),'zh',true,true FROM generate_series(1,50000) i;
