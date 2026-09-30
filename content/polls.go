@@ -167,6 +167,9 @@ func (p *polls) update(ctx context.Context, actor access.Actor, id string, in up
 	if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PollWrite); err != nil {
 		return pollView{}, err
 	}
+	if !uuidRe.MatchString(id) {
+		return pollView{}, ErrNotFound
+	}
 	if in.Question != nil {
 		q := strings.TrimSpace(*in.Question)
 		if q == "" {
@@ -493,6 +496,9 @@ func (p *polls) votesFor(ctx context.Context, q querier, actor access.Actor, ids
 func (p *polls) vote(ctx context.Context, actor access.Actor, pollID, optionID string) (pollView, error) {
 	if optionID == "" {
 		return pollView{}, badRequest("option_id is required")
+	}
+	if !uuidRe.MatchString(optionID) {
+		return pollView{}, badRequest("invalid option_id")
 	}
 	userID, ip, ok := reactionKey(actor)
 	if !ok {
