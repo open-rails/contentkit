@@ -156,6 +156,9 @@ func (e *Encoder) audioFile(ctx context.Context, ms *media.Manifests, item media
 		if i < 0 || m.Files[i].Source() != source {
 			return errStale
 		}
+		if err := e.checkOutputs(ctx, item, produced...); err != nil {
+			return err
+		}
 		f := &m.Files[i]
 		f.HLS = hls
 		if f.Variants == nil {
