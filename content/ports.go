@@ -16,9 +16,10 @@ import (
 
 // PublicUser is display enrichment for an author/actor id.
 type PublicUser struct {
-	ID       string `json:"id"`
-	Username string `json:"username"`
-	Avatar   string `json:"avatar,omitempty"`
+	ID           string `json:"id"`
+	Username     string `json:"username"`
+	Avatar       string `json:"avatar,omitempty"`
+	AvatarSrcSet string `json:"avatar_srcset,omitempty"`
 }
 
 // --- mandatory ports ---
