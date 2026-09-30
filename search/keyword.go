@@ -26,22 +26,50 @@ type documentKey struct {
 // PostgreSQL retrieves bounded candidates; Go never scans the document catalog.
 // Host filters and the eligibility join run inside every route before its limit.
 func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts Options) (Result, error) {
-	var result Result
 	if pool == nil {
-		return result, fmt.Errorf("pool is required")
+		return Result{}, fmt.Errorf("pool is required")
 	}
 	if opts.Limit <= 0 {
-		result.Hits = []Hit{}
-		return result, nil
+		return Result{Hits: []Hit{}}, nil
 	}
 	if opts.Limit > MaxCandidateLimit {
-		return result, fmt.Errorf("limit must not exceed %d", MaxCandidateLimit)
-	}
-	if utf8.RuneCountInString(query) > 256 {
-		return result, fmt.Errorf("keyword query exceeds 256 characters")
+		return Result{}, fmt.Errorf("limit must not exceed %d", MaxCandidateLimit)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return Result{}, err
+	}
+	defer tx.Rollback(ctx)
+	result, err := keywordSearch(ctx, tx, query, opts, nil)
+	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit(ctx)
+}
+
+// WalkKeywordMatches visits every eligible matched document in content-reference
+// order. Limit is ignored. The caller owns the transaction and must roll it back
+// on error. Rows are closed before callbacks, which may use the same transaction.
+func WalkKeywordMatches(ctx context.Context, tx pgx.Tx, query string, opts Options, visit func(Hit) error) error {
+	if tx == nil {
+		return fmt.Errorf("transaction is required")
+	}
+	if visit == nil {
+		return fmt.Errorf("match visitor is required")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_, err := keywordSearch(ctx, tx, query, opts, visit)
+	return err
+}
+
+func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options, visit func(Hit) error) (Result, error) {
+	var result Result
+	if utf8.RuneCountInString(query) > 256 {
+		return result, fmt.Errorf("keyword query exceeds 256 characters")
+	}
 	args := pgx.NamedArgs{"q": "", "prefix": "", "limit": 0}
 	from, where, priority, err := hostClauses(opts, args)
 	if err != nil {
@@ -51,7 +79,7 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts O
 	// Normalize in the same database function as the expression indexes. This
 	// avoids Go/Postgres Unicode casing and locale differences.
 	var q, trgmSchema, nativeSchema string
-	err = pool.QueryRow(ctx, fmt.Sprintf(`SELECT %s.contentkit_keyword_normalize($1),
+	err = tx.QueryRow(ctx, fmt.Sprintf(`SELECT %s.contentkit_keyword_normalize($1),
  (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pg_trgm'),
  (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pgroonga')`, qs), query).Scan(&q, &trgmSchema, &nativeSchema)
 	if err != nil {
@@ -86,11 +114,6 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts O
 	// Acceptance below requires at most one Unicode edit, not a low similarity
 	// threshold. Queries of one/two characters never enter the fuzzy route.
 	fuzzy := selectSQL + fmt.Sprintf(`%s OPERATOR(%s.%%>) @q ORDER BY %s OPERATOR(%s.<->>) @q,%s LIMIT @limit`, corpus, qt, corpus, qt, order)
-	tx, err := pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
-	if err != nil {
-		return result, err
-	}
-	defer tx.Rollback(ctx)
 	// The whole request has a two-second ceiling (or an earlier caller deadline),
 	// including candidate scoring. SET LOCAL applies before retrieval and cannot leak into
 	// another pooled request. A SELECT CTE setting the GUC has ambiguous timing.
@@ -101,13 +124,32 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts O
 	if utf8.RuneCountInString(q) >= 3 {
 		queries = append(queries, fuzzy)
 	}
+	if visit != nil {
+		// One predicate union avoids repeated eligibility/scoring-field work and
+		// sorting duplicate documents when several indexed routes match a row.
+		predicates := []string{fmt.Sprintf(`%s @> ARRAY[@q::text]`, terms),
+			fmt.Sprintf(`%s OPERATOR(%s.&@~) @prefix`, terms, qn)}
+		if utf8.RuneCountInString(q) >= 3 {
+			predicates = append(predicates, fmt.Sprintf(`%s OPERATOR(%s.%%>) @q`, corpus, qt))
+		}
+		cursorSQL := selectSQL + "(" + strings.Join(predicates, " OR ") + ") ORDER BY 1,2,3,4"
+		if _, err := tx.Exec(ctx, "DECLARE contentkit_keyword_matches NO SCROLL CURSOR FOR "+cursorSQL, args); err != nil {
+			return result, err
+		}
+		queries = []string{"FETCH FORWARD 256 FROM contentkit_keyword_matches"}
+	}
 	found := map[documentKey]Hit{}
-	for _, sql := range queries {
-		rows, err := tx.Query(ctx, sql, args)
+	for i := 0; i < len(queries); {
+		var queryArgs []any
+		if visit == nil {
+			queryArgs = []any{args}
+		}
+		rows, err := tx.Query(ctx, queries[i], queryArgs...)
 		if err != nil {
 			return result, err
 		}
 		seen := 0
+		var batch []Hit
 		for rows.Next() {
 			if err := ctx.Err(); err != nil {
 				rows.Close()
@@ -129,6 +171,10 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts O
 				return result, err
 			}
 			if h.Score > 0 {
+				if visit != nil {
+					batch = append(batch, h)
+					continue
+				}
 				k := documentKey{h.Key(), h.Language}
 				if old, ok := found[k]; !ok || h.Score > old.Score {
 					found[k] = h
@@ -139,11 +185,20 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts O
 		if err := rows.Err(); err != nil {
 			return result, err
 		}
-		if seen >= sqlLimit {
+		if visit == nil && seen >= sqlLimit {
 			result.Truncated = true
 		}
+		for _, hit := range batch {
+			if err := visit(hit); err != nil {
+				return result, err
+			}
+		}
+		if visit == nil || seen < 256 {
+			i++
+		}
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if visit != nil {
+		_, err := tx.Exec(ctx, "CLOSE contentkit_keyword_matches")
 		return result, err
 	}
 	out := make([]Hit, 0, len(found))
