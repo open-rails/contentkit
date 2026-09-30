@@ -20,11 +20,17 @@ import (
 // private/ under the same name, and a hidden item's public/ is emptied at
 // once. It returns the deleted keys. A visible item's unlisted copies (older
 // outputs) are left to the sweep, so pages rendered a moment ago still load.
+// The folder lock covers the visibility read and completed copies/deletions.
 func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) ([]string, error) {
 	item, err := m.kinds.Item(ref.Content())
 	if err != nil {
 		return nil, err
 	}
+	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	root, _, err := m.root(ctx, item.ManifestKey())
 	if errors.Is(err, ErrNotFound) {
 		root = &Root{Hidden: true}
