@@ -15,7 +15,7 @@ func TestMigrationChains(t *testing.T) {
 		want  []string
 	}{
 		{"postgres", Postgres, []string{"0001_baseline.up.sql", "0002_search_invalid.up.sql", "0003_media_releases.up.sql"}},
-		{"clickhouse", ClickHouse, []string{"0001_baseline.up.sql"}},
+		{"clickhouse", ClickHouse, []string{"0001_baseline.up.sql", "0002_projection_generations.up.sql"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			migrations, err := migratekit.Load(tc.files, ".", migratekit.RequireParentLinks())

@@ -218,9 +218,9 @@ func plantResidue(t *testing.T, conn Conn, f barrierFixture, ingested time.Time)
 		{fmt.Sprintf(`INSERT INTO %s.signals (tenant, content_kind, content_id, subject_kind, subject, signal_type, event_id, occurred_at, progress, progress_max, score, completed, ingested_at)
 VALUES (?, ?, ?, ?, ?, 'view', 'residue', ?, 2, 2, 50, true, ?)`, testDB), []any{f.tenant, f.e1.ContentKind, f.e1.ContentID, kind, key, f.at, ingested}},
 		{fmt.Sprintf(`INSERT INTO %s.subject_content_state (tenant, subject_kind, subject, content_kind, content_id, first_seen_at, last_signal_at, total_events, views, completions, active_s, max_progress, progress_max, completed, resume, last_score, net_value, feedback, version)
-VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 0, 2, 2, true, '', 50, 0, 0, ?)`, testDB), []any{f.tenant, kind, key, f.e1.ContentKind, f.e1.ContentID, f.at, f.at, ingested}},
+VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 0, 2, 2, true, '', 50, 0, 0, ?)`, testDB), []any{f.tenant, kind, key, f.e1.ContentKind, f.e1.ContentID, f.at, f.at, uint64(ingested.UnixMicro())}},
 		{fmt.Sprintf(`INSERT INTO %s.subject_content_daily (tenant, content_kind, content_id, subject_kind, subject, day, events, views, completions, active_s, score_sum, value_sum, type_counts, version)
-VALUES (?, ?, ?, ?, ?, toDate(?), 1, 1, 1, 0, 50, 0, map('view', 1), ?)`, testDB), []any{f.tenant, f.e1.ContentKind, f.e1.ContentID, kind, key, f.at, ingested}},
+VALUES (?, ?, ?, ?, ?, toDate(?), 1, 1, 1, 0, 50, 0, map('view', 1), ?)`, testDB), []any{f.tenant, f.e1.ContentKind, f.e1.ContentID, kind, key, f.at, uint64(ingested.UnixMicro())}},
 		{fmt.Sprintf(`INSERT INTO %s.exposures (tenant, render_id, stage, surface, subject_kind, subject, content_kinds, content_ids, positions, occurred_at, ingested_at)
 VALUES (?, 'residue', 'rendered', 'search', ?, ?, [?], [?], [1], ?, ?)`, testDB), []any{f.tenant, kind, key, f.e1.ContentKind, f.e1.ContentID, f.at, ingested}},
 	} {

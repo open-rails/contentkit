@@ -26,7 +26,7 @@ func TestIntegrationViewRecencyRepairRestoresWatchHistory(t *testing.T) {
           ('doujins', 'user', 'u1', 'gallery', '`+g1+`',
            toDateTime('2026-05-01 10:00:00'), toDateTime('2026-05-05 10:00:00'),
            3, 2, 0, 30, 4, 20, false, 'p:4', 0, 0, 0,
-           toDateTime64('2026-05-05 10:00:01', 6))`); err != nil {
+           1)`); err != nil {
 		t.Fatal(err)
 	}
 

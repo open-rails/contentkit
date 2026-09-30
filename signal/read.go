@@ -612,6 +612,8 @@ func (st *Store) buildCoEngagement(ctx context.Context, tenant string, opts Refr
 	if maxPer <= 0 {
 		maxPer = 100
 	}
+	// Deletion makes this a new insert even if a prior build had identical rows.
+	insertToken := contentref.NewID()
 	if err := st.conn.Exec(ctx, fmt.Sprintf(`DELETE FROM %s.content_pairs WHERE tenant = ?`, st.db), tenant); err != nil {
 		return fmt.Errorf("signal: clear content_pairs: %w", err)
 	}
@@ -647,8 +649,10 @@ FROM (
 )
 WHERE a != bs.1
 GROUP BY content_kind_a, content_id_a, content_kind_b, content_id_b
-HAVING strength > 0%[5]s`, st.db, escapeCHString(tenant), maxPer, winPred, finalSettings, st.notErased(), workLevel)
-	if err := st.conn.Exec(ctx, q, append([]any{tenant}, winArgs...)...); err != nil {
+HAVING strength > 0%[5]s, insert_deduplication_token = ?`, st.db, escapeCHString(tenant), maxPer, winPred, finalSettings, st.notErased(), workLevel)
+	args := append([]any{tenant}, winArgs...)
+	args = append(args, insertToken)
+	if err := st.conn.Exec(ctx, q, args...); err != nil {
 		return fmt.Errorf("signal: refresh co-engagement: %w", err)
 	}
 	return nil

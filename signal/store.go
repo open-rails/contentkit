@@ -11,6 +11,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/ext"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/open-rails/contentkit/contentref"
 )
 
 // Conn is the minimal ClickHouse surface the Store needs; clickhouse-go's
@@ -184,24 +185,22 @@ WHERE %s`, st.db, strings.Join(rows[start:end], " UNION ALL "), st.notErased())
 
 // canonicalEvents selects, per logical event of the filtered keys, the
 // highest-version row as c = (occurred_at, revision, duration_s, progress,
-// progress_max, value, score, completed, resume) plus the newest ingest time of
-// any of its rows. Superseded and duplicate rows never count, whether or not
-// ClickHouse has merged them.
+// progress_max, value, score, completed, resume) plus its winning raw version.
+// Superseded and duplicate rows never count, whether or not ClickHouse has
+// merged them.
 func (st *Store) canonicalEvents(filter string) string {
 	return fmt.Sprintf(`SELECT %[3]s, subject_kind, subject, signal_type, event_id,
         argMax(tuple(occurred_at, revision, duration_s, progress, progress_max, value, score, completed, resume), version) AS c,
-        max(ingested_at) AS ing
+        max(version) AS ver
     FROM %[1]s.signals
     WHERE tenant = ? AND %[2]s AND %[4]s
     GROUP BY %[3]s, subject_kind, subject, signal_type, event_id`, st.db, filter, refColumns, st.notErased())
 }
 
 // project rebuilds subject_content_state and subject_content_daily for keys
-// from canonical events. Every derived row carries version = newest raw ingest
-// time of its key, so a projection that saw more events replaces one that saw
-// fewer and a late stale projection cannot win. Day rows that lost their
-// canonical events (a revision moved a session to another day) are rewritten
-// as zeros.
+// from canonical events. The sum of each winning raw version plus one advances
+// on additions and revisions, but not duplicate deliveries. Every day carries
+// the full key's generation. Days that lost events after a revision are zeroed.
 func (st *Store) project(ctx context.Context, tenant string, keys []ProjectionKey) error {
 	if len(keys) == 0 {
 		return nil
@@ -212,6 +211,8 @@ func (st *Store) project(ctx context.Context, tenant string, keys []ProjectionKe
 		return err
 	}
 	canon := st.canonicalEvents(projectionKeyFilter)
+	// A rebuild after projection loss is a new insert, even at the same generation.
+	insertToken := contentref.NewID()
 
 	state := fmt.Sprintf(`INSERT INTO %[1]s.subject_content_state
 (tenant, subject_kind, subject, %[4]s, first_seen_at, last_signal_at, last_view_at, total_events, views,
@@ -228,10 +229,11 @@ SELECT ?, subject_kind, subject, %[4]s,
     argMaxIf(c.7, (c.1, c.2, event_id), signal_type = '%[3]s'),
     sum(c.6),
     toUInt32(countIf(c.6 != 0)),
-    max(ing)
+    sum(toUInt256(ver) + 1)
 FROM (%[2]s)
-GROUP BY subject_kind, subject, %[4]s`, st.db, canon, TypeView, refColumns)
-	if err := st.conn.Exec(ctx, state, tenant, tenant); err != nil {
+GROUP BY subject_kind, subject, %[4]s
+SETTINGS insert_deduplication_token = ?`, st.db, canon, TypeView, refColumns)
+	if err := st.conn.Exec(ctx, state, tenant, tenant, insertToken); err != nil {
 		return fmt.Errorf("signal: project state: %w", err)
 	}
 
@@ -244,25 +246,26 @@ FROM (
     SELECT %[5]s, subject_kind, subject, day,
         toUInt32(sum(n)) AS events, toUInt32(sum(v)) AS views, toUInt32(sum(done)) AS completions,
         sum(active) AS active_s, sum(score) AS score_sum, sum(val) AS value_sum, sumMap(types) AS type_counts,
-        max(max(ing)) OVER (PARTITION BY %[5]s, subject_kind, subject) AS version,
+        sum(sum(generation)) OVER (PARTITION BY %[5]s, subject_kind, subject) AS version,
         max(prior) AS prior_events
     FROM (
         SELECT %[5]s, subject_kind, subject, toDate(c.1) AS day,
             toUInt32(1) AS n, toUInt32(signal_type = '%[4]s') AS v, toUInt32(signal_type = '%[4]s' AND c.8) AS done,
             if(signal_type = '%[4]s', toUInt64(c.3), 0) AS active, if(signal_type = '%[4]s', toInt64(c.7), 0) AS score,
-            c.6 AS val, map(signal_type, toUInt32(1)) AS types, ing, toUInt32(0) AS prior
+            c.6 AS val, map(signal_type, toUInt32(1)) AS types, toUInt256(ver) + 1 AS generation, toUInt32(0) AS prior
         FROM (%[2]s)
         UNION ALL
         SELECT %[5]s, subject_kind, subject, day, 0, 0, 0, 0, 0, 0,
-            CAST(map(), 'Map(LowCardinality(String), UInt32)'), toDateTime64(0, 6, 'UTC'), events
+            CAST(map(), 'Map(LowCardinality(String), UInt32)'), toUInt256(0), events
         FROM %[1]s.subject_content_daily FINAL
         WHERE tenant = ? AND %[3]s
     )
     GROUP BY %[5]s, subject_kind, subject, day
     HAVING events > 0 OR prior_events > 0
 )
-WHERE version > toDateTime64(0, 6, 'UTC')`, st.db, canon, projectionKeyFilter, TypeView, refColumns)
-	if err := st.conn.Exec(ctx, daily, tenant, tenant, tenant); err != nil {
+WHERE version > 0
+SETTINGS insert_deduplication_token = ?`, st.db, canon, projectionKeyFilter, TypeView, refColumns)
+	if err := st.conn.Exec(ctx, daily, tenant, tenant, tenant, insertToken); err != nil {
 		return fmt.Errorf("signal: project daily: %w", err)
 	}
 	return nil
@@ -295,8 +298,9 @@ type RepairResult struct {
 
 // RepairProjections is the owned projection repair. It examines up to Limit
 // candidate keys in key order and rebuilds those whose state or daily
-// projection is missing or older than their newest raw event (all of them with
-// Rebuild). Idempotent; call again with After = Next until Next is nil.
+// projection is missing or behind its canonical generation, or whose positive
+// daily rows do not cover exactly the canonical days (all keys with Rebuild).
+// Idempotent; call again with After = Next until Next is nil.
 func (st *Store) RepairProjections(ctx context.Context, tenant string, opts RepairOptions) (RepairResult, error) {
 	var res RepairResult
 	if strings.TrimSpace(tenant) == "" {
@@ -358,16 +362,17 @@ func (st *Store) staleKeys(ctx context.Context, tenant string, keys []Projection
 	}
 	const cols = refColumns + ", subject_kind, subject"
 	q := fmt.Sprintf(`SELECT r.content_kind, r.content_id, r.content_version_id, r.subject_kind, r.subject
-FROM (SELECT %[4]s, max(ingested_at) AS raw
-      FROM %[1]s.signals WHERE tenant = ? AND %[2]s AND %[3]s GROUP BY %[4]s) AS r
+FROM (SELECT %[4]s, sum(toUInt256(ver) + 1) AS raw, groupUniqArray(toDate(c.1)) AS days
+      FROM (%[5]s) GROUP BY %[4]s) AS r
 LEFT JOIN (SELECT %[4]s, max(version) AS projected
       FROM %[1]s.subject_content_state WHERE tenant = ? AND %[2]s AND %[3]s GROUP BY %[4]s) AS s
   USING (%[4]s)
-LEFT JOIN (SELECT %[4]s, max(version) AS projected
-      FROM %[1]s.subject_content_daily WHERE tenant = ? AND %[2]s AND %[3]s GROUP BY %[4]s) AS d
+LEFT JOIN (SELECT %[4]s, minIf(version, events > 0) AS projected, groupUniqArrayIf(day, events > 0) AS days
+      FROM %[1]s.subject_content_daily FINAL WHERE tenant = ? AND %[2]s AND %[3]s GROUP BY %[4]s) AS d
   USING (%[4]s)
-WHERE s.projected < r.raw OR d.projected < r.raw
-ORDER BY r.content_kind, r.content_id, r.content_version_id, r.subject_kind, r.subject`, st.db, projectionKeyFilter, st.notErased(), cols)
+WHERE ifNull(s.projected, 0) < r.raw OR ifNull(d.projected, 0) < r.raw
+   OR arraySort(ifNull(d.days, [])) != arraySort(r.days)
+ORDER BY r.content_kind, r.content_id, r.content_version_id, r.subject_kind, r.subject`, st.db, projectionKeyFilter, st.notErased(), cols, st.canonicalEvents(projectionKeyFilter))
 	keys, err = st.scanKeys(ctx, tenant, q, tenant, tenant, tenant)
 	if err != nil {
 		return nil, fmt.Errorf("signal: detect stale projections: %w", err)

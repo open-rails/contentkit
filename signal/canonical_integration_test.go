@@ -282,14 +282,14 @@ func TestIntegrationProjectionVersionsAndOrphanDays(t *testing.T) {
 
 	// A stale nonzero day row left by an interrupted projection.
 	if err := conn.Exec(ctx, `INSERT INTO `+testDB+`.subject_content_daily (tenant, content_kind, content_id, subject_kind, subject, day, events, views, completions, active_s, score_sum, value_sum, type_counts, version)
-VALUES ('t', 'gallery', '`+lid("g")+`', 'user', 'u', '2026-05-03', 1, 1, 0, 0, 0, 0, map('view', 1), '2000-01-01 00:00:00')`); err != nil {
+VALUES ('t', 'gallery', '`+lid("g")+`', 'user', 'u', '2026-05-03', 1, 1, 0, 0, 0, 0, map('view', 1), 1)`); err != nil {
 		t.Fatal(err)
 	}
 	if viewsOn(3) != 1 {
 		t.Fatal("precondition: orphan row visible")
 	}
-	if _, err := st.RepairProjections(ctx, "t", RepairOptions{Rebuild: true}); err != nil {
-		t.Fatal(err)
+	if res, err := st.RepairProjections(ctx, "t", RepairOptions{}); err != nil || res.Repaired != 1 {
+		t.Fatalf("orphan day repair: %+v %v", res, err)
 	}
 	if viewsOn(3) != 0 || viewsOn(6) != 1 {
 		t.Fatalf("repair must zero the orphan day: day3=%d day6=%d", viewsOn(3), viewsOn(6))

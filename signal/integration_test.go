@@ -3,6 +3,7 @@ package signal
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -170,6 +171,11 @@ func TestIntegrationRepairProjectionsHealsCrashResidue(t *testing.T) {
 	tenant := "doujins"
 	user := Subject{UserID: "u1"}
 
+	// A crash residue can share the timestamp of an already-projected event.
+	if err := conn.Exec(ctx, "ALTER TABLE "+testDB+".signals MODIFY COLUMN ingested_at DateTime64(6, 'UTC') DEFAULT toDateTime64('2026-05-01 00:00:00', 6, 'UTC')"); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, err := st.RepairProjections(ctx, "", RepairOptions{}); err == nil {
 		t.Fatal("empty tenant must error")
 	}
@@ -238,6 +244,17 @@ func TestIntegrationRepairProjectionsHealsCrashResidue(t *testing.T) {
 	}
 	if res.Examined != 3 || res.Repaired != 0 {
 		t.Fatalf("second sweep must be a no-op: %+v", res)
+	}
+	// Losing one day must be detected even when another day has the current generation.
+	if err := conn.Exec(ctx, "DELETE FROM "+testDB+".subject_content_daily WHERE tenant = ? AND content_id = ? AND day = toDate(?)", tenant, g1, at(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	res, err = st.RepairProjections(ctx, tenant, RepairOptions{})
+	if err != nil || res.Repaired != 1 {
+		t.Fatalf("missing daily row: %+v %v", res, err)
+	}
+	if m := metricsByID(t, st, tenant, []string{g1}, AllTime()); m[g1].Views != 2 {
+		t.Fatalf("missing day was not restored: %+v", m)
 	}
 	res, err = st.RepairProjections(ctx, tenant, RepairOptions{Rebuild: true, Window: Between(at(3, 0), at(4, 0))})
 	if err != nil {
@@ -529,9 +546,19 @@ func TestIntegrationCoEngaged(t *testing.T) {
 
 func TestIntegrationNegativeSignalsAndContentPairs(t *testing.T) {
 	A, B, C := cid(31), cid(32), cid(33)
-	st, _ := freshStore(t)
+	_, conn := freshStore(t)
 	ctx := context.Background()
 	tenant := "t"
+	// Fix the snapshot clock so identical rebuilds exercise insert deduplication.
+	gate := newGate(conn, "INSERT INTO "+testDB+".content_pairs")
+	close(gate.release)
+	gate.dispatch = func(ctx context.Context, query string, args ...any) error {
+		return conn.Exec(ctx, strings.ReplaceAll(query, "now()", "toDateTime(0)"), args...)
+	}
+	st, err := NewStore(gate, testDB)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	react := func(sub Subject, id string, kind string, value float64, day int) Signal {
 		return Signal{
@@ -624,8 +651,15 @@ func TestIntegrationNegativeSignalsAndContentPairs(t *testing.T) {
 	}
 
 	// Refresh is idempotent (DELETE + INSERT).
+	storedPairs := countWhere(t, conn, "content_pairs", "tenant = ?", tenant)
+	if storedPairs == 0 {
+		t.Fatal("first refresh did not store any pairs")
+	}
 	if err := st.RefreshCoEngagement(ctx, tenant, RefreshCoEngagementOptions{}); err != nil {
 		t.Fatal(err)
+	}
+	if got := countWhere(t, conn, "content_pairs", "tenant = ?", tenant); got != storedPairs {
+		t.Fatalf("identical refresh lost stored pairs: got %d, want %d", got, storedPairs)
 	}
 	coR2, err := st.CoEngaged(ctx, tenant, gallery(tenant, A), CoEngagedOptions{Limit: 10})
 	if err != nil {
