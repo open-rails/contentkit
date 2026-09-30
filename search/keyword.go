@@ -125,14 +125,15 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options, v
 		queries = append(queries, fuzzy)
 	}
 	if visit != nil {
-		// UNION removes route overlap before streaming; identity order keeps
-		// all editions of a work together without a catalog-sized Go map.
-		queries = []string{selectSQL + fmt.Sprintf(`%s @> ARRAY[@q::text]`, terms),
-			selectSQL + fmt.Sprintf(`%s OPERATOR(%s.&@~) @prefix`, terms, qn)}
+		// One predicate union avoids repeated eligibility/scoring-field work and
+		// sorting duplicate documents when several indexed routes match a row.
+		predicates := []string{fmt.Sprintf(`%s @> ARRAY[@q::text]`, terms),
+			fmt.Sprintf(`%s OPERATOR(%s.&@~) @prefix`, terms, qn)}
 		if utf8.RuneCountInString(q) >= 3 {
-			queries = append(queries, selectSQL+fmt.Sprintf(`%s OPERATOR(%s.%%>) @q`, corpus, qt))
+			predicates = append(predicates, fmt.Sprintf(`%s OPERATOR(%s.%%>) @q`, corpus, qt))
 		}
-		if _, err := tx.Exec(ctx, "DECLARE contentkit_keyword_matches NO SCROLL CURSOR FOR "+strings.Join(queries, " UNION ")+" ORDER BY 1,2,3,4", args); err != nil {
+		cursorSQL := selectSQL + "(" + strings.Join(predicates, " OR ") + ") ORDER BY 1,2,3,4"
+		if _, err := tx.Exec(ctx, "DECLARE contentkit_keyword_matches NO SCROLL CURSOR FOR "+cursorSQL, args); err != nil {
 			return result, err
 		}
 		queries = []string{"FETCH FORWARD 256 FROM contentkit_keyword_matches"}

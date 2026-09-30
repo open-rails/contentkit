@@ -343,5 +343,18 @@ ORDER BY app.contentkit_keyword_text(sd.title,sd.aliases,sd.keywords,sd.raw_docu
 		started := time.Now()
 		expect(search("鬼灭刃", "zh", LanguageModeExact, SearchOptions{}), cid(6)+"=g6-zh-1/zh")
 		t.Logf("grouped search over 50k joined documents: %s", time.Since(started))
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx)
+		var matches []SearchHit
+		if err := client.WalkSearchMatches(ctx, tx, "鬼灭刃", SearchMatchOptions{Language: "zh", ContentKinds: kinds, Eligibility: groupedEligibility()}, func(_ context.Context, batch []SearchHit) error {
+			matches = append(matches, batch...)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		expect(SearchResult{Hits: matches}, cid(6)+"=g6-zh-1/zh")
 	})
 }
