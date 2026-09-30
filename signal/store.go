@@ -11,6 +11,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/ext"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/open-rails/contentkit/contentref"
 )
 
 // Conn is the minimal ClickHouse surface the Store needs; clickhouse-go's
@@ -210,6 +211,8 @@ func (st *Store) project(ctx context.Context, tenant string, keys []ProjectionKe
 		return err
 	}
 	canon := st.canonicalEvents(projectionKeyFilter)
+	// A rebuild after projection loss is a new insert, even at the same generation.
+	insertToken := contentref.NewID()
 
 	state := fmt.Sprintf(`INSERT INTO %[1]s.subject_content_state
 (tenant, subject_kind, subject, %[4]s, first_seen_at, last_signal_at, last_view_at, total_events, views,
@@ -228,8 +231,9 @@ SELECT ?, subject_kind, subject, %[4]s,
     toUInt32(countIf(c.6 != 0)),
     sum(toUInt256(ver) + 1)
 FROM (%[2]s)
-GROUP BY subject_kind, subject, %[4]s`, st.db, canon, TypeView, refColumns)
-	if err := st.conn.Exec(ctx, state, tenant, tenant); err != nil {
+GROUP BY subject_kind, subject, %[4]s
+SETTINGS insert_deduplication_token = ?`, st.db, canon, TypeView, refColumns)
+	if err := st.conn.Exec(ctx, state, tenant, tenant, insertToken); err != nil {
 		return fmt.Errorf("signal: project state: %w", err)
 	}
 
@@ -259,8 +263,9 @@ FROM (
     GROUP BY %[5]s, subject_kind, subject, day
     HAVING events > 0 OR prior_events > 0
 )
-WHERE version > 0`, st.db, canon, projectionKeyFilter, TypeView, refColumns)
-	if err := st.conn.Exec(ctx, daily, tenant, tenant, tenant); err != nil {
+WHERE version > 0
+SETTINGS insert_deduplication_token = ?`, st.db, canon, projectionKeyFilter, TypeView, refColumns)
+	if err := st.conn.Exec(ctx, daily, tenant, tenant, tenant, insertToken); err != nil {
 		return fmt.Errorf("signal: project daily: %w", err)
 	}
 	return nil
