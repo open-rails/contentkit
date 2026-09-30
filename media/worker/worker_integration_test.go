@@ -808,9 +808,29 @@ func TestWorkerRunsAsAnUnprivilegedRole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := worker.New(ctx, worker.Config{Pool: app, Schema: schema, Store: env.Store, Kinds: kinds, HostSchema: host,
-		TempDir: t.TempDir(), Threads: 1}); err != nil {
+	cfg := worker.Config{Pool: app, Schema: schema, Store: env.Store, Kinds: kinds, HostSchema: host,
+		TempDir: t.TempDir(), Threads: 1}
+	if _, err := worker.New(ctx, cfg); err != nil {
 		t.Fatalf("worker as the app role: %v", err)
+	}
+	for _, table := range []string{"encode_run", "encode_chunk"} {
+		t.Run(table, func(t *testing.T) {
+			name := pgx.Identifier{schema, table}.Sanitize()
+			hidden := pgx.Identifier{schema, table + "_missing"}.Sanitize()
+			_, err := admin.Exec(ctx, "ALTER TABLE "+name+" RENAME TO "+pgx.Identifier{table + "_missing"}.Sanitize())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if _, err := admin.Exec(ctx, "ALTER TABLE "+hidden+" RENAME TO "+pgx.Identifier{table}.Sanitize()); err != nil {
+					t.Error(err)
+				}
+			})
+			_, err = worker.New(ctx, cfg)
+			if err == nil || !strings.Contains(err.Error(), schema+"."+table) {
+				t.Fatalf("worker accepted missing %s or did not identify it: %v", table, err)
+			}
+		})
 	}
 }
 

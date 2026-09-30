@@ -139,7 +139,7 @@ func newEnv(t *testing.T, store func(media.Store) media.Store, queue media.Proce
 		t.Fatal(err)
 	}
 	slots := queueFunc(func(_ context.Context, j media.ProcessJob) error { e.slotJobs = append(e.slotJobs, j); return nil })
-	if e.encoder, err = video.New(video.Config{Store: e.store, Locker: locker, TempDir: t.TempDir(), Threads: 2,
+	if e.encoder, err = video.New(t.Context(), video.Config{Store: e.store, Locker: locker, TempDir: t.TempDir(), Threads: 2,
 		Encoder: video.EncoderCPU, Slots: slots}); err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func checkByteRanges(t *testing.T, path string, segs []media.Segment, kind strin
 
 func TestEncoderRequiresLockerWithoutConditionalPut(t *testing.T) {
 	env := s3test.Open(t).WithoutConditionalPut(t)
-	if _, err := video.New(video.Config{Store: env.Store}); err == nil || !strings.Contains(err.Error(), "Config.Locker is required") {
+	if _, err := video.New(t.Context(), video.Config{Store: env.Store}); err == nil || !strings.Contains(err.Error(), "Config.Locker is required") {
 		t.Fatalf("no conditional PUT and no Locker: %v", err)
 	}
 }

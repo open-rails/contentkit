@@ -49,7 +49,7 @@ func TestEncodeProgressThroughReadAPI(t *testing.T) {
 	if enq, err = workqueue.New(pool, e.kinds, testSchema); err != nil {
 		t.Fatal(err)
 	}
-	enc, err := video.New(video.Config{Store: e.store, Locker: media.PGLocker(pool), TempDir: t.TempDir(), Threads: 2, ProgressInterval: 300 * time.Millisecond})
+	enc, err := video.New(ctx, video.Config{Store: e.store, Locker: media.PGLocker(pool), TempDir: t.TempDir(), Threads: 2, ProgressInterval: 300 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}

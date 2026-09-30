@@ -47,7 +47,7 @@ func TestPublicationRetriesOutputsRemovedBySweep(t *testing.T) {
 			e, _ := newAudioEnv(t, a, nil)
 			locker := &sweepBeforePublishLocker{Locker: s3test.Locker(t, e.store)}
 			var err error
-			e.encoder, err = video.New(video.Config{Store: e.store, Locker: locker, TempDir: t.TempDir(),
+			e.encoder, err = video.New(ctx, video.Config{Store: e.store, Locker: locker, TempDir: t.TempDir(),
 				Threads: 2, Encoder: video.EncoderCPU, Codecs: []media.Codec{media.CodecH264}})
 			if err != nil {
 				t.Fatal(err)

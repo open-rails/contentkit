@@ -2,6 +2,7 @@ package video_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -16,7 +17,7 @@ func encodeWith(t *testing.T, c video.Config) []media.Rendition {
 	e := newEnv(t, nil, nil)
 	c.Store, c.Locker, c.TempDir = e.store, s3test.Locker(t, e.store), t.TempDir()
 	var err error
-	if e.encoder, err = video.New(c); err != nil {
+	if e.encoder, err = video.New(t.Context(), c); err != nil {
 		t.Skip(err)
 	}
 	e.commit(t, fixture{w: 1280, h: 720, secs: 9, rate: 30, audio: 1, tone: 440}.make(t), media.OpInsert)
@@ -77,9 +78,23 @@ func TestUnknownEncoderOrCodec(t *testing.T) {
 		{Store: store, Codecs: []media.Codec{"vp9"}},
 		{Store: store, Codecs: []media.Codec{media.CodecH264, media.CodecH264}},
 	} {
-		if _, err := video.New(c); err == nil {
+		if _, err := video.New(t.Context(), c); err == nil {
 			t.Fatalf("%+v accepted", c)
 		}
+	}
+}
+
+func TestEncoderStartupCancellation(t *testing.T) {
+	requireFFmpeg(t)
+	store := s3test.Open(t).Store
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	enc, err := video.New(ctx, video.Config{
+		Store: store, Locker: s3test.Locker(t, store), TempDir: t.TempDir(),
+		Encoder: video.EncoderCPU, Codecs: []media.Codec{media.CodecH264},
+	})
+	if enc != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("encoder: %v, error: %v", enc, err)
 	}
 }
 

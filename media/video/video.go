@@ -103,7 +103,7 @@ const (
 	encodeAudio
 )
 
-func New(c Config) (*Encoder, error) {
+func New(ctx context.Context, c Config) (*Encoder, error) {
 	if c.Store == nil {
 		return nil, errors.New("media/video: Encoder needs a Store")
 	}
@@ -130,7 +130,7 @@ func New(c Config) (*Encoder, error) {
 		}
 	}
 	c.Encoder = cmp.Or(c.Encoder, EncoderAuto)
-	encoders, err := resolveEncoders(context.Background(), c.TempDir, c.Encoder, c.Codecs)
+	encoders, err := resolveEncoders(ctx, c.TempDir, c.Encoder, c.Codecs)
 	if err != nil {
 		return nil, err
 	}
