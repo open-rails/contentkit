@@ -130,6 +130,15 @@ type hookStore struct {
 	lists    atomic.Int32
 	onList   func(n int32) // before the nth List
 	onDelete func(key string)
+	onHead   func(key string)
+}
+
+func (s *hookStore) Head(ctx context.Context, key string) (media.Object, error) {
+	obj, err := s.Store.Head(ctx, key)
+	if err == nil && s.onHead != nil {
+		s.onHead(key)
+	}
+	return obj, err
 }
 
 func (s *hookStore) List(ctx context.Context, prefix string) iter.Seq2[media.Object, error] {
