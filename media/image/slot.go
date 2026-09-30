@@ -80,7 +80,7 @@ func (p *Processor) render(ctx context.Context, item media.Item, slot string, sp
 			if ie := media.AsImageError(err); ie != nil {
 				res.Error, res.Code, res.Details = ie.Message, ie.Code, &ie.Details
 			}
-			if err := p.record(ctx, ref, slot, spec, fp, res); errors.Is(err, errSuperseded) {
+			if err := p.record(ctx, item, slot, spec, fp, res); errors.Is(err, errSuperseded) {
 				continue
 			} else if err != nil {
 				return err
@@ -88,7 +88,6 @@ func (p *Processor) render(ctx context.Context, item media.Item, slot string, sp
 			p.failed(ctx, item.Ref(), slot, err)
 			return nil
 		}
-		var blobs []string
 		for _, w := range spec.Widths {
 			out, fits := outs[w]
 			if !fits {
@@ -98,13 +97,9 @@ func (p *Processor) render(ctx context.Context, item media.Item, slot string, sp
 			if err != nil {
 				return err
 			}
-			blobs = append(blobs, blob)
 			res.Outputs = append(res.Outputs, media.SlotRendition{Rung: w, W: out.dims.W, H: out.dims.H, Blob: blob, Size: int64(len(out.webp))})
 		}
-		if err := p.prepublish(ctx, item, blobs); err != nil {
-			return err
-		}
-		if err := p.record(ctx, ref, slot, spec, fp, res); errors.Is(err, errSuperseded) {
+		if err := p.record(ctx, item, slot, spec, fp, res); errors.Is(err, errSuperseded) {
 			continue
 		} else if err != nil {
 			return err
@@ -120,31 +115,6 @@ func (p *Processor) render(ctx context.Context, item media.Item, slot string, sp
 	return fmt.Errorf("media/image: slot %s of %s kept changing", slot, item.Ref())
 }
 
-// prepublish copies new renditions to public/ before they are recorded,
-// unless the item is hidden, so a listed public URL never misses.
-func (p *Processor) prepublish(ctx context.Context, item media.Item, blobs []string) error {
-	root, _, err := p.c.Manifests.Root(ctx, item.Ref())
-	if err != nil && !errors.Is(err, media.ErrNotFound) {
-		return err
-	}
-	if root == nil || root.Hidden {
-		return nil
-	}
-	for _, b := range blobs {
-		src, _ := item.Private(b)
-		dst, _ := item.Public(b)
-		if _, err := p.c.Store.Head(ctx, dst); err == nil {
-			continue
-		} else if !errors.Is(err, media.ErrNotFound) {
-			return err
-		}
-		if _, err := p.c.Store.Copy(ctx, src, dst, media.CopyOptions{}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // syncPublic brings public/ to the recorded state (media.Manifests.SyncPublic).
 func (p *Processor) syncPublic(ctx context.Context, ref contentref.ContentRef) error {
 	removed, err := p.c.Manifests.SyncPublic(ctx, ref)
@@ -155,12 +125,42 @@ func (p *Processor) syncPublic(ctx context.Context, ref contentref.ContentRef) e
 }
 
 // record stores res unless the record moved past fp.
-func (p *Processor) record(ctx context.Context, ref contentref.ContentRef, slot string, spec media.Slot, fp string, res *media.SlotResult) error {
-	return p.c.Manifests.UpdateSlot(ctx, ref, slot, func(rec *media.SlotRecord) error {
-		if rec.Fingerprint(spec) != fp {
+func (p *Processor) record(ctx context.Context, item media.Item, slot string, spec media.Slot, fp string, res *media.SlotResult) error {
+	_, err := p.c.Manifests.EditRoot(ctx, item.Ref(), func(root *media.Root) error {
+		rec := root.Slots[slot]
+		if rec == nil || rec.Fingerprint(spec) != fp {
 			return errSuperseded
+		}
+		// Check and publish under the sweep's lock. Failed encodes keep the
+		// previously referenced outputs rather than adopting new blobs.
+		if res.Error == "" {
+			for _, out := range res.Outputs {
+				src, err := item.Private(out.Blob)
+				if err != nil {
+					return err
+				}
+				if _, err := p.c.Store.Head(ctx, src); err != nil {
+					return fmt.Errorf("media/image: publish slot rendition %s: %w", src, err)
+				}
+				if root.Hidden {
+					continue
+				}
+				dst, err := item.Public(out.Blob)
+				if err != nil {
+					return err
+				}
+				if _, err := p.c.Store.Head(ctx, dst); err == nil {
+					continue
+				} else if !errors.Is(err, media.ErrNotFound) {
+					return err
+				}
+				if _, err := p.c.Store.Copy(ctx, src, dst, media.CopyOptions{}); err != nil {
+					return err
+				}
+			}
 		}
 		rec.Result = res
 		return nil
 	})
+	return err
 }

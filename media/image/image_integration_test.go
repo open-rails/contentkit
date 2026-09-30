@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"golang.org/x/image/webp"
 
@@ -203,6 +204,103 @@ func (e *env) manifest(t *testing.T, ref contentref.ContentRef) (*media.Manifest
 		t.Fatal(err)
 	}
 	return m, etag
+}
+
+type beforePublicationLocker struct {
+	media.Locker
+	before func()
+}
+
+func (l *beforePublicationLocker) Lock(ctx context.Context, key string) (func(), error) {
+	if l.before != nil {
+		before := l.before
+		l.before = nil
+		before()
+	}
+	return l.Locker.Lock(ctx, key)
+}
+
+func TestPublicationRetriesBlobsSweptAfterReuse(t *testing.T) {
+	for _, scenario := range []string{"variants", "zip", "slot"} {
+		t.Run(scenario, func(t *testing.T) {
+			kind := galleryKind()
+			kind.Specs = map[string]media.Spec{"high": high}
+			e := newEnv(t, kind)
+			ctx := t.Context()
+			ref := contentref.New(e.Tenant, "gallery", cid(20)).WithVersion("v1")
+			job := media.ProcessJob{Ref: ref}
+			if scenario == "slot" {
+				job.Ref, job.Slot = ref.Content(), "cover"
+				e.slot(t, job.Ref, job.Slot, pngImage(t, 600, 300, 1), nil)
+			} else {
+				original := e.upload(t, ref, "", pngImage(t, 300, 200, 1))
+				e.commit(t, ref, media.Op{Op: media.OpInsert, Name: "a.png", Original: original})
+			}
+			e.drain(t)
+			if _, err := e.manifests.EditRoot(ctx, ref, func(root *media.Root) error {
+				if scenario == "slot" {
+					root.Slots["cover"].Result = nil
+				} else {
+					m := root.Versions["v1"]
+					m.Downloads = nil
+					if scenario == "variants" {
+						m.Files[0].Variants, m.Files[0].Derived = nil, ""
+					}
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			_, before, err := e.manifests.Root(ctx, ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			locker := &beforePublicationLocker{Locker: s3test.Locker(t, e.store)}
+			jobs, err := media.NewJobs(media.JobsConfig{Store: e.store, Kinds: e.kinds, Locker: locker.Locker,
+				Now: func() time.Time { return time.Now().Add(48 * time.Hour) }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			locker.before = func() {
+				if result, err := jobs.Sweep(ctx, ref); err != nil || len(result.Deleted) == 0 {
+					t.Fatalf("sweep before publication: %+v %v", result, err)
+				}
+			}
+			manifests, err := media.NewManifests(e.store, e.kinds, media.ManifestOptions{Locker: locker})
+			if err != nil {
+				t.Fatal(err)
+			}
+			processor, err := image.New(image.Config{Store: e.store, Kinds: e.kinds, Manifests: manifests})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := processor.Process(ctx, job); !errors.Is(err, media.ErrNotFound) {
+				t.Fatalf("swept output must abort publication: %v", err)
+			}
+			if _, after, err := manifests.Root(ctx, ref); err != nil || after != before {
+				t.Fatalf("failed publication changed manifest: %s -> %s (%v)", before, after, err)
+			}
+			if err := processor.Process(ctx, job); err != nil {
+				t.Fatal("retry:", err)
+			}
+			root, _, err := manifests.Root(ctx, ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "slot" {
+				if root.Slots["cover"].Result == nil {
+					t.Fatal("retry did not publish slot")
+				}
+			} else if root.Versions["v1"].Downloads["zip"].Blob == "" {
+				t.Fatal("retry did not publish variants and ZIP")
+			}
+			for name := range root.Refs() {
+				if _, err := e.store.Head(ctx, e.Tenant+"/gallery/"+ref.ContentID+"/"+name); err != nil {
+					t.Fatalf("published missing %s: %v", name, err)
+				}
+			}
+		})
+	}
 }
 
 func (e *env) object(t *testing.T, key string) ([]byte, media.Object) {

@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"errors"
 	"io"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -151,5 +153,37 @@ func TestPlaceConvergesAndDedupes(t *testing.T) {
 	rc.Close()
 	if string(got) != "page a" {
 		t.Fatalf("placed %q", got)
+	}
+
+	// Sweep after the verified copy but before publication must leave the
+	// staged reference intact, so another attempt can recreate the copy.
+	f := stage("page f")
+	set("v1", media.File{Name: "f.png", Original: f.Name, Type: "image/png"})
+	placed := media.SHA256Name(f.SHA256)
+	placedKey, _ := g.Original(placed)
+	hs := &hookStore{Store: s}
+	jobs, err := media.NewJobs(media.JobsConfig{Store: s, Kinds: r, Locker: s3test.Locker(t, s),
+		Now: func() time.Time { return time.Now().Add(48 * time.Hour) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hs.onHead = func(key string) {
+		if key == placedKey {
+			hs.onHead = nil
+			if result, err := jobs.Sweep(ctx, work); err != nil || !slices.Contains(result.Deleted, placedKey) {
+				t.Fatalf("sweep placed original: %+v %v", result, err)
+			}
+		}
+	}
+	guarded := s3test.Manifests(t, hs, r, media.ManifestOptions{})
+	if _, err := guarded.Place(ctx, work, f); !errors.Is(err, media.ErrNotFound) {
+		t.Fatalf("swept destination must abort placement: %v", err)
+	}
+	if original("v1", "f.png") != f.Name || !exists(f.Name) {
+		t.Fatal("failed placement lost the staged reference or object")
+	}
+	place(f)
+	if original("v1", "f.png") != placed || !exists(placed) || exists(f.Name) {
+		t.Fatal("placement retry did not converge")
 	}
 }

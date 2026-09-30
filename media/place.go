@@ -107,7 +107,20 @@ func (m *Manifests) copyStaged(ctx context.Context, item Item, staged Object, ds
 // renameSource points every reference to from at to.
 func (m *Manifests) renameSource(ctx context.Context, item Item, from, to string) error {
 	_, err := m.editRoot(ctx, item, false, func(r *Root) error {
-		r.sections(func(_ string, man *Manifest) { man.renameSource(from, to) })
+		changed := false
+		r.sections(func(_ string, man *Manifest) { changed = man.renameSource(from, to) || changed })
+		if !changed {
+			return nil
+		}
+		// A sweep selected before the copy may delete its destination before
+		// this lock is acquired. Keep the staged reference for a retry.
+		key, err := item.Original(to)
+		if err != nil {
+			return err
+		}
+		if _, err := m.store.Head(ctx, key); err != nil {
+			return fmt.Errorf("media: publish placed original %s: %w", key, err)
+		}
 		return nil
 	})
 	return err
