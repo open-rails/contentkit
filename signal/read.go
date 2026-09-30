@@ -6,6 +6,8 @@ import (
 	"math"
 	"strings"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/ext"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"github.com/open-rails/contentkit/contentref"
@@ -336,8 +338,22 @@ func (st *Store) Metrics(ctx context.Context, tenant string, refs []ContentRef, 
 			return nil, err
 		}
 	}
-	filter, filterArgs := refTuples(refs)
-	q, args := st.windowMetrics(tenant, filter, filterArgs, window)
+	table, err := ext.NewTable("contentkit_metric_refs",
+		ext.Column("content_kind", "String"),
+		ext.Column("content_id", "String"),
+		ext.Column("content_version_id", "String"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("signal: metrics references: %w", err)
+	}
+	for _, r := range refs {
+		if err := table.Append(r.ContentKind, r.ContentID, r.Version()); err != nil {
+			return nil, fmt.Errorf("signal: metrics references: %w", err)
+		}
+	}
+	ctx = clickhouse.Context(ctx, clickhouse.WithExternalTable(table))
+	filter := "(" + refColumns + ") IN (SELECT " + refColumns + " FROM contentkit_metric_refs)"
+	q, args := st.windowMetrics(tenant, filter, nil, window)
 	rows, err := st.conn.Query(ctx, q+finalSettings, args...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: metrics: %w", err)
