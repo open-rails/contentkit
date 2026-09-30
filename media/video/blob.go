@@ -22,6 +22,20 @@ var (
 
 const blobCacheControl = "max-age=31536000, immutable"
 
+// checkOutputs runs under the manifest lock, which also fences sweep deletion.
+func (e *Encoder) checkOutputs(ctx context.Context, item media.Item, names ...string) error {
+	for _, name := range names {
+		key, err := item.Private(name)
+		if err != nil {
+			return err
+		}
+		if _, err := e.c.Store.Head(ctx, key); err != nil {
+			return fmt.Errorf("media/video: publish output %s: %w", key, err)
+		}
+	}
+	return nil
+}
+
 // put stores the file as a content-addressed blob unless it already exists,
 // which makes retries cheap: outputs are byte-identical.
 func (e *Encoder) put(ctx context.Context, item media.Item, path, contentType string, fp *fileProgress) (string, int64, error) {

@@ -595,6 +595,9 @@ func (e *Encoder) file(ctx context.Context, ms *media.Manifests, item media.Item
 			m.Downloads = map[string]media.Download{}
 		}
 		m.Downloads[DownloadKey(name, todo.n)] = download
+		if err := e.checkOutputs(ctx, item, produced...); err != nil {
+			return err
+		}
 		published = f.HLS
 		return nil
 	})

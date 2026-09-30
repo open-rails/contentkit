@@ -180,6 +180,11 @@ func (c WorkerConfig) assemble(ctx context.Context, args workqueue.VideoAssemble
 	if k > 0 {
 		newRenditions = slices.Clone(hls.Video[len(current.Video):])
 	}
+	outputs := hls
+	if k > 0 {
+		outputs = &media.HLS{Video: newRenditions}
+	}
+	produced := (&media.Manifest{Files: []media.File{{HLS: outputs}}, Downloads: downloads}).Renditions()
 	orderVideo(hls.Video, c.Encoder.c.Codecs)
 	// An object can change between the encode and publish. The manifest edit
 	// below also fences the logical source name.
@@ -231,7 +236,7 @@ func (c WorkerConfig) assemble(ctx context.Context, args workqueue.VideoAssemble
 		for key, download := range downloads {
 			m.Downloads[key] = download
 		}
-		return nil
+		return c.Encoder.checkOutputs(ctx, item, produced...)
 	})
 	if errors.Is(err, errStale) {
 		return c.cancelRun(ctx, run.ID)

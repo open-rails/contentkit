@@ -119,6 +119,9 @@ func (e *Encoder) subtitleFile(ctx context.Context, ms *media.Manifests, item me
 		if i < 0 || m.Files[i].Source() != source || subtitleSpec(m.Files[i]) != spec {
 			return errStale
 		}
+		if err := e.checkOutputs(ctx, item, blob); err != nil {
+			return err
+		}
 		g := &m.Files[i]
 		if g.Variants == nil {
 			g.Variants = map[string]media.Variant{}
@@ -750,6 +753,11 @@ func (e *Encoder) sourceSubs(ctx context.Context, ms *media.Manifests, item medi
 		i := m.File(f.Name)
 		if i < 0 || m.Files[i].Source() != source || m.Files[i].HLS == nil || m.Files[i].HLS.Source != source {
 			return errStale
+		}
+		for _, sub := range out {
+			if err := e.checkOutputs(ctx, item, sub.Blob); err != nil {
+				return err
+			}
 		}
 		h := *m.Files[i].HLS
 		h.Subs, h.SubsSpec = out, SubsSpec
