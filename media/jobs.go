@@ -51,7 +51,7 @@ type JobsConfig struct {
 	// abort rule. Default 25 h.
 	LateUploadWindow time.Duration
 	Limiter          QuotaReleaser // releases a deleted item's quota; optional
-	// Locker serializes Expose's manifest edits (ManifestOptions.Locker); required.
+	// Locker serializes manifest edits and sweep deletion; required.
 	Locker Locker
 	// Resolver decides, with an anonymous actor, whether an item is hidden
 	// (Expose); required for Expose.
@@ -412,7 +412,7 @@ func (w *sweepWorker) Work(ctx context.Context, job *river.Job[sweepArgs]) (err 
 	if err := w.j.waitFor(ctx, job.Args.After); err != nil {
 		return err
 	}
-	res, err := w.j.sweep(ctx, job.Args.Prefix, nil)
+	res, err := w.j.sweep(ctx, job.Args.Prefix)
 	if err != nil {
 		return err
 	}

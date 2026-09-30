@@ -370,19 +370,37 @@ func (p *Processor) pass(ctx context.Context, item media.Item, man *media.Manife
 		if len(m.Files) == 0 {
 			return errGone // deleted (or emptied) during the pass: never recreate it
 		}
-		record(m)
-		if kind.Zip == "" {
-			return nil
+		kept := map[string]bool{}
+		for _, name := range m.Renditions() {
+			kept[name] = true
 		}
-		_, inputs, ok := zipInputs(m, kind.Zip)
-		switch {
-		case ok && zip != nil && zip.Inputs == inputs:
-			if m.Downloads == nil {
-				m.Downloads = map[string]media.Download{}
+		record(m)
+		if kind.Zip != "" {
+			_, inputs, ok := zipInputs(m, kind.Zip)
+			switch {
+			case ok && zip != nil && zip.Inputs == inputs:
+				if m.Downloads == nil {
+					m.Downloads = map[string]media.Download{}
+				}
+				m.Downloads["zip"] = *zip
+			case !ok:
+				delete(m.Downloads, "zip") // stale: some file lacks the zip variant
 			}
-			m.Downloads["zip"] = *zip
-		case !ok:
-			delete(m.Downloads, "zip") // stale: some file lacks the zip variant
+		}
+		// A reused hash may have been swept before this edit acquired the
+		// folder lock. Abort without marking it derived so the job retries.
+		for _, name := range m.Renditions() {
+			if kept[name] {
+				continue
+			}
+			key, err := item.Private(name)
+			if err != nil {
+				return err
+			}
+			if _, err := p.c.Store.Head(ctx, key); err != nil {
+				return fmt.Errorf("media/image: publish rendition %s: %w", key, err)
+			}
+			kept[name] = true
 		}
 		return nil
 	})

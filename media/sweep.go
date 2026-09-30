@@ -32,17 +32,17 @@ type SweepResult struct {
 // Removed public/ keys go to Hooks.PublicRemoved.
 //
 // Invariant: the sweep deletes only objects the manifest does not reference
-// and that no in-flight commit or job can newly reference. Uploads keeps the
-// second half: presign reuses an existing original, and a commit accepts one,
-// only while it is referenced or well before deleteAt (see protected); jobs
-// write renditions before the edit that lists them, well within grace.
+// and that no in-flight commit or job can newly reference. Sweep holds the
+// manifest lock through selection and deletion; image jobs check reused
+// renditions under that same lock before publishing them. Uploads reuse an
+// original only while referenced or well before deleteAt (see protected).
 // Nothing references an editor view: it is rendered again when missing.
 func (j *Jobs) Sweep(ctx context.Context, ref contentref.ContentRef) (SweepResult, error) {
 	item, err := j.cfg.Kinds.Item(ref.Content())
 	if err != nil {
 		return SweepResult{}, err
 	}
-	return j.sweep(ctx, item.Prefix(), nil)
+	return j.sweep(ctx, item.Prefix())
 }
 
 // SweepAll sweeps every folder of the configured tenants whose kind is
@@ -51,14 +51,13 @@ func (j *Jobs) SweepAll(ctx context.Context) error {
 	var errs []error
 	for _, tenant := range j.cfg.Tenants {
 		var folder string
-		var objs []Object
 		flush := func() {
 			if folder != "" {
-				if _, err := j.sweep(ctx, folder, objs); err != nil {
+				if _, err := j.sweep(ctx, folder); err != nil {
 					errs = append(errs, err)
 				}
 			}
-			folder, objs = "", nil
+			folder = ""
 		}
 		for obj, err := range j.cfg.Store.List(ctx, tenant+"/") {
 			if err != nil {
@@ -79,7 +78,6 @@ func (j *Jobs) SweepAll(ctx context.Context) error {
 				flush() // keys sharing a prefix are listed contiguously
 				folder = p
 			}
-			objs = append(objs, obj)
 		}
 		flush()
 	}
@@ -89,12 +87,25 @@ func (j *Jobs) SweepAll(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-func (j *Jobs) sweep(ctx context.Context, prefix string, objs []Object) (SweepResult, error) {
-	if objs == nil {
-		var err error
-		if objs, err = j.list(ctx, prefix); err != nil {
-			return SweepResult{}, err
-		}
+func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
+	result, err := j.sweepUnreferenced(ctx, prefix)
+	if err == nil {
+		j.publicRemoved(ctx, result.Deleted)
+	}
+	return result, err
+}
+
+func (j *Jobs) sweepUnreferenced(ctx context.Context, prefix string) (SweepResult, error) {
+	unlock, err := j.cfg.Locker.Lock(ctx, prefix+layout.ManifestName)
+	if err != nil {
+		return SweepResult{}, err
+	}
+	defer unlock()
+	// SweepAll's outer listing can predate publication. Select from a fresh
+	// listing under the same lock as manifest edits.
+	objs, err := j.list(ctx, prefix)
+	if err != nil {
+		return SweepResult{}, err
 	}
 	now := j.cfg.Now()
 	cutoff := now.Add(-j.cfg.Grace)
@@ -147,7 +158,6 @@ func (j *Jobs) sweep(ctx context.Context, prefix string, objs []Object) (SweepRe
 		if err := j.deleteKeys(ctx, doomed); err != nil {
 			return SweepResult{}, err
 		}
-		j.publicRemoved(ctx, doomed)
 	}
 	return SweepResult{Deleted: doomed, Wait: wait}, nil
 }
