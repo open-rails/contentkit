@@ -270,14 +270,13 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 
 	limit, offset, _ := h.client.effectiveLimits(opts.SearchOptions)
 
-	// Oversample the content ranking so re-ranking has headroom; the page is
-	// cut from the re-ranked list.
-	base := opts.SearchOptions
-	base.Offset = 0
-	base.Limit = clampInt((offset+limit)*3, 50, 500)
-	content, err := h.client.Search(ctx, userText, base)
+	groups, truncated, err := h.client.searchGroups(ctx, userText, opts.SearchOptions, nil)
 	if err != nil {
 		return SearchResult{}, err
+	}
+	content := SearchResult{Hits: make([]SearchHit, 0, len(groups)), Truncated: truncated, HasMore: truncated}
+	for _, g := range groups {
+		content.Hits = append(content.Hits, hitFromGroup(g))
 	}
 	hits := content.Hits
 	if len(hits) == 0 {
@@ -379,7 +378,7 @@ func (h *EmbeddedHub) Search(ctx context.Context, userText string, opts HubSearc
 	return result, nil
 }
 
-// unpersonalized pages the oversampled content ranking when the signal plane
+// unpersonalized pages the complete retrieved content ranking when the signal plane
 // cannot personalize it: the signal plane is optional, search is not.
 func unpersonalized(ctx context.Context, content SearchResult, offset, limit int, err error) SearchResult {
 	slog.WarnContext(ctx, "contentkit: search personalization unavailable", "error", err)
