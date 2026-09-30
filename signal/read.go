@@ -36,16 +36,23 @@ func scanStateRow(rows driver.Rows, tenant string) (StateRow, error) {
 	return r, nil
 }
 
-// refTuples renders "(content_kind, content_id, content_version_id) IN (...)"
-// for references already validated against the tenant.
-func refTuples(refs []ContentRef) (string, []any) {
-	tuples := make([]string, len(refs))
-	args := make([]any, 0, 3*len(refs))
-	for i, r := range refs {
-		tuples[i] = "(?, ?, ?)"
-		args = append(args, r.ContentKind, r.ContentID, r.Version())
+const referenceFilter = "(" + refColumns + ") IN (SELECT " + refColumns + " FROM contentkit_read_refs)"
+
+func referenceContext(ctx context.Context, refs []ContentRef) (context.Context, error) {
+	table, err := ext.NewTable("contentkit_read_refs",
+		ext.Column("content_kind", "String"),
+		ext.Column("content_id", "String"),
+		ext.Column("content_version_id", "String"),
+	)
+	if err != nil {
+		return nil, err
 	}
-	return "(" + refColumns + ") IN (" + strings.Join(tuples, ", ") + ")", args
+	for _, r := range refs {
+		if err := table.Append(r.ContentKind, r.ContentID, r.Version()); err != nil {
+			return nil, err
+		}
+	}
+	return clickhouse.Context(ctx, clickhouse.WithExternalTable(table)), nil
 }
 
 // States is the bulk "annotate this list with view context" read: for each
@@ -65,12 +72,15 @@ func (st *Store) States(ctx context.Context, tenant string, subject Subject, ref
 			return nil, err
 		}
 	}
-	filter, refArgs := refTuples(refs)
-	args := append([]any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}, refArgs...)
+	ctx, err := referenceContext(ctx, refs)
+	if err != nil {
+		return nil, fmt.Errorf("signal: states references: %w", err)
+	}
+	args := []any{tenant, subject.Kind(), subject.Key(), tenant, subjectHashKey(subject)}
 	q := fmt.Sprintf(`SELECT %s
 FROM %s.subject_content_state FINAL
 WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND %s`,
-		stateColumns, st.db, st.subjectNotErased(), filter)
+		stateColumns, st.db, st.subjectNotErased(), referenceFilter)
 	rows, err := st.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: states: %w", err)
@@ -338,22 +348,11 @@ func (st *Store) Metrics(ctx context.Context, tenant string, refs []ContentRef, 
 			return nil, err
 		}
 	}
-	table, err := ext.NewTable("contentkit_metric_refs",
-		ext.Column("content_kind", "String"),
-		ext.Column("content_id", "String"),
-		ext.Column("content_version_id", "String"),
-	)
+	ctx, err := referenceContext(ctx, refs)
 	if err != nil {
 		return nil, fmt.Errorf("signal: metrics references: %w", err)
 	}
-	for _, r := range refs {
-		if err := table.Append(r.ContentKind, r.ContentID, r.Version()); err != nil {
-			return nil, fmt.Errorf("signal: metrics references: %w", err)
-		}
-	}
-	ctx = clickhouse.Context(ctx, clickhouse.WithExternalTable(table))
-	filter := "(" + refColumns + ") IN (SELECT " + refColumns + " FROM contentkit_metric_refs)"
-	q, args := st.windowMetrics(tenant, filter, nil, window)
+	q, args := st.windowMetrics(tenant, referenceFilter, nil, window)
 	rows, err := st.conn.Query(ctx, q+finalSettings, args...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: metrics: %w", err)
@@ -425,8 +424,17 @@ func (st *Store) popular(ctx context.Context, tenant string, contentKind string,
 	}
 	filter, filterArgs := "content_kind = ?"+workLevel, []any{contentKind}
 	if len(ids) > 0 {
-		filter += " AND content_id IN ?"
-		filterArgs = append(filterArgs, ids)
+		table, err := ext.NewTable("contentkit_popularity_ids", ext.Column("content_id", "String"))
+		if err != nil {
+			return nil, fmt.Errorf("signal: popularity candidates: %w", err)
+		}
+		for _, id := range ids {
+			if err := table.Append(id); err != nil {
+				return nil, fmt.Errorf("signal: popularity candidates: %w", err)
+			}
+		}
+		ctx = clickhouse.Context(ctx, clickhouse.WithExternalTable(table))
+		filter += " AND content_id IN (SELECT content_id FROM contentkit_popularity_ids)"
 	}
 	metrics, args := st.windowMetrics(tenant, filter, filterArgs, opts.Window)
 	q := fmt.Sprintf(`SELECT %s, %s, (%s) AS rank_score
