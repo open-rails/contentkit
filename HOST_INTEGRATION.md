@@ -519,7 +519,8 @@ out until `attach`.
   uploads come with `edit`, `frame`, `meta`, `pending`, `failed`, encode
   `progress` and an `editor_url`: the editor view, rendered on demand by the
   worker (`ReaderOptions.Queue`) into `private/` under the hash of its source
-  and `Config.Editor`, and swept a grace period later.
+  and `Config.Editor`, and swept a grace period later. Viewers never get
+  these fields, even for served originals.
 - `GET /{kind}/{id}/hls/{dir}master.m3u8` (a ladder in `hls`), `{path}.m3u8`
   (a track) and `{dir}sprite.vtt` are built per request from the manifest's
   tracks and their index blobs (cached by hash).

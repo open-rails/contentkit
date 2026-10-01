@@ -346,10 +346,15 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		}
 		n := out.Total
 		out.Total++
+		// Viewers get what a file is, never editor fields: an edit, a frame's
+		// source blob, meta, pending work or failures.
 		fi := FileInfo{Path: f.Path, Type: f.Type, Size: f.Size, W: f.W, H: f.H, Dur: f.Dur, Download: f.Download}
-		if f.IsUpload() {
+		switch {
+		case f.IsUpload() && editor:
 			fi = uploadInfo(f)
-		} else {
+		case f.IsUpload():
+			fi.Teaser = f.Teaser()
+		default:
 			fi.Teaser = g.sourceTeaser(f)
 			if editor {
 				fi.From = f.From

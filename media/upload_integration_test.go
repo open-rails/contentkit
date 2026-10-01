@@ -299,6 +299,14 @@ func TestFrame(t *testing.T) {
 	if _, err := f.up.Commit(ctx, f.editor, v, []media.Op{{Op: media.OpFrame, Path: "source", Auto: true}}); code(err) != media.CodeInvalid {
 		t.Fatalf("frame into an upload without Frames: %v", err)
 	}
+	// An unattached video is not part of the item yet: no frame from it.
+	u := f.ref("video", 2)
+	f.visible(2)
+	vp, vb := f.upload(u, "source.mp4", "video/mp4", []byte("video three"))
+	f.commit(u, media.Op{Op: media.OpPut, Path: vp, Blob: vb, Unattached: true})
+	if _, err := f.up.Commit(ctx, f.editor, u, []media.Op{{Op: media.OpFrame, Path: "poster", Auto: true}}); code(err) != media.CodeConflict {
+		t.Fatalf("frame from an unattached video: %v", err)
+	}
 }
 
 func ptr[T any](v T) *T { return &v }
