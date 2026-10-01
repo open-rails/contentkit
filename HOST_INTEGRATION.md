@@ -391,6 +391,7 @@ var Gallery = media.Kind{Name: "gallery", KeepOriginals: true,
 	},
 	Public: []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{230, 460, 920},
 		Image: media.Image{Aspect: media.Ratio("46:65")}, Default: "cover.png"}},
+	Defaults: defaultsFS, // holds cover.png
 }
 
 var Video = media.Kind{Name: "video", KeepOriginals: true,
@@ -408,7 +409,7 @@ var Video = media.Kind{Name: "video", KeepOriginals: true,
 }
 
 reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https://media.doujins.ai",
-	Kinds: []media.Kind{Gallery, accountmedia.User}, Defaults: defaultsFS,
+	Kinds: []media.Kind{Gallery, accountmedia.User},
 	Hooks: media.Hooks{Resolver: resolver, CanUpload: authorizer, PurgePublic: purge, ItemReady: ready}})
 ```
 
@@ -433,9 +434,15 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   presets' sources are always kept). `ServeOriginals` lists and serves
   uploads to viewers with access; otherwise the read API never returns an
   upload's path or blob, and its hash cannot be guessed.
+- **Defaults.** A kind's `Defaults` (an `fs.FS`, e.g. `go:embed`) holds the
+  images its public presets name in `Public.Default`; `NewRegistry` checks
+  they exist. A shared kind ships its own, so importing apps merge nothing.
 - **Shared kinds.** A kind with `Namespace: "accounts"` lives at
   `accounts/{kind}/{id}/` and is served on every importing site's media host
-  (account avatars). An app's own namespace is never a shared one.
+  (account avatars). An app's own namespace is never a shared one. Every app
+  importing a shared kind (hosts and media workers) must lock in one
+  Postgres database: `PGLocker` takes advisory locks, which are per database,
+  and Ceph RGW has no conditional PUT to fall back on.
 - The stock worker reads the registry as JSON (`json.Marshal(reg)` into
   `MEDIA_KINDS_FILE`; `Choose` and hooks are not included).
 
@@ -507,7 +514,8 @@ out until `attach`.
   with `cache: "reload"`.
 - Render the defaults from the deploy step:
   `image.PublishDefaults(ctx, store, reg)` (it needs libvips) writes each
-  `Public.Default` to `{ns}/{kind}/_default/public/{name}` and returns the keys
+  `Public.Default` from its kind's `Defaults` to
+  `{ns}/{kind}/_default/public/{name}` and returns the keys
   to purge. `media.AgentConfig(reg)` gives the agent's namespaces and
   `MEDIA_ACCESS_DEFAULTS` (`layout.FormatDefaults`).
 

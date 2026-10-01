@@ -202,7 +202,7 @@ overwritten in place (ETags and a CDN purge keep them fresh). Every URL is
 
 ```go
 reg, _ := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https://media.doujins.ai",
-	Kinds: []media.Kind{Gallery, accountmedia.User}, Defaults: defaultsFS,
+	Kinds: []media.Kind{Gallery, accountmedia.User},
 	Hooks: media.Hooks{Resolver: resolver, CanUpload: authorizer, PurgePublic: purge, ItemReady: ready}})
 store, _ := s3.New(s3.Config{Bucket: "media", Endpoint: rgw, PublicEndpoint: "https://s3.doujins.ai", UsePathStyle: true,
 	AccessKeyID: id, SecretAccessKey: secret})

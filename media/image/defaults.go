@@ -10,10 +10,11 @@ import (
 	"path"
 
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
-// PublishDefaults renders every public preset's Default (a file in the
-// registry's Config.Defaults) to its kind's _default item at every width,
+// PublishDefaults renders every public preset's Default (a file in its
+// kind's Defaults) to the kind's _default item at every width,
 // where the access agent serves a missing public name from. An unchanged
 // default is not written again. It returns the keys written, for a CDN
 // purge. Apps run it from their deploy step.
@@ -29,16 +30,16 @@ func PublishDefaults(ctx context.Context, store media.Store, reg *media.Registry
 			if p.Default == "" {
 				continue
 			}
-			if cfg.Defaults == nil {
-				return written, errors.New("media/image: Config.Defaults is required for public defaults")
+			if k.Defaults == nil {
+				return written, fmt.Errorf("media/image: kind %s names default %s but has no Defaults", k.Name, p.Default)
 			}
-			src, err := fs.ReadFile(cfg.Defaults, p.Default)
+			src, err := fs.ReadFile(k.Defaults, p.Default)
 			if err != nil {
 				return written, fmt.Errorf("media/image: default %s: %w", p.Default, err)
 			}
 			typ := mime.TypeByExtension(path.Ext(p.Default))
 			// The default's fingerprint: its bytes as the blob, the preset's spec.
-			fp := publicFP(media.File{Blob: string(sha(src))}, p)
+			fp := publicFP(media.File{Blob: layout.SHA256Name(sha(src))}, p)
 			names := k.PublicNames(p, "")
 			outs, _, err := encodePublic(src, typ, p, names, nil, rules{maxPixels: 100_000_000, maxFrames: 1000, maxSeconds: 60})
 			if err != nil {

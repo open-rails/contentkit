@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
@@ -90,6 +91,15 @@ func TestRegistryRefuses(t *testing.T) {
 		if _, err := media.NewRegistry(media.Config{Namespace: "d", Kinds: []media.Kind{k}}); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+	missing := media.Kind{Name: "k", Uploads: up, Defaults: fstest.MapFS{"other.png": {}},
+		Public: []media.Public{{Name: "c", From: "cover", To: "c.webp", Default: "cover.png"}}}
+	if _, err := media.NewRegistry(media.Config{Namespace: "d", Kinds: []media.Kind{missing}}); err == nil {
+		t.Error("a Default missing from the kind's Defaults accepted")
+	}
+	missing.Defaults = fstest.MapFS{"cover.png": {}}
+	if _, err := media.NewRegistry(media.Config{Namespace: "d", Kinds: []media.Kind{missing}}); err != nil {
+		t.Errorf("a kind's own default refused: %v", err)
 	}
 	if _, err := media.NewRegistry(media.Config{Namespace: "accounts", Kinds: []media.Kind{{Name: "user", Namespace: "accounts", Uploads: up}}}); err == nil {
 		t.Error("an app namespace named after a shared one accepted")

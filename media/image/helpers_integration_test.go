@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"sync"
 	"testing"
-	"testing/fstest"
 
 	"github.com/davidbyttow/govips/v2/vips"
 	"golang.org/x/image/webp"
@@ -45,7 +44,7 @@ var stills = []string{"image/png", "image/jpeg", "image/gif", "image/webp"}
 // config is the registry the tests run: pages with private presets and a
 // zip, a cropped public cover, animated avatars refused.
 func config(ns string) media.Config {
-	return media.Config{Namespace: ns, BaseURL: "https://media.test", Defaults: fstest.MapFS{},
+	return media.Config{Namespace: ns, BaseURL: "https://media.test",
 		Kinds: []media.Kind{
 			{Name: "gallery", KeepOriginals: true,
 				Uploads: []media.Upload{{Path: "originals/{name}", Types: stills, MaxBytes: 10 << 20, Pages: true}, {Path: "cover", Types: stills, MaxBytes: 10 << 20}},

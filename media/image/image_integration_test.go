@@ -78,7 +78,9 @@ func TestSpecChangeAndForce(t *testing.T) {
 	e.process(t, media.ProcessJob{Ref: g})
 	high := e.file(t, g, "high/1.webp")
 	thumb := e.file(t, g, "thumb/1.webp")
-	e.deploy(t, func(c *media.Config) { c.Kinds[0].Private[0].Image = &media.Image{Width: 50, Height: 50, Fit: media.FitCover} })
+	e.deploy(t, func(c *media.Config) {
+		c.Kinds[0].Private[0].Image = &media.Image{Width: 50, Height: 50, Fit: media.FitCover}
+	})
 	e.process(t, media.ProcessJob{Ref: g})
 	if th := e.file(t, g, "thumb/1.webp"); th.FP == thumb.FP || th.W != 50 {
 		t.Fatalf("thumb not regenerated %+v", th)
@@ -287,7 +289,7 @@ func TestChooseGoneAndEditorViews(t *testing.T) {
 func TestPublishDefaults(t *testing.T) {
 	e := newEnv(t, nil)
 	e.deploy(t, func(c *media.Config) {
-		c.Defaults = fstest.MapFS{"cover.png": {Data: quadrants(t)}}
+		c.Kinds[0].Defaults = fstest.MapFS{"cover.png": {Data: quadrants(t)}}
 	})
 	ctx := context.Background()
 	keys, err := image.PublishDefaults(ctx, e.Store, e.reg)

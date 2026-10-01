@@ -3,6 +3,7 @@ package media
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"slices"
 	"strings"
 
@@ -255,6 +256,11 @@ func (k *Kind) validatePublic(p *Public, names map[string]bool) error {
 		slices.Contains(vars, "w") != (len(p.Widths) > 0) ||
 		!layout.ValidSegment(fill(p.To, map[string]string{"name": "n", "w": "1"})) {
 		return fmt.Errorf("invalid To %q ([A-Za-z0-9._-] with {w} exactly when Widths are set)", p.To)
+	}
+	if p.Default != "" && k.Defaults != nil {
+		if _, err := fs.Stat(k.Defaults, p.Default); err != nil {
+			return fmt.Errorf("Default %q: %w", p.Default, err)
+		}
 	}
 	p.Widths = slices.Sorted(slices.Values(p.Widths))
 	for j, w := range p.Widths {
