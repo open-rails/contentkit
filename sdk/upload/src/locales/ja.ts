@@ -10,6 +10,7 @@ export const ja: UploadUiMessageBundle = {
     change: "変更",
     upload: "アップロード",
     editCrop: "切り抜きを編集",
+    remove: "削除",
   },
   crop: {
     title: "画像を切り抜く",

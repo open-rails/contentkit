@@ -58,9 +58,15 @@ type Hooks struct {
 	// say); file is the manifest file name, or the slot name. The job does not
 	// retry it; a new commit does.
 	Failed func(ctx context.Context, ref contentref.ContentRef, file string, err error)
-	// SlotEncoded reports a slot's new outputs: hosts store the listing to
-	// list the slot with Reader.ListedSlot without reads.
-	SlotEncoded func(ctx context.Context, ref contentref.ContentRef, slot string, l SlotListing)
+	// SlotChanged reports a registered slot whose public image was set,
+	// replaced (set) or removed (!set): its slot index row changed. The slot
+	// index job runs it in the host process (JobsConfig.Hooks), in the
+	// transaction that changes the row, under the item's folder lock: an error
+	// rolls back and retries the job, so it runs at least once and must be
+	// idempotent, and it must not edit the item's media. Reader.SlotLink is
+	// the slot's stable URL. Item deletion (Jobs.DeleteItemsTx) drops rows
+	// without it.
+	SlotChanged func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, slot string, set bool) error
 	// PublicRemoved reports public/ keys deleted (a hidden item, replaced
 	// outputs), for a CDN purge; optional.
 	PublicRemoved func(ctx context.Context, ref contentref.ContentRef, keys []string)
@@ -94,6 +100,12 @@ type ReaderOptions struct {
 	// Limit is 0 (default 50).
 	MaxLimit, DefaultLimit int
 	Now                    func() time.Time
+	// Slots is the slot index (NewSlotIndex) that SlotImages and the
+	// Handler's slot image route read; required for both.
+	Slots *SlotIndex
+	// ReadURL is the absolute URL the host mounts Handler at, e.g.
+	// "https://doujins.com/api/v1/media": SlotLink's base. Optional.
+	ReadURL string
 }
 
 // Reader answers the read API: one Resolve per item, metadata for every file,
@@ -112,6 +124,8 @@ type Reader struct {
 	maxLimit             int
 	defLimit             int
 	now                  func() time.Time
+	slots                *SlotIndex
+	readURL              string
 }
 
 var (
@@ -154,8 +168,15 @@ func NewReader(o ReaderOptions) (*Reader, error) {
 	if d.Window%time.Second != 0 {
 		return nil, errors.New("media: Delivery.Window must be a whole number of seconds")
 	}
+	readURL := strings.TrimRight(o.ReadURL, "/")
+	if readURL != "" {
+		if u, err := url.Parse(readURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.RawQuery != "" {
+			return nil, fmt.Errorf("media: ReaderOptions.ReadURL %q must be an absolute http(s) URL", o.ReadURL)
+		}
+	}
 	r := &Reader{manifests: o.Manifests, kinds: o.Kinds, resolver: o.Resolver, delivery: d, base: base, ring: ring,
-		hooks: o.Hooks, allowGenericDownload: o.AllowGenericDownload, progress: o.Progress, queue: o.Queue, maxLimit: orDefault(o.MaxLimit, 200), defLimit: orDefault(o.DefaultLimit, 50), now: o.Now}
+		hooks: o.Hooks, allowGenericDownload: o.AllowGenericDownload, progress: o.Progress, queue: o.Queue, maxLimit: orDefault(o.MaxLimit, 200),
+		defLimit: orDefault(o.DefaultLimit, 50), now: o.Now, slots: o.Slots, readURL: readURL}
 	if r.now == nil {
 		r.now = time.Now
 	}

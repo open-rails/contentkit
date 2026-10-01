@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/open-rails/contentkit/access"
@@ -127,7 +128,11 @@ func (u *Uploads) CommitSlot(ctx context.Context, actor access.Actor, c SlotComm
 	if err := edit.Check(0, 0); err != nil {
 		return uploadErr(CodeInvalid, "edit: %v", err)
 	}
-	if _, err := u.authorize(ctx, actor, c.Ref.Content()); err != nil {
+	target := UploadTarget{Ref: c.Ref.Content()}
+	if registered {
+		target.Slot = c.Slot
+	}
+	if _, err := u.authorize(ctx, actor, target); err != nil {
 		return err
 	}
 	name := SHA256Name(c.SHA256)
@@ -169,7 +174,7 @@ func (u *Uploads) EditSlot(ctx context.Context, actor access.Actor, ref contentr
 	if err := edit.Check(0, 0); err != nil {
 		return uploadErr(CodeInvalid, "edit: %v", err)
 	}
-	if _, err := u.authorize(ctx, actor, ref.Content()); err != nil {
+	if _, err := u.authorize(ctx, actor, UploadTarget{Ref: ref.Content(), Slot: slot}); err != nil {
 		return err
 	}
 	if err := u.o.Manifests.UpdateSlot(ctx, ref, slot, func(rec *SlotRecord) error {
@@ -238,11 +243,11 @@ func (u *Uploads) SetSlotFromFile(ctx context.Context, actor access.Actor, r Slo
 	if _, err := src.Section(); err != nil {
 		return uploadErr(CodeInvalid, "%v", err)
 	}
-	if _, err := u.authorize(ctx, actor, r.Ref.Content()); err != nil {
+	if _, err := u.authorize(ctx, actor, UploadTarget{Ref: r.Ref.Content(), Slot: r.Slot}); err != nil {
 		return err
 	}
 	if src.Prefix() != item.Prefix() {
-		if _, err := u.authorize(ctx, actor, from); err != nil {
+		if _, err := u.authorize(ctx, actor, UploadTarget{Ref: from}); err != nil {
 			return err
 		}
 	}
@@ -301,6 +306,35 @@ func (u *Uploads) SetSlotFromFile(ctx context.Context, actor access.Actor, r Slo
 		return err
 	}
 	return u.enqueueSlot(ctx, r.Ref, r.Slot)
+}
+
+// DeleteSlot removes a registered slot's image: its record goes, the slot
+// index job drops its row (Hooks.SlotChanged), and the folder sweep deletes
+// its original and renditions. The actor must be allowed to upload to the
+// slot. Removing an unset slot succeeds. A video's poster is not removed
+// here: SetVideoPoster returns it to the automatic frame.
+func (u *Uploads) DeleteSlot(ctx context.Context, actor access.Actor, ref contentref.ContentRef, slot string) error {
+	ref = ref.Content()
+	item, err := u.item(ref)
+	if err != nil {
+		return err
+	}
+	if _, ok := item.Kind().Slots[slot]; !ok || (slot == PosterSlot && item.Kind().Video != nil) {
+		return uploadErr(CodeNotFound, "kind %q has no removable slot %q", item.Kind().Name, slot)
+	}
+	if _, err := u.authorize(ctx, actor, UploadTarget{Ref: ref, Slot: slot}); err != nil {
+		return err
+	}
+	if _, err := u.o.Manifests.EditRoot(ctx, ref, func(r *Root) error {
+		if r.Originals == nil {
+			return errNoManifest
+		}
+		delete(r.Slots, slot)
+		return nil
+	}); err != nil && !errors.Is(err, errNoManifest) {
+		return err
+	}
+	return u.o.Manifests.IndexSlots(ctx, ref)
 }
 
 func (u *Uploads) enqueueSlot(ctx context.Context, ref contentref.ContentRef, slot string) error {
@@ -473,42 +507,49 @@ func (r *Reader) EditorURLs(ref contentref.ContentRef) (OutputURLs, error) {
 		Editor: r.ring.Sign(token.EditorScope(item.TempPrefix()), exp)}, nil
 }
 
-// SlotListing is what a host stores from Hooks.SlotEncoded to list a slot
-// without reads (Reader.ListedSlot).
-type SlotListing struct {
-	Aspect  Aspect          `json:"aspect"`
-	Outputs []SlotRendition `json:"outputs"`
-}
+// ErrNoSlotIndex: SlotImages or a slot image link without ReaderOptions.Slots.
+var ErrNoSlotIndex = errors.New("media: no slot index (ReaderOptions.Slots)")
 
-// Listing is the slot's current outputs, for Hooks.SlotEncoded.
-func (res *SlotResult) Listing(s Slot) SlotListing {
-	l := SlotListing{Aspect: s.Aspect, Outputs: res.Outputs}
-	if n := len(res.Outputs); n > 0 && s.Native() {
-		l.Aspect = AspectOf(res.Outputs[n-1].W, res.Outputs[n-1].H)
+// SlotImages lists one registered slot of kind's items from the slot index:
+// one query and no bucket reads. width is the display width each URL targets;
+// items whose slot has no public image (unset, hidden or not yet encoded)
+// are absent.
+func (r *Reader) SlotImages(ctx context.Context, tenant, kind, slot string, width int, ids ...string) (map[string]Picture, error) {
+	if r.slots == nil {
+		return nil, ErrNoSlotIndex
 	}
-	return l
-}
-
-// ListedSlot is a slot's manifest built without reads, for listings, from
-// the SlotListing the host stored: every output's public URL. Hosts list only
-// items that are not hidden.
-func (r *Reader) ListedSlot(ref contentref.ContentRef, slot string, l SlotListing) (SlotManifest, error) {
-	item, s, err := r.kinds.slot(ref, slot)
+	k, err := r.kinds.Kind(kind)
 	if err != nil {
-		return SlotManifest{}, err
+		return nil, err
 	}
-	aspect := s.Aspect
-	if s.Native() {
-		aspect = l.Aspect
+	if _, ok := k.Slots[slot]; !ok {
+		return nil, fmt.Errorf("media: kind %q has no slot %q", kind, slot)
 	}
-	out := SlotManifest{Aspect: aspect, Outputs: []SlotImage{}, MinWidth: s.Min(), Animation: s.Animation}
-	urls := OutputURLs{BaseURL: r.base.String()}
-	for _, o := range l.Outputs {
-		if layout.ValidHashName(o.Blob) {
-			out.Outputs = append(out.Outputs, SlotImage{W: o.W, H: o.H, URL: urls.url(item, o.Blob, true)})
+	rows, err := r.slots.lookup(ctx, tenant, kind, slot, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]Picture, len(rows))
+	for id, s := range rows {
+		item, err := r.kinds.Item(contentref.New(tenant, kind, id))
+		if err != nil {
+			continue
 		}
+		out[id] = s.picture(item, r.base.String(), width)
 	}
 	return out, nil
+}
+
+// SlotLink is a registered slot's stable URL, the Handler's slot image route
+// under ReaderOptions.ReadURL: it redirects to the slot's current public
+// image, or to the host's default (HandlerOptions.SlotDefault). It never
+// changes, so hosts may store it, e.g. as an account's avatar; "" without a
+// ReadURL. Append ?w= for a display width (Slot.LinkSrcSet).
+func (r *Reader) SlotLink(ref contentref.ContentRef, slot string) string {
+	if r.readURL == "" {
+		return ""
+	}
+	return r.readURL + "/" + url.PathEscape(ref.ContentKind) + "/" + url.PathEscape(ref.ContentID) + "/slots/" + url.PathEscape(slot) + "/image"
 }
 
 // InlineURL is an inline image's public URL, or ErrPending until the worker

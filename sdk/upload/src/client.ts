@@ -155,6 +155,11 @@ export class UploadClient {
     return this.retry(() => this.api.editSlot({ ref, slot, ...(edit ? { edit } : {}) }, signal), signal);
   }
 
+  /** Removes the slot's image; the reply is the empty slot. Removing an unset slot succeeds. */
+  deleteSlot(ref: RefBody, slot: string, signal?: AbortSignal): Promise<SlotManifest> {
+    return this.retry(() => this.api.deleteSlot({ ref, slot }, signal), signal);
+  }
+
   /** The slot's aspect, edit, dims and rendered sizes (no outputs before the first commit). */
   getSlot(ref: RefBody, slot: string, signal?: AbortSignal): Promise<SlotManifest> {
     return this.retry(() => this.api.slot({ ref, slot }, signal), signal);

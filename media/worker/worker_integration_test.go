@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -44,7 +45,7 @@ import (
 
 type allow struct{}
 
-func (allow) CanUpload(context.Context, access.Actor, contentref.ContentRef) (media.UploadGrant, error) {
+func (allow) CanUpload(context.Context, access.Actor, media.UploadTarget) (media.UploadGrant, error) {
 	return media.UploadGrant{Allowed: true}, nil
 }
 
@@ -60,12 +61,55 @@ type host struct {
 	uploads   *media.Uploads
 	queue     *workqueue.Queue
 	worker    *worker.Worker
+	jobs      *media.Jobs
+	slots     *media.SlotIndex
+	reader    *media.Reader // ReadURL appURL, delivery mediaURL
+	hidden    sync.Map      // contentref.ContentKey → true: hidden from anonymous viewers (Expose)
 
-	mu      sync.Mutex
-	encoded map[string]media.SlotListing // Hooks.SlotEncoded, by ref#slot
-	settled map[string][]media.Readiness // Hooks.ItemReady, by ref
-	schema  string                       // the host's River schema
-	workers string                       // the host's worker schema
+	mu          sync.Mutex
+	changes     []string                     // Hooks.SlotChanged, "ref#slot set|clear"
+	failChanges int                          // SlotChanged calls still to fail
+	settled     map[string][]media.Readiness // Hooks.ItemReady, by ref
+	schema      string                       // the host's River schema
+	workers     string                       // the host's worker schema
+}
+
+// The host's read API and media origins.
+const (
+	appURL   = "https://app.example/api/v1/media"
+	mediaURL = "https://media.example"
+)
+
+// slotChanged is the host's Hooks.SlotChanged.
+func (h *host) slotChanged(_ context.Context, _ pgx.Tx, ref contentref.ContentRef, slot string, set bool) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.failChanges > 0 {
+		h.failChanges--
+		return errors.New("the host's hook is down")
+	}
+	state := "clear"
+	if set {
+		state = "set"
+	}
+	h.changes = append(h.changes, ref.String()+"#"+slot+" "+state)
+	return nil
+}
+
+func (h *host) slotChanges() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.changes...)
+}
+
+// Resolve hides the refs in h.hidden from anonymous viewers.
+func (h *host) Resolve(_ context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	out := map[contentref.ContentKey]access.Resolution{}
+	for _, ref := range refs {
+		_, hidden := h.hidden.Load(ref.Content().Key())
+		out[ref.Key()] = access.Resolution{Visible: !hidden || !a.Anonymous, Accessible: true, Editor: a.ID == alice.ID}
+	}
+	return out, nil
 }
 
 // lastSettled is the latest ItemReady report for ref.
@@ -101,11 +145,16 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 			Specs: map[string]media.Spec{"thumb": {Width: 100, Height: 150, Fit: media.FitCover, Quality: 80}},
 			Slots: map[string]media.Slot{"cover": {Aspect: media.Aspect3x1, Widths: []int{150, 300}}}},
 		media.Kind{Name: "clip", Types: []string{"video/mp4"}, MaxBytes: 1 << 30, Video: &media.Video{Ladder: []int{240}}},
+		media.Kind{Name: media.UserKind, Types: []string{"image/png"}, MaxBytes: 10 << 20,
+			Slots: map[string]media.Slot{media.AvatarSlotName: media.AvatarSlot}},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &host{Env: env, pool: pool, kinds: kinds, encoded: map[string]media.SlotListing{}, settled: map[string][]media.Readiness{}}
+	h := &host{Env: env, pool: pool, kinds: kinds, settled: map[string][]media.Readiness{}}
+	if h.slots, err = media.NewSlotIndex(pool, pgtest.Schema(t, ctx, pool)); err != nil {
+		t.Fatal(err)
+	}
 
 	// The host's River: publishes and sweeps the worker hands back run here.
 	schema := pgtest.EmptySchema(t, ctx, pool)
@@ -113,10 +162,12 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 	if err := riverhelpers.ApplyMigrations(ctx, pool, schema); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Locker: s3test.Locker(t, env.Store), Kinds: kinds, Tenants: []string{env.Tenant}, Resolver: editorResolver{}})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Locker: s3test.Locker(t, env.Store), Kinds: kinds, Tenants: []string{env.Tenant},
+		Resolver: h, Slots: h.slots, Hooks: media.Hooks{SlotChanged: h.slotChanged}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	h.jobs = jobs
 	hostClient, err := riverhelpers.New(ctx, pool, &river.Config{Schema: schema, FetchPollInterval: 100 * time.Millisecond,
 		FetchCooldown: 50 * time.Millisecond}, jobs.RiverJobs())
 	if err != nil {
@@ -131,6 +182,10 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 		_ = hostClient.StopAndCancel(ctx)
 	})
 	h.manifests = s3test.Manifests(t, env.Store, kinds, media.ManifestOptions{Sweeps: jobs})
+	if h.reader, err = media.NewReader(media.ReaderOptions{Manifests: h.manifests, Kinds: kinds, Resolver: h, Slots: h.slots, ReadURL: appURL,
+		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: mediaURL, SigningKey: token.Key{ID: "k", Secret: bytes.Repeat([]byte("k"), 32)}}}); err != nil {
+		t.Fatal(err)
+	}
 	h.workers = workerSchema(t, pool)
 	if err := workqueue.Migrate(ctx, pool, h.workers); err != nil {
 		t.Fatal(err)
@@ -154,11 +209,7 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 	}
 	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Schema: h.workers, Store: store, Kinds: kinds, HostSchema: schema,
 		TempDir: t.TempDir(), Threads: 2, RiverHooks: riverHooks, ImageTimeout: imageTimeout,
-		Hooks: media.Hooks{SlotEncoded: func(_ context.Context, ref contentref.ContentRef, slot string, l media.SlotListing) {
-			h.mu.Lock()
-			h.encoded[ref.String()+"#"+slot] = l
-			h.mu.Unlock()
-		}, ItemReady: func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r media.Readiness) error {
+		Hooks: media.Hooks{ItemReady: func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r media.Readiness) error {
 			if r.Ready() {
 				if err := hostQueue.ExposeTx(ctx, tx, ref); err != nil {
 					return err
@@ -353,8 +404,9 @@ func TestOneShotWorkerStopsAfterOneJob(t *testing.T) {
 	}
 }
 
-// The host enqueues; the worker derives variants and slot outputs (running
-// the host's SlotEncoded hook), and places a staged upload at its SHA-256.
+// The host enqueues; the worker derives variants and slot outputs (the
+// host's slot index job then lists the cover), and places a staged upload at
+// its SHA-256.
 func TestWorkerProcessesImagesAndPlacesStagedUploads(t *testing.T) {
 	h := newHost(t)
 	ctx := context.Background()
@@ -384,16 +436,24 @@ func TestWorkerProcessesImagesAndPlacesStagedUploads(t *testing.T) {
 	if key, _ := item.Original(name); h.exists(t, key) {
 		t.Fatal("temp upload kept after placement")
 	}
-	var listing media.SlotListing
-	var ok bool
-	eventually(t, "SlotEncoded", 10*time.Second, func() bool { // it runs just after the outputs are recorded
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		listing, ok = h.encoded[work.String()+"#cover"]
-		return ok
+	m, err := h.manifests.SlotManifest(ctx, media.OutputURLs{BaseURL: mediaURL}, work, "cover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pic media.Picture
+	eventually(t, "the cover's slot index row", 30*time.Second, func() bool { // the host's job runs just after the worker's
+		pics, err := h.reader.SlotImages(ctx, h.Tenant, "gallery", "cover", 1, work.ContentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pic = pics[work.ContentID]
+		return pic.URL != ""
 	})
-	if !ok || listing.Aspect != media.Aspect3x1 || len(listing.Outputs) == 0 {
-		t.Fatalf("the host's SlotEncoded hook did not run in the worker: %+v %v", listing, ok)
+	if pic.URL != m.Outputs[0].URL || pic.W != m.Outputs[0].W || !strings.HasSuffix(pic.SrcSet, " "+strconv.Itoa(m.Outputs[len(m.Outputs)-1].W)+"w") {
+		t.Fatalf("listed %+v, manifest %+v", pic, m.Outputs)
+	}
+	if got := h.slotChanges(); len(got) != 1 || got[0] != work.String()+"#cover set" {
+		t.Fatalf("SlotChanged %v", got)
 	}
 }
 

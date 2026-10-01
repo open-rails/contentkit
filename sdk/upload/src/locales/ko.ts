@@ -10,6 +10,7 @@ export const ko: UploadUiMessageBundle = {
     change: "변경",
     upload: "업로드",
     editCrop: "자르기 편집",
+    remove: "삭제",
   },
   crop: {
     title: "이미지 자르기",

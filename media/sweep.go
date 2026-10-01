@@ -47,6 +47,8 @@ func (j *Jobs) Sweep(ctx context.Context, ref contentref.ContentRef) (SweepResul
 
 // SweepAll sweeps every folder of the configured tenants whose kind is
 // registered: the periodic backstop for missed schedules and abandoned uploads.
+// It also brings each folder's slot index rows to its manifest, which fills
+// the index for slots set before it existed.
 func (j *Jobs) SweepAll(ctx context.Context) error {
 	var errs []error
 	for _, tenant := range j.cfg.Tenants {
@@ -54,6 +56,9 @@ func (j *Jobs) SweepAll(ctx context.Context) error {
 		flush := func() {
 			if folder != "" {
 				if _, err := j.sweep(ctx, folder); err != nil {
+					errs = append(errs, err)
+				}
+				if err := j.reindexFolder(ctx, folder); err != nil {
 					errs = append(errs, err)
 				}
 			}

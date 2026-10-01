@@ -107,9 +107,10 @@ func (rt *Runtime) deleteMediaTx(ctx context.Context, tx pgx.Tx, f folder, id st
 
 // CanUpload is media's UploadAuthorizer for post and poll folders: the actor
 // holds Perms.PostWrite or Perms.PollWrite and the post or poll exists in this
-// tenant. Every other ref is refused; hosts route their own kinds elsewhere.
-func (rt *Runtime) CanUpload(ctx context.Context, actor access.Actor, ref contentref.ContentRef) (media.UploadGrant, error) {
-	if rt.media == nil || ref.TenantID != rt.tenant || ref.ContentVersionID != nil {
+// tenant. Every other target is refused; hosts route their own kinds elsewhere.
+func (rt *Runtime) CanUpload(ctx context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
+	ref := t.Ref
+	if rt.media == nil || ref.TenantID != rt.tenant || ref.ContentVersionID != nil || t.Slot != "" {
 		return media.UploadGrant{}, nil
 	}
 	var perm, table string

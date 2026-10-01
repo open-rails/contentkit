@@ -10,6 +10,7 @@ export const zh: UploadUiMessageBundle = {
     change: "更换",
     upload: "上传",
     editCrop: "编辑裁剪",
+    remove: "移除",
   },
   crop: {
     title: "裁剪图片",

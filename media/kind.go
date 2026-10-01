@@ -237,6 +237,25 @@ const (
 	AnimationReject Animation = "reject"
 )
 
+// AvatarSlot is the avatar preset: square stills at 64, 128, 256 and 512 px
+// (32–256 CSS px at 2x), quality 85. Register it as a kind's AvatarSlotName
+// slot, e.g. on UserKind for account avatars; give the kind raster Types only.
+var AvatarSlot = Slot{Aspect: Aspect1x1, Widths: []int{64, 128, 256, 512}, Quality: 85, Animation: AnimationReject}
+
+// AvatarSlotName is the avatar slot's name.
+const AvatarSlotName = "avatar"
+
+// LinkSrcSet is a srcset of a slot link (Reader.SlotLink) at each width:
+// "link?w=64 64w, link?w=128 128w, …".
+func (s Slot) LinkSrcSet(link string) string {
+	set := make([]string, len(s.Widths))
+	for i, w := range s.Widths {
+		n := strconv.Itoa(w)
+		set[i] = link + "?w=" + n + " " + n + "w"
+	}
+	return strings.Join(set, ", ")
+}
+
 // Min is the narrowest edited width accepted: MinWidth, else the smallest width.
 func (s Slot) Min() int {
 	if s.MinWidth > 0 {

@@ -98,7 +98,7 @@ func (f fixture) make(t *testing.T) string {
 
 type grants struct{}
 
-func (grants) CanUpload(context.Context, access.Actor, contentref.ContentRef) (media.UploadGrant, error) {
+func (grants) CanUpload(context.Context, access.Actor, media.UploadTarget) (media.UploadGrant, error) {
 	return media.UploadGrant{Allowed: true, Exempt: true}, nil
 }
 

@@ -65,6 +65,9 @@ export class UploadApi {
   slot(b: SlotRefBody, signal?: AbortSignal) {
     return this.call<SlotManifest>("/slot", b, signal);
   }
+  deleteSlot(b: SlotRefBody, signal?: AbortSignal) {
+    return this.call<SlotManifest>("/delete-slot", b, signal);
+  }
   commitSlotFromFile(b: SlotFromFileBody, signal?: AbortSignal) {
     return this.call<SlotManifest>("/commit-slot-from-file", b, signal);
   }

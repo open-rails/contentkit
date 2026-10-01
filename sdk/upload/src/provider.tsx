@@ -19,6 +19,7 @@ export type UploadUiOperation =
   | "slot.load"
   | "slot.decode"
   | "slot.save"
+  | "slot.remove"
   | "upload";
 
 /**

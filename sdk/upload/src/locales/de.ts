@@ -10,6 +10,7 @@ export const de: UploadUiMessageBundle = {
     change: "Ändern",
     upload: "Hochladen",
     editCrop: "Zuschnitt bearbeiten",
+    remove: "Entfernen",
   },
   crop: {
     title: "Bild zuschneiden",

@@ -124,7 +124,7 @@ func (u *Uploads) SetVideoPoster(ctx context.Context, actor access.Actor, ref co
 	if r.Source != PosterSourceFrame && r.Source != PosterSourceAuto {
 		return uploadErr(CodeInvalid, "poster source must be frame, upload or auto")
 	}
-	if _, err := u.authorize(ctx, actor, ref.Content()); err != nil {
+	if _, err := u.authorize(ctx, actor, UploadTarget{Ref: ref.Content(), Slot: PosterSlot}); err != nil {
 		return err
 	}
 	f, err := u.encodedVideo(ctx, item, r.File)
@@ -181,7 +181,7 @@ func (u *Uploads) Frame(ctx context.Context, actor access.Actor, ref contentref.
 	if math.IsNaN(t) || math.IsInf(t, 0) {
 		return nil, uploadErr(CodeInvalid, "t must be a number of seconds")
 	}
-	if _, err := u.authorize(ctx, actor, ref.Content()); err != nil {
+	if _, err := u.authorize(ctx, actor, UploadTarget{Ref: ref.Content(), Slot: PosterSlot}); err != nil {
 		return nil, err
 	}
 	f, err := u.encodedVideo(ctx, item, file)

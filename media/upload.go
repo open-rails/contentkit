@@ -31,10 +31,19 @@ const (
 )
 
 // UploadAuthorizer is the host's upload permission check (AuthKit), run at
-// presign and commit against the ref whose folder is written: the version
-// for manifest uploads, the work (ref.Content()) for slots and inline images.
+// presign, commit, edit and removal against what is written (UploadTarget).
 type UploadAuthorizer interface {
-	CanUpload(ctx context.Context, actor access.Actor, ref contentref.ContentRef) (UploadGrant, error)
+	CanUpload(ctx context.Context, actor access.Actor, t UploadTarget) (UploadGrant, error)
+}
+
+// UploadTarget is what an upload writes: Ref is the folder's ref (the
+// version for manifest uploads, the work for slots and inline images), and
+// Slot the registered slot (a video's PosterSlot included), "" for manifest
+// files and inline images. A host can grant one slot alone, e.g. a user their
+// own avatar.
+type UploadTarget struct {
+	Ref  contentref.ContentRef
+	Slot string
 }
 
 // UploadGrant is the host's verdict. Exempt (trusted roles) skips the
@@ -216,9 +225,12 @@ func (u *Uploads) presignFile(ctx context.Context, actor access.Actor, r Presign
 	if r.Slot != "" && r.Size > MaxSinglePut {
 		return Presigned{}, uploadErr(CodeTooLarge, "slot originals are at most %d bytes", MaxSinglePut)
 	}
-	target := r.Ref
+	target := UploadTarget{Ref: r.Ref}
 	if r.Slot != "" {
-		target = r.Ref.Content() // slots and inline images live in the work's folder
+		target.Ref = r.Ref.Content() // slots and inline images live in the work's folder
+	}
+	if !r.Inline {
+		target.Slot = r.Slot
 	}
 	grant, err := u.authorize(ctx, actor, target)
 	if err != nil {
@@ -450,7 +462,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	if len(ops) == 0 || len(ops) > 1000 {
 		return nil, uploadErr(CodeInvalid, "commit 1 to 1000 operations")
 	}
-	grant, err := u.authorize(ctx, actor, ref)
+	grant, err := u.authorize(ctx, actor, UploadTarget{Ref: ref})
 	if err != nil {
 		return nil, err
 	}
@@ -626,8 +638,8 @@ func (u *Uploads) item(ref contentref.ContentRef) (Item, error) {
 	return item, nil
 }
 
-func (u *Uploads) authorize(ctx context.Context, actor access.Actor, ref contentref.ContentRef) (UploadGrant, error) {
-	g, err := u.o.Authorizer.CanUpload(ctx, actor, ref)
+func (u *Uploads) authorize(ctx context.Context, actor access.Actor, t UploadTarget) (UploadGrant, error) {
+	g, err := u.o.Authorizer.CanUpload(ctx, actor, t)
 	if err != nil {
 		return UploadGrant{}, fmt.Errorf("media: upload permission check: %w", err)
 	}

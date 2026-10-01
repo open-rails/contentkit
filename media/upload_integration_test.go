@@ -31,7 +31,8 @@ import (
 // upload to versions only; "owner2" to content id cid(2) only.
 type grants map[string]media.UploadGrant
 
-func (g grants) CanUpload(_ context.Context, a access.Actor, ref contentref.ContentRef) (media.UploadGrant, error) {
+func (g grants) CanUpload(_ context.Context, a access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
+	ref := t.Ref
 	switch a.ID {
 	case "translator":
 		return media.UploadGrant{Allowed: ref.Version() != ""}, nil

@@ -123,6 +123,14 @@ describe.skipIf(!endpoint)("upload against MinIO and media.UploadHandler", () =>
     expect((await c.editSlot(ref, "cover", { rotate: 45 }).catch((e) => e)).code).toBe("invalid_request");
     expect((await c.editSlot(ref, "banner", edit).catch((e) => e)).code).toBe("not_found");
     expect((await c.getEditorView({ ...ref, id: "0192f000-0000-7000-8000-000000000005" }, "cover").catch((e) => e)).code).toBe("not_found");
+
+    // Removal drops the record: the slot reads empty, a re-edit has no original, and removing again succeeds.
+    const removed = await c.deleteSlot(ref, "cover");
+    expect(removed).toMatchObject({ aspect: "3:1", outputs: [], pending: false });
+    expect(removed).not.toHaveProperty("edit");
+    expect((await c.editSlot(ref, "cover", edit).catch((e) => e)).code).toBe("not_found");
+    expect((await c.deleteSlot(ref, "cover")).outputs).toEqual([]);
+    expect((await c.deleteSlot(ref, "banner").catch((e) => e)).code).toBe("not_found");
   });
 
   it("uploads a stale original again when commit refuses it", async () => {

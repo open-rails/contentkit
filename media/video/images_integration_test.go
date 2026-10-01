@@ -17,7 +17,6 @@ import (
 	"testing"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 	"github.com/open-rails/contentkit/media/internal/videotest"
@@ -221,7 +220,7 @@ func TestRotatedSourceFrame(t *testing.T) {
 
 type authz map[string]bool
 
-func (a authz) CanUpload(_ context.Context, actor access.Actor, _ contentref.ContentRef) (media.UploadGrant, error) {
+func (a authz) CanUpload(_ context.Context, actor access.Actor, _ media.UploadTarget) (media.UploadGrant, error) {
 	return media.UploadGrant{Allowed: a[actor.ID], Exempt: true}, nil
 }
 

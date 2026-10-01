@@ -65,7 +65,7 @@ func (allow) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.A
 	return out, nil
 }
 
-func (allow) CanUpload(_ context.Context, a access.Actor, _ contentref.ContentRef) (media.UploadGrant, error) {
+func (allow) CanUpload(_ context.Context, a access.Actor, _ media.UploadTarget) (media.UploadGrant, error) {
 	return media.UploadGrant{Allowed: a.ID != "reader", Owner: "owner"}, nil
 }
 

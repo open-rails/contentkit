@@ -364,21 +364,29 @@ Cropping and rotating are ContentKit's: the host never decodes images.
   follows. `From` (`"from"`) takes the file from another item of the tenant,
   e.g. a channel avatar from a post image; `CanUpload` must allow both.
 - Slots and inline images belong to the work: `CanUpload` is asked for
-  `ref.Content()` even when a version ref is sent.
+  `UploadTarget{Ref: ref.Content(), Slot}` even when a version ref is sent.
+  `Slot` names the registered slot ("" for files and inline images), so a
+  host can let users write their own avatar and nothing else.
 - Avatars and covers are slots with density widths; see README "Slots":
 
   ```go
-  "avatar": {Aspect: media.Aspect1x1, Widths: []int{128, 512}}, // small, large
-  "cover":  {Aspect: media.Aspect3x1, Widths: []int{900, 3000}, MinWidth: 600},
+  media.AvatarSlotName: media.AvatarSlot, // 1:1, 64–512 px, stills
+  "cover": {Aspect: media.Aspect3x1, Widths: []int{900, 3000}, MinWidth: 600},
   ```
 
   Mount `UploadHandler` with `Reader` (its origin and editor tokens build
   reply URLs). For one item use `Reader.Slot(ctx, ref, actor, slot)` /
   `GET /{kind}/{id}/slots/{slot}` (resolves; 404 for items the viewer cannot see). Listings
-  store the `SlotListing` that `Hooks.SlotEncoded` hands over and link it
-  with `Reader.ListedSlot(ref, slot, listing)`: hash-named, immutable URLs;
-  a change reports new ones. After changing slot specs, enqueue
-  `ProcessJob{Ref}` per item; the sweep removes the old renditions.
+  read `Reader.SlotImages(ctx, tenant, kind, slot, width, ids...)` from the
+  slot index (`media.NewSlotIndex(pool, schema)` in `JobsConfig.Slots` and
+  `ReaderOptions.Slots`): hash-named, immutable URLs, no bucket reads.
+  `Reader.SlotLink(ref, slot)` (with `ReaderOptions.ReadURL`) is a stable
+  URL to store, e.g. as an account's avatar: the read API redirects it to
+  the current image or `HandlerOptions.SlotDefault`. `Hooks.SlotChanged`
+  (in `JobsConfig.Hooks`) hears every set, replace and removal;
+  `Uploads.DeleteSlot` / `POST /delete-slot` removes. After changing slot
+  specs, enqueue `ProcessJob{Ref}` per item; the sweep removes the old
+  renditions.
 - Editors (`Resolution.Editor`) read `dims` (original size) and `edit` from
   the read API and crop on the editor view: set `Kind.Editor` (e.g.
   `&media.Spec{Width: 1200, Height: 1200, Fit: media.FitInside}`) and read
@@ -468,9 +476,8 @@ the frame or upload); `poster` is a reserved slot name.
     host image); `FrameConcurrency` (2) at once, then 429.
 - Viewers: `GET /{kind}/{id}/video-images` resolves (404 when hidden) and
   lists the public cover (editors of a hidden item: its `private/` URLs), with
-  the cover's `file` and `time`. Listings build poster URLs without reads,
-  `Reader.ListedSlot(ref, media.PosterSlot, listing)`, for items that are not
-  hidden.
+  the cover's `file` and `time`. Listings read poster URLs from the slot
+  index, `Reader.SlotImages(ctx, tenant, kind, media.PosterSlot, width, ids...)`.
 
 ## Media worker schema
 

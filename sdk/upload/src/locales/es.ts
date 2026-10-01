@@ -10,6 +10,7 @@ export const es: UploadUiMessageBundle = {
     change: "Cambiar",
     upload: "Subir",
     editCrop: "Editar recorte",
+    remove: "Eliminar",
   },
   crop: {
     title: "Recortar imagen",

@@ -75,9 +75,10 @@ var errNoManifest = errors.New("media: no manifest")
 // item for an anonymous actor (JobsConfig.Resolver), records Hidden when
 // anonymous viewers cannot see it, and syncs public/ (SyncPublic): a hidden
 // item's copies are deleted at once and reported to Hooks.PublicRemoved; an
-// unhidden item's are copied back. It re-resolves after writing and repeats
-// until the state holds, so an Expose racing a visibility change ends at the
-// newer one. An item without a manifest is left alone.
+// unhidden item's are copied back, and the slot index follows (IndexSlots).
+// It re-resolves after writing and repeats until the state holds, so an
+// Expose racing a visibility change ends at the newer one. An item without a
+// manifest is left alone.
 func (j *Jobs) Expose(ctx context.Context, ref contentref.ContentRef) error {
 	if j.cfg.Resolver == nil {
 		return errors.New("media: Expose needs JobsConfig.Resolver")
@@ -112,7 +113,7 @@ func (j *Jobs) Expose(ctx context.Context, ref contentref.ContentRef) error {
 			return err
 		}
 		if now == hidden {
-			return nil
+			return j.IndexSlots(ctx, ref)
 		}
 		hidden = now
 	}

@@ -269,6 +269,15 @@ describe("slots", () => {
     expect((await c.getEditorView(ref, "banner").catch((e) => e)).code).toBe("not_found");
   });
 
+  it("removes a slot's image", async () => {
+    const { s, c } = setup();
+    await c.uploadSlot(file(1000, 9, "image/jpeg"), { ref, slot: "avatar" });
+    expect(await c.deleteSlot(ref, "avatar")).toEqual({ aspect: "1:1", outputs: [], pending: false });
+    expect((await c.getSlot(ref, "avatar")).outputs).toEqual([]);
+    expect(s.calls.slice(-2)).toEqual(["/delete-slot", "/slot"]);
+    expect((await c.editSlot(ref, "avatar").catch((e) => e)).code).toBe("not_found");
+  });
+
   it("waits for the outputs to be encoded", async () => {
     const { s, c } = setup();
     s.pendingReads = 2;
