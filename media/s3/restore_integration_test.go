@@ -69,7 +69,7 @@ func TestRestoreAfterSweepAndFolderDeletion(t *testing.T) {
 		t.Helper()
 		put(ch.OriginalsPrefix()+name(v), v)
 		put(ch.PrivatePrefix()+name(v+" out"), v+" out")
-		put(ch.PublicPrefix()+name(v+" out"), v+" out")
+		put(ch.PublicPrefix()+"avatar-80.webp", v+" out") // the slot's fixed public name, overwritten
 		if err := ms.UpdateSlot(ctx, channel, "avatar", func(rec *media.SlotRecord) error {
 			*rec = media.SlotRecord{Original: name(v), Result: &media.SlotResult{Source: name(v),
 				Outputs: []media.SlotRendition{{Rung: 80, W: 80, H: 80, Blob: name(v + " out")}}}}
@@ -108,7 +108,7 @@ func TestRestoreAfterSweepAndFolderDeletion(t *testing.T) {
 	avatar("avatar v2")
 	clock = time.Now().Add(grace + time.Minute)
 	res, err := jobs.Sweep(ctx, channel)
-	if err != nil || len(res.Deleted) != 5 { // A's file and v1's avatar: original, rendition, public copy
+	if err != nil || len(res.Deleted) != 4 { // A's file and v1's avatar: original and rendition (its public name is v2's now)
 		t.Fatalf("sweep: %+v %v", res, err)
 	}
 	for o, err := range s.List(ctx, p.Prefix()) { // an erased item: its folder deleted
@@ -136,8 +136,8 @@ func TestRestoreAfterSweepAndFolderDeletion(t *testing.T) {
 	for key, want := range map[string]string{
 		ch.OriginalsPrefix() + name("origA"): "origA", ch.PrivatePrefix() + name("blobA"): "blobA",
 		ch.OriginalsPrefix() + name("avatar v1"): "avatar v1", ch.PrivatePrefix() + name("avatar v1 out"): "avatar v1 out",
-		ch.PublicPrefix() + name("avatar v1 out"): "avatar v1 out",
-		p.OriginalsPrefix() + name("origP"):       "origP", p.PrivatePrefix() + name("blobP"): "blobP",
+		ch.PublicPrefix() + "avatar-80.webp": "avatar v1 out",
+		p.OriginalsPrefix() + name("origP"):  "origP", p.PrivatePrefix() + name("blobP"): "blobP",
 	} {
 		if got, err := read(key); err != nil || got != want {
 			t.Errorf("%s: %q %v, want %q", key, got, err, want)
