@@ -20,7 +20,6 @@ package video_test
 
 import (
 	"bufio"
-	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -40,13 +39,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 
-	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/internal/s3test"
+	"github.com/open-rails/contentkit/media/internal/videotest"
+	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/video"
 	"github.com/open-rails/contentkit/media/workqueue"
 )
@@ -91,7 +88,7 @@ func TestBenchEncode(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("resource sampling requires Linux /proc")
 	}
-	requireFFmpeg(t)
+	videotest.RequireFFmpeg(t)
 	samples := strings.Split(os.Getenv("CONTENTKIT_BENCH_SAMPLES"), ",")
 	if samples[0] == "" {
 		t.Skip("CONTENTKIT_BENCH_SAMPLES not set")
@@ -102,61 +99,19 @@ func TestBenchEncode(t *testing.T) {
 }
 
 func benchSample(t *testing.T, src string) {
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	pool := pgtest.Pool(t, nil)
-	schema := pgtest.EmptySchema(t, ctx, pool)
-	if err := workqueue.Migrate(ctx, pool, schema); err != nil {
-		t.Fatal(err)
-	}
-	s3 := s3test.Open(t)
-	policy := benchVideo()
-	kinds, err := media.NewRegistry(media.Kind{Name: "video", Versioned: true, Video: &policy, Types: []string{"video/x-matroska", "video/mp4", "video/quicktime"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ms, err := media.NewManifests(s3.Store, kinds, media.ManifestOptions{Locker: s3test.Locker(t, s3.Store)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	queue, err := workqueue.New(pool, kinds, schema)
-	if err != nil {
-		t.Fatal(err)
-	}
-	uploads, err := media.NewUploads(media.UploadOptions{Store: s3.Store, Kinds: kinds, Manifests: ms, Authorizer: grants{}, Queue: queue})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ref := contentref.NewVersion(s3.Tenant, "video", cid(1), "v1")
-	item, _ := kinds.Item(ref)
-	name := benchCommit(t, ctx, s3.Store, item, src)
-	if _, err := uploads.Commit(ctx, admin, ref, []media.Op{{Op: "insert", Name: "source", Original: name}}); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg := video.Config{Store: s3.Store, Locker: s3test.Locker(t, s3.Store), TempDir: os.Getenv("CONTENTKIT_BENCH_TMP")}
+	e := newEnv(t, opts{profile: os.Getenv("CONTENTKIT_BENCH_PROFILE"), mp4: []int{1080, 480}})
+	cfg := video.Config{Manifests: e.ms, Queue: e.queue, TempDir: os.Getenv("CONTENTKIT_BENCH_TMP")}
 	if cfg.TempDir == "" {
 		cfg.TempDir = t.TempDir()
 	}
 	cfg.Threads, _ = strconv.Atoi(os.Getenv("CONTENTKIT_BENCH_THREADS"))
 	defer benchKnobs(&cfg)()
-	enc, err := video.New(ctx, cfg)
-	if err != nil {
+	var err error
+	if e.enc, err = video.New(e.ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
-	wc := video.WorkerConfig{Encoder: enc, Pool: pool, Schema: schema, Kinds: kinds}
-	contribution, err := video.Contribution(wc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	clientConfig := video.ClientConfig(wc)
-	clientConfig.FetchPollInterval = 100 * time.Millisecond
-	worker, err := riverhelpers.New(ctx, pool, clientConfig, contribution)
-	if err != nil {
-		t.Fatal(err)
-	}
-	events, unsubscribe := worker.Subscribe(river.EventKindJobCompleted, river.EventKindJobFailed, river.EventKindJobCancelled)
-	defer unsubscribe()
+	e.wc.Encoder, e.wc.ChunkTarget = e.enc, 0
+	path := benchCommit(t, e, src)
 
 	res := benchResult{Label: os.Getenv("CONTENTKIT_BENCH_LABEL"), Sample: filepath.Base(src), Threads: cfg.Threads,
 		FFmpeg: ffmpegVersion(), Load1: load1(), Phases: map[string]float64{}}
@@ -168,98 +123,82 @@ func benchSample(t *testing.T, src string) {
 		stop := sampleResources(cfg.TempDir, &res)
 		defer stop()
 		start, cpu0 := time.Now(), cpuSeconds()
-		if err := worker.Start(ctx); err != nil {
-			t.Fatal(err)
-		}
-		defer func() {
-			stopCtx, stopWorker := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-			defer stopWorker()
-			if err := worker.StopAndCancel(stopCtx); err != nil {
-				t.Errorf("stop benchmark worker: %v", err)
-			}
-		}()
-		tick := time.NewTicker(100 * time.Millisecond)
-		defer tick.Stop()
-		jobTable := pgx.Identifier{schema, "river_job"}.Sanitize()
+		e.start()
+		defer e.stopWorker()
+		jobTable := pgx.Identifier{e.schema, "river_job"}.Sanitize()
 		for {
 			select {
-			case event := <-events:
+			case event := <-e.events:
 				if event.Kind != river.EventKindJobCompleted {
 					t.Fatalf("job %s %s: %+v", event.Kind, event.Job.Kind, event.Job.Errors)
 				}
-			case <-tick.C:
-				m, _, err := ms.Get(ctx, ref)
-				if err != nil {
-					t.Fatal(err)
-				}
-				file := m.Files[m.File("source")]
-				if file.Servable() && res.Playable == 0 {
-					res.Playable = time.Since(start).Seconds()
-				}
-				switch file.State() {
-				case media.StateFailed:
-					t.Fatalf("video failed: %s", file.HLS.Error)
-				case media.StateReady:
-				default:
-					continue
-				}
-				// Publication precedes assembly completion. Wait for every video job
-				// in this sample's private schema, independently of event delivery order.
-				rows, err := pool.Query(ctx, `SELECT kind, bool_and(state = 'completed'),
+				continue
+			case <-time.After(100 * time.Millisecond):
+			}
+			m := e.manifest()
+			if res.Playable == 0 && len(m.Outputs(path, "hls")) > 0 {
+				res.Playable = time.Since(start).Seconds()
+			}
+			if r := e.readiness(m); r.State == media.StateFailed {
+				t.Fatalf("video failed: %+v", e.file(m, path).Failed)
+			} else if !r.Ready() {
+				continue
+			}
+			// Wait for every video job in this sample's private schema.
+			rows, err := e.pool.Query(e.ctx, `SELECT kind, bool_and(state = 'completed'),
 COALESCE(sum(extract(epoch FROM finalized_at - attempted_at)), 0)
 FROM `+jobTable+` WHERE queue IN ($1, $2) GROUP BY kind`, workqueue.VideoLightQueue, workqueue.VideoEncodeQueue)
-				if err != nil {
-					t.Fatal(err)
-				}
-				done := true
-				var kind string
-				var completed bool
-				var seconds float64
-				_, err = pgx.ForEachRow(rows, []any{&kind, &completed, &seconds}, func() error {
-					done = done && completed
-					res.Phases[kind] = seconds
-					return nil
-				})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if !done {
-					continue
-				}
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := true
+			var kind string
+			var completed bool
+			var seconds float64
+			if _, err = pgx.ForEachRow(rows, []any{&kind, &completed, &seconds}, func() error {
+				done = done && completed
+				res.Phases[kind] = seconds
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if done {
 				res.Wall = time.Since(start).Seconds()
 				res.CPU = cpuSeconds() - cpu0
 				return
-			case <-ctx.Done():
-				t.Fatal(ctx.Err())
 			}
 		}
 	}()
 
-	m, _, err := ms.Get(ctx, ref)
-	if err != nil {
-		t.Fatal(err)
+	m := e.manifest()
+	var renditions []media.File
+	for _, o := range m.Outputs(path, "hls") {
+		if o.Track.Kind == media.TrackVideo {
+			renditions = append(renditions, o)
+		}
 	}
-	f := m.Files[m.File("source")]
-	if f.HLS == nil || f.HLS.Error != "" || len(f.HLS.Video) == 0 {
-		t.Fatalf("no ladder: %+v", f.HLS)
+	if len(renditions) == 0 {
+		t.Fatal("no ladder")
 	}
 	res.Knobs = knobsNote()
-	res.Duration, _ = f.Meta["duration"].(float64)
+	res.Duration = e.file(m, path).Dur
 	res.Frames = frameCount(t, src)
-	res.CPUPerOut = res.CPU * 1000 / float64(res.Frames*len(f.HLS.Video))
+	res.CPUPerOut = res.CPU * 1000 / float64(res.Frames*len(renditions))
 	res.Realtime = res.Duration / res.Wall
-	for _, d := range m.Downloads {
-		res.Downloads += d.Size >> 20
+	for _, f := range m.Files {
+		if strings.HasPrefix(f.Preset, "mp4-") {
+			res.Downloads += f.Size >> 20
+		}
 	}
-	dir := t.TempDir()
-	for _, r := range f.HLS.Video {
-		path := benchFetch(t, ctx, s3.Store, item, r.Blob, dir)
-		br := benchRung{Codec: r.Codec, Rung: r.Rung, W: r.Width, H: r.Height, AvgKbps: r.Average / 1000}
+	for _, r := range renditions {
+		local := e.blob(r.Blob)
+		rung, _ := strconv.Atoi(strings.TrimPrefix(strings.SplitN(r.Path, "-", 2)[0], "hls/"))
+		br := benchRung{Codec: media.Codec(r.Track.Codec), Rung: rung, W: r.W, H: r.H, AvgKbps: r.Track.Average / 1000}
 		if os.Getenv("CONTENTKIT_BENCH_QUALITY") != "0" {
-			br.SSIM, br.PSNR, br.VMAF, br.VMAF1, br.VMAFMin = quality(t, src, path, r.Width, r.Height)
+			br.SSIM, br.PSNR, br.VMAF, br.VMAF1, br.VMAFMin = quality(t, src, local, r.W, r.H)
 		}
 		res.Rungs = append(res.Rungs, br)
-		os.Remove(path)
+		os.Remove(local)
 	}
 	b, _ := json.Marshal(res)
 	t.Logf("%s", b)
@@ -273,7 +212,9 @@ FROM `+jobTable+` WHERE queue IN ($1, $2) GROUP BY kind`, workqueue.VideoLightQu
 	}
 }
 
-func benchCommit(t *testing.T, ctx context.Context, store media.Store, item media.Item, src string) string {
+// benchCommit stores the sample at its content address (in parts above
+// 1 GiB) and commits it as the source; it returns the source's path.
+func benchCommit(t *testing.T, e *env, src string) string {
 	f, err := os.Open(src)
 	if err != nil {
 		t.Fatal(err)
@@ -285,10 +226,14 @@ func benchCommit(t *testing.T, ctx context.Context, store media.Store, item medi
 		t.Fatal(err)
 	}
 	sum := h.Sum(nil)
-	name := media.SHA256Name(sum)
-	key, _ := item.Original(name)
+	blob := layout.SHA256Name(sum)
+	key, _ := e.item().Blob(blob)
+	typ := map[string]string{".mkv": "video/x-matroska", ".mov": "video/quicktime"}[filepath.Ext(src)]
+	if typ == "" {
+		typ = "video/mp4"
+	}
 	if size > 1<<30 {
-		id, err := store.CreateMultipart(ctx, key, "video/mp4")
+		id, err := e.store.CreateMultipart(e.ctx, key, typ)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -297,40 +242,26 @@ func benchCommit(t *testing.T, ctx context.Context, store media.Store, item medi
 			l := min(256<<20, size-off)
 			ph := sha256.New()
 			_, _ = io.Copy(ph, io.NewSectionReader(f, off, l))
-			p, err := store.PutPart(ctx, key, id, n, io.NewSectionReader(f, off, l), l, ph.Sum(nil))
+			p, err := e.store.PutPart(e.ctx, key, id, n, io.NewSectionReader(f, off, l), l, ph.Sum(nil))
 			if err != nil {
 				t.Fatal(err)
 			}
 			parts = append(parts, p)
 		}
-		if _, err := store.CompleteMultipart(ctx, key, id, parts); err != nil {
+		if _, err := e.store.CompleteMultipart(e.ctx, key, id, parts); err != nil {
 			t.Fatal(err)
 		}
-		return name
-	}
-	if _, err := store.Put(ctx, key, io.NewSectionReader(f, 0, size), size, media.PutOptions{ContentType: "video/mp4", ChecksumSHA256: sum}); err != nil {
+	} else if _, err := e.store.Put(e.ctx, key, io.NewSectionReader(f, 0, size), size, media.PutOptions{ContentType: typ, ChecksumSHA256: sum}); err != nil {
 		t.Fatal(err)
 	}
-	return name
-}
-
-func benchFetch(t *testing.T, ctx context.Context, store media.Store, item media.Item, blob, dir string) string {
-	key, _ := item.Private(blob)
-	rc, _, err := store.Get(ctx, key, media.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
+	m := e.commit(media.Op{Op: media.OpPut, Path: "source" + filepath.Ext(src), Blob: blob})
+	for _, f := range m.Files {
+		if f.IsUpload() && f.Blob == blob {
+			return f.Path
+		}
 	}
-	defer rc.Close()
-	path := filepath.Join(dir, blob+".mp4")
-	out, err := os.Create(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := io.Copy(out, rc); err != nil {
-		t.Fatal(err)
-	}
-	out.Close()
-	return path
+	t.Fatal("source not committed")
+	return ""
 }
 
 var (

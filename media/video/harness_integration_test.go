@@ -54,6 +54,7 @@ type opts struct {
 	codecs   []media.Codec // the worker's; default H.264 only
 	chunk    time.Duration // WorkerConfig.ChunkTarget
 	loudness float64
+	profile  string // the HLS and MP4 presets' profile
 	encoder  string // default EncoderCPU
 	shared   bool   // also a "clip" kind in a shared namespace
 }
@@ -69,7 +70,7 @@ func testKind(o opts) media.Kind {
 			{Path: "audio/{name}", Types: audioTypes, MaxBytes: 64 << 20},
 		},
 		Private: []media.Private{
-			{Name: "hls", From: "source", To: "hls/", HLS: &media.HLS{Ladder: o.ladder}},
+			{Name: "hls", From: "source", To: "hls/", HLS: &media.HLS{Ladder: o.ladder, Profile: o.profile}},
 			{Name: "vtt", From: "subs/{name}", To: "vtt/{name}.vtt", Subtitles: &media.Subtitles{}},
 			{Name: "listen", From: "audio/{name}", To: "listen/{name}/", Audio: &media.Audio{Loudness: o.loudness}},
 		},
@@ -77,7 +78,7 @@ func testKind(o opts) media.Kind {
 	}
 	for _, n := range o.mp4 {
 		k.Private = append(k.Private, media.Private{Name: fmt.Sprintf("mp4-%d", n), From: "source",
-			To: fmt.Sprintf("video/source-%dp.mp4", n), Download: fmt.Sprintf("{title} (%dp).mp4", n), MP4: media.Rung(n)})
+			To: fmt.Sprintf("video/source-%dp.mp4", n), Download: fmt.Sprintf("{title} (%dp).mp4", n), MP4: &media.MP4{Rung: n, Profile: o.profile}})
 	}
 	return k
 }
