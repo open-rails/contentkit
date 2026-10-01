@@ -1,6 +1,6 @@
 # @openrails/contentkit-upload
 
-Browser client for ContentKit media: SHA-256-addressed uploads (one PUT up to
+Browser client for ContentKit media: staged uploads (one PUT up to
 64 MiB, resumable multipart above: 8–16 MiB parts sized from measured
 throughput, bounded concurrency, per-part retry), commit ops, the read API,
 React hooks, and a styled UI for cropped images, video posters and galleries.

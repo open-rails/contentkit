@@ -24,7 +24,7 @@ export interface QueueItem {
   unattached?: boolean;
   /** The server's view of an unattached upload while it processes (editor read): dims, pending, failed, progress. */
   processing?: FileInfo;
-  /** Processing finished (outputs written, or failed). */
+  /** Processing finished (placed and outputs written, or failed). */
   processed?: boolean;
 }
 
@@ -250,7 +250,7 @@ export class UploadQueue {
     for (const i of pending) {
       const f = byPath.get(i.path);
       if (!f) continue;
-      changed = this.set(i.id, { processing: f, processed: !!f.failed || !f.pending?.length }) || changed;
+      changed = this.set(i.id, { processing: f, processed: !!f.failed || (!f.pending?.length && !f.staged) }) || changed;
     }
     if (changed) this.changed();
   }

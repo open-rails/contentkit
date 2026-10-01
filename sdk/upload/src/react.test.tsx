@@ -30,7 +30,7 @@ it("useUpload reports progress and the result; with put it commits and waits", a
     await result.current.upload(new File([bytes(100)], "c.png", { type: "image/png" }), { ref, path: "originals/c.png" });
   });
   expect(result.current.status).toBe("done");
-  expect(result.current.result).toMatchObject({ path: "originals/c.png", blob: expect.stringMatching(/^sha256-/) });
+  expect(result.current.result).toMatchObject({ path: "originals/c.png", blob: expect.stringMatching(/^u-/), exists: false });
   expect(result.current.progress?.loaded).toBe(100);
   expect(s.commits).toEqual([]);
 

@@ -56,7 +56,7 @@ it("AvatarUpload: pick → crop dialog with a sharpness warning → save → sho
 
   await user.click(within(dialog).getByRole("button", { name: "Save" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(s.commits[0]).toEqual([{ op: "put", path: "avatar.png", blob: expect.stringMatching(/^sha256-/), edit: { crop: { x: 50, y: 0, w: 300, h: 300 } } }]);
+  expect(s.commits[0]).toEqual([{ op: "put", path: "avatar.png", blob: expect.stringMatching(/^u-/), edit: { crop: { x: 50, y: 0, w: 300, h: 300 } } }]);
   expect(onChange).toHaveBeenCalledOnce();
   expect(container.querySelector("img")?.getAttribute("data-rendition")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Change" })).toBeInTheDocument();

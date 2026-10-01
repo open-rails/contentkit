@@ -9,6 +9,7 @@ const EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "
 
 interface Upload {
   path: string;
+  /** The staged name the parts write. */
   blob: string;
   type: string;
   size: number;
@@ -22,12 +23,17 @@ interface Upload {
  * and Reader.Handler's semantics, for unit tests of the client's scheduling
  * and the components. The integration suite runs the real handlers over MinIO.
  * Mount: endpoint "http://x/api", readEndpoint "http://x/read".
+ *
+ * Fresh uploads are staged (u-{uuid}); a commit places them at once at
+ * sha256-{hex} of the declared hash, so an identical upload then exists.
  */
 export class FakeServer {
-  /** Blobs in the bucket by name, with their size. */
+  /** Objects in the bucket by name (staged u-… or placed sha256-…), with their size. */
   objects = new Map<string, number>();
-  /** Blobs the sweep may take: presign sends them again and commit refuses them. */
+  /** Names the sweep may take: presign stages them again and commit refuses them. */
   stale = new Set<string>();
+  /** Every presign's body. */
+  presigns: PresignBody[] = [];
   /** Answer not_uploaded without the blobs field. */
   omitBlobs = false;
   uploads = new Map<string, Upload>();
@@ -42,12 +48,17 @@ export class FakeServer {
   dropPuts = 0;
   /** Editor reads that answer pending after each commit. */
   pendingReads = 0;
+  /** Editor reads that answer the uploads staged (not placed yet) after each commit. */
+  stagedReads = 0;
   /** Each item's uploads, by "kind/id". */
   items = new Map<string, FileInfo[]>();
   /** Frame grabs as "t@w". */
   frames: string[] = [];
   private pendingLeft = 0;
+  private stagedLeft = 0;
   private seq = 0;
+  /** Each staged name's declared hash. */
+  private hashes = new Map<string, string>();
 
   /** Seeds an item's uploads (editor read view). */
   seed(ref: { kind: string; id: string }, files: FileInfo[]) {
@@ -103,9 +114,10 @@ export class FakeServer {
   private read(ref: { kind: string; id: string }, q: URLSearchParams): ReadResult {
     const prefix = q.get("prefix") ?? "";
     const pending = this.pendingLeft > 0 && (this.pendingLeft--, true);
+    const staged = this.stagedLeft > 0 && (this.stagedLeft--, true);
     const files = (this.items.get(key(ref)) ?? [])
       .filter((f) => f.path.startsWith(prefix))
-      .map((f) => ({ ...f, ...(pending ? { pending: ["render"] } : {}), ...(f.type.startsWith("image/") && f.size ? { editor_url: `fake://cdn/private/e-${f.path}` } : {}) }));
+      .map((f) => ({ ...f, ...(pending ? { pending: ["render"] } : {}), ...(staged ? { staged: true } : {}), ...(f.type.startsWith("image/") && f.size ? { editor_url: `fake://cdn/private/e-${f.path}` } : {}) }));
     return { access: "full", preview_limit: 0, expires: 0, total: files.length, offset: 0, limit: 50, files };
   }
 
@@ -118,12 +130,16 @@ export class FakeServer {
           throw new UploadError(r.code, r.error, r.status, r.retry_after);
         }
         if (!/^[0-9a-f]{64}$/.test(p.sha256)) throw new UploadError("invalid_request", "sha256 required", 400);
-        const blob = "sha256-" + p.sha256;
+        this.presigns.push(p);
         const ext = EXT[p.type] ?? "bin";
         // Named uploads are named by the server; a path without an extension gets one.
         const at = p.path.startsWith("inline/") ? `inline/i-${++this.seq}.${ext}` : /\.\w+$/.test(p.path) ? p.path : `${p.path}.${ext}`;
+        const placed = "sha256-" + p.sha256;
+        if (this.objects.get(placed) === p.size && !this.stale.has(placed)) return { path: at, blob: placed, exists: true, process_on_upload: this.processOnUpload };
+        // Anything else is staged under a fresh name.
+        const blob = `u-00000000-0000-4000-8000-${String(++this.seq).padStart(12, "0")}`;
+        this.hashes.set(blob, p.sha256);
         const out = { path: at, blob, process_on_upload: this.processOnUpload };
-        if (this.objects.get(blob) === p.size && !this.stale.has(blob)) return { ...out, exists: true };
         if (p.size <= 64 * MiB) return { ...out, put: req(`fake://s3/put/${blob}`, { "Content-Type": p.type, "X-Amz-Checksum-Sha256": b64(p.sha256) }) };
         const ticket = `t${++this.seq}`;
         this.uploads.set(ticket, { path: at, blob, type: p.type, size: p.size, parts: new Map(), signed: new Map(), complete: false });
@@ -188,6 +204,9 @@ export class FakeServer {
           const size = this.objects.get(op.blob!)!;
           const dims = type.startsWith("image/") ? { w: 4000, h: 3000 } : type.startsWith("video/") ? { w: 1920, h: 1080, dur: 12 } : {};
           place({ path: op.path!, type, size, ...dims, upload: true, ...(op.edit ? { edit: op.edit } : {}), ...(op.meta ? { meta: op.meta } : {}), ...(op.unattached ? { unattached: true } : {}) }, op.index);
+          // The worker places a staged upload at the hash of its bytes.
+          const sum = this.hashes.get(op.blob!);
+          if (sum) this.objects.set(`sha256-${sum}`, size);
           break;
         }
         case "frame":
@@ -216,6 +235,7 @@ export class FakeServer {
     files = files.map((f) => JSON.parse(JSON.stringify(f)) as FileInfo);
     this.items.set(key(ref), files);
     this.pendingLeft = this.pendingReads;
+    this.stagedLeft = this.stagedReads;
     return files;
   }
 

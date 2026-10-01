@@ -176,7 +176,7 @@ export function useSlotCrop(client: UploadClient, o: SlotCropOptions): UseSlotCr
     [open],
   );
 
-  const canRecrop = !!o.file && (o.file.size ?? 0) > 0 && !!o.file.type.startsWith("image/");
+  const canRecrop = !!o.file && !o.file.staged && (o.file.size ?? 0) > 0 && o.file.type.startsWith("image/");
   const recrop = useCallback(async () => {
     const f = opts.current.file;
     if (!f) return;

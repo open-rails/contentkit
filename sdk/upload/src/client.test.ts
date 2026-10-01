@@ -7,6 +7,7 @@ import { UploadError } from "./errors.js";
 const MiB = 1 << 20;
 const ref = { kind: "video", id: "0192f000-0000-7000-8000-000000000001" };
 const path = "source";
+const STAGED = /^u-[0-9a-f-]{36}$/;
 
 function setup(o: { retries?: number; concurrency?: number } = {}) {
   const s = new FakeServer();
@@ -18,16 +19,18 @@ function file(n: number, seed = 1, type = "video/mp4"): File {
 }
 
 describe("single PUT", () => {
-  it("hashes, presigns the path with the checksum and PUTs; an identical file is not resent", async () => {
+  it("hashes, presigns the path with the checksum and stages one PUT; a placed identical file is not resent", async () => {
     const { s, c } = setup();
     const f = file(3 * MiB, 2, "image/png");
+    const sum = createHash("sha256").update(bytes(3 * MiB, 2)).digest("hex");
     const phases = new Set<string>();
     const up = await c.upload(f, { ref, path: "cover", onProgress: (p) => phases.add(p.phase) });
-    expect(up).toMatchObject({ path: "cover.png", blob: expect.stringMatching(/^sha256-[0-9a-f]{64}$/), type: "image/png", size: 3 * MiB, exists: false });
-    expect(s.puts.length).toBe(1);
-    expect([...phases]).toEqual(["hashing", "uploading"]);
+    expect(up).toMatchObject({ path: "cover.png", blob: expect.stringMatching(STAGED), type: "image/png", size: 3 * MiB, exists: false });
+    expect(s.presigns[0]).toMatchObject({ path: "cover", type: "image/png", size: 3 * MiB, sha256: sum });
+    expect([s.puts, [...phases]]).toEqual([[`fake://s3/put/${up.blob}`], ["hashing", "uploading"]]);
+    await c.commit(ref, [{ op: "put", path: up.path, blob: up.blob }]);
     const again = await c.upload(f, { ref, path: "cover" });
-    expect([again.exists, again.blob, s.puts.length]).toEqual([true, up.blob, 1]);
+    expect([again.exists, again.blob, s.puts.length]).toEqual([true, `sha256-${sum}`, 1]);
   });
 
   it("retries a dropped PUT", async () => {
@@ -51,7 +54,7 @@ describe("single PUT", () => {
     const f = await c.put(file(MiB, 4, "image/png"), { ref, path: "inline/x.png", edit: { rotate: 90 }, onProgress: (p) => phases.push(p.phase) });
     expect(f).toMatchObject({ path: "inline/i-1.png", upload: true, edit: { rotate: 90 } });
     expect(f.pending).toBeUndefined();
-    expect(s.commits[0]).toEqual([{ op: "put", path: "inline/i-1.png", blob: expect.stringMatching(/^sha256-/), edit: { rotate: 90 } }]);
+    expect(s.commits[0]).toEqual([{ op: "put", path: "inline/i-1.png", blob: expect.stringMatching(STAGED), edit: { rotate: 90 } }]);
     expect(phases.at(-1)).toBe("processing");
     expect(s.calls.filter((x) => x === "/read")).toHaveLength(1);
   });
@@ -60,13 +63,13 @@ describe("single PUT", () => {
 describe("multipart", () => {
   const size = 70 * MiB + 123;
 
-  it("hashes the whole file first, so the blob is its content address", async () => {
+  it("hashes the whole file first, then stages it in parts", async () => {
     const { s, c } = setup();
     const phases: string[] = [];
     const up = await c.upload(file(size), { ref, path, onProgress: (p) => phases.at(-1) !== p.phase && phases.push(p.phase) });
     expect(phases).toEqual(["hashing", "uploading", "completing"]);
-    expect(up.blob).toBe("sha256-" + createHash("sha256").update(bytes(size, 1)).digest("hex"));
-    expect(up.path).toBe("source.mp4");
+    expect(s.presigns[0]!.sha256).toBe(createHash("sha256").update(bytes(size, 1)).digest("hex"));
+    expect(up).toMatchObject({ path: "source.mp4", blob: expect.stringMatching(STAGED) });
     expect(s.objects.get(up.blob)).toBe(size);
   });
 
@@ -159,7 +162,7 @@ describe("multipart", () => {
 
   it("refuses to resume with a different file", async () => {
     const { c } = setup();
-    const state = { ticket: "t", path: "source.mp4", blob: "sha256-x", type: "video/mp4", size, ref, file: { size, name: "other", lastModified: 1 }, limits: { minPartSize: 8 * MiB, maxPartSize: 16 * MiB, maxParts: 9 }, parts: [] };
+    const state = { ticket: "t", path: "source.mp4", blob: "u-x", type: "video/mp4", size, ref, file: { size, name: "other", lastModified: 1 }, limits: { minPartSize: 8 * MiB, maxPartSize: 16 * MiB, maxParts: 9 }, parts: [] };
     const err = await c.upload(file(size), { ref, path, resume: state }).catch((e) => e);
     expect(err.code).toBe("resume_mismatch");
   });
@@ -196,7 +199,11 @@ describe("commit", () => {
     const commits = () => s.calls.filter((x) => x === "/commit").length;
     const files = await c.commit(gallery, [put(ua.path, ua.blob), put(ub.path, ub.blob)], { sources: { [ua.blob]: a, [ub.blob]: b } });
     expect(files.map((f) => f.path)).toEqual(["originals/1.png", "originals/2.png"]);
-    expect([commits(), s.puts.length, s.stale.size]).toEqual([2, 3, 0]); // only b went up again
+    expect([commits(), s.puts.length]).toEqual([2, 3]); // only b went up again, staged anew
+    const retried = s.commits.at(-1)!.map((op) => op.blob);
+    expect(retried[0]).toBe(ua.blob);
+    expect(retried[1]).toMatch(STAGED);
+    expect(retried[1]).not.toBe(ub.blob);
   });
 
   it("uploads every sourced file again when the refusal names none", async () => {
@@ -208,8 +215,8 @@ describe("commit", () => {
     const ub = await c.upload(b, { ref: gallery, path: "originals/2.png" });
     s.stale.add(ub.blob);
     await c.commit(gallery, [put(ua.path, ua.blob), put(ub.path, ub.blob)], { sources: { [ua.blob]: a, [ub.blob]: b } });
-    // Both went through presign again; only the stale one needed bytes.
-    expect([s.calls.filter((x) => x === "/presign").length, s.puts.length]).toEqual([4, 3]);
+    // Neither was placed, so both are staged and sent again.
+    expect([s.calls.filter((x) => x === "/presign").length, s.puts.length]).toEqual([4, 4]);
   });
 
   it("gives up after one retry, and without sources", async () => {
@@ -223,7 +230,9 @@ describe("commit", () => {
     s.transport = async () => {}; // the PUT "succeeds" but nothing lands
     const c2 = new UploadClient({ endpoint: "http://x/api", fetch: s.fetch, transport: s.transport, retryDelay: () => 0 });
     const err = await c2.commit(gallery, ops, { sources: { [ua.blob]: a } }).catch((e) => e);
-    expect([err.code, err.blobs]).toEqual(["not_uploaded", [ua.blob]]);
+    expect(err.code).toBe("not_uploaded");
+    expect(err.blobs).toEqual([expect.stringMatching(STAGED)]);
+    expect(err.blobs[0]).not.toBe(ua.blob);
     expect(s.calls.filter((x) => x === "/commit").length).toBe(3);
   });
 });
@@ -238,6 +247,14 @@ describe("reads", () => {
     await c.commit(ref, [{ op: "edit", path: "cover.png", edit }]);
     expect(await c.waitFor(ref, "cover", { interval: 1 })).toMatchObject({ path: "cover.png", edit });
     expect(s.calls.filter((x) => x === "/read")).toHaveLength(3);
+    // An upload with nothing pending is not processed while it is staged.
+    s.pendingReads = 0;
+    s.stagedReads = 2;
+    await c.commit(ref, [{ op: "edit", path: "cover.png" }]);
+    expect(await c.waitFor(ref, "cover", { interval: 1 })).toMatchObject({ path: "cover.png" });
+    expect(s.calls.filter((x) => x === "/read")).toHaveLength(6);
+    s.seed(ref, [{ path: "source.mp4", type: "video/mp4", size: 10, staged: true }]);
+    expect((await c.waitFor(ref, "source", { timeout: 0 }).catch((e) => e)).code).toBe("render_timeout");
     s.seed(ref, [{ path: "cover.png", type: "image/png", size: 10, failed: { of: "x", message: "too small", code: "image_too_small", details: { width: 100, min_width: 300 } } }]);
     const failed = await c.waitFor(ref, "cover").catch((e) => e);
     expect([failed.code, failed.details?.min_width, failed.refusal]).toEqual(["image_too_small", 300, true]);

@@ -58,7 +58,7 @@ it("useSlotCrop: pick → edit → save uploads and puts the file with the edit,
   expect(result.current.cropped).toEqual({ width: 400, height: 400 });
   await act(async () => void (await result.current.save()));
   expect(result.current.status).toBe("done");
-  expect(s.commits[0]).toEqual([{ op: "put", path: "avatar.png", blob: expect.stringMatching(/^sha256-/), edit }]);
+  expect(s.commits[0]).toEqual([{ op: "put", path: "avatar.png", blob: expect.stringMatching(/^u-/), edit }]);
   expect(saved).toHaveBeenCalledWith(expect.objectContaining({ path: "avatar.png", edit }));
   expect(source.revoke).toHaveBeenCalled();
   expect(vi.mocked(fetch).mock.calls.map(([u, i]) => [String(u), i?.cache])).toEqual([
