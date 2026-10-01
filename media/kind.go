@@ -212,6 +212,15 @@ func (k *Kind) validatePrivate(p Private, names map[string]bool) error {
 	if slices.Contains(placeholders(p.Download), "") {
 		return fmt.Errorf("invalid Download %q", p.Download)
 	}
+	// Outputs never land on upload paths: "subs/{name}" uploads cannot
+	// derive "subs/{name}.vtt" (a .vtt sidecar would be its own output).
+	sample := fill(p.To, map[string]string{"name": "x"})
+	if dir {
+		sample += "x"
+	}
+	if _, _, _, _, ok := k.upload(sample); ok {
+		return fmt.Errorf("To %q overlaps an upload path", p.To)
+	}
 	switch {
 	case p.Image != nil:
 		return p.Image.validate()

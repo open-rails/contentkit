@@ -267,7 +267,7 @@ func TestHLSPlaylists(t *testing.T) {
 		}); err != nil {
 			return err
 		}
-		return m.SetOutputs(sub, "vtt", []media.File{{Path: "subs/en.vtt", Blob: put("WEBVTT\n"), Type: "text/vtt"}})
+		return m.SetOutputs(sub, "vtt", []media.File{{Path: "vtt/en.vtt", Blob: put("WEBVTT\n"), Type: "text/vtt"}})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestHLSPlaylists(t *testing.T) {
 		return string(b)
 	}
 	master := get("hls/master.m3u8")
-	for _, want := range []string{"RESOLUTION=1920x1080", "../hls/480-h264.mp4.m3u8", `LANGUAGE="ja"`, `NAME="English"`, "../subs/en.vtt.m3u8", "BANDWIDTH=5128000"} {
+	for _, want := range []string{"RESOLUTION=1920x1080", "../hls/480-h264.mp4.m3u8", `LANGUAGE="ja"`, `NAME="English"`, "../vtt/en.vtt.m3u8", "BANDWIDTH=5128000"} {
 		if !strings.Contains(master, want) {
 			t.Fatalf("master lacks %q:\n%s", want, master)
 		}
@@ -308,7 +308,7 @@ func TestHLSPlaylists(t *testing.T) {
 	if status, body, _ := f.fetch(u); status != http.StatusOK || body != "v1080" {
 		t.Fatalf("segment blob %d %q", status, body)
 	}
-	if subs := get("subs/en.vtt.m3u8"); !strings.Contains(subs, "#EXTINF:6.500,") {
+	if subs := get("vtt/en.vtt.m3u8"); !strings.Contains(subs, "#EXTINF:6.500,") {
 		t.Fatalf("subtitle playlist:\n%s", subs)
 	}
 	if sprite := get("hls/sprite.vtt"); !strings.Contains(sprite, "#xywh=160,0,160,90") || !strings.Contains(sprite, "00:00:05.000 --> 00:00:06.500") {

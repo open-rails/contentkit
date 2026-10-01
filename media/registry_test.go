@@ -85,6 +85,7 @@ func TestRegistryRefuses(t *testing.T) {
 		"zero width":         {Name: "k", Uploads: up, Public: []media.Public{{Name: "c", From: "cover", To: "c-{w}.webp", Widths: []int{0}}}},
 		"bad ladder":         {Name: "k", Uploads: up, Private: []media.Private{{Name: "p", From: "cover", To: "h/", HLS: &media.HLS{Ladder: []int{480, 1080}}}}},
 		"underscore kind":    {Name: "_k", Uploads: up},
+		"to on an upload":    {Name: "k", Uploads: up, Private: []media.Private{{Name: "p", From: "originals/{name}", To: "originals/{name}.webp", Image: &media.Image{}}}},
 	} {
 		if _, err := media.NewRegistry(media.Config{Namespace: "d", Kinds: []media.Kind{k}}); err == nil {
 			t.Errorf("%s: accepted", name)

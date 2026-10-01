@@ -402,7 +402,7 @@ var Video = media.Kind{Name: "video", KeepOriginals: true,
 	Private: []media.Private{
 		{Name: "hls", From: "source", To: "hls/", HLS: &media.HLS{Ladder: []int{2160, 1080, 480}}},
 		{Name: "mp4-1080", From: "source", To: "video/source-1080p.mp4", Download: "{title} (1080p).mp4", MP4: media.Rung(1080)},
-		{Name: "vtt", From: "subs/{name}", To: "subs/{name}.vtt", Subtitles: &media.Subtitles{}},
+		{Name: "vtt", From: "subs/{name}", To: "vtt/{name}.vtt", Subtitles: &media.Subtitles{}},
 	},
 	Public: []media.Public{{Name: "poster", From: "poster", To: "poster-{w}.webp", Widths: []int{640, 1280, 1920}, Default: "poster.png"}},
 }
