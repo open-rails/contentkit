@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -22,36 +20,48 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// recipe is the encode's identity with the ladder and profile: a manifest
-// hls or download whose spec differs is stale and re-encoded.
-const recipe = "codecs:%s|h264-high,hevc-main-hvc1-x265-closed,av1-svt-p%d|capped-crf:%s|k4-sc0|short-side:%s|native-below-%d|lanczos|max-4096-3840x2160|lvl51-52|max60fps|sar1|aac-128k-48k-2ch|webvtt|sprite-10x10-short90-jpg|mp4-%s-all-audio-mov_text|stage-per-rung|pt-top|v5"
+// hlsRecipe and mp4Recipe identify the encodes: a preset's outputs carry
+// their hash with the source and the preset's spec (media.SpecFP) and are
+// redone when it changes. The encoders (CPU or NVENC) are not part of them.
+const (
+	hlsRecipe = "codecs:%s|h264-high,hevc-main-hvc1-x265-closed,av1-svt-p%d|capped-crf:%s|k4-sc0|short-side:%s|native-below-%d|aspect:%g-%g|lanczos|max-4096-3840x2160|lvl51-52|max60fps|sar1|aac-128k-48k-2ch|sprite-10x10-short90-jpg|stage-per-rung|pt-top|v6"
+	mp4Recipe = "h264-high|capped-crf:%s|k4-sc0|lanczos|max-4096-3840x2160|lvl51-52|max60fps|sar1|aac-128k-48k-2ch-default|faststart|v1"
+)
 
-// Spec identifies the recipe over v's ladder (empty: media.DefaultLadder)
-// and profile and the encoder's codecs in manifest hls and downloads
-// entries. The encoders (CPU or NVENC) are not part of it.
-func (e *Encoder) Spec(v media.Video) string {
-	ladder := v.Rungs()
-	h := make([]string, len(ladder))
-	for i, n := range ladder {
-		h[i] = strconv.Itoa(n)
-	}
-	var rs []string
-	for _, c := range e.c.Codecs {
-		for _, n := range []int{2160, 1440, 1080, 720, 480} {
-			r := rung{n: n, profile: v.Profile}.rate(c)
-			rs = append(rs, fmt.Sprintf("%d/%d", r.crf, r.maxrate))
-		}
-	}
-	if v.Profile != "" {
-		rs = append(rs, "tune-"+v.Profile)
+// hlsFP is the fingerprint of an HLS preset's renditions, audio tracks and
+// sprite from upload src (its source text tracks: subsFP).
+func (e *Encoder) hlsFP(src media.File, h *media.HLS) string {
+	ladder := make([]string, len(h.Rungs()))
+	for i, n := range h.Rungs() {
+		ladder[i] = strconv.Itoa(n)
 	}
 	codecs := make([]string, len(e.c.Codecs))
 	for i, c := range e.c.Codecs {
 		codecs[i] = string(c)
 	}
-	s := sha256.Sum256(fmt.Appendf(nil, recipe, strings.Join(codecs, ","), svtAV1Preset, strings.Join(rs, ","), strings.Join(h, ","),
-		nativeBelow, e.downloadCodec()))
-	return hex.EncodeToString(s[:4])
+	lo, hi := h.Aspects()
+	return media.SpecFP(src, h, fmt.Sprintf(hlsRecipe, strings.Join(codecs, ","), svtAV1Preset, rateTable(h.Profile, e.c.Codecs),
+		strings.Join(ladder, ","), nativeBelow, lo, hi))
+}
+
+// mp4FP is the fingerprint of an MP4 preset's file from upload src.
+func mp4FP(src media.File, m *media.MP4) string {
+	return media.SpecFP(src, m, fmt.Sprintf(mp4Recipe, rateTable(m.Profile, []media.Codec{media.CodecH264})))
+}
+
+// rateTable lists each codec's capped CRF per rung class under profile.
+func rateTable(profile string, codecs []media.Codec) string {
+	var rs []string
+	for _, c := range codecs {
+		for _, n := range []int{2160, 1440, 1080, 720, 480} {
+			r := rung{n: n, profile: profile}.rate(c)
+			rs = append(rs, fmt.Sprintf("%d/%d", r.crf, r.maxrate))
+		}
+	}
+	if profile != "" {
+		rs = append(rs, "tune-"+profile)
+	}
+	return strings.Join(rs, ",")
 }
 
 // sourceDemuxers are the containers a source may be; playlists, concat lists,
@@ -235,42 +245,20 @@ func sprite(ctx context.Context, dir string) error {
 	return err
 }
 
-// mux stream-copies one rendition (the file stem v in dir), every audio
-// track (default first) and the subtitles into a faststart MP4 download.
-// Output is byte-identical on retry.
-func mux(ctx context.Context, dir, v string, p plan, out string) error {
-	own := inputOptions([]string{"mov", "webvtt"}) // our own renditions and subtitles
-	args := append([]string{"-v", "error", "-nostdin"}, own...)
-	args = append(args, "-i", filepath.Join(dir, v+".mp4"))
-	order := make([]int, 0, len(p.audio))
-	for i, a := range p.audio {
-		if a.def {
-			order = append([]int{i}, order...)
-		} else {
-			order = append(order, i)
-		}
-	}
-	for _, i := range order {
-		args = append(append(args, own...), "-i", filepath.Join(dir, fmt.Sprintf("a%d.mp4", i)))
-	}
-	for i := range p.subs {
-		args = append(append(args, own...), "-i", filepath.Join(dir, fmt.Sprintf("s%d.vtt", i)))
+// mux stream-copies a rendition and an audio track ("" for none) into a
+// faststart MP4. Output is byte-identical on retry.
+func mux(ctx context.Context, video, audio, out string) error {
+	own := inputOptions([]string{"mov"}) // our own renditions
+	args := append(append([]string{"-v", "error", "-nostdin"}, own...), "-i", video)
+	if audio != "" {
+		args = append(append(args, own...), "-i", audio)
 	}
 	args = append(args, "-map", "0:v:0")
-	in := 1
-	for o, i := range order {
-		a := p.audio[i]
-		args = append(args, "-map", fmt.Sprintf("%d:a:0", in), fmt.Sprintf("-metadata:s:a:%d", o), "language="+a.iso6392,
-			fmt.Sprintf("-metadata:s:a:%d", o), "handler_name="+a.label, fmt.Sprintf("-disposition:a:%d", o), map[bool]string{true: "default", false: "0"}[o == 0])
-		in++
+	if audio != "" {
+		args = append(args, "-map", "1:a:0", "-disposition:a:0", "default")
 	}
-	for o, s := range p.subs {
-		args = append(args, "-map", fmt.Sprintf("%d:s:0", in), fmt.Sprintf("-metadata:s:s:%d", o), "language="+s.iso6392,
-			fmt.Sprintf("-metadata:s:s:%d", o), "handler_name="+s.label, fmt.Sprintf("-disposition:s:%d", o), "0")
-		in++
-	}
-	args = append(args, "-c", "copy", "-c:s", "mov_text", "-map_metadata", "-1", "-map_chapters", "-1",
-		"-fflags", "+bitexact", "-flags:v", "+bitexact", "-flags:a", "+bitexact", "-movflags", "+faststart", "-y", out)
+	args = append(args, "-c", "copy", "-map_metadata", "-1", "-map_chapters", "-1",
+		"-fflags", "+bitexact", "-flags:v", "+bitexact", "-flags:a", "+bitexact", "-movflags", "+faststart", "-f", "mp4", "-y", out)
 	_, err := command(ctx, "ffmpeg", args...)
 	return err
 }

@@ -98,15 +98,14 @@ type track struct {
 	iso6392 string // MP4 language tag
 }
 
-// plan is what one encode produces from a probed source.
+// plan is a probed source: its video stream, display size and tracks.
 type plan struct {
 	duration      float64
 	video         int     // input stream index
 	width, height int     // displayed: square pixels, rotation applied
 	fps           float64 // output rate: the source's, at most maxFPS
 	limitFPS      bool    // the source is faster than maxFPS
-	rungs         []rung
-	tileW, tileH  int // sprite tile
+	tileW, tileH  int     // sprite tile
 	audio, subs   []track
 	stream        probeStream // the video stream, for passthrough
 	formatName    string
@@ -115,7 +114,7 @@ type plan struct {
 
 var errNoVideo = errors.New("source has no video stream")
 
-func newPlan(p probeResult, v *media.Video) (plan, error) {
+func newPlan(p probeResult) (plan, error) {
 	var pl plan
 	d, err := strconv.ParseFloat(p.Format.Duration, 64)
 	if err != nil || d <= 0 || math.IsInf(d, 0) || math.IsNaN(d) {
@@ -165,11 +164,6 @@ func newPlan(p probeResult, v *media.Video) (plan, error) {
 	if pl.video < 0 {
 		return pl, errNoVideo
 	}
-	lo, hi := v.Aspects()
-	if err := checkAspect(pl.width, pl.height, lo, hi); err != nil {
-		return pl, err
-	}
-	pl.rungs = rungs(v.Rungs(), pl.width, pl.height, pl.fps, v.Profile)
 	pl.tileW, pl.tileH = tile(pl.width, pl.height)
 	// Exactly one default audio track: the first flagged one, else the first.
 	def := 0
@@ -183,6 +177,39 @@ func newPlan(p probeResult, v *media.Video) (plan, error) {
 		pl.audio[i].def = i == def
 	}
 	return pl, nil
+}
+
+// ladder is an HLS preset's rungs for the source, largest first; a source
+// outside its aspect bounds fails.
+func (pl plan) ladder(h *media.HLS) ([]rung, error) {
+	lo, hi := h.Aspects()
+	if err := checkAspect(pl.width, pl.height, lo, hi); err != nil {
+		return nil, err
+	}
+	rs := rungs(h.Rungs(), pl.width, pl.height, pl.fps, h.Profile)
+	if len(rs) == 0 {
+		return nil, errors.New("video has no applicable rendition rung")
+	}
+	return rs, nil
+}
+
+// rung is an MP4 preset's rung; false above the source (no upscaling).
+func (pl plan) rung(m *media.MP4) (rung, bool) {
+	if m.Rung > min(pl.width, pl.height) {
+		return rung{}, false
+	}
+	w, h := frame(pl.width, pl.height, m.Rung)
+	return rung{n: m.Rung, w: w, h: h, level: level(w, h, pl.fps), profile: m.Profile}, true
+}
+
+// defaultAudio is the source's default audio track, if any.
+func (pl plan) defaultAudio() (track, int, bool) {
+	for i, a := range pl.audio {
+		if a.def {
+			return a, i, true
+		}
+	}
+	return track{}, -1, false
 }
 
 // The container may outlast the selected video because it also carries audio.
