@@ -1,168 +1,114 @@
 package media
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
-	"strings"
+	"io"
+	"slices"
 
 	"github.com/open-rails/contentkit/media/layout"
 )
 
-// Manifest is the ordered file list of an item or of one version (a section
-// of the item's Root). List order is display order. References are names
-// within the item's folder.
+// ManifestVersion is the manifest format.
+const ManifestVersion = 2
+
+// Manifest is an item's manifest.json: an ordered, app-defined virtual file
+// system over the item's private blobs. Files is in an explicit,
+// deterministic order: each Upload's files by name by default (reordered by
+// commit ops), then each private preset's outputs in their uploads' order.
+// Readers never re-sort it. Public files are never listed.
 type Manifest struct {
-	Files     []File              `json:"files"`
-	Meta      map[string]any      `json:"meta,omitempty"`
-	Downloads map[string]Download `json:"downloads,omitempty"`
+	V      int            `json:"v"`
+	Hidden bool           `json:"hidden,omitempty"` // set by Expose; public files are then absent
+	Meta   map[string]any `json:"meta,omitempty"`   // the app's template values, e.g. title
+	Files  []File         `json:"files"`
+
+	index map[string]int
 }
 
-// File is one manifest entry. Original and Master live in originals/ (a
-// multipart upload's Original is its temp/ "u-{uuid}" until the worker
-// places it); variants, HLS and downloads in private/. Image variants derive from Source()
-// through Edit; Dims is Source()'s size, recorded by processing, and edits
-// are validated against it. meta w/h is the edited size.
+// File is one file: an upload (no Preset) or a derived file.
 type File struct {
-	Name     string             `json:"name"`
-	Original string             `json:"original"`
-	Master   string             `json:"master,omitempty"`
-	Type     string             `json:"type,omitempty"`
-	Size     int64              `json:"size,omitempty"`
-	Edit     *Edit              `json:"edit,omitempty"`
-	Dims     *Dims              `json:"dims,omitempty"`
-	Meta     map[string]any     `json:"meta,omitempty"`
-	Variants map[string]Variant `json:"variants,omitempty"`
-	HLS      *HLS               `json:"hls,omitempty"`
-	// Failure is why the image processor cannot derive this source through
-	// this edit (Of); a new source or edit clears it.
-	Failure *FileFailure `json:"failure,omitempty"`
-	// Derived is the FailureKey the image processor last derived every
-	// variant for; the file's images are current while it matches.
-	Derived string `json:"derived,omitempty"`
-	// Unattached marks a file processed on upload (UploadOptions.ProcessOnUpload)
-	// that is not part of the item yet: reads leave it out (editors may ask
-	// for it) until an attach op. Removing it discards its objects at once.
-	Unattached bool `json:"unattached,omitempty"`
+	Path string  `json:"path"`           // app path: "originals/001.png", "low-res/001.webp"
+	Blob string  `json:"blob,omitempty"` // "sha256-{hex}" in private/; "" only for a frame not grabbed yet
+	Type string  `json:"type"`
+	Size int64   `json:"size,omitempty"`
+	W    int     `json:"w,omitempty"` // an upload's oriented size once measured; an output's size
+	H    int     `json:"h,omitempty"`
+	Dur  float64 `json:"dur,omitempty"`
+
+	// Uploads:
+	Edit       *Edit          `json:"edit,omitempty"`       // crop and rotate in source pixels
+	Frame      *Frame         `json:"frame,omitempty"`      // grabbed from the Upload.Frames video
+	Meta       map[string]any `json:"meta,omitempty"`       // teaser, lang, label, …
+	Unattached bool           `json:"unattached,omitempty"` // processed on upload, not yet part of the item
+	Gone       bool           `json:"gone,omitempty"`       // blob dropped (KeepOriginals false); the hash stays for provenance
+	Pending    []string       `json:"pending,omitempty"`    // presets still producing from this upload
+	Failed     *Failure       `json:"failed,omitempty"`     // this blob and edit cannot be processed
+
+	// Derived files:
+	From     string `json:"from,omitempty"`     // the upload's path, or a zip's prefix
+	Preset   string `json:"preset,omitempty"`   // the Private preset
+	FP       string `json:"fp,omitempty"`       // Fingerprint of its inputs
+	Download string `json:"download,omitempty"` // the human download name
+	Track    *Track `json:"track,omitempty"`    // HLS
 }
 
-// FileFailure is a file's permanent processing failure.
-type FileFailure struct {
-	Of      string        `json:"of"`             // File.FailureKey it was recorded for
-	Message string        `json:"message"`        // what went wrong, or the rule an ImageError states
+// Frame is an upload grabbed from a frame of its Upload.Frames video at T
+// seconds; Auto lets the worker choose T. Of is the video blob it was
+// grabbed from: a new video grabs again.
+type Frame struct {
+	T    float64 `json:"t,omitempty"`
+	Auto bool    `json:"auto,omitempty"`
+	Of   string  `json:"of,omitempty"`
+}
+
+// Failure is why an upload's blob through its edit cannot be processed.
+type Failure struct {
+	Of      string        `json:"of"` // File.Key it was recorded for
+	Message string        `json:"message"`
 	Code    string        `json:"code,omitempty"` // an ImageError's code
 	Details *ErrorDetails `json:"details,omitempty"`
 }
 
-// FailureKey identifies the source and edit a Failure applies to.
-func (f File) FailureKey() string { return f.Source() + "." + f.Edit.Hash() }
-
-// Failed is the file's failure for its current source and edit, or nil.
-func (f File) Failed() *FileFailure {
-	if f.Failure != nil && f.Failure.Of == f.FailureKey() {
-		return f.Failure
-	}
-	return nil
+// Track is an HLS track file. It is small: the segment table or sprite grid
+// is its own private blob, Index (a TrackIndex), cached by hash.
+type Track struct {
+	Kind      string `json:"kind"`             // TrackVideo, TrackAudio, TrackSubs, TrackSprite
+	Codec     string `json:"codec,omitempty"`  // video: h264, hevc, av1
+	Codecs    string `json:"codecs,omitempty"` // RFC 6381
+	Bandwidth int    `json:"bw,omitempty"`
+	Average   int    `json:"avg,omitempty"`
+	ID        string `json:"id,omitempty"`
+	Lang      string `json:"lang,omitempty"`
+	Label     string `json:"label,omitempty"`
+	Default   bool   `json:"default,omitempty"`
+	Forced    bool   `json:"forced,omitempty"`
+	Index     string `json:"index,omitempty"` // "sha256-{hex}": the TrackIndex
 }
 
-// NewFileFailure records err for f: an ImageError keeps its code and details.
-func NewFileFailure(f File, err error) *FileFailure {
-	out := &FileFailure{Of: f.FailureKey(), Message: err.Error()}
-	if ie := AsImageError(err); ie != nil {
-		out.Message, out.Code, out.Details = ie.Message, ie.Code, &ie.Details
-	}
-	return out
+// Track kinds.
+const (
+	TrackVideo  = "video"
+	TrackAudio  = "audio"
+	TrackSubs   = "subs"
+	TrackSprite = "sprite"
+)
+
+// TrackIndex is a Track's index blob: a byte-range track's segments (its
+// init segment is bytes [0, Segments[0].Offset)), or a sprite's grid.
+type TrackIndex struct {
+	Segments []Segment `json:"segments,omitempty"`
+	Sprite   *Sprite   `json:"sprite,omitempty"`
 }
 
-// Source is the file variants derive from: Master when present, else Original.
-func (f File) Source() string {
-	if f.Master != "" {
-		return f.Master
-	}
-	return f.Original
-}
-
-// Teaser reports meta.teaser, a file served to any viewer who can see the item.
-func (f File) Teaser() bool { t, _ := f.Meta["teaser"].(bool); return t }
-
-type Variant struct {
-	Blob string `json:"blob"`
-	Spec string `json:"spec,omitempty"`
-	Type string `json:"type,omitempty"`
-	Size int64  `json:"size,omitempty"`
-	W    int    `json:"w,omitempty"`
-	H    int    `json:"h,omitempty"`
-}
-
-type Download struct {
-	Blob   string `json:"blob"`
-	Type   string `json:"type,omitempty"`
-	Size   int64  `json:"size,omitempty"`
-	Spec   string `json:"spec,omitempty"`
-	Inputs string `json:"inputs,omitempty"` // hash of the ordered input blobs
-}
-
-// HLS is a byte-range ladder: each rendition is one fMP4 blob. Source is the
-// original it was encoded from; when it differs from the file's, the ladder is
-// stale but still served until its replacement is promoted. Error, with no
-// renditions, records why Source can never be encoded.
-type HLS struct {
-	Source string       `json:"source"`
-	Spec   string       `json:"spec,omitempty"`
-	Error  string       `json:"error,omitempty"`
-	Video  []Rendition  `json:"video,omitempty"`
-	Audio  []AudioTrack `json:"audio,omitempty"`
-	Subs   []Subtitle   `json:"subs,omitempty"`
-	// SubsSpec is the conversion of the source's text tracks in Subs: a new
-	// one re-extracts them without re-encoding the ladder.
-	SubsSpec string  `json:"subs_spec,omitempty"`
-	Sprite   *Sprite `json:"sprite,omitempty"`
-	// Pending lists the rungs of later encode stages, smallest first: the
-	// file plays at the rungs in Video until they are added.
-	Pending []int `json:"pending,omitempty"`
-}
-
-// Rendition is one video-only fMP4 blob: its init segment is bytes
-// [0, Segments[0].Offset) and the segments follow contiguously. Rung is its
-// ladder label (the short side it was asked for, e.g. 1080 for "1080p");
-// Width and Height are the encoded frame. Each rung has one rendition per
-// codec; Codecs is its RFC 6381 value.
-type Rendition struct {
-	Rung      int       `json:"rung"`
-	Codec     Codec     `json:"codec"`
-	Width     int       `json:"w"`
-	Height    int       `json:"h"`
-	Bandwidth int       `json:"bandwidth"`
-	Average   int       `json:"avg,omitempty"`
-	Codecs    string    `json:"codecs"`
-	Blob      string    `json:"blob"`
-	Segments  []Segment `json:"segments"`
-}
-
-type AudioTrack struct {
-	ID        string    `json:"id"`
-	Lang      string    `json:"lang,omitempty"`
-	Label     string    `json:"label,omitempty"`
-	Default   bool      `json:"default,omitempty"`
-	Bandwidth int       `json:"bandwidth,omitempty"`
-	Codecs    string    `json:"codecs,omitempty"`
-	Blob      string    `json:"blob"`
-	Segments  []Segment `json:"segments"`
-}
-
-type Subtitle struct {
-	ID     string `json:"id"`
-	Lang   string `json:"lang,omitempty"`
-	Label  string `json:"label,omitempty"`
-	Forced bool   `json:"forced,omitempty"`
-	Blob   string `json:"blob"`
-}
-
+// Sprite is a seek-preview grid of Cols×Rows tiles of W×H, one per Interval seconds.
 type Sprite struct {
-	Blob     string  `json:"blob"`
 	Cols     int     `json:"cols"`
 	Rows     int     `json:"rows"`
-	Width    int     `json:"w"`
-	Height   int     `json:"h"`
+	W        int     `json:"w"`
+	H        int     `json:"h"`
 	Interval float64 `json:"interval"`
 }
 
@@ -191,141 +137,215 @@ func (s *Segment) UnmarshalJSON(b []byte) error {
 	return err
 }
 
-// Attached is the manifest without its unattached files and their
-// downloads, as readers see it; m itself when it has none.
-func (m *Manifest) Attached() *Manifest {
-	return m.without(func(f File) bool { return f.Unattached })
+// IsUpload reports an upload (a file with no preset).
+func (f File) IsUpload() bool { return f.Preset == "" }
+
+// Key identifies the blob and edit an upload's Failure applies to.
+func (f File) Key() string { return f.Blob + "." + f.Edit.Hash() }
+
+// Fail is the upload's failure for its current blob and edit, or nil.
+func (f File) Fail() *Failure {
+	if f.Failed != nil && f.Failed.Of == f.Key() {
+		return f.Failed
+	}
+	return nil
 }
 
-// without is the manifest without the files drop reports and their
-// downloads; m itself when it drops none.
-func (m *Manifest) without(drop func(File) bool) *Manifest {
-	gone := map[string]bool{}
-	for _, f := range m.Files {
-		if drop(f) {
-			gone[f.Name] = true
-		}
+// Teaser reports meta.teaser: served to every viewer who can see the item.
+func (f File) Teaser() bool { t, _ := f.Meta[MetaTeaser].(bool); return t }
+
+// NewFailure records err for upload f: an ImageError keeps its code and details.
+func NewFailure(f File, err error) *Failure {
+	out := &Failure{Of: f.Key(), Message: err.Error()}
+	if ie := AsImageError(err); ie != nil {
+		out.Message, out.Code, out.Details = ie.Message, ie.Code, &ie.Details
 	}
-	if len(gone) == 0 {
-		return m
-	}
-	out := *m
-	out.Files = make([]File, 0, len(m.Files))
-	for _, f := range m.Files {
-		if !gone[f.Name] {
-			out.Files = append(out.Files, f)
-		}
-	}
-	out.Downloads = map[string]Download{}
-	for k, d := range m.Downloads {
-		if !gone[downloadFile(k)] {
-			out.Downloads[k] = d
-		}
-	}
-	return &out
+	return out
 }
 
-// downloadFile is the file a download key names ("{file}-{rung}p" for
-// video, "{file}-audio"), else "".
-func downloadFile(key string) string {
-	if f, ok := strings.CutSuffix(key, "-audio"); ok && f != "" {
-		return f
+// Find returns the index of the file at path, or -1.
+func (m *Manifest) Find(path string) int {
+	i, ok := m.index[path]
+	if ok && i < len(m.Files) && m.Files[i].Path == path {
+		return i
 	}
-	i := strings.LastIndexByte(key, '-')
-	if i <= 0 || !strings.HasSuffix(key, "p") || len(key) < i+3 {
-		return ""
+	if !ok && len(m.index) == len(m.Files) && m.index != nil {
+		return -1
 	}
-	for _, c := range key[i+1 : len(key)-1] {
-		if c < '0' || c > '9' {
-			return ""
-		}
-	}
-	return key[:i]
-}
-
-// File returns the index of the named file, or -1.
-func (m *Manifest) File(name string) int {
-	for i := range m.Files {
-		if m.Files[i].Name == name {
-			return i
-		}
+	m.reindex()
+	if i, ok := m.index[path]; ok {
+		return i
 	}
 	return -1
 }
 
-// Renditions returns every private/ name the manifest references.
-func (m *Manifest) Renditions() []string { return m.names(AreaPrivate) }
+// Get returns the file at path.
+func (m *Manifest) Get(path string) (File, bool) {
+	if i := m.Find(path); i >= 0 {
+		return m.Files[i], true
+	}
+	return File{}, false
+}
 
-// Sources returns every uploaded file's name the manifest references
-// (originals/ hashes and staged "u-{uuid}" names).
-func (m *Manifest) Sources() []string { return m.names(AreaOriginals) }
+func (m *Manifest) reindex() {
+	m.index = make(map[string]int, len(m.Files))
+	for i, f := range m.Files {
+		m.index[f.Path] = i
+	}
+}
 
-func (m *Manifest) names(area string) []string {
-	var out []string
-	m.walk(func(a, name string) {
-		if a == area && name != "" {
-			out = append(out, name)
+// Outputs lists the derived files of preset from the upload (or zip
+// prefix) from, in manifest order.
+func (m *Manifest) Outputs(from, preset string) []File {
+	var out []File
+	for _, f := range m.Files {
+		if f.Preset == preset && f.From == from {
+			out = append(out, f)
 		}
-	})
+	}
 	return out
 }
 
-// walk visits every required reference; an unset one is visited as "".
-func (m *Manifest) walk(fn func(area, name string)) {
+// Blobs lists every blob the manifest references: kept uploads, derived
+// files and track indexes.
+func (m *Manifest) Blobs() []string {
+	var out []string
 	for _, f := range m.Files {
-		fn(AreaOriginals, f.Original)
-		if f.Master != "" {
-			fn(AreaOriginals, f.Master)
+		if f.Blob != "" && !f.Gone {
+			out = append(out, f.Blob)
 		}
-		for _, v := range f.Variants {
-			fn(AreaPrivate, v.Blob)
-		}
-		if h := f.HLS; h != nil {
-			fn(AreaOriginals, h.Source)
-			for _, r := range h.Video {
-				fn(AreaPrivate, r.Blob)
-			}
-			for _, a := range h.Audio {
-				fn(AreaPrivate, a.Blob)
-			}
-			for _, s := range h.Subs {
-				fn(AreaPrivate, s.Blob)
-			}
-			if h.Sprite != nil {
-				fn(AreaPrivate, h.Sprite.Blob)
-			}
+		if f.Track != nil && f.Track.Index != "" {
+			out = append(out, f.Track.Index)
 		}
 	}
-	for _, d := range m.Downloads {
-		fn(AreaPrivate, d.Blob)
-	}
+	return out
 }
 
-// Validate requires unique, non-empty file names and well-formed references.
+// Validate requires unique paths, well-formed blobs and edits, and derived
+// files with a preset.
 func (m *Manifest) Validate() error {
 	seen := make(map[string]bool, len(m.Files))
 	for i, f := range m.Files {
-		if f.Name == "" || seen[f.Name] {
-			return fmt.Errorf("media: manifest file %d: empty or duplicate name %q", i, f.Name)
+		switch {
+		case f.Path == "" || seen[f.Path]:
+			return fmt.Errorf("media: manifest file %d: empty or duplicate path %q", i, f.Path)
+		case f.Blob != "" && !layout.ValidHashName(f.Blob), f.Blob == "" && (f.Frame == nil || !f.IsUpload()):
+			return fmt.Errorf("media: manifest file %q: invalid blob %q", f.Path, f.Blob)
+		case f.Track != nil && f.Track.Index != "" && !layout.ValidHashName(f.Track.Index):
+			return fmt.Errorf("media: manifest file %q: invalid track index %q", f.Path, f.Track.Index)
+		case !f.IsUpload() && (f.Edit != nil || f.Frame != nil || f.Pending != nil || f.Unattached):
+			return fmt.Errorf("media: manifest file %q: a derived file has upload fields", f.Path)
+		case f.IsUpload() && (f.From != "" || f.FP != "" || f.Track != nil):
+			return fmt.Errorf("media: manifest file %q: an upload has provenance", f.Path)
 		}
-		seen[f.Name] = true
-		var w, h int
-		if f.Dims != nil {
-			w, h = f.Dims.W, f.Dims.H
-		}
-		if err := f.Edit.Check(w, h); err != nil {
-			return fmt.Errorf("media: manifest file %q: edit: %w", f.Name, err)
+		seen[f.Path] = true
+		if err := f.Edit.Check(f.W, f.H); err != nil {
+			return fmt.Errorf("media: manifest file %q: edit: %w", f.Path, err)
 		}
 	}
-	var err error
-	m.walk(func(area, name string) {
-		valid := layout.ValidHashName(name)
-		if area == AreaOriginals {
-			valid = layout.ValidSourceName(name)
-		}
-		if err == nil && !valid {
-			err = fmt.Errorf("media: manifest: invalid %s reference %q", area, name)
-		}
-	})
-	return err
+	return nil
 }
+
+// Clone copies the manifest for an edit; file maps and pointers are shared,
+// so an edit replaces them rather than mutating them.
+func (m *Manifest) Clone() *Manifest {
+	out := *m
+	out.Files = slices.Clone(m.Files)
+	out.index = nil
+	return &out
+}
+
+// SetOutputs replaces preset's outputs from the upload (or zip prefix) from
+// with outs (whose From and Preset it sets) and clears preset from the
+// upload's Pending. Outputs at paths taken by other files are an error.
+func (m *Manifest) SetOutputs(from, preset string, outs []File) error {
+	m.Files = slices.DeleteFunc(m.Files, func(f File) bool { return f.Preset == preset && f.From == from })
+	m.index = nil
+	for _, o := range outs {
+		if m.Find(o.Path) >= 0 {
+			return fmt.Errorf("media: output %q of %s from %q: path taken", o.Path, preset, from)
+		}
+		o.From, o.Preset = from, preset
+		m.Files = append(m.Files, o)
+		m.index[o.Path] = len(m.Files) - 1
+	}
+	m.ClearPending(from, preset)
+	return nil
+}
+
+// ClearPending removes preset from the Pending of the upload at path.
+func (m *Manifest) ClearPending(path, preset string) {
+	if i := m.Find(path); i >= 0 && slices.Contains(m.Files[i].Pending, preset) {
+		m.Files[i].Pending = slices.DeleteFunc(slices.Clone(m.Files[i].Pending), func(p string) bool { return p == preset })
+		if len(m.Files[i].Pending) == 0 {
+			m.Files[i].Pending = nil
+		}
+	}
+}
+
+// AddPending adds presets to the Pending of the upload at path.
+func (m *Manifest) AddPending(path string, presets ...string) {
+	i := m.Find(path)
+	if i < 0 {
+		return
+	}
+	p := slices.Clone(m.Files[i].Pending)
+	for _, name := range presets {
+		if !slices.Contains(p, name) {
+			p = append(p, name)
+		}
+	}
+	m.Files[i].Pending = p
+}
+
+// SetFailed records err on the upload at path for its current blob and edit,
+// and clears its Pending.
+func (m *Manifest) SetFailed(path string, err error) {
+	if i := m.Find(path); i >= 0 {
+		m.Files[i].Failed = NewFailure(m.Files[i], err)
+		m.Files[i].Pending = nil
+	}
+}
+
+// encodeManifest writes m as gzip JSON.
+func encodeManifest(m *Manifest) ([]byte, error) {
+	m.V = ManifestVersion
+	if m.Files == nil {
+		m.Files = []File{}
+	}
+	var b bytes.Buffer
+	zw, _ := gzip.NewWriterLevel(&b, gzip.BestSpeed)
+	if err := json.NewEncoder(zw).Encode(m); err != nil {
+		return nil, err
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
+}
+
+// decodeManifest reads gzip JSON (or plain JSON) and indexes it.
+func decodeManifest(b []byte) (*Manifest, error) {
+	r := io.Reader(bytes.NewReader(b))
+	if len(b) >= 2 && b[0] == 0x1f && b[1] == 0x8b {
+		zr, err := gzip.NewReader(r)
+		if err != nil {
+			return nil, err
+		}
+		defer zr.Close()
+		r = io.LimitReader(zr, maxManifestBytes+1)
+	}
+	var m Manifest
+	if err := json.NewDecoder(r).Decode(&m); err != nil {
+		return nil, err
+	}
+	if m.V != ManifestVersion {
+		return nil, fmt.Errorf("media: manifest version %d, want %d", m.V, ManifestVersion)
+	}
+	m.reindex()
+	return &m, nil
+}
+
+// maxManifestBytes bounds a decoded manifest (a 2,000-page gallery is
+// about 1.5 MB).
+const maxManifestBytes = 64 << 20

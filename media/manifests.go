@@ -4,13 +4,12 @@ import (
 	"bytes"
 	"container/list"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math/rand/v2"
-	"slices"
+	"reflect"
 	"sync"
 	"time"
 
@@ -22,229 +21,151 @@ type Locker interface {
 	Lock(ctx context.Context, key string) (unlock func(), err error)
 }
 
-// ManifestOptions configure Manifests.
-type ManifestOptions struct {
-	// Locker is required: every edit runs under it (so processes that have
-	// and have not probed the store never diverge), and also writes with
-	// If-Match once the store reports ConditionalPut. See PGLocker.
-	Locker     Locker
-	CacheSize  int // manifests kept in process, revalidated by ETag; default 4096
-	MaxRetries int // CAS attempts per edit; default 16
-	// Sweeps, when set, schedules the folder's sweep after every written
-	// edit: the host's *Jobs, or in the media worker a *HostQueue. Scheduling
-	// is best-effort (logged); the periodic sweep pass backs it up. Both also
-	// schedule slot index jobs (IndexSlots).
-	Sweeps SweepScheduler
-}
-
-// SweepScheduler schedules a folder's sweep after an edit.
+// SweepScheduler schedules a folder's sweep after an edit: the host's
+// *Jobs, or in the media worker a *HostQueue.
 type SweepScheduler interface {
 	ScheduleSweep(ctx context.Context, ref contentref.ContentRef) error
+}
+
+// ManifestOptions configure Manifests.
+type ManifestOptions struct {
+	// Locker is required: every edit runs under it, and also writes with
+	// If-Match once the store reports ConditionalPut. See PGLocker.
+	Locker Locker
+	// CacheBytes bounds the decoded manifests kept in process, revalidated
+	// by ETag; default 64 MiB.
+	CacheBytes int64
+	MaxRetries int // conditional-write attempts per edit; default 16
+	// Sweeps schedules the folder's sweep after every written edit; best
+	// effort (the periodic pass backs it up).
+	Sweeps SweepScheduler
 }
 
 // Manifests reads and edits item manifests.
 type Manifests struct {
 	store   Store
-	kinds   *Registry
+	reg     *Registry
 	locker  Locker
 	sweeps  SweepScheduler
 	retries int
-	cache   *lru
+	cache   *manifestCache
 }
 
 var ErrManifestConflict = errors.New("media: manifest edit kept conflicting")
 
-func NewManifests(store Store, kinds *Registry, opts ManifestOptions) (*Manifests, error) {
-	if store == nil || kinds == nil {
-		return nil, errors.New("media: Manifests needs a Store and a Registry")
+func NewManifests(store Store, reg *Registry, o ManifestOptions) (*Manifests, error) {
+	if store == nil || reg == nil || o.Locker == nil {
+		return nil, errors.New("media: Manifests needs a Store, a Registry and a Locker")
 	}
-	locker := opts.Locker
-	if locker == nil {
-		return nil, errors.New("media: ManifestOptions.Locker is required")
+	if o.CacheBytes <= 0 {
+		o.CacheBytes = 64 << 20
 	}
-	if opts.CacheSize <= 0 {
-		opts.CacheSize = 4096
+	if o.MaxRetries <= 0 {
+		o.MaxRetries = 16
 	}
-	if opts.MaxRetries <= 0 {
-		opts.MaxRetries = 16
-	}
-	return &Manifests{store: store, kinds: kinds, locker: locker, sweeps: opts.Sweeps, retries: opts.MaxRetries, cache: newLRU(opts.CacheSize)}, nil
+	return &Manifests{store: store, reg: reg, locker: o.Locker, sweeps: o.Sweeps, retries: o.MaxRetries,
+		cache: newManifestCache(o.CacheBytes)}, nil
 }
 
-// IndexSlots schedules ref's slot index job through ManifestOptions.Sweeps
-// (a SlotIndexer); without one it does nothing.
-func (m *Manifests) IndexSlots(ctx context.Context, ref contentref.ContentRef) error {
-	if ix, ok := m.sweeps.(SlotIndexer); ok {
-		return ix.IndexSlots(ctx, ref)
-	}
-	return nil
-}
+// Registry is the registry the manifests are read under.
+func (m *Manifests) Registry() *Registry { return m.reg }
 
-// Get returns ref's files (its version's section for a versioned kind) and
-// the manifest's ETag, or ErrNotFound. Cached copies are revalidated with a
-// conditional GET, so a read is never stale.
+// Store is the bucket.
+func (m *Manifests) Store() Store { return m.store }
+
+// Get returns ref's manifest and ETag, or ErrNotFound. Cached copies are
+// revalidated with a conditional GET, so a read is never stale. The
+// manifest is shared: never modify it (Clone it).
 func (m *Manifests) Get(ctx context.Context, ref contentref.ContentRef) (*Manifest, string, error) {
-	item, err := m.kinds.Item(ref)
+	item, err := m.reg.Item(ref)
 	if err != nil {
 		return nil, "", err
 	}
-	v, err := item.Section()
-	if err != nil {
-		return nil, "", err
-	}
-	root, etag, err := m.root(ctx, item.ManifestKey())
-	if err != nil {
-		return nil, "", err
-	}
-	man := root.Section(v)
-	if man == nil {
-		return nil, "", ErrNotFound
-	}
-	return man, etag, nil
+	return m.get(ctx, item.ManifestKey())
 }
 
-// Root returns the item's manifest.json and its ETag, or ErrNotFound.
-func (m *Manifests) Root(ctx context.Context, ref contentref.ContentRef) (*Root, string, error) {
-	item, err := m.kinds.Item(ref.Content())
-	if err != nil {
-		return nil, "", err
-	}
-	return m.root(ctx, item.ManifestKey())
-}
-
-// Edit applies fn to ref's files (see Get; a new version starts empty) like
-// EditRoot.
+// Edit applies fn to ref's manifest (empty if none) and writes it with
+// If-Match on the ETag it read (If-None-Match for a new one), re-reading
+// and re-applying fn on conflict. fn must be safe to run more than once; an
+// error from fn aborts the edit. The result is normalized (Kind.Normalize)
+// and validated; an unchanged manifest is not written. A folder's first
+// manifest is refused (ErrFolderNotEmpty) over a previous item's public
+// files.
 func (m *Manifests) Edit(ctx context.Context, ref contentref.ContentRef, fn func(*Manifest) error) (*Manifest, error) {
-	return m.editSection(ctx, ref, false, fn)
+	return m.edit(ctx, ref, false, fn)
 }
 
-// EditExisting edits a section only while its folder manifest still exists.
-// Workers use it after processing so a concurrent folder deletion stays deleted.
+// EditExisting is Edit while the manifest exists (ErrNotFound otherwise):
+// workers use it after processing, so a concurrent deletion stays deleted.
 func (m *Manifests) EditExisting(ctx context.Context, ref contentref.ContentRef, fn func(*Manifest) error) (*Manifest, error) {
-	return m.editSection(ctx, ref, true, fn)
+	return m.edit(ctx, ref, true, fn)
 }
 
-func (m *Manifests) editSection(ctx context.Context, ref contentref.ContentRef, existing bool, fn func(*Manifest) error) (*Manifest, error) {
-	item, err := m.kinds.Item(ref)
+func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existing bool, fn func(*Manifest) error) (*Manifest, error) {
+	item, err := m.reg.Item(ref)
 	if err != nil {
 		return nil, err
 	}
-	v, err := item.Section()
-	if err != nil {
-		return nil, err
-	}
-	var man *Manifest
-	if _, err := m.editRoot(ctx, item, existing, func(r *Root) error {
-		if existing {
-			man = r.Section(v)
-			if man == nil {
-				return ErrNotFound
-			}
-		} else {
-			man = r.section(v)
-		}
-		return fn(man)
-	}); err != nil {
-		return nil, err
-	}
-	return man, nil
-}
-
-// EditRoot applies fn to the item's manifest (empty if none) and writes it
-// with If-Match on the ETag it read (If-None-Match for a new one),
-// re-reading and re-applying fn on conflict. fn must be safe to run more
-// than once; an error from fn aborts the edit. The index is rebuilt; an
-// unchanged manifest is not written. A folder's first manifest is refused
-// (ErrFolderNotEmpty) over a previous item's renditions.
-func (m *Manifests) EditRoot(ctx context.Context, ref contentref.ContentRef, fn func(*Root) error) (*Root, error) {
-	item, err := m.kinds.Item(ref.Content())
-	if err != nil {
-		return nil, err
-	}
-	return m.editRoot(ctx, item, false, fn)
-}
-
-func (m *Manifests) editRoot(ctx context.Context, item Item, existing bool, fn func(*Root) error) (*Root, error) {
 	key := item.ManifestKey()
-	var root *Root
-	written, err := m.edit(ctx, key, func(body []byte) ([]byte, error) {
-		if existing && body == nil {
-			return nil, ErrNotFound
-		}
-		root = &Root{}
-		if body != nil {
-			if err := json.Unmarshal(body, root); err != nil {
-				return nil, fmt.Errorf("media: decode manifest %s: %w", key, err)
-			}
-		}
-		if err := fn(root); err != nil {
-			return nil, err
-		}
-		if err := root.validate(); err != nil {
-			return nil, err
-		}
-		root.normalize()
-		root.index()
-		out, err := json.Marshal(root)
-		if err != nil || (body != nil && bytes.Equal(body, out)) {
-			return nil, err
-		}
-		if body == nil {
-			if err := m.requireFresh(ctx, item); err != nil {
-				return nil, err
-			}
-		}
-		return out, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	if written && m.sweeps != nil {
-		if err := m.sweeps.ScheduleSweep(ctx, item.Ref().Content()); err != nil {
-			slog.WarnContext(ctx, "media: schedule sweep", "key", key, "error", err)
-		}
-	}
-	return root, nil
-}
-
-// edit writes fn's replacement of the JSON object at key (body nil when
-// absent) under the Locker, with If-Match on the ETag read
-// when the store has conditional PUT, re-running fn on conflict. fn returns
-// nil to leave the object alone.
-func (m *Manifests) edit(ctx context.Context, key string, fn func(body []byte) ([]byte, error)) (written bool, err error) {
 	unlock, err := m.locker.Lock(ctx, key)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	defer unlock()
 	conditional := m.store.Capabilities().ConditionalPut
 	for attempt := 0; attempt < m.retries; attempt++ {
-		conflict, written, err := m.try(ctx, key, fn, conditional)
-		if !conflict {
-			return written, err
+		out, written, conflict, err := m.try(ctx, item, existing, conditional, fn)
+		if conflict {
+			backoff := time.Duration(1<<min(attempt, 6)) * 5 * time.Millisecond
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff/2 + rand.N(backoff)):
+			}
+			continue
 		}
-		backoff := time.Duration(1<<min(attempt, 6)) * 5 * time.Millisecond
-		select {
-		case <-ctx.Done():
-			return false, ctx.Err()
-		case <-time.After(backoff/2 + rand.N(backoff)):
+		if err == nil && written && m.sweeps != nil {
+			if serr := m.sweeps.ScheduleSweep(ctx, ref); serr != nil {
+				slog.WarnContext(ctx, "media: schedule sweep", "key", key, "error", serr)
+			}
 		}
+		return out, err
 	}
-	return false, fmt.Errorf("%w: %s", ErrManifestConflict, key)
+	return nil, fmt.Errorf("%w: %s", ErrManifestConflict, key)
 }
 
-func (m *Manifests) try(ctx context.Context, key string, fn func([]byte) ([]byte, error), conditional bool) (conflict, written bool, err error) {
-	body, etag, err := m.raw(ctx, key)
-	if errors.Is(err, ErrNotFound) {
-		body, etag = nil, ""
-	} else if err != nil {
-		return false, false, err
+func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bool, fn func(*Manifest) error) (out *Manifest, written, conflict bool, err error) {
+	key := item.ManifestKey()
+	cur, etag, err := m.get(ctx, key)
+	switch {
+	case errors.Is(err, ErrNotFound) && existing:
+		return nil, false, false, err
+	case errors.Is(err, ErrNotFound):
+		cur, etag = &Manifest{V: ManifestVersion, Files: []File{}}, ""
+	case err != nil:
+		return nil, false, false, err
 	}
-	out, err := fn(body)
-	if err != nil || out == nil {
-		return false, false, err
+	next := cur.Clone()
+	if err := fn(next); err != nil {
+		return nil, false, false, err
 	}
-	opts := PutOptions{ContentType: "application/json", CacheControl: "no-store"}
+	item.kind.Normalize(next)
+	if err := next.Validate(); err != nil {
+		return nil, false, false, err
+	}
+	if etag != "" && next.Hidden == cur.Hidden && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) {
+		return cur, false, false, nil
+	}
+	if etag == "" {
+		if err := m.requireFresh(ctx, item); err != nil {
+			return nil, false, false, err
+		}
+	}
+	body, err := encodeManifest(next)
+	if err != nil {
+		return nil, false, false, err
+	}
+	opts := PutOptions{ContentType: "application/gzip", CacheControl: "no-store"}
 	if conditional {
 		if etag == "" {
 			opts.IfNoneMatch = "*"
@@ -252,32 +173,21 @@ func (m *Manifests) try(ctx context.Context, key string, fn func([]byte) ([]byte
 			opts.IfMatch = etag
 		}
 	}
-	obj, err := m.store.Put(ctx, key, bytes.NewReader(out), int64(len(out)), opts)
+	obj, err := m.store.Put(ctx, key, bytes.NewReader(body), int64(len(body)), opts)
 	if errors.Is(err, ErrPreconditionFailed) {
 		m.cache.remove(key)
-		return true, false, nil
+		return nil, false, true, nil
 	}
 	if err != nil {
-		return false, false, err
+		return nil, false, false, err
 	}
-	m.cache.put(key, obj.ETag, out)
-	return false, true, nil
+	next.reindex()
+	m.cache.put(key, obj.ETag, next, int64(len(body)))
+	return next, true, false, nil
 }
 
-func (m *Manifests) root(ctx context.Context, key string) (*Root, string, error) {
-	body, etag, err := m.raw(ctx, key)
-	if err != nil {
-		return nil, "", err
-	}
-	var root Root
-	if err := json.Unmarshal(body, &root); err != nil {
-		return nil, "", fmt.Errorf("media: decode manifest %s: %w", key, err)
-	}
-	return &root, etag, nil
-}
-
-// raw reads an object through the ETag-revalidated cache.
-func (m *Manifests) raw(ctx context.Context, key string) ([]byte, string, error) {
+// get reads and decodes a manifest through the ETag-revalidated cache.
+func (m *Manifests) get(ctx context.Context, key string) (*Manifest, string, error) {
 	cachedETag, cached := m.cache.get(key)
 	rc, obj, err := m.store.Get(ctx, key, GetOptions{IfNoneMatch: cachedETag})
 	switch {
@@ -289,95 +199,27 @@ func (m *Manifests) raw(ctx context.Context, key string) ([]byte, string, error)
 	case err != nil:
 		return nil, "", err
 	}
-	body, err := io.ReadAll(rc)
+	body, err := io.ReadAll(io.LimitReader(rc, maxManifestBytes+1))
 	rc.Close()
 	if err != nil {
 		return nil, "", err
 	}
-	m.cache.put(key, obj.ETag, body)
-	return body, obj.ETag, nil
-}
-
-type lru struct {
-	mu    sync.Mutex
-	max   int
-	order *list.List
-	items map[string]*list.Element
-}
-
-type lruEntry struct {
-	key, etag string
-	body      []byte
-}
-
-func newLRU(max int) *lru {
-	return &lru{max: max, order: list.New(), items: map[string]*list.Element{}}
-}
-
-func (c *lru) get(key string) (string, []byte) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if e, ok := c.items[key]; ok {
-		c.order.MoveToFront(e)
-		v := e.Value.(*lruEntry)
-		return v.etag, v.body
+	man, err := decodeManifest(body)
+	if err != nil {
+		return nil, "", fmt.Errorf("media: decode manifest %s: %w", key, err)
 	}
-	return "", nil
+	m.cache.put(key, obj.ETag, man, int64(len(body)))
+	return man, obj.ETag, nil
 }
 
-func (c *lru) put(key, etag string, body []byte) {
-	if etag == "" {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if e, ok := c.items[key]; ok {
-		e.Value = &lruEntry{key, etag, body}
-		c.order.MoveToFront(e)
-		return
-	}
-	c.items[key] = c.order.PushFront(&lruEntry{key, etag, body})
-	if c.order.Len() > c.max {
-		last := c.order.Back()
-		c.order.Remove(last)
-		delete(c.items, last.Value.(*lruEntry).key)
-	}
-}
-
-func (c *lru) remove(key string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if e, ok := c.items[key]; ok {
-		c.order.Remove(e)
-		delete(c.items, key)
-	}
-}
-
-// references reports whether the item's manifest references the original
-// name.
-func (m *Manifests) references(ctx context.Context, item Item, name string) (bool, error) {
-	root, _, err := m.root(ctx, item.ManifestKey())
-	if errors.Is(err, ErrNotFound) {
-		return false, nil
-	} else if err != nil {
-		return false, err
-	}
-	if _, ok := root.Originals[name]; ok {
-		return true, nil
-	}
-	found := false
-	root.sections(func(_ string, man *Manifest) { found = found || slices.Contains(man.Sources(), name) })
-	return found, nil
-}
-
-// DropOutputsIfDeleted removes unpublished private blobs only if the folder's
-// manifest is still absent. The folder lock serializes that check and the
-// deletes with normal manifest edits and folder deletion.
-func (m *Manifests) DropOutputsIfDeleted(ctx context.Context, ref contentref.ContentRef, names []string) error {
-	if len(names) == 0 {
+// DropIfDeleted deletes blobs a worker wrote for ref only if its manifest is
+// gone: the folder lock orders the check and the deletes with edits and
+// folder deletion.
+func (m *Manifests) DropIfDeleted(ctx context.Context, ref contentref.ContentRef, blobs []string) error {
+	if len(blobs) == 0 {
 		return nil
 	}
-	item, err := m.kinds.Item(ref)
+	item, err := m.reg.Item(ref)
 	if err != nil {
 		return err
 	}
@@ -386,19 +228,14 @@ func (m *Manifests) DropOutputsIfDeleted(ctx context.Context, ref contentref.Con
 		return err
 	}
 	defer unlock()
-	if _, _, err := m.root(ctx, item.ManifestKey()); err == nil {
+	if _, _, err := m.get(ctx, item.ManifestKey()); err == nil {
 		return nil
 	} else if !errors.Is(err, ErrNotFound) {
 		return err
 	}
-	seen := make(map[string]bool, len(names))
 	var errs []error
-	for _, name := range names {
-		if seen[name] {
-			continue
-		}
-		seen[name] = true
-		key, err := item.Private(name)
+	for _, b := range blobs {
+		key, err := item.Blob(b)
 		if err != nil {
 			return err
 		}
@@ -407,4 +244,70 @@ func (m *Manifests) DropOutputsIfDeleted(ctx context.Context, ref contentref.Con
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// manifestCache keeps decoded manifests by key, bounded by their encoded
+// size times a decode factor.
+type manifestCache struct {
+	mu    sync.Mutex
+	max   int64
+	used  int64
+	order *list.List
+	items map[string]*list.Element
+}
+
+type cacheEntry struct {
+	key, etag string
+	m         *Manifest
+	cost      int64
+}
+
+// decodeFactor estimates a decoded manifest's memory from its gzip size.
+const decodeFactor = 12
+
+func newManifestCache(max int64) *manifestCache {
+	return &manifestCache{max: max, order: list.New(), items: map[string]*list.Element{}}
+}
+
+func (c *manifestCache) get(key string) (string, *Manifest) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.items[key]; ok {
+		c.order.MoveToFront(e)
+		v := e.Value.(*cacheEntry)
+		return v.etag, v.m
+	}
+	return "", nil
+}
+
+func (c *manifestCache) put(key, etag string, m *Manifest, size int64) {
+	if etag == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.removeLocked(key)
+	e := &cacheEntry{key: key, etag: etag, m: m, cost: size * decodeFactor}
+	if e.cost > c.max {
+		return
+	}
+	c.items[key] = c.order.PushFront(e)
+	c.used += e.cost
+	for c.used > c.max {
+		c.removeLocked(c.order.Back().Value.(*cacheEntry).key)
+	}
+}
+
+func (c *manifestCache) remove(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.removeLocked(key)
+}
+
+func (c *manifestCache) removeLocked(key string) {
+	if e, ok := c.items[key]; ok {
+		c.used -= e.Value.(*cacheEntry).cost
+		c.order.Remove(e)
+		delete(c.items, key)
+	}
 }

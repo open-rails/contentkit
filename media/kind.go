@@ -1,454 +1,335 @@
-// Package media stores host content files in per-item folders of one private
-// bucket: library-built keys, the generic manifest with conditional-write
-// edits, and the Store port. See media/s3 for the S3 implementation and
-// media/token for access tokens.
 package media
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/open-rails/contentkit/media/layout"
 )
 
-// Kind is a host's per-kind rule set, registered once at startup.
-type Kind struct {
-	Name      string
-	Versioned bool // manifests live at manifests/{version_id}.json
-	// Types are the accepted content types (empty: any); image processing
-	// also requires the bytes to be the declared format.
-	Types    []string
-	MaxBytes int64
-	// MaxFiles caps a manifest's files; 0 is unlimited.
-	MaxFiles int
-	// TypeLimits are caps per top-level type ("image", "video"): a set
-	// MaxBytes replaces the kind's for that type, and MaxFiles caps that
-	// type's files. A kind may mix images (Specs) and videos (Video).
-	TypeLimits map[string]Limit
-	Specs      map[string]Spec // variant name → spec ("editor" is reserved)
-	Slots      map[string]Slot // public slot name → outputs
-	// Editor is the editor view: the whole source (EXIF-oriented, ignoring
-	// crop and rotate) the cropper draws on, for image files and slot
-	// originals. It is an input-keyed cache in temp/ (Item.EditorView), never
-	// in the manifest: the image job renders it, the sweep deletes it after
-	// JobsConfig.EditorTTL, and an editor's read renders it again. Only
-	// editors get its URL, under an editor token. nil: no editor views.
-	Editor *Spec
-	// Inline enables inline images: write-once public images with random ids
-	// ("i-{uuid}", from NewInlineName), each re-encoded with this spec from
-	// originals/{id} to public/{id}.webp. Post bodies and poll options use them.
-	Inline *Spec
-	// Animation is the policy for animated images (GIF, WebP) in files and
-	// inline images; slots set their own.
-	Animation Animation
-	Video     *Video // nil: no video encoding
-	Audio     *Audio // nil: no audio encoding; required to accept audio/ types
-	// Zip names the variant packed, in file order, into downloads["zip"];
-	// "" offers no zip.
-	Zip string
+// kindState is what NewRegistry compiles into a Kind.
+type kindState struct {
+	ns       string
+	patterns []pattern // parallel to Uploads
 }
 
-// Video configures a kind's video encoding (media/video).
-type Video struct {
-	// Ladder is the rendition short sides (height of landscape, width of
-	// vertical video), largest first; rungs above the source's short side
-	// are dropped, and a source below 1080 that is not a rung also gets one
-	// at its own short side. Empty is DefaultLadder.
-	Ladder []int `json:"ladder,omitempty"`
-	// MinAspect and MaxAspect bound a source's display width/height; a
-	// source outside fails permanently. Zero is DefaultMinAspect/DefaultMaxAspect.
-	MinAspect float64 `json:"min_aspect,omitempty"`
-	MaxAspect float64 `json:"max_aspect,omitempty"`
-	// PosterWidths are the cover (poster slot) output widths, the host's
-	// display sizes × densities; widths wider than the frame or upload are
-	// skipped. Empty is DefaultPosterWidths.
-	PosterWidths []int `json:"poster_widths,omitempty"`
-	// Profile tunes the encode to the content: VideoLive (default) or
-	// VideoAnimation (x264 tune animation, lower CRF, lower caps).
-	Profile string `json:"profile,omitempty"`
+// upload finds the Upload a path (stem plus optional extension) belongs to:
+// a literal stem wins over a pattern. It returns the Upload's index, the
+// stem, its {name} and the extension.
+func (k *Kind) upload(path string) (i int, stem, name, ext string, ok bool) {
+	stem, ext = splitExt(path)
+	for _, literal := range []bool{true, false} {
+		for j, p := range k.patterns {
+			if (p.literal != "") != literal {
+				continue
+			}
+			if n, ok := p.match(stem); ok {
+				return j, stem, n, ext, true
+			}
+		}
+	}
+	return -1, "", "", "", false
 }
 
-// Audio configures a kind's audio files, encoded by the media worker
-// (media/video) to AAC-LC at 128 kbit/s, 48 kHz stereo: a one-track HLS
-// audio ladder (File.HLS.Audio, played through the master playlist) and a
-// faststart M4A, the file's AudioVariant and its download
-// AudioDownloadKey(file).
-type Audio struct {
-	// Loudness normalizes each file to this integrated loudness in LUFS
-	// (EBU R128 two-pass linear loudnorm, true peak at most -1.5 dBTP), e.g.
-	// -16; 0 keeps the source's level.
-	Loudness float64 `json:"loudness,omitempty"`
+// uploadIndex is the index of the Upload whose Path is from, or -1.
+func (k *Kind) uploadIndex(from string) int {
+	return slices.IndexFunc(k.Uploads, func(u Upload) bool { return u.Path == from })
 }
 
-// Validate requires Loudness 0 or within -70..-5 LUFS.
-func (a Audio) Validate() error {
-	if a.Loudness != 0 && (a.Loudness < -70 || a.Loudness > -5) {
-		return fmt.Errorf("media: invalid audio loudness %g LUFS", a.Loudness)
+func (k *Kind) private(name string) *Private {
+	if i := slices.IndexFunc(k.Private, func(p Private) bool { return p.Name == name }); i >= 0 {
+		return &k.Private[i]
 	}
 	return nil
 }
 
-// AudioVariant is an encoded audio file's M4A variant (read API ?variant=audio).
-const AudioVariant = "audio"
-
-// AudioDownloadKey is the manifest downloads key of an audio file's M4A.
-func AudioDownloadKey(file string) string { return file + "-audio" }
-
-// DefaultPosterWidths cover a full-width column at 2–3× density.
-var DefaultPosterWidths = []int{640, 960, 1280, 1920, 2560}
-
-// Poster is the kind's poster slot: native aspect at PosterWidths.
-func (v *Video) Poster() Slot {
-	if v == nil || len(v.PosterWidths) == 0 {
-		return Slot{Widths: DefaultPosterWidths}
+func (k *Kind) public(name string) *Public {
+	if i := slices.IndexFunc(k.Public, func(p Public) bool { return p.Name == name }); i >= 0 {
+		return &k.Public[i]
 	}
-	return Slot{Widths: slices.Sorted(slices.Values(v.PosterWidths))}
+	return nil
 }
 
-// Video.Profile values.
-const (
-	VideoLive      = ""
-	VideoAnimation = "animation"
-)
+// Presets are the names of the presets an upload at path feeds: the private
+// ones, then (unless hidden) the public ones. Zips are not listed; they
+// follow their inputs.
+func (k *Kind) Presets(path string, hidden bool) []string {
+	i, _, _, _, ok := k.upload(path)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, p := range k.Private {
+		if p.From != "" && p.From == k.Uploads[i].Path {
+			out = append(out, p.Name)
+		}
+	}
+	for _, p := range k.Public {
+		if !hidden && p.From == k.Uploads[i].Path {
+			out = append(out, p.Name)
+		}
+	}
+	return out
+}
 
-// DefaultLadder is the default ladder by short side.
-var DefaultLadder = []int{2160, 1080, 480}
+// PrivateFor lists the private presets fed by the upload at path.
+func (k *Kind) PrivateFor(path string) []*Private {
+	i, _, _, _, ok := k.upload(path)
+	if !ok {
+		return nil
+	}
+	var out []*Private
+	for j := range k.Private {
+		if p := &k.Private[j]; p.From != "" && p.From == k.Uploads[i].Path {
+			out = append(out, p)
+		}
+	}
+	return out
+}
 
-// Codec is a video codec of a ladder: each rung is encoded in each codec
-// the media worker is configured with.
-type Codec string
+// PublicFor lists the public presets fed by the upload at path.
+func (k *Kind) PublicFor(path string) []*Public {
+	i, _, _, _, ok := k.upload(path)
+	if !ok {
+		return nil
+	}
+	var out []*Public
+	for j := range k.Public {
+		if p := &k.Public[j]; p.From == k.Uploads[i].Path {
+			out = append(out, p)
+		}
+	}
+	return out
+}
 
-const (
-	CodecH264 Codec = "h264"
-	CodecHEVC Codec = "hevc"
-	CodecAV1  Codec = "av1"
-)
+// NameOf is the {name} of an upload path ("originals/001.png" is "001",
+// "cover.png" is "cover").
+func (k *Kind) NameOf(path string) string {
+	_, _, name, _, _ := k.upload(path)
+	return name
+}
 
-// Default aspect bounds: 1:2.4 vertical to 2.4:1 wide, which admits "21:9"
-// content (2560×1080 at 2.37, 2.39:1 cinema) and its vertical equivalents.
-const (
-	DefaultMinAspect = 1 / 2.4
-	DefaultMaxAspect = 2.4
-)
+// OutputPath is p's output path (a file, or a directory ending in "/") for
+// the upload at path.
+func (k *Kind) OutputPath(p *Private, path string) string {
+	return fill(p.To, map[string]string{"name": k.NameOf(path)})
+}
+
+// PublicNames are p's public names for the upload at path, one per width.
+func (k *Kind) PublicNames(p *Public, path string) []string {
+	vars := map[string]string{"name": k.NameOf(path)}
+	if len(p.Widths) == 0 {
+		return []string{fill(p.To, vars)}
+	}
+	out := make([]string, len(p.Widths))
+	for i, w := range p.Widths {
+		vars["w"] = fmt.Sprint(w)
+		out[i] = fill(p.To, vars)
+	}
+	return out
+}
+
+// EditBounds is the image that bounds an edit of the upload at path: its
+// first public preset's, else a native one.
+func (k *Kind) EditBounds(path string) Image {
+	if ps := k.PublicFor(path); len(ps) > 0 {
+		return ps[0].Image
+	}
+	return Image{}
+}
+
+func (k *Kind) validate() error {
+	if !layout.ValidSegment(k.Name) || strings.HasPrefix(k.Name, "_") {
+		return errors.New("invalid name")
+	}
+	if len(k.Uploads) == 0 {
+		return errors.New("no uploads")
+	}
+	k.patterns = make([]pattern, len(k.Uploads))
+	for i, u := range k.Uploads {
+		p, ok := parsePattern(u.Path)
+		if !ok || slices.ContainsFunc(k.Uploads[:i], func(o Upload) bool { return o.Path == u.Path }) {
+			return fmt.Errorf("upload %q: invalid or duplicate path", u.Path)
+		}
+		if len(u.Types) == 0 || u.MaxBytes <= 0 || u.Max < 0 {
+			return fmt.Errorf("upload %q: needs Types and MaxBytes", u.Path)
+		}
+		if u.Named && p.literal != "" {
+			return fmt.Errorf("upload %q: only a pattern is Named", u.Path)
+		}
+		k.patterns[i] = p
+	}
+	for _, u := range k.Uploads {
+		if u.Frames == "" {
+			continue
+		}
+		j := k.uploadIndex(u.Frames)
+		if j < 0 || k.patterns[j].literal == "" || !slices.ContainsFunc(k.Uploads[j].Types, isVideoType) {
+			return fmt.Errorf("upload %q: Frames %q is not a literal video upload", u.Path, u.Frames)
+		}
+	}
+	names := map[string]bool{}
+	for _, p := range k.Private {
+		if err := k.validatePrivate(p, names); err != nil {
+			return fmt.Errorf("private %q: %w", p.Name, err)
+		}
+	}
+	for i := range k.Public {
+		if err := k.validatePublic(&k.Public[i], names); err != nil {
+			return fmt.Errorf("public %q: %w", k.Public[i].Name, err)
+		}
+	}
+	return nil
+}
+
+func (k *Kind) validatePrivate(p Private, names map[string]bool) error {
+	if !layout.ValidSegment(p.Name) || names[p.Name] {
+		return errors.New("invalid or duplicate name")
+	}
+	names[p.Name] = true
+	producers := 0
+	for _, set := range []bool{p.Image != nil, p.HLS != nil, p.MP4 != nil, p.Zip != "", p.Audio != nil, p.Subtitles != nil} {
+		if set {
+			producers++
+		}
+	}
+	if producers != 1 {
+		return errors.New("needs exactly one producer")
+	}
+	if p.Zip != "" {
+		if p.From != "" || !validDir(p.Zip) {
+			return errors.New("a Zip takes no From and a directory prefix")
+		}
+	} else if k.uploadIndex(p.From) < 0 {
+		return fmt.Errorf("From %q is no upload path", p.From)
+	}
+	dir := p.HLS != nil || p.Audio != nil
+	if !validTemplate(p.To, dir) || slices.ContainsFunc(placeholders(p.To), func(s string) bool { return s != "name" }) {
+		return fmt.Errorf("invalid To %q (a path with {name} only; a directory ending in / for HLS and Audio)", p.To)
+	}
+	if slices.Contains(placeholders(p.Download), "") {
+		return fmt.Errorf("invalid Download %q", p.Download)
+	}
+	switch {
+	case p.Image != nil:
+		return p.Image.validate()
+	case p.HLS != nil:
+		return p.HLS.validate()
+	case p.MP4 != nil:
+		if p.MP4.Rung < 2 || p.MP4.Rung > 4320 || p.MP4.Rung%2 != 0 || !validProfile(p.MP4.Profile) {
+			return fmt.Errorf("invalid MP4 rung %d or profile", p.MP4.Rung)
+		}
+	case p.Audio != nil:
+		if l := p.Audio.Loudness; l != 0 && (l < -70 || l > -5) {
+			return fmt.Errorf("invalid loudness %g LUFS", l)
+		}
+	}
+	return nil
+}
+
+func (k *Kind) validatePublic(p *Public, names map[string]bool) error {
+	if !layout.ValidSegment(p.Name) || names[p.Name] {
+		return errors.New("invalid or duplicate name")
+	}
+	names[p.Name] = true
+	i := k.uploadIndex(p.From)
+	if i < 0 {
+		return fmt.Errorf("From %q is no upload path", p.From)
+	}
+	vars := placeholders(p.To)
+	if slices.Contains(vars, "name") && k.patterns[i].literal == "" && !k.Uploads[i].Named {
+		return errors.New("{name} in To needs a literal or Named upload")
+	}
+	if slices.ContainsFunc(vars, func(s string) bool { return s != "name" && s != "w" }) ||
+		slices.Contains(vars, "w") != (len(p.Widths) > 0) ||
+		!layout.ValidSegment(fill(p.To, map[string]string{"name": "n", "w": "1"})) {
+		return fmt.Errorf("invalid To %q ([A-Za-z0-9._-] with {w} exactly when Widths are set)", p.To)
+	}
+	p.Widths = slices.Sorted(slices.Values(p.Widths))
+	for j, w := range p.Widths {
+		if w <= 0 || w > maxWidth || j > 0 && w == p.Widths[j-1] {
+			return fmt.Errorf("invalid width %d", w)
+		}
+	}
+	return p.Image.validate()
+}
+
+// validTemplate accepts a relative app path: no empty, "." or ".." segment;
+// a directory ends in "/".
+func validTemplate(t string, dir bool) bool {
+	if t == "" || strings.HasSuffix(t, "/") != dir || strings.HasPrefix(t, "/") {
+		return false
+	}
+	for _, s := range strings.Split(strings.TrimSuffix(t, "/"), "/") {
+		if s == "" || s == "." || s == ".." || strings.ContainsAny(s, "\\") {
+			return false
+		}
+	}
+	return true
+}
+
+func (im Image) validate() error {
+	if im.Width < 0 || im.Height < 0 || im.Width > 16384 || im.Height > 16384 || im.Quality < 0 || im.Quality > 100 ||
+		im.Blur < 0 || im.MinWidth < 0 || !im.Aspect.Valid() ||
+		im.Fit != FitInside && im.Fit != FitCover || im.Animation != AnimationAllow && im.Animation != AnimationReject {
+		return fmt.Errorf("invalid image spec %+v", im)
+	}
+	return nil
+}
 
 // Rungs is the ladder in effect.
-func (v *Video) Rungs() []int {
-	if v == nil || len(v.Ladder) == 0 {
+func (h *HLS) Rungs() []int {
+	if h == nil || len(h.Ladder) == 0 {
 		return DefaultLadder
 	}
-	return v.Ladder
+	return h.Ladder
 }
 
 // Aspects are the aspect bounds in effect.
-func (v *Video) Aspects() (lo, hi float64) {
+func (h *HLS) Aspects() (lo, hi float64) {
 	lo, hi = DefaultMinAspect, DefaultMaxAspect
-	if v != nil && v.MinAspect > 0 {
-		lo = v.MinAspect
+	if h != nil && h.MinAspect > 0 {
+		lo = h.MinAspect
 	}
-	if v != nil && v.MaxAspect > 0 {
-		hi = v.MaxAspect
+	if h != nil && h.MaxAspect > 0 {
+		hi = h.MaxAspect
 	}
 	return lo, hi
 }
 
-// Validate requires even rungs of 2–4320, largest first, without repeats,
-// aspect bounds with MinAspect ≤ 1 ≤ MaxAspect, and a known Profile.
-func (v Video) Validate() error {
-	for i, n := range v.Ladder {
-		if n < 2 || n > 4320 || n%2 != 0 || i > 0 && n >= v.Ladder[i-1] {
-			return fmt.Errorf("media: invalid video ladder %v", v.Ladder)
+func (h *HLS) validate() error {
+	for i, n := range h.Ladder {
+		if n < 2 || n > 4320 || n%2 != 0 || i > 0 && n >= h.Ladder[i-1] {
+			return fmt.Errorf("invalid ladder %v", h.Ladder)
 		}
 	}
-	if lo, hi := v.Aspects(); v.MinAspect < 0 || v.MaxAspect < 0 || lo > 1 || hi < 1 {
-		return fmt.Errorf("media: invalid video aspect bounds %g–%g", lo, hi)
+	if lo, hi := h.Aspects(); h.MinAspect < 0 || h.MaxAspect < 0 || lo > 1 || hi < 1 {
+		return fmt.Errorf("invalid aspect bounds %g-%g", lo, hi)
 	}
-	if v.Profile != VideoLive && v.Profile != VideoAnimation {
-		return fmt.Errorf("media: unknown video profile %q", v.Profile)
+	if !validProfile(h.Profile) {
+		return fmt.Errorf("unknown profile %q", h.Profile)
 	}
 	return nil
 }
 
-// Limit is a per-type cap; zero values are unlimited.
-type Limit struct {
-	MaxBytes int64
-	MaxFiles int
-}
+func validProfile(p string) bool { return p == VideoLive || p == VideoAnimation }
 
-// EditorVariant is the read API's name for the editor view (Kind.Editor).
-const EditorVariant = "editor"
+func isVideoType(t string) bool    { return strings.HasPrefix(t, "video/") }
+func isImageType(t string) bool    { return strings.HasPrefix(t, "image/") }
+func isAudioType(t string) bool    { return strings.HasPrefix(t, "audio/") }
+func isSubtitleType(t string) bool { return slices.Contains(SubtitleTypes, t) }
 
-// Fit is how an image spec fits its box.
-type Fit string
+// SubtitleTypes are the subtitle types the Subtitles producer converts.
+var SubtitleTypes = []string{"text/vtt", "application/x-subrip", "text/x-ssa", "text/x-ass"}
 
+// Upload meta keys ContentKit reads (put's meta).
 const (
-	FitInside Fit = "inside"
-	FitCover  Fit = "cover"
+	MetaTeaser  = "teaser"  // bool: served to every viewer who can see the item
+	MetaLang    = "lang"    // subtitles and audio: BCP 47
+	MetaLabel   = "label"   // a track's name
+	MetaForced  = "forced"  // bool: a forced-narrative subtitle track
+	MetaFor     = "for"     // a subtitle's video upload path; default every video of the item
+	MetaCharset = "charset" // a subtitle's IANA charset, overriding detection
 )
-
-// Spec describes one derived image. Zero Width and Height keep full resolution.
-type Spec struct {
-	Width   int
-	Height  int
-	Fit     Fit
-	Quality int
-	Blur    float64
-}
-
-// Hash is the spec's stable identity; a variant whose recorded spec differs is
-// stale (see For, which adds the file's edit).
-func (s Spec) Hash() string {
-	id := strconv.Itoa(s.Width) + "x" + strconv.Itoa(s.Height) + "|" + string(s.Fit) + "|q" +
-		strconv.Itoa(s.Quality) + "|b" + strconv.FormatFloat(s.Blur, 'g', -1, 64)
-	sum := sha256.Sum256([]byte(id))
-	return hex.EncodeToString(sum[:4])
-}
-
-// Slot is a fixed public image at Aspect (the edited image's width:height),
-// or at the edited image's own shape when Aspect is AspectNative (no crop by
-// default, any crop shape), rendered at each of Widths (the host's rungs,
-// e.g. a small and a large one) to hash-named WebP renditions in private/,
-// copied to public/ unless the item is hidden. A change writes new names.
-// Nothing is upscaled: a rung wider than the edited image is rendered at the
-// edited width, so every rung exists once the slot is set. Its original and
-// Edit are recorded in the manifest (Root.Slots). An edit narrower than Min
-// fails.
-type Slot struct {
-	Aspect    Aspect
-	Widths    []int
-	MinWidth  int
-	Quality   int // WebP quality; default 80
-	Animation Animation
-}
-
-// Animation is a policy for animated images (GIF, WebP; AVIF/HEIF sequences
-// are refused as animation_unsupported, never flattened).
-type Animation string
-
-const (
-	// AnimationAllow keeps every frame, delay and the loop count in each
-	// rendition; edits and resizes apply per frame. The default.
-	AnimationAllow Animation = ""
-	// AnimationReject refuses an animated upload with animation_not_allowed.
-	AnimationReject Animation = "reject"
-)
-
-// AvatarSlot is the avatar preset: square stills at 64, 128, 256 and 512 px
-// (32–256 CSS px at 2x), quality 85. Register it as a kind's AvatarSlotName
-// slot, e.g. on UserKind for account avatars; give the kind raster Types only.
-var AvatarSlot = Slot{Aspect: Aspect1x1, Widths: []int{64, 128, 256, 512}, Quality: 85, Animation: AnimationReject}
-
-// AvatarSlotName is the avatar slot's name.
-const AvatarSlotName = "avatar"
-
-// LinkSrcSet is a srcset of a slot link (Reader.SlotLink) at each width:
-// "link?w=64 64w, link?w=128 128w, …".
-func (s Slot) LinkSrcSet(link string) string {
-	set := make([]string, len(s.Widths))
-	for i, w := range s.Widths {
-		n := strconv.Itoa(w)
-		set[i] = link + "?w=" + n + " " + n + "w"
-	}
-	return strings.Join(set, ", ")
-}
-
-// Min is the narrowest edited width accepted: MinWidth, else the smallest width.
-func (s Slot) Min() int {
-	if s.MinWidth > 0 {
-		return s.MinWidth
-	}
-	return slices.Min(s.Widths)
-}
-
-// OutputWidth is the width rendered for rung from an image edited pixels
-// wide: the rung, or edited when narrower (never upscaled).
-func (s Slot) OutputWidth(rung, edited int) int { return min(rung, edited) }
-
-// Native reports a slot at its edited image's own aspect.
-func (s Slot) Native() bool { return s.Aspect.Native() }
-
-// Height is the output height of a width at Aspect (0 for a native slot).
-func (s Slot) Height(width int) int {
-	return s.Aspect.Height(width)
-}
-
-// Size is the output of a width from an edited image of size edited.
-func (s Slot) Size(width int, edited Dims) Dims {
-	if s.Native() && edited.W > 0 {
-		return Dims{W: width, H: Aspect{edited.W, edited.H}.Height(width)}
-	}
-	return Dims{W: width, H: s.Height(width)}
-}
-
-// Hash is the slot spec's stable identity; outputs under another are stale.
-func (s Slot) Hash() string {
-	b := []byte(s.Aspect.String() + "|" + strconv.Itoa(s.Min()) + "|q" + strconv.Itoa(s.Quality) + "|capped")
-	for _, w := range s.Widths {
-		b = strconv.AppendInt(append(b, '|'), int64(w), 10)
-	}
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:4])
-}
-
-const maxSlotWidth = 8192
-
-var (
-	ErrUnknownKind = errors.New("media: unknown kind")
-	ErrType        = errors.New("media: content type not allowed")
-	ErrTooLarge    = errors.New("media: file too large")
-)
-
-// Allows checks a file against the kind's types and size cap.
-func (k Kind) Allows(contentType string, size int64) error {
-	if len(k.Types) > 0 && !slices.Contains(k.Types, contentType) {
-		return &UploadError{Code: CodeType, Message: fmt.Sprintf("%s files are not allowed here; allowed: %s", contentType, strings.Join(k.Types, ", ")),
-			Details: &ErrorDetails{Type: contentType, Allowed: k.Types}}
-	}
-	limit := k.MaxBytes
-	if l := k.TypeLimits[topType(contentType)]; l.MaxBytes > 0 {
-		limit = l.MaxBytes
-	}
-	if size < 0 || (limit > 0 && size > limit) {
-		return &UploadError{Code: CodeTooLarge, Message: fmt.Sprintf("%s files may be at most %d bytes; this one is %d", contentType, limit, size),
-			Details: &ErrorDetails{Type: contentType, Size: size, MaxBytes: limit}}
-	}
-	return nil
-}
-
-// checkFiles refuses an edit that leaves more files than the kind's caps
-// allow and adds to them; a manifest already over a lowered cap can still
-// shrink or be reordered.
-func (k Kind) checkFiles(before, after *Manifest) error {
-	if k.MaxFiles > 0 && len(after.Files) > k.MaxFiles && len(after.Files) > len(before.Files) {
-		return uploadErr(CodeTooManyFiles, "kind %q allows at most %d files", k.Name, k.MaxFiles)
-	}
-	if len(k.TypeLimits) == 0 {
-		return nil
-	}
-	count := func(m *Manifest) map[string]int {
-		n := map[string]int{}
-		for _, f := range m.Files {
-			n[topType(f.Type)]++
-		}
-		return n
-	}
-	was, now := count(before), count(after)
-	for t, l := range k.TypeLimits {
-		if l.MaxFiles > 0 && now[t] > l.MaxFiles && now[t] > was[t] {
-			return uploadErr(CodeTooManyFiles, "kind %q allows at most %d %s files", k.Name, l.MaxFiles, t)
-		}
-	}
-	return nil
-}
-
-func topType(contentType string) string {
-	t, _, _ := strings.Cut(contentType, "/")
-	return t
-}
-
-// Registry is the host's set of kinds.
-type Registry struct {
-	kinds map[string]Kind
-}
-
-// NewRegistry validates and registers kinds.
-func NewRegistry(kinds ...Kind) (*Registry, error) {
-	r := &Registry{kinds: make(map[string]Kind, len(kinds))}
-	for _, k := range kinds {
-		if !layout.ValidSegment(k.Name) {
-			return nil, fmt.Errorf("media: invalid kind name %q", k.Name)
-		}
-		if _, dup := r.kinds[k.Name]; dup {
-			return nil, fmt.Errorf("media: duplicate kind %q", k.Name)
-		}
-		for name := range k.Specs {
-			if !layout.ValidSegment(name) || name == EditorVariant {
-				return nil, fmt.Errorf("media: kind %q: invalid spec name %q (%q is the editor view)", k.Name, name, EditorVariant)
-			}
-		}
-		if _, ok := k.Specs[k.Zip]; k.Zip != "" && !ok {
-			return nil, fmt.Errorf("media: kind %q: zip variant %q has no spec", k.Name, k.Zip)
-		}
-		if k.Video != nil {
-			if err := k.Video.Validate(); err != nil {
-				return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
-			}
-		}
-		if k.Audio != nil {
-			if err := k.Audio.Validate(); err != nil {
-				return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
-			}
-			if _, ok := k.Specs[AudioVariant]; ok {
-				return nil, fmt.Errorf("media: kind %q: spec name %q is the audio variant", k.Name, AudioVariant)
-			}
-		} else if slices.ContainsFunc(k.Types, isAudioType) {
-			return nil, fmt.Errorf("media: kind %q accepts audio types but has no Audio", k.Name)
-		}
-		if k.Video == nil && slices.ContainsFunc(k.Types, isSubtitleType) {
-			return nil, fmt.Errorf("media: kind %q accepts subtitles but has no Video", k.Name)
-		}
-		if _, ok := k.Specs[SubtitleVariant]; ok && k.Video != nil {
-			return nil, fmt.Errorf("media: kind %q: spec name %q is the subtitle variant", k.Name, SubtitleVariant)
-		}
-		for t, l := range k.TypeLimits {
-			if t == "" || strings.Contains(t, "/") || l.MaxBytes < 0 || l.MaxFiles < 0 {
-				return nil, fmt.Errorf("media: kind %q: invalid type limit %q", k.Name, t)
-			}
-		}
-		slots := make(map[string]Slot, len(k.Slots))
-		for name, slot := range k.Slots {
-			if !layout.ValidSegment(name) || layout.ValidSourceName(name) || layout.ValidInlineName(name) {
-				return nil, fmt.Errorf("media: kind %q: invalid slot name %q", k.Name, name)
-			}
-			if !slot.Aspect.Valid() || len(slot.Widths) == 0 || slot.MinWidth < 0 || slot.Quality < 0 || slot.Quality > 100 {
-				return nil, fmt.Errorf("media: kind %q slot %q: needs a valid Aspect (or AspectNative) and Widths", k.Name, name)
-			}
-			slot.Widths = slices.Sorted(slices.Values(slot.Widths))
-			for i, w := range slot.Widths {
-				if w <= 0 || w > maxSlotWidth || (i > 0 && w == slot.Widths[i-1]) {
-					return nil, fmt.Errorf("media: kind %q slot %q: invalid width %d", k.Name, name, w)
-				}
-			}
-			slots[name] = slot
-		}
-		if k.Video != nil {
-			for _, reserved := range []string{PosterSlot} {
-				if _, ok := slots[reserved]; ok {
-					return nil, fmt.Errorf("media: kind %q: slot %q is reserved on video kinds", k.Name, reserved)
-				}
-			}
-			poster := k.Video.Poster()
-			for i, w := range poster.Widths {
-				if w <= 0 || w > maxSlotWidth || (i > 0 && w == poster.Widths[i-1]) {
-					return nil, fmt.Errorf("media: kind %q: invalid poster width %d", k.Name, w)
-				}
-			}
-			slots[PosterSlot] = poster
-		}
-		k.Slots = slots
-		r.kinds[k.Name] = k
-	}
-	return r, nil
-}
-
-func (r *Registry) hasVideo() bool {
-	for _, k := range r.kinds {
-		if k.Video != nil {
-			return true
-		}
-	}
-	return false
-}
-
-// Kind returns a registered kind.
-func (r *Registry) Kind(name string) (Kind, error) {
-	k, ok := r.kinds[name]
-	if !ok {
-		return Kind{}, fmt.Errorf("%w %q", ErrUnknownKind, name)
-	}
-	return k, nil
-}

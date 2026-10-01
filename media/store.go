@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"slices"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -132,7 +134,7 @@ type Store interface {
 // missing capability.
 func Probe(ctx context.Context, s Store, prefix string) (Capabilities, error) {
 	var c Capabilities
-	key := prefix + "probe-" + NewUploadName()
+	key := prefix + "probe-" + uuid.NewString()
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()

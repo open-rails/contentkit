@@ -1,16 +1,13 @@
 // Package layout defines media object keys, dependency-free so the access
-// worker can classify paths without importing the media runtime:
+// agent can classify paths without importing the media runtime:
 //
-//	{tenant}/{kind}/{content_id}/manifest.json         the item's one manifest; never served
-//	                            /originals/sha256-{hex} uploads; never served
-//	                            /temp/u-{uuid}          staged multipart uploads until placed; never served
-//	                            /temp/e-{hex}           editor views; editor token only
-//	                            /private/sha256-{hex}   every rendition; token-gated
-//	                            /public/sha256-{hex}    copies of the exposed renditions; anyone
+//	{namespace}/{kind}/{id}/manifest.json         gzip JSON; never served
+//	                       /private/sha256-{hex}  every blob: uploads, derived files, editor views
+//	                       /public/{name}         app-declared names, e.g. cover-460.webp
+//	                       /temp/{name}           in-flight writes only; never served
+//	{namespace}/{kind}/_default/public/{name}     a public preset's default image
 //
-// originals/, private/ and public/ names are the SHA-256 of the object, so
-// objects are immutable: a change writes a new name. temp/ is discardable:
-// nothing a viewer needs lives there, and the sweep wipes it by age.
+// The URL of an object is its key under /v1/ on the site's media host.
 package layout
 
 import (
@@ -20,51 +17,52 @@ import (
 
 // Folder areas.
 const (
-	AreaManifest  = "manifest"
-	AreaOriginals = "originals"
-	AreaTemp      = "temp"
-	AreaPrivate   = "private"
-	AreaPublic    = "public"
+	AreaManifest = "manifest"
+	AreaPrivate  = "private"
+	AreaPublic   = "public"
+	AreaTemp     = "temp"
 )
 
-// ManifestName is the manifest's key within the folder.
-const ManifestName = "manifest.json"
-
 const (
+	// ManifestName is the manifest's key within the folder.
+	ManifestName = "manifest.json"
+	// DefaultID is the item id under which a kind's default public images live.
+	DefaultID = "_default"
+	// SHA256Prefix starts every blob name.
 	SHA256Prefix = "sha256-"
-	UploadPrefix = "u-"
-	InlinePrefix = "i-"
-	EditorPrefix = "e-"
+	// URLPrefix is the path every media URL starts with.
+	URLPrefix = "/v1/"
 )
 
 // Key is a parsed object key.
 type Key struct {
-	Tenant, Kind, ID string
-	Area             string
-	Name             string // file name within the area; "" for the manifest
+	Namespace, Kind, ID string
+	Area                string
+	Name                string // the name within the area; "" for the manifest
 }
 
-// Parse classifies an object key; ok is false for anything outside the
-// layout.
+// Parse classifies an object key; ok is false for anything outside the layout.
 func Parse(key string) (Key, bool) {
 	parts := strings.Split(key, "/")
 	if len(parts) < 4 || len(parts) > 5 || !ValidSegment(parts[0]) || !ValidSegment(parts[1]) || !ValidSegment(parts[2]) {
 		return Key{}, false
 	}
-	k := Key{Tenant: parts[0], Kind: parts[1], ID: parts[2]}
+	k := Key{Namespace: parts[0], Kind: parts[1], ID: parts[2]}
 	rest := parts[3:]
 	switch {
 	case len(rest) == 1 && rest[0] == ManifestName:
 		k.Area = AreaManifest
-	case len(rest) == 2 && rest[0] == AreaTemp && (ValidStagedName(rest[1]) || ValidEditorName(rest[1])):
-		k.Area, k.Name = AreaTemp, rest[1]
-	case len(rest) == 2 && (rest[0] == AreaOriginals || rest[0] == AreaPrivate || rest[0] == AreaPublic) && ValidHashName(rest[1]):
+	case len(rest) == 2 && rest[0] == AreaPrivate && ValidHashName(rest[1]),
+		len(rest) == 2 && (rest[0] == AreaPublic || rest[0] == AreaTemp) && ValidSegment(rest[1]):
 		k.Area, k.Name = rest[0], rest[1]
 	default:
 		return Key{}, false
 	}
 	return k, true
 }
+
+// Prefix is an item's folder: "{namespace}/{kind}/{id}/".
+func Prefix(namespace, kind, id string) string { return namespace + "/" + kind + "/" + id + "/" }
 
 // ValidSegment keeps keys stable ASCII: [A-Za-z0-9._-]{1,128}, no leading dot.
 func ValidSegment(s string) bool {
@@ -86,63 +84,6 @@ func ValidHashName(name string) bool {
 	return ok
 }
 
-// ValidSourceName accepts an uploaded file's name: a hash, or "u-{uuid}"
-// until the worker places it.
-func ValidSourceName(name string) bool { return ValidHashName(name) || ValidStagedName(name) }
-
-// ValidStagedName accepts "u-{uuid}", an upload whose hash is not yet known.
-func ValidStagedName(name string) bool {
-	id, ok := strings.CutPrefix(name, UploadPrefix)
-	return ok && canonicalUUID(id)
-}
-
-// ValidEditorName accepts "e-{64 lowercase hex}", an editor view.
-func ValidEditorName(name string) bool {
-	h, ok := strings.CutPrefix(name, EditorPrefix)
-	return ok && len(h) == 64 && strings.ToLower(h) == h && validHex(h)
-}
-
-func validHex(s string) bool {
-	_, err := hex.DecodeString(s)
-	return err == nil
-}
-
-// SourceArea is where an uploaded file named name lives: temp/ for a
-// "u-{uuid}" not yet placed, originals/ for a "sha256-{hex}".
-func SourceArea(name string) string {
-	if ValidStagedName(name) {
-		return AreaTemp
-	}
-	return AreaOriginals
-}
-
-// ValidInlineName accepts "i-{uuid}", an inline image's id.
-func ValidInlineName(name string) bool {
-	id, ok := strings.CutPrefix(name, InlinePrefix)
-	if !ok {
-		return false
-	}
-	return canonicalUUID(id)
-}
-
-// canonicalUUID accepts only the lowercase 8-4-4-4-12 hex form.
-func canonicalUUID(s string) bool {
-	if len(s) != 36 {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if i == 8 || i == 13 || i == 18 || i == 23 {
-			if c != '-' {
-				return false
-			}
-		} else if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
-			return false
-		}
-	}
-	return true
-}
-
 // ParseSHA256Name returns the digest of a "sha256-{hex}" name.
 func ParseSHA256Name(name string) ([]byte, bool) {
 	h, ok := strings.CutPrefix(name, SHA256Prefix)
@@ -152,3 +93,6 @@ func ParseSHA256Name(name string) ([]byte, bool) {
 	sum, err := hex.DecodeString(h)
 	return sum, err == nil
 }
+
+// SHA256Name names a blob by its digest: "sha256-{hex}".
+func SHA256Name(sum []byte) string { return SHA256Prefix + hex.EncodeToString(sum) }
