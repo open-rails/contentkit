@@ -5,15 +5,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image/color"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/image"
+	"github.com/open-rails/contentkit/media/internal/s3test"
 )
 
 // Image presets render each page through its edit, record provenance and
@@ -110,7 +114,10 @@ func TestSpecChangeAndForce(t *testing.T) {
 // purged on every write; a removed upload's names are deleted and purged; a
 // hidden item renders none.
 func TestPublicPreset(t *testing.T) {
-	e := newEnv(t, nil)
+	var removed []string
+	e := newEnv(t, func(c *media.Config) {
+		c.Hooks.PurgePublic = func(_ context.Context, urls []string) { removed = append(removed, urls...) }
+	})
 	g := e.ref(t, "gallery", 1)
 	e.put(t, g, "cover.png", "image/png", quadrants(t), media.Op{Op: media.OpEdit, Path: "cover.png", Edit: &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 400, H: 1}}})
 	e.process(t, media.ProcessJob{Ref: g})
@@ -149,13 +156,13 @@ func TestPublicPreset(t *testing.T) {
 		t.Fatal("an edit under MinWidth accepted")
 	}
 	e.commit(t, g, media.Op{Op: media.OpRemove, Path: "cover.png"})
-	e.process(t, media.ProcessJob{Ref: g})
 	if _, _, ok := e.public(t, g, "cover-150.webp"); ok {
-		t.Fatal("a removed cover's public name kept")
+		t.Fatal("remove returned before public cleanup")
 	}
-	if p := e.takePurged(); len(p) != 3 {
-		t.Fatalf("removal purged %v", p)
+	if len(removed) != 3 {
+		t.Fatalf("removal purged %v", removed)
 	}
+	e.process(t, media.ProcessJob{Ref: g})
 	// A hidden item renders nothing public.
 	h := e.ref(t, "gallery", 2)
 	e.put(t, h, "cover.png", "image/png", quadrants(t))
@@ -169,6 +176,105 @@ func TestPublicPreset(t *testing.T) {
 	e.process(t, media.ProcessJob{Ref: h})
 	if _, _, ok := e.public(t, h, "cover-150.webp"); ok {
 		t.Fatal("a hidden item rendered its cover")
+	}
+}
+
+func TestRemoveFencesInFlightPublicPublication(t *testing.T) {
+	e := newEnv(t, nil)
+	ref := e.ref(t, "gallery", 1)
+	e.put(t, ref, "cover.png", "image/png", quadrants(t))
+	e.process(t, media.ProcessJob{Ref: ref})
+	item, _ := e.reg.Item(ref)
+	source, _ := item.Blob(e.file(t, ref, "cover.png").Blob)
+	reading, resume := make(chan struct{}), make(chan struct{})
+	var once, release sync.Once
+	defer release.Do(func() { close(resume) })
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var publicWrites atomic.Int64
+	s := &hooked{Store: e.Store,
+		onGet: func(key string) {
+			if key == source {
+				once.Do(func() {
+					close(reading)
+					select {
+					case <-resume:
+					case <-ctx.Done():
+					}
+				})
+			}
+		},
+		onPut: func(key string, put func() error) error {
+			if strings.HasPrefix(key, item.PublicPrefix()) {
+				publicWrites.Add(1)
+			}
+			return put()
+		},
+	}
+	processor := e.processor(t, s)
+	done := make(chan error, 1)
+	go func() { done <- processor.Process(ctx, media.ProcessJob{Ref: ref, Force: true}) }()
+	<-reading
+	op := media.Op{Op: media.OpRemove, Path: "cover.png"}
+	e.commit(t, ref, op)
+	if _, _, ok := e.public(t, ref, "cover-150.webp"); ok {
+		t.Fatal("remove returned before deleting the old public image")
+	}
+	e.commit(t, ref, op) // a retry must still confirm cleanup
+	if _, err := e.Store.Head(ctx, source); err != nil {
+		t.Fatalf("ordinary removal lost the retained private blob: %v", err)
+	}
+	release.Do(func() { close(resume) })
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if n := publicWrites.Load(); n != 0 {
+		t.Fatalf("in-flight worker published %d public files after removal returned", n)
+	}
+}
+
+type failDelete struct {
+	media.Store
+	key string
+	err error
+}
+
+func (s *failDelete) Delete(ctx context.Context, key string) error {
+	if key == s.key {
+		s.key = ""
+		return s.err
+	}
+	return s.Store.Delete(ctx, key)
+}
+
+func TestRemoveRetriesFailedPublicCleanup(t *testing.T) {
+	e := newEnv(t, nil)
+	ref := e.ref(t, "gallery", 1)
+	e.put(t, ref, "cover.png", "image/png", quadrants(t))
+	e.process(t, media.ProcessJob{Ref: ref})
+	item, _ := e.reg.Item(ref)
+	key, _ := item.Public("cover-150.webp")
+	failure := errors.New("public delete unavailable")
+	store := &failDelete{Store: e.Store, key: key, err: failure}
+	manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{})
+	uploads, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests, Queue: nopQueue{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops := []media.Op{{Op: media.OpRemove, Path: "cover.png"}}
+	if _, err := uploads.Commit(t.Context(), e.editor, ref, ops); !errors.Is(err, failure) {
+		t.Fatalf("remove did not report failed cleanup: %v", err)
+	}
+	if _, ok := e.manifest(t, ref).Get("cover.png"); ok {
+		t.Fatal("cleanup failure unexpectedly restored the removed upload")
+	}
+	if _, err := uploads.Commit(t.Context(), e.editor, ref, ops); err != nil {
+		t.Fatalf("retry could not finish cleanup after the upload was removed: %v", err)
+	}
+	for _, name := range []string{"cover-150.webp", "cover-300.webp", "cover-600.webp"} {
+		if _, _, ok := e.public(t, ref, name); ok {
+			t.Fatalf("retry kept %s", name)
+		}
 	}
 }
 

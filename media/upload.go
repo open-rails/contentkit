@@ -361,7 +361,8 @@ func (u *Uploads) abort(ctx context.Context, t ticket, key string, cause error) 
 // upload sizes; growth past its quota fails with CodeQuota (not for exempt
 // grants). Then the worker places staged uploads and processes the item. A
 // new item starts hidden unless anonymous viewers may see it
-// (Hooks.Resolver).
+// (Hooks.Resolver). Removes finish public-file cleanup before returning;
+// unreferenced private blobs retain the normal sweep grace period.
 func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref.ContentRef, ops []Op) (*Manifest, error) {
 	item, err := u.item(ref)
 	if err != nil {
@@ -499,6 +500,23 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	}
 	if err := u.o.Queue.Enqueue(ctx, job); err != nil {
 		return nil, err
+	}
+	for _, op := range ops {
+		if op.Op != OpRemove || len(item.Kind().PublicFor(op.Path)) == 0 {
+			continue
+		}
+		keys, err := u.o.Manifests.SyncPublic(ctx, ref)
+		if purge := u.o.Manifests.reg.cfg.Hooks.PurgePublic; purge != nil && len(keys) > 0 {
+			urls := make([]string, len(keys))
+			for i, key := range keys {
+				urls[i] = strings.TrimRight(u.o.Manifests.reg.cfg.BaseURL, "/") + layout.URLPrefix + key
+			}
+			purge(ctx, urls)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("media: remove public files: %w", err)
+		}
+		break
 	}
 	return man, nil
 }

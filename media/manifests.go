@@ -131,6 +131,56 @@ func (b bound) check(cur, next *Manifest) error {
 	return nil
 }
 
+// SyncPublic deletes public names no attached upload currently uses, under
+// the manifest lock. It returns the deleted keys for cache purging.
+func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) ([]string, error) {
+	item, err := m.reg.Item(ref)
+	if err != nil {
+		return nil, err
+	}
+	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	cur, _, err := m.get(ctx, item.ManifestKey())
+	if errors.Is(err, ErrNotFound) {
+		cur = &Manifest{}
+	} else if err != nil {
+		return nil, err
+	}
+	want := map[string]bool{}
+	if !cur.Hidden {
+		for _, f := range cur.Files {
+			if !f.IsUpload() || f.Unattached {
+				continue
+			}
+			for _, p := range item.Kind().PublicFor(f.Path) {
+				for _, name := range item.Kind().PublicNames(p, f.Path) {
+					key, err := item.Public(name)
+					if err != nil {
+						return nil, err
+					}
+					want[key] = true
+				}
+			}
+		}
+	}
+	var gone []string
+	for obj, err := range m.store.List(ctx, item.PublicPrefix()) {
+		if err != nil {
+			return gone, err
+		}
+		if !want[obj.Key] {
+			if err := m.store.Delete(ctx, obj.Key); err != nil && !errors.Is(err, ErrNotFound) {
+				return gone, err
+			}
+			gone = append(gone, obj.Key)
+		}
+	}
+	return gone, nil
+}
+
 func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existing bool, b bound, fn func(*Manifest) error) (*Manifest, error) {
 	item, err := m.reg.Item(ref)
 	if err != nil {
