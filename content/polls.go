@@ -267,7 +267,7 @@ func (p *polls) list(ctx context.Context, actor access.Actor, f listFilter) ([]p
 	defer rows.Close()
 	var views []pollView
 	for rows.Next() {
-		v, err := scanPoll(rows)
+		v, err := p.scan(ctx, rows)
 		if err != nil {
 			return nil, err
 		}
@@ -301,12 +301,18 @@ func parseWindow(month, date string) (from, to time.Time, ok bool) {
 	return time.Time{}, time.Time{}, false
 }
 
-const pollCols = `id::text, kind, question, language, is_active, coalesce(image_url,''), live_at, closes_at`
+const pollCols = `id::text, kind, question, language, is_active, coalesce(image_name,''), live_at, closes_at`
 
-// scanPoll reads one pollCols row and derives Closed.
-func scanPoll(row pgx.Row) (pollView, error) {
+// scan reads pollCols and derives the image URL and Closed.
+func (p *polls) scan(ctx context.Context, row pgx.Row) (pollView, error) {
 	v := pollView{Options: []pollOption{}}
-	if err := row.Scan(&v.ID, &v.Kind, &v.Question, &v.Language, &v.IsActive, &v.ImageURL, &v.LiveAt, &v.ClosesAt); err != nil {
+	var name string
+	if err := row.Scan(&v.ID, &v.Kind, &v.Question, &v.Language, &v.IsActive, &name, &v.LiveAt, &v.ClosesAt); err != nil {
+		return pollView{}, err
+	}
+	var err error
+	v.ImageURL, err = p.rt.imageURL(ctx, pollFolder, v.ID, name)
+	if err != nil {
 		return pollView{}, err
 	}
 	v.Closed = !v.IsActive || (v.ClosesAt != nil && !v.ClosesAt.After(time.Now()))
@@ -319,7 +325,7 @@ func (p *polls) get(ctx context.Context, actor access.Actor, id string) (pollVie
 	if !uuidRe.MatchString(id) {
 		return pollView{}, ErrNotFound
 	}
-	v, err := scanPoll(p.s.pool.QueryRow(ctx, `SELECT `+pollCols+` FROM `+p.s.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant))
+	v, err := p.scan(ctx, p.s.pool.QueryRow(ctx, `SELECT `+pollCols+` FROM `+p.s.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pollView{}, ErrNotFound
 	}
@@ -334,9 +340,8 @@ func (p *polls) get(ctx context.Context, actor access.Actor, id string) (pollVie
 }
 
 // attach batch-loads options + the caller's votes into views, sums total_votes,
-// absolutizes stored-relative image paths (backfilled legacy rows) and, for
-// free_text polls, loads the answer count, the caller's answer and the
-// classifier's groups.
+// and, for free_text polls, loads the answer count, the caller's answer and
+// the classifier's groups.
 func (p *polls) attach(ctx context.Context, actor access.Actor, views []pollView) error {
 	if len(views) == 0 {
 		return nil
@@ -450,7 +455,7 @@ func (p *polls) answersFor(ctx context.Context, actor access.Actor, ids []string
 
 // optionsFor batch-loads options keyed by question id (one array-param query).
 func (p *polls) optionsFor(ctx context.Context, q querier, ids []string) (map[string][]pollOption, error) {
-	rows, err := q.Query(ctx, `SELECT question_id::text, id::text, label, coalesce(image_url, ''), position, vote_count
+	rows, err := q.Query(ctx, `SELECT question_id::text, id::text, label, coalesce(image_name, ''), position, vote_count
 		FROM `+p.s.t.pollOptions+` WHERE question_id = ANY($1::uuid[]) ORDER BY question_id, position`, ids)
 	if err != nil {
 		return nil, err
@@ -459,8 +464,13 @@ func (p *polls) optionsFor(ctx context.Context, q querier, ids []string) (map[st
 	out := map[string][]pollOption{}
 	for rows.Next() {
 		var qid string
+		var name string
 		var o pollOption
-		if err := rows.Scan(&qid, &o.ID, &o.Label, &o.ImageURL, &o.Position, &o.VoteCount); err != nil {
+		if err := rows.Scan(&qid, &o.ID, &o.Label, &name, &o.Position, &o.VoteCount); err != nil {
+			return nil, err
+		}
+		o.ImageURL, err = p.rt.imageURL(ctx, pollFolder, qid, name)
+		if err != nil {
 			return nil, err
 		}
 		out[qid] = append(out[qid], o)
@@ -783,9 +793,9 @@ func (p *polls) handleAddOption(w http.ResponseWriter, req *http.Request) {
 		(question_id, label, position)
 		SELECT q.id, $2, COALESCE($3, (SELECT COALESCE(MAX(position)+1, 0) FROM `+p.s.t.pollOptions+` WHERE question_id = q.id))
 		FROM `+p.s.t.pollQuestions+` q WHERE q.id = $1 AND q.tenant_id = $4 AND q.deleted_at IS NULL AND q.kind = '`+PollMultipleChoice+`'
-		RETURNING id::text, label, coalesce(image_url,''), position, vote_count`,
+		RETURNING id::text, label, position, vote_count`,
 		id, strings.TrimSpace(*in.Label), in.Position, p.s.tenant).
-		Scan(&o.ID, &o.Label, &o.ImageURL, &o.Position, &o.VoteCount)
+		Scan(&o.ID, &o.Label, &o.Position, &o.VoteCount)
 	if errors.Is(err, pgx.ErrNoRows) { // poll missing/deleted, or free_text
 		var kind string
 		if p.s.pool.QueryRow(req.Context(), `SELECT kind FROM `+p.s.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, id, p.s.tenant).Scan(&kind) == nil && kind == PollFreeText {
@@ -828,16 +838,22 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 		in.Label = &l
 	}
 	var o pollOption
+	var name string
 	err := p.s.pool.QueryRow(req.Context(), `UPDATE `+p.s.t.pollOptions+`
 		SET label = COALESCE($2, label), position = COALESCE($3, position)
 		WHERE id = $1 AND question_id = $4 AND `+p.ownsQuestion("question_id", 5)+`
-		RETURNING id::text, label, coalesce(image_url,''), position, vote_count`,
+		RETURNING id::text, label, coalesce(image_name,''), position, vote_count`,
 		oid, in.Label, in.Position, pollID, p.s.tenant).
-		Scan(&o.ID, &o.Label, &o.ImageURL, &o.Position, &o.VoteCount)
+		Scan(&o.ID, &o.Label, &name, &o.Position, &o.VoteCount)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeErr(w, ErrNotFound)
 		return
 	}
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	o.ImageURL, err = p.rt.imageURL(req.Context(), pollFolder, pollID, name)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -884,7 +900,7 @@ func (p *polls) handleDeleteOption(w http.ResponseWriter, req *http.Request) {
 // handleQuestionImage sets (or with "" clears) the question image to an
 // inline image of the poll's media folder. PollWrite-gated.
 func (p *polls) handleQuestionImage(w http.ResponseWriter, req *http.Request) {
-	p.setImage(w, req, `UPDATE `+p.s.t.pollQuestions+` SET image_url = $3, updated_at = now()
+	p.setImage(w, req, `UPDATE `+p.s.t.pollQuestions+` SET image_name = NULLIF($3, ''), updated_at = now()
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`)
 }
 
@@ -895,10 +911,10 @@ func (p *polls) handleOptionImage(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, ErrNotFound)
 		return
 	}
-	p.setImage(w, req, `UPDATE `+p.s.t.pollOptions+` SET image_url = $3 WHERE id = $4 AND question_id = $1 AND `+p.ownsQuestion("question_id", 2), req.PathValue("oid"))
+	p.setImage(w, req, `UPDATE `+p.s.t.pollOptions+` SET image_name = NULLIF($3, '') WHERE id = $4 AND question_id = $1 AND `+p.ownsQuestion("question_id", 2), req.PathValue("oid"))
 }
 
-// setImage runs update with $1 the poll id, $2 the tenant, $3 the image URL
+// setImage runs update with $1 the poll id, $2 the tenant, $3 the image name
 // (NULL clears) and then extra.
 func (p *polls) setImage(w http.ResponseWriter, req *http.Request, update string, extra ...any) {
 	ctx := req.Context()
@@ -933,7 +949,7 @@ func (p *polls) setImage(w http.ResponseWriter, req *http.Request, update string
 		writeErr(w, err)
 		return
 	}
-	tag, err := p.s.pool.Exec(ctx, update, append([]any{id, p.s.tenant, url}, extra...)...)
+	tag, err := p.s.pool.Exec(ctx, update, append([]any{id, p.s.tenant, name}, extra...)...)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -942,7 +958,11 @@ func (p *polls) setImage(w http.ResponseWriter, req *http.Request, update string
 		writeErr(w, ErrNotFound)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]*string{"image_url": url})
+	var responseURL *string
+	if name != "" {
+		responseURL = &url
+	}
+	writeJSON(w, http.StatusOK, map[string]*string{"image_url": responseURL})
 }
 
 func (p *polls) handleList(w http.ResponseWriter, req *http.Request) {

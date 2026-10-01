@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/media"
 )
 
 // posts is the generic authored-content primitive (a "blog post" is a post
@@ -30,7 +31,7 @@ type posts struct {
 
 func newPosts(rt *Runtime) *posts {
 	s := rt.store
-	cols := `p.id, p.author_id, p.title, p.slug, p.body, p.excerpt, p.cover_url,
+	cols := `p.id, p.author_id, p.title, p.slug, p.body, p.excerpt, p.cover_name,
 		p.language, p.is_draft, p.live_at, p.total_likes, p.total_dislikes,
 		p.created_at, p.updated_at,
 		(SELECT count(*) FROM ` + s.t.comments + ` c
@@ -104,6 +105,9 @@ func decodeImage(req *http.Request) (string, error) {
 	if in.Image == nil {
 		return "", badRequest("image is required")
 	}
+	if *in.Image != "" && !media.ValidNamed(*in.Image) {
+		return "", badRequest("image must be an inline image name (i-{uuid})")
+	}
 	return *in.Image, nil
 }
 
@@ -126,14 +130,14 @@ func (p *posts) handleImage(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	url, err := p.rt.imageURL(ctx, postFolder, id, name)
-	if err == nil && url == nil {
+	if err == nil && name == "" {
 		err = badRequest("image is required")
 	}
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"url": *url})
+	writeJSON(w, http.StatusOK, map[string]string{"url": url})
 }
 
 // handleCover sets (or with "" clears) the post cover to an inline image of
@@ -159,7 +163,7 @@ func (p *posts) handleCover(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	tag, err := p.s.pool.Exec(ctx, `UPDATE `+p.s.t.posts+` SET cover_url = $2, updated_at = now() WHERE id = $1 AND tenant_id = $3 AND deleted_at IS NULL`, id, url, p.s.tenant)
+	tag, err := p.s.pool.Exec(ctx, `UPDATE `+p.s.t.posts+` SET cover_name = NULLIF($2, ''), updated_at = now() WHERE id = $1 AND tenant_id = $3 AND deleted_at IS NULL`, id, name, p.s.tenant)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -168,7 +172,11 @@ func (p *posts) handleCover(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, ErrNotFound)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]*string{"cover_url": url})
+	var responseURL *string
+	if name != "" {
+		responseURL = &url
+	}
+	writeJSON(w, http.StatusOK, map[string]*string{"cover_url": responseURL})
 }
 
 // liveID confirms a post exists in this tenant (not deleted).
@@ -241,6 +249,10 @@ func (p *posts) handleCreate(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if err := p.markDirty(ctx, tx, id, language, false); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if err := p.rt.exposePostMediaTx(ctx, tx, id); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -367,6 +379,10 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	if err := p.rt.exposePostMediaTx(ctx, tx, id); err != nil {
+		writeErr(w, err)
+		return
+	}
 	if err := tx.Commit(ctx); err != nil {
 		writeErr(w, err)
 		return
@@ -412,7 +428,7 @@ func (p *posts) handleDelete(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if err := p.rt.deleteMediaTx(ctx, tx, postFolder, id); err != nil {
+	if err := p.rt.exposePostMediaTx(ctx, tx, id); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -460,7 +476,7 @@ func (p *posts) handleList(w http.ResponseWriter, req *http.Request) {
 	defer rows.Close()
 	out := []postView{}
 	for rows.Next() {
-		v, err := scanPost(rows)
+		v, err := p.scan(ctx, rows)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -527,7 +543,7 @@ func (p *posts) react(ctx context.Context, actor access.Actor, id string, value 
 // loadByID returns a single non-deleted post (draft or published) of the tenant.
 func (p *posts) loadByID(ctx context.Context, q querier, id string) (postView, error) {
 	row := q.QueryRow(ctx, `SELECT `+p.cols+` FROM `+p.s.t.posts+` p WHERE p.id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL`, id, p.s.tenant)
-	v, err := scanPost(row)
+	v, err := p.scan(ctx, row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return postView{}, ErrNotFound
 	}
@@ -558,17 +574,28 @@ func (p *posts) sanitizePtr(ctx context.Context, s *string) (*string, error) {
 	return &out, nil
 }
 
-// scanPost scans the p.cols column order (pgx.Rows satisfies pgx.Row).
-func scanPost(row pgx.Row) (postView, error) {
+// scan reads p.cols and derives the cover URL from its stored image name.
+func (p *posts) scan(ctx context.Context, row pgx.Row) (postView, error) {
 	var v postView
+	var coverName *string
 	var state, reason string
 	err := row.Scan(&v.ID, &v.AuthorID, &v.Title, &v.Slug, &v.Body, &v.Excerpt,
-		&v.CoverURL, &v.Language, &v.IsDraft, &v.LiveAt, &v.TotalLikes,
+		&coverName, &v.Language, &v.IsDraft, &v.LiveAt, &v.TotalLikes,
 		&v.TotalDislikes, &v.CreatedAt, &v.UpdatedAt, &v.CommentCount, &state, &reason)
+	if err != nil {
+		return postView{}, err
+	}
+	if coverName != nil && *coverName != "" {
+		url, err := p.rt.imageURL(ctx, postFolder, v.ID, *coverName)
+		if err != nil {
+			return postView{}, err
+		}
+		v.CoverURL = &url
+	}
 	if state != ModerationApproved {
 		v.Moderation, v.ModerationReason = state, reason
 	}
-	return v, err
+	return v, nil
 }
 
 // isPublished mirrors the list predicate for a loaded row (deleted already excluded).

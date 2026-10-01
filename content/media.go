@@ -15,10 +15,11 @@ import (
 // Media connects post and poll images to ContentKit media. The browser uploads
 // an image to a Named upload path of the post's or poll's item (the host's
 // media registry declares it and its public preset), and hands its name
-// ("i-{uuid}") to ContentKit, which stores the public URL and deletes the
-// item with the post or poll. Runtime.CanUpload authorizes those uploads.
+// ("i-{uuid}") to ContentKit, which stores the name and derives its public URL.
+// Post visibility changes reconcile public files; poll deletion removes the item.
+// Runtime.CanUpload authorizes those uploads.
 type Media struct {
-	URLs     MediaURLs    // *media.Reader
+	URLs     MediaURLs    // host registry's inline-image URLs
 	Folders  MediaFolders // *media.Jobs
 	PostKind string       // media kind of post folders; default "post"
 	PollKind string       // media kind of poll folders; default "poll"
@@ -30,9 +31,10 @@ type MediaURLs interface {
 	InlineURL(ctx context.Context, ref contentref.ContentRef, name string) (string, error)
 }
 
-// MediaFolders deletes item folders from the host's transaction; *media.Jobs
-// implements it.
+// MediaFolders queues visibility changes and folder deletions in the content
+// transaction; *media.Jobs implements it.
 type MediaFolders interface {
+	ExposeTx(ctx context.Context, tx pgx.Tx, refs ...contentref.ContentRef) error
 	DeleteItemsTx(ctx context.Context, tx pgx.Tx, items ...media.Deletion) error
 }
 
@@ -74,25 +76,25 @@ func (m *Media) kind(f folder) string {
 }
 
 // imageURL resolves an inline image name of a post or poll folder to its
-// public URL; "" clears the image (nil).
-func (rt *Runtime) imageURL(ctx context.Context, f folder, id, name string) (*string, error) {
-	if rt.media == nil {
-		return nil, errMediaNotConfigured
-	}
+// public URL; an empty name has no image, even without media configured.
+func (rt *Runtime) imageURL(ctx context.Context, f folder, id, name string) (string, error) {
 	if name == "" {
-		return nil, nil
+		return "", nil
 	}
-	if !media.ValidNamed(name) {
-		return nil, badRequest("image must be an inline image name (i-{uuid})")
+	if rt.media == nil {
+		return "", errMediaNotConfigured
 	}
-	u, err := rt.media.URLs.InlineURL(ctx, rt.Ref(rt.media.kind(f), id), name)
-	if err != nil {
-		return nil, err
-	}
-	return &u, nil
+	return rt.media.URLs.InlineURL(ctx, rt.Ref(rt.media.kind(f), id), name)
 }
 
-// deleteMediaTx deletes a post's or poll's media folder with the row.
+func (rt *Runtime) exposePostMediaTx(ctx context.Context, tx pgx.Tx, id string) error {
+	if rt.media == nil {
+		return nil
+	}
+	return rt.media.Folders.ExposeTx(ctx, tx, rt.Ref(rt.media.PostKind, id))
+}
+
+// deleteMediaTx queues a media folder's deletion with the row.
 func (rt *Runtime) deleteMediaTx(ctx context.Context, tx pgx.Tx, f folder, id string) error {
 	if rt.media == nil {
 		return nil

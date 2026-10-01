@@ -105,8 +105,9 @@ or PollWrite, and the post or poll must exist), and pass
 public preset's URL (`reg.PublicURL(ref, name+".webp")`; a pure function).
 The editor uploads each image with the SDK's `upload(file, {ref: {kind:
 "post", id}, path: "inline/x.png"})` (browser to bucket; the server names it
-`i-{uuid}`), then hands the name to ContentKit, which stores the public URL;
-it serves the kind's default until the worker renders it:
+`i-{uuid}`), then hands the name to ContentKit. Covers and poll images store
+that name, not the public URL; reads derive the URL from the current registry.
+The public URL serves the kind's default until the worker renders it:
 
 | Route | Body | Result |
 |---|---|---|
@@ -117,8 +118,20 @@ it serves the kind's default until the worker renders it:
 
 Create and update bodies take no image URLs, so images are added once the post
 or poll exists. The public URL serves after the image job runs (seconds).
-Deleting a post or poll deletes its folder in the same transaction; replaced
-images stay in the folder until then.
+Post creation, edits, moderation decisions and soft deletion queue `ExposeTx`
+in the content transaction. Soft deletion hides public media and keeps private
+sources; deleting a poll still queues its folder's deletion. Replaced images
+stay in the folder until it is deleted.
+
+Migration `0007_inline_image_names` renames `content_posts.cover_url` to
+`cover_name` and the poll question/option `image_url` columns to `image_name`.
+It refuses nonempty legacy image fields without modifying them. This is a
+coordinated cutover: stop old readers/writers, update host direct SQL readers
+and legacy importers to the name columns and registry-derived URLs, then apply
+the migration and start the new code. Doujins and Hentai0 currently read
+`content_posts.cover_url` directly; neither can adopt this migration unchanged.
+The JSON fields above remain `cover_url` and `image_url`. This migration must
+not deploy independently of the host adoption work.
 
 There is no `Recorder` and no `Moderation` port: reactions and favorites feed
 the signal plane through ContentKit's own preference outbox, and the
