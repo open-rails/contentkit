@@ -90,6 +90,48 @@ func TestEditorScope(t *testing.T) {
 	}
 }
 
+func TestVerifyPrivate(t *testing.T) {
+	r := ring(t, k2, &k1)
+	now := time.Unix(1_800_000_000, 0)
+	exp := token.Expiry(now, time.Hour, 0)
+	const item = "doujins/gallery/456/private/"
+	a, b, other := item+"sha256-3a", item+"sha256-7d", "doujins/gallery/789/private/sha256-3a"
+	whole := r.Sign(token.ItemScope("doujins", "gallery", "456"), exp)
+	file := r.Sign(token.FileScope(a), exp)
+	dl := r.Sign(token.DownloadScope(a, "Title.zip"), exp)
+	for _, c := range []struct {
+		tok, key, dl string
+		want         error
+	}{
+		{whole, a, "", nil},
+		{whole, b, "", nil},
+		{ring(t, k1, nil).Sign(token.ItemScope("doujins", "gallery", "456"), exp), b, "", nil},
+		{file, a, "", nil},
+		{dl, a, "Title.zip", nil},
+		{whole, other, "", token.ErrInvalid},
+		{file, b, "", token.ErrInvalid},
+		{r.Sign(item, exp), a, "", token.ErrInvalid}, // the old folder scope
+		{whole, a, "Title.zip", token.ErrInvalid},
+		{file, a, "Title.zip", token.ErrInvalid},
+		{dl, a, "Other.zip", token.ErrInvalid},
+		{dl, a, "", token.ErrInvalid},
+		{whole, "doujins/gallery/456/public/cover-460.webp", "", token.ErrInvalid},
+		{whole, "doujins/gallery/456/private/", "", token.ErrInvalid},
+		{whole, "doujins/gallery/456/private/a/b", "", token.ErrInvalid},
+		{whole, "doujins/gallery/456", "", token.ErrInvalid},
+		{r.Sign(token.ItemScope("doujins", "gallery", "456"), now), a, "", token.ErrExpired},
+		{ring(t, token.Key{ID: "k3", Secret: k1.Secret}, nil).Sign(token.FileScope(a), exp), a, "", token.ErrUnknownKey},
+		{token.Ring{}.Sign(token.FileScope(a), exp), a, "", token.ErrMalformed}, // a zero Ring signs with an empty key id
+	} {
+		if err := r.VerifyPrivate(c.tok, c.key, c.dl, now); !errors.Is(err, c.want) {
+			t.Errorf("VerifyPrivate(%.12s…, %s, %q) = %v, want %v", c.tok, c.key, c.dl, err, c.want)
+		}
+	}
+	if err := (token.Ring{}).VerifyPrivate(token.Ring{}.Sign(token.FileScope(a), exp), a, "", now); !errors.Is(err, token.ErrMalformed) {
+		t.Fatalf("a zero Ring verified its own token: %v", err)
+	}
+}
+
 func TestDownloadNameBinding(t *testing.T) {
 	r := ring(t, k1, nil)
 	now := time.Unix(1_800_000_000, 0)

@@ -32,10 +32,10 @@ var rules = []rule{
 	{pkgs: []string{m + "/contentref", m + "/media/token"}, only: []string{}},
 	{pkgs: []string{m + "/access"}, only: []string{m + "/contentref"}},
 	{pkgs: []string{m + "/media/layout"}, only: []string{m + "/media/token"}},
-	// The access worker: stdlib, token/layout and the SigV4 signer. No DB,
-	// River, S3 client, CGO or content/search/signal.
-	{pkgs: []string{m + "/cmd/media-access", m + "/media/accessworker"}, only: []string{
-		m + "/media/token", m + "/media/layout", m + "/media/accessworker",
+	// The access agent: stdlib, token and the SigV4 signer. No DB, River, S3
+	// client, CGO, media runtime or content/search/signal.
+	{pkgs: []string{m + "/cmd/media-access", m + "/media/agent"}, only: []string{
+		m + "/media/token", m + "/media/agent",
 		"github.com/aws/aws-sdk-go-v2/aws/...", "github.com/aws/aws-sdk-go-v2/internal/...", "github.com/aws/smithy-go/...",
 	}},
 	{pkgs: []string{m + "/content"}, deny: []string{

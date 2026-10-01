@@ -4,8 +4,10 @@
 //	{kid}.{exp}.base64url(HMAC-SHA256(secret, "{scope}|{exp}"))
 //
 // A scope is either a folder prefix ending in "/", which covers the objects
-// directly under it, or one object key. A download scope binds a
-// Content-Disposition name: "{key}#dl={name}". An editor scope,
+// directly under it, or one object key. An item scope, "{ns}/{kind}/{id}",
+// covers every private file of one item, and VerifyPrivate accepts it with
+// the file's own key. A download scope binds a Content-Disposition name:
+// "{key}#dl={name}". An editor scope,
 // "{folder}#editor", covers the objects directly under a temp/ folder and is
 // accepted only by VerifyEditor; Verify never accepts it, nor VerifyEditor any
 // other scope. Tokens are bearer tokens, revoked only by expiry.
@@ -17,6 +19,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -125,6 +128,9 @@ func FileScope(key string) string { return key }
 // DownloadScope scopes a token to one key served under a download name.
 func DownloadScope(key, name string) string { return key + "#dl=" + name }
 
+// ItemScope covers every private file of one item: "{ns}/{kind}/{id}".
+func ItemScope(ns, kind, id string) string { return ns + "/" + kind + "/" + id }
+
 // EditorScope scopes a token to the editor views directly under folder.
 func EditorScope(folder string) string { return folder + "#editor" }
 
@@ -153,6 +159,20 @@ func (r Ring) Verify(tok, key, dl string, now time.Time) error {
 	return r.verify(tok, scopes, now)
 }
 
+// VerifyPrivate checks tok for the private object key
+// "{ns}/{kind}/{id}/private/{name}" at now. With dl it accepts only
+// DownloadScope(key, dl); otherwise FileScope(key) or the key's ItemScope.
+func (r Ring) VerifyPrivate(tok, key, dl string, now time.Time) error {
+	p := strings.Split(key, "/")
+	if len(p) != 5 || p[3] != "private" || slices.Contains(p, "") {
+		return ErrInvalid
+	}
+	if dl != "" {
+		return r.verify(tok, []string{DownloadScope(key, dl)}, now)
+	}
+	return r.verify(tok, []string{FileScope(key), ItemScope(p[0], p[1], p[2])}, now)
+}
+
 // VerifyEditor checks tok for object key at now under an editor scope for
 // the folder directly containing key, and nothing else.
 func (r Ring) VerifyEditor(tok, key string, now time.Time) error {
@@ -170,7 +190,7 @@ func (r Ring) VerifyScope(tok, scope string, now time.Time) error {
 
 func (r Ring) verify(tok string, scopes []string, now time.Time) error {
 	kid, rest, ok := strings.Cut(tok, ".")
-	if !ok {
+	if !ok || kid == "" { // a zero Ring's empty key id would verify an empty secret
 		return ErrMalformed
 	}
 	e, sig, ok := strings.Cut(rest, ".")

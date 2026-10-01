@@ -536,15 +536,15 @@ the host's periodic jobs. The worker migrates its schema itself.
   Cookie mode issues a folder cookie only for unversioned full-access items.
   Versioned items use per-file URL tokens even in cookie mode because versions
   share the same `private/` folder and may have different access decisions.
-- **Access worker config**: `MEDIA_ACCESS_HOSTS=media.<domain>`;
+- **Access agent config**: `MEDIA_ACCESS_HOSTS` maps each media host to the
+  namespaces it serves (`media.<domain>=<tenant>,accounts`); URLs are
+  `https://media.<domain>/v1/{ns}/{kind}/{id}/{public|private}/{name}`.
   `MEDIA_ACCESS_CORS_ORIGINS` exactly your sites' origins
   (`https://<domain>,https://www.<domain>`; no wildcards, no third parties);
-  keep `Cross-Origin-Resource-Policy` at its `same-site` default so other
-  sites cannot hotlink media into `<img>`/`<video>`.
-- **Bucket**: private (no public ACL or policy); the worker's key is
-  read-only on `*/private/*`, `*/public/*` and `*/temp/e-*` (editor views,
-  served only under an editor token); `temp/` is never public and nothing
-  else in it is readable by the worker; only the hosts write.
+  `MEDIA_ACCESS_DEFAULTS` the public names that fall back to a kind's
+  `_default` item. `Cross-Origin-Resource-Policy` is always `same-site`.
+- **Bucket**: private (no public ACL or policy); the agent's key reads only
+  `*/private/*` and `*/public/*`; only the hosts write.
 - **CDN**: may cache `public/` in a shared cache (every name is immutable);
   wire `Hooks.PublicRemoved` (Jobs and the media worker) to purge the keys a
   hide or sweep deletes. Never cache `private/` in a shared cache: the token
