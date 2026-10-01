@@ -163,7 +163,7 @@ func (o *opRun) apply(n int, op Op) error {
 	case OpMove:
 		g, _, _, _, _ := k.upload(f.Path)
 		m.Files = slices.Delete(m.Files, i, i+1)
-		o.insert(g, f, op.Index, false)
+		o.insert(g, f, op.Index, !f.Unattached)
 	case OpAttach:
 		if !f.Unattached {
 			return nil // attached already: a retry
