@@ -424,6 +424,35 @@ Cropping and rotating are ContentKit's: the host never decodes images.
   `SlotManifest.error_code`. GIF and WebP variants derived as stills before
   this release re-derive on the item's next `ProcessJob{Ref}`.
 
+## Account avatars (AuthKit)
+
+An account's avatar is its user folder's avatar slot. The opt-in module
+`github.com/open-rails/contentkit/adapters/authkit` wires it to AuthKit, so a
+host writes no avatar code:
+
+```go
+import ckauthkit "github.com/open-rails/contentkit/adapters/authkit"
+
+users := media.Kind{Name: media.UserKind, Types: []string{"image/jpeg", "image/png", "image/webp"},
+	MaxBytes: 10 << 20, Slots: map[string]media.Slot{media.AvatarSlotName: media.AvatarSlot}}
+avatars := &ckauthkit.Avatars{Directory: authkitClient, Links: reader, Staff: permissions.ContentManage}
+// UploadAuthorizer: route the user kind to avatars.CanUpload (own avatar, or Staff).
+// JobsConfig.Hooks.SlotChanged: avatars.SlotChanged.
+// content.Options.Users: &ckauthkit.Authors{Directory: authkitClient}.
+// HandlerOptions.SlotDefault: the default avatar image.
+```
+
+- The reader needs `ReaderOptions.ReadURL`; `reader.SlotLink(ref, "avatar")`
+  is the account's avatar URL. `SlotChanged` writes it to the account's
+  `public_metadata.avatar` (`Avatars.Key`) once it is set; a removal leaves
+  it, and the link serves `SlotDefault`. Hosts sharing an account store show
+  the avatar of the site where it was last set.
+- Users change their own avatar under the host's `PGLimiter`; staff with
+  `Staff` (checked live) change anyone's. The SDK's `AvatarUpload` uploads,
+  crops and removes it.
+- `Authors` fills comment and post authors' names and avatars from
+  `PublicUsers`; `ckauthkit.AvatarLink(user, key)` reads the link elsewhere.
+
 ## Video posters and inline previews
 
 Every `Video` kind gets the `poster` slot (`Video.Poster()`): native aspect,
