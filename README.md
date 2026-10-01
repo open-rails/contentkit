@@ -237,8 +237,10 @@ full item can still shrink and the `hidden` and `full` flags always fit. A
 commit is refused (413 `too_large`) when the item, once processed, would
 pass that: it projects every output its presets have yet to write. When
 outputs still overrun it, the worker marks the item `full` instead of
-recording them: every producer then skips it, and editor reads report
-`full` (state `full`), until a commit shrinks the manifest. An item holds
+recording them: producers then write no private output for it (its public
+files still render), and editor reads report `full` (state `full`), until a
+commit frees the bytes the refused record was short of (`deficit`, counting
+what removed uploads would still have added). An item holds
 at most `MaxUploads` (10,000) uploads, an upload's meta at most 4 KiB of
 JSON and the item's 16 KiB; names are capped at 200 bytes of JSON, written
 unescaped (`<` is one byte). The manifest object records the quota its

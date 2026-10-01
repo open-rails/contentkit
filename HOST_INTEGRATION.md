@@ -570,10 +570,13 @@ out until `attach`.
 - Manifests stop at `media.MaxManifestBytes` (8 MiB of JSON). A commit is
   refused (413 `too_large`) when the item, processed, would pass that. If
   outputs still overrun it, the worker marks the item `full` instead of
-  recording them: every producer skips it, readiness is `full` and editor
-  reads say `full: true`, until a commit shrinks the manifest (removing
-  uploads, shortening meta); processing then resumes. The SDK's `waitFor`
-  rejects with `too_large` while an item is full.
+  recording them: producers write no private output for it (public files
+  still render), readiness is `full` and editor reads say `full: true`,
+  until a commit frees the bytes the refused record was short of (the
+  manifest's `deficit`, counting what removed uploads would still have
+  added); a smaller shrink or removal re-runs nothing.
+  The SDK's `waitFor` rejects with `too_large` while an item is full.
+  Failure messages are capped at 300 bytes.
 - `ManifestOptions.CacheBytes` (default 128 MiB) holds decoded manifests,
   each about three times its JSON: the largest costs 24 MiB, and a read
   that misses decodes it again (about 0.25 s and 60 MiB at 8 MiB, anonymous

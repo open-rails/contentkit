@@ -355,5 +355,5 @@ func full(ctx context.Context, ms *media.Manifests, ref contentref.ContentRef, e
 	if !errors.Is(err, media.ErrManifestTooLarge) {
 		return err
 	}
-	return river.JobCancel(errors.Join(err, ms.SetFull(ctx, ref)))
+	return river.JobCancel(errors.Join(err, ms.SetFull(ctx, ref, err)))
 }

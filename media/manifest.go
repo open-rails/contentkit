@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/open-rails/contentkit/media/layout"
@@ -25,10 +26,13 @@ type Manifest struct {
 	V      int  `json:"v"`
 	Hidden bool `json:"hidden,omitempty"` // set by Expose; public files are then absent
 	// Full: a producer could not record its outputs within the bound, so
-	// processing stops until a commit shrinks the manifest.
-	Full  bool           `json:"full,omitempty"`
-	Meta  map[string]any `json:"meta,omitempty"` // the app's template values, e.g. title
-	Files []File         `json:"files"`
+	// private outputs stop until a commit frees Deficit bytes (in the
+	// manifest and in what its uploads would still add): how far past the
+	// bound the refused record went.
+	Full    bool           `json:"full,omitempty"`
+	Deficit int64          `json:"deficit,omitempty"`
+	Meta    map[string]any `json:"meta,omitempty"` // the app's template values, e.g. title
+	Files   []File         `json:"files"`
 
 	index map[string]int
 	size  int64 // its JSON length when last read or written
@@ -166,14 +170,22 @@ func (f File) Fail() *Failure {
 // Teaser reports meta.teaser: served to every viewer who can see the item.
 func (f File) Teaser() bool { t, _ := f.Meta[MetaTeaser].(bool); return t }
 
-// NewFailure records err for upload f: an ImageError keeps its code and details.
+// NewFailure records err for upload f: an ImageError keeps its code and
+// details; the message is capped at maxFailureBytes.
 func NewFailure(f File, err error) *Failure {
 	out := &Failure{Of: f.Key(), Message: err.Error()}
 	if ie := AsImageError(err); ie != nil {
 		out.Message, out.Code, out.Details = ie.Message, ie.Code, &ie.Details
 	}
+	// A tool's diagnostics can run to kilobytes: the manifest keeps the gist.
+	for n := 0; jsonLen(out.Message) > maxFailureBytes; n++ {
+		out.Message = strings.ToValidUTF8(out.Message[:min(len(out.Message), maxFailureBytes-n)], "")
+	}
 	return out
 }
+
+// maxFailureBytes caps a Failure's message in the manifest's JSON bytes.
+const maxFailureBytes = 300
 
 // Find returns the index of the file at path, or -1.
 func (m *Manifest) Find(path string) int {
@@ -394,7 +406,7 @@ func (m *Manifest) SetFailed(path string, err error) {
 // and write (8 MiB: a 2,000-page gallery is about 1.5 MB), so every manifest
 // a reader may meet fits the cache. Edits stop editHeadroom below it, so a
 // hide always fits; a commit stops when the item, processed, would pass that
-// (Kind.unwritten). Meta is bounded where ops set it, and an item holds at
+// (Kind.Unwritten). Meta is bounded where ops set it, and an item holds at
 // most MaxUploads uploads.
 const (
 	MaxManifestBytes = 8 << 20
@@ -406,7 +418,7 @@ const (
 
 var (
 	// ErrManifestTooLarge: an edit refused because the manifest would grow
-	// past its bound. A worker refused it marks the item Full.
+	// past its bound. A worker refused it marks the item Full (SetFull).
 	ErrManifestTooLarge = errors.New("media: manifest edit refused: over its size limit")
 	// ErrManifestUnreadable: a stored manifest over MaxManifestBytes, written
 	// before the bound; it does not decode.

@@ -108,9 +108,13 @@ func (m *Manifests) EditExisting(ctx context.Context, ref contentref.ContentRef,
 	return m.edit(ctx, ref, true, bound{}, fn)
 }
 
-// editLimit is where commits and the workers' records stop; the flags (Full,
-// Hidden) may use the headroom above it, so they always fit.
-const editLimit = MaxManifestBytes - editHeadroom
+// editLimit is where commits and the workers' records stop; an unhide, whose
+// pending names commits projected, may run to flagBytes short of the bound;
+// the flags (Hidden, Full and its Deficit) may use it all, so they always fit.
+const (
+	editLimit = MaxManifestBytes - editHeadroom
+	flagBytes = 64
+)
 
 // bound refuses an edit (ErrManifestTooLarge) that grows a manifest past
 // limit (default editLimit), counting what project adds; an edit that does
@@ -128,10 +132,19 @@ func (b bound) check(cur, next *Manifest) error {
 		grown, was = grown+b.project(next), was+b.project(cur)
 	}
 	if next.size > MaxManifestBytes || grown > limit && grown > was {
-		return fmt.Errorf("%w: %d bytes (%d when processed), at most %d", ErrManifestTooLarge, next.size, grown, limit)
+		return &tooLargeError{size: next.size, grown: grown, limit: limit}
 	}
 	return nil
 }
+
+// tooLargeError is ErrManifestTooLarge with how far past its limit the edit
+// went, which SetFull records as the item's Deficit.
+type tooLargeError struct{ size, grown, limit int64 }
+
+func (e *tooLargeError) Error() string {
+	return fmt.Sprintf("%v: %d bytes (%d when processed), at most %d", ErrManifestTooLarge, e.size, e.grown, e.limit)
+}
+func (e *tooLargeError) Is(target error) bool { return target == ErrManifestTooLarge }
 
 // SyncPublic deletes public names no attached upload currently uses, under
 // the manifest lock. Cleanup is bounded to one minute; deleted keys are
@@ -254,7 +267,7 @@ func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bo
 	if err := next.Validate(); err != nil {
 		return nil, false, false, err
 	}
-	if etag != "" && next.Hidden == cur.Hidden && next.Full == cur.Full && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) {
+	if etag != "" && next.Hidden == cur.Hidden && next.Full == cur.Full && next.Deficit == cur.Deficit && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) {
 		return cur, false, false, nil
 	}
 	if etag == "" {
@@ -269,8 +282,12 @@ func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bo
 	if err := b.check(cur, next); err != nil {
 		return nil, false, false, err
 	}
-	if next.Full && b.project != nil && next.size < cur.size {
-		next.Full = false
+	// A commit clears Full only when it really makes room: it frees, in the
+	// manifest and in what its uploads will still add, the bytes the refused
+	// record was short of. Less (a small shrink, one upload of many) would
+	// only re-run the work to the same refusal.
+	if cur.Full && b.project != nil && cur.size+b.project(cur)-next.size-b.project(next) >= max(cur.Deficit, 1) {
+		next.Full, next.Deficit = false, 0
 		if body, err = encodeManifest(next); err != nil {
 			return nil, false, false, err
 		}
@@ -326,12 +343,17 @@ func (m *Manifests) get(ctx context.Context, key string) (*Manifest, string, err
 }
 
 // SetFull marks ref's manifest Full: a producer could not record its
-// outputs (ErrManifestTooLarge). The flag fits in the headroom every other
-// edit leaves. Producers do nothing more for a Full item until a commit
-// shrinks it.
-func (m *Manifests) SetFull(ctx context.Context, ref contentref.ContentRef) error {
+// outputs (cause, an ErrManifestTooLarge, whose overrun becomes the
+// Deficit). The flags fit in the headroom every other edit leaves.
+// Producers write no private output for a Full item until a commit frees
+// the deficit.
+func (m *Manifests) SetFull(ctx context.Context, ref contentref.ContentRef, cause error) error {
+	deficit := int64(1)
+	if tl := (*tooLargeError)(nil); errors.As(cause, &tl) {
+		deficit = max(tl.grown-tl.limit, 1)
+	}
 	_, err := m.edit(ctx, ref, true, bound{limit: MaxManifestBytes}, func(cur *Manifest) error {
-		cur.Full = true
+		cur.Full, cur.Deficit = true, max(cur.Deficit, deficit)
 		return nil
 	})
 	if errors.Is(err, ErrNotFound) {

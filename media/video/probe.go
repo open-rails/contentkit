@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/text/language"
 	"golang.org/x/text/language/display"
@@ -399,6 +400,12 @@ func trackLabel(s probeStream, lang string, count int, seen map[string]int) stri
 	}
 	if len(label) > 120 {
 		label = strings.ToValidUTF8(label[:120], "")
+	}
+	// At most 120 bytes in the manifest's JSON too: quotes and backslashes
+	// take two.
+	for len(label)+strings.Count(label, `"`)+strings.Count(label, `\`) > 120 {
+		_, size := utf8.DecodeLastRuneInString(label)
+		label = label[:len(label)-size]
 	}
 	key := s.CodecType + "\x00" + label
 	seen[key]++

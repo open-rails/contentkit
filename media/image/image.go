@@ -101,17 +101,20 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 		if err := p.syncPublic(ctx, item); err != nil {
 			return err
 		}
-		if m.Full { // nothing more fits: render nothing until a commit shrinks it
-			if job.Editor {
-				return p.editorViews(ctx, item, m)
-			}
-			return nil
-		}
 		todo, err := p.todo(ctx, item, m, job)
 		if err != nil {
 			return err
 		}
 		zips := p.staleZips(item, m, job)
+		if m.Full {
+			// No record of a private output or zip fits. Public files still
+			// render: recording them only clears pending names.
+			zips = nil
+			todo = slices.DeleteFunc(todo, func(w work) bool { return len(w.public) == 0 })
+			for i := range todo {
+				todo[i].private, todo[i].measure = nil, false
+			}
+		}
 		if len(todo) == 0 && len(zips) == 0 {
 			if job.Editor {
 				return p.editorViews(ctx, item, m)
@@ -120,6 +123,14 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 		}
 		if err := p.pass(ctx, item, m, todo, zips); err != nil {
 			return err
+		}
+		if m.Full {
+			// One pass: a public render that failed has no record to stop
+			// the next (none fits), so it is not tried again in this job.
+			if job.Editor {
+				return p.editorViews(ctx, item, m)
+			}
+			return nil
 		}
 		job.Force = false // forced once
 	}
@@ -295,11 +306,19 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 				}
 				continue
 			}
+			if d.err != nil && cur.Full {
+				// A failure record does not fit a Full manifest: drop the
+				// public names instead, so the pass is not repeated.
+				for _, pu := range d.public {
+					cur.ClearPending(d.src.Path, pu.Name)
+				}
+				continue
+			}
 			if d.err != nil {
 				cur.SetFailed(d.src.Path, d.err)
 				continue
 			}
-			if d.dims.W > 0 {
+			if d.dims.W > 0 && !cur.Full { // a Full manifest only shrinks
 				cur.Files[i].W, cur.Files[i].H = d.dims.W, d.dims.H
 			}
 			for _, pr := range d.private {
@@ -341,7 +360,7 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 	case errors.Is(err, media.ErrManifestTooLarge):
 		// The outputs do not fit: mark the item Full, which stops processing
 		// (the rendered blobs go by age).
-		if err := p.c.Manifests.SetFull(ctx, item.Ref()); err != nil {
+		if err := p.c.Manifests.SetFull(ctx, item.Ref(), err); err != nil {
 			return errors.Join(err, p.dropIfHidden(ctx, item, written))
 		}
 		return p.dropIfHidden(ctx, item, written)

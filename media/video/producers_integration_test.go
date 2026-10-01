@@ -139,3 +139,47 @@ func TestSubtitleSidecars(t *testing.T) {
 		t.Fatalf("re-converted %+v, before %+v", after, before)
 	}
 }
+
+// The commit's projection covers what audio uploads gain once processed,
+// whatever their titles (the final review: a title of 120 quotes took 899
+// bytes against 708 projected), so an audio item admitted at the bound does
+// not go Full.
+func TestProjectionCoversAudio(t *testing.T) {
+	e := newEnv(t, opts{})
+	dir := t.TempDir()
+	titles := map[string]string{"plain": "", "ascii": strings.Repeat("T", 200), "quotes": strings.Repeat(`"`, 200), "slashes": strings.Repeat(`\`, 200)}
+	for name, title := range titles {
+		wav := filepath.Join(dir, name+".wav")
+		if b, err := exec.Command("ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+			"-c:a", "pcm_s16le", "-metadata", "title="+title, "-y", wav).CombinedOutput(); err != nil {
+			t.Fatalf("fixture: %v: %s", err, b)
+		}
+		e.put("audio/"+name+".wav", "audio/wav", wav, nil)
+	}
+	size := func(m *media.Manifest) int64 {
+		var b bytes.Buffer
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(m); err != nil {
+			t.Fatal(err)
+		}
+		return int64(b.Len())
+	}
+	before := e.manifest()
+	projected := e.item().Kind().Unwritten(before)
+	e.start()
+	e.wait()
+	after := e.manifest()
+	if after.Full || size(after)-size(before) > projected {
+		t.Fatalf("full %v: processing added %d bytes, %d projected", after.Full, size(after)-size(before), projected)
+	}
+	for name, title := range titles {
+		hls := e.file(after, "listen/"+name+"/audio.mp4")
+		if hls.Track == nil || title != "" && !strings.HasPrefix(title, hls.Track.Label) || title != "" && hls.Track.Label == "" {
+			t.Fatalf("%s: track %+v", name, hls.Track)
+		}
+		if b, _ := json.Marshal(hls.Track.Label); len(b)-2 > 120 {
+			t.Fatalf("%s: label takes %d bytes of JSON", name, len(b)-2)
+		}
+	}
+}

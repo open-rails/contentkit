@@ -421,7 +421,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	editCtx, cancel := context.WithTimeout(ctx, commitMargin(u.o.Grace)/2)
 	defer cancel()
 	var prior *Manifest
-	man, err := u.o.Manifests.edit(editCtx, ref, false, bound{project: item.Kind().unwritten}, func(m *Manifest) error {
+	man, err := u.o.Manifests.edit(editCtx, ref, false, bound{project: item.Kind().Unwritten}, func(m *Manifest) error {
 		prior = m.Clone()
 		o := &opRun{k: item.Kind(), m: m, id: ref.ContentID, copies: copies}
 		keys = keys[:0]
@@ -528,11 +528,11 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 			return nil, errors.Join(err, publicErr)
 		}
 	}
-	if man.Full {
+	if man.Full && !publicPending(item.Kind(), man) {
 		if publicErr != nil {
 			return nil, publicErr
 		}
-		return man, nil // nothing is processed until a commit shrinks it
+		return man, nil // only public files render for a Full item
 	}
 	job := ProcessJob{Ref: ref, Place: len(man.StagedNames()) > 0}
 	for _, op := range ops {
@@ -544,6 +544,14 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		return nil, err
 	}
 	return man, nil
+}
+
+// publicPending reports an upload of a visible item waiting for a public
+// preset.
+func publicPending(k *Kind, m *Manifest) bool {
+	return !m.Hidden && slices.ContainsFunc(m.Files, func(f File) bool {
+		return f.IsUpload() && slices.ContainsFunc(f.Pending, func(p string) bool { return k.public(p) != nil })
+	})
 }
 
 // removesPending reports ops removing an upload that is still being

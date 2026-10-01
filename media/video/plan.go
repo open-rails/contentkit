@@ -97,6 +97,12 @@ func (c WorkerConfig) planVideo(ctx context.Context, args workqueue.VideoPlanArg
 		return err
 	}
 	var errs []error
+	// settle records one upload's result; false once the item is Full (the
+	// rest would be produced only to be refused).
+	settle := func(f media.File, err error) bool {
+		errs = append(errs, e.settle(ctx, item, f, err))
+		return !errors.Is(err, media.ErrManifestTooLarge)
+	}
 	for _, f := range man.Files {
 		if !f.IsUpload() || f.Gone || f.Blob == "" || f.Fail() != nil {
 			continue
@@ -106,15 +112,14 @@ func (c WorkerConfig) planVideo(ctx context.Context, args workqueue.VideoPlanArg
 			if args.Preset != "" && p.Name != args.Preset || !videoFamily(p) || !e.todo(man, f, p) {
 				continue
 			}
-			if p.Subtitles != nil {
-				errs = append(errs, e.settle(ctx, item, f, e.subtitle(ctx, item, f, p)))
-			} else {
+			if p.Subtitles == nil {
 				encode = append(encode, p)
+			} else if !settle(f, e.subtitle(ctx, item, f, p)) {
+				return errors.Join(errs...)
 			}
 		}
-		if len(encode) > 0 {
-			err := e.settle(ctx, item, f, c.planUpload(ctx, item, man, f, encode, args.Class))
-			errs = append(errs, err)
+		if len(encode) > 0 && !settle(f, c.planUpload(ctx, item, man, f, encode, args.Class)) {
+			return errors.Join(errs...)
 		}
 	}
 	if args.Preset == "" {

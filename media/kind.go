@@ -393,12 +393,15 @@ const (
 )
 
 // Output entry sizes in manifest JSON, beyond their paths and preset name:
-// a file's blob, type, size, dimensions and fingerprint, and an HLS track's
-// fields too (labels are at most 120 bytes, with no control characters).
+// a file's blob, type, size, dimensions and fingerprint, and a track's
+// fields too (its label is at most 120 bytes of JSON) with the file name
+// under its directory.
 const (
-	outputEntryBytes = 320
-	trackEntryBytes  = 640
-	blobFieldsBytes  = 256 // what a staged upload or a frame gains: its blob, size and dimensions
+	outputEntryBytes  = 320
+	trackEntryBytes   = 640 + 24
+	blobFieldsBytes   = 256 // what a staged upload or a frame gains: its blob, size and dimensions
+	measuredBytes     = 48  // an upload's w and h, or dur, once measured
+	failureEntryBytes = 768 // a Failure: its key, a message of maxFailureBytes, code and details
 )
 
 // Tracks per source a video's HLS ladder carries beyond its renditions: the
@@ -408,14 +411,16 @@ const (
 	MaxSubtitleTracks = 16
 )
 
-// unwritten estimates the JSON m gains as the worker processes it: an entry
-// for every output its uploads' presets have yet to write (an HLS ladder's
-// tracks counted one by one: a rendition per rung and codec, the sprite, and
-// as many audio and subtitle tracks as a source may carry), the zips, a
-// staged upload's or frame's fields, and the public presets' pending names
-// an unhide adds. Commits bound the manifest with it; an item whose
-// outputs still overrun it is marked Full by the worker.
-func (k *Kind) unwritten(m *Manifest) int64 {
+// Unwritten estimates the JSON m gains as the worker processes it. Per
+// upload it is the larger of a failure record and what success writes: an
+// entry for every output its presets have yet to write (an HLS ladder's
+// tracks one by one: a rendition per rung and codec, the sprite, and as many
+// audio and subtitle tracks as a source may carry; an Audio preset's track
+// and M4A), its measured fields, and a staged upload's or frame's blob.
+// Then the zips, and the public presets' pending names an unhide adds.
+// Commits bound the manifest with it; an item whose outputs still overrun
+// it is marked Full by the worker.
+func (k *Kind) Unwritten(m *Manifest) int64 {
 	written := map[[2]string]int64{}
 	for _, f := range m.Files {
 		if !f.IsUpload() {
@@ -427,10 +432,12 @@ func (k *Kind) unwritten(m *Manifest) int64 {
 		if !f.IsUpload() || f.Gone || f.Fail() != nil {
 			continue
 		}
+		var out int64
 		if f.Blob == "" {
-			n += blobFieldsBytes
+			out += blobFieldsBytes
 		}
 		from := jsonLen(f.Path)
+		public := k.PublicFor(f.Path)
 		for _, p := range k.PrivateFor(f.Path) {
 			entries, size := int64(1), int64(outputEntryBytes)
 			switch {
@@ -438,20 +445,27 @@ func (k *Kind) unwritten(m *Manifest) int64 {
 				ladder := cmp.Or(len(p.HLS.Ladder), len(DefaultLadder))
 				entries, size = int64(3*ladder+1+MaxAudioTracks+MaxSubtitleTracks), trackEntryBytes
 			case p.Audio != nil:
-				entries = 2
+				entries, size = 2, trackEntryBytes
 			}
 			if p.Download != "" {
 				size += maxNameBytes + 16
 			}
 			if left := entries - written[[2]string{f.Path, p.Name}]; left > 0 {
-				n += left * (size + int64(jsonLen(k.OutputPath(p, f.Path))+from+len(p.Name)))
+				out += left * (size + int64(jsonLen(k.OutputPath(p, f.Path))+from+len(p.Name)))
 			}
 		}
-		if pub := k.PublicFor(f.Path); len(pub) > 0 {
+		if out > 0 || len(f.Pending) > 0 { // work is left: it may measure the upload, or fail
+			if f.W == 0 && f.Dur == 0 {
+				out += measuredBytes
+			}
+			out = max(out, failureEntryBytes)
+		}
+		n += out
+		if len(public) > 0 {
 			if len(f.Pending) == 0 {
 				n += int64(len(`,"pending":[]`))
 			}
-			for _, p := range pub {
+			for _, p := range public {
 				n += int64(len(p.Name)) + 3
 			}
 		}
