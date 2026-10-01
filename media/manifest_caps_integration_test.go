@@ -346,20 +346,24 @@ func TestHideFits(t *testing.T) {
 	}
 }
 
-// A Full item asks the worker for nothing: commits that do not make real
-// room (a regenerate, a meta edit as long, a one-byte shrink) enqueue no
-// work and leave it Full; one that removes an upload clears Full and
-// processing resumes. Readiness and editor reads say so.
+// A Full item asks the worker for nothing: commits that do not free what
+// the refused record was short of (a regenerate, a meta edit as long, a
+// one-byte shrink, one upload removed where six are needed) enqueue no work
+// and leave it Full; one that frees it clears Full and processing resumes.
+// Readiness and editor reads say so.
 func TestFullStopsUntilShrunk(t *testing.T) {
 	f := newFixture(t)
 	f.visible(1)
 	ctx := context.Background()
 	g := f.gallery(1, 2)
 	f.commit(g, media.Op{Op: media.OpMeta, Meta: map[string]any{"title": "abc"}})
-	f.put(g, "originals/002.png", "image/png", png(102))
-	// A record refused for size, as a producer meets it.
+	for i := range 8 {
+		f.put(g, fmt.Sprintf("originals/new%d.png", i), "image/png", png(200+i))
+	}
+	// A record refused for running about 5,000 bytes past the edit limit, as
+	// a producer meets it.
 	_, cause := f.ms.EditExisting(ctx, g, func(m *media.Manifest) error {
-		m.Meta = map[string]any{"title": strings.Repeat("A", media.MaxManifestBytes)}
+		m.Meta = padded(t, m, editLimit+5000)
 		return nil
 	})
 	if !errors.Is(cause, media.ErrManifestTooLarge) {
@@ -368,27 +372,32 @@ func TestFullStopsUntilShrunk(t *testing.T) {
 	if err := f.ms.SetFull(ctx, g, cause); err != nil {
 		t.Fatal(err)
 	}
-	if m, _, _ := f.ms.Get(ctx, g); !m.Full || m.Deficit < 1000 {
+	if m, _, _ := f.ms.Get(ctx, g); !m.Full || m.Deficit < 4000 || m.Deficit > 6000 {
 		t.Fatalf("full %v, deficit %d", m.Full, m.Deficit)
 	}
 	f.q.take()
 	k, _ := f.reg.Kind("gallery")
-	m := f.commit(g, media.Op{Op: media.OpRegenerate}, media.Op{Op: media.OpMeta, Meta: map[string]any{"title": "xyz"}})
-	if jobs := f.q.take(); !m.Full || len(jobs) != 0 || k.Readiness(m).State != media.StateFull {
-		t.Fatalf("full %v, enqueued %+v, state %s", m.Full, jobs, k.Readiness(m).State)
-	}
-	// Freeing less than the refused record was short of re-runs nothing.
-	m = f.commit(g, media.Op{Op: media.OpMeta, Meta: map[string]any{"title": "xy"}})
-	if jobs := f.q.take(); !m.Full || len(jobs) != 0 {
-		t.Fatalf("a one-byte shrink: full %v, enqueued %+v", m.Full, jobs)
+	for what, ops := range map[string][]media.Op{
+		"a regenerate and a meta edit as long": {{Op: media.OpRegenerate}, {Op: media.OpMeta, Meta: map[string]any{"title": "xyz"}}},
+		"a one-byte shrink":                    {{Op: media.OpMeta, Meta: map[string]any{"title": "xy"}}},
+		"one upload removed":                   {{Op: media.OpRemove, Path: "originals/new0.png"}},
+	} {
+		m := f.commit(g, ops...)
+		if jobs := f.q.take(); !m.Full || len(jobs) != 0 || k.Readiness(m).State != media.StateFull {
+			t.Fatalf("%s: full %v, enqueued %+v, state %s", what, m.Full, jobs, k.Readiness(m).State)
+		}
 	}
 	res, err := f.rd.Read(ctx, g, f.editor, media.ReadOptions{Editor: true})
 	if err != nil || !res.Full || res.State != media.StateFull {
 		t.Fatalf("editor read %+v %v", res, err)
 	}
 	f.q.take() // the read asks for its editor views
-	m = f.commit(g, media.Op{Op: media.OpRemove, Path: "originals/000.png"})
+	var ops []media.Op
+	for i := 1; i < 7; i++ {
+		ops = append(ops, media.Op{Op: media.OpRemove, Path: fmt.Sprintf("originals/new%d.png", i)})
+	}
+	m := f.commit(g, ops...)
 	if jobs := f.q.take(); m.Full || m.Deficit != 0 || len(jobs) != 1 {
-		t.Fatalf("a removal: full %v, enqueued %+v", m.Full, jobs)
+		t.Fatalf("six uploads removed: full %v, enqueued %+v", m.Full, jobs)
 	}
 }

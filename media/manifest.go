@@ -26,8 +26,9 @@ type Manifest struct {
 	V      int  `json:"v"`
 	Hidden bool `json:"hidden,omitempty"` // set by Expose; public files are then absent
 	// Full: a producer could not record its outputs within the bound, so
-	// private outputs stop until a commit removes an upload or frees
-	// Deficit bytes, how far past the bound the refused record went.
+	// private outputs stop until a commit frees Deficit bytes (in the
+	// manifest and in what its uploads would still add): how far past the
+	// bound the refused record went.
 	Full    bool           `json:"full,omitempty"`
 	Deficit int64          `json:"deficit,omitempty"`
 	Meta    map[string]any `json:"meta,omitempty"` // the app's template values, e.g. title

@@ -124,6 +124,14 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 		if err := p.pass(ctx, item, m, todo, zips); err != nil {
 			return err
 		}
+		if m.Full {
+			// One pass: a public render that failed has no record to stop
+			// the next (none fits), so it is not tried again in this job.
+			if job.Editor {
+				return p.editorViews(ctx, item, m)
+			}
+			return nil
+		}
 		job.Force = false // forced once
 	}
 	return fmt.Errorf("media/image: manifest of %s kept changing", job.Ref)
@@ -295,6 +303,14 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 			if i < 0 || cur.Files[i].Blob != d.src.Blob || cur.Files[i].Edit.Hash() != d.src.Edit.Hash() {
 				if i < 0 {
 					orphaned = append(orphaned, d.written...)
+				}
+				continue
+			}
+			if d.err != nil && cur.Full {
+				// A failure record does not fit a Full manifest: drop the
+				// public names instead, so the pass is not repeated.
+				for _, pu := range d.public {
+					cur.ClearPending(d.src.Path, pu.Name)
 				}
 				continue
 			}

@@ -572,8 +572,9 @@ out until `attach`.
   outputs still overrun it, the worker marks the item `full` instead of
   recording them: producers write no private output for it (public files
   still render), readiness is `full` and editor reads say `full: true`,
-  until a commit removes an upload or frees the bytes the refused record was
-  short of (the manifest's `deficit`); a smaller shrink re-runs nothing.
+  until a commit frees the bytes the refused record was short of (the
+  manifest's `deficit`, counting what removed uploads would still have
+  added); a smaller shrink or removal re-runs nothing.
   The SDK's `waitFor` rejects with `too_large` while an item is full.
   Failure messages are capped at 300 bytes.
 - `ManifestOptions.CacheBytes` (default 128 MiB) holds decoded manifests,

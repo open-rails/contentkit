@@ -591,3 +591,33 @@ func TestFullStillRendersPublic(t *testing.T) {
 		t.Fatalf("cover pending %v, thumbs %v", c.Pending, m.Outputs("originals/1.png", "thumb"))
 	}
 }
+
+// A public render that fails on a Full item records no failure (it would
+// not fit) and drops the pending name: a job tries it once and ends, and no
+// commit queues it again.
+func TestFullPublicFailureDoesNotSpin(t *testing.T) {
+	e := newEnv(t, nil)
+	g := e.ref(t, "gallery", 1)
+	ctx := context.Background()
+	e.put(t, g, "cover.png", "image/png", []byte("not a png at all"))
+	_, cause := e.ms.EditExisting(ctx, g, func(m *media.Manifest) error {
+		m.Meta = map[string]any{"pad": strings.Repeat("A", media.MaxManifestBytes)}
+		return nil
+	})
+	if !errors.Is(cause, media.ErrManifestTooLarge) {
+		t.Fatalf("an oversized record: %v", cause)
+	}
+	if err := e.ms.SetFull(ctx, g, cause); err != nil {
+		t.Fatal(err)
+	}
+	e.process(t, media.ProcessJob{Ref: g})
+	m := e.manifest(t, g)
+	if c, _ := m.Get("cover.png"); !m.Full || len(c.Pending) != 0 || c.Fail() != nil {
+		t.Fatalf("full %v, cover %+v", m.Full, c)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(e.failed) != 1 {
+		t.Fatalf("the failing render ran %d times in one job", len(e.failed))
+	}
+}

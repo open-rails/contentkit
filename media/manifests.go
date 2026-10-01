@@ -282,10 +282,11 @@ func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bo
 	if err := b.check(cur, next); err != nil {
 		return nil, false, false, err
 	}
-	// A commit clears Full only when it really makes room: it removes an
-	// upload, or frees the bytes the refused record was short of. A smaller
-	// shrink would only re-run the work to the same refusal.
-	if cur.Full && b.project != nil && (next.uploads() < cur.uploads() || cur.size-next.size >= max(cur.Deficit, 1)) {
+	// A commit clears Full only when it really makes room: it frees, in the
+	// manifest and in what its uploads will still add, the bytes the refused
+	// record was short of. Less (a small shrink, one upload of many) would
+	// only re-run the work to the same refusal.
+	if cur.Full && b.project != nil && cur.size+b.project(cur)-next.size-b.project(next) >= max(cur.Deficit, 1) {
 		next.Full, next.Deficit = false, 0
 		if body, err = encodeManifest(next); err != nil {
 			return nil, false, false, err
@@ -344,8 +345,8 @@ func (m *Manifests) get(ctx context.Context, key string) (*Manifest, string, err
 // SetFull marks ref's manifest Full: a producer could not record its
 // outputs (cause, an ErrManifestTooLarge, whose overrun becomes the
 // Deficit). The flags fit in the headroom every other edit leaves.
-// Producers write no private output for a Full item until a commit removes
-// an upload or frees the deficit.
+// Producers write no private output for a Full item until a commit frees
+// the deficit.
 func (m *Manifests) SetFull(ctx context.Context, ref contentref.ContentRef, cause error) error {
 	deficit := int64(1)
 	if tl := (*tooLargeError)(nil); errors.As(cause, &tl) {

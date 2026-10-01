@@ -239,8 +239,8 @@ pass that: it projects every output its presets have yet to write. When
 outputs still overrun it, the worker marks the item `full` instead of
 recording them: producers then write no private output for it (its public
 files still render), and editor reads report `full` (state `full`), until a
-commit removes an upload or frees the bytes the refused record was short of
-(`deficit`). An item holds
+commit frees the bytes the refused record was short of (`deficit`, counting
+what removed uploads would still have added). An item holds
 at most `MaxUploads` (10,000) uploads, an upload's meta at most 4 KiB of
 JSON and the item's 16 KiB; names are capped at 200 bytes of JSON, written
 unescaped (`<` is one byte). The manifest object records the quota its
