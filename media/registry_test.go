@@ -87,10 +87,17 @@ func TestRegistryRefuses(t *testing.T) {
 		"bad ladder":         {Name: "k", Uploads: up, Private: []media.Private{{Name: "p", From: "cover", To: "h/", HLS: &media.HLS{Ladder: []int{480, 1080}}}}},
 		"underscore kind":    {Name: "_k", Uploads: up},
 		"to on an upload":    {Name: "k", Uploads: up, Private: []media.Private{{Name: "p", From: "originals/{name}", To: "originals/{name}.webp", Image: &media.Image{}}}},
+		"svg to a preset":    {Name: "k", Uploads: []media.Upload{{Path: "cover", Types: []string{"image/svg+xml"}, MaxBytes: 1}}, Public: []media.Public{{Name: "c", From: "cover", To: "c.webp"}}},
+		"bmp to a preset":    {Name: "k", Uploads: []media.Upload{{Path: "a/{name}", Types: []string{"image/png", "image/bmp"}, MaxBytes: 1}}, Private: []media.Private{{Name: "p", From: "a/{name}", To: "b/{name}.webp", Image: &media.Image{}}}},
+		"widths, lone width": {Name: "k", Uploads: up, Public: []media.Public{{Name: "c", From: "cover", To: "c-{w}.webp", Widths: []int{100}, Image: media.Image{Width: 100}}}},
 	} {
 		if _, err := media.NewRegistry(media.Config{Namespace: "d", Kinds: []media.Kind{k}}); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+	svg := media.Kind{Name: "k", Uploads: []media.Upload{{Path: "logo", Types: []string{"image/svg+xml"}, MaxBytes: 1}}}
+	if _, err := media.NewRegistry(media.Config{Namespace: "d", Kinds: []media.Kind{svg}}); err != nil {
+		t.Errorf("an SVG stored without presets refused: %v", err)
 	}
 	missing := media.Kind{Name: "k", Uploads: up, Defaults: fstest.MapFS{"other.png": {}},
 		Public: []media.Public{{Name: "c", From: "cover", To: "c.webp", Default: "cover.png"}}}

@@ -395,7 +395,7 @@ func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manife
 	if err != nil {
 		return d, err
 	}
-	src, err := p.read(ctx, key, w.src.Blob)
+	src, err := p.read(ctx, key, w.src, item.Kind())
 	if err != nil {
 		if isPermanent(err) {
 			d.err = err
@@ -515,7 +515,7 @@ func (p *Processor) editorViews(ctx context.Context, item media.Item, m *media.M
 	for name, f := range want {
 		g.Go(func() error {
 			key, _ := item.Blob(f.Blob)
-			src, err := p.read(gctx, key, f.Blob)
+			src, err := p.read(gctx, key, f, item.Kind())
 			if err != nil {
 				return nil // missing or unreadable: its upload records why
 			}
@@ -560,21 +560,39 @@ func (p *Processor) putBlob(ctx context.Context, item media.Item, body io.Reader
 	return name, nil
 }
 
-// read reads a blob, verifying its content address (a multipart upload is
-// verified on its first read): a mismatching blob is deleted and fails.
-func (p *Processor) read(ctx context.Context, key, blob string) ([]byte, error) {
-	rc, _, err := p.c.Store.Get(ctx, key, media.GetOptions{})
+// read reads upload f's blob: one stored larger than f may be (its Upload's
+// MaxBytes, or a grabbed frame's recorded size) is refused unread, and the
+// bytes must match their content address (a multipart upload is verified on
+// its first read), else the blob is deleted and fails.
+func (p *Processor) read(ctx context.Context, key string, f media.File, k *media.Kind) ([]byte, error) {
+	u, _ := k.UploadOf(f.Path)
+	limit := u.MaxBytes
+	if f.Frame != nil && f.Frame.Of != "" {
+		limit = max(limit, f.Size)
+	}
+	rc, obj, err := p.c.Store.Get(ctx, key, media.GetOptions{})
 	if errors.Is(err, media.ErrNotFound) {
 		return nil, permanentError{err}
 	} else if err != nil {
 		return nil, err
 	}
 	defer rc.Close()
-	b, err := io.ReadAll(rc)
+	tooLarge := func(size int64) error {
+		return permanentError{&media.ImageError{Code: media.CodeTooLarge,
+			Message: fmt.Sprintf("%s files at %s may be at most %d bytes; this one is %d", f.Type, u.Path, limit, size),
+			Details: media.ErrorDetails{Type: f.Type, Size: size, MaxBytes: limit}}}
+	}
+	if obj.Size > limit {
+		return nil, tooLarge(obj.Size)
+	}
+	b, err := io.ReadAll(io.LimitReader(rc, limit+1))
 	if err != nil {
 		return nil, err
 	}
-	if want, _ := layout.ParseSHA256Name(blob); !bytes.Equal(sha(b), want) {
+	if int64(len(b)) > limit {
+		return nil, tooLarge(int64(len(b)))
+	}
+	if want, _ := layout.ParseSHA256Name(f.Blob); !bytes.Equal(sha(b), want) {
 		_ = p.c.Store.Delete(context.WithoutCancel(ctx), key)
 		return nil, permanentError{&media.ImageError{Code: media.CodeChecksum, Message: "the stored bytes do not match their SHA-256; upload again"}}
 	}

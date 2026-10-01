@@ -3,6 +3,7 @@ package image
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/davidbyttow/govips/v2/vips"
@@ -19,11 +20,14 @@ var (
 )
 
 // start initialises libvips once per process: one thread per operation
-// (Config.Workers parallelises across files) and no operation cache.
+// (Config.Workers parallelises across files), no operation cache, and every
+// loader blocked but the formats' trusted ones.
 func start() error {
 	startOnce.Do(func() {
 		vips.LoggingSettings(nil, vips.LogLevelError)
-		startErr = vips.Startup(&vips.Config{ConcurrencyLevel: 1})
+		if startErr = vips.Startup(&vips.Config{ConcurrencyLevel: 1}); startErr == nil {
+			startErr = blockLoaders()
+		}
 	})
 	return startErr
 }
@@ -40,13 +44,12 @@ func isPermanent(err error) bool {
 	return errors.As(err, &d)
 }
 
-// formats are the declared types decoded and the format their bytes must
-// sniff as, so a kind's Types also bound the libvips loaders an upload reaches.
+// formats are the format the bytes of each of media.ImageTypes must sniff
+// as, so a kind's Types also bound the libvips loaders an upload reaches.
 var formats = map[string]vips.ImageType{
 	"image/jpeg": vips.ImageTypeJPEG, "image/png": vips.ImageTypePNG, "image/webp": vips.ImageTypeWEBP,
 	"image/gif": vips.ImageTypeGIF, "image/avif": vips.ImageTypeAVIF, "image/heic": vips.ImageTypeHEIF,
-	"image/heif": vips.ImageTypeHEIF, "image/tiff": vips.ImageTypeTIFF, "image/jxl": vips.ImageTypeJXL,
-	"image/bmp": vips.ImageTypeBMP, "image/svg+xml": vips.ImageTypeSVG,
+	"image/heif": vips.ImageTypeHEIF, "image/tiff": vips.ImageTypeTIFF,
 }
 
 // animated are the formats loaded with every frame (libvips n=-1): the frames
@@ -74,7 +77,7 @@ func (s source) dims() media.Dims { return media.Dims{W: s.w, H: s.h} }
 func probe(src []byte, contentType string, r rules) (source, error) {
 	unreadable := permanentError{&media.ImageError{Code: media.CodeImageUnreadable,
 		Message: fmt.Sprintf("the file is not a readable %s image", contentType), Details: media.ErrorDetails{Type: contentType}}}
-	if want, ok := formats[contentType]; !ok || vips.DetermineImageType(src) != want {
+	if want, ok := formats[contentType]; !ok || !slices.Contains(media.ImageTypes, contentType) || vips.DetermineImageType(src) != want {
 		return source{}, unreadable
 	}
 	if isImageSequence(src) {
