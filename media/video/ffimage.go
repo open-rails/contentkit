@@ -7,26 +7,40 @@ import (
 	"io"
 	"math"
 	"os"
-	"slices"
 	"strconv"
 
 	"github.com/open-rails/contentkit/media"
 )
 
-// Posters are cut from an HLS rendition, not the source: the
-// init segment plus the segments covering the section are one small local
-// fMP4, so nothing downloads the source and ffmpeg reads only our own output.
+// Frames are cut from a rendition when one is current: the init segment
+// plus the segments covering the time are one small local fMP4, so nothing
+// downloads the source and ffmpeg reads only our own output.
 var ownMP4 = inputOptions([]string{"mov"})
 
-// snippet writes the init segment and the segments of r covering [from, to]
-// to path; start is the time the first of them begins.
-func snippet(ctx context.Context, store media.Store, item media.Item, r media.Rendition, from, to float64, path string) (start float64, err error) {
-	if len(r.Segments) == 0 {
+// frameInput is an ffmpeg input to cut a frame from at offset seconds.
+type frameInput struct {
+	path   string
+	opts   []string // input options: ownMP4, or the source's remote options
+	offset float64
+}
+
+// args open the input; -ss before -i decodes from the previous keyframe and
+// drops frames before the offset, so the first frame out is the one there.
+func (in frameInput) args(threads int) []string {
+	args := append([]string{"-v", "error", "-nostdin", "-threads", strconv.Itoa(threads)}, in.opts...)
+	return append(args, "-ss", strconv.FormatFloat(math.Max(0, in.offset), 'f', 6, 64), "-i", in.path, "-map", "0:v:0", "-frames:v", "1")
+}
+
+// snippet writes the init segment and the segments of the byte-range track
+// at key covering [from, to] to path; start is the time the first of them
+// begins.
+func snippet(ctx context.Context, store media.Store, key string, segs []media.Segment, from, to float64, path string) (start float64, err error) {
+	if len(segs) == 0 {
 		return 0, errors.New("media/video: rendition has no segments")
 	}
-	first, last := -1, len(r.Segments)-1
+	first, last := -1, len(segs)-1
 	var t float64
-	for i, s := range r.Segments {
+	for i, s := range segs {
 		if first < 0 && (from < t+s.Seconds || i == last) {
 			first, start = i, t
 		}
@@ -36,18 +50,14 @@ func snippet(ctx context.Context, store media.Store, item media.Item, r media.Re
 		}
 		t += s.Seconds
 	}
-	key, err := item.Private(r.Blob)
-	if err != nil {
-		return 0, err
-	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return 0, err
 	}
-	err = copyRange(ctx, store, f, key, 0, r.Segments[0].Offset)
+	err = copyRange(ctx, store, f, key, 0, segs[0].Offset)
 	if err == nil {
-		end := r.Segments[last].Offset + r.Segments[last].Length
-		err = copyRange(ctx, store, f, key, r.Segments[first].Offset, end-r.Segments[first].Offset)
+		end := segs[last].Offset + segs[last].Length
+		err = copyRange(ctx, store, f, key, segs[first].Offset, end-segs[first].Offset)
 	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
@@ -68,48 +78,27 @@ func copyRange(ctx context.Context, store media.Store, w io.Writer, key string, 
 	return err
 }
 
-// narrowest is the narrowest rendition at least width wide, else the widest.
-func narrowest(f media.File, width int) media.Rendition {
-	ladder := slices.SortedFunc(slices.Values(f.HLS.Video), func(a, b media.Rendition) int { return a.Width - b.Width })
-	if i := slices.IndexFunc(ladder, func(v media.Rendition) bool { return v.Width >= width }); i >= 0 {
-		return ladder[i]
-	}
-	return ladder[len(ladder)-1]
-}
-
-// seek is an ffmpeg input position; -ss before -i decodes from the previous
-// keyframe and drops frames before t, so the first frame out is the one at t.
-func seek(t float64) string { return strconv.FormatFloat(math.Max(0, t), 'f', 6, 64) }
-
-func ffmpegIn(threads int, pre ...string) []string {
-	args := append([]string{"-v", "error", "-nostdin", "-threads", strconv.Itoa(threads)}, ownMP4...)
-	return append(args, pre...)
-}
-
-// grabFrame writes the frame at offset into input, scaled to w×h, as a PNG.
-func grabFrame(ctx context.Context, input string, offset float64, w, h int, out string, threads int) error {
-	args := append(ffmpegIn(threads, "-ss", seek(offset), "-i", input), "-map", "0:v:0", "-frames:v", "1",
-		"-vf", fmt.Sprintf("scale=%d:%d:flags=lanczos,setsar=1", w, h), "-c:v", "png", "-f", "image2", "-y", out)
+// grabFrame writes the input's frame, scaled to w×h, as a PNG.
+func grabFrame(ctx context.Context, in frameInput, w, h int, out string, threads int) error {
+	args := append(in.args(threads), "-vf", fmt.Sprintf("scale=%d:%d:flags=lanczos,setsar=1", w, h), "-c:v", "png", "-f", "image2", "-y", out)
 	if _, err := command(ctx, "ffmpeg", args...); err != nil {
 		return err
 	}
 	if st, err := os.Stat(out); err != nil || st.Size() == 0 {
-		return fmt.Errorf("no frame at %.3fs", offset)
+		return fmt.Errorf("no frame at %.3fs", in.offset)
 	}
 	return nil
 }
 
-// detail is the luma standard deviation (0-255) of the frame at offset,
+// detail is the luma standard deviation (0-255) of the input's frame,
 // measured on a 64×36 thumbnail: near zero for black and flat frames.
-func detail(ctx context.Context, input string, offset float64, threads int) (float64, error) {
-	args := append(ffmpegIn(threads, "-ss", seek(offset), "-i", input), "-map", "0:v:0", "-frames:v", "1",
-		"-vf", "scale=64:36,format=gray", "-f", "rawvideo", "pipe:1")
-	out, err := command(ctx, "ffmpeg", args...)
+func detail(ctx context.Context, in frameInput, threads int) (float64, error) {
+	out, err := command(ctx, "ffmpeg", append(in.args(threads), "-vf", "scale=64:36,format=gray", "-f", "rawvideo", "pipe:1")...)
 	if err != nil {
 		return 0, err
 	}
 	if len(out) == 0 {
-		return 0, fmt.Errorf("no frame at %.3fs", offset)
+		return 0, fmt.Errorf("no frame at %.3fs", in.offset)
 	}
 	var sum, sq float64
 	for _, v := range out {
@@ -132,16 +121,16 @@ func clampTime(t, duration float64) float64 {
 	return math.Round(math.Min(math.Max(0, t), math.Max(0, duration-0.25))*1000) / 1000
 }
 
-// frameJPEG decodes the frame at offset into input as a JPEG width px wide.
-func frameJPEG(ctx context.Context, input string, offset float64, width int) ([]byte, error) {
-	args := append(ffmpegIn(1, "-ss", seek(offset), "-i", input), "-map", "0:v:0", "-frames:v", "1",
-		"-vf", fmt.Sprintf("scale=%d:-2:flags=bicubic,setsar=1", width), "-q:v", "4", "-c:v", "mjpeg", "-f", "image2pipe", "pipe:1")
-	out, err := command(ctx, "ffmpeg", args...)
+// frameJPEG decodes the input's frame as a JPEG width px wide (0: the
+// frame's own width).
+func frameJPEG(ctx context.Context, in frameInput, width int) ([]byte, error) {
+	out, err := command(ctx, "ffmpeg", append(in.args(1), "-vf", fmt.Sprintf("scale=%d:-2:flags=bicubic,setsar=1", width),
+		"-q:v", "4", "-c:v", "mjpeg", "-f", "image2pipe", "pipe:1")...)
 	if err != nil {
 		return nil, err
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("no frame at %.3fs", offset)
+		return nil, fmt.Errorf("no frame at %.3fs", in.offset)
 	}
 	return out, nil
 }

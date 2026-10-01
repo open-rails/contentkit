@@ -52,11 +52,15 @@ func TestPassthroughChecks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		p, err := newPlan(pr, &media.Video{})
+		p, err := newPlan(pr)
 		if err != nil {
 			t.Fatal(err)
 		}
-		codec, ok, why := passthroughable(ctx, src, p, p.rungs[0])
+		rs, err := p.ladder(&media.HLS{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		codec, ok, why := passthroughable(ctx, src, p, rs[0])
 		if c.want == "" && !ok || c.want != "" && (ok || !strings.Contains(why, c.want)) || codec != c.codec {
 			t.Errorf("%s: passthrough %v %s (%s), want %q %s", c.name, ok, codec, why, c.want, c.codec)
 		}

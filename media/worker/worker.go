@@ -174,13 +174,13 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if c.Metrics != nil {
 		observeEncode = c.Metrics.ObserveEncode
 	}
-	enc, err := video.New(ctx, video.Config{Store: c.Store, Locker: media.PGLocker(c.Pool), Sweeps: host, TempDir: c.TempDir,
-		Threads: c.Threads, Preset: c.Preset, TopPreset: c.TopPreset, Encoder: c.VideoEncoder, Codecs: c.VideoCodecs, Hooks: c.Kinds.Config().Hooks, Logger: c.Logger, Slots: queue,
+	enc, err := video.New(ctx, video.Config{Manifests: manifests, Queue: queue, TempDir: c.TempDir,
+		Threads: c.Threads, Preset: c.Preset, TopPreset: c.TopPreset, Encoder: c.VideoEncoder, Codecs: c.VideoCodecs, Logger: c.Logger,
 		ObserveEncode: observeEncode})
 	if err != nil {
 		return nil, err
 	}
-	videos, err := video.Contribution(video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, Kinds: c.Kinds, Timeout: c.VideoTimeout,
+	videos, err := video.Contribution(video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, Timeout: c.VideoTimeout,
 		MaxWorkers: c.VideoWorkers, AudioWorkers: c.AudioWorkers, Queue: c.Queue, Logger: c.Logger})
 	if err != nil {
 		return nil, err

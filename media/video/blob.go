@@ -1,8 +1,10 @@
 package video
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,20 +25,20 @@ var (
 const blobCacheControl = "max-age=31536000, immutable"
 
 // checkOutputs runs under the manifest lock, which also fences sweep deletion.
-func (e *Encoder) checkOutputs(ctx context.Context, item media.Item, names ...string) error {
-	for _, name := range names {
-		key, err := item.Private(name)
+func (e *Encoder) checkOutputs(ctx context.Context, item media.Item, blobs ...string) error {
+	for _, name := range blobs {
+		key, err := item.Blob(name)
 		if err != nil {
 			return err
 		}
-		if _, err := e.c.Store.Head(ctx, key); err != nil {
+		if _, err := e.store.Head(ctx, key); err != nil {
 			return fmt.Errorf("media/video: publish output %s: %w", key, err)
 		}
 	}
 	return nil
 }
 
-// put stores the file as a content-addressed blob unless it already exists,
+// put stores a file as a content-addressed private blob unless it exists,
 // which makes retries cheap: outputs are byte-identical.
 func (e *Encoder) put(ctx context.Context, item media.Item, path, contentType string, fp *fileProgress) (string, int64, error) {
 	f, err := os.Open(path)
@@ -49,10 +51,24 @@ func (e *Encoder) put(ctx context.Context, item media.Item, path, contentType st
 	if err != nil {
 		return "", 0, err
 	}
-	sum := h.Sum(nil)
-	name := media.SHA256Name(sum)
-	key, _ := item.Private(name)
-	if obj, err := e.c.Store.Head(ctx, key); err == nil && obj.Size == size {
+	return e.putBlob(ctx, item, f, size, h.Sum(nil), contentType, fp)
+}
+
+// putJSON stores v as a private JSON blob (a track index).
+func (e *Encoder) putJSON(ctx context.Context, item media.Item, v any) (string, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(b)
+	name, _, err := e.putBlob(ctx, item, bytes.NewReader(b), int64(len(b)), sum[:], "application/json", nil)
+	return name, err
+}
+
+func (e *Encoder) putBlob(ctx context.Context, item media.Item, body io.ReaderAt, size int64, sum []byte, contentType string, fp *fileProgress) (string, int64, error) {
+	name := layout.SHA256Name(sum)
+	key, _ := item.Blob(name)
+	if obj, err := e.store.Head(ctx, key); err == nil && obj.Size == size {
 		fp.skipped(size)
 		return name, size, nil
 	} else if err != nil && !errors.Is(err, media.ErrNotFound) {
@@ -60,17 +76,17 @@ func (e *Encoder) put(ctx context.Context, item media.Item, path, contentType st
 	}
 	start := time.Now()
 	if size > multipartAbove {
-		if err := e.putMultipart(ctx, key, f, size, contentType, fp); err != nil {
+		if err := e.putMultipart(ctx, key, body, size, contentType, fp); err != nil {
 			return "", 0, err
 		}
 		fp.transferred(size, time.Since(start))
 		return name, size, nil
 	}
 	opts := media.PutOptions{ContentType: contentType, CacheControl: blobCacheControl, ChecksumSHA256: sum}
-	if e.c.Store.Capabilities().ConditionalPut {
+	if e.store.Capabilities().ConditionalPut {
 		opts.IfNoneMatch = "*"
 	}
-	_, err = e.c.Store.Put(ctx, key, fp.reader(io.NewSectionReader(f, 0, size)), size, opts)
+	_, err := e.store.Put(ctx, key, fp.reader(io.NewSectionReader(body, 0, size)), size, opts)
 	if err != nil && !errors.Is(err, media.ErrPreconditionFailed) {
 		return "", 0, err
 	}
@@ -81,14 +97,14 @@ func (e *Encoder) put(ctx context.Context, item media.Item, path, contentType st
 // putMultipart uploads parts through the Store, each bound to its length and
 // SHA-256. A failed upload is aborted (and the bucket's abort-incomplete rule
 // catches a killed process).
-func (e *Encoder) putMultipart(ctx context.Context, key string, f *os.File, size int64, contentType string, fp *fileProgress) (err error) {
-	id, err := e.c.Store.CreateMultipart(ctx, key, contentType)
+func (e *Encoder) putMultipart(ctx context.Context, key string, f io.ReaderAt, size int64, contentType string, fp *fileProgress) (err error) {
+	id, err := e.store.CreateMultipart(ctx, key, contentType)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err != nil {
-			_ = e.c.Store.AbortMultipart(context.WithoutCancel(ctx), key, id)
+			_ = e.store.AbortMultipart(context.WithoutCancel(ctx), key, id)
 		}
 	}()
 	var parts []media.Part
@@ -98,40 +114,120 @@ func (e *Encoder) putMultipart(ctx context.Context, key string, f *os.File, size
 		if _, err := io.Copy(h, io.NewSectionReader(f, off, length)); err != nil {
 			return err
 		}
-		p, err := e.c.Store.PutPart(ctx, key, id, n, fp.reader(io.NewSectionReader(f, off, length)), length, h.Sum(nil))
+		p, err := e.store.PutPart(ctx, key, id, n, fp.reader(io.NewSectionReader(f, off, length)), length, h.Sum(nil))
 		if err != nil {
 			return fmt.Errorf("media/video: part %d of %s: %w", n, key, err)
 		}
 		parts = append(parts, p)
 	}
-	_, err = e.c.Store.CompleteMultipart(ctx, key, id, parts)
+	_, err = e.store.CompleteMultipart(ctx, key, id, parts)
 	return err
 }
 
-// source downloads a file's source to path and places a staged one at its
-// content address. An empty key means the source is gone and the result
-// would be stale.
-func (e *Encoder) source(ctx context.Context, ms *media.Manifests, item media.Item, name, source, path string, fp *fileProgress) (string, string, media.Object, error) {
-	srcKey, err := item.Original(source)
+// errChecksum: an upload's bytes are not its content address.
+var errChecksum = errors.New("media/video: upload bytes do not match their SHA-256 name")
+
+// fetch downloads an upload's blob to path. Unless the store vouches for
+// its SHA-256, the bytes are hashed on the way and must match the name
+// (errChecksum).
+func (e *Encoder) fetch(ctx context.Context, item media.Item, blob, path string, fp *fileProgress) error {
+	key, err := item.Blob(blob)
 	if err != nil {
-		return "", "", media.Object{}, &PermanentError{err}
+		return err
 	}
-	obj, sum, err := e.fetch(ctx, srcKey, path, fp)
-	if errors.Is(err, media.ErrNotFound) {
-		return "", "", obj, e.stale(ctx, ms, item, name, source, err)
-	} else if err != nil {
-		return "", "", obj, err
+	rc, obj, err := e.store.Get(ctx, key, media.GetOptions{})
+	if err != nil {
+		return err
 	}
-	if !layout.ValidStagedName(source) {
-		return srcKey, source, obj, nil
+	defer rc.Close()
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
 	}
-	placed, err := ms.Place(ctx, item.Ref(), media.Staged{Name: source, ETag: obj.ETag, SHA256: sum})
-	if errors.Is(err, media.ErrStagedGone) {
-		return "", "", obj, e.stale(ctx, ms, item, name, source, err)
-	} else if err != nil {
-		return "", "", obj, err
+	h := sha256.New()
+	start := time.Now()
+	n, err := io.Copy(io.MultiWriter(f, h), rc)
+	fp.transferred(n, time.Since(start))
+	if cerr := f.Close(); err == nil {
+		err = cerr
 	}
-	srcKey, _ = item.Original(placed)
-	obj, err = e.c.Store.Head(ctx, srcKey)
-	return srcKey, placed, obj, err
+	if err == nil && n != obj.Size {
+		err = fmt.Errorf("media/video: read %d of %d bytes of %s", n, obj.Size, key)
+	}
+	if err == nil && !matches(blob, h.Sum(nil)) {
+		err = errChecksum
+	}
+	return err
+}
+
+// verify reads an upload's blob through for its SHA-256 unless the store
+// vouches for it (a single PUT with a full-object checksum).
+func (e *Encoder) verify(ctx context.Context, item media.Item, blob string, obj media.Object) error {
+	if matches(blob, obj.ChecksumSHA256) {
+		return nil
+	}
+	key, _ := item.Blob(blob)
+	rc, got, err := e.store.Get(ctx, key, media.GetOptions{})
+	if err != nil {
+		return err
+	}
+	h := sha256.New()
+	n, err := io.Copy(h, rc)
+	if err = errors.Join(err, rc.Close()); err != nil {
+		return err
+	}
+	if got.ETag != obj.ETag || n != obj.Size {
+		return media.ErrPreconditionFailed
+	}
+	if !matches(blob, h.Sum(nil)) {
+		return errChecksum
+	}
+	return nil
+}
+
+func matches(blob string, sum []byte) bool {
+	want, ok := layout.ParseSHA256Name(blob)
+	return ok && bytes.Equal(want, sum)
+}
+
+// checksumFailed fails an upload whose bytes are not its name
+// (checksum_mismatch) and deletes the blob unless another file names it.
+func (e *Encoder) checksumFailed(ctx context.Context, item media.Item, path, blob string) error {
+	var drop bool
+	err := e.failed(ctx, item, path, blob, errChecksum, func(m *media.Manifest) {
+		i := m.Find(path)
+		f := &m.Files[i]
+		f.Failed = &media.Failure{Of: f.Key(), Message: errChecksum.Error(), Code: media.CodeChecksum}
+		f.Pending, f.Gone = nil, true
+		drop = true
+		for _, g := range m.Files {
+			if g.Path != path && g.Blob == blob {
+				drop = false
+			}
+		}
+	})
+	if err != nil || !drop {
+		return err
+	}
+	key, _ := item.Blob(blob)
+	if err := e.store.Delete(ctx, key); err != nil && !errors.Is(err, media.ErrNotFound) {
+		return err
+	}
+	return nil
+}
+
+// readIndex reads a track's index blob.
+func (e *Encoder) readIndex(ctx context.Context, item media.Item, blob string) (media.TrackIndex, error) {
+	var idx media.TrackIndex
+	key, err := item.Blob(blob)
+	if err != nil {
+		return idx, err
+	}
+	rc, _, err := e.store.Get(ctx, key, media.GetOptions{})
+	if err != nil {
+		return idx, err
+	}
+	defer rc.Close()
+	err = json.NewDecoder(io.LimitReader(rc, 64<<20)).Decode(&idx)
+	return idx, err
 }

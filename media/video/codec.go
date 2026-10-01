@@ -9,7 +9,6 @@ import (
 	"math/bits"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -213,15 +212,4 @@ func hvcCodec(r []byte) string {
 		s += fmt.Sprintf(".%x", c)
 	}
 	return s
-}
-
-// orderVideo sorts renditions by codec (the ladder's order), then largest
-// rung first.
-func orderVideo(video []media.Rendition, codecs []media.Codec) {
-	slices.SortStableFunc(video, func(a, b media.Rendition) int {
-		if d := slices.Index(codecs, a.Codec) - slices.Index(codecs, b.Codec); d != 0 {
-			return d
-		}
-		return b.Rung - a.Rung
-	})
 }

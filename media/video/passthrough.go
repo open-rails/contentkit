@@ -183,18 +183,6 @@ func isIDR(f *os.File, pk sourcePacket, c media.Codec) (bool, error) {
 	return false, fmt.Errorf("no slice")
 }
 
-// copyRung stream-copies the source's video into the single-file fMP4 v.
-func copyRung(ctx context.Context, src, dir string, p plan, v string, c media.Codec) error {
-	args := append(append([]string{"-v", "error", "-nostdin"}, inputOptions(sourceDemuxers)...), "-i", src,
-		"-map", fmt.Sprintf("0:%d", p.video), "-c", "copy", "-map_metadata", "-1")
-	if c == media.CodecHEVC {
-		args = append(args, "-tag:v", "hvc1")
-	}
-	args = append(args, hlsArgs(filepath.Join(dir, v+".mp4"), filepath.Join(dir, v+".m3u8"))...)
-	_, err := command(ctx, "ffmpeg", args...)
-	return err
-}
-
 // copyRungRemote stream-copies a short source into its single queued chunk.
 func copyRungRemote(ctx context.Context, src, dir string, p plan, v string, c media.Codec) error {
 	args := append([]string{"-v", "error", "-nostdin"}, remoteInputOptions(sourceDemuxers)...)
