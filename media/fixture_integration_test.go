@@ -17,6 +17,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/agent"
 	"github.com/open-rails/contentkit/media/internal/s3test"
@@ -80,6 +81,17 @@ func testConfig(ns, shared string) media.Config {
 	}}
 }
 
+// miniRegistry is one plain kind, "post", in namespace ns.
+func miniRegistry(t testing.TB, ns string) *media.Registry {
+	t.Helper()
+	r, err := media.NewRegistry(media.Config{Namespace: ns, Kinds: []media.Kind{
+		{Name: "post", Uploads: []media.Upload{{Path: "files/{name}", Types: images, MaxBytes: 1 << 20}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
 // resolver is the app's ContentResolver: verdicts per item id; anonymous
 // viewers get anon.
 type resolver struct {
@@ -94,7 +106,7 @@ func (r *resolver) set(id string, res access.Resolution) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.verdicts[id] = res
-	r.anon[id] = access.Resolution{Visible: res.Visible, Accessible: res.Accessible && res.PreviewLimit == 0}
+	r.anon[id] = access.Resolution{Visible: res.Visible, Accessible: res.Accessible, PreviewLimit: res.PreviewLimit}
 }
 
 func (r *resolver) Resolve(_ context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
@@ -190,7 +202,7 @@ func newFixtureOn(t *testing.T, env *s3test.Env, mutate func(*media.Config)) *fi
 		t.Fatal(err)
 	}
 	locker := s3test.Locker(t, env.Store)
-	if f.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: locker, Processes: f.q}); err != nil {
+	if f.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: locker, Processes: f.q, Pool: pgtest.Pool(t, nil)}); err != nil {
 		t.Fatal(err)
 	}
 	f.ms = f.jobs.Manifests()
