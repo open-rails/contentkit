@@ -164,7 +164,8 @@ func (o *opRun) apply(n int, op Op) error {
 		return o.copy(op, src)
 	}
 	i := m.Find(op.Path)
-	if i < 0 && op.Op == OpRemove {
+	publicRemoval := op.Op == OpRemove && len(k.PublicFor(op.Path)) > 0
+	if i < 0 && publicRemoval {
 		return nil // retry after the manifest changed but public cleanup failed
 	}
 	if i < 0 || !m.Files[i].IsUpload() {
