@@ -171,7 +171,7 @@ func TestMedia_PollImages(t *testing.T) {
 		t.Fatalf("poll list after origin change: %+v, err=%v", listed, err)
 	}
 	var edited pollOption
-	if code := send(t, rt, mediaAdmin, "PATCH", "/polls/"+poll.ID+"/options/"+oid, map[string]string{"label": "edited"}, &edited); code != 200 || edited.ImageURL != movedFolder+o+".webp" {
+	if code := send(t, rt, mediaAdmin, "PATCH", "/polls/"+strings.ToUpper(poll.ID)+"/options/"+oid, map[string]string{"label": "edited"}, &edited); code != 200 || edited.ImageURL != movedFolder+o+".webp" {
 		t.Fatalf("edited option after origin change: status=%d, option=%+v", code, edited)
 	}
 	if code := send(t, rt, mediaAdmin, "PUT", "/polls/"+other.ID+"/options/"+oid+"/image", image(o), nil); code != 404 {

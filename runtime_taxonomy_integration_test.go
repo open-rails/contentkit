@@ -3,12 +3,14 @@ package contentkit
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/migrations"
 	"github.com/open-rails/contentkit/taxonomy"
 )
 
@@ -65,9 +67,13 @@ func TestMigrateHostSchemaAndForeignKeysIntegration(t *testing.T) {
 	if err := Migrate(ctx, cfg); err != nil {
 		t.Fatalf("repeat migrations: %v", err)
 	}
+	chain, err := fs.Glob(migrations.Postgres, "*.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var count int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM public.migrations WHERE app='contentkit' AND schema=$1", schema).Scan(&count); err != nil || count != 7 {
-		t.Fatalf("seven migration ledger rows: %d %v", count, err)
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM public.migrations WHERE app='contentkit' AND schema=$1", schema).Scan(&count); err != nil || count != len(chain) {
+		t.Fatalf("migration ledger rows: %d, want %d %v", count, len(chain), err)
 	}
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM "+q+".content_node_names WHERE taxonomy_id=$1 AND normalized='color'", tax(1)).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("catalog preserved on rerun: %d %v", count, err)

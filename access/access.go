@@ -20,8 +20,9 @@ type Actor struct {
 // Resolution is the host's verdict about a content reference for one actor.
 type Resolution struct {
 	// Ref is the canonical reference every row is stored and read under (an
-	// alias or slug resolves to it). A zero Ref keeps the requested one; a Ref
-	// of another tenant is an error.
+	// alias or slug resolves to it). A zero Ref keeps the requested one, which
+	// content then refuses unless lower case; a Ref of another tenant is an
+	// error.
 	Ref contentref.ContentRef
 	// Visible = published and not soft-deleted. Teasers need only Visible.
 	Visible bool

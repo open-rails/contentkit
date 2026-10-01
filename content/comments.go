@@ -31,8 +31,9 @@ func newComments(rt *Runtime) *comments {
 // commentTombstone is the body shown for a soft-deleted comment.
 const commentTombstone = "[deleted]"
 
-// uuidRe validates a comment id before it reaches a uuid column, so a
-// malformed id is a clean 404/400 instead of a cast error.
+// uuidRe validates an id before it reaches a uuid column, so a malformed id
+// is a clean 404/400 instead of a cast error. Letter case does not change the
+// row it names, so text keys (a comment's reactions) take the row's id::text.
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // createInput is the POST body for a new comment.
@@ -118,8 +119,8 @@ func (c *comments) create(ctx context.Context, actor access.Actor, kind, id stri
 		var targetReply *string
 		var targetDeleted *time.Time
 		var targetState string
-		row := tx.QueryRow(ctx, `SELECT `+keyCols+`, reply_to_id::text, deleted_at, moderation FROM `+c.s.t.comments+` WHERE id = $1`, in.ReplyToID)
-		if err := row.Scan(&target.TenantID, &target.ContentKind, &target.ContentID, &target.ContentVersionID, &targetReply, &targetDeleted, &targetState); err != nil {
+		row := tx.QueryRow(ctx, `SELECT id::text, `+keyCols+`, reply_to_id::text, deleted_at, moderation FROM `+c.s.t.comments+` WHERE id = $1`, in.ReplyToID)
+		if err := row.Scan(&in.ReplyToID, &target.TenantID, &target.ContentKind, &target.ContentID, &target.ContentVersionID, &targetReply, &targetDeleted, &targetState); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return Comment{}, badRequest("comment to reply to not found")
 			}
@@ -672,7 +673,8 @@ func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, 
 	}
 	var deletedAt *time.Time
 	var state string
-	if err := tx.QueryRow(ctx, `SELECT deleted_at, moderation FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, cid, c.s.tenant).Scan(&deletedAt, &state); err != nil {
+	// Key by the stored id: every spelling of cid is one comment, one reaction.
+	if err := tx.QueryRow(ctx, `SELECT id::text, deleted_at, moderation FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, cid, c.s.tenant).Scan(&cid, &deletedAt, &state); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return reactionCounts{}, ErrNotFound
 		}
