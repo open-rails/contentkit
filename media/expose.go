@@ -15,12 +15,14 @@ import (
 )
 
 // Expose brings an item's public files to its visibility, resolved for an
-// anonymous viewer (Hooks.Resolver). Hiding records Hidden and deletes and
-// purges public/ at once; unhiding marks the public presets pending on their
-// kept sources and asks the worker to render them. It re-resolves after
-// writing and repeats until the state holds, so an Expose racing a
-// visibility change ends at the newer one. An item without a manifest is
-// left alone (its first commit resolves it).
+// anonymous viewer (Hooks.Resolver). Hiding deletes and purges public/,
+// records Hidden, and deletes again what a pass wrote meanwhile; it needs no
+// readable manifest, so a manifest over its bound still hides. Unhiding
+// marks the public presets pending on their kept sources and asks the worker
+// to render them. It re-resolves after writing and repeats until the state
+// holds, so an Expose racing a visibility change ends at the newer one. An
+// item without a manifest has no public files (its first commit resolves
+// it).
 func (j *Jobs) Expose(ctx context.Context, ref contentref.ContentRef) error {
 	item, err := j.cfg.Registry.Item(ref)
 	if err != nil {
@@ -34,15 +36,25 @@ func (j *Jobs) Expose(ctx context.Context, ref contentref.ContentRef) error {
 		return err
 	}
 	for range 4 {
+		if hidden {
+			if err := j.deletePublic(ctx, item); err != nil {
+				return err
+			}
+		}
 		changed := false
 		_, err := j.manifests.EditExisting(ctx, ref, func(m *Manifest) error {
 			changed = m.Hidden != hidden
 			setHidden(item.Kind(), m, hidden)
 			return nil
 		})
-		if errors.Is(err, ErrNotFound) {
+		switch {
+		case errors.Is(err, ErrNotFound):
 			return nil
-		} else if err != nil {
+		case hidden && errors.Is(err, ErrManifestTooLarge):
+			// Nothing can process it either, so public/ stays empty.
+			j.cfg.Logger.WarnContext(ctx, "media: hid an item whose manifest does not decode", "ref", ref.String(), "error", err)
+			return nil
+		case err != nil:
 			return err
 		}
 		if hidden {

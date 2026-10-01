@@ -112,10 +112,21 @@ func (op Op) validate() error {
 			return bad("create_id requires a put and a canonical nonzero UUID")
 		}
 	}
+	if limit := op.metaLimit(); metaBytes(op.Meta) > limit {
+		return uploadErr(CodeTooLarge, "%s %q: meta is at most %d bytes of JSON", op.Op, op.Path, limit)
+	}
 	if err := op.Edit.Check(0, 0); err != nil {
 		return bad("%v", err)
 	}
 	return nil
+}
+
+// metaLimit bounds op.Meta: the item's for a meta op, else an upload's.
+func (op Op) metaLimit() int {
+	if op.Op == OpMeta {
+		return MaxItemMetaBytes
+	}
+	return MaxMetaBytes
 }
 
 // opRun applies commit ops to a manifest of kind k.
@@ -187,6 +198,9 @@ func (o *opRun) apply(n int, op Op) error {
 				f.Meta = map[string]any{}
 			}
 			maps.Copy(f.Meta, op.Meta)
+			if metaBytes(f.Meta) > MaxMetaBytes {
+				return uploadErr(CodeTooLarge, "attach %q: meta is at most %d bytes of JSON", f.Path, MaxMetaBytes)
+			}
 		}
 		g, _, _, _, _ := k.upload(f.Path)
 		m.Files = slices.Delete(m.Files, i, i+1)

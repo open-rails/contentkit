@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -285,13 +286,31 @@ func (j *Jobs) deleteFolderLocked(ctx context.Context, prefix, owner, operation 
 	return nil
 }
 
-// uploadBytes is the quota the folder's manifest was charged at commit.
+// uploadBytesMeta is the manifest object's metadata key for the quota its
+// uploads were charged.
+const uploadBytesMeta = "upload-bytes"
+
+// uploadBytes is the quota the folder's manifest was charged, read from the
+// manifest object's metadata so a manifest that does not decode (over its
+// bound) is still deleted. One without the record is decoded; failing that
+// nothing is released.
 func (j *Jobs) uploadBytes(ctx context.Context, prefix string) (int64, error) {
-	m, err := j.readManifest(ctx, prefix+layout.ManifestName)
+	key := prefix + layout.ManifestName
+	obj, err := j.cfg.Store.Head(ctx, key)
 	if errors.Is(err, ErrNotFound) {
 		return 0, nil
 	} else if err != nil {
 		return 0, err
+	}
+	if n, err := strconv.ParseInt(obj.Metadata[uploadBytesMeta], 10, 64); err == nil && n >= 0 {
+		return n, nil
+	}
+	m, err := j.readManifest(ctx, key)
+	if errors.Is(err, ErrNotFound) {
+		return 0, nil
+	} else if err != nil {
+		j.cfg.Logger.WarnContext(ctx, "media: deleting a folder whose manifest does not decode releases no quota", "key", key, "error", err)
+		return 0, nil
 	}
 	return m.uploadBytes(), nil
 }

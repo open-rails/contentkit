@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"reflect"
+	"strconv"
 	"sync"
 	"time"
 
@@ -90,18 +91,19 @@ func (m *Manifests) Get(ctx context.Context, ref contentref.ContentRef) (*Manife
 // error from fn aborts the edit. The result is normalized (Kind.Normalize)
 // and validated; an unchanged manifest is not written. A folder's first
 // manifest is refused (ErrFolderNotEmpty) over a previous item's public
-// files.
+// files, and a manifest over MaxManifestBytes with ErrManifestTooLarge.
 func (m *Manifests) Edit(ctx context.Context, ref contentref.ContentRef, fn func(*Manifest) error) (*Manifest, error) {
-	return m.edit(ctx, ref, false, fn)
+	return m.edit(ctx, ref, false, MaxManifestBytes, fn)
 }
 
 // EditExisting is Edit while the manifest exists (ErrNotFound otherwise):
 // workers use it after processing, so a concurrent deletion stays deleted.
 func (m *Manifests) EditExisting(ctx context.Context, ref contentref.ContentRef, fn func(*Manifest) error) (*Manifest, error) {
-	return m.edit(ctx, ref, true, fn)
+	return m.edit(ctx, ref, true, MaxManifestBytes, fn)
 }
 
-func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existing bool, fn func(*Manifest) error) (*Manifest, error) {
+// edit writes manifests of at most limit bytes of JSON.
+func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existing bool, limit int64, fn func(*Manifest) error) (*Manifest, error) {
 	item, err := m.reg.Item(ref)
 	if err != nil {
 		return nil, err
@@ -114,7 +116,7 @@ func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existin
 	defer unlock()
 	conditional := m.store.Capabilities().ConditionalPut
 	for attempt := 0; attempt < m.retries; attempt++ {
-		out, written, conflict, err := m.try(ctx, item, existing, conditional, fn)
+		out, written, conflict, err := m.try(ctx, item, existing, conditional, limit, fn)
 		if conflict {
 			backoff := time.Duration(1<<min(attempt, 6)) * 5 * time.Millisecond
 			select {
@@ -134,7 +136,7 @@ func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existin
 	return nil, fmt.Errorf("%w: %s", ErrManifestConflict, key)
 }
 
-func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bool, fn func(*Manifest) error) (out *Manifest, written, conflict bool, err error) {
+func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bool, limit int64, fn func(*Manifest) error) (out *Manifest, written, conflict bool, err error) {
 	key := item.ManifestKey()
 	cur, etag, err := m.get(ctx, key)
 	switch {
@@ -161,11 +163,17 @@ func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bo
 			return nil, false, false, err
 		}
 	}
-	body, err := encodeManifest(next)
+	body, size, err := encodeManifest(next)
 	if err != nil {
 		return nil, false, false, err
 	}
-	opts := PutOptions{ContentType: "application/gzip", CacheControl: "no-store"}
+	if size > limit {
+		return nil, false, false, fmt.Errorf("%w: %d bytes, at most %d", ErrManifestTooLarge, size, limit)
+	}
+	// The charged quota rides on the object, so releasing it never needs
+	// the manifest to decode.
+	opts := PutOptions{ContentType: "application/gzip", CacheControl: "no-store",
+		Metadata: map[string]string{uploadBytesMeta: strconv.FormatInt(next.uploadBytes(), 10)}}
 	if conditional {
 		if etag == "" {
 			opts.IfNoneMatch = "*"
@@ -182,7 +190,7 @@ func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bo
 		return nil, false, false, err
 	}
 	next.reindex()
-	m.cache.put(key, obj.ETag, next, int64(len(body)))
+	m.cache.put(key, obj.ETag, next, size)
 	return next, true, false, nil
 }
 
@@ -199,16 +207,16 @@ func (m *Manifests) get(ctx context.Context, key string) (*Manifest, string, err
 	case err != nil:
 		return nil, "", err
 	}
-	body, err := io.ReadAll(io.LimitReader(rc, maxManifestBytes+1))
+	body, err := io.ReadAll(io.LimitReader(rc, MaxManifestBytes+1))
 	rc.Close()
 	if err != nil {
 		return nil, "", err
 	}
-	man, err := decodeManifest(body)
+	man, size, err := decodeManifest(body)
 	if err != nil {
 		return nil, "", fmt.Errorf("media: decode manifest %s: %w", key, err)
 	}
-	m.cache.put(key, obj.ETag, man, int64(len(body)))
+	m.cache.put(key, obj.ETag, man, size)
 	return man, obj.ETag, nil
 }
 
@@ -246,8 +254,8 @@ func (m *Manifests) DropIfDeleted(ctx context.Context, ref contentref.ContentRef
 	return errors.Join(errs...)
 }
 
-// manifestCache keeps decoded manifests by key, bounded by their encoded
-// size times a decode factor.
+// manifestCache keeps decoded manifests by key, bounded by their JSON size
+// times a decode factor.
 type manifestCache struct {
 	mu    sync.Mutex
 	max   int64
@@ -262,8 +270,8 @@ type cacheEntry struct {
 	cost      int64
 }
 
-// decodeFactor estimates a decoded manifest's memory from its gzip size.
-const decodeFactor = 12
+// decodeFactor estimates a decoded manifest's memory from its JSON size.
+const decodeFactor = 3
 
 func newManifestCache(max int64) *manifestCache {
 	return &manifestCache{max: max, order: list.New(), items: map[string]*list.Element{}}

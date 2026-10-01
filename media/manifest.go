@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -384,48 +385,93 @@ func (m *Manifest) SetFailed(path string, err error) {
 	}
 }
 
-// encodeManifest writes m as gzip JSON.
-func encodeManifest(m *Manifest) ([]byte, error) {
+// Manifest bounds. MaxManifestBytes bounds a manifest's JSON on every read
+// and write, so nothing writes a manifest no reader can load; commits stop
+// at a quarter of it (ErrManifestTooLarge), leaving the rest for the
+// worker's outputs. A 2,000-page gallery is about 1.5 MB. Meta is bounded
+// where ops set it, and an item holds at most MaxUploads uploads.
+const (
+	MaxManifestBytes = 64 << 20
+	MaxCommitBytes   = MaxManifestBytes / 4
+	MaxMetaBytes     = 4 << 10  // an upload's meta, as JSON
+	MaxItemMetaBytes = 16 << 10 // the item's meta, as JSON
+	MaxUploads       = 10000
+)
+
+// ErrManifestTooLarge: a manifest over its bound, refused on write and on
+// read.
+var ErrManifestTooLarge = errors.New("media: manifest over its size limit")
+
+// encodeManifest writes m as gzip JSON and returns the JSON's length.
+func encodeManifest(m *Manifest) ([]byte, int64, error) {
 	m.V = ManifestVersion
 	if m.Files == nil {
 		m.Files = []File{}
 	}
 	var b bytes.Buffer
 	zw, _ := gzip.NewWriterLevel(&b, gzip.BestSpeed)
-	if err := json.NewEncoder(zw).Encode(m); err != nil {
-		return nil, err
+	cw := &countWriter{w: zw}
+	if err := json.NewEncoder(cw).Encode(m); err != nil {
+		return nil, 0, err
 	}
 	if err := zw.Close(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return b.Bytes(), nil
+	return b.Bytes(), cw.n, nil
+}
+
+type countWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
 }
 
 // DecodeManifest reads a stored manifest (gzip JSON, or plain JSON).
-func DecodeManifest(b []byte) (*Manifest, error) { return decodeManifest(b) }
+func DecodeManifest(b []byte) (*Manifest, error) {
+	m, _, err := decodeManifest(b)
+	return m, err
+}
 
-// decodeManifest reads gzip JSON (or plain JSON) and indexes it.
-func decodeManifest(b []byte) (*Manifest, error) {
+// decodeManifest reads gzip JSON (or plain JSON), at most MaxManifestBytes
+// of it, indexes it and returns the JSON's length.
+func decodeManifest(b []byte) (*Manifest, int64, error) {
 	r := io.Reader(bytes.NewReader(b))
 	if len(b) >= 2 && b[0] == 0x1f && b[1] == 0x8b {
 		zr, err := gzip.NewReader(r)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		defer zr.Close()
-		r = io.LimitReader(zr, maxManifestBytes+1)
+		r = zr
 	}
+	lr := &io.LimitedReader{R: r, N: MaxManifestBytes + 1}
 	var m Manifest
-	if err := json.NewDecoder(r).Decode(&m); err != nil {
-		return nil, err
+	err := json.NewDecoder(lr).Decode(&m)
+	if lr.N <= 0 {
+		return nil, 0, ErrManifestTooLarge
+	} else if err != nil {
+		return nil, 0, err
 	}
 	if m.V != ManifestVersion {
-		return nil, fmt.Errorf("media: manifest version %d, want %d", m.V, ManifestVersion)
+		return nil, 0, fmt.Errorf("media: manifest version %d, want %d", m.V, ManifestVersion)
 	}
 	m.reindex()
-	return &m, nil
+	return &m, MaxManifestBytes + 1 - lr.N, nil
 }
 
-// maxManifestBytes bounds a decoded manifest (a 2,000-page gallery is
-// about 1.5 MB).
-const maxManifestBytes = 64 << 20
+// metaBytes is meta's JSON length.
+func metaBytes(meta map[string]any) int {
+	if len(meta) == 0 {
+		return 0
+	}
+	b, err := json.Marshal(meta)
+	if err != nil {
+		return MaxItemMetaBytes + 1
+	}
+	return len(b)
+}

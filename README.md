@@ -230,7 +230,13 @@ names, dropped originals) and validated; an unchanged manifest is not
 written. Reads go through an in-process cache bounded by bytes and
 revalidated by ETag, so a read is never stale. A 2,000-page gallery is about
 1.5 MB of JSON and 400 KB stored; a 2-hour video about 5 KB, its segment
-tables living in index blobs.
+tables living in index blobs. Every read and write stops at
+`MaxManifestBytes` (64 MiB of JSON); commits stop at `MaxCommitBytes`
+(16 MiB, 413 `too_large`), leaving the rest for outputs. An item holds at
+most `MaxUploads` (10,000) uploads, an upload's meta at most 4 KiB of JSON
+and the item's 16 KiB. The manifest object records the quota its uploads
+were charged, so deleting an item never needs it to decode, and hiding
+deletes `public/` before touching it.
 
 **The bucket is optional at startup.** `s3.New` never dials; register
 `store.Check(ctx, prefix)` as the host's optional S3 dependency probe. Its
@@ -250,7 +256,7 @@ each staged upload and writes it to `private/sha256-{hex}` of the bytes it
 read (`Manifests.Place`); an existing blob is never overwritten, so a blob
 always holds the bytes of its name. The optional `UploadLimiter`
 (`media.NewPGLimiter`) rate-limits uploaders and charges each upload's size
-to the grant's `Owner`; growth past the quota fails with 413
+(at least 64 KiB) to the grant's `Owner`; growth past the quota fails with 413
 `quota_exceeded`, and deleting an item releases it.
 
 **Access agent** (`cmd/media-access`, `media/agent`, image

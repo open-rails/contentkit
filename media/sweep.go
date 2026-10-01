@@ -187,11 +187,11 @@ func (j *Jobs) readManifest(ctx context.Context, key string) (*Manifest, error) 
 		return nil, err
 	}
 	defer rc.Close()
-	body, err := io.ReadAll(io.LimitReader(rc, maxManifestBytes+1))
+	body, err := io.ReadAll(io.LimitReader(rc, MaxManifestBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	m, err := decodeManifest(body)
+	m, _, err := decodeManifest(body)
 	if err != nil {
 		return nil, fmt.Errorf("media: decode manifest %s: %w", key, err)
 	}
