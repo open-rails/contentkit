@@ -30,3 +30,10 @@ const (
 type ProcessQueue interface {
 	Enqueue(ctx context.Context, job ProcessJob) error
 }
+
+// FrameGrabber grabs a JPEG still at t seconds (width 0 keeps the frame's)
+// from a video upload, for the frame picker (Uploads.Frame); media/video's
+// Frames implements it.
+type FrameGrabber interface {
+	Frame(ctx context.Context, item Item, video File, t float64, width int) ([]byte, error)
+}
