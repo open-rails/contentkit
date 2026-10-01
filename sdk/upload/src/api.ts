@@ -62,14 +62,14 @@ export class UploadApi {
     return this.post<CommitReply>("/commit", b, signal);
   }
   /** A JPEG still of the video upload at path, t seconds in, w pixels wide (0: the frame's). */
-  frame(ref: RefBody, path: string, t: number, w?: number, signal?: AbortSignal) {
+  async frame(ref: RefBody, path: string, t: number, w?: number, signal?: AbortSignal) {
     checkRef(ref);
     const q = new URLSearchParams({ kind: ref.kind, id: ref.id, path, t: String(t) });
     if (w) q.set("w", String(w));
     return this.call<Blob>(trim(this.o.endpoint) + "/frame?" + q, undefined, signal, true);
   }
 
-  read(ref: RefBody, o: ReadOptions = {}, signal?: AbortSignal) {
+  async read(ref: RefBody, o: ReadOptions = {}, signal?: AbortSignal) {
     const q = new URLSearchParams();
     if (o.prefix) q.set("prefix", o.prefix);
     if (o.offset) q.set("offset", String(o.offset));
@@ -87,7 +87,7 @@ export class UploadApi {
     return `${trim(this.o.readEndpoint)}/${encodeURIComponent(ref.kind)}/${encodeURIComponent(ref.id)}`;
   }
 
-  private post<T>(path: string, body: object, signal?: AbortSignal) {
+  private async post<T>(path: string, body: object, signal?: AbortSignal) {
     checkRef((body as { ref?: RefBody }).ref);
     return this.call<T>(trim(this.o.endpoint) + path, body, signal);
   }
