@@ -337,7 +337,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	}
 	k := g.Item.Kind()
 	if editor {
-		out.State = k.Readiness(g.Manifest).State
+		out.State, out.Full = k.Readiness(g.Manifest).State, g.Manifest.Full
 	}
 	views := &editorViews{g: g}
 	for _, f := range g.Manifest.Files {

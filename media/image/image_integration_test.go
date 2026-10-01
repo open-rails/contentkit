@@ -290,9 +290,10 @@ func TestPublishDefaults(t *testing.T) {
 	}
 }
 
-// A pass whose outputs the manifest cannot hold fails those uploads
-// too_large instead of retrying: the next job renders nothing again.
-func TestFullManifestFailsUploads(t *testing.T) {
+// A pass whose outputs the manifest cannot hold marks the item Full instead
+// of recording them: later jobs render nothing, until a commit shrinks the
+// manifest and the pass completes.
+func TestFullManifestStopsProcessing(t *testing.T) {
 	e := newEnv(t, nil)
 	p := e.ref(t, "post", 1)
 	ctx := context.Background()
@@ -314,17 +315,21 @@ func TestFullManifestFailsUploads(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.process(t, media.ProcessJob{Ref: p})
-	f := e.file(t, p, "files/a.png")
-	if fail := f.Fail(); fail == nil || fail.Code != media.CodeTooLarge || f.Pending != nil {
-		t.Fatalf("a full manifest: %+v", f)
+	m := e.manifest(t, p)
+	if f, _ := m.Get("files/a.png"); !m.Full || f.Fail() != nil || len(f.Pending) == 0 {
+		t.Fatalf("full %v, upload %+v", m.Full, f)
+	}
+	purged := len(e.takePurged())
+	e.process(t, media.ProcessJob{Ref: p})
+	if m := e.manifest(t, p); len(m.Outputs("files/a.png", "web")) != 0 || len(e.takePurged()) != 0 {
+		t.Fatalf("a full item was processed again (%d purged before)", purged)
+	}
+	e.commit(t, p, media.Op{Op: media.OpMeta})
+	if m := e.manifest(t, p); m.Full {
+		t.Fatal("a shrinking commit kept the item full")
 	}
 	e.process(t, media.ProcessJob{Ref: p})
-	if m := e.manifest(t, p); len(m.Outputs("files/a.png", "web")) != 0 {
-		t.Fatal("rendered again")
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if !slices.Contains(e.failed, "files/a.png") {
-		t.Fatalf("Hooks.Failed %v", e.failed)
+	if m := e.manifest(t, p); len(m.Outputs("files/a.png", "web")) != 1 {
+		t.Fatal("not processed once shrunk")
 	}
 }

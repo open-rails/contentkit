@@ -32,6 +32,9 @@ func isAudio(p *media.Private) bool { return p.Audio != nil }
 // audio produces an item's stale Audio presets (only args.Preset when set;
 // every one with args.Force).
 func (e *Encoder) audio(ctx context.Context, item media.Item, args workqueue.AudioArgs, report Report) error {
+	if e.full(ctx, item) {
+		return nil
+	}
 	if args.Force {
 		if err := e.force(ctx, item, args.Preset, isAudio); err != nil {
 			return err

@@ -47,6 +47,9 @@ func (m *Manifests) Place(ctx context.Context, ref contentref.ContentRef) (int, 
 	} else if err != nil {
 		return 0, err
 	}
+	if man.Full {
+		return 0, nil // placing would grow it: wait for a commit that shrinks it
+	}
 	sizes := map[string]int64{}
 	for _, f := range man.Files {
 		if f.Staged != "" && f.Fail() == nil {

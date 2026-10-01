@@ -29,6 +29,7 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/image"
 	"github.com/open-rails/contentkit/media/video"
@@ -212,7 +213,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 			if err := river.AddWorkerSafely(cfg.Workers, &placeWorker{c: c, manifests: manifests, queue: queue}); err != nil {
 				return err
 			}
-			return river.AddWorkerSafely(cfg.Workers, &imageWorker{c: c, images: images})
+			return river.AddWorkerSafely(cfg.Workers, &imageWorker{c: c, images: images, manifests: manifests})
 		}, nil, nil)
 		contributions = append(contributions, imageJobs)
 	}
@@ -319,15 +320,16 @@ func (w *placeWorker) Work(ctx context.Context, job *river.Job[workqueue.PlaceAr
 		return err
 	}
 	if _, err := w.manifests.Place(ctx, a.Ref); err != nil {
-		return full(err)
+		return full(ctx, w.manifests, a.Ref, err)
 	}
 	return w.queue.Enqueue(ctx, media.ProcessJob{Ref: a.Ref, Preset: a.Preset, Force: a.Force})
 }
 
 type imageWorker struct {
 	river.WorkerDefaults[workqueue.ImageArgs]
-	c      Config
-	images *image.Processor
+	c         Config
+	images    *image.Processor
+	manifests *media.Manifests
 }
 
 func (w *imageWorker) Timeout(*river.Job[workqueue.ImageArgs]) time.Duration { return w.c.ImageTimeout }
@@ -343,14 +345,15 @@ func (w *imageWorker) Work(ctx context.Context, job *river.Job[workqueue.ImageAr
 	if err := media.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), job.Args.After); err != nil {
 		return err
 	}
-	return full(w.images.Process(ctx, pj))
+	return full(ctx, w.manifests, pj.Ref, w.images.Process(ctx, pj))
 }
 
-// full makes a manifest edit refused for size final: a retry would redo the
-// work only to be refused again.
-func full(err error) error {
-	if errors.Is(err, media.ErrManifestTooLarge) {
-		return river.JobCancel(err)
+// full marks the item Full when a record of its outputs did not fit
+// (ErrManifestTooLarge) and ends the job: a retry would redo the work only
+// to be refused again.
+func full(ctx context.Context, ms *media.Manifests, ref contentref.ContentRef, err error) error {
+	if !errors.Is(err, media.ErrManifestTooLarge) {
+		return err
 	}
-	return err
+	return river.JobCancel(errors.Join(err, ms.SetFull(ctx, ref)))
 }

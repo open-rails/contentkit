@@ -182,6 +182,7 @@ export interface ReadResult {
   limit: number;
   hls?: string[];
   state?: ItemState;
+  full?: boolean;
   files: FileInfo[];
 }
 

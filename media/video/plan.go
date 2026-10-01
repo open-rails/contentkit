@@ -82,6 +82,9 @@ func (c WorkerConfig) planVideo(ctx context.Context, args workqueue.VideoPlanArg
 		return river.JobSnooze(lockedSnooze)
 	}
 	defer release()
+	if e.full(ctx, item) {
+		return nil
+	}
 	if args.Force {
 		if err := e.force(ctx, item, args.Preset, videoFamily); err != nil {
 			return err

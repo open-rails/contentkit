@@ -486,6 +486,9 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 			return nil, err
 		}
 	}
+	if man.Full {
+		return man, nil // nothing is processed until a commit shrinks it
+	}
 	job := ProcessJob{Ref: ref, Place: len(man.StagedNames()) > 0}
 	for _, op := range ops {
 		if op.Op == OpRegenerate {

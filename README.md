@@ -231,16 +231,18 @@ written. Reads go through an in-process cache bounded by bytes and
 revalidated by ETag, so a read is never stale. A 2,000-page gallery is about
 1.5 MB of JSON and 400 KB stored; a 2-hour video about 5 KB, its segment
 tables living in index blobs. Every read and write stops at
-`MaxManifestBytes` (8 MiB of JSON, which the default 64 MiB cache holds
-twice over); edits stop 4 KiB short of it, so a hide always fits, and only
-when they grow the manifest, so a full item can still shrink. A commit is
-refused (413 `too_large`) when the item, once processed, would pass that:
-it projects every output its presets have yet to write. A worker whose
-record does not fit fails those uploads `too_large`, without retrying. An
-item holds at most `MaxUploads` (10,000) uploads, an upload's meta at most
-4 KiB of JSON and the item's 16 KiB; names are capped at 200 bytes of JSON,
-written unescaped (`<` is one byte). The manifest object records the quota
-its uploads were charged, so deleting an item never needs it to decode, and
+`MaxManifestBytes` (8 MiB of JSON; the default 128 MiB cache holds five).
+Edits stop 4 KiB short of it and only when they grow the manifest, so a
+full item can still shrink and the `hidden` and `full` flags always fit. A
+commit is refused (413 `too_large`) when the item, once processed, would
+pass that: it projects every output its presets have yet to write. When
+outputs still overrun it, the worker marks the item `full` instead of
+recording them: every producer then skips it, and editor reads report
+`full` (state `full`), until a commit shrinks the manifest. An item holds
+at most `MaxUploads` (10,000) uploads, an upload's meta at most 4 KiB of
+JSON and the item's 16 KiB; names are capped at 200 bytes of JSON, written
+unescaped (`<` is one byte). The manifest object records the quota its
+uploads were charged, so deleting an item never needs it to decode, and
 hiding deletes `public/` before touching it.
 
 **The bucket is optional at startup.** `s3.New` never dials; register

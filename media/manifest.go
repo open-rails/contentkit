@@ -22,10 +22,13 @@ const ManifestVersion = 2
 // commit ops), then each private preset's outputs in their uploads' order.
 // Readers never re-sort it. Public files are never listed.
 type Manifest struct {
-	V      int            `json:"v"`
-	Hidden bool           `json:"hidden,omitempty"` // set by Expose; public files are then absent
-	Meta   map[string]any `json:"meta,omitempty"`   // the app's template values, e.g. title
-	Files  []File         `json:"files"`
+	V      int  `json:"v"`
+	Hidden bool `json:"hidden,omitempty"` // set by Expose; public files are then absent
+	// Full: a producer could not record its outputs within the bound, so
+	// processing stops until a commit shrinks the manifest.
+	Full  bool           `json:"full,omitempty"`
+	Meta  map[string]any `json:"meta,omitempty"` // the app's template values, e.g. title
+	Files []File         `json:"files"`
 
 	index map[string]int
 	size  int64 // its JSON length when last read or written
@@ -163,14 +166,11 @@ func (f File) Fail() *Failure {
 // Teaser reports meta.teaser: served to every viewer who can see the item.
 func (f File) Teaser() bool { t, _ := f.Meta[MetaTeaser].(bool); return t }
 
-// NewFailure records err for upload f: an ImageError keeps its code and
-// details, ErrManifestTooLarge is too_large.
+// NewFailure records err for upload f: an ImageError keeps its code and details.
 func NewFailure(f File, err error) *Failure {
 	out := &Failure{Of: f.Key(), Message: err.Error()}
 	if ie := AsImageError(err); ie != nil {
 		out.Message, out.Code, out.Details = ie.Message, ie.Code, &ie.Details
-	} else if errors.Is(err, ErrManifestTooLarge) {
-		out.Message, out.Code = "the item's manifest is full: remove uploads to process more", CodeTooLarge
 	}
 	return out
 }
@@ -406,7 +406,7 @@ const (
 
 var (
 	// ErrManifestTooLarge: an edit refused because the manifest would grow
-	// past its bound. The workers fail the uploads it was for (too_large).
+	// past its bound. A worker refused it marks the item Full.
 	ErrManifestTooLarge = errors.New("media: manifest edit refused: over its size limit")
 	// ErrManifestUnreadable: a stored manifest over MaxManifestBytes, written
 	// before the bound; it does not decode.

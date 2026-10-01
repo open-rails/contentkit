@@ -12,6 +12,7 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pglock"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/workqueue"
@@ -114,7 +115,7 @@ type planWorker struct {
 func (w *planWorker) Timeout(*river.Job[workqueue.VideoPlanArgs]) time.Duration { return time.Hour }
 
 func (w *planWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoPlanArgs]) error {
-	return w.c.runVideoJob(ctx, job.JobRow, func() error { return w.c.planVideo(ctx, job.Args) })
+	return w.c.runVideoJob(ctx, job.JobRow, job.Args.Ref, func() error { return w.c.planVideo(ctx, job.Args) })
 }
 
 type chunkWorker struct {
@@ -126,7 +127,7 @@ func (w *chunkWorker) Timeout(*river.Job[workqueue.VideoChunkArgs]) time.Duratio
 
 func (w *chunkWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoChunkArgs]) error {
 	defer w.c.clearProgress(ctx, job.ID)
-	return w.c.runVideoJob(ctx, job.JobRow, func() error { return w.c.encodeChunk(ctx, job) })
+	return w.c.runVideoJob(ctx, job.JobRow, job.Args.Ref, func() error { return w.c.encodeChunk(ctx, job) })
 }
 
 type assembleWorker struct {
@@ -140,7 +141,7 @@ func (w *assembleWorker) Timeout(*river.Job[workqueue.VideoAssembleArgs]) time.D
 
 func (w *assembleWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoAssembleArgs]) error {
 	defer w.c.clearProgress(ctx, job.ID)
-	return w.c.runVideoJob(ctx, job.JobRow, func() error { return w.c.assemble(ctx, job.Args, job.ID) })
+	return w.c.runVideoJob(ctx, job.JobRow, job.Args.Ref, func() error { return w.c.assemble(ctx, job.Args, job.ID) })
 }
 
 // store is the bucket the encoder writes, nil without an encoder.
@@ -159,7 +160,7 @@ func (c WorkerConfig) clearProgress(ctx context.Context, id int64) {
 	}
 }
 
-func (c WorkerConfig) runVideoJob(ctx context.Context, row *rivertype.JobRow, work func() error) error {
+func (c WorkerConfig) runVideoJob(ctx context.Context, row *rivertype.JobRow, ref contentref.ContentRef, work func() error) error {
 	if err := c.restoreRescuedAttempt(ctx, row); err != nil {
 		return snoozeOnShutdown(ctx, err)
 	}
@@ -168,7 +169,7 @@ func (c WorkerConfig) runVideoJob(ctx context.Context, row *rivertype.JobRow, wo
 	}
 	err := media.SnoozeUnavailable(ctx, c.store(), row, snoozeOnShutdown(ctx, work()))
 	if errors.Is(err, media.ErrManifestTooLarge) {
-		return river.JobCancel(err) // a retry would only be refused again
+		return c.full(ctx, ref, err)
 	}
 	var snooze *river.JobSnoozeError
 	var cancelled *river.JobCancelError
@@ -234,9 +235,15 @@ func (w *audioWorker) Work(ctx context.Context, job *river.Job[workqueue.AudioAr
 	defer release()
 	defer w.c.clearProgress(ctx, job.ID)
 	if err = w.c.Encoder.audio(ctx, item, job.Args, w.c.report(job.ID)); errors.Is(err, media.ErrManifestTooLarge) {
-		return river.JobCancel(err) // a retry would only be refused again
+		return w.c.full(ctx, job.Args.Ref, err)
 	}
 	return err
+}
+
+// full marks the item Full (its outputs do not fit) and ends the job: a
+// retry would only be refused again.
+func (c WorkerConfig) full(ctx context.Context, ref contentref.ContentRef, err error) error {
+	return river.JobCancel(errors.Join(err, c.Encoder.ms.SetFull(ctx, ref)))
 }
 
 func (c WorkerConfig) report(id int64) Report {

@@ -255,6 +255,10 @@ describe("reads", () => {
     expect(s.calls.filter((x) => x === "/read")).toHaveLength(6);
     s.seed(ref, [{ path: "source.mp4", type: "video/mp4", size: 10, staged: true }]);
     expect((await c.waitFor(ref, "source", { timeout: 0 }).catch((e) => e)).code).toBe("render_timeout");
+    // A full item processes nothing until uploads are removed: waitFor says so at once.
+    s.full = true;
+    expect((await c.waitFor(ref, "source", { timeout: 60_000 }).catch((e) => e)).code).toBe("too_large");
+    s.full = false;
     s.seed(ref, [{ path: "cover.png", type: "image/png", size: 10, failed: { of: "x", message: "too small", code: "image_too_small", details: { width: 100, min_width: 300 } } }]);
     const failed = await c.waitFor(ref, "cover").catch((e) => e);
     expect([failed.code, failed.details?.min_width, failed.refusal]).toEqual(["image_too_small", 300, true]);

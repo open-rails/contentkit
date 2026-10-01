@@ -35,8 +35,8 @@ type ManifestOptions struct {
 	// If-Match once the store reports ConditionalPut. See PGLocker.
 	Locker Locker
 	// CacheBytes bounds the decoded manifests kept in process, revalidated
-	// by ETag; default and least 64 MiB, which holds the largest manifest
-	// (MaxManifestBytes) twice over.
+	// by ETag. A manifest costs about three times its JSON, so the largest
+	// (MaxManifestBytes) costs 24 MiB; default 128 MiB, at least two of them.
 	CacheBytes int64
 	MaxRetries int // conditional-write attempts per edit; default 16
 	// Sweeps schedules the folder's sweep after every written edit; best
@@ -60,7 +60,10 @@ func NewManifests(store Store, reg *Registry, o ManifestOptions) (*Manifests, er
 	if store == nil || reg == nil || o.Locker == nil {
 		return nil, errors.New("media: Manifests needs a Store, a Registry and a Locker")
 	}
-	o.CacheBytes = max(o.CacheBytes, 64<<20)
+	if o.CacheBytes <= 0 {
+		o.CacheBytes = 128 << 20
+	}
+	o.CacheBytes = max(o.CacheBytes, 2*MaxManifestBytes*decodeFactor)
 	if o.MaxRetries <= 0 {
 		o.MaxRetries = 16
 	}
@@ -103,19 +106,15 @@ func (m *Manifests) EditExisting(ctx context.Context, ref contentref.ContentRef,
 	return m.edit(ctx, ref, true, bound{}, fn)
 }
 
-// Edit limits below MaxManifestBytes: commits and the workers' records stop
-// at editLimit; failures recorded for what did not fit may use the headroom
-// but hideBytes, which a hide's flag needs; a hide may use it all.
-const (
-	hideBytes = 64
-	editLimit = MaxManifestBytes - editHeadroom
-	failLimit = MaxManifestBytes - hideBytes
-)
+// editLimit is where commits and the workers' records stop; the flags (Full,
+// Hidden) may use the headroom above it, so they always fit.
+const editLimit = MaxManifestBytes - editHeadroom
 
 // bound refuses an edit (ErrManifestTooLarge) that grows a manifest past
 // limit (default editLimit), counting what project adds; an edit that does
 // not grow it passes, so a full item still shrinks. Nothing over
-// MaxManifestBytes is ever written.
+// MaxManifestBytes is ever written. A commit (project set) that shrinks a
+// Full manifest clears Full: processing resumes.
 type bound struct {
 	limit   int64
 	project func(*Manifest) int64
@@ -184,7 +183,7 @@ func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bo
 	if err := next.Validate(); err != nil {
 		return nil, false, false, err
 	}
-	if etag != "" && next.Hidden == cur.Hidden && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) {
+	if etag != "" && next.Hidden == cur.Hidden && next.Full == cur.Full && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) {
 		return cur, false, false, nil
 	}
 	if etag == "" {
@@ -198,6 +197,12 @@ func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bo
 	}
 	if err := b.check(cur, next); err != nil {
 		return nil, false, false, err
+	}
+	if next.Full && b.project != nil && next.size < cur.size {
+		next.Full = false
+		if body, err = encodeManifest(next); err != nil {
+			return nil, false, false, err
+		}
 	}
 	// The charged quota rides on the object, so releasing it never needs
 	// the manifest to decode.
@@ -249,19 +254,18 @@ func (m *Manifests) get(ctx context.Context, key string) (*Manifest, string, err
 	return man, obj.ETag, nil
 }
 
-// FailUploads records cause on each of uploads that still holds the blob and
-// edit given. It may use the headroom the other edits leave, so a worker can
-// always fail what the manifest could not hold (ErrManifestTooLarge, a
-// too_large failure).
-func (m *Manifests) FailUploads(ctx context.Context, ref contentref.ContentRef, uploads []File, cause error) error {
-	_, err := m.edit(ctx, ref, true, bound{limit: failLimit}, func(cur *Manifest) error {
-		for _, f := range uploads {
-			if c, ok := cur.Get(f.Path); ok && c.IsUpload() && c.Key() == f.Key() {
-				cur.SetFailed(f.Path, cause)
-			}
-		}
+// SetFull marks ref's manifest Full: a producer could not record its
+// outputs (ErrManifestTooLarge). The flag fits in the headroom every other
+// edit leaves. Producers do nothing more for a Full item until a commit
+// shrinks it.
+func (m *Manifests) SetFull(ctx context.Context, ref contentref.ContentRef) error {
+	_, err := m.edit(ctx, ref, true, bound{limit: MaxManifestBytes}, func(cur *Manifest) error {
+		cur.Full = true
 		return nil
 	})
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
 	return err
 }
 
