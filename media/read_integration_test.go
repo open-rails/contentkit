@@ -111,6 +111,37 @@ func TestReadPreviewAndTeaser(t *testing.T) {
 	}
 }
 
+// Viewers of served originals get what a file is and its URL, never editor
+// fields (audit): no edit, meta, pending work, failure, or a frame's source
+// blob. Editors still get them.
+func TestViewerReadsCarryNoEditorFields(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	post := f.ref("post", 1)
+	ctx := context.Background()
+	p, blob := f.upload(post, "inline/x.png", "image/png", png(1))
+	f.commit(post, media.Op{Op: media.OpPut, Path: p, Blob: blob, Meta: map[string]any{"alt": "private note"}, Edit: &media.Edit{Rotate: 90}})
+	if _, err := f.ms.EditExisting(ctx, post, func(m *media.Manifest) error {
+		i := m.Find(p)
+		m.Files[i].Frame = &media.Frame{Of: blobOf([]byte("an unpublished video"))}
+		m.SetFailed(p, errors.New("render /tmp/worker/scratch failed"))
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := f.rd.Read(ctx, post, access.Actor{Anonymous: true}, media.ReadOptions{Editor: true})
+	if err != nil || len(res.Files) != 1 || res.Files[0].URL == "" {
+		t.Fatalf("viewer read %+v %v", res, err)
+	}
+	if fi := res.Files[0]; fi.Edit != nil || fi.Meta != nil || fi.Frame != nil || fi.Failed != nil || fi.Pending != nil || fi.Upload || fi.EditorURL != "" {
+		t.Fatalf("a viewer got editor fields: %+v", fi)
+	}
+	res, err = f.rd.Read(ctx, post, f.editor, media.ReadOptions{Editor: true})
+	if fi := res.Files[0]; err != nil || fi.Edit == nil || fi.Meta["alt"] != "private note" || fi.Frame == nil || fi.Failed == nil || !fi.Upload {
+		t.Fatalf("editor read %+v %v", fi, err)
+	}
+}
+
 // ServeOriginals lists and serves uploads; a download read signs each
 // file's download name, which the agent sends as the attachment name.
 func TestReadOriginalsAndDownloads(t *testing.T) {

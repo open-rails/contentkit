@@ -324,6 +324,9 @@ func (o *opRun) frame(op Op) error {
 	if video < 0 {
 		return uploadErr(CodeNotFound, "no video at %s to grab a frame from", k.Uploads[g].Frames)
 	}
+	if m.Files[video].Unattached {
+		return uploadErr(CodeConflict, "the video at %s is unattached: attach it first", k.Uploads[g].Frames)
+	}
 	if v := m.Files[video]; op.T != nil && v.Dur > 0 && *op.T > v.Dur {
 		return uploadErr(CodeInvalid, "frame at %gs is past the video's %gs", *op.T, v.Dur)
 	}
