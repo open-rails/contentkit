@@ -16,17 +16,19 @@ import (
 	"github.com/open-rails/contentkit/media/layout"
 )
 
-// SweepResult reports one folder sweep. Wait > 0 means the manifest changed
-// within the grace period, so no blob was deleted; sweep again after Wait.
+// SweepResult reports one folder sweep. Wait > 0 is when the next
+// unreferenced blob comes due; sweep again then.
 type SweepResult struct {
 	Deleted []string
 	Wait    time.Duration
 }
 
 // Sweep collects garbage by manifest reference, with no other state:
-//   - private/ blobs the manifest does not reference, once the manifest and
-//     the blob are older than the grace period (in-flight uploads and jobs,
-//     mid-stream viewers of a replaced file, editor views);
+//   - private/ blobs the manifest does not reference, once the blob is
+//     older than the grace period (a job's outputs not recorded yet, editor
+//     views). Later edits never hold it back. A blob written long ago and
+//     dropped just now is old already, so a viewer mid-stream on a replaced
+//     file may lose it within the grace period;
 //   - public/ names no preset expects (a removed upload, a hidden item), at
 //     once, purged;
 //   - temp/ by age (JobsConfig.TempTTL), but for staged uploads the
@@ -89,21 +91,19 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 	}
 	man, etag := manifestOf(objs)
 	now := j.cfg.Now()
-	var wait time.Duration
-	if cutoff := now.Add(-j.cfg.Grace); man.LastModified.After(cutoff) {
-		wait = man.LastModified.Sub(cutoff) + time.Second
-	}
 	m := &Manifest{} // no manifest: uploads never committed, or a deleted item's leftovers
 	if man.Key != "" {
 		if m, err = j.readManifest(ctx, man.Key); errors.Is(err, ErrNotFound) {
-			return SweepResult{Wait: j.cfg.Grace}, nil
+			return SweepResult{Wait: time.Minute}, nil
 		} else if err != nil {
 			return SweepResult{}, err
 		}
 	}
 	keep := j.keeps(item, m)
+	var wait time.Duration // until the youngest-due unreferenced blob is a grace period old
 	doomed := func(objs []Object) []string {
 		var keys []string
+		wait = 0
 		for _, o := range objs {
 			k, ok := layout.Parse(o.Key)
 			if !ok || k.Area == layout.AreaManifest || keep[k.Area+"/"+k.Name] {
@@ -117,8 +117,10 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 					keys = append(keys, o.Key)
 				}
 			case layout.AreaPrivate:
-				if wait == 0 && !now.Before(o.LastModified.Add(j.cfg.Grace)) {
+				if left := o.LastModified.Add(j.cfg.Grace).Sub(now); left <= 0 {
 					keys = append(keys, o.Key)
+				} else if wait == 0 || left < wait {
+					wait = left + time.Second
 				}
 			}
 		}
@@ -134,7 +136,7 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 		return SweepResult{}, err
 	}
 	if m2, etag2 := manifestOf(again); m2.Key != man.Key || etag2 != etag {
-		return SweepResult{Wait: j.cfg.Grace}, nil
+		return SweepResult{Wait: time.Minute}, nil
 	}
 	keys := doomed(again)
 	if err := j.deleteKeys(ctx, keys); err != nil {

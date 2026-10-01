@@ -44,6 +44,12 @@ type Op struct {
 	Auto       bool           `json:"auto,omitempty"` // frame: the worker chooses
 	Preset     string         `json:"preset,omitempty"`
 	Force      bool           `json:"force,omitempty"`
+	// Takedown (remove) also removes the frames grabbed from the upload and
+	// the zips that bundled it, then deletes at once, not a grace period
+	// later, every private blob the item no longer references (earlier
+	// versions and editor views too) and the public files no upload renders.
+	// Repeating it, the path already gone, completes one that failed part way.
+	Takedown bool `json:"takedown,omitempty"`
 }
 
 // CopyFrom names an upload of an item of the same kind, including this item.
@@ -106,6 +112,9 @@ func (op Op) validate() error {
 	if op.Unattached && op.Op != OpPut {
 		return bad("only put takes unattached")
 	}
+	if op.Takedown && op.Op != OpRemove {
+		return bad("only remove takes takedown")
+	}
 	if op.CreateID != "" {
 		id, err := uuid.Parse(op.CreateID)
 		if op.Op != OpPut || err != nil || id == uuid.Nil || id.String() != op.CreateID {
@@ -164,9 +173,9 @@ func (o *opRun) apply(n int, op Op) error {
 		return o.copy(op, src)
 	}
 	i := m.Find(op.Path)
-	publicRemoval := op.Op == OpRemove && len(k.PublicFor(op.Path)) > 0
+	publicRemoval := op.Op == OpRemove && (op.Takedown || len(k.PublicFor(op.Path)) > 0)
 	if i < 0 && publicRemoval {
-		return nil // retry after the manifest changed but public cleanup failed
+		return nil // retry after the manifest changed but the cleanup failed
 	}
 	if i < 0 || !m.Files[i].IsUpload() {
 		return uploadErr(CodeNotFound, "no upload %q", op.Path)
@@ -210,12 +219,39 @@ func (o *opRun) apply(n int, op Op) error {
 		m.Files = slices.Delete(m.Files, i, i+1)
 		o.insert(g, f, op.Index, true)
 	case OpRemove:
-		m.Files = slices.DeleteFunc(m.Files, func(x File) bool { return x.Path == f.Path || !x.IsUpload() && x.From == f.Path })
+		gone := []string{f.Path}
+		if op.Takedown {
+			// The frames grabbed from it show it too.
+			stem, _ := splitExt(f.Path)
+			for _, x := range m.Files {
+				if g, _, _, _, ok := k.upload(x.Path); ok && x.IsUpload() && x.Frame != nil && k.Uploads[g].Frames == stem {
+					gone = append(gone, x.Path)
+				}
+			}
+			for _, p := range gone {
+				o.dropZips(p)
+			}
+		}
+		m.Files = slices.DeleteFunc(m.Files, func(x File) bool {
+			return slices.Contains(gone, x.Path) || !x.IsUpload() && slices.Contains(gone, x.From)
+		})
 	case OpRename:
 		return o.rename(f, op.To)
 	}
 	m.index = nil
 	return nil
+}
+
+// dropZips removes the zips bundling outputs of the upload at path; the
+// worker builds them again without it.
+func (o *opRun) dropZips(path string) {
+	for i := range o.k.Private {
+		z := &o.k.Private[i]
+		if z.Zip == "" || !slices.ContainsFunc(o.m.Files, func(x File) bool { return x.From == path && strings.HasPrefix(x.Path, z.Zip) }) {
+			continue
+		}
+		o.m.Files = slices.DeleteFunc(o.m.Files, func(x File) bool { return x.Preset == z.Name && x.From == z.Zip })
+	}
 }
 
 // put adds or replaces an upload.

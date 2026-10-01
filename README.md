@@ -331,8 +331,8 @@ request by the read API. Encode progress comes from
 `workqueue.NewProgressSource` (`ReaderOptions.Progress`).
 
 **Jobs** (`media.Jobs`, composed into the host's River client): the sweep
-collects garbage by manifest reference (unreferenced private blobs past the
-grace period, unexpected public names at once, `temp/` by age); folder
+collects garbage by manifest reference (unreferenced private blobs a grace
+period old, unexpected public names at once, `temp/` by age); folder
 deletion (with a late-upload second pass and quota release); `Expose`;
 `Regenerate`; `SweepOrphans`; and the worker's relays.
 

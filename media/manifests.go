@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"reflect"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -213,6 +214,60 @@ func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) (
 	}
 	err = errors.Join(g.Wait(), ctx.Err())
 	return gone, err
+}
+
+// DropUnreferenced deletes at once, under the manifest lock, every private
+// blob ref's manifest does not reference, and those of the staged uploads
+// it does not: a takedown's sweep without the grace period, which also takes
+// earlier versions, dropped originals and editor views. A worker whose
+// unrecorded outputs go with them finds them missing when it records, and
+// produces them again.
+func (m *Manifests) DropUnreferenced(ctx context.Context, ref contentref.ContentRef, staged []string) error {
+	item, err := m.reg.Item(ref)
+	if err != nil {
+		return err
+	}
+	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	cur, _, err := m.get(ctx, item.ManifestKey())
+	if errors.Is(err, ErrNotFound) {
+		return nil // deleted: the folder deletion takes everything
+	} else if err != nil {
+		return err
+	}
+	keep := map[string]bool{}
+	for _, b := range cur.Blobs() {
+		key, _ := item.Blob(b)
+		keep[key] = true
+	}
+	var keys []string
+	for _, s := range staged {
+		if key, err := item.Staged(s); err == nil && !slices.Contains(cur.StagedNames(), s) {
+			keys = append(keys, key)
+		}
+	}
+	for obj, err := range m.store.List(ctx, item.PrivatePrefix()) {
+		if err != nil {
+			return err
+		}
+		if !keep[obj.Key] {
+			keys = append(keys, obj.Key)
+		}
+	}
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(8)
+	for _, key := range keys {
+		g.Go(func() error {
+			if err := m.store.Delete(ctx, key); err != nil && !errors.Is(err, ErrNotFound) {
+				return err
+			}
+			return nil
+		})
+	}
+	return g.Wait()
 }
 
 func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existing bool, b bound, fn func(*Manifest) error) (*Manifest, error) {

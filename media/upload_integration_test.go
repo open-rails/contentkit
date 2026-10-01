@@ -448,6 +448,14 @@ func TestCopyIsMetered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Nor is it committed again by name: a blob never outlives its sweep unmetered.
+	if p, err := unlimited.Presign(ctx, f.editor, media.PresignRequest{Ref: b, Path: "originals/again.png", Type: "image/png",
+		Size: int64(len(png(1))), SHA256: mustSum(blobOf(png(1)))}); err != nil || p.Exists || p.Put == nil {
+		t.Fatalf("presign offered a blob due for cleanup: %+v %v", p, err)
+	}
+	if _, err := unlimited.Commit(ctx, f.editor, b, []media.Op{{Op: media.OpPut, Path: "originals/again.png", Blob: blobOf(png(1))}}); code(err) != media.CodeNotUploaded {
+		t.Fatalf("a put naming a blob due for cleanup: %v", err)
+	}
 	if _, err := unlimited.Commit(ctx, f.editor, b, copyOf("originals/1.png")); err != nil {
 		t.Fatal(err)
 	}

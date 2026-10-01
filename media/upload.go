@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -369,7 +370,8 @@ func (u *Uploads) abort(ctx context.Context, t ticket, key string, cause error) 
 // grants). Then the worker places staged uploads and processes the item. A
 // new item starts hidden unless anonymous viewers may see it
 // (Hooks.Resolver). Successful removes finish public cleanup before returning;
-// unreferenced private blobs retain the normal sweep grace period.
+// unreferenced private blobs go when a grace period old, or at once for a
+// takedown (Op.Takedown).
 func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref.ContentRef, ops []Op) (*Manifest, error) {
 	item, err := u.item(ref)
 	if err != nil {
@@ -448,6 +450,9 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		if err != nil {
 			return err
 		}
+		if err := u.copied(editCtx, item, copies); err != nil {
+			return err
+		}
 		o.objects = objects
 		if hidden != nil && len(m.Files) == 0 && m.Meta == nil {
 			m.Hidden = *hidden
@@ -502,7 +507,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	// remaining request work.
 	var publicErr error
 	for _, op := range ops {
-		if op.Op != OpRemove || len(item.Kind().PublicFor(op.Path)) == 0 {
+		if op.Op != OpRemove || len(item.Kind().PublicFor(op.Path)) == 0 && !op.Takedown {
 			continue
 		}
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
@@ -528,19 +533,34 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 			return nil, errors.Join(err, publicErr)
 		}
 	}
-	if man.Full && !publicPending(item.Kind(), man) {
-		if publicErr != nil {
-			return nil, publicErr
+	var queueErr error
+	if !man.Full || publicPending(item.Kind(), man) { // only public files render for a Full item
+		job := ProcessJob{Ref: ref, Place: len(man.StagedNames()) > 0}
+		for _, op := range ops {
+			if op.Op == OpRegenerate {
+				job.Preset, job.Force = op.Preset, op.Force
+			}
 		}
-		return man, nil // only public files render for a Full item
+		queueErr = u.o.Queue.Enqueue(ctx, job)
 	}
-	job := ProcessJob{Ref: ref, Place: len(man.StagedNames()) > 0}
-	for _, op := range ops {
-		if op.Op == OpRegenerate {
-			job.Preset, job.Force = op.Preset, op.Force
+	// A takedown leaves nothing to fetch: with processing queued (dropped
+	// zips are built again), every blob the item no longer references goes
+	// now. A failure is returned; repeating the op completes it.
+	var takedownErr error
+	if slices.ContainsFunc(ops, func(op Op) bool { return op.Takedown }) {
+		var staged []string
+		for _, op := range ops {
+			if f, ok := prior.Get(op.Path); op.Takedown && ok && f.Staged != "" {
+				staged = append(staged, f.Staged)
+			}
 		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		if err := u.o.Manifests.DropUnreferenced(cleanupCtx, ref, staged); err != nil {
+			takedownErr = fmt.Errorf("media: takedown: %w", err)
+		}
+		cancel()
 	}
-	if err := errors.Join(u.o.Queue.Enqueue(ctx, job), publicErr); err != nil {
+	if err := errors.Join(queueErr, publicErr, takedownErr); err != nil {
 		return nil, err
 	}
 	return man, nil
@@ -725,17 +745,8 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 		if to != group || op.Edit != nil {
 			files = files[:1]
 		}
-		var blobs []string
-		for _, f := range files {
-			if f.Blob != "" && !f.Gone {
-				blobs = append(blobs, f.Blob)
-			}
-			if f.Track != nil && f.Track.Index != "" {
-				blobs = append(blobs, f.Track.Index)
-			}
-		}
 		var todo []string
-		for _, b := range blobs {
+		for _, b := range fileBlobs(files) {
 			dstKey, _ := item.Blob(b)
 			if seen[dstKey] {
 				continue
@@ -776,6 +787,46 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 		out[n] = files
 	}
 	return out, reserved, nil
+}
+
+// fileBlobs are the blobs files reference.
+func fileBlobs(files []File) []string {
+	var blobs []string
+	for _, f := range files {
+		if f.Blob != "" && !f.Gone {
+			blobs = append(blobs, f.Blob)
+		}
+		if f.Track != nil && f.Track.Index != "" {
+			blobs = append(blobs, f.Track.Index)
+		}
+	}
+	return blobs
+}
+
+// copied checks, under the manifest lock, that the blobs copies put in
+// item's folder are still there: a takedown since may have taken them.
+func (u *Uploads) copied(ctx context.Context, item Item, copies map[int][]File) error {
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(8)
+	seen := map[string]bool{}
+	for _, files := range copies {
+		for _, b := range fileBlobs(files) {
+			if seen[b] {
+				continue
+			}
+			seen[b] = true
+			g.Go(func() error {
+				key, _ := item.Blob(b)
+				if _, err := u.o.Store.Head(ctx, key); errors.Is(err, ErrNotFound) {
+					return uploadErr(CodeConflict, "the item changed during the copy: try again")
+				} else if err != nil {
+					return err
+				}
+				return nil
+			})
+		}
+	}
+	return g.Wait()
 }
 
 // Frame grabs a still of the video upload at path for the frame picker.

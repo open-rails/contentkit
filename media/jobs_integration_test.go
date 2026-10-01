@@ -3,9 +3,11 @@ package media_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -114,6 +116,242 @@ func TestSweep(t *testing.T) {
 	gone, _ := otherItem.Staged(abandoned)
 	if _, err := f.later().Sweep(ctx, other); err != nil || f.exists(gone) || !f.exists(kept) {
 		t.Fatalf("staged uploads after the temp period: %v", err)
+	}
+}
+
+// The sweep deletes an unreferenced blob by the blob's own age, however
+// lately the item was edited (audit: an item edited daily was never swept);
+// a young one waits out its grace period.
+func TestSweepProgressesUnderEdits(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	g := f.gallery(1, 1)
+	item, _ := f.reg.Item(g)
+	ctx := context.Background()
+	const grace = 6 * time.Second
+	jobs, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Processes: f.q, Grace: grace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, _ := item.Blob(blobOf(png(100)))
+	time.Sleep(grace + time.Second)
+	f.put(g, "originals/000.png", "image/png", png(7)) // drops the old blob and edits the manifest just now
+	f.produce(g)
+	if res, err := jobs.Sweep(ctx, g); err != nil || f.exists(old) || !slices.Contains(res.Deleted, old) {
+		t.Fatalf("an old blob survived a fresh edit: %+v %v", res, err)
+	}
+	young, _ := item.Blob(blobOf(png(7)))
+	f.put(g, "originals/000.png", "image/png", png(8))
+	f.produce(g)
+	if res, err := jobs.Sweep(ctx, g); err != nil || !f.exists(young) || res.Wait <= 0 || res.Wait > grace+time.Second {
+		t.Fatalf("a young blob: %+v %v", res, err)
+	}
+	waitFor(t, "the young blob's sweep", func() bool {
+		res, err := jobs.Sweep(ctx, g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res.Wait == 0
+	})
+	if f.exists(young) {
+		t.Fatal("the young blob was never swept")
+	}
+	m, _, _ := f.ms.Get(ctx, g)
+	for _, b := range m.Blobs() {
+		if key, _ := item.Blob(b); !f.exists(key) {
+			t.Fatalf("swept referenced %s", key)
+		}
+	}
+}
+
+// A takedown leaves nothing of the upload to fetch: its blob and outputs,
+// its earlier versions, editor views, the zip that bundled it and its
+// public names go at once (purged); a blob another file still names stays.
+func TestTakedown(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	g := f.gallery(1, 2)
+	item, _ := f.reg.Item(g)
+	ctx := context.Background()
+	f.put(g, "originals/000.png", "image/png", png(7))   // page 0's first version is unreferenced
+	f.put(g, "originals/002.png", "image/png", png(101)) // the same bytes as page 1
+	f.produce(g)
+	m, _, _ := f.ms.Get(ctx, g)
+	page, _ := m.Get("originals/000.png")
+	earlier, _ := item.Blob(blobOf(png(100)))
+	page0, _ := item.Blob(blobOf(png(7)))
+	page1, _ := item.Blob(blobOf(png(101)))
+	view, _ := item.Blob(f.reg.EditorView(page))
+	f.object(view, "editor view")
+	f.q.take()
+	m = f.commit(g, media.Op{Op: media.OpRemove, Path: "originals/000.png", Takedown: true},
+		media.Op{Op: media.OpRemove, Path: "originals/001.png", Takedown: true})
+	if f.exists(page0) || f.exists(earlier) || f.exists(view) || !f.exists(page1) || m.Find("download/pages.zip") >= 0 {
+		t.Fatalf("takedown: page 0 kept %v, its earlier version %v, its editor view %v; page 1 kept %v; %v",
+			f.exists(page0), f.exists(earlier), f.exists(view), f.exists(page1), paths(m))
+	}
+	if jobs := f.q.take(); len(jobs) != 1 {
+		t.Fatalf("the zip is not built again: %+v", jobs)
+	}
+	for _, b := range m.Blobs() {
+		if key, _ := item.Blob(b); !f.exists(key) {
+			t.Fatalf("took referenced %s", key)
+		}
+	}
+	for len(f.purged) > 0 {
+		<-f.purged
+	}
+	f.commit(g, media.Op{Op: media.OpRemove, Path: "cover.png", Takedown: true})
+	for _, w := range []int{230, 460} {
+		if key, _ := item.Public(fmt.Sprintf("cover-%d.webp", w)); f.exists(key) {
+			t.Fatalf("taken-down cover %d kept", w)
+		}
+	}
+	if urls := f.purges(); len(urls) != 2 {
+		t.Fatalf("purged %v", urls)
+	}
+	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpEdit, Path: "originals/002.png", Takedown: true}}); code(err) != media.CodeInvalid {
+		t.Fatalf("takedown on an edit: %v", err)
+	}
+	// A staged upload taken down before it is placed.
+	p, staged := f.upload(g, "originals/003.png", "image/png", png(3))
+	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: p, Blob: staged}}); err != nil {
+		t.Fatal(err)
+	}
+	f.commit(g, media.Op{Op: media.OpRemove, Path: p, Takedown: true})
+	if key, _ := item.Staged(staged); f.exists(key) {
+		t.Fatal("a taken-down staged upload kept")
+	}
+}
+
+// A video's takedown takes the frames grabbed from it, their blobs and
+// their public files.
+func TestTakedownFrames(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	v := f.ref("video", 1)
+	item, _ := f.reg.Item(v)
+	ctx := context.Background()
+	f.put(v, "source.mp4", "video/mp4", []byte("video one"))
+	f.commit(v, media.Op{Op: media.OpFrame, Path: "poster", T: ptr(3.5)})
+	frame, _ := item.Blob(blobOf([]byte("frame")))
+	f.object(frame, "frame")
+	public, _ := item.Public("poster-640.webp")
+	f.object(public, "poster")
+	if _, err := f.ms.EditExisting(ctx, v, func(m *media.Manifest) error {
+		i := m.Find("poster.png")
+		m.Files[i].Blob, m.Files[i].Size, m.Files[i].Frame.Of, m.Files[i].Pending = blobOf([]byte("frame")), 5, blobOf([]byte("video one")), nil
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m := f.commit(v, media.Op{Op: media.OpRemove, Path: "source.mp4", Takedown: true})
+	if len(m.Files) != 0 || f.exists(frame) || f.exists(public) {
+		t.Fatalf("a grabbed frame survived its video: %v, blob %v, public %v", paths(m), f.exists(frame), f.exists(public))
+	}
+	// An uploaded poster is not of the video: it stays.
+	f.put(v, "source.mp4", "video/mp4", []byte("video two"))
+	f.put(v, "poster.png", "image/png", png(1))
+	if m := f.commit(v, media.Op{Op: media.OpRemove, Path: "source.mp4", Takedown: true}); m.Find("poster.png") < 0 {
+		t.Fatalf("an uploaded poster went with the video: %v", paths(m))
+	}
+}
+
+// failingStore fails deletions under private/ while armed.
+type failingStore struct {
+	media.Store
+	armed *atomic.Bool
+}
+
+func (s failingStore) Delete(ctx context.Context, key string) error {
+	if s.armed.Load() && strings.Contains(key, "/private/") {
+		return errors.New("delete failed")
+	}
+	return s.Store.Delete(ctx, key)
+}
+
+// A takedown whose deletes fail says so, with the manifest already
+// committed and processing queued; sending it again, the path now gone,
+// completes it.
+func TestTakedownRetry(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	g := f.gallery(1, 2)
+	item, _ := f.reg.Item(g)
+	ctx := context.Background()
+	store := failingStore{Store: f.env.Store, armed: &atomic.Bool{}}
+	up, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: s3test.Manifests(t, store, f.reg, media.ManifestOptions{}), Queue: f.q})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page0, _ := item.Blob(blobOf(png(100)))
+	takedown := []media.Op{{Op: media.OpRemove, Path: "originals/000.png", Takedown: true}}
+	f.q.take()
+	store.armed.Store(true)
+	if _, err := up.Commit(ctx, f.editor, g, takedown); err == nil || !f.exists(page0) {
+		t.Fatalf("a failed delete was not reported: %v", err)
+	}
+	if m, _, _ := f.ms.Get(ctx, g); m.Find("originals/000.png") >= 0 || len(f.q.take()) != 1 {
+		t.Fatal("the removal was not committed and queued before the deletes")
+	}
+	store.armed.Store(false)
+	if _, err := up.Commit(ctx, f.editor, g, takedown); err != nil || f.exists(page0) {
+		t.Fatalf("the retry: %v, blob kept %v", err, f.exists(page0))
+	}
+	// Without takedown, a path that is gone is not found.
+	if _, err := up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpRemove, Path: "originals/000.png"}}); code(err) != media.CodeNotFound {
+		t.Fatalf("a plain remove of a gone path: %v", err)
+	}
+}
+
+// takedownStore runs a takedown of the destination right after a copy's
+// blobs land, before the copy's manifest edit.
+type takedownStore struct {
+	media.Store
+	after func()
+}
+
+func (s takedownStore) Copy(ctx context.Context, src, dst string, o media.CopyOptions) (media.Object, error) {
+	obj, err := s.Store.Copy(ctx, src, dst, o)
+	if err == nil {
+		s.after()
+	}
+	return obj, err
+}
+
+// A copy never references a blob a takedown took meanwhile: it conflicts,
+// and the retry copies again.
+func TestCopyDuringTakedown(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	f.visible(2)
+	f.gallery(1, 1)
+	b := f.gallery(2, 1)
+	item, _ := f.reg.Item(b)
+	ctx := context.Background()
+	var once sync.Once
+	store := takedownStore{Store: f.env.Store, after: func() {
+		once.Do(func() { f.commit(b, media.Op{Op: media.OpRemove, Path: "originals/gone.png", Takedown: true}) })
+	}}
+	up, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: f.ms, Queue: f.q})
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyOp := []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: "originals/000.png"}, To: "originals/copy.png"}}
+	if _, err := up.Commit(ctx, f.editor, b, copyOp); code(err) != media.CodeConflict {
+		t.Fatalf("a copy over a takedown: %v", err)
+	}
+	if m, _, _ := f.ms.Get(ctx, b); m.Find("originals/copy.png") >= 0 {
+		t.Fatal("the copy references a blob that was taken")
+	}
+	m, err := up.Commit(ctx, f.editor, b, copyOp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, blob := range m.Blobs() {
+		if key, _ := item.Blob(blob); !f.exists(key) {
+			t.Fatalf("the retried copy references missing %s", key)
+		}
 	}
 }
 
