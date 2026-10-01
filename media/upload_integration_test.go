@@ -85,6 +85,33 @@ func TestCreateOnlyPreservesExistingUploadsAndRetries(t *testing.T) {
 	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{op}); code(err) != media.CodeConflict {
 		t.Fatalf("old create overwrote an intentional replacement: %v", err)
 	}
+
+	p, blob = f.upload(g, "originals/004.png", "image/png", png(4))
+	op = media.Op{Op: media.OpPut, Path: p, Blob: blob, CreateID: cid(103)}
+	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{op}); err != nil {
+		t.Fatal(err)
+	}
+	key, _ = item.Staged(blob)
+	if err := f.env.Store.Delete(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	before = f.place(g)
+	if up, _ := before.Get(p); up.Fail() == nil || up.Fail().Code != media.CodeNotUploaded {
+		t.Fatalf("missing staged upload did not fail placement: %+v", up)
+	}
+	after = f.commit(g, op)
+	if !reflect.DeepEqual(before.Files, after.Files) {
+		t.Fatal("retry of the same failed source changed its failure")
+	}
+	_, op.Blob = f.upload(g, p, "image/png", png(4))
+	after = f.commit(g, op)
+	if up, _ := after.Get(p); up.Fail() != nil || up.Blob != blobOf(png(4)) || up.Staged != "" || up.CreateID != op.CreateID {
+		t.Fatalf("re-upload with the same receipt did not recover placement: %+v", up)
+	}
+	key, _ = item.Staged(op.Blob)
+	if _, err := f.env.Store.Head(ctx, key); !errors.Is(err, media.ErrNotFound) {
+		t.Fatalf("recovered placement left the new staged object: %v", err)
+	}
 }
 
 func TestConcurrentCreateOnlyCommits(t *testing.T) {

@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/open-rails/contentkit/contentref"
 )
 
@@ -129,6 +131,75 @@ func (b bound) check(cur, next *Manifest) error {
 		return fmt.Errorf("%w: %d bytes (%d when processed), at most %d", ErrManifestTooLarge, next.size, grown, limit)
 	}
 	return nil
+}
+
+// SyncPublic deletes public names no attached upload currently uses, under
+// the manifest lock. Cleanup is bounded to one minute; deleted keys are
+// returned for cache purging, including partial success on failure.
+func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	item, err := m.reg.Item(ref)
+	if err != nil {
+		return nil, err
+	}
+	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	cur, _, err := m.get(ctx, item.ManifestKey())
+	if errors.Is(err, ErrNotFound) {
+		cur = &Manifest{}
+	} else if err != nil {
+		return nil, err
+	}
+	want := map[string]bool{}
+	if !cur.Hidden {
+		for _, f := range cur.Files {
+			if !f.IsUpload() || f.Unattached {
+				continue
+			}
+			for _, p := range item.Kind().PublicFor(f.Path) {
+				for _, name := range item.Kind().PublicNames(p, f.Path) {
+					key, err := item.Public(name)
+					if err != nil {
+						return nil, err
+					}
+					want[key] = true
+				}
+			}
+		}
+	}
+	var keys []string
+	for obj, err := range m.store.List(ctx, item.PublicPrefix()) {
+		if err != nil {
+			return nil, err
+		}
+		if !want[obj.Key] {
+			keys = append(keys, obj.Key)
+		}
+	}
+	g, deleteCtx := errgroup.WithContext(ctx)
+	g.SetLimit(8)
+	var mu sync.Mutex
+	var gone []string
+	for _, key := range keys {
+		if deleteCtx.Err() != nil {
+			break
+		}
+		g.Go(func() error {
+			if err := m.store.Delete(deleteCtx, key); err != nil && !errors.Is(err, ErrNotFound) {
+				return err
+			}
+			mu.Lock()
+			gone = append(gone, key)
+			mu.Unlock()
+			return nil
+		})
+	}
+	err = errors.Join(g.Wait(), ctx.Err())
+	return gone, err
 }
 
 func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existing bool, b bound, fn func(*Manifest) error) (*Manifest, error) {

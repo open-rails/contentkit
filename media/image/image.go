@@ -98,7 +98,7 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 		} else if err != nil {
 			return err
 		}
-		if err := p.syncPublic(ctx, item, m); err != nil {
+		if err := p.syncPublic(ctx, item); err != nil {
 			return err
 		}
 		if m.Full { // nothing more fits: render nothing until a commit shrinks it
@@ -223,10 +223,8 @@ func (p *Processor) publicStale(ctx context.Context, item media.Item, f media.Fi
 // edit. An upload whose blob or edit changed meanwhile keeps nothing this
 // pass made for it; the next pass redoes it.
 //
-// A hide records Hidden under the manifest lock, then deletes public/. Every
-// public write of this pass precedes its closing edit (or, failing, its
-// dropIfHidden) under that lock: a hide before it is seen there and the
-// writes deleted; a hide after it lists and deletes them itself.
+// Public writes check their source under the manifest lock; cleanup uses
+// the same lock, so removed or hidden sources cannot publish afterward.
 func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest, todo []work, zips []*media.Private) (err error) {
 	var (
 		mu      sync.Mutex
@@ -358,10 +356,12 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 			p.failed(ctx, item, d.src.Path, d.err)
 		}
 	}
-	for _, key := range orphaned {
-		_ = p.c.Store.Delete(ctx, key) // best effort: the sweep is the backstop
+	if len(orphaned) > 0 {
+		if err := p.syncPublic(ctx, item); err != nil {
+			return err
+		}
 	}
-	return p.purge(ctx, append(purge, orphaned...))
+	return p.purge(ctx, purge)
 }
 
 // dropIfHidden deletes and purges keys, the public files of a pass that
@@ -424,19 +424,37 @@ func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manife
 		if d.dims = dims; err != nil {
 			return p.permanent(d, err)
 		}
-		fp := publicFP(w.src, pu)
-		for _, n := range names {
-			out := outs[n]
-			pk, err := item.Public(n)
-			if err != nil {
-				return d, err
+		published := false
+		_, err = p.c.Manifests.EditExisting(ctx, item.Ref(), func(cur *media.Manifest) error {
+			f, ok := cur.Get(w.src.Path)
+			if !ok || cur.Hidden || f.Unattached {
+				return nil
 			}
-			d.written = append(d.written, pk) // a failed put may still land
-			if _, err := p.c.Store.Put(ctx, pk, bytes.NewReader(out.webp), int64(len(out.webp)), media.PutOptions{
-				ContentType: "image/webp", ChecksumSHA256: sha(out.webp),
-				Metadata: map[string]string{"from": url.PathEscape(w.src.Path), "fp": fp}}); err != nil {
-				return d, err
+			if f.Blob != w.src.Blob || f.Edit.Hash() != w.src.Edit.Hash() {
+				return nil
 			}
+			for _, n := range names {
+				out := outs[n]
+				pk, err := item.Public(n)
+				if err != nil {
+					return err
+				}
+				d.written = append(d.written, pk) // a failed put may still land
+				if _, err := p.c.Store.Put(ctx, pk, bytes.NewReader(out.webp), int64(len(out.webp)), media.PutOptions{
+					ContentType: "image/webp", ChecksumSHA256: sha(out.webp),
+					Metadata: map[string]string{"from": url.PathEscape(w.src.Path), "fp": publicFP(w.src, pu)}}); err != nil {
+					return err
+				}
+			}
+			published = true
+			return nil
+		})
+		if err != nil && !errors.Is(err, media.ErrNotFound) {
+			return d, err
+		}
+		if !published {
+			d.public = nil
+			break
 		}
 	}
 	for _, pr := range w.private {
@@ -475,35 +493,9 @@ func (p *Processor) permanent(d done, err error) (done, error) {
 
 // syncPublic deletes (and purges) the public names no attached upload's
 // preset expects: a removed upload's, or all of a hidden item's.
-func (p *Processor) syncPublic(ctx context.Context, item media.Item, m *media.Manifest) error {
-	k := item.Kind()
-	want := map[string]bool{}
-	if !m.Hidden {
-		for _, f := range m.Files {
-			if f.IsUpload() && !f.Unattached {
-				for _, pu := range k.PublicFor(f.Path) {
-					for _, n := range k.PublicNames(pu, f.Path) {
-						want[n] = true
-					}
-				}
-			}
-		}
-	}
-	var gone []string
-	for o, err := range p.c.Store.List(ctx, item.PublicPrefix()) {
-		if err != nil {
-			return err
-		}
-		if !want[strings.TrimPrefix(o.Key, item.PublicPrefix())] {
-			gone = append(gone, o.Key)
-		}
-	}
-	for _, key := range gone {
-		if err := p.c.Store.Delete(ctx, key); err != nil && !errors.Is(err, media.ErrNotFound) {
-			return err
-		}
-	}
-	return p.purge(ctx, gone)
+func (p *Processor) syncPublic(ctx context.Context, item media.Item) error {
+	keys, err := p.c.Manifests.SyncPublic(ctx, item.Ref())
+	return errors.Join(err, p.purge(ctx, keys))
 }
 
 // editorViews renders the missing editor views of the item's image uploads

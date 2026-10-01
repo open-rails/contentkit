@@ -22,6 +22,7 @@ import (
 type hooked struct {
 	media.Store
 	onPut func(key string, put func() error) error
+	onGet func(key string)
 	read  atomic.Int64
 }
 
@@ -41,6 +42,9 @@ func (s *hooked) Get(ctx context.Context, key string, o media.GetOptions) (io.Re
 	rc, obj, err := s.Store.Get(ctx, key, o)
 	if err != nil {
 		return rc, obj, err
+	}
+	if s.onGet != nil {
+		s.onGet(key)
 	}
 	return counted{rc, &s.read}, obj, nil
 }
@@ -82,13 +86,21 @@ func (s switchable) Resolve(_ context.Context, refs []contentref.ContentRef, _ a
 	return out, nil
 }
 
-// A hide (Expose) landing while a pass writes public names leaves none of
-// them behind, whether the pass then records its work or fails part way
-// (no survival until a later pass or the sweep): the pass re-checks Hidden
-// under the manifest lock and deletes and purges what it wrote.
+// Hiding during public publication removes every written name, including
+// when publication fails partway through.
 func TestHideDuringPass(t *testing.T) {
 	hidden := new(atomic.Bool)
-	e := newEnv(t, func(c *media.Config) { c.Hooks.Resolver = switchable{hidden} })
+	var e *env
+	e = newEnv(t, func(c *media.Config) {
+		c.Hooks.Resolver = switchable{hidden}
+		c.Hooks.PurgePublic = func(_ context.Context, urls []string) {
+			e.mu.Lock()
+			defer e.mu.Unlock()
+			for _, u := range urls {
+				e.purged = append(e.purged, strings.TrimPrefix(u, "https://media.test/v1/"))
+			}
+		}
+	})
 	jobs, err := media.NewJobs(media.JobsConfig{Store: e.Store, Registry: e.reg, Locker: s3test.Locker(t, e.Store)})
 	if err != nil {
 		t.Fatal(err)
@@ -102,6 +114,7 @@ func TestHideDuringPass(t *testing.T) {
 		var mu sync.Mutex
 		var puts atomic.Int64
 		var wrote []string
+		hideDone := make(chan error, 1)
 		s := &hooked{Store: e.Store, onPut: func(key string, put func() error) error {
 			if !strings.HasPrefix(key, item.PublicPrefix()) {
 				return put()
@@ -110,13 +123,13 @@ func TestHideDuringPass(t *testing.T) {
 			case failAt:
 				return errors.New("bucket unavailable")
 			case 1:
-				// The first name lands, then the item is hidden: Expose records
-				// Hidden and deletes public/ while the pass goes on.
+				// Expose waits for the in-flight publication lock.
 				if err := put(); err != nil {
 					return err
 				}
 				hidden.Store(true)
-				return jobs.Expose(ctx, ref)
+				go func() { hideDone <- jobs.Expose(ctx, ref) }()
+				return nil
 			}
 			mu.Lock()
 			wrote = append(wrote, key)
@@ -125,13 +138,19 @@ func TestHideDuringPass(t *testing.T) {
 		}}
 		e.takePurged()
 		err := e.processor(t, s).Process(ctx, media.ProcessJob{Ref: ref})
+		if !hidden.Load() {
+			t.Fatalf("publication did not reach the hide hook: %v", err)
+		}
+		if err := <-hideDone; err != nil {
+			t.Fatal(err)
+		}
 		if failAt > 0 && err == nil {
 			t.Fatal("a pass failing part way reported success")
 		} else if failAt == 0 && err != nil {
 			t.Fatal(err)
 		}
 		if len(wrote) == 0 {
-			t.Fatalf("pass %d wrote nothing after the hide", n)
+			t.Fatalf("pass %d did not exercise the remaining public writes", n)
 		}
 		for o, err := range e.Store.List(ctx, item.PublicPrefix()) {
 			if err != nil {

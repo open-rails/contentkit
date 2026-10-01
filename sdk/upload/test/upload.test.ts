@@ -137,11 +137,11 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
     expect((await c.commit(ref, [{ op: "edit", path: f.path, edit: { rotate: 45 } }]).catch((e) => e)).code).toBe("invalid_request");
     expect((await c.commit(ref, [{ op: "edit", path: "banner", edit: turned }]).catch((e) => e)).code).toBe("not_found");
 
-    // Removal drops the upload; the worker deletes its public names.
+    // Removal confirms public cleanup before returning; retries are harmless.
     expect(await c.commit(ref, [{ op: "remove", path: f.path }])).toEqual([]);
-    await vi.waitFor(async () => expect(await stored(ref, "cover-230.webp", "public")).toBeNull(), { timeout: 10_000, interval: 100 });
+    for (const w of [230, 460]) expect(await stored(ref, `cover-${w}.webp`, "public")).toBeNull();
     expect((await c.editorView(ref, "cover").catch((e) => e)).code).toBe("not_found");
-    expect((await c.commit(ref, [{ op: "remove", path: f.path }]).catch((e) => e)).code).toBe("not_found");
+    expect(await c.commit(ref, [{ op: "remove", path: f.path }])).toEqual([]);
   });
 
   it("uploads a stale blob again when commit refuses it", async () => {
