@@ -64,10 +64,9 @@ export class UploadQueue {
   private running = new Map<string, AbortController>();
   private listeners = new Set<() => void>();
   private snap!: QueueSnapshot;
-  private seq = 0;
   private started: boolean;
   /** In-flight unattached commits, by item id. */
-  private staging = new Map<string, Promise<void>>();
+  private staging = new Map<string, Promise<FileInfo | undefined>>();
   private poll?: ReturnType<typeof setTimeout>;
   private disposed = false;
 
@@ -93,7 +92,7 @@ export class UploadQueue {
   ): QueueItem[] {
     const added = [...files].map(
       (file): QueueItem => ({
-        id: `u${++this.seq}`,
+        id: crypto.randomUUID(),
         file,
         path: opts.path?.(file) ?? fill(this.o.path, { name: file.name }),
         status: "queued",
@@ -140,7 +139,11 @@ export class UploadQueue {
     const staged = this.staging.get(id);
     if (item.unattached || staged) {
       void (staged ?? Promise.resolve())
-        .then(() => this.client.commit(this.o.ref, [{ op: "remove", path: this.find(id)?.path ?? item.path }]))
+        .then((file) => {
+          if (file || item.unattached) {
+            return this.client.commit(this.o.ref, [{ op: "remove", path: file?.path ?? item.path }]);
+          }
+        })
         .catch(() => {});
     }
     this.o.onState?.(item, null);
@@ -184,11 +187,13 @@ export class UploadQueue {
     }
     const ready = items.filter((i) => i.status === "uploaded");
     if (ready.length === 0) return [];
-    const ops = ready.map((i): Op =>
-      i.unattached
-        ? { op: "attach", path: i.path, index: END, ...(i.meta ? { meta: i.meta } : {}) }
-        : { op: "put", path: i.path, blob: i.result!.blob, index: END, ...(i.meta ? { meta: i.meta } : {}) },
-    );
+    const ops = ready.flatMap((i): Op[] => {
+      const attach: Op = { op: "attach", path: i.path, index: END, ...(i.meta ? { meta: i.meta } : {}) };
+      if (i.unattached) return [attach];
+      const put: Op = { op: "put", path: i.path, blob: i.result!.blob, create_id: i.id, index: END, ...(i.meta ? { meta: i.meta } : {}) };
+      // A lost staging response may hide a successful unattached create.
+      return i.result!.processOnUpload ? [put, attach] : [put];
+    });
     const sources = Object.fromEntries(ready.map((i) => [i.result!.blob, { file: i.file, type: i.result!.type }]));
     const files = await this.client.commit(this.o.ref, ops, { signal, sources });
     for (const i of ready) this.set(i.id, { status: "committed", unattached: false });
@@ -210,7 +215,7 @@ export class UploadQueue {
     const item = this.find(id);
     if (!item?.result) return;
     const { blob, type } = item.result;
-    const op: Op = { op: "put", path: item.path, blob, unattached: true, ...(item.meta ? { meta: item.meta } : {}) };
+    const op: Op = { op: "put", path: item.path, blob, create_id: item.id, unattached: true, ...(item.meta ? { meta: item.meta } : {}) };
     const p = this.client
       .commit(this.o.ref, [op], { sources: { [blob]: { file: item.file, type } } })
       .then(
@@ -218,8 +223,15 @@ export class UploadQueue {
           const f = files.find((x) => x.unattached && samePath(x.path, stem(item.path)));
           if (f && this.find(id)) this.patch(id, { unattached: true, path: f.path });
           this.schedulePoll();
+          return f;
         },
-        () => {}, // left uploaded: commit() puts it
+        (error: unknown) => {
+          if (error instanceof UploadError && error.code === "conflict") {
+            this.patch(id, { status: "failed", error });
+          }
+          // Other failures leave it uploaded; commit() retries the same create.
+          return undefined;
+        },
       )
       .finally(() => this.staging.delete(id));
     this.staging.set(id, p);

@@ -496,7 +496,7 @@ way.
 
 | Op | Does |
 | --- | --- |
-| `put {path, blob, index?, meta?, edit?, unattached?}` | Adds an upload at its natural position (or `index` among its Upload's), or replaces the one with the same stem. |
+| `put {path, blob, index?, meta?, edit?, unattached?, create_id?}` | Adds an upload at its natural position (or `index` among its Upload's), or replaces the one with the same stem. A nonzero UUID `create_id` instead requires an unused stem; repeating that ID is a no-op retry, even after placement or attachment. |
 | `edit {path, edit}` | Crops and rotates an image upload; nil clears. |
 | `move {path, index}` | Reorders an upload; its outputs follow. |
 | `rename {path, to}` | Renames an upload within its Upload, and its outputs. |

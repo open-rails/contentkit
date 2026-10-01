@@ -96,6 +96,11 @@ await one.upload(file, { ref, path: "inline/x.png", put: {} }); // put: commit i
 const { read, reload } = useRead(client, ref, { prefix: "low-res/" });
 ```
 
+Queue puts are create-only: a canonical filename collision is refused rather
+than replacing another upload. For a standalone new-file upload, use
+`client.put(file, { ref, path, createOnly: true })`. Ordinary `put` still replaces
+by stem; cover/avatar editors retain that behavior.
+
 With the host's `ProcessOnUpload`, the queue commits each upload unattached as
 it lands, polls an editor read until it is processed, and `commit` attaches them.
 

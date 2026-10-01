@@ -59,6 +59,8 @@ export interface UploadedFile {
 
 /** The put op's fields besides path and blob. */
 export interface PutOptions {
+  /** Refuse to replace an existing upload. Default false. */
+  createOnly?: boolean;
   edit?: Edit | null;
   meta?: Record<string, unknown>;
   index?: number;
@@ -195,6 +197,7 @@ export class UploadClient {
     const up = await this.upload(file, o);
     o.onUploaded?.(up);
     const op: Op = { op: "put", path: up.path, blob: up.blob };
+    if (o.createOnly) op.create_id = crypto.randomUUID();
     if (o.edit) op.edit = o.edit;
     if (o.meta) op.meta = o.meta;
     if (o.index !== undefined) op.index = o.index;

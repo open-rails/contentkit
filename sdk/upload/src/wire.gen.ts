@@ -100,6 +100,7 @@ export interface Op {
   op: OpName;
   path?: string;
   blob?: string;
+  create_id?: string;
   index?: number;
   meta?: Record<string, unknown>;
   edit?: Edit;

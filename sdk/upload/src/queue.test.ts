@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { FakeServer, bytes, fakeClient } from "../test/fake.js";
 import { UploadQueue, type QueueSnapshot } from "./queue.js";
+import type { Op } from "./wire.gen.js";
 
 const ref = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000001" };
 const path = "originals/{name}";
@@ -36,6 +37,7 @@ it("uploads, keeps the arranged order and commits puts appended in it", async ()
     ["put", "originals/02.png", 2 ** 31 - 1],
   ]);
   expect(s.commits[0]![2]).toMatchObject({ meta: { alt: "b" }, blob: expect.stringMatching(/^u-/) });
+  expect(s.commits[0]!.map((op) => op.create_id)).toEqual([c!.id, a!.id, b!.id]);
   expect(q.getSnapshot().items.map((i) => i.status)).toEqual(["committed", "committed", "committed"]);
   expect(a!.status).toBe("queued"); // snapshots are immutable
 });
@@ -72,7 +74,64 @@ it("re-uploads a file whose blob went stale before commit", async () => {
   const files = await q.commit();
   expect(files.map((f) => f.path)).toEqual(["originals/a.png", "originals/b.png"]);
   expect(s.puts.length).toBe(3);
+  expect(s.commits[0]![1]!.create_id).toBe(b!.id);
   expect(q.getSnapshot().items.every((i) => i.status === "committed")).toBe(true);
+});
+
+it("does not remove an existing file when a cancelled staging create is rejected", async () => {
+  const s = new FakeServer();
+  s.processOnUpload = true;
+  s.seed(ref, [{ path: "originals/a.png", type: "image/png", size: 100 }]);
+  const fetch = s.fetch;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  s.fetch = async (input, init) => {
+    if (String(input).endsWith("/commit")) {
+      const body = JSON.parse(String(init?.body)) as { ops: Op[] };
+      if (body.ops[0]?.op === "put") {
+        await gate;
+        return new Response(JSON.stringify({ code: "conflict", error: "already exists" }), { status: 409 });
+      }
+    }
+    return fetch(input, init);
+  };
+  const q = new UploadQueue(fakeClient(s), { ref, path });
+  const [item] = q.add([png("a.png", 1)]);
+  await until(q, (x) => x.ready);
+  const pending = q.commit();
+  q.remove(item!.id);
+  release();
+  await pending;
+  expect(s.commits).toEqual([]);
+  expect(s.items.get(`${ref.kind}/${ref.id}`)).toMatchObject([{ path: "originals/a.png", size: 100 }]);
+  q.dispose();
+});
+
+it("retries a lost staging response with the same create ID and attaches the upload", async () => {
+  const s = new FakeServer();
+  s.processOnUpload = true;
+  const fetch = s.fetch;
+  let dropped = false;
+  s.fetch = async (input, init) => {
+    const response = await fetch(input, init);
+    if (String(input).endsWith("/commit") && !dropped) {
+      dropped = true;
+      throw new TypeError("lost response");
+    }
+    return response;
+  };
+  const q = new UploadQueue(fakeClient(s), { ref, path });
+  const [item] = q.add([png("new.png", 2)]);
+  await until(q, (x) => x.ready);
+  const files = await q.commit();
+  expect(s.commits[0]![0]).toMatchObject({ create_id: item!.id, unattached: true });
+  expect(s.commits[1]).toMatchObject([
+    { op: "put", create_id: item!.id },
+    { op: "attach", path: "originals/new.png" },
+  ]);
+  expect(files).toMatchObject([{ path: "originals/new.png" }]);
+  expect(files[0]!.unattached).toBeUndefined();
+  q.dispose();
 });
 
 it("commits only the uploaded head of the queue with head", async () => {
