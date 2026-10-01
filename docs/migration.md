@@ -9,6 +9,7 @@ ContentKit has a PostgreSQL migration chain and a ClickHouse baseline:
 | PostgreSQL | `migrations.Postgres` | `postgres/0003_media_releases.up.sql` | media quota release ledger |
 | PostgreSQL | `migrations.Postgres` | `postgres/0004_media_slots.up.sql` | slot index (`content_media_slots`) |
 | PostgreSQL | `migrations.Postgres` | `postgres/0005_media_slot_backfill.up.sql` | slot index backfill progress (`content_media_slot_backfill`) |
+| PostgreSQL | `migrations.Postgres` | `postgres/0006_media_slot_versions.up.sql` | slot versions; reruns the backfill for fixed public names |
 | ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, subject state, daily contributions, exposures, co-engagement and erasure fences |
 
 The baselines initialize fresh stores; PostgreSQL `0002` and later also upgrade
@@ -82,7 +83,11 @@ runtime role read/write access to `content_search_invalid`. Before deploying
 code that uses `0004` and `0005`, apply them and grant the host's runtime role
 read/write access to `content_media_slots` and `content_media_slot_backfill`
 (the media worker needs none). Existing slots enter the index at the first
-start: binding the media jobs to River schedules a one-time backfill.
+start: binding the media jobs to River schedules a one-time backfill. `0006`
+reruns it once: it writes every public slot's fixed `public/` names
+(`{slot}-{rung}.webp`) and versioned row, and `Hooks.SlotChanged` hears each
+slot, so a host's stored links (an account's avatar) move to the new URLs.
+Deploy the media worker and access worker of the same release with it.
 
 ## Host relationships
 

@@ -73,10 +73,11 @@ func TestExposure(t *testing.T) {
 	blob := sha("poster")
 	private, _ := item.Private(blob)
 	orig := sha("frame")
+	var fp string
 	if err := ms.UpdateSlot(ctx, ref, media.PosterSlot, func(r *media.SlotRecord) error {
 		r.Original = orig
 		r.Frame = &media.PosterFrame{File: "source", Time: 2.5, Auto: true, Source: orig}
-		fp := r.Fingerprint((&media.Video{PosterWidths: []int{480, 960, 1920}}).Poster())
+		fp = r.Fingerprint((&media.Video{PosterWidths: []int{480, 960, 1920}}).Poster())
 		r.Result = &media.SlotResult{Of: fp, Source: r.Original, Outputs: []media.SlotRendition{{Rung: 480, W: 480, H: 270, Blob: blob}}}
 		return nil
 	}); err != nil {
@@ -121,7 +122,7 @@ func TestExposure(t *testing.T) {
 		_, _ = io.ReadAll(resp.Body)
 		return resp.StatusCode, resp.Header.Get("Cache-Control")
 	}
-	publicKey, _ := item.Public(blob)
+	publicKey := item.PublicPrefix() + "poster-480.webp" // the poster slot's fixed public name
 	public := func() int { code, _ := fetch(mediaSrv.URL + "/" + publicKey); return code }
 	expose := func(res access.Resolution) {
 		t.Helper()
@@ -156,11 +157,13 @@ func TestExposure(t *testing.T) {
 
 	// Paid: the poster is public.
 	expose(access.Resolution{Visible: true})
-	if code, cc := fetch(mediaSrv.URL + "/" + publicKey); code != http.StatusOK || cc != "public, max-age=31536000, immutable" {
+	// A fixed name is rewritten on a change: caches keep it briefly, and the
+	// read API's URL carries ?v= the record's fingerprint.
+	if code, cc := fetch(mediaSrv.URL + "/" + publicKey + "?v=" + fp); code != http.StatusOK || cc != "public, max-age=300, stale-while-revalidate=60" {
 		t.Fatalf("paid poster: %d %q", code, cc)
 	}
 	code, v := images("viewer")
-	if code != http.StatusOK || len(v.Poster.Outputs) != 1 || v.Poster.Outputs[0].URL != mediaSrv.URL+"/"+publicKey ||
+	if code != http.StatusOK || len(v.Poster.Outputs) != 1 || v.Poster.Outputs[0].URL != mediaSrv.URL+"/"+publicKey+"?v="+fp ||
 		v.Poster.File != "source" || v.Poster.Time == nil || *v.Poster.Time != 2.5 || v.Poster.Selection != nil {
 		t.Fatalf("paid video-images: %d %+v", code, v)
 	}

@@ -38,10 +38,13 @@ const (
 	// HealthPath answers 200 without touching the bucket.
 	HealthPath = "/healthz"
 
-	// Every private/ and public/ name is its content's SHA-256: nothing is
-	// rewritten. Editor views are discardable, and never shared.
+	// private/ names and public/ file copies are their content's SHA-256:
+	// never rewritten. A public slot's fixed names are overwritten on a change,
+	// so caches keep them briefly (links carry ?v= to bust them at once).
+	// Editor views are discardable, and never shared.
 	privateCacheControl = "private, max-age=31536000, immutable"
 	publicCacheControl  = "public, max-age=31536000, immutable"
+	slotCacheControl    = "public, max-age=300, stale-while-revalidate=60"
 	tempCacheControl    = "private, max-age=3600"
 )
 
@@ -282,7 +285,11 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request, key string, k l
 	}
 	switch k.Area {
 	case layout.AreaPublic:
-		hdr.Set("Cache-Control", publicCacheControl)
+		if layout.ValidSlotFileName(k.Name) {
+			hdr.Set("Cache-Control", slotCacheControl)
+		} else {
+			hdr.Set("Cache-Control", publicCacheControl)
+		}
 	case layout.AreaTemp:
 		hdr.Set("Cache-Control", tempCacheControl)
 	default:

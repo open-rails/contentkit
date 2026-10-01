@@ -6,15 +6,19 @@
 //	                            /temp/u-{uuid}          staged multipart uploads until placed; never served
 //	                            /temp/e-{hex}           editor views; editor token only
 //	                            /private/sha256-{hex}   every rendition; token-gated
-//	                            /public/sha256-{hex}    copies of the exposed renditions; anyone
+//	                            /public/sha256-{hex}    copies of the exposed file renditions; anyone
+//	                            /public/{slot}-{w}.webp a public slot's rendition at rung w; anyone
 //
-// originals/, private/ and public/ names are the SHA-256 of the object, so
-// objects are immutable: a change writes a new name. temp/ is discardable:
+// originals/ and private/ names, and public/ file copies, are the SHA-256 of
+// the object, so those objects are immutable: a change writes a new name. A
+// public slot's renditions keep fixed names, so its URL is a function of the
+// item, slot and width; a change overwrites them. temp/ is discardable:
 // nothing a viewer needs lives there, and the sweep wipes it by age.
 package layout
 
 import (
 	"encoding/hex"
+	"strconv"
 	"strings"
 )
 
@@ -60,6 +64,8 @@ func Parse(key string) (Key, bool) {
 		k.Area, k.Name = AreaTemp, rest[1]
 	case len(rest) == 2 && (rest[0] == AreaOriginals || rest[0] == AreaPrivate || rest[0] == AreaPublic) && ValidHashName(rest[1]):
 		k.Area, k.Name = rest[0], rest[1]
+	case len(rest) == 2 && rest[0] == AreaPublic && ValidSlotFileName(rest[1]):
+		k.Area, k.Name = AreaPublic, rest[1]
 	default:
 		return Key{}, false
 	}
@@ -83,6 +89,35 @@ func ValidSegment(s string) bool {
 // ValidHashName accepts "sha256-{64 lowercase hex}".
 func ValidHashName(name string) bool {
 	_, ok := ParseSHA256Name(name)
+	return ok
+}
+
+// SlotFileName is a public slot rendition's fixed name: "{slot}-{width}.webp".
+func SlotFileName(slot string, width int) string {
+	return slot + "-" + strconv.Itoa(width) + ".webp"
+}
+
+// ParseSlotFileName splits a SlotFileName.
+func ParseSlotFileName(name string) (slot string, width int, ok bool) {
+	base, ok := strings.CutSuffix(name, ".webp")
+	if !ok {
+		return "", 0, false
+	}
+	i := strings.LastIndexByte(base, '-')
+	if i <= 0 {
+		return "", 0, false
+	}
+	slot, digits := base[:i], base[i+1:]
+	w, err := strconv.Atoi(digits)
+	if err != nil || w <= 0 || strconv.Itoa(w) != digits || !ValidSegment(slot) || ValidSourceName(slot) || ValidInlineName(slot) {
+		return "", 0, false
+	}
+	return slot, w, true
+}
+
+// ValidSlotFileName accepts a SlotFileName.
+func ValidSlotFileName(name string) bool {
+	_, _, ok := ParseSlotFileName(name)
 	return ok
 }
 

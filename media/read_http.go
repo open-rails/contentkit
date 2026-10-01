@@ -34,10 +34,6 @@ type HandlerOptions struct {
 	// else by the connection's address: behind a proxy, set Actor.IP from
 	// the client address the proxy forwards.
 	Limit ViewerLimit
-	// SlotDefault is the image a slot link redirects to while the slot has
-	// none (unset, hidden or not yet encoded), e.g. "/static/avatar.svg";
-	// nil or "" answers 404.
-	SlotDefault func(kind, slot string) string
 }
 
 // Handler serves the read API. The host mounts it under a prefix such as
@@ -53,13 +49,9 @@ type HandlerOptions struct {
 //	GET /{kind}/{id}/hls/{file}/sprite.vtt
 //	GET /{kind}/{id}/download/{key} -> 302 to the signed download URL
 //	GET /{kind}/{id}/slots/{slot} -> SlotManifest
-//	GET /{kind}/{id}/slots/{slot}/image?w=320 -> 302 to the slot's public image (Reader.SlotLink)
 //	GET /{kind}/{id}/video-images -> VideoImages without selections
 //
-// The slot image route is the stable link: it reads only the slot index and
-// redirects to the narrowest public output at least w wide (the widest
-// without w), else to HandlerOptions.SlotDefault, with "public, max-age=60".
-// Every other request resolves the item once and is "private, no-store";
+// Every request resolves the item once and is "private, no-store";
 // playlists and redirects carry a folder cookie only for unversioned
 // full-access items in cookie mode. Disabled generic downloads return 404
 // and are omitted from read results. Signed responses log the viewer, item,
@@ -85,9 +77,6 @@ func (r *Reader) Handler(o HandlerOptions) http.Handler {
 		}
 		w.Header().Set("Cache-Control", "private, no-store")
 		writeJSON(w, http.StatusOK, m)
-	})
-	mux.HandleFunc("GET /{kind}/{id}/slots/{slot}/image", func(w http.ResponseWriter, req *http.Request) {
-		r.serveSlotImage(w, req, o, log)
 	})
 	mux.HandleFunc("GET /{kind}/{id}/video-images", func(w http.ResponseWriter, req *http.Request) {
 		ref, actor := requestRef(req, o)
@@ -126,63 +115,6 @@ func (r *Reader) Handler(o HandlerOptions) http.Handler {
 		log.Debug("media read", "path", req.URL.Path, "status", status, "duration", time.Since(start))
 	})
 	return limited(mux, o, log)
-}
-
-// serveSlotImage redirects a slot link (Reader.SlotLink) from the slot index.
-func (r *Reader) serveSlotImage(w http.ResponseWriter, req *http.Request, o HandlerOptions, log *slog.Logger) {
-	kind, id, slot := req.PathValue("kind"), req.PathValue("id"), req.PathValue("slot")
-	width := 0
-	if v := req.URL.Query().Get("w"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 || n > maxSlotWidth {
-			w.Header().Set("Cache-Control", "no-store")
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid width", "code": "invalid_request"})
-			return
-		}
-		width = n
-	}
-	notFound := func() {
-		w.Header().Set("Cache-Control", "public, max-age=60")
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "code": "not_found"})
-	}
-	k, err := r.kinds.Kind(kind)
-	if _, ok := k.Slots[slot]; err != nil || !ok || contentref.ValidateID(id) != nil {
-		notFound()
-		return
-	}
-	if r.slots == nil {
-		log.Error("media slot link without a slot index", "path", req.URL.Path)
-		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error", "code": "internal_error"})
-		return
-	}
-	rows, err := r.slots.lookup(req.Context(), o.Tenant, kind, slot, []string{id})
-	if err != nil {
-		log.Error("media slot link failed", "path", req.URL.Path, "err", err.Error())
-		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error", "code": "internal_error"})
-		return
-	}
-	target := ""
-	if s, ok := rows[id]; ok {
-		item, err := r.kinds.Item(contentref.New(o.Tenant, kind, id))
-		if err != nil {
-			notFound()
-			return
-		}
-		if width == 0 {
-			width = maxSlotWidth
-		}
-		target = OutputURLs{BaseURL: r.base.String()}.url(item, s.pick(width).Blob, true)
-	} else if o.SlotDefault != nil {
-		target = o.SlotDefault(kind, slot)
-	}
-	if target == "" {
-		notFound()
-		return
-	}
-	w.Header().Set("Cache-Control", "public, max-age=60, stale-while-revalidate=300")
-	http.Redirect(w, req, target, http.StatusFound)
 }
 
 // limited applies HandlerOptions.Limit to every route.

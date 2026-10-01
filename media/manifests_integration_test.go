@@ -225,23 +225,27 @@ func TestRootIndex(t *testing.T) {
 	if p := root.Private[blobName("b.png/thumb")]; p.File != "b.png" || p.Version != "v2" || p.Rendition != "thumb" || p.W != 460 || p.Public {
 		t.Fatalf("variant: %+v", p)
 	}
-	if p := root.Private[blobName("c1500")]; p.Slot != "cover" || p.Rendition != "1500" || !p.Public {
+	// A registered slot is exposed under its fixed name, not its blob's.
+	if p := root.Private[blobName("c1500")]; p.Slot != "cover" || p.Rendition != "1500" || p.Public {
 		t.Fatalf("slot output: %+v", p)
 	}
+	if copies := root.PublicCopies(); len(copies) != 1 || copies["cover-1500.webp"] != blobName("c1500") {
+		t.Fatalf("public copies: %v", copies)
+	}
 	refs := root.Refs()
-	for _, want := range []string{"originals/" + blobName("a.png"), "private/" + blobName("c1500"), "public/" + blobName("c1500"), "temp/" + staged} {
+	for _, want := range []string{"originals/" + blobName("a.png"), "private/" + blobName("c1500"), "public/cover-1500.webp", "temp/" + staged} {
 		if !refs[want] {
 			t.Errorf("refs lack %s", want)
 		}
 	}
-	if refs["public/"+blobName("a.png/thumb")] {
-		t.Error("a file variant is public")
+	if refs["public/"+blobName("a.png/thumb")] || refs["public/"+blobName("c1500")] {
+		t.Error("a file variant, or a slot output under its blob, is public")
 	}
 	root, err = ms.EditRoot(ctx, work, func(r *media.Root) error { r.Hidden = true; return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if root.Private[blobName("c1500")].Public || len(root.PublicNames()) != 0 {
+	if root.Private[blobName("c1500")].Public || len(root.PublicCopies()) != 0 {
 		t.Fatal("a hidden item exposes its cover")
 	}
 	if man, _, err := ms.Get(ctx, work.WithVersion("v1")); err != nil || len(man.Files) != 1 {

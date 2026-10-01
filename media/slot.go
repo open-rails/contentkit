@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/open-rails/contentkit/access"
@@ -41,13 +40,25 @@ type SlotResult struct {
 }
 
 // SlotRendition is one output: private/{Blob}, the rung it renders and its
-// size (narrower than the rung when the edited image is).
+// size (narrower than the rung when the edited image is). Public is its fixed
+// public/ name while the item is visible, layout.SlotFileName(slot, Rung), for
+// registered slots; inline images are exposed under Blob.
 type SlotRendition struct {
-	Rung int    `json:"rung"`
-	W    int    `json:"w"`
-	H    int    `json:"h"`
-	Blob string `json:"blob"`
-	Size int64  `json:"size,omitempty"`
+	Rung   int    `json:"rung"`
+	W      int    `json:"w"`
+	H      int    `json:"h"`
+	Blob   string `json:"blob"`
+	Size   int64  `json:"size,omitempty"`
+	Public string `json:"public,omitempty"`
+}
+
+// PublicName is the public/ name of slot's output: its fixed name for a
+// registered slot, its blob for an inline image.
+func (o SlotRendition) PublicName(slot string) string {
+	if layout.ValidInlineName(slot) {
+		return o.Blob
+	}
+	return layout.SlotFileName(slot, o.Rung)
 }
 
 // Fingerprint identifies the outputs the record yields under slot spec s.
@@ -399,6 +410,20 @@ func (u OutputURLs) url(item Item, blob string, public bool) string {
 	return ""
 }
 
+// slotURL is a slot output's URL for this caller: its public copy while the
+// item is visible (a registered slot's fixed name with ?v=version, an inline
+// image's content-named copy), else its private/ rendition under Token
+// (editors), else "".
+func (u OutputURLs) slotURL(item Item, slot string, o SlotRendition, visible bool, version string) string {
+	switch {
+	case visible && layout.ValidInlineName(slot):
+		return u.url(item, o.Blob, true)
+	case visible:
+		return slotURL(u.BaseURL, item, o.PublicName(slot), version)
+	}
+	return u.url(item, o.Blob, false)
+}
+
 // SlotManifest reads a slot (or inline image) from the item's manifest,
 // building output URLs with urls. A slot never committed has no outputs.
 func (m *Manifests) SlotManifest(ctx context.Context, urls OutputURLs, ref contentref.ContentRef, slot string) (SlotManifest, error) {
@@ -438,7 +463,7 @@ func (m *Manifests) slotManifest(ctx context.Context, urls OutputURLs, ref conte
 		out.Error, out.ErrorCode, out.ErrorDetails = res.Error, res.Code, res.Details
 	}
 	for _, o := range res.Outputs {
-		if u := urls.url(item, o.Blob, root.Private[o.Blob].Public); u != "" {
+		if u := urls.slotURL(item, slot, o, !root.Hidden, res.Of); u != "" {
 			out.Outputs = append(out.Outputs, SlotImage{W: o.W, H: o.H, URL: u})
 		}
 	}
@@ -535,21 +560,26 @@ func (r *Reader) SlotImages(ctx context.Context, tenant, kind, slot string, widt
 		if err != nil {
 			continue
 		}
-		out[id] = s.picture(item, r.base.String(), width)
+		out[id] = s.picture(item, slot, r.base.String(), width)
 	}
 	return out, nil
 }
 
-// SlotLink is a registered slot's stable URL, the Handler's slot image route
-// under ReaderOptions.ReadURL: it redirects to the slot's current public
-// image, or to the host's default (HandlerOptions.SlotDefault). It never
-// changes, so hosts may store it, e.g. as an account's avatar; "" without a
-// ReadURL. Append ?w= for a display width (Slot.LinkSrcSet).
-func (r *Reader) SlotLink(ref contentref.ContentRef, slot string) string {
-	if r.readURL == "" {
+// SlotLink is a public slot's URL at the narrowest rung at least width wide
+// (the widest otherwise): the fixed name {BaseURL}/{tenant}/{kind}/{id}/public/
+// {slot}-{rung}.webp, a function of the item, slot and width, with ?v=version
+// to bust caches (SlotChange.Version; Picture URLs carry it). Without version
+// it serves the current image within the cache window. Nothing is there while
+// the slot has no public image. "" for an unknown kind or slot.
+func (r *Reader) SlotLink(ref contentref.ContentRef, slot string, width int, version string) string {
+	item, s, err := r.kinds.slot(ref, slot)
+	if err != nil {
 		return ""
 	}
-	return r.readURL + "/" + url.PathEscape(ref.ContentKind) + "/" + url.PathEscape(ref.ContentID) + "/slots/" + url.PathEscape(slot) + "/image"
+	if _, registered := item.Kind().Slots[slot]; !registered {
+		return ""
+	}
+	return slotURL(r.base.String(), item, layout.SlotFileName(slot, s.Rung(width)), version)
 }
 
 // InlineURL is an inline image's public URL, or ErrPending until the worker

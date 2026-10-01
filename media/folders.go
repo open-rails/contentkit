@@ -128,7 +128,7 @@ func (j *Jobs) Purge(ctx context.Context, d Deletion) error {
 	var removed []string
 	defer func() {
 		unlock()
-		j.publicRemoved(ctx, removed)
+		j.purgePublic(ctx, removed)
 	}()
 	var release int64
 	operation := "purge:" + prefix + d.OperationID

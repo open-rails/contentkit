@@ -45,7 +45,7 @@ type Config struct {
 	Queue string
 	Store media.Store
 	// Kinds, Specs and Hooks are the host's: build them with the code the
-	// host's media setup uses. Hooks.Failed, Hooks.PublicRemoved and
+	// host's media setup uses. Hooks.Failed, Hooks.PurgePublic and
 	// Hooks.ItemReady run here; Hooks.SlotChanged runs in the host's jobs.
 	Kinds *media.Registry
 	Specs image.SpecChooser

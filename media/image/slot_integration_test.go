@@ -19,6 +19,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 const slotBase = "https://media.example"
@@ -111,7 +112,8 @@ func widths(m media.SlotManifest) []int {
 
 // checkOutputs requires m to be settled and list exactly want (one per rung,
 // at 3:1), each an immutable hash-named file in private/ and its public/ copy
-// with those dimensions and sampled pixels c.
+// under the slot's fixed name (?v= the record's fingerprint) with those
+// dimensions and sampled pixels c.
 func (e *env) checkOutputs(t *testing.T, ref contentref.ContentRef, m media.SlotManifest, want []int, c color.RGBA) {
 	t.Helper()
 	if m.Pending || m.Error != "" || !slices.Equal(widths(m), want) {
@@ -119,14 +121,26 @@ func (e *env) checkOutputs(t *testing.T, ref contentref.ContentRef, m media.Slot
 	}
 	prefix := e.Tenant + "/" + ref.ContentKind + "/" + ref.ContentID + "/"
 	for _, o := range m.Outputs {
-		name, ok := strings.CutPrefix(o.URL, slotBase+"/"+prefix+"public/")
-		if !ok || !strings.HasPrefix(name, "sha256-") || o.H != media.Aspect3x1.Height(o.W) {
+		u, ok := strings.CutPrefix(o.URL, slotBase+"/"+prefix+"public/")
+		name, version, _ := strings.Cut(u, "?v=")
+		slot, rung, fixed := layout.ParseSlotFileName(name)
+		if !ok || !fixed || o.H != media.Aspect3x1.Height(o.W) {
 			t.Fatalf("output %+v", o)
+		}
+		rec, err := e.manifests.Slot(context.Background(), ref.Content(), slot)
+		if err != nil || rec.Result == nil || version != rec.Result.Of {
+			t.Fatalf("output %+v: record %+v %v", o, rec, err)
+		}
+		var blob string
+		for _, r := range rec.Result.Outputs {
+			if r.Rung == rung {
+				blob = r.Blob
+			}
 		}
 		key := prefix + "public/" + name
 		b, obj := e.object(t, key)
-		if priv, _ := e.object(t, prefix+"private/"+name); !bytes.Equal(priv, b) {
-			t.Fatalf("%s is not a copy of its private/ file", key)
+		if priv, _ := e.object(t, prefix+"private/"+blob); blob == "" || !bytes.Equal(priv, b) {
+			t.Fatalf("%s is not a copy of its private/ file %s", key, blob)
 		}
 		if obj.ContentType != "image/webp" || obj.CacheControl != "max-age=31536000, immutable" {
 			t.Fatalf("%s: %+v", key, obj)

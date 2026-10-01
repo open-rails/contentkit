@@ -3,11 +3,12 @@
 // of its own, so ContentKit's core never imports AuthKit.
 //
 // An account's avatar is its user folder's avatar slot (media.UserKind,
-// media.AvatarSlotName). Its stable link (media.Reader.SlotLink) never
-// changes, so the account's AuthKit public metadata names it once, under Key
-// ("avatar"): hosts and auth-ui read public_metadata.avatar. Hosts sharing
-// one account store share the key, so the site where the user last set an
-// avatar is the one shown everywhere.
+// media.AvatarSlotName), served from fixed public names. The account's AuthKit
+// public metadata names its link (media.Reader.SlotLink, ?v= its version)
+// under Key ("avatar"): hosts and auth-ui read public_metadata.avatar, and
+// show their default when it is unset. Hosts sharing one account store share
+// the key, so the site where the user last set an avatar is the one shown
+// everywhere.
 package authkit
 
 import (
@@ -16,7 +17,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	ak "github.com/open-rails/authkit"
@@ -39,9 +40,9 @@ type Directory interface {
 	PublicUsers(ctx context.Context, ids []string) (map[string]iam.PublicUser, error)
 }
 
-// SlotLinker builds a slot's stable URL: *media.Reader with ReadURL set.
+// SlotLinker builds a public slot's URL: *media.Reader.
 type SlotLinker interface {
-	SlotLink(ref contentref.ContentRef, slot string) string
+	SlotLink(ref contentref.ContentRef, slot string, width int, version string) string
 }
 
 var (
@@ -63,6 +64,9 @@ type Avatars struct {
 	Key string
 	// Slot is the avatar slot; default media.AvatarSlotName.
 	Slot string
+	// Width is the rung public_metadata names (clients pick others with
+	// media.Slot.LinkAt); default 256.
+	Width int
 }
 
 func (a *Avatars) key() string { return or(a.Key, DefaultKey) }
@@ -103,19 +107,36 @@ func (a *Avatars) CanUpload(ctx context.Context, actor access.Actor, t media.Upl
 }
 
 // SlotChanged is the avatar's media.Hooks.SlotChanged: when a user's avatar
-// is set or replaced, their public metadata's Key becomes its stable link,
-// one idempotent merge patch outside the slot index transaction (AuthKit may
-// live in another database). A removal writes nothing, since the link then
-// serves the host's default; an erased account is done. Other slots pass.
-func (a *Avatars) SlotChanged(ctx context.Context, _ pgx.Tx, ref contentref.ContentRef, slot string, set bool) error {
-	if !set || ref.ContentKind != media.UserKind || slot != a.slot() {
+// is set or replaced, their public metadata's Key becomes its link at Width
+// with ?v= the new version, one merge patch outside the slot index
+// transaction (AuthKit may live in another database). A removal clears Key
+// when it names this site's avatar (another site's stays), so clients show
+// their default. An erased account is done; other slots pass.
+func (a *Avatars) SlotChanged(ctx context.Context, _ pgx.Tx, c media.SlotChange) error {
+	if c.Ref.ContentKind != media.UserKind || c.Slot != a.slot() {
 		return nil
 	}
-	link := a.Links.SlotLink(ref, slot)
-	if link == "" {
-		return errors.New("contentkit/authkit: no slot link; set media.ReaderOptions.ReadURL")
+	width := a.Width
+	if width <= 0 {
+		width = 256
 	}
-	err := a.Directory.PatchPublicMetadata(ctx, iam.SystemActor(), ref.ContentID, map[string]any{a.key(): link})
+	link := a.Links.SlotLink(c.Ref, c.Slot, width, c.Version)
+	if link == "" {
+		return fmt.Errorf("contentkit/authkit: kind %q has no slot %q", c.Ref.ContentKind, c.Slot)
+	}
+	var value any = link
+	if c.Version == "" {
+		users, err := a.Directory.PublicUsers(ctx, []string{c.Ref.ContentID})
+		if err != nil {
+			return err
+		}
+		current, _, _ := strings.Cut(AvatarLink(users[c.Ref.ContentID], a.key()), "?")
+		if current != link {
+			return nil // unset, or another site's avatar
+		}
+		value = nil
+	}
+	err := a.Directory.PatchPublicMetadata(ctx, iam.SystemActor(), c.Ref.ContentID, map[string]any{a.key(): value})
 	if errors.Is(err, iam.ErrUserNotFound) {
 		return nil
 	}
@@ -131,7 +152,7 @@ type Authors struct {
 	// Key is the public-metadata key; default DefaultKey.
 	Key string
 	// Width is the avatar's display width in CSS pixels: Avatar is the link
-	// at it; default 64.
+	// at the rung for it (media.Slot.LinkAt); default 64.
 	Width int
 	// Slot gives AvatarSrcSet's widths; default media.AvatarSlot.
 	Slot   *media.Slot
@@ -163,8 +184,9 @@ func (a *Authors) UsersByIDs(ctx context.Context, ids []string) (map[string]cont
 	for _, id := range ids {
 		u := content.PublicUser{ID: id, Username: iam.PublicDisplayName(users, id)}
 		if link := AvatarLink(users[id], or(a.Key, DefaultKey)); link != "" {
-			u.Avatar = link + "?w=" + strconv.Itoa(width)
-			u.AvatarSrcSet = slot.LinkSrcSet(link)
+			if u.Avatar = slot.LinkAt(link, width); u.Avatar != "" {
+				u.AvatarSrcSet = slot.LinkSrcSet(link)
+			}
 		}
 		out[id] = u
 	}
@@ -172,11 +194,14 @@ func (a *Authors) UsersByIDs(ctx context.Context, ids []string) (map[string]cont
 }
 
 // AvatarLink is the avatar link an account's public metadata names under key:
-// an absolute http(s) URL without a query or fragment, else "".
+// an absolute http(s) URL whose only query is v, else "".
 func AvatarLink(u iam.PublicUser, key string) string {
 	s, _ := u.PublicMetadata[key].(string)
 	p, err := url.Parse(s)
-	if err != nil || (p.Scheme != "https" && p.Scheme != "http") || p.Host == "" || p.RawQuery != "" || p.Fragment != "" || p.User != nil {
+	if err != nil || (p.Scheme != "https" && p.Scheme != "http") || p.Host == "" || p.Fragment != "" || p.User != nil {
+		return ""
+	}
+	if q := p.Query(); len(q) > 1 || len(q) == 1 && len(q["v"]) != 1 {
 		return ""
 	}
 	return s

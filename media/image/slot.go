@@ -8,6 +8,7 @@ import (
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // errSuperseded aborts recording a result for a slot record that changed meanwhile.
@@ -102,7 +103,11 @@ func (p *Processor) render(ctx context.Context, item media.Item, slot string, sp
 			if err != nil {
 				return err
 			}
-			res.Outputs = append(res.Outputs, media.SlotRendition{Rung: w, W: out.dims.W, H: out.dims.H, Blob: blob, Size: int64(len(out.webp))})
+			o := media.SlotRendition{Rung: w, W: out.dims.W, H: out.dims.H, Blob: blob, Size: int64(len(out.webp))}
+			if !layout.ValidInlineName(slot) {
+				o.Public = o.PublicName(slot)
+			}
+			res.Outputs = append(res.Outputs, o)
 		}
 		if err := p.record(ctx, item, slot, spec, fp, res); errors.Is(err, errSuperseded) {
 			continue
@@ -117,8 +122,8 @@ func (p *Processor) render(ctx context.Context, item media.Item, slot string, sp
 // syncPublic brings public/ to the recorded state (media.Manifests.SyncPublic).
 func (p *Processor) syncPublic(ctx context.Context, ref contentref.ContentRef) error {
 	removed, err := p.c.Manifests.SyncPublic(ctx, ref)
-	if len(removed) > 0 && p.c.Hooks.PublicRemoved != nil {
-		p.c.Hooks.PublicRemoved(ctx, ref, removed)
+	if len(removed) > 0 && p.c.Hooks.PurgePublic != nil {
+		p.c.Hooks.PurgePublic(ctx, ref, removed)
 	}
 	return err
 }
@@ -138,19 +143,19 @@ func (p *Processor) record(ctx context.Context, item media.Item, slot string, sp
 				if err != nil {
 					return err
 				}
-				if _, err := p.c.Store.Head(ctx, src); err != nil {
+				head, err := p.c.Store.Head(ctx, src)
+				if err != nil {
 					return fmt.Errorf("media/image: publish slot rendition %s: %w", src, err)
 				}
 				if root.Hidden {
 					continue
 				}
-				dst, err := item.Public(out.Blob)
-				if err != nil {
-					return err
-				}
-				if _, err := p.c.Store.Head(ctx, dst); err == nil {
+				// A registered slot's fixed name is overwritten when it holds
+				// another rendition; an inline image's copy is content-named.
+				dst := item.PublicPrefix() + out.PublicName(slot)
+				if cur, err := p.c.Store.Head(ctx, dst); err == nil && cur.ETag == head.ETag {
 					continue
-				} else if !errors.Is(err, media.ErrNotFound) {
+				} else if err != nil && !errors.Is(err, media.ErrNotFound) {
 					return err
 				}
 				if _, err := p.c.Store.Copy(ctx, src, dst, media.CopyOptions{}); err != nil {

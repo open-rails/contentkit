@@ -22,7 +22,7 @@ type Root struct {
 	// Originals indexes originals/ by name.
 	Originals map[string]OriginalEntry `json:"originals"`
 	// Private indexes private/ by name; Public entries are copied to public/
-	// under the same name.
+	// under the same name (PublicCopies adds the slots' fixed names).
 	Private map[string]PrivateEntry `json:"private"`
 }
 
@@ -37,7 +37,9 @@ type OriginalEntry struct {
 }
 
 // PrivateEntry is one rendition: the file (in Version) or slot it belongs
-// to, which rendition it is, and whether it is exposed in public/.
+// to, which rendition it is, and whether it is exposed in public/ under its
+// own name (a registered slot's renditions are exposed under fixed names:
+// PublicCopies).
 type PrivateEntry struct {
 	File      string `json:"file,omitempty"`
 	Version   string `json:"version,omitempty"`
@@ -78,15 +80,28 @@ func (r *Root) sections(fn func(v string, m *Manifest)) {
 	}
 }
 
-// PublicNames lists the renditions exposed in public/.
-func (r *Root) PublicNames() []string {
-	var out []string
+// PublicCopies maps every public/ name the manifest exposes to the private/
+// rendition it copies: file renditions and inline images under their own
+// name, a registered slot's renditions under their fixed names
+// (layout.SlotFileName). A hidden item exposes none.
+func (r *Root) PublicCopies() map[string]string {
+	out := map[string]string{}
 	for name, e := range r.Private {
 		if e.Public {
-			out = append(out, name)
+			out[name] = name
 		}
 	}
-	slices.Sort(out)
+	if r.Hidden {
+		return out
+	}
+	for slot, rec := range r.Slots {
+		if rec.Result == nil || layout.ValidInlineName(slot) {
+			continue
+		}
+		for _, o := range rec.Result.Outputs {
+			out[o.PublicName(slot)] = o.Blob
+		}
+	}
 	return out
 }
 
@@ -159,9 +174,11 @@ func (r *Root) index() {
 		if rec.Result == nil {
 			continue
 		}
+		// A registered slot is exposed under fixed names (PublicCopies); an
+		// inline image under its rendition's own name.
 		for _, o := range rec.Result.Outputs {
 			private(o.Blob, rec.Result.Source, PrivateEntry{Slot: slot, Rendition: strconv.Itoa(o.Rung), W: o.W,
-				Type: "image/webp", Size: o.Size, Public: !r.Hidden})
+				Type: "image/webp", Size: o.Size, Public: !r.Hidden && layout.ValidInlineName(slot)})
 		}
 	}
 }
@@ -216,11 +233,11 @@ func (r *Root) Refs() map[string]bool {
 	for n := range r.Originals {
 		refs[AreaOriginals+"/"+n] = true
 	}
-	for n, e := range r.Private {
+	for n := range r.Private {
 		refs[AreaPrivate+"/"+n] = true
-		if e.Public {
-			refs[AreaPublic+"/"+n] = true
-		}
+	}
+	for n := range r.PublicCopies() {
+		refs[AreaPublic+"/"+n] = true
 	}
 	r.sections(func(_ string, m *Manifest) {
 		for _, n := range m.Sources() {

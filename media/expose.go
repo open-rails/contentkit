@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -13,14 +14,18 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
-// SyncPublic makes public/ match the manifest: every exposed rendition (the
-// slot and inline outputs of an item that is not hidden) is copied from
-// private/ under the same name, and a hidden item's public/ is emptied at
-// once. It returns the deleted keys. A visible item's unlisted copies (older
-// outputs) are left to the sweep, so pages rendered a moment ago still load.
-// The folder lock covers the visibility read and completed copies/deletions.
+// SyncPublic makes public/ match the manifest's PublicCopies: a missing copy
+// is copied from private/, a fixed slot name holding another rendition is
+// overwritten, and a hidden item's public/ is emptied at once, as are fixed
+// names no slot exposes any more (a removed slot, a dropped rung). A visible
+// item's other unlisted copies (older file renditions) are left to the sweep,
+// so pages rendered a moment ago still load. It returns the public/ keys it
+// deleted, overwrote or first wrote under a fixed name, for a CDN purge
+// (Hooks.PurgePublic). The folder lock covers the visibility read and
+// completed copies/deletions.
 func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) ([]string, error) {
 	item, err := m.kinds.Item(ref.Content())
 	if err != nil {
@@ -37,36 +42,53 @@ func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) (
 	} else if err != nil {
 		return nil, err
 	}
-	want := root.PublicNames()
-	have := map[string]bool{}
-	var removed []string
+	want := root.PublicCopies()
+	have := map[string]Object{}
+	var changed []string
 	for o, err := range m.store.List(ctx, item.PublicPrefix()) {
 		if err != nil {
-			return removed, err
+			return changed, err
 		}
 		name := strings.TrimPrefix(o.Key, item.PublicPrefix())
-		if slices.Contains(want, name) {
-			have[name] = true
+		if _, ok := want[name]; ok {
+			have[name] = o
 			continue
 		}
-		if root.Hidden {
+		if root.Hidden || layout.ValidSlotFileName(name) {
 			if err := m.store.Delete(ctx, o.Key); err != nil && !errors.Is(err, ErrNotFound) {
-				return removed, err
+				return changed, err
 			}
-			removed = append(removed, o.Key)
+			changed = append(changed, o.Key)
 		}
 	}
-	for _, name := range want {
-		if have[name] {
+	for _, name := range slices.Sorted(maps.Keys(want)) {
+		src, _ := item.Private(want[name])
+		dst := item.PublicPrefix() + name
+		fixed := layout.ValidSlotFileName(name)
+		if cur, ok := have[name]; ok {
+			if !fixed {
+				continue // content-named: immutable
+			}
+			head, err := m.store.Head(ctx, src)
+			if errors.Is(err, ErrNotFound) {
+				continue
+			} else if err != nil {
+				return changed, err
+			}
+			if head.ETag == cur.ETag {
+				continue
+			}
+		}
+		if _, err := m.store.Copy(ctx, src, dst, CopyOptions{}); errors.Is(err, ErrNotFound) {
 			continue
+		} else if err != nil {
+			return changed, err
 		}
-		src, _ := item.Private(name)
-		dst, _ := item.Public(name)
-		if _, err := m.store.Copy(ctx, src, dst, CopyOptions{}); err != nil && !errors.Is(err, ErrNotFound) {
-			return removed, err
+		if fixed {
+			changed = append(changed, dst)
 		}
 	}
-	return removed, nil
+	return changed, nil
 }
 
 var errNoManifest = errors.New("media: no manifest")
@@ -74,7 +96,7 @@ var errNoManifest = errors.New("media: no manifest")
 // Expose brings an item's public/ copies to its visibility: it resolves the
 // item for an anonymous actor (JobsConfig.Resolver), records Hidden when
 // anonymous viewers cannot see it, and syncs public/ (SyncPublic): a hidden
-// item's copies are deleted at once and reported to Hooks.PublicRemoved; an
+// item's copies are deleted at once and reported to Hooks.PurgePublic; an
 // unhidden item's are copied back, and the slot index follows (IndexSlots).
 // It re-resolves after writing and repeats until the state holds, so an
 // Expose racing a visibility change ends at the newer one. An item without a
@@ -102,8 +124,8 @@ func (j *Jobs) Expose(ctx context.Context, ref contentref.ContentRef) error {
 			return err
 		}
 		removed, err := j.manifests.SyncPublic(ctx, ref)
-		if len(removed) > 0 && j.cfg.Hooks.PublicRemoved != nil {
-			j.cfg.Hooks.PublicRemoved(ctx, ref, removed)
+		if len(removed) > 0 && j.cfg.Hooks.PurgePublic != nil {
+			j.cfg.Hooks.PurgePublic(ctx, ref, removed)
 		}
 		if err != nil {
 			return err

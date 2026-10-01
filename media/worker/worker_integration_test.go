@@ -63,11 +63,12 @@ type host struct {
 	worker    *worker.Worker
 	jobs      *media.Jobs
 	slots     *media.SlotIndex
-	reader    *media.Reader // ReadURL appURL, delivery mediaURL
+	reader    *media.Reader // delivery mediaURL
 	hidden    sync.Map      // contentref.ContentKey → true: hidden from anonymous viewers (Expose)
 
 	mu          sync.Mutex
-	changes     []string                     // Hooks.SlotChanged, "ref#slot set|clear"
+	changes     []string                     // Hooks.SlotChanged, "ref#slot set:{version}|clear"
+	purged      []string                     // Hooks.PurgePublic keys
 	failChanges int                          // SlotChanged calls still to fail
 	settled     map[string][]media.Readiness // Hooks.ItemReady, by ref
 	schema      string                       // the host's River schema
@@ -80,7 +81,7 @@ type host struct {
 func (h *host) startJobs(t *testing.T) *media.Jobs {
 	t.Helper()
 	jobs, err := media.NewJobs(media.JobsConfig{Store: h.Store, Locker: s3test.Locker(t, h.Store), Kinds: h.kinds, Tenants: []string{h.Tenant},
-		Resolver: h, Slots: h.slots, Hooks: media.Hooks{SlotChanged: h.slotChanged}})
+		Resolver: h, Slots: h.slots, Hooks: media.Hooks{SlotChanged: h.slotChanged, PurgePublic: h.purgePublic}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,14 +101,11 @@ func (h *host) startJobs(t *testing.T) *media.Jobs {
 	return jobs
 }
 
-// The host's read API and media origins.
-const (
-	appURL   = "https://app.example/api/v1/media"
-	mediaURL = "https://media.example"
-)
+// The media origin.
+const mediaURL = "https://media.example"
 
 // slotChanged is the host's Hooks.SlotChanged.
-func (h *host) slotChanged(_ context.Context, _ pgx.Tx, ref contentref.ContentRef, slot string, set bool) error {
+func (h *host) slotChanged(_ context.Context, _ pgx.Tx, c media.SlotChange) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.failChanges > 0 {
@@ -115,11 +113,24 @@ func (h *host) slotChanged(_ context.Context, _ pgx.Tx, ref contentref.ContentRe
 		return errors.New("the host's hook is down")
 	}
 	state := "clear"
-	if set {
-		state = "set"
+	if c.Version != "" {
+		state = "set:" + c.Version
 	}
-	h.changes = append(h.changes, ref.String()+"#"+slot+" "+state)
+	h.changes = append(h.changes, c.Ref.String()+"#"+c.Slot+" "+state)
 	return nil
+}
+
+// purgePublic is the host's Hooks.PurgePublic.
+func (h *host) purgePublic(_ context.Context, _ contentref.ContentRef, keys []string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.purged = append(h.purged, keys...)
+}
+
+func (h *host) purgedKeys() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.purged...)
 }
 
 func (h *host) slotChanges() []string {
@@ -192,7 +203,7 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 	jobs := h.startJobs(t)
 	h.jobs = jobs
 	h.manifests = s3test.Manifests(t, env.Store, kinds, media.ManifestOptions{Sweeps: jobs})
-	if h.reader, err = media.NewReader(media.ReaderOptions{Manifests: h.manifests, Kinds: kinds, Resolver: h, Slots: h.slots, ReadURL: appURL,
+	if h.reader, err = media.NewReader(media.ReaderOptions{Manifests: h.manifests, Kinds: kinds, Resolver: h, Slots: h.slots,
 		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: mediaURL, SigningKey: token.Key{ID: "k", Secret: bytes.Repeat([]byte("k"), 32)}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -439,7 +450,7 @@ func TestWorkerProcessesImagesAndPlacesStagedUploads(t *testing.T) {
 		if err != nil || rec.Result == nil || len(rec.Result.Outputs) == 0 {
 			return false
 		}
-		cover, _ := item.Public(rec.Result.Outputs[0].Blob)
+		cover := item.PublicPrefix() + rec.Result.Outputs[0].PublicName("cover")
 		return m.Files[0].Variants["thumb"].Blob != "" && m.Files[1].Variants["thumb"].Blob != "" &&
 			m.Files[1].Original == media.SHA256Name(sum[:]) && h.exists(t, cover)
 	})
@@ -462,7 +473,7 @@ func TestWorkerProcessesImagesAndPlacesStagedUploads(t *testing.T) {
 	if pic.URL != m.Outputs[0].URL || pic.W != m.Outputs[0].W || !strings.HasSuffix(pic.SrcSet, " "+strconv.Itoa(m.Outputs[len(m.Outputs)-1].W)+"w") {
 		t.Fatalf("listed %+v, manifest %+v", pic, m.Outputs)
 	}
-	if got := h.slotChanges(); len(got) != 1 || got[0] != work.String()+"#cover set" {
+	if got := h.slotChanges(); len(got) != 1 || !strings.HasPrefix(got[0], work.String()+"#cover set:") {
 		t.Fatalf("SlotChanged %v", got)
 	}
 }

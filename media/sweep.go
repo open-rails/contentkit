@@ -29,7 +29,7 @@ type SweepResult struct {
 // than the grace period, and temp/ at any time: editor views past
 // JobsConfig.EditorTTL and staged uploads no file references past
 // JobsConfig.TempUploadTTL. Only objects past their retention (deleteAt) go.
-// Removed public/ keys go to Hooks.PublicRemoved.
+// Removed public/ keys go to Hooks.PurgePublic.
 //
 // Invariant: the sweep deletes only objects the manifest does not reference
 // and that no in-flight commit or job can newly reference. Sweep holds the
@@ -95,7 +95,7 @@ func (j *Jobs) SweepAll(ctx context.Context) error {
 func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 	result, err := j.sweepUnreferenced(ctx, prefix)
 	if err == nil {
-		j.publicRemoved(ctx, result.Deleted)
+		j.purgePublic(ctx, result.Deleted)
 	}
 	return result, err
 }
@@ -239,10 +239,10 @@ func (j *Jobs) readRoot(ctx context.Context, key string) (*Root, error) {
 	return &root, nil
 }
 
-// publicRemoved reports deleted public/ keys, grouped by item, to
-// Hooks.PublicRemoved.
-func (j *Jobs) publicRemoved(ctx context.Context, keys []string) {
-	if j.cfg.Hooks.PublicRemoved == nil {
+// purgePublic reports deleted public/ keys, grouped by item, to
+// Hooks.PurgePublic.
+func (j *Jobs) purgePublic(ctx context.Context, keys []string) {
+	if j.cfg.Hooks.PurgePublic == nil {
 		return
 	}
 	byItem := map[contentref.ContentRef][]string{}
@@ -253,7 +253,7 @@ func (j *Jobs) publicRemoved(ctx context.Context, keys []string) {
 		}
 	}
 	for ref, keys := range byItem {
-		j.cfg.Hooks.PublicRemoved(ctx, ref, keys)
+		j.cfg.Hooks.PurgePublic(ctx, ref, keys)
 	}
 }
 
@@ -273,7 +273,7 @@ func (j *Jobs) list(ctx context.Context, prefix string) ([]Object, error) {
 // before its other files go.
 func (j *Jobs) deleteFolder(ctx context.Context, prefix string) error {
 	removed, err := j.deleteFolderObjects(ctx, prefix)
-	j.publicRemoved(ctx, removed)
+	j.purgePublic(ctx, removed)
 	return err
 }
 

@@ -56,7 +56,7 @@ type JobsConfig struct {
 	// Resolver decides, with an anonymous actor, whether an item is hidden
 	// (Expose); required for Expose.
 	Resolver access.ContentResolver
-	// Hooks.PublicRemoved hears of deleted public/ keys (CDN purge);
+	// Hooks.PurgePublic hears of deleted public/ keys (CDN purge);
 	// Hooks.SlotChanged of slot index changes.
 	Hooks Hooks
 	// Slots is the slot index the slot index job keeps (IndexSlots); nil
@@ -501,7 +501,7 @@ func (w *deleteFolderWorker) work(ctx context.Context, job *river.Job[deleteFold
 	var removed []string
 	defer func() {
 		unlock()
-		w.j.publicRemoved(ctx, removed)
+		w.j.purgePublic(ctx, removed)
 	}()
 	operation := fmt.Sprintf("folder-delete:%s:%d", job.Args.Prefix, job.JobRow.ID)
 	if !job.Args.Final && w.j.cfg.Limiter != nil && job.Args.Owner != "" {

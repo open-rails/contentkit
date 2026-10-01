@@ -91,7 +91,7 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	putObject(t, s, key(media.AreaTemp, upRef), "committed multipart the worker has not placed")
 	putObject(t, s, key(media.AreaOriginals, names["coverOrig"]), "slot original")
 	putObject(t, s, key(media.AreaPrivate, names["coverOut"]), "slot output")
-	putObject(t, s, key(media.AreaPublic, names["coverOut"]), "slot output")
+	putObject(t, s, key(media.AreaPublic, "cover-80.webp"), "slot output") // its fixed public name
 	putObject(t, s, key(media.AreaPublic, names["coverOld"]), "replaced slot output")
 	putObject(t, s, g.Prefix()+"notes.txt", "not ours")
 	// Other folders: a registered kind is swept by SweepAll, an unknown kind is not.
@@ -115,7 +115,7 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 	slot(user.Ref(), "avatar", "avatarOrig", "avatarOut") // committed first; the job renders after
 	putObject(t, s, user.OriginalsPrefix()+names["avatarOrig"], "avatar original")
 	putObject(t, s, user.PrivatePrefix()+names["avatarOut"], "avatar")
-	putObject(t, s, user.PublicPrefix()+names["avatarOut"], "avatar")
+	putObject(t, s, user.PublicPrefix()+"avatar-80.webp", "avatar")
 
 	variant := func(n string) map[string]media.Variant { return map[string]media.Variant{"thumb": {Blob: names[n]}} }
 	for v, f := range map[string]media.File{
@@ -169,7 +169,7 @@ func TestSweepKeepsReferencedFreshAndSlotFiles(t *testing.T) {
 		key(media.AreaPrivate, names["blobA"]), key(media.AreaPrivate, names["blobA2"]), key(media.AreaPrivate, names["blobB"]),
 		key(media.AreaPrivate, names["blobFresh"]), key(media.AreaTemp, upFresh), key(media.AreaOriginals, names["coverOrig"]),
 		key(media.AreaTemp, upOrphan), key(media.AreaTemp, upRef), key(media.AreaPrivate, names["coverOut"]),
-		key(media.AreaPublic, names["coverOut"]), g.Prefix() + "notes.txt", g.ManifestKey()} {
+		key(media.AreaPublic, "cover-80.webp"), g.Prefix() + "notes.txt", g.ManifestKey()} {
 		if !slices.Contains(left, k) {
 			t.Errorf("sweep removed %s", k)
 		}

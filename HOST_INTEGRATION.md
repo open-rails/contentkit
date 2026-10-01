@@ -379,11 +379,13 @@ Cropping and rotating are ContentKit's: the host never decodes images.
   `GET /{kind}/{id}/slots/{slot}` (resolves; 404 for items the viewer cannot see). Listings
   read `Reader.SlotImages(ctx, tenant, kind, slot, width, ids...)` from the
   slot index (`media.NewSlotIndex(pool, schema)` in `JobsConfig.Slots` and
-  `ReaderOptions.Slots`): hash-named, immutable URLs, no bucket reads.
-  `Reader.SlotLink(ref, slot)` (with `ReaderOptions.ReadURL`) is a stable
-  URL to store, e.g. as an account's avatar: the read API redirects it to
-  the current image or `HandlerOptions.SlotDefault`. `Hooks.SlotChanged`
-  (in `JobsConfig.Hooks`) hears every set, replace and removal;
+  `ReaderOptions.Slots`): no bucket reads. A public slot's renditions keep
+  fixed names, `public/{slot}-{rung}.webp`: `Reader.SlotLink(ref, slot,
+  width, version)` is its URL, a function of the item, with `?v=` (the
+  slot's version) to bust caches; nothing is there while the slot is unset.
+  `Hooks.SlotChanged` (in `JobsConfig.Hooks`) hears every set, replace and
+  removal with the new version, and `Hooks.PurgePublic` the fixed keys to
+  purge;
   `Uploads.DeleteSlot` / `POST /delete-slot` removes. After changing slot
   specs, enqueue `ProcessJob{Ref}` per item; the sweep removes the old
   renditions.
@@ -439,14 +441,14 @@ avatars := &ckauthkit.Avatars{Directory: authkitClient, Links: reader, Staff: pe
 // UploadAuthorizer: route the user kind to avatars.CanUpload (own avatar, or Staff).
 // JobsConfig.Hooks.SlotChanged: avatars.SlotChanged.
 // content.Options.Users: &ckauthkit.Authors{Directory: authkitClient}.
-// HandlerOptions.SlotDefault: the default avatar image.
 ```
 
-- The reader needs `ReaderOptions.ReadURL`; `reader.SlotLink(ref, "avatar")`
-  is the account's avatar URL. `SlotChanged` writes it to the account's
-  `public_metadata.avatar` (`Avatars.Key`) once it is set; a removal leaves
-  it, and the link serves `SlotDefault`. Hosts sharing an account store show
-  the avatar of the site where it was last set.
+- `SlotChanged` writes the avatar's URL (`reader.SlotLink` at `Avatars.Width`,
+  `?v=` its version) to the account's `public_metadata.avatar`
+  (`Avatars.Key`) on every set and replace, and clears it on removal when it
+  names this site's avatar; clients show their default while it is unset.
+  Hosts sharing an account store show the avatar of the site where it was
+  last set; `media.AvatarSlot.LinkAt(link, width)` picks another rung.
 - Users change their own avatar under the host's `PGLimiter`; staff with
   `Staff` (checked live) change anyone's. The SDK's `AvatarUpload` uploads,
   crops and removes it.
@@ -487,7 +489,7 @@ the frame or upload); `poster` is a reserved slot name.
   changes whether anonymous viewers see the item (create a draft, publish,
   unpublish, soft delete, restore): it resolves the item anonymously
   (`JobsConfig.Resolver`) and either deletes its public copies at once
-  (reporting them to `Hooks.PublicRemoved` for a CDN purge) or copies them
+  (reporting them to `Hooks.PurgePublic` for a CDN purge) or copies them
   back. Paid and members-only items keep public covers; what they gate is
   the `private/` token the read API grants.
 - Frames are cut from the HLS renditions (one segment range, confined ffmpeg
@@ -545,9 +547,11 @@ the host's periodic jobs. The worker migrates its schema itself.
   read-only on `*/private/*`, `*/public/*` and `*/temp/e-*` (editor views,
   served only under an editor token); `temp/` is never public and nothing
   else in it is readable by the worker; only the hosts write.
-- **CDN**: may cache `public/` in a shared cache (every name is immutable);
-  wire `Hooks.PublicRemoved` (Jobs and the media worker) to purge the keys a
-  hide or sweep deletes. Never cache `private/` in a shared cache: the token
+- **CDN**: may cache `public/` in a shared cache (content-named copies are
+  immutable; a slot's fixed names are served for 5 minutes and links carry
+  `?v=`, so the CDN must key on the query string); wire `Hooks.PurgePublic`
+  (Jobs, and a host-built media worker) to purge the keys a hide, removal,
+  replacement or sweep deletes or overwrites. Never cache `private/` in a shared cache: the token
   is not part of a cache key the CDN checks, so a cached object would be
   served without one. It is `private` for the browser cache.
 - **Denials are 404 by design**: a missing, malformed, expired, wrong-scope

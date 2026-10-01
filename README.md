@@ -189,12 +189,16 @@ One private bucket; each item owns a folder the library keys:
                     /temp/u-{uuid}            staged multipart uploads until placed; never served
                     /temp/e-{hex}             editor views (Kind.Editor); editor token only
                     /private/sha256-{hex}     every rendition (token)
-                    /public/sha256-{hex}      copies of the exposed renditions: slots and inline images of an item that is not hidden
+                    /public/sha256-{hex}      copies of the exposed inline images (and file renditions) of an item that is not hidden
+                    /public/{slot}-{w}.webp   a registered slot's rendition at rung w while the item is not hidden
 ```
 
-`originals/`, `private/` and `public/` names are their content's SHA-256, so
-those objects are immutable: a change writes new names and the
-manifest-driven sweep deletes what the manifest no longer lists. `temp/` is
+`originals/` and `private/` names, and `public/` file copies, are their
+content's SHA-256, so those objects are immutable: a change writes new names
+and the manifest-driven sweep deletes what the manifest no longer lists. A
+public slot keeps fixed names, so its URL is a function of the item, slot and
+width: a change overwrites them (reported to `Hooks.PurgePublic`), and a
+removal or hide deletes them. `temp/` is
 intermediary and discardable: nothing a viewer needs lives there, and the
 sweep wipes it by age. Clients never build URLs; the API returns them.
 
@@ -243,8 +247,9 @@ allowed only `*/private/*`, `*/public/*` and `*/temp/e-*`, `MEDIA_ACCESS_TOKEN_K
 `MEDIA_ACCESS_CORS_ORIGINS` (the sites' exact origins, with credentials;
 empty breaks hls.js, warned; wildcards and paths are refused); secrets may be
 given as `{VAR}_FILE`. `public/` is served without a token (`public,
-immutable`); `private/` needs `?t=` or an `mt` cookie (`private,
-immutable`); a `temp/e-` editor view needs `?t=` with an editor token
+immutable`; a slot's fixed names `public, max-age=300,
+stale-while-revalidate=60`, since a change rewrites them); `private/` needs
+`?t=` or an `mt` cookie (`private, immutable`); a `temp/e-` editor view needs `?t=` with an editor token
 (`token.EditorScope`, which no viewer token carries). Everything refused (no
 or bad token, the manifest, `originals/`, staged uploads, unknown keys) is
 one identical `no-store` 404, so denials look
@@ -430,17 +435,20 @@ works), as do `DeleteSlot` and `Expose`; folder deletion and the periodic
 sweep pass reconcile too. Slots that predate the index (an upgrade) are
 indexed once per tenant by a backfill the jobs schedule when they bind to
 River (one unique job across replicas, resumable, recorded in
-`content_media_slot_backfill`). Each change runs `Hooks.SlotChanged(ctx, tx, ref,
-slot, set)` in that job's transaction (at least once). Listings read
-`Reader.SlotImages(ctx, tenant, kind, slot, width, ids...)`: one query, no
-bucket reads, `Picture{URL, SrcSet, W, H}` per set item.
-`Reader.SlotLink(ref, slot)` is the slot's stable URL,
-`{ReaderOptions.ReadURL}/{kind}/{id}/slots/{slot}/image`: the read API
-redirects it (`?w=` picks the narrowest output at least that wide) to the
-current public image, else to `HandlerOptions.SlotDefault`, else 404.
+`content_media_slot_backfill`; it also writes the slots' fixed `public/`
+names). Each change runs `Hooks.SlotChanged(ctx, tx, SlotChange{Ref, Slot,
+Version})` in that job's transaction (at least once; `Version` "" on
+removal), and the job reports the slot's fixed keys to `Hooks.PurgePublic`.
+Listings read `Reader.SlotImages(ctx, tenant, kind, slot, width, ids...)`:
+one query, no bucket reads, `Picture{URL, SrcSet, W, H}` per set item.
+`Reader.SlotLink(ref, slot, width, version)` is a public slot's URL, a pure
+function of the item: `{media}/{tenant}/{kind}/{id}/public/{slot}-{rung}.webp`
+at the narrowest rung at least `width` wide, with `?v={version}` to bust
+caches (without it the image refreshes within the cache window). An unset
+slot has nothing there (the CDN answers 404); clients show their default.
 `media.AvatarSlot` is the avatar preset (1:1, 64–512 px, stills), registered
-as `media.AvatarSlotName` on e.g. `media.UserKind`; `Slot.LinkSrcSet(link)` is
-a srcset of the link.
+as `media.AvatarSlotName` on e.g. `media.UserKind`; `Slot.LinkAt(link, width)`
+moves a link to another rung and `Slot.LinkSrcSet(link)` is its srcset.
 `Slot{Aspect: media.AspectNative}` keeps the edited image's own shape: no crop
 by default, crops of any shape.
 
@@ -654,7 +662,7 @@ Media's River jobs (`jobs.RiverJobs()`) compose into the host client through
   `TempUploadTTL` (48 h: above the bucket's 1-day multipart abort rule, since
   multipart objects may be dated at initiation). A staged upload still being
   uploaded is not an object yet, and one being processed is referenced.
-  Deleted `public/` keys go to `Hooks.PublicRemoved` (CDN purge). S3
+  Deleted `public/` keys go to `Hooks.PurgePublic` (CDN purge). S3
   lifecycle rules cannot match `*/temp/*` (filters are prefixes), so the
   sweep is the mechanism; `AbortIncompleteMultipartUpload` stays the backstop
   for uploads never completed.
@@ -672,7 +680,7 @@ Media's River jobs (`jobs.RiverJobs()`) compose into the host client through
 - **Expose** (`jobs.ExposeTx` in every transaction that changes whether
   anonymous viewers see an item: create a draft, publish, hide, delete,
   restore) resolves the item anonymously. Hidden: the manifest records it,
-  `public/` is emptied at once and the keys go to `Hooks.PublicRemoved`.
+  `public/` is emptied at once and the keys go to `Hooks.PurgePublic`.
   Visible: the slot and inline outputs are copied back. `private/` is never
   touched; free vs members-only is only whether the host grants a token.
 - Processing: `workqueue.Queue` (the uploads' `ProcessQueue`) inserts one

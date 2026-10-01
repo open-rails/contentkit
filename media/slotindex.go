@@ -19,12 +19,12 @@ import (
 	"github.com/open-rails/contentkit/media/layout"
 )
 
-// SlotIndex is the index of public slot outputs (content_media_slots in the
+// SlotIndex is the index of public slots (content_media_slots in the
 // ContentKit schema): a row per registered slot whose renditions are in
-// public/, so an unset, hidden or not yet encoded slot has none. The host's
-// media jobs keep it (Jobs.IndexSlots); listings (Reader.SlotImages) and
-// stable slot links (Reader.SlotLink) read it without bucket reads. Pass the
-// same index to JobsConfig.Slots and ReaderOptions.Slots.
+// public/ under their fixed names, so an unset, hidden or not yet encoded
+// slot has none. The host's media jobs keep it (Jobs.IndexSlots); listings
+// (Reader.SlotImages) read it without bucket reads. Pass the same index to
+// JobsConfig.Slots and ReaderOptions.Slots.
 type SlotIndex struct {
 	pool     *pgxpool.Pool
 	table    string
@@ -40,20 +40,21 @@ func NewSlotIndex(pool *pgxpool.Pool, schema string) (*SlotIndex, error) {
 		backfill: pgx.Identifier{schema, "content_media_slot_backfill"}.Sanitize()}, nil
 }
 
-// indexedSlot is one row: the slot's aspect and its public outputs by
-// ascending width.
+// indexedSlot is one row: the slot's aspect, version (its record's
+// fingerprint, the URLs' ?v=) and public outputs by ascending rung.
 type indexedSlot struct {
 	Aspect  Aspect
+	Version string
 	Outputs []SlotRendition
 }
 
 func (s indexedSlot) equal(o indexedSlot) bool {
 	a, _ := json.Marshal(s.Outputs)
 	b, _ := json.Marshal(o.Outputs)
-	return s.Aspect == o.Aspect && bytes.Equal(a, b)
+	return s.Aspect == o.Aspect && s.Version == o.Version && bytes.Equal(a, b)
 }
 
-// publicSlots are the item's registered slots with outputs in public/.
+// publicSlots are the item's registered slots with renditions in public/.
 func publicSlots(item Item, root *Root) map[string]indexedSlot {
 	out := map[string]indexedSlot{}
 	if root == nil || root.Hidden {
@@ -61,33 +62,44 @@ func publicSlots(item Item, root *Root) map[string]indexedSlot {
 	}
 	for name, spec := range item.Kind().Slots {
 		rec := root.Slots[name]
-		if rec == nil || rec.Result == nil {
+		if rec == nil || rec.Result == nil || len(rec.Result.Outputs) == 0 {
 			continue
 		}
-		var outs []SlotRendition
-		for _, o := range rec.Result.Outputs {
-			if root.Private[o.Blob].Public {
-				outs = append(outs, o)
-			}
-		}
-		if len(outs) == 0 {
-			continue
-		}
+		outs := rec.Result.Outputs
 		aspect := spec.Aspect
 		if spec.Native() {
 			aspect = AspectOf(outs[len(outs)-1].W, outs[len(outs)-1].H)
 		}
-		out[name] = indexedSlot{Aspect: aspect, Outputs: outs}
+		out[name] = indexedSlot{Aspect: aspect, Version: rec.Result.Of, Outputs: outs}
 	}
 	return out
 }
 
+// SlotChange is a slot index change Hooks.SlotChanged reports: the slot's
+// public image was set or replaced (Version, its URLs' ?v=), or removed
+// (Version "").
+type SlotChange struct {
+	Ref     contentref.ContentRef
+	Slot    string
+	Version string
+}
+
 // sync makes ref's rows want in one transaction, calling changed for every
 // slot whose row it adds, replaces or removes; an error rolls everything back.
-func (x *SlotIndex) sync(ctx context.Context, ref contentref.ContentRef, want map[string]indexedSlot,
-	changed func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, slot string, set bool) error) error {
-	return pgx.BeginFunc(ctx, x.pool, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT slot, aspect, outputs FROM `+x.table+`
+// It returns the public/ keys of the changed slots' fixed names, before and
+// after, for a CDN purge.
+func (x *SlotIndex) sync(ctx context.Context, item Item, want map[string]indexedSlot,
+	changed func(ctx context.Context, tx pgx.Tx, c SlotChange) error) ([]string, error) {
+	ref := item.Ref().Content()
+	var purge []string
+	fixed := func(slot string, s indexedSlot) {
+		for _, o := range s.Outputs {
+			purge = append(purge, item.PublicPrefix()+o.PublicName(slot))
+		}
+	}
+	err := pgx.BeginFunc(ctx, x.pool, func(tx pgx.Tx) error {
+		purge = purge[:0]
+		rows, err := tx.Query(ctx, `SELECT slot, aspect, version, outputs FROM `+x.table+`
 			WHERE tenant_id = $1 AND content_kind = $2 AND content_id = $3 FOR UPDATE`,
 			ref.TenantID, ref.ContentKind, ref.ContentID)
 		if err != nil {
@@ -95,13 +107,13 @@ func (x *SlotIndex) sync(ctx context.Context, ref contentref.ContentRef, want ma
 		}
 		have := map[string]indexedSlot{}
 		for rows.Next() {
-			var slot, aspect string
+			var slot, aspect, version string
 			var outputs []byte
-			if err := rows.Scan(&slot, &aspect, &outputs); err != nil {
+			if err := rows.Scan(&slot, &aspect, &version, &outputs); err != nil {
 				rows.Close()
 				return err
 			}
-			s, err := decodeIndexed(aspect, outputs)
+			s, err := decodeIndexed(aspect, version, outputs)
 			if err != nil {
 				rows.Close()
 				return err
@@ -111,13 +123,10 @@ func (x *SlotIndex) sync(ctx context.Context, ref contentref.ContentRef, want ma
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		type change struct {
-			slot string
-			set  bool
-		}
-		var changes []change
+		var changes []SlotChange
 		for slot, s := range want {
-			if h, ok := have[slot]; ok && h.equal(s) {
+			h, had := have[slot]
+			if had && h.equal(s) {
 				continue
 			}
 			outputs, err := json.Marshal(s.Outputs)
@@ -125,16 +134,20 @@ func (x *SlotIndex) sync(ctx context.Context, ref contentref.ContentRef, want ma
 				return err
 			}
 			aspect, _ := s.Aspect.MarshalText()
-			if _, err := tx.Exec(ctx, `INSERT INTO `+x.table+` (tenant_id, content_kind, content_id, slot, aspect, outputs)
-				VALUES ($1, $2, $3, $4, $5, $6)
+			if _, err := tx.Exec(ctx, `INSERT INTO `+x.table+` (tenant_id, content_kind, content_id, slot, aspect, version, outputs)
+				VALUES ($1, $2, $3, $4, $5, $6, $7)
 				ON CONFLICT (tenant_id, content_kind, content_id, slot)
-				DO UPDATE SET aspect = EXCLUDED.aspect, outputs = EXCLUDED.outputs, updated_at = now()`,
-				ref.TenantID, ref.ContentKind, ref.ContentID, slot, string(aspect), outputs); err != nil {
+				DO UPDATE SET aspect = EXCLUDED.aspect, version = EXCLUDED.version, outputs = EXCLUDED.outputs, updated_at = now()`,
+				ref.TenantID, ref.ContentKind, ref.ContentID, slot, string(aspect), s.Version, outputs); err != nil {
 				return err
 			}
-			changes = append(changes, change{slot, true})
+			if had {
+				fixed(slot, h)
+			}
+			fixed(slot, s)
+			changes = append(changes, SlotChange{Ref: ref, Slot: slot, Version: s.Version})
 		}
-		for slot := range have {
+		for slot, h := range have {
 			if _, ok := want[slot]; ok {
 				continue
 			}
@@ -143,18 +156,24 @@ func (x *SlotIndex) sync(ctx context.Context, ref contentref.ContentRef, want ma
 				ref.TenantID, ref.ContentKind, ref.ContentID, slot); err != nil {
 				return err
 			}
-			changes = append(changes, change{slot, false})
+			fixed(slot, h)
+			changes = append(changes, SlotChange{Ref: ref, Slot: slot})
 		}
 		if changed == nil {
 			return nil
 		}
 		for _, c := range changes {
-			if err := changed(ctx, tx, ref, c.slot, c.set); err != nil {
-				return fmt.Errorf("media: Hooks.SlotChanged %s#%s: %w", ref, c.slot, err)
+			if err := changed(ctx, tx, c); err != nil {
+				return fmt.Errorf("media: Hooks.SlotChanged %s#%s: %w", ref, c.Slot, err)
 			}
 		}
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	slices.Sort(purge)
+	return slices.Compact(purge), nil
 }
 
 // deleteTx drops every row of the items, in the host's transaction.
@@ -174,19 +193,19 @@ func (x *SlotIndex) lookup(ctx context.Context, tenant, kind, slot string, ids [
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := x.pool.Query(ctx, `SELECT content_id, aspect, outputs FROM `+x.table+`
+	rows, err := x.pool.Query(ctx, `SELECT content_id, aspect, version, outputs FROM `+x.table+`
 		WHERE tenant_id = $1 AND content_kind = $2 AND content_id = ANY($3) AND slot = $4`, tenant, kind, ids, slot)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, aspect string
+		var id, aspect, version string
 		var outputs []byte
-		if err := rows.Scan(&id, &aspect, &outputs); err != nil {
+		if err := rows.Scan(&id, &aspect, &version, &outputs); err != nil {
 			return nil, err
 		}
-		s, err := decodeIndexed(aspect, outputs)
+		s, err := decodeIndexed(aspect, version, outputs)
 		if err != nil {
 			return nil, err
 		}
@@ -195,8 +214,8 @@ func (x *SlotIndex) lookup(ctx context.Context, tenant, kind, slot string, ids [
 	return out, rows.Err()
 }
 
-func decodeIndexed(aspect string, outputs []byte) (indexedSlot, error) {
-	var s indexedSlot
+func decodeIndexed(aspect, version string, outputs []byte) (indexedSlot, error) {
+	s := indexedSlot{Version: version}
 	if err := s.Aspect.UnmarshalText([]byte(aspect)); err != nil {
 		return s, fmt.Errorf("media: slot index aspect %q: %w", aspect, err)
 	}
@@ -208,7 +227,8 @@ func decodeIndexed(aspect string, outputs []byte) (indexedSlot, error) {
 
 // Picture is a listed slot image: URL is the output nearest a display width
 // (the narrowest at least that wide, else the widest), W and H its size, and
-// SrcSet every distinct output ("url 320w, …"). Every URL is immutable.
+// SrcSet every distinct output ("url 320w, …"). URLs are the slot's fixed
+// public names with ?v= its version (Reader.SlotLink).
 type Picture struct {
 	URL    string `json:"url"`
 	SrcSet string `json:"srcset"`
@@ -217,16 +237,18 @@ type Picture struct {
 }
 
 // picture builds an indexed slot's Picture for width.
-func (s indexedSlot) picture(item Item, base string, width int) Picture {
-	urls := OutputURLs{BaseURL: base}
+func (s indexedSlot) picture(item Item, slot, base string, width int) Picture {
+	url := func(o SlotRendition) string {
+		return slotURL(base, item, layout.SlotFileName(slot, o.Rung), s.Version)
+	}
 	o := s.pick(width)
-	p := Picture{URL: urls.url(item, o.Blob, true), W: o.W, H: o.H}
+	p := Picture{URL: url(o), W: o.W, H: o.H}
 	set := make([]string, 0, len(s.Outputs))
 	for i, o := range s.Outputs {
 		if i > 0 && s.Outputs[i-1].Blob == o.Blob { // rungs capped at the edited width share one output
 			continue
 		}
-		set = append(set, urls.url(item, o.Blob, true)+" "+strconv.Itoa(o.W)+"w")
+		set = append(set, url(o)+" "+strconv.Itoa(o.W)+"w")
 	}
 	p.SrcSet = strings.Join(set, ", ")
 	return p
@@ -240,6 +262,15 @@ func (s indexedSlot) pick(width int) SlotRendition {
 		}
 	}
 	return s.Outputs[len(s.Outputs)-1]
+}
+
+// slotURL is a public slot rendition's URL: base, the fixed name, ?v=version.
+func slotURL(base string, item Item, name, version string) string {
+	u := strings.TrimRight(base, "/") + "/" + item.PublicPrefix() + name
+	if version != "" {
+		u += "?v=" + version
+	}
+	return u
 }
 
 // SlotIndexer schedules an item's slot index job after a change to its
@@ -264,8 +295,10 @@ func (j *Jobs) IndexSlots(ctx context.Context, ref contentref.ContentRef) error 
 	return j.insertOnce(ctx, slotIndexArgs{Ref: ref.Content()}, river.InsertOpts{})
 }
 
-// reindex brings ref's slot index rows to its manifest under the folder lock,
-// so reindexes of one item never interleave. Hooks.SlotChanged runs under that
+// reindex brings the item's public/ copies (Manifests.SyncPublic) and slot
+// index rows to its manifest, reporting deleted, overwritten and changed fixed
+// public keys to Hooks.PurgePublic. Rows are written under the folder lock, so
+// reindexes of one item never interleave; Hooks.SlotChanged runs under that
 // lock and must not edit the item's media.
 func (j *Jobs) reindex(ctx context.Context, ref contentref.ContentRef) error {
 	if j.cfg.Slots == nil {
@@ -276,18 +309,26 @@ func (j *Jobs) reindex(ctx context.Context, ref contentref.ContentRef) error {
 	if err != nil || len(item.Kind().Slots) == 0 {
 		return nil // an unregistered kind has no slots to index
 	}
+	removed, err := j.manifests.SyncPublic(ctx, ref)
+	j.purgePublic(ctx, removed)
+	if err != nil {
+		return err
+	}
 	unlock, err := j.cfg.Locker.Lock(ctx, item.ManifestKey())
 	if err != nil {
 		return err
 	}
-	defer unlock()
 	root, _, err := j.manifests.Root(ctx, ref)
 	if errors.Is(err, ErrNotFound) {
 		root = nil
 	} else if err != nil {
+		unlock()
 		return err
 	}
-	return j.cfg.Slots.sync(ctx, ref, publicSlots(item, root), j.cfg.Hooks.SlotChanged)
+	changed, err := j.cfg.Slots.sync(ctx, item, publicSlots(item, root), j.cfg.Hooks.SlotChanged)
+	unlock()
+	j.purgePublic(ctx, changed)
+	return err
 }
 
 // reindexFolder is reindex for a swept folder.

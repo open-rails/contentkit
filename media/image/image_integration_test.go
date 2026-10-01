@@ -331,7 +331,7 @@ func (e *env) slotOutput(t *testing.T, ref contentref.ContentRef, slot string, r
 	}
 	for _, o := range rec.Result.Outputs {
 		if o.Rung == rung {
-			return e.Tenant + "/" + ref.ContentKind + "/" + ref.ContentID + "/public/" + o.Blob
+			return e.Tenant + "/" + ref.ContentKind + "/" + ref.ContentID + "/public/" + o.PublicName(slot)
 		}
 	}
 	return ""

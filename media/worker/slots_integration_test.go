@@ -1,12 +1,13 @@
 package worker_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
-	"net/http"
-	"net/http/httptest"
+	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -27,8 +28,6 @@ func (selfAvatar) CanUpload(_ context.Context, a access.Actor, t media.UploadTar
 	return media.UploadGrant{Allowed: own, Owner: a.ID}, nil
 }
 
-const avatarDefault = "https://app.example/static/avatar.svg"
-
 func (h *host) avatar(t *testing.T, user contentref.ContentRef, width int) media.Picture {
 	t.Helper()
 	pics, err := h.reader.SlotImages(context.Background(), h.Tenant, media.UserKind, media.AvatarSlotName, width, user.ContentID)
@@ -38,31 +37,41 @@ func (h *host) avatar(t *testing.T, user contentref.ContentRef, width int) media
 	return pics[user.ContentID]
 }
 
-// link GETs a slot link through the read API.
-func (h *host) link(t *testing.T, path string, withDefault bool) *httptest.ResponseRecorder {
+// object returns an object's bytes and ETag; ok is false when it is absent.
+func (h *host) object(t *testing.T, key string) ([]byte, string, bool) {
 	t.Helper()
-	o := media.HandlerOptions{Tenant: h.Tenant}
-	if withDefault {
-		o.SlotDefault = func(kind, slot string) string {
-			if kind == media.UserKind && slot == media.AvatarSlotName {
-				return avatarDefault
-			}
-			return ""
-		}
+	rc, obj, err := h.Store.Get(context.Background(), key, media.GetOptions{})
+	if errors.Is(err, media.ErrNotFound) {
+		return nil, "", false
+	} else if err != nil {
+		t.Fatal(err)
 	}
-	rec := httptest.NewRecorder()
-	h.reader.Handler(o).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
-	return rec
+	defer rc.Close()
+	b, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b, obj.ETag, true
 }
 
-// An account avatar end to end: the worker renders it, the host's slot index
-// job lists it once its hook succeeds, the stable link follows every change,
-// only the user may change it, removal falls back to the default, and erasure
-// drops the row with the account.
+// fixedKeys are the public/ keys of the avatar preset's rungs.
+func fixedKeys(item media.Item) []string {
+	var keys []string
+	for _, w := range media.AvatarSlot.Widths {
+		keys = append(keys, item.PublicPrefix()+media.AvatarSlotName+"-"+strconv.Itoa(w)+".webp")
+	}
+	return keys
+}
+
+// An account avatar end to end: the worker renders it to fixed public names,
+// the slot index lists it with a version once the host's hook succeeds, a
+// replacement overwrites the same names (purged, a new version), only the
+// user may change it, removal deletes the names, and erasure drops the row.
 func TestAvatarSlotIndexLinksAndRemoval(t *testing.T) {
 	h := newHost(t)
 	ctx := context.Background()
 	user := contentref.New(h.Tenant, media.UserKind, newID())
+	item, _ := h.kinds.Item(user)
 	owner := access.Actor{ID: user.ContentID, Kind: "user"}
 	self, err := media.NewUploads(media.UploadOptions{Store: h.Store, Kinds: h.kinds, Manifests: h.manifests, Authorizer: selfAvatar{}, Queue: h.queue})
 	if err != nil {
@@ -83,59 +92,66 @@ func TestAvatarSlotIndexLinksAndRemoval(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	keys := fixedKeys(item)
 	h.mu.Lock()
 	h.failChanges = 1 // the first SlotChanged fails: the row waits for the retried job
 	h.mu.Unlock()
 	upload(41)
 	eventually(t, "the avatar's row", time.Minute, func() bool { return h.avatar(t, user, 100).URL != "" })
-	set := user.String() + "#" + media.AvatarSlotName + " set"
-	if got := h.slotChanges(); !slices.Equal(got, []string{set}) {
+	rec, err := h.manifests.Slot(ctx, user, media.AvatarSlotName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := rec.Result.Of
+	if got := h.slotChanges(); !slices.Equal(got, []string{user.String() + "#avatar set:" + first}) {
 		t.Fatalf("SlotChanged %v, want one set after the retry", got)
 	}
-	m, err := h.manifests.SlotManifest(ctx, media.OutputURLs{BaseURL: mediaURL}, user, media.AvatarSlotName)
-	if err != nil || len(m.Outputs) != 4 {
-		t.Fatalf("avatar manifest %+v %v", m, err)
+
+	// Fixed names, each a copy of its private rendition; the manifest records them.
+	pic := h.avatar(t, user, 100)
+	if want := mediaURL + "/" + keys[1] + "?v=" + first; pic.URL != want || pic.W != 128 || pic.H != 128 {
+		t.Fatalf("avatar at 100 px: %+v, want %s", pic, want)
 	}
-	first := h.avatar(t, user, 100)
-	if first.URL != m.Outputs[1].URL || first.W != 128 || first.H != 128 {
-		t.Fatalf("avatar at 100 px: %+v, outputs %+v", first, m.Outputs)
+	if link := h.reader.SlotLink(user, media.AvatarSlotName, 100, first); link != pic.URL {
+		t.Fatalf("SlotLink %q, want %q", link, pic.URL)
 	}
-	if n := strings.Count(first.SrcSet, "w,") + 1; n != 4 { // the 512 rung is capped at the 300 px upload
-		t.Fatalf("srcset %q", first.SrcSet)
+	if link := h.reader.SlotLink(user, media.AvatarSlotName, 100, ""); link != mediaURL+"/"+keys[1] {
+		t.Fatalf("unversioned SlotLink %q", link)
 	}
-	if key, ok := strings.CutPrefix(first.URL, mediaURL+"/"); !ok || !h.exists(t, key) {
-		t.Fatalf("listed URL %s is not a public object", first.URL)
+	if n := strings.Count(pic.SrcSet, "w,") + 1; n != 4 || !strings.Contains(pic.SrcSet, "/avatar-512.webp?v="+first+" 300w") {
+		t.Fatalf("srcset %q", pic.SrcSet)
+	}
+	etags := map[string]string{}
+	for i, o := range rec.Result.Outputs {
+		if o.Public != media.AvatarSlotName+"-"+strconv.Itoa(o.Rung)+".webp" {
+			t.Fatalf("output %d records public name %q", i, o.Public)
+		}
+		private, _ := item.Private(o.Blob)
+		want, _, _ := h.object(t, private)
+		got, etag, ok := h.object(t, keys[i])
+		if !ok || !bytes.Equal(got, want) {
+			t.Fatalf("%s is not a copy of %s", keys[i], private)
+		}
+		etags[keys[i]] = etag
 	}
 
-	// The stable link redirects to the current image.
-	link := h.reader.SlotLink(user, media.AvatarSlotName)
-	path, ok := strings.CutPrefix(link, appURL)
-	if !ok || path != "/user/"+user.ContentID+"/slots/avatar/image" {
-		t.Fatalf("SlotLink %q", link)
+	// A replacement overwrites the same names, purges them, and changes v.
+	upload(42)
+	eventually(t, "the replaced row", time.Minute, func() bool { return h.avatar(t, user, 100).URL != pic.URL })
+	rec, _ = h.manifests.Slot(ctx, user, media.AvatarSlotName)
+	second := rec.Result.Of
+	if second == first || h.avatar(t, user, 100).URL != mediaURL+"/"+keys[1]+"?v="+second {
+		t.Fatalf("replaced version %s (was %s): %+v", second, first, h.avatar(t, user, 100))
 	}
-	if rec := h.link(t, path+"?w=100", true); rec.Code != http.StatusFound || rec.Header().Get("Location") != first.URL ||
-		!strings.HasPrefix(rec.Header().Get("Cache-Control"), "public, max-age=60") {
-		t.Fatalf("link?w=100: %d %v", rec.Code, rec.Header())
-	}
-	if rec := h.link(t, path, false); rec.Code != http.StatusFound || rec.Header().Get("Location") != m.Outputs[3].URL {
-		t.Fatalf("link without w: %d %s, want the widest %s", rec.Code, rec.Header().Get("Location"), m.Outputs[3].URL)
-	}
-	for p, code := range map[string]int{path + "?w=0": http.StatusBadRequest, path + "?w=x": http.StatusBadRequest,
-		"/user/" + user.ContentID + "/slots/cover/image": http.StatusNotFound, "/gallery/" + user.ContentID + "/slots/avatar/image": http.StatusNotFound} {
-		if rec := h.link(t, p, true); rec.Code != code {
-			t.Fatalf("GET %s: %d, want %d", p, rec.Code, code)
+	for _, key := range keys {
+		if _, etag, ok := h.object(t, key); !ok || etag == etags[key] {
+			t.Fatalf("%s was not overwritten", key)
 		}
 	}
-	if got := media.AvatarSlot.LinkSrcSet(link); !strings.HasPrefix(got, link+"?w=64 64w, ") || !strings.HasSuffix(got, link+"?w=512 512w") {
-		t.Fatalf("LinkSrcSet %q", got)
-	}
-
-	// A new image replaces the row; the link follows.
-	upload(42)
-	eventually(t, "the replaced row", time.Minute, func() bool { u := h.avatar(t, user, 100).URL; return u != "" && u != first.URL })
-	if rec := h.link(t, path+"?w=100", true); rec.Header().Get("Location") != h.avatar(t, user, 100).URL {
-		t.Fatalf("link after replace: %s", rec.Header().Get("Location"))
-	}
+	eventually(t, "the replaced names purged", 10*time.Second, func() bool {
+		purged := h.purgedKeys()
+		return !slices.ContainsFunc(keys, func(k string) bool { return !slices.Contains(purged, k) })
+	})
 
 	// Only the user writes their folder, and only the avatar slot.
 	bob := access.Actor{ID: newID(), Kind: "user"}
@@ -147,20 +163,28 @@ func TestAvatarSlotIndexLinksAndRemoval(t *testing.T) {
 		t.Fatalf("a file in the user's folder: %v", err)
 	}
 
-	// Removal: the row goes, the hook hears it, the link falls back.
+	// Removal: the names are deleted (nothing at the URL), the row goes, the
+	// hook hears it.
+	before := len(h.purgedKeys())
 	if err := self.DeleteSlot(ctx, owner, user, media.AvatarSlotName); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "the removed row", time.Minute, func() bool { return h.avatar(t, user, 100).URL == "" })
-	clear := user.String() + "#" + media.AvatarSlotName + " clear"
-	if got := h.slotChanges(); !slices.Equal(got, []string{set, set, clear}) {
+	eventually(t, "the removed avatar", time.Minute, func() bool {
+		if h.avatar(t, user, 100).URL != "" {
+			return false
+		}
+		for _, key := range keys {
+			if _, _, ok := h.object(t, key); ok {
+				return false
+			}
+		}
+		return true
+	})
+	if got := h.slotChanges(); got[len(got)-1] != user.String()+"#avatar clear" {
 		t.Fatalf("SlotChanged %v", got)
 	}
-	if rec := h.link(t, path, true); rec.Code != http.StatusFound || rec.Header().Get("Location") != avatarDefault {
-		t.Fatalf("link without an avatar: %d %s", rec.Code, rec.Header().Get("Location"))
-	}
-	if rec := h.link(t, path, false); rec.Code != http.StatusNotFound {
-		t.Fatalf("link without an avatar or default: %d", rec.Code)
+	if purged := h.purgedKeys()[before:]; !slices.Contains(purged, keys[0]) {
+		t.Fatalf("removal purged %v", purged)
 	}
 	if err := self.DeleteSlot(ctx, owner, user, media.AvatarSlotName); err != nil {
 		t.Fatalf("removing an unset avatar: %v", err)
@@ -169,8 +193,7 @@ func TestAvatarSlotIndexLinksAndRemoval(t *testing.T) {
 	// Erasing the account drops its row in the host's transaction; the folder
 	// deletion keeps it dropped.
 	upload(43)
-	var last media.Picture
-	eventually(t, "the new row", time.Minute, func() bool { last = h.avatar(t, user, 100); return last.URL != "" })
+	eventually(t, "the new row", time.Minute, func() bool { return h.avatar(t, user, 100).URL != "" })
 	tx, err := h.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -181,42 +204,52 @@ func TestAvatarSlotIndexLinksAndRemoval(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	key, _ := strings.CutPrefix(last.URL, mediaURL+"/")
 	eventually(t, "the erased account's folder and row", time.Minute, func() bool {
-		return !h.exists(t, key) && h.avatar(t, user, 100).URL == ""
+		_, _, ok := h.object(t, keys[0])
+		return !ok && h.avatar(t, user, 100).URL == ""
 	})
 }
 
-// Hiding an item takes its slots out of the index (and its links to the
-// default); unhiding brings them back.
+// Hiding an item deletes its fixed public names and takes its slots out of
+// the index; unhiding brings both back.
 func TestHiddenItemLeavesTheSlotIndex(t *testing.T) {
 	h := newHost(t)
 	ctx := context.Background()
 	work := contentref.New(h.Tenant, "gallery", newID())
+	item, _ := h.kinds.Item(work)
 	h.upload(t, work, "cover", "image/png", pngImage(t, 600, 200, 51))
+	cover := item.PublicPrefix() + "cover-300.webp"
 	listed := func() bool {
 		pics, err := h.reader.SlotImages(ctx, h.Tenant, "gallery", "cover", 300, work.ContentID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return pics[work.ContentID].URL != ""
+		_, _, public := h.object(t, cover)
+		return pics[work.ContentID].URL != "" && public
 	}
 	eventually(t, "the cover's row", time.Minute, listed)
 	h.hidden.Store(work.Key(), true)
 	if err := h.jobs.Expose(ctx, work); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "the hidden cover leaving the index", time.Minute, func() bool { return !listed() })
-	if rec := h.link(t, "/gallery/"+work.ContentID+"/slots/cover/image", true); rec.Code != http.StatusNotFound {
-		t.Fatalf("hidden cover link: %d %s", rec.Code, rec.Header().Get("Location"))
+	eventually(t, "the hidden cover leaving public/ and the index", time.Minute, func() bool {
+		pics, err := h.reader.SlotImages(ctx, h.Tenant, "gallery", "cover", 300, work.ContentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, public := h.object(t, cover)
+		return pics[work.ContentID].URL == "" && !public
+	})
+	if !slices.Contains(h.purgedKeys(), cover) {
+		t.Fatalf("hiding purged %v", h.purgedKeys())
 	}
 	h.hidden.Delete(work.Key())
 	if err := h.jobs.Expose(ctx, work); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, "the unhidden cover's row", time.Minute, listed)
-	cover := work.String() + "#cover"
-	if got := h.slotChanges(); !slices.Equal(got, []string{cover + " set", cover + " clear", cover + " set"}) {
+	got := h.slotChanges()
+	if len(got) != 3 || !strings.HasPrefix(got[0], work.String()+"#cover set:") || got[1] != work.String()+"#cover clear" || got[2] != got[0] {
 		t.Fatalf("SlotChanged %v", got)
 	}
 }
@@ -244,10 +277,10 @@ func (h *host) idle(t *testing.T) {
 	})
 }
 
-// An upgrade: the slot index starts empty beside slots set before it existed.
-// A host replica starting (its media jobs bound to River) backfills it at
-// once, without the daily sweep, records completion, and a later start
-// schedules no backfill.
+// An upgrade: the slot index starts empty and the fixed public names absent
+// beside slots set before they existed. A host replica starting (its media
+// jobs bound to River) backfills both at once, without the daily sweep,
+// records completion, and a later start schedules no backfill.
 func TestSlotIndexBackfillsAfterAnUpgrade(t *testing.T) {
 	h := newHost(t)
 	ctx := context.Background()
@@ -255,6 +288,9 @@ func TestSlotIndexBackfillsAfterAnUpgrade(t *testing.T) {
 	user := contentref.New(h.Tenant, media.UserKind, newID())
 	h.upload(t, work, "cover", "image/png", pngImage(t, 600, 200, 61))
 	h.upload(t, user, media.AvatarSlotName, "image/png", pngImage(t, 200, 200, 62))
+	workItem, _ := h.kinds.Item(work)
+	userItem, _ := h.kinds.Item(user)
+	fixed := []string{workItem.PublicPrefix() + "cover-150.webp", userItem.PublicPrefix() + "avatar-64.webp"}
 	listed := func() int {
 		t.Helper()
 		n := 0
@@ -264,6 +300,11 @@ func TestSlotIndexBackfillsAfterAnUpgrade(t *testing.T) {
 				t.Fatal(err)
 			}
 			n += len(pics)
+		}
+		for _, key := range fixed {
+			if _, _, ok := h.object(t, key); ok {
+				n++
+			}
 		}
 		return n
 	}
@@ -284,12 +325,17 @@ func TestSlotIndexBackfillsAfterAnUpgrade(t *testing.T) {
 		}
 		return n
 	}
-	eventually(t, "both slots indexed and the first start's backfill done", time.Minute, func() bool { return listed() == 2 && completed() })
+	eventually(t, "both slots public and indexed, and the first start's backfill done", time.Minute, func() bool { return listed() == 4 && completed() })
 	h.idle(t)
 
-	// Before the upgrade: no rows and no backfill record.
+	// Before the upgrade: no rows, no fixed names and no backfill record.
 	for _, table := range []string{"content_media_slots", "content_media_slot_backfill"} {
 		if _, err := h.pool.Exec(ctx, "DELETE FROM "+pgx.Identifier{h.content, table}.Sanitize()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, key := range fixed {
+		if err := h.Store.Delete(ctx, key); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -298,7 +344,7 @@ func TestSlotIndexBackfillsAfterAnUpgrade(t *testing.T) {
 	}
 	before := backfills()
 	h.startJobs(t) // the upgraded replica starts
-	eventually(t, "the backfill", 30*time.Second, func() bool { return listed() == 2 && completed() })
+	eventually(t, "the backfill", 30*time.Second, func() bool { return listed() == 4 && completed() })
 	if n := backfills(); n != before+1 {
 		t.Fatalf("%d backfill jobs scheduled at start, want 1", n-before)
 	}

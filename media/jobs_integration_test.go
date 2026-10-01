@@ -381,7 +381,7 @@ func TestPublicSyncCannotUndoCompletedHide(t *testing.T) {
 	item, _ := kinds.Item(ref)
 	blob := blobName("poster")
 	private, _ := item.Private(blob)
-	store.key, _ = item.Public(blob)
+	store.key = item.PublicPrefix() + "poster-480.webp" // the poster slot's fixed public name
 	manifests := s3test.Manifests(t, store, kinds, media.ManifestOptions{})
 	if err := manifests.UpdateSlot(ctx, ref, media.PosterSlot, func(rec *media.SlotRecord) error {
 		*rec = media.SlotRecord{Original: blobName("frame"), Result: &media.SlotResult{Source: blobName("frame"),
@@ -446,7 +446,7 @@ func TestExposeTxThroughRiver(t *testing.T) {
 	var mu sync.Mutex
 	var purged []string
 	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Kinds: r, Resolver: res, Locker: s3test.Locker(t, env.Store),
-		Hooks: media.Hooks{PublicRemoved: func(_ context.Context, _ contentref.ContentRef, keys []string) {
+		Hooks: media.Hooks{PurgePublic: func(_ context.Context, _ contentref.ContentRef, keys []string) {
 			mu.Lock()
 			defer mu.Unlock()
 			purged = append(purged, keys...)
@@ -459,7 +459,7 @@ func TestExposeTxThroughRiver(t *testing.T) {
 	item, _ := r.Item(ref)
 	blob := blobName("poster")
 	private, _ := item.Private(blob)
-	public, _ := item.Public(blob)
+	public := item.PublicPrefix() + "poster-480.webp"
 	ms := s3test.Manifests(t, env.Store, r, media.ManifestOptions{})
 	if err := ms.UpdateSlot(ctx, ref, media.PosterSlot, func(rec *media.SlotRecord) error {
 		*rec = media.SlotRecord{Original: blobName("frame"), Result: &media.SlotResult{Source: blobName("frame"),

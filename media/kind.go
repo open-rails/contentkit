@@ -212,7 +212,8 @@ func (s Spec) Hash() string {
 // or at the edited image's own shape when Aspect is AspectNative (no crop by
 // default, any crop shape), rendered at each of Widths (the host's rungs,
 // e.g. a small and a large one) to hash-named WebP renditions in private/,
-// copied to public/ unless the item is hidden. A change writes new names.
+// copied to fixed public/ names ({slot}-{rung}.webp) unless the item is
+// hidden. A change writes new private/ names and overwrites the public ones.
 // Nothing is upscaled: a rung wider than the edited image is rendered at the
 // edited width, so every rung exists once the slot is set. Its original and
 // Edit are recorded in the manifest (Root.Slots). An edit narrower than Min
@@ -245,15 +246,52 @@ var AvatarSlot = Slot{Aspect: Aspect1x1, Widths: []int{64, 128, 256, 512}, Quali
 // AvatarSlotName is the avatar slot's name.
 const AvatarSlotName = "avatar"
 
-// LinkSrcSet is a srcset of a slot link (Reader.SlotLink) at each width:
-// "link?w=64 64w, link?w=128 128w, …".
+// Rung is the narrowest of Widths at least width wide, else the widest.
+func (s Slot) Rung(width int) int {
+	for _, w := range s.Widths {
+		if w >= width {
+			return w
+		}
+	}
+	return s.Widths[len(s.Widths)-1]
+}
+
+// LinkAt rewrites a slot link (Reader.SlotLink, possibly another site's with
+// the same slot spec) to the rung for width, keeping its ?v=; "" when link is
+// not a slot link.
+func (s Slot) LinkAt(link string, width int) string {
+	path, query, _ := strings.Cut(link, "?")
+	dir, name, ok := cutLast(path, "/")
+	slot, _, valid := layout.ParseSlotFileName(name)
+	if !ok || !valid {
+		return ""
+	}
+	out := dir + "/" + layout.SlotFileName(slot, s.Rung(width))
+	if query != "" {
+		out += "?" + query
+	}
+	return out
+}
+
+// LinkSrcSet is a srcset of a slot link at each of Widths:
+// "…/avatar-64.webp?v=… 64w, …/avatar-128.webp?v=… 128w, …"; "" when link is
+// not a slot link.
 func (s Slot) LinkSrcSet(link string) string {
+	if s.LinkAt(link, 0) == "" {
+		return ""
+	}
 	set := make([]string, len(s.Widths))
 	for i, w := range s.Widths {
-		n := strconv.Itoa(w)
-		set[i] = link + "?w=" + n + " " + n + "w"
+		set[i] = s.LinkAt(link, w) + " " + strconv.Itoa(w) + "w"
 	}
 	return strings.Join(set, ", ")
+}
+
+func cutLast(s, sep string) (before, after string, found bool) {
+	if i := strings.LastIndex(s, sep); i >= 0 {
+		return s[:i], s[i+len(sep):], true
+	}
+	return s, "", false
 }
 
 // Min is the narrowest edited width accepted: MinWidth, else the smallest width.

@@ -14,12 +14,15 @@ func TestParse(t *testing.T) {
 	const staged = "u-0190f3b2-7c1e-7a3d-9e4f-0123456789ab"
 	editor := layout.EditorPrefix + hex.EncodeToString(sum[:])
 	for key, want := range map[string]layout.Key{
-		"d/gallery/1/manifest.json":     {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaManifest},
-		"d/gallery/1/originals/" + hash: {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaOriginals, Name: hash},
-		"d/gallery/1/private/" + hash:   {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaPrivate, Name: hash},
-		"o/user/42/public/" + hash:      {Tenant: "o", Kind: "user", ID: "42", Area: layout.AreaPublic, Name: hash},
-		"d/gallery/1/temp/" + staged:    {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaTemp, Name: staged},
-		"d/gallery/1/temp/" + editor:    {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaTemp, Name: editor},
+		"d/gallery/1/manifest.json":        {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaManifest},
+		"d/gallery/1/originals/" + hash:    {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaOriginals, Name: hash},
+		"d/gallery/1/private/" + hash:      {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaPrivate, Name: hash},
+		"o/user/42/public/" + hash:         {Tenant: "o", Kind: "user", ID: "42", Area: layout.AreaPublic, Name: hash},
+		"d/gallery/1/temp/" + staged:       {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaTemp, Name: staged},
+		"d/gallery/1/temp/" + editor:       {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaTemp, Name: editor},
+		"o/user/42/public/avatar-128.webp": {Tenant: "o", Kind: "user", ID: "42", Area: layout.AreaPublic, Name: "avatar-128.webp"},
+		"d/gallery/1/public/hover-cover-460.webp": {Tenant: "d", Kind: "gallery", ID: "1", Area: layout.AreaPublic,
+			Name: "hover-cover-460.webp"},
 	} {
 		got, ok := layout.Parse(key)
 		if !ok || got != want {
@@ -29,7 +32,9 @@ func TestParse(t *testing.T) {
 	for _, bad := range []string{"d/gallery/1", "d/gallery/1/private/x", "d/gallery/1/private/" + hash + "/x", "d/gallery/1/public/a.webp",
 		"d/gallery/1/originals/cover", "d/gallery/1/manifests/v2.json", "d/gallery/1/blobs/" + hash, "d/gallery/1/editor/" + hash,
 		"d/../1/manifest.json", "d/gallery/1/other/x", "d/gallery/1/staging/" + staged, "d/gallery/1/temp/" + hash,
-		"d/gallery/1/private/" + staged, "d/gallery/1/private/" + editor, "d/gallery/1/temp/e-ABC"} {
+		"d/gallery/1/private/" + staged, "d/gallery/1/private/" + editor, "d/gallery/1/temp/e-ABC",
+		"o/user/42/private/avatar-128.webp", "o/user/42/public/avatar-0128.webp", "o/user/42/public/avatar-0.webp",
+		"o/user/42/public/avatar-128.png", "o/user/42/public/-128.webp", "o/user/42/public/avatar.webp"} {
 		if _, ok := layout.Parse(bad); ok {
 			t.Errorf("parsed %q", bad)
 		}
@@ -58,5 +63,12 @@ func TestUUIDNames(t *testing.T) {
 	}
 	if layout.SourceArea("u-"+id) != layout.AreaTemp || layout.SourceArea(layout.SHA256Prefix+id) != layout.AreaOriginals {
 		t.Error("SourceArea")
+	}
+}
+
+func TestSlotFileName(t *testing.T) {
+	name := layout.SlotFileName("hover-cover", 460)
+	if slot, w, ok := layout.ParseSlotFileName(name); name != "hover-cover-460.webp" || !ok || slot != "hover-cover" || w != 460 {
+		t.Fatalf("%q: %q %d %v", name, slot, w, ok)
 	}
 }
