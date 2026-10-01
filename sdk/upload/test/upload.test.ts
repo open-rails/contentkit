@@ -12,6 +12,7 @@ const id = (n: number) => `0192f000-0000-7000-8000-${String(n).padStart(12, "0")
 const hex = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 const png = (seed: number, n = 3000) => new File([bytes(n, seed)], `${seed}.png`, { type: "image/png" });
 const put = (up: { path: string; blob: string }): Op => ({ op: "put", path: up.path, blob: up.blob });
+const STAGED = /^u-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handlers", () => {
   let proxy: KillProxy;
@@ -47,17 +48,19 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
     return res.ok ? ((await res.json()) as { size: number; sha256: string }) : null;
   }
 
-  it("uploads a page, commits it, and reads its derived file as a viewer", async () => {
+  it("stages a page, commits it, and reads the placed blob's derived file as a viewer", async () => {
     const ref = { kind: "gallery", id: id(1) };
     const body = bytes(4096, 7);
     const file = new File([body], "a.png", { type: "image/png" });
     const c = client();
     const up = await c.upload(file, { ref, path: "originals/001.png" });
-    expect(up).toMatchObject({ path: "originals/001.png", blob: `sha256-${hex(body)}`, type: "image/png", size: 4096, exists: false });
+    expect(up).toMatchObject({ path: "originals/001.png", blob: expect.stringMatching(STAGED), type: "image/png", size: 4096, exists: false });
     const files = await c.commit(ref, [put(up)]);
-    expect(files).toMatchObject([{ path: "originals/001.png", type: "image/png", size: 4096, upload: true, pending: ["low"] }]);
-    expect((await c.upload(file, { ref, path: "originals/001.png" })).exists).toBe(true);
-    expect((await c.waitFor(ref, "originals/001.png", { interval: 100 })).pending).toBeUndefined();
+    expect(files).toMatchObject([{ path: "originals/001.png", type: "image/png", size: 4096, upload: true, staged: true, pending: ["low"] }]);
+    const done = await c.waitFor(ref, "originals/001.png", { interval: 100 });
+    expect([done.pending, done.staged]).toEqual([undefined, undefined]);
+    // Placed at the hash of its bytes: an identical upload now exists.
+    expect(await c.upload(file, { ref, path: "originals/001.png" })).toMatchObject({ exists: true, blob: `sha256-${hex(body)}` });
 
     // A viewer gets the derived page, signed; the upload itself is never served.
     const read = await client({ actor: "reader" }).read(ref);
@@ -142,17 +145,23 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
   });
 
   it("uploads a stale blob again when commit refuses it", async () => {
-    // The server's sweep grace is 20 s: commit refuses an unreferenced blob after 15 s,
-    // and presign reuses one for as long.
+    // The server's sweep grace is 20 s: presign offers an unreferenced blob as
+    // existing while it is fresh, and commit refuses it once it is 15 s old.
     const ref = { kind: "gallery", id: id(2) };
     const file = png(8, 2048);
     const c = client();
-    const up = await c.upload(file, { ref, path: "originals/001.png" });
+    await c.put(file, { ref, path: "originals/001.png" });
+    await c.commit(ref, [{ op: "remove", path: "originals/001.png" }]);
+    const up = await c.upload(file, { ref, path: "originals/002.png" });
+    expect(up).toMatchObject({ exists: true, blob: `sha256-${hex(bytes(2048, 8))}` });
     await new Promise((r) => setTimeout(r, 17_000));
     const refused = await c.commit(ref, [put(up)]).catch((e) => e);
     expect([refused.code, refused.blobs]).toEqual(["not_uploaded", [up.blob]]);
+    // Uploaded again, staged, and placed at the same hash.
     const files = await c.commit(ref, [put(up)], { sources: { [up.blob]: file } });
-    expect(files).toMatchObject([{ path: "originals/001.png", size: 2048 }]);
+    expect(files).toMatchObject([{ path: "originals/002.png", size: 2048 }]);
+    await c.waitFor(ref, "originals/002.png", { interval: 100 });
+    expect(await stored(ref, "originals/002.png")).toEqual({ size: 2048, sha256: hex(bytes(2048, 8)) });
   });
 
   it("survives a killed connection mid-part, resumes and commits a >64 MiB file", async () => {
@@ -168,7 +177,7 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
       .catch((e) => e);
     expect(first.code).toBe("network");
     expect(proxy.kills).toBe(1);
-    expect(saved).toMatchObject({ path: "source.mp4", blob: `sha256-${hex(body)}` });
+    expect(saved).toMatchObject({ path: "source.mp4", blob: expect.stringMatching(STAGED) });
 
     // Session 2 (a reload): resume from the saved state; another drop is retried in place.
     let parts = 0;
@@ -186,13 +195,16 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
 
     const files = await c.commit(ref, [put(up)]);
     expect(files).toMatchObject([{ path: "source.mp4", size: body.length }]);
+    await c.waitFor(ref, "source", { interval: 100 });
     expect(await stored(ref, "source")).toEqual({ size: body.length, sha256: hex(body) });
+    expect(await c.upload(file, { ref, path: "source" })).toMatchObject({ exists: true, blob: `sha256-${hex(body)}` });
   });
 
   it("grabs a still of a video, sets the poster from a frame, then lets the worker choose", async () => {
     const ref = { kind: "video", id: id(7) };
     const c = client();
-    await c.put(new File([bytes(4096, 5)], "v.mp4", { type: "video/mp4" }), { ref, path: "source", wait: false });
+    // Frames come from the placed video: put waits until it is no longer staged.
+    expect((await c.put(new File([bytes(4096, 5)], "v.mp4", { type: "video/mp4" }), { ref, path: "source" })).staged).toBeUndefined();
     const still = await c.getFrame(ref, "source.mp4", 1.5, 320);
     expect([still.type, still.size > 0]).toEqual(["image/jpeg", true]);
 

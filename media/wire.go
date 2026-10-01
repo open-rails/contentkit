@@ -16,8 +16,8 @@ type RefBody struct {
 }
 
 // PresignBody declares one upload: its path, type, size and whole-file
-// SHA-256 (the browser hashes every file, so every blob lands at its
-// content address).
+// SHA-256, which finds an identical blob already in the folder and binds a
+// single PUT's body.
 type PresignBody struct {
 	Ref    RefBody `json:"ref"`
 	Path   string  `json:"path"`
@@ -28,7 +28,9 @@ type PresignBody struct {
 
 // PresignReply is the upload plan: Exists (commit directly), one Put, or a
 // Multipart upload. Path is the path to commit: cleaned, with an
-// extension, and named by the server for a Named upload.
+// extension, and named by the server for a Named upload. Blob is the name
+// to commit: the folder's blob (sha256-{hex}) with Exists, else the staged
+// upload (u-{uuid}) the PUT or parts write, which the worker places.
 type PresignReply struct {
 	Path            string          `json:"path"`
 	Blob            string          `json:"blob"`
@@ -81,6 +83,7 @@ type PartsReply struct {
 	Parts []PartReply `json:"parts"`
 }
 
+// CompleteReply is a completed multipart upload; Blob is its staged name.
 type CompleteReply struct {
 	Blob string `json:"blob"`
 	Type string `json:"type"`
@@ -151,6 +154,7 @@ type FileInfo struct {
 
 	// Editors (editor reads and commit replies):
 	Upload     bool            `json:"upload,omitempty"`
+	Staged     bool            `json:"staged,omitempty"` // uploaded, not yet placed by the worker: no blob, views or frames yet
 	From       string          `json:"from,omitempty"`
 	Edit       *Edit           `json:"edit,omitempty"`
 	Frame      *Frame          `json:"frame,omitempty"`

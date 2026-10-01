@@ -80,7 +80,7 @@ func setHidden(k *Kind, m *Manifest, hidden bool) {
 			continue
 		}
 		pending := slices.DeleteFunc(slices.Clone(f.Pending), func(p string) bool { return k.public(p) != nil })
-		if !hidden && f.Blob != "" {
+		if !hidden && f.Source() != "" {
 			for _, p := range k.PublicFor(f.Path) {
 				pending = append(pending, p.Name)
 			}

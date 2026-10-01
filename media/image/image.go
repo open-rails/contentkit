@@ -561,9 +561,8 @@ func (p *Processor) putBlob(ctx context.Context, item media.Item, body io.Reader
 }
 
 // read reads upload f's blob: one stored larger than f may be (its Upload's
-// MaxBytes, or a grabbed frame's recorded size) is refused unread, and the
-// bytes must match their content address (a multipart upload is verified on
-// its first read), else the blob is deleted and fails.
+// MaxBytes, or a grabbed frame's recorded size) is refused unread. Blobs are
+// hashed when placed or produced, so the bytes are not hashed again.
 func (p *Processor) read(ctx context.Context, key string, f media.File, k *media.Kind) ([]byte, error) {
 	u, _ := k.UploadOf(f.Path)
 	limit := u.MaxBytes
@@ -591,10 +590,6 @@ func (p *Processor) read(ctx context.Context, key string, f media.File, k *media
 	}
 	if int64(len(b)) > limit {
 		return nil, tooLarge(int64(len(b)))
-	}
-	if want, _ := layout.ParseSHA256Name(f.Blob); !bytes.Equal(sha(b), want) {
-		_ = p.c.Store.Delete(context.WithoutCancel(ctx), key)
-		return nil, permanentError{&media.ImageError{Code: media.CodeChecksum, Message: "the stored bytes do not match their SHA-256; upload again"}}
 	}
 	return b, nil
 }

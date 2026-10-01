@@ -92,10 +92,11 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
   const [cropFor, setCropFor] = useState<"frame" | "upload">("frame");
   const [decodeError, setDecodeError] = useState<string>();
   const input = useRef<HTMLInputElement>(null);
-  const duration = video?.dur ?? 0;
+  const duration = video && !video.staged ? (video.dur ?? 0) : 0;
   const aspect = video?.w && video.h ? aspectOf(video.w, video.h) : "16:9";
   const shown = time ?? selection?.t ?? duration * 0.25;
-  const path = video?.path;
+  // Frames come from the placed video (GET /frame answers conflict while it is staged).
+  const path = duration > 0 ? video!.path : undefined;
   const poster = useVideoPoster(client, {
     ref: p.item,
     path: p.path,

@@ -217,26 +217,9 @@ func TestAnimationAndFailures(t *testing.T) {
 	if f := e.file(t, p, "files/bad.png").Fail(); f == nil || f.Code != media.CodeImageUnreadable {
 		t.Fatalf("undecodable %+v", f)
 	}
-	// A blob whose bytes are not its hash (a multipart upload is verified on
-	// its first read) fails and is deleted.
-	good := solid(t, 10, 10, red)
-	e.put(t, p, "files/ok.png", "image/png", good)
-	item, _ := e.reg.Item(p)
-	key, _ := item.Blob(e.file(t, p, "files/ok.png").Blob)
-	other := solid(t, 10, 10, blue)
-	if _, err := e.Store.Put(context.Background(), key, bytes.NewReader(other), int64(len(other)), media.PutOptions{ContentType: "image/png"}); err != nil {
-		t.Fatal(err)
-	}
-	e.process(t, media.ProcessJob{Ref: p})
-	if f := e.file(t, p, "files/ok.png").Fail(); f == nil || f.Code != media.CodeChecksum {
-		t.Fatalf("mismatch %+v", f)
-	}
-	if _, err := e.Store.Head(context.Background(), key); err == nil {
-		t.Fatal("a mismatching blob kept")
-	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	for _, want := range []string{"avatar.gif", "files/bad.png", "files/ok.png"} {
+	for _, want := range []string{"avatar.gif", "files/bad.png"} {
 		if !slices.Contains(e.failed, want) {
 			t.Fatalf("Hooks.Failed %v lacks %s", e.failed, want)
 		}

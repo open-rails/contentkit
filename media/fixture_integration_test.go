@@ -252,7 +252,7 @@ func (f *fixture) visible(n int) {
 }
 
 // upload presigns body for path and PUTs it like the browser does,
-// returning the path to commit and the blob.
+// returning the path and name (staged upload or existing blob) to commit.
 func (f *fixture) upload(ref contentref.ContentRef, path, typ string, body []byte) (string, string) {
 	f.t.Helper()
 	sum := sha256.Sum256(body)
@@ -284,11 +284,29 @@ func (f *fixture) put(ref contentref.ContentRef, path, typ string, body []byte, 
 	return f.commit(ref, append([]media.Op{{Op: media.OpPut, Path: p, Blob: blob}}, extra...)...)
 }
 
+// commit commits ops, then places staged uploads as the worker does first.
 func (f *fixture) commit(ref contentref.ContentRef, ops ...media.Op) *media.Manifest {
 	f.t.Helper()
 	m, err := f.up.Commit(context.Background(), f.editor, ref, ops)
 	if err != nil {
 		f.t.Fatalf("commit %+v: %v", ops, err)
+	}
+	if len(m.StagedNames()) == 0 {
+		return m
+	}
+	return f.place(ref)
+}
+
+// place stands in for the worker's place job.
+func (f *fixture) place(ref contentref.ContentRef) *media.Manifest {
+	f.t.Helper()
+	ctx := context.Background()
+	if _, err := f.ms.Place(ctx, ref); err != nil {
+		f.t.Fatalf("place %s: %v", ref, err)
+	}
+	m, _, err := f.ms.Get(ctx, ref)
+	if err != nil {
+		f.t.Fatal(err)
 	}
 	return m
 }

@@ -151,6 +151,14 @@ func (i Item) Blob(name string) (string, error) {
 	return i.PrivatePrefix() + name, nil
 }
 
+// Staged is the key of a staged upload ("u-{uuid}"), in temp/ until placed.
+func (i Item) Staged(name string) (string, error) {
+	if !layout.ValidStagedName(name) {
+		return "", fmt.Errorf("media: invalid staged upload name %q", name)
+	}
+	return i.TempPrefix() + name, nil
+}
+
 // Public is the key of a public name.
 func (i Item) Public(name string) (string, error) {
 	if !layout.ValidSegment(name) {

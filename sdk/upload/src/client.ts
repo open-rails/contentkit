@@ -39,11 +39,15 @@ export interface UploadOptions {
   onState?: (s: UploadState | null) => void;
 }
 
-/** An uploaded blob, ready for a put op. */
+/** An upload, ready for a put op. */
 export interface UploadedFile {
   /** The path to commit: cleaned, with an extension, named by the server for a Named upload. */
   path: string;
-  /** "sha256-{hex}" of the whole file. */
+  /**
+   * The name to commit: the folder's identical blob ("sha256-{hex}") when
+   * exists, else the staged upload ("u-{uuid}") the worker hashes and places
+   * after the commit.
+   */
   blob: string;
   type: string;
   size: number;
@@ -62,7 +66,7 @@ export interface PutOptions {
   wait?: boolean;
   /** How long to wait, ms. */
   timeout?: number;
-  /** The uploaded blob, before the commit. */
+  /** The upload, before the commit. */
   onUploaded?: (up: UploadedFile) => void;
 }
 
@@ -85,6 +89,7 @@ export interface PlannedPart {
 export interface UploadState {
   ticket: string;
   path: string;
+  /** The staged upload ("u-{uuid}") the parts write. */
   blob: string;
   type: string;
   size: number;
@@ -133,11 +138,12 @@ export class UploadClient {
   }
 
   /**
-   * Uploads file to its content address in the item's folder: it hashes the
-   * whole file (off the main thread), presigns {path, type, size, sha256},
-   * then sends nothing (the blob exists), one checksum-bound PUT up to 64 MiB,
-   * or resumable multipart above. A refused presign throws before any bytes
-   * move. Commit the result with a put op (or use put()).
+   * Uploads file to the item's folder: it hashes the whole file (off the
+   * main thread) and presigns {path, type, size, sha256}, then sends nothing
+   * (the folder holds the identical blob), or stages it: one checksum-bound
+   * PUT up to 64 MiB, resumable multipart above. A refused presign throws
+   * before any bytes move. Commit the result with a put op (or use put());
+   * the worker then places a staged upload at the hash of its bytes.
    */
   async upload(file: Uploadable, o: UploadOptions): Promise<UploadedFile> {
     const type = o.type || file.type;
@@ -234,7 +240,8 @@ export class UploadClient {
 
   /**
    * Polls an editor read until the upload at path (or with that stem) is
-   * processed: nothing pending and its blob present (a frame grabbed).
+   * processed: placed (not staged), nothing pending and its blob present (a
+   * frame grabbed).
    * Rejects with its failure, not_found once it is gone, render_timeout
    * after the timeout.
    */
@@ -245,7 +252,7 @@ export class UploadClient {
       const f = r.files.find((x) => x.upload && samePath(x.path, path));
       if (!f) throw new UploadError("not_found", `no upload ${path}`, 404);
       if (f.failed) throw failureError(f.failed);
-      if (!f.pending?.length && (f.size ?? 0) > 0) return f;
+      if (!f.pending?.length && !f.staged && (f.size ?? 0) > 0) return f;
       if (Date.now() >= until) throw new UploadError("render_timeout", `${path} is still processing`);
       await sleep(o.interval ?? 1000, o.signal);
     }

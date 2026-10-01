@@ -173,10 +173,14 @@ func (e *env) put(t *testing.T, ref contentref.ContentRef, path, typ string, bod
 	e.commit(t, ref, append([]media.Op{{Op: media.OpPut, Path: p.Path, Blob: p.Blob}}, extra...)...)
 }
 
+// commit commits ops and places staged uploads, as the worker's place job does.
 func (e *env) commit(t *testing.T, ref contentref.ContentRef, ops ...media.Op) {
 	t.Helper()
 	if _, err := e.up.Commit(context.Background(), e.editor, ref, ops); err != nil {
 		t.Fatalf("commit %+v: %v", ops, err)
+	}
+	if _, err := e.ms.Place(context.Background(), ref); err != nil {
+		t.Fatal(err)
 	}
 }
 

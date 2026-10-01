@@ -196,6 +196,7 @@ export interface FileInfo {
   url?: string;
   locked?: boolean;
   upload?: boolean;
+  staged?: boolean;
   from?: string;
   edit?: Edit;
   frame?: Frame;

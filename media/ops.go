@@ -32,7 +32,7 @@ const (
 type Op struct {
 	Op         string         `json:"op"`
 	Path       string         `json:"path,omitempty"`
-	Blob       string         `json:"blob,omitempty"`  // put
+	Blob       string         `json:"blob,omitempty"`  // put: the staged upload (u-{uuid}) or a blob in the folder
 	Index      *int           `json:"index,omitempty"` // put, move, attach: among the attached uploads of its Upload
 	Meta       map[string]any `json:"meta,omitempty"`  // put: the upload's meta; attach: merged into it; meta: the item's
 	Edit       *Edit          `json:"edit,omitempty"`  // put, edit, copy, frame
@@ -76,8 +76,8 @@ func (op Op) validate() error {
 	}
 	switch op.Op {
 	case OpPut:
-		if !layout.ValidHashName(op.Blob) {
-			return bad("blob must be sha256-{hex}")
+		if !layout.ValidHashName(op.Blob) && !layout.ValidStagedName(op.Blob) {
+			return bad("blob must be sha256-{hex} or a staged u-{uuid}")
 		}
 	case OpMove:
 		if op.Index == nil {
@@ -116,7 +116,7 @@ type opRun struct {
 	k  *Kind
 	m  *Manifest
 	id string
-	// objects are the put blobs, HEAD-checked in the item's private/.
+	// objects are the put names, HEAD-checked in the item's folder.
 	objects map[string]Object
 	// copies are each copy op's source upload and outputs (by op index),
 	// already copied into the item.
@@ -214,11 +214,16 @@ func (o *opRun) put(op Op) error {
 	if ext == "" {
 		ext = typeExt(obj.ContentType)
 	}
-	f := File{Path: stem + "." + ext, Blob: op.Blob, Type: obj.ContentType, Size: obj.Size, Meta: op.Meta, Unattached: op.Unattached}
+	f := File{Path: stem + "." + ext, Type: obj.ContentType, Size: obj.Size, Meta: op.Meta, Unattached: op.Unattached}
+	if layout.ValidStagedName(op.Blob) {
+		f.Staged = op.Blob
+	} else {
+		f.Blob = op.Blob
+	}
 	i := o.stem(stem)
 	if i >= 0 {
 		old := m.Files[i]
-		if old.Blob == f.Blob {
+		if old.Source() == f.Source() {
 			f.W, f.H, f.Dur = old.W, old.H, old.Dur
 		}
 		if f.Meta == nil {
@@ -282,7 +287,7 @@ func (o *opRun) place(g, i int, f File, index *int) error {
 		}
 	}
 	m.index = nil
-	if old.Blob != f.Blob {
+	if old.Source() != f.Source() {
 		o.regrab(old.Path)
 	}
 	return nil

@@ -96,10 +96,10 @@ test.describe("browser uploads", () => {
       return { uploaded, committed, landed, saved, storedState: sessionStorage.getItem("multipart") };
     }, { modulePath, ref, size });
 
-    // The whole file was hashed (in a worker) before the upload: its blob is its content address.
-    const sha = createHash("sha256").update(Buffer.alloc(size, 9)).digest("hex");
-    expect(result.saved).toMatchObject({ path: "source.mp4", blob: `sha256-${sha}` });
-    expect(result.uploaded).toMatchObject({ path: "source.mp4", blob: `sha256-${sha}` });
+    // The parts land at a staged name; the worker places it at the hash of its bytes.
+    const staged = /^u-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+    expect(result.saved).toMatchObject({ path: "source.mp4", blob: expect.stringMatching(staged) });
+    expect(result.uploaded).toMatchObject({ path: "source.mp4", blob: result.saved.blob });
     expect(result.landed).toBeGreaterThan(0);
     expect(result.committed).toEqual([expect.objectContaining({ path: "source.mp4", size })]);
     expect(result.storedState).toBeNull();

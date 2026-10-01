@@ -124,12 +124,8 @@ func (e *Encoder) putMultipart(ctx context.Context, key string, f io.ReaderAt, s
 	return err
 }
 
-// errChecksum: an upload's bytes are not its content address.
-var errChecksum = errors.New("media/video: upload bytes do not match their SHA-256 name")
-
-// fetch downloads an upload's blob to path. Unless the store vouches for
-// its SHA-256, the bytes are hashed on the way and must match the name
-// (errChecksum).
+// fetch downloads a blob to path. Blobs are verified when placed or
+// produced, so the bytes are not hashed again.
 func (e *Encoder) fetch(ctx context.Context, item media.Item, blob, path string, fp *fileProgress) error {
 	key, err := item.Blob(blob)
 	if err != nil {
@@ -144,9 +140,8 @@ func (e *Encoder) fetch(ctx context.Context, item media.Item, blob, path string,
 	if err != nil {
 		return err
 	}
-	h := sha256.New()
 	start := time.Now()
-	n, err := io.Copy(io.MultiWriter(f, h), rc)
+	n, err := io.Copy(f, rc)
 	fp.transferred(n, time.Since(start))
 	if cerr := f.Close(); err == nil {
 		err = cerr
@@ -154,66 +149,7 @@ func (e *Encoder) fetch(ctx context.Context, item media.Item, blob, path string,
 	if err == nil && n != obj.Size {
 		err = fmt.Errorf("media/video: read %d of %d bytes of %s", n, obj.Size, key)
 	}
-	if err == nil && !matches(blob, h.Sum(nil)) {
-		err = errChecksum
-	}
 	return err
-}
-
-// verify reads an upload's blob through for its SHA-256 unless the store
-// vouches for it (a single PUT with a full-object checksum).
-func (e *Encoder) verify(ctx context.Context, item media.Item, blob string, obj media.Object) error {
-	if matches(blob, obj.ChecksumSHA256) {
-		return nil
-	}
-	key, _ := item.Blob(blob)
-	rc, got, err := e.store.Get(ctx, key, media.GetOptions{})
-	if err != nil {
-		return err
-	}
-	h := sha256.New()
-	n, err := io.Copy(h, rc)
-	if err = errors.Join(err, rc.Close()); err != nil {
-		return err
-	}
-	if got.ETag != obj.ETag || n != obj.Size {
-		return media.ErrPreconditionFailed
-	}
-	if !matches(blob, h.Sum(nil)) {
-		return errChecksum
-	}
-	return nil
-}
-
-func matches(blob string, sum []byte) bool {
-	want, ok := layout.ParseSHA256Name(blob)
-	return ok && bytes.Equal(want, sum)
-}
-
-// checksumFailed fails an upload whose bytes are not its name
-// (checksum_mismatch) and deletes the blob unless another file names it.
-func (e *Encoder) checksumFailed(ctx context.Context, item media.Item, path, blob string) error {
-	var drop bool
-	err := e.failed(ctx, item, path, blob, errChecksum, func(m *media.Manifest) {
-		i := m.Find(path)
-		f := &m.Files[i]
-		f.Failed = &media.Failure{Of: f.Key(), Message: errChecksum.Error(), Code: media.CodeChecksum}
-		f.Pending, f.Gone = nil, true
-		drop = true
-		for _, g := range m.Files {
-			if g.Path != path && g.Blob == blob {
-				drop = false
-			}
-		}
-	})
-	if err != nil || !drop {
-		return err
-	}
-	key, _ := item.Blob(blob)
-	if err := e.store.Delete(ctx, key); err != nil && !errors.Is(err, media.ErrNotFound) {
-		return err
-	}
-	return nil
 }
 
 // readIndex reads a track's index blob.

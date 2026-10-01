@@ -35,7 +35,7 @@ it("uploads, keeps the arranged order and commits puts appended in it", async ()
     ["put", "originals/a.png", 2 ** 31 - 1],
     ["put", "originals/02.png", 2 ** 31 - 1],
   ]);
-  expect(s.commits[0]![2]).toMatchObject({ meta: { alt: "b" }, blob: expect.stringMatching(/^sha256-/) });
+  expect(s.commits[0]![2]).toMatchObject({ meta: { alt: "b" }, blob: expect.stringMatching(/^u-/) });
   expect(q.getSnapshot().items.map((i) => i.status)).toEqual(["committed", "committed", "committed"]);
   expect(a!.status).toBe("queued"); // snapshots are immutable
 });
@@ -89,6 +89,7 @@ it("processes on upload: stages unattached, polls until processed, attaches in q
   const s = new FakeServer();
   s.processOnUpload = true;
   s.pendingReads = 2;
+  s.stagedReads = 3;
   const q = new UploadQueue(fakeClient(s), { ref, path, pollInterval: 5 });
   const [a, b, d] = q.add([png("a.png", 1), png("b.png", 2), png("d.png", 3)]);
   await until(q, (x) => x.items.every((i) => i.unattached && i.processing));

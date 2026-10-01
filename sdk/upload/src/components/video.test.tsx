@@ -112,7 +112,7 @@ it("VideoPosterPicker: upload an image, crop it, and return to automatic", async
   await user.click(within(crop).getByRole("button", { name: "Save" }));
   await waitFor(() => expect(onChange).toHaveBeenCalled());
   expect(s.calls).toContain("/presign");
-  expect(s.commits.at(-1)![0]).toMatchObject({ op: "put", path: "poster.png", blob: expect.stringMatching(/^sha256-[0-9a-f]{64}$/) });
+  expect(s.commits.at(-1)![0]).toMatchObject({ op: "put", path: "poster.png", blob: expect.stringMatching(/^u-/) });
   void container;
 
   onChange.mockClear();

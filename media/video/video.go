@@ -125,15 +125,13 @@ func (e *PermanentError) Unwrap() error { return e.Err }
 // commit that changed it enqueued its own job.
 var errStale = errors.New("media/video: upload changed during processing")
 
-// settle records a permanent error or a checksum mismatch as upload f's
-// failure, and drops errStale (the next job redoes the work).
+// settle records a permanent error as upload f's failure, and drops
+// errStale (the next job redoes the work).
 func (e *Encoder) settle(ctx context.Context, item media.Item, f media.File, err error) error {
 	var perm *PermanentError
 	switch {
 	case errors.Is(err, errStale):
 		return nil
-	case errors.Is(err, errChecksum):
-		return e.checksumFailed(ctx, item, f.Path, f.Blob)
 	case errors.As(err, &perm):
 		return e.fail(ctx, item, f.Path, f.Blob, perm.Err)
 	case err != nil:
