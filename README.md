@@ -63,6 +63,7 @@ another tenant is an error, never remapped.
 | `discovery` | `SimilarTo`/`Recommend`: the `Candidates` port, the default co-engagement source (`Engagement`), `Fallback`, and the shared exclusion/fill policy (`Recommender`) |
 | `eval` | lexical golden-case evaluation, reports, baselines |
 | `migrations` | PostgreSQL migration chain and ClickHouse baseline |
+| `adapters/authkit` | its own module (opt-in): account avatars and content authors from AuthKit; see HOST_INTEGRATION "Account avatars" |
 | root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (all PostgreSQL features and optional ClickHouse signals), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
 
 ## Install
