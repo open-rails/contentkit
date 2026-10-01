@@ -396,7 +396,9 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	}
 	editCtx, cancel := context.WithTimeout(ctx, commitMargin(u.o.Grace)/2)
 	defer cancel()
+	var prior *Manifest
 	man, err := u.o.Manifests.Edit(editCtx, ref, func(m *Manifest) error {
+		prior = m.Clone()
 		objects, err := u.verify(editCtx, item, blobs)
 		if err != nil {
 			return err
@@ -434,6 +436,11 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		return nil, err
 	}
 	if u.o.Queue != nil {
+		if c, ok := u.o.Queue.(ProcessCanceler); ok && removesPending(prior, ops) {
+			if _, err := c.Cancel(context.WithoutCancel(ctx), ref); err != nil {
+				return nil, err
+			}
+		}
 		job := ProcessJob{Ref: ref}
 		for _, op := range ops {
 			if op.Op == OpRegenerate {
@@ -445,6 +452,17 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		}
 	}
 	return man, nil
+}
+
+// removesPending reports ops removing an upload that is still being
+// processed: its running jobs are cancelled rather than finished.
+func removesPending(m *Manifest, ops []Op) bool {
+	for _, op := range ops {
+		if f, ok := m.Get(op.Path); op.Op == OpRemove && ok && f.IsUpload() && len(f.Pending) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // authorizeOps checks every op's target once; the grants must agree on the
