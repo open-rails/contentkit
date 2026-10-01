@@ -426,7 +426,10 @@ registered slot whose image is public (set, encoded, item not hidden).
 `ReaderOptions.Slots`. The host's slot index job keeps it: the worker
 schedules it after every slot job (through `HostQueue`, so the stock worker
 works), as do `DeleteSlot` and `Expose`; folder deletion and the periodic
-sweep pass reconcile too. Each change runs `Hooks.SlotChanged(ctx, tx, ref,
+sweep pass reconcile too. Slots that predate the index (an upgrade) are
+indexed once per tenant by a backfill the jobs schedule when they bind to
+River (one unique job across replicas, resumable, recorded in
+`content_media_slot_backfill`). Each change runs `Hooks.SlotChanged(ctx, tx, ref,
 slot, set)` in that job's transaction (at least once). Listings read
 `Reader.SlotImages(ctx, tenant, kind, slot, width, ids...)`: one query, no
 bucket reads, `Picture{URL, SrcSet, W, H}` per set item.

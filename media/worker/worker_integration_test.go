@@ -72,6 +72,32 @@ type host struct {
 	settled     map[string][]media.Readiness // Hooks.ItemReady, by ref
 	schema      string                       // the host's River schema
 	workers     string                       // the host's worker schema
+	content     string                       // the ContentKit schema
+}
+
+// startJobs starts a host replica: its media jobs, bound to a River client on
+// the host's schema.
+func (h *host) startJobs(t *testing.T) *media.Jobs {
+	t.Helper()
+	jobs, err := media.NewJobs(media.JobsConfig{Store: h.Store, Locker: s3test.Locker(t, h.Store), Kinds: h.kinds, Tenants: []string{h.Tenant},
+		Resolver: h, Slots: h.slots, Hooks: media.Hooks{SlotChanged: h.slotChanged}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := riverhelpers.New(context.Background(), h.pool, &river.Config{Schema: h.schema, FetchPollInterval: 100 * time.Millisecond,
+		FetchCooldown: 50 * time.Millisecond}, jobs.RiverJobs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = client.StopAndCancel(ctx)
+	})
+	return jobs
 }
 
 // The host's read API and media origins.
@@ -152,7 +178,8 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 		t.Fatal(err)
 	}
 	h := &host{Env: env, pool: pool, kinds: kinds, settled: map[string][]media.Readiness{}}
-	if h.slots, err = media.NewSlotIndex(pool, pgtest.Schema(t, ctx, pool)); err != nil {
+	h.content = pgtest.Schema(t, ctx, pool)
+	if h.slots, err = media.NewSlotIndex(pool, h.content); err != nil {
 		t.Fatal(err)
 	}
 
@@ -162,25 +189,8 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 	if err := riverhelpers.ApplyMigrations(ctx, pool, schema); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Locker: s3test.Locker(t, env.Store), Kinds: kinds, Tenants: []string{env.Tenant},
-		Resolver: h, Slots: h.slots, Hooks: media.Hooks{SlotChanged: h.slotChanged}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	jobs := h.startJobs(t)
 	h.jobs = jobs
-	hostClient, err := riverhelpers.New(ctx, pool, &river.Config{Schema: schema, FetchPollInterval: 100 * time.Millisecond,
-		FetchCooldown: 50 * time.Millisecond}, jobs.RiverJobs())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := hostClient.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = hostClient.StopAndCancel(ctx)
-	})
 	h.manifests = s3test.Manifests(t, env.Store, kinds, media.ManifestOptions{Sweeps: jobs})
 	if h.reader, err = media.NewReader(media.ReaderOptions{Manifests: h.manifests, Kinds: kinds, Resolver: h, Slots: h.slots, ReadURL: appURL,
 		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: mediaURL, SigningKey: token.Key{ID: "k", Secret: bytes.Repeat([]byte("k"), 32)}}}); err != nil {

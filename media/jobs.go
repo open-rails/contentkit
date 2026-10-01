@@ -60,7 +60,7 @@ type JobsConfig struct {
 	// Hooks.SlotChanged of slot index changes.
 	Hooks Hooks
 	// Slots is the slot index the slot index job keeps (IndexSlots); nil
-	// keeps none.
+	// keeps none. Binding the jobs to River backfills it once per tenant.
 	Slots      *SlotIndex
 	Queue      string // default "contentkit_media"
 	MaxWorkers int    // default 2
@@ -142,8 +142,10 @@ func (j *Jobs) Register(fn func(*river.Config) error) error {
 	return nil
 }
 
-// RiverJobs contributes media's workers, queue and periodic sweep to the
-// host's helpers/river composition. It composes once.
+// RiverJobs contributes media's workers, queue and periodic jobs (the sweep
+// pass, the slot index backfill) to the host's helpers/river composition,
+// and on binding schedules the backfill while a tenant's is incomplete. It
+// composes once.
 func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 	claimed := false
 	return riverhelpers.NewContribution("contentkit-media", func(_ context.Context, cfg *river.Config) error {
@@ -164,6 +166,7 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &deleteFolderWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &exposeWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &slotIndexWorker{j: j}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &slotBackfillWorker{j: j}) },
 		} {
 			if err := w(); err != nil {
 				return err
@@ -175,16 +178,21 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 				return sweepPassArgs{}, &river.InsertOpts{Queue: j.cfg.Queue, MaxAttempts: 3,
 					UniqueOpts: river.UniqueOpts{ByPeriod: interval}}
 			}, &river.PeriodicJobOpts{ID: "contentkit_media_sweep_pass"}))
+		cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(time.Hour),
+			func() (river.JobArgs, *river.InsertOpts) {
+				return slotBackfillArgs{}, &river.InsertOpts{Queue: j.cfg.Queue, UniqueOpts: PendingOnce}
+			}, &river.PeriodicJobOpts{ID: "contentkit_media_slot_backfill"}))
 		for _, reg := range j.regs {
 			if err := reg(cfg); err != nil {
 				return err
 			}
 		}
 		return nil
-	}, func(_ context.Context, b riverhelpers.Binding) error {
+	}, func(ctx context.Context, b riverhelpers.Binding) error {
 		j.mu.Lock()
 		j.client = b.Client
 		j.mu.Unlock()
+		j.scheduleBackfill(ctx)
 		return nil
 	}, func() error {
 		if claimed {

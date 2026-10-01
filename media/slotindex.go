@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // SlotIndex is the index of public slot outputs (content_media_slots in the
@@ -24,8 +26,9 @@ import (
 // stable slot links (Reader.SlotLink) read it without bucket reads. Pass the
 // same index to JobsConfig.Slots and ReaderOptions.Slots.
 type SlotIndex struct {
-	pool  *pgxpool.Pool
-	table string
+	pool     *pgxpool.Pool
+	table    string
+	backfill string // content_media_slot_backfill
 }
 
 // NewSlotIndex reads and writes the index in ContentKit's schema.
@@ -33,7 +36,8 @@ func NewSlotIndex(pool *pgxpool.Pool, schema string) (*SlotIndex, error) {
 	if pool == nil || schema == "" {
 		return nil, errors.New("media: SlotIndex needs a pool and the ContentKit schema")
 	}
-	return &SlotIndex{pool: pool, table: pgx.Identifier{schema, "content_media_slots"}.Sanitize()}, nil
+	return &SlotIndex{pool: pool, table: pgx.Identifier{schema, "content_media_slots"}.Sanitize(),
+		backfill: pgx.Identifier{schema, "content_media_slot_backfill"}.Sanitize()}, nil
 }
 
 // indexedSlot is one row: the slot's aspect and its public outputs by
@@ -320,4 +324,131 @@ func (w *slotIndexWorker) Work(ctx context.Context, job *river.Job[slotIndexArgs
 		return err
 	}
 	return w.j.reindex(ctx, job.Args.Ref)
+}
+
+// The backfill indexes the slots that predate the index (an upgrade), once
+// per tenant: the host's media jobs enqueue it when they are bound to River
+// while a tenant's backfill is incomplete (and hourly, as a backstop), as one
+// unique job across replicas. It walks the tenant's folders of kinds with
+// slots in key order, saving its place every backfillSave folders, so a retry
+// resumes; a tenant done is recorded and never walked again.
+const backfillSave = 100
+
+// backfillState is the tenant's place: the last folder indexed, and done.
+func (x *SlotIndex) backfillState(ctx context.Context, tenant string) (after string, done bool, err error) {
+	var completed *time.Time
+	err = x.pool.QueryRow(ctx, `SELECT after_folder, completed_at FROM `+x.backfill+` WHERE tenant_id = $1`, tenant).Scan(&after, &completed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	return after, completed != nil, err
+}
+
+// saveBackfill records the tenant's place, and its completion when done.
+func (x *SlotIndex) saveBackfill(ctx context.Context, tenant, after string, done bool) error {
+	_, err := x.pool.Exec(ctx, `INSERT INTO `+x.backfill+` (tenant_id, after_folder, completed_at)
+		VALUES ($1, $2, CASE WHEN $3 THEN now() END)
+		ON CONFLICT (tenant_id) DO UPDATE SET after_folder = EXCLUDED.after_folder, completed_at = EXCLUDED.completed_at`,
+		tenant, after, done)
+	return err
+}
+
+// backfillPending reports a tenant whose backfill has not completed.
+func (x *SlotIndex) backfillPending(ctx context.Context, tenants []string) (bool, error) {
+	if len(tenants) == 0 {
+		return false, nil
+	}
+	var done int
+	err := x.pool.QueryRow(ctx, `SELECT count(*) FROM `+x.backfill+` WHERE tenant_id = ANY($1) AND completed_at IS NOT NULL`, tenants).Scan(&done)
+	return done < len(tenants), err
+}
+
+// scheduleBackfill enqueues the backfill while a tenant's is incomplete:
+// when the jobs are bound to River. Best effort; the hourly job backs it up.
+func (j *Jobs) scheduleBackfill(ctx context.Context) {
+	if j.cfg.Slots == nil {
+		return
+	}
+	pending, err := j.cfg.Slots.backfillPending(ctx, j.cfg.Tenants)
+	if err == nil && pending {
+		_, err = j.Insert(ctx, slotBackfillArgs{}, &river.InsertOpts{UniqueOpts: PendingOnce})
+	}
+	if err != nil {
+		j.cfg.Logger.WarnContext(ctx, "media: schedule the slot index backfill", "error", err)
+	}
+}
+
+// backfillSlots indexes the existing slots of every tenant whose backfill is
+// incomplete (see backfillSave).
+func (j *Jobs) backfillSlots(ctx context.Context) error {
+	if j.cfg.Slots == nil {
+		return nil
+	}
+	var kinds []string
+	for name, k := range j.cfg.Kinds.kinds {
+		if len(k.Slots) > 0 {
+			kinds = append(kinds, name)
+		}
+	}
+	slices.Sort(kinds)
+	for _, tenant := range j.cfg.Tenants {
+		after, done, err := j.cfg.Slots.backfillState(ctx, tenant)
+		if err != nil {
+			return err
+		}
+		if done {
+			continue
+		}
+		n := 0
+		for _, kind := range kinds {
+			root := tenant + "/" + kind + "/"
+			if after > root && !strings.HasPrefix(after, root) {
+				continue // a later kind's folder: this one is done
+			}
+			for o, err := range j.cfg.Store.List(ctx, root) {
+				if err != nil {
+					return err
+				}
+				parts := strings.SplitN(o.Key, "/", 4)
+				if len(parts) < 4 || parts[3] != layout.ManifestName {
+					continue
+				}
+				folder, err := folderPrefix(parts[0], parts[1], parts[2])
+				if err != nil || folder <= after {
+					continue
+				}
+				if err := j.reindexFolder(ctx, folder); err != nil {
+					return err
+				}
+				if after, n = folder, n+1; n%backfillSave == 0 {
+					if err := j.cfg.Slots.saveBackfill(ctx, tenant, after, false); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		if err := j.cfg.Slots.saveBackfill(ctx, tenant, after, true); err != nil {
+			return err
+		}
+		j.cfg.Logger.InfoContext(ctx, "media: slot index backfilled", "tenant", tenant, "folders", n)
+	}
+	return nil
+}
+
+type slotBackfillArgs struct{}
+
+func (slotBackfillArgs) Kind() string { return "contentkit_media_slot_backfill" }
+
+type slotBackfillWorker struct {
+	river.WorkerDefaults[slotBackfillArgs]
+	j *Jobs
+}
+
+func (w *slotBackfillWorker) Timeout(*river.Job[slotBackfillArgs]) time.Duration {
+	return 6 * time.Hour
+}
+
+func (w *slotBackfillWorker) Work(ctx context.Context, job *river.Job[slotBackfillArgs]) (err error) {
+	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
+	return w.j.backfillSlots(ctx)
 }

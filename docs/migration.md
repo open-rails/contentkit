@@ -8,6 +8,7 @@ ContentKit has a PostgreSQL migration chain and a ClickHouse baseline:
 | PostgreSQL | `migrations.Postgres` | `postgres/0002_search_invalid.up.sql` | durable invalid search-document state |
 | PostgreSQL | `migrations.Postgres` | `postgres/0003_media_releases.up.sql` | media quota release ledger |
 | PostgreSQL | `migrations.Postgres` | `postgres/0004_media_slots.up.sql` | slot index (`content_media_slots`) |
+| PostgreSQL | `migrations.Postgres` | `postgres/0005_media_slot_backfill.up.sql` | slot index backfill progress (`content_media_slot_backfill`) |
 | ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, subject state, daily contributions, exposures, co-engagement and erasure fences |
 
 The baselines initialize fresh stores; PostgreSQL `0002` and later also upgrade
@@ -78,9 +79,10 @@ access to another application's schema. Migration SQL contains the complete
 indexes, checks, internal foreign keys and dirty-queue trigger.
 Before deploying a worker that uses `0002`, apply the migration and grant its
 runtime role read/write access to `content_search_invalid`. Before deploying
-code that uses `0004`, apply it and grant the host's runtime role read/write
-access to `content_media_slots` (the media worker needs none). Existing slots
-enter the index on the next sweep pass or slot change.
+code that uses `0004` and `0005`, apply them and grant the host's runtime role
+read/write access to `content_media_slots` and `content_media_slot_backfill`
+(the media worker needs none). Existing slots enter the index at the first
+start: binding the media jobs to River schedules a one-time backfill.
 
 ## Host relationships
 
