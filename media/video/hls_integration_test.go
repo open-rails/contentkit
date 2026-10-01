@@ -378,6 +378,7 @@ func TestAspects(t *testing.T) {
 		}
 	}
 
+	e.ref = e.refOf("video", 20)
 	m := e.manifest()
 	src, poster := e.file(m, "source.mkv"), e.file(m, "poster.png")
 	if fail := src.Fail(); fail == nil || !strings.Contains(fail.Message, "480x180") || len(src.Pending) != 0 ||

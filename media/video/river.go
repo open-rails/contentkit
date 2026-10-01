@@ -200,6 +200,11 @@ SET attempt = $2 WHERE id = $1 AND state = 'running' AND attempt = $3`, job.ID, 
 	return nil
 }
 
+// lockedSnooze is how long a job waits while another job of its item holds
+// the item's plan or audio lock; the later job then finds the work done or
+// does what the earlier one did not see.
+const lockedSnooze = 5 * time.Second
+
 type audioWorker struct {
 	river.WorkerDefaults[workqueue.AudioArgs]
 	c WorkerConfig
@@ -221,7 +226,7 @@ func (w *audioWorker) Work(ctx context.Context, job *river.Job[workqueue.AudioAr
 		return err
 	}
 	if !ok {
-		return river.JobSnooze(time.Minute)
+		return river.JobSnooze(lockedSnooze)
 	}
 	defer release()
 	defer w.c.clearProgress(ctx, job.ID)

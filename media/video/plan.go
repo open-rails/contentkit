@@ -79,7 +79,7 @@ func (c WorkerConfig) planVideo(ctx context.Context, args workqueue.VideoPlanArg
 		return err
 	}
 	if !ok {
-		return river.JobSnooze(time.Minute)
+		return river.JobSnooze(lockedSnooze)
 	}
 	defer release()
 	if args.Force {
