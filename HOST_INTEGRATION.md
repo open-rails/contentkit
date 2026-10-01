@@ -717,6 +717,10 @@ artists, err := ranker.Taxonomy(ctx, "gallery", "artist", window)     // member 
   a signal against a taxonomy id.
 - Cache keys carry tenant, policy name, kind, window and bounds; two policies
   sharing one cache never read each other's entries.
+- `Popular` serves at most `Config.MaxDepth` works (default 2000) and reads
+  power-of-two prefixes, so a request-chosen offset can neither deepen a read
+  nor add cache entries. `popularity.NewMemoryCache(maxBytes)` is LRU within
+  its byte budget; a host cache passed as `Cache` must be bounded too.
 
 See [docs/popularity-policy.md](docs/popularity-policy.md) for the formula,
 priors, the judged fixture and the host adoption steps.

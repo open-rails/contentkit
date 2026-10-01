@@ -43,6 +43,13 @@ func (f CatalogFunc) Assignments(ctx context.Context, tenant, contentKind, taxon
 // aggregates; see docs/popularity-policy.md for what the bound means.
 const DefaultTaxonomyCandidateLimit = 2000
 
+// DefaultMaxDepth is the deepest rank Popular serves by default; it equals
+// DefaultTaxonomyCandidateLimit, the deepest prefix Taxonomy reads.
+const DefaultMaxDepth = DefaultTaxonomyCandidateLimit
+
+// minReadDepth is the shallowest ranking prefix Popular reads.
+const minReadDepth = 64
+
 // DefaultCacheTTL bounds how stale a cached global ranking may be: the rollup
 // behind it is daily, so minutes change nothing a reader would notice.
 const DefaultCacheTTL = 5 * time.Minute
@@ -60,6 +67,11 @@ type Config struct {
 	// TaxonomyCandidateLimit is the ranked-work bound of Taxonomy (default
 	// DefaultTaxonomyCandidateLimit). Part of the cache key.
 	TaxonomyCandidateLimit int
+	// MaxDepth is the deepest rank Popular serves (default DefaultMaxDepth,
+	// or TaxonomyCandidateLimit when larger); a larger limit is clamped, so a
+	// listing ends there. It bounds the rows one read returns and one cache
+	// entry holds. Must be at least TaxonomyCandidateLimit.
+	MaxDepth int
 }
 
 // Ranker applies one policy to one tenant's signal plane.
@@ -70,6 +82,7 @@ type Ranker struct {
 	cache              Cache
 	cacheTTL           time.Duration
 	taxonomyCandidates int
+	maxDepth           int
 }
 
 // New validates the policy and returns the Ranker.
@@ -80,18 +93,28 @@ func New(cfg Config) (*Ranker, error) {
 	if err := cfg.Policy.Validate(); err != nil {
 		return nil, err
 	}
-	r := &Ranker{source: cfg.Source, policy: cfg.Policy, catalog: cfg.Catalog, cache: cfg.Cache, cacheTTL: cfg.CacheTTL, taxonomyCandidates: cfg.TaxonomyCandidateLimit}
+	r := &Ranker{source: cfg.Source, policy: cfg.Policy, catalog: cfg.Catalog, cache: cfg.Cache, cacheTTL: cfg.CacheTTL,
+		taxonomyCandidates: cfg.TaxonomyCandidateLimit, maxDepth: cfg.MaxDepth}
 	if r.cacheTTL <= 0 {
 		r.cacheTTL = DefaultCacheTTL
 	}
 	if r.taxonomyCandidates <= 0 {
 		r.taxonomyCandidates = DefaultTaxonomyCandidateLimit
 	}
+	if r.maxDepth <= 0 {
+		r.maxDepth = max(DefaultMaxDepth, r.taxonomyCandidates)
+	}
+	if r.taxonomyCandidates > r.maxDepth {
+		return nil, fmt.Errorf("popularity: TaxonomyCandidateLimit %d exceeds MaxDepth %d", r.taxonomyCandidates, r.maxDepth)
+	}
 	return r, nil
 }
 
 // Policy returns the ranking this Ranker applies.
 func (r *Ranker) Policy() Policy { return r.policy }
+
+// MaxDepth is the deepest rank Popular serves.
+func (r *Ranker) MaxDepth() int { return r.maxDepth }
 
 // Hit is one ranked work: the policy score next to its raw window metrics.
 // Public counts come from the metrics, never from the score.
@@ -121,8 +144,9 @@ type TaxonomyHit struct {
 
 // Popular returns the top limit works of one kind in a window, ranked by the
 // policy inside ClickHouse (RankExpr). Only works with a view in the window
-// rank; ties break on content id. The ranking is global, so one cache entry
-// serves every reader; hosts page by asking for offset+limit and slicing.
+// rank; ties break on content id. limit is clamped to MaxDepth. The ranking is
+// global and read in power-of-two prefixes, so a few cache entries per window
+// serve every reader; hosts page by asking for offset+limit and slicing.
 func (r *Ranker) Popular(ctx context.Context, contentKind string, window signal.Window, limit int) ([]Hit, error) {
 	if strings.TrimSpace(contentKind) == "" {
 		return nil, fmt.Errorf("popularity: contentKind is required")
@@ -133,21 +157,35 @@ func (r *Ranker) Popular(ctx context.Context, contentKind string, window signal.
 	if limit <= 0 {
 		limit = 20
 	}
-	key := r.cacheKey("popular", contentKind, window.String(), strconv.Itoa(limit))
+	limit = min(limit, r.maxDepth)
+	depth := r.readDepth(limit)
+	key := r.cacheKey("popular", contentKind, window.String(), strconv.Itoa(depth))
 	var out []Hit
-	if r.cached(ctx, key, &out) {
-		return out, nil
+	if !r.cached(ctx, key, &out) {
+		hits, err := r.source.Popular(ctx, contentKind, signal.PopularOptions{Window: window, Limit: depth, RankExpr: r.policy.RankExpr()})
+		if err != nil {
+			return nil, err
+		}
+		out = make([]Hit, 0, len(hits))
+		for _, h := range hits {
+			out = append(out, Hit{ContentID: h.ContentID, Score: h.Score, ContentMetrics: h.ContentMetrics})
+		}
+		r.store(ctx, key, out)
 	}
-	hits, err := r.source.Popular(ctx, contentKind, signal.PopularOptions{Window: window, Limit: limit, RankExpr: r.policy.RankExpr()})
-	if err != nil {
-		return nil, err
+	if len(out) > limit {
+		out = out[:limit]
 	}
-	out = make([]Hit, 0, len(hits))
-	for _, h := range hits {
-		out = append(out, Hit{ContentID: h.ContentID, Score: h.Score, ContentMetrics: h.ContentMetrics})
-	}
-	r.store(ctx, key, out)
 	return out, nil
+}
+
+// readDepth is the ranking prefix read for limit: the next power of two from
+// minReadDepth, at most MaxDepth.
+func (r *Ranker) readDepth(limit int) int {
+	depth := minReadDepth
+	for depth < limit {
+		depth *= 2
+	}
+	return min(depth, r.maxDepth)
 }
 
 // Candidates scores a host-selected set of works (an artist's galleries, a

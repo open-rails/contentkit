@@ -753,7 +753,7 @@ func TestIntegrationPolicyFixture(t *testing.T) {
 
 	// The cache key names the policy: another policy sharing the cache never
 	// reads v1's entry, and v1 reads its own back.
-	cache := popularity.NewMemoryCache()
+	cache := popularity.NewMemoryCache(0)
 	cached, err := popularity.New(popularity.Config{Source: v1Hub, Policy: popularity.PolicyV1, Cache: cache})
 	if err != nil {
 		t.Fatal(err)

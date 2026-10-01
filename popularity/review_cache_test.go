@@ -25,7 +25,7 @@ func (s *reviewCacheSource) Metrics(context.Context, []signal.ContentRef, signal
 }
 
 func TestReviewCacheSeparatesOpaqueTenantsAndPolicies(t *testing.T) {
-	cache := NewMemoryCache()
+	cache := NewMemoryCache(0)
 	a, b := &reviewCacheSource{tenant: "site:variant", id: "01920000-0000-7000-8000-00000000000a"}, &reviewCacheSource{tenant: "site", id: "01920000-0000-7000-8000-00000000000b"}
 	pa, pb := PolicyV1, PolicyV1
 	pa.Name, pb.Name = "v1", "variant:v1"
@@ -46,7 +46,7 @@ func TestReviewCacheSeparatesOpaqueTenantsAndPolicies(t *testing.T) {
 }
 
 func TestReviewCacheSeparatesPolicyParameters(t *testing.T) {
-	cache := NewMemoryCache()
+	cache := NewMemoryCache(0)
 	source := &reviewCacheSource{tenant: "site", id: "01920000-0000-7000-8000-000000000001"}
 	changed := PolicyV1
 	changed.Weights.Approval = 0.8
