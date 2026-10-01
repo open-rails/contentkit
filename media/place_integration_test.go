@@ -214,3 +214,39 @@ func mustSum(blob string) []byte {
 	}
 	return sum
 }
+
+// deletingStore deletes a manifest right after a blob lands: the item is
+// deleted while a place job runs.
+type deletingStore struct {
+	media.Store
+	manifest string
+}
+
+func (s deletingStore) Put(ctx context.Context, key string, body io.Reader, size int64, o media.PutOptions) (media.Object, error) {
+	obj, err := s.Store.Put(ctx, key, body, size, o)
+	if err == nil && strings.Contains(key, "/private/") {
+		err = s.Store.Delete(ctx, s.manifest)
+	}
+	return obj, err
+}
+
+// A place job that finds its item deleted removes the blob it just wrote
+// and the staged upload, as the folder deletion before it could not.
+func TestPlaceAfterDeletion(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	ctx := context.Background()
+	g := f.ref("gallery", 1)
+	item, _ := f.reg.Item(g)
+	p, staged := f.upload(g, "originals/1.png", "image/png", png(1))
+	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: p, Blob: staged}}); err != nil {
+		t.Fatal(err)
+	}
+	ms := s3test.Manifests(t, deletingStore{Store: f.env.Store, manifest: item.ManifestKey()}, f.reg, media.ManifestOptions{})
+	if n, err := ms.Place(ctx, g); err != nil || n != 0 {
+		t.Fatalf("placed %d: %v", n, err)
+	}
+	for o, err := range f.env.Store.List(ctx, item.Prefix()) {
+		t.Fatalf("left %s %v", o.Key, err)
+	}
+}

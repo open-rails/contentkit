@@ -287,15 +287,34 @@ func (g *Grant) sign(blob, download string, dl bool) (string, error) {
 }
 
 // EditorView is the blob name of an image upload's editor view: the hash of
-// its source and the editor spec. Only editor reads return it; the sweep
-// removes it after the grace period and an editor read renders it again.
+// its source and the editor spec, so a read finds it without rendering.
+// It is the one private blob not named by its bytes: only the worker
+// writes it, and no upload may name it (presign, put and copy refuse it).
+// Only editor reads return it; the sweep removes it after the grace period
+// and an editor read renders it again.
 func (r *Registry) EditorView(f File) string {
+	spec, _ := json.Marshal(r.cfg.Editor)
+	return editorView(f, spec)
+}
+
+func editorView(f File, spec []byte) string {
 	if !f.IsUpload() || f.Blob == "" || f.Gone || !isImageType(f.Type) {
 		return ""
 	}
-	spec, _ := json.Marshal(r.cfg.Editor)
 	sum := sha256.Sum256([]byte(f.Blob + "|" + string(spec)))
 	return layout.SHA256Name(sum[:])
+}
+
+// editorViews are the names of m's editor views.
+func (r *Registry) editorViews(m *Manifest) map[string]bool {
+	spec, _ := json.Marshal(r.cfg.Editor)
+	out := map[string]bool{}
+	for _, f := range m.Files {
+		if v := editorView(f, spec); v != "" {
+			out[v] = true
+		}
+	}
+	return out
 }
 
 // ReadOptions select what a read returns.

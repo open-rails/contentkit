@@ -158,9 +158,11 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequ
 	blob := layout.SHA256Name(r.SHA256)
 	key, _ := item.Blob(blob)
 	if obj, err := u.o.Store.Head(ctx, key); err == nil && obj.Size == r.Size && obj.ContentType == r.Type {
-		if ok, err := u.protected(ctx, item, blob, obj); err != nil {
+		m, err := u.current(ctx, item)
+		if err != nil {
 			return Presigned{}, err
-		} else if ok {
+		}
+		if u.reusable(m, u.reg.editorViews(m), blob, obj) {
 			out.Blob, out.Exists = blob, true
 			return out, nil
 		}
@@ -377,7 +379,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	if err != nil {
 		return nil, err
 	}
-	copies, err := u.copies(ctx, actor, item, ops)
+	copies, copied, err := u.copies(ctx, actor, grant, item, ops)
 	if err != nil {
 		return nil, err
 	}
@@ -424,7 +426,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 				keys = append(keys, key)
 			}
 		}
-		objects, err := u.verify(editCtx, item, names)
+		objects, err := u.verify(editCtx, item, m, names)
 		if err != nil {
 			return err
 		}
@@ -446,7 +448,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 				}
 				if _, ok := o.objects[op.Blob]; !ok {
 					// An earlier op in this batch removed or replaced the receipt.
-					objects, err := u.verify(editCtx, item, []string{op.Blob})
+					objects, err := u.verify(editCtx, item, m, []string{op.Blob})
 					if err != nil {
 						return err
 					}
@@ -472,7 +474,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		}
 		return nil, err
 	}
-	if err := settle(context.WithoutCancel(ctx), Settlement{Keys: keys, Delta: delta - charged}); err != nil {
+	if err := settle(context.WithoutCancel(ctx), Settlement{Keys: append(keys, copied...), Delta: delta - charged}); err != nil {
 		return nil, err
 	}
 	if c, ok := u.o.Queue.(ProcessCanceler); ok && removesPending(prior, ops) {
@@ -569,9 +571,10 @@ func (u *Uploads) newHidden(ctx context.Context, item Item) (*bool, error) {
 // temp/, and blobs in private/ the sweep cannot take first. A blob's bytes
 // were hashed when it was placed or produced, so they are not read again; a
 // name from another item's folder is simply absent here.
-func (u *Uploads) verify(ctx context.Context, item Item, names []string) (map[string]Object, error) {
+func (u *Uploads) verify(ctx context.Context, item Item, m *Manifest, names []string) (map[string]Object, error) {
 	out := make(map[string]Object, len(names))
 	var missing []string
+	views := u.reg.editorViews(m)
 	for _, n := range names {
 		key, err := item.Staged(n)
 		if err != nil {
@@ -584,13 +587,9 @@ func (u *Uploads) verify(ctx context.Context, item Item, names []string) (map[st
 		} else if err != nil {
 			return nil, err
 		}
-		if layout.ValidHashName(n) {
-			if ok, err := u.protected(ctx, item, n, obj); err != nil {
-				return nil, err
-			} else if !ok {
-				missing = append(missing, n)
-				continue
-			}
+		if layout.ValidHashName(n) && !u.reusable(m, views, n, obj) {
+			missing = append(missing, n)
+			continue
 		}
 		out[n] = obj
 	}
@@ -601,20 +600,23 @@ func (u *Uploads) verify(ctx context.Context, item Item, names []string) (map[st
 	return out, nil
 }
 
-// protected reports whether an existing blob may be newly referenced: the
-// manifest references it, or the sweep cannot take it within the commit's
-// margin.
-func (u *Uploads) protected(ctx context.Context, item Item, blob string, obj Object) (bool, error) {
-	if time.Now().Add(commitMargin(u.o.Grace)).Before(obj.LastModified.Add(u.o.Grace)) {
-		return true, nil
+// reusable reports whether an existing blob may be newly referenced: never
+// one of m's editor views (named by their source, not their bytes), else
+// one m references or the sweep cannot take within the commit's margin.
+func (u *Uploads) reusable(m *Manifest, views map[string]bool, blob string, obj Object) bool {
+	if views[blob] {
+		return false
 	}
+	return time.Now().Add(commitMargin(u.o.Grace)).Before(obj.LastModified.Add(u.o.Grace)) || slices.Contains(m.Blobs(), blob)
+}
+
+// current is item's manifest, empty when it has none.
+func (u *Uploads) current(ctx context.Context, item Item) (*Manifest, error) {
 	m, _, err := u.o.Manifests.Get(ctx, item.Ref())
 	if errors.Is(err, ErrNotFound) {
-		return false, nil
-	} else if err != nil {
-		return false, err
+		return &Manifest{}, nil
 	}
-	return slices.Contains(m.Blobs(), blob), nil
+	return m, err
 }
 
 // commitMargin bounds the time between a commit's check of a blob and its
@@ -623,16 +625,26 @@ func (u *Uploads) protected(ctx context.Context, item Item, blob string, obj Obj
 func commitMargin(grace time.Duration) time.Duration { return min(grace/4, time.Hour) }
 
 // copies reads each copy op's source upload and outputs from the other item
-// and copies their blobs into item, keyed by op index.
-func (u *Uploads) copies(ctx context.Context, actor access.Actor, item Item, ops []Op) (map[int][]File, error) {
+// and copies their blobs into item, keyed by op index. An identical blob the
+// sweep cannot take first is reused, as verify does for puts; any other is
+// copied (over an old one: the same bytes, refreshed). Each copy op that
+// moves bytes is reserved once, like an upload of its source (rate limits
+// and pending quota; the commit charges it), so a failed commit leaves no
+// unmetered bytes; it returns the reserved keys.
+func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGrant, item Item, ops []Op) (map[int][]File, []string, error) {
 	out := map[int][]File{}
+	var reserved []string
+	seen := map[string]bool{}
+	limited := u.o.Limiter != nil && !grant.Exempt
+	var dst *Manifest
+	var views map[string]bool
 	for n, op := range ops {
 		if op.Op != OpCopy {
 			continue
 		}
 		src, err := u.reg.Ref(item.Kind().Name, op.From.ID)
 		if err != nil {
-			return nil, uploadErr(CodeInvalid, "copy from item %q: %v", op.From.ID, err)
+			return nil, nil, uploadErr(CodeInvalid, "copy from item %q: %v", op.From.ID, err)
 		}
 		if src == item.Ref() {
 			continue // read the source under the destination's manifest lock
@@ -640,13 +652,13 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, item Item, ops
 		from, _ := u.reg.Item(src)
 		m, _, err := u.o.Manifests.Get(ctx, src)
 		if errors.Is(err, ErrNotFound) {
-			return nil, uploadErr(CodeNotFound, "item %s has no media", op.From.ID)
+			return nil, nil, uploadErr(CodeNotFound, "item %s has no media", op.From.ID)
 		} else if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		files := copyFiles(m, op.From.Path)
 		if len(files) == 0 {
-			return nil, uploadErr(CodeNotFound, "no upload %q in item %s", op.From.Path, op.From.ID)
+			return nil, nil, uploadErr(CodeNotFound, "no upload %q in item %s", op.From.Path, op.From.ID)
 		}
 		to, _, _, _, _ := item.Kind().upload(cmpOr(op.To, op.From.Path))
 		group, _, _, _, _ := item.Kind().upload(op.From.Path)
@@ -662,19 +674,48 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, item Item, ops
 				blobs = append(blobs, f.Track.Index)
 			}
 		}
+		var todo []string
 		for _, b := range blobs {
-			srcKey, _ := from.Blob(b)
 			dstKey, _ := item.Blob(b)
-			if _, err := u.o.Store.Head(ctx, dstKey); err == nil {
+			if seen[dstKey] {
 				continue
 			}
+			seen[dstKey] = true
+			if obj, err := u.o.Store.Head(ctx, dstKey); err == nil {
+				if dst == nil {
+					if dst, err = u.current(ctx, item); err != nil {
+						return nil, nil, err
+					}
+					views = u.reg.editorViews(dst)
+				}
+				if u.reusable(dst, views, b, obj) {
+					continue
+				}
+			} else if !errors.Is(err, ErrNotFound) {
+				return nil, nil, err
+			}
+			todo = append(todo, b)
+		}
+		// One reservation per copy, for the upload's bytes: what the commit
+		// charges (outputs are not charged).
+		if limited && len(todo) > 0 {
+			key, _ := item.Blob(files[0].Blob)
+			if err := u.o.Limiter.Reserve(ctx, Reservation{Tenant: item.Ref().TenantID, Uploader: uploaderID(actor),
+				Owner: grant.Owner, Key: key, Size: files[0].Size}); err != nil {
+				return nil, nil, err
+			}
+			reserved = append(reserved, key)
+		}
+		for _, b := range todo {
+			srcKey, _ := from.Blob(b)
+			dstKey, _ := item.Blob(b)
 			if _, err := u.o.Store.Copy(ctx, srcKey, dstKey, CopyOptions{}); err != nil {
-				return nil, fmt.Errorf("media: copy %s: %w", srcKey, err)
+				return nil, nil, fmt.Errorf("media: copy %s: %w", srcKey, err)
 			}
 		}
 		out[n] = files
 	}
-	return out, nil
+	return out, reserved, nil
 }
 
 // Frame grabs a still of the video upload at path for the frame picker.

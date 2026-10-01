@@ -103,7 +103,15 @@ func (m *Manifests) Place(ctx context.Context, ref contentref.ContentRef) (int, 
 		return nil
 	})
 	if errors.Is(err, ErrNotFound) {
-		return 0, nil // deleted meanwhile; the folder deletion takes temp/
+		// Deleted meanwhile: drop what this run wrote, as a folder deletion
+		// that ran before it could not.
+		var written []string
+		for _, b := range blobs {
+			if b != "" {
+				written = append(written, b)
+			}
+		}
+		return 0, errors.Join(m.DropIfDeleted(ctx, ref, written), m.dropStaged(ctx, item, blobs))
 	} else if err != nil {
 		return 0, err
 	}
