@@ -54,13 +54,14 @@ func TestInputsAreConfinedToContainerDemuxers(t *testing.T) {
 	if err := os.Mkdir(out, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	pl := plan{duration: 1, video: 0, width: 64, height: 48, rungs: []rung{{n: 48, w: 64, h: 48}}, tileW: 120, tileH: 90}
-	if err := ladder(ctx, list, out, pl, pass{rung: pl.rungs[0], codecs: []media.Codec{media.CodecH264}, sprite: true,
+	pl := plan{duration: 1, video: 0, width: 64, height: 48, tileW: 120, tileH: 90}
+	rs := []rung{{n: 48, w: 64, h: 48}}
+	if err := ladder(ctx, list, out, pl, pass{rung: rs[0], codecs: []media.Codec{media.CodecH264}, sprite: true,
 		enc: encoding{encoders: map[media.Codec]string{media.CodecH264: "libx264"}, threads: 1, preset: "fast"}}, nil); err == nil {
 		t.Fatal("concat list encoded")
 	}
 	var observed EncodeObservation
-	if err := ladder(ctx, clip, out, pl, pass{rung: pl.rungs[0], codecs: []media.Codec{media.CodecH264},
+	if err := ladder(ctx, clip, out, pl, pass{rung: rs[0], codecs: []media.Codec{media.CodecH264},
 		enc:     encoding{encoders: map[media.Codec]string{media.CodecH264: "libx264"}, threads: 1, preset: "fast"},
 		observe: func(o EncodeObservation) { observed = o }}, nil); err != nil {
 		t.Fatal(err)
@@ -91,7 +92,11 @@ func TestEncodeObservationUsesVideoDuration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pl, err := newPlan(probed, &media.Video{Ladder: []int{48}})
+	pl, err := newPlan(probed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs, err := pl.ladder(&media.HLS{Ladder: []int{48}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +109,7 @@ func TestEncodeObservationUsesVideoDuration(t *testing.T) {
 		t.Fatal(err)
 	}
 	var observed EncodeObservation
-	if err := ladder(ctx, clip, out, pl, pass{rung: pl.rungs[0], codecs: []media.Codec{media.CodecH264},
+	if err := ladder(ctx, clip, out, pl, pass{rung: rs[0], codecs: []media.Codec{media.CodecH264},
 		enc:     encoding{encoders: map[media.Codec]string{media.CodecH264: "libx264"}, threads: 1, preset: "fast"},
 		observe: func(o EncodeObservation) { observed = o }}, nil); err != nil {
 		t.Fatal(err)

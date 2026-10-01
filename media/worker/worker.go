@@ -1,15 +1,15 @@
-// Package worker is the media worker: the one process that does all media
-// work, from the host's worker River schema (Config.Schema) in its database. It hashes a
-// staged upload while reading it for processing and places it at its content
-// address (media.Manifests.Place), derives image variants, zips, slot outputs
-// and inline images (media/image, libvips) and encodes video, posters and
-// (media/video, ffmpeg). The host only presigns, commits,
-// exposes and reads.
+// Package worker is the media worker: the one process that runs every
+// producer, from the host's worker River schema (Config.Schema) in its
+// database: images, zips, public presets and editor views (media/image,
+// libvips), and HLS, MP4, audio, subtitles and frames (media/video, ffmpeg).
+// The host only presigns, commits, exposes and reads. After each job the
+// worker asks the host, through its media queue, to report the item's
+// readiness (Hooks.ItemReady) and to purge the public URLs it changed
+// (Hooks.PurgePublic), so the stock worker needs no host code.
 //
-// The host builds the worker from the same code that builds its
-// media.Registry, image.SpecChooser and media.Hooks, so the worker applies
-// exactly the host's kinds, slots and policy (see Config). cmd/media-worker is
-// the stock build for hosts whose kinds are plain data.
+// The registry is the host's (media.Config, built by the same code or read
+// from its JSON); cmd/media-worker is the stock build for hosts whose kinds
+// are plain data.
 package worker
 
 import (
@@ -44,16 +44,13 @@ type Config struct {
 	// Empty keeps the long-running all-queue worker.
 	Queue string
 	Store media.Store
-	// Kinds, Specs and Hooks are the host's: build them with the code the
-	// host's media setup uses. Hooks.Failed, Hooks.PublicRemoved and
-	// Hooks.ItemReady run here; Hooks.SlotChanged runs in the host's jobs.
+	// Kinds is the host's registry. Only Hooks.Failed runs here; ItemReady
+	// and PurgePublic run in the host through its media queue.
 	Kinds *media.Registry
-	Specs image.SpecChooser
-	Hooks media.Hooks
 	// HostSchema and HostQueue are the host's River schema ("" is the
 	// connection's search path) and media queue (default media.DefaultQueue):
-	// folder sweeps after edits run there. Grace is the
-	// host's JobsConfig.Grace (default 24 h).
+	// sweeps, readiness and purges run there. Grace is the host's
+	// JobsConfig.Grace (default 24 h).
 	HostSchema string
 	HostQueue  string
 	Grace      time.Duration
@@ -177,21 +174,18 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if c.Metrics != nil {
 		observeEncode = c.Metrics.ObserveEncode
 	}
-	enc, err := video.New(ctx, video.Config{Store: c.Store, Locker: media.PGLocker(c.Pool), Sweeps: host, TempDir: c.TempDir,
-		Threads: c.Threads, Preset: c.Preset, TopPreset: c.TopPreset, Encoder: c.VideoEncoder, Codecs: c.VideoCodecs, Hooks: c.Hooks, Logger: c.Logger, Slots: queue,
+	enc, err := video.New(ctx, video.Config{Manifests: manifests, Queue: queue, TempDir: c.TempDir,
+		Threads: c.Threads, Preset: c.Preset, TopPreset: c.TopPreset, Encoder: c.VideoEncoder, Codecs: c.VideoCodecs, Logger: c.Logger,
 		ObserveEncode: observeEncode})
 	if err != nil {
 		return nil, err
 	}
-	videos, err := video.Contribution(video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, Kinds: c.Kinds, Timeout: c.VideoTimeout,
+	videos, err := video.Contribution(video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, Timeout: c.VideoTimeout,
 		MaxWorkers: c.VideoWorkers, AudioWorkers: c.AudioWorkers, Queue: c.Queue, Logger: c.Logger})
 	if err != nil {
 		return nil, err
 	}
-	hooks := c.RiverHooks
-	if c.Hooks.ItemReady != nil {
-		hooks = append(hooks[:len(hooks):len(hooks)], &readyHook{pool: c.Pool, manifests: manifests, ready: c.Hooks.ItemReady})
-	}
+	hooks := append(c.RiverHooks[:len(c.RiverHooks):len(c.RiverHooks)], &readyHook{manifests: manifests, host: host})
 	var middleware []rivertype.Middleware
 	if c.Metrics != nil {
 		middleware = []rivertype.Middleware{c.Metrics}
@@ -200,7 +194,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	var singleStarted *atomic.Bool
 	var singleDone <-chan struct{}
 	if c.Queue != workqueue.VideoEncodeQueue {
-		images, err := image.New(image.Config{Store: c.Store, Kinds: c.Kinds, Manifests: manifests, Specs: c.Specs, Hooks: c.Hooks,
+		images, err := image.New(image.Config{Store: c.Store, Manifests: manifests, Purge: host.Purge,
 			Workers: c.ImageSources, MaxPixels: c.MaxPixels, MaxFrames: c.MaxFrames, MaxAnimationSeconds: c.MaxAnimationSeconds})
 		if err != nil {
 			return nil, err
@@ -307,7 +301,8 @@ func (w *imageWorker) Timeout(*river.Job[workqueue.ImageArgs]) time.Duration { r
 // Work runs one image job, after any equal job it follows.
 func (w *imageWorker) Work(ctx context.Context, job *river.Job[workqueue.ImageArgs]) (err error) {
 	defer func() { err = media.SnoozeUnavailable(ctx, w.c.Store, job.JobRow, err) }()
-	pj := media.ProcessJob{Ref: job.Args.Ref, Slot: job.Args.Slot}
+	a := job.Args
+	pj := media.ProcessJob{Ref: a.Ref, Preset: a.Preset, Force: a.Force, Editor: a.Editor}
 	if _, err := w.c.Kinds.Item(pj.Ref); err != nil {
 		return river.JobCancel(err)
 	}

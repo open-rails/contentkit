@@ -91,49 +91,25 @@ func (e *Edit) Hash() string {
 	return hex.EncodeToString(sum[:4])
 }
 
-// For is the identity of s derived through e, recorded as Variant.Spec: a
-// variant is stale when its spec or its file's edit changes.
-func (s Spec) For(e *Edit) string {
-	if h := e.Hash(); h != "" {
-		return s.Hash() + "." + h
+// Resolve is the edit im applies to a w×h source (EXIF-oriented): e with its
+// crop height fitted to Aspect, or without a crop the largest centred one at
+// Aspect (a native aspect: the whole source). It must lie inside the source
+// and be at least MinWidth wide once edited.
+func (im Image) Resolve(e *Edit, w, h int) (*Edit, error) {
+	e = e.Normalize()
+	rotate := 0
+	if e != nil {
+		rotate = e.Rotate
 	}
-	return s.Hash()
-}
-
-// fit derives the crop height from its width so the edited image has the
-// slot's aspect (width/height); a native slot keeps the crop as given.
-func (s Slot) fit(e *Edit) *Edit {
-	if e = e.Normalize(); e == nil || e.Crop == nil || s.Native() {
-		return e
-	}
-	e.Crop.H = s.cropAspect(e.Rotate).Height(e.Crop.W)
-	return e
-}
-
-// cropAspect is the crop's shape that yields Aspect after rotating.
-func (s Slot) cropAspect(rotate int) Aspect {
+	r := im.Aspect
 	if rotate == 90 || rotate == 270 {
-		return s.Aspect.Rotated()
+		r = r.Rotated()
 	}
-	return s.Aspect
-}
-
-// Resolve is the edit the slot applies to a w×h source (EXIF-oriented): e
-// with its height fitted, or without a crop the largest centred one at
-// Aspect (a native slot: the whole source). It must lie inside the source and
-// be at least Min wide once edited.
-func (s Slot) Resolve(e *Edit, w, h int) (*Edit, error) {
-	e = s.fit(e)
-	if (e == nil || e.Crop == nil) && s.Native() {
-		if e == nil {
-			e = &Edit{}
-		}
-	} else if e == nil || e.Crop == nil {
-		rotate := 0
-		if e != nil {
-			rotate = e.Rotate
-		}
-		r := s.cropAspect(rotate)
+	switch {
+	case r.Native():
+	case e != nil && e.Crop != nil:
+		e.Crop.H = r.Height(e.Crop.W)
+	case w > 0 && h > 0:
 		cw := w
 		if r.Height(cw) > h {
 			cw = min(w, r.Width(h))
@@ -144,9 +120,9 @@ func (s Slot) Resolve(e *Edit, w, h int) (*Edit, error) {
 	if err := e.Check(w, h); err != nil {
 		return nil, err
 	}
-	if ew, _ := e.Size(w, h); ew < s.Min() {
-		return nil, &ImageError{Code: CodeImageTooSmall, Message: fmt.Sprintf("the edited image must be at least %dpx wide; this one is %dpx", s.Min(), ew),
-			Details: ErrorDetails{Width: ew, MinWidth: s.Min()}}
+	if ew, _ := e.Size(w, h); w > 0 && ew < im.MinWidth {
+		return nil, &ImageError{Code: CodeImageTooSmall, Message: fmt.Sprintf("the edited image must be at least %dpx wide; this one is %dpx", im.MinWidth, ew),
+			Details: ErrorDetails{Width: ew, MinWidth: im.MinWidth}}
 	}
-	return e, nil
+	return e.Normalize(), nil
 }

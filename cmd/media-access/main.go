@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/media/agent"
+	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 )
 
@@ -75,11 +76,11 @@ func run(log *slog.Logger, args []string) error {
 	if err != nil {
 		return err
 	}
-	hostMap, err := agent.ParseHosts(*hosts)
+	hostMap, err := layout.ParseHosts(*hosts)
 	if err != nil {
 		return fmt.Errorf("MEDIA_ACCESS_HOSTS: %w", err)
 	}
-	defs, err := agent.ParseDefaults(*defaults)
+	defs, err := layout.ParseDefaults(*defaults)
 	if err != nil {
 		return fmt.Errorf("MEDIA_ACCESS_DEFAULTS: %w", err)
 	}
@@ -110,7 +111,7 @@ func run(log *slog.Logger, args []string) error {
 	defer stop()
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(ln) }()
-	log.Info("listening", "addr", ln.Addr().String(), "bucket", *bucket, "hosts", agent.FormatHosts(hostMap), "defaults", agent.FormatDefaults(defs))
+	log.Info("listening", "addr", ln.Addr().String(), "bucket", *bucket, "hosts", layout.FormatHosts(hostMap), "defaults", layout.FormatDefaults(defs))
 	select {
 	case err := <-done:
 		return err

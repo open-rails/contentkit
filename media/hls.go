@@ -1,12 +1,16 @@
 package media
 
 import (
+	"container/list"
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math"
-	"net/url"
+	"path"
 	"slices"
-	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 )
 
@@ -21,224 +25,181 @@ const (
 	subsGroup  = "subs"
 )
 
+// StartRung is the short side of the variant listed first in each codec:
+// native HLS players (Safari, iOS) start there before measuring.
+const StartRung = 1080
+
 // MasterOptions filter a master playlist's renditions by id or BCP 47 tag;
 // nil keeps every track, an empty non-nil slice none.
 type MasterOptions struct {
 	Audio, Subs []string
 }
 
-// Playlist URIs relative to the master playlist, which is served at
-// ".../hls/{file}/master.m3u8".
-func videoURI(v Rendition) string {
-	return "video/" + strconv.Itoa(v.Rung) + "-" + string(v.Codec) + ".m3u8"
-}
-func audioURI(id string) string { return "audio/" + id + ".m3u8" }
-func subsURI(id string) string  { return "subs/" + url.PathEscape(id) + ".m3u8" }
-
-// playable reports a ladder with renditions: video, or an audio file's track.
-func (h *HLS) playable() bool { return h != nil && (len(h.Video) > 0 || len(h.Audio) > 0) }
-
-// hlsFile returns the index and ladder of a file this viewer may play.
-func (g *Grant) hlsFile(name string) (int, *HLS, error) {
-	i := g.Manifest.File(name)
-	if !g.Allowed(i) || !g.Manifest.Files[i].HLS.playable() {
-		return 0, nil, ErrNotAllowed
-	}
-	return i, g.Manifest.Files[i].HLS, nil
+// Playlists are served under the read API at {kind}/{id}/hls/: a ladder's
+// master at {dir}master.m3u8 and its sprite at {dir}sprite.vtt, and every
+// track file's media playlist at {path}.m3u8. A master lists its media
+// playlists relative to its own URL.
+func playlistURI(dir, filePath string) string {
+	return strings.Repeat("../", strings.Count(dir, "/")) + filePath + ".m3u8"
 }
 
-// MasterPlaylist is the multivariant playlist of file: one variant per video
-// rendition (rung and codec), with alternative audio and subtitle groups.
-// Codecs are listed in the ladder's order, so a player that decodes the
-// first starts on it; players drop variants whose CODECS they cannot decode.
-// Subtitles are the source's tracks, then its sidecar subtitle files. An
-// audio file's is one audio-only variant over its track.
-func (g *Grant) MasterPlaylist(file string, o MasterOptions) ([]byte, error) {
-	i, h, err := g.hlsFile(file)
-	if err != nil {
-		return nil, err
-	}
-	if len(h.Video) == 0 {
-		a := h.Audio[0]
-		return fmt.Appendf(nil, "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-STREAM-INF:BANDWIDTH=%d,CODECS=%q\n%s\n",
-			a.Bandwidth, orDefaultString(a.Codecs, "mp4a.40.2"), audioURI(a.ID)), nil
-	}
-	audio := pick(h.Audio, o.Audio, func(a AudioTrack) (string, string) { return a.ID, a.Lang })
-	subs := pick(g.subtitles(i, h), o.Subs, func(s subtitleTrack) (string, string) { return s.ID, s.Lang })
-
-	var b strings.Builder
-	b.WriteString("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n")
-	audioBW, audioCodecs := 0, []string{}
-	def := slices.IndexFunc(audio, func(a AudioTrack) bool { return a.Default })
-	names := map[string]bool{}
-	for i, a := range audio {
-		audioBW = max(audioBW, a.Bandwidth)
-		c := orDefaultString(a.Codecs, "mp4a.40.2")
-		if !slices.Contains(audioCodecs, c) {
-			audioCodecs = append(audioCodecs, c)
+// ladder lists the tracks of the HLS output directory dir this viewer may
+// play, in manifest order.
+func (g *Grant) ladder(dir string) (video, audio, subs []File, sprite *File) {
+	for _, f := range g.Manifest.Files {
+		if f.Track == nil || path.Dir(f.Path)+"/" != dir || !g.Allowed(f) {
+			continue
 		}
-		fmt.Fprintf(&b, "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=%q,NAME=%q%s,DEFAULT=%s,AUTOSELECT=YES,URI=%q\n",
-			audioGroup, uniqueName(names, a.Label, a.Lang, a.ID), language(a.Lang), yesNo(i == max(def, 0)), audioURI(a.ID))
-	}
-	names = map[string]bool{}
-	for _, s := range subs {
-		fmt.Fprintf(&b, "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=%q,NAME=%q%s,DEFAULT=NO,AUTOSELECT=YES,FORCED=%s,URI=%q\n",
-			subsGroup, uniqueName(names, s.Label, s.Lang, s.ID), language(s.Lang), yesNo(s.Forced), subsURI(s.ID))
-	}
-	var variants []Rendition
-	for _, c := range codecOrder(h.Video) {
-		variants = append(variants, variantOrder(slices.DeleteFunc(slices.Clone(h.Video), func(v Rendition) bool { return v.Codec != c }))...)
-	}
-	for _, v := range variants {
-		fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d", v.Bandwidth+audioBW)
-		if v.Average > 0 {
-			fmt.Fprintf(&b, ",AVERAGE-BANDWIDTH=%d", v.Average+audioBW)
+		switch f.Track.Kind {
+		case TrackVideo:
+			video = append(video, f)
+		case TrackAudio:
+			audio = append(audio, f)
+		case TrackSubs:
+			subs = append(subs, f)
+		case TrackSprite:
+			sprite = &f
 		}
-		if v.Width > 0 && v.Height > 0 {
-			fmt.Fprintf(&b, ",RESOLUTION=%dx%d", v.Width, v.Height)
-		}
-		fmt.Fprintf(&b, ",CODECS=%q", strings.Join(append([]string{v.Codecs}, audioCodecs...), ","))
-		if len(audio) > 0 {
-			fmt.Fprintf(&b, ",AUDIO=%q", audioGroup)
-		}
-		if len(subs) > 0 {
-			fmt.Fprintf(&b, ",SUBTITLES=%q", subsGroup)
-		}
-		b.WriteString(",CLOSED-CAPTIONS=NONE\n" + videoURI(v) + "\n")
 	}
-	return []byte(b.String()), nil
+	if len(video) > 0 {
+		subs = append(subs, g.sidecars(video[0].From, subs)...)
+	}
+	return video, audio, subs, sprite
 }
 
-// StartRung is the short side of the variant listed first in each codec:
-// native HLS players (Safari, iOS) start there before measuring.
-const StartRung = 1080
-
-// codecOrder lists the ladder's codecs in first-appearance order.
-func codecOrder(video []Rendition) []Codec {
-	var out []Codec
-	for _, v := range video {
-		if !slices.Contains(out, v.Codec) {
-			out = append(out, v.Codec)
+// sidecars are the converted subtitle uploads (Subtitles presets' outputs)
+// this viewer may read for the video upload from: those whose upload's
+// meta.for names it, or names no video. Their track id is the output path;
+// one whose language-and-label duplicates a source track still lists.
+func (g *Grant) sidecars(from string, have []File) []File {
+	var out []File
+	k := g.Item.Kind()
+	for _, f := range g.Manifest.Files {
+		p := k.private(f.Preset)
+		if p == nil || p.Subtitles == nil || !g.Allowed(f) {
+			continue
+		}
+		src, _ := g.Manifest.Get(f.From)
+		if target, _ := src.Meta[MetaFor].(string); target != "" && target != from {
+			continue
+		}
+		lang, _ := src.Meta[MetaLang].(string)
+		label, _ := src.Meta[MetaLabel].(string)
+		forced, _ := src.Meta[MetaForced].(bool)
+		f.Track = &Track{Kind: TrackSubs, ID: f.Path, Lang: lang, Label: label, Forced: forced}
+		if !slices.ContainsFunc(have, func(h File) bool { return h.Track.ID == f.Path }) {
+			out = append(out, f)
 		}
 	}
 	return out
 }
 
-// variantOrder lists the highest rendition up to StartRung first (else the
+// MasterPlaylist is the multivariant playlist of the ladder under dir: one
+// variant per video track (rung and codec), with the audio and subtitle
+// groups; an audio-only ladder is one audio variant. Codecs are listed in
+// the ladder's order, so a player that decodes the first starts on it.
+func (g *Grant) MasterPlaylist(dir string, o MasterOptions) ([]byte, error) {
+	video, audio, subs, _ := g.ladder(dir)
+	if len(video) == 0 && len(audio) == 0 {
+		return nil, ErrNotAllowed
+	}
+	if len(video) == 0 {
+		a := audio[0]
+		return fmt.Appendf(nil, "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-STREAM-INF:BANDWIDTH=%d,CODECS=%q\n%s\n",
+			max(a.Track.Bandwidth, 1), cmpOr(a.Track.Codecs, "mp4a.40.2"), playlistURI(dir, a.Path)), nil
+	}
+	audio = pickTracks(audio, o.Audio)
+	subs = pickTracks(subs, o.Subs)
+
+	var b strings.Builder
+	b.WriteString("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n")
+	audioBW, audioCodecs := 0, []string{}
+	def := slices.IndexFunc(audio, func(a File) bool { return a.Track.Default })
+	names := map[string]bool{}
+	for i, a := range audio {
+		audioBW = max(audioBW, a.Track.Bandwidth)
+		if c := cmpOr(a.Track.Codecs, "mp4a.40.2"); !slices.Contains(audioCodecs, c) {
+			audioCodecs = append(audioCodecs, c)
+		}
+		fmt.Fprintf(&b, "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=%q,NAME=%q%s,DEFAULT=%s,AUTOSELECT=YES,URI=%q\n",
+			audioGroup, uniqueName(names, a.Track), language(a.Track.Lang), yesNo(i == max(def, 0)), playlistURI(dir, a.Path))
+	}
+	names = map[string]bool{}
+	for _, s := range subs {
+		fmt.Fprintf(&b, "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=%q,NAME=%q%s,DEFAULT=NO,AUTOSELECT=YES,FORCED=%s,URI=%q\n",
+			subsGroup, uniqueName(names, s.Track), language(s.Track.Lang), yesNo(s.Track.Forced), playlistURI(dir, s.Path))
+	}
+	var codecs []string
+	for _, v := range video {
+		if !slices.Contains(codecs, v.Track.Codec) {
+			codecs = append(codecs, v.Track.Codec)
+		}
+	}
+	for _, c := range codecs {
+		for _, v := range variantOrder(slices.DeleteFunc(slices.Clone(video), func(v File) bool { return v.Track.Codec != c })) {
+			fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d", v.Track.Bandwidth+audioBW)
+			if v.Track.Average > 0 {
+				fmt.Fprintf(&b, ",AVERAGE-BANDWIDTH=%d", v.Track.Average+audioBW)
+			}
+			if v.W > 0 && v.H > 0 {
+				fmt.Fprintf(&b, ",RESOLUTION=%dx%d", v.W, v.H)
+			}
+			fmt.Fprintf(&b, ",CODECS=%q", strings.Join(append([]string{v.Track.Codecs}, audioCodecs...), ","))
+			if len(audio) > 0 {
+				fmt.Fprintf(&b, ",AUDIO=%q", audioGroup)
+			}
+			if len(subs) > 0 {
+				fmt.Fprintf(&b, ",SUBTITLES=%q", subsGroup)
+			}
+			b.WriteString(",CLOSED-CAPTIONS=NONE\n" + playlistURI(dir, v.Path) + "\n")
+		}
+	}
+	return []byte(b.String()), nil
+}
+
+// variantOrder lists the highest variant up to StartRung first (else the
 // smallest), then the rest by descending bandwidth.
-func variantOrder(video []Rendition) []Rendition {
+func variantOrder(video []File) []File {
 	out := slices.Clone(video)
-	slices.SortStableFunc(out, func(a, b Rendition) int { return b.Bandwidth - a.Bandwidth })
+	slices.SortStableFunc(out, func(a, b File) int { return b.Track.Bandwidth - a.Track.Bandwidth })
 	start := len(out) - 1
 	for i, v := range out {
-		if shortSide(v) <= StartRung {
+		if min(v.W, v.H) <= StartRung {
 			start = i
 			break
 		}
 	}
 	first := out[start]
-	return append([]Rendition{first}, slices.Delete(out, start, start+1)...)
+	return append([]File{first}, slices.Delete(out, start, start+1)...)
 }
 
-func shortSide(v Rendition) int {
-	if v.Width > 0 && v.Height > 0 {
-		return min(v.Width, v.Height)
+// MediaPlaylist is the playlist of the track file at filePath: a byte-range
+// playlist over its blob for video and audio (from its index), or one
+// segment over a whole WebVTT file.
+func (g *Grant) MediaPlaylist(ctx context.Context, filePath string) ([]byte, error) {
+	f, ok := g.Manifest.Get(filePath)
+	if !ok || !g.Allowed(f) {
+		return nil, ErrNotAllowed
 	}
-	return v.Rung
-}
-
-// VideoPlaylist is the byte-range media playlist of one video rung in codec.
-func (g *Grant) VideoPlaylist(file string, rung int, codec Codec) ([]byte, error) {
-	i, h, err := g.hlsFile(file)
+	u, err := g.URL(f, false)
 	if err != nil {
 		return nil, err
 	}
-	for _, v := range h.Video {
-		if v.Rung == rung && v.Codec == codec {
-			return g.mediaPlaylist(i, v.Blob, v.Segments)
-		}
-	}
-	return nil, ErrNotAllowed
-}
-
-// AudioPlaylist is the byte-range media playlist of one audio track.
-func (g *Grant) AudioPlaylist(file, id string) ([]byte, error) {
-	i, h, err := g.hlsFile(file)
-	if err != nil {
-		return nil, err
-	}
-	for _, a := range h.Audio {
-		if a.ID == id {
-			return g.mediaPlaylist(i, a.Blob, a.Segments)
-		}
-	}
-	return nil, ErrNotAllowed
-}
-
-// SubtitlePlaylist is a one-segment playlist over the whole WebVTT blob of
-// one of the file's tracks (its source's or a sidecar's).
-func (g *Grant) SubtitlePlaylist(file, id string) ([]byte, error) {
-	i, h, err := g.hlsFile(file)
-	if err != nil {
-		return nil, err
-	}
-	for _, s := range g.subtitles(i, h) {
-		if s.ID != id {
-			continue
-		}
-		u, err := g.URL(s.File, s.Blob)
-		if err != nil {
-			return nil, err
-		}
-		d := duration(g.Manifest.Files[i], h)
+	if f.Type == "text/vtt" {
+		d := g.duration(f)
 		return fmt.Appendf(nil, "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:%d\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:%s,\n%s\n#EXT-X-ENDLIST\n",
 			max(1, int(math.Ceil(d))), seconds(d), u), nil
 	}
-	return nil, ErrNotAllowed
-}
-
-// SpriteVTT is the seek-preview track: one cue per sprite tile, each
-// pointing at its tile with a #xywh fragment.
-func (g *Grant) SpriteVTT(file string) ([]byte, error) {
-	i, h, err := g.hlsFile(file)
-	if err != nil {
-		return nil, err
-	}
-	s := h.Sprite
-	if s == nil || s.Cols <= 0 || s.Rows <= 0 || s.Interval <= 0 {
+	if f.Track == nil || f.Track.Kind != TrackVideo && f.Track.Kind != TrackAudio {
 		return nil, ErrNotAllowed
 	}
-	u, err := g.URL(i, s.Blob)
+	idx, err := g.r.index(ctx, g.Item, f.Track.Index)
 	if err != nil {
 		return nil, err
 	}
-	d := duration(g.Manifest.Files[i], h)
-	n := s.Cols * s.Rows
-	if d > 0 {
-		n = min(n, int(math.Ceil(d/s.Interval)))
-	}
-	var b strings.Builder
-	b.WriteString("WEBVTT\n")
-	for t := range n {
-		start, end := float64(t)*s.Interval, float64(t+1)*s.Interval
-		if d > 0 {
-			end = min(end, d)
-		}
-		fmt.Fprintf(&b, "\n%s --> %s\n%s#xywh=%d,%d,%d,%d\n", vttTime(start), vttTime(end), u,
-			t%s.Cols*s.Width, t/s.Cols*s.Height, s.Width, s.Height)
-	}
-	return []byte(b.String()), nil
-}
-
-// mediaPlaylist lists segs as byte ranges of one fMP4 blob whose init
-// segment is bytes [0, segs[0].Offset).
-func (g *Grant) mediaPlaylist(i int, blob string, segs []Segment) ([]byte, error) {
+	segs := idx.Segments
 	if len(segs) == 0 || segs[0].Offset <= 0 {
-		return nil, fmt.Errorf("media: rendition %s has no init segment or segments", blob)
-	}
-	u, err := g.URL(i, blob)
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("media: track %s has no init segment or segments", f.Path)
 	}
 	target := 1
 	for _, s := range segs {
@@ -254,33 +215,92 @@ func (g *Grant) mediaPlaylist(i int, blob string, segs []Segment) ([]byte, error
 	return []byte(b.String()), nil
 }
 
-// duration is the ladder's length: its first rendition's (or track's)
-// segments, else meta.
-func duration(f File, h *HLS) float64 {
-	segs := []Segment(nil)
-	if len(h.Video) > 0 {
-		segs = h.Video[0].Segments
-	} else if len(h.Audio) > 0 {
-		segs = h.Audio[0].Segments
+// duration is a subtitle's: its video upload's.
+func (g *Grant) duration(f File) float64 {
+	src, _ := g.Manifest.Get(f.From)
+	if target, _ := src.Meta[MetaFor].(string); target != "" {
+		src, _ = g.Manifest.Get(target)
 	}
-	var d float64
-	for _, s := range segs {
-		d += s.Seconds
+	if src.Dur > 0 {
+		return src.Dur
 	}
-	if d > 0 {
-		return d
+	for _, x := range g.Manifest.Files {
+		if x.IsUpload() && isVideoType(x.Type) && x.Dur > 0 {
+			return x.Dur
+		}
 	}
-	return metaFloat(f.Meta, "duration")
+	return 0
 }
 
-func pick[T any](tracks []T, want []string, key func(T) (id, lang string)) []T {
+// SpriteVTT is the ladder's seek-preview track: one cue per sprite tile,
+// each pointing at its tile with a #xywh fragment.
+func (g *Grant) SpriteVTT(ctx context.Context, dir string) ([]byte, error) {
+	_, _, _, sprite := g.ladder(dir)
+	if sprite == nil {
+		return nil, ErrNotAllowed
+	}
+	idx, err := g.r.index(ctx, g.Item, sprite.Track.Index)
+	if err != nil {
+		return nil, err
+	}
+	s := idx.Sprite
+	if s == nil || s.Cols <= 0 || s.Rows <= 0 || s.Interval <= 0 {
+		return nil, ErrNotAllowed
+	}
+	u, err := g.URL(*sprite, false)
+	if err != nil {
+		return nil, err
+	}
+	src, _ := g.Manifest.Get(sprite.From)
+	n := s.Cols * s.Rows
+	if src.Dur > 0 {
+		n = min(n, int(math.Ceil(src.Dur/s.Interval)))
+	}
+	var b strings.Builder
+	b.WriteString("WEBVTT\n")
+	for t := range n {
+		start, end := float64(t)*s.Interval, float64(t+1)*s.Interval
+		if src.Dur > 0 {
+			end = min(end, src.Dur)
+		}
+		fmt.Fprintf(&b, "\n%s --> %s\n%s#xywh=%d,%d,%d,%d\n", vttTime(start), vttTime(end), u, t%s.Cols*s.W, t/s.Cols*s.H, s.W, s.H)
+	}
+	return []byte(b.String()), nil
+}
+
+// index reads a track index blob through the cache (blobs never change).
+func (r *Reader) index(ctx context.Context, item Item, blob string) (*TrackIndex, error) {
+	if idx := r.indexes.get(blob); idx != nil {
+		return idx, nil
+	}
+	key, err := item.Blob(blob)
+	if err != nil {
+		return nil, err
+	}
+	rc, _, err := r.o.Manifests.store.Get(ctx, key, GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	body, err := io.ReadAll(io.LimitReader(rc, 16<<20))
+	if err != nil {
+		return nil, err
+	}
+	var idx TrackIndex
+	if err := json.Unmarshal(body, &idx); err != nil {
+		return nil, fmt.Errorf("media: track index %s: %w", key, err)
+	}
+	r.indexes.put(blob, &idx, int64(len(body)))
+	return &idx, nil
+}
+
+func pickTracks(tracks []File, want []string) []File {
 	if want == nil {
 		return tracks
 	}
-	var out []T
+	var out []File
 	for _, t := range tracks {
-		id, lang := key(t)
-		if slices.Contains(want, id) || (lang != "" && slices.Contains(want, lang)) {
+		if slices.Contains(want, t.Track.ID) || t.Track.Lang != "" && slices.Contains(want, t.Track.Lang) {
 			out = append(out, t)
 		}
 	}
@@ -288,10 +308,10 @@ func pick[T any](tracks []T, want []string, key func(T) (id, lang string)) []T {
 }
 
 // uniqueName is a NAME attribute unique within its group.
-func uniqueName(seen map[string]bool, label, lang, id string) string {
-	n := quotable(orDefaultString(orDefaultString(label, lang), id))
+func uniqueName(seen map[string]bool, t *Track) string {
+	n := quotable(cmpOr(cmpOr(t.Label, t.Lang), t.ID))
 	if seen[n] {
-		n += " (" + quotable(id) + ")"
+		n += " (" + quotable(t.ID) + ")"
 	}
 	seen[n] = true
 	return n
@@ -304,8 +324,7 @@ func language(lang string) string {
 	return ",LANGUAGE=\"" + lang + "\""
 }
 
-// quotable strips what an HLS quoted-string may not hold; %q then only
-// quotes, as the rest is printable.
+// quotable strips what an HLS quoted-string may not hold.
 func quotable(s string) string {
 	return strings.Map(func(r rune) rune {
 		if r == '"' || r == '\\' || !unicode.IsPrint(r) {
@@ -315,13 +334,6 @@ func quotable(s string) string {
 	}, s)
 }
 
-func orDefaultString(s, def string) string {
-	if s == "" {
-		return def
-	}
-	return s
-}
-
 func yesNo(b bool) string {
 	if b {
 		return "YES"
@@ -329,9 +341,55 @@ func yesNo(b bool) string {
 	return "NO"
 }
 
-func seconds(s float64) string { return strconv.FormatFloat(s, 'f', 3, 64) }
+func seconds(s float64) string { return fmt.Sprintf("%.3f", s) }
 
 func vttTime(s float64) string {
 	ms := int64(math.Round(s * 1000))
 	return fmt.Sprintf("%02d:%02d:%02d.%03d", ms/3600000, ms/60000%60, ms/1000%60, ms%1000)
+}
+
+// indexCache keeps decoded track indexes by blob, bounded by their size.
+type indexCache struct {
+	mu    sync.Mutex
+	max   int64
+	used  int64
+	order *list.List
+	items map[string]*list.Element
+}
+
+type indexEntry struct {
+	blob string
+	idx  *TrackIndex
+	cost int64
+}
+
+func newIndexCache(max int64) *indexCache {
+	return &indexCache{max: max, order: list.New(), items: map[string]*list.Element{}}
+}
+
+func (c *indexCache) get(blob string) *TrackIndex {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.items[blob]; ok {
+		c.order.MoveToFront(e)
+		return e.Value.(*indexEntry).idx
+	}
+	return nil
+}
+
+func (c *indexCache) put(blob string, idx *TrackIndex, size int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.items[blob]; ok || size*4 > c.max {
+		return
+	}
+	c.items[blob] = c.order.PushFront(&indexEntry{blob, idx, size * 4})
+	c.used += size * 4
+	for c.used > c.max {
+		e := c.order.Back()
+		v := e.Value.(*indexEntry)
+		c.order.Remove(e)
+		delete(c.items, v.blob)
+		c.used -= v.cost
+	}
 }

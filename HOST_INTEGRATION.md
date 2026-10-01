@@ -89,7 +89,7 @@ Ports (in `content` unless qualified):
 |---|---|---|
 | `Identity` | yes | reads the already-authenticated `access.Actor` from context; ContentKit never authenticates |
 | `Authorizer` | yes | `Can(actor, perm)` for `Perms{PostWrite, PollWrite, CommentModerate, ModerationReview}`; fail-closed on error and on an unset perm |
-| `access.ContentResolver` | yes | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, PreviewLimit, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request; another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`; content ignores `PreviewLimit`. Media serves every file only when `Full()`, else the first `Units(n)` files (`PreviewLimit` N caps a `Visible` item to its first N files; free preview is `Accessible=false, PreviewLimit=3`) and `Visible` teasers; `Editor` (the actor may edit the item) unlocks editor views (`Kind.Editor`, `variant=editor`, slot `editor_url`) and `edit`/`dims` in the read API |
+| `access.ContentResolver` | yes | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, PreviewLimit, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request; another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`; content ignores `PreviewLimit`. Media serves every file only when `Full()`, else the files of the first `Units(n)` pages (`PreviewLimit` N caps a `Visible` item to its first N `Pages` uploads; free preview is `Accessible=false, PreviewLimit=3`) and `Visible` teasers; for media the ref is the item, i.e. the host's version; `Editor` (the actor may edit the item) unlocks editor reads (uploads, edits, editor views) |
 | `UserEnricher` | no | display data for author ids |
 | `Media` | no | post and poll images in ContentKit media (see below); absent = image routes answer 501 |
 | `ContentProcessor` | no | rich-text sanitizer for comment/post bodies (default strips tags) |
@@ -98,14 +98,15 @@ Ports (in `content` unless qualified):
 
 **Post and poll images** live in media folders `{tenant}/post/{post_id}/` and
 `{tenant}/poll/{poll_id}/` (`Media.PostKind`/`PollKind`). Register both kinds
-with `Inline` set, route their `CanUpload` to `rt.Content.CanUpload` (PostWrite
-or PollWrite, and the post or poll must exist), register the `media/image`
-processor, and pass `content.Media{URLs: reader, Folders: jobs}`. The editor
-uploads each image with the SDK's `uploadInline(file, {ref: {kind: "post", id}})`
-(browser to bucket; the original stays private; the call returns once the
-worker has rendered it to `public/sha256-{hex}`), then hands the returned name
-to ContentKit, which stores the public URL (`Reader.InlineURL`; 400 until
-rendered):
+with a `Named` upload path (`inline/{name}`) and its public preset (`To:
+"{name}.webp"`), route their `CanUpload` to `rt.Content.CanUpload` (PostWrite
+or PollWrite, and the post or poll must exist), and pass
+`content.Media{URLs: urls, Folders: jobs}`, where `urls.InlineURL` is the
+public preset's URL (`reg.PublicURL(ref, name+".webp")`; a pure function).
+The editor uploads each image with the SDK's `upload(file, {ref: {kind:
+"post", id}, path: "inline/x.png"})` (browser to bucket; the server names it
+`i-{uuid}`), then hands the name to ContentKit, which stores the public URL;
+it serves the kind's default until the worker renders it:
 
 | Route | Body | Result |
 |---|---|---|
@@ -351,168 +352,205 @@ operations that finish remotely after the caller sees a timeout. A failed sink
 stays queued under a new revision. Callbacks must be bounded, read-only and
 respect cancellation.
 
-## Media edits and slots from files
+## Media
 
-Cropping and rotating are ContentKit's: the host never decodes images.
+Media is a self-describing file system in one private bucket; no database
+table records what media exists. The app declares everything in one registry
+at startup (`media.Config`); ContentKit hard-codes no kinds, names or
+layouts.
 
-- A file edit is the commit op `{"op":"edit","name":"001.png","edit":{"crop":{"x":0,"y":0,"w":800,"h":600},"rotate":90}}`
-  (omit `edit` to clear). Crop is in the original's pixels, before the
-  clockwise rotate. Variants re-derive; the original is never changed.
-- A cover from a page is `Uploads.SetSlotFromFile(ctx, actor, media.SlotFromFile{Ref: ref, Slot: "cover", File: "001.png", Edit: &media.Edit{Crop: &media.Crop{X: x, Y: y, W: w}}})`
-  or `POST /commit-slot-from-file {"ref","slot","file","edit"}` (→ `SlotManifest`).
-  Give the slot `Aspect: media.Ratio("46:65")` and send only the width; the height
-  follows. `From` (`"from"`) takes the file from another item of the tenant,
-  e.g. a channel avatar from a post image; `CanUpload` must allow both.
-- Slots and inline images belong to the work: `CanUpload` is asked for
-  `UploadTarget{Ref: ref.Content(), Slot}` even when a version ref is sent.
-  `Slot` names the registered slot ("" for files and inline images), so a
-  host can let users write their own avatar and nothing else.
-- Avatars and covers are slots with density widths; see README "Slots":
+- **Items.** An item is `{namespace}/{kind}/{id}/`: the host's version id is
+  the item id (ContentKit has no versions; a work's versions are separate
+  items). It holds `manifest.json` (gzip JSON, never served), `private/`
+  (hash-named blobs: uploads, derived files, editor views), `public/`
+  (app-declared names such as `cover-460.webp`) and `temp/` (in-flight
+  server-side writes).
+- **Manifest.** An ordered virtual file system over the item's private
+  blobs: each Upload's files in natural order unless an op reorders them,
+  then each private preset's outputs in their uploads' order. A derived file
+  records `from`, `preset` and `fp` (its inputs' fingerprint); it is stale
+  exactly when the fingerprint no longer matches. Public files are never in
+  it: their names are deterministic.
+- **URLs.** `https://media.<site>/v1/{namespace}/{kind}/{id}/{public|private}/{name}`.
+  `media.PublicURL(base, ns, kind, id, name)` and `media.SrcSet(…)` (or
+  `Registry.PublicURL`/`SrcSet`) build public URLs with no lookup; a missing
+  public file is served its kind's default by the access agent.
 
-  ```go
-  media.AvatarSlotName: media.AvatarSlot, // 1:1, 64–512 px, stills
-  "cover": {Aspect: media.Aspect3x1, Widths: []int{900, 3000}, MinWidth: 600},
-  ```
-
-  Mount `UploadHandler` with `Reader` (its origin and editor tokens build
-  reply URLs). For one item use `Reader.Slot(ctx, ref, actor, slot)` /
-  `GET /{kind}/{id}/slots/{slot}` (resolves; 404 for items the viewer cannot see). Listings
-  read `Reader.SlotImages(ctx, tenant, kind, slot, width, ids...)` from the
-  slot index (`media.NewSlotIndex(pool, schema)` in `JobsConfig.Slots` and
-  `ReaderOptions.Slots`): hash-named, immutable URLs, no bucket reads.
-  `Reader.SlotLink(ref, slot)` (with `ReaderOptions.ReadURL`) is a stable
-  URL to store, e.g. as an account's avatar: the read API redirects it to
-  the current image or `HandlerOptions.SlotDefault`. `Hooks.SlotChanged`
-  (in `JobsConfig.Hooks`) hears every set, replace and removal;
-  `Uploads.DeleteSlot` / `POST /delete-slot` removes. After changing slot
-  specs, enqueue `ProcessJob{Ref}` per item; the sweep removes the old
-  renditions.
-- Editors (`Resolution.Editor`) read `dims` (original size) and `edit` from
-  the read API and crop on the editor view: set `Kind.Editor` (e.g.
-  `&media.Spec{Width: 1200, Height: 1200, Fit: media.FitInside}`) and read
-  with `variant=editor` (files) or a slot's `editor_url` (the SDK's
-  `getEditorView`, used by `useSlotCrop`'s recrop). Editor views live in
-  `temp/`: pass `ReaderOptions.Queue` so a swept one is rendered again, and
-  expect a file without an editor URL while it renders. The SDK's `useCrop`
-  keeps the rect in original pixels for any cropper UI.
-- `temp/` retention is the sweep's: `JobsConfig.EditorTTL` (7 days) and
-  `TempUploadTTL` (48 h; keep it above the bucket's multipart abort age).
-- Cap files per item with `Kind.MaxFiles` and `Kind.TypeLimits`
-  (`{"video": {MaxFiles: 1}}`); commits over a cap get 409 `too_many_files`.
-
-### Animated images and AVIF
-
-- GIF and WebP animations keep every frame, delay and the loop count in
-  every variant and slot output (animated WebP). Crops, rotations and
-  resizes apply per frame. `Kind.Animation` (files, inline images) and
-  `Slot.Animation` are `media.AnimationAllow` (default) or
-  `media.AnimationReject`, which refuses an animated upload with
-  `animation_not_allowed`. Nothing is flattened to its first frame.
-  Animations ignore EXIF orientation.
-- `image.Config` bounds sources: `MaxPixels` counts all frames (frames × w × h,
-  default 100 MP), `MaxFrames` (default 1000) and `MaxAnimationSeconds`
-  (default 60) refuse with `image_too_large` / `animation_too_long`.
-- AVIF and HEIF stills decode through libheif. The host's libvips needs
-  libheif with an AV1 decoder (Debian/Ubuntu: `libheif-plugin-dav1d` or
-  `libheif-plugin-aomdec`, which `--no-install-recommends` leaves out). libheif
-  before 1.19 reads only the first frame of an AVIF sequence, so sequences
-  are refused as `animation_unsupported`. Outputs stay WebP.
-- A file the processor refuses records `File.Failure` (`message`, `code`,
-  `details`) for its source and edit, and is not retried until either
-  changes. Editors see it in the read API as `failed`, `failed_code` and
-  `failed_details` (images and videos alike). Slots record theirs as
-  `SlotManifest.error_code`. GIF and WebP variants derived as stills before
-  this release re-derive on the item's next `ProcessJob{Ref}`.
-
-## Account avatars (AuthKit)
-
-An account's avatar is its user folder's avatar slot. The opt-in module
-`github.com/open-rails/contentkit/adapters/authkit` wires it to AuthKit, so a
-host writes no avatar code:
+### Registry
 
 ```go
-import ckauthkit "github.com/open-rails/contentkit/adapters/authkit"
+var Gallery = media.Kind{Name: "gallery", KeepOriginals: true,
+	Uploads: []media.Upload{
+		{Path: "originals/{name}", Types: images, MaxBytes: 10 << 20, Pages: true},
+		{Path: "cover", Types: images, MaxBytes: 10 << 20},
+	},
+	Private: []media.Private{
+		{Name: "thumb", From: "originals/{name}", To: "thumb/{name}.webp", Image: &media.Image{Width: 460, Height: 650, Fit: media.FitCover}},
+		{Name: "high", From: "originals/{name}", To: "high/{name}.webp", Image: &media.Image{Quality: 90}},
+		{Name: "zip", To: "download/pages.zip", Download: "{title}.zip", Zip: "high/"},
+	},
+	Public: []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{230, 460, 920},
+		Image: media.Image{Aspect: media.Ratio("46:65")}, Default: "cover.png"}},
+}
 
-users := media.Kind{Name: media.UserKind, Types: []string{"image/jpeg", "image/png", "image/webp"},
-	MaxBytes: 10 << 20, Slots: map[string]media.Slot{media.AvatarSlotName: media.AvatarSlot}}
-avatars := &ckauthkit.Avatars{Directory: authkitClient, Links: reader, Staff: permissions.ContentManage}
-// UploadAuthorizer: route the user kind to avatars.CanUpload (own avatar, or Staff).
-// JobsConfig.Hooks.SlotChanged: avatars.SlotChanged.
-// content.Options.Users: &ckauthkit.Authors{Directory: authkitClient}.
-// HandlerOptions.SlotDefault: the default avatar image.
+var Video = media.Kind{Name: "video", KeepOriginals: true,
+	Uploads: []media.Upload{
+		{Path: "source", Types: videoTypes, MaxBytes: maxVideo},
+		{Path: "subs/{name}", Types: media.SubtitleTypes, MaxBytes: 32 << 20},
+		{Path: "poster", Types: images, MaxBytes: 10 << 20, Frames: "source"},
+	},
+	Private: []media.Private{
+		{Name: "hls", From: "source", To: "hls/", HLS: &media.HLS{Ladder: []int{2160, 1080, 480}}},
+		{Name: "mp4-1080", From: "source", To: "video/source-1080p.mp4", Download: "{title} (1080p).mp4", MP4: media.Rung(1080)},
+		{Name: "vtt", From: "subs/{name}", To: "vtt/{name}.vtt", Subtitles: &media.Subtitles{}},
+	},
+	Public: []media.Public{{Name: "poster", From: "poster", To: "poster-{w}.webp", Widths: []int{640, 1280, 1920}, Default: "poster.png"}},
+}
+
+reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https://media.doujins.ai",
+	Kinds: []media.Kind{Gallery, accountmedia.User}, Defaults: defaultsFS,
+	Hooks: media.Hooks{Resolver: resolver, CanUpload: authorizer, PurgePublic: purge, ItemReady: ready}})
 ```
 
-- The reader needs `ReaderOptions.ReadURL`; `reader.SlotLink(ref, "avatar")`
-  is the account's avatar URL. `SlotChanged` writes it to the account's
-  `public_metadata.avatar` (`Avatars.Key`) once it is set; a removal leaves
-  it, and the link serves `SlotDefault`. Hosts sharing an account store show
-  the avatar of the site where it was last set.
-- Users change their own avatar under the host's `PGLimiter`; staff with
-  `Staff` (checked live) change anyone's. The SDK's `AvatarUpload` uploads,
-  crops and removes it.
-- `Authors` fills comment and post authors' names and avatars from
-  `PublicUsers`; `ckauthkit.AvatarLink(user, key)` reads the link elsewhere.
+- **Uploads** are paths: a literal (`cover`) or a pattern (`originals/{name}`);
+  a file's path adds its extension (`cover.png`), and a put to the same stem
+  replaces it. `Max` caps an Upload's files, `Pages` marks the pages the
+  preview cut counts, `Frames` lets the `frame` op grab the upload from a
+  video upload, `Named` lets the server name it (`i-{uuid}`, inline images).
+- **Private presets** have one producer: `Image` (per-file `Choose` in Go),
+  `HLS` (byte-range fMP4 ladder, audio and subtitle tracks, seek sprite; each
+  track's segment table is its own private blob), `MP4` (one rung, H.264),
+  `Zip` (the files under a prefix, in manifest order), `Audio` (an HLS track
+  and an M4A) or `Subtitles` (clean WebVTT; a video lists them after its own
+  tracks). Nothing is upscaled.
+- **Public presets** render an upload through its edit at fixed names,
+  `{w}` for each width (a width past the edited image renders at its width,
+  so every name exists). The object carries its `from` and `fp` as metadata.
+  The first public preset of an upload bounds its edit: the crop is fitted to
+  `Image.Aspect`, and an edit narrower than `MinWidth` fails.
+- **Originals.** `KeepOriginals` keeps uploads once their private outputs
+  exist (otherwise the blob is dropped and the file marked `gone`; public
+  presets' sources are always kept). `ServeOriginals` lists and serves
+  uploads to viewers with access; otherwise the read API never returns an
+  upload's path or blob, and its hash cannot be guessed.
+- **Shared kinds.** A kind with `Namespace: "accounts"` lives at
+  `accounts/{kind}/{id}/` and is served on every importing site's media host
+  (account avatars). An app's own namespace is never a shared one.
+- The stock worker reads the registry as JSON (`json.Marshal(reg)` into
+  `MEDIA_KINDS_FILE`; `Choose` and hooks are not included).
 
-## Video posters and inline previews
+### Uploads and commit ops
 
-Every `Video` kind gets the `poster` slot (`Video.Poster()`): native aspect,
-the video's own shape unless an edit crops it, at `Video.PosterWidths` (the
-host's policy: its display widths × 2–3× density; default
-`media.DefaultPosterWidths` 640/960/1280/1920/2560, skipping widths wider than
-the frame or upload); `poster` is a reserved slot name.
+`media.UploadHandler(uploads, opts)`, behind the host's auth:
 
-- **Poster**: a frame or an uploaded image, encoded by the media worker's
-  image job through the slot's edit like any slot. The worker grabs frames
-  from the widest HLS rendition into `originals/poster` (PNG) and queues its
-  own image job for them; publishing then runs in the host's River schema
-  (`MEDIA_HOST_RIVER_SCHEMA`/`MEDIA_HOST_QUEUE`). Default: the first of five
-  sampled frames (20–80 %) that is not black or flat. Frames narrower than
-  the smallest width are upscaled, so every poster has it. After changing
-  `PosterWidths` (or covers from before v0.37, which were 16:9 crops),
-  enqueue `ProcessJob{Ref, Slot: "poster"}` per video item: the slot's spec
-  hash changed, so the image job re-encodes every width from the kept
-  original and deletes retired ones. Frame edits narrower than the smallest
-  width are refused.
-- **Inline preview**: there is no preview clip. The SDK's `MediaGallery`
-  plays the video's own HLS muted inline (desktop: after 500 ms of hover;
-  touch: the most visible video in view), one at a time, from the cover's
-  frame (`poster.time`) or 10 % in, at the lowest rendition before ABR takes
-  over, and unloads it when the viewer moves on. Only files the viewer may
-  play (read API `hls`) preview, so locked items show their cover alone.
-  Turn it off with `UploadUiProvider inlinePreview={false}` (or the
-  component prop).
-- **Exposure**: every item's covers (the poster, other slots, inline
-  images) render to `private/` and are copied to `public/` unless the item is
-  hidden. Call `jobs.ExposeTx(ctx, tx, ref)` in every transaction that
-  changes whether anonymous viewers see the item (create a draft, publish,
-  unpublish, soft delete, restore): it resolves the item anonymously
-  (`JobsConfig.Resolver`) and either deletes its public copies at once
-  (reporting them to `Hooks.PublicRemoved` for a CDN purge) or copies them
-  back. Paid and members-only items keep public covers; what they gate is
-  the `private/` token the read API grants.
-- Frames are cut from the HLS renditions (one segment range, confined ffmpeg
-  inputs), so selection changes never download the source.
-- Upload API (`CanUpload` on the work), each answering `VideoImages`:
-  - `POST /video-poster {ref, source: "frame"|"upload"|"auto", file?, time?, sha256?, edit?}`:
-    `frame` needs `time` and the ref's version, its edit in the frame's pixels
-    (`video.w×h`); `upload` needs the `sha256` of an image presigned with
-    `slot: "poster"`. `/edit-slot` re-edits either without a new grab.
-  - `POST /video-images {ref, file?}`: outputs, selections, and the file's
-    duration and frame size for the picker.
-  - `GET /frame?kind=&id=&version=&file=&t=&w=`: a JPEG from one HLS
-    segment; `t` clamped into the video, `w` into 64–1280 and the widest
-    rendition. Needs `UploadOptions.Frames` (`video.NewFrames`, ffmpeg in the
-    host image); `FrameConcurrency` (2) at once, then 429.
-- Viewers: `GET /{kind}/{id}/video-images` resolves (404 when hidden) and
-  lists the public cover (editors of a hidden item: its `private/` URLs), with
-  the cover's `file` and `time`. Listings read poster URLs from the slot
-  index, `Reader.SlotImages(ctx, tenant, kind, media.PosterSlot, width, ids...)`.
+| Route | Does |
+| --- | --- |
+| `POST /presign {ref, path, type, size, sha256}` | Checks the path's Upload and `CanUpload`; answers `exists`, one `put`, or a `multipart` ticket, and the `path` to commit (cleaned, with an extension, server-named for `Named`). |
+| `POST /parts`, `/parts/list`, `/complete`, `/abort` | Multipart parts bound to their SHA-256; resume; assemble. |
+| `POST /commit {ref, ops}` | Applies ops in one conditional write, then enqueues processing. |
+| `GET /frame?kind&id&path&t&w` | A JPEG still of a video upload for the frame picker (`UploadOptions.Frames`). |
+
+The browser hashes every file before uploading, so every blob lands at its
+content address in `private/`. A multipart blob's hash is verified by the
+producer that first reads it (a mismatch fails the upload,
+`checksum_mismatch`). Server-side imports use `Uploads.Ingest`, which writes
+through `temp/` and copies to the content address.
+
+| Op | Does |
+| --- | --- |
+| `put {path, blob, index?, meta?, edit?, unattached?}` | Adds an upload at its natural position (or `index` among its Upload's), or replaces the one with the same stem. |
+| `edit {path, edit}` | Crops and rotates an image upload; nil clears. |
+| `move {path, index}` | Reorders an upload; its outputs follow. |
+| `rename {path, to}` | Renames an upload within its Upload, and its outputs. |
+| `remove {path}` | Removes an upload and its outputs (cancelling its processing). |
+| `attach {path, index?, meta?}` | Makes an unattached upload part of the item. |
+| `copy {from: {id, path}, to?}` | Copies an upload and its current outputs from another item of the kind, server-side. |
+| `frame {path, t \| auto}` | Fills an upload from a frame of its `Frames` video; a new video grabs again. |
+| `meta {meta}` | Sets the template values (`{title}` in download names). |
+| `regenerate {preset?, force?}` | Asks the worker to redo stale outputs (all with `force`). |
+
+`CanUpload` is asked for `UploadTarget{Ref, Path}` per op (the upload's stem;
+"" for item-wide ops), and for a copy's source too. A new item starts hidden
+unless anonymous viewers may see it (`Hooks.Resolver`). `ProcessOnUpload`
+tells the SDK to commit uploads unattached as they land; readers leave them
+out until `attach`.
+
+### Reads and playback
+
+`reader.Handler(media.HandlerOptions{Identity, Limit})`:
+
+- `GET /{kind}/{id}?prefix=low-res/&offset=&limit=&download&editor` answers
+  `{access, preview_limit, expires, meta, total, hls, files: [{path, type, w, h, url | locked}]}`
+  in manifest order and sets the item cookie (`Path=/v1/{ns}/{kind}/{id}/private/`).
+  Full access serves every file; preview access the first `PreviewLimit`
+  `Pages` uploads' outputs (their uploads only with `ServeOriginals`); a
+  file of an upload with `meta.teaser` needs only visibility. With
+  `download`, each URL's token also signs the file's download name, which the
+  agent sends as `Content-Disposition`. With `editor` (editors only), the
+  uploads come with `edit`, `frame`, `meta`, `pending`, `failed`, encode
+  `progress` and an `editor_url`: the editor view, rendered on demand by the
+  worker (`ReaderOptions.Queue`) into `private/` under the hash of its source
+  and `Config.Editor`, and swept a grace period later.
+- `GET /{kind}/{id}/hls/{dir}master.m3u8` (a ladder in `hls`), `{path}.m3u8`
+  (a track) and `{dir}sprite.vtt` are built per request from the manifest's
+  tracks and their index blobs (cached by hash).
+
+### Public files, exposure and purge
+
+- Call `jobs.ExposeTx(ctx, tx, ref)` whenever anonymous visibility changes
+  (publish, unpublish, hold, soft delete, restore). Hiding deletes and purges
+  `public/` at once; unhiding renders the public presets again from their
+  kept sources. Paid items keep public covers; what they gate is `private/`.
+- `Hooks.PurgePublic(ctx, urls)` hears every overwrite, deletion and first
+  write of a public name (the CDN may hold the default). The worker's writes
+  reach it through the host's media queue. After a change, the SDK refetches
+  with `cache: "reload"`.
+- Render the defaults from the deploy step:
+  `image.PublishDefaults(ctx, store, reg)` (it needs libvips) writes each
+  `Public.Default` to `{ns}/{kind}/_default/public/{name}` and returns the keys
+  to purge. `media.AgentConfig(reg)` gives the agent's namespaces and
+  `MEDIA_ACCESS_DEFAULTS` (`layout.FormatDefaults`).
+
+### Processing and readiness
+
+- A commit marks an upload `pending` with the presets it feeds; the worker
+  clears each as it records the outputs. The worker also finds stale outputs
+  itself (a changed spec or recipe after a deploy): `Jobs.Regenerate(ctx,
+  kind, preset)` visits every item of a kind, and the `regenerate` op one
+  item. A `meta` change rewrites download names only.
+- An item is ready when no attached upload is pending (public presets count
+  only while it is visible) and every zip packs its inputs; failed once
+  nothing is pending and an upload failed for its current blob and edit.
+  `Hooks.ItemReady(ctx, tx, ref, readiness)` runs in a host transaction
+  after the worker's jobs, through the host's media queue; it must be
+  idempotent. `Hooks.Failed` runs where the producer runs.
+- Refused images record `failed` (`message`, `code`, `details`):
+  `image_unreadable`, `image_too_large`, `image_too_small`,
+  `animation_not_allowed`, `animation_too_long`, `animation_unsupported`,
+  `checksum_mismatch`. GIF and WebP animations keep every frame, delay and
+  the loop count; `Image.Animation: media.AnimationReject` refuses them.
+  AVIF and HEIF stills need libheif with an AV1 decoder
+  (`libheif-plugin-dav1d`); sequences are refused.
+
+### Sweep, deletion and erasure
+
+- The sweep collects garbage by manifest reference: private blobs the
+  manifest does not reference once it and they are older than
+  `JobsConfig.Grace` (24 h), public names no preset expects at once (purged),
+  and `temp/` after `TempTTL` (48 h). A periodic pass covers every folder.
+- `jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref, Owner})` deletes items from
+  the host's delete transaction (a second pass catches late uploads); a host
+  deletes every version item of a work, and account erasure deletes
+  `accounts/user/{id}/` once. `Jobs.Purge` deletes now; `SweepOrphans` finds
+  folders the host no longer has.
+- Restore: `s3.Store.Restore(ctx, prefix, t)` brings back manifests and
+  their referenced blobs; then `Expose` the restored items.
 
 ## Media worker schema
 
 Each host names its own media worker River schema, e.g. `doujins_media_worker`
 and `hentai0_media_worker`, and passes it everywhere:
-- `workqueue.Migrate(ctx, pool, schema)` and `workqueue.New(pool, kinds, schema)`;
+- `workqueue.Migrate(ctx, pool, schema)` and `workqueue.New(pool, registry, schema)`;
 - `workqueue.NewProgressSource(pool, schema)`;
 - `worker.Config.Schema` (`MEDIA_WORKER_SCHEMA`).
 
@@ -533,9 +571,8 @@ the host's periodic jobs. The worker migrates its schema itself.
 - **Media host**: serve `cmd/media-access` at `media.<site domain>` (same
   site as the pages) and use cookie delivery (`Delivery{Mode: DeliverCookie,
   CookieDomain: "<site domain>"}`); URL delivery only for apps without cookies.
-  Cookie mode issues a folder cookie only for unversioned full-access items.
-  Versioned items use per-file URL tokens even in cookie mode because versions
-  share the same `private/` folder and may have different access decisions.
+  Every full-access viewer gets the item cookie; preview viewers get per-file
+  URL tokens.
 - **Access agent config**: `MEDIA_ACCESS_HOSTS` maps each media host to the
   namespaces it serves (`media.<domain>=<tenant>,accounts`); URLs are
   `https://media.<domain>/v1/{ns}/{kind}/{id}/{public|private}/{name}`.
@@ -545,11 +582,12 @@ the host's periodic jobs. The worker migrates its schema itself.
   `_default` item. `Cross-Origin-Resource-Policy` is always `same-site`.
 - **Bucket**: private (no public ACL or policy); the agent's key reads only
   `*/private/*` and `*/public/*`; only the hosts write.
-- **CDN**: may cache `public/` in a shared cache (every name is immutable);
-  wire `Hooks.PublicRemoved` (Jobs and the media worker) to purge the keys a
-  hide or sweep deletes. Never cache `private/` in a shared cache: the token
-  is not part of a cache key the CDN checks, so a cached object would be
-  served without one. It is `private` for the browser cache.
+- **CDN**: may cache `public/` in a shared cache: names are fixed and
+  overwritten in place (`public, max-age=300, stale-while-revalidate=86400`,
+  revalidated by ETag), so wire `Hooks.PurgePublic` to purge every URL it is
+  given. Never cache `private/` in a shared cache: the token is not part of a
+  cache key the CDN checks, so a cached object would be served without one.
+  Private blobs are hash-named and `private, max-age=31536000, immutable`.
 - **Denials are 404 by design**: a missing, malformed, expired, wrong-scope
   or unknown-key token on `private/` gets the same response as a
   missing object (status, headers, body; `Cache-Control: no-store`), decided
@@ -561,7 +599,7 @@ the host's periodic jobs. The worker migrates its schema itself.
   `MEDIA_ACCESS_TOKEN_KEY` with the old one as `_TOKEN_KEY_PREVIOUS`, then
   switch the hosts' `Delivery.SigningKey`, then drop the previous key after
   the longest token lifetime (TTL rounded up to the window, about 5 h by default).
-  A scope change does not revoke already-issued folder tokens: they remain
+  A scope change does not revoke already-issued item tokens: they remain
   valid until expiry while their signing key is accepted. If immediate
   revocation is required, coordinate a key replacement without accepting the
   old key and have clients refresh their media grants.
@@ -578,8 +616,8 @@ the host's periodic jobs. The worker migrates its schema itself.
   once per outage and increments expvar
   `contentkit_media_ratelimit_redis_errors`: the limit is abuse protection,
   tokens and visibility checks still gate every file.
-- **Visibility**: wire `JobsConfig.Resolver` and call `ExposeTx` on every
-  visibility change (see "Exposure"); `DeleteItemsTx` removes `public/` first.
+- **Visibility**: wire `Hooks.Resolver` and call `ExposeTx` on every
+  visibility change; `DeleteItemsTx` removes `public/` first.
 
 ## Example: hentai0 (video versions)
 
@@ -770,5 +808,6 @@ priors, the judged fixture and the host adoption steps.
 - Wire `Options.Moderator` (a `Chain` of `BasicModerator` and the AI moderator), `Options.Classifier` for free-text polls, `Perms.ModerationReview`, and schedule `ReclassifyPending`.
 - Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, implement `ContentCanonicalizer`, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, schedule `SyncPreferences` (and `ResyncPreferences` as the periodic repair), wire `EraseSubjects` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.
-- Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the `post` and `poll` kinds with `Inline`, and move image uploads to the SDK's `uploadInline` plus the image routes above (`POST /posts/media`, multipart `POST .../cover|image` and `image_url`/`cover_url` in write bodies are gone).
+- Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the `post` and `poll` kinds with a `Named` upload path and its public preset, and move image uploads to the SDK's `upload` plus the image routes above (`POST /posts/media`, multipart `POST .../cover|image` and `image_url`/`cover_url` in write bodies are gone).
+- Adopt the one media model (v0.62.0): declare the registry (`media.Config`), use version ids as item ids, replace slots with upload paths and public presets, and wire the hooks; see "Media".
 - Rename direct SQL on `social_*` tables to `content_*` (`social_entity_counts` → `content_interaction_counts`) and `content.Options.PrivateDataEraser` to `ProviderDataEraser`.

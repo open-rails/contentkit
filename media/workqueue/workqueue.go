@@ -88,23 +88,27 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, schema string) error {
 // jobs is the schema's river_job table.
 func jobs(schema string) string { return pgx.Identifier{schema, "river_job"}.Sanitize() }
 
-// ImageArgs derives a ref's image variants, zip, slots and inline images, or
-// one slot or inline image when Slot is set.
+// ImageArgs runs an item's image producers (Image and Zip presets, public
+// presets, editor views): media.ProcessJob's fields.
 type ImageArgs struct {
-	Ref   contentref.ContentRef `json:"ref"`
-	Slot  string                `json:"slot,omitempty"`
-	After int64                 `json:"after,omitempty"` // the running job this one follows
+	Ref    contentref.ContentRef `json:"ref"`
+	Preset string                `json:"preset,omitempty"`
+	Force  bool                  `json:"force,omitempty"`
+	Editor bool                  `json:"editor,omitempty"`
+	After  int64                 `json:"after,omitempty"` // the running job this one follows
 }
 
 func (ImageArgs) Kind() string { return "contentkit_media_image" }
 
 func (a ImageArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
 
-// VideoPlanArgs plans a manifest's stale video files. Its River kind stays
-// stable so queued jobs from before the queue split can be moved and run.
+// VideoPlanArgs runs an item's video producers (HLS, MP4, Subtitles
+// presets and frames): it plans stale outputs into encode runs.
 type VideoPlanArgs struct {
-	Ref   contentref.ContentRef `json:"ref"`
-	Class media.VideoJobClass   `json:"class,omitempty"`
+	Ref    contentref.ContentRef `json:"ref"`
+	Preset string                `json:"preset,omitempty"`
+	Force  bool                  `json:"force,omitempty"`
+	Class  media.VideoJobClass   `json:"class,omitempty"`
 }
 
 func (VideoPlanArgs) Kind() string { return "contentkit_media_video" }
@@ -126,9 +130,11 @@ type VideoAssembleArgs struct {
 
 func (VideoAssembleArgs) Kind() string { return "contentkit_media_video_assemble" }
 
-// AudioArgs encodes a manifest's audio files (media.Audio kinds).
+// AudioArgs runs an item's Audio presets.
 type AudioArgs struct {
-	Ref contentref.ContentRef `json:"ref"`
+	Ref    contentref.ContentRef `json:"ref"`
+	Preset string                `json:"preset,omitempty"`
+	Force  bool                  `json:"force,omitempty"`
 }
 
 func (AudioArgs) Kind() string { return "contentkit_media_audio" }
@@ -165,10 +171,9 @@ func New(pool *pgxpool.Pool, kinds *media.Registry, schema string) (*Queue, erro
 // Schema is the worker schema the queue inserts into.
 func (q *Queue) Schema() string { return q.schema }
 
-// Enqueue asks the worker to process job: an image job for kinds with image
-// variants, slots or inline images (one pending job per ref and slot, with a
-// follow-up behind a running one), and a video job for a video or audio
-// kind's manifest.
+// Enqueue asks the worker to process job: one job per producer family the
+// kind (or job.Preset) uses. Image jobs are one pending per job, with a
+// follow-up behind a running one.
 func (q *Queue) Enqueue(ctx context.Context, job media.ProcessJob) error {
 	return q.enqueue(ctx, q.client.Insert, job)
 }
@@ -180,6 +185,29 @@ func (q *Queue) EnqueueTx(ctx context.Context, tx pgx.Tx, job media.ProcessJob) 
 	}, job)
 }
 
+// Families are the producer families a kind's presets (or one preset) use.
+type Families struct{ Image, Video, Audio bool }
+
+// FamiliesOf maps k's presets (only preset, when set) to producer families.
+func FamiliesOf(k *media.Kind, preset string) Families {
+	var f Families
+	for _, p := range k.Private {
+		if preset != "" && p.Name != preset {
+			continue
+		}
+		f.Image = f.Image || p.Image != nil || p.Zip != ""
+		f.Video = f.Video || p.HLS != nil || p.MP4 != nil || p.Subtitles != nil
+		f.Audio = f.Audio || p.Audio != nil
+	}
+	for _, p := range k.Public {
+		f.Image = f.Image || preset == "" || p.Name == preset
+	}
+	for _, u := range k.Uploads {
+		f.Video = f.Video || u.Frames != "" && preset == ""
+	}
+	return f
+}
+
 func (q *Queue) enqueue(ctx context.Context, insert media.InsertFunc, job media.ProcessJob) error {
 	if job.Class != "" && job.Class != media.VideoReencode && job.Class != media.VideoBackfill {
 		return fmt.Errorf("media/workqueue: invalid video job class %q", job.Class)
@@ -188,29 +216,23 @@ func (q *Queue) enqueue(ctx context.Context, insert media.InsertFunc, job media.
 	if err != nil {
 		return err
 	}
-	k := item.Kind()
-	if job.Slot != "" || len(k.Specs) > 0 || len(k.Slots) > 0 || k.Inline != nil {
-		if err := media.InsertOnce(ctx, insert, ImageArgs{Ref: job.Ref, Slot: job.Slot},
+	f := FamiliesOf(item.Kind(), job.Preset)
+	if f.Image || job.Editor {
+		if err := media.InsertOnce(ctx, insert, ImageArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force, Editor: job.Editor},
 			river.InsertOpts{Queue: ImageQueue, MaxAttempts: MaxAttempts}); err != nil {
 			return err
 		}
 	}
-	if job.Slot != "" || k.Video == nil && k.Audio == nil {
-		return nil
-	}
-	if _, err := item.Section(); err != nil {
-		return err
-	}
 	// Not unique: River's uniqueness always covers running jobs, which would
 	// drop the job for a source replaced mid-encode. Duplicates serialize on
 	// the worker's per-manifest lock and are no-ops once the manifest is fresh.
-	if k.Video != nil {
-		if _, err := insert(ctx, VideoPlanArgs{Ref: job.Ref, Class: job.Class}, VideoPlanInsertOpts(job.Class)); err != nil {
+	if f.Video {
+		if _, err := insert(ctx, VideoPlanArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force, Class: job.Class}, VideoPlanInsertOpts(job.Class)); err != nil {
 			return err
 		}
 	}
-	if k.Audio != nil {
-		if _, err := insert(ctx, AudioArgs{Ref: job.Ref}, AudioInsertOpts()); err != nil {
+	if f.Audio {
+		if _, err := insert(ctx, AudioArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force}, AudioInsertOpts()); err != nil {
 			return err
 		}
 	}
@@ -238,14 +260,13 @@ func VideoPlanInsertOpts(class media.VideoJobClass) *river.InsertOpts {
 // a running job's context is cancelled, so an encode is killed and publishes
 // nothing further. It returns how many jobs it cancelled.
 func (q *Queue) Cancel(ctx context.Context, ref contentref.ContentRef) (int, error) {
-	match, version, err := RefMatch(ref)
+	match, err := RefMatch(ref)
 	if err != nil {
 		return 0, err
 	}
 	rows, err := q.pool.Query(ctx, `SELECT id FROM `+jobs(q.schema)+`
-WHERE kind = ANY($1) AND args @> $2 AND args->'ref'->>'content_version_id' IS NOT DISTINCT FROM $3
-  AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled')`,
-		append([]string{ImageArgs{}.Kind()}, EncodeKinds...), match, version)
+WHERE kind = ANY($1) AND args @> $2 AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled')`,
+		append([]string{ImageArgs{}.Kind()}, EncodeKinds...), match)
 	if err != nil {
 		return 0, err
 	}
@@ -271,18 +292,10 @@ WHERE ref = $1 AND state IN ('planned', 'encoding', 'assembling')`, refJSON)
 	return len(ids), nil
 }
 
-// RefMatch is the jsonb containment and version a job query matches ref's jobs by.
-func RefMatch(ref contentref.ContentRef) ([]byte, *string, error) {
-	match, err := json.Marshal(map[string]any{"ref": map[string]string{
+// RefMatch is the jsonb containment a job query matches ref's jobs by.
+func RefMatch(ref contentref.ContentRef) ([]byte, error) {
+	return json.Marshal(map[string]any{"ref": map[string]string{
 		"tenant_id": ref.TenantID, "content_kind": ref.ContentKind, "content_id": ref.ContentID}})
-	if err != nil {
-		return nil, nil, err
-	}
-	var version *string
-	if v := ref.Version(); v != "" {
-		version = &v
-	}
-	return match, version, nil
 }
 
 // Progress lives on the running video job's row (metadata.contentkit_progress):
@@ -321,7 +334,7 @@ SELECT j.state, j.metadata->'` + progressKey + `',
   CASE WHEN j.state = 'available' THEN 1 + (SELECT count(*) FROM ` + jobs(schema) + ` a
     WHERE a.state = 'available' AND a.queue = j.queue AND (a.priority, a.scheduled_at, a.id) < (j.priority, j.scheduled_at, j.id)) END
 FROM ` + jobs(schema) + ` j
-WHERE j.kind = ANY($1) AND j.args @> $2 AND j.args->'ref'->>'content_version_id' IS NOT DISTINCT FROM $3
+WHERE j.kind = ANY($1) AND j.args @> $2
   AND j.state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
 ORDER BY j.id`, runSQL: `
 SELECT DISTINCT ON (r.file_name) r.file_name, r.state,
@@ -350,11 +363,11 @@ type progressSource struct {
 
 func (s *progressSource) EncodeProgress(ctx context.Context, ref contentref.ContentRef) (media.EncodeStatus, error) {
 	var st media.EncodeStatus
-	match, version, err := RefMatch(ref)
+	match, err := RefMatch(ref)
 	if err != nil {
 		return st, err
 	}
-	rows, err := s.pool.Query(ctx, s.sql, EncodeKinds, match, version)
+	rows, err := s.pool.Query(ctx, s.sql, EncodeKinds, match)
 	if err != nil {
 		return st, err
 	}

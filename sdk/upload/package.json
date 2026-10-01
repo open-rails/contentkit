@@ -1,7 +1,7 @@
 {
   "name": "@openrails/contentkit-upload",
   "version": "0.0.0",
-  "description": "Browser uploads to ContentKit media: checksum-bound PUTs, resumable multipart, slot cropping, React hooks and UI.",
+  "description": "Browser uploads and reads for ContentKit media: content-addressed PUTs, resumable multipart, cropping, React hooks and UI.",
   "type": "module",
   "license": "MIT",
   "repository": {

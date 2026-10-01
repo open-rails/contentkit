@@ -145,6 +145,7 @@ export const zh: UploadUiMessageBundle = {
     type_not_allowed: "此处不支持该文件类型。",
     checksum_mismatch: "上传过程中文件发生了变化，请重试。",
     rate_limited: "上传次数过多，请在 {seconds} 秒后重试。",
+    unavailable: "媒体存储暂时不可用，请稍后重试。",
     internal_error: "我们这边出了问题，请重试。",
     allowedTypes: "请使用 {allowed}。",
     tooLargeBy: "此文件为 {size}；上限为 {max}。",

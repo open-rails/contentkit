@@ -4,643 +4,302 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"errors"
 	"fmt"
-	stdimage "image"
 	"image/color"
-	"image/jpeg"
-	"image/png"
-	"io"
-	"net/http"
 	"slices"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
+	"testing/fstest"
 
-	"golang.org/x/image/webp"
-
-	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/image"
-	"github.com/open-rails/contentkit/media/internal/s3test"
 )
 
-var (
-	thumb = media.Spec{Width: 100, Height: 150, Fit: media.FitCover, Quality: 80}
-	low   = media.Spec{Width: 300, Height: 300, Fit: media.FitInside, Quality: 90}
-	high  = media.Spec{Quality: 90}
-	cover = media.Slot{Aspect: media.Aspect3x1, Widths: []int{150, 300, 600}}
-)
-
-// cid is the n-th test content id, a canonical UUIDv7.
-func cid(n int) string { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) }
-
-func galleryKind() media.Kind {
-	return media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
-		Specs: map[string]media.Spec{"thumb": thumb, "low": low, "high": high}, Zip: "high",
-		Slots: map[string]media.Slot{"cover": cover}}
-}
-
-// countingStore is the real store, counting and optionally holding reads of originals.
-type countingStore struct {
-	media.Store
-	reads atomic.Int64
-	gate  func()
-}
-
-func (s *countingStore) Get(ctx context.Context, key string, o media.GetOptions) (io.ReadCloser, media.Object, error) {
-	if strings.Contains(key, "/originals/") && !strings.HasSuffix(key, ".json") { // slot records are not originals
-		s.reads.Add(1)
-		if s.gate != nil {
-			s.gate()
-		}
+// Image presets render each page through its edit, record provenance and
+// clear pending; the zip packs the high files in manifest order and is
+// rebuilt when they move; a second pass redoes nothing.
+func TestPrivatePresetsAndZip(t *testing.T) {
+	e := newEnv(t, nil)
+	g := e.ref(t, "gallery", 1)
+	for i, c := range []color.RGBA{red, green, blue} {
+		e.put(t, g, fmt.Sprintf("originals/%d.png", i+1), "image/png", solid(t, 300, 400, c))
 	}
-	return s.Store.Get(ctx, key, o)
+	e.commit(t, g, media.Op{Op: media.OpMeta, Meta: map[string]any{"title": "Book"}})
+	e.process(t, media.ProcessJob{Ref: g})
+	m := e.manifest(t, g)
+	k, _ := e.reg.Kind("gallery")
+	if r := k.Readiness(m); !r.Ready() {
+		t.Fatalf("readiness %+v", r)
+	}
+	th := e.file(t, g, "thumb/2.webp")
+	if th.From != "originals/2.png" || th.Preset != "thumb" || th.FP == "" || th.W != 100 || th.H != 150 {
+		t.Fatalf("thumb %+v", th)
+	}
+	pixels(t, e.blob(t, g, th), 100, 150, map[[2]int]color.RGBA{{50, 75}: green})
+	if up := e.file(t, g, "originals/1.png"); up.W != 300 || up.H != 400 || up.Pending != nil {
+		t.Fatalf("measured upload %+v", up)
+	}
+	z := e.file(t, g, "download/pages.zip")
+	if z.Download != "Book.zip" || z.From != "high/" || z.FP != media.ZipFP(k.ZipInputs(m, &k.Private[2])) {
+		t.Fatalf("zip %+v", z)
+	}
+	names := func(b []byte) []string {
+		zr, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, f := range zr.File {
+			out = append(out, f.Name)
+		}
+		return out
+	}
+	if got := names(e.blob(t, g, z)); !slices.Equal(got, []string{"1.webp", "2.webp", "3.webp"}) {
+		t.Fatalf("zip entries %v", got)
+	}
+	before := e.manifest(t, g)
+	e.process(t, media.ProcessJob{Ref: g})
+	if after := e.manifest(t, g); !slices.EqualFunc(before.Files, after.Files, func(a, b media.File) bool { return a.Blob == b.Blob && a.Path == b.Path }) {
+		t.Fatal("a second pass changed outputs")
+	}
+	e.commit(t, g, media.Op{Op: media.OpMove, Path: "originals/3.png", Index: new(int)})
+	e.process(t, media.ProcessJob{Ref: g})
+	if got := names(e.blob(t, g, e.file(t, g, "download/pages.zip"))); !slices.Equal(got, []string{"3.webp", "1.webp", "2.webp"}) {
+		t.Fatalf("zip after a move %v", got)
+	}
 }
 
-type allow struct{}
-
-func (allow) CanUpload(context.Context, access.Actor, media.UploadTarget) (media.UploadGrant, error) {
-	return media.UploadGrant{Allowed: true}, nil
+// A deploy that changes a preset's spec makes exactly that preset's outputs
+// stale; Force redoes current ones; Preset limits a job.
+func TestSpecChangeAndForce(t *testing.T) {
+	e := newEnv(t, nil)
+	g := e.ref(t, "gallery", 1)
+	e.put(t, g, "originals/1.png", "image/png", solid(t, 300, 400, red))
+	e.process(t, media.ProcessJob{Ref: g})
+	high := e.file(t, g, "high/1.webp")
+	thumb := e.file(t, g, "thumb/1.webp")
+	e.deploy(t, func(c *media.Config) { c.Kinds[0].Private[0].Image = &media.Image{Width: 50, Height: 50, Fit: media.FitCover} })
+	e.process(t, media.ProcessJob{Ref: g})
+	if th := e.file(t, g, "thumb/1.webp"); th.FP == thumb.FP || th.W != 50 {
+		t.Fatalf("thumb not regenerated %+v", th)
+	}
+	if h := e.file(t, g, "high/1.webp"); h.FP != high.FP || h.Blob != high.Blob {
+		t.Fatalf("high regenerated %+v", h)
+	}
+	if _, err := e.ms.EditExisting(context.Background(), g, func(m *media.Manifest) error {
+		m.Files[m.Find("high/1.webp")].Blob = thumb.Blob // a wrong blob a producer fix must redo
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.process(t, media.ProcessJob{Ref: g, Preset: "thumb", Force: true})
+	if h := e.file(t, g, "high/1.webp"); h.Blob != thumb.Blob {
+		t.Fatal("Preset thumb touched high")
+	}
+	e.process(t, media.ProcessJob{Ref: g, Preset: "high", Force: true})
+	if h := e.file(t, g, "high/1.webp"); h.Blob != high.Blob {
+		t.Fatalf("Force did not redo high: %+v", h)
+	}
 }
 
-type queue struct {
-	mu   sync.Mutex
-	jobs []media.ProcessJob
+// Public presets render fixed names through the crop at the preset's
+// aspect, never upscaled, with their provenance as object metadata, and are
+// purged on every write; a removed upload's names are deleted and purged; a
+// hidden item renders none.
+func TestPublicPreset(t *testing.T) {
+	e := newEnv(t, nil)
+	g := e.ref(t, "gallery", 1)
+	e.put(t, g, "cover.png", "image/png", quadrants(t), media.Op{Op: media.OpEdit, Path: "cover.png", Edit: &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 400, H: 1}}})
+	e.process(t, media.ProcessJob{Ref: g})
+	c := e.file(t, g, "cover.png")
+	if c.Pending != nil || c.Edit.Crop.H != 133 || c.W != 400 || c.H != 200 {
+		t.Fatalf("cover %+v", c)
+	}
+	for _, w := range []int{150, 300} {
+		b, obj, ok := e.public(t, g, fmt.Sprintf("cover-%d.webp", w))
+		if !ok || obj.Metadata["fp"] == "" || obj.Metadata["from"] != "cover.png" {
+			t.Fatalf("cover-%d: %v %+v", w, ok, obj.Metadata)
+		}
+		pixels(t, b, w, w/3, map[[2]int]color.RGBA{{w / 4, w / 12}: red, {3 * w / 4, w / 12}: blue})
+	}
+	// 600 is wider than the 400px edit: rendered at the edited width.
+	if b, _, ok := e.public(t, g, "cover-600.webp"); !ok {
+		t.Fatal("cover-600 missing")
+	} else if w, h := webpSize(t, b); w != 400 || h != 133 {
+		t.Fatalf("cover-600 is %dx%d", w, h)
+	}
+	if p := e.takePurged(); len(p) != 3 {
+		t.Fatalf("purged %v", p)
+	}
+	e.process(t, media.ProcessJob{Ref: g})
+	if p := e.takePurged(); len(p) != 0 {
+		t.Fatalf("an unchanged cover was rewritten: %v", p)
+	}
+	e.commit(t, g, media.Op{Op: media.OpEdit, Path: "cover.png", Edit: &media.Edit{Crop: &media.Crop{X: 200, Y: 100, W: 200, H: 1}}})
+	e.process(t, media.ProcessJob{Ref: g})
+	b, _, _ := e.public(t, g, "cover-150.webp")
+	pixels(t, b, 150, 50, map[[2]int]color.RGBA{{75, 25}: white})
+	if p := e.takePurged(); len(p) != 3 {
+		t.Fatalf("re-crop purged %v", p)
+	}
+	if _, err := e.up.Commit(context.Background(), e.editor, g, []media.Op{{Op: media.OpEdit, Path: "cover.png", Edit: &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 50, H: 1}}}}); err == nil {
+		t.Fatal("an edit under MinWidth accepted")
+	}
+	e.commit(t, g, media.Op{Op: media.OpRemove, Path: "cover.png"})
+	e.process(t, media.ProcessJob{Ref: g})
+	if _, _, ok := e.public(t, g, "cover-150.webp"); ok {
+		t.Fatal("a removed cover's public name kept")
+	}
+	if p := e.takePurged(); len(p) != 3 {
+		t.Fatalf("removal purged %v", p)
+	}
+	// A hidden item renders nothing public.
+	h := e.ref(t, "gallery", 2)
+	e.put(t, h, "cover.png", "image/png", quadrants(t))
+	if _, err := e.ms.EditExisting(context.Background(), h, func(m *media.Manifest) error {
+		m.Hidden = true
+		m.Files[m.Find("cover.png")].Pending = nil
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.process(t, media.ProcessJob{Ref: h})
+	if _, _, ok := e.public(t, h, "cover-150.webp"); ok {
+		t.Fatal("a hidden item rendered its cover")
+	}
 }
 
-func (q *queue) Enqueue(_ context.Context, j media.ProcessJob) error {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.jobs = append(q.jobs, j)
-	return nil
+// EXIF orientation is applied before measuring and editing.
+func TestOrientation(t *testing.T) {
+	e := newEnv(t, nil)
+	g := e.ref(t, "gallery", 1)
+	img := paint(200, 100, func(x, _ int) color.RGBA {
+		if x < 100 {
+			return red
+		}
+		return blue
+	})
+	e.put(t, g, "originals/1.jpg", "image/jpeg", orientedJPEG(t, img, 6)) // 90° clockwise: displayed 100×200
+	e.process(t, media.ProcessJob{Ref: g})
+	if up := e.file(t, g, "originals/1.jpg"); up.W != 100 || up.H != 200 {
+		t.Fatalf("oriented size %dx%d", up.W, up.H)
+	}
+	pixels(t, e.blob(t, g, e.file(t, g, "high/1.webp")), 100, 200, map[[2]int]color.RGBA{{50, 50}: red, {50, 150}: blue})
 }
 
-func (q *queue) take() []media.ProcessJob {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	j := q.jobs
-	q.jobs = nil
-	return j
-}
-
-type env struct {
-	*s3test.Env
-	store     *countingStore
-	manifests *media.Manifests
-	uploads   *media.Uploads
-	queue     *queue
-	proc      *image.Processor
-	kinds     *media.Registry
-	mu        sync.Mutex
-	failed    []string
-	indexed   map[string]int // IndexSlots calls, by ref
-}
-
-// ScheduleSweep and IndexSlots stand in for the host's media jobs.
-func (e *env) ScheduleSweep(context.Context, contentref.ContentRef) error { return nil }
-
-func (e *env) IndexSlots(_ context.Context, ref contentref.ContentRef) error {
+// Animations stay animated where allowed; a refusing preset, an
+// undecodable file or bytes that do not match their hash fail the upload
+// for its blob (Hooks.Failed), and the item reads as failed.
+func TestAnimationAndFailures(t *testing.T) {
+	e := newEnv(t, nil)
+	a := e.ref(t, "anim", 1)
+	e.put(t, a, "files/a.gif", "image/gif", animatedGIF(t))
+	e.process(t, media.ProcessJob{Ref: a})
+	w, h, n, delays := frames(t, e.blob(t, a, e.file(t, a, "large/a.webp")))
+	if w != 40 || h != 40 || n != 4 || len(delays) != 4 || delays[3] != 400 {
+		t.Fatalf("animated output %dx%d ×%d %v", w, h, n, delays)
+	}
+	u := e.ref(t, "user", 1)
+	e.put(t, u, "avatar", "image/gif", animatedGIF(t))
+	e.process(t, media.ProcessJob{Ref: u})
+	if f := e.file(t, u, "avatar.gif").Fail(); f == nil || f.Code != media.CodeAnimationNotAllowed {
+		t.Fatalf("animated avatar failure %+v", f)
+	}
+	k, _ := e.reg.Kind("user")
+	if r := k.Readiness(e.manifest(t, u)); r.State != media.StateFailed {
+		t.Fatalf("readiness %+v", r)
+	}
+	p := e.ref(t, "post", 1)
+	e.put(t, p, "files/bad.png", "image/png", []byte("not a png at all"))
+	e.process(t, media.ProcessJob{Ref: p})
+	if f := e.file(t, p, "files/bad.png").Fail(); f == nil || f.Code != media.CodeImageUnreadable {
+		t.Fatalf("undecodable %+v", f)
+	}
+	// A blob whose bytes are not its hash (a multipart upload is verified on
+	// its first read) fails and is deleted.
+	good := solid(t, 10, 10, red)
+	e.put(t, p, "files/ok.png", "image/png", good)
+	item, _ := e.reg.Item(p)
+	key, _ := item.Blob(e.file(t, p, "files/ok.png").Blob)
+	other := solid(t, 10, 10, blue)
+	if _, err := e.Store.Put(context.Background(), key, bytes.NewReader(other), int64(len(other)), media.PutOptions{ContentType: "image/png"}); err != nil {
+		t.Fatal(err)
+	}
+	e.process(t, media.ProcessJob{Ref: p})
+	if f := e.file(t, p, "files/ok.png").Fail(); f == nil || f.Code != media.CodeChecksum {
+		t.Fatalf("mismatch %+v", f)
+	}
+	if _, err := e.Store.Head(context.Background(), key); err == nil {
+		t.Fatal("a mismatching blob kept")
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.indexed == nil {
-		e.indexed = map[string]int{}
-	}
-	e.indexed[ref.String()]++
-	return nil
-}
-
-func newEnv(t *testing.T, kind media.Kind) *env {
-	t.Helper()
-	s := s3test.Open(t)
-	if !s.Store.Capabilities().ConditionalPut {
-		t.Skip("backend lacks conditional PUT")
-	}
-	e := &env{Env: s, store: &countingStore{Store: s.Store}, queue: &queue{}}
-	e.useKind(t, kind)
-	return e
-}
-
-// useKind rebuilds the registry, manifests, uploads and processor: a deploy
-// with new specs.
-func (e *env) useKind(t *testing.T, kind media.Kind) {
-	t.Helper()
-	kinds, err := media.NewRegistry(kind)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.kinds = kinds
-	e.manifests = s3test.Manifests(t, e.store, kinds, media.ManifestOptions{Sweeps: e})
-	if e.uploads, err = media.NewUploads(media.UploadOptions{Store: e.Env.Store, Kinds: kinds, Manifests: e.manifests,
-		Authorizer: allow{}, Queue: e.queue}); err != nil {
-		t.Fatal(err)
-	}
-	e.proc, err = image.New(image.Config{Store: e.store, Kinds: kinds, Manifests: e.manifests,
-		Hooks: media.Hooks{Failed: func(_ context.Context, _ contentref.ContentRef, file string, _ error) {
-			e.mu.Lock()
-			e.failed = append(e.failed, file)
-			e.mu.Unlock()
-		}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-// upload presigns and PUTs a PNG like a browser, returning its original name.
-func (e *env) upload(t *testing.T, ref contentref.ContentRef, slot string, body []byte) string {
-	t.Helper()
-	return e.uploadAs(t, ref, slot, "image/png", body)
-}
-
-func (e *env) uploadAs(t *testing.T, ref contentref.ContentRef, slot, typ string, body []byte) string {
-	t.Helper()
-	sum := sha256.Sum256(body)
-	p, err := e.uploads.Presign(context.Background(), access.Actor{ID: "u"}, media.PresignRequest{Ref: ref, Type: typ,
-		Size: int64(len(body)), SHA256: sum[:], Slot: slot})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Put != nil {
-		req, _ := http.NewRequest(p.Put.Method, p.Put.URL, bytes.NewReader(body))
-		for k := range p.Put.Header {
-			req.Header.Set(k, p.Put.Header.Get(k))
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("put: %d", resp.StatusCode)
-		}
-	}
-	if slot != "" {
-		if err := e.uploads.CommitSlot(context.Background(), access.Actor{ID: "u"}, media.SlotCommit{Ref: ref, Slot: slot, SHA256: sum[:]}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return p.Name
-}
-
-func (e *env) commit(t *testing.T, ref contentref.ContentRef, ops ...media.Op) {
-	t.Helper()
-	if _, err := e.uploads.Commit(context.Background(), access.Actor{ID: "u"}, ref, ops); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// drain runs every queued job, as the River worker would.
-func (e *env) drain(t *testing.T) {
-	t.Helper()
-	for _, j := range e.queue.take() {
-		if err := e.proc.Process(context.Background(), j); err != nil {
-			t.Fatal(err)
+	for _, want := range []string{"avatar.gif", "files/bad.png", "files/ok.png"} {
+		if !slices.Contains(e.failed, want) {
+			t.Fatalf("Hooks.Failed %v lacks %s", e.failed, want)
 		}
 	}
 }
 
-func (e *env) manifest(t *testing.T, ref contentref.ContentRef) (*media.Manifest, string) {
-	t.Helper()
-	m, etag, err := e.manifests.Get(context.Background(), ref)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return m, etag
-}
-
-type beforePublicationLocker struct {
-	media.Locker
-	before func()
-}
-
-func (l *beforePublicationLocker) Lock(ctx context.Context, key string) (func(), error) {
-	if l.before != nil {
-		before := l.before
-		l.before = nil
-		before()
-	}
-	return l.Locker.Lock(ctx, key)
-}
-
-func TestPublicationRetriesBlobsSweptAfterReuse(t *testing.T) {
-	for _, scenario := range []string{"variants", "zip", "slot"} {
-		t.Run(scenario, func(t *testing.T) {
-			kind := galleryKind()
-			kind.Specs = map[string]media.Spec{"high": high}
-			e := newEnv(t, kind)
-			ctx := t.Context()
-			ref := contentref.New(e.Tenant, "gallery", cid(20)).WithVersion("v1")
-			job := media.ProcessJob{Ref: ref}
-			if scenario == "slot" {
-				job.Ref, job.Slot = ref.Content(), "cover"
-				e.slot(t, job.Ref, job.Slot, pngImage(t, 600, 300, 1), nil)
-			} else {
-				original := e.upload(t, ref, "", pngImage(t, 300, 200, 1))
-				e.commit(t, ref, media.Op{Op: media.OpInsert, Name: "a.png", Original: original})
+// Choose picks a per-file spec; KeepOriginals false drops an upload's blob
+// once its outputs exist; editor views render on request.
+func TestChooseGoneAndEditorViews(t *testing.T) {
+	e := newEnv(t, func(c *media.Config) {
+		post := &c.Kinds[3]
+		post.Private[0].Choose = func(f media.File) *media.Image {
+			if strings.Contains(f.Path, "tall") {
+				return &media.Image{Width: 20, Height: 80}
 			}
-			e.drain(t)
-			if _, err := e.manifests.EditRoot(ctx, ref, func(root *media.Root) error {
-				if scenario == "slot" {
-					root.Slots["cover"].Result = nil
-				} else {
-					m := root.Versions["v1"]
-					m.Downloads = nil
-					if scenario == "variants" {
-						m.Files[0].Variants, m.Files[0].Derived = nil, ""
-					}
-				}
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
-			_, before, err := e.manifests.Root(ctx, ref)
-			if err != nil {
-				t.Fatal(err)
-			}
-			locker := &beforePublicationLocker{Locker: s3test.Locker(t, e.store)}
-			jobs, err := media.NewJobs(media.JobsConfig{Store: e.store, Kinds: e.kinds, Locker: locker.Locker,
-				Now: func() time.Time { return time.Now().Add(48 * time.Hour) }})
-			if err != nil {
-				t.Fatal(err)
-			}
-			locker.before = func() {
-				if result, err := jobs.Sweep(ctx, ref); err != nil || len(result.Deleted) == 0 {
-					t.Fatalf("sweep before publication: %+v %v", result, err)
-				}
-			}
-			manifests, err := media.NewManifests(e.store, e.kinds, media.ManifestOptions{Locker: locker})
-			if err != nil {
-				t.Fatal(err)
-			}
-			processor, err := image.New(image.Config{Store: e.store, Kinds: e.kinds, Manifests: manifests})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := processor.Process(ctx, job); !errors.Is(err, media.ErrNotFound) {
-				t.Fatalf("swept output must abort publication: %v", err)
-			}
-			if _, after, err := manifests.Root(ctx, ref); err != nil || after != before {
-				t.Fatalf("failed publication changed manifest: %s -> %s (%v)", before, after, err)
-			}
-			if err := processor.Process(ctx, job); err != nil {
-				t.Fatal("retry:", err)
-			}
-			root, _, err := manifests.Root(ctx, ref)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if scenario == "slot" {
-				if root.Slots["cover"].Result == nil {
-					t.Fatal("retry did not publish slot")
-				}
-			} else if root.Versions["v1"].Downloads["zip"].Blob == "" {
-				t.Fatal("retry did not publish variants and ZIP")
-			}
-			for name := range root.Refs() {
-				if _, err := e.store.Head(ctx, e.Tenant+"/gallery/"+ref.ContentID+"/"+name); err != nil {
-					t.Fatalf("published missing %s: %v", name, err)
-				}
-			}
-		})
-	}
-}
-
-func (e *env) object(t *testing.T, key string) ([]byte, media.Object) {
-	t.Helper()
-	rc, obj, err := e.Env.Store.Get(context.Background(), key, media.GetOptions{})
-	if err != nil {
-		t.Fatalf("get %s: %v", key, err)
-	}
-	defer rc.Close()
-	b, _ := io.ReadAll(rc)
-	return b, obj
-}
-
-// slotOutput is the public/ key of a slot's current output at rung, or "".
-func (e *env) slotOutput(t *testing.T, ref contentref.ContentRef, slot string, rung int) string {
-	t.Helper()
-	rec, err := e.manifests.Slot(context.Background(), ref.Content(), slot)
-	if errors.Is(err, media.ErrNotFound) || err == nil && rec.Result == nil {
-		return ""
-	} else if err != nil {
-		t.Fatal(err)
-	}
-	for _, o := range rec.Result.Outputs {
-		if o.Rung == rung {
-			return e.Tenant + "/" + ref.ContentKind + "/" + ref.ContentID + "/public/" + o.Blob
+			return nil
 		}
+	})
+	p := e.ref(t, "post", 1)
+	e.put(t, p, "files/tall.png", "image/png", solid(t, 100, 400, red))
+	e.put(t, p, "files/wide.png", "image/png", solid(t, 400, 200, red))
+	e.process(t, media.ProcessJob{Ref: p, Editor: true})
+	if w := e.file(t, p, "web/tall.webp"); w.W != 20 || w.H != 80 {
+		t.Fatalf("chosen spec %dx%d", w.W, w.H)
 	}
-	return ""
-}
-
-func (e *env) blob(t *testing.T, ref contentref.ContentRef, name string) ([]byte, media.Object) {
-	t.Helper()
-	return e.object(t, e.Tenant+"/"+ref.ContentKind+"/"+ref.ContentID+"/private/"+name)
-}
-
-func pngImage(t *testing.T, w, h int, seed uint8) []byte {
-	t.Helper()
-	img := stdimage.NewRGBA(stdimage.Rect(0, 0, w, h))
-	for y := range h {
-		for x := range w {
-			img.Set(x, y, color.RGBA{uint8(x) + seed, uint8(y) * seed, seed, 255})
-		}
+	if w := e.file(t, p, "web/wide.webp"); w.W != 50 || w.H != 25 {
+		t.Fatalf("default spec %dx%d", w.W, w.H)
 	}
-	var b bytes.Buffer
-	if err := png.Encode(&b, img); err != nil {
-		t.Fatal(err)
+	up := e.file(t, p, "files/wide.png")
+	if !up.Gone {
+		t.Fatalf("an upload of a kind without KeepOriginals kept: %+v", up)
 	}
-	return b.Bytes()
-}
-
-func webpSize(t *testing.T, b []byte) (int, int) {
-	t.Helper()
-	c, err := webp.DecodeConfig(bytes.NewReader(b))
-	if err != nil {
-		t.Fatalf("not a webp: %v", err)
+	if slices.Contains(e.manifest(t, p).Blobs(), up.Blob) {
+		t.Fatal("a gone upload's blob is still referenced")
 	}
-	return c.Width, c.Height
-}
-
-func ins(name, original string) media.Op {
-	return media.Op{Op: media.OpInsert, Name: name, Original: original}
-}
-
-func TestVariantsZipAndSkip(t *testing.T) {
-	e := newEnv(t, galleryKind())
-	ref := contentref.NewVersion(e.Tenant, "gallery", cid(1), "en")
-	p1, p2 := pngImage(t, 800, 1200, 1), pngImage(t, 600, 900, 2)
-	e.commit(t, ref, ins("001.png", e.upload(t, ref, "", p1)), ins("002.png", e.upload(t, ref, "", p2)))
-	e.drain(t)
-
-	m, etag := e.manifest(t, ref)
-	want := map[string][3][2]int{"001.png": {{100, 150}, {200, 300}, {800, 1200}}, "002.png": {{100, 150}, {200, 300}, {600, 900}}}
-	for _, f := range m.Files {
-		for i, name := range []string{"thumb", "low", "high"} {
-			v, ok := f.Variants[name]
-			if !ok || v.Spec != galleryKind().Specs[name].Hash() || v.Type != "image/webp" {
-				t.Fatalf("%s %s: %+v", f.Name, name, v)
-			}
-			b, obj := e.blob(t, ref, v.Blob)
-			if obj.ContentType != "image/webp" || obj.CacheControl != "max-age=31536000, immutable" || int64(len(b)) != v.Size {
-				t.Fatalf("%s %s blob: %+v", f.Name, name, obj)
-			}
-			if w, h := webpSize(t, b); [2]int{w, h} != want[f.Name][i] {
-				t.Fatalf("%s %s: %dx%d, want %v", f.Name, name, w, h, want[f.Name][i])
-			}
-		}
-		if f.Meta["w"] != float64(want[f.Name][2][0]) || f.Meta["h"] != float64(want[f.Name][2][1]) {
-			t.Fatalf("%s meta: %v", f.Name, f.Meta)
-		}
-	}
-
-	d, ok := m.Downloads["zip"]
-	if !ok || d.Type != "application/zip" || d.Inputs == "" {
-		t.Fatalf("zip: %+v", m.Downloads)
-	}
-	zb, _ := e.blob(t, ref, d.Blob)
-	zr, err := zip.NewReader(bytes.NewReader(zb), int64(len(zb)))
-	if err != nil || len(zr.File) != 2 {
-		t.Fatalf("zip: %v %d", err, len(zr.File))
-	}
-	for i, zf := range zr.File {
-		rc, _ := zf.Open()
-		got, _ := io.ReadAll(rc)
-		rc.Close()
-		hb, _ := e.blob(t, ref, m.Files[i].Variants["high"].Blob)
-		if zf.Name != []string{"001.webp", "002.webp"}[i] || !bytes.Equal(got, hb) || bytes.Equal(got, p1) || bytes.Equal(got, p2) {
-			t.Fatalf("zip entry %d %q is not the high variant", i, zf.Name)
-		}
-	}
-
-	// Unchanged sources and specs: nothing is read, encoded or written.
-	e.store.reads.Store(0)
-	for range 2 {
-		if err := e.proc.Process(context.Background(), media.ProcessJob{Ref: ref}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if n := e.store.reads.Load(); n != 0 {
-		t.Fatalf("unchanged sources read %d times", n)
-	}
-	if _, again := e.manifest(t, ref); again != etag {
-		t.Fatal("unchanged run rewrote the manifest")
+	g := e.ref(t, "gallery", 1)
+	e.put(t, g, "cover.png", "image/png", quadrants(t))
+	e.process(t, media.ProcessJob{Ref: g, Editor: true})
+	view := e.reg.EditorView(e.file(t, g, "cover.png"))
+	item, _ := e.reg.Item(g)
+	key, _ := item.Blob(view)
+	b, _ := e.read(t, key)
+	if w, h := webpSize(t, b); w != 400 || h != 200 {
+		t.Fatalf("editor view %dx%d", w, h)
 	}
 }
 
-func TestSpecChangeAndZipRebuild(t *testing.T) {
-	e := newEnv(t, galleryKind())
-	ref := contentref.NewVersion(e.Tenant, "gallery", cid(2), "en")
-	e.commit(t, ref, ins("001.png", e.upload(t, ref, "", pngImage(t, 400, 600, 3))),
-		ins("002.png", e.upload(t, ref, "", pngImage(t, 400, 600, 4))))
-	e.drain(t)
-	before, _ := e.manifest(t, ref)
-
-	// A new thumb spec regenerates thumbs only; the zip's inputs are unchanged.
-	k := galleryKind()
-	k.Specs["thumb"] = media.Spec{Width: 120, Height: 120, Fit: media.FitCover, Quality: 80}
-	e.useKind(t, k)
-	e.store.reads.Store(0)
-	if err := e.proc.Process(context.Background(), media.ProcessJob{Ref: ref}); err != nil {
-		t.Fatal(err)
-	}
-	if n := e.store.reads.Load(); n != 2 {
-		t.Fatalf("read %d originals, want 2", n)
-	}
-	after, _ := e.manifest(t, ref)
-	for i, f := range after.Files {
-		old := before.Files[i]
-		if v := f.Variants["thumb"]; v.Spec != k.Specs["thumb"].Hash() || v.Blob == old.Variants["thumb"].Blob {
-			t.Fatalf("%s thumb not regenerated: %+v", f.Name, v)
-		}
-		b, _ := e.blob(t, ref, f.Variants["thumb"].Blob)
-		if w, h := webpSize(t, b); w != 120 || h != 120 {
-			t.Fatalf("%s thumb is %dx%d", f.Name, w, h)
-		}
-		if f.Variants["low"] != old.Variants["low"] || f.Variants["high"] != old.Variants["high"] {
-			t.Fatalf("%s: unchanged specs were regenerated", f.Name)
-		}
-	}
-	if after.Downloads["zip"] != before.Downloads["zip"] {
-		t.Fatal("zip rebuilt though its inputs did not change")
-	}
-
-	// A new high spec changes the zip's inputs: the zip is rebuilt.
-	k.Specs["high"] = media.Spec{Quality: 60}
-	e.useKind(t, k)
-	if err := e.proc.Process(context.Background(), media.ProcessJob{Ref: ref}); err != nil {
-		t.Fatal(err)
-	}
-	rebuilt, _ := e.manifest(t, ref)
-	if z := rebuilt.Downloads["zip"]; z.Inputs == after.Downloads["zip"].Inputs || z.Blob == after.Downloads["zip"].Blob {
-		t.Fatalf("zip not rebuilt: %+v", z)
-	}
-
-	// Replacing a page rebuilds the zip; dropping a spec prunes its variants.
-	e.commit(t, ref, media.Op{Op: media.OpReplace, Name: "002.png", Original: e.upload(t, ref, "", pngImage(t, 300, 300, 5))})
-	delete(k.Specs, "low")
-	e.useKind(t, k)
-	e.drain(t)
-	final, _ := e.manifest(t, ref)
-	if z := final.Downloads["zip"]; z.Inputs == rebuilt.Downloads["zip"].Inputs {
-		t.Fatal("zip not rebuilt after a replace")
-	}
-	for _, f := range final.Files {
-		if _, ok := f.Variants["low"]; ok || len(f.Variants) != 2 {
-			t.Fatalf("%s variants: %v", f.Name, f.Variants)
-		}
-	}
-	if final.Files[1].Meta["w"] != float64(300) {
-		t.Fatalf("replaced page meta: %v", final.Files[1].Meta)
-	}
-}
-
-func TestConcurrentEdits(t *testing.T) {
-	e := newEnv(t, galleryKind())
-	ref := contentref.NewVersion(e.Tenant, "gallery", cid(3), "en")
-	e.commit(t, ref, ins("001.png", e.upload(t, ref, "", pngImage(t, 300, 400, 6))),
-		ins("002.png", e.upload(t, ref, "", pngImage(t, 300, 400, 7))))
-	e.queue.take()
-
-	// The job holds the old sources while a commit replaces 001 and adds 003.
-	entered, release := make(chan struct{}), make(chan struct{})
-	var once sync.Once
-	e.store.gate = func() { once.Do(func() { close(entered) }); <-release }
-	done := make(chan error)
-	go func() { done <- e.proc.Process(context.Background(), media.ProcessJob{Ref: ref}) }()
-	<-entered
-	replacement := e.upload(t, ref, "", pngImage(t, 500, 500, 8))
-	e.commit(t, ref, media.Op{Op: media.OpReplace, Name: "001.png", Original: replacement},
-		ins("003.png", e.upload(t, ref, "", pngImage(t, 300, 400, 9))))
-	close(release)
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	e.store.gate = nil
-
-	// The running job absorbs the commit: it derives the new sources too, and
-	// never records the old 001's results under the replacement.
-	m, _ := e.manifest(t, ref)
-	if len(m.Files) != 3 || m.Files[0].Original != replacement {
-		t.Fatalf("the concurrent commit was lost: %+v", m.Files)
-	}
-	for _, f := range m.Files {
-		if len(f.Variants) != 3 {
-			t.Fatalf("%s: %v", f.Name, f.Variants)
-		}
-	}
-	hb, _ := e.blob(t, ref, m.Files[0].Variants["high"].Blob)
-	if w, h := webpSize(t, hb); w != 500 || h != 500 || m.Files[0].Meta["w"] != float64(500) {
-		t.Fatalf("001 carries the replaced source's results: %dx%d %v", w, h, m.Files[0].Meta)
-	}
-	if _, ok := m.Downloads["zip"]; !ok {
-		t.Fatal("zip missing")
-	}
-	zipOf(t, e, ref, m)
-
-	// The commit's queued job, run twice at once, finds nothing left to do.
-	e.store.reads.Store(0)
-	jobs := e.queue.take()
-	var wg sync.WaitGroup
-	for range 2 {
-		wg.Go(func() {
-			if err := e.proc.Process(context.Background(), jobs[0]); err != nil {
-				t.Error(err)
-			}
-		})
-	}
-	wg.Wait()
-	if n := e.store.reads.Load(); n != 0 {
-		t.Fatalf("completed item re-read %d originals", n)
-	}
-}
-
-// zipOf checks the recorded zip holds the high variants in page order.
-func zipOf(t *testing.T, e *env, ref contentref.ContentRef, m *media.Manifest) {
-	t.Helper()
-	d := m.Downloads["zip"]
-	zb, _ := e.blob(t, ref, d.Blob)
-	zr, err := zip.NewReader(bytes.NewReader(zb), int64(len(zb)))
-	if err != nil || len(zr.File) != len(m.Files) {
-		t.Fatalf("zip: %v, %d entries", err, len(zr.File))
-	}
-	for i, zf := range zr.File {
-		rc, _ := zf.Open()
-		got, _ := io.ReadAll(rc)
-		rc.Close()
-		hb, _ := e.blob(t, ref, m.Files[i].Variants["high"].Blob)
-		if !bytes.Equal(got, hb) {
-			t.Fatalf("zip entry %d is not page %d's high variant", i, i)
-		}
-	}
-}
-
-func TestUndecodableReportsFailed(t *testing.T) {
-	e := newEnv(t, galleryKind())
-	ref := contentref.NewVersion(e.Tenant, "gallery", cid(4), "en")
-	e.commit(t, ref, ins("001.png", e.upload(t, ref, "", pngImage(t, 200, 200, 1))),
-		ins("002.png", e.upload(t, ref, "", []byte("not an image at all"))))
-	e.drain(t)
-	m, _ := e.manifest(t, ref)
-	if len(e.failed) != 1 || e.failed[0] != "002.png" {
-		t.Fatalf("failed: %v", e.failed)
-	}
-	if len(m.Files[0].Variants) != 3 || len(m.Files[1].Variants) != 0 || m.Downloads["zip"].Blob != "" {
-		t.Fatalf("manifest: %+v", m)
-	}
-}
-
-// A kind's Types bind the decoder: bytes of another format under a declared
-// image/png (a JPEG, an SVG) are refused, not handed to whichever libvips
-// loader sniffs them (PDF, SVG, ImageMagick...).
-func TestDeclaredTypeBindsTheDecoder(t *testing.T) {
-	e := newEnv(t, galleryKind())
-	ref := contentref.NewVersion(e.Tenant, "gallery", cid(7), "en")
-	var jpg bytes.Buffer
-	if err := jpeg.Encode(&jpg, stdimage.NewRGBA(stdimage.Rect(0, 0, 64, 64)), nil); err != nil {
-		t.Fatal(err)
-	}
-	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="red"/></svg>`)
-	e.commit(t, ref, ins("001.png", e.upload(t, ref, "", pngImage(t, 64, 64, 1))),
-		ins("002.png", e.upload(t, ref, "", jpg.Bytes())), ins("003.png", e.upload(t, ref, "", svg)))
-	e.upload(t, ref.Content(), "cover", svg)
-	e.drain(t)
-	m, _ := e.manifest(t, ref)
-	slices.Sort(e.failed)
-	if failed := slices.Compact(e.failed); !slices.Equal(failed, []string{"002.png", "003.png", "cover"}) {
-		t.Fatalf("failed: %v", failed)
-	}
-	if len(m.Files[0].Variants) != 3 || len(m.Files[1].Variants) != 0 || len(m.Files[2].Variants) != 0 {
-		t.Fatalf("manifest: %+v", m)
-	}
-	if k := e.slotOutput(t, ref, "cover", 150); k != "" {
-		t.Fatalf("cover derived from an SVG declared image/png: %s", k)
-	}
-}
-
-// TestProcessDoesNotResurrectADeletedItem deletes the manifest while a pass
-// derives: the pass records nothing and removes what it stored.
-func TestProcessDoesNotResurrectADeletedItem(t *testing.T) {
-	e := newEnv(t, galleryKind())
+// PublishDefaults renders each public default to its kind's _default item
+// at every width, once.
+func TestPublishDefaults(t *testing.T) {
+	e := newEnv(t, nil)
+	e.deploy(t, func(c *media.Config) {
+		c.Defaults = fstest.MapFS{"cover.png": {Data: quadrants(t)}}
+	})
 	ctx := context.Background()
-	ref := contentref.NewVersion(e.Tenant, "gallery", cid(99), "v1")
-	e.commit(t, ref, media.Op{Op: media.OpInsert, Name: "1.png", Original: e.uploadAs(t, ref, "", "image/png", pngImage(t, 64, 64, 1))})
-	item, _ := e.kinds.Item(ref)
-	key := item.ManifestKey()
-	var once sync.Once
-	e.store.gate = func() { once.Do(func() { _ = e.Env.Store.Delete(ctx, key) }) }
-	e.drain(t)
-	e.store.gate = nil
-	for o, err := range e.Env.Store.List(ctx, item.Prefix()) {
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(o.Key, "/originals/") {
-			t.Errorf("a pass over a deleted item left %s", o.Key)
-		}
+	keys, err := image.PublishDefaults(ctx, e.Store, e.reg)
+	if err != nil || len(keys) != 3 {
+		t.Fatalf("published %v %v", keys, err)
+	}
+	k, _ := e.reg.Kind("gallery")
+	b, obj := e.read(t, k.DefaultKey("cover-300.webp"))
+	if w, h := webpSize(t, b); w != 300 || h != 100 || obj.Metadata["fp"] == "" {
+		t.Fatalf("default %dx%d %+v", w, h, obj.Metadata)
+	}
+	if keys, err := image.PublishDefaults(ctx, e.Store, e.reg); err != nil || len(keys) != 0 {
+		t.Fatalf("republished %v %v", keys, err)
 	}
 }

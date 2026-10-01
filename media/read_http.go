@@ -23,166 +23,143 @@ type Identity interface {
 	Actor(ctx context.Context) (access.Actor, bool)
 }
 
-// HandlerOptions scope the read API to one tenant.
+// HandlerOptions configure the read API.
 type HandlerOptions struct {
-	Tenant   string
 	Identity Identity
 	Logger   *slog.Logger
 	// Limit is the per-viewer rate limit (default ViewerLimit{}: 2/s, burst
 	// 120, per process; set Limit.Redis to share it across replicas).
-	// Viewers are keyed by tenant and Actor.ID, anonymous ones by Actor.IP,
-	// else by the connection's address: behind a proxy, set Actor.IP from
-	// the client address the proxy forwards.
+	// Viewers are keyed by Actor.ID, anonymous ones by Actor.IP, else by the
+	// connection's address.
 	Limit ViewerLimit
-	// SlotDefault is the image a slot link redirects to while the slot has
-	// none (unset, hidden or not yet encoded), e.g. "/static/avatar.svg";
-	// nil or "" answers 404.
-	SlotDefault func(kind, slot string) string
 }
 
 // Handler serves the read API. The host mounts it under a prefix such as
-// "/media/" after its auth middleware. {id} is "{content_id}" or
-// "{content_id}@{version_id}" for a versioned kind. Errors are JSON
-// {"error", "code"}: 400 invalid_request, 404 not_found (also for hidden
-// items), 429 rate_limited (Retry-After; HandlerOptions.Limit), 500
-// internal_error (a resolver error denies this way).
+// "/media/" after its auth middleware. Errors are JSON {"error", "code"}:
+// 400 invalid_request, 404 not_found (also for what the viewer may not see),
+// 429 rate_limited (Retry-After), 503 unavailable, 500 internal_error (a
+// resolver error denies this way).
 //
-//	GET /{kind}/{id}?variant=high,thumb&offset=0&limit=50 -> ReadResult (+ Set-Cookie mt)
-//	GET /{kind}/{id}/hls/{file}/master.m3u8?audio=ja&subs=en,s2 (filters optional; empty = none)
-//	GET /{kind}/{id}/hls/{file}/video/{rung}-{codec}.m3u8, audio/{track}.m3u8, subs/{track}.m3u8
-//	GET /{kind}/{id}/hls/{file}/sprite.vtt
-//	GET /{kind}/{id}/download/{key} -> 302 to the signed download URL
-//	GET /{kind}/{id}/slots/{slot} -> SlotManifest
-//	GET /{kind}/{id}/slots/{slot}/image?w=320 -> 302 to the slot's public image (Reader.SlotLink)
-//	GET /{kind}/{id}/video-images -> VideoImages without selections
+//	GET /{kind}/{id}?prefix=low-res/&offset=0&limit=50&download&editor -> ReadResult (+ Set-Cookie mt)
+//	GET /{kind}/{id}/hls/{dir}master.m3u8?audio=ja&subs=en (filters optional; empty = none)
+//	GET /{kind}/{id}/hls/{path}.m3u8   a track's media playlist
+//	GET /{kind}/{id}/hls/{dir}sprite.vtt
 //
-// The slot image route is the stable link: it reads only the slot index and
-// redirects to the narrowest public output at least w wide (the widest
-// without w), else to HandlerOptions.SlotDefault, with "public, max-age=60".
-// Every other request resolves the item once and is "private, no-store";
-// playlists and redirects carry a folder cookie only for unversioned
-// full-access items in cookie mode. Disabled generic downloads return 404
-// and are omitted from read results. Signed responses log the viewer, item,
-// access and expiry, plus a short hash when they issue a folder token.
+// Every response is "private, no-store"; playlists carry the item cookie
+// like reads. Signed responses log the viewer, item, access and expiry.
 func (r *Reader) Handler(o HandlerOptions) http.Handler {
 	log := o.Logger
 	if log == nil {
 		log = slog.Default()
 	}
 	mux := http.NewServeMux()
-	r.hlsRoutes(mux, o, log)
-	mux.HandleFunc("GET /{kind}/{id}/slots/{slot}", func(w http.ResponseWriter, req *http.Request) {
-		ref, actor := requestRef(req, o)
-		m, err := r.Slot(req.Context(), ref, actor, req.PathValue("slot"))
-		if err != nil {
-			status, code, msg := classify(err)
-			if status >= http.StatusInternalServerError {
-				log.Error("media slot read failed", "path", req.URL.Path, "err", err.Error())
-			}
-			w.Header().Set("Cache-Control", "no-store")
-			writeJSON(w, status, map[string]string{"error": msg, "code": code})
-			return
-		}
-		w.Header().Set("Cache-Control", "private, no-store")
-		writeJSON(w, http.StatusOK, m)
-	})
-	mux.HandleFunc("GET /{kind}/{id}/slots/{slot}/image", func(w http.ResponseWriter, req *http.Request) {
-		r.serveSlotImage(w, req, o, log)
-	})
-	mux.HandleFunc("GET /{kind}/{id}/video-images", func(w http.ResponseWriter, req *http.Request) {
-		ref, actor := requestRef(req, o)
-		v, err := r.VideoImages(req.Context(), ref, actor)
-		if err != nil {
-			status, code, msg := classify(err)
-			if status >= http.StatusInternalServerError {
-				log.Error("media video images read failed", "path", req.URL.Path, "err", err.Error())
-			}
-			w.Header().Set("Cache-Control", "no-store")
-			writeJSON(w, status, map[string]string{"error": msg, "code": code})
-			return
-		}
-		w.Header().Set("Cache-Control", "private, no-store")
-		writeJSON(w, http.StatusOK, v)
-	})
 	mux.HandleFunc("GET /{kind}/{id}", func(w http.ResponseWriter, req *http.Request) {
 		start := time.Now()
-		res, g, err := r.serveRead(req, o)
-		status := http.StatusOK
 		w.Header().Set("Cache-Control", "private, no-store")
+		res, g, err := r.serveRead(req, o)
 		if err != nil {
-			var code, msg string
-			status, code, msg = classify(err)
-			if status >= http.StatusInternalServerError {
-				log.Error("media read failed", "path", req.URL.Path, "err", err.Error())
-			}
-			writeJSON(w, status, map[string]string{"error": msg, "code": code})
-		} else {
-			if res.Cookie != nil {
-				http.SetCookie(w, res.Cookie)
-			}
-			writeJSON(w, status, res)
-			g.logIssued(req, log)
+			fail(w, req, log, err)
+			return
 		}
-		log.Debug("media read", "path", req.URL.Path, "status", status, "duration", time.Since(start))
+		if res.Cookie != nil {
+			http.SetCookie(w, res.Cookie)
+		}
+		writeJSON(w, http.StatusOK, res)
+		g.logIssued(req, log)
+		log.Debug("media read", "path", req.URL.Path, "duration", time.Since(start))
+	})
+	mux.HandleFunc("GET /{kind}/{id}/hls/{path...}", func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Cache-Control", "private, no-store")
+		ref, actor, err := r.requestRef(req, o)
+		var g *Grant
+		if err == nil {
+			g, err = r.Grant(req.Context(), ref, actor)
+		}
+		var body []byte
+		contentType := HLSContentType
+		if err == nil {
+			p := req.PathValue("path")
+			switch {
+			case strings.HasSuffix(p, "/master.m3u8") || p == "master.m3u8":
+				q := req.URL.Query()
+				body, err = g.MasterPlaylist(strings.TrimSuffix(p, "master.m3u8"), MasterOptions{Audio: queryList(q, "audio"), Subs: queryList(q, "subs")})
+			case strings.HasSuffix(p, "/sprite.vtt") || p == "sprite.vtt":
+				body, err = g.SpriteVTT(req.Context(), strings.TrimSuffix(p, "sprite.vtt"))
+				contentType = VTTContentType
+			case strings.HasSuffix(p, ".m3u8"):
+				body, err = g.MediaPlaylist(req.Context(), strings.TrimSuffix(p, ".m3u8"))
+			default:
+				err = ErrNotAllowed
+			}
+		}
+		if err != nil {
+			fail(w, req, log, err)
+			return
+		}
+		if c := g.Cookie(); c != nil {
+			http.SetCookie(w, c)
+		}
+		g.logIssued(req, log)
+		w.Header().Set("Content-Type", contentType)
+		_, _ = w.Write(body)
 	})
 	return limited(mux, o, log)
 }
 
-// serveSlotImage redirects a slot link (Reader.SlotLink) from the slot index.
-func (r *Reader) serveSlotImage(w http.ResponseWriter, req *http.Request, o HandlerOptions, log *slog.Logger) {
-	kind, id, slot := req.PathValue("kind"), req.PathValue("id"), req.PathValue("slot")
-	width := 0
-	if v := req.URL.Query().Get("w"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 || n > maxSlotWidth {
-			w.Header().Set("Cache-Control", "no-store")
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid width", "code": "invalid_request"})
-			return
-		}
-		width = n
-	}
-	notFound := func() {
-		w.Header().Set("Cache-Control", "public, max-age=60")
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found", "code": "not_found"})
-	}
-	k, err := r.kinds.Kind(kind)
-	if _, ok := k.Slots[slot]; err != nil || !ok || contentref.ValidateID(id) != nil {
-		notFound()
-		return
-	}
-	if r.slots == nil {
-		log.Error("media slot link without a slot index", "path", req.URL.Path)
-		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error", "code": "internal_error"})
-		return
-	}
-	rows, err := r.slots.lookup(req.Context(), o.Tenant, kind, slot, []string{id})
+func (r *Reader) serveRead(req *http.Request, o HandlerOptions) (*ReadResult, *Grant, error) {
+	ref, actor, err := r.requestRef(req, o)
 	if err != nil {
-		log.Error("media slot link failed", "path", req.URL.Path, "err", err.Error())
-		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error", "code": "internal_error"})
-		return
+		return nil, nil, err
 	}
-	target := ""
-	if s, ok := rows[id]; ok {
-		item, err := r.kinds.Item(contentref.New(o.Tenant, kind, id))
-		if err != nil {
-			notFound()
-			return
+	q := req.URL.Query()
+	opts := ReadOptions{Prefix: q.Get("prefix"), Download: q.Has("download"), Editor: q.Has("editor")}
+	for _, p := range []struct {
+		name string
+		dst  *int
+	}{{"offset", &opts.Offset}, {"limit", &opts.Limit}} {
+		if s := q.Get(p.name); s != "" {
+			n, err := strconv.Atoi(s)
+			if err != nil || n < 0 {
+				return nil, nil, ErrInvalidRequest
+			}
+			*p.dst = n
 		}
-		if width == 0 {
-			width = maxSlotWidth
+	}
+	return r.read(req.Context(), ref, actor, opts)
+}
+
+func (r *Reader) requestRef(req *http.Request, o HandlerOptions) (contentref.ContentRef, access.Actor, error) {
+	actor := actorOf(req, o)
+	ref, err := r.reg.Ref(req.PathValue("kind"), req.PathValue("id"))
+	if err != nil {
+		return ref, actor, ErrNotVisible
+	}
+	return ref, actor, nil
+}
+
+func actorOf(req *http.Request, o HandlerOptions) access.Actor {
+	if o.Identity != nil {
+		if a, ok := o.Identity.Actor(req.Context()); ok {
+			return a
 		}
-		target = OutputURLs{BaseURL: r.base.String()}.url(item, s.pick(width).Blob, true)
-	} else if o.SlotDefault != nil {
-		target = o.SlotDefault(kind, slot)
 	}
-	if target == "" {
-		notFound()
-		return
+	return access.Actor{Anonymous: true}
+}
+
+func fail(w http.ResponseWriter, req *http.Request, log *slog.Logger, err error) {
+	status, code, msg := http.StatusInternalServerError, "internal_error", "internal error"
+	switch {
+	case errors.Is(err, ErrNotVisible), errors.Is(err, ErrNotAllowed):
+		status, code, msg = http.StatusNotFound, "not_found", "not found"
+	case errors.Is(err, ErrInvalidRequest):
+		status, code, msg = http.StatusBadRequest, "invalid_request", "invalid request"
+	case errors.Is(err, ErrUnavailable):
+		status, code, msg = http.StatusServiceUnavailable, "unavailable", "media storage is unavailable"
+	default:
+		log.Error("media read failed", "path", req.URL.Path, "err", err.Error())
 	}
-	w.Header().Set("Cache-Control", "public, max-age=60, stale-while-revalidate=300")
-	http.Redirect(w, req, target, http.StatusFound)
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, status, map[string]string{"error": msg, "code": code})
 }
 
 // limited applies HandlerOptions.Limit to every route.
@@ -192,9 +169,8 @@ func limited(next http.Handler, o HandlerOptions, log *slog.Logger) http.Handler
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		_, actor := requestRef(req, o)
-		key := o.Tenant + "|" + viewerKey(req, actor)
-		if ok, wait := lim.allow(req.Context(), key); !ok {
+		actor := actorOf(req, o)
+		if ok, wait := lim.allow(req.Context(), viewerKey(req, actor)); !ok {
 			log.Warn("media read rate limited", "viewer", actor.ID, "anonymous", actor.Anonymous, "path", req.URL.Path)
 			w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(wait.Seconds())))))
 			w.Header().Set("Cache-Control", "no-store")
@@ -222,9 +198,6 @@ func viewerKey(req *http.Request, a access.Actor) string {
 
 // logIssued records the URLs a grant signed for its viewer.
 func (g *Grant) logIssued(req *http.Request, log *slog.Logger) {
-	if g == nil {
-		return
-	}
 	access := AccessNone
 	switch {
 	case g.Full():
@@ -234,58 +207,26 @@ func (g *Grant) logIssued(req *http.Request, log *slog.Logger) {
 	}
 	attrs := []any{"viewer", g.actor.ID, "anonymous", g.actor.Anonymous, "ref", g.Item.Ref().String(),
 		"path", req.URL.Path, "access", access, "editor", g.Editor(), "expires", g.Expires.Unix()}
-	if g.folder != "" {
-		sum := sha256.Sum256([]byte(g.folder))
+	if g.item != "" {
+		sum := sha256.Sum256([]byte(g.item))
 		attrs = append(attrs, "token", hex.EncodeToString(sum[:6]))
 	}
 	log.Info("media urls signed", attrs...)
 }
 
-func (r *Reader) serveRead(req *http.Request, o HandlerOptions) (*ReadResult, *Grant, error) {
-	ref, actor := requestRef(req, o)
-	q := req.URL.Query()
-	var opts ReadOptions
-	for _, v := range q["variant"] {
-		for _, name := range strings.Split(v, ",") {
-			if name = strings.TrimSpace(name); name != "" {
-				opts.Variants = append(opts.Variants, name)
+// queryList is a comma-separated query filter; nil when the parameter is absent.
+func queryList(q map[string][]string, name string) []string {
+	vs, ok := q[name]
+	if !ok {
+		return nil
+	}
+	out := []string{}
+	for _, v := range vs {
+		for _, s := range strings.Split(v, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				out = append(out, s)
 			}
 		}
 	}
-	for _, p := range []struct {
-		name string
-		dst  *int
-	}{{"offset", &opts.Offset}, {"limit", &opts.Limit}} {
-		if s := q.Get(p.name); s != "" {
-			n, err := strconv.Atoi(s)
-			if err != nil || n < 0 {
-				return nil, nil, ErrInvalidRequest
-			}
-			*p.dst = n
-		}
-	}
-	return r.read(req.Context(), ref, actor, opts)
-}
-
-func requestRef(req *http.Request, o HandlerOptions) (contentref.ContentRef, access.Actor) {
-	id, version, _ := strings.Cut(req.PathValue("id"), "@")
-	actor := access.Actor{Anonymous: true}
-	if o.Identity != nil {
-		if a, ok := o.Identity.Actor(req.Context()); ok {
-			actor = a
-		}
-	}
-	return contentref.New(o.Tenant, req.PathValue("kind"), id).WithVersion(version), actor
-}
-
-func classify(err error) (int, string, string) {
-	switch {
-	case errors.Is(err, ErrNotVisible), errors.Is(err, ErrNotAllowed):
-		return http.StatusNotFound, "not_found", "not found"
-	case errors.Is(err, ErrInvalidRequest):
-		return http.StatusBadRequest, "invalid_request", "invalid request"
-	case errors.Is(err, ErrUnavailable):
-		return http.StatusServiceUnavailable, "unavailable", "media storage is unavailable"
-	}
-	return http.StatusInternalServerError, "internal_error", "internal error"
+	return out
 }

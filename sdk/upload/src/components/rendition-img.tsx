@@ -77,7 +77,7 @@ export function RenditionImg({ outputs, density, onLoad, alt = "", ...img }: Ren
       alt={alt}
       src={rendition ? r.url : undefined}
       width={r.w}
-      height={r.h}
+      height={r.h || undefined}
       decoding="async"
       data-rendition={rendition ? r.w : undefined}
       onLoad={(e) => {

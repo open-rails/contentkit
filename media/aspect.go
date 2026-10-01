@@ -15,12 +15,7 @@ const maxAspectTerm = 10000
 
 var (
 	AspectNative = Aspect{}
-	Aspect1x1    = Aspect{1, 1}
-	Aspect3x1    = Aspect{3, 1}
-	Aspect4x5    = Aspect{4, 5}
-	Aspect16x9   = Aspect{16, 9}
-	Aspect9x16   = Aspect{9, 16}
-	Aspect21x9   = Aspect{7, 3} // "21:9" reduces to 7:3
+	Square       = Aspect{1, 1}
 )
 
 // Ratio parses "W:H" and panics on an invalid one (for constants in code).

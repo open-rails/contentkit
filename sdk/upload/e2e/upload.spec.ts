@@ -9,7 +9,7 @@ const endpoint = process.env.CONTENTKIT_TEST_S3_ENDPOINT;
 const MiB = 1 << 20;
 const size = 72 * MiB + 4321;
 const ref = { kind: "video", id: "0192f000-0000-7000-8000-000000000001" };
-const imageRef = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000002", version: "en" };
+const imageRef = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000002" };
 const image = Array.from(readFileSync(resolve(import.meta.dirname, "fixtures/small.png")));
 const modulePath = `/@fs/${resolve(import.meta.dirname, "../dist/index.js")}`;
 const demoPort = Number(process.env.DEMO_PORT ?? 4179);
@@ -36,19 +36,17 @@ test.describe("browser uploads", () => {
     await proxy?.close();
   });
 
-  test("uploads and commits a small image", async ({ page }) => {
+  test("uploads a small image, puts it and waits until it is processed", async ({ page }) => {
     await page.goto(origin);
     const result = await page.evaluate(async ({ modulePath, imageRef, image }) => {
       const { UploadClient } = (await import(/* @vite-ignore */ modulePath)) as typeof import("../src/index.js");
       const file = new File([new Uint8Array(image)], "small.png", { type: "image/png" });
-      const client = new UploadClient({ endpoint: "/upload", headers: () => ({ "X-Test-Actor": "alice" }) });
-      const uploaded = await client.upload(file, { ref: imageRef });
-      const committed = await client.commit(imageRef, [{ op: "insert", name: "001.png", original: uploaded.name }]);
-      return { uploaded, committed };
+      const client = new UploadClient({ endpoint: "/upload", readEndpoint: "/read", headers: () => ({ "X-Test-Actor": "alice" }) });
+      return client.put(file, { ref: imageRef, path: "originals/001.png" });
     }, { modulePath, imageRef, image });
 
-    expect(result.committed).toEqual([expect.objectContaining({ name: "001.png", original: result.uploaded.name, size: image.length })]);
-    const object = await (await page.request.get(`${origin}/object?kind=gallery&id=${imageRef.id}&version=en&name=${result.uploaded.name}`)).json();
+    expect(result).toMatchObject({ path: "originals/001.png", size: image.length, w: 360, h: 240 });
+    const object = await (await page.request.get(`${origin}/object?kind=gallery&id=${imageRef.id}&path=originals/001.png`)).json();
     expect(object).toEqual({ size: image.length, sha256: createHash("sha256").update(Buffer.from(image)).digest("hex") });
   });
 
@@ -65,6 +63,7 @@ test.describe("browser uploads", () => {
       try {
         await client.upload(file, {
           ref,
+          path: "source",
           onState: (state) => state && sessionStorage.setItem("multipart", JSON.stringify(state)),
         });
         return "completed";
@@ -87,21 +86,25 @@ test.describe("browser uploads", () => {
       const landed = (await client.api.listParts({ ticket: saved.ticket })).parts.length;
       const uploaded = await client.upload(file, {
         ref,
+        path: "source",
         resume: saved,
         onState: (state) => state
           ? sessionStorage.setItem("multipart", JSON.stringify(state))
           : sessionStorage.removeItem("multipart"),
       });
-      const committed = await client.commit(ref, [{ op: "insert", name: "video.mp4", original: uploaded.name }]);
-      return { uploaded, committed, landed, savedName: saved.name, storedState: sessionStorage.getItem("multipart") };
+      const committed = await client.commit(ref, [{ op: "put", path: uploaded.path, blob: uploaded.blob }]);
+      return { uploaded, committed, landed, saved, storedState: sessionStorage.getItem("multipart") };
     }, { modulePath, ref, size });
 
-    expect(result.uploaded.name).toBe(result.savedName);
+    // The whole file was hashed (in a worker) before the upload: its blob is its content address.
+    const sha = createHash("sha256").update(Buffer.alloc(size, 9)).digest("hex");
+    expect(result.saved).toMatchObject({ path: "source.mp4", blob: `sha256-${sha}` });
+    expect(result.uploaded).toMatchObject({ path: "source.mp4", blob: `sha256-${sha}` });
     expect(result.landed).toBeGreaterThan(0);
-    expect(result.committed).toEqual([expect.objectContaining({ name: "video.mp4", size })]);
+    expect(result.committed).toEqual([expect.objectContaining({ path: "source.mp4", size })]);
     expect(result.storedState).toBeNull();
 
-    const object = await (await page.request.get(`${origin}/object?kind=video&id=${ref.id}&name=${result.uploaded.name}`)).json();
+    const object = await (await page.request.get(`${origin}/object?kind=video&id=${ref.id}&path=source`)).json();
     expect(object).toEqual({ size, sha256: createHash("sha256").update(Buffer.alloc(size, 9)).digest("hex") });
   });
 });

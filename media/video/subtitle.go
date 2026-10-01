@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"html"
@@ -34,138 +32,81 @@ import (
 )
 
 // cleanRecipe versions cleanVTT and the conversions before it: a change
-// re-converts sidecars and a source's text tracks, never the ladder.
+// converts sidecars and an HLS preset's source text tracks again (subsFP),
+// never the ladder.
 const cleanRecipe = "webvtt|utf8|b-i-u-only|no-ass-drawings|srt-lenient-times|max-32m|v2"
 
-// subtitleRecipe is a sidecar's conversion; its hash (with the charset
-// inputs) is the WebVTT variant's spec.
-const subtitleRecipe = cleanRecipe + "|charset:%s|lang:%s"
-
-// SubsSpec identifies the conversion of a source's text tracks (hls.subs_spec).
-var SubsSpec = func() string { s := sha256.Sum256([]byte(cleanRecipe)); return hex.EncodeToString(s[:4]) }()
-
-// IsSubtitle reports an uploaded subtitle sidecar (media.SubtitleTypes).
-func IsSubtitle(f media.File) bool { return slices.Contains(media.SubtitleTypes, f.Type) }
-
-func subtitleSpec(f media.File) string {
-	charset, _ := f.Meta[media.MetaCharset].(string)
-	lang, _ := f.Meta[media.MetaLang].(string)
-	lang, _ = normalizeLanguage(lang) // conversion stores the normalized tag
-	s := sha256.Sum256(fmt.Appendf(nil, subtitleRecipe, strings.ToLower(charset), lang))
-	return hex.EncodeToString(s[:4])
+// sidecarOf is a subtitle upload's conversion inputs from its meta: the
+// charset that overrides detection and the normalized language that hints it.
+func sidecarOf(f media.File) (charset, lang string) {
+	charset, _ = f.Meta[media.MetaCharset].(string)
+	lang, _ = f.Meta[media.MetaLang].(string)
+	lang, _ = normalizeLanguage(lang)
+	return strings.ToLower(charset), lang
 }
 
-// subtitleFresh reports a sidecar converted from its source under its
-// current meta, or failed for its source.
-func subtitleFresh(f media.File) bool {
-	v, ok := f.Variants[media.SubtitleVariant]
-	return f.Failed() != nil || f.Derived == f.FailureKey() && ok && v.Spec == subtitleSpec(f)
+// subtitleFP covers the sidecar's charset and normalized language.
+func subtitleFP(f media.File, s *media.Subtitles) string {
+	charset, lang := sidecarOf(f)
+	return media.SpecFP(f, s, cleanRecipe+"|charset:"+charset+"|lang:"+lang)
 }
 
 // maxSubtitleBytes bounds a subtitle read into memory: a sidecar, or a
 // source's text track as converted.
 var maxSubtitleBytes int64 = 32 << 20
 
-// subtitleFile converts a sidecar to clean UTF-8 WebVTT: SRT and SSA/ASS
+// subtitle converts a sidecar to clean UTF-8 WebVTT: SRT and SSA/ASS
 // through ffmpeg's WebVTT encoder (as the ladder converts a source's text
-// tracks), then cleanVTT; WebVTT through cleanVTT alone. A file that cannot
-// be converted records a Failure (Hooks.Failed) until its source changes.
-func (e *Encoder) subtitleFile(ctx context.Context, ms *media.Manifests, item media.Item, f media.File, fp *fileProgress) error {
+// tracks), then cleanVTT; WebVTT through cleanVTT alone. The reader lists
+// it as a track from the upload's meta.
+func (e *Encoder) subtitle(ctx context.Context, item media.Item, f media.File, p *media.Private) error {
+	if to := item.Kind().OutputPath(p, f.Path); to == f.Path {
+		return &PermanentError{fmt.Errorf("preset %s would write over its own upload %s", p.Name, to)}
+	}
+	key, _ := item.Blob(f.Blob)
+	if obj, err := e.store.Head(ctx, key); errors.Is(err, media.ErrNotFound) {
+		return errStale
+	} else if err != nil {
+		return err
+	} else if obj.Size > maxSubtitleBytes {
+		return &PermanentError{fmt.Errorf("subtitles are %d bytes; at most %d", obj.Size, maxSubtitleBytes)}
+	}
 	dir, err := os.MkdirTemp(e.c.TempDir, tempPattern)
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	// Refuse an oversized sidecar before downloading it.
-	if key, err := item.Original(f.Source()); err == nil {
-		if obj, err := e.c.Store.Head(ctx, key); err == nil && obj.Size > maxSubtitleBytes {
-			return e.subtitleFailed(ctx, ms, item, f, f.Source(), fmt.Errorf("subtitles are %d bytes; at most %d", obj.Size, maxSubtitleBytes))
-		} else if err != nil && !errors.Is(err, media.ErrNotFound) {
-			return err
-		}
-	}
-	srcKey, source, _, err := e.source(ctx, ms, item, f.Name, f.Source(), filepath.Join(dir, "source"), fp)
-	var perm *PermanentError
-	if errors.As(err, &perm) {
-		return e.subtitleFailed(ctx, ms, item, f, f.Source(), perm.Err)
-	}
-	if err != nil || srcKey == "" {
+	src := filepath.Join(dir, "source")
+	if err := e.fetch(ctx, item, f.Blob, src, nil); err != nil {
 		return err
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "source"))
+	raw, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
+	charset, _ := sidecarOf(f)
 	lang, _ := f.Meta[media.MetaLang].(string)
-	charset, _ := f.Meta[media.MetaCharset].(string)
 	vtt, err := e.convertSubtitle(ctx, dir, f.Type, raw, lang, charset)
-	if errors.As(err, &perm) {
-		return e.subtitleFailed(ctx, ms, item, f, source, perm.Err)
-	} else if err != nil {
+	if err != nil {
 		return err
 	}
 	path := filepath.Join(dir, "out.vtt")
 	if err := os.WriteFile(path, vtt, 0o600); err != nil {
 		return err
 	}
-	blob, size, err := e.put(ctx, item, path, "text/vtt", fp)
+	blob, size, err := e.put(ctx, item, path, "text/vtt", nil)
 	if err != nil {
 		return err
 	}
-	spec := subtitleSpec(f)
-	bcp, _ := normalizeLanguage(lang)
-	_, err = ms.Edit(ctx, item.Ref(), func(m *media.Manifest) error {
-		i := m.File(f.Name)
-		if i < 0 || m.Files[i].Source() != source || subtitleSpec(m.Files[i]) != spec {
+	fp := subtitleFP(f, p.Subtitles)
+	out := media.File{Path: item.Kind().OutputPath(p, f.Path), Blob: blob, Type: "text/vtt", Size: size, FP: fp}
+	return e.publish(ctx, item, []media.File{out}, func(m *media.Manifest) error {
+		g, err := current(m, f.Path, f.Blob)
+		if err != nil || subtitleFP(g, p.Subtitles) != fp {
 			return errStale
 		}
-		if err := e.checkOutputs(ctx, item, blob); err != nil {
-			return err
-		}
-		g := &m.Files[i]
-		if g.Variants == nil {
-			g.Variants = map[string]media.Variant{}
-		}
-		g.Variants[media.SubtitleVariant] = media.Variant{Blob: blob, Spec: spec, Type: "text/vtt", Size: size}
-		g.Failure, g.Derived = nil, g.FailureKey()
-		if g.Meta == nil {
-			g.Meta = map[string]any{}
-		}
-		if g.Meta[media.MetaLang] = bcp; bcp == "" {
-			delete(g.Meta, media.MetaLang)
-		}
-		if l, _ := g.Meta[media.MetaLabel].(string); strings.TrimSpace(l) == "" {
-			g.Meta[media.MetaLabel] = trackLabel(probeStream{CodecType: "subtitle"}, bcp, 1, map[string]int{})
-		}
-		return nil
+		return m.SetOutputs(g.Path, p.Name, []media.File{out})
 	})
-	if errors.Is(err, errStale) {
-		return nil // the commit that changed it enqueued its own job
-	}
-	return err
-}
-
-func (e *Encoder) subtitleFailed(ctx context.Context, ms *media.Manifests, item media.Item, f media.File, source string, cause error) error {
-	e.c.Logger.WarnContext(ctx, "media/video: cannot convert subtitles", "ref", item.Ref().String(), "file", f.Name, "error", cause)
-	_, err := ms.Edit(ctx, item.Ref(), func(m *media.Manifest) error {
-		i := m.File(f.Name)
-		if i < 0 || m.Files[i].Source() != source {
-			return errStale
-		}
-		g := &m.Files[i]
-		g.Failure, g.Derived = media.NewFileFailure(*g, cause), g.FailureKey()
-		delete(g.Variants, media.SubtitleVariant)
-		return nil
-	})
-	if errors.Is(err, errStale) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	if e.c.Hooks.Failed != nil {
-		e.c.Hooks.Failed(ctx, item.Ref(), f.Name, &PermanentError{cause})
-	}
-	return nil
 }
 
 // subtitleDemuxers are the sidecar formats ffmpeg reads (SSA through "ass").
@@ -677,95 +618,4 @@ func langCharsets(lang string) []legacyCharset {
 		out[i] = legacyCharset{enc: e}
 	}
 	return out
-}
-
-// subsStale reports an encoded ladder whose source text tracks predate
-// SubsSpec.
-func subsStale(f media.File) bool {
-	h := f.HLS
-	return h != nil && h.Source == f.Source() && h.Error == "" && len(h.Video) > 0 && h.SubsSpec != SubsSpec
-}
-
-// sourceSubs re-extracts an encoded video's text tracks under SubsSpec,
-// without touching its renditions: the source is fetched, its text tracks
-// converted and cleaned, and hls.subs replaced, fenced on the original's
-// ETag. A source whose tracks cannot be read keeps none.
-func (e *Encoder) sourceSubs(ctx context.Context, ms *media.Manifests, item media.Item, v *media.Video, f media.File, fp *fileProgress) error {
-	dir, err := os.MkdirTemp(e.c.TempDir, tempPattern)
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(dir)
-	src := filepath.Join(dir, "source")
-	srcKey, source, srcObj, err := e.source(ctx, ms, item, f.Name, f.Source(), src, fp)
-	if err != nil || srcKey == "" {
-		var perm *PermanentError
-		if errors.As(err, &perm) {
-			err = nil
-		}
-		return err
-	}
-	fp.set(media.PhaseProbing)
-	var subs []track
-	pr, err := probe(ctx, src)
-	if err == nil {
-		var p plan
-		if p, err = newPlan(pr, v); err == nil {
-			subs = p.subs
-		}
-	}
-	if err != nil && ctx.Err() != nil {
-		return ctx.Err()
-	}
-	if len(subs) > 0 {
-		fp.set(media.PhaseEncoding)
-		args := append([]string{"-v", "error", "-nostdin"}, inputOptions(sourceDemuxers)...)
-		args = append(args, "-i", src)
-		for i, s := range subs {
-			args = append(append(args, "-map", fmt.Sprintf("0:%d", s.index)), webvttArgs(filepath.Join(dir, fmt.Sprintf("s%d.vtt", i)))...)
-		}
-		if _, err := command(ctx, "ffmpeg", args...); err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			e.c.Logger.WarnContext(ctx, "media/video: source subtitles unreadable", "key", srcKey, "error", err)
-			subs = nil
-		} else if subs, err = keepSubs(ctx, e.c.Logger, dir, subs); err != nil {
-			return err
-		}
-	}
-	out := make([]media.Subtitle, len(subs))
-	fp.set(media.PhaseUploading)
-	for i, s := range subs {
-		blob, _, err := e.put(ctx, item, filepath.Join(dir, fmt.Sprintf("s%d.vtt", i)), "text/vtt", fp)
-		if err != nil {
-			return err
-		}
-		out[i] = media.Subtitle{ID: s.id, Lang: s.lang, Label: s.label, Forced: s.forced, Blob: blob}
-	}
-	fp.set(media.PhasePublishing)
-	if obj, err := e.c.Store.Head(ctx, srcKey); errors.Is(err, media.ErrNotFound) || err == nil && obj.ETag != srcObj.ETag {
-		return e.stale(ctx, ms, item, f.Name, source, errStale)
-	} else if err != nil {
-		return err
-	}
-	_, err = ms.Edit(ctx, item.Ref(), func(m *media.Manifest) error {
-		i := m.File(f.Name)
-		if i < 0 || m.Files[i].Source() != source || m.Files[i].HLS == nil || m.Files[i].HLS.Source != source {
-			return errStale
-		}
-		for _, sub := range out {
-			if err := e.checkOutputs(ctx, item, sub.Blob); err != nil {
-				return err
-			}
-		}
-		h := *m.Files[i].HLS
-		h.Subs, h.SubsSpec = out, SubsSpec
-		m.Files[i].HLS = &h
-		return nil
-	})
-	if errors.Is(err, errStale) {
-		return nil
-	}
-	return err
 }

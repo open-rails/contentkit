@@ -9,7 +9,8 @@ import { useInlinePreview } from "../inline-preview.js";
 import { useMessages } from "../i18n/context.js";
 import { UploadUiRoot } from "../scope.js";
 import { RenditionImg } from "./rendition-img.js";
-import type { EncodeProgress as Progress, SlotManifest } from "../wire.gen.js";
+import { publicRenditions, type PublicImage } from "../public.js";
+import type { EncodeProgress as Progress } from "../wire.gen.js";
 import { EncodeProgress } from "./encode-progress.js";
 import { Button } from "#ckui/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "#ckui/ui/dropdown-menu";
@@ -82,18 +83,18 @@ export function SpriteFrame({ vtt, xhrSetup, fit = "contain", className }: { vtt
 }
 
 export interface VideoPlayerProps extends Omit<HlsPlayerOptions, "src"> {
-  /** The folder of the video's HLS (…/hls/{file}/): master.m3u8 and sprite.vtt resolve under it. */
+  /** The ladder's HLS folder (client.hlsBase: {read API}/{kind}/{id}/hls/{dir}): master.m3u8 and sprite.vtt resolve under it. */
   base?: string | null;
-  /** Shown until playback starts; default the first sprite frame. */
-  poster?: string | SlotManifest | null;
-  /** The source's size (read API w/h): the box is reserved before anything loads. */
+  /** Shown until playback starts: the poster's public preset or a URL; default the first sprite frame. */
+  poster?: string | PublicImage | null;
+  /** The video's size (read API w/h): the box is reserved before anything loads. */
   width?: number;
   height?: number;
   duration?: number;
-  /** A pending encode (read API `progress`): shows its progress instead of a player. */
+  /** A pending encode (an editor read's `pending` and `progress`): shows its progress instead of a player. */
   pending?: boolean;
   progress?: Progress | null;
-  /** Why the video cannot be encoded (read API `failed`, editors only). */
+  /** Why the video cannot be encoded (an editor read's `failed.message`). */
   failed?: string;
   /**
    * `frame` spans the width at the video's aspect, capped at `maxHeight` and
@@ -149,7 +150,7 @@ export function VideoPlayer({
   });
   const aspect = width && height ? width / height : 16 / 9;
   const frame: CSSProperties = layout === "frame" ? { aspectRatio: String(aspect), maxHeight } : {};
-  const posterOutputs = typeof poster === "string" ? [] : (poster?.outputs ?? []).filter((o) => o.url);
+  const posterOutputs = typeof poster === "string" ? [] : publicRenditions(poster);
   const busy = !error && !previewing && (status === "loading" || status === "buffering");
   // The preview shows once frames play; the cover stays until then.
   const shown = previewing && status === "playing";

@@ -2,18 +2,19 @@ package media
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"slices"
+	"path"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 )
 
@@ -21,111 +22,55 @@ import (
 type DeliveryMode string
 
 const (
-	// DeliverCookie (default) returns plain URLs plus a folder cookie for
-	// unversioned items. Versioned items use per-file URL tokens.
+	// DeliverCookie (default) returns plain URLs plus an item cookie.
 	DeliverCookie DeliveryMode = "cookie"
 	// DeliverURL appends ?t= to every URL: apps and clients without cookies.
 	DeliverURL DeliveryMode = "url"
 )
 
-// CookieName is the access worker's cookie.
+// CookieName is the access agent's cookie.
 const CookieName = token.CookieName
 
-// Delivery is the host's per-site delivery configuration.
+// Delivery is the host's signing configuration; URLs are at the
+// registry's BaseURL.
 type Delivery struct {
 	Mode DeliveryMode
-	// BaseURL is the access worker origin for this site, e.g.
-	// "https://media.doujins.com".
-	BaseURL string
-	// CookieDomain is the site's registrable domain, e.g. "doujins.com";
+	// CookieDomain is the site's registrable domain, e.g. "doujins.ai";
 	// required in cookie mode, because a host-only cookie never reaches media.
 	CookieDomain string
-	// SigningKey is the current key of the ring the access worker verifies.
+	// SigningKey is the current key of the ring the access agent verifies.
 	SigningKey token.Key
 	// TTL is the minimum token lifetime (default 1h); expiries round up to
-	// Window (default token.DefaultWindow).
-	TTL time.Duration
-	// Window must be a whole number of seconds when set.
-	Window time.Duration
-}
-
-// Hooks are optional host callbacks.
-type Hooks struct {
-	// DownloadName returns the display name a download is saved under, e.g.
-	// "[Artist] Title (English).zip". Default: "{content_id}-{key}{ext}".
-	DownloadName func(ctx context.Context, ref contentref.ContentRef, key string, d Download) (string, error)
-	// Failed reports a file a processor cannot derive (an undecodable image,
-	// say); file is the manifest file name, or the slot name. The job does not
-	// retry it; a new commit does.
-	Failed func(ctx context.Context, ref contentref.ContentRef, file string, err error)
-	// SlotChanged reports a registered slot whose public image was set,
-	// replaced (set) or removed (!set): its slot index row changed. The slot
-	// index job runs it in the host process (JobsConfig.Hooks), in the
-	// transaction that changes the row, under the item's folder lock: an error
-	// rolls back and retries the job, so it runs at least once and must be
-	// idempotent, and it must not edit the item's media. Reader.SlotLink is
-	// the slot's stable URL. Item deletion (Jobs.DeleteItemsTx) drops rows
-	// without it.
-	SlotChanged func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, slot string, set bool) error
-	// PublicRemoved reports public/ keys deleted (a hidden item, replaced
-	// outputs), for a CDN purge; optional.
-	PublicRemoved func(ctx context.Context, ref contentref.ContentRef, keys []string)
-	// ItemReady reports an item whose processing settled (Readiness ready,
-	// or failed with nothing still processing) after a media worker job, in a
-	// transaction on the host database (worker.Config.Pool), e.g. to publish
-	// it and enqueue HostQueue.ExposeTx. It runs after every job that leaves
-	// the item settled, so it must be idempotent; an error rolls back and
-	// retries the job.
-	ItemReady func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r Readiness) error
+	// Window (default token.DefaultWindow, whole seconds).
+	TTL, Window time.Duration
 }
 
 // ReaderOptions configure a Reader.
 type ReaderOptions struct {
-	Manifests *Manifests
-	Kinds     *Registry
-	Resolver  access.ContentResolver
+	Manifests *Manifests // its Registry's BaseURL and Hooks.Resolver are required
 	Delivery  Delivery
-	Hooks     Hooks
-	// AllowGenericDownload controls download URLs issued by Read and Handler.
-	// Nil permits all kinds. Grant.DownloadURL remains available to hosts that
-	// govern downloads through their own endpoint.
-	AllowGenericDownload func(contentKind string) bool
-	// Progress adds live encode progress to pending video files; optional.
+	// Progress adds live encode progress to pending uploads in editor
+	// reads; optional.
 	Progress ProgressSource
-	// Queue renders an editor view an editor asks for that is missing
-	// (never rendered, or swept); optional (the editor then waits for the
-	// next processing job).
+	// Queue renders the editor views an editor read finds missing; optional.
 	Queue ProcessQueue
-	// MaxLimit caps ReadOptions.Limit (default 200); DefaultLimit is used when
-	// Limit is 0 (default 50).
+	// MaxLimit caps ReadOptions.Limit (default 200); DefaultLimit is used
+	// when Limit is 0 (default 50).
 	MaxLimit, DefaultLimit int
-	Now                    func() time.Time
-	// Slots is the slot index (NewSlotIndex) that SlotImages and the
-	// Handler's slot image route read; required for both.
-	Slots *SlotIndex
-	// ReadURL is the absolute URL the host mounts Handler at, e.g.
-	// "https://doujins.com/api/v1/media": SlotLink's base. Optional.
-	ReadURL string
+	// IndexCacheBytes bounds the track index blobs kept for playlists;
+	// default 16 MiB.
+	IndexCacheBytes int64
+	Now             func() time.Time
 }
 
-// Reader answers the read API: one Resolve per item, metadata for every file,
-// and signed URLs for the requested range.
+// Reader answers the read API and HLS playlists: one Resolve per item, and
+// signed URLs for what the viewer may have.
 type Reader struct {
-	manifests            *Manifests
-	kinds                *Registry
-	resolver             access.ContentResolver
-	delivery             Delivery
-	base                 *url.URL
-	ring                 token.Ring
-	hooks                Hooks
-	allowGenericDownload func(contentKind string) bool
-	progress             ProgressSource
-	queue                ProcessQueue
-	maxLimit             int
-	defLimit             int
-	now                  func() time.Time
-	slots                *SlotIndex
-	readURL              string
+	o       ReaderOptions
+	reg     *Registry
+	ring    token.Ring
+	base    string
+	indexes *indexCache
 }
 
 var (
@@ -135,22 +80,24 @@ var (
 	ErrResolve = errors.New("media: resolve failed")
 	// ErrInvalidRequest is a malformed read request.
 	ErrInvalidRequest = errors.New("media: invalid request")
+	// ErrNotAllowed is a file the viewer may not have.
+	ErrNotAllowed = errors.New("media: not allowed")
 )
 
 func NewReader(o ReaderOptions) (*Reader, error) {
-	if o.Manifests == nil || o.Kinds == nil || o.Resolver == nil {
-		return nil, errors.New("media: Reader needs Manifests, Kinds and Resolver")
+	if o.Manifests == nil {
+		return nil, errors.New("media: Reader needs Manifests")
 	}
-	d := o.Delivery
+	reg := o.Manifests.Registry()
+	if reg.cfg.BaseURL == "" || reg.cfg.Hooks.Resolver == nil {
+		return nil, errors.New("media: Reader needs the registry's BaseURL and Hooks.Resolver")
+	}
+	d := &o.Delivery
 	if d.Mode == "" {
 		d.Mode = DeliverCookie
 	}
 	if d.Mode != DeliverCookie && d.Mode != DeliverURL {
 		return nil, fmt.Errorf("media: unknown delivery mode %q", d.Mode)
-	}
-	base, err := url.Parse(strings.TrimRight(d.BaseURL, "/"))
-	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" || base.RawQuery != "" {
-		return nil, fmt.Errorf("media: Delivery.BaseURL %q must be an http(s) origin", d.BaseURL)
 	}
 	if d.Mode == DeliverCookie && d.CookieDomain == "" {
 		return nil, errors.New("media: cookie delivery needs Delivery.CookieDomain")
@@ -168,329 +115,166 @@ func NewReader(o ReaderOptions) (*Reader, error) {
 	if d.Window%time.Second != 0 {
 		return nil, errors.New("media: Delivery.Window must be a whole number of seconds")
 	}
-	readURL := strings.TrimRight(o.ReadURL, "/")
-	if readURL != "" {
-		if u, err := url.Parse(readURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.RawQuery != "" {
-			return nil, fmt.Errorf("media: ReaderOptions.ReadURL %q must be an absolute http(s) URL", o.ReadURL)
-		}
+	if o.MaxLimit <= 0 {
+		o.MaxLimit = 200
 	}
-	r := &Reader{manifests: o.Manifests, kinds: o.Kinds, resolver: o.Resolver, delivery: d, base: base, ring: ring,
-		hooks: o.Hooks, allowGenericDownload: o.AllowGenericDownload, progress: o.Progress, queue: o.Queue, maxLimit: orDefault(o.MaxLimit, 200),
-		defLimit: orDefault(o.DefaultLimit, 50), now: o.Now, slots: o.Slots, readURL: readURL}
-	if r.now == nil {
-		r.now = time.Now
+	if o.DefaultLimit <= 0 {
+		o.DefaultLimit = 50
 	}
-	return r, nil
+	if o.IndexCacheBytes <= 0 {
+		o.IndexCacheBytes = 16 << 20
+	}
+	if o.Now == nil {
+		o.Now = time.Now
+	}
+	return &Reader{o: o, reg: reg, ring: ring, base: strings.TrimRight(reg.cfg.BaseURL, "/"),
+		indexes: newIndexCache(o.IndexCacheBytes)}, nil
 }
 
-// Grant is one viewer's resolved access to one item or version: the read API
-// and HLS playlists sign every URL through it.
+// Grant is one viewer's resolved access to one item: reads and playlists
+// sign every URL through it.
 type Grant struct {
 	Item       Item
 	Resolution access.Resolution
 	Manifest   *Manifest
 	Expires    time.Time
-	units      int
-	folder     string // folder token for full access to an unversioned item
-	editor     string // editor token for temp/; editors only
+	units      int            // the Pages uploads within the preview cut
+	pages      map[string]int // each attached Pages upload's position
+	item       string         // an item token, for full access
 	actor      access.Actor
 	r          *Reader
 }
 
 // Grant resolves ref for actor exactly once and loads its manifest. A
 // resolver error denies (ErrResolve); an invisible item is ErrNotVisible. A
-// visible item without a manifest yet has no files.
+// visible item without a manifest has no files.
 func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor access.Actor) (*Grant, error) {
-	return r.grant(ctx, ref, actor, false)
-}
-
-// grant is Grant; unattached keeps an editor's unattached files.
-func (r *Reader) grant(ctx context.Context, ref contentref.ContentRef, actor access.Actor, unattached bool) (*Grant, error) {
-	requested, err := r.kinds.Item(ref)
+	item, err := r.reg.Item(ref)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNotVisible, err)
 	}
-	if _, err := requested.Section(); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
-	}
-	res, err := access.ResolveOne(ctx, r.resolver, ref, actor)
+	res, err := access.ResolveOne(ctx, r.reg.cfg.Hooks.Resolver, ref, actor)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrResolve, err)
 	}
 	if !res.Visible {
 		return nil, ErrNotVisible
 	}
-	canon, err := canonical(ref, res.Ref)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrResolve, err)
-	}
-	item, err := r.kinds.Item(canon)
-	if err == nil {
-		_, err = item.Section()
-	}
-	if err != nil {
-		return nil, fmt.Errorf("%w: resolver ref: %w", ErrResolve, err)
-	}
-	man, _, err := r.manifests.Get(ctx, canon)
+	man, _, err := r.o.Manifests.Get(ctx, ref)
 	if errors.Is(err, ErrNotFound) {
-		man = &Manifest{}
+		man = &Manifest{V: ManifestVersion}
 	} else if err != nil {
 		return nil, err
 	}
-	if !unattached || !res.Editor {
-		man = man.Attached()
+	g := &Grant{Item: item, Resolution: res, Manifest: man, pages: map[string]int{}, actor: actor, r: r,
+		Expires: token.Expiry(r.o.Now(), r.o.Delivery.TTL, r.o.Delivery.Window)}
+	k := item.Kind()
+	for _, f := range man.Files {
+		if u, _, _, _, ok := k.upload(f.Path); f.IsUpload() && !f.Unattached && ok && k.Uploads[u].Pages {
+			g.pages[f.Path] = len(g.pages)
+		}
 	}
-	if !res.Editor {
-		man = man.Servable() // viewers never see a file before it is processed
-	}
-	g := &Grant{Item: item, Resolution: res, Manifest: man, units: res.Units(len(man.Files)),
-		Expires: token.Expiry(r.now(), r.delivery.TTL, r.delivery.Window), actor: actor, r: r}
-	if res.Full() && !item.Kind().Versioned {
-		g.folder = r.ring.Sign(item.PrivatePrefix(), g.Expires)
-	}
-	if res.Editor {
-		g.editor = r.ring.Sign(token.EditorScope(item.TempPrefix()), g.Expires)
+	g.units = res.Units(len(g.pages))
+	if res.Full() {
+		g.item = r.ring.Sign(token.ItemScope(ref.TenantID, ref.ContentKind, ref.ContentID), g.Expires)
 	}
 	return g, nil
-}
-
-// canonical applies the resolver's Ref: zero keeps the request; another
-// tenant is refused.
-func canonical(requested, resolved contentref.ContentRef) (contentref.ContentRef, error) {
-	if resolved.ContentID == "" {
-		return requested, nil
-	}
-	if resolved.TenantID == "" {
-		resolved.TenantID = requested.TenantID
-	}
-	if resolved.ContentKind == "" {
-		resolved.ContentKind = requested.ContentKind
-	}
-	if resolved.TenantID != requested.TenantID {
-		return contentref.ContentRef{}, fmt.Errorf("resolver returned tenant %q for %s", resolved.TenantID, requested)
-	}
-	return resolved, nil
 }
 
 // Full reports the resolver's full-access decision.
 func (g *Grant) Full() bool { return g.Resolution.Full() }
 
-// Allowed reports whether file i is served to this viewer: within the
-// preview cut, or a teaser of a visible item.
-func (g *Grant) Allowed(i int) bool {
-	if i < 0 || i >= len(g.Manifest.Files) {
+// Editor reports an editor's grant.
+func (g *Grant) Editor() bool { return g.Resolution.Editor }
+
+// Allowed reports whether f is served to this viewer: full access; a page
+// within the preview cut, or a file derived from one; or a teaser's. Uploads
+// are served only with ServeOriginals; unattached files and frames not
+// grabbed yet never are.
+func (g *Grant) Allowed(f File) bool {
+	src := f
+	if !f.IsUpload() {
+		s, ok := g.Manifest.Get(f.From)
+		if ok && s.IsUpload() {
+			src = s
+		} else {
+			src = File{}
+		}
+	} else if !g.Item.Kind().ServeOriginals || f.Gone {
 		return false
 	}
-	return i < g.units || g.Manifest.Files[i].Teaser()
+	if f.Blob == "" || src.Unattached {
+		return false
+	}
+	if g.Full() {
+		return true
+	}
+	if p, ok := g.pages[src.Path]; ok && p < g.units {
+		return true
+	}
+	return src.Teaser()
 }
 
-// Cookie is the folder cookie for an unversioned full-access item in cookie
-// mode, else nil.
+// Cookie is the item cookie for full access in cookie mode, else nil.
 func (g *Grant) Cookie() *http.Cookie {
-	if g.folder == "" || g.r.delivery.Mode != DeliverCookie {
+	if g.item == "" || g.r.o.Delivery.Mode != DeliverCookie {
 		return nil
 	}
 	return &http.Cookie{
-		Name: CookieName, Value: g.folder,
-		Domain: g.r.delivery.CookieDomain, Path: g.r.base.Path + "/" + g.Item.PrivatePrefix(),
-		Expires: g.Expires, MaxAge: max(1, int(g.Expires.Sub(g.r.now()).Seconds())),
+		Name: CookieName, Value: g.item,
+		Domain: g.r.o.Delivery.CookieDomain, Path: layout.URLPrefix + g.Item.PrivatePrefix(),
+		Expires: g.Expires, MaxAge: max(1, int(g.Expires.Sub(g.r.o.Now()).Seconds())),
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
 	}
 }
 
-// ErrNotAllowed is a URL request for a file the viewer may not have, or a
-// blob that file does not reference.
-var ErrNotAllowed = errors.New("media: not allowed")
-
-// Editor reports an editor's grant: editor views are signed.
-func (g *Grant) Editor() bool { return g.Resolution.Editor }
-
-// URL signs rendition blob of file i. Folder tokens are used only for
-// unversioned full-access items; versioned items use exact-key tokens.
-func (g *Grant) URL(i int, blob string) (string, error) {
-	if !g.Allowed(i) {
+// URL signs f's blob (dl: under its download name).
+func (g *Grant) URL(f File, dl bool) (string, error) {
+	if !g.Allowed(f) {
 		return "", ErrNotAllowed
 	}
-	if !slices.Contains(fileBlobs(g.Manifest.Files[i]), blob) {
-		return "", ErrNotAllowed
-	}
-	key, err := g.Item.Private(blob)
+	return g.sign(f.Blob, f.Download, dl)
+}
+
+// sign is the URL of the item's blob: plain under the item cookie, else
+// with the item token or a file token; with dl, a download token.
+func (g *Grant) sign(blob, download string, dl bool) (string, error) {
+	key, err := g.Item.Blob(blob)
 	if err != nil {
 		return "", err
 	}
-	u := g.r.objectURL(key)
+	u := g.r.base + layout.URLPrefix + key
 	switch {
-	case g.folder != "" && g.r.delivery.Mode == DeliverCookie:
+	case dl && download != "":
+		return u + "?t=" + g.r.ring.Sign(token.DownloadScope(key, download), g.Expires) + "&dl=" + url.QueryEscape(download), nil
+	case g.item != "" && g.r.o.Delivery.Mode == DeliverCookie:
 		return u, nil
-	case g.folder != "":
-		return u + "?t=" + g.folder, nil
+	case g.item != "":
+		return u + "?t=" + g.item, nil
 	}
 	return u + "?t=" + g.r.ring.Sign(token.FileScope(key), g.Expires), nil
 }
 
-// DownloadURL signs a manifest download under its display name; full access
-// only, and always a URL token because the worker must see the signed dl=.
-func (g *Grant) DownloadURL(ctx context.Context, key string) (name, u string, err error) {
-	d, ok := g.Manifest.Downloads[key]
-	if !g.Full() || !ok {
-		return "", "", ErrNotAllowed
+// EditorView is the blob name of an image upload's editor view: the hash of
+// its source and the editor spec. Only editor reads return it; the sweep
+// removes it after the grace period and an editor read renders it again.
+func (r *Registry) EditorView(f File) string {
+	if !f.IsUpload() || f.Blob == "" || f.Gone || !isImageType(f.Type) {
+		return ""
 	}
-	if name, err = g.r.downloadName(ctx, g.Item.Ref(), key, d); err != nil {
-		return "", "", err
-	}
-	blob, err := g.Item.Private(d.Blob)
-	if err != nil {
-		return "", "", err
-	}
-	tok := g.r.ring.Sign(token.DownloadScope(blob, name), g.Expires)
-	return name, g.r.objectURL(blob) + "?t=" + tok + "&dl=" + url.QueryEscape(name), nil
+	spec, _ := json.Marshal(r.cfg.Editor)
+	sum := sha256.Sum256([]byte(f.Blob + "|" + string(spec)))
+	return layout.SHA256Name(sum[:])
 }
 
-func (r *Reader) downloadName(ctx context.Context, ref contentref.ContentRef, key string, d Download) (string, error) {
-	if r.hooks.DownloadName != nil {
-		name, err := r.hooks.DownloadName(ctx, ref, key, d)
-		if err != nil || name == "" {
-			return "", fmt.Errorf("media: download name for %s %q: %v", ref, key, err)
-		}
-		return name, nil
-	}
-	return ref.ContentID + "-" + key + extension(d.Type), nil
-}
-
-func (r *Reader) genericDownloadAllowed(kind string) bool {
-	return r.allowGenericDownload == nil || r.allowGenericDownload(kind)
-}
-
-func extension(contentType string) string {
-	switch contentType {
-	case "application/zip":
-		return ".zip"
-	case "video/mp4":
-		return ".mp4"
-	case "audio/mp4":
-		return ".m4a"
-	}
-	return ""
-}
-
-func (r *Reader) objectURL(key string) string { return r.base.String() + "/" + key }
-
-// fileBlobs lists the renditions one file references.
-func fileBlobs(f File) []string {
-	m := Manifest{Files: []File{f}}
-	return m.Renditions()
-}
-
-// editorViews finds the item's editor views: one listing of temp/ per read.
-type editorViews struct {
-	g       *Grant
-	have    map[string]bool
-	missing bool // an editor view the read wanted is not there
-}
-
-// url is the editor view of file f under the editor token: "" for a file
-// without one (not an image, not placed yet, failed) or when it is missing.
-func (e *editorViews) url(ctx context.Context, f File) (string, error) {
-	key := e.g.Item.EditorView(f.Source())
-	if e.g.editor == "" || key == "" || !isImageType(f.Type) || f.Failed() != nil {
-		return "", nil
-	}
-	if e.have == nil {
-		e.have = map[string]bool{}
-		for o, err := range e.g.r.manifests.store.List(ctx, e.g.Item.TempPrefix()) {
-			if err != nil {
-				return "", err
-			}
-			e.have[o.Key] = true
-		}
-	}
-	if !e.have[key] {
-		e.missing = true
-		return "", nil
-	}
-	return e.g.r.objectURL(key) + "?t=" + e.g.editor, nil
-}
-
-// renderMissing asks the image job for missing editor views. Best effort:
-// the editor's next read asks again.
-func (r *Reader) renderMissing(ctx context.Context, job ProcessJob, missing bool) {
-	if missing && r.queue != nil {
-		_ = r.queue.Enqueue(ctx, job)
-	}
-}
-
-// ReadOptions select the URLs a read returns.
+// ReadOptions select what a read returns.
 type ReadOptions struct {
-	// Variants in preference order: each file in range gets a URL for the
-	// first one it has. EditorVariant is the editor view, for editors only:
-	// a missing one is rendered again (ReaderOptions.Queue) and the file
-	// falls through to the next variant meanwhile. Empty returns metadata only.
-	Variants      []string
-	Offset, Limit int
-	// Unattached also lists an editor's unattached files (FileInfo.Unattached).
-	Unattached bool
-}
-
-// Access levels in ReadResult.
-const (
-	AccessFull    = "full"    // every file; downloads
-	AccessPreview = "preview" // files [0, preview_limit) plus teasers
-	AccessNone    = "none"    // teasers only
-)
-
-// ReadResult is the read API response. Files lists every file; only allowed
-// files inside [offset, offset+limit) carry a URL, and files past the cut
-// omit their name.
-type ReadResult struct {
-	Access       string         `json:"access"`
-	Total        int            `json:"total"`
-	PreviewLimit int            `json:"preview_limit"`
-	Offset       int            `json:"offset"`
-	Limit        int            `json:"limit"`
-	Expires      int64          `json:"expires"` // unix seconds; URLs and cookie stop working then
-	Meta         map[string]any `json:"meta,omitempty"`
-	Files        []FileInfo     `json:"files"`
-	Downloads    []DownloadInfo `json:"downloads,omitempty"`
-	// Cookie must be set on the response when an unversioned full-access item
-	// uses cookie delivery.
-	Cookie *http.Cookie `json:"-"`
-}
-
-type FileInfo struct {
-	Index    int     `json:"index"`
-	Name     string  `json:"name,omitempty"`
-	Type     string  `json:"type,omitempty"`
-	Width    int     `json:"w,omitempty"`
-	Height   int     `json:"h,omitempty"`
-	Duration float64 `json:"duration,omitempty"`
-	Edit     *Edit   `json:"edit,omitempty"` // editors only: with Dims, what re-cropping needs
-	Dims     *Dims   `json:"dims,omitempty"` // editors only: the source's size; w/h is the edited size
-	Teaser   bool    `json:"teaser,omitempty"`
-	Locked   bool    `json:"locked,omitempty"`
-	HLS      bool    `json:"hls,omitempty"` // playable at .../hls/{file}/master.m3u8 (video, or audio only)
-	// Ready: the file is processed (File.State): encoded, derived or converted.
-	Ready bool `json:"ready,omitempty"`
-	// Unattached is an editor's file processed on upload, not yet attached
-	// (ReadOptions.Unattached).
-	Unattached bool   `json:"unattached,omitempty"`
-	Failed     string `json:"failed,omitempty"` // editors only: why the file cannot be processed (video encode, image derive)
-	// FailedCode and FailedDetails type an image refusal (image_too_large,
-	// animation_not_allowed, …); editors only.
-	FailedCode    string        `json:"failed_code,omitempty"`
-	FailedDetails *ErrorDetails `json:"failed_details,omitempty"`
-	// Progress of a pending encode (none yet, or a replaced source); served
-	// with the file, as it reveals only timing and queue depth.
-	Progress *EncodeProgress `json:"progress,omitempty"`
-	Variant  string          `json:"variant,omitempty"`
-	URL      string          `json:"url,omitempty"`
-}
-
-type DownloadInfo struct {
-	Key  string `json:"key"`
-	Name string `json:"name"`
-	Type string `json:"type,omitempty"`
-	Size int64  `json:"size,omitempty"`
-	URL  string `json:"url"`
+	Prefix        string // only files under this path prefix ("low-res/")
+	Offset, Limit int    // the range that gets URLs
+	Download      bool   // sign each file's download name into its URL
+	// Editor adds an editor's uploads with their edit, frame, meta,
+	// pending, failure and editor view, unattached ones included.
+	Editor bool
 }
 
 // Read resolves ref once and answers the read API.
@@ -504,138 +288,142 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		return nil, nil, fmt.Errorf("%w: negative offset or limit", ErrInvalidRequest)
 	}
 	if o.Limit == 0 {
-		o.Limit = r.defLimit
+		o.Limit = r.o.DefaultLimit
 	}
-	o.Limit = min(o.Limit, r.maxLimit)
-	g, err := r.grant(ctx, ref, actor, o.Unattached)
+	o.Limit = min(o.Limit, r.o.MaxLimit)
+	g, err := r.Grant(ctx, ref, actor)
 	if err != nil {
 		return nil, nil, err
 	}
-	files := g.Manifest.Files
-	out := &ReadResult{Access: AccessNone, Total: len(files), Offset: o.Offset, Limit: o.Limit,
-		Expires: g.Expires.Unix(), Meta: g.Manifest.Meta, Files: make([]FileInfo, len(files)), Cookie: g.Cookie()}
+	editor := o.Editor && g.Editor()
+	out := &ReadResult{Access: AccessNone, Offset: o.Offset, Limit: o.Limit, Expires: g.Expires.Unix(),
+		Meta: g.Manifest.Meta, Files: []FileInfo{}, Cookie: g.Cookie()}
 	switch {
 	case g.Full():
 		out.Access = AccessFull
 	case g.units > 0:
 		out.Access, out.PreviewLimit = AccessPreview, g.units
 	}
-	views := &editorViews{g: g}
-	for i, f := range files {
-		fi := FileInfo{Index: i, Type: f.Type, Width: metaInt(f.Meta, "w"), Height: metaInt(f.Meta, "h"),
-			Duration: metaFloat(f.Meta, "duration"), Teaser: f.Teaser(), HLS: f.HLS.playable(), Ready: f.State() == StateReady, Unattached: f.Unattached}
-		if !g.Allowed(i) {
-			fi.Locked = true
-		} else {
-			fi.Name = f.Name
-			if g.Editor() {
-				fi.Edit, fi.Dims = f.Edit, f.Dims
-				if f.HLS != nil && f.HLS.Source == f.Source() {
-					fi.Failed = f.HLS.Error
-				}
-				if ff := f.Failed(); ff != nil {
-					fi.Failed, fi.FailedCode, fi.FailedDetails = ff.Message, ff.Code, ff.Details
-				}
-			}
-			if i >= o.Offset && i < o.Offset+o.Limit {
-				for _, v := range o.Variants {
-					if v == EditorVariant {
-						if fi.URL, err = views.url(ctx, f); err != nil {
-							return nil, nil, err
-						}
-					} else if vr, ok := f.Variants[v]; ok {
-						if fi.URL, err = g.URL(i, vr.Blob); err != nil {
-							return nil, nil, err
-						}
-					}
-					if fi.URL != "" {
-						fi.Variant = v
-						break
-					}
-				}
-			}
-		}
-		out.Files[i] = fi
+	k := g.Item.Kind()
+	if editor {
+		out.State = k.Readiness(g.Manifest).State
 	}
-	r.renderMissing(ctx, ProcessJob{Ref: g.Item.Ref()}, views.missing)
-	r.addProgress(ctx, g, out.Files)
-	if g.Full() && r.genericDownloadAllowed(g.Item.Ref().ContentKind) {
-		keys := make([]string, 0, len(g.Manifest.Downloads))
-		for k := range g.Manifest.Downloads {
-			keys = append(keys, k)
+	views := &editorViews{g: g}
+	for _, f := range g.Manifest.Files {
+		if !strings.HasPrefix(f.Path, o.Prefix) || !g.listed(f, editor) {
+			continue
 		}
-		slices.Sort(keys)
-		for _, k := range keys {
-			d := g.Manifest.Downloads[k]
-			name, u, err := g.DownloadURL(ctx, k)
-			if err != nil {
+		n := out.Total
+		out.Total++
+		fi := FileInfo{Path: f.Path, Type: f.Type, Size: f.Size, W: f.W, H: f.H, Dur: f.Dur, Download: f.Download}
+		if f.IsUpload() {
+			fi = uploadInfo(f)
+		} else {
+			fi.Teaser = g.sourceTeaser(f)
+			if editor {
+				fi.From = f.From
+			}
+		}
+		if !g.Allowed(f) {
+			fi.Locked = g.listed(f, false)
+		} else if n >= o.Offset && n < o.Offset+o.Limit {
+			if fi.URL, err = g.URL(f, o.Download); err != nil {
 				return nil, nil, err
 			}
-			out.Downloads = append(out.Downloads, DownloadInfo{Key: k, Name: name, Type: d.Type, Size: d.Size, URL: u})
 		}
+		if editor && f.IsUpload() && n >= o.Offset && n < o.Offset+o.Limit {
+			if fi.EditorURL, err = views.url(ctx, f); err != nil {
+				return nil, nil, err
+			}
+		}
+		if f.Track != nil && (f.Track.Kind == TrackVideo || f.Track.Kind == TrackAudio) && g.Allowed(f) {
+			if dir := path.Dir(f.Path) + "/"; len(out.HLS) == 0 || out.HLS[len(out.HLS)-1] != dir {
+				out.HLS = append(out.HLS, dir)
+			}
+		}
+		out.Files = append(out.Files, fi)
+	}
+	if views.missing && r.o.Queue != nil {
+		_ = r.o.Queue.Enqueue(ctx, ProcessJob{Ref: ref, Editor: true}) // best effort: the next read asks again
+	}
+	if editor {
+		r.addProgress(ctx, g, out.Files)
 	}
 	return out, g, nil
 }
 
-// addProgress fills Progress on allowed, pending video and audio files. A
-// failed progress read leaves it out rather than failing the read.
+// listed reports a file a read lists: derived files and served uploads to
+// viewers (attached only); every file to an editor read.
+func (g *Grant) listed(f File, editor bool) bool {
+	if editor {
+		return true
+	}
+	if f.IsUpload() {
+		return !f.Unattached && g.Item.Kind().ServeOriginals && f.Blob != "" && !f.Gone
+	}
+	src, ok := g.Manifest.Get(f.From)
+	return !ok || !src.IsUpload() || !src.Unattached
+}
+
+// sourceTeaser reports a derived file of a teaser upload.
+func (g *Grant) sourceTeaser(f File) bool {
+	src, ok := g.Manifest.Get(f.From)
+	return ok && src.Teaser()
+}
+
+// editorViews finds an item's editor views: one listing of private/ per read.
+type editorViews struct {
+	g       *Grant
+	have    map[string]bool
+	missing bool
+}
+
+func (e *editorViews) url(ctx context.Context, f File) (string, error) {
+	name := e.g.r.reg.EditorView(f)
+	if name == "" || f.Fail() != nil {
+		return "", nil
+	}
+	if e.have == nil {
+		e.have = map[string]bool{}
+		for o, err := range e.g.r.o.Manifests.store.List(ctx, e.g.Item.PrivatePrefix()) {
+			if err != nil {
+				return "", err
+			}
+			e.have[strings.TrimPrefix(o.Key, e.g.Item.PrivatePrefix())] = true
+		}
+	}
+	if !e.have[name] {
+		e.missing = true
+		return "", nil
+	}
+	return e.g.sign(name, "", false)
+}
+
+// addProgress fills Progress on pending video and audio uploads. A failed
+// progress read leaves it out rather than failing the read.
 func (r *Reader) addProgress(ctx context.Context, g *Grant, files []FileInfo) {
-	if k := g.Item.Kind(); r.progress == nil || k.Video == nil && k.Audio == nil {
+	if r.o.Progress == nil {
 		return
 	}
 	var pending []int
-	for i, f := range g.Manifest.Files {
-		if g.Allowed(i) && encodePending(f) {
+	for i, f := range files {
+		if f.Upload && len(f.Pending) > 0 && (isVideoType(f.Type) || isAudioType(f.Type)) {
 			pending = append(pending, i)
 		}
 	}
 	if len(pending) == 0 {
 		return
 	}
-	st, err := r.progress.EncodeProgress(ctx, g.Item.Ref())
+	st, err := r.o.Progress.EncodeProgress(ctx, g.Item.Ref())
 	if err != nil {
 		return
 	}
 	for _, i := range pending {
-		if p, ok := st.Files[g.Manifest.Files[i].Name]; ok {
+		if p, ok := st.Files[files[i].Path]; ok {
 			files[i].Progress = &p
 		} else if st.Queued != nil {
 			q := *st.Queued
-			if h := g.Manifest.Files[i].HLS; h != nil && len(h.Pending) > 0 {
-				published := make(map[int]bool, len(h.Video))
-				for _, rendition := range h.Video {
-					published[rendition.Rung] = true
-				}
-				q.Stage, q.Stages = len(published)+1, len(published)+len(h.Pending)
-			}
 			files[i].Progress = &q
 		}
 	}
-}
-
-// encodePending reports a video or audio file whose current source has no
-// ladder or failure recorded yet, or a ladder still missing a later stage's rungs.
-func encodePending(f File) bool {
-	return isEncodedType(f.Type) && (f.HLS == nil || f.HLS.Source != f.Source() || len(f.HLS.Pending) > 0)
-}
-
-func metaFloat(m map[string]any, k string) float64 {
-	switch v := m[k].(type) {
-	case float64:
-		return v
-	case int:
-		return float64(v)
-	case int64:
-		return float64(v)
-	}
-	return 0
-}
-
-func metaInt(m map[string]any, k string) int { return int(metaFloat(m, k)) }
-
-func orDefault(v, def int) int {
-	if v <= 0 {
-		return def
-	}
-	return v
 }

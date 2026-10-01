@@ -2,7 +2,7 @@
 import "../test/dom.js";
 import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import type { FileInfo, ReadResult, VideoImages } from "../wire.gen.js";
+import type { FileInfo, ReadResult } from "../wire.gen.js";
 import { MediaGallery, UploadUiProvider, VideoPlayer } from "../ui.js";
 
 // hls.js needs MediaSource, which jsdom lacks: a stand-in that records what the player asks of it.
@@ -48,12 +48,19 @@ const hls = vi.hoisted(() => {
 });
 vi.mock("hls.js", () => ({ default: hls.FakeHls }));
 
-const read = (files: FileInfo[]): ReadResult => ({ access: "full", total: files.length, preview_limit: 0, offset: 0, limit: 50, expires: 0, files });
-const vid = (index: number): FileInfo => ({ index, name: `${index}.mp4`, type: "video/mp4", w: 1920, h: 1080, duration: 40, hls: true });
-const hlsBase = (f: FileInfo) => `/hls/${f.name}/`;
-const poster = (file: string, time: number): VideoImages => ({
-  poster: { aspect: "16:9", pending: false, file, time, outputs: [{ w: 480, h: 270, url: "https://m/poster.webp" }] },
+const read = (files: FileInfo[]): ReadResult => ({
+  access: "full",
+  total: files.length,
+  preview_limit: 0,
+  offset: 0,
+  limit: 50,
+  expires: 0,
+  files,
+  hls: files.filter((f) => !f.locked).map((f) => f.path.slice(0, f.path.lastIndexOf("/") + 1)),
 });
+const vid = (index: number): FileInfo => ({ path: `hls/${index}/1080-h264.mp4`, type: "video/mp4", w: 1920, h: 1080, dur: 40, url: "u" });
+const hlsBase = (dir: string) => `/read/${dir}`;
+const poster = { base: "https://m", namespace: "app", kind: "post", id: "1", to: "poster-{w}.webp", widths: [480], aspect: "16:9" };
 
 let io: { cb: IntersectionObserverCallback; el?: Element }[] = [];
 
@@ -92,10 +99,10 @@ async function hoverPreviews(el: HTMLElement) {
 }
 
 it("desktop hover: after the delay the real HLS plays muted from the cover frame at the lowest rung; leaving unloads it", async () => {
-  render(<MediaGallery read={read([vid(0)])} hlsBase={hlsBase} videoImages={poster("0.mp4", 12.5)} />);
+  render(<MediaGallery read={read([vid(0)])} hlsBase={hlsBase} poster={poster} previewStart={12.5} />);
   const [box] = players();
   const h = await hoverPreviews(box!);
-  expect(h.src).toBe("/hls/0.mp4/master.m3u8");
+  expect(h.src).toBe("/read/hls/0/master.m3u8");
   expect(h.startLevel).toBe(0);
   expect(h.startedAt).toBe(12.5);
   const video = box!.querySelector("video")!;
@@ -103,7 +110,7 @@ it("desktop hover: after the delay the real HLS plays muted from the cover frame
   expect(video.controls).toBe(false);
   act(() => void video.dispatchEvent(new Event("playing")));
   expect(box).toHaveAttribute("data-previewing");
-  expect(box!.querySelector("img[src*='poster.webp']")).toHaveClass("opacity-0");
+  expect(box!.querySelector("img[src*='poster-480.webp']")).toHaveClass("opacity-0");
 
   fireEvent.pointerLeave(box!);
   expect(h.destroyed).toBe(true);
@@ -181,8 +188,8 @@ it("the host setting turns it off; a locked or unencoded video never loads a str
   expect(hls.instances).toHaveLength(0);
   unmount();
 
-  const locked: FileInfo = { index: 0, type: "video/mp4", locked: true };
-  render(<MediaGallery read={{ ...read([locked, { ...vid(1), hls: false }]), access: "none" }} hlsBase={hlsBase} defaultView="grid" storageKey={null} />);
+  const locked: FileInfo = { path: "hls/0/480-h264.mp4", type: "video/mp4", locked: true };
+  render(<MediaGallery read={{ ...read([locked, vid(1)]), hls: [], access: "none" }} hlsBase={hlsBase} defaultView="grid" storageKey={null} />);
   for (const el of document.querySelectorAll<HTMLElement>("[data-ckui=tile], [data-ckui=video-player]")) fireEvent.pointerEnter(el, { pointerType: "mouse" });
   await wait(700);
   expect(hls.instances).toHaveLength(0);
@@ -193,7 +200,7 @@ it("grid tiles preview in place", async () => {
   render(<MediaGallery read={read([vid(0), vid(1)])} hlsBase={hlsBase} defaultView="grid" storageKey={null} />);
   const tile = document.querySelectorAll<HTMLElement>("[data-ckui=tile]")[1]!;
   const h = await hoverPreviews(tile);
-  expect(h.src).toBe("/hls/1.mp4/master.m3u8");
+  expect(h.src).toBe("/read/hls/1/master.m3u8");
   expect(h.startedAt).toBe(4);
   expect(tile.querySelector<HTMLVideoElement>("[data-ckui=tile-preview]")!.muted).toBe(true);
   fireEvent.pointerLeave(tile);

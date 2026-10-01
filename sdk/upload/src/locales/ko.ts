@@ -145,6 +145,7 @@ export const ko: UploadUiMessageBundle = {
     type_not_allowed: "이 파일 형식은 여기에서 지원되지 않습니다.",
     checksum_mismatch: "업로드 중 파일이 변경되었습니다. 다시 시도해 주세요.",
     rate_limited: "업로드가 너무 많습니다. {seconds}초 후에 다시 시도해 주세요.",
+    unavailable: "미디어 저장소를 사용할 수 없습니다. 잠시 후 다시 시도하세요.",
     internal_error: "서버에서 문제가 발생했습니다. 다시 시도하세요.",
     allowedTypes: "{allowed} 형식을 사용하세요.",
     tooLargeBy: "이 파일은 {size}입니다. 제한은 {max}입니다.",

@@ -1,34 +1,72 @@
-import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
-import { throwIfAborted } from "./errors.js";
+import { aborted, throwIfAborted } from "./errors.js";
+import { streamSha256 } from "./hash-stream.js";
+import HashWorker from "./hash.worker.ts?worker&inline";
 import { MAX_SINGLE_PUT } from "./wire.gen.js";
 
-const CHUNK = 4 << 20;
+export interface HashOptions {
+  signal?: AbortSignal;
+  onProgress?: (hashed: number) => void;
+}
 
 /**
- * Lowercase hex SHA-256 of blob. Up to 64 MiB (every part and single PUT) it
- * is one WebCrypto digest: native and off the main thread, so parts hash in
- * parallel. Larger blobs, or no WebCrypto (an insecure context), stream
- * through @noble/hashes in 4 MiB slices so memory stays bounded.
+ * Lowercase hex SHA-256 of blob, off the main thread. Up to 64 MiB (every
+ * part and single PUT) it is one WebCrypto digest: native, so parts hash in
+ * parallel. Larger files stream through @noble/hashes in a Web Worker,
+ * since WebCrypto cannot hash incrementally; without workers (or WebCrypto)
+ * the same stream runs here.
  */
-export async function sha256Hex(
-  blob: Blob,
-  opts: { signal?: AbortSignal; onProgress?: (hashed: number) => void } = {},
-): Promise<string> {
+export async function sha256Hex(blob: Blob, o: HashOptions = {}): Promise<string> {
+  throwIfAborted(o.signal);
   const subtle = globalThis.crypto?.subtle;
   if (subtle && blob.size <= MAX_SINGLE_PUT) {
-    throwIfAborted(opts.signal);
     const digest = await subtle.digest("SHA-256", await blob.arrayBuffer());
-    throwIfAborted(opts.signal);
-    opts.onProgress?.(blob.size);
+    throwIfAborted(o.signal);
+    o.onProgress?.(blob.size);
     return bytesToHex(new Uint8Array(digest));
   }
-  const h = sha256.create();
-  for (let off = 0; off < blob.size; off += CHUNK) {
-    throwIfAborted(opts.signal);
-    h.update(new Uint8Array(await blob.slice(off, off + CHUNK).arrayBuffer()));
-    opts.onProgress?.(Math.min(off + CHUNK, blob.size));
+  const worked = typeof Worker === "function" ? await inWorker(blob, o) : undefined;
+  if (worked !== undefined) return worked;
+  try {
+    return await streamSha256(blob, o.onProgress, () => !!o.signal?.aborted);
+  } catch (err) {
+    throw o.signal?.aborted ? aborted(o.signal) : err;
   }
-  throwIfAborted(opts.signal);
-  return bytesToHex(h.digest());
+}
+
+/** The hash from a worker; undefined when no worker can run (a CSP without blob: or data: workers). */
+function inWorker(blob: Blob, o: HashOptions): Promise<string | undefined> {
+  return new Promise((resolve, reject) => {
+    let w: Worker;
+    try {
+      w = new HashWorker();
+    } catch {
+      return resolve(undefined);
+    }
+    let started = false;
+    const done = () => {
+      w.terminate();
+      o.signal?.removeEventListener("abort", stop);
+    };
+    const stop = () => {
+      done();
+      reject(aborted(o.signal));
+    };
+    o.signal?.addEventListener("abort", stop, { once: true });
+    w.onerror = (e) => {
+      e.preventDefault();
+      done();
+      if (started) reject(new Error("hashing failed: " + e.message));
+      else resolve(undefined);
+    };
+    w.onmessage = (e: MessageEvent<{ hashed?: number; hex?: string; error?: string }>) => {
+      started = true;
+      const m = e.data;
+      if (m.hashed !== undefined) return o.onProgress?.(m.hashed);
+      done();
+      if (m.hex) resolve(m.hex);
+      else reject(new Error("hashing failed: " + m.error));
+    };
+    w.postMessage(blob);
+  });
 }

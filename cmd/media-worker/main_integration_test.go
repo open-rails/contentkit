@@ -80,7 +80,7 @@ func TestStartsWithoutItsDependencies(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 	kinds := filepath.Join(dir, "kinds.json")
-	if err := os.WriteFile(kinds, []byte(`[{"Name":"clip","Video":{}}]`), 0o600); err != nil {
+	if err := os.WriteFile(kinds, []byte(`{"namespace":"t","kinds":[{"name":"clip","uploads":[{"path":"source","types":["video/mp4"],"max_bytes":1073741824}],"private":[{"name":"hls","from":"source","to":"hls/","hls":{}}]}]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	addr := freeAddr(t)

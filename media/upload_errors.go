@@ -14,11 +14,11 @@ const (
 	CodeInvalid      = "invalid_request"   // 400
 	CodeForbidden    = "forbidden"         // 403
 	CodeNotFound     = "not_found"         // 404: unknown kind, file or upload
-	CodeConflict     = "conflict"          // 409: file name taken, or a new item's folder not empty
+	CodeConflict     = "conflict"          // 409: a path taken, or a new item's folder not empty
 	CodeIncomplete   = "incomplete"        // 409: multipart parts missing
 	CodeNotUploaded  = "not_uploaded"      // 409: commit before the object landed
-	CodeTooManyFiles = "too_many_files"    // 409: the commit would exceed the kind's file caps
-	CodeTooLarge     = "too_large"         // 413: over the kind's cap
+	CodeTooManyFiles = "too_many_files"    // 409: the commit would exceed an Upload's Max
+	CodeTooLarge     = "too_large"         // 413: over the Upload's MaxBytes
 	CodeQuota        = "quota_exceeded"    // 413: owner quota
 	CodeType         = "type_not_allowed"  // 415
 	CodeChecksum     = "checksum_mismatch" // 422: stored bytes differ from the declared hash
@@ -26,7 +26,7 @@ const (
 	CodeUnavailable  = "unavailable"       // 503: the bucket cannot be reached; retry
 
 	// Image refusals (ImageError): the rules refuse the image; never a server fault.
-	CodeImageTooSmall   = "image_too_small"  // 422: edited narrower than the slot's minimum
+	CodeImageTooSmall   = "image_too_small"  // 422: edited narrower than the public preset's MinWidth
 	CodeImageTooLarge   = "image_too_large"  // 413: more pixels than the processor decodes
 	CodeImageUnreadable = "image_unreadable" // 422: not a decodable image of its declared type
 
@@ -76,7 +76,7 @@ type ErrorDetails struct {
 }
 
 // ImageError is an image the rules refuse, synchronously (an edit checked
-// against known dims) or in the image job (recorded on the slot result).
+// against known dims) or in the image job (recorded as the upload's Failure).
 type ImageError struct {
 	Code    string
 	Message string
@@ -108,16 +108,11 @@ type UploadError struct {
 	Code       string
 	Message    string
 	RetryAfter time.Duration // CodeRate: when the window frees
-	Originals  []string      // CodeNotUploaded at commit: the originals to upload again
+	Blobs      []string      // CodeNotUploaded at commit: the blobs to upload again
 	Details    *ErrorDetails // image refusals
 }
 
 func (e *UploadError) Error() string { return "media: " + e.Message }
-
-// Is matches the kind sentinels by code.
-func (e *UploadError) Is(target error) bool {
-	return target == ErrType && e.Code == CodeType || target == ErrTooLarge && e.Code == CodeTooLarge
-}
 
 // Status is the HTTP status for Code.
 func (e *UploadError) Status() int {
@@ -141,10 +136,6 @@ func AsUploadError(err error) (*UploadError, bool) {
 	case AsImageError(err) != nil:
 		ie := AsImageError(err)
 		return &UploadError{Code: ie.Code, Message: ie.Message, Details: &ie.Details}, true
-	case errors.Is(err, ErrType):
-		return &UploadError{Code: CodeType, Message: err.Error()}, true
-	case errors.Is(err, ErrTooLarge):
-		return &UploadError{Code: CodeTooLarge, Message: err.Error()}, true
 	case errors.Is(err, ErrUnknownKind):
 		return &UploadError{Code: CodeNotFound, Message: err.Error()}, true
 	case errors.Is(err, contentref.ErrInvalidID):

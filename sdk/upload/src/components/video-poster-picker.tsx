@@ -8,7 +8,8 @@ import { useMessages } from "../i18n/context.js";
 import { decodeImage, type CropSource } from "../image.js";
 import { useErrorReporter, useUploadClient, type UploadUiErrorHandler } from "../provider.js";
 import { useFrameStrip, useVideoFrame, useVideoImages, useVideoPoster, type VideoSaveState } from "../video-react.js";
-import type { RefBody, VideoImages } from "../wire.gen.js";
+import type { PublicImage } from "../public.js";
+import type { FileInfo, ReadResult, RefBody } from "../wire.gen.js";
 import { Alert, AlertDescription } from "#ckui/ui/alert";
 import { Button } from "#ckui/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "#ckui/ui/dialog";
@@ -24,13 +25,17 @@ export interface VideoPickerProps {
   onOpenChange: (open: boolean) => void;
   /** The video item. */
   item: RefBody;
-  /** The video file (multi-file kinds); default the first video. */
-  file?: string;
+  /** The video upload path. Default "source". */
+  video?: string;
+  /** The poster upload path (its Upload.Frames is the video). Default "poster". */
+  path?: string;
+  /** The poster's public preset, refetched after a save. */
+  image?: PublicImage | null;
   client?: UploadClient;
-  /** Current images from the host; otherwise fetched. */
-  images?: VideoImages | null;
-  /** Called with the rendered images after a save. */
-  onChange?: (v: VideoImages) => void;
+  /** An editor read of the item from the host; otherwise fetched. */
+  read?: ReadResult | null;
+  /** Called with the processed poster upload after a save. */
+  onChange?: (poster: FileInfo) => void;
   /** Every failure (load, frame grab, save or render); default the provider's. The dialog shows it too. */
   onError?: UploadUiErrorHandler;
   title?: ReactNode;
@@ -52,10 +57,10 @@ export function formatTime(s: number): string {
 }
 
 /**
- * Sets a video's cover (poster): scrub to an exact frame (a coarse strip, a
- * slider and frame steps over the frame endpoint) and use it whole or cropped,
- * or upload an image and crop it at the video's aspect, or return to the
- * automatic frame. Covers keep the video's native aspect.
+ * Sets a video's cover (its poster upload): scrub to an exact frame (a coarse
+ * strip, a slider and frame steps over GET /frame) and use it whole or
+ * cropped (a frame op), or upload an image and crop it at the video's aspect
+ * (a put), or let the worker choose the frame. Covers keep the video's aspect.
  */
 export function VideoPosterPicker(p: VideoPosterPickerProps) {
   const { t } = useMessages();
@@ -77,26 +82,27 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
   const { t, error: errorText } = useMessages();
   const client = useUploadClient(p.client);
   const report = useErrorReporter(p.onError);
-  const loaded = useVideoImages(client, { ref: p.item, file: p.file, images: p.images });
+  const loaded = useVideoImages(client, { ref: p.item, video: p.video, poster: p.path, read: p.read });
   useEffect(() => void (loaded.error && report(loaded.error, "poster.load")), [loaded.error, report]);
-  const video = loaded.images?.video;
-  const selection = loaded.images?.poster.selection;
-  const [mode, setMode] = useState<"frame" | "upload">(selection?.source === "upload" ? "upload" : "frame");
+  const { video, poster: current } = loaded;
+  const selection = current?.frame;
+  const [mode, setMode] = useState<"frame" | "upload">(current && !selection ? "upload" : "frame");
   const [time, setTime] = useState<number>();
   const [crop, setCrop] = useState<CropSource | null>(null);
   const [cropFor, setCropFor] = useState<"frame" | "upload">("frame");
   const [decodeError, setDecodeError] = useState<string>();
   const input = useRef<HTMLInputElement>(null);
-  const duration = video?.encoded ? video.duration : 0;
+  const duration = video?.dur ?? 0;
   const aspect = video?.w && video.h ? aspectOf(video.w, video.h) : "16:9";
-  const shown = time ?? (selection?.source === "frame" && selection.time !== undefined ? selection.time : duration * 0.25);
-  const file = p.file ?? video?.file;
+  const shown = time ?? selection?.t ?? duration * 0.25;
+  const path = video?.path;
   const poster = useVideoPoster(client, {
     ref: p.item,
-    file,
-    onSaved: (v) => {
-      loaded.set(v);
-      p.onChange?.(v);
+    path: p.path,
+    image: p.image,
+    onSaved: (f) => {
+      loaded.set(f);
+      p.onChange?.(f);
       p.onOpenChange(false);
     },
     onError: (e) => report(e, "poster.save"),
@@ -106,8 +112,8 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
   onSaving.current = p.onSaving;
   useEffect(() => onSaving.current(busy), [busy]);
   const onFrameError = (e: unknown) => report(e, "poster.frame");
-  const frame = useVideoFrame(client, { ref: p.item, file, time: duration > 0 ? shown : undefined, width: 960, onError: onFrameError });
-  const strip = useFrameStrip(client, { ref: p.item, file, duration, count: 8, width: 160, onError: onFrameError });
+  const frame = useVideoFrame(client, { ref: p.item, path, time: duration > 0 ? shown : undefined, width: 960, onError: onFrameError });
+  const strip = useFrameStrip(client, { ref: p.item, path, duration, count: 8, width: 160, onError: onFrameError });
   useEffect(() => () => crop?.revoke?.(), [crop]);
 
   const openCrop = async (source: "frame" | "upload", f?: File) => {
@@ -115,10 +121,10 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
     try {
       if (source === "upload") setCrop(await (p.decode ?? decodeImage)(f!));
       else {
-        const blob = await client.getFrame(p.item, shown, { file, width: 1280 });
+        const blob = await client.getFrame(p.item, path!, shown, 1280);
         const url = URL.createObjectURL(blob);
-        // Poster edits are in the grabbed frame's pixels (VideoInfo w×h), whatever the preview's size.
-        setCrop({ url, width: video!.w, height: video!.h, revoke: () => URL.revokeObjectURL(url) });
+        // Frame edits are in the frame's pixels (the video's w×h), whatever the preview's size.
+        setCrop({ url, width: video!.w!, height: video!.h!, revoke: () => URL.revokeObjectURL(url) });
       }
       setCropFor(source);
     } catch (e) {
@@ -170,7 +176,7 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
         {mode === "frame" &&
           (loaded.loading && !video ? (
             <Stage loading aspect={aspect} />
-          ) : !video?.encoded ? (
+          ) : !duration ? (
             <p className="rounded-lg bg-muted px-4 py-6 text-center text-sm text-muted-foreground" data-ckui="processing">
               {t("poster.processing")}
             </p>
@@ -268,14 +274,14 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
       </div>
 
       <DialogFooter className="px-5 pt-4 pb-5 sm:justify-between">
-        <Button variant="ghost" disabled={busy || selection?.source === "auto" || !selection} onClick={() => void poster.saveAuto()} title={t("poster.autoHint")}>
+        <Button variant="ghost" disabled={busy || !!selection?.auto} onClick={() => void poster.saveAuto()} title={t("poster.autoHint")}>
           {t("poster.auto")}
         </Button>
         <div className="flex flex-col-reverse gap-2 sm:flex-row">
           <Button variant="outline" disabled={busy} onClick={() => p.onOpenChange(false)}>
             {t("common.cancel")}
           </Button>
-          {mode === "frame" && video?.encoded && (
+          {mode === "frame" && duration > 0 && (
             <>
               <Button variant="outline" disabled={busy} onClick={() => void openCrop("frame")}>
                 {t("poster.crop")}

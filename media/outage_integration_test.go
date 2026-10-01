@@ -30,7 +30,11 @@ func TestStoreOutage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kinds, err := media.NewRegistry(media.Kind{Name: "post", Specs: map[string]media.Spec{"large": {}}})
+	res := &resolver{verdicts: map[string]access.Resolution{}, anon: map[string]access.Resolution{}}
+	res.set(cid(1), access.Resolution{Visible: true, Accessible: true})
+	cfg2 := testConfig(env.Tenant, "acct")
+	cfg2.Hooks = media.Hooks{Resolver: res}
+	kinds, err := media.NewRegistry(cfg2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,17 +42,16 @@ func TestStoreOutage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res := &resolver{verdicts: map[string]access.Resolution{cid(1): {Visible: true, Accessible: true}}}
-	reader, err := media.NewReader(media.ReaderOptions{Manifests: ms, Kinds: kinds, Resolver: res,
-		Delivery: media.Delivery{Mode: media.DeliverCookie, BaseURL: readBase, CookieDomain: "doujins.com", SigningKey: readKey}})
+	reader, err := media.NewReader(media.ReaderOptions{Manifests: ms,
+		Delivery: media.Delivery{Mode: media.DeliverCookie, CookieDomain: "doujins.test", SigningKey: signKey}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(http.StripPrefix("/media", reader.Handler(media.HandlerOptions{Tenant: env.Tenant})))
+	srv := httptest.NewServer(http.StripPrefix("/media", reader.Handler(media.HandlerOptions{})))
 	defer srv.Close()
 	get := func() (int, string) {
 		t.Helper()
-		resp, err := http.Get(srv.URL + "/media/post/" + cid(1))
+		resp, err := http.Get(srv.URL + "/media/gallery/" + cid(1))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -58,10 +61,10 @@ func TestStoreOutage(t *testing.T) {
 		return resp.StatusCode, body.Code
 	}
 	ctx := context.Background()
-	ref := contentref.New(env.Tenant, "post", cid(1))
+	ref := contentref.New(env.Tenant, "gallery", cid(1))
 	edit := func() error {
 		_, err := ms.Edit(ctx, ref, func(m *media.Manifest) error {
-			m.Files = []media.File{{Name: "a.jpg", Original: blobName("a"), Type: "image/jpeg"}}
+			m.Files = []media.File{{Path: "originals/a.jpg", Blob: blobOf([]byte("a")), Type: "image/jpeg"}}
 			return nil
 		})
 		return err

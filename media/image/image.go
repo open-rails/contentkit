@@ -1,61 +1,58 @@
-// Package image derives WebP variants, slot and inline renditions and zip
-// downloads with libvips (CGO). A Processor runs one media.ProcessJob: it
-// fills an item's missing or stale variants in one manifest edit and
-// re-encodes its slots. Originals are read, never served.
+// Package image is the media worker's image producer (libvips, CGO): the
+// Image presets' private WebP files, the Zip presets, the public presets'
+// fixed names, editor views, and the kinds' default public images. A
+// Processor runs one media.ProcessJob: it redoes stale or pending outputs,
+// records them in one manifest edit per pass, and keeps public/ in step.
 package image
 
 import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"maps"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 )
 
-// SpecChooser returns the variants a file gets, by name: a host's per-file
-// choice such as taller manhwa pages or a blurred teaser. The default is the
-// kind's Specs.
-type SpecChooser func(kind media.Kind, f media.File) map[string]media.Spec
+// Recipe versions the image producer: a change re-renders every image output.
+const Recipe = "webp-1"
 
 // Config configures a Processor.
 type Config struct {
 	Store     media.Store
-	Kinds     *media.Registry
 	Manifests *media.Manifests
-	Specs     SpecChooser
-	Hooks     media.Hooks // Failed
-	Workers   int         // sources encoded at once; default 2
-	MaxPixels int         // largest source decoded, all frames of an animation together; default 100 MP
-	MaxFrames int         // frames an animation may have; default 1000
-	// MaxAnimationSeconds bounds an animation's running time; default 60.
+	// Purge relays overwritten or deleted public keys to the host's
+	// Hooks.PurgePublic (media.HostQueue.Purge); optional.
+	Purge   func(ctx context.Context, keys []string) error
+	Workers int // uploads decoded at once; default 2
+	// MaxPixels bounds a decoded source, all frames of an animation
+	// together (default 100 MP); MaxFrames and MaxAnimationSeconds bound
+	// animations (defaults 1000 and 60).
+	MaxPixels           int
+	MaxFrames           int
 	MaxAnimationSeconds float64
 	TempDir             string // zip scratch; default os.TempDir()
 }
 
-// Processor derives images. It is safe for concurrent use and idempotent:
-// a variant of an unchanged source and spec is never recomputed.
+// Processor runs image jobs. It is safe for concurrent use and idempotent:
+// an output whose fingerprint matches is never redone (unless forced).
 type Processor struct {
-	c Config
+	c   Config
+	reg *media.Registry
 }
 
 func New(c Config) (*Processor, error) {
-	if c.Store == nil || c.Kinds == nil || c.Manifests == nil {
-		return nil, errors.New("media/image: Processor needs a Store, Kinds and Manifests")
-	}
-	if c.Specs == nil {
-		c.Specs = func(k media.Kind, _ media.File) map[string]media.Spec { return k.Specs }
+	if c.Store == nil || c.Manifests == nil {
+		return nil, errors.New("media/image: Processor needs a Store and Manifests")
 	}
 	if c.Workers <= 0 {
 		c.Workers = 2
@@ -72,444 +69,429 @@ func New(c Config) (*Processor, error) {
 	if err := start(); err != nil {
 		return nil, fmt.Errorf("media/image: libvips: %w", err)
 	}
-	return &Processor{c: c}, nil
+	return &Processor{c: c, reg: c.Manifests.Registry()}, nil
 }
 
-// Process runs one job: a Slot job re-encodes that slot or inline image;
-// otherwise the ref's manifest (when the ref addresses one), every uploaded
-// slot and every inline image are brought up to date.
+// publicSpec is what a public preset's fingerprint covers.
+type publicSpec struct {
+	To     string      `json:"to"`
+	Widths []int       `json:"widths"`
+	Image  media.Image `json:"image"`
+}
+
+func publicFP(src media.File, p *media.Public) string {
+	return media.SpecFP(src, publicSpec{p.To, p.Widths, p.Image}, Recipe)
+}
+
+// Process brings ref's image outputs up to date. Passes repeat until the
+// manifest needs no more work, so a commit landing during a pass is absorbed.
 func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
-	item, err := p.c.Kinds.Item(job.Ref)
+	item, err := p.reg.Item(job.Ref)
 	if err != nil {
 		return err
 	}
-	if job.Slot != "" {
-		return errors.Join(p.slot(ctx, item, job.Slot), p.editorViews(ctx, item, job.Slot))
-	}
-	var errs []error
-	if _, err := item.Section(); err == nil {
-		errs = append(errs, p.manifest(ctx, item))
-	}
-	for slot := range item.Kind().Slots {
-		errs = append(errs, p.slot(ctx, item, slot))
-	}
-	if item.Kind().Inline != nil {
-		root, _, err := p.c.Manifests.Root(ctx, item.Ref())
-		if err != nil && !errors.Is(err, media.ErrNotFound) {
-			return errors.Join(append(errs, err)...)
+	for range 8 {
+		m, _, err := p.c.Manifests.Get(ctx, job.Ref)
+		if errors.Is(err, media.ErrNotFound) {
+			return nil
+		} else if err != nil {
+			return err
 		}
-		if root != nil {
-			for name := range root.Slots {
-				if item.Inline(name) {
-					errs = append(errs, p.slot(ctx, item, name))
+		if err := p.syncPublic(ctx, item, m); err != nil {
+			return err
+		}
+		todo, err := p.todo(ctx, item, m, job)
+		if err != nil {
+			return err
+		}
+		zips := p.staleZips(item, m, job)
+		if len(todo) == 0 && len(zips) == 0 {
+			if job.Editor {
+				return p.editorViews(ctx, item, m)
+			}
+			return nil
+		}
+		if err := p.pass(ctx, item, m, todo, zips); err != nil {
+			return err
+		}
+		job.Force = false // forced once
+	}
+	return fmt.Errorf("media/image: manifest of %s kept changing", job.Ref)
+}
+
+// work is one upload's image outputs to render.
+type work struct {
+	src     media.File
+	private []*media.Private
+	public  []*media.Public
+	measure bool // record its size (W×H) only
+}
+
+// done is a rendered upload.
+type done struct {
+	work
+	outputs map[string]media.File // by private preset
+	written []string              // public keys written
+	dims    media.Dims
+	err     error // permanent
+}
+
+// todo lists the uploads with stale, pending or forced image outputs.
+func (p *Processor) todo(ctx context.Context, item media.Item, m *media.Manifest, job media.ProcessJob) ([]work, error) {
+	k := item.Kind()
+	var out []work
+	for _, f := range m.Files {
+		if !f.IsUpload() || f.Blob == "" || f.Gone || f.Fail() != nil {
+			continue
+		}
+		w := work{src: f}
+		for _, pr := range k.PrivateFor(f.Path) {
+			if pr.Image == nil || job.Preset != "" && pr.Name != job.Preset {
+				continue
+			}
+			outs := m.Outputs(f.Path, pr.Name)
+			if job.Force || slices.Contains(f.Pending, pr.Name) || len(outs) != 1 || outs[0].Path != k.OutputPath(pr, f.Path) ||
+				outs[0].FP != media.SpecFP(f, spec(pr, f), Recipe) {
+				w.private = append(w.private, pr)
+			}
+		}
+		if !m.Hidden && !f.Unattached {
+			for _, pu := range k.PublicFor(f.Path) {
+				if job.Preset != "" && pu.Name != job.Preset {
+					continue
+				}
+				stale := job.Force || slices.Contains(f.Pending, pu.Name)
+				if !stale {
+					var err error
+					if stale, err = p.publicStale(ctx, item, f, pu); err != nil {
+						return nil, err
+					}
+				}
+				if stale {
+					w.public = append(w.public, pu)
 				}
 			}
 		}
+		w.measure = strings.HasPrefix(f.Type, "image/") && f.W == 0
+		if len(w.private) > 0 || len(w.public) > 0 || w.measure {
+			out = append(out, w)
+		}
 	}
-	errs = append(errs, p.editorViews(ctx, item, ""))
-	return errors.Join(errs...)
+	return out, nil
 }
 
-// editorViews renders the item's missing editor views (Kind.Editor) into
-// temp/: every image file's placed source and every registered slot's
-// measured original, or only slot's when set. Sources that cannot be decoded
-// are skipped; their files and slots record the failure.
-func (p *Processor) editorViews(ctx context.Context, item media.Item, slot string) error {
-	spec := item.Kind().Editor
-	if spec == nil {
-		return nil
+// spec is pr's image for upload f: Choose's, else the preset's.
+func spec(pr *media.Private, f media.File) media.Image {
+	if pr.Choose != nil {
+		if im := pr.Choose(f); im != nil {
+			return *im
+		}
 	}
-	root, _, err := p.c.Manifests.Root(ctx, item.Ref())
-	if errors.Is(err, media.ErrNotFound) {
+	return *pr.Image
+}
+
+// publicStale reports a public preset whose names are missing or carry
+// another fingerprint.
+func (p *Processor) publicStale(ctx context.Context, item media.Item, f media.File, pu *media.Public) (bool, error) {
+	fp := publicFP(f, pu)
+	for _, n := range item.Kind().PublicNames(pu, f.Path) {
+		key, err := item.Public(n)
+		if err != nil {
+			return false, err
+		}
+		obj, err := p.c.Store.Head(ctx, key)
+		if errors.Is(err, media.ErrNotFound) {
+			return true, nil
+		} else if err != nil {
+			return false, err
+		}
+		if obj.Metadata["fp"] != fp {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// pass renders todo and the stale zips and records them in one manifest
+// edit. An upload whose blob or edit changed meanwhile keeps nothing this
+// pass made for it; the next pass redoes it.
+func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest, todo []work, zips []*media.Private) error {
+	var (
+		mu      sync.Mutex
+		results []done
+	)
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(p.c.Workers)
+	for _, w := range todo {
+		g.Go(func() error {
+			d, err := p.render(gctx, item, m, w)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			results = append(results, d)
+			mu.Unlock()
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+	zipped := map[string]media.File{}
+	for _, z := range zips {
+		f, ok, err := p.buildZip(ctx, item, m, z)
+		if err != nil {
+			return err
+		}
+		if ok {
+			zipped[z.Name] = f
+		}
+	}
+	prior := map[string]bool{}
+	for _, b := range m.Blobs() {
+		prior[b] = true
+	}
+	var made []string
+	for _, d := range results {
+		for _, f := range d.outputs {
+			made = append(made, f.Blob)
+		}
+	}
+	for _, f := range zipped {
+		made = append(made, f.Blob)
+	}
+	var purge, orphaned []string
+	k := item.Kind()
+	_, err := p.c.Manifests.EditExisting(ctx, item.Ref(), func(cur *media.Manifest) error {
+		purge, orphaned = purge[:0], orphaned[:0]
+		for _, d := range results {
+			i := cur.Find(d.src.Path)
+			if i < 0 || cur.Files[i].Blob != d.src.Blob || cur.Files[i].Edit.Hash() != d.src.Edit.Hash() {
+				if i < 0 {
+					orphaned = append(orphaned, d.written...)
+				}
+				continue
+			}
+			if d.err != nil {
+				cur.SetFailed(d.src.Path, d.err)
+				continue
+			}
+			if d.dims.W > 0 {
+				cur.Files[i].W, cur.Files[i].H = d.dims.W, d.dims.H
+			}
+			for _, pr := range d.private {
+				if err := cur.SetOutputs(d.src.Path, pr.Name, []media.File{d.outputs[pr.Name]}); err != nil {
+					return err
+				}
+			}
+			for _, pu := range d.public {
+				cur.ClearPending(d.src.Path, pu.Name)
+			}
+			purge = append(purge, d.written...)
+		}
+		for _, z := range zips {
+			if f, ok := zipped[z.Name]; ok && f.FP == media.ZipFP(k.ZipInputs(cur, z)) {
+				if err := cur.SetOutputs(z.Zip, z.Name, []media.File{f}); err != nil {
+					return err
+				}
+			} else if len(k.ZipInputs(cur, z)) == 0 {
+				if err := cur.SetOutputs(z.Zip, z.Name, nil); err != nil {
+					return err
+				}
+			}
+		}
+		// A reused blob may have been swept before this edit took the folder
+		// lock: check it is still there before referencing it.
+		for _, b := range made {
+			if !prior[b] && slices.Contains(cur.Blobs(), b) {
+				key, _ := item.Blob(b)
+				if _, err := p.c.Store.Head(ctx, key); err != nil {
+					return fmt.Errorf("media/image: output %s: %w", key, err)
+				}
+			}
+		}
 		return nil
+	})
+	if errors.Is(err, media.ErrNotFound) {
+		orphaned = nil
+		for _, d := range results {
+			orphaned = append(orphaned, d.written...)
+		}
 	} else if err != nil {
 		return err
 	}
-	want := map[string]string{} // key → source
-	add := func(source string) {
-		if key := item.EditorView(source); key != "" {
-			want[key] = source
+	for _, d := range results {
+		if d.err != nil {
+			p.failed(ctx, item, d.src.Path, d.err)
 		}
 	}
-	if slot == "" {
-		for _, m := range append([]*media.Manifest{&root.Manifest}, slices.Collect(maps.Values(root.Versions))...) {
-			for _, f := range m.Files {
-				if isImage(f) && f.Failed() == nil {
-					add(f.Source())
+	if len(orphaned) > 0 {
+		for _, key := range orphaned {
+			_ = p.c.Store.Delete(ctx, key) // best effort: the sweep is the backstop
+		}
+	}
+	return p.purge(ctx, append(purge, orphaned...))
+}
+
+// render decodes one upload once and encodes its private and public outputs.
+func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manifest, w work) (done, error) {
+	d := done{work: w, outputs: map[string]media.File{}}
+	if !strings.HasPrefix(w.src.Type, "image/") {
+		d.err = &media.ImageError{Code: media.CodeImageUnreadable, Message: w.src.Type + " is not an image",
+			Details: media.ErrorDetails{Type: w.src.Type}}
+		return d, nil
+	}
+	key, err := item.Blob(w.src.Blob)
+	if err != nil {
+		return d, err
+	}
+	src, err := p.read(ctx, key, w.src.Blob)
+	if err != nil {
+		if isPermanent(err) {
+			d.err = err
+			return d, nil
+		}
+		return d, err
+	}
+	k := item.Kind()
+	for _, pu := range w.public {
+		names := k.PublicNames(pu, w.src.Path)
+		outs, dims, err := encodePublic(src, w.src.Type, pu, names, w.src.Edit, p.rules(pu.Image.Animation))
+		if d.dims = dims; err != nil {
+			return p.permanent(d, err)
+		}
+		fp := publicFP(w.src, pu)
+		for _, n := range names {
+			out := outs[n]
+			pk, err := item.Public(n)
+			if err != nil {
+				return d, err
+			}
+			if _, err := p.c.Store.Put(ctx, pk, bytes.NewReader(out.webp), int64(len(out.webp)), media.PutOptions{
+				ContentType: "image/webp", ChecksumSHA256: sha(out.webp),
+				Metadata: map[string]string{"from": url.PathEscape(w.src.Path), "fp": fp}}); err != nil {
+				return d, err
+			}
+			d.written = append(d.written, pk)
+		}
+	}
+	for _, pr := range w.private {
+		s := spec(pr, w.src)
+		if _, err := probe(src, w.src.Type, p.rules(s.Animation)); err != nil {
+			return p.permanent(d, err)
+		}
+		out, dims, err := encode(src, w.src.Type, s, w.src.Edit)
+		if err != nil {
+			return p.permanent(d, err)
+		}
+		blob, err := p.putBlob(ctx, item, bytes.NewReader(out), int64(len(out)), sha(out), "image/webp")
+		if err != nil {
+			return d, err
+		}
+		d.outputs[pr.Name] = media.File{Path: k.OutputPath(pr, w.src.Path), Blob: blob, Type: "image/webp", Size: int64(len(out)),
+			W: dims.W, H: dims.H, FP: media.SpecFP(w.src, s, Recipe)}
+	}
+	if d.dims.W == 0 {
+		s, err := probe(src, w.src.Type, p.rules(media.AnimationAllow))
+		if err != nil {
+			return p.permanent(d, err)
+		}
+		d.dims = s.dims()
+	}
+	return d, nil
+}
+
+func (p *Processor) permanent(d done, err error) (done, error) {
+	if isPermanent(err) {
+		d.err = err
+		return d, nil
+	}
+	return d, err
+}
+
+// syncPublic deletes (and purges) the public names no attached upload's
+// preset expects: a removed upload's, or all of a hidden item's.
+func (p *Processor) syncPublic(ctx context.Context, item media.Item, m *media.Manifest) error {
+	k := item.Kind()
+	want := map[string]bool{}
+	if !m.Hidden {
+		for _, f := range m.Files {
+			if f.IsUpload() && !f.Unattached {
+				for _, pu := range k.PublicFor(f.Path) {
+					for _, n := range k.PublicNames(pu, f.Path) {
+						want[n] = true
+					}
 				}
 			}
 		}
 	}
-	for name, rec := range root.Slots {
-		if _, registered := item.Kind().Slots[name]; registered && (slot == "" || slot == name) &&
-			rec.Result != nil && rec.Result.Source == rec.Original && rec.Result.Dims.W > 0 {
-			add(rec.Original)
+	var gone []string
+	for o, err := range p.c.Store.List(ctx, item.PublicPrefix()) {
+		if err != nil {
+			return err
+		}
+		if !want[strings.TrimPrefix(o.Key, item.PublicPrefix())] {
+			gone = append(gone, o.Key)
+		}
+	}
+	for _, key := range gone {
+		if err := p.c.Store.Delete(ctx, key); err != nil && !errors.Is(err, media.ErrNotFound) {
+			return err
+		}
+	}
+	return p.purge(ctx, gone)
+}
+
+// editorViews renders the missing editor views of the item's image uploads
+// (Config.Editor over the whole oriented source), named by source and spec.
+func (p *Processor) editorViews(ctx context.Context, item media.Item, m *media.Manifest) error {
+	want := map[string]media.File{}
+	for _, f := range m.Files {
+		if n := p.reg.EditorView(f); n != "" && f.Fail() == nil {
+			want[n] = f
 		}
 	}
 	if len(want) == 0 {
 		return nil
 	}
-	for o, err := range p.c.Store.List(ctx, item.TempPrefix()) {
+	for o, err := range p.c.Store.List(ctx, item.PrivatePrefix()) {
 		if err != nil {
 			return err
 		}
-		delete(want, o.Key)
+		delete(want, strings.TrimPrefix(o.Key, item.PrivatePrefix()))
 	}
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(p.c.Workers)
-	for key, source := range want {
+	for name, f := range want {
 		g.Go(func() error {
-			orig, _ := item.Original(source)
-			src, obj, err := p.read(gctx, orig)
-			if errors.Is(err, media.ErrNotFound) {
-				return nil // replaced meanwhile
-			} else if err != nil {
-				return err
+			key, _ := item.Blob(f.Blob)
+			src, err := p.read(gctx, key, f.Blob)
+			if err != nil {
+				return nil // missing or unreadable: its upload records why
 			}
-			if _, err := probe(src, obj.ContentType, p.rules(media.AnimationAllow)); err != nil {
+			if _, err := probe(src, f.Type, p.rules(media.AnimationAllow)); err != nil {
 				return nil
 			}
-			out, _, err := encode(src, obj.ContentType, *spec, nil)
+			out, _, err := encode(src, f.Type, p.reg.Config().Editor, nil)
 			if err != nil {
 				return nil
 			}
-			_, err = p.c.Store.Put(gctx, key, bytes.NewReader(out), int64(len(out)),
-				media.PutOptions{ContentType: "image/webp", CacheControl: "private, max-age=3600", ChecksumSHA256: sha(out)})
+			dst, _ := item.Blob(name)
+			_, err = p.c.Store.Put(gctx, dst, bytes.NewReader(out), int64(len(out)), media.PutOptions{ContentType: "image/webp"})
 			return err
 		})
 	}
 	return g.Wait()
 }
 
-// derived holds a source's new variants through one edit, by name.
-type derived struct {
-	variants map[string]media.Variant
-	dims     media.Dims // the source's
-	w, h     int        // edited
-	placed   string     // the staged source's content address, once placed
-}
-
-// work is one source and edit to derive into specs.
-type work struct {
-	source string
-	typ    string
-	edit   *media.Edit
-	specs  map[string]media.Spec
-}
-
-// key groups files deriving from the same source through the same edit.
-func key(f media.File) string { return f.Source() + "." + f.Edit.Hash() }
-
-// manifest runs passes until the manifest needs no more work: a commit that
-// lands while a pass runs is absorbed by this job, not queued again.
-func (p *Processor) manifest(ctx context.Context, item media.Item) error {
-	man, _, err := p.c.Manifests.Get(ctx, item.Ref())
-	if errors.Is(err, media.ErrNotFound) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	failed := map[string]error{} // keys that cannot be derived; reported once, recorded on their files
-	for range 8 {
-		if len(p.todo(item.Kind(), man, failed)) == 0 && !p.zipStale(item.Kind(), man) {
-			return nil
-		}
-		if man, err = p.pass(ctx, item, man, failed); err != nil {
-			return err
-		}
-	}
-	return fmt.Errorf("media/image: manifest of %s kept changing", item.Ref())
-}
-
-// todo maps each source and edit to the variants its files lack or have
-// under another spec or edit; a file whose variants are all current but not
-// yet marked Derived for them gets an entry without specs (a probe).
-func (p *Processor) todo(kind media.Kind, man *media.Manifest, failed map[string]error) map[string]work {
-	todo := map[string]work{}
-	for _, f := range man.Files {
-		k := key(f)
-		if !isImage(f) || failed[k] != nil || f.Failed() != nil {
-			continue
-		}
-		entry := func() work {
-			w, ok := todo[k]
-			if !ok {
-				w = work{source: f.Source(), typ: f.Type, edit: f.Edit, specs: map[string]media.Spec{}}
-				todo[k] = w
-			}
-			return w
-		}
-		for name, s := range p.c.Specs(kind, f) {
-			if v, ok := f.Variants[name]; !ok || v.Spec != specFor(s, f.Type, f.Edit) {
-				entry().specs[name] = s
-			}
-		}
-		if f.Derived != f.FailureKey() {
-			entry()
-		}
-	}
-	return todo
-}
-
-// derivedAll reports f holding every spec's variant for its current edit.
-func derivedAll(f media.File, specs map[string]media.Spec) bool {
-	for name, s := range specs {
-		if v, ok := f.Variants[name]; !ok || v.Spec != specFor(s, f.Type, f.Edit) {
-			return false
-		}
-	}
-	return true
-}
-
-// zipStale reports a zip whose inputs are complete but differ from the recorded
-// one, or a recorded zip whose inputs are incomplete.
-func (p *Processor) zipStale(kind media.Kind, man *media.Manifest) bool {
-	if kind.Zip == "" {
-		return false
-	}
-	_, inputs, ok := zipInputs(man, kind.Zip)
-	d, has := man.Downloads["zip"]
-	return ok && d.Inputs != inputs || !ok && has
-}
-
-// pass derives what man lacks, builds the zip when its inputs are complete,
-// and records both in one manifest edit, returning the edited manifest.
-func (p *Processor) pass(ctx context.Context, item media.Item, man *media.Manifest, failed map[string]error) (*media.Manifest, error) {
-	ref, kind := item.Ref(), item.Kind()
-	todo := p.todo(kind, man, failed)
-
-	var (
-		mu      sync.Mutex
-		results = map[string]derived{}
-	)
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(p.c.Workers)
-	for k, w := range todo {
-		g.Go(func() error {
-			d, err := p.derive(gctx, item, w)
-			// A placed source is renamed in the manifest: record under both keys.
-			keys := []string{k}
-			if d.placed != "" {
-				keys = append(keys, d.placed+"."+w.edit.Hash())
-			}
-			if err != nil {
-				if !isPermanent(err) {
-					return err
-				}
-				p.failed(ctx, ref, fileOf(man, k), err)
-				mu.Lock()
-				for _, k := range keys {
-					failed[k] = err
-				}
-				mu.Unlock()
-				return nil
-			}
-			mu.Lock()
-			for _, k := range keys {
-				results[k] = d
-			}
-			mu.Unlock()
-			return nil
-		})
-	}
-	deriveErr := g.Wait()
-
-	record := func(m *media.Manifest) {
-		for i := range m.Files {
-			f := &m.Files[i]
-			if !isImage(*f) {
-				continue
-			}
-			specs := p.c.Specs(kind, *f)
-			for name := range f.Variants {
-				if _, ok := specs[name]; !ok {
-					delete(f.Variants, name)
-				}
-			}
-			if err := failed[key(*f)]; err != nil {
-				f.Failure = media.NewFileFailure(*f, err)
-				continue
-			}
-			d, ok := results[key(*f)] // a replaced source or changed edit keeps nothing derived from the old one
-			if !ok {
-				continue
-			}
-			f.Failure = nil
-			for name, s := range specs {
-				if v, ok := d.variants[name]; ok && v.Spec == specFor(s, f.Type, f.Edit) {
-					if f.Variants == nil {
-						f.Variants = map[string]media.Variant{}
-					}
-					f.Variants[name] = v
-				}
-			}
-			if f.Meta == nil {
-				f.Meta = map[string]any{}
-			}
-			f.Meta["w"], f.Meta["h"] = d.w, d.h
-			f.Dims = &d.dims
-			if derivedAll(*f, specs) {
-				f.Derived = f.FailureKey()
-			}
-		}
-	}
-
-	var zip *media.Download
-	if kind.Zip != "" && deriveErr == nil {
-		projected := clone(man)
-		record(projected)
-		if entries, inputs, ok := zipInputs(projected, kind.Zip); ok && projected.Downloads["zip"].Inputs != inputs {
-			var err error
-			if zip, err = p.buildZip(ctx, item, entries, inputs); err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	edited, err := p.c.Manifests.Edit(ctx, ref, func(m *media.Manifest) error {
-		if len(m.Files) == 0 {
-			return errGone // deleted (or emptied) during the pass: never recreate it
-		}
-		kept := map[string]bool{}
-		for _, name := range m.Renditions() {
-			kept[name] = true
-		}
-		record(m)
-		if kind.Zip != "" {
-			_, inputs, ok := zipInputs(m, kind.Zip)
-			switch {
-			case ok && zip != nil && zip.Inputs == inputs:
-				if m.Downloads == nil {
-					m.Downloads = map[string]media.Download{}
-				}
-				m.Downloads["zip"] = *zip
-			case !ok:
-				delete(m.Downloads, "zip") // stale: some file lacks the zip variant
-			}
-		}
-		// A reused hash may have been swept before this edit acquired the
-		// folder lock. Abort without marking it derived so the job retries.
-		for _, name := range m.Renditions() {
-			if kept[name] {
-				continue
-			}
-			key, err := item.Private(name)
-			if err != nil {
-				return err
-			}
-			if _, err := p.c.Store.Head(ctx, key); err != nil {
-				return fmt.Errorf("media/image: publish rendition %s: %w", key, err)
-			}
-			kept[name] = true
-		}
-		return nil
-	})
-	if errors.Is(err, errGone) {
-		// A deleted item keeps nothing this pass stored.
-		if _, _, gerr := p.c.Manifests.Get(ctx, ref); errors.Is(gerr, media.ErrNotFound) {
-			p.drop(ctx, item, results, zip)
-		}
-		return &media.Manifest{}, deriveErr
-	}
-	if err = errors.Join(deriveErr, err); err != nil {
-		return nil, err
-	}
-	return edited, nil
-}
-
-var errGone = errors.New("media/image: manifest gone")
-
-// drop deletes the renditions a pass stored for an item deleted meanwhile.
-func (p *Processor) drop(ctx context.Context, item media.Item, results map[string]derived, zip *media.Download) {
-	var keys []string
-	for _, d := range results {
-		for _, v := range d.variants {
-			if key, err := item.Private(v.Blob); err == nil {
-				keys = append(keys, key)
-			}
-		}
-	}
-	if zip != nil {
-		if key, err := item.Private(zip.Blob); err == nil {
-			keys = append(keys, key)
-		}
-	}
-	for _, k := range keys {
-		_ = p.c.Store.Delete(ctx, k) // best effort: the sweep is the backstop
-	}
-}
-
-// specFor is a variant's recipe: animated formats carry a marker, so variants
-// derived as stills before frames were kept re-derive.
-func specFor(s media.Spec, typ string, edit *media.Edit) string {
-	if animated[typ] {
-		return s.For(edit) + ".frames"
-	}
-	return s.For(edit)
-}
-
-// derive encodes one source through its edit into each spec and stores the
-// blobs. A staged source (a multipart upload) is hashed from the bytes read
-// for decoding and placed at its content address first.
-func (p *Processor) derive(ctx context.Context, item media.Item, w work) (derived, error) {
-	key, err := item.Original(w.source)
-	if err != nil {
-		return derived{}, err
-	}
-	src, obj, err := p.read(ctx, key)
-	if errors.Is(err, media.ErrNotFound) {
-		return derived{}, permanentError{err}
-	} else if err != nil {
-		return derived{}, err
-	}
-	d := derived{variants: make(map[string]media.Variant, len(w.specs))}
-	if layout.ValidStagedName(w.source) {
-		if d.placed, err = p.c.Manifests.Place(ctx, item.Ref(), media.Staged{Name: w.source, ETag: obj.ETag, SHA256: sha(src)}); err != nil {
-			if errors.Is(err, media.ErrStagedGone) {
-				return derived{}, permanentError{err}
-			}
-			return derived{}, err
-		}
-	}
-	if d.dims, err = p.probe(src, w.typ, w.edit, item.Kind().Animation); err != nil {
-		return derived{placed: d.placed}, err
-	}
-	d.w, d.h = w.edit.Size(d.dims.W, d.dims.H)
-	for name, s := range w.specs {
-		out, dims, err := encode(src, w.typ, s, w.edit)
-		if err != nil {
-			return derived{placed: d.placed}, err
-		}
-		blob, err := p.putBlob(ctx, item, bytes.NewReader(out), int64(len(out)), sha(out), "image/webp")
-		if err != nil {
-			return derived{placed: d.placed}, err
-		}
-		d.variants[name] = media.Variant{Blob: blob, Spec: specFor(s, w.typ, w.edit), Type: "image/webp", Size: int64(len(out)),
-			W: dims.W, H: dims.H}
-	}
-	return d, nil
-}
-
-// probe checks src is contentType, sizes it and checks edit against it.
-func (p *Processor) probe(src []byte, contentType string, edit *media.Edit, animation media.Animation) (media.Dims, error) {
-	s, err := probe(src, contentType, p.rules(animation))
-	if err != nil {
-		return media.Dims{}, err
-	}
-	if err := edit.Check(s.w, s.h); err != nil {
-		return media.Dims{}, permanentError{fmt.Errorf("edit: %w", err)}
-	}
-	return s.dims(), nil
-}
-
 func (p *Processor) rules(animation media.Animation) rules {
 	return rules{maxPixels: p.c.MaxPixels, maxFrames: p.c.MaxFrames, maxSeconds: p.c.MaxAnimationSeconds, animation: animation}
 }
 
-// putBlob stores an immutable rendition at private/{sha256} unless it exists.
+// putBlob stores an immutable blob at private/{sha256} unless it exists.
 func (p *Processor) putBlob(ctx context.Context, item media.Item, body io.Reader, size int64, sum []byte, contentType string) (string, error) {
-	name := media.SHA256Name(sum)
-	key, err := item.Private(name)
+	name := layout.SHA256Name(sum)
+	key, err := item.Blob(name)
 	if err != nil {
 		return "", err
 	}
@@ -518,7 +500,7 @@ func (p *Processor) putBlob(ctx context.Context, item media.Item, body io.Reader
 	} else if err != nil && !errors.Is(err, media.ErrNotFound) {
 		return "", err
 	}
-	opts := media.PutOptions{ContentType: contentType, CacheControl: "max-age=31536000, immutable", ChecksumSHA256: sum}
+	opts := media.PutOptions{ContentType: contentType, ChecksumSHA256: sum}
 	if p.c.Store.Capabilities().ConditionalPut {
 		opts.IfNoneMatch = "*"
 	}
@@ -528,38 +510,38 @@ func (p *Processor) putBlob(ctx context.Context, item media.Item, body io.Reader
 	return name, nil
 }
 
-func (p *Processor) read(ctx context.Context, key string) ([]byte, media.Object, error) {
-	rc, obj, err := p.c.Store.Get(ctx, key, media.GetOptions{})
-	if err != nil {
-		return nil, media.Object{}, err
+// read reads a blob, verifying its content address (a multipart upload is
+// verified on its first read): a mismatching blob is deleted and fails.
+func (p *Processor) read(ctx context.Context, key, blob string) ([]byte, error) {
+	rc, _, err := p.c.Store.Get(ctx, key, media.GetOptions{})
+	if errors.Is(err, media.ErrNotFound) {
+		return nil, permanentError{err}
+	} else if err != nil {
+		return nil, err
 	}
 	defer rc.Close()
 	b, err := io.ReadAll(rc)
-	return b, obj, err
-}
-
-func (p *Processor) failed(ctx context.Context, ref contentref.ContentRef, file string, err error) {
-	if p.c.Hooks.Failed != nil {
-		p.c.Hooks.Failed(ctx, ref, file, err)
+	if err != nil {
+		return nil, err
 	}
-}
-
-func isImage(f media.File) bool { return strings.HasPrefix(f.Type, "image/") }
-
-func fileOf(m *media.Manifest, k string) string {
-	for _, f := range m.Files {
-		if key(f) == k {
-			return f.Name
-		}
+	if want, _ := layout.ParseSHA256Name(blob); !bytes.Equal(sha(b), want) {
+		_ = p.c.Store.Delete(context.WithoutCancel(ctx), key)
+		return nil, permanentError{&media.ImageError{Code: media.CodeChecksum, Message: "the stored bytes do not match their SHA-256; upload again"}}
 	}
-	return k
+	return b, nil
 }
 
-func clone(m *media.Manifest) *media.Manifest {
-	b, _ := json.Marshal(m)
-	var out media.Manifest
-	_ = json.Unmarshal(b, &out)
-	return &out
+func (p *Processor) purge(ctx context.Context, keys []string) error {
+	if p.c.Purge == nil || len(keys) == 0 {
+		return nil
+	}
+	return p.c.Purge(ctx, keys)
+}
+
+func (p *Processor) failed(ctx context.Context, item media.Item, path string, err error) {
+	if h := p.reg.Config().Hooks.Failed; h != nil {
+		h(ctx, item.Ref(), path, err)
+	}
 }
 
 func sha(b []byte) []byte {

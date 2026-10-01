@@ -1,762 +1,348 @@
 package media_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
-	"github.com/open-rails/contentkit/media/token"
 )
 
-const readBase = "https://media.doujins.com"
-
-var readKey = token.Key{ID: "k1", Secret: []byte("0123456789abcdef0123456789abcdef")}
-
-// resolver is the host's ContentResolver: verdicts per content id.
-type resolver struct {
-	calls    atomic.Int32
-	verdicts map[string]access.Resolution
-	err      error
+// gallery commits n pages and a cover to gallery item id and produces them.
+func (f *fixture) gallery(id, n int) contentref.ContentRef {
+	f.t.Helper()
+	g := f.ref("gallery", id)
+	for i := range n {
+		f.put(g, fmt.Sprintf("originals/%03d.png", i), "image/png", png(id*100+i))
+	}
+	f.put(g, "cover.png", "image/png", png(id*100+99))
+	f.produce(g)
+	return g
 }
 
-func (r *resolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	r.calls.Add(1)
-	if r.err != nil {
-		return nil, r.err
-	}
-	out := map[contentref.ContentKey]access.Resolution{}
-	for _, ref := range refs {
-		out[ref.Key()] = r.verdicts[ref.ContentID]
-	}
-	return out, nil
-}
-
-type readFixture struct {
-	env      *s3test.Env
-	kinds    *media.Registry
-	ms       *media.Manifests
-	res      *resolver
-	gallery  contentref.ContentRef // versioned, 10 pages
-	other    contentref.ContentRef // another gallery
-	post     contentref.ContentRef // teaser + 2 files
-	now      time.Time
-	verifier token.Ring
-}
-
-func newReadFixture(t *testing.T) *readFixture {
-	t.Helper()
-	return newReadFixtureOn(t, s3test.Open(t))
-}
-
-func newReadFixtureOn(t *testing.T, env *s3test.Env) *readFixture {
-	t.Helper()
-	kinds, err := media.NewRegistry(
-		media.Kind{Name: "gallery", Versioned: true, Specs: map[string]media.Spec{"thumb": {Width: 460}, "high": {}}},
-		media.Kind{Name: "post", Specs: map[string]media.Spec{"large": {}, "blurred": {Blur: 20}}, Editor: &media.Spec{Width: 1200},
-			Video: &media.Video{Ladder: []int{2160, 1080, 480}},
-			Slots: map[string]media.Slot{"cover": {Aspect: media.Aspect1x1, Widths: []int{64}}}},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ms := s3test.Manifests(t, env.Store, kinds, media.ManifestOptions{})
-	ring, err := token.NewRing(readKey, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f := &readFixture{env: env, kinds: kinds, ms: ms, res: &resolver{verdicts: map[string]access.Resolution{}},
-		gallery: contentref.NewVersion(env.Tenant, "gallery", cid(1), "v1"),
-		other:   contentref.NewVersion(env.Tenant, "gallery", cid(2), "v1"),
-		post:    contentref.New(env.Tenant, "post", cid(501)),
-		now:     time.Date(2026, 9, 23, 13, 7, 0, 0, time.UTC), verifier: ring}
-	ctx := context.Background()
-	for _, ref := range []contentref.ContentRef{f.gallery, f.other} {
-		if _, err := ms.Edit(ctx, ref, func(m *media.Manifest) error {
-			for i := range 10 {
-				name := fmt.Sprintf("%s-%03d.png", ref.ContentID, i)
-				m.Files = append(m.Files, media.File{Name: name, Original: blobName("o" + name), Type: "image/png",
-					Meta:     map[string]any{"w": 1200, "h": 1700 + i},
-					Variants: map[string]media.Variant{"thumb": {Blob: blobName("t" + name)}, "high": {Blob: blobName("h" + name)}}})
-			}
-			m.Meta = map[string]any{"chapters": []any{map[string]any{"title": "Ch. 1", "start": 0, "end": 10}}}
-			m.Downloads = map[string]media.Download{"zip": {Blob: blobName("zip" + ref.ContentID), Type: "application/zip", Size: 42}}
-			return nil
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := ms.Edit(ctx, f.post, func(m *media.Manifest) error {
-		m.Files = []media.File{
-			{Name: "teaser", Original: blobName("teaser"), Type: "image/jpeg", Meta: map[string]any{"teaser": true},
-				Variants: map[string]media.Variant{"blurred": {Blob: blobName("blurred")}}},
-			{Name: "beach.jpg", Original: blobName("beach"), Type: "image/jpeg",
-				Variants: map[string]media.Variant{"large": {Blob: blobName("beach-large")}}},
-			{Name: "clip.mp4", Original: blobName("clip"), Type: "video/mp4", Meta: map[string]any{"duration": 12.5},
-				HLS: &media.HLS{Source: blobName("clip"), Video: []media.Rendition{{Rung: 720, Width: 1280, Height: 720, Blob: blobName("clip-720")}}}},
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	return f
-}
-
-func (f *readFixture) reader(t *testing.T, mode media.DeliveryMode, hooks media.Hooks) *media.Reader {
-	t.Helper()
-	return f.newReader(t, media.ReaderOptions{Hooks: hooks}, mode)
-}
-
-func (f *readFixture) readerWith(t *testing.T, mode media.DeliveryMode, q media.ProcessQueue) *media.Reader {
-	t.Helper()
-	return f.newReader(t, media.ReaderOptions{Queue: q}, mode)
-}
-
-func (f *readFixture) newReader(t *testing.T, o media.ReaderOptions, mode media.DeliveryMode) *media.Reader {
-	t.Helper()
-	r, err := media.NewReader(media.ReaderOptions{Manifests: f.ms, Kinds: f.kinds, Resolver: f.res, Hooks: o.Hooks, Queue: o.Queue,
-		Progress: o.Progress, AllowGenericDownload: o.AllowGenericDownload,
-		Delivery: media.Delivery{Mode: mode, BaseURL: readBase, CookieDomain: "doujins.com", SigningKey: readKey},
-		Now:      func() time.Time { return f.now }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return r
-}
-
-type fixedProgress media.EncodeStatus
-
-func (p fixedProgress) EncodeProgress(context.Context, contentref.ContentRef) (media.EncodeStatus, error) {
-	return media.EncodeStatus(p), nil
-}
-
-func TestQueuedProgressCountsPublishedRungs(t *testing.T) {
-	f := newReadFixture(t)
-	source := blobName("queued-video")
-	if _, err := f.ms.Edit(context.Background(), f.post, func(m *media.Manifest) error {
-		m.Files = append(m.Files, media.File{Name: "queued.mp4", Original: source, Type: "video/mp4",
-			HLS: &media.HLS{Source: source, Pending: []int{2160}, Video: []media.Rendition{
-				{Rung: 480, Codec: media.CodecH264, Blob: blobName("queued-480-h264")},
-				{Rung: 480, Codec: media.CodecAV1, Blob: blobName("queued-480-av1")},
-				{Rung: 1080, Codec: media.CodecH264, Blob: blobName("queued-1080-h264")},
-				{Rung: 1080, Codec: media.CodecAV1, Blob: blobName("queued-1080-av1")},
-			}}})
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	f.res.verdicts[cid(501)] = access.Resolution{Visible: true, Accessible: true, Editor: true}
-	r := f.newReader(t, media.ReaderOptions{Progress: fixedProgress{Queued: &media.EncodeProgress{Phase: media.PhaseQueued}}}, media.DeliverURL)
-	out := f.read(t, r, f.post, media.ReadOptions{})
-	i := slices.IndexFunc(out.Files, func(file media.FileInfo) bool { return file.Name == "queued.mp4" })
-	if i < 0 || out.Files[i].Progress == nil || out.Files[i].Progress.Stage != 3 || out.Files[i].Progress.Stages != 3 {
-		t.Fatalf("queued progress for published rungs: %+v", out.Files)
-	}
-}
-
-func (f *readFixture) read(t *testing.T, r *media.Reader, ref contentref.ContentRef, o media.ReadOptions) *media.ReadResult {
-	t.Helper()
-	f.res.calls.Store(0)
-	out, err := r.Read(context.Background(), ref, access.Actor{ID: "u1"}, o)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n := f.res.calls.Load(); n != 1 {
-		t.Fatalf("resolver called %d times, want 1", n)
+func urls(res *media.ReadResult) map[string]string {
+	out := map[string]string{}
+	for _, f := range res.Files {
+		out[f.Path] = f.URL
 	}
 	return out
 }
 
-// split parses a signed URL into its object key, token and dl name.
-func split(t *testing.T, raw string) (key, tok, dl string) {
-	t.Helper()
-	if !strings.HasPrefix(raw, readBase+"/") {
-		t.Fatalf("url %q not under %s", raw, readBase)
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return strings.TrimPrefix(u.Path, "/"), u.Query().Get("t"), u.Query().Get("dl")
-}
-
-func (f *readFixture) key(t *testing.T, ref contentref.ContentRef, area, name string) string {
-	t.Helper()
-	item, err := f.kinds.Item(ref)
-	if err != nil {
-		t.Fatal(err)
-	}
-	switch area {
-	case media.AreaOriginals:
-		k, err := item.Original(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return k
-	case media.AreaManifest:
-		return item.ManifestKey()
-	}
-	k, err := item.Private(name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return k
-}
-
-// covers requires tok to open exactly the want keys among candidates.
-func (f *readFixture) covers(t *testing.T, tok string, want map[string]bool, candidates ...string) {
-	t.Helper()
-	at := f.now.Add(time.Minute)
-	for _, k := range candidates {
-		err := f.verifier.Verify(tok, k, "", at)
-		if want[k] && err != nil {
-			t.Errorf("token should open %s: %v", k, err)
-		}
-		if !want[k] && err == nil {
-			t.Errorf("token must not open %s", k)
-		}
-	}
-}
-
+// A full-access read lists the derived files (not the unserved originals)
+// in manifest order with URLs the access agent serves; prefix, offset and
+// limit select them.
 func TestReadFullAccess(t *testing.T) {
-	f := newReadFixture(t)
-	f.res.verdicts[cid(1)] = access.Resolution{Visible: true, Accessible: true}
-	page3 := cid(1) + "-003.png"
-	thumb3 := f.key(t, f.gallery, media.AreaPrivate, blobName("t"+page3))
-	high3 := f.key(t, f.gallery, media.AreaPrivate, blobName("h"+page3))
-	forbidden := []string{
-		f.key(t, f.gallery, media.AreaOriginals, blobName("o"+page3)),
-		f.key(t, f.gallery, media.AreaManifest, ""),
-		f.key(t, f.other, media.AreaPrivate, blobName("t"+cid(2)+"-003.png")),
-	}
-
-	t.Run("cookie", func(t *testing.T) {
-		out := f.read(t, f.reader(t, media.DeliverCookie, media.Hooks{}), f.gallery,
-			media.ReadOptions{Variants: []string{"thumb"}, Offset: 2, Limit: 3})
-		if out.Access != media.AccessFull || out.Total != 10 || out.PreviewLimit != 0 || len(out.Files) != 10 {
-			t.Fatalf("result %+v", out)
-		}
-		if out.Expires%int64(token.DefaultWindow/time.Second) != 0 || out.Expires <= f.now.Add(time.Hour).Unix() {
-			t.Fatalf("expiry %d not window-aligned past now+ttl", out.Expires)
-		}
-		for i, fi := range out.Files {
-			inRange := i >= 2 && i < 5
-			if fi.Name != fmt.Sprintf("%s-%03d.png", cid(1), i) || fi.Locked || fi.Width != 1200 || fi.Height != 1700+i {
-				t.Fatalf("file %d: %+v", i, fi)
-			}
-			if inRange != (fi.URL != "") {
-				t.Fatalf("file %d url %q; want url only in [2,5)", i, fi.URL)
-			}
-		}
-		key, tok, _ := split(t, out.Files[3].URL)
-		if key != thumb3 || tok == "" || out.Cookie != nil {
-			t.Fatalf("versioned cookie delivery needs a file token, not a cookie: %s, %+v", out.Files[3].URL, out.Cookie)
-		}
-		f.covers(t, tok, map[string]bool{thumb3: true}, append([]string{thumb3, high3}, forbidden...)...)
-		if len(out.Downloads) != 1 || out.Downloads[0].Name != cid(1)+"-zip.zip" {
-			t.Fatalf("downloads %+v", out.Downloads)
-		}
-	})
-
-	t.Run("url", func(t *testing.T) {
-		out := f.read(t, f.reader(t, media.DeliverURL, media.Hooks{}), f.gallery,
-			media.ReadOptions{Variants: []string{"high"}, Limit: 4})
-		if out.Cookie != nil {
-			t.Fatal("url mode must not set a cookie")
-		}
-		key, tok, _ := split(t, out.Files[3].URL)
-		if key != high3 || tok == "" {
-			t.Fatalf("url mode needs ?t=: %s", out.Files[3].URL)
-		}
-		if _, tok0, _ := split(t, out.Files[0].URL); tok0 == tok {
-			t.Fatal("different versioned files share a token")
-		}
-		f.covers(t, tok, map[string]bool{high3: true}, append([]string{thumb3, high3}, forbidden...)...)
-		if out.Files[4].URL != "" {
-			t.Fatal("url past limit")
-		}
-	})
-}
-
-func TestReadUnversionedFullAccessCookie(t *testing.T) {
-	f := newReadFixture(t)
-	f.res.verdicts[cid(501)] = access.Resolution{Visible: true, Accessible: true}
-	out := f.read(t, f.reader(t, media.DeliverCookie, media.Hooks{}), f.post, media.ReadOptions{Variants: []string{"large", "blurred"}})
-	c := out.Cookie
-	if out.Access != media.AccessFull || c == nil || c.Name != "mt" || c.Domain != "doujins.com" ||
-		c.Path != "/"+f.env.Tenant+"/post/"+cid(501)+"/private/" || !c.HttpOnly || !c.Secure ||
-		c.SameSite != http.SameSiteLaxMode || !c.Expires.Equal(time.Unix(out.Expires, 0)) {
-		t.Fatalf("unversioned full access: %+v, cookie %+v", out, c)
-	}
-	key, tok, _ := split(t, out.Files[1].URL)
-	if key != f.key(t, f.post, media.AreaPrivate, blobName("beach-large")) || tok != "" {
-		t.Fatalf("unversioned cookie delivery must return a plain URL: %s", out.Files[1].URL)
-	}
-	preview := f.key(t, f.post, media.AreaPrivate, blobName("blurred"))
-	f.covers(t, c.Value, map[string]bool{key: true, preview: true}, key, preview)
-}
-
-// TestReadWithoutConditionalPut reads manifests edited under the PGLocker, as
-// on Ceph RGW.
-func TestReadWithoutConditionalPut(t *testing.T) {
-	f := newReadFixtureOn(t, s3test.Open(t).WithoutConditionalPut(t))
-	f.res.verdicts[cid(1)] = access.Resolution{Visible: true, Accessible: true}
-	out := f.read(t, f.reader(t, media.DeliverURL, media.Hooks{}), f.gallery, media.ReadOptions{Variants: []string{"thumb"}, Limit: 10})
-	if out.Access != media.AccessFull || out.Total != 10 || len(out.Files) != 10 || out.Files[9].URL == "" {
-		t.Fatalf("result %+v", out)
-	}
-}
-
-func TestReadPreview(t *testing.T) {
-	f := newReadFixture(t)
-	for name, v := range map[string]access.Resolution{
-		"free preview":       {Visible: true, PreviewLimit: 3},
-		"scheduled chapters": {Visible: true, Accessible: true, PreviewLimit: 3},
-	} {
-		t.Run(name, func(t *testing.T) {
-			f.res.verdicts[cid(1)] = v
-			// Cookie mode still gets per-file URL tokens for preview viewers.
-			out := f.read(t, f.reader(t, media.DeliverCookie, media.Hooks{}), f.gallery,
-				media.ReadOptions{Variants: []string{"high"}, Offset: 1, Limit: 50})
-			if out.Access != media.AccessPreview || out.PreviewLimit != 3 || out.Cookie != nil || out.Downloads != nil {
-				t.Fatalf("result %+v", out)
-			}
-			for i, fi := range out.Files {
-				if i < 3 {
-					if fi.Locked || fi.Name == "" || (i == 0) != (fi.URL == "") {
-						t.Fatalf("file %d: %+v", i, fi)
-					}
-					continue
-				}
-				if !fi.Locked || fi.Name != "" || fi.URL != "" || fi.Type != "image/png" || fi.Width != 1200 || fi.Height != 1700+i {
-					t.Fatalf("hidden file %d must expose type/dimensions only: %+v", i, fi)
-				}
-			}
-			body, _ := json.Marshal(out)
-			if strings.Contains(string(body), cid(1)+"-003.png") || strings.Contains(string(body), "zip") {
-				t.Fatalf("response leaks hidden names or downloads: %s", body)
-			}
-			key1, tok1, _ := split(t, out.Files[1].URL)
-			key2, _, _ := split(t, out.Files[2].URL)
-			f.covers(t, tok1, map[string]bool{key1: true}, key1, key2,
-				f.key(t, f.gallery, media.AreaPrivate, blobName("t"+cid(1)+"-001.png")),
-				f.key(t, f.gallery, media.AreaPrivate, blobName("h"+cid(1)+"-003.png")),
-				f.key(t, f.gallery, media.AreaOriginals, blobName("o"+cid(1)+"-001.png")),
-				f.key(t, f.other, media.AreaPrivate, blobName("h"+cid(2)+"-001.png")))
-		})
-	}
-}
-
-func TestReadTeaserAndDeny(t *testing.T) {
-	f := newReadFixture(t)
-	r := f.reader(t, media.DeliverCookie, media.Hooks{})
+	f := newFixture(t)
+	f.visible(1)
+	g := f.gallery(1, 3)
 	ctx := context.Background()
-
-	f.res.verdicts[cid(501)] = access.Resolution{Visible: true}
-	out := f.read(t, r, f.post, media.ReadOptions{Variants: []string{"large", "blurred"}})
-	if out.Access != media.AccessNone || out.Cookie != nil || len(out.Files) != 3 {
-		t.Fatalf("result %+v", out)
-	}
-	teaser, beach, clip := out.Files[0], out.Files[1], out.Files[2]
-	if teaser.Name != "teaser" || !teaser.Teaser || teaser.Variant != "blurred" || teaser.URL == "" {
-		t.Fatalf("teaser %+v", teaser)
-	}
-	if !beach.Locked || beach.Name != "" || beach.URL != "" || !clip.Locked || !clip.HLS || clip.Duration != 12.5 {
-		t.Fatalf("locked files %+v %+v", beach, clip)
-	}
-	key, tok, _ := split(t, teaser.URL)
-	f.covers(t, tok, map[string]bool{key: true}, key,
-		f.key(t, f.post, media.AreaPrivate, blobName("beach-large")),
-		f.key(t, f.post, media.AreaOriginals, blobName("teaser")))
-
-	g, err := r.Grant(ctx, f.post, access.Actor{})
+	res, err := f.rd.Read(ctx, g, f.editor, media.ReadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range []struct {
-		i    int
-		blob string
-	}{{1, blobName("beach-large")}, {0, blobName("teaser")}, {0, blobName("beach-large")}} {
-		if _, err := g.URL(c.i, c.blob); !errors.Is(err, media.ErrNotAllowed) {
-			t.Fatalf("URL(%d, %s) = %v, want ErrNotAllowed", c.i, c.blob, err)
+	if res.Access != media.AccessFull || res.Total != 7 || res.Files[0].Path != "thumb/000.webp" || res.Files[5].Path != "high/002.webp" ||
+		res.Files[6].Path != "download/pages.zip" {
+		t.Fatalf("read %+v", res)
+	}
+	for _, fi := range res.Files {
+		if fi.URL == "" || fi.Locked || strings.HasPrefix(fi.Path, "originals/") {
+			t.Fatalf("file %+v", fi)
 		}
 	}
-	if _, _, err := g.DownloadURL(ctx, "zip"); !errors.Is(err, media.ErrNotAllowed) {
-		t.Fatal("downloads need full access")
+	status, body, hdr := f.fetch(res.Files[0].URL)
+	if status != http.StatusOK || body != string(png(100)) || hdr.Get("Cache-Control") != "private, max-age=31536000, immutable" {
+		t.Fatalf("agent served %d %q %v", status, body, hdr)
 	}
-
-	for name, c := range map[string]struct {
-		verdict access.Resolution
-		err     error
-		want    error
-	}{
-		"invisible":           {verdict: access.Resolution{Accessible: true}, want: media.ErrNotVisible},
-		"resolver error":      {verdict: access.Resolution{Visible: true, Accessible: true}, err: errors.New("db down"), want: media.ErrResolve},
-		"foreign tenant ref":  {verdict: access.Resolution{Visible: true, Accessible: true, Ref: contentref.New("x", "post", cid(501))}, want: media.ErrResolve},
-		"visible, no preview": {verdict: access.Resolution{Visible: true}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			f.res.verdicts[cid(1)], f.res.err = c.verdict, c.err
-			out, err := r.Read(ctx, f.gallery, access.Actor{}, media.ReadOptions{Variants: []string{"high"}})
-			if c.want != nil {
-				if !errors.Is(err, c.want) || out != nil {
-					t.Fatalf("got %v, %+v; want %v", out, err, c.want)
-				}
-				return
-			}
-			if err != nil || out.Access != media.AccessNone || out.Total != 10 {
-				t.Fatalf("got %+v, %v", out, err)
-			}
-			for _, fi := range out.Files {
-				if !fi.Locked || fi.URL != "" || fi.Name != "" {
-					t.Fatalf("file %+v", fi)
-				}
-			}
-		})
+	page, err := f.rd.Read(ctx, g, f.editor, media.ReadOptions{Prefix: "high/", Offset: 1, Limit: 1})
+	if err != nil || page.Total != 3 || len(page.Files) != 3 || page.Files[0].URL != "" || page.Files[1].URL == "" || page.Files[2].URL != "" {
+		t.Fatalf("page %+v %v", page, err)
 	}
-	f.res.err = nil
+	// Another item's token does not open this item's blobs.
+	f.visible(2)
+	other := f.gallery(2, 1)
+	res2, _ := f.rd.Read(ctx, other, f.editor, media.ReadOptions{})
+	tok := res2.Files[0].URL[strings.Index(res2.Files[0].URL, "?t="):]
+	plain := strings.Split(res.Files[0].URL, "?")[0]
+	if status, _, _ := f.fetch(plain + tok); status != http.StatusNotFound {
+		t.Fatalf("another item's token: %d", status)
+	}
+	if _, err := f.rd.Read(ctx, f.ref("gallery", 3), f.editor, media.ReadOptions{}); !errors.Is(err, media.ErrNotVisible) {
+		t.Fatalf("invisible item: %v", err)
+	}
 }
 
-func TestReadDownloadNames(t *testing.T) {
-	f := newReadFixture(t)
-	f.res.verdicts[cid(1)] = access.Resolution{Visible: true, Accessible: true}
-	const name = "[Artist] タイトル (English).zip"
-	r := f.reader(t, media.DeliverCookie, media.Hooks{DownloadName: func(_ context.Context, ref contentref.ContentRef, key string, d media.Download) (string, error) {
-		if ref.ContentID != cid(1) || key != "zip" || d.Type != "application/zip" {
-			return "", fmt.Errorf("unexpected download %s %s %+v", ref, key, d)
-		}
-		return name, nil
-	}})
-	out := f.read(t, r, f.gallery, media.ReadOptions{})
-	if len(out.Downloads) != 1 {
-		t.Fatalf("downloads %+v", out.Downloads)
-	}
-	d := out.Downloads[0]
-	key, tok, dl := split(t, d.URL)
-	at := f.now.Add(time.Minute)
-	if d.Name != name || dl != name || d.Size != 42 || key != f.key(t, f.gallery, media.AreaPrivate, blobName("zip"+cid(1))) {
-		t.Fatalf("download %+v (dl %q)", d, dl)
-	}
-	if err := f.verifier.Verify(tok, key, dl, at); err != nil {
+// Preview access serves the first PreviewLimit pages' outputs; a teaser
+// page's outputs need only visibility; the zip needs full access.
+func TestReadPreviewAndTeaser(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	g := f.gallery(1, 4)
+	ctx := context.Background()
+	f.commit(g, media.Op{Op: media.OpPut, Path: "originals/003.png", Blob: blobOf(png(103)), Meta: map[string]any{"teaser": true}})
+	f.produce(g)
+	f.res.set(cid(1), access.Resolution{Visible: true, PreviewLimit: 2})
+	res, err := f.rd.Read(ctx, g, access.Actor{Anonymous: true}, media.ReadOptions{Prefix: "high/"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	for _, bad := range []string{"other.zip", ""} {
-		if f.verifier.Verify(tok, key, bad, at) == nil {
-			t.Fatalf("download token must not verify with dl=%q", bad)
-		}
+	got := urls(res)
+	if res.Access != media.AccessPreview || res.PreviewLimit != 2 || got["high/000.webp"] == "" || got["high/001.webp"] == "" ||
+		got["high/002.webp"] != "" || got["high/003.webp"] == "" {
+		t.Fatalf("preview %+v", res)
 	}
-	if f.verifier.Verify(tok, f.key(t, f.gallery, media.AreaPrivate, blobName("h"+cid(1)+"-000.png")), dl, at) == nil {
-		t.Fatal("download token opened another blob")
+	if !res.Files[2].Locked || !res.Files[3].Teaser {
+		t.Fatalf("locked and teaser flags %+v", res.Files)
 	}
-	for _, fi := range out.Files {
-		if fi.URL != "" {
-			t.Fatal("no variant requested: metadata only")
-		}
+	f.res.set(cid(1), access.Resolution{Visible: true})
+	res, _ = f.rd.Read(ctx, g, access.Actor{Anonymous: true}, media.ReadOptions{Prefix: "high/"})
+	if got := urls(res); res.Access != media.AccessNone || got["high/000.webp"] != "" || got["high/003.webp"] == "" {
+		t.Fatalf("no access %+v", res)
 	}
 }
 
-func TestGenericDownloadPolicy(t *testing.T) {
-	f := newReadFixture(t)
-	f.res.verdicts[cid(1)] = access.Resolution{Visible: true, Accessible: true}
-	f.res.verdicts[cid(501)] = access.Resolution{Visible: true, Accessible: true}
-	if _, err := f.ms.Edit(t.Context(), f.post, func(m *media.Manifest) error {
-		m.Downloads = map[string]media.Download{"zip": {Blob: blobName("post-zip"), Type: "application/zip"}}
-		return nil
+// ServeOriginals lists and serves uploads; a download read signs each
+// file's download name, which the agent sends as the attachment name.
+func TestReadOriginalsAndDownloads(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	post := f.ref("post", 1)
+	p, blob := f.upload(post, "inline/x.png", "image/png", png(1))
+	f.commit(post, media.Op{Op: media.OpPut, Path: p, Blob: blob})
+	ctx := context.Background()
+	res, err := f.rd.Read(ctx, post, f.editor, media.ReadOptions{})
+	if err != nil || len(res.Files) != 1 || res.Files[0].Path != p || res.Files[0].URL == "" {
+		t.Fatalf("served original %+v %v", res, err)
+	}
+
+	f.visible(2)
+	g := f.gallery(2, 1)
+	if _, err := f.ms.EditExisting(ctx, g, func(m *media.Manifest) error {
+		item, _ := f.reg.Item(g)
+		zip := []byte("zip bytes")
+		key, _ := item.Blob(blobOf(zip))
+		if _, err := f.env.Store.Put(ctx, key, bytes.NewReader(zip), int64(len(zip)), media.PutOptions{ContentType: "application/zip"}); err != nil {
+			return err
+		}
+		m.Meta = map[string]any{"title": "Café Book"}
+		return m.SetOutputs("high/", "zip", []media.File{{Path: "download/pages.zip", Blob: blobOf(zip), Type: "application/zip", Size: int64(len(zip)), FP: "x"}})
 	}); err != nil {
 		t.Fatal(err)
 	}
-
-	actor := access.Actor{ID: "viewer"}
-	allowed := f.reader(t, media.DeliverURL, media.Hooks{})
-	governed := f.newReader(t, media.ReaderOptions{AllowGenericDownload: func(kind string) bool { return kind != "gallery" }}, media.DeliverURL)
-	for _, tc := range []struct {
-		name string
-		r    *media.Reader
-		ref  contentref.ContentRef
-		want int
-	}{
-		{name: "default gallery", r: allowed, ref: f.gallery, want: http.StatusFound},
-		{name: "governed gallery", r: governed, ref: f.gallery, want: http.StatusNotFound},
-		{name: "other kind", r: governed, ref: f.post, want: http.StatusFound},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			result, err := tc.r.Read(t.Context(), tc.ref, actor, media.ReadOptions{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			wantDownloads := tc.want == http.StatusFound
-			wantCount := 0
-			if wantDownloads {
-				wantCount = 1
-			}
-			if len(result.Downloads) != wantCount {
-				t.Fatalf("direct read downloads: %+v", result.Downloads)
-			}
-			h := tc.r.Handler(media.HandlerOptions{Tenant: f.env.Tenant})
-			path := "/" + tc.ref.ContentKind + "/" + tc.ref.ContentID
-			if tc.ref.Version() != "" {
-				path += "@" + tc.ref.Version()
-			}
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
-			var body media.ReadResult
-			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusOK {
-				t.Fatalf("HTTP read: %d %s: %v", rec.Code, rec.Body.String(), err)
-			}
-			if len(body.Downloads) != wantCount {
-				t.Fatalf("HTTP read downloads: %+v", body.Downloads)
-			}
-			rec = httptest.NewRecorder()
-			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path+"/download/zip", nil))
-			if rec.Code != tc.want || (rec.Header().Get("Location") != "") != wantDownloads {
-				t.Fatalf("download route: %d, Location %q", rec.Code, rec.Header().Get("Location"))
-			}
-		})
+	res, err = f.rd.Read(ctx, g, f.editor, media.ReadOptions{Prefix: "download/", Download: true})
+	if err != nil || len(res.Files) != 1 || res.Files[0].Download != "Café Book.zip" || !strings.Contains(res.Files[0].URL, "&dl=") {
+		t.Fatalf("download read %+v %v", res, err)
 	}
-
-	grant, err := governed.Grant(t.Context(), f.gallery, actor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, downloadURL, err := grant.DownloadURL(t.Context(), "zip"); err != nil || downloadURL == "" {
-		t.Fatalf("governed download: %q, %v", downloadURL, err)
+	status, body, hdr := f.fetch(res.Files[0].URL)
+	if status != http.StatusOK || body != "zip bytes" || !strings.Contains(hdr.Get("Content-Disposition"), "filename*=UTF-8''Caf%C3%A9%20Book.zip") {
+		t.Fatalf("download %d %q %v", status, body, hdr)
 	}
 }
 
-func TestReadHandler(t *testing.T) {
-	f := newReadFixture(t)
-	r := f.reader(t, media.DeliverCookie, media.Hooks{})
-	srv := httptest.NewServer(http.StripPrefix("/media", r.Handler(media.HandlerOptions{Tenant: f.env.Tenant})))
+// Cookie delivery returns plain URLs and the item cookie, which the agent
+// accepts for every private file of the item.
+func TestReadCookieDelivery(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	f.gallery(1, 1)
+	rd, err := media.NewReader(media.ReaderOptions{Manifests: f.ms,
+		Delivery: media.Delivery{Mode: media.DeliverCookie, CookieDomain: "doujins.test", SigningKey: signKey}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(rd.Handler(media.HandlerOptions{Identity: identity{f.editor}, Limit: media.ViewerLimit{Disabled: true}}))
 	defer srv.Close()
-	get := func(path string) (*http.Response, map[string]any) {
+	resp, err := http.Get(srv.URL + "/gallery/" + cid(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var res media.ReadResult
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		t.Fatal(err)
+	}
+	cookies := resp.Cookies()
+	if len(cookies) != 1 || cookies[0].Name != media.CookieName || cookies[0].Path != "/v1/"+f.ns+"/gallery/"+cid(1)+"/private/" ||
+		strings.Contains(res.Files[0].URL, "?") {
+		t.Fatalf("cookie %+v url %s", cookies, res.Files[0].URL)
+	}
+	if status, _, _ := f.fetch(res.Files[0].URL); status != http.StatusNotFound {
+		t.Fatalf("no cookie: %d", status)
+	}
+	if status, body, _ := f.fetch(res.Files[0].URL, "Cookie", media.CookieName+"="+cookies[0].Value); status != http.StatusOK || body != string(png(100)) {
+		t.Fatalf("with cookie: %d %q", status, body)
+	}
+}
+
+type identity struct{ a access.Actor }
+
+func (i identity) Actor(context.Context) (access.Actor, bool) { return i.a, true }
+
+// An editor read lists the uploads with their editing state; missing editor
+// views are asked of the worker and served once rendered.
+func TestReadEditor(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	g := f.ref("gallery", 1)
+	f.put(g, "cover.png", "image/png", png(1))
+	ctx := context.Background()
+	f.q.take()
+	res, err := f.rd.Read(ctx, g, f.editor, media.ReadOptions{Editor: true})
+	if err != nil || res.State != media.StateProcessing || len(res.Files) != 1 || !res.Files[0].Upload || res.Files[0].EditorURL != "" {
+		t.Fatalf("editor read %+v %v", res, err)
+	}
+	if jobs := f.q.take(); len(jobs) != 1 || !jobs[0].Editor {
+		t.Fatalf("editor views not asked for: %+v", jobs)
+	}
+	m, _, _ := f.ms.Get(ctx, g)
+	cover, _ := m.Get("cover.png")
+	item, _ := f.reg.Item(g)
+	key, _ := item.Blob(f.reg.EditorView(cover))
+	if _, err := f.env.Store.Put(ctx, key, strings.NewReader("view"), 4, media.PutOptions{ContentType: "image/webp"}); err != nil {
+		t.Fatal(err)
+	}
+	f.produce(g)
+	res, _ = f.rd.Read(ctx, g, f.editor, media.ReadOptions{Editor: true})
+	if res.State != media.StateReady || res.Files[0].EditorURL == "" {
+		t.Fatalf("editor view %+v", res.Files[0])
+	}
+	if status, body, _ := f.fetch(res.Files[0].EditorURL); status != http.StatusOK || body != "view" {
+		t.Fatalf("editor view served %d %q", status, body)
+	}
+	// Non-editors never get the editing state.
+	f.res.set(cid(1), access.Resolution{Visible: true, Accessible: true})
+	res, _ = f.rd.Read(ctx, g, f.editor, media.ReadOptions{Editor: true})
+	if res.State != "" || len(res.Files) != 0 {
+		t.Fatalf("a viewer's editor read %+v", res)
+	}
+}
+
+// HLS playlists are built per request from the manifest's track files and
+// their index blobs, with sidecar subtitles; every URI is signed.
+func TestHLSPlaylists(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	v := f.ref("video", 1)
+	f.put(v, "source.mp4", "video/mp4", []byte("video"))
+	sub, blob := f.upload(v, "subs/en.srt", "application/x-subrip", []byte("1\n00:00:01,000 --> 00:00:02,000\nhi\n"))
+	f.commit(v, media.Op{Op: media.OpPut, Path: sub, Blob: blob, Meta: map[string]any{"lang": "en", "label": "English"}})
+	ctx := context.Background()
+	item, _ := f.reg.Item(v)
+	put := func(body string) string {
+		b := []byte(body)
+		key, _ := item.Blob(blobOf(b))
+		if _, err := f.env.Store.Put(ctx, key, bytes.NewReader(b), int64(len(b)), media.PutOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		return blobOf(b)
+	}
+	index := func(idx media.TrackIndex) string {
+		b, _ := json.Marshal(idx)
+		return put(string(b))
+	}
+	segs := media.TrackIndex{Segments: []media.Segment{{Offset: 100, Length: 50, Seconds: 4}, {Offset: 150, Length: 40, Seconds: 2.5}}}
+	if _, err := f.ms.EditExisting(ctx, v, func(m *media.Manifest) error {
+		if i := m.Find("source.mp4"); i >= 0 {
+			m.Files[i].Dur = 6.5
+		}
+		if err := m.SetOutputs("source.mp4", "hls", []media.File{
+			{Path: "hls/1080-h264.mp4", Blob: put("v1080"), Type: "video/mp4", W: 1920, H: 1080,
+				Track: &media.Track{Kind: media.TrackVideo, Codec: "h264", Codecs: "avc1.640028", Bandwidth: 5000000, Index: index(segs)}},
+			{Path: "hls/480-h264.mp4", Blob: put("v480"), Type: "video/mp4", W: 854, H: 480,
+				Track: &media.Track{Kind: media.TrackVideo, Codec: "h264", Codecs: "avc1.64001e", Bandwidth: 1000000, Index: index(segs)}},
+			{Path: "hls/audio-a1.mp4", Blob: put("a1"), Type: "audio/mp4",
+				Track: &media.Track{Kind: media.TrackAudio, ID: "a1", Lang: "ja", Default: true, Bandwidth: 128000, Codecs: "mp4a.40.2", Index: index(segs)}},
+			{Path: "hls/sprite.jpg", Blob: put("sprite"), Type: "image/jpeg",
+				Track: &media.Track{Kind: media.TrackSprite, Index: index(media.TrackIndex{Sprite: &media.Sprite{Cols: 2, Rows: 1, W: 160, H: 90, Interval: 5}})}},
+		}); err != nil {
+			return err
+		}
+		return m.SetOutputs(sub, "vtt", []media.File{{Path: "vtt/en.vtt", Blob: put("WEBVTT\n"), Type: "text/vtt"}})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(f.rd.Handler(media.HandlerOptions{Identity: identity{f.editor}, Limit: media.ViewerLimit{Disabled: true}}))
+	defer srv.Close()
+	res, err := f.rd.Read(ctx, v, f.editor, media.ReadOptions{})
+	if err != nil || len(res.HLS) != 1 || res.HLS[0] != "hls/" {
+		t.Fatalf("hls dirs %+v %v", res.HLS, err)
+	}
+	get := func(p string) string {
 		t.Helper()
-		resp, err := http.Get(srv.URL + path)
+		resp, err := http.Get(srv.URL + "/video/" + cid(1) + "/hls/" + p)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer resp.Body.Close()
-		var body map[string]any
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		b, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: %d %s", p, resp.StatusCode, b)
+		}
+		return string(b)
+	}
+	master := get("hls/master.m3u8")
+	for _, want := range []string{"RESOLUTION=1920x1080", "../hls/480-h264.mp4.m3u8", `LANGUAGE="ja"`, `NAME="English"`, "../vtt/en.vtt.m3u8", "BANDWIDTH=5128000"} {
+		if !strings.Contains(master, want) {
+			t.Fatalf("master lacks %q:\n%s", want, master)
+		}
+	}
+	if i, j := strings.Index(master, "1080-h264"), strings.Index(master, "480-h264"); i < 0 || i > j {
+		t.Fatalf("the start variant (up to 1080) is not first:\n%s", master)
+	}
+	media1080 := get("hls/1080-h264.mp4.m3u8")
+	if !strings.Contains(media1080, `#EXT-X-MAP:URI="https://`+mediaHost) || !strings.Contains(media1080, "#EXT-X-BYTERANGE:40@150") {
+		t.Fatalf("media playlist:\n%s", media1080)
+	}
+	u := media1080[strings.Index(media1080, "https://"):]
+	u = u[:strings.IndexAny(u, "\"\n")]
+	if status, body, _ := f.fetch(u); status != http.StatusOK || body != "v1080" {
+		t.Fatalf("segment blob %d %q", status, body)
+	}
+	if subs := get("vtt/en.vtt.m3u8"); !strings.Contains(subs, "#EXTINF:6.500,") {
+		t.Fatalf("subtitle playlist:\n%s", subs)
+	}
+	if sprite := get("hls/sprite.vtt"); !strings.Contains(sprite, "#xywh=160,0,160,90") || !strings.Contains(sprite, "00:00:05.000 --> 00:00:06.500") {
+		t.Fatalf("sprite:\n%s", sprite)
+	}
+	resp, _ := http.Get(srv.URL + "/video/" + cid(1) + "/hls/source.mp4.m3u8")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("an unserved upload's playlist: %d", resp.StatusCode)
+	}
+}
+
+// The read handler maps errors and rate limits per viewer.
+func TestReadHandler(t *testing.T) {
+	f := newFixtureOn(t, s3test.Open(t), nil)
+	f.visible(1)
+	f.gallery(1, 1)
+	srv := httptest.NewServer(f.rd.Handler(media.HandlerOptions{Identity: identity{f.editor}, Limit: media.ViewerLimit{PerSecond: 1, Burst: 2}}))
+	defer srv.Close()
+	status := func(p string) int {
+		resp, err := http.Get(srv.URL + p)
+		if err != nil {
 			t.Fatal(err)
 		}
-		return resp, body
+		resp.Body.Close()
+		return resp.StatusCode
 	}
-
-	f.res.verdicts[cid(1)] = access.Resolution{Visible: true, Accessible: true}
-	resp, body := get("/media/gallery/" + cid(1) + "@v1?variant=thumb&offset=0&limit=2")
-	if resp.StatusCode != 200 || body["access"] != "full" || body["total"] != float64(10) || resp.Header.Get("Cache-Control") != "private, no-store" {
-		t.Fatalf("%d %v", resp.StatusCode, body)
+	if s := status("/gallery/" + cid(1) + "?prefix=" + url.QueryEscape("thumb/")); s != http.StatusOK {
+		t.Fatalf("read %d", s)
 	}
-	if sc := resp.Header.Get("Set-Cookie"); sc != "" {
-		t.Fatalf("versioned full access set a folder cookie: %s", sc)
+	if s := status("/nope/" + cid(1)); s != http.StatusNotFound {
+		t.Fatalf("unknown kind %d", s)
 	}
-	files := body["files"].([]any)
-	if len(files) != 10 || files[1].(map[string]any)["url"] == nil || files[2].(map[string]any)["url"] != nil {
-		t.Fatalf("files %v", files)
-	}
-	if _, tok, _ := split(t, files[1].(map[string]any)["url"].(string)); tok == "" {
-		t.Fatal("versioned full-access URL lacks a file token")
-	}
-
-	f.res.verdicts[cid(1)] = access.Resolution{Visible: true, PreviewLimit: 3}
-	resp, _ = get("/media/gallery/" + cid(1) + "@v1?variant=thumb")
-	if resp.StatusCode != 200 || resp.Header.Get("Set-Cookie") != "" {
-		t.Fatalf("preview: %d, cookie %q", resp.StatusCode, resp.Header.Get("Set-Cookie"))
-	}
-
-	for path, want := range map[string]int{
-		"/media/gallery/" + cid(1):                       400, // versioned kind needs @version
-		"/media/gallery/" + cid(1) + "@v1?limit=x":       400,
-		"/media/unknown/" + cid(1):                       404,
-		"/media/gallery/" + cid(9) + "@v1?variant=thumb": 404, // resolver: not visible
-		"/media/gallery/1@v1?variant=thumb":              404, // not a content id
-	} {
-		if resp, body := get(path); resp.StatusCode != want || resp.Header.Get("Set-Cookie") != "" {
-			t.Fatalf("%s: %d %v, want %d", path, resp.StatusCode, body, want)
-		}
-	}
-	f.res.err = errors.New("boom")
-	if resp, body := get("/media/gallery/" + cid(1) + "@v1?variant=thumb"); resp.StatusCode != 500 || body["code"] != "internal_error" {
-		t.Fatalf("resolver error must deny: %d %v", resp.StatusCode, body)
-	}
-
-	if resp, _ := get("/media/post/" + cid(501) + "/slots/cover"); resp.StatusCode != 500 {
-		t.Fatalf("slot read must resolve: %d", resp.StatusCode)
-	}
-	f.res.err = nil
-	hidden := f.res.verdicts[cid(501)]
-	f.res.verdicts[cid(501)] = access.Resolution{}
-	if resp, _ := get("/media/post/" + cid(501) + "/slots/cover"); resp.StatusCode != 404 {
-		t.Fatalf("slot of a hidden item: %d", resp.StatusCode)
-	}
-	f.res.verdicts[cid(501)] = access.Resolution{Visible: true}
-	defer func() { f.res.verdicts[cid(501)] = hidden }()
-	if resp, body := get("/media/post/" + cid(501) + "/slots/cover"); resp.StatusCode != 200 || body["pending"] != false || len(body["outputs"].([]any)) != 0 {
-		t.Fatalf("uncommitted slot: %d %v", resp.StatusCode, body)
-	}
-	spec := media.Slot{Aspect: media.Aspect1x1, Widths: []int{64}}
-	rec := media.SlotRecord{Original: blobName("cover-original"), Edit: &media.Edit{Crop: &media.Crop{X: 10, Y: 10, W: 100, H: 100}}}
-	fp := rec.Fingerprint(spec)
-	rec.Result = &media.SlotResult{Of: fp, Source: rec.Original, Dims: media.Dims{W: 200, H: 200},
-		Outputs: []media.SlotRendition{{Rung: 64, W: 64, H: 64, Blob: blobName("cover-64")}}}
-	if err := f.ms.UpdateSlot(context.Background(), f.post, "cover", func(r *media.SlotRecord) error { *r = rec; return nil }); err != nil {
-		t.Fatal(err)
-	}
-	cover := readBase + "/" + f.env.Tenant + "/post/" + cid(501) + "/public/" + blobName("cover-64")
-	resp, body = get("/media/post/" + cid(501) + "/slots/cover")
-	if outs := body["outputs"].([]any); resp.StatusCode != 200 || body["pending"] != false || len(outs) != 1 || body["aspect"] != "1:1" ||
-		outs[0].(map[string]any)["url"] != cover || body["dims"].(map[string]any)["w"] != float64(200) || resp.Header.Get("Cache-Control") != "private, no-store" {
-		t.Fatalf("slot: %d %v", resp.StatusCode, body)
-	}
-	if resp, _ := get("/media/post/" + cid(501) + "/slots/nope"); resp.StatusCode != 404 {
-		t.Fatalf("unknown slot: %d", resp.StatusCode)
-	}
-
-	// A hidden item's cover is listed to no viewer.
-	if _, err := f.ms.EditRoot(context.Background(), f.post, func(r *media.Root) error { r.Hidden = true; return nil }); err != nil {
-		t.Fatal(err)
-	}
-	if resp, body := get("/media/post/" + cid(501) + "/slots/cover"); resp.StatusCode != 200 || len(body["outputs"].([]any)) != 0 {
-		t.Fatalf("hidden slot: %d %v", resp.StatusCode, body)
-	}
-}
-
-// Editor views live in temp/, outside the manifest: only editors get them,
-// under an editor token no viewer token equals; a missing one is rendered
-// again and the read falls through to the next variant meanwhile.
-func TestReadEditorViews(t *testing.T) {
-	f := newReadFixture(t)
-	ref := contentref.New(f.env.Tenant, "post", cid(502))
-	edit := &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 100, H: 100}}
-	if _, err := f.ms.Edit(context.Background(), ref, func(m *media.Manifest) error {
-		m.Files = []media.File{{Name: "a.png", Original: blobName("a"), Type: "image/png", Edit: edit, Dims: &media.Dims{W: 400, H: 200},
-			Variants: map[string]media.Variant{"large": {Blob: blobName("a-large")}}}}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	item, _ := f.kinds.Item(ref)
-	view := item.EditorView(blobName("a"))
-	putObject(t, f.env.Store, view, "editor view")
-	largeKey := f.key(t, ref, media.AreaPrivate, blobName("a-large"))
-	for _, mode := range []media.DeliveryMode{media.DeliverCookie, media.DeliverURL} {
-		for _, res := range []access.Resolution{
-			{Visible: true, Accessible: true},
-			{Visible: true, PreviewLimit: 1},
-			{Visible: true, Accessible: true, Editor: true},
-			{Visible: true, PreviewLimit: 1, Editor: true},
-		} {
-			t.Run(fmt.Sprintf("%s %+v", mode, res), func(t *testing.T) {
-				f.res.verdicts[cid(502)] = res
-				q := &queue{}
-				r := f.readerWith(t, mode, q)
-				out := f.read(t, r, ref, media.ReadOptions{Variants: []string{media.EditorVariant, "large"}})
-				fi := out.Files[0]
-				if (fi.Edit != nil) != res.Editor || (fi.Dims != nil) != res.Editor {
-					t.Fatalf("file %+v", fi)
-				}
-				key, tok, _ := split(t, fi.URL)
-				if !res.Editor {
-					if fi.Variant != "large" || key != largeKey {
-						t.Fatalf("viewer got %+v", fi)
-					}
-					return
-				}
-				if fi.Variant != media.EditorVariant || key != view || q.count() != 0 {
-					t.Fatalf("editor got %+v (%d jobs)", fi, q.count())
-				}
-				at := f.now.Add(time.Minute)
-				if err := f.verifier.VerifyEditor(tok, view, at); err != nil {
-					t.Fatal(err)
-				}
-				if err := f.verifier.Verify(tok, largeKey, "", at); err == nil {
-					t.Fatal("editor token opens private/")
-				}
-				// No token a viewer can hold opens the editor view.
-				g, err := r.Grant(context.Background(), ref, access.Actor{ID: "u1"})
-				if err != nil {
-					t.Fatal(err)
-				}
-				u, _ := g.URL(0, blobName("a-large"))
-				_, viewer, _ := split(t, u)
-				if c := g.Cookie(); c != nil {
-					viewer = c.Value
-				}
-				if err := f.verifier.VerifyEditor(viewer, view, at); err == nil {
-					t.Fatal("viewer token opens temp/")
-				}
-			})
-		}
-	}
-
-	// Swept: the editor read falls back and asks for a render.
-	if err := f.env.Store.Delete(context.Background(), view); err != nil {
-		t.Fatal(err)
-	}
-	f.res.verdicts[cid(502)] = access.Resolution{Visible: true, Accessible: true, Editor: true}
-	q := &queue{}
-	out := f.read(t, f.readerWith(t, media.DeliverURL, q), ref, media.ReadOptions{Variants: []string{media.EditorVariant}})
-	if out.Files[0].URL != "" || q.count() != 1 || q.jobs[0].Ref != ref {
-		t.Fatalf("missing view: %+v, jobs %+v", out.Files[0], q.jobs)
-	}
-}
-
-// Viewers are never shown a file before it is processed, nor a failed one;
-// a replaced source keeps its stale ladder playing. Editors see every file.
-func TestReadHidesUnprocessedFilesFromViewers(t *testing.T) {
-	f := newReadFixture(t)
-	r := f.reader(t, media.DeliverURL, media.Hooks{})
-	ladder := func(source string, pending ...int) *media.HLS {
-		return &media.HLS{Source: source, Pending: pending, Video: []media.Rendition{{Rung: 720, Width: 1280, Height: 720, Blob: blobName("l" + source)}}}
-	}
-	if _, err := f.ms.Edit(context.Background(), f.post, func(m *media.Manifest) error {
-		m.Files = append(m.Files,
-			media.File{Name: "new.mp4", Original: blobName("new"), Type: "video/mp4"},
-			media.File{Name: "stage2.mp4", Original: blobName("s2"), Type: "video/mp4", HLS: ladder(blobName("s2"), 2160)},
-			media.File{Name: "replaced.mp4", Original: blobName("r2"), Type: "video/mp4", HLS: ladder(blobName("r1"))},
-			media.File{Name: "broken.mp4", Original: blobName("b"), Type: "video/mp4", HLS: &media.HLS{Source: blobName("b"), Error: "no video stream"}},
-			media.File{Name: "rendering.jpg", Original: blobName("rj"), Type: "image/jpeg"})
-		m.Downloads = map[string]media.Download{"new.mp4-720p": {Blob: blobName("dl"), Type: "video/mp4"}}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	names := func(files []media.FileInfo) []string {
-		var out []string
-		for _, fi := range files {
-			out = append(out, fi.Name)
-		}
-		return out
-	}
-	f.res.verdicts[cid(501)] = access.Resolution{Visible: true, Accessible: true}
-	out := f.read(t, r, f.post, media.ReadOptions{})
-	if got := names(out.Files); !slices.Equal(got, []string{"teaser", "beach.jpg", "clip.mp4", "stage2.mp4", "replaced.mp4"}) || len(out.Downloads) != 0 {
-		t.Fatalf("a viewer reads %v %+v", got, out.Downloads)
-	}
-	f.res.verdicts[cid(501)] = access.Resolution{Visible: true, Accessible: true, Editor: true}
-	if out := f.read(t, r, f.post, media.ReadOptions{}); len(out.Files) != 8 || out.Files[6].Failed == "" {
-		t.Fatalf("the editor reads %v", names(out.Files))
-	}
-	root, _, err := f.ms.Root(context.Background(), f.post)
-	if err != nil {
-		t.Fatal(err)
-	}
-	k, _ := f.kinds.Kind("post")
-	got := root.Readiness(k)
-	if got.State != media.StateProcessing || !slices.Equal(got.Processing, []string{"teaser", "beach.jpg", "new.mp4", "stage2.mp4", "replaced.mp4", "rendering.jpg", "poster"}) ||
-		!slices.Equal(got.Failed, []string{"broken.mp4"}) {
-		t.Fatalf("readiness %+v", got)
+	if s := status("/gallery/" + cid(1)); s != http.StatusTooManyRequests {
+		t.Fatalf("burst exceeded %d", s)
 	}
 }

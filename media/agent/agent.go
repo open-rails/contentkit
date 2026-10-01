@@ -29,13 +29,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 
+	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 )
 
 const (
 	publicCacheControl  = "public, max-age=300, stale-while-revalidate=86400"
 	privateCacheControl = "private, max-age=31536000, immutable"
-	defaultID           = "_default"
 )
 
 // Config configures a Handler.
@@ -45,16 +45,9 @@ type Config struct {
 	Ring                         token.Ring
 	Hosts                        map[string][]string // lower-case host name (no port) -> namespaces served on it; required
 	Origins                      []string            // exact CORS origins ("scheme://host[:port]") allowed with credentials
-	Defaults                     []Default           // public default images
+	Defaults                     []layout.Default    // public default images
 	Client                       *http.Client        // default: a tuned transport without compression
 	Logger                       *slog.Logger
-}
-
-// Default declares the public names of {Namespace}/{Kind} that fall back to
-// {Namespace}/{Kind}/_default/public/{name} when the item's object is missing.
-type Default struct {
-	Namespace, Kind string
-	Names           []string // templates over [A-Za-z0-9._-] with {w} (digits) and {name} placeholders, e.g. "cover-{w}.webp"
 }
 
 // Handler serves media objects.
@@ -70,17 +63,17 @@ var emptySHA256 = hex.EncodeToString(func() []byte { s := sha256.Sum256(nil); re
 
 // New validates cfg.
 func New(cfg Config) (*Handler, error) {
-	if cfg.Endpoint == "" || !validSegment(cfg.Bucket) || cfg.AccessKeyID == "" || cfg.SecretAccessKey == "" {
+	if cfg.Endpoint == "" || !layout.ValidSegment(cfg.Bucket) || cfg.AccessKeyID == "" || cfg.SecretAccessKey == "" {
 		return nil, errors.New("agent: Endpoint, a valid Bucket and S3 credentials are required")
 	}
 	base, err := url.Parse(strings.TrimRight(cfg.Endpoint, "/"))
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" {
 		return nil, errors.New("agent: invalid Endpoint")
 	}
-	if cfg.Hosts, err = checkHosts(cfg.Hosts); err != nil {
+	if cfg.Hosts, err = layout.CheckHosts(cfg.Hosts); err != nil {
 		return nil, err
 	}
-	defaults, err := compileDefaults(cfg.Defaults)
+	defaults, err := layout.CompileDefaults(cfg.Defaults)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +142,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.fetch(r, key)
 	if err == nil && missing(resp.StatusCode) && o.area == "public" && h.hasDefault(o) {
 		_ = resp.Body.Close()
-		key = o.key(defaultID)
+		key = o.key(layout.DefaultID)
 		resp, err = h.fetch(r, key)
 	}
 	if err != nil {
@@ -172,9 +165,9 @@ func (o object) key(id string) string {
 // parse accepts exactly /v1/{ns}/{kind}/{id}/{public|private}/{name},
 // unescaped, for a namespace served on the request's host.
 func (h *Handler) parse(r *http.Request) (object, bool) {
-	rest, ok := strings.CutPrefix(r.URL.Path, "/v1/")
+	rest, ok := strings.CutPrefix(r.URL.Path, layout.URLPrefix)
 	p := strings.Split(rest, "/")
-	if !ok || r.URL.RawPath != "" || len(p) != 5 || !all(p, validSegment) {
+	if !ok || r.URL.RawPath != "" || len(p) != 5 || slices.ContainsFunc(p, func(s string) bool { return !layout.ValidSegment(s) }) {
 		return object{}, false
 	}
 	o := object{p[0], p[1], p[2], p[3], p[4]}
@@ -185,7 +178,7 @@ func (h *Handler) parse(r *http.Request) (object, bool) {
 	if strings.HasPrefix(o.id, "_") || !slices.Contains(h.cfg.Hosts[strings.ToLower(host)], o.ns) {
 		return object{}, false
 	}
-	return o, o.area == "public" || (o.area == "private" && validHashName(o.name))
+	return o, o.area == "public" || (o.area == "private" && layout.ValidHashName(o.name))
 }
 
 var errNoToken = errors.New("no token")

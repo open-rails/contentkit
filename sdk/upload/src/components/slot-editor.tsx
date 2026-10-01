@@ -10,26 +10,34 @@ import type { CropSource } from "../image.js";
 import type { UploadError } from "../errors.js";
 import { asUploadError, useErrorReporter, useUploadClient, type UploadUiErrorHandler } from "../provider.js";
 import { useScopeProps } from "../scope.js";
-import { useSlotCrop, useSlotImage, type UseSlotCrop, type UseSlotImage } from "../slot-react.js";
-import type { RefBody, SlotManifest } from "../wire.gen.js";
+import type { PublicImage } from "../public.js";
+import { reloadImage, useSlotCrop, useSlotImage, type UseSlotCrop, type UseSlotImage } from "../slot-react.js";
+import type { FileInfo, ReadResult, RefBody } from "../wire.gen.js";
 import { Button } from "#ckui/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "#ckui/ui/dropdown-menu";
 import { ImageCropDialog } from "./image-crop-dialog.js";
 
 export interface SlotEditorProps {
-  /** The item that owns the slot. */
+  /** The item that owns the upload. */
   item: RefBody;
-  slot: string;
+  /** The upload path, e.g. "cover" or "avatar". */
+  path: string;
+  /** The public preset showing the upload: children draw it, saves refetch it. */
+  image?: PublicImage | null;
   client?: UploadClient;
-  /** Current manifest from the host; otherwise fetched with client.getSlot. */
-  manifest?: SlotManifest | null;
-  /** Called with the new manifest after every save. */
-  onChange?: (m: SlotManifest) => void;
+  /** An editor read of the item from the host; otherwise fetched. */
+  read?: ReadResult | null;
+  /** Called with the processed upload after every save, null after a removal. */
+  onChange?: (file: FileInfo | null) => void;
   /** Every failure (load, decode, save or render); default the provider's. */
   onError?: UploadUiErrorHandler;
-  /** The output's "W:H"; default the manifest's aspect, else "1:1". */
+  /** The output's "W:H"; default the preset's aspect, else "1:1". */
   aspect?: AspectRatio;
-  /** Crops narrower than this many source pixels get a sharpness warning; default the widest output, else 512. */
+  /** The narrowest edit the server accepts (the preset's Image.MinWidth). */
+  minWidth?: number;
+  /** "reject" refuses animated images before uploading (the preset's Image.Animation). */
+  animation?: "reject";
+  /** Crops narrower than this many source pixels get a sharpness warning; default the preset's widest, else 512. */
   targetWidth?: number;
   /** Round crop mask; default aspect 1. */
   round?: boolean;
@@ -38,7 +46,7 @@ export interface SlotEditorProps {
   /** `accept` of the file input. Default "image/*". */
   accept?: string;
   disabled?: boolean;
-  /** Offers Remove (client.deleteSlot) once the slot has an image; default false. */
+  /** Offers Remove (a remove op) once the path has an upload; default false. */
   removable?: boolean;
   /** Replaces decodeImage (tests). */
   decode?: (file: File) => Promise<CropSource>;
@@ -49,21 +57,21 @@ export interface SlotEditorProps {
 export interface SlotEditorState {
   image: UseSlotImage;
   crop: UseSlotCrop;
-  /** The slot has an image. */
+  /** The path has an upload. */
   has: boolean;
   busy: boolean;
   disabled: boolean;
-  /** A failure outside the dialog (unreadable file, manifest fetch), localized. */
+  /** A failure outside the dialog (unreadable file, read failure), localized. */
   error?: string;
   /** Opens the file picker. */
   choose: () => void;
   /** Opens a file for cropping (drop targets). */
   pick: (file: File) => void;
-  /** Re-crops the kept original; only when crop.canRecrop. */
+  /** Re-crops the kept upload; only when crop.canRecrop. */
   recrop: () => void;
   /** Remove is offered (SlotEditorProps.removable). */
   removable: boolean;
-  /** Removes the slot's image; only when removable. */
+  /** Removes the upload; only when removable. */
   remove: () => void;
 }
 
@@ -77,7 +85,7 @@ export function useSlotEditor(): SlotEditorState {
 }
 
 /**
- * A slot's pick → crop → save and re-crop flow without layout: it renders a
+ * An image upload's pick → crop → save and re-crop flow without layout: it renders a
  * hidden file input and the crop dialog, and its children draw the image and
  * triggers (SlotEditMenu, or custom ones through useSlotEditor).
  */
@@ -85,21 +93,23 @@ export function SlotEditor(p: SlotEditorProps) {
   const { t, error: errorText } = useMessages();
   const client = useUploadClient(p.client);
   const report = useErrorReporter(p.onError);
-  const image = useSlotImage(client, { ref: p.item, slot: p.slot, manifest: p.manifest });
+  const image = useSlotImage(client, { ref: p.item, path: p.path, image: p.image, read: p.read });
   useEffect(() => void (image.error && report(image.error, "slot.load")), [image.error, report]);
   const aspect = p.aspect ?? image.aspect;
   const onChange = useRef(p.onChange);
   onChange.current = p.onChange;
   const crop = useSlotCrop(client, {
     ref: p.item,
-    slot: p.slot,
-    manifest: image.manifest,
+    path: p.path,
+    file: image.file,
     aspect,
+    animation: p.animation,
+    image: p.image,
     decode: p.decode,
     onError: report,
-    onSaved: (m) => {
-      image.set(m);
-      onChange.current?.(m);
+    onSaved: (f) => {
+      image.set(f);
+      onChange.current?.(f);
     },
   });
   const input = useRef<HTMLInputElement>(null);
@@ -108,7 +118,7 @@ export function SlotEditor(p: SlotEditorProps) {
   const busy = crop.status === "decoding" || crop.status === "saving" || removing;
   const disabled = !!p.disabled || busy;
   const round = p.round ?? ratio(aspect) === 1;
-  const target = p.targetWidth ?? image.manifest?.outputs.at(-1)?.w ?? 512;
+  const target = p.targetWidth ?? image.renditions.at(-1)?.w ?? 512;
   const error =
     crop.status === "error" && !crop.source
       ? errorText(crop.error)
@@ -121,9 +131,10 @@ export function SlotEditor(p: SlotEditorProps) {
     setRemoving(true);
     setRemoveError(undefined);
     try {
-      const m = await client.deleteSlot(p.item, p.slot);
-      image.set(m);
-      onChange.current?.(m);
+      if (image.file) await client.commit(p.item, [{ op: "remove", path: image.file.path }]);
+      await reloadImage(p.image);
+      image.set(null);
+      onChange.current?.(null);
     } catch (e) {
       setRemoveError(asUploadError(e));
       report(e, "slot.remove");
@@ -134,7 +145,7 @@ export function SlotEditor(p: SlotEditorProps) {
   const state: SlotEditorState = {
     image,
     crop,
-    has: !!image.src,
+    has: !!image.file,
     busy,
     disabled,
     error,
@@ -167,7 +178,7 @@ export function SlotEditor(p: SlotEditorProps) {
         round={round}
         initialEdit={"edit" in crop && crop.mode === "recrop" ? crop.edit : undefined}
         targetWidth={target}
-        minWidth={image.manifest?.min_width}
+        minWidth={p.minWidth}
         title={p.title ?? t(round ? "crop.avatarTitle" : "crop.coverTitle")}
         busy={crop.status === "saving"}
         progress={crop.status === "saving" ? crop.progress : undefined}
@@ -196,8 +207,8 @@ export interface SlotEditMenuProps {
 }
 
 /**
- * One trigger for a SlotEditor: it picks a file, or, once the slot has an
- * image, opens a Change / Edit crop / Remove menu (each when available).
+ * One trigger for a SlotEditor: it picks a file, or, once the path has an
+ * upload, opens a Change / Edit crop / Remove menu (each when available).
  */
 export function SlotEditMenu({ label, iconOnly, render, className, align = "end" }: SlotEditMenuProps) {
   const { t } = useMessages();
@@ -253,7 +264,7 @@ export function SlotEditMenu({ label, iconOnly, render, className, align = "end"
   );
 }
 
-/** The SlotEditor's error outside the dialog (unreadable file, fetch failure), if any. */
+/** The SlotEditor's error outside the dialog (unreadable file, read failure), if any. */
 export function SlotEditError({ className }: { className?: string }) {
   const { error } = useSlotEditor();
   const scope = useScopeProps();

@@ -5,7 +5,10 @@ export type GalleryView = "carousel" | "grid";
 export interface GalleryMediaItem {
   kind: "image" | "video" | "audio";
   key: string;
+  /** An image; a ladder's widest video track (its size and duration) or its audio file. */
   file: FileInfo;
+  /** A video or audio ladder's HLS folder from the read's `hls`, e.g. "hls/". */
+  dir?: string;
   /** Width / height from the read API; a default when unknown. */
   aspect: number;
 }
@@ -24,17 +27,12 @@ export type GalleryItem = GalleryMediaItem | GalleryLockedItem;
 
 export const isVideoType = (type?: string) => !!type?.startsWith("video/");
 export const isAudioType = (type?: string) => !!type?.startsWith("audio/");
-
-/** An audio file's M4A variant name: request it in the read (`variants`) for `<audio>` playback. */
-export const AUDIO_VARIANT = "audio";
-
-/** An audio file's download key in `read.downloads`. */
-export const audioDownloadKey = (name: string) => `${name}-audio`;
+export const isImageType = (type?: string) => !!type?.startsWith("image/");
 
 /** The stage aspect of an audio slide. */
 export const AUDIO_ASPECT = 3;
 
-/** Subtitle sidecars are a video's text tracks, not gallery items. */
+/** Subtitle files are a video's text tracks, not gallery items. */
 export const isSubtitleType = (type?: string) =>
   ["text/vtt", "application/x-subrip", "text/x-ssa", "text/x-ass"].includes(type ?? "");
 
@@ -42,36 +40,53 @@ function aspectOf(f: FileInfo | undefined, fallback: number) {
   return f?.w && f.h ? f.w / f.h : fallback;
 }
 
+const parent = (path: string) => path.slice(0, path.lastIndexOf("/") + 1);
+
 /**
- * The read result as gallery items in manifest order: every file this viewer
- * may see (full access hides the teaser), then one locked item for the rest.
+ * The read result as gallery items in manifest order: each image, each
+ * playable HLS ladder (a folder in `hls`: a video, or an audio-only one)
+ * and each other audio file this viewer may see (full access hides the
+ * teaser), then one locked item for the rest. Other files (plain videos,
+ * subtitles, zips) are not items; scope the read with a prefix to choose.
  * Locked files never carry URLs; the teaser is the only image behind the lock.
  */
 export function galleryItems(read: ReadResult | null | undefined): GalleryItem[] {
   if (!read) return [];
   const full = read.access === "full";
-  const files = read.files.filter((f) => !isSubtitleType(f.type));
-  const locked = files.filter((f) => f.locked);
-  const teaser = full || locked.length === 0 ? undefined : files.find((f) => f.teaser && !f.locked && f.url);
+  const dirs = read.hls ?? [];
+  const dirOf = (f: FileInfo) => dirs.find((d) => f.path.startsWith(d));
+  // A locked ladder lists its tracks (and sprite): count each folder once.
+  const unit = (f: FileInfo) => parent(f.path) || f.path;
+  const lockedMedia = read.files.filter((f) => f.locked && (isVideoType(f.type) || isAudioType(f.type)));
+  const units = new Set(lockedMedia.map(unit));
+  const lockedImages = read.files.filter((f) => f.locked && isImageType(f.type) && !units.has(parent(f.path)));
+  const lockedVideos = new Set(lockedMedia.filter((f) => isVideoType(f.type)).map(unit)).size;
+  const lockedCount = lockedImages.length + units.size;
+  const teaser = full || lockedCount === 0 ? undefined : read.files.find((f) => f.teaser && !f.locked && f.url && isImageType(f.type));
   const items: GalleryItem[] = [];
-  for (const f of files) {
+  const seen = new Set<string>();
+  for (const f of read.files) {
     if (f.locked || (f.teaser && (full || f === teaser))) continue;
-    if (isAudioType(f.type)) {
-      items.push({ kind: "audio", key: `f${f.index}`, file: f, aspect: AUDIO_ASPECT });
+    const dir = dirOf(f);
+    if (dir) {
+      if (seen.has(dir)) continue;
+      seen.add(dir);
+      const files = read.files.filter((x) => x.path.startsWith(dir));
+      const video = files.filter((x) => isVideoType(x.type)).reduce<FileInfo | undefined>((a, x) => ((x.w ?? 0) > (a?.w ?? -1) ? x : a), undefined);
+      if (video) {
+        const dur = video.dur ?? files.find((x) => x.dur)?.dur;
+        items.push({ kind: "video", key: dir, dir, file: { ...video, dur }, aspect: aspectOf(video, 16 / 9) });
+      } else {
+        const audio = files.find((x) => x.path.endsWith(".m4a")) ?? files.find((x) => isAudioType(x.type));
+        if (audio) items.push({ kind: "audio", key: dir, dir, file: audio, aspect: AUDIO_ASPECT });
+      }
       continue;
     }
-    const video = isVideoType(f.type);
-    items.push({ kind: video ? "video" : "image", key: `f${f.index}`, file: f, aspect: aspectOf(f, video ? 16 / 9 : 1) });
+    if (isImageType(f.type)) items.push({ kind: "image", key: f.path, file: f, aspect: aspectOf(f, 1) });
+    else if (isAudioType(f.type)) items.push({ kind: "audio", key: f.path, file: f, aspect: AUDIO_ASPECT });
   }
-  if (locked.length > 0)
-    items.push({
-      kind: "locked",
-      key: "locked",
-      count: locked.length,
-      videos: locked.filter((f) => isVideoType(f.type)).length,
-      teaser,
-      aspect: aspectOf(teaser, 1),
-    });
+  if (lockedCount > 0)
+    items.push({ kind: "locked", key: "locked", count: lockedCount, videos: lockedVideos, teaser, aspect: aspectOf(teaser, 1) });
   return items;
 }
 

@@ -1,183 +1,175 @@
 # @openrails/contentkit-upload
 
-Browser client for ContentKit's `media.UploadHandler`: SHA-256-bound single
-PUTs up to 64 MiB, resumable multipart above (8–16 MiB parts sized from
-measured throughput, bounded concurrency, per-part retry), commit, and React
-hooks, and a styled UI for cropped slot images (avatars, covers).
+Browser client for ContentKit media: SHA-256-addressed uploads (one PUT up to
+64 MiB, resumable multipart above: 8–16 MiB parts sized from measured
+throughput, bounded concurrency, per-part retry), commit ops, the read API,
+React hooks, and a styled UI for cropped images, video posters and galleries.
 
 Each ContentKit release (`v*`) attaches the package as a release asset:
 
 ```sh
-pnpm add https://github.com/open-rails/contentkit/releases/download/v0.21.0/openrails-contentkit-upload-0.21.0.tgz
+pnpm add https://github.com/open-rails/contentkit/releases/download/v0.62.0/openrails-contentkit-upload-0.62.0.tgz
 ```
 
-The host mounts `media.UploadHandler` (e.g. at `/api/media/upload`) behind its
-auth with `UploadHandlerOptions.PublicBaseURL` set (the access worker origin slot
-manifests build output URLs on; slot routes fail without it), and the bucket allows CORS `PUT` from the app's origin with the
-`Content-Type` and `x-amz-checksum-sha256` headers.
+The host mounts `media.UploadHandler` (e.g. at `/api/media/upload`) and
+`Reader.Handler` (e.g. at `/api/media`) behind its auth, and the bucket allows
+CORS `PUT` from the app's origin with the `Content-Type` and
+`x-amz-checksum-sha256` headers. Paths, kinds and public presets are the app's
+`media.Config` registry; a ref is `{ kind, id }` (an item is the host's version).
 
 ## Core
 
 ```ts
-import { createUploadClient } from "@openrails/contentkit-upload";
+import { createUploadClient, publicURL, srcSet } from "@openrails/contentkit-upload";
 
-const client = createUploadClient({ endpoint: "/api/media/upload" });
-const ref = { kind: "gallery", id: "123", version: "en" };
+const client = createUploadClient({ endpoint: "/api/media/upload", readEndpoint: "/api/media" });
+const ref = { kind: "gallery", id: versionId };
 
-const up = await client.upload(file, { ref, onProgress: (p) => console.log(p.phase, p.loaded, p.total) });
-await client.commit(ref, [{ op: "insert", name: "001.png", original: up.name }], {
-  sources: { [up.name]: file }, // re-upload and retry once if the original went stale (not_uploaded)
+// Hashes the whole file (in a Web Worker), presigns {ref, path, type, size, sha256}, sends it.
+const up = await client.upload(file, { ref, path: "originals/001.png", onProgress: (p) => console.log(p.phase, p.loaded, p.total) });
+// up: { path: "originals/001.png", blob: "sha256-…", type, size, exists }
+await client.commit(ref, [{ op: "put", path: up.path, blob: up.blob }], {
+  sources: { [up.blob]: file }, // re-upload and retry once if the blob went stale (not_uploaded)
 });
 
-await client.uploadSlot(cover, { ref, slot: "cover", edit }); // upload + commit-slot → { manifest }
-await client.editSlot(ref, "cover", edit);                   // re-render from the committed original
-await client.getSlot(ref, "cover");                          // { aspect: "3:1", edit, dims, outputs, pending }
+// upload + put + wait until the worker processed it; resolves with the upload as an editor reads it.
+const cover = await client.put(image, { ref, path: "cover", edit: { crop: { x: 0, y: 40, w: 1200, h: 0 } } });
+await client.commit(ref, [{ op: "edit", path: cover.path, edit }]); // also move, rename, remove, attach, copy, frame, meta, regenerate
+await client.waitFor(ref, "cover");                                 // until nothing is pending; rejects with its failure
 
-await client.edit(ref, "001.png", { crop: { x: 0, y: 0, w: 800, h: 600 }, rotate: 90 }); // null clears
-await client.setSlotFromFile(ref, "cover", "001.png", { crop: { x: 40, y: 0, w: 460, h: 0 } }); // slot aspect sets h
+const read = await client.read(ref, { prefix: "low-res/", offset: 0, limit: 50, download: true }); // editor: true adds the uploads
+const view = await client.editorView(ref, "cover");                // { url, width, height } to re-crop on (editors)
+const still = await client.getFrame(ref, "source.mp4", 8.3, 640);  // JPEG Blob (GET /frame)
+const base = client.hlsBase(ref, read.hls![0]!);                   // {readEndpoint}/{kind}/{id}/hls/{dir}: master.m3u8, sprite.vtt
 
-// A new inline image (post bodies, poll options): the server names it i-{uuid};
-// the call returns once it is rendered, with its public url.
-const img = await client.uploadInline(file, { ref: { kind: "post", id: postId } });
-// then e.g. POST /posts/{id}/images {"image": img.name} -> {"url"}
+// Public files sit at fixed names, as media.PublicURL and media.SrcSet build them.
+publicURL("https://media.doujins.ai", "doujins", "gallery", id, "cover-460.webp");
+srcSet("https://media.doujins.ai", "doujins", "gallery", id, "cover-{w}.webp", [230, 460, 920]);
 ```
 
-A slot `edit` is the same `Edit` as files: a crop in pixels of the EXIF-oriented
-original, then a clockwise `rotate`; the server derives `h` from `w` and the slot's aspect
-(`"W:H"`; `ratio("3:1")` gives the number for CSS, `aspectOf(w, h)` the reduced string),
-and no crop means the largest centred one. Output URLs name immutable files; a
-new crop or upload returns new URLs. `slotSources(manifest)` gives `src`/`srcSet`; `waitForSlot` polls
-while `pending`; `getEditorView` returns the committed original's editor view (URL and
-original size, editors only) to re-crop on; `decodeImage` is the EXIF-aware preview of a
-picked file.
-
-Video items (#32): a cover (slot `poster`, the video's native aspect). There is no preview clip: players preview the HLS itself inline.
-
-```ts
-await client.getVideoImages(ref);                                  // { poster: { file, time, … }, video: { file, duration, w, h, encoded } }
-await client.setVideoPoster(ref, { source: "frame", time: 8.3, edit }); // edit in frame pixels (video.w × video.h)
-await client.uploadVideoPoster(image, { ref, edit });              // presign slot "poster" + /video-poster upload
-await client.setVideoPoster(ref, { source: "auto" });
-await client.getFrame(ref, 8.3, { width: 640 });                   // JPEG Blob (GET /frame)
-await client.waitForVideoImages(ref);                              // until nothing is pending
-```
-
+- An inline image is a put to a Named upload path (`inline/x.png`): the server
+  names it `inline/i-{uuid}.png`, and its public URL is `publicURL(…)` of the
+  kind's public preset name, e.g. `fill("{name}.webp", { name: "i-…" })`.
+- A video poster is an upload whose `Frames` is the video: `frame { path, t }`
+  or `{ path, auto: true }` grabs it, a put uploads one.
+- An `edit` is a crop in pixels of the EXIF-oriented upload, then a clockwise
+  `rotate`; the server fits `h` to the public preset's aspect (`"W:H"`;
+  `ratio("3:1")` gives the number, `aspectOf(w, h)` the reduced string), and no
+  crop means the largest centred one. `decodeImage` is the EXIF-aware preview
+  of a picked file.
+- After a change, `reloadPublic(urls)` refetches public files past the browser
+  cache and remounts the kit's images showing them (the kit does this after its saves).
 - Errors are `UploadError` with `code` (the server's `ErrorReply.code`, or
   `network`, `storage`, `aborted`, `resume_mismatch`, `decode`,
-  `render_timeout`), `status`, `retryAfter` (seconds, on `rate_limited`) and
-  `details` (image refusals: `image_too_small` `{ width, min_width }`,
-  `image_too_large`, `image_unreadable`, `type_not_allowed` `{ allowed }`,
-  `too_large` `{ size, max_bytes }`, `animation_not_allowed`,
-  `animation_too_long` `{ frames, max_frames | seconds, max_seconds }`,
-  `animation_unsupported`). `isAnimatedImage(file)` pre-checks a slot whose
-  manifest says `animation: "reject"` (the SDK's slot cropper does); the
-  server decides. Editors see an image the processor refused as the read
-  API's `failed`, `failed_code` and `failed_details`, and the gallery shows why. `refusal` is true when the request broke
-  a stated rule (4xx, typed refusals) rather than hitting a fault. A slot
-  render's failure is `slotError(manifest)` (`error_code`, `error_details`). `isLimit` is true for
-  `rate_limited` and `quota_exceeded`; `isCeiling` for `too_many_files` (409,
-  the kind's file caps).
-- A refused presign throws before any bytes move; multipart files are
-  presigned before they are hashed.
-- Parts hash with WebCrypto (off the main thread; `@noble/hashes` in an
-  insecure context) and are hashed and presigned ahead of the PUT slots, so the
-  link stays busy. `bench/run.ts` measures a 1 GB upload from Chromium.
+  `render_timeout`), `status`, `retryAfter` (seconds, on `rate_limited`),
+  `blobs` (`not_uploaded`) and `details` (image refusals: `image_too_small`
+  `{ width, min_width }`, `image_too_large`, `image_unreadable`,
+  `type_not_allowed` `{ allowed }`, `too_large` `{ size, max_bytes }`,
+  `animation_not_allowed`, `animation_too_long`, `animation_unsupported`).
+  An upload the worker cannot process carries `failed` in editor reads;
+  `failureError(failed)` is its error. `refusal` is true when the request broke a
+  stated rule rather than hitting a fault; `isLimit` for `rate_limited` and
+  `quota_exceeded`; `isCeiling` for `too_many_files`.
+- Hashing: files up to 64 MiB and every part use WebCrypto; larger files
+  stream through `@noble/hashes` in an inline Web Worker (on the main thread
+  where workers cannot start). Parts hash and presign ahead of the PUT slots.
+  `bench/run.ts` measures a 1 GB upload from Chromium.
 - Aborting `signal` pauses a multipart upload. `onState` reports resumable
   state (JSON; `null` when done); pass it back as `resume` with the same file
-  to continue after a reload, or `client.discard(state)` to drop it.
+  to continue after a reload (nothing is hashed again), or `client.discard(state)`.
 
 ## React
 
 ```tsx
-import { useUploadQueue, useUpload } from "@openrails/contentkit-upload/react";
+import { useRead, useUpload, useUploadQueue } from "@openrails/contentkit-upload/react";
 
-const q = useUploadQueue(client, { ref });
+const q = useUploadQueue(client, { ref, path: "originals/{name}" });
 q.add(input.files!);           // uploads in the background, 2 at a time
 q.move(id, 0);                 // reorder before commit
-q.update(id, { name: "001.png" });
+q.update(id, { path: "originals/001.png", meta: { teaser: true } });
 q.blocked;                     // rate/quota/permission refusal: nothing new starts until q.start()
-await q.commit();              // inserts uploaded files in queue order; re-uploads stale ones
+await q.commit();              // puts the uploads after the item's, in queue order; re-uploads stale ones
 
-const cover = useUpload(client);
-await cover.upload(file, { ref, slot: "cover" }); // or { ref, inline: true }
+const one = useUpload(client);
+await one.upload(file, { ref, path: "inline/x.png", put: {} }); // put: commit it and wait (result.file)
+
+const { read, reload } = useRead(client, ref, { prefix: "low-res/" });
 ```
 
-`UploadQueue` is the framework-free queue behind the hook.
+With the host's `ProcessOnUpload`, the queue commits each upload unattached as
+it lands, polls an editor read until it is processed, and `commit` attaches them.
 
-`useCrop` is headless crop state for any cropper UI; crops are in original
-pixels (`dims` from the read API), before a clockwise rotation:
+`useCrop` is headless crop state for any cropper UI; crops are in upload
+pixels (an editor read's `w`, `h`), before a clockwise rotation:
 
 ```tsx
-const c = useCrop({ source: { width: dims.w, height: dims.h }, aspect: 460 / 650, initial: file.edit });
+const c = useCrop({ source: { width: file.w, height: file.h }, aspect: "46:65", initial: file.edit });
 <AnyCropper onChange={(rect) => c.setFromDisplay(rect, { width: img.width, height: img.height })} />;
 c.rotateBy(90);
-await client.setSlotFromFile(ref, "cover", name, c.edit ?? {});
+await client.commit(ref, [{ op: "edit", path: file.path, ...(c.edit ? { edit: c.edit } : {}) }]);
 ```
 
-`c.edit` keeps its identity until its value changes, so it can feed effects
-and state setters (`ImageCropDialog`'s `onEditChange` fires only on a change).
-`constrainCrop`, `toOriginal`, `centeredCrop`, `editOf` and `sameEdit` are the
-same math without React.
+`c.edit` keeps its identity until its value changes. `constrainCrop`,
+`toOriginal`, `centeredCrop`, `editOf` and `sameEdit` are the same math without React.
 
-Headless slot hooks:
+Headless image hooks:
 
 ```tsx
-const img = useSlotImage(client, { ref, slot: "avatar" });   // manifest, src, srcSet, aspect, reload
-<img src={img.src} srcSet={img.srcSet} sizes="96px" />
-
-const crop = useSlotCrop(client, { ref, slot: "avatar", manifest: img.manifest, onSaved: img.set });
+const img = useSlotImage(client, { ref, path: "avatar", image });   // file (the upload), renditions, aspect, reload, set
+const crop = useSlotCrop(client, { ref, path: "avatar", file: img.file, aspect: "1:1", image, onSaved: img.set });
 crop.pick(file);     // idle → decoding → cropping { source, edit, mode: "new" }
-await crop.recrop(); // cropping from the committed original via editSlot (mode: "recrop"); crop.canRecrop
-crop.setEdit(e);     // Edit: crop in oriented-original pixels, then a clockwise rotate
-await crop.save();   // saving { progress, rendering } → done { manifest } | error { error, source } (retry with save())
-crop.cancel();
+await crop.recrop(); // cropping the committed upload's editor view (mode: "recrop"); crop.canRecrop
+await crop.save();   // saving { progress, rendering } → done { file } | error { error, source } (retry with save())
 ```
 
-Headless video hooks: `useVideoImages(client, { ref, file?, images? })`,
-`useFrameStrip(client, { ref, duration, count, width })` (frames fetched one at
-a time), `useVideoFrame(client, { ref, time, width, delay })` (debounced exact
-frame), `useVideoPoster(client, { ref, onSaved })` (`saveFrame(time, edit)`,
-`saveUpload(blob, edit)`, `saveAuto()`, `state`).
+`image` is a `PublicImage`: the item's public preset, `{ base, namespace, kind,
+id, to: "avatar-{w}.webp", widths, aspect }`.
 
-Video encode progress: the read API puts `progress` (`EncodeProgress`) on a
-pending video file; `useEncodeProgress(file.progress)` counts its ETA down
-between polls (`{ progress, remaining }`).
+Headless video hooks: `useVideoImages(client, { ref, video: "source", poster: "poster" })`
+(the two uploads), `useFrameStrip(client, { ref, path, duration, count, width })`
+(frames fetched one at a time), `useVideoFrame(client, { ref, path, time, width, delay })`
+(debounced exact frame), `useVideoPoster(client, { ref, path, image, onSaved })`
+(`saveFrame(time, edit)`, `saveUpload(blob, edit)`, `saveAuto()`, `state`).
+
+Encode progress: an editor read puts `progress` (`EncodeProgress`) on a pending
+video upload; `useEncodeProgress(file.progress)` counts its ETA down between
+polls (`{ progress, remaining }`).
 
 ## UI
 
 `@openrails/contentkit-upload/ui`: shadcn (base-vega, Base UI, zinc) components
 whose CSS is scoped under `.ckui` and installed on import (also shipped as
 `./styles.css`). Crop the picked image in a dialog (drag, wheel/pinch/slider zoom,
-arrow keys and +/−, 90° rotation), upload the original with the crop, and let the server
-render every size; show a post's media with `MediaGallery` and `VideoPlayer`.
+arrow keys and +/−, 90° rotation), upload it with the crop, and let the worker
+render the public sizes; show a post's media with `MediaGallery` and `VideoPlayer`.
 
 ```tsx
 import { AvatarUpload, CoverUpload, SlotImage, UploadUiProvider } from "@openrails/contentkit-upload/ui";
 import { ja } from "@openrails/contentkit-upload/locales/ja";
 
+const avatar = { base: MEDIA, namespace: "accounts", kind: "user", id: userId, to: "avatar-{w}.webp", widths: [64, 128, 256, 512], aspect: "1:1" };
+
 <UploadUiProvider client={client} messages={ja} appearance={{ theme: "inherit" }}>
-  <CoverUpload item={{ kind: "channel", id }} onChange={(m) => save(m)} />
-  <AvatarUpload item={{ kind: "channel", id }} />
-  <SlotImage item={{ kind: "user", id }} slot="avatar" round sizes="40px" className="size-10" />
+  <CoverUpload item={{ kind: "channel", id }} image={cover} onChange={(f) => save(f)} />
+  <AvatarUpload item={{ kind: "user", id: userId }} image={avatar} />
+  <SlotImage image={avatar} round sizes="40px" className="size-10" />
 </UploadUiProvider>
 ```
 
 `AvatarUpload` / `CoverUpload` are complete form fields. Layouts that draw the
 images themselves (a channel header with icon buttons over the cover) use
 `SlotEditor`: the same pick → crop → save / re-crop flow with no markup of its
-own. Its children draw the image from `useSlotEditor()` and put triggers where
-they belong; `SlotEditMenu` is one trigger (a file picker, or a Change / Edit crop
-menu once the slot keeps an original) and takes a host-styled element via `render`:
+own. Its children draw the image and put triggers where they belong;
+`SlotEditMenu` is one trigger (a file picker, or a Change / Edit crop menu once
+the path has an upload) and takes a host-styled element via `render`:
 
 ```tsx
-import { SlotEditError, SlotEditMenu, SlotEditor, SlotImage, useSlotEditor } from "@openrails/contentkit-upload/ui";
-
 function Cover() {
-  const { image } = useSlotEditor();
-  return <SlotImage manifest={image.manifest} sizes="100vw" />;
+  const { has } = useSlotEditor();
+  return <SlotImage image={has ? cover : null} />;
 }
 
-<SlotEditor item={channel} slot="cover" manifest={channel.cover} aspect={3} onChange={saveCover}>
+<SlotEditor item={channel} path="cover" image={cover} onChange={saveCover}>
   <Cover />
   <SlotEditMenu label="Change cover" iconOnly render={<button className="my-overlay-button" />} />
   <SlotEditError />
@@ -186,51 +178,43 @@ function Cover() {
 
 | Component | Props |
 | --- | --- |
-| `AvatarUpload`, `CoverUpload` | `item`, `slot` (default `avatar`/`cover`), `client`, `manifest` (else fetched), `onChange(manifest)`, `aspect` (default the manifest's, else 1 / 3), `targetWidth` (sharpness warning below it; default 512 / 3000), `accept`, `sizes`, `disabled`, `label`, `hint` |
-| `SlotEditor` | `item`, `slot`, `client`, `manifest` (else fetched), `onChange(manifest)`, `onError`, `aspect` (default the manifest's, else 1), `targetWidth` (default the widest output), `round` (default aspect 1), `title`, `accept`, `disabled`, `children` |
-| `useSlotEditor()` | `{ image, crop, has, busy, disabled, error, choose(), pick(file), recrop() }` inside a `SlotEditor` |
+| `AvatarUpload`, `CoverUpload` | `item`, `path` (default `avatar`/`cover`), `image` (the public preset), `client`, `read` (an editor read; else fetched), `onChange(file \| null)`, `aspect` (default the preset's, else 1:1 / 3:1), `minWidth`, `animation`, `targetWidth` (sharpness warning below it; default 512 / 3000), `accept`, `disabled`, `removable`, `label`, `hint` |
+| `SlotEditor` | `item`, `path`, `image`, `client`, `read`, `onChange(file \| null)`, `onError`, `aspect`, `minWidth` (the preset's `Image.MinWidth`), `animation` (`"reject"`), `targetWidth` (default the preset's widest), `round`, `title`, `accept`, `disabled`, `removable`, `children` |
+| `useSlotEditor()` | `{ image, crop, has, busy, disabled, error, choose(), pick(file), recrop(), remove() }` inside a `SlotEditor` |
 | `SlotEditMenu` | `label`, `iconOnly`, `render` (trigger element; default the kit's outline button), `className`, `align`; the trigger has `data-ckui="slot-edit"` and `data-busy` |
 | `SlotEditError` | `className`: the editor's error outside the dialog |
-| `ImageCropDialog` | `open`, `onOpenChange`, `source` (`{ url, width, height }` of the oriented original), `aspect`, `round`, `initialEdit`, `onEditChange`, `onConfirm(edit)`, `targetWidth`, `minWidth` (the slot's `min_width`: zoom stops there, a smaller image cannot be confirmed), `busy`, `progress`, `error`, `title` |
-| `EncodeProgress` | `progress` (a read API file's `progress`; absent shows "Processing video"), `className`, `appearance`: bar, phase, `segment 5 / 27`, `~40 s left` or queue position; `data-ckui="encode-progress"`, `data-phase` |
-| `SlotImage` | `manifest` or `item` + `slot`, `density`, `round`, `aspect`, `placeholder`, `alt` |
-| `VideoPosterPicker` | `open`, `onOpenChange`, `item`, `file`, `client`, `images` (else fetched), `onChange(images)`, `onError`, `title` (default "Set cover"), `accept`: frame strip + slider + frame steps over `/frame`, "Use this frame", "Crop…" (in `video.w×h` pixels), "Upload image" → `ImageCropDialog` at the video's aspect, "Automatic" |
-| `VideoPoster` | `poster` (`VideoImages.poster` or a listing's outputs), `aspect` (default the poster's own), `density`, `alt`, `children`: full-width, uncropped `srcset` cover at its native aspect; never plays (for videos the viewer cannot play) |
+| `ImageCropDialog` | `open`, `onOpenChange`, `source` (`{ url, width, height }` of the oriented upload), `aspect`, `round`, `initialEdit`, `onEditChange`, `onConfirm(edit)`, `targetWidth`, `minWidth` (zoom stops there, a smaller image cannot be confirmed), `busy`, `progress`, `error`, `title` |
+| `EncodeProgress` | `progress` (an editor read's `progress`; absent shows "Processing video"), `className`, `appearance` |
+| `SlotImage` | `image` (a `PublicImage`; null shows the placeholder), `density`, `round`, `aspect`, `placeholder`, `alt` |
+| `VideoPosterPicker` | `open`, `onOpenChange`, `item`, `video` (default `source`), `path` (the poster upload, default `poster`), `image` (its preset), `client`, `read`, `onChange(poster)`, `onError`, `title`, `accept`: frame strip + slider + frame steps over `/frame`, "Use this frame", "Crop…" (in the video's pixels), "Upload image" → `ImageCropDialog` at the video's aspect, "Automatic" |
+| `VideoPoster` | `poster` (a `PublicImage` or URL), `aspect` (default the preset's), `density`, `alt`, `children`: full-width, uncropped; never plays |
 | `UploadUiProvider` | `client`, `appearance` (`theme`: `light`/`dark`/`auto`/`inherit`, `variables`), `messages` (bundle or list; locales `en de es ja ko zh`), `t` (host translate hook), `density` (default `[2, 3]`), `onError(error, { operation })`, `inlinePreview` (default true) |
 
 Errors are mapped from `UploadError.code` to `errors.*` messages; an unknown
 refusal shows the server's message, a fault the generic "try again" line.
-Every failure a component shows (load, frame grab, decode, save, render) also
-goes to its `onError` or the provider's, e.g. to toast it; aborts never do.
+Every failure a component shows also goes to its `onError` or the provider's;
+aborts never do.
 
 ### Renditions
 
-Slot images and covers come in several widths (the host's policy, e.g.
-`media.Video{PosterWidths}`). `SlotImage`, `VideoPoster`, `VideoPlayer` and
-gallery tiles show the narrowest one at least their rendered CSS width ×
-density, where density is `devicePixelRatio` clamped to `[2, 3]` (so 1×
-screens get 2×): a 400 px box picks ≥ 800 px, ≥ 1200 px on a 3× phone. They
-re-pick when the box grows (fullscreen, resize), never step down, and keep
-the shown image until the wider one has loaded. Set the range for a subtree
-with `UploadUiProvider density`, or per component with `density`.
-
-Hosts rendering media themselves use the same logic:
+`SlotImage`, `VideoPoster`, `VideoPlayer` and gallery tiles show the narrowest
+public width at least their rendered CSS width × density, where density is
+`devicePixelRatio` clamped to `[2, 3]`. They re-pick when the box grows, never
+step down, and keep the shown image until the wider one has loaded. Set the
+range with `UploadUiProvider density`, or per component with `density`.
 
 ```tsx
 import { RenditionImg, useRendition } from "@openrails/contentkit-upload/ui";
-import { pickRendition, densityFor } from "@openrails/contentkit-upload";
+import { pickRendition, publicRenditions } from "@openrails/contentkit-upload";
 
-<RenditionImg outputs={manifest.outputs} alt="" className="size-full object-contain" />;
-
-const { ref, rendition, onLoad } = useRendition(manifest.outputs, { density: [1.5, 2] });
-<img ref={ref} src={rendition?.url} onLoad={onLoad} alt="" />;
-
-pickRendition(outputs, 400, densityFor()); // no React
+<RenditionImg outputs={publicRenditions(cover)} alt="" className="size-full object-contain" />;
+pickRendition(publicRenditions(cover), 400); // no React
 ```
 
 ### Media gallery and player
 
-`MediaGallery` renders a read API result: an Instagram-style carousel (swipe,
+`MediaGallery` renders a read (scope it with a `prefix`): each image, each HLS
+ladder in `hls` (a video, or audio-only) and each other audio file, as an Instagram-style carousel (swipe,
 arrows, ←/→, dots, counter) or a tile grid whose tiles open a lightbox carousel
 (Esc closes, focus is trapped and returns to the tile), with a view toggle in
 its header. One item renders alone. The carousel spans its column's full width at
@@ -239,9 +223,9 @@ only the current slide and its neighbours are mounted, and a video swiped away
 pauses. Viewers without access see the blurred teaser behind one locked item
 with the host's `renderLocked`; locked files carry no URLs.
 
-**Inline preview.** A playable video (read API `hls`) previews in place: with a
+**Inline preview.** A playable video (a read's `hls`) previews in place: with a
 mouse, after 500 ms of hover; on touch, the most visible video in view. It is
-the real HLS player, muted, from the cover's frame (`poster.time`) or 10 % in,
+the real HLS player, muted, from `previewStart` (e.g. the poster's frame) or 10 % in,
 starting at the lowest rendition (ABR then takes over). One plays page-wide,
 none while a video plays for real, and leaving unloads the player. Clicking
 commits: the same player restarts from 0 with sound and controls. Locked or
@@ -252,18 +236,18 @@ Headless: `useInlinePreview` with `useHlsPlayer`'s `preview(at)`/`unload()`.
 
 ```tsx
 <MediaGallery
-  read={read}                                    // GET /{kind}/{id}?variant=large,blurred
-  hlsBase={(f) => `/api/media/post/${id}/hls/${encodeURIComponent(f.name!)}/`}
+  read={read}                                    // client.read(ref, { prefix: "low-res/" }), or the host's
+  hlsBase={(dir) => client.hlsBase(ref, dir)}
   xhrSetup={(xhr) => xhr.setRequestHeader("Authorization", `Bearer ${token()}`)} // same-origin playlists only
   refresh={() => refetchRead()}                  // after a 401/403/404: re-grant, then the player resumes once
-  videoImages={images}                           // optional poster (GET …/video-images): drawn on its `file`; previews start at its `time`
+  poster={posterImage} previewStart={12.5}       // optional: drawn on the first video, whose preview starts there
   renderLocked={({ count }) => <UnlockButton count={count} />}
   renderDetails={(item) => <Downloads item={item} />}
   defaultView="carousel"                         // or view + onViewChange; storageKey remembers the choice
 />
 ```
 
-`VideoPlayer` (`base`, `width`/`height` reserve the box, `poster`, `duration`,
+`VideoPlayer` (`base`: `client.hlsBase(ref, dir)`, `width`/`height` reserve the box, `poster`, `duration`,
 `pending`/`progress` show `EncodeProgress`, `failed`, `layout` `frame`|`fill`,
 `maxHeight` default `80svh`, `active`, `xhrSetup`, `refresh`, `inlinePreview`,
 `previewStart`) loads nothing until previewed or played (hls.js imported then; native HLS on Safari), and never spins
@@ -301,8 +285,10 @@ Safari's native HLS chooses for itself, so it shows no menu. Headless:
 
 ## Development
 
-Wire types (`src/wire.gen.ts`) are generated from the Go handler:
-`go test ./media/internal/wirets -update`.
+Wire types (`src/wire.gen.ts`) are generated from the Go handlers:
+`go test ./media/internal/wirets -update`. Integration tests and the browser
+specs run against `media/internal/uploadtestserver` (the real handlers over
+MinIO, with a stand-in worker).
 
 ```sh
 pnpm test               # unit + jsdom hooks/components

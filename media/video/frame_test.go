@@ -113,7 +113,7 @@ func TestLevel(t *testing.T) {
 }
 
 func TestAspectAndTile(t *testing.T) {
-	lo, hi := (*media.Video)(nil).Aspects()
+	lo, hi := (*media.HLS)(nil).Aspects()
 	for _, c := range []struct {
 		w, h int
 		ok   bool

@@ -1,14 +1,16 @@
 import { ratio, type AspectRatio } from "./aspect.js";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { Progress, SlotUploadOptions, UploadClient, UploadedFile, UploadOptions } from "./client.js";
+import type { Progress, PutOptions, UploadClient, UploadedFile, UploadOptions } from "./client.js";
 import { centeredCrop, constrainCrop, editOf, rotation, sameEdit, toOriginal, type Rotation, type Size } from "./crop.js";
 import { UploadError } from "./errors.js";
 import { encodeRemaining } from "./encode.js";
 import { UploadQueue, type QueueOptions, type QueueSnapshot } from "./queue.js";
-import type { Crop, Edit, EncodeProgress } from "./wire.gen.js";
+import type { Crop, Edit, EncodeProgress, FileInfo } from "./wire.gen.js";
 
 export {
   editOutput,
+  reloadImage,
+  usePublicGeneration,
   useSlotCrop,
   useSlotImage,
   type SlotCropMode,
@@ -61,23 +63,26 @@ export interface UploadStatus {
   status: "idle" | "uploading" | "done" | "error";
   progress?: Progress;
   error?: UploadError;
-  result?: UploadedFile;
+  result?: UploadedFile & { file?: FileInfo };
 }
 
 export interface UseUpload extends UploadStatus {
-  /** Uploads one file; with opts.slot or opts.inline it also commits the slot or inline image (opts.edit crops a slot). */
-  upload: (file: File, opts: Omit<UploadOptions, "signal" | "onProgress"> & { edit?: SlotUploadOptions["edit"] }) => Promise<UploadedFile>;
+  /**
+   * Uploads one file; with put it also commits it to its path (put's edit,
+   * meta and index) and waits until it is processed (result.file).
+   */
+  upload: (file: File, opts: Omit<UploadOptions, "signal" | "onProgress"> & { put?: PutOptions }) => Promise<UploadedFile & { file?: FileInfo }>;
   cancel: () => void;
 }
 
-/** One upload at a time (a cover, an avatar); a new upload cancels the previous. */
+/** One upload at a time (a cover, an inline image); a new upload cancels the previous. */
 export function useUpload(client: UploadClient): UseUpload {
   const [s, set] = useState<UploadStatus>({ status: "idle" });
   const ctl = useRef<AbortController | null>(null);
   useEffect(() => () => ctl.current?.abort(), []);
 
   const upload = useCallback<UseUpload["upload"]>(
-    async (file, opts) => {
+    async (file, { put, ...opts }) => {
       ctl.current?.abort();
       const c = (ctl.current = new AbortController());
       set({ status: "uploading" });
@@ -87,11 +92,12 @@ export function useUpload(client: UploadClient): UseUpload {
         onProgress: (progress) => c === ctl.current && set({ status: "uploading", progress }),
       };
       try {
-        const result = opts.slot
-          ? await client.uploadSlot(file, { ...o, slot: opts.slot, edit: opts.edit })
-          : opts.inline
-            ? await client.uploadInline(file, o)
-            : await client.upload(file, o);
+        let result: UploadedFile & { file?: FileInfo };
+        if (put) {
+          let up: UploadedFile | undefined;
+          const f = await client.put(file, { ...o, ...put, onUploaded: (u) => (up = u) });
+          result = { ...up!, file: f };
+        } else result = await client.upload(file, o);
         if (c === ctl.current) set((prev) => ({ status: "done", progress: prev.progress, result }));
         return result;
       } catch (e) {
@@ -107,9 +113,9 @@ export function useUpload(client: UploadClient): UseUpload {
 }
 
 export interface UseCropOptions {
-  /** The original's size (read API dims). */
+  /** The upload's size (an editor read's w and h). */
   source: Size;
-  /** The edited image's "W:H", e.g. the slot's aspect; "" or omitted is free. */
+  /** The edited image's "W:H", e.g. the public preset's aspect; "" or omitted is free. */
   aspect?: AspectRatio;
   /** The current edit to start from. */
   initial?: Edit | null;
@@ -119,7 +125,7 @@ export interface UseCrop {
   /** In original pixels, inside the source and at the aspect. */
   crop: Crop;
   rotate: Rotation;
-  /** Ready for client.edit or setSlotFromFile; null when nothing changes. Its identity changes only with its value. */
+  /** Ready for an edit or put op; null when nothing changes. Its identity changes only with its value. */
   edit: Edit | null;
   /** A rect in original pixels. */
   setCrop: (rect: Crop) => void;
@@ -188,6 +194,8 @@ export {
   type VideoPosterOptions,
   type VideoSaveState,
 } from "./video-react.js";
+
+export { useRead, type UseRead } from "./read-react.js";
 
 export {
   GALLERY_VIEW_KEY,

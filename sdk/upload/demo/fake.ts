@@ -1,63 +1,55 @@
-import { centeredCrop, editedSize, rotation, type Edit, type SlotManifest, type Transport, type VideoImages } from "@openrails/contentkit-upload";
+import { centeredCrop, fill, publicURL, rotation, stem, type Edit, type FileInfo, type Op, type PublicImage, type RefBody, type Transport } from "@openrails/contentkit-upload";
 
-const WIDTHS: Record<string, number[]> = { avatar: [128, 256, 512], cover: [1500, 3000] };
-const ASPECT: Record<string, [number, number]> = { avatar: [1, 1], cover: [3, 1] };
+/** The demo kinds' public presets by upload path: fixed names, as the app's registry declares them. */
+const PRESETS: Record<string, { to: string; widths: number[]; aspect: [number, number] }> = {
+  avatar: { to: "avatar-{w}.webp", widths: [128, 256, 512], aspect: [1, 1] },
+  cover: { to: "cover-{w}.webp", widths: [1500, 3000], aspect: [3, 1] },
+  poster: { to: "poster-{w}.webp", widths: [480, 960, 1920], aspect: [16, 9] },
+};
 
-/** An in-browser stand-in for media.UploadHandler that renders slot outputs with canvas. */
+export const NAMESPACE = "demo";
+
+/**
+ * An in-browser stand-in for media.UploadHandler, Reader.Handler and the
+ * worker: it keeps each item's uploads, renders public presets with canvas
+ * and writes them to e2e/media-server.ts, which serves /v1/ like media-access.
+ */
 export class DemoServer {
   private blobs = new Map<string, Blob>();
-  private slots = new Map<string, SlotManifest>();
-  private encoding = new Map<string, Promise<unknown>>();
-
-  private aspect(slot: string) {
-    const [w, h] = ASPECT[slot]!;
-    return `${w}:${h}`;
-  }
+  private items = new Map<string, FileInfo[]>();
+  private views = new Map<string, string>();
   delay = 250;
 
-  /** One 16:9 demo video of VIDEO_SECONDS, drawn per frame. */
-  video: VideoImages = {
-    poster: { aspect: "16:9", outputs: [], pending: false, selection: { source: "auto", file: "clip.mp4", time: 3 } },
-    video: { file: "clip.mp4", duration: VIDEO_SECONDS, w: 1920, h: 1080, encoded: true },
-  };
+  constructor(readonly media: string) {}
+
+  /** The public preset of an upload path for an item. */
+  image(ref: RefBody, path: string): PublicImage {
+    const p = PRESETS[path]!;
+    return { base: this.media, namespace: NAMESPACE, kind: ref.kind, id: ref.id, to: p.to, widths: p.widths, aspect: p.aspect.join(":") };
+  }
 
   fetch: typeof fetch = async (input, init) => {
     const url = new URL(String(input), location.href);
-    const path = url.pathname.replace(/^\/api/, "");
-    if (path === "/frame") {
+    if (url.pathname === "/api/frame") {
       await sleep(this.delay / 2);
       const w = Number(url.searchParams.get("w") ?? 640);
       return new Response(await videoFrame(Number(url.searchParams.get("t")), w, "image/jpeg"), { status: 200 });
     }
-    const b = JSON.parse(String(init?.body));
     await sleep(this.delay);
-    const key = `${b.ref?.kind}/${b.ref?.id}#${b.slot}`;
-    switch (path) {
-      case "/presign":
-        return json({ name: b.slot, put: { method: "PUT", url: `demo://${key}`, headers: {}, expires: "" } });
-      case "/commit-slot":
-      case "/edit-slot": {
-        // Encoding is asynchronous, like the server's queue: answer pending first.
-        const done = this.render(key, b.slot, b.edit);
-        this.encoding.set(key, done);
-        void done.then(() => this.encoding.delete(key));
-        const prev = this.slots.get(key);
-        return json({ aspect: this.aspect(b.slot), outputs: prev?.outputs ?? [], ...(b.edit ? { edit: b.edit } : {}), pending: true });
+    if (url.pathname.startsWith("/read/")) {
+      const [, , kind, id] = url.pathname.split("/");
+      const files = this.uploads({ kind: kind!, id: id! }).map((f) => ({ ...f, editor_url: this.view(f) }));
+      return json({ access: "full", preview_limit: 0, expires: 0, total: files.length, offset: 0, limit: 50, files });
+    }
+    const b = JSON.parse(String(init?.body));
+    switch (url.pathname) {
+      case "/api/presign": {
+        const blob = `sha256-${b.sha256}`;
+        const path = /\.\w+$/.test(b.path) ? b.path : `${b.path}.${b.type === "image/png" ? "png" : "jpg"}`;
+        return json(this.blobs.has(blob) ? { path, blob, exists: true } : { path, blob, put: { method: "PUT", url: `demo://${blob}`, headers: {}, expires: "" } });
       }
-      case "/video-images":
-        return json(this.video);
-      case "/video-poster": {
-        await sleep(this.delay * 3);
-        const t = b.source === "frame" ? b.time : 3;
-        const src = b.source === "upload" ? this.blobs.get(`${b.ref.kind}/${b.ref.id}#poster`)! : await videoFrame(t, 1920, "image/png");
-        const outputs = await renderPoster(src, b.edit);
-        this.video = { ...this.video, poster: { aspect: "16:9", ...(b.edit ? { edit: b.edit } : {}), dims: { w: 1920, h: 1080 }, outputs, pending: false, selection: { source: b.source, file: "clip.mp4", ...(b.source === "frame" ? { time: t } : {}) } } };
-        return json(this.video);
-      }
-      case "/slot": {
-        const m = this.slots.get(key) ?? { aspect: this.aspect(b.slot), outputs: [], pending: false };
-        return json({ ...m, pending: this.encoding.has(key) });
-      }
+      case "/api/commit":
+        return json({ files: await this.commit(b.ref, b.ops) });
     }
     return json({ error: "not found", code: "not_found" }, 404);
   };
@@ -70,22 +62,74 @@ export class DemoServer {
     this.blobs.set(req.url.slice("demo://".length), body);
   };
 
-  async seed(ref: { kind: string; id: string }, slot: string, original: Blob, edit?: Edit) {
-    const key = `${ref.kind}/${ref.id}#${slot}`;
-    this.blobs.set(key, original);
-    await this.render(key, slot, edit);
+  /** Puts an image as an item's upload, rendered. */
+  async seed(ref: RefBody, path: string, image: Blob, edit?: Edit) {
+    const blob = `sha256-seed-${ref.id}-${path}`;
+    this.blobs.set(blob, image);
+    await this.commit(ref, [{ op: "put", path: `${path}.jpg`, blob, ...(edit ? { edit } : {}) }]);
+    await sleep(this.delay * 4);
   }
 
-  private async render(key: string, slot: string, edit?: Edit): Promise<SlotManifest> {
+  /** Adds a video upload to an item. */
+  seedVideo(ref: RefBody) {
+    this.uploads(ref).push({ path: "source.mp4", type: "video/mp4", size: 1, w: 1920, h: 1080, dur: VIDEO_SECONDS, upload: true });
+  }
+
+  private uploads(ref: RefBody): FileInfo[] {
+    const key = `${ref.kind}/${ref.id}`;
+    if (!this.items.has(key)) this.items.set(key, []);
+    return this.items.get(key)!;
+  }
+
+  private view(f: FileInfo): string | undefined {
+    const blob = (f as { blob?: string }).blob;
+    if (!blob || !f.type.startsWith("image/")) return undefined;
+    if (!this.views.has(blob)) this.views.set(blob, URL.createObjectURL(this.blobs.get(blob)!));
+    return this.views.get(blob);
+  }
+
+  private async commit(ref: RefBody, ops: Op[]): Promise<FileInfo[]> {
+    const files = this.uploads(ref);
+    const at = (p: string) => files.findIndex((f) => stem(f.path) === stem(p));
+    for (const op of ops) {
+      const i = at(op.path!);
+      if (op.op === "remove") {
+        if (i < 0) throw new Error("no upload");
+        const [f] = files.splice(i, 1);
+        void this.unpublish(ref, f!);
+        continue;
+      }
+      let f: FileInfo & { blob?: string };
+      if (op.op === "put") {
+        const src = this.blobs.get(op.blob!)!;
+        const bmp = await createImageBitmap(src, { imageOrientation: "from-image" });
+        f = { path: op.path!, type: src.type || "image/jpeg", size: src.size, w: bmp.width, h: bmp.height, upload: true, blob: op.blob };
+      } else if (op.op === "frame") {
+        const t = op.t ?? 3;
+        const blob = `sha256-frame-${t}`;
+        this.blobs.set(blob, await videoFrame(t, 1920, "image/png"));
+        f = { path: `${stem(op.path!)}.png`, type: "image/png", size: 1, w: 1920, h: 1080, upload: true, blob, frame: op.auto ? { auto: true, t } : { t } };
+      } else f = { ...files[i]! };
+      if (op.edit) f.edit = op.edit;
+      else if (op.op === "edit" || op.op === "frame") delete f.edit;
+      f.pending = [stem(f.path)];
+      if (i >= 0) files[i] = f;
+      else files.push(f);
+      // Rendering is asynchronous, like the worker's queue: pending first.
+      void this.render(ref, f);
+    }
+    return files.map((f) => ({ ...f }));
+  }
+
+  private async render(ref: RefBody, f: FileInfo & { blob?: string }) {
     await sleep(this.delay * 3);
-    const bmp = await createImageBitmap(this.blobs.get(key)!, { imageOrientation: "from-image" });
-    const [aw, ah] = ASPECT[slot]!;
-    const rot = rotation(edit?.rotate ?? 0);
-    const src = { width: bmp.width, height: bmp.height };
-    const c = edit?.crop ?? centeredCrop(src, aw / ah, rot);
-    const out = editedSize({ width: c.w, height: c.h }, rot);
-    const outputs = [];
-    for (const width of WIDTHS[slot]!.filter((w) => w <= Math.max(out.width, WIDTHS[slot]![0]!))) {
+    const preset = PRESETS[stem(f.path)];
+    if (!preset) return;
+    const bmp = await createImageBitmap(this.blobs.get(f.blob!)!, { imageOrientation: "from-image" });
+    const [aw, ah] = preset.aspect;
+    const rot = rotation(f.edit?.rotate ?? 0);
+    const c = f.edit?.crop ?? centeredCrop({ width: bmp.width, height: bmp.height }, aw / ah, rot);
+    for (const width of preset.widths) {
       const height = Math.round((width * ah) / aw);
       const cv = new OffscreenCanvas(width, height);
       const g = cv.getContext("2d")!;
@@ -94,13 +138,15 @@ export class DemoServer {
       g.rotate((rot * Math.PI) / 180);
       const [dw, dh] = rot === 90 || rot === 270 ? [height, width] : [width, height];
       g.drawImage(bmp, c.x, c.y, c.w, c.h, -dw / 2, -dh / 2, dw, dh);
-      const url = URL.createObjectURL(await cv.convertToBlob({ type: "image/webp", quality: 0.9 }));
-      outputs.push({ w: width, h: height, url });
+      const body = await cv.convertToBlob({ type: "image/webp", quality: 0.9 });
+      await fetch(publicURL(this.media, NAMESPACE, ref.kind, ref.id, fill(preset.to, { w: width })), { method: "PUT", body, headers: { "Content-Type": "image/webp" } });
     }
-    const editor_url = URL.createObjectURL(this.blobs.get(key)!);
-    const m: SlotManifest = { aspect: `${aw}:${ah}`, ...(edit ? { edit } : {}), dims: { w: src.width, h: src.height }, editor_url, outputs, pending: false };
-    this.slots.set(key, m);
-    return m;
+    delete f.pending;
+  }
+
+  private async unpublish(ref: RefBody, f: FileInfo) {
+    const preset = PRESETS[stem(f.path)];
+    for (const w of preset?.widths ?? []) await fetch(publicURL(this.media, NAMESPACE, ref.kind, ref.id, fill(preset!.to, { w })), { method: "DELETE" });
   }
 }
 
@@ -181,22 +227,4 @@ async function videoFrame(t: number, width: number, type: string): Promise<Blob>
   g.font = `600 ${Math.round(h / 8)}px system-ui, sans-serif`;
   g.fillText(`${t.toFixed(2)} s`, w * 0.05, h * 0.9);
   return cv.convertToBlob({ type, quality: 0.85 });
-}
-
-async function renderPoster(src: Blob, edit?: Edit) {
-  const bmp = await createImageBitmap(src, { imageOrientation: "from-image" });
-  const rot = rotation(edit?.rotate ?? 0);
-  const c = edit?.crop ?? centeredCrop({ width: bmp.width, height: bmp.height }, 16 / 9, rot);
-  const outputs = [];
-  for (const width of [480, 960, 1920]) {
-    const height = Math.round((width * 9) / 16);
-    const cv = new OffscreenCanvas(width, height);
-    const g = cv.getContext("2d")!;
-    g.translate(width / 2, height / 2);
-    g.rotate((rot * Math.PI) / 180);
-    const [dw, dh] = rot === 90 || rot === 270 ? [height, width] : [width, height];
-    g.drawImage(bmp, c.x, c.y, c.w, c.h, -dw / 2, -dh / 2, dw, dh);
-    outputs.push({ w: width, h: height, url: URL.createObjectURL(await cv.convertToBlob({ type: "image/webp", quality: 0.85 })) });
-  }
-  return outputs;
 }

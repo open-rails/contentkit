@@ -16,67 +16,50 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
 
-	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media/layout"
 )
 
-// UserKind is the kind of per-user folders ({tenant}/user/{id}/), erased by EraseUserTx.
-const UserKind = "user"
-
-// JobsConfig configures media's River jobs.
+// JobsConfig configures media's River jobs in the host.
 type JobsConfig struct {
-	Store Store
-	Kinds *Registry
-	// Tenants are the folders the periodic sweep pass covers; folders of
-	// kinds missing from Kinds are skipped.
-	Tenants []string
-	// Grace protects in-flight uploads, jobs and mid-stream viewers: a folder
-	// is swept only when its manifests are this old, and only objects this old
-	// are deleted. Default 24 h.
+	Store     Store
+	Registry  *Registry
+	Locker    Locker       // serializes manifest edits and sweep deletion; required
+	Processes ProcessQueue // the worker's queue (workqueue.Queue): Expose and Regenerate render through it
+	// Pool is the host database Hooks.ItemReady's transaction runs on;
+	// required with ItemReady.
+	Pool *pgxpool.Pool
+	// Grace protects in-flight uploads, jobs and mid-stream viewers: a
+	// folder's blobs are swept only when its manifest is this old, and only
+	// blobs this old are deleted. Default 24 h.
 	Grace time.Duration
-	// TempUploadTTL is how long a staged upload (temp/u-) no file references
-	// is kept. Keep it above the bucket's AbortIncompleteMultipartUpload age
-	// (1 day) plus the longest commit delay: backends may date a completed
-	// multipart object at its initiation. Default 48 h.
-	TempUploadTTL time.Duration
-	// EditorTTL is how long an editor view (temp/e-) is kept; an editor's
-	// read renders a swept one again. Default 7 days.
-	EditorTTL time.Duration
-	// SweepInterval is the periodic pass interval. Default 24 h.
+	// TempTTL is how long temp/ objects (in-flight server-side writes) are
+	// kept; above the bucket's 1-day abort-incomplete rule. Default 48 h.
+	TempTTL time.Duration
+	// SweepInterval is the periodic pass over every folder. Default 24 h.
 	SweepInterval time.Duration
-	// LateUploadWindow delays the second pass of a folder deletion, which
-	// removes PUTs and multipart completions that land after the first. It
-	// must exceed the longest upload presign TTL and the 1-day multipart
-	// abort rule. Default 25 h.
+	// LateUploadWindow delays a folder deletion's second pass, which removes
+	// uploads that land after the first; above the presign TTL and the
+	// 1-day multipart rule. Default 25 h.
 	LateUploadWindow time.Duration
 	Limiter          QuotaReleaser // releases a deleted item's quota; optional
-	// Locker serializes manifest edits and sweep deletion; required.
-	Locker Locker
-	// Resolver decides, with an anonymous actor, whether an item is hidden
-	// (Expose); required for Expose.
-	Resolver access.ContentResolver
-	// Hooks.PublicRemoved hears of deleted public/ keys (CDN purge);
-	// Hooks.SlotChanged of slot index changes.
-	Hooks Hooks
-	// Slots is the slot index the slot index job keeps (IndexSlots); nil
-	// keeps none. Binding the jobs to River backfills it once per tenant.
-	Slots      *SlotIndex
-	Queue      string // default "contentkit_media"
-	MaxWorkers int    // default 2
-	Logger     *slog.Logger
-	Now        func() time.Time // clock for grace decisions; default time.Now
+	Queue            string        // default DefaultQueue
+	MaxWorkers       int           // default 2
+	Logger           *slog.Logger
+	Now              func() time.Time
 }
 
-// Jobs is media's River contribution to the host: sweep, folder deletion and
-// publishing. Processing runs in the media worker (media/worker). Compose
-// RiverJobs once into the host client.
+// DefaultQueue is JobsConfig.Queue's default.
+const DefaultQueue = "contentkit_media"
+
+// Jobs is media's River contribution to the host: sweep, folder deletion,
+// Expose, and the worker's relays (ItemReady, PurgePublic). Processing runs
+// in the media worker (media/worker).
 type Jobs struct {
 	cfg       JobsConfig
 	manifests *Manifests
 
 	mu       sync.Mutex
-	regs     []func(*river.Config) error
 	composed bool
 	client   *river.Client[pgx.Tx]
 }
@@ -84,22 +67,17 @@ type Jobs struct {
 var ErrJobsNotBound = errors.New("media: River jobs are not composed into a client")
 
 func NewJobs(cfg JobsConfig) (*Jobs, error) {
-	if cfg.Store == nil || cfg.Kinds == nil {
-		return nil, errors.New("media: Jobs needs a Store and a Registry")
+	if cfg.Store == nil || cfg.Registry == nil || cfg.Locker == nil {
+		return nil, errors.New("media: Jobs needs a Store, a Registry and a Locker")
 	}
-	for _, t := range cfg.Tenants {
-		if !layout.ValidSegment(t) {
-			return nil, fmt.Errorf("media: invalid tenant %q", t)
-		}
+	if cfg.Registry.cfg.Hooks.ItemReady != nil && cfg.Pool == nil {
+		return nil, errors.New("media: Hooks.ItemReady needs JobsConfig.Pool")
 	}
 	if cfg.Grace <= 0 {
 		cfg.Grace = 24 * time.Hour
 	}
-	if cfg.TempUploadTTL <= 0 {
-		cfg.TempUploadTTL = 48 * time.Hour
-	}
-	if cfg.EditorTTL <= 0 {
-		cfg.EditorTTL = 7 * 24 * time.Hour
+	if cfg.TempTTL <= 0 {
+		cfg.TempTTL = 48 * time.Hour
 	}
 	if cfg.SweepInterval <= 0 {
 		cfg.SweepInterval = 24 * time.Hour
@@ -121,31 +99,17 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 	}
 	j := &Jobs{cfg: cfg}
 	var err error
-	if j.manifests, err = NewManifests(cfg.Store, cfg.Kinds, ManifestOptions{Locker: cfg.Locker, CacheSize: 256, Sweeps: j}); err != nil {
+	if j.manifests, err = NewManifests(cfg.Store, cfg.Registry, ManifestOptions{Locker: cfg.Locker, CacheBytes: 8 << 20, Sweeps: j}); err != nil {
 		return nil, err
 	}
 	return j, nil
 }
 
-// Queue is the shared media queue; registered workers may use it or add their own.
-func (j *Jobs) Queue() string { return j.cfg.Queue }
+// Manifests is the jobs' manifest store; hosts may share it.
+func (j *Jobs) Manifests() *Manifests { return j.manifests }
 
-// Register adds workers, queues or periodic jobs to the contribution. Media
-// packages (image variants, video) call it before RiverJobs is composed.
-func (j *Jobs) Register(fn func(*river.Config) error) error {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if j.composed {
-		return errors.New("media: Register after RiverJobs was composed")
-	}
-	j.regs = append(j.regs, fn)
-	return nil
-}
-
-// RiverJobs contributes media's workers, queue and periodic jobs (the sweep
-// pass, the slot index backfill) to the host's helpers/river composition,
-// and on binding schedules the backfill while a tenant's is incomplete. It
-// composes once.
+// RiverJobs contributes media's workers, queue and periodic sweep pass to
+// the host's helpers/river composition. It composes once.
 func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 	claimed := false
 	return riverhelpers.NewContribution("contentkit-media", func(_ context.Context, cfg *river.Config) error {
@@ -160,15 +124,15 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 		} else if !ok {
 			cfg.Queues[j.cfg.Queue] = river.QueueConfig{MaxWorkers: j.cfg.MaxWorkers}
 		}
-		for _, w := range []func() error{
+		for _, add := range []func() error{
 			func() error { return river.AddWorkerSafely(cfg.Workers, &sweepWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &sweepPassWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &deleteFolderWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &exposeWorker{j: j}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &slotIndexWorker{j: j}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &slotBackfillWorker{j: j}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &readyWorker{j: j}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &purgeWorker{j: j}) },
 		} {
-			if err := w(); err != nil {
+			if err := add(); err != nil {
 				return err
 			}
 		}
@@ -178,21 +142,11 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 				return sweepPassArgs{}, &river.InsertOpts{Queue: j.cfg.Queue, MaxAttempts: 3,
 					UniqueOpts: river.UniqueOpts{ByPeriod: interval}}
 			}, &river.PeriodicJobOpts{ID: "contentkit_media_sweep_pass"}))
-		cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(time.Hour),
-			func() (river.JobArgs, *river.InsertOpts) {
-				return slotBackfillArgs{}, &river.InsertOpts{Queue: j.cfg.Queue, UniqueOpts: PendingOnce}
-			}, &river.PeriodicJobOpts{ID: "contentkit_media_slot_backfill"}))
-		for _, reg := range j.regs {
-			if err := reg(cfg); err != nil {
-				return err
-			}
-		}
 		return nil
-	}, func(ctx context.Context, b riverhelpers.Binding) error {
+	}, func(_ context.Context, b riverhelpers.Binding) error {
 		j.mu.Lock()
 		j.client = b.Client
 		j.mu.Unlock()
-		j.scheduleBackfill(ctx)
 		return nil
 	}, func() error {
 		if claimed {
@@ -223,7 +177,7 @@ func (j *Jobs) opts(o *river.InsertOpts) *river.InsertOpts {
 	return o
 }
 
-// Insert enqueues a job on the bound client; an empty queue means Queue().
+// Insert enqueues a job on the bound client; an empty queue means the media queue.
 func (j *Jobs) Insert(ctx context.Context, args river.JobArgs, o *river.InsertOpts) (*rivertype.JobInsertResult, error) {
 	c, err := j.bound()
 	if err != nil {
@@ -232,72 +186,7 @@ func (j *Jobs) Insert(ctx context.Context, args river.JobArgs, o *river.InsertOp
 	return c.Insert(ctx, args, j.opts(o))
 }
 
-// InsertTx enqueues a job in the host's transaction.
-func (j *Jobs) InsertTx(ctx context.Context, tx pgx.Tx, args river.JobArgs, o *river.InsertOpts) (*rivertype.JobInsertResult, error) {
-	c, err := j.bound()
-	if err != nil {
-		return nil, err
-	}
-	return c.InsertTx(ctx, tx, args, j.opts(o))
-}
-
-// PendingOnce dedupes a job per args while one is waiting or running.
-var PendingOnce = river.UniqueOpts{ByArgs: true, ByState: []rivertype.JobState{rivertype.JobStateAvailable,
-	rivertype.JobStatePending, rivertype.JobStateRunning, rivertype.JobStateRetryable, rivertype.JobStateScheduled}}
-
-// RerunArgs are job args that can name the running job they follow.
-type RerunArgs interface {
-	river.JobArgs
-	FollowUp(id int64) river.JobArgs
-}
-
-// InsertFunc inserts one job (a River client's Insert, or InsertTx bound to a transaction).
-type InsertFunc func(ctx context.Context, args river.JobArgs, o *river.InsertOpts) (*rivertype.JobInsertResult, error)
-
-// InsertOnce enqueues args after the caller's change to their inputs. An
-// equal job still waiting to run absorbs it. River's uniqueness also covers
-// running jobs, which may have read the inputs before the change, so one
-// follow-up is queued behind a running equal job; a burst shares it. The
-// follow-up's worker calls WaitFor first.
-func InsertOnce(ctx context.Context, insert InsertFunc, args RerunArgs, o river.InsertOpts) error {
-	o.UniqueOpts = PendingOnce
-	var next river.JobArgs = args
-	for {
-		res, err := insert(ctx, next, &o)
-		if err != nil || !res.UniqueSkippedAsDuplicate || res.Job.State != rivertype.JobStateRunning {
-			return err
-		}
-		next = args.FollowUp(res.Job.ID)
-	}
-}
-
-// WaitFor snoozes a follow-up (InsertOnce) while the job it follows still
-// runs, so jobs for the same inputs do not overlap. The client is the one
-// running the job (river.ClientFromContext).
-func WaitFor(ctx context.Context, c *river.Client[pgx.Tx], id int64) error {
-	if id == 0 {
-		return nil
-	}
-	prev, err := c.JobGet(ctx, id)
-	if errors.Is(err, river.ErrNotFound) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	if prev.State == rivertype.JobStateRunning {
-		return river.JobSnooze(time.Second)
-	}
-	return nil
-}
-
-func (j *Jobs) insertOnce(ctx context.Context, args RerunArgs, o river.InsertOpts) error {
-	return InsertOnce(ctx, j.Insert, args, o)
-}
-
 func (j *Jobs) waitFor(ctx context.Context, id int64) error {
-	if id == 0 {
-		return nil
-	}
 	c, err := j.bound()
 	if err != nil {
 		return err
@@ -308,27 +197,27 @@ func (j *Jobs) waitFor(ctx context.Context, id int64) error {
 // ScheduleSweep sweeps the item's folder after the grace period; a sweep
 // already waiting for the folder absorbs it. Manifests calls it on every edit.
 func (j *Jobs) ScheduleSweep(ctx context.Context, ref contentref.ContentRef) error {
-	item, err := j.cfg.Kinds.Item(ref.Content())
+	item, err := j.cfg.Registry.Item(ref)
 	if err != nil {
 		return err
 	}
-	return j.insertOnce(ctx, sweepArgs{Prefix: item.Prefix()}, river.InsertOpts{ScheduledAt: j.cfg.Now().Add(j.cfg.Grace)})
+	return InsertOnce(ctx, j.Insert, sweepArgs{Prefix: item.Prefix()}, river.InsertOpts{ScheduledAt: j.cfg.Now().Add(j.cfg.Grace)})
 }
 
 // Deletion is one item to delete. Owner is its quota owner (UploadGrant.Owner),
 // "" for none; with a Limiter configured the owner's usage is released.
-// OperationID is only for Purge; queued deletion uses its River job ID.
+// OperationID is only for Purge; queued deletion uses its River job id.
 type Deletion struct {
 	Ref         contentref.ContentRef
 	Owner       string
 	OperationID string // required by Purge with a quota owner; stable across retries
 }
 
-// DeleteItemsTx deletes each item's whole folder (every version) through a
-// job enqueued in the host's delete transaction, and its slot index rows in
-// that transaction (no Hooks.SlotChanged). A second pass after
-// LateUploadWindow removes uploads that land after the first. The worker
-// records the refund from the manifest before deleting any objects.
+// DeleteItemsTx deletes each item's folder through a job enqueued in the
+// host's delete transaction: a host deletes every version item of a work,
+// and erasing an account deletes its accounts/user/{id}/ item. A second pass
+// after LateUploadWindow removes uploads that land after the first. The
+// worker records the quota refund from the manifest before deleting.
 func (j *Jobs) DeleteItemsTx(ctx context.Context, tx pgx.Tx, items ...Deletion) error {
 	c, err := j.bound()
 	if err != nil {
@@ -336,15 +225,11 @@ func (j *Jobs) DeleteItemsTx(ctx context.Context, tx pgx.Tx, items ...Deletion) 
 	}
 	params := make([]river.InsertManyParams, 0, len(items))
 	for _, d := range items {
-		ref := d.Ref
-		if ref.Version() != "" {
-			return fmt.Errorf("media: delete %s: folders hold every version; pass the work ref", ref)
-		}
-		prefix, err := folderPrefix(ref.TenantID, ref.ContentKind, ref.ContentID)
+		item, err := j.cfg.Registry.Item(d.Ref)
 		if err != nil {
 			return err
 		}
-		args := deleteFolderArgs{Prefix: prefix}
+		args := deleteFolderArgs{Prefix: item.Prefix()}
 		if j.cfg.Limiter != nil {
 			args.Owner = d.Owner
 		}
@@ -353,62 +238,104 @@ func (j *Jobs) DeleteItemsTx(ctx context.Context, tx pgx.Tx, items ...Deletion) 
 	if len(params) == 0 {
 		return nil
 	}
-	if j.cfg.Slots != nil {
-		refs := make([]contentref.ContentRef, len(items))
-		for i, d := range items {
-			refs[i] = d.Ref
-		}
-		if err := j.cfg.Slots.deleteTx(ctx, tx, refs); err != nil {
-			return err
-		}
-	}
 	_, err = c.InsertManyTx(ctx, tx, params)
 	return err
 }
 
-// EraseUserTx erases a user's media: the items the host maps to them plus
-// their user folder, {tenant}/user/{id}/.
-func (j *Jobs) EraseUserTx(ctx context.Context, tx pgx.Tx, tenant, userID string, items ...Deletion) error {
-	return j.DeleteItemsTx(ctx, tx, append(items, Deletion{Ref: contentref.New(tenant, UserKind, userID)})...)
+// Purge deletes an item's folder now: the explicit reset before
+// deliberately recreating an item, or an operator cleanup. A quota-owned
+// purge needs a caller-stable OperationID; retry a failed purge with it.
+// Hosts deleting content use DeleteItemsTx.
+func (j *Jobs) Purge(ctx context.Context, d Deletion) error {
+	item, err := j.cfg.Registry.Item(d.Ref)
+	if err != nil {
+		return err
+	}
+	if j.cfg.Limiter != nil && d.Owner != "" && d.OperationID == "" {
+		return errors.New("media: purge with a quota owner needs an operation id")
+	}
+	return j.deleteFolderLocked(ctx, item.Prefix(), d.Owner, "purge:"+item.Prefix()+d.OperationID)
 }
 
-// originalBytes is the quota the folder's manifests were charged at commit.
-func (j *Jobs) originalBytes(ctx context.Context, prefix string) (int64, error) {
-	objs, err := j.list(ctx, prefix)
+// deleteFolderLocked deletes prefix under its manifest lock, releasing the
+// owner's quota first (once per operation).
+func (j *Jobs) deleteFolderLocked(ctx context.Context, prefix, owner, operation string) error {
+	unlock, err := j.cfg.Locker.Lock(ctx, prefix+layout.ManifestName)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	ns, _, _, _ := parseFolder(prefix)
+	if j.cfg.Limiter != nil && owner != "" {
+		release, err := j.uploadBytes(ctx, prefix)
+		if err != nil {
+			return err
+		}
+		applied, err := j.cfg.Limiter.PrepareRelease(ctx, QuotaRelease{Tenant: ns, Folder: prefix, Owner: owner, Operation: operation, Bytes: release})
+		if err != nil || applied {
+			return err
+		}
+	}
+	if err := j.deleteFolder(ctx, prefix); err != nil {
+		return err
+	}
+	if j.cfg.Limiter != nil && owner != "" {
+		return j.cfg.Limiter.Release(ctx, ns, operation)
+	}
+	return nil
+}
+
+// uploadBytes is the quota the folder's manifest was charged at commit.
+func (j *Jobs) uploadBytes(ctx context.Context, prefix string) (int64, error) {
+	m, err := j.readManifest(ctx, prefix+layout.ManifestName)
+	if errors.Is(err, ErrNotFound) {
+		return 0, nil
+	} else if err != nil {
+		return 0, err
+	}
+	return m.uploadBytes(), nil
+}
+
+// parseFolder guards every job's prefix: exactly "{ns}/{kind}/{id}/".
+func parseFolder(prefix string) (ns, kind, id string, err error) {
+	parts := strings.Split(prefix, "/")
+	if len(parts) != 4 || parts[3] != "" || !layout.ValidSegment(parts[0]) || !layout.ValidSegment(parts[1]) ||
+		contentref.ValidateID(parts[2]) != nil {
+		return "", "", "", fmt.Errorf("media: invalid folder prefix %q", prefix)
+	}
+	return parts[0], parts[1], parts[2], nil
+}
+
+// Regenerate visits every item of kind (in its namespace) and asks the
+// worker to redo its stale outputs of preset ("" for all): after a deploy
+// changed a preset's spec or a producer's recipe. It returns the items
+// visited.
+func (j *Jobs) Regenerate(ctx context.Context, kind, preset string) (int, error) {
+	k, err := j.cfg.Registry.Kind(kind)
 	if err != nil {
 		return 0, err
 	}
-	var n int64
-	for key := range manifestKeys(objs) {
-		root, err := j.readRoot(ctx, key)
-		if errors.Is(err, ErrNotFound) {
+	if j.cfg.Processes == nil {
+		return 0, errors.New("media: Regenerate needs JobsConfig.Processes")
+	}
+	n := 0
+	root := k.ns + "/" + k.Name + "/"
+	last := ""
+	for o, err := range j.cfg.Store.List(ctx, root) {
+		if err != nil {
+			return n, err
+		}
+		id, rest, _ := strings.Cut(strings.TrimPrefix(o.Key, root), "/")
+		if id == last || rest != layout.ManifestName || contentref.ValidateID(id) != nil {
 			continue
 		}
-		if err != nil {
-			return 0, err
+		last = id
+		if err := j.cfg.Processes.Enqueue(ctx, ProcessJob{Ref: contentref.New(k.ns, k.Name, id), Preset: preset, Class: VideoBackfill}); err != nil {
+			return n, err
 		}
-		root.sections(func(_ string, m *Manifest) { n += m.OriginalBytes() })
+		n++
 	}
 	return n, nil
-}
-
-func folderPrefix(tenant, kind, id string) (string, error) {
-	if !layout.ValidSegment(tenant) || !layout.ValidSegment(kind) || contentref.ValidateID(id) != nil {
-		return "", fmt.Errorf("media: invalid folder %q/%q/%q", tenant, kind, id)
-	}
-	return tenant + "/" + kind + "/" + id + "/", nil
-}
-
-// parseFolder guards every job's prefix: exactly "{tenant}/{kind}/{id}/".
-func parseFolder(prefix string) (tenant, kind, id string, err error) {
-	parts := strings.Split(prefix, "/")
-	if len(parts) != 4 || parts[3] != "" {
-		return "", "", "", fmt.Errorf("media: invalid folder prefix %q", prefix)
-	}
-	if _, err := folderPrefix(parts[0], parts[1], parts[2]); err != nil {
-		return "", "", "", err
-	}
-	return parts[0], parts[1], parts[2], nil
 }
 
 type sweepArgs struct {
@@ -416,8 +343,7 @@ type sweepArgs struct {
 	After  int64  `json:"after,omitempty"` // the running sweep this one follows
 }
 
-func (sweepArgs) Kind() string { return "contentkit_media_sweep" }
-
+func (sweepArgs) Kind() string                      { return "contentkit_media_sweep" }
 func (a sweepArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
 
 type sweepWorker struct {
@@ -478,74 +404,105 @@ func (w *deleteFolderWorker) Timeout(*river.Job[deleteFolderArgs]) time.Duration
 	return 15 * time.Minute
 }
 
-// Work deletes the folder, then reconciles its slot index rows: the host's
-// transaction dropped them, and a slot index job racing the deletion may have
-// written them back.
 func (w *deleteFolderWorker) Work(ctx context.Context, job *river.Job[deleteFolderArgs]) (err error) {
 	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
-	if err := w.work(ctx, job); err != nil {
+	a := job.Args
+	if _, _, _, err := parseFolder(a.Prefix); err != nil {
+		return river.JobCancel(err)
+	}
+	owner := a.Owner
+	if a.Final {
+		owner = ""
+	}
+	if err := w.j.deleteFolderLocked(ctx, a.Prefix, owner, fmt.Sprintf("folder-delete:%s:%d", a.Prefix, job.JobRow.ID)); err != nil {
 		return err
 	}
-	return w.j.reindexFolder(ctx, job.Args.Prefix)
+	if a.Final {
+		return nil
+	}
+	_, err = w.j.Insert(ctx, deleteFolderArgs{Prefix: a.Prefix, Final: true}, &river.InsertOpts{
+		ScheduledAt: w.j.cfg.Now().Add(w.j.cfg.LateUploadWindow), UniqueOpts: PendingOnce})
+	return err
 }
 
-func (w *deleteFolderWorker) work(ctx context.Context, job *river.Job[deleteFolderArgs]) error {
-	tenant, _, _, err := parseFolder(job.Args.Prefix)
+// readyArgs asks the host to report an item's settled readiness
+// (Hooks.ItemReady); the media worker enqueues it after a job.
+type readyArgs struct {
+	Ref   contentref.ContentRef `json:"ref"`
+	After int64                 `json:"after,omitempty"`
+}
+
+func (readyArgs) Kind() string                      { return "contentkit_media_ready" }
+func (a readyArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
+
+type readyWorker struct {
+	river.WorkerDefaults[readyArgs]
+	j *Jobs
+}
+
+func (w *readyWorker) Work(ctx context.Context, job *river.Job[readyArgs]) (err error) {
+	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
+	hook := w.j.cfg.Registry.cfg.Hooks.ItemReady
+	if hook == nil {
+		return nil
+	}
+	if err := w.j.waitFor(ctx, job.Args.After); err != nil {
+		return err
+	}
+	item, err := w.j.cfg.Registry.Item(job.Args.Ref)
 	if err != nil {
 		return river.JobCancel(err)
 	}
-	unlock, err := w.j.cfg.Locker.Lock(ctx, job.Args.Prefix+layout.ManifestName)
-	if err != nil {
+	m, _, err := w.j.manifests.Get(ctx, item.Ref())
+	if errors.Is(err, ErrNotFound) {
+		return nil // deleted meanwhile
+	} else if err != nil {
 		return err
 	}
-	var removed []string
-	defer func() {
-		unlock()
-		w.j.publicRemoved(ctx, removed)
-	}()
-	operation := fmt.Sprintf("folder-delete:%s:%d", job.Args.Prefix, job.JobRow.ID)
-	if !job.Args.Final && w.j.cfg.Limiter != nil && job.Args.Owner != "" {
-		release, err := w.j.originalBytes(ctx, job.Args.Prefix)
-		if err != nil {
-			return err
-		}
-		applied, err := w.j.cfg.Limiter.PrepareRelease(ctx, QuotaRelease{
-			Tenant: tenant, Folder: job.Args.Prefix, Owner: job.Args.Owner, Operation: operation, Bytes: release,
-		})
-		if err != nil {
-			return err
-		}
-		if applied {
-			return nil
-		}
+	r := item.Kind().Readiness(m)
+	if r.State == StateProcessing {
+		return nil // a later job reports it
 	}
-	removed, err = w.j.deleteFolderObjects(ctx, job.Args.Prefix)
-	if err != nil {
-		return err
-	}
-	if job.Args.Final {
-		return nil
-	}
-	if _, err := w.j.Insert(ctx, deleteFolderArgs{Prefix: job.Args.Prefix, Final: true}, &river.InsertOpts{
-		ScheduledAt: w.j.cfg.Now().Add(w.j.cfg.LateUploadWindow), UniqueOpts: PendingOnce}); err != nil {
-		return err
-	}
-	if w.j.cfg.Limiter != nil && job.Args.Owner != "" {
-		return w.j.cfg.Limiter.Release(ctx, tenant, operation)
-	}
+	return pgx.BeginFunc(ctx, w.j.cfg.Pool, func(tx pgx.Tx) error { return hook(ctx, tx, item.Ref(), r) })
+}
+
+// purgeArgs relays public keys the worker overwrote or deleted to
+// Hooks.PurgePublic.
+type purgeArgs struct {
+	Keys []string `json:"keys"`
+}
+
+func (purgeArgs) Kind() string { return "contentkit_media_purge" }
+
+type purgeWorker struct {
+	river.WorkerDefaults[purgeArgs]
+	j *Jobs
+}
+
+func (w *purgeWorker) Work(ctx context.Context, job *river.Job[purgeArgs]) error {
+	w.j.purge(ctx, job.Args.Keys)
 	return nil
 }
 
-// DefaultQueue is JobsConfig.Queue's default.
-const DefaultQueue = "contentkit_media"
+// purge hands public keys to Hooks.PurgePublic as URLs.
+func (j *Jobs) purge(ctx context.Context, keys []string) {
+	purge := j.cfg.Registry.cfg.Hooks.PurgePublic
+	if purge == nil || len(keys) == 0 {
+		return
+	}
+	urls := make([]string, 0, len(keys))
+	for _, k := range keys {
+		urls = append(urls, strings.TrimRight(j.cfg.Registry.cfg.BaseURL, "/")+layout.URLPrefix+k)
+	}
+	purge(ctx, urls)
+}
 
 // HostQueue is the media worker's handle on the host's River schema: it
-// inserts the jobs the host runs on the worker's behalf: a folder's sweep
-// after the worker edits a manifest, and the slot index job after a slot
-// job. It inserts only.
+// inserts the jobs the host runs on the worker's behalf (a folder's sweep
+// after an edit, ItemReady and PurgePublic relays). It inserts only.
 type HostQueue struct {
 	client *river.Client[pgx.Tx]
-	kinds  *Registry
+	reg    *Registry
 	queue  string
 	grace  time.Duration
 }
@@ -553,8 +510,8 @@ type HostQueue struct {
 // NewHostQueue targets the host's River schema ("" is the connection's
 // search path) and media queue ("" is DefaultQueue); grace is the host's
 // JobsConfig.Grace (default 24 h).
-func NewHostQueue(pool *pgxpool.Pool, kinds *Registry, schema, queue string, grace time.Duration) (*HostQueue, error) {
-	if pool == nil || kinds == nil {
+func NewHostQueue(pool *pgxpool.Pool, reg *Registry, schema, queue string, grace time.Duration) (*HostQueue, error) {
+	if pool == nil || reg == nil {
 		return nil, errors.New("media: HostQueue needs a pool and a Registry")
 	}
 	if queue == "" {
@@ -567,7 +524,7 @@ func NewHostQueue(pool *pgxpool.Pool, kinds *Registry, schema, queue string, gra
 	if err != nil {
 		return nil, err
 	}
-	return &HostQueue{client: c, kinds: kinds, queue: queue, grace: grace}, nil
+	return &HostQueue{client: c, reg: reg, queue: queue, grace: grace}, nil
 }
 
 func (h *HostQueue) insert(ctx context.Context, args river.JobArgs, o *river.InsertOpts) (*rivertype.JobInsertResult, error) {
@@ -577,35 +534,33 @@ func (h *HostQueue) insert(ctx context.Context, args river.JobArgs, o *river.Ins
 
 // ScheduleSweep implements SweepScheduler like Jobs.ScheduleSweep.
 func (h *HostQueue) ScheduleSweep(ctx context.Context, ref contentref.ContentRef) error {
-	item, err := h.kinds.Item(ref.Content())
+	item, err := h.reg.Item(ref)
 	if err != nil {
 		return err
 	}
 	return InsertOnce(ctx, h.insert, sweepArgs{Prefix: item.Prefix()}, river.InsertOpts{ScheduledAt: time.Now().Add(h.grace)})
 }
 
-// IndexSlots implements SlotIndexer like Jobs.IndexSlots.
-func (h *HostQueue) IndexSlots(ctx context.Context, ref contentref.ContentRef) error {
-	item, err := h.kinds.Item(ref.Content())
-	if err != nil || len(item.Kind().Slots) == 0 {
+// Ready asks the host to report ref's readiness (Hooks.ItemReady) once it
+// has settled.
+func (h *HostQueue) Ready(ctx context.Context, ref contentref.ContentRef) error {
+	if _, err := h.reg.Item(ref); err != nil {
 		return err
 	}
-	return InsertOnce(ctx, h.insert, slotIndexArgs{Ref: ref.Content()}, river.InsertOpts{})
+	return InsertOnce(ctx, h.insert, readyArgs{Ref: ref}, river.InsertOpts{})
+}
+
+// Purge asks the host to purge public keys from its CDN (Hooks.PurgePublic).
+func (h *HostQueue) Purge(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	_, err := h.insert(ctx, purgeArgs{Keys: keys}, &river.InsertOpts{})
+	return err
 }
 
 // ExposeTx enqueues the host's Expose of refs in tx, a transaction on the
-// host database, like Jobs.ExposeTx: Hooks.ItemReady making an item visible.
+// host database, like Jobs.ExposeTx.
 func (h *HostQueue) ExposeTx(ctx context.Context, tx pgx.Tx, refs ...contentref.ContentRef) error {
-	params := make([]river.InsertManyParams, 0, len(refs))
-	for _, ref := range refs {
-		if _, err := h.kinds.Item(ref.Content()); err != nil {
-			return err
-		}
-		params = append(params, river.InsertManyParams{Args: exposeArgs{Ref: ref.Content()}, InsertOpts: &river.InsertOpts{Queue: h.queue}})
-	}
-	if len(params) == 0 {
-		return nil
-	}
-	_, err := h.client.InsertManyTx(ctx, tx, params)
-	return err
+	return exposeTx(ctx, h.reg, tx, h.client, h.queue, refs)
 }

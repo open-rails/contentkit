@@ -1,42 +1,57 @@
 // @vitest-environment jsdom
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { expect, it } from "vitest";
-import { FakeServer, bytes } from "../test/fake.js";
-import { UploadClient } from "./client.js";
-import { useCrop, useUpload, useUploadQueue } from "./react.js";
+import { FakeServer, bytes, fakeClient as client } from "../test/fake.js";
+import { useCrop, useRead, useUpload, useUploadQueue } from "./react.js";
 
-const ref = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000001", version: "en" };
-
-function client(s: FakeServer) {
-  return new UploadClient({ endpoint: "http://x/api", fetch: s.fetch, transport: s.transport, retryDelay: () => 0 });
-}
+const ref = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000001" };
 
 it("useUploadQueue uploads, reorders and commits", async () => {
   const s = new FakeServer();
   const c = client(s);
-  const { result } = renderHook(() => useUploadQueue(c, { ref }));
+  const { result } = renderHook(() => useUploadQueue(c, { ref, path: "originals/{name}" }));
   act(() => {
     result.current.add([1, 2].map((n) => new File([bytes(100, n)], `${n}.png`, { type: "image/png" })));
   });
   await waitFor(() => expect(result.current.ready).toBe(true));
   act(() => result.current.move(result.current.items[1]!.id, 0));
-  let files: { name: string }[] = [];
+  let files: { path: string }[] = [];
   await act(async () => {
     files = await result.current.commit();
   });
-  expect(files.map((f) => f.name)).toEqual(["2.png", "1.png"]);
+  expect(files.map((f) => f.path)).toEqual(["originals/2.png", "originals/1.png"]);
   expect(result.current.items.every((i) => i.status === "committed")).toBe(true);
 });
 
-it("useUpload reports progress and the result", async () => {
+it("useUpload reports progress and the result; with put it commits and waits", async () => {
   const s = new FakeServer();
   const { result } = renderHook(() => useUpload(client(s)));
   await act(async () => {
-    await result.current.upload(new File([bytes(100)], "c.png", { type: "image/png" }), { ref, slot: "cover" });
+    await result.current.upload(new File([bytes(100)], "c.png", { type: "image/png" }), { ref, path: "originals/c.png" });
   });
   expect(result.current.status).toBe("done");
-  expect(result.current.result?.name).toMatch(/^sha256-/);
+  expect(result.current.result).toMatchObject({ path: "originals/c.png", blob: expect.stringMatching(/^sha256-/) });
   expect(result.current.progress?.loaded).toBe(100);
+  expect(s.commits).toEqual([]);
+
+  await act(async () => {
+    await result.current.upload(new File([bytes(100, 2)], "c.png", { type: "image/png" }), { ref, path: "cover", put: { edit: { rotate: 180 } } });
+  });
+  expect(result.current.result).toMatchObject({ path: "cover.png", file: { path: "cover.png", edit: { rotate: 180 } } });
+  expect(result.current.progress?.phase).toBe("processing");
+});
+
+it("useRead reads the item and refetches on reload", async () => {
+  const s = new FakeServer();
+  s.seed(ref, [{ path: "originals/1.png", type: "image/png", size: 3 }]);
+  const c = client(s);
+  const { result } = renderHook(() => useRead(c, ref, { editor: true }));
+  await waitFor(() => expect(result.current.read?.files.map((f) => f.path)).toEqual(["originals/1.png"]));
+  act(() => result.current.reload());
+  await waitFor(() => expect(s.calls.filter((x) => x === "/read")).toHaveLength(2));
+  const given = renderHook(() => useRead(c, ref, { read: null }));
+  expect([given.result.current.read, given.result.current.loading]).toEqual([null, false]);
+  expect(s.calls.filter((x) => x === "/read")).toHaveLength(2);
 });
 
 it("useCrop keeps a crop in original pixels at the aspect and yields the edit", () => {
