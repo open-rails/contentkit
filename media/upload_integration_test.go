@@ -374,7 +374,7 @@ func TestNamedAndHiddenNewItem(t *testing.T) {
 	if u, _ := m.Get(p); !m.Hidden || u.Pending != nil {
 		t.Fatalf("hidden new item: hidden %v pending %v", m.Hidden, u.Pending)
 	}
-	if _, err := f.up.Commit(context.Background(), f.editor, post, []media.Op{{Op: media.OpPut, Path: "inline/mine.png", Blob: blob}}); code(err) != media.CodeInvalid {
+	if _, err := f.up.Commit(context.Background(), f.editor, post, []media.Op{{Op: media.OpPut, Path: "inline/mine.png", Blob: blobOf(png(1))}}); code(err) != media.CodeInvalid {
 		t.Fatalf("a client-chosen name: %v", err)
 	}
 }

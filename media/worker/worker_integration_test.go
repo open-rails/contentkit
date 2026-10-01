@@ -805,12 +805,13 @@ func (h *host) imageJob(t *testing.T) (state string, attempt, errs, snoozes int)
 	return h.job(t, workqueue.ImageArgs{}.Kind())
 }
 
-// job reports the state of the worker's latest job of kind.
+// job reports the state of the worker's latest job of kind ("" before one is
+// enqueued: the place job enqueues processing).
 func (h *host) job(t *testing.T, kind string) (state string, attempt, errs, snoozes int) {
 	t.Helper()
 	err := h.pool.QueryRow(context.Background(), `SELECT state, attempt, coalesce(cardinality(errors), 0), coalesce((metadata->>'snoozes')::int, 0)
 		FROM `+h.workers+`.river_job WHERE kind = $1 ORDER BY id DESC LIMIT 1`, kind).Scan(&state, &attempt, &errs, &snoozes)
-	if err != nil {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatal(err)
 	}
 	return state, attempt, errs, snoozes
