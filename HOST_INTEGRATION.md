@@ -502,7 +502,7 @@ way.
 | `rename {path, to}` | Renames an upload within its Upload, and its outputs. |
 | `remove {path}` | Removes an upload and its outputs (cancelling its processing). |
 | `attach {path, index?, meta?}` | Makes an unattached upload part of the item. |
-| `copy {from: {id, path}, to?, edit?}` | Copies an upload within the kind, including the current item. Copies within an Upload preserve current private outputs; another Upload or a supplied edit renders its own presets from the original. |
+| `copy {from: {id, path}, to?, edit?}` | Copies an upload within the kind, including the current item. Copies within an Upload preserve current private outputs; another Upload or a supplied edit renders its own presets from the original. Blobs copied from another item are reserved like uploads (rate limits, pending quota) before they move. |
 | `frame {path, t \| auto}` | Fills an upload from a frame of its `Frames` video; a new video grabs again. |
 | `meta {meta}` | Sets the template values (`{title}` in download names). |
 | `regenerate {preset?, force?}` | Asks the worker to redo stale outputs (all with `force`). |

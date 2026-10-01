@@ -10,8 +10,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -354,6 +356,60 @@ func TestCopy(t *testing.T) {
 	}
 	if _, err := f.up.Commit(ctx, f.editor, b, []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: page.Path}, To: "cover"}}); code(err) != media.CodeNotFound {
 		t.Fatalf("cover copy without its original: %v", err)
+	}
+}
+
+// A copy is reserved like an upload, before any byte moves: past the
+// uploader's rate limit nothing is copied, so a refused or failed commit
+// leaves no unmetered blobs. An identical blob the sweep may take first is
+// copied again (refreshed) rather than reused.
+func TestCopyIsMetered(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	f.visible(2)
+	ctx := context.Background()
+	a, b := f.ref("gallery", 1), f.ref("gallery", 2)
+	f.put(a, "originals/1.png", "image/png", png(1))
+	f.put(a, "originals/2.png", "image/png", png(2))
+	f.produce(a)
+	pool := pgtest.Pool(t, nil)
+	limiter, err := media.NewPGLimiter(pool, pgtest.Schema(t, ctx, pool), media.PGLimits{FilesPerHour: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, err := media.NewUploads(media.UploadOptions{Store: f.env.Store, Manifests: f.ms, Queue: f.q, Limiter: limiter, Grace: 8 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyOf := func(path string) []media.Op {
+		return []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: path}}}
+	}
+	item, _ := f.reg.Item(b)
+	one, _ := item.Blob(blobOf(png(1)))
+	two, _ := item.Blob(blobOf(png(2)))
+	if _, err := up.Commit(ctx, f.editor, b, copyOf("originals/1.png")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := up.Commit(ctx, f.editor, b, copyOf("originals/2.png")); code(err) != media.CodeRate || f.exists(two) {
+		t.Fatalf("a copy past the rate limit: %v, copied %v", err, f.exists(two))
+	}
+
+	// Unreferenced and older than the grace period: copied again.
+	f.commit(b, media.Op{Op: media.OpRemove, Path: "originals/1.png"})
+	old, err := f.env.Store.Head(ctx, one)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(9 * time.Second)
+	unlimited, err := media.NewUploads(media.UploadOptions{Store: f.env.Store, Manifests: f.ms, Queue: f.q, Grace: 8 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unlimited.Commit(ctx, f.editor, b, copyOf("originals/1.png")); err != nil {
+		t.Fatal(err)
+	}
+	if obj, err := f.env.Store.Head(ctx, one); err != nil || !obj.LastModified.After(old.LastModified) {
+		t.Fatalf("an unprotected blob was reused: %v %v", obj.LastModified, err)
 	}
 }
 

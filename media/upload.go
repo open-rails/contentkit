@@ -377,7 +377,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	if err != nil {
 		return nil, err
 	}
-	copies, err := u.copies(ctx, actor, item, ops)
+	copies, copied, err := u.copies(ctx, actor, grant, item, ops)
 	if err != nil {
 		return nil, err
 	}
@@ -472,7 +472,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		}
 		return nil, err
 	}
-	if err := settle(context.WithoutCancel(ctx), Settlement{Keys: keys, Delta: delta - charged}); err != nil {
+	if err := settle(context.WithoutCancel(ctx), Settlement{Keys: append(keys, copied...), Delta: delta - charged}); err != nil {
 		return nil, err
 	}
 	if c, ok := u.o.Queue.(ProcessCanceler); ok && removesPending(prior, ops) {
@@ -623,16 +623,24 @@ func (u *Uploads) protected(ctx context.Context, item Item, blob string, obj Obj
 func commitMargin(grace time.Duration) time.Duration { return min(grace/4, time.Hour) }
 
 // copies reads each copy op's source upload and outputs from the other item
-// and copies their blobs into item, keyed by op index.
-func (u *Uploads) copies(ctx context.Context, actor access.Actor, item Item, ops []Op) (map[int][]File, error) {
+// and copies their blobs into item, keyed by op index. An identical blob the
+// sweep cannot take first is reused, as verify does for puts; any other is
+// copied (over an old one: the same bytes, refreshed). Each copy is
+// reserved like an upload (rate limits and pending quota; the commit
+// charges it), so a failed commit leaves no unmetered bytes; it returns the
+// reserved keys.
+func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGrant, item Item, ops []Op) (map[int][]File, []string, error) {
 	out := map[int][]File{}
+	var reserved []string
+	seen := map[string]bool{}
+	limited := u.o.Limiter != nil && !grant.Exempt
 	for n, op := range ops {
 		if op.Op != OpCopy {
 			continue
 		}
 		src, err := u.reg.Ref(item.Kind().Name, op.From.ID)
 		if err != nil {
-			return nil, uploadErr(CodeInvalid, "copy from item %q: %v", op.From.ID, err)
+			return nil, nil, uploadErr(CodeInvalid, "copy from item %q: %v", op.From.ID, err)
 		}
 		if src == item.Ref() {
 			continue // read the source under the destination's manifest lock
@@ -640,13 +648,13 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, item Item, ops
 		from, _ := u.reg.Item(src)
 		m, _, err := u.o.Manifests.Get(ctx, src)
 		if errors.Is(err, ErrNotFound) {
-			return nil, uploadErr(CodeNotFound, "item %s has no media", op.From.ID)
+			return nil, nil, uploadErr(CodeNotFound, "item %s has no media", op.From.ID)
 		} else if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		files := copyFiles(m, op.From.Path)
 		if len(files) == 0 {
-			return nil, uploadErr(CodeNotFound, "no upload %q in item %s", op.From.Path, op.From.ID)
+			return nil, nil, uploadErr(CodeNotFound, "no upload %q in item %s", op.From.Path, op.From.ID)
 		}
 		to, _, _, _, _ := item.Kind().upload(cmpOr(op.To, op.From.Path))
 		group, _, _, _, _ := item.Kind().upload(op.From.Path)
@@ -665,16 +673,37 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, item Item, ops
 		for _, b := range blobs {
 			srcKey, _ := from.Blob(b)
 			dstKey, _ := item.Blob(b)
-			if _, err := u.o.Store.Head(ctx, dstKey); err == nil {
+			if seen[dstKey] {
 				continue
 			}
+			seen[dstKey] = true
+			if obj, err := u.o.Store.Head(ctx, dstKey); err == nil {
+				if ok, err := u.protected(ctx, item, b, obj); err != nil {
+					return nil, nil, err
+				} else if ok {
+					continue
+				}
+			} else if !errors.Is(err, ErrNotFound) {
+				return nil, nil, err
+			}
+			if limited {
+				obj, err := u.o.Store.Head(ctx, srcKey)
+				if err != nil {
+					return nil, nil, err
+				}
+				if err := u.o.Limiter.Reserve(ctx, Reservation{Tenant: item.Ref().TenantID, Uploader: uploaderID(actor),
+					Owner: grant.Owner, Key: dstKey, Size: obj.Size}); err != nil {
+					return nil, nil, err
+				}
+				reserved = append(reserved, dstKey)
+			}
 			if _, err := u.o.Store.Copy(ctx, srcKey, dstKey, CopyOptions{}); err != nil {
-				return nil, fmt.Errorf("media: copy %s: %w", srcKey, err)
+				return nil, nil, fmt.Errorf("media: copy %s: %w", srcKey, err)
 			}
 		}
 		out[n] = files
 	}
-	return out, nil
+	return out, reserved, nil
 }
 
 // Frame grabs a still of the video upload at path for the frame picker.

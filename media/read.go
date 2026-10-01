@@ -287,8 +287,11 @@ func (g *Grant) sign(blob, download string, dl bool) (string, error) {
 }
 
 // EditorView is the blob name of an image upload's editor view: the hash of
-// its source and the editor spec. Only editor reads return it; the sweep
-// removes it after the grace period and an editor read renders it again.
+// its source and the editor spec, so a read finds it without rendering. It
+// is the one private blob not named by its bytes: only the worker writes it,
+// and nothing references, copies or reuses it. Only editor reads return it;
+// the sweep removes it after the grace period and an editor read renders it
+// again.
 func (r *Registry) EditorView(f File) string {
 	if !f.IsUpload() || f.Blob == "" || f.Gone || !isImageType(f.Type) {
 		return ""
