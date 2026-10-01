@@ -7,7 +7,7 @@ export const MAX_PART_SIZE = 16777216;
 export type ErrorCode = "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "incomplete" | "not_uploaded" | "too_many_files" | "too_large" | "quota_exceeded" | "type_not_allowed" | "checksum_mismatch" | "rate_limited" | "unavailable" | "image_too_small" | "image_too_large" | "image_unreadable" | "animation_not_allowed" | "animation_too_long" | "animation_unsupported" | "video_too_long" | "video_too_large" | "video_over_budget" | "internal_error";
 
 export type OpName = "put" | "edit" | "move" | "rename" | "remove" | "attach" | "copy" | "frame" | "meta" | "regenerate";
-export type Access = "full" | "preview" | "none";
+export type Access = "full" | "none";
 export type ItemState = "ready" | "processing" | "failed";
 export type EncodePhase = "queued" | "downloading" | "probing" | "encoding" | "muxing" | "uploading" | "publishing" | "images";
 
@@ -175,9 +175,9 @@ export interface EncodeProgress {
 
 export interface ReadResult {
   access: Access;
-  preview_limit: number;
   expires: number;
   meta?: Record<string, unknown>;
+  previews?: string[];
   total: number;
   offset: number;
   limit: number;
@@ -194,7 +194,6 @@ export interface FileInfo {
   w?: number;
   h?: number;
   dur?: number;
-  teaser?: boolean;
   download?: string;
   url?: string;
   locked?: boolean;

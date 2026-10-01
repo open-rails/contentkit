@@ -4,10 +4,12 @@
 //
 //	/v1/{ns}/{kind}/{id}/public/{name}         to anyone; when missing, {ns}/{kind}/_default/public/{name}
 //	                                           if a Default declares the name
-//	/v1/{ns}/{kind}/{id}/private/sha256-{hex}  with an unexpired item or file token (?t= or an mt cookie)
+//	/v1/{ns}/{kind}/{id}/private/sha256-{hex}  with the item's unexpired token (?t= or an mt cookie);
+//	                                           ?dl={name} serves it as a download under that name
 //
-// Everything else and every denial is one identical no-store 404; token
-// denials are decided before any bucket access. It reads no manifests and no
+// A token opens every private file of its item or none. Everything else and
+// every denial is one identical no-store 404; token denials are decided
+// before any bucket access. It keeps no state, reads no manifests and no
 // databases, and knows nothing of apps, presets or originals.
 package agent
 
@@ -129,15 +131,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := o.key(o.id)
-	cacheControl, disposition := publicCacheControl, ""
+	cacheControl := publicCacheControl
+	var dl *string // a private file's unsigned download name
 	if o.area == "private" {
-		var err error
-		if disposition, err = h.authorize(r, key); err != nil {
+		if err := h.authorize(r, key); err != nil {
 			h.cfg.Logger.Debug("media-access: denied", "key", key, "reason", err)
 			h.fail(w, http.StatusNotFound)
 			return
 		}
 		cacheControl = privateCacheControl
+		if q := r.URL.Query(); q.Has("dl") {
+			dl = new(q.Get("dl"))
+		}
 	}
 	resp, err := h.fetch(r, key)
 	if err == nil && missing(resp.StatusCode) && o.area == "public" && h.hasDefault(o) {
@@ -153,7 +158,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	h.relay(w, r, key, resp, cacheControl, disposition)
+	h.relay(w, r, key, resp, cacheControl, dl)
 }
 
 type object struct{ ns, kind, id, area, name string }
@@ -184,35 +189,24 @@ func (h *Handler) parse(r *http.Request) (object, bool) {
 var errNoToken = errors.New("no token")
 
 // authorize accepts the URL token or any mt cookie (a browser may send
-// several) for key. With dl only the URL token counts, signed for that name.
-func (h *Handler) authorize(r *http.Request, key string) (disposition string, err error) {
-	q, now := r.URL.Query(), time.Now()
-	t := q.Get("t")
-	if q.Has("dl") {
-		dl := q.Get("dl")
-		if t == "" || dl == "" {
-			return "", errNoToken
-		}
-		if err := h.cfg.Ring.VerifyPrivate(t, key, dl, now); err != nil {
-			return "", err
-		}
-		return token.Attachment(dl), nil
-	}
+// several) of key's item.
+func (h *Handler) authorize(r *http.Request, key string) (err error) {
+	now := time.Now()
 	var toks []string
-	if t != "" {
+	if t := r.URL.Query().Get("t"); t != "" {
 		toks = append(toks, t)
 	}
 	for _, c := range r.CookiesNamed(token.CookieName) {
 		toks = append(toks, c.Value)
 	}
 	for _, tok := range toks {
-		e := h.cfg.Ring.VerifyPrivate(tok, key, "", now)
+		e := h.cfg.Ring.VerifyPrivate(tok, key, now)
 		if e == nil {
-			return "", nil
+			return nil
 		}
 		err = cmp.Or(err, e)
 	}
-	return "", cmp.Or(err, errNoToken)
+	return cmp.Or(err, errNoToken)
 }
 
 func (h *Handler) hasDefault(o object) bool {
@@ -246,7 +240,8 @@ func (h *Handler) fetch(r *http.Request, key string) (*http.Response, error) {
 	return h.cfg.Client.Do(up)
 }
 
-func (h *Handler) relay(w http.ResponseWriter, r *http.Request, key string, resp *http.Response, cacheControl, disposition string) {
+// relay streams the bucket's answer, as an attachment when dl is set.
+func (h *Handler) relay(w http.ResponseWriter, r *http.Request, key string, resp *http.Response, cacheControl string, dl *string) {
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusPartialContent, http.StatusNotModified,
 		http.StatusPreconditionFailed, http.StatusRequestedRangeNotSatisfiable:
@@ -267,8 +262,8 @@ func (h *Handler) relay(w http.ResponseWriter, r *http.Request, key string, resp
 		}
 	}
 	hdr.Set("Cache-Control", cacheControl)
-	if disposition != "" {
-		hdr.Set("Content-Disposition", disposition)
+	if dl != nil {
+		hdr.Set("Content-Disposition", layout.Disposition(*dl, resp.Header.Get("Content-Type")))
 	}
 	securityHeaders(hdr)
 	w.WriteHeader(resp.StatusCode)

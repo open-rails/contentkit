@@ -37,62 +37,31 @@ func TestVerifyPrivate(t *testing.T) {
 	const item = "doujins/gallery/456/private/"
 	a, b, other := item+"sha256-3a", item+"sha256-7d", "doujins/gallery/789/private/sha256-3a"
 	whole := r.Sign(token.ItemScope("doujins", "gallery", "456"), exp)
-	file := r.Sign(token.FileScope(a), exp)
-	dl := r.Sign(token.DownloadScope(a, "Title.zip"), exp)
 	for _, c := range []struct {
-		tok, key, dl string
-		want         error
+		tok, key string
+		want     error
 	}{
-		{whole, a, "", nil},
-		{whole, b, "", nil},
-		{ring(t, k1, nil).Sign(token.ItemScope("doujins", "gallery", "456"), exp), b, "", nil},
-		{file, a, "", nil},
-		{dl, a, "Title.zip", nil},
-		{whole, other, "", token.ErrInvalid},
-		{file, b, "", token.ErrInvalid},
-		{r.Sign(item, exp), a, "", token.ErrInvalid}, // the old folder scope
-		{whole, a, "Title.zip", token.ErrInvalid},
-		{file, a, "Title.zip", token.ErrInvalid},
-		{dl, a, "Other.zip", token.ErrInvalid},
-		{dl, a, "", token.ErrInvalid},
-		{whole, "doujins/gallery/456/public/cover-460.webp", "", token.ErrInvalid},
-		{whole, "doujins/gallery/456/private/", "", token.ErrInvalid},
-		{whole, "doujins/gallery/456/private/a/b", "", token.ErrInvalid},
-		{whole, "doujins/gallery/456", "", token.ErrInvalid},
-		{r.Sign(token.ItemScope("doujins", "gallery", "456"), now), a, "", token.ErrExpired},
-		{ring(t, token.Key{ID: "k3", Secret: k1.Secret}, nil).Sign(token.FileScope(a), exp), a, "", token.ErrUnknownKey},
-		{token.Ring{}.Sign(token.FileScope(a), exp), a, "", token.ErrMalformed}, // a zero Ring signs with an empty key id
+		{whole, a, nil},
+		{whole, b, nil},
+		{ring(t, k1, nil).Sign(token.ItemScope("doujins", "gallery", "456"), exp), b, nil},
+		{whole, other, token.ErrInvalid},
+		{r.Sign(a, exp), a, token.ErrInvalid},                 // a file's own key: no such scope
+		{r.Sign(a+"#dl=Title.zip", exp), a, token.ErrInvalid}, // nor a download's
+		{r.Sign(item, exp), a, token.ErrInvalid},              // the old folder scope
+		{whole, "doujins/gallery/456/public/cover-460.webp", token.ErrInvalid},
+		{whole, "doujins/gallery/456/private/", token.ErrInvalid},
+		{whole, "doujins/gallery/456/private/a/b", token.ErrInvalid},
+		{whole, "doujins/gallery/456", token.ErrInvalid},
+		{r.Sign(token.ItemScope("doujins", "gallery", "456"), now), a, token.ErrExpired},
+		{ring(t, token.Key{ID: "k3", Secret: k1.Secret}, nil).Sign(token.ItemScope("doujins", "gallery", "456"), exp), a, token.ErrUnknownKey},
+		{token.Ring{}.Sign(token.ItemScope("doujins", "gallery", "456"), exp), a, token.ErrMalformed}, // a zero Ring signs with an empty key id
 	} {
-		if err := r.VerifyPrivate(c.tok, c.key, c.dl, now); !errors.Is(err, c.want) {
-			t.Errorf("VerifyPrivate(%.12s…, %s, %q) = %v, want %v", c.tok, c.key, c.dl, err, c.want)
+		if err := r.VerifyPrivate(c.tok, c.key, now); !errors.Is(err, c.want) {
+			t.Errorf("VerifyPrivate(%.12s…, %s) = %v, want %v", c.tok, c.key, err, c.want)
 		}
 	}
-	if err := (token.Ring{}).VerifyPrivate(token.Ring{}.Sign(token.FileScope(a), exp), a, "", now); !errors.Is(err, token.ErrMalformed) {
+	if err := (token.Ring{}).VerifyPrivate(token.Ring{}.Sign(token.ItemScope("doujins", "gallery", "456"), exp), a, now); !errors.Is(err, token.ErrMalformed) {
 		t.Fatalf("a zero Ring verified its own token: %v", err)
-	}
-}
-
-func TestDownloadNameBinding(t *testing.T) {
-	r := ring(t, k1, nil)
-	now := time.Unix(1_800_000_000, 0)
-	exp := token.Expiry(now, time.Hour, 0)
-	zip := item + "/private/sha256-e0"
-	name := "[Artist] Title (English).zip"
-	dl := r.Sign(token.DownloadScope(zip, name), exp)
-	if err := r.VerifyPrivate(dl, zip, name, now); err != nil {
-		t.Fatal(err)
-	}
-	for _, altered := range []string{"[Artist] Title (English) .zip", "evil.exe", ""} {
-		if err := r.VerifyPrivate(dl, zip, altered, now); !errors.Is(err, token.ErrInvalid) {
-			t.Fatalf("dl %q: %v", altered, err)
-		}
-	}
-	// An item or file token never authorizes a chosen download name.
-	if err := r.VerifyPrivate(r.Sign(item, exp), zip, name, now); !errors.Is(err, token.ErrInvalid) {
-		t.Fatalf("item token with dl: %v", err)
-	}
-	if got := token.Attachment("[A] 日本語 \"x\".zip"); got != `attachment; filename="[A] ___ _x_.zip"; filename*=UTF-8''%5BA%5D%20%E6%97%A5%E6%9C%AC%E8%AA%9E%20%22x%22.zip` {
-		t.Fatal(got)
 	}
 }
 
@@ -119,35 +88,35 @@ func TestExpiryWindowsAndRotation(t *testing.T) {
 		t.Fatal("tokens within one window must be identical")
 	}
 	exp := token.Expiry(base, time.Hour, window)
-	if err := r1.VerifyPrivate(a, page, "", exp.Add(-time.Second)); err != nil {
+	if err := r1.VerifyPrivate(a, page, exp.Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if err := r1.VerifyPrivate(a, page, "", exp); !errors.Is(err, token.ErrExpired) {
+	if err := r1.VerifyPrivate(a, page, exp); !errors.Is(err, token.ErrExpired) {
 		t.Fatalf("at exp: %v", err)
 	}
 
 	rotated := ring(t, k2, &k1)
-	if err := rotated.VerifyPrivate(a, page, "", base); err != nil {
+	if err := rotated.VerifyPrivate(a, page, base); err != nil {
 		t.Fatalf("previous key refused after rotation: %v", err)
 	}
 	if !strings.HasPrefix(rotated.Sign(item, exp), "k2.") {
 		t.Fatal("rotation must sign with the new key")
 	}
-	if err := ring(t, k2, nil).VerifyPrivate(a, page, "", base); !errors.Is(err, token.ErrUnknownKey) {
+	if err := ring(t, k2, nil).VerifyPrivate(a, page, base); !errors.Is(err, token.ErrUnknownKey) {
 		t.Fatalf("retired key: %v", err)
 	}
 	forged := token.Key{ID: "k1", Secret: bytes.Repeat([]byte{9}, 32)}
-	if err := r1.VerifyPrivate(ring(t, forged, nil).Sign(item, exp), page, "", base); !errors.Is(err, token.ErrInvalid) {
+	if err := r1.VerifyPrivate(ring(t, forged, nil).Sign(item, exp), page, base); !errors.Is(err, token.ErrInvalid) {
 		t.Fatalf("forged secret: %v", err)
 	}
 	parts := strings.Split(a, ".")
 	for _, bad := range []string{"", "k1", "k1.123", "k1..sig", "k1.0123." + parts[2], "k1.x." + parts[2], "k1." + parts[1] + ".!!"} {
-		if err := r1.VerifyPrivate(bad, page, "", base); !errors.Is(err, token.ErrMalformed) {
+		if err := r1.VerifyPrivate(bad, page, base); !errors.Is(err, token.ErrMalformed) {
 			t.Fatalf("%q: %v", bad, err)
 		}
 	}
 	later := parts[0] + "." + parts[1] + "0." + parts[2]
-	if err := r1.VerifyPrivate(later, page, "", base); !errors.Is(err, token.ErrInvalid) {
+	if err := r1.VerifyPrivate(later, page, base); !errors.Is(err, token.ErrInvalid) {
 		t.Fatalf("extended expiry accepted: %v", err)
 	}
 	for _, bad := range []struct {
@@ -201,10 +170,10 @@ func TestParseRing(t *testing.T) {
 	}
 	now := time.Unix(1_800_000_000, 0)
 	exp := token.Expiry(now, time.Hour, 0)
-	if err := r.VerifyPrivate(ring(t, k1, nil).Sign(page, exp), page, "", now); err != nil {
+	if err := r.VerifyPrivate(ring(t, k1, nil).Sign(item, exp), page, now); err != nil {
 		t.Fatalf("previous key from ParseRing: %v", err)
 	}
-	if err := r.VerifyPrivate(r.Sign(page, exp), page, "", now); err != nil || !strings.HasPrefix(r.Sign(page, exp), "k2.") {
+	if err := r.VerifyPrivate(r.Sign(item, exp), page, now); err != nil || !strings.HasPrefix(r.Sign(item, exp), "k2.") {
 		t.Fatalf("current key from ParseRing: %v", err)
 	}
 	for _, bad := range [][2]string{{"k1", ""}, {"k1:not base64!", ""}, {"k1:" + base64.StdEncoding.EncodeToString([]byte("short")), ""}, {std, std}} {

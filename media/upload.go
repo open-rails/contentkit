@@ -482,6 +482,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 				return err
 			}
 		}
+		item.Kind().syncPreviews(prior, m)
 		if n := m.uploads(); n > MaxUploads && n > uploads {
 			return uploadErr(CodeTooManyFiles, "an item holds at most %d uploads", MaxUploads)
 		}

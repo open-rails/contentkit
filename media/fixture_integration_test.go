@@ -45,7 +45,7 @@ func testConfig(ns, shared string) media.Config {
 	return media.Config{Namespace: ns, BaseURL: "https://" + mediaHost, Kinds: []media.Kind{
 		{Name: "gallery", KeepOriginals: true,
 			Uploads: []media.Upload{
-				{Path: "originals/{name}", Types: images, MaxBytes: 10 << 20, Pages: true},
+				{Path: "originals/{name}", Types: images, MaxBytes: 10 << 20},
 				{Path: "cover", Types: images, MaxBytes: 10 << 20},
 				{Path: "import/{name}", Types: []string{"application/zip"}, MaxBytes: 256 << 20, Max: 2},
 			},
@@ -106,7 +106,7 @@ func (r *resolver) set(id string, res access.Resolution) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.verdicts[id] = res
-	r.anon[id] = access.Resolution{Visible: res.Visible, Accessible: res.Accessible, PreviewLimit: res.PreviewLimit}
+	r.anon[id] = access.Resolution{Visible: res.Visible, Accessible: res.Accessible}
 }
 
 func (r *resolver) Resolve(_ context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
@@ -332,7 +332,7 @@ func (f *fixture) produce(ref contentref.ContentRef) {
 			continue
 		}
 		for _, p := range k.PublicFor(u.Path) {
-			for _, n := range k.PublicNames(p, u.Path) {
+			for _, n := range k.PublicNames(m, p, u.Path) {
 				key, _ := item.Public(n)
 				publics = append(publics, public{key, u.Blob})
 			}

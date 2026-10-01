@@ -47,7 +47,7 @@ func config(ns string) media.Config {
 	return media.Config{Namespace: ns, BaseURL: "https://media.test",
 		Kinds: []media.Kind{
 			{Name: "gallery", KeepOriginals: true,
-				Uploads: []media.Upload{{Path: "originals/{name}", Types: stills, MaxBytes: 10 << 20, Pages: true}, {Path: "cover", Types: stills, MaxBytes: 10 << 20}},
+				Uploads: []media.Upload{{Path: "originals/{name}", Types: stills, MaxBytes: 10 << 20}, {Path: "cover", Types: stills, MaxBytes: 10 << 20}},
 				Private: []media.Private{
 					{Name: "thumb", From: "originals/{name}", To: "thumb/{name}.webp", Image: &media.Image{Width: 100, Height: 150, Fit: media.FitCover}},
 					{Name: "high", From: "originals/{name}", To: "high/{name}.webp", Image: &media.Image{Quality: 90}},

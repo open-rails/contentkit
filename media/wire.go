@@ -111,24 +111,28 @@ type ErrorReply struct {
 	Details    *ErrorDetails `json:"details,omitempty"`     // image refusals
 }
 
-// Access levels in ReadResult.
+// Access levels in ReadResult: an item's private files are all or nothing.
 const (
-	AccessFull    = "full"    // every file
-	AccessPreview = "preview" // the first preview_limit pages' files, plus teasers
-	AccessNone    = "none"    // teasers only
+	AccessFull = "full" // every private file
+	AccessNone = "none" // public files only (previews)
 )
 
 // ReadResult is the read API's answer: the files under the requested prefix
-// in manifest order (Total of them), each with a signed URL within
-// [offset, offset+limit) when the viewer may have it, else locked.
+// in manifest order (Total of them). With access each has a URL within
+// [offset, offset+limit); without, each is locked: its path, type and size.
 type ReadResult struct {
-	Access       string         `json:"access"`
-	PreviewLimit int            `json:"preview_limit"`
-	Expires      int64          `json:"expires"` // unix seconds; URLs and the cookie stop working then
-	Meta         map[string]any `json:"meta,omitempty"`
-	Total        int            `json:"total"`
-	Offset       int            `json:"offset"`
-	Limit        int            `json:"limit"`
+	Access string `json:"access"`
+	// Expires is when the item token (the URLs, the cookie) stops working,
+	// in unix seconds. A read before then answers the same token, so a
+	// client keeps what it has and reads again shortly before.
+	Expires int64          `json:"expires"`
+	Meta    map[string]any `json:"meta,omitempty"`
+	// Previews are the item's public preview images in order (a Public
+	// preset with First): every viewer who can see the item gets them.
+	Previews []string `json:"previews,omitempty"`
+	Total    int      `json:"total"`
+	Offset   int      `json:"offset"`
+	Limit    int      `json:"limit"`
 	// HLS lists the item's playable ladders by output directory ("hls/"):
 	// play {read API}/{kind}/{id}/hls/{dir}master.m3u8.
 	HLS []string `json:"hls,omitempty"`
@@ -139,7 +143,7 @@ type ReadResult struct {
 	// resume. Uploads left unprocessed stay pending.
 	Full  bool       `json:"full,omitempty"`
 	Files []FileInfo `json:"files"`
-	// Cookie must be set on the response (cookie delivery, full access).
+	// Cookie must be set on the response (cookie delivery, with access).
 	Cookie *http.Cookie `json:"-"`
 }
 
@@ -151,8 +155,7 @@ type FileInfo struct {
 	W        int     `json:"w,omitempty"`
 	H        int     `json:"h,omitempty"`
 	Dur      float64 `json:"dur,omitempty"`
-	Teaser   bool    `json:"teaser,omitempty"`
-	Download string  `json:"download,omitempty"` // the name a download read signs
+	Download string  `json:"download,omitempty"` // the name a download read serves it under
 	URL      string  `json:"url,omitempty"`
 	Locked   bool    `json:"locked,omitempty"`
 

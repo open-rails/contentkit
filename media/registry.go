@@ -18,6 +18,9 @@ var ErrUnknownKind = errors.New("media: unknown kind")
 // maxWidth bounds a public width.
 const maxWidth = 8192
 
+// maxFirst bounds a preview's uploads.
+const maxFirst = 100
+
 // Registry is a validated Config.
 type Registry struct {
 	cfg   Config

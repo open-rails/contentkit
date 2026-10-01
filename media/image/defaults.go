@@ -40,7 +40,7 @@ func PublishDefaults(ctx context.Context, store media.Store, reg *media.Registry
 			typ := mime.TypeByExtension(path.Ext(p.Default))
 			// The default's fingerprint: its bytes as the blob, the preset's spec.
 			fp := publicFP(media.File{Blob: layout.SHA256Name(sha(src))}, p)
-			names := k.PublicNames(p, "")
+			names := k.PublicNames(nil, p, "")
 			outs, _, err := encodePublic(src, typ, p, names, nil, rules{maxPixels: 100_000_000, maxFrames: 1000, maxSeconds: 60})
 			if err != nil {
 				return written, fmt.Errorf("media/image: default %s: %w", p.Default, err)

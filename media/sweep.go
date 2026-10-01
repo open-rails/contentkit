@@ -157,19 +157,8 @@ func (j *Jobs) keeps(item Item, m *Manifest) map[string]bool {
 	for _, s := range m.StagedNames() {
 		keep[layout.AreaTemp+"/"+s] = true
 	}
-	if m.Hidden {
-		return keep
-	}
-	k := item.Kind()
-	for _, f := range m.Files {
-		if !f.IsUpload() || f.Unattached {
-			continue
-		}
-		for _, p := range k.PublicFor(f.Path) {
-			for _, n := range k.PublicNames(p, f.Path) {
-				keep[layout.AreaPublic+"/"+n] = true
-			}
-		}
+	for _, n := range item.Kind().PublicKept(m) {
+		keep[layout.AreaPublic+"/"+n] = true
 	}
 	return keep
 }

@@ -200,11 +200,8 @@ func viewerKey(req *http.Request, a access.Actor) string {
 // logIssued records the URLs a grant signed for its viewer.
 func (g *Grant) logIssued(req *http.Request, log *slog.Logger) {
 	access := AccessNone
-	switch {
-	case g.Full():
+	if g.Full() {
 		access = AccessFull
-	case g.units > 0:
-		access = AccessPreview
 	}
 	attrs := []any{"viewer", g.actor.ID, "anonymous", g.actor.Anonymous, "ref", g.Item.Ref().String(),
 		"path", req.URL.Path, "access", access, "editor", g.Editor(), "expires", g.Expires.Unix()}

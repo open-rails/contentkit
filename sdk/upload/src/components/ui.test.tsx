@@ -14,7 +14,7 @@ const item = { kind: "channel", id: "0192f000-0000-7000-8000-000000000007" };
 const preset = (name: string, aspect: string, widths: number[]) => ({ base: "https://m", namespace: "app", kind: "channel", id: item.id, to: `${name}-{w}.webp`, widths, aspect });
 const avatar = preset("avatar", "1:1", [128, 256, 512]);
 const cover = preset("cover", "3:1", [1500, 3000]);
-const empty: ReadResult = { access: "full", preview_limit: 0, expires: 0, total: 0, offset: 0, limit: 50, files: [] };
+const empty: ReadResult = { access: "full", expires: 0, total: 0, offset: 0, limit: 50, files: [] };
 globalThis.fetch = vi.fn(async () => new Response(null)) as typeof fetch;
 
 function setup() {

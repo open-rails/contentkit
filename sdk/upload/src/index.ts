@@ -43,6 +43,8 @@ export {
   classifyMediaError,
   hlsConfig,
   initialEstimate,
+  expiryDelay,
+  REFRESH_BEFORE_EXPIRY,
   refreshable,
   startRung,
   statusKind,

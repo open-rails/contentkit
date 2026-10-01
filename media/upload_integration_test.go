@@ -302,11 +302,11 @@ func TestUnattachedAttach(t *testing.T) {
 	if err != nil || len(res.Files) != 1 || res.Files[0].Path != "thumb/1.webp" {
 		t.Fatalf("viewers see unattached outputs: %+v %v", res, err)
 	}
-	m = f.commit(g, media.Op{Op: media.OpAttach, Path: p, Index: new(int), Meta: map[string]any{"teaser": true}})
+	m = f.commit(g, media.Op{Op: media.OpAttach, Path: p, Index: new(int), Meta: map[string]any{"alt": "first"}})
 	if want := []string{"originals/2.png", "originals/1.png"}; !reflect.DeepEqual(paths(m)[:2], want) {
 		t.Fatalf("attach at 0: %v", paths(m))
 	}
-	if u, _ := m.Get(p); u.Unattached || !u.Teaser() {
+	if u, _ := m.Get(p); u.Unattached || u.Meta["alt"] != "first" {
 		t.Fatalf("attached %+v", u)
 	}
 }

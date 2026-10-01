@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -82,32 +84,57 @@ func TestReadFullAccess(t *testing.T) {
 	}
 }
 
-// Preview access serves the first PreviewLimit pages' outputs; a teaser
-// page's outputs need only visibility; the zip needs full access.
-func TestReadPreviewAndTeaser(t *testing.T) {
-	f := newFixture(t)
+// Private is all or nothing: a viewer who can see the item but has no
+// access gets no URL, token or cookie, and each file as its path, type and
+// size only. Nothing in the answer names a blob. The item's previews are
+// public, so the same viewer gets those.
+func TestReadWithoutAccess(t *testing.T) {
+	f := newFixtureOn(t, s3test.Open(t), func(c *media.Config) {
+		c.Kinds[0].Public = append(c.Kinds[0].Public, media.Public{Name: "preview", From: "originals/{name}", To: "preview-{n}.webp", First: 2})
+	})
 	f.visible(1)
-	g := f.gallery(1, 4)
+	g := f.gallery(1, 3)
 	ctx := context.Background()
-	f.commit(g, media.Op{Op: media.OpPut, Path: "originals/003.png", Blob: blobOf(png(103)), Meta: map[string]any{"teaser": true}})
-	f.produce(g)
-	f.res.set(cid(1), access.Resolution{Visible: true, PreviewLimit: 2})
-	res, err := f.rd.Read(ctx, g, access.Actor{Anonymous: true}, media.ReadOptions{Prefix: "high/"})
+	item, _ := f.reg.Item(g)
+	anon := access.Actor{Anonymous: true}
+	want := []string{"https://" + mediaHost + "/v1/" + item.PublicPrefix() + "preview-1.webp", "https://" + mediaHost + "/v1/" + item.PublicPrefix() + "preview-2.webp"}
+	full, err := f.rd.Read(ctx, g, anon, media.ReadOptions{Prefix: "high/"})
+	if err != nil || full.Access != media.AccessFull || !slices.Equal(full.Previews, want) || full.Files[0].URL == "" {
+		t.Fatalf("with access: %+v %v", full, err)
+	}
+	f.res.set(cid(1), access.Resolution{Visible: true})
+	rd, err := media.NewReader(media.ReaderOptions{Manifests: f.ms, Delivery: media.Delivery{Mode: media.DeliverCookie, CookieDomain: "doujins.test", SigningKey: signKey}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := urls(res)
-	if res.Access != media.AccessPreview || res.PreviewLimit != 2 || got["high/000.webp"] == "" || got["high/001.webp"] == "" ||
-		got["high/002.webp"] != "" || got["high/003.webp"] == "" {
-		t.Fatalf("preview %+v", res)
+	for _, r := range []*media.Reader{f.rd, rd} {
+		res, err := r.Read(ctx, g, anon, media.ReadOptions{Download: true})
+		if err != nil || res.Access != media.AccessNone || res.Cookie != nil || len(res.HLS) != 0 || res.Total != 7 || !slices.Equal(res.Previews, want) {
+			t.Fatalf("without access: %+v %v", res, err)
+		}
+		if fi := res.Files[0]; !reflect.DeepEqual(fi, media.FileInfo{Path: "thumb/000.webp", Type: "image/png", Size: int64(len(png(100))), Locked: true}) {
+			t.Fatalf("a locked file is its path, type and size: %+v", fi)
+		}
+		body, _ := json.Marshal(res)
+		if strings.Contains(string(body), "sha256-") || strings.Contains(string(body), "?t=") || strings.Contains(string(body), "/private/") {
+			t.Fatalf("a read without access names a blob or a token: %s", body)
+		}
+		grant, err := r.Grant(ctx, g, anon)
+		if err != nil || grant.Full() || grant.Cookie() != nil {
+			t.Fatalf("grant without access: %+v %v", grant, err)
+		}
+		for _, file := range grant.Manifest.Files {
+			if _, err := grant.URL(file, false); !errors.Is(err, media.ErrNotAllowed) {
+				t.Fatalf("%s signed without access: %v", file.Path, err)
+			}
+		}
 	}
-	if !res.Files[2].Locked || !res.Files[3].Teaser {
-		t.Fatalf("locked and teaser flags %+v", res.Files)
+	// The previews are served to anyone; a private file is not.
+	if status, body, _ := f.fetch(want[0]); status != http.StatusOK || body != string(png(100)) {
+		t.Fatalf("preview served %d %q", status, body)
 	}
-	f.res.set(cid(1), access.Resolution{Visible: true})
-	res, _ = f.rd.Read(ctx, g, access.Actor{Anonymous: true}, media.ReadOptions{Prefix: "high/"})
-	if got := urls(res); res.Access != media.AccessNone || got["high/000.webp"] != "" || got["high/003.webp"] == "" {
-		t.Fatalf("no access %+v", res)
+	if status, _, _ := f.fetch(strings.Split(full.Files[0].URL, "?")[0]); status != http.StatusNotFound {
+		t.Fatalf("a private file without a token: %d", status)
 	}
 }
 
@@ -140,10 +167,20 @@ func TestViewerReadsCarryNoEditorFields(t *testing.T) {
 	if fi := res.Files[0]; err != nil || fi.Edit == nil || fi.Meta["alt"] != "private note" || fi.Frame == nil || fi.Failed == nil || !fi.Upload {
 		t.Fatalf("editor read %+v %v", fi, err)
 	}
+	// Without access the file is listed locked: its path, type and size,
+	// and no blob name, source or editor field.
+	f.res.set(cid(1), access.Resolution{Visible: true})
+	res, err = f.rd.Read(ctx, post, access.Actor{Anonymous: true}, media.ReadOptions{Editor: true, Download: true})
+	if err != nil || len(res.Files) != 1 || !reflect.DeepEqual(res.Files[0], media.FileInfo{Path: p, Type: "image/png", Size: int64(len(png(1))), Locked: true}) {
+		t.Fatalf("locked listing %+v %v", res.Files, err)
+	}
+	if body, _ := json.Marshal(res); strings.Contains(string(body), "sha256-") {
+		t.Fatalf("a locked listing names a blob: %s", body)
+	}
 }
 
-// ServeOriginals lists and serves uploads; a download read signs each
-// file's download name, which the agent sends as the attachment name.
+// ServeOriginals lists and serves uploads; a download read adds each file's
+// download name to its URL, which the agent sends as the attachment name.
 func TestReadOriginalsAndDownloads(t *testing.T) {
 	f := newFixture(t)
 	f.visible(1)
@@ -171,7 +208,7 @@ func TestReadOriginalsAndDownloads(t *testing.T) {
 		t.Fatal(err)
 	}
 	res, err = f.rd.Read(ctx, g, f.editor, media.ReadOptions{Prefix: "download/", Download: true})
-	if err != nil || len(res.Files) != 1 || res.Files[0].Download != "Café Book.zip" || !strings.Contains(res.Files[0].URL, "&dl=") {
+	if err != nil || len(res.Files) != 1 || res.Files[0].Download != "Café Book.zip" || !strings.Contains(res.Files[0].URL, "dl=") {
 		t.Fatalf("download read %+v %v", res, err)
 	}
 	status, body, hdr := f.fetch(res.Files[0].URL)
@@ -213,82 +250,73 @@ func TestReadCookieDelivery(t *testing.T) {
 	if status, body, _ := f.fetch(res.Files[0].URL, "Cookie", media.CookieName+"="+cookies[0].Value); status != http.StatusOK || body != string(png(100)) {
 		t.Fatalf("with cookie: %d %q", status, body)
 	}
+	// A download is the same URL with a name: the cookie authorizes it.
+	dl, err := rd.Read(context.Background(), f.ref("gallery", 1), f.editor, media.ReadOptions{Prefix: "download/", Download: true})
+	if err != nil || len(dl.Files) != 1 || !strings.Contains(dl.Files[0].URL, "?dl=") || strings.Contains(dl.Files[0].URL, "t=") {
+		t.Fatalf("cookie download read %+v %v", dl, err)
+	}
 }
 
-func TestReadRestrictedFiles(t *testing.T) {
-	for _, hostOnly := range []bool{false, true} {
-		t.Run(fmt.Sprintf("host-only-%t", hostOnly), func(t *testing.T) {
-			f := newFixtureOn(t, s3test.Open(t), func(c *media.Config) {
-				c.Kinds[0].ServeOriginals = hostOnly
-				c.Kinds[0].Private[2].HostOnly = hostOnly
-			})
-			f.visible(1)
-			ref := f.gallery(1, 1)
-			ctx := context.Background()
-			item, _ := f.reg.Item(ref)
-			body := []byte("distinct rendered page")
-			blob := blobOf(body)
-			key, _ := item.Blob(blob)
-			if _, err := f.env.Store.Put(ctx, key, bytes.NewReader(body), int64(len(body)), media.PutOptions{ContentType: "image/webp"}); err != nil {
-				t.Fatal(err)
+// An item's token opens every private file of the item, in both delivery
+// modes: ServeOriginals and HostOnly decide what a generic read lists, not
+// what the token reaches. A HostOnly file's URL comes from Grant.HostURL,
+// with the item token, and only with access.
+func TestItemTokenIsAllOrNothing(t *testing.T) {
+	f := newFixtureOn(t, s3test.Open(t), func(c *media.Config) { c.Kinds[0].Private[2].HostOnly = true })
+	f.visible(1)
+	ref := f.gallery(1, 1)
+	ctx := context.Background()
+	item, _ := f.reg.Item(ref)
+	m, _, _ := f.ms.Get(ctx, ref)
+	original, _ := m.Get("originals/000.png")
+	archive, _ := m.Get("download/pages.zip")
+	for _, mode := range []media.DeliveryMode{media.DeliverCookie, media.DeliverURL} {
+		rd, err := media.NewReader(media.ReaderOptions{Manifests: f.ms, Delivery: media.Delivery{Mode: mode, CookieDomain: "doujins.test", SigningKey: signKey}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.visible(1)
+		read, err := rd.Read(ctx, ref, f.editor, media.ReadOptions{})
+		if err != nil || (read.Cookie != nil) != (mode == media.DeliverCookie) || len(read.Files) != 2 || read.Files[0].URL == "" {
+			t.Fatalf("%s read lists the page's outputs only: %+v %v", mode, read, err)
+		}
+		var hdr []string
+		if read.Cookie != nil {
+			hdr = []string{"Cookie", media.CookieName + "=" + read.Cookie.Value}
+		}
+		u, _ := url.Parse(read.Files[0].URL)
+		for _, file := range []media.File{original, archive} {
+			key, _ := item.Blob(file.Blob)
+			u.Path = "/v1/" + key
+			if status, _, _ := f.fetch(u.String(), hdr...); status != http.StatusOK {
+				t.Fatalf("%s: the item token did not open %s: %d", mode, file.Path, status)
 			}
-			m, err := f.ms.EditExisting(ctx, ref, func(m *media.Manifest) error {
-				i := m.Find("high/000.webp")
-				m.Files[i].Blob, m.Files[i].Size = blob, int64(len(body))
-				return nil
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			original, _ := m.Get("originals/000.png")
-			archive, _ := m.Get("download/pages.zip")
-			for _, mode := range []media.DeliveryMode{media.DeliverCookie, media.DeliverURL} {
-				rd, err := media.NewReader(media.ReaderOptions{Manifests: f.ms, Delivery: media.Delivery{Mode: mode, CookieDomain: "doujins.test", SigningKey: signKey}})
-				if err != nil {
-					t.Fatal(err)
-				}
-				read, err := rd.Read(ctx, ref, f.editor, media.ReadOptions{Prefix: "high/"})
-				if err != nil || read.Cookie != nil || len(read.Files) != 1 || read.Files[0].URL == "" {
-					t.Fatalf("%s restricted read: %+v %v", mode, read, err)
-				}
-				u, _ := url.Parse(read.Files[0].URL)
-				if status, _, _ := f.fetch(u.String()); status != http.StatusOK {
-					t.Fatalf("%s served page: %d", mode, status)
-				}
-				for _, restricted := range []media.File{original, archive} {
-					key, _ := item.Blob(restricted.Blob)
-					u.Path = "/v1/" + key
-					if status, _, _ := f.fetch(u.String()); status != http.StatusNotFound {
-						t.Fatalf("%s page token opened %s: %d", mode, restricted.Path, status)
-					}
-				}
-				if hostOnly {
-					g, err := rd.Grant(ctx, ref, f.editor)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if _, err := g.URL(archive, true); !errors.Is(err, media.ErrNotAllowed) {
-						t.Fatalf("generic archive signing: %v", err)
-					}
-					download, err := g.HostURL(archive.Path, true)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if status, _, _ := f.fetch(download); status != http.StatusOK {
-						t.Fatalf("host archive: %d", status)
-					}
-					f.res.set(cid(1), access.Resolution{Visible: true, PreviewLimit: 1})
-					preview, err := rd.Grant(ctx, ref, f.editor)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if _, err := preview.HostURL(archive.Path, true); !errors.Is(err, media.ErrNotAllowed) {
-						t.Fatalf("preview host archive: %v", err)
-					}
-					f.visible(1)
-				}
-			}
-		})
+		}
+		g, err := rd.Grant(ctx, ref, f.editor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := g.URL(archive, true); !errors.Is(err, media.ErrNotAllowed) {
+			t.Fatalf("%s: a generic read's URL for a HostOnly file: %v", mode, err)
+		}
+		download, err := g.HostURL(archive.Path, true)
+		if err != nil || !strings.Contains(download, "t=") {
+			t.Fatalf("%s host URL %q %v", mode, download, err)
+		}
+		if status, _, hdr := f.fetch(download); status != http.StatusOK || !strings.HasPrefix(hdr.Get("Content-Disposition"), "attachment") {
+			t.Fatalf("%s host archive: %d %v", mode, status, hdr)
+		}
+		if _, err := g.HostURL("high/000.webp", false); !errors.Is(err, media.ErrNotAllowed) {
+			t.Fatalf("%s: HostURL for a listed preset: %v", mode, err)
+		}
+		f.res.set(cid(1), access.Resolution{Visible: true})
+		none, err := rd.Grant(ctx, ref, f.editor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := none.HostURL(archive.Path, true); !errors.Is(err, media.ErrNotAllowed) {
+			t.Fatalf("%s host archive without access: %v", mode, err)
+		}
 	}
 }
 
@@ -426,6 +454,13 @@ func TestHLSPlaylists(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("an unserved upload's playlist: %d", resp.StatusCode)
+	}
+	// Without access there is no playlist.
+	f.res.set(cid(1), access.Resolution{Visible: true})
+	resp, _ = http.Get(srv.URL + "/video/" + cid(1) + "/hls/hls/master.m3u8")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("a playlist without access: %d", resp.StatusCode)
 	}
 }
 

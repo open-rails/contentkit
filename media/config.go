@@ -74,7 +74,6 @@ type Upload struct {
 	Types    []string `json:"types"`            // accepted content types
 	MaxBytes int64    `json:"max_bytes"`        // per file
 	Max      int      `json:"max,omitempty"`    // uploads matching Path; 0 is unlimited
-	Pages    bool     `json:"pages,omitempty"`  // ordered pages: the preview cut counts these
 	Frames   string   `json:"frames,omitempty"` // may be grabbed from a frame of this video upload (the frame op)
 	Named    bool     `json:"named,omitempty"`  // the server names it ({name} is "i-{uuid}"): inline images
 	// Video bounds a video or audio upload as probed from its real stream;
@@ -107,8 +106,10 @@ type Private struct {
 	// Download is the human name template a download read signs into the
 	// URL, filled from the manifest's meta and {name}: "{title}.zip".
 	Download string `json:"download,omitempty"`
-	// HostOnly excludes this preset from generic reads and playlists.
-	// A host route must apply its additional policy before calling Grant.HostURL.
+	// HostOnly leaves this preset out of generic reads and playlists; a host
+	// route applies its own policy and calls Grant.HostURL. It decides what
+	// is listed, not what a token opens: an item's token opens every private
+	// file of the item.
 	HostOnly  bool       `json:"host_only,omitempty"`
 	Image     *Image     `json:"image,omitempty"`
 	HLS       *HLS       `json:"hls,omitempty"`
@@ -127,10 +128,17 @@ type Private struct {
 // shape of its Width×Height box (both or neither), fitted per Fit, else of
 // the edit. It is never in the manifest; the object carries its from and fp
 // as metadata. A missing one is served Default by the access agent.
+//
+// First makes it a preview: the first First attached uploads of From (a
+// {name} pattern) in manifest order, {n} in To their position from 1
+// ("preview-{n}.webp"). Anyone who can see the item sees them; a position is
+// rendered again when another upload takes it, and names past the last
+// upload are deleted. Everything else of the item stays private.
 type Public struct {
 	Name   string `json:"name"`
 	From   string `json:"from"`
-	To     string `json:"to"` // "cover-{w}.webp", "{name}.webp"
+	To     string `json:"to"` // "cover-{w}.webp", "{name}.webp", "preview-{n}.webp"
+	First  int    `json:"first,omitempty"`
 	Widths []int  `json:"widths,omitempty"`
 	Image  Image  `json:"image"`
 	// Default is a path in Kind.Defaults, rendered to the kind's _default

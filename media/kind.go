@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/open-rails/contentkit/media/layout"
@@ -120,9 +121,18 @@ func (k *Kind) OutputPath(p *Private, path string) string {
 	return fill(p.To, map[string]string{"name": k.NameOf(path)})
 }
 
-// PublicNames are p's public names for the upload at path, one per width.
-func (k *Kind) PublicNames(p *Public, path string) []string {
+// PublicNames are p's public names in m for the upload at path, one per
+// width: none for an upload outside a preview's First. m may be nil for a
+// preset without First.
+func (k *Kind) PublicNames(m *Manifest, p *Public, path string) []string {
 	vars := map[string]string{"name": k.NameOf(path)}
+	if p.First > 0 {
+		n := slices.Index(k.firsts(m, p), path)
+		if n < 0 {
+			return nil
+		}
+		vars["n"] = strconv.Itoa(n + 1)
+	}
 	if len(p.Widths) == 0 {
 		return []string{fill(p.To, vars)}
 	}
@@ -132,6 +142,112 @@ func (k *Kind) PublicNames(p *Public, path string) []string {
 		out[i] = fill(p.To, vars)
 	}
 	return out
+}
+
+// firsts are the paths of the uploads preview p renders, in order: the
+// first p.First attached uploads of its From.
+func (k *Kind) firsts(m *Manifest, p *Public) []string {
+	var out []string
+	if m == nil {
+		return nil
+	}
+	g := k.uploadIndex(p.From)
+	for _, f := range m.Files {
+		if len(out) == p.First {
+			break
+		}
+		if i, _, _, _, ok := k.upload(f.Path); ok && i == g && f.IsUpload() && !f.Unattached {
+			out = append(out, f.Path)
+		}
+	}
+	return out
+}
+
+// rendered reports preview p rendered for the upload now at f's position:
+// until then the name there holds another upload's image, or none.
+func rendered(f File, p *Public) bool {
+	return f.Blob != "" && f.Fail() == nil && !slices.Contains(f.Pending, p.Name)
+}
+
+// previewNames lists m's rendered preview names in order; none for a
+// hidden item.
+func (k *Kind) previewNames(m *Manifest) []string {
+	var out []string
+	if m.Hidden {
+		return nil
+	}
+	for i := range k.Public {
+		p := &k.Public[i]
+		for _, path := range k.firsts(m, p) {
+			if f, _ := m.Get(path); rendered(f, p) {
+				out = append(out, k.PublicNames(m, p, path)...)
+			}
+		}
+	}
+	return out
+}
+
+// PublicKept are the public names m vouches for; every other name in
+// public/ is deleted. They are its attached uploads' names, none when
+// hidden, and a preview position's only once rendered for the upload now
+// there: a removed page's image does not stay under the next page's name.
+func (k *Kind) PublicKept(m *Manifest) []string {
+	var out []string
+	if m.Hidden {
+		return nil
+	}
+	for _, f := range m.Files {
+		if !f.IsUpload() || f.Unattached {
+			continue
+		}
+		for _, p := range k.PublicFor(f.Path) {
+			if p.First == 0 || rendered(f, p) {
+				out = append(out, k.PublicNames(m, p, f.Path)...)
+			}
+		}
+	}
+	return out
+}
+
+// syncPreviews keeps each preview preset pending on exactly the uploads
+// whose position's file is not the one before did (a reorder, an insert, a
+// removal, a new source or edit); uploads past First carry none.
+func (k *Kind) syncPreviews(before, m *Manifest) {
+	for i := range k.Public {
+		p := &k.Public[i]
+		if p.First == 0 {
+			continue
+		}
+		was := map[int]string{}
+		if before != nil && !before.Hidden {
+			for n, path := range k.firsts(before, p) {
+				if f, ok := before.Get(path); ok && !slices.Contains(f.Pending, p.Name) {
+					was[n] = f.Key()
+				}
+			}
+		}
+		now := k.firsts(m, p)
+		g := k.uploadIndex(p.From)
+		for j := range m.Files {
+			f := &m.Files[j]
+			if u, _, _, _, ok := k.upload(f.Path); !ok || u != g || !f.IsUpload() {
+				continue
+			}
+			n := slices.Index(now, f.Path)
+			pending := slices.Contains(f.Pending, p.Name)
+			switch {
+			case m.Hidden || n < 0 || f.Fail() != nil:
+				if pending {
+					f.Pending = slices.DeleteFunc(slices.Clone(f.Pending), func(s string) bool { return s == p.Name })
+					if len(f.Pending) == 0 {
+						f.Pending = nil
+					}
+				}
+			case !pending && was[n] != f.Key():
+				f.Pending = append(slices.Clone(f.Pending), p.Name)
+			}
+		}
+	}
 }
 
 // EditBounds is the image that bounds an edit of the upload at path: its
@@ -287,10 +403,13 @@ func (k *Kind) validatePublic(p *Public, names map[string]bool) error {
 	if slices.Contains(vars, "name") && (k.patterns[i].literal == "" && !k.Uploads[i].Named || p.Default != "") {
 		return errors.New("{name} in To needs a literal or Named upload, and no Default")
 	}
-	if slices.ContainsFunc(vars, func(s string) bool { return s != "name" && s != "w" }) ||
-		slices.Contains(vars, "w") != (len(p.Widths) > 0) ||
-		!layout.ValidSegment(fill(p.To, map[string]string{"name": "n", "w": "1"})) {
-		return fmt.Errorf("invalid To %q ([A-Za-z0-9._-] with {w} exactly when Widths are set)", p.To)
+	if p.First < 0 || p.First > maxFirst || p.First > 0 && (k.patterns[i].literal != "" || slices.Contains(vars, "name") || p.Default != "") {
+		return fmt.Errorf("First (at most %d) needs a {name} upload, {n} in To for {name}, and no Default", maxFirst)
+	}
+	if slices.ContainsFunc(vars, func(s string) bool { return s != "name" && s != "w" && s != "n" }) ||
+		slices.Contains(vars, "w") != (len(p.Widths) > 0) || slices.Contains(vars, "n") != (p.First > 0) ||
+		!layout.ValidSegment(fill(p.To, map[string]string{"name": "n", "w": "1", "n": "1"})) {
+		return fmt.Errorf("invalid To %q ([A-Za-z0-9._-] with {w} exactly when Widths are set and {n} exactly with First)", p.To)
 	}
 	if p.Default != "" && k.Defaults != nil {
 		if _, err := fs.Stat(k.Defaults, p.Default); err != nil {
@@ -384,7 +503,6 @@ var SubtitleTypes = []string{"text/vtt", "application/x-subrip", "text/x-ssa", "
 
 // Upload meta keys ContentKit reads (put's meta).
 const (
-	MetaTeaser  = "teaser"  // bool: served to every viewer who can see the item
 	MetaLang    = "lang"    // subtitles and audio: BCP 47
 	MetaLabel   = "label"   // a track's name
 	MetaForced  = "forced"  // bool: a forced-narrative subtitle track

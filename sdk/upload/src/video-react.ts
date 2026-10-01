@@ -40,7 +40,7 @@ export function useVideoImages(client: UploadClient | null | undefined, o: Video
   const set = useCallback(
     (poster: FileInfo) => {
       const files = (read?.files ?? []).filter((x) => !(x.upload && samePath(x.path, posterPath)));
-      update({ access: "full", preview_limit: 0, expires: 0, total: 0, offset: 0, limit: 0, ...read, files: [...files, poster] });
+      update({ access: "full", expires: 0, total: 0, offset: 0, limit: 0, ...read, files: [...files, poster] });
     },
     [read, posterPath, update],
   );

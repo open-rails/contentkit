@@ -31,7 +31,7 @@ func TestRegistry(t *testing.T) {
 	if got := g.OutputPath(thumb, "originals/My Page 7.png"); got != "thumb/My Page 7.webp" {
 		t.Fatalf("output path %q", got)
 	}
-	if got := g.PublicNames(&g.Public[0], "cover.png"); !reflect.DeepEqual(got, []string{"cover-230.webp", "cover-460.webp"}) {
+	if got := g.PublicNames(nil, &g.Public[0], "cover.png"); !reflect.DeepEqual(got, []string{"cover-230.webp", "cover-460.webp"}) {
 		t.Fatalf("public names %v", got)
 	}
 	u, _ := reg.Kind("user")

@@ -45,7 +45,7 @@ another tenant is an error, never remapped.
 | Package | Owns |
 |---|---|
 | `contentref` | `ContentRef`, `ContentKey`, `TaxonomyID` |
-| `access` | `Actor`, the batch `ContentResolver` port (`Resolve(ctx, refs, actor) → map[ContentKey]Resolution`; an omitted ref denies) and its `Resolution{Ref, Visible, Accessible, PreviewLimit, Editor}`, shared by `content` and media |
+| `access` | `Actor`, the batch `ContentResolver` port (`Resolve(ctx, refs, actor) → map[ContentKey]Resolution`; an omitted ref denies) and its `Resolution{Ref, Visible, Accessible, Editor}`, shared by `content` and media |
 | `media` | the registry (`Config`, kinds, upload paths, private and public presets), ordered manifests with provenance and conditional-write edits, the `Store` port, direct uploads and commit ops with their HTTP API, reads and HLS playlists, the optional `UploadLimiter`, and the sweep, deletion, `Expose` and relays as River jobs |
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
 | `media/image` | libvips (CGO) producer: Image presets, public presets, zips, editor views, `PublishDefaults` |
@@ -271,10 +271,12 @@ always holds the bytes of its name. The optional `UploadLimiter`
 **Access agent** (`cmd/media-access`, `media/agent`, image
 `ghcr.io/open-rails/contentkit-media-access:{tag}`): `public/` to anyone
 (`public, max-age=300, stale-while-revalidate=86400`, falling back to the
-kind's `_default` for declared names), `private/sha256-{hex}` with an item or
-file token in `?t=` or the `mt` cookie (`private, immutable`; a signed `dl`
-download name only via `?t=`). Everything else and every denial is one
-`no-store` 404. It needs `MEDIA_ACCESS_S3_ENDPOINT`, `_S3_BUCKET`, a key
+kind's `_default` for declared names), `private/sha256-{hex}` with the item's
+token in `?t=` or the `mt` cookie (`private, immutable`). A token opens every
+private file of its item or none; `?dl={name}` serves the file as a download
+under that name when it has the file's type. Everything else and every denial
+is one `no-store` 404. It keeps no state: rate limit the media host at the
+ingress. It needs `MEDIA_ACCESS_S3_ENDPOINT`, `_S3_BUCKET`, a key
 reading only `*/private/*` and `*/public/*`, `MEDIA_ACCESS_TOKEN_KEY` and
 `_TOKEN_KEY_PREVIOUS`, `MEDIA_ACCESS_HOSTS`
 (`media.doujins.ai=doujins,accounts; media.hanime.media=hentai0,accounts`),

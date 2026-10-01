@@ -39,7 +39,7 @@ export class DemoServer {
     if (url.pathname.startsWith("/read/")) {
       const [, , kind, id] = url.pathname.split("/");
       const files = this.uploads({ kind: kind!, id: id! }).map((f) => ({ ...f, editor_url: this.view(f) }));
-      return json({ access: "full", preview_limit: 0, expires: 0, total: files.length, offset: 0, limit: 50, files });
+      return json({ access: "full", expires: 0, total: files.length, offset: 0, limit: 50, files });
     }
     const b = JSON.parse(String(init?.body));
     switch (url.pathname) {

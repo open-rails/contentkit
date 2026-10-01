@@ -81,11 +81,6 @@ func (w *standIn) process(ctx context.Context, j media.ProcessJob) error {
 			if f, err = w.settle(ctx, item, m, f); err != nil {
 				return err
 			}
-			for _, p := range k.PublicFor(f.Path) {
-				for _, name := range k.PublicNames(p, f.Path) {
-					public[name] = true
-				}
-			}
 			if view := w.reg.EditorView(f); j.Editor && view != "" {
 				if err := w.copy(ctx, item, f.Blob, item.PrivatePrefix()+view); err != nil {
 					return err
@@ -93,6 +88,9 @@ func (w *standIn) process(ctx context.Context, j media.ProcessJob) error {
 			}
 		}
 		// Public names no upload feeds any more go, as the worker's sync does.
+		for _, name := range k.PublicKept(m) {
+			public[name] = true
+		}
 		for o, err := range w.store.List(ctx, item.PublicPrefix()) {
 			if err != nil {
 				return err
@@ -160,7 +158,7 @@ func (w *standIn) settle(ctx context.Context, item media.Item, m *media.Manifest
 		if !slices.Contains(f.Pending, p.Name) {
 			continue
 		}
-		for _, name := range k.PublicNames(p, f.Path) {
+		for _, name := range k.PublicNames(m, p, f.Path) {
 			if err := w.copy(ctx, item, f.Blob, item.PublicPrefix()+name); err != nil {
 				return f, err
 			}

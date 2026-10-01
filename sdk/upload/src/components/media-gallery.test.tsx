@@ -11,7 +11,6 @@ import { MediaGallery, UploadUiProvider } from "../ui.js";
 const read = (access: Access, files: FileInfo[]): ReadResult => ({
   access,
   total: files.length,
-  preview_limit: 0,
   offset: 0,
   limit: 50,
   expires: 0,
@@ -186,10 +185,9 @@ it("one item renders alone, without toggle or dots", () => {
   expect(stage.style.maxHeight).toBe("");
 });
 
-it("locked items: blurred teaser with the host's unlock slot, no locked URLs", async () => {
+it("locked items: the public preview behind the host's unlock slot, no locked URLs", async () => {
   const user = userEvent.setup();
   const files: FileInfo[] = [
-    { path: "teaser/blur.webp", type: "image/webp", w: 960, h: 720, teaser: true, url: "https://m/blurred?t=x" },
     { path: "low-res/1.webp", type: "image/webp", locked: true },
     { path: "hls/480-h264.mp4", type: "video/mp4", locked: true },
     { path: "hls/sprite.jpg", type: "image/jpeg", locked: true },
@@ -197,16 +195,19 @@ it("locked items: blurred teaser with the host's unlock slot, no locked URLs", a
   ];
   const renderLocked = vi.fn(({ count }: { count: number }) => <button type="button">Unlock {count}</button>);
   const { container } = render(<MediaGallery read={read("none", files)} renderLocked={renderLocked} />);
+  expect(container.querySelectorAll("img")).toHaveLength(0);
   expect(screen.getByText("3 more items are locked")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Unlock 3" })).toBeInTheDocument();
   expect(renderLocked).toHaveBeenCalledWith({ count: 3, videos: 1 });
-  const srcs = [...container.querySelectorAll("img")].map((i) => i.getAttribute("src"));
-  expect(srcs).toEqual(["https://m/blurred?t=x"]);
   await user.click(screen.getByRole("button", { name: "Unlock 3" }));
 
+  // With a public preview: it is the first item, and the backdrop of the lock.
   document.body.innerHTML = "";
-  render(<MediaGallery read={read("preview", [img(0), files[1]!])} defaultView="grid" storageKey={null} />);
-  expect(screen.getByRole("button", { name: "Open item 2 of 2" })).toHaveTextContent("+1");
+  const preview = "https://m/v1/d/gallery/1/public/preview-1.webp";
+  const withPreview = render(<MediaGallery read={{ ...read("none", files), previews: [preview] }} defaultView="grid" storageKey={null} />);
+  expect(screen.getByRole("button", { name: "Open item 2 of 2" })).toHaveTextContent("+2");
+  const srcs = [...withPreview.container.querySelectorAll("img")].map((i) => i.getAttribute("src"));
+  expect(new Set(srcs)).toEqual(new Set([preview]));
 });
 
 it("failed and processing images, and translated labels", async () => {

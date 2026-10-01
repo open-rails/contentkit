@@ -203,6 +203,7 @@ export {
   useCarousel,
   useGalleryView,
   useHlsPlayer,
+  useRefreshBeforeExpiry,
   type CarouselOptions,
   type GalleryViewOptions,
   type HlsPlayerOptions,

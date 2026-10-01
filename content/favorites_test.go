@@ -229,24 +229,24 @@ func TestFavorites_ListAndCounts(t *testing.T) {
 	}
 }
 
-// A preview-limited resolution (media free preview, scheduled chapters) gates
-// interactions only by Visible/Accessible; content ignores PreviewLimit.
-func TestPreviewLimitIgnoredByInteractions(t *testing.T) {
+// Interactions are gated by Visible and Accessible: an item the actor can
+// only see takes a favorite, not a reaction.
+func TestInteractionsGateOnAccessible(t *testing.T) {
 	res := &fakeResolver{entries: map[string]access.Resolution{
-		"widget:" + cid(1): {Visible: true, PreviewLimit: 3},
-		"widget:" + cid(2): {Visible: true, Accessible: true, PreviewLimit: 7},
+		"widget:" + cid(1): {Visible: true},
+		"widget:" + cid(2): {Visible: true, Accessible: true},
 	}}
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	ctx := context.Background()
 	actor := access.Actor{ID: "u1", Kind: "user"}
 
 	if err := newFavorites(rt).add(ctx, actor, "widget", cid(1)); err != nil {
-		t.Fatalf("favorite preview: %v", err)
+		t.Fatalf("favorite a visible item: %v", err)
 	}
 	if _, err := rt.reactions.react(ctx, actor, "widget", cid(1), 1); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("react preview: %v, want ErrForbidden", err)
+		t.Fatalf("react without access: %v, want ErrForbidden", err)
 	}
 	if _, err := rt.reactions.react(ctx, actor, "widget", cid(2), 1); err != nil {
-		t.Fatalf("react scheduled: %v", err)
+		t.Fatalf("react with access: %v", err)
 	}
 }

@@ -51,7 +51,6 @@ vi.mock("hls.js", () => ({ default: hls.FakeHls }));
 const read = (files: FileInfo[]): ReadResult => ({
   access: "full",
   total: files.length,
-  preview_limit: 0,
   offset: 0,
   limit: 50,
   expires: 0,

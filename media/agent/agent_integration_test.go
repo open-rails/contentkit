@@ -178,7 +178,7 @@ func TestAgent(t *testing.T) {
 	exp := token.Expiry(time.Now(), time.Hour, 0)
 	item := cur.Sign(token.ItemScope(f.ns, "gallery", "456"), exp)
 	blobA, blobB := f.path("gallery/456/private/"+sha("a")), f.path("gallery/456/private/"+sha("b"))
-	fileA := cur.Sign(token.FileScope(f.key("gallery/456/private/"+sha("a"))), exp)
+	fileA := cur.Sign(f.key("gallery/456/private/"+sha("a")), exp) // a file's own key: no such scope
 	cover := f.path("gallery/456/public/cover-460.webp")
 
 	// Every refusal is byte-identical to an authorized request for a missing blob.
@@ -238,7 +238,6 @@ func TestAgent(t *testing.T) {
 		}
 		expect(t, do(t, srv, "GET", blobB, cookie(item)), 200, "bee")
 		expect(t, do(t, srv, "GET", withQuery(blobB, "t", item), nil), 200, "bee")
-		expect(t, do(t, srv, "GET", withQuery(blobA, "t", fileA), nil), 200, bodyA)
 		other := cur.Sign(token.ItemScope(f.ns, "gallery", "789"), exp)
 		expect(t, do(t, srv, "GET", blobA, map[string]string{"Cookie": "mt=" + other + "; mt=" + item}), 200, bodyA)
 		expect(t, do(t, srv, "GET", withQuery(blobA, "t", ring(t, k1, nil).Sign(token.ItemScope(f.ns, "gallery", "456"), exp)), nil), 200, bodyA)
@@ -246,7 +245,7 @@ func TestAgent(t *testing.T) {
 			"no token":       do(t, srv, "GET", blobA, nil),
 			"garbage":        do(t, srv, "GET", withQuery(blobA, "t", "garbage"), nil),
 			"other item":     do(t, srv, "GET", withQuery(blobA, "t", other), cookie(other)),
-			"other file":     do(t, srv, "GET", withQuery(blobB, "t", fileA), cookie(fileA)),
+			"file token":     do(t, srv, "GET", withQuery(blobA, "t", fileA), cookie(fileA)),
 			"folder scope":   do(t, srv, "GET", blobA, cookie(cur.Sign(f.key("gallery/456/private/"), exp))),
 			"expired":        do(t, srv, "GET", blobA, cookie(cur.Sign(token.ItemScope(f.ns, "gallery", "456"), time.Now().Add(-time.Second)))),
 			"unknown key":    do(t, srv, "GET", withQuery(blobA, "t", ring(t, k0, nil).Sign(token.ItemScope(f.ns, "gallery", "456"), exp)), nil),
@@ -257,21 +256,28 @@ func TestAgent(t *testing.T) {
 		}
 	})
 
+	// A download name is unsigned: the item token (or cookie) authorizes, and
+	// the name is kept only when plain and of the object's type.
 	t.Run("download name", func(t *testing.T) {
-		name := `Title "ep" (1080p) ✓.mp4`
-		dl := cur.Sign(token.DownloadScope(f.key("gallery/456/private/"+sha("a")), name), exp)
-		r := do(t, srv, "GET", withQuery(blobA, "t", dl, "dl", name), nil)
-		expect(t, r, 200, bodyA)
-		if got := r.header.Get("Content-Disposition"); got != token.Attachment(name) {
-			t.Fatalf("Content-Disposition %q", got)
+		name := `Title "ep" (1080p) ✓.webp`
+		for _, r := range []result{
+			do(t, srv, "GET", withQuery(blobA, "t", item, "dl", name), nil),
+			do(t, srv, "GET", withQuery(blobA, "dl", name), cookie(item)),
+		} {
+			expect(t, r, 200, bodyA)
+			if got := r.header.Get("Content-Disposition"); got != layout.Attachment(name) {
+				t.Fatalf("Content-Disposition %q", got)
+			}
 		}
-		denied(t, do(t, srv, "GET", withQuery(blobA, "t", item, "dl", name), nil))
+		for _, bad := range []string{"", "setup.exe", "page.webp.exe", "noext", ".webp", "a/b.webp", `a\b.webp`, "a\nb.webp", strings.Repeat("a", 200) + ".webp"} {
+			r := do(t, srv, "GET", withQuery(blobA, "t", item, "dl", bad), nil)
+			expect(t, r, 200, bodyA)
+			if got := r.header.Get("Content-Disposition"); got != "attachment" {
+				t.Fatalf("dl %q: Content-Disposition %q", bad, got)
+			}
+		}
+		denied(t, do(t, srv, "GET", withQuery(blobA, "dl", name), nil))
 		denied(t, do(t, srv, "GET", withQuery(blobA, "t", fileA, "dl", name), nil))
-		denied(t, do(t, srv, "GET", withQuery(blobA, "t", dl, "dl", "Other.mp4"), nil))
-		denied(t, do(t, srv, "GET", withQuery(blobA, "t", dl, "dl", ""), nil))
-		denied(t, do(t, srv, "GET", withQuery(blobA, "t", dl), nil))
-		denied(t, do(t, srv, "GET", withQuery(blobA, "dl", name), cookie(dl)))
-		denied(t, do(t, srv, "GET", withQuery(blobA, "dl", name), cookie(item)))
 	})
 
 	t.Run("refused paths", func(t *testing.T) {
@@ -445,10 +451,10 @@ func TestBinary(t *testing.T) {
 	blob := f.path("gallery/456/private/" + sha("a"))
 	for path, want := range map[string]int{
 		"/healthz": 200,
-		f.path("gallery/456/public/cover-460.webp"):                                                               200,
-		f.path("gallery/789/public/cover-460.webp"):                                                               200,
-		withQuery(blob, "t", ring(t, k2, nil).Sign(token.ItemScope(f.ns, "gallery", "456"), exp)):                 200,
-		withQuery(blob, "t", ring(t, k1, nil).Sign(token.FileScope(f.key("gallery/456/private/"+sha("a"))), exp)): 200,
+		f.path("gallery/456/public/cover-460.webp"):                                               200,
+		f.path("gallery/789/public/cover-460.webp"):                                               200,
+		withQuery(blob, "t", ring(t, k2, nil).Sign(token.ItemScope(f.ns, "gallery", "456"), exp)): 200,
+		withQuery(blob, "t", ring(t, k1, nil).Sign(token.ItemScope(f.ns, "gallery", "456"), exp)): 200,
 		blob:                                404,
 		f.path("gallery/456/manifest.json"): 404,
 	} {

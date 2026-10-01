@@ -147,9 +147,10 @@ func (e *tooLargeError) Error() string {
 }
 func (e *tooLargeError) Is(target error) bool { return target == ErrManifestTooLarge }
 
-// SyncPublic deletes public names no attached upload currently uses, under
-// the manifest lock. Cleanup is bounded to one minute; deleted keys are
-// returned for cache purging, including partial success on failure.
+// SyncPublic deletes the public names the manifest does not keep
+// (Kind.PublicKept), under the manifest lock. Cleanup is bounded to one
+// minute; deleted keys are returned for cache purging, including partial
+// success on failure.
 func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
@@ -169,21 +170,12 @@ func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) (
 		return nil, err
 	}
 	want := map[string]bool{}
-	if !cur.Hidden {
-		for _, f := range cur.Files {
-			if !f.IsUpload() || f.Unattached {
-				continue
-			}
-			for _, p := range item.Kind().PublicFor(f.Path) {
-				for _, name := range item.Kind().PublicNames(p, f.Path) {
-					key, err := item.Public(name)
-					if err != nil {
-						return nil, err
-					}
-					want[key] = true
-				}
-			}
+	for _, name := range item.Kind().PublicKept(cur) {
+		key, err := item.Public(name)
+		if err != nil {
+			return nil, err
 		}
+		want[key] = true
 	}
 	var keys []string
 	for obj, err := range m.store.List(ctx, item.PublicPrefix()) {

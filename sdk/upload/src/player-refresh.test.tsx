@@ -2,8 +2,8 @@
 import "./test/dom.js";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import { useHlsPlayer, type HlsPlayerOptions } from "./gallery-react.js";
-import { refreshable } from "./playback.js";
+import { useHlsPlayer, useRefreshBeforeExpiry, type HlsPlayerOptions } from "./gallery-react.js";
+import { expiryDelay, NETWORK_FAILURES_BEFORE_ERROR, refreshable } from "./playback.js";
 
 // hls.js needs MediaSource, which jsdom lacks: a stand-in that records what the
 // player asks of it and lets the test deliver its events.
@@ -214,4 +214,78 @@ it("a preview committed to playback drops its low start rung for ABR", async () 
   expect(live().flushes).toEqual([-1]);
   expect(live().nextAutoLevel).toBeGreaterThan(0);
   expect(m.video.currentTime).toBe(0);
+});
+
+it("reads again shortly before the token expires, once for a gallery and its players", async () => {
+  vi.useFakeTimers();
+  try {
+    const now = 1_800_000_000_000;
+    vi.setSystemTime(now);
+    expect(expiryDelay(undefined)).toBeNull();
+    expect(expiryDelay(0)).toBeNull();
+    expect(expiryDelay(now / 1000 + 3600)).toBe(3_540_000);
+    expect(expiryDelay(now / 1000 - 10)).toBe(30_000); // an old read: soon, never in a hot loop
+
+    const refresh = vi.fn();
+    const expires = now / 1000 + 3600;
+    const a = renderHook(({ e }: { e: number }) => useRefreshBeforeExpiry(e, refresh), { initialProps: { e: expires } });
+    const b = renderHook(() => useRefreshBeforeExpiry(expires, refresh));
+    await vi.advanceTimersByTimeAsync(3_539_000);
+    expect(refresh).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    // The same expiry again (a failed refresh) arms nothing; a later one does.
+    await vi.advanceTimersByTimeAsync(7_200_000);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    a.rerender({ e: expires + 14_400 });
+    await vi.advanceTimersByTimeAsync(14_400_000);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    a.unmount();
+    b.unmount();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("a new expiry reloads the playlists at the playhead only when their URLs carry the token", async () => {
+  const m = mount({ src: "https://media/item/master.m3u8", expires: 1000, qualityKey: null });
+  act(() => m.result.current.play());
+  await waitFor(() => expect(hls.instances.length).toBe(1));
+  act(() => live().emit("hlsManifestParsed"));
+  await playing(m.video);
+
+  // Cookie delivery: plain segment URLs keep working under the new cookie.
+  (live().levels as unknown[]) = [{ width: 480, height: 270, bitrate: 300_000, details: { fragments: [{ url: "https://m/v1/d/video/1/private/sha256-aa" }] } }];
+  m.video.currentTime = 7.5;
+  m.rerender({ src: "https://media/item/master.m3u8", expires: 2000, qualityKey: null });
+  expect(hls.instances.length).toBe(1);
+
+  // URL delivery: the playlists hold the old token.
+  (live().levels as unknown[]) = [{ width: 480, height: 270, bitrate: 300_000, details: { fragments: [{ url: "https://m/v1/d/video/1/private/sha256-aa?t=k1.2000.sig" }] } }];
+  m.rerender({ src: "https://media/item/master.m3u8", expires: 3000, qualityKey: null });
+  await waitFor(() => expect(hls.instances.length).toBe(2));
+  expect(hls.instances[0]!.destroyed).toBe(true);
+  act(() => live().emit("hlsManifestParsed"));
+  expect(live().startedAt).toBe(7.5);
+  expect(m.result.current.error).toBeUndefined();
+});
+
+it("a rate limit or a blocked media request fails once: no refresh, no retry loop", async () => {
+  for (const response of [{ code: 429 }, { code: 0 }]) {
+    hls.instances.length = 0;
+    const refresh = vi.fn();
+    const m = mount({ src: "https://media/item/master.m3u8", refresh });
+    act(() => m.result.current.play());
+    await waitFor(() => expect(hls.instances.length).toBe(1));
+    act(() => live().emit("hlsManifestParsed"));
+    await playing(m.video);
+    // The ingress's 429 arrives with its status, or as status 0 when it carries no CORS headers.
+    for (let i = 0; i < NETWORK_FAILURES_BEFORE_ERROR; i++) act(() => hls.instances[0]!.emit("hlsError", { type: "networkError", details: "fragLoadError", fatal: false, response }));
+    await waitFor(() => expect(m.result.current.status).toBe("error"));
+    expect(m.result.current.error?.kind).toBe(response.code === 429 ? "rate_limited" : "network");
+    expect(refresh).not.toHaveBeenCalled();
+    expect(hls.instances.length).toBe(1);
+    expect(hls.instances[0]!.destroyed).toBe(true);
+    m.unmount();
+  }
 });

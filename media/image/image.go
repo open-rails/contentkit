@@ -181,7 +181,7 @@ func (p *Processor) todo(ctx context.Context, item media.Item, m *media.Manifest
 				stale := job.Force || slices.Contains(f.Pending, pu.Name)
 				if !stale {
 					var err error
-					if stale, err = p.publicStale(ctx, item, f, pu); err != nil {
+					if stale, err = p.publicStale(ctx, item, m, f, pu); err != nil {
 						return nil, err
 					}
 				}
@@ -210,9 +210,9 @@ func spec(pr *media.Private, f media.File) media.Image {
 
 // publicStale reports a public preset whose names are missing or carry
 // another fingerprint.
-func (p *Processor) publicStale(ctx context.Context, item media.Item, f media.File, pu *media.Public) (bool, error) {
+func (p *Processor) publicStale(ctx context.Context, item media.Item, m *media.Manifest, f media.File, pu *media.Public) (bool, error) {
 	fp := publicFP(f, pu)
-	for _, n := range item.Kind().PublicNames(pu, f.Path) {
+	for _, n := range item.Kind().PublicNames(m, pu, f.Path) {
 		key, err := item.Public(n)
 		if err != nil {
 			return false, err
@@ -453,7 +453,10 @@ func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manife
 	}
 	k := item.Kind()
 	for _, pu := range w.public {
-		names := k.PublicNames(pu, w.src.Path)
+		names := k.PublicNames(m, pu, w.src.Path)
+		if len(names) == 0 {
+			continue // past a preview's First by now: nothing to render
+		}
 		outs, dims, err := encodePublic(src, w.src.Type, pu, names, w.src.Edit, p.rules(pu.Image.Animation))
 		if d.dims = dims; err != nil {
 			return p.permanent(d, err)
@@ -464,8 +467,8 @@ func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manife
 			if !ok || cur.Hidden || f.Unattached {
 				return nil
 			}
-			if f.Blob != w.src.Blob || f.Edit.Hash() != w.src.Edit.Hash() {
-				return nil
+			if f.Blob != w.src.Blob || f.Edit.Hash() != w.src.Edit.Hash() || !slices.Equal(k.PublicNames(cur, pu, w.src.Path), names) {
+				return nil // changed, or moved to another preview position
 			}
 			for _, n := range names {
 				out := outs[n]

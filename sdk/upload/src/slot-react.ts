@@ -53,7 +53,7 @@ export function useSlotImage(client: UploadClient | null | undefined, o: SlotIma
   const set = useCallback(
     (f: FileInfo | null) => {
       const files = (read?.files ?? []).filter((x) => !(x.upload && samePath(x.path, path)));
-      update({ access: "full", preview_limit: 0, expires: 0, total: 0, offset: 0, limit: 0, ...read, files: f ? [...files, f] : files });
+      update({ access: "full", expires: 0, total: 0, offset: 0, limit: 0, ...read, files: f ? [...files, f] : files });
     },
     [read, path, update],
   );

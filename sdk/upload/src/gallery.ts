@@ -13,13 +13,13 @@ export interface GalleryMediaItem {
   aspect: number;
 }
 
-/** What a viewer without access is missing; `teaser` is the blurred image drawn behind it. */
+/** What a viewer without access is missing; `backdrop` is the public preview drawn behind it. */
 export interface GalleryLockedItem {
   kind: "locked";
   key: string;
   count: number;
   videos: number;
-  teaser?: FileInfo;
+  backdrop?: string;
   aspect: number;
 }
 
@@ -43,12 +43,13 @@ function aspectOf(f: FileInfo | undefined, fallback: number) {
 const parent = (path: string) => path.slice(0, path.lastIndexOf("/") + 1);
 
 /**
- * The read result as gallery items in manifest order: each image, each
- * playable HLS ladder (a folder in `hls`: a video, or an audio-only one)
- * and each other audio file this viewer may see (full access hides the
- * teaser), then one locked item for the rest. Other files (plain videos,
- * subtitles, zips) are not items; scope the read with a prefix to choose.
- * Locked files never carry URLs; the teaser is the only image behind the lock.
+ * The read result as gallery items in manifest order. With access: each
+ * image, each playable HLS ladder (a folder in `hls`: a video, or an
+ * audio-only one) and each other audio file. Without: the item's public
+ * previews (the read's `previews`), then one locked item for the rest; an
+ * item's private files are all or nothing, so locked files never carry URLs.
+ * Other files (plain videos, subtitles, zips) are not items; scope the read
+ * with a prefix to choose.
  */
 export function galleryItems(read: ReadResult | null | undefined): GalleryItem[] {
   if (!read) return [];
@@ -61,12 +62,13 @@ export function galleryItems(read: ReadResult | null | undefined): GalleryItem[]
   const units = new Set(lockedMedia.map(unit));
   const lockedImages = read.files.filter((f) => f.locked && isImageType(f.type) && !units.has(parent(f.path)));
   const lockedVideos = new Set(lockedMedia.filter((f) => isVideoType(f.type)).map(unit)).size;
-  const lockedCount = lockedImages.length + units.size;
-  const teaser = full || lockedCount === 0 ? undefined : read.files.find((f) => f.teaser && !f.locked && f.url && isImageType(f.type));
-  const items: GalleryItem[] = [];
+  const previews = full ? [] : (read.previews ?? []);
+  // Each preview shows one of the locked images.
+  const lockedCount = Math.max(lockedImages.length - previews.length, 0) + units.size;
+  const items: GalleryItem[] = previews.map((url, i) => ({ kind: "image", key: `preview/${i + 1}`, file: { path: `preview/${i + 1}`, type: "image/webp", url }, aspect: 1 }));
   const seen = new Set<string>();
   for (const f of read.files) {
-    if (f.locked || (f.teaser && (full || f === teaser))) continue;
+    if (f.locked) continue;
     const dir = dirOf(f);
     if (dir) {
       if (seen.has(dir)) continue;
@@ -86,7 +88,7 @@ export function galleryItems(read: ReadResult | null | undefined): GalleryItem[]
     else if (isAudioType(f.type)) items.push({ kind: "audio", key: f.path, file: f, aspect: AUDIO_ASPECT });
   }
   if (lockedCount > 0)
-    items.push({ kind: "locked", key: "locked", count: lockedCount, videos: lockedVideos, teaser, aspect: aspectOf(teaser, 1) });
+    items.push({ kind: "locked", key: "locked", count: lockedCount, videos: lockedVideos, backdrop: previews.at(-1), aspect: 1 });
   return items;
 }
 

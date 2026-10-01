@@ -35,7 +35,7 @@ it("useSlotImage reads the upload at its path and lists the preset's public file
 
 it("useSlotImage uses a given read without fetching, and has no file without an upload", () => {
   const { s, c } = setup();
-  const read = { access: "full" as const, preview_limit: 0, expires: 0, total: 0, offset: 0, limit: 50, files: [] };
+  const read = { access: "full" as const, expires: 0, total: 0, offset: 0, limit: 50, files: [] };
   const { result } = renderHook(() => useSlotImage(c, { ref, path: "avatar", read }));
   expect([result.current.loading, result.current.file, result.current.aspect]).toEqual([false, null, "1:1"]);
   expect(s.calls).toEqual([]);

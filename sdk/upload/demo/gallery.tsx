@@ -7,16 +7,19 @@ const media = `http://127.0.0.1:${q.get("media") ?? 4180}`;
 const dark = q.get("theme") === "dark";
 
 // Reads as the read API answers them: each video is an HLS folder in `hls`.
-const read = (access: Access, files: FileInfo[], hls: string[] = []): ReadResult => ({ access, total: files.length, preview_limit: 0, offset: 0, limit: 50, expires: 0, files, hls });
+const read = (access: Access, files: FileInfo[], hls: string[] = []): ReadResult => ({ access, total: files.length, offset: 0, limit: 50, expires: 0, files, hls });
 const img = (n: number, w: number, h: number): FileInfo => ({ path: `low-res/${n}.webp`, type: "image/jpeg", w, h, url: `${media}/cors/img/${n}.jpg` });
 const vid = (name: string, w: number, h: number): FileInfo => ({ path: `${name}/video.mp4`, type: "video/mp4", w, h, dur: 6, url: "u" });
 
 // 4 images and 2 videos, mixed aspects.
 const post = read("full", [img(1, 1200, 900), vid("landscape", 480, 270), img(2, 900, 1125), vid("portrait", 360, 640), img(3, 1280, 720), img(4, 1000, 1000)], ["landscape/", "portrait/"]);
-const locked = read("none", [
-  { path: "teaser/blur.webp", type: "image/jpeg", w: 480, h: 360, teaser: true, url: `${media}/cors/img/teaser.jpg` },
-  ...[1, 2, 3, 4, 5].map((n) => (n % 2 ? { path: `low-res/${n}.webp`, type: "image/jpeg", locked: true } : { path: `v${n}/video.mp4`, type: "video/mp4", locked: true })),
-]);
+const locked: ReadResult = {
+  ...read(
+    "none",
+    [1, 2, 3, 4, 5].map((n) => (n % 2 ? { path: `low-res/${n}.webp`, type: "image/jpeg", locked: true } : { path: `v${n}/video.mp4`, type: "video/mp4", locked: true })),
+  ),
+  previews: [`${media}/cors/img/teaser.jpg`],
+};
 const single = read("full", [vid("portrait", 360, 640)], ["portrait/"]);
 const hlsBase = (dir: string) => `${media}/cors/${dir}`;
 

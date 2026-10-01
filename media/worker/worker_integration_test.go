@@ -61,7 +61,7 @@ var pngs = []string{"image/png"}
 func registry(ns string, hooks media.Hooks) media.Config {
 	return media.Config{Namespace: ns, BaseURL: "https://media.example", Hooks: hooks, Kinds: []media.Kind{
 		{Name: "gallery", KeepOriginals: true,
-			Uploads: []media.Upload{{Path: "originals/{name}", Types: pngs, MaxBytes: 10 << 20, Pages: true}, {Path: "cover", Types: pngs, MaxBytes: 10 << 20}},
+			Uploads: []media.Upload{{Path: "originals/{name}", Types: pngs, MaxBytes: 10 << 20}, {Path: "cover", Types: pngs, MaxBytes: 10 << 20}},
 			Private: []media.Private{{Name: "thumb", From: "originals/{name}", To: "thumb/{name}.webp", Image: &media.Image{Width: 100, Height: 150, Fit: media.FitCover}}},
 			Public:  []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{150, 300}, Image: media.Image{Aspect: media.Ratio("3:1")}}},
 		},

@@ -98,7 +98,7 @@ Ports (in `content` unless qualified):
 |---|---|---|
 | `Identity` | yes | reads the already-authenticated `access.Actor` from context; ContentKit never authenticates |
 | `Authorizer` | yes | `Can(actor, perm)` for `Perms{PostWrite, PollWrite, CommentModerate, ModerationReview}`; fail-closed on error and on an unset perm |
-| `access.ContentResolver` | yes | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, PreviewLimit, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request, which must then be lower case (else 400); another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`; content ignores `PreviewLimit`. Media serves every file only when `Full()`, else the files of the first `Units(n)` pages (`PreviewLimit` N caps a `Visible` item to its first N `Pages` uploads; free preview is `Accessible=false, PreviewLimit=3`) and `Visible` teasers; for media the ref is the item, i.e. the host's version; `Editor` (the actor may edit the item) unlocks editor reads (uploads, edits, editor views) |
+| `access.ContentResolver` | yes | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request, which must then be lower case (else 400); another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`. For media an item's private files are all or nothing: `Full()` (visible and accessible) gets every one, anyone else none; what a viewer without access may see is the item's public files (a preview preset), which need only `Visible` to anonymous viewers; the ref is the item, i.e. the host's version; `Editor` (the actor may edit the item) unlocks editor reads (uploads, edits, editor views) and the item's private files |
 | `UserEnricher` | no | display data for author ids |
 | `Media` | no | post and poll images in ContentKit media (see below); absent = image routes answer 501 |
 | `ContentProcessor` | no | rich-text sanitizer for comment/post bodies (default strips tags) |
@@ -403,7 +403,7 @@ layouts.
 ```go
 var Gallery = media.Kind{Name: "gallery", KeepOriginals: true,
 	Uploads: []media.Upload{
-		{Path: "originals/{name}", Types: images, MaxBytes: 10 << 20, Pages: true},
+		{Path: "originals/{name}", Types: images, MaxBytes: 10 << 20},
 		{Path: "cover", Types: images, MaxBytes: 10 << 20},
 	},
 	Private: []media.Private{
@@ -411,8 +411,11 @@ var Gallery = media.Kind{Name: "gallery", KeepOriginals: true,
 		{Name: "high", From: "originals/{name}", To: "high/{name}.webp", Image: &media.Image{Quality: 90}},
 		{Name: "zip", To: "download/pages.zip", Download: "{title}.zip", Zip: "high/"},
 	},
-	Public: []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{230, 460, 920},
-		Image: media.Image{Aspect: media.Ratio("46:65")}, Default: "cover.png"}},
+	Public: []media.Public{
+		{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{230, 460, 920},
+			Image: media.Image{Aspect: media.Ratio("46:65")}, Default: "cover.png"},
+		{Name: "preview", From: "originals/{name}", To: "preview-{n}.webp", First: 3, Image: media.Image{Width: 1280}},
+	},
 	Defaults: defaultsFS, // holds cover.png
 }
 
@@ -437,9 +440,8 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
 
 - **Uploads** are paths: a literal (`cover`) or a pattern (`originals/{name}`);
   a file's path adds its extension (`cover.png`), and a put to the same stem
-  replaces it. `Max` caps an Upload's files, `Pages` marks the pages the
-  preview cut counts, `Frames` lets the `frame` op grab the upload from a
-  video upload, `Named` lets the server name it (`i-{uuid}`, inline images;
+  replaces it. `Max` caps an Upload's files, `Frames` lets the `frame` op
+  grab the upload from a video upload, `Named` lets the server name it (`i-{uuid}`, inline images;
   it needs a `Max`).
 - **Private presets** have one producer: `Image` (per-file `Choose` in Go),
   `HLS` (byte-range fMP4 ladder, audio and subtitle tracks, seek sprite; each
@@ -452,18 +454,28 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   so every name exists). The object carries its `from` and `fp` as metadata.
   The first public preset of an upload bounds its edit: the crop is fitted to
   `Image.Aspect`, and an edit narrower than `MinWidth` fails.
+- **Previews** are public presets with `First: N`: the first N attached
+  uploads of a `{name}` Upload in manifest order, `{n}` in `To` their position
+  from 1, so the URLs
+  (`{BaseURL}/v1/{ns}/{kind}/{id}/public/preview-{n}.webp`) need no manifest.
+  Anyone who can see the item sees them; a hidden item has none. A position
+  is rendered again when another upload takes it (a reorder, an insert, a
+  removal), its old image is deleted when a removal shifts the pages, and
+  names past the last upload are deleted. This is the only way to show part
+  of an item: there is no partial access to `private/`.
 - **Originals.** `KeepOriginals` keeps uploads once their private outputs
   exist (otherwise the blob is dropped and the file marked `gone`; public
-  presets' sources are always kept). `ServeOriginals` lists and serves
-  uploads to viewers with access; otherwise the read API never returns an
-  upload's path or blob, and viewer tokens authorize only served blobs rather
-  than the whole private folder. Identical bytes share a blob: serving those
-  bytes as a rendition also authorizes that blob.
-- **Host-only presets.** Set `Private.HostOnly` when an output needs policy
-  beyond the item's access decision. Generic reads, downloads and playlists
-  do not serve it. A trusted host route applies its additional checks and
-  calls `grant.HostURL(path, download)` for a full-access viewer. These kinds
-  always use file-scoped tokens; the access agent needs no registry policy.
+  presets' sources are always kept). `ServeOriginals` lists uploads in reads
+  for viewers with access; otherwise the read API never returns an upload's
+  path or URL.
+- **Host-only presets.** `Private.HostOnly` keeps an output out of generic
+  reads, downloads and playlists; a host route applies its own checks and
+  calls `grant.HostURL(path, download)`, which answers the file's URL with
+  the item token for a viewer with access.
+- **`private/` is all or nothing.** One token per item opens every private
+  file of it. `ServeOriginals` and `HostOnly` decide what reads list, not
+  what the token reaches: a viewer with access who learns a blob's hash can
+  fetch it. Put what must be gated separately in another item.
 - **Defaults.** A kind's `Defaults` (an `fs.FS`, e.g. `go:embed`) holds the
   images its public presets name in `Public.Default`; `NewRegistry` checks
   they exist. A shared kind ships its own, so importing apps merge nothing.
@@ -519,15 +531,19 @@ out until `attach`.
 `reader.Handler(media.HandlerOptions{Identity, Limit})`:
 
 - `GET /{kind}/{id}?prefix=low-res/&offset=&limit=&download&editor` answers
-  `{access, preview_limit, expires, meta, total, hls, files: [{path, type, w, h, url | locked}]}`
-  in manifest order. When `ServeOriginals` is true and no preset is `HostOnly`,
-  full access sets the item cookie (`Path=/v1/{ns}/{kind}/{id}/private/`);
-  otherwise URLs carry file-scoped tokens, including in cookie mode.
-  Full access serves every viewer file; preview access the first `PreviewLimit`
-  `Pages` uploads' outputs (their uploads only with `ServeOriginals`); a
-  file of an upload with `meta.teaser` needs only visibility. With
-  `download`, each URL's token also signs the file's download name, which the
-  agent sends as `Content-Disposition`. With `editor` (editors only), the
+  `{access, expires, meta, previews, total, hls, files: [{path, type, size, w, h, url | locked}]}`
+  in manifest order. `access` is `full` or `none`. With access every listed
+  file has a URL: plain under the item cookie
+  (`Path=/v1/{ns}/{kind}/{id}/private/`) in cookie mode, with `?t={item
+  token}` in URL mode. Without it there is no URL, token or cookie, and each
+  file is `{path, type, size, locked}`: nothing names a blob. `previews` are
+  the item's public preview URLs, for every viewer who can see it. `expires`
+  is when the token stops working; a read before then answers the same token,
+  so clients keep what they have and read again shortly before (the SDK's
+  gallery and player do). With `download`, each URL carries the file's
+  download name as an unsigned `dl`, which the agent sends as
+  `Content-Disposition: attachment` when the name is plain and has the
+  file's type. With `editor` (editors only), the
   uploads come with `edit`, `frame`, `meta`, `pending`, `failed`, encode
   `progress` and an `editor_url`: the editor view, rendered on demand by the
   worker (`ReaderOptions.Queue`) into `private/` under the hash of its source
@@ -643,8 +659,8 @@ the host's periodic jobs. The worker migrates its schema itself.
 - **Media host**: serve `cmd/media-access` at `media.<site domain>` (same
   site as the pages) and use cookie delivery (`Delivery{Mode: DeliverCookie,
   CookieDomain: "<site domain>"}`); URL delivery only for apps without cookies.
-  Unrestricted full-access kinds use the item cookie. Kinds with unserved
-  originals or host-only presets, and preview viewers, use per-file URL tokens.
+  Either way one item token opens the whole item's `private/`, and viewers
+  without access get none.
 - **Access agent config**: `MEDIA_ACCESS_HOSTS` maps each media host to the
   namespaces it serves (`media.<domain>=<tenant>,accounts`); URLs are
   `https://media.<domain>/v1/{ns}/{kind}/{id}/{public|private}/{name}`.
@@ -677,6 +693,9 @@ the host's periodic jobs. The worker migrates its schema itself.
   old key and have clients refresh their media grants.
 - **Scraping**: keep `HandlerOptions.Limit` on (default 2/s, burst 120 per
   viewer); behind a proxy set `Actor.IP` so anonymous viewers are not one key.
+  The access agent keeps no state and limits nothing: rate limit the media
+  host at the ingress (Traefik's per-IP `rateLimit`). Clients treat its 429
+  as "over the limit" and do not retry in a loop (the SDK does not).
   Signed-URL logs name the viewer.
 - **Multiple replicas**: the limit is per process unless `Limit.Redis` is set
   (logged at startup), so N replicas allow N times it. Pass the host's
