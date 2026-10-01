@@ -65,6 +65,27 @@ it("AvatarUpload: pick → crop dialog with a sharpness warning → save → sho
   expect(screen.getByRole("button", { name: "Change" })).toBeInTheDocument();
 });
 
+it("AvatarUpload removes the avatar; CoverUpload offers Remove only when removable", async () => {
+  const { s, client } = setup();
+  await client.uploadSlot(png(3), { ref: item, slot: "avatar" });
+  const onChange = vi.fn();
+  const user = userEvent.setup();
+  const { unmount } = render(<AvatarUpload client={client} item={item} onChange={onChange} />);
+  await user.click(await screen.findByRole("button", { name: "Remove" }));
+  await waitFor(() => expect(screen.getByRole("img", { name: "No avatar" })).toBeInTheDocument());
+  expect(s.calls).toContain("/delete-slot");
+  expect(onChange).toHaveBeenLastCalledWith({ aspect: "1:1", outputs: [], pending: false });
+  expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
+  unmount();
+
+  await client.uploadSlot(png(4), { ref: item, slot: "cover" });
+  const { rerender } = render(<CoverUpload client={client} item={item} />);
+  await screen.findAllByRole("button", { name: "Change" });
+  expect(screen.queryAllByRole("button", { name: "Remove" })).toHaveLength(0);
+  rerender(<CoverUpload client={client} item={item} removable />);
+  expect((await screen.findAllByRole("button", { name: "Remove" })).length).toBeGreaterThan(0);
+});
+
 it("CoverUpload: edit crop re-renders from the original without uploading", async () => {
   const { s, client } = setup();
   const { manifest } = await client.uploadSlot(png(2), { ref: item, slot: "cover" });

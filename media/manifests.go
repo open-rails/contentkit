@@ -32,7 +32,8 @@ type ManifestOptions struct {
 	MaxRetries int // CAS attempts per edit; default 16
 	// Sweeps, when set, schedules the folder's sweep after every written
 	// edit: the host's *Jobs, or in the media worker a *HostQueue. Scheduling
-	// is best-effort (logged); the periodic sweep pass backs it up.
+	// is best-effort (logged); the periodic sweep pass backs it up. Both also
+	// schedule slot index jobs (IndexSlots).
 	Sweeps SweepScheduler
 }
 
@@ -68,6 +69,15 @@ func NewManifests(store Store, kinds *Registry, opts ManifestOptions) (*Manifest
 		opts.MaxRetries = 16
 	}
 	return &Manifests{store: store, kinds: kinds, locker: locker, sweeps: opts.Sweeps, retries: opts.MaxRetries, cache: newLRU(opts.CacheSize)}, nil
+}
+
+// IndexSlots schedules ref's slot index job through ManifestOptions.Sweeps
+// (a SlotIndexer); without one it does nothing.
+func (m *Manifests) IndexSlots(ctx context.Context, ref contentref.ContentRef) error {
+	if ix, ok := m.sweeps.(SlotIndexer); ok {
+		return ix.IndexSlots(ctx, ref)
+	}
+	return nil
 }
 
 // Get returns ref's files (its version's section for a versioned kind) and

@@ -8,6 +8,7 @@ export const en = {
     change: "Change",
     upload: "Upload",
     editCrop: "Edit crop",
+    remove: "Remove",
   },
   crop: {
     title: "Crop image",

@@ -64,7 +64,7 @@ func (s *countingStore) Get(ctx context.Context, key string, o media.GetOptions)
 
 type allow struct{}
 
-func (allow) CanUpload(context.Context, access.Actor, contentref.ContentRef) (media.UploadGrant, error) {
+func (allow) CanUpload(context.Context, access.Actor, media.UploadTarget) (media.UploadGrant, error) {
 	return media.UploadGrant{Allowed: true}, nil
 }
 
@@ -98,7 +98,20 @@ type env struct {
 	kinds     *media.Registry
 	mu        sync.Mutex
 	failed    []string
-	encoded   map[string]media.SlotListing // Hooks.SlotEncoded, by ref#slot
+	indexed   map[string]int // IndexSlots calls, by ref
+}
+
+// ScheduleSweep and IndexSlots stand in for the host's media jobs.
+func (e *env) ScheduleSweep(context.Context, contentref.ContentRef) error { return nil }
+
+func (e *env) IndexSlots(_ context.Context, ref contentref.ContentRef) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.indexed == nil {
+		e.indexed = map[string]int{}
+	}
+	e.indexed[ref.String()]++
+	return nil
 }
 
 func newEnv(t *testing.T, kind media.Kind) *env {
@@ -121,7 +134,7 @@ func (e *env) useKind(t *testing.T, kind media.Kind) {
 		t.Fatal(err)
 	}
 	e.kinds = kinds
-	e.manifests = s3test.Manifests(t, e.store, kinds, media.ManifestOptions{})
+	e.manifests = s3test.Manifests(t, e.store, kinds, media.ManifestOptions{Sweeps: e})
 	if e.uploads, err = media.NewUploads(media.UploadOptions{Store: e.Env.Store, Kinds: kinds, Manifests: e.manifests,
 		Authorizer: allow{}, Queue: e.queue}); err != nil {
 		t.Fatal(err)
@@ -130,13 +143,6 @@ func (e *env) useKind(t *testing.T, kind media.Kind) {
 		Hooks: media.Hooks{Failed: func(_ context.Context, _ contentref.ContentRef, file string, _ error) {
 			e.mu.Lock()
 			e.failed = append(e.failed, file)
-			e.mu.Unlock()
-		}, SlotEncoded: func(_ context.Context, ref contentref.ContentRef, slot string, l media.SlotListing) {
-			e.mu.Lock()
-			if e.encoded == nil {
-				e.encoded = map[string]media.SlotListing{}
-			}
-			e.encoded[ref.String()+"#"+slot] = l
 			e.mu.Unlock()
 		}}})
 	if err != nil {

@@ -13,12 +13,17 @@ import (
 // errSuperseded aborts recording a result for a slot record that changed meanwhile.
 var errSuperseded = errors.New("media/image: slot record changed")
 
-// slot renders a registered slot or an inline image.
+// slot renders a registered slot or an inline image. A registered slot's
+// index job follows every pass that settles (media.Manifests.IndexSlots), so a
+// retried job schedules it again.
 func (p *Processor) slot(ctx context.Context, item media.Item, slot string) error {
 	if spec, ok := item.Kind().Slots[slot]; ok {
-		return p.render(ctx, item, slot, spec, func(src []byte, typ string, rec *media.SlotRecord) (map[int]slotOutput, media.Dims, error) {
+		if err := p.render(ctx, item, slot, spec, func(src []byte, typ string, rec *media.SlotRecord) (map[int]slotOutput, media.Dims, error) {
 			return encodeSlot(src, typ, spec, rec.Edit, p.rules(spec.Animation))
-		})
+		}); err != nil {
+			return err
+		}
+		return p.c.Manifests.IndexSlots(ctx, item.Ref().Content())
 	}
 	if item.Inline(slot) {
 		s := *item.Kind().Inline
@@ -41,7 +46,7 @@ type slotEncoder func(src []byte, typ string, rec *media.SlotRecord) (map[int]sl
 // width) to private/{sha256}, copied to public/ unless the item is hidden,
 // then recorded. Every pass re-checks the record, so jobs holding an older
 // commit or edit converge on the newest; the replaced renditions are left to
-// the sweep. Hooks.SlotEncoded reports the new outputs.
+// the sweep.
 func (p *Processor) render(ctx context.Context, item media.Item, slot string, spec media.Slot, enc slotEncoder) error {
 	ref := item.Ref().Content()
 	for range 8 {
@@ -104,13 +109,7 @@ func (p *Processor) render(ctx context.Context, item media.Item, slot string, sp
 		} else if err != nil {
 			return err
 		}
-		if err := p.syncPublic(ctx, ref); err != nil {
-			return err
-		}
-		if p.c.Hooks.SlotEncoded != nil && len(res.Outputs) > 0 {
-			p.c.Hooks.SlotEncoded(ctx, ref, slot, res.Listing(spec))
-		}
-		return nil
+		return p.syncPublic(ctx, ref)
 	}
 	return fmt.Errorf("media/image: slot %s of %s kept changing", slot, item.Ref())
 }

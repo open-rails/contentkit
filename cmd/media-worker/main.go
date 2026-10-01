@@ -1,6 +1,6 @@
 // Command media-worker is the stock media worker (media/worker) for hosts
 // whose kinds are plain data: it reads them from a JSON file. Hosts with a
-// per-file spec chooser or hooks (Failed, SlotEncoded) build their own worker
+// per-file spec chooser or worker hooks (Failed, ItemReady) build their own worker
 // from the code that builds their media.Registry instead.
 //
 // Environment: worker.FromEnv and Config.TuningFromEnv, plus

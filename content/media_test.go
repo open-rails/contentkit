@@ -14,6 +14,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/media"
 )
 
 var mediaAdmin = access.Actor{ID: "admin", Kind: "user"}
@@ -189,13 +190,16 @@ func TestMedia_CanUpload(t *testing.T) {
 		{contentref.New("other", "post", post), false},
 		{rt.Ref("post", post).WithVersion("v1"), false},
 	} {
-		g, err := rt.CanUpload(ctx, mediaAdmin, tc.ref)
+		g, err := rt.CanUpload(ctx, mediaAdmin, media.UploadTarget{Ref: tc.ref})
 		if err != nil || g.Allowed != tc.want {
 			t.Errorf("%s: %+v %v, want %v", tc.ref, g, err, tc.want)
 		}
 	}
 	denied, _ := newTestRuntime(t, Options{Authz: denyAll{}, Media: (&testMedia{}).options(), Perms: Perms{PostWrite: "post"}})
-	if g, err := denied.CanUpload(ctx, mediaAdmin, denied.Ref("post", insertPost(t, denied))); err != nil || g.Allowed {
+	if g, err := rt.CanUpload(ctx, mediaAdmin, media.UploadTarget{Ref: rt.Ref("post", post), Slot: "cover"}); err != nil || g.Allowed {
+		t.Fatalf("a post slot: %+v %v", g, err)
+	}
+	if g, err := denied.CanUpload(ctx, mediaAdmin, media.UploadTarget{Ref: denied.Ref("post", insertPost(t, denied))}); err != nil || g.Allowed {
 		t.Fatalf("without PostWrite: %+v %v", g, err)
 	}
 }

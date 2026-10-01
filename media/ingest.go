@@ -96,7 +96,7 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 	if err := item.Kind().Allows(req.Type, req.Size); err != nil {
 		return IngestResult{}, err
 	}
-	grant, err := u.authorize(ctx, actor, req.Ref)
+	grant, err := u.authorize(ctx, actor, UploadTarget{Ref: req.Ref})
 	if err != nil {
 		return IngestResult{}, err
 	}

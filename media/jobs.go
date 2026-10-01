@@ -56,8 +56,12 @@ type JobsConfig struct {
 	// Resolver decides, with an anonymous actor, whether an item is hidden
 	// (Expose); required for Expose.
 	Resolver access.ContentResolver
-	// Hooks.PublicRemoved hears of deleted public/ keys (CDN purge).
-	Hooks      Hooks
+	// Hooks.PublicRemoved hears of deleted public/ keys (CDN purge);
+	// Hooks.SlotChanged of slot index changes.
+	Hooks Hooks
+	// Slots is the slot index the slot index job keeps (IndexSlots); nil
+	// keeps none.
+	Slots      *SlotIndex
 	Queue      string // default "contentkit_media"
 	MaxWorkers int    // default 2
 	Logger     *slog.Logger
@@ -159,6 +163,7 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &sweepPassWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &deleteFolderWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &exposeWorker{j: j}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &slotIndexWorker{j: j}) },
 		} {
 			if err := w(); err != nil {
 				return err
@@ -312,7 +317,8 @@ type Deletion struct {
 }
 
 // DeleteItemsTx deletes each item's whole folder (every version) through a
-// job enqueued in the host's delete transaction. A second pass after
+// job enqueued in the host's delete transaction, and its slot index rows in
+// that transaction (no Hooks.SlotChanged). A second pass after
 // LateUploadWindow removes uploads that land after the first. The worker
 // records the refund from the manifest before deleting any objects.
 func (j *Jobs) DeleteItemsTx(ctx context.Context, tx pgx.Tx, items ...Deletion) error {
@@ -338,6 +344,15 @@ func (j *Jobs) DeleteItemsTx(ctx context.Context, tx pgx.Tx, items ...Deletion) 
 	}
 	if len(params) == 0 {
 		return nil
+	}
+	if j.cfg.Slots != nil {
+		refs := make([]contentref.ContentRef, len(items))
+		for i, d := range items {
+			refs[i] = d.Ref
+		}
+		if err := j.cfg.Slots.deleteTx(ctx, tx, refs); err != nil {
+			return err
+		}
 	}
 	_, err = c.InsertManyTx(ctx, tx, params)
 	return err
@@ -455,8 +470,18 @@ func (w *deleteFolderWorker) Timeout(*river.Job[deleteFolderArgs]) time.Duration
 	return 15 * time.Minute
 }
 
+// Work deletes the folder, then reconciles its slot index rows: the host's
+// transaction dropped them, and a slot index job racing the deletion may have
+// written them back.
 func (w *deleteFolderWorker) Work(ctx context.Context, job *river.Job[deleteFolderArgs]) (err error) {
 	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
+	if err := w.work(ctx, job); err != nil {
+		return err
+	}
+	return w.j.reindexFolder(ctx, job.Args.Prefix)
+}
+
+func (w *deleteFolderWorker) work(ctx context.Context, job *river.Job[deleteFolderArgs]) error {
 	tenant, _, _, err := parseFolder(job.Args.Prefix)
 	if err != nil {
 		return river.JobCancel(err)
@@ -508,7 +533,8 @@ const DefaultQueue = "contentkit_media"
 
 // HostQueue is the media worker's handle on the host's River schema: it
 // inserts the jobs the host runs on the worker's behalf: a folder's sweep
-// after the worker edits a manifest. It inserts only.
+// after the worker edits a manifest, and the slot index job after a slot
+// job. It inserts only.
 type HostQueue struct {
 	client *river.Client[pgx.Tx]
 	kinds  *Registry
@@ -548,6 +574,15 @@ func (h *HostQueue) ScheduleSweep(ctx context.Context, ref contentref.ContentRef
 		return err
 	}
 	return InsertOnce(ctx, h.insert, sweepArgs{Prefix: item.Prefix()}, river.InsertOpts{ScheduledAt: time.Now().Add(h.grace)})
+}
+
+// IndexSlots implements SlotIndexer like Jobs.IndexSlots.
+func (h *HostQueue) IndexSlots(ctx context.Context, ref contentref.ContentRef) error {
+	item, err := h.kinds.Item(ref.Content())
+	if err != nil || len(item.Kind().Slots) == 0 {
+		return err
+	}
+	return InsertOnce(ctx, h.insert, slotIndexArgs{Ref: ref.Content()}, river.InsertOpts{})
 }
 
 // ExposeTx enqueues the host's Expose of refs in tx, a transaction on the

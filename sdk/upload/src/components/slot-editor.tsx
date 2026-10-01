@@ -1,13 +1,14 @@
 import { ratio, type AspectRatio } from "../aspect.js";
-import { Alert02Icon, Camera01Icon, CropIcon, ImageUpload01Icon, Loading03Icon } from "@hugeicons/core-free-icons";
+import { Alert02Icon, Camera01Icon, CropIcon, Delete02Icon, ImageUpload01Icon, Loading03Icon } from "@hugeicons/core-free-icons";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { createContext, useContext, useEffect, useRef, type ReactElement, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import type { UploadClient } from "../client.js";
 import { useMessages } from "../i18n/context.js";
 import type { CropSource } from "../image.js";
-import { useErrorReporter, useUploadClient, type UploadUiErrorHandler } from "../provider.js";
+import type { UploadError } from "../errors.js";
+import { asUploadError, useErrorReporter, useUploadClient, type UploadUiErrorHandler } from "../provider.js";
 import { useScopeProps } from "../scope.js";
 import { useSlotCrop, useSlotImage, type UseSlotCrop, type UseSlotImage } from "../slot-react.js";
 import type { RefBody, SlotManifest } from "../wire.gen.js";
@@ -37,6 +38,8 @@ export interface SlotEditorProps {
   /** `accept` of the file input. Default "image/*". */
   accept?: string;
   disabled?: boolean;
+  /** Offers Remove (client.deleteSlot) once the slot has an image; default false. */
+  removable?: boolean;
   /** Replaces decodeImage (tests). */
   decode?: (file: File) => Promise<CropSource>;
   /** Triggers and the image, e.g. `<SlotEditMenu />`, or anything using useSlotEditor(). */
@@ -58,6 +61,10 @@ export interface SlotEditorState {
   pick: (file: File) => void;
   /** Re-crops the kept original; only when crop.canRecrop. */
   recrop: () => void;
+  /** Remove is offered (SlotEditorProps.removable). */
+  removable: boolean;
+  /** Removes the slot's image; only when removable. */
+  remove: () => void;
 }
 
 const Ctx = createContext<SlotEditorState | null>(null);
@@ -96,11 +103,34 @@ export function SlotEditor(p: SlotEditorProps) {
     },
   });
   const input = useRef<HTMLInputElement>(null);
-  const busy = crop.status === "decoding" || crop.status === "saving";
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState<UploadError>();
+  const busy = crop.status === "decoding" || crop.status === "saving" || removing;
   const disabled = !!p.disabled || busy;
   const round = p.round ?? ratio(aspect) === 1;
   const target = p.targetWidth ?? image.manifest?.outputs.at(-1)?.w ?? 512;
-  const error = crop.status === "error" && !crop.source ? errorText(crop.error) : image.error ? errorText(image.error) : undefined;
+  const error =
+    crop.status === "error" && !crop.source
+      ? errorText(crop.error)
+      : image.error
+        ? errorText(image.error)
+        : removeError
+          ? errorText(removeError)
+          : undefined;
+  const remove = async () => {
+    setRemoving(true);
+    setRemoveError(undefined);
+    try {
+      const m = await client.deleteSlot(p.item, p.slot);
+      image.set(m);
+      onChange.current?.(m);
+    } catch (e) {
+      setRemoveError(asUploadError(e));
+      report(e, "slot.remove");
+    } finally {
+      setRemoving(false);
+    }
+  };
   const state: SlotEditorState = {
     image,
     crop,
@@ -111,6 +141,8 @@ export function SlotEditor(p: SlotEditorProps) {
     choose: () => !disabled && input.current?.click(),
     pick: (f) => !disabled && void crop.pick(f),
     recrop: () => !disabled && void crop.recrop(),
+    removable: !!p.removable,
+    remove: () => !disabled && !!p.removable && void remove(),
   };
   return (
     <Ctx.Provider value={state}>
@@ -164,8 +196,8 @@ export interface SlotEditMenuProps {
 }
 
 /**
- * One trigger for a SlotEditor: it picks a file, or, once the slot has a
- * kept original, opens a Change / Edit crop menu.
+ * One trigger for a SlotEditor: it picks a file, or, once the slot has an
+ * image, opens a Change / Edit crop / Remove menu (each when available).
  */
 export function SlotEditMenu({ label, iconOnly, render, className, align = "end" }: SlotEditMenuProps) {
   const { t } = useMessages();
@@ -189,7 +221,7 @@ export function SlotEditMenu({ label, iconOnly, render, className, align = "end"
     "data-busy": s.busy || undefined,
     className: render ? className : undefined,
   };
-  if (!(s.has && s.crop.canRecrop)) {
+  if (!(s.has && (s.crop.canRecrop || s.removable))) {
     return (
       <ButtonPrimitive {...props} onClick={s.choose}>
         {content}
@@ -204,10 +236,18 @@ export function SlotEditMenu({ label, iconOnly, render, className, align = "end"
           <HugeiconsIcon icon={ImageUpload01Icon} strokeWidth={2} />
           {t("common.change")}
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={s.recrop} data-ckui="edit-crop">
-          <HugeiconsIcon icon={CropIcon} strokeWidth={2} />
-          {t("common.editCrop")}
-        </DropdownMenuItem>
+        {s.crop.canRecrop && (
+          <DropdownMenuItem onClick={s.recrop} data-ckui="edit-crop">
+            <HugeiconsIcon icon={CropIcon} strokeWidth={2} />
+            {t("common.editCrop")}
+          </DropdownMenuItem>
+        )}
+        {s.removable && (
+          <DropdownMenuItem onClick={s.remove} data-ckui="remove">
+            <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+            {t("common.remove")}
+          </DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

@@ -19,7 +19,6 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/token"
 )
 
 const slotBase = "https://media.example"
@@ -149,39 +148,15 @@ func (e *env) checkOutputs(t *testing.T, ref contentref.ContentRef, m media.Slot
 	e.checkListed(t, ref, "cover", m)
 }
 
-type visible struct{}
-
-func (visible) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	out := map[contentref.ContentKey]access.Resolution{}
-	for _, ref := range refs {
-		out[ref.Key()] = access.Resolution{Visible: true}
-	}
-	return out, nil
-}
-
-// checkListed requires the host's SlotEncoded record and ListedSlot to link
-// exactly m's outputs without reads.
-func (e *env) checkListed(t *testing.T, ref contentref.ContentRef, slot string, m media.SlotManifest) {
+// checkListed requires the slot job to have scheduled the item's slot index
+// job, which lists m's outputs (media's slot index tests check the rows).
+func (e *env) checkListed(t *testing.T, ref contentref.ContentRef, _ string, m media.SlotManifest) {
 	t.Helper()
 	e.mu.Lock()
-	listing, ok := e.encoded[ref.String()+"#"+slot]
+	n := e.indexed[ref.Content().String()]
 	e.mu.Unlock()
-	if !ok || listing.Aspect != m.Aspect {
-		t.Fatalf("encoded listing %+v (reported %v), manifest's aspect %v", listing, ok, m.Aspect)
-	}
-	r, err := media.NewReader(media.ReaderOptions{Manifests: e.manifests, Kinds: e.kinds, Resolver: visible{},
-		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: slotBase, SigningKey: token.Key{ID: "k", Secret: make([]byte, 32)}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	listed, err := r.ListedSlot(ref, slot, listing)
-	if err != nil || len(listed.Outputs) != len(m.Outputs) {
-		t.Fatalf("ListedSlot = %+v %v, want %+v", listed, err, m.Outputs)
-	}
-	for i, o := range listed.Outputs {
-		if o.URL != m.Outputs[i].URL || o.W != m.Outputs[i].W {
-			t.Fatalf("listed %+v, read %+v", o, m.Outputs[i])
-		}
+	if n == 0 || len(m.Outputs) == 0 {
+		t.Fatalf("slot job scheduled %d slot index jobs for %s (outputs %+v)", n, ref, m.Outputs)
 	}
 }
 

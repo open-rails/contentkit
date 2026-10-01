@@ -183,6 +183,10 @@ export class FakeServer {
         this.video = { ...this.video, poster: { aspect: "16:9", ...(b.edit ? { edit: b.edit } : {}), dims: { w: 1920, h: 1080 }, outputs, pending: this.pendingReads > 0, selection } };
         return this.video;
       }
+      case "/delete-slot":
+        this.slotCalls.push(b);
+        this.slotState.delete(slotKey(b.ref, b.slot));
+        return { aspect: slotAspect(b.slot), outputs: [], pending: false };
       case "/slot": {
         const m = this.slotState.get(slotKey(b.ref, b.slot));
         if (!m) return { aspect: slotAspect(b.slot), outputs: [], pending: false };

@@ -6,10 +6,12 @@ ContentKit has a PostgreSQL migration chain and a ClickHouse baseline:
 |---|---|---|---|
 | PostgreSQL | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | interactions, moderation, polls, preferences, keyword search and taxonomy |
 | PostgreSQL | `migrations.Postgres` | `postgres/0002_search_invalid.up.sql` | durable invalid search-document state |
+| PostgreSQL | `migrations.Postgres` | `postgres/0003_media_releases.up.sql` | media quota release ledger |
+| PostgreSQL | `migrations.Postgres` | `postgres/0004_media_slots.up.sql` | slot index (`content_media_slots`) |
 | ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, subject state, daily contributions, exposures, co-engagement and erasure fences |
 
-The baselines initialize fresh stores; PostgreSQL `0002` also upgrades an
-existing installation of the current ContentKit lineage. The baselines replace
+The baselines initialize fresh stores; PostgreSQL `0002` and later also upgrade
+an existing installation of the current ContentKit lineage. The baselines replace
 older feature-specific migration chains; they are not an in-place upgrade of
 those retired ledgers. Restore old installations with the matching library
 version and use a host-owned, verified data import when moving their data into
@@ -75,7 +77,10 @@ the migration role. ContentKit does not create application roles or grant
 access to another application's schema. Migration SQL contains the complete
 indexes, checks, internal foreign keys and dirty-queue trigger.
 Before deploying a worker that uses `0002`, apply the migration and grant its
-runtime role read/write access to `content_search_invalid`.
+runtime role read/write access to `content_search_invalid`. Before deploying
+code that uses `0004`, apply it and grant the host's runtime role read/write
+access to `content_media_slots` (the media worker needs none). Existing slots
+enter the index on the next sweep pass or slot change.
 
 ## Host relationships
 

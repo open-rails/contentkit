@@ -623,11 +623,6 @@ func TestReadHandler(t *testing.T) {
 	if resp, _ := get("/media/post/" + cid(501) + "/slots/nope"); resp.StatusCode != 404 {
 		t.Fatalf("unknown slot: %d", resp.StatusCode)
 	}
-	listing := rec.Result.Listing(spec)
-	if listed, err := r.ListedSlot(f.post, "cover", listing); err != nil || len(listed.Outputs) != 1 || listed.Outputs[0].URL != cover ||
-		listed.Outputs[0].H != 64 || listed.Aspect != media.Aspect1x1 {
-		t.Fatalf("listed slot %+v %v", listed, err)
-	}
 
 	// A hidden item's cover is listed to no viewer.
 	if _, err := f.ms.EditRoot(context.Background(), f.post, func(r *media.Root) error { r.Hidden = true; return nil }); err != nil {

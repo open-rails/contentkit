@@ -262,8 +262,8 @@ schema is required and per host (e.g. `doujins_media_worker`,
 worker takes the other's jobs. Queue names are fixed within it. The host presigns, commits, publishes and reads, and links only
 `media/workqueue` (no libvips, no ffmpeg). The worker must apply the host's
 exact kinds and policy, so the host builds it from the same code that builds
-its `media.Registry`, `image.SpecChooser` and `media.Hooks` (`Failed`,
-`SlotEncoded` and `ItemReady` run in the worker), e.g. as a subcommand of the host binary:
+its `media.Registry`, `image.SpecChooser` and `media.Hooks` (`Failed` and
+`ItemReady` run in the worker), e.g. as a subcommand of the host binary:
 
 ```go
 cfg, _ := worker.FromEnv(ctx) // DATABASE_URL, MEDIA_S3_*, MEDIA_WORKER_SCHEMA, MEDIA_HOST_RIVER_SCHEMA, MEDIA_WORKER_* (see worker.FromEnv)
@@ -414,10 +414,29 @@ the original or narrower than `MinWidth` (default the smallest width) is refused
 is not yet known: `Hooks.Failed`, keeping the served outputs). Slot routes and
 the read API's `GET /{kind}/{id}/slots/{slot}` answer `SlotManifest{aspect,
 edit, dims, outputs: [{w, h, url}], pending, error}`: public URLs for
-viewers, `private/` URLs with a token for editors of a hidden item. Listings
-link a slot without reads: `Hooks.SlotEncoded(ctx, ref, slot, listing)` hands
-the host a `SlotListing` to store, and `Reader.ListedSlot(ref, slot,
-listing)` builds its URLs.
+viewers, `private/` URLs with a token for editors of a hidden item.
+`Uploads.DeleteSlot` (`POST /delete-slot {ref, slot}`) removes a slot's image;
+the sweep deletes its files. `UploadAuthorizer.CanUpload` receives an
+`UploadTarget{Ref, Slot}`, so a host can grant one slot alone (a user their
+own avatar).
+
+**Slot index and links.** ContentKit keeps `content_media_slots`: a row per
+registered slot whose image is public (set, encoded, item not hidden).
+`media.NewSlotIndex(pool, schema)` goes to `JobsConfig.Slots` and
+`ReaderOptions.Slots`. The host's slot index job keeps it: the worker
+schedules it after every slot job (through `HostQueue`, so the stock worker
+works), as do `DeleteSlot` and `Expose`; folder deletion and the periodic
+sweep pass reconcile too. Each change runs `Hooks.SlotChanged(ctx, tx, ref,
+slot, set)` in that job's transaction (at least once). Listings read
+`Reader.SlotImages(ctx, tenant, kind, slot, width, ids...)`: one query, no
+bucket reads, `Picture{URL, SrcSet, W, H}` per set item.
+`Reader.SlotLink(ref, slot)` is the slot's stable URL,
+`{ReaderOptions.ReadURL}/{kind}/{id}/slots/{slot}/image`: the read API
+redirects it (`?w=` picks the narrowest output at least that wide) to the
+current public image, else to `HandlerOptions.SlotDefault`, else 404.
+`media.AvatarSlot` is the avatar preset (1:1, 64–512 px, stills), registered
+as `media.AvatarSlotName` on e.g. `media.UserKind`; `Slot.LinkSrcSet(link)` is
+a srcset of the link.
 `Slot{Aspect: media.AspectNative}` keeps the edited image's own shape: no crop
 by default, crops of any shape.
 

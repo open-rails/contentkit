@@ -1,5 +1,5 @@
 import { ratio, type AspectRatio } from "../aspect.js";
-import { Camera01Icon, CropIcon, ImageUpload01Icon, Loading03Icon } from "@hugeicons/core-free-icons";
+import { Camera01Icon, CropIcon, Delete02Icon, ImageUpload01Icon, Loading03Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useState, type DragEvent, type ReactNode } from "react";
@@ -28,6 +28,8 @@ export interface SlotUploadProps {
   /** `accept` of the file input. Default "image/*". */
   accept?: string;
   disabled?: boolean;
+  /** Offers Remove once set; default true for avatars, false for covers. */
+  removable?: boolean;
   label?: ReactNode;
   hint?: ReactNode;
   className?: string;
@@ -62,6 +64,7 @@ function SlotUpload({ variant, ...p }: SlotUploadProps & { variant: Variant }) {
         round={variant === "avatar"}
         accept={p.accept}
         disabled={p.disabled}
+        removable={p.removable ?? variant === "avatar"}
         decode={p.decode}
       >
         <SlotUploadLayout {...p} variant={variant} />
@@ -99,6 +102,12 @@ function SlotUploadLayout({ variant, ...p }: SlotUploadProps & { variant: Varian
         <Button variant={overlay ? "secondary" : "ghost"} size="sm" disabled={disabled} onClick={s.recrop} data-ckui="edit-crop">
           <HugeiconsIcon icon={CropIcon} strokeWidth={2} data-icon="inline-start" />
           {t("common.editCrop")}
+        </Button>
+      )}
+      {has && s.removable && (
+        <Button variant={overlay ? "secondary" : "ghost"} size="sm" disabled={disabled} onClick={s.remove} data-ckui="remove">
+          <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} data-icon="inline-start" />
+          {t("common.remove")}
         </Button>
       )}
     </>
