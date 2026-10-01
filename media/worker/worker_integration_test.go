@@ -466,6 +466,31 @@ func TestWorkerEncodesVideoAndPoster(t *testing.T) {
 	if !h.exists(t, key) {
 		t.Fatal("no public poster")
 	}
+	// The read API plays the producer's ladder.
+	r, err := media.NewReader(media.ReaderOptions{Manifests: h.ms,
+		Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: token.Key{ID: "k", Secret: bytes.Repeat([]byte("k"), 32)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := r.Grant(context.Background(), ref, alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	master, err := g.MasterPlaylist("hls/", media.MasterOptions{})
+	if err != nil || !strings.Contains(string(master), "#EXT-X-STREAM-INF:") || !strings.Contains(string(master), "TYPE=AUDIO") {
+		t.Fatalf("master playlist %s %v", master, err)
+	}
+	for _, f := range m.Files {
+		if f.Track != nil && f.Track.Kind == media.TrackVideo {
+			pl, err := g.MediaPlaylist(context.Background(), f.Path)
+			if err != nil || !strings.Contains(string(pl), "#EXT-X-BYTERANGE:") || !strings.Contains(string(pl), "#EXT-X-ENDLIST") {
+				t.Fatalf("media playlist of %s: %s %v", f.Path, pl, err)
+			}
+		}
+	}
+	if vtt, err := g.SpriteVTT(context.Background(), "hls/"); err != nil || !strings.Contains(string(vtt), "#xywh=") {
+		t.Fatalf("sprite %s %v", vtt, err)
+	}
 }
 
 // ItemReady reports a failure while an upload cannot be processed (viewers
