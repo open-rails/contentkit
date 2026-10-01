@@ -220,7 +220,7 @@ func TestMedia_PostExposureCommitsWithContent(t *testing.T) {
 	rt, pool := newTestRuntime(t, Options{Media: ports, Moderator: &fakeModerator{},
 		Perms: Perms{PostWrite: "post", ModerationReview: "review"}})
 	reg, err := media.NewRegistry(media.Config{Namespace: testTenant, Kinds: []media.Kind{{Name: "article",
-		Uploads: []media.Upload{{Path: "images/{name}", Types: []string{"image/png"}, MaxBytes: 1024, Named: true}}}}})
+		Uploads: []media.Upload{{Path: "images/{name}", Types: []string{"image/png"}, MaxBytes: 1024, Named: true, Max: 100}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

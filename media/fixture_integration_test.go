@@ -58,7 +58,7 @@ func testConfig(ns, shared string) media.Config {
 				Image: media.Image{Aspect: media.Ratio("46:65"), MinWidth: 100}, Default: "cover.png"}},
 		},
 		{Name: "post", ServeOriginals: true,
-			Uploads: []media.Upload{{Path: "inline/{name}", Types: images, MaxBytes: 1 << 20, Named: true}},
+			Uploads: []media.Upload{{Path: "inline/{name}", Types: images, MaxBytes: 1 << 20, Named: true, Max: 100}},
 			Public:  []media.Public{{Name: "inline", From: "inline/{name}", To: "{name}.webp", Image: media.Image{Width: 1600, Height: 1600}}},
 		},
 		{Name: "video", KeepOriginals: true,
@@ -127,7 +127,8 @@ func (r *resolver) Resolve(_ context.Context, refs []contentref.ContentRef, a ac
 	return out, nil
 }
 
-// authorizer lets every signed-in actor but "reader" upload; owner "owner".
+// authorizer lets every signed-in actor but "reader" upload; owner "owner";
+// "staff" is exempt.
 type authorizer struct {
 	mu      sync.Mutex
 	targets []media.UploadTarget
@@ -137,7 +138,7 @@ func (a *authorizer) CanUpload(_ context.Context, actor access.Actor, t media.Up
 	a.mu.Lock()
 	a.targets = append(a.targets, t)
 	a.mu.Unlock()
-	return media.UploadGrant{Allowed: actor.ID != "reader" && !actor.Anonymous, Owner: "owner"}, nil
+	return media.UploadGrant{Allowed: actor.ID != "reader" && !actor.Anonymous, Owner: "owner", Exempt: actor.ID == "staff"}, nil
 }
 
 // queue records the processing the app asks the worker for.
