@@ -525,7 +525,7 @@ func rebase(p, old, new string) string {
 }
 
 // created checks a create-only put against the current manifest. A retry
-// leaves later attachment, edits and worker results untouched.
+// preserves later changes unless a failed upload supplies a new source.
 func (o *opRun) created(op Op) (bool, error) {
 	if op.CreateID == "" {
 		return false, nil
@@ -535,10 +535,11 @@ func (o *opRun) created(op Op) (bool, error) {
 	if i < 0 {
 		return false, nil
 	}
-	if o.m.Files[i].CreateID != op.CreateID {
+	f := o.m.Files[i]
+	if f.CreateID != op.CreateID {
 		return false, uploadErr(CodeConflict, "upload %q already exists", op.Path)
 	}
-	return true, nil
+	return f.Fail() == nil || f.Source() == op.Blob, nil
 }
 
 // stem finds the upload whose path has stem, or -1.
