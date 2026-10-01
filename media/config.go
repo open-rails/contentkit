@@ -225,7 +225,8 @@ func Rung(n int) *MP4 { return &MP4{Rung: n} }
 
 // Hooks are the app's callbacks.
 type Hooks struct {
-	// Resolver says who may see an item; the read API and Expose use it.
+	// Resolver says who may see an item: the read API, Expose and a new
+	// item's first commit (Uploads) use it, and both require it.
 	Resolver access.ContentResolver
 	// CanUpload says who may write which upload path.
 	CanUpload UploadAuthorizer

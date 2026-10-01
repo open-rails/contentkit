@@ -90,6 +90,15 @@ func (grants) CanUpload(context.Context, access.Actor, media.UploadTarget) (medi
 	return media.UploadGrant{Allowed: true, Exempt: true}, nil
 }
 
+// Resolve shows every item to everyone: a new item is not hidden.
+func (grants) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	out := map[contentref.ContentKey]access.Resolution{}
+	for _, r := range refs {
+		out[r.Key()] = access.Resolution{Visible: true, Accessible: true}
+	}
+	return out, nil
+}
+
 // failure is one Hooks.Failed report.
 type failure struct {
 	ref  contentref.ContentRef
@@ -134,7 +143,7 @@ func newEnvOn(t *testing.T, s3 *s3test.Env, o opts, schema string) *env {
 	t.Helper()
 	e := &env{t: t, ctx: t.Context(), s3: s3, store: s3.Store, editor: access.Actor{ID: "editor", Kind: "user"}}
 	cfg := media.Config{Namespace: s3.Tenant, Kinds: []media.Kind{testKind(o)},
-		Hooks: media.Hooks{CanUpload: grants{}, Failed: func(_ context.Context, ref contentref.ContentRef, path string, err error) {
+		Hooks: media.Hooks{CanUpload: grants{}, Resolver: grants{}, Failed: func(_ context.Context, ref contentref.ContentRef, path string, err error) {
 			e.mu.Lock()
 			defer e.mu.Unlock()
 			e.failures = append(e.failures, failure{ref, path, err})
