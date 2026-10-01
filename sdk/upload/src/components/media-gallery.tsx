@@ -16,7 +16,7 @@ import { cn } from "cn";
 import { useMemo, useState, type ReactNode } from "react";
 import type { UploadUiAppearance } from "../appearance.js";
 import { formatDuration, galleryItems, stageAspect, type GalleryItem, type GalleryLockedItem, type GalleryMediaItem } from "../gallery.js";
-import { useCarousel, useGalleryView, useHlsPlayer, type GalleryViewOptions, type HlsPlayerOptions } from "../gallery-react.js";
+import { useCarousel, useGalleryView, useHlsPlayer, useRefreshBeforeExpiry, type GalleryViewOptions, type HlsPlayerOptions } from "../gallery-react.js";
 import { useInlinePreview } from "../inline-preview.js";
 import { useMessages } from "../i18n/context.js";
 import { publicRenditions, type PublicImage } from "../public.js";
@@ -31,6 +31,7 @@ export interface MediaGalleryProps extends GalleryViewOptions, Pick<HlsPlayerOpt
   /**
    * The read API result: files in manifest order with this viewer's access
    * (scope it with a prefix). A download read adds each audio file's download.
+   * With `refresh`, the gallery reads again shortly before `read.expires`.
    */
   read: ReadResult | null | undefined;
   /** A ladder's HLS folder from the read's `hls` dir: client.hlsBase(ref, dir). */
@@ -74,6 +75,7 @@ export function MediaGallery(props: MediaGalleryProps) {
   const { read, label, className, appearance, view: given, defaultView, onViewChange, storageKey } = props;
   const { t } = useMessages();
   const items = useMemo(() => galleryItems(read), [read]);
+  useRefreshBeforeExpiry(read?.expires, props.refresh);
   const [view, setView] = useGalleryView({ view: given, defaultView, onViewChange, storageKey });
   const [index, setIndex] = useState(0);
   const [lightbox, setLightbox] = useState<number | null>(null);
@@ -258,6 +260,7 @@ function Slide({ ctx, item, position, active, lightbox }: { ctx: Ctx; item: Gall
       active={active}
       xhrSetup={ctx.xhrSetup}
       refresh={ctx.refresh}
+      expires={ctx.read?.expires}
       abr={ctx.abr}
       label={t("gallery.video", { index: position + 1 })}
       className={lightbox ? "bg-transparent" : undefined}
@@ -328,8 +331,8 @@ function Locked({ ctx, item, tile }: { ctx: Ctx; item: GalleryLockedItem; tile?:
   const { t } = useMessages();
   return (
     <div className="absolute inset-0 overflow-hidden bg-muted" data-ckui="locked">
-      {item.teaser?.url && <img src={item.teaser.url} alt="" draggable={false} className="absolute inset-0 size-full scale-105 object-cover" />}
-      <div className={cn("absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center", item.teaser?.url ? "bg-black/45 text-white" : "text-foreground")}>
+      {item.backdrop && <img src={item.backdrop} alt="" draggable={false} className="absolute inset-0 size-full scale-110 object-cover blur-xl" />}
+      <div className={cn("absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center", item.backdrop ? "bg-black/45 text-white" : "text-foreground")}>
         <HugeiconsIcon icon={SquareLock02Icon} className={tile ? "size-6" : "size-8"} strokeWidth={1.75} />
         {tile ? (
           <span className="text-lg font-semibold tabular-nums">+{item.count}</span>
@@ -430,7 +433,7 @@ function Tile({ ctx, item, label, onOpen }: { ctx: Ctx; item: GalleryItem; label
 
 // A grid tile's inline preview; the tile opens the lightbox for real playback.
 function TilePreview({ ctx, base, start, target }: { ctx: Ctx; base: string; start: number; target: HTMLElement | null }) {
-  const player = useHlsPlayer({ src: `${base}master.m3u8`, xhrSetup: ctx.xhrSetup, refresh: ctx.refresh, abr: ctx.abr, qualityKey: null });
+  const player = useHlsPlayer({ src: `${base}master.m3u8`, xhrSetup: ctx.xhrSetup, refresh: ctx.refresh, expires: ctx.read?.expires, abr: ctx.abr, qualityKey: null });
   useInlinePreview({ setting: ctx.inlinePreview, available: true, target, start: () => player.preview(start), stop: player.unload });
   return (
     <video

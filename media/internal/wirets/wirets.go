@@ -33,7 +33,7 @@ var errorCodes = []string{
 var ops = []string{media.OpPut, media.OpEdit, media.OpMove, media.OpRename, media.OpRemove, media.OpAttach,
 	media.OpCopy, media.OpFrame, media.OpMeta, media.OpRegenerate}
 
-var access = []string{media.AccessFull, media.AccessPreview, media.AccessNone}
+var access = []string{media.AccessFull, media.AccessNone}
 
 var states = []string{media.StateReady, media.StateProcessing, media.StateFailed}
 

@@ -53,7 +53,7 @@ type File struct {
 	CreateID   string         `json:"create_id,omitempty"`  // create-only put receipt; retained through placement and processing
 	Edit       *Edit          `json:"edit,omitempty"`       // crop and rotate in source pixels
 	Frame      *Frame         `json:"frame,omitempty"`      // grabbed from the Upload.Frames video
-	Meta       map[string]any `json:"meta,omitempty"`       // teaser, lang, label, …
+	Meta       map[string]any `json:"meta,omitempty"`       // lang, label, …
 	Unattached bool           `json:"unattached,omitempty"` // processed on upload, not yet part of the item
 	Gone       bool           `json:"gone,omitempty"`       // blob dropped (KeepOriginals false); the hash stays for provenance
 	Pending    []string       `json:"pending,omitempty"`    // presets still producing from this upload
@@ -166,9 +166,6 @@ func (f File) Fail() *Failure {
 	}
 	return nil
 }
-
-// Teaser reports meta.teaser: served to every viewer who can see the item.
-func (f File) Teaser() bool { t, _ := f.Meta[MetaTeaser].(bool); return t }
 
 // NewFailure records err for upload f: an ImageError keeps its code and
 // details; the message is capped at maxFailureBytes.

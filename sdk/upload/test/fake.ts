@@ -120,7 +120,7 @@ export class FakeServer {
     const files = (this.items.get(key(ref)) ?? [])
       .filter((f) => f.path.startsWith(prefix))
       .map((f) => ({ ...f, ...(pending ? { pending: ["render"] } : {}), ...(staged ? { staged: true } : {}), ...(f.type.startsWith("image/") && f.size ? { editor_url: `fake://cdn/private/e-${f.path}` } : {}) }));
-    return { access: "full", preview_limit: 0, expires: 0, total: files.length, offset: 0, limit: 50, files, ...(this.full ? { full: true } : {}) };
+    return { access: "full", expires: 0, total: files.length, offset: 0, limit: 50, files, ...(this.full ? { full: true } : {}) };
   }
 
   private route(path: string, b: any): unknown {

@@ -131,7 +131,7 @@ func (a *Authors) avatar(ref contentref.ContentRef) (string, string) {
 		if p.Name != preset {
 			continue
 		}
-		names := k.PublicNames(p, "")
+		names := k.PublicNames(nil, p, "")
 		width := a.Width
 		if width <= 0 {
 			width = 64

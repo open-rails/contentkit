@@ -18,12 +18,11 @@ import (
 	"github.com/open-rails/contentkit/media/token"
 )
 
-// DeliveryMode is how viewers with full access present their token.
+// DeliveryMode is how viewers with access present their item token.
 type DeliveryMode string
 
 const (
-	// DeliverCookie (default) uses an item cookie when the kind permits
-	// folder-wide access; otherwise it returns file-scoped URLs.
+	// DeliverCookie (default) sets the item cookie; URLs are plain.
 	DeliverCookie DeliveryMode = "cookie"
 	// DeliverURL appends ?t= to every URL: apps and clients without cookies.
 	DeliverURL DeliveryMode = "url"
@@ -64,8 +63,10 @@ type ReaderOptions struct {
 	Now             func() time.Time
 }
 
-// Reader answers the read API and HLS playlists: one Resolve per item, and
-// signed URLs for what the viewer may have.
+// Reader answers the read API and HLS playlists: one Resolve per item. An
+// item's private files are all or nothing: a viewer with access gets one
+// token that opens every one of them; anyone else gets none, and sees only
+// the item's public files (covers, previews).
 type Reader struct {
 	o       ReaderOptions
 	reg     *Registry
@@ -139,9 +140,7 @@ type Grant struct {
 	Resolution access.Resolution
 	Manifest   *Manifest
 	Expires    time.Time
-	units      int            // the Pages uploads within the preview cut
-	pages      map[string]int // each attached Pages upload's position
-	item       string         // an item token, for full access
+	item       string // the item token; "" without access
 	actor      access.Actor
 	r          *Reader
 }
@@ -167,71 +166,30 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	} else if err != nil {
 		return nil, err
 	}
-	g := &Grant{Item: item, Resolution: res, Manifest: man, pages: map[string]int{}, actor: actor, r: r,
+	g := &Grant{Item: item, Resolution: res, Manifest: man, actor: actor, r: r,
 		Expires: token.Expiry(r.o.Now(), r.o.Delivery.TTL, r.o.Delivery.Window)}
-	k := item.Kind()
-	for _, f := range man.Files {
-		if u, _, _, _, ok := k.upload(f.Path); f.IsUpload() && !f.Unattached && ok && k.Uploads[u].Pages {
-			g.pages[f.Path] = len(g.pages)
-		}
-	}
-	g.units = res.Units(len(g.pages))
-	wholeItem := res.Full() && k.ServeOriginals
-	for _, p := range k.Private {
-		if p.HostOnly {
-			wholeItem = false
-			break
-		}
-	}
-	if wholeItem {
+	if res.Full() || res.Editor {
 		g.item = r.ring.Sign(token.ItemScope(ref.TenantID, ref.ContentKind, ref.ContentID), g.Expires)
 	}
 	return g, nil
 }
 
-// Full reports the resolver's full-access decision.
-func (g *Grant) Full() bool { return g.Resolution.Full() }
+// Full reports access to the item's private files: the resolver's verdict,
+// or an editor's.
+func (g *Grant) Full() bool { return g.item != "" }
 
 // Editor reports an editor's grant.
 func (g *Grant) Editor() bool { return g.Resolution.Editor }
 
-// Allowed reports whether f is served to this viewer: full access; a page
-// within the preview cut, or a file derived from one; or a teaser's. Uploads
-// are served only with ServeOriginals; unattached files and frames not
-// grabbed yet never are.
+// Allowed reports whether a read gives this viewer f's URL: with access,
+// every listed file with a blob. Uploads are listed only with
+// ServeOriginals, HostOnly presets never (Grant.HostURL), unattached files
+// and frames not grabbed yet never.
 func (g *Grant) Allowed(f File) bool {
-	if p := g.Item.Kind().private(f.Preset); !f.IsUpload() && p != nil && p.HostOnly {
-		return false
-	}
-	return g.allowed(f)
+	return g.Full() && f.Blob != "" && g.listed(f, false)
 }
 
-func (g *Grant) allowed(f File) bool {
-	src := f
-	if !f.IsUpload() {
-		s, ok := g.Manifest.Get(f.From)
-		if ok && s.IsUpload() {
-			src = s
-		} else {
-			src = File{}
-		}
-	} else if !g.Item.Kind().ServeOriginals || f.Gone {
-		return false
-	}
-	if f.Blob == "" || src.Unattached {
-		return false
-	}
-	if g.Full() {
-		return true
-	}
-	if p, ok := g.pages[src.Path]; ok && p < g.units {
-		return true
-	}
-	return src.Teaser()
-}
-
-// Cookie is the item cookie for unrestricted full access in cookie mode,
-// else nil. Restricted kinds use file-scoped URLs in both delivery modes.
+// Cookie is the item cookie for a viewer with access in cookie mode, else nil.
 func (g *Grant) Cookie() *http.Cookie {
 	if g.item == "" || g.r.o.Delivery.Mode != DeliverCookie {
 		return nil
@@ -244,53 +202,61 @@ func (g *Grant) Cookie() *http.Cookie {
 	}
 }
 
-// URL signs f's blob (dl: under its download name).
+// URL is f's URL (dl: served as a download under its name).
 func (g *Grant) URL(f File, dl bool) (string, error) {
 	if !g.Allowed(f) {
 		return "", ErrNotAllowed
 	}
-	return g.sign(f.Blob, f.Download, dl)
+	return g.url(f.Blob, f.Download, dl, g.r.o.Delivery.Mode == DeliverCookie)
 }
 
-// HostURL signs a HostOnly preset for a full-access viewer. Call only from
-// a trusted host route after enforcing its additional policy; never expose
-// this operation through the generic read API.
+// HostURL is the URL of a HostOnly preset's file for a viewer with access,
+// always carrying the item token (the host route may not have set the
+// cookie). HostOnly only keeps a file out of generic reads: call this from a
+// host route after its own policy, which decides who is handed the URL.
 func (g *Grant) HostURL(path string, dl bool) (string, error) {
 	f, ok := g.Manifest.Get(path)
-	if !ok || !g.Full() || f.IsUpload() || !g.allowed(f) {
+	if !ok || !g.Full() || f.IsUpload() || f.Blob == "" {
+		return "", ErrNotAllowed
+	}
+	if src, ok := g.Manifest.Get(f.From); ok && src.IsUpload() && src.Unattached {
 		return "", ErrNotAllowed
 	}
 	p := g.Item.Kind().private(f.Preset)
 	if p == nil || !p.HostOnly {
 		return "", ErrNotAllowed
 	}
-	return g.sign(f.Blob, f.Download, dl)
+	return g.url(f.Blob, f.Download, dl, false)
 }
 
-// sign is the URL of the item's blob: plain under the item cookie, else
-// with the item token or a file token; with dl, a download token.
-func (g *Grant) sign(blob, download string, dl bool) (string, error) {
+// url is the URL of the item's blob: plain under the item cookie, else with
+// the item token. A download adds dl, its name: unsigned, since the token
+// already opens the file and the agent only accepts a name of the file's
+// type.
+func (g *Grant) url(blob, download string, dl, cookie bool) (string, error) {
 	key, err := g.Item.Blob(blob)
 	if err != nil {
 		return "", err
 	}
-	u := g.r.base + layout.URLPrefix + key
-	switch {
-	case dl && download != "":
-		return u + "?t=" + g.r.ring.Sign(token.DownloadScope(key, download), g.Expires) + "&dl=" + url.QueryEscape(download), nil
-	case g.item != "" && g.r.o.Delivery.Mode == DeliverCookie:
-		return u, nil
-	case g.item != "":
-		return u + "?t=" + g.item, nil
+	q := url.Values{}
+	if !cookie {
+		q.Set("t", g.item)
 	}
-	return u + "?t=" + g.r.ring.Sign(token.FileScope(key), g.Expires), nil
+	if dl && download != "" {
+		q.Set("dl", download)
+	}
+	u := g.r.base + layout.URLPrefix + key
+	if len(q) > 0 {
+		u += "?" + q.Encode()
+	}
+	return u, nil
 }
 
 // EditorView is the blob name of an image upload's editor view: the hash of
 // its source and the editor spec, so a read finds it without rendering.
 // It is the one private blob not named by its bytes: only the worker
 // writes it, and no upload may name it (presign, put and copy refuse it).
-// Only editor reads return it; the sweep removes it after the grace period
+// Only editor reads list it; the sweep removes it after the grace period
 // and an editor read renders it again.
 func (r *Registry) EditorView(f File) string {
 	spec, _ := json.Marshal(r.cfg.Editor)
@@ -321,7 +287,7 @@ func (r *Registry) editorViews(m *Manifest) map[string]bool {
 type ReadOptions struct {
 	Prefix        string // only files under this path prefix ("low-res/")
 	Offset, Limit int    // the range that gets URLs
-	Download      bool   // sign each file's download name into its URL
+	Download      bool   // URLs serve each file as a download under its name
 	// Editor adds an editor's uploads with their edit, frame, meta,
 	// pending, failure and editor view, unattached ones included.
 	Editor bool
@@ -348,13 +314,13 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	editor := o.Editor && g.Editor()
 	out := &ReadResult{Access: AccessNone, Offset: o.Offset, Limit: o.Limit, Expires: g.Expires.Unix(),
 		Meta: g.Manifest.Meta, Files: []FileInfo{}, Cookie: g.Cookie()}
-	switch {
-	case g.Full():
+	if g.Full() {
 		out.Access = AccessFull
-	case g.units > 0:
-		out.Access, out.PreviewLimit = AccessPreview, g.units
 	}
 	k := g.Item.Kind()
+	for _, n := range k.previewNames(g.Manifest) {
+		out.Previews = append(out.Previews, g.r.base+layout.URLPrefix+g.Item.PublicPrefix()+n)
+	}
 	if editor {
 		out.State, out.Full = k.Readiness(g.Manifest).State, g.Manifest.Full
 	}
@@ -366,18 +332,17 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		n := out.Total
 		out.Total++
 		// Viewers get what a file is, never editor fields: an edit, a frame's
-		// source blob, meta, pending work or failures.
-		fi := FileInfo{Path: f.Path, Type: f.Type, Size: f.Size, W: f.W, H: f.H, Dur: f.Dur, Download: f.Download}
+		// source blob, meta, pending work or failures. Without access a file
+		// is its path, type and size, locked: nothing names a blob.
+		fi := FileInfo{Path: f.Path, Type: f.Type, Size: f.Size}
+		if g.Full() {
+			fi.W, fi.H, fi.Dur, fi.Download = f.W, f.H, f.Dur, f.Download
+		}
 		switch {
 		case f.IsUpload() && editor:
 			fi = uploadInfo(f)
-		case f.IsUpload():
-			fi.Teaser = f.Teaser()
-		default:
-			fi.Teaser = g.sourceTeaser(f)
-			if editor {
-				fi.From = f.From
-			}
+		case editor:
+			fi.From = f.From
 		}
 		if !g.Allowed(f) {
 			fi.Locked = g.listed(f, false)
@@ -423,12 +388,6 @@ func (g *Grant) listed(f File, editor bool) bool {
 	return !ok || !src.IsUpload() || !src.Unattached
 }
 
-// sourceTeaser reports a derived file of a teaser upload.
-func (g *Grant) sourceTeaser(f File) bool {
-	src, ok := g.Manifest.Get(f.From)
-	return ok && src.Teaser()
-}
-
 // editorViews finds an item's editor views: one listing of private/ per read.
 type editorViews struct {
 	g       *Grant
@@ -454,7 +413,7 @@ func (e *editorViews) url(ctx context.Context, f File) (string, error) {
 		e.missing = true
 		return "", nil
 	}
-	return e.g.sign(name, "", false)
+	return e.g.url(name, "", false, e.g.r.o.Delivery.Mode == DeliverCookie)
 }
 
 // addProgress fills Progress on pending video and audio uploads. A failed

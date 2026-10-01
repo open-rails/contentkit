@@ -2,6 +2,7 @@ package layout_test
 
 import (
 	"crypto/sha256"
+	"strings"
 	"testing"
 
 	"github.com/open-rails/contentkit/media/layout"
@@ -42,6 +43,32 @@ func TestValidStagedName(t *testing.T) {
 		"u-0192a3b4c5d67e8f9a0b1c2d3e4f5a6b", "u-0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6g", "sha256-00"} {
 		if layout.ValidStagedName(bad) {
 			t.Errorf("accepted %q", bad)
+		}
+	}
+}
+
+func TestDisposition(t *testing.T) {
+	const plain = "attachment"
+	for _, c := range []struct{ name, typ, want string }{
+		{"[A] Title.zip", "application/zip", `attachment; filename="[A] Title.zip"; filename*=UTF-8''%5BA%5D%20Title.zip`},
+		{"[A] 日本語 \"x\".zip", "application/zip", `attachment; filename="[A] ___ _x_.zip"; filename*=UTF-8''%5BA%5D%20%E6%97%A5%E6%9C%AC%E8%AA%9E%20%22x%22.zip`},
+		{"Page.JPG", "image/jpeg; charset=binary", `attachment; filename="Page.JPG"; filename*=UTF-8''Page.JPG`},
+		{"setup.exe", "application/zip", plain},
+		{"pages.zip.exe", "application/zip", plain},
+		{"pages.zip", "image/webp", plain},
+		{"pages.zip", "application/octet-stream", plain},
+		{"pages.zip", "", plain},
+		{"pages", "application/zip", plain},
+		{".zip", "application/zip", plain},
+		{"", "application/zip", plain},
+		{"a/b.zip", "application/zip", plain},
+		{`a\b.zip`, "application/zip", plain},
+		{"a\r\nSet-Cookie: x.zip", "application/zip", plain},
+		{"a\xffb.zip", "application/zip", plain},
+		{strings.Repeat("a", layout.MaxDownloadName) + ".zip", "application/zip", plain},
+	} {
+		if got := layout.Disposition(c.name, c.typ); got != c.want {
+			t.Errorf("Disposition(%q, %q) = %q, want %q", c.name, c.typ, got, c.want)
 		}
 	}
 }

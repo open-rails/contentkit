@@ -23,7 +23,6 @@ import (
 	"github.com/open-rails/contentkit/media/internal/s3test"
 	"github.com/open-rails/contentkit/media/layout"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
-	"github.com/open-rails/contentkit/media/token"
 )
 
 // cid is the n-th test content id, a canonical UUIDv7.
@@ -267,7 +266,7 @@ func TestResponseContentDisposition(t *testing.T) {
 	if _, err := env.Store.Put(ctx, key, bytes.NewReader([]byte("zip")), 3, media.PutOptions{ContentType: "application/zip"}); err != nil {
 		t.Fatal(err)
 	}
-	want := token.Attachment("[Artist] Title (日本語).zip")
+	want := layout.Attachment("[Artist] Title (日本語).zip")
 	p, err := s3.NewPresignClient(env.Store.Client()).PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(env.Store.Bucket()), Key: &key, ResponseContentDisposition: &want}, s3.WithPresignExpires(time.Minute))
 	if err != nil {

@@ -50,7 +50,7 @@ var images = []string{"image/png", "image/jpeg"}
 var kinds = []media.Kind{
 	{Name: "gallery", KeepOriginals: true,
 		Uploads: []media.Upload{
-			{Path: "originals/{name}", Types: images, MaxBytes: 10 << 20, Pages: true},
+			{Path: "originals/{name}", Types: images, MaxBytes: 10 << 20},
 			{Path: "cover", Types: images, MaxBytes: 10 << 20},
 		},
 		Private: []media.Private{{Name: "low", From: "originals/{name}", To: "low-res/{name}.webp", Image: &media.Image{Width: 1200, Height: 1200}}},

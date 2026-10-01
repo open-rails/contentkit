@@ -109,6 +109,9 @@ func setHidden(k *Kind, m *Manifest, hidden bool) {
 		}
 		f.Pending = pending
 	}
+	if !hidden {
+		k.syncPreviews(nil, m)
+	}
 }
 
 // deletePublic deletes the item's public files and purges them.

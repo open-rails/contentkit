@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { formatDuration, galleryItems, stageAspect } from "./gallery.js";
 import type { Access, FileInfo, ReadResult } from "./wire.gen.js";
 
-const read = (access: Access, files: FileInfo[], hls?: string[]): ReadResult => ({ access, total: files.length, preview_limit: 0, offset: 0, limit: 50, expires: 0, files, hls });
+const read = (access: Access, files: FileInfo[], hls?: string[]): ReadResult => ({ access, total: files.length, offset: 0, limit: 50, expires: 0, files, hls });
 const img = (n: number, o: Partial<FileInfo> = {}): FileInfo => ({ path: `low-res/${n}.webp`, type: "image/webp", w: 800, h: 600, url: `https://m/${n}`, ...o });
 const ladder = (dir: string, o: Partial<FileInfo> = {}): FileInfo[] => [
   { path: `${dir}480-h264.mp4`, type: "video/mp4", w: 270, h: 480, url: "u", ...o },
@@ -11,9 +11,9 @@ const ladder = (dir: string, o: Partial<FileInfo> = {}): FileInfo[] => [
   { path: `${dir}sprite.jpg`, type: "image/jpeg", url: "u", ...o },
 ];
 
-it("full access: images in order, one item per HLS ladder, teaser hidden; downloads and subtitles are not items", () => {
-  const files = [img(0, { teaser: true }), img(1), ...ladder("hls/"), { path: "video/source-1080p.mp4", type: "video/mp4", url: "u" }, { path: "subs/en.vtt", type: "text/vtt", url: "u" }];
-  const items = galleryItems(read("full", files, ["hls/"]));
+it("full access: images in order, one item per HLS ladder, no previews; downloads and subtitles are not items", () => {
+  const files = [img(1), ...ladder("hls/"), { path: "video/source-1080p.mp4", type: "video/mp4", url: "u" }, { path: "subs/en.vtt", type: "text/vtt", url: "u" }];
+  const items = galleryItems({ ...read("full", files, ["hls/"]), previews: ["https://m/public/preview-1.webp"] });
   expect(items.map((i) => [i.kind, i.key])).toEqual([["image", "low-res/1.webp"], ["video", "hls/"]]);
   expect(items[1]).toMatchObject({ dir: "hls/", file: { path: "hls/1080-h264.mp4", dur: 42 } });
   expect(items[1]!.aspect).toBeCloseTo(0.5625);
@@ -27,16 +27,23 @@ it("an audio-only ladder plays its M4A", () => {
   expect(galleryItems(read("full", files, ["listen/song/"]))).toEqual([{ kind: "audio", key: "listen/song/", dir: "listen/song/", file: files[1], aspect: 3 }]);
 });
 
-it("no access: the teaser sits behind one locked item, a locked ladder counts once, and nothing locked leaks", () => {
-  const files = [img(0, { teaser: true, url: "https://m/blurred" }), { path: "low-res/1.webp", type: "image/webp", locked: true }, ...ladder("hls/", { url: undefined, locked: true })];
-  const items = galleryItems(read("none", files));
-  expect(items).toEqual([{ kind: "locked", key: "locked", count: 2, videos: 1, teaser: files[0], aspect: 800 / 600 }]);
+const lockedImg = (n: number): FileInfo => ({ path: `low-res/${n}.webp`, type: "image/webp", size: 1000, locked: true });
+
+it("no access: one locked item, a locked ladder counts once, and nothing locked leaks", () => {
+  const files = [lockedImg(0), lockedImg(1), ...ladder("hls/", { url: undefined, locked: true })];
+  expect(galleryItems(read("none", files))).toEqual([{ kind: "locked", key: "locked", count: 3, videos: 1, backdrop: undefined, aspect: 1 }]);
 });
 
-it("preview access: allowed files, then the locked rest", () => {
-  const items = galleryItems(read("preview", [img(0), img(1), { path: "low-res/2.webp", type: "image/webp", locked: true }]));
-  expect(items.map((i) => i.kind)).toEqual(["image", "image", "locked"]);
-  expect(items[2]).toMatchObject({ count: 1, teaser: undefined });
+it("no access with previews: the public previews, then the locked rest behind the last preview", () => {
+  const previews = ["https://m/public/preview-1.webp", "https://m/public/preview-2.webp"];
+  const items = galleryItems({ ...read("none", [lockedImg(0), lockedImg(1), lockedImg(2)]), previews });
+  expect(items).toEqual([
+    { kind: "image", key: "preview/1", file: { path: "preview/1", type: "image/webp", url: previews[0] }, aspect: 1 },
+    { kind: "image", key: "preview/2", file: { path: "preview/2", type: "image/webp", url: previews[1] }, aspect: 1 },
+    { kind: "locked", key: "locked", count: 1, videos: 0, backdrop: previews[1], aspect: 1 },
+  ]);
+  // Every page previewed: nothing is left to lock.
+  expect(galleryItems({ ...read("none", [lockedImg(0), lockedImg(1)]), previews }).map((i) => i.kind)).toEqual(["image", "image"]);
 });
 
 it("stage aspect is the current item's native aspect; durations format", () => {

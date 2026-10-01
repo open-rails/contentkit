@@ -40,9 +40,25 @@ export function statusKind(status: number | undefined): PlaybackErrorKind {
   return "network";
 }
 
+/** Read again this long before the item token expires. */
+export const REFRESH_BEFORE_EXPIRY = 60_000;
+const MIN_REFRESH_DELAY = 30_000;
+
+/**
+ * Milliseconds until the read should be fetched again: shortly before
+ * `expires` (the read's, unix seconds), never sooner than 30 s; null when
+ * the read has no expiry. A read before the expiry answers the same token,
+ * so nothing is gained by reading earlier.
+ */
+export function expiryDelay(expires: number | undefined, now = Date.now()): number | null {
+  if (!expires) return null;
+  return Math.max(expires * 1000 - REFRESH_BEFORE_EXPIRY - now, MIN_REFRESH_DELAY);
+}
+
 /**
  * Worth one grant refresh and retry: 401/403, or a 404 — media-access answers a
- * missing, expired or wrong token exactly like a missing object.
+ * missing, expired or wrong token exactly like a missing object. A 429 (the
+ * ingress's rate limit) or a blocked request is not: it fails without a loop.
  */
 export function refreshable(e: PlaybackError): boolean {
   return e.kind === "access" || e.status === 404;

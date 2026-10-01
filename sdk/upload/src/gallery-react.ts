@@ -10,6 +10,7 @@ import {
   hlsConfig,
   initialEstimate,
   otherCodecLevels,
+  expiryDelay,
   refreshable,
   startRung,
   statusKind,
@@ -181,11 +182,16 @@ export interface HlsPlayerOptions {
   /** Adds auth to playlist and segment requests (e.g. a bearer header for the app's read API). */
   xhrSetup?: (xhr: XMLHttpRequest, url: string) => void | Promise<void>;
   /**
-   * Re-grants access (refetch the read API) after a 401, 403 or 404 — media-access
-   * answers an expired token with 404 — then the player retries once, resuming
-   * where it was.
+   * Re-grants access (refetch the read API). Called shortly before `expires`,
+   * and once after a 401, 403 or 404 — media-access answers an expired token
+   * with 404 — after which the player retries, resuming where it was.
    */
   refresh?: () => unknown;
+  /**
+   * The read's `expires` (unix seconds). When a later one arrives the player
+   * loads its playlists again at the playhead if their URLs carry the token.
+   */
+  expires?: number;
   /** Inactive pauses (a swiped-away slide). Default true. */
   active?: boolean;
   /** No playback progress and no bytes for this long is an error. Default 10 s. */
@@ -197,6 +203,41 @@ export interface HlsPlayerOptions {
 }
 
 export const PLAYER_QUALITY_KEY = "ckui.player.quality";
+
+// One timer per refresh callback: a gallery and its players share a read.
+const refreshTimers = new Map<() => unknown, { expires: number; subs: number; timer: ReturnType<typeof setTimeout> }>();
+
+/**
+ * Calls refresh shortly before expires (a read's, unix seconds), once however
+ * many components ask with the same callback. The next read's later expiry
+ * arms it again; a refresh that fails or changes nothing does not repeat.
+ */
+export function useRefreshBeforeExpiry(expires: number | undefined, refresh: (() => unknown) | undefined) {
+  useEffect(() => {
+    const delay = expiryDelay(expires);
+    if (delay === null || !expires || !refresh) return;
+    let entry = refreshTimers.get(refresh);
+    if (entry?.expires !== expires) {
+      if (entry) clearTimeout(entry.timer);
+      const made = {
+        expires,
+        subs: 0,
+        timer: setTimeout(() => {
+          if (refreshTimers.get(refresh) === made) refreshTimers.delete(refresh);
+          Promise.resolve().then(refresh).catch(() => {});
+        }, delay),
+      };
+      refreshTimers.set(refresh, (entry = made));
+    }
+    const mine = entry;
+    mine.subs++;
+    return () => {
+      if (--mine.subs > 0 || refreshTimers.get(refresh) !== mine) return;
+      clearTimeout(mine.timer);
+      refreshTimers.delete(refresh);
+    };
+  }, [expires, refresh]);
+}
 
 /** A selectable rendition; `height` is its short side (portrait 1080×1920 is 1080). */
 export interface QualityLevel {
@@ -304,12 +345,14 @@ function capController(Base: typeof CapLevelController | undefined, policy: AbrP
 
 /**
  * HLS playback that fails fast with a reason: hls.js (lazy-loaded) or native
- * HLS, tuned retries, one grant refresh on 401/403/404, and a stall watchdog.
+ * HLS, tuned retries, a grant refresh before expiry and one on 401/403/404,
+ * and a stall watchdog.
  */
 export function useHlsPlayer({
   src,
   xhrSetup,
   refresh,
+  expires,
   active = true,
   stallTimeout = 10_000,
   abr,
@@ -339,6 +382,15 @@ export function useHlsPlayer({
   const commit = useRef<() => void>(() => {});
   const opts = useRef({ xhrSetup, refresh, abr, qualityKey });
   opts.current = { xhrSetup, refresh, abr, qualityKey };
+  // Loads the playlists again at the playhead when they hold the old token.
+  const renew = useRef<() => void>(() => {});
+  useRefreshBeforeExpiry(expires, refresh);
+  const granted = useRef(expires);
+  useEffect(() => {
+    const before = granted.current;
+    granted.current = expires;
+    if (expires && before && expires > before) renew.current();
+  }, [expires]);
 
   useEffect(() => {
     if (!el || !src || !armed) return;
@@ -352,6 +404,15 @@ export function useHlsPlayer({
     setCurrent(-1);
     choose.current = () => {};
     commit.current = () => {};
+    renew.current = () => {};
+    const reload = () => {
+      if (dead) return;
+      if (previewAt.current !== null) return stopPreview.current();
+      resumeAt.current = el.currentTime || 0;
+      dead = true;
+      destroy();
+      setSession((s) => s + 1);
+    };
     setStatus(want.current ? "loading" : "idle");
     const fail = (e: PlaybackError) => {
       if (dead) return;
@@ -439,6 +500,11 @@ export function useHlsPlayer({
             lastProgress.current = Date.now();
             measured = hls.bandwidthEstimate;
           });
+          // Media playlists are loaded once: their segment URLs keep the token they were signed with.
+          const tokenInUrl = () => hls.levels.some((l) => /[?&]t=/.test(l.details?.fragments[0]?.url ?? ""));
+          renew.current = () => {
+            if (loading && tokenInUrl()) reload();
+          };
           let parsed = false;
           start.current = () => {
             if (!parsed) return;
@@ -480,6 +546,7 @@ export function useHlsPlayer({
           if (dead) return;
           if (code < 200 || code >= 400) return fail({ kind: statusKind(code), code: `probe/${code}`, status: code });
           native = true;
+          renew.current = reload; // its playlists cannot be inspected
           el.src = src;
           if (previewAt.current !== null) el.currentTime = previewAt.current;
           else if (resumeAt.current) el.currentTime = resumeAt.current;
@@ -496,6 +563,7 @@ export function useHlsPlayer({
     );
     return () => {
       dead = true;
+      renew.current = () => {};
       start.current = null;
       el.removeEventListener("error", onMediaError);
       destroy();

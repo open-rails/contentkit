@@ -24,39 +24,22 @@ type Resolution struct {
 	// content then refuses unless lower case; a Ref of another tenant is an
 	// error.
 	Ref contentref.ContentRef
-	// Visible = published and not soft-deleted. Teasers need only Visible.
+	// Visible = published and not soft-deleted. Media's public files (covers,
+	// previews) need only Visible to anonymous viewers.
 	Visible bool
 	// Accessible = the actor may consume it: an opaque host verdict
 	// (entitlement, purchase, ACL, flag). ContentKit imposes no access model.
+	// For media it is all or nothing: every private file of the item, or none.
 	Accessible bool
-	// PreviewLimit caps a Visible item to its first N ordered units (pages,
-	// files), whatever Accessible says. 0 = no cap. Content interactions
-	// ignore it.
-	PreviewLimit int
-	// Editor = the actor may edit the item (its creator, staff): media signs
-	// editor views (the item's temp/, one editor token) and returns edit
-	// metadata only for editors. Its read API URLs stay within what Visible,
-	// Accessible and PreviewLimit allow.
+	// Editor = the actor may edit the item (its creator, staff): media
+	// returns edit metadata and editor views only for editors, and gives a
+	// visible item's editor its private files whatever Accessible says.
 	Editor bool
 }
 
-// Full reports unrestricted access: every unit is served.
+// Full reports access to the item: everything private is served.
 func (r Resolution) Full() bool {
-	return r.Visible && r.Accessible && r.PreviewLimit <= 0
-}
-
-// Units returns how many leading units of an ordered list of total units the
-// resolution grants.
-func (r Resolution) Units(total int) int {
-	switch {
-	case !r.Visible || total <= 0:
-		return 0
-	case r.PreviewLimit > 0:
-		return min(r.PreviewLimit, total)
-	case r.Accessible:
-		return total
-	}
-	return 0
+	return r.Visible && r.Accessible
 }
 
 // ContentResolver is the one mandatory content hook and the whole gating

@@ -26,7 +26,7 @@ export interface VideoPosterProps extends Omit<ComponentProps<"div">, "children"
 /**
  * A poster at its aspect, uncropped, spanning its container's width, at the
  * width its rendered width × density needs. It never plays: use it for
- * videos the viewer cannot play (a locked post's teaser); playable ones
+ * videos the viewer cannot play (a locked post); playable ones
  * preview inline in VideoPlayer and MediaGallery.
  */
 export function VideoPoster({ poster, aspect, density, alt = "", placeholder, className, style, children, ...div }: VideoPosterProps) {

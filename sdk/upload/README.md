@@ -86,7 +86,7 @@ import { useRead, useUpload, useUploadQueue } from "@openrails/contentkit-upload
 const q = useUploadQueue(client, { ref, path: "originals/{name}" });
 q.add(input.files!);           // uploads in the background, 2 at a time
 q.move(id, 0);                 // reorder before commit
-q.update(id, { path: "originals/001.png", meta: { teaser: true } });
+q.update(id, { path: "originals/001.png", meta: { alt: "Cover page" } });
 q.blocked;                     // rate/quota/permission refusal: nothing new starts until q.start()
 await q.commit();              // puts the uploads after the item's, in queue order; re-uploads stale ones
 
@@ -225,8 +225,10 @@ arrows, ←/→, dots, counter) or a tile grid whose tiles open a lightbox carou
 its header. One item renders alone. The carousel spans its column's full width at
 the current item's native aspect (uncropped; `maxHeight`, default none, caps it);
 only the current slide and its neighbours are mounted, and a video swiped away
-pauses. Viewers without access see the blurred teaser behind one locked item
-with the host's `renderLocked`; locked files carry no URLs.
+pauses. An item's private files are all or nothing: viewers without access
+see its public previews (the read's `previews`, a public preset with `First`),
+then one locked item with the host's `renderLocked` over the last preview;
+locked files carry no URLs.
 
 **Inline preview.** A playable video (a read's `hls`) previews in place: with a
 mouse, after 500 ms of hover; on touch, the most visible video in view. It is
@@ -244,7 +246,7 @@ Headless: `useInlinePreview` with `useHlsPlayer`'s `preview(at)`/`unload()`.
   read={read}                                    // client.read(ref, { prefix: "low-res/" }), or the host's
   hlsBase={(dir) => client.hlsBase(ref, dir)}
   xhrSetup={(xhr) => xhr.setRequestHeader("Authorization", `Bearer ${token()}`)} // same-origin playlists only
-  refresh={() => refetchRead()}                  // after a 401/403/404: re-grant, then the player resumes once
+  refresh={() => refetchRead()}                  // called shortly before read.expires, and once after a 401/403/404
   poster={posterImage} previewStart={12.5}       // optional: drawn on the first video, whose preview starts there
   renderLocked={({ count }) => <UnlockButton count={count} />}
   renderDetails={(item) => <Downloads item={item} />}
@@ -254,15 +256,20 @@ Headless: `useInlinePreview` with `useHlsPlayer`'s `preview(at)`/`unload()`.
 
 `VideoPlayer` (`base`: `client.hlsBase(ref, dir)`, `width`/`height` reserve the box, `poster`, `duration`,
 `pending`/`progress` show `EncodeProgress`, `failed`, `layout` `frame`|`fill`,
-`maxHeight` default `80svh`, `active`, `xhrSetup`, `refresh`, `inlinePreview`,
+`maxHeight` default `80svh`, `active`, `xhrSetup`, `refresh`, `expires`, `inlinePreview`,
 `previewStart`) loads nothing until previewed or played (hls.js imported then; native HLS on Safari), and never spins
 forever: tuned retries surface a dead endpoint within seconds, a watchdog
 catches 10 s without progress, and each failure has its own message, a Retry
 and a support code: unreachable or blocked (status 0, including missing
 `MEDIA_ACCESS_CORS_ORIGINS`, also logged to the console), no access
 (401/403 after one refresh), not found (404 after one refresh: media-access
-answers an expired or wrong token like a missing object), rate limited (429), unsupported in
-this browser. Headless: `useHlsPlayer`, `useCarousel` and `useGalleryView` in
+answers an expired or wrong token like a missing object), rate limited (429, from the
+media host's ingress: shown, never retried in a loop), unsupported in
+this browser. A read answers the same token until `expires`, so nothing needs
+re-reading before then: with `refresh`, the gallery and the player read again
+one minute before it (`useRefreshBeforeExpiry`, `expiryDelay`), and a player
+given the new `expires` loads its playlists again at the playhead when their
+URLs carry the token. The refresh after a 401/403/404 stays as the fallback. Headless: `useHlsPlayer`, `useCarousel` and `useGalleryView` in
 `/react`; `galleryItems`, `classifyHlsError`, `hlsConfig` and the ABR helpers
 (`capRung`, `startRung`, `initialEstimate`, `abrHlsConfig`) in the root entry.
 

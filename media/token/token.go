@@ -3,10 +3,8 @@
 //
 //	{kid}.{exp}.base64url(HMAC-SHA256(secret, "{scope}|{exp}"))
 //
-// An item scope, "{ns}/{kind}/{id}", covers every private file of one item;
-// a file scope is one private object key; a download scope,
-// "{key}#dl={name}", binds a Content-Disposition name. Tokens are bearer
-// tokens, revoked only by expiry.
+// The one access scope is an item's, "{ns}/{kind}/{id}": every private file
+// of the item or none. Tokens are bearer tokens, revoked only by expiry.
 package token
 
 import (
@@ -28,7 +26,7 @@ var (
 	ErrInvalid    = errors.New("token: signature does not cover this path")
 )
 
-// CookieName carries a folder token in cookie delivery mode.
+// CookieName carries an item token in cookie delivery mode.
 const CookieName = "mt"
 
 // DefaultWindow aligns expiries so tokens and URLs repeat within a window.
@@ -118,12 +116,6 @@ func Expiry(now time.Time, ttl, window time.Duration) time.Time {
 	return time.Unix(intervals*w, 0).UTC()
 }
 
-// FileScope scopes a token to one object key.
-func FileScope(key string) string { return key }
-
-// DownloadScope scopes a token to one key served under a download name.
-func DownloadScope(key, name string) string { return key + "#dl=" + name }
-
 // ItemScope covers every private file of one item: "{ns}/{kind}/{id}".
 func ItemScope(ns, kind, id string) string { return ns + "/" + kind + "/" + id }
 
@@ -134,25 +126,17 @@ func (r Ring) Sign(scope string, exp time.Time) string {
 }
 
 // VerifyPrivate checks tok for the private object key
-// "{ns}/{kind}/{id}/private/{name}" at now. With dl it accepts only
-// DownloadScope(key, dl); otherwise FileScope(key) or the key's ItemScope.
-func (r Ring) VerifyPrivate(tok, key, dl string, now time.Time) error {
+// "{ns}/{kind}/{id}/private/{name}" at now: its item's token.
+func (r Ring) VerifyPrivate(tok, key string, now time.Time) error {
 	p := strings.Split(key, "/")
 	if len(p) != 5 || p[3] != "private" || slices.Contains(p, "") {
 		return ErrInvalid
 	}
-	if dl != "" {
-		return r.verify(tok, []string{DownloadScope(key, dl)}, now)
-	}
-	return r.verify(tok, []string{FileScope(key), ItemScope(p[0], p[1], p[2])}, now)
+	return r.VerifyScope(tok, ItemScope(p[0], p[1], p[2]), now)
 }
 
-// VerifyScope checks tok for exactly scope at now (upload tickets).
+// VerifyScope checks tok for exactly scope at now.
 func (r Ring) VerifyScope(tok, scope string, now time.Time) error {
-	return r.verify(tok, []string{scope}, now)
-}
-
-func (r Ring) verify(tok string, scopes []string, now time.Time) error {
 	kid, rest, ok := strings.Cut(tok, ".")
 	if !ok || kid == "" { // a zero Ring's empty key id would verify an empty secret
 		return ErrMalformed
@@ -181,34 +165,10 @@ func (r Ring) verify(tok string, scopes []string, now time.Time) error {
 	if err != nil {
 		return ErrMalformed
 	}
-	for _, s := range scopes {
-		want, _ := base64.RawURLEncoding.DecodeString(mac(secret, s, e))
-		if hmac.Equal(got, want) {
-			return nil
-		}
+	if want, _ := base64.RawURLEncoding.DecodeString(mac(secret, scope, e)); !hmac.Equal(got, want) {
+		return ErrInvalid
 	}
-	return ErrInvalid
-}
-
-// Attachment is the Content-Disposition for a signed download name: an ASCII
-// fallback plus the RFC 5987 UTF-8 name.
-func Attachment(name string) string {
-	var ascii, ext strings.Builder
-	for _, c := range name {
-		if c < 0x20 || c >= 0x7f || c == '"' || c == '\\' {
-			ascii.WriteByte('_')
-		} else {
-			ascii.WriteRune(c)
-		}
-	}
-	for _, b := range []byte(name) {
-		if b < 0x80 && (b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || strings.IndexByte("!#$&+-.^_`|~", b) >= 0) {
-			ext.WriteByte(b)
-		} else {
-			fmt.Fprintf(&ext, "%%%02X", b)
-		}
-	}
-	return `attachment; filename="` + ascii.String() + `"; filename*=UTF-8''` + ext.String()
+	return nil
 }
 
 func mac(secret []byte, scope, exp string) string {
