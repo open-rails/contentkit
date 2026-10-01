@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"slices"
 	"strings"
 
@@ -163,6 +164,11 @@ func (k *Kind) validate() error {
 		k.patterns[i] = p
 	}
 	for _, u := range k.Uploads {
+		if err := u.Video.validate(u.Types); err != nil {
+			return fmt.Errorf("upload %q: %w", u.Path, err)
+		}
+	}
+	for _, u := range k.Uploads {
 		if u.Frames == "" {
 			continue
 		}
@@ -181,6 +187,20 @@ func (k *Kind) validate() error {
 		if err := k.validatePublic(&k.Public[i], names); err != nil {
 			return fmt.Errorf("public %q: %w", k.Public[i].Name, err)
 		}
+	}
+	return nil
+}
+
+func (l *VideoLimits) validate(types []string) error {
+	if l == nil {
+		return nil
+	}
+	if !slices.ContainsFunc(types, func(t string) bool { return isVideoType(t) || isAudioType(t) }) {
+		return errors.New("video limits on an upload of neither video nor audio")
+	}
+	finite := func(v float64) bool { return v >= 0 && !math.IsInf(v, 0) && !math.IsNaN(v) }
+	if !finite(l.MaxSeconds) || !finite(l.MaxFPS) || l.MaxFPS > 60 || l.MaxPixels < 0 || !finite(l.MaxWork) {
+		return fmt.Errorf("invalid Video limits %+v (non-negative, MaxFPS at most 60)", *l)
 	}
 	return nil
 }

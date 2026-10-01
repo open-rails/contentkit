@@ -110,7 +110,7 @@ func ladder(ctx context.Context, src, dir string, p plan, ps pass, fp *fileProgr
 	var fc strings.Builder
 	fmt.Fprintf(&fc, "[0:%d]", p.video)
 	if p.limitFPS {
-		fmt.Fprintf(&fc, "fps=%d,", maxFPS)
+		fmt.Fprintf(&fc, "fps=%s,", strconv.FormatFloat(p.fps, 'f', -1, 64))
 	}
 	var outs []string
 	for i := range ps.codecs {

@@ -1,13 +1,16 @@
 package video
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/text/language"
 	"golang.org/x/text/language/display"
@@ -16,6 +19,10 @@ import (
 )
 
 type probeResult struct {
+	// Packets and MaxFPS are plan-time facts kept with the encode runs: the
+	// video stream's real packets and the upload's output rate cap.
+	Packets *packetScan   `json:"packets,omitempty"`
+	MaxFPS  float64       `json:"max_fps,omitempty"`
 	Streams []probeStream `json:"streams"`
 	Format  struct {
 		Duration   string `json:"duration"`
@@ -58,6 +65,59 @@ type probeStream struct {
 	SideData []struct {
 		Rotation float64 `json:"rotation"`
 	} `json:"side_data_list"`
+}
+
+// packetScan is a stream's packets as demuxed: their count and the span of
+// their timestamps, seconds on the container's clock.
+type packetScan struct {
+	Count int     `json:"count"`
+	Start float64 `json:"start"`
+	End   float64 `json:"end"` // the last packet's end
+}
+
+// scanTimeout bounds reading a whole source's packets.
+const scanTimeout = 15 * time.Minute
+
+// scanPackets demuxes stream of src (no decoding) for its real packets:
+// containers declare durations and rates, the packets are what plays.
+func scanPackets(ctx context.Context, src string, stream int, opts []string) (packetScan, error) {
+	ctx, cancel := context.WithTimeout(ctx, scanTimeout)
+	defer cancel()
+	pr, pw := io.Pipe()
+	var s packetScan
+	done := make(chan error, 1)
+	go func() {
+		sc := bufio.NewScanner(pr)
+		for sc.Scan() {
+			pts, dur, _ := strings.Cut(strings.TrimSpace(sc.Text()), ",")
+			if pts == "" {
+				continue
+			}
+			s.Count++
+			t, err := strconv.ParseFloat(pts, 64)
+			if err != nil || math.IsInf(t, 0) || math.IsNaN(t) {
+				continue
+			}
+			d, _ := strconv.ParseFloat(dur, 64)
+			if s.Count == 1 || t < s.Start {
+				s.Start = t
+			}
+			s.End = max(s.End, t+max(0, d))
+		}
+		_, _ = io.Copy(io.Discard, pr)
+		done <- sc.Err()
+	}()
+	args := append(append([]string{"-v", "error"}, opts...), "-select_streams", strconv.Itoa(stream),
+		"-show_entries", "packet=pts_time,duration_time", "-of", "csv=p=0", src)
+	err := run(ctx, pw, "ffprobe", args...)
+	_ = pw.Close()
+	if serr := <-done; err == nil {
+		err = serr
+	}
+	if err == nil && s.Count == 0 {
+		err = errNoVideo
+	}
+	return s, err
 }
 
 func probe(ctx context.Context, path string) (probeResult, error) {
@@ -103,8 +163,9 @@ type plan struct {
 	duration      float64
 	video         int     // input stream index
 	width, height int     // displayed: square pixels, rotation applied
-	fps           float64 // output rate: the source's, at most maxFPS
-	limitFPS      bool    // the source is faster than maxFPS
+	fps           float64 // output rate: the source's, at most maxFPS and MaxFPS, at most its real rate
+	limitFPS      bool    // the source's declared rate is faster than fps
+	realFPS       float64 // packets per second, when scanned
 	tileW, tileH  int     // sprite tile
 	audio, subs   []track
 	stream        probeStream // the video stream, for passthrough
@@ -113,6 +174,10 @@ type plan struct {
 }
 
 var errNoVideo = errors.New("source has no video stream")
+
+// minSourceFPS is the lowest real frame rate a scanned video may average:
+// sparser sources leave chunks with nothing to encode.
+const minSourceFPS = 1
 
 func newPlan(p probeResult) (plan, error) {
 	var pl plan
@@ -144,7 +209,25 @@ func newPlan(p probeResult) (plan, error) {
 				pl.width = max(2, int(math.Round(float64(s.Width)*float64(n)/float64(d))))
 			}
 			r := rate(s)
-			pl.fps, pl.limitFPS = min(r, maxFPS), r > maxFPS
+			out := min(r, maxFPS)
+			if p.MaxFPS > 0 {
+				out = min(out, p.MaxFPS)
+			}
+			if pk := p.Packets; pk != nil && pk.Count > 0 && pk.End > pk.Start {
+				// The container's word for duration and rate is not trusted:
+				// a sparse source averaging under its declared rate is
+				// encoded at its real rate, one whose last frame ends well
+				// before its declared duration ends there.
+				span := pk.End - pk.Start
+				pl.realFPS = float64(pk.Count) / span
+				if r*span > 1.5*float64(pk.Count) {
+					out = min(out, pl.realFPS)
+				}
+				if end := pk.End - pl.start; pl.duration > end+max(1, end/100) {
+					pl.duration = end
+				}
+			}
+			pl.fps, pl.limitFPS = out, r > out
 			if rotated(s) {
 				pl.width, pl.height = pl.height, pl.width
 			}
@@ -163,6 +246,10 @@ func newPlan(p probeResult) (plan, error) {
 	}
 	if pl.video < 0 {
 		return pl, errNoVideo
+	}
+	if pl.realFPS > 0 && pl.realFPS < minSourceFPS {
+		return pl, &media.ImageError{Code: media.CodeVideoOverBudget, Message: fmt.Sprintf(
+			"the video has %d frames over %.0f seconds; a video must average at least %d frame a second", p.Packets.Count, pl.duration, minSourceFPS)}
 	}
 	pl.tileW, pl.tileH = tile(pl.width, pl.height)
 	// Exactly one default audio track: the first flagged one, else the first.

@@ -77,6 +77,21 @@ type Upload struct {
 	Pages    bool     `json:"pages,omitempty"`  // ordered pages: the preview cut counts these
 	Frames   string   `json:"frames,omitempty"` // may be grabbed from a frame of this video upload (the frame op)
 	Named    bool     `json:"named,omitempty"`  // the server names it ({name} is "i-{uuid}"): inline images
+	// Video bounds a video or audio upload as probed from its real stream;
+	// nil or zero fields take the defaults (DefaultVideoLimits).
+	Video *VideoLimits `json:"video,omitempty"`
+}
+
+// VideoLimits bound what one video or audio upload may cost the worker; an
+// upload past them fails (video_too_long, video_too_large,
+// video_over_budget) before any encode runs.
+type VideoLimits struct {
+	MaxSeconds float64 `json:"max_seconds,omitempty"` // real running time (audio too)
+	MaxFPS     float64 `json:"max_fps,omitempty"`     // output frame rate (at most 60); a faster source is encoded at it
+	MaxPixels  int     `json:"max_pixels,omitempty"`  // displayed frame area
+	// MaxWork bounds the planned encode: the sum over the HLS and MP4
+	// presets' rungs and codecs of output pixels × output frames.
+	MaxWork float64 `json:"max_work,omitempty"`
 }
 
 // Private derives files in private/, recorded in the manifest with their
