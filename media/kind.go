@@ -169,6 +169,11 @@ func (k *Kind) validate() error {
 		}
 	}
 	for _, u := range k.Uploads {
+		if k.feedsImages(u.Path) {
+			if i := slices.IndexFunc(u.Types, func(t string) bool { return !slices.Contains(ImageTypes, t) }); i >= 0 {
+				return fmt.Errorf("upload %q: its image presets cannot decode %s (ImageTypes)", u.Path, u.Types[i])
+			}
+		}
 		if u.Frames == "" {
 			continue
 		}
@@ -203,6 +208,12 @@ func (l *VideoLimits) validate(types []string) error {
 		return fmt.Errorf("invalid Video limits %+v (non-negative, MaxFPS at most 60)", *l)
 	}
 	return nil
+}
+
+// feedsImages reports an upload some image preset (private or public) decodes.
+func (k *Kind) feedsImages(path string) bool {
+	return slices.ContainsFunc(k.Private, func(p Private) bool { return p.Image != nil && p.From == path }) ||
+		slices.ContainsFunc(k.Public, func(p Public) bool { return p.From == path })
 }
 
 func (k *Kind) validatePrivate(p Private, names map[string]bool) error {
@@ -282,6 +293,9 @@ func (k *Kind) validatePublic(p *Public, names map[string]bool) error {
 			return fmt.Errorf("Default %q: %w", p.Default, err)
 		}
 	}
+	if len(p.Widths) > 0 && (p.Image.Width > 0) != (p.Image.Height > 0) {
+		return errors.New("with Widths, Image.Width and Height are the names' shape: set both or neither")
+	}
 	p.Widths = slices.Sorted(slices.Values(p.Widths))
 	for j, w := range p.Widths {
 		if w <= 0 || w > maxWidth || j > 0 && w == p.Widths[j-1] {
@@ -355,6 +369,11 @@ func isVideoType(t string) bool    { return strings.HasPrefix(t, "video/") }
 func isImageType(t string) bool    { return strings.HasPrefix(t, "image/") }
 func isAudioType(t string) bool    { return strings.HasPrefix(t, "audio/") }
 func isSubtitleType(t string) bool { return slices.Contains(SubtitleTypes, t) }
+
+// ImageTypes are the image types the image presets decode (media/image); an
+// upload feeding one accepts no other. SVG, BMP and JPEG XL are refused:
+// their libvips loaders are blocked as untrusted.
+var ImageTypes = []string{"image/jpeg", "image/png", "image/webp", "image/gif", "image/avif", "image/heic", "image/heif", "image/tiff"}
 
 // SubtitleTypes are the subtitle types the Subtitles producer converts.
 var SubtitleTypes = []string{"text/vtt", "application/x-subrip", "text/x-ssa", "text/x-ass"}

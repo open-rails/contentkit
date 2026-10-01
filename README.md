@@ -292,9 +292,13 @@ bucket answers, and `MEDIA_METRICS_ADDR` serves `/livez`, `/readyz`,
 EXIF-oriented source pixels, then a clockwise quarter rotation); nothing is
 upscaled. GIF and WebP animations keep every frame, delay and loop count;
 `MaxPixels` (100 MP over all frames), `MaxFrames` (1000) and
-`MaxAnimationSeconds` (60) bound sources. The declared type binds the
-decoder. Public presets render every width (a width past the edited image
-at its width) and carry `from` and `fp` as object metadata.
+`MaxAnimationSeconds` (60) bound sources, and a stored source over its
+Upload's `MaxBytes` is refused unread. Uploads feeding image presets take
+only `media.ImageTypes` (JPEG, PNG, WebP, GIF, AVIF, HEIF, TIFF), the
+declared type binds the decoder, and every other libvips loader is blocked
+(libvips 8.13 or later). Public presets render every width through the same
+spec (a width past the edited image at its width) and carry `from` and `fp`
+as object metadata.
 
 **Video** (`media/video`): an `HLS` preset encodes the ladder (rung = short
 side, default 2160/1080/480, none above the source) in each of the worker's

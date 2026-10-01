@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -215,22 +216,34 @@ func (p *Processor) publicStale(ctx context.Context, item media.Item, f media.Fi
 // pass renders todo and the stale zips and records them in one manifest
 // edit. An upload whose blob or edit changed meanwhile keeps nothing this
 // pass made for it; the next pass redoes it.
-func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest, todo []work, zips []*media.Private) error {
+//
+// A hide records Hidden under the manifest lock, then deletes public/. Every
+// public write of this pass precedes its closing edit (or, failing, its
+// dropIfHidden) under that lock: a hide before it is seen there and the
+// writes deleted; a hide after it lists and deletes them itself.
+func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest, todo []work, zips []*media.Private) (err error) {
 	var (
 		mu      sync.Mutex
 		results []done
+		written []string // every public key this pass may have written
 	)
+	defer func() {
+		if err != nil && len(written) > 0 {
+			err = errors.Join(err, p.dropIfHidden(ctx, item, written))
+		}
+	}()
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(p.c.Workers)
 	for _, w := range todo {
 		g.Go(func() error {
 			d, err := p.render(gctx, item, m, w)
+			mu.Lock()
+			defer mu.Unlock()
+			written = append(written, d.written...)
 			if err != nil {
 				return err
 			}
-			mu.Lock()
 			results = append(results, d)
-			mu.Unlock()
 			return nil
 		})
 	}
@@ -261,9 +274,15 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 		made = append(made, f.Blob)
 	}
 	var purge, orphaned []string
+	hidden := false
 	k := item.Kind()
-	_, err := p.c.Manifests.EditExisting(ctx, item.Ref(), func(cur *media.Manifest) error {
+	_, err = p.c.Manifests.EditExisting(ctx, item.Ref(), func(cur *media.Manifest) error {
 		purge, orphaned = purge[:0], orphaned[:0]
+		if hidden = cur.Hidden; hidden {
+			if err := p.drop(ctx, written); err != nil {
+				return err
+			}
+		}
 		for _, d := range results {
 			i := cur.Find(d.src.Path)
 			if i < 0 || cur.Files[i].Blob != d.src.Blob || cur.Files[i].Edit.Hash() != d.src.Edit.Hash() {
@@ -313,24 +332,55 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 		return nil
 	})
 	if errors.Is(err, media.ErrNotFound) {
-		orphaned = nil
-		for _, d := range results {
-			orphaned = append(orphaned, d.written...)
-		}
+		err, orphaned = nil, written
 	} else if err != nil {
 		return err
+	}
+	if hidden {
+		purge, orphaned = written, nil // deleted under the lock
 	}
 	for _, d := range results {
 		if d.err != nil {
 			p.failed(ctx, item, d.src.Path, d.err)
 		}
 	}
-	if len(orphaned) > 0 {
-		for _, key := range orphaned {
-			_ = p.c.Store.Delete(ctx, key) // best effort: the sweep is the backstop
-		}
+	for _, key := range orphaned {
+		_ = p.c.Store.Delete(ctx, key) // best effort: the sweep is the backstop
 	}
 	return p.purge(ctx, append(purge, orphaned...))
+}
+
+// dropIfHidden deletes and purges keys, the public files of a pass that
+// failed, if the item is hidden or gone by now: checked under the manifest
+// lock, like the closing edit it stands in for. A visible item keeps them:
+// they are current, and the retry finds them fresh.
+func (p *Processor) dropIfHidden(ctx context.Context, item media.Item, keys []string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+	defer cancel()
+	drop := false
+	_, err := p.c.Manifests.EditExisting(ctx, item.Ref(), func(cur *media.Manifest) error {
+		if drop = cur.Hidden; drop {
+			return p.drop(ctx, keys)
+		}
+		return nil
+	})
+	if errors.Is(err, media.ErrNotFound) {
+		drop, err = true, p.drop(ctx, keys)
+	}
+	if err != nil || !drop {
+		return err
+	}
+	return p.purge(ctx, keys)
+}
+
+// drop deletes public keys.
+func (p *Processor) drop(ctx context.Context, keys []string) error {
+	for _, key := range keys {
+		if err := p.c.Store.Delete(ctx, key); err != nil && !errors.Is(err, media.ErrNotFound) {
+			return err
+		}
+	}
+	return nil
 }
 
 // render decodes one upload once and encodes its private and public outputs.
@@ -345,7 +395,7 @@ func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manife
 	if err != nil {
 		return d, err
 	}
-	src, err := p.read(ctx, key, w.src.Blob)
+	src, err := p.read(ctx, key, w.src, item.Kind())
 	if err != nil {
 		if isPermanent(err) {
 			d.err = err
@@ -367,12 +417,12 @@ func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manife
 			if err != nil {
 				return d, err
 			}
+			d.written = append(d.written, pk) // a failed put may still land
 			if _, err := p.c.Store.Put(ctx, pk, bytes.NewReader(out.webp), int64(len(out.webp)), media.PutOptions{
 				ContentType: "image/webp", ChecksumSHA256: sha(out.webp),
 				Metadata: map[string]string{"from": url.PathEscape(w.src.Path), "fp": fp}}); err != nil {
 				return d, err
 			}
-			d.written = append(d.written, pk)
 		}
 	}
 	for _, pr := range w.private {
@@ -465,7 +515,7 @@ func (p *Processor) editorViews(ctx context.Context, item media.Item, m *media.M
 	for name, f := range want {
 		g.Go(func() error {
 			key, _ := item.Blob(f.Blob)
-			src, err := p.read(gctx, key, f.Blob)
+			src, err := p.read(gctx, key, f, item.Kind())
 			if err != nil {
 				return nil // missing or unreadable: its upload records why
 			}
@@ -510,21 +560,39 @@ func (p *Processor) putBlob(ctx context.Context, item media.Item, body io.Reader
 	return name, nil
 }
 
-// read reads a blob, verifying its content address (a multipart upload is
-// verified on its first read): a mismatching blob is deleted and fails.
-func (p *Processor) read(ctx context.Context, key, blob string) ([]byte, error) {
-	rc, _, err := p.c.Store.Get(ctx, key, media.GetOptions{})
+// read reads upload f's blob: one stored larger than f may be (its Upload's
+// MaxBytes, or a grabbed frame's recorded size) is refused unread, and the
+// bytes must match their content address (a multipart upload is verified on
+// its first read), else the blob is deleted and fails.
+func (p *Processor) read(ctx context.Context, key string, f media.File, k *media.Kind) ([]byte, error) {
+	u, _ := k.UploadOf(f.Path)
+	limit := u.MaxBytes
+	if f.Frame != nil && f.Frame.Of != "" {
+		limit = max(limit, f.Size)
+	}
+	rc, obj, err := p.c.Store.Get(ctx, key, media.GetOptions{})
 	if errors.Is(err, media.ErrNotFound) {
 		return nil, permanentError{err}
 	} else if err != nil {
 		return nil, err
 	}
 	defer rc.Close()
-	b, err := io.ReadAll(rc)
+	tooLarge := func(size int64) error {
+		return permanentError{&media.ImageError{Code: media.CodeTooLarge,
+			Message: fmt.Sprintf("%s files at %s may be at most %d bytes; this one is %d", f.Type, u.Path, limit, size),
+			Details: media.ErrorDetails{Type: f.Type, Size: size, MaxBytes: limit}}}
+	}
+	if obj.Size > limit {
+		return nil, tooLarge(obj.Size)
+	}
+	b, err := io.ReadAll(io.LimitReader(rc, limit+1))
 	if err != nil {
 		return nil, err
 	}
-	if want, _ := layout.ParseSHA256Name(blob); !bytes.Equal(sha(b), want) {
+	if int64(len(b)) > limit {
+		return nil, tooLarge(int64(len(b)))
+	}
+	if want, _ := layout.ParseSHA256Name(f.Blob); !bytes.Equal(sha(b), want) {
 		_ = p.c.Store.Delete(context.WithoutCancel(ctx), key)
 		return nil, permanentError{&media.ImageError{Code: media.CodeChecksum, Message: "the stored bytes do not match their SHA-256; upload again"}}
 	}
