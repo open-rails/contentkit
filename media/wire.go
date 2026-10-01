@@ -154,6 +154,7 @@ type FileInfo struct {
 
 	// Editors (editor reads and commit replies):
 	Upload     bool            `json:"upload,omitempty"`
+	Staged     bool            `json:"staged,omitempty"` // uploaded, not yet placed by the worker: no blob, views or frames yet
 	From       string          `json:"from,omitempty"`
 	Edit       *Edit           `json:"edit,omitempty"`
 	Frame      *Frame          `json:"frame,omitempty"`

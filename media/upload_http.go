@@ -178,7 +178,7 @@ func (h uploadHandler) commit(w http.ResponseWriter, r *http.Request) {
 // uploadInfo is an upload as an editor reads it, without URLs.
 func uploadInfo(f File) FileInfo {
 	return FileInfo{Path: f.Path, Type: f.Type, Size: f.Size, W: f.W, H: f.H, Dur: f.Dur, Teaser: f.Teaser(), Upload: true,
-		Edit: f.Edit, Frame: f.Frame, Meta: f.Meta, Unattached: f.Unattached, Pending: f.Pending, Failed: f.Fail()}
+		Staged: f.Staged != "", Edit: f.Edit, Frame: f.Frame, Meta: f.Meta, Unattached: f.Unattached, Pending: f.Pending, Failed: f.Fail()}
 }
 
 func (h uploadHandler) frame(w http.ResponseWriter, r *http.Request) {

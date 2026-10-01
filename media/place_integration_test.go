@@ -131,6 +131,10 @@ func TestPlaceStagedUpload(t *testing.T) {
 	if jobs := f.q.take(); len(jobs) != 1 || !jobs[0].Place {
 		t.Fatalf("enqueued %+v", jobs)
 	}
+	res, err := f.rd.Read(ctx, g, f.editor, media.ReadOptions{Editor: true, Prefix: "originals/"})
+	if err != nil || len(res.Files) != 2 || !res.Files[0].Staged || res.Files[0].URL != "" {
+		t.Fatalf("editor read of staged uploads %+v %v", res, err)
+	}
 	lostKey, _ := item.Staged(lost)
 	if err := f.env.Store.Delete(ctx, lostKey); err != nil {
 		t.Fatal(err)
@@ -141,6 +145,9 @@ func TestPlaceStagedUpload(t *testing.T) {
 	m, _, _ = f.ms.Get(ctx, g)
 	if u, _ := m.Get(p); u.Blob != blobOf(png(1)) || u.Staged != "" {
 		t.Fatalf("placed %+v", u)
+	}
+	if res, err = f.rd.Read(ctx, g, f.editor, media.ReadOptions{Editor: true, Prefix: p}); err != nil || len(res.Files) != 1 || res.Files[0].Staged {
+		t.Fatalf("editor read of a placed upload %+v %v", res, err)
 	}
 	if u, _ := m.Get(gone); u.Fail() == nil || u.Fail().Code != media.CodeNotUploaded || u.Pending != nil {
 		t.Fatalf("gone %+v", u)
