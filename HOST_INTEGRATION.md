@@ -544,7 +544,7 @@ out until `attach`.
   (`media.VideoLimits`) caps an upload's running time, frame area, output
   frame rate and planned encode work (output pixels × output frames over
   its HLS and MP4 rungs and codecs); zero fields take
-  `media.DefaultVideoLimits` (4 h, 60 fps, 4096×2160 px, 4e13). An upload
+  `media.DefaultVideoLimits` (4 h, 60 fps, 8192×4320 px, 4e13). An upload
   past them, or a video averaging under one frame a second, fails before
   any encode with `video_too_long`, `video_too_large` or
   `video_over_budget`. A source declaring a faster rate than its packets

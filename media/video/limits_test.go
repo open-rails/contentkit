@@ -62,9 +62,12 @@ func TestAuditPlanIsRefused(t *testing.T) {
 	if c := refusal(t, checkLimits(probe4K(t, 4*3600+60), videoPresets, twoCodecs, l)); c != media.CodeVideoTooLong {
 		t.Fatalf("4 h 1 min: %s", c)
 	}
-	big, _ := newPlan(probeOf(7680, 4320, "30/1", 60, 1800))
+	big, _ := newPlan(probeOf(15360, 8640, "30/1", 60, 1800))
 	if c := refusal(t, checkLimits(big, videoPresets, twoCodecs, l)); c != media.CodeVideoTooLarge {
-		t.Fatalf("8K: %s", c)
+		t.Fatalf("16K: %s", c)
+	}
+	if pl, _ := newPlan(probeOf(8192, 4320, "30/1", 60, 1800)); checkLimits(pl, videoPresets, twoCodecs, l) != nil {
+		t.Fatal("DCI 8K refused")
 	}
 }
 
