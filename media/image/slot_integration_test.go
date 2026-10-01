@@ -206,7 +206,7 @@ func TestSlotEditWidthsAndSpecChange(t *testing.T) {
 
 	// Re-edit the kept original to the bottom-left, 450 wide: the 600 rung is
 	// never upscaled, so it holds the 450 px image. Two jobs race. The new
-	// outputs have new names; the original is kept.
+	// renditions overwrite the same public names; the original is kept.
 	orig, err := e.manifests.Slot(ctx, ref, "cover")
 	if err != nil {
 		t.Fatal(err)
@@ -225,8 +225,8 @@ func TestSlotEditWidthsAndSpecChange(t *testing.T) {
 	wg.Wait()
 	m = e.slotManifest(t, ref, "cover")
 	e.checkOutputs(t, ref, m, []int{150, 300, 450}, green)
-	if again, _ := e.manifests.Slot(ctx, ref, "cover"); again.Original != orig.Original || m.Outputs[0].URL == first {
-		t.Fatalf("edit replaced the original or kept the old 150 output (%s)", m.Outputs[0].URL)
+	if again, _ := e.manifests.Slot(ctx, ref, "cover"); again.Original != orig.Original || m.Outputs[0].URL != first {
+		t.Fatalf("edit replaced the original or moved the 150 output (%s)", m.Outputs[0].URL)
 	}
 
 	// With the size known, an edit outside it or under the smallest width is refused at once.
