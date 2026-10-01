@@ -46,12 +46,14 @@ another tenant is an error, never remapped.
 |---|---|
 | `contentref` | `ContentRef`, `ContentKey`, `TaxonomyID` |
 | `access` | `Actor`, the batch `ContentResolver` port (`Resolve(ctx, refs, actor) → map[ContentKey]Resolution`; an omitted ref denies) and its `Resolution{Ref, Visible, Accessible, PreviewLimit, Editor}`, shared by `content` and media |
-| `media` | per-item folders and keys, kind registry, the `Store` port, manifests with conditional-write edits, direct uploads and their HTTP API, the optional `UploadLimiter`, sweep, folder deletion and processing as River jobs |
+| `media` | the registry (`Config`, kinds, upload paths, private and public presets), ordered manifests with provenance and conditional-write edits, the `Store` port, direct uploads and commit ops with their HTTP API, reads and HLS playlists, the optional `UploadLimiter`, and the sweep, deletion, `Expose` and relays as River jobs |
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
-| `media/image` | libvips (CGO) processor: WebP variants, public slots, zip downloads |
-| `media/token` | media access tokens, shared by hosts and the access worker |
-| `media/video` | ffmpeg encode: byte-range fMP4 HLS ladder, AAC per audio track, WebVTT per text subtitle and subtitle sidecar, audio files, sprite, per-quality MP4 downloads, poster frames; `Frames` for the poster picker |
-| `media/worker` | the media worker: one process for placement, images and video, built by the host from its media config (`cmd/media-worker` is the stock build) |
+| `media/image` | libvips (CGO) producer: Image presets, public presets, zips, editor views, `PublishDefaults` |
+| `media/token` | media access tokens, shared by hosts and the access agent |
+| `media/layout` | object keys and the access agent's host and default rules, dependency-free |
+| `media/agent` | the access agent's handler (`cmd/media-access`) |
+| `media/video` | ffmpeg producers: byte-range fMP4 HLS ladders with audio, subtitle and sprite tracks, MP4 per rung, audio, subtitles, frame grabs; `Frames` for the frame picker |
+| `media/worker` | the media worker: one process for every producer, built from the host's registry (`cmd/media-worker` is the stock build) |
 | `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
 | `media/tiered` | optional `public`/`members`/`ppv`/`members_ppv`/`premium` policy over an entitlement `Checker` (hosts adapt OpenRails `CheckEntitlements`) |
 | `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; the `Identity`/`Authorizer`/`UserEnricher`/`ContentProcessor` ports, post and poll images through `Media`, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, and the HTTP routes |
@@ -180,507 +182,146 @@ names, driver text and stack traces are logged, never served.
 
 ## Media
 
-Design: [MEDIA-DESIGN.md](https://github.com/open-rails/tracker/blob/master/contentkit/MEDIA-DESIGN.md).
-One private bucket; each item owns a folder the library keys:
+Media is an app-defined, self-describing file system in one private bucket;
+no database table records what media exists. The app declares its kinds in
+one registry (`media.Config`); HOST_INTEGRATION "Media" covers the registry,
+commit ops, reads and exposure.
 
 ```text
-{tenant}/{kind}/{id}/manifest.json            the one manifest (versions, slots, index); never served
-                    /originals/sha256-{hex}   uploads, deduped per item; never served
-                    /temp/u-{uuid}            staged multipart uploads until placed; never served
-                    /temp/e-{hex}             editor views (Kind.Editor); editor token only
-                    /private/sha256-{hex}     every rendition (token)
-                    /public/sha256-{hex}      copies of the exposed renditions: slots and inline images of an item that is not hidden
+{namespace}/{kind}/{id}/manifest.json         gzip JSON: the ordered file list with provenance; never served
+                       /private/sha256-{hex}  every blob: uploads, derived files, editor views (token)
+                       /public/{name}         app-declared names, e.g. cover-460.webp (anyone)
+                       /temp/{name}           in-flight server-side writes; never served
+{namespace}/{kind}/_default/public/{name}     a public preset's default image
 ```
 
-`originals/`, `private/` and `public/` names are their content's SHA-256, so
-those objects are immutable: a change writes new names and the
-manifest-driven sweep deletes what the manifest no longer lists. `temp/` is
-intermediary and discardable: nothing a viewer needs lives there, and the
-sweep wipes it by age. Clients never build URLs; the API returns them.
-
-Host wiring (one tenant; errors elided):
+An item is the host's version (`gallery/456` English, `gallery/789` Korean).
+Private blobs are content-addressed and immutable; public names are fixed and
+overwritten in place (ETags and a CDN purge keep them fresh). Every URL is
+`https://media.<site>/v1/{namespace}/{kind}/{id}/{public|private}/{name}`.
 
 ```go
-kinds, _ := media.NewRegistry(
-	media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
-		Specs: map[string]media.Spec{"thumb": {Width: 460, Height: 650, Fit: media.FitCover, Quality: 80}, "high": {Quality: 90}},
-		Slots:  map[string]media.Slot{"cover": {Aspect: media.Ratio("46:65"), Widths: []int{230, 460, 920}}},
-		Editor: &media.Spec{Width: 1200, Height: 1200, Fit: media.FitInside, Quality: 80},
-		Zip:    "high"},
-	media.Kind{Name: "video", Types: []string{"video/mp4", "video/x-matroska"}, MaxBytes: 20 << 30, Video: true})
+reg, _ := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https://media.doujins.ai",
+	Kinds: []media.Kind{Gallery, accountmedia.User}, Defaults: defaultsFS,
+	Hooks: media.Hooks{Resolver: resolver, CanUpload: authorizer, PurgePublic: purge, ItemReady: ready}})
 store, _ := s3.New(s3.Config{Bucket: "media", Endpoint: rgw, PublicEndpoint: "https://s3.doujins.ai", UsePathStyle: true,
-	AccessKeyID: id, SecretAccessKey: secret}) // never dials; capabilities come from the first Check
+	AccessKeyID: id, SecretAccessKey: secret})
 key, _ := token.ParseKey(os.Getenv("MEDIA_TOKEN_KEY")) // "{kid}:{base64}", shared with media-access
-ring, _ := token.NewRing(key, nil)
-
-jobs, _ := media.NewJobs(media.JobsConfig{Store: store, Locker: media.PGLocker(pool), Kinds: kinds, Tenants: []string{"d"}, Limiter: limiter, Resolver: resolver})
-manifests, _ := media.NewManifests(store, kinds, media.ManifestOptions{Locker: media.PGLocker(pool), Sweeps: jobs})
-_ = workqueue.Migrate(ctx, pool, "doujins_media_worker") // this host's worker schema, drained by its media worker
-queue, _ := workqueue.New(pool, kinds, "doujins_media_worker")
-client, _ := riverhelpers.New(ctx, pool, &river.Config{Schema: "public"}, runtime.RiverJobs(), jobs.RiverJobs())
-
-uploads, _ := media.NewUploads(media.UploadOptions{Store: store, Kinds: kinds, Manifests: manifests,
-	Authorizer: hostUploads, Tickets: &ring, Limiter: limiter, Queue: queue, ProcessOnUpload: true})
-reader, _ := media.NewReader(media.ReaderOptions{Manifests: manifests, Kinds: kinds, Resolver: resolver, Hooks: hooks,
-	Progress: workqueue.NewProgressSource(pool), Queue: queue,
-	Delivery: media.Delivery{Mode: media.DeliverCookie, BaseURL: "https://media.doujins.com", CookieDomain: "doujins.com", SigningKey: key}})
-mux.Handle("/api/media/upload/", http.StripPrefix("/api/media/upload", media.UploadHandler(uploads, media.UploadHandlerOptions{Tenant: "d", Actor: actorOf,
-	Reader: reader})))
-mux.Handle("/api/media/", http.StripPrefix("/api/media", reader.Handler(media.HandlerOptions{Tenant: "d", Identity: identity})))
-
-_ = jobs.ExposeTx(ctx, tx, ref)                                           // in any transaction that changes whether anonymous viewers see it
+_ = workqueue.Migrate(ctx, pool, "doujins_media_worker") // this host's worker schema
+queue, _ := workqueue.New(pool, reg, "doujins_media_worker")
+jobs, _ := media.NewJobs(media.JobsConfig{Store: store, Registry: reg, Locker: media.PGLocker(pool), Pool: pool,
+	Processes: queue, Limiter: limiter})
+uploads, _ := media.NewUploads(media.UploadOptions{Store: store, Manifests: jobs.Manifests(), Tickets: &ring,
+	Limiter: limiter, Queue: queue, Frames: frames})
+reader, _ := media.NewReader(media.ReaderOptions{Manifests: jobs.Manifests(), Queue: queue, Progress: progress,
+	Delivery: media.Delivery{Mode: media.DeliverCookie, CookieDomain: "doujins.ai", SigningKey: key}})
+mux.Handle("/api/media/upload/", http.StripPrefix("/api/media/upload", media.UploadHandler(uploads, media.UploadHandlerOptions{Actor: actorOf})))
+mux.Handle("/api/media/", http.StripPrefix("/api/media", reader.Handler(media.HandlerOptions{Identity: identity})))
+// composed into the host's River client: jobs.RiverJobs()
+_ = jobs.ExposeTx(ctx, tx, ref)                                          // whenever anonymous visibility changes
 _ = jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref: ref, Owner: owner}) // in the host's delete transaction
-_ = jobs.EraseUserTx(ctx, tx, "d", userID, deletions...)                 // the user's items plus user/{id}/
 ```
 
-The access agent (`cmd/media-access`, `media/agent`, image
-`ghcr.io/open-rails/contentkit-media-access:{tag}`, same tag as the hosts'
-ContentKit) serves `https://media.<site>/v1/{ns}/{kind}/{id}/{public|private}/{name}`:
-`public/` to anyone (`public, max-age=300, stale-while-revalidate=86400`,
-falling back to `{ns}/{kind}/_default/public/{name}` for declared names),
-`private/sha256-{hex}` with an item or file token in `?t=` or an `mt` cookie
-(`private, immutable`; a `dl` download name only via `?t=`). Everything else
-and every denial is one `no-store` 404; objects carry
-`Cross-Origin-Resource-Policy: same-site`. It needs `MEDIA_ACCESS_S3_ENDPOINT`,
-`_S3_BUCKET`, a key (`_S3_ACCESS_KEY_ID`, `_S3_SECRET_ACCESS_KEY`) that reads
-only `*/private/*` and `*/public/*`, `MEDIA_ACCESS_TOKEN_KEY` and
-`_TOKEN_KEY_PREVIOUS` (the hosts' `{kid}:{base64}` ring), `MEDIA_ACCESS_HOSTS`
-(required: `media.doujins.ai=doujins,accounts; media.hanime.media=hentai0,accounts`),
-`MEDIA_ACCESS_CORS_ORIGINS` (the sites' exact origins, with credentials) and
-`MEDIA_ACCESS_DEFAULTS` (`doujins/gallery: cover-{w}.webp; accounts/user: avatar-{w}.webp`);
-secrets may be given as `{VAR}_FILE`. See HOST_INTEGRATION "Production media delivery".
-
-**The media worker** (`media/worker`) is the one process that does media
-work: it hashes and places staged uploads, derives image variants, zips, slot
-outputs and inline images (libvips) and encodes video and poster frames
-(ffmpeg), from the host's worker River schema (`media/workqueue`,
-`worker.Config.Schema`, `MEDIA_WORKER_SCHEMA`) in the host database. The
-schema is required and per host (e.g. `doujins_media_worker`,
-`hentai0_media_worker`): hosts sharing a database must not share one, or each
-worker takes the other's jobs. Queue names are fixed within it. The host presigns, commits, publishes and reads, and links only
-`media/workqueue` (no libvips, no ffmpeg). The worker must apply the host's
-exact kinds and policy, so the host builds it from the same code that builds
-its `media.Registry`, `image.SpecChooser` and `media.Hooks` (`Failed` and
-`ItemReady` run in the worker), e.g. as a subcommand of the host binary:
-
-```go
-cfg, _ := worker.FromEnv(ctx) // DATABASE_URL, MEDIA_S3_*, MEDIA_WORKER_SCHEMA, MEDIA_HOST_RIVER_SCHEMA, MEDIA_WORKER_* (see worker.FromEnv)
-cfg.Kinds, cfg.Specs, cfg.Hooks = kinds, specs, hooks // the host's media config package
-w, _ := worker.New(ctx, cfg) // no DDL: the host's migrate step runs workqueue.Migrate(ctx, pool, schema)
-_ = w.Run(ctx) // until SIGTERM; running jobs get MEDIA_WORKER_SHUTDOWN_GRACE
-```
-
-`worker.New` needs no DDL rights, so the worker runs as the host's
-unprivileged app role; the host applies `workqueue.Migrate` with its other
-migrations.
-
-`cmd/media-worker` (image `ghcr.io/open-rails/contentkit-media-worker`) is
-the stock build for hosts whose kinds are plain data: it reads them from
-`MEDIA_KINDS_FILE` (a JSON array of `media.Kind`). The worker hands a video
-item's poster publish, and folder sweeps after its edits,
-back to the host's River schema (`MEDIA_HOST_RIVER_SCHEMA`), where
-`jobs.RiverJobs()` runs them with the host's `Resolver`. It never exits for a
-missing dependency: it runs no DDL (the host migrates `MEDIA_WORKER_SCHEMA`) and its build is retried while Postgres is down; `Run`
-takes no jobs until the bucket answers, and `MEDIA_METRICS_ADDR` serves
-`/livez`, `/readyz` (built), `/statusz` and `app_dependency_up` with /metrics.
-
-**Process on upload** (`UploadOptions.ProcessOnUpload`, default false): the
-presign reply tells the SDK to commit each file as soon as it is uploaded,
-`{op: "insert", unattached: true}`, so the worker processes it while the user
-is still arranging the upload. Unattached files are charged to the quota,
-count against the kind's caps and are left out of every read (editors ask for
-them with `ReadOptions.Unattached`, `POST /files`), zips and the automatic
-poster. `{op: "attach", name}` makes one part of the item after the attached
-files (or at `index`), without reprocessing; `remove` of an unattached file
-discards it: the item's worker jobs are cancelled (`workqueue.Queue.Cancel`,
-every stage) and re-enqueued for the rest, and its staged or placed original
-and derivatives no manifest references are deleted at once. The SDK's
-`UploadQueue` does all of this: `commit()` attaches in queue order, `remove()`
-discards, and `item.processing` (dims, `hls`, `failed`, `progress`) is polled
-until `item.processed`.
-
-**Readiness.** `Manifests.Readiness(ctx, ref)` (`Root.Readiness(kind)`) is
-`ready` when every attached file, set slot and video poster is processed
-(videos: every stage, no `hls.pending`; images: variants for the current
-source and edit), `processing` while any is not, and `failed` once nothing is
-processing and some could not be (`Failed` names them). After every image or
-video job that leaves an item settled, the worker calls
-`Hooks.ItemReady(ctx, tx, ref, readiness)` in a transaction on the host
-database; an error retries the job, so it must be idempotent. A host that
-holds content back until its media is ready publishes it there (and enqueues
-its Expose with `HostQueue.ExposeTx` in the same `tx`). Independently, reads
-never show a non-editor a file with nothing processed to serve, or a failed
-one (`File.Servable`): media added to live content appears once processed.
-
-`Edit` always runs under the `Locker` (required: a Postgres advisory lock,
-`PGLocker`, shared by every process on the bucket), and writes with
+**Manifests.** Every edit runs under the `Locker` (required: `PGLocker`, a
+Postgres advisory lock shared by every process on the bucket) and writes with
 `If-Match` (or `If-None-Match: *`) once the store reports conditional PUT,
-retrying on conflict.
+retrying on conflict. The edit is normalized (canonical order, download
+names, dropped originals) and validated; an unchanged manifest is not
+written. Reads go through an in-process cache bounded by bytes and
+revalidated by ETag, so a read is never stale. A 2,000-page gallery is about
+1.5 MB of JSON and 400 KB stored; a 2-hour video about 5 KB, its segment
+tables living in index blobs.
 
 **The bucket is optional at startup.** `s3.New` never dials; register
-`store.Check(ctx, prefix)` as the host's optional S3 dependency probe
-(helpers `deps`). Its first success probes the backend's capabilities unless
-`Config.Capabilities` declares them; a probe records nothing unless every
-step succeeded or was refused cleanly (412, checksum mismatch, 501), so a
-throttled or cut-off probe is retried. Until then the store claims none
-(locked unconditional edits, server-side rehash). An unreachable or 5xx
-bucket surfaces as `media.ErrUnavailable`: 503 `unavailable` from the read
-and upload handlers. In media jobs it becomes a River snooze (not an
-attempt) only when the job's own context is live and a fresh bounded
-`Check` confirms the bucket is down, capped by `MaxOutageSnoozes`; a job
-that outran its timeout or one broken object spends attempts
-(`media.SnoozeUnavailable`). Reads are cached in process and revalidated by ETag. Presigned PUTs
-bind `Content-Type`, `Content-Length` and `x-amz-checksum-sha256`.
+`store.Check(ctx, prefix)` as the host's optional S3 dependency probe. Its
+first success probes the backend's capabilities unless `Config.Capabilities`
+declares them; a throttled or cut-off probe records nothing. An unreachable
+or 5xx bucket is `media.ErrUnavailable`: 503 `unavailable` over HTTP, and in
+media jobs a River snooze (not an attempt) while a fresh `Check` confirms the
+outage, capped by `MaxOutageSnoozes` (`media.SnoozeUnavailable`).
 
-**Uploads** go straight to the bucket (`media.Uploads`, served by
-`media.UploadHandler`): the host's `UploadAuthorizer.CanUpload` (AuthKit) runs
-at presign and commit for the folder written (slots and inline images: the
-work, `ref.Content()`), and the kind's types and size cap bind every presign.
-Up to 64 MiB is one PUT to `originals/sha256-{hex}` signed with its type,
-length and SHA-256; larger files are multipart to `temp/u-{uuid}` with
-8–16 MiB parts, each signed with its length and SHA-256, resumed through
-`ListParts` and completed by the server (a signed ticket carries the S3
-UploadId; nothing is stored). The manifest names a staged upload `u-{uuid}`
-until `Manifests.Place` moves it to `originals/sha256-{hex}` with the hash
-computed while reading it (server-side copy, or none when the folder already
-holds the hash; every reference renamed; the temp upload deleted; idempotent).
-Slot and inline originals are hash-named too (`originals/sha256-{hex}`,
-deduped). A kind with `Inline` takes inline images: presign with
-`inline: true` names a new `i-{uuid}`, committed with `commit-slot`; it is
-rendered with the `Inline` spec to `private/` and copied to `public/`, and
-`Reader.InlineURL` returns its URL (`ErrPending` until rendered).
-Commit is one conditional manifest edit (`insert`, `replace`, `move`,
-`rename`, `remove`, `edit`) that HEAD-checks each new original, re-hashes it when the
-store does not enforce checksums, and enqueues a `ProcessJob`. `Kind.MaxFiles`
-and per-type `Kind.TypeLimits` (`"image"`, `"video"`: `MaxBytes` replacing the
-kind's, `MaxFiles`) cap a manifest: a commit that ends over a cap and adds to
-it fails with 409 `too_many_files`. A kind may mix images (`Specs`) and videos
-(`Video`); each processor handles only its own files.
+**Uploads** go straight to the bucket. The browser hashes each file; up to
+64 MiB is one PUT to `private/sha256-{hex}` signed with its type, length and
+SHA-256, larger files are multipart (8–16 MiB parts, each signed with its
+length and SHA-256, resumed through `ListParts`, completed by the server
+from a signed ticket; nothing is stored). Commits HEAD-check every new blob
+and re-hash it when the store does not enforce checksums; the producer that
+first reads a multipart blob verifies it. The optional `UploadLimiter`
+(`media.NewPGLimiter`) rate-limits uploaders and charges each item's
+distinct upload blobs to the grant's `Owner`; growth past the quota fails
+with 413 `quota_exceeded`, and deleting an item releases it.
 
-**Edits** are non-destructive: `File.Edit{Crop{x,y,w,h}, Rotate}` crops in the
-source's pixels (EXIF orientation applied), then rotates clockwise by 0, 90,
-180 or 270. The `edit` op sets or (without `edit`) clears it; `insert` and
-`replace` may carry one. It is checked against `File.Dims`, the source's size
-recorded by processing (before that, by the processor, which reports an
-out-of-bounds edit to `Hooks.Failed`). A variant's `spec` is
-`Spec.For(edit)`, so changing or clearing an edit re-derives that file's
-variants (and the zip) from the untouched original. No master is written.
-`meta.w/h` is the edited size; the read API returns `edit` and `dims` to
-editors.
+**Access agent** (`cmd/media-access`, `media/agent`, image
+`ghcr.io/open-rails/contentkit-media-access:{tag}`): `public/` to anyone
+(`public, max-age=300, stale-while-revalidate=86400`, falling back to the
+kind's `_default` for declared names), `private/sha256-{hex}` with an item or
+file token in `?t=` or the `mt` cookie (`private, immutable`; a signed `dl`
+download name only via `?t=`). Everything else and every denial is one
+`no-store` 404. It needs `MEDIA_ACCESS_S3_ENDPOINT`, `_S3_BUCKET`, a key
+reading only `*/private/*` and `*/public/*`, `MEDIA_ACCESS_TOKEN_KEY` and
+`_TOKEN_KEY_PREVIOUS`, `MEDIA_ACCESS_HOSTS`
+(`media.doujins.ai=doujins,accounts; media.hanime.media=hentai0,accounts`),
+`MEDIA_ACCESS_CORS_ORIGINS` and `MEDIA_ACCESS_DEFAULTS`
+(`layout.FormatDefaults(media.AgentConfig(reg).Defaults)`).
 
-**Editor views** (`Kind.Editor`, a `Spec`) are what croppers draw on: the
-whole source, EXIF-oriented, ignoring crop and rotate, for image files and
-slot originals. They are an input-keyed cache, `temp/e-{hex}` of (source,
-spec) (`Item.EditorView`), never in the manifest: the image job renders them,
-the sweep deletes them after `JobsConfig.EditorTTL`, and a missing one is
-rendered again when an editor asks (`ReaderOptions.Queue`; the slot routes
-use `UploadOptions.Queue`). Editors (`Resolution.Editor`) get them as the
-read API's `variant=editor` and as `editor_url` in slot manifests, signed
-with an editor token no viewer token equals; a crop in progress is drawn by
-the client, so nothing uncommitted is stored.
-
-**Slots** are fixed public images such as avatars and covers, rendered at
-several widths for high-density screens:
+**The media worker** (`media/worker`) runs every producer from the host's
+worker River schema (`media/workqueue`, `MEDIA_WORKER_SCHEMA`, per host:
+hosts sharing a database never share one): images, zips, public presets and
+editor views (`media/image`, libvips) and HLS, MP4, audio, subtitles and
+frames (`media/video`, ffmpeg). The host presigns, commits, exposes and reads,
+and links only `media/workqueue`. The worker hands readiness
+(`Hooks.ItemReady`), purges (`Hooks.PurgePublic`) and sweeps back to the
+host's River schema (`MEDIA_HOST_RIVER_SCHEMA`), so the stock build
+(`cmd/media-worker`, image `ghcr.io/open-rails/contentkit-media-worker`)
+needs only the registry as JSON (`MEDIA_KINDS_FILE`). Hosts with a
+`Private.Choose` build their own:
 
 ```go
-Slots: map[string]media.Slot{
-	"avatar": {Aspect: media.Aspect1x1, Widths: []int{128, 512}}, // small, large
-	"cover":  {Aspect: media.Ratio("3:1"), Widths: []int{900, 3000}, MinWidth: 600},
-}
+cfg, _ := worker.FromEnv(ctx) // DATABASE_URL, MEDIA_S3_*, MEDIA_WORKER_SCHEMA, MEDIA_HOST_RIVER_SCHEMA, MEDIA_WORKER_*
+cfg.Kinds = reg                // the host's registry
+w, _ := worker.New(ctx, cfg)   // no DDL: the host's migrate step runs workqueue.Migrate
+_ = w.Run(ctx)                 // until SIGTERM; running jobs get MEDIA_WORKER_SHUTDOWN_GRACE
 ```
 
-A slot's `Edit` uses the same crop (original pixels, EXIF-oriented) and rotate;
-the crop's height follows its width at `Aspect` (a `media.Aspect` ratio in
-lowest terms, written `"W:H"` in JSON and config: `media.Ratio("9:16")`,
-`ParseAspect`, constants `Aspect1x1`, `Aspect3x1`, `Aspect4x5`, `Aspect16x9`,
-`Aspect9x16`, `Aspect21x9`; all maths is integer, heights round half up), and
-no crop means the largest centred one. The original PUTs to
-`originals/sha256-{hex}` and `POST /commit-slot {ref, slot, sha256, edit,
-filename}` commits it; `POST /edit-slot
-{ref, slot, edit}` re-edits the kept original without an upload;
-`Uploads.SetSlotFromFile(ctx, actor, SlotFromFile{Ref, Slot, From, File,
-Edit})` (`POST /commit-slot-from-file {ref, slot, from, file, edit}`) copies a
-manifest image (of `From`, default `Ref`: another item of the tenant needs
-`CanUpload` on both; default edit: the file's own). Originals never leave the
-server: editors re-crop on the slot's `editor_url`. The record (original, edit, result) lives in the
-manifest's `slots`, so spec changes re-encode with it. Each width is a new
-`private/sha256-{hex}`, copied to `public/` unless the item is hidden; a
-change writes new names and swaps the record. Nothing is upscaled: a width
-wider than the edited image is rendered at the edited width, so every width
-exists once the slot is set. An edit outside
-the original or narrower than `MinWidth` (default the smallest width) is refused (by the job when the original's size
-is not yet known: `Hooks.Failed`, keeping the served outputs). Slot routes and
-the read API's `GET /{kind}/{id}/slots/{slot}` answer `SlotManifest{aspect,
-edit, dims, outputs: [{w, h, url}], pending, error}`: public URLs for
-viewers, `private/` URLs with a token for editors of a hidden item.
-`Uploads.DeleteSlot` (`POST /delete-slot {ref, slot}`) removes a slot's image;
-the sweep deletes its files. `UploadAuthorizer.CanUpload` receives an
-`UploadTarget{Ref, Slot}`, so a host can grant one slot alone (a user their
-own avatar).
+It never exits for a missing dependency: `Run` takes no jobs until the
+bucket answers, and `MEDIA_METRICS_ADDR` serves `/livez`, `/readyz`,
+`/statusz` and `app_dependency_up` with /metrics.
 
-**Slot index and links.** ContentKit keeps `content_media_slots`: a row per
-registered slot whose image is public (set, encoded, item not hidden).
-`media.NewSlotIndex(pool, schema)` goes to `JobsConfig.Slots` and
-`ReaderOptions.Slots`. The host's slot index job keeps it: the worker
-schedules it after every slot job (through `HostQueue`, so the stock worker
-works), as do `DeleteSlot` and `Expose`; folder deletion and the periodic
-sweep pass reconcile too. Slots that predate the index (an upgrade) are
-indexed once per tenant by a backfill the jobs schedule when they bind to
-River (one unique job across replicas, resumable, recorded in
-`content_media_slot_backfill`). Each change runs `Hooks.SlotChanged(ctx, tx, ref,
-slot, set)` in that job's transaction (at least once). Listings read
-`Reader.SlotImages(ctx, tenant, kind, slot, width, ids...)`: one query, no
-bucket reads, `Picture{URL, SrcSet, W, H}` per set item.
-`Reader.SlotLink(ref, slot)` is the slot's stable URL,
-`{ReaderOptions.ReadURL}/{kind}/{id}/slots/{slot}/image`: the read API
-redirects it (`?w=` picks the narrowest output at least that wide) to the
-current public image, else to `HandlerOptions.SlotDefault`, else 404.
-`media.AvatarSlot` is the avatar preset (1:1, 64–512 px, stills), registered
-as `media.AvatarSlotName` on e.g. `media.UserKind`; `Slot.LinkSrcSet(link)` is
-a srcset of the link.
-`Slot{Aspect: media.AspectNative}` keeps the edited image's own shape: no crop
-by default, crops of any shape.
+**Images** (`media/image`, CGO over libvips): WebP at each `Image` spec
+(inside or cover box, quality, blur), through the upload's edit (crop in
+EXIF-oriented source pixels, then a clockwise quarter rotation); nothing is
+upscaled. GIF and WebP animations keep every frame, delay and loop count;
+`MaxPixels` (100 MP over all frames), `MaxFrames` (1000) and
+`MaxAnimationSeconds` (60) bound sources. The declared type binds the
+decoder. Public presets render every width (a width past the edited image
+at its width) and carry `from` and `fp` as object metadata.
 
-**Image processing** (`media/image`, CGO over libvips via govips; install
-`libvips-dev` to build it; run by the media worker). `image.New(Config{Store,
-Kinds, Manifests, Specs, Hooks})` gives `Process(ctx, media.ProcessJob)`. A
-staged source is hashed from the bytes read for decoding and placed first. It derives WebP variants per the kind's `Specs` (or a per-file
-`SpecChooser`) from each file's `master`, else `original`, through its edit,
-only where a variant is missing or its `spec` differs, stores them as `private/sha256-…`, and
-records them in one manifest edit per pass that drops results for sources
-replaced meanwhile; it repeats until a commit that landed during the run is
-covered too. A kind with `Zip` set gets `downloads.zip`: a stored zip of that
-variant in file order, rebuilt only when its `inputs` hash changes; its
-display name comes from `Hooks.DownloadName` at read time. Slots and inline
-images render from their original only when the record's fingerprint changed.
-Undecodable sources go to `Hooks.Failed` and are not retried.
+**Video** (`media/video`): an `HLS` preset encodes the ladder (rung = short
+side, default 2160/1080/480, none above the source) in each of the worker's
+codecs (`MEDIA_WORKER_CODECS`, default `av1,h264`), plus AAC per audio
+track, WebVTT per text subtitle and a seek sprite. Each rendition is one
+byte-range fMP4 blob whose segment table is its own index blob; stages are
+published rung by rung (the upload stays pending until the last), a
+compliant top rung is stream-copied, and sources outside the aspect bounds
+fail. An `MP4` preset muxes H.264 at one rung with the default audio;
+`Audio` gives an HLS track and an M4A (optional EBU R128 loudness);
+`Subtitles` converts SRT and SSA/ASS to clean WebVTT. Playlists are built per
+request by the read API. Encode progress comes from
+`workqueue.NewProgressSource` (`ReaderOptions.Progress`).
 
-The optional `UploadLimiter` (`media.NewPGLimiter` over the baseline's
-`content_media_*` tables) rate-limits uploaders (files/hour, bytes/day → 429)
-and enforces per-owner quota. The rule: a commit that grows the owner's stored
-originals (the change in the manifest's distinct originals) past its quota
-fails with 413 `quota_exceeded` and writes nothing. Presign reservations only
-refuse early (used + pending + size); they lapse after a day, which never lets
-a late commit past the quota. Exempt grants are charged but never refused.
+**Jobs** (`media.Jobs`, composed into the host's River client): the sweep
+collects garbage by manifest reference (unreferenced private blobs past the
+grace period, unexpected public names at once, `temp/` by age); folder
+deletion (with a late-upload second pass and quota release); `Expose`;
+`Regenerate`; `SweepOrphans`; and the worker's relays.
 
-The bucket needs CORS allowing `PUT` from the app origins with the
-`Content-Type` and `x-amz-checksum-sha256` headers, and the
-`AbortIncompleteMultipartUpload: 1 day` rule `Store.Configure` sets.
+**Tiered access** (`media/tiered`) maps `public`/`members`/`ppv`/
+`members_ppv`/`premium` to `Resolution`s over an entitlement `Checker`.
 
-**Video** (`media/video`, run by the media worker) encodes each `video/*`
-manifest file at the kind's ladder (`Kind.Video = &media.Video{Ladder: []int{1080, 480}}`;
-default `media.DefaultLadder`, 2160/1080/480) in each of the worker's codecs
-(`video.Config.Codecs`, `MEDIA_WORKER_CODECS`; default `av1,h264`, `hevc`
-optional), plus AAC per audio track, WebVTT per text subtitle and a 10×10
-sprite whose tiles keep the source aspect (short side 90). A rung N is the
-output's **short side** (a 1080 rung of a vertical video is 1080 wide); rungs
-above the source's short side are dropped, and a source below 1080 that is
-not a rung gets one at its own short side (720p: 720 + 480). Every frame is
-then capped, aspect kept, at 4096 px per side and a 3840×2160 area (common
-hardware decode limits), so a 21:9 2160 rung is 4096×1756 and an 8K source
-is downscaled to 3840×2160; a rung whose capped frame repeats the next one's
-is dropped. Output is square-pixel (SAR applied), 8-bit 4:2:0, at most
-60 fps, an IDR every 4 s without scene cuts (one per 4 s segment), closed
-GOPs. Rates are a capped CRF per rung (live-action H.264: 2160 CRF 23 at most
-32 Mbit/s, 1440 23/18M, 1080 23/12M, 720 22/7M, 480 21/3M; VBV buffer 2× the
-cap; HEVC one CRF lower and AV1 CRF 34–30, both at 0.6× the caps;
-`Video.Profile: media.VideoAnimation` tunes for animation at lower CRFs and
-caps). H.264 is High (frames above 1080p-class carry the lowest fitting level
-5.0/5.1/5.2), HEVC Main tagged `hvc1` (Safari requires it), AV1 Main.
-`Config.Encoder` `auto` (default) uses NVENC for each codec whose probe
-encode works and the CPU otherwise (libx264 and libx265 preset `fast`,
-`Config.Preset` up to 1080 and `TopPreset` above; SVT-AV1 preset 8), `cpu`
-never NVENC, `nvenc` requires it; a file NVENC fails on re-encodes on the
-CPU. `New` probe-encodes each codec and fails when its encoder is missing or
-ignores forced keyframes (libsvtav1 needs ffmpeg ≥ 7 with SVT-AV1 ≥ 2).
-`hls.video[]` records `rung`, `codec`, CODECS and the true `w`/`h`, ordered by
-codec (as configured), then largest rung first.
-Sources whose display aspect is outside `Video.MinAspect`–`MaxAspect`
-(default 1/2.4–2.4, admitting 2560×1080 and 2.39:1 cinema; 0.5% slack) fail permanently: the file's `hls` becomes
-`{source, spec, error}` with no renditions, `Hooks.Failed` (in the encoder's
-process) gets `video.ErrAspect`, editors see `failed` in the read API, and
-it is retried only when the source or the kind's bounds change. Each rendition and
-audio track is one single-file fMP4 blob whose segments are
-`[offset, length, seconds]` (the init segment is `[0, segments[0].offset)`);
-each rung also gets a muxed H.264 MP4 (the first codec when H.264 is not
-configured) in `downloads["{file}-{N}p"]` (video, every audio track,
-subtitles). Blobs are written first; one manifest edit then records `hls`
-and `downloads` only if the file still derives from the encoded original,
-so a replaced file keeps its previous `hls` until then. Outputs are
-byte-identical on retry (same encoders, presets and `Threads`).
-**Progressive stages:** one stage per rung, smallest first. A stage decodes
-the source once, scales it (lanczos) to its rung and encodes it in every
-codec; the first also makes the tracks and the sprite. Each stage is
-published at once (`hls.pending` lists the rungs to come), so a viewer plays
-480p while 1080p and 2160p encode; the worker queues each next stage as a
-follow-up job (same args, River priority 2), behind other uploads' first
-stages. Every codec advances together because hls.js picks one codec set at
-start and never switches it for bandwidth. Progress reports
-`stage`/`stages`. **Passthrough:** when the source already is a compliant
-top rung (MP4/MOV constant-rate 8-bit 4:2:0 progressive H.264 High/Main or
-HEVC Main tagged `hvc1`, ≤ level 5.2, unrotated, at the rung's exact frame,
-within its bitrate cap in that codec, with an IDR starting each 4 s segment)
-that rung is stream-copied in its codec, provided its segments match the
-published rung below; otherwise it is encoded.
-**Playback:** the master playlist lists every rung in every codec with its
-`CODECS` (`avc1…`, `hvc1…`, `av01…`), codecs in configured order, each
-starting at its 1080 rung; media playlists are `video/{rung}-{codec}.m3u8`.
-hls.js drops variants `MediaSource.isTypeSupported` refuses and Safari those
-it cannot decode, so H.264 is the fallback; the SDK player keeps one codec
-set (see sdk/upload).
-ffmpeg reads only local files
-(`-protocol_whitelist file`) through container demuxers (mov/mp4, matroska/webm, avi,
-mpegts, flv, ogg, asf, mpeg): playlists and concat lists are refused. Changing
-the ladder, profile, codecs or recipe (versioned; bumped when the encode
-defaults change) changes `Encoder.Spec(video)`, so files re-encode once;
-encoder (CPU/NVENC) and preset choices are not part of it. A
-staged source is hashed while it downloads for ffmpeg and placed before the
-encode, so `hls.source` names the placed original. Jobs are `{ref}`
-(`workqueue.VideoArgs`; the worker takes the kind from its registry), not
-unique, and a job for a fresh manifest is a no-op; `workqueue.Queue.Cancel`
-cancels an item's queued and running jobs of every stage.
-
-**Audio** (`Kind.Audio = &media.Audio{}`; the media worker's own `media_audio`
-queue and per-manifest lock, so audio never waits behind video encodes;
-`MEDIA_WORKER_AUDIO_CONCURRENCY`, default 2) encodes each
-`audio/*` file (mp3, m4a/mp4, wav, flac, ogg/opus, aac, mka/webm, aiff, caf,
-wma): its default (else first) audio stream to AAC-LC 128 kbit/s, 48 kHz
-stereo (downmixed before any measuring), as a one-track HLS ladder (`hls.audio`, no video; the master
-playlist is one audio-only variant) and a faststart M4A remuxed from it, the
-file's `audio` variant (`?variant=audio`, for an `<audio>` element) and its
-download `{file}-audio`. Language and label come from the stream or container
-tags. `Audio.Loudness` (LUFS, e.g. -16; default 0 = off) measures EBU R128
-loudness and true peak of the stereo mix, then applies one linear gain,
-min(target − I, −1.5 − TP) dB (`volume`): one extra decode, no dynamics
-processing, so a quiet source limited by its peak stays below the target.
-The SDK `MediaGallery` plays audio items from their `audio` variant (request
-it in the read) with the file's download. An unreadable source fails like video (`hls.error`,
-`Hooks.Failed`). A kind that lists `audio/` types must set `Audio`.
-
-**Subtitle sidecars** (`media.SubtitleTypes`: WebVTT, SRT, SSA/ASS; a video
-kind only) are manifest files beside the video. The worker's video job converts
-each one to WebVTT, which becomes the file's `vtt` variant. The parser follows
-the file's type, never its content:
-- SRT goes through ffmpeg's WebVTT encoder (the one used for a source's own
-  text tracks) after its timings are normalized (`01:02,5` → `00:01:02,500`);
-- SSA/ASS goes through ffmpeg after vector drawings (`{\p1}…{\p0}`) and
-  `{comment}` blocks are stripped;
-- WebVTT is read directly.
-
-Sidecars over 32 MB fail before they are downloaded. The charset comes from
-`meta.charset`, else a BOM, BOM-less UTF-16 or valid UTF-8, else the legacy
-charsets of `meta.lang` (Shift_JIS, GB18030, Big5, EUC-KR, Windows-125x). Without
-a hint, a CJK charset needs most high bytes to pair as its common characters
-(kana, Hangul, frequent Han), else Cyrillic scoring, else Windows-1252.
-
-Every WebVTT output, sidecar or source track, is then cleaned:
-- only `b`/`i`/`u` markup stays (other tags are dropped and their text kept);
-- text is escaped and safe cue settings are kept;
-- `NOTE`, `STYLE` and `REGION` blocks are dropped, along with ASS positioning
-  and colors and ASS vector drawings;
-- cues are sorted by start time.
-
-A source track over 32 MB, or with no cues, is dropped; a sidecar with no cues
-fails (`Failure`, `Hooks.Failed`); the read API's `ready` marks a converted one.
-A source's tracks carry `hls.subs_spec`: a new cleaning recipe re-extracts them
-from the source without re-encoding the ladder. The master playlist lists the
-video's own tracks and then its sidecars (`meta.for` names the video, default
-the first, and follows a rename; `meta.lang`, `label`, `forced`; track id = file
-name). Adding, replacing or removing a sidecar re-encodes nothing, because
-playlists are built per request. MP4 downloads carry only the source's tracks.
-
-After each encode the job grabs the item's **poster** frame (the `poster`
-slot; the image job encodes it) from its selection. There is no preview clip:
-the SDK previews the HLS itself inline; see HOST_INTEGRATION "Video posters
-and inline previews".
-
-**Encode progress**: with `ReaderOptions.Progress: workqueue.NewProgressSource(pool)`
-the read API adds `progress` to each visible video file still pending (none
-yet, or a replaced source), and `GET /{kind}/{id}/video-images` adds the item's
-current step. The worker parses ffmpeg `-progress` and writes, at most every
-`Config.ProgressInterval` (2 s) plus on phase changes, a per-file map to its own
-River row (`metadata.contentkit_progress`, cleared when the job ends; no extra
-table). Contract (`media.EncodeProgress`): `phase` (`queued` downloading
-probing encoding muxing uploading publishing, then item-wide `images`),
-`queue_position` (1 = next; waiting jobs only), `segments_done`/`segments_total`
-(HLS segments, `ceil(duration/4)`), `percent` (time-based, never decreasing),
-`speed` (×realtime, smoothed over ~8 s), `eta` (seconds: remaining media /
-speed plus projected uploads / measured throughput), `at` (unix ms), `stalled`
-(a running job silent for a minute). It reveals only timing and queue depth,
-so every viewer allowed the file gets it; one indexed query, only for items
-with a pending video.
-
-**Playback** is served by `Reader.Handler` next to the read API, generated per
-request after one `Resolve` (`private, no-store`; unversioned full-access
-items get a folder cookie in cookie mode):
-`/{kind}/{id}/hls/{file}/master.m3u8?audio=&subs=` (optional
-id/language filters; `RESOLUTION` is the rung's true w×h; the first variant is
-the highest rung up to 1080p, where Safari/iOS native HLS starts, then the rest
-by descending bandwidth), `video/{N}.m3u8`, `audio/{id}.m3u8`,
-`subs/{id}.m3u8`, `sprite.vtt`, and `/{kind}/{id}/download/{key}` (302 to the
-signed `dl=` URL, full access only; name from `Hooks.DownloadName`). Media
-playlists are `EXT-X-BYTERANGE` lines over one blob URL per rendition. A file
-plays when the grant allows it (full access, inside a preview cut, or a
-teaser). Versioned items always get per-file URL tokens, including for full
-access in cookie mode: their versions share `private/`, so a folder token
-would also open another version's restricted files. Unversioned full-access
-items retain plain URLs and a folder cookie in cookie mode. For those items,
-hls.js needs `xhrSetup: xhr => { xhr.withCredentials = true }` and the worker's
-`Origins` must list the site; native Safari/iOS HLS should be checked in
-cookie mode and switched to URL mode if it does not send the cookie.
-
-Tokens are `kid.exp.base64url(HMAC-SHA256(secret, "{scope}|{exp}"))`: a scope
-is a folder (`…/private/`, covering the objects directly under it), one key,
-or `{key}#dl={name}` for a download name. Expiry is window-aligned (default
-4 h); `token.Ring` verifies the current and previous key.
-
-`Reader.Handler` limits each viewer (`HandlerOptions.Limit`, default 2
-requests/s, burst 120; keyed by `Actor.ID`, else `Actor.IP`, else the peer
-address) with 429 `rate_limited` + `Retry-After`, and logs every signed
-response (`media urls signed`: viewer, ref, access, expiry, and a short hash
-when a folder token is issued).
-
-Media's River jobs (`jobs.RiverJobs()`) compose into the host client through
-`helpers/river`; edits schedule a sweep and commits enqueue processing:
-
-- **Sweep** (per folder, 24 h after each edit and in a daily pass over
-  `Tenants`): deletes `originals/`, `private/` and `public/` objects outside
-  the manifest's index once the manifest and the object are older than
-  `Grace` (24 h), and `temp/` whatever the manifest's age: editor views older
-  than `EditorTTL` (7 days) and staged uploads no file references older than
-  `TempUploadTTL` (48 h: above the bucket's 1-day multipart abort rule, since
-  multipart objects may be dated at initiation). A staged upload still being
-  uploaded is not an object yet, and one being processed is referenced.
-  Deleted `public/` keys go to `Hooks.PublicRemoved` (CDN purge). S3
-  lifecycle rules cannot match `*/temp/*` (filters are prefixes), so the
-  sweep is the mechanism; `AbortIncompleteMultipartUpload` stays the backstop
-  for uploads never completed.
-  Invariant: it deletes only objects no manifest references and no in-flight
-  commit can newly reference. Presign reuses an existing original, and a
-  commit accepts one, only while a manifest references it or it is well
-  before the sweep's cutoff (grace/2 for presign; a quarter of its retention,
-  at most 1 h, for commit); otherwise the client uploads it again. Set
-  `UploadOptions.Grace` and `TempUploadTTL` to the sweep's (taken from the
-  Manifests' `Sweeps` when it is the `*Jobs`).
-- **Deletion** removes the whole folder, manifests and `public/` first, then again after
-  `LateUploadWindow` (25 h) for PUTs and multipart completions that land late.
-  With a `Limiter`, the owner's quota (the manifests' `OriginalBytes`) is
-  released once.
-- **Expose** (`jobs.ExposeTx` in every transaction that changes whether
-  anonymous viewers see an item: create a draft, publish, hide, delete,
-  restore) resolves the item anonymously. Hidden: the manifest records it,
-  `public/` is emptied at once and the keys go to `Hooks.PublicRemoved`.
-  Visible: the slot and inline outputs are copied back. `private/` is never
-  touched; free vs members-only is only whether the host grants a token.
-- Processing: `workqueue.Queue` (the uploads' `ProcessQueue`) inserts one
-  pending image job per ref and slot, and a video job for a video or audio kind's
-  manifest, into the worker's schema. An Enqueue (or `ScheduleSweep`) while an
-  equal job runs queues one follow-up that starts after it, since the running
-  job may have read its inputs before the change; an equal job still waiting
-  absorbs it.
-- Media packages add workers with `jobs.Register(func(*river.Config) error)`
-  before composition and enqueue with `jobs.Insert`/`InsertTx`.
-- Restore: [docs/restore.md](docs/restore.md#media).
+**Browser SDK** (`sdk/upload`, `@openrails/contentkit-upload`, attached to
+each release): hashing, uploads, commit ops, reads, `waitFor`, the frame
+picker, `publicURL`/`srcSet`, React hooks and UI. See
+[sdk/upload/README.md](sdk/upload/README.md).
 
 ## Taxonomy
 
