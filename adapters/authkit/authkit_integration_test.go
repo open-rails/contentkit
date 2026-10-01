@@ -17,15 +17,6 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-const readURL = "https://doujins.test/api/v1/media"
-
-// links is a host Reader's SlotLink with ReadURL readURL.
-type links struct{}
-
-func (links) SlotLink(ref contentref.ContentRef, slot string) string {
-	return readURL + "/" + ref.ContentKind + "/" + ref.ContentID + "/slots/" + slot + "/image"
-}
-
 type world struct {
 	auth  *ak.Client
 	staff iam.Perm
@@ -55,28 +46,33 @@ func (w *world) signedIn(t *testing.T, u authtest.User) context.Context {
 	return verify.SetClaims(t.Context(), cl)
 }
 
-func (w *world) metadata(t *testing.T, id string) map[string]any {
+// registry is a site importing the shared account kind.
+func registry(t *testing.T) *media.Registry {
 	t.Helper()
-	users, err := w.auth.PublicUsers(t.Context(), []string{id})
+	images := []string{"image/png", "image/jpeg", "image/webp"}
+	r, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https://media.doujins.test", Kinds: []media.Kind{
+		{Name: "user", Namespace: "accounts", KeepOriginals: true,
+			Uploads: []media.Upload{{Path: "avatar", Types: images, MaxBytes: 10 << 20}},
+			Public: []media.Public{{Name: "avatar", From: "avatar", To: "avatar-{w}.webp", Widths: []int{64, 128, 256, 512},
+				Image: media.Image{Aspect: media.Square, Quality: 85}, Default: "avatar.png"}}},
+		{Name: "artist", Uploads: []media.Upload{{Path: "avatar", Types: images, MaxBytes: 10 << 20}}},
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return users[id].PublicMetadata
+	return r
 }
 
-func avatarOf(id string) media.UploadTarget {
-	return media.UploadTarget{Ref: contentref.New("doujins", media.UserKind, id), Slot: media.AvatarSlotName}
-}
-
-// A user changes only their own avatar, staff anyone's; the account's public
-// metadata names the avatar's stable link once it is set and keeps it.
+// A user changes only their own account's media, staff anyone's.
 func TestAvatars(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
-	avatars := &ckauthkit.Avatars{Directory: w.auth, Links: links{}, Staff: w.staff}
+	avatars := &ckauthkit.Avatars{Directory: w.auth, Staff: w.staff}
 	actor := func(u authtest.User) access.Actor { return access.Actor{ID: u.ID, Kind: "user"} }
 	aliceCtx, bobCtx, bossCtx := w.signedIn(t, w.alice), w.signedIn(t, w.bob), w.signedIn(t, w.boss)
-
+	avatarOf := func(id string) media.UploadTarget {
+		return media.UploadTarget{Ref: contentref.New("accounts", "user", id), Path: "avatar"}
+	}
 	for _, tc := range []struct {
 		name    string
 		ctx     context.Context
@@ -88,9 +84,7 @@ func TestAvatars(t *testing.T) {
 		{"own avatar", aliceCtx, actor(w.alice), avatarOf(w.alice.ID), true, false},
 		{"another user's avatar", bobCtx, actor(w.bob), avatarOf(w.alice.ID), false, false},
 		{"staff, anyone's avatar", bossCtx, actor(w.boss), avatarOf(w.alice.ID), true, true},
-		{"a file in one's own folder", aliceCtx, actor(w.alice), media.UploadTarget{Ref: avatarOf(w.alice.ID).Ref}, false, false},
-		{"another slot of one's own folder", aliceCtx, actor(w.alice), media.UploadTarget{Ref: avatarOf(w.alice.ID).Ref, Slot: "banner"}, false, false},
-		{"another kind's avatar slot", aliceCtx, actor(w.alice), media.UploadTarget{Ref: contentref.New("doujins", "artist", w.alice.ID), Slot: media.AvatarSlotName}, false, false},
+		{"another kind", aliceCtx, actor(w.alice), media.UploadTarget{Ref: contentref.New("doujins", "artist", w.alice.ID), Path: "avatar"}, false, false},
 		{"no verified claims", ctx, actor(w.alice), avatarOf(w.alice.ID), false, false},
 		{"claims of another user", bobCtx, actor(w.alice), avatarOf(w.alice.ID), false, false},
 		{"anonymous", ctx, access.Actor{Anonymous: true}, avatarOf(w.alice.ID), false, false},
@@ -104,44 +98,8 @@ func TestAvatars(t *testing.T) {
 		}
 	}
 	// Without Staff nobody else may.
-	if g, err := (&ckauthkit.Avatars{Directory: w.auth, Links: links{}}).CanUpload(bossCtx, actor(w.boss), avatarOf(w.alice.ID)); err != nil || g.Allowed {
+	if g, err := (&ckauthkit.Avatars{Directory: w.auth}).CanUpload(bossCtx, actor(w.boss), avatarOf(w.alice.ID)); err != nil || g.Allowed {
 		t.Fatalf("staff without Staff: %+v %v", g, err)
-	}
-
-	alice := avatarOf(w.alice.ID).Ref
-	link := links{}.SlotLink(alice, media.AvatarSlotName)
-	if err := avatars.SlotChanged(ctx, nil, alice, media.AvatarSlotName, true); err != nil {
-		t.Fatal(err)
-	}
-	if got := w.metadata(t, w.alice.ID)["avatar"]; got != link {
-		t.Fatalf("public_metadata.avatar = %v, want %s", got, link)
-	}
-	// Idempotent; a removal and other slots write nothing.
-	if err := avatars.SlotChanged(ctx, nil, alice, media.AvatarSlotName, true); err != nil {
-		t.Fatal(err)
-	}
-	if err := avatars.SlotChanged(ctx, nil, alice, media.AvatarSlotName, false); err != nil {
-		t.Fatal(err)
-	}
-	bob := avatarOf(w.bob.ID).Ref
-	if err := avatars.SlotChanged(ctx, nil, bob, "banner", true); err != nil {
-		t.Fatal(err)
-	}
-	if got := w.metadata(t, w.alice.ID)["avatar"]; got != link {
-		t.Fatalf("after a removal public_metadata.avatar = %v, want it kept", got)
-	}
-	if _, ok := w.metadata(t, w.bob.ID)["avatar"]; ok {
-		t.Fatal("another slot wrote the avatar")
-	}
-	// The key is the host's; an unknown account is done.
-	if err := (&ckauthkit.Avatars{Directory: w.auth, Links: links{}, Key: "picture"}).SlotChanged(ctx, nil, bob, media.AvatarSlotName, true); err != nil {
-		t.Fatal(err)
-	}
-	if got := w.metadata(t, w.bob.ID)["picture"]; got != links.SlotLink(links{}, bob, media.AvatarSlotName) {
-		t.Fatalf("public_metadata.picture = %v", got)
-	}
-	if err := avatars.SlotChanged(ctx, nil, avatarOf(contentref.NewID()).Ref, media.AvatarSlotName, true); err != nil {
-		t.Fatalf("unknown account: %v", err)
 	}
 }
 
@@ -151,43 +109,31 @@ func (down) PublicUsers(context.Context, []string) (map[string]iam.PublicUser, e
 	return nil, errors.New("directory down")
 }
 
-// Authors gives comment authors their names and the avatar their public
-// metadata names; anything but an http(s) link is ignored.
+// Authors gives comment authors their names and their avatar's fixed URL.
 func TestAuthors(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
-	alice := avatarOf(w.alice.ID).Ref
-	if err := (&ckauthkit.Avatars{Directory: w.auth, Links: links{}}).SlotChanged(ctx, nil, alice, media.AvatarSlotName, true); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.auth.PatchPublicMetadata(ctx, iam.SystemActor(), w.bob.ID, map[string]any{"avatar": "javascript:alert(1)"}); err != nil {
-		t.Fatal(err)
-	}
+	reg := registry(t)
 	unknown := contentref.NewID()
-	authors := &ckauthkit.Authors{Directory: w.auth}
-	got, err := authors.UsersByIDs(ctx, []string{w.alice.ID, w.bob.ID, unknown})
+	got, err := (&ckauthkit.Authors{Directory: w.auth, Media: reg}).UsersByIDs(ctx, []string{w.alice.ID, unknown})
 	if err != nil {
 		t.Fatal(err)
 	}
-	link := links{}.SlotLink(alice, media.AvatarSlotName)
+	base := "https://media.doujins.test/v1/accounts/user/" + w.alice.ID + "/public/avatar-"
 	a := got[w.alice.ID]
-	if a.Username != w.alice.Username || a.Avatar != link+"?w=64" || a.AvatarSrcSet != media.AvatarSlot.LinkSrcSet(link) {
+	if a.Username != w.alice.Username || a.Avatar != base+"64.webp" || !strings.HasPrefix(a.AvatarSrcSet, base+"64.webp 64w, ") || !strings.HasSuffix(a.AvatarSrcSet, base+"512.webp 512w") {
 		t.Fatalf("alice %+v", a)
 	}
-	if b := got[w.bob.ID]; b.Username != w.bob.Username || b.Avatar != "" || b.AvatarSrcSet != "" {
-		t.Fatalf("bob's unsafe avatar was used: %+v", b)
-	}
-	if u := got[unknown]; u.ID != unknown || !strings.HasPrefix(u.Username, "user-") || u.Avatar != "" {
+	if u := got[unknown]; u.ID != unknown || !strings.HasPrefix(u.Username, "user-") || !strings.Contains(u.Avatar, unknown) {
 		t.Fatalf("unknown %+v", u)
 	}
-	got, err = (&ckauthkit.Authors{Directory: w.auth, Width: 128}).UsersByIDs(ctx, []string{w.alice.ID})
-	if err != nil || got[w.alice.ID].Avatar != link+"?w=128" {
-		t.Fatalf("width 128: %+v %v", got, err)
+	got, err = (&ckauthkit.Authors{Directory: w.auth, Media: reg, Width: 100}).UsersByIDs(ctx, []string{w.alice.ID})
+	if err != nil || got[w.alice.ID].Avatar != base+"128.webp" {
+		t.Fatalf("width 100: %+v %v", got, err)
 	}
-
 	// A directory outage never fails a listing.
-	got, err = (&ckauthkit.Authors{Directory: down{w.auth}}).UsersByIDs(ctx, []string{w.alice.ID})
-	if err != nil || len(got) != 1 || got[w.alice.ID].Avatar != "" || !strings.HasPrefix(got[w.alice.ID].Username, "user-") {
+	got, err = (&ckauthkit.Authors{Directory: down{w.auth}, Media: reg}).UsersByIDs(ctx, []string{w.alice.ID})
+	if err != nil || len(got) != 1 || !strings.HasPrefix(got[w.alice.ID].Username, "user-") {
 		t.Fatalf("outage: %+v %v", got, err)
 	}
 }

@@ -15,7 +15,7 @@ import (
 )
 
 // FromEnv builds a Config's database and bucket from the environment, with
-// TuningFromEnv; the host then sets Kinds, Specs and Hooks. Neither is dialed.
+// TuningFromEnv; the host then sets Kinds. Neither is dialed.
 // Close the Pool when done.
 //
 //	DATABASE_URL                 host Postgres (holds MEDIA_WORKER_SCHEMA)

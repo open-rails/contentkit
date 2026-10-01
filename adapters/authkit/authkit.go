@@ -1,13 +1,11 @@
-// Package authkit connects ContentKit to AuthKit accounts: account avatars on
-// ContentKit's slots (Avatars) and content authors (Authors). It is a module
+// Package authkit connects ContentKit to AuthKit accounts: who may upload to
+// an account's media (Avatars) and content authors (Authors). It is a module
 // of its own, so ContentKit's core never imports AuthKit.
 //
-// An account's avatar is its user folder's avatar slot (media.UserKind,
-// media.AvatarSlotName). Its stable link (media.Reader.SlotLink) never
-// changes, so the account's AuthKit public metadata names it once, under Key
-// ("avatar"): hosts and auth-ui read public_metadata.avatar. Hosts sharing
-// one account store share the key, so the site where the user last set an
-// avatar is the one shown everywhere.
+// An account's media is an item of a kind whose ids are AuthKit user ids,
+// such as the shared accounts/user kind. Its avatar is a public preset at a
+// fixed name, so its URL is a pure function of the user id: AuthKit stores
+// no avatar metadata.
 package authkit
 
 import (
@@ -15,10 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
-	"strconv"
 
-	"github.com/jackc/pgx/v5"
 	ak "github.com/open-rails/authkit"
 	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/authkit/verify"
@@ -29,54 +24,36 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// DefaultKey is the public-metadata key naming an account's avatar link.
-const DefaultKey = "avatar"
-
 // Directory is what this package uses of *authkit.Client.
 type Directory interface {
 	Can(ctx context.Context, actor iam.Actor, ref iam.GroupRef, perm iam.Perm) (bool, error)
-	PatchPublicMetadata(ctx context.Context, actor iam.Actor, userID string, patch map[string]any, opts ...ak.Option) error
 	PublicUsers(ctx context.Context, ids []string) (map[string]iam.PublicUser, error)
-}
-
-// SlotLinker builds a slot's stable URL: *media.Reader with ReadURL set.
-type SlotLinker interface {
-	SlotLink(ref contentref.ContentRef, slot string) string
 }
 
 var (
 	_ Directory              = (*ak.Client)(nil)
-	_ SlotLinker             = (*media.Reader)(nil)
 	_ media.UploadAuthorizer = (*Avatars)(nil)
 	_ content.UserEnricher   = (*Authors)(nil)
 )
 
-// Avatars are account avatars: CanUpload decides who may change one and
-// SlotChanged names it in the account's public metadata.
+// DefaultKind is the account kind's name.
+const DefaultKind = "user"
+
+// Avatars authorizes uploads to account items: a signed-in user their own
+// (Owner them and not Exempt, so the host's upload limiter applies), staff
+// holding Staff anyone's (Exempt). It refuses every other kind: a host
+// routes its other kinds before it. It reads the verified claims AuthKit's
+// middleware put in ctx; only the staff check reads the database.
 type Avatars struct {
 	Directory Directory
-	Links     SlotLinker
-	// Staff may change any account's avatar, checked live in the root group;
-	// zero: nobody but the account's user.
+	// Staff may change any account's media, checked live in the root
+	// group; zero: nobody but the account's user.
 	Staff iam.Perm
-	// Key is the public-metadata key; default DefaultKey.
-	Key string
-	// Slot is the avatar slot; default media.AvatarSlotName.
-	Slot string
+	Kind  string // default DefaultKind
 }
 
-func (a *Avatars) key() string { return or(a.Key, DefaultKey) }
-
-func (a *Avatars) slot() string { return or(a.Slot, media.AvatarSlotName) }
-
-// CanUpload authorizes the avatar slot of user folders: a signed-in user
-// their own (Owner them and not Exempt, so the host's upload limiter
-// applies), staff holding Staff anyone's (Exempt). It refuses every other
-// target: a host routes its other kinds before it. It reads the verified
-// claims AuthKit's middleware put in ctx; only the staff check reads the
-// database.
 func (a *Avatars) CanUpload(ctx context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
-	if t.Ref.ContentKind != media.UserKind || t.Ref.Version() != "" || t.Slot != a.slot() || actor.Anonymous || actor.ID == "" {
+	if t.Ref.ContentKind != or(a.Kind, DefaultKind) || actor.Anonymous || actor.ID == "" {
 		return media.UploadGrant{}, nil
 	}
 	cl, ok := verify.ClaimsFromContext(ctx)
@@ -102,39 +79,19 @@ func (a *Avatars) CanUpload(ctx context.Context, actor access.Actor, t media.Upl
 	return media.UploadGrant{Allowed: allowed, Exempt: allowed}, nil
 }
 
-// SlotChanged is the avatar's media.Hooks.SlotChanged: when a user's avatar
-// is set or replaced, their public metadata's Key becomes its stable link,
-// one idempotent merge patch outside the slot index transaction (AuthKit may
-// live in another database). A removal writes nothing, since the link then
-// serves the host's default; an erased account is done. Other slots pass.
-func (a *Avatars) SlotChanged(ctx context.Context, _ pgx.Tx, ref contentref.ContentRef, slot string, set bool) error {
-	if !set || ref.ContentKind != media.UserKind || slot != a.slot() {
-		return nil
-	}
-	link := a.Links.SlotLink(ref, slot)
-	if link == "" {
-		return errors.New("contentkit/authkit: no slot link; set media.ReaderOptions.ReadURL")
-	}
-	err := a.Directory.PatchPublicMetadata(ctx, iam.SystemActor(), ref.ContentID, map[string]any{a.key(): link})
-	if errors.Is(err, iam.ErrUserNotFound) {
-		return nil
-	}
-	return err
-}
-
 // Authors is content's UserEnricher over AuthKit: each id's display name
-// (tombstones and unknown ids get AuthKit's fallback) and the avatar its
-// public metadata names. A directory failure is logged and degrades to
-// fallback names without avatars; it never fails a listing.
+// (tombstones and unknown ids get AuthKit's fallback) and its avatar, the
+// account kind's public preset at the site's media host (the access agent
+// serves the default until one is set). A directory failure is logged and
+// degrades to fallback names; it never fails a listing.
 type Authors struct {
 	Directory Directory
-	// Key is the public-metadata key; default DefaultKey.
-	Key string
-	// Width is the avatar's display width in CSS pixels: Avatar is the link
-	// at it; default 64.
-	Width int
-	// Slot gives AvatarSrcSet's widths; default media.AvatarSlot.
-	Slot   *media.Slot
+	Media     *media.Registry // the site's registry, importing the account kind
+	Kind      string          // default DefaultKind
+	Preset    string          // the avatar's public preset; default "avatar"
+	// Width is the avatar's display width in CSS pixels: Avatar is the
+	// narrowest width at least this wide; default 64.
+	Width  int
 	Logger *slog.Logger
 }
 
@@ -152,34 +109,43 @@ func (a *Authors) UsersByIDs(ctx context.Context, ids []string) (map[string]cont
 		log.WarnContext(ctx, "contentkit/authkit: public users failed; showing fallback names", "error", err)
 		users = nil
 	}
-	width := a.Width
-	if width <= 0 {
-		width = 64
-	}
-	slot := media.AvatarSlot
-	if a.Slot != nil {
-		slot = *a.Slot
-	}
 	for _, id := range ids {
 		u := content.PublicUser{ID: id, Username: iam.PublicDisplayName(users, id)}
-		if link := AvatarLink(users[id], or(a.Key, DefaultKey)); link != "" {
-			u.Avatar = link + "?w=" + strconv.Itoa(width)
-			u.AvatarSrcSet = slot.LinkSrcSet(link)
+		if ref, err := a.Media.Ref(or(a.Kind, DefaultKind), id); err == nil {
+			u.Avatar, u.AvatarSrcSet = a.avatar(ref)
 		}
 		out[id] = u
 	}
 	return out, nil
 }
 
-// AvatarLink is the avatar link an account's public metadata names under key:
-// an absolute http(s) URL without a query or fragment, else "".
-func AvatarLink(u iam.PublicUser, key string) string {
-	s, _ := u.PublicMetadata[key].(string)
-	p, err := url.Parse(s)
-	if err != nil || (p.Scheme != "https" && p.Scheme != "http") || p.Host == "" || p.RawQuery != "" || p.Fragment != "" || p.User != nil {
-		return ""
+// avatar is the account's avatar URL at Width and its srcset.
+func (a *Authors) avatar(ref contentref.ContentRef) (string, string) {
+	k, err := a.Media.Kind(ref.ContentKind)
+	if err != nil {
+		return "", ""
 	}
-	return s
+	preset := or(a.Preset, "avatar")
+	for i := range k.Public {
+		p := &k.Public[i]
+		if p.Name != preset {
+			continue
+		}
+		names := k.PublicNames(p, "")
+		width := a.Width
+		if width <= 0 {
+			width = 64
+		}
+		pick := names[len(names)-1]
+		for j, w := range p.Widths {
+			if w >= width {
+				pick = names[j]
+				break
+			}
+		}
+		return a.Media.PublicURL(ref, pick), a.Media.SrcSet(ref, preset)
+	}
+	return "", ""
 }
 
 func or(s, def string) string {

@@ -233,25 +233,22 @@ _ = jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref: ref, Owner: owner}) // in th
 _ = jobs.EraseUserTx(ctx, tx, "d", userID, deletions...)                 // the user's items plus user/{id}/
 ```
 
-The access worker (`cmd/media-access`, image
+The access agent (`cmd/media-access`, `media/agent`, image
 `ghcr.io/open-rails/contentkit-media-access:{tag}`, same tag as the hosts'
-ContentKit) serves `BaseURL`. It needs `MEDIA_ACCESS_S3_ENDPOINT`,
-`_S3_BUCKET`, a read-only key (`_S3_ACCESS_KEY_ID`, `_S3_SECRET_ACCESS_KEY`)
-allowed only `*/private/*`, `*/public/*` and `*/temp/e-*`, `MEDIA_ACCESS_TOKEN_KEY` and
+ContentKit) serves `https://media.<site>/v1/{ns}/{kind}/{id}/{public|private}/{name}`:
+`public/` to anyone (`public, max-age=300, stale-while-revalidate=86400`,
+falling back to `{ns}/{kind}/_default/public/{name}` for declared names),
+`private/sha256-{hex}` with an item or file token in `?t=` or an `mt` cookie
+(`private, immutable`; a `dl` download name only via `?t=`). Everything else
+and every denial is one `no-store` 404; objects carry
+`Cross-Origin-Resource-Policy: same-site`. It needs `MEDIA_ACCESS_S3_ENDPOINT`,
+`_S3_BUCKET`, a key (`_S3_ACCESS_KEY_ID`, `_S3_SECRET_ACCESS_KEY`) that reads
+only `*/private/*` and `*/public/*`, `MEDIA_ACCESS_TOKEN_KEY` and
 `_TOKEN_KEY_PREVIOUS` (the hosts' `{kid}:{base64}` ring), `MEDIA_ACCESS_HOSTS`
-(the media host names; empty serves any Host, warned) and
-`MEDIA_ACCESS_CORS_ORIGINS` (the sites' exact origins, with credentials;
-empty breaks hls.js, warned; wildcards and paths are refused); secrets may be
-given as `{VAR}_FILE`. `public/` is served without a token (`public,
-immutable`); `private/` needs `?t=` or an `mt` cookie (`private,
-immutable`); a `temp/e-` editor view needs `?t=` with an editor token
-(`token.EditorScope`, which no viewer token carries). Everything refused (no
-or bad token, the manifest, `originals/`, staged uploads, unknown keys) is
-one identical `no-store` 404, so denials look
-like absence. Every object carries `Cross-Origin-Resource-Policy:
-same-site` (`MEDIA_ACCESS_RESOURCE_POLICY=cross-origin` only when the pages
-live on another site than the media), so other sites cannot embed it with
-`<img>`/`<video>`. See HOST_INTEGRATION "Production media delivery".
+(required: `media.doujins.ai=doujins,accounts; media.hanime.media=hentai0,accounts`),
+`MEDIA_ACCESS_CORS_ORIGINS` (the sites' exact origins, with credentials) and
+`MEDIA_ACCESS_DEFAULTS` (`doujins/gallery: cover-{w}.webp; accounts/user: avatar-{w}.webp`);
+secrets may be given as `{VAR}_FILE`. See HOST_INTEGRATION "Production media delivery".
 
 **The media worker** (`media/worker`) is the one process that does media
 work: it hashes and places staged uploads, derives image variants, zips, slot
