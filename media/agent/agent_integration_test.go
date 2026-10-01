@@ -25,6 +25,7 @@ import (
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/agent"
 	"github.com/open-rails/contentkit/media/internal/s3test"
+	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 )
 
@@ -95,7 +96,7 @@ func (f *fixture) config(t *testing.T) agent.Config {
 		Ring:     ring(t, k2, &k1),
 		Hosts:    map[string][]string{host: {"accounts", f.ns}, "other.test": {"accounts"}},
 		Origins:  []string{origin},
-		Defaults: []agent.Default{{Namespace: f.ns, Kind: "gallery", Names: []string{"cover-{w}.webp"}}},
+		Defaults: []layout.Default{{Namespace: f.ns, Kind: "gallery", Names: []string{"cover-{w}.webp"}}},
 	}
 }
 

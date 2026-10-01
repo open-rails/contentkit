@@ -2,13 +2,11 @@ package s3
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -22,7 +20,7 @@ import (
 type RestoreReport struct {
 	Reverted  []string // manifests set to their version at T
 	Removed   []string // such keys that did not exist at T
-	Undeleted []string // referenced originals, renditions and public copies whose delete markers were removed
+	Undeleted []string // referenced blobs whose delete markers were removed
 	Missing   []string // referenced at T but no version is left
 }
 
@@ -34,10 +32,11 @@ type version struct {
 }
 
 // Restore returns the folders under prefix to time at, on a versioned bucket
-// (see Configure): manifests take their version at T, then the objects
-// those manifests keep lose the delete markers the sweep or a folder
-// deletion left. Restore the host
-// database to T first, and re-apply erasures made after T afterwards.
+// (see Configure): manifests take their version at T, then the blobs those
+// manifests reference lose the delete markers the sweep or a folder
+// deletion left. Restore the host database to T first, then Expose the
+// restored items (public/ renders again from their kept sources), and
+// re-apply erasures made after T.
 func (s *Store) Restore(ctx context.Context, prefix string, at time.Time) (RestoreReport, error) {
 	var rep RestoreReport
 	history := map[string][]version{}
@@ -136,13 +135,13 @@ func (s *Store) collectRefs(ctx context.Context, key, versionID string, k layout
 	if err != nil {
 		return err
 	}
-	var root media.Root
-	if err := json.Unmarshal(body, &root); err != nil {
+	m, err := media.DecodeManifest(body)
+	if err != nil {
 		return fmt.Errorf("s3: restore: decode %s@%s: %w", key, versionID, err)
 	}
-	folder := strings.Join([]string{k.Tenant, k.Kind, k.ID}, "/") + "/"
-	for ref := range root.Refs() {
-		refs[folder+ref] = true
+	folder := layout.Prefix(k.Namespace, k.Kind, k.ID) + layout.AreaPrivate + "/"
+	for _, b := range m.Blobs() {
+		refs[folder+b] = true
 	}
 	return nil
 }

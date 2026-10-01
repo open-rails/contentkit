@@ -324,6 +324,9 @@ func encodeManifest(m *Manifest) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+// DecodeManifest reads a stored manifest (gzip JSON, or plain JSON).
+func DecodeManifest(b []byte) (*Manifest, error) { return decodeManifest(b) }
+
 // decodeManifest reads gzip JSON (or plain JSON) and indexes it.
 func decodeManifest(b []byte) (*Manifest, error) {
 	r := io.Reader(bytes.NewReader(b))
