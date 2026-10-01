@@ -27,11 +27,12 @@ type Identity interface {
 type HandlerOptions struct {
 	Identity Identity
 	Logger   *slog.Logger
-	// Limit is the per-viewer rate limit (default ViewerLimit{}: 2/s, burst
-	// 120, per process; set Limit.Redis to share it across replicas).
+	// Limit is the per-viewer rate limit (default 2/s, burst 120, per
+	// process; set Limit.Redis to share it across replicas): every read,
+	// playlist and download counts.
 	// Viewers are keyed by Actor.ID, anonymous ones by Actor.IP, else by the
 	// connection's address.
-	Limit ViewerLimit
+	Limit RateLimit
 }
 
 // Handler serves the read API. The host mounts it under a prefix such as
@@ -164,7 +165,7 @@ func fail(w http.ResponseWriter, req *http.Request, log *slog.Logger, err error)
 
 // limited applies HandlerOptions.Limit to every route.
 func limited(next http.Handler, o HandlerOptions, log *slog.Logger) http.Handler {
-	lim := newViewerLimiter(o.Limit, time.Now, log)
+	lim := newRateLimiter(o.Limit, viewerLimit, "read", time.Now, log)
 	if lim == nil {
 		return next
 	}

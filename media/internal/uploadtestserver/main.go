@@ -59,7 +59,7 @@ var kinds = []media.Kind{
 	{Name: "post",
 		Uploads: []media.Upload{
 			{Path: "originals/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20, Max: 2},
-			{Path: "inline/{name}", Types: images, MaxBytes: 1 << 20, Named: true},
+			{Path: "inline/{name}", Types: images, MaxBytes: 1 << 20, Named: true, Max: 100},
 		},
 		Public: []media.Public{{Name: "inline", From: "inline/{name}", To: "{name}.webp", Image: media.Image{Width: 1600}}}},
 	{Name: "video", KeepOriginals: true,
@@ -183,7 +183,8 @@ func main() {
 	must(err)
 	newUploads := func(onUpload bool) http.Handler {
 		u, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests, Tickets: &ring, Grace: *grace,
-			Queue: worker, Frames: worker, ProcessOnUpload: onUpload})
+			Queue: worker, Frames: worker, ProcessOnUpload: onUpload,
+			Commits: media.RateLimit{Disabled: true}}) // one server for the whole SDK suite
 		must(err)
 		return media.UploadHandler(u, media.UploadHandlerOptions{Actor: actor})
 	}
@@ -191,7 +192,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/upload/", http.StripPrefix("/upload", newUploads(false)))
 	mux.Handle("/upload-on-upload/", http.StripPrefix("/upload-on-upload", newUploads(true)))
-	mux.Handle("/read/", http.StripPrefix("/read", withActor(reader.Handler(media.HandlerOptions{Identity: identity{}, Limit: media.ViewerLimit{Disabled: true}}))))
+	mux.Handle("/read/", http.StripPrefix("/read", withActor(reader.Handler(media.HandlerOptions{Identity: identity{}, Limit: media.RateLimit{Disabled: true}}))))
 	mux.HandleFunc("GET /object", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		ref, err := reg.Ref(q.Get("kind"), q.Get("id"))

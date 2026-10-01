@@ -14,17 +14,16 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// ViewerLimit is the read API's per-viewer limit: every read, playlist,
-// download, slot and video-images request counts. Zero fields take the
-// defaults (2/s sustained, burst 120: a page of reads and an HLS session each
-// fit, bulk link harvesting does not).
+// RateLimit is a per-key request limit: the read API's per viewer
+// (HandlerOptions.Limit) and commits' per uploader (UploadOptions.Commits).
+// Zero fields take the use's defaults.
 //
-// With Redis set, every replica shares one limit per viewer; otherwise each
-// process keeps its own (a single-replica assumption, logged at Handler), so
+// With Redis set, every replica shares one limit per key; otherwise each
+// process keeps its own (a single-replica assumption, logged at start), so
 // N replicas allow N times the limit. Redis errors fail open to the
 // per-process limit (see RedisErrors): the limit is abuse protection, and
-// tokens and visibility checks still gate every file.
-type ViewerLimit struct {
+// tokens, permissions and visibility checks still gate everything.
+type RateLimit struct {
 	PerSecond float64
 	Burst     int
 	// Disabled turns limiting off, e.g. when the host limits upstream.
@@ -33,7 +32,8 @@ type ViewerLimit struct {
 	// pass the host's own. Only INCR, PEXPIRE, GET, DECR and MULTI/EXEC are
 	// used (no Lua: Garnet ships with scripting off).
 	Redis redis.UniversalClient
-	// KeyPrefix namespaces the Redis keys (default "contentkit:media:rl:").
+	// KeyPrefix namespaces the Redis keys (defaults "contentkit:media:rl:"
+	// for viewers, "contentkit:media:commit:" for uploaders).
 	KeyPrefix string
 }
 
@@ -42,39 +42,46 @@ type ViewerLimit struct {
 // "contentkit_media_ratelimit_redis_errors".
 var RedisErrors = expvar.NewInt("contentkit_media_ratelimit_redis_errors")
 
-const (
-	defaultViewerRate  = 2
-	defaultViewerBurst = 120
-	defaultKeyPrefix   = "contentkit:media:rl:"
-	limiterShards      = 32
-	limiterMaxKeys     = 1 << 16 // per shard; idle full buckets are dropped first
-	redisTimeout       = 100 * time.Millisecond
-	redisBackoff       = time.Second // after an error, skip Redis this long
+// The uses' defaults: viewers 2/s sustained, burst 120 (a page of reads and
+// an HLS session each fit, bulk link harvesting does not); uploaders 1
+// commit/s, burst 30.
+var (
+	viewerLimit = RateLimit{PerSecond: 2, Burst: 120, KeyPrefix: "contentkit:media:rl:"}
+	commitLimit = RateLimit{PerSecond: 1, Burst: 30, KeyPrefix: "contentkit:media:commit:"}
 )
 
-// viewerLimiter takes one request from key's allowance, or reports how long
+const (
+	limiterShards  = 32
+	limiterMaxKeys = 1 << 16 // per shard; idle full buckets are dropped first
+	redisTimeout   = 100 * time.Millisecond
+	redisBackoff   = time.Second // after an error, skip Redis this long
+)
+
+// rateLimiter takes one request from key's allowance, or reports how long
 // until one is available.
-type viewerLimiter interface {
+type rateLimiter interface {
 	allow(ctx context.Context, key string) (bool, time.Duration)
 }
 
-func newViewerLimiter(l ViewerLimit, now func() time.Time, log *slog.Logger) viewerLimiter {
+// newRateLimiter is l with def's values for its zero fields; name is the use
+// in logs.
+func newRateLimiter(l, def RateLimit, name string, now func() time.Time, log *slog.Logger) rateLimiter {
 	if l.Disabled {
 		return nil
 	}
 	if l.PerSecond <= 0 {
-		l.PerSecond = defaultViewerRate
+		l.PerSecond = def.PerSecond
 	}
 	if l.Burst <= 0 {
-		l.Burst = defaultViewerBurst
+		l.Burst = def.Burst
 	}
 	mem := newMemoryLimiter(l, now)
 	if l.Redis == nil {
-		log.Info("media read rate limit is per process (no ViewerLimit.Redis): assuming a single replica")
+		log.Info("media " + name + " rate limit is per process (no RateLimit.Redis): assuming a single replica")
 		return mem
 	}
 	if l.KeyPrefix == "" {
-		l.KeyPrefix = defaultKeyPrefix
+		l.KeyPrefix = def.KeyPrefix
 	}
 	window := time.Duration(float64(l.Burst) / l.PerSecond * float64(time.Second))
 	return &redisLimiter{rdb: l.Redis, prefix: l.KeyPrefix, limit: int64(l.Burst),
@@ -106,7 +113,7 @@ func (r *redisLimiter) allow(ctx context.Context, key string) (bool, time.Durati
 	if err != nil {
 		RedisErrors.Add(1)
 		if r.down.Swap(t+redisBackoff.Milliseconds()) <= t-redisBackoff.Milliseconds() {
-			r.log.Warn("media read rate limit: Redis unavailable, failing open to the per-process limit", "err", err.Error())
+			r.log.Warn("media rate limit: Redis unavailable, failing open to the per-process limit", "err", err.Error())
 		}
 		return r.local.allow(ctx, key)
 	}
@@ -174,7 +181,7 @@ type bucket struct {
 	at     time.Time
 }
 
-func newMemoryLimiter(l ViewerLimit, now func() time.Time) *memoryLimiter {
+func newMemoryLimiter(l RateLimit, now func() time.Time) *memoryLimiter {
 	v := &memoryLimiter{rate: l.PerSecond, burst: float64(l.Burst), now: now}
 	for i := range v.shards {
 		v.shards[i].buckets = map[string]*bucket{}

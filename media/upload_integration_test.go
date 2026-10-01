@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -495,6 +496,35 @@ func TestFrame(t *testing.T) {
 	}
 }
 
+// Commits are rate limited per uploader (audit); exempt grants are not.
+func TestCommitRateLimit(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	g := f.ref("gallery", 1)
+	ctx := context.Background()
+	up, err := media.NewUploads(media.UploadOptions{Store: f.env.Store, Manifests: f.ms, Queue: f.q, Commits: media.RateLimit{PerSecond: 0.01, Burst: 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := func(i int) []media.Op {
+		return []media.Op{{Op: media.OpMeta, Meta: map[string]any{"title": fmt.Sprint(i)}}}
+	}
+	for i := range 3 {
+		_, err := up.Commit(ctx, f.editor, g, meta(i))
+		if i < 2 && err != nil || i == 2 && code(err) != media.CodeRate {
+			t.Fatalf("commit %d: %v", i, err)
+		}
+	}
+	if ue, _ := media.AsUploadError(func() error { _, err := up.Commit(ctx, f.editor, g, meta(3)); return err }()); ue == nil || ue.RetryAfter <= 0 {
+		t.Fatalf("no retry-after: %+v", ue)
+	}
+	for i := range 3 {
+		if _, err := up.Commit(ctx, access.Actor{ID: "staff"}, g, meta(10+i)); err != nil {
+			t.Fatalf("exempt commit %d: %v", i, err)
+		}
+	}
+}
+
 func ptr[T any](v T) *T { return &v }
 
 // meta fills download names; regenerate asks the worker for a preset.
@@ -515,7 +545,13 @@ func TestMetaAndRegenerate(t *testing.T) {
 		t.Fatalf("download name %q", z.Download)
 	}
 	f.q.take()
-	f.commit(g, media.Op{Op: media.OpRegenerate, Preset: "thumb", Force: true})
+	// Forcing rewrites and purges everything: exempt (staff) grants only.
+	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpRegenerate, Preset: "thumb", Force: true}}); code(err) != media.CodeForbidden {
+		t.Fatalf("a writer forced regeneration: %v", err)
+	}
+	if _, err := f.up.Commit(ctx, access.Actor{ID: "staff"}, g, []media.Op{{Op: media.OpRegenerate, Preset: "thumb", Force: true}}); err != nil {
+		t.Fatal(err)
+	}
 	if jobs := f.q.take(); len(jobs) != 1 || jobs[0].Preset != "thumb" || !jobs[0].Force {
 		t.Fatalf("regenerate enqueued %+v", jobs)
 	}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -51,14 +52,19 @@ type UploadOptions struct {
 	// soon as it lands, so the worker processes it while the user arranges
 	// the rest; an attach op makes it part of the item.
 	ProcessOnUpload bool
+	// Commits limits each uploader's commits (default 1/s, burst 30, per
+	// process; set Commits.Redis to share it); exempt grants are not
+	// limited.
+	Commits RateLimit
 }
 
 // Uploads presigns direct-to-bucket uploads and commits them. It keeps no
 // state: a multipart upload is its S3 UploadId, carried in a signed ticket.
 type Uploads struct {
-	o      UploadOptions
-	reg    *Registry
-	frames chan struct{}
+	o       UploadOptions
+	reg     *Registry
+	frames  chan struct{}
+	commits rateLimiter
 }
 
 func NewUploads(o UploadOptions) (*Uploads, error) {
@@ -81,7 +87,8 @@ func NewUploads(o UploadOptions) (*Uploads, error) {
 	if o.FrameConcurrency <= 0 {
 		o.FrameConcurrency = 2
 	}
-	return &Uploads{o: o, reg: reg, frames: make(chan struct{}, o.FrameConcurrency)}, nil
+	return &Uploads{o: o, reg: reg, frames: make(chan struct{}, o.FrameConcurrency),
+		commits: newRateLimiter(o.Commits, commitLimit, "commit", time.Now, slog.Default())}, nil
 }
 
 // PresignRequest declares one upload; SHA256 is the whole file's: it finds
@@ -378,6 +385,16 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	grant, err := u.authorizeOps(ctx, actor, item, ops)
 	if err != nil {
 		return nil, err
+	}
+	if !grant.Exempt {
+		if slices.ContainsFunc(ops, func(op Op) bool { return op.Op == OpRegenerate && op.Force }) {
+			return nil, uploadErr(CodeForbidden, "forced regeneration needs an exempt grant")
+		}
+		if u.commits != nil {
+			if ok, wait := u.commits.allow(ctx, uploaderID(actor)); !ok {
+				return nil, &UploadError{Code: CodeRate, Message: "commit rate limit", RetryAfter: wait}
+			}
+		}
 	}
 	copies, copied, err := u.copies(ctx, actor, grant, item, ops)
 	if err != nil {

@@ -107,7 +107,7 @@ Ports (in `content` unless qualified):
 
 **Post and poll images** live in media folders `{tenant}/post/{post_id}/` and
 `{tenant}/poll/{poll_id}/` (`Media.PostKind`/`PollKind`). Register both kinds
-with a `Named` upload path (`inline/{name}`) and its public preset (`To:
+with a `Named` upload path (`inline/{name}`, with a `Max`) and its public preset (`To:
 "{name}.webp"`), route their `CanUpload` to `rt.Content.CanUpload` (PostWrite
 or PollWrite, and the post or poll must exist), and pass
 `content.Media{URLs: urls, Folders: jobs}`, where `urls.InlineURL` is the
@@ -439,7 +439,8 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   a file's path adds its extension (`cover.png`), and a put to the same stem
   replaces it. `Max` caps an Upload's files, `Pages` marks the pages the
   preview cut counts, `Frames` lets the `frame` op grab the upload from a
-  video upload, `Named` lets the server name it (`i-{uuid}`, inline images).
+  video upload, `Named` lets the server name it (`i-{uuid}`, inline images;
+  it needs a `Max`).
 - **Private presets** have one producer: `Image` (per-file `Choose` in Go),
   `HLS` (byte-range fMP4 ladder, audio and subtitle tracks, seek sprite; each
   track's segment table is its own private blob), `MP4` (one rung, H.264),
@@ -483,7 +484,7 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
 | --- | --- |
 | `POST /presign {ref, path, type, size, sha256}` | Checks the path's Upload and `CanUpload`; answers `exists`, one `put`, or a `multipart` ticket, and the `path` to commit (cleaned, with an extension, server-named for `Named`). |
 | `POST /parts`, `/parts/list`, `/complete`, `/abort` | Multipart parts bound to their SHA-256; resume; assemble. |
-| `POST /commit {ref, ops}` | Applies ops in one conditional write, then enqueues placement and processing. |
+| `POST /commit {ref, ops}` | Applies ops in one conditional write, then enqueues placement and processing. Each uploader's commits are rate limited (`UploadOptions.Commits`, default 1/s, burst 30; 429 `rate_limited`), except for exempt grants. |
 | `GET /frame?kind&id&path&t&w` | A JPEG still of a video upload for the frame picker (`UploadOptions.Frames`). |
 
 Uploads land at a staged name, `temp/u-{uuid}`, which presign answers as
@@ -505,7 +506,7 @@ way.
 | `copy {from: {id, path}, to?, edit?}` | Copies an upload within the kind, including the current item. Copies within an Upload preserve current private outputs; another Upload or a supplied edit renders its own presets from the original. Blobs copied from another item are reserved like uploads (rate limits, pending quota) before they move. |
 | `frame {path, t \| auto}` | Fills an upload from a frame of its `Frames` video; a new video grabs again. |
 | `meta {meta}` | Sets the template values (`{title}` in download names). |
-| `regenerate {preset?, force?}` | Asks the worker to redo stale outputs (all with `force`). |
+| `regenerate {preset?, force?}` | Asks the worker to redo stale outputs (all with `force`, which needs an exempt grant). |
 
 `CanUpload` is asked for `UploadTarget{Ref, Path}` per op (the upload's stem;
 "" for item-wide ops), and for a copy's source too. A new item starts hidden

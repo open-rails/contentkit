@@ -162,6 +162,9 @@ func (k *Kind) validate() error {
 		if u.Named && p.literal != "" {
 			return fmt.Errorf("upload %q: only a pattern is Named", u.Path)
 		}
+		if u.Named && u.Max == 0 {
+			return fmt.Errorf("upload %q: a Named upload needs Max", u.Path)
+		}
 		k.patterns[i] = p
 	}
 	for _, u := range k.Uploads {

@@ -191,7 +191,7 @@ func TestReadCookieDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(rd.Handler(media.HandlerOptions{Identity: identity{f.editor}, Limit: media.ViewerLimit{Disabled: true}}))
+	srv := httptest.NewServer(rd.Handler(media.HandlerOptions{Identity: identity{f.editor}, Limit: media.RateLimit{Disabled: true}}))
 	defer srv.Close()
 	resp, err := http.Get(srv.URL + "/gallery/" + cid(1))
 	if err != nil {
@@ -379,7 +379,7 @@ func TestHLSPlaylists(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(f.rd.Handler(media.HandlerOptions{Identity: identity{f.editor}, Limit: media.ViewerLimit{Disabled: true}}))
+	srv := httptest.NewServer(f.rd.Handler(media.HandlerOptions{Identity: identity{f.editor}, Limit: media.RateLimit{Disabled: true}}))
 	defer srv.Close()
 	res, err := f.rd.Read(ctx, v, f.editor, media.ReadOptions{})
 	if err != nil || len(res.HLS) != 1 || res.HLS[0] != "hls/" {
@@ -434,7 +434,7 @@ func TestReadHandler(t *testing.T) {
 	f := newFixtureOn(t, s3test.Open(t), nil)
 	f.visible(1)
 	f.gallery(1, 1)
-	srv := httptest.NewServer(f.rd.Handler(media.HandlerOptions{Identity: identity{f.editor}, Limit: media.ViewerLimit{PerSecond: 1, Burst: 2}}))
+	srv := httptest.NewServer(f.rd.Handler(media.HandlerOptions{Identity: identity{f.editor}, Limit: media.RateLimit{PerSecond: 1, Burst: 2}}))
 	defer srv.Close()
 	status := func(p string) int {
 		resp, err := http.Get(srv.URL + p)
