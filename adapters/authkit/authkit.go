@@ -4,8 +4,8 @@
 //
 // An account's avatar is its user folder's avatar slot (media.UserKind,
 // media.AvatarSlotName), served from fixed public names. The account's AuthKit
-// public metadata names its link (media.Reader.SlotLink, ?v= its version)
-// under Key ("avatar"): hosts and auth-ui read public_metadata.avatar, and
+// public metadata names its link (media.Reader.SlotLink), a plain URL, under
+// Key ("avatar"): hosts and auth-ui read public_metadata.avatar, and
 // show their default when it is unset. Hosts sharing one account store share
 // the key, so the site where the user last set an avatar is the one shown
 // everywhere.
@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 	ak "github.com/open-rails/authkit"
@@ -42,7 +41,7 @@ type Directory interface {
 
 // SlotLinker builds a public slot's URL: *media.Reader.
 type SlotLinker interface {
-	SlotLink(ref contentref.ContentRef, slot string, width int, version string) string
+	SlotLink(ref contentref.ContentRef, slot string, width int) string
 }
 
 var (
@@ -107,36 +106,35 @@ func (a *Avatars) CanUpload(ctx context.Context, actor access.Actor, t media.Upl
 }
 
 // SlotChanged is the avatar's media.Hooks.SlotChanged: when a user's avatar
-// is set or replaced, their public metadata's Key becomes its link at Width
-// with ?v= the new version, one merge patch outside the slot index
-// transaction (AuthKit may live in another database). A removal clears Key
-// when it names this site's avatar (another site's stays), so clients show
-// their default. An erased account is done; other slots pass.
-func (a *Avatars) SlotChanged(ctx context.Context, _ pgx.Tx, c media.SlotChange) error {
-	if c.Ref.ContentKind != media.UserKind || c.Slot != a.slot() {
+// is set or replaced, their public metadata's Key becomes its link at Width,
+// one idempotent merge patch outside the slot index transaction (AuthKit may
+// live in another database). A removal clears Key when it names this site's
+// avatar (another site's stays), so clients show their default. An erased
+// account is done; other slots pass.
+func (a *Avatars) SlotChanged(ctx context.Context, _ pgx.Tx, ref contentref.ContentRef, slot string, set bool) error {
+	if ref.ContentKind != media.UserKind || slot != a.slot() {
 		return nil
 	}
 	width := a.Width
 	if width <= 0 {
 		width = 256
 	}
-	link := a.Links.SlotLink(c.Ref, c.Slot, width, c.Version)
+	link := a.Links.SlotLink(ref, slot, width)
 	if link == "" {
-		return fmt.Errorf("contentkit/authkit: kind %q has no slot %q", c.Ref.ContentKind, c.Slot)
+		return fmt.Errorf("contentkit/authkit: kind %q has no slot %q", ref.ContentKind, slot)
 	}
 	var value any = link
-	if c.Version == "" {
-		users, err := a.Directory.PublicUsers(ctx, []string{c.Ref.ContentID})
+	if !set {
+		users, err := a.Directory.PublicUsers(ctx, []string{ref.ContentID})
 		if err != nil {
 			return err
 		}
-		current, _, _ := strings.Cut(AvatarLink(users[c.Ref.ContentID], a.key()), "?")
-		if current != link {
+		if AvatarLink(users[ref.ContentID], a.key()) != link {
 			return nil // unset, or another site's avatar
 		}
 		value = nil
 	}
-	err := a.Directory.PatchPublicMetadata(ctx, iam.SystemActor(), c.Ref.ContentID, map[string]any{a.key(): value})
+	err := a.Directory.PatchPublicMetadata(ctx, iam.SystemActor(), ref.ContentID, map[string]any{a.key(): value})
 	if errors.Is(err, iam.ErrUserNotFound) {
 		return nil
 	}
@@ -194,14 +192,11 @@ func (a *Authors) UsersByIDs(ctx context.Context, ids []string) (map[string]cont
 }
 
 // AvatarLink is the avatar link an account's public metadata names under key:
-// an absolute http(s) URL whose only query is v, else "".
+// an absolute http(s) URL without a query or fragment, else "".
 func AvatarLink(u iam.PublicUser, key string) string {
 	s, _ := u.PublicMetadata[key].(string)
 	p, err := url.Parse(s)
-	if err != nil || (p.Scheme != "https" && p.Scheme != "http") || p.Host == "" || p.Fragment != "" || p.User != nil {
-		return ""
-	}
-	if q := p.Query(); len(q) > 1 || len(q) == 1 && len(q["v"]) != 1 {
+	if err != nil || (p.Scheme != "https" && p.Scheme != "http") || p.Host == "" || p.RawQuery != "" || p.Fragment != "" || p.User != nil {
 		return ""
 	}
 	return s

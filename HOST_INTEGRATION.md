@@ -381,11 +381,9 @@ Cropping and rotating are ContentKit's: the host never decodes images.
   slot index (`media.NewSlotIndex(pool, schema)` in `JobsConfig.Slots` and
   `ReaderOptions.Slots`): no bucket reads. A public slot's renditions keep
   fixed names, `public/{slot}-{rung}.webp`: `Reader.SlotLink(ref, slot,
-  width, version)` is its URL, a function of the item, with `?v=` (the
-  slot's version) to bust caches; nothing is there while the slot is unset.
-  `Hooks.SlotChanged` (in `JobsConfig.Hooks`) hears every set, replace and
-  removal with the new version, and `Hooks.PurgePublic` the fixed keys to
-  purge;
+  width)` is its URL, a function of the item; nothing is there while the
+  slot is unset. `Hooks.SlotChanged` (in `JobsConfig.Hooks`) hears every
+  set, replace and removal, and `Hooks.PurgePublic` the fixed keys to purge;
   `Uploads.DeleteSlot` / `POST /delete-slot` removes. After changing slot
   specs, enqueue `ProcessJob{Ref}` per item; the sweep removes the old
   renditions.
@@ -443,8 +441,8 @@ avatars := &ckauthkit.Avatars{Directory: authkitClient, Links: reader, Staff: pe
 // content.Options.Users: &ckauthkit.Authors{Directory: authkitClient}.
 ```
 
-- `SlotChanged` writes the avatar's URL (`reader.SlotLink` at `Avatars.Width`,
-  `?v=` its version) to the account's `public_metadata.avatar`
+- `SlotChanged` writes the avatar's URL (`reader.SlotLink` at
+  `Avatars.Width`) to the account's `public_metadata.avatar`
   (`Avatars.Key`) on every set and replace, and clears it on removal when it
   names this site's avatar; clients show their default while it is unset.
   Hosts sharing an account store show the avatar of the site where it was
@@ -548,8 +546,8 @@ the host's periodic jobs. The worker migrates its schema itself.
   served only under an editor token); `temp/` is never public and nothing
   else in it is readable by the worker; only the hosts write.
 - **CDN**: may cache `public/` in a shared cache (content-named copies are
-  immutable; a slot's fixed names are served for 5 minutes and links carry
-  `?v=`, so the CDN must key on the query string); wire `Hooks.PurgePublic`
+  immutable; a slot's fixed names are cached for 5 minutes and revalidated
+  by ETag); wire `Hooks.PurgePublic`
   (Jobs, and a host-built media worker) to purge the keys a hide, removal,
   replacement or sweep deletes or overwrites. Never cache `private/` in a shared cache: the token
   is not part of a cache key the CDN checks, so a cached object would be

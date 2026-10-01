@@ -257,24 +257,18 @@ func (s Slot) Rung(width int) int {
 }
 
 // LinkAt rewrites a slot link (Reader.SlotLink, possibly another site's with
-// the same slot spec) to the rung for width, keeping its ?v=; "" when link is
-// not a slot link.
+// the same slot spec) to the rung for width; "" when link is not a slot link.
 func (s Slot) LinkAt(link string, width int) string {
-	path, query, _ := strings.Cut(link, "?")
-	dir, name, ok := cutLast(path, "/")
+	dir, name, ok := cutLast(link, "/")
 	slot, _, valid := layout.ParseSlotFileName(name)
 	if !ok || !valid {
 		return ""
 	}
-	out := dir + "/" + layout.SlotFileName(slot, s.Rung(width))
-	if query != "" {
-		out += "?" + query
-	}
-	return out
+	return dir + "/" + layout.SlotFileName(slot, s.Rung(width))
 }
 
 // LinkSrcSet is a srcset of a slot link at each of Widths:
-// "…/avatar-64.webp?v=… 64w, …/avatar-128.webp?v=… 128w, …"; "" when link is
+// "…/avatar-64.webp 64w, …/avatar-128.webp 128w, …"; "" when link is
 // not a slot link.
 func (s Slot) LinkSrcSet(link string) string {
 	if s.LinkAt(link, 0) == "" {

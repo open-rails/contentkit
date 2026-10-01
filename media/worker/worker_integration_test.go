@@ -67,7 +67,7 @@ type host struct {
 	hidden    sync.Map      // contentref.ContentKey → true: hidden from anonymous viewers (Expose)
 
 	mu          sync.Mutex
-	changes     []string                     // Hooks.SlotChanged, "ref#slot set:{version}|clear"
+	changes     []string                     // Hooks.SlotChanged, "ref#slot set|clear"
 	purged      []string                     // Hooks.PurgePublic keys
 	failChanges int                          // SlotChanged calls still to fail
 	settled     map[string][]media.Readiness // Hooks.ItemReady, by ref
@@ -105,7 +105,7 @@ func (h *host) startJobs(t *testing.T) *media.Jobs {
 const mediaURL = "https://media.example"
 
 // slotChanged is the host's Hooks.SlotChanged.
-func (h *host) slotChanged(_ context.Context, _ pgx.Tx, c media.SlotChange) error {
+func (h *host) slotChanged(_ context.Context, _ pgx.Tx, ref contentref.ContentRef, slot string, set bool) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.failChanges > 0 {
@@ -113,10 +113,10 @@ func (h *host) slotChanged(_ context.Context, _ pgx.Tx, c media.SlotChange) erro
 		return errors.New("the host's hook is down")
 	}
 	state := "clear"
-	if c.Version != "" {
-		state = "set:" + c.Version
+	if set {
+		state = "set"
 	}
-	h.changes = append(h.changes, c.Ref.String()+"#"+c.Slot+" "+state)
+	h.changes = append(h.changes, ref.String()+"#"+slot+" "+state)
 	return nil
 }
 
@@ -473,7 +473,7 @@ func TestWorkerProcessesImagesAndPlacesStagedUploads(t *testing.T) {
 	if pic.URL != m.Outputs[0].URL || pic.W != m.Outputs[0].W || !strings.HasSuffix(pic.SrcSet, " "+strconv.Itoa(m.Outputs[len(m.Outputs)-1].W)+"w") {
 		t.Fatalf("listed %+v, manifest %+v", pic, m.Outputs)
 	}
-	if got := h.slotChanges(); len(got) != 1 || !strings.HasPrefix(got[0], work.String()+"#cover set:") {
+	if got := h.slotChanges(); len(got) != 1 || got[0] != work.String()+"#cover set" {
 		t.Fatalf("SlotChanged %v", got)
 	}
 }

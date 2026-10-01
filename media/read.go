@@ -59,14 +59,14 @@ type Hooks struct {
 	// retry it; a new commit does.
 	Failed func(ctx context.Context, ref contentref.ContentRef, file string, err error)
 	// SlotChanged reports a registered slot whose public image was set,
-	// replaced or removed (SlotChange): its slot index row changed. The slot
+	// replaced (set) or removed (!set): its slot index row changed. The slot
 	// index job runs it in the host process (JobsConfig.Hooks), in the
 	// transaction that changes the row, under the item's folder lock: an error
 	// rolls back and retries the job, so it runs at least once and must be
-	// idempotent, and it must not edit the item's media. Reader.SlotLink with
-	// SlotChange.Version is the image's URL. Item deletion
-	// (Jobs.DeleteItemsTx) drops rows without it.
-	SlotChanged func(ctx context.Context, tx pgx.Tx, c SlotChange) error
+	// idempotent, and it must not edit the item's media. Reader.SlotLink is
+	// the image's URL. Item deletion (Jobs.DeleteItemsTx) drops rows without
+	// it.
+	SlotChanged func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, slot string, set bool) error
 	// PurgePublic reports public/ keys deleted (a hidden item, a removed slot,
 	// replaced outputs) or overwritten (a public slot's fixed names), for a
 	// CDN purge; optional. The slot index job also reports a slot's fixed

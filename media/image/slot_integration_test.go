@@ -112,8 +112,7 @@ func widths(m media.SlotManifest) []int {
 
 // checkOutputs requires m to be settled and list exactly want (one per rung,
 // at 3:1), each an immutable hash-named file in private/ and its public/ copy
-// under the slot's fixed name (?v= the record's fingerprint) with those
-// dimensions and sampled pixels c.
+// under the slot's fixed name with those dimensions and sampled pixels c.
 func (e *env) checkOutputs(t *testing.T, ref contentref.ContentRef, m media.SlotManifest, want []int, c color.RGBA) {
 	t.Helper()
 	if m.Pending || m.Error != "" || !slices.Equal(widths(m), want) {
@@ -121,14 +120,13 @@ func (e *env) checkOutputs(t *testing.T, ref contentref.ContentRef, m media.Slot
 	}
 	prefix := e.Tenant + "/" + ref.ContentKind + "/" + ref.ContentID + "/"
 	for _, o := range m.Outputs {
-		u, ok := strings.CutPrefix(o.URL, slotBase+"/"+prefix+"public/")
-		name, version, _ := strings.Cut(u, "?v=")
+		name, ok := strings.CutPrefix(o.URL, slotBase+"/"+prefix+"public/")
 		slot, rung, fixed := layout.ParseSlotFileName(name)
 		if !ok || !fixed || o.H != media.Aspect3x1.Height(o.W) {
 			t.Fatalf("output %+v", o)
 		}
 		rec, err := e.manifests.Slot(context.Background(), ref.Content(), slot)
-		if err != nil || rec.Result == nil || version != rec.Result.Of {
+		if err != nil || rec.Result == nil {
 			t.Fatalf("output %+v: record %+v %v", o, rec, err)
 		}
 		var blob string

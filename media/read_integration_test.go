@@ -614,7 +614,7 @@ func TestReadHandler(t *testing.T) {
 	if err := f.ms.UpdateSlot(context.Background(), f.post, "cover", func(r *media.SlotRecord) error { *r = rec; return nil }); err != nil {
 		t.Fatal(err)
 	}
-	cover := readBase + "/" + f.env.Tenant + "/post/" + cid(501) + "/public/cover-64.webp?v=" + fp // its fixed name
+	cover := readBase + "/" + f.env.Tenant + "/post/" + cid(501) + "/public/cover-64.webp" // its fixed name
 	resp, body = get("/media/post/" + cid(501) + "/slots/cover")
 	if outs := body["outputs"].([]any); resp.StatusCode != 200 || body["pending"] != false || len(outs) != 1 || body["aspect"] != "1:1" ||
 		outs[0].(map[string]any)["url"] != cover || body["dims"].(map[string]any)["w"] != float64(200) || resp.Header.Get("Cache-Control") != "private, no-store" {

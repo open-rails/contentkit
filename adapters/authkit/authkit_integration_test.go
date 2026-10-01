@@ -23,17 +23,13 @@ const mediaURL = "https://media.doujins.test"
 // links is a host Reader's SlotLink on mediaURL.
 type links struct{}
 
-func (links) SlotLink(ref contentref.ContentRef, slot string, width int, version string) string {
-	u := mediaURL + "/" + ref.TenantID + "/" + ref.ContentKind + "/" + ref.ContentID + "/public/" + slot + "-" +
+func (links) SlotLink(ref contentref.ContentRef, slot string, width int) string {
+	return mediaURL + "/" + ref.TenantID + "/" + ref.ContentKind + "/" + ref.ContentID + "/public/" + slot + "-" +
 		strconv.Itoa(media.AvatarSlot.Rung(width)) + ".webp"
-	if version != "" {
-		u += "?v=" + version
-	}
-	return u
 }
 
-func set(ref contentref.ContentRef, version string) media.SlotChange {
-	return media.SlotChange{Ref: ref, Slot: media.AvatarSlotName, Version: version}
+func link(ref contentref.ContentRef, width int) string {
+	return links{}.SlotLink(ref, media.AvatarSlotName, width)
 }
 
 type world struct {
@@ -79,7 +75,7 @@ func avatarOf(id string) media.UploadTarget {
 }
 
 // A user changes only their own avatar, staff anyone's; the account's public
-// metadata names the avatar's stable link once it is set and keeps it.
+// metadata names the avatar's link while it is set.
 func TestAvatars(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
@@ -119,56 +115,52 @@ func TestAvatars(t *testing.T) {
 	}
 
 	alice := avatarOf(w.alice.ID).Ref
-	link := links{}.SlotLink(alice, media.AvatarSlotName, 256, "v1")
-	if err := avatars.SlotChanged(ctx, nil, set(alice, "v1")); err != nil {
+	if err := avatars.SlotChanged(ctx, nil, alice, media.AvatarSlotName, true); err != nil {
 		t.Fatal(err)
 	}
-	if got := w.metadata(t, w.alice.ID)["avatar"]; got != link || !strings.HasSuffix(link, "/public/avatar-256.webp?v=v1") {
-		t.Fatalf("public_metadata.avatar = %v, want %s", got, link)
+	if got := w.metadata(t, w.alice.ID)["avatar"]; got != link(alice, 256) || !strings.HasSuffix(got.(string), "/public/avatar-256.webp") {
+		t.Fatalf("public_metadata.avatar = %v, want %s", got, link(alice, 256))
 	}
-	// Idempotent; a replacement names the new version; other slots pass.
-	if err := avatars.SlotChanged(ctx, nil, set(alice, "v1")); err != nil {
+	// A replacement is idempotent; other slots pass.
+	if err := avatars.SlotChanged(ctx, nil, alice, media.AvatarSlotName, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := avatars.SlotChanged(ctx, nil, set(alice, "v2")); err != nil {
-		t.Fatal(err)
-	}
-	if got := w.metadata(t, w.alice.ID)["avatar"]; got != links.SlotLink(links{}, alice, media.AvatarSlotName, 256, "v2") {
+	if got := w.metadata(t, w.alice.ID)["avatar"]; got != link(alice, 256) {
 		t.Fatalf("replaced public_metadata.avatar = %v", got)
 	}
 	bob := avatarOf(w.bob.ID).Ref
-	if err := avatars.SlotChanged(ctx, nil, media.SlotChange{Ref: bob, Slot: "banner", Version: "v1"}); err != nil {
+	if err := avatars.SlotChanged(ctx, nil, bob, "banner", true); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := w.metadata(t, w.bob.ID)["avatar"]; ok {
 		t.Fatal("another slot wrote the avatar")
 	}
 	// A removal clears this site's avatar, so clients show their default.
-	if err := avatars.SlotChanged(ctx, nil, set(alice, "")); err != nil {
+	if err := avatars.SlotChanged(ctx, nil, alice, media.AvatarSlotName, false); err != nil {
 		t.Fatal(err)
 	}
 	if got, ok := w.metadata(t, w.alice.ID)["avatar"]; ok {
 		t.Fatalf("removed avatar still named: %v", got)
 	}
 	// Another site's avatar stays named.
-	other := "https://media.hentai0.test/hentai0/user/" + w.bob.ID + "/public/avatar-256.webp?v=h1"
+	other := "https://media.hentai0.test/hentai0/user/" + w.bob.ID + "/public/avatar-256.webp"
 	if err := w.auth.PatchPublicMetadata(ctx, iam.SystemActor(), w.bob.ID, map[string]any{"avatar": other}); err != nil {
 		t.Fatal(err)
 	}
-	if err := avatars.SlotChanged(ctx, nil, set(bob, "")); err != nil {
+	if err := avatars.SlotChanged(ctx, nil, bob, media.AvatarSlotName, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.metadata(t, w.bob.ID)["avatar"]; got != other {
 		t.Fatalf("a removal here cleared another site's avatar: %v", got)
 	}
 	// The key and width are the host's; an unknown account is done.
-	if err := (&ckauthkit.Avatars{Directory: w.auth, Links: links{}, Key: "picture", Width: 64}).SlotChanged(ctx, nil, set(bob, "v3")); err != nil {
+	if err := (&ckauthkit.Avatars{Directory: w.auth, Links: links{}, Key: "picture", Width: 64}).SlotChanged(ctx, nil, bob, media.AvatarSlotName, true); err != nil {
 		t.Fatal(err)
 	}
-	if got := w.metadata(t, w.bob.ID)["picture"]; got != links.SlotLink(links{}, bob, media.AvatarSlotName, 64, "v3") {
+	if got := w.metadata(t, w.bob.ID)["picture"]; got != link(bob, 64) {
 		t.Fatalf("public_metadata.picture = %v", got)
 	}
-	if err := avatars.SlotChanged(ctx, nil, set(avatarOf(contentref.NewID()).Ref, "v1")); err != nil {
+	if err := avatars.SlotChanged(ctx, nil, avatarOf(contentref.NewID()).Ref, media.AvatarSlotName, true); err != nil {
 		t.Fatalf("unknown account: %v", err)
 	}
 }
@@ -185,7 +177,7 @@ func TestAuthors(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
 	alice := avatarOf(w.alice.ID).Ref
-	if err := (&ckauthkit.Avatars{Directory: w.auth, Links: links{}}).SlotChanged(ctx, nil, set(alice, "v1")); err != nil {
+	if err := (&ckauthkit.Avatars{Directory: w.auth, Links: links{}}).SlotChanged(ctx, nil, alice, media.AvatarSlotName, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.auth.PatchPublicMetadata(ctx, iam.SystemActor(), w.bob.ID, map[string]any{"avatar": "javascript:alert(1)"}); err != nil {
@@ -197,10 +189,9 @@ func TestAuthors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	link := links{}.SlotLink(alice, media.AvatarSlotName, 256, "v1")
 	a := got[w.alice.ID]
-	if a.Username != w.alice.Username || a.Avatar != links.SlotLink(links{}, alice, media.AvatarSlotName, 64, "v1") ||
-		a.AvatarSrcSet != media.AvatarSlot.LinkSrcSet(link) || !strings.Contains(a.AvatarSrcSet, "/avatar-512.webp?v=v1 512w") {
+	if a.Username != w.alice.Username || a.Avatar != link(alice, 64) ||
+		a.AvatarSrcSet != media.AvatarSlot.LinkSrcSet(link(alice, 256)) || !strings.Contains(a.AvatarSrcSet, "/avatar-512.webp 512w") {
 		t.Fatalf("alice %+v", a)
 	}
 	if b := got[w.bob.ID]; b.Username != w.bob.Username || b.Avatar != "" || b.AvatarSrcSet != "" {
@@ -210,7 +201,7 @@ func TestAuthors(t *testing.T) {
 		t.Fatalf("unknown %+v", u)
 	}
 	got, err = (&ckauthkit.Authors{Directory: w.auth, Width: 128}).UsersByIDs(ctx, []string{w.alice.ID})
-	if err != nil || got[w.alice.ID].Avatar != links.SlotLink(links{}, alice, media.AvatarSlotName, 128, "v1") {
+	if err != nil || got[w.alice.ID].Avatar != link(alice, 128) {
 		t.Fatalf("width 128: %+v %v", got, err)
 	}
 

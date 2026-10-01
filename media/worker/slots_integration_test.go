@@ -64,9 +64,9 @@ func fixedKeys(item media.Item) []string {
 }
 
 // An account avatar end to end: the worker renders it to fixed public names,
-// the slot index lists it with a version once the host's hook succeeds, a
-// replacement overwrites the same names (purged, a new version), only the
-// user may change it, removal deletes the names, and erasure drops the row.
+// the slot index lists it once the host's hook succeeds, a replacement
+// overwrites the same names (purged, same URLs), only the user may change it,
+// removal deletes the names, and erasure drops the row.
 func TestAvatarSlotIndexLinksAndRemoval(t *testing.T) {
 	h := newHost(t)
 	ctx := context.Background()
@@ -102,23 +102,20 @@ func TestAvatarSlotIndexLinksAndRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := rec.Result.Of
-	if got := h.slotChanges(); !slices.Equal(got, []string{user.String() + "#avatar set:" + first}) {
+	set := user.String() + "#avatar set"
+	if got := h.slotChanges(); !slices.Equal(got, []string{set}) {
 		t.Fatalf("SlotChanged %v, want one set after the retry", got)
 	}
 
 	// Fixed names, each a copy of its private rendition; the manifest records them.
 	pic := h.avatar(t, user, 100)
-	if want := mediaURL + "/" + keys[1] + "?v=" + first; pic.URL != want || pic.W != 128 || pic.H != 128 {
+	if want := mediaURL + "/" + keys[1]; pic.URL != want || pic.W != 128 || pic.H != 128 {
 		t.Fatalf("avatar at 100 px: %+v, want %s", pic, want)
 	}
-	if link := h.reader.SlotLink(user, media.AvatarSlotName, 100, first); link != pic.URL {
+	if link := h.reader.SlotLink(user, media.AvatarSlotName, 100); link != pic.URL {
 		t.Fatalf("SlotLink %q, want %q", link, pic.URL)
 	}
-	if link := h.reader.SlotLink(user, media.AvatarSlotName, 100, ""); link != mediaURL+"/"+keys[1] {
-		t.Fatalf("unversioned SlotLink %q", link)
-	}
-	if n := strings.Count(pic.SrcSet, "w,") + 1; n != 4 || !strings.Contains(pic.SrcSet, "/avatar-512.webp?v="+first+" 300w") {
+	if n := strings.Count(pic.SrcSet, "w,") + 1; n != 4 || !strings.Contains(pic.SrcSet, "/avatar-512.webp 300w") {
 		t.Fatalf("srcset %q", pic.SrcSet)
 	}
 	etags := map[string]string{}
@@ -135,13 +132,11 @@ func TestAvatarSlotIndexLinksAndRemoval(t *testing.T) {
 		etags[keys[i]] = etag
 	}
 
-	// A replacement overwrites the same names, purges them, and changes v.
+	// A replacement overwrites the same names and purges them; URLs stay.
 	upload(42)
-	eventually(t, "the replaced row", time.Minute, func() bool { return h.avatar(t, user, 100).URL != pic.URL })
-	rec, _ = h.manifests.Slot(ctx, user, media.AvatarSlotName)
-	second := rec.Result.Of
-	if second == first || h.avatar(t, user, 100).URL != mediaURL+"/"+keys[1]+"?v="+second {
-		t.Fatalf("replaced version %s (was %s): %+v", second, first, h.avatar(t, user, 100))
+	eventually(t, "the replaced row", time.Minute, func() bool { return len(h.slotChanges()) == 2 })
+	if got := h.slotChanges(); got[1] != set || h.avatar(t, user, 100) != pic {
+		t.Fatalf("replaced: SlotChanged %v, avatar %+v", got, h.avatar(t, user, 100))
 	}
 	for _, key := range keys {
 		if _, etag, ok := h.object(t, key); !ok || etag == etags[key] {
@@ -249,7 +244,7 @@ func TestHiddenItemLeavesTheSlotIndex(t *testing.T) {
 	}
 	eventually(t, "the unhidden cover's row", time.Minute, listed)
 	got := h.slotChanges()
-	if len(got) != 3 || !strings.HasPrefix(got[0], work.String()+"#cover set:") || got[1] != work.String()+"#cover clear" || got[2] != got[0] {
+	if set, clear := work.String()+"#cover set", work.String()+"#cover clear"; !slices.Equal(got, []string{set, clear, set}) {
 		t.Fatalf("SlotChanged %v", got)
 	}
 }

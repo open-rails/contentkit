@@ -157,13 +157,25 @@ func TestExposure(t *testing.T) {
 
 	// Paid: the poster is public.
 	expose(access.Resolution{Visible: true})
-	// A fixed name is rewritten on a change: caches keep it briefly, and the
-	// read API's URL carries ?v= the record's fingerprint.
-	if code, cc := fetch(mediaSrv.URL + "/" + publicKey + "?v=" + fp); code != http.StatusOK || cc != "public, max-age=300, stale-while-revalidate=60" {
+	// A fixed name is rewritten on a change: caches keep it briefly and
+	// revalidate by ETag.
+	if code, cc := fetch(mediaSrv.URL + "/" + publicKey); code != http.StatusOK || cc != "public, max-age=300, stale-while-revalidate=60" {
 		t.Fatalf("paid poster: %d %q", code, cc)
 	}
+	head, err := http.Get(mediaSrv.URL + "/" + publicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head.Body.Close()
+	req, _ := http.NewRequest(http.MethodGet, mediaSrv.URL+"/"+publicKey, nil)
+	req.Header.Set("If-None-Match", head.Header.Get("ETag"))
+	if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != http.StatusNotModified || head.Header.Get("ETag") == "" {
+		t.Fatalf("revalidation: %v %v (ETag %q)", resp, err, head.Header.Get("ETag"))
+	} else {
+		resp.Body.Close()
+	}
 	code, v := images("viewer")
-	if code != http.StatusOK || len(v.Poster.Outputs) != 1 || v.Poster.Outputs[0].URL != mediaSrv.URL+"/"+publicKey+"?v="+fp ||
+	if code != http.StatusOK || len(v.Poster.Outputs) != 1 || v.Poster.Outputs[0].URL != mediaSrv.URL+"/"+publicKey ||
 		v.Poster.File != "source" || v.Poster.Time == nil || *v.Poster.Time != 2.5 || v.Poster.Selection != nil {
 		t.Fatalf("paid video-images: %d %+v", code, v)
 	}

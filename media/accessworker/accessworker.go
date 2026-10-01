@@ -39,9 +39,9 @@ const (
 	HealthPath = "/healthz"
 
 	// private/ names and public/ file copies are their content's SHA-256:
-	// never rewritten. A public slot's fixed names are overwritten on a change,
-	// so caches keep them briefly (links carry ?v= to bust them at once).
-	// Editor views are discardable, and never shared.
+	// never rewritten. A public slot's fixed names are overwritten on a change
+	// (and purged, Hooks.PurgePublic), so caches keep them briefly and
+	// revalidate by ETag. Editor views are discardable, and never shared.
 	privateCacheControl = "private, max-age=31536000, immutable"
 	publicCacheControl  = "public, max-age=31536000, immutable"
 	slotCacheControl    = "public, max-age=300, stale-while-revalidate=60"

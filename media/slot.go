@@ -411,15 +411,15 @@ func (u OutputURLs) url(item Item, blob string, public bool) string {
 }
 
 // slotURL is a slot output's URL for this caller: its public copy while the
-// item is visible (a registered slot's fixed name with ?v=version, an inline
-// image's content-named copy), else its private/ rendition under Token
-// (editors), else "".
-func (u OutputURLs) slotURL(item Item, slot string, o SlotRendition, visible bool, version string) string {
+// item is visible (a registered slot's fixed name, an inline image's
+// content-named copy), else its private/ rendition under Token (editors),
+// else "".
+func (u OutputURLs) slotURL(item Item, slot string, o SlotRendition, visible bool) string {
 	switch {
 	case visible && layout.ValidInlineName(slot):
 		return u.url(item, o.Blob, true)
 	case visible:
-		return slotURL(u.BaseURL, item, o.PublicName(slot), version)
+		return slotURL(u.BaseURL, item, o.PublicName(slot))
 	}
 	return u.url(item, o.Blob, false)
 }
@@ -463,7 +463,7 @@ func (m *Manifests) slotManifest(ctx context.Context, urls OutputURLs, ref conte
 		out.Error, out.ErrorCode, out.ErrorDetails = res.Error, res.Code, res.Details
 	}
 	for _, o := range res.Outputs {
-		if u := urls.slotURL(item, slot, o, !root.Hidden, res.Of); u != "" {
+		if u := urls.slotURL(item, slot, o, !root.Hidden); u != "" {
 			out.Outputs = append(out.Outputs, SlotImage{W: o.W, H: o.H, URL: u})
 		}
 	}
@@ -567,11 +567,11 @@ func (r *Reader) SlotImages(ctx context.Context, tenant, kind, slot string, widt
 
 // SlotLink is a public slot's URL at the narrowest rung at least width wide
 // (the widest otherwise): the fixed name {BaseURL}/{tenant}/{kind}/{id}/public/
-// {slot}-{rung}.webp, a function of the item, slot and width, with ?v=version
-// to bust caches (SlotChange.Version; Picture URLs carry it). Without version
-// it serves the current image within the cache window. Nothing is there while
-// the slot has no public image. "" for an unknown kind or slot.
-func (r *Reader) SlotLink(ref contentref.ContentRef, slot string, width int, version string) string {
+// {slot}-{rung}.webp, a function of the item, slot and width; a replaced
+// image is purged from the CDN and revalidated by caches within minutes.
+// Nothing is there while the slot has no public image. "" for an unknown kind
+// or slot.
+func (r *Reader) SlotLink(ref contentref.ContentRef, slot string, width int) string {
 	item, s, err := r.kinds.slot(ref, slot)
 	if err != nil {
 		return ""
@@ -579,7 +579,7 @@ func (r *Reader) SlotLink(ref contentref.ContentRef, slot string, width int, ver
 	if _, registered := item.Kind().Slots[slot]; !registered {
 		return ""
 	}
-	return slotURL(r.base.String(), item, layout.SlotFileName(slot, s.Rung(width)), version)
+	return slotURL(r.base.String(), item, layout.SlotFileName(slot, s.Rung(width)))
 }
 
 // InlineURL is an inline image's public URL, or ErrPending until the worker
