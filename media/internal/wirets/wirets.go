@@ -1,4 +1,4 @@
-// Package wirets renders the upload API wire types as TypeScript for the
+// Package wirets renders the upload and read API wire types as TypeScript for the
 // browser SDK (sdk/upload/src/wire.gen.ts). The test keeps the file current:
 //
 //	go test ./media/internal/wirets -update
@@ -17,25 +17,33 @@ import (
 var types = []any{
 	media.RefBody{}, media.PresignBody{}, media.RequestReply{}, media.MultipartReply{}, media.PresignReply{},
 	media.PartBody{}, media.PartsBody{}, media.TicketBody{}, media.PartReply{}, media.PartsReply{},
-	media.CompleteReply{}, media.Crop{}, media.Edit{}, media.Op{}, media.CommitBody{}, media.CommitFile{},
-	media.CommitReply{}, media.SlotBody{}, media.SlotFromFileBody{}, media.SlotEditBody{}, media.SlotRefBody{},
-	media.Dims{}, media.SlotImage{}, media.ErrorDetails{}, media.SlotManifest{},
-	media.VideoImagesBody{}, media.VideoPosterBody{}, media.PosterSelection{}, media.PosterManifest{},
-	media.VideoInfo{}, media.VideoImages{}, media.ErrorReply{},
-	media.ReadResult{}, media.FileInfo{}, media.DownloadInfo{}, media.EncodeProgress{},
-	media.FilesBody{}, media.FilesReply{},
+	media.CompleteReply{}, media.Crop{}, media.Edit{}, media.CopyFrom{}, media.Op{}, media.CommitBody{}, media.CommitReply{},
+	media.ErrorDetails{}, media.ErrorReply{}, media.Frame{}, media.Failure{}, media.EncodeProgress{},
+	media.ReadResult{}, media.FileInfo{},
 }
-
-var posterSources = []string{media.PosterSourceFrame, media.PosterSourceUpload, media.PosterSourceAuto}
 
 var errorCodes = []string{
 	media.CodeInvalid, "unauthorized", media.CodeForbidden, media.CodeNotFound, media.CodeConflict,
 	media.CodeIncomplete, media.CodeNotUploaded, media.CodeTooManyFiles, media.CodeTooLarge, media.CodeQuota, media.CodeType,
-	media.CodeChecksum, media.CodeRate, media.CodeImageTooSmall, media.CodeImageTooLarge, media.CodeImageUnreadable,
+	media.CodeChecksum, media.CodeRate, media.CodeUnavailable, media.CodeImageTooSmall, media.CodeImageTooLarge, media.CodeImageUnreadable,
 	media.CodeAnimationNotAllowed, media.CodeAnimationTooLong, media.CodeAnimationUnsupported, "internal_error",
 }
 
-var ops = []string{media.OpInsert, media.OpAttach, media.OpReplace, media.OpMove, media.OpRename, media.OpRemove, media.OpEdit}
+var ops = []string{media.OpPut, media.OpEdit, media.OpMove, media.OpRename, media.OpRemove, media.OpAttach,
+	media.OpCopy, media.OpFrame, media.OpMeta, media.OpRegenerate}
+
+var access = []string{media.AccessFull, media.AccessPreview, media.AccessNone}
+
+var states = []string{media.StateReady, media.StateProcessing, media.StateFailed}
+
+// named types a field renders as, by "Type.json".
+var named = map[string]string{
+	"Op.op":                "OpName",
+	"ErrorReply.code":      "ErrorCode",
+	"EncodeProgress.phase": "EncodePhase",
+	"ReadResult.access":    "Access",
+	"ReadResult.state":     "ItemState",
+}
 
 // Render returns the TypeScript source.
 func Render() string {
@@ -45,7 +53,8 @@ func Render() string {
 		media.MaxSinglePut, media.MinPartSize, media.MaxPartSize)
 	fmt.Fprintf(&b, "export type ErrorCode = %s;\n\n", union(errorCodes))
 	fmt.Fprintf(&b, "export type OpName = %s;\n", union(ops))
-	fmt.Fprintf(&b, "export type PosterSource = %s;\n", union(posterSources))
+	fmt.Fprintf(&b, "export type Access = %s;\n", union(access))
+	fmt.Fprintf(&b, "export type ItemState = %s;\n", union(states))
 	fmt.Fprintf(&b, "export type EncodePhase = %s;\n", union(media.EncodePhases))
 	for _, v := range types {
 		t := reflect.TypeOf(v)
@@ -73,17 +82,8 @@ func Render() string {
 				name = f.Name
 			}
 			typ := ts(f.Type)
-			if t.Name() == "Op" && name == "op" {
-				typ = "OpName"
-			}
-			if t.Name() == "ErrorReply" && name == "code" {
-				typ = "ErrorCode"
-			}
-			if (t.Name() == "VideoPosterBody" || t.Name() == "PosterSelection") && name == "source" {
-				typ = "PosterSource"
-			}
-			if t.Name() == "EncodeProgress" && name == "phase" {
-				typ = "EncodePhase"
+			if n, ok := named[t.Name()+"."+name]; ok {
+				typ = n
 			}
 			opt := ""
 			if strings.Contains(opts, "omitempty") || f.Type.Kind() == reflect.Pointer {

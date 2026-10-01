@@ -1,12 +1,18 @@
-// Command uploadtestserver serves media.UploadHandler over an isolated MinIO/RGW
-// tenant for the browser SDK's integration tests (sdk/upload/test). It reads
-// the CONTENTKIT_TEST_S3_* variables, presigns for -public (a proxy the test
-// controls), prints "READY <url>" and runs until stdin closes.
-// CONTENTKIT_TEST_S3_BUCKET selects an existing bucket; cleanup removes only the test tenant.
+// Command uploadtestserver serves the media upload and read APIs over an
+// isolated MinIO/RGW namespace for the browser SDK's integration tests
+// (sdk/upload/test) and e2e specs. It reads the CONTENTKIT_TEST_S3_*
+// variables, presigns for -public (a proxy the test controls), prints
+// "READY <url> <namespace>" and runs until stdin closes.
+// CONTENTKIT_TEST_S3_BUCKET selects an existing bucket; cleanup removes only
+// the test namespace.
 //
-//	POST /upload/...          the upload API; X-Test-Actor names the caller
-//	POST /upload-on-upload/...  the same with ProcessOnUpload
-//	GET  /object?kind&id&version&name|slot   {"size","sha256","edit"} of a stored original
+//	/upload/...            the upload API; X-Test-Actor names the caller ("reader" may not upload)
+//	/upload-on-upload/...  the same with ProcessOnUpload
+//	/read/...              the read API; "reader" reads as a viewer, everyone else as an editor
+//	GET /object?kind&id&path|public   {"size","sha256"} of a stored file: an
+//	                       item's file by path (or stem), or a public name
+//
+// It has no libvips or ffmpeg: a stand-in worker (standIn) processes items.
 package main
 
 import (
@@ -24,7 +30,7 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strings"
+	"path"
 	"sync"
 	"time"
 
@@ -36,9 +42,74 @@ import (
 	"github.com/open-rails/contentkit/media/token"
 )
 
+var images = []string{"image/png", "image/jpeg"}
+
+// kinds exercise the SDK: ordered pages with a derived file and a cropped
+// public cover, a capped kind with server-named inline images, and a video
+// whose poster is a frame or an upload.
+var kinds = []media.Kind{
+	{Name: "gallery", KeepOriginals: true,
+		Uploads: []media.Upload{
+			{Path: "originals/{name}", Types: images, MaxBytes: 10 << 20, Pages: true},
+			{Path: "cover", Types: images, MaxBytes: 10 << 20},
+		},
+		Private: []media.Private{{Name: "low", From: "originals/{name}", To: "low-res/{name}.webp", Image: &media.Image{Width: 1200, Height: 1200}}},
+		Public: []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{230, 460},
+			Image: media.Image{Aspect: media.Ratio("3:1")}}}},
+	{Name: "post",
+		Uploads: []media.Upload{
+			{Path: "originals/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20, Max: 2},
+			{Path: "inline/{name}", Types: images, MaxBytes: 1 << 20, Named: true},
+		},
+		Public: []media.Public{{Name: "inline", From: "inline/{name}", To: "{name}.webp", Image: media.Image{Width: 1600}}}},
+	{Name: "video", KeepOriginals: true,
+		Uploads: []media.Upload{
+			{Path: "source", Types: []string{"video/mp4"}, MaxBytes: 1 << 30},
+			{Path: "poster", Types: images, MaxBytes: 10 << 20, Frames: "source"},
+			{Path: "subs/{name}", Types: []string{"text/vtt", "application/x-subrip"}, MaxBytes: 1 << 20},
+		},
+		Public: []media.Public{{Name: "poster", From: "poster", To: "poster-{w}.webp", Widths: []int{640}}}},
+}
+
 type allow struct{}
 
-// uploadStore records this fixture's sessions; MinIO cannot list uploads by tenant prefix.
+func (allow) Resolve(_ context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	out := map[contentref.ContentKey]access.Resolution{}
+	for _, ref := range refs {
+		out[ref.Key()] = access.Resolution{Visible: true, Accessible: true, Editor: !a.Anonymous && a.ID != "reader"}
+	}
+	return out, nil
+}
+
+func (allow) CanUpload(_ context.Context, a access.Actor, _ media.UploadTarget) (media.UploadGrant, error) {
+	return media.UploadGrant{Allowed: a.ID != "reader", Owner: "owner"}, nil
+}
+
+type actorKey struct{}
+
+// identity is the X-Test-Actor caller, for the read API.
+type identity struct{}
+
+func (identity) Actor(ctx context.Context) (access.Actor, bool) {
+	a, ok := ctx.Value(actorKey{}).(access.Actor)
+	return a, ok
+}
+
+func actor(r *http.Request) (access.Actor, bool) {
+	id := r.Header.Get("X-Test-Actor")
+	return access.Actor{ID: id, Kind: "user"}, id != ""
+}
+
+func withActor(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a, ok := actor(r); ok {
+			r = r.WithContext(context.WithValue(r.Context(), actorKey{}, a))
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// uploadStore records this fixture's sessions; MinIO cannot list uploads by prefix.
 type uploadStore struct {
 	*mediaS3.Store
 	mu      sync.Mutex
@@ -57,63 +128,16 @@ func (s *uploadStore) CreateMultipart(ctx context.Context, key, contentType stri
 	return id, err
 }
 
-func (allow) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	out := map[contentref.ContentKey]access.Resolution{}
-	for _, ref := range refs {
-		out[ref.Key()] = access.Resolution{Visible: true, Accessible: true, Editor: true}
-	}
-	return out, nil
-}
-
-func (allow) CanUpload(_ context.Context, a access.Actor, _ media.UploadTarget) (media.UploadGrant, error) {
-	return media.UploadGrant{Allowed: a.ID != "reader", Owner: "owner"}, nil
-}
-
-// inlineRenderer stands in for the media worker's image job for inline
-// images (this server has no libvips): the rendition is the original's bytes.
-// Other jobs are dropped, so slots stay pending.
-type inlineRenderer struct {
-	store     media.Store
-	kinds     *media.Registry
-	manifests *media.Manifests
-}
-
-func (q inlineRenderer) Enqueue(ctx context.Context, j media.ProcessJob) error {
-	item, err := q.kinds.Item(j.Ref)
-	if err != nil || !item.Inline(j.Slot) {
-		return err
-	}
-	rec, err := q.manifests.Slot(ctx, j.Ref, j.Slot)
-	if err != nil {
-		return err
-	}
-	src, _ := item.Original(rec.Original)
-	dst, _ := item.Private(rec.Original)
-	if _, err := q.store.Copy(ctx, src, dst, media.CopyOptions{}); err != nil {
-		return err
-	}
-	spec := media.InlineSlot(*item.Kind().Inline)
-	if err := q.manifests.UpdateSlot(ctx, j.Ref, j.Slot, func(r *media.SlotRecord) error {
-		r.Result = &media.SlotResult{Of: r.Fingerprint(spec), Source: r.Original,
-			Outputs: []media.SlotRendition{{Rung: spec.Widths[0], Blob: r.Original, Size: r.Size}}}
-		return nil
-	}); err != nil {
-		return err
-	}
-	_, err = q.manifests.SyncPublic(ctx, j.Ref)
-	return err
-}
-
 func main() {
 	public := flag.String("public", "", "presign endpoint the client reaches (default: the S3 endpoint)")
-	grace := flag.Duration("grace", 0, "sweep grace; short values let tests see originals go stale")
+	grace := flag.Duration("grace", 0, "sweep grace; short values let tests see uploads go stale")
 	flag.Parse()
 	ctx := context.Background()
 
 	suffix := make([]byte, 6)
 	_, err := rand.Read(suffix)
 	must(err)
-	tenant := "sdk-" + hex.EncodeToString(suffix)
+	namespace := "sdk-" + hex.EncodeToString(suffix)
 	cfg := mediaS3.Config{
 		Bucket:          os.Getenv("CONTENTKIT_TEST_S3_BUCKET"),
 		Region:          os.Getenv("CONTENTKIT_TEST_S3_REGION"),
@@ -125,7 +149,7 @@ func main() {
 	}
 	created := cfg.Bucket == ""
 	if created {
-		cfg.Bucket = "ck-" + tenant
+		cfg.Bucket = "ck-" + namespace
 	}
 	s3store, err := mediaS3.New(cfg)
 	must(err)
@@ -134,76 +158,54 @@ func main() {
 		_, err = store.Client().CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &cfg.Bucket})
 		must(err)
 	}
+	worker := &standIn{store: store}
 	defer func() {
-		if err := drop(store, tenant+"/", created); err != nil {
+		worker.wg.Wait()
+		if err := drop(store, namespace+"/", created); err != nil {
 			log.Print(err)
 			os.Exit(1)
 		}
 	}()
-	must(store.Check(ctx, tenant+"/probe/"))
-	log.Printf("upload fixture bucket=%s prefix=%s/", cfg.Bucket, tenant)
+	must(store.Check(ctx, namespace+"/probe/"))
+	log.Printf("upload fixture bucket=%s prefix=%s/", cfg.Bucket, namespace)
 
-	kinds, err := media.NewRegistry(
-		media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png", "image/jpeg"}, MaxBytes: 10 << 20,
-			Slots: map[string]media.Slot{"cover": {Aspect: media.Aspect3x1, Widths: []int{460}}}},
-		media.Kind{Name: "video", Types: []string{"video/mp4"}, MaxBytes: 1 << 30},
-		media.Kind{Name: "post", Types: []string{"image/png"}, MaxBytes: 1 << 20, MaxFiles: 2, Inline: &media.Spec{Width: 1600},
-			Slots: map[string]media.Slot{"cover": {Aspect: media.Ratio("1:2"), Widths: []int{50}}}},
-	)
+	reg, err := media.NewRegistry(media.Config{Namespace: namespace, BaseURL: "http://media.invalid", Kinds: kinds,
+		Hooks: media.Hooks{Resolver: allow{}, CanUpload: allow{}}})
 	must(err)
-	manifests, err := media.NewManifests(store, kinds, media.ManifestOptions{Locker: &procLocker{}})
+	manifests, err := media.NewManifests(store, reg, media.ManifestOptions{Locker: &procLocker{}})
 	must(err)
+	worker.reg, worker.manifests = reg, manifests
 	key := token.Key{ID: "k1", Secret: bytes.Repeat([]byte("s"), 32)}
 	ring, err := token.NewRing(key, nil)
 	must(err)
-	reader, err := media.NewReader(media.ReaderOptions{Manifests: manifests, Kinds: kinds, Resolver: allow{},
-		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: "http://media.invalid", SigningKey: key}})
+	reader, err := media.NewReader(media.ReaderOptions{Manifests: manifests, Queue: worker,
+		Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: key}})
 	must(err)
-	uploads, err := media.NewUploads(media.UploadOptions{Store: store, Kinds: kinds, Manifests: manifests, Tickets: &ring, Authorizer: allow{}, Grace: *grace,
-		Queue: inlineRenderer{store, kinds, manifests}})
-	must(err)
-
-	// The same API with UploadOptions.ProcessOnUpload.
-	onUpload, err := media.NewUploads(media.UploadOptions{Store: store, Kinds: kinds, Manifests: manifests, Tickets: &ring, Authorizer: allow{},
-		Grace: *grace, ProcessOnUpload: true})
-	must(err)
+	newUploads := func(onUpload bool) http.Handler {
+		u, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests, Tickets: &ring, Grace: *grace,
+			Queue: worker, Frames: worker, ProcessOnUpload: onUpload})
+		must(err)
+		return media.UploadHandler(u, media.UploadHandlerOptions{Actor: actor})
+	}
 
 	mux := http.NewServeMux()
-	handler := func(u *media.Uploads) http.Handler {
-		return media.UploadHandler(u, media.UploadHandlerOptions{
-			Tenant: tenant,
-			Reader: reader,
-			Actor: func(r *http.Request) (access.Actor, bool) {
-				id := r.Header.Get("X-Test-Actor")
-				return access.Actor{ID: id, Kind: "user"}, id != ""
-			},
-		})
-	}
-	mux.Handle("/upload/", http.StripPrefix("/upload", handler(uploads)))
-	mux.Handle("/upload-on-upload/", http.StripPrefix("/upload-on-upload", handler(onUpload)))
+	mux.Handle("/upload/", http.StripPrefix("/upload", newUploads(false)))
+	mux.Handle("/upload-on-upload/", http.StripPrefix("/upload-on-upload", newUploads(true)))
+	mux.Handle("/read/", http.StripPrefix("/read", withActor(reader.Handler(media.HandlerOptions{Identity: identity{}, Limit: media.ViewerLimit{Disabled: true}}))))
 	mux.HandleFunc("GET /object", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		item, err := kinds.Item(contentref.NewVersion(tenant, q.Get("kind"), q.Get("id"), q.Get("version")))
+		ref, err := reg.Ref(q.Get("kind"), q.Get("id"))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		name := q.Get("name")
-		slot := q.Get("slot")
-		if slot == "" && strings.HasPrefix(name, "i-") {
-			slot = name
+		item, _ := reg.Item(ref)
+		key, err := item.Public(q.Get("public"))
+		if !q.Has("public") {
+			key, err = fileKey(r.Context(), manifests, item, q.Get("path"))
 		}
-		if slot != "" {
-			rec, err := manifests.Slot(r.Context(), item.Ref().Content(), slot)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusNotFound)
-				return
-			}
-			name = rec.Original
-		}
-		key, err := item.Original(name)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
 		rc, _, err := store.Get(r.Context(), key, media.GetOptions{})
@@ -218,21 +220,14 @@ func main() {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		out := map[string]any{"size": n, "sha256": hex.EncodeToString(h.Sum(nil))}
-		if q.Has("slot") {
-			if rec, err := manifests.Slot(r.Context(), item.Ref(), q.Get("slot")); err == nil && rec.Edit != nil {
-				b, _ := json.Marshal(rec.Edit)
-				out["edit"] = string(b)
-			}
-		}
-		_ = json.NewEncoder(w).Encode(out)
+		_ = json.NewEncoder(w).Encode(map[string]any{"size": n, "sha256": hex.EncodeToString(h.Sum(nil))})
 	})
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	must(err)
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = srv.Serve(ln) }()
-	fmt.Printf("READY http://%s\n", ln.Addr())
+	fmt.Printf("READY http://%s %s\n", ln.Addr(), namespace)
 
 	// Exit when the test runner closes stdin (or dies), or after an hour.
 	done := make(chan struct{})
@@ -243,6 +238,22 @@ func main() {
 	}
 	_ = srv.Close()
 }
+
+// fileKey is the blob key of the item's file at p, or of the upload whose stem p is.
+func fileKey(ctx context.Context, manifests *media.Manifests, item media.Item, p string) (string, error) {
+	m, _, err := manifests.Get(ctx, item.Ref())
+	if err != nil {
+		return "", err
+	}
+	for _, f := range m.Files {
+		if f.Path == p || f.IsUpload() && trimExt(f.Path) == p {
+			return item.Blob(f.Blob)
+		}
+	}
+	return "", fmt.Errorf("no file %q", p)
+}
+
+func trimExt(p string) string { return p[:len(p)-len(path.Ext(p))] }
 
 // drop removes only this fixture's uploads and object versions. Existing buckets stay intact.
 func drop(store *uploadStore, prefix string, created bool) error {
