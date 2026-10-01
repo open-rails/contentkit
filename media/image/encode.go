@@ -260,8 +260,9 @@ func eachFrame(img *vips.ImageRef, fn func(*vips.ImageRef) error) (*vips.ImageRe
 	return out, nil
 }
 
-// webp encodes img, every frame of an animation included.
-func webp(img *vips.ImageRef, quality int) ([]byte, error) {
+// webp encodes img, every frame of an animation included, and closes it.
+func webp(img *vips.ImageRef, quality int) ([]byte, media.Dims, error) {
+	defer img.Close()
 	p := vips.NewWebpExportParams()
 	p.Quality = quality
 	if p.Quality <= 0 {
@@ -269,49 +270,64 @@ func webp(img *vips.ImageRef, quality int) ([]byte, error) {
 	}
 	p.StripMetadata = true
 	out, _, err := img.ExportWebp(p)
-	return out, err
-}
-
-// encode derives one WebP from src through edit per spec, frame by frame
-// (nil edit: the whole source). Inside never enlarges; cover fills the box
-// and crops the centre; a zero box keeps full resolution.
-func encode(src []byte, contentType string, s media.Image, edit *media.Edit) ([]byte, media.Dims, error) {
-	full := s.Width == 0 && s.Height == 0
-	w, h := orUnbounded(s.Width), orUnbounded(s.Height)
-	crop, size := vips.InterestingNone, vips.SizeDown
-	if s.Fit == media.FitCover && s.Width > 0 && s.Height > 0 {
-		crop, size = vips.InterestingCentre, vips.SizeBoth
-	}
-	var img *vips.ImageRef
-	var err error
-	if edit == nil && !full && !animated[contentType] {
-		img, err = vips.NewThumbnailWithSizeFromBuffer(src, w, h, crop, size) // shrink on load
-		if err == nil && s.Blur > 0 {
-			err = img.GaussianBlur(s.Blur)
-		}
-	} else if img, err = open(src, contentType); err == nil {
-		img, err = eachFrame(img, func(f *vips.ImageRef) error {
-			err := apply(f, edit)
-			if err == nil && !full {
-				err = f.ThumbnailWithSize(w, h, crop, size)
-			}
-			if err == nil && s.Blur > 0 {
-				err = f.GaussianBlur(s.Blur)
-			}
-			return err
-		})
-	}
-	if img != nil {
-		defer img.Close()
-	}
-	if err != nil {
-		return nil, media.Dims{}, permanentError{err}
-	}
-	out, err := webp(img, s.Quality)
 	if err != nil {
 		return nil, media.Dims{}, permanentError{err}
 	}
 	return out, media.Dims{W: img.Width(), H: img.PageHeight()}, nil
+}
+
+// box is s's box: cover fills Width×Height and crops the centre; inside
+// fits within it (a zero side unbounded) and never enlarges.
+func box(s media.Image) (w, h int, crop vips.Interesting, size vips.Size) {
+	if s.Fit == media.FitCover && s.Width > 0 && s.Height > 0 {
+		return s.Width, s.Height, vips.InterestingCentre, vips.SizeBoth
+	}
+	return orUnbounded(s.Width), orUnbounded(s.Height), vips.InterestingNone, vips.SizeDown
+}
+
+// transform is every rendering's one pipeline: each frame through edit,
+// into s's box (a zero box keeps its size), then blurred by s.Blur. The
+// result replaces img, which it closes on error.
+func transform(img *vips.ImageRef, edit *media.Edit, s media.Image) (*vips.ImageRef, error) {
+	w, h, crop, size := box(s)
+	out, err := eachFrame(img, func(f *vips.ImageRef) error {
+		err := apply(f, edit)
+		if err == nil && (s.Width > 0 || s.Height > 0) {
+			err = f.ThumbnailWithSize(w, h, crop, size)
+		}
+		if err == nil && s.Blur > 0 {
+			err = f.GaussianBlur(s.Blur)
+		}
+		return err
+	})
+	if err != nil {
+		if out != nil {
+			out.Close()
+		}
+		return nil, permanentError{err}
+	}
+	return out, nil
+}
+
+// encode derives one WebP from src through edit per spec (nil edit: the
+// whole source), shrinking an unedited still on load.
+func encode(src []byte, contentType string, s media.Image, edit *media.Edit) ([]byte, media.Dims, error) {
+	var img *vips.ImageRef
+	var err error
+	if edit == nil && (s.Width > 0 || s.Height > 0) && !animated[contentType] {
+		w, h, crop, size := box(s)
+		img, err = vips.NewThumbnailWithSizeFromBuffer(src, w, h, crop, size)
+		s.Width, s.Height = 0, 0 // sized
+	} else {
+		img, err = open(src, contentType)
+	}
+	if err != nil {
+		return nil, media.Dims{}, permanentError{err}
+	}
+	if img, err = transform(img, edit, s); err != nil {
+		return nil, media.Dims{}, err
+	}
+	return webp(img, s.Quality)
 }
 
 // rendition is one encoded public name.
@@ -322,10 +338,9 @@ type rendition struct {
 
 // encodePublic checks src is contentType and within r, decodes it, applies
 // its EXIF orientation and the preset's resolved edit, and encodes each of
-// names (one per width, or one at the image's box without widths), never
-// upscaling: a width past the edited image renders at the edited width, so
-// every name exists. Animations stay animated. dims is the oriented
-// source's (one frame's) size once known.
+// names (one per width, or one at the image's box without widths) through
+// the same transform as every rendering. dims is the oriented source's (one
+// frame's) size once known. Animations stay animated.
 func encodePublic(src []byte, contentType string, p *media.Public, names []string, edit *media.Edit, r rules) (map[string]rendition, media.Dims, error) {
 	var dims media.Dims
 	info, err := probe(src, contentType, r)
@@ -344,47 +359,55 @@ func encodePublic(src []byte, contentType string, p *media.Public, names []strin
 		return map[string]rendition{names[0]: {out, d}}, dims, nil
 	}
 	img, err := open(src, contentType)
-	if err == nil {
-		img, err = eachFrame(img, func(f *vips.ImageRef) error { return apply(f, edit) })
-	}
 	if err != nil {
 		return nil, dims, permanentError{err}
 	}
+	if img, err = transform(img, edit, media.Image{}); err != nil {
+		return nil, dims, err
+	}
 	defer img.Close()
 	edited := media.Dims{W: img.Width(), H: img.PageHeight()}
-	aspect := p.Image.Aspect
-	if aspect.Native() {
-		aspect = media.AspectOf(edited.W, edited.H)
-	}
 	outs := map[string]rendition{}
-	var last rendition
+	var last media.Image
 	for i, rung := range p.Widths {
-		w := min(rung, edited.W)
-		d := media.Dims{W: w, H: aspect.Height(w)}
-		if d == last.dims {
-			outs[names[i]] = last // widths past the edited width share its bytes
+		s := atWidth(p.Image, rung, edited)
+		if i > 0 && s == last {
+			outs[names[i]] = outs[names[i-1]] // widths past the edited width share its bytes
 			continue
 		}
 		out, err := img.Copy()
-		if err == nil {
-			out, err = eachFrame(out, func(f *vips.ImageRef) error {
-				return f.ThumbnailWithSize(d.W, d.H, vips.InterestingNone, vips.SizeForce)
-			})
-		}
-		var b []byte
-		if err == nil {
-			b, err = webp(out, p.Image.Quality)
-		}
-		if out != nil {
-			out.Close()
-		}
 		if err != nil {
 			return nil, dims, permanentError{err}
 		}
-		last = rendition{b, d}
-		outs[names[i]] = last
+		if out, err = transform(out, nil, s); err != nil {
+			return nil, dims, err
+		}
+		b, d, err := webp(out, s.Quality)
+		if err != nil {
+			return nil, dims, err
+		}
+		outs[names[i]], last = rendition{b, d}, s
 	}
 	return outs, dims, nil
+}
+
+// atWidth is a Widths preset's image at one width: its box is the width,
+// never past the edited image's (nothing is upscaled), at the shape of
+// im's Width×Height (fitted per Fit) or else at the edit's own aspect,
+// which it fills exactly.
+func atWidth(im media.Image, width int, edited media.Dims) media.Image {
+	s := im
+	s.Width = min(width, edited.W)
+	if im.Width > 0 && im.Height > 0 {
+		s.Height = max(1, (s.Width*im.Height+im.Width/2)/im.Width)
+		return s
+	}
+	aspect := im.Aspect
+	if aspect.Native() {
+		aspect = media.AspectOf(edited.W, edited.H)
+	}
+	s.Height, s.Fit = aspect.Height(s.Width), media.FitCover
+	return s
 }
 
 func apply(img *vips.ImageRef, e *media.Edit) error {

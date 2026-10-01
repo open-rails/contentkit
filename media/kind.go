@@ -282,6 +282,9 @@ func (k *Kind) validatePublic(p *Public, names map[string]bool) error {
 			return fmt.Errorf("Default %q: %w", p.Default, err)
 		}
 	}
+	if len(p.Widths) > 0 && (p.Image.Width > 0) != (p.Image.Height > 0) {
+		return errors.New("with Widths, Image.Width and Height are the names' shape: set both or neither")
+	}
 	p.Widths = slices.Sorted(slices.Values(p.Widths))
 	for j, w := range p.Widths {
 		if w <= 0 || w > maxWidth || j > 0 && w == p.Widths[j-1] {

@@ -123,8 +123,10 @@ type Private struct {
 
 // Public is a fixed public image: {To} with {w} at each of Widths (or one
 // file without Widths), rendered from an upload through its edit, at
-// public/{name}. It is never in the manifest; the object carries its from
-// and fp as metadata. A missing one is served Default by the access agent.
+// public/{name}. With Widths, each width is Image at that width: in the
+// shape of its Width×Height box (both or neither), fitted per Fit, else of
+// the edit. It is never in the manifest; the object carries its from and fp
+// as metadata. A missing one is served Default by the access agent.
 type Public struct {
 	Name   string `json:"name"`
 	From   string `json:"from"`
