@@ -439,7 +439,10 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   they exist. A shared kind ships its own, so importing apps merge nothing.
 - **Shared kinds.** A kind with `Namespace: "accounts"` lives at
   `accounts/{kind}/{id}/` and is served on every importing site's media host
-  (account avatars). An app's own namespace is never a shared one.
+  (account avatars). An app's own namespace is never a shared one. Every app
+  importing a shared kind (hosts and media workers) must lock in one
+  Postgres database: `PGLocker` takes advisory locks, which are per database,
+  and Ceph RGW has no conditional PUT to fall back on.
 - The stock worker reads the registry as JSON (`json.Marshal(reg)` into
   `MEDIA_KINDS_FILE`; `Choose` and hooks are not included).
 
