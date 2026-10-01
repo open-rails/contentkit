@@ -1,13 +1,15 @@
 import { createHash } from "node:crypto";
+import { UploadClient, stem } from "../src/client.js";
 import { UploadError } from "../src/errors.js";
 import type { Transport } from "../src/transport.js";
-import type { SlotManifest, VideoImages } from "../src/wire.gen.js";
-import type { ErrorReply, PartBody, PresignBody, RequestReply } from "../src/wire.gen.js";
+import type { ErrorReply, FileInfo, Op, PartBody, PresignBody, ReadResult, RequestReply } from "../src/wire.gen.js";
 
 const MiB = 1 << 20;
+const EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "video/mp4": "mp4", "application/x-subrip": "srt" };
 
 interface Upload {
-  name: string;
+  path: string;
+  blob: string;
   type: string;
   size: number;
   parts: Map<number, { size: number; sha256: string }>;
@@ -16,59 +18,61 @@ interface Upload {
 }
 
 /**
- * An in-process upload API and bucket with media.UploadHandler's semantics,
- * for unit tests of the client's scheduling. The integration suite runs the
- * real handler over MinIO.
+ * An in-process upload and read API and bucket with media.UploadHandler's
+ * and Reader.Handler's semantics, for unit tests of the client's scheduling
+ * and the components. The integration suite runs the real handlers over MinIO.
+ * Mount: endpoint "http://x/api", readEndpoint "http://x/read".
  */
 export class FakeServer {
+  /** Blobs in the bucket by name, with their size. */
   objects = new Map<string, number>();
-  /** Originals the sweep may take: presign re-uploads them and commit refuses them. */
+  /** Blobs the sweep may take: presign sends them again and commit refuses them. */
   stale = new Set<string>();
-  /** Answer not_uploaded without the originals field. */
-  omitOriginals = false;
+  /** Answer not_uploaded without the blobs field. */
+  omitBlobs = false;
   uploads = new Map<string, Upload>();
   calls: string[] = [];
-  slots: string[] = [];
   puts: string[] = [];
+  /** Every commit's ops. */
+  commits: Op[][] = [];
   refuse?: ErrorReply & { status: number };
-  /** Presigns answer process_on_upload; /files answers these, by name. */
+  /** Presigns answer process_on_upload. */
   processOnUpload = false;
-  fileInfos = new Map<string, Record<string, unknown>>();
   /** Fail the next n storage PUTs with a dropped connection. */
   dropPuts = 0;
-  /** Rendered slots by "kind/id#slot". */
-  slotState = new Map<string, SlotManifest>();
-  /** Bodies of commit-slot and recrop-slot calls. */
-  slotCalls: any[] = [];
-  /** Slot reads that answer pending after each commit or re-crop. */
+  /** Editor reads that answer pending after each commit. */
   pendingReads = 0;
-  private pendingLeft = 0;
-  private seq = 0;
-  /** A video item's images (every ref shares it). */
-  video: VideoImages = {
-    poster: { aspect: "16:9", outputs: [], pending: false, selection: { source: "auto", file: "clip.mp4", time: 3 } },
-    video: { file: "clip.mp4", duration: 12, w: 1920, h: 1080, encoded: true },
-  };
-  /** Bodies of /video-poster. */
-  videoCalls: any[] = [];
+  /** Each item's uploads, by "kind/id". */
+  items = new Map<string, FileInfo[]>();
   /** Frame grabs as "t@w". */
   frames: string[] = [];
+  private pendingLeft = 0;
+  private seq = 0;
+
+  /** Seeds an item's uploads (editor read view). */
+  seed(ref: { kind: string; id: string }, files: FileInfo[]) {
+    this.items.set(key(ref), files.map((f) => ({ upload: true, ...f })));
+  }
 
   fetch: typeof fetch = async (input, init) => {
-    const path = new URL(String(input)).pathname.replace(/^\/api/, "");
-    this.calls.push(path);
+    const url = new URL(String(input));
+    const path = url.pathname.replace(/^\/api/, "");
+    this.calls.push(path.startsWith("/read/") ? "/read" : path);
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     try {
       if (path === "/frame") {
-        const q = new URL(String(input)).searchParams;
-        this.frames.push(`${q.get("t")}@${q.get("w")}`);
+        this.frames.push(`${url.searchParams.get("t")}@${url.searchParams.get("w")}`);
         return new Response(new Blob([bytes(32, 3)], { type: "image/jpeg" }), { status: 200 });
+      }
+      if (path.startsWith("/read/")) {
+        const [, , kind, id] = path.split("/");
+        return json(200, this.read({ kind: kind!, id: id! }, url.searchParams));
       }
       return json(200, this.route(path, body));
     } catch (e) {
       if (!(e instanceof UploadError)) throw e;
       const headers: Record<string, string> = e.retryAfter ? { "Retry-After": String(e.retryAfter) } : {};
-      return json(e.status, { error: e.message, code: e.code, retry_after: e.retryAfter, originals: e.originals }, headers);
+      return json(e.status, { error: e.message, code: e.code, retry_after: e.retryAfter, blobs: e.blobs }, headers);
     }
   };
 
@@ -87,8 +91,7 @@ export class FakeServer {
     if (kind === "put") {
       this.objects.set(a!, bytes.length);
       this.stale.delete(a!);
-    }
-    else {
+    } else {
       const u = this.uploads.get(a!)!;
       const s = u.signed.get(Number(b))!;
       if (s.size !== bytes.length) throw new UploadError("storage", "length", 403);
@@ -96,6 +99,15 @@ export class FakeServer {
     }
     onProgress?.(bytes.length);
   };
+
+  private read(ref: { kind: string; id: string }, q: URLSearchParams): ReadResult {
+    const prefix = q.get("prefix") ?? "";
+    const pending = this.pendingLeft > 0 && (this.pendingLeft--, true);
+    const files = (this.items.get(key(ref)) ?? [])
+      .filter((f) => f.path.startsWith(prefix))
+      .map((f) => ({ ...f, ...(pending ? { pending: ["render"] } : {}), ...(f.type.startsWith("image/") && f.size ? { editor_url: `fake://cdn/private/e-${f.path}` } : {}) }));
+    return { access: "full", preview_limit: 0, expires: 0, total: files.length, offset: 0, limit: 50, files };
+  }
 
   private route(path: string, b: any): unknown {
     switch (path) {
@@ -105,18 +117,17 @@ export class FakeServer {
           const r = this.refuse;
           throw new UploadError(r.code, r.error, r.status, r.retry_after);
         }
-        if (p.size <= 64 * MiB || p.slot || p.inline) {
-          if (!p.sha256) throw new UploadError("invalid_request", "sha256 required", 400);
-          // Every original is hash-named; an inline image is named by its new id.
-          const key = "sha256-" + p.sha256;
-          const name = p.inline ? `i-${++this.seq}` : key;
-          if (this.objects.get(key) === p.size && !this.stale.has(key)) return { name, exists: true, process_on_upload: this.processOnUpload };
-          return { name, process_on_upload: this.processOnUpload, put: req(`fake://s3/put/${key}`, { "Content-Type": p.type, "X-Amz-Checksum-Sha256": b64(p.sha256) }) };
-        }
+        if (!/^[0-9a-f]{64}$/.test(p.sha256)) throw new UploadError("invalid_request", "sha256 required", 400);
+        const blob = "sha256-" + p.sha256;
+        const ext = EXT[p.type] ?? "bin";
+        // Named uploads are named by the server; a path without an extension gets one.
+        const at = p.path.startsWith("inline/") ? `inline/i-${++this.seq}.${ext}` : /\.\w+$/.test(p.path) ? p.path : `${p.path}.${ext}`;
+        const out = { path: at, blob, process_on_upload: this.processOnUpload };
+        if (this.objects.get(blob) === p.size && !this.stale.has(blob)) return { ...out, exists: true };
+        if (p.size <= 64 * MiB) return { ...out, put: req(`fake://s3/put/${blob}`, { "Content-Type": p.type, "X-Amz-Checksum-Sha256": b64(p.sha256) }) };
         const ticket = `t${++this.seq}`;
-        const name = `u-${this.seq}`;
-        this.uploads.set(ticket, { name, type: p.type, size: p.size, parts: new Map(), signed: new Map(), complete: false });
-        return { name, multipart: { ticket, min_part_size: 8 * MiB, max_part_size: 16 * MiB, max_parts: Math.ceil(p.size / (8 * MiB)) } };
+        this.uploads.set(ticket, { path: at, blob, type: p.type, size: p.size, parts: new Map(), signed: new Map(), complete: false });
+        return { ...out, multipart: { ticket, min_part_size: 8 * MiB, max_part_size: 16 * MiB, max_parts: Math.ceil(p.size / (8 * MiB)) } };
       }
       case "/parts": {
         const u = this.ticket(b.ticket);
@@ -144,73 +155,68 @@ export class FakeServer {
         });
         if (total !== u.size) throw new UploadError("incomplete", "short", 409);
         u.complete = true;
-        this.objects.set(u.name, total);
-        return { name: u.name, type: u.type, size: total };
+        this.objects.set(u.blob, total);
+        return { blob: u.blob, type: u.type, size: total };
       }
       case "/abort":
         this.uploads.delete(b.ticket);
         return undefined;
       case "/commit":
-        {
-          const missing = [...new Set<string>(b.ops.map((op: any) => op.original))].filter(
-            (n) => n && (this.stale.has(n) || !this.objects.has(n)),
-          );
-          if (missing.length) {
-            throw new UploadError("not_uploaded", "upload again", 409, undefined, { originals: this.omitOriginals ? undefined : missing });
-          }
-        }
-        return { files: b.ops.map((op: any) => ({ name: op.name, original: op.original, size: this.objects.get(op.original) })) };
-      case "/files":
-        return { files: (b.names ?? []).flatMap((n: string) => (this.fileInfos.has(n) ? [{ index: 0, name: n, ...this.fileInfos.get(n) }] : [])) };
-      case "/commit-slot":
-        if (!this.objects.has("sha256-" + b.sha256)) throw new UploadError("not_uploaded", "upload the original first", 409);
-        this.slots.push(b.slot);
-        this.slotCalls.push(b);
-        return this.render(b.ref, b.slot, b.edit);
-      case "/edit-slot":
-        if (!this.slotState.has(slotKey(b.ref, b.slot))) throw new UploadError("not_found", "no original", 404);
-        this.slotCalls.push(b);
-        return this.render(b.ref, b.slot, b.edit);
-      case "/video-images":
-        return { ...this.video, poster: { ...this.video.poster, pending: this.video.poster.pending && this.pendingLeft-- > 0 } };
-      case "/video-poster": {
-        this.videoCalls.push(b);
-        if (b.source === "upload" && !this.objects.has("sha256-" + b.sha256)) throw new UploadError("not_uploaded", "upload the poster first", 409);
-        const v = ++this.seq;
-        const outputs = [480, 960, 1920].map((w) => ({ w, h: Math.round((w * 9) / 16), url: `fake://cdn/public/sha256-poster${w}v${v}` }));
-        const selection = { source: b.source, file: b.file ?? "clip.mp4", ...(b.time !== undefined ? { time: b.time } : {}) };
-        this.pendingLeft = this.pendingReads;
-        this.video = { ...this.video, poster: { aspect: "16:9", ...(b.edit ? { edit: b.edit } : {}), dims: { w: 1920, h: 1080 }, outputs, pending: this.pendingReads > 0, selection } };
-        return this.video;
-      }
-      case "/delete-slot":
-        this.slotCalls.push(b);
-        this.slotState.delete(slotKey(b.ref, b.slot));
-        return { aspect: slotAspect(b.slot), outputs: [], pending: false };
-      case "/slot": {
-        const m = this.slotState.get(slotKey(b.ref, b.slot));
-        if (!m) return { aspect: slotAspect(b.slot), outputs: [], pending: false };
-        return { ...m, pending: this.pendingLeft-- > 0 };
-      }
+        return { files: this.commit(b.ref, b.ops) };
     }
     throw new UploadError("not_found", path, 404);
   }
 
-  private render(ref: { kind: string; id: string }, slot: string, edit?: SlotManifest["edit"]): SlotManifest {
-    const aspect = slotAspect(slot);
-    const widths = slot === "avatar" ? [128, 256, 512] : [1500, 3000];
-    const v = ++this.seq;
-    const m: SlotManifest = {
-      aspect,
-      ...(edit ? { edit } : {}),
-      dims: { w: 4000, h: 3000 },
-      editor_url: `fake://cdn/temp/e-${slot}`,
-      outputs: widths.map((w) => ({ w, h: Math.round(w / (slot === "avatar" ? 1 : 3)), url: `fake://cdn/public/sha256-${slot}${w}v${v}` })),
-      pending: false,
+  private commit(ref: { kind: string; id: string }, ops: Op[]): FileInfo[] {
+    const missing = [...new Set(ops.filter((op) => op.op === "put").map((op) => op.blob!))].filter((n) => this.stale.has(n) || !this.objects.has(n));
+    if (missing.length) throw new UploadError("not_uploaded", "upload again", 409, undefined, { blobs: this.omitBlobs ? undefined : missing });
+    this.commits.push(ops);
+    let files = [...(this.items.get(key(ref)) ?? [])];
+    const at = (p: string) => files.findIndex((f) => f.path === p || stem(f.path) === stem(p));
+    const place = (f: FileInfo, index?: number) => {
+      const i = at(f.path);
+      if (i >= 0) files[i] = f;
+      else files.splice(index ?? files.length, 0, f);
     };
-    this.slotState.set(slotKey(ref, slot), m);
+    for (const op of ops) {
+      const i = op.path ? at(op.path) : -1;
+      const cur = files[i];
+      if (op.op !== "put" && op.op !== "frame" && !cur) throw new UploadError("not_found", `no upload ${op.path}`, 404);
+      switch (op.op) {
+        case "put": {
+          const type = op.path!.endsWith(".mp4") ? "video/mp4" : op.path!.endsWith(".srt") ? "application/x-subrip" : "image/png";
+          const size = this.objects.get(op.blob!)!;
+          const dims = type.startsWith("image/") ? { w: 4000, h: 3000 } : type.startsWith("video/") ? { w: 1920, h: 1080, dur: 12 } : {};
+          place({ path: op.path!, type, size, ...dims, upload: true, ...(op.edit ? { edit: op.edit } : {}), ...(op.meta ? { meta: op.meta } : {}), ...(op.unattached ? { unattached: true } : {}) }, op.index);
+          break;
+        }
+        case "frame":
+          place({ path: `${stem(op.path!)}.png`, type: "image/png", size: 100, w: 1920, h: 1080, upload: true, frame: op.auto ? { auto: true } : { t: op.t }, ...(op.edit ? { edit: op.edit } : {}) });
+          break;
+        case "edit":
+          files[i] = { ...cur!, edit: op.edit };
+          if (!op.edit) delete files[i]!.edit;
+          break;
+        case "remove":
+          files.splice(i, 1);
+          break;
+        case "attach":
+          files.splice(i, 1);
+          files.push({ ...cur!, unattached: undefined, ...(op.meta ? { meta: op.meta } : {}) });
+          break;
+        case "rename":
+          files[i] = { ...cur!, path: /\.\w+$/.test(op.to!) ? op.to! : `${op.to}${cur!.path.slice(stem(cur!.path).length)}` };
+          break;
+        case "move":
+          files.splice(i, 1);
+          files.splice(op.index!, 0, cur!);
+          break;
+      }
+    }
+    files = files.map((f) => JSON.parse(JSON.stringify(f)) as FileInfo);
+    this.items.set(key(ref), files);
     this.pendingLeft = this.pendingReads;
-    return { ...m, pending: this.pendingReads > 0 };
+    return files;
   }
 
   private ticket(t: string): Upload {
@@ -220,13 +226,7 @@ export class FakeServer {
   }
 }
 
-function slotKey(ref: { kind: string; id: string }, slot: string): string {
-  return `${ref.kind}/${ref.id}#${slot}`;
-}
-
-function slotAspect(slot: string): string {
-  return slot === "avatar" ? "1:1" : "3:1";
-}
+const key = (ref: { kind: string; id: string }) => `${ref.kind}/${ref.id}`;
 
 function req(url: string, headers: Record<string, string>): RequestReply {
   return { method: "PUT", url, headers, expires: new Date(Date.now() + 900_000).toISOString() };
@@ -252,4 +252,9 @@ export function bytes(n: number, seed = 1): Uint8Array<ArrayBuffer> {
     out[i] = x & 0xff;
   }
   return out;
+}
+
+/** A client on a FakeServer. */
+export function fakeClient(s: FakeServer, o: { retries?: number; concurrency?: number } = {}): UploadClient {
+  return new UploadClient({ endpoint: "http://x/api", readEndpoint: "http://x/read", fetch: s.fetch, transport: s.transport, retryDelay: () => 0, ...o });
 }

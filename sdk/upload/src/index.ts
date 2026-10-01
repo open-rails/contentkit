@@ -1,31 +1,32 @@
-export { UploadApi, type ApiOptions } from "./api.js";
+export { UploadApi, type ApiOptions, type ReadOptions } from "./api.js";
 export {
   UploadClient,
   createUploadClient,
   backoff,
+  samePath,
+  stem,
   type ClientOptions,
   type CommitOptions,
   type CommitSource,
   type PlannedPart,
   type Progress,
-  type SlotUpload,
-  type SlotUploadOptions,
+  type PutOptions,
   type UploadOptions,
   type UploadState,
   type UploadedFile,
+  type WaitOptions,
 } from "./client.js";
 export { centeredCrop, constrainCrop, editOf, editedSize, fromRotated, rotation, sameEdit, toOriginal, toRotated, type Rotation, type Size } from "./crop.js";
 export { decodeImage, isAnimatedImage, type CropSource, type DecodeOptions } from "./image.js";
 export { aspectOf, ratio, type AspectRatio } from "./aspect.js";
-export { hasOriginal, largestOutput, manifestAspect, slotSources, type SlotSources } from "./srcset.js";
+export { fill, publicRenditions, publicURL, reloadPublic, srcSet, type PublicImage } from "./public.js";
 export { DEFAULT_DENSITY, densityFor, pickRendition, sortRenditions, type DensityRange, type Rendition } from "./rendition.js";
 export {
   formatDuration,
   galleryItems,
   isAudioType,
+  isImageType,
   isVideoType,
-  audioDownloadKey,
-  AUDIO_VARIANT,
   isSubtitleType,
   stageAspect,
   type GalleryItem,
@@ -52,7 +53,7 @@ export {
   type PlaybackError,
   type PlaybackErrorKind,
 } from "./playback.js";
-export { UploadError, slotError, type UploadErrorCode } from "./errors.js";
+export { UploadError, failureError, type UploadErrorCode } from "./errors.js";
 export { checkRef, isContentId } from "./ref.js";
 export { encodeRemaining } from "./encode.js";
 export { sha256Hex } from "./hash.js";

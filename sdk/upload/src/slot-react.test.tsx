@@ -2,46 +2,49 @@
 import "./test/dom.js";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import { FakeServer, bytes } from "../test/fake.js";
-import { UploadClient } from "./client.js";
+import { FakeServer, bytes, fakeClient } from "../test/fake.js";
 import type { CropSource } from "./image.js";
 import { useSlotCrop, useSlotImage } from "./slot-react.js";
 
 const ref = { kind: "channel", id: "0192f000-0000-7000-8000-000000000007" };
+const image = { base: "https://media.x", namespace: "app", kind: "channel", id: ref.id, to: "cover-{w}.webp", widths: [1500, 3000], aspect: "3:1" };
 
 function setup() {
   const s = new FakeServer();
-  const c = new UploadClient({ endpoint: "http://x/api", fetch: s.fetch, transport: s.transport, retryDelay: () => 0 });
-  return { s, c };
+  return { s, c: fakeClient(s) };
 }
 
 const png = (seed = 1) => new File([bytes(500, seed)], "a.png", { type: "image/png" });
 const decode = vi.fn(async (file: File): Promise<CropSource> => ({ url: "blob:preview", width: 800, height: 400, file, revoke: vi.fn() }));
+globalThis.fetch = vi.fn(async () => new Response(null)) as typeof fetch;
 
-it("useSlotImage fetches the manifest and builds srcset", async () => {
+it("useSlotImage reads the upload at its path and lists the preset's public files", async () => {
   const { s, c } = setup();
-  await c.uploadSlot(png(), { ref, slot: "avatar" });
-  const { result } = renderHook(() => useSlotImage(c, { ref, slot: "avatar" }));
+  await c.put(png(), { ref, path: "cover" });
+  const { result } = renderHook(() => useSlotImage(c, { ref, path: "cover", image }));
   expect(result.current.loading).toBe(true);
   await waitFor(() => expect(result.current.loading).toBe(false));
-  expect(result.current.aspect).toBe("1:1");
-  expect(result.current.srcSet).toMatch(/avatar128v\d+ 128w, .* 256w, .* 512w$/);
-  expect(result.current.src).toContain("avatar512");
-  expect(s.calls.filter((p) => p === "/slot")).toHaveLength(1);
+  expect(result.current.file).toMatchObject({ path: "cover.png", w: 4000 });
+  expect(result.current.aspect).toBe("3:1");
+  expect(result.current.renditions.map((r) => [r.w, r.h, r.url])).toEqual([
+    [1500, 500, `https://media.x/v1/app/channel/${ref.id}/public/cover-1500.webp`],
+    [3000, 1000, `https://media.x/v1/app/channel/${ref.id}/public/cover-3000.webp`],
+  ]);
+  expect(s.calls.at(-1)).toBe("/read");
 });
 
-it("useSlotImage uses a given manifest without fetching", () => {
+it("useSlotImage uses a given read without fetching, and has no file without an upload", () => {
   const { s, c } = setup();
-  const manifest = { aspect: "3:1", pending: false, outputs: [{ name: "c", w: 1500, h: 500, url: "u" }] };
-  const { result } = renderHook(() => useSlotImage(c, { ref, slot: "cover", manifest }));
-  expect([result.current.loading, result.current.aspect, result.current.srcSet]).toEqual([false, "3:1", "u 1500w"]);
+  const read = { access: "full" as const, preview_limit: 0, expires: 0, total: 0, offset: 0, limit: 50, files: [] };
+  const { result } = renderHook(() => useSlotImage(c, { ref, path: "avatar", read }));
+  expect([result.current.loading, result.current.file, result.current.aspect]).toEqual([false, null, "1:1"]);
   expect(s.calls).toEqual([]);
 });
 
-it("useSlotCrop: pick → edit → save uploads the original with the edit", async () => {
+it("useSlotCrop: pick → edit → save uploads and puts the file with the edit, then refetches the public files", async () => {
   const { s, c } = setup();
   const saved = vi.fn();
-  const { result } = renderHook(() => useSlotCrop(c, { ref, slot: "avatar", aspect: "1:1", decode, onSaved: saved }));
+  const { result } = renderHook(() => useSlotCrop(c, { ref, path: "avatar", aspect: "1:1", decode, image, onSaved: saved }));
   const file = png(2);
   await act(() => result.current.pick(file));
   expect(result.current.status).toBe("cropping");
@@ -55,33 +58,34 @@ it("useSlotCrop: pick → edit → save uploads the original with the edit", asy
   expect(result.current.cropped).toEqual({ width: 400, height: 400 });
   await act(async () => void (await result.current.save()));
   expect(result.current.status).toBe("done");
-  expect(s.slotCalls[0]).toMatchObject({ slot: "avatar", edit });
-  expect(saved).toHaveBeenCalledWith(expect.objectContaining({ aspect: "1:1" }));
+  expect(s.commits[0]).toEqual([{ op: "put", path: "avatar.png", blob: expect.stringMatching(/^sha256-/), edit }]);
+  expect(saved).toHaveBeenCalledWith(expect.objectContaining({ path: "avatar.png", edit }));
   expect(source.revoke).toHaveBeenCalled();
+  expect(vi.mocked(fetch).mock.calls.map(([u, i]) => [String(u), i?.cache])).toEqual([
+    [`https://media.x/v1/app/channel/${ref.id}/public/cover-1500.webp`, "reload"],
+    [`https://media.x/v1/app/channel/${ref.id}/public/cover-3000.webp`, "reload"],
+  ]);
 });
 
-it("useSlotCrop: recrop re-edits the committed original and waits for the encode", async () => {
+it("useSlotCrop: recrop edits the committed upload from its editor view and waits for the render", async () => {
   const { s, c } = setup();
   const first = { crop: { x: 0, y: 40, w: 800, h: 266 } };
-  const { manifest } = await c.uploadSlot(png(3), { ref, slot: "cover", edit: first });
-  const { result } = renderHook(() => useSlotCrop(c, { ref, slot: "cover", manifest, decode }));
+  const file = await c.put(png(3), { ref, path: "cover", edit: first });
+  const { result } = renderHook(() => useSlotCrop(c, { ref, path: "cover", file, aspect: "3:1", decode }));
   expect([result.current.canRecrop, result.current.aspect]).toEqual([true, "3:1"]);
   await act(() => result.current.recrop());
-  expect(s.calls).not.toContain("/slot-original");
-  expect(result.current).toMatchObject({ status: "cropping", mode: "recrop", edit: first, source: { url: "fake://cdn/temp/e-cover", width: 4000, height: 3000 } });
-  s.pendingReads = 1;
+  expect(result.current).toMatchObject({ status: "cropping", mode: "recrop", edit: first, source: { url: "fake://cdn/private/e-cover.png", width: 4000, height: 3000 } });
   const puts = s.puts.length;
   const next = { crop: { x: 0, y: 100, w: 800, h: 266 }, rotate: 180 };
   await act(async () => void (await result.current.save(next)));
-  expect(result.current.status).toBe("done");
-  expect(s.slotCalls.at(-1)).toEqual({ ref, slot: "cover", edit: next });
+  expect(result.current).toMatchObject({ status: "done", file: { path: "cover.png", edit: next } });
+  expect(s.commits.at(-1)).toEqual([{ op: "edit", path: "cover.png", edit: next }]);
   expect(s.puts.length).toBe(puts);
-  expect(result.current).toMatchObject({ status: "done", manifest: { pending: false } });
 });
 
 it("useSlotCrop keeps the source on a refused save so the user can retry", async () => {
   const { s, c } = setup();
-  const { result } = renderHook(() => useSlotCrop(c, { ref, slot: "avatar", aspect: "1:1", decode }));
+  const { result } = renderHook(() => useSlotCrop(c, { ref, path: "avatar", aspect: "1:1", decode }));
   await act(() => result.current.pick(png(4)));
   s.refuse = { status: 413, code: "too_large", error: "too large" };
   await act(async () => void (await result.current.save()));
@@ -97,10 +101,10 @@ it("useSlotCrop reports undecodable files and cancel closes the source", async (
   const bad = vi.fn(async () => {
     throw new Error("nope");
   });
-  const { result } = renderHook(() => useSlotCrop(c, { ref, slot: "avatar", decode: bad }));
+  const { result } = renderHook(() => useSlotCrop(c, { ref, path: "avatar", decode: bad }));
   await act(() => result.current.pick(png()));
   expect(result.current).toMatchObject({ status: "error", error: { code: "decode" } });
-  const { result: r2 } = renderHook(() => useSlotCrop(c, { ref, slot: "avatar", decode }));
+  const { result: r2 } = renderHook(() => useSlotCrop(c, { ref, path: "avatar", decode }));
   await act(() => r2.current.pick(png()));
   const src = "source" in r2.current ? r2.current.source : undefined;
   act(() => r2.current.cancel());

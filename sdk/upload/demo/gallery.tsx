@@ -1,4 +1,4 @@
-import type { FileInfo, ReadResult } from "@openrails/contentkit-upload";
+import type { Access, FileInfo, ReadResult } from "@openrails/contentkit-upload";
 import { MediaGallery, VideoPlayer } from "@openrails/contentkit-upload/ui";
 import { useState, type ReactNode } from "react";
 
@@ -6,18 +6,19 @@ const q = new URLSearchParams(location.search);
 const media = `http://127.0.0.1:${q.get("media") ?? 4180}`;
 const dark = q.get("theme") === "dark";
 
-const read = (access: string, files: FileInfo[]): ReadResult => ({ access, total: files.length, preview_limit: 0, offset: 0, limit: 50, expires: 0, files });
-const img = (index: number, n: number, w: number, h: number): FileInfo => ({ index, name: `${n}.jpg`, type: "image/jpeg", w, h, url: `${media}/cors/img/${n}.jpg` });
-const vid = (index: number, name: string, w: number, h: number): FileInfo => ({ index, name, type: "video/mp4", w, h, duration: 6, hls: true });
+// Reads as the read API answers them: each video is an HLS folder in `hls`.
+const read = (access: Access, files: FileInfo[], hls: string[] = []): ReadResult => ({ access, total: files.length, preview_limit: 0, offset: 0, limit: 50, expires: 0, files, hls });
+const img = (n: number, w: number, h: number): FileInfo => ({ path: `low-res/${n}.webp`, type: "image/jpeg", w, h, url: `${media}/cors/img/${n}.jpg` });
+const vid = (name: string, w: number, h: number): FileInfo => ({ path: `${name}/video.mp4`, type: "video/mp4", w, h, dur: 6, url: "u" });
 
 // 4 images and 2 videos, mixed aspects.
-const post = read("full", [img(0, 1, 1200, 900), vid(1, "landscape", 480, 270), img(2, 2, 900, 1125), vid(3, "portrait", 360, 640), img(4, 3, 1280, 720), img(5, 4, 1000, 1000)]);
+const post = read("full", [img(1, 1200, 900), vid("landscape", 480, 270), img(2, 900, 1125), vid("portrait", 360, 640), img(3, 1280, 720), img(4, 1000, 1000)], ["landscape/", "portrait/"]);
 const locked = read("none", [
-  { index: 0, name: "teaser", type: "image/jpeg", w: 480, h: 360, teaser: true, url: `${media}/cors/img/teaser.jpg` },
-  ...[1, 2, 3, 4, 5].map((index) => ({ index, type: index % 2 ? "image/jpeg" : "video/mp4", locked: true })),
+  { path: "teaser/blur.webp", type: "image/jpeg", w: 480, h: 360, teaser: true, url: `${media}/cors/img/teaser.jpg` },
+  ...[1, 2, 3, 4, 5].map((n) => (n % 2 ? { path: `low-res/${n}.webp`, type: "image/jpeg", locked: true } : { path: `v${n}/video.mp4`, type: "video/mp4", locked: true })),
 ]);
-const single = read("full", [vid(0, "portrait", 360, 640)]);
-const hlsBase = (f: FileInfo) => `${media}/cors/${f.name}/`;
+const single = read("full", [vid("portrait", 360, 640)], ["portrait/"]);
+const hlsBase = (dir: string) => `${media}/cors/${dir}`;
 
 function Post({ title, children, demo }: { title: string; children: ReactNode; demo: string }) {
   return (

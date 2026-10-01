@@ -1,7 +1,8 @@
-/** One rendered size of an image: a slot output, a cover, a variant. */
+/** One rendered width of an image, e.g. a public preset's file at one of its widths. */
 export interface Rendition {
   w: number;
-  h: number;
+  /** Its height when known (the preset's aspect). */
+  h?: number;
   url: string;
 }
 

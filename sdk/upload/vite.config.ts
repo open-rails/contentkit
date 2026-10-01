@@ -31,7 +31,7 @@ export default defineConfig({
     dts({
       include: ["src"],
       entryRoot: "src",
-      exclude: ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test/**"],
+      exclude: ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.worker.ts", "src/test/**"],
       tsconfigPath: path.resolve(root, "tsconfig.json"),
     }),
     ckuiCssPlugin({ entries: ["ui"] }),
@@ -51,7 +51,12 @@ export default defineConfig({
     sourcemap: true,
     rollupOptions: {
       external: (id) => EXTERNAL.some((dep) => id === dep || id.startsWith(`${dep}/`)),
-      output: { preserveModules: true, preserveModulesRoot: "src" },
+      output: {
+        preserveModules: true,
+        preserveModulesRoot: "src",
+        // "hash.worker.ts?worker&inline" (an inlined worker) gets a file name without a query.
+        entryFileNames: (c) => (c.name.includes("?") ? `${c.name.replace(/\.ts\?.*$/, "")}-inline.js` : "[name].js"),
+      },
     },
   },
 });

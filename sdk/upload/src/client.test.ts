@@ -1,21 +1,16 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { FakeServer, bytes } from "../test/fake.js";
+import { FakeServer, bytes, fakeClient } from "../test/fake.js";
 import { UploadClient, type UploadState } from "./client.js";
 import { UploadError } from "./errors.js";
 
 const MiB = 1 << 20;
 const ref = { kind: "video", id: "0192f000-0000-7000-8000-000000000001" };
+const path = "source";
 
 function setup(o: { retries?: number; concurrency?: number } = {}) {
   const s = new FakeServer();
-  const c = new UploadClient({
-    endpoint: "http://x/api",
-    fetch: s.fetch,
-    transport: s.transport,
-    retryDelay: () => 0,
-    ...o,
-  });
-  return { s, c };
+  return { s, c: fakeClient(s, o) };
 }
 
 function file(n: number, seed = 1, type = "video/mp4"): File {
@@ -23,70 +18,70 @@ function file(n: number, seed = 1, type = "video/mp4"): File {
 }
 
 describe("single PUT", () => {
-  it("hashes, presigns with the checksum and PUTs; an identical file is not resent", async () => {
+  it("hashes, presigns the path with the checksum and PUTs; an identical file is not resent", async () => {
     const { s, c } = setup();
     const f = file(3 * MiB, 2, "image/png");
     const phases = new Set<string>();
-    const up = await c.upload(f, { ref, onProgress: (p) => phases.add(p.phase) });
-    expect(up.name).toBe("sha256-" + up.sha256);
-    expect([up.exists, up.size, s.puts.length]).toEqual([false, 3 * MiB, 1]);
+    const up = await c.upload(f, { ref, path: "cover", onProgress: (p) => phases.add(p.phase) });
+    expect(up).toMatchObject({ path: "cover.png", blob: expect.stringMatching(/^sha256-[0-9a-f]{64}$/), type: "image/png", size: 3 * MiB, exists: false });
+    expect(s.puts.length).toBe(1);
     expect([...phases]).toEqual(["hashing", "uploading"]);
-    const again = await c.upload(f, { ref });
-    expect([again.exists, s.puts.length]).toEqual([true, 1]);
+    const again = await c.upload(f, { ref, path: "cover" });
+    expect([again.exists, again.blob, s.puts.length]).toEqual([true, up.blob, 1]);
   });
 
   it("retries a dropped PUT", async () => {
     const { s, c } = setup();
     s.dropPuts = 2;
-    await c.upload(file(MiB), { ref });
+    await c.upload(file(MiB), { ref, path });
     expect(s.puts.length).toBe(3);
   });
 
   it("surfaces a refused presign without sending bytes", async () => {
     const { s, c } = setup();
     s.refuse = { status: 429, code: "rate_limited", error: "too many uploads", retry_after: 60 };
-    const err = await c.upload(file(MiB), { ref }).catch((e) => e);
+    const err = await c.upload(file(MiB), { ref, path }).catch((e) => e);
     expect(err).toBeInstanceOf(UploadError);
     expect([err.code, err.retryAfter, err.isLimit, s.puts.length]).toEqual(["rate_limited", 60, true, 0]);
   });
 
-  it("uploads and commits a slot", async () => {
+  it("puts an upload under the path the server names, and waits until it is processed", async () => {
     const { s, c } = setup();
-    const up = await c.uploadSlot(file(MiB, 3, "image/png"), { ref, slot: "cover" });
-    expect(up.name).toMatch(/^sha256-/);
-    expect(s.slotCalls.at(-1)).toMatchObject({ slot: "cover", sha256: up.name.slice(7), filename: "f3.bin" });
-    expect(s.calls).toEqual(["/presign", "/commit-slot"]);
-  });
-
-  it("uploads and commits an inline image under the name the server picks", async () => {
-    const { s, c } = setup();
-    const up = await c.uploadInline(file(MiB, 4, "image/png"), { ref });
-    expect(up.name).toMatch(/^i-/);
-    expect(up.url).toMatch(/^fake:\/\/cdn\/public\/sha256-/);
-    expect(s.calls).toEqual(["/presign", "/commit-slot"]);
-    expect(s.slots).toEqual([up.name]);
+    const phases: string[] = [];
+    const f = await c.put(file(MiB, 4, "image/png"), { ref, path: "inline/x.png", edit: { rotate: 90 }, onProgress: (p) => phases.push(p.phase) });
+    expect(f).toMatchObject({ path: "inline/i-1.png", upload: true, edit: { rotate: 90 } });
+    expect(f.pending).toBeUndefined();
+    expect(s.commits[0]).toEqual([{ op: "put", path: "inline/i-1.png", blob: expect.stringMatching(/^sha256-/), edit: { rotate: 90 } }]);
+    expect(phases.at(-1)).toBe("processing");
+    expect(s.calls.filter((x) => x === "/read")).toHaveLength(1);
   });
 });
 
 describe("multipart", () => {
   const size = 70 * MiB + 123;
 
-  it("presigns before hashing, so a refused upload reads nothing", async () => {
+  it("hashes the whole file first, so the blob is its content address", async () => {
     const { s, c } = setup();
-    s.refuse = { status: 413, code: "quota_exceeded", error: "over quota" };
-    let hashed = false;
-    const err = await c
-      .upload(file(size), { ref, onProgress: (p) => (hashed ||= p.phase === "hashing") })
-      .catch((e) => e);
-    expect([err.code, hashed, s.puts.length]).toEqual(["quota_exceeded", false, 0]);
+    const phases: string[] = [];
+    const up = await c.upload(file(size), { ref, path, onProgress: (p) => phases.at(-1) !== p.phase && phases.push(p.phase) });
+    expect(phases).toEqual(["hashing", "uploading", "completing"]);
+    expect(up.blob).toBe("sha256-" + createHash("sha256").update(bytes(size, 1)).digest("hex"));
+    expect(up.path).toBe("source.mp4");
+    expect(s.objects.get(up.blob)).toBe(size);
   });
 
+  it("refuses before any part moves", async () => {
+    const { s, c } = setup();
+    s.refuse = { status: 413, code: "quota_exceeded", error: "over quota" };
+    const err = await c.upload(file(size), { ref, path }).catch((e) => e);
+    expect([err.code, s.puts.length, s.calls]).toEqual(["quota_exceeded", 0, ["/presign"]]);
+  });
   it("uploads parts within the bounds, retries a dropped part and completes", async () => {
     const { s, c } = setup();
     s.dropPuts = 1;
     const states: (UploadState | null)[] = [];
     let last = 0;
-    const up = await c.upload(file(size), { ref, onState: (st) => states.push(st), onProgress: (p) => (last = p.loaded) });
+    const up = await c.upload(file(size), { ref, path, onState: (st) => states.push(st), onProgress: (p) => (last = p.loaded) });
     expect(up).toMatchObject({ size, exists: false });
     expect(states.at(-1)).toBeNull();
     const plan = states.at(-2)!.parts;
@@ -120,7 +115,7 @@ describe("multipart", () => {
         }
       },
     });
-    await c.upload(file(size, 3), { ref });
+    await c.upload(file(size, 3), { ref, path });
     expect(peak).toBe(2);
     expect(ahead).toBeGreaterThan(0);
   });
@@ -133,10 +128,11 @@ describe("multipart", () => {
     const ctl = new AbortController();
     const first = c.upload(f, {
       ref,
+      path,
       signal: ctl.signal,
       onState: (st) => (saved = st),
       onProgress: (p) => {
-        if (p.loaded >= 16 * MiB && !ctl.signal.aborted) {
+        if (p.phase === "uploading" && p.loaded >= 16 * MiB && !ctl.signal.aborted) {
           landed = p.loaded;
           ctl.abort();
         }
@@ -152,25 +148,26 @@ describe("multipart", () => {
     let final: UploadState | null = null;
     const resumed = await new UploadClient({ endpoint: "http://x/api", fetch: s.fetch, transport: s.transport }).upload(f, {
       ref,
+      path,
       resume: saved!,
       onState: (st) => st && (final = st),
     });
-    expect(resumed).toMatchObject({ name: saved!.name, size });
+    expect(resumed).toMatchObject({ path: saved!.path, blob: saved!.blob, size });
     expect(s.puts.length - before).toBe(final!.parts.length - landedParts);
     expect(s.calls).toContain("/parts/list");
   });
 
   it("refuses to resume with a different file", async () => {
     const { c } = setup();
-    const state = { ticket: "t", name: "u-1", type: "video/mp4", size, ref, file: { size, name: "other", lastModified: 1 }, limits: { minPartSize: 8 * MiB, maxPartSize: 16 * MiB, maxParts: 9 }, parts: [] };
-    const err = await c.upload(file(size), { ref, resume: state }).catch((e) => e);
+    const state = { ticket: "t", path: "source.mp4", blob: "sha256-x", type: "video/mp4", size, ref, file: { size, name: "other", lastModified: 1 }, limits: { minPartSize: 8 * MiB, maxPartSize: 16 * MiB, maxParts: 9 }, parts: [] };
+    const err = await c.upload(file(size), { ref, path, resume: state }).catch((e) => e);
     expect(err.code).toBe("resume_mismatch");
   });
 
   it("stops every part when one fails for good", async () => {
     const { s, c } = setup({ retries: 1 });
     s.dropPuts = 100;
-    const err = await c.upload(file(size), { ref }).catch((e) => e);
+    const err = await c.upload(file(size), { ref, path }).catch((e) => e);
     expect(err.code).toBe("network");
     // Before the failing part's second PUT, other parts may take the slot
     // (how many depends on hashing speed). The deterministic bounds: at most
@@ -186,38 +183,31 @@ describe("multipart", () => {
 });
 
 describe("commit", () => {
-  const gallery = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000001", version: "en" };
+  const gallery = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000001" };
+  const put = (path: string, blob: string) => ({ op: "put" as const, path, blob });
 
-  it("uploads a file again when its original is due for cleanup, then commits once more", async () => {
+  it("uploads a file again when its blob is due for cleanup, then commits once more", async () => {
     const { s, c } = setup();
     const a = file(1000, 11, "image/png");
     const b = file(1000, 12, "image/png");
-    const ua = await c.upload(a, { ref: gallery });
-    const ub = await c.upload(b, { ref: gallery });
-    s.stale.add(ub.name);
+    const ua = await c.upload(a, { ref: gallery, path: "originals/1.png" });
+    const ub = await c.upload(b, { ref: gallery, path: "originals/2.png" });
+    s.stale.add(ub.blob);
     const commits = () => s.calls.filter((x) => x === "/commit").length;
-    const files = await c.commit(
-      gallery,
-      [{ op: "insert", name: "1.png", original: ua.name }, { op: "insert", name: "2.png", original: ub.name }],
-      { sources: { [ua.name]: a, [ub.name]: b } },
-    );
-    expect(files.map((f) => f.original)).toEqual([ua.name, ub.name]);
+    const files = await c.commit(gallery, [put(ua.path, ua.blob), put(ub.path, ub.blob)], { sources: { [ua.blob]: a, [ub.blob]: b } });
+    expect(files.map((f) => f.path)).toEqual(["originals/1.png", "originals/2.png"]);
     expect([commits(), s.puts.length, s.stale.size]).toEqual([2, 3, 0]); // only b went up again
   });
 
   it("uploads every sourced file again when the refusal names none", async () => {
     const { s, c } = setup();
-    s.omitOriginals = true;
+    s.omitBlobs = true;
     const a = file(1000, 14, "image/png");
     const b = file(1000, 15, "image/png");
-    const ua = await c.upload(a, { ref: gallery });
-    const ub = await c.upload(b, { ref: gallery });
-    s.stale.add(ub.name);
-    await c.commit(
-      gallery,
-      [{ op: "insert", name: "1.png", original: ua.name }, { op: "insert", name: "2.png", original: ub.name }],
-      { sources: { [ua.name]: a, [ub.name]: b } },
-    );
+    const ua = await c.upload(a, { ref: gallery, path: "originals/1.png" });
+    const ub = await c.upload(b, { ref: gallery, path: "originals/2.png" });
+    s.stale.add(ub.blob);
+    await c.commit(gallery, [put(ua.path, ua.blob), put(ub.path, ub.blob)], { sources: { [ua.blob]: a, [ub.blob]: b } });
     // Both went through presign again; only the stale one needed bytes.
     expect([s.calls.filter((x) => x === "/presign").length, s.puts.length]).toEqual([4, 3]);
   });
@@ -225,67 +215,57 @@ describe("commit", () => {
   it("gives up after one retry, and without sources", async () => {
     const { s, c } = setup();
     const a = file(1000, 13, "image/png");
-    const ua = await c.upload(a, { ref: gallery });
-    s.stale.add(ua.name);
-    const ops = [{ op: "insert" as const, name: "1.png", original: ua.name }];
+    const ua = await c.upload(a, { ref: gallery, path: "originals/1.png" });
+    s.stale.add(ua.blob);
+    const ops = [put(ua.path, ua.blob)];
     expect((await c.commit(gallery, ops).catch((e) => e)).code).toBe("not_uploaded");
-    s.objects.delete(ua.name); // gone even after the re-upload attempt below
-    const t = s.transport;
+    s.objects.delete(ua.blob); // gone even after the re-upload attempt below
     s.transport = async () => {}; // the PUT "succeeds" but nothing lands
     const c2 = new UploadClient({ endpoint: "http://x/api", fetch: s.fetch, transport: s.transport, retryDelay: () => 0 });
-    expect((await c2.commit(gallery, ops, { sources: { [ua.name]: a } }).catch((e) => e)).code).toBe("not_uploaded");
+    const err = await c2.commit(gallery, ops, { sources: { [ua.blob]: a } }).catch((e) => e);
+    expect([err.code, err.blobs]).toEqual(["not_uploaded", [ua.blob]]);
     expect(s.calls.filter((x) => x === "/commit").length).toBe(3);
-    s.transport = t;
   });
 });
 
-describe("slots", () => {
+describe("reads", () => {
   const edit = { crop: { x: 400, y: 600, w: 2000, h: 2000 }, rotate: 90 };
 
-  it("commits the crop with the original and returns the manifest", async () => {
+  it("waits for an upload by path or stem, and rejects on its failure or absence", async () => {
     const { s, c } = setup();
-    const up = await c.uploadSlot(file(1000, 4, "image/jpeg"), { ref, slot: "avatar", edit });
-    expect(s.slotCalls).toEqual([{ ref, slot: "avatar", filename: "f4.bin", sha256: up.sha256, edit }]);
-    expect(up.manifest).toMatchObject({ aspect: "1:1", edit, dims: { w: 4000, h: 3000 }, outputs: [{ w: 128 }, { w: 256 }, { w: 512 }] });
-    expect(s.calls).toEqual(["/presign", "/commit-slot"]);
-  });
-
-  it("omits the edit when not given", async () => {
-    const { s, c } = setup();
-    await c.uploadSlot(file(1000, 5, "image/jpeg"), { ref, slot: "cover" });
-    expect(s.slotCalls[0]).not.toHaveProperty("edit");
-  });
-
-  it("re-crops without uploading and reads the manifest", async () => {
-    const { s, c } = setup();
-    expect((await c.getSlot(ref, "cover")).outputs).toEqual([]);
-    await c.uploadSlot(file(1000, 6, "image/jpeg"), { ref, slot: "cover" });
-    const puts = s.puts.length;
-    const m = await c.editSlot(ref, "cover", edit);
-    expect([m.edit, s.puts.length]).toEqual([edit, puts]);
-    expect(await c.getSlot(ref, "cover")).toEqual(m);
-    expect(await c.getEditorView(ref, "cover")).toEqual({ url: "fake://cdn/temp/e-cover", width: 4000, height: 3000 });
-    expect((await c.editSlot(ref, "banner", edit).catch((e) => e)).code).toBe("not_found");
-    expect((await c.getEditorView(ref, "banner").catch((e) => e)).code).toBe("not_found");
-  });
-
-  it("removes a slot's image", async () => {
-    const { s, c } = setup();
-    await c.uploadSlot(file(1000, 9, "image/jpeg"), { ref, slot: "avatar" });
-    expect(await c.deleteSlot(ref, "avatar")).toEqual({ aspect: "1:1", outputs: [], pending: false });
-    expect((await c.getSlot(ref, "avatar")).outputs).toEqual([]);
-    expect(s.calls.slice(-2)).toEqual(["/delete-slot", "/slot"]);
-    expect((await c.editSlot(ref, "avatar").catch((e) => e)).code).toBe("not_found");
-  });
-
-  it("waits for the outputs to be encoded", async () => {
-    const { s, c } = setup();
+    await c.put(file(1000, 5, "image/png"), { ref, path: "cover", wait: false });
     s.pendingReads = 2;
-    const up = await c.uploadSlot(file(1000, 7, "image/jpeg"), { ref, slot: "avatar" });
-    expect(up.manifest.pending).toBe(true);
-    const m = await c.waitForSlot(ref, "avatar", { interval: 1 });
-    expect(m.pending).toBe(false);
-    expect(s.calls.filter((p) => p === "/slot")).toHaveLength(3);
+    await c.commit(ref, [{ op: "edit", path: "cover.png", edit }]);
+    expect(await c.waitFor(ref, "cover", { interval: 1 })).toMatchObject({ path: "cover.png", edit });
+    expect(s.calls.filter((x) => x === "/read")).toHaveLength(3);
+    s.seed(ref, [{ path: "cover.png", type: "image/png", size: 10, failed: { of: "x", message: "too small", code: "image_too_small", details: { width: 100, min_width: 300 } } }]);
+    const failed = await c.waitFor(ref, "cover").catch((e) => e);
+    expect([failed.code, failed.details?.min_width, failed.refusal]).toEqual(["image_too_small", 300, true]);
+    expect((await c.waitFor(ref, "banner").catch((e) => e)).code).toBe("not_found");
+    s.seed(ref, [{ path: "poster.png", type: "image/png", frame: { t: 3 } }]);
+    expect((await c.waitFor(ref, "poster", { timeout: 0 }).catch((e) => e)).code).toBe("render_timeout");
+  });
+
+  it("finds the editor view of an upload for re-cropping", async () => {
+    const { s, c } = setup();
+    await c.put(file(1000, 6, "image/jpeg"), { ref, path: "cover", edit });
+    expect(await c.editorView(ref, "cover")).toEqual({ url: "fake://cdn/private/e-cover.jpg", width: 4000, height: 3000 });
+    expect((await c.editorView(ref, "banner").catch((e) => e)).code).toBe("not_found");
+    expect(s.commits[0]![0]).toMatchObject({ op: "put", path: "cover.jpg", edit });
+  });
+
+  it("reads with options as query flags, and builds HLS and frame URLs", async () => {
+    const { s, c } = setup();
+    const urls: string[] = [];
+    const spy = new UploadClient({ endpoint: "http://x/api", readEndpoint: "http://x/read/", fetch: ((u: string, i: RequestInit) => (urls.push(String(u)), s.fetch(u, i))) as typeof fetch });
+    await spy.read(ref, { prefix: "low-res/", offset: 50, limit: 25, download: true, editor: true });
+    await spy.getFrame(ref, "source.mp4", 1.5, 320);
+    expect(urls).toEqual([
+      `http://x/read/video/${ref.id}?prefix=low-res%2F&offset=50&limit=25&download=1&editor=1`,
+      `http://x/api/frame?kind=video&id=${ref.id}&path=source.mp4&t=1.5&w=320`,
+    ]);
+    expect(spy.hlsBase(ref, "hls/")).toBe(`http://x/read/video/${ref.id}/hls/hls/`);
+    expect(() => new UploadClient({ endpoint: "/u" }).hlsBase(ref, "hls/")).toThrow(/readEndpoint/);
   });
 });
 
@@ -296,6 +276,6 @@ it("refuses a ref whose content id is not a UUIDv7 before any request", async ()
   for (const bad of ["1", "0192f000-0000-4000-8000-000000000001", "0192F000-0000-7000-8000-000000000001", "0192f000-0000-7000-c000-000000000001"]) expect(isContentId(bad)).toBe(false);
   let called = false;
   const api = new UploadApi({ endpoint: "/u", fetch: (async () => ((called = true), new Response("{}"))) as typeof fetch });
-  await expect(api.presign({ ref: { kind: "post", id: "18" }, type: "image/png", size: 1 })).rejects.toMatchObject({ code: "invalid_request" });
+  await expect(api.presign({ ref: { kind: "post", id: "18" }, path: "cover", type: "image/png", size: 1, sha256: "0".repeat(64) })).rejects.toMatchObject({ code: "invalid_request" });
   expect(called).toBe(false);
 });

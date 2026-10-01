@@ -1,14 +1,13 @@
-import { expect, it } from "vitest";
-import { FakeServer, bytes } from "../test/fake.js";
-import { UploadClient } from "./client.js";
+import { expect, it, vi } from "vitest";
+import { FakeServer, bytes, fakeClient } from "../test/fake.js";
 import { UploadQueue, type QueueSnapshot } from "./queue.js";
 
-const ref = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000001", version: "en" };
+const ref = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000001" };
+const path = "originals/{name}";
 
 function setup() {
   const s = new FakeServer();
-  const c = new UploadClient({ endpoint: "http://x/api", fetch: s.fetch, transport: s.transport, retryDelay: () => 0 });
-  return { s, q: new UploadQueue(c, { ref }) };
+  return { s, q: new UploadQueue(fakeClient(s), { ref, path }) };
 }
 
 const png = (name: string, seed: number) => new File([bytes(1000, seed)], name, { type: "image/png" });
@@ -21,16 +20,22 @@ function until(q: UploadQueue, ok: (s: QueueSnapshot) => boolean): Promise<Queue
   });
 }
 
-it("uploads, keeps the arranged order and commits inserts in it", async () => {
+it("uploads, keeps the arranged order and commits puts appended in it", async () => {
   const { s, q } = setup();
   const [a, b, c] = q.add([png("a.png", 1), png("b.png", 2), png("c.png", 3)]);
+  expect(a!.path).toBe("originals/a.png");
+  s.seed(ref, [{ path: "originals/0.png", type: "image/png", size: 1 }]);
   await until(q, (x) => x.ready);
   q.move(c!.id, 0);
-  q.update(b!.id, { name: "02.png", meta: { alt: "b" } });
+  q.update(b!.id, { path: "originals/02.png", meta: { alt: "b" } });
   const files = await q.commit();
-  expect(files.map((f) => f.name)).toEqual(["c.png", "a.png", "02.png"]);
-  const commit = s.calls.lastIndexOf("/commit");
-  expect(commit).toBeGreaterThan(0);
+  expect(files.map((f) => f.path)).toEqual(["originals/0.png", "originals/c.png", "originals/a.png", "originals/02.png"]);
+  expect(s.commits[0]!.map((op) => [op.op, op.path, op.index])).toEqual([
+    ["put", "originals/c.png", 2 ** 31 - 1],
+    ["put", "originals/a.png", 2 ** 31 - 1],
+    ["put", "originals/02.png", 2 ** 31 - 1],
+  ]);
+  expect(s.commits[0]![2]).toMatchObject({ meta: { alt: "b" }, blob: expect.stringMatching(/^sha256-/) });
   expect(q.getSnapshot().items.map((i) => i.status)).toEqual(["committed", "committed", "committed"]);
   expect(a!.status).toBe("queued"); // snapshots are immutable
 });
@@ -59,13 +64,13 @@ it("marks a file failed on its own refusal and retries it", async () => {
   expect(s.puts.length).toBe(0);
 });
 
-it("re-uploads a file whose original went stale before commit", async () => {
+it("re-uploads a file whose blob went stale before commit", async () => {
   const { s, q } = setup();
   const [, b] = q.add([png("a.png", 1), png("b.png", 2)]);
   const snap = await until(q, (x) => x.ready);
-  s.stale.add(snap.items.find((i) => i.id === b!.id)!.result!.name);
+  s.stale.add(snap.items.find((i) => i.id === b!.id)!.result!.blob);
   const files = await q.commit();
-  expect(files.map((f) => f.name)).toEqual(["a.png", "b.png"]);
+  expect(files.map((f) => f.path)).toEqual(["originals/a.png", "originals/b.png"]);
   expect(s.puts.length).toBe(3);
   expect(q.getSnapshot().items.every((i) => i.status === "committed")).toBe(true);
 });
@@ -75,21 +80,27 @@ it("commits only the uploaded head of the queue with head", async () => {
   const [a, bad, c] = q.add([png("a.png", 1), new File([bytes(10)], "x.gif", { type: "" }), png("c.png", 3)]);
   await until(q, (x) => x.items.every((i) => i.status !== "queued" && i.status !== "uploading"));
   const files = await q.commit(undefined, { head: true });
-  expect(files.map((f) => f.name)).toEqual(["a.png"]);
+  expect(files.map((f) => f.path)).toEqual(["originals/a.png"]);
   const status = (id: string) => q.getSnapshot().items.find((i) => i.id === id)!.status;
   expect([status(a!.id), status(bad!.id), status(c!.id)]).toEqual(["committed", "failed", "uploaded"]);
 });
 
-it("an unattached subtitle sidecar is processed once the server reports it ready", async () => {
+it("processes on upload: stages unattached, polls until processed, attaches in queue order and discards a removed one", async () => {
   const s = new FakeServer();
   s.processOnUpload = true;
-  const c = new UploadClient({ endpoint: "http://x/api", fetch: s.fetch, transport: s.transport, retryDelay: () => 0 });
-  const q = new UploadQueue(c, { ref, pollInterval: 5 });
-  const [sub] = q.add([new File(["1\n00:00:01,000 --> 00:00:02,000\nHi\n"], "en.srt", { type: "application/x-subrip" })]);
-  s.fileInfos.set("en.srt", { type: "application/x-subrip" });
-  await until(q, (x) => x.items[0]!.processing?.name === "en.srt");
-  expect(q.getSnapshot().items[0]!.processed).toBeFalsy();
-  s.fileInfos.set("en.srt", { type: "application/x-subrip", ready: true });
-  await until(q, (x) => !!x.items.find((i) => i.id === sub!.id)?.processed);
+  s.pendingReads = 2;
+  const q = new UploadQueue(fakeClient(s), { ref, path, pollInterval: 5 });
+  const [a, b, d] = q.add([png("a.png", 1), png("b.png", 2), png("d.png", 3)]);
+  await until(q, (x) => x.items.every((i) => i.unattached && i.processing));
+  await until(q, (x) => x.items.every((i) => i.processed));
+  expect(s.commits.flat().map((op) => [op.op, op.unattached])).toEqual([["put", true], ["put", true], ["put", true]]);
+  q.remove(d!.id);
+  await vi.waitFor(() => expect(s.commits).toHaveLength(4));
+  expect(s.commits[3]).toEqual([{ op: "remove", path: "originals/d.png" }]);
+  q.move(b!.id, 0);
+  const files = await q.commit();
+  expect(s.commits[4]!.map((op) => [op.op, op.path])).toEqual([["attach", "originals/b.png"], ["attach", "originals/a.png"]]);
+  expect(files.map((f) => [f.path, !!f.unattached])).toEqual([["originals/b.png", false], ["originals/a.png", false]]);
+  void a;
   q.dispose();
 });

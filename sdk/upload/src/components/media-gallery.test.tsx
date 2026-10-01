@@ -5,14 +5,23 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { GALLERY_VIEW_KEY } from "../gallery-react.js";
 import { de } from "../locales/de.js";
-import type { FileInfo, ReadResult } from "../wire.gen.js";
+import type { Access, FileInfo, ReadResult } from "../wire.gen.js";
 import { MediaGallery, UploadUiProvider } from "../ui.js";
 
-const read = (access: string, files: FileInfo[]): ReadResult => ({ access, total: files.length, preview_limit: 0, offset: 0, limit: 50, expires: 0, files });
-const img = (index: number, w = 800, h = 600): FileInfo => ({ index, name: `${index}.png`, type: "image/png", w, h, url: `https://m/${index}.webp` });
-const vid = (index: number): FileInfo => ({ index, name: `${index}.mp4`, type: "video/mp4", w: 1080, h: 1920, duration: 42, hls: true });
+const read = (access: Access, files: FileInfo[]): ReadResult => ({
+  access,
+  total: files.length,
+  preview_limit: 0,
+  offset: 0,
+  limit: 50,
+  expires: 0,
+  files,
+  hls: [...new Set(files.filter((f) => f.type.startsWith("video/") && !f.locked).map((f) => f.path.slice(0, f.path.lastIndexOf("/") + 1)))],
+});
+const img = (index: number, w = 800, h = 600): FileInfo => ({ path: `low-res/${index}.webp`, type: "image/webp", w, h, url: `https://m/${index}.webp` });
+const vid = (index: number): FileInfo => ({ path: `hls/${index}/1080-h264.mp4`, type: "video/mp4", w: 1080, h: 1920, dur: 42, url: "u" });
 const four = read("full", [img(0), img(1, 600, 900), vid(2), img(3)]);
-const hlsBase = (f: FileInfo) => `/hls/${f.name}/`;
+const hlsBase = (dir: string) => `/read/post/1/hls/${dir}`;
 
 beforeEach(() => {
   localStorage.clear();
@@ -91,18 +100,14 @@ it("carousel: the arrow that reaches an end hands focus to the carousel, so arro
   expect(screen.getByText("1 / 2")).toBeInTheDocument();
 });
 
-it("a multi-video gallery draws the poster on the video it was cut from, for any viewer", () => {
+it("the item's poster is drawn on its first video", () => {
   const two = read("full", [vid(0), vid(1)]);
-  const poster = { aspect: "16:9", outputs: [{ w: 480, h: 270, url: "https://m/poster.webp" }], pending: false, min_width: 480 };
-  const { rerender } = render(<MediaGallery read={two} hlsBase={hlsBase} videoImages={{ poster: { ...poster, file: "1.mp4" } }} />);
-  const posterIn = (i: number) => document.querySelectorAll("[data-ckui=slide]")[i]!.querySelector("img[src*='poster.webp']");
-  expect(posterIn(0)).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  expect(posterIn(1)).not.toBeNull();
-  // An uploaded poster (no file) belongs to the first video.
-  rerender(<MediaGallery read={two} hlsBase={hlsBase} videoImages={{ poster }} />);
-  fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+  const poster = { base: "https://m", namespace: "app", kind: "post", id: "1", to: "poster-{w}.webp", widths: [480], aspect: "16:9" };
+  render(<MediaGallery read={two} hlsBase={hlsBase} poster={poster} />);
+  const posterIn = (i: number) => document.querySelectorAll("[data-ckui=slide]")[i]!.querySelector("img[src*='poster-480.webp']");
   expect(posterIn(0)).not.toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(posterIn(1)).toBeNull();
 });
 
 it("the swiped-away video pauses; only the visible one is active", async () => {
@@ -184,10 +189,11 @@ it("one item renders alone, without toggle or dots", () => {
 it("locked items: blurred teaser with the host's unlock slot, no locked URLs", async () => {
   const user = userEvent.setup();
   const files: FileInfo[] = [
-    { index: 0, name: "teaser", type: "image/webp", w: 960, h: 720, teaser: true, url: "https://m/blurred?t=x" },
-    { index: 1, type: "image/png", locked: true },
-    { index: 2, type: "video/mp4", locked: true },
-    { index: 3, type: "image/png", locked: true },
+    { path: "teaser/blur.webp", type: "image/webp", w: 960, h: 720, teaser: true, url: "https://m/blurred?t=x" },
+    { path: "low-res/1.webp", type: "image/webp", locked: true },
+    { path: "hls/480-h264.mp4", type: "video/mp4", locked: true },
+    { path: "hls/sprite.jpg", type: "image/jpeg", locked: true },
+    { path: "low-res/3.webp", type: "image/webp", locked: true },
   ];
   const renderLocked = vi.fn(({ count }: { count: number }) => <button type="button">Unlock {count}</button>);
   const { container } = render(<MediaGallery read={read("none", files)} renderLocked={renderLocked} />);
@@ -203,20 +209,20 @@ it("locked items: blurred teaser with the host's unlock slot, no locked URLs", a
   expect(screen.getByRole("button", { name: "Open item 2 of 2" })).toHaveTextContent("+1");
 });
 
-it("pending and failed videos, and translated labels", async () => {
+it("failed and processing images, and translated labels", async () => {
   const files: FileInfo[] = [
-    { index: 0, name: "a.mp4", type: "video/mp4", progress: { phase: "encoding", segments_done: 2, segments_total: 10, percent: 20, at: Date.now() } },
-    { index: 1, name: "b.mp4", type: "video/mp4", failed: "aspect" },
+    { path: "cover.png", type: "image/png", upload: true },
+    { path: "page.png", type: "image/png", upload: true, failed: { of: "x", message: "too small", code: "image_too_small", details: { width: 100, min_width: 300 } } },
   ];
   render(
     <UploadUiProvider messages={de}>
-      <MediaGallery read={read("full", files)} hlsBase={hlsBase} />
+      <MediaGallery read={read("full", files)} />
     </UploadUiProvider>,
   );
-  expect(screen.getByText(/Encoding|Kodier/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Raster" })).toBeInTheDocument();
+  expect(within(current() as HTMLElement).getByText(/Bild|Image/)).toBeInTheDocument();
   await act(async () => screen.getByRole("button", { name: "Weiter" }).click());
-  expect(within(current() as HTMLElement).getByRole("alert")).toHaveTextContent("Dieses Video konnte nicht verarbeitet werden.");
+  expect(within(current() as HTMLElement).getByRole("alert")).toHaveTextContent("300");
 });
 
 it("a browser without HLS says so, with a code and Retry", async () => {
@@ -229,17 +235,21 @@ it("a browser without HLS says so, with a code and Retry", async () => {
   expect(within(alert).getByRole("button", { name: "Try again" })).toBeInTheDocument();
 });
 
-it("audio: a player over the M4A variant with its duration and download; a music tile in the grid", () => {
-  const song: FileInfo = { index: 0, name: "song.mp3", type: "audio/mpeg", duration: 125, hls: true, url: "https://m/song.m4a", variant: "audio" };
-  const pending: FileInfo = { index: 1, name: "wip.mp3", type: "audio/mpeg" };
-  const r = { ...read("full", [song, pending]), downloads: [{ key: "song.mp3-audio", name: "Song.m4a", type: "audio/mp4", url: "https://m/dl" }] };
+it("audio: a player over the ladder's M4A with its duration and download; a music tile in the grid", () => {
+  const files: FileInfo[] = [
+    { path: "listen/song/audio.mp4", type: "audio/mp4", dur: 125, url: "https://m/track" },
+    { path: "listen/song/audio.m4a", type: "audio/mp4", dur: 125, url: "https://m/song.m4a?t=x&dl=Song.m4a", download: "Song.m4a" },
+    { path: "listen/wip.mp3", type: "audio/mpeg" },
+  ];
+  const r = { ...read("full", files), hls: ["listen/song/"] };
   render(<MediaGallery read={r} view="carousel" />);
   const slide = within(current() as HTMLElement);
   const audio = current().querySelector("audio")!;
-  expect(audio).toHaveAttribute("src", "https://m/song.m4a");
+  expect(audio).toHaveAttribute("src", "https://m/song.m4a?t=x&dl=Song.m4a");
   expect(audio).toHaveAccessibleName("Audio 1");
+  expect(slide.getByText("song")).toBeInTheDocument();
   expect(slide.getByText("2:05")).toBeInTheDocument();
-  expect(slide.getByRole("link", { name: "Download" })).toHaveAttribute("href", "https://m/dl");
+  expect(slide.getByRole("link", { name: "Download" })).toHaveAttribute("download", "Song.m4a");
   expect(current().querySelector("img")).toBeNull();
 
   render(<MediaGallery read={r} view="grid" />);

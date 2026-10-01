@@ -26,7 +26,7 @@ export class KillProxy {
       let destination = upstream;
       if (this.browser) {
         const path = new URL(req.url!, "http://x").pathname;
-        if (path.startsWith("/upload/") || path === "/object") destination = this.browser.api;
+        if (path.startsWith("/upload/") || path.startsWith("/read/") || path === "/object") destination = this.browser.api;
         else if (!path.startsWith(bucketPath)) destination = this.browser.app;
       }
       const up = http.request(
@@ -83,18 +83,18 @@ export class KillProxy {
   }
 }
 
-/** Builds and starts media/internal/uploadtestserver; resolves its base URL. */
-export async function startServer(publicEndpoint: string): Promise<{ url: string; proc: ChildProcess }> {
+/** Builds and starts media/internal/uploadtestserver; resolves its base URL and its namespace. */
+export async function startServer(publicEndpoint: string): Promise<{ url: string; namespace: string; proc: ChildProcess }> {
   const root = resolve(import.meta.dirname, "../../..");
   const bin = join(mkdtempSync(join(tmpdir(), "ck-sdk-")), "uploadtestserver");
   execFileSync("go", ["build", "-o", bin, "./media/internal/uploadtestserver"], { cwd: root, stdio: "inherit" });
   const proc = spawn(bin, ["-public", publicEndpoint, "-grace", "20s"], { stdio: ["pipe", "pipe", "inherit"] });
   const lines = createInterface({ input: proc.stdout! });
-  const url = await new Promise<string>((resolve, reject) => {
+  const [url, namespace] = await new Promise<string[]>((resolve, reject) => {
     proc.once("exit", (code) => reject(new Error(`uploadtestserver exited ${code}`)));
-    lines.on("line", (l) => l.startsWith("READY ") && resolve(l.slice(6)));
+    lines.on("line", (l) => l.startsWith("READY ") && resolve(l.slice(6).split(" ")));
   });
-  return { url, proc };
+  return { url: url!, namespace: namespace!, proc };
 }
 
 export function stopServer(proc: ChildProcess): Promise<void> {

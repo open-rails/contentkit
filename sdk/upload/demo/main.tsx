@@ -14,7 +14,6 @@ import {
   type UploadUiTheme,
 } from "@openrails/contentkit-upload/ui";
 import { StrictMode, useState } from "react";
-import type { VideoImages } from "@openrails/contentkit-upload";
 import { createRoot } from "react-dom/client";
 import { DemoServer, sampleAvatar, sampleImage } from "./fake";
 
@@ -24,8 +23,9 @@ const dark = theme === "dark";
 document.documentElement.style.colorScheme = dark ? "dark" : "light";
 document.body.style.cssText = `margin:0;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:${dark ? "#09090b" : "#fafafa"};color:${dark ? "#fafafa" : "#09090b"}`;
 
-const server = new DemoServer();
-const client = createUploadClient({ endpoint: "/api", fetch: server.fetch, transport: server.transport });
+// Public files are served by e2e/media-server.ts (`node e2e/media-server.ts`).
+const server = new DemoServer(`http://127.0.0.1:${q.get("media") ?? 4180}`);
+const client = createUploadClient({ endpoint: "/api", readEndpoint: "/read", fetch: server.fetch, transport: server.transport });
 const channel = { kind: "channel", id: "0192f000-0000-7000-8000-000000000001" };
 const empty = { kind: "channel", id: "0192f000-0000-7000-8000-000000000002" };
 
@@ -47,26 +47,26 @@ const iconButton: React.CSSProperties = {
   cursor: "pointer",
 };
 
-function HeaderImage({ round }: { round?: boolean }) {
-  const { image } = useSlotEditor();
-  return <SlotImage manifest={image.manifest} round={round} style={{ width: "100%", height: "100%" }} />;
+function HeaderImage({ path, round }: { path: string; round?: boolean }) {
+  const { has } = useSlotEditor();
+  return <SlotImage image={has ? server.image(channel, path) : null} round={round} style={{ width: "100%", height: "100%" }} />;
 }
 
 function ChannelHeader() {
   return (
     <div data-demo="header" style={{ position: "relative", paddingBottom: 56 }}>
-      <SlotEditor item={channel} slot="cover" aspect="3:1">
+      <SlotEditor item={channel} path="cover" image={server.image(channel, "cover")}>
         <div style={{ position: "relative", borderRadius: 14, overflow: "hidden", aspectRatio: "3" }}>
-          <HeaderImage />
+          <HeaderImage path="cover" />
           <div style={{ position: "absolute", top: 10, right: 10 }}>
             <SlotEditMenu label="Change cover" iconOnly render={<button style={iconButton} />} />
           </div>
         </div>
         <SlotEditError />
       </SlotEditor>
-      <SlotEditor item={channel} slot="avatar" aspect="1:1">
+      <SlotEditor item={channel} path="avatar" image={server.image(channel, "avatar")}>
         <div style={{ position: "absolute", left: 20, bottom: 0, width: 112, height: 112, borderRadius: 999, border: `4px solid ${dark ? "#18181b" : "#fff"}` }}>
-          <HeaderImage round />
+          <HeaderImage path="avatar" round />
           <div style={{ position: "absolute", right: -2, bottom: -2 }}>
             <SlotEditMenu label="Change avatar" iconOnly render={<button style={iconButton} />} align="start" />
           </div>
@@ -77,19 +77,20 @@ function ChannelHeader() {
 }
 
 const video = { kind: "post", id: "0192f000-0000-7000-8000-000000000001" };
-await client.setVideoPoster(video, { source: "auto" });
-const seededVideo = await client.getVideoImages(video);
+const poster = server.image(video, "poster");
+server.seedVideo(video);
+await client.commit(video, [{ op: "frame", path: "poster", auto: true }]);
+await client.waitFor(video, "poster", { interval: 200 });
 
 function VideoCard() {
-  const [images, setImages] = useState<VideoImages>(seededVideo);
   const [open, setOpen] = useState(false);
   return (
     <div data-demo="video" style={{ display: "grid", gap: 12 }}>
-      <VideoPoster poster={images.poster} style={{ maxWidth: 360 }} />
+      <VideoPoster poster={poster} style={{ maxWidth: 360 }} />
       <div style={{ display: "flex", gap: 8 }}>
         <button type="button" onClick={() => setOpen(true)}>Set cover</button>
       </div>
-      <VideoPosterPicker open={open} onOpenChange={setOpen} item={video} images={images} onChange={setImages} />
+      <VideoPosterPicker open={open} onOpenChange={setOpen} item={video} image={poster} />
     </div>
   );
 }
@@ -120,8 +121,8 @@ createRoot(document.getElementById("root")!).render(
           <ChannelHeader />
         </Card>
         <Card title="Channel profile">
-          <CoverUpload item={channel} />
-          <AvatarUpload item={channel} />
+          <CoverUpload item={channel} image={server.image(channel, "cover")} />
+          <AvatarUpload item={channel} image={server.image(channel, "avatar")} />
         </Card>
         <Card title="Video poster">
           <VideoCard />
@@ -134,8 +135,8 @@ createRoot(document.getElementById("root")!).render(
           </div>
         </Card>
         <Card title="New channel">
-          <CoverUpload item={empty} />
-          <AvatarUpload item={empty} />
+          <CoverUpload item={empty} image={server.image(empty, "cover")} />
+          <AvatarUpload item={empty} image={server.image(empty, "avatar")} />
         </Card>
       </main>
     </UploadUiProvider>

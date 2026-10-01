@@ -1,10 +1,9 @@
-import { UploadApi, type ApiOptions } from "./api.js";
-import { UploadError, aborted, throwIfAborted, type UploadErrorCode } from "./errors.js";
+import { UploadApi, type ApiOptions, type ReadOptions } from "./api.js";
+import { UploadError, aborted, failureError, throwIfAborted } from "./errors.js";
 import { sha256Hex } from "./hash.js";
-import type { CropSource } from "./image.js";
 import { Pacer } from "./pacer.js";
 import { defaultTransport, type Transport } from "./transport.js";
-import { MAX_SINGLE_PUT, type CommitFile, type Edit, type FileInfo, type Op, type RefBody, type RequestReply, type SlotManifest, type VideoImages } from "./wire.gen.js";
+import type { Edit, FileInfo, Op, PresignReply, ReadResult, RefBody, RequestReply } from "./wire.gen.js";
 
 export interface ClientOptions extends ApiOptions {
   transport?: Transport;
@@ -19,20 +18,19 @@ export interface ClientOptions extends ApiOptions {
 }
 
 export interface Progress {
-  phase: "hashing" | "uploading" | "completing";
+  /** processing: committed, waiting for the worker (put). */
+  phase: "hashing" | "uploading" | "completing" | "processing";
   loaded: number;
   total: number;
 }
 
 export interface UploadOptions {
   ref: RefBody;
+  /** The upload path: a literal ("cover") or under a pattern ("originals/001.png"); the server cleans it and adds the extension. */
+  path: string;
   /** Content type; default the file's. */
   type?: string;
-  /** Upload the kind's slot original instead of a manifest file. */
-  slot?: string;
-  /** Upload a new inline image (post bodies, poll options); the result's name is its id. */
-  inline?: boolean;
-  /** Aborting pauses: the multipart upload stays resumable from the last state. */
+  /** Aborting pauses: a multipart upload stays resumable from the last state. */
   signal?: AbortSignal;
   onProgress?: (p: Progress) => void;
   /** State saved from onState, to resume a multipart upload of the same file. */
@@ -41,28 +39,39 @@ export interface UploadOptions {
   onState?: (s: UploadState | null) => void;
 }
 
-export interface SlotUploadOptions extends UploadOptions {
-  slot: string;
-  /** Crop (EXIF-oriented original pixels) and rotation; omitted = centred at the slot's aspect. */
-  edit?: Edit | null;
-}
-
-/** A committed slot original and the slot as rendered from it. */
-export interface SlotUpload extends UploadedFile {
-  manifest: SlotManifest;
-}
-
-/** An uploaded original, ready for an insert or replace op. */
+/** An uploaded blob, ready for a put op. */
 export interface UploadedFile {
-  name: string;
+  /** The path to commit: cleaned, with an extension, named by the server for a Named upload. */
+  path: string;
+  /** "sha256-{hex}" of the whole file. */
+  blob: string;
   type: string;
   size: number;
-  /** Set for single-PUT uploads (and slots and inline images). */
-  sha256?: string;
   /** The identical file was already in the item's folder; nothing was sent. */
   exists: boolean;
   /** The host processes files on upload: commit it unattached now (the queue does). */
   processOnUpload?: boolean;
+}
+
+/** The put op's fields besides path and blob. */
+export interface PutOptions {
+  edit?: Edit | null;
+  meta?: Record<string, unknown>;
+  index?: number;
+  /** Wait until the worker processed the upload (waitFor). Default true. */
+  wait?: boolean;
+  /** How long to wait, ms. */
+  timeout?: number;
+  /** The uploaded blob, before the commit. */
+  onUploaded?: (up: UploadedFile) => void;
+}
+
+export interface WaitOptions {
+  signal?: AbortSignal;
+  /** Poll interval, ms. Default 1000. */
+  interval?: number;
+  /** ms; then render_timeout. Default 120000. */
+  timeout?: number;
 }
 
 export interface PlannedPart {
@@ -75,7 +84,8 @@ export interface PlannedPart {
 /** A multipart upload in flight; JSON-serializable. */
 export interface UploadState {
   ticket: string;
-  name: string;
+  path: string;
+  blob: string;
   type: string;
   size: number;
   ref: RefBody;
@@ -85,16 +95,25 @@ export interface UploadState {
   processOnUpload?: boolean;
 }
 
-/** A file to upload again when its original is gone at commit; type defaults to the file's. */
+/** A file to upload again when its blob is gone at commit; type defaults to the file's. */
 export type CommitSource = Blob | { file: Blob; type?: string };
 
 export interface CommitOptions {
   signal?: AbortSignal;
-  /** Original name → the file it was uploaded from. */
+  /** Blob ("sha256-…") → the file it was uploaded from. */
   sources?: Record<string, CommitSource>;
 }
 
 type Uploadable = Blob & { name?: string; lastModified?: number };
+
+/** A path names a file by its full path or, for an upload, its stem ("cover" for "cover.png"). */
+export const samePath = (file: string, path: string) => file === path || stem(file) === path;
+
+/** The path without its extension. */
+export const stem = (path: string) => {
+  const i = path.lastIndexOf(".");
+  return i > path.lastIndexOf("/") + 1 ? path.slice(0, i) : path;
+};
 
 export class UploadClient {
   readonly api: UploadApi;
@@ -114,224 +133,156 @@ export class UploadClient {
   }
 
   /**
-   * Uploads file into the item's folder: one checksum-bound PUT up to 64 MiB
-   * (or for a slot), resumable multipart above. A refused presign throws
-   * before any bytes move; multipart presigns before hashing anything.
+   * Uploads file to its content address in the item's folder: it hashes the
+   * whole file (off the main thread), presigns {path, type, size, sha256},
+   * then sends nothing (the blob exists), one checksum-bound PUT up to 64 MiB,
+   * or resumable multipart above. A refused presign throws before any bytes
+   * move. Commit the result with a put op (or use put()).
    */
   async upload(file: Uploadable, o: UploadOptions): Promise<UploadedFile> {
     const type = o.type || file.type;
     if (!type) throw new UploadError("invalid_request", "the file has no content type");
     throwIfAborted(o.signal);
     if (o.resume) return this.resumeMultipart(file, o.resume, o);
-    if (o.slot || o.inline || file.size <= MAX_SINGLE_PUT) return this.single(file, type, o);
-
-    const p = await this.api.presign({ ref: o.ref, type, size: file.size }, o.signal);
-    if (!p.multipart) throw new UploadError("invalid_request", "expected a multipart upload plan");
-    const m = p.multipart;
-    const state: UploadState = {
-      ticket: m.ticket,
-      name: p.name,
-      type,
-      size: file.size,
-      ref: o.ref,
-      file: fingerprint(file),
-      limits: { minPartSize: m.min_part_size, maxPartSize: m.max_part_size, maxParts: m.max_parts },
-      parts: [],
-      processOnUpload: !!p.process_on_upload,
-    };
-    return this.multipart(file, state, new Set(), o);
-  }
-
-  /** Uploads a slot original and commits it with the edit; the server renders every size. */
-  async uploadSlot(file: Uploadable, o: SlotUploadOptions): Promise<SlotUpload> {
-    const f = await this.upload(file, o);
-    const body = { ref: o.ref, slot: o.slot, sha256: f.sha256!, ...(o.edit ? { edit: o.edit } : {}), ...fileName(file) };
-    const manifest = await this.retry(() => this.api.commitSlot(body, o.signal), o.signal);
-    return { ...f, manifest };
-  }
-
-  /** Re-renders a slot from its committed original with a new edit (null: centred); nothing is uploaded. */
-  editSlot(ref: RefBody, slot: string, edit?: Edit | null, signal?: AbortSignal): Promise<SlotManifest> {
-    return this.retry(() => this.api.editSlot({ ref, slot, ...(edit ? { edit } : {}) }, signal), signal);
-  }
-
-  /** Removes the slot's image; the reply is the empty slot. Removing an unset slot succeeds. */
-  deleteSlot(ref: RefBody, slot: string, signal?: AbortSignal): Promise<SlotManifest> {
-    return this.retry(() => this.api.deleteSlot({ ref, slot }, signal), signal);
-  }
-
-  /** The slot's aspect, edit, dims and rendered sizes (no outputs before the first commit). */
-  getSlot(ref: RefBody, slot: string, signal?: AbortSignal): Promise<SlotManifest> {
-    return this.retry(() => this.api.slot({ ref, slot }, signal), signal);
-  }
-
-  /**
-   * The committed original's editor view, for re-cropping: its URL (editors
-   * only) and the original's size. Waits while it renders; not_found when
-   * the slot has no measured original, render_timeout after timeout ms.
-   */
-  async getEditorView(ref: RefBody, slot: string, o: { signal?: AbortSignal; interval?: number; timeout?: number } = {}): Promise<CropSource> {
-    const until = Date.now() + (o.timeout ?? 30_000);
-    for (;;) {
-      const m = await this.getSlot(ref, slot, o.signal);
-      if (m.editor_url && m.dims) return { url: m.editor_url, width: m.dims.w, height: m.dims.h };
-      if (!m.dims && !m.pending) throw new UploadError("not_found", "the slot has no committed original", 404);
-      if (Date.now() >= until) throw new UploadError("render_timeout", "the editor view is still rendering");
-      await sleep(o.interval ?? 1000, o.signal);
+    const total = file.size;
+    const sha256 = await sha256Hex(file, { signal: o.signal, onProgress: (loaded) => o.onProgress?.({ phase: "hashing", loaded, total }) });
+    const presign = () => this.api.presign({ ref: o.ref, path: o.path, type, size: total, sha256 }, o.signal);
+    let p = await presign();
+    const out = (p: PresignReply): UploadedFile => ({ path: p.path, blob: p.blob, type, size: total, exists: !!p.exists, processOnUpload: !!p.process_on_upload });
+    if (p.exists) return out(p);
+    if (p.multipart) {
+      const m = p.multipart;
+      const state: UploadState = {
+        ticket: m.ticket,
+        path: p.path,
+        blob: p.blob,
+        type,
+        size: total,
+        ref: o.ref,
+        file: fingerprint(file),
+        limits: { minPartSize: m.min_part_size, maxPartSize: m.max_part_size, maxParts: m.max_parts },
+        parts: [],
+        processOnUpload: !!p.process_on_upload,
+      };
+      return this.multipart(file, state, new Set(), o);
     }
+    await this.retry(
+      async () => {
+        if (p.exists) return;
+        await this.transport(p.put!, file, { signal: o.signal, onProgress: (loaded) => o.onProgress?.({ phase: "uploading", loaded, total }) });
+      },
+      o.signal,
+      async (err) => {
+        // An expired URL: presign again (a Named upload gets a new name).
+        if (err.code === "storage" && err.status === 403) p = await presign();
+      },
+    );
+    return out(p);
   }
 
   /**
-   * Polls until the slot's outputs are encoded (pending false) or timeout ms
-   * pass; returns the latest manifest either way.
+   * Uploads file and commits it as a put to its path (with edit, meta and
+   * index), then by default waits until the worker processed it; resolves
+   * with the upload as an editor reads it.
    */
-  async waitForSlot(ref: RefBody, slot: string, o: { signal?: AbortSignal; interval?: number; timeout?: number } = {}): Promise<SlotManifest> {
-    const until = Date.now() + (o.timeout ?? 60_000);
-    for (;;) {
-      const m = await this.getSlot(ref, slot, o.signal);
-      if (!m.pending || Date.now() >= until) return m;
-      await sleep(o.interval ?? 1000, o.signal);
-    }
+  async put(file: Uploadable, o: UploadOptions & PutOptions): Promise<FileInfo> {
+    const up = await this.upload(file, o);
+    o.onUploaded?.(up);
+    const op: Op = { op: "put", path: up.path, blob: up.blob };
+    if (o.edit) op.edit = o.edit;
+    if (o.meta) op.meta = o.meta;
+    if (o.index !== undefined) op.index = o.index;
+    const files = await this.commit(o.ref, [op], { signal: o.signal, sources: { [up.blob]: { file, type: up.type } } });
+    if (o.wait === false) return files.find((f) => f.path === up.path) ?? { path: up.path, type: up.type };
+    o.onProgress?.({ phase: "processing", loaded: up.size, total: up.size });
+    return this.waitFor(o.ref, up.path, { signal: o.signal, timeout: o.timeout });
   }
 
   /**
-   * Uploads a new inline image, commits it and waits until it is rendered;
-   * url is its public URL. Hand name to the host (a post body, a cover).
-   */
-  async uploadInline(file: Uploadable, o: Omit<UploadOptions, "slot" | "inline" | "resume">): Promise<UploadedFile & { url: string }> {
-    const f = await this.upload(file, { ...o, inline: true });
-    let m = await this.retry(() => this.api.commitSlot({ ref: o.ref, slot: f.name, sha256: f.sha256!, ...fileName(file) }, o.signal), o.signal);
-    if (m.pending) m = await this.waitForSlot(o.ref, f.name, { signal: o.signal, interval: 500 });
-    const url = m.outputs.at(-1)?.url;
-    if (!url) throw new UploadError((m.error_code ?? "internal_error") as UploadErrorCode, m.error ?? "the image was not rendered", 422);
-    return { ...f, url };
-  }
-
-  /**
-   * Applies manifest ops in one conditional write; returns the committed file
-   * order. With sources (original name → the file uploaded as it), a
-   * not_uploaded refusal (the original expired or is due for cleanup) uploads
+   * Applies ops to the item in one conditional write; returns its uploads as
+   * an editor reads them. With sources (blob → the file uploaded as it), a
+   * not_uploaded refusal (the blob expired or is due for cleanup) uploads
    * the affected files again and retries the commit once.
    */
-  async commit(ref: RefBody, ops: Op[], o: CommitOptions = {}): Promise<CommitFile[]> {
+  async commit(ref: RefBody, ops: Op[], o: CommitOptions = {}): Promise<FileInfo[]> {
     try {
       return (await this.api.commit({ ref, ops }, o.signal)).files;
     } catch (e) {
-      const sources = o.sources ?? {};
       if (!(e instanceof UploadError) || e.code !== "not_uploaded") throw e;
-      const originals = [...new Set(ops.map((op) => op.original).filter((n): n is string => !!n && n in sources))];
-      const stale = e.originals ? originals.filter((n) => e.originals!.includes(n)) : originals;
+      const sources = o.sources ?? {};
+      const puts = ops.filter((op) => op.op === "put" && op.blob && op.blob in sources);
+      const stale = [...new Set(puts.map((op) => op.blob!))].filter((b) => !e.blobs || e.blobs.includes(b));
       if (stale.length === 0) throw e;
       const renamed = new Map<string, string>();
-      for (const name of stale) {
-        const src = sources[name]!;
+      for (const blob of stale) {
+        const src = sources[blob]!;
         const file = src instanceof Blob ? src : src.file;
         const type = src instanceof Blob ? undefined : src.type;
-        const up = await this.upload(file, { ref, type, signal: o.signal });
-        renamed.set(name, up.name);
+        const op = puts.find((p) => p.blob === blob)!;
+        renamed.set(blob, (await this.upload(file, { ref, path: op.path!, type, signal: o.signal })).blob);
       }
-      const retried = ops.map((op) => (op.original && renamed.has(op.original) ? { ...op, original: renamed.get(op.original) } : op));
+      const retried = ops.map((op) => (op.blob && renamed.has(op.blob) ? { ...op, blob: renamed.get(op.blob) } : op));
       return (await this.api.commit({ ref, ops: retried }, o.signal)).files;
     }
   }
 
-  /**
-   * Sets a file's non-destructive edit (crop in original pixels, then a
-   * clockwise rotate); null clears it. Its variants are re-derived from the
-   * untouched original.
-   */
-  async edit(ref: RefBody, name: string, edit: Edit | null, o: { signal?: AbortSignal } = {}): Promise<CommitFile[]> {
-    return this.commit(ref, [{ op: "edit", name, ...(edit ? { edit } : {}) }], o);
+  /** The read API: the item's files under prefix in manifest order, with signed URLs for what this viewer may have. */
+  async read(ref: RefBody, o: ReadOptions & { signal?: AbortSignal } = {}): Promise<ReadResult> {
+    this.api.itemURL(ref); // a bad ref or a missing readEndpoint fails at once
+    return this.retry(() => this.api.read(ref, o, o.signal), o.signal);
   }
 
   /**
-   * Makes a manifest image the slot's original (a cover from a page), through
-   * edit: omitted uses the file's own edit, {} none. With a slot aspect the
-   * server derives the crop's height from its width. o.from names another
-   * item holding file (e.g. a channel avatar from a post image).
+   * Polls an editor read until the upload at path (or with that stem) is
+   * processed: nothing pending and its blob present (a frame grabbed).
+   * Rejects with its failure, not_found once it is gone, render_timeout
+   * after the timeout.
    */
-  async setSlotFromFile(ref: RefBody, slot: string, file: string, edit?: Edit, o: { signal?: AbortSignal; from?: RefBody } = {}): Promise<SlotManifest> {
-    const body = { ref, slot, file, ...(edit ? { edit } : {}), ...(o.from ? { from: o.from } : {}) };
-    return this.retry(() => this.api.commitSlotFromFile(body, o.signal), o.signal);
-  }
-
-  /** A video item's poster, with its selection and the video's duration and frame size. */
-  getVideoImages(ref: RefBody, file?: string, signal?: AbortSignal): Promise<VideoImages> {
-    return this.retry(() => this.api.videoImages({ ref, ...(file ? { file } : {}) }, signal), signal);
-  }
-
-  /**
-   * Sets the poster to a frame (seconds into file; edit in the frame's pixels,
-   * VideoInfo w×h) or back to the automatic frame; the worker grabs it and the
-   * image job renders the sizes.
-   */
-  setVideoPoster(ref: RefBody, poster: { source: "frame"; time: number; file?: string; edit?: Edit | null } | { source: "auto"; file?: string }, signal?: AbortSignal): Promise<VideoImages> {
-    const edit = "edit" in poster && poster.edit ? { edit: poster.edit } : {};
-    const time = poster.source === "frame" ? { time: poster.time } : {};
-    const body = { ref, source: poster.source, ...(poster.file ? { file: poster.file } : {}), ...time, ...edit };
-    return this.retry(() => this.api.videoPoster(body, signal), signal);
-  }
-
-  /** Uploads an image as the poster, cropped by edit (its own pixels; omitted: the whole image). */
-  async uploadVideoPoster(image: Uploadable, o: { ref: RefBody; edit?: Edit | null; signal?: AbortSignal; onProgress?: (p: Progress) => void }): Promise<VideoImages> {
-    const f = await this.upload(image, { ref: o.ref, slot: "poster", signal: o.signal, onProgress: o.onProgress });
-    const body = { ref: o.ref, source: "upload" as const, sha256: f.sha256!, ...(o.edit ? { edit: o.edit } : {}) };
-    return this.retry(() => this.api.videoPoster(body, o.signal), o.signal);
-  }
-
-  /** One frame as a JPEG w pixels wide (clamped by the server to 64–1280 and the video). */
-  getFrame(ref: RefBody, time: number, o: { file?: string; width?: number; signal?: AbortSignal } = {}): Promise<Blob> {
-    return this.retry(() => this.api.frame({ ...ref, file: o.file, t: time, w: o.width }, o.signal), o.signal);
-  }
-
-  /** Polls until the poster is rendered, or timeout ms pass; returns the latest either way. */
-  async waitForVideoImages(ref: RefBody, o: { file?: string; signal?: AbortSignal; interval?: number; timeout?: number } = {}): Promise<VideoImages> {
+  async waitFor(ref: RefBody, path: string, o: WaitOptions = {}): Promise<FileInfo> {
     const until = Date.now() + (o.timeout ?? 120_000);
     for (;;) {
-      const v = await this.getVideoImages(ref, o.file, o.signal);
-      if (!v.poster.pending || Date.now() >= until) return v;
-      await sleep(o.interval ?? 1500, o.signal);
+      const r = await this.read(ref, { editor: true, prefix: stem(path), signal: o.signal });
+      const f = r.files.find((x) => x.upload && samePath(x.path, path));
+      if (!f) throw new UploadError("not_found", `no upload ${path}`, 404);
+      if (f.failed) throw failureError(f.failed);
+      if (!f.pending?.length && (f.size ?? 0) > 0) return f;
+      if (Date.now() >= until) throw new UploadError("render_timeout", `${path} is still processing`);
+      await sleep(o.interval ?? 1000, o.signal);
     }
   }
 
-  /** The item's named files as their editor reads them, unattached ones included (processing state, progress). */
-  files(ref: RefBody, names?: string[], signal?: AbortSignal): Promise<FileInfo[]> {
-    return this.retry(async () => (await this.api.files({ ref, ...(names?.length ? { names } : {}) }, signal)).files, signal);
+  /**
+   * The upload's editor view, for re-cropping: its URL and the upload's
+   * oriented size. Waits while it renders (an editor read asks for it);
+   * not_found when the path has no upload, render_timeout after the timeout
+   * (default 30 s).
+   */
+  async editorView(ref: RefBody, path: string, o: WaitOptions = {}): Promise<{ url: string; width: number; height: number }> {
+    const until = Date.now() + (o.timeout ?? 30_000);
+    for (;;) {
+      const r = await this.read(ref, { editor: true, prefix: stem(path), signal: o.signal });
+      const f = r.files.find((x) => x.upload && samePath(x.path, path));
+      if (!f) throw new UploadError("not_found", `no upload ${path}`, 404);
+      if (f.editor_url && f.w && f.h) return { url: f.editor_url, width: f.w, height: f.h };
+      if (f.failed) throw failureError(f.failed);
+      if (Date.now() >= until) throw new UploadError("render_timeout", `the editor view of ${path} is still rendering`);
+      await sleep(o.interval ?? 1000, o.signal);
+    }
+  }
+
+  /** A JPEG still of the video upload at path, t seconds in, w pixels wide (default the frame's). */
+  getFrame(ref: RefBody, path: string, t: number, w?: number, signal?: AbortSignal): Promise<Blob> {
+    return this.retry(() => this.api.frame(ref, path, t, w, signal), signal);
+  }
+
+  /** The folder of an HLS ladder from a read's `hls`: `{readEndpoint}/{kind}/{id}/hls/{dir}`; master.m3u8 and sprite.vtt resolve under it. */
+  hlsBase(ref: RefBody, dir: string): string {
+    return `${this.api.itemURL(ref)}/hls/${dir}`;
   }
 
   /** Discards a paused multipart upload. */
   async discard(state: UploadState): Promise<void> {
     await this.api.abort({ ticket: state.ticket });
-  }
-
-  private async single(file: Uploadable, type: string, o: UploadOptions): Promise<UploadedFile> {
-    const total = file.size;
-    const sha256 = await sha256Hex(file, {
-      signal: o.signal,
-      onProgress: (loaded) => o.onProgress?.({ phase: "hashing", loaded, total }),
-    });
-    const presign = () => this.api.presign({ ref: o.ref, type, size: total, sha256, slot: o.slot, inline: o.inline }, o.signal);
-    const p = await presign();
-    const out: UploadedFile = { name: p.name, type, size: total, sha256, exists: !!p.exists, processOnUpload: !!p.process_on_upload };
-    if (p.exists) return out;
-    let put = p.put!;
-    await this.retry(
-      async () => {
-        await this.transport(put, file, {
-          signal: o.signal,
-          onProgress: (loaded) => o.onProgress?.({ phase: "uploading", loaded, total }),
-        });
-      },
-      o.signal,
-      async (err) => {
-        if (err.code === "storage" && err.status === 403) {
-          const again = await presign(); // expired URL; an inline image gets a new name
-          put = again.put!;
-          out.name = again.name;
-        }
-      },
-    );
-    return out;
   }
 
   private async resumeMultipart(file: Uploadable, state: UploadState, o: UploadOptions): Promise<UploadedFile> {
@@ -478,7 +429,7 @@ export class UploadClient {
     o.onProgress?.({ phase: "completing", loaded: state.size, total: state.size });
     const c = await this.retry(() => this.api.complete({ ticket: state.ticket }, o.signal), o.signal);
     o.onState?.(null);
-    return { name: c.name, type: c.type, size: c.size, exists: false, processOnUpload: state.processOnUpload };
+    return { path: state.path, blob: c.blob, type: c.type, size: c.size, exists: false, processOnUpload: state.processOnUpload };
   }
 
   private async retry<T>(fn: () => Promise<T>, signal?: AbortSignal, before?: (err: UploadError) => Promise<void>): Promise<T> {
@@ -511,7 +462,7 @@ export function backoff(attempt: number, retryAfter?: number): number {
   return base * (0.75 + Math.random() * 0.5);
 }
 
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(aborted(signal));
     const t = setTimeout(() => {
@@ -524,9 +475,4 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     };
     signal?.addEventListener("abort", onAbort, { once: true });
   });
-}
-
-/** The uploaded file's name for commit-slot, when it has one. */
-function fileName(file: Uploadable): { filename?: string } {
-  return file.name ? { filename: file.name } : {};
 }
