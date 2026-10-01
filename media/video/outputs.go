@@ -201,9 +201,9 @@ func blobs(outs ...media.File) []string {
 
 // publish records outputs with edit under the manifest lock, after checking
 // every blob exists (the lock fences the sweep). A deleted folder drops the
-// blobs written for it, and so does errGone (a taken-down upload's outputs
-// do not come back); any other errStale leaves them for the retry or the
-// sweep.
+// blobs written for it, and so does errGone (the outputs of an upload taken
+// down, or taken down and put again, do not come back); any other errStale
+// leaves them for the retry or the sweep.
 func (e *Encoder) publish(ctx context.Context, item media.Item, outs []media.File, edit func(*media.Manifest) error) error {
 	if testBeforePublish != nil {
 		testBeforePublish()
@@ -225,10 +225,10 @@ func (e *Encoder) publish(ctx context.Context, item media.Item, outs []media.Fil
 // current is upload f while it holds blob: the edit's fence.
 func current(m *media.Manifest, path, blob string) (media.File, error) {
 	f, ok := m.Get(path)
-	if !ok {
+	if !ok || f.Blob != blob {
 		return f, errGone
 	}
-	if f.Blob != blob || f.Gone {
+	if f.Gone {
 		return f, errStale
 	}
 	return f, nil

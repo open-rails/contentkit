@@ -275,25 +275,33 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 			zipped[z.Name] = f
 		}
 	}
-	var made []string
-	for _, d := range results {
-		for _, f := range d.outputs {
-			made = append(made, f.Blob)
-		}
-	}
-	for _, f := range zipped {
-		made = append(made, f.Blob)
-	}
 	var purge, orphaned []string
 	hidden := false
 	k := item.Kind()
 	_, err = p.c.Manifests.EditExisting(ctx, item.Ref(), func(cur *media.Manifest) error {
 		purge, orphaned = purge[:0], orphaned[:0]
-		before := map[string]bool{}
+		// A blob this edit newly references may have been swept or taken
+		// down before it took the folder lock (one shared with an upload
+		// removed meanwhile, too): there reports it still in place. What is
+		// missing is not recorded, and the next pass makes it again; the
+		// rest of the pass is kept.
+		present := map[string]bool{}
 		for _, b := range cur.Blobs() {
-			before[b] = true
+			present[b] = true
 		}
-		var gone []string // outputs of uploads removed meanwhile, and of zips that bundled them
+		there := func(blob string) (bool, error) {
+			if ok, seen := present[blob]; seen {
+				return ok, nil
+			}
+			key, _ := item.Blob(blob)
+			_, err := p.c.Store.Head(ctx, key)
+			if err != nil && !errors.Is(err, media.ErrNotFound) {
+				return false, fmt.Errorf("media/image: output %s: %w", key, err)
+			}
+			present[blob] = err == nil
+			return err == nil, nil
+		}
+		var gone []string // outputs of uploads removed or replaced meanwhile, and of zips that bundled them
 		if hidden = cur.Hidden; hidden {
 			if err := p.drop(ctx, written); err != nil {
 				return err
@@ -304,6 +312,8 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 			if i < 0 || cur.Files[i].Blob != d.src.Blob || cur.Files[i].Edit.Hash() != d.src.Edit.Hash() {
 				if i < 0 {
 					orphaned = append(orphaned, d.written...)
+				}
+				if i < 0 || cur.Files[i].Blob != d.src.Blob {
 					for _, f := range d.outputs {
 						gone = append(gone, f.Blob)
 					}
@@ -322,6 +332,17 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 				cur.SetFailed(d.src.Path, d.err)
 				continue
 			}
+			missing := false
+			for _, pr := range d.private {
+				ok, err := there(d.outputs[pr.Name].Blob)
+				if err != nil {
+					return err
+				}
+				missing = missing || !ok
+			}
+			if missing {
+				continue // still pending: the next pass renders it again
+			}
 			if d.dims.W > 0 && !cur.Full { // a Full manifest only shrinks
 				cur.Files[i].W, cur.Files[i].H = d.dims.W, d.dims.H
 			}
@@ -337,8 +358,12 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 		}
 		for _, z := range zips {
 			if f, ok := zipped[z.Name]; ok && f.FP == media.ZipFP(k.ZipInputs(cur, z)) {
-				if err := cur.SetOutputs(z.Zip, z.Name, []media.File{f}); err != nil {
+				if ok, err := there(f.Blob); err != nil {
 					return err
+				} else if ok {
+					if err := cur.SetOutputs(z.Zip, z.Name, []media.File{f}); err != nil {
+						return err
+					}
 				}
 			} else {
 				if ok {
@@ -348,21 +373,6 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 					if err := cur.SetOutputs(z.Zip, z.Name, nil); err != nil {
 						return err
 					}
-				}
-			}
-		}
-		// A blob this edit newly references may have been swept or taken
-		// down before it took the folder lock (one shared with an upload
-		// removed meanwhile, too): check it is still there.
-		after := map[string]bool{}
-		for _, b := range cur.Blobs() {
-			after[b] = true
-		}
-		for _, b := range made {
-			if !before[b] && after[b] {
-				key, _ := item.Blob(b)
-				if _, err := p.c.Store.Head(ctx, key); err != nil {
-					return fmt.Errorf("media/image: output %s: %w", key, err)
 				}
 			}
 		}
