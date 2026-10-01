@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"image/color"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -51,18 +53,24 @@ func TestSharedOutputTakenDownMidPass(t *testing.T) {
 	shared, _ := item.Blob(e.file(t, ref, "web/a.webp").Blob)
 	var once sync.Once
 	var takedown error
+	var heads []string
 	p := e.processor(t, headHook{Store: e.Store, after: func(key string) {
+		heads = append(heads, key)
 		if key == shared {
 			once.Do(func() {
 				_, takedown = e.up.Commit(ctx, e.editor, ref, []media.Op{{Op: media.OpRemove, Path: "files/a.png", Takedown: true}})
 			})
 		}
 	}})
-	if err := p.Process(ctx, media.ProcessJob{Ref: ref}); err == nil && e.exists(t, shared) {
-		t.Fatal("the takedown did not run mid-pass")
-	}
+	err := p.Process(ctx, media.ProcessJob{Ref: ref})
 	if takedown != nil {
 		t.Fatal(takedown)
+	}
+	if !slices.Contains(heads, shared) {
+		t.Fatalf("the pass did not produce the shared output %s: %v (%v)", shared, heads, err)
+	}
+	if err == nil {
+		t.Fatal("the pass recorded an output a takedown had deleted")
 	}
 	e.process(t, media.ProcessJob{Ref: ref}) // the retry
 	m := e.manifest(t, ref)
@@ -77,33 +85,38 @@ func TestSharedOutputTakenDownMidPass(t *testing.T) {
 }
 
 // An upload taken down while a pass re-renders it leaves nothing: the pass
-// writes its output again after the takedown's deletes (the same bytes, the
-// same name), and its closing edit deletes it, so old URLs do not come back.
+// writes its outputs again after the takedown's deletes (the same bytes, the
+// same names), and its closing edit deletes them, so old URLs do not come
+// back.
 func TestTakedownMidPassLeavesNoOutput(t *testing.T) {
 	e := newEnv(t, nil)
 	ctx := context.Background()
-	ref := e.ref(t, "post", 1)
+	ref := e.ref(t, "gallery", 1)
 	item, _ := e.reg.Item(ref)
-	e.put(t, ref, "files/a.png", "image/png", solid(t, 80, 80, color.RGBA{30, 200, 30, 255}))
+	e.put(t, ref, "originals/a.png", "image/png", solid(t, 80, 80, color.RGBA{30, 200, 30, 255}))
 	e.process(t, media.ProcessJob{Ref: ref})
-	source, _ := item.Blob(e.file(t, ref, "files/a.png").Blob)
-	output, _ := item.Blob(e.file(t, ref, "web/a.webp").Blob)
+	source, _ := item.Blob(e.file(t, ref, "originals/a.png").Blob)
 	var once sync.Once
 	var takedown error
+	fired := false
 	p := e.processor(t, headHook{Store: e.Store, before: func(key string) {
-		if key == output {
-			once.Do(func() {
-				_, takedown = e.up.Commit(ctx, e.editor, ref, []media.Op{{Op: media.OpRemove, Path: "files/a.png", Takedown: true}})
+		if strings.HasPrefix(key, item.PrivatePrefix()) && key != source {
+			once.Do(func() { // the pass is about to write its first output
+				fired = true
+				_, takedown = e.up.Commit(ctx, e.editor, ref, []media.Op{{Op: media.OpRemove, Path: "originals/a.png", Takedown: true}})
 			})
 		}
 	}})
 	if err := p.Process(ctx, media.ProcessJob{Ref: ref, Force: true}); err != nil {
 		t.Fatal(err)
 	}
-	if takedown != nil {
-		t.Fatal(takedown)
+	if takedown != nil || !fired {
+		t.Fatalf("the takedown did not run mid-pass: fired %v, %v", fired, takedown)
 	}
-	if e.exists(t, source) || e.exists(t, output) {
-		t.Fatalf("after the takedown: source kept %v, re-rendered output kept %v", e.exists(t, source), e.exists(t, output))
+	for o, err := range e.Store.List(ctx, item.PrivatePrefix()) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Fatalf("%s kept after the takedown", o.Key)
 	}
 }
