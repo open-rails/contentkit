@@ -138,6 +138,9 @@ func TestHideDuringPass(t *testing.T) {
 		}}
 		e.takePurged()
 		err := e.processor(t, s).Process(ctx, media.ProcessJob{Ref: ref})
+		if !hidden.Load() {
+			t.Fatalf("publication did not reach the hide hook: %v", err)
+		}
 		if err := <-hideDone; err != nil {
 			t.Fatal(err)
 		}

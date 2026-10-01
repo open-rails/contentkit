@@ -214,7 +214,11 @@ func TestRemoveFencesInFlightPublicPublication(t *testing.T) {
 	processor := e.processor(t, s)
 	done := make(chan error, 1)
 	go func() { done <- processor.Process(ctx, media.ProcessJob{Ref: ref, Force: true}) }()
-	<-reading
+	select {
+	case <-reading:
+	case err := <-done:
+		t.Fatalf("worker exited before the publication pause: %v", err)
+	}
 	op := media.Op{Op: media.OpRemove, Path: "cover.png"}
 	e.commit(t, ref, op)
 	if _, _, ok := e.public(t, ref, "cover-150.webp"); ok {
