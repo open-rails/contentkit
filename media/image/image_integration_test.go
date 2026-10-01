@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"image/color"
 	"slices"
@@ -286,5 +287,44 @@ func TestPublishDefaults(t *testing.T) {
 	}
 	if keys, err := image.PublishDefaults(ctx, e.Store, e.reg); err != nil || len(keys) != 0 {
 		t.Fatalf("republished %v %v", keys, err)
+	}
+}
+
+// A pass whose outputs the manifest cannot hold fails those uploads
+// too_large instead of retrying: the next job renders nothing again.
+func TestFullManifestFailsUploads(t *testing.T) {
+	e := newEnv(t, nil)
+	p := e.ref(t, "post", 1)
+	ctx := context.Background()
+	e.put(t, p, "files/a.png", "image/png", solid(t, 10, 10, red))
+	// Fill the manifest to just under where edits stop (4 KiB short of the
+	// bound): the output's record no longer fits.
+	if _, err := e.ms.EditExisting(ctx, p, func(m *media.Manifest) error {
+		c := *m
+		c.Meta = map[string]any{"pad": ""}
+		var b bytes.Buffer
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(&c); err != nil {
+			return err
+		}
+		m.Meta = map[string]any{"pad": strings.Repeat("A", media.MaxManifestBytes-4<<10-100-b.Len())}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.process(t, media.ProcessJob{Ref: p})
+	f := e.file(t, p, "files/a.png")
+	if fail := f.Fail(); fail == nil || fail.Code != media.CodeTooLarge || f.Pending != nil {
+		t.Fatalf("a full manifest: %+v", f)
+	}
+	e.process(t, media.ProcessJob{Ref: p})
+	if m := e.manifest(t, p); len(m.Outputs("files/a.png", "web")) != 0 {
+		t.Fatal("rendered again")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !slices.Contains(e.failed, "files/a.png") {
+		t.Fatalf("Hooks.Failed %v", e.failed)
 	}
 }

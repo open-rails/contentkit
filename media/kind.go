@@ -1,6 +1,7 @@
 package media
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -387,3 +388,56 @@ const (
 	MetaFor     = "for"     // a subtitle's video upload path; default every video of the item
 	MetaCharset = "charset" // a subtitle's IANA charset, overriding detection
 )
+
+// Output entry sizes in manifest JSON, beyond their paths and preset name:
+// a file's blob, type, size, dimensions and fingerprint, and an HLS track's
+// fields too. Generous, so the worker's records fit what commits admit.
+const (
+	outputEntryBytes = 320
+	trackEntryBytes  = 640
+)
+
+// unwritten estimates the JSON m gains as the worker processes it: an entry
+// for every output its uploads' presets have not written yet (HLS a track
+// per rung and codec, plus audio and sprite), a grabbed frame's or placed
+// upload's fields, and the public presets' pending names an unhide adds.
+// Commits bound the manifest with it, so the worker's records always fit.
+func (k *Kind) unwritten(m *Manifest) int64 {
+	written := map[[2]string]bool{}
+	for _, f := range m.Files {
+		if !f.IsUpload() {
+			written[[2]string{f.From, f.Preset}] = true
+		}
+	}
+	var n int64
+	for _, f := range m.Files {
+		if !f.IsUpload() || f.Gone || f.Fail() != nil {
+			continue
+		}
+		if f.Blob == "" {
+			n += 128 // a frame's or staged upload's blob, size and dimensions
+		}
+		from := jsonLen(f.Path)
+		for _, p := range k.PrivateFor(f.Path) {
+			if written[[2]string{f.Path, p.Name}] {
+				continue
+			}
+			entries, size := int64(1), int64(outputEntryBytes)
+			switch {
+			case p.HLS != nil:
+				ladder := cmp.Or(len(p.HLS.Ladder), len(DefaultLadder))
+				entries, size = int64(3*ladder+2), trackEntryBytes
+			case p.Audio != nil:
+				entries = 2
+			}
+			if p.Download != "" {
+				size += maxNameBytes + 16
+			}
+			n += entries * (size + int64(jsonLen(k.OutputPath(p, f.Path))+from+len(p.Name)))
+		}
+		for _, p := range k.PublicFor(f.Path) {
+			n += int64(len(p.Name)) + 3
+		}
+	}
+	return n
+}

@@ -181,6 +181,9 @@ func manifestOf(objs []Object) (Object, string) {
 	return Object{}, ""
 }
 
+// errBadManifest: a manifest that was read but does not decode.
+var errBadManifest = errors.New("media: manifest does not decode")
+
 func (j *Jobs) readManifest(ctx context.Context, key string) (*Manifest, error) {
 	rc, _, err := j.cfg.Store.Get(ctx, key, GetOptions{})
 	if err != nil {
@@ -191,9 +194,9 @@ func (j *Jobs) readManifest(ctx context.Context, key string) (*Manifest, error) 
 	if err != nil {
 		return nil, err
 	}
-	m, _, err := decodeManifest(body)
+	m, err := decodeManifest(body)
 	if err != nil {
-		return nil, fmt.Errorf("media: decode manifest %s: %w", key, err)
+		return nil, fmt.Errorf("%w %s: %w", errBadManifest, key, err)
 	}
 	return m, nil
 }

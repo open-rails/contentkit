@@ -167,6 +167,9 @@ func (c WorkerConfig) runVideoJob(ctx context.Context, row *rivertype.JobRow, wo
 		return river.JobCancel(fmt.Errorf("media/video: %d failed attempts", row.Attempt-1))
 	}
 	err := media.SnoozeUnavailable(ctx, c.store(), row, snoozeOnShutdown(ctx, work()))
+	if errors.Is(err, media.ErrManifestTooLarge) {
+		return river.JobCancel(err) // a retry would only be refused again
+	}
 	var snooze *river.JobSnoozeError
 	var cancelled *river.JobCancelError
 	if err != nil && row.Attempt >= workqueue.MaxAttempts && !errors.As(err, &snooze) && !errors.As(err, &cancelled) {
@@ -230,7 +233,10 @@ func (w *audioWorker) Work(ctx context.Context, job *river.Job[workqueue.AudioAr
 	}
 	defer release()
 	defer w.c.clearProgress(ctx, job.ID)
-	return w.c.Encoder.audio(ctx, item, job.Args, w.c.report(job.ID))
+	if err = w.c.Encoder.audio(ctx, item, job.Args, w.c.report(job.ID)); errors.Is(err, media.ErrManifestTooLarge) {
+		return river.JobCancel(err) // a retry would only be refused again
+	}
+	return err
 }
 
 func (c WorkerConfig) report(id int64) Report {

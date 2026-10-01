@@ -331,9 +331,15 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 		}
 		return nil
 	})
-	if errors.Is(err, media.ErrNotFound) {
+	switch {
+	case errors.Is(err, media.ErrNotFound):
 		err, orphaned = nil, written
-	} else if err != nil {
+	case errors.Is(err, media.ErrManifestTooLarge):
+		if err := p.full(ctx, item, results, err); err != nil {
+			return err
+		}
+		return p.dropIfHidden(ctx, item, written)
+	case err != nil:
 		return err
 	}
 	if hidden {
@@ -348,6 +354,25 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 		_ = p.c.Store.Delete(ctx, key) // best effort: the sweep is the backstop
 	}
 	return p.purge(ctx, append(purge, orphaned...))
+}
+
+// full fails a pass's uploads whose outputs the manifest cannot hold
+// (too_large), so no retry renders them again; the rendered blobs go by
+// age.
+func (p *Processor) full(ctx context.Context, item media.Item, results []done, cause error) error {
+	srcs := make([]media.File, len(results))
+	for i, d := range results {
+		srcs[i] = d.src
+	}
+	if err := p.c.Manifests.FailUploads(ctx, item.Ref(), srcs, cause); errors.Is(err, media.ErrNotFound) {
+		return nil
+	} else if err != nil {
+		return errors.Join(cause, err)
+	}
+	for _, f := range srcs {
+		p.failed(ctx, item, f.Path, cause)
+	}
+	return nil
 }
 
 // dropIfHidden deletes and purges keys, the public files of a pass that

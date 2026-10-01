@@ -100,7 +100,7 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 	}
 	j := &Jobs{cfg: cfg}
 	var err error
-	if j.manifests, err = NewManifests(cfg.Store, cfg.Registry, ManifestOptions{Locker: cfg.Locker, CacheBytes: 8 << 20, Sweeps: j}); err != nil {
+	if j.manifests, err = NewManifests(cfg.Store, cfg.Registry, ManifestOptions{Locker: cfg.Locker, Sweeps: j}); err != nil {
 		return nil, err
 	}
 	return j, nil
@@ -292,8 +292,8 @@ const uploadBytesMeta = "upload-bytes"
 
 // uploadBytes is the quota the folder's manifest was charged, read from the
 // manifest object's metadata so a manifest that does not decode (over its
-// bound) is still deleted. One without the record is decoded; failing that
-// nothing is released.
+// bound) is still deleted. One without the record is decoded; one that does
+// not decode releases nothing, and any other error is returned for a retry.
 func (j *Jobs) uploadBytes(ctx context.Context, prefix string) (int64, error) {
 	key := prefix + layout.ManifestName
 	obj, err := j.cfg.Store.Head(ctx, key)
@@ -306,11 +306,14 @@ func (j *Jobs) uploadBytes(ctx context.Context, prefix string) (int64, error) {
 		return n, nil
 	}
 	m, err := j.readManifest(ctx, key)
-	if errors.Is(err, ErrNotFound) {
+	switch {
+	case errors.Is(err, ErrNotFound):
 		return 0, nil
-	} else if err != nil {
+	case errors.Is(err, errBadManifest):
 		j.cfg.Logger.WarnContext(ctx, "media: deleting a folder whose manifest does not decode releases no quota", "key", key, "error", err)
 		return 0, nil
+	case err != nil:
+		return 0, err
 	}
 	return m.uploadBytes(), nil
 }

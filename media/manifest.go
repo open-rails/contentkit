@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"unicode/utf8"
 
 	"github.com/open-rails/contentkit/media/layout"
 )
@@ -27,6 +28,7 @@ type Manifest struct {
 	Files  []File         `json:"files"`
 
 	index map[string]int
+	size  int64 // its JSON length when last read or written
 }
 
 // File is one file: an upload (no Preset) or a derived file.
@@ -161,11 +163,14 @@ func (f File) Fail() *Failure {
 // Teaser reports meta.teaser: served to every viewer who can see the item.
 func (f File) Teaser() bool { t, _ := f.Meta[MetaTeaser].(bool); return t }
 
-// NewFailure records err for upload f: an ImageError keeps its code and details.
+// NewFailure records err for upload f: an ImageError keeps its code and
+// details, ErrManifestTooLarge is too_large.
 func NewFailure(f File, err error) *Failure {
 	out := &Failure{Of: f.Key(), Message: err.Error()}
 	if ie := AsImageError(err); ie != nil {
 		out.Message, out.Code, out.Details = ie.Message, ie.Code, &ie.Details
+	} else if errors.Is(err, ErrManifestTooLarge) {
+		out.Message, out.Code = "the item's manifest is full: remove uploads to process more", CodeTooLarge
 	}
 	return out
 }
@@ -386,24 +391,31 @@ func (m *Manifest) SetFailed(path string, err error) {
 }
 
 // Manifest bounds. MaxManifestBytes bounds a manifest's JSON on every read
-// and write, so nothing writes a manifest no reader can load; commits stop
-// at a quarter of it (ErrManifestTooLarge), leaving the rest for the
-// worker's outputs. A 2,000-page gallery is about 1.5 MB. Meta is bounded
-// where ops set it, and an item holds at most MaxUploads uploads.
+// and write (8 MiB: a 2,000-page gallery is about 1.5 MB), so every manifest
+// a reader may meet fits the cache. Edits stop editHeadroom below it, so a
+// hide always fits; a commit stops when the item, processed, would pass that
+// (Kind.unwritten). Meta is bounded where ops set it, and an item holds at
+// most MaxUploads uploads.
 const (
-	MaxManifestBytes = 64 << 20
-	MaxCommitBytes   = MaxManifestBytes / 4
+	MaxManifestBytes = 8 << 20
+	editHeadroom     = 4 << 10
 	MaxMetaBytes     = 4 << 10  // an upload's meta, as JSON
 	MaxItemMetaBytes = 16 << 10 // the item's meta, as JSON
 	MaxUploads       = 10000
 )
 
-// ErrManifestTooLarge: a manifest over its bound, refused on write and on
-// read.
-var ErrManifestTooLarge = errors.New("media: manifest over its size limit")
+var (
+	// ErrManifestTooLarge: an edit refused because the manifest would grow
+	// past its bound. The workers fail the uploads it was for (too_large).
+	ErrManifestTooLarge = errors.New("media: manifest edit refused: over its size limit")
+	// ErrManifestUnreadable: a stored manifest over MaxManifestBytes, written
+	// before the bound; it does not decode.
+	ErrManifestUnreadable = errors.New("media: stored manifest over its size limit")
+)
 
-// encodeManifest writes m as gzip JSON and returns the JSON's length.
-func encodeManifest(m *Manifest) ([]byte, int64, error) {
+// encodeManifest writes m as gzip JSON (HTML characters unescaped: a name of
+// "<" costs one byte) and records its JSON length.
+func encodeManifest(m *Manifest) ([]byte, error) {
 	m.V = ManifestVersion
 	if m.Files == nil {
 		m.Files = []File{}
@@ -411,13 +423,16 @@ func encodeManifest(m *Manifest) ([]byte, int64, error) {
 	var b bytes.Buffer
 	zw, _ := gzip.NewWriterLevel(&b, gzip.BestSpeed)
 	cw := &countWriter{w: zw}
-	if err := json.NewEncoder(cw).Encode(m); err != nil {
-		return nil, 0, err
+	enc := json.NewEncoder(cw)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(m); err != nil {
+		return nil, err
 	}
 	if err := zw.Close(); err != nil {
-		return nil, 0, err
+		return nil, err
 	}
-	return b.Bytes(), cw.n, nil
+	m.size = cw.n
+	return b.Bytes(), nil
 }
 
 type countWriter struct {
@@ -432,19 +447,17 @@ func (c *countWriter) Write(p []byte) (int, error) {
 }
 
 // DecodeManifest reads a stored manifest (gzip JSON, or plain JSON).
-func DecodeManifest(b []byte) (*Manifest, error) {
-	m, _, err := decodeManifest(b)
-	return m, err
-}
+func DecodeManifest(b []byte) (*Manifest, error) { return decodeManifest(b) }
 
 // decodeManifest reads gzip JSON (or plain JSON), at most MaxManifestBytes
-// of it, indexes it and returns the JSON's length.
-func decodeManifest(b []byte) (*Manifest, int64, error) {
+// of it (ErrManifestUnreadable past that), indexes it and records its JSON
+// length.
+func decodeManifest(b []byte) (*Manifest, error) {
 	r := io.Reader(bytes.NewReader(b))
 	if len(b) >= 2 && b[0] == 0x1f && b[1] == 0x8b {
 		zr, err := gzip.NewReader(r)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		defer zr.Close()
 		r = zr
@@ -453,15 +466,36 @@ func decodeManifest(b []byte) (*Manifest, int64, error) {
 	var m Manifest
 	err := json.NewDecoder(lr).Decode(&m)
 	if lr.N <= 0 {
-		return nil, 0, ErrManifestTooLarge
+		return nil, ErrManifestUnreadable
 	} else if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	if m.V != ManifestVersion {
-		return nil, 0, fmt.Errorf("media: manifest version %d, want %d", m.V, ManifestVersion)
+		return nil, fmt.Errorf("media: manifest version %d, want %d", m.V, ManifestVersion)
 	}
 	m.reindex()
-	return &m, MaxManifestBytes + 1 - lr.N, nil
+	m.size = MaxManifestBytes + 1 - lr.N
+	return &m, nil
+}
+
+// jsonLen is s's length as a JSON string's contents (encodeManifest's
+// escaping: quotes and backslashes doubled, control characters and the line
+// separators U+2028 and U+2029 as \uXXXX).
+func jsonLen(s string) int {
+	n := 0
+	for _, r := range s {
+		switch {
+		case r == '"' || r == '\\' || r == '\n' || r == '\r' || r == '\t' || r == '\b' || r == '\f':
+			n += 2
+		case r < 0x20 || r == '\u2028' || r == '\u2029':
+			n += 6
+		case r == utf8.RuneError:
+			n += 6
+		default:
+			n += utf8.RuneLen(r)
+		}
+	}
+	return n
 }
 
 // metaBytes is meta's JSON length.

@@ -42,7 +42,9 @@ func (j *Jobs) Expose(ctx context.Context, ref contentref.ContentRef) error {
 			}
 		}
 		changed := false
-		_, err := j.manifests.EditExisting(ctx, ref, func(m *Manifest) error {
+		// Every other edit stops editHeadroom short of the bound, so this one
+		// fits; a refusal is returned and the job retries.
+		_, err := j.manifests.edit(ctx, ref, true, bound{limit: MaxManifestBytes}, func(m *Manifest) error {
 			changed = m.Hidden != hidden
 			setHidden(item.Kind(), m, hidden)
 			return nil
@@ -50,7 +52,7 @@ func (j *Jobs) Expose(ctx context.Context, ref contentref.ContentRef) error {
 		switch {
 		case errors.Is(err, ErrNotFound):
 			return nil
-		case hidden && errors.Is(err, ErrManifestTooLarge):
+		case hidden && errors.Is(err, ErrManifestUnreadable):
 			// Nothing can process it either, so public/ stays empty.
 			j.cfg.Logger.WarnContext(ctx, "media: hid an item whose manifest does not decode", "ref", ref.String(), "error", err)
 			return nil
@@ -92,7 +94,7 @@ func setHidden(k *Kind, m *Manifest, hidden bool) {
 			continue
 		}
 		pending := slices.DeleteFunc(slices.Clone(f.Pending), func(p string) bool { return k.public(p) != nil })
-		if !hidden && f.Source() != "" {
+		if !hidden && f.Source() != "" && f.Fail() == nil {
 			for _, p := range k.PublicFor(f.Path) {
 				pending = append(pending, p.Name)
 			}

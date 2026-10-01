@@ -319,7 +319,7 @@ func (w *placeWorker) Work(ctx context.Context, job *river.Job[workqueue.PlaceAr
 		return err
 	}
 	if _, err := w.manifests.Place(ctx, a.Ref); err != nil {
-		return err
+		return full(err)
 	}
 	return w.queue.Enqueue(ctx, media.ProcessJob{Ref: a.Ref, Preset: a.Preset, Force: a.Force})
 }
@@ -343,5 +343,14 @@ func (w *imageWorker) Work(ctx context.Context, job *river.Job[workqueue.ImageAr
 	if err := media.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), job.Args.After); err != nil {
 		return err
 	}
-	return w.images.Process(ctx, pj)
+	return full(w.images.Process(ctx, pj))
+}
+
+// full makes a manifest edit refused for size final: a retry would redo the
+// work only to be refused again.
+func full(err error) error {
+	if errors.Is(err, media.ErrManifestTooLarge) {
+		return river.JobCancel(err)
+	}
+	return err
 }

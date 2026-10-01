@@ -132,6 +132,14 @@ func (e *Encoder) settle(ctx context.Context, item media.Item, f media.File, err
 	switch {
 	case errors.Is(err, errStale):
 		return nil
+	case errors.Is(err, media.ErrManifestTooLarge):
+		if ferr := e.ms.FailUploads(ctx, item.Ref(), []media.File{f}, err); ferr != nil && !errors.Is(ferr, media.ErrNotFound) {
+			return errors.Join(err, ferr)
+		}
+		if h := e.ms.Registry().Config().Hooks.Failed; h != nil {
+			h(ctx, item.Ref(), f.Path, err)
+		}
+		return nil
 	case errors.As(err, &perm):
 		return e.fail(ctx, item, f.Path, f.Blob, perm.Err)
 	case err != nil:

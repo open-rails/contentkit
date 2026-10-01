@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -17,8 +19,8 @@ import (
 
 // A manifest never grows past what readers load (audit H2). The audit's PoC,
 // a 10 MiB meta value, is refused where ops set meta; puts with meta at its
-// bound grow the manifest until a commit would pass MaxCommitBytes, which is
-// refused with the manifest unchanged. The item then still reads, hides and
+// bound grow the manifest until a commit would pass the bound once
+// processed, which is refused with the manifest unchanged. The item then still reads, hides and
 // deletes from a fresh process, and deletion releases every upload's charge
 // (at least 64 KiB each).
 func TestManifestCaps(t *testing.T) {
@@ -113,7 +115,7 @@ func TestOversizedManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	fresh := s3test.Manifests(t, f.env.Store, f.reg, media.ManifestOptions{})
-	if _, _, err := fresh.Get(ctx, g); !errors.Is(err, media.ErrManifestTooLarge) {
+	if _, _, err := fresh.Get(ctx, g); !errors.Is(err, media.ErrManifestUnreadable) {
 		t.Fatalf("oversized read: %v", err)
 	}
 	pool := pgtest.Pool(t, nil)
@@ -149,7 +151,7 @@ func TestManifestBound(t *testing.T) {
 		zw.Write([]byte(tail))
 		zw.Close()
 		_, err := media.DecodeManifest(b.Bytes())
-		if extra == 0 && err != nil || extra == 1 && !errors.Is(err, media.ErrManifestTooLarge) {
+		if extra == 0 && err != nil || extra == 1 && !errors.Is(err, media.ErrManifestUnreadable) {
 			t.Fatalf("%d bytes over: %v", extra, err)
 		}
 	}
@@ -167,4 +169,179 @@ func oversizedManifest(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return b.Bytes()
+}
+
+// editLimit is where commits and the workers' records stop: 4 KiB short of
+// MaxManifestBytes, so a hide always fits.
+const editLimit = media.MaxManifestBytes - 4<<10
+
+// padded is meta padding m (as fn receives it) to a manifest of size bytes of
+// JSON, for a kind whose meta fills no download names.
+func padded(t *testing.T, m *media.Manifest, size int) map[string]any {
+	t.Helper()
+	c := *m
+	c.Meta = map[string]any{"pad": ""}
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(&c); err != nil {
+		t.Fatal(err)
+	}
+	return map[string]any{"pad": strings.Repeat("A", size-b.Len())}
+}
+
+// The largest manifest an edit may write stays in the cache, the host's
+// (Jobs.Manifests) and a fresh one alike: reads never decode it again.
+func TestLargeManifestIsCached(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	ctx := context.Background()
+	post := f.ref("post", 1)
+	f.put(post, "inline/a.png", "image/png", png(1))
+	if _, err := f.ms.EditExisting(ctx, post, func(m *media.Manifest) error {
+		m.Meta = padded(t, m, editLimit)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fresh := s3test.Manifests(t, f.env.Store, f.reg, media.ManifestOptions{})
+	for _, ms := range []*media.Manifests{f.ms, fresh} {
+		a, _, err := ms.Get(ctx, post)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b, _, _ := ms.Get(ctx, post); a != b {
+			t.Fatal("an admissible manifest was not cached")
+		}
+	}
+}
+
+// A commit is refused only when it grows the item past the bound once
+// processed: an item whose outputs would not fit refuses a new page, yet
+// removing one or shortening its meta still lands (no freeze).
+func TestFullItemStillShrinks(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	ctx := context.Background()
+	g := f.ref("gallery", 1)
+	f.put(g, "originals/seed.png", "image/png", png(1))
+	seed := blobOf(png(1))
+	meta := map[string]any{"x": strings.Repeat("A", media.MaxMetaBytes-16)}
+	if _, err := f.ms.EditExisting(ctx, g, func(m *media.Manifest) error {
+		for i := range 1800 {
+			m.Files = append(m.Files, media.File{Path: fmt.Sprintf("originals/p%04d.png", i), Blob: seed, Type: "image/png",
+				Size: int64(len(png(1))), Meta: meta, Pending: []string{"thumb", "high"}})
+		}
+		m.Meta = map[string]any{"title": strings.Repeat("T", 100)}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: "originals/new.png", Blob: seed}}); code(err) != media.CodeTooLarge {
+		t.Fatalf("a page whose outputs would not fit: %v", err)
+	}
+	f.commit(g, media.Op{Op: media.OpRemove, Path: "originals/p0000.png"})
+	f.commit(g, media.Op{Op: media.OpMeta, Meta: map[string]any{"title": "short"}})
+}
+
+// The commit counts the outputs its uploads will get, with their escaped
+// names: pages whose processed entries would pass the bound are refused
+// while the manifest is still small. Names are written unescaped.
+func TestCommitProjectsOutputs(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	ctx := context.Background()
+	g := f.ref("gallery", 1)
+	item, _ := f.reg.Item(g)
+	f.put(g, "originals/seed.png", "image/png", png(1))
+	seed := blobOf(png(1))
+	name := strings.Repeat("<", 190)
+	var last *media.Manifest
+	for batch := 0; ; batch++ {
+		if batch == 10 {
+			t.Fatal("commits never reached the bound")
+		}
+		ops := make([]media.Op, 1000)
+		for i := range ops {
+			ops[i] = media.Op{Op: media.OpPut, Path: fmt.Sprintf("originals/%s%d-%04d", name, batch, i), Blob: seed}
+		}
+		m, err := f.up.Commit(ctx, f.editor, g, ops)
+		if err != nil {
+			if code(err) != media.CodeTooLarge || last == nil {
+				t.Fatalf("batch %d: %v", batch, err)
+			}
+			break
+		}
+		last = m
+	}
+	var size bytes.Buffer
+	enc := json.NewEncoder(&size)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(last); err != nil || size.Len() > media.MaxManifestBytes/2 {
+		t.Fatalf("refused only at %d bytes: outputs were not projected (%v)", size.Len(), err)
+	}
+	rc, _, err := f.env.Store.Get(ctx, item.ManifestKey(), media.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	zr, err := gzip.NewReader(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(zr)
+	if !bytes.Contains(raw, []byte(name)) || bytes.Contains(raw, []byte(`\u003c`)) {
+		t.Fatal("names are written escaped")
+	}
+}
+
+// A hide always fits: an item at the edit limit hides; a stored manifest that
+// decodes but leaves no room for the flag is refused and the error returned
+// (the job retries), never taken for hidden.
+func TestHideFits(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	f.visible(2)
+	ctx := context.Background()
+	full := f.ref("post", 1)
+	f.put(full, "inline/a.png", "image/png", png(1))
+	if _, err := f.ms.EditExisting(ctx, full, func(m *media.Manifest) error {
+		m.Meta = padded(t, m, editLimit)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.res.set(cid(1), access.Resolution{})
+	if err := f.jobs.Expose(ctx, full); err != nil {
+		t.Fatal(err)
+	}
+	if m, _, _ := f.ms.Get(ctx, full); !m.Hidden {
+		t.Fatal("an item at the edit limit did not hide")
+	}
+
+	tight := f.ref("post", 2)
+	f.put(tight, "inline/b.png", "image/png", png(2))
+	f.produce(tight) // nothing pending: the hide only adds its flag
+	m, _, _ := f.ms.Get(ctx, tight)
+	c := *m
+	c.Meta = padded(t, m, media.MaxManifestBytes-5)
+	var b bytes.Buffer
+	zw := gzip.NewWriter(&b)
+	enc := json.NewEncoder(zw)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(&c); err != nil {
+		t.Fatal(err)
+	}
+	zw.Close()
+	item, _ := f.reg.Item(tight)
+	if _, err := f.env.Store.Put(ctx, item.ManifestKey(), bytes.NewReader(b.Bytes()), int64(b.Len()), media.PutOptions{ContentType: "application/gzip"}); err != nil {
+		t.Fatal(err)
+	}
+	f.res.set(cid(2), access.Resolution{})
+	if err := f.jobs.Expose(ctx, tight); !errors.Is(err, media.ErrManifestTooLarge) {
+		t.Fatalf("a hide that does not fit: %v", err)
+	}
+	if m, _, err := f.ms.Get(ctx, tight); err != nil || m.Hidden {
+		t.Fatalf("hidden %v %v", m != nil && m.Hidden, err)
+	}
 }

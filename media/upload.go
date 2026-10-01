@@ -401,7 +401,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	editCtx, cancel := context.WithTimeout(ctx, commitMargin(u.o.Grace)/2)
 	defer cancel()
 	var prior *Manifest
-	man, err := u.o.Manifests.edit(editCtx, ref, false, MaxCommitBytes, func(m *Manifest) error {
+	man, err := u.o.Manifests.edit(editCtx, ref, false, bound{project: item.Kind().unwritten}, func(m *Manifest) error {
 		prior = m.Clone()
 		o := &opRun{k: item.Kind(), m: m, id: ref.ContentID, copies: copies}
 		keys = keys[:0]
@@ -470,7 +470,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		return nil
 	})
 	if errors.Is(err, ErrManifestTooLarge) {
-		err = uploadErr(CodeTooLarge, "the item's manifest would pass %d MiB: remove files or meta first", MaxCommitBytes>>20)
+		err = uploadErr(CodeTooLarge, "the item, processed, would pass its manifest's %d MiB: remove uploads or meta first", MaxManifestBytes>>20)
 	}
 	if err != nil {
 		if charged > 0 {
