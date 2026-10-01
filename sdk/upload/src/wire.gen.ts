@@ -4,25 +4,24 @@ export const MAX_SINGLE_PUT = 67108864;
 export const MIN_PART_SIZE = 8388608;
 export const MAX_PART_SIZE = 16777216;
 
-export type ErrorCode = "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "incomplete" | "not_uploaded" | "too_many_files" | "too_large" | "quota_exceeded" | "type_not_allowed" | "checksum_mismatch" | "rate_limited" | "image_too_small" | "image_too_large" | "image_unreadable" | "animation_not_allowed" | "animation_too_long" | "animation_unsupported" | "internal_error";
+export type ErrorCode = "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "incomplete" | "not_uploaded" | "too_many_files" | "too_large" | "quota_exceeded" | "type_not_allowed" | "checksum_mismatch" | "rate_limited" | "unavailable" | "image_too_small" | "image_too_large" | "image_unreadable" | "animation_not_allowed" | "animation_too_long" | "animation_unsupported" | "internal_error";
 
-export type OpName = "insert" | "attach" | "replace" | "move" | "rename" | "remove" | "edit";
-export type PosterSource = "frame" | "upload" | "auto";
+export type OpName = "put" | "edit" | "move" | "rename" | "remove" | "attach" | "copy" | "frame" | "meta" | "regenerate";
+export type Access = "full" | "preview" | "none";
+export type ItemState = "ready" | "processing" | "failed";
 export type EncodePhase = "queued" | "downloading" | "probing" | "encoding" | "muxing" | "uploading" | "publishing" | "images";
 
 export interface RefBody {
   kind: string;
   id: string;
-  version?: string;
 }
 
 export interface PresignBody {
   ref: RefBody;
+  path: string;
   type: string;
   size: number;
-  sha256?: string;
-  slot?: string;
-  inline?: boolean;
+  sha256: string;
 }
 
 export interface RequestReply {
@@ -40,7 +39,8 @@ export interface MultipartReply {
 }
 
 export interface PresignReply {
-  name: string;
+  path: string;
+  blob: string;
   exists?: boolean;
   put?: RequestReply;
   multipart?: MultipartReply;
@@ -74,7 +74,7 @@ export interface PartsReply {
 }
 
 export interface CompleteReply {
-  name: string;
+  blob: string;
   type: string;
   size: number;
 }
@@ -91,15 +91,25 @@ export interface Edit {
   rotate?: number;
 }
 
+export interface CopyFrom {
+  id: string;
+  path: string;
+}
+
 export interface Op {
   op: OpName;
-  name: string;
-  original?: string;
+  path?: string;
+  blob?: string;
   index?: number;
-  to?: string;
   meta?: Record<string, unknown>;
   edit?: Edit;
   unattached?: boolean;
+  to?: string;
+  from?: CopyFrom;
+  t?: number;
+  auto?: boolean;
+  preset?: string;
+  force?: boolean;
 }
 
 export interface CommitBody {
@@ -107,56 +117,8 @@ export interface CommitBody {
   ops: Op[];
 }
 
-export interface CommitFile {
-  name: string;
-  original: string;
-  type?: string;
-  size?: number;
-  edit?: Edit;
-  meta?: Record<string, unknown>;
-  unattached?: boolean;
-}
-
 export interface CommitReply {
-  files: CommitFile[];
-}
-
-export interface SlotBody {
-  ref: RefBody;
-  slot: string;
-  sha256: string;
-  edit?: Edit;
-  filename?: string;
-}
-
-export interface SlotFromFileBody {
-  ref: RefBody;
-  slot: string;
-  from?: RefBody;
-  file: string;
-  edit?: Edit;
-}
-
-export interface SlotEditBody {
-  ref: RefBody;
-  slot: string;
-  edit?: Edit;
-}
-
-export interface SlotRefBody {
-  ref: RefBody;
-  slot: string;
-}
-
-export interface Dims {
-  w: number;
-  h: number;
-}
-
-export interface SlotImage {
-  w: number;
-  h: number;
-  url: string;
+  files: FileInfo[];
 }
 
 export interface ErrorDetails {
@@ -174,110 +136,25 @@ export interface ErrorDetails {
   max_seconds?: number;
 }
 
-export interface SlotManifest {
-  aspect: string;
-  edit?: Edit;
-  dims?: Dims;
-  outputs: SlotImage[];
-  pending: boolean;
-  error?: string;
-  error_code?: string;
-  error_details?: ErrorDetails;
-  min_width?: number;
-  animation?: string;
-  editor_url?: string;
-}
-
-export interface VideoImagesBody {
-  ref: RefBody;
-  file?: string;
-}
-
-export interface VideoPosterBody {
-  ref: RefBody;
-  source: PosterSource;
-  file?: string;
-  time?: number;
-  sha256?: string;
-  edit?: Edit;
-}
-
-export interface PosterSelection {
-  source: PosterSource;
-  version?: string;
-  file?: string;
-  time?: number;
-}
-
-export interface PosterManifest extends SlotManifest {
-  file?: string;
-  time?: number;
-  selection?: PosterSelection;
-}
-
-export interface VideoInfo {
-  version?: string;
-  file: string;
-  duration: number;
-  w: number;
-  h: number;
-  encoded: boolean;
-}
-
-export interface VideoImages {
-  poster: PosterManifest;
-  video?: VideoInfo;
-  progress?: EncodeProgress;
-}
-
 export interface ErrorReply {
   error: string;
   code: ErrorCode;
   retry_after?: number;
-  originals?: string[];
+  blobs?: string[];
   details?: ErrorDetails;
 }
 
-export interface ReadResult {
-  access: string;
-  total: number;
-  preview_limit: number;
-  offset: number;
-  limit: number;
-  expires: number;
-  meta?: Record<string, unknown>;
-  files: FileInfo[];
-  downloads?: DownloadInfo[];
+export interface Frame {
+  t?: number;
+  auto?: boolean;
+  of?: string;
 }
 
-export interface FileInfo {
-  index: number;
-  name?: string;
-  type?: string;
-  w?: number;
-  h?: number;
-  duration?: number;
-  edit?: Edit;
-  dims?: Dims;
-  teaser?: boolean;
-  locked?: boolean;
-  hls?: boolean;
-  ready?: boolean;
-  unattached?: boolean;
-  failed?: string;
-  failed_code?: string;
-  failed_details?: ErrorDetails;
-  progress?: EncodeProgress;
-  variant?: string;
-  url?: string;
-}
-
-export interface DownloadInfo {
-  key: string;
-  name: string;
-  type?: string;
-  size?: number;
-  url: string;
+export interface Failure {
+  of: string;
+  message: string;
+  code?: string;
+  details?: ErrorDetails;
 }
 
 export interface EncodeProgress {
@@ -294,11 +171,38 @@ export interface EncodeProgress {
   stages?: number;
 }
 
-export interface FilesBody {
-  ref: RefBody;
-  names?: string[];
+export interface ReadResult {
+  access: Access;
+  preview_limit: number;
+  expires: number;
+  meta?: Record<string, unknown>;
+  total: number;
+  offset: number;
+  limit: number;
+  hls?: string[];
+  state?: ItemState;
+  files: FileInfo[];
 }
 
-export interface FilesReply {
-  files: FileInfo[];
+export interface FileInfo {
+  path: string;
+  type: string;
+  size?: number;
+  w?: number;
+  h?: number;
+  dur?: number;
+  teaser?: boolean;
+  download?: string;
+  url?: string;
+  locked?: boolean;
+  upload?: boolean;
+  from?: string;
+  edit?: Edit;
+  frame?: Frame;
+  meta?: Record<string, unknown>;
+  unattached?: boolean;
+  pending?: string[];
+  failed?: Failure;
+  editor_url?: string;
+  progress?: EncodeProgress;
 }
