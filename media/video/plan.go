@@ -171,13 +171,14 @@ func (c WorkerConfig) planUpload(ctx context.Context, item media.Item, man *medi
 	if err != nil {
 		return err
 	}
-	pr, err := probeRemote(ctx, url.URL)
+	pr, err := c.probeSource(ctx, item.Ref(), f, url.URL)
 	if err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return &PermanentError{err}
+		return err
 	}
+	k := item.Kind()
+	u, _ := k.UploadOf(f.Path)
+	limits := u.Video.Limits()
+	pr.MaxFPS = limits.MaxFPS
 	pl, err := newPlan(pr)
 	if err != nil {
 		return &PermanentError{err}
@@ -185,7 +186,9 @@ func (c WorkerConfig) planUpload(ctx context.Context, item media.Item, man *medi
 	if err := e.measured(ctx, item, f, pl, presets); err != nil {
 		return err
 	}
-	k := item.Kind()
+	if err := checkLimits(pl, k.PrivateFor(f.Path), e.c.Codecs, limits); err != nil {
+		return &PermanentError{err}
+	}
 	remuxed := map[string]bool{}
 	for _, p := range presets {
 		if p.HLS == nil {
@@ -229,6 +232,83 @@ func (c WorkerConfig) planUpload(ctx context.Context, item media.Item, man *medi
 		}
 	}
 	return nil
+}
+
+// probeSource probes upload f's source and scans its video packets, or
+// reuses the probe a run of the same blob recorded.
+func (c WorkerConfig) probeSource(ctx context.Context, ref contentref.ContentRef, f media.File, url string) (probeResult, error) {
+	var pr probeResult
+	refJSON, err := json.Marshal(ref)
+	if err != nil {
+		return pr, err
+	}
+	var raw []byte
+	err = c.Pool.QueryRow(ctx, `SELECT probe FROM `+c.runTable()+`
+WHERE ref = $1 AND file_name = $2 AND source_name = $3 AND probe ? 'packets' ORDER BY created_at DESC LIMIT 1`, refJSON, f.Path, f.Blob).Scan(&raw)
+	if err == nil && json.Unmarshal(raw, &pr) == nil {
+		return pr, nil
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return pr, err
+	}
+	if pr, err = probeRemote(ctx, url); err != nil {
+		if ctx.Err() != nil {
+			return pr, ctx.Err()
+		}
+		return pr, &PermanentError{err}
+	}
+	pl, err := newPlan(pr)
+	if err != nil {
+		return pr, &PermanentError{err}
+	}
+	scan, err := scanPackets(ctx, url, pl.video, remoteInputOptions(sourceDemuxers))
+	switch {
+	case ctx.Err() != nil:
+		return pr, ctx.Err()
+	case errors.Is(err, context.DeadlineExceeded):
+		return pr, fmt.Errorf("media/video: reading the source's packets took over %s", scanTimeout)
+	case err != nil:
+		return pr, &PermanentError{fmt.Errorf("unreadable video packets: %w", err)}
+	}
+	pr.Packets = &scan
+	return pr, nil
+}
+
+// checkLimits refuses a source past its upload's limits: its running time,
+// its frame size, or the encode its presets plan.
+func checkLimits(pl plan, presets []*media.Private, codecs []media.Codec, l media.VideoLimits) error {
+	if pl.duration > l.MaxSeconds {
+		return &media.ImageError{Code: media.CodeVideoTooLong, Message: fmt.Sprintf("the video runs %.0f seconds; videos may run at most %.0f", pl.duration, l.MaxSeconds),
+			Details: media.ErrorDetails{Seconds: math.Round(pl.duration), MaxSeconds: l.MaxSeconds}}
+	}
+	if pl.width*pl.height > l.MaxPixels {
+		return &media.ImageError{Code: media.CodeVideoTooLarge, Message: fmt.Sprintf("the video is %dx%d px; videos may have at most %d pixels", pl.width, pl.height, l.MaxPixels),
+			Details: media.ErrorDetails{Width: pl.width, Height: pl.height, MaxPixels: l.MaxPixels}}
+	}
+	if w := work(pl, presets, codecs); w > l.MaxWork {
+		return &media.ImageError{Code: media.CodeVideoOverBudget, Message: fmt.Sprintf("encoding the video would take %.3g pixel-frames; at most %.3g", w, l.MaxWork)}
+	}
+	return nil
+}
+
+// work is the encode presets plan for a source: the sum over their rungs
+// and codecs of output pixels × output frames (an MP4 counted as its own
+// H.264 run).
+func work(pl plan, presets []*media.Private, codecs []media.Codec) float64 {
+	var px float64
+	for _, p := range presets {
+		if !isEncode(p) {
+			continue
+		}
+		n := len(codecs)
+		if p.MP4 != nil {
+			n = 1
+		}
+		st, _ := stages(p, pl) // an aspect refusal is the plan's
+		for _, r := range st {
+			px += float64(r.w * r.h * n)
+		}
+	}
+	return px * pl.duration * pl.fps
 }
 
 // planRuns sizes a preset's stages into chunks and records them.

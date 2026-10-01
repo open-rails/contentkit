@@ -539,6 +539,16 @@ out until `attach`.
   the loop count; `Image.Animation: media.AnimationReject` refuses them.
   AVIF and HEIF stills need libheif with an AV1 decoder
   (`libheif-plugin-dav1d`); sequences are refused.
+- Video and audio uploads are measured from their real packets, not the
+  container's declared duration and rate. `Upload.Video`
+  (`media.VideoLimits`) caps an upload's running time, frame area, output
+  frame rate and planned encode work (output pixels × output frames over
+  its HLS and MP4 rungs and codecs); zero fields take
+  `media.DefaultVideoLimits` (4 h, 60 fps, 4096×2160 px, 4e13). An upload
+  past them, or a video averaging under one frame a second, fails before
+  any encode with `video_too_long`, `video_too_large` or
+  `video_over_budget`. A source declaring a faster rate than its packets
+  hold is encoded at its real rate.
 
 ### Sweep, deletion and erasure
 

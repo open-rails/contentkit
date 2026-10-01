@@ -1,5 +1,7 @@
 package media
 
+import "cmp"
+
 // Helpers the video producers (media/video) need from the core.
 
 // Codec is a video codec of an HLS ladder: each rung is encoded in each of
@@ -34,4 +36,20 @@ func (k *Kind) FramesVideo(m *Manifest, path string) (File, bool) {
 		}
 	}
 	return File{}, false
+}
+
+// DefaultVideoLimits are an upload's VideoLimits where it sets none: 4 h at
+// up to 60 fps, frames up to 4096×2160 px, and the work of a 4 h 4K60
+// default ladder (2160, 1080, 480) in three codecs plus MP4 downloads,
+// about 3e13 pixel-frames.
+var DefaultVideoLimits = VideoLimits{MaxSeconds: 4 * 3600, MaxFPS: 60, MaxPixels: 4096 * 2160, MaxWork: 4e13}
+
+// Limits are the limits in effect: l's, and the defaults for nil or zero fields.
+func (l *VideoLimits) Limits() VideoLimits {
+	d := DefaultVideoLimits
+	if l == nil {
+		return d
+	}
+	return VideoLimits{MaxSeconds: cmp.Or(l.MaxSeconds, d.MaxSeconds), MaxFPS: cmp.Or(l.MaxFPS, d.MaxFPS),
+		MaxPixels: cmp.Or(l.MaxPixels, d.MaxPixels), MaxWork: cmp.Or(l.MaxWork, d.MaxWork)}
 }

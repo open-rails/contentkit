@@ -102,6 +102,20 @@ func (e *Encoder) audioFile(ctx context.Context, item media.Item, f media.File, 
 	if err != nil {
 		return &PermanentError{err}
 	}
+	// The running time is the packets', not the container's word.
+	if scan, err := scanPackets(ctx, src, t.index, inputOptions(audioDemuxers)); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return &PermanentError{fmt.Errorf("unreadable audio packets: %w", err)}
+	} else if scan.End > scan.Start {
+		d = scan.End - scan.Start
+	}
+	u, _ := item.Kind().UploadOf(f.Path)
+	if limit := u.Video.Limits().MaxSeconds; d > limit {
+		return &PermanentError{&media.ImageError{Code: media.CodeVideoTooLong, Message: fmt.Sprintf("the audio runs %.0f seconds; at most %.0f", d, limit),
+			Details: media.ErrorDetails{Seconds: math.Round(d), MaxSeconds: limit}}}
+	}
 	out := filepath.Join(dir, "out")
 	if err := os.Mkdir(out, 0o700); err != nil {
 		return err

@@ -54,9 +54,10 @@ type opts struct {
 	codecs   []media.Codec // the worker's; default H.264 only
 	chunk    time.Duration // WorkerConfig.ChunkTarget
 	loudness float64
-	profile  string // the HLS and MP4 presets' profile
-	encoder  string // default EncoderCPU
-	shared   bool   // also a "clip" kind in a shared namespace
+	profile  string             // the HLS and MP4 presets' profile
+	limits   *media.VideoLimits // the source's and audio's Upload.Video
+	encoder  string             // default EncoderCPU
+	shared   bool               // also a "clip" kind in a shared namespace
 }
 
 // testKind is a Hentai0-like video kind: a source with an HLS ladder and MP4
@@ -64,10 +65,10 @@ type opts struct {
 func testKind(o opts) media.Kind {
 	k := media.Kind{Name: "video", KeepOriginals: true,
 		Uploads: []media.Upload{
-			{Path: "source", Types: videoTypes, MaxBytes: 1 << 30},
+			{Path: "source", Types: videoTypes, MaxBytes: 1 << 30, Video: o.limits},
 			{Path: "subs/{name}", Types: media.SubtitleTypes, MaxBytes: 32 << 20},
 			{Path: "poster", Types: imageTypes, MaxBytes: 10 << 20, Frames: "source"},
-			{Path: "audio/{name}", Types: audioTypes, MaxBytes: 64 << 20},
+			{Path: "audio/{name}", Types: audioTypes, MaxBytes: 64 << 20, Video: o.limits},
 		},
 		Private: []media.Private{
 			{Name: "hls", From: "source", To: "hls/", HLS: &media.HLS{Ladder: o.ladder, Profile: o.profile}},

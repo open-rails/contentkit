@@ -26,7 +26,8 @@ var errorCodes = []string{
 	media.CodeInvalid, "unauthorized", media.CodeForbidden, media.CodeNotFound, media.CodeConflict,
 	media.CodeIncomplete, media.CodeNotUploaded, media.CodeTooManyFiles, media.CodeTooLarge, media.CodeQuota, media.CodeType,
 	media.CodeChecksum, media.CodeRate, media.CodeUnavailable, media.CodeImageTooSmall, media.CodeImageTooLarge, media.CodeImageUnreadable,
-	media.CodeAnimationNotAllowed, media.CodeAnimationTooLong, media.CodeAnimationUnsupported, "internal_error",
+	media.CodeAnimationNotAllowed, media.CodeAnimationTooLong, media.CodeAnimationUnsupported,
+	media.CodeVideoTooLong, media.CodeVideoTooLarge, media.CodeVideoOverBudget, "internal_error",
 }
 
 var ops = []string{media.OpPut, media.OpEdit, media.OpMove, media.OpRename, media.OpRemove, media.OpAttach,
