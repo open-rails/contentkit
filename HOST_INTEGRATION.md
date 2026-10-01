@@ -566,6 +566,18 @@ out until `attach`.
   `Hooks.ItemReady(ctx, tx, ref, readiness)` runs in a host transaction
   after the worker's jobs, through the host's media queue; it must be
   idempotent. `Hooks.Failed` runs where the producer runs.
+- Manifests stop at `media.MaxManifestBytes` (8 MiB of JSON). A commit is
+  refused (413 `too_large`) when the item, processed, would pass that. If
+  outputs still overrun it, the worker marks the item `full` instead of
+  recording them: every producer skips it, readiness is `full` and editor
+  reads say `full: true`, until a commit shrinks the manifest (removing
+  uploads, shortening meta); processing then resumes. The SDK's `waitFor`
+  rejects with `too_large` while an item is full.
+- `ManifestOptions.CacheBytes` (default 128 MiB) holds decoded manifests,
+  each about three times its JSON: the largest costs 24 MiB, and a read
+  that misses decodes it again (about 0.25 s and 60 MiB at 8 MiB, anonymous
+  reads included). Size it for the hot set of large items; it never drops
+  below two of the largest.
 - Refused images record `failed` (`message`, `code`, `details`):
   `image_unreadable`, `image_too_large`, `image_too_small`,
   `animation_not_allowed`, `animation_too_long`, `animation_unsupported`,

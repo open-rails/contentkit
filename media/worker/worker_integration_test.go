@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	stdimage "image"
 	"image/color"
 	"image/png"
@@ -55,7 +56,8 @@ var alice = access.Actor{ID: "alice", Kind: "user"}
 var pngs = []string{"image/png"}
 
 // registry is the hosts' registry: paged galleries with a thumb and a
-// cover, clips with an HLS ladder and a poster grabbed from the video.
+// cover, clips with an HLS ladder and a poster grabbed from the video, and
+// albums of pages and audio tracks.
 func registry(ns string, hooks media.Hooks) media.Config {
 	return media.Config{Namespace: ns, BaseURL: "https://media.example", Hooks: hooks, Kinds: []media.Kind{
 		{Name: "gallery", KeepOriginals: true,
@@ -67,6 +69,13 @@ func registry(ns string, hooks media.Hooks) media.Config {
 			Uploads: []media.Upload{{Path: "source", Types: []string{"video/mp4"}, MaxBytes: 1 << 30}, {Path: "poster", Types: pngs, MaxBytes: 10 << 20, Frames: "source"}},
 			Private: []media.Private{{Name: "hls", From: "source", To: "hls/", HLS: &media.HLS{Ladder: []int{240}}}},
 			Public:  []media.Public{{Name: "poster", From: "poster", To: "poster-{w}.webp", Widths: []int{160}}},
+		},
+		{Name: "album", KeepOriginals: true,
+			Uploads: []media.Upload{{Path: "pages/{name}", Types: pngs, MaxBytes: 10 << 20}, {Path: "tracks/{name}", Types: []string{"audio/wav"}, MaxBytes: 10 << 20}},
+			Private: []media.Private{
+				{Name: "thumb", From: "pages/{name}", To: "thumbs/{name}.webp", Image: &media.Image{Width: 100, Height: 150}},
+				{Name: "listen", From: "tracks/{name}", To: "listen/{name}/", Audio: &media.Audio{}},
+			},
 		},
 	}}
 }
@@ -891,4 +900,99 @@ func TestWorkerOutageSnoozesAreCapped(t *testing.T) {
 		_, _, errs, snoozes := h.job(t, workqueue.PlaceArgs{}.Kind())
 		return errs > 0 && snoozes >= 2
 	})
+}
+
+// An item whose outputs overrun its manifest's bound (here: padded after
+// the commit, past what the commit projected) is marked Full by the first
+// producer that cannot record: image and audio work stop, later commits
+// queue no work, and a commit that shrinks it resumes processing to the end.
+func TestFullItemStopsAndRecovers(t *testing.T) {
+	h := newHost(t)
+	ctx := context.Background()
+	ref := h.ref(t, "album")
+	var ops []media.Op
+	for i := range 3 {
+		p, name := h.stage(t, ref, fmt.Sprintf("pages/%d.png", i), "image/png", pngImage(t, 60, 80, uint8(i)))
+		ops = append(ops, media.Op{Op: media.OpPut, Path: p, Blob: name})
+	}
+	dir := t.TempDir()
+	for i := range 2 {
+		wav := filepath.Join(dir, fmt.Sprintf("%d.wav", i))
+		if out, err := exec.Command("ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i", fmt.Sprintf("sine=frequency=%d:duration=1", 440+i*100), "-y", wav).CombinedOutput(); err != nil {
+			t.Fatalf("ffmpeg: %v: %s", err, out)
+		}
+		body, err := os.ReadFile(wav)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, name := h.stage(t, ref, fmt.Sprintf("tracks/%d.wav", i), "audio/wav", body)
+		ops = append(ops, media.Op{Op: media.OpPut, Path: p, Blob: name})
+	}
+	h.commit(t, ref, ops...)
+	// Fill the manifest to just short of where edits stop, leaving room to
+	// place the staged uploads but not to record any output.
+	if _, err := h.ms.EditExisting(ctx, ref, func(m *media.Manifest) error {
+		c := *m
+		c.Meta = map[string]any{"pad": ""}
+		var b bytes.Buffer
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(&c); err != nil {
+			return err
+		}
+		leave := 200 + 64*len(m.StagedNames())
+		m.Meta = map[string]any{"pad": strings.Repeat("A", media.MaxManifestBytes-4<<10-leave-b.Len())}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manifest := func() *media.Manifest {
+		m, _, err := h.ms.Get(ctx, ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	eventually(t, "the item marked full", 2*time.Minute, func() bool { return manifest().Full })
+	jobs := func() (n int) {
+		match, _ := workqueue.RefMatch(ref)
+		if err := h.pool.QueryRow(ctx, "SELECT count(*) FROM "+h.workers+".river_job WHERE args @> $1", match).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	idle := func() bool {
+		var active int
+		match, _ := workqueue.RefMatch(ref)
+		if err := h.pool.QueryRow(ctx, "SELECT count(*) FROM "+h.workers+".river_job WHERE args @> $1 AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled')", match).Scan(&active); err != nil {
+			t.Fatal(err)
+		}
+		return active == 0
+	}
+	eventually(t, "the jobs settled", time.Minute, idle)
+	before := jobs()
+	h.commit(t, ref, media.Op{Op: media.OpRegenerate})
+	h.commit(t, ref, media.Op{Op: media.OpRegenerate, Preset: "listen"})
+	time.Sleep(2 * time.Second)
+	if n := jobs(); n != before {
+		t.Fatalf("a full item queued %d jobs", n-before)
+	}
+	k, _ := h.reg.Kind("album")
+	if m := manifest(); len(m.Outputs("pages/0.png", "thumb"))+len(m.Outputs("tracks/0.wav", "listen")) != 0 || k.Readiness(m).State != media.StateFull {
+		t.Fatalf("readiness of a full item: %+v", k.Readiness(m))
+	}
+
+	h.commit(t, ref, media.Op{Op: media.OpMeta})
+	eventually(t, "processing after the item shrank", 2*time.Minute, func() bool { return k.Readiness(manifest()).Ready() })
+	m := manifest()
+	for i := range 3 {
+		if len(m.Outputs(fmt.Sprintf("pages/%d.png", i), "thumb")) != 1 {
+			t.Fatalf("page %d not thumbed", i)
+		}
+	}
+	for i := range 2 {
+		if len(m.Outputs(fmt.Sprintf("tracks/%d.wav", i), "listen")) != 2 {
+			t.Fatalf("track %d: %v", i, m.Outputs(fmt.Sprintf("tracks/%d.wav", i), "listen"))
+		}
+	}
 }

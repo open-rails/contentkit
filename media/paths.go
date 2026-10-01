@@ -11,12 +11,12 @@ import (
 	"github.com/open-rails/contentkit/media/layout"
 )
 
-// maxNameBytes caps a cleaned template value.
+// maxNameBytes caps a cleaned template value, in the manifest's JSON bytes.
 const maxNameBytes = 200
 
 // CleanName makes a template value ({name}, {title}) safe to fill a path or
 // a download name: "/", "\", control characters and ".." are removed, the
-// text is NFC-normalized, trimmed and capped at 200 bytes.
+// text is NFC-normalized, trimmed and capped at 200 bytes of JSON.
 func CleanName(s string) string {
 	s = norm.NFC.String(s)
 	s = strings.Map(func(r rune) rune {
@@ -29,9 +29,11 @@ func CleanName(s string) string {
 		s = strings.ReplaceAll(s, "..", "")
 	}
 	s = strings.TrimSpace(s)
-	for len(s) > maxNameBytes {
-		_, size := utf8.DecodeLastRuneInString(s)
-		s = strings.TrimSpace(s[:len(s)-size])
+	n := 0
+	for i, r := range s {
+		if n += jsonRuneLen(r); n > maxNameBytes {
+			return strings.TrimSpace(s[:i])
+		}
 	}
 	return s
 }

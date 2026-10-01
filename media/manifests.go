@@ -2,6 +2,7 @@ package media
 
 import (
 	"bytes"
+	"cmp"
 	"container/list"
 	"context"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"reflect"
+	"strconv"
 	"sync"
 	"time"
 
@@ -33,7 +35,8 @@ type ManifestOptions struct {
 	// If-Match once the store reports ConditionalPut. See PGLocker.
 	Locker Locker
 	// CacheBytes bounds the decoded manifests kept in process, revalidated
-	// by ETag; default 64 MiB.
+	// by ETag. A manifest costs about three times its JSON, so the largest
+	// (MaxManifestBytes) costs 24 MiB; default 128 MiB, at least two of them.
 	CacheBytes int64
 	MaxRetries int // conditional-write attempts per edit; default 16
 	// Sweeps schedules the folder's sweep after every written edit; best
@@ -58,8 +61,9 @@ func NewManifests(store Store, reg *Registry, o ManifestOptions) (*Manifests, er
 		return nil, errors.New("media: Manifests needs a Store, a Registry and a Locker")
 	}
 	if o.CacheBytes <= 0 {
-		o.CacheBytes = 64 << 20
+		o.CacheBytes = 128 << 20
 	}
+	o.CacheBytes = max(o.CacheBytes, 2*MaxManifestBytes*decodeFactor)
 	if o.MaxRetries <= 0 {
 		o.MaxRetries = 16
 	}
@@ -90,18 +94,44 @@ func (m *Manifests) Get(ctx context.Context, ref contentref.ContentRef) (*Manife
 // error from fn aborts the edit. The result is normalized (Kind.Normalize)
 // and validated; an unchanged manifest is not written. A folder's first
 // manifest is refused (ErrFolderNotEmpty) over a previous item's public
-// files.
+// files, and one growing to within editHeadroom of MaxManifestBytes with
+// ErrManifestTooLarge.
 func (m *Manifests) Edit(ctx context.Context, ref contentref.ContentRef, fn func(*Manifest) error) (*Manifest, error) {
-	return m.edit(ctx, ref, false, fn)
+	return m.edit(ctx, ref, false, bound{}, fn)
 }
 
 // EditExisting is Edit while the manifest exists (ErrNotFound otherwise):
 // workers use it after processing, so a concurrent deletion stays deleted.
 func (m *Manifests) EditExisting(ctx context.Context, ref contentref.ContentRef, fn func(*Manifest) error) (*Manifest, error) {
-	return m.edit(ctx, ref, true, fn)
+	return m.edit(ctx, ref, true, bound{}, fn)
 }
 
-func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existing bool, fn func(*Manifest) error) (*Manifest, error) {
+// editLimit is where commits and the workers' records stop; the flags (Full,
+// Hidden) may use the headroom above it, so they always fit.
+const editLimit = MaxManifestBytes - editHeadroom
+
+// bound refuses an edit (ErrManifestTooLarge) that grows a manifest past
+// limit (default editLimit), counting what project adds; an edit that does
+// not grow it passes, so a full item still shrinks. Nothing over
+// MaxManifestBytes is ever written. A commit (project set) that shrinks a
+// Full manifest clears Full: processing resumes.
+type bound struct {
+	limit   int64
+	project func(*Manifest) int64
+}
+
+func (b bound) check(cur, next *Manifest) error {
+	limit, grown, was := cmp.Or(b.limit, editLimit), next.size, cur.size
+	if b.project != nil {
+		grown, was = grown+b.project(next), was+b.project(cur)
+	}
+	if next.size > MaxManifestBytes || grown > limit && grown > was {
+		return fmt.Errorf("%w: %d bytes (%d when processed), at most %d", ErrManifestTooLarge, next.size, grown, limit)
+	}
+	return nil
+}
+
+func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existing bool, b bound, fn func(*Manifest) error) (*Manifest, error) {
 	item, err := m.reg.Item(ref)
 	if err != nil {
 		return nil, err
@@ -114,7 +144,7 @@ func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existin
 	defer unlock()
 	conditional := m.store.Capabilities().ConditionalPut
 	for attempt := 0; attempt < m.retries; attempt++ {
-		out, written, conflict, err := m.try(ctx, item, existing, conditional, fn)
+		out, written, conflict, err := m.try(ctx, item, existing, conditional, b, fn)
 		if conflict {
 			backoff := time.Duration(1<<min(attempt, 6)) * 5 * time.Millisecond
 			select {
@@ -134,7 +164,7 @@ func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existin
 	return nil, fmt.Errorf("%w: %s", ErrManifestConflict, key)
 }
 
-func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bool, fn func(*Manifest) error) (out *Manifest, written, conflict bool, err error) {
+func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bool, b bound, fn func(*Manifest) error) (out *Manifest, written, conflict bool, err error) {
 	key := item.ManifestKey()
 	cur, etag, err := m.get(ctx, key)
 	switch {
@@ -153,7 +183,7 @@ func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bo
 	if err := next.Validate(); err != nil {
 		return nil, false, false, err
 	}
-	if etag != "" && next.Hidden == cur.Hidden && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) {
+	if etag != "" && next.Hidden == cur.Hidden && next.Full == cur.Full && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) {
 		return cur, false, false, nil
 	}
 	if etag == "" {
@@ -165,7 +195,19 @@ func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bo
 	if err != nil {
 		return nil, false, false, err
 	}
-	opts := PutOptions{ContentType: "application/gzip", CacheControl: "no-store"}
+	if err := b.check(cur, next); err != nil {
+		return nil, false, false, err
+	}
+	if next.Full && b.project != nil && next.size < cur.size {
+		next.Full = false
+		if body, err = encodeManifest(next); err != nil {
+			return nil, false, false, err
+		}
+	}
+	// The charged quota rides on the object, so releasing it never needs
+	// the manifest to decode.
+	opts := PutOptions{ContentType: "application/gzip", CacheControl: "no-store",
+		Metadata: map[string]string{uploadBytesMeta: strconv.FormatInt(next.uploadBytes(), 10)}}
 	if conditional {
 		if etag == "" {
 			opts.IfNoneMatch = "*"
@@ -182,7 +224,7 @@ func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bo
 		return nil, false, false, err
 	}
 	next.reindex()
-	m.cache.put(key, obj.ETag, next, int64(len(body)))
+	m.cache.put(key, obj.ETag, next)
 	return next, true, false, nil
 }
 
@@ -199,7 +241,7 @@ func (m *Manifests) get(ctx context.Context, key string) (*Manifest, string, err
 	case err != nil:
 		return nil, "", err
 	}
-	body, err := io.ReadAll(io.LimitReader(rc, maxManifestBytes+1))
+	body, err := io.ReadAll(io.LimitReader(rc, MaxManifestBytes+1))
 	rc.Close()
 	if err != nil {
 		return nil, "", err
@@ -208,8 +250,23 @@ func (m *Manifests) get(ctx context.Context, key string) (*Manifest, string, err
 	if err != nil {
 		return nil, "", fmt.Errorf("media: decode manifest %s: %w", key, err)
 	}
-	m.cache.put(key, obj.ETag, man, int64(len(body)))
+	m.cache.put(key, obj.ETag, man)
 	return man, obj.ETag, nil
+}
+
+// SetFull marks ref's manifest Full: a producer could not record its
+// outputs (ErrManifestTooLarge). The flag fits in the headroom every other
+// edit leaves. Producers do nothing more for a Full item until a commit
+// shrinks it.
+func (m *Manifests) SetFull(ctx context.Context, ref contentref.ContentRef) error {
+	_, err := m.edit(ctx, ref, true, bound{limit: MaxManifestBytes}, func(cur *Manifest) error {
+		cur.Full = true
+		return nil
+	})
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
 }
 
 // DropIfDeleted deletes blobs a worker wrote for ref only if its manifest is
@@ -246,8 +303,8 @@ func (m *Manifests) DropIfDeleted(ctx context.Context, ref contentref.ContentRef
 	return errors.Join(errs...)
 }
 
-// manifestCache keeps decoded manifests by key, bounded by their encoded
-// size times a decode factor.
+// manifestCache keeps decoded manifests by key, bounded by their JSON size
+// times a decode factor.
 type manifestCache struct {
 	mu    sync.Mutex
 	max   int64
@@ -262,8 +319,8 @@ type cacheEntry struct {
 	cost      int64
 }
 
-// decodeFactor estimates a decoded manifest's memory from its gzip size.
-const decodeFactor = 12
+// decodeFactor estimates a decoded manifest's memory from its JSON size.
+const decodeFactor = 3
 
 func newManifestCache(max int64) *manifestCache {
 	return &manifestCache{max: max, order: list.New(), items: map[string]*list.Element{}}
@@ -280,14 +337,14 @@ func (c *manifestCache) get(key string) (string, *Manifest) {
 	return "", nil
 }
 
-func (c *manifestCache) put(key, etag string, m *Manifest, size int64) {
+func (c *manifestCache) put(key, etag string, m *Manifest) {
 	if etag == "" {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.removeLocked(key)
-	e := &cacheEntry{key: key, etag: etag, m: m, cost: size * decodeFactor}
+	e := &cacheEntry{key: key, etag: etag, m: m, cost: m.size * decodeFactor}
 	if e.cost > c.max {
 		return
 	}

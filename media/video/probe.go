@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"golang.org/x/text/language"
 	"golang.org/x/text/language/display"
@@ -231,6 +232,9 @@ func newPlan(p probeResult) (plan, error) {
 			if rotated(s) {
 				pl.width, pl.height = pl.height, pl.width
 			}
+		case s.CodecType == "audio" && len(pl.audio) == media.MaxAudioTracks,
+			s.CodecType == "subtitle" && len(pl.subs) == media.MaxSubtitleTracks:
+			// More tracks than a ladder carries (and its manifest projects).
 		case s.CodecType == "audio", s.CodecType == "subtitle" && textSubtitles[s.CodecName]:
 			t := track{index: s.Index, def: s.Disposition.Default == 1, forced: s.Disposition.Forced == 1}
 			t.lang, t.iso6392 = normalizeLanguage(s.Tags.Language)
@@ -377,7 +381,12 @@ func normalizeLanguage(v string) (bcp47, iso string) {
 }
 
 func trackLabel(s probeStream, lang string, count int, seen map[string]int) string {
-	label := strings.TrimSpace(s.Tags.Title)
+	label := strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return -1 // each would cost six bytes of manifest JSON
+		}
+		return r
+	}, s.Tags.Title))
 	if label == "" && lang != "" {
 		label = display.English.Tags().Name(language.Make(lang))
 	}

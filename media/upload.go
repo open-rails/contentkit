@@ -403,7 +403,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	editCtx, cancel := context.WithTimeout(ctx, commitMargin(u.o.Grace)/2)
 	defer cancel()
 	var prior *Manifest
-	man, err := u.o.Manifests.Edit(editCtx, ref, func(m *Manifest) error {
+	man, err := u.o.Manifests.edit(editCtx, ref, false, bound{project: item.Kind().unwritten}, func(m *Manifest) error {
 		prior = m.Clone()
 		o := &opRun{k: item.Kind(), m: m, id: ref.ContentID, copies: copies}
 		keys = keys[:0]
@@ -434,7 +434,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		if hidden != nil && len(m.Files) == 0 && m.Meta == nil {
 			m.Hidden = *hidden
 		}
-		before := m.uploadBytes()
+		before, uploads := m.uploadBytes(), m.uploads()
 		for n, op := range ops {
 			if op.Op == OpPut {
 				created, err := o.created(op)
@@ -459,6 +459,9 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 				return err
 			}
 		}
+		if n := m.uploads(); n > MaxUploads && n > uploads {
+			return uploadErr(CodeTooManyFiles, "an item holds at most %d uploads", MaxUploads)
+		}
 		delta = m.uploadBytes() - before
 		if delta > charged && grant.Owner != "" {
 			if err := settle(editCtx, Settlement{Delta: delta - charged, Enforce: !grant.Exempt}); err != nil {
@@ -468,6 +471,9 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		}
 		return nil
 	})
+	if errors.Is(err, ErrManifestTooLarge) {
+		err = uploadErr(CodeTooLarge, "the item, processed, would pass its manifest's %d MiB: remove uploads or meta first", MaxManifestBytes>>20)
+	}
 	if err != nil {
 		if charged > 0 {
 			err = errors.Join(err, settle(context.WithoutCancel(ctx), Settlement{Delta: -charged}))
@@ -481,6 +487,9 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		if _, err := c.Cancel(context.WithoutCancel(ctx), ref); err != nil {
 			return nil, err
 		}
+	}
+	if man.Full {
+		return man, nil // nothing is processed until a commit shrinks it
 	}
 	job := ProcessJob{Ref: ref, Place: len(man.StagedNames()) > 0}
 	for _, op := range ops {
@@ -787,13 +796,29 @@ func uploaderID(a access.Actor) string {
 
 func maxParts(size int64) int { return int((size + MinPartSize - 1) / MinPartSize) }
 
+// uploadFloor is the least an upload is charged: its share of the manifest
+// and its outputs, so tiny files cannot grow an item for free.
+const uploadFloor = 64 << 10
+
 // uploadBytes is the storage charged for a manifest: the size of every
-// upload put in it, staged or placed (frames are the worker's).
+// upload put in it, staged or placed, at least uploadFloor (frames are the
+// worker's).
 func (m *Manifest) uploadBytes() int64 {
 	var n int64
 	for _, f := range m.Files {
 		if f.IsUpload() && f.Frame == nil {
-			n += f.Size
+			n += max(f.Size, uploadFloor)
+		}
+	}
+	return n
+}
+
+// uploads counts the manifest's uploads.
+func (m *Manifest) uploads() int {
+	n := 0
+	for _, f := range m.Files {
+		if f.IsUpload() {
+			n++
 		}
 	}
 	return n

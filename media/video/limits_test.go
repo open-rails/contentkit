@@ -156,3 +156,26 @@ func TestVideoLimitsValidate(t *testing.T) {
 		}
 	}
 }
+
+// A source keeps at most MaxAudioTracks audio and MaxSubtitleTracks text
+// subtitle tracks (what a manifest projects for its ladder), and a title's
+// control characters never reach a track label.
+func TestTracksAreBounded(t *testing.T) {
+	pr := probeOf(640, 360, "30/1", 60, 0)
+	for range 20 {
+		s := probeStream{CodecType: "audio", CodecName: "aac"}
+		s.Tags.Title = "\x01\x02voice "
+		pr.Streams = append(pr.Streams, s)
+		pr.Streams = append(pr.Streams, probeStream{CodecType: "subtitle", CodecName: "subrip"})
+	}
+	pl, err := newPlan(pr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pl.audio) != media.MaxAudioTracks || len(pl.subs) != media.MaxSubtitleTracks {
+		t.Fatalf("%d audio, %d subtitle tracks", len(pl.audio), len(pl.subs))
+	}
+	if pl.audio[0].label != "voice" {
+		t.Fatalf("label %q", pl.audio[0].label)
+	}
+}

@@ -245,8 +245,9 @@ export class UploadClient {
    * Polls an editor read until the upload at path (or with that stem) is
    * processed: placed (not staged), nothing pending and its blob present (a
    * frame grabbed).
-   * Rejects with its failure, not_found once it is gone, render_timeout
-   * after the timeout.
+   * Rejects with its failure, not_found once it is gone, too_large while the
+   * item is full (nothing is processed until uploads are removed),
+   * render_timeout after the timeout.
    */
   async waitFor(ref: RefBody, path: string, o: WaitOptions = {}): Promise<FileInfo> {
     const until = Date.now() + (o.timeout ?? 120_000);
@@ -256,6 +257,7 @@ export class UploadClient {
       if (!f) throw new UploadError("not_found", `no upload ${path}`, 404);
       if (f.failed) throw failureError(f.failed);
       if (!f.pending?.length && !f.staged && (f.size ?? 0) > 0) return f;
+      if (r.full) throw new UploadError("too_large", `${path} waits: the item is full; remove uploads to process more`, 413);
       if (Date.now() >= until) throw new UploadError("render_timeout", `${path} is still processing`);
       await sleep(o.interval ?? 1000, o.signal);
     }

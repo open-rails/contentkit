@@ -2,11 +2,11 @@ package s3
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"maps"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -22,6 +22,9 @@ type RestoreReport struct {
 	Removed   []string // such keys that did not exist at T
 	Undeleted []string // referenced blobs whose delete markers were removed
 	Missing   []string // referenced at T but no version is left
+	// Unreadable are manifests at T that do not decode (over their bound):
+	// every blob and staged upload their folders held is undeleted.
+	Unreadable []string
 }
 
 type version struct {
@@ -88,8 +91,18 @@ func (s *Store) Restore(ctx context.Context, prefix string, at time.Time) (Resto
 				}
 				rep.Reverted = append(rep.Reverted, key)
 			}
-			if err := s.collectRefs(ctx, key, then.id, k, refs); err != nil {
+			ok, err := s.collectRefs(ctx, key, then.id, k, refs)
+			if err != nil {
 				return rep, err
+			}
+			if !ok {
+				rep.Unreadable = append(rep.Unreadable, key)
+				folder := layout.Prefix(k.Namespace, k.Kind, k.ID)
+				for other := range history {
+					if o, ok := layout.Parse(other); ok && strings.HasPrefix(other, folder) && (o.Area == layout.AreaPrivate || o.Area == layout.AreaTemp) {
+						refs[other] = true
+					}
+				}
 			}
 		case !now.marker:
 			if err := s.Delete(ctx, key); err != nil {
@@ -125,19 +138,21 @@ func (s *Store) Restore(ctx context.Context, prefix string, at time.Time) (Resto
 	return rep, nil
 }
 
-func (s *Store) collectRefs(ctx context.Context, key, versionID string, k layout.Key, refs map[string]bool) error {
+// collectRefs adds what the manifest version references; ok is false when it
+// does not decode.
+func (s *Store) collectRefs(ctx context.Context, key, versionID string, k layout.Key, refs map[string]bool) (bool, error) {
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: &s.bucket, Key: &key, VersionId: &versionID})
 	if err != nil {
-		return mapErr("get version", key, err)
+		return false, mapErr("get version", key, err)
 	}
 	defer out.Body.Close()
-	body, err := io.ReadAll(out.Body)
+	body, err := io.ReadAll(io.LimitReader(out.Body, media.MaxManifestBytes+1))
 	if err != nil {
-		return err
+		return false, err
 	}
 	m, err := media.DecodeManifest(body)
 	if err != nil {
-		return fmt.Errorf("s3: restore: decode %s@%s: %w", key, versionID, err)
+		return false, nil
 	}
 	folder := layout.Prefix(k.Namespace, k.Kind, k.ID)
 	for _, b := range m.Blobs() {
@@ -146,5 +161,5 @@ func (s *Store) collectRefs(ctx context.Context, key, versionID string, k layout
 	for _, s := range m.StagedNames() {
 		refs[folder+layout.AreaTemp+"/"+s] = true
 	}
-	return nil
+	return true, nil
 }

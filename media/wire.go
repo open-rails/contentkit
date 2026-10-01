@@ -133,7 +133,11 @@ type ReadResult struct {
 	// play {read API}/{kind}/{id}/hls/{dir}master.m3u8.
 	HLS []string `json:"hls,omitempty"`
 	// State is the item's readiness (editors).
-	State string     `json:"state,omitempty"`
+	State string `json:"state,omitempty"`
+	// Full (editors): the item's manifest cannot hold more outputs, so
+	// processing stopped; remove uploads (any commit that shrinks it) to
+	// resume. Uploads left unprocessed stay pending.
+	Full  bool       `json:"full,omitempty"`
 	Files []FileInfo `json:"files"`
 	// Cookie must be set on the response (cookie delivery, full access).
 	Cookie *http.Cookie `json:"-"`

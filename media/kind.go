@@ -1,6 +1,7 @@
 package media
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -387,3 +388,75 @@ const (
 	MetaFor     = "for"     // a subtitle's video upload path; default every video of the item
 	MetaCharset = "charset" // a subtitle's IANA charset, overriding detection
 )
+
+// Output entry sizes in manifest JSON, beyond their paths and preset name:
+// a file's blob, type, size, dimensions and fingerprint, and an HLS track's
+// fields too (labels are at most 120 bytes, with no control characters).
+const (
+	outputEntryBytes = 320
+	trackEntryBytes  = 640
+	blobFieldsBytes  = 256 // what a staged upload or a frame gains: its blob, size and dimensions
+)
+
+// Tracks per source a video's HLS ladder carries beyond its renditions: the
+// probe keeps at most this many audio and text subtitle streams.
+const (
+	MaxAudioTracks    = 8
+	MaxSubtitleTracks = 16
+)
+
+// unwritten estimates the JSON m gains as the worker processes it: an entry
+// for every output its uploads' presets have yet to write (an HLS ladder's
+// tracks counted one by one: a rendition per rung and codec, the sprite, and
+// as many audio and subtitle tracks as a source may carry), the zips, a
+// staged upload's or frame's fields, and the public presets' pending names
+// an unhide adds. Commits bound the manifest with it; an item whose
+// outputs still overrun it is marked Full by the worker.
+func (k *Kind) unwritten(m *Manifest) int64 {
+	written := map[[2]string]int64{}
+	for _, f := range m.Files {
+		if !f.IsUpload() {
+			written[[2]string{f.From, f.Preset}]++
+		}
+	}
+	var n int64
+	for _, f := range m.Files {
+		if !f.IsUpload() || f.Gone || f.Fail() != nil {
+			continue
+		}
+		if f.Blob == "" {
+			n += blobFieldsBytes
+		}
+		from := jsonLen(f.Path)
+		for _, p := range k.PrivateFor(f.Path) {
+			entries, size := int64(1), int64(outputEntryBytes)
+			switch {
+			case p.HLS != nil:
+				ladder := cmp.Or(len(p.HLS.Ladder), len(DefaultLadder))
+				entries, size = int64(3*ladder+1+MaxAudioTracks+MaxSubtitleTracks), trackEntryBytes
+			case p.Audio != nil:
+				entries = 2
+			}
+			if p.Download != "" {
+				size += maxNameBytes + 16
+			}
+			if left := entries - written[[2]string{f.Path, p.Name}]; left > 0 {
+				n += left * (size + int64(jsonLen(k.OutputPath(p, f.Path))+from+len(p.Name)))
+			}
+		}
+		if pub := k.PublicFor(f.Path); len(pub) > 0 {
+			if len(f.Pending) == 0 {
+				n += int64(len(`,"pending":[]`))
+			}
+			for _, p := range pub {
+				n += int64(len(p.Name)) + 3
+			}
+		}
+	}
+	for i := range k.Private {
+		if z := &k.Private[i]; z.Zip != "" && written[[2]string{z.Zip, z.Name}] == 0 {
+			n += outputEntryBytes + maxNameBytes + 16 + int64(jsonLen(z.To)+jsonLen(z.Zip)+len(z.Name))
+		}
+	}
+	return n
+}

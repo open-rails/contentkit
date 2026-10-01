@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"image/color"
 	"slices"
@@ -286,5 +287,49 @@ func TestPublishDefaults(t *testing.T) {
 	}
 	if keys, err := image.PublishDefaults(ctx, e.Store, e.reg); err != nil || len(keys) != 0 {
 		t.Fatalf("republished %v %v", keys, err)
+	}
+}
+
+// A pass whose outputs the manifest cannot hold marks the item Full instead
+// of recording them: later jobs render nothing, until a commit shrinks the
+// manifest and the pass completes.
+func TestFullManifestStopsProcessing(t *testing.T) {
+	e := newEnv(t, nil)
+	p := e.ref(t, "post", 1)
+	ctx := context.Background()
+	e.put(t, p, "files/a.png", "image/png", solid(t, 10, 10, red))
+	// Fill the manifest to just under where edits stop (4 KiB short of the
+	// bound): the output's record no longer fits.
+	if _, err := e.ms.EditExisting(ctx, p, func(m *media.Manifest) error {
+		c := *m
+		c.Meta = map[string]any{"pad": ""}
+		var b bytes.Buffer
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(&c); err != nil {
+			return err
+		}
+		m.Meta = map[string]any{"pad": strings.Repeat("A", media.MaxManifestBytes-4<<10-100-b.Len())}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.process(t, media.ProcessJob{Ref: p})
+	m := e.manifest(t, p)
+	if f, _ := m.Get("files/a.png"); !m.Full || f.Fail() != nil || len(f.Pending) == 0 {
+		t.Fatalf("full %v, upload %+v", m.Full, f)
+	}
+	purged := len(e.takePurged())
+	e.process(t, media.ProcessJob{Ref: p})
+	if m := e.manifest(t, p); len(m.Outputs("files/a.png", "web")) != 0 || len(e.takePurged()) != 0 {
+		t.Fatalf("a full item was processed again (%d purged before)", purged)
+	}
+	e.commit(t, p, media.Op{Op: media.OpMeta})
+	if m := e.manifest(t, p); m.Full {
+		t.Fatal("a shrinking commit kept the item full")
+	}
+	e.process(t, media.ProcessJob{Ref: p})
+	if m := e.manifest(t, p); len(m.Outputs("files/a.png", "web")) != 1 {
+		t.Fatal("not processed once shrunk")
 	}
 }

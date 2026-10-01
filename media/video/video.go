@@ -125,13 +125,23 @@ func (e *PermanentError) Unwrap() error { return e.Err }
 // commit that changed it enqueued its own job.
 var errStale = errors.New("media/video: upload changed during processing")
 
-// settle records a permanent error as upload f's failure, and drops
-// errStale (the next job redoes the work).
+// full reports an item marked Full: nothing more is produced for it until a
+// commit shrinks it.
+func (e *Encoder) full(ctx context.Context, item media.Item) bool {
+	m, _, err := e.ms.Get(ctx, item.Ref())
+	return err == nil && m.Full
+}
+
+// settle records a permanent error as upload f's failure, marks the item
+// Full when its outputs do not fit, and drops errStale (the next job redoes
+// the work).
 func (e *Encoder) settle(ctx context.Context, item media.Item, f media.File, err error) error {
 	var perm *PermanentError
 	switch {
 	case errors.Is(err, errStale):
 		return nil
+	case errors.Is(err, media.ErrManifestTooLarge):
+		return errors.Join(err, e.ms.SetFull(ctx, item.Ref()))
 	case errors.As(err, &perm):
 		return e.fail(ctx, item, f.Path, f.Blob, perm.Err)
 	case err != nil:

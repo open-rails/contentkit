@@ -2,6 +2,7 @@ package s3_test
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"io"
@@ -134,5 +135,55 @@ func TestRestoreAfterSweepAndFolderDeletion(t *testing.T) {
 	}
 	if man, _, err := ms.Get(ctx, post); err != nil || man.Files[0].Blob != name("origP") {
 		t.Fatalf("deleted folder's manifest not restored: %v", err)
+	}
+}
+
+// A manifest that does not decode (over MaxManifestBytes) does not stop a
+// restore: its folder's blobs are all undeleted.
+func TestRestoreKeepsAnUnreadableFolder(t *testing.T) {
+	env := s3test.Open(t)
+	ctx := context.Background()
+	if env.Created {
+		if err := env.Store.Configure(ctx, 30); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if status, err := env.VersioningStatus(ctx); err != nil || status != types.BucketVersioningStatusEnabled {
+		t.Fatalf("bucket versioning is %q (%v), want enabled", status, err)
+	}
+	s := env.Store
+	kinds, err := media.NewRegistry(media.Config{Namespace: env.Tenant, Kinds: []media.Kind{
+		{Name: "post", Uploads: []media.Upload{{Path: "files/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, _ := kinds.Item(contentref.New(env.Tenant, "post", cid(3)))
+	sum := sha256.Sum256([]byte("kept"))
+	blob, _ := item.Blob(layout.SHA256Name(sum[:]))
+	var b bytes.Buffer
+	zw := gzip.NewWriter(&b)
+	zw.Write([]byte(`{"v":2,"meta":{"x":"`))
+	zw.Write(bytes.Repeat([]byte("A"), media.MaxManifestBytes))
+	zw.Write([]byte(`"},"files":[]}`))
+	zw.Close()
+	for key, body := range map[string][]byte{blob: []byte("kept"), item.ManifestKey(): b.Bytes()} {
+		if _, err := s.Put(ctx, key, bytes.NewReader(body), int64(len(body)), media.PutOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(1500 * time.Millisecond)
+	at := time.Now()
+	time.Sleep(1500 * time.Millisecond)
+	for _, key := range []string{blob, item.ManifestKey()} {
+		if err := s.Delete(ctx, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rep, err := s.Restore(ctx, item.Prefix(), at)
+	if err != nil || len(rep.Unreadable) != 1 || len(rep.Missing) != 0 {
+		t.Fatalf("restore %+v %v", rep, err)
+	}
+	if _, err := s.Head(ctx, blob); err != nil {
+		t.Fatalf("blob of an unreadable folder not restored: %v", err)
 	}
 }

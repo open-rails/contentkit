@@ -8,12 +8,15 @@ import (
 
 func TestPaths(t *testing.T) {
 	for in, want := range map[string]string{
-		"  Page 1  ":             "Page 1",
-		"a/b\\c":                 "abc",
-		"..evil..":               "evil",
-		"tab\there":              "tabhere",
-		"é":                     "é", // NFC
-		strings.Repeat("é", 150): strings.Repeat("é", 100),
+		"  Page 1  ":               "Page 1",
+		"a/b\\c":                   "abc",
+		"..evil..":                 "evil",
+		"tab\there":                "tabhere",
+		"é":                       "é", // NFC
+		strings.Repeat("é", 150):   strings.Repeat("é", 100),
+		strings.Repeat("<", 300):   strings.Repeat("<", 200), // unescaped in the manifest
+		strings.Repeat(`"`, 300):   strings.Repeat(`"`, 100), // two bytes each in JSON
+		strings.Repeat("x", 8<<20): strings.Repeat("x", 200), // linear in the input
 	} {
 		if got := CleanName(in); got != want {
 			t.Errorf("CleanName(%q) = %q, want %q", in, got, want)

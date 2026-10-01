@@ -101,6 +101,12 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 		if err := p.syncPublic(ctx, item, m); err != nil {
 			return err
 		}
+		if m.Full { // nothing more fits: render nothing until a commit shrinks it
+			if job.Editor {
+				return p.editorViews(ctx, item, m)
+			}
+			return nil
+		}
 		todo, err := p.todo(ctx, item, m, job)
 		if err != nil {
 			return err
@@ -331,9 +337,17 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 		}
 		return nil
 	})
-	if errors.Is(err, media.ErrNotFound) {
+	switch {
+	case errors.Is(err, media.ErrNotFound):
 		err, orphaned = nil, written
-	} else if err != nil {
+	case errors.Is(err, media.ErrManifestTooLarge):
+		// The outputs do not fit: mark the item Full, which stops processing
+		// (the rendered blobs go by age).
+		if err := p.c.Manifests.SetFull(ctx, item.Ref()); err != nil {
+			return errors.Join(err, p.dropIfHidden(ctx, item, written))
+		}
+		return p.dropIfHidden(ctx, item, written)
+	case err != nil:
 		return err
 	}
 	if hidden {
