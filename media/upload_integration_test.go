@@ -219,6 +219,51 @@ func TestCopy(t *testing.T) {
 	if _, err := f.up.Commit(context.Background(), f.editor, b, []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: "originals/9.png"}}}); code(err) != media.CodeNotFound {
 		t.Fatalf("copy of a missing upload: %v", err)
 	}
+	m = f.commit(b, media.Op{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: "originals/1.png"}, To: "cover"})
+	before := m.Clone()
+	m = f.commit(b, media.Op{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(2), Path: "originals/1.png"}, To: "cover"},
+		media.Op{Op: media.OpEdit, Path: "cover.png"})
+	page, _ := m.Get("originals/1.png")
+	cover, _ := m.Get("cover.png")
+	if cover.Blob != page.Blob || cover.Edit != nil || !reflect.DeepEqual(cover.Pending, []string{"cover"}) {
+		t.Fatalf("copied page cover: %+v", cover)
+	}
+	for _, path := range []string{"originals/1.png", "thumb/1.webp", "high/1.webp"} {
+		got, _ := m.Get(path)
+		want, _ := before.Get(path)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("cover copy changed source %q: %+v", path, got)
+		}
+	}
+	ctx := context.Background()
+	for _, ops := range [][]media.Op{
+		{{Op: media.OpRemove, Path: page.Path}, {Op: media.OpCopy, From: &media.CopyFrom{ID: cid(2), Path: page.Path}, To: "cover"}},
+		{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(2), Path: "originals/missing.png"}, To: "cover"}},
+	} {
+		if _, err := f.up.Commit(ctx, f.editor, b, ops); code(err) != media.CodeNotFound {
+			t.Fatalf("copy must use current manifest state: %v", err)
+		}
+	}
+	f.put(b, "import/book.zip", "application/zip", []byte("zip"))
+	if _, err := f.up.Commit(ctx, f.editor, b, []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(2), Path: "import/book.zip"}, To: "cover"}}); code(err) != media.CodeType {
+		t.Fatalf("copy bypassed cover types: %v", err)
+	}
+	if _, err := f.up.Commit(ctx, f.editor, b, []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(2), Path: page.Path}, To: "import/book"}}); code(err) != media.CodeType {
+		t.Fatalf("copy bypassed archive types: %v", err)
+	}
+	if _, err := f.ms.EditExisting(ctx, a, func(m *media.Manifest) error {
+		m.Files[m.Find(page.Path)].Gone = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m = f.commit(b, media.Op{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: page.Path}, To: "originals/2"})
+	if copied, _ := m.Get("originals/2.png"); !copied.Gone || copied.Blob != page.Blob {
+		t.Fatalf("copy of retained outputs: %+v", copied)
+	}
+	if _, err := f.up.Commit(ctx, f.editor, b, []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: page.Path}, To: "cover"}}); code(err) != media.CodeNotFound {
+		t.Fatalf("cover copy without its original: %v", err)
+	}
 }
 
 // frame fills an upload from its Frames video; a new video grabs again.

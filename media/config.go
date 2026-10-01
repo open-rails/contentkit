@@ -52,8 +52,8 @@ type Kind struct {
 	// always kept, so unhiding can render them again.
 	KeepOriginals bool `json:"keep_originals,omitempty"`
 	// ServeOriginals lists and serves uploads to viewers with access, like
-	// any private file. Otherwise the read API never returns an upload's
-	// path or blob to viewers, and its hash cannot be guessed.
+	// any private file. Otherwise viewer URLs are scoped to served files,
+	// not the whole private folder, and reads omit upload paths and blobs.
 	ServeOriginals bool      `json:"serve_originals,omitempty"`
 	Private        []Private `json:"private,omitempty"`
 	Public         []Public  `json:"public,omitempty"`
@@ -91,7 +91,10 @@ type Private struct {
 	To string `json:"to"`
 	// Download is the human name template a download read signs into the
 	// URL, filled from the manifest's meta and {name}: "{title}.zip".
-	Download  string     `json:"download,omitempty"`
+	Download string `json:"download,omitempty"`
+	// HostOnly excludes this preset from generic reads and playlists.
+	// A host route must apply its additional policy before calling Grant.HostURL.
+	HostOnly  bool       `json:"host_only,omitempty"`
 	Image     *Image     `json:"image,omitempty"`
 	HLS       *HLS       `json:"hls,omitempty"`
 	MP4       *MP4       `json:"mp4,omitempty"`

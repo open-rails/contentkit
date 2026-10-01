@@ -446,7 +446,14 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   exist (otherwise the blob is dropped and the file marked `gone`; public
   presets' sources are always kept). `ServeOriginals` lists and serves
   uploads to viewers with access; otherwise the read API never returns an
-  upload's path or blob, and its hash cannot be guessed.
+  upload's path or blob, and viewer tokens authorize only served blobs rather
+  than the whole private folder. Identical bytes share a blob: serving those
+  bytes as a rendition also authorizes that blob.
+- **Host-only presets.** Set `Private.HostOnly` when an output needs policy
+  beyond the item's access decision. Generic reads, downloads and playlists
+  do not serve it. A trusted host route applies its additional checks and
+  calls `grant.HostURL(path, download)` for a full-access viewer. These kinds
+  always use file-scoped tokens; the access agent needs no registry policy.
 - **Defaults.** A kind's `Defaults` (an `fs.FS`, e.g. `go:embed`) holds the
   images its public presets name in `Public.Default`; `NewRegistry` checks
   they exist. A shared kind ships its own, so importing apps merge nothing.
@@ -484,7 +491,7 @@ through `temp/` and copies to the content address.
 | `rename {path, to}` | Renames an upload within its Upload, and its outputs. |
 | `remove {path}` | Removes an upload and its outputs (cancelling its processing). |
 | `attach {path, index?, meta?}` | Makes an unattached upload part of the item. |
-| `copy {from: {id, path}, to?}` | Copies an upload and its current outputs from another item of the kind, server-side. |
+| `copy {from: {id, path}, to?, edit?}` | Copies an upload within the kind, including the current item. Copies within an Upload preserve current private outputs; another Upload or a supplied edit renders its own presets from the original. |
 | `frame {path, t \| auto}` | Fills an upload from a frame of its `Frames` video; a new video grabs again. |
 | `meta {meta}` | Sets the template values (`{title}` in download names). |
 | `regenerate {preset?, force?}` | Asks the worker to redo stale outputs (all with `force`). |
@@ -501,8 +508,10 @@ out until `attach`.
 
 - `GET /{kind}/{id}?prefix=low-res/&offset=&limit=&download&editor` answers
   `{access, preview_limit, expires, meta, total, hls, files: [{path, type, w, h, url | locked}]}`
-  in manifest order and sets the item cookie (`Path=/v1/{ns}/{kind}/{id}/private/`).
-  Full access serves every file; preview access the first `PreviewLimit`
+  in manifest order. When `ServeOriginals` is true and no preset is `HostOnly`,
+  full access sets the item cookie (`Path=/v1/{ns}/{kind}/{id}/private/`);
+  otherwise URLs carry file-scoped tokens, including in cookie mode.
+  Full access serves every viewer file; preview access the first `PreviewLimit`
   `Pages` uploads' outputs (their uploads only with `ServeOriginals`); a
   file of an upload with `meta.teaser` needs only visibility. With
   `download`, each URL's token also signs the file's download name, which the
@@ -592,8 +601,8 @@ the host's periodic jobs. The worker migrates its schema itself.
 - **Media host**: serve `cmd/media-access` at `media.<site domain>` (same
   site as the pages) and use cookie delivery (`Delivery{Mode: DeliverCookie,
   CookieDomain: "<site domain>"}`); URL delivery only for apps without cookies.
-  Every full-access viewer gets the item cookie; preview viewers get per-file
-  URL tokens.
+  Unrestricted full-access kinds use the item cookie. Kinds with unserved
+  originals or host-only presets, and preview viewers, use per-file URL tokens.
 - **Access agent config**: `MEDIA_ACCESS_HOSTS` maps each media host to the
   namespaces it serves (`media.<domain>=<tenant>,accounts`); URLs are
   `https://media.<domain>/v1/{ns}/{kind}/{id}/{public|private}/{name}`.

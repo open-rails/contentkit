@@ -22,7 +22,8 @@ import (
 type DeliveryMode string
 
 const (
-	// DeliverCookie (default) returns plain URLs plus an item cookie.
+	// DeliverCookie (default) uses an item cookie when the kind permits
+	// folder-wide access; otherwise it returns file-scoped URLs.
 	DeliverCookie DeliveryMode = "cookie"
 	// DeliverURL appends ?t= to every URL: apps and clients without cookies.
 	DeliverURL DeliveryMode = "url"
@@ -175,7 +176,14 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 		}
 	}
 	g.units = res.Units(len(g.pages))
-	if res.Full() {
+	wholeItem := res.Full() && k.ServeOriginals
+	for _, p := range k.Private {
+		if p.HostOnly {
+			wholeItem = false
+			break
+		}
+	}
+	if wholeItem {
 		g.item = r.ring.Sign(token.ItemScope(ref.TenantID, ref.ContentKind, ref.ContentID), g.Expires)
 	}
 	return g, nil
@@ -192,6 +200,13 @@ func (g *Grant) Editor() bool { return g.Resolution.Editor }
 // are served only with ServeOriginals; unattached files and frames not
 // grabbed yet never are.
 func (g *Grant) Allowed(f File) bool {
+	if p := g.Item.Kind().private(f.Preset); !f.IsUpload() && p != nil && p.HostOnly {
+		return false
+	}
+	return g.allowed(f)
+}
+
+func (g *Grant) allowed(f File) bool {
 	src := f
 	if !f.IsUpload() {
 		s, ok := g.Manifest.Get(f.From)
@@ -215,7 +230,8 @@ func (g *Grant) Allowed(f File) bool {
 	return src.Teaser()
 }
 
-// Cookie is the item cookie for full access in cookie mode, else nil.
+// Cookie is the item cookie for unrestricted full access in cookie mode,
+// else nil. Restricted kinds use file-scoped URLs in both delivery modes.
 func (g *Grant) Cookie() *http.Cookie {
 	if g.item == "" || g.r.o.Delivery.Mode != DeliverCookie {
 		return nil
@@ -231,6 +247,21 @@ func (g *Grant) Cookie() *http.Cookie {
 // URL signs f's blob (dl: under its download name).
 func (g *Grant) URL(f File, dl bool) (string, error) {
 	if !g.Allowed(f) {
+		return "", ErrNotAllowed
+	}
+	return g.sign(f.Blob, f.Download, dl)
+}
+
+// HostURL signs a HostOnly preset for a full-access viewer. Call only from
+// a trusted host route after enforcing its additional policy; never expose
+// this operation through the generic read API.
+func (g *Grant) HostURL(path string, dl bool) (string, error) {
+	f, ok := g.Manifest.Get(path)
+	if !ok || !g.Full() || f.IsUpload() || !g.allowed(f) {
+		return "", ErrNotAllowed
+	}
+	p := g.Item.Kind().private(f.Preset)
+	if p == nil || !p.HostOnly {
 		return "", ErrNotAllowed
 	}
 	return g.sign(f.Blob, f.Download, dl)
@@ -360,6 +391,9 @@ func (g *Grant) listed(f File, editor bool) bool {
 	}
 	if f.IsUpload() {
 		return !f.Unattached && g.Item.Kind().ServeOriginals && f.Blob != "" && !f.Gone
+	}
+	if p := g.Item.Kind().private(f.Preset); p != nil && p.HostOnly {
+		return false
 	}
 	src, ok := g.Manifest.Get(f.From)
 	return !ok || !src.IsUpload() || !src.Unattached

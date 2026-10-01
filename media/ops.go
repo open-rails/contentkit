@@ -22,7 +22,7 @@ const (
 	OpRename     = "rename"     // rename an upload and its outputs
 	OpRemove     = "remove"     // remove an upload and its outputs
 	OpAttach     = "attach"     // make an unattached upload part of the item
-	OpCopy       = "copy"       // copy an upload and its current outputs from another item of the kind
+	OpCopy       = "copy"       // copy an upload within the kind, optionally with a new edit
 	OpFrame      = "frame"      // fill an upload from a frame of its Upload.Frames video
 	OpMeta       = "meta"       // set the template values (download names)
 	OpRegenerate = "regenerate" // redo stale outputs (of Preset), or every output with Force
@@ -35,7 +35,7 @@ type Op struct {
 	Blob       string         `json:"blob,omitempty"`  // put
 	Index      *int           `json:"index,omitempty"` // put, move, attach: among the attached uploads of its Upload
 	Meta       map[string]any `json:"meta,omitempty"`  // put: the upload's meta; attach: merged into it; meta: the item's
-	Edit       *Edit          `json:"edit,omitempty"`  // put, edit, frame
+	Edit       *Edit          `json:"edit,omitempty"`  // put, edit, copy, frame
 	Unattached bool           `json:"unattached,omitempty"`
 	To         string         `json:"to,omitempty"`   // rename, copy (default the source's path)
 	From       *CopyFrom      `json:"from,omitempty"` // copy
@@ -45,7 +45,7 @@ type Op struct {
 	Force      bool           `json:"force,omitempty"`
 }
 
-// CopyFrom names an upload of another item of the same kind.
+// CopyFrom names an upload of an item of the same kind, including this item.
 type CopyFrom struct {
 	ID   string `json:"id"`
 	Path string `json:"path"`
@@ -99,8 +99,8 @@ func (op Op) validate() error {
 	default:
 		return uploadErr(CodeInvalid, "unknown op %q", op.Op)
 	}
-	if op.Edit != nil && op.Op != OpPut && op.Op != OpEdit && op.Op != OpFrame {
-		return bad("only put, edit and frame take an edit")
+	if op.Edit != nil && op.Op != OpPut && op.Op != OpEdit && op.Op != OpCopy && op.Op != OpFrame {
+		return bad("only put, edit, copy and frame take an edit")
 	}
 	if op.Unattached && op.Op != OpPut {
 		return bad("only put takes unattached")
@@ -113,8 +113,9 @@ func (op Op) validate() error {
 
 // opRun applies commit ops to a manifest of kind k.
 type opRun struct {
-	k *Kind
-	m *Manifest
+	k  *Kind
+	m  *Manifest
+	id string
 	// objects are the put blobs, HEAD-checked in the item's private/.
 	objects map[string]Object
 	// copies are each copy op's source upload and outputs (by op index),
@@ -138,7 +139,11 @@ func (o *opRun) apply(n int, op Op) error {
 	case OpFrame:
 		return o.frame(op)
 	case OpCopy:
-		return o.copy(op, o.copies[n])
+		src := o.copies[n]
+		if op.From.ID == o.id {
+			src = copyFiles(m, op.From.Path)
+		}
+		return o.copy(op, src)
 	}
 	i := m.Find(op.Path)
 	if i < 0 || !m.Files[i].IsUpload() {
@@ -334,7 +339,23 @@ func (o *opRun) frame(op Op) error {
 	return o.place(g, i, f, nil)
 }
 
-// copy adds the copied upload src[0] (and its outputs src[1:]) at op.To.
+// copyFiles snapshots an upload and its derived files before an edit moves them.
+func copyFiles(m *Manifest, path string) []File {
+	f, ok := m.Get(path)
+	if !ok || !f.IsUpload() || f.Blob == "" {
+		return nil
+	}
+	files := []File{f}
+	for _, out := range m.Files {
+		if !out.IsUpload() && out.From == f.Path {
+			files = append(files, out)
+		}
+	}
+	return files
+}
+
+// copy preserves current outputs within an upload group; a different group
+// derives its own outputs from the copied original.
 func (o *opRun) copy(op Op, src []File) error {
 	k, m := o.k, o.m
 	if len(src) == 0 {
@@ -345,15 +366,40 @@ func (o *opRun) copy(op Op, src []File) error {
 	if to == "" {
 		to = f.Path
 	}
-	g, stem, _, ext, ok := k.upload(to)
-	if gf, _, _, _, _ := k.upload(f.Path); !ok || g != gf {
-		return uploadErr(CodeInvalid, "copy to %q: not an upload path of %s", to, f.Path)
+	g, stem, name, ext, ok := k.upload(to)
+	if !ok {
+		return uploadErr(CodeInvalid, "copy to %q: not an upload path", to)
+	}
+	if k.Uploads[g].Named && !ValidNamed(name) {
+		return uploadErr(CodeInvalid, "upload %q: the server names %s uploads (presign)", to, k.Uploads[g].Path)
+	}
+	if err := allows(k.Uploads[g], f.Type, f.Size); err != nil {
+		return err
 	}
 	if ext == "" {
 		_, ext = splitExt(f.Path)
 	}
 	from := f.Path
 	f.Path, f.Unattached = stem+"."+ext, false
+	group, _, _, _, _ := k.upload(from)
+	if g != group || op.Edit != nil {
+		if f.Gone {
+			return uploadErr(CodeNotFound, "upload %q: original is no longer available", from)
+		}
+		f.Edit, f.Frame, f.Failed = nil, nil, nil
+		if op.Edit != nil {
+			if !isImageType(f.Type) {
+				return uploadErr(CodeInvalid, "upload %q: only images take an edit", f.Path)
+			}
+			e, err := fitEdit(k.EditBounds(f.Path), op.Edit, f.W, f.H)
+			if err != nil {
+				return editErr(err, "upload %q: %v", f.Path)
+			}
+			f.Edit = e
+		}
+		f.Pending = k.Presets(f.Path, m.Hidden)
+		src = src[:1]
+	}
 	i := o.stem(stem)
 	if i < 0 && k.Uploads[g].Max > 0 && o.count(g) >= k.Uploads[g].Max {
 		return uploadErr(CodeTooManyFiles, "kind %q allows at most %d uploads at %s", k.Name, k.Uploads[g].Max, k.Uploads[g].Path)

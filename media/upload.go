@@ -411,7 +411,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 			m.Hidden = *hidden
 		}
 		before := m.uploadBytes()
-		o := &opRun{k: item.Kind(), m: m, objects: objects, copies: copies}
+		o := &opRun{k: item.Kind(), m: m, id: ref.ContentID, objects: objects, copies: copies}
 		for n, op := range ops {
 			if err := o.apply(n, op); err != nil {
 				return err
@@ -611,8 +611,11 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, item Item, ops
 			continue
 		}
 		src, err := u.reg.Ref(item.Kind().Name, op.From.ID)
-		if err != nil || src == item.Ref() {
-			return nil, uploadErr(CodeInvalid, "copy from item %q: another item of the kind", op.From.ID)
+		if err != nil {
+			return nil, uploadErr(CodeInvalid, "copy from item %q: %v", op.From.ID, err)
+		}
+		if src == item.Ref() {
+			continue // read the source under the destination's manifest lock
 		}
 		from, _ := u.reg.Item(src)
 		m, _, err := u.o.Manifests.Get(ctx, src)
@@ -621,15 +624,14 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, item Item, ops
 		} else if err != nil {
 			return nil, err
 		}
-		i := m.Find(op.From.Path)
-		if i < 0 || !m.Files[i].IsUpload() || m.Files[i].Blob == "" {
+		files := copyFiles(m, op.From.Path)
+		if len(files) == 0 {
 			return nil, uploadErr(CodeNotFound, "no upload %q in item %s", op.From.Path, op.From.ID)
 		}
-		files := []File{m.Files[i]}
-		for _, f := range m.Files {
-			if !f.IsUpload() && f.From == m.Files[i].Path {
-				files = append(files, f)
-			}
+		to, _, _, _, _ := item.Kind().upload(cmpOr(op.To, op.From.Path))
+		group, _, _, _, _ := item.Kind().upload(op.From.Path)
+		if to != group || op.Edit != nil {
+			files = files[:1]
 		}
 		var blobs []string
 		for _, f := range files {
