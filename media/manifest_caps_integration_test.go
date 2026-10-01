@@ -370,6 +370,7 @@ func TestFullStopsUntilShrunk(t *testing.T) {
 	if err != nil || !res.Full || res.State != media.StateFull {
 		t.Fatalf("editor read %+v %v", res, err)
 	}
+	f.q.take() // the read asks for its editor views
 	m = f.commit(g, media.Op{Op: media.OpRemove, Path: "originals/000.png"})
 	if jobs := f.q.take(); m.Full || len(jobs) != 1 {
 		t.Fatalf("a shrinking commit: full %v, enqueued %+v", m.Full, jobs)
