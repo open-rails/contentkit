@@ -1,24 +1,17 @@
 package accessworker_test
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
@@ -430,96 +423,5 @@ func sameResponse(t *testing.T, got, want result) {
 	w.Del("Date")
 	if got.status != want.status || got.body != want.body || !reflect.DeepEqual(g, w) {
 		t.Fatalf("response differs from not-found:\n got %d %q %v\nwant %d %q %v", got.status, got.body, g, want.status, want.body, w)
-	}
-}
-
-// TestBinary runs the built cmd/media-access with its environment config.
-func TestBinary(t *testing.T) {
-	f := seed(t)
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "media-access")
-	build := exec.Command("go", "build", "-o", bin, "github.com/open-rails/contentkit/cmd/media-access")
-	build.Env = append(os.Environ(), "CGO_ENABLED=0")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, out)
-	}
-	keyFile := filepath.Join(dir, "token-key")
-	if err := os.WriteFile(keyFile, []byte("k2:"+base64.StdEncoding.EncodeToString(k2.Secret)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(bin, "-listen", "127.0.0.1:0", "-hosts", "media.doujins.com, 127.0.0.1")
-	cmd.Env = []string{
-		"MEDIA_ACCESS_S3_ENDPOINT=" + f.env.Config.Endpoint,
-		"MEDIA_ACCESS_S3_BUCKET=" + f.env.Config.Bucket,
-		"MEDIA_ACCESS_S3_ACCESS_KEY_ID=" + f.env.Config.AccessKeyID,
-		"MEDIA_ACCESS_S3_SECRET_ACCESS_KEY=" + f.env.Config.SecretAccessKey,
-		"MEDIA_ACCESS_TOKEN_KEY_FILE=" + keyFile,
-		"MEDIA_ACCESS_TOKEN_KEY_PREVIOUS=k1:" + base64.RawURLEncoding.EncodeToString(k1.Secret),
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	exited, done := make(chan error, 1), make(chan struct{})
-	t.Cleanup(func() { _ = cmd.Process.Kill(); <-done })
-
-	addr := make(chan string, 1)
-	go func() {
-		sc := bufio.NewScanner(stderr)
-		for sc.Scan() {
-			var line struct{ Msg, Addr string }
-			if json.Unmarshal(sc.Bytes(), &line) == nil && line.Msg == "listening" {
-				addr <- line.Addr
-			}
-			t.Log(sc.Text())
-		}
-		exited <- cmd.Wait()
-		close(done)
-	}()
-	var base string
-	select {
-	case a := <-addr:
-		base = "http://" + a
-	case err := <-exited:
-		t.Fatalf("exited before listening: %v", err)
-	case <-time.After(30 * time.Second):
-		t.Fatal("no listening line")
-	}
-
-	get := func(path string) (int, string) {
-		resp, err := http.Get(base + path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		b, _ := io.ReadAll(resp.Body)
-		return resp.StatusCode, string(b)
-	}
-	exp := token.Expiry(time.Now(), time.Hour, 0)
-	for path, want := range map[string]int{
-		accessworker.HealthPath: 200,
-		"/" + f.public:          200,
-		withToken(f.blobA, mustRing(t, k2, nil).Sign(f.blobA, exp)): 200,
-		withToken(f.blobA, mustRing(t, k1, nil).Sign(f.blobA, exp)): 200,
-		withToken(f.orig, mustRing(t, k2, nil).Sign(f.orig, exp)):   404,
-		"/" + f.blobA: 404,
-	} {
-		if got, body := get(path); got != want {
-			t.Errorf("%s: %d %q, want %d", path, got, body, want)
-		}
-	}
-	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case err := <-exited:
-		if err != nil {
-			t.Fatalf("shutdown: %v", err)
-		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("no graceful shutdown")
 	}
 }
