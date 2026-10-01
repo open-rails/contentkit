@@ -33,9 +33,7 @@ type Config struct {
 	// Editor is how editor views render (the whole oriented source the
 	// cropper draws on); zero is DefaultEditor.
 	Editor Image `json:"editor,omitzero"`
-	// Defaults holds the images public presets name in Public.Default.
-	Defaults fs.FS `json:"-"`
-	Hooks    Hooks `json:"-"`
+	Hooks  Hooks `json:"-"`
 }
 
 // DefaultEditor renders editor views.
@@ -59,6 +57,10 @@ type Kind struct {
 	ServeOriginals bool      `json:"serve_originals,omitempty"`
 	Private        []Private `json:"private,omitempty"`
 	Public         []Public  `json:"public,omitempty"`
+	// Defaults holds the images the kind's public presets name in
+	// Public.Default, so a shared kind ships its own (go:embed). A registry
+	// read from JSON (the stock worker) has none; PublishDefaults needs them.
+	Defaults fs.FS `json:"-"`
 
 	kindState
 }
@@ -111,7 +113,7 @@ type Public struct {
 	To     string `json:"to"` // "cover-{w}.webp", "{name}.webp"
 	Widths []int  `json:"widths,omitempty"`
 	Image  Image  `json:"image"`
-	// Default is a path in Config.Defaults, rendered to the kind's _default
+	// Default is a path in Kind.Defaults, rendered to the kind's _default
 	// item at every width (PublishDefaults).
 	Default string `json:"default,omitempty"`
 }
