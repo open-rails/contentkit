@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"net/http"
 	"slices"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
+	"github.com/open-rails/contentkit/media/layout"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
 )
@@ -59,7 +61,7 @@ func TestPresignedPutIsBoundToTypeLengthAndChecksum(t *testing.T) {
 	ctx := context.Background()
 	body := random(t, 4096)
 	sum := sha256.Sum256(body)
-	key := env.Tenant + "/gallery/" + cid(1) + "/originals/" + media.SHA256Name(sum[:])
+	key := env.Tenant + "/gallery/" + cid(1) + "/private/" + layout.SHA256Name(sum[:])
 	p, err := env.Store.PresignPut(ctx, key, media.PresignPut{ContentType: "image/png", Size: int64(len(body)), SHA256: sum[:], TTL: time.Minute})
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +101,7 @@ func TestPresignedGetReadsRangesFromInternalEndpoint(t *testing.T) {
 	ctx := context.Background()
 	body := []byte("0123456789")
 	sum := sha256.Sum256(body)
-	key := env.Tenant + "/video/" + cid(7) + "/originals/" + media.SHA256Name(sum[:])
+	key := env.Tenant + "/video/" + cid(7) + "/private/" + layout.SHA256Name(sum[:])
 	if _, err := env.Store.Put(ctx, key, bytes.NewReader(body), int64(len(body)), media.PutOptions{ContentType: "video/mp4"}); err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +220,7 @@ func TestDirectPutChecksumAndObjectOps(t *testing.T) {
 	prefix := env.Tenant + "/video/" + cid(9) + "/blobs/"
 	body := []byte("0123456789")
 	sum := sha256.Sum256(body)
-	key := prefix + media.SHA256Name(sum[:])
+	key := prefix + layout.SHA256Name(sum[:])
 	wrong := sha256.Sum256([]byte("other"))
 	_, err := env.Store.Put(ctx, key, bytes.NewReader(body), int64(len(body)), media.PutOptions{ChecksumSHA256: wrong[:]})
 	if env.Store.Capabilities().ChecksumSHA256 && err == nil {
@@ -261,7 +263,7 @@ func TestDirectPutChecksumAndObjectOps(t *testing.T) {
 func TestResponseContentDisposition(t *testing.T) {
 	env := s3test.Open(t)
 	ctx := context.Background()
-	key := env.Tenant + "/gallery/" + cid(2) + "/blobs/" + media.NewUploadName()
+	key := env.Tenant + "/gallery/" + cid(2) + "/blobs/" + "u-" + uuid.NewString()
 	if _, err := env.Store.Put(ctx, key, bytes.NewReader([]byte("zip")), 3, media.PutOptions{ContentType: "application/zip"}); err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +286,7 @@ func TestResponseContentDisposition(t *testing.T) {
 func TestMultipartPartsAreChecksumBoundAndResumable(t *testing.T) {
 	env := s3test.Open(t)
 	ctx := context.Background()
-	key := env.Tenant + "/video/" + cid(3) + "/originals/" + media.NewUploadName()
+	key := env.Tenant + "/video/" + cid(3) + "/originals/" + "u-" + uuid.NewString()
 	id, err := env.Store.CreateMultipart(ctx, key, "video/mp4")
 	if err != nil {
 		t.Fatal(err)
@@ -332,7 +334,7 @@ func TestMultipartPartsAreChecksumBoundAndResumable(t *testing.T) {
 		t.Fatalf("completed %+v %v", obj, err)
 	}
 
-	abortKey := env.Tenant + "/video/" + cid(3) + "/originals/" + media.NewUploadName()
+	abortKey := env.Tenant + "/video/" + cid(3) + "/originals/" + "u-" + uuid.NewString()
 	abortID, err := env.Store.CreateMultipart(ctx, abortKey, "video/mp4")
 	if err != nil {
 		t.Fatal(err)
@@ -435,9 +437,9 @@ func TestCopyInOneRequestOrInParts(t *testing.T) {
 	}
 	for _, size := range []int{1 << 10, 12<<20 + 7} {
 		body := random(t, size)
-		src := env.Tenant + "/video/9/temp/" + media.NewUploadName()
+		src := env.Tenant + "/video/9/temp/u-" + uuid.NewString()
 		sum := sha256.Sum256(body)
-		dst := env.Tenant + "/video/9/originals/" + media.SHA256Name(sum[:])
+		dst := env.Tenant + "/video/9/private/" + layout.SHA256Name(sum[:])
 		put, err := store.Put(ctx, src, bytes.NewReader(body), int64(size),
 			media.PutOptions{ContentType: "video/mp4", CacheControl: "no-cache", Metadata: map[string]string{"of": "x"}})
 		if err != nil {

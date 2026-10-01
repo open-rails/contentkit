@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	stdimage "image"
@@ -17,7 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,88 +52,50 @@ func (allow) CanUpload(context.Context, access.Actor, media.UploadTarget) (media
 
 var alice = access.Actor{ID: "alice", Kind: "user"}
 
+var pngs = []string{"image/png"}
+
+// registry is the hosts' registry: paged galleries with a thumb and a
+// cover, clips with an HLS ladder and a poster grabbed from the video.
+func registry(ns string, hooks media.Hooks) media.Config {
+	return media.Config{Namespace: ns, BaseURL: "https://media.example", Hooks: hooks, Kinds: []media.Kind{
+		{Name: "gallery", KeepOriginals: true,
+			Uploads: []media.Upload{{Path: "originals/{name}", Types: pngs, MaxBytes: 10 << 20, Pages: true}, {Path: "cover", Types: pngs, MaxBytes: 10 << 20}},
+			Private: []media.Private{{Name: "thumb", From: "originals/{name}", To: "thumb/{name}.webp", Image: &media.Image{Width: 100, Height: 150, Fit: media.FitCover}}},
+			Public:  []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{150, 300}, Image: media.Image{Aspect: media.Ratio("3:1")}}},
+		},
+		{Name: "clip", KeepOriginals: true,
+			Uploads: []media.Upload{{Path: "source", Types: []string{"video/mp4"}, MaxBytes: 1 << 30}, {Path: "poster", Types: pngs, MaxBytes: 10 << 20, Frames: "source"}},
+			Private: []media.Private{{Name: "hls", From: "source", To: "hls/", HLS: &media.HLS{Ladder: []int{240}}}},
+			Public:  []media.Public{{Name: "poster", From: "poster", To: "poster-{w}.webp", Widths: []int{160}}},
+		},
+	}}
+}
+
 // host is a host that only presigns, commits and reads, with the worker
 // running beside it on the same database and bucket.
 type host struct {
 	*s3test.Env
-	pool      *pgxpool.Pool
-	kinds     *media.Registry
-	manifests *media.Manifests
-	uploads   *media.Uploads
-	queue     *workqueue.Queue
-	worker    *worker.Worker
-	jobs      *media.Jobs
-	slots     *media.SlotIndex
-	reader    *media.Reader // ReadURL appURL, delivery mediaURL
-	hidden    sync.Map      // contentref.ContentKey → true: hidden from anonymous viewers (Expose)
+	pool    *pgxpool.Pool
+	reg     *media.Registry
+	ms      *media.Manifests
+	uploads *media.Uploads
+	queue   *workqueue.Queue
+	worker  *worker.Worker
+	jobs    *media.Jobs
+	hidden  sync.Map // item id → true: hidden from anonymous viewers
 
-	mu          sync.Mutex
-	changes     []string                     // Hooks.SlotChanged, "ref#slot set|clear"
-	failChanges int                          // SlotChanged calls still to fail
-	settled     map[string][]media.Readiness // Hooks.ItemReady, by ref
-	schema      string                       // the host's River schema
-	workers     string                       // the host's worker schema
-	content     string                       // the ContentKit schema
+	mu      sync.Mutex
+	settled map[string][]media.Readiness // Hooks.ItemReady, by ref
+	purged  []string                     // Hooks.PurgePublic
+	schema  string                       // the host's River schema
+	workers string                       // the host's worker schema
 }
 
-// startJobs starts a host replica: its media jobs, bound to a River client on
-// the host's schema.
-func (h *host) startJobs(t *testing.T) *media.Jobs {
-	t.Helper()
-	jobs, err := media.NewJobs(media.JobsConfig{Store: h.Store, Locker: s3test.Locker(t, h.Store), Kinds: h.kinds, Tenants: []string{h.Tenant},
-		Resolver: h, Slots: h.slots, Hooks: media.Hooks{SlotChanged: h.slotChanged}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	client, err := riverhelpers.New(context.Background(), h.pool, &river.Config{Schema: h.schema, FetchPollInterval: 100 * time.Millisecond,
-		FetchCooldown: 50 * time.Millisecond}, jobs.RiverJobs())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := client.Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = client.StopAndCancel(ctx)
-	})
-	return jobs
-}
-
-// The host's read API and media origins.
-const (
-	appURL   = "https://app.example/api/v1/media"
-	mediaURL = "https://media.example"
-)
-
-// slotChanged is the host's Hooks.SlotChanged.
-func (h *host) slotChanged(_ context.Context, _ pgx.Tx, ref contentref.ContentRef, slot string, set bool) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.failChanges > 0 {
-		h.failChanges--
-		return errors.New("the host's hook is down")
-	}
-	state := "clear"
-	if set {
-		state = "set"
-	}
-	h.changes = append(h.changes, ref.String()+"#"+slot+" "+state)
-	return nil
-}
-
-func (h *host) slotChanges() []string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return append([]string(nil), h.changes...)
-}
-
-// Resolve hides the refs in h.hidden from anonymous viewers.
+// Resolve hides the ids in h.hidden from anonymous viewers.
 func (h *host) Resolve(_ context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
 	out := map[contentref.ContentKey]access.Resolution{}
 	for _, ref := range refs {
-		_, hidden := h.hidden.Load(ref.Content().Key())
+		_, hidden := h.hidden.Load(ref.ContentID)
 		out[ref.Key()] = access.Resolution{Visible: !hidden || !a.Anonymous, Accessible: true, Editor: a.ID == alice.ID}
 	}
 	return out, nil
@@ -142,7 +105,7 @@ func (h *host) Resolve(_ context.Context, refs []contentref.ContentRef, a access
 func (h *host) lastSettled(ref contentref.ContentRef) (media.Readiness, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	all := h.settled[ref.Content().String()]
+	all := h.settled[ref.String()]
 	if len(all) == 0 {
 		return media.Readiness{}, false
 	}
@@ -166,62 +129,17 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 	}
 	ctx := context.Background()
 	pool := pgtest.Pool(t, nil)
-	kinds, err := media.NewRegistry(
-		media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png"}, MaxBytes: 10 << 20,
-			Specs: map[string]media.Spec{"thumb": {Width: 100, Height: 150, Fit: media.FitCover, Quality: 80}},
-			Slots: map[string]media.Slot{"cover": {Aspect: media.Aspect3x1, Widths: []int{150, 300}}}},
-		media.Kind{Name: "clip", Types: []string{"video/mp4"}, MaxBytes: 1 << 30, Video: &media.Video{Ladder: []int{240}}},
-		media.Kind{Name: media.UserKind, Types: []string{"image/png"}, MaxBytes: 10 << 20,
-			Slots: map[string]media.Slot{media.AvatarSlotName: media.AvatarSlot}},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := &host{Env: env, pool: pool, kinds: kinds, settled: map[string][]media.Readiness{}}
-	h.content = pgtest.Schema(t, ctx, pool)
-	if h.slots, err = media.NewSlotIndex(pool, h.content); err != nil {
-		t.Fatal(err)
-	}
-
-	// The host's River: publishes and sweeps the worker hands back run here.
-	schema := pgtest.EmptySchema(t, ctx, pool)
-	h.schema = schema
-	if err := riverhelpers.ApplyMigrations(ctx, pool, schema); err != nil {
-		t.Fatal(err)
-	}
-	jobs := h.startJobs(t)
-	h.jobs = jobs
-	h.manifests = s3test.Manifests(t, env.Store, kinds, media.ManifestOptions{Sweeps: jobs})
-	if h.reader, err = media.NewReader(media.ReaderOptions{Manifests: h.manifests, Kinds: kinds, Resolver: h, Slots: h.slots, ReadURL: appURL,
-		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: mediaURL, SigningKey: token.Key{ID: "k", Secret: bytes.Repeat([]byte("k"), 32)}}}); err != nil {
-		t.Fatal(err)
-	}
-	h.workers = workerSchema(t, pool)
-	if err := workqueue.Migrate(ctx, pool, h.workers); err != nil {
-		t.Fatal(err)
-	}
-	if h.queue, err = workqueue.New(pool, kinds, h.workers); err != nil {
-		t.Fatal(err)
-	}
-	if h.uploads, err = media.NewUploads(media.UploadOptions{Store: env.Store, Kinds: kinds, Manifests: h.manifests,
-		Authorizer: allow{}, Queue: h.queue}); err != nil {
-		t.Fatal(err)
-	}
-
-	// The worker, built from the same registry, with the host's hooks.
-	hostQueue, err := media.NewHostQueue(pool, kinds, schema, "", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var store media.Store = env.Store
-	if workerStore != nil {
-		store = workerStore(env)
-	}
-	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Schema: h.workers, Store: store, Kinds: kinds, HostSchema: schema,
-		TempDir: t.TempDir(), Threads: 2, RiverHooks: riverHooks, ImageTimeout: imageTimeout,
-		Hooks: media.Hooks{ItemReady: func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r media.Readiness) error {
+	h := &host{Env: env, pool: pool, settled: map[string][]media.Readiness{}}
+	var err error
+	h.reg, err = media.NewRegistry(registry(env.Tenant, media.Hooks{Resolver: h, CanUpload: allow{},
+		PurgePublic: func(_ context.Context, urls []string) {
+			h.mu.Lock()
+			h.purged = append(h.purged, urls...)
+			h.mu.Unlock()
+		},
+		ItemReady: func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r media.Readiness) error {
 			if r.Ready() {
-				if err := hostQueue.ExposeTx(ctx, tx, ref); err != nil {
+				if err := h.jobs.ExposeTx(ctx, tx, ref); err != nil {
 					return err
 				}
 			}
@@ -229,7 +147,50 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 			h.settled[ref.String()] = append(h.settled[ref.String()], r)
 			h.mu.Unlock()
 			return nil
-		}}})
+		}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.workers = workerSchema(t, pool)
+	if err := workqueue.Migrate(ctx, pool, h.workers); err != nil {
+		t.Fatal(err)
+	}
+	if h.queue, err = workqueue.New(pool, h.reg, h.workers); err != nil {
+		t.Fatal(err)
+	}
+	// The host's River: readiness, purges and sweeps the worker hands back run here.
+	h.schema = pgtest.EmptySchema(t, ctx, pool)
+	if err := riverhelpers.ApplyMigrations(ctx, pool, h.schema); err != nil {
+		t.Fatal(err)
+	}
+	if h.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: h.reg, Locker: s3test.Locker(t, env.Store), Pool: pool, Processes: h.queue}); err != nil {
+		t.Fatal(err)
+	}
+	client, err := riverhelpers.New(ctx, pool, &river.Config{Schema: h.schema, FetchPollInterval: 100 * time.Millisecond,
+		FetchCooldown: 50 * time.Millisecond}, h.jobs.RiverJobs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = client.StopAndCancel(ctx)
+	})
+	h.ms = h.jobs.Manifests()
+	if h.uploads, err = media.NewUploads(media.UploadOptions{Store: env.Store, Manifests: h.ms, Queue: h.queue}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The worker, built from the same registry.
+	var store media.Store = env.Store
+	if workerStore != nil {
+		store = workerStore(env)
+	}
+	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Schema: h.workers, Store: store, Kinds: h.reg, HostSchema: h.schema,
+		TempDir: t.TempDir(), Threads: 2, RiverHooks: riverHooks, ImageTimeout: imageTimeout})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,51 +206,38 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 	return h
 }
 
-func (h *host) put(t *testing.T, p *media.PresignedRequest, body []byte) {
+// upload presigns and PUTs body like a browser and commits it at path with
+// extra ops.
+func (h *host) upload(t *testing.T, ref contentref.ContentRef, path, typ string, body []byte, extra ...media.Op) string {
 	t.Helper()
-	req, _ := http.NewRequest(p.Method, p.URL, bytes.NewReader(body))
-	for k := range p.Header {
-		req.Header.Set(k, p.Header.Get(k))
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("put: %d", resp.StatusCode)
-	}
+	p, blob := h.stage(t, ref, path, typ, body)
+	h.commit(t, ref, append([]media.Op{{Op: media.OpPut, Path: p, Blob: blob}}, extra...)...)
+	return p
 }
 
-// upload presigns and PUTs body like a browser (slot: and commits the slot).
-func (h *host) upload(t *testing.T, ref contentref.ContentRef, slot, typ string, body []byte) string {
+// stage presigns and PUTs body like a browser, returning the path and blob
+// to commit.
+func (h *host) stage(t *testing.T, ref contentref.ContentRef, path, typ string, body []byte) (string, string) {
 	t.Helper()
 	sum := sha256.Sum256(body)
-	p, err := h.uploads.Presign(context.Background(), alice, media.PresignRequest{Ref: ref, Type: typ, Size: int64(len(body)), SHA256: sum[:], Slot: slot})
+	p, err := h.uploads.Presign(context.Background(), alice, media.PresignRequest{Ref: ref, Path: path, Type: typ, Size: int64(len(body)), SHA256: sum[:]})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if p.Put != nil {
-		h.put(t, p.Put, body)
-	}
-	if slot != "" {
-		if err := h.uploads.CommitSlot(context.Background(), alice, media.SlotCommit{Ref: ref, Slot: slot, SHA256: sum[:]}); err != nil {
+		req, _ := http.NewRequest(p.Put.Method, p.Put.URL, bytes.NewReader(body))
+		req.Header = p.Put.Header.Clone()
+		req.ContentLength = int64(len(body))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
 			t.Fatal(err)
 		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("put: %d", resp.StatusCode)
+		}
 	}
-	return p.Name
-}
-
-// stage puts body where a completed multipart upload lands, returning its name.
-func (h *host) stage(t *testing.T, ref contentref.ContentRef, typ string, body []byte) string {
-	t.Helper()
-	item, _ := h.kinds.Item(ref)
-	name := media.NewUploadName()
-	key, _ := item.Original(name)
-	if _, err := h.Store.Put(context.Background(), key, bytes.NewReader(body), int64(len(body)), media.PutOptions{ContentType: typ}); err != nil {
-		t.Fatal(err)
-	}
-	return name
+	return p.Path, p.Blob
 }
 
 func (h *host) commit(t *testing.T, ref contentref.ContentRef, ops ...media.Op) {
@@ -299,6 +247,18 @@ func (h *host) commit(t *testing.T, ref contentref.ContentRef, ops ...media.Op) 
 	}
 }
 
+func (h *host) file(ref contentref.ContentRef, path string) (media.File, bool) {
+	m, _, err := h.ms.Get(context.Background(), ref)
+	if err != nil {
+		return media.File{}, false
+	}
+	return m.Get(path)
+}
+
+func (h *host) has(ref contentref.ContentRef, path string) func() bool {
+	return func() bool { _, ok := h.file(ref, path); return ok }
+}
+
 func (h *host) exists(t *testing.T, key string) bool {
 	t.Helper()
 	_, err := h.Store.Head(context.Background(), key)
@@ -306,6 +266,20 @@ func (h *host) exists(t *testing.T, key string) bool {
 		t.Fatal(err)
 	}
 	return err == nil
+}
+
+func (h *host) read(t *testing.T, ref contentref.ContentRef, actor access.Actor, editor bool) []media.FileInfo {
+	t.Helper()
+	r, err := media.NewReader(media.ReaderOptions{Manifests: h.ms,
+		Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: token.Key{ID: "k", Secret: bytes.Repeat([]byte("k"), 32)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := r.Read(context.Background(), ref, actor, media.ReadOptions{Editor: editor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res.Files
 }
 
 // workerSchema is a fresh worker schema name, dropped after the test: each
@@ -345,6 +319,15 @@ func pngImage(t *testing.T, w, h int, seed uint8) []byte {
 
 func newID() string { return uuid.Must(uuid.NewV7()).String() }
 
+func (h *host) ref(t *testing.T, kind string) contentref.ContentRef {
+	t.Helper()
+	ref, err := h.reg.Ref(kind, newID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ref
+}
+
 func TestOneShotWorkerStopsAfterOneJob(t *testing.T) {
 	for _, tc := range []struct{ workerQueue, jobQueue string }{
 		{workqueue.VideoLightQueue, workqueue.VideoLightQueue},
@@ -364,11 +347,11 @@ func TestOneShotWorkerStopsAfterOneJob(t *testing.T) {
 			if err := os.Mkdir(active, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			kinds, err := media.NewRegistry(media.Kind{Name: "clip", Types: []string{"video/mp4"}, Video: &media.Video{Ladder: []int{240}}})
+			reg, err := media.NewRegistry(registry(env.Tenant, media.Hooks{}))
 			if err != nil {
 				t.Fatal(err)
 			}
-			w, err := worker.New(context.Background(), worker.Config{Pool: pool, Schema: schema, Store: env.Store, Kinds: kinds,
+			w, err := worker.New(context.Background(), worker.Config{Pool: pool, Schema: schema, Store: env.Store, Kinds: reg,
 				Queue: tc.workerQueue, TempDir: scratch, Threads: 2})
 			if err != nil {
 				t.Fatal(err)
@@ -376,7 +359,7 @@ func TestOneShotWorkerStopsAfterOneJob(t *testing.T) {
 			if _, err := os.Stat(active); err != nil {
 				t.Fatalf("one-shot worker swept another process's scratch: %v", err)
 			}
-			ref := contentref.New(env.Tenant, "clip", newID())
+			ref, _ := reg.Ref("clip", newID())
 			var args river.JobArgs = workqueue.VideoPlanArgs{Ref: ref}
 			switch tc.jobQueue {
 			case workqueue.VideoEncodeQueue:
@@ -414,67 +397,41 @@ func TestOneShotWorkerStopsAfterOneJob(t *testing.T) {
 	}
 }
 
-// The host enqueues; the worker derives variants and slot outputs (the
-// host's slot index job then lists the cover), and places a staged upload at
-// its SHA-256.
-func TestWorkerProcessesImagesAndPlacesStagedUploads(t *testing.T) {
+// The host commits; the worker renders the pages' thumbs and the public
+// cover, the host's jobs report the item ready (Hooks.ItemReady, in a host
+// transaction) and purge the cover's URLs (Hooks.PurgePublic).
+func TestWorkerProcessesImagesAndRelays(t *testing.T) {
 	h := newHost(t)
-	ctx := context.Background()
-	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
-	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 1))})
-	staged := pngImage(t, 400, 600, 2)
-	sum := sha256.Sum256(staged)
-	name := h.stage(t, ref, "image/png", staged)
-	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "002.png", Original: name})
-	work := ref.Content()
-	h.upload(t, work, "cover", "image/png", pngImage(t, 600, 200, 3))
-
-	item, _ := h.kinds.Item(ref)
-	eventually(t, "variants, placement and the cover", time.Minute, func() bool {
-		m, _, err := h.manifests.Get(ctx, ref)
-		if err != nil || len(m.Files) != 2 {
-			return false
-		}
-		rec, err := h.manifests.Slot(ctx, work, "cover")
-		if err != nil || rec.Result == nil || len(rec.Result.Outputs) == 0 {
-			return false
-		}
-		cover, _ := item.Public(rec.Result.Outputs[0].Blob)
-		return m.Files[0].Variants["thumb"].Blob != "" && m.Files[1].Variants["thumb"].Blob != "" &&
-			m.Files[1].Original == media.SHA256Name(sum[:]) && h.exists(t, cover)
+	ref := h.ref(t, "gallery")
+	h.upload(t, ref, "originals/001.png", "image/png", pngImage(t, 300, 450, 1))
+	h.upload(t, ref, "cover", "image/png", pngImage(t, 600, 200, 3))
+	eventually(t, "ItemReady", time.Minute, func() bool { r, ok := h.lastSettled(ref); return ok && r.Ready() })
+	if th, ok := h.file(ref, "thumb/001.webp"); !ok || th.W != 100 || th.H != 150 || th.FP == "" {
+		t.Fatalf("thumb %+v", th)
+	}
+	item, _ := h.reg.Item(ref)
+	key, _ := item.Public("cover-300.webp")
+	if !h.exists(t, key) {
+		t.Fatal("no public cover")
+	}
+	eventually(t, "the cover purged", 30*time.Second, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return slices.Contains(h.purged, h.reg.PublicURL(ref, "cover-300.webp"))
 	})
-	if key, _ := item.Original(name); h.exists(t, key) {
-		t.Fatal("temp upload kept after placement")
-	}
-	m, err := h.manifests.SlotManifest(ctx, media.OutputURLs{BaseURL: mediaURL}, work, "cover")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var pic media.Picture
-	eventually(t, "the cover's slot index row", 30*time.Second, func() bool { // the host's job runs just after the worker's
-		pics, err := h.reader.SlotImages(ctx, h.Tenant, "gallery", "cover", 1, work.ContentID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		pic = pics[work.ContentID]
-		return pic.URL != ""
-	})
-	if pic.URL != m.Outputs[0].URL || pic.W != m.Outputs[0].W || !strings.HasSuffix(pic.SrcSet, " "+strconv.Itoa(m.Outputs[len(m.Outputs)-1].W)+"w") {
-		t.Fatalf("listed %+v, manifest %+v", pic, m.Outputs)
-	}
-	if got := h.slotChanges(); len(got) != 1 || got[0] != work.String()+"#cover set" {
-		t.Fatalf("SlotChanged %v", got)
+	var n int
+	if err := h.pool.QueryRow(context.Background(), "SELECT count(*) FROM "+h.schema+".river_job WHERE kind = 'contentkit_media_expose'").Scan(&n); err != nil || n == 0 {
+		t.Fatalf("no Expose enqueued in the host schema: %d %v", n, err)
 	}
 }
 
-// A staged video is hashed while the worker downloads it for ffmpeg, placed,
-// then encoded; the manifest names the placed original throughout.
-func TestWorkerPlacesAndEncodesStagedVideo(t *testing.T) {
+// A video is encoded to the HLS ladder; its poster is grabbed from a frame
+// and rendered public; the item is ready only once both are done.
+func TestWorkerEncodesVideoAndPoster(t *testing.T) {
 	if os.Getenv("CONTENTKIT_TEST_FFMPEG") == "" {
 		t.Skip("CONTENTKIT_TEST_FFMPEG not set")
 	}
 	h := newHost(t)
-	ctx := context.Background()
 	src := filepath.Join(t.TempDir(), "clip.mp4")
 	if out, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=3:size=426x240:rate=24",
 		"-f", "lavfi", "-i", "sine=duration=3", "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", src).CombinedOutput(); err != nil {
@@ -484,44 +441,120 @@ func TestWorkerPlacesAndEncodesStagedVideo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256(body)
-	ref := contentref.New(h.Tenant, "clip", newID())
-	name := h.stage(t, ref, "video/mp4", body)
-	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "source", Original: name})
-	if r, err := h.manifests.Readiness(ctx, ref); err != nil || r.State != media.StateProcessing {
-		t.Fatalf("a staged video is %+v, %v; want processing", r, err)
+	ref := h.ref(t, "clip")
+	h.upload(t, ref, "source.mp4", "video/mp4", body, media.Op{Op: media.OpFrame, Path: "poster", Auto: true})
+	eventually(t, "ItemReady", 3*time.Minute, func() bool { r, ok := h.lastSettled(ref); return ok && r.Ready() })
+	m, _, err := h.ms.Get(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
 	}
-	eventually(t, "the encode", 2*time.Minute, func() bool {
-		m, _, err := h.manifests.Get(ctx, ref)
-		return err == nil && m.Files[0].HLS != nil && len(m.Files[0].HLS.Video) > 0
-	})
-	m, _, _ := h.manifests.Get(ctx, ref)
-	if f := m.Files[0]; f.Original != media.SHA256Name(sum[:]) || f.HLS.Source != f.Original {
-		t.Fatalf("not placed before the encode: %+v", f)
+	var video, audio bool
+	for _, f := range m.Files {
+		if f.Track != nil {
+			video = video || f.Track.Kind == media.TrackVideo && f.Track.Index != ""
+			audio = audio || f.Track.Kind == media.TrackAudio
+		}
 	}
-	item, _ := h.kinds.Item(ref)
-	if key, _ := item.Original(name); h.exists(t, key) {
-		t.Fatal("temp upload kept after placement")
+	if !video || !audio {
+		t.Fatalf("ladder %+v", m.Files)
 	}
-	// Ready only once the poster is grabbed and rendered too.
-	eventually(t, "ItemReady", time.Minute, func() bool { r, ok := h.lastSettled(ref); return ok && r.Ready() })
-	rec, err := h.manifests.Slot(ctx, ref, media.PosterSlot)
-	if err != nil || rec.Result == nil || len(rec.Result.Outputs) == 0 {
-		t.Fatalf("ready before the poster rendered: %+v %v", rec, err)
+	if p, ok := m.Get("poster.png"); !ok || p.Blob == "" || p.Frame == nil || p.Frame.Of == "" {
+		t.Fatalf("poster %+v", p)
+	}
+	item, _ := h.reg.Item(ref)
+	key, _ := item.Public("poster-160.webp")
+	if !h.exists(t, key) {
+		t.Fatal("no public poster")
 	}
 }
 
-// Hooks.ItemReady runs in the worker once an item settles: failed while a
-// file cannot be processed (viewers never see it; its editor does), ready once
-// it is removed, with HostQueue.ExposeTx enqueuing the host's Expose in the
-// hook's transaction.
+// ItemReady reports a failure while an upload cannot be processed (viewers
+// never see it; its editor does), and ready once it is removed.
+func TestItemReadyAfterProcessing(t *testing.T) {
+	h := newHost(t)
+	ref := h.ref(t, "gallery")
+	h.upload(t, ref, "originals/001.png", "image/png", pngImage(t, 300, 450, 21))
+	h.upload(t, ref, "originals/002.png", "image/png", []byte("not a png at all"))
+	eventually(t, "the failure reported", time.Minute, func() bool { r, ok := h.lastSettled(ref); return ok && r.State == media.StateFailed })
+	if r, _ := h.lastSettled(ref); len(r.Failed) != 1 || r.Failed[0] != "originals/002.png" || len(r.Processing) != 0 {
+		t.Fatalf("readiness: %+v", r)
+	}
+	if got := h.read(t, ref, access.Actor{Anonymous: true}, false); len(got) != 1 || got[0].Path != "thumb/001.webp" {
+		t.Fatalf("a viewer reads %+v; want only the processed page's thumb", got)
+	}
+	if got := h.read(t, ref, alice, true); len(got) != 3 || got[1].Failed == nil {
+		t.Fatalf("the editor reads %+v; want both uploads, the failure named", got)
+	}
+	h.commit(t, ref, media.Op{Op: media.OpRemove, Path: "originals/002.png"})
+	eventually(t, "ready after the removal", time.Minute, func() bool { r, ok := h.lastSettled(ref); return ok && r.Ready() })
+}
+
+// An edit that lands as the image job finishes, while River still has it
+// running, is absorbed by a follow-up job and still rendered.
+func TestWorkerRendersAnEditLandingAsTheJobFinishes(t *testing.T) {
+	type target struct {
+		h   *host
+		ref contentref.ContentRef
+	}
+	var tg atomic.Pointer[target]
+	var once sync.Once
+	edited := make(chan error, 1)
+	late := &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 300, H: 100}}
+	h := newHost(t, river.HookWorkEndFunc(func(ctx context.Context, job *rivertype.JobRow, err error) error {
+		if cur := tg.Load(); cur != nil && job.Kind == (workqueue.ImageArgs{}).Kind() && err == nil {
+			once.Do(func() {
+				_, cerr := cur.h.uploads.Commit(context.Background(), alice, cur.ref, []media.Op{{Op: media.OpEdit, Path: "cover.png", Edit: late}})
+				edited <- cerr
+			})
+		}
+		return err
+	}))
+	ref := h.ref(t, "gallery")
+	tg.Store(&target{h: h, ref: ref})
+	h.upload(t, ref, "cover", "image/png", pngImage(t, 300, 400, 13))
+	select {
+	case err := <-edited:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Minute):
+		t.Fatal("the image job did not run")
+	}
+	eventually(t, "the late edit rendered", time.Minute, func() bool {
+		f, ok := h.file(ref, "cover.png")
+		return ok && f.Edit.Hash() == late.Hash() && f.Pending == nil
+	})
+}
+
+// ProcessOnUpload: an unattached upload is processed before it is attached
+// and viewers do not see it until then; attaching does not reprocess.
+func TestUnattachedThenAttached(t *testing.T) {
+	h := newHost(t)
+	ref := h.ref(t, "gallery")
+	p, blob := h.stage(t, ref, "originals/001.png", "image/png", pngImage(t, 300, 450, 7))
+	h.commit(t, ref, media.Op{Op: media.OpPut, Path: p, Blob: blob, Unattached: true})
+	eventually(t, "the unattached page processed", time.Minute, h.has(ref, "thumb/001.webp"))
+	if got := h.read(t, ref, access.Actor{Anonymous: true}, false); len(got) != 0 {
+		t.Fatalf("a viewer sees an unattached upload's outputs: %+v", got)
+	}
+	before, _ := h.file(ref, "thumb/001.webp")
+	h.commit(t, ref, media.Op{Op: media.OpAttach, Path: p})
+	h.commit(t, ref, media.Op{Op: media.OpAttach, Path: p}) // idempotent
+	if after, _ := h.file(ref, "thumb/001.webp"); after.Blob != before.Blob {
+		t.Fatal("attach reprocessed")
+	}
+	if got := h.read(t, ref, access.Actor{Anonymous: true}, false); len(got) != 1 {
+		t.Fatalf("the attached page is not read: %+v", got)
+	}
+}
+
 // A worker started while the bucket is down waits (taking no jobs, so none
 // burn attempts), then works the queue once the bucket answers.
 func TestWorkerWaitsForTheBucket(t *testing.T) {
 	h, proxy := proxiedWorker(t, func(p *tcpproxy.Proxy) { p.Down() })
 	ctx := context.Background()
-	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
-	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 31))})
+	ref := h.ref(t, "gallery")
+	h.upload(t, ref, "originals/001.png", "image/png", pngImage(t, 300, 450, 31))
 	attempted := func() int {
 		var n int
 		if err := h.pool.QueryRow(ctx, "SELECT coalesce(sum(attempt), 0) FROM "+h.workers+".river_job").Scan(&n); err != nil {
@@ -534,10 +567,7 @@ func TestWorkerWaitsForTheBucket(t *testing.T) {
 		t.Fatalf("%d job attempts while the bucket was down", n)
 	}
 	proxy.Up(t)
-	eventually(t, "the variant after the bucket returned", time.Minute, func() bool {
-		m, _, err := h.manifests.Get(ctx, ref)
-		return err == nil && len(m.Files) == 1 && m.Files[0].Variants["thumb"].Blob != ""
-	})
+	eventually(t, "the thumb after the bucket returned", time.Minute, h.has(ref, "thumb/001.webp"))
 }
 
 // proxiedWorker is newHostOn with the worker's store behind proxy.
@@ -557,23 +587,16 @@ func proxiedWorker(t *testing.T, setup func(*tcpproxy.Proxy)) (*host, *tcpproxy.
 	return h, proxy
 }
 
-func (h *host) thumbed(t *testing.T, ref contentref.ContentRef) func() bool {
-	return func() bool {
-		m, _, err := h.manifests.Get(context.Background(), ref)
-		return err == nil && len(m.Files) == 1 && m.Files[0].Variants["thumb"].Blob != ""
-	}
-}
-
 // A bucket that accepts connections and never answers does not wedge the
 // worker: each readiness check has a deadline, and it starts once the bucket
 // answers.
 func TestWorkerSurvivesAHungBucket(t *testing.T) {
 	h, proxy := proxiedWorker(t, func(p *tcpproxy.Proxy) { p.Hang(t) })
-	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
-	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 41))})
+	ref := h.ref(t, "gallery")
+	h.upload(t, ref, "originals/001.png", "image/png", pngImage(t, 300, 450, 41))
 	time.Sleep(2 * time.Second)
 	proxy.Up(t)
-	eventually(t, "the variant after the bucket answered", 90*time.Second, h.thumbed(t, ref))
+	eventually(t, "the thumb after the bucket answered", 90*time.Second, h.has(ref, "thumb/001.webp"))
 }
 
 // A bucket outage after the worker started snoozes jobs instead of spending
@@ -583,13 +606,13 @@ func TestWorkerSnoozesJobsDuringAnOutage(t *testing.T) {
 	media.UnavailableSnooze = 2 * time.Second
 	h, proxy := proxiedWorker(t, func(*tcpproxy.Proxy) {})
 	ctx := context.Background()
-	first := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
-	h.commit(t, first, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, first, "", "image/png", pngImage(t, 300, 450, 51))})
-	eventually(t, "the worker running", time.Minute, h.thumbed(t, first))
+	first := h.ref(t, "gallery")
+	h.upload(t, first, "originals/001.png", "image/png", pngImage(t, 300, 450, 51))
+	eventually(t, "the worker running", time.Minute, h.has(first, "thumb/001.webp"))
 
 	proxy.Down()
-	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
-	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 52))})
+	ref := h.ref(t, "gallery")
+	h.upload(t, ref, "originals/001.png", "image/png", pngImage(t, 300, 450, 52))
 	time.Sleep(8 * time.Second)
 	var attempts, errs int
 	if err := h.pool.QueryRow(ctx, "SELECT coalesce(max(attempt), 0), coalesce(max(cardinality(errors)), 0) FROM "+h.workers+
@@ -602,178 +625,7 @@ func TestWorkerSnoozesJobsDuringAnOutage(t *testing.T) {
 		t.Fatalf("outage spent job attempts: attempt %d, %d errors: %s", attempts, errs, e)
 	}
 	proxy.Up(t)
-	eventually(t, "the variant after the outage", time.Minute, h.thumbed(t, ref))
-}
-
-func TestItemReadyAfterProcessing(t *testing.T) {
-	h := newHost(t)
-	ctx := context.Background()
-	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
-	h.commit(t, ref,
-		media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 21))},
-		media.Op{Op: media.OpInsert, Name: "002.png", Original: h.upload(t, ref, "", "image/png", []byte("not a png at all"))})
-	eventually(t, "the failure reported", time.Minute, func() bool { r, ok := h.lastSettled(ref); return ok && r.State == media.StateFailed })
-	if r, _ := h.lastSettled(ref); len(r.Failed) != 1 || r.Failed[0] != "en/002.png" || len(r.Processing) != 0 {
-		t.Fatalf("readiness: %+v", r)
-	}
-	if got := h.read(t, ref, access.Actor{Anonymous: true}, false); len(got) != 1 || got[0].Name != "001.png" {
-		t.Fatalf("a viewer reads %+v; want only the processed file", got)
-	}
-	if got := h.read(t, ref, alice, false); len(got) != 2 || got[1].Failed == "" {
-		t.Fatalf("the editor reads %+v; want both, the failure named", got)
-	}
-	h.commit(t, ref, media.Op{Op: media.OpRemove, Name: "002.png"})
-	eventually(t, "ready after the removal", time.Minute, func() bool { r, ok := h.lastSettled(ref); return ok && r.Ready() })
-	var n int
-	if err := h.pool.QueryRow(ctx, "SELECT count(*) FROM "+h.schema+".river_job WHERE kind = 'contentkit_media_expose'").Scan(&n); err != nil || n == 0 {
-		t.Fatalf("no Expose enqueued in the host schema: %d %v", n, err)
-	}
-}
-
-// An edit that lands as a slot job finishes, while River still has it
-// running, is absorbed as a follow-up job and still rendered.
-func TestWorkerRendersASlotEditLandingAsTheJobFinishes(t *testing.T) {
-	type target struct {
-		h   *host
-		ref contentref.ContentRef
-	}
-	var tg atomic.Pointer[target]
-	var once sync.Once
-	edited := make(chan error, 1)
-	late := &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 300, H: 100}}
-	h := newHost(t, river.HookWorkEndFunc(func(ctx context.Context, job *rivertype.JobRow, err error) error {
-		if cur := tg.Load(); cur != nil && job.Kind == (workqueue.ImageArgs{}).Kind() && err == nil {
-			once.Do(func() { edited <- cur.h.uploads.EditSlot(context.Background(), alice, cur.ref, "cover", late) })
-		}
-		return err
-	}))
-	ref := contentref.New(h.Tenant, "gallery", newID())
-	tg.Store(&target{h: h, ref: ref})
-	h.upload(t, ref, "cover", "image/png", pngImage(t, 300, 400, 13))
-	select {
-	case err := <-edited:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Minute):
-		t.Fatal("the slot job did not run")
-	}
-	eventually(t, "the late edit rendered", time.Minute, func() bool {
-		rec, err := h.manifests.Slot(context.Background(), ref, "cover")
-		return err == nil && rec.Result != nil && rec.Edit.Hash() == late.Hash() && rec.Result.Of == rec.Fingerprint(h.cover(t))
-	})
-}
-
-func (h *host) cover(t *testing.T) media.Slot {
-	t.Helper()
-	k, err := h.kinds.Kind("gallery")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return k.Slots["cover"]
-}
-
-type editorResolver struct{}
-
-func (editorResolver) Resolve(_ context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	out := map[contentref.ContentKey]access.Resolution{}
-	for _, ref := range refs {
-		out[ref.Key()] = access.Resolution{Visible: true, Accessible: true, Editor: a.ID == alice.ID}
-	}
-	return out, nil
-}
-
-func (h *host) read(t *testing.T, ref contentref.ContentRef, actor access.Actor, unattached bool) []media.FileInfo {
-	t.Helper()
-	r, err := media.NewReader(media.ReaderOptions{Manifests: h.manifests, Kinds: h.kinds, Resolver: editorResolver{},
-		Delivery: media.Delivery{Mode: media.DeliverURL, BaseURL: "https://media.invalid", SigningKey: token.Key{ID: "k", Secret: bytes.Repeat([]byte("k"), 32)}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, err := r.Read(context.Background(), ref, actor, media.ReadOptions{Unattached: unattached})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return res.Files
-}
-
-// ProcessOnUpload: an unattached file is processed before it is attached and
-// readers leave it out until then; attaching does not reprocess; discarding a
-// file mid-encode cancels the job and deletes its objects.
-func TestProcessOnUploadAttachAndDiscard(t *testing.T) {
-	if os.Getenv("CONTENTKIT_TEST_FFMPEG") == "" {
-		t.Skip("CONTENTKIT_TEST_FFMPEG not set")
-	}
-	h := newHost(t)
-	ctx := context.Background()
-	gallery := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
-	name := h.upload(t, gallery, "", "image/png", pngImage(t, 300, 450, 7))
-	h.commit(t, gallery, media.Op{Op: media.OpInsert, Name: "001.png", Original: name, Unattached: true})
-	eventually(t, "the unattached image derived", time.Minute, func() bool {
-		m, _, err := h.manifests.Get(ctx, gallery)
-		return err == nil && m.Files[0].Unattached && m.Files[0].Variants["thumb"].Blob != ""
-	})
-	if got := h.read(t, gallery, access.Actor{Anonymous: true}, true); len(got) != 0 {
-		t.Fatalf("a viewer sees an unattached file: %+v", got)
-	}
-	if got := h.read(t, gallery, alice, false); len(got) != 0 {
-		t.Fatalf("an editor's plain read lists an unattached file: %+v", got)
-	}
-	if got := h.read(t, gallery, alice, true); len(got) != 1 || !got[0].Unattached || got[0].Width == 0 {
-		t.Fatalf("the editor's unattached file: %+v", got)
-	}
-	before, _, _ := h.manifests.Get(ctx, gallery)
-	h.commit(t, gallery, media.Op{Op: media.OpAttach, Name: "001.png"})
-	h.commit(t, gallery, media.Op{Op: media.OpAttach, Name: "001.png"}) // idempotent
-	after, _, _ := h.manifests.Get(ctx, gallery)
-	if f := after.Files[0]; f.Unattached || f.Variants["thumb"] != before.Files[0].Variants["thumb"] {
-		t.Fatalf("attach changed the derived file: %+v", f)
-	}
-	if got := h.read(t, gallery, access.Actor{Anonymous: true}, false); len(got) != 1 {
-		t.Fatalf("the attached file is not read: %+v", got)
-	}
-
-	// A long staged video, discarded while its encode runs.
-	src := filepath.Join(t.TempDir(), "long.mp4")
-	if out, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=90:size=426x240:rate=30",
-		"-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", src).CombinedOutput(); err != nil {
-		t.Fatalf("ffmpeg: %v %s", err, out)
-	}
-	body, err := os.ReadFile(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sum := sha256.Sum256(body)
-	clip := contentref.New(h.Tenant, "clip", newID())
-	staged := h.stage(t, clip, "video/mp4", body)
-	h.commit(t, clip, media.Op{Op: media.OpInsert, Name: "long", Original: staged, Unattached: true})
-	progress, err := workqueue.NewProgressSource(h.pool, h.workers)
-	if err != nil {
-		t.Fatal(err)
-	}
-	eventually(t, "the encode running", time.Minute, func() bool {
-		st, err := progress.EncodeProgress(ctx, clip)
-		p, ok := st.Files["long"]
-		return err == nil && ok && p.Phase == media.PhaseEncoding
-	})
-	h.commit(t, clip, media.Op{Op: media.OpRemove, Name: "long"})
-	match, _, _ := workqueue.RefMatch(clip)
-	eventually(t, "the encode cancelled", 30*time.Second, func() bool {
-		var n int
-		err := h.pool.QueryRow(ctx, "SELECT count(*) FROM "+h.workers+".river_job WHERE kind = $1 AND args @> $2 AND state = 'cancelled'",
-			(workqueue.VideoChunkArgs{}).Kind(), match).Scan(&n)
-		return err == nil && n > 0
-	})
-	item, _ := h.kinds.Item(clip)
-	stagedKey, _ := item.Original(staged)
-	placedKey, _ := item.Original(media.SHA256Name(sum[:]))
-	if h.exists(t, stagedKey) || h.exists(t, placedKey) {
-		t.Fatal("the discarded video's original was kept")
-	}
-	time.Sleep(2 * time.Second) // a cancelled job must not write back
-	if m, _, err := h.manifests.Get(ctx, clip); err != nil || len(m.Files) != 0 {
-		t.Fatalf("after discard: %+v %v", m, err)
-	}
+	eventually(t, "the thumb after the outage", time.Minute, h.has(ref, "thumb/001.webp"))
 }
 
 // Two hosts on one database, with the same kind names: each worker drains
@@ -781,7 +633,7 @@ func TestProcessOnUploadAttachAndDiscard(t *testing.T) {
 func TestHostsShareADatabase(t *testing.T) {
 	ctx := context.Background()
 	var mu sync.Mutex
-	ran := map[string][]string{} // worker → tenants of the jobs it ran
+	ran := map[string][]string{} // worker → namespaces of the jobs it ran
 	record := func(name string) rivertype.Hook {
 		return river.HookWorkEndFunc(func(_ context.Context, job *rivertype.JobRow, err error) error {
 			var args struct {
@@ -798,7 +650,7 @@ func TestHostsShareADatabase(t *testing.T) {
 	if a.workers == b.workers {
 		t.Fatal("hosts share a worker schema")
 	}
-	refA, refB := contentref.New(a.Tenant, "gallery", newID()), contentref.New(b.Tenant, "gallery", newID())
+	refA, refB := a.ref(t, "gallery"), b.ref(t, "gallery")
 	a.upload(t, refA, "cover", "image/png", pngImage(t, 300, 400, 3))
 	b.upload(t, refB, "cover", "image/png", pngImage(t, 300, 400, 4))
 	eventually(t, "both covers", time.Minute, func() bool {
@@ -807,13 +659,13 @@ func TestHostsShareADatabase(t *testing.T) {
 		return oka && okb && ra.Ready() && rb.Ready()
 	})
 	mu.Lock()
-	for name, tenant := range map[string]string{"a": a.Tenant, "b": b.Tenant} {
+	for name, ns := range map[string]string{"a": a.Tenant, "b": b.Tenant} {
 		if len(ran[name]) == 0 {
 			t.Fatalf("worker %s ran nothing", name)
 		}
 		for _, got := range ran[name] {
-			if got != tenant {
-				t.Fatalf("worker %s ran a job of tenant %s: %v", name, got, ran)
+			if got != ns {
+				t.Fatalf("worker %s ran a job of namespace %s: %v", name, got, ran)
 			}
 		}
 	}
@@ -824,11 +676,11 @@ func TestHostsShareADatabase(t *testing.T) {
 	if err := workqueue.Migrate(ctx, a.pool, c); err != nil {
 		t.Fatal(err)
 	}
-	qc, err := workqueue.New(a.pool, a.kinds, c)
+	qc, err := workqueue.New(a.pool, a.reg, c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	clip := contentref.New(a.Tenant, "clip", newID())
+	clip := a.ref(t, "clip")
 	if err := qc.Enqueue(ctx, media.ProcessJob{Ref: clip}); err != nil {
 		t.Fatal(err)
 	}
@@ -847,7 +699,7 @@ func TestHostsShareADatabase(t *testing.T) {
 		t.Fatalf("host c cancelled %d: %v", n, err)
 	}
 	for _, bad := range []string{"", "Media", "media-worker", "a.b", strings.Repeat("x", 64)} {
-		if _, err := workqueue.New(a.pool, a.kinds, bad); err == nil {
+		if _, err := workqueue.New(a.pool, a.reg, bad); err == nil {
 			t.Fatalf("schema %q accepted", bad)
 		}
 	}
@@ -855,31 +707,30 @@ func TestHostsShareADatabase(t *testing.T) {
 
 // A host runs its media worker as its unprivileged app role; the worker
 // schema is migrated by the host's migration step, so worker.New must not
-// need DDL rights (CREATE on public for migration tracking).
+// need DDL rights.
 func TestWorkerRunsAsAnUnprivilegedRole(t *testing.T) {
 	env := s3test.Open(t)
 	ctx := context.Background()
 	admin := pgtest.Pool(t, nil)
-	host := pgtest.EmptySchema(t, ctx, admin)
-	if err := riverhelpers.ApplyMigrations(ctx, admin, host); err != nil {
+	hostSchema := pgtest.EmptySchema(t, ctx, admin)
+	if err := riverhelpers.ApplyMigrations(ctx, admin, hostSchema); err != nil {
 		t.Fatal(err)
 	}
 	schema := workerSchema(t, admin)
 	if err := workqueue.Migrate(ctx, admin, schema); err != nil {
 		t.Fatal(err)
 	}
-	dsn := pgtest.MediaWorkerRole(t, ctx, admin, schema, host)
+	dsn := pgtest.MediaWorkerRole(t, ctx, admin, schema, hostSchema)
 	app, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(app.Close)
-	kinds, err := media.NewRegistry(media.Kind{Name: "gallery", Versioned: true, Types: []string{"image/png"}, MaxBytes: 1 << 20})
+	reg, err := media.NewRegistry(registry(env.Tenant, media.Hooks{}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := worker.Config{Pool: app, Schema: schema, Store: env.Store, Kinds: kinds, HostSchema: host,
-		TempDir: t.TempDir(), Threads: 1}
+	cfg := worker.Config{Pool: app, Schema: schema, Store: env.Store, Kinds: reg, HostSchema: hostSchema, TempDir: t.TempDir(), Threads: 1}
 	if _, err := worker.New(ctx, cfg); err != nil {
 		t.Fatalf("worker as the app role: %v", err)
 	}
@@ -887,8 +738,7 @@ func TestWorkerRunsAsAnUnprivilegedRole(t *testing.T) {
 		t.Run(table, func(t *testing.T) {
 			name := pgx.Identifier{schema, table}.Sanitize()
 			hidden := pgx.Identifier{schema, table + "_missing"}.Sanitize()
-			_, err := admin.Exec(ctx, "ALTER TABLE "+name+" RENAME TO "+pgx.Identifier{table + "_missing"}.Sanitize())
-			if err != nil {
+			if _, err := admin.Exec(ctx, "ALTER TABLE "+name+" RENAME TO "+pgx.Identifier{table + "_missing"}.Sanitize()); err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() {
@@ -896,8 +746,7 @@ func TestWorkerRunsAsAnUnprivilegedRole(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			_, err = worker.New(ctx, cfg)
-			if err == nil || !strings.Contains(err.Error(), schema+"."+table) {
+			if _, err := worker.New(ctx, cfg); err == nil || !strings.Contains(err.Error(), schema+"."+table) {
 				t.Fatalf("worker accepted missing %s or did not identify it: %v", table, err)
 			}
 		})
@@ -926,7 +775,7 @@ func faultyWorker(t *testing.T, fault func(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// imageJob reports the state of the worker's one unfinished image job.
+// imageJob reports the state of the worker's latest image job.
 func (h *host) imageJob(t *testing.T) (state string, attempt, errs, snoozes int) {
 	t.Helper()
 	err := h.pool.QueryRow(context.Background(), `SELECT state, attempt, coalesce(cardinality(errors), 0), coalesce((metadata->>'snoozes')::int, 0)
@@ -946,24 +795,27 @@ func (h *host) discardNext(t *testing.T) {
 	}
 }
 
+// blobName is a body's blob name.
+func blobName(body []byte) string {
+	sum := sha256.Sum256(body)
+	return "sha256-" + hex.EncodeToString(sum[:])
+}
+
 // A job that outruns its own timeout spends its attempts (the bucket is
 // fine; the job is not), and is discarded when they run out.
 func TestWorkerTimedOutJobSpendsAttempts(t *testing.T) {
 	defer func(d time.Duration) { imageTimeout = d }(imageTimeout)
 	imageTimeout = 2 * time.Second
-	var name atomic.Value
-	name.Store("\x00")
+	body := pngImage(t, 300, 450, 61)
+	name := blobName(body)
 	h := faultyWorker(t, func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, name.Load().(string)) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, name) {
 			<-r.Context().Done() // this one object never answers
 			return true
 		}
 		return false
 	})
-	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
-	original := h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 61))
-	name.Store(original)
-	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: original})
+	h.upload(t, h.ref(t, "gallery"), "originals/001.png", "image/png", body)
 	eventually(t, "the timed-out attempt recorded", time.Minute, func() bool { _, _, errs, _ := h.imageJob(t); return errs > 0 })
 	if state, _, _, snoozes := h.imageJob(t); state == "scheduled" || snoozes != 0 {
 		t.Fatalf("timed-out job: state %s, snoozes %d; want an attempt spent, no snooze", state, snoozes)
@@ -974,10 +826,10 @@ func TestWorkerTimedOutJobSpendsAttempts(t *testing.T) {
 
 // A deterministic 500 on one object of a healthy bucket spends attempts too.
 func TestWorkerBrokenObjectSpendsAttempts(t *testing.T) {
-	var name atomic.Value
-	name.Store("\x00")
+	body := pngImage(t, 300, 450, 62)
+	name := blobName(body)
 	h := faultyWorker(t, func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, name.Load().(string)) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, name) {
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = io.WriteString(w, `<Error><Code>InternalError</Code></Error>`)
@@ -985,10 +837,7 @@ func TestWorkerBrokenObjectSpendsAttempts(t *testing.T) {
 		}
 		return false
 	})
-	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
-	original := h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 62))
-	name.Store(original)
-	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: original})
+	h.upload(t, h.ref(t, "gallery"), "originals/001.png", "image/png", body)
 	eventually(t, "the failed attempt recorded", time.Minute, func() bool { _, _, errs, _ := h.imageJob(t); return errs > 0 })
 	if state, _, _, snoozes := h.imageJob(t); state == "scheduled" || snoozes != 0 {
 		t.Fatalf("broken object: state %s, snoozes %d; want an attempt spent, no snooze", state, snoozes)
@@ -1002,12 +851,11 @@ func TestWorkerOutageSnoozesAreCapped(t *testing.T) {
 	defer func(d time.Duration, n int) { media.UnavailableSnooze, media.MaxOutageSnoozes = d, n }(media.UnavailableSnooze, media.MaxOutageSnoozes)
 	media.UnavailableSnooze, media.MaxOutageSnoozes = time.Second, 2
 	h, proxy := proxiedWorker(t, func(*tcpproxy.Proxy) {})
-	first := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
-	h.commit(t, first, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, first, "", "image/png", pngImage(t, 300, 450, 71))})
-	eventually(t, "the worker running", time.Minute, h.thumbed(t, first))
+	first := h.ref(t, "gallery")
+	h.upload(t, first, "originals/001.png", "image/png", pngImage(t, 300, 450, 71))
+	eventually(t, "the worker running", time.Minute, h.has(first, "thumb/001.webp"))
 	proxy.Down()
-	ref := contentref.NewVersion(h.Tenant, "gallery", newID(), "en")
-	h.commit(t, ref, media.Op{Op: media.OpInsert, Name: "001.png", Original: h.upload(t, ref, "", "image/png", pngImage(t, 300, 450, 72))})
+	h.upload(t, h.ref(t, "gallery"), "originals/001.png", "image/png", pngImage(t, 300, 450, 72))
 	eventually(t, "an attempt spent after the snooze cap", time.Minute, func() bool {
 		_, _, errs, snoozes := h.imageJob(t)
 		return errs > 0 && snoozes >= 2

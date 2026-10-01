@@ -2,12 +2,12 @@ package video
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
+	"os"
+	"path/filepath"
 	"slices"
 	"time"
 
@@ -17,7 +17,6 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pglock"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/workqueue"
 )
 
@@ -26,6 +25,9 @@ const (
 	maxVideoChunksPerRun = 5000
 )
 
+// encodeRun is one stage of an upload's encode preset: its rung, encoded in
+// bounded chunks, then assembled and published. File is the upload's path,
+// Source its blob and Spec the preset and fingerprint (runSpec).
 type encodeRun struct {
 	ID          string
 	Ref         contentref.ContentRef
@@ -60,15 +62,17 @@ func (c WorkerConfig) jobTable() string {
 	return pgx.Identifier{c.Schema, "river_job"}.Sanitize()
 }
 
-// planVideo only probes and records the work. It never downloads the source
-// into scratch or runs an encode pass.
+// videoFamily are the presets the video plan produces.
+func videoFamily(p *media.Private) bool { return isEncode(p) || p.Subtitles != nil }
+
+// planVideo brings an item's video presets (and frames) up to date: it
+// converts subtitles, and probes each source with stale HLS or MP4 outputs
+// and records the encode runs; it never downloads a video or encodes one.
 func (c WorkerConfig) planVideo(ctx context.Context, args workqueue.VideoPlanArgs) error {
-	item, err := c.Kinds.Item(args.Ref)
+	e := c.Encoder
+	item, err := e.ms.Registry().Item(args.Ref)
 	if err != nil {
 		return river.JobCancel(err)
-	}
-	if item.Kind().Video == nil {
-		return river.JobCancel(fmt.Errorf("media/video: kind %q has no video", item.Kind().Name))
 	}
 	release, ok, err := pglock.Acquire(ctx, c.Pool, "contentkit:media:video:"+args.Ref.String(), false)
 	if err != nil {
@@ -78,54 +82,92 @@ func (c WorkerConfig) planVideo(ctx context.Context, args workqueue.VideoPlanArg
 		return river.JobSnooze(time.Minute)
 	}
 	defer release()
-
-	ms, err := media.NewManifests(c.Encoder.c.Store, c.Kinds, media.ManifestOptions{Locker: c.Encoder.c.Locker,
-		CacheSize: 1, Sweeps: c.Encoder.c.Sweeps})
-	if err != nil {
-		return err
+	if args.Force {
+		if err := e.force(ctx, item, args.Preset, videoFamily); err != nil {
+			return err
+		}
 	}
-	man, _, err := ms.Get(ctx, args.Ref)
+	man, _, err := e.ms.Get(ctx, args.Ref)
 	if errors.Is(err, media.ErrNotFound) {
 		return nil
 	} else if err != nil {
 		return err
 	}
-	recipe := c.Encoder.recipeOf(item.Kind().Video)
+	var errs []error
 	for _, f := range man.Files {
-		switch {
-		case IsSubtitle(f) && !subtitleFresh(f):
-			err = c.Encoder.subtitleFile(ctx, ms, item, f, nil)
-		case IsVideo(f) && fresh(man, f, recipe) && subsStale(f):
-			err = c.Encoder.sourceSubs(ctx, ms, item, item.Kind().Video, f, nil)
-		case IsVideo(f) && !fresh(man, f, recipe):
-			err = c.planFile(ctx, ms, item, recipe, f, args.Class)
-		default:
+		if !f.IsUpload() || f.Gone || f.Blob == "" || f.Fail() != nil {
 			continue
 		}
-		var permanent *PermanentError
-		if errors.As(err, &permanent) {
-			err = c.Encoder.fail(ctx, ms, item, recipe.failSpec, f.Name, f.Source(), permanent.Err)
+		var encode []*media.Private
+		for _, p := range item.Kind().PrivateFor(f.Path) {
+			if args.Preset != "" && p.Name != args.Preset || !videoFamily(p) || !e.todo(man, f, p) {
+				continue
+			}
+			if p.Subtitles != nil {
+				errs = append(errs, e.settle(ctx, item, f, e.subtitle(ctx, item, f, p)))
+			} else {
+				encode = append(encode, p)
+			}
 		}
-		if err != nil {
-			return fmt.Errorf("media/video: plan %s/%s: %w", args.Ref, f.Name, err)
+		if len(encode) > 0 {
+			err := e.settle(ctx, item, f, c.planUpload(ctx, item, man, f, encode, args.Class))
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	if args.Preset == "" {
+		errs = append(errs, e.grabFrames(ctx, item))
+	}
+	return errors.Join(errs...)
 }
 
-func (c WorkerConfig) planFile(ctx context.Context, ms *media.Manifests, item media.Item, r jobRecipe, f media.File, class media.VideoJobClass) error {
-	source := f.Source()
-	key, err := item.Original(source)
-	if err != nil {
-		return &PermanentError{err}
-	}
-	obj, err := c.Encoder.c.Store.Head(ctx, key)
+// force marks preset's outputs (every preset of family when "") stale and
+// pending, and clears their uploads' failures, so they are redone.
+func (e *Encoder) force(ctx context.Context, item media.Item, preset string, family func(*media.Private) bool) error {
+	_, err := e.ms.EditExisting(ctx, item.Ref(), func(m *media.Manifest) error {
+		for _, f := range slices.Clone(m.Files) {
+			if !f.IsUpload() || f.Gone || f.Blob == "" {
+				continue
+			}
+			for _, p := range item.Kind().PrivateFor(f.Path) {
+				if preset != "" && p.Name != preset || !family(p) {
+					continue
+				}
+				for j := range m.Files {
+					if o := &m.Files[j]; o.From == f.Path && o.Preset == p.Name {
+						o.FP = ""
+					}
+				}
+				m.AddPending(f.Path, p.Name)
+				m.Files[m.Find(f.Path)].Failed = nil
+			}
+		}
+		return nil
+	})
 	if errors.Is(err, media.ErrNotFound) {
-		return c.Encoder.stale(ctx, ms, item, f.Name, source, err)
+		return nil
+	}
+	return err
+}
+
+// planUpload probes upload f and records the runs of its stale encode
+// presets. An MP4 at a rung an HLS run of this plan encodes in H.264 is
+// remuxed by that run.
+func (c WorkerConfig) planUpload(ctx context.Context, item media.Item, man *media.Manifest, f media.File, presets []*media.Private, class media.VideoJobClass) error {
+	e := c.Encoder
+	key, _ := item.Blob(f.Blob)
+	obj, err := e.store.Head(ctx, key)
+	if errors.Is(err, media.ErrNotFound) {
+		return errStale
 	} else if err != nil {
 		return err
 	}
-	url, err := c.Encoder.c.Store.PresignGet(ctx, key, 2*time.Hour)
+	// Commit verified single PUTs; a measured upload was read through once.
+	if f.Dur == 0 && obj.Size > media.MaxSinglePut {
+		if err := e.verify(ctx, item, f.Blob, obj); err != nil {
+			return err
+		}
+	}
+	url, err := e.store.PresignGet(ctx, key, 2*time.Hour)
 	if err != nil {
 		return err
 	}
@@ -136,79 +178,181 @@ func (c WorkerConfig) planFile(ctx context.Context, ms *media.Manifests, item me
 		}
 		return &PermanentError{err}
 	}
-	plan, err := newPlan(pr, r.video)
+	pl, err := newPlan(pr)
 	if err != nil {
 		return &PermanentError{err}
 	}
-	stages := slices.Clone(plan.rungs)
-	slices.Reverse(stages)
-	if len(stages) == 0 {
-		return &PermanentError{fmt.Errorf("video has no applicable rendition rung")}
+	if err := e.measured(ctx, item, f, pl, presets); err != nil {
+		return err
 	}
-	bounds := make([][][2]int64, len(stages))
-	for i, stage := range stages {
-		bounds[i], err = chunkBounds(plan, []rung{stage}, len(c.Encoder.c.Codecs), c.ChunkTarget)
+	k := item.Kind()
+	remuxed := map[string]bool{}
+	for _, p := range presets {
+		if p.HLS == nil {
+			continue
+		}
+		st, err := stages(p, pl)
 		if err != nil {
 			return &PermanentError{err}
 		}
-	}
-	// A staged upload has no immutable key yet. Stream it once for its hash,
-	// without storing a local copy, then atomically point the manifest at it.
-	if layout.ValidStagedName(source) {
-		body, got, err := c.Encoder.c.Store.Get(ctx, key, media.GetOptions{})
-		if err != nil {
-			return err
+		fp := e.fp(p, f)
+		done := stagesDone(man.Outputs(f.Path, p.Name), k.OutputPath(p, f.Path), fp, st, e.c.Codecs)
+		if done == len(st) {
+			if err := e.refreshSubs(ctx, item, f, p, pl, url.URL); err != nil {
+				return err
+			}
+			continue
 		}
-		h := sha256.New()
-		n, readErr := io.Copy(h, body)
-		err = errors.Join(readErr, body.Close())
-		if err != nil {
-			return err
+		for _, q := range presets {
+			if q.MP4 != nil && q.MP4.Profile == p.HLS.Profile && slices.Contains(e.c.Codecs, media.CodecH264) &&
+				slices.IndexFunc(st, func(r rung) bool { return r.n == q.MP4.Rung }) >= done {
+				remuxed[q.Name] = true
+			}
 		}
-		if got.ETag != obj.ETag || n != obj.Size {
-			return media.ErrPreconditionFailed
-		}
-		placed, err := ms.Place(ctx, item.Ref(), media.Staged{Name: source, ETag: obj.ETag, SHA256: h.Sum(nil)})
-		if errors.Is(err, media.ErrStagedGone) {
-			return c.Encoder.stale(ctx, ms, item, f.Name, source, err)
-		} else if err != nil {
-			return err
-		}
-		source = placed
-		key, _ = item.Original(source)
-		obj, err = c.Encoder.c.Store.Head(ctx, key)
-		if err != nil {
+		if err := c.planRuns(ctx, item, f, p, fp, obj, pr, pl, st, done, class); err != nil {
 			return err
 		}
 	}
+	for _, p := range presets {
+		if p.MP4 == nil || remuxed[p.Name] {
+			continue
+		}
+		st, _ := stages(p, pl)
+		if len(st) == 0 {
+			if err := e.noOutput(ctx, item, f, p); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := c.planRuns(ctx, item, f, p, e.fp(p, f), obj, pr, pl, st, 0, class); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-	// Re-read after Place or another editor's manifest change. Planning a
-	// superseded file is harmless but releasing work for it is not.
-	current, _, err := ms.Get(ctx, item.Ref())
+// planRuns sizes a preset's stages into chunks and records them.
+func (c WorkerConfig) planRuns(ctx context.Context, item media.Item, f media.File, p *media.Private, fp string, obj media.Object,
+	pr probeResult, pl plan, st []rung, done int, class media.VideoJobClass) error {
+	codecs := c.Encoder.codecs(p)
+	bounds := make([][][2]int64, len(st))
+	for i, stage := range st {
+		var err error
+		if bounds[i], err = chunkBounds(pl, []rung{stage}, len(codecs), c.ChunkTarget); err != nil {
+			return &PermanentError{err}
+		}
+	}
+	// The top rung is copied from a source compliant in one of the codecs
+	// when it fits one chunk (the chunk checks its packets).
+	var passthrough media.Codec
+	if src := media.Codec(pl.stream.CodecName); p.HLS != nil && len(st) > 1 && len(bounds[len(bounds)-1]) == 1 &&
+		slices.Contains(codecs, src) && (src == media.CodecH264 || src == media.CodecHEVC) {
+		codec, ok, why := passthroughCandidate(pl, st[len(st)-1])
+		if ok && slices.Contains(codecs, codec) {
+			passthrough = codec
+		} else {
+			c.Logger.DebugContext(ctx, "media/video: no passthrough", "ref", item.Ref().String(), "path", f.Path, "codec", codec, "reason", why)
+		}
+	}
+	key, _ := item.Blob(f.Blob)
+	return c.insertRuns(ctx, item.Ref(), f.Path, f.Blob, key, obj.ETag, runSpec(p, fp), class, pr, st, bounds, done, passthrough)
+}
+
+// measured records the upload's display size and duration, and marks the
+// presets it produces pending (a deploy's recipe change makes outputs stale
+// with nothing pending).
+func (e *Encoder) measured(ctx context.Context, item media.Item, f media.File, pl plan, presets []*media.Private) error {
+	_, err := e.ms.EditExisting(ctx, item.Ref(), func(m *media.Manifest) error {
+		if _, err := current(m, f.Path, f.Blob); err != nil {
+			return err
+		}
+		g := &m.Files[m.Find(f.Path)]
+		g.W, g.H, g.Dur = pl.width, pl.height, math.Round(pl.duration*1000)/1000
+		for _, p := range presets {
+			m.AddPending(f.Path, p.Name)
+		}
+		return nil
+	})
+	return err
+}
+
+// noOutput records that preset p has no output from upload f (an MP4 rung
+// above the source).
+func (e *Encoder) noOutput(ctx context.Context, item media.Item, f media.File, p *media.Private) error {
+	_, err := e.ms.EditExisting(ctx, item.Ref(), func(m *media.Manifest) error {
+		if _, err := current(m, f.Path, f.Blob); err != nil {
+			return err
+		}
+		return m.SetOutputs(f.Path, p.Name, nil)
+	})
+	return err
+}
+
+// refreshSubs settles an HLS preset whose renditions are current: its
+// source text tracks are extracted again when their cleaning changed, and
+// its pending mark cleared.
+func (e *Encoder) refreshSubs(ctx context.Context, item media.Item, f media.File, p *media.Private, pl plan, src string) error {
+	to, sub := item.Kind().OutputPath(p, f.Path), subsFP(f, p.HLS)
+	man, _, err := e.ms.Get(ctx, item.Ref())
 	if err != nil {
 		return err
 	}
-	i := current.File(f.Name)
-	if i < 0 || current.Files[i].Source() != source {
+	outs := man.Outputs(f.Path, p.Name)
+	stale := slices.ContainsFunc(outs, func(o media.File) bool { return trackKind(o) == media.TrackSubs && o.FP != sub })
+	if g, ok := man.Get(f.Path); !stale && ok && !slices.Contains(g.Pending, p.Name) {
 		return nil
 	}
-	done := c.Encoder.stagesDone(current.Files[i].HLS, source, r.spec, stages)
-	var passthrough media.Codec
-	sourceCodec := media.Codec(plan.stream.CodecName)
-	if len(plan.rungs) > 1 && len(bounds[len(bounds)-1]) == 1 && slices.Contains(c.Encoder.c.Codecs, sourceCodec) &&
-		(sourceCodec == media.CodecH264 || sourceCodec == media.CodecHEVC) {
-		codec, ok, why := passthroughCandidate(plan, plan.rungs[0])
-		if ok && slices.Contains(c.Encoder.c.Codecs, codec) {
-			passthrough = codec
-		} else {
-			c.Encoder.c.Logger.DebugContext(ctx, "media/video: no passthrough", "key", key, "codec", codec, "reason", why)
+	var subs []media.File
+	if stale {
+		dir, err := os.MkdirTemp(e.c.TempDir, tempPattern)
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(dir)
+		pl.audio = nil
+		if err := ladder(ctx, src, dir, pl, pass{enc: encoding{threads: e.c.Threads}}, nil); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			e.c.Logger.WarnContext(ctx, "media/video: source subtitles unreadable", "ref", item.Ref().String(), "path", f.Path, "error", err)
+			pl.subs = nil
+		} else if pl.subs, err = keepSubs(ctx, e.c.Logger, dir, pl.subs); err != nil {
+			return err
+		}
+		if subs, err = e.subsOutputs(ctx, item, dir, to, sub, pl.subs); err != nil {
+			return err
 		}
 	}
-	return c.insertRuns(ctx, item.Ref(), f.Name, source, key, obj.ETag, r.spec, class, pr, stages, bounds, done, passthrough)
+	fp := e.fp(p, f)
+	return e.publish(ctx, item, subs, func(m *media.Manifest) error {
+		g, err := current(m, f.Path, f.Blob)
+		if err != nil {
+			return err
+		}
+		next := slices.DeleteFunc(m.Outputs(g.Path, p.Name), func(o media.File) bool { return stale && trackKind(o) == media.TrackSubs })
+		next = append(next, subs...)
+		orderHLS(next, e.c.Codecs)
+		if slices.ContainsFunc(next, func(o media.File) bool { return trackKind(o) != media.TrackSubs && o.FP != fp }) {
+			return errStale
+		}
+		return m.SetOutputs(g.Path, p.Name, next)
+	})
 }
 
-// chunkBounds sizes work by output pixels and frames, then rounds boundaries
-// to the HLS keyframe grid. A run always has at least one nonempty chunk.
+// subsOutputs stores a pass's kept text tracks (dir/s{i}.vtt) as outputs.
+func (e *Encoder) subsOutputs(ctx context.Context, item media.Item, dir, to, fp string, subs []track) ([]media.File, error) {
+	var out []media.File
+	for i, s := range subs {
+		blob, size, err := e.put(ctx, item, filepath.Join(dir, fmt.Sprintf("s%d.vtt", i)), "text/vtt", nil)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, media.File{Path: subsPath(to, s.id), Blob: blob, Type: "text/vtt", Size: size, FP: fp,
+			Track: &media.Track{Kind: media.TrackSubs, ID: s.id, Lang: s.lang, Label: s.label, Forced: s.forced}})
+	}
+	return out, nil
+}
+
 func chunkBounds(p plan, rungs []rung, codecs int, target time.Duration) ([][2]int64, error) {
 	var pixelFactor float64
 	for _, r := range rungs {

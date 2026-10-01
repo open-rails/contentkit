@@ -16,7 +16,7 @@ import (
 //	CONTENTKIT_BENCH_ENCODER   Config.Encoder
 //	CONTENTKIT_BENCH_PRESET, CONTENTKIT_BENCH_TOP_PRESET  Config.Preset, TopPreset
 //	CONTENTKIT_BENCH_NVENC_CQ_OFFSET  NVENC H.264 CQ over the rung CRF
-//	CONTENTKIT_BENCH_PROFILE   media.Video.Profile
+//	CONTENTKIT_BENCH_PROFILE   media.HLS.Profile
 //	CONTENTKIT_BENCH_CAP_SCALE multiplies the rung bitrate caps
 func benchKnobs(cfg *video.Config) func() {
 	cfg.Encoder = os.Getenv("CONTENTKIT_BENCH_ENCODER")
@@ -33,8 +33,6 @@ func benchKnobs(cfg *video.Config) func() {
 	}
 	return undo
 }
-
-func benchVideo() media.Video { return media.Video{Profile: os.Getenv("CONTENTKIT_BENCH_PROFILE")} }
 
 func knobsNote() string {
 	var out []string

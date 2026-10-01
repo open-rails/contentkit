@@ -4,92 +4,110 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
-	"strings"
+	"time"
 
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/workqueue"
 )
 
-// audioRecipe is an audio file's encode; its hls, variant and download
-// carry its hash (AudioSpec) and are re-encoded when it changes.
-const audioRecipe = "aac-lc-128k-48k-2ch|hls-fmp4-4s|m4a-faststart|gain:%g/r128-after-downmix/tp-1.5|v2"
+// audioRecipe is the Audio producer's encode: its outputs carry its hash
+// with the source and the preset's spec (media.SpecFP).
+const audioRecipe = "aac-lc-128k-48k-2ch|hls-fmp4-4s|m4a-faststart|gain:r128-after-downmix/tp-1.5|v3"
 
-// AudioSpec identifies the audio recipe under a's settings.
-func AudioSpec(a media.Audio) string {
-	s := sha256.Sum256(fmt.Appendf(nil, audioRecipe, a.Loudness))
-	return hex.EncodeToString(s[:4])
-}
+func audioFP(f media.File, a *media.Audio) string { return media.SpecFP(f, a, audioRecipe) }
 
 // audioDemuxers are the containers an audio source may be.
 var audioDemuxers = []string{"mp3", "wav", "w64", "flac", "ogg", "mov", "aac", "matroska", "aiff", "caf", "asf"}
 
-// IsAudio reports whether a manifest file is an audio file (encoded when
-// the kind has media.Audio).
-func IsAudio(f media.File) bool { return strings.HasPrefix(f.Type, "audio/") }
+func isAudio(p *media.Private) bool { return p.Audio != nil }
 
-// audioFresh reports an audio file whose outputs (or failure) match its
-// source and spec.
-func audioFresh(m *media.Manifest, f media.File, spec string) bool {
-	h := f.HLS
-	if h == nil || h.Source != f.Source() || h.Spec != spec {
-		return false
+// audio produces an item's stale Audio presets (only args.Preset when set;
+// every one with args.Force).
+func (e *Encoder) audio(ctx context.Context, item media.Item, args workqueue.AudioArgs, report Report) error {
+	if args.Force {
+		if err := e.force(ctx, item, args.Preset, isAudio); err != nil {
+			return err
+		}
 	}
-	if h.Error != "" {
-		return true
+	man, _, err := e.ms.Get(ctx, item.Ref())
+	if errors.Is(err, media.ErrNotFound) {
+		return nil
+	} else if err != nil {
+		return err
 	}
-	v, ok := f.Variants[media.AudioVariant]
-	d, dok := m.Downloads[media.AudioDownloadKey(f.Name)]
-	return len(h.Audio) == 1 && ok && v.Spec == spec && dok && d.Spec == spec && d.Inputs == h.Source
+	type todo struct {
+		f media.File
+		p *media.Private
+	}
+	var work []todo
+	var names []string
+	for _, f := range man.Files {
+		if !f.IsUpload() || f.Gone || f.Blob == "" || f.Fail() != nil {
+			continue
+		}
+		for _, p := range item.Kind().PrivateFor(f.Path) {
+			if p.Audio != nil && (args.Preset == "" || p.Name == args.Preset) && e.todo(man, f, p) {
+				work = append(work, todo{f, p})
+				if !slices.Contains(names, f.Path) {
+					names = append(names, f.Path)
+				}
+			}
+		}
+	}
+	prog := newProgress(ctx, report, e.c.ProgressInterval, time.Now, names)
+	var errs []error
+	for _, w := range work {
+		err := e.audioFile(ctx, item, w.f, w.p, prog.file(w.f.Path))
+		prog.done(w.f.Path)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		errs = append(errs, e.settle(ctx, item, w.f, err))
+	}
+	return errors.Join(errs...)
 }
 
-func audioDownload(key string, d media.Download) (file string, ok bool) {
-	file, ok = strings.CutSuffix(key, "-audio")
-	return file, ok && file != "" && d.Type == "audio/mp4"
-}
-
-// audioFile encodes one audio file: its default (else first) audio stream, optionally
-// loudness-normalized, to AAC in a single-file fMP4 HLS track and a
-// faststart M4A remuxed from it, promoted in one manifest edit fenced on the
-// original's ETag. It returns the source, placed if it was staged.
-func (e *Encoder) audioFile(ctx context.Context, ms *media.Manifests, item media.Item, a media.Audio, name, source string, fp *fileProgress) (string, error) {
-	spec := AudioSpec(a)
+// audioFile encodes upload f's default (else first) audio stream,
+// optionally loudness-normalized, to AAC in a single-file fMP4 HLS track
+// ({To}audio.mp4) and a faststart M4A remuxed from it ({To}audio.m4a).
+func (e *Encoder) audioFile(ctx context.Context, item media.Item, f media.File, p *media.Private, fp *fileProgress) error {
 	dir, err := os.MkdirTemp(e.c.TempDir, tempPattern)
 	if err != nil {
-		return source, err
+		return err
 	}
 	defer os.RemoveAll(dir)
-	srcKey, placed, srcObj, err := e.source(ctx, ms, item, name, source, filepath.Join(dir, "source"), fp)
-	if err != nil || srcKey == "" {
-		return source, err
-	}
-	source = placed
 	src := filepath.Join(dir, "source")
-
+	if err := e.fetch(ctx, item, f.Blob, src, fp); errors.Is(err, media.ErrNotFound) {
+		return errStale
+	} else if err != nil {
+		return err
+	}
 	fp.set(media.PhaseProbing)
 	pr, err := probeWith(ctx, src, audioDemuxers)
 	if err != nil {
 		if ctx.Err() != nil {
-			return source, ctx.Err()
+			return ctx.Err()
 		}
-		return source, &PermanentError{fmt.Errorf("unreadable audio: %w", err)}
+		return &PermanentError{fmt.Errorf("unreadable audio: %w", err)}
 	}
 	t, d, err := audioPlan(pr)
 	if err != nil {
-		return source, &PermanentError{err}
+		return &PermanentError{err}
 	}
 	out := filepath.Join(dir, "out")
 	if err := os.Mkdir(out, 0o700); err != nil {
-		return source, err
+		return err
 	}
-	e.c.Logger.InfoContext(ctx, "media/video: encoding audio", "key", srcKey, "duration", d, "loudness", a.Loudness)
+	a := p.Audio
+	e.c.Logger.InfoContext(ctx, "media/video: encoding audio", "ref", item.Ref().String(), "path", f.Path, "duration", d, "loudness", a.Loudness)
 	fp.stage(1, 1)
 	fp.probed(d, out)
 	// Measured after the downmix, so a 5.1 source is normalized as heard in stereo.
@@ -99,7 +117,7 @@ func (e *Encoder) audioFile(ctx context.Context, ms *media.Manifests, item media
 		// Two passes: progress is half the measure, then half the encode.
 		gain, err := measureGain(ctx, src, t.index, a.Loudness, func(t float64) { fp.encoded(t / 2) })
 		if err != nil {
-			return source, err
+			return err
 		}
 		if gain != 0 {
 			filter += fmt.Sprintf(",volume=%.2fdB", gain)
@@ -111,10 +129,10 @@ func (e *Encoder) audioFile(ctx context.Context, ms *media.Manifests, item media
 	args = append(args, "-c:a", "aac", "-b:a", "128k")
 	args = append(args, hlsArgs(filepath.Join(out, "a1.mp4"), filepath.Join(out, "a1.m3u8"))...)
 	if _, err := ffmpegProgress(ctx, encoded, args...); err != nil {
-		return source, err
+		return err
 	}
 	if err := os.Remove(src); err != nil {
-		return source, err
+		return err
 	}
 	fp.set(media.PhaseMuxing)
 	m4a := filepath.Join(out, "audio.m4a")
@@ -122,63 +140,31 @@ func (e *Encoder) audioFile(ctx context.Context, ms *media.Manifests, item media
 	if _, err := command(ctx, "ffmpeg", append(append([]string{"-v", "error", "-nostdin"}, own...), "-i", filepath.Join(out, "a1.mp4"),
 		"-map", "0:a:0", "-c", "copy", "-map_metadata", "-1", "-fflags", "+bitexact", "-flags:a", "+bitexact",
 		"-movflags", "+faststart", "-f", "mp4", "-y", m4a)...); err != nil {
-		return source, err
+		return err
 	}
 	fp.uploads(fileSize(filepath.Join(out, "a1.mp4")) + fileSize(m4a))
 	fp.set(media.PhaseUploading)
-	blob, pl, err := e.stream(ctx, item, out, "a1", "audio/mp4", fp)
+	to, fprint, dur := item.Kind().OutputPath(p, f.Path), audioFP(f, a), math.Round(d*1000)/1000
+	hls, err := e.stream(ctx, item, out, "a1", to+"audio.mp4", "audio/mp4", fp)
 	if err != nil {
-		return source, err
+		return err
 	}
-	m4aBlob, m4aSize, err := e.put(ctx, item, m4a, "audio/mp4", fp)
+	hls.FP, hls.Track = fprint, &media.Track{Kind: media.TrackAudio, ID: "a1", Lang: t.lang, Label: t.label, Default: true,
+		Bandwidth: hls.Track.Bandwidth, Codecs: "mp4a.40.2", Index: hls.Track.Index}
+	blob, size, err := e.put(ctx, item, m4a, "audio/mp4", fp)
 	if err != nil {
-		return source, err
+		return err
 	}
-	peak, _ := bandwidth(pl.segments)
-	hls := &media.HLS{Source: source, Spec: spec, Audio: []media.AudioTrack{{ID: "a1", Lang: t.lang, Label: t.label, Default: true,
-		Bandwidth: peak, Codecs: "mp4a.40.2", Blob: blob, Segments: pl.segments}}}
-	variant := media.Variant{Blob: m4aBlob, Spec: spec, Type: "audio/mp4", Size: m4aSize}
-	download := media.Download{Blob: m4aBlob, Type: "audio/mp4", Size: m4aSize, Spec: spec, Inputs: source}
-	produced := (&media.Manifest{Files: []media.File{{HLS: hls, Variants: map[string]media.Variant{media.AudioVariant: variant}}},
-		Downloads: map[string]media.Download{media.AudioDownloadKey(name): download}}).Renditions()
-
+	outs := []media.File{hls, {Path: to + "audio.m4a", Blob: blob, Type: "audio/mp4", Size: size, Dur: dur, FP: fprint}}
 	fp.set(media.PhasePublishing)
-	if testBeforePromote != nil {
-		testBeforePromote()
-	}
-	if obj, err := e.c.Store.Head(ctx, srcKey); errors.Is(err, media.ErrNotFound) || err == nil && obj.ETag != srcObj.ETag {
-		return source, e.stale(ctx, ms, item, name, source, errStale, produced...)
-	} else if err != nil {
-		return source, err
-	}
-	_, err = ms.Edit(ctx, item.Ref(), func(m *media.Manifest) error {
-		i := m.File(name)
-		if i < 0 || m.Files[i].Source() != source {
+	return e.publish(ctx, item, outs, func(m *media.Manifest) error {
+		g, err := current(m, f.Path, f.Blob)
+		if err != nil || audioFP(g, a) != fprint {
 			return errStale
 		}
-		if err := e.checkOutputs(ctx, item, produced...); err != nil {
-			return err
-		}
-		f := &m.Files[i]
-		f.HLS = hls
-		if f.Variants == nil {
-			f.Variants = map[string]media.Variant{}
-		}
-		f.Variants[media.AudioVariant] = variant
-		if f.Meta == nil {
-			f.Meta = map[string]any{}
-		}
-		f.Meta["duration"] = d
-		if m.Downloads == nil {
-			m.Downloads = map[string]media.Download{}
-		}
-		m.Downloads[media.AudioDownloadKey(name)] = download
-		return nil
+		m.Files[m.Find(g.Path)].Dur = dur
+		return m.SetOutputs(g.Path, p.Name, outs)
 	})
-	if errors.Is(err, errStale) {
-		return source, e.stale(ctx, ms, item, name, source, err, produced...)
-	}
-	return source, err
 }
 
 // audioPlan picks the source's first audio stream (the default one when

@@ -29,10 +29,7 @@ func TestManifestsLockAndUseIfMatchOnceProbed(t *testing.T) {
 	if !env.Store.Capabilities().ConditionalPut {
 		t.Skip("backend lacks conditional PUT")
 	}
-	kinds, err := media.NewRegistry(media.Kind{Name: "post"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	kinds := miniRegistry(t, env.Tenant)
 	if _, err := media.NewManifests(env.Store, kinds, media.ManifestOptions{}); err == nil {
 		t.Fatal("lock-free Manifests must be refused")
 	}
@@ -95,8 +92,7 @@ func TestManifestsLockAndUseIfMatchOnceProbed(t *testing.T) {
 // unprobedRaw is a process with its own lock space (not the host's), so its
 // edits do not wait on the caller's lock.
 func unprobedRaw(t *testing.T, env *s3test.Env) *media.Manifests {
-	kinds, _ := media.NewRegistry(media.Kind{Name: "post"})
-	ms, err := media.NewManifests(env.Store, kinds, media.ManifestOptions{Locker: noLock{}})
+	ms, err := media.NewManifests(env.Store, miniRegistry(t, env.Tenant), media.ManifestOptions{Locker: noLock{}})
 	if err != nil {
 		t.Fatal(err)
 	}

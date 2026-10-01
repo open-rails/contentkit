@@ -31,6 +31,13 @@ type ProcessQueue interface {
 	Enqueue(ctx context.Context, job ProcessJob) error
 }
 
+// ProcessCanceler is a ProcessQueue that can cancel an item's queued and
+// running jobs (workqueue.Queue): a commit removing an upload still being
+// processed cancels them, then enqueues the item's remaining work.
+type ProcessCanceler interface {
+	Cancel(ctx context.Context, ref contentref.ContentRef) (int, error)
+}
+
 // FrameGrabber grabs a JPEG still at t seconds (width 0 keeps the frame's)
 // from a video upload, for the frame picker (Uploads.Frame); media/video's
 // Frames implements it.
