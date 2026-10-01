@@ -132,7 +132,11 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 	h := &host{Env: env, pool: pool, settled: map[string][]media.Readiness{}}
 	var err error
 	h.reg, err = media.NewRegistry(registry(env.Tenant, media.Hooks{Resolver: h, CanUpload: allow{},
-		PurgePublic: func(_ context.Context, urls []string) { h.mu.Lock(); h.purged = append(h.purged, urls...); h.mu.Unlock() },
+		PurgePublic: func(_ context.Context, urls []string) {
+			h.mu.Lock()
+			h.purged = append(h.purged, urls...)
+			h.mu.Unlock()
+		},
 		ItemReady: func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r media.Readiness) error {
 			if r.Ready() {
 				if err := h.jobs.ExposeTx(ctx, tx, ref); err != nil {
