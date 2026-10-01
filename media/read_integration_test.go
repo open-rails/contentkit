@@ -10,10 +10,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -487,5 +493,159 @@ func TestReadHandler(t *testing.T) {
 	}
 	if s := status("/gallery/" + cid(1)); s != http.StatusTooManyRequests {
 		t.Fatalf("burst exceeded %d", s)
+	}
+}
+
+// The read API answers 429 with Retry-After once a viewer has opened too
+// many items this hour: reads and playlists alike, the same item again is
+// free, and neither a viewer without access nor an exempt one is counted.
+func TestIssuanceLimitOnReads(t *testing.T) {
+	f := newFixture(t)
+	viewer := access.Actor{ID: "viewer", Kind: "user"}
+	for n := 1; n <= 4; n++ {
+		f.res.set(cid(n), access.Resolution{Visible: true, Accessible: true})
+	}
+	f.res.set(cid(5), access.Resolution{Visible: true})
+	actor := viewer
+	rd, err := media.NewReader(media.ReaderOptions{Manifests: f.ms, Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: signKey},
+		Issuance: media.Issuance{PerHour: 2, Exempt: func(a access.Actor) bool { return a.Kind == "staff" }}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(rd.Handler(media.HandlerOptions{Identity: identityFunc(func() access.Actor { return actor }), Limit: media.RateLimit{Disabled: true}}))
+	defer srv.Close()
+	get := func(path string) (*http.Response, string) {
+		t.Helper()
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp, string(b)
+	}
+	for _, n := range []int{5, 1, 2, 1, 5} { // 5 gives no access: not counted
+		if resp, body := get("/gallery/" + cid(n)); resp.StatusCode != http.StatusOK {
+			t.Fatalf("item %d: %d %s", n, resp.StatusCode, body)
+		}
+	}
+	for _, path := range []string{"/gallery/" + cid(3), "/video/" + cid(4) + "/hls/hls/master.m3u8"} {
+		resp, body := get(path)
+		wait, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
+		if resp.StatusCode != http.StatusTooManyRequests || wait < 1 || wait > 7200 || !strings.Contains(body, `"rate_limited"`) || strings.Contains(body, "?t=") {
+			t.Fatalf("%s over the limit: %d retry-after %q %s", path, resp.StatusCode, resp.Header.Get("Retry-After"), body)
+		}
+	}
+	if resp, _ := get("/gallery/" + cid(2)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("an item opened this hour: %d", resp.StatusCode)
+	}
+	actor = access.Actor{ID: "staff", Kind: "staff"}
+	for n := 1; n <= 4; n++ {
+		if resp, _ := get("/gallery/" + cid(n)); resp.StatusCode != http.StatusOK {
+			t.Fatalf("an exempt actor, item %d: %d", n, resp.StatusCode)
+		}
+	}
+	if _, err := rd.Grant(context.Background(), f.ref("gallery", 3), viewer); !errors.Is(err, media.ErrRateLimited) {
+		t.Fatalf("Grant over the limit: %v", err)
+	}
+}
+
+type identityFunc func() access.Actor
+
+func (f identityFunc) Actor(context.Context) (access.Actor, bool) { return f(), true }
+
+// redisURLs lists CONTENTKIT_TEST_REDIS_URLS (Redis and Garnet in CI); unset skips.
+func redisURLs(t *testing.T) []string {
+	var out []string
+	for _, u := range strings.Split(os.Getenv("CONTENTKIT_TEST_REDIS_URLS"), ",") {
+		if u = strings.TrimSpace(u); u != "" {
+			out = append(out, u)
+		}
+	}
+	if len(out) == 0 {
+		t.Skip("CONTENTKIT_TEST_REDIS_URLS not set")
+	}
+	return out
+}
+
+// Replicas sharing one Redis (or Garnet) enforce one issuance limit per
+// viewer, in expiring, prefixed keys; a refused item is not kept. When
+// Redis is unreachable each replica falls back to its own count.
+func TestSharedIssuanceLimit(t *testing.T) {
+	for _, u := range redisURLs(t) {
+		t.Run(u, func(t *testing.T) {
+			f := newFixture(t)
+			opt, err := redis.ParseURL(u)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rdb := redis.NewClient(opt)
+			t.Cleanup(func() { rdb.Close() })
+			ctx := context.Background()
+			if err := rdb.Ping(ctx).Err(); err != nil {
+				t.Fatal(err)
+			}
+			prefix := "cktest:" + uuid.NewString() + ":"
+			replica := func(c redis.UniversalClient) *media.Reader {
+				rd, err := media.NewReader(media.ReaderOptions{Manifests: f.ms, Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: signKey},
+					Issuance: media.Issuance{PerHour: 3, Redis: c, KeyPrefix: prefix}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return rd
+			}
+			a, b := replica(rdb), replica(rdb)
+			viewer := access.Actor{ID: "scraper", Kind: "user"}
+			for n := 1; n <= 6; n++ {
+				f.res.set(cid(n), access.Resolution{Visible: true, Accessible: true})
+			}
+			open := func(rd *media.Reader, who access.Actor, n int) error {
+				_, err := rd.Grant(ctx, f.ref("gallery", n), who)
+				return err
+			}
+			before := media.RedisErrors.Value()
+			for i, rd := range []*media.Reader{a, b, a, b} { // items 1, 2, 3, then 1 again
+				if err := open(rd, viewer, i%3+1); err != nil {
+					t.Fatalf("open %d: %v", i, err)
+				}
+			}
+			for _, rd := range []*media.Reader{a, b} {
+				var le *media.LimitError
+				if err := open(rd, viewer, 4); !errors.As(err, &le) || le.RetryAfter <= 0 || le.RetryAfter > 2*time.Hour {
+					t.Fatalf("a fourth item on a replica: %v", err)
+				}
+			}
+			if err := open(b, access.Actor{ID: "someone-else", Kind: "user"}, 4); err != nil {
+				t.Fatalf("another viewer: %v", err)
+			}
+			if got := media.RedisErrors.Value(); got != before {
+				t.Fatalf("redis errors %d -> %d", before, got)
+			}
+			keys, err := rdb.Keys(ctx, prefix+"*scraper*").Result()
+			if err != nil || len(keys) != 1 {
+				t.Fatalf("keys under %q: %v %v", prefix, keys, err)
+			}
+			if n, err := rdb.SCard(ctx, keys[0]).Result(); err != nil || n != 3 {
+				t.Fatalf("items kept for the viewer: %d %v", n, err)
+			}
+			if ttl, err := rdb.PTTL(ctx, keys[0]).Result(); err != nil || ttl <= 0 || ttl > 2*time.Hour+2*time.Second {
+				t.Fatalf("%s ttl %v %v", keys[0], ttl, err)
+			}
+			// Redis down: the replica counts on its own, and says so.
+			dead := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", DialTimeout: 50 * time.Millisecond, MaxRetries: -1})
+			t.Cleanup(func() { dead.Close() })
+			alone := replica(dead)
+			for n := 1; n <= 3; n++ {
+				if err := open(alone, viewer, n); err != nil {
+					t.Fatalf("with Redis down, item %d: %v", n, err)
+				}
+			}
+			if err := open(alone, viewer, 5); !errors.Is(err, media.ErrRateLimited) {
+				t.Fatalf("with Redis down, a fourth item: %v", err)
+			}
+			if got := media.RedisErrors.Value(); got == before {
+				t.Fatal("the Redis failure was not counted")
+			}
+		})
 	}
 }

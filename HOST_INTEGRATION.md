@@ -691,11 +691,26 @@ the host's periodic jobs. The worker migrates its schema itself.
   valid until expiry while their signing key is accepted. If immediate
   revocation is required, coordinate a key replacement without accepting the
   old key and have clients refresh their media grants.
-- **Scraping**: keep `HandlerOptions.Limit` on (default 2/s, burst 120 per
-  viewer); behind a proxy set `Actor.IP` so anonymous viewers are not one key.
-  The access agent keeps no state and limits nothing: rate limit the media
-  host at the ingress (Traefik's per-IP `rateLimit`). Clients treat its 429
-  as "over the limit" and do not retry in a loop (the SDK does not).
+- **Scraping** is limited in three places, none of them the access agent
+  (it keeps no state):
+  - `ReaderOptions.Issuance` bounds the distinct items a viewer is given the
+    token of per hour (default 120 per account, 600 per anonymous IP;
+    `Issuance.Redis` shares the count across replicas, else it is per
+    process). It is enforced in `Reader.Grant`, so reads, playlists and
+    `HostURL` routes all pass it; over the limit the read API answers 429
+    `rate_limited` with `Retry-After`, and `Grant` returns a `LimitError`
+    (`ErrRateLimited`). Opening the same item again within the hour is free;
+    viewers without access, the item's editors and `Issuance.Exempt` actors
+    (staff) are not counted.
+  - `HandlerOptions.Limit` bounds requests to the read API (default 2/s,
+    burst 120 per viewer).
+  - The ingress of the media host limits downloads per IP (Traefik's
+    `rateLimit`). Clients treat its 429 as "over the limit" and do not retry
+    in a loop (the SDK does not).
+
+  So an account pulls at most `Issuance.PerHour` items an hour, each at the
+  ingress's rate. Behind a proxy set `Actor.IP`, so anonymous viewers are
+  not one key.
   Signed-URL logs name the viewer.
 - **Multiple replicas**: the limit is per process unless `Limit.Redis` is set
   (logged at startup), so N replicas allow N times it. Pass the host's

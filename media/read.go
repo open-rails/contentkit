@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path"
@@ -60,7 +61,10 @@ type ReaderOptions struct {
 	// IndexCacheBytes bounds the track index blobs kept for playlists;
 	// default 16 MiB.
 	IndexCacheBytes int64
-	Now             func() time.Time
+	// Issuance limits the items each viewer is given access to per hour
+	// (default 120 per account, 600 per anonymous IP).
+	Issuance Issuance
+	Now      func() time.Time
 }
 
 // Reader answers the read API and HLS playlists: one Resolve per item. An
@@ -73,6 +77,7 @@ type Reader struct {
 	ring    token.Ring
 	base    string
 	indexes *indexCache
+	issue   *issuance
 }
 
 var (
@@ -130,7 +135,7 @@ func NewReader(o ReaderOptions) (*Reader, error) {
 		o.Now = time.Now
 	}
 	return &Reader{o: o, reg: reg, ring: ring, base: strings.TrimRight(reg.cfg.BaseURL, "/"),
-		indexes: newIndexCache(o.IndexCacheBytes)}, nil
+		indexes: newIndexCache(o.IndexCacheBytes), issue: newIssuance(o.Issuance, o.Now, slog.Default())}, nil
 }
 
 // Grant is one viewer's resolved access to one item: reads and playlists
@@ -147,7 +152,9 @@ type Grant struct {
 
 // Grant resolves ref for actor exactly once and loads its manifest. A
 // resolver error denies (ErrResolve); an invisible item is ErrNotVisible. A
-// visible item without a manifest has no files.
+// visible item without a manifest has no files. A viewer with access who
+// has opened too many items this hour (ReaderOptions.Issuance) gets a
+// LimitError (ErrRateLimited) instead of the item's token.
 func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor access.Actor) (*Grant, error) {
 	item, err := r.reg.Item(ref)
 	if err != nil {
@@ -160,6 +167,12 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	if !res.Visible {
 		return nil, ErrNotVisible
 	}
+	scope := token.ItemScope(ref.TenantID, ref.ContentKind, ref.ContentID)
+	if res.Full() || res.Editor {
+		if ok, wait := r.issue.allow(ctx, actor, res.Editor, scope); !ok {
+			return nil, &LimitError{RetryAfter: wait}
+		}
+	}
 	man, _, err := r.o.Manifests.Get(ctx, ref)
 	if errors.Is(err, ErrNotFound) {
 		man = &Manifest{V: ManifestVersion}
@@ -169,7 +182,7 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	g := &Grant{Item: item, Resolution: res, Manifest: man, actor: actor, r: r,
 		Expires: token.Expiry(r.o.Now(), r.o.Delivery.TTL, r.o.Delivery.Window)}
 	if res.Full() || res.Editor {
-		g.item = r.ring.Sign(token.ItemScope(ref.TenantID, ref.ContentKind, ref.ContentID), g.Expires)
+		g.item = r.ring.Sign(scope, g.Expires)
 	}
 	return g, nil
 }
