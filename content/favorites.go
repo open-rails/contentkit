@@ -43,7 +43,11 @@ func (f *favorites) add(ctx context.Context, actor access.Actor, kind, id string
 // remove unfavorites (idempotent), keeping the row at value 0. No visibility
 // gate: un-wishlisting content that later became hidden must still work.
 func (f *favorites) remove(ctx context.Context, actor access.Actor, kind, id string) error {
-	return f.set(ctx, actor, f.rt.canonical(ctx, kind, id, actor), 0)
+	ref, err := f.rt.canonical(ctx, kind, id, actor)
+	if err != nil {
+		return err
+	}
+	return f.set(ctx, actor, ref, 0)
 }
 
 func (f *favorites) set(ctx context.Context, actor access.Actor, ref contentref.ContentRef, value int16) error {
@@ -195,7 +199,11 @@ func (f *favorites) handleStatus(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	ref := f.rt.canonical(req.Context(), req.PathValue("kind"), req.PathValue("id"), actor)
+	ref, err := f.rt.canonical(req.Context(), req.PathValue("kind"), req.PathValue("id"), actor)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	m, err := f.IsFavorited(req.Context(), actor.ID, []contentref.ContentRef{ref}) // read under the stored reference
 	if err != nil {
 		writeErr(w, err)

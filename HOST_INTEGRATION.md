@@ -33,11 +33,17 @@ Do not call `search` package SQL helpers from request paths.
 
 `content_id` is a canonical lowercase UUIDv7 (`contentref.ValidateID`), never
 reused. Every boundary refuses anything else with `contentref.ErrInvalidID`:
-`ContentRef.Validate`, media refs, HTTP routes (400 `invalid_request`), jobs
-and the upload SDK. Mint ids with Postgres 18 `uuidv7()` or
-`contentref.NewID()`; `contentref.Parse` validates untrusted input. A content
-id names the media folder `{tenant}/{kind}/{id}/`, so a reused id (an integer
-sequence restarted after a reset) would hand a new item another's files.
+`ContentRef.Validate`, media refs and routes, jobs and the upload SDK.
+`content` routes take a host route id (an id, alias or `{id}:en`) and key rows
+by the resolver's `Ref`, or by the route id itself when `Ref` is zero, which is
+then 400 `invalid_request` unless lower case: one spelling, one key. Comment
+and poll ids are UUIDs in any letter case and key rows by their stored form,
+so one actor has one reaction per comment however its id is spelled. The
+interaction tables refuse upper case (`CHECK content_id = lower(content_id)`).
+Mint ids with Postgres 18 `uuidv7()` or `contentref.NewID()`;
+`contentref.Parse` validates untrusted input. A content id names the media
+folder `{tenant}/{kind}/{id}/`, so a reused id (an integer sequence restarted
+after a reset) would hand a new item another's files.
 Taxonomy ids follow the same rule: a node is a search document keyed by its
 `taxonomy_id` (`CreateNodes` mints one when omitted).
 
@@ -89,7 +95,7 @@ Ports (in `content` unless qualified):
 |---|---|---|
 | `Identity` | yes | reads the already-authenticated `access.Actor` from context; ContentKit never authenticates |
 | `Authorizer` | yes | `Can(actor, perm)` for `Perms{PostWrite, PollWrite, CommentModerate, ModerationReview}`; fail-closed on error and on an unset perm |
-| `access.ContentResolver` | yes | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, PreviewLimit, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request; another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`; content ignores `PreviewLimit`. Media serves every file only when `Full()`, else the files of the first `Units(n)` pages (`PreviewLimit` N caps a `Visible` item to its first N `Pages` uploads; free preview is `Accessible=false, PreviewLimit=3`) and `Visible` teasers; for media the ref is the item, i.e. the host's version; `Editor` (the actor may edit the item) unlocks editor reads (uploads, edits, editor views) |
+| `access.ContentResolver` | yes | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, PreviewLimit, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request, which must then be lower case (else 400); another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`; content ignores `PreviewLimit`. Media serves every file only when `Full()`, else the files of the first `Units(n)` pages (`PreviewLimit` N caps a `Visible` item to its first N `Pages` uploads; free preview is `Accessible=false, PreviewLimit=3`) and `Visible` teasers; for media the ref is the item, i.e. the host's version; `Editor` (the actor may edit the item) unlocks editor reads (uploads, edits, editor views) |
 | `UserEnricher` | no | display data for author ids |
 | `Media` | no | post and poll images in ContentKit media (see below); absent = image routes answer 501 |
 | `ContentProcessor` | no | rich-text sanitizer for comment/post bodies (default strips tags) |

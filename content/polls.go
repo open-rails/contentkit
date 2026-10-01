@@ -842,9 +842,9 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 	err := p.s.pool.QueryRow(req.Context(), `UPDATE `+p.s.t.pollOptions+`
 		SET label = COALESCE($2, label), position = COALESCE($3, position)
 		WHERE id = $1 AND question_id = $4 AND `+p.ownsQuestion("question_id", 5)+`
-		RETURNING id::text, label, coalesce(image_name,''), position, vote_count`,
+		RETURNING id::text, question_id::text, label, coalesce(image_name,''), position, vote_count`,
 		oid, in.Label, in.Position, pollID, p.s.tenant).
-		Scan(&o.ID, &o.Label, &name, &o.Position, &o.VoteCount)
+		Scan(&o.ID, &pollID, &o.Label, &name, &o.Position, &o.VoteCount)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeErr(w, ErrNotFound)
 		return

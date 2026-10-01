@@ -9,6 +9,9 @@ ContentKit has a PostgreSQL migration chain and a ClickHouse baseline:
 | PostgreSQL | `migrations.Postgres` | `postgres/0003_media_releases.up.sql` | media quota release ledger |
 | PostgreSQL | `migrations.Postgres` | `postgres/0004_media_slots.up.sql` | slot index (`content_media_slots`) |
 | PostgreSQL | `migrations.Postgres` | `postgres/0005_media_slot_backfill.up.sql` | slot index backfill progress (`content_media_slot_backfill`) |
+| PostgreSQL | `migrations.Postgres` | `postgres/0006_drop_media_slots.up.sql` | drops the slot index and its backfill (one media model) |
+| PostgreSQL | `migrations.Postgres` | `postgres/0007_inline_image_names.up.sql` | renames post and poll image URL columns to image names (refuses legacy URLs; coordinated cutover, see HOST_INTEGRATION) |
+| PostgreSQL | `migrations.Postgres` | `postgres/0008_canonical_interaction_ids.up.sql` | merges case spellings of interaction content ids and refuses them (`CHECK content_id = lower(content_id)`) |
 | ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, subject state, daily contributions, exposures, co-engagement and erasure fences |
 
 The baselines initialize fresh stores; PostgreSQL `0002` and later also upgrade

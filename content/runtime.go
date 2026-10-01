@@ -242,10 +242,10 @@ func (rt *Runtime) checkRef(ref contentref.ContentRef) error {
 }
 
 // canonicalRef merges the resolver's verdict into the requested reference: a
-// zero Ref keeps the request, a foreign tenant is refused.
+// zero Ref keeps the request (see routeKey), a foreign tenant is refused.
 func (rt *Runtime) canonicalRef(requested, resolved contentref.ContentRef) (contentref.ContentRef, error) {
 	if resolved.ContentID == "" {
-		return requested, nil
+		return routeKey(requested)
 	}
 	if resolved.TenantID == "" {
 		resolved.TenantID = rt.tenant
@@ -257,6 +257,16 @@ func (rt *Runtime) canonicalRef(requested, resolved contentref.ContentRef) (cont
 		return contentref.ContentRef{}, err
 	}
 	return resolved, nil
+}
+
+// routeKey admits a route id kept as the row key (an id or a host route id
+// such as "{id}:en") only in lower case, so a resolver that folds letter case
+// cannot turn one target into many keys.
+func routeKey(ref contentref.ContentRef) (contentref.ContentRef, error) {
+	if ref.ContentID != strings.ToLower(ref.ContentID) {
+		return contentref.ContentRef{}, badRequest("content id %q must be lower case", ref.ContentID)
+	}
+	return ref, nil
 }
 
 // gate resolves a route target and enforces the required access level. The
@@ -300,21 +310,17 @@ func (rt *Runtime) routable(kind, id string) bool {
 
 // canonical maps a caller-supplied key to the resolver's canonical one for
 // paths that must succeed even when the target is hidden (un-wishlisting
-// deleted content): a resolve failure falls back to the raw key.
-func (rt *Runtime) canonical(ctx context.Context, kind, id string, actor access.Actor) contentref.ContentRef {
+// deleted content): a resolve failure falls back to the requested key.
+func (rt *Runtime) canonical(ctx context.Context, kind, id string, actor access.Actor) (contentref.ContentRef, error) {
 	requested := rt.Ref(kind, id)
-	if !rt.routable(kind, id) {
-		return requested
+	if rt.routable(kind, id) {
+		if res, err := access.ResolveOne(ctx, rt.resolver, requested, actor); err == nil {
+			if ref, err := rt.canonicalRef(requested, res.Ref); err == nil {
+				return ref, nil
+			}
+		}
 	}
-	res, err := access.ResolveOne(ctx, rt.resolver, requested, actor)
-	if err != nil {
-		return requested
-	}
-	ref, err := rt.canonicalRef(requested, res.Ref)
-	if err != nil {
-		return requested
-	}
-	return ref
+	return routeKey(requested)
 }
 
 // requirePerm is fail-closed: an unset perm, a denied check, or a check error
