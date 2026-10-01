@@ -133,10 +133,15 @@ type testMedia struct {
 	mu      sync.Mutex
 	deleted []string
 	exposed []string
+	origin  string
 }
 
-func (*testMedia) InlineURL(_ context.Context, ref contentref.ContentRef, name string) (string, error) {
-	return "https://media.test/" + ref.TenantID + "/" + ref.ContentKind + "/" + ref.ContentID + "/public/" + name + ".webp", nil
+func (m *testMedia) InlineURL(_ context.Context, ref contentref.ContentRef, name string) (string, error) {
+	origin := m.origin
+	if origin == "" {
+		origin = "https://media.test"
+	}
+	return origin + "/" + ref.TenantID + "/" + ref.ContentKind + "/" + ref.ContentID + "/public/" + name + ".webp", nil
 }
 
 func (m *testMedia) DeleteItemsTx(_ context.Context, tx pgx.Tx, items ...media.Deletion) error {

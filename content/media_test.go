@@ -63,7 +63,7 @@ func send(t *testing.T, rt *Runtime, actor access.Actor, method, path string, bo
 func image(name string) map[string]string { return map[string]string{"image": name} }
 
 func TestMedia_PostCoverAndInlineImages(t *testing.T) {
-	rt, _ := newMediaTest(t, Options{})
+	rt, m := newMediaTest(t, Options{})
 	id := insertPost(t, rt)
 	name := "i-" + uuid.NewString()
 	want := "https://media.test/" + testTenant + "/post/" + id + "/public/" + name + ".webp"
@@ -77,6 +77,22 @@ func TestMedia_PostCoverAndInlineImages(t *testing.T) {
 	if v.CoverURL == nil || *v.CoverURL != want {
 		t.Fatalf("stored cover %v", v.CoverURL)
 	}
+	var stored string
+	if err := rt.store.pool.QueryRow(t.Context(), `SELECT cover_name FROM `+rt.store.t.posts+` WHERE id=$1`, id).Scan(&stored); err != nil || stored != name {
+		t.Fatalf("stored cover name %q, err=%v", stored, err)
+	}
+	m.origin = "https://moved-media.test"
+	moved := strings.Replace(want, "https://media.test", m.origin, 1)
+	if code := send(t, rt, mediaAdmin, "GET", "/posts/"+id, nil, &v); code != 200 || v.CoverURL == nil || *v.CoverURL != moved {
+		t.Fatalf("cover after origin change: status=%d, cover=%v", code, v.CoverURL)
+	}
+	if code := send(t, rt, mediaAdmin, "PATCH", "/posts/"+id, map[string]bool{"is_draft": false}, &v); code != 200 || v.CoverURL == nil || *v.CoverURL != moved {
+		t.Fatalf("published cover after origin change: status=%d, cover=%v", code, v.CoverURL)
+	}
+	var listed []postView
+	if code := send(t, rt, mediaAdmin, "GET", "/posts", nil, &listed); code != 200 || len(listed) != 1 || listed[0].CoverURL == nil || *listed[0].CoverURL != moved {
+		t.Fatalf("listed cover after origin change: status=%d, posts=%+v", code, listed)
+	}
 	if code := send(t, rt, mediaAdmin, "PUT", "/posts/"+id+"/cover", image(""), nil); code != 200 {
 		t.Fatalf("clear %d", code)
 	}
@@ -85,9 +101,13 @@ func TestMedia_PostCoverAndInlineImages(t *testing.T) {
 	if cleared.ID != id || cleared.CoverURL != nil {
 		t.Fatalf("cover not cleared: %+v", cleared)
 	}
+	var clearedName *string
+	if err := rt.store.pool.QueryRow(t.Context(), `SELECT cover_name FROM `+rt.store.t.posts+` WHERE id=$1`, id).Scan(&clearedName); err != nil || clearedName != nil {
+		t.Fatalf("cleared cover name %v, err=%v", clearedName, err)
+	}
 
 	var inline map[string]string
-	if code := send(t, rt, mediaAdmin, "POST", "/posts/"+id+"/images", image(name), &inline); code != 200 || inline["url"] != want {
+	if code := send(t, rt, mediaAdmin, "POST", "/posts/"+id+"/images", image(name), &inline); code != 200 || inline["url"] != moved {
 		t.Fatalf("inline %d %v", code, inline)
 	}
 	for _, tc := range []struct {
@@ -115,7 +135,7 @@ func TestMedia_PostCoverAndInlineImages(t *testing.T) {
 }
 
 func TestMedia_PollImages(t *testing.T) {
-	rt, _ := newMediaTest(t, Options{})
+	rt, m := newMediaTest(t, Options{})
 	poll, err := rt.polls.create(context.Background(), mediaAdmin, createPollInput{Question: "Q?", Options: []createOptionInput{{Label: "A"}, {Label: "B"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -137,6 +157,22 @@ func TestMedia_PollImages(t *testing.T) {
 	v, _ := rt.polls.get(context.Background(), mediaAdmin, poll.ID)
 	if v.ImageURL != folder+q+".webp" || v.Options[0].ImageURL != folder+o+".webp" && v.Options[1].ImageURL != folder+o+".webp" {
 		t.Fatalf("stored %+v", v)
+	}
+	var questionName, optionName string
+	if err := rt.store.pool.QueryRow(t.Context(), `SELECT q.image_name, o.image_name FROM `+rt.store.t.pollQuestions+` q JOIN `+rt.store.t.pollOptions+` o ON o.question_id=q.id WHERE o.id=$1`, oid).Scan(&questionName, &optionName); err != nil || questionName != q || optionName != o {
+		t.Fatalf("stored image names %q/%q, err=%v", questionName, optionName, err)
+	}
+	m.origin = "https://moved-media.test"
+	movedFolder := strings.Replace(folder, "https://media.test", m.origin, 1)
+	if v, err := rt.polls.get(t.Context(), mediaAdmin, poll.ID); err != nil || v.ImageURL != movedFolder+q+".webp" {
+		t.Fatalf("poll after origin change: %+v, err=%v", v, err)
+	}
+	if listed, err := rt.polls.list(t.Context(), mediaAdmin, listFilter{limit: 10}); err != nil || len(listed) != 2 || listed[1].ImageURL != movedFolder+q+".webp" {
+		t.Fatalf("poll list after origin change: %+v, err=%v", listed, err)
+	}
+	var edited pollOption
+	if code := send(t, rt, mediaAdmin, "PATCH", "/polls/"+poll.ID+"/options/"+oid, map[string]string{"label": "edited"}, &edited); code != 200 || edited.ImageURL != movedFolder+o+".webp" {
+		t.Fatalf("edited option after origin change: status=%d, option=%+v", code, edited)
 	}
 	if code := send(t, rt, mediaAdmin, "PUT", "/polls/"+other.ID+"/options/"+oid+"/image", image(o), nil); code != 404 {
 		t.Fatalf("option of another poll: %d", code)
