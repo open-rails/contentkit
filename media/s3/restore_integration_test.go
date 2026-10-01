@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"io"
+	"slices"
 	"testing"
 	"time"
 
@@ -126,6 +127,9 @@ func TestRestoreAfterSweepAndFolderDeletion(t *testing.T) {
 	}
 	if len(rep.Missing) != 0 {
 		t.Fatalf("missing after restore: %v", rep.Missing)
+	}
+	if !slices.Contains(rep.Reverted, ch.PublicPrefix()+"avatar-80.webp") {
+		t.Errorf("fixed public name not reverted: %+v", rep)
 	}
 	man, _, err := ms.Get(ctx, channel)
 	if err != nil || man.Files[0].Original != name("origA") {

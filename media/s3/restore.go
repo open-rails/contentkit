@@ -20,8 +20,8 @@ import (
 
 // RestoreReport lists what Restore changed, by key.
 type RestoreReport struct {
-	Reverted  []string // manifests set to their version at T
-	Removed   []string // such keys that did not exist at T
+	Reverted  []string // manifests and public slots' fixed names set to their version at T
+	Removed   []string // such keys that did not exist at T, and fixed names no restored manifest keeps
 	Undeleted []string // referenced originals, renditions and public copies whose delete markers were removed
 	Missing   []string // referenced at T but no version is left
 }
@@ -36,8 +36,10 @@ type version struct {
 // Restore returns the folders under prefix to time at, on a versioned bucket
 // (see Configure): manifests take their version at T, then the objects
 // those manifests keep lose the delete markers the sweep or a folder
-// deletion left. Restore the host
-// database to T first, and re-apply erasures made after T afterwards.
+// deletion left. A public slot's fixed names are rewritten in place, so they
+// also take their version at T, and those no restored manifest keeps are
+// deleted. Restore the host database to T first, and re-apply erasures made
+// after T afterwards.
 func (s *Store) Restore(ctx context.Context, prefix string, at time.Time) (RestoreReport, error) {
 	var rep RestoreReport
 	history := map[string][]version{}
@@ -72,13 +74,7 @@ func (s *Store) Restore(ctx context.Context, prefix string, at time.Time) (Resto
 			continue
 		}
 		vs := history[key]
-		var then *version
-		for i := range vs {
-			if !vs[i].modified.After(at) {
-				then = &vs[i]
-				break
-			}
-		}
+		then := versionAt(vs, at)
 		now := vs[0]
 		switch {
 		case then != nil && !then.marker:
@@ -97,6 +93,33 @@ func (s *Store) Restore(ctx context.Context, prefix string, at time.Time) (Resto
 				return rep, err
 			}
 			rep.Removed = append(rep.Removed, key)
+		}
+	}
+
+	for _, key := range slices.Sorted(maps.Keys(history)) {
+		k, ok := layout.Parse(key)
+		if !ok || k.Area != layout.AreaPublic || !layout.ValidSlotFileName(k.Name) {
+			continue
+		}
+		vs := history[key]
+		if !refs[key] {
+			if !vs[0].marker {
+				if err := s.Delete(ctx, key); err != nil {
+					return rep, err
+				}
+				rep.Removed = append(rep.Removed, key)
+			}
+			continue
+		}
+		if then := versionAt(vs, at); then != nil && !then.marker {
+			if vs[0].id != then.id {
+				src := s.bucket + "/" + key + "?versionId=" + then.id
+				if _, err := s.client.CopyObject(ctx, &s3.CopyObjectInput{Bucket: &s.bucket, Key: &key, CopySource: &src}); err != nil {
+					return rep, mapErr("restore", key, err)
+				}
+				rep.Reverted = append(rep.Reverted, key)
+			}
+			delete(refs, key) // restored; nothing to undelete
 		}
 	}
 
@@ -124,6 +147,17 @@ func (s *Store) Restore(ctx context.Context, prefix string, at time.Time) (Resto
 		rep.Undeleted = append(rep.Undeleted, key)
 	}
 	return rep, nil
+}
+
+// versionAt is the newest version (or delete marker) at or before at, nil
+// when the key had none; vs is newest first.
+func versionAt(vs []version, at time.Time) *version {
+	for i := range vs {
+		if !vs[i].modified.After(at) {
+			return &vs[i]
+		}
+	}
+	return nil
 }
 
 func (s *Store) collectRefs(ctx context.Context, key, versionID string, k layout.Key, refs map[string]bool) error {
