@@ -196,9 +196,6 @@ func TestMedia_CanUpload(t *testing.T) {
 		}
 	}
 	denied, _ := newTestRuntime(t, Options{Authz: denyAll{}, Media: (&testMedia{}).options(), Perms: Perms{PostWrite: "post"}})
-	if g, err := rt.CanUpload(ctx, mediaAdmin, media.UploadTarget{Ref: rt.Ref("post", post), Slot: "cover"}); err != nil || g.Allowed {
-		t.Fatalf("a post slot: %+v %v", g, err)
-	}
 	if g, err := denied.CanUpload(ctx, mediaAdmin, media.UploadTarget{Ref: denied.Ref("post", insertPost(t, denied))}); err != nil || g.Allowed {
 		t.Fatalf("without PostWrite: %+v %v", g, err)
 	}

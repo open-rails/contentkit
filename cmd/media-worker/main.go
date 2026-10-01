@@ -1,11 +1,11 @@
 // Command media-worker is the stock media worker (media/worker) for hosts
-// whose kinds are plain data: it reads them from a JSON file. Hosts with a
-// per-file spec chooser or worker hooks (Failed, ItemReady) build their own worker
-// from the code that builds their media.Registry instead.
+// whose registry is plain data: it reads it from a JSON file
+// (media.Registry's JSON). Hosts with a Private.Choose or Hooks.Failed build
+// their own worker from the code that builds their registry instead.
 //
 // Environment: worker.FromEnv and Config.TuningFromEnv, plus
 //
-//	MEDIA_KINDS_FILE    JSON array of media.Kind, the host's registry (e.g. [{"Name":"clip","Video":{}}])
+//	MEDIA_KINDS_FILE    the host's registry as JSON (media.Registry's MarshalJSON)
 //	MEDIA_METRICS_ADDR  ops listen address (default :9090): /metrics, /livez, /readyz, /statusz
 //
 // The process never exits for a missing dependency: it waits for Postgres and
@@ -16,7 +16,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -168,9 +167,9 @@ func loadKinds(path string) (*media.Registry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("MEDIA_KINDS_FILE: %w", err)
 	}
-	var kinds []media.Kind
-	if err := json.Unmarshal(b, &kinds); err != nil {
+	cfg, err := media.ParseConfig(b)
+	if err != nil {
 		return nil, fmt.Errorf("MEDIA_KINDS_FILE: %w", err)
 	}
-	return media.NewRegistry(kinds...)
+	return media.NewRegistry(cfg)
 }

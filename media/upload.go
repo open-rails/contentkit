@@ -33,7 +33,7 @@ const (
 // UploadOptions configure Uploads.
 type UploadOptions struct {
 	Store     Store
-	Manifests *Manifests // its Registry's Hooks.CanUpload authorizes, Hooks.Resolver hides new items
+	Manifests *Manifests    // its Registry's Hooks.CanUpload authorizes, Hooks.Resolver hides new items
 	Tickets   *token.Ring   // signs multipart tickets (domain-separated from access tokens); required above MaxSinglePut
 	Limiter   UploadLimiter // optional
 	Queue     ProcessQueue  // optional

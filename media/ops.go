@@ -57,7 +57,8 @@ const NamedPrefix = "i-"
 // NewName is a fresh Named upload name: "i-{uuid}".
 func NewName() string { return NamedPrefix + uuid.NewString() }
 
-func validNamed(name string) bool {
+// ValidNamed reports a server-given name ("i-{uuid}").
+func ValidNamed(name string) bool {
 	id, ok := strings.CutPrefix(name, NamedPrefix)
 	if !ok {
 		return false
@@ -195,7 +196,7 @@ func (o *opRun) put(op Op) error {
 		return uploadErr(CodeNotFound, "kind %q has no upload path %q", k.Name, op.Path)
 	}
 	u := k.Uploads[g]
-	if u.Named && !validNamed(name) {
+	if u.Named && !ValidNamed(name) {
 		return uploadErr(CodeInvalid, "upload %q: the server names %s uploads (presign)", op.Path, u.Path)
 	}
 	obj, ok := o.objects[op.Blob]
