@@ -11,10 +11,14 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	riverhelpers "github.com/open-rails/helpers/river"
+	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/s3"
 )
 
 var mediaAdmin = access.Actor{ID: "admin", Kind: "user"}
@@ -151,7 +155,7 @@ func TestMedia_PollImages(t *testing.T) {
 	}
 }
 
-func TestMedia_DeleteRemovesFolders(t *testing.T) {
+func TestMedia_SoftDeleteHidesPostAndDeletesPoll(t *testing.T) {
 	rt, m := newMediaTest(t, Options{})
 	post := insertPost(t, rt)
 	poll, err := rt.polls.create(context.Background(), mediaAdmin, createPollInput{Question: "Q?", Options: []createOptionInput{{Label: "A"}, {Label: "B"}}})
@@ -164,9 +168,100 @@ func TestMedia_DeleteRemovesFolders(t *testing.T) {
 	if code := send(t, rt, mediaAdmin, "DELETE", "/polls/"+poll.ID, nil, nil); code >= 300 {
 		t.Fatalf("delete poll %d", code)
 	}
-	want := []string{testTenant + "/post/" + post, testTenant + "/poll/" + poll.ID}
+	want := []string{testTenant + "/poll/" + poll.ID}
 	if got := m.deletions(); !slices.Equal(got, want) {
 		t.Fatalf("deleted %v, want %v", got, want)
+	}
+	if want := []string{testTenant + "/post/" + post}; !slices.Equal(m.exposed, want) {
+		t.Fatalf("exposed %v, want %v", m.exposed, want)
+	}
+}
+
+func TestMedia_PostExposureCommitsWithContent(t *testing.T) {
+	ctx := context.Background()
+	ports := (&testMedia{}).options()
+	ports.PostKind = "article"
+	rt, pool := newTestRuntime(t, Options{Media: ports, Moderator: &fakeModerator{},
+		Perms: Perms{PostWrite: "post", ModerationReview: "review"}})
+	reg, err := media.NewRegistry(media.Config{Namespace: testTenant, Kinds: []media.Kind{{Name: "article",
+		Uploads: []media.Upload{{Path: "images/{name}", Types: []string{"image/png"}, MaxBytes: 1024, Named: true}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only transactionally queued jobs are exercised; workers and S3 are not started.
+	store, err := s3.New(s3.Config{Bucket: "unused", Endpoint: "http://127.0.0.1:1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := media.NewJobs(media.JobsConfig{Store: store, Registry: reg, Locker: media.PGLocker(pool)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := riverhelpers.ApplyMigrations(ctx, pool, rt.schema); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := riverhelpers.New(ctx, pool, &river.Config{Schema: rt.schema}, jobs.RiverJobs()); err != nil {
+		t.Fatal(err)
+	}
+	rt.media.Folders = jobs
+	schema := pgx.Identifier{rt.schema}.Sanitize()
+	queue := schema + ".river_job"
+	snapshot := func() string {
+		t.Helper()
+		var state string
+		err := pool.QueryRow(ctx, `SELECT jsonb_build_array(
+			(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM `+rt.store.t.posts+` p),
+			(SELECT jsonb_agg(to_jsonb(d) ORDER BY content_id, language) FROM `+schema+`.content_search_dirty d),
+			(SELECT jsonb_agg(to_jsonb(j) ORDER BY id) FROM `+queue+` j))::text`).Scan(&state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+	var post postView
+	for i, step := range []struct {
+		name, method, path string
+		body               any
+		status             int
+	}{
+		{"create", "POST", "/posts", postWriteReq{Title: ptr("Title"), Body: ptr("iffy"), Language: ptr("en")}, 202},
+		{"update", "PATCH", "/posts/{id}", postWriteReq{Body: ptr("iffy edit"), Language: ptr("ja")}, 202},
+		{"approve", "POST", "/moderation/post/{id}/resolve", map[string]any{"revision": 2, "decision": "approve"}, 200},
+		{"delete", "DELETE", "/posts/{id}", nil, 200},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			path := strings.ReplaceAll(step.path, "{id}", post.ID)
+			if _, err := pool.Exec(ctx, `ALTER TABLE `+queue+` ADD CONSTRAINT reject_exposure CHECK (kind <> 'contentkit_media_expose') NOT VALID`); err != nil {
+				t.Fatal(err)
+			}
+			before := snapshot()
+			if code := send(t, rt, mediaAdmin, step.method, path, step.body, nil); code != 500 {
+				t.Fatalf("queue failure: status %d, want 500", code)
+			}
+			if after := snapshot(); after != before {
+				t.Fatal("queue failure committed post, keyword or media job changes")
+			}
+			if _, err := pool.Exec(ctx, `ALTER TABLE `+queue+` DROP CONSTRAINT reject_exposure`); err != nil {
+				t.Fatal(err)
+			}
+			var result postView
+			if code := send(t, rt, mediaAdmin, step.method, path, step.body, &result); code != step.status {
+				t.Fatalf("status %d, want %d", code, step.status)
+			}
+			if i == 0 {
+				post = result
+			}
+			var count int
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+queue+` WHERE kind='contentkit_media_expose' AND args->'ref'=$1::jsonb`, rt.Ref("article", post.ID)).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			if count != i+1 {
+				t.Fatalf("committed exposure jobs %d, want %d", count, i+1)
+			}
+		})
+		if t.Failed() {
+			break
+		}
 	}
 }
 

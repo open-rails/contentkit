@@ -128,11 +128,11 @@ func (f *fakeResolver) Resolve(_ context.Context, refs []contentref.ContentRef, 
 	return out, nil
 }
 
-// testMedia is the Media port pair: URLs as media.Reader builds them, and the
-// folder deletions requested inside committed transactions.
+// testMedia records media lifecycle requests and builds inline URLs.
 type testMedia struct {
 	mu      sync.Mutex
 	deleted []string
+	exposed []string
 }
 
 func (*testMedia) InlineURL(_ context.Context, ref contentref.ContentRef, name string) (string, error) {
@@ -144,6 +144,15 @@ func (m *testMedia) DeleteItemsTx(_ context.Context, tx pgx.Tx, items ...media.D
 		m.mu.Lock()
 		m.deleted = append(m.deleted, d.Ref.String())
 		m.mu.Unlock()
+	}
+	return nil
+}
+
+func (m *testMedia) ExposeTx(_ context.Context, _ pgx.Tx, refs ...contentref.ContentRef) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, ref := range refs {
+		m.exposed = append(m.exposed, ref.String())
 	}
 	return nil
 }

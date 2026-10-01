@@ -15,8 +15,9 @@ import (
 // Media connects post and poll images to ContentKit media. The browser uploads
 // an image to a Named upload path of the post's or poll's item (the host's
 // media registry declares it and its public preset), and hands its name
-// ("i-{uuid}") to ContentKit, which stores the public URL and deletes the
-// item with the post or poll. Runtime.CanUpload authorizes those uploads.
+// ("i-{uuid}") to ContentKit, which stores the public URL. Post visibility
+// changes reconcile public files; poll deletion removes the item.
+// Runtime.CanUpload authorizes those uploads.
 type Media struct {
 	URLs     MediaURLs    // *media.Reader
 	Folders  MediaFolders // *media.Jobs
@@ -30,9 +31,10 @@ type MediaURLs interface {
 	InlineURL(ctx context.Context, ref contentref.ContentRef, name string) (string, error)
 }
 
-// MediaFolders deletes item folders from the host's transaction; *media.Jobs
-// implements it.
+// MediaFolders queues visibility changes and folder deletions in the content
+// transaction; *media.Jobs implements it.
 type MediaFolders interface {
+	ExposeTx(ctx context.Context, tx pgx.Tx, refs ...contentref.ContentRef) error
 	DeleteItemsTx(ctx context.Context, tx pgx.Tx, items ...media.Deletion) error
 }
 
@@ -92,7 +94,14 @@ func (rt *Runtime) imageURL(ctx context.Context, f folder, id, name string) (*st
 	return &u, nil
 }
 
-// deleteMediaTx deletes a post's or poll's media folder with the row.
+func (rt *Runtime) exposePostMediaTx(ctx context.Context, tx pgx.Tx, id string) error {
+	if rt.media == nil {
+		return nil
+	}
+	return rt.media.Folders.ExposeTx(ctx, tx, rt.Ref(rt.media.PostKind, id))
+}
+
+// deleteMediaTx queues a media folder's deletion with the row.
 func (rt *Runtime) deleteMediaTx(ctx context.Context, tx pgx.Tx, f folder, id string) error {
 	if rt.media == nil {
 		return nil

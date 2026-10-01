@@ -433,6 +433,9 @@ func (p *posts) resolve(ctx context.Context, id, state string, d ReviewDecision)
 	if err := p.markDirty(ctx, tx, id, language, false); err != nil {
 		return err
 	}
+	if err := p.rt.exposePostMediaTx(ctx, tx, id); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 

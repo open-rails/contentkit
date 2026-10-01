@@ -244,6 +244,10 @@ func (p *posts) handleCreate(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	if err := p.rt.exposePostMediaTx(ctx, tx, id); err != nil {
+		writeErr(w, err)
+		return
+	}
 	if err := tx.Commit(ctx); err != nil {
 		writeErr(w, err)
 		return
@@ -367,6 +371,10 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	if err := p.rt.exposePostMediaTx(ctx, tx, id); err != nil {
+		writeErr(w, err)
+		return
+	}
 	if err := tx.Commit(ctx); err != nil {
 		writeErr(w, err)
 		return
@@ -412,7 +420,7 @@ func (p *posts) handleDelete(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if err := p.rt.deleteMediaTx(ctx, tx, postFolder, id); err != nil {
+	if err := p.rt.exposePostMediaTx(ctx, tx, id); err != nil {
 		writeErr(w, err)
 		return
 	}
