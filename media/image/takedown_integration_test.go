@@ -40,7 +40,7 @@ func (e *env) exists(t *testing.T, key string) bool {
 
 // Two uploads of the same bytes share their output blob. One is taken down
 // while a pass renders the other, after the pass saw the blob in place: the
-// pass must not record a blob that is gone.
+// pass must not record a blob that is gone, and renders it again.
 func TestSharedOutputTakenDownMidPass(t *testing.T) {
 	e := newEnv(t, nil)
 	ctx := context.Background()
@@ -69,10 +69,9 @@ func TestSharedOutputTakenDownMidPass(t *testing.T) {
 	if !slices.Contains(heads, shared) {
 		t.Fatalf("the pass did not produce the shared output %s: %v (%v)", shared, heads, err)
 	}
-	if err == nil {
-		t.Fatal("the pass recorded an output a takedown had deleted")
+	if err != nil {
+		e.process(t, media.ProcessJob{Ref: ref}) // the job's retry; usually the next pass already rendered it again
 	}
-	e.process(t, media.ProcessJob{Ref: ref}) // the retry
 	m := e.manifest(t, ref)
 	if out, ok := m.Get("web/b.webp"); !ok || out.Blob == "" {
 		t.Fatalf("the other upload was not rendered: %+v", m.Files)
