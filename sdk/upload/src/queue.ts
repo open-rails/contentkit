@@ -1,15 +1,15 @@
-import type { Progress, UploadClient, UploadedFile, UploadState } from "./client.js";
+import { samePath, stem, type Progress, type UploadClient, type UploadedFile, type UploadState } from "./client.js";
 import { UploadError } from "./errors.js";
-import { isSubtitleType } from "./gallery.js";
-import type { CommitFile, FileInfo, Op, RefBody } from "./wire.gen.js";
+import { fill } from "./public.js";
+import type { FileInfo, Op, RefBody } from "./wire.gen.js";
 
 export type ItemStatus = "queued" | "uploading" | "uploaded" | "failed" | "committed";
 
 export interface QueueItem {
   readonly id: string;
   readonly file: File;
-  /** The manifest file name the commit inserts; default the file's name. */
-  name: string;
+  /** The upload path the commit puts; the server's canonical one once uploaded. */
+  path: string;
   meta?: Record<string, unknown>;
   status: ItemStatus;
   progress?: Progress;
@@ -22,9 +22,9 @@ export interface QueueItem {
    * ProcessOnUpload): commit() attaches it, remove() discards it.
    */
   unattached?: boolean;
-  /** The server's view of an unattached file while it processes: dims, hls, failed, progress. */
+  /** The server's view of an unattached upload while it processes (editor read): dims, pending, failed, progress. */
   processing?: FileInfo;
-  /** Processing finished (derived, encoded or failed). */
+  /** Processing finished (outputs written, or failed). */
   processed?: boolean;
 }
 
@@ -38,19 +38,24 @@ export interface QueueSnapshot {
 
 export interface QueueOptions {
   ref: RefBody;
+  /** Each file's upload path: a template whose {name} is the file's name, e.g. "originals/{name}". */
+  path: string;
   /** Files uploading at once. Default 2. */
   concurrency?: number;
   /** Start uploads as files are added. Default true. */
   autoStart?: boolean;
   /** Called with every item state change, to persist resumable state. */
   onState?: (item: QueueItem, state: UploadState | null) => void;
-  /** Milliseconds between processing polls of unattached files. Default 2000. */
+  /** Milliseconds between processing polls of unattached uploads. Default 2000. */
   pollInterval?: number;
 }
 
+/** An op index past the end of the list: the upload is appended. */
+const END = 2 ** 31 - 1;
+
 /**
  * An ordered file queue for one item: uploads in the background, keeps the
- * order the user arranges, and commits the uploaded files as inserts in that
+ * order the user arranges, and commits the uploads as puts appended in that
  * order. Framework-free; the React hooks wrap it.
  */
 export class UploadQueue {
@@ -84,13 +89,13 @@ export class UploadQueue {
   /** Queues files; state restores a multipart upload saved through onState before a reload. */
   add(
     files: Iterable<File>,
-    opts: { name?: (f: File) => string; state?: (f: File) => UploadState | undefined } = {},
+    opts: { path?: (f: File) => string; state?: (f: File) => UploadState | undefined } = {},
   ): QueueItem[] {
     const added = [...files].map(
       (file): QueueItem => ({
         id: `u${++this.seq}`,
         file,
-        name: opts.name?.(file) ?? file.name,
+        path: opts.path?.(file) ?? fill(this.o.path, { name: file.name }),
         status: "queued",
         state: opts.state?.(file),
       }),
@@ -109,17 +114,23 @@ export class UploadQueue {
     this.changed();
   }
 
-  update(id: string, patch: Pick<Partial<QueueItem>, "name" | "meta">): void {
+  update(id: string, patch: Pick<Partial<QueueItem>, "path" | "meta">): void {
     const item = this.find(id);
-    if (item?.unattached && patch.name && patch.name !== item.name) {
-      void this.client.commit(this.o.ref, [{ op: "rename", name: item.name, to: patch.name }]).catch(() => {});
+    if (item?.unattached && patch.path && patch.path !== item.path) {
+      void this.client.commit(this.o.ref, [{ op: "rename", path: item.path, to: patch.path }]).then(
+        (files) => {
+          const f = files.find((x) => samePath(x.path, stem(patch.path!)));
+          if (f) this.patch(id, { path: f.path });
+        },
+        () => {},
+      );
     }
     this.patch(id, patch);
   }
 
   /**
    * Removes an item, discarding its multipart upload if one is open, or its
-   * unattached file (the server cancels its processing and deletes it).
+   * unattached upload (the commit removes it and its outputs).
    */
   remove(id: string): void {
     const item = this.find(id);
@@ -129,7 +140,7 @@ export class UploadQueue {
     const staged = this.staging.get(id);
     if (item.unattached || staged) {
       void (staged ?? Promise.resolve())
-        .then(() => this.client.commit(this.o.ref, [{ op: "remove", name: item.name }]))
+        .then(() => this.client.commit(this.o.ref, [{ op: "remove", path: this.find(id)?.path ?? item.path }]))
         .catch(() => {});
     }
     this.o.onState?.(item, null);
@@ -157,13 +168,13 @@ export class UploadQueue {
   }
 
   /**
-   * Commits every uploaded item, in queue order, appended to the manifest's
-   * files: unattached ones are attached (no reprocessing), the rest inserted.
-   * With head, only the uploaded items before the first one still uploading
-   * or failed (a draft committing files as they finish). Returns the
-   * committed file order.
+   * Commits every uploaded item, in queue order, after the item's uploads:
+   * unattached ones are attached (no reprocessing), the rest put. With head,
+   * only the uploaded items before the first one still uploading or failed
+   * (a draft committing files as they finish). Returns the item's attached
+   * uploads in order.
    */
-  async commit(signal?: AbortSignal, o: { head?: boolean } = {}): Promise<CommitFile[]> {
+  async commit(signal?: AbortSignal, o: { head?: boolean } = {}): Promise<FileInfo[]> {
     await Promise.all(this.staging.values());
     let items = this.items;
     if (o.head) {
@@ -173,22 +184,14 @@ export class UploadQueue {
     }
     const ready = items.filter((i) => i.status === "uploaded");
     if (ready.length === 0) return [];
-    let ops: Op[] = ready.map((i) => ({ op: "insert", name: i.name, original: i.result!.name, meta: i.meta }));
-    if (ready.some((i) => i.unattached)) {
-      // Attach in queue order; inserts join as unattached first so the order holds.
-      ops = [
-        ...ready.filter((i) => !i.unattached).map((i): Op => ({ op: "insert", name: i.name, original: i.result!.name, meta: i.meta, unattached: true })),
-        ...ready.map((i): Op => ({ op: "attach", name: i.name, ...(i.meta ? { meta: i.meta } : {}) })),
-      ];
-    }
-    const sources = Object.fromEntries(ready.map((i) => [i.result!.name, { file: i.file, type: i.result!.type }]));
+    const ops = ready.map((i): Op =>
+      i.unattached
+        ? { op: "attach", path: i.path, index: END, ...(i.meta ? { meta: i.meta } : {}) }
+        : { op: "put", path: i.path, blob: i.result!.blob, index: END, ...(i.meta ? { meta: i.meta } : {}) },
+    );
+    const sources = Object.fromEntries(ready.map((i) => [i.result!.blob, { file: i.file, type: i.result!.type }]));
     const files = await this.client.commit(this.o.ref, ops, { signal, sources });
-    const original = new Map(files.map((f) => [f.name, f.original]));
-    for (const i of ready) {
-      // An original uploaded again at commit may have a new name (multipart).
-      const name = original.get(i.name) ?? i.result!.name;
-      this.set(i.id, { status: "committed", unattached: false, result: { ...i.result!, name } });
-    }
+    for (const i of ready) this.set(i.id, { status: "committed", unattached: false });
     this.changed();
     return files.filter((f) => !f.unattached);
   }
@@ -206,17 +209,17 @@ export class UploadQueue {
   private stage(id: string): void {
     const item = this.find(id);
     if (!item?.result) return;
-    const op: Op = { op: "insert", name: item.name, original: item.result.name, meta: item.meta, unattached: true };
+    const { blob, type } = item.result;
+    const op: Op = { op: "put", path: item.path, blob, unattached: true, ...(item.meta ? { meta: item.meta } : {}) };
     const p = this.client
-      .commit(this.o.ref, [op], { sources: { [item.result.name]: { file: item.file, type: item.result.type } } })
+      .commit(this.o.ref, [op], { sources: { [blob]: { file: item.file, type } } })
       .then(
         (files) => {
-          const f = files.find((x) => x.name === item.name);
-          const cur = this.find(id);
-          if (cur && f) this.patch(id, { unattached: true, result: { ...cur.result!, name: f.original } });
+          const f = files.find((x) => x.unattached && samePath(x.path, stem(item.path)));
+          if (f && this.find(id)) this.patch(id, { unattached: true, path: f.path });
           this.schedulePoll();
         },
-        () => {}, // left uploaded: commit() inserts it
+        () => {}, // left uploaded: commit() puts it
       )
       .finally(() => this.staging.delete(id));
     this.staging.set(id, p);
@@ -232,24 +235,22 @@ export class UploadQueue {
     }, this.o.pollInterval ?? 2000);
   }
 
-  /** Reads the processing state of unattached files still processing. */
+  /** Reads the processing state of unattached uploads still processing. */
   private async refresh(): Promise<void> {
     const pending = this.items.filter((i) => i.unattached && !i.processed);
     if (pending.length === 0) return;
     let files: FileInfo[];
     try {
-      files = await this.client.files(this.o.ref, pending.map((i) => i.name));
+      files = (await this.client.read(this.o.ref, { editor: true })).files;
     } catch {
       return;
     }
-    const byName = new Map(files.map((f) => [f.name, f]));
+    const byPath = new Map(files.filter((f) => f.upload).map((f) => [f.path, f]));
     let changed = false;
     for (const i of pending) {
-      const f = byName.get(i.name);
+      const f = byPath.get(i.path);
       if (!f) continue;
-      const encoded = /^(video|audio)\//.test(f.type ?? "");
-      const processed = !!f.failed || (isSubtitleType(f.type) ? !!f.ready : encoded ? f.hls && !f.progress : (f.w ?? 0) > 0);
-      changed = this.set(i.id, { processing: f, processed }) || changed;
+      changed = this.set(i.id, { processing: f, processed: !!f.failed || !f.pending?.length }) || changed;
     }
     if (changed) this.changed();
   }
@@ -302,6 +303,7 @@ export class UploadQueue {
     this.client
       .upload(item.file, {
         ref: this.o.ref,
+        path: item.path,
         signal: ctl.signal,
         resume: item.state,
         onProgress: (progress) => this.patch(id, { progress }),
@@ -314,7 +316,7 @@ export class UploadQueue {
       .then(
         (result) => {
           this.running.delete(id);
-          this.patch(id, { status: "uploaded", result, state: undefined });
+          this.patch(id, { status: "uploaded", result, path: result.path, state: undefined });
           if (result.processOnUpload) this.stage(id);
         },
         (e: unknown) => {

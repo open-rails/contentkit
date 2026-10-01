@@ -145,6 +145,7 @@ export const es: UploadUiMessageBundle = {
     type_not_allowed: "Este tipo de archivo no se admite aquí.",
     checksum_mismatch: "El archivo cambió durante la subida. Inténtalo de nuevo.",
     rate_limited: "Demasiadas subidas. Inténtalo de nuevo en {seconds} s.",
+    unavailable: "El almacenamiento de medios no está disponible. Inténtalo de nuevo en breve.",
     internal_error: "Algo salió mal por nuestra parte. Inténtalo de nuevo.",
     allowedTypes: "Usa {allowed}.",
     tooLargeBy: "Este archivo ocupa {size}; el límite es {max}.",

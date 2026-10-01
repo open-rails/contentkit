@@ -41,7 +41,7 @@ export interface ImageCropDialogProps {
   onConfirm: (edit: Edit | null) => void;
   /** Warns when the output is narrower than this many source pixels. */
   targetWidth?: number;
-  /** The narrowest output the server accepts (SlotManifest.min_width): zoom stops there, and a smaller image cannot be confirmed. */
+  /** The narrowest edit the server accepts (the preset's Image.MinWidth): zoom stops there, and a smaller image cannot be confirmed. */
   minWidth?: number;
   title?: ReactNode;
   description?: ReactNode;
@@ -49,7 +49,7 @@ export interface ImageCropDialogProps {
   /** A save is running: controls lock and progress shows. */
   busy?: boolean;
   progress?: UploadProgress;
-  /** The server is encoding the outputs (indeterminate progress). */
+  /** The worker is rendering the outputs (indeterminate progress). */
   rendering?: boolean;
   /** Shown above the footer, e.g. a mapped UploadError. */
   error?: ReactNode;
@@ -76,7 +76,7 @@ export function ImageCropDialog(p: ImageCropDialogProps) {
 function CropBody(p: ImageCropDialogProps & { source: CropSource }) {
   const { t } = useMessages();
   const { source } = p;
-  // A native slot ("") crops at the image's own shape.
+  // A native aspect ("") crops at the image's own shape.
   const aspect = ratio(p.aspect) ? p.aspect : aspectOf(source.width, source.height);
   const size: Size = useMemo(() => ({ width: source.width, height: source.height }), [source.width, source.height]);
   const c = useCrop({ source: size, aspect, initial: p.initialEdit });

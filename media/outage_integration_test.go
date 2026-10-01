@@ -30,7 +30,8 @@ func TestStoreOutage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res := &resolver{verdicts: map[string]access.Resolution{cid(1): {Visible: true, Accessible: true}}, anon: map[string]access.Resolution{}}
+	res := &resolver{verdicts: map[string]access.Resolution{}, anon: map[string]access.Resolution{}}
+	res.set(cid(1), access.Resolution{Visible: true, Accessible: true})
 	cfg2 := testConfig(env.Tenant, "acct")
 	cfg2.Hooks = media.Hooks{Resolver: res}
 	kinds, err := media.NewRegistry(cfg2)

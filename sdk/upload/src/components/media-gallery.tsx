@@ -15,28 +15,30 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useMemo, useState, type ReactNode } from "react";
 import type { UploadUiAppearance } from "../appearance.js";
-import { audioDownloadKey, formatDuration, galleryItems, stageAspect, type GalleryItem, type GalleryLockedItem, type GalleryMediaItem } from "../gallery.js";
+import { formatDuration, galleryItems, stageAspect, type GalleryItem, type GalleryLockedItem, type GalleryMediaItem } from "../gallery.js";
 import { useCarousel, useGalleryView, useHlsPlayer, type GalleryViewOptions, type HlsPlayerOptions } from "../gallery-react.js";
 import { useInlinePreview } from "../inline-preview.js";
 import { useMessages } from "../i18n/context.js";
+import { publicRenditions, type PublicImage } from "../public.js";
 import { UploadUiRoot, useScopeProps } from "../scope.js";
 import { RenditionImg } from "./rendition-img.js";
-import type { FileInfo, ReadResult, VideoImages } from "../wire.gen.js";
+import type { FileInfo, ReadResult } from "../wire.gen.js";
 import { previewStartAt, SpriteFrame, VideoPlayer } from "./video-player.js";
 import { Button } from "#ckui/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "#ckui/ui/toggle-group";
 
 export interface MediaGalleryProps extends GalleryViewOptions, Pick<HlsPlayerOptions, "xhrSetup" | "refresh" | "abr"> {
   /**
-   * The read API result: files in manifest order with this viewer's access.
-   * Audio files play from their `audio` variant (AUDIO_VARIANT), so include it
-   * in the read's variants; full access adds their download.
+   * The read API result: files in manifest order with this viewer's access
+   * (scope it with a prefix). A download read adds each audio file's download.
    */
   read: ReadResult | null | undefined;
-  /** A video file's HLS folder (e.g. `/media/post/1/hls/{name}/`). */
-  hlsBase?: (file: FileInfo) => string;
-  /** The item's poster; drawn for the video it was cut from (or the first video), whose preview starts at its frame. */
-  videoImages?: VideoImages | null;
+  /** A ladder's HLS folder from the read's `hls` dir: client.hlsBase(ref, dir). */
+  hlsBase?: (dir: string) => string;
+  /** The item's poster (its public preset, or a URL), drawn on the first video. */
+  poster?: PublicImage | string | null;
+  /** Where the first video's preview starts, seconds (e.g. the poster's frame); default 10% in. */
+  previewStart?: number;
   /** Playable videos preview muted inline (hover, or in view on touch); default the provider's. */
   inlinePreview?: boolean;
   /** The host's unlock call to action, drawn over the locked item. */
@@ -56,16 +58,13 @@ interface Ctx extends MediaGalleryProps {
   items: GalleryItem[];
 }
 
-// The item's poster belongs to the video it was cut from, whose preview starts
-// at its frame; an uploaded poster (no file) to the first video.
-function videoArt(ctx: Ctx, f: FileInfo): { poster?: VideoImages["poster"]; start: number } {
-  const v = ctx.videoImages;
-  const first = ctx.items.find((i): i is GalleryMediaItem => i.kind === "video")?.file.name;
-  const file = v?.poster.file ?? v?.poster.selection?.file;
-  const mine = !!v && (file || first) === f.name;
-  const time = mine && file ? v?.poster.time : undefined;
-  return { poster: mine && v.poster.outputs.length ? v.poster : undefined, start: previewStartAt(time, f.duration) };
+// The item's poster and preview start belong to its first video.
+function videoArt(ctx: Ctx, item: GalleryMediaItem): { poster?: PublicImage | string; start: number } {
+  const first = ctx.items.find((i): i is GalleryMediaItem => i.kind === "video") === item;
+  return { poster: first ? (ctx.poster ?? undefined) : undefined, start: previewStartAt(first ? ctx.previewStart : undefined, item.file.dur) };
 }
+
+const baseOf = (ctx: Ctx, item: GalleryMediaItem) => (item.dir && ctx.hlsBase ? ctx.hlsBase(item.dir) : null);
 
 /**
  * A post's images and videos as a swipeable carousel or a tile grid that opens
@@ -228,7 +227,7 @@ function Slide({ ctx, item, position, active, lightbox }: { ctx: Ctx; item: Gall
   const { t } = useMessages();
   if (item.kind === "locked") return <Locked ctx={ctx} item={item} />;
   const f = item.file;
-  if (item.kind === "audio") return <AudioSlide ctx={ctx} file={f} position={position} />;
+  if (item.kind === "audio") return <AudioSlide item={item} position={position} />;
   if (item.kind === "image") {
     if (!f.url) return f.failed ? <ImageFailed file={f} /> : <Processing>{t("gallery.processingImage")}</Processing>;
     return (
@@ -245,20 +244,17 @@ function Slide({ ctx, item, position, active, lightbox }: { ctx: Ctx; item: Gall
       />
     );
   }
-  const { poster, start } = videoArt(ctx, f);
+  const { poster, start } = videoArt(ctx, item);
   return (
     <VideoPlayer
       inlinePreview={lightbox ? false : ctx.inlinePreview}
       previewStart={start}
       layout="fill"
-      base={f.hls && f.name && ctx.hlsBase ? ctx.hlsBase(f) : null}
-      pending={!f.hls && !f.failed}
-      progress={f.progress}
-      failed={f.failed}
+      base={baseOf(ctx, item)}
       poster={poster}
       width={f.w}
       height={f.h}
-      duration={f.duration}
+      duration={f.dur}
       active={active}
       xhrSetup={ctx.xhrSetup}
       refresh={ctx.refresh}
@@ -269,18 +265,19 @@ function Slide({ ctx, item, position, active, lightbox }: { ctx: Ctx; item: Gall
   );
 }
 
-// An audio file: a native player over its M4A variant, its duration and,
-// with full access, its download.
-function AudioSlide({ ctx, file: f, position }: { ctx: Ctx; file: FileInfo; position: number }) {
+// An audio file (a ladder's M4A): a native player, its duration and, in a
+// download read, its download.
+function AudioSlide({ item, position }: { item: GalleryMediaItem; position: number }) {
   const { t } = useMessages();
-  const download = f.name ? ctx.read?.downloads?.find((d) => d.key === audioDownloadKey(f.name!)) : undefined;
+  const f = item.file;
+  const name = (item.dir ?? f.path).replace(/\/$/, "").split("/").pop();
   const label = t("gallery.audio", { index: position + 1 });
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-muted p-4" data-ckui="audio">
       <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
         <HugeiconsIcon icon={MusicNote01Icon} className="size-5 shrink-0" strokeWidth={1.75} />
-        {f.name && <span className="truncate">{f.name}</span>}
-        {f.duration ? <span className="tabular-nums">{formatDuration(f.duration)}</span> : null}
+        {name && <span className="truncate">{name}</span>}
+        {f.dur ? <span className="tabular-nums">{formatDuration(f.dur)}</span> : null}
       </div>
       {f.failed ? (
         <p className="text-sm text-destructive" role="alert">
@@ -291,8 +288,8 @@ function AudioSlide({ ctx, file: f, position }: { ctx: Ctx; file: FileInfo; posi
       ) : (
         <p className="text-sm text-muted-foreground">{t("gallery.processingAudio")}</p>
       )}
-      {download && (
-        <a href={download.url} download={download.name} className="inline-flex items-center gap-1.5 text-sm underline-offset-4 hover:underline" data-ckui-noswipe="">
+      {f.download && f.url && (
+        <a href={f.url} download={f.download} className="inline-flex items-center gap-1.5 text-sm underline-offset-4 hover:underline" data-ckui-noswipe="">
           <HugeiconsIcon icon={Download01Icon} className="size-4" strokeWidth={2} />
           {t("gallery.download")}
         </a>
@@ -304,7 +301,8 @@ function AudioSlide({ ctx, file: f, position }: { ctx: Ctx; file: FileInfo; posi
 // Why an image cannot be shown (editors only: the read API's failed fields).
 function ImageFailed({ file }: { file: FileInfo }) {
   const { t, error } = useMessages();
-  const text = file.failed_code ? error({ code: file.failed_code, message: file.failed, details: file.failed_details, refusal: true }) : t("gallery.failedImage");
+  const f = file.failed;
+  const text = f?.code ? error({ code: f.code, message: f.message, details: f.details, refusal: true }) : t("gallery.failedImage");
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-muted p-4 text-center text-sm text-destructive" role="alert" data-ckui="image-failed">
       <HugeiconsIcon icon={AlertCircleIcon} className="size-6" />
@@ -368,7 +366,7 @@ function Tile({ ctx, item, label, onOpen }: { ctx: Ctx; item: GalleryItem; label
     body = (
       <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-muted text-muted-foreground">
         <HugeiconsIcon icon={item.file.failed ? AlertCircleIcon : MusicNote01Icon} className={cn("size-7", item.file.failed && "text-destructive")} strokeWidth={1.75} />
-        {item.file.duration ? <span className="text-[11px] font-medium tabular-nums">{formatDuration(item.file.duration)}</span> : null}
+        {item.file.dur ? <span className="text-[11px] font-medium tabular-nums">{formatDuration(item.file.dur)}</span> : null}
       </span>
     );
   else if (item.kind === "image")
@@ -383,12 +381,14 @@ function Tile({ ctx, item, label, onOpen }: { ctx: Ctx; item: GalleryItem; label
     );
   else {
     const f = item.file;
-    const { poster, start } = videoArt(ctx, f);
-    const covers = (poster?.outputs ?? []).filter((o) => o.url);
-    const base = f.hls && f.name && ctx.hlsBase ? ctx.hlsBase(f) : null;
+    const { poster, start } = videoArt(ctx, item);
+    const covers = typeof poster === "string" ? [] : publicRenditions(poster);
+    const base = baseOf(ctx, item);
     body = (
       <>
-        {covers.length ? (
+        {typeof poster === "string" ? (
+          <img src={poster} alt="" loading="lazy" decoding="async" className="absolute inset-0 size-full object-cover" />
+        ) : covers.length ? (
           <RenditionImg outputs={covers} loading="lazy" className="absolute inset-0 size-full object-cover" />
         ) : base ? (
           <SpriteFrame vtt={`${base}sprite.vtt`} xhrSetup={ctx.xhrSetup} fit="cover" />
@@ -398,16 +398,16 @@ function Tile({ ctx, item, label, onOpen }: { ctx: Ctx; item: GalleryItem; label
           <span className="absolute inset-0 flex items-center justify-center bg-muted text-destructive">
             <HugeiconsIcon icon={AlertCircleIcon} className="size-6" />
           </span>
-        ) : !f.hls ? (
+        ) : !base ? (
           <Processing>{""}</Processing>
         ) : (
           <span className="pointer-events-none absolute top-1/2 left-1/2 flex size-10 -translate-1/2 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-opacity group-hover:opacity-0">
             <HugeiconsIcon icon={PlayIcon} className="ml-0.5 size-5 fill-current" strokeWidth={1.5} />
           </span>
         )}
-        {f.duration ? (
+        {f.dur ? (
           <span className="pointer-events-none absolute right-1.5 bottom-1.5 rounded bg-black/65 px-1.5 py-0.5 text-[11px] font-medium text-white tabular-nums">
-            {formatDuration(f.duration)}
+            {formatDuration(f.dur)}
           </span>
         ) : null}
       </>

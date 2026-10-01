@@ -294,8 +294,9 @@ func (f *fixture) commit(ref contentref.ContentRef, ops ...media.Op) *media.Mani
 }
 
 // produce stands in for the worker's producers: it records an output for
-// each pending private preset of every upload (the upload's bytes as its
-// blob), renders its public names (the upload's bytes), and clears pending.
+// each private preset of every upload (the upload's bytes as its blob) and
+// each zip, renders its public names (the upload's bytes), and clears
+// pending.
 func (f *fixture) produce(ref contentref.ContentRef) {
 	f.t.Helper()
 	ctx := context.Background()
@@ -340,6 +341,17 @@ func (f *fixture) produce(ref contentref.ContentRef) {
 			}
 			for _, p := range k.PublicFor(u.Path) {
 				m.ClearPending(u.Path, p.Name)
+			}
+		}
+		for i := range k.Private {
+			if z := &k.Private[i]; z.Zip != "" {
+				var outs []media.File
+				if in := k.ZipInputs(m, z); len(in) > 0 {
+					outs = []media.File{{Path: z.To, Blob: in[0].Blob, Type: "application/zip", FP: media.ZipFP(in)}}
+				}
+				if err := m.SetOutputs(z.Zip, z.Name, outs); err != nil {
+					return err
+				}
 			}
 		}
 		return nil

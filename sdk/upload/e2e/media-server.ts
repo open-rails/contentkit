@@ -6,6 +6,8 @@
 //   /busy/…        429
 //   /abr/{name}/   a synthetic 480–2160 ladder over {name}'s segments, repeated to 60 s,
 //                  each padded with MPEG-TS null packets to its rung's bitrate
+//   /v1/…          public files like media-access serves them; the demo's stand-in
+//                  worker (demo/fake.ts) PUTs and DELETEs them
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -63,8 +65,25 @@ async function abr(name: string, file: string[], url: URL): Promise<[string, Buf
   return [".seg", Buffer.concat([body, ...Array.from({ length: pad }, () => nullPacket)])];
 }
 
+const published = new Map<string, { type: string; body: Buffer }>();
+
 createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://x");
+  if (url.pathname.startsWith("/v1/")) {
+    if (req.headers.origin) res.setHeader("Access-Control-Allow-Origin", req.headers.origin);
+    if (req.method === "OPTIONS")
+      return res.writeHead(204, { "Access-Control-Allow-Methods": "GET, PUT, DELETE", "Access-Control-Allow-Headers": "content-type" }).end();
+    if (req.method === "PUT") {
+      const chunks: Buffer[] = [];
+      for await (const c of req) chunks.push(c as Buffer);
+      published.set(url.pathname, { type: req.headers["content-type"] ?? "application/octet-stream", body: Buffer.concat(chunks) });
+      return res.writeHead(204).end();
+    }
+    if (req.method === "DELETE") return published.delete(url.pathname), res.writeHead(204).end();
+    const f = published.get(url.pathname);
+    if (!f) return res.writeHead(404, { "Cache-Control": "no-store" }).end("not found");
+    return res.writeHead(200, { "Content-Type": f.type, "Cache-Control": "public, max-age=300, stale-while-revalidate=86400" }).end(f.body);
+  }
   const [, mode, ...rest] = url.pathname.split("/");
   let file = rest;
   const origin = req.headers.origin;

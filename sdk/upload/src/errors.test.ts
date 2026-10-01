@@ -14,4 +14,8 @@ it("maps error replies, Retry-After and non-JSON bodies", async () => {
   expect([quota.code, quota.isLimit]).toEqual(["quota_exceeded", true]);
   const proxy = await fromResponse(new Response("bad gateway", { status: 502 }));
   expect([proxy.code, proxy.transient]).toEqual(["internal_error", true]);
+  const down = await fromResponse(new Response(JSON.stringify({ error: "storage down", code: "unavailable", retry_after: 5 }), { status: 503 }));
+  expect([down.code, down.transient, down.retryAfter]).toEqual(["unavailable", true, 5]);
+  const gone = await fromResponse(new Response(JSON.stringify({ error: "again", code: "not_uploaded", blobs: ["sha256-a"] }), { status: 409 }));
+  expect([gone.code, gone.blobs]).toEqual(["not_uploaded", ["sha256-a"]]);
 });

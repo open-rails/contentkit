@@ -22,14 +22,14 @@ async function upload(o: { concurrency?: number }) {
     spans.push({ kind: "put", start, end: performance.now(), bytes: body.size, part });
   };
   const c = new UploadClient({ endpoint: "/upload", headers: () => ({ "X-Test-Actor": "bench" }), fetch: f, transport, concurrency: o.concurrency });
-  const ref = { kind: "video", id: "v" + Math.random().toString(36).slice(2), version: "" };
+  const ref = { kind: "video", id: crypto.randomUUID().replace(/^(.{14})./, (_, head: string) => head + "7") };
   const t0 = performance.now();
-  const up = await c.upload(file, { ref });
+  const up = await c.upload(file, { ref, path: "source" });
   const t1 = performance.now();
-  await c.commit(ref, [{ op: "insert", name: "v.mp4", original: up.name }]);
+  await c.commit(ref, [{ op: "put", path: up.path, blob: up.blob }]);
   const t2 = performance.now();
   for (const h of (globalThis as any).__hashLog) spans.push({ kind: "hash", ...h });
-  return { size: file.size, t0, uploadMs: t1 - t0, commitMs: t2 - t1, spans, name: up.name };
+  return { size: file.size, t0, uploadMs: t1 - t0, commitMs: t2 - t1, spans, blob: up.blob };
 }
 
 // Standalone hashing costs on the same File.

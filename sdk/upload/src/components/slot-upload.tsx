@@ -7,23 +7,31 @@ import type { UploadClient } from "../client.js";
 import { useMessages } from "../i18n/context.js";
 import type { CropSource } from "../image.js";
 import { UploadUiRoot } from "../scope.js";
-import type { RefBody, SlotManifest } from "../wire.gen.js";
+import type { PublicImage } from "../public.js";
+import type { FileInfo, ReadResult, RefBody } from "../wire.gen.js";
 import { Button } from "#ckui/ui/button";
 import { SlotEditError, SlotEditor, useSlotEditor } from "./slot-editor.js";
 import { SlotImage } from "./slot-image.js";
 
 export interface SlotUploadProps {
-  /** The item that owns the slot. */
+  /** The item that owns the upload. */
   item: RefBody;
-  slot?: string;
+  /** The upload path; default "avatar" or "cover". */
+  path?: string;
+  /** The public preset showing it. */
+  image?: PublicImage | null;
   client?: UploadClient;
-  /** Current manifest from the host; otherwise fetched with client.getSlot. */
-  manifest?: SlotManifest | null;
-  /** Called with the new manifest after every save. */
-  onChange?: (m: SlotManifest) => void;
-  /** The output's "W:H"; default the manifest's aspect, else "1:1" (avatar) or "3:1" (cover). */
+  /** An editor read of the item from the host; otherwise fetched. */
+  read?: ReadResult | null;
+  /** Called with the processed upload after every save, null after a removal. */
+  onChange?: (file: FileInfo | null) => void;
+  /** The output's "W:H"; default the preset's aspect, else "1:1" (avatar) or "3:1" (cover). */
   aspect?: AspectRatio;
-  /** Crops narrower than this many source pixels get a sharpness warning; default the largest output. */
+  /** The narrowest edit the server accepts (the preset's Image.MinWidth). */
+  minWidth?: number;
+  /** "reject" refuses animated images before uploading. */
+  animation?: "reject";
+  /** Crops narrower than this many source pixels get a sharpness warning; default 512 (avatar) or 3000 (cover). */
   targetWidth?: number;
   /** `accept` of the file input. Default "image/*". */
   accept?: string;
@@ -44,22 +52,25 @@ export function AvatarUpload(p: SlotUploadProps) {
   return <SlotUpload {...p} variant="avatar" />;
 }
 
-/** Wide cover field at the slot's aspect (e.g. 3:1), with drop-to-upload. For custom layouts use SlotEditor. */
+/** Wide cover field at the preset's aspect (e.g. 3:1), with drop-to-upload. For custom layouts use SlotEditor. */
 export function CoverUpload(p: SlotUploadProps) {
   return <SlotUpload {...p} variant="cover" />;
 }
 
 function SlotUpload({ variant, ...p }: SlotUploadProps & { variant: Variant }) {
-  const slot = p.slot ?? variant;
+  const path = p.path ?? variant;
   return (
     <UploadUiRoot className={cn("text-sm", p.className)} data-ckui={variant === "avatar" ? "avatar-upload" : "cover-upload"}>
-    <SlotEditor
+      <SlotEditor
         item={p.item}
-        slot={slot}
+        path={path}
+        image={p.image}
         client={p.client}
-        manifest={p.manifest}
+        read={p.read}
         onChange={p.onChange}
-        aspect={p.aspect ?? (p.manifest === undefined ? undefined : (p.manifest?.aspect || (variant === "avatar" ? "1:1" : "3:1")))}
+        aspect={p.aspect || p.image?.aspect || (variant === "avatar" ? "1:1" : "3:1")}
+        minWidth={p.minWidth}
+        animation={p.animation}
         targetWidth={p.targetWidth ?? (variant === "avatar" ? 512 : 3000)}
         round={variant === "avatar"}
         accept={p.accept}
@@ -76,7 +87,7 @@ function SlotUpload({ variant, ...p }: SlotUploadProps & { variant: Variant }) {
 function SlotUploadLayout({ variant, ...p }: SlotUploadProps & { variant: Variant }) {
   const { t } = useMessages();
   const s = useSlotEditor();
-  const { image, crop, has, busy, disabled } = s;
+  const { crop, has, busy, disabled } = s;
   const [dragging, setDragging] = useState(false);
   const aspect = crop.aspect;
   const target = p.targetWidth ?? (variant === "avatar" ? 512 : 3000);
@@ -116,7 +127,7 @@ function SlotUploadLayout({ variant, ...p }: SlotUploadProps & { variant: Varian
   return variant === "avatar" ? (
     <div className="flex items-center gap-4">
       <div className="relative size-20 shrink-0">
-        <SlotImage manifest={image.manifest} round emptyLabel={t("avatar.empty")} className="size-full ring-1 ring-foreground/10" />
+        <SlotImage image={has ? p.image : null} round emptyLabel={t("avatar.empty")} className="size-full ring-1 ring-foreground/10" />
         {busy && <BusyOverlay round label={t(crop.status === "decoding" ? "progress.decoding" : "common.saving")} />}
       </div>
       <div className="grid min-w-0 gap-1">
@@ -141,9 +152,8 @@ function SlotUploadLayout({ variant, ...p }: SlotUploadProps & { variant: Varian
         onDrop={onDrop}
       >
         <SlotImage
-          manifest={image.manifest}
+          image={has ? p.image : null}
           aspect={aspect}
-         
           className="w-full rounded-none"
           placeholder={
             <div aria-label={t("cover.empty")} role="group" className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-[repeating-linear-gradient(135deg,transparent_0_10px,color-mix(in_oklch,var(--ckui-foreground)_3%,transparent)_10px_20px)] p-4 text-center">

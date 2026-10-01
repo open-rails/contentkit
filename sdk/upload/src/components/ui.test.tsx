@@ -4,42 +4,39 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { Profiler, useState } from "react";
 import { expect, it, vi } from "vitest";
-import { FakeServer, bytes } from "../../test/fake.js";
-import { UploadClient } from "../client.js";
+import { FakeServer, bytes, fakeClient } from "../../test/fake.js";
 import type { CropSource } from "../image.js";
-import type { Edit, SlotManifest } from "../wire.gen.js";
+import type { Edit, FileInfo, ReadResult } from "../wire.gen.js";
 import { ja } from "../locales/ja.js";
 import { AvatarUpload, CoverUpload, ImageCropDialog, SlotEditError, SlotEditMenu, SlotEditor, SlotImage, UploadUiProvider, useSlotEditor } from "../ui.js";
 
 const item = { kind: "channel", id: "0192f000-0000-7000-8000-000000000007" };
+const preset = (name: string, aspect: string, widths: number[]) => ({ base: "https://m", namespace: "app", kind: "channel", id: item.id, to: `${name}-{w}.webp`, widths, aspect });
+const avatar = preset("avatar", "1:1", [128, 256, 512]);
+const cover = preset("cover", "3:1", [1500, 3000]);
+const empty: ReadResult = { access: "full", preview_limit: 0, expires: 0, total: 0, offset: 0, limit: 50, files: [] };
+globalThis.fetch = vi.fn(async () => new Response(null)) as typeof fetch;
 
 function setup() {
   const s = new FakeServer();
-  const client = new UploadClient({ endpoint: "http://x/api", fetch: s.fetch, transport: s.transport, retryDelay: () => 0 });
-  return { s, client };
+  return { s, client: fakeClient(s) };
 }
 
 const decodeAs = (width: number, height: number) =>
   vi.fn(async (file: File): Promise<CropSource> => ({ url: "blob:preview", width, height, file }));
 const png = (seed = 1) => new File([bytes(300, seed)], "a.png", { type: "image/png" });
 
-it("SlotImage renders srcset and sizes, and a placeholder when empty", () => {
-  const manifest = {
-    aspect: "3:1",
-    pending: false,
-    outputs: [
-      { w: 1500, h: 500, url: "https://cdn/1500.webp" },
-      { w: 3000, h: 1000, url: "https://cdn/3000.webp" },
-    ],
-  };
-  const { container, rerender } = render(<SlotImage manifest={manifest} alt="cover" />);
+it("SlotImage renders the preset's public files at its aspect, and a placeholder without one or when it fails", () => {
+  const { container, rerender } = render(<SlotImage image={cover} alt="cover" />);
   const img = screen.getByRole("img", { name: "cover" });
-  // jsdom lays nothing out: an unmeasured box gets the narrowest rendition.
-  expect(img).toHaveAttribute("src", "https://cdn/1500.webp");
+  // jsdom lays nothing out: an unmeasured box gets the narrowest width.
+  expect(img).toHaveAttribute("src", `https://m/v1/app/channel/${item.id}/public/cover-1500.webp`);
+  expect(img).toHaveAttribute("height", "500");
   expect(container.firstElementChild).toHaveClass("ckui");
   expect(container.firstElementChild).toHaveStyle({ aspectRatio: "3" });
-  rerender(<SlotImage manifest={null} round />);
+  fireEvent.error(img);
   expect(screen.queryByRole("img", { name: "cover" })).toBeNull();
+  rerender(<SlotImage image={null} round />);
   expect(container.querySelector("[data-empty]")).not.toBeNull();
 });
 
@@ -47,8 +44,8 @@ it("AvatarUpload: pick → crop dialog with a sharpness warning → save → sho
   const { s, client } = setup();
   const onChange = vi.fn();
   const user = userEvent.setup();
-  const { container } = render(<AvatarUpload client={client} item={item} decode={decodeAs(400, 300)} onChange={onChange} />);
-  await waitFor(() => expect(s.calls).toContain("/slot"));
+  const { container } = render(<AvatarUpload client={client} item={item} image={avatar} decode={decodeAs(400, 300)} onChange={onChange} />);
+  await waitFor(() => expect(s.calls).toContain("/read"));
   expect(screen.getByRole("img", { name: "No avatar" })).toBeInTheDocument();
   expect(screen.getByText("Square image, at least 512 px.")).toBeInTheDocument();
 
@@ -59,7 +56,7 @@ it("AvatarUpload: pick → crop dialog with a sharpness warning → save → sho
 
   await user.click(within(dialog).getByRole("button", { name: "Save" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(s.slotCalls[0]).toMatchObject({ ref: item, slot: "avatar", edit: { crop: { x: 50, y: 0, w: 300, h: 300 } } });
+  expect(s.commits[0]).toEqual([{ op: "put", path: "avatar.png", blob: expect.stringMatching(/^sha256-/), edit: { crop: { x: 50, y: 0, w: 300, h: 300 } } }]);
   expect(onChange).toHaveBeenCalledOnce();
   expect(container.querySelector("img")?.getAttribute("data-rendition")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Change" })).toBeInTheDocument();
@@ -67,46 +64,45 @@ it("AvatarUpload: pick → crop dialog with a sharpness warning → save → sho
 
 it("AvatarUpload removes the avatar; CoverUpload offers Remove only when removable", async () => {
   const { s, client } = setup();
-  await client.uploadSlot(png(3), { ref: item, slot: "avatar" });
+  await client.put(png(3), { ref: item, path: "avatar" });
   const onChange = vi.fn();
   const user = userEvent.setup();
-  const { unmount } = render(<AvatarUpload client={client} item={item} onChange={onChange} />);
+  const { unmount } = render(<AvatarUpload client={client} item={item} image={avatar} onChange={onChange} />);
   await user.click(await screen.findByRole("button", { name: "Remove" }));
   await waitFor(() => expect(screen.getByRole("img", { name: "No avatar" })).toBeInTheDocument());
-  expect(s.calls).toContain("/delete-slot");
-  expect(onChange).toHaveBeenLastCalledWith({ aspect: "1:1", outputs: [], pending: false });
+  expect(s.commits.at(-1)).toEqual([{ op: "remove", path: "avatar.png" }]);
+  expect(onChange).toHaveBeenLastCalledWith(null);
   expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
   unmount();
 
-  await client.uploadSlot(png(4), { ref: item, slot: "cover" });
-  const { rerender } = render(<CoverUpload client={client} item={item} />);
+  await client.put(png(4), { ref: item, path: "cover" });
+  const { rerender } = render(<CoverUpload client={client} item={item} image={cover} />);
   await screen.findAllByRole("button", { name: "Change" });
   expect(screen.queryAllByRole("button", { name: "Remove" })).toHaveLength(0);
-  rerender(<CoverUpload client={client} item={item} removable />);
+  rerender(<CoverUpload client={client} item={item} image={cover} removable />);
   expect((await screen.findAllByRole("button", { name: "Remove" })).length).toBeGreaterThan(0);
 });
 
-it("CoverUpload: edit crop re-renders from the original without uploading", async () => {
+it("CoverUpload: edit crop re-renders from the upload without uploading", async () => {
   const { s, client } = setup();
-  const { manifest } = await client.uploadSlot(png(2), { ref: item, slot: "cover" });
+  await client.put(png(2), { ref: item, path: "cover" });
   const puts = s.puts.length;
   const user = userEvent.setup();
-  render(<CoverUpload client={client} item={item} manifest={manifest} decode={decodeAs(4000, 3000)} />);
+  render(<CoverUpload client={client} item={item} image={cover} decode={decodeAs(4000, 3000)} />);
   // The overlay and the mobile row both render; CSS shows one.
-  await user.click(screen.getAllByRole("button", { name: "Edit crop" })[0]!);
+  await user.click((await screen.findAllByRole("button", { name: "Edit crop" }))[0]!);
   const dialog = await screen.findByRole("dialog");
   expect(within(dialog).getByText("Crop your cover")).toBeInTheDocument();
   await user.click(within(dialog).getByRole("button", { name: "Save" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(s.slotCalls.at(-1)).toMatchObject({ slot: "cover", edit: { crop: { x: 0, w: 4000, h: 1333 } } });
-  expect(s.slotCalls.at(-1)).not.toHaveProperty("sha256");
+  expect(s.commits.at(-1)![0]).toMatchObject({ op: "edit", path: "cover.png", edit: { crop: { x: 0, w: 4000, h: 1333 } } });
   expect(s.puts.length).toBe(puts);
 });
 
 it("maps UploadError codes to messages and keeps the dialog open to retry", async () => {
   const { s, client } = setup();
   const user = userEvent.setup();
-  const { container } = render(<AvatarUpload client={client} item={item} manifest={null} decode={decodeAs(1024, 1024)} />);
+  const { container } = render(<AvatarUpload client={client} item={item} read={empty} decode={decodeAs(1024, 1024)} />);
   await user.upload(container.querySelector<HTMLInputElement>("input[type=file]")!, png(3));
   const dialog = await screen.findByRole("dialog");
   expect(within(dialog).queryByText(/px or more/)).toBeNull();
@@ -126,7 +122,7 @@ it("shows an unreadable file inline, localized through the provider", async () =
   });
   const { container } = render(
     <UploadUiProvider client={client} messages={ja} appearance={{ theme: "dark", variables: { primary: "red" } }}>
-      <AvatarUpload item={item} manifest={null} decode={bad} />
+      <AvatarUpload item={item} read={empty} decode={bad} />
     </UploadUiProvider>,
   );
   const root = container.querySelector(".ckui")!;
@@ -170,24 +166,25 @@ it("SlotEditor composes a host-styled overlay trigger: pick, then a Change / Edi
   const user = userEvent.setup();
   const onChange = vi.fn();
   function Header() {
-    const { image } = useSlotEditor();
-    return <img alt="cover" srcSet={image.srcSet} />;
+    const { has } = useSlotEditor();
+    return <SlotImage image={has ? cover : null} alt="cover" />;
   }
-  // The host owns the manifest (e.g. from its channel API) and stores each save.
+  // The host owns the editor read (e.g. from its channel API) and keeps each save.
   function Host() {
-    const [manifest, setManifest] = useState<SlotManifest | null>(null);
+    const [read, setRead] = useState<ReadResult>(empty);
     return (
       <div data-testid="overlay" className="host-overlay">
         <SlotEditor
           client={client}
           item={item}
-          slot="cover"
-          manifest={manifest}
+          path="cover"
+          image={cover}
+          read={read}
           aspect="3:1"
           decode={decodeAs(3000, 1500)}
-          onChange={(m) => {
-            onChange(m);
-            setManifest(m);
+          onChange={(f: FileInfo | null) => {
+            onChange(f);
+            setRead({ ...read, files: f ? [f] : [] });
           }}
         >
           <Header />
@@ -212,9 +209,9 @@ it("SlotEditor composes a host-styled overlay trigger: pick, then a Change / Edi
   await user.click(within(dialog).getByRole("button", { name: "Save" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(onChange).toHaveBeenCalledOnce();
-  expect(screen.getByRole("img", { name: "cover" }).getAttribute("srcset")).toContain("3000w");
+  expect(screen.getByRole("img", { name: "cover" }).getAttribute("src")).toContain("cover-1500.webp");
 
-  // Now the slot keeps an original: the same trigger opens a menu.
+  // Now the path has an upload: the same trigger opens a menu.
   const puts = s.puts.length;
   await user.click(within(overlay).getByRole("button", { name: "Change cover" }));
   const menu = await screen.findByRole("menu");
@@ -225,7 +222,7 @@ it("SlotEditor composes a host-styled overlay trigger: pick, then a Change / Edi
   await user.click(within(again).getByRole("button", { name: "Save" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(s.puts.length).toBe(puts);
-  expect(s.slotCalls.at(-1)).not.toHaveProperty("sha256");
+  expect(s.commits.at(-1)![0]!.op).toBe("edit");
 });
 
 it("SlotEditMenu defaults to the kit's scoped button and SlotEditError shows unreadable files", async () => {
@@ -235,7 +232,7 @@ it("SlotEditMenu defaults to the kit's scoped button and SlotEditError shows unr
     throw new Error("bad");
   });
   const { container } = render(
-    <SlotEditor client={client} item={item} slot="avatar" manifest={null} decode={bad}>
+    <SlotEditor client={client} item={item} path="avatar" read={empty} decode={bad}>
       <SlotEditMenu />
       <SlotEditError />
     </SlotEditor>,
@@ -281,15 +278,15 @@ it("ImageCropDialog reports an edit only when it changes, so onEditChange can se
 
 it("CoverUpload's crop dialog settles instead of re-rendering forever", async () => {
   const { client } = setup();
-  const { manifest } = await client.uploadSlot(png(5), { ref: item, slot: "cover" });
+  await client.put(png(5), { ref: item, path: "cover" });
   let commits = 0;
   const user = userEvent.setup();
   render(
     <Profiler id="cover" onRender={() => commits++}>
-      <CoverUpload client={client} item={item} manifest={manifest} decode={decodeAs(4000, 3000)} />
+      <CoverUpload client={client} item={item} image={cover} decode={decodeAs(4000, 3000)} />
     </Profiler>,
   );
-  await user.click(screen.getAllByRole("button", { name: "Edit crop" })[0]!);
+  await user.click((await screen.findAllByRole("button", { name: "Edit crop" }))[0]!);
   await screen.findByRole("dialog");
   await settle();
   const settled = commits;

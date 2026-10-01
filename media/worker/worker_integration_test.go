@@ -403,8 +403,8 @@ func TestOneShotWorkerStopsAfterOneJob(t *testing.T) {
 func TestWorkerProcessesImagesAndRelays(t *testing.T) {
 	h := newHost(t)
 	ref := h.ref(t, "gallery")
-	h.upload(t, ref, "originals/001.png", "image/png", pngImage(t, 300, 450, 1))
-	h.upload(t, ref, "cover", "image/png", pngImage(t, 600, 200, 3))
+	p, blob := h.stage(t, ref, "originals/001.png", "image/png", pngImage(t, 300, 450, 1))
+	h.upload(t, ref, "cover", "image/png", pngImage(t, 600, 200, 3), media.Op{Op: media.OpPut, Path: p, Blob: blob})
 	eventually(t, "ItemReady", time.Minute, func() bool { r, ok := h.lastSettled(ref); return ok && r.Ready() })
 	if th, ok := h.file(ref, "thumb/001.webp"); !ok || th.W != 100 || th.H != 150 || th.FP == "" {
 		t.Fatalf("thumb %+v", th)

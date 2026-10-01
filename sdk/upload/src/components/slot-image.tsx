@@ -2,44 +2,35 @@ import { ratio, type AspectRatio } from "../aspect.js";
 import { Image01Icon, UserIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import type { ComponentProps, ReactNode } from "react";
-import type { UploadClient } from "../client.js";
-import { useSlotImage } from "../slot-react.js";
-import { manifestAspect } from "../srcset.js";
+import { useState, type ComponentProps, type ReactNode } from "react";
+import { publicRenditions, type PublicImage } from "../public.js";
 import type { DensityRange } from "../rendition.js";
+import { usePublicGeneration } from "../slot-react.js";
 import { RenditionImg } from "./rendition-img.js";
-import type { RefBody, SlotManifest } from "../wire.gen.js";
-import { useOptionalUploadClient } from "../provider.js";
 import { UploadUiRoot } from "../scope.js";
 
 export interface SlotImageProps extends Omit<ComponentProps<"img">, "src" | "srcSet" | "sizes" | "width" | "height" | "placeholder"> {
-  /** A manifest the host already has; otherwise fetched with client.getSlot(item, slot). */
-  manifest?: SlotManifest | null;
-  item?: RefBody;
-  slot?: string;
-  client?: UploadClient;
-  /** Density range for picking the rendition; default the provider's (2–3×). */
+  /** The item's public preset (fixed URLs; a missing file is served its kind's default). */
+  image?: PublicImage | null;
+  /** Density range for picking the width; default the provider's (2–3×). */
   density?: DensityRange;
   round?: boolean;
-  /** Width / height of the box; default the manifest's aspect. */
+  /** Width / height of the box; default the preset's aspect. */
   aspect?: AspectRatio;
-  /** Shown when the slot is empty; default a muted box with an icon. */
+  /** Shown without an image (or when it fails to load); default a muted box with an icon. */
   placeholder?: ReactNode;
   /** Accessible name of the empty state. */
   emptyLabel?: string;
 }
 
-/** A slot manifest's image, in a box at the slot's aspect, at the rendition its rendered width × density needs. */
-export function SlotImage({ manifest, item, slot, client, density, round, aspect, placeholder, emptyLabel, className, alt = "", style, ...img }: SlotImageProps) {
-  const c = useOptionalUploadClient(client);
-  const fetched = useSlotImage(manifest === undefined && item && slot ? c : null, {
-    ref: item ?? { kind: "", id: "" },
-    slot: slot ?? "",
-    manifest: manifest === undefined && item && slot ? undefined : (manifest ?? null),
-  });
-  const m = fetched.manifest;
-  const has = !!m?.outputs.some((o) => o.url);
-  const a = ratio(aspect ?? manifestAspect(m)) ?? 1;
+/** A public image preset's file, in a box at its aspect, at the width its rendered width × density needs. */
+export function SlotImage({ image, density, round, aspect, placeholder, emptyLabel, className, alt = "", style, onError, ...img }: SlotImageProps) {
+  const generation = usePublicGeneration();
+  const outputs = publicRenditions(image);
+  const [failed, setFailed] = useState<string | null>(null);
+  const key = `${outputs[0]?.url}#${generation}`;
+  const has = outputs.length > 0 && failed !== key;
+  const a = ratio(aspect ?? image?.aspect) ?? 1;
   return (
     <UploadUiRoot
       className={cn("relative overflow-hidden bg-muted", round ? "rounded-full" : "rounded-lg", className)}
@@ -48,7 +39,18 @@ export function SlotImage({ manifest, item, slot, client, density, round, aspect
       data-empty={has ? undefined : ""}
     >
       {has ? (
-        <RenditionImg {...img} outputs={m!.outputs} density={density} alt={alt} className="absolute inset-0 size-full object-cover" />
+        <RenditionImg
+          {...img}
+          key={key}
+          outputs={outputs}
+          density={density}
+          alt={alt}
+          className="absolute inset-0 size-full object-cover"
+          onError={(e) => {
+            setFailed(key);
+            onError?.(e);
+          }}
+        />
       ) : (
         (placeholder ?? (
           <div role={emptyLabel ? "img" : undefined} aria-label={emptyLabel} className="absolute inset-0 flex items-center justify-center text-muted-foreground/70">

@@ -248,13 +248,69 @@ func (m *Manifest) Validate() error {
 	return nil
 }
 
-// Clone copies the manifest for an edit; file maps and pointers are shared,
-// so an edit replaces them rather than mutating them.
+// Clone deep-copies the manifest for an edit: a cached manifest is shared,
+// so an edit never mutates it.
 func (m *Manifest) Clone() *Manifest {
 	out := *m
-	out.Files = slices.Clone(m.Files)
+	out.Meta = cloneMap(m.Meta)
+	out.Files = make([]File, len(m.Files))
+	for i, f := range m.Files {
+		f.Meta, f.Pending = cloneMap(f.Meta), slices.Clone(f.Pending)
+		if f.Edit != nil {
+			e := *f.Edit
+			if e.Crop != nil {
+				c := *e.Crop
+				e.Crop = &c
+			}
+			f.Edit = &e
+		}
+		if f.Frame != nil {
+			x := *f.Frame
+			f.Frame = &x
+		}
+		if f.Failed != nil {
+			x := *f.Failed
+			if x.Details != nil {
+				d := *x.Details
+				d.Allowed = slices.Clone(d.Allowed)
+				x.Details = &d
+			}
+			f.Failed = &x
+		}
+		if f.Track != nil {
+			x := *f.Track
+			f.Track = &x
+		}
+		out.Files[i] = f
+	}
 	out.index = nil
 	return &out
+}
+
+// cloneMap deep-copies JSON-shaped values.
+func cloneMap(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = cloneValue(v)
+	}
+	return out
+}
+
+func cloneValue(v any) any {
+	switch v := v.(type) {
+	case map[string]any:
+		return cloneMap(v)
+	case []any:
+		out := make([]any, len(v))
+		for i, x := range v {
+			out[i] = cloneValue(x)
+		}
+		return out
+	}
+	return v
 }
 
 // SetOutputs replaces preset's outputs from the upload (or zip prefix) from

@@ -150,7 +150,7 @@ func (o *opRun) apply(n int, op Op) error {
 		if !isImageType(f.Type) {
 			return uploadErr(CodeInvalid, "upload %q: only images take an edit", f.Path)
 		}
-		e, err := k.EditBounds(f.Path).Resolve(op.Edit, f.W, f.H)
+		e, err := fitEdit(k.EditBounds(f.Path), op.Edit, f.W, f.H)
 		if err != nil {
 			return editErr(err, "upload %q: %v", f.Path)
 		}
@@ -227,7 +227,7 @@ func (o *opRun) put(op Op) error {
 		if !isImageType(f.Type) {
 			return uploadErr(CodeInvalid, "upload %q: only images take an edit", f.Path)
 		}
-		e, err := k.EditBounds(f.Path).Resolve(op.Edit, f.W, f.H)
+		e, err := fitEdit(k.EditBounds(f.Path), op.Edit, f.W, f.H)
 		if err != nil {
 			return editErr(err, "upload %q: %v", f.Path)
 		}
@@ -238,6 +238,20 @@ func (o *opRun) put(op Op) error {
 	}
 	f.Pending = k.Presets(f.Path, m.Hidden)
 	return o.place(g, i, f, op.Index)
+}
+
+// fitEdit checks e against the upload's bounds and stores what the editor
+// chose: a crop fitted to the aspect, or no crop (the producer centres one).
+func fitEdit(bounds Image, e *Edit, w, h int) (*Edit, error) {
+	e = e.Normalize()
+	if e == nil {
+		return nil, nil
+	}
+	fitted, err := bounds.Resolve(e, w, h)
+	if err != nil || e.Crop != nil {
+		return fitted, err
+	}
+	return e, nil
 }
 
 func stripPending(f File) File {
