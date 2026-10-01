@@ -239,8 +239,8 @@ func (k *Kind) validatePublic(p *Public, names map[string]bool) error {
 		return fmt.Errorf("From %q is no upload path", p.From)
 	}
 	vars := placeholders(p.To)
-	if slices.Contains(vars, "name") && k.patterns[i].literal == "" && !k.Uploads[i].Named {
-		return errors.New("{name} in To needs a literal or Named upload")
+	if slices.Contains(vars, "name") && (k.patterns[i].literal == "" && !k.Uploads[i].Named || p.Default != "") {
+		return errors.New("{name} in To needs a literal or Named upload, and no Default")
 	}
 	if slices.ContainsFunc(vars, func(s string) bool { return s != "name" && s != "w" }) ||
 		slices.Contains(vars, "w") != (len(p.Widths) > 0) ||

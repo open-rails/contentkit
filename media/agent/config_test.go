@@ -39,11 +39,13 @@ func TestNewValidates(t *testing.T) {
 		"wildcard origin":  func(c *Config) { c.Origins = []string{"*"} },
 		"origin path":      func(c *Config) { c.Origins = []string{"https://doujins.ai/"} },
 		"origin no scheme": func(c *Config) { c.Origins = []string{"doujins.ai"} },
-		"bad template":     func(c *Config) { c.Defaults = []layout.Default{{Namespace: "doujins", Kind: "gallery", Names: []string{"cover-{h}.webp"}}} },
-		"no names":         func(c *Config) { c.Defaults = []layout.Default{{Namespace: "doujins", Kind: "gallery"}} },
-		"bad endpoint":     func(c *Config) { c.Endpoint = "localhost:9000" },
-		"bad bucket":       func(c *Config) { c.Bucket = "a/b" },
-		"no credentials":   func(c *Config) { c.SecretAccessKey = "" },
+		"bad template": func(c *Config) {
+			c.Defaults = []layout.Default{{Namespace: "doujins", Kind: "gallery", Names: []string{"cover-{h}.webp"}}}
+		},
+		"no names":       func(c *Config) { c.Defaults = []layout.Default{{Namespace: "doujins", Kind: "gallery"}} },
+		"bad endpoint":   func(c *Config) { c.Endpoint = "localhost:9000" },
+		"bad bucket":     func(c *Config) { c.Bucket = "a/b" },
+		"no credentials": func(c *Config) { c.SecretAccessKey = "" },
 	} {
 		c := base
 		mut(&c)

@@ -125,7 +125,9 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 			Owner: grant.Owner, Key: reserve, Size: req.Size}); err != nil {
 			return IngestResult{}, err
 		}
-		defer func() { _ = u.o.Limiter.Settle(context.WithoutCancel(ctx), Settlement{Tenant: req.Ref.TenantID, Keys: []string{reserve}}) }()
+		defer func() {
+			_ = u.o.Limiter.Settle(context.WithoutCancel(ctx), Settlement{Tenant: req.Ref.TenantID, Keys: []string{reserve}})
+		}()
 	}
 	var res IngestResult
 	if single {

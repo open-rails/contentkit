@@ -10,15 +10,13 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Media connects post and poll images to ContentKit media. The browser uploads
-// an image through media's upload API as an inline image of the post's or
-// poll's folder ({tenant}/{kind}/{id}/, whose media.Kind sets Inline), waits
-// for it to render and hands its name ("i-{uuid}") to ContentKit, which
-// stores the public URL and deletes the folder with the post or poll. Runtime.CanUpload authorizes those
-// uploads.
+// an image to a Named upload path of the post's or poll's item (the host's
+// media registry declares it and its public preset), and hands its name
+// ("i-{uuid}") to ContentKit, which stores the public URL and deletes the
+// item with the post or poll. Runtime.CanUpload authorizes those uploads.
 type Media struct {
 	URLs     MediaURLs    // *media.Reader
 	Folders  MediaFolders // *media.Jobs
@@ -26,8 +24,8 @@ type Media struct {
 	PollKind string       // media kind of poll folders; default "poll"
 }
 
-// MediaURLs resolves inline images to their public URLs (media.ErrPending
-// until rendered); *media.Reader implements it.
+// MediaURLs maps an inline image name to its public URL, a pure function of
+// the host's registry (media.Registry.PublicURL of its public preset).
 type MediaURLs interface {
 	InlineURL(ctx context.Context, ref contentref.ContentRef, name string) (string, error)
 }
@@ -84,13 +82,10 @@ func (rt *Runtime) imageURL(ctx context.Context, f folder, id, name string) (*st
 	if name == "" {
 		return nil, nil
 	}
-	if !layout.ValidInlineName(name) {
+	if !media.ValidNamed(name) {
 		return nil, badRequest("image must be an inline image name (i-{uuid})")
 	}
 	u, err := rt.media.URLs.InlineURL(ctx, rt.Ref(rt.media.kind(f), id), name)
-	if errors.Is(err, media.ErrPending) {
-		return nil, badRequest("image %s is not rendered yet", name)
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -105,12 +100,12 @@ func (rt *Runtime) deleteMediaTx(ctx context.Context, tx pgx.Tx, f folder, id st
 	return rt.media.Folders.DeleteItemsTx(ctx, tx, media.Deletion{Ref: rt.Ref(rt.media.kind(f), id)})
 }
 
-// CanUpload is media's UploadAuthorizer for post and poll folders: the actor
+// CanUpload is media's UploadAuthorizer for post and poll items: the actor
 // holds Perms.PostWrite or Perms.PollWrite and the post or poll exists in this
 // tenant. Every other target is refused; hosts route their own kinds elsewhere.
 func (rt *Runtime) CanUpload(ctx context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
 	ref := t.Ref
-	if rt.media == nil || ref.TenantID != rt.tenant || ref.ContentVersionID != nil || t.Slot != "" {
+	if rt.media == nil || ref.TenantID != rt.tenant || ref.ContentVersionID != nil {
 		return media.UploadGrant{}, nil
 	}
 	var perm, table string

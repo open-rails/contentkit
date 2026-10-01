@@ -343,7 +343,7 @@ type sweepArgs struct {
 	After  int64  `json:"after,omitempty"` // the running sweep this one follows
 }
 
-func (sweepArgs) Kind() string                     { return "contentkit_media_sweep" }
+func (sweepArgs) Kind() string                      { return "contentkit_media_sweep" }
 func (a sweepArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
 
 type sweepWorker struct {
@@ -432,7 +432,7 @@ type readyArgs struct {
 	After int64                 `json:"after,omitempty"`
 }
 
-func (readyArgs) Kind() string                     { return "contentkit_media_ready" }
+func (readyArgs) Kind() string                      { return "contentkit_media_ready" }
 func (a readyArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
 
 type readyWorker struct {

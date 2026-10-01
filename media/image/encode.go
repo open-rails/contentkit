@@ -54,7 +54,7 @@ var formats = map[string]vips.ImageType{
 var animated = map[string]bool{"image/gif": true, "image/webp": true}
 
 // rules bound a source: pixels over all frames, frames, running time and the
-// kind's or slot's animation policy.
+// preset's animation policy.
 type rules struct {
 	maxPixels  int
 	maxFrames  int
@@ -275,7 +275,7 @@ func webp(img *vips.ImageRef, quality int) ([]byte, error) {
 // encode derives one WebP from src through edit per spec, frame by frame
 // (nil edit: the whole source). Inside never enlarges; cover fills the box
 // and crops the centre; a zero box keeps full resolution.
-func encode(src []byte, contentType string, s media.Spec, edit *media.Edit) ([]byte, media.Dims, error) {
+func encode(src []byte, contentType string, s media.Image, edit *media.Edit) ([]byte, media.Dims, error) {
 	full := s.Width == 0 && s.Height == 0
 	w, h := orUnbounded(s.Width), orUnbounded(s.Height)
 	crop, size := vips.InterestingNone, vips.SizeDown
@@ -314,25 +314,34 @@ func encode(src []byte, contentType string, s media.Spec, edit *media.Edit) ([]b
 	return out, media.Dims{W: img.Width(), H: img.PageHeight()}, nil
 }
 
-// slotOutput is one encoded slot width.
-type slotOutput struct {
+// rendition is one encoded public name.
+type rendition struct {
 	webp []byte
 	dims media.Dims
 }
 
-// encodeSlot checks src is contentType and within r, decodes it, applies its
-// EXIF orientation and the slot's resolved edit, and encodes every width that
-// fits the edited image, never upscaling; animations stay animated. dims is
-// the oriented source's (one frame's) size once known.
-func encodeSlot(src []byte, contentType string, s media.Slot, edit *media.Edit, r rules) (map[int]slotOutput, media.Dims, error) {
+// encodePublic checks src is contentType and within r, decodes it, applies
+// its EXIF orientation and the preset's resolved edit, and encodes each of
+// names (one per width, or one at the image's box without widths), never
+// upscaling: a width past the edited image renders at the edited width, so
+// every name exists. Animations stay animated. dims is the oriented
+// source's (one frame's) size once known.
+func encodePublic(src []byte, contentType string, p *media.Public, names []string, edit *media.Edit, r rules) (map[string]rendition, media.Dims, error) {
 	var dims media.Dims
 	info, err := probe(src, contentType, r)
 	if err != nil {
 		return nil, dims, err
 	}
 	dims = info.dims()
-	if edit, err = s.Resolve(edit, dims.W, dims.H); err != nil {
+	if edit, err = p.Image.Resolve(edit, dims.W, dims.H); err != nil {
 		return nil, dims, permanentError{fmt.Errorf("edit: %w", err)}
+	}
+	if len(p.Widths) == 0 {
+		out, d, err := encode(src, contentType, p.Image, edit)
+		if err != nil {
+			return nil, dims, err
+		}
+		return map[string]rendition{names[0]: {out, d}}, dims, nil
 	}
 	img, err := open(src, contentType)
 	if err == nil {
@@ -343,12 +352,17 @@ func encodeSlot(src []byte, contentType string, s media.Slot, edit *media.Edit, 
 	}
 	defer img.Close()
 	edited := media.Dims{W: img.Width(), H: img.PageHeight()}
-	outs := map[int]slotOutput{}
-	var last slotOutput
-	for _, rung := range s.Widths {
-		d := s.Size(s.OutputWidth(rung, edited.W), edited)
+	aspect := p.Image.Aspect
+	if aspect.Native() {
+		aspect = media.AspectOf(edited.W, edited.H)
+	}
+	outs := map[string]rendition{}
+	var last rendition
+	for i, rung := range p.Widths {
+		w := min(rung, edited.W)
+		d := media.Dims{W: w, H: aspect.Height(w)}
 		if d == last.dims {
-			outs[rung] = last // rungs past the edited width share its bytes
+			outs[names[i]] = last // widths past the edited width share its bytes
 			continue
 		}
 		out, err := img.Copy()
@@ -359,7 +373,7 @@ func encodeSlot(src []byte, contentType string, s media.Slot, edit *media.Edit, 
 		}
 		var b []byte
 		if err == nil {
-			b, err = webp(out, s.Quality)
+			b, err = webp(out, p.Image.Quality)
 		}
 		if out != nil {
 			out.Close()
@@ -367,8 +381,8 @@ func encodeSlot(src []byte, contentType string, s media.Slot, edit *media.Edit, 
 		if err != nil {
 			return nil, dims, permanentError{err}
 		}
-		last = slotOutput{b, d}
-		outs[rung] = last
+		last = rendition{b, d}
+		outs[names[i]] = last
 	}
 	return outs, dims, nil
 }
