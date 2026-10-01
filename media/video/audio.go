@@ -74,6 +74,9 @@ func (e *Encoder) audio(ctx context.Context, item media.Item, args workqueue.Aud
 			return ctx.Err()
 		}
 		errs = append(errs, e.settle(ctx, item, w.f, err))
+		if errors.Is(err, media.ErrManifestTooLarge) {
+			break // the item is Full: the rest would be encoded only to be refused
+		}
 	}
 	return errors.Join(errs...)
 }

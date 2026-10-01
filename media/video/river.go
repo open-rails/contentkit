@@ -243,7 +243,7 @@ func (w *audioWorker) Work(ctx context.Context, job *river.Job[workqueue.AudioAr
 // full marks the item Full (its outputs do not fit) and ends the job: a
 // retry would only be refused again.
 func (c WorkerConfig) full(ctx context.Context, ref contentref.ContentRef, err error) error {
-	return river.JobCancel(errors.Join(err, c.Encoder.ms.SetFull(ctx, ref)))
+	return river.JobCancel(errors.Join(err, c.Encoder.ms.SetFull(ctx, ref, err)))
 }
 
 func (c WorkerConfig) report(id int64) Report {

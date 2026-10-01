@@ -42,9 +42,14 @@ func (j *Jobs) Expose(ctx context.Context, ref contentref.ContentRef) error {
 			}
 		}
 		changed := false
-		// Every other edit stops editHeadroom short of the bound, so this one
-		// fits; a refusal is returned and the job retries.
-		_, err := j.manifests.edit(ctx, ref, true, bound{limit: MaxManifestBytes}, func(m *Manifest) error {
+		// Every other edit stops editHeadroom short of the bound, so a hide
+		// fits; an unhide leaves flagBytes for a later hide or SetFull. A
+		// refusal is returned and the job retries.
+		limit := int64(MaxManifestBytes)
+		if !hidden {
+			limit -= flagBytes
+		}
+		_, err := j.manifests.edit(ctx, ref, true, bound{limit: limit}, func(m *Manifest) error {
 			changed = m.Hidden != hidden
 			setHidden(item.Kind(), m, hidden)
 			return nil

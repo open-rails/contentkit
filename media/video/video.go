@@ -141,7 +141,7 @@ func (e *Encoder) settle(ctx context.Context, item media.Item, f media.File, err
 	case errors.Is(err, errStale):
 		return nil
 	case errors.Is(err, media.ErrManifestTooLarge):
-		return errors.Join(err, e.ms.SetFull(ctx, item.Ref()))
+		return errors.Join(err, e.ms.SetFull(ctx, item.Ref(), err))
 	case errors.As(err, &perm):
 		return e.fail(ctx, item, f.Path, f.Blob, perm.Err)
 	case err != nil:

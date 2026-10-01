@@ -346,10 +346,10 @@ func TestHideFits(t *testing.T) {
 	}
 }
 
-// A Full item asks the worker for nothing: commits that do not shrink it
-// (a regenerate, a meta edit as long) enqueue no work and leave it Full; one
-// that shrinks it clears Full and processing resumes. Readiness and editor
-// reads say so.
+// A Full item asks the worker for nothing: commits that do not make real
+// room (a regenerate, a meta edit as long, a one-byte shrink) enqueue no
+// work and leave it Full; one that removes an upload clears Full and
+// processing resumes. Readiness and editor reads say so.
 func TestFullStopsUntilShrunk(t *testing.T) {
 	f := newFixture(t)
 	f.visible(1)
@@ -357,8 +357,19 @@ func TestFullStopsUntilShrunk(t *testing.T) {
 	g := f.gallery(1, 2)
 	f.commit(g, media.Op{Op: media.OpMeta, Meta: map[string]any{"title": "abc"}})
 	f.put(g, "originals/002.png", "image/png", png(102))
-	if err := f.ms.SetFull(ctx, g); err != nil {
+	// A record refused for size, as a producer meets it.
+	_, cause := f.ms.EditExisting(ctx, g, func(m *media.Manifest) error {
+		m.Meta = map[string]any{"title": strings.Repeat("A", media.MaxManifestBytes)}
+		return nil
+	})
+	if !errors.Is(cause, media.ErrManifestTooLarge) {
+		t.Fatalf("an oversized record: %v", cause)
+	}
+	if err := f.ms.SetFull(ctx, g, cause); err != nil {
 		t.Fatal(err)
+	}
+	if m, _, _ := f.ms.Get(ctx, g); !m.Full || m.Deficit < 1000 {
+		t.Fatalf("full %v, deficit %d", m.Full, m.Deficit)
 	}
 	f.q.take()
 	k, _ := f.reg.Kind("gallery")
@@ -366,13 +377,18 @@ func TestFullStopsUntilShrunk(t *testing.T) {
 	if jobs := f.q.take(); !m.Full || len(jobs) != 0 || k.Readiness(m).State != media.StateFull {
 		t.Fatalf("full %v, enqueued %+v, state %s", m.Full, jobs, k.Readiness(m).State)
 	}
+	// Freeing less than the refused record was short of re-runs nothing.
+	m = f.commit(g, media.Op{Op: media.OpMeta, Meta: map[string]any{"title": "xy"}})
+	if jobs := f.q.take(); !m.Full || len(jobs) != 0 {
+		t.Fatalf("a one-byte shrink: full %v, enqueued %+v", m.Full, jobs)
+	}
 	res, err := f.rd.Read(ctx, g, f.editor, media.ReadOptions{Editor: true})
 	if err != nil || !res.Full || res.State != media.StateFull {
 		t.Fatalf("editor read %+v %v", res, err)
 	}
 	f.q.take() // the read asks for its editor views
 	m = f.commit(g, media.Op{Op: media.OpRemove, Path: "originals/000.png"})
-	if jobs := f.q.take(); m.Full || len(jobs) != 1 {
-		t.Fatalf("a shrinking commit: full %v, enqueued %+v", m.Full, jobs)
+	if jobs := f.q.take(); m.Full || m.Deficit != 0 || len(jobs) != 1 {
+		t.Fatalf("a removal: full %v, enqueued %+v", m.Full, jobs)
 	}
 }

@@ -536,3 +536,58 @@ func TestFullManifestStopsProcessing(t *testing.T) {
 		t.Fatal("not processed once shrunk")
 	}
 }
+
+// A Full item still renders its public files: recording them only clears
+// pending names. Hidden and restored, it gets its cover back while its
+// private outputs stay stopped.
+func TestFullStillRendersPublic(t *testing.T) {
+	e := newEnv(t, nil)
+	g := e.ref(t, "gallery", 1)
+	ctx := context.Background()
+	e.put(t, g, "cover.png", "image/png", quadrants(t))
+	e.process(t, media.ProcessJob{Ref: g})
+	if _, _, ok := e.public(t, g, "cover-150.webp"); !ok {
+		t.Fatal("no cover")
+	}
+	e.put(t, g, "originals/1.png", "image/png", solid(t, 30, 40, red))
+	if _, err := e.ms.EditExisting(ctx, g, func(m *media.Manifest) error {
+		c := *m
+		c.Meta = map[string]any{"pad": ""}
+		var b bytes.Buffer
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(&c); err != nil {
+			return err
+		}
+		m.Meta = map[string]any{"pad": strings.Repeat("A", media.MaxManifestBytes-4<<10-100-b.Len())}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.process(t, media.ProcessJob{Ref: g})
+	if m := e.manifest(t, g); !m.Full || m.Deficit <= 0 {
+		t.Fatalf("full %v, deficit %d", m.Full, m.Deficit)
+	}
+	// Hidden (public/ emptied) and restored (the cover pending again).
+	item, _ := e.reg.Item(g)
+	for _, w := range []int{150, 300, 600} {
+		key, _ := item.Public(fmt.Sprintf("cover-%d.webp", w))
+		if err := e.Store.Delete(ctx, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := e.ms.EditExisting(ctx, g, func(m *media.Manifest) error {
+		m.AddPending("cover.png", "cover")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.process(t, media.ProcessJob{Ref: g})
+	m := e.manifest(t, g)
+	if _, _, ok := e.public(t, g, "cover-150.webp"); !ok || !m.Full {
+		t.Fatalf("a full item's cover rendered %v, still full %v", ok, m.Full)
+	}
+	if c, _ := m.Get("cover.png"); len(c.Pending) != 0 || len(m.Outputs("originals/1.png", "thumb")) != 0 {
+		t.Fatalf("cover pending %v, thumbs %v", c.Pending, m.Outputs("originals/1.png", "thumb"))
+	}
+}
