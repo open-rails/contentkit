@@ -221,8 +221,8 @@ func (m *Manifest) Blobs() []string {
 	return out
 }
 
-// Validate requires unique paths, well-formed blobs and edits, and derived
-// files with a preset.
+// Validate requires unique paths, well-formed blobs and edits, and upload
+// and derived fields where they belong.
 func (m *Manifest) Validate() error {
 	seen := make(map[string]bool, len(m.Files))
 	for i, f := range m.Files {
@@ -239,7 +239,9 @@ func (m *Manifest) Validate() error {
 			return fmt.Errorf("media: manifest file %q: an upload has provenance", f.Path)
 		}
 		seen[f.Path] = true
-		if err := f.Edit.Check(f.W, f.H); err != nil {
+		// Bounds are checked at commit and by the producers (a failure, not
+		// a refused edit), so a measured size never wedges a worker's edit.
+		if err := f.Edit.Check(0, 0); err != nil {
 			return fmt.Errorf("media: manifest file %q: edit: %w", f.Path, err)
 		}
 	}
