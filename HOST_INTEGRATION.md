@@ -480,14 +480,16 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
 | --- | --- |
 | `POST /presign {ref, path, type, size, sha256}` | Checks the path's Upload and `CanUpload`; answers `exists`, one `put`, or a `multipart` ticket, and the `path` to commit (cleaned, with an extension, server-named for `Named`). |
 | `POST /parts`, `/parts/list`, `/complete`, `/abort` | Multipart parts bound to their SHA-256; resume; assemble. |
-| `POST /commit {ref, ops}` | Applies ops in one conditional write, then enqueues processing. |
+| `POST /commit {ref, ops}` | Applies ops in one conditional write, then enqueues placement and processing. |
 | `GET /frame?kind&id&path&t&w` | A JPEG still of a video upload for the frame picker (`UploadOptions.Frames`). |
 
-The browser hashes every file before uploading, so every blob lands at its
-content address in `private/`. A multipart blob's hash is verified by the
-producer that first reads it (a mismatch fails the upload,
-`checksum_mismatch`). Server-side imports use `Uploads.Ingest`, which writes
-through `temp/` and copies to the content address.
+Uploads land at a staged name, `temp/u-{uuid}`, which presign answers as
+`blob` (or the folder's identical blob, with `exists`); the put op commits
+that name. The media worker then hashes each staged upload and places it at
+`private/sha256-{hex}` of its bytes before processing (an upload gone or
+changed by then fails with `not_uploaded`), so no client ever writes under a
+blob name. Server-side imports use `Uploads.Ingest`, which stages the same
+way.
 
 | Op | Does |
 | --- | --- |
@@ -603,8 +605,9 @@ and `hentai0_media_worker`, and passes it everywhere:
 It is required. Hosts sharing a database must never share one: a worker
 drains every job in its schema, so it would take another host's jobs (same
 queue and job kinds) and fail them against its own registry and bucket. Queue
-names (`media_image`, `media_video`, `media_audio`) are fixed within a
-schema. Autoscalers (KEDA) count `{schema}.river_job` rows of `media_video`
+names (`media_place`, `media_image`, `media_video`, `media_audio`) are fixed
+within a schema; every upload passes through `media_place`, so a worker must
+run even for kinds without presets. Autoscalers (KEDA) count `{schema}.river_job` rows of `media_video`
 and `media_audio` (available/running/retryable).
 
 It is never the host's own River schema either: River elects one leader per

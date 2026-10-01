@@ -15,8 +15,8 @@ import (
 )
 
 // readyHook asks the host to report an item's readiness (Hooks.ItemReady,
-// through its media queue) after each image or video job that leaves the
-// item settled.
+// through its media queue) after each place, image or video job that leaves
+// the item settled.
 type readyHook struct {
 	river.HookDefaults
 	manifests *media.Manifests
@@ -24,7 +24,7 @@ type readyHook struct {
 }
 
 func (h *readyHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err error) error {
-	if err != nil || job.Kind != (workqueue.ImageArgs{}).Kind() && !slices.Contains(workqueue.EncodeKinds, job.Kind) {
+	if err != nil || job.Kind != (workqueue.PlaceArgs{}).Kind() && job.Kind != (workqueue.ImageArgs{}).Kind() && !slices.Contains(workqueue.EncodeKinds, job.Kind) {
 		return err
 	}
 	var args struct {

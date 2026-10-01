@@ -2,9 +2,7 @@ package video_test
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"math"
 	"os"
 	"os/exec"
@@ -139,31 +137,5 @@ func TestSubtitleSidecars(t *testing.T) {
 	after := e.manifest().Outputs("subs/ja.srt", "vtt")[0]
 	if after.FP == before.FP || after.Blob != before.Blob {
 		t.Fatalf("re-converted %+v, before %+v", after, before)
-	}
-}
-
-// A multipart upload whose bytes are not its declared SHA-256 fails with
-// checksum_mismatch when the worker first reads it, and its blob is deleted.
-func TestMultipartChecksumMismatch(t *testing.T) {
-	e := newEnv(t, opts{})
-	e.start()
-	body := bytes.Repeat([]byte("not the declared video "), (media.MaxSinglePut+media.MinPartSize)/23)
-	claim := sha256.Sum256([]byte("declared"))
-	path, blob := e.upload(e.ref, "source", "video/x-matroska", body, claim[:])
-	e.commit(media.Op{Op: media.OpPut, Path: path, Blob: blob})
-	e.wait()
-
-	m := e.manifest()
-	src := e.file(m, "source.mkv")
-	if fail := src.Fail(); fail == nil || fail.Code != media.CodeChecksum || !src.Gone || len(src.Pending) != 0 ||
-		e.readiness(m).State != media.StateFailed {
-		t.Fatalf("source %+v failure %+v", src, src.Failed)
-	}
-	key, _ := e.item().Blob(blob)
-	if _, err := e.store.Head(e.ctx, key); !errors.Is(err, media.ErrNotFound) {
-		t.Fatalf("mismatched blob kept: %v", err)
-	}
-	if f := e.failed(); len(f) != 1 || f[0].path != "source.mkv" {
-		t.Fatalf("failures %+v", f)
 	}
 }

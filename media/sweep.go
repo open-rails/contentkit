@@ -29,7 +29,8 @@ type SweepResult struct {
 //     mid-stream viewers of a replaced file, editor views);
 //   - public/ names no preset expects (a removed upload, a hidden item), at
 //     once, purged;
-//   - temp/ by age (JobsConfig.TempTTL).
+//   - temp/ by age (JobsConfig.TempTTL), but for staged uploads the
+//     manifest references.
 //
 // It holds the manifest lock through selection and deletion, and decides on
 // a second listing, so a manifest written meanwhile keeps what it references.
@@ -143,12 +144,16 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 	return SweepResult{Deleted: keys, Wait: wait}, nil
 }
 
-// keeps is what an item's manifest keeps, as "{area}/{name}": its blobs and,
-// unless hidden, the public names its uploads' presets render.
+// keeps is what an item's manifest keeps, as "{area}/{name}": its blobs and
+// staged uploads and, unless hidden, the public names its uploads' presets
+// render.
 func (j *Jobs) keeps(item Item, m *Manifest) map[string]bool {
 	keep := map[string]bool{}
 	for _, b := range m.Blobs() {
 		keep[layout.AreaPrivate+"/"+b] = true
+	}
+	for _, s := range m.StagedNames() {
+		keep[layout.AreaTemp+"/"+s] = true
 	}
 	if m.Hidden {
 		return keep

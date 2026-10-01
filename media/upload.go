@@ -1,17 +1,17 @@
 package media
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -19,11 +19,11 @@ import (
 	"github.com/open-rails/contentkit/media/token"
 )
 
-// Upload size rules. Every upload lands at private/sha256-{hex}, the hash
-// the browser computed over the whole file: up to MaxSinglePut as one
-// checksum-bound PUT, larger in parts of MinPartSize up to MaxPartSize (the
-// last may be smaller). A multipart blob's hash is verified by the producer
-// that first reads it.
+// Upload size rules. An upload lands at a staged name in temp/ (u-{uuid}):
+// up to MaxSinglePut as one checksum-bound PUT, larger in parts of
+// MinPartSize up to MaxPartSize (the last may be smaller). Once committed,
+// the media worker hashes it and places it at private/sha256-{hex}
+// (Manifests.Place), so a blob's bytes always hash to its name.
 const (
 	MaxSinglePut = 64 << 20
 	MinPartSize  = 8 << 20
@@ -36,7 +36,7 @@ type UploadOptions struct {
 	Manifests *Manifests    // its Registry's Hooks.CanUpload authorizes, Hooks.Resolver hides new items
 	Tickets   *token.Ring   // signs multipart tickets (domain-separated from access tokens); required above MaxSinglePut
 	Limiter   UploadLimiter // optional
-	Queue     ProcessQueue  // optional
+	Queue     ProcessQueue  // places staged uploads and processes items in the media worker; required
 	// PresignTTL bounds PUT and part URLs; default 15m. TicketTTL bounds a
 	// multipart ticket; default 24h, the bucket's abort-incomplete rule.
 	PresignTTL, TicketTTL time.Duration
@@ -62,8 +62,8 @@ type Uploads struct {
 }
 
 func NewUploads(o UploadOptions) (*Uploads, error) {
-	if o.Store == nil || o.Manifests == nil {
-		return nil, errors.New("media: Uploads needs a Store and Manifests")
+	if o.Store == nil || o.Manifests == nil || o.Queue == nil {
+		return nil, errors.New("media: Uploads needs a Store, Manifests and a Queue")
 	}
 	reg := o.Manifests.Registry()
 	if reg.cfg.Hooks.CanUpload == nil {
@@ -84,7 +84,8 @@ func NewUploads(o UploadOptions) (*Uploads, error) {
 	return &Uploads{o: o, reg: reg, frames: make(chan struct{}, o.FrameConcurrency)}, nil
 }
 
-// PresignRequest declares one upload; SHA256 is the whole file's.
+// PresignRequest declares one upload; SHA256 is the whole file's: it finds
+// an identical blob already in the folder and binds a single PUT's body.
 type PresignRequest struct {
 	Ref    contentref.ContentRef
 	Path   string
@@ -94,7 +95,9 @@ type PresignRequest struct {
 }
 
 // Presigned is the upload plan: Exists (commit it), a single Put, or a
-// Multipart upload. Path is the path to commit.
+// Multipart upload. Path is the path to commit; Blob is the name to commit:
+// the folder's blob when Exists, else the staged upload (u-{uuid}) that the
+// PUT or the parts write.
 type Presigned struct {
 	Path            string
 	Blob            string
@@ -148,21 +151,24 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequ
 	if err != nil {
 		return Presigned{}, err
 	}
+	out := Presigned{Path: path, ProcessOnUpload: u.o.ProcessOnUpload}
+	// An identical blob already in the folder needs no upload, unless the
+	// sweep may soon take it. Anything else is staged: nothing a client
+	// sends is ever written under a blob name.
 	blob := layout.SHA256Name(r.SHA256)
 	key, _ := item.Blob(blob)
-	out := Presigned{Path: path, Blob: blob, ProcessOnUpload: u.o.ProcessOnUpload}
-	// Content-addressed: an identical blob already in the folder needs no
-	// upload, unless the sweep may soon take it; a new upload refreshes it.
 	if obj, err := u.o.Store.Head(ctx, key); err == nil && obj.Size == r.Size && obj.ContentType == r.Type {
 		if ok, err := u.protected(ctx, item, blob, obj); err != nil {
 			return Presigned{}, err
 		} else if ok {
-			out.Exists = true
+			out.Blob, out.Exists = blob, true
 			return out, nil
 		}
 	} else if err != nil && !errors.Is(err, ErrNotFound) {
 		return Presigned{}, err
 	}
+	out.Blob = NewStaged()
+	key, _ = item.Staged(out.Blob)
 	res := Reservation{Tenant: r.Ref.TenantID, Uploader: uploaderID(actor), Owner: grant.Owner, Key: key, Size: r.Size}
 	limited := u.o.Limiter != nil && !grant.Exempt
 	if limited {
@@ -178,6 +184,9 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequ
 	}
 	return out, nil
 }
+
+// NewStaged is a fresh staged upload name: "u-{uuid}".
+func NewStaged() string { return layout.StagedPrefix + uuid.NewString() }
 
 // uploadPath is the path to commit for a requested one: its {name} cleaned
 // (or chosen, for a Named upload) and an extension from the type when it
@@ -273,7 +282,7 @@ func (u *Uploads) listParts(ctx context.Context, key, id string) ([]Part, error)
 	return parts, err
 }
 
-// UploadedBlob is a completed multipart upload.
+// UploadedBlob is a completed multipart upload; Blob is its staged name.
 type UploadedBlob struct {
 	Blob string
 	Type string
@@ -344,12 +353,13 @@ func (u *Uploads) abort(ctx context.Context, t ticket, key string, cause error) 
 }
 
 // Commit applies ops to ref's manifest in one conditional write. Every op
-// is authorized against what it writes (Hooks.CanUpload). Every put blob is
-// HEAD-checked against its Upload (and re-hashed when the store does not
-// enforce checksums); copies are copied server-side first. The owner is
-// charged the change in distinct upload blobs; growth past its quota fails
-// with CodeQuota (not for exempt grants). Then processing is enqueued. A new
-// item starts hidden unless anonymous viewers may see it (Hooks.Resolver).
+// is authorized against what it writes (Hooks.CanUpload). A put names a
+// staged upload or a blob in the folder, HEAD-checked against its Upload;
+// copies are copied server-side first. The owner is charged the change in
+// upload sizes; growth past its quota fails with CodeQuota (not for exempt
+// grants). Then the worker places staged uploads and processes the item. A
+// new item starts hidden unless anonymous viewers may see it
+// (Hooks.Resolver).
 func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref.ContentRef, ops []Op) (*Manifest, error) {
 	item, err := u.item(ref)
 	if err != nil {
@@ -367,10 +377,10 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	if err != nil {
 		return nil, err
 	}
-	var blobs []string
+	var names []string
 	for _, op := range ops {
-		if op.Op == OpPut && !slices.Contains(blobs, op.Blob) {
-			blobs = append(blobs, op.Blob)
+		if op.Op == OpPut && !slices.Contains(names, op.Blob) {
+			names = append(names, op.Blob)
 		}
 	}
 	copies, err := u.copies(ctx, actor, item, ops)
@@ -399,7 +409,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	var prior *Manifest
 	man, err := u.o.Manifests.Edit(editCtx, ref, func(m *Manifest) error {
 		prior = m.Clone()
-		objects, err := u.verify(editCtx, item, blobs)
+		objects, err := u.verify(editCtx, item, names)
 		if err != nil {
 			return err
 		}
@@ -435,21 +445,19 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	if err := settle(context.WithoutCancel(ctx), Settlement{Keys: keys, Delta: delta - charged}); err != nil {
 		return nil, err
 	}
-	if u.o.Queue != nil {
-		if c, ok := u.o.Queue.(ProcessCanceler); ok && removesPending(prior, ops) {
-			if _, err := c.Cancel(context.WithoutCancel(ctx), ref); err != nil {
-				return nil, err
-			}
-		}
-		job := ProcessJob{Ref: ref}
-		for _, op := range ops {
-			if op.Op == OpRegenerate {
-				job.Preset, job.Force = op.Preset, op.Force
-			}
-		}
-		if err := u.o.Queue.Enqueue(ctx, job); err != nil {
+	if c, ok := u.o.Queue.(ProcessCanceler); ok && removesPending(prior, ops) {
+		if _, err := c.Cancel(context.WithoutCancel(ctx), ref); err != nil {
 			return nil, err
 		}
+	}
+	job := ProcessJob{Ref: ref, Place: len(man.StagedNames()) > 0}
+	for _, op := range ops {
+		if op.Op == OpRegenerate {
+			job.Preset, job.Force = op.Preset, op.Force
+		}
+	}
+	if err := u.o.Queue.Enqueue(ctx, job); err != nil {
+		return nil, err
 	}
 	return man, nil
 }
@@ -527,39 +535,34 @@ func (u *Uploads) newHidden(ctx context.Context, item Item) (*bool, error) {
 	return &hidden, nil
 }
 
-// verify HEAD-checks put blobs in item's private/: present, not about to be
-// swept, and, for single PUTs on a store that does not enforce checksums,
-// re-hashed. A blob from another item's folder is simply absent here.
-func (u *Uploads) verify(ctx context.Context, item Item, blobs []string) (map[string]Object, error) {
-	out := make(map[string]Object, len(blobs))
+// verify HEAD-checks the put names in item's folder: staged uploads in
+// temp/, and blobs in private/ the sweep cannot take first. A blob's bytes
+// were hashed when it was placed or produced, so they are not read again; a
+// name from another item's folder is simply absent here.
+func (u *Uploads) verify(ctx context.Context, item Item, names []string) (map[string]Object, error) {
+	out := make(map[string]Object, len(names))
 	var missing []string
-	for _, b := range blobs {
-		key, _ := item.Blob(b)
+	for _, n := range names {
+		key, err := item.Staged(n)
+		if err != nil {
+			key, _ = item.Blob(n)
+		}
 		obj, err := u.o.Store.Head(ctx, key)
 		if errors.Is(err, ErrNotFound) {
-			missing = append(missing, b)
+			missing = append(missing, n)
 			continue
 		} else if err != nil {
 			return nil, err
 		}
-		if ok, err := u.protected(ctx, item, b, obj); err != nil {
-			return nil, err
-		} else if !ok {
-			missing = append(missing, b)
-			continue
-		}
-		if obj.Size <= MaxSinglePut && (obj.ChecksumSHA256 == nil || !u.o.Store.Capabilities().ChecksumSHA256) {
-			sum, _ := layout.ParseSHA256Name(b)
-			got, err := u.rehash(ctx, key)
-			if err != nil {
+		if layout.ValidHashName(n) {
+			if ok, err := u.protected(ctx, item, n, obj); err != nil {
 				return nil, err
-			}
-			if !bytes.Equal(got, sum) {
-				_ = u.o.Store.Delete(context.WithoutCancel(ctx), key)
-				return nil, uploadErr(CodeChecksum, "stored bytes of %s do not match their SHA-256; upload again", b)
+			} else if !ok {
+				missing = append(missing, n)
+				continue
 			}
 		}
-		out[b] = obj
+		out[n] = obj
 	}
 	if len(missing) > 0 {
 		return nil, &UploadError{Code: CodeNotUploaded, Blobs: missing,
@@ -588,19 +591,6 @@ func (u *Uploads) protected(ctx context.Context, item Item, blob string, obj Obj
 // manifest edit landing (the edit runs under half of it): a quarter of the
 // grace period, at most 1 h.
 func commitMargin(grace time.Duration) time.Duration { return min(grace/4, time.Hour) }
-
-func (u *Uploads) rehash(ctx context.Context, key string) ([]byte, error) {
-	rc, _, err := u.o.Store.Get(ctx, key, GetOptions{})
-	if err != nil {
-		return nil, err
-	}
-	defer rc.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, rc); err != nil {
-		return nil, err
-	}
-	return h.Sum(nil), nil
-}
 
 // copies reads each copy op's source upload and outputs from the other item
 // and copies their blobs into item, keyed by op index.
@@ -680,8 +670,11 @@ func (u *Uploads) Frame(ctx context.Context, actor access.Actor, ref contentref.
 		return nil, err
 	}
 	f, ok := m.Get(path)
-	if !ok || !f.IsUpload() || !isVideoType(f.Type) || f.Blob == "" || f.Gone {
+	if !ok || !f.IsUpload() || !isVideoType(f.Type) || f.Source() == "" || f.Gone {
 		return nil, uploadErr(CodeNotFound, "no video upload %q", path)
+	}
+	if f.Blob == "" {
+		return nil, uploadErr(CodeConflict, "video %q is still being placed; retry", path)
 	}
 	select {
 	case u.frames <- struct{}{}:
@@ -723,18 +716,14 @@ func uploaderID(a access.Actor) string {
 
 func maxParts(size int64) int { return int((size + MinPartSize - 1) / MinPartSize) }
 
-// uploadBytes is the storage charged for a manifest: the sizes of its
-// distinct upload blobs.
+// uploadBytes is the storage charged for a manifest: the size of every
+// upload put in it, staged or placed (frames are the worker's).
 func (m *Manifest) uploadBytes() int64 {
-	sizes := map[string]int64{}
-	for _, f := range m.Files {
-		if f.IsUpload() && f.Blob != "" {
-			sizes[f.Blob] = max(sizes[f.Blob], f.Size)
-		}
-	}
 	var n int64
-	for _, s := range sizes {
-		n += s
+	for _, f := range m.Files {
+		if f.IsUpload() && f.Frame == nil {
+			n += f.Size
+		}
 	}
 	return n
 }
@@ -743,8 +732,8 @@ func (m *Manifest) uploadBytes() int64 {
 // the item releases it.
 func (m *Manifest) UploadBytes() int64 { return m.uploadBytes() }
 
-// ticket binds a multipart upload to its item, blob, declared size and
-// type, and uploader. It is signed with the token ring under an "upload|"
+// ticket binds a multipart upload to its item, staged name, declared size
+// and type, and uploader. It is signed with the token ring under an "upload|"
 // scope that no object path can equal, so it never works as an access token.
 type ticket struct {
 	Ref      contentref.ContentRef `json:"r"`
@@ -783,7 +772,7 @@ func (u *Uploads) open(actor access.Actor, sealed string) (ticket, string, error
 	if err != nil {
 		return ticket{}, "", invalid
 	}
-	key, err := item.Blob(t.Blob)
+	key, err := item.Staged(t.Blob)
 	if err != nil {
 		return ticket{}, "", invalid
 	}

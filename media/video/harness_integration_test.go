@@ -250,15 +250,11 @@ func (e *env) stopWorker() {
 }
 
 // upload presigns body for path and uploads it like the browser does (one
-// PUT, or parts), returning the path to commit and the blob. claim is the
-// SHA-256 to declare; nil is body's.
-func (e *env) upload(ref contentref.ContentRef, path, typ string, body []byte, claim []byte) (string, string) {
+// PUT, or parts), returning the path and name to commit.
+func (e *env) upload(ref contentref.ContentRef, path, typ string, body []byte) (string, string) {
 	e.t.Helper()
-	if claim == nil {
-		sum := sha256.Sum256(body)
-		claim = sum[:]
-	}
-	p, err := e.up.Presign(e.ctx, e.editor, media.PresignRequest{Ref: ref, Path: path, Type: typ, Size: int64(len(body)), SHA256: claim})
+	sum := sha256.Sum256(body)
+	p, err := e.up.Presign(e.ctx, e.editor, media.PresignRequest{Ref: ref, Path: path, Type: typ, Size: int64(len(body)), SHA256: sum[:]})
 	if err != nil {
 		e.t.Fatalf("presign %s: %v", path, err)
 	}
@@ -309,15 +305,30 @@ func (e *env) put(path, typ, file string, meta map[string]any, extra ...media.Op
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	p, blob := e.upload(e.ref, path, typ, body, nil)
+	p, blob := e.upload(e.ref, path, typ, body)
 	return e.commit(append([]media.Op{{Op: media.OpPut, Path: p, Blob: blob, Meta: meta}}, extra...)...)
 }
 
+// commit commits ops; staged uploads are placed and the item enqueued, as
+// the worker's place job does.
 func (e *env) commit(ops ...media.Op) *media.Manifest {
 	e.t.Helper()
 	m, err := e.up.Commit(e.ctx, e.editor, e.ref, ops)
 	if err != nil {
 		e.t.Fatalf("commit %+v: %v", ops, err)
+	}
+	if len(m.StagedNames()) == 0 {
+		return m
+	}
+	if _, err := e.ms.Place(e.ctx, e.ref); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := e.queue.Enqueue(e.ctx, media.ProcessJob{Ref: e.ref}); err != nil {
+		e.t.Fatal(err)
+	}
+	m, _, err = e.ms.Get(e.ctx, e.ref)
+	if err != nil {
+		e.t.Fatal(err)
 	}
 	return m
 }

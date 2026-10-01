@@ -34,6 +34,7 @@ import (
 // sharing a database must not share one, or one host's worker takes the
 // other's jobs. Queue names are fixed within a schema.
 const (
+	PlaceQueue       = "media_place"        // staged uploads hashed and placed at their blobs
 	ImageQueue       = "media_image"        // image variants, slots and inline images
 	VideoLightQueue  = "media_video_light"  // video probe, tracks and assembly
 	VideoEncodeQueue = "media_video_encode" // bounded video chunks
@@ -87,6 +88,19 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, schema string) error {
 
 // jobs is the schema's river_job table.
 func jobs(schema string) string { return pgx.Identifier{schema, "river_job"}.Sanitize() }
+
+// PlaceArgs places an item's staged uploads (media.Manifests.Place), then
+// enqueues its processing: media.ProcessJob's fields.
+type PlaceArgs struct {
+	Ref    contentref.ContentRef `json:"ref"`
+	Preset string                `json:"preset,omitempty"`
+	Force  bool                  `json:"force,omitempty"`
+	After  int64                 `json:"after,omitempty"` // the running job this one follows
+}
+
+func (PlaceArgs) Kind() string { return "contentkit_media_place" }
+
+func (a PlaceArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
 
 // ImageArgs runs an item's image producers (Image and Zip presets, public
 // presets, editor views): media.ProcessJob's fields.
@@ -172,8 +186,9 @@ func New(pool *pgxpool.Pool, kinds *media.Registry, schema string) (*Queue, erro
 func (q *Queue) Schema() string { return q.schema }
 
 // Enqueue asks the worker to process job: one job per producer family the
-// kind (or job.Preset) uses. Image jobs are one pending per job, with a
-// follow-up behind a running one.
+// kind (or job.Preset) uses, or with job.Place one place job that enqueues
+// them once the item's staged uploads are placed. Image and place jobs are
+// one pending per job, with a follow-up behind a running one.
 func (q *Queue) Enqueue(ctx context.Context, job media.ProcessJob) error {
 	return q.enqueue(ctx, q.client.Insert, job)
 }
@@ -215,6 +230,10 @@ func (q *Queue) enqueue(ctx context.Context, insert media.InsertFunc, job media.
 	item, err := q.kinds.Item(job.Ref)
 	if err != nil {
 		return err
+	}
+	if job.Place {
+		return media.InsertOnce(ctx, insert, PlaceArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force},
+			river.InsertOpts{Queue: PlaceQueue, MaxAttempts: MaxAttempts})
 	}
 	f := FamiliesOf(item.Kind(), job.Preset)
 	if f.Image || job.Editor {

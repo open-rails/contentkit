@@ -4,7 +4,7 @@
 //	{namespace}/{kind}/{id}/manifest.json         gzip JSON; never served
 //	                       /private/sha256-{hex}  every blob: uploads, derived files, editor views
 //	                       /public/{name}         app-declared names, e.g. cover-460.webp
-//	                       /temp/{name}           in-flight writes only; never served
+//	                       /temp/{name}           in-flight writes and staged uploads (u-{uuid}); never served
 //	{namespace}/{kind}/_default/public/{name}     a public preset's default image
 //
 // The URL of an object is its key under /v1/ on the site's media host.
@@ -30,6 +30,8 @@ const (
 	DefaultID = "_default"
 	// SHA256Prefix starts every blob name.
 	SHA256Prefix = "sha256-"
+	// StagedPrefix starts a staged upload's name in temp/.
+	StagedPrefix = "u-"
 	// URLPrefix is the path every media URL starts with.
 	URLPrefix = "/v1/"
 )
@@ -92,6 +94,25 @@ func ParseSHA256Name(name string) ([]byte, bool) {
 	}
 	sum, err := hex.DecodeString(h)
 	return sum, err == nil
+}
+
+// ValidStagedName accepts "u-{uuid}", a canonical lowercase UUID.
+func ValidStagedName(name string) bool {
+	id, ok := strings.CutPrefix(name, StagedPrefix)
+	if !ok || len(id) != 36 {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+		} else if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // SHA256Name names a blob by its digest: "sha256-{hex}".

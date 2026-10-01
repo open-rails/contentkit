@@ -1,7 +1,9 @@
-// Package worker is the media worker: the one process that runs every
-// producer, from the host's worker River schema (Config.Schema) in its
-// database: images, zips, public presets and editor views (media/image,
-// libvips), and HLS, MP4, audio, subtitles and frames (media/video, ffmpeg).
+// Package worker is the media worker: the one process that places uploads
+// and runs every producer, from the host's worker River schema
+// (Config.Schema) in its database: staged uploads hashed and placed at their
+// blobs (media.Manifests.Place), images, zips, public presets and editor
+// views (media/image, libvips), and HLS, MP4, audio, subtitles and frames
+// (media/video, ffmpeg).
 // The host only presigns, commits, exposes and reads. After each job the
 // worker asks the host, through its media queue, to report the item's
 // readiness (Hooks.ItemReady) and to purge the public URLs it changed
@@ -62,8 +64,8 @@ type Config struct {
 	Preset, TopPreset, VideoEncoder string
 	VideoCodecs                     []media.Codec
 	// VideoWorkers and ImageWorkers are concurrent jobs per process
-	// (defaults 1 and 2); ImageSources bounds sources decoded at once per
-	// image job (default 2).
+	// (defaults 1 and 2; ImageWorkers also bounds place jobs); ImageSources
+	// bounds sources decoded at once per image job (default 2).
 	VideoWorkers int
 	AudioWorkers int // default 2
 	ImageWorkers int
@@ -200,10 +202,16 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 			return nil, err
 		}
 		imageJobs := riverhelpers.NewContribution("contentkit-media-image", func(_ context.Context, cfg *river.Config) error {
-			if _, ok := cfg.Queues[workqueue.ImageQueue]; ok {
-				return fmt.Errorf("media/worker: queue %q already registered", workqueue.ImageQueue)
+			for _, q := range []string{workqueue.PlaceQueue, workqueue.ImageQueue} {
+				if _, ok := cfg.Queues[q]; ok {
+					return fmt.Errorf("media/worker: queue %q already registered", q)
+				}
 			}
+			cfg.Queues[workqueue.PlaceQueue] = river.QueueConfig{MaxWorkers: c.ImageWorkers}
 			cfg.Queues[workqueue.ImageQueue] = river.QueueConfig{MaxWorkers: c.ImageWorkers}
+			if err := river.AddWorkerSafely(cfg.Workers, &placeWorker{c: c, manifests: manifests, queue: queue}); err != nil {
+				return err
+			}
 			return river.AddWorkerSafely(cfg.Workers, &imageWorker{c: c, images: images})
 		}, nil, nil)
 		contributions = append(contributions, imageJobs)
@@ -288,6 +296,32 @@ func (w *Worker) Run(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+type placeWorker struct {
+	river.WorkerDefaults[workqueue.PlaceArgs]
+	c         Config
+	manifests *media.Manifests
+	queue     *workqueue.Queue
+}
+
+func (w *placeWorker) Timeout(*river.Job[workqueue.PlaceArgs]) time.Duration { return w.c.ImageTimeout }
+
+// Work places an item's staged uploads, after any equal job it follows, then
+// enqueues its processing.
+func (w *placeWorker) Work(ctx context.Context, job *river.Job[workqueue.PlaceArgs]) (err error) {
+	defer func() { err = media.SnoozeUnavailable(ctx, w.c.Store, job.JobRow, err) }()
+	a := job.Args
+	if _, err := w.c.Kinds.Item(a.Ref); err != nil {
+		return river.JobCancel(err)
+	}
+	if err := media.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), a.After); err != nil {
+		return err
+	}
+	if _, err := w.manifests.Place(ctx, a.Ref); err != nil {
+		return err
+	}
+	return w.queue.Enqueue(ctx, media.ProcessJob{Ref: a.Ref, Preset: a.Preset, Force: a.Force})
 }
 
 type imageWorker struct {

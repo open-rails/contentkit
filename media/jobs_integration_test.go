@@ -101,13 +101,19 @@ func TestSweep(t *testing.T) {
 			t.Fatalf("swept referenced %s", key)
 		}
 	}
-	// Uploads never committed are swept once past the grace period.
+	// Uploads never committed are swept once past the temp period; a staged
+	// upload the manifest references stays until placed.
 	other := f.ref("gallery", 2)
-	_, blob := f.upload(other, "originals/1.png", "image/png", png(1))
 	otherItem, _ := f.reg.Item(other)
-	key, _ := otherItem.Blob(blob)
-	if _, err := f.later().Sweep(ctx, other); err != nil || f.exists(key) {
-		t.Fatalf("abandoned upload kept: %v", err)
+	p, committed := f.upload(other, "originals/1.png", "image/png", png(1))
+	_, abandoned := f.upload(other, "originals/2.png", "image/png", png(2))
+	if _, err := f.up.Commit(ctx, f.editor, other, []media.Op{{Op: media.OpPut, Path: p, Blob: committed}}); err != nil {
+		t.Fatal(err)
+	}
+	kept, _ := otherItem.Staged(committed)
+	gone, _ := otherItem.Staged(abandoned)
+	if _, err := f.later().Sweep(ctx, other); err != nil || f.exists(gone) || !f.exists(kept) {
+		t.Fatalf("staged uploads after the temp period: %v", err)
 	}
 }
 

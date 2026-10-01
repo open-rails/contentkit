@@ -7,11 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"slices"
 	"sync"
 	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -54,22 +53,21 @@ type IngestRequest struct {
 
 // IngestUpload identifies an in-progress multipart ingest in temp/.
 type IngestUpload struct {
-	Temp     string `json:"temp"` // the temp/ name
+	Temp     string `json:"temp"` // the staged name (u-{uuid})
 	UploadID string `json:"upload_id"`
 }
 
-// IngestResult is the committed upload.
+// IngestResult is the committed upload; Staged is its name in temp/ until
+// the worker places it.
 type IngestResult struct {
-	Blob     string
+	Staged   string
 	Size     int64
 	Manifest *Manifest
 }
 
-// Ingest writes req.Body to the item: one checksum-bound PUT at its content
-// address when it fits in one part, else a multipart write to temp/ (the
-// hash is known only at the end) copied server-side to its content address.
-// Then it commits a put with Commit, which re-checks the blob and enqueues
-// processing.
+// Ingest writes req.Body to a staged upload in temp/, one checksum-bound
+// PUT when it fits in one part, else a multipart write, and commits a put
+// of it: the worker places and processes it like a browser upload.
 func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequest) (IngestResult, error) {
 	item, err := u.item(req.Ref)
 	if err != nil {
@@ -115,11 +113,11 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 	if n == 0 {
 		return IngestResult{}, uploadErr(CodeInvalid, "ingest body is empty")
 	}
-	temp := "u-" + uuid.NewString()
-	if req.Resume != nil && layout.ValidSegment(req.Resume.Temp) {
+	temp := NewStaged()
+	if req.Resume != nil && layout.ValidStagedName(req.Resume.Temp) {
 		temp = req.Resume.Temp
 	}
-	reserve := item.TempPrefix() + temp
+	reserve, _ := item.Staged(temp)
 	if limited {
 		if err := u.o.Limiter.Reserve(ctx, Reservation{Tenant: req.Ref.TenantID, Uploader: uploaderID(actor),
 			Owner: grant.Owner, Key: reserve, Size: req.Size}); err != nil {
@@ -131,14 +129,15 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 	}
 	var res IngestResult
 	if single {
-		res, err = u.ingestOne(ctx, item, up, req, first)
+		res, err = u.ingestOne(ctx, up, req, reserve, first)
 	} else {
-		res, err = u.ingestParts(ctx, item, up, req, temp, first)
+		res, err = u.ingestParts(ctx, up, req, reserve, first)
 	}
 	if err != nil {
 		return IngestResult{}, err
 	}
-	man, err := u.Commit(ctx, actor, req.Ref, []Op{{Op: OpPut, Path: req.Path, Blob: res.Blob, Meta: req.Meta}})
+	res.Staged = temp
+	man, err := u.Commit(ctx, actor, req.Ref, []Op{{Op: OpPut, Path: req.Path, Blob: temp, Meta: req.Meta}})
 	if err != nil {
 		return IngestResult{}, err
 	}
@@ -146,7 +145,7 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 	return res, nil
 }
 
-func (u *Uploads) ingestOne(ctx context.Context, item Item, up Upload, req IngestRequest, body []byte) (IngestResult, error) {
+func (u *Uploads) ingestOne(ctx context.Context, up Upload, req IngestRequest, key string, body []byte) (IngestResult, error) {
 	if req.Size > 0 && int64(len(body)) != req.Size {
 		return IngestResult{}, uploadErr(CodeInvalid, "read %d bytes; declared %d", len(body), req.Size)
 	}
@@ -154,21 +153,17 @@ func (u *Uploads) ingestOne(ctx context.Context, item Item, up Upload, req Inges
 		return IngestResult{}, err
 	}
 	sum := sha256.Sum256(body)
-	blob := layout.SHA256Name(sum[:])
-	key, _ := item.Blob(blob)
 	if _, err := u.o.Store.Put(ctx, key, bytes.NewReader(body), int64(len(body)), PutOptions{ContentType: req.Type, ChecksumSHA256: sum[:]}); err != nil {
 		return IngestResult{}, err
 	}
-	return IngestResult{Blob: blob, Size: int64(len(body))}, nil
+	return IngestResult{Size: int64(len(body))}, nil
 }
 
-// ingestParts writes the body to temp/{temp} part by part, hashing it, then
-// copies it to its content address and drops the temp object.
-func (u *Uploads) ingestParts(ctx context.Context, item Item, up Upload, req IngestRequest, temp string, first []byte) (IngestResult, error) {
-	key := item.TempPrefix() + temp
+// ingestParts writes the body to its staged key part by part.
+func (u *Uploads) ingestParts(ctx context.Context, up Upload, req IngestRequest, key string, first []byte) (IngestResult, error) {
 	var id string
 	stored := map[int32]Part{}
-	if req.Resume != nil && req.Resume.Temp == temp {
+	if req.Resume != nil && req.Resume.Temp == path.Base(key) {
 		parts, err := u.o.Store.ListParts(ctx, key, req.Resume.UploadID)
 		switch {
 		case err == nil:
@@ -186,33 +181,25 @@ func (u *Uploads) ingestParts(ctx context.Context, item Item, up Upload, req Ing
 			return IngestResult{}, err
 		}
 		if req.OnUpload != nil {
-			if err := req.OnUpload(IngestUpload{Temp: temp, UploadID: id}); err != nil {
+			if err := req.OnUpload(IngestUpload{Temp: path.Base(key), UploadID: id}); err != nil {
 				_ = u.o.Store.AbortMultipart(context.WithoutCancel(ctx), key, id)
 				return IngestResult{}, err
 			}
 		}
 	}
-	sum, total, err := u.writeParts(ctx, key, id, up, req, first, stored)
+	total, err := u.writeParts(ctx, key, id, up, req, first, stored)
 	if err != nil {
 		if _, invalid := AsUploadError(err); req.OnUpload == nil || invalid {
 			_ = u.o.Store.AbortMultipart(context.WithoutCancel(ctx), key, id)
 		}
 		return IngestResult{}, err
 	}
-	blob := layout.SHA256Name(sum)
-	dst, _ := item.Blob(blob)
-	if _, err := u.o.Store.Copy(ctx, key, dst, CopyOptions{}); err != nil {
-		return IngestResult{}, fmt.Errorf("media: ingest copy to %s: %w", dst, err)
-	}
-	if err := u.o.Store.Delete(ctx, key); err != nil && !errors.Is(err, ErrNotFound) {
-		return IngestResult{}, err
-	}
-	return IngestResult{Blob: blob, Size: total}, nil
+	return IngestResult{Size: total}, nil
 }
 
 // writeParts reads the body part by part into a bounded buffer pool while
 // Concurrency uploaders send them, then completes the upload.
-func (u *Uploads) writeParts(ctx context.Context, key, id string, up Upload, req IngestRequest, first []byte, stored map[int32]Part) ([]byte, int64, error) {
+func (u *Uploads) writeParts(ctx context.Context, key, id string, up Upload, req IngestRequest, first []byte, stored map[int32]Part) (int64, error) {
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	type job struct {
@@ -247,7 +234,6 @@ func (u *Uploads) writeParts(ctx context.Context, key, id string, up Upload, req
 			}
 		})
 	}
-	whole := sha256.New()
 	var total int64
 	readErr := func() error {
 		defer close(jobs)
@@ -263,7 +249,6 @@ func (u *Uploads) writeParts(ctx context.Context, key, id string, up Upload, req
 			if req.Size > 0 && total > req.Size {
 				return uploadErr(CodeInvalid, "body exceeds the declared %d bytes", req.Size)
 			}
-			whole.Write(buf)
 			sum := sha256.Sum256(buf)
 			select {
 			case jobs <- job{n: n, buf: buf, sum: sum[:]}:
@@ -288,19 +273,19 @@ func (u *Uploads) writeParts(ctx context.Context, key, id string, up Upload, req
 	}()
 	wg.Wait()
 	if readErr != nil {
-		return nil, 0, readErr
+		return 0, readErr
 	}
 	if err := context.Cause(ctx); err != nil {
-		return nil, 0, err
+		return 0, err
 	}
 	if req.Size > 0 && total != req.Size {
-		return nil, 0, uploadErr(CodeInvalid, "read %d bytes; declared %d", total, req.Size)
+		return 0, uploadErr(CodeInvalid, "read %d bytes; declared %d", total, req.Size)
 	}
 	slices.SortFunc(parts, func(a, b Part) int { return int(a.Number - b.Number) })
 	if _, err := u.o.Store.CompleteMultipart(ctx, key, id, parts); err != nil {
-		return nil, 0, err
+		return 0, err
 	}
-	return whole.Sum(nil), total, nil
+	return total, nil
 }
 
 func (u *Uploads) putPart(ctx context.Context, key, id string, n int32, buf, sum []byte) (Part, error) {

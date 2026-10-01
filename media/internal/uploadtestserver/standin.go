@@ -20,8 +20,8 @@ import (
 )
 
 // standIn is the media worker's stand-in: a job runs shortly after it is
-// enqueued, like the real worker's, and settles every pending output
-// without encoding. A private image output and the public names reuse the
+// enqueued, like the real worker's, places staged uploads
+// (Manifests.Place) and settles every pending output without encoding. A private image output and the public names reuse the
 // upload's bytes, a frame grab is a flat image, a video measures 10 s at
 // 1280×720, and missing editor views are copies of their uploads.
 type standIn struct {
@@ -66,6 +66,9 @@ func flat(w, h int, shade uint8) image.Image {
 func (w *standIn) process(ctx context.Context, j media.ProcessJob) error {
 	item, err := w.reg.Item(j.Ref)
 	if err != nil {
+		return err
+	}
+	if _, err := w.manifests.Place(ctx, j.Ref); err != nil {
 		return err
 	}
 	k := item.Kind()

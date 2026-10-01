@@ -33,3 +33,15 @@ func TestParse(t *testing.T) {
 		t.Error("upper-case hex accepted")
 	}
 }
+
+func TestValidStagedName(t *testing.T) {
+	if !layout.ValidStagedName("u-0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b") {
+		t.Error("a staged name refused")
+	}
+	for _, bad := range []string{"u-1", "u-0192A3B4-C5D6-7E8F-9A0B-1C2D3E4F5A6B", "i-0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b",
+		"u-0192a3b4c5d67e8f9a0b1c2d3e4f5a6b", "u-0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6g", "sha256-00"} {
+		if layout.ValidStagedName(bad) {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+}

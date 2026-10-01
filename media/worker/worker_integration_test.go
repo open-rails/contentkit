@@ -802,9 +802,14 @@ func faultyWorker(t *testing.T, fault func(w http.ResponseWriter, r *http.Reques
 
 // imageJob reports the state of the worker's latest image job.
 func (h *host) imageJob(t *testing.T) (state string, attempt, errs, snoozes int) {
+	return h.job(t, workqueue.ImageArgs{}.Kind())
+}
+
+// job reports the state of the worker's latest job of kind.
+func (h *host) job(t *testing.T, kind string) (state string, attempt, errs, snoozes int) {
 	t.Helper()
 	err := h.pool.QueryRow(context.Background(), `SELECT state, attempt, coalesce(cardinality(errors), 0), coalesce((metadata->>'snoozes')::int, 0)
-		FROM `+h.workers+`.river_job WHERE kind = 'contentkit_media_image' ORDER BY id DESC LIMIT 1`).Scan(&state, &attempt, &errs, &snoozes)
+		FROM `+h.workers+`.river_job WHERE kind = $1 ORDER BY id DESC LIMIT 1`, kind).Scan(&state, &attempt, &errs, &snoozes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -882,7 +887,7 @@ func TestWorkerOutageSnoozesAreCapped(t *testing.T) {
 	proxy.Down()
 	h.upload(t, h.ref(t, "gallery"), "originals/001.png", "image/png", pngImage(t, 300, 450, 72))
 	eventually(t, "an attempt spent after the snooze cap", time.Minute, func() bool {
-		_, _, errs, snoozes := h.imageJob(t)
+		_, _, errs, snoozes := h.job(t, workqueue.PlaceArgs{}.Kind())
 		return errs > 0 && snoozes >= 2
 	})
 }

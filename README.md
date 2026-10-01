@@ -191,7 +191,7 @@ commit ops, reads and exposure.
 {namespace}/{kind}/{id}/manifest.json         gzip JSON: the ordered file list with provenance; never served
                        /private/sha256-{hex}  every blob: uploads, derived files, editor views (token)
                        /public/{name}         app-declared names, e.g. cover-460.webp (anyone)
-                       /temp/{name}           in-flight server-side writes; never served
+                       /temp/{name}           staged uploads (u-{uuid}) and in-flight writes; never served
 {namespace}/{kind}/_default/public/{name}     a public preset's default image
 ```
 
@@ -240,16 +240,18 @@ or 5xx bucket is `media.ErrUnavailable`: 503 `unavailable` over HTTP, and in
 media jobs a River snooze (not an attempt) while a fresh `Check` confirms the
 outage, capped by `MaxOutageSnoozes` (`media.SnoozeUnavailable`).
 
-**Uploads** go straight to the bucket. The browser hashes each file; up to
-64 MiB is one PUT to `private/sha256-{hex}` signed with its type, length and
-SHA-256, larger files are multipart (8–16 MiB parts, each signed with its
-length and SHA-256, resumed through `ListParts`, completed by the server
-from a signed ticket; nothing is stored). Commits HEAD-check every new blob
-and re-hash it when the store does not enforce checksums; the producer that
-first reads a multipart blob verifies it. The optional `UploadLimiter`
-(`media.NewPGLimiter`) rate-limits uploaders and charges each item's
-distinct upload blobs to the grant's `Owner`; growth past the quota fails
-with 413 `quota_exceeded`, and deleting an item releases it.
+**Uploads** go straight to the bucket, to a staged name: up to 64 MiB is one
+PUT to `temp/u-{uuid}` signed with its type, length and SHA-256, larger files
+are multipart (8–16 MiB parts, each signed with its length and SHA-256,
+resumed through `ListParts`, completed by the server from a signed ticket;
+nothing is stored). The browser's hash only finds an identical blob already
+in the folder (no upload). After the commit, the worker's place job hashes
+each staged upload and writes it to `private/sha256-{hex}` of the bytes it
+read (`Manifests.Place`); an existing blob is never overwritten, so a blob
+always holds the bytes of its name. The optional `UploadLimiter`
+(`media.NewPGLimiter`) rate-limits uploaders and charges each upload's size
+to the grant's `Owner`; growth past the quota fails with 413
+`quota_exceeded`, and deleting an item releases it.
 
 **Access agent** (`cmd/media-access`, `media/agent`, image
 `ghcr.io/open-rails/contentkit-media-access:{tag}`): `public/` to anyone

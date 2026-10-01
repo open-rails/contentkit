@@ -139,9 +139,12 @@ func (s *Store) collectRefs(ctx context.Context, key, versionID string, k layout
 	if err != nil {
 		return fmt.Errorf("s3: restore: decode %s@%s: %w", key, versionID, err)
 	}
-	folder := layout.Prefix(k.Namespace, k.Kind, k.ID) + layout.AreaPrivate + "/"
+	folder := layout.Prefix(k.Namespace, k.Kind, k.ID)
 	for _, b := range m.Blobs() {
-		refs[folder+b] = true
+		refs[folder+layout.AreaPrivate+"/"+b] = true
+	}
+	for _, s := range m.StagedNames() {
+		refs[folder+layout.AreaTemp+"/"+s] = true
 	}
 	return nil
 }

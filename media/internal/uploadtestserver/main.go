@@ -239,7 +239,8 @@ func main() {
 	_ = srv.Close()
 }
 
-// fileKey is the blob key of the item's file at p, or of the upload whose stem p is.
+// fileKey is the key of the item's file at p, or of the upload whose stem p
+// is: its blob, or its staged upload until placed.
 func fileKey(ctx context.Context, manifests *media.Manifests, item media.Item, p string) (string, error) {
 	m, _, err := manifests.Get(ctx, item.Ref())
 	if err != nil {
@@ -247,6 +248,9 @@ func fileKey(ctx context.Context, manifests *media.Manifests, item media.Item, p
 	}
 	for _, f := range m.Files {
 		if f.Path == p || f.IsUpload() && trimExt(f.Path) == p {
+			if f.Staged != "" {
+				return item.Staged(f.Staged)
+			}
 			return item.Blob(f.Blob)
 		}
 	}

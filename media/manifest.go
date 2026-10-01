@@ -31,7 +31,7 @@ type Manifest struct {
 // File is one file: an upload (no Preset) or a derived file.
 type File struct {
 	Path string  `json:"path"`           // app path: "originals/001.png", "low-res/001.webp"
-	Blob string  `json:"blob,omitempty"` // "sha256-{hex}" in private/; "" only for a frame not grabbed yet
+	Blob string  `json:"blob,omitempty"` // "sha256-{hex}" in private/; "" for a staged upload or a frame not grabbed yet
 	Type string  `json:"type"`
 	Size int64   `json:"size,omitempty"`
 	W    int     `json:"w,omitempty"` // an upload's oriented size once measured; an output's size
@@ -39,6 +39,7 @@ type File struct {
 	Dur  float64 `json:"dur,omitempty"`
 
 	// Uploads:
+	Staged     string         `json:"staged,omitempty"`     // "u-{uuid}" in temp/ until the worker hashes and places it at Blob
 	Edit       *Edit          `json:"edit,omitempty"`       // crop and rotate in source pixels
 	Frame      *Frame         `json:"frame,omitempty"`      // grabbed from the Upload.Frames video
 	Meta       map[string]any `json:"meta,omitempty"`       // teaser, lang, label, …
@@ -140,8 +141,12 @@ func (s *Segment) UnmarshalJSON(b []byte) error {
 // IsUpload reports an upload (a file with no preset).
 func (f File) IsUpload() bool { return f.Preset == "" }
 
-// Key identifies the blob and edit an upload's Failure applies to.
-func (f File) Key() string { return f.Blob + "." + f.Edit.Hash() }
+// Source is the object holding an upload's bytes: its blob, or its staged
+// upload until placed.
+func (f File) Source() string { return cmpOr(f.Blob, f.Staged) }
+
+// Key identifies the source and edit an upload's Failure applies to.
+func (f File) Key() string { return f.Source() + "." + f.Edit.Hash() }
 
 // Fail is the upload's failure for its current blob and edit, or nil.
 func (f File) Fail() *Failure {
@@ -221,6 +226,17 @@ func (m *Manifest) Blobs() []string {
 	return out
 }
 
+// StagedNames lists the staged uploads the manifest references (in temp/).
+func (m *Manifest) StagedNames() []string {
+	var out []string
+	for _, f := range m.Files {
+		if f.Staged != "" {
+			out = append(out, f.Staged)
+		}
+	}
+	return out
+}
+
 // Validate requires unique paths, well-formed blobs and edits, and upload
 // and derived fields where they belong.
 func (m *Manifest) Validate() error {
@@ -229,7 +245,9 @@ func (m *Manifest) Validate() error {
 		switch {
 		case f.Path == "" || seen[f.Path]:
 			return fmt.Errorf("media: manifest file %d: empty or duplicate path %q", i, f.Path)
-		case f.Blob != "" && !layout.ValidHashName(f.Blob), f.Blob == "" && (f.Frame == nil || !f.IsUpload()):
+		case f.Staged != "" && (!layout.ValidStagedName(f.Staged) || f.Blob != "" || f.Frame != nil || !f.IsUpload()):
+			return fmt.Errorf("media: manifest file %q: invalid staged upload %q", f.Path, f.Staged)
+		case f.Blob != "" && !layout.ValidHashName(f.Blob), f.Blob == "" && f.Staged == "" && (f.Frame == nil || !f.IsUpload()):
 			return fmt.Errorf("media: manifest file %q: invalid blob %q", f.Path, f.Blob)
 		case f.Track != nil && f.Track.Index != "" && !layout.ValidHashName(f.Track.Index):
 			return fmt.Errorf("media: manifest file %q: invalid track index %q", f.Path, f.Track.Index)

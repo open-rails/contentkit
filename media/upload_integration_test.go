@@ -330,37 +330,33 @@ func TestMetaAndRegenerate(t *testing.T) {
 	}
 }
 
-// Commits verify blobs: not uploaded, or bytes that do not match their hash.
+// Commits HEAD-check what they name: a staged upload or blob that is not
+// there is not_uploaded; an identical blob already in the folder needs no
+// upload.
 func TestCommitVerifiesBlobs(t *testing.T) {
 	f := newFixture(t)
 	f.visible(1)
 	g := f.ref("gallery", 1)
 	ctx := context.Background()
 	missing := blobOf([]byte("never uploaded"))
-	_, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: "originals/1.png", Blob: missing}})
+	staged := media.NewStaged()
+	_, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: "originals/1.png", Blob: missing},
+		{Op: media.OpPut, Path: "originals/2.png", Blob: staged}})
 	var ue *media.UploadError
-	if !errors.As(err, &ue) || ue.Code != media.CodeNotUploaded || !reflect.DeepEqual(ue.Blobs, []string{missing}) {
+	if !errors.As(err, &ue) || ue.Code != media.CodeNotUploaded || !reflect.DeepEqual(ue.Blobs, []string{missing, staged}) {
 		t.Fatalf("not uploaded: %v", err)
 	}
-	// A store that does not enforce checksums: the commit re-hashes.
-	bad := blobOf([]byte("claimed"))
-	item, _ := f.reg.Item(g)
-	key, _ := item.Blob(bad)
-	if _, err := f.env.Store.Put(ctx, key, bytes.NewReader([]byte("other bytes")), 11, media.PutOptions{ContentType: "image/png"}); err != nil {
-		t.Fatal(err)
+	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: "originals/1.png", Blob: "u-not-a-uuid"}}); code(err) != media.CodeInvalid {
+		t.Fatalf("a malformed staged name: %v", err)
 	}
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: "originals/1.png", Blob: bad}}); code(err) != media.CodeChecksum {
-		t.Fatalf("mismatch: %v", err)
-	}
-	if _, err := f.env.Store.Head(ctx, key); !errors.Is(err, media.ErrNotFound) {
-		t.Fatalf("a mismatching blob is deleted: %v", err)
-	}
-	// An identical blob already in the folder needs no upload.
 	f.put(g, "originals/1.png", "image/png", png(1))
 	sum := sha256.Sum256(png(1))
 	p, err := f.up.Presign(ctx, f.editor, media.PresignRequest{Ref: g, Path: "originals/again.png", Type: "image/png", Size: int64(len(png(1))), SHA256: sum[:]})
-	if err != nil || !p.Exists || p.Put != nil {
+	if err != nil || !p.Exists || p.Put != nil || p.Blob != blobOf(png(1)) {
 		t.Fatalf("exists: %+v %v", p, err)
+	}
+	if m := f.commit(g, media.Op{Op: media.OpPut, Path: p.Path, Blob: p.Blob}); m.Find(p.Path) < 0 {
+		t.Fatalf("existing blob not committed: %v", paths(m))
 	}
 }
 
@@ -383,7 +379,7 @@ func TestNamedAndHiddenNewItem(t *testing.T) {
 	}
 }
 
-// Ingest streams a server-side import through temp/ to its content address.
+// Ingest streams a server-side import to a staged upload, placed like any other.
 func TestIngest(t *testing.T) {
 	f := newFixture(t)
 	f.visible(1)
@@ -397,18 +393,25 @@ func TestIngest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Blob != blobOf(body) || res.Size != int64(len(body)) || resumed.Temp == "" {
+	if res.Size != int64(len(body)) || resumed.Temp != res.Staged {
 		t.Fatalf("ingest %+v %+v", res, resumed)
 	}
-	if u, ok := res.Manifest.Get("import/legacy.zip"); !ok || u.Blob != res.Blob {
+	if u, ok := res.Manifest.Get("import/legacy.zip"); !ok || u.Staged != res.Staged || u.Blob != "" {
 		t.Fatalf("committed %v", paths(res.Manifest))
+	}
+	small, err := f.up.Ingest(ctx, f.editor, media.IngestRequest{Ref: g, Path: "originals/1.png", Type: "image/png", Body: bytes.NewReader(png(1))})
+	if err != nil || small.Staged == "" {
+		t.Fatalf("single ingest %+v %v", small, err)
+	}
+	m := f.place(g)
+	if u, _ := m.Get("import/legacy.zip"); u.Blob != blobOf(body) || u.Staged != "" {
+		t.Fatalf("placed %+v", u)
+	}
+	if u, _ := m.Get("originals/1.png"); u.Blob != blobOf(png(1)) {
+		t.Fatalf("placed %+v", u)
 	}
 	item, _ := f.reg.Item(g)
 	for o, err := range f.env.Store.List(ctx, item.TempPrefix()) {
 		t.Fatalf("temp/ kept %s %v", o.Key, err)
-	}
-	small, err := f.up.Ingest(ctx, f.editor, media.IngestRequest{Ref: g, Path: "originals/1.png", Type: "image/png", Body: bytes.NewReader(png(1))})
-	if err != nil || small.Blob != blobOf(png(1)) {
-		t.Fatalf("single ingest %+v %v", small, err)
 	}
 }
