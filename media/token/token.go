@@ -163,6 +163,11 @@ func (r Ring) VerifyEditor(tok, key string, now time.Time) error {
 	return r.verify(tok, []string{EditorScope(key[:i+1])}, now)
 }
 
+// VerifyScope checks tok for exactly scope at now.
+func (r Ring) VerifyScope(tok, scope string, now time.Time) error {
+	return r.verify(tok, []string{scope}, now)
+}
+
 func (r Ring) verify(tok string, scopes []string, now time.Time) error {
 	kid, rest, ok := strings.Cut(tok, ".")
 	if !ok {

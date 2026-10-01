@@ -110,8 +110,8 @@ func (op Op) validate() error {
 	return nil
 }
 
-// ops applies commit ops to a manifest of kind k.
-type ops struct {
+// opRun applies commit ops to a manifest of kind k.
+type opRun struct {
 	k *Kind
 	m *Manifest
 	// objects are the put blobs, HEAD-checked in the item's private/.
@@ -121,7 +121,7 @@ type ops struct {
 	copies map[int][]File
 }
 
-func (o *ops) apply(n int, op Op) error {
+func (o *opRun) apply(n int, op Op) error {
 	k, m := o.k, o.m
 	switch op.Op {
 	case OpMeta:
@@ -188,7 +188,7 @@ func (o *ops) apply(n int, op Op) error {
 }
 
 // put adds or replaces an upload.
-func (o *ops) put(op Op) error {
+func (o *opRun) put(op Op) error {
 	k, m := o.k, o.m
 	g, stem, name, ext, ok := k.upload(op.Path)
 	if !ok {
@@ -247,7 +247,7 @@ func stripPending(f File) File {
 // place puts upload f in group g: replacing file i (renaming its outputs'
 // From when the extension changed), or inserted at index. A video it
 // replaces has its frames grabbed again.
-func (o *ops) place(g, i int, f File, index *int) error {
+func (o *opRun) place(g, i int, f File, index *int) error {
 	m := o.m
 	if i < 0 {
 		o.insert(g, f, index, !f.Unattached)
@@ -269,7 +269,7 @@ func (o *ops) place(g, i int, f File, index *int) error {
 }
 
 // regrab resets the frames grabbed from the video upload at path.
-func (o *ops) regrab(path string) {
+func (o *opRun) regrab(path string) {
 	k, m := o.k, o.m
 	g, _, _, _, ok := k.upload(path)
 	if !ok {
@@ -289,7 +289,7 @@ func (o *ops) regrab(path string) {
 }
 
 // frame sets an upload to a frame grab of its Upload.Frames video.
-func (o *ops) frame(op Op) error {
+func (o *opRun) frame(op Op) error {
 	k, m := o.k, o.m
 	g, stem, _, _, ok := k.upload(op.Path)
 	if !ok || k.Uploads[g].Frames == "" {
@@ -320,7 +320,7 @@ func (o *ops) frame(op Op) error {
 }
 
 // copy adds the copied upload src[0] (and its outputs src[1:]) at op.To.
-func (o *ops) copy(op Op, src []File) error {
+func (o *opRun) copy(op Op, src []File) error {
 	k, m := o.k, o.m
 	if len(src) == 0 {
 		return uploadErr(CodeNotFound, "no upload %q in item %s", op.From.Path, op.From.ID)
@@ -372,7 +372,7 @@ func (o *ops) copy(op Op, src []File) error {
 }
 
 // rename renames upload f and re-paths its outputs.
-func (o *ops) rename(f File, to string) error {
+func (o *opRun) rename(f File, to string) error {
 	k, m := o.k, o.m
 	g, stem, _, ext, ok := k.upload(to)
 	if gf, _, _, _, _ := k.upload(f.Path); !ok || g != gf {
@@ -426,7 +426,7 @@ func rebase(p, old, new string) string {
 }
 
 // stem finds the upload whose path has stem, or -1.
-func (o *ops) stem(stem string) int {
+func (o *opRun) stem(stem string) int {
 	for i, f := range o.m.Files {
 		if s, _ := splitExt(f.Path); f.IsUpload() && s == stem {
 			return i
@@ -436,7 +436,7 @@ func (o *ops) stem(stem string) int {
 }
 
 // count is the uploads of group g.
-func (o *ops) count(g int) int {
+func (o *opRun) count(g int) int {
 	n := 0
 	for _, f := range o.m.Files {
 		if u, _, _, _, ok := o.k.upload(f.Path); f.IsUpload() && ok && u == g {
@@ -448,7 +448,7 @@ func (o *ops) count(g int) int {
 
 // insert puts upload f among group g's attached uploads (or its unattached
 // ones): at index when given, else at its natural-sort position.
-func (o *ops) insert(g int, f File, index *int, attached bool) {
+func (o *opRun) insert(g int, f File, index *int, attached bool) {
 	m := o.m
 	var members []int
 	for i, x := range m.Files {
