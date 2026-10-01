@@ -377,12 +377,6 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	if err != nil {
 		return nil, err
 	}
-	var names []string
-	for _, op := range ops {
-		if op.Op == OpPut && !slices.Contains(names, op.Blob) {
-			names = append(names, op.Blob)
-		}
-	}
 	copies, err := u.copies(ctx, actor, item, ops)
 	if err != nil {
 		return nil, err
@@ -409,20 +403,56 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	var prior *Manifest
 	man, err := u.o.Manifests.Edit(editCtx, ref, func(m *Manifest) error {
 		prior = m.Clone()
+		o := &opRun{k: item.Kind(), m: m, id: ref.ContentID, copies: copies}
+		keys = keys[:0]
+		var names []string
+		for _, op := range ops {
+			if op.Op != OpPut {
+				continue
+			}
+			created, conflict := o.created(op)
+			// Defer retries and conflicts to the ordered ops below. Their
+			// staged object may already be gone, or an earlier op may remove them.
+			if !created && conflict == nil && !slices.Contains(names, op.Blob) {
+				names = append(names, op.Blob)
+			}
+			key, err := item.Staged(op.Blob)
+			if err != nil {
+				key, _ = item.Blob(op.Blob)
+			}
+			if !slices.Contains(keys, key) {
+				keys = append(keys, key)
+			}
+		}
 		objects, err := u.verify(editCtx, item, names)
 		if err != nil {
 			return err
 		}
-		keys = keys[:0]
-		for _, o := range objects {
-			keys = append(keys, o.Key)
-		}
+		o.objects = objects
 		if hidden != nil && len(m.Files) == 0 && m.Meta == nil {
 			m.Hidden = *hidden
 		}
 		before := m.uploadBytes()
-		o := &opRun{k: item.Kind(), m: m, id: ref.ContentID, objects: objects, copies: copies}
 		for n, op := range ops {
+			if op.Op == OpPut {
+				created, err := o.created(op)
+				if err != nil {
+					return err
+				}
+				// Placement may have removed the staged object. Its receipt
+				// proves a retry without restoring old attachment or edits.
+				if created {
+					continue
+				}
+				if _, ok := o.objects[op.Blob]; !ok {
+					// An earlier op in this batch removed or replaced the receipt.
+					objects, err := u.verify(editCtx, item, []string{op.Blob})
+					if err != nil {
+						return err
+					}
+					o.objects[op.Blob] = objects[op.Blob]
+				}
+			}
 			if err := o.apply(n, op); err != nil {
 				return err
 			}

@@ -32,10 +32,11 @@ const (
 type Op struct {
 	Op         string         `json:"op"`
 	Path       string         `json:"path,omitempty"`
-	Blob       string         `json:"blob,omitempty"`  // put: the staged upload (u-{uuid}) or a blob in the folder
-	Index      *int           `json:"index,omitempty"` // put, move, attach: among the attached uploads of its Upload
-	Meta       map[string]any `json:"meta,omitempty"`  // put: the upload's meta; attach: merged into it; meta: the item's
-	Edit       *Edit          `json:"edit,omitempty"`  // put, edit, copy, frame
+	Blob       string         `json:"blob,omitempty"`      // put: the staged upload (u-{uuid}) or a blob in the folder
+	CreateID   string         `json:"create_id,omitempty"` // put: create-only UUID; repeat the same ID to retry
+	Index      *int           `json:"index,omitempty"`     // put, move, attach: among the attached uploads of its Upload
+	Meta       map[string]any `json:"meta,omitempty"`      // put: the upload's meta; attach: merged into it; meta: the item's
+	Edit       *Edit          `json:"edit,omitempty"`      // put, edit, copy, frame
 	Unattached bool           `json:"unattached,omitempty"`
 	To         string         `json:"to,omitempty"`   // rename, copy (default the source's path)
 	From       *CopyFrom      `json:"from,omitempty"` // copy
@@ -104,6 +105,12 @@ func (op Op) validate() error {
 	}
 	if op.Unattached && op.Op != OpPut {
 		return bad("only put takes unattached")
+	}
+	if op.CreateID != "" {
+		id, err := uuid.Parse(op.CreateID)
+		if op.Op != OpPut || err != nil || id == uuid.Nil || id.String() != op.CreateID {
+			return bad("create_id requires a put and a canonical nonzero UUID")
+		}
 	}
 	if err := op.Edit.Check(0, 0); err != nil {
 		return bad("%v", err)
@@ -214,7 +221,7 @@ func (o *opRun) put(op Op) error {
 	if ext == "" {
 		ext = typeExt(obj.ContentType)
 	}
-	f := File{Path: stem + "." + ext, Type: obj.ContentType, Size: obj.Size, Meta: op.Meta, Unattached: op.Unattached}
+	f := File{Path: stem + "." + ext, Type: obj.ContentType, Size: obj.Size, Meta: op.Meta, Unattached: op.Unattached, CreateID: op.CreateID}
 	if layout.ValidStagedName(op.Blob) {
 		f.Staged = op.Blob
 	} else {
@@ -243,8 +250,13 @@ func (o *opRun) put(op Op) error {
 		}
 		f.Edit = e
 	}
-	if i >= 0 && reflect.DeepEqual(stripPending(m.Files[i]), f) {
-		return nil // a retry
+	if i >= 0 {
+		old := stripPending(m.Files[i])
+		old.CreateID = f.CreateID
+		if reflect.DeepEqual(old, f) {
+			m.Files[i].CreateID = f.CreateID
+			return nil // unchanged source and edit
+		}
 	}
 	f.Pending = k.Presets(f.Path, m.Hidden)
 	return o.place(g, i, f, op.Index)
@@ -388,7 +400,7 @@ func (o *opRun) copy(op Op, src []File) error {
 		_, ext = splitExt(f.Path)
 	}
 	from := f.Path
-	f.Path, f.Unattached = stem+"."+ext, false
+	f.Path, f.Unattached, f.CreateID = stem+"."+ext, false, ""
 	group, _, _, _, _ := k.upload(from)
 	if g != group || op.Edit != nil {
 		if f.Gone {
@@ -492,6 +504,23 @@ func rebase(p, old, new string) string {
 		return new
 	}
 	return p
+}
+
+// created checks a create-only put against the current manifest. A retry
+// leaves later attachment, edits and worker results untouched.
+func (o *opRun) created(op Op) (bool, error) {
+	if op.CreateID == "" {
+		return false, nil
+	}
+	stem, _ := splitExt(op.Path)
+	i := o.stem(stem)
+	if i < 0 {
+		return false, nil
+	}
+	if o.m.Files[i].CreateID != op.CreateID {
+		return false, uploadErr(CodeConflict, "upload %q already exists", op.Path)
+	}
+	return true, nil
 }
 
 // stem finds the upload whose path has stem, or -1.

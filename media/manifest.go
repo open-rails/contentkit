@@ -40,6 +40,7 @@ type File struct {
 
 	// Uploads:
 	Staged     string         `json:"staged,omitempty"`     // "u-{uuid}" in temp/ until the worker hashes and places it at Blob
+	CreateID   string         `json:"create_id,omitempty"`  // create-only put receipt; retained through placement and processing
 	Edit       *Edit          `json:"edit,omitempty"`       // crop and rotate in source pixels
 	Frame      *Frame         `json:"frame,omitempty"`      // grabbed from the Upload.Frames video
 	Meta       map[string]any `json:"meta,omitempty"`       // teaser, lang, label, …

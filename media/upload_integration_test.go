@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/open-rails/contentkit/access"
@@ -27,6 +28,96 @@ func code(err error) string {
 		return ue.Code
 	}
 	return ""
+}
+
+func TestCreateOnlyPreservesExistingUploadsAndRetries(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	ctx := context.Background()
+	g := f.ref("gallery", 1)
+	f.put(g, "originals/001.png", "image/png", png(1))
+	f.produce(g)
+	before, _, _ := f.ms.Get(ctx, g)
+	p, blob := f.upload(g, "originals/001 .png", "image/png", png(2))
+	if p != "originals/001.png" {
+		t.Fatalf("canonical path %q", p)
+	}
+	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: p, Blob: blob, CreateID: cid(100)}}); code(err) != media.CodeConflict {
+		t.Fatalf("create over existing upload: %v", err)
+	}
+	after, _, _ := f.ms.Get(ctx, g)
+	if !reflect.DeepEqual(before.Files, after.Files) {
+		t.Fatal("rejected create changed the existing upload or its outputs")
+	}
+
+	p, blob = f.upload(g, "originals/002.png", "image/png", png(3))
+	op := media.Op{Op: media.OpPut, Path: p, Blob: blob, CreateID: cid(101), Unattached: true}
+	f.commit(g, op)
+	f.produce(g)
+	before = f.commit(g, op, media.Op{Op: media.OpAttach, Path: p, Meta: map[string]any{"alt": "attached"}})
+	item, _ := f.reg.Item(g)
+	key, _ := item.Staged(blob)
+	if _, err := f.env.Store.Head(ctx, key); !errors.Is(err, media.ErrNotFound) {
+		t.Fatalf("placement kept the staged object: %v", err)
+	}
+	after = f.commit(g, op)
+	if !reflect.DeepEqual(before.Files, after.Files) {
+		t.Fatal("retry after placement restored old attachment, metadata or pending work")
+	}
+	other := op
+	other.CreateID = cid(102)
+	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{other}); code(err) != media.CodeConflict {
+		t.Fatalf("a different create reused the receipt: %v", err)
+	}
+	m := f.commit(g, media.Op{Op: media.OpCopy, From: &media.CopyFrom{ID: g.ContentID, Path: p}, To: "originals/003.png"})
+	if copied, _ := m.Get("originals/003.png"); copied.CreateID != "" {
+		t.Fatal("copy carried the source's create receipt")
+	}
+	want := m.Clone()
+	want.Files[want.Find(p)].CreateID = ""
+	m = f.put(g, p, "image/png", png(3))
+	if !reflect.DeepEqual(want.Files, m.Files) {
+		t.Fatal("an unchanged intentional put reset processing while clearing its receipt")
+	}
+	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{op}); code(err) != media.CodeConflict {
+		t.Fatalf("old create overwrote an intentional replacement: %v", err)
+	}
+}
+
+func TestConcurrentCreateOnlyCommits(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	g := f.ref("gallery", 1)
+	p, blob := f.upload(g, "originals/new.png", "image/png", png(5))
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var wg sync.WaitGroup
+	for i := range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := f.up.Commit(context.Background(), f.editor, g, []media.Op{{Op: media.OpPut, Path: p, Blob: blob, CreateID: cid(200 + i)}})
+			results <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	var accepted, conflicts int
+	for err := range results {
+		switch {
+		case err == nil:
+			accepted++
+		case code(err) == media.CodeConflict:
+			conflicts++
+		default:
+			t.Fatalf("concurrent create: %v", err)
+		}
+	}
+	if accepted != 1 || conflicts != 1 {
+		t.Fatalf("accepted %d, conflicts %d", accepted, conflicts)
+	}
 }
 
 // Uploads keep their natural order unless an op gives an index; derived

@@ -51,10 +51,10 @@ describe("single PUT", () => {
   it("puts an upload under the path the server names, and waits until it is processed", async () => {
     const { s, c } = setup();
     const phases: string[] = [];
-    const f = await c.put(file(MiB, 4, "image/png"), { ref, path: "inline/x.png", edit: { rotate: 90 }, onProgress: (p) => phases.push(p.phase) });
+    const f = await c.put(file(MiB, 4, "image/png"), { ref, path: "inline/x.png", createOnly: true, edit: { rotate: 90 }, onProgress: (p) => phases.push(p.phase) });
     expect(f).toMatchObject({ path: "inline/i-1.png", upload: true, edit: { rotate: 90 } });
     expect(f.pending).toBeUndefined();
-    expect(s.commits[0]).toEqual([{ op: "put", path: "inline/i-1.png", blob: expect.stringMatching(STAGED), edit: { rotate: 90 } }]);
+    expect(s.commits[0]).toEqual([{ op: "put", path: "inline/i-1.png", blob: expect.stringMatching(STAGED), create_id: expect.any(String), edit: { rotate: 90 } }]);
     expect(phases.at(-1)).toBe("processing");
     expect(s.calls.filter((x) => x === "/read")).toHaveLength(1);
   });
