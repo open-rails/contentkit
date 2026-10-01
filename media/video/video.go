@@ -125,6 +125,10 @@ func (e *PermanentError) Unwrap() error { return e.Err }
 // commit that changed it enqueued its own job.
 var errStale = errors.New("media/video: upload changed during processing")
 
+// errGone is errStale for an upload that was removed: what was made for it
+// is deleted at once.
+var errGone = fmt.Errorf("%w: removed", errStale)
+
 // full reports an item marked Full: nothing more is produced for it until a
 // commit shrinks it.
 func (e *Encoder) full(ctx context.Context, item media.Item) bool {

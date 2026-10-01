@@ -1,6 +1,7 @@
 package video_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -174,5 +175,46 @@ func TestDeletedFolderDropsInFlightOutputs(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Fatalf("%s kept after the folder was deleted", o.Key)
+	}
+}
+
+// enqueueOnly is the queue without its Cancel: a removal whose cancel has
+// not reached the running job yet.
+type enqueueOnly struct{ q media.ProcessQueue }
+
+func (e enqueueOnly) Enqueue(ctx context.Context, job media.ProcessJob) error {
+	return e.q.Enqueue(ctx, job)
+}
+
+// An upload removed while its outputs are made leaves none of them: the
+// publish that finds its source gone deletes what the job wrote.
+func TestRemovedSourceDropsInFlightOutputs(t *testing.T) {
+	e := newEnv(t, opts{ladder: []int{360}})
+	up, err := media.NewUploads(media.UploadOptions{Store: e.store, Manifests: e.ms, Queue: enqueueOnly{e.queue}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var once sync.Once
+	var takedown error
+	defer video.SetBeforePublish(func() {
+		once.Do(func() {
+			_, takedown = up.Commit(e.ctx, e.editor, e.ref, []media.Op{{Op: media.OpRemove, Path: "source.mkv", Takedown: true}})
+		})
+	})()
+	e.start()
+	defer e.stopWorker()
+	e.put("source", "video/x-matroska", fixture{w: 640, h: 360, secs: 3, audio: 1, tone: 440}.make(t), nil)
+	e.wait()
+	if takedown != nil {
+		t.Fatal(takedown)
+	}
+	if m := e.manifest(); len(m.Files) != 0 {
+		t.Fatalf("files after the takedown: %v", m.Files)
+	}
+	for o, err := range e.store.List(e.ctx, e.item().PrivatePrefix()) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Fatalf("%s kept after its source was taken down", o.Key)
 	}
 }

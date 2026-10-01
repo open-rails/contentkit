@@ -501,7 +501,7 @@ way.
 | `edit {path, edit}` | Crops and rotates an image upload; nil clears. |
 | `move {path, index}` | Reorders an upload; its outputs follow. |
 | `rename {path, to}` | Renames an upload within its Upload, and its outputs. |
-| `remove {path}` | Removes an upload and its outputs (cancelling its processing). |
+| `remove {path, takedown?}` | Removes an upload and its outputs (cancelling its processing). With `takedown` it also removes the frames grabbed from the upload and the zips that bundled it, then deletes at once the blobs the commit dropped, the removed uploads' editor views and staged objects, and the item's unused public files (purged). With an exempt grant (`UploadGrant.Exempt`, staff) it instead deletes every private blob the item no longer references, earlier versions and all editor views included, which costs re-rendering them; sent again on the path already gone, it runs that sweep again. If a takedown's deletes fail it says so: staff complete it with the exempt takedown, otherwise the leftovers go at the grace sweep. For anyone else a takedown of a path already gone is `not_found`. |
 | `attach {path, index?, meta?}` | Makes an unattached upload part of the item. |
 | `copy {from: {id, path}, to?, edit?}` | Copies an upload within the kind, including the current item. Copies within an Upload preserve current private outputs; another Upload or a supplied edit renders its own presets from the original. Blobs copied from another item are reserved like uploads (rate limits, pending quota) before they move. |
 | `frame {path, t \| auto}` | Fills an upload from a frame of its `Frames` video; a new video grabs again. |
@@ -603,9 +603,12 @@ out until `attach`.
 ### Sweep, deletion and erasure
 
 - The sweep collects garbage by manifest reference: private blobs the
-  manifest does not reference once it and they are older than
-  `JobsConfig.Grace` (24 h), public names no preset expects at once (purged),
-  and `temp/` after `TempTTL` (48 h). A periodic pass covers every folder.
+  manifest does not reference once they are older than `JobsConfig.Grace`
+  (24 h) by their own age, however often the item is edited; public names no
+  preset expects at once (purged); and `temp/` after `TempTTL` (48 h). A
+  periodic pass covers every folder. An unreferenced blob that old cannot be
+  committed again by name (`not_uploaded`: upload it again). For content
+  that must go now, use `remove` with `takedown`.
 - `jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref, Owner})` deletes items from
   the host's delete transaction (a second pass catches late uploads); a host
   deletes every version item of a work, and account erasure deletes

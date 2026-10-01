@@ -31,7 +31,8 @@ const placeConcurrency = 4
 //     overwritten, so its bytes always hash to its name;
 //  2. point the files at their blobs in one edit, which checks under the
 //     folder lock (the sweep holds it too) that each blob still exists;
-//  3. delete the staged objects no manifest references.
+//  3. delete the staged objects no manifest references, and, in that
+//     edit, the blobs of uploads removed meanwhile (a takedown's stay gone).
 //
 // A staged upload that is gone or not the size committed fails its file
 // (CodeNotUploaded: upload it again). Every step is idempotent, so a crash
@@ -82,9 +83,11 @@ func (m *Manifests) Place(ctx context.Context, ref contentref.ContentRef) (int, 
 	var failed []string
 	_, err = m.EditExisting(ctx, ref, func(cur *Manifest) error {
 		placed, failed = 0, failed[:0]
+		live := map[string]bool{}
 		for i := range cur.Files {
 			f := &cur.Files[i]
 			blob, ok := blobs[f.Staged]
+			live[f.Staged] = true
 			switch {
 			case f.Staged == "" || !ok || f.Fail() != nil:
 				continue
@@ -103,7 +106,13 @@ func (m *Manifests) Place(ctx context.Context, ref contentref.ContentRef) (int, 
 			f.Blob, f.Staged = blob, ""
 			placed++
 		}
-		return nil
+		var gone []string
+		for name, blob := range blobs {
+			if blob != "" && !live[name] {
+				gone = append(gone, blob)
+			}
+		}
+		return m.DeleteUnreferenced(ctx, item, cur, gone)
 	})
 	if errors.Is(err, ErrNotFound) {
 		// Deleted meanwhile: drop what this run wrote, as a folder deletion

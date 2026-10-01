@@ -30,9 +30,9 @@ type JobsConfig struct {
 	// Pool is the host database Hooks.ItemReady's transaction runs on;
 	// required with ItemReady.
 	Pool *pgxpool.Pool
-	// Grace protects in-flight uploads, jobs and mid-stream viewers: a
-	// folder's blobs are swept only when its manifest is this old, and only
-	// blobs this old are deleted. Default 24 h.
+	// Grace protects job outputs not recorded yet: the sweep deletes an
+	// unreferenced blob once it is this old, whatever edits follow. Default
+	// 24 h.
 	Grace time.Duration
 	// TempTTL is how long temp/ objects (in-flight server-side writes) are
 	// kept; above the bucket's 1-day abort-incomplete rule. Default 48 h.

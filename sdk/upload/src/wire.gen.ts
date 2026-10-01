@@ -111,6 +111,7 @@ export interface Op {
   auto?: boolean;
   preset?: string;
   force?: boolean;
+  takedown?: boolean;
 }
 
 export interface CommitBody {
