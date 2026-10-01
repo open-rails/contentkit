@@ -164,35 +164,64 @@ func TestSweepProgressesUnderEdits(t *testing.T) {
 	}
 }
 
-// A takedown leaves nothing of the upload to fetch: its blob and outputs,
-// its earlier versions, editor views, the zip that bundled it and its
-// public names go at once (purged); a blob another file still names stays.
+// A takedown leaves nothing of the upload to fetch: the blobs the commit
+// dropped (its own, its outputs', the zip that bundled it), its editor view
+// and its public names go at once (purged). It touches nothing else: another
+// upload's editor view, an output a job has not recorded yet, an earlier
+// version and a blob another file still names all stay. Only an exempt
+// grant sweeps the whole item.
 func TestTakedown(t *testing.T) {
 	f := newFixture(t)
 	f.visible(1)
-	g := f.gallery(1, 2)
+	g := f.gallery(1, 3)
 	item, _ := f.reg.Item(g)
 	ctx := context.Background()
+	staff := access.Actor{ID: "staff", Kind: "user"}
 	f.put(g, "originals/000.png", "image/png", png(7))   // page 0's first version is unreferenced
-	f.put(g, "originals/002.png", "image/png", png(101)) // the same bytes as page 1
+	f.put(g, "originals/003.png", "image/png", png(101)) // the same bytes as page 1
 	f.produce(g)
 	m, _, _ := f.ms.Get(ctx, g)
-	page, _ := m.Get("originals/000.png")
-	earlier, _ := item.Blob(blobOf(png(100)))
-	page0, _ := item.Blob(blobOf(png(7)))
-	page1, _ := item.Blob(blobOf(png(101)))
-	view, _ := item.Blob(f.reg.EditorView(page))
-	f.object(view, "editor view")
+	blob := func(body []byte) string { key, _ := item.Blob(blobOf(body)); return key }
+	view := func(path string) string {
+		u, _ := m.Get(path)
+		key, _ := item.Blob(f.reg.EditorView(u))
+		f.object(key, "editor view")
+		return key
+	}
+	earlier, page0, page1 := blob(png(100)), blob(png(7)), blob(png(101))
+	view0, view2 := view("originals/000.png"), view("originals/002.png")
+	unrecorded := blob([]byte("an output a job has not recorded yet"))
+	f.object(unrecorded, "unrecorded")
 	f.q.take()
 	m = f.commit(g, media.Op{Op: media.OpRemove, Path: "originals/000.png", Takedown: true},
 		media.Op{Op: media.OpRemove, Path: "originals/001.png", Takedown: true})
-	if f.exists(page0) || f.exists(earlier) || f.exists(view) || !f.exists(page1) || m.Find("download/pages.zip") >= 0 {
-		t.Fatalf("takedown: page 0 kept %v, its earlier version %v, its editor view %v; page 1 kept %v; %v",
-			f.exists(page0), f.exists(earlier), f.exists(view), f.exists(page1), paths(m))
+	if f.exists(page0) || f.exists(view0) || m.Find("download/pages.zip") >= 0 {
+		t.Fatalf("takedown: page 0 kept %v, its editor view %v; %v", f.exists(page0), f.exists(view0), paths(m))
+	}
+	if !f.exists(page1) || !f.exists(view2) || !f.exists(unrecorded) || !f.exists(earlier) {
+		t.Fatalf("takedown took more than it dropped: shared blob kept %v, another upload's editor view %v, an unrecorded output %v, an earlier version %v",
+			f.exists(page1), f.exists(view2), f.exists(unrecorded), f.exists(earlier))
 	}
 	if jobs := f.q.take(); len(jobs) != 1 {
 		t.Fatalf("the zip is not built again: %+v", jobs)
 	}
+	// On a path already gone it changes and queues nothing.
+	_, before, _ := f.ms.Get(ctx, g)
+	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpRemove, Path: "originals/000.png", Takedown: true}}); code(err) != media.CodeNotFound {
+		t.Fatalf("a takedown of a gone path: %v", err)
+	}
+	if _, after, _ := f.ms.Get(ctx, g); before != after || len(f.q.take()) != 0 || !f.exists(view2) || !f.exists(unrecorded) {
+		t.Fatal("a takedown of a gone path changed or queued something")
+	}
+	// An exempt grant sweeps the item, on a gone path too.
+	if _, err := f.up.Commit(ctx, staff, g, []media.Op{{Op: media.OpRemove, Path: "originals/000.png", Takedown: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if f.exists(view2) || f.exists(unrecorded) || f.exists(earlier) || !f.exists(page1) {
+		t.Fatalf("an exempt takedown: editor view kept %v, unrecorded output %v, earlier version %v; referenced blob kept %v",
+			f.exists(view2), f.exists(unrecorded), f.exists(earlier), f.exists(page1))
+	}
+	m, _, _ = f.ms.Get(ctx, g)
 	for _, b := range m.Blobs() {
 		if key, _ := item.Blob(b); !f.exists(key) {
 			t.Fatalf("took referenced %s", key)
@@ -214,7 +243,7 @@ func TestTakedown(t *testing.T) {
 		t.Fatalf("takedown on an edit: %v", err)
 	}
 	// A staged upload taken down before it is placed.
-	p, staged := f.upload(g, "originals/003.png", "image/png", png(3))
+	p, staged := f.upload(g, "originals/004.png", "image/png", png(4))
 	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: p, Blob: staged}}); err != nil {
 		t.Fatal(err)
 	}
@@ -271,8 +300,9 @@ func (s failingStore) Delete(ctx context.Context, key string) error {
 }
 
 // A takedown whose deletes fail says so, with the manifest already
-// committed and processing queued; sending it again, the path now gone,
-// completes it.
+// committed and processing queued. An exempt grant completes it by sending
+// it again, the path now gone; for anyone else the leftovers go at the
+// sweep.
 func TestTakedownRetry(t *testing.T) {
 	f := newFixture(t)
 	f.visible(1)
@@ -295,12 +325,11 @@ func TestTakedownRetry(t *testing.T) {
 		t.Fatal("the removal was not committed and queued before the deletes")
 	}
 	store.armed.Store(false)
-	if _, err := up.Commit(ctx, f.editor, g, takedown); err != nil || f.exists(page0) {
-		t.Fatalf("the retry: %v, blob kept %v", err, f.exists(page0))
+	if _, err := up.Commit(ctx, f.editor, g, takedown); code(err) != media.CodeNotFound || !f.exists(page0) {
+		t.Fatalf("a retry without an exempt grant: %v, blob kept %v", err, f.exists(page0))
 	}
-	// Without takedown, a path that is gone is not found.
-	if _, err := up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpRemove, Path: "originals/000.png"}}); code(err) != media.CodeNotFound {
-		t.Fatalf("a plain remove of a gone path: %v", err)
+	if _, err := up.Commit(ctx, access.Actor{ID: "staff", Kind: "user"}, g, takedown); err != nil || f.exists(page0) {
+		t.Fatalf("the exempt retry: %v, blob kept %v", err, f.exists(page0))
 	}
 }
 
@@ -331,7 +360,12 @@ func TestCopyDuringTakedown(t *testing.T) {
 	ctx := context.Background()
 	var once sync.Once
 	store := takedownStore{Store: f.env.Store, after: func() {
-		once.Do(func() { f.commit(b, media.Op{Op: media.OpRemove, Path: "originals/gone.png", Takedown: true}) })
+		once.Do(func() {
+			// An exempt takedown sweeps every blob the item does not reference.
+			if _, err := f.up.Commit(ctx, access.Actor{ID: "staff", Kind: "user"}, b, []media.Op{{Op: media.OpRemove, Path: "originals/gone.png", Takedown: true}}); err != nil {
+				t.Error(err)
+			}
+		})
 	}}
 	up, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: f.ms, Queue: f.q})
 	if err != nil {

@@ -425,7 +425,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	var prior *Manifest
 	man, err := u.o.Manifests.edit(editCtx, ref, false, bound{project: item.Kind().Unwritten}, func(m *Manifest) error {
 		prior = m.Clone()
-		o := &opRun{k: item.Kind(), m: m, id: ref.ContentID, copies: copies}
+		o := &opRun{k: item.Kind(), m: m, id: ref.ContentID, copies: copies, exempt: grant.Exempt}
 		keys = keys[:0]
 		var names []string
 		for _, op := range ops {
@@ -544,18 +544,24 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		queueErr = u.o.Queue.Enqueue(ctx, job)
 	}
 	// A takedown leaves nothing to fetch: with processing queued (dropped
-	// zips are built again), every blob the item no longer references goes
-	// now. A failure is returned; repeating the op completes it.
+	// zips are built again), what the commit dropped goes now. An exempt
+	// grant sweeps the whole item instead, which costs every editor view and
+	// every output a job has not recorded yet. A failure is returned; an
+	// exempt repeat completes it, else the sweep does a grace period later.
 	var takedownErr error
 	if slices.ContainsFunc(ops, func(op Op) bool { return op.Takedown }) {
-		var staged []string
-		for _, op := range ops {
-			if f, ok := prior.Get(op.Path); op.Takedown && ok && f.Staged != "" {
-				staged = append(staged, f.Staged)
+		drop := Unreferenced{All: grant.Exempt, Staged: missing(prior.StagedNames(), man.StagedNames())}
+		if !drop.All {
+			drop.Blobs = missing(prior.Blobs(), man.Blobs())
+			now := u.reg.editorViews(man)
+			for v := range u.reg.editorViews(prior) {
+				if !now[v] {
+					drop.Blobs = append(drop.Blobs, v)
+				}
 			}
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
-		if err := u.o.Manifests.DropUnreferenced(cleanupCtx, ref, staged); err != nil {
+		if err := u.o.Manifests.DropUnreferenced(cleanupCtx, ref, drop); err != nil {
 			takedownErr = fmt.Errorf("media: takedown: %w", err)
 		}
 		cancel()
@@ -564,6 +570,11 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		return nil, err
 	}
 	return man, nil
+}
+
+// missing are the names in before that are not in after.
+func missing(before, after []string) []string {
+	return slices.DeleteFunc(slices.Clone(before), func(s string) bool { return slices.Contains(after, s) })
 }
 
 // publicPending reports an upload of a visible item waiting for a public

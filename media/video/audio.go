@@ -179,7 +179,10 @@ func (e *Encoder) audioFile(ctx context.Context, item media.Item, f media.File, 
 	fp.set(media.PhasePublishing)
 	return e.publish(ctx, item, outs, func(m *media.Manifest) error {
 		g, err := current(m, f.Path, f.Blob)
-		if err != nil || audioFP(g, a) != fprint {
+		if err != nil {
+			return err
+		}
+		if audioFP(g, a) != fprint {
 			return errStale
 		}
 		m.Files[m.Find(g.Path)].Dur = dur

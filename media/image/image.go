@@ -275,10 +275,6 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 			zipped[z.Name] = f
 		}
 	}
-	prior := map[string]bool{}
-	for _, b := range m.Blobs() {
-		prior[b] = true
-	}
 	var made []string
 	for _, d := range results {
 		for _, f := range d.outputs {
@@ -293,6 +289,11 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 	k := item.Kind()
 	_, err = p.c.Manifests.EditExisting(ctx, item.Ref(), func(cur *media.Manifest) error {
 		purge, orphaned = purge[:0], orphaned[:0]
+		before := map[string]bool{}
+		for _, b := range cur.Blobs() {
+			before[b] = true
+		}
+		var gone []string // outputs of uploads removed meanwhile, and of zips that bundled them
 		if hidden = cur.Hidden; hidden {
 			if err := p.drop(ctx, written); err != nil {
 				return err
@@ -303,6 +304,9 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 			if i < 0 || cur.Files[i].Blob != d.src.Blob || cur.Files[i].Edit.Hash() != d.src.Edit.Hash() {
 				if i < 0 {
 					orphaned = append(orphaned, d.written...)
+					for _, f := range d.outputs {
+						gone = append(gone, f.Blob)
+					}
 				}
 				continue
 			}
@@ -336,23 +340,34 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 				if err := cur.SetOutputs(z.Zip, z.Name, []media.File{f}); err != nil {
 					return err
 				}
-			} else if len(k.ZipInputs(cur, z)) == 0 {
-				if err := cur.SetOutputs(z.Zip, z.Name, nil); err != nil {
-					return err
+			} else {
+				if ok {
+					gone = append(gone, f.Blob)
+				}
+				if len(k.ZipInputs(cur, z)) == 0 {
+					if err := cur.SetOutputs(z.Zip, z.Name, nil); err != nil {
+						return err
+					}
 				}
 			}
 		}
-		// A reused blob may have been swept before this edit took the folder
-		// lock: check it is still there before referencing it.
+		// A blob this edit newly references may have been swept or taken
+		// down before it took the folder lock (one shared with an upload
+		// removed meanwhile, too): check it is still there.
+		after := map[string]bool{}
+		for _, b := range cur.Blobs() {
+			after[b] = true
+		}
 		for _, b := range made {
-			if !prior[b] && slices.Contains(cur.Blobs(), b) {
+			if !before[b] && after[b] {
 				key, _ := item.Blob(b)
 				if _, err := p.c.Store.Head(ctx, key); err != nil {
 					return fmt.Errorf("media/image: output %s: %w", key, err)
 				}
 			}
 		}
-		return nil
+		// What was rendered for a source that is gone does not outlive it.
+		return p.c.Manifests.DeleteUnreferenced(ctx, item, cur, gone)
 	})
 	switch {
 	case errors.Is(err, media.ErrNotFound):

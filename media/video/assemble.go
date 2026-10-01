@@ -196,7 +196,10 @@ func (e *Encoder) assembleHLS(ctx context.Context, w runWork, k int, chunks []en
 	fp.set(media.PhasePublishing)
 	return e.publish(ctx, w.item, append(outs, mp4Files...), func(m *media.Manifest) error {
 		g, err := current(m, w.f.Path, w.f.Blob)
-		if err != nil || e.fp(w.p, g) != w.fp {
+		if err != nil {
+			return err
+		}
+		if e.fp(w.p, g) != w.fp {
 			return errStale
 		}
 		cur := m.Outputs(g.Path, w.p.Name)
@@ -244,7 +247,10 @@ func (e *Encoder) assembleMP4(ctx context.Context, w runWork, chunks []encodeChu
 	fp.set(media.PhasePublishing)
 	return e.publish(ctx, w.item, files, func(m *media.Manifest) error {
 		g, err := current(m, w.f.Path, w.f.Blob)
-		if err != nil || e.fp(w.p, g) != w.fp {
+		if err != nil {
+			return err
+		}
+		if e.fp(w.p, g) != w.fp {
 			return errStale
 		}
 		return setMP4s(m, g.Path, files)

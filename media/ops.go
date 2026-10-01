@@ -46,9 +46,11 @@ type Op struct {
 	Force      bool           `json:"force,omitempty"`
 	// Takedown (remove) also removes the frames grabbed from the upload and
 	// the zips that bundled it, then deletes at once, not a grace period
-	// later, every private blob the item no longer references (earlier
-	// versions and editor views too) and the public files no upload renders.
-	// Repeating it, the path already gone, completes one that failed part way.
+	// later, the blobs the commit dropped, the removed uploads' editor views
+	// and the public files no upload renders. With an exempt grant it deletes
+	// every private blob the item no longer references (earlier versions and
+	// every editor view too), and repeating it, the path already gone, runs
+	// that sweep again: how staff complete a takedown that failed part way.
 	Takedown bool `json:"takedown,omitempty"`
 }
 
@@ -148,6 +150,9 @@ type opRun struct {
 	// copies are each copy op's source upload and outputs (by op index),
 	// already copied into the item.
 	copies map[int][]File
+	// exempt is an exempt grant: its takedown of a path already gone is a
+	// retry, not an error.
+	exempt bool
 }
 
 func (o *opRun) apply(n int, op Op) error {
@@ -173,7 +178,7 @@ func (o *opRun) apply(n int, op Op) error {
 		return o.copy(op, src)
 	}
 	i := m.Find(op.Path)
-	publicRemoval := op.Op == OpRemove && (op.Takedown || len(k.PublicFor(op.Path)) > 0)
+	publicRemoval := op.Op == OpRemove && (op.Takedown && o.exempt || len(k.PublicFor(op.Path)) > 0)
 	if i < 0 && publicRemoval {
 		return nil // retry after the manifest changed but the cleanup failed
 	}

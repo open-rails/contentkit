@@ -216,13 +216,23 @@ func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) (
 	return gone, err
 }
 
-// DropUnreferenced deletes at once, under the manifest lock, every private
-// blob ref's manifest does not reference, and those of the staged uploads
-// it does not: a takedown's sweep without the grace period, which also takes
-// earlier versions, dropped originals and editor views. A worker whose
-// unrecorded outputs go with them finds them missing when it records, and
-// produces them again.
-func (m *Manifests) DropUnreferenced(ctx context.Context, ref contentref.ContentRef, staged []string) error {
+// Unreferenced selects what DropUnreferenced deletes.
+type Unreferenced struct {
+	// All is every private blob in the folder, editor views included: a
+	// worker whose unrecorded outputs go with them finds them missing when
+	// it records, and produces them again.
+	All bool
+	// Blobs are candidates: each goes unless it is an editor view of a
+	// current upload.
+	Blobs []string
+	// Staged are staged uploads' names.
+	Staged []string
+}
+
+// DropUnreferenced deletes at once, under the manifest lock, what u selects
+// and ref's manifest does not reference: a takedown's sweep, without the
+// grace period.
+func (m *Manifests) DropUnreferenced(ctx context.Context, ref contentref.ContentRef, u Unreferenced) error {
 	item, err := m.reg.Item(ref)
 	if err != nil {
 		return err
@@ -238,23 +248,35 @@ func (m *Manifests) DropUnreferenced(ctx context.Context, ref contentref.Content
 	} else if err != nil {
 		return err
 	}
-	keep := map[string]bool{}
-	for _, b := range cur.Blobs() {
-		key, _ := item.Blob(b)
-		keep[key] = true
-	}
 	var keys []string
-	for _, s := range staged {
+	for _, s := range u.Staged {
 		if key, err := item.Staged(s); err == nil && !slices.Contains(cur.StagedNames(), s) {
 			keys = append(keys, key)
 		}
 	}
-	for obj, err := range m.store.List(ctx, item.PrivatePrefix()) {
-		if err != nil {
-			return err
+	if u.All {
+		keep := map[string]bool{}
+		for _, b := range cur.Blobs() {
+			key, _ := item.Blob(b)
+			keep[key] = true
 		}
-		if !keep[obj.Key] {
-			keys = append(keys, obj.Key)
+		for obj, err := range m.store.List(ctx, item.PrivatePrefix()) {
+			if err != nil {
+				return err
+			}
+			if !keep[obj.Key] {
+				keys = append(keys, obj.Key)
+			}
+		}
+	} else {
+		keep := m.reg.editorViews(cur)
+		for _, b := range cur.Blobs() {
+			keep[b] = true
+		}
+		for _, b := range u.Blobs {
+			if key, err := item.Blob(b); err == nil && !keep[b] {
+				keys = append(keys, key)
+			}
 		}
 	}
 	g, ctx := errgroup.WithContext(ctx)
@@ -268,6 +290,29 @@ func (m *Manifests) DropUnreferenced(ctx context.Context, ref contentref.Content
 		})
 	}
 	return g.Wait()
+}
+
+// DeleteUnreferenced deletes the blobs among blobs that cur does not
+// reference. A job calls it from its closing edit (the manifest lock held)
+// for what it wrote for a source that is gone, so a taken-down upload's
+// outputs do not come back under their old names.
+func (m *Manifests) DeleteUnreferenced(ctx context.Context, item Item, cur *Manifest, blobs []string) error {
+	if len(blobs) == 0 {
+		return nil
+	}
+	keep := map[string]bool{}
+	for _, b := range cur.Blobs() {
+		keep[b] = true
+	}
+	var errs []error
+	for _, b := range blobs {
+		if key, err := item.Blob(b); err == nil && !keep[b] {
+			if err := m.store.Delete(ctx, key); err != nil && !errors.Is(err, ErrNotFound) {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existing bool, b bound, fn func(*Manifest) error) (*Manifest, error) {

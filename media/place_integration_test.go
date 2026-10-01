@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/open-rails/contentkit/media"
@@ -248,5 +249,54 @@ func TestPlaceAfterDeletion(t *testing.T) {
 	}
 	for o, err := range f.env.Store.List(ctx, item.Prefix()) {
 		t.Fatalf("left %s %v", o.Key, err)
+	}
+}
+
+// afterBlob runs after once a blob lands in private/.
+type afterBlob struct {
+	media.Store
+	after func()
+}
+
+func (s afterBlob) Put(ctx context.Context, key string, body io.Reader, size int64, o media.PutOptions) (media.Object, error) {
+	obj, err := s.Store.Put(ctx, key, body, size, o)
+	if err == nil && strings.Contains(key, "/private/") {
+		s.after()
+	}
+	return obj, err
+}
+
+// A place job that finds its upload taken down removes the blob it just
+// wrote: the upload's bytes do not come back under their name.
+func TestPlaceAfterTakedown(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	ctx := context.Background()
+	g := f.gallery(1, 1)
+	item, _ := f.reg.Item(g)
+	p, staged := f.upload(g, "originals/1.png", "image/png", png(1))
+	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: p, Blob: staged}}); err != nil {
+		t.Fatal(err)
+	}
+	var once sync.Once
+	ms := s3test.Manifests(t, afterBlob{Store: f.env.Store, after: func() {
+		once.Do(func() {
+			if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpRemove, Path: p, Takedown: true}}); err != nil {
+				t.Error(err)
+			}
+		})
+	}}, f.reg, media.ManifestOptions{})
+	if n, err := ms.Place(ctx, g); err != nil || n != 0 {
+		t.Fatalf("placed %d: %v", n, err)
+	}
+	blob, _ := item.Blob(blobOf(png(1)))
+	if key, _ := item.Staged(staged); f.exists(blob) || f.exists(key) {
+		t.Fatalf("a taken-down upload's blob kept %v, its staged object %v", f.exists(blob), f.exists(key))
+	}
+	m, _, _ := f.ms.Get(ctx, g)
+	for _, b := range m.Blobs() {
+		if key, _ := item.Blob(b); !f.exists(key) {
+			t.Fatalf("took referenced %s", key)
+		}
 	}
 }
