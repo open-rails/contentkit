@@ -1,18 +1,18 @@
-// Command media-access is the media access worker. Settings are flags or
-// their environment variables; secrets are environment only, each also
-// readable from a file named by {VAR}_FILE:
+// Command media-access is the media access agent (media/agent). Settings are
+// flags or their environment variables; secrets are environment only, each
+// also readable from a file named by {VAR}_FILE:
 //
 //	-listen        MEDIA_ACCESS_LISTEN          default :8080
 //	-s3-endpoint   MEDIA_ACCESS_S3_ENDPOINT     path-style S3 endpoint (RGW or MinIO)
 //	-s3-bucket     MEDIA_ACCESS_S3_BUCKET
 //	-s3-region     MEDIA_ACCESS_S3_REGION       default us-east-1
-//	-hosts         MEDIA_ACCESS_HOSTS           comma list of allowed Host names, e.g. media.example.com;
-//	                                            empty allows any (warned; set it in production)
+//	-hosts         MEDIA_ACCESS_HOSTS           required: each media host and the namespaces it serves,
+//	                                            e.g. "media.doujins.ai=doujins,accounts; media.hanime.media=hentai0,accounts"
 //	-cors-origins  MEDIA_ACCESS_CORS_ORIGINS    comma list of exact site origins allowed with credentials,
-//	                                            e.g. https://example.com; empty breaks hls.js (warned)
-//	-resource-policy MEDIA_ACCESS_RESOURCE_POLICY  Cross-Origin-Resource-Policy: same-site (default),
-//	                                            same-origin, or cross-origin (pages on another site)
-//	               MEDIA_ACCESS_S3_ACCESS_KEY_ID, MEDIA_ACCESS_S3_SECRET_ACCESS_KEY   read-only key
+//	                                            e.g. https://doujins.ai; empty breaks hls.js (warned)
+//	-defaults      MEDIA_ACCESS_DEFAULTS        public names that fall back to the kind's _default item,
+//	                                            e.g. "doujins/gallery: cover-{w}.webp; accounts/user: avatar-{w}.webp"
+//	               MEDIA_ACCESS_S3_ACCESS_KEY_ID, MEDIA_ACCESS_S3_SECRET_ACCESS_KEY   key reading only */private/* and */public/*
 //	               MEDIA_ACCESS_TOKEN_KEY           current signing key "{kid}:{base64 secret}"
 //	               MEDIA_ACCESS_TOKEN_KEY_PREVIOUS  previous key, accepted during rotation; optional
 package main
@@ -31,7 +31,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/open-rails/contentkit/media/accessworker"
+	"github.com/open-rails/contentkit/media/agent"
 	"github.com/open-rails/contentkit/media/token"
 )
 
@@ -49,9 +49,9 @@ func run(log *slog.Logger, args []string) error {
 	endpoint := fs.String("s3-endpoint", env("MEDIA_ACCESS_S3_ENDPOINT", ""), "S3 endpoint")
 	bucket := fs.String("s3-bucket", env("MEDIA_ACCESS_S3_BUCKET", ""), "bucket")
 	region := fs.String("s3-region", env("MEDIA_ACCESS_S3_REGION", "us-east-1"), "S3 region")
-	hosts := fs.String("hosts", env("MEDIA_ACCESS_HOSTS", ""), "allowed Host names")
+	hosts := fs.String("hosts", env("MEDIA_ACCESS_HOSTS", ""), "host=namespace,…; …")
 	origins := fs.String("cors-origins", env("MEDIA_ACCESS_CORS_ORIGINS", ""), "CORS origins")
-	policy := fs.String("resource-policy", env("MEDIA_ACCESS_RESOURCE_POLICY", "same-site"), "Cross-Origin-Resource-Policy")
+	defaults := fs.String("defaults", env("MEDIA_ACCESS_DEFAULTS", ""), "namespace/kind: name template,…; …")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -75,19 +75,24 @@ func run(log *slog.Logger, args []string) error {
 	if err != nil {
 		return err
 	}
-	h, err := accessworker.New(accessworker.Config{
+	hostMap, err := agent.ParseHosts(*hosts)
+	if err != nil {
+		return fmt.Errorf("MEDIA_ACCESS_HOSTS: %w", err)
+	}
+	defs, err := agent.ParseDefaults(*defaults)
+	if err != nil {
+		return fmt.Errorf("MEDIA_ACCESS_DEFAULTS: %w", err)
+	}
+	h, err := agent.New(agent.Config{
 		Endpoint: *endpoint, Bucket: *bucket, Region: *region,
 		AccessKeyID: accessKey, SecretAccessKey: secretKey,
-		Ring: ring, Hosts: list(*hosts), Origins: list(*origins), ResourcePolicy: *policy, Logger: log,
+		Ring: ring, Hosts: hostMap, Origins: list(*origins), Defaults: defs, Logger: log,
 	})
 	if err != nil {
 		return err
 	}
 	if len(list(*origins)) == 0 {
 		log.Warn("MEDIA_ACCESS_CORS_ORIGINS is empty: browsers cannot read blobs with fetch/XHR, so hls.js playback fails; set it to the sites' exact origins")
-	}
-	if len(list(*hosts)) == 0 {
-		log.Warn("MEDIA_ACCESS_HOSTS is empty: any Host header is served; set it to the media host names")
 	}
 
 	ln, err := net.Listen("tcp", *listen)
@@ -105,7 +110,7 @@ func run(log *slog.Logger, args []string) error {
 	defer stop()
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(ln) }()
-	log.Info("listening", "addr", ln.Addr().String(), "bucket", *bucket)
+	log.Info("listening", "addr", ln.Addr().String(), "bucket", *bucket, "hosts", agent.FormatHosts(hostMap), "defaults", agent.FormatDefaults(defs))
 	select {
 	case err := <-done:
 		return err
