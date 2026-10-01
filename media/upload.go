@@ -361,7 +361,7 @@ func (u *Uploads) abort(ctx context.Context, t ticket, key string, cause error) 
 // upload sizes; growth past its quota fails with CodeQuota (not for exempt
 // grants). Then the worker places staged uploads and processes the item. A
 // new item starts hidden unless anonymous viewers may see it
-// (Hooks.Resolver). Removes finish public-file cleanup before returning;
+// (Hooks.Resolver). Successful removes finish public cleanup before returning;
 // unreferenced private blobs retain the normal sweep grace period.
 func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref.ContentRef, ops []Op) (*Manifest, error) {
 	item, err := u.item(ref)
@@ -481,15 +481,40 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		}
 		return nil, err
 	}
+	// The manifest is committed; cleanup must survive failures in the
+	// remaining request work.
+	var publicErr error
+	for _, op := range ops {
+		if op.Op != OpRemove || len(item.Kind().PublicFor(op.Path)) == 0 {
+			continue
+		}
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		keys, err := u.o.Manifests.SyncPublic(cleanupCtx, ref)
+		if purge := u.o.Manifests.reg.cfg.Hooks.PurgePublic; purge != nil && len(keys) > 0 {
+			urls := make([]string, len(keys))
+			for i, key := range keys {
+				urls[i] = strings.TrimRight(u.o.Manifests.reg.cfg.BaseURL, "/") + layout.URLPrefix + key
+			}
+			purge(cleanupCtx, urls)
+		}
+		cleanupCancel()
+		if err != nil {
+			publicErr = fmt.Errorf("media: remove public files: %w", err)
+		}
+		break
+	}
 	if err := settle(context.WithoutCancel(ctx), Settlement{Keys: append(keys, copied...), Delta: delta - charged}); err != nil {
-		return nil, err
+		return nil, errors.Join(err, publicErr)
 	}
 	if c, ok := u.o.Queue.(ProcessCanceler); ok && removesPending(prior, ops) {
 		if _, err := c.Cancel(context.WithoutCancel(ctx), ref); err != nil {
-			return nil, err
+			return nil, errors.Join(err, publicErr)
 		}
 	}
 	if man.Full {
+		if publicErr != nil {
+			return nil, publicErr
+		}
 		return man, nil // nothing is processed until a commit shrinks it
 	}
 	job := ProcessJob{Ref: ref, Place: len(man.StagedNames()) > 0}
@@ -498,25 +523,8 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 			job.Preset, job.Force = op.Preset, op.Force
 		}
 	}
-	if err := u.o.Queue.Enqueue(ctx, job); err != nil {
+	if err := errors.Join(u.o.Queue.Enqueue(ctx, job), publicErr); err != nil {
 		return nil, err
-	}
-	for _, op := range ops {
-		if op.Op != OpRemove || len(item.Kind().PublicFor(op.Path)) == 0 {
-			continue
-		}
-		keys, err := u.o.Manifests.SyncPublic(ctx, ref)
-		if purge := u.o.Manifests.reg.cfg.Hooks.PurgePublic; purge != nil && len(keys) > 0 {
-			urls := make([]string, len(keys))
-			for i, key := range keys {
-				urls[i] = strings.TrimRight(u.o.Manifests.reg.cfg.BaseURL, "/") + layout.URLPrefix + key
-			}
-			purge(ctx, urls)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("media: remove public files: %w", err)
-		}
-		break
 	}
 	return man, nil
 }

@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/open-rails/contentkit/contentref"
 )
 
@@ -132,8 +134,11 @@ func (b bound) check(cur, next *Manifest) error {
 }
 
 // SyncPublic deletes public names no attached upload currently uses, under
-// the manifest lock. It returns the deleted keys for cache purging.
+// the manifest lock. Cleanup is bounded to one minute; deleted keys are
+// returned for cache purging, including partial success on failure.
 func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
 	item, err := m.reg.Item(ref)
 	if err != nil {
 		return nil, err
@@ -166,19 +171,35 @@ func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) (
 			}
 		}
 	}
-	var gone []string
+	var keys []string
 	for obj, err := range m.store.List(ctx, item.PublicPrefix()) {
 		if err != nil {
-			return gone, err
+			return nil, err
 		}
 		if !want[obj.Key] {
-			if err := m.store.Delete(ctx, obj.Key); err != nil && !errors.Is(err, ErrNotFound) {
-				return gone, err
-			}
-			gone = append(gone, obj.Key)
+			keys = append(keys, obj.Key)
 		}
 	}
-	return gone, nil
+	g, deleteCtx := errgroup.WithContext(ctx)
+	g.SetLimit(8)
+	var mu sync.Mutex
+	var gone []string
+	for _, key := range keys {
+		if deleteCtx.Err() != nil {
+			break
+		}
+		g.Go(func() error {
+			if err := m.store.Delete(deleteCtx, key); err != nil && !errors.Is(err, ErrNotFound) {
+				return err
+			}
+			mu.Lock()
+			gone = append(gone, key)
+			mu.Unlock()
+			return nil
+		})
+	}
+	err = errors.Join(g.Wait(), ctx.Err())
+	return gone, err
 }
 
 func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existing bool, b bound, fn func(*Manifest) error) (*Manifest, error) {

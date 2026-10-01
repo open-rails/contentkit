@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/image"
@@ -239,16 +240,108 @@ func TestRemoveFencesInFlightPublicPublication(t *testing.T) {
 
 type failDelete struct {
 	media.Store
-	key string
-	err error
+	key    string
+	err    error
+	failed atomic.Bool
 }
 
 func (s *failDelete) Delete(ctx context.Context, key string) error {
-	if key == s.key {
-		s.key = ""
+	if key == s.key && s.failed.CompareAndSwap(false, true) {
 		return s.err
 	}
 	return s.Store.Delete(ctx, key)
+}
+
+type enqueueFunc func(context.Context, media.ProcessJob) error
+
+func (f enqueueFunc) Enqueue(ctx context.Context, job media.ProcessJob) error { return f(ctx, job) }
+
+func TestRemoveCleansPublicAfterCommitFailure(t *testing.T) {
+	for _, scenario := range []string{"enqueue failure", "client disconnect"} {
+		t.Run(scenario, func(t *testing.T) {
+			e := newEnv(t, nil)
+			ref := e.ref(t, "gallery", 1)
+			e.put(t, ref, "cover.png", "image/png", quadrants(t))
+			e.process(t, media.ProcessJob{Ref: ref})
+			item, _ := e.reg.Item(ref)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			store := &hooked{Store: e.Store, onPut: func(key string, put func() error) error {
+				err := put()
+				if err == nil && key == item.ManifestKey() && scenario == "client disconnect" {
+					cancel()
+				}
+				return err
+			}}
+			failure := errors.New("queue unavailable")
+			queue := enqueueFunc(func(ctx context.Context, _ media.ProcessJob) error {
+				if scenario == "client disconnect" {
+					return ctx.Err()
+				}
+				return failure
+			})
+			manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{})
+			uploads, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests, Queue: queue})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = uploads.Commit(ctx, e.editor, ref, []media.Op{{Op: media.OpRemove, Path: "cover.png"}})
+			if scenario == "client disconnect" {
+				failure = context.Canceled
+			}
+			if !errors.Is(err, failure) {
+				t.Fatalf("commit did not preserve the queue error: %v", err)
+			}
+			for obj, err := range e.Store.List(t.Context(), item.PublicPrefix()) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Fatalf("public file survived %s: %s", scenario, obj.Key)
+			}
+		})
+	}
+}
+
+type parallelDelete struct {
+	media.Store
+	started atomic.Int64
+	ready   chan struct{}
+}
+
+func (s *parallelDelete) Delete(ctx context.Context, key string) error {
+	if s.started.Add(1) == 3 {
+		close(s.ready)
+	}
+	select {
+	case <-s.ready:
+		return s.Store.Delete(ctx, key)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestPublicCleanupDeletesConcurrently(t *testing.T) {
+	e := newEnv(t, nil)
+	ref := e.ref(t, "gallery", 1)
+	e.put(t, ref, "cover.png", "image/png", quadrants(t))
+	e.process(t, media.ProcessJob{Ref: ref})
+	if _, err := e.ms.EditExisting(t.Context(), ref, func(m *media.Manifest) error {
+		m.Files = nil
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store := &parallelDelete{Store: e.Store, ready: make(chan struct{})}
+	manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{})
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	keys, err := manifests.SyncPublic(ctx, ref)
+	if err != nil || len(keys) != 3 {
+		t.Fatalf("public deletes did not overlap: keys=%v, err=%v", keys, err)
+	}
+	if _, err := e.ms.EditExisting(t.Context(), ref, func(*media.Manifest) error { return nil }); err != nil {
+		t.Fatalf("cleanup did not release the folder lock: %v", err)
+	}
 }
 
 func TestRemoveRetriesFailedPublicCleanup(t *testing.T) {
