@@ -45,7 +45,7 @@ func TestCommitOrderAndPaths(t *testing.T) {
 	f.produce(g)
 	m, _, _ = f.ms.Get(context.Background(), g)
 	want := []string{"originals/1.png", "originals/0.png", "originals/2.png", "originals/10.png",
-		"thumb/1.webp", "thumb/0.webp", "thumb/2.webp", "thumb/10.webp", "high/1.webp", "high/0.webp", "high/2.webp", "high/10.webp"}
+		"thumb/1.webp", "thumb/0.webp", "thumb/2.webp", "thumb/10.webp", "high/1.webp", "high/0.webp", "high/2.webp", "high/10.webp", "download/pages.zip"}
 	if !reflect.DeepEqual(paths(m), want) {
 		t.Fatalf("derived order %v", paths(m))
 	}

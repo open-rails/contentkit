@@ -52,7 +52,7 @@ func TestRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := media.ParseConfig(append(b[:len(b)-1], []byte(`,"unknown":1}`)...))
+	cfg, err := media.ParseConfig([]byte(string(b[:len(b)-1]) + `,"unknown":1}`))
 	if err != nil {
 		t.Fatalf("lenient registry JSON: %v", err)
 	}

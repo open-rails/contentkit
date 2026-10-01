@@ -51,7 +51,8 @@ func TestReadFullAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Access != media.AccessFull || res.Total != 6 || res.Files[0].Path != "thumb/000.webp" || res.Files[5].Path != "high/002.webp" {
+	if res.Access != media.AccessFull || res.Total != 7 || res.Files[0].Path != "thumb/000.webp" || res.Files[5].Path != "high/002.webp" ||
+		res.Files[6].Path != "download/pages.zip" {
 		t.Fatalf("read %+v", res)
 	}
 	for _, fi := range res.Files {
