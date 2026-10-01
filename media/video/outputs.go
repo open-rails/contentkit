@@ -23,10 +23,12 @@ import (
 //
 // Byte-range tracks and the sprite keep their segments or grid in a
 // TrackIndex blob (Track.Index).
-func renditionPath(to string, n int, c media.Codec) string { return fmt.Sprintf("%s%d-%s.mp4", to, n, c) }
-func audioPath(to, id string) string                    { return to + "audio-" + id + ".mp4" }
-func subsPath(to, id string) string                     { return to + "subs-" + id + ".vtt" }
-func spritePath(to string) string                       { return to + "sprite.jpg" }
+func renditionPath(to string, n int, c media.Codec) string {
+	return fmt.Sprintf("%s%d-%s.mp4", to, n, c)
+}
+func audioPath(to, id string) string { return to + "audio-" + id + ".mp4" }
+func subsPath(to, id string) string  { return to + "subs-" + id + ".vtt" }
+func spritePath(to string) string    { return to + "sprite.jpg" }
 
 // isEncode reports a preset of the encode runs (HLS or MP4).
 func isEncode(p *media.Private) bool { return p.HLS != nil || p.MP4 != nil }

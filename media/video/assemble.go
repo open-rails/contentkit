@@ -432,4 +432,3 @@ func (e *Encoder) spriteFromRendition(ctx context.Context, path, dir string, p p
 		enc: encoding{threads: e.c.Threads}}
 	return ladder(ctx, path, dir, p, ps, nil)
 }
-

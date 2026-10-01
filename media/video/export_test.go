@@ -1,22 +1,11 @@
 package video
 
-import (
-	"context"
+import "github.com/open-rails/contentkit/media"
 
-	"github.com/open-rails/contentkit/media"
-)
-
-// SetBeforePromote runs fn between the blob uploads and the manifest edit.
-func SetBeforePromote(fn func()) func() {
-	testBeforePromote = fn
-	return func() { testBeforePromote = nil }
-}
-
-// SetMultipart lowers the multipart threshold and part size.
-func SetMultipart(above, part int64) func() {
-	a, p := multipartAbove, partSize
-	multipartAbove, partSize = above, part
-	return func() { multipartAbove, partSize = a, p }
+// SetBeforePublish runs fn between the output uploads and the manifest edit.
+func SetBeforePublish(fn func()) func() {
+	testBeforePublish = fn
+	return func() { testBeforePublish = nil }
 }
 
 // SetNVENCCQOffset overrides NVENC's CQ offset over the rung CRF of codec c.
@@ -24,11 +13,6 @@ func SetNVENCCQOffset(c media.Codec, o int) func() {
 	old := nvencCQOffset[c]
 	nvencCQOffset[c] = o
 	return func() { nvencCQOffset[c] = old }
-}
-
-// EncodeStage runs the stale files' next stage and reports whether one remains.
-func EncodeStage(ctx context.Context, e *Encoder, job Job, report Report) (bool, error) {
-	return e.encode(ctx, job, report, true)
 }
 
 // SetCapScale multiplies every rung's bitrate cap.

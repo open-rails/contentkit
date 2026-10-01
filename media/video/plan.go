@@ -161,8 +161,8 @@ func (c WorkerConfig) planUpload(ctx context.Context, item media.Item, man *medi
 	} else if err != nil {
 		return err
 	}
-	// A measured upload was read through once already.
-	if f.Dur == 0 {
+	// Commit verified single PUTs; a measured upload was read through once.
+	if f.Dur == 0 && obj.Size > media.MaxSinglePut {
 		if err := e.verify(ctx, item, f.Blob, obj); err != nil {
 			return err
 		}

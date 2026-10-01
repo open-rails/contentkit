@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -37,30 +36,19 @@ import (
 // never the ladder.
 const cleanRecipe = "webvtt|utf8|b-i-u-only|no-ass-drawings|srt-lenient-times|max-32m|v2"
 
-// sidecar is a subtitle upload's conversion inputs from its meta.
-type sidecar struct {
-	Charset string `json:"charset,omitempty"`
-	Lang    string `json:"lang,omitempty"` // normalized BCP 47
-	Label   string `json:"label"`
-	Forced  bool   `json:"forced,omitempty"`
-}
-
-func sidecarOf(f media.File) sidecar {
-	charset, _ := f.Meta[media.MetaCharset].(string)
-	lang, _ := f.Meta[media.MetaLang].(string)
-	label, _ := f.Meta[media.MetaLabel].(string)
-	forced, _ := f.Meta[media.MetaForced].(bool)
+// sidecarOf is a subtitle upload's conversion inputs from its meta: the
+// charset that overrides detection and the normalized language that hints it.
+func sidecarOf(f media.File) (charset, lang string) {
+	charset, _ = f.Meta[media.MetaCharset].(string)
+	lang, _ = f.Meta[media.MetaLang].(string)
 	lang, _ = normalizeLanguage(lang)
-	if label = strings.TrimSpace(label); label == "" {
-		label = trackLabel(probeStream{CodecType: "subtitle"}, lang, 1, map[string]int{})
-	}
-	return sidecar{Charset: strings.ToLower(charset), Lang: lang, Label: label, Forced: forced}
+	return strings.ToLower(charset), lang
 }
 
-// subtitleFP covers the sidecar's charset, language, label and forced flag.
+// subtitleFP covers the sidecar's charset and normalized language.
 func subtitleFP(f media.File, s *media.Subtitles) string {
-	b, _ := json.Marshal(sidecarOf(f))
-	return media.SpecFP(f, s, cleanRecipe+"|"+string(b))
+	charset, lang := sidecarOf(f)
+	return media.SpecFP(f, s, cleanRecipe+"|charset:"+charset+"|lang:"+lang)
 }
 
 // maxSubtitleBytes bounds a subtitle read into memory: a sidecar, or a
@@ -69,9 +57,12 @@ var maxSubtitleBytes int64 = 32 << 20
 
 // subtitle converts a sidecar to clean UTF-8 WebVTT: SRT and SSA/ASS
 // through ffmpeg's WebVTT encoder (as the ladder converts a source's text
-// tracks), then cleanVTT; WebVTT through cleanVTT alone. Its output carries
-// the track's language, label and forced flag.
+// tracks), then cleanVTT; WebVTT through cleanVTT alone. The reader lists
+// it as a track from the upload's meta.
 func (e *Encoder) subtitle(ctx context.Context, item media.Item, f media.File, p *media.Private) error {
+	if to := item.Kind().OutputPath(p, f.Path); to == f.Path {
+		return &PermanentError{fmt.Errorf("preset %s would write over its own upload %s", p.Name, to)}
+	}
 	key, _ := item.Blob(f.Blob)
 	if obj, err := e.store.Head(ctx, key); errors.Is(err, media.ErrNotFound) {
 		return errStale
@@ -93,9 +84,9 @@ func (e *Encoder) subtitle(ctx context.Context, item media.Item, f media.File, p
 	if err != nil {
 		return err
 	}
-	sc := sidecarOf(f)
+	charset, _ := sidecarOf(f)
 	lang, _ := f.Meta[media.MetaLang].(string)
-	vtt, err := e.convertSubtitle(ctx, dir, f.Type, raw, lang, sc.Charset)
+	vtt, err := e.convertSubtitle(ctx, dir, f.Type, raw, lang, charset)
 	if err != nil {
 		return err
 	}
@@ -108,8 +99,7 @@ func (e *Encoder) subtitle(ctx context.Context, item media.Item, f media.File, p
 		return err
 	}
 	fp := subtitleFP(f, p.Subtitles)
-	out := media.File{Path: item.Kind().OutputPath(p, f.Path), Blob: blob, Type: "text/vtt", Size: size, FP: fp,
-		Track: &media.Track{Kind: media.TrackSubs, Lang: sc.Lang, Label: sc.Label, Forced: sc.Forced}}
+	out := media.File{Path: item.Kind().OutputPath(p, f.Path), Blob: blob, Type: "text/vtt", Size: size, FP: fp}
 	return e.publish(ctx, item, []media.File{out}, func(m *media.Manifest) error {
 		g, err := current(m, f.Path, f.Blob)
 		if err != nil || subtitleFP(g, p.Subtitles) != fp {
@@ -629,4 +619,3 @@ func langCharsets(lang string) []legacyCharset {
 	}
 	return out
 }
-
