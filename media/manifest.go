@@ -478,24 +478,27 @@ func decodeManifest(b []byte) (*Manifest, error) {
 	return &m, nil
 }
 
-// jsonLen is s's length as a JSON string's contents (encodeManifest's
-// escaping: quotes and backslashes doubled, control characters and the line
-// separators U+2028 and U+2029 as \uXXXX).
+// jsonLen is s's length as a JSON string's contents, as encodeManifest
+// writes it.
 func jsonLen(s string) int {
 	n := 0
 	for _, r := range s {
-		switch {
-		case r == '"' || r == '\\' || r == '\n' || r == '\r' || r == '\t' || r == '\b' || r == '\f':
-			n += 2
-		case r < 0x20 || r == '\u2028' || r == '\u2029':
-			n += 6
-		case r == utf8.RuneError:
-			n += 6
-		default:
-			n += utf8.RuneLen(r)
-		}
+		n += jsonRuneLen(r)
 	}
 	return n
+}
+
+// jsonRuneLen is r's length in a JSON string: quotes and backslashes and
+// the short escapes doubled, other control characters, invalid bytes and
+// the line separators U+2028 and U+2029 as \uXXXX.
+func jsonRuneLen(r rune) int {
+	switch {
+	case r == '"' || r == '\\' || r == '\n' || r == '\r' || r == '\t':
+		return 2
+	case r < 0x20 || r == '\u2028' || r == '\u2029' || r == utf8.RuneError:
+		return 6
+	}
+	return utf8.RuneLen(r)
 }
 
 // metaBytes is meta's JSON length.

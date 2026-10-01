@@ -29,9 +29,11 @@ func CleanName(s string) string {
 		s = strings.ReplaceAll(s, "..", "")
 	}
 	s = strings.TrimSpace(s)
-	for jsonLen(s) > maxNameBytes {
-		_, size := utf8.DecodeLastRuneInString(s)
-		s = strings.TrimSpace(s[:len(s)-size])
+	n := 0
+	for i, r := range s {
+		if n += jsonRuneLen(r); n > maxNameBytes {
+			return strings.TrimSpace(s[:i])
+		}
 	}
 	return s
 }
