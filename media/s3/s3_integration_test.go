@@ -263,7 +263,7 @@ func TestDirectPutChecksumAndObjectOps(t *testing.T) {
 func TestResponseContentDisposition(t *testing.T) {
 	env := s3test.Open(t)
 	ctx := context.Background()
-	key := env.Tenant + "/gallery/" + cid(2) + "/blobs/" + media.NewUploadName()
+	key := env.Tenant + "/gallery/" + cid(2) + "/blobs/" + "u-" + uuid.NewString()
 	if _, err := env.Store.Put(ctx, key, bytes.NewReader([]byte("zip")), 3, media.PutOptions{ContentType: "application/zip"}); err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +286,7 @@ func TestResponseContentDisposition(t *testing.T) {
 func TestMultipartPartsAreChecksumBoundAndResumable(t *testing.T) {
 	env := s3test.Open(t)
 	ctx := context.Background()
-	key := env.Tenant + "/video/" + cid(3) + "/originals/" + media.NewUploadName()
+	key := env.Tenant + "/video/" + cid(3) + "/originals/" + "u-" + uuid.NewString()
 	id, err := env.Store.CreateMultipart(ctx, key, "video/mp4")
 	if err != nil {
 		t.Fatal(err)
@@ -334,7 +334,7 @@ func TestMultipartPartsAreChecksumBoundAndResumable(t *testing.T) {
 		t.Fatalf("completed %+v %v", obj, err)
 	}
 
-	abortKey := env.Tenant + "/video/" + cid(3) + "/originals/" + media.NewUploadName()
+	abortKey := env.Tenant + "/video/" + cid(3) + "/originals/" + "u-" + uuid.NewString()
 	abortID, err := env.Store.CreateMultipart(ctx, abortKey, "video/mp4")
 	if err != nil {
 		t.Fatal(err)
