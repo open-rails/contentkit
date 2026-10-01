@@ -66,8 +66,8 @@ func NewUploads(o UploadOptions) (*Uploads, error) {
 		return nil, errors.New("media: Uploads needs a Store and Manifests")
 	}
 	reg := o.Manifests.Registry()
-	if reg.cfg.Hooks.CanUpload == nil {
-		return nil, errors.New("media: Uploads needs Hooks.CanUpload")
+	if reg.cfg.Hooks.CanUpload == nil || reg.cfg.Hooks.Resolver == nil {
+		return nil, errors.New("media: Uploads needs Hooks.CanUpload and Hooks.Resolver")
 	}
 	if o.PresignTTL <= 0 {
 		o.PresignTTL = 15 * time.Minute
@@ -509,17 +509,17 @@ func (u *Uploads) authorizeOps(ctx context.Context, actor access.Actor, item Ite
 	return *grant, nil
 }
 
-// newHidden is whether a new item starts hidden, resolved anonymously; nil
-// when the item has a manifest or the app has no resolver.
+// newHidden is whether a new item (no manifest, or Create's empty one)
+// starts hidden, resolved anonymously; nil for an item with files or meta.
+// The commit applies it to a manifest that is still empty: no public file is
+// rendered before this first visibility decision.
 func (u *Uploads) newHidden(ctx context.Context, item Item) (*bool, error) {
-	r := u.reg.cfg.Hooks.Resolver
-	if r == nil {
+	if m, _, err := u.o.Manifests.Get(ctx, item.Ref()); err == nil && (len(m.Files) > 0 || m.Meta != nil) {
 		return nil, nil
-	}
-	if _, _, err := u.o.Manifests.Get(ctx, item.Ref()); !errors.Is(err, ErrNotFound) {
+	} else if err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
-	res, err := access.ResolveOne(ctx, r, item.Ref(), access.Actor{Anonymous: true})
+	res, err := access.ResolveOne(ctx, u.reg.cfg.Hooks.Resolver, item.Ref(), access.Actor{Anonymous: true})
 	if err != nil {
 		return nil, fmt.Errorf("media: resolve %s: %w", item.Ref(), err)
 	}

@@ -154,6 +154,47 @@ func TestExpose(t *testing.T) {
 	}
 }
 
+// A new item exposes nothing public before its first visibility decision
+// (audit): Create writes a hidden manifest, and the first commit resolves it
+// anonymously, so a draft's cover renders nothing public until Expose
+// unhides it; a visible item's first commit unhides it.
+func TestNewItemStartsHidden(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	g := f.ref("gallery", 1)
+	item, _ := f.reg.Item(g)
+	cover, _ := item.Public("cover-460.webp")
+	f.res.set(cid(1), access.Resolution{}) // a draft
+	if m, err := f.ms.Create(ctx, g); err != nil || !m.Hidden {
+		t.Fatalf("created %+v %v", m, err)
+	}
+	m := f.put(g, "cover.png", "image/png", png(1))
+	if c, _ := m.Get("cover.png"); !m.Hidden || c.Pending != nil {
+		t.Fatalf("draft's first commit: hidden %v pending %v", m.Hidden, c.Pending)
+	}
+	f.produce(g)
+	if f.exists(cover) {
+		t.Fatal("a draft's cover is public")
+	}
+	f.visible(1)
+	if err := f.jobs.Expose(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	f.produce(g)
+	if !f.exists(cover) {
+		t.Fatal("the published item's cover is not public")
+	}
+
+	v := f.ref("gallery", 2)
+	f.visible(2)
+	if _, err := f.ms.Create(ctx, v); err != nil {
+		t.Fatal(err)
+	}
+	if m := f.put(v, "cover.png", "image/png", png(2)); m.Hidden {
+		t.Fatal("a visible item's first commit kept it hidden")
+	}
+}
+
 // Purge deletes an item's folder now; Regenerate visits every item of a
 // kind; SweepOrphans finds folders the host no longer has.
 func TestPurgeRegenerateOrphans(t *testing.T) {

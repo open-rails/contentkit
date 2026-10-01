@@ -49,9 +49,12 @@ Taxonomy ids follow the same rule: a node is a search document keyed by its
 
 Media never adopts leftovers:
 
-- `Manifests.Create(ctx, ref)` starts an item: it writes the empty manifest and
-  fails with `media.ErrFolderNotEmpty` (`*FolderNotEmptyError`) if the folder
-  holds any object. Call it when the host row is created.
+- `Manifests.Create(ctx, ref)` starts an item: it writes the empty manifest,
+  hidden, and fails with `media.ErrFolderNotEmpty` (`*FolderNotEmptyError`)
+  if the folder holds any object. Call it when the host row is created. A new
+  item exposes nothing public until its first visibility decision: the first
+  commit resolves it anonymously (`Hooks.Resolver`, required by `Uploads`),
+  and `Expose` afterwards.
 - A folder's first manifest edit (a commit) is refused the same way over a
   previous item's blobs.
 - `Jobs.Purge(ctx, media.Deletion{Ref, Owner})` deletes a folder now, the
