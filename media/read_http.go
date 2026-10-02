@@ -9,6 +9,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -38,8 +39,9 @@ type HandlerOptions struct {
 // Handler serves the read API. The host mounts it under a prefix such as
 // "/media/" after its auth middleware. Errors are JSON {"error", "code"}:
 // 400 invalid_request, 404 not_found (also for what the viewer may not see),
-// 429 rate_limited (Retry-After), 503 unavailable, 500 internal_error (a
-// resolver error denies this way).
+// 429 rate_limited (Retry-After: too many requests, or too many items opened
+// this hour), 503 unavailable, 500 internal_error (a resolver error denies
+// this way).
 //
 //	GET /{kind}/{id}?prefix=low-res/&offset=0&limit=50&download&editor -> ReadResult (+ Set-Cookie mt)
 //	GET /{kind}/{id}/hls/{dir}master.m3u8?audio=ja&subs=en (filters optional; empty = none)
@@ -138,18 +140,33 @@ func (r *Reader) requestRef(req *http.Request, o HandlerOptions) (contentref.Con
 	return ref, actor, nil
 }
 
+// actorOf is the request's actor; an anonymous one without an IP takes the
+// connection's address, so limits never share one key across everyone.
 func actorOf(req *http.Request, o HandlerOptions) access.Actor {
+	a := access.Actor{Anonymous: true}
 	if o.Identity != nil {
-		if a, ok := o.Identity.Actor(req.Context()); ok {
-			return a
+		if id, ok := o.Identity.Actor(req.Context()); ok {
+			a = id
 		}
 	}
-	return access.Actor{Anonymous: true}
+	if a.IP == "" && (a.Anonymous || a.ID == "") {
+		host, _, err := net.SplitHostPort(req.RemoteAddr)
+		if err != nil {
+			host = req.RemoteAddr
+		}
+		a.IP = host
+	}
+	return a
 }
 
 func fail(w http.ResponseWriter, req *http.Request, log *slog.Logger, err error) {
 	status, code, msg := http.StatusInternalServerError, "internal_error", "internal error"
+	var limit *LimitError
 	switch {
+	case errors.As(err, &limit):
+		log.Warn("media issuance rate limited", "path", req.URL.Path, "retry_after", limit.RetryAfter.String())
+		w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(limit.RetryAfter.Seconds())))))
+		status, code, msg = http.StatusTooManyRequests, "rate_limited", "too many items opened; try again later"
 	case errors.Is(err, ErrNotVisible), errors.Is(err, ErrNotAllowed):
 		status, code, msg = http.StatusNotFound, "not_found", "not found"
 	case errors.Is(err, ErrInvalidRequest):
@@ -171,7 +188,7 @@ func limited(next http.Handler, o HandlerOptions, log *slog.Logger) http.Handler
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		actor := actorOf(req, o)
-		if ok, wait := lim.allow(req.Context(), viewerKey(req, actor)); !ok {
+		if ok, wait := lim.allow(req.Context(), viewerKey(actor)); !ok {
 			log.Warn("media read rate limited", "viewer", actor.ID, "anonymous", actor.Anonymous, "path", req.URL.Path)
 			w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(wait.Seconds())))))
 			w.Header().Set("Cache-Control", "no-store")
@@ -182,19 +199,23 @@ func limited(next http.Handler, o HandlerOptions, log *slog.Logger) http.Handler
 	})
 }
 
-// viewerKey is the rate-limit key: the actor, else its IP, else the peer address.
-func viewerKey(req *http.Request, a access.Actor) string {
+// viewerKey is the key limits count a viewer under: the actor's id, else
+// its IP (actorOf fills in the peer address), "" when it has neither. An
+// IPv6 address is keyed by its /64, the least a client is handed: keyed
+// whole, one client would have as many keys as it has addresses.
+func viewerKey(a access.Actor) string {
 	switch {
 	case !a.Anonymous && a.ID != "":
 		return "a:" + a.ID
-	case a.IP != "":
-		return "ip:" + a.IP
+	case a.IP == "":
+		return ""
 	}
-	host, _, err := net.SplitHostPort(req.RemoteAddr)
-	if err != nil {
-		host = req.RemoteAddr
+	if addr, err := netip.ParseAddr(a.IP); err == nil && !addr.Is4() && !addr.Is4In6() {
+		if p, err := addr.WithZone("").Prefix(64); err == nil {
+			return "ip:" + p.String()
+		}
 	}
-	return "ip:" + host
+	return "ip:" + a.IP
 }
 
 // logIssued records the URLs a grant signed for its viewer.

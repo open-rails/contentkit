@@ -65,6 +65,13 @@ func TestDisposition(t *testing.T) {
 		{`a\b.zip`, "application/zip", plain},
 		{"a\r\nSet-Cookie: x.zip", "application/zip", plain},
 		{"a\xffb.zip", "application/zip", plain},
+		{"invoice\u202efdp.zip", "application/zip", plain}, // displays as invoicepiz.pdf
+		{"a\u200eb.zip", "application/zip", plain},
+		{"a\u200fb.zip", "application/zip", plain},
+		{"a\u202ab.zip", "application/zip", plain},
+		{"a\u2066b.zip", "application/zip", plain},
+		{"a\u2069b.zip", "application/zip", plain},
+		{"a\u2065b.zip", "application/zip", `attachment; filename="a_b.zip"; filename*=UTF-8''a%E2%81%A5b.zip`},
 		{strings.Repeat("a", layout.MaxDownloadName) + ".zip", "application/zip", plain},
 	} {
 		if got := layout.Disposition(c.name, c.typ); got != c.want {

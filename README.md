@@ -276,7 +276,8 @@ token in `?t=` or the `mt` cookie (`private, immutable`). A token opens every
 private file of its item or none; `?dl={name}` serves the file as a download
 under that name when it has the file's type. Everything else and every denial
 is one `no-store` 404. It keeps no state: rate limit the media host at the
-ingress. It needs `MEDIA_ACCESS_S3_ENDPOINT`, `_S3_BUCKET`, a key
+ingress; the read API limits the items a viewer opens per hour
+(`ReaderOptions.Issuance`). It needs `MEDIA_ACCESS_S3_ENDPOINT`, `_S3_BUCKET`, a key
 reading only `*/private/*` and `*/public/*`, `MEDIA_ACCESS_TOKEN_KEY` and
 `_TOKEN_KEY_PREVIOUS`, `MEDIA_ACCESS_HOSTS`
 (`media.doujins.ai=doujins,accounts; media.hanime.media=hentai0,accounts`),

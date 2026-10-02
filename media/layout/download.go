@@ -29,13 +29,16 @@ var downloadExts = map[string][]string{
 
 // Disposition is the Content-Disposition of a download requested as name
 // (the URL's unsigned dl) for an object of contentType: always an
-// attachment. The name is used only when it is plain (no path separator or
-// control character, at most MaxDownloadName bytes) and ends in an extension
-// of the object's type, so a link cannot rename a file into another type.
+// attachment. The name is used only when it is plain (no path separator,
+// control character or bidirectional format character, at most
+// MaxDownloadName bytes) and ends in an extension of the object's type, so a
+// link cannot rename a file into another type, or make it read as one.
 func Disposition(name, contentType string) string {
 	typ, _, _ := mime.ParseMediaType(contentType)
-	plain := name != "" && len(name) <= MaxDownloadName && !strings.HasPrefix(name, ".") &&
-		!strings.ContainsFunc(name, func(c rune) bool { return c < 0x20 || c == 0x7f || c == '/' || c == '\\' || c == 0xfffd })
+	plain := name != "" && len(name) <= MaxDownloadName && !strings.HasPrefix(name, ".") && !strings.ContainsFunc(name, func(c rune) bool {
+		return c < 0x20 || c == 0x7f || c == '/' || c == '\\' || c == 0xfffd ||
+			c == 0x200e || c == 0x200f || c >= 0x202a && c <= 0x202e || c >= 0x2066 && c <= 0x2069
+	})
 	if !plain || !slices.Contains(downloadExts[typ], strings.ToLower(path.Ext(name))) {
 		return "attachment"
 	}

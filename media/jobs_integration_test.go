@@ -389,6 +389,61 @@ func TestCopyDuringTakedown(t *testing.T) {
 	}
 }
 
+// A preview name the manifest stops vouching for goes with the commit, not
+// when the queued job runs: a page moved out of the first N, a position
+// another page took, a page cropped again or replaced.
+func TestPreviewNamesGoWithTheCommit(t *testing.T) {
+	f := newFixtureOn(t, s3test.Open(t), func(c *media.Config) {
+		c.Kinds[0].Public = append(c.Kinds[0].Public, media.Public{Name: "preview", From: "originals/{name}", To: "preview-{n}.webp", First: 2})
+	})
+	f.visible(1)
+	g := f.gallery(1, 3)
+	item, _ := f.reg.Item(g)
+	have := func() string {
+		t.Helper()
+		var out []string
+		for n := 1; n <= 3; n++ {
+			if key, _ := item.Public(fmt.Sprintf("preview-%d.webp", n)); f.exists(key) {
+				out = append(out, fmt.Sprint(n))
+			}
+		}
+		return strings.Join(out, ",")
+	}
+	if got := have(); got != "1,2" {
+		t.Fatalf("previews rendered: %q", got)
+	}
+	for len(f.purged) > 0 {
+		<-f.purged
+	}
+	// The third page moves first: positions 1 and 2 hold other pages' images.
+	f.commit(g, media.Op{Op: media.OpMove, Path: "originals/002.png", Index: new(int)})
+	if got := have(); got != "" {
+		t.Fatalf("after a move the old images are still public at %q", got)
+	}
+	if urls := f.purges(); len(urls) != 2 {
+		t.Fatalf("purged %v", urls)
+	}
+	f.produce(g)
+	// A crop of the page at position 2 (page 0 now): only its image goes.
+	f.commit(g, media.Op{Op: media.OpEdit, Path: "originals/000.png", Edit: &media.Edit{Rotate: 90}})
+	if got := have(); got != "1" {
+		t.Fatalf("after an edit: %q", got)
+	}
+	f.produce(g)
+	// A page moved out of the first two takes nothing with it but its own.
+	last := 2
+	f.commit(g, media.Op{Op: media.OpMove, Path: "originals/000.png", Index: &last})
+	if got := have(); got != "1" {
+		t.Fatalf("after moving the second page out: %q", got)
+	}
+	// A commit that changes no preview deletes nothing.
+	f.produce(g)
+	f.commit(g, media.Op{Op: media.OpMeta, Meta: map[string]any{"title": "T"}})
+	if got := have(); got != "1,2" {
+		t.Fatalf("after a meta edit: %q", got)
+	}
+}
+
 // Expose hides an item (public/ deleted and purged at once, nothing public
 // pending) and unhides it (public presets pending, the worker asked).
 func TestExpose(t *testing.T) {

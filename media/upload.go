@@ -507,8 +507,12 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	// The manifest is committed; cleanup must survive failures in the
 	// remaining request work.
 	var publicErr error
+	// A public name the manifest stopped vouching for goes now, not when the
+	// queued job runs: a preview position that another upload took, or whose
+	// upload was replaced or cropped again.
+	unkept := len(missing(item.Kind().PublicKept(prior), item.Kind().PublicKept(man))) > 0
 	for _, op := range ops {
-		if op.Op != OpRemove || len(item.Kind().PublicFor(op.Path)) == 0 && !op.Takedown {
+		if !unkept && (op.Op != OpRemove || len(item.Kind().PublicFor(op.Path)) == 0 && !op.Takedown) {
 			continue
 		}
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)

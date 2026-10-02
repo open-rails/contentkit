@@ -98,7 +98,7 @@ Ports (in `content` unless qualified):
 |---|---|---|
 | `Identity` | yes | reads the already-authenticated `access.Actor` from context; ContentKit never authenticates |
 | `Authorizer` | yes | `Can(actor, perm)` for `Perms{PostWrite, PollWrite, CommentModerate, ModerationReview}`; fail-closed on error and on an unset perm |
-| `access.ContentResolver` | yes | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request, which must then be lower case (else 400); another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`. For media an item's private files are all or nothing: `Full()` (visible and accessible) gets every one, anyone else none; what a viewer without access may see is the item's public files (a preview preset), which need only `Visible` to anonymous viewers; the ref is the item, i.e. the host's version; `Editor` (the actor may edit the item) unlocks editor reads (uploads, edits, editor views) and the item's private files |
+| `access.ContentResolver` | yes | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request, which must then be lower case (else 400); another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`. For media an item's private files are all or nothing: `Full()` (visible and accessible) gets every one, anyone else none; what a viewer without access may see is the item's public files (a preview preset), which need only `Visible` to anonymous viewers; the ref is the item, i.e. the host's version; `Editor` (the actor may edit the item) unlocks editor reads (uploads, edits, editor views) and every private file of a visible item, so set it only for people who may see them all |
 | `UserEnricher` | no | display data for author ids |
 | `Media` | no | post and poll images in ContentKit media (see below); absent = image routes answer 501 |
 | `ContentProcessor` | no | rich-text sanitizer for comment/post bodies (default strips tags) |
@@ -460,8 +460,9 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   (`{BaseURL}/v1/{ns}/{kind}/{id}/public/preview-{n}.webp`) need no manifest.
   Anyone who can see the item sees them; a hidden item has none. A position
   is rendered again when another upload takes it (a reorder, an insert, a
-  removal), its old image is deleted when a removal shifts the pages, and
-  names past the last upload are deleted. This is the only way to show part
+  removal) or its upload is replaced or cropped again; its old image is
+  deleted with that commit, so the name is a 404 until the worker has
+  rendered it, and names past the last upload are deleted. This is the only way to show part
   of an item: there is no partial access to `private/`.
 - **Originals.** `KeepOriginals` keeps uploads once their private outputs
   exist (otherwise the blob is dropped and the file marked `gone`; public
@@ -691,11 +692,31 @@ the host's periodic jobs. The worker migrates its schema itself.
   valid until expiry while their signing key is accepted. If immediate
   revocation is required, coordinate a key replacement without accepting the
   old key and have clients refresh their media grants.
-- **Scraping**: keep `HandlerOptions.Limit` on (default 2/s, burst 120 per
-  viewer); behind a proxy set `Actor.IP` so anonymous viewers are not one key.
-  The access agent keeps no state and limits nothing: rate limit the media
-  host at the ingress (Traefik's per-IP `rateLimit`). Clients treat its 429
-  as "over the limit" and do not retry in a loop (the SDK does not).
+- **Scraping** is limited in three places, none of them the access agent
+  (it keeps no state):
+  - `ReaderOptions.Issuance` bounds the distinct items a viewer is given the
+    token of per hour (default 120 per account, 600 per anonymous IP;
+    `Issuance.Redis` shares the count across replicas, else it is per
+    process). It is enforced in `Reader.Grant`, so reads, playlists and
+    `HostURL` routes all pass it; over the limit the read API answers 429
+    `rate_limited` with `Retry-After`, and `Grant` returns a `LimitError`
+    (`ErrRateLimited`). Opening the same item again within the hour is free;
+    viewers without access, the item's editors and `Issuance.Exempt` actors
+    (staff) are not counted. An anonymous viewer is counted by `Actor.IP`
+    (an IPv6 address by its /64). The read API fills it from the connection;
+    a host route that calls `Grant` or `Read` itself for an anonymous actor
+    must set it, or the grant fails with `ErrNoViewerKey` rather than put
+    every anonymous viewer in one count. The per-process count holds at most
+    65,536 viewers; past that it forgets some, who start again.
+  - `HandlerOptions.Limit` bounds requests to the read API (default 2/s,
+    burst 120 per viewer).
+  - The ingress of the media host limits downloads per IP (Traefik's
+    `rateLimit`). Clients treat its 429 as "over the limit" and do not retry
+    in a loop (the SDK does not).
+
+  So an account pulls at most `Issuance.PerHour` items an hour, each at the
+  ingress's rate. Behind a proxy set `Actor.IP` to the client's address, or
+  every anonymous viewer is counted as the proxy.
   Signed-URL logs name the viewer.
 - **Multiple replicas**: the limit is per process unless `Limit.Redis` is set
   (logged at startup), so N replicas allow N times it. Pass the host's
