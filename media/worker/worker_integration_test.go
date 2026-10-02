@@ -513,7 +513,7 @@ func TestItemReadyAfterProcessing(t *testing.T) {
 	if r, _ := h.lastSettled(ref); len(r.Failed) != 1 || r.Failed[0] != "originals/002.png" || len(r.Processing) != 0 {
 		t.Fatalf("readiness: %+v", r)
 	}
-	if got := h.read(t, ref, access.Actor{Anonymous: true}, false); len(got) != 1 || got[0].Path != "thumb/001.webp" {
+	if got := h.read(t, ref, access.Actor{Anonymous: true, IP: "203.0.113.9"}, false); len(got) != 1 || got[0].Path != "thumb/001.webp" {
 		t.Fatalf("a viewer reads %+v; want only the processed page's thumb", got)
 	}
 	if got := h.read(t, ref, alice, true); len(got) != 3 || got[1].Failed == nil {
@@ -568,7 +568,7 @@ func TestUnattachedThenAttached(t *testing.T) {
 	p, blob := h.stage(t, ref, "originals/001.png", "image/png", pngImage(t, 300, 450, 7))
 	h.commit(t, ref, media.Op{Op: media.OpPut, Path: p, Blob: blob, Unattached: true})
 	eventually(t, "the unattached page processed", time.Minute, h.has(ref, "thumb/001.webp"))
-	if got := h.read(t, ref, access.Actor{Anonymous: true}, false); len(got) != 0 {
+	if got := h.read(t, ref, access.Actor{Anonymous: true, IP: "203.0.113.9"}, false); len(got) != 0 {
 		t.Fatalf("a viewer sees an unattached upload's outputs: %+v", got)
 	}
 	before, _ := h.file(ref, "thumb/001.webp")
@@ -577,7 +577,7 @@ func TestUnattachedThenAttached(t *testing.T) {
 	if after, _ := h.file(ref, "thumb/001.webp"); after.Blob != before.Blob {
 		t.Fatal("attach reprocessed")
 	}
-	if got := h.read(t, ref, access.Actor{Anonymous: true}, false); len(got) != 1 {
+	if got := h.read(t, ref, access.Actor{Anonymous: true, IP: "203.0.113.9"}, false); len(got) != 1 {
 		t.Fatalf("the attached page is not read: %+v", got)
 	}
 }

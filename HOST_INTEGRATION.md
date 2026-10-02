@@ -702,7 +702,12 @@ the host's periodic jobs. The worker migrates its schema itself.
     `rate_limited` with `Retry-After`, and `Grant` returns a `LimitError`
     (`ErrRateLimited`). Opening the same item again within the hour is free;
     viewers without access, the item's editors and `Issuance.Exempt` actors
-    (staff) are not counted.
+    (staff) are not counted. An anonymous viewer is counted by `Actor.IP`
+    (an IPv6 address by its /64). The read API fills it from the connection;
+    a host route that calls `Grant` or `Read` itself for an anonymous actor
+    must set it, or the grant fails with `ErrNoViewerKey` rather than put
+    every anonymous viewer in one count. The per-process count holds at most
+    65,536 viewers; past that it forgets some, who start again.
   - `HandlerOptions.Limit` bounds requests to the read API (default 2/s,
     burst 120 per viewer).
   - The ingress of the media host limits downloads per IP (Traefik's
@@ -710,8 +715,8 @@ the host's periodic jobs. The worker migrates its schema itself.
     in a loop (the SDK does not).
 
   So an account pulls at most `Issuance.PerHour` items an hour, each at the
-  ingress's rate. Behind a proxy set `Actor.IP`, so anonymous viewers are
-  not one key.
+  ingress's rate. Behind a proxy set `Actor.IP` to the client's address, or
+  every anonymous viewer is counted as the proxy.
   Signed-URL logs name the viewer.
 - **Multiple replicas**: the limit is per process unless `Limit.Redis` is set
   (logged at startup), so N replicas allow N times it. Pass the host's

@@ -26,9 +26,11 @@ import (
 // per-process count (RedisErrors).
 type Issuance struct {
 	// PerHour is the items an account may open per hour (default 120);
-	// AnonymousPerHour is per Actor.IP, where one address may be many people
-	// (default 600). The read API fills an anonymous actor's IP from the
-	// connection; a host calling Reader.Grant itself sets it.
+	// AnonymousPerHour is per Actor.IP (an IPv6 address counts as its /64),
+	// where one address may be many people (default 600). The read API
+	// fills an anonymous actor's IP from the connection; a host calling
+	// Reader.Grant itself must set it (ErrNoViewerKey otherwise: without it
+	// every anonymous viewer would share one count).
 	PerHour, AnonymousPerHour int
 	Disabled                  bool
 	// Exempt actors are not limited (staff); an item's editors never are.
@@ -42,6 +44,10 @@ type Issuance struct {
 
 // ErrRateLimited is a refusal that a later attempt will pass.
 var ErrRateLimited = errors.New("media: rate limited")
+
+// ErrNoViewerKey is a grant the issuance limit cannot count: an anonymous
+// actor without Actor.IP. It is the host's bug, not the viewer's limit.
+var ErrNoViewerKey = errors.New("media: an anonymous actor needs Actor.IP for the issuance limit")
 
 // LimitError is ErrRateLimited with how long to wait.
 type LimitError struct{ RetryAfter time.Duration }
@@ -81,19 +87,30 @@ func newIssuance(o Issuance, now func() time.Time, log *slog.Logger) *issuance {
 		log.Info("media issuance limit is per process (no Issuance.Redis): assuming a single replica")
 	}
 	return &issuance{o: o, now: now, log: log, window: issuanceWindow.Milliseconds(),
-		local: &distinctCounter{keys: map[string]*distinctWindow{}}}
+		local: &distinctCounter{max: limiterMaxKeys, keys: map[string]*distinctWindow{}}}
 }
 
-// allow counts item for actor, or reports how long until it may be opened.
-// An editor of the item (editor) and exempt actors are not counted.
-func (i *issuance) allow(ctx context.Context, actor access.Actor, editor bool, item string) (bool, time.Duration) {
+// allow counts item for actor: nil, a LimitError saying how long until it
+// may be opened, or ErrNoViewerKey. An editor of the item (editor) and
+// exempt actors are not counted.
+func (i *issuance) allow(ctx context.Context, actor access.Actor, editor bool, item string) error {
 	if i == nil || editor || i.o.Exempt != nil && i.o.Exempt(actor) {
-		return true, 0
+		return nil
 	}
 	key, limit := viewerKey(actor), int64(i.o.AnonymousPerHour)
+	if key == "" {
+		return ErrNoViewerKey
+	}
 	if !actor.Anonymous && actor.ID != "" {
 		limit = int64(i.o.PerHour)
 	}
+	if ok, wait := i.count(ctx, key, item, limit); !ok {
+		return &LimitError{RetryAfter: wait}
+	}
+	return nil
+}
+
+func (i *issuance) count(ctx context.Context, key, item string, limit int64) (bool, time.Duration) {
 	t := i.now().UnixMilli()
 	idx, elapsed := t/i.window, t%i.window
 	if i.o.Redis != nil && t >= i.down.Load() {
@@ -160,9 +177,11 @@ func (i *issuance) shared(ctx context.Context, key, item string, limit, idx, ela
 }
 
 // distinctCounter is the per-process count: each key's members in the
-// current window and how many it had in the previous one.
+// current window and how many it had in the previous one, for at most max
+// keys.
 type distinctCounter struct {
 	mu   sync.Mutex
+	max  int
 	keys map[string]*distinctWindow
 }
 
@@ -179,12 +198,8 @@ func (c *distinctCounter) add(key, member string, idx int64) (cur, prev int64, a
 	defer c.mu.Unlock()
 	w := c.keys[key]
 	if w == nil {
-		if len(c.keys) >= limiterMaxKeys {
-			for k, old := range c.keys { // windows that ended: forgetting them changes nothing
-				if old.idx < idx-1 {
-					delete(c.keys, k)
-				}
-			}
+		if len(c.keys) >= c.max {
+			c.prune(idx)
 		}
 		w = &distinctWindow{idx: idx, cur: map[string]struct{}{}}
 		c.keys[key] = w
@@ -199,6 +214,27 @@ func (c *distinctCounter) add(key, member string, idx int64) (cur, prev int64, a
 	_, had := w.cur[member]
 	w.cur[member] = struct{}{}
 	return int64(len(w.cur)), w.prev, !had
+}
+
+// prune makes room: the windows that ended go (forgetting them changes
+// nothing); if every key is live, an arbitrary half goes, and each of those
+// viewers starts a fresh count.
+func (c *distinctCounter) prune(idx int64) {
+	for k, w := range c.keys {
+		if w.idx < idx-1 {
+			delete(c.keys, k)
+		}
+	}
+	if len(c.keys) < c.max {
+		return
+	}
+	n := 0
+	for k := range c.keys {
+		if n++; n > c.max/2 {
+			break
+		}
+		delete(c.keys, k)
+	}
 }
 
 func (c *distinctCounter) remove(key, member string) {

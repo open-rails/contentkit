@@ -154,7 +154,8 @@ type Grant struct {
 // resolver error denies (ErrResolve); an invisible item is ErrNotVisible. A
 // visible item without a manifest has no files. A viewer with access who
 // has opened too many items this hour (ReaderOptions.Issuance) gets a
-// LimitError (ErrRateLimited) instead of the item's token.
+// LimitError (ErrRateLimited) instead of the item's token; an anonymous
+// actor with access must carry Actor.IP (ErrNoViewerKey).
 func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor access.Actor) (*Grant, error) {
 	item, err := r.reg.Item(ref)
 	if err != nil {
@@ -169,8 +170,8 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	}
 	scope := token.ItemScope(ref.TenantID, ref.ContentKind, ref.ContentID)
 	if res.Full() || res.Editor {
-		if ok, wait := r.issue.allow(ctx, actor, res.Editor, scope); !ok {
-			return nil, &LimitError{RetryAfter: wait}
+		if err := r.issue.allow(ctx, actor, res.Editor, scope); err != nil {
+			return nil, err
 		}
 	}
 	man, _, err := r.o.Manifests.Get(ctx, ref)

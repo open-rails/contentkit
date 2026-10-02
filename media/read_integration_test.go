@@ -102,7 +102,7 @@ func TestReadWithoutAccess(t *testing.T) {
 	g := f.gallery(1, 3)
 	ctx := context.Background()
 	item, _ := f.reg.Item(g)
-	anon := access.Actor{Anonymous: true}
+	anon := access.Actor{Anonymous: true, IP: "203.0.113.9"}
 	want := []string{"https://" + mediaHost + "/v1/" + item.PublicPrefix() + "preview-1.webp", "https://" + mediaHost + "/v1/" + item.PublicPrefix() + "preview-2.webp"}
 	full, err := f.rd.Read(ctx, g, anon, media.ReadOptions{Prefix: "high/"})
 	if err != nil || full.Access != media.AccessFull || !slices.Equal(full.Previews, want) || full.Files[0].URL == "" {
@@ -162,7 +162,7 @@ func TestViewerReadsCarryNoEditorFields(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	res, err := f.rd.Read(ctx, post, access.Actor{Anonymous: true}, media.ReadOptions{Editor: true})
+	res, err := f.rd.Read(ctx, post, access.Actor{Anonymous: true, IP: "203.0.113.9"}, media.ReadOptions{Editor: true})
 	if err != nil || len(res.Files) != 1 || res.Files[0].URL == "" {
 		t.Fatalf("viewer read %+v %v", res, err)
 	}
@@ -176,7 +176,7 @@ func TestViewerReadsCarryNoEditorFields(t *testing.T) {
 	// Without access the file is listed locked: its path, type and size,
 	// and no blob name, source or editor field.
 	f.res.set(cid(1), access.Resolution{Visible: true})
-	res, err = f.rd.Read(ctx, post, access.Actor{Anonymous: true}, media.ReadOptions{Editor: true, Download: true})
+	res, err = f.rd.Read(ctx, post, access.Actor{Anonymous: true, IP: "203.0.113.9"}, media.ReadOptions{Editor: true, Download: true})
 	if err != nil || len(res.Files) != 1 || !reflect.DeepEqual(res.Files[0], media.FileInfo{Path: p, Type: "image/png", Size: int64(len(png(1))), Locked: true}) {
 		t.Fatalf("locked listing %+v %v", res.Files, err)
 	}
@@ -547,6 +547,20 @@ func TestIssuanceLimitOnReads(t *testing.T) {
 	}
 	if _, err := rd.Grant(context.Background(), f.ref("gallery", 3), viewer); !errors.Is(err, media.ErrRateLimited) {
 		t.Fatalf("Grant over the limit: %v", err)
+	}
+	// A host route calling Grant for an anonymous viewer must say who: with
+	// no IP every anonymous viewer would share one count. The read API fills
+	// it from the connection; where no token is minted it is not needed.
+	anon := access.Actor{Anonymous: true}
+	if _, err := rd.Grant(context.Background(), f.ref("gallery", 1), anon); !errors.Is(err, media.ErrNoViewerKey) || errors.Is(err, media.ErrRateLimited) {
+		t.Fatalf("an anonymous grant without an IP: %v", err)
+	}
+	if g, err := rd.Grant(context.Background(), f.ref("gallery", 5), anon); err != nil || g.Full() {
+		t.Fatalf("an anonymous grant without access: %v", err)
+	}
+	actor = anon
+	if resp, body := get("/gallery/" + cid(1)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("an anonymous read through the handler: %d %s", resp.StatusCode, body)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -198,11 +199,21 @@ func limited(next http.Handler, o HandlerOptions, log *slog.Logger) http.Handler
 	})
 }
 
-// viewerKey is the rate-limit key: the actor, else its IP (actorOf fills in
-// the peer address).
+// viewerKey is the key limits count a viewer under: the actor's id, else
+// its IP (actorOf fills in the peer address), "" when it has neither. An
+// IPv6 address is keyed by its /64, the least a client is handed: keyed
+// whole, one client would have as many keys as it has addresses.
 func viewerKey(a access.Actor) string {
-	if !a.Anonymous && a.ID != "" {
+	switch {
+	case !a.Anonymous && a.ID != "":
 		return "a:" + a.ID
+	case a.IP == "":
+		return ""
+	}
+	if addr, err := netip.ParseAddr(a.IP); err == nil && !addr.Is4() && !addr.Is4In6() {
+		if p, err := addr.WithZone("").Prefix(64); err == nil {
+			return "ip:" + p.String()
+		}
 	}
 	return "ip:" + a.IP
 }

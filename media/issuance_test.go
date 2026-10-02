@@ -23,8 +23,8 @@ func TestIssuance(t *testing.T) {
 		t.Fatal("a disabled limit")
 	}
 	var none *issuance
-	if ok, _ := none.allow(context.Background(), access.Actor{ID: "u"}, false, "x"); !ok {
-		t.Fatal("a nil limit refused")
+	if err := none.allow(context.Background(), access.Actor{Anonymous: true}, false, "x"); err != nil {
+		t.Fatalf("a nil limit refused: %v", err)
 	}
 	if l := newIssuance(Issuance{}, now, log); l.o.PerHour != 120 || l.o.AnonymousPerHour != 600 {
 		t.Fatalf("defaults %+v", l.o)
@@ -32,7 +32,16 @@ func TestIssuance(t *testing.T) {
 	l := newIssuance(Issuance{PerHour: 3, AnonymousPerHour: 5, Exempt: func(a access.Actor) bool { return a.Kind == "staff" }}, now, log)
 	user, anon := access.Actor{ID: "u1", Kind: "user"}, access.Actor{Anonymous: true, IP: "203.0.113.7"}
 	open := func(a access.Actor, editor bool, item string) (bool, time.Duration) {
-		return l.allow(context.Background(), a, editor, item)
+		t.Helper()
+		err := l.allow(context.Background(), a, editor, item)
+		var le *LimitError
+		if err != nil && !errors.As(err, &le) {
+			t.Fatalf("%+v opening %s: %v", a, item, err)
+		}
+		if le != nil {
+			return false, le.RetryAfter
+		}
+		return true, 0
 	}
 	for _, item := range []string{"a", "b", "c", "a", "b"} {
 		if ok, _ := open(user, false, item); !ok {
@@ -93,5 +102,88 @@ func TestIssuance(t *testing.T) {
 	var le *LimitError
 	if err := error(&LimitError{RetryAfter: time.Minute}); !errors.Is(err, ErrRateLimited) || !errors.As(err, &le) {
 		t.Fatal("LimitError is not ErrRateLimited")
+	}
+	// An anonymous actor without an IP has no key: every such viewer would
+	// share one count, so it is the host's error, not a rate limit. Where
+	// the limit does not apply it is not asked for.
+	for _, a := range []access.Actor{{Anonymous: true}, {}} {
+		err := l.allow(context.Background(), a, false, "x")
+		if !errors.Is(err, ErrNoViewerKey) || errors.Is(err, ErrRateLimited) || errors.As(err, &le) {
+			t.Fatalf("%+v without an IP: %v", a, err)
+		}
+		if err := l.allow(context.Background(), a, true, "x"); err != nil {
+			t.Fatalf("an editor without an IP: %v", err)
+		}
+	}
+	// An IPv6 client has a /64 of addresses: they are one viewer.
+	clock = clock.Add(3 * time.Hour)
+	v6 := func(host string) access.Actor { return access.Actor{Anonymous: true, IP: "2001:db8:1:2:" + host} }
+	for i := range 5 {
+		if ok, _ := open(v6(fmt.Sprintf("%x::%x", i+1, i+7)), false, fmt.Sprint("v6-", i)); !ok {
+			t.Fatalf("IPv6 item %d refused", i)
+		}
+	}
+	if ok, _ := open(v6("ffff:ffff:ffff:ffff"), false, "v6-over"); ok {
+		t.Fatal("another address of the same /64 got its own count")
+	}
+	if ok, _ := open(access.Actor{Anonymous: true, IP: "2001:db8:1:3::1"}, false, "v6-over"); !ok {
+		t.Fatal("another /64 shares the count")
+	}
+}
+
+func TestViewerKey(t *testing.T) {
+	for _, c := range []struct {
+		a    access.Actor
+		want string
+	}{
+		{access.Actor{ID: "u1", IP: "203.0.113.7"}, "a:u1"},
+		{access.Actor{Anonymous: true, ID: "u1", IP: "203.0.113.7"}, "ip:203.0.113.7"},
+		{access.Actor{IP: "203.0.113.7"}, "ip:203.0.113.7"},
+		{access.Actor{Anonymous: true}, ""},
+		{access.Actor{}, ""},
+		{access.Actor{Anonymous: true, IP: "2001:db8:1:2:3:4:5:6"}, "ip:2001:db8:1:2::/64"},
+		{access.Actor{Anonymous: true, IP: "2001:db8:1:2::"}, "ip:2001:db8:1:2::/64"},
+		{access.Actor{Anonymous: true, IP: "2001:db8:1:3::1"}, "ip:2001:db8:1:3::/64"},
+		{access.Actor{Anonymous: true, IP: "fe80::1%eth0"}, "ip:fe80::/64"},
+		{access.Actor{Anonymous: true, IP: "::1"}, "ip:::/64"},
+		{access.Actor{Anonymous: true, IP: "::ffff:203.0.113.7"}, "ip:::ffff:203.0.113.7"},
+		{access.Actor{Anonymous: true, IP: "not an address"}, "ip:not an address"},
+	} {
+		if got := viewerKey(c.a); got != c.want {
+			t.Errorf("viewerKey(%+v) = %q, want %q", c.a, got, c.want)
+		}
+	}
+}
+
+// The per-process count never holds more than its cap of viewers, however
+// many arrive within one window: live keys are evicted to make room, and an
+// evicted viewer starts a fresh count.
+func TestDistinctCounterIsBounded(t *testing.T) {
+	c := &distinctCounter{max: 8, keys: map[string]*distinctWindow{}}
+	for i := range 1000 {
+		c.add(fmt.Sprint("viewer", i), "item", 7)
+		if len(c.keys) > c.max {
+			t.Fatalf("%d keys after %d viewers, cap %d", len(c.keys), i+1, c.max)
+		}
+	}
+	// Ended windows go first: the live keys stay.
+	c = &distinctCounter{max: 8, keys: map[string]*distinctWindow{}}
+	for i := range 4 {
+		c.add(fmt.Sprint("old", i), "item", 1)
+	}
+	for i := range 4 {
+		c.add(fmt.Sprint("live", i), "item", 7)
+	}
+	c.add("new", "item", 7)
+	for i := range 4 {
+		if cur, _, added := c.add(fmt.Sprint("live", i), "item", 7); added || cur != 1 {
+			t.Fatalf("live key %d lost its count while ended windows could go", i)
+		}
+	}
+	if len(c.keys) != 5 {
+		t.Fatalf("%d keys, want the 4 live and the new one", len(c.keys))
+	}
+	if l := newIssuance(Issuance{}, time.Now, slog.New(slog.NewTextHandler(io.Discard, nil))); l.local.max != limiterMaxKeys {
+		t.Fatalf("cap %d", l.local.max)
 	}
 }
