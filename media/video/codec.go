@@ -95,8 +95,9 @@ func (e encoding) streamArgs(i int, r rung, c media.Codec) []string {
 	case "hevc_nvenc":
 		args = append(append(args, o("profile"), "main", o("tag"), "hvc1"), nvenc(rt.crf+nvencCQOffset[c])...)
 	case "libsvtav1":
-		args = append(args, o("preset"), strconv.Itoa(svtAV1Preset), o("crf"), strconv.Itoa(rt.crf), o("threads"), threads,
-			o("svtav1-params"), fmt.Sprintf("tune=0:mbr=%d", rt.maxrate))
+		// SVT ignores -threads. Native lp levels above 3 allocate extra in-flight mini-GOPs.
+		args = append(args, o("preset"), strconv.Itoa(svtAV1Preset), o("crf"), strconv.Itoa(rt.crf),
+			o("svtav1-params"), fmt.Sprintf("tune=0:mbr=%d:lp=%d", rt.maxrate, min(e.threads, 3)))
 	case "av1_nvenc":
 		args = append(args, nvenc(rt.crf+nvencCQOffset[c])...)
 	}
