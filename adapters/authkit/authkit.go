@@ -26,6 +26,7 @@ import (
 
 // Directory is what this package uses of *authkit.Client.
 type Directory interface {
+	CheckSession(ctx context.Context, cl verify.Claims) error
 	Can(ctx context.Context, actor iam.Actor, ref iam.GroupRef, perm iam.Perm) (bool, error)
 	PublicUsers(ctx context.Context, ids []string) (map[string]iam.PublicUser, error)
 }
@@ -43,7 +44,7 @@ const DefaultKind = "user"
 // (Owner them and not Exempt, so the host's upload limiter applies), staff
 // holding Staff anyone's (Exempt). It refuses every other kind: a host
 // routes its other kinds before it. It reads the verified claims AuthKit's
-// middleware put in ctx; only the staff check reads the database.
+// middleware put in ctx and checks account and session state live.
 type Avatars struct {
 	Directory Directory
 	// Staff may change any account's media, checked live in the root
@@ -61,6 +62,11 @@ func (a *Avatars) CanUpload(ctx context.Context, actor access.Actor, t media.Upl
 		return media.UploadGrant{}, nil
 	}
 	if cl.IsUser() && cl.UserID == actor.ID && actor.ID == t.Ref.ContentID {
+		if err := a.Directory.CheckSession(ctx, cl); errors.Is(err, iam.ErrSessionRevoked) {
+			return media.UploadGrant{}, nil
+		} else if err != nil {
+			return media.UploadGrant{}, fmt.Errorf("contentkit/authkit: session check: %w", err)
+		}
 		return media.UploadGrant{Allowed: true, Owner: actor.ID}, nil
 	}
 	if a.Staff.IsZero() {

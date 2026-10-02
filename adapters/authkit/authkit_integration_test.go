@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	ak "github.com/open-rails/authkit"
 	"github.com/open-rails/authkit/authtest"
@@ -100,6 +101,50 @@ func TestAvatars(t *testing.T) {
 	// Without Staff nobody else may.
 	if g, err := (&ckauthkit.Avatars{Directory: w.auth}).CanUpload(bossCtx, actor(w.boss), avatarOf(w.alice.ID)); err != nil || g.Allowed {
 		t.Fatalf("staff without Staff: %+v %v", g, err)
+	}
+	if _, err := w.auth.RevokeAccountSessions(ctx, iam.SystemActor(), w.alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.auth.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	results, err := w.auth.PurgeUsers(ctx, []string{w.bob.ID})
+	if err != nil || len(results) != 1 || results[0].Err != nil {
+		t.Fatalf("purge: %+v %v", results, err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, err := w.auth.User(ctx, iam.UserByID(w.bob.ID), ak.IncludeDeleted())
+		if errors.Is(err, iam.ErrUserNotFound) {
+			break
+		}
+		if err != nil || time.Now().After(deadline) {
+			t.Fatalf("wait for account purge: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	for _, tc := range []struct {
+		name string
+		ctx  context.Context
+		user authtest.User
+	}{
+		{"revoked session", aliceCtx, w.alice},
+		{"purged account", bobCtx, w.bob},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g, err := avatars.CanUpload(tc.ctx, actor(tc.user), avatarOf(tc.user.ID))
+			if err != nil || g != (media.UploadGrant{}) {
+				t.Fatalf("stale claims: %+v %v", g, err)
+			}
+		})
+	}
+	if g, err := (&ckauthkit.Avatars{Directory: w.auth}).CanUpload(bossCtx, actor(w.boss), avatarOf(w.boss.ID)); err != nil || !g.Allowed || g.Exempt || g.Owner != w.boss.ID {
+		t.Fatalf("active owner without Staff: %+v %v", g, err)
+	}
+	canceledCtx, cancel := context.WithCancel(bossCtx)
+	cancel()
+	if g, err := avatars.CanUpload(canceledCtx, actor(w.boss), avatarOf(w.boss.ID)); !errors.Is(err, context.Canceled) || g != (media.UploadGrant{}) {
+		t.Fatalf("failed session check: %+v %v", g, err)
 	}
 }
 
