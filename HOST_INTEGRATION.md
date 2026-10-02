@@ -98,7 +98,7 @@ Ports (in `content` unless qualified):
 |---|---|---|
 | `Identity` | yes | reads the already-authenticated `access.Actor` from context; ContentKit never authenticates |
 | `Authorizer` | yes | `Can(actor, perm)` for `Perms{PostWrite, PollWrite, CommentModerate, ModerationReview}`; fail-closed on error and on an unset perm |
-| `access.ContentResolver` | yes | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request, which must then be lower case (else 400); another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`. For media an item's private files are all or nothing: `Full()` (visible and accessible) gets every one, anyone else none; what a viewer without access may see is the item's public files (a preview preset), which need only `Visible` to anonymous viewers; the ref is the item, i.e. the host's version; `Editor` (the actor may edit the item) unlocks editor reads (uploads, edits, editor views) and the item's private files |
+| `access.ContentResolver` | yes | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request, which must then be lower case (else 400); another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`. For media an item's private files are all or nothing: `Full()` (visible and accessible) gets every one, anyone else none; what a viewer without access may see is the item's public files (a preview preset), which need only `Visible` to anonymous viewers; the ref is the item, i.e. the host's version; `Editor` (the actor may edit the item) unlocks editor reads (uploads, edits, editor views) and every private file of a visible item, so set it only for people who may see them all |
 | `UserEnricher` | no | display data for author ids |
 | `Media` | no | post and poll images in ContentKit media (see below); absent = image routes answer 501 |
 | `ContentProcessor` | no | rich-text sanitizer for comment/post bodies (default strips tags) |
@@ -460,8 +460,9 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
   (`{BaseURL}/v1/{ns}/{kind}/{id}/public/preview-{n}.webp`) need no manifest.
   Anyone who can see the item sees them; a hidden item has none. A position
   is rendered again when another upload takes it (a reorder, an insert, a
-  removal), its old image is deleted when a removal shifts the pages, and
-  names past the last upload are deleted. This is the only way to show part
+  removal) or its upload is replaced or cropped again; its old image is
+  deleted with that commit, so the name is a 404 until the worker has
+  rendered it, and names past the last upload are deleted. This is the only way to show part
   of an item: there is no partial access to `private/`.
 - **Originals.** `KeepOriginals` keeps uploads once their private outputs
   exist (otherwise the blob is dropped and the file marked `gone`; public

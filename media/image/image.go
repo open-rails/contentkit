@@ -352,7 +352,11 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 				}
 			}
 			for _, pu := range d.public {
-				cur.ClearPending(d.src.Path, pu.Name)
+				// A preview rendered for a position the upload has left
+				// since stays pending: it is rendered again where it is now.
+				if pu.First == 0 || slices.Equal(k.PublicNames(cur, pu, d.src.Path), k.PublicNames(m, pu, d.src.Path)) {
+					cur.ClearPending(d.src.Path, pu.Name)
+				}
 			}
 			purge = append(purge, d.written...)
 		}
