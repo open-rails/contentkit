@@ -200,6 +200,90 @@ func TestComments_RepliesAuthorizeStoredVersion(t *testing.T) {
 	}
 }
 
+func TestComments_ReactionsAuthorizeStoredTarget(t *testing.T) {
+	res := &commentThreadResolver{defaultVersion: "en", versions: map[string]access.Resolution{
+		"en": {Visible: true, Accessible: true},
+		"ja": {Visible: true, Accessible: true},
+	}}
+	rt, pool := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery_thread"}})
+	ctx := context.Background()
+	cm := mustComment(t, rt, access.Actor{ID: "author"}, "gallery_thread", cid(1)+":ja", createInput{Body: "Japanese comment"})
+	actor := access.Actor{ID: "reactor"}
+	h := rt.Handler()
+	path := "/comments/" + cm.ID
+	assertStored := func(t *testing.T, likes, dislikes, reactions int) {
+		t.Helper()
+		var gotLikes, gotDislikes, gotReactions int
+		if err := pool.QueryRow(ctx, `SELECT likes, dislikes FROM `+rt.store.t.comments+` WHERE id = $1`, cm.ID).Scan(&gotLikes, &gotDislikes); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.reactions+` WHERE content_kind = $1 AND content_id = $2`, KindComment, cm.ID).Scan(&gotReactions); err != nil {
+			t.Fatal(err)
+		}
+		if gotLikes != likes || gotDislikes != dislikes || gotReactions != reactions {
+			t.Fatalf("stored likes/dislikes/reactions = %d/%d/%d, want %d/%d/%d", gotLikes, gotDislikes, gotReactions, likes, dislikes, reactions)
+		}
+	}
+	for _, target := range []string{"hidden", "missing", "resolver error"} {
+		t.Run(target, func(t *testing.T) {
+			res.err = nil
+			res.versions["ja"] = access.Resolution{}
+			status := http.StatusNotFound
+			switch target {
+			case "missing":
+				delete(res.versions, "ja")
+			case "resolver error":
+				res.err = errors.New("resolver unavailable")
+				status = http.StatusInternalServerError
+			}
+			for _, action := range []string{"like", "dislike", "neutral"} {
+				if rec := doJSON(t, h, actor, "POST", path+"/"+action, nil); rec.Code != status {
+					t.Fatalf("%s: %d %s, want %d", action, rec.Code, rec.Body.String(), status)
+				}
+			}
+			assertStored(t, 0, 0, 0)
+		})
+	}
+	res.err = nil
+	res.versions["en"] = access.Resolution{}
+	res.versions["ja"] = access.Resolution{Visible: true} // Comment reactions do not consume locked media.
+	for i, action := range []string{"like", "dislike", "neutral"} {
+		rec := doJSON(t, h, actor, "POST", path+"/"+action, nil)
+		var counts reactionCounts
+		want := []reactionCounts{{Likes: 1, Mine: 1}, {Dislikes: 1, Mine: -1}, {}}[i]
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &counts) != nil || counts != want {
+			t.Fatalf("visible locked target %s: %d %s, want %+v", action, rec.Code, rec.Body.String(), want)
+		}
+	}
+	assertStored(t, 0, 0, 1)
+	if rec := doJSON(t, h, access.Actor{Anonymous: true, IP: "192.0.2.1"}, "POST", path+"/like", nil); rec.Code != http.StatusOK {
+		t.Fatalf("anonymous visible target: %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	assertStored(t, 1, 0, 2)
+	res.versions["ja"] = access.Resolution{}
+	if rec := doJSON(t, h, access.Actor{Anonymous: true, IP: "192.0.2.1"}, "POST", path+"/neutral", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("hidden target after reacting: %d %s, want 404", rec.Code, rec.Body.String())
+	}
+	assertStored(t, 1, 0, 2)
+	res.versions["ja"] = access.Resolution{Visible: true, Accessible: true}
+	for _, state := range []string{ModerationHeld, ModerationRejected} {
+		if _, err := pool.Exec(ctx, `UPDATE `+rt.store.t.comments+` SET moderation = $2 WHERE id = $1`, cm.ID, state); err != nil {
+			t.Fatal(err)
+		}
+		if rec := doJSON(t, h, actor, "POST", path+"/like", nil); rec.Code != http.StatusNotFound {
+			t.Fatalf("%s comment: %d %s, want 404", state, rec.Code, rec.Body.String())
+		}
+		assertStored(t, 1, 0, 2)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE `+rt.store.t.comments+` SET moderation = $2, deleted_at = now() WHERE id = $1`, cm.ID, ModerationApproved); err != nil {
+		t.Fatal(err)
+	}
+	if rec := doJSON(t, h, actor, "POST", path+"/like", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("deleted comment: %d %s, want 404", rec.Code, rec.Body.String())
+	}
+	assertStored(t, 1, 0, 2)
+}
+
 // Edits run the same sanitizer as create, and a policy rejection (the C4
 // moderator seam) answers 422 with its reason.
 func TestComments_EditSanitizesAndRejectionIs422(t *testing.T) {

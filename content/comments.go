@@ -657,11 +657,18 @@ func (c *comments) loadForWrite(ctx context.Context, actor access.Actor, cid str
 }
 
 // reactTx writes the caller's reaction to a comment and denormalizes the split
-// counter on the comment row in the same tx. The comment kind is internal, so
-// no gate: just a liveness check (published, not deleted).
+// counter on the comment row in the same tx. Its owning content must be visible;
+// the comment must still be published and not deleted when its row is locked.
 func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, value int16) (reactionCounts, error) {
 	if !uuidRe.MatchString(cid) {
 		return reactionCounts{}, ErrNotFound
+	}
+	ref, err := c.refOf(ctx, c.s.pool, cid)
+	if err != nil {
+		return reactionCounts{}, err
+	}
+	if _, err := c.rt.gateRef(ctx, ref, actor, false); err != nil {
+		return reactionCounts{}, err
 	}
 	tx, err := c.s.beginMutation(ctx)
 	if err != nil {
