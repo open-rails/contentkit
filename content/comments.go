@@ -289,7 +289,7 @@ func (c *comments) latest(ctx context.Context, actor access.Actor, limit, offset
 	var refs []contentref.ContentRef
 	seen := map[contentref.ContentKey]bool{}
 	for _, it := range items {
-		if ref := it.ContentRef.Content(); !seen[ref.Key()] && c.rt.routable(ref.ContentKind, ref.ContentID) {
+		if ref := it.ContentRef; !seen[ref.Key()] && c.rt.routable(ref.ContentKind, ref.ContentID) {
 			seen[ref.Key()] = true
 			refs = append(refs, ref)
 		}
@@ -308,7 +308,7 @@ func (c *comments) latest(ctx context.Context, actor access.Actor, limit, offset
 	kept := items[:0]
 	var flat []Comment
 	for _, it := range items {
-		if visible[it.ContentRef.Content().Key()] {
+		if visible[it.ContentRef.Key()] {
 			kept = append(kept, it)
 			flat = append(flat, it.Comment)
 		}

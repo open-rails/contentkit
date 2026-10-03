@@ -200,6 +200,31 @@ func TestComments_RepliesAuthorizeStoredVersion(t *testing.T) {
 	}
 }
 
+func TestComments_LatestAuthorizesStoredVersions(t *testing.T) {
+	res := &commentThreadResolver{defaultVersion: "en", versions: map[string]access.Resolution{
+		"en": {Visible: true, Accessible: true},
+		"ja": {Visible: true, Accessible: true},
+	}}
+	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery_thread"}})
+	actor := access.Actor{ID: "author"}
+	en := mustComment(t, rt, actor, "gallery_thread", cid(1)+":en", createInput{Body: "English comment"})
+	ja := mustComment(t, rt, actor, "gallery_thread", cid(1)+":ja", createInput{Body: "Japanese comment"})
+	for _, version := range []string{"en", "ja"} {
+		res.versions["en"] = access.Resolution{}
+		res.versions["ja"] = access.Resolution{}
+		res.versions[version] = access.Resolution{Visible: true}
+		rec := doJSON(t, rt.Handler(), actor, "GET", "/comments/latest?limit=100", nil)
+		var feed []FeedItem
+		wantID := en.ID
+		if version == "ja" {
+			wantID = ja.ID
+		}
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &feed) != nil || len(feed) != 1 || feed[0].ID != wantID || feed[0].ContentRef.Version() != version {
+			t.Fatalf("visible version %s: %d %s, want only %s", version, rec.Code, rec.Body.String(), wantID)
+		}
+	}
+}
+
 func TestComments_ReactionsAuthorizeStoredTarget(t *testing.T) {
 	res := &commentThreadResolver{defaultVersion: "en", versions: map[string]access.Resolution{
 		"en": {Visible: true, Accessible: true},
