@@ -227,7 +227,7 @@ func (c *comments) replies(ctx context.Context, actor access.Actor, replyToID st
 	if err != nil {
 		return nil, err
 	}
-	if _, err := c.rt.gate(ctx, ref.ContentKind, ref.ContentID, actor, false); err != nil {
+	if _, err := c.rt.gateRef(ctx, ref, actor, false); err != nil {
 		return nil, err
 	}
 	rows, err := c.s.pool.Query(ctx, `SELECT `+commentCols+` FROM `+c.s.t.comments+`

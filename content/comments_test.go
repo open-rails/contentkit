@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contentref"
 )
 
 // commentsEnricher is a fake UserEnricher for the enrichment assertion.
@@ -129,6 +131,72 @@ func TestComments_AccessGating(t *testing.T) {
 	}
 	if _, err := rt.comments.create(ctx, author, "gallery", cid(903), createInput{Body: "x"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing: want ErrNotFound, got %v", err)
+	}
+}
+
+type commentThreadResolver struct {
+	defaultVersion string
+	versions       map[string]access.Resolution
+	err            error
+}
+
+func (r *commentThreadResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	out := make(map[contentref.ContentKey]access.Resolution)
+	for _, requested := range refs {
+		id, version, _ := strings.Cut(requested.ContentID, ":")
+		if requested.ContentVersionID != nil {
+			version = *requested.ContentVersionID
+		}
+		if version == "" {
+			version = r.defaultVersion
+		}
+		if res, ok := r.versions[version]; ok {
+			res.Ref = contentref.NewVersion(requested.TenantID, requested.ContentKind, id, version)
+			out[requested.Key()] = res
+		}
+	}
+	return out, nil
+}
+
+func TestComments_RepliesAuthorizeStoredVersion(t *testing.T) {
+	res := &commentThreadResolver{defaultVersion: "en", versions: map[string]access.Resolution{
+		"en": {Visible: true, Accessible: true},
+		"ja": {Visible: true, Accessible: true},
+	}}
+	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery_thread"}})
+	actor := access.Actor{ID: "author"}
+	root := mustComment(t, rt, actor, "gallery_thread", cid(1)+":ja", createInput{Body: "Japanese root"})
+	reply := mustComment(t, rt, actor, "gallery_thread", cid(1)+":ja", createInput{Body: "Japanese reply", ReplyToID: root.ID})
+	h := rt.Handler()
+	path := "/comments/" + root.ID + "/replies"
+
+	res.versions["ja"] = access.Resolution{}
+	if rec := doJSON(t, h, actor, "GET", path, nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("hidden stored version: %d %s, want 404", rec.Code, rec.Body.String())
+	}
+	res.versions["en"] = access.Resolution{}
+	res.versions["ja"] = access.Resolution{Visible: true} // Locked content still permits reading replies.
+	rec := doJSON(t, h, actor, "GET", path, nil)
+	var replies []Comment
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &replies) != nil || len(replies) != 1 || replies[0].ID != reply.ID {
+		t.Fatalf("visible stored version: %d %s, want the Japanese reply", rec.Code, rec.Body.String())
+	}
+	delete(res.versions, "ja")
+	if rec := doJSON(t, h, actor, "GET", path, nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("missing stored version: %d %s, want 404", rec.Code, rec.Body.String())
+	}
+	res.err = errors.New("resolver unavailable")
+	if rec := doJSON(t, h, actor, "GET", path, nil); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("resolver failure: %d %s, want 500", rec.Code, rec.Body.String())
+	}
+	res.err = nil
+	res.versions["ja"] = access.Resolution{Visible: true, Accessible: true}
+	unregistered, _ := newTestRuntime(t, Options{Schema: rt.schema, Resolver: res, ContentKinds: []string{"gallery"}})
+	if rec := doJSON(t, unregistered.Handler(), actor, "GET", path, nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("unregistered stored kind: %d %s, want 404", rec.Code, rec.Body.String())
 	}
 }
 

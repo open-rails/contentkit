@@ -273,10 +273,14 @@ func routeKey(ref contentref.ContentRef) (contentref.ContentRef, error) {
 // returned reference is the resolver's canonical identity; callers store and
 // query by it, never by the caller-supplied key, so aliases cannot fragment rows.
 func (rt *Runtime) gate(ctx context.Context, kind, id string, actor access.Actor, needAccessible bool) (contentref.ContentRef, error) {
-	if !rt.routable(kind, id) {
+	return rt.gateRef(ctx, rt.Ref(kind, id), actor, needAccessible)
+}
+
+// gateRef authorizes an existing reference without dropping its stored version.
+func (rt *Runtime) gateRef(ctx context.Context, requested contentref.ContentRef, actor access.Actor, needAccessible bool) (contentref.ContentRef, error) {
+	if !rt.routable(requested.ContentKind, requested.ContentID) {
 		return contentref.ContentRef{}, ErrNotFound
 	}
-	requested := rt.Ref(kind, id)
 	res, err := rt.resolver.Resolve(ctx, []contentref.ContentRef{requested}, actor)
 	if err != nil {
 		return contentref.ContentRef{}, err
