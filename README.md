@@ -56,7 +56,7 @@ another tenant is an error, never remapped.
 | `media/worker` | the media worker: one process for every producer, built from the host's registry (`cmd/media-worker` is the stock build) |
 | `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
 | `media/tiered` | optional `public`/`members`/`ppv`/`members_ppv`/`premium` policy over an entitlement `Checker` (hosts adapt OpenRails `CheckEntitlements`) |
-| `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; the `Identity`/`Authorizer`/`UserEnricher`/`ContentProcessor` ports, post and poll images through `Media`, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, and the HTTP routes |
+| `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; the `Identity`/`Authorizer`/`UserEnricher`/`ContentProcessor` ports, post and poll images through `Media`, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
 | `worker` | one tenant's document maintenance: dirty queue, bounded backfill, sink delivery |
 | `taxonomy` | generic catalog: nodes (tags, artists, creators, characters, series, seasons, voice actors), localized names/aliases, edges, content assignments, effective tags, per-language counts, typeahead documents, admin routes |
@@ -169,9 +169,11 @@ may change.
 | 400 | `invalid_request` | malformed or semantically invalid input |
 | 401 | `unauthorized` | no identity |
 | 403 | `forbidden` | identity present, not permitted |
+| 403 | `comment_banned` | a comment ban applies; `ban` is `{scope, reason, until}` |
 | 404 | `not_found` | absent, unpublished or soft-deleted (existence is hidden) |
 | 409 | `conflict` | state or revision conflict |
 | 422 | `moderation_rejected` | a `ContentModerator` refused the write; `error` is the author-facing reason |
+| 429 | `rate_limited` | an interaction limit; `Retry-After` header, `action` and `retry_after` (seconds) in the body |
 | 501 | `not_configured` | the host never wired the port this route needs (`Media`, `AnswerClassifier`) |
 | 500 | `tenant_mismatch` | a host port answered with another tenant's data |
 | 500 | `internal_error` | anything else |

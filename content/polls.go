@@ -1054,6 +1054,10 @@ func (p *polls) handleDelete(w http.ResponseWriter, req *http.Request) {
 }
 
 func (p *polls) handleAnswer(w http.ResponseWriter, req *http.Request) {
+	if err := p.rt.limit(req.Context(), ActionPollVote, p.rt.actor(req.Context())); err != nil {
+		writeErr(w, err)
+		return
+	}
 	var in struct {
 		Text string `json:"text"`
 	}
@@ -1070,6 +1074,10 @@ func (p *polls) handleAnswer(w http.ResponseWriter, req *http.Request) {
 }
 
 func (p *polls) handleVote(w http.ResponseWriter, req *http.Request) {
+	if err := p.rt.limit(req.Context(), ActionPollVote, p.rt.actor(req.Context())); err != nil {
+		writeErr(w, err)
+		return
+	}
 	var in struct {
 		OptionID string `json:"option_id"`
 	}

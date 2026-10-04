@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 
@@ -45,6 +46,12 @@ const (
 	CodeConflict           = "conflict"
 	CodeModerationRejected = "moderation_rejected"
 	CodeUnprocessable      = "unprocessable"
+	// CodeRateLimited: too many of one interaction; the body carries action
+	// and retry_after (seconds, as the Retry-After header). -> 429
+	CodeRateLimited = "rate_limited"
+	// CodeCommentBanned: the caller is banned from commenting on this target;
+	// the body's ban says the scope, reason and until. -> 403
+	CodeCommentBanned = "comment_banned"
 	// CodeNotConfigured: the capability exists but the host never wired its
 	// port (Media, AnswerClassifier). Retrying does not help. -> 501
 	CodeNotConfigured = "not_configured"
@@ -56,8 +63,11 @@ const (
 
 // errorBody is ContentKit's flat error shape.
 type errorBody struct {
-	Error string `json:"error"`
-	Code  string `json:"code"`
+	Error      string     `json:"error"`
+	Code       string     `json:"code"`
+	Action     Action     `json:"action,omitempty"`      // rate_limited
+	RetryAfter int        `json:"retry_after,omitempty"` // rate_limited: seconds
+	Ban        *BanNotice `json:"ban,omitempty"`         // comment_banned
 }
 
 // statusWriter records the response status and the cause of a 5xx (set by
@@ -83,14 +93,29 @@ func writeErr(w http.ResponseWriter, err error) {
 			sw.internalErr = err
 		}
 	}
-	writeJSON(w, status, errorBody{Error: msg, Code: code})
+	body := errorBody{Error: msg, Code: code}
+	var limited *RateLimitError
+	if errors.As(err, &limited) {
+		body.Action, body.RetryAfter = limited.Action, max(1, int(math.Ceil(limited.RetryAfter.Seconds())))
+		w.Header().Set("Retry-After", strconv.Itoa(body.RetryAfter))
+	}
+	var banned *BannedError
+	if errors.As(err, &banned) {
+		body.Ban = &banned.BanNotice
+	}
+	writeJSON(w, status, body)
 }
 
 // classifyErr maps an error to status, public code and safe message. Resolver
 // sentinels hide existence (not-visible -> 404); authorization and identity
 // failures are fail-closed; 5xx messages carry nothing internal.
 func classifyErr(err error) (status int, code, msg string) {
+	var banned *BannedError
 	switch {
+	case errors.Is(err, ErrRateLimited):
+		return http.StatusTooManyRequests, CodeRateLimited, "too many requests; try again later"
+	case errors.As(err, &banned):
+		return http.StatusForbidden, CodeCommentBanned, banned.Error()
 	case errors.Is(err, ErrNotFound), errors.Is(err, ErrNotVisible):
 		return http.StatusNotFound, CodeNotFound, "not found"
 	case errors.Is(err, ErrForbidden), errors.Is(err, ErrSubjectErased):

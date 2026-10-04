@@ -181,6 +181,14 @@ func (r *reactions) mount(mux *http.ServeMux) {
 func (r *reactions) handleSet(value int16) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		actor := r.rt.actor(req.Context())
+		action := ActionReaction
+		if req.PathValue("kind") == KindPost {
+			action = ActionPostReaction
+		}
+		if err := r.rt.limit(req.Context(), action, actor); err != nil {
+			writeErr(w, err)
+			return
+		}
 		ref, err := r.react(req.Context(), actor, req.PathValue("kind"), req.PathValue("id"), value)
 		if err != nil {
 			writeErr(w, err)
