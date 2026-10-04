@@ -169,6 +169,9 @@ func (f *favorites) mount(mux *http.ServeMux) {
 
 func (f *favorites) handleAdd(w http.ResponseWriter, req *http.Request) {
 	actor, err := f.rt.requireActor(req.Context())
+	if err == nil {
+		err = f.rt.limit(req.Context(), ActionFavorite, actor)
+	}
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -182,6 +185,9 @@ func (f *favorites) handleAdd(w http.ResponseWriter, req *http.Request) {
 
 func (f *favorites) handleRemove(w http.ResponseWriter, req *http.Request) {
 	actor, err := f.rt.requireActor(req.Context())
+	if err == nil {
+		err = f.rt.limit(req.Context(), ActionFavorite, actor)
+	}
 	if err != nil {
 		writeErr(w, err)
 		return

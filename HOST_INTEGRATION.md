@@ -13,7 +13,8 @@ _ = contentkit.Migrate(ctx, contentkit.MigrateConfig{DB: sqlDB, Schema: "doujins
 rt, _ := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
 	EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: "doujins", Tenant: "doujins", CH: ch, CHDatabase: "hub"},
 	Content: content.Options{Schema: "doujins", Identity: identity, Authz: authz, Resolver: resolver, Users: users,
-		Media: &content.Media{URLs: reader, Folders: jobs}, Processor: sanitizer, Perms: content.Perms{...}, ContentKinds: []string{"gallery", "post", "tag"}},
+		Media: &content.Media{URLs: reader, Folders: jobs}, Processor: sanitizer, Perms: content.Perms{...}, ContentKinds: []string{"gallery", "post", "tag"},
+		Limits: content.Limits{Redis: rdb}},
 })
 mux.Handle("/api/social/", http.StripPrefix("/api/social", rt.Handler()))
 ```
@@ -89,7 +90,8 @@ content_version_id)`; comment threading is `reply_to_id`. Routes are
 `/{kind}/{id}/comments|like|dislike|neutral|reaction|favorite`,
 `/comments/{cid}/...`, `/comments/latest`, `/comments/admin?content_kind=`,
 `/favorites`, `/polls...` (incl. `/polls/{id}/answer`), `/posts...`,
-`/moderation/held`, `/moderation/{kind}/{id}/resolve`; `kind` must be in
+`/moderation/held`, `/moderation/{kind}/{id}/resolve`, `/comment-bans...`,
+`/global-comment-bans...`, `/{kind}/{id}/can-comment`; `kind` must be in
 `ContentKinds`.
 
 Ports (in `content` unless qualified):
@@ -97,8 +99,8 @@ Ports (in `content` unless qualified):
 | Port | Required | Contract |
 |---|---|---|
 | `Identity` | yes | reads the already-authenticated `access.Actor` from context; ContentKit never authenticates |
-| `Authorizer` | yes | `Can(actor, perm)` for `Perms{PostWrite, PollWrite, CommentModerate, ModerationReview}`; fail-closed on error and on an unset perm |
-| `access.ContentResolver` | yes | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request, which must then be lower case (else 400); another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`. For media an item's private files are all or nothing: `Full()` (visible and accessible) gets every one, anyone else none; what a viewer without access may see is the item's public files (a preview preset), which need only `Visible` to anonymous viewers; the ref is the item, i.e. the host's version; `Editor` (the actor may edit the item) unlocks editor reads (uploads, edits, editor views) and every private file of a visible item, so set it only for people who may see them all |
+| `Authorizer` | yes | `Can(actor, perm)` for `Perms{PostWrite, PollWrite, CommentModerate, ModerationReview, CommentBan}`; fail-closed on error and on an unset perm |
+| `access.ContentResolver` | yes | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request, which must then be lower case (else 400); another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`. `Owner` is the user who owns the content (its creator; `""` for site content): owner-scoped comment bans apply to it. For media an item's private files are all or nothing: `Full()` (visible and accessible) gets every one, anyone else none; what a viewer without access may see is the item's public files (a preview preset), which need only `Visible` to anonymous viewers; the ref is the item, i.e. the host's version; `Editor` (the actor may edit the item) unlocks editor reads (uploads, edits, editor views) and every private file of a visible item, so set it only for people who may see them all |
 | `UserEnricher` | no | display data for author ids |
 | `Media` | no | post and poll images in ContentKit media (see below); absent = image routes answer 501 |
 | `ContentProcessor` | no | rich-text sanitizer for comment/post bodies (default strips tags) |
@@ -216,6 +218,65 @@ breaker. Register
 `Runtime.CheckModerator` as an optional dependency (helpers `deps`) so a
 tripped moderator shows on statusz and `app_dependency_up`.
 
+## Interaction limits
+
+ContentKit limits each actor's interactions itself: the user id, or the IP
+for an anonymous actor (an actor with neither is not limited here). Hosts
+keep no limiter around these routes; the edge (Traefik) keeps the generic
+per-IP ceiling. Every attempt spends one, so undoing (unfavorite, neutral,
+`DELETE .../reaction`) costs the same as doing. Each rate is "at most `Count`
+in any `Per`"; an action with two must pass both.
+
+| Action | Routes | Default |
+|---|---|---|
+| `comment` | `POST /{kind}/{id}/comments` (top-level and replies) | 5 per 5 minutes and 20 per hour |
+| `comment_reaction` | `POST /comments/{cid}/like\|dislike\|neutral` | 30 per minute |
+| `post_reaction` | `/posts/{id}/like\|dislike\|neutral`, and `/post/{id}/...` | 30 per minute |
+| `reaction` | `/{kind}/{id}/like\|dislike\|neutral`, `DELETE /{kind}/{id}/reaction` | 30 per minute |
+| `favorite` | `POST` and `DELETE /{kind}/{id}/favorite` | 20 per minute |
+| `poll_vote` | `POST /polls/{id}/vote`, `POST /polls/{id}/answer` | 30 per minute |
+
+Override any of them in `content.Options.Limits` (`Comment`, `CommentReaction`,
+`PostReaction`, `Reaction`, `Favorite`, `PollVote`, each `[]content.Rate{{Count, Per}}`).
+`Limits.Redis` (a Redis or Garnet client) shares the counts across replicas
+under `Limits.KeyPrefix` (default `contentkit:content:rl:`) plus the tenant;
+without it each process counts alone (logged at start). A Redis error falls
+back to the per-process count for a second and adds to the expvar
+`contentkit_content_ratelimit_redis_errors`. A refusal is `429 rate_limited`
+with `Retry-After` and `{"action", "retry_after"}` in the body
+(`*content.RateLimitError`, `errors.Is(err, content.ErrRateLimited)`).
+
+## Comment bans
+
+A ban is current state only: `{user, scope, reason, until, by}`, no history.
+It stops every new comment of that user in its scope: top-level, replies (to
+anyone, themselves included) and edits of their comments, on any content in
+the scope, their own included. It hides and deletes nothing, and does not stop
+reactions, favorites or votes. Scopes:
+
+- `owner:<id>`: content whose resolver `Owner` is `<id>`; managed by that
+  owner, any signed-in user, over their own scope only.
+- `global`: the whole tenant; managed by holders of `Perms.CommentBan` (an
+  operator permission, e.g. AuthKit `root:comments:ban`), over that scope only.
+
+| Route | Scope | Result |
+|---|---|---|
+| `GET /comment-bans?limit=&offset=` | the caller's owner scope | `[CommentBan]`, newest first |
+| `PUT /comment-bans/{user}` `{"reason","until"}` | the caller's owner scope | the ban (created or replaced) |
+| `DELETE /comment-bans/{user}` | the caller's owner scope | `204`, idempotent |
+| `GET`, `PUT`, `DELETE /global-comment-bans[/{user}]` | `global` | the same |
+| `GET /{kind}/{id}/can-comment` | the caller on that target | `{"can_comment", "ban"}` |
+
+`until` is optional (absent: until lifted) and must be in the future; an
+expired ban stays listed with `expired: true` until lifted or replaced.
+`CommentBan` carries `user_id`, `user` (from `UserEnricher`), `scope`,
+`reason`, `until`, `banned_by`, `banned_at` and `expired`. A banned write is
+`403 comment_banned` with `ban: {scope, reason, until}` (never who banned);
+when both scopes apply it reports the one lasting longer
+(`*content.BannedError`, `errors.Is(err, content.ErrCommentBanned)`). Anonymous
+commenters have no identity to ban. `EraseSubjects` removes the bans of an
+erased user and of their owner scope, and blanks them as `banned_by`.
+
 ## Free-text polls
 
 `content_poll_questions.kind` is `multiple_choice` (options + votes, as
@@ -260,7 +321,8 @@ Content erasure commits atomically:
 - a permanent tenant/subject fence in `content_erased_subjects`; later writes by
   that subject fail with `content.ErrSubjectErased`;
 - removal of the subject's authenticated reactions, favorites, poll votes and
-  answers, with exact counter decrements;
+  answers, with exact counter decrements, and of comment bans of them or in
+  their owner scope (global bans they set stay, without their id);
 - redaction of the subject's unpublished payloads (held/rejected comments and
   posts, draft and future-scheduled posts even when approved) and their
   moderation metadata. An item with a previously approved payload keeps it

@@ -35,6 +35,9 @@ type Resolution struct {
 	// returns edit metadata and editor views only for editors, and gives a
 	// visible item's editor its private files whatever Accessible says.
 	Editor bool
+	// Owner is the actor id that owns the content (its creator), "" when no
+	// single user does. A comment ban in that owner's scope applies to it.
+	Owner string
 }
 
 // Full reports access to the item: everything private is served.
