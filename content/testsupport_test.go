@@ -3,6 +3,7 @@ package content
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -48,6 +49,9 @@ func newTestRuntime(t *testing.T, opts Options) (*Runtime, *pgxpool.Pool) {
 	}
 	if opts.Resolver == nil {
 		opts.Resolver = &fakeResolver{}
+	}
+	if reflect.ValueOf(opts.Limits).IsZero() {
+		opts.Limits.Disabled = true // tests opt in to rate limits by setting any field
 	}
 	rt, err := New(ctx, opts)
 	if err != nil {
@@ -113,6 +117,16 @@ func (f *fakeResolver) set(kind, id string, visible, accessible bool) {
 		f.entries = map[string]access.Resolution{}
 	}
 	f.entries[kind+":"+id] = access.Resolution{Visible: visible, Accessible: accessible}
+}
+
+// setOwned is set for a visible, accessible target owned by owner.
+func (f *fakeResolver) setOwned(kind, id, owner string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.entries == nil {
+		f.entries = map[string]access.Resolution{}
+	}
+	f.entries[kind+":"+id] = access.Resolution{Visible: true, Accessible: true, Owner: owner}
 }
 
 func (f *fakeResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {

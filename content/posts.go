@@ -494,6 +494,10 @@ func (p *posts) handleReact(value int16) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		ctx := req.Context()
 		actor := p.rt.actor(ctx)
+		if err := p.rt.limit(ctx, ActionPostReaction, actor); err != nil {
+			writeErr(w, err)
+			return
+		}
 		id := req.PathValue("id")
 		if _, err := p.react(ctx, actor, id, value); err != nil {
 			writeErr(w, err)
