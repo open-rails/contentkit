@@ -74,6 +74,7 @@ type Perms struct {
 	PollWrite        string // create/update/delete polls + options
 	CommentModerate  string // moderator delete/restore of another actor's comment
 	ModerationReview string // list and resolve held comments and posts
+	CommentBan       string // ban users from commenting anywhere in the tenant (global scope)
 }
 
 // --- moderation and classification ports (nil -> publish / refuse) ---
