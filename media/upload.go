@@ -571,8 +571,6 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		}
 		cancel()
 	}
-	// The host hears of the change here because ItemReady stays silent until
-	// the work it just queued settles.
 	var hookErr error
 	if hook := u.reg.cfg.Hooks.ItemCommitted; hook != nil {
 		if err := hook(ctx, item.Ref()); err != nil {

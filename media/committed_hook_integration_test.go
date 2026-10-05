@@ -12,7 +12,6 @@ import (
 	"github.com/open-rails/contentkit/media/internal/s3test"
 )
 
-// committed records what ItemCommitted was told, and can refuse once.
 type committed struct {
 	mu   sync.Mutex
 	refs []string
@@ -42,8 +41,6 @@ func fixtureWithCommitted(t *testing.T, c *committed) *fixture {
 	return newFixtureOn(t, s3test.Open(t), func(cfg *media.Config) { cfg.Hooks.ItemCommitted = c.hook })
 }
 
-// A host that stores readiness of its own has to hear about the commit,
-// because ItemReady stays silent until the work it queues settles.
 func TestItemCommittedReportsEveryCommit(t *testing.T) {
 	c := &committed{}
 	f := fixtureWithCommitted(t, c)
@@ -56,16 +53,12 @@ func TestItemCommittedReportsEveryCommit(t *testing.T) {
 		t.Fatalf("the first commit reported %v, want one %s", seen, want)
 	}
 
-	// A replacement is the case this exists for: the item is listed as ready
-	// until the new upload finishes, so the host must hear of it again.
 	f.put(g, "originals/1.png", "image/png", png(22))
 	if seen := c.seen(); len(seen) != 2 {
 		t.Fatalf("a replacement reported %v, want two commits", seen)
 	}
 }
 
-// The other direction: it fires before the work settles, not after, which is
-// the whole point of having it alongside ItemReady.
 func TestItemCommittedFiresWhileProcessingIsPending(t *testing.T) {
 	c := &committed{}
 	f := fixtureWithCommitted(t, c)
@@ -81,8 +74,6 @@ func TestItemCommittedFiresWhileProcessingIsPending(t *testing.T) {
 	}
 }
 
-// A refusal fails the commit, the way a queue or public-sync failure does,
-// so a host that could not record the change is not left out of step.
 func TestItemCommittedRefusalFailsTheCommit(t *testing.T) {
 	c := &committed{fail: errors.New("the host said no")}
 	f := fixtureWithCommitted(t, c)
@@ -99,7 +90,6 @@ func TestItemCommittedRefusalFailsTheCommit(t *testing.T) {
 	}
 }
 
-// An item with no hook set must commit exactly as before.
 func TestCommitsWorkWithoutTheHook(t *testing.T) {
 	f := newFixture(t)
 	f.visible(1)
