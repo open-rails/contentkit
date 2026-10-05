@@ -80,8 +80,8 @@ func TestItemCommittedRefusalFailsTheCommit(t *testing.T) {
 	f.visible(1)
 	g := f.ref("gallery", 1)
 
-	blob, _ := f.upload(g, "originals/1.png", "image/png", png(44))
-	_, err := f.up.Commit(context.Background(), f.editor, g, []media.Op{{Op: media.OpPut, Path: "originals/1.png", Blob: blob}})
+	p, blob := f.upload(g, "originals/1.png", "image/png", png(44))
+	_, err := f.up.Commit(context.Background(), f.editor, g, []media.Op{{Op: media.OpPut, Path: p, Blob: blob}})
 	if err == nil {
 		t.Fatal("a refused ItemCommitted let the commit report success")
 	}
