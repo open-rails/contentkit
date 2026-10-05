@@ -571,7 +571,15 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		}
 		cancel()
 	}
-	if err := errors.Join(queueErr, publicErr, takedownErr); err != nil {
+	// The host hears of the change here because ItemReady stays silent until
+	// the work it just queued settles.
+	var hookErr error
+	if hook := u.reg.cfg.Hooks.ItemCommitted; hook != nil {
+		if err := hook(ctx, item.Ref()); err != nil {
+			hookErr = fmt.Errorf("media: ItemCommitted: %w", err)
+		}
+	}
+	if err := errors.Join(queueErr, publicErr, takedownErr, hookErr); err != nil {
 		return nil, err
 	}
 	return man, nil

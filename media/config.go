@@ -248,6 +248,14 @@ type Hooks struct {
 	// job, through the host's media queue. It must be idempotent; an error
 	// retries.
 	ItemReady func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r Readiness) error
+	// ItemCommitted reports an item a commit changed, in the committing
+	// process, once the manifest is written and its processing queued.
+	// ItemReady reports the far end of that work and is silent while it
+	// runs, so a host that stores readiness of its own needs this to lower
+	// it: a replaced upload leaves the item listed as ready until the new
+	// one finishes otherwise. It must be idempotent, and an error fails the
+	// commit, which the caller may repeat.
+	ItemCommitted func(ctx context.Context, ref contentref.ContentRef) error
 	// Failed reports an upload a producer cannot process, where it runs.
 	Failed func(ctx context.Context, ref contentref.ContentRef, path string, err error)
 }
