@@ -58,7 +58,7 @@ func (rt *Runtime) erasedSubjectsTable() string {
 }
 
 // EraseSubjects fences future authenticated content writes, removes reactions,
-// favorites and poll votes/answers atomically,
+// favorites, poll votes/answers and comment bans of or by them atomically,
 // and removes unpublished held/rejected/draft/scheduled payloads and moderation
 // provenance. A previously published item retains its last approved payload
 // without publishing it again; its unpublished replacement is erased. Never-published items become
@@ -103,6 +103,18 @@ func (rt *Runtime) EraseSubjects(ctx context.Context, actorIDs []string) error {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM `+rt.store.t.pollAnswers+` WHERE tenant_id=$1 AND actor_id=ANY($2)`, rt.tenant, ids); err != nil {
+		return err
+	}
+	// Comment bans of or by the subjects: bans of them and their owner scopes go;
+	// global bans they set keep standing without their id.
+	scopes := make([]string, len(ids))
+	for i, id := range ids {
+		scopes[i] = OwnerScope(id)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM `+rt.store.t.commentBans+` WHERE tenant_id=$1 AND (user_id=ANY($2) OR scope=ANY($3))`, rt.tenant, ids, scopes); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE `+rt.store.t.commentBans+` SET banned_by='' WHERE tenant_id=$1 AND banned_by=ANY($2)`, rt.tenant, ids); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE `+rt.store.t.comments+` SET body=coalesce(published_body,''), user_id=CASE WHEN published_body IS NOT NULL THEN user_id ELSE NULL END, anon_name=CASE WHEN published_body IS NOT NULL THEN anon_name ELSE '[deleted]' END, moderation='rejected', moderation_reason=NULL, moderation_verdict=NULL, moderated_by=NULL, moderated_at=NULL, deleted_at=CASE WHEN published_body IS NOT NULL THEN deleted_at ELSE coalesce(deleted_at,clock_timestamp()) END, moderation_revision=moderation_revision+1, updated_at=clock_timestamp()

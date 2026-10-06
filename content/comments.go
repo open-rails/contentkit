@@ -69,12 +69,12 @@ type Comment struct {
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 
-// create gates on accessibility, sanitizes and screens the body and inserts.
-// A reply must target a published top-level comment on the same reference;
-// replies are one level deep. A held comment is stored author-only and
-// counted only once a reviewer approves it.
+// create gates on accessibility and comment bans, sanitizes and screens the
+// body and inserts. A reply must target a published top-level comment on the
+// same reference; replies are one level deep. A held comment is stored
+// author-only and counted only once a reviewer approves it.
 func (c *comments) create(ctx context.Context, actor access.Actor, kind, id string, in createInput) (Comment, error) {
-	ref, err := c.rt.gate(ctx, kind, id, actor, true)
+	ref, res, err := c.rt.resolveTarget(ctx, kind, id, actor, true)
 	if err != nil {
 		return Comment{}, err
 	}
@@ -83,6 +83,9 @@ func (c *comments) create(ctx context.Context, actor access.Actor, kind, id stri
 	loggedIn := actor.ID != "" && !actor.Anonymous
 	var userID, anonName any
 	if loggedIn {
+		if err := c.rt.checkCommentBan(ctx, actor.ID, res.Owner); err != nil {
+			return Comment{}, err
+		}
 		userID = actor.ID
 	} else {
 		name := strings.TrimSpace(in.AnonName)
@@ -532,11 +535,22 @@ func (c *comments) attachMine(ctx context.Context, actor access.Actor, list []Co
 // edit re-sanitizes, re-screens and updates a comment's body: the verdict on
 // the new text sets its state, so a held comment publishes on approval and a
 // published one is withdrawn on review. Allowed for the owner or a
-// moderator. 404 if missing or soft-deleted.
+// moderator; an owner banned in the content's scope may not. 404 if missing
+// or soft-deleted.
 func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody string) (Comment, error) {
 	target, err := c.loadForWrite(ctx, actor, cid)
 	if err != nil {
 		return Comment{}, err
+	}
+	if author := deref(target.ownerID); author != "" && author == viewerID(actor) {
+		// The content's owner, when the resolver still answers for it.
+		res, err := access.ResolveOne(ctx, c.rt.resolver, target.ref, actor)
+		if err != nil {
+			return Comment{}, err
+		}
+		if err := c.rt.checkCommentBan(ctx, author, res.Owner); err != nil {
+			return Comment{}, err
+		}
 	}
 	clean, err := c.cleanBody(ctx, rawBody)
 	if err != nil {
@@ -821,6 +835,10 @@ func (c *comments) handleReplies(w http.ResponseWriter, req *http.Request) {
 
 func (c *comments) handleCreate(w http.ResponseWriter, req *http.Request) {
 	actor := c.rt.actor(req.Context())
+	if err := c.rt.limit(req.Context(), ActionComment, actor); err != nil {
+		writeErr(w, err)
+		return
+	}
 	var in createInput
 	if err := decodeJSON(req, &in); err != nil {
 		writeErr(w, err)
@@ -869,6 +887,10 @@ func (c *comments) handleDelete(w http.ResponseWriter, req *http.Request) {
 func (c *comments) handleReact(value int16) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		actor := c.rt.actor(req.Context())
+		if err := c.rt.limit(req.Context(), ActionCommentReaction, actor); err != nil {
+			writeErr(w, err)
+			return
+		}
 		cnt, err := c.reactTx(req.Context(), actor, req.PathValue("cid"), value)
 		if err != nil {
 			writeErr(w, err)

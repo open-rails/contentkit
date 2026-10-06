@@ -13,6 +13,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/ratelimit"
 )
 
 // Reserved content kinds owned by this package: reactions on comments and
@@ -74,6 +75,10 @@ type Options struct {
 	// Perms are the opaque host permission strings gating privileged writes.
 	Perms Perms
 
+	// Limits are the per-actor interaction rate limits (limits.go); the zero
+	// value takes the defaults, counted per process.
+	Limits Limits
+
 	// ContentKinds are the commentable/reactable/favoritable kinds the host
 	// registers (e.g. "gallery", "video", "post"). Unregistered kinds are 404.
 	ContentKinds []string
@@ -103,6 +108,7 @@ type Runtime struct {
 	perms             Perms
 	log               *slog.Logger
 	kinds             map[string]struct{}
+	limiters          map[Action]*ratelimit.Limiter
 
 	preferences *preferences
 	reactions   *reactions
@@ -133,6 +139,11 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	log := orDefault[*slog.Logger](opts.Logger, slog.Default())
+	limiters, err := newLimiters(opts.Limits, opts.Tenant, log)
+	if err != nil {
+		return nil, err
+	}
 	processor := orDefault[ContentProcessor](opts.Processor, stripProcessor{})
 	rt := &Runtime{
 		store:             newStore(opts.Pool, opts.Schema, opts.Tenant),
@@ -150,8 +161,9 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		classifier:        opts.Classifier,
 		providerEraser:    opts.ProviderDataEraser,
 		perms:             opts.Perms,
-		log:               orDefault[*slog.Logger](opts.Logger, slog.Default()),
+		log:               log,
 		kinds:             make(map[string]struct{}, len(opts.ContentKinds)),
+		limiters:          limiters,
 	}
 	for _, k := range opts.ContentKinds {
 		rt.kinds[k] = struct{}{}
@@ -176,7 +188,8 @@ func (rt *Runtime) checkSchema(ctx context.Context) error {
 		SELECT revision FROM `+rt.store.t.reactions+` LIMIT 0; SELECT value, revision FROM `+rt.store.t.favorites+` LIMIT 0;
 		SELECT revision FROM `+rt.store.t.preferenceSync+` LIMIT 0;
 		SELECT moderation FROM `+rt.store.t.comments+` LIMIT 0; SELECT moderation FROM `+rt.store.t.posts+` LIMIT 0;
-		SELECT kind, closes_at FROM `+rt.store.t.pollQuestions+` LIMIT 0; SELECT group_id FROM `+rt.store.t.pollAnswers+` LIMIT 0`); err != nil {
+		SELECT kind, closes_at FROM `+rt.store.t.pollQuestions+` LIMIT 0; SELECT group_id FROM `+rt.store.t.pollAnswers+` LIMIT 0;
+		SELECT scope, until FROM `+rt.store.t.commentBans+` LIMIT 0`); err != nil {
 		return fmt.Errorf("content: schema %q lacks the ContentKit baseline (apply contentkit.Migrate): %w", rt.schema, err)
 	}
 	return nil
@@ -200,6 +213,7 @@ func (rt *Runtime) Handler() http.Handler {
 	rt.posts.mount(mux)
 	rt.favorites.mount(mux)
 	rt.mountModeration(mux)
+	rt.mountBans(mux)
 	return rt.accessLog(mux)
 }
 
@@ -273,7 +287,22 @@ func routeKey(ref contentref.ContentRef) (contentref.ContentRef, error) {
 // returned reference is the resolver's canonical identity; callers store and
 // query by it, never by the caller-supplied key, so aliases cannot fragment rows.
 func (rt *Runtime) gate(ctx context.Context, kind, id string, actor access.Actor, needAccessible bool) (contentref.ContentRef, error) {
-	return rt.gateRef(ctx, rt.Ref(kind, id), actor, needAccessible)
+	ref, _, err := rt.resolveTarget(ctx, kind, id, actor, needAccessible)
+	return ref, err
+}
+
+// resolveTarget is gate that also returns the resolution (its Owner).
+func (rt *Runtime) resolveTarget(ctx context.Context, kind, id string, actor access.Actor, needAccessible bool) (contentref.ContentRef, access.Resolution, error) {
+	if !rt.routable(kind, id) {
+		return contentref.ContentRef{}, access.Resolution{}, ErrNotFound
+	}
+	requested := rt.Ref(kind, id)
+	batch, err := rt.resolver.Resolve(ctx, []contentref.ContentRef{requested}, actor)
+	if err != nil {
+		return contentref.ContentRef{}, access.Resolution{}, err
+	}
+	ref, err := rt.admit(requested, batch, needAccessible)
+	return ref, batch[requested.Key()], err
 }
 
 // gateRef authorizes an existing reference without dropping its stored version.
@@ -281,11 +310,11 @@ func (rt *Runtime) gateRef(ctx context.Context, requested contentref.ContentRef,
 	if !rt.routable(requested.ContentKind, requested.ContentID) {
 		return contentref.ContentRef{}, ErrNotFound
 	}
-	res, err := rt.resolver.Resolve(ctx, []contentref.ContentRef{requested}, actor)
+	batch, err := rt.resolver.Resolve(ctx, []contentref.ContentRef{requested}, actor)
 	if err != nil {
 		return contentref.ContentRef{}, err
 	}
-	return rt.admit(requested, res, needAccessible)
+	return rt.admit(requested, batch, needAccessible)
 }
 
 // admit applies requested's resolution from a batch: the canonical reference
