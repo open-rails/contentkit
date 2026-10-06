@@ -266,12 +266,13 @@ func TestPreferences_ExportScopeAndOptOut(t *testing.T) {
 	res := &fakeResolver{}
 	res.set("gallery", localeID(42, "en"), true, true)
 	res.set("tag", cid(9), true, true)
-	rt, pool := newPostRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery", "tag"}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
+	rt, pool := newPostRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery", "tag", KindPost}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
 	ctx := context.Background()
 	u1 := access.Actor{ID: "u1", Kind: "user"}
 	mustReact(t, rt, access.Actor{IP: "10.0.0.1", Anonymous: true}, "gallery", localeID(42, "en"), 1)
 	mustReact(t, rt, u1, "tag", cid(9), 1)
 	post, commentID := cid(500), cid(501)
+	res.set(KindPost, post, true, true)
 	if _, err := pool.Exec(ctx, `INSERT INTO `+rt.store.t.posts+` (id, tenant_id, author_id, title, body, is_draft) VALUES ($2, $1, 'a', 't', 'b', false)`, testTenant, post); err != nil {
 		t.Fatal(err)
 	}

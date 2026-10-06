@@ -305,6 +305,18 @@ func (rt *Runtime) resolveTarget(ctx context.Context, kind, id string, actor acc
 	return ref, batch[requested.Key()], err
 }
 
+// gateRef authorizes an existing reference without dropping its stored version.
+func (rt *Runtime) gateRef(ctx context.Context, requested contentref.ContentRef, actor access.Actor, needAccessible bool) (contentref.ContentRef, error) {
+	if !rt.routable(requested.ContentKind, requested.ContentID) {
+		return contentref.ContentRef{}, ErrNotFound
+	}
+	batch, err := rt.resolver.Resolve(ctx, []contentref.ContentRef{requested}, actor)
+	if err != nil {
+		return contentref.ContentRef{}, err
+	}
+	return rt.admit(requested, batch, needAccessible)
+}
+
 // admit applies requested's resolution from a batch: the canonical reference
 // if the target exists and is visible (and accessible when required).
 func (rt *Runtime) admit(requested contentref.ContentRef, batch map[contentref.ContentKey]access.Resolution, needAccessible bool) (contentref.ContentRef, error) {

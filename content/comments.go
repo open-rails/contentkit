@@ -230,7 +230,7 @@ func (c *comments) replies(ctx context.Context, actor access.Actor, replyToID st
 	if err != nil {
 		return nil, err
 	}
-	if _, err := c.rt.gate(ctx, ref.ContentKind, ref.ContentID, actor, false); err != nil {
+	if _, err := c.rt.gateRef(ctx, ref, actor, false); err != nil {
 		return nil, err
 	}
 	rows, err := c.s.pool.Query(ctx, `SELECT `+commentCols+` FROM `+c.s.t.comments+`
@@ -292,7 +292,7 @@ func (c *comments) latest(ctx context.Context, actor access.Actor, limit, offset
 	var refs []contentref.ContentRef
 	seen := map[contentref.ContentKey]bool{}
 	for _, it := range items {
-		if ref := it.ContentRef.Content(); !seen[ref.Key()] && c.rt.routable(ref.ContentKind, ref.ContentID) {
+		if ref := it.ContentRef; !seen[ref.Key()] && c.rt.routable(ref.ContentKind, ref.ContentID) {
 			seen[ref.Key()] = true
 			refs = append(refs, ref)
 		}
@@ -311,7 +311,7 @@ func (c *comments) latest(ctx context.Context, actor access.Actor, limit, offset
 	kept := items[:0]
 	var flat []Comment
 	for _, it := range items {
-		if visible[it.ContentRef.Content().Key()] {
+		if visible[it.ContentRef.Key()] {
 			kept = append(kept, it)
 			flat = append(flat, it.Comment)
 		}
@@ -671,11 +671,18 @@ func (c *comments) loadForWrite(ctx context.Context, actor access.Actor, cid str
 }
 
 // reactTx writes the caller's reaction to a comment and denormalizes the split
-// counter on the comment row in the same tx. The comment kind is internal, so
-// no gate: just a liveness check (published, not deleted).
+// counter on the comment row in the same tx. Its owning content must be visible;
+// the comment must still be published and not deleted when its row is locked.
 func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, value int16) (reactionCounts, error) {
 	if !uuidRe.MatchString(cid) {
 		return reactionCounts{}, ErrNotFound
+	}
+	ref, err := c.refOf(ctx, c.s.pool, cid)
+	if err != nil {
+		return reactionCounts{}, err
+	}
+	if _, err := c.rt.gateRef(ctx, ref, actor, false); err != nil {
+		return reactionCounts{}, err
 	}
 	tx, err := c.s.beginMutation(ctx)
 	if err != nil {
