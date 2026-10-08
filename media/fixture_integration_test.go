@@ -19,7 +19,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/agent"
+	"github.com/open-rails/contentkit/media/gateway"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
@@ -164,23 +164,23 @@ func (q *queue) take() []media.ProcessJob {
 
 // fixture is one test's media stack on real MinIO (and PostgreSQL for the
 // manifest lock): the app's registry, uploads, reads and jobs, and the
-// access agent serving its URLs.
+// media gateway serving its URLs.
 type fixture struct {
-	t      *testing.T
-	env    *s3test.Env
-	ns     string
-	shared string
-	reg    *media.Registry
-	ms     *media.Manifests
-	up     *media.Uploads
-	rd     *media.Reader
-	jobs   *media.Jobs
-	res    *resolver
-	auth   *authorizer
-	q      *queue
-	purged chan []string
-	agent  *httptest.Server
-	editor access.Actor
+	t       *testing.T
+	env     *s3test.Env
+	ns      string
+	shared  string
+	reg     *media.Registry
+	ms      *media.Manifests
+	up      *media.Uploads
+	rd      *media.Reader
+	jobs    *media.Jobs
+	res     *resolver
+	auth    *authorizer
+	q       *queue
+	purged  chan []string
+	gateway *httptest.Server
+	editor  access.Actor
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -215,14 +215,14 @@ func newFixtureOn(t *testing.T, env *s3test.Env, mutate func(*media.Config)) *fi
 		Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: signKey}}); err != nil {
 		t.Fatal(err)
 	}
-	h, err := agent.New(agent.Config{Endpoint: env.Config.Endpoint, Bucket: env.Config.Bucket, Region: env.Config.Region,
+	h, err := gateway.New(gateway.Config{Endpoint: env.Config.Endpoint, Bucket: env.Config.Bucket, Region: env.Config.Region,
 		AccessKeyID: env.Config.AccessKeyID, SecretAccessKey: env.Config.SecretAccessKey, Ring: ring,
-		Hosts: map[string][]string{mediaHost: f.reg.Namespaces()}, Defaults: media.AgentConfig(f.reg).Defaults})
+		Hosts: map[string][]string{mediaHost: f.reg.Namespaces()}, Defaults: media.GatewayConfig(f.reg).Defaults})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.agent = httptest.NewServer(h)
-	t.Cleanup(f.agent.Close)
+	f.gateway = httptest.NewServer(h)
+	t.Cleanup(f.gateway.Close)
 	return f
 }
 
@@ -381,16 +381,16 @@ func (f *fixture) produce(ref contentref.ContentRef) {
 
 func slicesClone(files []media.File) []media.File { return append([]media.File(nil), files...) }
 
-// fetch GETs a media URL through the access agent.
+// fetch GETs a media URL through the media gateway.
 func (f *fixture) fetch(u string, hdr ...string) (int, string, http.Header) {
 	f.t.Helper()
 	path := strings.TrimPrefix(u, "https://"+mediaHost)
-	req, _ := http.NewRequest(http.MethodGet, f.agent.URL+path, nil)
+	req, _ := http.NewRequest(http.MethodGet, f.gateway.URL+path, nil)
 	req.Host = mediaHost
 	for i := 0; i+1 < len(hdr); i += 2 {
 		req.Header.Set(hdr[i], hdr[i+1])
 	}
-	resp, err := f.agent.Client().Do(req)
+	resp, err := f.gateway.Client().Do(req)
 	if err != nil {
 		f.t.Fatal(err)
 	}

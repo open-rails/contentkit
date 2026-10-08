@@ -107,7 +107,7 @@ test("player fails fast with a specific reason", async ({ page }, info) => {
   expect(Date.now() - started).toBeLessThan(10_000);
   await expect(alert.getByRole("button", { name: "Try again" })).toBeVisible();
   await expect(alert).toContainText(/Code fragLoadError\/0/);
-  expect(warnings.some((w) => w.includes("MEDIA_ACCESS_CORS_ORIGINS"))).toBe(true);
+  expect(warnings.some((w) => w.includes("MEDIA_GATEWAY_CORS_ORIGINS"))).toBe(true);
   await player("no-cors").screenshot({ path: `${dir}/player-error-network.png` });
   await alert.getByRole("button", { name: "Try again" }).click();
   await expect(player("no-cors").getByRole("alert")).toBeVisible({ timeout: 10_000 });

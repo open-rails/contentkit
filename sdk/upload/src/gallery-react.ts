@@ -183,7 +183,7 @@ export interface HlsPlayerOptions {
   xhrSetup?: (xhr: XMLHttpRequest, url: string) => void | Promise<void>;
   /**
    * Re-grants access (refetch the read API). Called shortly before `expires`,
-   * and once after a 401, 403 or 404 — media-access answers an expired token
+   * and once after a 401, 403 or 404 — media-gateway answers an expired token
    * with 404 — after which the player retries, resuming where it was.
    */
   refresh?: () => unknown;
@@ -286,7 +286,7 @@ function corsHint() {
   hinted = true;
   console.warn(
     `contentkit: video requests failed with no response (status 0). If media is served from another origin, ` +
-      `media-access must allow this page: set MEDIA_ACCESS_CORS_ORIGINS to include ${globalThis.location?.origin ?? "the app origin"}.`,
+      `media-gateway must allow this page: set MEDIA_GATEWAY_CORS_ORIGINS to include ${globalThis.location?.origin ?? "the app origin"}.`,
   );
 }
 

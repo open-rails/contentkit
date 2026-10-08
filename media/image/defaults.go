@@ -15,7 +15,7 @@ import (
 
 // PublishDefaults renders every public preset's Default (a file in its
 // kind's Defaults) to the kind's _default item at every width,
-// where the access agent serves a missing public name from. An unchanged
+// where the media gateway serves a missing public name from. An unchanged
 // default is not written again. It returns the keys written, for a CDN
 // purge. Apps run it from their deploy step.
 func PublishDefaults(ctx context.Context, store media.Store, reg *media.Registry) ([]string, error) {

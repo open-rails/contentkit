@@ -45,9 +45,9 @@ func TestRegistry(t *testing.T) {
 	if got := reg.SrcSet(ref, "avatar"); !strings.HasSuffix(got, "avatar-128.webp 128w") || !strings.Contains(got, "avatar-64.webp 64w, ") {
 		t.Fatalf("srcset %s", got)
 	}
-	agent := media.AgentConfig(reg)
-	if got := layout.FormatDefaults(agent.Defaults); got != "accounts/user: avatar-{w}.webp; doujins/gallery: cover-{w}.webp" {
-		t.Fatalf("agent defaults %q", got)
+	rules := media.GatewayConfig(reg)
+	if got := layout.FormatDefaults(rules.Defaults); got != "accounts/user: avatar-{w}.webp; doujins/gallery: cover-{w}.webp" {
+		t.Fatalf("gateway defaults %q", got)
 	}
 	b, err := json.Marshal(reg)
 	if err != nil {

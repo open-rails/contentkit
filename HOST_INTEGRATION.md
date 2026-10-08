@@ -458,7 +458,7 @@ layouts.
 - **URLs.** `https://media.<site>/v1/{namespace}/{kind}/{id}/{public|private}/{name}`.
   `media.PublicURL(base, ns, kind, id, name)` and `media.SrcSet(…)` (or
   `Registry.PublicURL`/`SrcSet`) build public URLs with no lookup; a missing
-  public file is served its kind's default by the access agent.
+  public file is served its kind's default by the media gateway.
 
 ### Registry
 
@@ -604,7 +604,7 @@ out until `attach`.
   is when the token stops working; a read before then answers the same token,
   so clients keep what they have and read again shortly before (the SDK's
   gallery and player do). With `download`, each URL carries the file's
-  download name as an unsigned `dl`, which the agent sends as
+  download name as an unsigned `dl`, which the gateway sends as
   `Content-Disposition: attachment` when the name is plain and has the
   file's type. With `editor` (editors only), the
   uploads come with `edit`, `frame`, `meta`, `pending`, `failed`, encode
@@ -630,8 +630,8 @@ out until `attach`.
   `image.PublishDefaults(ctx, store, reg)` (it needs libvips) writes each
   `Public.Default` from its kind's `Defaults` to
   `{ns}/{kind}/_default/public/{name}` and returns the keys
-  to purge. `media.AgentConfig(reg)` gives the agent's namespaces and
-  `MEDIA_ACCESS_DEFAULTS` (`layout.FormatDefaults`).
+  to purge. `media.GatewayConfig(reg)` gives the gateway's namespaces and
+  `MEDIA_GATEWAY_DEFAULTS` (`layout.FormatDefaults`).
 
 ### Processing and readiness
 
@@ -719,19 +719,19 @@ the host's periodic jobs. The worker migrates its schema itself.
 
 ## Production media delivery
 
-- **Media host**: serve `cmd/media-access` at `media.<site domain>` (same
+- **Media host**: serve `cmd/media-gateway` at `media.<site domain>` (same
   site as the pages) and use cookie delivery (`Delivery{Mode: DeliverCookie,
   CookieDomain: "<site domain>"}`); URL delivery only for apps without cookies.
   Either way one item token opens the whole item's `private/`, and viewers
   without access get none.
-- **Access agent config**: `MEDIA_ACCESS_HOSTS` maps each media host to the
+- **Media gateway config**: `MEDIA_GATEWAY_HOSTS` maps each media host to the
   namespaces it serves (`media.<domain>=<tenant>,accounts`); URLs are
   `https://media.<domain>/v1/{ns}/{kind}/{id}/{public|private}/{name}`.
-  `MEDIA_ACCESS_CORS_ORIGINS` exactly your sites' origins
+  `MEDIA_GATEWAY_CORS_ORIGINS` exactly your sites' origins
   (`https://<domain>,https://www.<domain>`; no wildcards, no third parties);
-  `MEDIA_ACCESS_DEFAULTS` the public names that fall back to a kind's
+  `MEDIA_GATEWAY_DEFAULTS` the public names that fall back to a kind's
   `_default` item. `Cross-Origin-Resource-Policy` is always `same-site`.
-- **Bucket**: private (no public ACL or policy); the agent's key reads only
+- **Bucket**: private (no public ACL or policy); the gateway's key reads only
   `*/private/*` and `*/public/*`; only the hosts write.
 - **CDN**: may cache `public/` in a shared cache: names are fixed and
   overwritten in place (`public, max-age=300, stale-while-revalidate=86400`,
@@ -743,18 +743,18 @@ the host's periodic jobs. The worker migrates its schema itself.
   or unknown-key token on `private/` gets the same response as a
   missing object (status, headers, body; `Cache-Control: no-store`), decided
   before any bucket request, so a response never reveals that protected
-  content exists. The reason is logged at debug (`media-access: denied`).
+  content exists. The reason is logged at debug (`media-gateway: denied`).
   Clients that re-grant on expiry must treat 404 on these URLs as "refresh
   and retry once"; the SDK player's `refresh` does.
 - **Key rotation**: add the new key to every access worker as
-  `MEDIA_ACCESS_TOKEN_KEY` with the old one as `_TOKEN_KEY_PREVIOUS`, then
+  `MEDIA_GATEWAY_TOKEN_KEY` with the old one as `_TOKEN_KEY_PREVIOUS`, then
   switch the hosts' `Delivery.SigningKey`, then drop the previous key after
   the longest token lifetime (TTL rounded up to the window, about 5 h by default).
   A scope change does not revoke already-issued item tokens: they remain
   valid until expiry while their signing key is accepted. If immediate
   revocation is required, coordinate a key replacement without accepting the
   old key and have clients refresh their media grants.
-- **Scraping** is limited in three places, none of them the access agent
+- **Scraping** is limited in three places, none of them the media gateway
   (it keeps no state):
   - `ReaderOptions.Issuance` bounds the distinct items a viewer is given the
     token of per hour (default 120 per account, 600 per anonymous IP;

@@ -1,20 +1,20 @@
-// Command media-access is the media access agent (media/agent). Settings are
+// Command media-gateway is the media gateway (media/gateway). Settings are
 // flags or their environment variables; secrets are environment only, each
 // also readable from a file named by {VAR}_FILE:
 //
-//	-listen        MEDIA_ACCESS_LISTEN          default :8080
-//	-s3-endpoint   MEDIA_ACCESS_S3_ENDPOINT     path-style S3 endpoint (RGW or MinIO)
-//	-s3-bucket     MEDIA_ACCESS_S3_BUCKET
-//	-s3-region     MEDIA_ACCESS_S3_REGION       default us-east-1
-//	-hosts         MEDIA_ACCESS_HOSTS           required: each media host and the namespaces it serves,
+//	-listen        MEDIA_GATEWAY_LISTEN          default :8080
+//	-s3-endpoint   MEDIA_GATEWAY_S3_ENDPOINT     path-style S3 endpoint (RGW or MinIO)
+//	-s3-bucket     MEDIA_GATEWAY_S3_BUCKET
+//	-s3-region     MEDIA_GATEWAY_S3_REGION       default us-east-1
+//	-hosts         MEDIA_GATEWAY_HOSTS           required: each media host and the namespaces it serves,
 //	                                            e.g. "media.doujins.ai=doujins,accounts; media.hanime.media=hentai0,accounts"
-//	-cors-origins  MEDIA_ACCESS_CORS_ORIGINS    comma list of exact site origins allowed with credentials,
+//	-cors-origins  MEDIA_GATEWAY_CORS_ORIGINS    comma list of exact site origins allowed with credentials,
 //	                                            e.g. https://doujins.ai; empty breaks hls.js (warned)
-//	-defaults      MEDIA_ACCESS_DEFAULTS        public names that fall back to the kind's _default item,
+//	-defaults      MEDIA_GATEWAY_DEFAULTS        public names that fall back to the kind's _default item,
 //	                                            e.g. "doujins/gallery: cover-{w}.webp; accounts/user: avatar-{w}.webp"
-//	               MEDIA_ACCESS_S3_ACCESS_KEY_ID, MEDIA_ACCESS_S3_SECRET_ACCESS_KEY   key reading only */private/* and */public/*
-//	               MEDIA_ACCESS_TOKEN_KEY           current signing key "{kid}:{base64 secret}"
-//	               MEDIA_ACCESS_TOKEN_KEY_PREVIOUS  previous key, accepted during rotation; optional
+//	               MEDIA_GATEWAY_S3_ACCESS_KEY_ID, MEDIA_GATEWAY_S3_SECRET_ACCESS_KEY   key reading only */private/* and */public/*
+//	               MEDIA_GATEWAY_TOKEN_KEY           current signing key "{kid}:{base64 secret}"
+//	               MEDIA_GATEWAY_TOKEN_KEY_PREVIOUS  previous key, accepted during rotation; optional
 package main
 
 import (
@@ -31,7 +31,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/open-rails/contentkit/media/agent"
+	"github.com/open-rails/contentkit/media/gateway"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 )
@@ -39,20 +39,20 @@ import (
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	if err := run(log, os.Args[1:]); err != nil {
-		log.Error("media-access", "err", err)
+		log.Error("media-gateway", "err", err)
 		os.Exit(1)
 	}
 }
 
 func run(log *slog.Logger, args []string) error {
-	fs := flag.NewFlagSet("media-access", flag.ContinueOnError)
-	listen := fs.String("listen", env("MEDIA_ACCESS_LISTEN", ":8080"), "listen address")
-	endpoint := fs.String("s3-endpoint", env("MEDIA_ACCESS_S3_ENDPOINT", ""), "S3 endpoint")
-	bucket := fs.String("s3-bucket", env("MEDIA_ACCESS_S3_BUCKET", ""), "bucket")
-	region := fs.String("s3-region", env("MEDIA_ACCESS_S3_REGION", "us-east-1"), "S3 region")
-	hosts := fs.String("hosts", env("MEDIA_ACCESS_HOSTS", ""), "host=namespace,…; …")
-	origins := fs.String("cors-origins", env("MEDIA_ACCESS_CORS_ORIGINS", ""), "CORS origins")
-	defaults := fs.String("defaults", env("MEDIA_ACCESS_DEFAULTS", ""), "namespace/kind: name template,…; …")
+	fs := flag.NewFlagSet("media-gateway", flag.ContinueOnError)
+	listen := fs.String("listen", env("MEDIA_GATEWAY_LISTEN", ":8080"), "listen address")
+	endpoint := fs.String("s3-endpoint", env("MEDIA_GATEWAY_S3_ENDPOINT", ""), "S3 endpoint")
+	bucket := fs.String("s3-bucket", env("MEDIA_GATEWAY_S3_BUCKET", ""), "bucket")
+	region := fs.String("s3-region", env("MEDIA_GATEWAY_S3_REGION", "us-east-1"), "S3 region")
+	hosts := fs.String("hosts", env("MEDIA_GATEWAY_HOSTS", ""), "host=namespace,…; …")
+	origins := fs.String("cors-origins", env("MEDIA_GATEWAY_CORS_ORIGINS", ""), "CORS origins")
+	defaults := fs.String("defaults", env("MEDIA_GATEWAY_DEFAULTS", ""), "namespace/kind: name template,…; …")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -65,10 +65,10 @@ func run(log *slog.Logger, args []string) error {
 		errs = append(errs, err)
 		return v
 	}
-	accessKey := secret("MEDIA_ACCESS_S3_ACCESS_KEY_ID", true)
-	secretKey := secret("MEDIA_ACCESS_S3_SECRET_ACCESS_KEY", true)
-	current := secret("MEDIA_ACCESS_TOKEN_KEY", true)
-	previous := secret("MEDIA_ACCESS_TOKEN_KEY_PREVIOUS", false)
+	accessKey := secret("MEDIA_GATEWAY_S3_ACCESS_KEY_ID", true)
+	secretKey := secret("MEDIA_GATEWAY_S3_SECRET_ACCESS_KEY", true)
+	current := secret("MEDIA_GATEWAY_TOKEN_KEY", true)
+	previous := secret("MEDIA_GATEWAY_TOKEN_KEY_PREVIOUS", false)
 	if err := errors.Join(errs...); err != nil {
 		return err
 	}
@@ -78,13 +78,13 @@ func run(log *slog.Logger, args []string) error {
 	}
 	hostMap, err := layout.ParseHosts(*hosts)
 	if err != nil {
-		return fmt.Errorf("MEDIA_ACCESS_HOSTS: %w", err)
+		return fmt.Errorf("MEDIA_GATEWAY_HOSTS: %w", err)
 	}
 	defs, err := layout.ParseDefaults(*defaults)
 	if err != nil {
-		return fmt.Errorf("MEDIA_ACCESS_DEFAULTS: %w", err)
+		return fmt.Errorf("MEDIA_GATEWAY_DEFAULTS: %w", err)
 	}
-	h, err := agent.New(agent.Config{
+	h, err := gateway.New(gateway.Config{
 		Endpoint: *endpoint, Bucket: *bucket, Region: *region,
 		AccessKeyID: accessKey, SecretAccessKey: secretKey,
 		Ring: ring, Hosts: hostMap, Origins: list(*origins), Defaults: defs, Logger: log,
@@ -93,7 +93,7 @@ func run(log *slog.Logger, args []string) error {
 		return err
 	}
 	if len(list(*origins)) == 0 {
-		log.Warn("MEDIA_ACCESS_CORS_ORIGINS is empty: browsers cannot read blobs with fetch/XHR, so hls.js playback fails; set it to the sites' exact origins")
+		log.Warn("MEDIA_GATEWAY_CORS_ORIGINS is empty: browsers cannot read blobs with fetch/XHR, so hls.js playback fails; set it to the sites' exact origins")
 	}
 
 	ln, err := net.Listen("tcp", *listen)

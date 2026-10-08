@@ -1,4 +1,4 @@
-package agent_test
+package gateway_test
 
 import (
 	"bufio"
@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/agent"
+	"github.com/open-rails/contentkit/media/gateway"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
@@ -89,8 +89,8 @@ func (f *fixture) path(rest string) string { return "/v1/" + f.ns + "/" + rest }
 // key is the object key of "{kind}/{id}/{area}/{name}".
 func (f *fixture) key(rest string) string { return f.ns + "/" + rest }
 
-func (f *fixture) config(t *testing.T) agent.Config {
-	return agent.Config{
+func (f *fixture) config(t *testing.T) gateway.Config {
+	return gateway.Config{
 		Endpoint: f.env.Config.Endpoint, Bucket: f.env.Config.Bucket, Region: f.env.Config.Region,
 		AccessKeyID: f.env.Config.AccessKeyID, SecretAccessKey: f.env.Config.SecretAccessKey,
 		Ring:     ring(t, k2, &k1),
@@ -100,9 +100,9 @@ func (f *fixture) config(t *testing.T) agent.Config {
 	}
 }
 
-func serve(t *testing.T, cfg agent.Config) *httptest.Server {
+func serve(t *testing.T, cfg gateway.Config) *httptest.Server {
 	t.Helper()
-	h, err := agent.New(cfg)
+	h, err := gateway.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func same(t *testing.T, got, want result) {
 	}
 }
 
-func TestAgent(t *testing.T) {
+func TestGateway(t *testing.T) {
 	f := seed(t)
 	srv := serve(t, f.config(t))
 	cur := ring(t, k2, nil)
@@ -389,12 +389,12 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// TestBinary runs the built cmd/media-access with its environment config.
+// TestBinary runs the built cmd/media-gateway with its environment config.
 func TestBinary(t *testing.T) {
 	f := seed(t)
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "media-access")
-	build := exec.Command("go", "build", "-o", bin, "github.com/open-rails/contentkit/cmd/media-access")
+	bin := filepath.Join(dir, "media-gateway")
+	build := exec.Command("go", "build", "-o", bin, "github.com/open-rails/contentkit/cmd/media-gateway")
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
@@ -405,14 +405,14 @@ func TestBinary(t *testing.T) {
 	}
 	cmd := exec.Command(bin, "-listen", "127.0.0.1:0", "-hosts", "media.test=accounts; 127.0.0.1="+f.ns)
 	cmd.Env = []string{
-		"MEDIA_ACCESS_S3_ENDPOINT=" + f.env.Config.Endpoint,
-		"MEDIA_ACCESS_S3_BUCKET=" + f.env.Config.Bucket,
-		"MEDIA_ACCESS_S3_ACCESS_KEY_ID=" + f.env.Config.AccessKeyID,
-		"MEDIA_ACCESS_S3_SECRET_ACCESS_KEY=" + f.env.Config.SecretAccessKey,
-		"MEDIA_ACCESS_TOKEN_KEY_FILE=" + keyFile,
-		"MEDIA_ACCESS_TOKEN_KEY_PREVIOUS=k1:" + base64.RawURLEncoding.EncodeToString(k1.Secret),
-		"MEDIA_ACCESS_CORS_ORIGINS=" + origin,
-		"MEDIA_ACCESS_DEFAULTS=" + f.ns + "/gallery: cover-{w}.webp",
+		"MEDIA_GATEWAY_S3_ENDPOINT=" + f.env.Config.Endpoint,
+		"MEDIA_GATEWAY_S3_BUCKET=" + f.env.Config.Bucket,
+		"MEDIA_GATEWAY_S3_ACCESS_KEY_ID=" + f.env.Config.AccessKeyID,
+		"MEDIA_GATEWAY_S3_SECRET_ACCESS_KEY=" + f.env.Config.SecretAccessKey,
+		"MEDIA_GATEWAY_TOKEN_KEY_FILE=" + keyFile,
+		"MEDIA_GATEWAY_TOKEN_KEY_PREVIOUS=k1:" + base64.RawURLEncoding.EncodeToString(k1.Secret),
+		"MEDIA_GATEWAY_CORS_ORIGINS=" + origin,
+		"MEDIA_GATEWAY_DEFAULTS=" + f.ns + "/gallery: cover-{w}.webp",
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {

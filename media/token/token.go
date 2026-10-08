@@ -1,5 +1,5 @@
 // Package token signs and verifies media access tokens, shared by the host
-// signer and the access agent so the format cannot drift:
+// signer and the media gateway so the format cannot drift:
 //
 //	{kid}.{exp}.base64url(HMAC-SHA256(secret, "{scope}|{exp}"))
 //

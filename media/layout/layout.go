@@ -1,5 +1,5 @@
-// Package layout defines media object keys, dependency-free so the access
-// agent can classify paths without importing the media runtime:
+// Package layout defines media object keys, dependency-free so the media
+// gateway can classify paths without importing the media runtime:
 //
 //	{namespace}/{kind}/{id}/manifest.json         gzip JSON; never served
 //	                       /private/sha256-{hex}  every blob: uploads, derived files, editor views

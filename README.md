@@ -49,9 +49,9 @@ another tenant is an error, never remapped.
 | `media` | the registry (`Config`, kinds, upload paths, private and public presets), ordered manifests with provenance and conditional-write edits, the `Store` port, direct uploads and commit ops with their HTTP API, reads and HLS playlists, the optional `UploadLimiter`, and the sweep, deletion, `Expose` and relays as River jobs |
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
 | `media/image` | libvips (CGO) producer: Image presets, public presets, zips, editor views, `PublishDefaults` |
-| `media/token` | media access tokens, shared by hosts and the access agent |
-| `media/layout` | object keys and the access agent's host and default rules, dependency-free |
-| `media/agent` | the access agent's handler (`cmd/media-access`) |
+| `media/token` | media access tokens, shared by hosts and the media gateway |
+| `media/layout` | object keys and the media gateway's host and default rules, dependency-free |
+| `media/gateway` | the media gateway's handler (`cmd/media-gateway`) |
 | `media/video` | ffmpeg producers: byte-range fMP4 HLS ladders with audio, subtitle and sprite tracks, MP4 per rung, audio, subtitles, frame grabs; `Frames` for the frame picker |
 | `media/worker` | the media worker: one process for every producer, built from the host's registry (`cmd/media-worker` is the stock build) |
 | `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
@@ -208,7 +208,7 @@ reg, _ := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https:/
 	Hooks: media.Hooks{Resolver: resolver, CanUpload: authorizer, PurgePublic: purge, ItemReady: ready}})
 store, _ := s3.New(s3.Config{Bucket: "media", Endpoint: rgw, PublicEndpoint: "https://s3.doujins.ai", UsePathStyle: true,
 	AccessKeyID: id, SecretAccessKey: secret})
-key, _ := token.ParseKey(os.Getenv("MEDIA_TOKEN_KEY")) // "{kid}:{base64}", shared with media-access
+key, _ := token.ParseKey(os.Getenv("MEDIA_TOKEN_KEY")) // "{kid}:{base64}", shared with media-gateway
 _ = workqueue.Migrate(ctx, pool, "doujins_media_worker") // this host's worker schema
 queue, _ := workqueue.New(pool, reg, "doujins_media_worker")
 jobs, _ := media.NewJobs(media.JobsConfig{Store: store, Registry: reg, Locker: media.PGLocker(pool), Pool: pool,
@@ -270,8 +270,8 @@ always holds the bytes of its name. The optional `UploadLimiter`
 (at least 64 KiB) to the grant's `Owner`; growth past the quota fails with 413
 `quota_exceeded`, and deleting an item releases it.
 
-**Access agent** (`cmd/media-access`, `media/agent`, image
-`ghcr.io/open-rails/contentkit-media-access:{tag}`): `public/` to anyone
+**Media gateway** (`cmd/media-gateway`, `media/gateway`, image
+`ghcr.io/open-rails/contentkit-media-gateway:{tag}`): `public/` to anyone
 (`public, max-age=300, stale-while-revalidate=86400`, falling back to the
 kind's `_default` for declared names), `private/sha256-{hex}` with the item's
 token in `?t=` or the `mt` cookie (`private, immutable`). A token opens every
@@ -279,12 +279,12 @@ private file of its item or none; `?dl={name}` serves the file as a download
 under that name when it has the file's type. Everything else and every denial
 is one `no-store` 404. It keeps no state: rate limit the media host at the
 ingress; the read API limits the items a viewer opens per hour
-(`ReaderOptions.Issuance`). It needs `MEDIA_ACCESS_S3_ENDPOINT`, `_S3_BUCKET`, a key
-reading only `*/private/*` and `*/public/*`, `MEDIA_ACCESS_TOKEN_KEY` and
-`_TOKEN_KEY_PREVIOUS`, `MEDIA_ACCESS_HOSTS`
+(`ReaderOptions.Issuance`). It needs `MEDIA_GATEWAY_S3_ENDPOINT`, `_S3_BUCKET`, a key
+reading only `*/private/*` and `*/public/*`, `MEDIA_GATEWAY_TOKEN_KEY` and
+`_TOKEN_KEY_PREVIOUS`, `MEDIA_GATEWAY_HOSTS`
 (`media.doujins.ai=doujins,accounts; media.hanime.media=hentai0,accounts`),
-`MEDIA_ACCESS_CORS_ORIGINS` and `MEDIA_ACCESS_DEFAULTS`
-(`layout.FormatDefaults(media.AgentConfig(reg).Defaults)`).
+`MEDIA_GATEWAY_CORS_ORIGINS` and `MEDIA_GATEWAY_DEFAULTS`
+(`layout.FormatDefaults(media.GatewayConfig(reg).Defaults)`).
 
 **The media worker** (`media/worker`) runs every producer from the host's
 worker River schema (`media/workqueue`, `MEDIA_WORKER_SCHEMA`, per host:

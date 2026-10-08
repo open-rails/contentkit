@@ -127,7 +127,7 @@ type Private struct {
 // public/{name}. With Widths, each width is Image at that width: in the
 // shape of its Width×Height box (both or neither), fitted per Fit, else of
 // the edit. It is never in the manifest; the object carries its from and fp
-// as metadata. A missing one is served Default by the access agent.
+// as metadata. A missing one is served Default by the media gateway.
 //
 // First makes it a preview: the first First attached uploads of From (a
 // {name} pattern) in manifest order, {n} in To their position from 1
