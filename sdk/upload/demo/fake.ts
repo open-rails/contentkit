@@ -12,7 +12,7 @@ export const NAMESPACE = "demo";
 /**
  * An in-browser stand-in for media.UploadHandler, Reader.Handler and the
  * worker: it keeps each item's uploads, renders public presets with canvas
- * and writes them to e2e/media-server.ts, which serves /v1/ like media-access.
+ * and writes them to e2e/media-server.ts, which serves /v1/ like media-gateway.
  */
 export class DemoServer {
   private blobs = new Map<string, Blob>();

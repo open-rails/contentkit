@@ -261,8 +261,8 @@ Headless: `useInlinePreview` with `useHlsPlayer`'s `preview(at)`/`unload()`.
 forever: tuned retries surface a dead endpoint within seconds, a watchdog
 catches 10 s without progress, and each failure has its own message, a Retry
 and a support code: unreachable or blocked (status 0, including missing
-`MEDIA_ACCESS_CORS_ORIGINS`, also logged to the console), no access
-(401/403 after one refresh), not found (404 after one refresh: media-access
+`MEDIA_GATEWAY_CORS_ORIGINS`, also logged to the console), no access
+(401/403 after one refresh), not found (404 after one refresh: media-gateway
 answers an expired or wrong token like a missing object), rate limited (429, from the
 media host's ingress: shown, never retried in a loop), unsupported in
 this browser. A read answers the same token until `expires`, so nothing needs

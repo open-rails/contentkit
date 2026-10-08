@@ -12,8 +12,8 @@ import (
 // Default declares the public names of {Namespace}/{Kind} that fall back to
 // {Namespace}/{Kind}/_default/public/{name} when an item's object is
 // missing: templates over [A-Za-z0-9._-] with {w} (digits) and {name}
-// placeholders, e.g. "cover-{w}.webp". The access agent serves them; the
-// registry derives them (media.AgentConfig).
+// placeholders, e.g. "cover-{w}.webp". The media gateway serves them; the
+// registry derives them (media.GatewayConfig).
 type Default struct {
 	Namespace, Kind string
 	Names           []string

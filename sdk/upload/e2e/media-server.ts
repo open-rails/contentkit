@@ -1,12 +1,12 @@
-// Serves e2e/fixtures/media like media-access, with failure modes by prefix:
+// Serves e2e/fixtures/media like media-gateway, with failure modes by prefix:
 //   /cors/…        CORS for the requesting origin (the healthy path)
-//   /nocors/…      playlists with CORS, segments and sprites without (the missing MEDIA_ACCESS_CORS_ORIGINS incident)
-//   /auth/{token}/ 404 unless token is "fresh" (media-access answers a bad token like a missing object)
+//   /nocors/…      playlists with CORS, segments and sprites without (the missing MEDIA_GATEWAY_CORS_ORIGINS incident)
+//   /auth/{token}/ 404 unless token is "fresh" (media-gateway answers a bad token like a missing object)
 //   /missing/…     404
 //   /busy/…        429
 //   /abr/{name}/   a synthetic 480–2160 ladder over {name}'s segments, repeated to 60 s,
 //                  each padded with MPEG-TS null packets to its rung's bitrate
-//   /v1/…          public files like media-access serves them; the demo's stand-in
+//   /v1/…          public files like media-gateway serves them; the demo's stand-in
 //                  worker (demo/fake.ts) PUTs and DELETEs them
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";

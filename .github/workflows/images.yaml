@@ -40,7 +40,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [media-access, media-worker]
+        name: [media-gateway, media-worker]
         arch: ${{ fromJSON(github.event_name == 'pull_request' && '["amd64"]' || '["amd64","arm64"]') }}
     steps:
     - uses: actions/checkout@v4
@@ -98,7 +98,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [media-access, media-worker]
+        name: [media-gateway, media-worker]
     steps:
     - uses: actions/download-artifact@v4
       with:

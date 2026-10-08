@@ -56,7 +56,7 @@ export function expiryDelay(expires: number | undefined, now = Date.now()): numb
 }
 
 /**
- * Worth one grant refresh and retry: 401/403, or a 404 — media-access answers a
+ * Worth one grant refresh and retry: 401/403, or a 404 — media-gateway answers a
  * missing, expired or wrong token exactly like a missing object. A 429 (the
  * ingress's rate limit) or a blocked request is not: it fails without a loop.
  */

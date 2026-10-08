@@ -29,7 +29,7 @@ const (
 	DeliverURL DeliveryMode = "url"
 )
 
-// CookieName is the access agent's cookie.
+// CookieName is the media gateway's cookie.
 const CookieName = token.CookieName
 
 // Delivery is the host's signing configuration; URLs are at the
@@ -39,7 +39,7 @@ type Delivery struct {
 	// CookieDomain is the site's registrable domain, e.g. "doujins.ai";
 	// required in cookie mode, because a host-only cookie never reaches media.
 	CookieDomain string
-	// SigningKey is the current key of the ring the access agent verifies.
+	// SigningKey is the current key of the ring the media gateway verifies.
 	SigningKey token.Key
 	// TTL is the minimum token lifetime (default 1h); expiries round up to
 	// Window (default token.DefaultWindow, whole seconds).
@@ -245,7 +245,7 @@ func (g *Grant) HostURL(path string, dl bool) (string, error) {
 
 // url is the URL of the item's blob: plain under the item cookie, else with
 // the item token. A download adds dl, its name: unsigned, since the token
-// already opens the file and the agent only accepts a name of the file's
+// already opens the file and the gateway only accepts a name of the file's
 // type.
 func (g *Grant) url(blob, download string, dl, cookie bool) (string, error) {
 	key, err := g.Item.Blob(blob)

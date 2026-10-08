@@ -48,7 +48,7 @@ func urls(res *media.ReadResult) map[string]string {
 }
 
 // A full-access read lists the derived files (not the unserved originals)
-// in manifest order with URLs the access agent serves; prefix, offset and
+// in manifest order with URLs the media gateway serves; prefix, offset and
 // limit select them.
 func TestReadFullAccess(t *testing.T) {
 	f := newFixture(t)
@@ -70,7 +70,7 @@ func TestReadFullAccess(t *testing.T) {
 	}
 	status, body, hdr := f.fetch(res.Files[0].URL)
 	if status != http.StatusOK || body != string(png(100)) || hdr.Get("Cache-Control") != "private, max-age=31536000, immutable" {
-		t.Fatalf("agent served %d %q %v", status, body, hdr)
+		t.Fatalf("gateway served %d %q %v", status, body, hdr)
 	}
 	page, err := f.rd.Read(ctx, g, f.editor, media.ReadOptions{Prefix: "high/", Offset: 1, Limit: 1})
 	if err != nil || page.Total != 3 || len(page.Files) != 3 || page.Files[0].URL != "" || page.Files[1].URL == "" || page.Files[2].URL != "" {
@@ -186,7 +186,7 @@ func TestViewerReadsCarryNoEditorFields(t *testing.T) {
 }
 
 // ServeOriginals lists and serves uploads; a download read adds each file's
-// download name to its URL, which the agent sends as the attachment name.
+// download name to its URL, which the gateway sends as the attachment name.
 func TestReadOriginalsAndDownloads(t *testing.T) {
 	f := newFixture(t)
 	f.visible(1)
@@ -223,7 +223,7 @@ func TestReadOriginalsAndDownloads(t *testing.T) {
 	}
 }
 
-// Cookie delivery returns plain URLs and the item cookie, which the agent
+// Cookie delivery returns plain URLs and the item cookie, which the gateway
 // accepts for every private file of the item.
 func TestReadCookieDelivery(t *testing.T) {
 	f := newFixtureOn(t, s3test.Open(t), func(c *media.Config) { c.Kinds[0].ServeOriginals = true })

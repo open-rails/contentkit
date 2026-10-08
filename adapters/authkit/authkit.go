@@ -87,7 +87,7 @@ func (a *Avatars) CanUpload(ctx context.Context, actor access.Actor, t media.Upl
 
 // Authors is content's UserEnricher over AuthKit: each id's display name
 // (tombstones and unknown ids get AuthKit's fallback) and its avatar, the
-// account kind's public preset at the site's media host (the access agent
+// account kind's public preset at the site's media host (the media gateway
 // serves the default until one is set). A directory failure is logged and
 // degrades to fallback names; it never fails a listing.
 type Authors struct {

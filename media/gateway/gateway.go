@@ -1,4 +1,4 @@
-// Package agent is the media access agent run by cmd/media-access. For the
+// Package gateway is the media gateway run by cmd/media-gateway. For the
 // namespaces served on the request's host it streams, from a private bucket
 // with its own read-only key:
 //
@@ -11,7 +11,7 @@
 // every denial is one identical no-store 404; token denials are decided
 // before any bucket access. It keeps no state, reads no manifests and no
 // databases, and knows nothing of apps, presets or originals.
-package agent
+package gateway
 
 import (
 	"cmp"
@@ -66,11 +66,11 @@ var emptySHA256 = hex.EncodeToString(func() []byte { s := sha256.Sum256(nil); re
 // New validates cfg.
 func New(cfg Config) (*Handler, error) {
 	if cfg.Endpoint == "" || !layout.ValidSegment(cfg.Bucket) || cfg.AccessKeyID == "" || cfg.SecretAccessKey == "" {
-		return nil, errors.New("agent: Endpoint, a valid Bucket and S3 credentials are required")
+		return nil, errors.New("gateway: Endpoint, a valid Bucket and S3 credentials are required")
 	}
 	base, err := url.Parse(strings.TrimRight(cfg.Endpoint, "/"))
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" {
-		return nil, errors.New("agent: invalid Endpoint")
+		return nil, errors.New("gateway: invalid Endpoint")
 	}
 	if cfg.Hosts, err = layout.CheckHosts(cfg.Hosts); err != nil {
 		return nil, err
@@ -135,7 +135,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var dl *string // a private file's unsigned download name
 	if o.area == "private" {
 		if err := h.authorize(r, key); err != nil {
-			h.cfg.Logger.Debug("media-access: denied", "key", key, "reason", err)
+			h.cfg.Logger.Debug("media-gateway: denied", "key", key, "reason", err)
 			h.fail(w, http.StatusNotFound)
 			return
 		}
@@ -152,7 +152,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if r.Context().Err() == nil {
-			h.cfg.Logger.Error("media-access: upstream", "key", key, "err", err)
+			h.cfg.Logger.Error("media-gateway: upstream", "key", key, "err", err)
 		}
 		h.fail(w, http.StatusBadGateway)
 		return
@@ -246,11 +246,11 @@ func (h *Handler) relay(w http.ResponseWriter, r *http.Request, key string, resp
 	case http.StatusOK, http.StatusPartialContent, http.StatusNotModified,
 		http.StatusPreconditionFailed, http.StatusRequestedRangeNotSatisfiable:
 	case http.StatusNotFound, http.StatusForbidden:
-		h.cfg.Logger.Debug("media-access: not found", "key", key, "status", resp.StatusCode)
+		h.cfg.Logger.Debug("media-gateway: not found", "key", key, "status", resp.StatusCode)
 		h.fail(w, http.StatusNotFound)
 		return
 	default:
-		h.cfg.Logger.Error("media-access: upstream status", "key", key, "status", resp.StatusCode)
+		h.cfg.Logger.Error("media-gateway: upstream status", "key", key, "status", resp.StatusCode)
 		h.fail(w, http.StatusBadGateway)
 		return
 	}
@@ -271,7 +271,7 @@ func (h *Handler) relay(w http.ResponseWriter, r *http.Request, key string, resp
 		return
 	}
 	if _, err := io.Copy(w, resp.Body); err != nil && r.Context().Err() == nil {
-		h.cfg.Logger.Warn("media-access: stream", "key", key, "err", err)
+		h.cfg.Logger.Warn("media-gateway: stream", "key", key, "err", err)
 	}
 }
 
