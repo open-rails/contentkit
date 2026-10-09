@@ -3,6 +3,8 @@ package authkit_test
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -37,14 +39,18 @@ func newWorld(t *testing.T) *world {
 	return w
 }
 
-// signedIn is a request context as AuthKit's middleware leaves it.
+// signedIn is a request context as AuthKit's gate leaves it.
 func (w *world) signedIn(t *testing.T, u authtest.User) context.Context {
 	t.Helper()
-	cl, err := w.auth.Verify(t.Context(), authtest.SignIn(t, w.auth, u).AccessToken)
-	if err != nil {
-		t.Fatal(err)
+	var ctx context.Context
+	gate := verify.Required(w.auth)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { ctx = r.Context() }))
+	r := httptest.NewRequest(http.MethodGet, "https://doujins.test/upload", nil).WithContext(t.Context())
+	r.Header.Set("Authorization", "Bearer "+authtest.SignIn(t, w.auth, u).AccessToken)
+	gate.ServeHTTP(httptest.NewRecorder(), r)
+	if ctx == nil {
+		t.Fatal("the gate refused the sign-in")
 	}
-	return verify.SetClaims(t.Context(), cl)
+	return ctx
 }
 
 // registry is a site importing the shared account kind.
@@ -71,6 +77,10 @@ func TestAvatars(t *testing.T) {
 	avatars := &ckauthkit.Avatars{Directory: w.auth, Staff: w.staff}
 	actor := func(u authtest.User) access.Actor { return access.Actor{ID: u.ID, Kind: "user"} }
 	aliceCtx, bobCtx, bossCtx := w.signedIn(t, w.alice), w.signedIn(t, w.bob), w.signedIn(t, w.boss)
+	stored, err := w.auth.Verify(ctx, authtest.SignIn(t, w.auth, w.alice).AccessToken)
+	if err != nil {
+		t.Fatal(err)
+	}
 	avatarOf := func(id string) media.UploadTarget {
 		return media.UploadTarget{Ref: contentref.New("accounts", "user", id), Path: "avatar"}
 	}
@@ -88,6 +98,7 @@ func TestAvatars(t *testing.T) {
 		{"another kind", aliceCtx, actor(w.alice), media.UploadTarget{Ref: contentref.New("doujins", "artist", w.alice.ID), Path: "avatar"}, false, false},
 		{"no verified claims", ctx, actor(w.alice), avatarOf(w.alice.ID), false, false},
 		{"claims of another user", bobCtx, actor(w.alice), avatarOf(w.alice.ID), false, false},
+		{"claims stored outside a gate", verify.SetClaims(ctx, stored), actor(w.alice), avatarOf(w.alice.ID), false, false},
 		{"anonymous", ctx, access.Actor{Anonymous: true}, avatarOf(w.alice.ID), false, false},
 	} {
 		g, err := avatars.CanUpload(tc.ctx, tc.actor, tc.target)
@@ -102,7 +113,7 @@ func TestAvatars(t *testing.T) {
 	if g, err := (&ckauthkit.Avatars{Directory: w.auth}).CanUpload(bossCtx, actor(w.boss), avatarOf(w.alice.ID)); err != nil || g.Allowed {
 		t.Fatalf("staff without Staff: %+v %v", g, err)
 	}
-	if _, err := w.auth.RevokeAccountSessions(ctx, iam.SystemActor(), w.alice.ID); err != nil {
+	if _, err := w.auth.RevokeAccountSessions(ctx, iam.SystemIdentity(), w.alice.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.auth.Start(ctx); err != nil {

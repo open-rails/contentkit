@@ -17,6 +17,7 @@ import (
 	ak "github.com/open-rails/authkit"
 	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/authkit/verify"
+	"github.com/open-rails/helpers/auth"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
@@ -27,7 +28,7 @@ import (
 // Directory is what this package uses of *authkit.Client.
 type Directory interface {
 	CheckSession(ctx context.Context, cl verify.Claims) error
-	Can(ctx context.Context, actor iam.Actor, ref iam.GroupRef, perm iam.Perm) (bool, error)
+	Can(ctx context.Context, who auth.Identity, ref iam.GroupRef, perm iam.Perm) (bool, error)
 	PublicUsers(ctx context.Context, ids []string) (map[string]iam.PublicUser, error)
 }
 
@@ -43,8 +44,9 @@ const DefaultKind = "user"
 // Avatars authorizes uploads to account items: a signed-in user their own
 // (Owner them and not Exempt, so the host's upload limiter applies), staff
 // holding Staff anyone's (Exempt). It refuses every other kind: a host
-// routes its other kinds before it. It reads the verified claims AuthKit's
-// middleware put in ctx and checks account and session state live.
+// routes its other kinds before it. It reads the identity an AuthKit gate
+// verified for the request (verify.IdentityFromContext; claims stored any
+// other way grant nothing) and checks account and session state live.
 type Avatars struct {
 	Directory Directory
 	// Staff may change any account's media, checked live in the root
@@ -57,11 +59,13 @@ func (a *Avatars) CanUpload(ctx context.Context, actor access.Actor, t media.Upl
 	if t.Ref.ContentKind != or(a.Kind, DefaultKind) || actor.Anonymous || actor.ID == "" {
 		return media.UploadGrant{}, nil
 	}
-	cl, ok := verify.ClaimsFromContext(ctx)
-	if !ok {
+	who, _ := verify.IdentityFromContext(ctx)
+	state, verified := iam.StateOf(who)
+	cl, _ := verify.ClaimsFromContext(ctx)
+	if !verified {
 		return media.UploadGrant{}, nil
 	}
-	if cl.IsUser() && cl.UserID == actor.ID && actor.ID == t.Ref.ContentID {
+	if state.IsUser() && who.Subject == actor.ID && actor.ID == t.Ref.ContentID {
 		if err := a.Directory.CheckSession(ctx, cl); errors.Is(err, iam.ErrSessionRevoked) {
 			return media.UploadGrant{}, nil
 		} else if err != nil {
@@ -70,10 +74,6 @@ func (a *Avatars) CanUpload(ctx context.Context, actor access.Actor, t media.Upl
 		return media.UploadGrant{Allowed: true, Owner: actor.ID}, nil
 	}
 	if a.Staff.IsZero() {
-		return media.UploadGrant{}, nil
-	}
-	who, ok := verify.ActorFromClaims(cl)
-	if !ok {
 		return media.UploadGrant{}, nil
 	}
 	allowed, err := a.Directory.Can(ctx, who, iam.RootGroup(), a.Staff)
