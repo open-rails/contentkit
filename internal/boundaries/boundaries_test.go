@@ -54,6 +54,10 @@ var rules = []rule{
 	{pkgs: []string{m + "/search", m + "/signal", m + "/taxonomy"}, deny: []string{
 		m + "/media/...", m + "/content/...",
 	}},
+	// Content URLs sit below every content owner (taxonomy and content write codes).
+	{pkgs: []string{m + "/contenturl", m + "/internal/codes"}, deny: []string{
+		m + "/media/...", m + "/content/...", m + "/signal/...", m + "/taxonomy/...", m + "/access/...",
+	}},
 }
 
 // importers restricts which module packages may import a third-party tree directly.

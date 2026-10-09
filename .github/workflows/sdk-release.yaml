@@ -5,20 +5,23 @@ name: sdk-release
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag to attach the package to (e.g. v0.17.0)
+        description: Existing release tag to attach the packages to (e.g. v0.17.0)
         required: true
 permissions:
   contents: write
 jobs:
   package:
-    name: Attach @openrails/contentkit-upload
+    name: Attach @openrails/contentkit-${{ matrix.sdk }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      matrix:
+        sdk: [upload, urls]
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
     defaults:
       run:
-        working-directory: sdk/upload
+        working-directory: sdk/${{ matrix.sdk }}
     steps:
     - uses: actions/checkout@v4
       with:
@@ -26,7 +29,7 @@ jobs:
         persist-credentials: false
     - uses: pnpm/action-setup@v4
       with:
-        package_json_file: sdk/upload/package.json
+        package_json_file: sdk/${{ matrix.sdk }}/package.json
     - uses: actions/setup-node@v4
       with:
         node-version: 24
@@ -38,7 +41,7 @@ jobs:
       run: |
         mkdir release
         pnpm pack --pack-destination release
-        ls "release/openrails-contentkit-upload-${TAG#v}.tgz"
+        ls "release/openrails-contentkit-${{ matrix.sdk }}-${TAG#v}.tgz"
     - name: Upload release asset
       env:
         GH_TOKEN: ${{ github.token }}

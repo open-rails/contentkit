@@ -9,6 +9,7 @@ GitHub Actions minutes are paid for; CI is a final check, not the test runner. T
   - `media-video`: `media/**` (not `media/image`), `go.mod`; ffmpeg.
   - `media-image`: `media/**`, `cmd/media-worker`, `go.mod`; libvips + ffmpeg (`media/image`, `media/worker`, `cmd/media-worker`).
   - `sdk-upload`: `sdk/upload`, the upload-handler media packages, `go.mod`.
+  - `sdk-urls`: `sdk/urls` and the shared `contenturl/testdata` vectors.
   - `images`: PRs touching a Dockerfile or `.dockerignore` build linux/amd64 only; `v*` tags publish multi-arch.
 - `full` (manual `workflow_dispatch`) runs every suite regardless of paths. Run it on `master` for full-tree qualification; it also warms the caches PRs restore.
 - Nothing runs on pushes to `master`.

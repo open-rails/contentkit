@@ -1,0 +1,15 @@
+packages:
+  - "."
+
+ignoreScripts: true
+ignorePnpmfile: true
+strictDepBuilds: true
+enablePrePostScripts: false
+dangerouslyAllowAllBuilds: false
+autoInstallPeers: false
+
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+minimumReleaseAgeIgnoreMissingTime: false
+trustPolicy: no-downgrade
+blockExoticSubdeps: true
