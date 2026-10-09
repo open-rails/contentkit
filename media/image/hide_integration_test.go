@@ -21,9 +21,18 @@ import (
 // Put, and the bytes read through Get are counted.
 type hooked struct {
 	media.Store
-	onPut func(key string, put func() error) error
-	onGet func(key string)
-	read  atomic.Int64
+	onPut         func(key string, put func() error) error
+	onGet         func(key string)
+	read          atomic.Int64
+	omitChecksums bool
+}
+
+func (s *hooked) Head(ctx context.Context, key string) (media.Object, error) {
+	obj, err := s.Store.Head(ctx, key)
+	if s.omitChecksums {
+		obj.ChecksumSHA256 = nil
+	}
+	return obj, err
 }
 
 func (s *hooked) Put(ctx context.Context, key string, body io.Reader, size int64, o media.PutOptions) (media.Object, error) {

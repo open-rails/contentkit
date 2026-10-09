@@ -208,6 +208,12 @@ func TestGateway(t *testing.T) {
 			t.Fatalf("public headers: %v", r.header)
 		}
 		expect(t, do(t, srv, "GET", cover, map[string]string{"If-None-Match": r.header.Get("ETag")}), 304, "")
+		name := strings.Repeat("c", 123) + "-0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b.webp"
+		if _, err := f.env.Store.Put(t.Context(), f.key("gallery/456/public/"+name), strings.NewReader("generated"), 9, media.PutOptions{ContentType: "image/webp"}); err != nil {
+			t.Fatal(err)
+		}
+		expect(t, do(t, srv, "GET", f.path("gallery/456/public/"+name), nil), 200, "generated")
+		denied(t, do(t, srv, "GET", f.path("gallery/456/public/"+strings.Repeat("c", 166)), nil))
 	})
 
 	t.Run("default fallback", func(t *testing.T) {

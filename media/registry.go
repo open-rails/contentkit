@@ -164,7 +164,7 @@ func (i Item) Staged(name string) (string, error) {
 
 // Public is the key of a public name.
 func (i Item) Public(name string) (string, error) {
-	if !layout.ValidSegment(name) {
+	if !layout.ValidPublicName(name) {
 		return "", fmt.Errorf("media: invalid public name %q", name)
 	}
 	return i.PublicPrefix() + name, nil

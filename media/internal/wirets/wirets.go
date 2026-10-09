@@ -19,7 +19,7 @@ var types = []any{
 	media.PartBody{}, media.PartsBody{}, media.TicketBody{}, media.PartReply{}, media.PartsReply{},
 	media.CompleteReply{}, media.Crop{}, media.Edit{}, media.CopyFrom{}, media.Op{}, media.CommitBody{}, media.CommitReply{},
 	media.ErrorDetails{}, media.ErrorReply{}, media.Frame{}, media.Failure{}, media.EncodeProgress{},
-	media.ReadResult{}, media.FileInfo{},
+	media.ReadResult{}, media.PublicImage{}, media.PublicRendition{}, media.FileInfo{},
 }
 
 var errorCodes = []string{

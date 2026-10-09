@@ -172,7 +172,7 @@ func (o object) key(id string) string {
 func (h *Handler) parse(r *http.Request) (object, bool) {
 	rest, ok := strings.CutPrefix(r.URL.Path, layout.URLPrefix)
 	p := strings.Split(rest, "/")
-	if !ok || r.URL.RawPath != "" || len(p) != 5 || slices.ContainsFunc(p, func(s string) bool { return !layout.ValidSegment(s) }) {
+	if !ok || r.URL.RawPath != "" || len(p) != 5 || slices.ContainsFunc(p[:4], func(s string) bool { return !layout.ValidSegment(s) }) {
 		return object{}, false
 	}
 	o := object{p[0], p[1], p[2], p[3], p[4]}
@@ -183,7 +183,7 @@ func (h *Handler) parse(r *http.Request) (object, bool) {
 	if strings.HasPrefix(o.id, "_") || !slices.Contains(h.cfg.Hosts[strings.ToLower(host)], o.ns) {
 		return object{}, false
 	}
-	return o, o.area == "public" || (o.area == "private" && layout.ValidHashName(o.name))
+	return o, o.area == "public" && layout.ValidPublicName(o.name) || o.area == "private" && layout.ValidHashName(o.name)
 }
 
 var errNoToken = errors.New("no token")

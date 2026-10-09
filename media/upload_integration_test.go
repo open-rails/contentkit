@@ -327,8 +327,11 @@ func TestCopy(t *testing.T) {
 	if !reflect.DeepEqual(paths(m), want) {
 		t.Fatalf("copied %v", paths(m))
 	}
-	if c, _ := m.Get("cover.png"); !reflect.DeepEqual(c.Pending, []string{"cover"}) {
-		t.Fatalf("copied cover pending %v", c.Pending)
+	if c, _ := m.Get("cover.png"); !reflect.DeepEqual(c.Pending, []string{"cover"}) || len(c.Public) != 0 {
+		t.Fatalf("copied cover has pending=%v, public ownership=%+v", c.Pending, c.Public)
+	}
+	if res, err := f.rd.Read(t.Context(), b, f.editor, media.ReadOptions{}); err != nil || len(res.Public) != 0 {
+		t.Fatalf("copied originals advertised nonexistent public files: %+v, %v", res, err)
 	}
 	item, _ := f.reg.Item(b)
 	for _, blob := range m.Blobs() {

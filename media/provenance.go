@@ -107,7 +107,8 @@ func (k *Kind) Readiness(m *Manifest) Readiness {
 		switch {
 		case f.Fail() != nil:
 			r.Failed = append(r.Failed, f.Path)
-		case f.Blob == "" || slices.ContainsFunc(f.Pending, func(p string) bool { return !m.Hidden || k.public(p) == nil }):
+		case f.Blob == "" || slices.ContainsFunc(f.Pending, func(p string) bool { return !m.Hidden || k.public(p) == nil }) ||
+			!m.Hidden && slices.ContainsFunc(f.Public, func(p Publication) bool { return !p.Ready() }):
 			r.Processing = append(r.Processing, f.Path)
 		}
 	}
@@ -137,6 +138,17 @@ func (k *Kind) Normalize(m *Manifest) {
 	for i := range m.Files {
 		f := &m.Files[i]
 		if f.IsUpload() {
+			f.Public = slices.DeleteFunc(slices.Clone(f.Public), func(pub Publication) bool {
+				p := k.public(pub.Preset)
+				if p == nil {
+					return true
+				}
+				_, ok := k.Publication(m, *f, p)
+				return !ok
+			})
+			if len(f.Public) == 0 {
+				f.Public = nil
+			}
 			f.Gone = f.Gone || k.droppable(m, *f)
 			continue
 		}

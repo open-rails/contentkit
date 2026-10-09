@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -23,7 +24,7 @@ const ManifestVersion = 2
 // system over the item's private blobs. Files is in an explicit,
 // deterministic order: each Upload's files by name by default (reordered by
 // commit ops), then each private preset's outputs in their uploads' order.
-// Readers never re-sort it. Public files are never listed.
+// Readers never re-sort it. Public publications belong to their source upload.
 type Manifest struct {
 	V      int  `json:"v"`
 	Hidden bool `json:"hidden,omitempty"` // set by Expose; public files are then absent
@@ -60,6 +61,7 @@ type File struct {
 	Gone       bool           `json:"gone,omitempty"`       // blob dropped (KeepOriginals false); the hash stays for provenance
 	Pending    []string       `json:"pending,omitempty"`    // presets still producing from this upload
 	Failed     *Failure       `json:"failed,omitempty"`     // this blob and edit cannot be processed
+	Public     []Publication  `json:"public,omitempty"`     // reserved or published public generations
 
 	// Derived files:
 	From     string `json:"from,omitempty"`     // the upload's path, or a zip's prefix
@@ -67,6 +69,64 @@ type File struct {
 	FP       string `json:"fp,omitempty"`       // Fingerprint of its inputs
 	Download string `json:"download,omitempty"` // the human download name
 	Track    *Track `json:"track,omitempty"`    // HLS
+}
+
+// Publication owns one public preset's physical files. Reservation precedes
+// every PUT; State becomes ready only after all renditions have landed. Retired
+// generations are never reused, even when their source bytes are identical.
+type Publication struct {
+	Preset     string           `json:"preset"`
+	Source     string           `json:"source"` // the upload's Key
+	FP         string           `json:"fp"`
+	Generation string           `json:"generation"`
+	Names      []string         `json:"names"` // logical preset names at this position
+	State      PublicationState `json:"state"`
+	Dims       []Dims           `json:"dims"`
+}
+
+// PublicationState has a fixed-width JSON representation: reserving and
+// publishing a replacement must not consume Full manifests' flag headroom.
+type PublicationState uint8
+
+const (
+	PublicationReserved PublicationState = iota
+	PublicationReady
+)
+
+func (p Publication) Ready() bool { return p.State == PublicationReady }
+
+// NamesOnDisk lists the immutable physical names reserved by the publication.
+func (p Publication) NamesOnDisk() []string {
+	names := make([]string, len(p.Names))
+	for i, name := range p.Names {
+		ext := path.Ext(name)
+		names[i] = strings.TrimSuffix(name, ext) + "-" + p.Generation + ext
+	}
+	return names
+}
+
+// Publication returns the public generation owned by this upload and preset.
+func (f File) Publication(preset string) (Publication, bool) {
+	for _, p := range f.Public {
+		if p.Preset == preset {
+			return p, true
+		}
+	}
+	return Publication{}, false
+}
+
+// SetPublication records a reserved or ready generation on its source upload.
+func (m *Manifest) SetPublication(from string, p Publication) {
+	if i := m.Find(from); i >= 0 {
+		pubs := slices.Clone(m.Files[i].Public)
+		j := slices.IndexFunc(pubs, func(old Publication) bool { return old.Preset == p.Preset })
+		if j < 0 {
+			pubs = append(pubs, p)
+		} else {
+			pubs[j] = p
+		}
+		m.Files[i].Public = pubs
+	}
 }
 
 // Frame is an upload grabbed from a frame of its Upload.Frames video at T
@@ -269,12 +329,26 @@ func (m *Manifest) Validate() error {
 			return fmt.Errorf("media: manifest file %q: invalid blob %q", f.Path, f.Blob)
 		case f.Track != nil && f.Track.Index != "" && !layout.ValidHashName(f.Track.Index):
 			return fmt.Errorf("media: manifest file %q: invalid track index %q", f.Path, f.Track.Index)
-		case !f.IsUpload() && (f.Edit != nil || f.Frame != nil || f.Pending != nil || f.Unattached):
+		case !f.IsUpload() && (f.Edit != nil || f.Frame != nil || f.Pending != nil || f.Unattached || len(f.Public) > 0):
 			return fmt.Errorf("media: manifest file %q: a derived file has upload fields", f.Path)
 		case f.IsUpload() && (f.From != "" || f.FP != "" || f.Track != nil):
 			return fmt.Errorf("media: manifest file %q: an upload has provenance", f.Path)
 		}
 		seen[f.Path] = true
+		presets := make(map[string]bool, len(f.Public))
+		for _, p := range f.Public {
+			id, err := uuid.Parse(p.Generation)
+			if p.Preset == "" || presets[p.Preset] || p.Source != f.Key() || p.FP == "" || err != nil || id == uuid.Nil || id.String() != p.Generation ||
+				len(p.Names) == 0 || len(p.Dims) != len(p.Names) || p.State > PublicationReady {
+				return fmt.Errorf("media: manifest file %q: invalid public publication", f.Path)
+			}
+			presets[p.Preset] = true
+			for j, name := range p.NamesOnDisk() {
+				if !layout.ValidSegment(p.Names[j]) || !layout.ValidPublicName(name) || p.Ready() && (p.Dims[j].W <= 0 || p.Dims[j].H <= 0) {
+					return fmt.Errorf("media: manifest file %q: invalid public rendition %q", f.Path, name)
+				}
+			}
+		}
 		// Bounds are checked at commit and by the producers (a failure, not
 		// a refused edit), so a measured size never wedges a worker's edit.
 		if err := f.Edit.Check(0, 0); err != nil {
@@ -292,6 +366,11 @@ func (m *Manifest) Clone() *Manifest {
 	out.Files = make([]File, len(m.Files))
 	for i, f := range m.Files {
 		f.Meta, f.Pending = cloneMap(f.Meta), slices.Clone(f.Pending)
+		f.Public = slices.Clone(f.Public)
+		for j := range f.Public {
+			f.Public[j].Names = slices.Clone(f.Public[j].Names)
+			f.Public[j].Dims = slices.Clone(f.Public[j].Dims)
+		}
 		if f.Edit != nil {
 			e := *f.Edit
 			if e.Crop != nil {

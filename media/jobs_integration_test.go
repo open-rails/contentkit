@@ -78,7 +78,7 @@ func TestSweep(t *testing.T) {
 	stale, _ := item.Public("cover-999.webp")
 	f.object(stale, "stale")
 	f.object(item.TempPrefix()+"u-1", "temp")
-	cover, _ := item.Public("cover-230.webp")
+	cover, _ := item.Public(f.publicName(g, "cover-230.webp"))
 
 	res, err := f.jobs.Sweep(ctx, g)
 	if err != nil {
@@ -402,9 +402,24 @@ func TestPreviewNamesGoWithTheCommit(t *testing.T) {
 	have := func() string {
 		t.Helper()
 		var out []string
+		m, _, err := f.ms.Get(t.Context(), g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		owned := item.Kind().PublicKept(m)
 		for n := 1; n <= 3; n++ {
-			if key, _ := item.Public(fmt.Sprintf("preview-%d.webp", n)); f.exists(key) {
-				out = append(out, fmt.Sprint(n))
+			prefix := fmt.Sprintf("preview-%d-", n)
+			for obj, err := range f.env.Store.List(t.Context(), item.PublicPrefix()) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				name := strings.TrimPrefix(obj.Key, item.PublicPrefix())
+				if strings.HasPrefix(name, prefix) {
+					if !slices.Contains(owned, name) {
+						t.Fatalf("an unowned preview survived the commit: %s", obj.Key)
+					}
+					out = append(out, fmt.Sprint(n))
+				}
 			}
 		}
 		return strings.Join(out, ",")
@@ -452,11 +467,12 @@ func TestExpose(t *testing.T) {
 	g := f.gallery(1, 1)
 	item, _ := f.reg.Item(g)
 	ctx := context.Background()
-	cover, _ := item.Public("cover-460.webp")
+	name := f.publicName(g, "cover-460.webp")
+	cover, _ := item.Public(name)
 	if !f.exists(cover) {
 		t.Fatal("no public cover")
 	}
-	if status, body, _ := f.fetch(f.reg.PublicURL(g, "cover-460.webp")); status != 200 || body != string(png(199)) {
+	if status, body, _ := f.fetch(f.reg.PublicURL(g, name)); status != 200 || body != string(png(199)) {
 		t.Fatalf("public cover %d %q", status, body)
 	}
 	f.res.set(cid(1), access.Resolution{})
@@ -506,14 +522,18 @@ func TestNewItemStartsHidden(t *testing.T) {
 		t.Fatalf("draft's first commit: hidden %v pending %v", m.Hidden, c.Pending)
 	}
 	f.produce(g)
-	if f.exists(cover) {
-		t.Fatal("a draft's cover is public")
+	for obj, err := range f.env.Store.List(ctx, item.PublicPrefix()) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Fatalf("a draft's cover is public: %s", obj.Key)
 	}
 	f.visible(1)
 	if err := f.jobs.Expose(ctx, g); err != nil {
 		t.Fatal(err)
 	}
 	f.produce(g)
+	cover, _ = item.Public(f.publicName(g, "cover-460.webp"))
 	if !f.exists(cover) {
 		t.Fatal("the published item's cover is not public")
 	}

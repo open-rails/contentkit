@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 )
@@ -158,11 +160,21 @@ func (w *standIn) settle(ctx context.Context, item media.Item, m *media.Manifest
 		if !slices.Contains(f.Pending, p.Name) {
 			continue
 		}
-		for _, name := range k.PublicNames(m, p, f.Path) {
+		names := k.PublicNames(m, p, f.Path)
+		if len(names) == 0 || m.Hidden || f.Unattached {
+			continue
+		}
+		pub := media.Publication{Preset: p.Name, Source: f.Key(), FP: standInRecipe, Generation: uuid.NewString(),
+			Names: names, Dims: make([]media.Dims, len(names)), State: media.PublicationReady}
+		for i := range pub.Dims {
+			pub.Dims[i] = media.Dims{W: f.W, H: f.H}
+		}
+		for _, name := range pub.NamesOnDisk() {
 			if err := w.copy(ctx, item, f.Blob, item.PublicPrefix()+name); err != nil {
 				return f, err
 			}
 		}
+		m.SetPublication(f.Path, pub)
 		m.ClearPending(f.Path, p.Name)
 	}
 	return m.Files[m.Find(f.Path)], nil

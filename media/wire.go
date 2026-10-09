@@ -130,9 +130,12 @@ type ReadResult struct {
 	// Previews are the item's public preview images in order (a Public
 	// preset with First): every viewer who can see the item gets them.
 	Previews []string `json:"previews,omitempty"`
-	Total    int      `json:"total"`
-	Offset   int      `json:"offset"`
-	Limit    int      `json:"limit"`
+	// Public lists the exact published renditions. Clients must not infer a
+	// current cover or avatar's physical filename from the preset template.
+	Public []PublicImage `json:"public,omitempty"`
+	Total  int           `json:"total"`
+	Offset int           `json:"offset"`
+	Limit  int           `json:"limit"`
 	// HLS lists the item's playable ladders by output directory ("hls/"):
 	// play {read API}/{kind}/{id}/hls/{dir}master.m3u8.
 	HLS []string `json:"hls,omitempty"`
@@ -145,6 +148,20 @@ type ReadResult struct {
 	Files []FileInfo `json:"files"`
 	// Cookie must be set on the response (cookie delivery, with access).
 	Cookie *http.Cookie `json:"-"`
+}
+
+// PublicImage is a published public preset for one upload.
+type PublicImage struct {
+	From       string            `json:"from"`
+	Preset     string            `json:"preset"`
+	Renditions []PublicRendition `json:"renditions"`
+}
+
+// PublicRendition carries its physical URL and actual encoded dimensions.
+type PublicRendition struct {
+	URL string `json:"url"`
+	W   int    `json:"w"`
+	H   int    `json:"h"`
 }
 
 // FileInfo is one file of a read.

@@ -1,6 +1,6 @@
 // Package image is the media worker's image producer (libvips, CGO): the
 // Image presets' private WebP files, the Zip presets, the public presets'
-// fixed names, editor views, and the kinds' default public images. A
+// owned generations, editor views, and the kinds' default public images. A
 // Processor runs one media.ProcessJob: it redoes stale or pending outputs,
 // records them in one manifest edit per pass, and keeps public/ in step.
 package image
@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/open-rails/contentkit/media"
@@ -108,7 +109,7 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 		zips := p.staleZips(item, m, job)
 		if m.Full {
 			// No record of a private output or zip fits. Public files still
-			// render: recording them only clears pending names.
+			// render when their existing reservation can be replaced without growth.
 			zips = nil
 			todo = slices.DeleteFunc(todo, func(w work) bool { return len(w.public) == 0 })
 			for i := range todo {
@@ -122,6 +123,9 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 			return nil
 		}
 		if err := p.pass(ctx, item, m, todo, zips); err != nil {
+			if errors.Is(err, media.ErrManifestTooLarge) {
+				return p.c.Manifests.SetFull(ctx, item.Ref(), err)
+			}
 			return err
 		}
 		if m.Full {
@@ -148,10 +152,11 @@ type work struct {
 // done is a rendered upload.
 type done struct {
 	work
-	outputs map[string]media.File // by private preset
-	written []string              // public keys written
-	dims    media.Dims
-	err     error // permanent
+	outputs      map[string]media.File // by private preset
+	publications []media.Publication
+	written      []string // public keys written
+	dims         media.Dims
+	err          error // permanent
 }
 
 // todo lists the uploads with stale, pending or forced image outputs.
@@ -212,7 +217,14 @@ func spec(pr *media.Private, f media.File) media.Image {
 // another fingerprint.
 func (p *Processor) publicStale(ctx context.Context, item media.Item, m *media.Manifest, f media.File, pu *media.Public) (bool, error) {
 	fp := publicFP(f, pu)
-	for _, n := range item.Kind().PublicNames(m, pu, f.Path) {
+	if len(item.Kind().PublicNames(m, pu, f.Path)) == 0 {
+		return false, nil
+	}
+	pub, ok := item.Kind().Publication(m, f, pu)
+	if !ok || !pub.Ready() || pub.FP != fp {
+		return true, nil
+	}
+	for _, n := range pub.NamesOnDisk() {
 		key, err := item.Public(n)
 		if err != nil {
 			return false, err
@@ -234,8 +246,8 @@ func (p *Processor) publicStale(ctx context.Context, item media.Item, m *media.M
 // edit. An upload whose blob or edit changed meanwhile keeps nothing this
 // pass made for it; the next pass redoes it.
 //
-// Public writes check their source under the manifest lock; cleanup uses
-// the same lock, so removed or hidden sources cannot publish afterward.
+// Public writes use manifest-owned generations. Publication verifies ownership
+// again; a delayed write from a retired generation cannot overwrite this one.
 func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest, todo []work, zips []*media.Private) (err error) {
 	var (
 		mu      sync.Mutex
@@ -351,11 +363,25 @@ func (p *Processor) pass(ctx context.Context, item media.Item, m *media.Manifest
 					return err
 				}
 			}
-			for _, pu := range d.public {
-				// A preview rendered for a position the upload has left
-				// since stays pending: it is rendered again where it is now.
-				if pu.First == 0 || slices.Equal(k.PublicNames(cur, pu, d.src.Path), k.PublicNames(m, pu, d.src.Path)) {
-					cur.ClearPending(d.src.Path, pu.Name)
+			for _, pub := range d.publications {
+				f, _ := cur.Get(d.src.Path)
+				owned, ok := f.Publication(pub.Preset)
+				if !ok || owned.Generation != pub.Generation || cur.Hidden {
+					continue
+				}
+				present := true
+				for _, name := range pub.NamesOnDisk() {
+					key, _ := item.Public(name)
+					if _, err := p.c.Store.Head(ctx, key); errors.Is(err, media.ErrNotFound) {
+						present = false
+					} else if err != nil {
+						return err
+					}
+				}
+				if present {
+					pub.State = media.PublicationReady
+					cur.SetPublication(d.src.Path, pub)
+					cur.ClearPending(d.src.Path, pub.Preset)
 				}
 			}
 			purge = append(purge, d.written...)
@@ -475,8 +501,9 @@ func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manife
 		if d.dims = dims; err != nil {
 			return p.permanent(d, err)
 		}
-		published := false
+		var publication media.Publication
 		_, err = p.c.Manifests.EditExisting(ctx, item.Ref(), func(cur *media.Manifest) error {
+			publication = media.Publication{}
 			f, ok := cur.Get(w.src.Path)
 			if !ok || cur.Hidden || f.Unattached {
 				return nil
@@ -484,29 +511,69 @@ func (p *Processor) render(ctx context.Context, item media.Item, m *media.Manife
 			if f.Blob != w.src.Blob || f.Edit.Hash() != w.src.Edit.Hash() || !slices.Equal(k.PublicNames(cur, pu, w.src.Path), names) {
 				return nil // changed, or moved to another preview position
 			}
-			for _, n := range names {
-				out := outs[n]
-				pk, err := item.Public(n)
-				if err != nil {
-					return err
-				}
-				d.written = append(d.written, pk) // a failed put may still land
-				if _, err := p.c.Store.Put(ctx, pk, bytes.NewReader(out.webp), int64(len(out.webp)), media.PutOptions{
-					ContentType: "image/webp", ChecksumSHA256: sha(out.webp),
-					Metadata: map[string]string{"from": url.PathEscape(w.src.Path), "fp": publicFP(w.src, pu)}}); err != nil {
-					return err
-				}
+			fp := publicFP(w.src, pu)
+			if old, ok := k.Publication(cur, f, pu); ok && !old.Ready() && old.FP == fp {
+				publication = old // interrupted PUTs retry the active reservation
+				return nil
 			}
-			published = true
+			publication = media.Publication{Preset: pu.Name, Source: f.Key(), FP: fp,
+				Generation: uuid.NewString(), Names: names, Dims: make([]media.Dims, len(names))}
+			for i, name := range names {
+				publication.Dims[i] = outs[name].dims
+			}
+			cur.SetPublication(f.Path, publication)
+			if !cur.Full {
+				cur.AddPending(f.Path, pu.Name)
+			}
 			return nil
 		})
 		if err != nil && !errors.Is(err, media.ErrNotFound) {
 			return d, err
 		}
-		if !published {
-			d.public = nil
-			break
+		if publication.Generation == "" {
+			continue
 		}
+		for i, n := range publication.NamesOnDisk() {
+			out := outs[names[i]]
+			pk, err := item.Public(n)
+			if err != nil {
+				return d, err
+			}
+			d.written = append(d.written, pk) // an interrupted PUT may still land
+			_, err = p.c.Store.Put(ctx, pk, bytes.NewReader(out.webp), int64(len(out.webp)), media.PutOptions{
+				ContentType: "image/webp", ChecksumSHA256: sha(out.webp), IfNoneMatch: "*",
+				Metadata: map[string]string{"from": url.PathEscape(w.src.Path), "fp": publication.FP}})
+			if errors.Is(err, media.ErrPreconditionFailed) {
+				// Only this active reservation can write here. Verify its
+				// bytes before accepting an earlier attempt as completed.
+				obj, headErr := p.c.Store.Head(ctx, pk)
+				if headErr != nil {
+					return d, headErr
+				}
+				if obj.Size != int64(len(out.webp)) || obj.Metadata["fp"] != publication.FP ||
+					len(obj.ChecksumSHA256) > 0 && !bytes.Equal(obj.ChecksumSHA256, sha(out.webp)) {
+					return d, fmt.Errorf("media/image: reserved public file %s differs from its output", pk)
+				}
+				if len(obj.ChecksumSHA256) == 0 {
+					rc, _, err := p.c.Store.Get(ctx, pk, media.GetOptions{})
+					if err != nil {
+						return d, err
+					}
+					h := sha256.New()
+					n, readErr := io.Copy(h, io.LimitReader(rc, int64(len(out.webp))+1))
+					rc.Close()
+					if readErr != nil {
+						return d, readErr
+					}
+					if n != int64(len(out.webp)) || !bytes.Equal(h.Sum(nil), sha(out.webp)) {
+						return d, fmt.Errorf("media/image: reserved public file %s differs from its output", pk)
+					}
+				}
+			} else if err != nil {
+				return d, err
+			}
+		}
+		d.publications = append(d.publications, publication)
 	}
 	for _, pr := range w.private {
 		s := spec(pr, w.src)

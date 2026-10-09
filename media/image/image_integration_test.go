@@ -153,6 +153,10 @@ func TestPublicPreset(t *testing.T) {
 	if p := e.takePurged(); len(p) != 3 {
 		t.Fatalf("re-crop purged %v", p)
 	}
+	if len(removed) != 3 {
+		t.Fatalf("re-crop did not retire its old public generation: %v", removed)
+	}
+	removed = nil
 	if _, err := e.up.Commit(context.Background(), e.editor, g, []media.Op{{Op: media.OpEdit, Path: "cover.png", Edit: &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 50, H: 1}}}}); err == nil {
 		t.Fatal("an edit under MinWidth accepted")
 	}
@@ -235,6 +239,130 @@ func TestRemoveFencesInFlightPublicPublication(t *testing.T) {
 	}
 	if n := publicWrites.Load(); n != 0 {
 		t.Fatalf("in-flight worker published %d public files after removal returned", n)
+	}
+}
+
+// A PUT can outlive the manifest revision that authorized it. It must write
+// only its retired generation, never the current cover's filename or pixels.
+func TestPublicGenerationsFenceLateWrites(t *testing.T) {
+	e := newEnv(t, nil)
+	ref := e.ref(t, "gallery", 1)
+	e.put(t, ref, "cover.png", "image/png", quadrants(t))
+	e.process(t, media.ProcessJob{Ref: ref})
+	item, _ := e.reg.Item(ref)
+	started, resume := make(chan struct{}), make(chan struct{})
+	var paused atomic.Bool
+	var release sync.Once
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	defer release.Do(func() { close(resume) })
+	s := &hooked{Store: e.Store, onPut: func(key string, put func() error) error {
+		if strings.HasPrefix(key, item.PublicPrefix()) && paused.CompareAndSwap(false, true) {
+			close(started)
+			select {
+			case <-resume:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return put()
+	}}
+	worker := e.processor(t, s)
+	done := make(chan error, 1)
+	go func() { done <- worker.Process(ctx, media.ProcessJob{Ref: ref, Force: true, Preset: "cover"}) }()
+	select {
+	case <-started:
+	case err := <-done:
+		t.Fatalf("worker exited before the delayed PUT: %v", err)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	old, _ := e.file(t, ref, "cover.png").Publication("cover")
+	if old.Ready() {
+		t.Fatal("unwritten reservation was published")
+	}
+	// Cleanup during the PUT must protect this active reservation.
+	if _, err := e.ms.SyncPublic(ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+	e.commit(t, ref, media.Op{Op: media.OpEdit, Path: "cover.png",
+		Edit: &media.Edit{Crop: &media.Crop{X: 200, Y: 100, W: 200, H: 1}}})
+	e.process(t, media.ProcessJob{Ref: ref})
+	current, _ := e.file(t, ref, "cover.png").Publication("cover")
+	if !current.Ready() || old.Generation == current.Generation {
+		t.Fatalf("replacement reused the delayed generation: old=%+v, new=%+v", old, current)
+	}
+	release.Do(func() { close(resume) })
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	after, _ := e.file(t, ref, "cover.png").Publication("cover")
+	if after.Generation != current.Generation {
+		t.Fatalf("old worker replaced the current publication: %+v", after)
+	}
+	b, _, ok := e.public(t, ref, "cover-150.webp")
+	if !ok {
+		t.Fatal("current cover disappeared")
+	}
+	pixels(t, b, 150, 50, map[[2]int]color.RGBA{{75, 25}: white})
+	for _, name := range old.NamesOnDisk() {
+		key, _ := item.Public(name)
+		if _, err := e.Store.Head(ctx, key); !errors.Is(err, media.ErrNotFound) {
+			t.Fatalf("retired delayed PUT was not reclaimed: %s: %v", key, err)
+		}
+	}
+}
+
+func TestPublicReservationRecoversInterruptedWrite(t *testing.T) {
+	e := newEnv(t, nil)
+	ref := e.ref(t, "gallery", 1)
+	e.put(t, ref, "cover.png", "image/png", quadrants(t))
+	item, _ := e.reg.Item(ref)
+	var interrupted atomic.Bool
+	var verified atomic.Bool
+	failure := errors.New("response lost after public PUT")
+	s := &hooked{Store: e.Store, omitChecksums: true, onGet: func(key string) {
+		if strings.HasPrefix(key, item.PublicPrefix()) {
+			verified.Store(true)
+		}
+	}, onPut: func(key string, put func() error) error {
+		err := put()
+		if err == nil && strings.HasPrefix(key, item.PublicPrefix()) && interrupted.CompareAndSwap(false, true) {
+			return failure
+		}
+		return err
+	}}
+	worker := e.processor(t, s)
+	if err := worker.Process(t.Context(), media.ProcessJob{Ref: ref}); !errors.Is(err, failure) {
+		t.Fatalf("write interruption: %v", err)
+	}
+	reserved, _ := e.file(t, ref, "cover.png").Publication("cover")
+	if reserved.Generation == "" || reserved.Ready() {
+		t.Fatalf("lost the unpublished reservation: %+v", reserved)
+	}
+	keys, err := e.ms.SyncPublic(t.Context(), ref)
+	if err != nil || len(keys) != 0 {
+		t.Fatalf("cleanup retired active outputs: %v, %v", keys, err)
+	}
+	if err := worker.Process(t.Context(), media.ProcessJob{Ref: ref}); err != nil {
+		t.Fatal(err)
+	}
+	if !verified.Load() {
+		t.Fatal("retry accepted an existing allocation without a checksum or reading its bytes")
+	}
+	pub, _ := e.file(t, ref, "cover.png").Publication("cover")
+	if !pub.Ready() || pub.Generation != reserved.Generation {
+		t.Fatalf("retry failed to publish its reserved generation: before=%+v, after=%+v", reserved, pub)
+	}
+	for i, name := range pub.NamesOnDisk() {
+		b, _, ok := e.public(t, ref, name)
+		if !ok {
+			t.Fatalf("published missing rendition %s", name)
+		}
+		w, h := webpSize(t, b)
+		if pub.Dims[i] != (media.Dims{W: w, H: h}) {
+			t.Fatalf("published dimensions %+v do not describe %dx%d", pub.Dims[i], w, h)
+		}
 	}
 }
 
@@ -350,7 +478,9 @@ func TestRemoveRetriesFailedPublicCleanup(t *testing.T) {
 	e.put(t, ref, "cover.png", "image/png", quadrants(t))
 	e.process(t, media.ProcessJob{Ref: ref})
 	item, _ := e.reg.Item(ref)
-	key, _ := item.Public("cover-150.webp")
+	pub, _ := e.file(t, ref, "cover.png").Publication("cover")
+	names := pub.NamesOnDisk()
+	key, _ := item.Public(names[0])
 	failure := errors.New("public delete unavailable")
 	store := &failDelete{Store: e.Store, key: key, err: failure}
 	manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{})
@@ -368,9 +498,10 @@ func TestRemoveRetriesFailedPublicCleanup(t *testing.T) {
 	if _, err := uploads.Commit(t.Context(), e.editor, ref, ops); err != nil {
 		t.Fatalf("retry could not finish cleanup after the upload was removed: %v", err)
 	}
-	for _, name := range []string{"cover-150.webp", "cover-300.webp", "cover-600.webp"} {
-		if _, _, ok := e.public(t, ref, name); ok {
-			t.Fatalf("retry kept %s", name)
+	for _, name := range names {
+		key, _ := item.Public(name)
+		if _, err := e.Store.Head(t.Context(), key); !errors.Is(err, media.ErrNotFound) {
+			t.Fatalf("retry kept %s: %v", name, err)
 		}
 	}
 }
@@ -537,9 +668,8 @@ func TestFullManifestStopsProcessing(t *testing.T) {
 	}
 }
 
-// A Full item still renders its public files: recording them only clears
-// pending names. Hidden and restored, it gets its cover back while its
-// private outputs stay stopped.
+// A Full item at the edit limit can replace an existing public reservation
+// without growing it, while its private outputs stay stopped.
 func TestFullStillRendersPublic(t *testing.T) {
 	e := newEnv(t, nil)
 	g := e.ref(t, "gallery", 1)
@@ -559,7 +689,7 @@ func TestFullStillRendersPublic(t *testing.T) {
 		if err := enc.Encode(&c); err != nil {
 			return err
 		}
-		m.Meta = map[string]any{"pad": strings.Repeat("A", media.MaxManifestBytes-4<<10-100-b.Len())}
+		m.Meta = map[string]any{"pad": strings.Repeat("A", media.MaxManifestBytes-4<<10-b.Len())}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -568,19 +698,16 @@ func TestFullStillRendersPublic(t *testing.T) {
 	if m := e.manifest(t, g); !m.Full || m.Deficit <= 0 {
 		t.Fatalf("full %v, deficit %d", m.Full, m.Deficit)
 	}
-	// Hidden (public/ emptied) and restored (the cover pending again).
+	// The objects disappeared but the manifest still owns their allocation.
+	// With no pending marker there is no space to grow one: reservation and
+	// completion must fit by replacing their fixed-width state.
 	item, _ := e.reg.Item(g)
-	for _, w := range []int{150, 300, 600} {
-		key, _ := item.Public(fmt.Sprintf("cover-%d.webp", w))
+	pub, _ := e.file(t, g, "cover.png").Publication("cover")
+	for _, name := range pub.NamesOnDisk() {
+		key, _ := item.Public(name)
 		if err := e.Store.Delete(ctx, key); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if _, err := e.ms.EditExisting(ctx, g, func(m *media.Manifest) error {
-		m.AddPending("cover.png", "cover")
-		return nil
-	}); err != nil {
-		t.Fatal(err)
 	}
 	e.process(t, media.ProcessJob{Ref: g})
 	m := e.manifest(t, g)

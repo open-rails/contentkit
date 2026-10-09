@@ -335,6 +335,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	for _, n := range k.previewNames(g.Manifest) {
 		out.Previews = append(out.Previews, g.r.base+layout.URLPrefix+g.Item.PublicPrefix()+n)
 	}
+	out.Public = r.reg.publicImages(g.Item, g.Manifest)
 	if editor {
 		out.State, out.Full = k.Readiness(g.Manifest).State, g.Manifest.Full
 	}
@@ -384,6 +385,42 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		r.addProgress(ctx, g, out.Files)
 	}
 	return out, g, nil
+}
+
+// PublicImages loads only ready, currently owned public generations. It does
+// not issue private grants or reveal unpublished allocations. A missing item
+// has no published images.
+func (m *Manifests) PublicImages(ctx context.Context, ref contentref.ContentRef) ([]PublicImage, error) {
+	man, _, err := m.Get(ctx, ref)
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	item, _ := m.reg.Item(ref) // Get already validated the ref
+	return m.reg.publicImages(item, man), nil
+}
+
+func (r *Registry) publicImages(item Item, m *Manifest) []PublicImage {
+	var images []PublicImage
+	for _, f := range m.Files {
+		if !f.IsUpload() {
+			continue
+		}
+		for _, p := range item.Kind().PublicFor(f.Path) {
+			pub, ok := item.Kind().Publication(m, f, p)
+			if !ok || !pub.Ready() {
+				continue
+			}
+			image := PublicImage{From: f.Path, Preset: p.Name}
+			for i, name := range pub.NamesOnDisk() {
+				image.Renditions = append(image.Renditions, PublicRendition{
+					URL: r.PublicURL(item.Ref(), name), W: pub.Dims[i].W, H: pub.Dims[i].H})
+			}
+			images = append(images, image)
+		}
+	}
+	return images
 }
 
 // listed reports a file a read lists: derived files and served uploads to

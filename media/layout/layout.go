@@ -55,7 +55,8 @@ func Parse(key string) (Key, bool) {
 	case len(rest) == 1 && rest[0] == ManifestName:
 		k.Area = AreaManifest
 	case len(rest) == 2 && rest[0] == AreaPrivate && ValidHashName(rest[1]),
-		len(rest) == 2 && (rest[0] == AreaPublic || rest[0] == AreaTemp) && ValidSegment(rest[1]):
+		len(rest) == 2 && rest[0] == AreaPublic && ValidPublicName(rest[1]),
+		len(rest) == 2 && rest[0] == AreaTemp && ValidSegment(rest[1]):
 		k.Area, k.Name = rest[0], rest[1]
 	default:
 		return Key{}, false
@@ -78,6 +79,24 @@ func ValidSegment(s string) bool {
 		}
 	}
 	return true
+}
+
+// ValidPublicName also accepts the generation suffix on a logical public
+// filename. Only object names gain that allowance; folder segments keep their
+// existing bounds. Default images still use logical names.
+func ValidPublicName(name string) bool {
+	if ValidSegment(name) {
+		return true
+	}
+	stem, ext := name, ""
+	// The extension follows the last dot, including dotted logical stems.
+	if i := strings.LastIndexByte(name, '.'); i >= 0 {
+		stem, ext = name[:i], name[i:]
+	}
+	if len(stem) < 38 || stem[len(stem)-37] != '-' {
+		return false
+	}
+	return ValidStagedName(StagedPrefix+stem[len(stem)-36:]) && ValidSegment(stem[:len(stem)-37]+ext)
 }
 
 // ValidHashName accepts "sha256-{64 lowercase hex}".

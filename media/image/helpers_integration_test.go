@@ -13,6 +13,7 @@ import (
 	"image/png"
 	"io"
 	"net/http"
+	"slices"
 	"sync"
 	"testing"
 
@@ -232,6 +233,13 @@ func (e *env) blob(t *testing.T, ref contentref.ContentRef, f media.File) []byte
 func (e *env) public(t *testing.T, ref contentref.ContentRef, name string) ([]byte, media.Object, bool) {
 	t.Helper()
 	item, _ := e.reg.Item(ref)
+	for _, f := range e.manifest(t, ref).Files {
+		for _, pub := range f.Public {
+			if i := slices.Index(pub.Names, name); i >= 0 && pub.Ready() {
+				name = pub.NamesOnDisk()[i]
+			}
+		}
+	}
 	key, _ := item.Public(name)
 	rc, obj, err := e.Store.Get(context.Background(), key, media.GetOptions{})
 	if errors.Is(err, media.ErrNotFound) {

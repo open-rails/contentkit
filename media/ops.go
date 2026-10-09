@@ -312,6 +312,9 @@ func (o *opRun) put(op Op) error {
 	if i >= 0 {
 		old := stripPending(m.Files[i])
 		old.CreateID = f.CreateID
+		if old.Key() == f.Key() {
+			f.Public = old.Public
+		}
 		if reflect.DeepEqual(old, f) {
 			m.Files[i].CreateID = f.CreateID
 			return nil // unchanged source and edit
@@ -441,6 +444,7 @@ func (o *opRun) copy(op Op, src []File) error {
 		return uploadErr(CodeNotFound, "no upload %q in item %s", op.From.Path, op.From.ID)
 	}
 	f := src[0]
+	f.Public = nil // copied originals never transfer another item's allocation
 	to := op.To
 	if to == "" {
 		to = f.Path

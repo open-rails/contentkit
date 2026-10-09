@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
@@ -325,26 +327,43 @@ func (f *fixture) produce(ref contentref.ContentRef) {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	type public struct{ key, blob string }
+	type public struct {
+		from, blob string
+		pub        media.Publication
+	}
 	var publics []public
 	for _, u := range m.Files {
 		if !u.IsUpload() || u.Blob == "" || m.Hidden {
 			continue
 		}
 		for _, p := range k.PublicFor(u.Path) {
-			for _, n := range k.PublicNames(m, p, u.Path) {
-				key, _ := item.Public(n)
-				publics = append(publics, public{key, u.Blob})
+			names := k.PublicNames(m, p, u.Path)
+			if len(names) > 0 && !u.Unattached {
+				pub := media.Publication{Preset: p.Name, Source: u.Key(), FP: "test", Generation: uuid.NewString(),
+					Names: names, Dims: make([]media.Dims, len(names)), State: media.PublicationReady}
+				if old, ok := k.Publication(m, u, p); ok && old.Ready() {
+					pub = old
+				}
+				for i := range pub.Dims {
+					pub.Dims[i] = media.Dims{W: 1, H: 1}
+				}
+				publics = append(publics, public{u.Path, u.Blob, pub})
 			}
 		}
 	}
 	for _, p := range publics {
 		src, _ := item.Blob(p.blob)
-		if _, err := f.env.Store.Copy(ctx, src, p.key, media.CopyOptions{}); err != nil {
-			f.t.Fatal(err)
+		for _, name := range p.pub.NamesOnDisk() {
+			key, _ := item.Public(name)
+			if _, err := f.env.Store.Copy(ctx, src, key, media.CopyOptions{}); err != nil {
+				f.t.Fatal(err)
+			}
 		}
 	}
 	if _, err := f.ms.EditExisting(ctx, ref, func(m *media.Manifest) error {
+		for _, p := range publics {
+			m.SetPublication(p.from, p.pub)
+		}
 		for _, u := range slicesClone(m.Files) {
 			if !u.IsUpload() || u.Blob == "" {
 				continue
@@ -377,6 +396,26 @@ func (f *fixture) produce(ref contentref.ContentRef) {
 	}); err != nil {
 		f.t.Fatal(err)
 	}
+}
+
+// publicName resolves a logical preset name to the fixture's published key.
+func (f *fixture) publicName(ref contentref.ContentRef, name string) string {
+	f.t.Helper()
+	m, _, err := f.ms.Get(f.t.Context(), ref)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	for _, file := range m.Files {
+		for _, pub := range file.Public {
+			for i, logical := range pub.Names {
+				if logical == name && pub.Ready() {
+					return pub.NamesOnDisk()[i]
+				}
+			}
+		}
+	}
+	f.t.Fatalf("no published public image for %s", name)
+	return ""
 }
 
 func slicesClone(files []media.File) []media.File { return append([]media.File(nil), files...) }

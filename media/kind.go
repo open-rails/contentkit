@@ -169,8 +169,7 @@ func rendered(f File, p *Public) bool {
 	return f.Blob != "" && f.Fail() == nil && !slices.Contains(f.Pending, p.Name)
 }
 
-// previewNames lists m's rendered preview names in order; none for a
-// hidden item.
+// previewNames lists m's published preview generations in order.
 func (k *Kind) previewNames(m *Manifest) []string {
 	var out []string
 	if m.Hidden {
@@ -180,17 +179,25 @@ func (k *Kind) previewNames(m *Manifest) []string {
 		p := &k.Public[i]
 		for _, path := range k.firsts(m, p) {
 			if f, _ := m.Get(path); rendered(f, p) {
-				out = append(out, k.PublicNames(m, p, path)...)
+				if pub, ok := k.Publication(m, f, p); ok && pub.Ready() {
+					out = append(out, pub.NamesOnDisk()...)
+				}
 			}
 		}
 	}
 	return out
 }
 
-// PublicKept are the public names m vouches for; every other name in
-// public/ is deleted. They are its attached uploads' names, none when
-// hidden, and a preview position's only once rendered for the upload now
-// there: a removed page's image does not stay under the next page's name.
+// Publication returns the generation still owned by the source and position.
+// A reservation need not be Ready: cleanup must protect it while PUTs run.
+func (k *Kind) Publication(m *Manifest, f File, p *Public) (Publication, bool) {
+	pub, ok := f.Publication(p.Name)
+	return pub, ok && !m.Hidden && !f.Unattached && f.Fail() == nil && pub.Source == f.Key() &&
+		slices.Equal(pub.Names, k.PublicNames(m, p, f.Path))
+}
+
+// PublicKept protects every active reservation and published generation.
+// An unowned name is permanently retired; no later worker may reuse it.
 func (k *Kind) PublicKept(m *Manifest) []string {
 	var out []string
 	if m.Hidden {
@@ -201,8 +208,8 @@ func (k *Kind) PublicKept(m *Manifest) []string {
 			continue
 		}
 		for _, p := range k.PublicFor(f.Path) {
-			if p.First == 0 || rendered(f, p) {
-				out = append(out, k.PublicNames(m, p, f.Path)...)
+			if pub, ok := k.Publication(m, f, p); ok {
+				out = append(out, pub.NamesOnDisk()...)
 			}
 		}
 	}
@@ -556,6 +563,21 @@ func (k *Kind) Unwritten(m *Manifest) int64 {
 		}
 		from := jsonLen(f.Path)
 		public := k.PublicFor(f.Path)
+		for _, p := range public {
+			names := k.PublicNames(m, p, f.Path)
+			if len(names) == 0 || m.Hidden || f.Unattached {
+				continue
+			}
+			if _, ok := k.Publication(m, f, p); !ok {
+				// Source, fingerprint and UUID; one logical name and measured
+				// dimension pair per rendition. Replacement does not accumulate
+				// old generations in the root.
+				out += 256 + int64(len(p.Name))
+				for _, name := range names {
+					out += int64(jsonLen(name) + 64)
+				}
+			}
+		}
 		for _, p := range k.PrivateFor(f.Path) {
 			entries, size := int64(1), int64(outputEntryBytes)
 			switch {

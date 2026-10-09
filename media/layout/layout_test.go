@@ -11,12 +11,14 @@ import (
 func TestParse(t *testing.T) {
 	sum := sha256.Sum256(nil)
 	hash := layout.SHA256Name(sum[:])
+	public := strings.Repeat("c", 123) + "-0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b.webp"
 	for key, want := range map[string]layout.Key{
 		"d/gallery/1/manifest.json":         {Namespace: "d", Kind: "gallery", ID: "1", Area: layout.AreaManifest},
 		"d/gallery/1/private/" + hash:       {Namespace: "d", Kind: "gallery", ID: "1", Area: layout.AreaPrivate, Name: hash},
 		"accounts/user/42/public/a-64.webp": {Namespace: "accounts", Kind: "user", ID: "42", Area: layout.AreaPublic, Name: "a-64.webp"},
 		"d/gallery/_default/public/c.webp":  {Namespace: "d", Kind: "gallery", ID: "_default", Area: layout.AreaPublic, Name: "c.webp"},
 		"d/gallery/1/temp/u-1":              {Namespace: "d", Kind: "gallery", ID: "1", Area: layout.AreaTemp, Name: "u-1"},
+		"d/gallery/1/public/" + public:      {Namespace: "d", Kind: "gallery", ID: "1", Area: layout.AreaPublic, Name: public},
 	} {
 		got, ok := layout.Parse(key)
 		if !ok || got != want {
@@ -25,7 +27,8 @@ func TestParse(t *testing.T) {
 	}
 	for _, bad := range []string{"d/gallery/1", "d/gallery/1/private/x", "d/gallery/1/private/" + hash + "/x",
 		"d/gallery/1/originals/" + hash, "d/../1/manifest.json", "d/gallery/1/other/x", "d/gallery/1/public/.x",
-		"d/gallery/1/public/a b", "d/gallery/1/private/SHA256-x"} {
+		"d/gallery/1/public/a b", "d/gallery/1/private/SHA256-x", "d/gallery/1/public/" + strings.Repeat("c", 166),
+		"d/gallery/1/temp/" + public, "d/gallery/1/private/" + public} {
 		if _, ok := layout.Parse(bad); ok {
 			t.Errorf("parsed %q", bad)
 		}

@@ -101,12 +101,17 @@ func TestReadWithoutAccess(t *testing.T) {
 	f.visible(1)
 	g := f.gallery(1, 3)
 	ctx := context.Background()
-	item, _ := f.reg.Item(g)
 	anon := access.Actor{Anonymous: true, IP: "203.0.113.9"}
-	want := []string{"https://" + mediaHost + "/v1/" + item.PublicPrefix() + "preview-1.webp", "https://" + mediaHost + "/v1/" + item.PublicPrefix() + "preview-2.webp"}
+	want := []string{f.reg.PublicURL(g, f.publicName(g, "preview-1.webp")), f.reg.PublicURL(g, f.publicName(g, "preview-2.webp"))}
 	full, err := f.rd.Read(ctx, g, anon, media.ReadOptions{Prefix: "high/"})
 	if err != nil || full.Access != media.AccessFull || !slices.Equal(full.Previews, want) || full.Files[0].URL == "" {
 		t.Fatalf("with access: %+v %v", full, err)
+	}
+	if len(full.Public) != 3 || full.Public[0].Preset != "preview" || full.Public[0].Renditions[0].URL != want[0] {
+		t.Fatalf("published public renditions: %+v", full.Public)
+	}
+	if images, err := f.ms.PublicImages(ctx, g); err != nil || !reflect.DeepEqual(images, full.Public) {
+		t.Fatalf("host public listing: %+v, %v", images, err)
 	}
 	f.res.set(cid(1), access.Resolution{Visible: true})
 	rd, err := media.NewReader(media.ReaderOptions{Manifests: f.ms, Delivery: media.Delivery{Mode: media.DeliverCookie, CookieDomain: "doujins.test", SigningKey: signKey}})
@@ -117,6 +122,9 @@ func TestReadWithoutAccess(t *testing.T) {
 		res, err := r.Read(ctx, g, anon, media.ReadOptions{Download: true})
 		if err != nil || res.Access != media.AccessNone || res.Cookie != nil || len(res.HLS) != 0 || res.Total != 7 || !slices.Equal(res.Previews, want) {
 			t.Fatalf("without access: %+v %v", res, err)
+		}
+		if !reflect.DeepEqual(res.Public, full.Public) {
+			t.Fatalf("public renditions depend on private access: %+v", res.Public)
 		}
 		if fi := res.Files[0]; !reflect.DeepEqual(fi, media.FileInfo{Path: "thumb/000.webp", Type: "image/png", Size: int64(len(png(100))), Locked: true}) {
 			t.Fatalf("a locked file is its path, type and size: %+v", fi)

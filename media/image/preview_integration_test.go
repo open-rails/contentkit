@@ -101,7 +101,7 @@ func TestPreviewMovedMidPass(t *testing.T) {
 	// A new page takes position 1; the pass renders it there.
 	first := 0
 	e.put(t, ref, "originals/n.png", "image/png", solid(t, 80, 80, blue), media.Op{Op: media.OpMove, Path: "originals/n.png", Index: &first})
-	second, _ := item.Public("preview-2.webp")
+	second := item.PublicPrefix() + "preview-2-"
 	var mu sync.Mutex
 	var events []string // what the processor does to preview-2 once the page has moved there
 	var once sync.Once
@@ -110,7 +110,7 @@ func TestPreviewMovedMidPass(t *testing.T) {
 	record := func(what, key string) {
 		mu.Lock()
 		defer mu.Unlock()
-		if fired && key == second {
+		if fired && strings.HasPrefix(key, second) {
 			events = append(events, what)
 		}
 	}

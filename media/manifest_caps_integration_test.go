@@ -31,7 +31,7 @@ func TestManifestCaps(t *testing.T) {
 	item, _ := f.reg.Item(g)
 	f.put(g, "cover.png", "image/png", png(2))
 	f.produce(g)
-	cover, _ := item.Public("cover-460.webp")
+	cover, _ := item.Public(f.publicName(g, "cover-460.webp"))
 	if !f.exists(cover) {
 		t.Fatal("no public cover")
 	}
@@ -109,7 +109,7 @@ func TestOversizedManifest(t *testing.T) {
 	item, _ := f.reg.Item(g)
 	f.put(g, "cover.png", "image/png", png(2))
 	f.produce(g)
-	cover, _ := item.Public("cover-460.webp")
+	cover, _ := item.Public(f.publicName(g, "cover-460.webp"))
 	body := oversizedManifest(t)
 	if _, err := f.env.Store.Put(ctx, item.ManifestKey(), bytes.NewReader(body), int64(len(body)), media.PutOptions{ContentType: "application/gzip"}); err != nil {
 		t.Fatal(err)
@@ -299,7 +299,9 @@ func TestCommitProjectsOutputs(t *testing.T) {
 // decodes but leaves no room for the flag is refused and the error returned
 // (the job retries), never taken for hidden.
 func TestHideFits(t *testing.T) {
-	f := newFixture(t)
+	f := newFixtureOn(t, s3test.Open(t), func(c *media.Config) {
+		c.Kinds[1].Public = nil // no publication is retired to make room for the flag
+	})
 	f.visible(1)
 	f.visible(2)
 	ctx := context.Background()
