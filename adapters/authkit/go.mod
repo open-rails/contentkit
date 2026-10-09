@@ -3,8 +3,9 @@ module github.com/open-rails/contentkit/adapters/authkit
 go 1.26.6
 
 require (
-	github.com/open-rails/authkit v1.2.0
+	github.com/open-rails/authkit v1.7.0
 	github.com/open-rails/contentkit v0.62.0
+	github.com/open-rails/helpers v1.2.0
 )
 
 require (
@@ -26,7 +27,6 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/mr-tron/base58 v1.3.0 // indirect
 	github.com/muhlemmer/gu v0.3.1 // indirect
-	github.com/open-rails/helpers v1.1.0 // indirect
 	github.com/open-rails/migratekit v1.10.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/redis/go-redis/v9 v9.22.0 // indirect
