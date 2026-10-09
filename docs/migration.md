@@ -12,6 +12,8 @@ ContentKit has a PostgreSQL migration chain and a ClickHouse baseline:
 | PostgreSQL | `migrations.Postgres` | `postgres/0006_drop_media_slots.up.sql` | drops the slot index and its backfill (one media model) |
 | PostgreSQL | `migrations.Postgres` | `postgres/0007_inline_image_names.up.sql` | renames post and poll image URL columns to image names (refuses legacy URLs; coordinated cutover, see HOST_INTEGRATION) |
 | PostgreSQL | `migrations.Postgres` | `postgres/0008_canonical_interaction_ids.up.sql` | merges case spellings of interaction content ids and refuses them (`CHECK content_id = lower(content_id)`) |
+| PostgreSQL | `migrations.Postgres` | `postgres/0009_comment_bans.up.sql` | comment bans (`content_comment_bans`) |
+| PostgreSQL | `migrations.Postgres` | `postgres/0010_content_codes.up.sql` | content codes and legacy aliases (`content_codes`, `content_code_aliases`, `contentkit_content_code()`); backfills codes for existing taxonomy nodes and posts |
 | ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, subject state, daily contributions, exposures, co-engagement and erasure fences |
 
 The baselines initialize fresh stores; PostgreSQL `0002` and later also upgrade
@@ -86,6 +88,10 @@ code that uses `0004` and `0005`, apply them and grant the host's runtime role
 read/write access to `content_media_slots` and `content_media_slot_backfill`
 (the media worker needs none). Existing slots enter the index at the first
 start: binding the media jobs to River schedules a one-time backfill.
+`0010` adds `content_codes` and `content_code_aliases`. The host's runtime
+role needs read/write access to both and EXECUTE on `contentkit_content_code()` (PUBLIC by default).
+Taxonomy and post writes register codes from then on, so grant the access
+before deploying code that uses `0010`.
 
 ## Host relationships
 

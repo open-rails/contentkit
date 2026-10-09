@@ -79,7 +79,79 @@ it after an import; `contentref.IDAt(createdAt)` (random low bits) only when the
 is generated once and stored. Import its media
 from the old system straight into ContentKit under the UUID `content_id`,
 idempotently (skip items whose manifest already exists). No integer content ids
-in storage, no permanent aliases.
+in storage; legacy URLs resolve through content-code aliases
+([Content URLs](#content-urls-contenturl)).
+
+## Content URLs (`contenturl`)
+
+Every content page is `[/{lang}]/{route}/{CODE}[/{slug}]`, e.g.
+`/watch/G4VRQ3ZQ5/night-before-the-counteroffensive`. The server reads only the
+code; sub-pages are query parameters (`/g/{CODE}/{slug}?p=12`), so the slug can
+always be omitted. The host chooses each kind's route; ContentKit owns the
+code, resolution and canonicalization.
+
+- **Codes** are 9 uppercase Crockford base32 characters (no `I L O U`), with at
+  least one letter, random, unique per tenant across every kind, assigned once,
+  never changed or reused. `ParseCode` accepts any case, `O`→`0`, `I`/`L`→`1`
+  and hyphens. A request with another spelling of the code is redirected to the
+  canonical one.
+- **Registration.** Taxonomy nodes and posts register themselves (node slugs
+  come from canonical names, one per language; post slugs from the post slug or
+  title). Host content calls `Put` in the transaction that creates it, and again
+  when a title changes. `Put` is idempotent, so the host backfills existing rows
+  by calling it over them.
+
+```go
+urls, _ := contenturl.New(contenturl.Options{Pool: pool, Schema: "hentai0", Tenant: "hentai0"})
+links, _ := urls.WithSQLTx(tx).Put(ctx, contenturl.Entry{ContentRef: ref, Title: video.Title,
+	Titles: map[string]string{"es": video.TitleES}}) // links[0].Code, .Slug, .Slugs
+byRef, _ := urls.Links(ctx, refs)                    // list pages: code and slugs for each ref
+_ = urls.Merge(ctx, duplicate, survivor)             // the duplicate's URL redirects to the survivor
+```
+
+- **Canonical redirects.** The router maps kinds to routes. Mount its middleware
+  in front of the pages, or in front of the SPA shell. A missing or stale slug,
+  a wrong route, a merged code or a trailing slash gets a 301 to the canonical
+  path, with the query kept. The canonical path carries the language prefix and
+  that language's slug. `Visibility` returns `Visible`, `Hidden` or `Gone`.
+  `Hidden` behaves like an unknown code and serves the host's 404 without
+  leaking the slug. `Gone` answers 410. For posts, use
+  `rt.Content.PostVisibility`. For taxonomy nodes, map the node state: a
+  deleted node is `Gone`, and merged nodes already resolve to their survivor.
+  A canonical request reaches the page
+  with `FromContext(ctx)`, and gets a `Link: <…>; rel="canonical"` header when
+  `BaseURL` is set.
+
+```go
+router, _ := contenturl.NewRouter(urls, contenturl.RouterOptions{
+	Routes: contenturl.Routes{"video": "watch", "series": "series", "tag": "tag", "post": "blog"},
+	Languages: []string{"en", "es"}, BaseURL: "https://hentai0.com",
+	Visibility: func(r *http.Request, l contenturl.Link) (contenturl.Visibility, error) { /* drafts, removals */ },
+})
+mux.Handle("/", router.Middleware(spa))
+mux.Handle("/api/content-urls/", http.StripPrefix("/api/content-urls", router.Handler())) // GET /{code}[?lang=]
+```
+
+- **Legacy aliases.** An import records the identifiers of the old site in the
+  same transaction as the content. Each alias is `(source, legacy_kind, key)`,
+  for example `("hentai0-legacy", "video", "346791971")` or
+  `("doujins-legacy", "tag-name", "netorare")`. An alias is written once:
+  repeating it is a no-op and re-pointing it is `ErrConflict`. The host keeps
+  its legacy URL-shape rules. It calls `DecideAlias` and answers a 301 to
+  `Path` (Matched), a 410 (Gone) or a 404 (neither), in one hop and before
+  language negotiation.
+- **Routes are reserved.** A content route serves only content pages: under
+  it, any 9-character segment with a letter is read as a code, and a third
+  segment as a slug. So `/watch/{CODE}/comments` redirects to the page. Put
+  sub-pages in the query string, and keep other host pages off content routes.
+- **Browser.** `@openrails/contentkit-urls` (a release asset) parses codes and
+  builds paths from API links (`{content_kind, code, slug, slugs}`). Its
+  `canonical` result drives a client-side `history.replaceState`. It never
+  computes slugs; those come from the server.
+- **Tables.** `content_codes(tenant_id, code, content_kind, content_id, slug,
+  slugs, merged_into)` and `content_code_aliases`. Host SQL may join
+  `content_codes` on `(tenant_id, content_kind, content_id)`, for example for
+  sitemaps.
 
 ## Interactions (`content`)
 

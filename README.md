@@ -45,6 +45,7 @@ another tenant is an error, never remapped.
 | Package | Owns |
 |---|---|
 | `contentref` | `ContentRef`, `ContentKey`, `TaxonomyID` |
+| `contenturl` | uniform content URLs `[/{lang}]/{route}/{CODE}[/{slug}]`: permanent 9-character codes per tenant, slugs, merges, legacy aliases, canonical redirects, a JSON lookup; the browser half is `sdk/urls` ([Content URLs](HOST_INTEGRATION.md#content-urls-contenturl)) |
 | `access` | `Actor`, the batch `ContentResolver` port (`Resolve(ctx, refs, actor) → map[ContentKey]Resolution`; an omitted ref denies) and its `Resolution{Ref, Visible, Accessible, Editor}`, shared by `content` and media; paywalls: the entitlement key grammar, item rules, the `Gate`, its listing `Filter` (with a SQL predicate) and the request memo over the `Entitlements` port ([Paywalls and listings](#paywalls-and-listings-access)) |
 | `access/accesstest` | an in-memory `Entitlements` and `CountingEntitlements`, for "one billing read per page" tests |
 | `media` | the registry (`Config`, kinds, upload paths, private and public presets), ordered manifests with provenance and conditional-write edits, the `Store` port, direct uploads and commit ops with their HTTP API, reads and HLS playlists, the optional `UploadLimiter`, and the sweep, deletion, `Expose` and relays as River jobs |

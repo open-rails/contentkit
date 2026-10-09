@@ -1,0 +1,39 @@
+name: sdk-urls
+'on':
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+    - 'sdk/urls/**'
+    - 'contenturl/testdata/**'
+    - '!**.md'
+    - '.github/workflows/sdk-urls.yaml'
+  workflow_call: {}
+permissions:
+  contents: read
+concurrency:
+  group: sdk-urls-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  sdk-urls:
+    name: URLs SDK
+    if: '!github.event.pull_request.draft'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: sdk/urls
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - uses: pnpm/action-setup@v4
+      with:
+        package_json_file: sdk/urls/package.json
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: pnpm
+        cache-dependency-path: sdk/urls/pnpm-lock.yaml
+    - run: pnpm install --frozen-lockfile --ignore-scripts
+    - run: pnpm check
