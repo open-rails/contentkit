@@ -436,6 +436,73 @@ operations that finish remotely after the caller sees a timeout. A failed sink
 stays queued under a new revision. Callbacks must be bounded, read-only and
 respect cancellation.
 
+## Listing with access
+
+A paywalled listing filters in SQL, not after `LIMIT`: hide mode then
+returns full keyset pages. `gate.Filter(ctx, actor)` reads the viewer once
+(see README [Paywalls and listings](README.md#paywalls-and-listings-access));
+`Filter.SQL(access.Columns{…})` turns it into one boolean predicate with pgx
+named args (prefix `ck_`, or `ArgPrefix`). Its text depends only on the
+columns, so one prepared statement serves every viewer. Put the same
+predicate inside a search `Eligibility` to get hide mode in keyword search.
+
+```go
+postCols := access.Columns{ID: "p.id", Kind: "post", Level: "p.access_policy",
+	Levels: map[string]access.Level{"public": access.Public, "membership": access.MembersLevel,
+		"ppv": access.PPV, "members_ppv": access.MembersPPV},
+	Scope: "p.channel_id", ScopeKind: "channel"}
+// One tier flag (Doujins, Hentai0):
+galleryCols := access.Columns{ID: "g.id", Kind: "gallery", TierName: "premium",
+	Level:  "CASE WHEN g.is_premium THEN 'premium' ELSE 'public' END",
+	Levels: map[string]access.Level{"public": access.Public, "premium": access.TierLevel}}
+```
+
+- `Kind` must be a `GateConfig.OwnedKinds` entry, `ScopeKind` a
+  `MemberKinds` entry and `TierName` a declared tier: the filter then holds
+  the viewer's whole holdings and the predicate is exact. `Tier` instead of
+  `TierName` names a per-row tier column.
+- A level value missing from `Levels` is never admitted, owned or not.
+- Every `Columns` string is trusted SQL; never build one from input.
+- Lock mode (locked items shown with a paywall) uses `f.Allows(item)` per row
+  and `gate.Decide` for `Sell`/`Requires`, with no further read.
+
+Indexes the listing needs:
+
+| Listing | Index | Plan |
+|---|---|---|
+| Global feed | `(published_at DESC, id DESC) WHERE <published>` | index scan in order, access as a filter, stops at `LIMIT n+1` |
+| Scope page | `(channel_id, published_at DESC, id DESC) WHERE <published>` | `channel_id = $1` index condition |
+| Sparse visibility | the two above and the primary key | `Filter.Branches`, below |
+
+A viewer who sees a small fraction of a feed scans far for each page. Split
+the predicate by access class with `Filter.Branches` (public, tier, members,
+owned, candidates; classes that can match nothing are left out), limit each
+branch on its own index and merge:
+
+```sql
+SELECT * FROM (
+  (SELECT … FROM posts p WHERE <published> AND <keyset> AND <branch 1> ORDER BY p.published_at DESC, p.id DESC LIMIT @n)
+  UNION
+  (SELECT … FROM posts p WHERE <published> AND <keyset> AND <branch 2> ORDER BY p.published_at DESC, p.id DESC LIMIT @n)
+) page ORDER BY published_at DESC, id DESC LIMIT @n
+```
+
+**Truncation.** A keyspace holding more than `HeldLimit` keys (default 1,000,
+at most 10,000) leaves `Filter.Complete(kind)` false, and the predicate also
+admits that keyspace's candidate rows. `gate.Settle(ctx, actor, f, items)`
+decides them in one exact read and returns `keep` and `short` (a dropped row:
+the page may hold fewer rows). It reads nothing when the filter decided every
+row, so call it on every hide-mode page. Only viewers past the limit get
+short pages.
+
+**Serving.** `gate.Resolver(facts)` is the `ContentResolver` for content and
+media: one `Facts` query per batch, at most one billing read, and
+`Accessible = Visible && !Withheld && (Editor || Bypass || allowed)`. In a
+request that already read the `Filter` it costs nothing for items of declared
+kinds. A media token (1 h TTL in 4 h
+windows) opens every private file of its item, so a refund or revocation
+reaches a viewer who holds one within about 5 hours.
+
 ## Media
 
 Media is a self-describing file system in one private bucket; no database

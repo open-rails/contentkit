@@ -1,6 +1,9 @@
-// Package access is the host's gating vocabulary shared by content
-// interactions and media: the authenticated Actor, the ContentResolver port
-// and its Resolution. It has no dependencies beyond contentref.
+// Package access is the gating vocabulary shared by content interactions and
+// media: the authenticated Actor, the ContentResolver port and its
+// Resolution; and the paywall model over billing entitlements: the key
+// grammar (content:, members:, tiers), item rules, the Gate, its listing
+// Filter with a SQL predicate, and the per-request memo. It has no
+// dependencies beyond contentref; billing is the Entitlements port.
 package access
 
 import (

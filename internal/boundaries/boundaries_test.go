@@ -31,6 +31,7 @@ type rule struct {
 var rules = []rule{
 	{pkgs: []string{m + "/contentref", m + "/media/token"}, only: []string{}},
 	{pkgs: []string{m + "/access"}, only: []string{m + "/contentref"}},
+	{pkgs: []string{m + "/access/accesstest"}, only: []string{m + "/access", m + "/contentref"}},
 	{pkgs: []string{m + "/media/layout"}, only: []string{m + "/media/token"}},
 	// The media gateway: stdlib, token, layout and the SigV4 signer. No DB, River, S3
 	// client, CGO, media runtime or content/search/signal.

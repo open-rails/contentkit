@@ -45,7 +45,8 @@ another tenant is an error, never remapped.
 | Package | Owns |
 |---|---|
 | `contentref` | `ContentRef`, `ContentKey`, `TaxonomyID` |
-| `access` | `Actor`, the batch `ContentResolver` port (`Resolve(ctx, refs, actor) → map[ContentKey]Resolution`; an omitted ref denies) and its `Resolution{Ref, Visible, Accessible, Editor}`, shared by `content` and media |
+| `access` | `Actor`, the batch `ContentResolver` port (`Resolve(ctx, refs, actor) → map[ContentKey]Resolution`; an omitted ref denies) and its `Resolution{Ref, Visible, Accessible, Editor}`, shared by `content` and media; paywalls: the entitlement key grammar, item rules, the `Gate`, its listing `Filter` (with a SQL predicate) and the request memo over the `Entitlements` port ([Paywalls and listings](#paywalls-and-listings-access)) |
+| `access/accesstest` | an in-memory `Entitlements` and `CountingEntitlements`, for "one billing read per page" tests |
 | `media` | the registry (`Config`, kinds, upload paths, private and public presets), ordered manifests with provenance and conditional-write edits, the `Store` port, direct uploads and commit ops with their HTTP API, reads and HLS playlists, the optional `UploadLimiter`, and the sweep, deletion, `Expose` and relays as River jobs |
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
 | `media/image` | libvips (CGO) producer: Image presets, public presets, zips, editor views, `PublishDefaults` |
@@ -55,7 +56,6 @@ another tenant is an error, never remapped.
 | `media/video` | ffmpeg producers: byte-range fMP4 HLS ladders with audio, subtitle and sprite tracks, MP4 per rung, audio, subtitles, frame grabs; `Frames` for the frame picker |
 | `media/worker` | the media worker: one process for every producer, built from the host's registry (`cmd/media-worker` is the stock build) |
 | `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
-| `media/tiered` | optional `public`/`members`/`ppv`/`members_ppv`/`premium` policy over an entitlement `Checker` (hosts adapt OpenRails `CheckEntitlements`) |
 | `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; the `Identity`/`Authorizer`/`UserEnricher`/`ContentProcessor` ports, post and poll images through `Media`, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
 | `worker` | one tenant's document maintenance: dirty queue, bounded backfill, sink delivery |
@@ -66,6 +66,7 @@ another tenant is an error, never remapped.
 | `eval` | lexical golden-case evaluation, reports, baselines |
 | `migrations` | PostgreSQL migration chain and ClickHouse baseline |
 | `adapters/authkit` | its own module (opt-in): account avatars and content authors from AuthKit; see HOST_INTEGRATION "Account avatars" |
+| `adapters/openrails` | its own module (opt-in): `access.Entitlements` over OpenRails `CheckEntitlements` (one request per read) |
 | root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (all PostgreSQL features and optional ClickHouse signals), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
 
 ## Install
@@ -181,6 +182,63 @@ may change.
 5xx bodies carry no cause: it goes to `Options.Logger` (`slog.Default()` when
 unset) with the request method, path, status and duration. Postgres constraint
 names, driver text and stack traces are logged, never served.
+
+## Paywalls and listings (`access`)
+
+ContentKit gives entitlement keys meaning; OpenRails grants them and never
+parses one. Keys are constructed, never typed:
+
+| Key | Grants |
+|---|---|
+| `access.Own(ref)` → `content:<tenant>:<kind>:<id>` | one work (bought, rented, bundled, granted), at every level |
+| `access.Members(scope)` → `members:<tenant>:<kind>:<id>` | membership of a scope: a channel, series, collection |
+| `access.Tier("premium")` → `premium` | a merchant-wide tier, interpreted only when declared in `GateConfig.Tiers` |
+
+Ids are content ids, keys are work-level (a version shares its work's key),
+tenants and kinds match `[a-z0-9_-]{1,64}`, and `ParseKey` refuses anything
+else. An item's `Rule` is a host fact: `Public`, `TierLevel` (any of
+`Tiers`), `MembersLevel` (`Scope`), `PPV`, or `MembersPPV` (owned; buying it
+requires the membership).
+
+```go
+gate, _ := access.NewGate(access.GateConfig{Entitlements: ckopenrails.Entitlements(bill), Tenant: "onlydemo",
+	Tiers: []string{"premium"}, MemberKinds: []string{"channel"}, OwnedKinds: []string{"post"}})
+
+f, err := gate.Filter(ctx, actor) // one billing read: the tiers and the keys held per keyspace
+pred, args, _ := f.SQL(postColumns) // hide mode: access inside the listing query, so pages are full
+rows, _ := pool.Query(ctx, `SELECT `+cols+` FROM posts p WHERE p.state = 'published'
+	AND (p.published_at, p.id) < (@cursor_at, @cursor_id) AND `+pred+`
+	ORDER BY p.published_at DESC, p.id DESC LIMIT @n`, pgx.NamedArgs(args))
+keep, short, _ := gate.Settle(ctx, actor, f, items) // free unless a keyspace was truncated
+ok, known := f.Allows(item)                         // lock mode: pure, no I/O
+ds, _ := gate.Decide(ctx, actor, items)             // paywalls: Allowed, Sell, Requires
+reg, _ := media.NewRegistry(media.Config{ /* … */ Hooks: media.Hooks{Resolver: gate.Resolver(facts)}})
+```
+
+- `access.WithMemo(ctx)` keeps the viewer's `Filter` and the keys read for
+  the request, so `Filter` then `Decide` (or a resolver) is one read. The
+  content and media handlers install it; install it in host middleware too.
+- `Decide` and `Settle` take a batch; there is no single-item check.
+- A failed read fails closed per item: `Filter.Unknown()` (its SQL admits
+  public rows only), `Decision.Unknown` (denied, nothing offered), and an
+  error wrapping `access.ErrUnavailable`. Public content keeps serving.
+- `GateConfig.Claims` (optional) answers a declared tier present in the
+  verified token without a read; a refund then lags by the token TTL.
+- `accesstest.CountingEntitlements` lets host tests assert one read per page.
+
+| Operation | Billing reads |
+|---|---|
+| Listing page, lock or hide mode | 1 (`Filter`) |
+| Hydration, item pages, comments in the same request | 0 (memo; items of declared kinds) |
+| Media item read (token mint) | 1 (the item's own, membership and tier keys) |
+| Media files, HLS segments | 0 (the token covers them) |
+| Viewer holding more than `HeldLimit` keys in a keyspace (hide mode) | +1 per page (`Settle`) |
+| Anonymous viewer | 0 |
+
+Embedded OpenRails answers a read with two index-backed statements on the
+host's Postgres; standalone adds one HTTPS round trip. HOST_INTEGRATION
+[Listing with access](HOST_INTEGRATION.md#listing-with-access) covers columns,
+indexes, UNION listings and truncation.
 
 ## Media
 
@@ -341,8 +399,9 @@ period old, unexpected public names at once, `temp/` by age); folder
 deletion (with a late-upload second pass and quota release); `Expose`;
 `Regenerate`; `SweepOrphans`; and the worker's relays.
 
-**Tiered access** (`media/tiered`) maps `public`/`members`/`ppv`/
-`members_ppv`/`premium` to `Resolution`s over an entitlement `Checker`.
+**Paywalls**: `Hooks.Resolver` is `gate.Resolver(facts)` (see
+[Paywalls and listings](#paywalls-and-listings-access)); one item read is one
+billing read, and its token covers every file and segment.
 
 **Browser SDK** (`sdk/upload`, `@openrails/contentkit-upload`, attached to
 each release): hashing, uploads, commit ops, reads, `waitFor`, the frame

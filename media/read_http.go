@@ -49,7 +49,8 @@ type HandlerOptions struct {
 //	GET /{kind}/{id}/hls/{dir}sprite.vtt
 //
 // Every response is "private, no-store"; playlists carry the item cookie
-// like reads. Signed responses log the viewer, item, access and expiry.
+// like reads. Signed responses log the viewer, item, access and expiry. Each
+// request runs in an access.WithMemo context.
 func (r *Reader) Handler(o HandlerOptions) http.Handler {
 	log := o.Logger
 	if log == nil {
@@ -106,7 +107,10 @@ func (r *Reader) Handler(o HandlerOptions) http.Handler {
 		w.Header().Set("Content-Type", contentType)
 		_, _ = w.Write(body)
 	})
-	return limited(mux, o, log)
+	h := limited(mux, o, log)
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		h.ServeHTTP(w, req.WithContext(access.WithMemo(req.Context())))
+	})
 }
 
 func (r *Reader) serveRead(req *http.Request, o HandlerOptions) (*ReadResult, *Grant, error) {
