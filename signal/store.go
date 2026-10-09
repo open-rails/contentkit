@@ -236,6 +236,10 @@ SETTINGS insert_deduplication_token = ?`, st.db, canon, TypeView, refColumns)
 	if err := st.conn.Exec(ctx, state, tenant, tenant, insertToken); err != nil {
 		return fmt.Errorf("signal: project state: %w", err)
 	}
+	months, err := st.projectionMonths(ctx, tenant)
+	if err != nil {
+		return err
+	}
 
 	daily := fmt.Sprintf(`INSERT INTO %[1]s.subject_content_daily
 (tenant, %[5]s, subject_kind, subject, day, events, views, completions, active_s,
@@ -263,12 +267,49 @@ FROM (
     GROUP BY %[5]s, subject_kind, subject, day
     HAVING events > 0 OR prior_events > 0
 )
-WHERE version > 0
+WHERE version > 0 AND toYYYYMM(day) IN ?
 SETTINGS insert_deduplication_token = ?`, st.db, canon, projectionKeyFilter, TypeView, refColumns)
-	if err := st.conn.Exec(ctx, daily, tenant, tenant, tenant, insertToken); err != nil {
-		return fmt.Errorf("signal: project daily: %w", err)
+	// Filter only the output: the window must retain the full key's generation.
+	// ClickHouse's default max_partitions_per_insert_block is 100.
+	const partitionsPerInsert = 100
+	for start := 0; start < len(months); start += partitionsPerInsert {
+		batch := months[start:min(start+partitionsPerInsert, len(months))]
+		if err := st.conn.Exec(ctx, daily, tenant, tenant, tenant, batch, contentref.NewID()); err != nil {
+			return fmt.Errorf("signal: project daily: %w", err)
+		}
 	}
 	return nil
+}
+
+// Raw months include every canonical month, even while revisions are arriving.
+// Prior positive months must also be visited to zero orphan days after revisions.
+func (st *Store) projectionMonths(ctx context.Context, tenant string) ([]uint32, error) {
+	q := fmt.Sprintf(`SELECT DISTINCT month FROM (
+    SELECT toYYYYMM(toDate(occurred_at)) AS month
+    FROM %[1]s.signals
+    WHERE tenant = ? AND %[2]s AND %[3]s
+    UNION ALL
+    SELECT toYYYYMM(day) AS month
+    FROM %[1]s.subject_content_daily FINAL
+    WHERE tenant = ? AND %[2]s AND %[3]s AND events > 0
+) ORDER BY month`, st.db, projectionKeyFilter, st.notErased())
+	rows, err := st.conn.Query(ctx, q, tenant, tenant)
+	if err != nil {
+		return nil, fmt.Errorf("signal: projection months: %w", err)
+	}
+	defer rows.Close()
+	var months []uint32
+	for rows.Next() {
+		var month uint32
+		if err := rows.Scan(&month); err != nil {
+			return nil, fmt.Errorf("signal: projection months: %w", err)
+		}
+		months = append(months, month)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("signal: projection months: %w", err)
+	}
+	return months, nil
 }
 
 // RepairOptions bounds one RepairProjections call.
