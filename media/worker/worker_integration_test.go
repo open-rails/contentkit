@@ -729,8 +729,119 @@ func TestHostsShareADatabase(t *testing.T) {
 	if n, err := a.queue.Cancel(ctx, clip); err != nil || n != 0 {
 		t.Fatalf("host a cancelled %d of host c's jobs: %v", n, err)
 	}
-	if n, err := qc.Cancel(ctx, clip); err != nil || n == 0 {
-		t.Fatalf("host c cancelled %d: %v", n, err)
+	// Recovery cancels old work and enqueues its replacement in one
+	// transaction. A later failure must preserve the original queue.
+	jobTable := pgx.Identifier{c, "river_job"}.Sanitize()
+	var oldJob int64
+	if err := a.pool.QueryRow(ctx, `SELECT id FROM `+jobTable+` WHERE kind = $1`,
+		(workqueue.VideoPlanArgs{}).Kind()).Scan(&oldJob); err != nil {
+		t.Fatal(err)
+	}
+	runTable := pgx.Identifier{c, "encode_run"}.Sanitize()
+	refJSON, err := json.Marshal(clip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// UUID order is deliberately opposite to rendition progression.
+	lowRun, highRun := "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000001"
+	if _, err := a.pool.Exec(ctx, `INSERT INTO `+runTable+`
+(id, tenant_id, ref, file_name, source_name, source_key, source_etag, spec, rung, class, probe, state)
+VALUES ($3, $1, $2, 'source.mp4', 'source.mp4', 'source', 'etag', 'hls', 240, '', '{}', 'encoding'),
+       ($4, $1, $2, 'source.mp4', 'source.mp4', 'source', 'etag', 'hls', 480, '', '{}', 'planned')`,
+		clip.TenantID, refJSON, lowRun, highRun); err != nil {
+		t.Fatal(err)
+	}
+	runStates := func(want []string) {
+		t.Helper()
+		var got []string
+		if err := a.pool.QueryRow(ctx, `SELECT array_agg(state ORDER BY rung) FROM `+runTable+` WHERE ref = $1`, refJSON).Scan(&got); err != nil || !slices.Equal(got, want) {
+			t.Fatalf("encode runs: states=%v err=%v; want %v", got, err, want)
+		}
+	}
+	replace := func(tx pgx.Tx) error {
+		n, err := qc.CancelTx(ctx, tx, clip)
+		if err != nil {
+			return err
+		}
+		if n != 2 {
+			return fmt.Errorf("cancelled %d jobs, want image and video jobs", n)
+		}
+		return qc.EnqueueTx(ctx, tx, media.ProcessJob{Ref: clip})
+	}
+	rolledBack := errors.New("rollback after replacement")
+	// finishRun holds the current rung, then releases the next. Cancellation
+	// must wait on that first lock without holding the later rung itself.
+	lockCtx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	finishing, err := a.pool.Begin(lockCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer finishing.Rollback(ctx)
+	if _, err := finishing.Exec(lockCtx, `SELECT id FROM `+runTable+` WHERE id = $1 FOR UPDATE`, lowRun); err != nil {
+		t.Fatal(err)
+	}
+	cancelPID, cancelled := make(chan int), make(chan error, 1)
+	go func() {
+		cancelled <- pgx.BeginFunc(lockCtx, a.pool, func(tx pgx.Tx) error {
+			var pid int
+			if err := tx.QueryRow(lockCtx, "SELECT pg_backend_pid()").Scan(&pid); err != nil {
+				return err
+			}
+			cancelPID <- pid
+			if err := replace(tx); err != nil {
+				return err
+			}
+			return rolledBack
+		})
+	}()
+	var pid int
+	select {
+	case pid = <-cancelPID:
+	case err := <-cancelled:
+		t.Fatalf("cancel did not start: %v", err)
+	}
+	eventually(t, "cancellation waiting on the current rung", 5*time.Second, func() bool {
+		var blocked bool
+		err := a.pool.QueryRow(lockCtx, "SELECT cardinality(pg_blocking_pids($1)) > 0", pid).Scan(&blocked)
+		return err == nil && blocked
+	})
+	if _, err := finishing.Exec(lockCtx, `SELECT id FROM `+runTable+` WHERE id = $1 FOR UPDATE`, highRun); err != nil {
+		t.Fatalf("completion and cancellation deadlocked: %v", err)
+	}
+	if err := finishing.Commit(lockCtx); err != nil {
+		t.Fatal(err)
+	}
+	err = <-cancelled
+	if !errors.Is(err, rolledBack) {
+		t.Fatal(err)
+	}
+	states := func() []string {
+		t.Helper()
+		rows, err := a.pool.Query(ctx, `SELECT state FROM `+jobTable+` ORDER BY id`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := states(); !slices.Equal(got, []string{"available", "available"}) {
+		t.Fatalf("rollback changed the queue: %v", got)
+	}
+	runStates([]string{"encoding", "planned"})
+	if err := pgx.BeginFunc(ctx, a.pool, replace); err != nil {
+		t.Fatal(err)
+	}
+	if got := states(); !slices.Equal(got, []string{"cancelled", "cancelled", "available", "available"}) {
+		t.Fatalf("replacement did not commit together: %v", got)
+	}
+	runStates([]string{"cancelled", "cancelled"})
+	var oldState string
+	if err := a.pool.QueryRow(ctx, `SELECT state FROM `+jobTable+` WHERE id = $1`, oldJob).Scan(&oldState); err != nil || oldState != "cancelled" {
+		t.Fatalf("original job: state=%s err=%v", oldState, err)
 	}
 	for _, bad := range []string{"", "Media", "media-worker", "a.b", strings.Repeat("x", 64)} {
 		if _, err := workqueue.New(a.pool, a.reg, bad); err == nil {
