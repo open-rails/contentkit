@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/open-rails/contentkit/contentref"
@@ -183,32 +182,9 @@ func PublicURL(base, namespace, kind, id, name string) string {
 	return strings.TrimRight(base, "/") + layout.URLPrefix + layout.Prefix(namespace, kind, id) + layout.AreaPublic + "/" + name
 }
 
-// SrcSet is a srcset over a public template's widths: "{url} 230w, …".
-func SrcSet(base, namespace, kind, id, to string, widths []int) string {
-	set := make([]string, len(widths))
-	for i, w := range widths {
-		n := strconv.Itoa(w)
-		set[i] = PublicURL(base, namespace, kind, id, fill(to, map[string]string{"w": n})) + " " + n + "w"
-	}
-	return strings.Join(set, ", ")
-}
-
 // PublicURL is the URL of item ref's public name at the registry's BaseURL.
 func (r *Registry) PublicURL(ref contentref.ContentRef, name string) string {
 	return PublicURL(r.cfg.BaseURL, ref.TenantID, ref.ContentKind, ref.ContentID, name)
-}
-
-// SrcSet is the srcset of ref's public preset (by name), "" when the kind has none.
-func (r *Registry) SrcSet(ref contentref.ContentRef, preset string) string {
-	k, err := r.Kind(ref.ContentKind)
-	if err != nil {
-		return ""
-	}
-	p := k.public(preset)
-	if p == nil {
-		return ""
-	}
-	return SrcSet(r.cfg.BaseURL, ref.TenantID, ref.ContentKind, ref.ContentID, p.To, p.Widths)
 }
 
 // MarshalJSON is the registry as data (no hooks, defaults or Choose): the
