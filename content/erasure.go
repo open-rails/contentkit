@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/codes"
 )
 
 // ProviderDataEraser deletes personal data retained by optional moderator and
@@ -121,8 +122,29 @@ func (rt *Runtime) EraseSubjects(ctx context.Context, actorIDs []string) error {
  WHERE tenant_id=$1 AND user_id=ANY($2) AND moderation IN ('held','rejected')`, rt.tenant, ids); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE `+rt.store.t.posts+` SET title=coalesce(published_content->>'title',''), body=coalesce(published_content->>'body',''), excerpt=published_content->>'excerpt', author_id=CASE WHEN published_content IS NOT NULL THEN author_id ELSE '' END, moderation='rejected', moderation_reason=NULL, moderation_verdict=NULL, moderated_by=NULL, moderated_at=NULL, deleted_at=CASE WHEN published_content IS NOT NULL THEN deleted_at ELSE coalesce(deleted_at,clock_timestamp()) END, moderation_revision=moderation_revision+1, updated_at=clock_timestamp()
- WHERE tenant_id=$1 AND author_id=ANY($2) AND (moderation IN ('held','rejected') OR is_draft OR live_at > clock_timestamp())`, rt.tenant, ids); err != nil {
+	rows, err := tx.Query(ctx, `UPDATE `+rt.store.t.posts+` SET title=coalesce(published_content->>'title',''), body=coalesce(published_content->>'body',''), excerpt=published_content->>'excerpt', author_id=CASE WHEN published_content IS NOT NULL THEN author_id ELSE '' END, moderation='rejected', moderation_reason=NULL, moderation_verdict=NULL, moderated_by=NULL, moderated_at=NULL, deleted_at=CASE WHEN published_content IS NOT NULL THEN deleted_at ELSE coalesce(deleted_at,clock_timestamp()) END, moderation_revision=moderation_revision+1, updated_at=clock_timestamp()
+ WHERE tenant_id=$1 AND author_id=ANY($2) AND (moderation IN ('held','rejected') OR is_draft OR live_at > clock_timestamp())
+ RETURNING id, CASE WHEN deleted_at IS NULL THEN coalesce(nullif(slug, ''), title) ELSE '' END`, rt.tenant, ids)
+	if err != nil {
+		return err
+	}
+	// Their URL slugs follow the reverted titles; erased posts keep a bare code.
+	var reslug []codes.Entry
+	for rows.Next() {
+		var id, title string
+		if err := rows.Scan(&id, &title); err != nil {
+			rows.Close()
+			return err
+		}
+		if id == strings.ToLower(id) {
+			reslug = append(reslug, codes.Entry{Key: codes.Key{Kind: KindPost, ID: id}, Slug: codes.Slugify(title)})
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if _, err := codes.Put(ctx, codes.Pgx(tx), rt.store.qs, rt.tenant, reslug); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {

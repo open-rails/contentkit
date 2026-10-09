@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/media"
 )
@@ -561,6 +562,27 @@ func (p *posts) react(ctx context.Context, actor access.Actor, id string, value 
 }
 
 // loadByID returns a single non-deleted post (draft or published) of the tenant.
+// PostVisibility is what a post's public URL shows, for a host's
+// contenturl.RouterOptions.Visibility on the post kind: Visible when
+// published, Gone when deleted, Hidden otherwise (draft, scheduled, held,
+// rejected, unknown).
+func (rt *Runtime) PostVisibility(ctx context.Context, id string) (contenturl.Visibility, error) {
+	var deleted, published bool
+	err := rt.store.pool.QueryRow(ctx, `SELECT deleted_at IS NOT NULL, deleted_at IS NULL AND NOT is_draft AND moderation = 'approved'
+		AND (live_at IS NULL OR live_at <= now()) FROM `+rt.store.t.posts+` WHERE tenant_id = $1 AND id = $2`, rt.tenant, id).Scan(&deleted, &published)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return contenturl.Hidden, nil
+	case err != nil:
+		return contenturl.Hidden, err
+	case deleted:
+		return contenturl.Gone, nil
+	case published:
+		return contenturl.Visible, nil
+	}
+	return contenturl.Hidden, nil
+}
+
 // putCode gives the post its content code (contenturl), slugged from its slug,
 // else its title.
 func (p *posts) putCode(ctx context.Context, tx pgx.Tx, id, title string, slug *string) error {

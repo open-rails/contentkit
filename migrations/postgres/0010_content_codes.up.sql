@@ -94,7 +94,7 @@ SELECT n.tenant_id, n.kind AS content_kind, n.taxonomy_id AS content_id,
 FROM content_nodes n
 WHERE n.tenant_id <> '' AND n.taxonomy_id = lower(n.taxonomy_id)
 UNION ALL
-SELECT p.tenant_id, 'post', p.id, pg_temp.contentkit_slug(coalesce(p.slug, p.title)), '{}'::jsonb
+SELECT p.tenant_id, 'post', p.id, pg_temp.contentkit_slug(coalesce(nullif(p.slug, ''), p.title)), '{}'::jsonb
 FROM content_posts p
 WHERE p.deleted_at IS NULL AND p.tenant_id <> '' AND p.id = lower(p.id);
 

@@ -115,7 +115,10 @@ _ = urls.Merge(ctx, duplicate, survivor)             // the duplicate's URL redi
   path, with the query kept. The canonical path carries the language prefix and
   that language's slug. `Visibility` returns `Visible`, `Hidden` or `Gone`.
   `Hidden` behaves like an unknown code and serves the host's 404 without
-  leaking the slug. `Gone` answers 410. A canonical request reaches the page
+  leaking the slug. `Gone` answers 410. For posts, use
+  `rt.Content.PostVisibility`. For taxonomy nodes, map the node state: a
+  deleted node is `Gone`, and merged nodes already resolve to their survivor.
+  A canonical request reaches the page
   with `FromContext(ctx)`, and gets a `Link: <…>; rel="canonical"` header when
   `BaseURL` is set.
 
