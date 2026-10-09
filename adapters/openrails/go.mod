@@ -5,8 +5,8 @@ go 1.26.9
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/contentkit v0.0.0
-	github.com/open-rails/openrails v0.232.2
+	github.com/open-rails/contentkit v0.66.0
+	github.com/open-rails/openrails v0.233.0
 )
 
 require (
@@ -58,7 +58,7 @@ require (
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/mostynb/zstdpool-freelist v0.0.0-20201229113212-927304c0c3b1 // indirect
 	github.com/oasisprotocol/curve25519-voi v0.0.0-20251114093237-2ab5a27a1729 // indirect
-	github.com/open-rails/authkit v1.8.0 // indirect
+	github.com/open-rails/authkit v1.9.0 // indirect
 	github.com/open-rails/helpers v1.2.0 // indirect
 	github.com/open-rails/migratekit v1.10.0 // indirect
 	github.com/redis/go-redis/v9 v9.22.0 // indirect

@@ -3,8 +3,8 @@ module github.com/open-rails/contentkit/adapters/authkit
 go 1.26.6
 
 require (
-	github.com/open-rails/authkit v1.7.0
-	github.com/open-rails/contentkit v0.62.0
+	github.com/open-rails/authkit v1.9.0
+	github.com/open-rails/contentkit v0.66.0
 	github.com/open-rails/helpers v1.2.0
 )
 

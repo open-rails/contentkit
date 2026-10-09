@@ -58,9 +58,9 @@ VALUES ('contentkit_media_video', '{}', 5, $1, $2, $3, $4, $5, $6)`,
 	for key, want := range map[string]struct{ jobs, high int64 }{
 		"media_video_light/available/1": {2, 1},
 		"media_video_light/available/2": {1, 1},
-		"media_audio/running/1":   {1, 0},
-		"media_image/retryable/1": {1, 1},
-		"media_image/scheduled/4": {1, 0},
+		"media_audio/running/1":         {1, 0},
+		"media_image/retryable/1":       {1, 1},
+		"media_image/scheduled/4":       {1, 0},
 	} {
 		got, ok := byGroup[key]
 		if !ok || got.Jobs != want.jobs || got.HighAttemptJobs != want.high {
