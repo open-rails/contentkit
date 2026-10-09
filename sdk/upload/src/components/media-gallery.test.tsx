@@ -101,9 +101,9 @@ it("carousel: the arrow that reaches an end hands focus to the carousel, so arro
 
 it("the item's poster is drawn on its first video", () => {
   const two = read("full", [vid(0), vid(1)]);
-  const poster = { base: "https://m", namespace: "app", kind: "post", id: "1", to: "poster-{w}.webp", widths: [480], aspect: "16:9" };
+  const poster = { preset: "poster", renditions: [{ url: "https://m/v1/app/post/1/public/poster-480-generation.webp", w: 480, h: 270 }], aspect: "16:9" };
   render(<MediaGallery read={two} hlsBase={hlsBase} poster={poster} />);
-  const posterIn = (i: number) => document.querySelectorAll("[data-ckui=slide]")[i]!.querySelector("img[src*='poster-480.webp']");
+  const posterIn = (i: number) => document.querySelectorAll("[data-ckui=slide]")[i]!.querySelector(`img[src='${poster.renditions[0]!.url}']`);
   expect(posterIn(0)).not.toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
   expect(posterIn(1)).toBeNull();

@@ -9,8 +9,6 @@ import type { Crop, Edit, EncodeProgress, FileInfo } from "./wire.gen.js";
 
 export {
   editOutput,
-  reloadImage,
-  usePublicGeneration,
   useSlotCrop,
   useSlotImage,
   type SlotCropMode,

@@ -11,7 +11,7 @@ import { ja } from "../locales/ja.js";
 import { AvatarUpload, CoverUpload, ImageCropDialog, SlotEditError, SlotEditMenu, SlotEditor, SlotImage, UploadUiProvider, useSlotEditor } from "../ui.js";
 
 const item = { kind: "channel", id: "0192f000-0000-7000-8000-000000000007" };
-const preset = (name: string, aspect: string, widths: number[]) => ({ base: "https://m", namespace: "app", kind: "channel", id: item.id, to: `${name}-{w}.webp`, widths, aspect });
+const preset = (name: string, aspect: string, widths: number[]) => ({ preset: name, aspect, renditions: widths.map((w) => ({ url: `https://m/v1/app/channel/${item.id}/public/${name}-${w}-generation.webp`, w, h: name === "avatar" ? w : w / 3 })) });
 const avatar = preset("avatar", "1:1", [128, 256, 512]);
 const cover = preset("cover", "3:1", [1500, 3000]);
 const empty: ReadResult = { access: "full", expires: 0, total: 0, offset: 0, limit: 50, files: [] };
@@ -19,6 +19,7 @@ globalThis.fetch = vi.fn(async () => new Response(null)) as typeof fetch;
 
 function setup() {
   const s = new FakeServer();
+  s.publicImages.set(`${item.kind}/${item.id}`, [{ from: "avatar.png", ...avatar }, { from: "cover.png", ...cover }]);
   return { s, client: fakeClient(s) };
 }
 
@@ -30,7 +31,7 @@ it("SlotImage renders the preset's public files at its aspect, and a placeholder
   const { container, rerender } = render(<SlotImage image={cover} alt="cover" />);
   const img = screen.getByRole("img", { name: "cover" });
   // jsdom lays nothing out: an unmeasured box gets the narrowest width.
-  expect(img).toHaveAttribute("src", `https://m/v1/app/channel/${item.id}/public/cover-1500.webp`);
+  expect(img).toHaveAttribute("src", cover.renditions[0]!.url);
   expect(img).toHaveAttribute("height", "500");
   expect(container.firstElementChild).toHaveClass("ckui");
   expect(container.firstElementChild).toHaveStyle({ aspectRatio: "3" });
@@ -209,7 +210,7 @@ it("SlotEditor composes a host-styled overlay trigger: pick, then a Change / Edi
   await user.click(within(dialog).getByRole("button", { name: "Save" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(onChange).toHaveBeenCalledOnce();
-  expect(screen.getByRole("img", { name: "cover" }).getAttribute("src")).toContain("cover-1500.webp");
+  await waitFor(() => expect(screen.getByRole("img", { name: "cover" })).toHaveAttribute("src", cover.renditions[0]!.url));
 
   // Now the path has an upload: the same trigger opens a menu.
   const puts = s.puts.length;

@@ -88,6 +88,7 @@ function SlotUploadLayout({ variant, ...p }: SlotUploadProps & { variant: Varian
   const { t } = useMessages();
   const s = useSlotEditor();
   const { crop, has, busy, disabled } = s;
+  const image = { preset: p.image?.preset ?? variant, aspect: s.image.aspect, renditions: s.image.renditions };
   const [dragging, setDragging] = useState(false);
   const aspect = crop.aspect;
   const target = p.targetWidth ?? (variant === "avatar" ? 512 : 3000);
@@ -127,7 +128,7 @@ function SlotUploadLayout({ variant, ...p }: SlotUploadProps & { variant: Varian
   return variant === "avatar" ? (
     <div className="flex items-center gap-4">
       <div className="relative size-20 shrink-0">
-        <SlotImage image={has ? p.image : null} round emptyLabel={t("avatar.empty")} className="size-full ring-1 ring-foreground/10" />
+        <SlotImage image={has ? image : null} round emptyLabel={t("avatar.empty")} className="size-full ring-1 ring-foreground/10" />
         {busy && <BusyOverlay round label={t(crop.status === "decoding" ? "progress.decoding" : "common.saving")} />}
       </div>
       <div className="grid min-w-0 gap-1">
@@ -152,7 +153,7 @@ function SlotUploadLayout({ variant, ...p }: SlotUploadProps & { variant: Varian
         onDrop={onDrop}
       >
         <SlotImage
-          image={has ? p.image : null}
+          image={has ? image : null}
           aspect={aspect}
           className="w-full rounded-none"
           placeholder={

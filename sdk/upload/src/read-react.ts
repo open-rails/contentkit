@@ -15,35 +15,37 @@ export interface UseRead {
 
 /**
  * A read of the item (client.read), refetched when ref or options change;
- * pass read to use one the host already has.
+ * pass read to use one the host already has. reload() fetches a replacement
+ * even with a supplied read; a changed supplied value takes precedence again.
  */
 export function useRead(client: UploadClient | null | undefined, ref: RefBody, o: ReadOptions & { read?: ReadResult | null } = {}): UseRead {
   const { read: given, prefix, offset, limit, download, editor } = o;
   const key = JSON.stringify([ref.kind, ref.id, prefix, offset, limit, download, editor]);
-  const [state, setState] = useState<{ key: string; read: ReadResult | null; loading: boolean; error?: UploadError }>({
+  const [state, setState] = useState<{ key: string; given?: ReadResult | null; read: ReadResult | null; loading: boolean; error?: UploadError }>({
     key,
     read: null,
     loading: given === undefined && !!client,
   });
-  const [tick, setTick] = useState(0);
+  const [request, setRequest] = useState<{ key: string; given?: ReadResult | null } | null>(null);
   const opts = useRef({ ref, prefix, offset, limit, download, editor });
   opts.current = { ref, prefix, offset, limit, download, editor };
   useEffect(() => {
-    if (given !== undefined || !client) return;
+    if (!client || given !== undefined && (request?.key !== key || request.given !== given)) return;
     const ctl = new AbortController();
-    setState((s) => ({ key, read: s.key === key ? s.read : null, loading: true }));
+    setState((s) => ({ key, given, read: s.key === key && s.given === given ? s.read : given ?? null, loading: true }));
     const { ref, ...q } = opts.current;
     client.read(ref, { ...q, signal: ctl.signal }).then(
-      (read) => setState({ key, read, loading: false }),
-      (e) => !ctl.signal.aborted && setState({ key, read: null, loading: false, error: e instanceof UploadError ? e : new UploadError("network", String(e)) }),
+      (read) => !ctl.signal.aborted && setState({ key, given, read, loading: false }),
+      (e) => !ctl.signal.aborted && setState({ key, given, read: null, loading: false, error: e instanceof UploadError ? e : new UploadError("network", String(e)) }),
     );
     return () => ctl.abort();
-  }, [client, key, given, tick]);
+  }, [client, key, given, request]);
+  const local = state.key === key && state.given === given;
   return {
-    read: given !== undefined ? given : state.key === key ? state.read : null,
-    loading: given === undefined && state.loading,
-    error: given === undefined ? state.error : undefined,
-    reload: useCallback(() => setTick((t) => t + 1), []),
-    set: useCallback((read: ReadResult) => setState({ key, read, loading: false }), [key]),
+    read: local ? state.read : given ?? null,
+    loading: local && state.loading,
+    error: local ? state.error : undefined,
+    reload: useCallback(() => setRequest({ key, given }), [key, given]),
+    set: useCallback((read: ReadResult) => setState({ key, given, read, loading: false }), [key, given]),
   };
 }

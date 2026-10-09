@@ -1,23 +1,15 @@
 import { ratio, type AspectRatio } from "./aspect.js";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { samePath, stem, type Progress, type UploadClient } from "./client.js";
 import { centeredCrop, constrainCrop, editedSize, rotation, sameEdit, type Size } from "./crop.js";
 import { UploadError } from "./errors.js";
 import { decodeImage, isAnimatedImage, type CropSource } from "./image.js";
-import { publicGeneration, publicRenditions, reloadPublic, subscribePublic, type PublicImage } from "./public.js";
+import { publicRenditions, type PublicImage } from "./public.js";
 import { useRead } from "./read-react.js";
 import type { Rendition } from "./rendition.js";
 import type { Edit, FileInfo, ReadResult, RefBody } from "./wire.gen.js";
 
 const asError = (e: unknown) => (e instanceof UploadError ? e : new UploadError("network", String(e)));
-
-/** Bumps after every reloadPublic: key images by it to show refetched public files. */
-export function usePublicGeneration(): number {
-  return useSyncExternalStore(subscribePublic, publicGeneration, publicGeneration);
-}
-
-/** Refetches a public preset's files after a change; nothing without a preset. */
-export const reloadImage = (image: PublicImage | null | undefined) => reloadPublic(publicRenditions(image).map((r) => r.url));
 
 export interface SlotImageOptions {
   ref: RefBody;
@@ -32,7 +24,7 @@ export interface SlotImageOptions {
 export interface UseSlotImage {
   /** The upload at path as an editor reads it; null when there is none. */
   file: FileInfo | null;
-  /** The public preset's files (always served: a missing one is the kind's default). */
+  /** The current published files; empty until the worker publishes them. */
   renditions: Rendition[];
   /** "W:H": the preset's, else "1:1". */
   aspect: AspectRatio;
@@ -57,7 +49,11 @@ export function useSlotImage(client: UploadClient | null | undefined, o: SlotIma
     },
     [read, path, update],
   );
-  const renditions = useMemo(() => publicRenditions(o.image), [o.image]);
+  const renditions = useMemo(() => {
+    if (!read) return publicRenditions(o.image);
+    const published = read.public?.find((p) => samePath(p.from, path) && (!o.image || p.preset === o.image.preset));
+    return publicRenditions(published);
+  }, [read, o.image, path]);
   return { file, renditions, aspect: o.image?.aspect || "1:1", loading: r.loading, error: r.error, reload: r.reload, set };
 }
 
@@ -82,8 +78,6 @@ export interface SlotCropOptions {
   aspect?: AspectRatio;
   /** "reject": refuse animated images before uploading (the preset's Image.Animation). */
   animation?: "reject";
-  /** The public preset to refetch after a save. */
-  image?: PublicImage | null;
   onSaved?: (file: FileInfo) => void;
   /** Replaces decodeImage (tests, custom decoders). */
   decode?: (file: File) => Promise<CropSource>;
@@ -214,7 +208,6 @@ export function useSlotCrop(client: UploadClient, o: SlotCropOptions): UseSlotCr
           saving({ phase: "processing", loaded: 0, total: 0 });
           file = await client.waitFor(ref, at, { signal: a.signal, timeout });
         }
-        await reloadImage(opts.current.image);
         if (a !== ctl.current) return undefined;
         set({ status: "done", file });
         opts.current.onSaved?.(file);

@@ -7,10 +7,14 @@ import type { CropSource } from "./image.js";
 import { useSlotCrop, useSlotImage } from "./slot-react.js";
 
 const ref = { kind: "channel", id: "0192f000-0000-7000-8000-000000000007" };
-const image = { base: "https://media.x", namespace: "app", kind: "channel", id: ref.id, to: "cover-{w}.webp", widths: [1500, 3000], aspect: "3:1" };
+const image = { preset: "cover", aspect: "3:1", renditions: [
+  { w: 1500, h: 500, url: "https://media.x/cover-1500-generation.webp" },
+  { w: 3000, h: 1000, url: "https://media.x/cover-3000-generation.webp" },
+] };
 
 function setup() {
   const s = new FakeServer();
+  s.publicImages.set(`${ref.kind}/${ref.id}`, [{ from: "cover.png", ...image }]);
   return { s, c: fakeClient(s) };
 }
 
@@ -26,25 +30,33 @@ it("useSlotImage reads the upload at its path and lists the preset's public file
   await waitFor(() => expect(result.current.loading).toBe(false));
   expect(result.current.file).toMatchObject({ path: "cover.png", w: 4000 });
   expect(result.current.aspect).toBe("3:1");
-  expect(result.current.renditions.map((r) => [r.w, r.h, r.url])).toEqual([
-    [1500, 500, `https://media.x/v1/app/channel/${ref.id}/public/cover-1500.webp`],
-    [3000, 1000, `https://media.x/v1/app/channel/${ref.id}/public/cover-3000.webp`],
-  ]);
+  expect(result.current.renditions).toEqual(image.renditions);
   expect(s.calls.at(-1)).toBe("/read");
+  const replacement = { from: "cover.png", preset: "cover", renditions: [{ url: "https://media.x/cover-next.webp", w: 400, h: 133 }] };
+  s.publicImages.set(`${ref.kind}/${ref.id}`, [replacement]);
+  act(() => result.current.reload());
+  await waitFor(() => expect(result.current.renditions).toEqual(replacement.renditions));
 });
 
-it("useSlotImage uses a given read without fetching, and has no file without an upload", () => {
+it("useSlotImage uses a given read without fetching, then adopts a fresh listing on reload", async () => {
   const { s, c } = setup();
   const read = { access: "full" as const, expires: 0, total: 0, offset: 0, limit: 50, files: [] };
   const { result } = renderHook(() => useSlotImage(c, { ref, path: "avatar", read }));
   expect([result.current.loading, result.current.file, result.current.aspect]).toEqual([false, null, "1:1"]);
   expect(s.calls).toEqual([]);
+  s.seed(ref, [{ path: "avatar.png", type: "image/png", size: 10, w: 400, h: 400 }]);
+  const replacement = { from: "avatar.png", preset: "avatar", renditions: [{ url: "https://media.x/avatar-next.webp", w: 400, h: 400 }] };
+  s.publicImages.set(`${ref.kind}/${ref.id}`, [replacement]);
+  act(() => result.current.reload());
+  await waitFor(() => expect(result.current.file?.path).toBe("avatar.png"));
+  expect(result.current.renditions).toEqual(replacement.renditions);
+  expect(s.calls).toEqual(["/read"]);
 });
 
-it("useSlotCrop: pick → edit → save uploads and puts the file with the edit, then refetches the public files", async () => {
+it("useSlotCrop: pick → edit → save uploads and puts the file with the edit, without reloading retired URLs", async () => {
   const { s, c } = setup();
   const saved = vi.fn();
-  const { result } = renderHook(() => useSlotCrop(c, { ref, path: "avatar", aspect: "1:1", decode, image, onSaved: saved }));
+  const { result } = renderHook(() => useSlotCrop(c, { ref, path: "avatar", aspect: "1:1", decode, onSaved: saved }));
   const file = png(2);
   await act(() => result.current.pick(file));
   expect(result.current.status).toBe("cropping");
@@ -61,10 +73,7 @@ it("useSlotCrop: pick → edit → save uploads and puts the file with the edit,
   expect(s.commits[0]).toEqual([{ op: "put", path: "avatar.png", blob: expect.stringMatching(/^u-/), edit }]);
   expect(saved).toHaveBeenCalledWith(expect.objectContaining({ path: "avatar.png", edit }));
   expect(source.revoke).toHaveBeenCalled();
-  expect(vi.mocked(fetch).mock.calls.map(([u, i]) => [String(u), i?.cache])).toEqual([
-    [`https://media.x/v1/app/channel/${ref.id}/public/cover-1500.webp`, "reload"],
-    [`https://media.x/v1/app/channel/${ref.id}/public/cover-3000.webp`, "reload"],
-  ]);
+  expect(fetch).not.toHaveBeenCalled();
 });
 
 it("useSlotCrop: recrop edits the committed upload from its editor view and waits for the render", async () => {

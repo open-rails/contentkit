@@ -11,7 +11,7 @@ import type { UploadError } from "../errors.js";
 import { asUploadError, useErrorReporter, useUploadClient, type UploadUiErrorHandler } from "../provider.js";
 import { useScopeProps } from "../scope.js";
 import type { PublicImage } from "../public.js";
-import { reloadImage, useSlotCrop, useSlotImage, type UseSlotCrop, type UseSlotImage } from "../slot-react.js";
+import { useSlotCrop, useSlotImage, type UseSlotCrop, type UseSlotImage } from "../slot-react.js";
 import type { FileInfo, ReadResult, RefBody } from "../wire.gen.js";
 import { Button } from "#ckui/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "#ckui/ui/dropdown-menu";
@@ -104,11 +104,11 @@ export function SlotEditor(p: SlotEditorProps) {
     file: image.file,
     aspect,
     animation: p.animation,
-    image: p.image,
     decode: p.decode,
     onError: report,
     onSaved: (f) => {
       image.set(f);
+      image.reload();
       onChange.current?.(f);
     },
   });
@@ -132,8 +132,8 @@ export function SlotEditor(p: SlotEditorProps) {
     setRemoveError(undefined);
     try {
       if (image.file) await client.commit(p.item, [{ op: "remove", path: image.file.path }]);
-      await reloadImage(p.image);
       image.set(null);
+      image.reload();
       onChange.current?.(null);
     } catch (e) {
       setRemoveError(asUploadError(e));
