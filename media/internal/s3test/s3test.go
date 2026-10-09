@@ -6,8 +6,8 @@
 //	CONTENTKIT_TEST_S3_BUCKET     existing bucket; unset creates (and removes) one per test
 //	CONTENTKIT_TEST_S3_REQUIRE    comma list that must hold: conditional,checksum,abort-lifecycle
 //
-// A backend without conditional PUT (Ceph RGW) needs a Postgres PGLocker for
-// manifest edits, taken from CONTENTKIT_TEST_URL (see Manifests).
+// Manifest writes require conditional PUT; the capability tests separately
+// cover refusal on an unqualified backend. PGLocker uses CONTENTKIT_TEST_URL.
 //
 // Every test writes under its own tenant prefix, removed with all versions on cleanup.
 package s3test

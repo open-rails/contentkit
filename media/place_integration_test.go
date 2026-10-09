@@ -19,17 +19,17 @@ import (
 // audit's PoC, a multipart upload declaring an existing blob's SHA-256 with
 // other bytes, is staged, and placing it names it by its own bytes: the blob
 // and the URLs serving it are unchanged, and a genuine upload over 64 MiB is
-// placed whole. A single PUT whose bytes the store did not check (Ceph RGW
-// enforces neither checksums nor If-None-Match) is placed by its bytes too.
+// placed whole. A single PUT whose bytes the store did not checksum is
+// placed by its bytes too; manifest writes still require conditional PUT.
 func TestPlaceNeverOverwritesABlob(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		env  func(*testing.T) *s3test.Env
 	}{
 		{"probed", func(t *testing.T) *s3test.Env { return s3test.Open(t) }},
-		{"no-checksum-no-conditional", func(t *testing.T) *s3test.Env {
+		{"no-checksum", func(t *testing.T) *s3test.Env {
 			e := s3test.Open(t)
-			caps := media.Capabilities{}
+			caps := media.Capabilities{ConditionalPut: true}
 			c := *e
 			c.Store, c.Config.Capabilities = e.WithCapabilities(t, caps), &caps
 			return &c

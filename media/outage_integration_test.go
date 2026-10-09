@@ -17,9 +17,8 @@ import (
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 )
 
-// A host builds media with the bucket down: construction never dials, reads
-// and edits fail with ErrUnavailable (503 over HTTP), and everything works
-// once the bucket answers and Check has probed its capabilities.
+// Construction never dials. Writes require a successful capability probe;
+// once qualified, storage outages still return ErrUnavailable.
 func TestStoreOutage(t *testing.T) {
 	env := s3test.Open(t)
 	proxy := tcpproxy.New(t, env.Config.Endpoint)
@@ -76,8 +75,8 @@ func TestStoreOutage(t *testing.T) {
 	if store.Capabilities() != (media.Capabilities{}) {
 		t.Fatalf("capabilities before a probe: %+v", store.Capabilities())
 	}
-	if err := edit(); !errors.Is(err, media.ErrUnavailable) {
-		t.Fatalf("edit while down: %v", err)
+	if err := edit(); !errors.Is(err, media.ErrConditionalPutRequired) {
+		t.Fatalf("edit before capability probe: %v", err)
 	}
 	if status, code := get(); status != http.StatusServiceUnavailable || code != "unavailable" {
 		t.Fatalf("read while down: %d %q", status, code)
@@ -96,6 +95,14 @@ func TestStoreOutage(t *testing.T) {
 	if status, _ := get(); status != http.StatusOK {
 		t.Fatalf("read after recovery: %d", status)
 	}
+	proxy.Down()
+	if err := edit(); !errors.Is(err, media.ErrUnavailable) {
+		t.Fatalf("qualified edit while down: %v", err)
+	}
+	if status, code := get(); status != http.StatusServiceUnavailable || code != "unavailable" {
+		t.Fatalf("qualified read while down: %d %q", status, code)
+	}
+	proxy.Up(t)
 	if err := store.Check(ctx, env.Tenant+"/"); err != nil {
 		t.Fatalf("health check once probed: %v", err)
 	}

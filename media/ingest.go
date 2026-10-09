@@ -98,6 +98,9 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 	if err != nil {
 		return IngestResult{}, err
 	}
+	if !u.o.Store.Capabilities().ConditionalPut {
+		return IngestResult{}, ErrConditionalPutRequired
+	}
 	limited := u.o.Limiter != nil && !grant.Exempt
 	if limited && req.Size == 0 {
 		return IngestResult{}, uploadErr(CodeInvalid, "a limited uploader must declare the size")

@@ -159,6 +159,9 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequ
 	if err != nil {
 		return Presigned{}, err
 	}
+	if !u.o.Store.Capabilities().ConditionalPut {
+		return Presigned{}, ErrConditionalPutRequired
+	}
 	out := Presigned{Path: path, ProcessOnUpload: u.o.ProcessOnUpload}
 	// An identical blob already in the folder needs no upload, unless the
 	// sweep may soon take it. Anything else is staged: nothing a client
@@ -388,6 +391,9 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	grant, err := u.authorizeOps(ctx, actor, item, ops)
 	if err != nil {
 		return nil, err
+	}
+	if !u.o.Store.Capabilities().ConditionalPut {
+		return nil, ErrConditionalPutRequired
 	}
 	if !grant.Exempt {
 		if slices.ContainsFunc(ops, func(op Op) bool { return op.Op == OpRegenerate && op.Force }) {

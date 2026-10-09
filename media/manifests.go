@@ -34,8 +34,9 @@ type SweepScheduler interface {
 
 // ManifestOptions configure Manifests.
 type ManifestOptions struct {
-	// Locker is required: every edit runs under it, and also writes with
-	// If-Match once the store reports ConditionalPut. See PGLocker.
+	// Locker is required: every edit runs under it and uses conditional PUT.
+	// The lock coordinates manifest edits with cleanup; it cannot replace
+	// the storage precondition if a PUT outlives the caller. See PGLocker.
 	Locker Locker
 	// CacheBytes bounds the decoded manifests kept in process, revalidated
 	// by ETag. A manifest costs about three times its JSON, so the largest
@@ -58,6 +59,10 @@ type Manifests struct {
 }
 
 var ErrManifestConflict = errors.New("media: manifest edit kept conflicting")
+
+// ErrConditionalPutRequired refuses mutations on a backend that cannot fence
+// a delayed manifest PUT. Probe or declare the backend's capabilities first.
+var ErrConditionalPutRequired = errors.New("media: manifest writes require conditional PUT support")
 
 func NewManifests(store Store, reg *Registry, o ManifestOptions) (*Manifests, error) {
 	if store == nil || reg == nil || o.Locker == nil {
@@ -312,15 +317,17 @@ func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existin
 	if err != nil {
 		return nil, err
 	}
+	if !m.store.Capabilities().ConditionalPut {
+		return nil, ErrConditionalPutRequired
+	}
 	key := item.ManifestKey()
 	unlock, err := m.locker.Lock(ctx, key)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	conditional := m.store.Capabilities().ConditionalPut
 	for attempt := 0; attempt < m.retries; attempt++ {
-		out, written, conflict, err := m.try(ctx, item, existing, conditional, b, fn)
+		out, written, conflict, err := m.try(ctx, item, existing, b, fn)
 		if conflict {
 			backoff := time.Duration(1<<min(attempt, 6)) * 5 * time.Millisecond
 			select {
@@ -340,7 +347,7 @@ func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existin
 	return nil, fmt.Errorf("%w: %s", ErrManifestConflict, key)
 }
 
-func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bool, b bound, fn func(*Manifest) error) (out *Manifest, written, conflict bool, err error) {
+func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, fn func(*Manifest) error) (out *Manifest, written, conflict bool, err error) {
 	key := item.ManifestKey()
 	cur, etag, err := m.get(ctx, key)
 	switch {
@@ -388,12 +395,10 @@ func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bo
 	// the manifest to decode.
 	opts := PutOptions{ContentType: "application/gzip", CacheControl: "no-store",
 		Metadata: map[string]string{uploadBytesMeta: strconv.FormatInt(next.uploadBytes(), 10)}}
-	if conditional {
-		if etag == "" {
-			opts.IfNoneMatch = "*"
-		} else {
-			opts.IfMatch = etag
-		}
+	if etag == "" {
+		opts.IfNoneMatch = "*"
+	} else {
+		opts.IfMatch = etag
 	}
 	obj, err := m.store.Put(ctx, key, bytes.NewReader(body), int64(len(body)), opts)
 	if errors.Is(err, ErrPreconditionFailed) {

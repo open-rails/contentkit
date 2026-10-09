@@ -38,7 +38,7 @@ type Config struct {
 	UsePathStyle    bool
 	// Capabilities of the backend as recorded for its release. Nil: Check
 	// probes them once the bucket answers; until then the store claims none
-	// (edits write unconditionally under the Locker, uploads rehash).
+	// (manifest edits and presigns are refused, uploads rehash).
 	Capabilities *media.Capabilities
 	// CopyPartSize is the part size of a multipart copy, used for objects
 	// larger than it; default MaxSingleCopy (tests set a few MiB).

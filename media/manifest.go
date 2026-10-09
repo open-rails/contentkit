@@ -11,6 +11,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+
 	"github.com/open-rails/contentkit/media/layout"
 )
 
@@ -431,6 +433,11 @@ func encodeManifest(m *Manifest) ([]byte, error) {
 	}
 	var b bytes.Buffer
 	zw, _ := gzip.NewWriterLevel(&b, gzip.BestSpeed)
+	// A return to earlier JSON must not restore its ETag: an old If-Match
+	// would become valid again. Keep the write nonce in gzip's extra header
+	// so it does not consume JSON headroom reserved for flags on full items.
+	revision := uuid.New()
+	zw.Extra = revision[:]
 	cw := &countWriter{w: zw}
 	enc := json.NewEncoder(cw)
 	enc.SetEscapeHTML(false)
