@@ -140,6 +140,10 @@ mux.Handle("/api/content-urls/", http.StripPrefix("/api/content-urls", router.Ha
   its legacy URL-shape rules. It calls `DecideAlias` and answers a 301 to
   `Path` (Matched), a 410 (Gone) or a 404 (neither), in one hop and before
   language negotiation.
+- **Routes are reserved.** A content route serves only content pages: under
+  it, any 9-character segment with a letter is read as a code, and a third
+  segment as a slug. So `/watch/{CODE}/comments` redirects to the page. Put
+  sub-pages in the query string, and keep other host pages off content routes.
 - **Browser.** `@openrails/contentkit-urls` (a release asset) parses codes and
   builds paths from API links (`{content_kind, code, slug, slugs}`). Its
   `canonical` result drives a client-side `history.replaceState`. It never

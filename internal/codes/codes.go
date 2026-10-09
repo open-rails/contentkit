@@ -167,8 +167,9 @@ const putAttempts = 8
 
 // Put assigns a code to every entry without one and sets its slugs, in the
 // caller's transaction; it returns every entry's code. qs is the quoted
-// schema. Code collisions and concurrent registrations of the same content
-// are retried.
+// schema. Code collisions and, under READ COMMITTED, concurrent registrations
+// of the same content are retried; stricter isolation levels report the
+// latter as a serialization failure for the caller to retry.
 func Put(ctx context.Context, q Querier, qs, tenant string, entries []Entry) (map[Key]string, error) {
 	pending := make(map[Key]entryJSON, len(entries))
 	for _, e := range entries {

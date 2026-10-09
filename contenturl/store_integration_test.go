@@ -2,6 +2,7 @@ package contenturl_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -289,7 +290,7 @@ func TestMergeRedirectsOneHop(t *testing.T) {
 }
 
 func TestAliases(t *testing.T) {
-	ctx, _, _, s := setup(t)
+	ctx, pool, _, s := setup(t)
 	links := put(t, s, contenturl.Entry{ContentRef: ref("gallery", 1), Title: "one"}, contenturl.Entry{ContentRef: ref("gallery", 2), Title: "two"})
 	aliases := []contenturl.Alias{
 		{Source: "doujins-legacy", LegacyKind: "folder", Key: "12345", ContentRef: ref("gallery", 1)},
@@ -327,7 +328,24 @@ func TestAliases(t *testing.T) {
 	if _, err := s.ResolveAlias(ctx, "doujins-legacy", "folder", "777"); !errors.Is(err, contenturl.ErrNotFound) {
 		t.Fatalf("conflicting batch left alias 777: %v", err)
 	}
-	err := s.PutAliases(ctx,
+	// The refusal precedes any write, so even a caller that commits anyway keeps nothing.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WithTx(tx).PutAliases(ctx,
+		contenturl.Alias{Source: "doujins-legacy", LegacyKind: "folder", Key: "776", ContentRef: ref("gallery", 1)},
+		contenturl.Alias{Source: "doujins-legacy", LegacyKind: "folder", Key: "12345", ContentRef: ref("gallery", 2)},
+	); !errors.Is(err, contenturl.ErrConflict) {
+		t.Fatalf("in-tx conflict: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ResolveAlias(ctx, "doujins-legacy", "folder", "776"); !errors.Is(err, contenturl.ErrNotFound) {
+		t.Fatalf("refused batch wrote alias 776: %v", err)
+	}
+	err = s.PutAliases(ctx,
 		contenturl.Alias{Source: "doujins-legacy", LegacyKind: "folder", Key: "778", ContentRef: ref("gallery", 1)},
 		contenturl.Alias{Source: "doujins-legacy", LegacyKind: "folder", Key: "779", ContentRef: ref("gallery", 9)},
 	)
@@ -413,16 +431,29 @@ func TestTaxonomyNodesCarryCodes(t *testing.T) {
 	}
 }
 
-// The migration backfills ContentKit's own records through the production
-// migratekit path: nodes slugged from their names (English first), merged
-// nodes redirected to their survivor, live posts.
-func TestMigrationBackfillsOwnRecords(t *testing.T) {
+func TestMigrationRefusesMergeCycles(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Pool(t, nil)
+	schema, db := migrateBefore0010(t, ctx, pool)
+	if _, err := pool.Exec(ctx, fmt.Sprintf(`INSERT INTO %[1]s.content_nodes (tenant_id, taxonomy_id, kind, slug, state) VALUES
+ ('doujins', '%[2]s', 'tag', 'a', 'merged'), ('doujins', '%[3]s', 'tag', 'b', 'merged');
+INSERT INTO %[1]s.content_edges (tenant_id, from_taxonomy_id, relation, to_taxonomy_id) VALUES
+ ('doujins', '%[2]s', 'alias_of', '%[3]s'), ('doujins', '%[3]s', 'alias_of', '%[2]s')`, schema, id(1), id(2))); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrations.ApplyPostgres(ctx, db, schema); err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("cyclic merges migrated: %v", err)
+	}
+}
+
+// migrateBefore0010 applies the chain up to 0009 the way a host's migrate
+// step does.
+func migrateBefore0010(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (string, *sql.DB) {
+	t.Helper()
 	schema := pgtest.EmptySchema(t, ctx, pool)
 	pgtest.EnsureExtensions(t, ctx, pool)
 	db := stdlib.OpenDBFromPool(pool)
-	defer db.Close()
+	t.Cleanup(func() { _ = db.Close() })
 	old := fstest.MapFS{}
 	entries, err := fs.ReadDir(migrations.Postgres, ".")
 	if err != nil {
@@ -445,6 +476,16 @@ func TestMigrationBackfillsOwnRecords(t *testing.T) {
 	if err := migratekit.NewPostgres(db, "contentkit").WithSchema(schema).ApplyMigrations(ctx, steps); err != nil {
 		t.Fatal(err)
 	}
+	return schema, db
+}
+
+// The migration backfills ContentKit's own records through the production
+// migratekit path: nodes slugged from their names (English first), merged
+// nodes redirected to their survivor, live posts.
+func TestMigrationBackfillsOwnRecords(t *testing.T) {
+	ctx := context.Background()
+	pool := pgtest.Pool(t, nil)
+	schema, db := migrateBefore0010(t, ctx, pool)
 	if _, err := pool.Exec(ctx, fmt.Sprintf(`SET search_path TO %[1]s;
 INSERT INTO %[1]s.content_nodes (tenant_id, taxonomy_id, kind, slug, state) VALUES
  ('doujins', '%[2]s', 'artist', 'a1', 'active'),

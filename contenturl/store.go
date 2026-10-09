@@ -192,16 +192,32 @@ func (s *Store) links(ctx context.Context, keys []codes.Key) (map[codes.Key]Link
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	further := map[codes.Key]Code{}
 	for rows.Next() {
 		var k codes.Key
-		l, _, err := s.scanLink(rows, &k.Kind, &k.ID)
+		l, merged, err := s.scanLink(rows, &k.Kind, &k.ID)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out[k] = l
+		if merged != "" {
+			further[k] = Code(merged)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Redirects are one hop; follow a longer chain the way Resolve does.
+	for k, code := range further {
+		l, err := s.Resolve(ctx, code)
 		if err != nil {
 			return nil, err
 		}
 		out[k] = l
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // Links returns the link of each registered reference, keyed by
@@ -320,7 +336,8 @@ func validAlias(source, kind, key string) error {
 // PutAliases records aliases, typically in the import transaction that
 // writes their content. An alias is written once: repeating it is a no-op,
 // pointing it at other content (or another locator) is ErrConflict and
-// writes nothing. The content must be registered (ErrNotFound).
+// writes nothing. The content must be registered (ErrNotFound). Roll the
+// transaction back on any error.
 func (s *Store) PutAliases(ctx context.Context, aliases ...Alias) error {
 	if len(aliases) == 0 {
 		return nil
@@ -353,24 +370,33 @@ func (s *Store) PutAliases(ctx context.Context, aliases ...Alias) error {
 	}
 	return s.write(ctx, func(q codes.Querier) error {
 		input := `jsonb_to_recordset($2::jsonb) AS r(source text, legacy_kind text, legacy_key text, locator text, kind text, id text)`
-		var missing int64
-		err := queryOne(ctx, q, fmt.Sprintf(`WITH r AS (
- SELECT r.source, r.legacy_kind, r.legacy_key, r.locator, c.code FROM %[2]s
- LEFT JOIN %[1]s.content_codes c ON c.tenant_id = $1 AND c.content_kind = r.kind AND c.content_id = r.id),
-ins AS (
- INSERT INTO %[1]s.content_code_aliases (tenant_id, source, legacy_kind, legacy_key, code, locator)
- SELECT DISTINCT ON (source, legacy_kind, legacy_key) $1, source, legacy_kind, legacy_key, code, locator FROM r WHERE code IS NOT NULL
- ON CONFLICT (tenant_id, source, legacy_kind, legacy_key) DO NOTHING
- RETURNING 1)
-SELECT count(*) FILTER (WHERE code IS NULL) FROM r`, s.qs, input), []any{s.tenant, string(data)}, &missing)
-		if err != nil {
+		resolved := fmt.Sprintf(`SELECT r.source, r.legacy_kind, r.legacy_key, r.locator, c.code FROM %[2]s
+ LEFT JOIN %[1]s.content_codes c ON c.tenant_id = $1 AND c.content_kind = r.kind AND c.content_id = r.id`, s.qs, input)
+		// Refuse before writing: unregistered content, a batch that disagrees
+		// with itself, or an alias that already names something else.
+		var missing, conflicting int64
+		if err := queryOne(ctx, q, fmt.Sprintf(`WITH r AS (%[2]s)
+SELECT count(*) FILTER (WHERE code IS NULL),
+ (SELECT count(*) FROM (SELECT 1 FROM r GROUP BY source, legacy_kind, legacy_key HAVING count(DISTINCT (code, locator)) > 1) d)
+ + count(*) FILTER (WHERE EXISTS (SELECT 1 FROM %[1]s.content_code_aliases a WHERE a.tenant_id = $1 AND a.source = r.source
+   AND a.legacy_kind = r.legacy_kind AND a.legacy_key = r.legacy_key AND (a.code IS DISTINCT FROM r.code OR a.locator IS DISTINCT FROM r.locator)))
+FROM r`, s.qs, resolved), []any{s.tenant, string(data)}, &missing, &conflicting); err != nil {
 			return err
 		}
 		if missing > 0 {
 			return fmt.Errorf("%w: %d aliases name unregistered content", ErrNotFound, missing)
 		}
-		// A new statement sees this transaction's rows and any committed concurrently.
-		var conflicting int64
+		if conflicting > 0 {
+			return fmt.Errorf("%w: %d aliases already name other content", ErrConflict, conflicting)
+		}
+		if err := codes.Drain(q.Query(ctx, fmt.Sprintf(`INSERT INTO %[1]s.content_code_aliases (tenant_id, source, legacy_kind, legacy_key, code, locator)
+ SELECT DISTINCT ON (source, legacy_kind, legacy_key) $1, source, legacy_kind, legacy_key, code, locator FROM (%[2]s) r
+ ON CONFLICT (tenant_id, source, legacy_kind, legacy_key) DO NOTHING RETURNING 1`, s.qs, resolved), s.tenant, string(data))); err != nil {
+			return err
+		}
+		// A concurrent import may have written the same alias meanwhile: a new
+		// statement sees it (READ COMMITTED; stricter levels fail the insert
+		// with a serialization error instead). Roll back on this error.
 		if err := queryOne(ctx, q, fmt.Sprintf(`SELECT count(*) FROM %[2]s
  JOIN %[1]s.content_codes c ON c.tenant_id = $1 AND c.content_kind = r.kind AND c.content_id = r.id
  WHERE NOT EXISTS (SELECT 1 FROM %[1]s.content_code_aliases a WHERE a.tenant_id = $1 AND a.source = r.source

@@ -51,12 +51,16 @@ func TestPostVisibilityAndErasure(t *testing.T) {
 		}
 		return decodePost(t, rec)
 	}
-	published, draft, deleted := create("Out Now", false), create("Secret Plan", true), create("Gone Soon", false)
-	if rec := doJSON(t, h, author, "DELETE", "/posts/"+deleted.ID, nil); rec.Code != http.StatusOK {
-		t.Fatalf("delete: %d", rec.Code)
+	published, draft, deleted, deletedDraft := create("Out Now", false), create("Secret Plan", true), create("Gone Soon", false), create("Never Shown", true)
+	for _, p := range []postView{deleted, deletedDraft} {
+		if rec := doJSON(t, h, author, "DELETE", "/posts/"+p.ID, nil); rec.Code != http.StatusOK {
+			t.Fatalf("delete: %d", rec.Code)
+		}
 	}
 	for id, want := range map[string]contenturl.Visibility{
-		published.ID: contenturl.Visible, draft.ID: contenturl.Hidden, deleted.ID: contenturl.Gone, cid(999): contenturl.Hidden,
+		published.ID: contenturl.Visible, draft.ID: contenturl.Hidden, deleted.ID: contenturl.Gone,
+		deletedDraft.ID: contenturl.Hidden, // never public: 404, not 410
+		cid(999):        contenturl.Hidden,
 	} {
 		if got, err := rt.PostVisibility(t.Context(), id); err != nil || got != want {
 			t.Errorf("PostVisibility(%s) = %v %v, want %v", id, got, err, want)
@@ -76,6 +80,9 @@ func TestPostVisibilityAndErasure(t *testing.T) {
 	}
 	if got := slugOf(draft.Code); got != "" {
 		t.Fatalf("erased draft keeps URL slug %q", got)
+	}
+	if got, _ := rt.PostVisibility(t.Context(), draft.ID); got != contenturl.Hidden {
+		t.Fatalf("erased draft visibility %v, want Hidden", got)
 	}
 	if got := slugOf(published.Code); got != "out-now" {
 		t.Fatalf("published post URL slug %q", got)

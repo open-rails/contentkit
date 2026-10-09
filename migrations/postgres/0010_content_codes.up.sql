@@ -119,13 +119,19 @@ BEGIN
 END;
 $$;
 
--- A merged node redirects to its survivor, followed to the end of the chain.
-UPDATE content_codes c SET merged_into = t.code
-FROM content_nodes n
-JOIN content_edges e ON e.tenant_id = n.tenant_id AND e.from_taxonomy_id = n.taxonomy_id AND e.relation = 'alias_of'
-JOIN content_nodes s ON s.tenant_id = e.tenant_id AND s.taxonomy_id = e.to_taxonomy_id
-JOIN content_codes t ON t.tenant_id = s.tenant_id AND t.content_kind = s.kind AND t.content_id = s.taxonomy_id
-WHERE n.state = 'merged' AND c.tenant_id = n.tenant_id AND c.content_kind = n.kind AND c.content_id = n.taxonomy_id;
+-- A merged node redirects to its survivor (its alias_of target, an active one
+-- first), followed to the end of the chain. A cycle fails the migration.
+UPDATE content_codes c SET merged_into = m.code
+FROM (
+    SELECT DISTINCT ON (n.tenant_id, n.taxonomy_id) n.tenant_id, n.kind, n.taxonomy_id, t.code
+    FROM content_nodes n
+    JOIN content_edges e ON e.tenant_id = n.tenant_id AND e.from_taxonomy_id = n.taxonomy_id AND e.relation = 'alias_of'
+    JOIN content_nodes s ON s.tenant_id = e.tenant_id AND s.taxonomy_id = e.to_taxonomy_id
+    JOIN content_codes t ON t.tenant_id = s.tenant_id AND t.content_kind = s.kind AND t.content_id = s.taxonomy_id
+    WHERE n.state = 'merged'
+    ORDER BY n.tenant_id, n.taxonomy_id, s.state = 'active' DESC, s.taxonomy_id
+) m
+WHERE c.tenant_id = m.tenant_id AND c.content_kind = m.kind AND c.content_id = m.taxonomy_id AND c.code <> m.code;
 
 DO $$
 BEGIN
@@ -135,6 +141,10 @@ BEGIN
         WHERE c.tenant_id = t.tenant_id AND c.merged_into = t.code AND t.merged_into IS NOT NULL AND t.merged_into <> c.code;
         EXIT WHEN NOT FOUND;
     END LOOP;
+    IF EXISTS (SELECT 1 FROM content_codes c JOIN content_codes t ON t.tenant_id = c.tenant_id AND t.code = c.merged_into
+        WHERE t.merged_into IS NOT NULL) THEN
+        RAISE EXCEPTION 'contentkit: merged taxonomy nodes form an alias_of cycle; fix content_edges and re-run';
+    END IF;
 END;
 $$;
 
