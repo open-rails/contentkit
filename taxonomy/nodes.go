@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/codes"
 )
 
 // NodeInput creates one node with its initial names.
@@ -318,6 +319,13 @@ func (s *Store) CreateNodes(ctx context.Context, inputs []NodeInput) ([]Node, er
 			marks = append(marks, nodeKey{n.Kind, n.TaxonomyID})
 		}
 		if err := s.insertNames(ctx, q, names); err != nil {
+			return err
+		}
+		ids := make([]string, len(out))
+		for i, n := range out {
+			ids[i] = string(n.TaxonomyID)
+		}
+		if err := s.syncCodes(ctx, q, ids); err != nil {
 			return err
 		}
 		return s.markDirty(ctx, q, marks, false)
@@ -760,9 +768,13 @@ func (s *Store) RemoveNames(ctx context.Context, id TaxonomyID, names []Name) er
 	})
 }
 
-// touch bumps updated_at and queues the node's documents.
+// touch bumps updated_at, re-slugs the node's content code from its names and
+// queues its documents.
 func (s *Store) touch(ctx context.Context, q querier, n Node) error {
 	if _, err := q.Exec(ctx, fmt.Sprintf(`UPDATE %s SET updated_at=now() WHERE tenant_id=$1 AND taxonomy_id=$2`, s.table("content_nodes")), s.tenant, string(n.TaxonomyID)); err != nil {
+		return err
+	}
+	if err := s.syncCodes(ctx, q, []string{string(n.TaxonomyID)}); err != nil {
 		return err
 	}
 	return s.markDirty(ctx, q, []nodeKey{{n.Kind, n.TaxonomyID}}, n.State != StateActive)
@@ -811,6 +823,9 @@ func (s *Store) Merge(ctx context.Context, from, into TaxonomyID) (MergeReport, 
 		}
 		if src.Kind != dst.Kind {
 			return fmt.Errorf("%w: cannot merge kind %s into %s", ErrConflict, src.Kind, dst.Kind)
+		}
+		if err := s.syncCodes(ctx, q, []string{string(from), string(into)}); err != nil {
+			return err
 		}
 		a := s.table("content_assignments")
 		// Folding an accepted assignment into a proposed duplicate must not
@@ -869,6 +884,10 @@ func (s *Store) Merge(ctx context.Context, from, into TaxonomyID) (MergeReport, 
 			return err
 		}
 		if err := s.recountNodes(ctx, q, []string{string(from), string(into)}); err != nil {
+			return err
+		}
+		// from's URL redirects to into's.
+		if err := codes.Merge(ctx, codesQuerier{q}, s.qs, s.tenant, codes.Key{Kind: src.Kind, ID: string(from)}, codes.Key{Kind: dst.Kind, ID: string(into)}); err != nil {
 			return err
 		}
 		if err := s.markDirty(ctx, q, []nodeKey{{src.Kind, from}}, true); err != nil {

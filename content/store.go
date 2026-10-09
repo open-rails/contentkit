@@ -24,6 +24,7 @@ type querier interface {
 type store struct {
 	pool   *pgxpool.Pool
 	schema string
+	qs     string // quoted schema
 	tenant string
 	t      tables
 	// revisionSeq is the schema-qualified preference revision sequence.
@@ -42,6 +43,7 @@ type tables struct {
 	favorites     string
 	counts        string
 	commentBans   string
+	codes         string
 
 	preferenceSync string
 }
@@ -51,6 +53,7 @@ func newStore(pool *pgxpool.Pool, schema, tenant string) *store {
 	return &store{
 		pool:   pool,
 		schema: schema,
+		qs:     pgx.Identifier{schema}.Sanitize(),
 		tenant: tenant,
 		t: tables{
 			reactions:     q("content_reactions"),
@@ -63,6 +66,7 @@ func newStore(pool *pgxpool.Pool, schema, tenant string) *store {
 			favorites:     q("content_favorites"),
 			counts:        q("content_interaction_counts"),
 			commentBans:   q("content_comment_bans"),
+			codes:         q("content_codes"),
 
 			preferenceSync: q("content_preference_sync"),
 		},

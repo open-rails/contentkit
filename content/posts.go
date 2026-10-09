@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -37,7 +38,9 @@ func newPosts(rt *Runtime) *posts {
 		(SELECT count(*) FROM ` + s.t.comments + ` c
 			WHERE c.tenant_id = p.tenant_id AND c.content_kind = '` + KindPost + `' AND c.content_id = p.id
 			AND c.content_version_id = '' AND c.deleted_at IS NULL AND c.moderation = 'approved') AS comment_count,
-		p.moderation, coalesce(p.moderation_reason, '')`
+		p.moderation, coalesce(p.moderation_reason, ''),
+		coalesce((SELECT cc.code || ' ' || cc.slug FROM ` + s.t.codes + ` cc
+			WHERE cc.tenant_id = p.tenant_id AND cc.content_kind = '` + KindPost + `' AND cc.content_id = p.id), '')`
 	return &posts{rt: rt, s: s, cols: cols}
 }
 
@@ -58,10 +61,14 @@ type postView struct {
 	CommentCount  int        `json:"comment_count"`
 	// Moderation is "held" or "rejected" (with the reason) on an unpublished
 	// post; absent when approved.
-	Moderation       string    `json:"moderation,omitempty"`
-	ModerationReason string    `json:"moderation_reason,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	Moderation       string `json:"moderation,omitempty"`
+	ModerationReason string `json:"moderation_reason,omitempty"`
+	// Code and URLSlug build the post's page URL: /{route}/{code}/{url_slug}
+	// (contenturl).
+	Code      string    `json:"code"`
+	URLSlug   string    `json:"url_slug"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // postWriteReq is the create/update body. All-pointer so PATCH is partial (nil =
@@ -248,6 +255,10 @@ func (p *posts) handleCreate(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	if err := p.putCode(ctx, tx, id, title, in.Slug); err != nil {
+		writeErr(w, err)
+		return
+	}
 	if err := p.markDirty(ctx, tx, id, language, false); err != nil {
 		writeErr(w, err)
 		return
@@ -354,6 +365,7 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	var after string
+	var slug *string
 	if err := tx.QueryRow(ctx, `UPDATE `+p.s.t.posts+` SET
 		title = $2, body = $3,
 		excerpt = COALESCE($4, excerpt), slug = COALESCE($5, slug),
@@ -361,11 +373,15 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		is_draft = $7, live_at = COALESCE($8, live_at),
 		published_content = CASE WHEN $10='approved' THEN NULL WHEN moderation='approved' AND NOT is_draft AND (live_at IS NULL OR live_at <= clock_timestamp()) THEN jsonb_build_object('title',title,'body',body,'excerpt',excerpt) ELSE published_content END, moderation_revision = moderation_revision + 1, moderated_by = NULL, moderated_at = NULL, moderation = $10, moderation_reason = $11, moderation_verdict = $12,
 		updated_at = now()
-		WHERE id = $1 AND tenant_id = $9 AND deleted_at IS NULL AND moderation_revision=$13 RETURNING language`,
-		id, curTitle, curBody, excerpt, in.Slug, in.Language, curDraft, in.LiveAt, p.s.tenant, sc.state, sc.reason, sc.meta, revision).Scan(&after); err != nil {
+		WHERE id = $1 AND tenant_id = $9 AND deleted_at IS NULL AND moderation_revision=$13 RETURNING language, slug`,
+		id, curTitle, curBody, excerpt, in.Slug, in.Language, curDraft, in.LiveAt, p.s.tenant, sc.state, sc.reason, sc.meta, revision).Scan(&after, &slug); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = errContentChanged
 		}
+		writeErr(w, err)
+		return
+	}
+	if err := p.putCode(ctx, tx, id, curTitle, slug); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -545,6 +561,17 @@ func (p *posts) react(ctx context.Context, actor access.Actor, id string, value 
 }
 
 // loadByID returns a single non-deleted post (draft or published) of the tenant.
+// putCode gives the post its content code (contenturl), slugged from its slug,
+// else its title.
+func (p *posts) putCode(ctx context.Context, tx pgx.Tx, id, title string, slug *string) error {
+	source := title
+	if slug != nil && *slug != "" {
+		source = *slug
+	}
+	_, err := codes.Put(ctx, codes.Pgx(tx), p.s.qs, p.s.tenant, []codes.Entry{{Key: codes.Key{Kind: KindPost, ID: id}, Slug: codes.Slugify(source)}})
+	return err
+}
+
 func (p *posts) loadByID(ctx context.Context, q querier, id string) (postView, error) {
 	row := q.QueryRow(ctx, `SELECT `+p.cols+` FROM `+p.s.t.posts+` p WHERE p.id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL`, id, p.s.tenant)
 	v, err := p.scan(ctx, row)
@@ -582,13 +609,14 @@ func (p *posts) sanitizePtr(ctx context.Context, s *string) (*string, error) {
 func (p *posts) scan(ctx context.Context, row pgx.Row) (postView, error) {
 	var v postView
 	var coverName *string
-	var state, reason string
+	var state, reason, link string
 	err := row.Scan(&v.ID, &v.AuthorID, &v.Title, &v.Slug, &v.Body, &v.Excerpt,
 		&coverName, &v.Language, &v.IsDraft, &v.LiveAt, &v.TotalLikes,
-		&v.TotalDislikes, &v.CreatedAt, &v.UpdatedAt, &v.CommentCount, &state, &reason)
+		&v.TotalDislikes, &v.CreatedAt, &v.UpdatedAt, &v.CommentCount, &state, &reason, &link)
 	if err != nil {
 		return postView{}, err
 	}
+	v.Code, v.URLSlug, _ = strings.Cut(link, " ")
 	if coverName != nil && *coverName != "" {
 		url, err := p.rt.imageURL(ctx, postFolder, v.ID, *coverName)
 		if err != nil {
