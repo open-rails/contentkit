@@ -35,10 +35,10 @@ const (
 // UploadOptions configure Uploads.
 type UploadOptions struct {
 	Store     Store
-	Manifests *Manifests    // its Registry's Hooks.CanUpload authorizes, Hooks.Resolver hides new items
-	Tickets   *token.Ring   // signs multipart tickets (domain-separated from access tokens); required above MaxSinglePut
-	Limiter   UploadLimiter // optional
-	Queue     ProcessQueue  // places staged uploads and processes items in the media worker; required
+	Manifests *Manifests   // its Registry's Hooks.CanUpload authorizes, Hooks.Resolver hides new items
+	Tickets   *token.Ring  // signs multipart tickets (domain-separated from access tokens); required above MaxSinglePut
+	Limiter   *PGLimiter   // optional; must share the journal's pool and ContentKit schema
+	Queue     ProcessQueue // places staged uploads and processes items in the media worker; required
 	// PresignTTL bounds PUT and part URLs; default 15m. TicketTTL bounds a
 	// multipart ticket; default 24h, the bucket's abort-incomplete rule.
 	PresignTTL, TicketTTL time.Duration
@@ -71,6 +71,9 @@ type Uploads struct {
 func NewUploads(o UploadOptions) (*Uploads, error) {
 	if o.Store == nil || o.Manifests == nil || o.Queue == nil {
 		return nil, errors.New("media: Uploads needs a Store, Manifests and a Queue")
+	}
+	if o.Limiter != nil && (o.Limiter.pool != o.Manifests.journal.pool || o.Limiter.usage != o.Manifests.journal.limiter.usage) {
+		return nil, errors.New("media: upload quota must use the journal's pool and ContentKit schema")
 	}
 	reg := o.Manifests.Registry()
 	if reg.cfg.Hooks.CanUpload == nil || reg.cfg.Hooks.Resolver == nil {
@@ -414,22 +417,19 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		return nil, err
 	}
 
-	// Growth is charged (and checked) inside the edit, before the manifest is
-	// written; the final settlement refunds what a retried attempt no longer
-	// needs and drops the reservations.
-	var delta, charged int64
-	var keys []string
-	settle := func(ctx context.Context, s Settlement) error {
-		if u.o.Limiter == nil {
-			return nil
-		}
-		s.Tenant, s.Owner = ref.TenantID, grant.Owner
-		return u.o.Limiter.Settle(ctx, s)
+	// The journal owns the growth claim before S3 PUT and settles it only
+	// after a definite success or a recovery fence. An uncertain response
+	// must not refund quota or consume the upload's reservations.
+	input, err := json.Marshal(ops)
+	if err != nil {
+		return nil, uploadErr(CodeInvalid, "commit operations must be JSON: %v", err)
 	}
+	mutation := &manifestMutation{commit: manifestCommit{ID: uuid.New(), Actor: actor.Kind + ":" + uploaderID(actor), Fingerprint: sha256.Sum256(input)}}
+	var keys []string
 	editCtx, cancel := context.WithTimeout(ctx, commitMargin(u.o.Grace)/2)
 	defer cancel()
 	var prior *Manifest
-	man, err := u.o.Manifests.edit(editCtx, ref, false, bound{project: item.Kind().Unwritten}, func(m *Manifest) error {
+	man, err := u.o.Manifests.editOperation(editCtx, ref, false, bound{project: item.Kind().Unwritten}, mutation, func(m *Manifest) error {
 		prior = m.Clone()
 		o := &opRun{k: item.Kind(), m: m, id: ref.ContentID, copies: copies, exempt: grant.Exempt}
 		keys = keys[:0]
@@ -492,12 +492,17 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		if n := m.uploads(); n > MaxUploads && n > uploads {
 			return uploadErr(CodeTooManyFiles, "an item holds at most %d uploads", MaxUploads)
 		}
-		delta = m.uploadBytes() - before
-		if delta > charged && grant.Owner != "" {
-			if err := settle(editCtx, Settlement{Delta: delta - charged, Enforce: !grant.Exempt}); err != nil {
-				return err
+		if u.o.Limiter != nil {
+			mutation.effects.Settlement = Settlement{Tenant: ref.TenantID, Owner: grant.Owner,
+				Keys: append(slices.Clone(keys), copied...), Delta: m.uploadBytes() - before, Enforce: !grant.Exempt}
+			if mutation.effects.Settlement.Delta > 0 && !grant.Exempt {
+				// Resolve host policy before the journal opens its transaction.
+				// Shrinks and ordering edits must not depend on quota availability.
+				mutation.quota, err = u.o.Limiter.Quota(editCtx, ref.TenantID, grant.Owner)
+				if err != nil {
+					return err
+				}
 			}
-			charged = delta
 		}
 		return nil
 	})
@@ -505,9 +510,6 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		err = uploadErr(CodeTooLarge, "the item, processed, would pass its manifest's %d MiB: remove uploads or meta first", MaxManifestBytes>>20)
 	}
 	if err != nil {
-		if charged > 0 {
-			err = errors.Join(err, settle(context.WithoutCancel(ctx), Settlement{Delta: -charged}))
-		}
 		return nil, err
 	}
 	// The manifest is committed; cleanup must survive failures in the
@@ -535,9 +537,6 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 			publicErr = fmt.Errorf("media: remove public files: %w", err)
 		}
 		break
-	}
-	if err := settle(context.WithoutCancel(ctx), Settlement{Keys: append(keys, copied...), Delta: delta - charged}); err != nil {
-		return nil, errors.Join(err, publicErr)
 	}
 	if c, ok := u.o.Queue.(ProcessCanceler); ok && removesPending(prior, ops) {
 		if _, err := c.Cancel(context.WithoutCancel(ctx), ref); err != nil {

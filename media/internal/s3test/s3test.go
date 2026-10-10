@@ -25,6 +25,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
@@ -44,6 +45,7 @@ type recoveryState struct {
 	owner         testing.TB
 	mu            sync.Mutex
 	journal       *media.PGJournal
+	pool          *pgxpool.Pool
 	contentSchema string
 }
 
@@ -137,10 +139,10 @@ func (e *Env) Journal() *media.PGJournal {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.journal == nil {
-		pool := pgtest.Pool(s.owner, nil)
-		s.contentSchema = pgtest.Schema(s.owner, context.Background(), pool)
+		s.pool = pgtest.Pool(s.owner, nil)
+		s.contentSchema = pgtest.Schema(s.owner, context.Background(), s.pool)
 		var err error
-		s.journal, err = media.NewPGJournal(pool, s.contentSchema, nil)
+		s.journal, err = media.NewPGJournal(s.pool, s.contentSchema, nil)
 		if err != nil {
 			s.owner.Fatal(err)
 		}
@@ -151,6 +153,11 @@ func (e *Env) Journal() *media.PGJournal {
 func (e *Env) ContentSchema() string {
 	e.Journal()
 	return e.recovery.contentSchema
+}
+
+func (e *Env) Pool() *pgxpool.Pool {
+	e.Journal()
+	return e.recovery.pool
 }
 
 // Locker is what a host wires: a PGLocker on CONTENTKIT_TEST_URL (skipping

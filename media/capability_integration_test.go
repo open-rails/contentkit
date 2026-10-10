@@ -214,6 +214,101 @@ type manifestPutStore struct {
 	put func(context.Context, string, io.Reader, int64, media.PutOptions) (media.Object, error)
 }
 
+// Quota follows the fenced S3 outcome, not the caller's observed PUT error.
+func TestUploadQuotaRecoversWithManifestOutcome(t *testing.T) {
+	for _, action := range []string{"insert", "replace", "rename", "remove"} {
+		for _, applied := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/applied=%t", action, applied), func(t *testing.T) {
+				f := newFixture(t)
+				f.visible(1)
+				ref := f.ref("gallery", 1)
+				item, _ := f.reg.Item(ref)
+				store := &uncertainManifestStore{Store: f.env.Store, key: item.ManifestKey(), applied: applied}
+				manifests := s3test.Manifests(t, store, f.reg, media.ManifestOptions{Journal: f.env.Journal()})
+				quota := int64(1 << 20)
+				var quotaErr error
+				limiter, err := media.NewPGLimiter(f.env.Pool(), f.env.ContentSchema(), media.PGLimits{
+					Quota: func(context.Context, string, string) (int64, error) { return quota, quotaErr },
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.up, err = media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests, Queue: f.q, Limiter: limiter})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var before int64
+				if action != "insert" {
+					before = f.put(ref, "originals/one.png", "image/png", []byte("old")).UploadBytes()
+				}
+				var ops []media.Op
+				var delta, reserved int64
+				switch action {
+				case "insert", "replace":
+					body := bytes.Repeat([]byte("n"), 96<<10) // above the existing per-upload accounting floor
+					p, staged := f.upload(ref, "originals/one.png", "image/png", body)
+					ops = []media.Op{{Op: media.OpPut, Path: p, Blob: staged}}
+					reserved, delta = int64(len(body)), int64(len(body))-before
+				case "rename":
+					ops = []media.Op{{Op: media.OpRename, Path: "originals/one.png", To: "originals/two.png"}}
+				case "remove":
+					ops = []media.Op{{Op: media.OpRemove, Path: "originals/one.png"}}
+					delta = -before
+				}
+				usage := func(wantUsed, wantPending int64) {
+					t.Helper()
+					used, pending, err := limiter.Usage(t.Context(), ref.TenantID, "owner")
+					if err != nil || used != wantUsed || pending != wantPending {
+						t.Fatalf("usage=%d pending=%d, want %d/%d: %v", used, pending, wantUsed, wantPending, err)
+					}
+				}
+				if delta > 0 {
+					_, beforeETag, beforeErr := manifests.Get(t.Context(), ref)
+					if beforeErr != nil && !errors.Is(beforeErr, media.ErrNotFound) {
+						t.Fatal(beforeErr)
+					}
+					quota = before + delta - 1 // the cap changed after the upload was reserved
+					if _, err := f.up.Commit(t.Context(), f.editor, ref, ops); code(err) != media.CodeQuota {
+						t.Fatalf("growth past current quota was accepted: %v", err)
+					}
+					usage(before, reserved)
+					_, afterETag, afterErr := manifests.Get(t.Context(), ref)
+					if beforeETag != afterETag || errors.Is(beforeErr, media.ErrNotFound) != errors.Is(afterErr, media.ErrNotFound) || afterErr != nil && !errors.Is(afterErr, media.ErrNotFound) {
+						t.Fatalf("quota refusal changed S3: %q/%q %v/%v", beforeETag, afterETag, beforeErr, afterErr)
+					}
+					quota = 1 << 20
+				} else {
+					quotaErr = errors.New("quota policy unavailable")
+				}
+				store.uncertain = true
+				if _, err := f.up.Commit(t.Context(), f.editor, ref, ops); !errors.Is(err, media.ErrUnavailable) {
+					t.Fatalf("uncertain write: %v", err)
+				}
+				usage(before+max(delta, 0), reserved)
+				store.blockFence = true
+				if err := manifests.Recover(t.Context(), ref); !errors.Is(err, media.ErrUnavailable) {
+					t.Fatalf("failed fence: %v", err)
+				}
+				usage(before+max(delta, 0), reserved)
+				store.blockFence = false
+				for range 2 {
+					if err := manifests.Recover(t.Context(), ref); err != nil {
+						t.Fatal(err)
+					}
+					if applied {
+						usage(before+delta, 0)
+					} else {
+						usage(before, reserved)
+					}
+				}
+				if _, err := f.env.Store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(store.body), int64(len(store.body)), store.options); !errors.Is(err, media.ErrPreconditionFailed) {
+					t.Fatalf("late original write was not fenced: %v", err)
+				}
+			})
+		}
+	}
+}
+
 func TestForeignJournalCannotEditOrCleanReceipt(t *testing.T) {
 	env := s3test.Open(t)
 	pool := pgtest.Pool(t, nil)
@@ -451,8 +546,7 @@ func TestUploadsRefuseUnconditionalStorageBeforeMovingBytes(t *testing.T) {
 	t.Parallel()
 	env := s3test.Open(t).WithoutConditionalPut(t)
 	f := newFixtureOn(t, env, nil)
-	pool := pgtest.Pool(t, nil)
-	limiter, err := media.NewPGLimiter(pool, pgtest.Schema(t, t.Context(), pool), media.PGLimits{})
+	limiter, err := media.NewPGLimiter(env.Pool(), env.ContentSchema(), media.PGLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}

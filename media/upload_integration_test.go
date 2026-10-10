@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -415,8 +414,7 @@ func TestCopyIsMetered(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	pool := pgtest.Pool(t, nil)
-	limiter, err := media.NewPGLimiter(pool, pgtest.Schema(t, ctx, pool), media.PGLimits{FilesPerHour: 1})
+	limiter, err := media.NewPGLimiter(f.env.Pool(), f.env.ContentSchema(), media.PGLimits{FilesPerHour: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
