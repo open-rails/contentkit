@@ -122,3 +122,16 @@ it("reads again shortly before the URLs expire; refresh() joins a read in flight
   });
   await waitFor(() => expect(reads(s)).toBe(3));
 });
+
+it("reloads the item's viewer reads once a polled editor read shows its uploads processed", async () => {
+  const s = new FakeServer();
+  s.seed(ref, [{ path: "originals/001.png", type: "image/png", size: 3, pending: ["low"] }]);
+  const c = client(s);
+  const { result } = renderHook(() => ({ editor: useMediaRead(ref, { editor: true, poll: 50 }), viewer: useMediaRead(ref, { prefix: "low-res/" }) }), { wrapper: provider(c) });
+  await waitFor(() => expect(result.current.editor.processing).toBe(true));
+  const viewerReads = () => s.reads.filter((q) => q.get("prefix") === "low-res/").length;
+  expect(viewerReads()).toBe(1);
+  s.seed(ref, [...pages(1), { path: "low-res/001.webp", type: "image/webp", size: 2, upload: false }]);
+  await waitFor(() => expect(result.current.viewer.read?.files.map((f) => f.path)).toEqual(["low-res/001.webp"]));
+  expect(viewerReads()).toBe(2);
+});

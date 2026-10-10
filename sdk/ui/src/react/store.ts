@@ -4,7 +4,7 @@ import type { FileInfo, ReadResult, RefBody } from "../client/generated/wire.js"
 import type { ContentKitChange } from "../client/http.js";
 import type { ReadOptions } from "../client/media/api.js";
 import { samePath, sleep } from "../client/media/client.js";
-import { processing } from "../client/media/windows.js";
+import { isProcessing, processing } from "../client/media/windows.js";
 import { expiryDelay } from "../client/playback.js";
 
 export interface ReadEntry {
@@ -108,8 +108,10 @@ export class ReadStore {
       (read) => {
         if (s.ctl !== ctl) return;
         s.ctl = undefined;
+        const before = s.entry.read;
         this.update(s, { read, loading: false, loaded: true, error: undefined });
         this.schedule(s);
+        if (s.options.editor && finished(before, read)) this.reloadViewers(s.ref);
       },
       (e) => {
         if (s.ctl !== ctl) return;
@@ -158,6 +160,13 @@ export class ReadStore {
     if (delay !== null) s.timer = setTimeout(() => this.load(s.key, "refresh"), delay);
   }
 
+  // Uploads finished processing: the item's viewer reads list new files and URLs.
+  private reloadViewers(ref: RefBody): void {
+    for (const [key, s] of this.slots) {
+      if (!s.options.editor && s.ref.kind === ref.kind && s.ref.id === ref.id && (s.entry.loaded || s.ctl)) this.load(key, "reload");
+    }
+  }
+
   private apply(change: ContentKitChange): void {
     const { ref } = change;
     for (const [key, s] of this.slots) {
@@ -186,6 +195,13 @@ export class ReadStore {
     s.entry = { ...s.entry, ...patch };
     for (const l of s.listeners.keys()) l();
   }
+}
+
+/** Some upload processing in before is done (or failed) in after. */
+function finished(before: ReadResult | null, after: ReadResult): boolean {
+  if (!before) return false;
+  const now = new Map(after.files.filter((f) => f.upload).map((f) => [f.path, f]));
+  return before.files.some((f) => isProcessing(f) && now.has(f.path) && !isProcessing(now.get(f.path)!));
 }
 
 const stores = new WeakMap<ContentKitClient, ReadStore>();
