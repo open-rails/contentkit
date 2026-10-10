@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { createContentKitClient } from "../client/client.js";
 import { ContentKitProvider } from "./provider.js";
 import { useComments } from "./comments.js";
@@ -10,6 +10,159 @@ import { useReaction } from "./engagement.js";
 
 afterEach(cleanup);
 const ref = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000001" };
+
+it.each([
+  ["comment", "language"], ["reaction", "viewer"], ["reaction", "round-trip"],
+  ["comment", "unchanged"], ["reaction", "unchanged"],
+] as const)("scopes the %s response after %s", async (kind, transition) => {
+  let scope = { viewer: "alice", language: "en" };
+  let reads = 0;
+  const onChange = vi.fn();
+  const writes: ((response: Response) => void)[] = [];
+  const client = createContentKitClient({
+    baseUrl: "https://content.test/ck",
+    language: () => scope.language,
+    token: () => scope.viewer,
+    fetch: async (url, init) => {
+      if (init?.method === "POST") return new Promise<Response>((resolve) => writes.push(resolve));
+      reads++;
+      return Response.json(String(url).endsWith("/reaction") ? { likes: 0, dislikes: 0, mine: 0 } : []);
+    },
+  });
+  const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} {...scope} onChange={onChange}>{children}</ContentKitProvider>;
+  const { result, rerender } = renderHook(() => ({ comments: useComments(ref), reaction: useReaction(ref) }), { wrapper });
+  await waitFor(() => expect(result.current.comments.loading || result.current.reaction.loading).toBe(false));
+  let pending: Promise<unknown>;
+  act(() => { pending = kind === "comment" ? result.current.comments.post("old language") : result.current.reaction.set(1); });
+  await waitFor(() => expect(writes).toHaveLength(1));
+  if (transition === "language") scope = { ...scope, language: "ja" };
+  if (transition === "viewer" || transition === "round-trip") scope = { ...scope, viewer: "bob" };
+  rerender();
+  await waitFor(() => expect(result.current.comments.loading || result.current.reaction.loading).toBe(false));
+  if (transition === "round-trip") {
+    scope = { ...scope, viewer: "alice" };
+    rerender();
+    await waitFor(() => expect(result.current.comments.loading || result.current.reaction.loading).toBe(false));
+  }
+  const before = reads;
+  await act(async () => {
+    writes[0]!(Response.json(kind === "comment"
+      ? { id: "old", body: "old language", likes: 0, dislikes: 0, reply_count: 0 }
+      : { likes: 1, dislikes: 0, mine: 1 }));
+    await pending;
+  });
+  await waitFor(() => expect(result.current.comments.loading || result.current.reaction.loading).toBe(false));
+  expect(result.current.comments.items.map((c) => c.id)).toEqual(kind === "comment" && transition === "unchanged" ? ["old"] : []);
+  expect(result.current.reaction.counts.mine).toBe(kind === "reaction" && transition === "unchanged" ? 1 : 0);
+  expect(reads).toBe(before + (transition === "unchanged" ? 0 : 1));
+  expect(onChange).toHaveBeenCalledTimes(1);
+  expect(onChange).toHaveBeenLastCalledWith(
+    expect.objectContaining({ type: kind === "comment" ? "comment.created" : "reaction.changed" }),
+    transition === "unchanged" ? JSON.stringify(scope) : null,
+  );
+});
+
+it.each([false, true])("scopes processed media when access changed: %s", async (changed) => {
+  let accessRevision = 0;
+  let reads = 0;
+  const processing: ((response: Response) => void)[] = [];
+  const empty = { access: "full", expires: 0, total: 0, offset: 0, limit: 50, files: [] };
+  const client = createContentKitClient({
+    baseUrl: "https://content.test/ck",
+    fetch: async (url) => {
+      if (String(url).includes("prefix=cover")) return new Promise<Response>((resolve) => processing.push(resolve));
+      reads++;
+      return Response.json(empty);
+    },
+  });
+  const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} accessRevision={accessRevision}>{children}</ContentKitProvider>;
+  const { result, rerender } = renderHook(() => useMediaRead(ref, { editor: true, poll: false }), { wrapper });
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  const pending = client.media.waitFor(ref, "cover.jpg");
+  await waitFor(() => expect(processing).toHaveLength(1));
+  if (changed) accessRevision++;
+  rerender();
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  const before = reads;
+  await act(async () => {
+    processing[0]!(Response.json({ ...empty, files: [{ path: "cover.jpg", upload: true, size: 10 }] }));
+    await pending;
+  });
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.read?.files.map((f) => f.path)).toEqual(changed ? [] : ["cover.jpg"]);
+  expect(reads).toBe(before + (changed ? 1 : 0));
+});
+
+it.each(["unchanged", "viewer", "round-trip"] as const)("keeps failed comment-reaction rollback in its original read after %s", async (transition) => {
+  let viewer = "alice";
+  let mine = 0;
+  const writes: ((response: Response) => void)[] = [];
+  const client = createContentKitClient({
+    baseUrl: "https://content.test/ck",
+    fetch: async (_url, init) => {
+      if (init?.method === "POST") return new Promise<Response>((resolve) => writes.push(resolve));
+      return Response.json([{ id: "comment", body: "hello", likes: 2, dislikes: 0, mine, reply_count: 0 }]);
+    },
+  });
+  const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} viewer={viewer}>{children}</ContentKitProvider>;
+  const { result, rerender } = renderHook(() => useComments(ref), { wrapper });
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  let pending: Promise<void>;
+  act(() => { pending = result.current.react(result.current.items[0]!, -1); });
+  const failed = expect(pending!).rejects.toMatchObject({ code: "unavailable" });
+  expect(result.current.items[0]?.mine).toBe(-1);
+  await waitFor(() => expect(writes).toHaveLength(1));
+  if (transition !== "unchanged") { viewer = "bob"; mine = 1; }
+  rerender();
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  if (transition === "round-trip") {
+    viewer = "alice";
+    rerender();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+  }
+  await act(async () => {
+    writes[0]!(Response.json({ error: "unavailable" }, { status: 503 }));
+    await failed;
+  });
+  expect(result.current.items[0]?.mine).toBe(transition === "unchanged" ? 0 : 1);
+  expect(result.current.items[0]?.likes).toBe(2);
+});
+
+it("does not roll back a new reaction after leaving and returning to the same viewer", async () => {
+  let viewer = "alice";
+  const writes: ((response: Response) => void)[] = [];
+  const client = createContentKitClient({
+    baseUrl: "https://content.test/ck",
+    fetch: async (_url, init) => init?.method === "POST"
+      ? new Promise<Response>((resolve) => writes.push(resolve))
+      : Response.json({ likes: 0, dislikes: 0, mine: 0 }),
+  });
+  const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} viewer={viewer}>{children}</ContentKitProvider>;
+  const { result, rerender } = renderHook(() => useReaction(ref), { wrapper });
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  let old: Promise<void>;
+  act(() => { old = result.current.set(1); });
+  const failed = expect(old!).rejects.toMatchObject({ code: "unavailable" });
+  await waitFor(() => expect(writes).toHaveLength(1));
+  for (const next of ["bob", "alice"]) {
+    viewer = next;
+    rerender();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+  }
+  let current: Promise<void>;
+  act(() => { current = result.current.set(-1); });
+  await waitFor(() => expect(writes).toHaveLength(2));
+  await act(async () => {
+    writes[0]!(Response.json({ error: "unavailable" }, { status: 503 }));
+    await failed;
+  });
+  expect(result.current.counts.mine).toBe(-1);
+  await act(async () => {
+    writes[1]!(Response.json({ likes: 0, dislikes: 1, mine: -1 }));
+    await current;
+  });
+  expect(result.current.counts.mine).toBe(-1);
+});
 
 it.each(["viewer", "language", "accessRevision"] as const)("isolates mounted media and comment reads when %s changes", async (field) => {
   let scope = { viewer: "alice" as string | null, language: "en", accessRevision: 0 };

@@ -25,6 +25,7 @@ export type Fetcher<T> = (signal: AbortSignal) => Promise<T>;
 /** What a slot holds, for matching changes: its resource type and the ids it depends on. */
 export interface Tag {
   type: string;
+  readScope?: string;
   ref?: RefBody;
   id?: string;
   scope?: string;
@@ -53,9 +54,11 @@ const sameRef = (a?: RefBody, b?: RefBody) => !!a && !!b && a.kind === b.kind &&
  */
 export class ResourceStore {
   private readonly slots = new Map<string, Slot>();
+  // Tokens must remain unique when a scope leaves and its slots are recreated.
+  private version = 0;
 
   constructor(client: ContentKitClient) {
-    client.subscribe((c) => this.apply(c));
+    client.subscribe((c, scope) => this.apply(c, scope));
   }
 
   subscribe(key: string, tag: Tag, listener: () => void): () => void {
@@ -144,7 +147,7 @@ export class ResourceStore {
   /** Starts an optimistic write on key: the token rollback() checks. */
   mark(key: string): number {
     const s = this.slots.get(key);
-    return s ? ++s.version : 0;
+    return s ? (s.version = ++this.version) : 0;
   }
 
   /** Restores data unless a newer optimistic write started since mark(). */
@@ -165,9 +168,13 @@ export class ResourceStore {
     for (const [key, s] of this.slots) if (match(s.tag) && s.listeners.size) this.load(key, true);
   }
 
-  private apply(c: ContentKitChange): void {
+  private apply(c: ContentKitChange, scope: string | null): void {
+    const patch = <T>(match: (tag: Tag) => boolean, fn: (data: T) => T) => {
+      this.patch<T>((t) => match(t) && (t.readScope ?? "{}") === scope, fn);
+      this.invalidate((t) => match(t) && (t.readScope ?? "{}") !== scope);
+    };
     const items = <T extends { id: string }>(types: string[], fn: (item: T) => T | null) =>
-      this.patch<Page<T>>(
+      patch<Page<T>>(
         (t) => types.includes(t.type),
         (page) => {
           let changed = false;
@@ -186,7 +193,7 @@ export class ResourceStore {
         const parent = c.comment.reply_to_id;
         const published = !c.comment.moderation;
         const add = (t: Tag) => (parent ? t.type === "replies" && t.id === parent : t.type === "comments" && sameRef(t.ref, c.ref));
-        this.patch<Page<Comment>>(add, (p) => (p.items.some((x) => x.id === c.comment.id) ? p : { ...p, items: parent ? [...p.items, c.comment] : [c.comment, ...p.items] }));
+        patch<Page<Comment>>(add, (p) => (p.items.some((x) => x.id === c.comment.id) ? p : { ...p, items: parent ? [...p.items, c.comment] : [c.comment, ...p.items] }));
         if (parent && published) items<Comment>(["comments"], (x) => (x.id === parent ? { ...x, reply_count: x.reply_count + 1 } : x));
         this.invalidate((t) => t.type === "latest" || t.type === "admin-comments");
         break;
@@ -213,18 +220,22 @@ export class ResourceStore {
         this.invalidate((t) => comments.includes(t.type));
         break;
       case "reaction.changed":
-        this.patch((t) => t.type === "reaction" && sameRef(t.ref, c.ref), () => c.counts);
-        if (c.ref.kind === "post") this.postTotals(c.ref.id, c.counts.likes, c.counts.dislikes);
+        patch((t) => t.type === "reaction" && sameRef(t.ref, c.ref), () => c.counts);
+        if (c.ref.kind === "post") {
+          const totals = (p: Post): Post => (p.id === c.ref.id ? { ...p, total_likes: c.counts.likes, total_dislikes: c.counts.dislikes } : p);
+          patch<Post>((t) => t.type === "post" && t.id === c.ref.id, totals);
+          items<Post>(["posts"], totals);
+        }
         break;
       case "favorite.changed":
-        this.patch((t) => t.type === "favorite" && sameRef(t.ref, c.ref), () => ({ favorited: c.favorited, count: c.count }));
+        patch((t) => t.type === "favorite" && sameRef(t.ref, c.ref), () => ({ favorited: c.favorited, count: c.count }));
         this.invalidate((t) => t.type === "favorites");
         break;
       case "post.created":
         this.invalidate((t) => t.type === "posts");
         break;
       case "post.updated":
-        this.patch<Post | null>((t) => t.type === "post", (p) => (p?.id === c.post.id ? c.post : p));
+        patch<Post | null>((t) => t.type === "post", (p) => (p?.id === c.post.id ? c.post : p));
         items<Post>(["posts"], (x) => (x.id === c.post.id ? c.post : x));
         break;
       case "post.changed":
@@ -242,7 +253,7 @@ export class ResourceStore {
         break;
       case "poll.updated":
         // A latest-poll slot has no id in its tag: match by the poll it holds.
-        this.patch<Poll | null>((t) => t.type === "poll", (p) => (p?.id === c.poll.id ? c.poll : p));
+        patch<Poll | null>((t) => t.type === "poll", (p) => (p?.id === c.poll.id ? c.poll : p));
         items<Poll>(["polls"], (x) => (x.id === c.poll.id ? c.poll : x));
         break;
       case "poll.changed":
@@ -262,12 +273,6 @@ export class ResourceStore {
         else this.invalidate((t) => (t.type === "post" && t.id === c.id) || t.type === "posts");
         break;
     }
-  }
-
-  private postTotals(id: string, likes: number, dislikes: number): void {
-    const fn = (p: Post): Post => (p.id === id ? { ...p, total_likes: likes, total_dislikes: dislikes } : p);
-    this.patch<Post>((t) => t.type === "post" && t.id === id, fn);
-    this.patch<Page<Post>>((t) => t.type === "posts", (page) => ({ ...page, items: page.items.map(fn) }));
   }
 
   // A new entry per change: useSyncExternalStore compares snapshots by identity.

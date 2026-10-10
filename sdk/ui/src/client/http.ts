@@ -65,7 +65,8 @@ const trim = (u: string) => u.replace(/\/+$/, "");
 
 /** The transport every module shares: mounts, auth, language, errors and change events. */
 export class Http {
-  private readonly listeners = new Set<(change: ContentKitChange) => void>();
+  private readonly listeners = new Set<(change: ContentKitChange, scope: string | null) => void>();
+  private readScope = { key: "{}" };
   private readonly base: string;
 
   constructor(private readonly o: HttpOptions) {
@@ -131,15 +132,25 @@ export class Http {
     if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
   };
 
-  subscribe(listener: (change: ContentKitChange) => void): () => void {
+  setReadScope(key: string): void {
+    if (key !== this.readScope.key) this.readScope = { key };
+  }
+
+  /** Capture before awaiting a write; null tells caches to refetch after a scope change. */
+  captureChanges(): (change: ContentKitChange) => void {
+    const scope = this.readScope;
+    return (change) => this.emit(change, scope === this.readScope ? scope.key : null);
+  }
+
+  subscribe(listener: (change: ContentKitChange, scope: string | null) => void): () => void {
     this.listeners.add(listener);
     return () => void this.listeners.delete(listener);
   }
 
-  emit(change: ContentKitChange): void {
+  private emit(change: ContentKitChange, scope: string | null): void {
     for (const l of this.listeners) {
       try {
-        l(change);
+        l(change, scope);
       } catch (e) {
         // A host listener's fault must not fail the mutation that succeeded.
         console.error("contentkit: change listener failed", e);

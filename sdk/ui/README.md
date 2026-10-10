@@ -63,6 +63,14 @@ It is a cache signal, not an authorization decision. Without a provider, replace
 the client when its session or request language changes. Host-supplied `read` and
 `initial` data must also belong to the current viewer and language.
 
+Writes retain the cache scope they started in. After a scope change, a late
+notification refetches affected reads instead of copying its response into them;
+`onChange` still runs. Use a separate client for each independent session or
+request-language context, not one client across differently scoped providers.
+The framework-free client exposes `setReadScope(key)` and passes that key as
+the second `subscribe` / `onChange` argument, or `null` when the scope changed during the
+operation. This does not change the operation's result or its authentication.
+
 - **Mounts.** Without `mounts`, modules live under `baseUrl`: content at the
   root, `/media` (reads, HLS), `/media/upload`, `/codes`, `/taxonomy`.
 - **`client.media`**: `upload`, `put` (upload, commit, wait), `commit`, `read`,

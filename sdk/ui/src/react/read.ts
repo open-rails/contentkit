@@ -97,7 +97,7 @@ export function useMediaRead(ref: RefBody, o: MediaReadOptions = {}): UseMediaRe
   const subscribe = useCallback(
     (l: () => void) => {
       if (!store || !fetching) return () => {};
-      const offs = keys.map((key, i) => store.subscribe(key, { kind: ref.kind, id: ref.id }, { prefix, download, editor, ...windows[i] }, l, { poll, refresh: refreshing }));
+      const offs = keys.map((key, i) => store.subscribe(key, { kind: ref.kind, id: ref.id }, { prefix, download, editor, ...windows[i] }, l, { poll, refresh: refreshing }, scope));
       return () => offs.forEach((off) => off());
     },
     // ref and options are in keys.

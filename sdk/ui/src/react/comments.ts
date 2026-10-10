@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { BanScope, Decision, HeldKind, Reaction, Sort } from "../client/content/types.js";
 import type { AdminComment, BanInput, Comment, CommentBan, CommentStanding, FeedItem, HeldItem, ReactionCounts, RefBody } from "../client/generated/wire.js";
-import type { ResourceStore } from "./resources.js";
+import type { Page, ResourceStore } from "./resources.js";
 import { keyOf, offsetPages, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
 
 /** Counts after the caller's reaction changes from counts.mine to value. */
@@ -16,21 +16,27 @@ const commentLists = ["comments", "replies", "latest", "admin-comments"];
 const tokens = new WeakMap<ResourceStore, Map<string, number>>();
 
 /** Sets the caller's reaction to a comment in every list showing it at once; rolls back on failure unless a newer one started. */
-async function reactToComment(client: ContentKitClient, store: ResourceStore, c: Pick<Comment, "id" | "likes" | "dislikes" | "mine">, value: Reaction) {
+async function reactToComment(client: ContentKitClient, store: ResourceStore, scope: string, c: Pick<Comment, "id" | "likes" | "dislikes" | "mine">, value: Reaction) {
   let t = tokens.get(store);
   if (!t) tokens.set(store, (t = new Map()));
   const token = (t.get(c.id) ?? 0) + 1;
   t.set(c.id, token);
-  const put = (counts: ReactionCounts) =>
-    store.patch<{ items: Comment[]; next: unknown }>(
-      (tag) => commentLists.includes(tag.type),
-      (page) => ({ ...page, items: page.items.map((x) => (x.id === c.id ? { ...x, ...counts } : x)) }),
+  const optimistic = new WeakSet<Comment>();
+  const put = (counts: ReactionCounts, rollback = false) =>
+    store.patch<Page<Comment>>(
+      (tag) => commentLists.includes(tag.type) && tag.readScope === scope,
+      (page) => ({ ...page, items: page.items.map((x) => {
+        if (x.id !== c.id || (rollback && !optimistic.has(x))) return x;
+        const next = { ...x, ...counts };
+        optimistic.add(next);
+        return next;
+      }) }),
     );
   put(withReaction({ likes: c.likes, dislikes: c.dislikes, mine: c.mine }, value));
   try {
     await client.comments.react(c.id, value);
   } catch (e) {
-    if (t.get(c.id) === token) put({ likes: c.likes, dislikes: c.dislikes, mine: c.mine });
+    if (t.get(c.id) === token) put({ likes: c.likes, dislikes: c.dislikes, mine: c.mine }, true);
     throw e;
   }
 }
@@ -69,7 +75,7 @@ export function useComments(ref: RefBody, o: UseCommentsOptions = {}): UseCommen
   const edit = useCallback((cid: string, body: string) => client.comments.edit(cid, body), [client]);
   const remove = useCallback((cid: string) => client.comments.delete(cid), [client]);
   const restore = useCallback((cid: string) => client.comments.restore(cid), [client]);
-  const react = useCallback((c: Comment, v: Reaction) => reactToComment(client, store, c, v), [client, store]);
+  const react = useCallback((c: Comment, v: Reaction) => reactToComment(client, store, scope, c, v), [client, store, scope]);
   return { ...list, post, edit, remove, react, restore };
 }
 
@@ -116,7 +122,7 @@ export function useAdminComments(o: { contentKind?: string; pageSize?: number; c
   );
   const remove = useCallback((id: string) => client.comments.delete(id), [client]);
   const restore = useCallback((id: string) => client.comments.restore(id), [client]);
-  const react = useCallback((c: Comment, v: Reaction) => reactToComment(client, store, c, v), [client, store]);
+  const react = useCallback((c: Comment, v: Reaction) => reactToComment(client, store, scope, c, v), [client, store, scope]);
   return { ...list, remove, restore, react };
 }
 

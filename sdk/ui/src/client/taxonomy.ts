@@ -69,8 +69,9 @@ export class TaxonomyClient {
   }
 
   private async write<T>(p: Promise<T>): Promise<T> {
+    const emit = this.http.captureChanges();
     const out = await p;
-    this.http.emit({ type: "taxonomy.changed" });
+    emit({ type: "taxonomy.changed" });
     return out;
   }
 }

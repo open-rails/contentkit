@@ -22,6 +22,7 @@ export function useResource<T>(
   fetcher: Fetcher<T>,
   o: { initial?: T; more?: (cursor: string | number, signal: AbortSignal) => Promise<Page<unknown>> } = {},
 ): Resource<T> & { reload: () => void } {
+  const scope = useReadScope();
   const fetch = useRef(fetcher);
   const more = useRef(o.more);
   const initial = useRef(o.initial);
@@ -31,10 +32,10 @@ export function useResource<T>(
     initial.current = o.initial;
   });
   const subscribe = useCallback(
-    (l: () => void) => (key ? store.subscribe(key, tag, l) : none()),
+    (l: () => void) => (key ? store.subscribe(key, { ...tag, readScope: scope }, l) : none()),
     // The tag is part of the key.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [store, key],
+    [store, key, scope],
   );
   const snapshot = useCallback(() => (key ? store.snapshot<T>(key) : IDLE), [store, key]);
   const entry = useSyncExternalStore(subscribe, snapshot, snapshot);

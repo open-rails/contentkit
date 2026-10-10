@@ -49,8 +49,10 @@ export interface ContentKitClient {
   config(signal?: AbortSignal): Promise<Config>;
   /** A module's base URL as configured (no trailing slash). */
   url(module: ContentKitModule, ref?: RefBody): string;
-  /** Every successful mutation made through this client; returns the unsubscribe. */
-  subscribe(listener: (change: ContentKitChange) => void): () => void;
+  /** Cache context only, not authentication. The React provider keeps this in sync. */
+  setReadScope(scope: string): void;
+  /** Every successful mutation; a null scope means its data predates a context change. */
+  subscribe(listener: (change: ContentKitChange, scope: string | null) => void): () => void;
 }
 
 export function createContentKitClient(options: ContentKitClientOptions): ContentKitClient {
@@ -70,6 +72,7 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     codes: new CodesClient(h),
     config: (signal) => call(h, "GET", "/config", { signal }),
     url: (module, ref) => h.mount(module, ref),
+    setReadScope: (scope) => h.setReadScope(scope),
     subscribe: (listener) => h.subscribe(listener),
   };
 }

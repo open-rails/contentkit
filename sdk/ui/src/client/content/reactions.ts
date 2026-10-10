@@ -13,8 +13,9 @@ export class ReactionsClient {
   }
   /** Sets the caller's reaction (0 clears it); resolves with the new counts. */
   async set(ref: RefBody, value: Reaction): Promise<ReactionCounts> {
+    const emit = this.http.captureChanges();
     const counts: ReactionCounts = await call(this.http, "POST", `/{kind}/{id}/${reactionVerb(value)}` as const, { params: { kind: ref.kind, id: ref.id } });
-    this.http.emit({ type: "reaction.changed", ref: { kind: ref.kind, id: ref.id }, counts });
+    emit({ type: "reaction.changed", ref: { kind: ref.kind, id: ref.id }, counts });
     return counts;
   }
 }
