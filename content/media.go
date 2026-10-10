@@ -135,3 +135,82 @@ func (rt *Runtime) CanUpload(ctx context.Context, actor access.Actor, t media.Up
 }
 
 var _ media.UploadAuthorizer = (*Runtime)(nil)
+
+// MediaResolver is the access.ContentResolver of the post and poll media
+// kinds: route the host registry's Hooks.Resolver to it for Media.PostKind and
+// PollKind, as CanUpload is routed. A post's folder shows like the post: a
+// published one to everyone, a draft, scheduled, held or rejected one only to
+// its author and PostWrite holders, its editors (an editor read gives them
+// the images before anyone else sees them), a deleted one to no one. A poll's
+// folder shows while the poll exists, edited by PollWrite holders. Other refs
+// are omitted (denied).
+func (rt *Runtime) MediaResolver() access.ContentResolver { return mediaResolver{rt} }
+
+type mediaResolver struct{ rt *Runtime }
+
+func (m mediaResolver) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	rt := m.rt
+	out := make(map[contentref.ContentKey]access.Resolution, len(refs))
+	if rt.media == nil {
+		return out, nil
+	}
+	var posts, polls []string
+	for _, ref := range refs {
+		if ref.TenantID != rt.tenant || ref.ContentVersionID != nil {
+			continue
+		}
+		switch ref.ContentKind {
+		case rt.media.PostKind:
+			posts = append(posts, ref.ContentID)
+		case rt.media.PollKind:
+			if uuidRe.MatchString(ref.ContentID) {
+				polls = append(polls, ref.ContentID)
+			}
+		}
+	}
+	signedIn := !actor.Anonymous && actor.ID != ""
+	can := func(perm string) bool { return signedIn && rt.requirePerm(ctx, actor, perm) == nil }
+	if len(posts) > 0 {
+		postWrite := can(rt.perms.PostWrite)
+		rows, err := rt.store.pool.Query(ctx, `SELECT id, author_id, NOT is_draft AND moderation = 'approved' AND (live_at IS NULL OR live_at <= now())
+			FROM `+rt.store.t.posts+` WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL`, rt.tenant, posts)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id, author string
+			var published bool
+			if err := rows.Scan(&id, &author, &published); err != nil {
+				return nil, err
+			}
+			editor := postWrite || (signedIn && actor.ID == author)
+			if published || editor {
+				out[rt.Ref(rt.media.PostKind, id).Key()] = access.Resolution{Visible: true, Accessible: true, Editor: editor}
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	if len(polls) > 0 {
+		pollWrite := can(rt.perms.PollWrite)
+		rows, err := rt.store.pool.Query(ctx, `SELECT id::text FROM `+rt.store.t.pollQuestions+`
+			WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL`, rt.tenant, polls)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			out[rt.Ref(rt.media.PollKind, id).Key()] = access.Resolution{Visible: true, Accessible: true, Editor: pollWrite}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}

@@ -373,3 +373,54 @@ func TestMedia_ForeignTenantIsNotFound(t *testing.T) {
 		t.Fatalf("foreign delete: %d %v", code, m.deletions())
 	}
 }
+
+// A post's folder shows like the post: published to everyone, unpublished
+// only to its editors (PostWrite and its author), deleted to no one; a
+// poll's while the poll exists, edited by PollWrite holders.
+func TestMediaResolverShowsPostFoldersLikeThePost(t *testing.T) {
+	ctx := context.Background()
+	rt, _ := newMediaTest(t, Options{Authz: postRoleAuthz{writers: map[string]bool{"admin": true}}})
+	draft, published, deleted, author := insertPost(t, rt), insertPost(t, rt), insertPost(t, rt), insertPost(t, rt)
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := rt.store.pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`UPDATE `+rt.store.t.posts+` SET is_draft = false WHERE id = ANY($1)`, []string{published, deleted})
+	exec(`UPDATE `+rt.store.t.posts+` SET deleted_at = now() WHERE id = $1`, deleted)
+	exec(`UPDATE `+rt.store.t.posts+` SET author_id = 'writer' WHERE id = $1`, author)
+	var poll Poll
+	if code := send(t, rt, mediaAdmin, "POST", "/polls", PollInput{Question: "Q", Language: "en",
+		Options: []PollOptionInput{{Label: "A"}, {Label: "B", Position: 1}}}, &poll); code != http.StatusCreated {
+		t.Fatalf("create poll: %d", code)
+	}
+	post := func(id string) contentref.ContentRef { return rt.Ref("post", id) }
+	refs := []contentref.ContentRef{post(draft), post(published), post(deleted), post(author), rt.Ref("poll", poll.ID),
+		rt.Ref("gallery", draft), contentref.New("other", "post", published)}
+	full := func(editor bool) access.Resolution {
+		return access.Resolution{Visible: true, Accessible: true, Editor: editor}
+	}
+	for _, c := range []struct {
+		actor access.Actor
+		want  map[contentref.ContentRef]access.Resolution
+	}{
+		{access.Actor{Anonymous: true}, map[contentref.ContentRef]access.Resolution{post(published): full(false), rt.Ref("poll", poll.ID): full(false)}},
+		{access.Actor{ID: "reader"}, map[contentref.ContentRef]access.Resolution{post(published): full(false), rt.Ref("poll", poll.ID): full(false)}},
+		{access.Actor{ID: "writer"}, map[contentref.ContentRef]access.Resolution{post(published): full(false), post(author): full(true), rt.Ref("poll", poll.ID): full(false)}},
+		{mediaAdmin, map[contentref.ContentRef]access.Resolution{post(draft): full(true), post(published): full(true), post(author): full(true), rt.Ref("poll", poll.ID): full(true)}},
+	} {
+		got, err := rt.MediaResolver().Resolve(ctx, refs, c.actor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != len(c.want) {
+			t.Errorf("%s: %d resolutions, want %d: %v", c.actor.ID, len(got), len(c.want), got)
+		}
+		for ref, want := range c.want {
+			if got[ref.Key()] != want {
+				t.Errorf("%s %s: %+v, want %+v", c.actor.ID, ref, got[ref.Key()], want)
+			}
+		}
+	}
+}

@@ -189,7 +189,8 @@ Ports (in `content` unless qualified):
 `{tenant}/poll/{poll_id}/` (`Media.PostKind`/`PollKind`). Register both kinds
 with a `Named` upload path (`inline/{name}`, with a `Max`) and its public preset (`To:
 "{name}.webp"`), route their `CanUpload` to `rt.Content.CanUpload` (PostWrite
-or PollWrite, and the post or poll must exist), and pass
+or PollWrite, and the post or poll must exist) and their `Hooks.Resolver` to
+`rt.Content.MediaResolver()`, and pass
 `content.Media{URLs: urls, Folders: jobs}`, where `urls.InlineURL` is the
 public preset's URL (`reg.PublicURL(ref, name+".webp")`; a pure function).
 The editor uploads each image with the SDK's `upload(file, {ref: {kind:
@@ -206,7 +207,12 @@ The public URL serves the kind's default until the worker renders it:
 | `PUT /polls/{id}/options/{oid}/image` | same | `{"image_url"}` |
 
 Create and update bodies take no image URLs, so images are added once the post
-or poll exists. The public URL serves after the image job runs (seconds).
+or poll exists. The public URL serves after the image job runs (seconds), and
+only while the post is published: `MediaResolver` shows a post's folder like
+the post (a draft, scheduled, held or rejected one only to its author and
+PostWrite holders, as editors). Its editors see an unpublished post's images
+through an editor read (`GET /media/{post kind}/{id}?editor`, signed
+`editor_url`s); the SDK's `usePost` does this for them.
 Post creation, edits, moderation decisions and soft deletion queue `ExposeTx`
 in the content transaction. Soft deletion hides public media and keeps private
 sources; deleting a poll still queues its folder's deletion. Replaced images

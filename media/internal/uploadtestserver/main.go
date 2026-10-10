@@ -204,7 +204,7 @@ func main() {
 
 	hooks := &uploadHooks{}
 	reg, err := media.NewRegistry(media.Config{Namespace: namespace, BaseURL: "http://media.invalid", Kinds: append(kinds, contentFolders...),
-		Hooks: media.Hooks{Resolver: allow{}, CanUpload: hooks}})
+		Hooks: media.Hooks{Resolver: hooks, CanUpload: hooks}})
 	must(err)
 	workerSchema := schema + "_worker"
 	must(workqueue.Migrate(ctx, pool, workerSchema))

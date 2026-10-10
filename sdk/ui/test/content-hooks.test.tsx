@@ -224,11 +224,49 @@ describe.skipIf(!endpoint)("content hooks against contentkit.Runtime.Handler", (
     expect(result.current.drafts.items[0]!.title).toBe("Draft, renamed");
     let url = "";
     await act(async () => void (url = await result.current.post.uploadImage(png())));
-    expect(url).toMatch(/\/ckpost\/.*\/public\/i-.*\.webp$/);
+    expect(url).toMatch(/^blob:/); // the file itself until the post's image is served
     await act(async () => void (await result.current.post.setCover(png())));
     await waitFor(() => expect(result.current.post.post?.cover_url).toMatch(/\/ckpost\//), wait);
     await act(() => result.current.post.remove());
     expect(result.current.all.items).toEqual([]);
+  });
+
+  it("usePost: an unpublished post's images show through its editor read; stored bodies keep their public URLs", async () => {
+    const c = client("editor");
+    const writer = renderHook(() => usePost(null), { wrapper: wrap(c, "editor") });
+    await act(async () => void (await writer.result.current.create({ title: "With pictures", body: "b", language: "en", is_draft: true })));
+    await waitFor(() => expect(writer.result.current.post).not.toBeNull(), wait);
+    const id = writer.result.current.post!.id;
+    // A fresh upload shows from its file; the stored body names its public URL.
+    let fresh = "";
+    await act(async () => void (fresh = await writer.result.current.uploadImage(png())));
+    expect(fresh).toMatch(/^blob:/);
+    // The fixture's posts take plain text (tags stripped); a host's HTML sanitizer keeps <img src>.
+    await act(async () => void (await writer.result.current.update({ body: `Look: ${fresh}` })));
+    const url = writer.result.current.post!.body.slice("Look: ".length);
+    expect(url).toMatch(new RegExp(`/ckpost/${id}/public/i-[0-9a-f-]{36}\\.webp$`));
+    expect(writer.result.current.imageSrc(url)).toBe(fresh);
+    await act(async () => void (await writer.result.current.setCover(png())));
+    await waitFor(() => expect(writer.result.current.post?.cover_url).toMatch(/\/ckpost\//), wait);
+    writer.unmount();
+
+    // Reopened, the draft's images show through the editor read once their editor views render.
+    const { result } = renderHook(() => usePost(id), { wrapper: wrap(client("editor"), "editor") });
+    await waitFor(() => expect(result.current.imageSrc(url)).toContain("?t="), wait);
+    const shown = result.current.imageSrc(url)!;
+    expect(shown).not.toContain("/public/");
+    expect(result.current.imageSrc(result.current.post!.cover_url)).toContain("?t=");
+    expect(result.current.editorBody).toBe(`Look: ${shown}`);
+    expect(result.current.imageSrc("https://example.com/other.png")).toBe("https://example.com/other.png");
+    await act(async () => void (await result.current.update({ body: `${result.current.editorBody} More.` })));
+    expect(result.current.post!.body).toBe(`Look: ${url} More.`);
+    expect(result.current.storedBody(result.current.editorBody!)).toBe(result.current.post!.body);
+
+    // The folder is its editors': another caller cannot read it.
+    await expect(client("alice").media.read({ kind: "ckpost", id }, { editor: true })).rejects.toMatchObject({ code: "not_found" });
+    // Published, its public URLs serve and no editor read is made.
+    await act(async () => void (await result.current.update({ is_draft: false })));
+    expect(result.current.imageSrc(url)).toBe(url);
   });
 
   it("useModerationQueue and useCommentBans: a resolved item leaves the queue; a ban joins the list", async () => {

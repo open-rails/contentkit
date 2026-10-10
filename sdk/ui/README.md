@@ -69,9 +69,11 @@ const urls = createContentURLs({ routes: { video: "watch", gallery: "g" }, langu
   `comments.adminList`.
 - **Images of posts and polls** go to the item's server-named upload path:
   `media.uploadNamed(ref, file)` resolves the name content routes take;
-  `media.uploadInline(postId, file)` resolves a body image's URL;
+  `media.uploadInline(postId, file)` resolves a body image's public URL;
   `posts.uploadCover`, `polls.uploadImage` and `polls.uploadOptionImage` do
-  both steps. `folders` renames the post and poll media kinds.
+  both steps. `folders` renames the post and poll media kinds. A post's
+  public image files exist only while it is published; `usePost` shows an
+  unpublished post's images to its editors (below).
 - **`client.config()`** says what the content module allows: which
   interactions signed-out visitors may make (`content.Options.Anonymous`,
   none by default).
@@ -116,6 +118,19 @@ const { counts, toggle } = useReaction(ref);
 const { favorited, toggle: fav } = useFavorite(ref);
 const { poll, vote } = usePoll(null, { language }); // the newest live poll
 const editor = usePollEditor(pollId);                // staff
+```
+
+A post editor puts `editorBody` in its rich-text field and inserts what
+`uploadImage(file)` resolves: URLs that show the images now (the file for a
+fresh upload, signed editor views of an unpublished post's images, read and
+refreshed as needed). `update({ body })` stores the images' public URLs
+(`storedBody(html)` does the same for a host's own save); `imageSrc(url)` shows
+the cover.
+
+```tsx
+const editor = usePost(postId);
+<RichText value={editor.editorBody} onImage={editor.uploadImage} onSave={(html) => editor.update({ body: html })} />
+<img src={editor.imageSrc(editor.post?.cover_url)} alt="" />
 ```
 
 Also `useContentConfig` (`client.config()`, read once), `useCommentReplies`,
