@@ -232,6 +232,7 @@ export const en = {
     checksum_mismatch: "The file changed during upload. Please try again.",
     rate_limited: "Too many uploads. Try again in {seconds} s.",
     unavailable: "Media storage is unavailable. Please try again shortly.",
+    upgrade_required: "This item is being upgraded. Please try again later.",
     internal_error: "Something went wrong on our end. Please try again.",
     allowedTypes: "Use {allowed}.",
     tooLargeBy: "This file is {size}; the limit is {max}.",

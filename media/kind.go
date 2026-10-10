@@ -208,8 +208,8 @@ func (k *Kind) owned(m *Manifest, f File, p *Public, pub Publication) bool {
 		slices.Equal(pub.Names, k.PublicNames(m, p, f.Path))
 }
 
-// PublicKept protects every owned generation: the current files and an
-// active reservation. An unowned name is permanently
+// PublicKept protects every owned generation: the current files, legacy
+// ones included, and an active reservation. An unowned name is permanently
 // retired; no later worker may reuse it.
 func (k *Kind) PublicKept(m *Manifest) []string {
 	var out []string

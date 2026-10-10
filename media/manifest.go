@@ -96,9 +96,11 @@ type EditorImage struct {
 // and one reserved successor, which replaces it once ready: cleanup never
 // retires the current files while their successor is written.
 type Publication struct {
-	Preset     string           `json:"preset"`
-	Source     string           `json:"source"` // the upload's Key
-	FP         string           `json:"fp"`
+	Preset string `json:"preset"`
+	Source string `json:"source"` // the upload's Key
+	FP     string `json:"fp"`
+	// Generation suffixes every physical name; "" is a legacy publication,
+	// files a pre-v0.68 worker wrote at the logical names (always ready).
 	Generation string           `json:"generation"`
 	Names      []string         `json:"names"` // logical preset names at this position
 	State      PublicationState `json:"state"`
@@ -118,6 +120,9 @@ func (p Publication) Ready() bool { return p.State == PublicationReady }
 
 // NamesOnDisk lists the immutable physical names reserved by the publication.
 func (p Publication) NamesOnDisk() []string {
+	if p.Generation == "" {
+		return slices.Clone(p.Names)
+	}
 	names := make([]string, len(p.Names))
 	for i, name := range p.Names {
 		ext := path.Ext(name)
@@ -397,7 +402,7 @@ func (m *Manifest) Validate() error {
 		slots := make(map[slot]bool, len(f.Public))
 		for _, p := range f.Public {
 			id, err := uuid.Parse(p.Generation)
-			generation := err == nil && id != uuid.Nil && id.String() == p.Generation
+			generation := err == nil && id != uuid.Nil && id.String() == p.Generation || p.Generation == "" && p.Ready()
 			current, _ := f.Current(p.Preset)
 			if p.Preset == "" || slots[slot{p.Preset, p.State}] || p.Source != f.Key() || p.FP == "" || !generation ||
 				!p.Ready() && current.Generation == p.Generation || len(p.Names) == 0 || len(p.Dims) != len(p.Names) || p.State > PublicationReady {
@@ -571,7 +576,14 @@ var (
 	// ErrManifestUnreadable: a stored manifest over MaxManifestBytes, written
 	// before the bound; it does not decode.
 	ErrManifestUnreadable = errors.New("media: stored manifest over its size limit")
+	// ErrUpgradeRequired: a manifest stored before v0.68 (version 2), which
+	// only the media upgrade (Jobs.Upgrade) reads. Nothing else edits or
+	// cleans the item until then; HTTP answers 503 upgrade_required.
+	ErrUpgradeRequired = errors.New("media: item stored before v0.68 needs the media upgrade")
 )
+
+// legacyManifestVersion is the manifest format the upgrade converts.
+const legacyManifestVersion = 2
 
 // encodeManifest writes m as gzip JSON (HTML characters unescaped: a name of
 // "<" costs one byte) and records its JSON length.
@@ -616,8 +628,22 @@ func DecodeManifest(b []byte) (*Manifest, error) { return decodeManifest(b) }
 
 // decodeManifest reads gzip JSON (or plain JSON), at most MaxManifestBytes
 // of it (ErrManifestUnreadable past that), indexes it and records its JSON
-// length.
+// length. A version 2 manifest is ErrUpgradeRequired.
 func decodeManifest(b []byte) (*Manifest, error) {
+	m, err := decodeStored(b)
+	switch {
+	case err != nil:
+		return nil, err
+	case m.V == legacyManifestVersion:
+		return nil, ErrUpgradeRequired
+	case m.V != ManifestVersion:
+		return nil, fmt.Errorf("media: manifest version %d, want %d", m.V, ManifestVersion)
+	}
+	return m, nil
+}
+
+// decodeStored decodes a manifest of any version.
+func decodeStored(b []byte) (*Manifest, error) {
 	r := io.Reader(bytes.NewReader(b))
 	if len(b) >= 2 && b[0] == 0x1f && b[1] == 0x8b {
 		zr, err := gzip.NewReader(r)
@@ -634,9 +660,6 @@ func decodeManifest(b []byte) (*Manifest, error) {
 		return nil, ErrManifestUnreadable
 	} else if err != nil {
 		return nil, err
-	}
-	if m.V != ManifestVersion {
-		return nil, fmt.Errorf("media: manifest version %d, want %d", m.V, ManifestVersion)
 	}
 	m.reindex()
 	m.size = MaxManifestBytes + 1 - lr.N

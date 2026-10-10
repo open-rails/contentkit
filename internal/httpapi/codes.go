@@ -23,6 +23,7 @@ const (
 	CodeConflict       = "conflict"
 	CodeRateLimited    = "rate_limited"
 	CodeUnavailable    = "unavailable"
+	CodeUpgrade        = "upgrade_required"
 	CodeInternal       = "internal_error"
 	CodeTenantMismatch = "tenant_mismatch"
 )
@@ -59,6 +60,7 @@ var codes = []ErrorCode{
 	{CodeTenantMismatch, http.StatusInternalServerError, "A host port answered with another tenant's data: a configuration fault."},
 	{"not_configured", http.StatusNotImplemented, "The capability needs a port the host did not configure; retrying does not help."},
 	{CodeUnavailable, http.StatusServiceUnavailable, "Media storage cannot be reached, or a commit's recovery is pending; retry."},
+	{CodeUpgrade, http.StatusServiceUnavailable, "The media item was stored before v0.68 and is served once the host's media upgrade (contentkit_media_upgrade) has converted it."},
 }
 
 var byCode = func() map[string]ErrorCode {

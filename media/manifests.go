@@ -585,6 +585,18 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 				return nil, false, err
 			}
 			return nil, false, m.finishCommit(ctx, item, *commit, false, nil)
+		} else if errors.Is(err, ErrUpgradeRequired) {
+			// Only the upgrade prepares a write over a legacy root, under
+			// If-Match on it; a legacy root means that write did not land.
+			// Changing the root's ETag fences a delayed copy of it.
+			if commit.Attempt != uuid.Nil {
+				if err := m.fenceLegacy(ctx, item); errors.Is(err, ErrPreconditionFailed) {
+					continue
+				} else if err != nil {
+					return nil, false, err
+				}
+			}
+			return nil, false, m.finishCommit(ctx, item, *commit, false, nil)
 		} else if err != nil {
 			return nil, false, err
 		}

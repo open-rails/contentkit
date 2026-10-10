@@ -35,6 +35,8 @@ type PGJournal struct {
 	table        string
 	allocations  string
 	publications string
+	upgrades     string
+	upgradeFails string
 	limiter      *PGLimiter
 	queue        TransactionalProcessQueue
 }
@@ -51,6 +53,8 @@ func NewPGJournal(pool *pgxpool.Pool, schema string, queue TransactionalProcessQ
 	return &PGJournal{pool: pool, table: pgx.Identifier{schema, "content_media_commits"}.Sanitize(),
 		allocations:  pgx.Identifier{schema, "content_media_allocations"}.Sanitize(),
 		publications: pgx.Identifier{schema, "content_media_publications"}.Sanitize(),
+		upgrades:     pgx.Identifier{schema, "content_media_upgrades"}.Sanitize(),
+		upgradeFails: pgx.Identifier{schema, "content_media_upgrade_failures"}.Sanitize(),
 		limiter:      limiter, queue: queue}, nil
 }
 
@@ -58,6 +62,7 @@ type journalEffects struct {
 	Deletion    bool        `json:"deletion,omitempty"`    // explicit purge may fence an unreadable root without decoding it
 	Cleanup     bool        `json:"cleanup,omitempty"`     // allocation retirement, no manifest PUT
 	Allocate    []string    `json:"allocate,omitempty"`    // physical names owned before a producer sends bytes
+	Adopt       []string    `json:"adopt,omitempty"`       // a legacy item's existing objects, owned by the upgrade's incarnation
 	Incarnation string      `json:"incarnation,omitempty"` // allocation lifetime, read from S3 under this lease
 	Settlement  Settlement  `json:"settlement"`
 	Cancel      bool        `json:"cancel,omitempty"`
@@ -248,6 +253,9 @@ func (j *PGJournal) prepare(ctx context.Context, c *manifestCommit, effects jour
 				return err
 			}
 		}
+		if err := j.adoptTx(ctx, tx, c, effects); err != nil {
+			return err
+		}
 		_, err = tx.Exec(ctx, `UPDATE `+j.table+` SET state = 'prepared', attempt_id = $3,
 expected_etag = $4, effects = $5, charged_bytes = $6, updated_at = now()
 WHERE tenant_id = $1 AND operation_id = $2`, c.Ref.TenantID, c.ID, attempt, c.ETag, body, charged)
@@ -319,6 +327,28 @@ AND content_kind = $4 AND content_id = $5 AND folder_prefix = $6 AND state = 'ap
 	}
 	if !known {
 		return ErrCommitPending
+	}
+	return nil
+}
+
+// adoptTx records a legacy item's objects under the upgrade's incarnation
+// before its manifest PUT. A retry after an absent attempt moves them to its
+// own incarnation; a retired object is never adopted again.
+func (j *PGJournal) adoptTx(ctx context.Context, tx pgx.Tx, c *manifestCommit, effects journalEffects) error {
+	if len(effects.Adopt) == 0 {
+		return nil
+	}
+	var adopted int
+	err := tx.QueryRow(ctx, `WITH a AS (INSERT INTO `+j.allocations+` AS a (tenant_id, folder_prefix, object_key, incarnation)
+SELECT $1, $2, key, $4 FROM unnest($3::text[]) AS key
+ON CONFLICT (tenant_id, object_key) DO UPDATE SET incarnation = EXCLUDED.incarnation
+WHERE a.folder_prefix = EXCLUDED.folder_prefix AND a.retired_at IS NULL RETURNING 1)
+SELECT count(*) FROM a`, c.Ref.TenantID, c.Folder, effects.Adopt, effects.Incarnation).Scan(&adopted)
+	if err != nil {
+		return err
+	}
+	if adopted != len(effects.Adopt) {
+		return ErrAllocationRetired
 	}
 	return nil
 }

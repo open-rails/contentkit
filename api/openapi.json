@@ -7310,6 +7310,7 @@
           "type_not_allowed",
           "unauthorized",
           "unavailable",
+          "upgrade_required",
           "video_aspect_unsupported",
           "video_over_budget",
           "video_too_large",
@@ -7418,13 +7419,15 @@
     ],
     "module:upload": [
       "internal_error",
-      "unavailable"
+      "unavailable",
+      "upgrade_required"
     ],
     "module:media": [
       "internal_error",
       "not_found",
       "rate_limited",
-      "unavailable"
+      "unavailable",
+      "upgrade_required"
     ],
     "module:codes": [
       "internal_error"
@@ -7541,6 +7544,10 @@
     "unavailable": {
       "status": 503,
       "meaning": "Media storage cannot be reached, or a commit's recovery is pending; retry."
+    },
+    "upgrade_required": {
+      "status": 503,
+      "meaning": "The media item was stored before v0.68 and is served once the host's media upgrade (contentkit_media_upgrade) has converted it."
     },
     "video_aspect_unsupported": {
       "status": 422,

@@ -203,6 +203,33 @@ func (s *Store) List(ctx context.Context, prefix string) iter.Seq2[media.Object,
 	}
 }
 
+// ListFolders lists the folder names directly under prefix, in key order,
+// after one ("" from the start): a delimiter listing (media.FolderLister).
+func (s *Store) ListFolders(ctx context.Context, prefix, after string) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		in := &s3.ListObjectsV2Input{Bucket: &s.bucket, Prefix: &prefix, Delimiter: aws.String("/")}
+		if after != "" {
+			in.StartAfter = aws.String(prefix + after + "/\U0010FFFF") // past every key in that folder
+		}
+		p := s3.NewListObjectsV2Paginator(s.client, in)
+		for p.HasMorePages() {
+			page, err := p.NextPage(ctx)
+			if err != nil {
+				yield("", mapErr("list", prefix, err))
+				return
+			}
+			for _, cp := range page.CommonPrefixes {
+				name := strings.TrimSuffix(strings.TrimPrefix(aws.ToString(cp.Prefix), prefix), "/")
+				if name > after && !yield(name, nil) {
+					return
+				}
+			}
+		}
+	}
+}
+
+var _ media.FolderLister = (*Store)(nil)
+
 // Copy copies src to dst in the bucket: one CopyObject up to the copy part
 // size, else UploadPartCopy ranges of it, each conditional on the source ETag.
 func (s *Store) Copy(ctx context.Context, src, dst string, o media.CopyOptions) (media.Object, error) {

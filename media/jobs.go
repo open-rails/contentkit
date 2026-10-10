@@ -138,6 +138,7 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &readyWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &purgeWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &recoverWorker{j: j}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &upgradeWorker{j: j}) },
 		} {
 			if err := add(); err != nil {
 				return err
@@ -154,6 +155,12 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 				return recoverArgs{}, &river.InsertOpts{Queue: j.cfg.Queue, MaxAttempts: 3,
 					UniqueOpts: river.UniqueOpts{ByPeriod: time.Minute}}
 			}, &river.PeriodicJobOpts{ID: "contentkit_media_recover", RunOnStart: true}))
+		// The upgrade starts with the host and queues its own batches until
+		// done; the daily run retries failures and costs one read after.
+		cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(24*time.Hour),
+			func() (river.JobArgs, *river.InsertOpts) {
+				return upgradeArgs{}, &river.InsertOpts{Queue: j.cfg.Queue, UniqueOpts: PendingOnce}
+			}, &river.PeriodicJobOpts{ID: "contentkit_media_upgrade", RunOnStart: true}))
 		return nil
 	}, func(_ context.Context, b riverhelpers.Binding) error {
 		j.mu.Lock()

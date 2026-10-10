@@ -28,6 +28,7 @@ export type ErrorCode =
   | "type_not_allowed"
   | "unauthorized"
   | "unavailable"
+  | "upgrade_required"
   | "video_aspect_unsupported"
   | "video_over_budget"
   | "video_too_large"
@@ -64,6 +65,7 @@ export const CONTENTKIT_ERROR_CODES: Readonly<Record<ErrorCode, { status: number
   type_not_allowed: { status: 415, meaning: "The file type is not allowed in the upload path; `details.allowed` lists the types." },
   unauthorized: { status: 401, meaning: "The route needs a signed-in actor." },
   unavailable: { status: 503, meaning: "Media storage cannot be reached, or a commit's recovery is pending; retry." },
+  upgrade_required: { status: 503, meaning: "The media item was stored before v0.68 and is served once the host's media upgrade (contentkit_media_upgrade) has converted it." },
   video_aspect_unsupported: { status: 422, meaning: "The video's display aspect is outside what its upload path accepts; `details` has `min_aspect` and `max_aspect` (width/height)." },
   video_over_budget: { status: 422, meaning: "The planned encode costs more than its upload path allows, or the source averages under a frame a second." },
   video_too_large: { status: 422, meaning: "The video's frames are larger than its upload path allows." },

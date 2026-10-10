@@ -235,6 +235,8 @@ func (h uploadHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	ue, ok := AsUploadError(err)
 	if !ok {
 		switch {
+		case errors.Is(err, ErrUpgradeRequired):
+			ue = &UploadError{Code: CodeUpgrade, Message: "this item was stored before v0.68; the media upgrade must convert it first", RetryAfter: time.Minute}
 		case errors.Is(err, ErrCommitPending), errors.Is(err, ErrManifestConflict):
 			ue = &UploadError{Code: CodeUnavailable, Message: "commit recovery is pending; retry the same operation_id", RetryAfter: time.Second}
 		case errors.Is(err, ErrUnavailable):
