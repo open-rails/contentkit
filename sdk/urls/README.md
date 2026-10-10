@@ -5,10 +5,10 @@ The server reads only the code; the slug is decoration. Zero dependencies.
 The Go side is the `contenturl` package. Both sides are tested against the
 same vectors (`contenturl/testdata/vectors.json`).
 
-Each ContentKit release (`v*`) attaches the package:
+Each ContentKit release `vX.Y.Z` publishes it to npm, with provenance:
 
 ```sh
-pnpm add https://github.com/open-rails/contentkit/releases/download/v0.67.0/openrails-contentkit-urls-0.67.0.tgz
+pnpm add @openrails/contentkit-urls@X.Y.Z
 ```
 
 ```ts

@@ -1,0 +1,102 @@
+name: Release
+# A published release publishes @openrails/contentkit-upload and
+# @openrails/contentkit-urls at X.Y.Z to npm, built from the release's tag, with
+# provenance. workflow_dispatch publishes an older release's attached tarballs.
+'on':
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release whose attached SDK tarballs to publish to npm (e.g. v0.67.0)
+        required: true
+permissions:
+  contents: read
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+jobs:
+  package:
+    name: Pack @openrails/contentkit-${{ matrix.sdk }}
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        sdk: [upload, urls]
+    defaults:
+      run:
+        working-directory: sdk/${{ matrix.sdk }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ env.TAG }}
+        persist-credentials: false
+    - uses: pnpm/action-setup@v4
+      with:
+        package_json_file: sdk/${{ matrix.sdk }}/package.json
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+    - run: pnpm install --frozen-lockfile --ignore-scripts
+    - run: pnpm check
+    - name: Version from tag
+      run: npm version "${TAG#v}" --no-git-tag-version --allow-same-version
+    - name: Pack
+      run: |
+        mkdir release
+        pnpm pack --pack-destination release
+        ls "release/openrails-contentkit-${{ matrix.sdk }}-${TAG#v}.tgz"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: contentkit-${{ matrix.sdk }}
+        path: sdk/${{ matrix.sdk }}/release/*.tgz
+        if-no-files-found: error
+        retention-days: 7
+  npm:
+    name: Publish @openrails/contentkit-${{ matrix.sdk }} to npm
+    needs: package
+    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.package.result == 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing
+    strategy:
+      matrix:
+        sdk: [upload, urls]
+    env:
+      PKG: '@openrails/contentkit-${{ matrix.sdk }}'
+      FILE: openrails-contentkit-${{ matrix.sdk }}
+    steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        registry-url: https://registry.npmjs.org
+    - uses: actions/download-artifact@v4
+      if: github.event_name == 'release'
+      with:
+        name: contentkit-${{ matrix.sdk }}
+    - name: Download the release's tarball
+      if: github.event_name == 'workflow_dispatch'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$FILE-${TAG#v}.tgz"
+    - name: Publish
+      run: |
+        v="${TAG#v}"
+        if npm view "$PKG@$v" version >/dev/null 2>&1; then
+          echo "$PKG@$v is already on npm"
+          exit 0
+        fi
+        latest="$(npm view "$PKG" dist-tags.latest 2>/dev/null || true)"
+        if [[ "$v" == *-* ]]; then
+          dist_tag=next
+        elif [[ -n "$latest" && "$(printf '%s\n%s\n' "$latest" "$v" | sort -V | tail -1)" != "$v" ]]; then
+          dist_tag="release-${v%.*}"
+        else
+          dist_tag=latest
+        fi
+        # Provenance names this run's commit, so only a tarball built in it gets one.
+        provenance=true
+        [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]] && provenance=false
+        npm publish "$FILE-$v.tgz" --tag "$dist_tag" --provenance="$provenance"

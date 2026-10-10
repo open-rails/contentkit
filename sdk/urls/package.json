@@ -31,6 +31,10 @@
     "test": "vitest run",
     "check": "pnpm build && pnpm test"
   },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "devDependencies": {
     "typescript": "^6.0.3",
     "vitest": "^4.1.11"

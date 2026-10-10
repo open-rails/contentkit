@@ -51,6 +51,10 @@
     "screenshots": "playwright test",
     "check": "pnpm typecheck && pnpm test && pnpm build"
   },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "peerDependencies": {
     "react": ">=19 <20",
     "react-dom": ">=19 <20"

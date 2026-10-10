@@ -5,10 +5,10 @@ Browser client for ContentKit media: staged uploads (one PUT up to
 throughput, bounded concurrency, per-part retry), commit ops, the read API,
 React hooks, and a styled UI for cropped images, video posters and galleries.
 
-Each ContentKit release (`v*`) attaches the package as a release asset:
+Each ContentKit release `vX.Y.Z` publishes it to npm, with provenance:
 
 ```sh
-pnpm add https://github.com/open-rails/contentkit/releases/download/v0.62.0/openrails-contentkit-upload-0.62.0.tgz
+pnpm add @openrails/contentkit-upload@X.Y.Z
 ```
 
 The host mounts `media.UploadHandler` (e.g. at `/api/media/upload`) and
@@ -312,4 +312,4 @@ pnpm build && pnpm screenshots   # demo/ in Chromium, light/dark × desktop/mobi
 UI primitives come from `pnpm dlx shadcn@4.21.0 add …` (`components.json`); local
 edits are marked `// Local:`.
 
-The `sdk-release` workflow packs `dist` (`pnpm pack`) onto every published `v*` release, versioned by the tag.
+The `release` workflow packs `dist` (`pnpm pack`) on every published `v*` release, versioned by the tag, and publishes it to npm.
