@@ -1,4 +1,4 @@
-import { centeredCrop, fill, publicURL, rotation, stem, type Edit, type FileInfo, type Op, type PublicPreset, type RefBody, type Transport } from "@openrails/contentkit-ui/client";
+import { centeredCrop, fill, publicURL, rotation, stem, type Edit, type FileInfo, type Op, type PublicPreset, type RefBody, type Transport, type UploadRule } from "@openrails/contentkit-ui/client";
 
 /** The demo kinds' logical public presets by upload path. */
 const PRESETS: Record<string, { to: string; widths: number[]; aspect: [number, number] }> = {
@@ -19,6 +19,8 @@ export class DemoServer {
   private items = new Map<string, FileInfo[]>();
   private views = new Map<string, string>();
   private published = new Map<string, PublicPreset>();
+  /** Each kind's upload rules, carried by editor reads. */
+  rules = new Map<string, UploadRule[]>();
   delay = 250;
 
   constructor(readonly media: string) {}
@@ -39,12 +41,22 @@ export class DemoServer {
     await sleep(this.delay);
     if (url.pathname.startsWith("/read/")) {
       const [, , kind, id] = url.pathname.split("/");
-      const files = this.uploads({ kind: kind!, id: id! }).map((f) => ({ ...f, editor_url: this.view(f) }));
-      const published = files.flatMap((f) => {
+      const editor = url.searchParams.has("editor");
+      const prefix = url.searchParams.get("prefix") ?? "";
+      const uploads = this.uploads({ kind: kind!, id: id! });
+      // Each processed image upload has a derived image, like a private preset's.
+      const derived = uploads.flatMap((f): FileInfo[] =>
+        f.type.startsWith("image/") && !f.pending && PRESETS[stem(f.path)] === undefined
+          ? [{ path: `low-res/${stem(f.path).split("/").pop()}.webp`, type: "image/webp", from: f.path, url: this.view(f), ...this.edited(f) }]
+          : [],
+      );
+      const files = (editor ? [...uploads.map((f) => ({ ...f, editor_url: this.view(f) })), ...derived] : derived).filter((f) => f.path.startsWith(prefix));
+      const published = uploads.flatMap((f) => {
         const p = this.published.get(`${kind}/${id}/${stem(f.path)}`);
         return p ? [{ from: f.path, ...p }] : [];
       });
-      return json({ access: "full", expires: 0, total: files.length, offset: 0, limit: 50, files, public: published });
+      const rules = editor ? this.rules.get(kind!) : undefined;
+      return json({ access: "full", expires: 0, total: files.length, offset: 0, limit: 200, files, public: published, ...(rules ? { uploads: rules } : {}) });
     }
     const b = JSON.parse(String(init?.body));
     switch (url.pathname) {
@@ -54,7 +66,12 @@ export class DemoServer {
         return json(this.blobs.has(blob) ? { path, blob, exists: true } : { path, blob, put: { method: "PUT", url: `demo://${blob}`, headers: {}, expires: "" } });
       }
       case "/api/commit":
-        return json({ files: await this.commit(b.ref, b.ops) });
+        try {
+          return json({ files: await this.commit(b.ref, b.ops) });
+        } catch (e) {
+          if ((e as { conflict?: boolean }).conflict) return json({ error: "upload exists", code: "conflict" }, 409);
+          throw e;
+        }
     }
     return json({ error: "not found", code: "not_found" }, 404);
   };
@@ -93,9 +110,17 @@ export class DemoServer {
     return this.views.get(blob);
   }
 
+  /** An edited image's displayed size: its crop, turned. */
+  private edited(f: FileInfo): Partial<FileInfo> {
+    const c = f.edit?.crop;
+    const [w, h] = c ? [c.w, c.h] : [f.w ?? 0, f.h ?? 0];
+    return f.edit?.rotate === 90 || f.edit?.rotate === 270 ? { w: h, h: w } : { w, h };
+  }
+
   private async commit(ref: RefBody, ops: Op[]): Promise<FileInfo[]> {
     const files = this.uploads(ref);
     const at = (p: string) => files.findIndex((f) => stem(f.path) === stem(p));
+    const dir = (p: string) => p.slice(0, p.lastIndexOf("/") + 1);
     for (const op of ops) {
       const i = at(op.path!);
       if (op.op === "remove") {
@@ -104,11 +129,27 @@ export class DemoServer {
         void this.unpublish(ref, f!);
         continue;
       }
+      if (op.op === "move") {
+        // index counts the uploads under the same path.
+        const [f] = files.splice(i, 1);
+        const peers = files.map((x, j) => [x, j] as const).filter(([x]) => dir(x.path) === dir(f!.path));
+        const to = peers[op.index!]?.[1] ?? (peers.length ? peers.at(-1)![1] + 1 : files.length);
+        files.splice(to, 0, f!);
+        continue;
+      }
+      if (op.op === "rename") {
+        const to = /\.\w+$/.test(op.to!) ? op.to! : `${op.to}${files[i]!.path.slice(stem(files[i]!.path).length)}`;
+        if (at(to) >= 0) return Promise.reject(Object.assign(new Error("exists"), { conflict: true }));
+        files[i] = { ...files[i]!, path: to };
+        continue;
+      }
       let f: FileInfo & { blob?: string };
       if (op.op === "put") {
         const src = this.blobs.get(op.blob!)!;
         const bmp = await createImageBitmap(src, { imageOrientation: "from-image" });
-        f = { path: op.path!, type: src.type || "image/jpeg", size: src.size, w: bmp.width, h: bmp.height, upload: true, blob: op.blob };
+        const type = src.type || "image/jpeg";
+        const path = /\.\w+$/.test(op.path!) ? op.path! : `${op.path}.${type === "image/png" ? "png" : "jpg"}`;
+        f = { path, type, size: src.size, w: bmp.width, h: bmp.height, upload: true, blob: op.blob };
       } else if (op.op === "frame") {
         const t = op.t ?? 3;
         const blob = `sha256-frame-${t}`;
@@ -130,7 +171,10 @@ export class DemoServer {
   private async render(ref: RefBody, f: FileInfo & { blob?: string }) {
     await sleep(this.delay * 3);
     const preset = PRESETS[stem(f.path)];
-    if (!preset) return;
+    if (!preset) {
+      delete f.pending;
+      return;
+    }
     const generation = crypto.randomUUID();
     const published: PublicPreset = { preset: stem(f.path), aspect: preset.aspect.join(":"), renditions: [] };
     const bmp = await createImageBitmap(this.blobs.get(f.blob!)!, { imageOrientation: "from-image" });

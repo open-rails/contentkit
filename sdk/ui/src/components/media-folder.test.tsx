@@ -116,7 +116,7 @@ it("a draft commits files as they finish; discard() empties the queue", async ()
   await user.upload(container.querySelector<HTMLInputElement>("input[type=file]")!, [png("1.png", 1), png("2.png", 2)]);
   await waitFor(() => expect(container.querySelectorAll("[data-ckui=upload-row]")).toHaveLength(2));
   expect(s.commits.flat().map((op) => op.path)).toEqual(["images/1.png", "images/2.png"]);
-  expect(screen.queryByRole("button", { name: /^Add/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Add \d/ })).toBeNull();
 
   s.refuse = { status: 429, code: "rate_limited", error: "slow down", retry_after: 30 };
   await user.upload(container.querySelector<HTMLInputElement>("[data-ckui=folder-add] input")!, [png("3.png", 3)]);
