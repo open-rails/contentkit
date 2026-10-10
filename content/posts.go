@@ -128,10 +128,6 @@ var postRoutes = []httpapi.Route[*posts]{
 		Doc:       "Restores a deleted post as it was; 409 when another live post took its slug.",
 		Responses: []httpapi.Reply{httpapi.OK(Post{})}, Errors: []string{CodeConflict, CodeNotFound}},
 		Serve: httpapi.H((*posts).handleRestore)},
-	// More specific than reactions' /{kind}/{id}/like, so no ServeMux conflict.
-	postReaction("like", "Likes a published post.", 1),
-	postReaction("dislike", "Dislikes a published post.", -1),
-	postReaction("neutral", "Clears the caller's reaction to a published post.", 0),
 	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/posts/{id}/cover", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
 		Doc:       "Sets the cover to an inline image uploaded to the post's media folder; \"\" clears it.",
 		Request:   ImageInput{},
@@ -142,12 +138,6 @@ var postRoutes = []httpapi.Route[*posts]{
 		Request:   ImageInput{},
 		Responses: []httpapi.Reply{httpapi.OK(InlineImage{})}, Errors: []string{CodeNotConfigured, CodeNotFound}},
 		Serve: httpapi.H((*posts).handleImage)},
-}
-
-func postReaction(verb, doc string, value int16) httpapi.Route[*posts] {
-	return httpapi.Route[*posts]{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/posts/{id}/" + verb, Resource: "posts", Auth: httpapi.Public,
-		Doc: doc, Responses: []httpapi.Reply{httpapi.OK(Post{})}, Errors: []string{CodeForbidden, CodeInvalidRequest, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
-		Serve: func(p *posts) http.HandlerFunc { return p.handleReact(value) }}
 }
 
 // ImageInput names an inline image of the item's media folder ("i-{uuid}");
@@ -664,37 +654,11 @@ func (p *posts) writeList(ctx context.Context, w http.ResponseWriter, rows pgx.R
 	writeJSON(w, http.StatusOK, orEmpty(out))
 }
 
-func (p *posts) handleReact(value int16) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		ctx := req.Context()
-		actor := p.rt.actor(ctx)
-		err := participant(actor, p.rt.anonymous.Reactions)
-		if err == nil {
-			err = p.rt.limit(ctx, ActionPostReaction, actor)
-		}
-		if err != nil {
-			writeErr(w, err)
-			return
-		}
-		id := req.PathValue("id")
-		if _, err := p.react(ctx, actor, id, value); err != nil {
-			writeErr(w, err)
-			return
-		}
-		v, err := p.loadByID(ctx, p.s.pool, id)
-		if err != nil {
-			writeErr(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, v)
-	}
-}
-
 // --- data ---
 
-// react applies a like/dislike/neutral to a post. The post kind is internal
-// (no host gate): it verifies the post is published inside the tx, reuses
-// reactions.applyTx and bumps the split counter by the exact returned deltas.
+// react applies a reaction to a post for reactions.react, after the host gate:
+// it verifies the post is published inside the tx, reuses reactions.applyTx
+// and bumps the split counter by the exact returned deltas.
 func (p *posts) react(ctx context.Context, actor access.Actor, id string, value int16) (contentref.ContentRef, error) {
 	tx, err := p.s.beginMutation(ctx)
 	if err != nil {

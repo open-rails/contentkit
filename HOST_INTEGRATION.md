@@ -165,7 +165,7 @@ The content module owns posts, comments, reactions, favorites and polls in the
 host schema's `content_*` interaction tables. Every row is keyed by the `ContentRef` of
 the host-owned work: `(tenant_id, content_kind, content_id,
 content_version_id)`; comment threading is `reply_to_id`. Routes are
-`/{kind}/{id}/comments|like|dislike|neutral|reaction|favorite`,
+`/{kind}/{id}/comments|like|dislike|reaction|favorite`,
 `/comments/{cid}/...`, `/comments/latest`, `/comments/admin?content_kind=`,
 `/favorites`, `/polls...` (incl. `/polls/{id}/answer`), `/posts...`,
 `/moderation/held`, `/moderation/{kind}/{id}/resolve`, `/comment-bans...`,
@@ -321,16 +321,16 @@ bounds comments and edits: longer is `422 comment_too_long` with
 ContentKit limits each actor's interactions itself: the user id, or the IP
 for an anonymous actor (an actor with neither is not limited here). Hosts
 keep no limiter around these routes; the edge (Traefik) keeps the generic
-per-IP ceiling. Every attempt spends one, so undoing (unfavorite, neutral,
+per-IP ceiling. Every attempt spends one, so undoing (unfavorite,
 `DELETE .../reaction`) costs the same as doing. Each rate is "at most `Count`
 in any `Per`"; an action with two must pass both.
 
 | Action | Routes | Default |
 |---|---|---|
 | `comment` | `POST /{kind}/{id}/comments` (top-level and replies) | 5 per 5 minutes and 20 per hour |
-| `comment_reaction` | `POST /comments/{cid}/like\|dislike\|neutral` | 30 per minute |
-| `post_reaction` | `/posts/{id}/like\|dislike\|neutral`, and `/post/{id}/...` | 30 per minute |
-| `reaction` | `/{kind}/{id}/like\|dislike\|neutral`, `DELETE /{kind}/{id}/reaction` | 30 per minute |
+| `comment_reaction` | `POST /comments/{cid}/like\|dislike`, `DELETE /comments/{cid}/reaction` | 30 per minute |
+| `post_reaction` | `POST /post/{id}/like\|dislike`, `DELETE /post/{id}/reaction` | 30 per minute |
+| `reaction` | `POST /{kind}/{id}/like\|dislike`, `DELETE /{kind}/{id}/reaction` | 30 per minute |
 | `favorite` | `POST` and `DELETE /{kind}/{id}/favorite` | 20 per minute |
 | `poll_vote` | `POST /polls/{id}/vote`, `POST /polls/{id}/answer` | 30 per minute |
 

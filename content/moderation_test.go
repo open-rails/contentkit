@@ -437,9 +437,6 @@ func TestModeration_Posts(t *testing.T) {
 	if rec = doJSON(t, h, editor, "GET", "/posts/"+held.ID, nil); rec.Code != http.StatusOK || decodePost(t, rec).ModerationReason != "needs a look" {
 		t.Fatalf("held post to its author = %d %s", rec.Code, rec.Body.String())
 	}
-	if rec = doJSON(t, h, reader, "POST", "/posts/"+held.ID+"/like", nil); rec.Code != http.StatusNotFound {
-		t.Fatalf("like on a held post = %d, want 404", rec.Code)
-	}
 	docs, err := rt.KeywordDocuments(ctx, testTenant, KindPost, "en", []contentref.ContentRef{rt.Ref(KindPost, held.ID)})
 	if err != nil || len(docs) != 0 {
 		t.Fatalf("held post produced a keyword document: %v err=%v", docs, err)
@@ -459,9 +456,6 @@ func TestModeration_Posts(t *testing.T) {
 	}
 	if docs, _ = rt.KeywordDocuments(ctx, testTenant, KindPost, "en", []contentref.ContentRef{rt.Ref(KindPost, held.ID)}); len(docs) != 1 || docs[0].Title != "Hello" {
 		t.Fatalf("approved post keyword document = %v", docs)
-	}
-	if rec = doJSON(t, h, reader, "POST", "/posts/"+held.ID+"/like", nil); rec.Code != http.StatusOK {
-		t.Fatalf("like on the approved post = %d", rec.Code)
 	}
 
 	// reject on create: 422, nothing stored

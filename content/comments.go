@@ -816,13 +816,13 @@ var commentRoutes = []httpapi.Route[*comments]{
 		Doc:       "Deletes a comment, leaving a tombstone: its author, or a CommentModerate holder.",
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeForbidden, CodeNotFound}},
 		Serve: httpapi.H((*comments).handleDelete)},
-	commentReaction("like", "Likes a comment.", 1),
-	commentReaction("dislike", "Dislikes a comment.", -1),
-	commentReaction("neutral", "Clears the caller's reaction to a comment.", 0),
+	commentReaction(httpapi.POST, "like", "Likes a comment.", 1),
+	commentReaction(httpapi.POST, "dislike", "Dislikes a comment.", -1),
+	commentReaction(httpapi.DELETE, "reaction", "Clears the caller's reaction to a comment.", 0),
 }
 
-func commentReaction(verb, doc string, value int16) httpapi.Route[*comments] {
-	return httpapi.Route[*comments]{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/comments/{cid}/" + verb, Resource: "comments", Auth: httpapi.Public,
+func commentReaction(method, verb, doc string, value int16) httpapi.Route[*comments] {
+	return httpapi.Route[*comments]{Spec: httpapi.Spec{Method: method, Path: "/comments/{cid}/" + verb, Resource: "comments", Auth: httpapi.Public,
 		Doc: doc, Responses: []httpapi.Reply{httpapi.OK(ReactionCounts{})}, Errors: []string{CodeForbidden, CodeInvalidRequest, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
 		Serve: func(c *comments) http.HandlerFunc { return c.handleReact(value) }}
 }

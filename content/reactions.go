@@ -174,7 +174,6 @@ func (r *reactions) counts(ctx context.Context, q querier, actor access.Actor, k
 var reactionRoutes = []httpapi.Route[*reactions]{
 	reaction(httpapi.POST, "like", "Likes a target.", 1),
 	reaction(httpapi.POST, "dislike", "Dislikes a target.", -1),
-	reaction(httpapi.POST, "neutral", "Clears the caller's reaction to a target.", 0),
 	reaction(httpapi.DELETE, "reaction", "Clears the caller's reaction to a target.", 0),
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}/reaction", Resource: "reactions", Auth: httpapi.Public,
 		Doc:       "A target's like and dislike counts and the caller's own reaction.",

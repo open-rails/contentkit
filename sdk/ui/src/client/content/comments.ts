@@ -50,7 +50,9 @@ export class CommentsClient {
   /** Sets the caller's reaction to a comment. */
   async react(id: string, value: Reaction): Promise<ReactionCounts> {
     const emit = this.http.captureChanges();
-    const counts: ReactionCounts = await call(this.http, "POST", `/comments/{cid}/${reactionVerb(value)}` as const, { params: { cid: id } });
+    const params = { cid: id };
+    const counts: ReactionCounts =
+      value === 0 ? await call(this.http, "DELETE", "/comments/{cid}/reaction", { params }) : await call(this.http, "POST", `/comments/{cid}/${reactionVerb(value)}` as const, { params });
     emit({ type: "comment.reacted", id, counts });
     return counts;
   }

@@ -261,8 +261,9 @@ func TestComments_ReactionsAuthorizeStoredTarget(t *testing.T) {
 				res.err = errors.New("resolver unavailable")
 				status = http.StatusInternalServerError
 			}
-			for _, action := range []string{"like", "dislike", "neutral"} {
-				if rec := doJSON(t, h, actor, "POST", path+"/"+action, nil); rec.Code != status {
+			for _, action := range []string{"POST /like", "POST /dislike", "DELETE /reaction"} {
+				method, suffix, _ := strings.Cut(action, " ")
+				if rec := doJSON(t, h, actor, method, path+suffix, nil); rec.Code != status {
 					t.Fatalf("%s: %d %s, want %d", action, rec.Code, rec.Body.String(), status)
 				}
 			}
@@ -272,8 +273,9 @@ func TestComments_ReactionsAuthorizeStoredTarget(t *testing.T) {
 	res.err = nil
 	res.versions["en"] = access.Resolution{}
 	res.versions["ja"] = access.Resolution{Visible: true} // Comment reactions do not consume locked media.
-	for i, action := range []string{"like", "dislike", "neutral"} {
-		rec := doJSON(t, h, actor, "POST", path+"/"+action, nil)
+	for i, action := range []string{"POST /like", "POST /dislike", "DELETE /reaction"} {
+		method, suffix, _ := strings.Cut(action, " ")
+		rec := doJSON(t, h, actor, method, path+suffix, nil)
 		var counts ReactionCounts
 		want := []ReactionCounts{{Likes: 1, Mine: 1}, {Dislikes: 1, Mine: -1}, {}}[i]
 		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &counts) != nil || counts != want {
@@ -286,7 +288,7 @@ func TestComments_ReactionsAuthorizeStoredTarget(t *testing.T) {
 	}
 	assertStored(t, 1, 0, 2)
 	res.versions["ja"] = access.Resolution{}
-	if rec := doJSON(t, h, access.Actor{Anonymous: true, IP: "192.0.2.1"}, "POST", path+"/neutral", nil); rec.Code != http.StatusNotFound {
+	if rec := doJSON(t, h, access.Actor{Anonymous: true, IP: "192.0.2.1"}, "DELETE", path+"/reaction", nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("hidden target after reacting: %d %s, want 404", rec.Code, rec.Body.String())
 	}
 	assertStored(t, 1, 0, 2)
