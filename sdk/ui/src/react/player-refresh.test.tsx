@@ -289,3 +289,15 @@ it("a rate limit or a blocked media request fails once: no refresh, no retry loo
     m.unmount();
   }
 });
+
+it("a hover preview never takes over a requested playback (it would swallow its failures)", async () => {
+  const m = mount({ src: "https://media/item/master.m3u8" });
+  act(() => m.result.current.play());
+  act(() => m.result.current.preview(3));
+  expect(m.result.current.previewing).toBe(false);
+  await waitFor(() => expect(hls.instances.length).toBe(1));
+  act(() => live().emit("hlsManifestParsed"));
+  expect(live().startedAt).toBe(-1);
+  for (let i = 0; i < NETWORK_FAILURES_BEFORE_ERROR; i++) act(() => live().emit("hlsError", { type: "networkError", details: "fragLoadError", fatal: false, response: { code: 0 } }));
+  await waitFor(() => expect(m.result.current.status).toBe("error"));
+});

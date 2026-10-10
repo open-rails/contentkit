@@ -653,7 +653,8 @@ export function useHlsPlayer({
 
   const preview = useCallback(
     (at: number) => {
-      if (!el || started || error || previewAt.current !== null) return;
+      // Not once playback was asked for: the preview would swallow its failures.
+      if (!el || started || error || want.current || previewAt.current !== null) return;
       previewAt.current = Math.max(0, at);
       el.muted = true;
       want.current = true;
