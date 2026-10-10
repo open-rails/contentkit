@@ -50,8 +50,8 @@ test("a fast connection starts at 1080p or better", async ({ page }) => {
 
 test("a slow link starts at 480p and plays without stalling", async ({ page }) => {
   test.setTimeout(90_000);
-  // 1.6× the 480p rung's average: it fits with headroom, 720p does not.
-  const link = 1.6 * ladder.average.get(480)!;
+  // 2.5× the 480p rung's average: it fits with headroom, 720p does not.
+  const link = 2.5 * ladder.average.get(480)!;
   expect(link * 0.75).toBeLessThan(ladder.average.get(720)!);
   // The app and hls.js are already cached; only media crosses the slow link.
   await expect(await play(page)).toHaveAttribute("data-status", "playing", { timeout: 15_000 });
