@@ -95,7 +95,7 @@ operation. This does not change the operation's result or its authentication.
   unpublished post's images to its editors (below).
 - **`client.config()`** says what the content module allows: which
   interactions signed-out visitors may make (`content.Options.Anonymous`,
-  none by default) and the longest comment (`CommentMaxLength`, 400 by
+  none by default) and the longest comment (`CommentMaxLength`, 2,200 by
   default; longer is `comment_too_long` with `details.max`).
 - **`client.subscribe(listener)`** receives every successful mutation
   (`media.committed`, `media.processed`, `comment.created`, `reaction.changed`,
