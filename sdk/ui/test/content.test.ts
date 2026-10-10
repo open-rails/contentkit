@@ -30,10 +30,10 @@ describe.skipIf(!endpoint)("content modules against contentkit.Runtime.Handler",
     if (proc) await stopServer(proc);
   });
 
-  /** A client as actor (signed in), or anonymous from ip. */
-  function ck(actor?: string, ip = "10.1.0.1"): ContentKitClient {
+  /** A client as actor (signed in), or anonymous from ip; mount "/ck-members" takes nothing from signed-out visitors. */
+  function ck(actor?: string, ip = "10.1.0.1", mount = "/ck"): ContentKitClient {
     const c = createContentKitClient({
-      baseUrl: `${base}/ck`,
+      baseUrl: `${base}${mount}`,
       headers: () => ({ "X-Test-IP": ip, ...(actor ? { "X-Test-Actor": actor } : {}) }),
       media: { retryDelay: () => 100 },
       folders: { post: "ckpost", poll: "ckpoll" },
@@ -69,6 +69,20 @@ describe.skipIf(!endpoint)("content modules against contentkit.Runtime.Handler",
     await editor.posts.delete(post.id);
     expect(changes).toContainEqual({ type: "post.deleted", id: post.id });
     await expect(editor.posts.get(post.id)).rejects.toEqual(code("not_found"));
+
+    // Staff search, the deleted list and restore.
+    const word = `w${randomUUID().slice(0, 8)}`;
+    const found = await editor.posts.create({ title: `About ${word.toUpperCase()}`, body: "b", language: "en" });
+    expect((await editor.posts.adminList({ q: word })).map((p) => p.id)).toEqual([found.id]);
+    expect((await editor.posts.adminList({ deleted: true, limit: 100 })).find((p) => p.id === post.id)).toMatchObject({ deleted_at: expect.any(String) });
+    expect((await editor.posts.adminList({ limit: 100 })).map((p) => p.id)).not.toContain(post.id);
+    await expect(ck("alice").posts.restore(post.id)).rejects.toEqual(code("forbidden"));
+    const restored = await editor.posts.restore(post.id);
+    expect(restored).toMatchObject({ id: post.id, title: "Hello world", body: "edited" });
+    expect(restored.deleted_at).toBeUndefined();
+    expect(changes).toContainEqual({ type: "post.restored", post: restored });
+    expect((await ck().posts.get(post.id)).id).toBe(post.id);
+    await expect(editor.posts.restore(post.id)).rejects.toEqual(code("not_found"));
   });
 
   it("media.uploadInline places a body image in the post's folder and resolves its URL; covers go through the same uploads", async () => {
@@ -144,8 +158,11 @@ describe.skipIf(!endpoint)("content modules against contentkit.Runtime.Handler",
       expect.objectContaining({ code: "moderation_rejected", message: "not allowed here", status: 422 }),
     );
 
-    expect(await ck().comments.standing(video)).toEqual({ can_comment: true, moderate: false, ban_scopes: [] });
-    expect(await ck("creator").comments.standing(video)).toEqual({ can_comment: true, user_id: "creator", moderate: false, ban_scopes: ["owner"] });
+    expect(await ck().comments.standing(video)).toEqual({ can_comment: true, anonymous: true, max_length: 400, moderate: false, ban_scopes: [] });
+    expect(await ck("creator").comments.standing(video)).toEqual({ can_comment: true, anonymous: true, max_length: 400, user_id: "creator", moderate: false, ban_scopes: ["owner"] });
+    await expect(ck("carol").comments.create(video, { body: "é".repeat(401) })).rejects.toEqual(
+      expect.objectContaining({ code: "comment_too_long", status: 422, details: { max: 400 } }),
+    );
     expect(await ck("moderator").comments.standing(video)).toMatchObject({ moderate: true, ban_scopes: ["global"] });
     expect(await ck("alice").comments.standing(item("video", "10cced"))).toMatchObject({ can_comment: false });
     await expect(ck("alice").comments.standing(item("video", "dead"))).rejects.toEqual(code("not_found"));
@@ -212,6 +229,33 @@ describe.skipIf(!endpoint)("content modules against contentkit.Runtime.Handler",
     expect((await ck(troll).comments.standing(item())).can_comment).toBe(true);
   });
 
+  it("anonymous participation is the server's setting: config, standing and refusals", async () => {
+    const everyone = { comments: true, reactions: true, votes: true };
+    expect(await ck().config()).toEqual({ anonymous: everyone, comment_max_length: 400 });
+    const members = (actor?: string) => ck(actor, "10.4.0.1", "/ck-members");
+    expect(await members().config()).toEqual({ anonymous: { comments: false, reactions: false, votes: false }, comment_max_length: 400 });
+
+    const video = item();
+    const top = await members("alice").comments.create(video, { body: "members only" });
+    expect(await members().comments.standing(video)).toEqual({ can_comment: false, anonymous: false, max_length: 400, moderate: false, ban_scopes: [] });
+    expect(await members("bob").comments.standing(video)).toMatchObject({ can_comment: true, anonymous: false, user_id: "bob" });
+    const post = await members("editor").posts.create({ title: "Members", body: "b", language: "en" });
+    const poll = await members("editor").polls.create({ question: "Members?", language: "en", options: [{ label: "Yes", position: 0 }, { label: "No", position: 1 }] });
+    for (const refused of [
+      () => members().comments.create(video, { body: "drive-by", anon_name: "Guest" }),
+      () => members().comments.react(top.id, 1),
+      () => members().reactions.set(video, 1),
+      () => members().posts.react(post.id, 1),
+      () => members().polls.vote(poll.id, poll.options[0]!.id),
+    ]) {
+      await expect(refused()).rejects.toEqual(expect.objectContaining({ code: "unauthorized", status: 401 }));
+    }
+    // Reads stay open, and the same items take anonymous interactions where the server allows them.
+    expect((await members().comments.list(video)).map((c) => c.id)).toEqual([top.id]);
+    expect(await ck(undefined, "10.4.0.2").reactions.set(video, 1)).toEqual({ likes: 1, dislikes: 0, mine: 1 });
+    expect(await ck(undefined, "10.4.0.2").polls.vote(poll.id, poll.options[0]!.id)).toMatchObject({ voted: true, total_votes: 1 });
+  });
+
   it("reactions and favorites: per caller (anonymous by IP for reactions), gated by the item's access", async () => {
     const video = item();
     expect(await ck().reactions.get(video)).toEqual({ likes: 0, dislikes: 0, mine: 0 });
@@ -223,14 +267,18 @@ describe.skipIf(!endpoint)("content modules against contentkit.Runtime.Handler",
     await expect(ck("alice").reactions.set(item("video", "10cced"), 1)).rejects.toEqual(code("forbidden"));
     await expect(ck("alice").reactions.get(item("video", "dead"))).rejects.toEqual(code("not_found"));
 
-    await expect(ck().favorites.get(video)).rejects.toEqual(code("unauthorized"));
+    expect(await ck().favorites.get(video)).toEqual({ favorited: false, count: 0 });
+    await expect(ck().favorites.set(video, true)).rejects.toEqual(code("unauthorized"));
+    await expect(ck().favorites.get(item("video", "dead"))).rejects.toEqual(code("not_found"));
     const fan = ck(`fan-${randomUUID()}`);
-    expect(await fan.favorites.get(video)).toEqual({ favorited: false });
-    expect(await fan.favorites.set(video, true)).toEqual({ favorited: true });
-    expect(await fan.favorites.set(video, true)).toEqual({ favorited: true });
-    expect(changes).toContainEqual({ type: "favorite.changed", ref: video, favorited: true });
+    expect(await fan.favorites.get(video)).toEqual({ favorited: false, count: 0 });
+    expect(await fan.favorites.set(video, true)).toEqual({ favorited: true, count: 1 });
+    expect(await fan.favorites.set(video, true)).toEqual({ favorited: true, count: 1 });
+    expect(await ck(`fan-${randomUUID()}`).favorites.set(video, true)).toEqual({ favorited: true, count: 2 });
+    expect(changes).toContainEqual({ type: "favorite.changed", ref: video, favorited: true, count: 2 });
+    expect(await ck().favorites.get(video)).toEqual({ favorited: false, count: 2 });
     expect((await fan.favorites.list()).map((f) => f.content_id)).toEqual([video.id]);
-    expect(await fan.favorites.set(video, false)).toEqual({ favorited: false });
+    expect(await fan.favorites.set(video, false)).toEqual({ favorited: false, count: 1 });
     expect(await fan.favorites.list()).toEqual([]);
   });
 
@@ -265,6 +313,11 @@ describe.skipIf(!endpoint)("content modules against contentkit.Runtime.Handler",
     expect(read.options.find((o) => o.id === spring!.id)!.image_url).toBe(optionImage);
     expect(await editor.polls.setOptionImage(poll.id, spring!.id, null)).toBeNull();
 
+    const closed = await editor.polls.update(poll.id, { closes_at: new Date(Date.now() - 60_000).toISOString() });
+    expect(closed).toMatchObject({ closed: true, closes_at: expect.any(String) });
+    const reopened = await editor.polls.update(poll.id, { closes_at: null });
+    expect(reopened.closed).toBe(false);
+    expect(reopened.closes_at).toBeUndefined();
     const hidden = await editor.polls.update(poll.id, { is_active: false });
     expect(hidden).toMatchObject({ is_active: false, closed: true });
     await expect(ck().polls.get(poll.id)).rejects.toEqual(code("not_found"));

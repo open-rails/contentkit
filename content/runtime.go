@@ -79,6 +79,13 @@ type Options struct {
 	// value takes the defaults, counted per process.
 	Limits Limits
 
+	// Anonymous is what signed-out visitors may do; the zero value lets them
+	// only read.
+	Anonymous Anonymous
+	// CommentMaxLength is the longest comment in characters (runes);
+	// default DefaultCommentMaxLength.
+	CommentMaxLength int
+
 	// ContentKinds are the commentable/reactable/favoritable kinds the host
 	// registers (e.g. "gallery", "video", "post"). Unregistered kinds are 404.
 	ContentKinds []string
@@ -106,6 +113,8 @@ type Runtime struct {
 	classifier        AnswerClassifier
 	providerEraser    ProviderDataEraser
 	perms             Perms
+	anonymous         Anonymous
+	commentMax        int
 	log               *slog.Logger
 	kinds             map[string]struct{}
 	limiters          map[Action]*ratelimit.Limiter
@@ -135,6 +144,9 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if opts.ProviderDataEraser == nil && (!policyIsStateless(opts.Moderator) || !policyIsStateless(opts.Classifier)) {
 		return nil, fmt.Errorf("content: retaining policy ports require ProviderDataEraser; stateless ports must declare StatelessPolicy")
 	}
+	if opts.CommentMaxLength < 0 {
+		return nil, fmt.Errorf("content: CommentMaxLength must not be negative")
+	}
 	media, err := newMedia(opts.Media)
 	if err != nil {
 		return nil, err
@@ -161,6 +173,8 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		classifier:        opts.Classifier,
 		providerEraser:    opts.ProviderDataEraser,
 		perms:             opts.Perms,
+		anonymous:         opts.Anonymous,
+		commentMax:        orDefault(opts.CommentMaxLength, DefaultCommentMaxLength),
 		log:               log,
 		kinds:             make(map[string]struct{}, len(opts.ContentKinds)),
 		limiters:          limiters,

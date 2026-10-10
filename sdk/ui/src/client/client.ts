@@ -6,9 +6,10 @@ import { ModerationClient } from "./content/moderation.js";
 import { PollsClient } from "./content/polls.js";
 import { PostsClient } from "./content/posts.js";
 import { ReactionsClient } from "./content/reactions.js";
-import type { RefBody } from "./generated/wire.js";
+import type { Config, RefBody } from "./generated/wire.js";
 import { Http, type ContentKitChange, type ContentKitModule, type HttpOptions } from "./http.js";
 import { MediaClient, type ContentFolders, type MediaOptions } from "./media/client.js";
+import { call } from "./route.js";
 import { TaxonomyClient } from "./taxonomy.js";
 
 export interface ContentKitClientOptions extends HttpOptions {
@@ -44,6 +45,8 @@ export interface ContentKitClient {
   /** Content-code lookup. */
   readonly codes: CodesClient;
 
+  /** What the content module allows: which interactions signed-out visitors may make. */
+  config(signal?: AbortSignal): Promise<Config>;
   /** A module's base URL as configured (no trailing slash). */
   url(module: ContentKitModule, ref?: RefBody): string;
   /** Every successful mutation made through this client; returns the unsubscribe. */
@@ -65,6 +68,7 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     moderation: new ModerationClient(h),
     taxonomy: new TaxonomyClient(h),
     codes: new CodesClient(h),
+    config: (signal) => call(h, "GET", "/config", { signal }),
     url: (module, ref) => h.mount(module, ref),
     subscribe: (listener) => h.subscribe(listener),
   };

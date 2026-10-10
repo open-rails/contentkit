@@ -39,6 +39,12 @@ export interface AdminComment {
   deleted_at?: string;
 }
 
+export interface Anonymous {
+  comments: boolean;
+  reactions: boolean;
+  votes: boolean;
+}
+
 export interface Assignment {
   tenant_id: string;
   content_kind: string;
@@ -107,6 +113,8 @@ export interface CommentInput {
 export interface CommentStanding {
   can_comment: boolean;
   ban?: BanNotice;
+  anonymous: boolean;
+  max_length: number;
   user_id?: string;
   moderate: boolean;
   ban_scopes: ("global" | "owner")[];
@@ -126,6 +134,11 @@ export interface CompleteReply {
   blob: string;
   type: string;
   size: number;
+}
+
+export interface Config {
+  anonymous: Anonymous;
+  comment_max_length: number;
 }
 
 export interface ContentRef {
@@ -245,6 +258,7 @@ export interface FavoriteItem {
 
 export interface FavoriteState {
   favorited: boolean;
+  count: number;
 }
 
 export interface FeedItem {
@@ -528,7 +542,7 @@ export interface PollUpdate {
   question?: string;
   is_active?: boolean;
   live_at?: string;
-  closes_at?: string;
+  closes_at?: string | null;
 }
 
 export interface PollVote {
@@ -555,6 +569,7 @@ export interface Post {
   url_slug: string;
   created_at: string;
   updated_at: string;
+  deleted_at?: string;
 }
 
 export interface PostCover {

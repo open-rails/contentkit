@@ -184,5 +184,8 @@ func (m *testMedia) deletions() []string {
 	return append([]string(nil), m.deleted...)
 }
 
+// favErr adapts favorites add/remove's (reference, error) return for error-only assertions.
+func favErr(_ contentref.ContentRef, err error) error { return err }
+
 // reactErr adapts react's (reference, error) return for error-only assertions.
 func reactErr(_ contentref.ContentRef, err error) error { return err }

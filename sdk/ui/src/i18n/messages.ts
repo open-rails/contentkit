@@ -113,10 +113,12 @@ export function createTranslator(messages: ContentKitUiMessages, hostT?: Content
         minAspect: d.min_aspect ? ratioLabel(d.min_aspect) : "",
         maxAspect: d.max_aspect ? ratioLabel(d.max_aspect) : "",
         maxFiles: d.max ?? "",
+        maxChars: d.max ?? "",
       };
       // A refusal the server words itself states its rule; show it rather than a vaguer line.
       if (code === "invalid_request" && server) return server;
       if (code === "type_not_allowed" && d.allowed?.length) return `${translate("errors.type_not_allowed", vars)} ${translate("errors.allowedTypes", vars)}`;
+      if (code === "comment_too_long" && d.max) return translate("errors.commentTooLongBy", vars) ?? messages.errors.comment_too_long;
       if (code === "too_large" && d.max_bytes) return translate("errors.tooLargeBy", vars) ?? messages.errors.too_large;
       if (code === "image_too_large" && (d.frames ?? 0) > 1) return translate("errors.animationTooLarge", vars) ?? messages.errors.image_too_large;
       if (code === "animation_too_long" && (d.max_frames || d.max_seconds)) return translate(d.max_frames ? "errors.animationFrames" : "errors.animationSeconds", vars) ?? messages.errors.generic;

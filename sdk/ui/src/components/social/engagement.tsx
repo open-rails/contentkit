@@ -9,17 +9,12 @@ import type { ReactionCounts, RefBody } from "../../client/generated/wire.js";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext, useErrorReporter, type ContentKitErrorHandler } from "../../react/context.js";
+import { useContentConfig } from "../../react/config.js";
 import { useFavorite, useReaction } from "../../react/engagement.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { contentError } from "./parts.js";
 
-/** Signed out with a sign-in to offer: the action asks for it instead of running. */
-function useSignInGate(own?: () => void) {
-  const ctx = useContext(ContentKitContext);
-  const signIn = own ?? ctx?.onSignIn;
-  return (fn: () => void) => (ctx?.viewer === null && signIn ? signIn() : fn());
-}
 
 const compact = (n: number, language?: string) => new Intl.NumberFormat(language, { notation: "compact", maximumFractionDigits: 1 }).format(n);
 
@@ -29,7 +24,7 @@ export interface ReactionButtonsProps {
   counts?: ReactionCounts;
   /** Offer dislike too. Default true. */
   dislike?: boolean;
-  /** Asks a signed-out visitor to sign in (default the provider's); without one they react anonymously. */
+  /** Asks a signed-out visitor to sign in where the server takes no anonymous reactions (default the provider's). */
   onSignIn?: () => void;
   size?: "sm" | "default";
   client?: ContentKitClient;
@@ -38,35 +33,44 @@ export interface ReactionButtonsProps {
   appearance?: ContentKitUiAppearance;
 }
 
-/** Like and dislike toggles with counts: they change at once and roll back if the server refuses. */
+/**
+ * Like and dislike toggles with counts: they change at once and roll back if
+ * the server refuses. Signed out, they react anonymously where the server
+ * allows it (`Config.anonymous.reactions`) and ask to sign in elsewhere.
+ */
 export function ReactionButtons({ item, counts: initial, dislike = true, onSignIn, size = "default", client, onError, className, appearance }: ReactionButtonsProps) {
   const m = useMessages();
   const { t } = m;
   const r = useReaction(item, { initial, client });
-  const gate = useSignInGate(onSignIn);
+  const ctx = useContext(ContentKitContext);
+  const { config } = useContentConfig({ client });
+  const signIn = onSignIn ?? ctx?.onSignIn;
+  // Signed out where the server takes no anonymous reactions.
+  const mustSignIn = ctx?.viewer === null && config?.anonymous.reactions === false;
   const report = useErrorReporter(onError);
   const [error, setError] = useState<ContentKitError | null>(null);
-  const toggle = (v: 1 | -1) =>
-    gate(() => {
-      setError(null);
-      r.toggle(v).catch((e) => {
-        const err = toContentKitError(e);
-        setError(err);
-        report(err, "reaction.save");
-      });
+  const toggle = (v: 1 | -1) => {
+    if (mustSignIn) return signIn?.();
+    setError(null);
+    r.toggle(v).catch((e) => {
+      const err = toContentKitError(e);
+      if (err.code === "unauthorized" && signIn) return signIn();
+      setError(err);
+      report(err, "reaction.save");
     });
+  };
   const btn = size === "sm" ? "sm" : "default";
-  const ctx = useContext(ContentKitContext);
-  const hint = ctx?.viewer === null && (onSignIn ?? ctx?.onSignIn) ? t("reactions.signIn") : undefined;
+  const hint = mustSignIn ? t("reactions.signIn") : undefined;
+  const disabled = mustSignIn && !signIn;
   return (
     <ContentKitUiRoot appearance={appearance} className={cn("inline-flex flex-wrap items-center gap-1 text-sm", className)} data-ckui="reaction-buttons">
       <div className="inline-flex items-center gap-1">
-        <Button variant={r.counts.mine === 1 ? "secondary" : "ghost"} size={btn} aria-pressed={r.counts.mine === 1} aria-label={t("reactions.like")} title={hint} onClick={() => toggle(1)}>
+        <Button variant={r.counts.mine === 1 ? "secondary" : "ghost"} size={btn} aria-pressed={r.counts.mine === 1} aria-label={t("reactions.like")} title={hint} disabled={disabled} onClick={() => toggle(1)}>
           <HugeiconsIcon icon={ThumbsUpIcon} strokeWidth={2} />
           <span>{compact(r.counts.likes, m.language)}</span>
         </Button>
         {dislike && (
-          <Button variant={r.counts.mine === -1 ? "secondary" : "ghost"} size={btn} aria-pressed={r.counts.mine === -1} aria-label={t("reactions.dislike")} title={hint} onClick={() => toggle(-1)}>
+          <Button variant={r.counts.mine === -1 ? "secondary" : "ghost"} size={btn} aria-pressed={r.counts.mine === -1} aria-label={t("reactions.dislike")} title={hint} disabled={disabled} onClick={() => toggle(-1)}>
             <HugeiconsIcon icon={ThumbsDownIcon} strokeWidth={2} />
             <span>{compact(r.counts.dislikes, m.language)}</span>
           </Button>
@@ -83,10 +87,11 @@ export function ReactionButtons({ item, counts: initial, dislike = true, onSignI
 
 export interface FavoriteButtonProps {
   item: RefBody;
-  /** Whether it is favorited, as the host already knows; used instead of reading it. */
+  /** Whether it is favorited and the item's count, as the host already has them: both given, nothing is read. */
   favorited?: boolean;
-  /** The item's favorite count, as the host has it; moved by one with each change. */
   count?: number;
+  /** Show the item's favorite count. Default true. */
+  showCount?: boolean;
   /** Show the label beside the icon. Default true. */
   label?: boolean;
   /** Asks a signed-out visitor to sign in (default the provider's). */
@@ -100,18 +105,17 @@ export interface FavoriteButtonProps {
   appearance?: ContentKitUiAppearance;
 }
 
-/** Adds the item to the signed-in visitor's favorites, or removes it; changes at once and rolls back if refused. */
-export function FavoriteButton({ item, favorited: initial, count, label = true, onSignIn, onChange, size = "default", client, onError, className, appearance }: FavoriteButtonProps) {
+/** Adds the item to the signed-in visitor's favorites, or removes it, with the server's count; changes at once and rolls back if refused. */
+export function FavoriteButton({ item, favorited, count, showCount = true, label = true, onSignIn, onChange, size = "default", client, onError, className, appearance }: FavoriteButtonProps) {
   const m = useMessages();
   const { t } = m;
   const ctx = useContext(ContentKitContext);
-  const f = useFavorite(item, { initial, client });
+  const f = useFavorite(item, { initial: favorited !== undefined && count !== undefined ? { favorited, count } : undefined, client });
   const signIn = onSignIn ?? ctx?.onSignIn;
   const report = useErrorReporter(onError);
   const [error, setError] = useState<ContentKitError | null>(null);
   const [status, setStatus] = useState("");
-  // The count the host gave counts the state it knew; move it with ours.
-  const shown = count === undefined ? undefined : count + (f.favorited ? 1 : 0) - (initial ? 1 : 0);
+  const shown = showCount ? f.count : undefined;
   const click = () => {
     if (ctx?.viewer === null) return signIn?.();
     setError(null);

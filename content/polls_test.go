@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -252,7 +253,7 @@ func TestPolls_HasVotedReflectedPerCaller(t *testing.T) {
 }
 
 func TestPolls_HTTPRoutesEndToEnd(t *testing.T) {
-	_, p := newPollTest(t, Options{})
+	_, p := newPollTest(t, Options{Anonymous: Anonymous{Votes: true}})
 	mux := http.NewServeMux()
 	httpapi.Mount(mux, p, pollRoutes)
 
@@ -555,6 +556,62 @@ func TestPolls_ArchiveWindowShowsInactiveButNotFuture(t *testing.T) {
 	for _, v := range fpub {
 		if v.LiveAt.After(time.Now()) {
 			t.Fatalf("future poll leaked publicly in archive window: %+v", v)
+		}
+	}
+}
+
+// closes_at: absent leaves it, a time sets it, null clears it and reopens the poll.
+func TestPolls_ClosesAtClearsWithNull(t *testing.T) {
+	_, p := newPollTest(t, Options{})
+	mux := http.NewServeMux()
+	httpapi.Mount(mux, p, pollRoutes)
+	var poll Poll
+	rec := doPollReq(t, mux, "POST", "/polls", twoOptionPoll("en"), pollAdmin)
+	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &poll) != nil {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	patch := func(body string) Poll {
+		t.Helper()
+		req := httptest.NewRequest("PATCH", "/polls/"+poll.ID, strings.NewReader(body))
+		req = req.WithContext(withActor(req.Context(), pollAdmin))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		var out Poll
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
+			t.Fatalf("PATCH %s: %d %s", body, rec.Code, rec.Body)
+		}
+		return out
+	}
+	past := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
+	if got := patch(`{"closes_at": "` + past.Format(time.RFC3339) + `"}`); got.ClosesAt == nil || !got.ClosesAt.Equal(past) || !got.Closed {
+		t.Fatalf("set closes_at: %+v", got)
+	}
+	if got := patch(`{"question": "Renamed?"}`); got.ClosesAt == nil || !got.ClosesAt.Equal(past) || got.Question != "Renamed?" {
+		t.Fatalf("absent closes_at: %+v", got)
+	}
+	if got := patch(`{"closes_at": null}`); got.ClosesAt != nil || got.Closed {
+		t.Fatalf("null closes_at: %+v", got)
+	}
+	if _, err := p.vote(context.Background(), access.Actor{ID: "voter"}, poll.ID, poll.Options[0].ID); err != nil {
+		t.Fatalf("vote after reopening: %v", err)
+	}
+	if rec := doPollReq(t, mux, "PATCH", "/polls/"+poll.ID, map[string]any{"closes_at": "soon"}, pollAdmin); rec.Code != http.StatusBadRequest {
+		t.Fatalf("closes_at not a time: %d", rec.Code)
+	}
+	// A Go client's PollUpdate encodes the same three: unset is left out.
+	for _, c := range []struct {
+		in   PollUpdate
+		want string
+	}{
+		{PollUpdate{Question: ptr("Q?")}, `{"question":"Q?","is_active":null,"live_at":null}`},
+		{PollUpdate{ClosesAt: Nullable[time.Time]{Set: true}}, `{"question":null,"is_active":null,"live_at":null,"closes_at":null}`},
+		{PollUpdate{ClosesAt: Nullable[time.Time]{Set: true, Value: &past}}, `{"question":null,"is_active":null,"live_at":null,"closes_at":"` + past.Format(time.RFC3339) + `"}`},
+	} {
+		if b, err := json.Marshal(c.in); err != nil || string(b) != c.want {
+			t.Fatalf("encode %+v: %s %v, want %s", c.in, b, err, c.want)
+		}
+		if rec := doPollReq(t, mux, "PATCH", "/polls/"+poll.ID, c.in, pollAdmin); rec.Code != http.StatusOK {
+			t.Fatalf("PATCH %s: %d %s", c.want, rec.Code, rec.Body)
 		}
 	}
 }

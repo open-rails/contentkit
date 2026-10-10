@@ -116,10 +116,35 @@ func (u inlineURLs) InlineURL(_ context.Context, ref contentref.ContentRef, name
 type noFolders struct{}
 
 func (noFolders) ExposeTx(context.Context, pgx.Tx, ...contentref.ContentRef) error { return nil }
-func (noFolders) DeleteItemsTx(context.Context, pgx.Tx, ...media.Deletion) error  { return nil }
+func (noFolders) DeleteItemsTx(context.Context, pgx.Tx, ...media.Deletion) error   { return nil }
 
-// uploadHooks authorizes post and poll images through the content runtime, every other upload as allow does.
+// uploadHooks resolves and authorizes post and poll folders through the
+// content runtime (a draft's folder shows to its editors only), every other
+// item as allow does.
 type uploadHooks struct{ content *content.Runtime }
+
+func (h *uploadHooks) Resolve(ctx context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	var folders, other []contentref.ContentRef
+	for _, ref := range refs {
+		if k := ref.ContentKind; (k == "ckpost" || k == "ckpoll") && h.content != nil {
+			folders = append(folders, ref)
+		} else {
+			other = append(other, ref)
+		}
+	}
+	out, err := allow{}.Resolve(ctx, other, a)
+	if err != nil || len(folders) == 0 {
+		return out, err
+	}
+	res, err := h.content.MediaResolver().Resolve(ctx, folders, a)
+	if err != nil {
+		return nil, err
+	}
+	for k, r := range res {
+		out[k] = r
+	}
+	return out, nil
+}
 
 func (h *uploadHooks) CanUpload(ctx context.Context, a access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
 	if k := t.Ref.ContentKind; (k == "ckpost" || k == "ckpoll") && h.content != nil {
@@ -144,7 +169,7 @@ func testActor(h http.Handler) http.Handler {
 }
 
 func contentHandler(ctx context.Context, pool *pgxpool.Pool, schema, tenant string, reg *media.Registry, hooks *uploadHooks,
-	uploads *media.Uploads, reader *media.Reader) http.Handler {
+	uploads *media.Uploads, reader *media.Reader, anonymous content.Anonymous) http.Handler {
 	codes, err := contenturl.New(contenturl.Options{Pool: pool, Schema: schema, Tenant: tenant})
 	must(err)
 	router, err := contenturl.NewRouter(codes, contenturl.RouterOptions{Routes: contenturl.Routes{"post": "blog", "video": "watch"}, Languages: []string{"en", "ja"}})
@@ -156,12 +181,14 @@ func contentHandler(ctx context.Context, pool *pgxpool.Pool, schema, tenant stri
 		Identity: identity{}, Authz: testAuthz{}, Resolver: testResolver{}, Users: testUsers{},
 		Moderator: testModerator{}, Classifier: testClassifier{}, Perms: testPerms,
 		Media:        &content.Media{URLs: inlineURLs{reg}, Folders: noFolders{}, PostKind: "ckpost", PollKind: "ckpoll"},
-		ContentKinds: []string{"video", "gallery", "post"},
+		ContentKinds: []string{"video", "gallery", "post"}, Anonymous: anonymous,
 		// Generous for a shared suite; a test hits the comment limit with its own caller.
 		Limits: content.Limits{Comment: []content.Rate{{Count: 20, Per: time.Minute}}},
 	})
 	must(err)
-	hooks.content = rt
+	if hooks != nil {
+		hooks.content = rt
+	}
 	mux := http.NewServeMux()
 	mount := func(m httpapi.Module, h http.Handler) { mux.Handle(m.Prefix()+"/", http.StripPrefix(m.Prefix(), h)) }
 	mux.Handle("/", rt.Handler())

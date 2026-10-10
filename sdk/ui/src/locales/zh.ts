@@ -259,6 +259,8 @@ export const zh: ContentKitUiMessageBundle = {
     resume_mismatch: "保存的上传属于另一个文件。请重新选择文件。",
     moderation_rejected: "已被审核拒绝。",
     comment_banned: "你无法在此评论。",
+    comment_too_long: "评论太长了。",
+    commentTooLongBy: "评论最多 {maxChars} 个字符。",
     not_configured: "此网站未提供该功能。",
     tenant_mismatch: "我们这边出了点问题，请重试。",
     gone: "此内容已不可用。",

@@ -138,6 +138,7 @@ type field struct {
 	t        reflect.Type
 	optional bool // omitempty or omitzero: absent when empty
 	nullable bool // null when unset: a pointer or interface without omitempty
+	clears   bool // a content.Nullable request member: absent leaves, null clears
 }
 
 // fieldsOf lists t's JSON members the way encoding/json writes them:
@@ -172,15 +173,18 @@ func fieldsOf(t reflect.Type) []field {
 				name = f.Name
 			}
 			member := field{name: name, owner: t, t: f.Type}
+			if v, ok := nullableValue(f.Type); ok {
+				member.t, member.clears = v, true
+			}
 			for _, opt := range strings.Split(opts, ",") {
 				if opt == "omitempty" || opt == "omitzero" {
 					member.optional = true
 				}
 			}
 			// Lists and maps are written empty, never null (Conform checks it).
-			switch f.Type.Kind() {
+			switch member.t.Kind() {
 			case reflect.Pointer, reflect.Interface:
-				member.nullable = !member.optional
+				member.nullable = !member.optional || member.clears
 			}
 			if at, dup := seen[name]; dup {
 				if depth == 0 {
@@ -194,6 +198,15 @@ func fieldsOf(t reflect.Type) []field {
 	}
 	walk(t, 0)
 	return out
+}
+
+// nullableValue is the Value type (*T) of a content.Nullable[T].
+func nullableValue(t reflect.Type) (reflect.Type, bool) {
+	if t.Kind() != reflect.Struct || t.PkgPath() != module+"/content" || !strings.HasPrefix(t.Name(), "Nullable[") {
+		return nil, false
+	}
+	f, ok := t.FieldByName("Value")
+	return f.Type, ok
 }
 
 // object is a named struct on the wire.

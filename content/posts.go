@@ -36,7 +36,7 @@ func newPosts(rt *Runtime) *posts {
 	s := rt.store
 	cols := `p.id, p.author_id, p.title, p.slug, p.body, p.excerpt, p.cover_name,
 		p.language, p.is_draft, p.live_at, p.total_likes, p.total_dislikes,
-		p.created_at, p.updated_at,
+		p.created_at, p.updated_at, p.deleted_at,
 		(SELECT count(*) FROM ` + s.t.comments + ` c
 			WHERE c.tenant_id = p.tenant_id AND c.content_kind = '` + KindPost + `' AND c.content_id = p.id
 			AND c.content_version_id = '' AND c.deleted_at IS NULL AND c.moderation = 'approved') AS comment_count,
@@ -71,6 +71,8 @@ type Post struct {
 	URLSlug   string    `json:"url_slug"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// DeletedAt is set on a deleted post in the staff list (deleted=true).
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
 // PostInput is the create and update body. All-pointer so PATCH is partial (nil =
@@ -95,9 +97,11 @@ var postRoutes = []httpapi.Route[*posts]{
 		Responses: []httpapi.Reply{httpapi.OK([]Post{})}},
 		Serve: httpapi.H((*posts).handleList)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/posts/admin", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
-		Doc: "Every post, newest first: drafts, scheduled, held and rejected ones included.",
+		Doc: "Every post, newest first: drafts, scheduled, held and rejected ones included; deleted ones on their own.",
 		Query: append([]httpapi.Param{httpapi.Text("language", "only posts in this language"),
-			httpapi.Bool("draft", "true: only drafts; false: only posts that are not drafts")}, httpapi.Page...),
+			httpapi.Bool("draft", "true: only drafts; false: only posts that are not drafts"),
+			httpapi.Bool("deleted", "true: only deleted posts, with deleted_at; otherwise only live ones"),
+			httpapi.Text("q", "only posts whose title, excerpt or body contains this text, ignoring case")}, httpapi.Page...),
 		Responses: []httpapi.Reply{httpapi.OK([]Post{})}},
 		Serve: httpapi.H((*posts).handleAdminList)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/posts/{id}", Resource: "posts", Auth: httpapi.Public,
@@ -120,6 +124,10 @@ var postRoutes = []httpapi.Route[*posts]{
 		Doc:       "Deletes a post.",
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeNotFound}},
 		Serve: httpapi.H((*posts).handleDelete)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/posts/{id}/restore", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
+		Doc:       "Restores a deleted post as it was; 409 when another live post took its slug.",
+		Responses: []httpapi.Reply{httpapi.OK(Post{})}, Errors: []string{CodeConflict, CodeNotFound}},
+		Serve: httpapi.H((*posts).handleRestore)},
 	// More specific than reactions' /{kind}/{id}/like, so no ServeMux conflict.
 	postReaction("like", "Likes a published post.", 1),
 	postReaction("dislike", "Dislikes a published post.", -1),
@@ -138,7 +146,7 @@ var postRoutes = []httpapi.Route[*posts]{
 
 func postReaction(verb, doc string, value int16) httpapi.Route[*posts] {
 	return httpapi.Route[*posts]{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/posts/{id}/" + verb, Resource: "posts", Auth: httpapi.Public,
-		Doc: doc, Responses: []httpapi.Reply{httpapi.OK(Post{})}, Errors: []string{CodeForbidden, CodeInvalidRequest, CodeNotFound, CodeRateLimited}},
+		Doc: doc, Responses: []httpapi.Reply{httpapi.OK(Post{})}, Errors: []string{CodeForbidden, CodeInvalidRequest, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
 		Serve: func(p *posts) http.HandlerFunc { return p.handleReact(value) }}
 }
 
@@ -509,6 +517,58 @@ func (p *posts) handleDelete(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusNoContent, nil)
 }
 
+// handleRestore undeletes a post (PostWrite): its keyword document and public
+// media follow, and its code's URL serves again.
+func (p *posts) handleRestore(w http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+	if err := p.rt.requirePerm(ctx, p.rt.actor(ctx), p.rt.perms.PostWrite); err != nil {
+		writeErr(w, err)
+		return
+	}
+	id := req.PathValue("id")
+	tx, err := p.s.beginMutation(ctx)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	var author string
+	err = tx.QueryRow(ctx, `SELECT author_id FROM `+p.s.t.posts+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL`, id, p.s.tenant).Scan(&author)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = ErrNotFound // missing, or not deleted
+	}
+	if err == nil {
+		err = p.rt.guardErasedSubject(ctx, tx, author)
+	}
+	var language string
+	if err == nil {
+		err = tx.QueryRow(ctx, `UPDATE `+p.s.t.posts+` SET deleted_at = NULL, updated_at = now()
+			WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NOT NULL RETURNING language`, id, p.s.tenant).Scan(&language)
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = ErrNotFound
+		}
+	}
+	if err == nil {
+		err = p.markDirty(ctx, tx, id, language, false)
+	}
+	if err == nil {
+		err = p.rt.exposePostMediaTx(ctx, tx, id)
+	}
+	if err == nil {
+		err = tx.Commit(ctx)
+	}
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	v, err := p.loadByID(ctx, p.s.pool, id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+
 func (p *posts) handleGet(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	actor := p.rt.actor(ctx)
@@ -542,7 +602,9 @@ func (p *posts) handleList(w http.ResponseWriter, req *http.Request) {
 	p.writeList(ctx, w, rows, err)
 }
 
-// handleAdminList lists every live post for staff, newest first. PostWrite-gated.
+// handleAdminList lists posts for staff, newest first: the live ones, or with
+// deleted=true the deleted ones; q searches title, excerpt and body.
+// PostWrite-gated.
 func (p *posts) handleAdminList(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	if err := p.rt.requirePerm(ctx, p.rt.actor(ctx), p.rt.perms.PostWrite); err != nil {
@@ -550,20 +612,34 @@ func (p *posts) handleAdminList(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	q := req.URL.Query()
-	var draft *bool
-	if v := q.Get("draft"); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			writeErr(w, badRequest("draft must be true or false"))
-			return
-		}
-		draft = &b
+	draft, err := optionalBool(q.Get("draft"), "draft")
+	var deleted *bool
+	if err == nil {
+		deleted, err = optionalBool(q.Get("deleted"), "deleted")
 	}
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	search := strings.TrimSpace(q.Get("q"))
 	limit, offset := parsePage(req)
 	rows, err := p.s.pool.Query(ctx, `SELECT `+p.cols+` FROM `+p.s.t.posts+` p
-		WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND ($2 = '' OR p.language = $2) AND ($3::boolean IS NULL OR p.is_draft = $3)
-		ORDER BY p.created_at DESC, p.id DESC LIMIT $4 OFFSET $5`, p.s.tenant, q.Get("language"), draft, limit, offset)
+		WHERE p.tenant_id = $1 AND (p.deleted_at IS NOT NULL) = $6 AND ($2 = '' OR p.language = $2) AND ($3::boolean IS NULL OR p.is_draft = $3)
+		AND ($7 = '' OR strpos(lower(p.title), lower($7)) > 0 OR strpos(lower(coalesce(p.excerpt, '')), lower($7)) > 0 OR strpos(lower(p.body), lower($7)) > 0)
+		ORDER BY p.created_at DESC, p.id DESC LIMIT $4 OFFSET $5`, p.s.tenant, q.Get("language"), draft, limit, offset, derefBool(deleted), search)
 	p.writeList(ctx, w, rows, err)
+}
+
+// optionalBool parses a true/false query value; "" is nil.
+func optionalBool(v, name string) (*bool, error) {
+	if v == "" {
+		return nil, nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return nil, badRequest("%s must be true or false", name)
+	}
+	return &b, nil
 }
 
 func (p *posts) writeList(ctx context.Context, w http.ResponseWriter, rows pgx.Rows, err error) {
@@ -592,7 +668,11 @@ func (p *posts) handleReact(value int16) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		ctx := req.Context()
 		actor := p.rt.actor(ctx)
-		if err := p.rt.limit(ctx, ActionPostReaction, actor); err != nil {
+		err := participant(actor, p.rt.anonymous.Reactions)
+		if err == nil {
+			err = p.rt.limit(ctx, ActionPostReaction, actor)
+		}
+		if err != nil {
 			writeErr(w, err)
 			return
 		}
@@ -717,7 +797,7 @@ func (p *posts) scan(ctx context.Context, row pgx.Row) (Post, error) {
 	var state, reason, link string
 	err := row.Scan(&v.ID, &v.AuthorID, &v.Title, &v.Slug, &v.Body, &v.Excerpt,
 		&coverName, &v.Language, &v.IsDraft, &v.LiveAt, &v.TotalLikes,
-		&v.TotalDislikes, &v.CreatedAt, &v.UpdatedAt, &v.CommentCount, &state, &reason, &link)
+		&v.TotalDislikes, &v.CreatedAt, &v.UpdatedAt, &v.DeletedAt, &v.CommentCount, &state, &reason, &link)
 	if err != nil {
 		return Post{}, err
 	}

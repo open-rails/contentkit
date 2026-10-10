@@ -3,7 +3,7 @@ import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
 import { toContentKitError } from "../client/errors.js";
 import type { Reaction } from "../client/content/types.js";
-import type { ReactionCounts, RefBody } from "../client/generated/wire.js";
+import type { FavoriteState, ReactionCounts, RefBody } from "../client/generated/wire.js";
 import { withReaction } from "./comments.js";
 import { keyOf, useContentScope, useResource } from "./use-resource.js";
 
@@ -46,49 +46,38 @@ export function useReaction(ref: RefBody, o: { initial?: ReactionCounts; client?
 
 export interface UseFavorite {
   favorited: boolean;
+  /** How many favorited the item; undefined until read. */
+  count?: number;
   loading: boolean;
   /** A write is in flight. */
   pending: boolean;
   error?: ContentKitError;
-  /** Sets it at once; rolled back if the server refuses it. */
+  /** Sets it at once (count moved by one); rolled back if the server refuses it. */
   set: (favorited: boolean) => Promise<void>;
   toggle: () => Promise<void>;
 }
 
 /**
- * Whether the signed-in caller favorited the item (initial: the host's value).
- * Signed out (viewer null) it reads nothing and stays false.
+ * An item's favorite count and whether the signed-in caller favorited it
+ * (initial: what the host already has). Signed out, favorited stays false.
  */
-export function useFavorite(ref: RefBody, o: { initial?: boolean; client?: ContentKitClient } = {}): UseFavorite {
+export function useFavorite(ref: RefBody, o: { initial?: FavoriteState; client?: ContentKitClient } = {}): UseFavorite {
   const { client, store, viewer } = useContentScope(o.client);
-  const key = viewer === null ? null : keyOf("favorite", viewer, ref.kind, ref.id);
-  const r = useResource<boolean>(
-    store,
-    key,
-    { type: "favorite", ref: { kind: ref.kind, id: ref.id } },
-    async (s) => {
-      try {
-        return (await client.favorites.get(ref, s)).favorited;
-      } catch (e) {
-        // A caller the host did not sign in has no favorites.
-        if (toContentKitError(e).code === "unauthorized") return false;
-        throw e;
-      }
-    },
-    { initial: o.initial },
-  );
-  const favorited = !!r.data;
+  const key = keyOf("favorite", viewer, ref.kind, ref.id);
+  const r = useResource<FavoriteState>(store, key, { type: "favorite", ref: { kind: ref.kind, id: ref.id } }, (s) => client.favorites.get(ref, s), { initial: o.initial });
+  const favorited = !!r.data?.favorited;
   const [pending, setPending] = useState(false);
   const { kind, id } = ref;
   const set = useCallback(
     async (next: boolean) => {
-      const token = key ? store.mark(key) : 0;
-      if (key) store.set(key, next);
+      const prev = store.snapshot<FavoriteState>(key).data;
+      const token = store.mark(key);
+      if (prev && prev.favorited !== next) store.set<FavoriteState>(key, { favorited: next, count: Math.max(0, prev.count + (next ? 1 : -1)) });
       setPending(true);
       try {
         await client.favorites.set({ kind, id }, next);
       } catch (e) {
-        if (key) store.rollback(key, token, !next);
+        if (prev) store.rollback(key, token, prev);
         throw toContentKitError(e);
       } finally {
         setPending(false);
@@ -97,5 +86,5 @@ export function useFavorite(ref: RefBody, o: { initial?: boolean; client?: Conte
     [client, store, key, kind, id],
   );
   const toggle = useCallback(() => set(!favorited), [set, favorited]);
-  return { favorited, loading: !!key && (r.loading || (!r.loaded && o.initial === undefined)), pending, error: r.error, set, toggle };
+  return { favorited, count: r.data?.count, loading: r.loading || (!r.loaded && o.initial === undefined), pending, error: r.error, set, toggle };
 }

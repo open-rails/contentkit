@@ -2,29 +2,31 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (80). `contentkit.Runtime.Handler` serves them under the one prefix the host mounts it at, each module at its sub-path: content `/`, upload `/media/upload`, media `/media`, codes `/codes`, taxonomy `/taxonomy`. A host that mounts a module alone serves its routes beneath that mount instead. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (82). `contentkit.Runtime.Handler` serves them under the one prefix the host mounts it at, each module at its sub-path: content `/`, upload `/media/upload`, media `/media`, codes `/codes`, taxonomy `/taxonomy`. A host that mounts a module alone serves its routes beneath that mount instead. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller: `public` (the actor is optional; the host's resolver decides what it sees), `user` (a signed-in actor, else 401 `unauthorized`), `staff` (the `content.Perms` permission named, else 403 `forbidden`). ContentKit never authenticates: it reads the actor the host's middleware put in the request context.
 
 Every error is `{"error", "code", …}`; the codes are at the end.
 
-## Content: posts, comments, reactions, favorites, polls, bans, moderation (`/`)
+## Content: config, posts, comments, reactions, favorites, polls, bans, moderation (`/`)
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
+| GET | `/config` | public | — | 200 `Config` | What the content module allows: which interactions signed-out visitors may make, and the longest comment. |
 | GET | `/posts` | public | — | 200 `Post[]` | Published posts. Query: `language`, `sort`, `limit`, `offset`. |
-| GET | `/posts/admin` | staff `PostWrite` | — | 200 `Post[]` | Every post, newest first: drafts, scheduled, held and rejected ones included. Query: `language`, `draft`, `limit`, `offset`. |
+| GET | `/posts/admin` | staff `PostWrite` | — | 200 `Post[]` | Every post, newest first: drafts, scheduled, held and rejected ones included; deleted ones on their own. Query: `language`, `draft`, `deleted`, `q`, `limit`, `offset`. |
 | GET | `/posts/{id}` | public | — | 200 `Post` | A post. A draft, scheduled, held or rejected post is shown only to its author and PostWrite holders. |
 | POST | `/posts` | staff `PostWrite` | `PostInput` | 201 `Post`<br>202 `Post` | Creates a post; 202 when the moderator holds it for review. |
 | PATCH | `/posts/{id}` | staff `PostWrite` | `PostInput` | 200 `Post`<br>202 `Post` | Updates a post's given fields; 202 when the moderator holds the new text. |
 | DELETE | `/posts/{id}` | staff `PostWrite` | — | 204 — | Deletes a post. |
+| POST | `/posts/{id}/restore` | staff `PostWrite` | — | 200 `Post` | Restores a deleted post as it was; 409 when another live post took its slug. |
 | POST | `/posts/{id}/like` | public | — | 200 `Post` | Likes a published post. |
 | POST | `/posts/{id}/dislike` | public | — | 200 `Post` | Dislikes a published post. |
 | POST | `/posts/{id}/neutral` | public | — | 200 `Post` | Clears the caller's reaction to a published post. |
 | PUT | `/posts/{id}/cover` | staff `PostWrite` | `ImageInput` | 200 `PostCover` | Sets the cover to an inline image uploaded to the post's media folder; "" clears it. |
 | POST | `/posts/{id}/images` | staff `PostWrite` | `ImageInput` | 200 `InlineImage` | The public URL of an inline image uploaded to the post's media folder, to place in the body. |
 | GET | `/{kind}/{id}/comments` | public | — | 200 `Comment[]` | A target's top-level comments with reply counts; the caller also sees its own held and rejected ones. Query: `sort`, `limit`, `offset`. |
-| POST | `/{kind}/{id}/comments` | public | `CommentInput` | 201 `Comment`<br>202 `Comment` | Comments on a target, or replies to a top-level comment; anonymous callers give anon_name. 202 when the moderator holds it. |
+| POST | `/{kind}/{id}/comments` | public | `CommentInput` | 201 `Comment`<br>202 `Comment` | Comments on a target, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it. |
 | GET | `/comments/latest` | public | — | 200 `FeedItem[]` | The newest published comments across the tenant, with their targets; a page may under-fill. Query: `limit`, `offset`. |
 | GET | `/comments/admin` | staff `CommentModerate` | — | 200 `AdminComment[]` | Every comment, newest first, deleted, held and rejected ones with their real bodies. Query: `content_kind`, `limit`, `offset`. |
 | POST | `/comments/{cid}/restore` | staff `CommentModerate` | — | 200 `Restored` | Restores a deleted comment. |
@@ -40,16 +42,16 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | DELETE | `/{kind}/{id}/reaction` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a target. |
 | GET | `/{kind}/{id}/reaction` | public | — | 200 `ReactionCounts` | A target's like and dislike counts and the caller's own reaction. |
 | GET | `/favorites` | user | — | 200 `FavoriteItem[]` | The caller's favorites, newest first. Query: `limit`, `offset`. |
-| POST | `/{kind}/{id}/favorite` | user | — | 200 `FavoriteState` | Favorites a visible target; favoriting again is a no-op. |
-| DELETE | `/{kind}/{id}/favorite` | user | — | 200 `FavoriteState` | Unfavorites a target, also one no longer visible. |
-| GET | `/{kind}/{id}/favorite` | user | — | 200 `FavoriteState` | Whether the caller has favorited a target. |
+| POST | `/{kind}/{id}/favorite` | user | — | 200 `FavoriteState` | Favorites a visible target; favoriting again is a no-op. Answers the state with the target's favorite count. |
+| DELETE | `/{kind}/{id}/favorite` | user | — | 200 `FavoriteState` | Unfavorites a target, also one no longer visible. Answers the state with the target's favorite count. |
+| GET | `/{kind}/{id}/favorite` | public | — | 200 `FavoriteState` | A target's favorite count and whether the caller favorited it (never, signed out: then the target must be visible). |
 | GET | `/polls` | public | — | 200 `Poll[]` | Live polls, newest first. Query: `language`, `month`, `date`, `limit`, `offset`. |
 | GET | `/polls/admin` | staff `PollWrite` | — | 200 `Poll[]` | Every poll, scheduled and inactive ones included. Query: `language`, `month`, `date`, `limit`, `offset`. |
 | GET | `/polls/{id}` | public | — | 200 `Poll` | A poll with the caller's vote or answer; a scheduled or inactive poll only for PollWrite holders. |
 | POST | `/polls` | staff `PollWrite` | `PollInput` | 201 `Poll` | Creates a poll with its options; a free-text poll needs an AnswerClassifier. |
-| PATCH | `/polls/{id}` | staff `PollWrite` | `PollUpdate` | 200 `Poll` | Updates a poll's given fields. |
+| PATCH | `/polls/{id}` | staff `PollWrite` | `PollUpdate` | 200 `Poll` | Updates a poll's given fields; closes_at null reopens it until deactivated. |
 | DELETE | `/polls/{id}` | staff `PollWrite` | — | 204 — | Deletes a poll and its media folder. |
-| POST | `/polls/{id}/vote` | public | `PollVote` | 200 `Poll` | Votes for an option of an open multiple-choice poll; a vote is final, and voting again changes nothing. |
+| POST | `/polls/{id}/vote` | public | `PollVote` | 200 `Poll` | Votes for an option of an open multiple-choice poll, signed out where Config.anonymous.votes allows it; a vote is final, and voting again changes nothing. |
 | POST | `/polls/{id}/answer` | user | `PollAnswerInput` | 200 `Poll` | Stores or replaces the caller's answer to an open free-text poll. |
 | PUT | `/polls/{id}/image` | staff `PollWrite` | `ImageInput` | 200 `PollImage` | Sets the question image to an inline image uploaded to the poll's media folder; "" clears it. |
 | POST | `/polls/{id}/options` | staff `PollWrite` | `PollOptionPatch` | 201 `PollOption` | Adds an option to a multiple-choice poll, at the end unless position is given. |
@@ -124,6 +126,7 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `animation_unsupported` | 415 | An AVIF or HEIF image sequence, which is decoded as one frame. |
 | `checksum_mismatch` | 422 | The stored bytes differ from the declared SHA-256. |
 | `comment_banned` | 403 | The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends. |
+| `comment_too_long` | 422 | The comment is longer than the site allows; `details.max` is the limit in characters. |
 | `conflict` | 409 | A concurrent change, a path or slug already taken, or an operation id already used for another commit. |
 | `forbidden` | 403 | The actor may not do this. |
 | `gone` | 410 | The content was removed. |

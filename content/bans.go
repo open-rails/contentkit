@@ -322,8 +322,15 @@ const (
 // CommentStanding is the caller's standing on a target: may they comment, if a
 // ban stops them which, and what they may do to others' comments.
 type CommentStanding struct {
+	// CanComment: the caller may comment now. A signed-out caller may only
+	// where Anonymous says so.
 	CanComment bool       `json:"can_comment"`
 	Ban        *BanNotice `json:"ban,omitempty"`
+	// Anonymous: signed-out visitors may comment here, under a name
+	// (Options.Anonymous.Comments); otherwise they are asked to sign in.
+	Anonymous bool `json:"anonymous"`
+	// MaxLength is the longest comment, in characters (Options.CommentMaxLength).
+	MaxLength int `json:"max_length"`
 	// UserID is the caller's user id, absent when anonymous: the comments it
 	// wrote are the ones it may edit and delete.
 	UserID string `json:"user_id,omitempty"`
@@ -335,8 +342,8 @@ type CommentStanding struct {
 }
 
 // handleCanComment answers whether the caller may comment on a visible target
-// (it must be accessible to them and no ban may apply) and what it may do to
-// the comments there.
+// (it must be accessible to them, signed in unless anonymous comments are on,
+// and no ban may apply) and what it may do to the comments there.
 func (rt *Runtime) handleCanComment(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	actor := rt.actor(ctx)
@@ -345,7 +352,8 @@ func (rt *Runtime) handleCanComment(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	out := CommentStanding{CanComment: res.Accessible, UserID: viewerID(actor), BanScopes: []BanScope{}}
+	out := CommentStanding{UserID: viewerID(actor), Anonymous: rt.anonymous.Comments, MaxLength: rt.commentMax, BanScopes: []BanScope{}}
+	out.CanComment = res.Accessible && (out.UserID != "" || out.Anonymous)
 	var banned *BannedError
 	if err := rt.checkCommentBan(ctx, viewerID(actor), res.Owner); errors.As(err, &banned) {
 		out.CanComment, out.Ban = false, &banned.BanNotice

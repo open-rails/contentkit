@@ -2,6 +2,7 @@ package content
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -32,7 +33,7 @@ func TestFavorites_AddRemoveStatus(t *testing.T) {
 	actor := access.Actor{ID: "u1", Kind: "user"}
 	w := ref("widget", cid(1))
 
-	if err := f.add(ctx, actor, "widget", cid(1)); err != nil {
+	if err := favErr(f.add(ctx, actor, "widget", cid(1))); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 	if !favIsFavorited(t, f, "u1", w) {
@@ -42,13 +43,13 @@ func TestFavorites_AddRemoveStatus(t *testing.T) {
 		t.Fatalf("favorites count after add = %d, want 1", c.Favorites)
 	}
 	// re-add is idempotent: no error, still a single row.
-	if err := f.add(ctx, actor, "widget", cid(1)); err != nil {
+	if err := favErr(f.add(ctx, actor, "widget", cid(1))); err != nil {
 		t.Fatalf("re-add: %v", err)
 	}
 	if c := countsOf(t, rt, w); c.Favorites != 1 {
 		t.Fatalf("favorites count after re-add = %d, want 1 (idempotent)", c.Favorites)
 	}
-	if err := f.remove(ctx, actor, "widget", cid(1)); err != nil {
+	if err := favErr(f.remove(ctx, actor, "widget", cid(1))); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 	if favIsFavorited(t, f, "u1", w) {
@@ -58,7 +59,7 @@ func TestFavorites_AddRemoveStatus(t *testing.T) {
 		t.Fatalf("favorites count after remove = %d, want 0", c.Favorites)
 	}
 	// remove again is idempotent (no row) -> no error.
-	if err := f.remove(ctx, actor, "widget", cid(1)); err != nil {
+	if err := favErr(f.remove(ctx, actor, "widget", cid(1))); err != nil {
 		t.Fatalf("idempotent remove: %v", err)
 	}
 }
@@ -71,7 +72,7 @@ func TestFavorites_TransactionErrorRollsBack(t *testing.T) {
 	if _, err := pool.Exec(ctx, `DROP TABLE `+rt.store.t.counts); err != nil {
 		t.Fatalf("drop counts table: %v", err)
 	}
-	if err := rt.favorites.add(ctx, access.Actor{ID: "u1", Kind: "user"}, "widget", cid(1)); err == nil {
+	if err := favErr(rt.favorites.add(ctx, access.Actor{ID: "u1", Kind: "user"}, "widget", cid(1))); err == nil {
 		t.Fatal("favorite error = nil, want transaction failure")
 	}
 	var n int
@@ -90,10 +91,10 @@ func TestFavorites_BatchIsFavorited(t *testing.T) {
 	ctx := context.Background()
 	actor := access.Actor{ID: "u1", Kind: "user"}
 
-	if err := f.add(ctx, actor, "widget", cid(1)); err != nil {
+	if err := favErr(f.add(ctx, actor, "widget", cid(1))); err != nil {
 		t.Fatalf("add 1: %v", err)
 	}
-	if err := f.add(ctx, actor, "widget", cid(3)); err != nil {
+	if err := favErr(f.add(ctx, actor, "widget", cid(3))); err != nil {
 		t.Fatalf("add 3: %v", err)
 	}
 	targets := []contentref.ContentRef{ref("widget", cid(1)), ref("widget", cid(2)), ref("widget", cid(3)), ref("widget", cid(4))}
@@ -124,7 +125,7 @@ func TestFavorites_WishlistVisibleNotAccessible(t *testing.T) {
 	ctx := context.Background()
 	actor := access.Actor{ID: "u1", Kind: "user"}
 
-	if err := f.add(ctx, actor, "widget", cid(904)); err != nil {
+	if err := favErr(f.add(ctx, actor, "widget", cid(904))); err != nil {
 		t.Fatalf("favorite premium-locked: want success, got %v", err)
 	}
 	if !favIsFavorited(t, f, "u1", ref("widget", cid(904))) {
@@ -143,13 +144,13 @@ func TestFavorites_GatingHiddenMissing(t *testing.T) {
 	ctx := context.Background()
 	actor := access.Actor{ID: "u1", Kind: "user"}
 
-	if err := f.add(ctx, actor, "widget", cid(902)); !errors.Is(err, ErrNotVisible) {
+	if err := favErr(f.add(ctx, actor, "widget", cid(902))); !errors.Is(err, ErrNotVisible) {
 		t.Fatalf("favorite hidden: want ErrNotVisible, got %v", err)
 	}
-	if err := f.add(ctx, actor, "widget", cid(903)); !errors.Is(err, ErrNotFound) {
+	if err := favErr(f.add(ctx, actor, "widget", cid(903))); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("favorite missing: want ErrNotFound, got %v", err)
 	}
-	if err := f.add(ctx, actor, "unregistered", cid(1)); !errors.Is(err, ErrNotFound) {
+	if err := favErr(f.add(ctx, actor, "unregistered", cid(1))); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("favorite unregistered kind: want ErrNotFound, got %v", err)
 	}
 }
@@ -163,7 +164,7 @@ func TestFavorites_AnonymousRejected(t *testing.T) {
 
 	anon := access.Actor{Anonymous: true, IP: "10.0.0.9"}
 	for _, c := range []struct{ method, path string }{
-		{"POST", "/widget/" + cid(1) + "/favorite"}, {"DELETE", "/widget/" + cid(1) + "/favorite"}, {"GET", "/widget/" + cid(1) + "/favorite"}, {"GET", "/favorites"},
+		{"POST", "/widget/" + cid(1) + "/favorite"}, {"DELETE", "/widget/" + cid(1) + "/favorite"}, {"GET", "/favorites"},
 	} {
 		req := httptest.NewRequest(c.method, c.path, nil)
 		req = req.WithContext(withActor(req.Context(), anon))
@@ -193,7 +194,7 @@ func TestFavorites_ListAndCounts(t *testing.T) {
 	u1, u2 := access.Actor{ID: "u1", Kind: "user"}, access.Actor{ID: "u2", Kind: "user"}
 
 	for _, id := range []string{cid(1), cid(2), cid(3)} {
-		if err := f.add(ctx, u1, "widget", id); err != nil {
+		if err := favErr(f.add(ctx, u1, "widget", id)); err != nil {
 			t.Fatalf("add %s: %v", id, err)
 		}
 	}
@@ -211,7 +212,7 @@ func TestFavorites_ListAndCounts(t *testing.T) {
 	if want := []string{cid(3), cid(2), cid(1)}; !reflect.DeepEqual(order, want) {
 		t.Fatalf("list order = %v, want %v (newest-first)", order, want)
 	}
-	if err := f.add(ctx, u2, "widget", cid(1)); err != nil {
+	if err := favErr(f.add(ctx, u2, "widget", cid(1))); err != nil {
 		t.Fatalf("u2 add: %v", err)
 	}
 	counts, err := rt.Counts(ctx, []contentref.ContentRef{ref("widget", cid(1)), ref("widget", cid(2)), ref("widget", cid(3)), ref("widget", cid(4))})
@@ -241,7 +242,7 @@ func TestInteractionsGateOnAccessible(t *testing.T) {
 	ctx := context.Background()
 	actor := access.Actor{ID: "u1", Kind: "user"}
 
-	if err := newFavorites(rt).add(ctx, actor, "widget", cid(1)); err != nil {
+	if err := favErr(newFavorites(rt).add(ctx, actor, "widget", cid(1))); err != nil {
 		t.Fatalf("favorite a visible item: %v", err)
 	}
 	if _, err := rt.reactions.react(ctx, actor, "widget", cid(1), 1); !errors.Is(err, ErrForbidden) {
@@ -250,4 +251,36 @@ func TestInteractionsGateOnAccessible(t *testing.T) {
 	if _, err := rt.reactions.react(ctx, actor, "widget", cid(2), 1); err != nil {
 		t.Fatalf("react with access: %v", err)
 	}
+}
+
+// Every favorite answer carries the target's count, read under the canonical
+// reference; signed out, the count of a visible target only.
+func TestFavoriteStateCarriesTheCount(t *testing.T) {
+	res := &fakeResolver{}
+	res.set("widget", cid(1), true, true)
+	res.set("widget", cid(2), false, false)
+	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
+	h := rt.Handler()
+	state := func(actor access.Actor, method, path string, want FavoriteState) {
+		t.Helper()
+		rec := doJSON(t, h, actor, method, path, nil)
+		var got FavoriteState
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil || got != want {
+			t.Fatalf("%s %s as %q: %d %s, want %+v", method, path, actor.ID, rec.Code, rec.Body, want)
+		}
+	}
+	u1, u2, anon := access.Actor{ID: "u1", Kind: "user"}, access.Actor{ID: "u2", Kind: "user"}, access.Actor{Anonymous: true, IP: "10.0.0.9"}
+	item := "/widget/" + cid(1) + "/favorite"
+	state(anon, "GET", item, FavoriteState{})
+	state(u1, "POST", item, FavoriteState{Favorited: true, Count: 1})
+	state(u1, "POST", item, FavoriteState{Favorited: true, Count: 1})
+	state(u2, "POST", item, FavoriteState{Favorited: true, Count: 2})
+	state(anon, "GET", item, FavoriteState{Count: 2})
+	state(u1, "GET", item, FavoriteState{Favorited: true, Count: 2})
+	state(u1, "DELETE", item, FavoriteState{Count: 1})
+	state(u2, "GET", item, FavoriteState{Favorited: true, Count: 1})
+	if rec := doJSON(t, h, anon, "GET", "/widget/"+cid(2)+"/favorite", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("signed out, a hidden target: %d %s", rec.Code, rec.Body)
+	}
+	state(u1, "GET", "/widget/"+cid(2)+"/favorite", FavoriteState{})
 }

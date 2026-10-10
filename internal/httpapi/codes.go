@@ -32,6 +32,7 @@ var codes = []ErrorCode{
 	{CodeUnauthorized, http.StatusUnauthorized, "The route needs a signed-in actor."},
 	{CodeForbidden, http.StatusForbidden, "The actor may not do this."},
 	{"comment_banned", http.StatusForbidden, "The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends."},
+	{"comment_too_long", http.StatusUnprocessableEntity, "The comment is longer than the site allows; `details.max` is the limit in characters."},
 	{CodeNotFound, http.StatusNotFound, "Nothing by that name, or nothing the actor may see."},
 	{CodeConflict, http.StatusConflict, "A concurrent change, a path or slug already taken, or an operation id already used for another commit."},
 	{"incomplete", http.StatusConflict, "A multipart upload is missing parts."},

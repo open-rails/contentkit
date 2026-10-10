@@ -217,7 +217,7 @@ export class ResourceStore {
         if (c.ref.kind === "post") this.postTotals(c.ref.id, c.counts.likes, c.counts.dislikes);
         break;
       case "favorite.changed":
-        this.patch((t) => t.type === "favorite" && sameRef(t.ref, c.ref), () => c.favorited);
+        this.patch((t) => t.type === "favorite" && sameRef(t.ref, c.ref), () => ({ favorited: c.favorited, count: c.count }));
         this.invalidate((t) => t.type === "favorites");
         break;
       case "post.created":
@@ -232,6 +232,10 @@ export class ResourceStore {
         break;
       case "post.deleted":
         items<Post>(["posts"], (x) => (x.id === c.id ? null : x));
+        this.invalidate((t) => t.type === "posts" && t.scope === "deleted");
+        break;
+      case "post.restored":
+        this.invalidate((t) => (t.type === "post" && t.id === c.post.id) || t.type === "posts");
         break;
       case "poll.created":
         this.invalidate((t) => t.type === "polls" || (t.type === "poll" && !t.id));

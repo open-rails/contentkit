@@ -189,7 +189,8 @@ Ports (in `content` unless qualified):
 `{tenant}/poll/{poll_id}/` (`Media.PostKind`/`PollKind`). Register both kinds
 with a `Named` upload path (`inline/{name}`, with a `Max`) and its public preset (`To:
 "{name}.webp"`), route their `CanUpload` to `rt.Content.CanUpload` (PostWrite
-or PollWrite, and the post or poll must exist), and pass
+or PollWrite, and the post or poll must exist) and their `Hooks.Resolver` to
+`rt.Content.MediaResolver()`, and pass
 `content.Media{URLs: urls, Folders: jobs}`, where `urls.InlineURL` is the
 public preset's URL (`reg.PublicURL(ref, name+".webp")`; a pure function).
 The editor uploads each image with the SDK's `upload(file, {ref: {kind:
@@ -206,7 +207,12 @@ The public URL serves the kind's default until the worker renders it:
 | `PUT /polls/{id}/options/{oid}/image` | same | `{"image_url"}` |
 
 Create and update bodies take no image URLs, so images are added once the post
-or poll exists. The public URL serves after the image job runs (seconds).
+or poll exists. The public URL serves after the image job runs (seconds), and
+only while the post is published: `MediaResolver` shows a post's folder like
+the post (a draft, scheduled, held or rejected one only to its author and
+PostWrite holders, as editors). Its editors see an unpublished post's images
+through an editor read (`GET /media/{post kind}/{id}?editor`, signed
+`editor_url`s); the SDK's `usePost` does this for them.
 Post creation, edits, moderation decisions and soft deletion queue `ExposeTx`
 in the content transaction. Soft deletion hides public media and keeps private
 sources; deleting a poll still queues its folder's deletion. Replaced images
@@ -296,6 +302,20 @@ breaker. Register
 `Runtime.CheckModerator` as an optional dependency (helpers `deps`) so a
 tripped moderator shows on statusz and `app_dependency_up`.
 
+## Anonymous participation
+
+Signed-out visitors only read unless `content.Options.Anonymous` says
+otherwise: `Comments` (under an `anon_name`), `Reactions` (likes and
+dislikes of works, posts and comments, keyed by IP) and `Votes`
+(multiple-choice polls, keyed by IP). Free-text answers and favorites always
+need a signed-in actor. A refused anonymous attempt is `401 unauthorized`.
+`GET /config` answers the setting (`{"anonymous": {"comments", "reactions",
+"votes"}, "comment_max_length"}`) and `GET /{kind}/{id}/can-comment` carries
+`anonymous`, so a client shows a sign-in prompt or an anonymous form from the
+server's answer. `content.Options.CommentMaxLength` (default 400 characters)
+bounds comments and edits: longer is `422 comment_too_long` with
+`details.max`; the standing carries it as `max_length`.
+
 ## Interaction limits
 
 ContentKit limits each actor's interactions itself: the user id, or the IP
@@ -343,7 +363,7 @@ reactions, favorites or votes. Scopes:
 | `PUT /comment-bans/{user}` `{"reason","until"}` | the caller's owner scope | the ban (created or replaced) |
 | `DELETE /comment-bans/{user}` | the caller's owner scope | `204`, idempotent |
 | `GET`, `PUT`, `DELETE /global-comment-bans[/{user}]` | `global` | the same |
-| `GET /{kind}/{id}/can-comment` | the caller on that target | `{"can_comment", "ban"}` |
+| `GET /{kind}/{id}/can-comment` | the caller on that target | `{"can_comment", "ban", "anonymous", …}` |
 
 `until` is optional (absent: until lifted) and must be in the future; an
 expired ban stays listed with `expired: true` until lifted or replaced.
@@ -360,7 +380,7 @@ erased user and of their owner scope, and blanks them as `banned_by`.
 `content_poll_questions.kind` is `multiple_choice` (options + votes, as
 before) or `free_text`: one answer per signed-in actor in
 `content_poll_answers`, editable until the poll closes. `closes_at` (optional,
-`PATCH`-able) and `is_active = false` close a poll for votes and answers alike
+`PATCH`-able, `null` clears it) and `is_active = false` close a poll for votes and answers alike
 (`400 poll is closed`); results stay readable. Anonymous actors cannot answer
 (an IP-keyed editable answer would let NAT neighbours overwrite each other).
 

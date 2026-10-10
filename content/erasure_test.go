@@ -81,8 +81,8 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 	}
 	for name, write := range map[string]func() error{
 		"reaction":         func() error { _, e := rt.reactions.react(ctx, u1, "gallery", localeID(42, "en"), 1); return e },
-		"favorite":         func() error { return rt.favorites.add(ctx, u1, "gallery", localeID(42, "en")) },
-		"unfavorite":       func() error { return rt.favorites.remove(ctx, u1, "gallery", localeID(42, "en")) },
+		"favorite":         func() error { return favErr(rt.favorites.add(ctx, u1, "gallery", localeID(42, "en"))) },
+		"unfavorite":       func() error { return favErr(rt.favorites.remove(ctx, u1, "gallery", localeID(42, "en"))) },
 		"post reaction":    func() error { _, err := rt.posts.react(ctx, u1, post, 1); return err },
 		"comment reaction": func() error { _, e := rt.comments.reactTx(ctx, u1, cm.ID, 1); return e },
 		"poll vote":        func() error { _, e := rt.polls.vote(ctx, u1, poll.ID, poll.Options[0].ID); return e },
@@ -120,7 +120,7 @@ func TestSourceWritesRaceErasureWithoutResurrection(t *testing.T) {
 			case 0:
 				_, err = rt.reactions.react(ctx, actor, "gallery", localeID(42, "en"), 1)
 			case 1:
-				err = rt.favorites.add(ctx, actor, "gallery", localeID(42, "en"))
+				err = favErr(rt.favorites.add(ctx, actor, "gallery", localeID(42, "en")))
 			case 2:
 				_, err = rt.polls.vote(ctx, actor, poll.ID, poll.Options[0].ID)
 			}

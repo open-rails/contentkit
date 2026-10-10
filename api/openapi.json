@@ -6,6 +6,41 @@
     "description": "ContentKit's HTTP API, from the prefix the host mounts contentkit.Runtime.Handler at. Each module sits at its own sub-path (x-contentkit-modules); a host that mounts a module alone serves its routes beneath that mount instead. Generated from the route catalog (internal/httpapi) by `go generate ./internal/contract`; do not edit."
   },
   "paths": {
+    "/config": {
+      "get": {
+        "tags": [
+          "config"
+        ],
+        "summary": "What the content module allows: which interactions signed-out visitors may make, and the longest comment.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Config"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content"
+        ]
+      }
+    },
     "/posts": {
       "get": {
         "tags": [
@@ -143,7 +178,7 @@
         "tags": [
           "posts"
         ],
-        "summary": "Every post, newest first: drafts, scheduled, held and rejected ones included.",
+        "summary": "Every post, newest first: drafts, scheduled, held and rejected ones included; deleted ones on their own.",
         "parameters": [
           {
             "name": "language",
@@ -159,6 +194,22 @@
             "description": "true: only drafts; false: only posts that are not drafts",
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "name": "deleted",
+            "in": "query",
+            "description": "true: only deleted posts, with deleted_at; otherwise only live ones",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "only posts whose title, excerpt or body contains this text, ignoring case",
+            "schema": {
+              "type": "string"
             }
           },
           {
@@ -370,6 +421,56 @@
         ]
       }
     },
+    "/posts/{id}/restore": {
+      "post": {
+        "tags": [
+          "posts"
+        ],
+        "summary": "Restores a deleted post as it was; 409 when another live post took its slug.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Post"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "PostWrite",
+        "x-contentkit-errors": [
+          "conflict",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
     "/posts/{id}/like": {
       "post": {
         "tags": [
@@ -413,7 +514,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -464,7 +566,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -515,7 +618,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -729,7 +833,7 @@
         "tags": [
           "comments"
         ],
-        "summary": "Comments on a target, or replies to a top-level comment; anonymous callers give anon_name. 202 when the moderator holds it.",
+        "summary": "Comments on a target, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.",
         "parameters": [
           {
             "name": "kind",
@@ -793,10 +897,12 @@
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "comment_banned",
+          "comment_too_long",
           "forbidden",
           "moderation_rejected",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -1104,6 +1210,7 @@
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "comment_banned",
+          "comment_too_long",
           "conflict",
           "forbidden",
           "moderation_rejected",
@@ -1198,7 +1305,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -1249,7 +1357,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -1300,7 +1409,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -1359,7 +1469,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -1418,7 +1529,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -1477,7 +1589,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -1536,7 +1649,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -1660,7 +1774,7 @@
         "tags": [
           "favorites"
         ],
-        "summary": "Favorites a visible target; favoriting again is a no-op.",
+        "summary": "Favorites a visible target; favoriting again is a no-op. Answers the state with the target's favorite count.",
         "parameters": [
           {
             "name": "kind",
@@ -1716,7 +1830,7 @@
         "tags": [
           "favorites"
         ],
-        "summary": "Unfavorites a target, also one no longer visible.",
+        "summary": "Unfavorites a target, also one no longer visible. Answers the state with the target's favorite count.",
         "parameters": [
           {
             "name": "kind",
@@ -1772,7 +1886,7 @@
         "tags": [
           "favorites"
         ],
-        "summary": "Whether the caller has favorited a target.",
+        "summary": "A target's favorite count and whether the caller favorited it (never, signed out: then the target must be visible).",
         "parameters": [
           {
             "name": "kind",
@@ -1807,18 +1921,19 @@
           }
         },
         "security": [
+          {},
           {
             "host": []
           }
         ],
         "x-contentkit-module": "content",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "public",
         "x-contentkit-errors": [
-          "invalid_request"
+          "invalid_request",
+          "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:user",
           "request"
         ]
       }
@@ -2084,7 +2199,7 @@
         "tags": [
           "polls"
         ],
-        "summary": "Updates a poll's given fields.",
+        "summary": "Updates a poll's given fields; closes_at null reopens it until deactivated.",
         "parameters": [
           {
             "name": "id",
@@ -2183,7 +2298,7 @@
         "tags": [
           "polls"
         ],
-        "summary": "Votes for an option of an open multiple-choice poll; a vote is final, and voting again changes nothing.",
+        "summary": "Votes for an option of an open multiple-choice poll, signed out where Config.anonymous.votes allows it; a vote is final, and voting again changes nothing.",
         "parameters": [
           {
             "name": "id",
@@ -2230,7 +2345,8 @@
         "x-contentkit-errors": [
           "forbidden",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -4834,6 +4950,25 @@
           "content_id"
         ]
       },
+      "Anonymous": {
+        "type": "object",
+        "properties": {
+          "comments": {
+            "type": "boolean"
+          },
+          "reactions": {
+            "type": "boolean"
+          },
+          "votes": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "comments",
+          "reactions",
+          "votes"
+        ]
+      },
       "Assignment": {
         "type": "object",
         "properties": {
@@ -5047,6 +5182,12 @@
           "ban": {
             "$ref": "#/components/schemas/BanNotice"
           },
+          "anonymous": {
+            "type": "boolean"
+          },
+          "max_length": {
+            "type": "integer"
+          },
           "user_id": {
             "type": "string"
           },
@@ -5066,6 +5207,8 @@
         },
         "required": [
           "can_comment",
+          "anonymous",
+          "max_length",
           "moderate",
           "ban_scopes"
         ]
@@ -5118,6 +5261,21 @@
           "blob",
           "type",
           "size"
+        ]
+      },
+      "Config": {
+        "type": "object",
+        "properties": {
+          "anonymous": {
+            "$ref": "#/components/schemas/Anonymous"
+          },
+          "comment_max_length": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "anonymous",
+          "comment_max_length"
         ]
       },
       "ContentRef": {
@@ -5499,10 +5657,14 @@
         "properties": {
           "favorited": {
             "type": "boolean"
+          },
+          "count": {
+            "type": "integer"
           }
         },
         "required": [
-          "favorited"
+          "favorited",
+          "count"
         ]
       },
       "FeedItem": {
@@ -6564,6 +6726,10 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "deleted_at": {
+            "type": "string",
+            "format": "date-time"
           }
         },
         "required": [
@@ -7122,6 +7288,7 @@
           "animation_unsupported",
           "checksum_mismatch",
           "comment_banned",
+          "comment_too_long",
           "conflict",
           "forbidden",
           "gone",
@@ -7286,6 +7453,10 @@
     "comment_banned": {
       "status": 403,
       "meaning": "The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends."
+    },
+    "comment_too_long": {
+      "status": 422,
+      "meaning": "The comment is longer than the site allows; `details.max` is the limit in characters."
     },
     "conflict": {
       "status": 409,

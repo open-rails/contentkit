@@ -30,7 +30,8 @@ type limitFixture struct {
 // the content (once per schema), otherwise it reuses from's schema and ids.
 func newLimitFixture(t *testing.T, limits Limits, from *limitFixture) limitFixture {
 	t.Helper()
-	opts := Options{Limits: limits, ContentKinds: []string{"gallery", "post"}, Perms: Perms{PostWrite: "post", PollWrite: "poll"}}
+	opts := Options{Limits: limits, ContentKinds: []string{"gallery", "post"}, Perms: Perms{PostWrite: "post", PollWrite: "poll"},
+		Anonymous: Anonymous{Comments: true, Reactions: true, Votes: true}}
 	if from != nil {
 		opts.Schema, opts.Resolver = from.rt.schema, from.rt.resolver
 		rt, _ := newTestRuntime(t, opts)

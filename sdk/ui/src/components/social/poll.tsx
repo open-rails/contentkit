@@ -8,6 +8,7 @@ import type { Poll as PollData } from "../../client/generated/wire.js";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext, useErrorReporter, type ContentKitErrorHandler } from "../../react/context.js";
+import { useContentConfig } from "../../react/config.js";
 import { usePoll } from "../../react/polls.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
@@ -21,7 +22,7 @@ export interface PollProps {
   language?: string;
   /** When results show: once the visitor voted (default), or always. A closed poll always shows them. */
   results?: "voted" | "always";
-  /** Asks a signed-out visitor to sign in (default the provider's); without one they vote anonymously. */
+  /** Asks a signed-out visitor to sign in where the server takes no anonymous votes (default the provider's). */
   onSignIn?: () => void;
   /** Shown when there is no live poll; default nothing. */
   empty?: ReactNode;
@@ -36,7 +37,9 @@ export interface PollProps {
 /**
  * A poll: vote (at once, final) and results scaled to the leading option, or a
  * free-text answer and its groups. Question and option images, the closing
- * date and the closed state come from the poll.
+ * date and the closed state come from the poll. Signed out, visitors vote
+ * where the server allows it (`Config.anonymous.votes`) and are asked to sign
+ * in elsewhere; free-text answers always need a signed-in visitor.
  */
 export function Poll(p: PollProps) {
   const m = useMessages();
@@ -46,8 +49,11 @@ export function Poll(p: PollProps) {
   const r = usePoll(id ?? null, { initial: typeof p.poll === "object" ? p.poll : undefined, language: p.language, client: p.client });
   const report = useErrorReporter(p.onError);
   const [error, setError] = useState<ContentKitError | null>(null);
+  const { config } = useContentConfig({ client: p.client });
   const signIn = p.onSignIn ?? ctx?.onSignIn;
   const signedOut = ctx?.viewer === null;
+  // Signed out where the server takes no anonymous votes.
+  const mustSignIn = signedOut && config?.anonymous.votes === false;
   const root = (children: ReactNode) => (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-3 rounded-xl border border-border bg-card p-4 text-sm text-card-foreground", p.className)} data-ckui="poll">
       {children}
@@ -82,7 +88,7 @@ export function Poll(p: PollProps) {
     report(err, op);
   };
   const vote = (option: string) => {
-    if (signedOut && signIn) return signIn();
+    if (mustSignIn) return signIn?.();
     setError(null);
     r.vote(option).catch((e) => fail(e, "poll.vote"));
   };
@@ -111,10 +117,10 @@ export function Poll(p: PollProps) {
           }
         />
       ) : (
-        <Choices poll={poll} results={p.results === "always" || poll.voted || poll.closed} canVote={!poll.voted && !poll.closed && !r.pending} onVote={vote} />
+        <Choices poll={poll} results={p.results === "always" || poll.voted || poll.closed} canVote={!poll.voted && !poll.closed && !r.pending && (!mustSignIn || !!signIn)} onVote={vote} />
       )}
       <ErrorLine error={error} />
-      {!poll.voted && !poll.closed && signedOut && signIn && poll.kind !== "free_text" && <p className="text-xs text-muted-foreground">{t("poll.signIn")}</p>}
+      {!poll.voted && !poll.closed && mustSignIn && poll.kind !== "free_text" && <p className="text-xs text-muted-foreground">{t("poll.signIn")}</p>}
     </>,
   );
 }

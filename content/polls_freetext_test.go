@@ -119,7 +119,7 @@ func TestPolls_FreeTextAnswersOnePerActorEditableUntilClose(t *testing.T) {
 	}
 	// close by closes_at: no more answers or edits, results still readable
 	past := time.Now().Add(-time.Minute)
-	if _, err := p.update(ctx, pollAdmin, poll.ID, PollUpdate{ClosesAt: &past}); err != nil {
+	if _, err := p.update(ctx, pollAdmin, poll.ID, PollUpdate{ClosesAt: Nullable[time.Time]{Set: true, Value: &past}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := p.answer(ctx, u1, poll.ID, "too late"); err == nil {
