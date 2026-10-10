@@ -16,14 +16,31 @@ export default defineConfig({
         },
       },
       {
+        // Against the real ContentKit (e2e/server and its compose services).
         resolve: { alias },
         test: {
           name: "integration",
-          include: ["test/**/*.test.{ts,tsx}"],
+          include: ["e2e/integration/**/*.test.ts"],
+          globalSetup: ["e2e/support/vitest-setup.ts"],
           environment: "node",
           testTimeout: 300_000,
-          hookTimeout: 300_000,
-          fileParallelism: false,
+          hookTimeout: 900_000,
+          maxWorkers: 2,
+        },
+      },
+      {
+        // The jsdom files (hooks and components; each says so), as their own
+        // run: with jsdom as the project's environment, or mixed with
+        // node-environment files, vite externalized Node built-ins for them.
+        resolve: { alias },
+        test: {
+          name: "integration-dom",
+          include: ["e2e/integration/**/*.test.tsx"],
+          globalSetup: ["e2e/support/vitest-setup.ts"],
+          environment: "node",
+          testTimeout: 300_000,
+          hookTimeout: 900_000,
+          maxWorkers: 2,
         },
       },
     ],

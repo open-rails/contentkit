@@ -4,9 +4,9 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { FakeServer, fakeClient } from "../../test/fake.js";
-import { ContentKitUiProvider, ImageCropDialog, LazyMount, MediaGallery, MediaReadinessNotice, RenditionImg, SlotImage, SortableList, VideoPosterPicker } from "../index.js";
-import { ContentKitProvider } from "../react/index.js";
+// Client-free: the readiness notice, the gallery item read and the poster picker against the real
+// ContentKit are in e2e/integration/media.test.tsx.
+import { ContentKitUiProvider, ImageCropDialog, LazyMount, MediaGallery, RenditionImg, SlotImage, SortableList } from "../index.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -135,65 +135,6 @@ it("LazyMount mounts children near the viewport and, with leaveMargin, unmounts 
   expect(screen.getByText("media")).toBeInTheDocument();
   fire("100px", false);
   expect(screen.getByText("later")).toBeInTheDocument();
-});
-
-const post = { kind: "post", id: "0192f000-0000-7000-8000-000000000021" };
-
-it("MediaReadinessNotice shows processing with the video's progress, then the failed files, then nothing", async () => {
-  const s = new FakeServer();
-  const c = fakeClient(s);
-  s.seed(post, [{ path: "videos/a.mp4", type: "video/mp4", size: 9, pending: ["hls"], progress: { phase: "queued", queue_position: 2, percent: 0, at: 1 } }]);
-  const { container, rerender } = render(<MediaReadinessNotice client={c} item={post} />);
-  expect(await screen.findByText("Processing media")).toBeInTheDocument();
-  expect(screen.getByText("Queued · #2 in line")).toBeInTheDocument();
-  s.seed(post, [
-    { path: "videos/a.mp4", type: "video/mp4", size: 9, failed: { of: "hls", message: "x" } },
-    { path: "images/b.png", type: "image/png", size: 3, failed: { of: "low", message: "x" } },
-  ]);
-  rerender(<MediaReadinessNotice client={c} item={post} prefix="" />);
-  await act(async () => c.media.commit(post, [{ op: "meta", path: "videos/a.mp4", meta: {} }]).catch(() => {}));
-  expect(await screen.findByText("2 files couldn't be processed: a.mp4, b.png")).toBeInTheDocument();
-  s.seed(post, [{ path: "images/b.png", type: "image/png", size: 3 }]);
-  await act(async () => c.media.commit(post, [{ op: "edit", path: "images/b.png" }]));
-  await waitFor(() => expect(container.querySelector("[data-ckui=readiness]")).toBeNull());
-});
-
-it("MediaGallery item reads through the client and builds HLS bases on its media mount", async () => {
-  const s = new FakeServer();
-  const c = fakeClient(s);
-  s.seed(post, [
-    { path: "low-res/1.webp", type: "image/webp", size: 3, w: 400, h: 300, upload: false },
-    { path: "low-res/2.webp", type: "image/webp", size: 3, w: 300, h: 400, upload: false },
-  ]);
-  render(
-    <ContentKitProvider client={c}>
-      <MediaGallery item={post} prefix="low-res/" storageKey={null} />
-    </ContentKitProvider>,
-  );
-  expect(await screen.findByText("1 / 2")).toBeInTheDocument();
-  expect(s.reads.at(-1)!.get("prefix")).toBe("low-res/");
-  expect(screen.getByRole("img", { name: "Image 1" })).toHaveAttribute("src", expect.stringContaining("fake://cdn/private/low-res/1.webp"));
-  expect(c.media.hlsBase(post, "hls/")).toBe(`http://x/read/post/${post.id}/hls/hls/`);
-});
-
-it("VideoPosterPicker takes frames from another video and uploads the chosen one as the cover image", async () => {
-  const s = new FakeServer();
-  const c = fakeClient(s);
-  const series = { kind: "series", id: "0192f000-0000-7000-8000-000000000031" };
-  const video = { kind: "video", id: "0192f000-0000-7000-8000-000000000032" };
-  s.seed(video, [{ path: "source.mp4", type: "video/mp4", size: 9, w: 1920, h: 1080, dur: 12 }]);
-  const user = userEvent.setup();
-  const onChange = vi.fn();
-  render(<VideoPosterPicker client={c} open onOpenChange={() => {}} item={series} path="cover" frames={{ item: video }} aspect="16:9" onChange={onChange} />);
-  const dialog = await screen.findByRole("dialog");
-  await waitFor(() => expect(s.frames.length).toBeGreaterThan(1));
-  expect(within(dialog).queryByRole("button", { name: "Automatic" })).toBeNull();
-  await user.click(await within(dialog).findByRole("button", { name: "Use this frame" }));
-  await waitFor(() => expect(onChange).toHaveBeenCalledOnce());
-  expect(s.frames).toContain("3@null");
-  expect(s.presigns.at(-1)).toMatchObject({ path: "cover", type: "image/jpeg" });
-  expect(s.commits.at(-1)).toEqual([{ op: "put", path: "cover.jpg", blob: expect.stringMatching(/^u-/) }]);
-  expect(s.commits.flat().some((op) => op.op === "frame")).toBe(false);
 });
 
 it("MediaGallery renders nothing without a read or item", () => {

@@ -1,5 +1,4 @@
-import { createContentKitClient } from "@openrails/contentkit-ui/client";
-import { ContentKitProvider } from "@openrails/contentkit-ui/react";
+import { ContentKitProvider, useSlotImage } from "@openrails/contentkit-ui/react";
 import {
   VideoPoster,
   VideoPosterPicker,
@@ -12,26 +11,21 @@ import {
   SlotImage,
   ContentKitUiProvider,
   useSlotEditor,
-  type ContentKitUiTheme,
 } from "@openrails/contentkit-ui";
+import type { PublicPreset, RefBody } from "@openrails/contentkit-ui/client";
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { DemoServer, sampleAvatar, sampleImage } from "./fake";
+import { client, dark, item, theme } from "./session";
 
-const q = new URLSearchParams(location.search);
-const theme = (q.get("theme") ?? "light") as ContentKitUiTheme;
-const dark = theme === "dark";
-document.documentElement.style.colorScheme = dark ? "dark" : "light";
-document.body.style.cssText = `margin:0;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:${dark ? "#09090b" : "#fafafa"};color:${dark ? "#fafafa" : "#09090b"}`;
+// ?channel= (with a cover and avatar), ?empty= (a channel without), ?video= (with a source).
+const channel = item("channel", "channel");
+const empty = item("empty", "channel");
+const video = item("video", "video");
 
-// Public files are served by e2e/media-server.ts (`node e2e/media-server.ts`).
-const server = new DemoServer(`http://127.0.0.1:${q.get("media") ?? 4180}`);
-const client = createContentKitClient({ baseUrl: "", mounts: { upload: "/api", media: "/read" }, fetch: server.fetch, media: { transport: server.transport } });
-const channel = { kind: "channel", id: "0192f000-0000-7000-8000-000000000001" };
-const empty = { kind: "channel", id: "0192f000-0000-7000-8000-000000000002" };
-
-await server.seed(channel, "cover", await sampleImage(3600, 1600, 210), { crop: { x: 0, y: 320, w: 3600, h: 1200 } });
-await server.seed(channel, "avatar", await sampleAvatar(900));
+const preset = (name: string, aspect: string): PublicPreset => ({ preset: name, aspect, renditions: [] });
+const cover = preset("cover", "3:1");
+const avatar = preset("avatar", "1:1");
+const poster = preset("poster", "16:9");
 
 // A host layout: the header draws the images; SlotEditor adds only the flow and
 // SlotEditMenu renders host-styled icon triggers over them.
@@ -48,26 +42,26 @@ const iconButton: React.CSSProperties = {
   cursor: "pointer",
 };
 
-function HeaderImage({ path, round }: { path: string; round?: boolean }) {
-  const { has } = useSlotEditor();
-  return <SlotImage image={has ? server.image(channel, path) : null} round={round} style={{ width: "100%", height: "100%" }} />;
+function HeaderImage({ round }: { round?: boolean }) {
+  const { has, image } = useSlotEditor();
+  return <SlotImage image={has ? { preset: "", aspect: image.aspect, renditions: image.renditions } : null} round={round} style={{ width: "100%", height: "100%" }} />;
 }
 
-function ChannelHeader() {
+function ChannelHeader({ item }: { item: RefBody }) {
   return (
     <div data-demo="header" style={{ position: "relative", paddingBottom: 56 }}>
-      <SlotEditor item={channel} path="cover" image={server.image(channel, "cover")}>
+      <SlotEditor item={item} path="cover" image={cover}>
         <div style={{ position: "relative", borderRadius: 14, overflow: "hidden", aspectRatio: "3" }}>
-          <HeaderImage path="cover" />
+          <HeaderImage />
           <div style={{ position: "absolute", top: 10, right: 10 }}>
             <SlotEditMenu label="Change cover" iconOnly render={<button style={iconButton} />} />
           </div>
         </div>
         <SlotEditError />
       </SlotEditor>
-      <SlotEditor item={channel} path="avatar" image={server.image(channel, "avatar")}>
+      <SlotEditor item={item} path="avatar" image={avatar}>
         <div style={{ position: "absolute", left: 20, bottom: 0, width: 112, height: 112, borderRadius: 999, border: `4px solid ${dark ? "#18181b" : "#fff"}` }}>
-          <HeaderImage path="avatar" round />
+          <HeaderImage round />
           <div style={{ position: "absolute", right: -2, bottom: -2 }}>
             <SlotEditMenu label="Change avatar" iconOnly render={<button style={iconButton} />} align="start" />
           </div>
@@ -77,21 +71,17 @@ function ChannelHeader() {
   );
 }
 
-const video = { kind: "post", id: "0192f000-0000-7000-8000-000000000001" };
-server.seedVideo(video);
-await client.media.commit(video, [{ op: "frame", path: "poster", auto: true }]);
-await client.media.waitFor(video, "poster", { interval: 200 });
-
-function VideoCard() {
+function VideoCard({ item }: { item: RefBody }) {
   const [open, setOpen] = useState(false);
-  const poster = server.image(video, "poster");
+  const image = useSlotImage({ ref: item, path: "poster", image: poster });
+  const shown = { ...poster, renditions: image.renditions };
   return (
     <div data-demo="video" style={{ display: "grid", gap: 12 }}>
-      <VideoPoster poster={poster} style={{ maxWidth: 360 }} />
+      <VideoPoster poster={shown} style={{ maxWidth: 360 }} />
       <div style={{ display: "flex", gap: 8 }}>
         <button type="button" onClick={() => setOpen(true)}>Set cover</button>
       </div>
-      <VideoPosterPicker open={open} onOpenChange={setOpen} item={video} image={poster} />
+      <VideoPosterPicker open={open} onOpenChange={setOpen} item={item} image={shown} onChange={() => image.reload()} />
     </div>
   );
 }
@@ -117,31 +107,39 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ContentKitProvider client={client}>
-    <ContentKitUiProvider appearance={{ theme }}>
-      <main style={{ maxWidth: 760, margin: "0 auto", padding: "28px 16px", display: "grid", gap: 20 }}>
-        <Card title="Channel header (SlotEditor)">
-          <ChannelHeader />
-        </Card>
-        <Card title="Channel profile">
-          <CoverUpload item={channel} image={server.image(channel, "cover")} />
-          <AvatarUpload item={channel} image={server.image(channel, "avatar")} />
-        </Card>
-        <Card title="Video poster">
-          <VideoCard />
-        </Card>
-        <Card title="Video encode progress">
-          <div data-demo="encode" style={{ display: "grid", gap: 16 }}>
-            <EncodeProgress progress={{ phase: "queued", queue_position: 3, percent: 0, at: Date.now() }} />
-            <EncodeProgress progress={{ phase: "encoding", segments_done: 5, segments_total: 27, percent: 22, speed: 2.4, eta: 40, at: Date.now() }} />
-            <EncodeProgress progress={{ phase: "uploading", segments_done: 27, segments_total: 27, percent: 91, eta: 6, at: Date.now() }} />
-          </div>
-        </Card>
-        <Card title="New channel">
-          <CoverUpload item={empty} image={server.image(empty, "cover")} />
-          <AvatarUpload item={empty} image={server.image(empty, "avatar")} />
-        </Card>
-      </main>
-    </ContentKitUiProvider>
+      <ContentKitUiProvider appearance={{ theme }}>
+        <main style={{ maxWidth: 760, margin: "0 auto", padding: "28px 16px", display: "grid", gap: 20 }}>
+          {channel && (
+            <>
+              <Card title="Channel header (SlotEditor)">
+                <ChannelHeader item={channel} />
+              </Card>
+              <Card title="Channel profile">
+                <CoverUpload item={channel} image={cover} />
+                <AvatarUpload item={channel} image={avatar} />
+              </Card>
+            </>
+          )}
+          {video && (
+            <Card title="Video poster">
+              <VideoCard item={video} />
+            </Card>
+          )}
+          <Card title="Video encode progress">
+            <div data-demo="encode" style={{ display: "grid", gap: 16 }}>
+              <EncodeProgress progress={{ phase: "queued", queue_position: 3, percent: 0, at: Date.now() }} />
+              <EncodeProgress progress={{ phase: "encoding", segments_done: 5, segments_total: 27, percent: 22, speed: 2.4, eta: 40, at: Date.now() }} />
+              <EncodeProgress progress={{ phase: "uploading", segments_done: 27, segments_total: 27, percent: 91, eta: 6, at: Date.now() }} />
+            </div>
+          </Card>
+          {empty && (
+            <Card title="New channel">
+              <CoverUpload item={empty} image={cover} />
+              <AvatarUpload item={empty} image={avatar} />
+            </Card>
+          )}
+        </main>
+      </ContentKitUiProvider>
     </ContentKitProvider>
   </StrictMode>,
 );

@@ -3,7 +3,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 
 type Span = { kind: string; start: number; end: number; bytes?: number; part?: number };
 
-async function upload(o: { concurrency?: number }) {
+async function upload(o: { concurrency?: number; token: string; ref: { kind: string; id: string } }) {
   const file = (document.getElementById("f") as HTMLInputElement).files![0]!;
   const spans: Span[] = [];
   ((globalThis as any).__hashLog ??= []).length = 0;
@@ -12,7 +12,7 @@ async function upload(o: { concurrency?: number }) {
     try {
       return await fetch(input, init);
     } finally {
-      spans.push({ kind: "api" + new URL(String(input), location.href).pathname.replace(/^\/upload/, ""), start, end: performance.now() });
+      spans.push({ kind: "api" + new URL(String(input), location.href).pathname.replace(/^\/api\/contentkit\/media\/upload/, ""), start, end: performance.now() });
     }
   };
   const transport: Transport = async (req, body, opts) => {
@@ -21,10 +21,10 @@ async function upload(o: { concurrency?: number }) {
     const part = Number(new URL(req.url).searchParams.get("partNumber")) || 0;
     spans.push({ kind: "put", start, end: performance.now(), bytes: body.size, part });
   };
-  const c = createContentKitClient({ baseUrl: "", mounts: { upload: "/upload" }, headers: () => ({ "X-Test-Actor": "bench" }), fetch: f, media: { transport, concurrency: o.concurrency } }).media;
-  const ref = { kind: "video", id: crypto.randomUUID().replace(/^(.{14})./, (_, head: string) => head + "7") };
+  const c = createContentKitClient({ baseUrl: "/api/contentkit", token: () => o.token, fetch: f, media: { transport, concurrency: o.concurrency } }).media;
+  const ref = o.ref;
   const t0 = performance.now();
-  const up = await c.upload(file, { ref, path: "source" });
+  const up = await c.upload(file, { ref, path: "file" });
   const t1 = performance.now();
   await c.commit(ref, [{ op: "put", path: up.path, blob: up.blob }]);
   const t2 = performance.now();

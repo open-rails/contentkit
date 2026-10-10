@@ -1,16 +1,15 @@
-import { ContentKitUiProvider, type ContentKitUiTheme } from "@openrails/contentkit-ui";
+import { ContentKitUiProvider } from "@openrails/contentkit-ui";
+import { ContentKitProvider } from "@openrails/contentkit-ui/react";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { AbrDemo, GalleryDemo, PlayerDemo, WatchDemo } from "./gallery";
+import { client, q, theme } from "./session";
 
-const q = new URLSearchParams(location.search);
-const theme = (q.get("theme") ?? "light") as ContentKitUiTheme;
-const dark = theme === "dark";
-document.documentElement.style.colorScheme = dark ? "dark" : "light";
-document.body.style.cssText = `margin:0;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:${dark ? "#09090b" : "#fafafa"};color:${dark ? "#fafafa" : "#09090b"}`;
-
+const page = q.get("page");
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <ContentKitUiProvider appearance={{ theme }}>{{ player: <PlayerDemo />, abr: <AbrDemo />, watch: <WatchDemo /> }[q.get("page") ?? ""] ?? <GalleryDemo />}</ContentKitUiProvider>
+    <ContentKitProvider client={client}>
+      <ContentKitUiProvider appearance={{ theme }}>{{ player: <PlayerDemo />, abr: <AbrDemo />, watch: <WatchDemo /> }[page ?? ""] ?? <GalleryDemo />}</ContentKitUiProvider>
+    </ContentKitProvider>
   </StrictMode>,
 );

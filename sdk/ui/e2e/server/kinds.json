@@ -1,0 +1,429 @@
+{
+  "namespace": "e2e",
+  "kinds": [
+    {
+      "name": "gallery",
+      "keep_originals": true,
+      "uploads": [
+        {
+          "path": "originals/{name}",
+          "types": [
+            "image/png",
+            "image/jpeg"
+          ],
+          "max_bytes": 10485760
+        },
+        {
+          "path": "cover",
+          "types": [
+            "image/png",
+            "image/jpeg"
+          ],
+          "max_bytes": 10485760
+        }
+      ],
+      "private": [
+        {
+          "name": "low",
+          "from": "originals/{name}",
+          "to": "low-res/{name}.webp",
+          "image": {
+            "width": 1200,
+            "height": 1200
+          }
+        }
+      ],
+      "public": [
+        {
+          "name": "cover",
+          "from": "cover",
+          "to": "cover-{w}.webp",
+          "widths": [
+            230,
+            460
+          ],
+          "image": {
+            "aspect": "3:1"
+          }
+        }
+      ]
+    },
+    {
+      "name": "note",
+      "uploads": [
+        {
+          "path": "originals/{name}",
+          "types": [
+            "image/png"
+          ],
+          "max_bytes": 1048576,
+          "max": 2
+        },
+        {
+          "path": "inline/{name}",
+          "types": [
+            "image/png",
+            "image/jpeg"
+          ],
+          "max_bytes": 1048576,
+          "named": true,
+          "max": 100
+        }
+      ],
+      "public": [
+        {
+          "name": "inline",
+          "from": "inline/{name}",
+          "to": "{name}.webp",
+          "image": {
+            "width": 1600
+          }
+        }
+      ]
+    },
+    {
+      "name": "video",
+      "keep_originals": true,
+      "uploads": [
+        {
+          "path": "source",
+          "types": [
+            "video/mp4"
+          ],
+          "max_bytes": 1073741824
+        },
+        {
+          "path": "poster",
+          "types": [
+            "image/png",
+            "image/jpeg"
+          ],
+          "max_bytes": 10485760,
+          "frames": "source"
+        },
+        {
+          "path": "subs/{name}",
+          "types": [
+            "text/vtt",
+            "application/x-subrip"
+          ],
+          "max_bytes": 1048576
+        }
+      ],
+      "private": [
+        {
+          "name": "hls",
+          "from": "source",
+          "to": "hls/",
+          "hls": {
+            "ladder": [
+              480
+            ]
+          }
+        }
+      ],
+      "public": [
+        {
+          "name": "poster",
+          "from": "poster",
+          "to": "poster-{w}.webp",
+          "widths": [
+            480,
+            960,
+            1920
+          ],
+          "image": {
+            "aspect": "16:9"
+          }
+        }
+      ]
+    },
+    {
+      "name": "album",
+      "keep_originals": true,
+      "uploads": [
+        {
+          "path": "images/{name}",
+          "types": [
+            "image/png",
+            "image/jpeg",
+            "image/webp"
+          ],
+          "max_bytes": 26214400,
+          "max": 6
+        },
+        {
+          "path": "videos/{name}",
+          "types": [
+            "video/mp4"
+          ],
+          "max_bytes": 1073741824,
+          "max": 2
+        }
+      ],
+      "private": [
+        {
+          "name": "large",
+          "from": "images/{name}",
+          "to": "large/{name}.webp",
+          "image": {
+            "width": 1600,
+            "height": 1600,
+            "quality": 85
+          }
+        },
+        {
+          "name": "hls",
+          "from": "videos/{name}",
+          "to": "hls/{name}/",
+          "hls": {
+            "ladder": [
+              480
+            ]
+          }
+        }
+      ],
+      "public": [
+        {
+          "name": "preview",
+          "from": "images/{name}",
+          "to": "preview-{n}.webp",
+          "first": 1,
+          "image": {
+            "width": 960,
+            "height": 960,
+            "quality": 70,
+            "blur": 24
+          }
+        }
+      ]
+    },
+    {
+      "name": "abr",
+      "keep_originals": true,
+      "uploads": [
+        {
+          "path": "source",
+          "types": [
+            "video/mp4"
+          ],
+          "max_bytes": 1073741824
+        }
+      ],
+      "private": [
+        {
+          "name": "hls",
+          "from": "source",
+          "to": "hls/",
+          "hls": {
+            "ladder": [
+              2160,
+              1440,
+              1080,
+              720,
+              480
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "channel",
+      "keep_originals": true,
+      "uploads": [
+        {
+          "path": "avatar",
+          "types": [
+            "image/png",
+            "image/jpeg",
+            "image/webp"
+          ],
+          "max_bytes": 26214400
+        },
+        {
+          "path": "cover",
+          "types": [
+            "image/png",
+            "image/jpeg",
+            "image/webp"
+          ],
+          "max_bytes": 26214400
+        }
+      ],
+      "public": [
+        {
+          "name": "avatar",
+          "from": "avatar",
+          "to": "avatar-{w}.webp",
+          "widths": [
+            128,
+            256,
+            512
+          ],
+          "image": {
+            "aspect": "1:1",
+            "quality": 85
+          }
+        },
+        {
+          "name": "cover",
+          "from": "cover",
+          "to": "cover-{w}.webp",
+          "widths": [
+            1500,
+            3000
+          ],
+          "image": {
+            "aspect": "3:1",
+            "quality": 85
+          }
+        }
+      ]
+    },
+    {
+      "name": "file",
+      "uploads": [
+        {
+          "path": "file",
+          "types": [
+            "application/octet-stream",
+            "video/mp4"
+          ],
+          "max_bytes": 1073741824
+        }
+      ]
+    },
+    {
+      "name": "user",
+      "namespace": "accounts",
+      "keep_originals": true,
+      "uploads": [
+        {
+          "path": "avatar",
+          "types": [
+            "image/png",
+            "image/jpeg",
+            "image/webp"
+          ],
+          "max_bytes": 10485760
+        }
+      ],
+      "public": [
+        {
+          "name": "avatar",
+          "from": "avatar",
+          "to": "avatar-{w}.webp",
+          "widths": [
+            64,
+            128,
+            256
+          ],
+          "image": {
+            "aspect": "1:1",
+            "quality": 85
+          }
+        }
+      ]
+    },
+    {
+      "name": "post",
+      "uploads": [
+        {
+          "path": "{name}",
+          "types": [
+            "image/png",
+            "image/jpeg",
+            "image/webp"
+          ],
+          "max_bytes": 10485760,
+          "named": true,
+          "max": 100
+        }
+      ],
+      "public": [
+        {
+          "name": "inline",
+          "from": "{name}",
+          "to": "{name}.webp",
+          "image": {
+            "width": 1600
+          }
+        }
+      ]
+    },
+    {
+      "name": "poll",
+      "uploads": [
+        {
+          "path": "{name}",
+          "types": [
+            "image/png",
+            "image/jpeg",
+            "image/webp"
+          ],
+          "max_bytes": 10485760,
+          "named": true,
+          "max": 100
+        }
+      ],
+      "public": [
+        {
+          "name": "inline",
+          "from": "{name}",
+          "to": "{name}.webp",
+          "image": {
+            "width": 800
+          }
+        }
+      ]
+    },
+    {
+      "name": "watch",
+      "keep_originals": true,
+      "uploads": [
+        {
+          "path": "source",
+          "types": [
+            "video/mp4"
+          ],
+          "max_bytes": 1073741824
+        },
+        {
+          "path": "subs/{name}",
+          "types": [
+            "text/vtt",
+            "application/x-subrip"
+          ],
+          "max_bytes": 1048576
+        }
+      ],
+      "private": [
+        {
+          "name": "hls",
+          "from": "source",
+          "to": "hls/",
+          "hls": {
+            "ladder": [
+              480
+            ]
+          }
+        },
+        {
+          "name": "subs",
+          "from": "subs/{name}",
+          "to": "captions/{name}.vtt",
+          "subtitles": {}
+        },
+        {
+          "name": "mp4",
+          "from": "source",
+          "to": "video.mp4",
+          "mp4": {
+            "rung": 270
+          },
+          "download": "clip.mp4"
+        }
+      ]
+    }
+  ]
+}

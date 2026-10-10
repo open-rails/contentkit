@@ -6,16 +6,17 @@ name: sdk-ui
     paths:
     - 'sdk/ui/**'
     - 'contenturl/testdata/**'
-    - 'media/*.go'
-    - 'media/internal/**'
-    - 'media/layout/**'
-    - 'media/s3/**'
-    - 'media/token/**'
-    - 'content/*.go'
-    - 'contenturl/*.go'
-    - 'taxonomy/*.go'
-    - 'internal/httpapi/**'
-    - 'internal/contract/**'
+    - '*.go'
+    - 'media/**'
+    - 'content/**'
+    - 'contenturl/**'
+    - 'taxonomy/**'
+    - 'migrations/**'
+    - 'internal/**'
+    - 'adapters/authkit/**'
+    - 'cmd/media-gateway/**'
+    - 'cmd/media-worker/**'
+    - '.dockerignore'
     - '!**.md'
     - 'go.mod'
     - 'go.sum'
@@ -32,33 +33,13 @@ jobs:
     if: '!github.event.pull_request.draft'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    services:
-      postgres:
-        image: groonga/pgroonga:4.0.8-debian-18
-        env:
-          POSTGRES_USER: contentkit
-          POSTGRES_PASSWORD: contentkit
-          POSTGRES_DB: contentkit_test
-        ports:
-        - 5432:5432
-        options: --health-cmd "pg_isready -U contentkit" --health-interval 5s --health-timeout 5s --health-retries 20
     defaults:
       run:
         working-directory: sdk/ui
-    env:
-      CONTENTKIT_TEST_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_test?sslmode=disable
-      CONTENTKIT_TEST_S3_ENDPOINT: http://localhost:9100
-      CONTENTKIT_TEST_S3_ACCESS_KEY: contentkit
-      CONTENTKIT_TEST_S3_SECRET_KEY: contentkit-secret
     steps:
     - uses: actions/checkout@v4
       with:
         persist-credentials: false
-    - name: Start MinIO
-      run: |
-        docker run -d --name minio -p 9100:9000 \
-          -e MINIO_ROOT_USER=contentkit -e MINIO_ROOT_PASSWORD=contentkit-secret \
-          cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1 server /data
     - uses: pnpm/action-setup@v4
       with:
         package_json_file: sdk/ui/package.json
@@ -74,7 +55,75 @@ jobs:
     - name: generated contract is fresh
       run: pnpm contract:check
     - run: pnpm check
-    - name: integration (Postgres + MinIO + media.UploadHandler)
+
+  # Vitest's integration project and the Playwright specs against a real
+  # ContentKit: e2e/server over PGroonga, MinIO and the media worker and
+  # gateway built from this checkout (sdk/ui/e2e/compose.yaml).
+  e2e:
+    name: UI package e2e (real ContentKit)
+    if: '!github.event.pull_request.draft'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: sdk/ui
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - uses: docker/setup-buildx-action@v3
+    - name: build media-gateway
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: cmd/media-gateway/Dockerfile
+        tags: ckui-e2e/media-gateway:local
+        load: true
+        cache-from: type=gha,scope=ckui-e2e-media-gateway
+        cache-to: type=gha,mode=max,scope=ckui-e2e-media-gateway
+    - name: build media-worker
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: cmd/media-worker/Dockerfile
+        tags: ckui-e2e/media-worker:local
+        load: true
+        cache-from: type=gha,scope=ckui-e2e-media-worker
+        cache-to: type=gha,mode=max,scope=ckui-e2e-media-worker
+    - name: ffmpeg (the harness's frame grabs, the ABR source)
       run: |
-        timeout 60 sh -c "until curl -fsS http://localhost:9100/minio/health/ready; do sleep 1; done"
-        pnpm test:integration
+        sudo rm -f /var/lib/man-db/auto-update
+        sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+    - uses: pnpm/action-setup@v4
+      with:
+        package_json_file: sdk/ui/package.json
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: pnpm
+        cache-dependency-path: sdk/ui/pnpm-lock.yaml
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+        cache-dependency-path: |
+          go.sum
+          sdk/ui/e2e/server/go.sum
+    - run: pnpm install --frozen-lockfile --ignore-scripts
+    - run: pnpm exec playwright install --with-deps chromium
+    - run: pnpm build
+    - name: integration and browser suites
+      run: pnpm test:e2e
+      env:
+        CKUI_E2E_KEEP_LOGS: '1'
+    - if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: sdk-ui-e2e-results
+        path: sdk/ui/test-results
+        retention-days: 7
+    - name: tear down leftover stacks
+      if: always()
+      run: |
+        for p in $(docker compose ls -a --format json | jq -r '.[].Name' | grep '^ckui-e2e-' || true); do
+          docker compose -p "$p" -f e2e/compose.yaml --profile worker down -v --remove-orphans -t 2
+        done

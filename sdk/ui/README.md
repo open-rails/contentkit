@@ -429,12 +429,24 @@ code has a message in every bundle (`useMessages().error(e)`).
 ## Development
 
 ```sh
-pnpm check                # typecheck, lint, unit + jsdom tests, build
-CONTENTKIT_TEST_URL=… CONTENTKIT_TEST_S3_ENDPOINT=… CONTENTKIT_TEST_S3_ACCESS_KEY=… CONTENTKIT_TEST_S3_SECRET_KEY=… \
-  pnpm test:integration   # the real handlers (contentkit.Runtime.Handler) over PostgreSQL and MinIO
-pnpm build && pnpm screenshots   # demo/ in Chromium, light/dark × desktop/mobile
-                                 # (social.html needs the integration variables)
+pnpm check                # typecheck, lint, unit tests (pure math and client-free components), build
+pnpm build
+pnpm test:e2e             # the integration project and the browser specs against a real ContentKit
+pnpm test:integration     # or either alone
+pnpm test:browser         # (demo/ in Chromium, light/dark × desktop/mobile screenshots)
+pnpm demo                 # the stack with seeded demo pages, until Ctrl-C
 ```
+
+The suites need Docker, Go and ffmpeg. `e2e/server` composes the real
+`contentkit.Runtime` (content, taxonomy, codes, media upload and read) with
+AuthKit for identity over PGroonga PostgreSQL 18, MinIO, and media-worker and
+media-gateway built from this checkout (`e2e/compose.yaml`). Each run brings
+the stack up under its own project name and takes it down; the server exits
+with its runner. Pages sign in with auth-ui and pass `auth.authFetch`. Tests
+set up through `/__test`: accounts (`staff`, `moderator`, `editor` roles),
+items the host's resolver knows, stored-object checks, and faults (no CORS,
+429 and expired tokens at the gateway, dropped or held bucket requests, API
+error replies).
 
 The wire types, route table and error codes in `src/client/generated/` are
 generated from ContentKit's route catalog (`pnpm contract`; CI runs

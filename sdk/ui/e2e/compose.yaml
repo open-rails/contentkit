@@ -1,0 +1,81 @@
+# The services behind the e2e harness (e2e/server): PGroonga PostgreSQL 18,
+# MinIO, and media-gateway and media-worker built from this checkout.
+# e2e/support/stack.ts runs it under its own project name on free loopback
+# ports (host networking: no bridge or port proxy in the way) and always
+# takes it down. The harness itself runs on the host.
+services:
+  postgres:
+    image: ${E2E_POSTGRES_IMAGE:-groonga/pgroonga:4.0.8-debian-18}
+    network_mode: host
+    environment:
+      POSTGRES_USER: contentkit
+      POSTGRES_PASSWORD: contentkit
+      POSTGRES_DB: contentkit
+    command: ["postgres", "-c", "listen_addresses=127.0.0.1", "-c", "port=${E2E_PG_PORT:-54790}", "-c", "fsync=off",
+      "-c", "synchronous_commit=off", "-c", "full_page_writes=off", "-c", "max_connections=200"]
+    tmpfs: [/var/lib/postgresql]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-p", "${E2E_PG_PORT:-54790}", "-U", "contentkit"]
+      interval: 1s
+      retries: 120
+
+  minio:
+    image: cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
+    network_mode: host
+    command: ["server", "/data", "--address", "127.0.0.1:${E2E_MINIO_PORT:-54791}", "--console-address", "127.0.0.1:0"]
+    environment:
+      MINIO_ROOT_USER: contentkit
+      MINIO_ROOT_PASSWORD: contentkit-secret
+    tmpfs: [/data]
+
+  media-gateway:
+    image: ckui-e2e/media-gateway:local
+    build:
+      context: ../../..
+      dockerfile: cmd/media-gateway/Dockerfile
+      network: host
+    network_mode: host
+    environment:
+      MEDIA_GATEWAY_LISTEN: 127.0.0.1:${E2E_GATEWAY_PORT:-54792}
+      MEDIA_GATEWAY_S3_ENDPOINT: http://127.0.0.1:${E2E_MINIO_PORT:-54791}
+      MEDIA_GATEWAY_S3_BUCKET: ckui-e2e
+      MEDIA_GATEWAY_S3_ACCESS_KEY_ID: contentkit
+      MEDIA_GATEWAY_S3_SECRET_ACCESS_KEY: contentkit-secret
+      # The harness's fault proxy forwards with the browser's Host.
+      MEDIA_GATEWAY_HOSTS: "127.0.0.1=e2e,accounts; localhost=e2e,accounts"
+      MEDIA_GATEWAY_CORS_ORIGINS: ${E2E_ORIGIN:-http://localhost:4790}
+      MEDIA_GATEWAY_TOKEN_KEY: ${E2E_TOKEN_KEY:-e2e:ZTJlLW1lZGlhLXRva2VuLWtleS0zMi1ieXRlcyEhISE=}
+
+  # Started once the harness has migrated its schemas (the worker runs no DDL).
+  media-worker:
+    image: ckui-e2e/media-worker:local
+    build:
+      context: ../../..
+      dockerfile: cmd/media-worker/Dockerfile
+      network: host
+    network_mode: host
+    profiles: [worker]
+    environment:
+      DATABASE_URL: postgres://contentkit:contentkit@127.0.0.1:${E2E_PG_PORT:-54790}/contentkit?sslmode=disable
+      MEDIA_KINDS_FILE: /kinds.json
+      MEDIA_METRICS_ADDR: 127.0.0.1:${E2E_WORKER_PORT:-54793}
+      MEDIA_WORKER_SCHEMA: e2e_media_worker
+      MEDIA_CONTENT_SCHEMA: e2e
+      MEDIA_HOST_RIVER_SCHEMA: e2e_river
+      # Through the harness, whose hold faults stall an item's processing.
+      MEDIA_S3_ENDPOINT: http://127.0.0.1:${E2E_APP_PORT:-4790}
+      MEDIA_S3_BUCKET: ckui-e2e
+      MEDIA_S3_REGION: us-east-1
+      MEDIA_S3_ACCESS_KEY_ID: contentkit
+      MEDIA_S3_SECRET_ACCESS_KEY: contentkit-secret
+      MEDIA_WORKER_CODECS: h264
+      MEDIA_WORKER_PRESET: veryfast
+      MEDIA_WORKER_TOP_PRESET: veryfast
+      MEDIA_WORKER_THREADS: "2"
+      # Held items (hold faults) keep a job slot each: room for the rest.
+      MEDIA_WORKER_CONCURRENCY: "3"
+      MEDIA_WORKER_IMAGE_CONCURRENCY: "8"
+      MEDIA_WORKER_ENCODER: cpu
+      MEDIA_WORKER_SHUTDOWN_GRACE: 1s
+    volumes: ["./server/kinds.json:/kinds.json:ro"]
+    restart: on-failure

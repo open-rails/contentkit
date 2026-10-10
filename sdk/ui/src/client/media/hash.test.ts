@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
-import { bytes } from "../../../test/fake.js";
+import { bytes } from "../../../e2e/support/bytes.js";
 import { sha256Hex } from "./hash.js";
 import { streamSha256 } from "./hash-stream.js";
 

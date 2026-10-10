@@ -1,12 +1,13 @@
-// Upload benchmark: Chromium → MinIO through media.UploadHandler (test/server.ts).
-//   CONTENTKIT_TEST_S3_ENDPOINT=... [BENCH_SRC=<other src>] node bench/run.ts <file> [runs]
-import http from "node:http";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import type { AddressInfo } from "node:net";
+// Upload benchmark: Chromium → MinIO through the real upload API (the e2e
+// stack, e2e/support/stack.ts), each run a fresh item.
+//   [BENCH_SRC=<other src>] node bench/run.ts <file> [runs]
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { build } from "vite";
 import { chromium } from "@playwright/test";
-import { startServer, stopServer } from "../test/server.ts";
+import { Harness } from "../e2e/support/harness.ts";
+import { startStack } from "../e2e/support/stack.ts";
 
 const here = import.meta.dirname;
 const file = process.argv[2]!;
@@ -31,29 +32,16 @@ const out = await build({
   build: { write: false, minify: false, lib: { entry: resolve(here, "page.ts"), formats: ["es"], fileName: "bundle" } },
 });
 const outputs = (Array.isArray(out) ? out[0] : out) as any;
-const assets = new Map<string, string | Uint8Array>();
-for (const o of outputs.output) assets.set("/" + o.fileName, o.type === "chunk" ? o.code : o.source);
-assets.set("/bundle.js", assets.get("/bundle.js") ?? [...assets.values()][0]!);
+const site = mkdtempSync(join(tmpdir(), "ckui-bench-"));
+for (const o of outputs.output) writeFileSync(join(site, o.fileName), o.type === "chunk" ? o.code : o.source);
+const entry = outputs.output.find((o: any) => o.type === "chunk" && o.isEntry);
+if (entry.fileName !== "bundle.js") copyFileSync(join(site, entry.fileName), join(site, "bundle.js"));
+copyFileSync(resolve(here, "index.html"), join(site, "index.html"));
 
-const { url: api, proc } = await startServer(process.env.CONTENTKIT_TEST_S3_ENDPOINT!);
-const agent = new http.Agent({ keepAlive: true });
-const web = http.createServer((req, res) => {
-  if (req.url!.startsWith("/upload/")) {
-    const u = new URL(api);
-    const up = http.request({ host: u.hostname, port: u.port, path: req.url, method: req.method, headers: req.headers, agent }, (r) => {
-      res.writeHead(r.statusCode!, r.headers);
-      r.pipe(res);
-    });
-    req.pipe(up);
-    return;
-  }
-  if (req.url === "/") return res.writeHead(200, { "content-type": "text/html" }).end(readFileSync(resolve(here, "index.html")));
-  const a = assets.get(req.url!);
-  if (!a) return res.writeHead(404).end();
-  res.writeHead(200, { "content-type": "text/javascript" }).end(a);
-});
-await new Promise<void>((r) => web.listen(0, "127.0.0.1", r));
-const origin = `http://localhost:${(web.address() as AddressInfo).port}`;
+const stack = await startStack({ static: site });
+const origin = stack.origin;
+const h = new Harness(origin);
+const user = await h.user();
 
 const browser = await chromium.launch({ args: ["--no-sandbox"] });
 try {
@@ -67,14 +55,14 @@ try {
   }
   for (let i = 0; i < runs; i++) {
     const load = readFileSync("/proc/loadavg", "utf8").split(" ")[0];
-    const r = await page.evaluate((o) => (globalThis as any).bench.upload(o), { concurrency });
+    const it = await h.item({ kind: "file", owner: user.id });
+    const r = await page.evaluate((o) => (globalThis as any).bench.upload(o), { concurrency, token: user.access_token, ref: { kind: it.kind, id: it.id } });
     console.log(JSON.stringify({ run: i, load, ...summarize(r) }));
   }
 } finally {
   await browser.close();
-  web.close();
-  agent.destroy();
-  await stopServer(proc);
+  await stack.stop();
+  rmSync(site, { recursive: true, force: true });
 }
 
 function summarize(r: { size: number; t0: number; uploadMs: number; commitMs: number; spans: any[] }) {

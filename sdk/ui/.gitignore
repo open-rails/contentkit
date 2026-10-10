@@ -2,3 +2,5 @@ node_modules/
 dist/
 test-results/
 playwright-report/
+e2e/.app/
+e2e/.cache/
