@@ -94,6 +94,12 @@ var postRoutes = []httpapi.Route[*posts]{
 		Query:     append([]httpapi.Param{httpapi.Text("language", "only posts in this language"), sortParam}, httpapi.Page...),
 		Responses: []httpapi.Reply{httpapi.OK([]Post{})}},
 		Serve: httpapi.H((*posts).handleList)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/posts/admin", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
+		Doc: "Every post, newest first: drafts, scheduled, held and rejected ones included.",
+		Query: append([]httpapi.Param{httpapi.Text("language", "only posts in this language"),
+			httpapi.Bool("draft", "true: only drafts; false: only posts that are not drafts")}, httpapi.Page...),
+		Responses: []httpapi.Reply{httpapi.OK([]Post{})}},
+		Serve: httpapi.H((*posts).handleAdminList)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/posts/{id}", Resource: "posts", Auth: httpapi.Public,
 		Doc:       "A post. A draft, scheduled, held or rejected post is shown only to its author and PostWrite holders.",
 		Responses: []httpapi.Reply{httpapi.OK(Post{})}, Errors: []string{CodeNotFound}},
@@ -112,7 +118,7 @@ var postRoutes = []httpapi.Route[*posts]{
 		Serve: httpapi.H((*posts).handleUpdate)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/posts/{id}", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
 		Doc:       "Deletes a post.",
-		Responses: []httpapi.Reply{httpapi.OK(DeletedPost{})}, Errors: []string{CodeNotFound}},
+		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeNotFound}},
 		Serve: httpapi.H((*posts).handleDelete)},
 	// More specific than reactions' /{kind}/{id}/like, so no ServeMux conflict.
 	postReaction("like", "Likes a published post.", 1),
@@ -150,12 +156,6 @@ type InlineImage struct {
 // PostCover is the post's cover URL after a cover change; null when cleared.
 type PostCover struct {
 	CoverURL *string `json:"cover_url"`
-}
-
-// DeletedPost confirms a post's deletion.
-type DeletedPost struct {
-	ID      string `json:"id"`
-	Deleted bool   `json:"deleted"`
 }
 
 func decodeImage(req *http.Request) (string, error) {
@@ -506,7 +506,7 @@ func (p *posts) handleDelete(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, DeletedPost{ID: id, Deleted: true})
+	writeJSON(w, http.StatusNoContent, nil)
 }
 
 func (p *posts) handleGet(w http.ResponseWriter, req *http.Request) {
@@ -539,6 +539,34 @@ func (p *posts) handleList(w http.ResponseWriter, req *http.Request) {
 		AND ($1 = '' OR p.language = $1)
 		`+orderBy(q.Get("sort"), "p.total_likes", "p.total_dislikes", "COALESCE(p.live_at, p.created_at)")+`
 		LIMIT $2 OFFSET $3`, language, limit, offset, p.s.tenant)
+	p.writeList(ctx, w, rows, err)
+}
+
+// handleAdminList lists every live post for staff, newest first. PostWrite-gated.
+func (p *posts) handleAdminList(w http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+	if err := p.rt.requirePerm(ctx, p.rt.actor(ctx), p.rt.perms.PostWrite); err != nil {
+		writeErr(w, err)
+		return
+	}
+	q := req.URL.Query()
+	var draft *bool
+	if v := q.Get("draft"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			writeErr(w, badRequest("draft must be true or false"))
+			return
+		}
+		draft = &b
+	}
+	limit, offset := parsePage(req)
+	rows, err := p.s.pool.Query(ctx, `SELECT `+p.cols+` FROM `+p.s.t.posts+` p
+		WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND ($2 = '' OR p.language = $2) AND ($3::boolean IS NULL OR p.is_draft = $3)
+		ORDER BY p.created_at DESC, p.id DESC LIMIT $4 OFFSET $5`, p.s.tenant, q.Get("language"), draft, limit, offset)
+	p.writeList(ctx, w, rows, err)
+}
+
+func (p *posts) writeList(ctx context.Context, w http.ResponseWriter, rows pgx.Rows, err error) {
 	if err != nil {
 		writeErr(w, err)
 		return

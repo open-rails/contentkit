@@ -1,4 +1,7 @@
+import { social } from "./social/en.js";
+
 export const en = {
+  ...social,
   common: {
     cancel: "Cancel",
     close: "Close",

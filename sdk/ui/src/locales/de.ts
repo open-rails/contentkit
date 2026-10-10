@@ -1,6 +1,8 @@
 import type { ContentKitUiMessageBundle } from "../i18n/messages.js";
+import { social } from "./social/de.js";
 
 export const de: ContentKitUiMessageBundle = {
+  ...social,
   common: {
     cancel: "Abbrechen",
     close: "Schließen",

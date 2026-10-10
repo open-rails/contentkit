@@ -221,6 +221,8 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusForbidden, user, "POST", "/posts", content.PostInput{Title: ptr("Hello"), Body: ptr("World")}, nil)
 	f.want(http.StatusCreated, staff, "POST", "/posts", content.PostInput{Title: ptr("Hello"), Body: ptr("World"), Language: ptr("en")}, &post)
 	f.want(http.StatusOK, anon, "GET", "/posts?language=en&sort=likes", nil, nil)
+	f.want(http.StatusOK, staff, "GET", "/posts/admin?draft=false&language=en", nil, nil)
+	f.want(http.StatusForbidden, user, "GET", "/posts/admin", nil, nil)
 	f.want(http.StatusOK, anon, "GET", "/posts/"+post.ID, nil, nil)
 	f.want(http.StatusOK, staff, "PATCH", "/posts/"+post.ID, content.PostInput{Excerpt: ptr("Short")}, nil)
 	for _, verb := range []string{"like", "dislike", "neutral"} {
@@ -237,7 +239,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	}
 	f.want(http.StatusBadRequest, anon, "GET", "/codes/not-a-code", nil, nil)
 	f.want(http.StatusNotFound, anon, "GET", "/codes/ZZZZZZZZ9", nil, nil)
-	f.want(http.StatusOK, staff, "DELETE", "/posts/"+post.ID, nil, nil)
+	f.want(http.StatusNoContent, staff, "DELETE", "/posts/"+post.ID, nil, nil)
 	f.want(http.StatusGone, anon, "GET", "/codes/"+post.Code, nil, nil)
 	f.want(http.StatusNotFound, anon, "GET", "/posts/"+post.ID, nil, nil)
 

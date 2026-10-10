@@ -127,7 +127,7 @@ func TestPostCRUDHappyPath(t *testing.T) {
 
 	// soft delete
 	rec = doJSON(t, h, author, "DELETE", "/posts/"+created.ID, nil)
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
 		t.Fatalf("delete: status %d body %s", rec.Code, rec.Body.String())
 	}
 
@@ -598,7 +598,7 @@ func TestPostWritesQueueKeywordDocuments(t *testing.T) {
 	if docs, _ := rt.KeywordDocuments(ctx, testTenant, KindPost, "ja", []contentref.ContentRef{rt.Ref(KindPost, id)}); len(docs) != 0 {
 		t.Fatalf("a draft yields a document: %+v", docs)
 	}
-	if rec = doJSON(t, h, author, "DELETE", "/posts/"+id, nil); rec.Code != http.StatusOK {
+	if rec = doJSON(t, h, author, "DELETE", "/posts/"+id, nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete: %d", rec.Code)
 	}
 	if got := dirty(); !got["ja"] {
@@ -607,5 +607,60 @@ func TestPostWritesQueueKeywordDocuments(t *testing.T) {
 	// Another tenant's post is neither built nor listed by this runtime.
 	if _, err := rt.KeywordDocuments(ctx, "other", KindPost, "en", nil); err == nil {
 		t.Fatal("KeywordDocuments accepted another tenant")
+	}
+}
+
+// The staff list shows every live post, drafts and scheduled ones included,
+// newest first, filtered by language and draft state; only PostWrite holders.
+func TestPostAdminList(t *testing.T) {
+	authz := postRoleAuthz{writers: map[string]bool{"editor": true}}
+	rt, _ := newPostRuntime(t, Options{Authz: authz})
+	h := postMux(rt)
+	editor := access.Actor{ID: "editor", Kind: "user"}
+	create := func(in PostInput) Post {
+		t.Helper()
+		rec := doJSON(t, h, editor, "POST", "/posts", in)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+		}
+		return decodePost(t, rec)
+	}
+	create(PostInput{Title: ptr("live"), Body: ptr("b"), Language: ptr("en")})
+	create(PostInput{Title: ptr("draft"), Body: ptr("b"), Language: ptr("en"), IsDraft: ptr(true)})
+	create(PostInput{Title: ptr("later"), Body: ptr("b"), Language: ptr("ja"), LiveAt: ptr(time.Now().Add(time.Hour))})
+	gone := create(PostInput{Title: ptr("gone"), Body: ptr("b"), Language: ptr("en")})
+	if rec := doJSON(t, h, editor, "DELETE", "/posts/"+gone.ID, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d", rec.Code)
+	}
+	ids := func(path string) string {
+		t.Helper()
+		rec := doJSON(t, h, editor, "GET", path, nil)
+		var list []Post
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &list) != nil {
+			t.Fatalf("%s: %d %s", path, rec.Code, rec.Body.String())
+		}
+		var out []string
+		for _, p := range list {
+			out = append(out, p.Title)
+		}
+		return strings.Join(out, ",")
+	}
+	if got := ids("/posts/admin"); got != "later,draft,live" {
+		t.Fatalf("all = %s", got)
+	}
+	if got := ids("/posts/admin?draft=true"); got != "draft" {
+		t.Fatalf("drafts = %s", got)
+	}
+	if got := ids("/posts/admin?draft=false&language=en"); got != "live" {
+		t.Fatalf("english non-drafts = %s", got)
+	}
+	if got := ids("/posts/admin?limit=1&offset=1"); got != "draft" {
+		t.Fatalf("paged = %s", got)
+	}
+	if rec := doJSON(t, h, editor, "GET", "/posts/admin?draft=maybe", nil); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad draft = %d", rec.Code)
+	}
+	if rec := doJSON(t, h, access.Actor{ID: "reader", Kind: "user"}, "GET", "/posts/admin", nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("reader = %d", rec.Code)
 	}
 }

@@ -739,3 +739,23 @@ func TestModeration_BreakerHalfOpenAdmitsOneTrial(t *testing.T) {
 		t.Fatalf("breaker still open after a passing trial: %v", err)
 	}
 }
+
+// The review queue names its signed-in authors, as comment lists do.
+func TestModeration_HeldItemsCarryAuthors(t *testing.T) {
+	res := &fakeResolver{}
+	res.set("gallery", cid(1), true, true)
+	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, Moderator: &fakeModerator{},
+		Users: commentsEnricher{}, Authz: reviewerOnly{}, Perms: Perms{ModerationReview: reviewPerm}})
+	mustComment(t, rt, access.Actor{ID: "author"}, "gallery", cid(1), CommentInput{Body: "iffy"})
+	mustComment(t, rt, access.Actor{Anonymous: true, IP: "10.0.0.1"}, "gallery", cid(1), CommentInput{Body: "iffy too", AnonName: "guest"})
+	page, err := rt.ListHeld(context.Background(), KindComment, "", 10)
+	if err != nil || len(page.Items) != 2 {
+		t.Fatalf("ListHeld = %+v err=%v", page, err)
+	}
+	if a := page.Items[0].Author; a == nil || a.Username != "name-author" {
+		t.Fatalf("held author = %+v", page.Items[0])
+	}
+	if it := page.Items[1]; it.Author != nil || it.AnonName != "guest" {
+		t.Fatalf("anonymous held item = %+v", it)
+	}
+}

@@ -11,6 +11,7 @@
 //	/upload/...            the upload API; X-Test-Actor names the caller ("reader" may not upload)
 //	/upload-on-upload/...  the same with ProcessOnUpload
 //	/read/...              the read API; "reader" reads as a viewer, everyone else as an editor
+//	/ck/...                contentkit.Runtime.Handler: content, media, codes, taxonomy (content.go)
 //	GET /object?kind&id&path|public   {"size","sha256"} of a stored file: an
 //	                       item's file by path (or stem), or a public name
 //
@@ -198,8 +199,9 @@ func main() {
 	must(store.Check(ctx, namespace+"/probe/"))
 	log.Printf("upload fixture bucket=%s prefix=%s/", cfg.Bucket, namespace)
 
-	reg, err := media.NewRegistry(media.Config{Namespace: namespace, BaseURL: "http://media.invalid", Kinds: kinds,
-		Hooks: media.Hooks{Resolver: allow{}, CanUpload: allow{}}})
+	hooks := &uploadHooks{}
+	reg, err := media.NewRegistry(media.Config{Namespace: namespace, BaseURL: "http://media.invalid", Kinds: append(kinds, contentFolders...),
+		Hooks: media.Hooks{Resolver: allow{}, CanUpload: hooks}})
 	must(err)
 	workerSchema := schema + "_worker"
 	must(workqueue.Migrate(ctx, pool, workerSchema))
@@ -243,18 +245,22 @@ func main() {
 	reader, err := media.NewReader(media.ReaderOptions{Manifests: manifests, Queue: worker,
 		Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: key}})
 	must(err)
-	newUploads := func(onUpload bool) http.Handler {
+	uploads := func(onUpload bool) *media.Uploads {
 		u, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests, Tickets: &ring, Grace: *grace,
 			Frames: worker, ProcessOnUpload: onUpload,
 			Commits: media.RateLimit{Disabled: true}}) // one server for the whole SDK suite
 		must(err)
-		return media.UploadHandler(u, media.UploadHandlerOptions{Actor: actor})
+		return u
+	}
+	newUploads := func(onUpload bool) http.Handler {
+		return media.UploadHandler(uploads(onUpload), media.UploadHandlerOptions{Actor: actor})
 	}
 
 	mux := http.NewServeMux()
 	mux.Handle("/upload/", http.StripPrefix("/upload", newUploads(false)))
 	mux.Handle("/upload-on-upload/", http.StripPrefix("/upload-on-upload", newUploads(true)))
 	mux.Handle("/read/", http.StripPrefix("/read", withActor(reader.Handler(media.HandlerOptions{Identity: identity{}, Limit: media.RateLimit{Disabled: true}}))))
+	mux.Handle("/ck/", http.StripPrefix("/ck", contentHandler(ctx, pool, schema, namespace, reg, hooks, uploads(false), reader)))
 	mux.HandleFunc("GET /object", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		ref, err := reg.Ref(q.Get("kind"), q.Get("id"))

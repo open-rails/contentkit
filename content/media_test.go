@@ -198,7 +198,7 @@ func TestMedia_SoftDeleteHidesPostAndDeletesPoll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code := send(t, rt, mediaAdmin, "DELETE", "/posts/"+post, nil, nil); code != 200 {
+	if code := send(t, rt, mediaAdmin, "DELETE", "/posts/"+post, nil, nil); code != http.StatusNoContent {
 		t.Fatalf("delete post %d", code)
 	}
 	if code := send(t, rt, mediaAdmin, "DELETE", "/polls/"+poll.ID, nil, nil); code >= 300 {
@@ -267,7 +267,7 @@ func TestMedia_PostExposureCommitsWithContent(t *testing.T) {
 		{"create", "POST", "/posts", PostInput{Title: ptr("Title"), Body: ptr("iffy"), Language: ptr("en")}, 202},
 		{"update", "PATCH", "/posts/{id}", PostInput{Body: ptr("iffy edit"), Language: ptr("ja")}, 202},
 		{"approve", "POST", "/moderation/post/{id}/resolve", map[string]any{"revision": 2, "decision": "approve"}, 200},
-		{"delete", "DELETE", "/posts/{id}", nil, 200},
+		{"delete", "DELETE", "/posts/{id}", nil, 204},
 	} {
 		t.Run(step.name, func(t *testing.T) {
 			path := strings.ReplaceAll(step.path, "{id}", post.ID)
@@ -285,7 +285,11 @@ func TestMedia_PostExposureCommitsWithContent(t *testing.T) {
 				t.Fatal(err)
 			}
 			var result Post
-			if code := send(t, rt, mediaAdmin, step.method, path, step.body, &result); code != step.status {
+			var out any = &result
+			if step.status == http.StatusNoContent {
+				out = nil
+			}
+			if code := send(t, rt, mediaAdmin, step.method, path, step.body, out); code != step.status {
 				t.Fatalf("status %d, want %d", code, step.status)
 			}
 			if i == 0 {

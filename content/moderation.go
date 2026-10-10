@@ -221,6 +221,7 @@ type HeldItem struct {
 	// Ref is the commented content, or the post's own reference.
 	Ref           contentref.ContentRef `json:"ref"`
 	AuthorID      string                `json:"author_id,omitempty"`
+	Author        *PublicUser           `json:"author,omitempty"`
 	AnonName      string                `json:"anon_name,omitempty"`
 	Title         string                `json:"title,omitempty"`
 	Body          string                `json:"body"`
@@ -305,7 +306,31 @@ func (rt *Runtime) ListHeld(ctx context.Context, kind, cursor string, limit int)
 		last := page.Items[limit-1]
 		page.Next = strconv.FormatInt(last.CreatedAt.UnixMicro(), 10) + ":" + last.ID
 	}
+	rt.enrichHeld(ctx, page.Items)
 	return page, nil
+}
+
+// enrichHeld attaches the authors' display data; a failed lookup leaves bare ids.
+func (rt *Runtime) enrichHeld(ctx context.Context, items []HeldItem) {
+	var ids []string
+	for _, it := range items {
+		if it.AuthorID != "" {
+			ids = append(ids, it.AuthorID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	users, err := rt.users.UsersByIDs(ctx, dedup(ids))
+	if err != nil {
+		rt.log.WarnContext(ctx, "content: held item authors lookup failed", "err", err.Error())
+		return
+	}
+	for i := range items {
+		if u, ok := users[items[i].AuthorID]; ok {
+			items[i].Author = &u
+		}
+	}
 }
 
 // parseHeldCursor decodes "<unix micros>:<id>"; "" starts from the beginning.

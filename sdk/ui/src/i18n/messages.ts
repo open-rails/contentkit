@@ -61,21 +61,32 @@ function lookup(messages: ContentKitUiMessages, key: string): string | undefined
 
 export interface Translator {
   messages: ContentKitUiMessages;
+  /** The UI's BCP 47 language (dates, plurals); undefined: the browser's. */
+  language?: string;
   t(key: MessageKey, vars?: MessageVars): string;
+  /** key_one or key_other by count (as the language's plural rules pick), with {count}. */
+  plural(key: string, count: number, vars?: MessageVars): string;
   /** Message for a ContentKitError (or its code). */
   error(error: unknown): string;
 }
 
-export function createTranslator(messages: ContentKitUiMessages, hostT?: ContentKitUiTranslate): Translator {
+export function createTranslator(messages: ContentKitUiMessages, hostT?: ContentKitUiTranslate, language?: string): Translator {
   const translate = (key: string, vars?: MessageVars) => {
     const hosted = hostT?.(key, vars);
     if (hosted && hosted !== key) return hosted;
     const own = lookup(messages, key);
     return own === undefined ? undefined : interpolate(own, vars);
   };
+  let rules: Intl.PluralRules | undefined;
   return {
     messages,
+    language,
     t: (key, vars) => translate(key, vars) ?? key,
+    plural(key, count, vars) {
+      rules ??= new Intl.PluralRules(language);
+      const all = { ...vars, count };
+      return translate(`${key}_${rules.select(count)}`, all) ?? translate(`${key}_other`, all) ?? key;
+    },
     error(error) {
       if (typeof error === "string") return translate(`errors.${error}`, { seconds: 60 }) ?? messages.errors.generic;
       const e = (error ?? {}) as { code?: unknown; message?: unknown; status?: number; retryAfter?: number; details?: ErrorDetails; refusal?: boolean };

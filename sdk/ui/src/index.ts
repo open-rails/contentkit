@@ -35,6 +35,7 @@ export {
 export { VideoMiniPlayer, type VideoMiniPlayerProps } from "./components/video-mini-player.js";
 export { playerButtonClass } from "./components/player-controls.js";
 export { AvatarUpload, CoverUpload, type SlotUploadProps } from "./components/slot-upload.js";
+export * from "./components/social/index.js";
 export {
   createTranslator,
   defaultMessages,

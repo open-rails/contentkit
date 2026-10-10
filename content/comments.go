@@ -168,7 +168,21 @@ func (c *comments) create(ctx context.Context, actor access.Actor, kind, id stri
 	} else {
 		out.AnonName, _ = anonName.(string)
 	}
-	return out, nil
+	return c.present(ctx, actor, out), nil
+}
+
+// present attaches a written comment's author and the caller's reaction, as a
+// list shows it. The write has committed, so a failed lookup leaves them out.
+func (c *comments) present(ctx context.Context, actor access.Actor, cm Comment) Comment {
+	list := []Comment{cm}
+	var ids []string
+	if cm.UserID != "" {
+		ids = []string{cm.UserID}
+	}
+	if err := errors.Join(c.enrichAuthors(ctx, list, ids), c.attachMine(ctx, actor, list)); err != nil {
+		c.rt.log.WarnContext(ctx, "content: comment author lookup failed", "err", err.Error())
+	}
+	return list[0]
 }
 
 // cleanBody trims and sanitizes a comment body; empty after either is a 400.
@@ -599,7 +613,7 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 		return Comment{}, err
 	}
 	cm.ReplyToID, cm.UserID, cm.AnonName = deref(replyTo), deref(userID), deref(anonName)
-	return cm, nil
+	return c.present(ctx, actor, cm), nil
 }
 
 // softDelete tombstones a comment (keeps the row for thread integrity). Allowed

@@ -288,3 +288,39 @@ func TestCommentBanErasure(t *testing.T) {
 		t.Fatalf("banning an erased user: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+// can-comment tells the caller what it may do to the target's comments: its
+// own user id (its comments are editable), moderation, and the ban scopes it
+// holds there. A written comment comes back with its author, as lists show it.
+func TestCommentStandingCapabilities(t *testing.T) {
+	_, h := bansRuntime(t)
+	anon := access.Actor{Anonymous: true, IP: "10.0.0.9"}
+	if s := standing(t, h, anon, 1); s.UserID != "" || s.Moderate || len(s.BanScopes) != 0 || !s.CanComment {
+		t.Fatalf("anonymous: %+v", s)
+	}
+	if s := standing(t, h, owner, 1); s.UserID != owner.ID || !s.Moderate || len(s.BanScopes) != 1 || s.BanScopes[0] != BanOwner {
+		t.Fatalf("the owner: %+v", s)
+	}
+	if s := standing(t, h, owner, 2); len(s.BanScopes) != 0 {
+		t.Fatalf("on another's content: %+v", s)
+	}
+	if s := standing(t, h, operator, 4); len(s.BanScopes) != 1 || s.BanScopes[0] != BanGlobal {
+		t.Fatalf("the operator: %+v", s)
+	}
+	if rec := doJSON(t, h, anon, "GET", gallery(1, "/can-comment"), nil); !strings.Contains(rec.Body.String(), `"ban_scopes":[]`) {
+		t.Fatalf("ban_scopes must be a list: %s", rec.Body.String())
+	}
+
+	c := created(t, comment(t, h, troll, 1, ""))
+	if c.Author == nil || c.Author.Username != "name-troll" || c.UserID != troll.ID {
+		t.Fatalf("created comment's author: %+v", c)
+	}
+	if rec := doJSON(t, h, fan, "POST", "/comments/"+c.ID+"/like", nil); rec.Code != http.StatusOK {
+		t.Fatalf("like: %d", rec.Code)
+	}
+	rec := doJSON(t, h, fan, "PATCH", "/comments/"+c.ID, CommentEdit{Body: "moderated"})
+	var edited Comment
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &edited) != nil || edited.Author == nil || edited.Author.ID != troll.ID || edited.Mine != 1 || edited.Likes != 1 {
+		t.Fatalf("edited comment (by a moderator): %d %s", rec.Code, rec.Body.String())
+	}
+}

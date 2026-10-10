@@ -7,6 +7,10 @@ import { storeFor } from "./store.js";
 
 export interface ContentKitProviderProps {
   client: ContentKitClient;
+  /** The signed-in user's id as ContentKit sees it (the actor id), or null when signed out. */
+  viewer?: string | null;
+  /** Asks the visitor to sign in: comments, reactions, favorites and votes prompt with it rather than act anonymously. */
+  onSignIn?: () => void;
   /** Content URL helpers (createContentURLs from `/urls`). */
   urls?: ContentURLs;
   /** Host router for in-app navigation (a canonical replace). */
@@ -19,12 +23,12 @@ export interface ContentKitProviderProps {
 }
 
 /** Client, URL config, callbacks and the shared read store for every hook below. Renders no DOM. */
-export function ContentKitProvider({ client, urls, navigate, onChange, onError, children }: ContentKitProviderProps) {
+export function ContentKitProvider({ client, viewer, onSignIn, urls, navigate, onChange, onError, children }: ContentKitProviderProps) {
   const changed = useRef(onChange);
   useEffect(() => {
     changed.current = onChange;
   });
   useEffect(() => client.subscribe((c) => changed.current?.(c)), [client]);
-  const value = useMemo(() => ({ client, urls, navigate, onError, store: storeFor(client) }), [client, urls, navigate, onError]);
+  const value = useMemo(() => ({ client, viewer, onSignIn, urls, navigate, onError, store: storeFor(client) }), [client, viewer, onSignIn, urls, navigate, onError]);
   return <ContentKitContext.Provider value={value}>{children}</ContentKitContext.Provider>;
 }
