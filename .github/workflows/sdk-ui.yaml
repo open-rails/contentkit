@@ -1,10 +1,11 @@
-name: sdk-upload
+name: sdk-ui
 'on':
   pull_request:
     branches: [master]
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
-    - 'sdk/upload/**'
+    - 'sdk/ui/**'
+    - 'contenturl/testdata/**'
     - 'media/*.go'
     - 'media/internal/**'
     - 'media/layout/**'
@@ -13,16 +14,16 @@ name: sdk-upload
     - '!**.md'
     - 'go.mod'
     - 'go.sum'
-    - '.github/workflows/sdk-upload.yaml'
+    - '.github/workflows/sdk-ui.yaml'
   workflow_call: {}
 permissions:
   contents: read
 concurrency:
-  group: sdk-upload-${{ github.event.pull_request.number || github.ref }}
+  group: sdk-ui-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
-  sdk-upload:
-    name: Upload SDK
+  sdk-ui:
+    name: UI package
     if: '!github.event.pull_request.draft'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -38,7 +39,7 @@ jobs:
         options: --health-cmd "pg_isready -U contentkit" --health-interval 5s --health-timeout 5s --health-retries 20
     defaults:
       run:
-        working-directory: sdk/upload
+        working-directory: sdk/ui
     env:
       CONTENTKIT_TEST_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_test?sslmode=disable
       CONTENTKIT_TEST_S3_ENDPOINT: http://localhost:9100
@@ -55,12 +56,12 @@ jobs:
           cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1 server /data
     - uses: pnpm/action-setup@v4
       with:
-        package_json_file: sdk/upload/package.json
+        package_json_file: sdk/ui/package.json
     - uses: actions/setup-node@v4
       with:
         node-version: 24
         cache: pnpm
-        cache-dependency-path: sdk/upload/pnpm-lock.yaml
+        cache-dependency-path: sdk/ui/pnpm-lock.yaml
     - uses: actions/setup-go@v5
       with:
         go-version-file: go.mod
