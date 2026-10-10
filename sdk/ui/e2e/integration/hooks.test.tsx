@@ -140,7 +140,8 @@ describe("media hooks against the real ContentKit", () => {
     expect(names.length).toBeGreaterThan(0);
     for (const name of names) expect(name).toMatch(/^cover-(230|460)-.+\.webp$/);
 
-    // An item without a cover shows the kind's default.
+    // An item without a cover shows the kind's default (the preset declares one).
+    expect(result.current.rule?.default).toBe(true);
     const empty = bare(await item(h, "gallery", accounts.get("alice")));
     const other = renderHook(() => usePublicImage("gallery", empty.id, "cover"), { wrapper: provider(c) });
     await waitFor(() => expect(other.result.current.isDefault).toBe(true), wait);

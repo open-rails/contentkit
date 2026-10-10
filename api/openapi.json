@@ -6661,6 +6661,9 @@
           },
           "first": {
             "type": "integer"
+          },
+          "default": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -6670,7 +6673,8 @@
           "base",
           "namespace",
           "to",
-          "widths"
+          "widths",
+          "default"
         ]
       },
       "PresignBody": {

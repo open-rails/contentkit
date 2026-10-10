@@ -218,8 +218,8 @@ type UploadRule struct {
 // PresetRule is a kind's public preset: its upload, name template, widths
 // and crop bounds. Published files carry a generation suffix, so
 // {base}/v1/{namespace}/{kind}/{id}/public/{to} ({w} each of Widths) names
-// the kind's default image, never an item's current one: a read's Public
-// lists those.
+// the kind's default image (only when Default), never an item's current
+// one: a read's Public lists those.
 type PresetRule struct {
 	Kind      string `json:"kind"`
 	Name      string `json:"name"`
@@ -234,4 +234,7 @@ type PresetRule struct {
 	MinWidth int `json:"min_width,omitempty"`
 	// First makes it a preview: the first First uploads, {n} in To.
 	First int `json:"first,omitempty"`
+	// Default: the gateway serves the kind's default image at the template's
+	// names while an item has no publication (Registry.DefaultImage).
+	Default bool `json:"default"`
 }

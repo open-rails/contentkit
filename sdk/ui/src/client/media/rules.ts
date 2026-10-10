@@ -139,11 +139,11 @@ export function presetFor(presets: readonly PresetRule[], kind: string, path: st
 /**
  * The kind's default image for a preset, at every width: what the gateway
  * serves for an item without its own (a URL from the template never names a
- * current file). Empty for a preview preset.
+ * current file). null when the preset has no default (`rule.default`).
  */
-export function defaultImage(rule: PresetRule, id: string): PublicPreset {
+export function defaultImage(rule: PresetRule, id: string): PublicPreset | null {
   const r = ratio(rule.aspect);
-  if (rule.first || rule.to.includes(NAME)) return { preset: rule.name, aspect: rule.aspect, renditions: [] };
+  if (!rule.default || rule.first || rule.to.includes(NAME)) return null;
   return {
     preset: rule.name,
     aspect: rule.aspect,

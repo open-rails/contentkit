@@ -597,6 +597,7 @@ export interface PresetRule {
   aspect?: string;
   min_width?: number;
   first?: number;
+  default: boolean;
 }
 
 export interface PresignBody {

@@ -44,7 +44,8 @@
           ],
           "image": {
             "aspect": "3:1"
-          }
+          },
+          "default": "cover.png"
         }
       ]
     },

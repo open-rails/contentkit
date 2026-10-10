@@ -226,9 +226,10 @@ const { image, rule, isDefault } = usePublicImage("user", userId, "avatar");
 
 An item's image for a public preset: the exact renditions from a read's
 `public`, or from a host listing passed as `image` (no read), else the
-kind's default image. Published files carry a generation, so a URL built
-from a preset template only ever names the default; `rule` (from
-`GET /media/presets`) gives the shape, widths and narrowest edit.
+kind's default image when the preset has one (`rule.default`), else none.
+Published files carry a generation, so a URL built from a preset template
+only ever names the default; `rule` (from `GET /media/presets`) gives the
+shape, widths and narrowest edit.
 
 ### useCanonicalContent
 
