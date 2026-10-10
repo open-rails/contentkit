@@ -53,9 +53,9 @@ describe("content modules against the real ContentKit", () => {
 
     const updated = await editor.posts.update(post.id, { body: "edited" });
     expect(updated.body).toBe("edited");
-    // A post is a reaction target like any other; its own routes answer the post's totals.
+    // A post is a reaction target like any other.
     expect(await ck("alice").reactions.set({ kind: "post", id: post.id }, 1)).toEqual({ likes: 1, dislikes: 0, mine: 1 });
-    expect(await ck("bob").posts.react(post.id, -1)).toMatchObject({ total_likes: 1, total_dislikes: 1 });
+    expect(await ck("bob").reactions.set({ kind: "post", id: post.id }, -1)).toEqual({ likes: 1, dislikes: 1, mine: -1 });
     expect(await ck("alice").reactions.get({ kind: "post", id: post.id })).toEqual({ likes: 1, dislikes: 1, mine: 1 });
 
     await editor.posts.delete(post.id);
@@ -237,7 +237,7 @@ describe("content modules against the real ContentKit", () => {
       () => members().comments.create(video, { body: "drive-by", anon_name: "Guest" }),
       () => members().comments.react(top.id, 1),
       () => members().reactions.set(video, 1),
-      () => members().posts.react(post.id, 1),
+      () => members().reactions.set({ kind: "post", id: post.id }, 1),
       () => members().polls.vote(poll.id, poll.options[0]!.id),
     ]) {
       await expect(refused()).rejects.toEqual(expect.objectContaining({ code: "unauthorized", status: 401 }));
