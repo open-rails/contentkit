@@ -4,7 +4,7 @@ go 1.26.6
 
 require (
 	github.com/open-rails/authkit v1.2.0
-	github.com/open-rails/contentkit v0.68.0
+	github.com/open-rails/contentkit v0.70.0
 )
 
 require (

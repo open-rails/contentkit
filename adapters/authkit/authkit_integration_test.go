@@ -154,19 +154,40 @@ func (down) PublicUsers(context.Context, []string) (map[string]iam.PublicUser, e
 	return nil, errors.New("directory down")
 }
 
+// images answers PresetImages as *media.Manifests does: each ref's current
+// image of the preset, else the preset's default, else none.
 type images struct {
-	reg  *media.Registry
-	byID map[string][]media.PublicImage
-	err  error
+	reg   *media.Registry
+	byID  map[string][]media.PublicImage
+	err   error
+	calls *int
 }
 
 func (s images) Registry() *media.Registry { return s.reg }
 
-func (s images) PublicImages(_ context.Context, ref contentref.ContentRef) ([]media.PublicImage, error) {
-	if _, err := s.reg.Item(ref); err != nil {
-		return nil, err
+func (s images) PresetImages(_ context.Context, preset string, refs ...contentref.ContentRef) ([]media.PublicImage, error) {
+	*s.calls++
+	if s.err != nil {
+		return nil, s.err
 	}
-	return s.byID[ref.ContentID], s.err
+	out := make([]media.PublicImage, len(refs))
+	for i, ref := range refs {
+		if _, err := s.reg.Item(ref); err != nil {
+			return nil, err
+		}
+		out[i] = media.PublicImage{Preset: preset}
+		for _, image := range s.byID[ref.ContentID] {
+			if image.Preset == preset {
+				out[i] = image
+			}
+		}
+		if len(out[i].Renditions) == 0 {
+			if def, ok := s.reg.DefaultImage(ref, preset); ok {
+				out[i] = def
+			}
+		}
+	}
+	return out, nil
 }
 
 // Authors gives comment authors their names and currently published avatar.
@@ -177,22 +198,28 @@ func TestAuthors(t *testing.T) {
 	unknown := contentref.NewID()
 	base := "https://media.doujins.test/v1/accounts/user/" + w.alice.ID + "/public/avatar-"
 	suffix := "-0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b.webp"
-	store := images{reg: reg, byID: map[string][]media.PublicImage{w.alice.ID: {
+	calls := 0
+	store := images{reg: reg, calls: &calls, byID: map[string][]media.PublicImage{w.alice.ID: {
 		{Preset: "avatar", Renditions: []media.PublicRendition{
 			{URL: base + "64" + suffix, W: 64, H: 64},
 			{URL: base + "128" + suffix, W: 100, H: 100},
 			{URL: base + "256" + suffix, W: 100, H: 100},
 		}},
 	}}}
-	got, err := (&ckauthkit.Authors{Directory: w.auth, Media: store}).UsersByIDs(ctx, []string{w.alice.ID, unknown})
-	if err != nil {
-		t.Fatal(err)
+	// One lookup for every author: alice's own avatar, the default for the rest.
+	got, err := (&ckauthkit.Authors{Directory: w.auth, Media: store}).UsersByIDs(ctx, []string{w.alice.ID, w.bob.ID, unknown})
+	if err != nil || calls != 1 {
+		t.Fatalf("%v, %d lookups", err, calls)
 	}
 	a := got[w.alice.ID]
 	if a.Username != w.alice.Username || a.Avatar != base+"64"+suffix || a.AvatarSrcSet != base+"64"+suffix+" 64w, "+base+"128"+suffix+" 100w" {
 		t.Fatalf("alice %+v", a)
 	}
-	if u := got[unknown]; u.ID != unknown || !strings.HasPrefix(u.Username, "user-") || u.Avatar != "" || u.AvatarSrcSet != "" {
+	def := "https://media.doujins.test/v1/accounts/user/" + w.bob.ID + "/public/avatar-"
+	if b := got[w.bob.ID]; b.Username != w.bob.Username || b.Avatar != def+"64.webp" || !strings.HasSuffix(b.AvatarSrcSet, def+"512.webp 512w") {
+		t.Fatalf("bob's default %+v", b)
+	}
+	if u := got[unknown]; u.ID != unknown || !strings.HasPrefix(u.Username, "user-") || !strings.HasPrefix(u.Avatar, "https://media.doujins.test/v1/accounts/user/"+unknown+"/public/avatar-64") {
 		t.Fatalf("unknown %+v", u)
 	}
 	got, err = (&ckauthkit.Authors{Directory: w.auth, Media: store, Width: 100}).UsersByIDs(ctx, []string{w.alice.ID})
