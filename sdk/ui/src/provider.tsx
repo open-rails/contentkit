@@ -55,8 +55,8 @@ export function ContentKitUiProvider({ appearance, language, messages, t, densit
   const bundle = lang && loaded?.lang === lang ? loaded.bundle : undefined;
   const translator = useMemo(() => {
     const own = messages ? (Array.isArray(messages) ? messages : [messages]) : [];
-    return createTranslator(resolveMessages(bundle ? [bundle, ...own] : own), t);
-  }, [bundle, messages, t]);
+    return createTranslator(resolveMessages(bundle ? [bundle, ...own] : own), t, language);
+  }, [bundle, messages, t, language]);
   return (
     <AppearanceContext.Provider value={appearance}>
       <MessagesContext.Provider value={translator}>
