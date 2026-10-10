@@ -31,7 +31,7 @@ test("a fast connection starts at 1080p or better", async ({ page }) => {
 test("1.5 Mbps starts low and plays without stalling", async ({ page }) => {
   test.setTimeout(60_000);
   // The app and hls.js are already cached (dev-server modules are huge); only media crosses the slow link.
-  await (await play(page)).locator("video").evaluate((v: HTMLVideoElement) => new Promise((r) => v.addEventListener("playing", r, { once: true })));
+  await expect(await play(page)).toHaveAttribute("data-status", "playing", { timeout: 15_000 });
   await page.goto("about:blank");
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Network.enable");
