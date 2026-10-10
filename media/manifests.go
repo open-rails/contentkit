@@ -235,7 +235,7 @@ func (m *Manifests) cleanup(ctx context.Context, item Item, publicOnly bool, sel
 	}
 	defer func() {
 		if c.State == "open" {
-			err = errors.Join(err, m.journal.finish(context.WithoutCancel(ctx), c, false))
+			err = errors.Join(err, m.journal.finish(context.WithoutCancel(ctx), c, false, nil))
 		}
 	}()
 	cur, _, err := m.get(ctx, item.ManifestKey())
@@ -255,10 +255,12 @@ func (m *Manifests) cleanup(ctx context.Context, item Item, publicOnly bool, sel
 	if publicOnly && (len(effects.Private) != 0 || len(effects.Allocate) != 0) {
 		return errors.New("media: public cleanup cannot alter private allocation ownership")
 	}
-	if err := m.journal.prepareCleanup(ctx, &c, effects); err != nil {
+	// The projection is asserted before any DELETE: a file it names is never
+	// one this cleanup retires.
+	if err := m.journal.prepareCleanup(ctx, &c, effects, projectionOf(item, cur).without(item, effects.Public)); err != nil {
 		return err
 	}
-	return m.finishCommit(ctx, item, c, true)
+	return m.finishCommit(ctx, item, c, true, nil)
 }
 
 // unreferenced selects exact targets while the caller holds the folder lock.
@@ -394,7 +396,11 @@ func (m *Manifests) editOperation(ctx context.Context, ref contentref.ContentRef
 	}
 	out, written, err := m.try(ctx, item, existing, b, mutation, fn)
 	if mutation.commit.State == "open" {
-		err = errors.Join(err, m.journal.finish(ctx, mutation.commit, err == nil))
+		var proj *projection
+		if err == nil {
+			proj = projectionOf(item, out) // unchanged and read under the lock
+		}
+		err = errors.Join(err, m.journal.finish(ctx, mutation.commit, err == nil, proj))
 	}
 	if err == nil && written && m.sweeps != nil {
 		if serr := m.sweeps.ScheduleSweep(ctx, ref); serr != nil {
@@ -530,7 +536,7 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	// durable settlement or the cleanup that follows a successful edit.
 	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 	defer cancel()
-	if err := m.finishCommit(settleCtx, item, mutation.commit, true); err != nil {
+	if err := m.finishCommit(settleCtx, item, mutation.commit, true, next); err != nil {
 		return nil, true, err
 	}
 	return next, true, nil
@@ -566,7 +572,7 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 		return nil, false, err
 	}
 	if commit.Effects.Cleanup {
-		return nil, true, m.finishCommit(ctx, item, *commit, true)
+		return nil, true, m.finishCommit(ctx, item, *commit, true, nil)
 	}
 	for range m.retries {
 		cur, etag, err := m.get(ctx, item.ManifestKey())
@@ -578,7 +584,19 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 			} else if err != nil {
 				return nil, false, err
 			}
-			return nil, false, m.finishCommit(ctx, item, *commit, false)
+			return nil, false, m.finishCommit(ctx, item, *commit, false, nil)
+		} else if errors.Is(err, ErrUpgradeRequired) {
+			// Only the upgrade prepares a write over a legacy root, under
+			// If-Match on it; a legacy root means that write did not land.
+			// Changing the root's ETag fences a delayed copy of it.
+			if commit.Attempt != uuid.Nil {
+				if err := m.fenceLegacy(ctx, item); errors.Is(err, ErrPreconditionFailed) {
+					continue
+				} else if err != nil {
+					return nil, false, err
+				}
+			}
+			return nil, false, m.finishCommit(ctx, item, *commit, false, nil)
 		} else if err != nil {
 			return nil, false, err
 		}
@@ -610,7 +628,7 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 			return nil, false, err
 		}
 		m.cache.put(item.ManifestKey(), obj.ETag, next)
-		if err := m.finishCommit(ctx, item, *commit, applied); err != nil {
+		if err := m.finishCommit(ctx, item, *commit, applied, next); err != nil {
 			return nil, false, err
 		}
 		return next, applied, nil
@@ -669,8 +687,17 @@ func (m *Manifests) fenceUnreadable(ctx context.Context, item Item) error {
 // finishCommit repeats only the recorded cleanup targets, never a fresh list
 // that might include another producer's outputs. Database effects settle only
 // after cleanup succeeds; the pending receipt remains discoverable on failure.
-func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifestCommit, applied bool) error {
+// current, the manifest now in S3 (nil: unknown or unchanged), is projected
+// with the outcome.
+func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifestCommit, applied bool, current *Manifest) error {
+	proj := projectionOf(item, current)
 	if applied {
+		if len(commit.Effects.Public) > 0 {
+			// Readers leave the retired files before they are deleted.
+			if err := m.journal.project(ctx, proj); err != nil {
+				return err
+			}
+		}
 		if err := m.retireAllocations(ctx, item, commit.Effects.Private); err != nil {
 			return err
 		}
@@ -695,7 +722,7 @@ func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifest
 			purge(ctx, urls)
 		}
 	}
-	return m.journal.finish(ctx, commit, applied)
+	return m.journal.finish(ctx, commit, applied, proj)
 }
 
 // RecoverPending scans the journal, including writes that never created an S3

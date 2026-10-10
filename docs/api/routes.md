@@ -148,6 +148,7 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `type_not_allowed` | 415 | The file type is not allowed in the upload path; `details.allowed` lists the types. |
 | `unauthorized` | 401 | The route needs a signed-in actor. |
 | `unavailable` | 503 | Media storage cannot be reached, or a commit's recovery is pending; retry. |
+| `upgrade_required` | 503 | The media item was stored before v0.68 and is served once the host's media upgrade (contentkit_media_upgrade) has converted it. |
 | `video_aspect_unsupported` | 422 | The video's display aspect is outside what its upload path accepts; `details` has `min_aspect` and `max_aspect` (width/height). |
 | `video_over_budget` | 422 | The planned encode costs more than its upload path allows, or the source averages under a frame a second. |
 | `video_too_large` | 422 | The video's frames are larger than its upload path allows. |

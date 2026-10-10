@@ -233,6 +233,7 @@ export const ja: ContentKitUiMessageBundle = {
     checksum_mismatch: "アップロード中にファイルが変更されました。もう一度お試しください。",
     rate_limited: "アップロードが多すぎます。{seconds} 秒後に再試行してください。",
     unavailable: "メディアストレージに接続できません。しばらくしてからもう一度お試しください。",
+    upgrade_required: "この項目は更新中です。しばらくしてからもう一度お試しください。",
     internal_error: "サーバー側で問題が発生しました。もう一度お試しください。",
     allowedTypes: "{allowed} を使用してください。",
     tooLargeBy: "このファイルは {size} です。上限は {max} です。",

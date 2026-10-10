@@ -92,10 +92,15 @@ type EditorImage struct {
 // Publication owns one public preset's physical files. Reservation precedes
 // every PUT; State becomes ready only after all renditions have landed. Retired
 // generations are never reused, even when their source bytes are identical.
+// An upload holds at most one ready publication per preset, the current one,
+// and one reserved successor, which replaces it once ready: cleanup never
+// retires the current files while their successor is written.
 type Publication struct {
-	Preset     string           `json:"preset"`
-	Source     string           `json:"source"` // the upload's Key
-	FP         string           `json:"fp"`
+	Preset string `json:"preset"`
+	Source string `json:"source"` // the upload's Key
+	FP     string `json:"fp"`
+	// Generation suffixes every physical name; "" is a legacy publication,
+	// files a pre-v0.68 worker wrote at the logical names (always ready).
 	Generation string           `json:"generation"`
 	Names      []string         `json:"names"` // logical preset names at this position
 	State      PublicationState `json:"state"`
@@ -115,6 +120,9 @@ func (p Publication) Ready() bool { return p.State == PublicationReady }
 
 // NamesOnDisk lists the immutable physical names reserved by the publication.
 func (p Publication) NamesOnDisk() []string {
+	if p.Generation == "" {
+		return slices.Clone(p.Names)
+	}
 	names := make([]string, len(p.Names))
 	for i, name := range p.Names {
 		ext := path.Ext(name)
@@ -123,27 +131,39 @@ func (p Publication) NamesOnDisk() []string {
 	return names
 }
 
-// Publication returns the public generation owned by this upload and preset.
+// Publication returns the upload's latest generation of preset: its reserved
+// successor if any, else its current one.
 func (f File) Publication(preset string) (Publication, bool) {
+	if p, ok := f.publication(preset, PublicationReserved); ok {
+		return p, true
+	}
+	return f.Current(preset)
+}
+
+// Current returns the upload's ready generation of preset.
+func (f File) Current(preset string) (Publication, bool) {
+	return f.publication(preset, PublicationReady)
+}
+
+func (f File) publication(preset string, state PublicationState) (Publication, bool) {
 	for _, p := range f.Public {
-		if p.Preset == preset {
+		if p.Preset == preset && p.State == state {
 			return p, true
 		}
 	}
 	return Publication{}, false
 }
 
-// SetPublication records a reserved or ready generation on its source upload.
+// SetPublication records a generation on its source upload: a reservation
+// replaces an earlier successor and keeps the current generation, but in a
+// Full manifest, which has no room for both, replaces it too; a ready
+// generation replaces both.
 func (m *Manifest) SetPublication(from string, p Publication) {
 	if i := m.Find(from); i >= 0 {
-		pubs := slices.Clone(m.Files[i].Public)
-		j := slices.IndexFunc(pubs, func(old Publication) bool { return old.Preset == p.Preset })
-		if j < 0 {
-			pubs = append(pubs, p)
-		} else {
-			pubs[j] = p
-		}
-		m.Files[i].Public = pubs
+		pubs := slices.DeleteFunc(slices.Clone(m.Files[i].Public), func(old Publication) bool {
+			return old.Preset == p.Preset && (p.Ready() || !old.Ready() || m.Full)
+		})
+		m.Files[i].Public = append(pubs, p)
 	}
 }
 
@@ -375,14 +395,20 @@ func (m *Manifest) Validate() error {
 			return fmt.Errorf("media: manifest file %q: an upload has provenance", f.Path)
 		}
 		seen[f.Path] = true
-		presets := make(map[string]bool, len(f.Public))
+		type slot struct {
+			preset string
+			state  PublicationState
+		}
+		slots := make(map[slot]bool, len(f.Public))
 		for _, p := range f.Public {
 			id, err := uuid.Parse(p.Generation)
-			if p.Preset == "" || presets[p.Preset] || p.Source != f.Key() || p.FP == "" || err != nil || id == uuid.Nil || id.String() != p.Generation ||
-				len(p.Names) == 0 || len(p.Dims) != len(p.Names) || p.State > PublicationReady {
+			generation := err == nil && id != uuid.Nil && id.String() == p.Generation || p.Generation == "" && p.Ready()
+			current, _ := f.Current(p.Preset)
+			if p.Preset == "" || slots[slot{p.Preset, p.State}] || p.Source != f.Key() || p.FP == "" || !generation ||
+				!p.Ready() && current.Generation == p.Generation || len(p.Names) == 0 || len(p.Dims) != len(p.Names) || p.State > PublicationReady {
 				return fmt.Errorf("media: manifest file %q: invalid public publication", f.Path)
 			}
-			presets[p.Preset] = true
+			slots[slot{p.Preset, p.State}] = true
 			for j, name := range p.NamesOnDisk() {
 				if !layout.ValidSegment(p.Names[j]) || !layout.ValidPublicName(name) || p.Ready() && (p.Dims[j].W <= 0 || p.Dims[j].H <= 0) {
 					return fmt.Errorf("media: manifest file %q: invalid public rendition %q", f.Path, name)
@@ -550,7 +576,14 @@ var (
 	// ErrManifestUnreadable: a stored manifest over MaxManifestBytes, written
 	// before the bound; it does not decode.
 	ErrManifestUnreadable = errors.New("media: stored manifest over its size limit")
+	// ErrUpgradeRequired: a manifest stored before v0.68 (version 2), which
+	// only the media upgrade (Jobs.Upgrade) reads. Nothing else edits or
+	// cleans the item until then; HTTP answers 503 upgrade_required.
+	ErrUpgradeRequired = errors.New("media: item stored before v0.68 needs the media upgrade")
 )
+
+// legacyManifestVersion is the manifest format the upgrade converts.
+const legacyManifestVersion = 2
 
 // encodeManifest writes m as gzip JSON (HTML characters unescaped: a name of
 // "<" costs one byte) and records its JSON length.
@@ -595,8 +628,22 @@ func DecodeManifest(b []byte) (*Manifest, error) { return decodeManifest(b) }
 
 // decodeManifest reads gzip JSON (or plain JSON), at most MaxManifestBytes
 // of it (ErrManifestUnreadable past that), indexes it and records its JSON
-// length.
+// length. A version 2 manifest is ErrUpgradeRequired.
 func decodeManifest(b []byte) (*Manifest, error) {
+	m, err := decodeStored(b)
+	switch {
+	case err != nil:
+		return nil, err
+	case m.V == legacyManifestVersion:
+		return nil, ErrUpgradeRequired
+	case m.V != ManifestVersion:
+		return nil, fmt.Errorf("media: manifest version %d, want %d", m.V, ManifestVersion)
+	}
+	return m, nil
+}
+
+// decodeStored decodes a manifest of any version.
+func decodeStored(b []byte) (*Manifest, error) {
 	r := io.Reader(bytes.NewReader(b))
 	if len(b) >= 2 && b[0] == 0x1f && b[1] == 0x8b {
 		zr, err := gzip.NewReader(r)
@@ -613,9 +660,6 @@ func decodeManifest(b []byte) (*Manifest, error) {
 		return nil, ErrManifestUnreadable
 	} else if err != nil {
 		return nil, err
-	}
-	if m.V != ManifestVersion {
-		return nil, fmt.Errorf("media: manifest version %d, want %d", m.V, ManifestVersion)
 	}
 	m.reindex()
 	m.size = MaxManifestBytes + 1 - lr.N

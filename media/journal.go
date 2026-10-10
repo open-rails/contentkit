@@ -31,11 +31,14 @@ type TransactionalProcessQueue interface {
 // PGJournal records unfinished S3 attempts and their database effects. The S3
 // manifest remains authoritative; this table contains no current file list.
 type PGJournal struct {
-	pool        *pgxpool.Pool
-	table       string
-	allocations string
-	limiter     *PGLimiter
-	queue       TransactionalProcessQueue
+	pool         *pgxpool.Pool
+	table        string
+	allocations  string
+	publications string
+	upgrades     string
+	upgradeFails string
+	limiter      *PGLimiter
+	queue        TransactionalProcessQueue
 }
 
 // NewPGJournal uses the migrated ContentKit schema and a processing queue in
@@ -48,14 +51,18 @@ func NewPGJournal(pool *pgxpool.Pool, schema string, queue TransactionalProcessQ
 		return nil, err
 	}
 	return &PGJournal{pool: pool, table: pgx.Identifier{schema, "content_media_commits"}.Sanitize(),
-		allocations: pgx.Identifier{schema, "content_media_allocations"}.Sanitize(),
-		limiter:     limiter, queue: queue}, nil
+		allocations:  pgx.Identifier{schema, "content_media_allocations"}.Sanitize(),
+		publications: pgx.Identifier{schema, "content_media_publications"}.Sanitize(),
+		upgrades:     pgx.Identifier{schema, "content_media_upgrades"}.Sanitize(),
+		upgradeFails: pgx.Identifier{schema, "content_media_upgrade_failures"}.Sanitize(),
+		limiter:      limiter, queue: queue}, nil
 }
 
 type journalEffects struct {
 	Deletion    bool        `json:"deletion,omitempty"`    // explicit purge may fence an unreadable root without decoding it
 	Cleanup     bool        `json:"cleanup,omitempty"`     // allocation retirement, no manifest PUT
 	Allocate    []string    `json:"allocate,omitempty"`    // physical names owned before a producer sends bytes
+	Adopt       []string    `json:"adopt,omitempty"`       // a legacy item's existing objects, owned by the upgrade's incarnation
 	Incarnation string      `json:"incarnation,omitempty"` // allocation lifetime, read from S3 under this lease
 	Settlement  Settlement  `json:"settlement"`
 	Cancel      bool        `json:"cancel,omitempty"`
@@ -67,7 +74,8 @@ type journalEffects struct {
 
 // prepareCleanup retires exact allocations while the operation still owns
 // the folder. A cleaner that lost its lease cannot delete from an old snapshot.
-func (j *PGJournal) prepareCleanup(ctx context.Context, c *manifestCommit, effects journalEffects) error {
+// The projection, without what this cleanup retires, commits with them.
+func (j *PGJournal) prepareCleanup(ctx context.Context, c *manifestCommit, effects journalEffects, proj *projection) error {
 	effects.Cleanup = true
 	body, err := json.Marshal(effects)
 	if err != nil {
@@ -92,6 +100,9 @@ func (j *PGJournal) prepareCleanup(ctx context.Context, c *manifestCommit, effec
 		if _, err := tx.Exec(ctx, `UPDATE `+j.allocations+` SET retired_at = now()
 WHERE tenant_id = $1 AND folder_prefix = $2 AND object_key = ANY($3::text[]) AND retired_at IS NULL`,
 			c.Ref.TenantID, c.Folder, effects.Private); err != nil {
+			return err
+		}
+		if err := j.projectTx(ctx, tx, proj); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE `+j.table+` SET state = 'prepared', attempt_id = $3, effects = $4, updated_at = now()
@@ -242,6 +253,9 @@ func (j *PGJournal) prepare(ctx context.Context, c *manifestCommit, effects jour
 				return err
 			}
 		}
+		if err := j.adoptTx(ctx, tx, c, effects); err != nil {
+			return err
+		}
 		_, err = tx.Exec(ctx, `UPDATE `+j.table+` SET state = 'prepared', attempt_id = $3,
 expected_etag = $4, effects = $5, charged_bytes = $6, updated_at = now()
 WHERE tenant_id = $1 AND operation_id = $2`, c.Ref.TenantID, c.ID, attempt, c.ETag, body, charged)
@@ -317,10 +331,33 @@ AND content_kind = $4 AND content_id = $5 AND folder_prefix = $6 AND state = 'ap
 	return nil
 }
 
+// adoptTx records a legacy item's objects under the upgrade's incarnation
+// before its manifest PUT. A retry after an absent attempt moves them to its
+// own incarnation; a retired object is never adopted again.
+func (j *PGJournal) adoptTx(ctx context.Context, tx pgx.Tx, c *manifestCommit, effects journalEffects) error {
+	if len(effects.Adopt) == 0 {
+		return nil
+	}
+	var adopted int
+	err := tx.QueryRow(ctx, `WITH a AS (INSERT INTO `+j.allocations+` AS a (tenant_id, folder_prefix, object_key, incarnation)
+SELECT $1, $2, key, $4 FROM unnest($3::text[]) AS key
+ON CONFLICT (tenant_id, object_key) DO UPDATE SET incarnation = EXCLUDED.incarnation
+WHERE a.folder_prefix = EXCLUDED.folder_prefix AND a.retired_at IS NULL RETURNING 1)
+SELECT count(*) FROM a`, c.Ref.TenantID, c.Folder, effects.Adopt, effects.Incarnation).Scan(&adopted)
+	if err != nil {
+		return err
+	}
+	if adopted != len(effects.Adopt) {
+		return ErrAllocationRetired
+	}
+	return nil
+}
+
 // finish settles at most once. An absent outcome is legal only before prepare,
 // or after recovery has fenced S3. Database effects and the outcome commit
 // together, so a crash or failed enqueue leaves the original receipt pending.
-func (j *PGJournal) finish(ctx context.Context, c manifestCommit, applied bool) error {
+// proj, the authoritative manifest's publications, is written with them.
+func (j *PGJournal) finish(ctx context.Context, c manifestCommit, applied bool, proj *projection) error {
 	return pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
 		found, err := j.load(ctx, tx, c.Ref.TenantID, c.ID)
 		if err != nil {
@@ -354,6 +391,9 @@ func (j *PGJournal) finish(ctx context.Context, c manifestCommit, applied bool) 
 			if err := j.queue.EnqueueTx(ctx, tx, *found.Effects.Process); err != nil {
 				return err
 			}
+		}
+		if err := j.projectTx(ctx, tx, proj); err != nil {
+			return err
 		}
 		state := "absent"
 		if applied {

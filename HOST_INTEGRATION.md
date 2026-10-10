@@ -612,18 +612,20 @@ layouts.
   the item id (ContentKit has no versions; a work's versions are separate
   items). It holds `manifest.json` (gzip JSON, never served), `private/`
   (hash-named blobs: uploads, derived files, editor views), `public/`
-  (app-declared names such as `cover-460.webp`) and `temp/` (in-flight
-  server-side writes).
+  (published renditions such as `cover-460-{generation}.webp`) and `temp/`
+  (in-flight server-side writes).
 - **Manifest.** An ordered virtual file system over the item's private
   blobs: each Upload's files in natural order unless an op reorders them,
   then each private preset's outputs in their uploads' order. A derived file
   records `from`, `preset` and `fp` (its inputs' fingerprint); it is stale
-  exactly when the fingerprint no longer matches. Public files are never in
-  it: their names are deterministic.
+  exactly when the fingerprint no longer matches. Each upload records its
+  public publications: the current generation of each preset and, while
+  the worker writes one, its successor.
 - **URLs.** `https://media.<site>/v1/{namespace}/{kind}/{id}/{public|private}/{name}`.
-  `media.PublicURL(base, ns, kind, id, name)` and `media.SrcSet(…)` (or
-  `Registry.PublicURL`/`SrcSet`) build public URLs with no lookup; a missing
-  public file is served its kind's default by the media gateway.
+  Public names carry a generation that changes on every render, so a URL
+  built from a preset's `to` template is never valid: it serves the kind's
+  default image, or 404 when the preset declares no `Default`. Build public
+  URLs with the lookup in "Public image URLs".
 
 ### Registry
 
@@ -786,11 +788,35 @@ out until `attach`.
 - `GET /presets` lists every kind's public preset rules (`base`,
   `namespace`, `kind`, `name`, `from`, `to`, `widths`, `aspect`, `min_width`,
   `first`): crop bounds and widths without a read. Published files carry a
-  generation suffix, so a URL built from `to` names the kind's default image;
-  an item's current images come from a read's `public`.
+  generation suffix, so a URL built from `to` is not an item's image; its
+  current images come from a read's `public` (or, server-side, the lookup
+  below).
 - `GET /{kind}/{id}/hls/{dir}master.m3u8` (a ladder in `hls`), `{path}.m3u8`
   (a track) and `{dir}sprite.vtt` are built per request from the manifest's
   tracks and their index blobs (cached by hash).
+
+### Public image URLs
+
+Every item's current publications are projected into Postgres
+(`content_media_publications`) in the same journal transaction that makes
+them current, so server-side rendering resolves a whole page with one
+indexed query and no bucket read. `*media.Manifests` (`jobs.Manifests()`):
+
+- `PresetImages(ctx, "cover", refs...)` returns one `PublicImage` per ref, in
+  order: its first current image of the preset, else the preset's default
+  (`From` is empty), else one without renditions. Use it for cards and
+  avatars: `image.URL(width)` picks a rendition, `image.SrcSet()` gives
+  `srcset` with the encoded widths.
+- `Images(ctx, media.ImageQuery{Ref, Preset, Name}...)` answers many queries in
+  one read: an item's images, one preset's, or one upload's by its `{name}`
+  (an inline image's `i-{uuid}`). Store names, not URLs, and resolve them
+  when rendering.
+- `PublicImages(ctx, ref)` is one item's images; `Registry.DefaultImage`
+  is a preset's default.
+
+A republish keeps the current files published until their successor is
+ready, and cleanup retires a generation only after the projection names the
+next one. Browsers keep using a read's `public` or `usePublicImage`.
 
 ### Public files, exposure and purge
 
@@ -805,9 +831,9 @@ out until `attach`.
 - Render the defaults from the deploy step:
   `image.PublishDefaults(ctx, store, reg)` (it needs libvips) writes each
   `Public.Default` from its kind's `Defaults` to
-  `{ns}/{kind}/_default/public/{name}` and returns the keys
-  to purge. `media.GatewayConfig(reg)` gives the gateway's namespaces and
-  `MEDIA_GATEWAY_DEFAULTS` (`layout.FormatDefaults`).
+  `{ns}/{kind}/_default/public/sha256-{digest}.webp` and returns the
+  mappings. `media.GatewayConfig(reg, publication.Defaults)` gives the
+  gateway's namespaces and `MEDIA_GATEWAY_DEFAULTS` (`layout.FormatDefaults`).
 
 ### Processing and readiness
 
@@ -874,6 +900,47 @@ out until `attach`.
   folders the host no longer has.
 - Restore: `s3.Store.Restore(ctx, prefix, t)` brings back manifests and
   their referenced blobs; then `Expose` the restored items.
+
+## Upgrading from v0.67
+
+Since v0.68 ContentKit reads no item stored by v0.67 or earlier until the
+media upgrade has converted it; v0.68.0 itself has no upgrade, so skip it.
+Reads answer 503 `upgrade_required` (`media.ErrUpgradeRequired`
+in Go), commits are refused, and cleanup, recovery and workers leave such an
+item untouched.
+
+Code changes:
+
+- `media.JobsConfig.Journal` is required: `media.NewPGJournal(pool, contentSchema, queue)`.
+  `UploadOptions.Queue` is gone; the journal supplies the queue.
+- `worker.Config.ContentSchema` is required.
+- `POST /media/upload/commit` requires `operation_id` (a canonical UUID,
+  reused unchanged on retry); `Uploads.Commit` takes it.
+- `GatewayConfig(reg, defaults)` takes the defaults `image.PublishDefaults` returned.
+- `Registry.SrcSet` and `media.SrcSet` are removed: build public URLs with
+  the lookup ("Public image URLs"), never from a preset's template.
+- Migrations `0011_media_commits` and `0012_media_publications`; River jobs
+  `contentkit_media_recover` (every minute) and `contentkit_media_upgrade`.
+
+Order:
+
+1. Stop the v0.67 media worker.
+2. Deploy the host: its migrations run, and `contentkit_media_upgrade`
+   starts with its River client and queues batches until done. It converts
+   each version 2 manifest in place under the commit journal: private blobs
+   keep their names and become the item's allocations, and the
+   template-named public files become their uploads' current publications,
+   so nothing is copied or rendered again and existing URLs keep working
+   until a later reprocess publishes a generation. It also projects every
+   item's publications. It is idempotent: a crash leaves an item either
+   unconverted or converted and recovered, and a rerun converges. A one-off
+   command can run `jobs.Upgrade(ctx, limit)` in a loop instead.
+3. Wait until `jobs.UpgradeStatus(ctx)` reports `Done` (also in
+   `content_media_upgrades`). Items it cannot convert are listed in
+   `Failures` (`content_media_upgrade_failures`), left as they were and
+   retried daily.
+4. Deploy the media gateway and media worker images at the same version.
+   The gateway serves both the legacy and the current names.
 
 ## Media worker schema
 

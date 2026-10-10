@@ -306,7 +306,9 @@ func (j *Jobs) SweepOrphans(ctx context.Context, s OrphanSweep) (OrphanReport, e
 					ref := contentref.New(k.ns, k.Name, id)
 					item, _ := j.cfg.Registry.Item(ref)
 					m, _, err := j.manifests.get(ctx, item.ManifestKey())
-					if err != nil && !errors.Is(err, ErrNotFound) {
+					if errors.Is(err, ErrUpgradeRequired) {
+						continue // never deleted before the upgrade reads it
+					} else if err != nil && !errors.Is(err, ErrNotFound) {
 						return rep, err
 					}
 					incarnation := ""

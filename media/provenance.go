@@ -140,11 +140,7 @@ func (k *Kind) Normalize(m *Manifest) {
 		if f.IsUpload() {
 			f.Public = slices.DeleteFunc(slices.Clone(f.Public), func(pub Publication) bool {
 				p := k.public(pub.Preset)
-				if p == nil {
-					return true
-				}
-				_, ok := k.Publication(m, *f, p)
-				return !ok
+				return p == nil || !k.owned(m, *f, p, pub)
 			})
 			if len(f.Public) == 0 {
 				f.Public = nil

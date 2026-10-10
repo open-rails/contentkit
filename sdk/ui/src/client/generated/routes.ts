@@ -118,9 +118,9 @@ export const CONTENTKIT_ROUTES = [
 export const CONTENTKIT_ERROR_SETS: Readonly<Record<string, readonly string[]>> = {
   "module:codes": ["internal_error"],
   "module:content": ["internal_error", "tenant_mismatch"],
-  "module:media": ["internal_error", "not_found", "rate_limited", "unavailable"],
+  "module:media": ["internal_error", "not_found", "rate_limited", "unavailable", "upgrade_required"],
   "module:taxonomy": ["internal_error"],
-  "module:upload": ["internal_error", "unavailable"],
+  "module:upload": ["internal_error", "unavailable", "upgrade_required"],
   "request": ["invalid_request"],
   "tier:staff": ["forbidden"],
   "tier:user": ["unauthorized"],

@@ -233,6 +233,7 @@ export const de: ContentKitUiMessageBundle = {
     checksum_mismatch: "Die Datei hat sich während des Uploads geändert. Bitte versuche es erneut.",
     rate_limited: "Zu viele Uploads. Versuche es in {seconds} s erneut.",
     unavailable: "Der Medienspeicher ist nicht erreichbar. Bitte versuche es gleich noch einmal.",
+    upgrade_required: "Dieses Element wird gerade aktualisiert. Bitte versuche es später noch einmal.",
     internal_error: "Auf unserer Seite ist etwas schiefgelaufen. Bitte versuche es erneut.",
     allowedTypes: "Verwende {allowed}.",
     tooLargeBy: "Diese Datei ist {size} groß; das Limit liegt bei {max}.",

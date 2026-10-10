@@ -233,6 +233,7 @@ export const es: ContentKitUiMessageBundle = {
     checksum_mismatch: "El archivo cambió durante la subida. Inténtalo de nuevo.",
     rate_limited: "Demasiadas subidas. Inténtalo de nuevo en {seconds} s.",
     unavailable: "El almacenamiento de medios no está disponible. Inténtalo de nuevo en breve.",
+    upgrade_required: "Este elemento se está actualizando. Inténtalo de nuevo más tarde.",
     internal_error: "Algo salió mal por nuestra parte. Inténtalo de nuevo.",
     allowedTypes: "Usa {allowed}.",
     tooLargeBy: "Este archivo ocupa {size}; el límite es {max}.",

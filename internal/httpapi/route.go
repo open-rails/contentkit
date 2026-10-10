@@ -275,9 +275,9 @@ func ErrorSet(name string) []string {
 	case "module:content":
 		return []string{CodeInternal, CodeTenantMismatch}
 	case "module:upload":
-		return []string{CodeInternal, CodeUnavailable}
+		return []string{CodeInternal, CodeUnavailable, CodeUpgrade}
 	case "module:media":
-		return []string{CodeInternal, CodeNotFound, CodeRateLimited, CodeUnavailable}
+		return []string{CodeInternal, CodeNotFound, CodeRateLimited, CodeUnavailable, CodeUpgrade}
 	case "module:codes", "module:taxonomy":
 		return []string{CodeInternal}
 	}

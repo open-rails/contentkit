@@ -3,6 +3,7 @@
 //
 //	{namespace}/{kind}/{id}/manifest.json         gzip JSON; never served
 //	                       /private/sha256-{hex}-{uuid}  uploads, derived files, editor views
+//	                       /private/sha256-{hex}  a pre-v0.68 item's blob, kept by the upgrade
 //	                       /public/{name}         app-declared names, e.g. cover-460.webp
 //	                       /temp/{name}           in-flight writes and staged uploads (u-{uuid}); never served
 //	{namespace}/{kind}/_default/public/{name}     a public preset's default image
@@ -119,15 +120,19 @@ func ParseSHA256Name(name string) ([]byte, bool) {
 // even of identical bytes, must receive a different allocation UUID.
 func BlobName(sum []byte, allocation string) string { return SHA256Name(sum) + "-" + allocation }
 
-// ValidBlobName accepts only the current private allocation layout.
+// ValidBlobName accepts a private allocation: "sha256-{hex}-{uuid}", or a
+// legacy "sha256-{hex}" the upgrade adopted. New writes always get a UUID.
 func ValidBlobName(name string) bool {
 	_, ok := BlobDigest(name)
 	return ok
 }
 
-// BlobDigest separates the content digest from its canonical allocation UUID.
+// BlobDigest returns a blob name's content digest.
 func BlobDigest(name string) ([]byte, bool) {
 	const digestEnd = len(SHA256Prefix) + 64
+	if len(name) == digestEnd {
+		return ParseSHA256Name(name)
+	}
 	if len(name) != digestEnd+37 || name[digestEnd] != '-' || !ValidStagedName(StagedPrefix+name[digestEnd+1:]) ||
 		name[digestEnd+1:] == "00000000-0000-0000-0000-000000000000" {
 		return nil, false
