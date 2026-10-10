@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import "../../src/test/dom.js";
-import { File as NodeFile } from "node:buffer";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
@@ -10,7 +9,7 @@ import { MediaFolderEditor, type MediaFolderEditorHandle } from "../../src/index
 import { ContentKitProvider } from "../../src/react/index.js";
 import { bytes } from "../support/bytes.js";
 import type { Config, TestUser } from "../support/harness.js";
-import { client, fixture, harness, item, png, recorder, wait, type Recorder } from "./setup.js";
+import { client, fixture, harness, item, png, recorder, wait, type Recorder, NodeFile } from "./setup.js";
 
 const h = harness();
 let cfg: Config;

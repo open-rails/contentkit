@@ -1,4 +1,5 @@
-import { deflateSync } from "node:zlib";
+// At run time, not imported: jsdom test files reach this module too.
+const { deflateSync } = process.getBuiltinModule("node:zlib");
 
 /** n deterministic pseudo-random bytes. */
 export function bytes(n: number, seed = 1): Uint8Array<ArrayBuffer> {

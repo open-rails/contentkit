@@ -1,12 +1,16 @@
 // Shared by the integration tests: the harness, named accounts, clients
 // against the real ContentKit, and a recorder of what a client sends.
-import { Blob as NodeBlob, File as NodeFile } from "node:buffer";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { inject } from "vitest";
 import { createContentKitClient, fetchTransport, type CommitBody, type ContentKitClient, type MediaOptions, type Op, type PresignBody, type RefBody, type Transport } from "../../src/client/index.js";
 import { png as pngBytes } from "../support/bytes.js";
 import { Harness, type Config, type Role, type TestUser } from "../support/harness.js";
+
+// Node's modules at run time, not imported: vite externalizes Node built-ins
+// a jsdom file imports, for browser compatibility.
+const { Blob: NodeBlob, File: NodeFile } = process.getBuiltinModule("node:buffer");
+const { readFileSync } = process.getBuiltinModule("node:fs");
+const path = process.getBuiltinModule("node:path");
+export { NodeBlob, NodeFile };
 
 export const harness = () => new Harness(inject("origin"));
 

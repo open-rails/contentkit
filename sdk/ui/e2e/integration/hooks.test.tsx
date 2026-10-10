@@ -1,13 +1,12 @@
 // @vitest-environment jsdom
 import "../../src/test/dom.js";
-import { File as NodeFile } from "node:buffer";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { ContentKitClient, Op } from "../../src/client/index.js";
 import { ContentKitProvider, useMediaFolder, useMediaRead, usePublicImage } from "../../src/react/index.js";
 import type { Config } from "../support/harness.js";
-import { Accounts, client, fixture, harness, item, png, wait } from "./setup.js";
+import { Accounts, client, fixture, harness, item, png, wait, NodeFile } from "./setup.js";
 
 describe("media hooks against the real ContentKit", () => {
   const h = harness();

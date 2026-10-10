@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import "../../src/test/dom.js";
-import { randomUUID } from "node:crypto";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -159,7 +158,7 @@ describe("content hooks against the real ContentKit", () => {
   });
 
   it("usePoll: the newest live poll; a vote applies at once and is final; usePolls and usePollEditor", async () => {
-    const language = `x${randomUUID().slice(0, 6)}`;
+    const language = `x${crypto.randomUUID().slice(0, 6)}`;
     const editor = client("editor");
     const ed = renderHook(() => ({ editor: usePollEditor(null), list: usePolls({ admin: true, language }) }), { wrapper: wrap(editor, "editor") });
     await waitFor(() => expect(ed.result.current.list.loading).toBe(false), wait);
@@ -201,7 +200,7 @@ describe("content hooks against the real ContentKit", () => {
   });
 
   it("usePost and usePosts: create, edit, cover and body images update every view", async () => {
-    const language = `y${randomUUID().slice(0, 6)}`;
+    const language = `y${crypto.randomUUID().slice(0, 6)}`;
     const c = client("editor");
     const { result } = renderHook(
       () => ({ post: usePost(null), all: usePosts({ admin: true, language }), drafts: usePosts({ admin: true, language, draft: true }), trash: usePosts({ admin: true, language, deleted: true }) }),
