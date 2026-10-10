@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useRef } from "react";
+import { createContext, useCallback, useContext, useLayoutEffect, useRef } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import { toContentKitError, type ContentKitError } from "../client/errors.js";
 import type { ContentURLs } from "../urls/index.js";
@@ -65,6 +65,11 @@ export interface ContentKitContextValue {
    * undefined when the host does not say. Content reads are kept per viewer.
    */
   viewer?: string | null;
+  /** Request language; keep it in sync with the client's language callback. */
+  language?: string;
+  /** Change when the current viewer's permissions or entitlements change. */
+  accessRevision?: string | number;
+  readScope: string;
   /** Asks the visitor to sign in; with it, signed-out visitors are prompted instead of acting anonymously. */
   onSignIn?: () => void;
   /** The host's content URL config (createContentURLs). */
@@ -76,6 +81,11 @@ export interface ContentKitContextValue {
 }
 
 export const ContentKitContext = createContext<ContentKitContextValue | null>(null);
+
+/** Values that can change a read without changing its content reference. */
+export function useReadScope(): string {
+  return useContext(ContentKitContext)?.readScope ?? "{}";
+}
 
 /** The ContentKitProvider's value; throws outside one. */
 export function useContentKit(): ContentKitContextValue {
@@ -93,7 +103,10 @@ export function useContentKitClient(own?: ContentKitClient | null): ContentKitCl
 
 export function useOptionalContentKitClient(own?: ContentKitClient | null): ContentKitClient | null {
   const ctx = useContext(ContentKitContext);
-  return own ?? ctx?.client ?? null;
+  const client = own ?? ctx?.client ?? null;
+  const scope = useReadScope();
+  useLayoutEffect(() => { client?.setReadScope(scope); }, [client, scope]);
+  return client;
 }
 
 /** The provider's content URL helpers; throws when none were given. */

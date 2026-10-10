@@ -29,25 +29,29 @@ export class CommentsClient {
   }
   /** Comments on the item, or replies to a top-level comment (reply_to_id); anonymous callers give anon_name. */
   async create(ref: RefBody, input: CommentInput): Promise<Comment> {
+    const emit = this.http.captureChanges();
     const comment: Comment = await call(this.http, "POST", "/{kind}/{id}/comments", { params: target(ref), body: input });
-    this.http.emit({ type: "comment.created", ref: target(ref), comment });
+    emit({ type: "comment.created", ref: target(ref), comment });
     return comment;
   }
   /** Replaces the body: its author, or a moderator. */
   async edit(id: string, body: string): Promise<Comment> {
+    const emit = this.http.captureChanges();
     const comment: Comment = await call(this.http, "PATCH", "/comments/{cid}", { params: { cid: id }, body: { body } });
-    this.http.emit({ type: "comment.updated", comment });
+    emit({ type: "comment.updated", comment });
     return comment;
   }
   /** Leaves a tombstone: its author, or a moderator. */
   async delete(id: string): Promise<void> {
+    const emit = this.http.captureChanges();
     await call(this.http, "DELETE", "/comments/{cid}", { params: { cid: id } });
-    this.http.emit({ type: "comment.deleted", id });
+    emit({ type: "comment.deleted", id });
   }
   /** Sets the caller's reaction to a comment. */
   async react(id: string, value: Reaction): Promise<ReactionCounts> {
+    const emit = this.http.captureChanges();
     const counts: ReactionCounts = await call(this.http, "POST", `/comments/{cid}/${reactionVerb(value)}` as const, { params: { cid: id } });
-    this.http.emit({ type: "comment.reacted", id, counts });
+    emit({ type: "comment.reacted", id, counts });
     return counts;
   }
   /** Whether the caller may comment on the item, the ban that stops it, and what it may do to others' comments. */
@@ -65,7 +69,8 @@ export class CommentsClient {
   }
   /** Restores a deleted comment (CommentModerate). */
   async restore(id: string): Promise<void> {
+    const emit = this.http.captureChanges();
     await call(this.http, "POST", "/comments/{cid}/restore", { params: { cid: id } });
-    this.http.emit({ type: "comment.restored", id });
+    emit({ type: "comment.restored", id });
   }
 }

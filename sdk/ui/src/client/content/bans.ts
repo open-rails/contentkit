@@ -15,17 +15,19 @@ export class BansClient {
   }
   /** Bans user from commenting in the scope, replacing any ban there; no until lasts until lifted. */
   async ban(scope: BanScope, user: string, input: BanInput = {}): Promise<CommentBan> {
+    const emit = this.http.captureChanges();
     const o = { params: { user }, body: input };
     const ban: CommentBan = await (scope === "global"
       ? call(this.http, "PUT", "/global-comment-bans/{user}", o)
       : call(this.http, "PUT", "/comment-bans/{user}", o));
-    this.http.emit({ type: "ban.saved", scope, ban });
+    emit({ type: "ban.saved", scope, ban });
     return ban;
   }
   /** Lifts user's ban in the scope; idempotent. */
   async lift(scope: BanScope, user: string): Promise<void> {
+    const emit = this.http.captureChanges();
     const o = { params: { user } };
     await (scope === "global" ? call(this.http, "DELETE", "/global-comment-bans/{user}", o) : call(this.http, "DELETE", "/comment-bans/{user}", o));
-    this.http.emit({ type: "ban.lifted", scope, user });
+    emit({ type: "ban.lifted", scope, user });
   }
 }

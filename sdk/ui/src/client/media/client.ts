@@ -261,6 +261,7 @@ export class MediaClient {
    * the affected files again and retries the commit once.
    */
   async commit(ref: RefBody, ops: Op[], o: CommitOptions = {}): Promise<FileInfo[]> {
+    const emit = this.http.captureChanges();
     // Snapshot the batch once: retries must not pick up edits to the caller's
     // ops while the first request or its response is still in flight.
     const body: CommitBody = structuredClone({ ref, ops, operation_id: o.operationID ?? crypto.randomUUID() });
@@ -289,7 +290,7 @@ export class MediaClient {
       o.onState?.(structuredClone(replacement));
       files = (await this.retry(() => this.api.commit(replacement, o.signal), o.signal)).files;
     }
-    this.http.emit({ type: "media.committed", ref: { kind: ref.kind, id: ref.id }, files });
+    emit({ type: "media.committed", ref: { kind: ref.kind, id: ref.id }, files });
     return files;
   }
 
@@ -308,6 +309,7 @@ export class MediaClient {
    * render_timeout after the timeout.
    */
   async waitFor(ref: RefBody, path: string, o: WaitOptions = {}): Promise<FileInfo> {
+    const emit = this.http.captureChanges();
     const until = Date.now() + (o.timeout ?? 120_000);
     for (;;) {
       const r = await this.read(ref, { editor: true, prefix: stem(path), signal: o.signal });
@@ -315,7 +317,7 @@ export class MediaClient {
       if (!f) throw new ContentKitError("not_found", `no upload ${path}`, { status: 404 });
       if (f.failed) throw failureError(f.failed);
       if (!f.pending?.length && !f.staged && (f.size ?? 0) > 0) {
-        this.http.emit({ type: "media.processed", ref: { kind: ref.kind, id: ref.id }, file: f });
+        emit({ type: "media.processed", ref: { kind: ref.kind, id: ref.id }, file: f });
         return f;
       }
       if (r.full) throw new ContentKitError("too_large", `${path} waits: the item is full; remove uploads to process more`, { status: 413 });

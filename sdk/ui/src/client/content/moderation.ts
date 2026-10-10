@@ -20,12 +20,13 @@ export class ModerationClient {
   }
   /** Approves (publishes) or rejects a held item at the revision the queue listed; conflict when it was edited since. */
   async resolve(item: Pick<HeldItem, "kind" | "id" | "revision">, decision: Decision, reason?: string): Promise<ReviewOutcome> {
+    const emit = this.http.captureChanges();
     const kind = item.kind as HeldKind;
     const out: ReviewOutcome = await call(this.http, "POST", "/moderation/{kind}/{id}/resolve", {
       params: { kind, id: item.id },
       body: { decision, revision: item.revision, ...(reason ? { reason } : {}) },
     });
-    this.http.emit({ type: "moderation.resolved", kind, id: item.id, decision });
+    emit({ type: "moderation.resolved", kind, id: item.id, decision });
     return out;
   }
 }

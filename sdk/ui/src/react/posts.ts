@@ -22,11 +22,11 @@ export interface PostFilter {
 
 /** Posts, a page at a time: the published ones, or every one for staff. */
 export function usePosts(f: PostFilter = {}, o: { client?: ContentKitClient } = {}): UseList<Post> {
-  const { client, store, viewer } = useContentScope(o.client);
+  const { client, store, scope } = useContentScope(o.client);
   const size = f.pageSize ?? 20;
   return useList(
     store,
-    keyOf("posts", viewer, !!f.admin, f.language, f.sort, f.draft, f.deleted, f.q, size),
+    keyOf("posts", scope, !!f.admin, f.language, f.sort, f.draft, f.deleted, f.q, size),
     { type: "posts", scope: f.admin && f.deleted ? "deleted" : undefined },
     offsetPages(size, (q, signal) =>
       f.admin
@@ -79,10 +79,10 @@ export function isPublished(post: Post, now = Date.now()): boolean {
 
 /** One post: read, and for staff (PostWrite) create, update, delete, restore, cover and body images. null creates a new post. */
 export function usePost(id: string | null | undefined, o: { initial?: Post; client?: ContentKitClient } = {}): UsePost {
-  const { client, store, viewer } = useContentScope(o.client);
+  const { client, store, scope } = useContentScope(o.client);
   const [created, setCreated] = useState<string | null>(null);
   const pid = id ?? created;
-  const key = pid ? keyOf("post", viewer, pid) : null;
+  const key = pid ? keyOf("post", scope, pid) : null;
   const r = useResource<Post | null>(store, key, { type: "post", id: pid ?? undefined }, (s) => client.posts.get(pid!, s), { initial: o.initial });
   const post = r.data ?? null;
   const [inflight, setInflight] = useState(0);

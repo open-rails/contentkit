@@ -21,8 +21,8 @@ const ZERO: ReactionCounts = { likes: 0, dislikes: 0, mine: 0 };
 
 /** An item's likes and dislikes and the caller's own reaction (initial: counts the host already has). */
 export function useReaction(ref: RefBody, o: { initial?: ReactionCounts; client?: ContentKitClient } = {}): UseReaction {
-  const { client, store, viewer } = useContentScope(o.client);
-  const key = keyOf("reaction", viewer, ref.kind, ref.id);
+  const { client, store, scope } = useContentScope(o.client);
+  const key = keyOf("reaction", scope, ref.kind, ref.id);
   const r = useResource<ReactionCounts>(store, key, { type: "reaction", ref: { kind: ref.kind, id: ref.id } }, (s) => client.reactions.get(ref, s), { initial: o.initial });
   const counts = r.data ?? ZERO;
   const { kind, id } = ref;
@@ -62,8 +62,8 @@ export interface UseFavorite {
  * (initial: what the host already has). Signed out, favorited stays false.
  */
 export function useFavorite(ref: RefBody, o: { initial?: FavoriteState; client?: ContentKitClient } = {}): UseFavorite {
-  const { client, store, viewer } = useContentScope(o.client);
-  const key = keyOf("favorite", viewer, ref.kind, ref.id);
+  const { client, store, scope } = useContentScope(o.client);
+  const key = keyOf("favorite", scope, ref.kind, ref.id);
   const r = useResource<FavoriteState>(store, key, { type: "favorite", ref: { kind: ref.kind, id: ref.id } }, (s) => client.favorites.get(ref, s), { initial: o.initial });
   const favorited = !!r.data?.favorited;
   const [pending, setPending] = useState(false);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ratio, type AspectRatio } from "../client/aspect.js";
 import type { ContentKitClient } from "../client/client.js";
 import { centeredCrop, constrainCrop, editedSize, rotation, sameEdit, type Size } from "../client/crop.js";
@@ -8,7 +8,7 @@ import { decodeImage, isAnimatedImage, type CropSource } from "../client/image.j
 import { samePath, stem, type Progress } from "../client/media/client.js";
 import { publicRenditions, type PublicPreset } from "../client/public.js";
 import type { Rendition } from "../client/rendition.js";
-import { useContentKitClient } from "./context.js";
+import { useContentKitClient, useReadScope } from "./context.js";
 import { useMediaRead } from "./read.js";
 import { withUpload } from "./store.js";
 
@@ -113,6 +113,7 @@ export function editOutput(source: Size, edit: Edit | null | undefined, shape: A
 /** pick → crop → save → done, and recrop() → crop → save for an existing upload. */
 export function useSlotCrop(o: SlotCropOptions): UseSlotCrop {
   const { media } = useContentKitClient(o.client);
+  const scope = useReadScope();
   const [s, setS] = useState<SlotCropState>({ status: "idle" });
   const cur = useRef(s);
   cur.current = s;
@@ -130,15 +131,6 @@ export function useSlotCrop(o: SlotCropOptions): UseSlotCrop {
     cur.current = next;
     setS(next);
   }, []);
-
-  useEffect(
-    () => () => {
-      ctl.current?.abort();
-      const c = cur.current;
-      if ("source" in c) c.source?.revoke?.();
-    },
-    [],
-  );
 
   const open = useCallback(
     async (load: () => Promise<CropSource>, mode: SlotCropMode, edit: Edit | null) => {
@@ -205,6 +197,7 @@ export function useSlotCrop(o: SlotCropOptions): UseSlotCrop {
         else {
           const at = opts.current.file?.path ?? path;
           await media.commit(ref, [{ op: "edit", path: at, ...(edit ? { edit } : {}) }], { signal: a.signal });
+          if (a !== ctl.current) return undefined;
           saving({ phase: "processing", loaded: 0, total: 0 });
           file = await media.waitFor(ref, at, { signal: a.signal, timeout });
         }
@@ -229,6 +222,9 @@ export function useSlotCrop(o: SlotCropOptions): UseSlotCrop {
     ctl.current = null;
     set({ status: "idle" });
   }, [set]);
+
+  // Cancel before old work can reach the current scope's editor callbacks.
+  useLayoutEffect(() => cancel, [scope, media, cancel]);
 
   const cropped = useMemo(() => ("source" in s && s.source ? editOutput(s.source, s.edit, aspect) : undefined), [s, aspect]);
   return { ...s, aspect, cropped, pick, canRecrop, recrop, setEdit, save, cancel };

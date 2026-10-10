@@ -41,6 +41,8 @@ const urls = createContentURLs({ routes: { video: "watch", gallery: "g" }, langu
 <ContentKitProvider
   client={contentkit}
   viewer={user?.id ?? null}                 // the signed-in user as ContentKit sees it
+  language={lang}                          // same value as the client's language callback
+  accessRevision={accessRevision}          // increment when permissions/entitlements change
   onSignIn={() => openSignIn()}             // asks signed-out visitors to sign in where the server refuses them
   urls={urls}
   navigate={(to, o) => navigate(to, o)}
@@ -52,6 +54,22 @@ const urls = createContentURLs({ routes: { video: "watch", gallery: "g" }, langu
   </ContentKitUiProvider>
 </ContentKitProvider>;
 ```
+
+Keep `viewer`, `language` and `accessRevision` current on the provider. A change
+starts fresh media and social reads without remounting the children. Old requests
+are abandoned when their last reader leaves; their results cannot fill the new
+scope. `accessRevision` is optional when the host has no changing access state.
+It is a cache signal, not an authorization decision. Without a provider, replace
+the client when its session or request language changes. Host-supplied `read` and
+`initial` data must also belong to the current viewer and language.
+
+Writes retain the cache scope they started in. After a scope change, a late
+notification refetches affected reads instead of copying its response into them;
+`onChange` still runs. Use a separate client for each independent session or
+request-language context, not one client across differently scoped providers.
+The framework-free client exposes `setReadScope(key)` and passes that key as
+the second `subscribe` / `onChange` argument, or `null` when the scope changed during the
+operation. This does not change the operation's result or its authentication.
 
 - **Mounts.** Without `mounts`, modules live under `baseUrl`: content at the
   root, `/media` (reads, HLS), `/media/upload`, `/codes`, `/taxonomy`.

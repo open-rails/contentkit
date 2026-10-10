@@ -32,6 +32,7 @@ export type LoadMode = "initial" | "refresh" | "reload";
 
 interface Slot {
   key: string;
+  scope: string;
   ref: RefBody;
   options: ReadOptions;
   listeners: Map<() => void, ReadPolicy>;
@@ -69,12 +70,12 @@ export class ReadStore {
   private readonly slots = new Map<string, Slot>();
 
   constructor(private readonly client: ContentKitClient) {
-    client.subscribe((c) => this.apply(c));
+    client.subscribe((c, scope) => this.apply(c, scope));
   }
 
-  subscribe(key: string, ref: RefBody, options: ReadOptions, listener: () => void, policy: ReadPolicy = {}): () => void {
+  subscribe(key: string, ref: RefBody, options: ReadOptions, listener: () => void, policy: ReadPolicy = {}, scope = "{}"): () => void {
     let s = this.slots.get(key);
-    if (!s) this.slots.set(key, (s = { key, ref, options, listeners: new Map(), entry: IDLE }));
+    if (!s) this.slots.set(key, (s = { key, scope, ref, options, listeners: new Map(), entry: IDLE }));
     const slot = s;
     slot.listeners.set(listener, policy);
     this.schedule(slot);
@@ -167,7 +168,7 @@ export class ReadStore {
     }
   }
 
-  private apply(change: ContentKitChange): void {
+  private apply(change: ContentKitChange, scope: string | null): void {
     if (change.type !== "media.committed" && change.type !== "media.processed") return;
     const { ref } = change;
     for (const [key, s] of this.slots) {
@@ -179,8 +180,8 @@ export class ReadStore {
       const read = s.entry.read;
       const { file } = change;
       if (!read) continue;
-      // A viewer read cannot be patched: its URLs and public files change.
-      if (!s.options.editor) {
+      // Viewer URLs and responses from an earlier scope require a fresh read.
+      if (!s.options.editor || s.scope !== scope) {
         this.load(key, "reload");
         continue;
       }

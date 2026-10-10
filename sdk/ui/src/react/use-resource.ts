@@ -1,14 +1,14 @@
 import { useCallback, useContext, useEffect, useRef, useSyncExternalStore } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
-import { ContentKitContext, useContentKitClient } from "./context.js";
+import { ContentKitContext, useContentKitClient, useReadScope } from "./context.js";
 import { resourcesFor, type Fetcher, type Page, type Resource, type ResourceStore, type Tag } from "./resources.js";
 
 /** The client, its shared store, and the provider's viewer and sign-in. */
 export function useContentScope(own?: ContentKitClient | null) {
   const ctx = useContext(ContentKitContext);
   const client = useContentKitClient(own);
-  return { client, store: resourcesFor(client), viewer: ctx?.viewer, onSignIn: ctx?.onSignIn };
+  return { client, store: resourcesFor(client), scope: useReadScope(), viewer: ctx?.viewer, onSignIn: ctx?.onSignIn };
 }
 
 const IDLE: Resource<never> = { data: undefined, loading: false, loaded: false };
@@ -22,18 +22,20 @@ export function useResource<T>(
   fetcher: Fetcher<T>,
   o: { initial?: T; more?: (cursor: string | number, signal: AbortSignal) => Promise<Page<unknown>> } = {},
 ): Resource<T> & { reload: () => void } {
+  const scope = useReadScope();
   const fetch = useRef(fetcher);
   const more = useRef(o.more);
   const initial = useRef(o.initial);
   useEffect(() => {
     fetch.current = fetcher;
     more.current = o.more;
+    initial.current = o.initial;
   });
   const subscribe = useCallback(
-    (l: () => void) => (key ? store.subscribe(key, tag, l) : none()),
+    (l: () => void) => (key ? store.subscribe(key, { ...tag, readScope: scope }, l) : none()),
     // The tag is part of the key.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [store, key],
+    [store, key, scope],
   );
   const snapshot = useCallback(() => (key ? store.snapshot<T>(key) : IDLE), [store, key]);
   const entry = useSyncExternalStore(subscribe, snapshot, snapshot);

@@ -39,36 +39,42 @@ export class PostsClient {
   }
   /** Creates a post (PostWrite); moderation "held" when the moderator holds it. */
   async create(input: PostInput): Promise<Post> {
+    const emit = this.http.captureChanges();
     const post: Post = await call(this.http, "POST", "/posts", { body: input });
-    this.http.emit({ type: "post.created", post });
+    emit({ type: "post.created", post });
     return post;
   }
   /** Updates the given fields (PostWrite). */
   async update(id: string, input: PostInput): Promise<Post> {
+    const emit = this.http.captureChanges();
     const post: Post = await call(this.http, "PATCH", "/posts/{id}", { params: { id }, body: input });
-    this.http.emit({ type: "post.updated", post });
+    emit({ type: "post.updated", post });
     return post;
   }
   async delete(id: string): Promise<void> {
+    const emit = this.http.captureChanges();
     await call(this.http, "DELETE", "/posts/{id}", { params: { id } });
-    this.http.emit({ type: "post.deleted", id });
+    emit({ type: "post.deleted", id });
   }
   /** Restores a deleted post as it was (PostWrite); conflict when a live post took its slug. */
   async restore(id: string): Promise<Post> {
+    const emit = this.http.captureChanges();
     const post: Post = await call(this.http, "POST", "/posts/{id}/restore", { params: { id } });
-    this.http.emit({ type: "post.restored", post });
+    emit({ type: "post.restored", post });
     return post;
   }
   /** Sets the caller's reaction to a published post; resolves with the post's new totals. */
   async react(id: string, value: Reaction): Promise<Post> {
+    const emit = this.http.captureChanges();
     const post: Post = await call(this.http, "POST", `/posts/{id}/${reactionVerb(value)}` as const, { params: { id } });
-    this.http.emit({ type: "post.updated", post });
+    emit({ type: "post.updated", post });
     return post;
   }
   /** Sets the cover to an inline image name ("i-{uuid}") of the post's folder, or clears it; resolves with its URL. */
   async setCover(id: string, image: string | null): Promise<string | null> {
+    const emit = this.http.captureChanges();
     const r: PostCover = await call(this.http, "PUT", "/posts/{id}/cover", { params: { id }, body: { image: image ?? "" } });
-    this.http.emit({ type: "post.changed", id });
+    emit({ type: "post.changed", id });
     return r.cover_url;
   }
   /** Uploads file to the post's folder and makes it the cover (null clears it); resolves with its URL. */

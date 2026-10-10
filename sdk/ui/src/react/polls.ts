@@ -29,8 +29,8 @@ export interface UsePoll {
  * live poll (in language): the one a home page shows.
  */
 export function usePoll(id?: string | null, o: { initial?: Poll; language?: string; client?: ContentKitClient } = {}): UsePoll {
-  const { client, store, viewer } = useContentScope(o.client);
-  const key = id ? keyOf("poll", viewer, id) : keyOf("poll", viewer, "latest", o.language ?? "");
+  const { client, store, scope } = useContentScope(o.client);
+  const key = id ? keyOf("poll", scope, id) : keyOf("poll", scope, "latest", o.language ?? "");
   const r = useResource<Poll | null>(
     store,
     key,
@@ -86,12 +86,12 @@ export interface PollFilter {
 
 /** Polls, newest first, a page at a time. */
 export function usePolls(f: PollFilter = {}, o: { client?: ContentKitClient } = {}): UseList<Poll> {
-  const { client, store, viewer } = useContentScope(o.client);
+  const { client, store, scope } = useContentScope(o.client);
   const size = f.pageSize ?? 20;
   const q = { language: f.language, month: f.month, date: f.date };
   return useList(
     store,
-    keyOf("polls", viewer, !!f.admin, q.language, q.month, q.date, size),
+    keyOf("polls", scope, !!f.admin, q.language, q.month, q.date, size),
     { type: "polls" },
     offsetPages(size, (page, signal) => (f.admin ? client.polls.adminList({ ...q, ...page }, signal) : client.polls.list({ ...q, ...page }, signal))),
   );
@@ -126,10 +126,10 @@ export interface UsePollEditor {
 
 /** Staff: one poll's editor (PollWrite); null creates a new poll. */
 export function usePollEditor(id: string | null | undefined, o: { client?: ContentKitClient } = {}): UsePollEditor {
-  const { client, store, viewer } = useContentScope(o.client);
+  const { client, store, scope } = useContentScope(o.client);
   const [created, setCreated] = useState<string | null>(null);
   const pid = id ?? created;
-  const key = pid ? keyOf("poll", viewer, pid) : null;
+  const key = pid ? keyOf("poll", scope, pid) : null;
   const r = useResource<Poll | null>(store, key, { type: "poll", id: pid ?? undefined }, (s) => client.polls.get(pid!, s));
   const poll = r.data ?? null;
   const [inflight, setInflight] = useState(0);
