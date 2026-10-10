@@ -137,8 +137,6 @@ export const social: typeof en = {
     option: "Opción {index}",
     addOption: "Añadir opción",
     newOption: "Nueva opción",
-    moveUp: "Subir",
-    moveDown: "Bajar",
     removeOption: "Quitar opción",
     removeOptionTitle: "¿Quitar esta opción?",
     removeOptionBody: "También se eliminan sus votos. Una encuesta conserva al menos dos opciones.",

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import vectors from "../../../../contenturl/testdata/vectors.json" with { type: "json" };
-import { type ContentLink, contentPath, createContentURLs, isCode, parseCode, slugFor } from "./index.js";
+import { type ContentLink, canonicalURL, contentPath, createContentURLs, isCode, parseCode, slugFor } from "./index.js";
 
 describe("codes (shared vectors)", () => {
   for (const c of vectors.codes) {
@@ -67,5 +67,28 @@ describe("building", () => {
     const site = createContentURLs({ routes: { gallery: "g" }, languages: ["es"], origin: "https://example.com/" });
     expect(site.url(link, { language: "es" })).toBe("https://example.com/es/g/G4VRQ3ZQ5/un-titulo");
     expect(() => urls.url(link)).toThrow(/origin/);
+  });
+});
+
+describe("hreflang and canonical URLs", () => {
+  const link: ContentLink = { content_kind: "video", code: "G4VRQ3ZQ5", slug: "night-run", slugs: { es: "carrera-nocturna" } };
+  const urls = createContentURLs({ routes: { video: "watch" }, languages: ["en", "es", "ja"], origin: "https://example.com/" });
+
+  it("lists each language's URL with its own slug, and x-default", () => {
+    expect(urls.hreflang(link, { defaultLanguage: "en" })).toEqual({
+      en: "https://example.com/en/watch/G4VRQ3ZQ5/night-run",
+      es: "https://example.com/es/watch/G4VRQ3ZQ5/carrera-nocturna",
+      ja: "https://example.com/ja/watch/G4VRQ3ZQ5/night-run",
+      "x-default": "https://example.com/en/watch/G4VRQ3ZQ5/night-run",
+    });
+    expect(urls.hreflang(link, { languages: ["es", "fr"], origin: "https://other.test" })).toEqual({ es: "https://other.test/es/watch/G4VRQ3ZQ5/carrera-nocturna" });
+    expect(() => createContentURLs({ routes: { video: "watch" } }).hreflang(link)).toThrow(/origin/);
+    expect(urls.languages).toEqual(["en", "es", "ja"]);
+    expect(urls.origin).toBe("https://example.com");
+  });
+
+  it("drops tracking parameters, the fragment and a trailing slash", () => {
+    expect(canonicalURL("https://example.com/blog/?utm_source=x&page=2&gclid=1&fbclid=2#top")).toBe("https://example.com/blog?page=2");
+    expect(canonicalURL("https://example.com/?ref=a", { drop: ["ref"] })).toBe("https://example.com/");
   });
 });

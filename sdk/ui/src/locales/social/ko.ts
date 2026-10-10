@@ -137,8 +137,6 @@ export const social: typeof en = {
     option: "선택지 {index}",
     addOption: "선택지 추가",
     newOption: "새 선택지",
-    moveUp: "위로",
-    moveDown: "아래로",
     removeOption: "선택지 삭제",
     removeOptionTitle: "이 선택지를 삭제할까요?",
     removeOptionBody: "해당 표도 삭제됩니다. 투표에는 선택지가 최소 2개 남습니다.",

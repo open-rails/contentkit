@@ -14,6 +14,12 @@ export type ContentKitOperation =
   | "slot.save"
   | "slot.remove"
   | "upload"
+  | "folder.load"
+  | "folder.commit"
+  | "folder.update"
+  | "folder.process"
+  | "crop.load"
+  | "crop.save"
   | SocialOperation;
 
 /** What failed in a content component: a load or a write. */
@@ -37,11 +43,17 @@ export type SocialOperation =
   | "moderation.load"
   | "moderation.resolve";
 
+/** The failure's context: the operation and, for one file, its name. */
+export interface ContentKitErrorInfo {
+  operation: ContentKitOperation;
+  file?: string;
+}
+
 /**
  * Every failure a component shows is also reported here (aborts excepted), so
  * the host can toast or log it. Components still show it in place.
  */
-export type ContentKitErrorHandler = (error: ContentKitError, info: { operation: ContentKitOperation }) => void;
+export type ContentKitErrorHandler = (error: ContentKitError, info: ContentKitErrorInfo) => void;
 
 /** The host router: in-app navigation, e.g. a canonical replace. */
 export type Navigate = (to: string, options?: { replace?: boolean }) => void;
@@ -92,12 +104,12 @@ export function useContentURLs(): ContentURLs {
 }
 
 /** A stable reporter: the component's own `onError`, else the provider's. */
-export function useErrorReporter(own?: ContentKitErrorHandler): (e: unknown, operation: ContentKitOperation) => void {
+export function useErrorReporter(own?: ContentKitErrorHandler): (e: unknown, operation: ContentKitOperation, file?: string) => void {
   const ctx = useContext(ContentKitContext)?.onError;
   const handler = useRef(own ?? ctx);
   handler.current = own ?? ctx;
-  return useCallback((e: unknown, operation: ContentKitOperation) => {
+  return useCallback((e: unknown, operation: ContentKitOperation, file?: string) => {
     const error = toContentKitError(e);
-    if (error.code !== "aborted") handler.current?.(error, { operation });
+    if (error.code !== "aborted") handler.current?.(error, file === undefined ? { operation } : { operation, file });
   }, []);
 }

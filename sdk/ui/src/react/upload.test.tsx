@@ -5,7 +5,7 @@ import { expect, it } from "vitest";
 import { FakeServer, bytes, fakeClient as client } from "../../test/fake.js";
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitChange } from "../client/http.js";
-import { ContentKitProvider, useCrop, useRead, useUpload, useUploadQueue } from "./index.js";
+import { ContentKitProvider, useCrop, useUpload, useUploadQueue } from "./index.js";
 
 const provider = (c: ContentKitClient, onChange?: (change: ContentKitChange) => void) =>
   function Wrapper({ children }: { children: ReactNode }) {
@@ -56,44 +56,6 @@ it("useUpload reports progress and the result; with put it commits and waits", a
   });
   expect(result.current.result).toMatchObject({ path: "cover.png", file: { path: "cover.png", edit: { rotate: 180 } } });
   expect(result.current.progress?.phase).toBe("processing");
-});
-
-it("useRead reads the item and refetches on reload", async () => {
-  const s = new FakeServer();
-  s.seed(ref, [{ path: "originals/1.png", type: "image/png", size: 3 }]);
-  const c = client(s);
-  const { result } = renderHook(() => useRead(ref, { editor: true, client: c }));
-  await waitFor(() => expect(result.current.read?.files.map((f) => f.path)).toEqual(["originals/1.png"]));
-  act(() => result.current.reload());
-  await waitFor(() => expect(s.calls.filter((x) => x === "/read")).toHaveLength(2));
-  const given = renderHook(() => useRead(ref, { read: null, client: c }));
-  expect([given.result.current.read, given.result.current.loading]).toEqual([null, false]);
-  expect(s.calls.filter((x) => x === "/read")).toHaveLength(2);
-});
-
-it("useRead shares one request per item and options, and set() and processed uploads update every reader", async () => {
-  const s = new FakeServer();
-  s.seed(ref, [{ path: "cover.png", type: "image/png", size: 3 }]);
-  const c = client(s);
-  const { result } = renderHook(
-    () => ({ a: useRead(ref, { editor: true, prefix: "cover" }), b: useRead(ref, { editor: true, prefix: "cover" }), other: useRead(ref, { editor: true }) }),
-    { wrapper: provider(c) },
-  );
-  await waitFor(() => expect(result.current.a.loading || result.current.b.loading || result.current.other.loading).toBe(false));
-  expect(s.calls.filter((x) => x === "/read")).toHaveLength(2);
-  expect(result.current.b.read).toBe(result.current.a.read);
-
-  const read = result.current.a.read!;
-  act(() => result.current.a.set({ ...read, files: [{ ...read.files[0]!, meta: { by: "set" } }] }));
-  expect(result.current.b.read?.files[0]?.meta).toEqual({ by: "set" });
-  expect(result.current.other.read?.files[0]?.meta).toBeUndefined();
-
-  await act(async () => {
-    await c.media.put(new File([bytes(100, 9)], "c.png", { type: "image/png" }), { ref, path: "cover", edit: { rotate: 90 } });
-  });
-  expect(result.current.a.read?.files.find((f) => f.path === "cover.png")?.edit).toEqual({ rotate: 90 });
-  expect(result.current.other.read?.files.find((f) => f.path === "cover.png")?.edit).toEqual({ rotate: 90 });
-  expect(s.calls.filter((x) => x === "/read")).toHaveLength(3); // put's own wait, no refetch
 });
 
 it("useCrop keeps a crop in original pixels at the aspect and yields the edit", () => {

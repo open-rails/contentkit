@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createContentKitClient, type ContentKitClient } from "../src/client/client.js";
 import { ContentKitError } from "../src/client/errors.js";
-import type { CommitBody, ErrorReply, FileInfo, Op, PartBody, PresignBody, PublicImage, ReadResult, RequestReply } from "../src/client/generated/wire.js";
+import type { CommitBody, ErrorReply, Failure, FileInfo, Op, PartBody, PresetRule, PresignBody, PublicImage, ReadResult, RequestReply, UploadRule } from "../src/client/generated/wire.js";
 import type { MediaOptions } from "../src/client/media/client.js";
 import { stem } from "../src/client/media/client.js";
 import type { Transport } from "../src/client/media/transport.js";
@@ -62,6 +62,18 @@ export class FakeServer {
   publicImages = new Map<string, PublicImage[]>();
   /** Frame grabs as "t@w". */
   frames: string[] = [];
+  /** Each kind's upload rules, carried by editor reads. */
+  rules = new Map<string, UploadRule[]>();
+  /** GET /presets. */
+  presets: PresetRule[] = [];
+  /** Reads answer rate_limited (retry_after 1) this many times. */
+  limitReads = 0;
+  /** Each read's query. */
+  reads: URLSearchParams[] = [];
+  /** Reads' expiry, unix seconds (0: none). */
+  expires = 0;
+  /** Uploads the worker fails, by path: their failure appears on the next commit. */
+  failures = new Map<string, Failure>();
   private pendingLeft = 0;
   private stagedLeft = 0;
   private seq = 0;
@@ -83,7 +95,13 @@ export class FakeServer {
         this.frames.push(`${url.searchParams.get("t")}@${url.searchParams.get("w")}`);
         return new Response(new Blob([bytes(32, 3)], { type: "image/jpeg" }), { status: 200 });
       }
+      if (path === "/read/presets") return json(200, this.presets);
       if (path.startsWith("/read/")) {
+        this.reads.push(url.searchParams);
+        if (this.limitReads > 0) {
+          this.limitReads--;
+          throw new ContentKitError("rate_limited", "slow down", { status: 429, retryAfter: 1 });
+        }
         const [, , kind, id] = path.split("/");
         return json(200, this.read({ kind: kind!, id: id! }, url.searchParams));
       }
@@ -121,13 +139,23 @@ export class FakeServer {
 
   private read(ref: { kind: string; id: string }, q: URLSearchParams): ReadResult {
     const prefix = q.get("prefix") ?? "";
+    const editor = q.has("editor");
+    const offset = Number(q.get("offset") ?? 0);
+    const limit = Number(q.get("limit") ?? 0) || 50;
     const pending = this.pendingLeft > 0 && (this.pendingLeft--, true);
     const staged = this.stagedLeft > 0 && (this.stagedLeft--, true);
     const files = (this.items.get(key(ref)) ?? [])
       .filter((f) => f.path.startsWith(prefix))
-      .map((f) => ({ ...f, ...(pending ? { pending: ["render"] } : {}), ...(staged ? { staged: true } : {}), ...(f.type.startsWith("image/") && f.size ? { editor_url: `fake://cdn/private/e-${f.path}` } : {}) }));
+      .map((f, i) => ({
+        ...f,
+        ...(pending ? { pending: ["render"] } : {}),
+        ...(staged ? { staged: true } : {}),
+        ...(editor && f.type.startsWith("image/") && f.size ? { editor_url: `fake://cdn/private/e-${f.path}` } : {}),
+        ...(i >= offset && i < offset + limit ? { url: `fake://cdn/private/${f.path}?at=${this.reads.length}` } : {}),
+      }));
     const published = pending || staged ? [] : (this.publicImages.get(key(ref)) ?? []).filter((p) => files.some((f) => f.path === p.from && !f.unattached));
-    return { access: "full", expires: 0, total: files.length, offset: 0, limit: 50, files, public: published, ...(this.full ? { full: true } : {}) };
+    const rules = editor ? this.rules.get(ref.kind) : undefined;
+    return { access: "full", expires: this.expires, total: files.length, offset, limit, files, public: published, ...(this.full ? { full: true } : {}), ...(rules ? { uploads: rules } : {}) } as ReadResult;
   }
 
   private route(path: string, b: any): unknown {
@@ -252,7 +280,10 @@ export class FakeServer {
           break;
       }
     }
-    files = files.map((f) => JSON.parse(JSON.stringify(f)) as FileInfo);
+    files = files.map((f) => {
+      const failed = this.failures.get(f.path);
+      return JSON.parse(JSON.stringify(failed ? { ...f, failed } : f)) as FileInfo;
+    });
     this.items.set(key(ref), files);
     this.pendingLeft = this.pendingReads;
     this.stagedLeft = this.stagedReads;

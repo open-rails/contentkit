@@ -5,6 +5,7 @@ import type {
   CompleteReply,
   PartsBody,
   PartsReply,
+  PresetRule,
   PresignBody,
   PresignReply,
   ReadResult,
@@ -68,6 +69,11 @@ export class MediaApi {
     if (o.editor) q.set("editor", "1");
     const s = q.toString();
     return this.http.request<ReadResult>(this.itemURL(ref) + (s ? "?" + s : ""), { signal });
+  }
+
+  /** Every kind's public presets (the same for every viewer). */
+  presets(signal?: AbortSignal) {
+    return this.http.request<PresetRule[]>(`${this.http.mount("media")}/presets`, { signal });
   }
 
   /** The item under the read API: `{media}/{kind}/{id}`. */

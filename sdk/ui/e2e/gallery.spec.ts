@@ -82,8 +82,10 @@ for (const theme of ["light", "dark"] as const) {
     await post.getByRole("button", { name: "Carousel" }).click();
 
     // Locked post and a lone vertical clip.
+    // The teaser is one of the five locked items and carries the unlock on the first slide.
     const locked = page.locator("[data-demo=locked]");
-    await expect(locked.getByRole("button", { name: "Unlock 5 for $5" })).toBeVisible();
+    await expect(locked.locator("[data-ckui=slide][data-current] [data-ckui=locked-bar]")).toContainText("4 more items are locked");
+    await expect(locked.getByRole("button", { name: "Unlock 4 for $5" })).toBeVisible();
     await locked.screenshot({ path: `${dir}/gallery-locked-${tag}.png` });
     const single = page.locator("[data-demo=single]");
     await expect(single.getByRole("button", { name: "Grid" })).toHaveCount(0);

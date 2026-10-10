@@ -156,7 +156,7 @@ function SlotUploadLayout({ variant, ...p }: SlotUploadProps & { variant: Varian
           image={has ? image : null}
           aspect={aspect}
           className="w-full rounded-none"
-          placeholder={
+          fallback={
             <div aria-label={t("cover.empty")} role="group" className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-[repeating-linear-gradient(135deg,transparent_0_10px,color-mix(in_oklch,var(--ckui-foreground)_3%,transparent)_10px_20px)] p-4 text-center">
               <HugeiconsIcon icon={ImageUpload01Icon} strokeWidth={1.5} className="size-7 text-muted-foreground" />
               <span className="hidden text-xs text-muted-foreground sm:block">{t("cover.drop")}</span>

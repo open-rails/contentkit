@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "../../test/dom.js";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vitest";
@@ -301,7 +301,22 @@ it("PollEditor: a new poll needs a question and two options; an existing one mov
   await waitFor(() => expect(onCreated).toHaveBeenCalledWith(created));
   expect(await screen.findByRole("heading", { name: "Edit poll" })).toBeInTheDocument();
 
-  await user.click(screen.getByRole("button", { name: "Move up: Option 3" }));
+  // Keyboard reorder through the drag handle: lift Water, move it up one, drop.
+  const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+    // The drag overlay's row stands where the dragged row is.
+    const li = this.closest("[data-overlay]") ? document.querySelector("li[data-dragging]") : this.closest("li");
+    const i = li?.parentElement ? [...li.parentElement.children].indexOf(li) : 0;
+    return { x: 0, y: i * 48, top: i * 48, left: 0, bottom: i * 48 + 44, right: 400, width: 400, height: 44, toJSON: () => ({}) } as DOMRect;
+  });
+  const tick = () => act(() => new Promise((r) => setTimeout(r, 20)));
+  const handle = screen.getByRole("button", { name: "Reorder Water" });
+  handle.focus();
+  fireEvent.keyDown(handle, { key: " ", code: "Space" });
+  await tick();
+  fireEvent.keyDown(document.activeElement!, { key: "ArrowUp", code: "ArrowUp" });
+  await tick();
+  fireEvent.keyDown(document.activeElement!, { key: " ", code: "Space" });
+  rect.mockRestore();
   await waitFor(() => expect(screen.getAllByRole("textbox", { name: /Option \d/ }).map((e) => (e as HTMLInputElement).value)).toEqual(["Tea", "Water", "Coffee"]));
   await waitFor(() => expect(s.calls.filter((c) => c.startsWith("PATCH"))).toEqual(["PATCH /polls/p1/options/o3", "PATCH /polls/p1/options/o2"]));
 });

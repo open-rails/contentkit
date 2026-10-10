@@ -335,7 +335,7 @@ describe("reads", () => {
   it("finds the editor view of an upload for re-cropping", async () => {
     const { s, c } = setup();
     await c.put(file(1000, 6, "image/jpeg"), { ref, path: "cover", edit });
-    expect(await c.editorView(ref, "cover")).toEqual({ url: "fake://cdn/private/e-cover.jpg", width: 4000, height: 3000 });
+    expect(await c.editorView(ref, "cover")).toEqual({ url: "fake://cdn/private/e-cover.jpg", width: 4000, height: 3000, edit });
     expect((await c.editorView(ref, "banner").catch((e) => e)).code).toBe("not_found");
     expect(s.commits[0]![0]).toMatchObject({ op: "put", path: "cover.jpg", edit });
   });

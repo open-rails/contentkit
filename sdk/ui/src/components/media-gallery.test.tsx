@@ -182,7 +182,8 @@ it("one item renders alone, without toggle or dots", () => {
   expect(screen.getByRole("img", { name: "Image 1" })).toHaveAttribute("src", "https://m/0.webp");
   const stage = document.querySelector("[data-ckui=slide]")!.parentElement!.parentElement!;
   expect(stage).toHaveStyle({ aspectRatio: String(1080 / 1920) });
-  expect(stage.style.maxHeight).toBe("");
+  // Never taller than the screen: taller media letterboxes ("none" lifts the cap).
+  expect(stage.style.maxHeight).toBe("80svh");
 });
 
 it("locked items: the public preview behind the host's unlock slot, no locked URLs", async () => {
@@ -208,6 +209,14 @@ it("locked items: the public preview behind the host's unlock slot, no locked UR
   expect(screen.getByRole("button", { name: "Open item 2 of 2" })).toHaveTextContent("+2");
   const srcs = [...withPreview.container.querySelectorAll("img")].map((i) => i.getAttribute("src"));
   expect(new Set(srcs)).toEqual(new Set([preview]));
+
+  // In the carousel the teaser carries the unlock: nothing to swipe past.
+  document.body.innerHTML = "";
+  const carousel = render(<MediaGallery read={{ ...read("none", files), previews: [preview] }} renderLocked={renderLocked} defaultView="carousel" storageKey={null} />);
+  const first = carousel.container.querySelector<HTMLElement>("[data-ckui=slide][data-current]")!;
+  expect(within(first).getByRole("img", { name: "Image 1" })).toHaveAttribute("src", preview);
+  expect(within(first).getByText("2 more items are locked")).toBeInTheDocument();
+  expect(within(first).getByRole("button", { name: "Unlock 2" })).toBeVisible();
 });
 
 it("failed and processing images, and translated labels", async () => {

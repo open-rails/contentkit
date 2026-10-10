@@ -1,5 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
 import { DEFAULT_DENSITY, densityFor, pickRendition, sortRenditions, type DensityRange, type Rendition } from "../client/rendition.js";
+import { useReducedMotion } from "../react/inline-preview.js";
 
 export const DensityContext = createContext<DensityRange>(DEFAULT_DENSITY);
 
@@ -62,27 +63,64 @@ export function useRendition<T extends Rendition, E extends HTMLElement = HTMLIm
 export interface RenditionImgProps extends Omit<ComponentProps<"img">, "src" | "srcSet" | "sizes" | "width" | "height"> {
   outputs: readonly Rendition[] | null | undefined;
   density?: DensityRange;
+  /** Rendered instead when there are no renditions or the image fails to load (a 404). */
+  fallback?: ReactNode;
+  /** A pulsing muted fill until the image has loaded. */
+  skeleton?: boolean;
+  /** object-fit of the image in its box. */
+  fit?: "cover" | "contain";
 }
 
-/** An `<img>` showing the rendition its rendered size × density needs (see useRendition). */
-export function RenditionImg({ outputs, density, onLoad, alt = "", ...img }: RenditionImgProps) {
+const SKELETON: CSSProperties = { backgroundColor: "var(--ckui-muted, rgb(127 127 127 / 0.15))" };
+const PULSE = "ckui-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite";
+
+/**
+ * An `<img>` showing the rendition its rendered size × density needs (see
+ * useRendition), with a fallback for none or a failed load and an optional
+ * loading skeleton.
+ */
+export function RenditionImg({ outputs, density, onLoad, onError, alt = "", fallback, skeleton, fit, style, ...img }: RenditionImgProps) {
   const { ref, rendition, onLoad: loaded } = useRendition(outputs, { density });
   const first = sortRenditions(outputs)[0];
   const r = rendition ?? first;
-  if (!r) return null;
+  const reduced = useReducedMotion();
+  const [failed, setFailed] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const [el, setEl] = useState<HTMLImageElement | null>(null);
+  const src = rendition ? r?.url : undefined;
+  // A cached image is complete before its load event; settle it before paint.
+  useIsoLayoutEffect(() => {
+    if (el && src && el.complete && el.naturalWidth > 0) setDone(src);
+  }, [el, src]);
+  const attach = useCallback(
+    (node: HTMLImageElement | null) => {
+      ref(node);
+      setEl(node);
+    },
+    [ref],
+  );
+  if (!r || (first && failed === first.url)) return <>{fallback ?? null}</>;
+  const loading = skeleton && done !== src;
   return (
     <img
       {...img}
-      ref={ref}
+      ref={attach}
       alt={alt}
-      src={rendition ? r.url : undefined}
+      src={src}
       width={r.w}
       height={r.h || undefined}
       decoding="async"
       data-rendition={rendition ? r.w : undefined}
+      data-loading={loading ? "" : undefined}
+      style={{ ...(fit ? { objectFit: fit } : {}), ...(loading ? { ...SKELETON, animation: reduced ? undefined : PULSE } : {}), ...style }}
       onLoad={(e) => {
         loaded();
+        if (src) setDone(src);
         onLoad?.(e);
+      }}
+      onError={(e) => {
+        if (first) setFailed(first.url);
+        onError?.(e);
       }}
     />
   );

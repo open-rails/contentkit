@@ -47,3 +47,24 @@ it("plural picks the language's form", () => {
   expect(m.plural("comments.count", 2)).toBe("2 comments");
   expect(createTranslator(resolveMessages(ja), undefined, "ja").plural("poll.votes", 1)).toBe("1 票");
 });
+
+type Tree = { [key: string]: string | Tree };
+const keys = (t: Tree, p = ""): string[] => Object.entries(t).flatMap(([k, v]) => (typeof v === "string" ? [p + k] : keys(v, `${p}${k}.`)));
+
+it("every message has a translation in every bundle", () => {
+  const all = keys(en as Tree);
+  for (const [lang, bundle] of Object.entries(bundles)) {
+    const have = new Set(keys(bundle as Tree));
+    expect(all.filter((k) => !have.has(k)), lang).toEqual([]);
+  }
+});
+
+it("words video shape and file cap refusals with their numbers", () => {
+  const { error } = createTranslator(resolveMessages());
+  expect(error(new ContentKitError("too_many_files", "x", { status: 409, details: { max: 2 } as never }))).toBe("This item holds at most 2 of these files. Remove some first.");
+  expect(error(new ContentKitError("too_many_files", "x", { status: 409 }))).toBe(en.errors.too_many_files);
+  expect(error({ code: "video_aspect_unsupported", details: { width: 3000, height: 1000, min_aspect: 1 / 2.4, max_aspect: 2.4 } })).toBe(
+    "This video is 3:1; videos here must be between 1:2.4 and 2.4:1.",
+  );
+  expect(createTranslator(resolveMessages(ja)).error({ code: "video_aspect_unsupported" })).toBe(ja.errors!.video_aspect_unsupported);
+});

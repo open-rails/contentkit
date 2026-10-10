@@ -4,7 +4,7 @@ import { toContentKitError, type ContentKitError } from "../client/errors.js";
 import type { Edit, FileInfo, Op, ReadResult, RefBody } from "../client/generated/wire.js";
 import { samePath, type Progress } from "../client/media/client.js";
 import { useContentKitClient } from "./context.js";
-import { useRead } from "./read.js";
+import { useMediaRead } from "./read.js";
 import { withUpload } from "./store.js";
 
 const asError = toContentKitError;
@@ -36,7 +36,7 @@ export interface UseVideoImages {
 
 /** A video item's video and poster uploads (an editor read). */
 export function useVideoImages(o: VideoImagesOptions): UseVideoImages {
-  const r = useRead(o.ref, { editor: true, read: o.read, client: o.client });
+  const r = useMediaRead(o.ref, { editor: true, read: o.read, client: o.client });
   const find = (p: string) => r.read?.files.find((f) => f.upload && samePath(f.path, p)) ?? null;
   const posterPath = o.poster ?? "poster";
   const { read, set: update } = r;
@@ -210,6 +210,11 @@ export interface UseVideoPoster {
   saveUpload: (image: Blob, edit?: Edit | null) => Promise<FileInfo | undefined>;
   /** The worker's choice of frame. */
   saveAuto: () => Promise<FileInfo | undefined>;
+  /**
+   * A frame of another item's video upload (at path, time seconds) uploaded
+   * as the poster image, cropped by edit in the frame's pixels.
+   */
+  saveFrameFrom: (video: RefBody, path: string, time: number, edit?: Edit | null) => Promise<FileInfo | undefined>;
   reset: () => void;
 }
 
@@ -254,6 +259,18 @@ export function useVideoPoster(o: VideoPosterOptions): UseVideoPoster {
       [media, run],
     ),
     saveAuto: useCallback(() => frame({ auto: true }), [frame]),
+    saveFrameFrom: useCallback(
+      (video, path, time, edit) => {
+        const { ref, path: to = "poster", timeout } = opts.current;
+        return run(async (onProgress) => {
+          const still = await media.getFrame(video, path, round3(time));
+          // GET /frame answers a JPEG.
+          const file = new File([still], "frame.jpg", { type: "image/jpeg" });
+          return media.put(file, { ref, path: to, edit, timeout, onProgress });
+        });
+      },
+      [media, run],
+    ),
     reset: useCallback(() => setState({ status: "idle" }), []),
   };
 }

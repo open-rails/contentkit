@@ -8,8 +8,8 @@ import type { DensityRange } from "../client/rendition.js";
 import { RenditionImg } from "./rendition-img.js";
 import { ContentKitUiRoot } from "../scope.js";
 
-export interface SlotImageProps extends Omit<ComponentProps<"img">, "src" | "srcSet" | "sizes" | "width" | "height" | "placeholder"> {
-  /** The item's published renditions; absent files use the placeholder. */
+export interface SlotImageProps extends Omit<ComponentProps<"img">, "src" | "srcSet" | "sizes" | "width" | "height"> {
+  /** The item's published renditions; without any, the fallback shows. */
   image?: PublicPreset | null;
   /** Density range for picking the width; default the provider's (2–3×). */
   density?: DensityRange;
@@ -17,13 +17,17 @@ export interface SlotImageProps extends Omit<ComponentProps<"img">, "src" | "src
   /** Width / height of the box; default the preset's aspect. */
   aspect?: AspectRatio;
   /** Shown without an image (or when it fails to load); default a muted box with an icon. */
-  placeholder?: ReactNode;
+  fallback?: ReactNode;
+  /** A pulsing fill until the image has loaded. */
+  skeleton?: boolean;
+  /** How the image fills the box. Default "cover". */
+  fit?: "cover" | "contain";
   /** Accessible name of the empty state. */
   emptyLabel?: string;
 }
 
 /** A public image preset's file, in a box at its aspect, at the width its rendered width × density needs. */
-export function SlotImage({ image, density, round, aspect, placeholder, emptyLabel, className, alt = "", style, onError, ...img }: SlotImageProps) {
+export function SlotImage({ image, density, round, aspect, fallback, skeleton, fit = "cover", emptyLabel, className, alt = "", style, onError, ...img }: SlotImageProps) {
   const outputs = publicRenditions(image);
   const [failed, setFailed] = useState<string | null>(null);
   const key = outputs[0]?.url ?? "";
@@ -43,14 +47,16 @@ export function SlotImage({ image, density, round, aspect, placeholder, emptyLab
           outputs={outputs}
           density={density}
           alt={alt}
-          className="absolute inset-0 size-full object-cover"
+          skeleton={skeleton}
+          fit={fit}
+          className="absolute inset-0 size-full"
           onError={(e) => {
             setFailed(key);
             onError?.(e);
           }}
         />
       ) : (
-        (placeholder ?? (
+        (fallback ?? (
           <div role={emptyLabel ? "img" : undefined} aria-label={emptyLabel} className="absolute inset-0 flex items-center justify-center text-muted-foreground/70">
             <HugeiconsIcon icon={round ? UserIcon : Image01Icon} strokeWidth={1.5} className="size-1/3 max-h-10 max-w-10" />
           </div>

@@ -137,8 +137,6 @@ export const social: typeof en = {
     option: "選択肢 {index}",
     addOption: "選択肢を追加",
     newOption: "新しい選択肢",
-    moveUp: "上へ",
-    moveDown: "下へ",
     removeOption: "選択肢を削除",
     removeOptionTitle: "この選択肢を削除しますか？",
     removeOptionBody: "その票も削除されます。投票には少なくとも 2 つの選択肢が残ります。",

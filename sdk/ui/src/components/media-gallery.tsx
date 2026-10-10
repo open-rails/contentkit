@@ -13,7 +13,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../appearance.js";
 import { formatDuration, galleryItems, stageAspect, type GalleryItem, type GalleryLockedItem, type GalleryMediaItem } from "../client/gallery.js";
 import { useCarousel, useGalleryView, useHlsPlayer, useRefreshBeforeExpiry, type GalleryViewOptions, type HlsPlayerOptions } from "../react/gallery.js";
@@ -22,18 +22,31 @@ import { useMessages } from "../i18n/context.js";
 import { publicRenditions, type PublicPreset } from "../client/public.js";
 import { ContentKitUiRoot, useScopeProps } from "../scope.js";
 import { RenditionImg } from "./rendition-img.js";
-import type { FileInfo, ReadResult } from "../client/generated/wire.js";
+import type { ContentKitClient } from "../client/client.js";
+import type { FileInfo, ReadResult, RefBody } from "../client/generated/wire.js";
+import { useOptionalContentKitClient } from "../react/context.js";
+import { useMediaRead } from "../react/read.js";
 import { previewStartAt, SpriteFrame, VideoPlayer } from "./video-player.js";
 import { Button } from "#ckui/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "#ckui/ui/toggle-group";
 
 export interface MediaGalleryProps extends GalleryViewOptions, Pick<HlsPlayerOptions, "xhrSetup" | "refresh" | "abr"> {
   /**
+   * The item to show, read through the client: its read (refreshed before
+   * the URLs expire, after commits), HLS bases, playlist auth and grant
+   * refresh. Or pass `read` (and hlsBase, xhrSetup, refresh) yourself.
+   */
+  item?: RefBody;
+  /** With item: only files under this path prefix. */
+  prefix?: string;
+  /** With item: each audio file's download name signed into its URL. */
+  download?: boolean;
+  /**
    * The read API result: files in manifest order with this viewer's access
    * (scope it with a prefix). A download read adds each audio file's download.
    * With `refresh`, the gallery reads again shortly before `read.expires`.
    */
-  read: ReadResult | null | undefined;
+  read?: ReadResult | null;
   /** A ladder's HLS folder from the read's `hls` dir: client.media.hlsBase(ref, dir). */
   hlsBase?: (dir: string) => string;
   /** The item's poster (its public preset, or a URL), drawn on the first video. */
@@ -48,11 +61,13 @@ export interface MediaGalleryProps extends GalleryViewOptions, Pick<HlsPlayerOpt
   renderDetails?: (item: GalleryItem) => ReactNode;
   /** `sizes` for carousel images. Default "(min-width: 768px) 720px, 100vw". */
   sizes?: string;
-  /** Tallest the carousel gets; taller media letterboxes. Default none: every slide at its native aspect, full width. */
+  /** Tallest the carousel gets; taller media letterboxes. Default "80svh": every slide at its native aspect, full width, never taller than the screen; "none" lifts it. */
   maxHeight?: string;
   label?: string;
   className?: string;
   appearance?: ContentKitUiAppearance;
+  /** Overrides the provider's client (item). */
+  client?: ContentKitClient;
 }
 
 interface Ctx extends MediaGalleryProps {
@@ -71,12 +86,13 @@ const baseOf = (ctx: Ctx, item: GalleryMediaItem) => (item.dir && ctx.hlsBase ? 
  * A post's images and videos as a swipeable carousel or a tile grid that opens
  * a lightbox, with a view toggle. One item renders alone.
  */
-export function MediaGallery(props: MediaGalleryProps) {
-  const { read, label, className, appearance, view: given, defaultView, onViewChange, storageKey } = props;
+export function MediaGallery(given: MediaGalleryProps) {
+  const props = useItemRead(given);
+  const { read, label, className, appearance, view: chosen, defaultView, onViewChange, storageKey } = props;
   const { t } = useMessages();
   const items = useMemo(() => galleryItems(read), [read]);
   useRefreshBeforeExpiry(read?.expires, props.refresh);
-  const [view, setView] = useGalleryView({ view: given, defaultView, onViewChange, storageKey });
+  const [view, setView] = useGalleryView({ view: chosen, defaultView, onViewChange, storageKey });
   const [index, setIndex] = useState(0);
   const [lightbox, setLightbox] = useState<number | null>(null);
   if (items.length === 0) return null;
@@ -114,13 +130,27 @@ export function MediaGallery(props: MediaGalleryProps) {
   );
 }
 
+const NO_ITEM: RefBody = { kind: "", id: "" };
+
+// With item, the read, HLS bases, playlist auth and refresh come from the client.
+function useItemRead(p: MediaGalleryProps): MediaGalleryProps {
+  const client = useOptionalContentKitClient(p.client);
+  if (p.item && !client) throw new Error("contentkit-ui: MediaGallery item needs `client` or a <ContentKitProvider>");
+  // One refresh timer for the gallery and its players, keyed by r.refresh.
+  const r = useMediaRead(p.item ?? NO_ITEM, { prefix: p.prefix, download: p.download, read: p.item ? p.read : null, refresh: false, client });
+  const item = p.item;
+  const hlsBase = useCallback((dir: string) => client!.media.hlsBase(item!, dir), [client, item]);
+  if (!item || !client) return p;
+  return { ...p, read: r.read, hlsBase: p.hlsBase ?? hlsBase, xhrSetup: p.xhrSetup ?? client.media.xhrSetup, refresh: p.refresh ?? r.refresh };
+}
+
 function Carousel({ ctx, index: given, onIndex, lightbox }: { ctx: Ctx; index: number; onIndex: (i: number) => void; lightbox?: boolean }) {
   const { t } = useMessages();
   const { items } = ctx;
   const c = useCarousel({ count: items.length, index: given, onIndexChange: onIndex });
   const { index } = c;
   const multi = items.length > 1;
-  const stage = lightbox ? {} : { aspectRatio: String(stageAspect(items, index)), maxHeight: ctx.maxHeight };
+  const stage = lightbox ? {} : { aspectRatio: String(stageAspect(items, index)), maxHeight: ctx.maxHeight ?? "80svh" };
   return (
     <div
       className={cn("group/carousel relative outline-none", lightbox ? "size-full" : "grid gap-2")}
@@ -232,18 +262,23 @@ function Slide({ ctx, item, position, active, lightbox }: { ctx: Ctx; item: Gall
   if (item.kind === "audio") return <AudioSlide item={item} position={position} />;
   if (item.kind === "image") {
     if (!f.url) return f.failed ? <ImageFailed file={f} /> : <Processing>{t("gallery.processingImage")}</Processing>;
+    // A public teaser of a locked item carries the unlock, so no one swipes past it to find it.
+    const locked = item.key.startsWith("preview/") && !lightbox ? ctx.items.find((i): i is GalleryLockedItem => i.kind === "locked") : undefined;
     return (
-      <img
-        src={f.url}
-        alt={t("gallery.image", { index: position + 1 })}
-        width={f.w}
-        height={f.h}
-        sizes={lightbox ? "100vw" : (ctx.sizes ?? "(min-width: 768px) 720px, 100vw")}
-        loading={active ? "eager" : "lazy"}
-        decoding="async"
-        draggable={false}
-        className="absolute inset-0 size-full object-contain"
-      />
+      <>
+        <img
+          src={f.url}
+          alt={t("gallery.image", { index: position + 1 })}
+          width={f.w}
+          height={f.h}
+          sizes={lightbox ? "100vw" : (ctx.sizes ?? "(min-width: 768px) 720px, 100vw")}
+          loading={active ? "eager" : "lazy"}
+          decoding="async"
+          draggable={false}
+          className="absolute inset-0 size-full object-contain"
+        />
+        {locked && <LockedBar ctx={ctx} item={locked} />}
+      </>
     );
   }
   const { poster, start } = videoArt(ctx, item);
@@ -343,6 +378,22 @@ function Locked({ ctx, item, tile }: { ctx: Ctx; item: GalleryLockedItem; tile?:
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function LockedBar({ ctx, item }: { ctx: Ctx; item: GalleryLockedItem }) {
+  const { t } = useMessages();
+  return (
+    <div
+      className="absolute inset-x-0 bottom-0 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 bg-linear-to-t from-black/75 via-black/45 to-transparent px-4 pt-10 pb-4 text-white"
+      data-ckui="locked-bar"
+    >
+      <span className="flex items-center gap-2 text-sm font-medium">
+        <HugeiconsIcon icon={SquareLock02Icon} className="size-5 shrink-0" strokeWidth={1.75} />
+        {lockedText(t, item.count)}
+      </span>
+      {ctx.renderLocked && <div data-ckui-noswipe="">{ctx.renderLocked({ count: item.count, videos: item.videos })}</div>}
     </div>
   );
 }

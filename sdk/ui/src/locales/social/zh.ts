@@ -137,8 +137,6 @@ export const social: typeof en = {
     option: "选项 {index}",
     addOption: "添加选项",
     newOption: "新选项",
-    moveUp: "上移",
-    moveDown: "下移",
     removeOption: "删除选项",
     removeOptionTitle: "删除此选项？",
     removeOptionBody: "它的票数也会被删除。投票至少保留两个选项。",
