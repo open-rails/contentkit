@@ -163,6 +163,7 @@ export const en = {
     videoTooLongBy: "This file runs {duration} s; the limit here is {maxSeconds} s.",
     videoTooLargeBy: "This video is {width}×{height} px; videos may have at most {megapixels} megapixels.",
     video_over_budget: "This video would take too long to process. Use a shorter or smaller video.",
+    video_aspect_unsupported: "This video is too wide or too tall to be used here.",
     aborted: "Canceled.",
     resume_mismatch: "The saved upload is for a different file. Please pick the file again.",
     moderation_rejected: "This was rejected by moderation.",

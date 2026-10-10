@@ -39,6 +39,9 @@ const (
 	CodeVideoTooLong    = "video_too_long"    // 422: runs longer than MaxSeconds (audio too)
 	CodeVideoTooLarge   = "video_too_large"   // 422: frames larger than MaxPixels
 	CodeVideoOverBudget = "video_over_budget" // 422: the planned encode is over MaxWork, or the source averages under a frame a second
+	// CodeVideoAspectUnsupported: the display aspect is outside its HLS
+	// presets' MinAspect and MaxAspect.
+	CodeVideoAspectUnsupported = "video_aspect_unsupported" // 422
 )
 
 var codeStatus = map[string]int{
@@ -67,12 +70,14 @@ var codeStatus = map[string]int{
 	CodeVideoTooLong:    http.StatusUnprocessableEntity,
 	CodeVideoTooLarge:   http.StatusUnprocessableEntity,
 	CodeVideoOverBudget: http.StatusUnprocessableEntity,
+
+	CodeVideoAspectUnsupported: http.StatusUnprocessableEntity,
 }
 
 // ErrorDetails qualifies an image refusal so clients can state the rule.
 type ErrorDetails struct {
-	Width      int      `json:"width,omitempty"`       // image_too_small: the edited width; image_too_large, video_too_large: the source's
-	Height     int      `json:"height,omitempty"`      // image_too_large, video_too_large: the source's
+	Width      int      `json:"width,omitempty"`       // image_too_small: the edited width; image_too_large, video_too_large, video_aspect_unsupported: the source's
+	Height     int      `json:"height,omitempty"`      // image_too_large, video_too_large, video_aspect_unsupported: the source's
 	MinWidth   int      `json:"min_width,omitempty"`   // image_too_small
 	MaxPixels  int      `json:"max_pixels,omitempty"`  // image_too_large, video_too_large
 	Type       string   `json:"type,omitempty"`        // the declared type (image_unreadable, type_not_allowed, too_large)
@@ -83,6 +88,9 @@ type ErrorDetails struct {
 	MaxFrames  int      `json:"max_frames,omitempty"`  // animation_too_long
 	Seconds    float64  `json:"seconds,omitempty"`     // animation_too_long, video_too_long: running time
 	MaxSeconds float64  `json:"max_seconds,omitempty"` // animation_too_long, video_too_long
+	MinAspect  float64  `json:"min_aspect,omitempty"`  // video_aspect_unsupported: the narrowest width/height accepted
+	MaxAspect  float64  `json:"max_aspect,omitempty"`  // video_aspect_unsupported: the widest width/height accepted
+	Max        int      `json:"max,omitempty"`         // too_many_files: the files allowed
 }
 
 // ImageError is an image the rules refuse, synchronously (an edit checked
@@ -134,6 +142,13 @@ func (e *UploadError) Status() int {
 
 func uploadErr(code, format string, a ...any) *UploadError {
 	return &UploadError{Code: code, Message: fmt.Sprintf(format, a...)}
+}
+
+// tooManyFiles refuses a commit past max files, which details carry.
+func tooManyFiles(max int, format string, a ...any) *UploadError {
+	e := uploadErr(CodeTooManyFiles, format, a...)
+	e.Details = &ErrorDetails{Max: max}
+	return e
 }
 
 // AsUploadError classifies err: an *UploadError, or the kind and registry

@@ -145,8 +145,10 @@ type ReadResult struct {
 	// Full (editors): the item's manifest cannot hold more outputs, so
 	// processing stopped; remove uploads (any commit that shrinks it) to
 	// resume. Uploads left unprocessed stay pending.
-	Full  bool       `json:"full,omitempty"`
-	Files []FileInfo `json:"files"`
+	Full bool `json:"full,omitempty"`
+	// Uploads (editors) are the kind's upload paths and their rules.
+	Uploads []UploadRule `json:"uploads,omitempty"`
+	Files   []FileInfo   `json:"files"`
 	// Cookie must be set on the response (cookie delivery, with access).
 	Cookie *http.Cookie `json:"-"`
 }
@@ -189,4 +191,46 @@ type FileInfo struct {
 	Failed     *Failure        `json:"failed,omitempty"`
 	EditorURL  string          `json:"editor_url,omitempty"`
 	Progress   *EncodeProgress `json:"progress,omitempty"`
+}
+
+// UploadRule is one upload path's rules, as editor reads carry them so a
+// client turns away a file the server would refuse. The server stays the
+// authority.
+type UploadRule struct {
+	Path     string   `json:"path"`
+	Types    []string `json:"types"`
+	MaxBytes int64    `json:"max_bytes"`
+	// Max caps the files at Path; 0 is unlimited.
+	Max    int    `json:"max,omitempty"`
+	Named  bool   `json:"named,omitempty"`
+	Frames string `json:"frames,omitempty"`
+	// Aspect and MinWidth bound an image's edit: its first public preset's.
+	Aspect   Aspect `json:"aspect,omitzero"`
+	MinWidth int    `json:"min_width,omitempty"`
+	// Video is a video or audio upload's limits in effect; MinAspect and
+	// MaxAspect the display aspects (width/height) its HLS presets accept.
+	Video     *VideoLimits `json:"video,omitempty"`
+	MinAspect float64      `json:"min_aspect,omitempty"`
+	MaxAspect float64      `json:"max_aspect,omitempty"`
+}
+
+// PresetRule is a kind's public preset: its upload, name template, widths
+// and crop bounds. Published files carry a generation suffix, so
+// {base}/v1/{namespace}/{kind}/{id}/public/{to} ({w} each of Widths) names
+// the kind's default image, never an item's current one: a read's Public
+// lists those.
+type PresetRule struct {
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	From      string `json:"from"`
+	Base      string `json:"base"`
+	Namespace string `json:"namespace"`
+	To        string `json:"to"`
+	Widths    []int  `json:"widths"`
+	// Aspect is the rendition's shape ("W:H"); absent keeps the edit's.
+	Aspect Aspect `json:"aspect,omitzero"`
+	// MinWidth is the narrowest edit the preset accepts.
+	MinWidth int `json:"min_width,omitempty"`
+	// First makes it a preview: the first First uploads, {n} in To.
+	First int `json:"first,omitempty"`
 }

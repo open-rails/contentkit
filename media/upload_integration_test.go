@@ -304,6 +304,9 @@ func TestCommitOrderAndPaths(t *testing.T) {
 		if i < 2 && err != nil || i == 2 && code(err) != media.CodeTooManyFiles {
 			t.Fatalf("import %d: %v", i, err)
 		}
+		if ue, _ := media.AsUploadError(err); i == 2 && (ue.Details == nil || ue.Details.Max != 2) {
+			t.Fatalf("too_many_files details %+v", ue.Details)
+		}
 	}
 }
 

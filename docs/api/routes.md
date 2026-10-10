@@ -2,7 +2,7 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (78). `contentkit.Runtime.Handler` serves them under the one prefix the host mounts it at, each module at its sub-path: content `/`, upload `/media/upload`, media `/media`, codes `/codes`, taxonomy `/taxonomy`. A host that mounts a module alone serves its routes beneath that mount instead. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (79). `contentkit.Runtime.Handler` serves them under the one prefix the host mounts it at, each module at its sub-path: content `/`, upload `/media/upload`, media `/media`, codes `/codes`, taxonomy `/taxonomy`. A host that mounts a module alone serves its routes beneath that mount instead. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller: `public` (the actor is optional; the host's resolver decides what it sees), `user` (a signed-in actor, else 401 `unauthorized`), `staff` (the `content.Perms` permission named, else 403 `forbidden`). ContentKit never authenticates: it reads the actor the host's middleware put in the request context.
 
@@ -81,6 +81,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
+| GET | `/media/presets` | public | — | 200 `PresetRule[]` | Every kind's public preset rules: crop bounds, widths and default images. Current image URLs come from a read's public. |
 | GET | `/media/{kind}/{id}` | public | — | 200 `ReadResult` | An item's files under a prefix in manifest order: with access each has a URL (and the item cookie is set), without each is locked. Query: `prefix`, `offset`, `limit`, `download`, `editor`. |
 | GET | `/media/{kind}/{id}/hls/{path...}` | public | — | 200 `application/vnd.apple.mpegurl`<br>200 `text/vtt` | HLS: {dir}master.m3u8 (a ladder of the read's hls), {path}.m3u8 (a track) or {dir}sprite.vtt (the seek sprite). Query: `audio`, `subs`. |
 
@@ -139,10 +140,11 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `rate_limited` | 429 | Too many requests; retry after `retry_after` seconds (also the Retry-After header). |
 | `tenant_mismatch` | 500 | A host port answered with another tenant's data: a configuration fault. |
 | `too_large` | 413 | The file is larger than its upload path allows; `details` has `size` and `max_bytes`. |
-| `too_many_files` | 409 | The commit would put more files in an upload path than its rules allow. |
+| `too_many_files` | 409 | The commit would put more files in an upload path, or the item, than allowed; `details.max` is the limit. |
 | `type_not_allowed` | 415 | The file type is not allowed in the upload path; `details.allowed` lists the types. |
 | `unauthorized` | 401 | The route needs a signed-in actor. |
 | `unavailable` | 503 | Media storage cannot be reached, or a commit's recovery is pending; retry. |
+| `video_aspect_unsupported` | 422 | The video's display aspect is outside what its upload path accepts; `details` has `min_aspect` and `max_aspect` (width/height). |
 | `video_over_budget` | 422 | The planned encode costs more than its upload path allows, or the source averages under a frame a second. |
 | `video_too_large` | 422 | The video's frames are larger than its upload path allows. |
 | `video_too_long` | 422 | The video or audio runs longer than its upload path allows. |

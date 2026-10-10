@@ -297,7 +297,7 @@ func (o *opRun) put(op Op) error {
 		}
 		f.Unattached = old.Unattached && op.Unattached
 	} else if u.Max > 0 && o.count(g) >= u.Max {
-		return uploadErr(CodeTooManyFiles, "kind %q allows at most %d uploads at %s", k.Name, u.Max, u.Path)
+		return tooManyFiles(u.Max, "kind %q allows at most %d uploads at %s", k.Name, u.Max, u.Path)
 	}
 	if op.Edit != nil {
 		if !isImageType(f.Type) {
@@ -485,7 +485,7 @@ func (o *opRun) copy(op Op, src []File) error {
 	}
 	i := o.stem(stem)
 	if i < 0 && k.Uploads[g].Max > 0 && o.count(g) >= k.Uploads[g].Max {
-		return uploadErr(CodeTooManyFiles, "kind %q allows at most %d uploads at %s", k.Name, k.Uploads[g].Max, k.Uploads[g].Path)
+		return tooManyFiles(k.Uploads[g].Max, "kind %q allows at most %d uploads at %s", k.Name, k.Uploads[g].Max, k.Uploads[g].Path)
 	}
 	// Private outputs come along current; public ones render here.
 	for _, p := range k.PublicFor(f.Path) {

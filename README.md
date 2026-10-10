@@ -401,7 +401,7 @@ track, WebVTT per text subtitle and a seek sprite. Each rendition is one
 byte-range fMP4 blob whose segment table is its own index blob; stages are
 published rung by rung (the upload stays pending until the last), a
 compliant top rung is stream-copied, and sources outside the aspect bounds
-fail. An `MP4` preset muxes H.264 at one rung with the default audio;
+fail with `video_aspect_unsupported`. An `MP4` preset muxes H.264 at one rung with the default audio;
 `Audio` gives an HLS track and an M4A (optional EBU R128 loudness);
 `Subtitles` converts SRT and SSA/ASS to clean WebVTT. Playlists are built per
 request by the read API. Encode progress comes from

@@ -165,6 +165,7 @@ export const ko: ContentKitUiMessageBundle = {
     videoTooLongBy: "이 파일의 길이는 {duration}초입니다. 여기서는 최대 {maxSeconds}초까지 가능합니다.",
     videoTooLargeBy: "이 동영상은 {width}×{height}px입니다. 동영상은 최대 {megapixels}메가픽셀까지 가능합니다.",
     video_over_budget: "이 동영상은 처리 시간이 너무 오래 걸립니다. 더 짧거나 작은 동영상을 사용하세요.",
+    video_aspect_unsupported: "이 동영상은 가로나 세로로 너무 길어 여기에서 사용할 수 없습니다.",
     aborted: "취소되었습니다.",
     resume_mismatch: "저장된 업로드가 다른 파일의 것입니다. 파일을 다시 선택하세요.",
     moderation_rejected: "검토 결과 거부되었습니다.",

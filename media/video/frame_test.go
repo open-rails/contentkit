@@ -1,7 +1,6 @@
 package video
 
 import (
-	"errors"
 	"slices"
 	"testing"
 
@@ -123,7 +122,8 @@ func TestAspectAndTile(t *testing.T) {
 		{2500, 1000, false}, {1000, 2500, false}, {3000, 1000, false}, {1000, 3000, false},
 	} {
 		err := checkAspect(c.w, c.h, lo, hi)
-		if (err == nil) != c.ok || err != nil && !errors.Is(err, ErrAspect) {
+		if ie := media.AsImageError(err); (err == nil) != c.ok || err != nil && (ie == nil || ie.Code != media.CodeVideoAspectUnsupported ||
+			ie.Details.Width != c.w || ie.Details.MinAspect != lo || ie.Details.MaxAspect != hi) {
 			t.Errorf("checkAspect(%dx%d) = %v", c.w, c.h, err)
 		}
 	}

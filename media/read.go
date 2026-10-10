@@ -340,7 +340,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	}
 	out.Public = r.reg.publicImages(g.Item, g.Manifest)
 	if editor {
-		out.State, out.Full = k.Readiness(g.Manifest).State, g.Manifest.Full
+		out.State, out.Full, out.Uploads = k.Readiness(g.Manifest).State, g.Manifest.Full, k.UploadRules()
 	}
 	views := &editorViews{g: g}
 	for _, f := range g.Manifest.Files {

@@ -27,6 +27,7 @@ export type ErrorCode =
   | "type_not_allowed"
   | "unauthorized"
   | "unavailable"
+  | "video_aspect_unsupported"
   | "video_over_budget"
   | "video_too_large"
   | "video_too_long"
@@ -57,10 +58,11 @@ export const CONTENTKIT_ERROR_CODES: Readonly<Record<ErrorCode, { status: number
   rate_limited: { status: 429, meaning: "Too many requests; retry after `retry_after` seconds (also the Retry-After header)." },
   tenant_mismatch: { status: 500, meaning: "A host port answered with another tenant's data: a configuration fault." },
   too_large: { status: 413, meaning: "The file is larger than its upload path allows; `details` has `size` and `max_bytes`." },
-  too_many_files: { status: 409, meaning: "The commit would put more files in an upload path than its rules allow." },
+  too_many_files: { status: 409, meaning: "The commit would put more files in an upload path, or the item, than allowed; `details.max` is the limit." },
   type_not_allowed: { status: 415, meaning: "The file type is not allowed in the upload path; `details.allowed` lists the types." },
   unauthorized: { status: 401, meaning: "The route needs a signed-in actor." },
   unavailable: { status: 503, meaning: "Media storage cannot be reached, or a commit's recovery is pending; retry." },
+  video_aspect_unsupported: { status: 422, meaning: "The video's display aspect is outside what its upload path accepts; `details` has `min_aspect` and `max_aspect` (width/height)." },
   video_over_budget: { status: 422, meaning: "The planned encode costs more than its upload path allows, or the source averages under a frame a second." },
   video_too_large: { status: 422, meaning: "The video's frames are larger than its upload path allows." },
   video_too_long: { status: 422, meaning: "The video or audio runs longer than its upload path allows." },
