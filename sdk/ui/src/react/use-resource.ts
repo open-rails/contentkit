@@ -1,14 +1,14 @@
 import { useCallback, useContext, useEffect, useRef, useSyncExternalStore } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
-import { ContentKitContext, useContentKitClient } from "./context.js";
+import { ContentKitContext, useContentKitClient, useReadScope } from "./context.js";
 import { resourcesFor, type Fetcher, type Page, type Resource, type ResourceStore, type Tag } from "./resources.js";
 
 /** The client, its shared store, and the provider's viewer and sign-in. */
 export function useContentScope(own?: ContentKitClient | null) {
   const ctx = useContext(ContentKitContext);
   const client = useContentKitClient(own);
-  return { client, store: resourcesFor(client), viewer: ctx?.viewer, onSignIn: ctx?.onSignIn };
+  return { client, store: resourcesFor(client), scope: useReadScope(), viewer: ctx?.viewer, onSignIn: ctx?.onSignIn };
 }
 
 const IDLE: Resource<never> = { data: undefined, loading: false, loaded: false };
@@ -28,6 +28,7 @@ export function useResource<T>(
   useEffect(() => {
     fetch.current = fetcher;
     more.current = o.more;
+    initial.current = o.initial;
   });
   const subscribe = useCallback(
     (l: () => void) => (key ? store.subscribe(key, tag, l) : none()),

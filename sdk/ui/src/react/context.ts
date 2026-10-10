@@ -65,6 +65,10 @@ export interface ContentKitContextValue {
    * undefined when the host does not say. Content reads are kept per viewer.
    */
   viewer?: string | null;
+  /** Request language; keep it in sync with the client's language callback. */
+  language?: string;
+  /** Change when the current viewer's permissions or entitlements change. */
+  accessRevision?: string | number;
   /** Asks the visitor to sign in; with it, signed-out visitors are prompted instead of acting anonymously. */
   onSignIn?: () => void;
   /** The host's content URL config (createContentURLs). */
@@ -76,6 +80,12 @@ export interface ContentKitContextValue {
 }
 
 export const ContentKitContext = createContext<ContentKitContextValue | null>(null);
+
+/** Values that can change a read without changing its content reference. */
+export function useReadScope(): string {
+  const ctx = useContext(ContentKitContext);
+  return JSON.stringify({ viewer: ctx?.viewer, language: ctx?.language, accessRevision: ctx?.accessRevision });
+}
 
 /** The ContentKitProvider's value; throws outside one. */
 export function useContentKit(): ContentKitContextValue {
