@@ -153,7 +153,8 @@ type ReadResult struct {
 	Cookie *http.Cookie `json:"-"`
 }
 
-// PublicImage is a published public preset for one upload.
+// PublicImage is a published public preset for one upload. From is empty
+// for a preset's default image (Registry.DefaultImage).
 type PublicImage struct {
 	From       string            `json:"from"`
 	Preset     string            `json:"preset"`

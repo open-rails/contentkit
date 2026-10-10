@@ -131,7 +131,7 @@ func (j *Jobs) repeatDeletion(ctx context.Context, item Item, operation uuid.UUI
 	if c.Ref != item.Ref() || c.Folder != item.Prefix() || c.State != "applied" {
 		return ErrCommitPending
 	}
-	return j.manifests.finishCommit(ctx, item, c, true)
+	return j.manifests.finishCommit(ctx, item, c, true, nil)
 }
 
 func (j *Jobs) resetItem(ctx context.Context, item Item, deletion uuid.UUID) error {

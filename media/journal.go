@@ -31,11 +31,12 @@ type TransactionalProcessQueue interface {
 // PGJournal records unfinished S3 attempts and their database effects. The S3
 // manifest remains authoritative; this table contains no current file list.
 type PGJournal struct {
-	pool        *pgxpool.Pool
-	table       string
-	allocations string
-	limiter     *PGLimiter
-	queue       TransactionalProcessQueue
+	pool         *pgxpool.Pool
+	table        string
+	allocations  string
+	publications string
+	limiter      *PGLimiter
+	queue        TransactionalProcessQueue
 }
 
 // NewPGJournal uses the migrated ContentKit schema and a processing queue in
@@ -48,8 +49,9 @@ func NewPGJournal(pool *pgxpool.Pool, schema string, queue TransactionalProcessQ
 		return nil, err
 	}
 	return &PGJournal{pool: pool, table: pgx.Identifier{schema, "content_media_commits"}.Sanitize(),
-		allocations: pgx.Identifier{schema, "content_media_allocations"}.Sanitize(),
-		limiter:     limiter, queue: queue}, nil
+		allocations:  pgx.Identifier{schema, "content_media_allocations"}.Sanitize(),
+		publications: pgx.Identifier{schema, "content_media_publications"}.Sanitize(),
+		limiter:      limiter, queue: queue}, nil
 }
 
 type journalEffects struct {
@@ -67,7 +69,8 @@ type journalEffects struct {
 
 // prepareCleanup retires exact allocations while the operation still owns
 // the folder. A cleaner that lost its lease cannot delete from an old snapshot.
-func (j *PGJournal) prepareCleanup(ctx context.Context, c *manifestCommit, effects journalEffects) error {
+// The projection, without what this cleanup retires, commits with them.
+func (j *PGJournal) prepareCleanup(ctx context.Context, c *manifestCommit, effects journalEffects, proj *projection) error {
 	effects.Cleanup = true
 	body, err := json.Marshal(effects)
 	if err != nil {
@@ -92,6 +95,9 @@ func (j *PGJournal) prepareCleanup(ctx context.Context, c *manifestCommit, effec
 		if _, err := tx.Exec(ctx, `UPDATE `+j.allocations+` SET retired_at = now()
 WHERE tenant_id = $1 AND folder_prefix = $2 AND object_key = ANY($3::text[]) AND retired_at IS NULL`,
 			c.Ref.TenantID, c.Folder, effects.Private); err != nil {
+			return err
+		}
+		if err := j.projectTx(ctx, tx, proj); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE `+j.table+` SET state = 'prepared', attempt_id = $3, effects = $4, updated_at = now()
@@ -320,7 +326,8 @@ AND content_kind = $4 AND content_id = $5 AND folder_prefix = $6 AND state = 'ap
 // finish settles at most once. An absent outcome is legal only before prepare,
 // or after recovery has fenced S3. Database effects and the outcome commit
 // together, so a crash or failed enqueue leaves the original receipt pending.
-func (j *PGJournal) finish(ctx context.Context, c manifestCommit, applied bool) error {
+// proj, the authoritative manifest's publications, is written with them.
+func (j *PGJournal) finish(ctx context.Context, c manifestCommit, applied bool, proj *projection) error {
 	return pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
 		found, err := j.load(ctx, tx, c.Ref.TenantID, c.ID)
 		if err != nil {
@@ -354,6 +361,9 @@ func (j *PGJournal) finish(ctx context.Context, c manifestCommit, applied bool) 
 			if err := j.queue.EnqueueTx(ctx, tx, *found.Effects.Process); err != nil {
 				return err
 			}
+		}
+		if err := j.projectTx(ctx, tx, proj); err != nil {
+			return err
 		}
 		state := "absent"
 		if applied {
