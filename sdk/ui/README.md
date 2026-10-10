@@ -2,7 +2,8 @@
 
 ContentKit in the browser: a framework-free client, content URLs, React hooks
 and styled components (uploads with cropping, video posters, galleries, HLS
-playback). `@openrails/contentkit-ui@X.Y.Z` speaks ContentKit `vX.Y.Z`.
+playback, comments, reactions, favorites, polls and their staff screens).
+`@openrails/contentkit-ui@X.Y.Z` speaks ContentKit `vX.Y.Z`.
 
 ```sh
 pnpm add @openrails/contentkit-ui@X.Y.Z
@@ -39,6 +40,8 @@ const urls = createContentURLs({ routes: { video: "watch", gallery: "g" }, langu
 
 <ContentKitProvider
   client={contentkit}
+  viewer={user?.id ?? null}                 // the signed-in user as ContentKit sees it
+  onSignIn={() => openSignIn()}             // signed-out visitors are asked instead of acting anonymously
   urls={urls}
   navigate={(to, o) => navigate(to, o)}
   onChange={(change) => queryClient.invalidateQueries({ queryKey: ["media", change.ref.id] })}
@@ -58,9 +61,21 @@ const urls = createContentURLs({ routes: { video: "watch", gallery: "g" }, langu
   Uploads hash in a Web Worker, send one checksum-bound PUT up to 64 MiB and
   resumable multipart above (`onState`/`resume`). The bucket must allow CORS
   `PUT` from the app's origin with `Content-Type` and `x-amz-checksum-sha256`.
+- **Content modules**, one per resource, each method one route of the
+  generated route table with its generated types: `posts`, `comments`,
+  `reactions`, `favorites`, `polls`, `bans` (`"owner"` or `"global"`),
+  `moderation`, `taxonomy`, `codes`. Lists take `limit`/`offset` (the review
+  queue a `cursor`); staff lists are `posts.adminList`, `polls.adminList`,
+  `comments.adminList`.
+- **Images of posts and polls** go to the item's server-named upload path:
+  `media.uploadNamed(ref, file)` resolves the name content routes take;
+  `media.uploadInline(postId, file)` resolves a body image's URL;
+  `posts.uploadCover`, `polls.uploadImage` and `polls.uploadOptionImage` do
+  both steps. `folders` renames the post and poll media kinds.
 - **`client.subscribe(listener)`** receives every successful mutation
-  (`media.committed`, `media.processed`); `ContentKitProvider onChange` is the
-  same stream, for the host's cache.
+  (`media.committed`, `media.processed`, `comment.created`, `reaction.changed`,
+  `poll.updated`, `ban.saved`, …); `ContentKitProvider onChange` is the same
+  stream, for the host's cache.
 - **`ContentKitProvider`** holds the client, URL config, `navigate`,
   `onChange`, `onError` and the read store hooks share: one request per item
   and options while any hook shows it; `set()` and processed uploads update
@@ -85,6 +100,26 @@ const { read, reload, set } = useRead(ref, { prefix: "low-res/", editor: true })
 const img = useSlotImage({ ref, path: "avatar", image });
 const crop = useSlotCrop({ ref, path: "avatar", file: img.file, aspect: "1:1", onSaved: img.set });
 ```
+
+Content hooks share one store per client: one request per item while any
+hook shows it, kept per `viewer`, with every change made through the client
+applied in place. Reactions, favorites and votes apply at once and roll back
+if the server refuses them.
+
+```tsx
+const thread = useComments(ref, { sort: "best" });
+await thread.post("Nice!", { replyTo: parentId });
+await thread.react(comment, 1);
+const { counts, toggle } = useReaction(ref);
+const { favorited, toggle: fav } = useFavorite(ref);
+const { poll, vote } = usePoll(null, { language }); // the newest live poll
+const editor = usePollEditor(pollId);                // staff
+```
+
+Also `useCommentReplies`, `useCanComment` (may the caller comment, the ban
+that stops it, and what it may do to others' comments), `useLatestComments`,
+`usePolls`, `usePosts`, `usePost`, and for staff `useAdminComments`,
+`useModerationQueue`, `useCommentBans`.
 
 Also: `useCrop`, `useVideoImages`, `useFrameStrip`, `useVideoFrame`,
 `useVideoPoster`, `useEncodeProgress`, `useHlsPlayer`, `useCarousel`,
@@ -143,6 +178,28 @@ fullscreen and a mini player.
 - **Theming:** `appearance.variables.playerAccent` colors the played range
   and pressed toggles (default white). Menus are always dark.
 
+## Comments, reactions and polls
+
+`Comments` (threads with one-level replies, tombstones, held and rejected
+states shown to their author, reactions, edit, delete, ban and rate-limit
+notices), `ReactionButtons`, `FavoriteButton` (moves a host-given `count`)
+and `Poll` (a final vote with results scaled to the leading option, or a
+free-text answer and its groups; `results="always"` shows results before
+voting). With an `onSignIn` (the provider's or their own), signed-out
+visitors are asked to sign in; without one they comment under a name and
+react and vote anonymously, as ContentKit allows.
+
+Staff: `CommentModeration` (every comment, the review queue, the site's
+bans), `CommentBans` with `CommentBanDialog`, and `PollEditor`. They show what
+the caller's permissions allow and say so when a route refuses; the host
+decides who sees them.
+
+```tsx
+<Comments item={{ kind: "video", id }} count={video.comment_count} userHref={(u) => `/u/${u.username}`} />
+<Poll language={lang} />
+<CommentModeration contentKinds={["video", "post"]} itemHref={(i) => `/${i.kind}/${i.id}`} />
+```
+
 ## Errors
 
 Every call rejects with `ContentKitError`: `code` (the server's, or `network`,
@@ -176,9 +233,10 @@ code has a message in every bundle (`useMessages().error(e)`).
 
 ```sh
 pnpm check                # typecheck, lint, unit + jsdom tests, build
-CONTENTKIT_TEST_S3_ENDPOINT=… CONTENTKIT_TEST_S3_ACCESS_KEY=… CONTENTKIT_TEST_S3_SECRET_KEY=… \
-  pnpm test:integration   # the real media handlers over MinIO
+CONTENTKIT_TEST_URL=… CONTENTKIT_TEST_S3_ENDPOINT=… CONTENTKIT_TEST_S3_ACCESS_KEY=… CONTENTKIT_TEST_S3_SECRET_KEY=… \
+  pnpm test:integration   # the real handlers (contentkit.Runtime.Handler) over PostgreSQL and MinIO
 pnpm build && pnpm screenshots   # demo/ in Chromium, light/dark × desktop/mobile
+                                 # (social.html needs the integration variables)
 ```
 
 The wire types, route table and error codes in `src/client/generated/` are

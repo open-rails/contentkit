@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 const port = Number(process.env.DEMO_PORT ?? 4179);
 const mediaPort = Number(process.env.MEDIA_PORT ?? 4180);
+const contentPort = Number(process.env.CONTENT_PORT ?? 4181);
 
 // Visual check of the demo (demo/) against the built package: `pnpm build && pnpm screenshots`.
 export default defineConfig({
@@ -20,6 +21,14 @@ export default defineConfig({
       url: `http://127.0.0.1:${port}`,
       reuseExistingServer: false,
       timeout: 60_000,
+    },
+    {
+      // contentkit.Runtime.Handler for the social demo; off (503) without the test PostgreSQL and MinIO.
+      command: `node e2e/content-server.ts`,
+      url: `http://127.0.0.1:${contentPort}/health`,
+      env: { CONTENT_PORT: String(contentPort) },
+      reuseExistingServer: false,
+      timeout: 120_000,
     },
     {
       command: `node e2e/media-server.ts`,

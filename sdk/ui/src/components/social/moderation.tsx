@@ -122,7 +122,7 @@ function AllComments(p: Rest) {
       <ErrorLine error={error} />
       <Listing loading={list.loading} error={list.error} empty={t("moderation.empty")} count={list.items.length} reload={list.reload}>
         {list.items.map((c) => {
-          const name = c.author?.username ?? c.anon_name ?? t("comments.anonymous");
+          const name = c.author?.username ?? c.anon_name ?? c.user_id ?? t("comments.anonymous");
           const s = status(c);
           const href = p.itemHref?.({ kind: c.content_kind, id: c.content_id });
           return (

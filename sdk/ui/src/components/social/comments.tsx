@@ -402,11 +402,11 @@ function Row({ comment: c, onReply }: { comment: Comment; onReply?: (name: strin
         )}
         {!c.deleted && !c.moderation && !editing && (
           <div className="-ms-2 flex flex-wrap items-center gap-1">
-            <Button variant="ghost" size="xs" aria-pressed={c.mine === 1} aria-label={t("comments.like")} onClick={() => react(1)} className={cn(c.mine === 1 && "text-primary")}>
+            <Button variant={c.mine === 1 ? "secondary" : "ghost"} size="xs" aria-pressed={c.mine === 1} aria-label={t("comments.like")} onClick={() => react(1)}>
               <HugeiconsIcon icon={ThumbsUpIcon} strokeWidth={2} />
               <span>{c.likes}</span>
             </Button>
-            <Button variant="ghost" size="xs" aria-pressed={c.mine === -1} aria-label={t("comments.dislike")} onClick={() => react(-1)} className={cn(c.mine === -1 && "text-primary")}>
+            <Button variant={c.mine === -1 ? "secondary" : "ghost"} size="xs" aria-pressed={c.mine === -1} aria-label={t("comments.dislike")} onClick={() => react(-1)}>
               <HugeiconsIcon icon={ThumbsDownIcon} strokeWidth={2} />
               <span>{c.dislikes}</span>
             </Button>
@@ -517,7 +517,13 @@ function Composer(p: ComposerProps) {
       />
       <div className="flex flex-wrap items-center gap-2">
         <span id={`${ids}-hint`} className="me-auto text-xs text-muted-foreground" aria-live="polite">
-          {invalid ? <span className="text-destructive">{invalid}</span> : left <= max * 0.2 ? m.plural("comments.charsLeft", left) : t("comments.submitHint", { key: mac ? "⌘" : "Ctrl" })}
+          {invalid ? (
+            <span className="text-destructive">{invalid}</span>
+          ) : left <= max * 0.2 ? (
+            m.plural("comments.charsLeft", left)
+          ) : (
+            <span className="pointer-coarse:hidden">{t("comments.submitHint", { key: mac ? "⌘" : "Ctrl" })}</span>
+          )}
         </span>
         {p.onCancel && (
           <Button type="button" size="sm" variant="ghost" onClick={p.onCancel} disabled={pending}>

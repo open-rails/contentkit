@@ -14,5 +14,6 @@ export default defineConfig({
       { find: /^@openrails\/contentkit-ui\/(client|react|urls|locales\/\w+)$/, replacement: path.join(root, "dist") + "/$1.js" },
     ],
   },
-  server: { host: "127.0.0.1", strictPort: true },
+  // The social demo's ContentKit (e2e/content-server.ts).
+  server: { host: "127.0.0.1", strictPort: true, proxy: { "/ck": `http://127.0.0.1:${process.env.CONTENT_PORT ?? 4181}` } },
 });
