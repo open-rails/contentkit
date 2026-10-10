@@ -75,4 +75,17 @@ export {
   type PlaybackError,
   type PlaybackErrorKind,
 } from "./playback.js";
+export {
+  PLAYBACK_SPEEDS,
+  PLAYER_TRACKS_KEY,
+  PLAYER_VOLUME_KEY,
+  parseSpriteVtt,
+  playerKeyAction,
+  resumeAt,
+  type PlayerAction,
+  type PlayerTrack,
+  type SpriteCue,
+  type TrackPrefs,
+  type VolumePrefs,
+} from "./player.js";
 export * from "./generated/wire.js";

@@ -18,6 +18,7 @@ import {
   type ConnectionHint,
   type PlaybackError,
 } from "../client/playback.js";
+import { PLAYER_TRACKS_KEY, PLAYER_VOLUME_KEY, pickTrack, readTrackPrefs, readVolume, writeTrackPrefs, type PlayerTrack } from "../client/player.js";
 
 export const GALLERY_VIEW_KEY = "ckui.media-gallery.view";
 
@@ -167,7 +168,8 @@ export function useCarousel({ count, index: given, defaultIndex = 0, onIndexChan
     },
     onKeyDown: (e) => {
       const to = { ArrowLeft: index - 1, ArrowRight: index + 1, Home: 0, End: count - 1 }[e.key];
-      if (to === undefined || (e.target as HTMLElement).closest?.("input, textarea, video, [contenteditable], [role=menu]")) return;
+      // A key the player took (a seek) is not a slide change.
+      if (to === undefined || e.defaultPrevented || (e.target as HTMLElement).closest?.("input, textarea, video, [contenteditable], [role=menu]")) return;
       e.preventDefault();
       go(to);
     },
@@ -200,6 +202,18 @@ export interface HlsPlayerOptions {
   abr?: AbrPolicy;
   /** localStorage key remembering the viewer's manual quality; null disables. */
   qualityKey?: string | null;
+  /** Where playback starts, seconds (a resume point); a committed preview starts here too. */
+  startAt?: number;
+  /** Loads and plays at once. A browser that blocks it leaves the play button: never a muted start. */
+  autoPlay?: boolean;
+  /** The audio language (BCP 47) until the viewer chooses one. */
+  audioLanguage?: string;
+  /** The subtitle language until the viewer chooses; absent or null: off. */
+  subtitleLanguage?: string | null;
+  /** localStorage key remembering the viewer's volume and mute; null disables. */
+  volumeKey?: string | null;
+  /** localStorage key remembering the viewer's audio and subtitle languages; null disables. */
+  trackKey?: string | null;
 }
 
 export const PLAYER_QUALITY_KEY = "ckui.player.quality";
@@ -258,6 +272,15 @@ export interface PlayerQuality {
   select: (index: number) => void;
 }
 
+export interface PlayerTracks {
+  /** Empty until the manifest lists them. */
+  list: PlayerTrack[];
+  /** The playing track's index; -1 for none (subtitles off). */
+  selected: number;
+  /** Switches track (-1: subtitles off) and remembers its language. */
+  select: (index: number) => void;
+}
+
 export interface UseHlsPlayer {
   /** Attach to the `<video>`. */
   ref: (el: HTMLVideoElement | null) => void;
@@ -276,6 +299,9 @@ export interface UseHlsPlayer {
   /** Reloads from scratch and plays. */
   retry: () => void;
   quality: PlayerQuality;
+  audio: PlayerTracks;
+  /** The selected subtitle track's TextTrack is kept "hidden": its cues are the caller's to draw. */
+  subtitles: PlayerTracks;
 }
 
 const HLS_TYPE = "application/vnd.apple.mpegurl";
@@ -324,6 +350,21 @@ function storeQuality(key: string | null, v: number | "auto") {
   }
 }
 
+interface NativeAudioTrack {
+  label: string;
+  language: string;
+  enabled: boolean;
+}
+type NativeAudioTracks = ArrayLike<NativeAudioTrack> & EventTarget;
+
+const subtitleTracks = (el: HTMLVideoElement) => Array.from(el.textTracks).filter((t) => t.kind === "subtitles" || t.kind === "captions");
+
+const asTracks = (ts: readonly { name?: string; label?: string; lang?: string; language?: string; forced?: boolean }[]): PlayerTrack[] =>
+  ts.map((t, index) => {
+    const lang = t.lang || t.language || undefined;
+    return { index, label: t.name || t.label || lang || "", lang, ...(t.forced ? { forced: true } : {}) };
+  });
+
 // The last throughput measured on this page seeds the next player.
 let measured = 0;
 
@@ -357,6 +398,12 @@ export function useHlsPlayer({
   stallTimeout = 10_000,
   abr,
   qualityKey = PLAYER_QUALITY_KEY,
+  startAt,
+  autoPlay,
+  audioLanguage,
+  subtitleLanguage,
+  volumeKey = PLAYER_VOLUME_KEY,
+  trackKey = PLAYER_TRACKS_KEY,
 }: HlsPlayerOptions): UseHlsPlayer {
   const [el, setEl] = useState<HTMLVideoElement | null>(null);
   const [status, setStatus] = useState<PlayerStatus>("idle");
@@ -378,10 +425,18 @@ export function useHlsPlayer({
   const [selected, setSelected] = useState(-1);
   const [current, setCurrent] = useState(-1);
   const choose = useRef<(index: number) => void>(() => {});
+  const [audioList, setAudioList] = useState<PlayerTrack[]>([]);
+  const [audioSel, setAudioSel] = useState(-1);
+  const [subList, setSubList] = useState<PlayerTrack[]>([]);
+  const [subSel, setSubSel] = useState(-1);
+  const chooseAudio = useRef<(index: number) => void>(() => {});
+  const chooseSubs = useRef<(index: number) => void>(() => {});
+  const startedRef = useRef(started);
+  startedRef.current = started;
   // A preview becoming real playback: drop its buffer so the chosen level or ABR takes over.
   const commit = useRef<() => void>(() => {});
-  const opts = useRef({ xhrSetup, refresh, abr, qualityKey });
-  opts.current = { xhrSetup, refresh, abr, qualityKey };
+  const opts = useRef({ xhrSetup, refresh, abr, qualityKey, startAt, audioLanguage, subtitleLanguage, volumeKey, trackKey });
+  opts.current = { xhrSetup, refresh, abr, qualityKey, startAt, audioLanguage, subtitleLanguage, volumeKey, trackKey };
   // Loads the playlists again at the playhead when they hold the old token.
   const renew = useRef<() => void>(() => {});
   useRefreshBeforeExpiry(expires, refresh);
@@ -391,6 +446,11 @@ export function useHlsPlayer({
     granted.current = expires;
     if (expires && before && expires > before) renew.current();
   }, [expires]);
+
+  // A new source starts at its resume point.
+  useEffect(() => {
+    resumeAt.current = opts.current.startAt ?? 0;
+  }, [src]);
 
   useEffect(() => {
     if (!el || !src || !armed) return;
@@ -402,7 +462,13 @@ export function useHlsPlayer({
     setLevels([]);
     setSelected(-1);
     setCurrent(-1);
+    setAudioList([]);
+    setAudioSel(-1);
+    setSubList([]);
+    setSubSel(-1);
     choose.current = () => {};
+    chooseAudio.current = () => {};
+    chooseSubs.current = () => {};
     commit.current = () => {};
     renew.current = () => {};
     const reload = () => {
@@ -439,6 +505,21 @@ export function useHlsPlayer({
       setStatus("error");
     };
     const onMediaError = () => native && fail(classifyMediaError(el.error));
+    // A blocked autoplay leaves the play button; it never retries muted.
+    const play = () =>
+      el.play().catch((e: unknown) => {
+        if (dead || (e as { name?: string } | null)?.name !== "NotAllowedError") return;
+        want.current = false;
+        setStatus((s) => (s === "error" ? s : startedRef.current ? "paused" : "idle"));
+      });
+    const prefs = () => readTrackPrefs(opts.current.trackKey);
+    const wantedSubs = (tracks: readonly { lang?: string; language?: string }[]) => {
+      const p = prefs().subtitles;
+      return pickTrack(
+        tracks.map((t) => ({ lang: t.lang || t.language })),
+        p === "off" ? null : (p ?? opts.current.subtitleLanguage),
+      );
+    };
     el.addEventListener("error", onMediaError);
     import("hls.js").then(
       ({ default: Hls }) => {
@@ -456,6 +537,43 @@ export function useHlsPlayer({
             xhrSetup: (xhr, url) => opts.current.xhrSetup?.(xhr, url),
           });
           destroy = () => hls.destroy();
+          // The player draws the cues of the chosen track ("hidden"), above its controls.
+          hls.subtitleDisplay = false;
+          const syncAudio = () => {
+            setAudioList(asTracks(hls.audioTracks));
+            setAudioSel(hls.audioTrack);
+          };
+          const syncSubs = () => {
+            setSubList(asTracks(hls.subtitleTracks));
+            setSubSel(hls.subtitleTrack);
+          };
+          hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => {
+            const i = pickTrack(hls.audioTracks, prefs().audio ?? opts.current.audioLanguage);
+            if (i >= 0 && i !== hls.audioTrack) hls.audioTrack = i;
+            syncAudio();
+          });
+          hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, syncAudio);
+          // A preview loads no subtitles; the commit applies the choice.
+          const applySubs = () => {
+            if (previewAt.current === null && hls.subtitleTracks.length) hls.subtitleTrack = wantedSubs(hls.subtitleTracks);
+          };
+          // hls.js selects its own default right after this event: choose after it.
+          hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => {
+            syncSubs();
+            queueMicrotask(() => {
+              if (dead) return;
+              applySubs();
+              syncSubs();
+            });
+          });
+          hls.on(Hls.Events.SUBTITLE_TRACK_SWITCH, syncSubs);
+          chooseAudio.current = (i) => {
+            hls.audioTrack = i;
+          };
+          chooseSubs.current = (i) => {
+            hls.subtitleTrack = i;
+            setSubSel(i);
+          };
           hls.on(Hls.Events.ERROR, (_, d) => {
             const e = classifyHlsError(d);
             if (d.fatal || e.kind === "access" || e.kind === "not_found" || e.kind === "rate_limited") fail(e);
@@ -491,6 +609,7 @@ export function useHlsPlayer({
             else hls.nextLevel = -1;
           };
           commit.current = () => {
+            applySubs();
             if (!loading) return;
             flush(locked);
             if (locked < 0) hls.nextAutoLevel = autoStart();
@@ -522,7 +641,7 @@ export function useHlsPlayer({
               }
               resumeAt.current = 0;
             }
-            el.play().catch(() => {});
+            void play();
           };
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             parsed = true;
@@ -548,15 +667,56 @@ export function useHlsPlayer({
           if (code < 200 || code >= 400) return fail({ kind: statusKind(code), code: `probe/${code}`, status: code });
           native = true;
           renew.current = reload; // its playlists cannot be inspected
+          const audioTracks = (el as { audioTracks?: NativeAudioTracks }).audioTracks;
+          const syncTracks = () => {
+            const a = audioTracks ? Array.from(audioTracks) : [];
+            setAudioList(asTracks(a));
+            setAudioSel(a.findIndex((t) => t.enabled));
+            const t = subtitleTracks(el);
+            setSubList(asTracks(t));
+            setSubSel(t.findIndex((x) => x.mode !== "disabled"));
+          };
+          chooseAudio.current = (i) => {
+            const t = audioTracks?.[i];
+            if (t) t.enabled = true;
+            syncTracks();
+          };
+          // Safari lists text tracks as it finds them: the wanted language applies until the viewer chooses.
+          let chosen = false;
+          const showSubs = (i: number) => {
+            subtitleTracks(el).forEach((t, j) => (t.mode = j === i ? "hidden" : "disabled"));
+            syncTracks();
+          };
+          chooseSubs.current = (i) => {
+            chosen = true;
+            showSubs(i);
+          };
+          const wantedNative = () => {
+            if (chosen || previewAt.current !== null) return syncTracks();
+            showSubs(wantedSubs(asTracks(subtitleTracks(el))));
+          };
+          const firstTracks = () => {
+            const a = audioTracks ? Array.from(audioTracks) : [];
+            const i = pickTrack(asTracks(a), prefs().audio ?? opts.current.audioLanguage);
+            if (i >= 0 && !a[i]!.enabled) a[i]!.enabled = true;
+            wantedNative();
+          };
+          el.addEventListener("loadedmetadata", firstTracks, { once: true });
+          el.textTracks.addEventListener?.("addtrack", wantedNative);
+          audioTracks?.addEventListener("change", syncTracks);
           el.src = src;
           if (previewAt.current !== null) el.currentTime = previewAt.current;
           else if (resumeAt.current) el.currentTime = resumeAt.current;
           resumeAt.current = 0;
           destroy = () => {
+            el.removeEventListener("loadedmetadata", firstTracks);
+            el.textTracks.removeEventListener?.("addtrack", wantedNative);
+            audioTracks?.removeEventListener("change", syncTracks);
             el.removeAttribute("src");
             el.load();
           };
-          start.current = () => void el.play().catch(() => {});
+          commit.current = wantedNative;
+          start.current = () => void play();
           if (want.current) start.current();
         });
       },
@@ -637,6 +797,14 @@ export function useHlsPlayer({
     setSession((s) => s + 1);
   }, []);
 
+  // The viewer's volume and mute; a preview's mute is the player's, never stored.
+  const restoreVolume = useCallback(() => {
+    if (!el) return;
+    const v = readVolume(opts.current.volumeKey);
+    el.volume = v.volume;
+    el.muted = v.muted;
+  }, [el]);
+
   const unload = useCallback(() => {
     if (previewAt.current === null) return;
     previewAt.current = null;
@@ -646,14 +814,15 @@ export function useHlsPlayer({
     setStatus("idle");
     if (el) {
       el.pause();
-      el.muted = false;
+      restoreVolume();
     }
-  }, [el]);
+  }, [el, restoreVolume]);
   stopPreview.current = unload;
 
   const preview = useCallback(
     (at: number) => {
-      if (!el || started || error || previewAt.current !== null) return;
+      // Not once playback was asked for: the preview would swallow its failures.
+      if (!el || started || error || want.current || previewAt.current !== null) return;
       previewAt.current = Math.max(0, at);
       el.muted = true;
       want.current = true;
@@ -668,22 +837,30 @@ export function useHlsPlayer({
   const play = useCallback(() => {
     if (error) return retry();
     if (previewAt.current !== null) {
-      // Committed: the preview's player becomes the real one, from the start.
+      // Committed: the preview's player becomes the real one, from the start (or the resume point).
       previewAt.current = null;
       setPreviewing(false);
       if (el) {
-        el.muted = false;
-        el.currentTime = 0;
+        restoreVolume();
+        el.currentTime = opts.current.startAt ?? 0;
       }
       commit.current();
       setStarted(true);
-    }
+    } else if (!startedRef.current) restoreVolume();
     want.current = true;
     lastProgress.current = Date.now();
     setStatus("loading");
     setArmed(true);
     start.current?.();
-  }, [error, retry, el]);
+  }, [error, retry, el, restoreVolume]);
+
+  const playRef = useRef(play);
+  playRef.current = play;
+  const auto = useRef(autoPlay);
+  auto.current = autoPlay;
+  useEffect(() => {
+    if (el && src && auto.current) playRef.current();
+  }, [el, src]);
 
   const levelsRef = useRef(levels);
   levelsRef.current = levels;
@@ -693,5 +870,33 @@ export function useHlsPlayer({
     storeQuality(opts.current.qualityKey, index === -1 || !h ? "auto" : h);
   }, []);
 
-  return { ref: setEl, status, error, started, play, preview, unload, previewing, retry, quality: { levels, selected, current, select } };
+  const audioRef = useRef(audioList);
+  audioRef.current = audioList;
+  const subsRef = useRef(subList);
+  subsRef.current = subList;
+  const selectAudio = useCallback((index: number) => {
+    chooseAudio.current(index);
+    const lang = audioRef.current[index]?.lang;
+    if (lang) writeTrackPrefs(opts.current.trackKey, { audio: lang });
+  }, []);
+  const selectSubs = useCallback((index: number) => {
+    chooseSubs.current(index);
+    const lang = index < 0 ? "off" : subsRef.current[index]?.lang;
+    if (lang) writeTrackPrefs(opts.current.trackKey, { subtitles: lang });
+  }, []);
+
+  return {
+    ref: setEl,
+    status,
+    error,
+    started,
+    play,
+    preview,
+    unload,
+    previewing,
+    retry,
+    quality: { levels, selected, current, select },
+    audio: { list: audioList, selected: audioSel, select: selectAudio },
+    subtitles: { list: subList, selected: subSel, select: selectSubs },
+  };
 }

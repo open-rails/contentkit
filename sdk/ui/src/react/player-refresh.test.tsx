@@ -9,12 +9,27 @@ import { expiryDelay, NETWORK_FAILURES_BEFORE_ERROR, refreshable } from "../clie
 // player asks of it and lets the test deliver its events.
 const hls = vi.hoisted(() => {
   const instances: FakeHls[] = [];
-  const Events = { ERROR: "hlsError", MANIFEST_PARSED: "hlsManifestParsed", LEVEL_SWITCHED: "hlsLevelSwitched", FRAG_LOADED: "hlsFragLoaded", BUFFER_FLUSHED: "hlsBufferFlushed" };
+  const Events = {
+    ERROR: "hlsError",
+    MANIFEST_PARSED: "hlsManifestParsed",
+    LEVEL_SWITCHED: "hlsLevelSwitched",
+    FRAG_LOADED: "hlsFragLoaded",
+    BUFFER_FLUSHED: "hlsBufferFlushed",
+    AUDIO_TRACKS_UPDATED: "hlsAudioTracksUpdated",
+    AUDIO_TRACK_SWITCHED: "hlsAudioTrackSwitched",
+    SUBTITLE_TRACKS_UPDATED: "hlsSubtitleTracksUpdated",
+    SUBTITLE_TRACK_SWITCH: "hlsSubtitleTrackSwitch",
+  };
   class FakeHls {
     static Events = Events;
     static DefaultConfig = {};
     static isSupported = () => true;
     levels = [{ width: 480, height: 270, bitrate: 300_000 }];
+    audioTracks: { name: string; lang?: string }[] = [];
+    subtitleTracks: { name: string; lang?: string }[] = [];
+    audioTrack = -1;
+    subtitleTrack = -1;
+    subtitleDisplay = true;
     bandwidthEstimate = 1_000_000;
     startLevel = -1;
     loadLevel = -1;
@@ -288,4 +303,133 @@ it("a rate limit or a blocked media request fails once: no refresh, no retry loo
     expect(hls.instances[0]!.destroyed).toBe(true);
     m.unmount();
   }
+});
+
+const tracks = {
+  audio: [
+    { name: "English", lang: "en" },
+    { name: "Japanese", lang: "ja" },
+  ],
+  subs: [
+    { name: "English", lang: "en" },
+    { name: "Spanish", lang: "es" },
+  ],
+};
+
+async function loaded(o: HlsPlayerOptions) {
+  const m = mount(o);
+  act(() => m.result.current.play());
+  await waitFor(() => expect(hls.instances.length).toBeGreaterThan(0));
+  const h = live();
+  act(() => h.emit("hlsManifestParsed"));
+  h.audioTracks = tracks.audio;
+  h.audioTrack = 0;
+  h.subtitleTracks = tracks.subs;
+  await act(async () => {
+    h.emit("hlsAudioTracksUpdated");
+    h.emit("hlsSubtitleTracksUpdated");
+  });
+  return { ...m, h };
+}
+
+it("tracks: the viewer's remembered language wins over the host's; each choice is remembered", async () => {
+  localStorage.clear();
+  const o = { src: "https://media/a/master.m3u8", audioLanguage: "ja", trackKey: "t" };
+  const a = await loaded(o);
+  // The cues are the player's to draw.
+  expect(a.h.subtitleDisplay).toBe(false);
+  expect(a.h.audioTrack).toBe(1);
+  expect(a.h.subtitleTrack).toBe(-1);
+  expect(a.result.current.audio.list.map((t) => t.label)).toEqual(["English", "Japanese"]);
+  expect(a.result.current.subtitles.list.map((t) => t.lang)).toEqual(["en", "es"]);
+
+  act(() => a.result.current.subtitles.select(1));
+  expect(a.h.subtitleTrack).toBe(1);
+  expect(a.result.current.subtitles.selected).toBe(1);
+  act(() => a.result.current.audio.select(0));
+  expect(a.h.audioTrack).toBe(0);
+  expect(JSON.parse(localStorage.getItem("t")!)).toEqual({ subtitles: "es", audio: "en" });
+  a.unmount();
+
+  const b = await loaded({ ...o, src: "https://media/b/master.m3u8" });
+  expect(b.h.audioTrack).toBe(0);
+  expect(b.h.subtitleTrack).toBe(1);
+  act(() => b.result.current.subtitles.select(-1));
+  expect(JSON.parse(localStorage.getItem("t")!).subtitles).toBe("off");
+  b.unmount();
+
+  const c = await loaded({ ...o, src: "https://media/c/master.m3u8", subtitleLanguage: "en-US" });
+  expect(c.h.subtitleTrack).toBe(-1);
+  c.unmount();
+  localStorage.clear();
+  const d = await loaded({ ...o, src: "https://media/d/master.m3u8", subtitleLanguage: "en-US" });
+  expect(d.h.subtitleTrack).toBe(0);
+});
+
+it("a preview loads no subtitles; committing it applies the choice", async () => {
+  localStorage.clear();
+  const m = mount({ src: "https://media/item/master.m3u8", subtitleLanguage: "es" });
+  act(() => m.result.current.preview(3));
+  await waitFor(() => expect(hls.instances.length).toBe(1));
+  live().subtitleTracks = tracks.subs;
+  await act(async () => live().emit("hlsSubtitleTracksUpdated"));
+  expect(live().subtitleTrack).toBe(-1);
+  act(() => m.result.current.play());
+  expect(live().subtitleTrack).toBe(1);
+});
+
+it("starts at the resume point, and a committed preview jumps to it", async () => {
+  const a = mount({ src: "https://media/a/master.m3u8", startAt: 42 });
+  act(() => a.result.current.play());
+  await waitFor(() => expect(hls.instances.length).toBe(1));
+  act(() => live().emit("hlsManifestParsed"));
+  expect(live().startedAt).toBe(42);
+  a.unmount();
+
+  const b = mount({ src: "https://media/b/master.m3u8", startAt: 42 });
+  act(() => b.result.current.preview(3));
+  await waitFor(() => expect(hls.instances.length).toBe(2));
+  act(() => live().emit("hlsManifestParsed"));
+  expect(live().startedAt).toBe(3);
+  act(() => b.result.current.play());
+  expect(b.video.currentTime).toBe(42);
+});
+
+it("autoPlay loads and plays at once; a blocked autoplay leaves the play button, never a muted start", async () => {
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockRejectedValue(new DOMException("blocked", "NotAllowedError"));
+  const m = mount({ src: "https://media/item/master.m3u8", autoPlay: true });
+  await waitFor(() => expect(hls.instances.length).toBe(1));
+  act(() => live().emit("hlsManifestParsed"));
+  expect(live().startedAt).toBe(-1);
+  await waitFor(() => expect(m.result.current.status).toBe("idle"));
+  expect(m.result.current.started).toBe(false);
+  expect(m.video.muted).toBe(false);
+});
+
+it("play restores the viewer's volume and mute; a preview's mute is never stored", async () => {
+  localStorage.setItem("v", JSON.stringify({ volume: 0.4, muted: true }));
+  const m = mount({ src: "https://media/item/master.m3u8", volumeKey: "v" });
+  m.video.muted = false;
+  act(() => m.result.current.preview(3));
+  expect(m.video.muted).toBe(true);
+  act(() => m.result.current.unload());
+  expect(m.video.volume).toBe(0.4);
+  expect(m.video.muted).toBe(true);
+  localStorage.setItem("v", JSON.stringify({ volume: 0.8, muted: false }));
+  act(() => m.result.current.play());
+  expect(m.video.volume).toBe(0.8);
+  expect(m.video.muted).toBe(false);
+  expect(JSON.parse(localStorage.getItem("v")!)).toEqual({ volume: 0.8, muted: false });
+});
+
+it("a hover preview never takes over a requested playback (it would swallow its failures)", async () => {
+  const m = mount({ src: "https://media/item/master.m3u8" });
+  act(() => m.result.current.play());
+  act(() => m.result.current.preview(3));
+  expect(m.result.current.previewing).toBe(false);
+  await waitFor(() => expect(hls.instances.length).toBe(1));
+  act(() => live().emit("hlsManifestParsed"));
+  expect(live().startedAt).toBe(-1);
+  for (let i = 0; i < NETWORK_FAILURES_BEFORE_ERROR; i++) act(() => live().emit("hlsError", { type: "networkError", details: "fragLoadError", fatal: false, response: { code: 0 } }));
+  await waitFor(() => expect(m.result.current.status).toBe("error"));
 });

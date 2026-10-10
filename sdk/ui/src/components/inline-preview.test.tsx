@@ -16,6 +16,8 @@ const hls = vi.hoisted(() => {
       { width: 480, height: 270, bitrate: 300_000 },
       { width: 1920, height: 1080, bitrate: 5_000_000 },
     ];
+    audioTracks = [];
+    subtitleTracks = [];
     bandwidthEstimate = 1_000_000;
     startLevel = -1;
     loadLevel = -1;
@@ -128,7 +130,7 @@ it("without a frame cover the preview starts 10% in; clicking commits to real pl
   fireEvent.click(box!.querySelector("button")!);
   expect(video.muted).toBe(false);
   expect(video.currentTime).toBe(0);
-  expect(video.controls).toBe(true);
+  expect(box!.querySelector("[data-ckui=controls]")).not.toBeNull();
   expect(h.destroyed).toBe(false); // the same player continues
   fireEvent.pointerLeave(box!);
   expect(h.destroyed).toBe(false);

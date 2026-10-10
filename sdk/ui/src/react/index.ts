@@ -65,8 +65,10 @@ export {
   type HlsPlayerOptions,
   type PlayerQuality,
   type PlayerStatus,
+  type PlayerTracks,
   type QualityLevel,
   type UseCarousel,
   type UseHlsPlayer,
 } from "./gallery.js";
+export type { PlaybackProgress, ProgressReason } from "./player.js";
 export { HOVER_DELAY, InlinePreviewContext, useInlinePreview, useReducedMotion, type InlinePreviewOptions } from "./inline-preview.js";

@@ -97,10 +97,51 @@ Also: `useCrop`, `useVideoImages`, `useFrameStrip`, `useVideoFrame`,
 `SlotEditMenu`, `SlotEditError` and `useSlotEditor()` (the same pick, crop,
 save and re-crop flow inside a host layout); `SlotImage`; `ImageCropDialog`;
 `VideoPosterPicker`, `VideoPoster`; `EncodeProgress`; `RenditionImg`;
-`MediaGallery` and `VideoPlayer` (HLS with ABR, a quality menu, inline muted
-previews, a grant refresh before `expires`, and a reason, Retry and support
-code for every failure). A `PublicPreset` (`{ preset, aspect, renditions }`)
+`MediaGallery`, `VideoPlayer` and `VideoMiniPlayer` (HLS with ABR, inline
+muted previews, a grant refresh before `expires`, and a reason, Retry and
+support code for every failure; see below). A `PublicPreset` (`{ preset, aspect, renditions }`)
 is what a slot or poster shows; a read's `public` lists `PublicImage`s.
+
+## Video player
+
+`VideoPlayer` plays a ladder's HLS folder (`client.media.hlsBase(ref, dir)`)
+with its own controls: seek bar with sprite preview, volume, subtitles,
+audio, quality (Auto or a fixed rung), speed, picture in picture, theater,
+fullscreen and a mini player.
+
+```tsx
+<VideoPlayer
+  base={contentkit.media.hlsBase(ref, "hls/")}
+  xhrSetup={contentkit.media.xhrSetup}
+  refresh={reload} expires={read.expires}       // re-grant before the token expires
+  width={video.w} height={video.h} duration={video.dur} poster={posterPreset}
+  autoPlay startAt={resumePoint}                 // resume; never a muted autoplay
+  keyboard="global"                              // a watch page; default "focus"
+  audioLanguage={lang} subtitleLanguage={null}   // until the viewer chooses
+  onProgress={(p) => saveResume(p.time, p.played)} // interval, pause, seek, end, page hide, unload
+  onEvent={(e) => analytics(e)}                  // play, pause, seek, quality, audio, subtitles, fullscreen, error…
+  theater={theater} onTheaterChange={setTheater}
+  onMiniPlayer={setHandoff}
+  renderDownloads={({ className, container }) => <Downloads className={className} container={container} />}
+  menuItems={[{ label: "Version", value, options, onChange }, { label: "Report a problem", onSelect }]}
+/>
+{handoff && <VideoMiniPlayer handoff={handoff} xhrSetup={contentkit.media.xhrSetup} onExpand={openWatchPage} onClose={() => setHandoff(null)} />}
+```
+
+- **Shortcuts:** Space/K play, ←/→ 5 s, J/L 10 s, ↑/↓ volume, M mute, C
+  subtitles, F fullscreen, T theater, I mini player, 0–9 a tenth of the way,
+  Home/End, `<`/`>` speed. Never while typing or in a menu.
+- **Touch:** a tap shows or hides the controls; a double tap on either side
+  seeks 10 s, and further taps keep seeking. A double click is fullscreen.
+- **Remembered per browser:** volume and mute (`ckui.player.volume`), the
+  audio and subtitle languages (`ckui.player.tracks`) and a fixed quality
+  (`ckui.player.quality`); each `*Key` option renames or disables one.
+- **Mini player:** `onMiniPlayer` gets a `PlayerHandoff` (position, playing,
+  languages, size, poster). `VideoMiniPlayer` docks it in a corner and calls
+  `onExpand({ time, playing })` or `onClose({ time })`; where it lives and
+  what expand opens are the host's.
+- **Theming:** `appearance.variables.playerAccent` colors the played range
+  and pressed toggles (default white). Menus are always dark.
 
 ## Errors
 

@@ -1,4 +1,4 @@
-import { MediaGallery, VideoPlayer } from "@openrails/contentkit-ui";
+import { MediaGallery, VideoMiniPlayer, VideoPlayer, type PlayerHandoff } from "@openrails/contentkit-ui";
 import type { Access, FileInfo, ReadResult } from "@openrails/contentkit-ui/client";
 import { useState, type ReactNode } from "react";
 
@@ -82,10 +82,69 @@ export function AbrDemo() {
     <main style={{ maxWidth: 680, margin: "0 auto", padding: "24px 16px", display: "grid", gap: 20 }}>
       <Post title="abr" demo="abr">
         <VideoPlayer base={`${media}/abr/landscape/`} width={1920} height={1080} duration={60} />
-        <button type="button" onClick={() => document.querySelector<HTMLElement>("[data-demo=abr] [data-ckui=video-player]")?.requestFullscreen()}>
-          Fullscreen
-        </button>
       </Post>
+    </main>
+  );
+}
+
+// Everything a watch page uses, over e2e/fixtures/media/tracks (two audio
+// languages, two subtitle languages, a sprite). Events land in window.events.
+const events: { name: string; [k: string]: unknown }[] = ((window as unknown as { events: unknown[] }).events = []) as never;
+const log = (name: string) => (x: object) => events.push({ name, ...x });
+
+export function WatchDemo() {
+  const [theater, setTheater] = useState(false);
+  const [handoff, setHandoff] = useState<PlayerHandoff | null>(null);
+  const [start, setStart] = useState({ at: Number(q.get("t")) || undefined, play: q.get("autoplay") === "1", key: 0 });
+  const [version, setVersion] = useState("v1");
+  return (
+    <main style={{ maxWidth: theater ? 1200 : 680, margin: "0 auto", padding: "24px 16px", display: "grid", gap: 20 }} data-theater={theater ? "" : undefined}>
+      <Post title={`watch (${version})`} demo="watch">
+        {handoff ? (
+          <p data-demo="browsing">Browsing while the mini player plays.</p>
+        ) : (
+          <VideoPlayer
+            key={start.key}
+            base={`${media}/cors/tracks/`}
+            width={480}
+            height={270}
+            duration={24}
+            keyboard="global"
+            startAt={start.at}
+            autoPlay={start.play}
+            theater={theater}
+            onTheaterChange={setTheater}
+            onMiniPlayer={setHandoff}
+            onProgress={log("progress")}
+            onEvent={log("event")}
+            renderDownloads={({ className }) => (
+              <a className={className} href={`${media}/cors/tracks/video.mp4`} download="clip.mp4" aria-label="Download" title="Download">
+                ⤓
+              </a>
+            )}
+            menuItems={[
+              { label: "Version", value: version, options: [{ value: "v1", label: "Original" }, { value: "v2", label: "Director's cut" }], onChange: setVersion },
+              { label: "Report a problem", onSelect: () => log("report")({}) },
+            ]}
+          />
+        )}
+      </Post>
+      {handoff && (
+        <VideoMiniPlayer
+          handoff={handoff}
+          label="Test pattern"
+          onExpand={({ time, playing }) => {
+            log("expand")({ time, playing });
+            setHandoff(null);
+            setStart((s) => ({ at: time, play: playing, key: s.key + 1 }));
+          }}
+          onClose={({ time }) => {
+            log("close")({ time });
+            setHandoff(null);
+          }}
+          onProgress={log("mini-progress")}
+        />
+      )}
     </main>
   );
 }
