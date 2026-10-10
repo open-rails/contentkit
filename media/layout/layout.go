@@ -83,7 +83,7 @@ func ValidSegment(s string) bool {
 
 // ValidPublicName also accepts the generation suffix on a logical public
 // filename. Only object names gain that allowance; folder segments keep their
-// existing bounds. Default images still use logical names.
+// existing bounds. Default images use content-addressed names.
 func ValidPublicName(name string) bool {
 	if ValidSegment(name) {
 		return true

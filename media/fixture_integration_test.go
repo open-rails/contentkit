@@ -289,7 +289,7 @@ func newFixtureOn(t *testing.T, env *s3test.Env, mutate func(*media.Config)) *fi
 	}
 	h, err := gateway.New(gateway.Config{Endpoint: env.Config.Endpoint, Bucket: env.Config.Bucket, Region: env.Config.Region,
 		AccessKeyID: env.Config.AccessKeyID, SecretAccessKey: env.Config.SecretAccessKey, Ring: ring,
-		Hosts: map[string][]string{mediaHost: f.reg.Namespaces()}, Defaults: media.GatewayConfig(f.reg).Defaults})
+		Hosts: map[string][]string{mediaHost: f.reg.Namespaces()}})
 	if err != nil {
 		t.Fatal(err)
 	}

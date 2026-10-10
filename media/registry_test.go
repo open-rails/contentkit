@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -54,8 +55,9 @@ func TestRegistry(t *testing.T) {
 			t.Fatalf("width %d: %s, want %s", width, got, want)
 		}
 	}
-	rules := media.GatewayConfig(reg)
-	if got := layout.FormatDefaults(rules.Defaults); got != "accounts/user: avatar-{w}.webp; doujins/gallery: cover-{w}.webp" {
+	defaults := []layout.Default{{Namespace: "accounts", Kind: "user", Files: map[string]string{"avatar-64.webp": "sha256-" + strings.Repeat("a", 64) + ".webp"}}}
+	rules := media.GatewayConfig(reg, defaults)
+	if got := layout.FormatDefaults(rules.Defaults); got != "accounts/user: avatar-64.webp=sha256-"+strings.Repeat("a", 64)+".webp" {
 		t.Fatalf("gateway defaults %q", got)
 	}
 	b, err := json.Marshal(reg)

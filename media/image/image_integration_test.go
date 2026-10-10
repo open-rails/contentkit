@@ -4,10 +4,14 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"image/color"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -20,8 +24,10 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/gateway"
 	"github.com/open-rails/contentkit/media/image"
 	"github.com/open-rails/contentkit/media/internal/s3test"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Image presets render each page through its edit, record provenance and
@@ -626,18 +632,103 @@ func TestPublishDefaults(t *testing.T) {
 		c.Kinds[0].Defaults = fstest.MapFS{"cover.png": {Data: quadrants(t)}}
 	})
 	ctx := context.Background()
-	keys, err := image.PublishDefaults(ctx, e.Store, e.reg)
-	if err != nil || len(keys) != 3 {
-		t.Fatalf("published %v %v", keys, err)
+	publication, err := image.PublishDefaults(ctx, e.Store, e.reg)
+	if err != nil || len(publication.Written) != 3 || len(publication.Defaults) != 1 {
+		t.Fatalf("published %v %v", publication, err)
 	}
 	k, _ := e.reg.Kind("gallery")
-	b, obj := e.read(t, k.DefaultKey("cover-300.webp"))
-	if w, h := webpSize(t, b); w != 300 || h != 100 || obj.Metadata["fp"] == "" {
-		t.Fatalf("default %dx%d %+v", w, h, obj.Metadata)
+	name := publication.Defaults[0].Files["cover-300.webp"]
+	b, _ := e.read(t, k.DefaultKey(name))
+	sum := sha256.Sum256(b)
+	if w, h := webpSize(t, b); w != 300 || h != 100 || name != layout.SHA256Name(sum[:])+".webp" {
+		t.Fatalf("default %dx%d %s", w, h, name)
 	}
-	if keys, err := image.PublishDefaults(ctx, e.Store, e.reg); err != nil || len(keys) != 0 {
-		t.Fatalf("republished %v %v", keys, err)
+	if next, err := image.PublishDefaults(ctx, e.Store, e.reg); err != nil || len(next.Written) != 0 || !reflect.DeepEqual(next.Defaults, publication.Defaults) {
+		t.Fatalf("republished %v %v", next, err)
 	}
+
+	t.Run("overlapping deployments", func(t *testing.T) {
+		e.deploy(t, func(c *media.Config) {
+			c.Kinds[0].Defaults = fstest.MapFS{"cover.png": {Data: solid(t, 600, 200, red)}}
+		})
+		older := e.reg
+		entered, release := make(chan struct{}), make(chan struct{})
+		var once sync.Once
+		defer once.Do(func() { close(release) })
+		var first atomic.Bool
+		done := make(chan error, 1)
+		store := &hooked{Store: e.Store, onPut: func(_ string, put func() error) error {
+			if first.CompareAndSwap(false, true) {
+				close(entered)
+				select {
+				case <-release:
+				case <-t.Context().Done():
+					return t.Context().Err()
+				}
+			}
+			return put()
+		}}
+		go func() {
+			_, err := image.PublishDefaults(t.Context(), store, older)
+			done <- err
+		}()
+		select {
+		case <-entered:
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		}
+		e.deploy(t, func(c *media.Config) {
+			c.Kinds[0].Defaults = fstest.MapFS{"cover.png": {Data: solid(t, 600, 200, blue)}}
+		})
+		newer, err := image.PublishDefaults(t.Context(), e.Store, e.reg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		once.Do(func() { close(release) })
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		rules := media.GatewayConfig(e.reg, newer.Defaults)
+		h, err := gateway.New(gateway.Config{Endpoint: e.Config.Endpoint, Bucket: e.Config.Bucket,
+			Region: e.Config.Region, AccessKeyID: e.Config.AccessKeyID, SecretAccessKey: e.Config.SecretAccessKey,
+			Hosts: map[string][]string{"media.test": rules.Namespaces}, Defaults: rules.Defaults})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"cover-300.webp", "cover-300-0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b.webp"} {
+			r := httptest.NewRequest(http.MethodGet, "http://media.test/v1/"+e.Tenant+"/gallery/"+e.ref(t, "gallery", 1).ContentID+"/public/"+name, nil)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != http.StatusOK {
+				t.Fatalf("fallback %s: %d", name, w.Code)
+			}
+			pixels(t, w.Body.Bytes(), 300, 100, map[[2]int]color.RGBA{{150, 50}: blue})
+		}
+	})
+
+	t.Run("lost publication response", func(t *testing.T) {
+		var first atomic.Bool
+		store := &hooked{Store: e.Store, onPut: func(_ string, put func() error) error {
+			err := put()
+			if err == nil && first.CompareAndSwap(false, true) {
+				return media.ErrUnavailable
+			}
+			return err
+		}}
+		e.deploy(t, func(c *media.Config) {
+			c.Kinds[0].Defaults = fstest.MapFS{"cover.png": {Data: solid(t, 600, 200, green)}}
+		})
+		if _, err := image.PublishDefaults(t.Context(), store, e.reg); !errors.Is(err, media.ErrUnavailable) {
+			t.Fatalf("lost response: %v", err)
+		}
+		retry, err := image.PublishDefaults(t.Context(), store, e.reg)
+		if err != nil || len(retry.Defaults) != 1 {
+			t.Fatalf("publication retry: %+v %v", retry, err)
+		}
+		k, _ := e.reg.Kind("gallery")
+		b, _ := e.read(t, k.DefaultKey(retry.Defaults[0].Files["cover-300.webp"]))
+		pixels(t, b, 300, 100, map[[2]int]color.RGBA{{150, 50}: green})
+	})
 }
 
 // A pass whose outputs the manifest cannot hold marks the item Full instead

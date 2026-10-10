@@ -2,6 +2,7 @@ package layout_test
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/open-rails/contentkit/media/layout"
@@ -21,15 +22,16 @@ func TestParseAndFormat(t *testing.T) {
 		t.Fatalf("FormatHosts = %q", got)
 	}
 
-	defs, err := layout.ParseDefaults("hentai0/video: poster-{w}.webp, thumb-{w}.webp; doujins/gallery:cover-{w}.webp")
+	target := "sha256-" + strings.Repeat("a", 64) + ".webp"
+	defs, err := layout.ParseDefaults("hentai0/video: poster-460.webp=" + target + ", thumb-230.webp=" + target + "; doujins/gallery: cover-460.webp=" + target)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantDefs := []layout.Default{{Namespace: "hentai0", Kind: "video", Names: []string{"poster-{w}.webp", "thumb-{w}.webp"}}, {Namespace: "doujins", Kind: "gallery", Names: []string{"cover-{w}.webp"}}}
+	wantDefs := []layout.Default{{Namespace: "hentai0", Kind: "video", Files: map[string]string{"poster-460.webp": target, "thumb-230.webp": target}}, {Namespace: "doujins", Kind: "gallery", Files: map[string]string{"cover-460.webp": target}}}
 	if !reflect.DeepEqual(defs, wantDefs) {
 		t.Fatalf("ParseDefaults = %v", defs)
 	}
-	const ds = "doujins/gallery: cover-{w}.webp; hentai0/video: poster-{w}.webp, thumb-{w}.webp"
+	ds := "doujins/gallery: cover-460.webp=" + target + "; hentai0/video: poster-460.webp=" + target + ", thumb-230.webp=" + target
 	if got := layout.FormatDefaults(defs); got != ds {
 		t.Fatalf("FormatDefaults = %q", got)
 	}
@@ -47,7 +49,9 @@ func TestParseAndFormat(t *testing.T) {
 		}
 	}
 	for _, bad := range []string{"doujins: cover.webp", "doujins/gallery", "doujins/gallery:", "doujins/gallery: {h}.webp",
-		"doujins/gallery: cover-{w.webp", "doujins/gallery: .{w}", "doujins/gallery: a/b", "doujins/gallery: a; doujins/gallery: b"} {
+		"doujins/gallery: cover-{w.webp", "doujins/gallery: .{w}", "doujins/gallery: a/b", "doujins/gallery: a; doujins/gallery: b",
+		"doujins/gallery: cover.webp=fixed.webp", "doujins/gallery: cover.webp=" + target + ", cover.webp=" + target,
+		"doujins/gallery: ../cover.webp=" + target, "doujins/gallery: cover-{w}.webp=" + target} {
 		if _, err := layout.ParseDefaults(bad); err == nil {
 			t.Errorf("layout.ParseDefaults(%q) accepted", bad)
 		}

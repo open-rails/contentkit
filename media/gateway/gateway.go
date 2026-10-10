@@ -2,8 +2,7 @@
 // namespaces served on the request's host it streams, from a private bucket
 // with its own read-only key:
 //
-//	/v1/{ns}/{kind}/{id}/public/{name}         to anyone; when missing, {ns}/{kind}/_default/public/{name}
-//	                                           if a Default declares the name
+//	/v1/{ns}/{kind}/{id}/public/{name}         to anyone; when missing, the configured immutable default
 //	/v1/{ns}/{kind}/{id}/private/sha256-{hex}-{uuid}  with the item's unexpired token (?t= or an mt cookie);
 //	                                           ?dl={name} serves it as a download under that name
 //
@@ -23,7 +22,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -47,7 +45,7 @@ type Config struct {
 	Ring                         token.Ring
 	Hosts                        map[string][]string // lower-case host name (no port) -> namespaces served on it; required
 	Origins                      []string            // exact CORS origins ("scheme://host[:port]") allowed with credentials
-	Defaults                     []layout.Default    // public default images
+	Defaults                     []layout.Default    // deployment selection from image.PublishDefaults
 	Client                       *http.Client        // default: a tuned transport without compression
 	Logger                       *slog.Logger
 }
@@ -58,7 +56,7 @@ type Handler struct {
 	base     *url.URL
 	creds    aws.Credentials
 	signer   *v4.Signer
-	defaults map[string][]*regexp.Regexp // "{ns}/{kind}" -> name templates
+	defaults map[string]map[string]string // "{ns}/{kind}" -> logical name -> immutable object
 }
 
 var emptySHA256 = hex.EncodeToString(func() []byte { s := sha256.Sum256(nil); return s[:] }())
@@ -145,10 +143,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	resp, err := h.fetch(r, key)
-	if err == nil && missing(resp.StatusCode) && o.area == "public" && h.hasDefault(o) {
-		_ = resp.Body.Close()
-		key = o.key(layout.DefaultID)
-		resp, err = h.fetch(r, key)
+	if err == nil && missing(resp.StatusCode) && o.area == "public" {
+		if name := h.defaultName(o); name != "" {
+			_ = resp.Body.Close()
+			o.name = name
+			key = o.key(layout.DefaultID)
+			resp, err = h.fetch(r, key)
+		}
 	}
 	if err != nil {
 		if r.Context().Err() == nil {
@@ -209,8 +210,20 @@ func (h *Handler) authorize(r *http.Request, key string) (err error) {
 	return cmp.Or(err, errNoToken)
 }
 
-func (h *Handler) hasDefault(o object) bool {
-	return slices.ContainsFunc(h.defaults[o.ns+"/"+o.kind], func(re *regexp.Regexp) bool { return re.MatchString(o.name) })
+func (h *Handler) defaultName(o object) string {
+	files := h.defaults[o.ns+"/"+o.kind]
+	if target := files[o.name]; target != "" {
+		return target
+	}
+	// A retired publication still has the logical name before its UUID.
+	stem, ext := o.name, ""
+	if i := strings.LastIndexByte(stem, '.'); i >= 0 {
+		stem, ext = stem[:i], stem[i:]
+	}
+	if len(stem) > 37 && stem[len(stem)-37] == '-' && layout.ValidStagedName(layout.StagedPrefix+stem[len(stem)-36:]) {
+		return files[stem[:len(stem)-37]+ext]
+	}
+	return ""
 }
 
 // missing is a bucket's answer for an absent key: 404, or 403 without ListBucket.
