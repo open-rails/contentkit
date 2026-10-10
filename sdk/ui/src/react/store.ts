@@ -168,6 +168,7 @@ export class ReadStore {
   }
 
   private apply(change: ContentKitChange): void {
+    if (change.type !== "media.committed" && change.type !== "media.processed") return;
     const { ref } = change;
     for (const [key, s] of this.slots) {
       if (s.ref.kind !== ref.kind || s.ref.id !== ref.id) continue;
