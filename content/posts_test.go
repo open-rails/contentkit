@@ -312,114 +312,51 @@ func TestPostLikeBumpsCountersConcurrentExact(t *testing.T) {
 	}
 }
 
-func TestPostLikeHTTPRoute(t *testing.T) {
-	rt, _ := newPostRuntime(t, Options{})
-	// Mount BOTH modules on one mux to prove /posts/{id}/like doesn't collide
-	// with reactions' /{type}/{id}/like.
-	mux := http.NewServeMux()
-	httpapi.Mount(mux, rt.reactions, reactionRoutes)
-	httpapi.Mount(mux, newPosts(rt), postRoutes)
-
-	author := access.Actor{ID: "root1"}
-	rec := doJSON(t, mux, author, "POST", "/posts", PostInput{Title: ptr("t"), Body: ptr("b"), IsDraft: ptr(false)})
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("create: status %d body %s", rec.Code, rec.Body.String())
-	}
-	id := decodePost(t, rec).ID
-
-	rec = doJSON(t, mux, author, "POST", "/posts/"+id+"/like", nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("like: status %d body %s", rec.Code, rec.Body.String())
-	}
-	if got := decodePost(t, rec).TotalLikes; got != 1 {
-		t.Fatalf("total_likes = %d, want 1", got)
-	}
-}
-
-func TestPostReactionRoutesShareCounters(t *testing.T) {
+func TestPostReactionRouteCounters(t *testing.T) {
 	resolver := &fakeResolver{}
 	rt, pool := newPostRuntime(t, Options{Resolver: resolver, ContentKinds: []string{KindPost}})
 	h := rt.Handler()
 	actor := access.Actor{ID: "reactor", Kind: "user"}
-	type step struct {
-		path            string
+	rec := doJSON(t, h, actor, http.MethodPost, "/posts", PostInput{Title: ptr("counters"), Body: ptr("body"), IsDraft: ptr(false)})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create post: %d %s", rec.Code, rec.Body.String())
+	}
+	id := decodePost(t, rec).ID
+	resolver.set(KindPost, id, true, true)
+	for _, step := range []struct {
+		method, path    string
 		mine            int16
 		likes, dislikes int
-	}
-	cases := []struct {
-		name  string
-		steps []step
 	}{
-		{name: "generic then dedicated", steps: []step{
-			{"/post/%s/like", 1, 1, 0},
-			{"/posts/%s/like", 1, 1, 0},
-			{"/posts/%s/neutral", 0, 0, 0},
-			{"/posts/%s/dislike", -1, 0, 1},
-			{"/post/%s/like", 1, 1, 0},
-			{"/post/%s/neutral", 0, 0, 0},
-		}},
-		{name: "dedicated then generic", steps: []step{
-			{"/posts/%s/like", 1, 1, 0},
-			{"/post/%s/like", 1, 1, 0},
-			{"/post/%s/neutral", 0, 0, 0},
-			{"/post/%s/dislike", -1, 0, 1},
-			{"/posts/%s/like", 1, 1, 0},
-			{"/posts/%s/neutral", 0, 0, 0},
-		}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := doJSON(t, h, actor, http.MethodPost, "/posts", PostInput{Title: ptr(tc.name), Body: ptr("body"), IsDraft: ptr(false)})
-			if rec.Code != http.StatusCreated {
-				t.Fatalf("create post: %d %s", rec.Code, rec.Body.String())
-			}
-			id := decodePost(t, rec).ID
-			resolver.set(KindPost, id, true, true)
-			for _, step := range tc.steps {
-				path := fmt.Sprintf(step.path, id)
-				rec := doJSON(t, h, actor, http.MethodPost, path, nil)
-				if rec.Code != http.StatusOK {
-					t.Fatalf("%s: %d %s", path, rec.Code, rec.Body.String())
-				}
-				if strings.HasPrefix(path, "/posts/") {
-					got := decodePost(t, rec)
-					if got.TotalLikes != step.likes || got.TotalDislikes != step.dislikes {
-						t.Fatalf("%s response: counts = (%d,%d), want (%d,%d)", path,
-							got.TotalLikes, got.TotalDislikes, step.likes, step.dislikes)
-					}
-				} else {
-					var got ReactionCounts
-					if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-						t.Fatalf("%s response: %v", path, err)
-					}
-					if got.Likes != step.likes || got.Dislikes != step.dislikes || got.Mine != step.mine {
-						t.Fatalf("%s response: %+v, want (%d,%d,%d)", path, got,
-							step.likes, step.dislikes, step.mine)
-					}
-				}
-				post, err := rt.posts.loadByID(context.Background(), pool, id)
-				if err != nil {
-					t.Fatal(err)
-				}
-				counts, err := rt.reactions.counts(context.Background(), pool, actor, rt.Ref(KindPost, id).Key())
-				if err != nil {
-					t.Fatal(err)
-				}
-				var stored int16
-				err = pool.QueryRow(context.Background(), `SELECT value FROM `+rt.store.t.reactions+`
-					WHERE tenant_id = $1 AND content_kind = $2 AND content_id = $3 AND content_version_id = '' AND user_id = $4`,
-					rt.tenant, KindPost, id, actor.ID).Scan(&stored)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if post.TotalLikes != step.likes || post.TotalDislikes != step.dislikes ||
-					counts.Likes != step.likes || counts.Dislikes != step.dislikes || counts.Mine != step.mine || stored != step.mine {
-					t.Fatalf("%s: post=(%d,%d), rollup=(%d,%d), mine=%d, row=%d; want (%d,%d), mine=%d",
-						path, post.TotalLikes, post.TotalDislikes, counts.Likes, counts.Dislikes, counts.Mine, stored,
-						step.likes, step.dislikes, step.mine)
-				}
-			}
-		})
+		{http.MethodPost, "/post/%s/like", 1, 1, 0},
+		{http.MethodPost, "/post/%s/dislike", -1, 0, 1},
+		{http.MethodPost, "/post/%s/like", 1, 1, 0},
+		{http.MethodDelete, "/post/%s/reaction", 0, 0, 0},
+	} {
+		path := fmt.Sprintf(step.path, id)
+		rec := doJSON(t, h, actor, step.method, path, nil)
+		var got ReactionCounts
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
+			t.Fatalf("%s %s: %d %s", step.method, path, rec.Code, rec.Body.String())
+		}
+		if got.Likes != step.likes || got.Dislikes != step.dislikes || got.Mine != step.mine {
+			t.Fatalf("%s %s response: %+v, want (%d,%d,%d)", step.method, path, got, step.likes, step.dislikes, step.mine)
+		}
+		post, err := rt.posts.loadByID(context.Background(), pool, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stored int16
+		err = pool.QueryRow(context.Background(), `SELECT value FROM `+rt.store.t.reactions+`
+			WHERE tenant_id = $1 AND content_kind = $2 AND content_id = $3 AND content_version_id = '' AND user_id = $4`,
+			rt.tenant, KindPost, id, actor.ID).Scan(&stored)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if post.TotalLikes != step.likes || post.TotalDislikes != step.dislikes || stored != step.mine {
+			t.Fatalf("%s %s: post=(%d,%d), row=%d; want (%d,%d), mine=%d",
+				step.method, path, post.TotalLikes, post.TotalDislikes, stored, step.likes, step.dislikes, step.mine)
+		}
 	}
 }
 
@@ -455,7 +392,7 @@ func TestPostReactionRoutesRespectAccessAndPublication(t *testing.T) {
 			if _, err := pool.Exec(context.Background(), state.query, id, rt.tenant); err != nil {
 				t.Fatal(err)
 			}
-			for _, path := range []string{"/post/" + id + "/dislike", "/posts/" + id + "/dislike"} {
+			for _, path := range []string{"/post/" + id + "/dislike"} {
 				if rec := doJSON(t, h, actor, http.MethodPost, path, nil); rec.Code != http.StatusNotFound {
 					t.Fatalf("%s: status %d body %s, want 404", path, rec.Code, rec.Body.String())
 				}
@@ -475,50 +412,6 @@ func TestPostReactionRoutesRespectAccessAndPublication(t *testing.T) {
 	}
 }
 
-func TestPostReactionMixedRoutesConcurrentExact(t *testing.T) {
-	resolver := &fakeResolver{}
-	rt, pool := newPostRuntime(t, Options{Resolver: resolver, ContentKinds: []string{KindPost}})
-	h := rt.Handler()
-	actor := access.Actor{ID: "reactor", Kind: "user"}
-	rec := doJSON(t, h, actor, http.MethodPost, "/posts", PostInput{
-		Title: ptr("concurrent"), Body: ptr("body"), IsDraft: ptr(false),
-	})
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("create post: %d %s", rec.Code, rec.Body.String())
-	}
-	id := decodePost(t, rec).ID
-	resolver.set(KindPost, id, true, true)
-	paths := []string{"/post/" + id + "/like", "/posts/" + id + "/like"}
-	var wg sync.WaitGroup
-	statuses := make(chan int, 20)
-	for i := 0; i < 20; i++ {
-		wg.Add(1)
-		go func(path string) {
-			defer wg.Done()
-			statuses <- doJSON(t, h, actor, http.MethodPost, path, nil).Code
-		}(paths[i%len(paths)])
-	}
-	wg.Wait()
-	close(statuses)
-	for status := range statuses {
-		if status != http.StatusOK {
-			t.Fatalf("concurrent mixed-route like: status %d", status)
-		}
-	}
-	post, err := rt.posts.loadByID(context.Background(), pool, id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	counts, err := rt.reactions.counts(context.Background(), pool, actor, rt.Ref(KindPost, id).Key())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if post.TotalLikes != 1 || post.TotalDislikes != 0 || counts.Likes != 1 || counts.Dislikes != 0 || counts.Mine != 1 {
-		t.Fatalf("concurrent like: post=(%d,%d), rollup=%+v", post.TotalLikes, post.TotalDislikes, counts)
-	}
-}
-
-// listPosts fetches GET /posts (optionally filtered by language) and decodes it.
 func listPosts(t *testing.T, h http.Handler, language string) []Post {
 	t.Helper()
 	target := "/posts"
@@ -536,9 +429,6 @@ func listPosts(t *testing.T, h http.Handler, language string) []Post {
 	return out
 }
 
-// Every post write queues the post as a keyword document in the search
-// schema's dirty queue inside the same transaction; the module's builder
-// returns a document only for a published post in that language.
 func TestPostWritesQueueKeywordDocuments(t *testing.T) {
 	ctx := context.Background()
 	pool := pgtest.Pool(t, nil)

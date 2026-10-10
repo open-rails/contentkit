@@ -92,9 +92,9 @@ func TestRateLimitsPerActionAndChurn(t *testing.T) {
 		steps  [3]step
 	}{
 		{ActionComment, [3]step{{"POST", g1 + "/comments", CommentInput{Body: "a"}}, {"POST", g1 + "/comments", CommentInput{Body: "b"}}, {"POST", g2 + "/comments", CommentInput{Body: "c"}}}},
-		{ActionCommentReaction, [3]step{{"POST", "/comments/" + f.comment + "/like", nil}, {"POST", "/comments/" + f.comment + "/neutral", nil}, {"POST", "/comments/" + f.comment + "/dislike", nil}}},
-		// The post routes and the generic route on kind post share one budget.
-		{ActionPostReaction, [3]step{{"POST", "/posts/" + f.post + "/like", nil}, {"POST", "/post/" + f.post + "/neutral", nil}, {"POST", "/posts/" + f.post + "/dislike", nil}}},
+		{ActionCommentReaction, [3]step{{"POST", "/comments/" + f.comment + "/like", nil}, {"DELETE", "/comments/" + f.comment + "/reaction", nil}, {"POST", "/comments/" + f.comment + "/dislike", nil}}},
+		// Kind post spends its own budget, not the generic one.
+		{ActionPostReaction, [3]step{{"POST", "/post/" + f.post + "/like", nil}, {"DELETE", "/post/" + f.post + "/reaction", nil}, {"POST", "/post/" + f.post + "/dislike", nil}}},
 		{ActionReaction, [3]step{{"POST", g1 + "/like", nil}, {"DELETE", g1 + "/reaction", nil}, {"POST", g2 + "/dislike", nil}}},
 		{ActionFavorite, [3]step{{"POST", g1 + "/favorite", nil}, {"DELETE", g1 + "/favorite", nil}, {"POST", g1 + "/favorite", nil}}},
 		// A free-text answer spends the vote budget, even one refused for

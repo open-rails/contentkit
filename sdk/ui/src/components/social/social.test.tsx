@@ -221,7 +221,7 @@ it("ReactionButtons and FavoriteButton change at once and roll back when refused
   const s = server({
     "GET /video/v1/reaction": () => ({ likes: 4, dislikes: 1, mine: 0 }),
     "POST /video/v1/like": () => (fail ? refusal(429, "rate_limited", { retry_after: 5 }) : { likes: 5, dislikes: 1, mine: 1 }),
-    "POST /video/v1/neutral": () => ({ likes: 4, dislikes: 1, mine: 0 }),
+    "DELETE /video/v1/reaction": () => ({ likes: 4, dislikes: 1, mine: 0 }),
     "GET /video/v1/favorite": () => ({ favorited: false, count: 10 }),
     "POST /video/v1/favorite": () => ({ favorited: true, count: 11 }),
   });

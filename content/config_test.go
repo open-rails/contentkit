@@ -52,7 +52,6 @@ func TestAnonymousParticipationIsAServerSetting(t *testing.T) {
 			{"reply", "POST", gallery(1, "/comments"), CommentInput{Body: "re", AnonName: "Guest", ReplyToID: cm.ID}, comments},
 			{"work like", "POST", gallery(1, "/like"), nil, reactions},
 			{"work reaction clear", "DELETE", gallery(1, "/reaction"), nil, reactions},
-			{"post like", "POST", "/posts/" + post.ID + "/like", nil, reactions},
 			{"post like by kind", "POST", "/post/" + post.ID + "/dislike", nil, reactions},
 			{"comment like", "POST", "/comments/" + cm.ID + "/like", nil, reactions},
 			{"vote", "POST", "/polls/" + poll.ID + "/vote", PollVote{OptionID: poll.Options[0].ID}, func(a Anonymous) bool { return a.Votes }},

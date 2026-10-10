@@ -232,9 +232,6 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusForbidden, user, "GET", "/posts/admin", nil, nil)
 	f.want(http.StatusOK, anon, "GET", "/posts/"+post.ID, nil, nil)
 	f.want(http.StatusOK, staff, "PATCH", "/posts/"+post.ID, content.PostInput{Excerpt: ptr("Short")}, nil)
-	for _, verb := range []string{"like", "dislike", "neutral"} {
-		f.want(http.StatusOK, user, "POST", "/posts/"+post.ID+"/"+verb, nil, nil)
-	}
 	f.want(http.StatusNotImplemented, staff, "PUT", "/posts/"+post.ID+"/cover", content.ImageInput{Image: ptr("")}, nil)
 	f.want(http.StatusNotImplemented, staff, "POST", "/posts/"+post.ID+"/images", content.ImageInput{Image: ptr("i-" + uuid.NewString())}, nil)
 
@@ -271,15 +268,16 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, staff, "GET", "/comments/admin?content_kind=gallery", nil, nil)
 	f.want(http.StatusOK, user, "PATCH", "/comments/"+root.ID, content.CommentEdit{Body: "first, edited"}, nil)
 	f.want(http.StatusForbidden, owner, "PATCH", "/comments/"+root.ID, content.CommentEdit{Body: "not yours"}, nil)
-	for _, verb := range []string{"like", "dislike", "neutral"} {
+	for _, verb := range []string{"like", "dislike"} {
 		f.want(http.StatusOK, owner, "POST", "/comments/"+root.ID+"/"+verb, nil, nil)
 	}
+	f.want(http.StatusOK, owner, "DELETE", "/comments/"+root.ID+"/reaction", nil, nil)
 	f.want(http.StatusNoContent, owner, "DELETE", "/comments/"+reply.ID, nil, nil)
 	f.want(http.StatusOK, staff, "POST", "/comments/"+reply.ID+"/restore", nil, nil)
 	f.want(http.StatusNotFound, anon, "GET", "/gallery/"+cid(2)+"/comments", nil, nil)
 
 	// Reactions on host content.
-	for _, verb := range []string{"like", "dislike", "neutral"} {
+	for _, verb := range []string{"like", "dislike"} {
 		f.want(http.StatusOK, user, "POST", item+"/"+verb, nil, nil)
 	}
 	f.want(http.StatusOK, user, "DELETE", item+"/reaction", nil, nil)

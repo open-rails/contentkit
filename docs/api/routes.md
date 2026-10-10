@@ -2,7 +2,7 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (82). `contentkit.Runtime.Handler` serves them under the one prefix the host mounts it at, each module at its sub-path: content `/`, upload `/media/upload`, media `/media`, codes `/codes`, taxonomy `/taxonomy`. A host that mounts a module alone serves its routes beneath that mount instead. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (78). `contentkit.Runtime.Handler` serves them under the one prefix the host mounts it at, each module at its sub-path: content `/`, upload `/media/upload`, media `/media`, codes `/codes`, taxonomy `/taxonomy`. A host that mounts a module alone serves its routes beneath that mount instead. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller: `public` (the actor is optional; the host's resolver decides what it sees), `user` (a signed-in actor, else 401 `unauthorized`), `staff` (the `content.Perms` permission named, else 403 `forbidden`). ContentKit never authenticates: it reads the actor the host's middleware put in the request context.
 
@@ -20,9 +20,6 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | PATCH | `/posts/{id}` | staff `PostWrite` | `PostInput` | 200 `Post`<br>202 `Post` | Updates a post's given fields; 202 when the moderator holds the new text. |
 | DELETE | `/posts/{id}` | staff `PostWrite` | — | 204 — | Deletes a post. |
 | POST | `/posts/{id}/restore` | staff `PostWrite` | — | 200 `Post` | Restores a deleted post as it was; 409 when another live post took its slug. |
-| POST | `/posts/{id}/like` | public | — | 200 `Post` | Likes a published post. |
-| POST | `/posts/{id}/dislike` | public | — | 200 `Post` | Dislikes a published post. |
-| POST | `/posts/{id}/neutral` | public | — | 200 `Post` | Clears the caller's reaction to a published post. |
 | PUT | `/posts/{id}/cover` | staff `PostWrite` | `ImageInput` | 200 `PostCover` | Sets the cover to an inline image uploaded to the post's media folder; "" clears it. |
 | POST | `/posts/{id}/images` | staff `PostWrite` | `ImageInput` | 200 `InlineImage` | The public URL of an inline image uploaded to the post's media folder, to place in the body. |
 | GET | `/{kind}/{id}/comments` | public | — | 200 `Comment[]` | A target's top-level comments with reply counts; the caller also sees its own held and rejected ones. Query: `sort`, `limit`, `offset`. |
@@ -35,10 +32,9 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | DELETE | `/comments/{cid}` | public | — | 204 — | Deletes a comment, leaving a tombstone: its author, or a CommentModerate holder. |
 | POST | `/comments/{cid}/like` | public | — | 200 `ReactionCounts` | Likes a comment. |
 | POST | `/comments/{cid}/dislike` | public | — | 200 `ReactionCounts` | Dislikes a comment. |
-| POST | `/comments/{cid}/neutral` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a comment. |
+| DELETE | `/comments/{cid}/reaction` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a comment. |
 | POST | `/{kind}/{id}/like` | public | — | 200 `ReactionCounts` | Likes a target. |
 | POST | `/{kind}/{id}/dislike` | public | — | 200 `ReactionCounts` | Dislikes a target. |
-| POST | `/{kind}/{id}/neutral` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a target. |
 | DELETE | `/{kind}/{id}/reaction` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a target. |
 | GET | `/{kind}/{id}/reaction` | public | — | 200 `ReactionCounts` | A target's like and dislike counts and the caller's own reaction. |
 | GET | `/favorites` | user | — | 200 `FavoriteItem[]` | The caller's favorites, newest first. Query: `limit`, `offset`. |

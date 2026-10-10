@@ -3,9 +3,9 @@ import type { CommentBan, CommentStanding, Comment, Poll, Post, ReactionCounts, 
 /** A reaction: like 1, dislike -1, none 0. */
 export type Reaction = -1 | 0 | 1;
 
-/** The route verb that sets a reaction. */
-export function reactionVerb(value: Reaction): "like" | "dislike" | "neutral" {
-  return value === 1 ? "like" : value === -1 ? "dislike" : "neutral";
+/** The route verb that sets a like or dislike; clearing is DELETE …/reaction. */
+export function reactionVerb(value: -1 | 1): "like" | "dislike" {
+  return value === 1 ? "like" : "dislike";
 }
 
 /** Comment and post order: newest (the default), likes (most liked) or best (Wilson lower bound). */

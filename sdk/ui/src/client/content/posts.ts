@@ -2,7 +2,7 @@ import type { InlineImage, Post, PostCover, PostInput } from "../generated/wire.
 import type { Http } from "../http.js";
 import type { MediaClient, NamedOptions } from "../media/client.js";
 import { call, type PageQuery } from "../route.js";
-import { reactionVerb, type Reaction, type Sort } from "./types.js";
+import type { Sort } from "./types.js";
 
 export interface PostQuery extends PageQuery {
   language?: string;
@@ -61,13 +61,6 @@ export class PostsClient {
     const emit = this.http.captureChanges();
     const post: Post = await call(this.http, "POST", "/posts/{id}/restore", { params: { id } });
     emit({ type: "post.restored", post });
-    return post;
-  }
-  /** Sets the caller's reaction to a published post; resolves with the post's new totals. */
-  async react(id: string, value: Reaction): Promise<Post> {
-    const emit = this.http.captureChanges();
-    const post: Post = await call(this.http, "POST", `/posts/{id}/${reactionVerb(value)}` as const, { params: { id } });
-    emit({ type: "post.updated", post });
     return post;
   }
   /** Sets the cover to an inline image name ("i-{uuid}") of the post's folder, or clears it; resolves with its URL. */

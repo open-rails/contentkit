@@ -136,7 +136,7 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 	// like → neutral → like, then a dislike on another language route.
 	post(u1, "POST", galleryRoute(42, ":en/like"))
 	mustSync(t, rt)
-	post(u1, "POST", galleryRoute(42, ":ja/neutral"))
+	post(u1, "DELETE", galleryRoute(42, ":ja/reaction"))
 	mustSync(t, rt)
 	if s := state(t, rt, "u1", cid(42)); s.NetValue != 0 || s.Feedback != 0 {
 		t.Fatalf("state after neutral = %+v, want zero", s)
@@ -150,7 +150,7 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 	}
 
 	// favorite → unfavorite reaches the sink as neutral; re-favorite returns.
-	post(u1, "POST", galleryRoute(42, ":en/neutral"))
+	post(u1, "DELETE", galleryRoute(42, ":en/reaction"))
 	post(u1, "POST", galleryRoute(42, ":ja/favorite"))
 	mustSync(t, rt)
 	if s := state(t, rt, "u1", cid(42)); s.NetValue != 1 || s.Feedback != 1 {
