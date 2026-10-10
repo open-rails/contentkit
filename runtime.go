@@ -5,32 +5,51 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/open-rails/migratekit"
 	"github.com/open-rails/migratekit/chmigrate"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/contenturl"
+	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/migrations"
 	"github.com/open-rails/contentkit/search"
 	"github.com/open-rails/contentkit/worker"
 )
 
 // RuntimeConfig configures one tenant's full ContentKit: the search and signal
-// planes (EmbeddedConfig) and the interaction module (Content). Pool, tenant
-// and schema are shared: Content.Pool, Content.Tenant and Content.Schema are
-// filled from the hub configuration when empty. Posts join the keyword queue.
+// planes (EmbeddedConfig), the interaction module (Content) and the modules
+// Handler serves beside it. Pool, tenant and schema are shared:
+// Content.Pool, Content.Tenant and Content.Schema are filled from the hub
+// configuration when empty. Posts join the keyword queue.
 type RuntimeConfig struct {
 	EmbeddedConfig
 	Content content.Options
+
+	// Optional modules Handler serves, each at its fixed sub-path. They
+	// identify the caller with Content.Identity.
+	Uploads *media.Uploads // the upload API at /media/upload
+	Reader  *media.Reader  // the read API at /media
+	// ReadLimit is the read API's per-viewer limit (media.HandlerOptions.Limit).
+	ReadLimit media.RateLimit
+	Codes     *contenturl.Router // GET /codes/{code}
+	// Taxonomy is taxonomy.Handler(store): the admin API at /taxonomy, for
+	// actors holding Content.Perms.Taxonomy.
+	Taxonomy http.Handler
 }
 
 // Runtime is the one surface a host wires: the Hub (search, typeahead,
-// signals, discovery) plus the content module and its HTTP routes.
+// signals, discovery), the content module and the HTTP API of every
+// configured module.
 type Runtime struct {
 	*EmbeddedHub
 	Content *content.Runtime
+	handler http.Handler
 }
 
 // NewRuntime builds the hub and the content module over the host pool.
@@ -55,16 +74,58 @@ func NewRuntime(ctx context.Context, cfg RuntimeConfig) (*Runtime, error) {
 	if c.Schema != cfg.PGSchema {
 		return nil, fmt.Errorf("contentkit: content schema %q differs from PostgreSQL schema %q", c.Schema, cfg.PGSchema)
 	}
+	if cfg.Codes != nil && cfg.Codes.Tenant() != c.Tenant {
+		return nil, fmt.Errorf("contentkit: codes tenant %q differs from content tenant %q", cfg.Codes.Tenant(), c.Tenant)
+	}
+	for _, kind := range c.ContentKinds {
+		if slices.Contains(httpapi.Reserved(), kind) {
+			return nil, fmt.Errorf("contentkit: content kind %q is a module's path under Runtime.Handler", kind)
+		}
+	}
 	rt, err := content.New(ctx, c)
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{EmbeddedHub: hub, Content: rt}, nil
+	return &Runtime{EmbeddedHub: hub, Content: rt, handler: handler(cfg, c, rt)}, nil
 }
 
-// Handler returns the content routes (comments, reactions, favorites, polls,
-// posts). Mount it under a prefix after the host's auth middleware.
-func (r *Runtime) Handler() http.Handler { return r.Content.Handler() }
+// Handler serves ContentKit's HTTP API: every configured module under one
+// prefix, each at its fixed sub-path (docs/api/routes.md). Mount it once,
+// after the host's auth middleware put the actor in the context:
+//
+//	mux.Handle("/api/contentkit/", http.StripPrefix("/api/contentkit", rt.Handler()))
+//
+// A host may instead mount the modules alone (content.Runtime.Handler,
+// media.UploadHandler, media.Reader.Handler, contenturl.Router.Handler,
+// taxonomy.Handler) at paths of its choosing.
+func (r *Runtime) Handler() http.Handler { return r.handler }
+
+func handler(cfg RuntimeConfig, c content.Options, rt *content.Runtime) http.Handler {
+	mux := http.NewServeMux()
+	mount := func(m httpapi.Module, h http.Handler) {
+		if p := m.Prefix(); p != "" {
+			mux.Handle(p+"/", http.StripPrefix(p, h))
+		}
+	}
+	mux.Handle("/", rt.Handler())
+	if cfg.Uploads != nil {
+		mount(httpapi.Upload, media.UploadHandler(cfg.Uploads, media.UploadHandlerOptions{Logger: c.Logger,
+			Actor: func(r *http.Request) (access.Actor, bool) {
+				a, ok := c.Identity.Actor(r.Context())
+				return a, ok && !a.Anonymous && a.ID != ""
+			}}))
+	}
+	if cfg.Reader != nil {
+		mount(httpapi.Media, cfg.Reader.Handler(media.HandlerOptions{Identity: c.Identity, Logger: c.Logger, Limit: cfg.ReadLimit}))
+	}
+	if cfg.Codes != nil {
+		mount(httpapi.Codes, cfg.Codes.Handler())
+	}
+	if cfg.Taxonomy != nil {
+		mount(httpapi.Taxonomy, rt.Guard(c.Perms.Taxonomy, cfg.Taxonomy))
+	}
+	return mux
+}
 
 // WorkerOptions returns the host's keyword worker options extended with
 // ContentKit's own documents: posts (content.KindPost) are listed and built by

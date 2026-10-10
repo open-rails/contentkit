@@ -6,7 +6,10 @@ another tenant are rejected.
 
 ## Contract
 
-One migrate call, one constructor, one HTTP mount per tenant:
+One migrate call, one constructor, one HTTP mount per tenant. The mount
+serves every configured module at its sub-path: content at the root,
+`/media/upload/…`, `/media/…`, `/codes/{code}` and `/taxonomy/…`
+([docs/api/routes.md](docs/api/routes.md)):
 
 ```go
 _ = contentkit.Migrate(ctx, contentkit.MigrateConfig{DB: sqlDB, Schema: "doujins", ClickHouse: &chmigrate.Config{...}})
@@ -15,8 +18,11 @@ rt, _ := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
 	Content: content.Options{Schema: "doujins", Identity: identity, Authz: authz, Resolver: resolver, Users: users,
 		Media: &content.Media{URLs: reader, Folders: jobs}, Processor: sanitizer, Perms: content.Perms{...}, ContentKinds: []string{"gallery", "post", "tag"},
 		Limits: content.Limits{Redis: rdb}},
+	Uploads: uploads, Reader: reader, ReadLimit: media.RateLimit{Redis: rdb}, // /media/upload, /media
+	Codes:    router,                  // /codes/{code}
+	Taxonomy: taxonomy.Handler(store), // /taxonomy, for Perms.Taxonomy
 })
-mux.Handle("/api/social/", http.StripPrefix("/api/social", rt.Handler()))
+mux.Handle("/api/contentkit/", http.StripPrefix("/api/contentkit", rt.Handler()))
 ```
 
 Hosts use:
@@ -129,7 +135,7 @@ router, _ := contenturl.NewRouter(urls, contenturl.RouterOptions{
 	Visibility: func(r *http.Request, l contenturl.Link) (contenturl.Visibility, error) { /* drafts, removals */ },
 })
 mux.Handle("/", router.Middleware(spa))
-mux.Handle("/api/content-urls/", http.StripPrefix("/api/content-urls", router.Handler())) // GET /{code}[?lang=]
+// RuntimeConfig.Codes: router, so rt.Handler() serves GET /codes/{code}[?lang=]
 ```
 
 - **Legacy aliases.** An import records the identifiers of the old site in the
@@ -171,7 +177,7 @@ Ports (in `content` unless qualified):
 | Port | Required | Contract |
 |---|---|---|
 | `Identity` | yes | reads the already-authenticated `access.Actor` from context; ContentKit never authenticates |
-| `Authorizer` | yes | `Can(actor, perm)` for `Perms{PostWrite, PollWrite, CommentModerate, ModerationReview, CommentBan}`; fail-closed on error and on an unset perm |
+| `Authorizer` | yes | `Can(actor, perm)` for `Perms{PostWrite, PollWrite, CommentModerate, ModerationReview, CommentBan, Taxonomy}`; fail-closed on error and on an unset perm |
 | `access.ContentResolver` | yes | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request, which must then be lower case (else 400); another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`. `Owner` is the user who owns the content (its creator; `""` for site content): owner-scoped comment bans apply to it. For media an item's private files are all or nothing: `Full()` (visible and accessible) gets every one, anyone else none; what a viewer without access may see is the item's public files (a preview preset), which need only `Visible` to anonymous viewers; the ref is the item, i.e. the host's version; `Editor` (the actor may edit the item) unlocks editor reads (uploads, edits, editor views) and every private file of a visible item, so set it only for people who may see them all |
 | `UserEnricher` | no | display data for author ids |
 | `Media` | no | post and poll images in ContentKit media (see below); absent = image routes answer 501 |
@@ -692,7 +698,8 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
 
 ### Uploads and commit ops
 
-`media.UploadHandler(uploads, opts)`, behind the host's auth:
+`rt.Handler()` serves the upload API at `/media/upload` (`RuntimeConfig.Uploads`);
+mounted alone it is `media.UploadHandler(uploads, opts)`, behind the host's auth:
 
 | Route | Does |
 | --- | --- |
@@ -730,7 +737,8 @@ out until `attach`.
 
 ### Reads and playback
 
-`reader.Handler(media.HandlerOptions{Identity, Limit})`:
+`rt.Handler()` serves the read API at `/media` (`RuntimeConfig.Reader`,
+`ReadLimit`); mounted alone it is `reader.Handler(media.HandlerOptions{Identity, Limit})`:
 
 - `GET /{kind}/{id}?prefix=low-res/&offset=&limit=&download&editor` answers
   `{access, expires, meta, previews, total, hls, files: [{path, type, size, w, h, url | locked}]}`
@@ -986,8 +994,9 @@ change, `RebuildCounts` after bulk loads written with
 `AssignOptions{SuppressCounts: true}`. Mark your content documents dirty in
 the transaction that calls `Assign`/`Unassign` (`store.WithTx(tx)`).
 Typeahead documents of nodes are built by the store: register its kinds with
-the worker through `store.Lister`/`store.Builder`. Mount `taxonomy.Handler`
-behind your admin authorization. Adoption: [docs/taxonomy-migration.md](docs/taxonomy-migration.md).
+the worker through `store.Lister`/`store.Builder`. `RuntimeConfig.Taxonomy:
+taxonomy.Handler(store)` serves the admin routes at `/taxonomy` to actors
+holding `Perms.Taxonomy`; mounted alone, put it behind your admin authorization. Adoption: [docs/taxonomy-migration.md](docs/taxonomy-migration.md).
 
 ## Preference boundary (reactions and favorites into the signal plane)
 

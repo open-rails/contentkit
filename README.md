@@ -68,7 +68,7 @@ another tenant is an error, never remapped.
 | `migrations` | PostgreSQL migration chain and ClickHouse baseline |
 | `adapters/authkit` | its own module (opt-in): account avatars and content authors from AuthKit; see HOST_INTEGRATION "Account avatars" |
 | `adapters/openrails` | its own module (opt-in): `access.Entitlements` over OpenRails `CheckEntitlements` (one request per read) |
-| root | `Runtime` (one constructor: hub + content + HTTP mount), `Migrate` (all PostgreSQL features and optional ClickHouse signals), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
+| root | `Runtime` (one constructor: hub + content + one HTTP mount for every module), `Migrate` (all PostgreSQL features and optional ClickHouse signals), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
 
 ## Install
 
@@ -93,14 +93,41 @@ current lineage, not retired migration chains. See [docs/migration.md](docs/migr
 rt, _ := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
 	EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: "doujins", Tenant: "doujins", CH: ch, CHDatabase: "hub"},
 	Content: content.Options{Schema: "doujins", Identity: identity, Authz: authz, Resolver: resolver, ContentKinds: []string{"gallery", "post"}},
+	Uploads: uploads, Reader: reader, Codes: router, Taxonomy: taxonomy.Handler(store), // optional modules
 })
-mux.Handle("/api/social/", http.StripPrefix("/api/social", rt.Handler()))
+mux.Handle("/api/contentkit/", http.StripPrefix("/api/contentkit", rt.Handler()))
 counts, _ := rt.Content.Counts(ctx, []contentkit.ContentRef{rt.Content.Ref("gallery", "42")})
 _ = worker.SyncOnce(ctx, rt.WorkerOptions(hostWorkerOptions)) // host documents + posts
 ```
 
 `rt` is the `Hub` (search, typeahead, signals, discovery) plus `rt.Content`
 (interactions). See [HOST_INTEGRATION.md](HOST_INTEGRATION.md).
+
+## HTTP API
+
+`rt.Handler()` serves every configured module under one prefix, after the
+host's auth middleware put the actor in the context:
+
+| Sub-path | Module | Configured by |
+|---|---|---|
+| `/` | content: posts, comments, reactions, favorites, polls, comment bans, moderation | always |
+| `/media/upload/…` | media uploads | `Uploads` |
+| `/media/…` | media reads and HLS playlists | `Reader`, `ReadLimit` |
+| `/codes/{code}` | content codes | `Codes` |
+| `/taxonomy/…` | taxonomy admin, for `Content.Perms.Taxonomy` | `Taxonomy` |
+
+Media and taxonomy identify the caller with `Content.Identity`. No content kind
+may be named `media`, `codes` or `taxonomy`. A host can still mount a module
+alone (`content.Runtime.Handler`, `media.UploadHandler`, `media.Reader.Handler`,
+`contenturl.Router.Handler`, `taxonomy.Handler`) at a path of its choosing.
+
+Every route is declared once, in its module's route table
+(`internal/httpapi`): method, path, tier, query, bodies and error codes. The
+table mounts the handlers and generates [`api/openapi.json`](api/openapi.json),
+[`docs/api/routes.md`](docs/api/routes.md) and the browser SDK's
+`sdk/ui/src/client/generated/{routes,wire,error-codes}.ts`. After changing a
+route or a wire type, run `go generate ./internal/contract`;
+`TestGeneratedContractIsFresh` fails while a generated file is stale.
 
 ## Search
 
@@ -158,27 +185,14 @@ configuration.
 
 ## Errors
 
-Both mounted handlers (`content.Runtime.Handler`, `taxonomy.Handler`) answer
-failures with one flat body. Branch on `code`; `error` is a human message and
-may change.
+Every module answers failures with one flat body. Branch on `code`; `error`
+is a human message and may change. A code's own members appear only with it
+(`retry_after`, `action`, `ban`, `blobs`, `details`). The codes and their
+statuses are listed in [docs/api/routes.md](docs/api/routes.md#error-codes).
 
 ```json
 {"error":"not found","code":"not_found"}
 ```
-
-| Status | Code | Meaning |
-|---|---|---|
-| 400 | `invalid_request` | malformed or semantically invalid input |
-| 401 | `unauthorized` | no identity |
-| 403 | `forbidden` | identity present, not permitted |
-| 403 | `comment_banned` | a comment ban applies; `ban` is `{scope, reason, until}` |
-| 404 | `not_found` | absent, unpublished or soft-deleted (existence is hidden) |
-| 409 | `conflict` | state or revision conflict |
-| 422 | `moderation_rejected` | a `ContentModerator` refused the write; `error` is the author-facing reason |
-| 429 | `rate_limited` | an interaction limit; `Retry-After` header, `action` and `retry_after` (seconds) in the body |
-| 501 | `not_configured` | the host never wired the port this route needs (`Media`, `AnswerClassifier`) |
-| 500 | `tenant_mismatch` | a host port answered with another tenant's data |
-| 500 | `internal_error` | anything else |
 
 5xx bodies carry no cause: it goes to `Options.Logger` (`slog.Default()` when
 unset) with the request method, path, status and duration. Postgres constraint
@@ -276,8 +290,7 @@ uploads, _ := media.NewUploads(media.UploadOptions{Store: store, Manifests: jobs
 	Limiter: limiter, Queue: queue, Frames: frames})
 reader, _ := media.NewReader(media.ReaderOptions{Manifests: jobs.Manifests(), Queue: queue, Progress: progress,
 	Delivery: media.Delivery{Mode: media.DeliverCookie, CookieDomain: "doujins.ai", SigningKey: key}})
-mux.Handle("/api/media/upload/", http.StripPrefix("/api/media/upload", media.UploadHandler(uploads, media.UploadHandlerOptions{Actor: actorOf})))
-mux.Handle("/api/media/", http.StripPrefix("/api/media", reader.Handler(media.HandlerOptions{Identity: identity})))
+// served by rt.Handler() at /media/upload and /media (RuntimeConfig.Uploads, .Reader)
 // composed into the host's River client: jobs.RiverJobs()
 _ = jobs.ExposeTx(ctx, tx, ref)                                          // whenever anonymous visibility changes
 _ = jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref: ref, Owner: owner}) // in the host's delete transaction
@@ -424,7 +437,7 @@ _ = store.WithTx(tx).Assign(ctx, []taxonomy.Assignment{{ContentRef: g1.WithVersi
 tags, _ := store.EffectiveTags(ctx, []contentkit.ContentRef{g1.WithVersion(v2)})
 filter, args, _ := taxonomy.RequireAll(schema, []taxonomy.TaxonomyID{"colored"})
 page, _ := client.Search(ctx, q, contentkit.SearchOptions{Language: "es", ContentKinds: []string{"gallery"}, FilterSQL: filter, FilterArgs: args, Eligibility: elig})
-mux.Handle("/admin/taxonomy/", http.StripPrefix("/admin/taxonomy", taxonomy.Handler(store)))
+// RuntimeConfig.Taxonomy: taxonomy.Handler(store), served at /taxonomy for Content.Perms.Taxonomy
 ```
 
 `ListNodes` backs a catalog index page directly: the display name in the
