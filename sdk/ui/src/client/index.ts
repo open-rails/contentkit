@@ -45,6 +45,25 @@ export {
   type WaitOptions,
 } from "./media/client.js";
 export { UploadQueue, type ItemStatus, type QueueItem, type QueueOptions, type QueueSnapshot } from "./media/queue.js";
+export {
+  acceptOf,
+  defaultImage,
+  filesFor,
+  isPattern,
+  ratioLabel,
+  ruleDir,
+  ruleFor,
+  screenFiles,
+  uniqueName,
+  uploadRules,
+  withMediaType,
+  type PresetRule,
+  type RuledRead,
+  type Screened,
+  type UploadRule,
+  type VideoLimits,
+} from "./media/rules.js";
+export { READ_CHUNK, chunkOffsets, isProcessing, mergeReads, processing } from "./media/windows.js";
 export { defaultTransport, fetchTransport, xhrTransport, type Transport } from "./media/transport.js";
 export { checkRef, isContentId } from "./media/ref.js";
 export { encodeRemaining } from "./media/encode.js";

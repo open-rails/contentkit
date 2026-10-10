@@ -9,7 +9,7 @@ import { samePath, stem, type Progress } from "../client/media/client.js";
 import { publicRenditions, type PublicPreset } from "../client/public.js";
 import type { Rendition } from "../client/rendition.js";
 import { useContentKitClient } from "./context.js";
-import { useRead } from "./read.js";
+import { useMediaRead } from "./read.js";
 import { withUpload } from "./store.js";
 
 export interface SlotImageOptions {
@@ -40,7 +40,7 @@ export interface UseSlotImage {
 
 /** An upload path's state (an editor read) and its public image. */
 export function useSlotImage(o: SlotImageOptions): UseSlotImage {
-  const r = useRead(o.ref, { editor: true, prefix: stem(o.path), read: o.read, client: o.client });
+  const r = useMediaRead(o.ref, { editor: true, prefix: stem(o.path), read: o.read, client: o.client });
   const read = r.read;
   const file = read?.files.find((f) => f.upload && samePath(f.path, o.path)) ?? null;
   const { path } = o;

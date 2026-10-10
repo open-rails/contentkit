@@ -105,7 +105,20 @@ export interface CanonicalResult {
   redirect: boolean;
 }
 
+export interface HreflangOptions {
+  /** Languages the content exists in; default every configured language. */
+  languages?: readonly string[];
+  /** The language x-default points at. */
+  defaultLanguage?: string;
+  /** The origin for absolute URLs; default the configured one (throws without either). */
+  origin?: string;
+}
+
 export interface ContentURLs {
+  /** The configured language segments. */
+  readonly languages: readonly string[];
+  /** The configured origin, without a trailing slash. */
+  readonly origin?: string;
   /** The canonical path of link; throws when its kind has no route. */
   path(link: ContentLink, options?: PathOptions): string;
   /** path() on the configured origin; throws without one. */
@@ -119,6 +132,28 @@ export interface ContentURLs {
    * has no route.
    */
   canonical(location: string, link: ContentLink): CanonicalResult | null;
+  /**
+   * hreflang alternates: each language's absolute URL of link (its own
+   * slug), plus x-default; empty when no language is configured.
+   */
+  hreflang(link: ContentLink, options?: HreflangOptions): Record<string, string>;
+}
+
+/** Query parameters that only track a visit: never part of a canonical URL. */
+export const TRACKING_PARAMS = ["gclid", "gbraid", "wbraid", "dclid", "fbclid", "msclkid", "yclid", "twclid", "igshid", "mc_cid", "mc_eid", "_ga", "_gl"];
+
+/**
+ * href without tracking parameters (utm_* and TRACKING_PARAMS, plus drop),
+ * its fragment or a trailing slash: the canonical URL of a page that is not
+ * a content page.
+ */
+export function canonicalURL(href: string, options: { drop?: readonly string[] } = {}): string {
+  const url = new URL(href);
+  const drop = new Set([...TRACKING_PARAMS, ...(options.drop ?? [])]);
+  for (const key of [...url.searchParams.keys()]) if (key.startsWith("utm_") || drop.has(key)) url.searchParams.delete(key);
+  url.hash = "";
+  if (url.pathname.length > 1 && url.pathname.endsWith("/")) url.pathname = url.pathname.replace(/\/+$/, "");
+  return url.toString();
 }
 
 const SEGMENT = /^[a-z0-9][a-z0-9_-]*$/;
@@ -167,6 +202,8 @@ export function createContentURLs(config: ContentURLConfig): ContentURLs {
   };
 
   return {
+    languages,
+    origin,
     path,
     url(link, options) {
       if (origin === undefined) throw new Error("contentkit-ui/urls: url() needs ContentURLConfig.origin");
@@ -183,6 +220,16 @@ export function createContentURLs(config: ContentURLConfig): ContentURLs {
       const path = canonicalPath(link, parsed.language);
       if (path === null) return null;
       return { path, location: search ? `${path}?${search}` : path, redirect: pathname !== path };
+    },
+    hreflang(link, options = {}) {
+      const base = options.origin?.replace(/\/+$/, "") ?? origin;
+      if (base === undefined) throw new Error("contentkit-ui/urls: hreflang() needs an origin");
+      const out: Record<string, string> = {};
+      const langs = (options.languages ?? languages).filter((l) => languages.includes(l));
+      for (const language of langs) out[language] = base + path(link, { language });
+      const def = options.defaultLanguage;
+      if (def && out[def]) out["x-default"] = out[def];
+      return out;
     },
   };
 }

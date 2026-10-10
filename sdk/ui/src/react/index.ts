@@ -9,11 +9,17 @@ export {
   useOptionalContentKitClient,
   type ContentKitContextValue,
   type ContentKitErrorHandler,
+  type ContentKitErrorInfo,
   type ContentKitOperation,
   type Navigate,
   type SocialOperation,
 } from "./context.js";
-export { useRead, type UseRead, type UseReadOptions } from "./read.js";
+export { useMediaRead, type MediaReadOptions, type ReadWindow, type UseMediaRead } from "./read.js";
+export { nameIn, thumbnailOf, useMediaFolder, type FolderGroup, type MediaFolderOptions, type UseMediaFolder } from "./folder.js";
+export { useEditorCrop, type EditorCropOptions, type EditorCropState, type UseEditorCrop } from "./crop.js";
+export { usePresets, usePublicImage, type PublicImageOptions, type UsePresets, type UsePublicImage } from "./public.js";
+export { useCanonicalContent, type CanonicalContent, type CanonicalContentOptions } from "./canonical.js";
+export { useNearViewport, type NearViewportOptions } from "./viewport.js";
 export {
   useAdminComments,
   useCanComment,

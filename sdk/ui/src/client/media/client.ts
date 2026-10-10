@@ -5,6 +5,7 @@ import { call } from "../route.js";
 import { MediaApi, type ReadOptions } from "./api.js";
 import { sha256Hex } from "./hash.js";
 import { Pacer } from "./pacer.js";
+import type { PresetRule } from "./rules.js";
 import { defaultTransport, type Transport } from "./transport.js";
 
 /** Upload tuning for the media module. */
@@ -168,6 +169,7 @@ export class MediaClient {
   private readonly retries: number;
   private readonly delay: (attempt: number, retryAfter?: number) => number;
   private readonly targetSeconds: number;
+  private presetList?: Promise<PresetRule[]>;
 
   private readonly folders: Required<ContentFolders>;
 
@@ -329,17 +331,31 @@ export class MediaClient {
    * not_found when the path has no upload, render_timeout after the timeout
    * (default 30 s).
    */
-  async editorView(ref: RefBody, path: string, o: WaitOptions = {}): Promise<{ url: string; width: number; height: number }> {
+  async editorView(ref: RefBody, path: string, o: WaitOptions = {}): Promise<{ url: string; width: number; height: number; edit?: Edit }> {
     const until = Date.now() + (o.timeout ?? 30_000);
     for (;;) {
       const r = await this.read(ref, { editor: true, prefix: stem(path), signal: o.signal });
       const f = r.files.find((x) => x.upload && samePath(x.path, path));
       if (!f) throw new ContentKitError("not_found", `no upload ${path}`, { status: 404 });
-      if (f.editor_url && f.w && f.h) return { url: f.editor_url, width: f.w, height: f.h };
+      if (f.editor_url && f.w && f.h) return { url: f.editor_url, width: f.w, height: f.h, ...(f.edit ? { edit: f.edit } : {}) };
       if (f.failed) throw failureError(f.failed);
       if (Date.now() >= until) throw new ContentKitError("render_timeout", `the editor view of ${path} is still rendering`);
       await sleep(o.interval ?? 1000, o.signal);
     }
+  }
+
+  /**
+   * Every kind's public presets, fetched once per client: crop bounds,
+   * widths and default images. An item's current image is in its read's
+   * `public`, never built from a preset. Shared by every caller, so it takes
+   * no signal; a failed fetch is retried on the next call.
+   */
+  presets(): Promise<PresetRule[]> {
+    this.presetList ??= this.retry(() => this.api.presets()).catch((e: unknown) => {
+      this.presetList = undefined;
+      throw e;
+    });
+    return this.presetList;
   }
 
   /** A JPEG still of the video upload at path, t seconds in, w pixels wide (default the frame's). */
