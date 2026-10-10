@@ -22,7 +22,7 @@ func TestCounts_RollupAggregates(t *testing.T) {
 	}
 	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u1"}, "gallery", cid(1), 1)))
 	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u2"}, "gallery", cid(1), -1)))
-	must(rt.favorites.add(ctx, access.Actor{ID: "u1"}, "gallery", cid(1)))
+	must(favErr(rt.favorites.add(ctx, access.Actor{ID: "u1"}, "gallery", cid(1))))
 	if _, err := rt.comments.create(ctx, access.Actor{ID: "u1"}, "gallery", cid(1), CommentInput{Body: "hi"}); err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestCounts_RollupAggregates(t *testing.T) {
 	if _, ok := m[ref("gallery", cid(3)).Key()]; ok {
 		t.Fatal("g3 has no engagement; it should be absent from the batch map")
 	}
-	must(rt.favorites.remove(ctx, access.Actor{ID: "u1"}, "gallery", cid(1)))
+	must(favErr(rt.favorites.remove(ctx, access.Actor{ID: "u1"}, "gallery", cid(1))))
 	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u2"}, "gallery", cid(1), 1)))
 	if c := countsOf(t, rt, ref("gallery", cid(1))); c.Favorites != 0 || c.Likes != 2 || c.Dislikes != 0 {
 		t.Fatalf("after unfavorite + switch: %+v, want favorites=0 likes=2 dislikes=0", c)

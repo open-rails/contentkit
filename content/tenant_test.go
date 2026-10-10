@@ -28,7 +28,7 @@ func TestTenantIsolation(t *testing.T) {
 	if _, err := a.reactions.react(ctx, u, "gallery", cid(1), 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.favorites.add(ctx, u, "gallery", cid(1)); err != nil {
+	if err := favErr(a.favorites.add(ctx, u, "gallery", cid(1))); err != nil {
 		t.Fatal(err)
 	}
 	cm := mustComment(t, a, u, "gallery", cid(1), CommentInput{Body: "on a"})
@@ -98,7 +98,7 @@ func TestTenantIsolation(t *testing.T) {
 		}
 	}
 	// The shared account's tenant-b wishlist is its own.
-	if err := b.favorites.add(ctx, u, "gallery", cid(1)); err != nil {
+	if err := favErr(b.favorites.add(ctx, u, "gallery", cid(1))); err != nil {
 		t.Fatal(err)
 	}
 	if items, _ := a.ListFavorites(ctx, u.ID, 0, 0); len(items) != 1 || items[0].TenantID != "site_a" {

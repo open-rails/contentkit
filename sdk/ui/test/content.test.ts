@@ -264,14 +264,18 @@ describe.skipIf(!endpoint)("content modules against contentkit.Runtime.Handler",
     await expect(ck("alice").reactions.set(item("video", "10cced"), 1)).rejects.toEqual(code("forbidden"));
     await expect(ck("alice").reactions.get(item("video", "dead"))).rejects.toEqual(code("not_found"));
 
-    await expect(ck().favorites.get(video)).rejects.toEqual(code("unauthorized"));
+    expect(await ck().favorites.get(video)).toEqual({ favorited: false, count: 0 });
+    await expect(ck().favorites.set(video, true)).rejects.toEqual(code("unauthorized"));
+    await expect(ck().favorites.get(item("video", "dead"))).rejects.toEqual(code("not_found"));
     const fan = ck(`fan-${randomUUID()}`);
-    expect(await fan.favorites.get(video)).toEqual({ favorited: false });
-    expect(await fan.favorites.set(video, true)).toEqual({ favorited: true });
-    expect(await fan.favorites.set(video, true)).toEqual({ favorited: true });
-    expect(changes).toContainEqual({ type: "favorite.changed", ref: video, favorited: true });
+    expect(await fan.favorites.get(video)).toEqual({ favorited: false, count: 0 });
+    expect(await fan.favorites.set(video, true)).toEqual({ favorited: true, count: 1 });
+    expect(await fan.favorites.set(video, true)).toEqual({ favorited: true, count: 1 });
+    expect(await ck(`fan-${randomUUID()}`).favorites.set(video, true)).toEqual({ favorited: true, count: 2 });
+    expect(changes).toContainEqual({ type: "favorite.changed", ref: video, favorited: true, count: 2 });
+    expect(await ck().favorites.get(video)).toEqual({ favorited: false, count: 2 });
     expect((await fan.favorites.list()).map((f) => f.content_id)).toEqual([video.id]);
-    expect(await fan.favorites.set(video, false)).toEqual({ favorited: false });
+    expect(await fan.favorites.set(video, false)).toEqual({ favorited: false, count: 1 });
     expect(await fan.favorites.list()).toEqual([]);
   });
 

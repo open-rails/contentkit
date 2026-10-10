@@ -134,7 +134,7 @@ describe.skipIf(!endpoint)("content hooks against contentkit.Runtime.Handler", (
     expect(result.current.hasMore).toBe(false);
   });
 
-  it("useReaction and useFavorite: at once, rolled back when refused; signed out reads nothing", async () => {
+  it("useReaction and useFavorite: at once, rolled back when refused; signed out the count only", async () => {
     const ref = video();
     const lockedRef = { kind: "video", id: uuid7("10cced") };
     const c = client(undefined, "10.9.1.1");
@@ -152,8 +152,8 @@ describe.skipIf(!endpoint)("content hooks against contentkit.Runtime.Handler", (
 
     const signedOut = client();
     const out = renderHook(() => useFavorite(ref), { wrapper: wrap(signedOut, null) });
-    expect(out.result.current).toMatchObject({ favorited: false, loading: false });
-    expect(requests).toEqual([]);
+    await waitFor(() => expect(out.result.current).toMatchObject({ favorited: false, count: 0, loading: false }), wait);
+    expect(requests).toEqual([`GET /video/${ref.id}/favorite`]);
     // Not known to be signed out: the read runs, and a refused write rolls back.
     const unknown = renderHook(() => useFavorite(ref), { wrapper: wrap(client()) });
     await waitFor(() => expect(unknown.result.current.loading).toBe(false), wait);
@@ -165,7 +165,7 @@ describe.skipIf(!endpoint)("content hooks against contentkit.Runtime.Handler", (
     const fan = renderHook(() => useFavorite(ref), { wrapper: wrap(client(`fan-${randomUUID()}`)) });
     await waitFor(() => expect(fan.result.current.loading).toBe(false), wait);
     await act(() => fan.result.current.toggle());
-    expect(fan.result.current.favorited).toBe(true);
+    expect(fan.result.current).toMatchObject({ favorited: true, count: 1 });
   });
 
   it("usePoll: the newest live poll; a vote applies at once and is final; usePolls and usePollEditor", async () => {

@@ -32,7 +32,7 @@ func TestCanonicalRef_UnifiesAliases(t *testing.T) {
 	u := access.Actor{ID: "u1"}
 	canonical := ref("gallery", cid(123))
 
-	if err := rt.favorites.add(ctx, u, "gallery", "slug-123"); err != nil {
+	if err := favErr(rt.favorites.add(ctx, u, "gallery", "slug-123")); err != nil {
 		t.Fatalf("add via alias: %v", err)
 	}
 	fav, err := rt.IsFavorited(ctx, "u1", []contentref.ContentRef{canonical})
@@ -56,7 +56,7 @@ func TestCanonicalRef_UnifiesAliases(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.counts+` WHERE content_id <> $1`, cid(123)).Scan(&leaked); err != nil || leaked != 0 {
 		t.Fatalf("alias keys leaked into the rollup: %d rows err=%v", leaked, err)
 	}
-	if err := rt.favorites.remove(ctx, u, "gallery", "123"); err != nil {
+	if err := favErr(rt.favorites.remove(ctx, u, "gallery", "123")); err != nil {
 		t.Fatal(err)
 	}
 	if c := countsOf(t, rt, canonical); c.Favorites != 0 {
@@ -136,7 +136,7 @@ func TestRuntime_ListFavoritesExported(t *testing.T) {
 	ctx := context.Background()
 	u := access.Actor{ID: "u1"}
 	for _, id := range []string{cid(1), cid(2)} {
-		if err := rt.favorites.add(ctx, u, "gallery", id); err != nil {
+		if err := favErr(rt.favorites.add(ctx, u, "gallery", id)); err != nil {
 			t.Fatal(err)
 		}
 	}

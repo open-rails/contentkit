@@ -33,22 +33,22 @@ type FavoriteItem struct {
 
 // add gates on visibility only, then favorites under the canonical preference
 // reference. Re-favoriting is a no-op success.
-func (f *favorites) add(ctx context.Context, actor access.Actor, kind, id string) error {
+func (f *favorites) add(ctx context.Context, actor access.Actor, kind, id string) (contentref.ContentRef, error) {
 	ref, err := f.rt.gate(ctx, kind, id, actor, false)
 	if err != nil {
-		return err
+		return ref, err
 	}
-	return f.set(ctx, actor, ref, 1)
+	return ref, f.set(ctx, actor, ref, 1)
 }
 
 // remove unfavorites (idempotent), keeping the row at value 0. No visibility
 // gate: un-wishlisting content that later became hidden must still work.
-func (f *favorites) remove(ctx context.Context, actor access.Actor, kind, id string) error {
+func (f *favorites) remove(ctx context.Context, actor access.Actor, kind, id string) (contentref.ContentRef, error) {
 	ref, err := f.rt.canonical(ctx, kind, id, actor)
 	if err != nil {
-		return err
+		return ref, err
 	}
-	return f.set(ctx, actor, ref, 0)
+	return ref, f.set(ctx, actor, ref, 0)
 }
 
 func (f *favorites) set(ctx context.Context, actor access.Actor, ref contentref.ContentRef, value int16) error {
@@ -167,22 +167,36 @@ var favoriteRoutes = []httpapi.Route[*favorites]{
 		Query: httpapi.Page, Responses: []httpapi.Reply{httpapi.OK([]FavoriteItem{})}},
 		Serve: httpapi.H((*favorites).handleList)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/{kind}/{id}/favorite", Resource: "favorites", Auth: httpapi.User,
-		Doc:       "Favorites a visible target; favoriting again is a no-op.",
+		Doc:       "Favorites a visible target; favoriting again is a no-op. Answers the state with the target's favorite count.",
 		Responses: []httpapi.Reply{httpapi.OK(FavoriteState{})}, Errors: []string{CodeForbidden, CodeNotFound, CodeRateLimited}},
 		Serve: httpapi.H((*favorites).handleAdd)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/{kind}/{id}/favorite", Resource: "favorites", Auth: httpapi.User,
-		Doc:       "Unfavorites a target, also one no longer visible.",
+		Doc:       "Unfavorites a target, also one no longer visible. Answers the state with the target's favorite count.",
 		Responses: []httpapi.Reply{httpapi.OK(FavoriteState{})}, Errors: []string{CodeForbidden, CodeInvalidRequest, CodeRateLimited}},
 		Serve: httpapi.H((*favorites).handleRemove)},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}/favorite", Resource: "favorites", Auth: httpapi.User,
-		Doc:       "Whether the caller has favorited a target.",
-		Responses: []httpapi.Reply{httpapi.OK(FavoriteState{})}, Errors: []string{CodeInvalidRequest}},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}/favorite", Resource: "favorites", Auth: httpapi.Public,
+		Doc:       "A target's favorite count and whether the caller favorited it (never, signed out: then the target must be visible).",
+		Responses: []httpapi.Reply{httpapi.OK(FavoriteState{})}, Errors: []string{CodeInvalidRequest, CodeNotFound}},
 		Serve: httpapi.H((*favorites).handleStatus)},
 }
 
-// FavoriteState says whether the caller has favorited the target.
+// FavoriteState says whether the caller has favorited the target, and how
+// many have.
 type FavoriteState struct {
 	Favorited bool `json:"favorited"`
+	Count     int  `json:"count"`
+}
+
+// state reads userID's bookmark of ref ("" for none) and ref's favorite
+// count under the storage reference set writes (a resolved route key such as
+// "{id}:ja" maps to its work).
+func (f *favorites) state(ctx context.Context, userID string, ref contentref.ContentRef) (FavoriteState, error) {
+	storage, _ := f.rt.preferences.work(ref)
+	args := append(keyArgs(storage.Key()), userID)
+	var out FavoriteState
+	err := f.s.pool.QueryRow(ctx, `SELECT coalesce((SELECT favorites FROM `+f.s.t.counts+` WHERE `+keyPred(1)+`), 0),
+		EXISTS (SELECT 1 FROM `+f.s.t.favorites+` WHERE `+keyPred(1)+` AND user_id = $5 AND value = 1)`, args...).Scan(&out.Count, &out.Favorited)
+	return out, err
 }
 
 func (f *favorites) handleAdd(w http.ResponseWriter, req *http.Request) {
@@ -194,11 +208,21 @@ func (f *favorites) handleAdd(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if err := f.add(req.Context(), actor, req.PathValue("kind"), req.PathValue("id")); err != nil {
+	ref, err := f.add(req.Context(), actor, req.PathValue("kind"), req.PathValue("id"))
+	f.writeState(w, req, actor.ID, ref, err)
+}
+
+// writeState answers the state after a write (err its failure).
+func (f *favorites) writeState(w http.ResponseWriter, req *http.Request, userID string, ref contentref.ContentRef, err error) {
+	var st FavoriteState
+	if err == nil {
+		st, err = f.state(req.Context(), userID, ref)
+	}
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, FavoriteState{Favorited: true})
+	writeJSON(w, http.StatusOK, st)
 }
 
 func (f *favorites) handleRemove(w http.ResponseWriter, req *http.Request) {
@@ -210,30 +234,25 @@ func (f *favorites) handleRemove(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if err := f.remove(req.Context(), actor, req.PathValue("kind"), req.PathValue("id")); err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, FavoriteState{})
+	ref, err := f.remove(req.Context(), actor, req.PathValue("kind"), req.PathValue("id"))
+	f.writeState(w, req, actor.ID, ref, err)
 }
 
+// handleStatus answers the count and the caller's bookmark. A signed-in
+// caller reads it also for a target no longer visible (to unfavorite it); a
+// signed-out one only for a visible target.
 func (f *favorites) handleStatus(w http.ResponseWriter, req *http.Request) {
-	actor, err := f.rt.requireActor(req.Context())
-	if err != nil {
-		writeErr(w, err)
-		return
+	ctx := req.Context()
+	actor := f.rt.actor(ctx)
+	kind, id := req.PathValue("kind"), req.PathValue("id")
+	var ref contentref.ContentRef
+	var err error
+	if userID := viewerID(actor); userID != "" {
+		ref, err = f.rt.canonical(ctx, kind, id, actor)
+	} else {
+		ref, err = f.rt.gate(ctx, kind, id, actor, false)
 	}
-	ref, err := f.rt.canonical(req.Context(), req.PathValue("kind"), req.PathValue("id"), actor)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	m, err := f.IsFavorited(req.Context(), actor.ID, []contentref.ContentRef{ref}) // read under the stored reference
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, FavoriteState{Favorited: m[ref.Key()]})
+	f.writeState(w, req, viewerID(actor), ref, err)
 }
 
 func (f *favorites) handleList(w http.ResponseWriter, req *http.Request) {

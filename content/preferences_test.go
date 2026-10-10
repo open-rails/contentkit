@@ -63,9 +63,9 @@ func mustFavorite(t *testing.T, rt *Runtime, actor access.Actor, kind, id string
 	t.Helper()
 	var err error
 	if add {
-		err = rt.favorites.add(context.Background(), actor, kind, id)
+		err = favErr(rt.favorites.add(context.Background(), actor, kind, id))
 	} else {
-		err = rt.favorites.remove(context.Background(), actor, kind, id)
+		err = favErr(rt.favorites.remove(context.Background(), actor, kind, id))
 	}
 	if err != nil {
 		t.Fatalf("favorite %s/%s add=%v: %v", kind, id, add, err)

@@ -116,7 +116,7 @@ const thread = useComments(ref, { sort: "best" });
 await thread.post("Nice!", { replyTo: parentId });
 await thread.react(comment, 1);
 const { counts, toggle } = useReaction(ref);
-const { favorited, toggle: fav } = useFavorite(ref);
+const { favorited, count, toggle: fav } = useFavorite(ref);
 const { poll, vote } = usePoll(null, { language }); // the newest live poll
 const editor = usePollEditor(pollId);                // staff
 ```
@@ -358,7 +358,7 @@ fullscreen and a mini player.
 
 `Comments` (threads with one-level replies, tombstones, held and rejected
 states shown to their author, reactions, edit, delete, ban and rate-limit
-notices), `ReactionButtons`, `FavoriteButton` (moves a host-given `count`)
+notices), `ReactionButtons`, `FavoriteButton` (with the server's count)
 and `Poll` (a final vote with results scaled to the leading option, or a
 free-text answer and its groups; `results="always"` shows results before
 voting). Signed-out visitors comment under a name, react and vote where the

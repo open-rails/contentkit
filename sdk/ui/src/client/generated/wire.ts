@@ -256,6 +256,7 @@ export interface FavoriteItem {
 
 export interface FavoriteState {
   favorited: boolean;
+  count: number;
 }
 
 export interface FeedItem {

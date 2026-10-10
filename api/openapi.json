@@ -1772,7 +1772,7 @@
         "tags": [
           "favorites"
         ],
-        "summary": "Favorites a visible target; favoriting again is a no-op.",
+        "summary": "Favorites a visible target; favoriting again is a no-op. Answers the state with the target's favorite count.",
         "parameters": [
           {
             "name": "kind",
@@ -1828,7 +1828,7 @@
         "tags": [
           "favorites"
         ],
-        "summary": "Unfavorites a target, also one no longer visible.",
+        "summary": "Unfavorites a target, also one no longer visible. Answers the state with the target's favorite count.",
         "parameters": [
           {
             "name": "kind",
@@ -1884,7 +1884,7 @@
         "tags": [
           "favorites"
         ],
-        "summary": "Whether the caller has favorited a target.",
+        "summary": "A target's favorite count and whether the caller favorited it (never, signed out: then the target must be visible).",
         "parameters": [
           {
             "name": "kind",
@@ -1919,18 +1919,19 @@
           }
         },
         "security": [
+          {},
           {
             "host": []
           }
         ],
         "x-contentkit-module": "content",
-        "x-contentkit-auth": "user",
+        "x-contentkit-auth": "public",
         "x-contentkit-errors": [
-          "invalid_request"
+          "invalid_request",
+          "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:user",
           "request"
         ]
       }
@@ -5646,10 +5647,14 @@
         "properties": {
           "favorited": {
             "type": "boolean"
+          },
+          "count": {
+            "type": "integer"
           }
         },
         "required": [
-          "favorited"
+          "favorited",
+          "count"
         ]
       },
       "FeedItem": {

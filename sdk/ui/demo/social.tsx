@@ -42,6 +42,8 @@ await erin!.comments.create(item, {
 });
 await bob!.comments.react(first.id, 1);
 await bob!.reactions.set(item, 1);
+await bob!.favorites.set(item, true);
+await carol!.favorites.set(item, true);
 await carol!.reactions.set(item, -1);
 if (actor === "alice") await client.comments.create(item, { body: "Is this the director's cut? [hold]" });
 const poll = await editor!.polls.create({ question: "Which season should we cover next?", language: lang, options: ["Spring 2026", "Summer 2026", "Autumn 2026"].map((label, position) => ({ label, position })) });
@@ -65,7 +67,7 @@ function Public() {
             <h1 style={{ margin: 0, fontSize: 20 }}>Night Before the Counteroffensive</h1>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
               <ReactionButtons item={item} />
-              <FavoriteButton item={item} count={12} />
+              <FavoriteButton item={item} />
             </div>
             {asked > 0 && <p data-demo="sign-in">Sign-in requested ({asked})</p>}
           </section>

@@ -206,15 +206,15 @@ it("ReactionButtons and FavoriteButton change at once and roll back when refused
     "GET /video/v1/reaction": () => ({ likes: 4, dislikes: 1, mine: 0 }),
     "POST /video/v1/like": () => (fail ? refusal(429, "rate_limited", { retry_after: 5 }) : { likes: 5, dislikes: 1, mine: 1 }),
     "POST /video/v1/neutral": () => ({ likes: 4, dislikes: 1, mine: 0 }),
-    "GET /video/v1/favorite": () => ({ favorited: false }),
-    "POST /video/v1/favorite": () => ({ favorited: true }),
+    "GET /video/v1/favorite": () => ({ favorited: false, count: 10 }),
+    "POST /video/v1/favorite": () => ({ favorited: true, count: 11 }),
   });
   const user = userEvent.setup();
   const onChange = vi.fn();
   render(
     <>
       <ReactionButtons item={item} />
-      <FavoriteButton item={item} count={10} onChange={onChange} />
+      <FavoriteButton item={item} onChange={onChange} />
     </>,
     { wrapper: wrap(s.client, { viewer: "alice" }) },
   );
@@ -231,17 +231,20 @@ it("ReactionButtons and FavoriteButton change at once and roll back when refused
   expect(like).toHaveAttribute("aria-pressed", "false");
 
   const fav = screen.getByRole("button", { name: /Add to favorites/ });
-  expect(fav).toHaveTextContent("10");
+  await waitFor(() => expect(fav).toHaveTextContent("10"));
   await user.click(fav);
   await waitFor(() => expect(onChange).toHaveBeenCalledWith(true));
   expect(screen.getByRole("button", { name: /Remove from favorites/ })).toHaveTextContent("11");
 
   const signIn = vi.fn();
-  const out = server({ "GET /video/v1/reaction": () => ({ likes: 0, dislikes: 0, mine: 0 }) });
+  const out = server({ "GET /video/v1/favorite": () => ({ favorited: false, count: 7 }) });
   render(<FavoriteButton item={item} />, { wrapper: wrap(out.client, { viewer: null, onSignIn: signIn }) });
-  await user.click(screen.getByRole("button", { name: "Sign in to save favorites" }));
+  // Signed out: the server's count shows; a click asks to sign in and writes nothing.
+  const signedOut = screen.getByRole("button", { name: /Sign in to save favorites/ });
+  await waitFor(() => expect(signedOut).toHaveTextContent("7"));
+  await user.click(signedOut);
   expect(signIn).toHaveBeenCalled();
-  expect(out.calls.some((c) => c.includes("favorite"))).toBe(false);
+  expect(out.calls.filter((c) => !c.startsWith("GET"))).toEqual([]);
 });
 
 it("ReactionButtons signed out: ask to sign in where the server takes no anonymous reactions, react where it does", async () => {

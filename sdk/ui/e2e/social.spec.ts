@@ -49,8 +49,9 @@ for (const theme of ["light", "dark"] as const) {
     await itemLike.click();
     await expect(itemLike).toHaveAttribute("aria-pressed", "true");
     await expect(itemLike).toContainText("2");
+    await expect(engagement.getByRole("button", { name: /Add to favorites/ })).toContainText("2");
     await engagement.getByRole("button", { name: /Add to favorites/ }).click();
-    await expect(engagement.getByRole("button", { name: /Remove from favorites/ })).toContainText("13");
+    await expect(engagement.getByRole("button", { name: /Remove from favorites/ })).toContainText("3");
 
     const poll = page.locator("[data-ckui=poll]");
     await poll.getByRole("button", { name: /Autumn 2026/ }).click();

@@ -87,10 +87,11 @@ export function ReactionButtons({ item, counts: initial, dislike = true, onSignI
 
 export interface FavoriteButtonProps {
   item: RefBody;
-  /** Whether it is favorited, as the host already knows; used instead of reading it. */
+  /** Whether it is favorited and the item's count, as the host already has them: both given, nothing is read. */
   favorited?: boolean;
-  /** The item's favorite count, as the host has it; moved by one with each change. */
   count?: number;
+  /** Show the item's favorite count. Default true. */
+  showCount?: boolean;
   /** Show the label beside the icon. Default true. */
   label?: boolean;
   /** Asks a signed-out visitor to sign in (default the provider's). */
@@ -104,18 +105,17 @@ export interface FavoriteButtonProps {
   appearance?: ContentKitUiAppearance;
 }
 
-/** Adds the item to the signed-in visitor's favorites, or removes it; changes at once and rolls back if refused. */
-export function FavoriteButton({ item, favorited: initial, count, label = true, onSignIn, onChange, size = "default", client, onError, className, appearance }: FavoriteButtonProps) {
+/** Adds the item to the signed-in visitor's favorites, or removes it, with the server's count; changes at once and rolls back if refused. */
+export function FavoriteButton({ item, favorited, count, showCount = true, label = true, onSignIn, onChange, size = "default", client, onError, className, appearance }: FavoriteButtonProps) {
   const m = useMessages();
   const { t } = m;
   const ctx = useContext(ContentKitContext);
-  const f = useFavorite(item, { initial, client });
+  const f = useFavorite(item, { initial: favorited !== undefined && count !== undefined ? { favorited, count } : undefined, client });
   const signIn = onSignIn ?? ctx?.onSignIn;
   const report = useErrorReporter(onError);
   const [error, setError] = useState<ContentKitError | null>(null);
   const [status, setStatus] = useState("");
-  // The count the host gave counts the state it knew; move it with ours.
-  const shown = count === undefined ? undefined : count + (f.favorited ? 1 : 0) - (initial ? 1 : 0);
+  const shown = showCount ? f.count : undefined;
   const click = () => {
     if (ctx?.viewer === null) return signIn?.();
     setError(null);

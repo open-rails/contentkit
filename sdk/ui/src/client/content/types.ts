@@ -35,7 +35,7 @@ export type ContentChange =
   | { type: "comment.restored"; id: string }
   | { type: "comment.reacted"; id: string; counts: ReactionCounts }
   | { type: "reaction.changed"; ref: RefBody; counts: ReactionCounts }
-  | { type: "favorite.changed"; ref: RefBody; favorited: boolean }
+  | { type: "favorite.changed"; ref: RefBody; favorited: boolean; count: number }
   /** Created, updated, voted or answered: the poll as the server now answers it. */
   | { type: "poll.created"; poll: Poll }
   | { type: "poll.updated"; poll: Poll }

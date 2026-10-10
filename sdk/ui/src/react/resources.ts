@@ -217,7 +217,7 @@ export class ResourceStore {
         if (c.ref.kind === "post") this.postTotals(c.ref.id, c.counts.likes, c.counts.dislikes);
         break;
       case "favorite.changed":
-        this.patch((t) => t.type === "favorite" && sameRef(t.ref, c.ref), () => c.favorited);
+        this.patch((t) => t.type === "favorite" && sameRef(t.ref, c.ref), () => ({ favorited: c.favorited, count: c.count }));
         this.invalidate((t) => t.type === "favorites");
         break;
       case "post.created":
