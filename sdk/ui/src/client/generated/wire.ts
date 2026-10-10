@@ -157,11 +157,6 @@ export interface Crop {
   h: number;
 }
 
-export interface DeletedPost {
-  id: string;
-  deleted: boolean;
-}
-
 export interface Edge {
   from_taxonomy_id: string;
   relation: "alias_of" | "artist_of" | "child" | "member_of" | "parent" | "synonym" | "voice_of";

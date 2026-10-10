@@ -53,7 +53,7 @@ func TestPostVisibilityAndErasure(t *testing.T) {
 	}
 	published, draft, deleted, deletedDraft := create("Out Now", false), create("Secret Plan", true), create("Gone Soon", false), create("Never Shown", true)
 	for _, p := range []Post{deleted, deletedDraft} {
-		if rec := doJSON(t, h, author, "DELETE", "/posts/"+p.ID, nil); rec.Code != http.StatusOK {
+		if rec := doJSON(t, h, author, "DELETE", "/posts/"+p.ID, nil); rec.Code != http.StatusNoContent {
 			t.Fatalf("delete: %d", rec.Code)
 		}
 	}

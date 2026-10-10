@@ -118,7 +118,7 @@ var postRoutes = []httpapi.Route[*posts]{
 		Serve: httpapi.H((*posts).handleUpdate)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/posts/{id}", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
 		Doc:       "Deletes a post.",
-		Responses: []httpapi.Reply{httpapi.OK(DeletedPost{})}, Errors: []string{CodeNotFound}},
+		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeNotFound}},
 		Serve: httpapi.H((*posts).handleDelete)},
 	// More specific than reactions' /{kind}/{id}/like, so no ServeMux conflict.
 	postReaction("like", "Likes a published post.", 1),
@@ -156,12 +156,6 @@ type InlineImage struct {
 // PostCover is the post's cover URL after a cover change; null when cleared.
 type PostCover struct {
 	CoverURL *string `json:"cover_url"`
-}
-
-// DeletedPost confirms a post's deletion.
-type DeletedPost struct {
-	ID      string `json:"id"`
-	Deleted bool   `json:"deleted"`
 }
 
 func decodeImage(req *http.Request) (string, error) {
@@ -512,7 +506,7 @@ func (p *posts) handleDelete(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, DeletedPost{ID: id, Deleted: true})
+	writeJSON(w, http.StatusNoContent, nil)
 }
 
 func (p *posts) handleGet(w http.ResponseWriter, req *http.Request) {

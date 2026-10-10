@@ -127,7 +127,7 @@ func TestPostCRUDHappyPath(t *testing.T) {
 
 	// soft delete
 	rec = doJSON(t, h, author, "DELETE", "/posts/"+created.ID, nil)
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
 		t.Fatalf("delete: status %d body %s", rec.Code, rec.Body.String())
 	}
 
@@ -598,7 +598,7 @@ func TestPostWritesQueueKeywordDocuments(t *testing.T) {
 	if docs, _ := rt.KeywordDocuments(ctx, testTenant, KindPost, "ja", []contentref.ContentRef{rt.Ref(KindPost, id)}); len(docs) != 0 {
 		t.Fatalf("a draft yields a document: %+v", docs)
 	}
-	if rec = doJSON(t, h, author, "DELETE", "/posts/"+id, nil); rec.Code != http.StatusOK {
+	if rec = doJSON(t, h, author, "DELETE", "/posts/"+id, nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete: %d", rec.Code)
 	}
 	if got := dirty(); !got["ja"] {
@@ -629,7 +629,7 @@ func TestPostAdminList(t *testing.T) {
 	create(PostInput{Title: ptr("draft"), Body: ptr("b"), Language: ptr("en"), IsDraft: ptr(true)})
 	create(PostInput{Title: ptr("later"), Body: ptr("b"), Language: ptr("ja"), LiveAt: ptr(time.Now().Add(time.Hour))})
 	gone := create(PostInput{Title: ptr("gone"), Body: ptr("b"), Language: ptr("en")})
-	if rec := doJSON(t, h, editor, "DELETE", "/posts/"+gone.ID, nil); rec.Code != http.StatusOK {
+	if rec := doJSON(t, h, editor, "DELETE", "/posts/"+gone.ID, nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete: %d", rec.Code)
 	}
 	ids := func(path string) string {

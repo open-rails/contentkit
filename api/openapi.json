@@ -345,15 +345,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeletedPost"
-                }
-              }
-            }
+          "204": {
+            "description": "No Content"
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -5211,21 +5204,6 @@
           "y",
           "w",
           "h"
-        ]
-      },
-      "DeletedPost": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "deleted": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "id",
-          "deleted"
         ]
       },
       "Edge": {

@@ -239,7 +239,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	}
 	f.want(http.StatusBadRequest, anon, "GET", "/codes/not-a-code", nil, nil)
 	f.want(http.StatusNotFound, anon, "GET", "/codes/ZZZZZZZZ9", nil, nil)
-	f.want(http.StatusOK, staff, "DELETE", "/posts/"+post.ID, nil, nil)
+	f.want(http.StatusNoContent, staff, "DELETE", "/posts/"+post.ID, nil, nil)
 	f.want(http.StatusGone, anon, "GET", "/codes/"+post.Code, nil, nil)
 	f.want(http.StatusNotFound, anon, "GET", "/posts/"+post.ID, nil, nil)
 

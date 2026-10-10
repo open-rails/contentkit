@@ -17,7 +17,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | GET | `/posts/{id}` | public | — | 200 `Post` | A post. A draft, scheduled, held or rejected post is shown only to its author and PostWrite holders. |
 | POST | `/posts` | staff `PostWrite` | `PostInput` | 201 `Post`<br>202 `Post` | Creates a post; 202 when the moderator holds it for review. |
 | PATCH | `/posts/{id}` | staff `PostWrite` | `PostInput` | 200 `Post`<br>202 `Post` | Updates a post's given fields; 202 when the moderator holds the new text. |
-| DELETE | `/posts/{id}` | staff `PostWrite` | — | 200 `DeletedPost` | Deletes a post. |
+| DELETE | `/posts/{id}` | staff `PostWrite` | — | 204 — | Deletes a post. |
 | POST | `/posts/{id}/like` | public | — | 200 `Post` | Likes a published post. |
 | POST | `/posts/{id}/dislike` | public | — | 200 `Post` | Dislikes a published post. |
 | POST | `/posts/{id}/neutral` | public | — | 200 `Post` | Clears the caller's reaction to a published post. |
