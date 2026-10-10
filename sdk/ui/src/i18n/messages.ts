@@ -2,8 +2,6 @@ import { en } from "../locales/en.js";
 import type { ErrorDetails } from "../client/generated/wire.js";
 import { ratioLabel } from "../client/media/rules.js";
 
-// The video aspect and file cap fields the contract adds to ErrorDetails.
-type Details = ErrorDetails & { min_aspect?: number; max_aspect?: number; max?: number };
 
 type Widen<T> = { [K in keyof T]: T[K] extends string ? string : Widen<T[K]> };
 type DeepPartial<T> = { [K in keyof T]?: T[K] extends string ? string : DeepPartial<T[K]> };
@@ -93,7 +91,7 @@ export function createTranslator(messages: ContentKitUiMessages, hostT?: Content
     },
     error(error) {
       if (typeof error === "string") return translate(`errors.${error}`, { seconds: 60 }) ?? messages.errors.generic;
-      const e = (error ?? {}) as { code?: unknown; message?: unknown; status?: number; retryAfter?: number; details?: Details; refusal?: boolean };
+      const e = (error ?? {}) as { code?: unknown; message?: unknown; status?: number; retryAfter?: number; details?: ErrorDetails; refusal?: boolean };
       const code = typeof e.code === "string" ? e.code : undefined;
       const server = typeof e.message === "string" && e.message ? sentence(e.message) : undefined;
       const d = e.details ?? {};

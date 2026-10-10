@@ -57,11 +57,7 @@ export {
   uniqueName,
   uploadRules,
   withMediaType,
-  type PresetRule,
-  type RuledRead,
   type Screened,
-  type UploadRule,
-  type VideoLimits,
 } from "./media/rules.js";
 export { READ_CHUNK, chunkOffsets, isProcessing, mergeReads, processing } from "./media/windows.js";
 export { defaultTransport, fetchTransport, xhrTransport, type Transport } from "./media/transport.js";

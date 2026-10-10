@@ -2,11 +2,12 @@
 import "../src/test/dom.js";
 import { File as NodeFile } from "node:buffer";
 import type { ChildProcess } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createContentKitClient, fetchTransport, type ContentKitClient, type Op } from "../src/client/index.js";
-import { ContentKitProvider, useMediaFolder, useMediaRead } from "../src/react/index.js";
+import { ContentKitProvider, useMediaFolder, useMediaRead, usePublicImage } from "../src/react/index.js";
 import { bytes } from "./fake.js";
 import { KillProxy, startServer, stopServer } from "./server.js";
 
@@ -20,12 +21,14 @@ describe.skipIf(!endpoint)("hooks against MinIO and the media handlers", () => {
   let proxy: KillProxy;
   let proc: ChildProcess;
   let base: string;
+  let namespace: string;
 
   beforeAll(async () => {
     proxy = new KillProxy(new URL(endpoint!));
     const s = await startServer(await proxy.listen());
     proc = s.proc;
     base = s.url;
+    namespace = s.namespace;
   });
 
   afterAll(async () => {
@@ -93,20 +96,36 @@ describe.skipIf(!endpoint)("hooks against MinIO and the media handlers", () => {
     });
   });
 
-  it("useMediaFolder shows the server's refusal when a commit passes the kind's file cap", async () => {
+  it("useMediaFolder screens files by the kind's rules from the editor read before anything uploads", async () => {
     const ref = { kind: "post", id: id(3) };
-    const { result } = renderHook(() => useMediaFolder(ref, { paths: ["originals/{name}"] }), { wrapper: provider(client()) });
-    await waitFor(() => expect(result.current.read.read).not.toBeNull(), wait);
-    act(() => void result.current.add([png("1.png", 21), png("2.png", 22), png("3.png", 23)]));
-    await waitFor(() => expect(result.current.queue.ready || result.current.refused.length > 0).toBe(true), wait);
-    if (result.current.refused.length) {
-      // The editor read states the cap: the third file never uploads.
-      expect(result.current.refused.map((r) => [r.file.name, r.error.code])).toEqual([["3.png", "too_many_files"]]);
-      return;
-    }
-    await act(async () => {
-      await expect(result.current.commit()).rejects.toMatchObject({ code: "too_many_files", status: 409 });
-    });
-    expect(result.current.error?.code).toBe("too_many_files");
+    const { result } = renderHook(() => useMediaFolder(ref), { wrapper: provider(client()) });
+    await waitFor(() => expect(result.current.groups.map((g) => g.path)).toEqual(["originals/{name}"]), wait);
+    expect(result.current.groups[0]!.rule).toMatchObject({ types: ["image/png"], max_bytes: 1 << 20, max: 2 });
+    let refused: ReturnType<typeof result.current.add> = [];
+    act(() => void (refused = result.current.add([png("1.png", 21), png("2.png", 22), png("3.png", 23), new NodeFile([bytes(10, 1)], "a.jpg", { type: "image/jpeg" }) as unknown as File])));
+    expect(refused.map((r) => [r.file.name, r.error.code])).toEqual([
+      ["3.png", "too_many_files"],
+      ["a.jpg", "type_not_allowed"],
+    ]);
+    await waitFor(() => expect(result.current.queue.ready).toBe(true), wait);
+    await act(async () => void (await result.current.commit()));
+    await waitFor(() => expect(result.current.uploads.map((f) => f.path)).toEqual(["originals/1.png", "originals/2.png"]), wait);
+  });
+
+  it("usePublicImage shows an item's published image from its read, else the kind's default", async () => {
+    const c = client();
+    const ref = { kind: "gallery", id: id(4) };
+    const cover = new NodeFile([readFileSync(new URL("../e2e/fixtures/small.png", import.meta.url))], "cover.png", { type: "image/png" }) as unknown as File;
+    await c.media.put(cover, { ref, path: "cover" });
+    const { result } = renderHook(() => usePublicImage("gallery", ref.id, "cover"), { wrapper: provider(c) });
+    await waitFor(() => expect(result.current.isDefault).toBe(false), wait);
+    expect(result.current.rule).toMatchObject({ kind: "gallery", name: "cover", from: "cover", widths: [230, 460], aspect: "3:1" });
+    expect(result.current.image).toMatchObject({ preset: "cover", aspect: "3:1" });
+    // Published names carry a generation; a template never names them.
+    expect(result.current.image!.renditions.map((r) => new URL(r.url).pathname.split("/").pop())).toEqual([expect.stringMatching(/^cover-230-.+\.webp$/), expect.stringMatching(/^cover-460-.+\.webp$/)]);
+
+    const other = renderHook(() => usePublicImage("gallery", id(5), "cover"), { wrapper: provider(c) });
+    await waitFor(() => expect(other.result.current.isDefault).toBe(true), wait);
+    expect(other.result.current.image!.renditions.map((r) => r.url)).toEqual([230, 460].map((w) => `http://media.invalid/v1/${namespace}/gallery/${id(5)}/public/cover-${w}.webp`));
   });
 });

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import { ContentKitError, failureError, toContentKitError } from "../client/errors.js";
-import type { Edit, FileInfo, Op, ReadResult, RefBody } from "../client/generated/wire.js";
+import type { Edit, FileInfo, Op, ReadResult, RefBody, UploadRule } from "../client/generated/wire.js";
 import { stem } from "../client/media/client.js";
-import { filesFor, isPattern, ruleDir, ruleFor, screenFiles, uniqueName, uploadRules, type Screened, type UploadRule } from "../client/media/rules.js";
+import { filesFor, isPattern, ruleDir, ruleFor, screenFiles, uniqueName, uploadRules, type Screened } from "../client/media/rules.js";
 import { useContentKitClient, useErrorReporter, type ContentKitErrorHandler } from "./context.js";
 import { useMediaRead, type UseMediaRead } from "./read.js";
 import { useUploadQueue, type UseUploadQueue } from "./upload.js";

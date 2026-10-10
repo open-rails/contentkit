@@ -1,11 +1,10 @@
 import { ContentKitError, aborted, failureError, throwIfAborted, toContentKitError } from "../errors.js";
-import type { CommitBody, Edit, FileInfo, InlineImage, Op, PresignReply, ReadResult, RefBody, RequestReply } from "../generated/wire.js";
+import type { CommitBody, Edit, FileInfo, InlineImage, Op, PresetRule, PresignReply, ReadResult, RefBody, RequestReply } from "../generated/wire.js";
 import type { Http } from "../http.js";
 import { call } from "../route.js";
 import { MediaApi, type ReadOptions } from "./api.js";
 import { sha256Hex } from "./hash.js";
 import { Pacer } from "./pacer.js";
-import type { PresetRule } from "./rules.js";
 import { defaultTransport, type Transport } from "./transport.js";
 
 /** Upload tuning for the media module. */

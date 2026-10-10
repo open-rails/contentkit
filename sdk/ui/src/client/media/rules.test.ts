@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ReadResult } from "../generated/wire.js";
-import { acceptOf, defaultImage, filesFor, ratioLabel, ruleFor, screenFiles, uniqueName, withMediaType, type UploadRule } from "./rules.js";
+import type { ReadResult, UploadRule } from "../generated/wire.js";
+import { acceptOf, defaultImage, filesFor, ratioLabel, ruleFor, screenFiles, uniqueName, withMediaType } from "./rules.js";
 import { chunkOffsets, mergeReads, processing } from "./windows.js";
 
 const MiB = 1 << 20;

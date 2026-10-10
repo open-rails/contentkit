@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import { expect, it, vi } from "vitest";
 import { FakeServer, bytes, fakeClient } from "../../test/fake.js";
-import type { UploadRule } from "../client/media/rules.js";
+import type { UploadRule } from "../client/generated/wire.js";
 import { MediaFolderEditor, type MediaFolderEditorHandle } from "../index.js";
 import { ContentKitProvider } from "../react/index.js";
 

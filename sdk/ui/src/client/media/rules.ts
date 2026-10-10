@@ -1,63 +1,11 @@
 import { ContentKitError } from "../errors.js";
-import type { ErrorDetails, ReadResult } from "../generated/wire.js";
+import type { ErrorDetails, PresetRule, ReadResult, UploadRule } from "../generated/wire.js";
 import { fill, publicURL, type PublicPreset } from "../public.js";
 import { ratio } from "../aspect.js";
 import { stem } from "./client.js";
 
-// The shapes of media.UploadRule and media.PresetRule as the contract states them.
-
-/** A video or audio upload's limits in effect. */
-export interface VideoLimits {
-  max_seconds?: number;
-  max_fps?: number;
-  max_pixels?: number;
-  max_work?: number;
-}
-
-/** One upload path's rules, as an editor read carries them. The server stays the authority. */
-export interface UploadRule {
-  /** A literal ("cover") or a pattern ("originals/{name}"). */
-  path: string;
-  types: string[];
-  max_bytes: number;
-  /** Files allowed at the path; absent is unlimited. */
-  max?: number;
-  /** The server names each upload (inline images). */
-  named?: boolean;
-  /** The video upload path whose frames this upload can take. */
-  frames?: string;
-  /** An image's edit bounds: its first public preset's "W:H" and narrowest width. */
-  aspect?: string;
-  min_width?: number;
-  video?: VideoLimits;
-  /** Display aspects (width/height) a video's HLS presets accept. */
-  min_aspect?: number;
-  max_aspect?: number;
-}
-
-/**
- * A kind's public preset (`GET /media/presets`). Its template names only the
- * kind's default image: current files carry a generation, so an item's image
- * comes from a read's `public`, never from this.
- */
-export interface PresetRule {
-  kind: string;
-  name: string;
-  from: string;
-  base: string;
-  namespace: string;
-  to: string;
-  widths: number[];
-  aspect?: string;
-  min_width?: number;
-  first?: number;
-}
-
-/** A read with the kind's upload rules (editor reads carry them). */
-export type RuledRead = ReadResult & { uploads?: UploadRule[] };
-
-/** The read's upload rules; empty when the server sends none. */
-export const uploadRules = (read: ReadResult | null | undefined): UploadRule[] => (read as RuledRead | null | undefined)?.uploads ?? [];
+/** An editor read's upload rules (a viewer read has none). */
+export const uploadRules = (read: ReadResult | null | undefined): UploadRule[] => read?.uploads ?? [];
 
 const NAME = "{name}";
 
@@ -153,7 +101,7 @@ export function screenFiles(files: Iterable<File>, rules: readonly UploadRule[],
     }
     const n = counts.get(rule) ?? have(rule);
     if (rule.max && n >= rule.max) {
-      const details = { max: rule.max } as ErrorDetails;
+      const details: ErrorDetails = { max: rule.max };
       out.refused.push({ file, error: new ContentKitError("too_many_files", `${file.name}: at most ${rule.max} files`, { status: 409, details }) });
       continue;
     }

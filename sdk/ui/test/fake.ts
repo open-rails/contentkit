@@ -1,9 +1,8 @@
 import { createHash } from "node:crypto";
 import { createContentKitClient, type ContentKitClient } from "../src/client/client.js";
 import { ContentKitError } from "../src/client/errors.js";
-import type { CommitBody, ErrorReply, Failure, FileInfo, Op, PartBody, PresignBody, PublicImage, ReadResult, RequestReply } from "../src/client/generated/wire.js";
+import type { CommitBody, ErrorReply, Failure, FileInfo, Op, PartBody, PresetRule, PresignBody, PublicImage, ReadResult, RequestReply, UploadRule } from "../src/client/generated/wire.js";
 import type { MediaOptions } from "../src/client/media/client.js";
-import type { PresetRule, UploadRule } from "../src/client/media/rules.js";
 import { stem } from "../src/client/media/client.js";
 import type { Transport } from "../src/client/media/transport.js";
 

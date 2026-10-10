@@ -5,6 +5,7 @@ import type {
   CompleteReply,
   PartsBody,
   PartsReply,
+  PresetRule,
   PresignBody,
   PresignReply,
   ReadResult,
@@ -12,7 +13,6 @@ import type {
   TicketBody,
 } from "../generated/wire.js";
 import { checkRef } from "./ref.js";
-import type { PresetRule } from "./rules.js";
 
 /** What a read returns (Reader.Read's ReadOptions). */
 export interface ReadOptions {
