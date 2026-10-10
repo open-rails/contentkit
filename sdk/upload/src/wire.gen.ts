@@ -116,6 +116,7 @@ export interface Op {
 
 export interface CommitBody {
   ref: RefBody;
+  operation_id: string;
   ops: Op[];
 }
 

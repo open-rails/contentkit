@@ -255,7 +255,7 @@ func (h *host) stage(t *testing.T, ref contentref.ContentRef, path, typ string, 
 
 func (h *host) commit(t *testing.T, ref contentref.ContentRef, ops ...media.Op) {
 	t.Helper()
-	if _, err := h.uploads.Commit(context.Background(), alice, ref, ops); err != nil {
+	if _, err := h.uploads.Commit(context.Background(), alice, ref, uuid.NewString(), ops); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -554,7 +554,7 @@ func TestWorkerRendersAnEditLandingAsTheJobFinishes(t *testing.T) {
 	h := newHost(t, river.HookWorkEndFunc(func(ctx context.Context, job *rivertype.JobRow, err error) error {
 		if cur := tg.Load(); cur != nil && job.Kind == (workqueue.ImageArgs{}).Kind() && err == nil {
 			once.Do(func() {
-				_, cerr := cur.h.uploads.Commit(context.Background(), alice, cur.ref, []media.Op{{Op: media.OpEdit, Path: "cover.png", Edit: late}})
+				_, cerr := cur.h.uploads.Commit(context.Background(), alice, cur.ref, uuid.NewString(), []media.Op{{Op: media.OpEdit, Path: "cover.png", Edit: late}})
 				edited <- cerr
 			})
 		}

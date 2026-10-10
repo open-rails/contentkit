@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { UploadClient, stem } from "../src/client.js";
 import { UploadError } from "../src/errors.js";
 import type { Transport } from "../src/transport.js";
-import type { ErrorReply, FileInfo, Op, PartBody, PresignBody, PublicImage, ReadResult, RequestReply } from "../src/wire.gen.js";
+import type { CommitBody, ErrorReply, FileInfo, Op, PartBody, PresignBody, PublicImage, ReadResult, RequestReply } from "../src/wire.gen.js";
 
 const MiB = 1 << 20;
 const EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "video/mp4": "mp4", "application/x-subrip": "srt" };
@@ -41,6 +41,8 @@ export class FakeServer {
   puts: string[] = [];
   /** Every commit's ops. */
   commits: Op[][] = [];
+  commitRequests: CommitBody[] = [];
+  private receipts = new Map<string, string>();
   refuse?: ErrorReply & { status: number };
   /** Presigns answer process_on_upload. */
   processOnUpload = false;
@@ -182,8 +184,19 @@ export class FakeServer {
       case "/abort":
         this.uploads.delete(b.ticket);
         return undefined;
-      case "/commit":
-        return { files: this.commit(b.ref, b.ops) };
+      case "/commit": {
+        this.commitRequests.push(b);
+        if (!b.operation_id) throw new UploadError("invalid_request", "operation_id required", 400);
+        const input = JSON.stringify({ ref: b.ref, ops: b.ops });
+        const prior = this.receipts.get(b.operation_id);
+        if (prior !== undefined) {
+          if (prior !== input) throw new UploadError("conflict", "commit inputs changed", 409);
+          return { files: this.items.get(key(b.ref)) ?? [] };
+        }
+        const files = this.commit(b.ref, b.ops);
+        this.receipts.set(b.operation_id, input);
+        return { files };
+      }
     }
     throw new UploadError("not_found", path, 404);
   }

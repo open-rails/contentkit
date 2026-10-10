@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
@@ -98,7 +99,7 @@ func TestItemCommittedRefusalFailsTheCommit(t *testing.T) {
 	g := f.ref("gallery", 1)
 
 	p, blob := f.upload(g, "originals/1.png", "image/png", png(44))
-	_, err := f.up.Commit(context.Background(), f.editor, g, []media.Op{{Op: media.OpPut, Path: p, Blob: blob}})
+	_, err := f.up.Commit(context.Background(), f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: p, Blob: blob}})
 	if err == nil {
 		t.Fatal("a refused ItemCommitted let the commit report success")
 	}

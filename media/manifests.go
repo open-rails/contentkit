@@ -350,6 +350,29 @@ type manifestMutation struct {
 	quota   int64
 }
 
+// replayCommit resolves a known request before any copy or new-item policy
+// work. A successful retry returns today's manifest, never replays old edits.
+func (m *Manifests) replayCommit(ctx context.Context, item Item, c manifestCommit) (*Manifest, bool, error) {
+	found, err := m.journal.existing(ctx, c)
+	if err != nil || found == nil || found.State == "absent" {
+		return nil, false, err
+	}
+	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
+	if err != nil {
+		return nil, false, err
+	}
+	defer unlock()
+	if _, _, err := m.recoverLocked(ctx, item); err != nil {
+		return nil, false, err
+	}
+	found, err = m.journal.existing(ctx, c)
+	if err != nil || found == nil || found.State != "applied" {
+		return nil, false, err
+	}
+	cur, _, err := m.get(ctx, item.ManifestKey())
+	return cur, true, err
+}
+
 func (m *Manifests) editOperation(ctx context.Context, ref contentref.ContentRef, existing bool, b bound, mutation *manifestMutation, fn func(*Manifest) error) (*Manifest, error) {
 	item, err := m.reg.Item(ref)
 	if err != nil {

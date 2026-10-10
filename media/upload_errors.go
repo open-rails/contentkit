@@ -152,6 +152,8 @@ func AsUploadError(err error) (*UploadError, bool) {
 		return &UploadError{Code: CodeInvalid, Message: err.Error()}, true
 	case errors.Is(err, ErrFolderNotEmpty):
 		return &UploadError{Code: CodeConflict, Message: err.Error()}, true
+	case errors.Is(err, ErrCommitIdentity):
+		return &UploadError{Code: CodeConflict, Message: "operation_id already identifies another commit"}, true
 	}
 	return nil, false
 }

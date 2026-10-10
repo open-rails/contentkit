@@ -312,7 +312,7 @@ func (f *fixture) put(ref contentref.ContentRef, path, typ string, body []byte, 
 // commit commits ops, then places staged uploads as the worker does first.
 func (f *fixture) commit(ref contentref.ContentRef, ops ...media.Op) *media.Manifest {
 	f.t.Helper()
-	m, err := f.up.Commit(context.Background(), f.editor, ref, ops)
+	m, err := f.up.Commit(context.Background(), f.editor, ref, uuid.NewString(), ops)
 	if err != nil {
 		f.t.Fatalf("commit %+v: %v", ops, err)
 	}

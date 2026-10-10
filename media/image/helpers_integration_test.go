@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/davidbyttow/govips/v2/vips"
+	"github.com/google/uuid"
 	"golang.org/x/image/webp"
 
 	"github.com/open-rails/contentkit/access"
@@ -177,7 +178,7 @@ func (e *env) put(t *testing.T, ref contentref.ContentRef, path, typ string, bod
 // commit commits ops and places staged uploads, as the worker's place job does.
 func (e *env) commit(t *testing.T, ref contentref.ContentRef, ops ...media.Op) {
 	t.Helper()
-	if _, err := e.up.Commit(context.Background(), e.editor, ref, ops); err != nil {
+	if _, err := e.up.Commit(context.Background(), e.editor, ref, uuid.NewString(), ops); err != nil {
 		t.Fatalf("commit %+v: %v", ops, err)
 	}
 	if _, err := e.ms.Place(context.Background(), ref); err != nil {

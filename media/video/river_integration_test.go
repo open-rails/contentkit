@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river/rivertype"
 
@@ -209,7 +210,7 @@ func TestRemovedSourceDropsInFlightOutputs(t *testing.T) {
 	var takedown error
 	defer video.SetBeforePublish(func() {
 		once.Do(func() {
-			_, takedown = up.Commit(e.ctx, e.editor, e.ref, []media.Op{{Op: media.OpRemove, Path: "source.mkv", Takedown: true}})
+			_, takedown = up.Commit(e.ctx, e.editor, e.ref, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: "source.mkv", Takedown: true}})
 		})
 	})()
 	e.start()

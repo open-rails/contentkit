@@ -9,6 +9,7 @@ import (
 	"io"
 	"path"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -140,7 +141,7 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 		return IngestResult{}, err
 	}
 	res.Staged = temp
-	man, err := u.Commit(ctx, actor, req.Ref, []Op{{Op: OpPut, Path: req.Path, Blob: temp, Meta: req.Meta}})
+	man, err := u.Commit(ctx, actor, req.Ref, strings.TrimPrefix(temp, "u-"), []Op{{Op: OpPut, Path: req.Path, Blob: temp, Meta: req.Meta}})
 	if err != nil {
 		return IngestResult{}, err
 	}

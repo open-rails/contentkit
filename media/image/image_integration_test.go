@@ -16,6 +16,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/media"
@@ -159,7 +160,7 @@ func TestPublicPreset(t *testing.T) {
 		t.Fatalf("re-crop did not retire its old public generation: %v", removed)
 	}
 	removed = nil
-	if _, err := e.up.Commit(context.Background(), e.editor, g, []media.Op{{Op: media.OpEdit, Path: "cover.png", Edit: &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 50, H: 1}}}}); err == nil {
+	if _, err := e.up.Commit(context.Background(), e.editor, g, uuid.NewString(), []media.Op{{Op: media.OpEdit, Path: "cover.png", Edit: &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 50, H: 1}}}}); err == nil {
 		t.Fatal("an edit under MinWidth accepted")
 	}
 	e.commit(t, g, media.Op{Op: media.OpRemove, Path: "cover.png"})
@@ -425,7 +426,7 @@ func TestRemoveCleansPublicAfterCommitFailure(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = uploads.Commit(ctx, e.editor, ref, []media.Op{{Op: media.OpRemove, Path: "cover.png"}})
+			_, err = uploads.Commit(ctx, e.editor, ref, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: "cover.png"}})
 			if scenario == "enqueue failure" && !errors.Is(err, failure) || scenario == "client disconnect" && err != nil {
 				t.Fatalf("commit did not preserve the queue error: %v", err)
 			}
@@ -504,13 +505,13 @@ func TestRemoveRetriesFailedPublicCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	ops := []media.Op{{Op: media.OpRemove, Path: "cover.png"}}
-	if _, err := uploads.Commit(t.Context(), e.editor, ref, ops); !errors.Is(err, failure) {
+	if _, err := uploads.Commit(t.Context(), e.editor, ref, uuid.NewString(), ops); !errors.Is(err, failure) {
 		t.Fatalf("remove did not report failed cleanup: %v", err)
 	}
 	if _, ok := e.manifest(t, ref).Get("cover.png"); ok {
 		t.Fatal("cleanup failure unexpectedly restored the removed upload")
 	}
-	if _, err := uploads.Commit(t.Context(), e.editor, ref, ops); err != nil {
+	if _, err := uploads.Commit(t.Context(), e.editor, ref, uuid.NewString(), ops); err != nil {
 		t.Fatalf("retry could not finish cleanup after the upload was removed: %v", err)
 	}
 	for _, name := range names {

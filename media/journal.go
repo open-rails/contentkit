@@ -99,10 +99,42 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (tenant_id, operation_id) DO
 		if !found.terminal() && found.Lease != lease {
 			return ErrCommitPending
 		}
+		if found.State == "absent" {
+			// Recovery fenced the old attempt and refunded its claim. A new
+			// authorized request may retry these same inputs with a new lease.
+			_, err = tx.Exec(ctx, `UPDATE `+j.table+` SET state = 'open', lease_id = $3,
+attempt_id = NULL, expected_etag = '', effects = '{}', charged_bytes = 0, updated_at = now()
+WHERE tenant_id = $1 AND operation_id = $2`, c.Ref.TenantID, c.ID, lease)
+			if err != nil {
+				return err
+			}
+			found.Lease, found.State, found.Attempt = lease, "open", uuid.Nil
+			found.ETag, found.Effects, found.Charged = "", journalEffects{}, 0
+		}
 		c = found
 		return nil
 	})
 	return c, err
+}
+
+// existing verifies identity before a retry can copy bytes or reserve quota.
+func (j *PGJournal) existing(ctx context.Context, c manifestCommit) (*manifestCommit, error) {
+	var out *manifestCommit
+	err := pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
+		found, err := j.load(ctx, tx, c.Ref.TenantID, c.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if found.Ref != c.Ref || found.Folder != c.Folder || found.Actor != c.Actor || found.Fingerprint != c.Fingerprint {
+			return ErrCommitIdentity
+		}
+		out = &found
+		return nil
+	})
+	return out, err
 }
 
 func (j *PGJournal) load(ctx context.Context, tx pgx.Tx, tenant string, id uuid.UUID) (manifestCommit, error) {

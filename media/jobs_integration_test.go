@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	riverhelpers "github.com/open-rails/helpers/river"
@@ -109,7 +110,7 @@ func TestSweep(t *testing.T) {
 	otherItem, _ := f.reg.Item(other)
 	p, committed := f.upload(other, "originals/1.png", "image/png", png(1))
 	_, abandoned := f.upload(other, "originals/2.png", "image/png", png(2))
-	if _, err := f.up.Commit(ctx, f.editor, other, []media.Op{{Op: media.OpPut, Path: p, Blob: committed}}); err != nil {
+	if _, err := f.up.Commit(ctx, f.editor, other, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: p, Blob: committed}}); err != nil {
 		t.Fatal(err)
 	}
 	kept, _ := otherItem.Staged(committed)
@@ -207,14 +208,14 @@ func TestTakedown(t *testing.T) {
 	}
 	// On a path already gone it changes and queues nothing.
 	_, before, _ := f.ms.Get(ctx, g)
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpRemove, Path: "originals/000.png", Takedown: true}}); code(err) != media.CodeNotFound {
+	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: "originals/000.png", Takedown: true}}); code(err) != media.CodeNotFound {
 		t.Fatalf("a takedown of a gone path: %v", err)
 	}
 	if _, after, _ := f.ms.Get(ctx, g); before != after || len(f.q.take()) != 0 || !f.exists(view2) || !f.exists(unrecorded) {
 		t.Fatal("a takedown of a gone path changed or queued something")
 	}
 	// An exempt grant sweeps the item, on a gone path too.
-	if _, err := f.up.Commit(ctx, staff, g, []media.Op{{Op: media.OpRemove, Path: "originals/000.png", Takedown: true}}); err != nil {
+	if _, err := f.up.Commit(ctx, staff, g, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: "originals/000.png", Takedown: true}}); err != nil {
 		t.Fatal(err)
 	}
 	if f.exists(view2) || f.exists(unrecorded) || f.exists(earlier) || !f.exists(page1) {
@@ -239,12 +240,12 @@ func TestTakedown(t *testing.T) {
 	if urls := f.purges(); len(urls) != 2 {
 		t.Fatalf("purged %v", urls)
 	}
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpEdit, Path: "originals/002.png", Takedown: true}}); code(err) != media.CodeInvalid {
+	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpEdit, Path: "originals/002.png", Takedown: true}}); code(err) != media.CodeInvalid {
 		t.Fatalf("takedown on an edit: %v", err)
 	}
 	// A staged upload taken down before it is placed.
 	p, staged := f.upload(g, "originals/004.png", "image/png", png(4))
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: p, Blob: staged}}); err != nil {
+	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: p, Blob: staged}}); err != nil {
 		t.Fatal(err)
 	}
 	f.commit(g, media.Op{Op: media.OpRemove, Path: p, Takedown: true})
@@ -319,7 +320,7 @@ func TestTakedownRetry(t *testing.T) {
 	takedown := []media.Op{{Op: media.OpRemove, Path: "originals/000.png", Takedown: true}}
 	f.q.take()
 	store.armed.Store(true)
-	if _, err := up.Commit(ctx, f.editor, g, takedown); err == nil || !f.exists(page0) {
+	if _, err := up.Commit(ctx, f.editor, g, uuid.NewString(), takedown); err == nil || !f.exists(page0) {
 		t.Fatalf("a failed delete was not reported: %v", err)
 	}
 	if m, _, _ := f.ms.Get(ctx, g); m.Find("originals/000.png") >= 0 || len(f.q.take()) != 0 {
@@ -334,10 +335,10 @@ func TestTakedownRetry(t *testing.T) {
 	if jobs := f.q.take(); len(jobs) != 1 || f.exists(page0) {
 		t.Fatalf("recovery did not finish cleanup and queue exactly once: %+v", jobs)
 	}
-	if _, err := up.Commit(ctx, f.editor, g, takedown); code(err) != media.CodeNotFound || f.exists(page0) {
+	if _, err := up.Commit(ctx, f.editor, g, uuid.NewString(), takedown); code(err) != media.CodeNotFound || f.exists(page0) {
 		t.Fatalf("a retry without an exempt grant: %v, blob kept %v", err, f.exists(page0))
 	}
-	if _, err := up.Commit(ctx, access.Actor{ID: "staff", Kind: "user"}, g, takedown); err != nil || f.exists(page0) {
+	if _, err := up.Commit(ctx, access.Actor{ID: "staff", Kind: "user"}, g, uuid.NewString(), takedown); err != nil || f.exists(page0) {
 		t.Fatalf("the exempt retry: %v, blob kept %v", err, f.exists(page0))
 	}
 }
@@ -371,7 +372,7 @@ func TestCopyDuringTakedown(t *testing.T) {
 	store := takedownStore{Store: f.env.Store, after: func() {
 		once.Do(func() {
 			// An exempt takedown sweeps every blob the item does not reference.
-			if _, err := f.up.Commit(ctx, access.Actor{ID: "staff", Kind: "user"}, b, []media.Op{{Op: media.OpRemove, Path: "originals/gone.png", Takedown: true}}); err != nil {
+			if _, err := f.up.Commit(ctx, access.Actor{ID: "staff", Kind: "user"}, b, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: "originals/gone.png", Takedown: true}}); err != nil {
 				t.Error(err)
 			}
 		})
@@ -381,13 +382,13 @@ func TestCopyDuringTakedown(t *testing.T) {
 		t.Fatal(err)
 	}
 	copyOp := []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: "originals/000.png"}, To: "originals/copy.png"}}
-	if _, err := up.Commit(ctx, f.editor, b, copyOp); code(err) != media.CodeConflict {
+	if _, err := up.Commit(ctx, f.editor, b, uuid.NewString(), copyOp); code(err) != media.CodeConflict {
 		t.Fatalf("a copy over a takedown: %v", err)
 	}
 	if m, _, _ := f.ms.Get(ctx, b); m.Find("originals/copy.png") >= 0 {
 		t.Fatal("the copy references a blob that was taken")
 	}
-	m, err := up.Commit(ctx, f.editor, b, copyOp)
+	m, err := up.Commit(ctx, f.editor, b, uuid.NewString(), copyOp)
 	if err != nil {
 		t.Fatal(err)
 	}

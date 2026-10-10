@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	riverhelpers "github.com/open-rails/helpers/river"
@@ -326,7 +327,7 @@ func (e *env) put(path, typ, file string, meta map[string]any, extra ...media.Op
 // the worker's place job does.
 func (e *env) commit(ops ...media.Op) *media.Manifest {
 	e.t.Helper()
-	m, err := e.up.Commit(e.ctx, e.editor, e.ref, ops)
+	m, err := e.up.Commit(e.ctx, e.editor, e.ref, uuid.NewString(), ops)
 	if err != nil {
 		e.t.Fatalf("commit %+v: %v", ops, err)
 	}

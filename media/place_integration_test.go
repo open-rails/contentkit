@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 	"github.com/open-rails/contentkit/media/layout"
@@ -122,7 +123,7 @@ func TestPlaceStagedUpload(t *testing.T) {
 	k, _ := f.reg.Kind("gallery")
 	p, staged := f.upload(g, "originals/1.png", "image/png", png(1))
 	gone, lost := f.upload(g, "originals/2.png", "image/png", png(2))
-	m, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: p, Blob: staged}, {Op: media.OpPut, Path: gone, Blob: lost}})
+	m, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: p, Blob: staged}, {Op: media.OpPut, Path: gone, Blob: lost}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +241,7 @@ func TestPlaceAfterDeletion(t *testing.T) {
 	g := f.ref("gallery", 1)
 	item, _ := f.reg.Item(g)
 	p, staged := f.upload(g, "originals/1.png", "image/png", png(1))
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: p, Blob: staged}}); err != nil {
+	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: p, Blob: staged}}); err != nil {
 		t.Fatal(err)
 	}
 	ms := s3test.Manifests(t, deletingStore{Store: f.env.Store, manifest: item.ManifestKey()}, f.reg, media.ManifestOptions{Journal: f.env.Journal()})
@@ -275,13 +276,13 @@ func TestPlaceAfterTakedown(t *testing.T) {
 	g := f.gallery(1, 1)
 	item, _ := f.reg.Item(g)
 	p, staged := f.upload(g, "originals/1.png", "image/png", png(1))
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: p, Blob: staged}}); err != nil {
+	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: p, Blob: staged}}); err != nil {
 		t.Fatal(err)
 	}
 	var once sync.Once
 	ms := s3test.Manifests(t, afterBlob{Store: f.env.Store, after: func() {
 		once.Do(func() {
-			if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpRemove, Path: p, Takedown: true}}); err != nil {
+			if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: p, Takedown: true}}); err != nil {
 				t.Error(err)
 			}
 		})

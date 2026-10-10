@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -58,7 +59,7 @@ func TestSharedOutputTakenDownMidPass(t *testing.T) {
 		heads = append(heads, key)
 		if key == shared {
 			once.Do(func() {
-				_, takedown = e.up.Commit(ctx, e.editor, ref, []media.Op{{Op: media.OpRemove, Path: "files/a.png", Takedown: true}})
+				_, takedown = e.up.Commit(ctx, e.editor, ref, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: "files/a.png", Takedown: true}})
 			})
 		}
 	}})
@@ -102,7 +103,7 @@ func TestTakedownMidPassLeavesNoOutput(t *testing.T) {
 		if strings.HasPrefix(key, item.PrivatePrefix()) && key != source {
 			once.Do(func() { // the pass is about to write its first output
 				fired = true
-				_, takedown = e.up.Commit(ctx, e.editor, ref, []media.Op{{Op: media.OpRemove, Path: "originals/a.png", Takedown: true}})
+				_, takedown = e.up.Commit(ctx, e.editor, ref, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: "originals/a.png", Takedown: true}})
 			})
 		}
 	}})
@@ -158,7 +159,7 @@ func TestDecoyTakedownCostsOneUpload(t *testing.T) {
 			if key == shared {
 				once.Do(func() {
 					fired = true
-					_, takedown = e.up.Commit(ctx, e.editor, ref, []media.Op{{Op: media.OpRemove, Path: "files/p.png", Takedown: true}})
+					_, takedown = e.up.Commit(ctx, e.editor, ref, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: "files/p.png", Takedown: true}})
 				})
 			}
 		}})
@@ -217,7 +218,7 @@ func TestTakedownAndPutMidPassLeavesNoOutput(t *testing.T) {
 		if key == old[1] {
 			once.Do(func() { // the pass is about to write the old source's first output
 				fired = true
-				_, replaced = e.up.Commit(ctx, e.editor, ref, []media.Op{
+				_, replaced = e.up.Commit(ctx, e.editor, ref, uuid.NewString(), []media.Op{
 					{Op: media.OpRemove, Path: "originals/a.png", Takedown: true},
 					{Op: media.OpPut, Path: "originals/a.png", Blob: other},
 				})

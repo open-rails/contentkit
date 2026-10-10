@@ -160,7 +160,7 @@ func (h uploadHandler) commit(w http.ResponseWriter, r *http.Request) {
 	ref, err := h.ref(b.Ref)
 	var man *Manifest
 	if err == nil {
-		man, err = h.u.Commit(r.Context(), actor, ref, b.Ops)
+		man, err = h.u.Commit(r.Context(), actor, ref, b.OperationID, b.Ops)
 	}
 	if err != nil {
 		h.fail(w, r, err)
@@ -248,8 +248,8 @@ func (h uploadHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	ue, ok := AsUploadError(err)
 	if !ok {
 		switch {
-		case errors.Is(err, ErrManifestConflict):
-			ue = &UploadError{Code: CodeConflict, Message: "manifest kept changing; retry"}
+		case errors.Is(err, ErrCommitPending), errors.Is(err, ErrManifestConflict):
+			ue = &UploadError{Code: CodeUnavailable, Message: "commit recovery is pending; retry the same operation_id", RetryAfter: time.Second}
 		case errors.Is(err, ErrUnavailable):
 			h.o.Logger.WarnContext(r.Context(), "media upload", "method", r.Method, "path", r.URL.Path, "error", err)
 			ue = &UploadError{Code: CodeUnavailable, Message: "media storage is unavailable; retry", RetryAfter: 5 * time.Second}

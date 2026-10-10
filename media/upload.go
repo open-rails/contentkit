@@ -370,7 +370,10 @@ func (u *Uploads) abort(ctx context.Context, t ticket, key string, cause error) 
 	return err
 }
 
-// Commit applies ops to ref's manifest in one conditional write. Every op
+// Commit applies ops to ref's manifest in one conditional write. operationID
+// is a caller-stable UUID for the complete ordered batch: reuse it after an
+// uncertain response, but never for different inputs. Replays authorize again
+// and return the current manifest without repeating the original edit. Every op
 // is authorized against what it writes (Hooks.CanUpload). A put names a
 // staged upload or a blob in the folder, HEAD-checked against its Upload;
 // copies are copied server-side first. The owner is charged the change in
@@ -380,10 +383,14 @@ func (u *Uploads) abort(ctx context.Context, t ticket, key string, cause error) 
 // (Hooks.Resolver). Successful removes finish public cleanup before returning;
 // unreferenced private blobs go when a grace period old, or at once for a
 // takedown (Op.Takedown).
-func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref.ContentRef, ops []Op) (*Manifest, error) {
+func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref.ContentRef, operationID string, ops []Op) (*Manifest, error) {
 	item, err := u.item(ref)
 	if err != nil {
 		return nil, err
+	}
+	id, err := uuid.Parse(operationID)
+	if err != nil || id == uuid.Nil || id.String() != operationID {
+		return nil, uploadErr(CodeInvalid, "operation_id must be a canonical nonzero UUID")
 	}
 	if len(ops) == 0 || len(ops) > 1000 {
 		return nil, uploadErr(CodeInvalid, "commit 1 to 1000 operations")
@@ -410,6 +417,24 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 			}
 		}
 	}
+	// The journal owns the growth claim before S3 PUT and settles it only
+	// after a definite success or a recovery fence. An uncertain response
+	// must not refund quota or consume the upload's reservations.
+	input, err := json.Marshal(ops)
+	if err != nil {
+		return nil, uploadErr(CodeInvalid, "commit operations must be JSON: %v", err)
+	}
+	mutation := &manifestMutation{commit: manifestCommit{ID: id, Ref: ref, Folder: item.Prefix(),
+		Actor: actor.Kind + ":" + uploaderID(actor), Fingerprint: sha256.Sum256(input)}}
+	if man, replayed, err := u.o.Manifests.replayCommit(ctx, item, mutation.commit); err != nil || replayed {
+		if err != nil {
+			return nil, err
+		}
+		if err := u.o.Manifests.notifyCommit(ctx, mutation.commit); err != nil {
+			return nil, err
+		}
+		return man, nil
+	}
 	copies, copied, err := u.copies(ctx, actor, grant, item, ops)
 	if err != nil {
 		return nil, err
@@ -418,15 +443,6 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	if err != nil {
 		return nil, err
 	}
-
-	// The journal owns the growth claim before S3 PUT and settles it only
-	// after a definite success or a recovery fence. An uncertain response
-	// must not refund quota or consume the upload's reservations.
-	input, err := json.Marshal(ops)
-	if err != nil {
-		return nil, uploadErr(CodeInvalid, "commit operations must be JSON: %v", err)
-	}
-	mutation := &manifestMutation{commit: manifestCommit{ID: uuid.New(), Actor: actor.Kind + ":" + uploaderID(actor), Fingerprint: sha256.Sum256(input)}}
 	var keys []string
 	editCtx, cancel := context.WithTimeout(ctx, commitMargin(u.o.Grace)/2)
 	defer cancel()

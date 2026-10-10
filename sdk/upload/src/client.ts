@@ -3,7 +3,7 @@ import { UploadError, aborted, failureError, throwIfAborted } from "./errors.js"
 import { sha256Hex } from "./hash.js";
 import { Pacer } from "./pacer.js";
 import { defaultTransport, type Transport } from "./transport.js";
-import type { Edit, FileInfo, Op, PresignReply, ReadResult, RefBody, RequestReply } from "./wire.gen.js";
+import type { CommitBody, Edit, FileInfo, Op, PresignReply, ReadResult, RefBody, RequestReply } from "./wire.gen.js";
 
 export interface ClientOptions extends ApiOptions {
   transport?: Transport;
@@ -107,6 +107,10 @@ export type CommitSource = Blob | { file: Blob; type?: string };
 
 export interface CommitOptions {
   signal?: AbortSignal;
+  /** UUID for this complete batch. Keep it with unchanged ops for a later retry; default a new UUID. */
+  operationID?: string;
+  /** Persist the active batch before sending it, including any replacement after re-upload. Resume with its ops and operation_id. */
+  onState?: (batch: CommitBody) => void;
   /** Blob ("sha256-…") → the file it was uploaded from. */
   sources?: Record<string, CommitSource>;
 }
@@ -214,12 +218,16 @@ export class UploadClient {
    * the affected files again and retries the commit once.
    */
   async commit(ref: RefBody, ops: Op[], o: CommitOptions = {}): Promise<FileInfo[]> {
+    // Snapshot the batch once: retries must not pick up edits to the caller's
+    // ops while the first request or its response is still in flight.
+    const body: CommitBody = structuredClone({ ref, ops, operation_id: o.operationID ?? crypto.randomUUID() });
+    o.onState?.(structuredClone(body));
     try {
-      return (await this.api.commit({ ref, ops }, o.signal)).files;
+      return (await this.retry(() => this.api.commit(body, o.signal), o.signal)).files;
     } catch (e) {
       if (!(e instanceof UploadError) || e.code !== "not_uploaded") throw e;
       const sources = o.sources ?? {};
-      const puts = ops.filter((op) => op.op === "put" && op.blob && op.blob in sources);
+      const puts = body.ops.filter((op) => op.op === "put" && op.blob && op.blob in sources);
       const stale = [...new Set(puts.map((op) => op.blob!))].filter((b) => !e.blobs || e.blobs.includes(b));
       if (stale.length === 0) throw e;
       const renamed = new Map<string, string>();
@@ -228,10 +236,14 @@ export class UploadClient {
         const file = src instanceof Blob ? src : src.file;
         const type = src instanceof Blob ? undefined : src.type;
         const op = puts.find((p) => p.blob === blob)!;
-        renamed.set(blob, (await this.upload(file, { ref, path: op.path!, type, signal: o.signal })).blob);
+        renamed.set(blob, (await this.upload(file, { ref: body.ref, path: op.path!, type, signal: o.signal })).blob);
       }
-      const retried = ops.map((op) => (op.blob && renamed.has(op.blob) ? { ...op, blob: renamed.get(op.blob) } : op));
-      return (await this.api.commit({ ref, ops: retried }, o.signal)).files;
+      const retried = body.ops.map((op) => (op.blob && renamed.has(op.blob) ? { ...op, blob: renamed.get(op.blob) } : op));
+      // Re-uploading changes the inputs. This is a new batch, not a retry
+      // under the old ID; transport retries retain its new identity.
+      const replacement = { ref: body.ref, ops: retried, operation_id: crypto.randomUUID() };
+      o.onState?.(structuredClone(replacement));
+      return (await this.retry(() => this.api.commit(replacement, o.signal), o.signal)).files;
     }
   }
 

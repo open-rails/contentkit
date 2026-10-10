@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -269,7 +270,7 @@ func TestUploadQuotaRecoversWithManifestOutcome(t *testing.T) {
 						t.Fatal(beforeErr)
 					}
 					quota = before + delta - 1 // the cap changed after the upload was reserved
-					if _, err := f.up.Commit(t.Context(), f.editor, ref, ops); code(err) != media.CodeQuota {
+					if _, err := f.up.Commit(t.Context(), f.editor, ref, uuid.NewString(), ops); code(err) != media.CodeQuota {
 						t.Fatalf("growth past current quota was accepted: %v", err)
 					}
 					usage(before, reserved)
@@ -282,7 +283,8 @@ func TestUploadQuotaRecoversWithManifestOutcome(t *testing.T) {
 					quotaErr = errors.New("quota policy unavailable")
 				}
 				store.uncertain = true
-				if _, err := f.up.Commit(t.Context(), f.editor, ref, ops); !errors.Is(err, media.ErrUnavailable) {
+				operationID := uuid.NewString()
+				if _, err := f.up.Commit(t.Context(), f.editor, ref, operationID, ops); !errors.Is(err, media.ErrUnavailable) {
 					t.Fatalf("uncertain write: %v", err)
 				}
 				usage(before+max(delta, 0), reserved)
@@ -314,6 +316,21 @@ func TestUploadQuotaRecoversWithManifestOutcome(t *testing.T) {
 				}
 				if _, err := f.env.Store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(store.body), int64(len(store.body)), store.options); !errors.Is(err, media.ErrPreconditionFailed) {
 					t.Fatalf("late original write was not fenced: %v", err)
+				}
+				// Reuse the original identity, including the absent branch. A
+				// successful replay must not charge or queue the batch twice.
+				for range 2 {
+					if _, err := f.up.Commit(t.Context(), f.editor, ref, operationID, ops); err != nil {
+						t.Fatalf("same-batch retry: %v", err)
+					}
+					usage(before+delta, 0)
+				}
+				wantJobs = 0
+				if !applied {
+					wantJobs = 1
+				}
+				if jobs := f.q.take(); len(jobs) != wantJobs {
+					t.Fatalf("batch retry queued %d jobs, want %d", len(jobs), wantJobs)
 				}
 			})
 		}
@@ -580,7 +597,7 @@ func TestUploadsRefuseUnconditionalStorageBeforeMovingBytes(t *testing.T) {
 		t.Fatalf("unqualified ingest: %v, %d unread bytes", err, body.Len())
 	}
 	ops := []media.Op{{Op: media.OpMeta, Meta: map[string]any{"title": "refused"}}}
-	if _, err := up.Commit(t.Context(), f.editor, ref, ops); !errors.Is(err, media.ErrConditionalPutRequired) {
+	if _, err := up.Commit(t.Context(), f.editor, ref, uuid.NewString(), ops); !errors.Is(err, media.ErrConditionalPutRequired) {
 		t.Fatalf("unqualified commit: %v", err)
 	}
 	used, reserved, err := limiter.Usage(t.Context(), ref.TenantID, "owner")
@@ -594,7 +611,7 @@ func TestUploadsRefuseUnconditionalStorageBeforeMovingBytes(t *testing.T) {
 	if jobs := f.q.take(); len(jobs) != 0 {
 		t.Fatalf("unqualified commit queued processing: %+v", jobs)
 	}
-	payload, err := json.Marshal(media.CommitBody{Ref: media.RefBody{Kind: "gallery", ID: ref.ContentID}, Ops: ops})
+	payload, err := json.Marshal(media.CommitBody{Ref: media.RefBody{Kind: "gallery", ID: ref.ContentID}, OperationID: uuid.NewString(), Ops: ops})
 	if err != nil {
 		t.Fatal(err)
 	}

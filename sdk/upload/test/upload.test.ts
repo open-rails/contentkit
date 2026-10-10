@@ -112,8 +112,29 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
     const refused = await c.commit(ref, [put(third)]).catch((e) => e);
     expect([refused.code, refused.status, refused.isCeiling]).toEqual(["too_many_files", 409, true]);
 
-    files = await c.commit(ref, [{ op: "remove", path: "originals/first.png" }]);
+    let lost = false;
+    const requests: string[] = [];
+    const recovering = new UploadClient({
+      endpoint: `${base}/upload`, headers: () => ({ "X-Test-Actor": "alice" }), retryDelay: () => 100,
+      fetch: async (input, init) => {
+        requests.push(String(init?.body));
+        const res = await fetch(input, init);
+        if (!lost && res.ok) {
+          lost = true;
+          await res.body?.cancel();
+          throw new Error("lost successful commit response");
+        }
+        return res;
+      },
+    });
+    const operationID = crypto.randomUUID();
+    const removal: Op[] = [{ op: "remove", path: "originals/first.png" }];
+    files = await recovering.commit(ref, removal, { operationID });
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toBe(requests[1]);
     expect(files.map((f) => f.path)).toEqual(["originals/b.png"]);
+    expect(await c.commit(ref, removal, { operationID })).toEqual(files);
+    expect((await c.commit(ref, [{ op: "remove", path: "originals/b.png" }], { operationID }).catch((e) => e)).code).toBe("conflict");
     expect((await c.commit(ref, [{ op: "remove", path: "originals/first.png" }]).catch((e) => e)).code).toBe("not_found");
   });
 

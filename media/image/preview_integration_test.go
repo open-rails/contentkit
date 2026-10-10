@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -123,7 +124,7 @@ func TestPreviewMovedMidPass(t *testing.T) {
 			record("head", key)
 			if strings.HasPrefix(key, item.PrivatePrefix()) {
 				once.Do(func() { // the new page's preview is published; its private outputs come next
-					_, moved = e.up.Commit(ctx, e.editor, ref, []media.Op{{Op: media.OpMove, Path: "originals/y.png", Index: &first}})
+					_, moved = e.up.Commit(ctx, e.editor, ref, uuid.NewString(), []media.Op{{Op: media.OpMove, Path: "originals/y.png", Index: &first}})
 					mu.Lock()
 					fired = true
 					mu.Unlock()

@@ -92,8 +92,9 @@ type CompleteReply struct {
 
 // CommitBody applies ops to an item in one conditional write.
 type CommitBody struct {
-	Ref RefBody `json:"ref"`
-	Ops []Op    `json:"ops"`
+	Ref         RefBody `json:"ref"`
+	OperationID string  `json:"operation_id"` // stable UUID for this complete ordered batch
+	Ops         []Op    `json:"ops"`
 }
 
 // CommitReply is the item's uploads as an editor reads them.

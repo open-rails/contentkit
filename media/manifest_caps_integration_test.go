@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
@@ -40,7 +41,7 @@ func TestManifestCaps(t *testing.T) {
 		{Op: media.OpPut, Path: "originals/x.png", Blob: seed, Meta: map[string]any{"x": strings.Repeat("A", 10<<20)}},
 		{Op: media.OpMeta, Meta: map[string]any{"title": strings.Repeat("A", media.MaxItemMetaBytes)}},
 	} {
-		if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{op}); code(err) != media.CodeTooLarge {
+		if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{op}); code(err) != media.CodeTooLarge {
 			t.Fatalf("%s with oversized meta: %v", op.Op, err)
 		}
 	}
@@ -55,7 +56,7 @@ func TestManifestCaps(t *testing.T) {
 		for i := range ops {
 			ops[i] = media.Op{Op: media.OpPut, Path: fmt.Sprintf("originals/%d-%04d.png", batch, i), Blob: seed, Meta: meta}
 		}
-		m, err := f.up.Commit(ctx, f.editor, g, ops)
+		m, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), ops)
 		if err != nil {
 			if code(err) != media.CodeTooLarge || last == nil {
 				t.Fatalf("batch %d: %v", batch, err)
@@ -237,7 +238,7 @@ func TestFullItemStillShrinks(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: "originals/new.png", Blob: seed}}); code(err) != media.CodeTooLarge {
+	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: "originals/new.png", Blob: seed}}); code(err) != media.CodeTooLarge {
 		t.Fatalf("a page whose outputs would not fit: %v", err)
 	}
 	f.commit(g, media.Op{Op: media.OpRemove, Path: "originals/p0000.png"})
@@ -265,7 +266,7 @@ func TestCommitProjectsOutputs(t *testing.T) {
 		for i := range ops {
 			ops[i] = media.Op{Op: media.OpPut, Path: fmt.Sprintf("originals/%s%d-%04d", name, batch, i), Blob: seed}
 		}
-		m, err := f.up.Commit(ctx, f.editor, g, ops)
+		m, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), ops)
 		if err != nil {
 			if code(err) != media.CodeTooLarge || last == nil {
 				t.Fatalf("batch %d: %v", batch, err)
