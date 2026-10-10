@@ -311,15 +311,32 @@ func (rt *Runtime) handleLiftBan(global bool) http.HandlerFunc {
 	}
 }
 
-// CommentStanding is the caller's standing on a target: may they comment, and if a
-// ban stops them, which.
+// BanScope names a ban route family a caller may use on a target's commenters.
+type BanScope string
+
+const (
+	BanOwner  BanScope = "owner"  // the caller owns the target: /comment-bans
+	BanGlobal BanScope = "global" // Perms.CommentBan: /global-comment-bans
+)
+
+// CommentStanding is the caller's standing on a target: may they comment, if a
+// ban stops them which, and what they may do to others' comments.
 type CommentStanding struct {
 	CanComment bool       `json:"can_comment"`
 	Ban        *BanNotice `json:"ban,omitempty"`
+	// UserID is the caller's user id, absent when anonymous: the comments it
+	// wrote are the ones it may edit and delete.
+	UserID string `json:"user_id,omitempty"`
+	// Moderate: the caller may edit, delete and restore anyone's comments
+	// (Perms.CommentModerate).
+	Moderate bool `json:"moderate"`
+	// BanScopes are the scopes the caller may ban the target's commenters in.
+	BanScopes []BanScope `json:"ban_scopes"`
 }
 
-// handleCanComment answers whether the caller may comment on a visible target:
-// it must be accessible to them and no ban may apply.
+// handleCanComment answers whether the caller may comment on a visible target
+// (it must be accessible to them and no ban may apply) and what it may do to
+// the comments there.
 func (rt *Runtime) handleCanComment(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	actor := rt.actor(ctx)
@@ -328,13 +345,22 @@ func (rt *Runtime) handleCanComment(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	out := CommentStanding{CanComment: res.Accessible}
+	out := CommentStanding{CanComment: res.Accessible, UserID: viewerID(actor), BanScopes: []BanScope{}}
 	var banned *BannedError
 	if err := rt.checkCommentBan(ctx, viewerID(actor), res.Owner); errors.As(err, &banned) {
 		out.CanComment, out.Ban = false, &banned.BanNotice
 	} else if err != nil {
 		writeErr(w, err)
 		return
+	}
+	if out.UserID != "" {
+		out.Moderate = rt.requirePerm(ctx, actor, rt.perms.CommentModerate) == nil
+		if res.Owner == out.UserID {
+			out.BanScopes = append(out.BanScopes, BanOwner)
+		}
+		if rt.requirePerm(ctx, actor, rt.perms.CommentBan) == nil {
+			out.BanScopes = append(out.BanScopes, BanGlobal)
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

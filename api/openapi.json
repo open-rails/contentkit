@@ -4979,10 +4979,28 @@
           },
           "ban": {
             "$ref": "#/components/schemas/BanNotice"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "moderate": {
+            "type": "boolean"
+          },
+          "ban_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "global",
+                "owner"
+              ]
+            }
           }
         },
         "required": [
-          "can_comment"
+          "can_comment",
+          "moderate",
+          "ban_scopes"
         ]
       },
       "CommitBody": {
@@ -5636,6 +5654,9 @@
           },
           "author_id": {
             "type": "string"
+          },
+          "author": {
+            "$ref": "#/components/schemas/PublicUser"
           },
           "anon_name": {
             "type": "string"

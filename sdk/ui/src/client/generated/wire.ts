@@ -107,6 +107,9 @@ export interface CommentInput {
 export interface CommentStanding {
   can_comment: boolean;
   ban?: BanNotice;
+  user_id?: string;
+  moderate: boolean;
+  ban_scopes: ("global" | "owner")[];
 }
 
 export interface CommitBody {
@@ -312,6 +315,7 @@ export interface HeldItem {
   id: string;
   ref: ContentRef;
   author_id?: string;
+  author?: PublicUser;
   anon_name?: string;
   title?: string;
   body: string;
