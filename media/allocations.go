@@ -30,16 +30,28 @@ func (m *Manifests) NewBlob(ctx context.Context, ref contentref.ContentRef, sum 
 	}
 	name := layout.BlobName(sum, uuid.NewString())
 	key, _ := item.Blob(name)
-	if err := m.journal.allocate(ctx, item, key); err != nil {
+	if err := m.allocate(ctx, item, key); err != nil {
 		return "", err
 	}
 	return name, nil
 }
 
-func (j *PGJournal) allocate(ctx context.Context, item Item, key string) error {
-	_, err := j.pool.Exec(ctx, `INSERT INTO `+j.allocations+`
-(tenant_id, folder_prefix, object_key) VALUES ($1, $2, $3)`, item.Ref().TenantID, item.Prefix(), key)
-	return err
+func (m *Manifests) allocate(ctx context.Context, item Item, key string) error {
+	if _, _, err := m.Get(ctx, item.Ref()); errors.Is(err, ErrNotFound) {
+		// Establish the S3 incarnation before issuing a write capability.
+		// Edit refuses a tombstone; only explicit reset can clear it.
+		if _, err := m.Edit(ctx, item.Ref(), func(*Manifest) error { return nil }); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	return m.cleanup(ctx, item, false, func(cur *Manifest, exists bool) (journalEffects, error) {
+		if !exists || cur.Deleted {
+			return journalEffects{}, ErrNotFound
+		}
+		return journalEffects{Allocate: []string{key}, Incarnation: cur.Incarnation}, nil
+	})
 }
 
 // checkAllocations runs under the folder lock, after its journal lease was
@@ -48,12 +60,23 @@ func (m *Manifests) checkAllocations(ctx context.Context, item Item, keys []stri
 	if len(keys) == 0 {
 		return nil
 	}
+	cur, _, err := m.Get(ctx, item.Ref())
+	if err != nil {
+		return err
+	}
+	return m.checkAllocationsIn(ctx, item, keys, cur.Incarnation)
+}
+
+func (m *Manifests) checkAllocationsIn(ctx context.Context, item Item, keys []string, incarnation string) error {
+	if len(keys) == 0 {
+		return nil
+	}
 	var live bool
 	err := m.journal.pool.QueryRow(ctx, `SELECT NOT EXISTS (
 SELECT 1 FROM unnest($3::text[]) AS requested(key)
 WHERE NOT EXISTS (SELECT 1 FROM `+m.journal.allocations+` a
-WHERE a.tenant_id = $1 AND a.folder_prefix = $2 AND a.object_key = requested.key AND a.retired_at IS NULL))`,
-		item.Ref().TenantID, item.Prefix(), keys).Scan(&live)
+WHERE a.tenant_id = $1 AND a.folder_prefix = $2 AND a.object_key = requested.key AND a.incarnation = $4 AND a.retired_at IS NULL))`,
+		item.Ref().TenantID, item.Prefix(), keys, incarnation).Scan(&live)
 	if err != nil {
 		return err
 	}

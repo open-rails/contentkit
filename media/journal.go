@@ -53,13 +53,16 @@ func NewPGJournal(pool *pgxpool.Pool, schema string, queue TransactionalProcessQ
 }
 
 type journalEffects struct {
-	Cleanup    bool        `json:"cleanup,omitempty"` // allocation retirement, no manifest PUT
-	Settlement Settlement  `json:"settlement"`
-	Cancel     bool        `json:"cancel,omitempty"`
-	Process    *ProcessJob `json:"process,omitempty"`
-	Public     []string    `json:"public,omitempty"`  // exact retired public names, selected before PUT
-	Private    []string    `json:"private,omitempty"` // exact takedown targets, selected before PUT
-	Notify     bool        `json:"notify,omitempty"`  // host's idempotent ItemCommitted hook still needs delivery
+	Deletion    bool        `json:"deletion,omitempty"`    // explicit purge may fence an unreadable root without decoding it
+	Cleanup     bool        `json:"cleanup,omitempty"`     // allocation retirement, no manifest PUT
+	Allocate    []string    `json:"allocate,omitempty"`    // physical names owned before a producer sends bytes
+	Incarnation string      `json:"incarnation,omitempty"` // allocation lifetime, read from S3 under this lease
+	Settlement  Settlement  `json:"settlement"`
+	Cancel      bool        `json:"cancel,omitempty"`
+	Process     *ProcessJob `json:"process,omitempty"`
+	Public      []string    `json:"public,omitempty"`  // exact retired public names, selected before PUT
+	Private     []string    `json:"private,omitempty"` // exact takedown targets, selected before PUT
+	Notify      bool        `json:"notify,omitempty"`  // host's idempotent ItemCommitted hook still needs delivery
 }
 
 // prepareCleanup retires exact allocations while the operation still owns
@@ -78,6 +81,13 @@ func (j *PGJournal) prepareCleanup(ctx context.Context, c *manifestCommit, effec
 		}
 		if found.Lease != c.Lease || found.State != "open" {
 			return ErrCommitPending
+		}
+		for _, key := range effects.Allocate {
+			if _, err := tx.Exec(ctx, `INSERT INTO `+j.allocations+`
+(tenant_id, folder_prefix, object_key, incarnation) VALUES ($1, $2, $3, $4)`,
+				c.Ref.TenantID, c.Folder, key, effects.Incarnation); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(ctx, `UPDATE `+j.allocations+` SET retired_at = now()
 WHERE tenant_id = $1 AND folder_prefix = $2 AND object_key = ANY($3::text[]) AND retired_at IS NULL`,

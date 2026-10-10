@@ -126,7 +126,7 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 		if err := u.o.Manifests.checkAllocations(ctx, item, []string{reserve}); err != nil {
 			return IngestResult{}, err
 		}
-	} else if err := u.o.Manifests.journal.allocate(ctx, item, reserve); err != nil {
+	} else if err := u.o.Manifests.allocate(ctx, item, reserve); err != nil {
 		return IngestResult{}, err
 	}
 	if limited {

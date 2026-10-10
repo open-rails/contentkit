@@ -204,7 +204,7 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequ
 			return Presigned{}, err
 		}
 	}
-	if err := u.o.Manifests.journal.allocate(ctx, item, key); err != nil {
+	if err := u.o.Manifests.allocate(ctx, item, key); err != nil {
 		if limited {
 			_ = u.o.Limiter.Settle(context.WithoutCancel(ctx), Settlement{Tenant: r.Ref.TenantID, Keys: []string{key}})
 		}

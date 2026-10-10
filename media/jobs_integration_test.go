@@ -583,12 +583,14 @@ func TestPurgeRegenerateOrphans(t *testing.T) {
 		t.Fatalf("orphan kept: %v", err)
 	}
 	f.purges() // the orphan's public cover
-	if err := f.jobs.Purge(ctx, media.Deletion{Ref: a}); err != nil {
+	if err := f.jobs.Purge(ctx, media.Deletion{Ref: a, OperationID: "purge-a"}); err != nil {
 		t.Fatal(err)
 	}
 	item, _ := f.reg.Item(a)
 	for o, err := range f.env.Store.List(ctx, item.Prefix()) {
-		t.Fatalf("purge kept %s %v", o.Key, err)
+		if err != nil || o.Key != item.ManifestKey() {
+			t.Fatalf("purge kept %s %v", o.Key, err)
+		}
 	}
 	if urls := f.purges(); len(urls) != 2 {
 		t.Fatalf("purged %v", urls)
@@ -618,6 +620,69 @@ func riverHost(t *testing.T, jobs *media.Jobs, pool *pgxpool.Pool) string {
 		_ = client.StopAndCancel(ctx)
 	})
 	return schema
+}
+
+// Both a delayed first pass and the exact-key late-upload pass must leave
+// an explicitly reset item alone. Exercise the actual River workers.
+func TestQueuedDeletionCannotEraseResetItem(t *testing.T) {
+	for _, final := range []bool{false, true} {
+		t.Run(fmt.Sprintf("final=%t", final), func(t *testing.T) {
+			f := newFixture(t)
+			f.visible(1)
+			ref := f.gallery(1, 1)
+			item, _ := f.reg.Item(ref)
+			oldKey, _ := item.Blob(f.fileBlob(ref, "originals/000.png"))
+			pool := f.env.Pool()
+			schema := riverHost(t, f.jobs, pool)
+			table := pgx.Identifier{schema, "river_job"}.Sanitize()
+			var target int64
+			if err := pgx.BeginFunc(t.Context(), pool, func(tx pgx.Tx) error {
+				if err := f.jobs.DeleteItemsTx(t.Context(), tx, media.Deletion{Ref: ref}); err != nil {
+					return err
+				}
+				if !final {
+					return tx.QueryRow(t.Context(), "UPDATE "+table+" SET state='scheduled', scheduled_at=now()+interval '1 day' WHERE kind='contentkit_media_delete_folder' RETURNING id").Scan(&target)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if final {
+				waitFor(t, "deletion's scheduled final pass", func() bool {
+					err := pool.QueryRow(t.Context(), "SELECT id FROM "+table+" WHERE kind='contentkit_media_delete_folder' AND args->>'final'='true'").Scan(&target)
+					if errors.Is(err, pgx.ErrNoRows) {
+						return false
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					return true
+				})
+			}
+			if err := f.jobs.Purge(t.Context(), media.Deletion{Ref: ref, OperationID: "reset-after-enqueue"}); err != nil {
+				t.Fatal(err)
+			}
+			f.put(ref, "originals/new.png", "image/png", png(1))
+			newKey, _ := item.Blob(f.fileBlob(ref, "originals/new.png"))
+			f.object(oldKey, string(png(1))) // an old presigned PUT lands after reset
+			if _, err := pool.Exec(t.Context(), "UPDATE "+table+" SET state='available', scheduled_at=now() WHERE id=$1", target); err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, "delayed deletion completion", func() bool {
+				var state string
+				if err := pool.QueryRow(t.Context(), "SELECT state FROM "+table+" WHERE id=$1", target).Scan(&state); err != nil {
+					t.Fatal(err)
+				}
+				return state == "completed"
+			})
+			if !f.exists(newKey) || f.fileBlob(ref, "originals/new.png") == "" {
+				t.Fatal("delayed deletion erased the recreated item")
+			}
+			if final && f.exists(oldKey) {
+				t.Fatal("final pass lost its original late-upload target")
+			}
+		})
+	}
 }
 
 // The host's periodic job must discover a landed write even when its caller

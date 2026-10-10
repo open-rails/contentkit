@@ -61,10 +61,7 @@ func TestStoreOutage(t *testing.T) {
 	}
 	ctx := context.Background()
 	ref := contentref.New(env.Tenant, "gallery", cid(1))
-	name, err := ms.NewBlob(ctx, ref, mustSum(blobOf([]byte("a"))))
-	if err != nil {
-		t.Fatal(err)
-	}
+	name := ""
 	edit := func() error {
 		_, err := ms.Edit(ctx, ref, func(m *media.Manifest) error {
 			m.Files = []media.File{{Path: "originals/a.jpg", Blob: name, Type: "image/jpeg"}}
@@ -92,6 +89,10 @@ func TestStoreOutage(t *testing.T) {
 	}
 	if got, want := store.Capabilities(), env.Store.Capabilities(); got != want {
 		t.Fatalf("probed capabilities %+v, want %+v", got, want)
+	}
+	name, err = ms.NewBlob(ctx, ref, mustSum(blobOf([]byte("a"))))
+	if err != nil {
+		t.Fatal(err)
 	}
 	if err := edit(); err != nil {
 		t.Fatal(err)

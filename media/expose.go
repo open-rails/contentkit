@@ -116,19 +116,16 @@ func setHidden(k *Kind, m *Manifest, hidden bool) {
 
 // deletePublic deletes the item's public files and purges them.
 func (j *Jobs) deletePublic(ctx context.Context, item Item) error {
-	objs, err := j.list(ctx, item.PublicPrefix())
-	if err != nil {
-		return err
-	}
-	keys := make([]string, len(objs))
-	for i, o := range objs {
-		keys[i] = o.Key
-	}
-	if err := j.deleteKeys(ctx, keys); err != nil {
-		return err
-	}
-	j.purge(ctx, keys)
-	return nil
+	return j.manifests.cleanup(ctx, item, true, func(*Manifest, bool) (journalEffects, error) {
+		var effects journalEffects
+		for obj, err := range j.cfg.Store.List(ctx, item.PublicPrefix()) {
+			if err != nil {
+				return effects, err
+			}
+			effects.Public = append(effects.Public, obj.Key)
+		}
+		return effects, nil
+	})
 }
 
 func (j *Jobs) hidden(ctx context.Context, ref contentref.ContentRef) (bool, error) {

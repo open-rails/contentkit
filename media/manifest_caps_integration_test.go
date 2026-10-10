@@ -13,7 +13,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 )
@@ -71,8 +70,7 @@ func TestManifestCaps(t *testing.T) {
 		t.Fatalf("fresh read after the refused commit: %v", err)
 	}
 
-	pool := pgtest.Pool(t, nil)
-	limiter, err := media.NewPGLimiter(pool, pgtest.Schema(t, ctx, pool), media.PGLimits{})
+	limiter, err := media.NewPGLimiter(f.env.Pool(), f.env.ContentSchema(), media.PGLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,8 +117,7 @@ func TestOversizedManifest(t *testing.T) {
 	if _, _, err := fresh.Get(ctx, g); !errors.Is(err, media.ErrManifestUnreadable) {
 		t.Fatalf("oversized read: %v", err)
 	}
-	pool := pgtest.Pool(t, nil)
-	limiter, err := media.NewPGLimiter(pool, pgtest.Schema(t, ctx, pool), media.PGLimits{})
+	limiter, err := media.NewPGLimiter(f.env.Pool(), f.env.ContentSchema(), media.PGLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +133,9 @@ func TestOversizedManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	for o, err := range f.env.Store.List(ctx, item.Prefix()) {
-		t.Fatalf("kept %s %v", o.Key, err)
+		if err != nil || o.Key != item.ManifestKey() {
+			t.Fatalf("kept %s %v", o.Key, err)
+		}
 	}
 }
 

@@ -41,6 +41,10 @@ func TestCleanupLosingLeaseCannotRetireAdoptedFile(t *testing.T) {
 					f.put(ref, "originals/current.png", "image/png", png(1))
 				}
 				name := f.blob(ref, png(2), "image/png")
+				initial, _, err := f.ms.Get(t.Context(), ref)
+				if err != nil {
+					t.Fatal(err)
+				}
 				item, _ := f.reg.Item(ref)
 				store := &cleanupListStore{Store: f.env.Store, prefix: item.Prefix(), selected: make(chan struct{}), resume: make(chan struct{})}
 				var release sync.Once
@@ -70,8 +74,9 @@ func TestCleanupLosingLeaseCannotRetireAdoptedFile(t *testing.T) {
 					t.Fatal(err)
 				}
 				if !existing {
-					if _, err := f.env.Store.Head(t.Context(), item.ManifestKey()); !errors.Is(err, media.ErrNotFound) {
-						t.Fatalf("cleanup recovery created a manifest: %v", err)
+					cur, _, err := f.ms.Get(t.Context(), ref)
+					if err != nil || cur.Incarnation != initial.Incarnation || len(cur.Files) != 0 {
+						t.Fatalf("cleanup recovery changed the allocation's empty incarnation: %+v %v", cur, err)
 					}
 				}
 				if _, err := f.ms.Edit(t.Context(), ref, func(m *media.Manifest) error {
@@ -596,6 +601,124 @@ type uncertainManifestStore struct {
 	blockFence bool
 	body       []byte
 	options    media.PutOptions
+}
+
+// A lost deletion response must refund exactly once. Reset isolates both
+// allocation ownership and a retry's cleanup from subsequently uploaded bytes.
+func TestPurgeRecoveryIsolatesRecreatedItem(t *testing.T) {
+	for _, applied := range []bool{false, true} {
+		t.Run(fmt.Sprintf("applied=%t", applied), func(t *testing.T) {
+			f := newFixture(t)
+			f.visible(1)
+			ref := f.gallery(1, 1)
+			item, _ := f.reg.Item(ref)
+			initial, _, err := f.ms.Get(t.Context(), ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			old := f.fileBlob(ref, "originals/000.png")
+			limiter, err := media.NewPGLimiter(f.env.Pool(), f.env.ContentSchema(), media.PGLimits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := limiter.Settle(t.Context(), media.Settlement{Tenant: f.ns, Owner: "owner", Delta: initial.UploadBytes() + 100}); err != nil {
+				t.Fatal(err)
+			}
+			store := &uncertainManifestStore{Store: f.env.Store, key: item.ManifestKey(), uncertain: true, applied: applied}
+			jobs, err := media.NewJobs(media.JobsConfig{Store: store, Registry: f.reg, Locker: s3test.Locker(t, store), Journal: f.journal, Limiter: limiter})
+			if err != nil {
+				t.Fatal(err)
+			}
+			deletion := media.Deletion{Ref: ref, Owner: "owner", OperationID: "reset-item"}
+			if err := jobs.Purge(t.Context(), deletion); !errors.Is(err, media.ErrUnavailable) {
+				t.Fatalf("lost deletion response: %v", err)
+			}
+			if err := jobs.Manifests().Recover(t.Context(), ref); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.Store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(store.body), int64(len(store.body)), store.options); !errors.Is(err, media.ErrPreconditionFailed) {
+				t.Fatalf("delayed deletion overwrote recovery: %v", err)
+			}
+			if applied {
+				if _, err := f.ms.Edit(t.Context(), ref, func(*media.Manifest) error { return nil }); !errors.Is(err, media.ErrNotFound) {
+					t.Fatalf("ordinary edit recreated a tombstone: %v", err)
+				}
+				sum := sha256.Sum256(png(1))
+				if _, err := f.ms.NewBlob(t.Context(), ref, sum[:]); !errors.Is(err, media.ErrNotFound) {
+					t.Fatalf("allocation recreated a tombstone: %v", err)
+				}
+			}
+			if err := jobs.Purge(t.Context(), deletion); err != nil {
+				t.Fatal(err)
+			}
+			reset, _, err := f.ms.Get(t.Context(), ref)
+			if err != nil || reset.Incarnation == initial.Incarnation || len(reset.Files) != 0 {
+				t.Fatalf("reset did not create an empty new incarnation: %+v %v", reset, err)
+			}
+			if used, _, err := limiter.Usage(t.Context(), f.ns, "owner"); err != nil || used != 100 {
+				t.Fatalf("deletion quota settled more than once: %d %v", used, err)
+			}
+			oldKey, _ := item.Blob(old)
+			f.object(oldKey, string(png(1)))
+			if _, err := f.ms.EditExisting(t.Context(), ref, func(m *media.Manifest) error {
+				m.Files = append(m.Files, media.File{Path: "originals/old.png", Blob: old, Type: "image/png"})
+				return nil
+			}); !errors.Is(err, media.ErrAllocationRetired) {
+				t.Fatalf("reset adopted an old allocation: %v", err)
+			}
+			f.put(ref, "originals/new.png", "image/png", png(1))
+			fresh := f.fileBlob(ref, "originals/new.png")
+			if err := jobs.Purge(t.Context(), deletion); err != nil {
+				t.Fatal(err)
+			}
+			if f.fileBlob(ref, "originals/new.png") != fresh {
+				t.Fatal("retry discarded the recreated item")
+			}
+		})
+	}
+}
+
+func TestPurgeRecoversUnreadableRootAfterLostFenceResponse(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	ref := f.gallery(1, 1)
+	item, _ := f.reg.Item(ref)
+	body := oversizedManifest(t)
+	// Leave space for one fence only. Repeated lost responses must replace
+	// that empty gzip member, not accumulate suffixes until recovery stalls.
+	body = append(body, bytes.Repeat([]byte("X"), media.MaxManifestBytes-80-len(body))...)
+	if _, err := f.env.Store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(body), int64(len(body)), media.PutOptions{ContentType: "application/gzip"}); err != nil {
+		t.Fatal(err)
+	}
+	store := &uncertainManifestStore{Store: f.env.Store, key: item.ManifestKey(), uncertain: true}
+	jobs, err := media.NewJobs(media.JobsConfig{Store: store, Registry: f.reg, Locker: s3test.Locker(t, store), Journal: f.journal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deletion := media.Deletion{Ref: ref, OperationID: "oversized-reset"}
+	if err := jobs.Purge(t.Context(), deletion); !errors.Is(err, media.ErrUnavailable) {
+		t.Fatalf("lost absent deletion: %v", err)
+	}
+	delayedBody, delayedOptions := store.body, store.options
+	for range 3 {
+		store.uncertain, store.applied = true, true
+		if err := jobs.Manifests().Recover(t.Context(), ref); !errors.Is(err, media.ErrUnavailable) {
+			t.Fatalf("lost successful fence response: %v", err)
+		}
+	}
+	if err := jobs.Manifests().Recover(t.Context(), ref); err != nil {
+		t.Fatalf("unreadable fence did not remain recoverable: %v", err)
+	}
+	if _, err := f.env.Store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(delayedBody), int64(len(delayedBody)), delayedOptions); !errors.Is(err, media.ErrPreconditionFailed) {
+		t.Fatalf("delayed deletion defeated unreadable-root fence: %v", err)
+	}
+	if err := jobs.Purge(t.Context(), deletion); err != nil {
+		t.Fatal(err)
+	}
+	cur, _, err := f.ms.Get(t.Context(), ref)
+	if err != nil || len(cur.Files) != 0 || cur.Deleted {
+		t.Fatalf("unreadable root was not reset: %+v %v", cur, err)
+	}
 }
 
 func (s *uncertainManifestStore) Put(ctx context.Context, key string, body io.Reader, size int64, opts media.PutOptions) (media.Object, error) {

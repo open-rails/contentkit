@@ -186,7 +186,7 @@ func (m *Manifests) placeOne(ctx context.Context, item Item, name string, size i
 // references, under the folder lock, so a commit naming one either sees it
 // gone or keeps it.
 func (m *Manifests) dropStaged(ctx context.Context, item Item, names map[string]string) error {
-	return m.cleanup(ctx, item, func(cur *Manifest, _ bool) (journalEffects, error) {
+	return m.cleanup(ctx, item, false, func(cur *Manifest, _ bool) (journalEffects, error) {
 		staged := make([]string, 0, len(names))
 		for name := range names {
 			staged = append(staged, name)

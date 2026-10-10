@@ -3,6 +3,7 @@ package media
 import (
 	"bytes"
 	"cmp"
+	"compress/gzip"
 	"container/list"
 	"context"
 	"crypto/sha256"
@@ -100,7 +101,11 @@ func (m *Manifests) Get(ctx context.Context, ref contentref.ContentRef) (*Manife
 	if err != nil {
 		return nil, "", err
 	}
-	return m.get(ctx, item.ManifestKey())
+	cur, etag, err := m.get(ctx, item.ManifestKey())
+	if err == nil && cur.Deleted {
+		return nil, etag, ErrNotFound
+	}
+	return cur, etag, err
 }
 
 // Edit applies fn to ref's manifest (empty if none) and writes it with
@@ -170,7 +175,7 @@ func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) (
 		return nil, err
 	}
 	var keys []string
-	err = m.cleanup(ctx, item, func(cur *Manifest, _ bool) (journalEffects, error) {
+	err = m.cleanup(ctx, item, false, func(cur *Manifest, _ bool) (journalEffects, error) {
 		want := item.Kind().PublicKept(cur)
 		for obj, err := range m.store.List(ctx, item.PublicPrefix()) {
 			if err != nil {
@@ -206,7 +211,7 @@ func (m *Manifests) DropUnreferenced(ctx context.Context, ref contentref.Content
 	if err != nil {
 		return err
 	}
-	return m.cleanup(ctx, item, func(cur *Manifest, _ bool) (journalEffects, error) {
+	return m.cleanup(ctx, item, false, func(cur *Manifest, _ bool) (journalEffects, error) {
 		keys, err := m.unreferenced(ctx, item, cur, u)
 		return journalEffects{Private: keys}, err
 	})
@@ -214,7 +219,7 @@ func (m *Manifests) DropUnreferenced(ctx context.Context, ref contentref.Content
 
 // cleanup owns a journal lease before selecting targets. Retirement and its
 // recoverable exact-key effects commit together before any DELETE is sent.
-func (m *Manifests) cleanup(ctx context.Context, item Item, selectKeys func(*Manifest, bool) (journalEffects, error)) (err error) {
+func (m *Manifests) cleanup(ctx context.Context, item Item, publicOnly bool, selectKeys func(*Manifest, bool) (journalEffects, error)) (err error) {
 	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
 	if err != nil {
 		return err
@@ -235,7 +240,7 @@ func (m *Manifests) cleanup(ctx context.Context, item Item, selectKeys func(*Man
 	}()
 	cur, _, err := m.get(ctx, item.ManifestKey())
 	exists := err == nil
-	if errors.Is(err, ErrNotFound) {
+	if errors.Is(err, ErrNotFound) || publicOnly && errors.Is(err, ErrManifestUnreadable) {
 		cur = &Manifest{}
 	} else if err != nil {
 		return err
@@ -246,6 +251,9 @@ func (m *Manifests) cleanup(ctx context.Context, item Item, selectKeys func(*Man
 	effects, err := selectKeys(cur, exists)
 	if err != nil {
 		return err
+	}
+	if publicOnly && (len(effects.Private) != 0 || len(effects.Allocate) != 0) {
+		return errors.New("media: public cleanup cannot alter private allocation ownership")
 	}
 	if err := m.journal.prepareCleanup(ctx, &c, effects); err != nil {
 		return err
@@ -322,9 +330,10 @@ func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existin
 }
 
 type manifestMutation struct {
-	commit  manifestCommit
-	effects journalEffects
-	quota   int64
+	lifecycle bool // only deletion and explicit reset may edit a tombstone
+	commit    manifestCommit
+	effects   journalEffects
+	quota     int64
 }
 
 // replayCommit resolves a known request before any copy or new-item policy
@@ -402,9 +411,14 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	case errors.Is(err, ErrNotFound) && existing:
 		return nil, false, err
 	case errors.Is(err, ErrNotFound):
-		cur, etag = &Manifest{V: ManifestVersion, Files: []File{}}, ""
+		cur, etag = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Hidden: true, Files: []File{}}, ""
+	case errors.Is(err, ErrManifestUnreadable) && mutation.lifecycle:
+		cur = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Hidden: true, Files: []File{}}
 	case err != nil:
 		return nil, false, err
+	}
+	if cur.Deleted && !mutation.lifecycle {
+		return nil, false, ErrNotFound
 	}
 	if err := m.journal.checkReceipt(ctx, item, cur.Receipt); err != nil {
 		return nil, false, err
@@ -412,6 +426,9 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	next := cur.Clone()
 	if err := fn(next); err != nil {
 		return nil, false, err
+	}
+	if !mutation.lifecycle && (next.Deleted != cur.Deleted || next.Incarnation != cur.Incarnation) {
+		return nil, false, errors.New("media: only explicit lifecycle operations can change incarnation or deletion")
 	}
 	item.kind.Normalize(next)
 	if err := next.Validate(); err != nil {
@@ -426,7 +443,7 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 		key, _ := item.Staged(name)
 		allocations = append(allocations, key)
 	}
-	if err := m.checkAllocations(ctx, item, allocations); err != nil {
+	if err := m.checkAllocationsIn(ctx, item, allocations, next.Incarnation); err != nil {
 		return nil, false, err
 	}
 	for _, key := range next.cleanup {
@@ -435,10 +452,10 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 		}
 	}
 	next.cleanup = nil
-	if etag != "" && reflect.DeepEqual(mutation.effects, journalEffects{}) && next.Hidden == cur.Hidden && next.Full == cur.Full && next.Deficit == cur.Deficit && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) {
+	if etag != "" && reflect.DeepEqual(mutation.effects, journalEffects{}) && next.Incarnation == cur.Incarnation && next.Deleted == cur.Deleted && next.Hidden == cur.Hidden && next.Full == cur.Full && next.Deficit == cur.Deficit && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) {
 		return cur, false, nil
 	}
-	if etag == "" {
+	if etag == "" && !mutation.lifecycle {
 		if err := m.requireFresh(ctx, item); err != nil {
 			return nil, false, err
 		}
@@ -554,7 +571,14 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 	for range m.retries {
 		cur, etag, err := m.get(ctx, item.ManifestKey())
 		if errors.Is(err, ErrNotFound) {
-			cur, etag = &Manifest{V: ManifestVersion, Files: []File{}}, ""
+			cur, etag = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Hidden: true, Files: []File{}}, ""
+		} else if errors.Is(err, ErrManifestUnreadable) && commit.Effects.Deletion {
+			if err := m.fenceUnreadable(ctx, item); errors.Is(err, ErrPreconditionFailed) {
+				continue
+			} else if err != nil {
+				return nil, false, err
+			}
+			return nil, false, m.finishCommit(ctx, item, *commit, false)
 		} else if err != nil {
 			return nil, false, err
 		}
@@ -592,6 +616,54 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 		return next, applied, nil
 	}
 	return nil, false, ErrManifestConflict
+}
+
+// A deletion's attempted replacement is always readable. If the root is
+// still unreadable, preserve its bytes and fence the absent attempt with an
+// empty gzip member carrying a fresh nonce. Never erase an unknown root just
+// to settle quota. Oversized compressed objects remain refused.
+func (m *Manifests) fenceUnreadable(ctx context.Context, item Item) error {
+	rc, obj, err := m.store.Get(ctx, item.ManifestKey(), GetOptions{})
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	body, err := io.ReadAll(io.LimitReader(rc, MaxManifestBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(body) > MaxManifestBytes {
+		return ErrManifestUnreadable
+	}
+	if _, err := decodeManifest(body); err == nil {
+		// A readable replacement landed between the failed read and this
+		// GET. Recovery must inspect its receipt instead of declaring absence.
+		return ErrPreconditionFailed
+	}
+	var suffix bytes.Buffer
+	zw := gzip.NewWriter(&suffix)
+	nonce := uuid.New()
+	const fenceMarker = "ck-recovery-fence:"
+	zw.Extra = append([]byte(fenceMarker), nonce[:]...)
+	if err := zw.Close(); err != nil {
+		return err
+	}
+	// Replace our prior empty member rather than growing the unreadable
+	// root on every ambiguous fence retry. Only the UUID bytes may differ.
+	const nonceOffset = 12 + len(fenceMarker) // gzip header and extra length
+	start := len(body) - suffix.Len()
+	if start >= 0 && bytes.Equal(body[start:start+nonceOffset], suffix.Bytes()[:nonceOffset]) &&
+		bytes.Equal(body[start+nonceOffset+len(nonce):], suffix.Bytes()[nonceOffset+len(nonce):]) {
+		body = body[:start]
+	}
+	if len(body)+suffix.Len() > MaxManifestBytes {
+		return ErrManifestUnreadable
+	}
+	body = append(body, suffix.Bytes()...)
+	_, err = m.store.Put(ctx, item.ManifestKey(), bytes.NewReader(body), int64(len(body)), PutOptions{
+		IfMatch: obj.ETag, ContentType: "application/gzip", CacheControl: "no-store", Metadata: obj.Metadata})
+	m.cache.remove(item.ManifestKey())
+	return err
 }
 
 // finishCommit repeats only the recorded cleanup targets, never a fresh list
@@ -699,7 +771,7 @@ func (m *Manifests) get(ctx context.Context, key string) (*Manifest, string, err
 	}
 	man, err := decodeManifest(body)
 	if err != nil {
-		return nil, "", fmt.Errorf("media: decode manifest %s: %w", key, err)
+		return nil, obj.ETag, fmt.Errorf("media: decode manifest %s: %w", key, err)
 	}
 	m.cache.put(key, obj.ETag, man)
 	return man, obj.ETag, nil
@@ -736,8 +808,8 @@ func (m *Manifests) DropIfDeleted(ctx context.Context, ref contentref.ContentRef
 	if err != nil {
 		return err
 	}
-	return m.cleanup(ctx, item, func(cur *Manifest, exists bool) (journalEffects, error) {
-		if exists {
+	return m.cleanup(ctx, item, false, func(cur *Manifest, exists bool) (journalEffects, error) {
+		if exists && !cur.Deleted {
 			return journalEffects{}, nil
 		}
 		keys, err := m.unreferenced(ctx, item, cur, Unreferenced{Blobs: blobs})

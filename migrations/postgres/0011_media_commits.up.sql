@@ -40,6 +40,7 @@ CREATE TABLE content_media_allocations (
     tenant_id text NOT NULL,
     folder_prefix text NOT NULL,
     object_key text NOT NULL,
+    incarnation uuid NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     retired_at timestamptz,
     PRIMARY KEY (tenant_id, object_key),

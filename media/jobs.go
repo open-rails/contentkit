@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	riverhelpers "github.com/open-rails/helpers/river"
@@ -44,9 +45,9 @@ type JobsConfig struct {
 	// uploads that land after the first; above the presign TTL and the
 	// 1-day multipart rule. Default 25 h.
 	LateUploadWindow time.Duration
-	Limiter          QuotaReleaser // releases a deleted item's quota; optional
-	Queue            string        // default DefaultQueue
-	MaxWorkers       int           // default 2
+	Limiter          *PGLimiter // optional; must share the journal's pool and schema
+	Queue            string     // default DefaultQueue
+	MaxWorkers       int        // default 2
 	Logger           *slog.Logger
 	Now              func() time.Time
 }
@@ -74,6 +75,9 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 	}
 	if cfg.Registry.cfg.Hooks.ItemReady != nil && cfg.Pool == nil {
 		return nil, errors.New("media: Hooks.ItemReady needs JobsConfig.Pool")
+	}
+	if cfg.Limiter != nil && (cfg.Limiter.pool != cfg.Journal.pool || cfg.Limiter.usage != cfg.Journal.limiter.usage) {
+		return nil, errors.New("media: deletion quota must use the journal's pool and ContentKit schema")
 	}
 	if cfg.Grace <= 0 {
 		cfg.Grace = 24 * time.Hour
@@ -214,7 +218,7 @@ func (j *Jobs) ScheduleSweep(ctx context.Context, ref contentref.ContentRef) err
 
 // Deletion is one item to delete. Owner is its quota owner (UploadGrant.Owner),
 // "" for none; with a Limiter configured the owner's usage is released.
-// OperationID is only for Purge; queued deletion uses its River job id.
+// OperationID is required for Purge; queued deletion uses its River job id.
 type Deletion struct {
 	Ref         contentref.ContentRef
 	Owner       string
@@ -237,7 +241,11 @@ func (j *Jobs) DeleteItemsTx(ctx context.Context, tx pgx.Tx, items ...Deletion) 
 		if err != nil {
 			return err
 		}
-		args := deleteFolderArgs{Prefix: item.Prefix()}
+		m, err := j.manifests.deletionIncarnation(ctx, item)
+		if err != nil {
+			return err
+		}
+		args := deleteFolderArgs{Prefix: item.Prefix(), Incarnation: m.Incarnation}
 		if j.cfg.Limiter != nil {
 			args.Owner = d.Owner
 		}
@@ -250,47 +258,22 @@ func (j *Jobs) DeleteItemsTx(ctx context.Context, tx pgx.Tx, items ...Deletion) 
 	return err
 }
 
-// Purge deletes an item's folder now: the explicit reset before
-// deliberately recreating an item, or an operator cleanup. A quota-owned
-// purge needs a caller-stable OperationID; retry a failed purge with it.
+// Purge clears and resets an item to a fresh incarnation. It needs a caller-
+// stable OperationID, even without quota; retry a failed reset with that ID.
 // Hosts deleting content use DeleteItemsTx.
 func (j *Jobs) Purge(ctx context.Context, d Deletion) error {
 	item, err := j.cfg.Registry.Item(d.Ref)
 	if err != nil {
 		return err
 	}
-	if j.cfg.Limiter != nil && d.Owner != "" && d.OperationID == "" {
-		return errors.New("media: purge with a quota owner needs an operation id")
+	if d.OperationID == "" {
+		return errors.New("media: purge needs an operation id")
 	}
-	return j.deleteFolderLocked(ctx, item.Prefix(), d.Owner, "purge:"+item.Prefix()+d.OperationID)
-}
-
-// deleteFolderLocked deletes prefix under its manifest lock, releasing the
-// owner's quota first (once per operation).
-func (j *Jobs) deleteFolderLocked(ctx context.Context, prefix, owner, operation string) error {
-	unlock, err := j.cfg.Locker.Lock(ctx, prefix+layout.ManifestName)
-	if err != nil {
+	operation := uuid.NewSHA1(uuid.NameSpaceURL, []byte("purge:"+item.Prefix()+d.OperationID))
+	if err := j.deleteItem(ctx, item, d.Owner, operation, "", time.Time{}); err != nil {
 		return err
 	}
-	defer unlock()
-	ns, _, _, _ := parseFolder(prefix)
-	if j.cfg.Limiter != nil && owner != "" {
-		release, err := j.uploadBytes(ctx, prefix)
-		if err != nil {
-			return err
-		}
-		applied, err := j.cfg.Limiter.PrepareRelease(ctx, QuotaRelease{Tenant: ns, Folder: prefix, Owner: owner, Operation: operation, Bytes: release})
-		if err != nil || applied {
-			return err
-		}
-	}
-	if err := j.deleteFolder(ctx, prefix); err != nil {
-		return err
-	}
-	if j.cfg.Limiter != nil && owner != "" {
-		return j.cfg.Limiter.Release(ctx, ns, operation)
-	}
-	return nil
+	return j.resetItem(ctx, item, operation)
 }
 
 // uploadBytesMeta is the manifest object's metadata key for the quota its
@@ -434,9 +417,11 @@ func (w *sweepPassWorker) Work(ctx context.Context, job *river.Job[sweepPassArgs
 }
 
 type deleteFolderArgs struct {
-	Prefix string `json:"prefix"`
-	Final  bool   `json:"final,omitempty"`
-	Owner  string `json:"owner,omitempty"`
+	Prefix      string `json:"prefix"`
+	Final       bool   `json:"final,omitempty"`
+	Owner       string `json:"owner,omitempty"`
+	Incarnation string `json:"incarnation,omitempty"`
+	Operation   string `json:"operation,omitempty"` // first pass's exact cleanup targets
 }
 
 func (deleteFolderArgs) Kind() string { return "contentkit_media_delete_folder" }
@@ -456,17 +441,26 @@ func (w *deleteFolderWorker) Work(ctx context.Context, job *river.Job[deleteFold
 	if _, _, _, err := parseFolder(a.Prefix); err != nil {
 		return river.JobCancel(err)
 	}
-	owner := a.Owner
-	if a.Final {
-		owner = ""
+	ns, kind, id, _ := parseFolder(a.Prefix)
+	item, err := w.j.cfg.Registry.Item(contentref.New(ns, kind, id))
+	if err != nil {
+		return river.JobCancel(err)
 	}
-	if err := w.j.deleteFolderLocked(ctx, a.Prefix, owner, fmt.Sprintf("folder-delete:%s:%d", a.Prefix, job.JobRow.ID)); err != nil {
+	if a.Final {
+		operation, err := uuid.Parse(a.Operation)
+		if err != nil {
+			return river.JobCancel(err)
+		}
+		return w.j.repeatDeletion(ctx, item, operation)
+	}
+	if a.Incarnation == "" {
+		return river.JobCancel(errors.New("media: queued deletion needs an incarnation"))
+	}
+	operation := uuid.NewSHA1(uuid.NameSpaceURL, []byte(fmt.Sprintf("folder-delete:%s:%d", a.Prefix, job.JobRow.ID)))
+	if err := w.j.deleteItem(ctx, item, a.Owner, operation, a.Incarnation, time.Time{}); err != nil {
 		return err
 	}
-	if a.Final {
-		return nil
-	}
-	_, err = w.j.Insert(ctx, deleteFolderArgs{Prefix: a.Prefix, Final: true}, &river.InsertOpts{
+	_, err = w.j.Insert(ctx, deleteFolderArgs{Prefix: a.Prefix, Final: true, Operation: operation.String()}, &river.InsertOpts{
 		ScheduledAt: w.j.cfg.Now().Add(w.j.cfg.LateUploadWindow), UniqueOpts: PendingOnce})
 	return err
 }

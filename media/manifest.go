@@ -26,8 +26,10 @@ const ManifestVersion = 3
 // commit ops), then each private preset's outputs in their uploads' order.
 // Readers never re-sort it. Public publications belong to their source upload.
 type Manifest struct {
-	V      int  `json:"v"`
-	Hidden bool `json:"hidden,omitempty"` // set by Expose; public files are then absent
+	V           int    `json:"v"`
+	Hidden      bool   `json:"hidden,omitempty"`      // set by Expose; public files are then absent
+	Incarnation string `json:"incarnation,omitempty"` // changes only on explicit reset
+	Deleted     bool   `json:"deleted,omitempty"`     // retained S3 tombstone; ordinary edits cannot recreate it
 	// Full: a producer could not record its outputs within the bound, so
 	// private outputs stop until a commit frees Deficit bytes (in the
 	// manifest and in what its uploads would still add): how far past the
@@ -337,6 +339,15 @@ func (m *Manifest) StagedNames() []string {
 // Validate requires unique paths, well-formed blobs and edits, and upload
 // and derived fields where they belong.
 func (m *Manifest) Validate() error {
+	if m.Incarnation != "" {
+		id, err := uuid.Parse(m.Incarnation)
+		if err != nil || id == uuid.Nil || id.String() != m.Incarnation {
+			return errors.New("media: invalid manifest incarnation")
+		}
+	}
+	if m.Deleted && (!m.Hidden || len(m.Files) != 0 || len(m.Meta) != 0 || m.Full || m.Deficit != 0) {
+		return errors.New("media: deletion tombstone must be hidden and empty")
+	}
 	if m.Receipt != nil {
 		for _, value := range []string{m.Receipt.Operation, m.Receipt.Attempt} {
 			id, err := uuid.Parse(value)

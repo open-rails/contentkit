@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/open-rails/contentkit/contentref"
@@ -81,7 +82,7 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 		return SweepResult{}, err
 	}
 	var result SweepResult
-	err = j.manifests.cleanup(ctx, item, func(m *Manifest, _ bool) (journalEffects, error) {
+	err = j.manifests.cleanup(ctx, item, false, func(m *Manifest, _ bool) (journalEffects, error) {
 		now := j.cfg.Now()
 		keep := j.keeps(item, m)
 		protected, err := j.manifests.protectedAllocations(ctx, item, now, j.cfg.Grace)
@@ -301,7 +302,23 @@ func (j *Jobs) SweepOrphans(ctx context.Context, s OrphanSweep) (OrphanReport, e
 				continue
 			}
 			if s.Delete {
-				if err := j.deleteFolder(ctx, f.Prefix); err != nil {
+				if f.ValidID {
+					ref := contentref.New(k.ns, k.Name, id)
+					item, _ := j.cfg.Registry.Item(ref)
+					m, _, err := j.manifests.get(ctx, item.ManifestKey())
+					if err != nil && !errors.Is(err, ErrNotFound) {
+						return rep, err
+					}
+					incarnation := ""
+					if err == nil {
+						incarnation = m.Incarnation
+					}
+					if err := j.deleteItem(ctx, item, "", uuid.New(), incarnation, cutoff); errors.Is(err, errOrphanChanged) {
+						continue
+					} else if err != nil {
+						return rep, err
+					}
+				} else if err := j.deleteFolder(ctx, f.Prefix); err != nil {
 					return rep, err
 				}
 				f.Deleted = true

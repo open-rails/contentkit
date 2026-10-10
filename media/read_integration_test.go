@@ -384,23 +384,25 @@ func TestHLSPlaylists(t *testing.T) {
 		return put(string(b))
 	}
 	segs := media.TrackIndex{Segments: []media.Segment{{Offset: 100, Length: 50, Seconds: 4}, {Offset: 150, Length: 40, Seconds: 2.5}}}
+	outputs := []media.File{
+		{Path: "hls/1080-h264.mp4", Blob: put("v1080"), Type: "video/mp4", W: 1920, H: 1080,
+			Track: &media.Track{Kind: media.TrackVideo, Codec: "h264", Codecs: "avc1.640028", Bandwidth: 5000000, Index: index(segs)}},
+		{Path: "hls/480-h264.mp4", Blob: put("v480"), Type: "video/mp4", W: 854, H: 480,
+			Track: &media.Track{Kind: media.TrackVideo, Codec: "h264", Codecs: "avc1.64001e", Bandwidth: 1000000, Index: index(segs)}},
+		{Path: "hls/audio-a1.mp4", Blob: put("a1"), Type: "audio/mp4",
+			Track: &media.Track{Kind: media.TrackAudio, ID: "a1", Lang: "ja", Default: true, Bandwidth: 128000, Codecs: "mp4a.40.2", Index: index(segs)}},
+		{Path: "hls/sprite.jpg", Blob: put("sprite"), Type: "image/jpeg",
+			Track: &media.Track{Kind: media.TrackSprite, Index: index(media.TrackIndex{Sprite: &media.Sprite{Cols: 2, Rows: 1, W: 160, H: 90, Interval: 5}})}},
+	}
+	vtt := put("WEBVTT\n")
 	if _, err := f.ms.EditExisting(ctx, v, func(m *media.Manifest) error {
 		if i := m.Find("source.mp4"); i >= 0 {
 			m.Files[i].Dur = 6.5
 		}
-		if err := m.SetOutputs("source.mp4", "hls", []media.File{
-			{Path: "hls/1080-h264.mp4", Blob: put("v1080"), Type: "video/mp4", W: 1920, H: 1080,
-				Track: &media.Track{Kind: media.TrackVideo, Codec: "h264", Codecs: "avc1.640028", Bandwidth: 5000000, Index: index(segs)}},
-			{Path: "hls/480-h264.mp4", Blob: put("v480"), Type: "video/mp4", W: 854, H: 480,
-				Track: &media.Track{Kind: media.TrackVideo, Codec: "h264", Codecs: "avc1.64001e", Bandwidth: 1000000, Index: index(segs)}},
-			{Path: "hls/audio-a1.mp4", Blob: put("a1"), Type: "audio/mp4",
-				Track: &media.Track{Kind: media.TrackAudio, ID: "a1", Lang: "ja", Default: true, Bandwidth: 128000, Codecs: "mp4a.40.2", Index: index(segs)}},
-			{Path: "hls/sprite.jpg", Blob: put("sprite"), Type: "image/jpeg",
-				Track: &media.Track{Kind: media.TrackSprite, Index: index(media.TrackIndex{Sprite: &media.Sprite{Cols: 2, Rows: 1, W: 160, H: 90, Interval: 5}})}},
-		}); err != nil {
+		if err := m.SetOutputs("source.mp4", "hls", outputs); err != nil {
 			return err
 		}
-		return m.SetOutputs(sub, "vtt", []media.File{{Path: "vtt/en.vtt", Blob: put("WEBVTT\n"), Type: "text/vtt"}})
+		return m.SetOutputs(sub, "vtt", []media.File{{Path: "vtt/en.vtt", Blob: vtt, Type: "text/vtt"}})
 	}); err != nil {
 		t.Fatal(err)
 	}
