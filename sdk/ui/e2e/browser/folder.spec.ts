@@ -98,25 +98,36 @@ for (const theme of ["light", "dark"] as const) {
   });
 }
 
-test("a draft adds files as they finish; discarding stops an upload in flight", async ({ page }, info) => {
+test("a draft created on the first drop adds files as they finish; Publish waits; discarding stops an upload in flight", async ({ page }, info) => {
   test.skip(info.project.name !== "desktop", "one browser covers the draft flow");
   const { url, ids } = await folder({}, ["draft"]);
   await page.goto(url);
   const composer = page.locator("[data-demo=composer]");
+  const publish = composer.getByRole("button", { name: "Publish" });
+  const files = composer.locator("[data-demo=files]");
+  await expect(publish).toBeDisabled();
+  // No draft yet: the files wait for it and its rules, and Publish waits for them.
   await composer.locator("[data-ckui=folder-drop] input[type=file]").setInputFiles([img("1.jpg"), img("2.jpg")]);
+  await expect(composer.locator("[data-ckui=queue-row][data-status=waiting]")).toHaveCount(2);
+  await expect(files).toHaveText("2 files, uploading");
+  await expect(publish).toBeDisabled();
   await expect(composer.locator("[data-ckui=upload-row]")).toHaveCount(2, { timeout: 20_000 });
   await expect(composer.getByRole("button", { name: /^Add \d/ })).toHaveCount(0);
+  await expect(files).toHaveText("2 files");
+  await expect(publish).toBeEnabled();
 
   // The next file's upload stalls at the bucket, so it is in flight when the draft is discarded.
   await h.faults([{ item: ids.draft!, fault: "hold", from: "browser" }]);
   await composer.locator("[data-ckui=folder-add] input").setInputFiles([img("4.jpg")]);
   await expect(composer.locator("[data-ckui=queue-row]")).toHaveCount(1);
+  await expect(publish).toBeDisabled();
   await composer.getByRole("button", { name: "Discard draft" }).click();
   await h.clearFaults(ids.draft!);
   await expect(composer.getByText("Drop files here, or click to choose")).toBeVisible();
   await page.waitForTimeout(2000);
   await expect(composer.locator("[data-ckui=upload-row]")).toHaveCount(0);
   await expect(composer.locator("[data-ckui=queue-row]")).toHaveCount(0);
+  await expect(files).toHaveText("0 files");
 });
 
 test("the folder editor speaks the page's language", async ({ page }, info) => {

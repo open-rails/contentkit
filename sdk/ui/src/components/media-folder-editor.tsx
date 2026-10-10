@@ -46,9 +46,7 @@ export interface MediaFolderEditorHandle {
   folder: UseMediaFolder;
 }
 
-export interface MediaFolderEditorProps extends MediaFolderOptions {
-  /** The item whose folder this edits. */
-  item: RefBody;
+export interface MediaFolderEditorViewProps {
   ref?: Ref<MediaFolderEditorHandle>;
   /** Heading; default "Media". */
   label?: ReactNode;
@@ -66,6 +64,25 @@ export interface MediaFolderEditorProps extends MediaFolderOptions {
   className?: string;
   appearance?: ContentKitUiAppearance;
 }
+
+/**
+ * Either the item, and the editor opens its folder with the options; or a
+ * folder the host opened (`folder={useMediaFolder(ref, options)}`), whose
+ * state the host reads and renders with.
+ */
+export type MediaFolderEditorProps = MediaFolderEditorViewProps &
+  (
+    | ({
+        /** The item whose folder this edits. */
+        item: RefBody;
+        folder?: never;
+      } & MediaFolderOptions)
+    | ({
+        /** The host's folder (useMediaFolder); its ref may be null until the item exists. */
+        folder: UseMediaFolder;
+        item?: never;
+      } & { [K in keyof MediaFolderOptions]?: never })
+  );
 
 const ASPECTS: readonly AspectRatio[] = ["", "1:1", "4:5", "16:9"];
 
@@ -109,20 +126,32 @@ export function describeRules(t: Translator["t"], rules: readonly UploadRule[]):
  * files finish (a draft; discard() through the ref).
  */
 export function MediaFolderEditor(p: MediaFolderEditorProps) {
+  // Editor state (selection, crop, rename) belongs to one item.
+  if (p.folder) {
+    const { folder, ...view } = p;
+    return <FolderView key={folder.ref ? `${folder.ref.kind}/${folder.ref.id}` : ""} folder={folder} {...view} />;
+  }
   // The queue belongs to one item: another item gets a fresh editor.
-  return <FolderEditor key={`${p.item.kind}/${p.item.id}`} {...p} />;
+  return <OwnFolder key={`${p.item.kind}/${p.item.id}`} {...p} />;
 }
 
-function FolderEditor(p: MediaFolderEditorProps) {
-  const { item, ref, label, toolbar, rowActions, footer, aspects = ASPECTS, confirmRemove, disabled, className, appearance, ...options } = p;
-  const { t, error: errorText } = useMessages();
+function OwnFolder(p: MediaFolderEditorViewProps & MediaFolderOptions & { item: RefBody }) {
+  const { item, ref, label, toolbar, rowActions, footer, aspects, confirmRemove, disabled, className, appearance, ...options } = p;
   const folder = useMediaFolder(item, options);
-  const { groups, queue, read } = folder;
+  return <FolderView {...{ folder, ref, label, toolbar, rowActions, footer, aspects, confirmRemove, disabled, className, appearance }} />;
+}
+
+const NO_ITEM: RefBody = { kind: "", id: "" };
+
+function FolderView(p: MediaFolderEditorViewProps & { folder: UseMediaFolder }) {
+  const { folder, ref, label, toolbar, rowActions, footer, aspects = ASPECTS, confirmRemove, disabled, className, appearance } = p;
+  const { t, error: errorText } = useMessages();
+  const { groups, queue, read, options } = folder;
   useImperativeHandle(ref, () => ({ discard: folder.discard, commit: folder.commit, folder }), [folder]);
   const auto = options.commit === "auto";
   const rules = groups.flatMap((g) => (g.rule ? [g.rule] : []));
   const accept = acceptOf(rules);
-  const count = folder.uploads.length + queue.items.length;
+  const count = folder.uploads.length + queue.items.length + folder.waiting.length;
   const empty = count === 0;
   const off = !!disabled;
 
@@ -132,7 +161,7 @@ function FolderEditor(p: MediaFolderEditorProps) {
     setSelected((s) => ([...s].every((x) => paths.has(x)) ? s : new Set([...s].filter((x) => paths.has(x)))));
   }, [folder.uploads]);
   const [cropping, setCropping] = useState<string | null>(null);
-  const crop = useEditorCrop(item, cropping, { client: options.client, onError: options.onError, onSaved: () => setCropping(null) });
+  const crop = useEditorCrop(folder.ref ?? NO_ITEM, cropping, { client: options.client, onError: options.onError, onSaved: () => setCropping(null) });
   const cropRule = cropping ? groups.find((g) => g.files.some((f) => f.path === cropping))?.rule : undefined;
   const [renaming, setRenaming] = useState<string | null>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
@@ -202,7 +231,7 @@ function FolderEditor(p: MediaFolderEditorProps) {
           {!empty && picker(false)}
         </div>
       </div>
-      {empty && read.read && picker(true)}
+      {empty && (read.read || !folder.ref) && picker(true)}
       {empty && !read.read && read.loading && (
         <div className="flex justify-center py-6 text-muted-foreground" data-ckui="folder-loading">
           <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="size-5 motion-safe:animate-spin" />
@@ -280,6 +309,22 @@ function FolderEditor(p: MediaFolderEditorProps) {
         ) : null,
       )}
 
+      {folder.waiting.length > 0 && (
+        <ul className="grid" aria-label={t("folder.label")}>
+          {folder.waiting.map((f, i) => (
+            <li key={i} className="flex min-h-11 items-center gap-2 px-1" data-ckui="queue-row" data-status="waiting">
+              <Thumb kind={kindOf(f.type)} />
+              <div className="grid min-w-0 flex-1 gap-1">
+                <span className="truncate text-sm">{f.name}</span>
+                <span className="text-xs text-muted-foreground" data-ckui="queue-status">
+                  {t("folder.queued")}
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
       {queue.items.length > 0 && (
         <SortableList
           items={queue.items}
@@ -297,7 +342,7 @@ function FolderEditor(p: MediaFolderEditorProps) {
       {((!auto && uploaded > 0) || (auto && folder.error && uploaded > 0)) && (
         <Button className="w-fit" disabled={off || !queue.ready || folder.committing} onClick={() => void folder.commit().catch(() => {})} data-ckui="folder-commit">
           {folder.committing && <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="motion-safe:animate-spin" />}
-          {auto ? t("folder.commitAgain") : t("folder.commit", { count: queue.items.length })}
+          {auto ? t("folder.commitAgain") : t("folder.commit", { count: queue.items.filter((i) => i.status !== "committed").length })}
         </Button>
       )}
       {footer}

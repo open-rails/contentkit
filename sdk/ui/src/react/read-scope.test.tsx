@@ -46,7 +46,8 @@ it.each(["viewer", "accessRevision", "round-trip"] as const)("discards a late cr
   const file = { path: "cover.jpg", upload: true, type: "image/jpeg", size: 10, w: 100, h: 100, editor_url: "https://media.test/alice.jpg" };
   const empty = { access: "none", expires: 0, total: 0, offset: 0, limit: 50, files: [] };
   const saved = vi.fn();
-  const client = createContentKitClient({ baseUrl: "https://content.test/ck", fetch: async (_url, init) => {
+  const client = createContentKitClient({ baseUrl: "https://content.test/ck", fetch: async (url, init) => {
+    if (String(url).endsWith("/presets")) return Response.json([]);
     if (init?.method === "POST") { afterCommit = true; return Response.json({ files: [file] }); }
     if (currentScope) return Response.json(empty);
     if (afterCommit) return new Promise<Response>((finish) => processing.push({ finish, signal: init?.signal }));

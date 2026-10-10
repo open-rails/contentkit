@@ -103,6 +103,27 @@ it("CoverUpload: edit crop re-renders from the upload without uploading", async 
   expect(record.puts.length).toBe(puts);
 });
 
+it("SlotEditor crops at the path's public preset before the item has an image", async () => {
+  const ref = await channel();
+  const { record, c } = setup();
+  const user = userEvent.setup();
+  function Aspect() {
+    return <output aria-label="aspect">{useSlotEditor().crop.aspect}</output>;
+  }
+  const { container } = render(
+    <SlotEditor client={c} item={ref} path="cover" read={empty} decode={decodeAs(600, 450)}>
+      <Aspect />
+    </SlotEditor>,
+  );
+  // Neither an image nor an aspect from the host: the cover preset's 3:1, not a square.
+  await waitFor(() => expect(screen.getByRole("status", { name: "aspect" })).toHaveTextContent("3:1"), wait);
+  await user.upload(container.querySelector<HTMLInputElement>("input[type=file]")!, png("c.png", 6, 600, 450));
+  const dialog = await screen.findByRole("dialog");
+  await user.click(within(dialog).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull(), wait);
+  expect(record.commits.at(-1)).toEqual([expect.objectContaining({ op: "put", path: "cover.png", edit: { crop: { x: 0, y: 125, w: 600, h: 200 } } })]);
+});
+
 it("maps ContentKitError codes to messages and keeps the dialog open to retry", async () => {
   const ref = await channel();
   const { c } = setup();

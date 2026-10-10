@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import "../../src/test/dom.js";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { createRef } from "react";
+import { createRef, useEffect, useRef, useState } from "react";
 import { beforeAll, expect, it, vi } from "vitest";
-import type { RefBody } from "../../src/client/index.js";
+import type { ContentKitClient, RefBody } from "../../src/client/index.js";
 import { MediaFolderEditor, type MediaFolderEditorHandle } from "../../src/index.js";
-import { ContentKitProvider } from "../../src/react/index.js";
+import { ContentKitProvider, useMediaFolder } from "../../src/react/index.js";
 import { bytes } from "../support/bytes.js";
 import type { Config, TestUser } from "../support/harness.js";
 import { client, fixture, harness, item, png, recorder, wait, type Recorder, NodeFile } from "./setup.js";
@@ -193,4 +193,94 @@ it("reports an upload the worker fails after the editor opened, once", async () 
   } finally {
     await h.clearFaults(ref.id);
   }
+});
+
+it("files added before the editor read wait for its rules, then go to the path that takes them", async () => {
+  const ref = await folder("album");
+  const { record, c } = setup();
+  const handle = createRef<MediaFolderEditorHandle>();
+  const { container } = render(<MediaFolderEditor client={c} item={ref} commit="auto" paths={["images/{name}", "videos/{name}"]} ref={handle} />);
+  // Right after mount, before the read answers: nothing is screened against rules not read yet.
+  act(() => handle.current!.folder.add([png("a.png", 31), fixture("clip.mp4", "video/mp4"), garbage("c.gif", "image/gif")]));
+  expect(container.querySelectorAll("[data-ckui=queue-row][data-status=waiting]")).toHaveLength(3);
+  expect(handle.current!.folder).toMatchObject({ busy: true, fileCount: 3, refused: [] });
+  expect(record.presigns).toEqual([]);
+
+  await waitFor(() => expect(container.querySelectorAll("[data-ckui=upload-row]")).toHaveLength(2), wait);
+  expect(record.presigns.map((p) => p.path)).toEqual(["images/a.png", "videos/clip.mp4"]);
+  expect(screen.getByRole("alert")).toHaveTextContent("c.gif: This file type isn't supported here.");
+  expect(handle.current!.folder).toMatchObject({ busy: false, fileCount: 2, waiting: [] });
+  expect(container.querySelectorAll("[data-ckui=queue-row]")).toHaveLength(0);
+});
+
+it("files waiting for a read that fails are refused with its failure, not routed", async () => {
+  const ref = await folder("album");
+  const { record, c } = setup();
+  const onError = vi.fn();
+  await h.faults([{ item: ref.id, fault: "api", path: `/media/album/${ref.id}`, method: "GET", status: 403, code: "forbidden", error: "forbidden" }]);
+  try {
+    const handle = createRef<MediaFolderEditorHandle>();
+    const { container } = render(<MediaFolderEditor client={c} item={ref} onError={onError} ref={handle} />);
+    act(() => handle.current!.folder.add([png("a.png", 41), fixture("clip.mp4", "video/mp4")]));
+    const alert = await screen.findByRole("alert", undefined, wait);
+    expect(alert).toHaveTextContent("a.png: You don't have permission to change this image.");
+    expect(alert).toHaveTextContent("clip.mp4: You don't have permission");
+    expect(handle.current!.folder).toMatchObject({ busy: false, fileCount: 0, waiting: [] });
+    expect(container.querySelectorAll("[data-ckui=queue-row]")).toHaveLength(0);
+    expect(onError.mock.calls).toEqual([[expect.objectContaining({ code: "forbidden" }), { operation: "folder.load" }]]);
+    // Later files are refused at once.
+    act(() => handle.current!.folder.add([png("b.png", 42)]));
+    expect(handle.current!.folder.refused.map((r) => [r.file.name, r.error.code])).toEqual([["b.png", "forbidden"]]);
+    expect(record.presigns).toEqual([]);
+  } finally {
+    await h.clearFaults(ref.id);
+  }
+});
+
+it("a host owns the folder: files dropped before the draft exists wait for it, and the host renders with busy and fileCount", async () => {
+  const draft = await folder("album");
+  const { record, c, user } = setup();
+  let createDraft!: () => void;
+  const created = new Promise<RefBody>((r) => (createDraft = () => r(draft)));
+  const counts: number[] = [];
+  function Composer({ client }: { client: ContentKitClient }) {
+    const [ref, setRef] = useState<RefBody | null>(null);
+    const folder = useMediaFolder(ref, { client, commit: "auto", paths: ["images/{name}", "videos/{name}"] });
+    counts.push(folder.fileCount);
+    // The host creates the draft on the first drop.
+    const asked = useRef(false);
+    useEffect(() => {
+      if (asked.current || !folder.fileCount) return;
+      asked.current = true;
+      void created.then(setRef);
+    }, [folder.fileCount]);
+    return (
+      <>
+        <MediaFolderEditor folder={folder} label="New post" />
+        <button type="button" disabled={folder.busy || folder.fileCount === 0}>
+          Publish
+        </button>
+        <output aria-label="files">{folder.fileCount}</output>
+      </>
+    );
+  }
+  const { container } = render(<Composer client={c} />);
+  const publish = screen.getByRole("button", { name: "Publish" });
+  expect(screen.getByText("Drop files here, or click to choose")).toBeInTheDocument();
+  expect(publish).toBeDisabled();
+
+  await user.upload(container.querySelector<HTMLInputElement>("[data-ckui=folder-drop] input")!, [png("a.png", 51), fixture("clip.mp4", "video/mp4")]);
+  expect(container.querySelectorAll("[data-ckui=queue-row][data-status=waiting]")).toHaveLength(2);
+  expect(screen.getByRole("status", { name: "files" })).toHaveTextContent("2");
+  expect(publish).toBeDisabled();
+  expect(record.calls).toEqual([]);
+
+  act(() => createDraft());
+  await waitFor(() => expect(container.querySelectorAll("[data-ckui=upload-row]")).toHaveLength(2), wait);
+  await waitFor(() => expect(publish).toBeEnabled(), wait);
+  expect(record.commits.flat().map((op) => op.path)).toEqual(["images/a.png", "videos/clip.mp4"]);
+  expect(container.querySelectorAll("[data-ckui=queue-row]")).toHaveLength(0);
+  // A committed file stays counted until the read lists it.
+  expect(counts.slice(counts.indexOf(2))).not.toContain(1);
+  expect(counts.at(-1)).toBe(2);
 });

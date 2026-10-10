@@ -9,6 +9,8 @@ import type { CropSource } from "../client/image.js";
 import { ContentKitUiRoot } from "../scope.js";
 import type { PublicPreset } from "../client/public.js";
 import type { FileInfo, ReadResult, RefBody } from "../client/generated/wire.js";
+import { presetFor } from "../client/media/rules.js";
+import { usePresets } from "../react/public.js";
 import { Button } from "#ckui/ui/button";
 import { SlotEditError, SlotEditor, useSlotEditor } from "./slot-editor.js";
 import { SlotImage } from "./slot-image.js";
@@ -59,6 +61,8 @@ export function CoverUpload(p: SlotUploadProps) {
 
 function SlotUpload({ variant, ...p }: SlotUploadProps & { variant: Variant }) {
   const path = p.path ?? variant;
+  const { presets } = usePresets({ client: p.client });
+  const rule = presetFor(presets, p.item.kind, path, p.image?.preset);
   return (
     <ContentKitUiRoot className={cn("text-sm", p.className)} data-ckui={variant === "avatar" ? "avatar-upload" : "cover-upload"}>
       <SlotEditor
@@ -68,7 +72,7 @@ function SlotUpload({ variant, ...p }: SlotUploadProps & { variant: Variant }) {
         client={p.client}
         read={p.read}
         onChange={p.onChange}
-        aspect={p.aspect || p.image?.aspect || (variant === "avatar" ? "1:1" : "3:1")}
+        aspect={p.aspect || p.image?.aspect || rule?.aspect || (variant === "avatar" ? "1:1" : "3:1")}
         minWidth={p.minWidth}
         animation={p.animation}
         targetWidth={p.targetWidth ?? (variant === "avatar" ? 512 : 3000)}
