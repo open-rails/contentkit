@@ -312,7 +312,7 @@ need a signed-in actor. A refused anonymous attempt is `401 unauthorized`.
 `GET /config` answers the setting (`{"anonymous": {"comments", "reactions",
 "votes"}, "comment_max_length"}`) and `GET /{kind}/{id}/can-comment` carries
 `anonymous`, so a client shows a sign-in prompt or an anonymous form from the
-server's answer. `content.Options.CommentMaxLength` (default 400 characters)
+server's answer. `content.Options.CommentMaxLength` (default 2,200 characters)
 bounds comments and edits: longer is `422 comment_too_long` with
 `details.max`; the standing carries it as `max_length`.
 

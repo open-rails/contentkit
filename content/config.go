@@ -28,7 +28,7 @@ type Config struct {
 }
 
 // DefaultCommentMaxLength is Options.CommentMaxLength unset.
-const DefaultCommentMaxLength = 400
+const DefaultCommentMaxLength = 2200
 
 var configRoutes = []httpapi.Route[*Runtime]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/config", Resource: "config", Auth: httpapi.Public,
