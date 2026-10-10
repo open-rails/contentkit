@@ -31,6 +31,7 @@ export type ContentKitRoute = {
 
 export const CONTENTKIT_ROUTES = [
   { method: "GET", module: "content", path: "/posts", auth: "public", permission: null, query: ["language", "sort", "limit", "offset"], request: null, responses: { 200: "Post[]" }, errors: [], errorSets: ["module:content", "request"] },
+  { method: "GET", module: "content", path: "/posts/admin", auth: "staff", permission: "PostWrite", query: ["language", "draft", "limit", "offset"], request: null, responses: { 200: "Post[]" }, errors: [], errorSets: ["module:content", "tier:staff", "request"] },
   { method: "GET", module: "content", path: "/posts/{id}", auth: "public", permission: null, query: [], request: null, responses: { 200: "Post" }, errors: ["not_found"], errorSets: ["module:content", "request"] },
   { method: "POST", module: "content", path: "/posts", auth: "staff", permission: "PostWrite", query: [], request: "PostInput", responses: { 201: "Post", 202: "Post" }, errors: ["conflict", "forbidden", "moderation_rejected"], errorSets: ["module:content", "tier:staff", "request"] },
   { method: "PATCH", module: "content", path: "/posts/{id}", auth: "staff", permission: "PostWrite", query: [], request: "PostInput", responses: { 200: "Post", 202: "Post" }, errors: ["conflict", "forbidden", "moderation_rejected", "not_found"], errorSets: ["module:content", "tier:staff", "request"] },

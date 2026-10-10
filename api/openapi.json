@@ -138,6 +138,80 @@
         ]
       }
     },
+    "/posts/admin": {
+      "get": {
+        "tags": [
+          "posts"
+        ],
+        "summary": "Every post, newest first: drafts, scheduled, held and rejected ones included.",
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only posts in this language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "draft",
+            "in": "query",
+            "description": "true: only drafts; false: only posts that are not drafts",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "items to skip",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Post"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "PostWrite",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
     "/posts/{id}": {
       "get": {
         "tags": [

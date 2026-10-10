@@ -94,6 +94,12 @@ var postRoutes = []httpapi.Route[*posts]{
 		Query:     append([]httpapi.Param{httpapi.Text("language", "only posts in this language"), sortParam}, httpapi.Page...),
 		Responses: []httpapi.Reply{httpapi.OK([]Post{})}},
 		Serve: httpapi.H((*posts).handleList)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/posts/admin", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
+		Doc: "Every post, newest first: drafts, scheduled, held and rejected ones included.",
+		Query: append([]httpapi.Param{httpapi.Text("language", "only posts in this language"),
+			httpapi.Bool("draft", "true: only drafts; false: only posts that are not drafts")}, httpapi.Page...),
+		Responses: []httpapi.Reply{httpapi.OK([]Post{})}},
+		Serve: httpapi.H((*posts).handleAdminList)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/posts/{id}", Resource: "posts", Auth: httpapi.Public,
 		Doc:       "A post. A draft, scheduled, held or rejected post is shown only to its author and PostWrite holders.",
 		Responses: []httpapi.Reply{httpapi.OK(Post{})}, Errors: []string{CodeNotFound}},
@@ -539,6 +545,34 @@ func (p *posts) handleList(w http.ResponseWriter, req *http.Request) {
 		AND ($1 = '' OR p.language = $1)
 		`+orderBy(q.Get("sort"), "p.total_likes", "p.total_dislikes", "COALESCE(p.live_at, p.created_at)")+`
 		LIMIT $2 OFFSET $3`, language, limit, offset, p.s.tenant)
+	p.writeList(ctx, w, rows, err)
+}
+
+// handleAdminList lists every live post for staff, newest first. PostWrite-gated.
+func (p *posts) handleAdminList(w http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
+	if err := p.rt.requirePerm(ctx, p.rt.actor(ctx), p.rt.perms.PostWrite); err != nil {
+		writeErr(w, err)
+		return
+	}
+	q := req.URL.Query()
+	var draft *bool
+	if v := q.Get("draft"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			writeErr(w, badRequest("draft must be true or false"))
+			return
+		}
+		draft = &b
+	}
+	limit, offset := parsePage(req)
+	rows, err := p.s.pool.Query(ctx, `SELECT `+p.cols+` FROM `+p.s.t.posts+` p
+		WHERE p.tenant_id = $1 AND p.deleted_at IS NULL AND ($2 = '' OR p.language = $2) AND ($3::boolean IS NULL OR p.is_draft = $3)
+		ORDER BY p.created_at DESC, p.id DESC LIMIT $4 OFFSET $5`, p.s.tenant, q.Get("language"), draft, limit, offset)
+	p.writeList(ctx, w, rows, err)
+}
+
+func (p *posts) writeList(ctx context.Context, w http.ResponseWriter, rows pgx.Rows, err error) {
 	if err != nil {
 		writeErr(w, err)
 		return
