@@ -20,20 +20,25 @@ type Anonymous struct {
 }
 
 // Config is what the content module allows, so clients choose between a
-// sign-in prompt and an anonymous form before acting.
+// sign-in prompt and an anonymous form, and bound a comment, before acting.
 type Config struct {
 	Anonymous Anonymous `json:"anonymous"`
+	// CommentMaxLength is the longest comment, in characters.
+	CommentMaxLength int `json:"comment_max_length"`
 }
+
+// DefaultCommentMaxLength is Options.CommentMaxLength unset.
+const DefaultCommentMaxLength = 400
 
 var configRoutes = []httpapi.Route[*Runtime]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/config", Resource: "config", Auth: httpapi.Public,
-		Doc:       "What the content module allows: which interactions signed-out visitors may make.",
+		Doc:       "What the content module allows: which interactions signed-out visitors may make, and the longest comment.",
 		Responses: []httpapi.Reply{httpapi.OK(Config{})}},
 		Serve: httpapi.H((*Runtime).handleConfig)},
 }
 
 func (rt *Runtime) config() Config {
-	return Config{Anonymous: rt.anonymous}
+	return Config{Anonymous: rt.anonymous, CommentMaxLength: rt.commentMax}
 }
 
 func (rt *Runtime) handleConfig(w http.ResponseWriter, _ *http.Request) {

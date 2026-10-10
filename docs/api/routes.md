@@ -12,7 +12,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/config` | public | — | 200 `Config` | What the content module allows: which interactions signed-out visitors may make. |
+| GET | `/config` | public | — | 200 `Config` | What the content module allows: which interactions signed-out visitors may make, and the longest comment. |
 | GET | `/posts` | public | — | 200 `Post[]` | Published posts. Query: `language`, `sort`, `limit`, `offset`. |
 | GET | `/posts/admin` | staff `PostWrite` | — | 200 `Post[]` | Every post, newest first: drafts, scheduled, held and rejected ones included; deleted ones on their own. Query: `language`, `draft`, `deleted`, `q`, `limit`, `offset`. |
 | GET | `/posts/{id}` | public | — | 200 `Post` | A post. A draft, scheduled, held or rejected post is shown only to its author and PostWrite holders. |
@@ -126,6 +126,7 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `animation_unsupported` | 415 | An AVIF or HEIF image sequence, which is decoded as one frame. |
 | `checksum_mismatch` | 422 | The stored bytes differ from the declared SHA-256. |
 | `comment_banned` | 403 | The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends. |
+| `comment_too_long` | 422 | The comment is longer than the site allows; `details.max` is the limit in characters. |
 | `conflict` | 409 | A concurrent change, a path or slug already taken, or an operation id already used for another commit. |
 | `forbidden` | 403 | The actor may not do this. |
 | `gone` | 410 | The content was removed. |

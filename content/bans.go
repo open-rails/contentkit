@@ -329,6 +329,8 @@ type CommentStanding struct {
 	// Anonymous: signed-out visitors may comment here, under a name
 	// (Options.Anonymous.Comments); otherwise they are asked to sign in.
 	Anonymous bool `json:"anonymous"`
+	// MaxLength is the longest comment, in characters (Options.CommentMaxLength).
+	MaxLength int `json:"max_length"`
 	// UserID is the caller's user id, absent when anonymous: the comments it
 	// wrote are the ones it may edit and delete.
 	UserID string `json:"user_id,omitempty"`
@@ -350,7 +352,7 @@ func (rt *Runtime) handleCanComment(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	out := CommentStanding{UserID: viewerID(actor), Anonymous: rt.anonymous.Comments, BanScopes: []BanScope{}}
+	out := CommentStanding{UserID: viewerID(actor), Anonymous: rt.anonymous.Comments, MaxLength: rt.commentMax, BanScopes: []BanScope{}}
 	out.CanComment = res.Accessible && (out.UserID != "" || out.Anonymous)
 	var banned *BannedError
 	if err := rt.checkCommentBan(ctx, viewerID(actor), res.Owner); errors.As(err, &banned) {

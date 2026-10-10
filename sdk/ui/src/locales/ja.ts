@@ -259,6 +259,8 @@ export const ja: ContentKitUiMessageBundle = {
     resume_mismatch: "保存されたアップロードは別のファイルのものです。もう一度ファイルを選んでください。",
     moderation_rejected: "モデレーションにより拒否されました。",
     comment_banned: "ここではコメントできません。",
+    comment_too_long: "コメントが長すぎます。",
+    commentTooLongBy: "コメントは {maxChars} 文字までです。",
     not_configured: "この機能はこのサイトでは利用できません。",
     tenant_mismatch: "サーバー側で問題が発生しました。もう一度お試しください。",
     gone: "このコンテンツはもう利用できません。",

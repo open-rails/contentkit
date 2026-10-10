@@ -77,7 +77,8 @@ const urls = createContentURLs({ routes: { video: "watch", gallery: "g" }, langu
   unpublished post's images to its editors (below).
 - **`client.config()`** says what the content module allows: which
   interactions signed-out visitors may make (`content.Options.Anonymous`,
-  none by default).
+  none by default) and the longest comment (`CommentMaxLength`, 400 by
+  default; longer is `comment_too_long` with `details.max`).
 - **`client.subscribe(listener)`** receives every successful mutation
   (`media.committed`, `media.processed`, `comment.created`, `reaction.changed`,
   `poll.updated`, `ban.saved`, …); `ContentKitProvider onChange` is the same
@@ -358,7 +359,7 @@ fullscreen and a mini player.
 
 `Comments` (threads with one-level replies, tombstones, held and rejected
 states shown to their author, reactions, edit, delete, ban and rate-limit
-notices), `ReactionButtons`, `FavoriteButton` (with the server's count)
+notices, the server's longest comment), `ReactionButtons`, `FavoriteButton` (with the server's count)
 and `Poll` (a final vote with results scaled to the leading option, or a
 free-text answer and its groups; `results="always"` shows results before
 voting). Signed-out visitors comment under a name, react and vote where the

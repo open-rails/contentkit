@@ -34,8 +34,6 @@ export interface CommentsProps {
   pageSize?: number;
   /** Replies per page. Default 10. */
   repliesPageSize?: number;
-  /** Longest body. Default 400. */
-  maxLength?: number;
   /**
    * Asks a signed-out visitor to sign in where the server takes no anonymous
    * comments or reactions (default the provider's). Where it does, they
@@ -64,7 +62,8 @@ interface Thread {
   gate: (kind: Act, fn: () => void) => void;
   /** false: signed out where the server refuses it, with no sign-in to offer. */
   can: (kind: Act) => boolean;
-  maxLength: number;
+  /** The server's longest comment (the standing's); undefined until it loads. */
+  maxLength?: number;
   repliesPageSize: number;
   renderBody?: CommentsProps["renderBody"];
   userHref?: CommentsProps["userHref"];
@@ -132,7 +131,7 @@ export function Comments(p: CommentsProps) {
     signedIn,
     gate: (kind, fn) => (mustSignIn(kind) ? signIn?.() : fn()),
     can: (kind) => !mustSignIn(kind) || !!signIn,
-    maxLength: p.maxLength ?? 400,
+    maxLength: standing?.max_length,
     repliesPageSize: p.repliesPageSize ?? 10,
     renderBody: p.renderBody,
     userHref: p.userHref,
@@ -470,7 +469,7 @@ function Composer(p: ComposerProps) {
   const [error, setError] = useState<string | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
   const max = thread.maxLength;
-  const left = max - body.length;
+  const left = max === undefined ? undefined : max - body.length;
 
   const send = async () => {
     const text = body.trim();
@@ -533,7 +532,7 @@ function Composer(p: ComposerProps) {
         <span id={`${ids}-hint`} className="me-auto text-xs text-muted-foreground" aria-live="polite">
           {invalid ? (
             <span className="text-destructive">{invalid}</span>
-          ) : left <= max * 0.2 ? (
+          ) : left !== undefined && max !== undefined && left <= max * 0.2 ? (
             m.plural("comments.charsLeft", left)
           ) : (
             <span className="pointer-coarse:hidden">{t("comments.submitHint", { key: mac ? "⌘" : "Ctrl" })}</span>

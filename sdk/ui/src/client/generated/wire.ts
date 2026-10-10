@@ -114,6 +114,7 @@ export interface CommentStanding {
   can_comment: boolean;
   ban?: BanNotice;
   anonymous: boolean;
+  max_length: number;
   user_id?: string;
   moderate: boolean;
   ban_scopes: ("global" | "owner")[];
@@ -137,6 +138,7 @@ export interface CompleteReply {
 
 export interface Config {
   anonymous: Anonymous;
+  comment_max_length: number;
 }
 
 export interface ContentRef {

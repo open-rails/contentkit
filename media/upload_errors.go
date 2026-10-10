@@ -90,7 +90,7 @@ type ErrorDetails struct {
 	MaxSeconds float64  `json:"max_seconds,omitempty"` // animation_too_long, video_too_long
 	MinAspect  float64  `json:"min_aspect,omitempty"`  // video_aspect_unsupported: the narrowest width/height accepted
 	MaxAspect  float64  `json:"max_aspect,omitempty"`  // video_aspect_unsupported: the widest width/height accepted
-	Max        int      `json:"max,omitempty"`         // too_many_files: the files allowed
+	Max        int      `json:"max,omitempty"`         // too_many_files: the files allowed; comment_too_long: the characters allowed
 }
 
 // ImageError is an image the rules refuse, synchronously (an edit checked

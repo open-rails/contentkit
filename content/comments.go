@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 
@@ -185,11 +186,15 @@ func (c *comments) present(ctx context.Context, actor access.Actor, cm Comment) 
 	return list[0]
 }
 
-// cleanBody trims and sanitizes a comment body; empty after either is a 400.
+// cleanBody trims and sanitizes a comment body; empty after either is a 400,
+// longer than Options.CommentMaxLength (as written) a 422 comment_too_long.
 func (c *comments) cleanBody(ctx context.Context, raw string) (string, error) {
 	body := strings.TrimSpace(raw)
 	if body == "" {
 		return "", badRequest("body is required")
+	}
+	if utf8.RuneCountInString(body) > c.rt.commentMax {
+		return "", &TooLongError{Max: c.rt.commentMax}
 	}
 	clean, err := c.rt.processor.Sanitize(ctx, body)
 	if err != nil {
@@ -782,7 +787,7 @@ var commentRoutes = []httpapi.Route[*comments]{
 		Doc:       "Comments on a target, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.",
 		Request:   CommentInput{},
 		Responses: []httpapi.Reply{httpapi.Created(Comment{}), httpapi.Accepted(Comment{})},
-		Errors:    []string{CodeCommentBanned, CodeForbidden, CodeModerationRejected, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
+		Errors:    []string{CodeCommentBanned, CodeCommentTooLong, CodeForbidden, CodeModerationRejected, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
 		Serve: httpapi.H((*comments).handleCreate)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/comments/latest", Resource: "comments", Auth: httpapi.Public,
 		Doc:   "The newest published comments across the tenant, with their targets; a page may under-fill.",
@@ -805,7 +810,7 @@ var commentRoutes = []httpapi.Route[*comments]{
 		Doc:       "Edits a comment: its author, or a CommentModerate holder. 202 when the moderator holds the new text.",
 		Request:   CommentEdit{},
 		Responses: []httpapi.Reply{httpapi.OK(Comment{}), httpapi.Accepted(Comment{})},
-		Errors:    []string{CodeCommentBanned, CodeConflict, CodeForbidden, CodeModerationRejected, CodeNotFound}},
+		Errors:    []string{CodeCommentBanned, CodeCommentTooLong, CodeConflict, CodeForbidden, CodeModerationRejected, CodeNotFound}},
 		Serve: httpapi.H((*comments).handleEdit)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/comments/{cid}", Resource: "comments", Auth: httpapi.Public,
 		Doc:       "Deletes a comment, leaving a tombstone: its author, or a CommentModerate holder.",

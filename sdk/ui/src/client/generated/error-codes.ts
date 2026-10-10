@@ -6,6 +6,7 @@ export type ErrorCode =
   | "animation_unsupported"
   | "checksum_mismatch"
   | "comment_banned"
+  | "comment_too_long"
   | "conflict"
   | "forbidden"
   | "gone"
@@ -41,6 +42,7 @@ export const CONTENTKIT_ERROR_CODES: Readonly<Record<ErrorCode, { status: number
   animation_unsupported: { status: 415, meaning: "An AVIF or HEIF image sequence, which is decoded as one frame." },
   checksum_mismatch: { status: 422, meaning: "The stored bytes differ from the declared SHA-256." },
   comment_banned: { status: 403, meaning: "The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends." },
+  comment_too_long: { status: 422, meaning: "The comment is longer than the site allows; `details.max` is the limit in characters." },
   conflict: { status: 409, meaning: "A concurrent change, a path or slug already taken, or an operation id already used for another commit." },
   forbidden: { status: 403, meaning: "The actor may not do this." },
   gone: { status: 410, meaning: "The content was removed." },

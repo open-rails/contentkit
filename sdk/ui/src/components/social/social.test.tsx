@@ -54,7 +54,7 @@ const comment = (id: string, o: Partial<Comment> = {}): Comment => ({
   updated_at: at,
   ...o,
 });
-const standing = (o: Partial<CommentStanding> = {}): CommentStanding => ({ can_comment: true, anonymous: false, user_id: "alice", moderate: false, ban_scopes: [], ...o });
+const standing = (o: Partial<CommentStanding> = {}): CommentStanding => ({ can_comment: true, anonymous: false, max_length: 400, user_id: "alice", moderate: false, ban_scopes: [], ...o });
 const config = (anonymous: Partial<Config["anonymous"]> = {}) => () => ({ anonymous: { comments: false, reactions: false, votes: false, ...anonymous } });
 
 it("Comments: a thread with tombstones and the author's held comment; posting lands in place; Ctrl+Enter posts", async () => {
@@ -108,6 +108,22 @@ it("Comments: a refused like rolls back; a ban or a rate limit is explained", as
   await user.type(screen.getByRole("textbox", { name: "Add a comment…" }), "spam");
   await user.click(screen.getByRole("button", { name: "Post" }));
   expect(await screen.findByText("You're commenting too quickly. Try again in 12 s.")).toBeInTheDocument();
+});
+
+it("Comments: the longest comment is the server's: the field takes no more, and a refusal says the limit", async () => {
+  const s = server({
+    "GET /video/v1/comments": () => [],
+    "GET /video/v1/can-comment": () => standing({ max_length: 20 }),
+    "POST /video/v1/comments": () => refusal(422, "comment_too_long", { details: { max: 20 } }),
+  });
+  const user = userEvent.setup();
+  render(<Comments item={item} />, { wrapper: wrap(s.client) });
+  const box = await screen.findByRole("textbox", { name: "Add a comment…" });
+  await waitFor(() => expect(box).toHaveAttribute("maxlength", "20"));
+  await user.type(box, "seventeen letters");
+  expect(screen.getByText("3 characters left")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Post" }));
+  expect(await screen.findByText("A comment is at most 20 characters.")).toBeInTheDocument();
 });
 
 it("Comments: a banned caller sees why instead of the composer", async () => {

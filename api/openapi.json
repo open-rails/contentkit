@@ -11,7 +11,7 @@
         "tags": [
           "config"
         ],
-        "summary": "What the content module allows: which interactions signed-out visitors may make.",
+        "summary": "What the content module allows: which interactions signed-out visitors may make, and the longest comment.",
         "responses": {
           "200": {
             "description": "OK",
@@ -897,6 +897,7 @@
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "comment_banned",
+          "comment_too_long",
           "forbidden",
           "moderation_rejected",
           "not_found",
@@ -1209,6 +1210,7 @@
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "comment_banned",
+          "comment_too_long",
           "conflict",
           "forbidden",
           "moderation_rejected",
@@ -5183,6 +5185,9 @@
           "anonymous": {
             "type": "boolean"
           },
+          "max_length": {
+            "type": "integer"
+          },
           "user_id": {
             "type": "string"
           },
@@ -5203,6 +5208,7 @@
         "required": [
           "can_comment",
           "anonymous",
+          "max_length",
           "moderate",
           "ban_scopes"
         ]
@@ -5262,10 +5268,14 @@
         "properties": {
           "anonymous": {
             "$ref": "#/components/schemas/Anonymous"
+          },
+          "comment_max_length": {
+            "type": "integer"
           }
         },
         "required": [
-          "anonymous"
+          "anonymous",
+          "comment_max_length"
         ]
       },
       "ContentRef": {
@@ -7278,6 +7288,7 @@
           "animation_unsupported",
           "checksum_mismatch",
           "comment_banned",
+          "comment_too_long",
           "conflict",
           "forbidden",
           "gone",
@@ -7442,6 +7453,10 @@
     "comment_banned": {
       "status": 403,
       "meaning": "The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends."
+    },
+    "comment_too_long": {
+      "status": 422,
+      "meaning": "The comment is longer than the site allows; `details.max` is the limit in characters."
     },
     "conflict": {
       "status": 409,

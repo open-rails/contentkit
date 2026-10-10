@@ -1,11 +1,14 @@
 package content
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/pgtest"
 )
 
 // What signed-out visitors may do is the server's setting: off by default,
@@ -96,4 +99,46 @@ func errCode(t *testing.T, body []byte) string {
 		t.Fatalf("error body %s: %v", body, err)
 	}
 	return e.Code
+}
+
+// The longest comment is the server's: counted in characters as written,
+// refused with comment_too_long and its max, and said by /config and the standing.
+func TestCommentLengthIsAServerSetting(t *testing.T) {
+	user := access.Actor{ID: "u1", Kind: "user"}
+	for _, c := range []struct{ option, max int }{{0, DefaultCommentMaxLength}, {10, 10}} {
+		res := &fakeResolver{}
+		res.set("gallery", cid(1), true, true)
+		rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, CommentMaxLength: c.option})
+		h := rt.Handler()
+		var cfg Config
+		if rec := doJSON(t, h, user, "GET", "/config", nil); json.Unmarshal(rec.Body.Bytes(), &cfg) != nil || cfg.CommentMaxLength != c.max {
+			t.Fatalf("config %s", rec.Body)
+		}
+		var standing CommentStanding
+		if rec := doJSON(t, h, user, "GET", gallery(1, "/can-comment"), nil); json.Unmarshal(rec.Body.Bytes(), &standing) != nil || standing.MaxLength != c.max {
+			t.Fatalf("standing %s", rec.Body)
+		}
+		fits := "  " + strings.Repeat("é", c.max) + "\n"
+		rec := doJSON(t, h, user, "POST", gallery(1, "/comments"), CommentInput{Body: fits})
+		var cm Comment
+		if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &cm) != nil {
+			t.Fatalf("max %d: a comment of %d characters: %d %s", c.max, c.max, rec.Code, rec.Body)
+		}
+		long := strings.Repeat("é", c.max+1)
+		for _, r := range []struct{ method, path string }{{"POST", gallery(1, "/comments")}, {"PATCH", "/comments/" + cm.ID}} {
+			rec := doJSON(t, h, user, r.method, r.path, CommentInput{Body: long})
+			var e struct {
+				Code    string `json:"code"`
+				Details struct {
+					Max int `json:"max"`
+				} `json:"details"`
+			}
+			if rec.Code != http.StatusUnprocessableEntity || json.Unmarshal(rec.Body.Bytes(), &e) != nil || e.Code != CodeCommentTooLong || e.Details.Max != c.max {
+				t.Fatalf("max %d: %s %s of %d characters: %d %s", c.max, r.method, r.path, c.max+1, rec.Code, rec.Body)
+			}
+		}
+	}
+	if _, err := New(context.Background(), Options{Pool: pgtest.Pool(t, nil), Schema: "x", Tenant: "t", Identity: &fakeIdentity{}, Authz: allowAll{}, Resolver: &fakeResolver{}, CommentMaxLength: -1}); err == nil {
+		t.Fatal("a negative CommentMaxLength was accepted")
+	}
 }

@@ -9,6 +9,8 @@ import (
 	"strconv"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/open-rails/contentkit/media"
 )
 
 // httpError carries an explicit status for handler-level failures (validation,
@@ -29,6 +31,13 @@ var (
 	errUnauthorized   = httpError{status: http.StatusUnauthorized, msg: "authentication required"}
 	errForbidden      = httpError{status: http.StatusForbidden, msg: "forbidden"}
 )
+
+// TooLongError refuses a comment longer than Max characters. -> 422 comment_too_long
+type TooLongError struct{ Max int }
+
+func (e *TooLongError) Error() string {
+	return fmt.Sprintf("a comment is at most %d characters", e.Max)
+}
 
 // RejectedError is a policy rejection of a text write, answered as 422 with
 // its reason: a ContentModerator's reject verdict.
@@ -51,6 +60,9 @@ const (
 	// CodeCommentBanned: the caller is banned from commenting on this target;
 	// the body's ban says the scope, reason and until. -> 403
 	CodeCommentBanned = "comment_banned"
+	// CodeCommentTooLong: the comment is longer than Options.CommentMaxLength;
+	// details.max is the limit in characters. -> 422
+	CodeCommentTooLong = "comment_too_long"
 	// CodeNotConfigured: the capability exists but the host never wired its
 	// port (Media, AnswerClassifier). Retrying does not help. -> 501
 	CodeNotConfigured = "not_configured"
@@ -67,6 +79,8 @@ type errorBody struct {
 	Action     Action     `json:"action,omitempty"`      // rate_limited
 	RetryAfter int        `json:"retry_after,omitempty"` // rate_limited: seconds
 	Ban        *BanNotice `json:"ban,omitempty"`         // comment_banned
+	// Details.Max is the limit: comment_too_long.
+	Details *media.ErrorDetails `json:"details,omitempty"`
 }
 
 // statusWriter records the response status and the cause of a 5xx (set by
@@ -102,6 +116,10 @@ func writeErr(w http.ResponseWriter, err error) {
 	if errors.As(err, &banned) {
 		body.Ban = &banned.BanNotice
 	}
+	var long *TooLongError
+	if errors.As(err, &long) {
+		body.Details = &media.ErrorDetails{Max: long.Max}
+	}
 	writeJSON(w, status, body)
 }
 
@@ -110,7 +128,10 @@ func writeErr(w http.ResponseWriter, err error) {
 // failures are fail-closed; 5xx messages carry nothing internal.
 func classifyErr(err error) (status int, code, msg string) {
 	var banned *BannedError
+	var long *TooLongError
 	switch {
+	case errors.As(err, &long):
+		return http.StatusUnprocessableEntity, CodeCommentTooLong, long.Error()
 	case errors.Is(err, ErrRateLimited):
 		return http.StatusTooManyRequests, CodeRateLimited, "too many requests; try again later"
 	case errors.As(err, &banned):
