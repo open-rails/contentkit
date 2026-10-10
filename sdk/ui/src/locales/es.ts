@@ -259,6 +259,7 @@ export const es: ContentKitUiMessageBundle = {
     resume_mismatch: "La subida guardada es de otro archivo. Vuelve a elegir el archivo.",
     moderation_rejected: "La moderación lo ha rechazado.",
     comment_banned: "No puedes comentar aquí.",
+    comments_closed: "No puedes comentar aquí.",
     comment_too_long: "Este comentario es demasiado largo.",
     commentTooLongBy: "Un comentario tiene como máximo {maxChars} caracteres.",
     not_configured: "Esta función no está disponible en este sitio.",

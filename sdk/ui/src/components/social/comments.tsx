@@ -130,7 +130,7 @@ export function Comments(p: CommentsProps) {
     standing,
     signedIn,
     gate: (kind, fn) => (mustSignIn(kind) ? signIn?.() : fn()),
-    can: (kind) => !mustSignIn(kind) || !!signIn,
+    can: (kind) => !(kind === "comment" && standing?.closed) && (!mustSignIn(kind) || !!signIn),
     maxLength: standing?.max_length,
     repliesPageSize: p.repliesPageSize ?? 10,
     renderBody: p.renderBody,
@@ -167,6 +167,8 @@ export function Comments(p: CommentsProps) {
         )}
         {ban ? (
           <BanNotice ban={ban} />
+        ) : standing?.closed ? (
+          <p className="rounded-lg border border-border p-3 text-muted-foreground">{t("comments.locked")}</p>
         ) : mustSignIn("comment") ? (
           signIn ? (
             <Button variant="outline" className="justify-self-start" onClick={signIn}>
@@ -305,7 +307,7 @@ function TopLevel({ comment }: { comment: Comment }) {
           )}
         </ul>
       )}
-      {replyTo !== null && (
+      {replyTo !== null && !thread.standing?.closed && (
         <div className="ms-11 grid gap-1">
           <p className="text-xs text-muted-foreground">{t("comments.replyingTo", { name: replyTo })}</p>
           <Composer
@@ -335,7 +337,8 @@ function Row({ comment: c, onReply }: { comment: Comment; onReply?: (name: strin
   const { standing } = thread;
   const name = authorName(c, t("comments.anonymous"));
   const own = !!standing?.user_id && c.user_id === standing.user_id;
-  const canEdit = !c.deleted && (own || !!standing?.moderate);
+  const canDelete = !c.deleted && (own || !!standing?.moderate);
+  const canEdit = canDelete && !standing?.closed;
   const canBan = !c.deleted && !!c.user_id && !own && (standing?.ban_scopes.length ?? 0) > 0;
   const bans = c.user_id ? thread.banned.get(c.user_id) : undefined;
   const [editing, setEditing] = useState(false);
@@ -365,14 +368,14 @@ function Row({ comment: c, onReply }: { comment: Comment; onReply?: (name: strin
           <RelativeTime at={c.created_at} className="text-xs text-muted-foreground" />
           {c.moderation === "held" && <Badge variant="secondary">{t("comments.heldBadge")}</Badge>}
           {c.moderation === "rejected" && <Badge variant="destructive">{t("comments.rejectedBadge")}</Badge>}
-          {(canEdit || canBan || (c.deleted && standing?.moderate)) && (
+          {(canDelete || canBan || (c.deleted && standing?.moderate)) && (
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" className="ms-auto" aria-label={t("comments.actions")} />}>
                 <HugeiconsIcon icon={MoreHorizontalIcon} strokeWidth={2} />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 {canEdit && <DropdownMenuItem onClick={() => setEditing(true)}>{t("comments.edit")}</DropdownMenuItem>}
-                {canEdit && (
+                {canDelete && (
                   <DropdownMenuItem className="text-destructive" onClick={() => setDeleting(true)}>
                     {t("comments.delete")}
                   </DropdownMenuItem>
@@ -384,7 +387,7 @@ function Row({ comment: c, onReply }: { comment: Comment; onReply?: (name: strin
             </DropdownMenu>
           )}
         </header>
-        {editing ? (
+        {editing && canEdit ? (
           <Composer
             autoFocus
             initial={c.body}

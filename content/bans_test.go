@@ -3,6 +3,7 @@ package content
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,9 +11,94 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contentref"
 )
 
 const banPerm = "comments:ban"
+
+func TestCommentPolicyStandingAndWrites(t *testing.T) {
+	res := &fakeResolver{}
+	res.setOwned("gallery", cid(1), owner.ID)
+	closed := false
+	var policyErr error
+	rt, pool := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"},
+		Perms:     Perms{CommentModerate: "mod"},
+		Anonymous: Anonymous{Comments: true},
+		CommentAllowed: func(_ context.Context, target contentref.ContentRef, _ access.Actor) (bool, error) {
+			if target != ref("gallery", cid(1)) {
+				t.Errorf("policy received wrong thread: %+v", target)
+			}
+			return !closed, policyErr
+		},
+	})
+	h := rt.Handler()
+	parent := created(t, comment(t, h, owner, 1, ""))
+	created(t, comment(t, h, fan, 1, parent.ID))
+	if got := standing(t, h, owner, 1); !got.CanComment || got.Closed {
+		t.Fatalf("open thread refused author: %+v", got)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{"closed", nil, http.StatusForbidden, CodeCommentsClosed},
+		{"policy unavailable", errors.New("database unavailable"), http.StatusInternalServerError, CodeInternal},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			closed, policyErr = true, tc.err
+			for _, who := range []access.Actor{owner, operator, {Anonymous: true}} {
+				rec := doJSON(t, h, who, "GET", gallery(1, "/can-comment"), nil)
+				if tc.err != nil {
+					if rec.Code != http.StatusInternalServerError {
+						t.Fatalf("policy failure standing: %d %s", rec.Code, rec.Body.String())
+					}
+				} else {
+					var got CommentStanding
+					if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || rec.Code != http.StatusOK || got.CanComment || !got.Closed {
+						t.Fatalf("closed standing: %d %s", rec.Code, rec.Body.String())
+					}
+				}
+			}
+			for _, write := range []struct {
+				name, method, path string
+				actor              access.Actor
+				body               any
+			}{
+				{"create", "POST", gallery(1, "/comments"), owner, CommentInput{Body: "new"}},
+				{"anonymous create", "POST", gallery(1, "/comments"), access.Actor{Anonymous: true, IP: "10.0.0.1"}, CommentInput{Body: "new", AnonName: "guest"}},
+				{"reply", "POST", gallery(1, "/comments"), fan, CommentInput{Body: "reply", ReplyToID: parent.ID}},
+				{"author edit", "PATCH", "/comments/" + parent.ID, owner, CommentEdit{Body: "changed"}},
+				{"moderator edit", "PATCH", "/comments/" + parent.ID, operator, CommentEdit{Body: "changed"}},
+			} {
+				t.Run(write.name, func(t *testing.T) {
+					rec := doJSON(t, h, write.actor, write.method, write.path, write.body)
+					if rec.Code != tc.status || decodeErr(t, rec.Body.String()).Code != tc.code {
+						t.Fatalf("write passed closed policy: %d %s", rec.Code, rec.Body.String())
+					}
+				})
+			}
+			var count int
+			if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM `+rt.store.t.comments).Scan(&count); err != nil || count != 2 {
+				t.Fatalf("denied writes must not create even held comments: count=%d err=%v", count, err)
+			}
+		})
+	}
+	policyErr = nil
+	if rec := doJSON(t, h, owner, "GET", gallery(1, "/comments"), nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), parent.Body) {
+		t.Fatalf("closed thread lost readable comments: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := doJSON(t, h, owner, "DELETE", "/comments/"+parent.ID, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("closed thread refused deletion: %d %s", rec.Code, rec.Body.String())
+	}
+	closed = false
+	parent = created(t, comment(t, h, owner, 1, ""))
+	if rec := doJSON(t, h, operator, "PATCH", "/comments/"+parent.ID, CommentEdit{Body: "edited"}); rec.Code != http.StatusOK {
+		t.Fatalf("reopened thread refused moderator edit: %d %s", rec.Code, rec.Body.String())
+	}
+}
 
 // banAuthz grants Perms.CommentBan to operators only, every other perm to all.
 type banAuthz struct{ operators map[string]bool }

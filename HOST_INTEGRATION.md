@@ -344,6 +344,23 @@ back to the per-process count for a second and adds to the expvar
 with `Retry-After` and `{"action", "retry_after"}` in the body
 (`*content.RateLimitError`, `errors.Is(err, content.ErrRateLimited)`).
 
+## Comment eligibility
+
+Set `content.Options.CommentAllowed(ctx, ref, actor)` for a host rule such as
+a video's `comments_enabled` flag. Standing and create/reply/edit all consult
+this read-only callback, including moderator edits. A false result sets
+`can_comment: false, closed: true` in standing and refuses writes with
+`403 comments_closed`; an error fails the request without holding a submission.
+Leaving it nil adds no restriction. Identity, content access and bans still
+apply separately.
+
+The callback receives the resolved thread reference on standing and creation,
+and the stored reference on edits. Reading, deleting, restoring and reacting
+are unaffected. Keep text screening in `Moderator.Screen`; do not put a
+closed-thread rule there or hide the thread through the content resolver.
+The shared `Comments` UI hides posting, replying and editing when `closed`
+is true, while retaining existing comments and delete controls.
+
 ## Comment bans
 
 A ban is current state only: `{user, scope, reason, until, by}`, no history.

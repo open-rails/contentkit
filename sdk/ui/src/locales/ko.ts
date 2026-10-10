@@ -259,6 +259,7 @@ export const ko: ContentKitUiMessageBundle = {
     resume_mismatch: "저장된 업로드가 다른 파일의 것입니다. 파일을 다시 선택하세요.",
     moderation_rejected: "검토 결과 거부되었습니다.",
     comment_banned: "여기에는 댓글을 달 수 없습니다.",
+    comments_closed: "여기에는 댓글을 달 수 없습니다.",
     comment_too_long: "댓글이 너무 깁니다.",
     commentTooLongBy: "댓글은 최대 {maxChars}자까지 쓸 수 있습니다.",
     not_configured: "이 사이트에서는 사용할 수 없는 기능입니다.",

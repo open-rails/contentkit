@@ -113,6 +113,7 @@ export interface CommentInput {
 export interface CommentStanding {
   can_comment: boolean;
   ban?: BanNotice;
+  closed: boolean;
   anonymous: boolean;
   max_length: number;
   user_id?: string;

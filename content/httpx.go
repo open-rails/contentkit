@@ -60,6 +60,8 @@ const (
 	// CodeCommentBanned: the caller is banned from commenting on this target;
 	// the body's ban says the scope, reason and until. -> 403
 	CodeCommentBanned = "comment_banned"
+	// CodeCommentsClosed: the host denies comment create/reply/edit. -> 403
+	CodeCommentsClosed = "comments_closed"
 	// CodeCommentTooLong: the comment is longer than Options.CommentMaxLength;
 	// details.max is the limit in characters. -> 422
 	CodeCommentTooLong = "comment_too_long"
@@ -136,6 +138,8 @@ func classifyErr(err error) (status int, code, msg string) {
 		return http.StatusTooManyRequests, CodeRateLimited, "too many requests; try again later"
 	case errors.As(err, &banned):
 		return http.StatusForbidden, CodeCommentBanned, banned.Error()
+	case errors.Is(err, ErrCommentsClosed):
+		return http.StatusForbidden, CodeCommentsClosed, "comments are closed"
 	case errors.Is(err, ErrNotFound), errors.Is(err, ErrNotVisible):
 		return http.StatusNotFound, CodeNotFound, "not found"
 	case errors.Is(err, ErrForbidden), errors.Is(err, ErrSubjectErased):
