@@ -112,6 +112,8 @@ export function useMediaFolder(ref: RefBody, o: MediaFolderOptions = {}): UseMed
   const uploads = useMemo(() => groups.flatMap((g) => g.files), [groups]);
 
   const queue = useUploadQueue({ client, ref, path: `${ruleDir(groupPaths[0] ?? "{name}")}{name}`, concurrency: o.concurrency });
+  // The UploadQueue itself is stable; the hook's wrapper is new every render.
+  const q = queue.queue;
   const [refused, setRefused] = useState<Screened["refused"]>([]);
   const [updating, setUpdating] = useState(0);
   const [committing, setCommitting] = useState(false);
@@ -127,7 +129,7 @@ export function useMediaFolder(ref: RefBody, o: MediaFolderOptions = {}): UseMed
     (files: Iterable<File>) => {
       const { groups } = state.current;
       const gs = groups.map((g) => g.rule ?? { path: g.path, types: [], max_bytes: 0 });
-      const queued = queue.queue.getSnapshot().items.filter((i) => i.status !== "failed");
+      const queued = q.getSnapshot().items.filter((i) => i.status !== "failed");
       const inGroup = (path: string, rule: UploadRule) => ruleFor(gs, path)?.path === rule.path;
       const s = screenFiles(files, gs, (rule) => groups.find((g) => g.path === rule.path)!.files.length + queued.filter((i) => inGroup(i.path, rule)).length);
       const taken = new Map<string, string[]>();
@@ -148,15 +150,15 @@ export function useMediaFolder(ref: RefBody, o: MediaFolderOptions = {}): UseMed
         paths.set(file, ruleDir(rule.path) + name);
       }
       if (paths.size) {
-        queue.add(paths.keys(), { path: (f) => paths.get(f)! });
-        if (queue.queue.getSnapshot().blocked) queue.start();
+        q.add(paths.keys(), { path: (f) => paths.get(f)! });
+        if (q.getSnapshot().blocked) q.start();
         setStalled(undefined);
       }
       setRefused(s.refused);
       for (const r of s.refused) report(r.error, "upload", r.file.name);
       return s.refused;
     },
-    [queue, report],
+    [q, report],
   );
 
   const update = useCallback(
@@ -181,8 +183,8 @@ export function useMediaFolder(ref: RefBody, o: MediaFolderOptions = {}): UseMed
   const commit = useCallback(async () => {
     setCommitting(true);
     try {
-      const files = await queue.commit(undefined, { head: opts.current.commit === "auto" });
-      for (const i of queue.queue.getSnapshot().items) if (i.status === "committed") queue.remove(i.id);
+      const files = await q.commit(undefined, { head: opts.current.commit === "auto" });
+      for (const i of q.getSnapshot().items) if (i.status === "committed") q.remove(i.id);
       setError(undefined);
       return files;
     } catch (e) {
@@ -193,7 +195,7 @@ export function useMediaFolder(ref: RefBody, o: MediaFolderOptions = {}): UseMed
     } finally {
       setCommitting(false);
     }
-  }, [queue, report]);
+  }, [q, report]);
 
   // A draft commits the uploaded head of the queue as it finishes; a failed commit waits for commit().
   const auto = o.commit === "auto";
@@ -274,9 +276,9 @@ export function useMediaFolder(ref: RefBody, o: MediaFolderOptions = {}): UseMed
     ),
     commit: manualCommit,
     discard: useCallback(() => {
-      for (const i of queue.queue.getSnapshot().items) queue.remove(i.id);
-      queue.pause();
-    }, [queue]),
+      for (const i of q.getSnapshot().items) q.remove(i.id);
+      q.pause();
+    }, [q]),
     updating: updating > 0,
     committing,
     error: error ?? stalled,
