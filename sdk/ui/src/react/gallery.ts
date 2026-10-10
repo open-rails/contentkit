@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
-import type { GalleryView } from "./gallery.js";
+import type { GalleryView } from "../client/gallery.js";
 import type { CapLevelController, Level } from "hls.js";
 import {
   NETWORK_FAILURES_BEFORE_ERROR,
@@ -17,7 +17,7 @@ import {
   type AbrPolicy,
   type ConnectionHint,
   type PlaybackError,
-} from "./playback.js";
+} from "../client/playback.js";
 
 export const GALLERY_VIEW_KEY = "ckui.media-gallery.view";
 
@@ -479,6 +479,7 @@ export function useHlsPlayer({
           hls.on(Hls.Events.BUFFER_FLUSHED, () => {
             if (!reseek) return;
             reseek = false;
+            // eslint-disable-next-line no-self-assign -- a seek in place is the point
             el.currentTime = el.currentTime;
           });
           choose.current = (i) => {

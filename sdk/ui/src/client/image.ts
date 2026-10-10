@@ -1,5 +1,5 @@
 import type { Size } from "./crop.js";
-import { UploadError } from "./errors.js";
+import { ContentKitError } from "./errors.js";
 
 /** An image to crop: a displayable URL and the size of the EXIF-oriented original. */
 export interface CropSource extends Size {
@@ -17,7 +17,7 @@ export interface DecodeOptions {
 /**
  * Decodes a picked file with its EXIF orientation applied and returns a
  * downscaled preview URL plus the oriented original size. Throws
- * UploadError("decode") for files the browser cannot read as an image.
+ * ContentKitError("decode") for files the browser cannot read as an image.
  */
 export async function decodeImage(file: File, o: DecodeOptions = {}): Promise<CropSource> {
   const max = o.maxPreview ?? 2048;
@@ -25,7 +25,7 @@ export async function decodeImage(file: File, o: DecodeOptions = {}): Promise<Cr
   try {
     bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
   } catch (err) {
-    throw new UploadError("decode", "the file is not a readable image", 0, undefined, { cause: err });
+    throw new ContentKitError("decode", "the file is not a readable image", { cause: err });
   }
   const { width, height } = bitmap;
   try {
@@ -51,7 +51,7 @@ async function render(bitmap: ImageBitmap, w: number, h: number, type: string): 
   c.height = h;
   c.getContext("2d")!.drawImage(bitmap, 0, 0, w, h);
   return new Promise((resolve, reject) =>
-    c.toBlob((b) => (b ? resolve(b) : reject(new UploadError("decode", "could not render a preview"))), type, 0.9),
+    c.toBlob((b) => (b ? resolve(b) : reject(new ContentKitError("decode", "could not render a preview"))), type, 0.9),
   );
 }
 

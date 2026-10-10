@@ -17,9 +17,9 @@
     "types": ["node", "vite/client"],
     "paths": {
       "#ckui/*": ["./src/*"],
-      "@openrails/contentkit-upload": ["./src/index.ts"],
-      "@openrails/contentkit-upload/*": ["./src/*.ts"]
+      "@openrails/contentkit-ui": ["./src/index.ts"],
+      "@openrails/contentkit-ui/*": ["./src/*/index.ts", "./src/*.ts"]
     }
   },
-  "include": ["src", "test", "bench", "tooling", "demo", "e2e", "vitest.config.ts", "vite.config.ts", "playwright.config.ts"]
+  "include": ["src", "test", "bench", "tooling", "demo", "e2e", "vitest.config.ts", "vite.config.ts", "playwright.config.ts", "eslint.config.js"]
 }

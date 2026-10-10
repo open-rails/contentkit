@@ -11,7 +11,7 @@ const size = 72 * MiB + 4321;
 const ref = { kind: "video", id: "0192f000-0000-7000-8000-000000000001" };
 const imageRef = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000002" };
 const image = Array.from(readFileSync(resolve(import.meta.dirname, "fixtures/small.png")));
-const modulePath = `/@fs/${resolve(import.meta.dirname, "../dist/index.js")}`;
+const modulePath = `/@fs/${resolve(import.meta.dirname, "../dist/client.js")}`;
 const demoPort = Number(process.env.DEMO_PORT ?? 4179);
 
 test.describe("browser uploads", () => {
@@ -39,9 +39,9 @@ test.describe("browser uploads", () => {
   test("uploads a small image, puts it and waits until it is processed", async ({ page }) => {
     await page.goto(origin);
     const result = await page.evaluate(async ({ modulePath, imageRef, image }) => {
-      const { UploadClient } = (await import(/* @vite-ignore */ modulePath)) as typeof import("../src/index.js");
+      const { createContentKitClient } = (await import(/* @vite-ignore */ modulePath)) as typeof import("../src/client/index.js");
       const file = new File([new Uint8Array(image)], "small.png", { type: "image/png" });
-      const client = new UploadClient({ endpoint: "/upload", readEndpoint: "/read", headers: () => ({ "X-Test-Actor": "alice" }) });
+      const client = createContentKitClient({ baseUrl: "", mounts: { upload: "/upload", media: "/read" }, headers: () => ({ "X-Test-Actor": "alice" }) }).media;
       return client.put(file, { ref: imageRef, path: "originals/001.png" });
     }, { modulePath, imageRef, image });
 
@@ -56,10 +56,10 @@ test.describe("browser uploads", () => {
     proxy.kill(3, Number.POSITIVE_INFINITY);
 
     const first = await page.evaluate(async ({ modulePath, ref, size }) => {
-      const { UploadClient } = (await import(/* @vite-ignore */ modulePath)) as typeof import("../src/index.js");
+      const { createContentKitClient } = (await import(/* @vite-ignore */ modulePath)) as typeof import("../src/client/index.js");
       const file = new File([new Uint8Array(size).fill(9)], "video.mp4", { type: "video/mp4", lastModified: 1 });
       // Land earlier parts before interruption, regardless of backend latency.
-      const client = new UploadClient({ endpoint: "/upload", headers: () => ({ "X-Test-Actor": "alice" }), retries: 0, concurrency: 1 });
+      const client = createContentKitClient({ baseUrl: "", mounts: { upload: "/upload" }, headers: () => ({ "X-Test-Actor": "alice" }), media: { retries: 0, concurrency: 1 } }).media;
       try {
         await client.upload(file, {
           ref,
@@ -79,11 +79,11 @@ test.describe("browser uploads", () => {
 
     await page.reload();
     const result = await page.evaluate(async ({ modulePath, ref, size }) => {
-      const { UploadClient } = (await import(/* @vite-ignore */ modulePath)) as typeof import("../src/index.js");
+      const { createContentKitClient } = (await import(/* @vite-ignore */ modulePath)) as typeof import("../src/client/index.js");
       const file = new File([new Uint8Array(size).fill(9)], "video.mp4", { type: "video/mp4", lastModified: 1 });
-      const saved = JSON.parse(sessionStorage.getItem("multipart")!) as import("../src/index.js").UploadState;
-      const client = new UploadClient({ endpoint: "/upload", headers: () => ({ "X-Test-Actor": "alice" }), retryDelay: () => 200 });
-      const landed = (await client.api.listParts({ ticket: saved.ticket })).parts.length;
+      const saved = JSON.parse(sessionStorage.getItem("multipart")!) as import("../src/client/index.js").UploadState;
+      const client = createContentKitClient({ baseUrl: "", mounts: { upload: "/upload" }, headers: () => ({ "X-Test-Actor": "alice" }), media: { retryDelay: () => 200 } }).media;
+      const landed = (await client.api.listParts(ref, { ticket: saved.ticket })).parts.length;
       const uploaded = await client.upload(file, {
         ref,
         path: "source",

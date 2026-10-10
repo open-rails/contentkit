@@ -1,5 +1,5 @@
-// Records every sha256Hex call (aliased over src/hash.ts by the bench build).
-import { sha256Hex as real } from "../src/hash.js";
+// Records every sha256Hex call (aliased over src/client/media/hash.ts by the bench build).
+import { sha256Hex as real } from "../src/client/media/hash.js";
 
 export const hashLog: { start: number; end: number; bytes: number }[] = ((globalThis as any).__hashLog ??= []);
 

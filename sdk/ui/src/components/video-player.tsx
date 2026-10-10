@@ -2,15 +2,15 @@ import { AlertCircleIcon, PlayIcon, Refresh01Icon, Settings01Icon } from "@hugei
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import type { UploadUiAppearance } from "../appearance.js";
-import { formatDuration } from "../gallery.js";
-import { useHlsPlayer, type HlsPlayerOptions, type PlayerQuality } from "../gallery-react.js";
-import { useInlinePreview } from "../inline-preview.js";
+import type { ContentKitUiAppearance } from "../appearance.js";
+import { formatDuration } from "../client/gallery.js";
+import { useHlsPlayer, type HlsPlayerOptions, type PlayerQuality } from "../react/gallery.js";
+import { useInlinePreview } from "../react/inline-preview.js";
 import { useMessages } from "../i18n/context.js";
-import { UploadUiRoot } from "../scope.js";
+import { ContentKitUiRoot } from "../scope.js";
 import { RenditionImg } from "./rendition-img.js";
-import { publicRenditions, type PublicImage } from "../public.js";
-import type { EncodeProgress as Progress } from "../wire.gen.js";
+import { publicRenditions, type PublicPreset } from "../client/public.js";
+import type { EncodeProgress as Progress } from "../client/generated/wire.js";
 import { EncodeProgress } from "./encode-progress.js";
 import { Button } from "#ckui/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "#ckui/ui/dropdown-menu";
@@ -83,10 +83,10 @@ export function SpriteFrame({ vtt, xhrSetup, fit = "contain", className }: { vtt
 }
 
 export interface VideoPlayerProps extends Omit<HlsPlayerOptions, "src"> {
-  /** The ladder's HLS folder (client.hlsBase: {read API}/{kind}/{id}/hls/{dir}): master.m3u8 and sprite.vtt resolve under it. */
+  /** The ladder's HLS folder (client.media.hlsBase: {media}/{kind}/{id}/hls/{dir}): master.m3u8 and sprite.vtt resolve under it. */
   base?: string | null;
   /** Shown until playback starts: the poster's public preset or a URL; default the first sprite frame. */
-  poster?: string | PublicImage | null;
+  poster?: string | PublicPreset | null;
   /** The video's size (read API w/h): the box is reserved before anything loads. */
   width?: number;
   height?: number;
@@ -109,7 +109,7 @@ export interface VideoPlayerProps extends Omit<HlsPlayerOptions, "src"> {
   label?: string;
   className?: string;
   style?: CSSProperties;
-  appearance?: UploadUiAppearance;
+  appearance?: ContentKitUiAppearance;
 }
 
 /**
@@ -156,7 +156,7 @@ export function VideoPlayer({
   const shown = previewing && status === "playing";
   const fade = cn("transition-opacity duration-300 motion-reduce:transition-none", shown && "opacity-0");
   return (
-    <UploadUiRoot
+    <ContentKitUiRoot
       appearance={appearance}
       className={cn("relative w-full overflow-hidden bg-black text-white", layout === "fill" ? "size-full" : "rounded-lg", className)}
       style={{ ...frame, ...style }}
@@ -228,7 +228,7 @@ export function VideoPlayer({
           )}
         </>
       )}
-    </UploadUiRoot>
+    </ContentKitUiRoot>
   );
 }
 

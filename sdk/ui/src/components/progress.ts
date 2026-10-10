@@ -1,4 +1,4 @@
-import type { Progress } from "../client.js";
+import type { Progress } from "../client/media/client.js";
 import type { Translator } from "../i18n/messages.js";
 
 /** Hashing and uploading fill 0–90 %, completing the rest; processing is indeterminate. */

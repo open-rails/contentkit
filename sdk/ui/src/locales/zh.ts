@@ -1,6 +1,6 @@
-import type { UploadUiMessageBundle } from "../i18n/messages.js";
+import type { ContentKitUiMessageBundle } from "../i18n/messages.js";
 
-export const zh: UploadUiMessageBundle = {
+export const zh: ContentKitUiMessageBundle = {
   common: {
     cancel: "取消",
     close: "关闭",
@@ -158,5 +158,20 @@ export const zh: UploadUiMessageBundle = {
     animationFrames: "动图最多 {maxFrames} 帧；此图有 {frames} 帧。",
     animationSeconds: "动图最长 {maxSeconds} 秒。",
     animationTooLarge: "此动图过大：{frames} 帧 {width}×{height} 像素。请减少帧数或缩小尺寸。",
+    too_many_files: "此项目的文件数已达上限。请先删除一些。",
+    animation_too_long: "此动图过长。",
+    video_too_long: "此文件时长超出此处允许的范围。",
+    video_too_large: "此视频的画面尺寸超出此处允许的范围。",
+    videoTooLongBy: "此文件时长 {duration} 秒；此处上限为 {maxSeconds} 秒。",
+    videoTooLargeBy: "此视频为 {width}×{height} 像素；视频最多 {megapixels} 百万像素。",
+    video_over_budget: "处理此视频耗时过长。请使用更短或更小的视频。",
+    aborted: "已取消。",
+    resume_mismatch: "保存的上传属于另一个文件。请重新选择文件。",
+    moderation_rejected: "已被审核拒绝。",
+    unprocessable: "无法处理此请求。",
+    comment_banned: "你无法在此评论。",
+    not_configured: "此网站未提供该功能。",
+    tenant_mismatch: "我们这边出了点问题，请重试。",
+    gone: "此内容已不可用。",
   },
 };

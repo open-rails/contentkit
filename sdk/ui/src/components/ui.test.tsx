@@ -5,10 +5,10 @@ import userEvent from "@testing-library/user-event";
 import { Profiler, useState } from "react";
 import { expect, it, vi } from "vitest";
 import { FakeServer, bytes, fakeClient } from "../../test/fake.js";
-import type { CropSource } from "../image.js";
-import type { Edit, FileInfo, ReadResult } from "../wire.gen.js";
-import { ja } from "../locales/ja.js";
-import { AvatarUpload, CoverUpload, ImageCropDialog, SlotEditError, SlotEditMenu, SlotEditor, SlotImage, UploadUiProvider, useSlotEditor } from "../ui.js";
+import type { CropSource } from "../client/image.js";
+import type { Edit, FileInfo, ReadResult } from "../client/generated/wire.js";
+import { AvatarUpload, ContentKitUiProvider, CoverUpload, ImageCropDialog, SlotEditError, SlotEditMenu, SlotEditor, SlotImage, useSlotEditor } from "../index.js";
+import { ContentKitProvider } from "../react/index.js";
 
 const item = { kind: "channel", id: "0192f000-0000-7000-8000-000000000007" };
 const preset = (name: string, aspect: string, widths: number[]) => ({ preset: name, aspect, renditions: widths.map((w) => ({ url: `https://m/v1/app/channel/${item.id}/public/${name}-${w}-generation.webp`, w, h: name === "avatar" ? w : w / 3 })) });
@@ -65,7 +65,7 @@ it("AvatarUpload: pick → crop dialog with a sharpness warning → save → sho
 
 it("AvatarUpload removes the avatar; CoverUpload offers Remove only when removable", async () => {
   const { s, client } = setup();
-  await client.put(png(3), { ref: item, path: "avatar" });
+  await client.media.put(png(3), { ref: item, path: "avatar" });
   const onChange = vi.fn();
   const user = userEvent.setup();
   const { unmount } = render(<AvatarUpload client={client} item={item} image={avatar} onChange={onChange} />);
@@ -76,7 +76,7 @@ it("AvatarUpload removes the avatar; CoverUpload offers Remove only when removab
   expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
   unmount();
 
-  await client.put(png(4), { ref: item, path: "cover" });
+  await client.media.put(png(4), { ref: item, path: "cover" });
   const { rerender } = render(<CoverUpload client={client} item={item} image={cover} />);
   await screen.findAllByRole("button", { name: "Change" });
   expect(screen.queryAllByRole("button", { name: "Remove" })).toHaveLength(0);
@@ -86,7 +86,7 @@ it("AvatarUpload removes the avatar; CoverUpload offers Remove only when removab
 
 it("CoverUpload: edit crop re-renders from the upload without uploading", async () => {
   const { s, client } = setup();
-  await client.put(png(2), { ref: item, path: "cover" });
+  await client.media.put(png(2), { ref: item, path: "cover" });
   const puts = s.puts.length;
   const user = userEvent.setup();
   render(<CoverUpload client={client} item={item} image={cover} decode={decodeAs(4000, 3000)} />);
@@ -100,7 +100,7 @@ it("CoverUpload: edit crop re-renders from the upload without uploading", async 
   expect(s.puts.length).toBe(puts);
 });
 
-it("maps UploadError codes to messages and keeps the dialog open to retry", async () => {
+it("maps ContentKitError codes to messages and keeps the dialog open to retry", async () => {
   const { s, client } = setup();
   const user = userEvent.setup();
   const { container } = render(<AvatarUpload client={client} item={item} read={empty} decode={decodeAs(1024, 1024)} />);
@@ -115,23 +115,27 @@ it("maps UploadError codes to messages and keeps the dialog open to retry", asyn
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
 
-it("shows an unreadable file inline, localized through the provider", async () => {
+it("shows an unreadable file inline, in the provider's language, and reports it to the provider", async () => {
   const { client } = setup();
   const user = userEvent.setup();
   const bad = vi.fn(async () => {
     throw new Error("bad");
   });
+  const onError = vi.fn();
   const { container } = render(
-    <UploadUiProvider client={client} messages={ja} appearance={{ theme: "dark", variables: { primary: "red" } }}>
-      <AvatarUpload item={item} read={empty} decode={bad} />
-    </UploadUiProvider>,
+    <ContentKitProvider client={client} onError={onError}>
+      <ContentKitUiProvider language="ja-JP" appearance={{ theme: "dark", variables: { primary: "red" } }}>
+        <AvatarUpload item={item} read={empty} decode={bad} />
+      </ContentKitUiProvider>
+    </ContentKitProvider>,
   );
   const root = container.querySelector(".ckui")!;
   expect(root).toHaveAttribute("data-ckui-theme", "dark");
   expect((root as HTMLElement).style.getPropertyValue("--ckui-primary")).toBe("red");
-  expect(screen.getByText("アバター")).toBeInTheDocument();
+  expect(await screen.findByText("アバター")).toBeInTheDocument();
   await user.upload(container.querySelector<HTMLInputElement>("input[type=file]")!, png(4));
   expect(await screen.findByRole("alert")).toHaveTextContent("このファイルは画像として開けません。");
+  expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: "decode" }), { operation: "slot.decode" });
 });
 
 it("ImageCropDialog confirms the initial edit, zooms from the keyboard and rotates", async () => {
@@ -279,7 +283,7 @@ it("ImageCropDialog reports an edit only when it changes, so onEditChange can se
 
 it("CoverUpload's crop dialog settles instead of re-rendering forever", async () => {
   const { client } = setup();
-  await client.put(png(5), { ref: item, path: "cover" });
+  await client.media.put(png(5), { ref: item, path: "cover" });
   let commits = 0;
   const user = userEvent.setup();
   render(

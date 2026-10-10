@@ -1,24 +1,27 @@
-import { ratio, type AspectRatio } from "./aspect.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { samePath, stem, type Progress, type UploadClient } from "./client.js";
-import { centeredCrop, constrainCrop, editedSize, rotation, sameEdit, type Size } from "./crop.js";
-import { UploadError } from "./errors.js";
-import { decodeImage, isAnimatedImage, type CropSource } from "./image.js";
-import { publicRenditions, type PublicImage } from "./public.js";
-import { useRead } from "./read-react.js";
-import type { Rendition } from "./rendition.js";
-import type { Edit, FileInfo, ReadResult, RefBody } from "./wire.gen.js";
-
-const asError = (e: unknown) => (e instanceof UploadError ? e : new UploadError("network", String(e)));
+import { ratio, type AspectRatio } from "../client/aspect.js";
+import type { ContentKitClient } from "../client/client.js";
+import { centeredCrop, constrainCrop, editedSize, rotation, sameEdit, type Size } from "../client/crop.js";
+import { ContentKitError, toContentKitError } from "../client/errors.js";
+import type { Edit, FileInfo, ReadResult, RefBody } from "../client/generated/wire.js";
+import { decodeImage, isAnimatedImage, type CropSource } from "../client/image.js";
+import { samePath, stem, type Progress } from "../client/media/client.js";
+import { publicRenditions, type PublicPreset } from "../client/public.js";
+import type { Rendition } from "../client/rendition.js";
+import { useContentKitClient } from "./context.js";
+import { useRead } from "./read.js";
+import { withUpload } from "./store.js";
 
 export interface SlotImageOptions {
   ref: RefBody;
   /** The upload path, e.g. "cover" or "avatar". */
   path: string;
   /** The public preset showing the upload. */
-  image?: PublicImage | null;
+  image?: PublicPreset | null;
   /** An editor read of the item the host already has; skips the fetch. */
   read?: ReadResult | null;
+  /** Overrides the provider's client; without one only a supplied read shows. */
+  client?: ContentKitClient | null;
 }
 
 export interface UseSlotImage {
@@ -29,26 +32,20 @@ export interface UseSlotImage {
   /** "W:H": the preset's, else "1:1". */
   aspect: AspectRatio;
   loading: boolean;
-  error?: UploadError;
+  error?: ContentKitError;
   reload: () => void;
   /** Replaces the upload after a save without refetching. */
   set: (file: FileInfo | null) => void;
 }
 
 /** An upload path's state (an editor read) and its public image. */
-export function useSlotImage(client: UploadClient | null | undefined, o: SlotImageOptions): UseSlotImage {
-  const r = useRead(client, o.ref, { editor: true, prefix: stem(o.path), read: o.read });
+export function useSlotImage(o: SlotImageOptions): UseSlotImage {
+  const r = useRead(o.ref, { editor: true, prefix: stem(o.path), read: o.read, client: o.client });
   const read = r.read;
   const file = read?.files.find((f) => f.upload && samePath(f.path, o.path)) ?? null;
   const { path } = o;
   const update = r.set;
-  const set = useCallback(
-    (f: FileInfo | null) => {
-      const files = (read?.files ?? []).filter((x) => !(x.upload && samePath(x.path, path)));
-      update({ access: "full", expires: 0, total: 0, offset: 0, limit: 0, ...read, files: f ? [...files, f] : files });
-    },
-    [read, path, update],
-  );
+  const set = useCallback((f: FileInfo | null) => update(withUpload(read, path, f)), [read, path, update]);
   const renditions = useMemo(() => {
     if (!read) return publicRenditions(o.image);
     const published = read.public?.find((p) => samePath(p.from, path) && (!o.image || p.preset === o.image.preset));
@@ -66,7 +63,7 @@ export type SlotCropState =
   | { status: "cropping"; source: CropSource; edit: Edit | null; mode: SlotCropMode }
   | { status: "saving"; source: CropSource; edit: Edit | null; mode: SlotCropMode; progress?: Progress; rendering?: boolean }
   | { status: "done"; file: FileInfo }
-  | { status: "error"; error: UploadError; source?: CropSource; edit?: Edit | null; mode?: SlotCropMode };
+  | { status: "error"; error: ContentKitError; source?: CropSource; edit?: Edit | null; mode?: SlotCropMode };
 
 export interface SlotCropOptions {
   ref: RefBody;
@@ -84,7 +81,9 @@ export interface SlotCropOptions {
   /** How long save() waits for the worker to render. Default 120 s. */
   renderTimeout?: number;
   /** Every failed decode or save (aborts excepted); the state shows it too. */
-  onError?: (e: UploadError, operation: "slot.decode" | "slot.save") => void;
+  onError?: (e: ContentKitError, operation: "slot.decode" | "slot.save") => void;
+  /** Overrides the provider's client. */
+  client?: ContentKitClient;
 }
 
 export type UseSlotCrop = SlotCropState & {
@@ -112,7 +111,8 @@ export function editOutput(source: Size, edit: Edit | null | undefined, shape: A
 }
 
 /** pick → crop → save → done, and recrop() → crop → save for an existing upload. */
-export function useSlotCrop(client: UploadClient, o: SlotCropOptions): UseSlotCrop {
+export function useSlotCrop(o: SlotCropOptions): UseSlotCrop {
+  const { media } = useContentKitClient(o.client);
   const [s, setS] = useState<SlotCropState>({ status: "idle" });
   const cur = useRef(s);
   cur.current = s;
@@ -152,7 +152,7 @@ export function useSlotCrop(client: UploadClient, o: SlotCropOptions): UseSlotCr
         set({ status: "cropping", source, edit, mode });
       } catch (e) {
         if (n !== picks.current) return;
-        const error = e instanceof UploadError ? e : new UploadError("decode", String(e));
+        const error = e instanceof ContentKitError ? e : new ContentKitError("decode", e instanceof Error ? e.message : String(e), { cause: e });
         set({ status: "error", error });
         opts.current.onError?.(error, "slot.decode");
       }
@@ -164,7 +164,7 @@ export function useSlotCrop(client: UploadClient, o: SlotCropOptions): UseSlotCr
     (file: File) =>
       open(async () => {
         if (opts.current.animation === "reject" && (await isAnimatedImage(file)))
-          throw new UploadError("animation_not_allowed", "animated images are not allowed here", 422);
+          throw new ContentKitError("animation_not_allowed", "animated images are not allowed here", { status: 422 });
         return (opts.current.decode ?? decodeImage)(file);
       }, "new", null),
     [open],
@@ -174,8 +174,8 @@ export function useSlotCrop(client: UploadClient, o: SlotCropOptions): UseSlotCr
   const recrop = useCallback(async () => {
     const f = opts.current.file;
     if (!f) return;
-    await open(() => client.editorView(opts.current.ref, f.path), "recrop", f.edit ?? null);
-  }, [client, open]);
+    await open(() => media.editorView(opts.current.ref, f.path), "recrop", f.edit ?? null);
+  }, [media, open]);
 
   const setEdit = useCallback(
     (edit: Edit | null) => {
@@ -201,12 +201,12 @@ export function useSlotCrop(client: UploadClient, o: SlotCropOptions): UseSlotCr
       saving();
       try {
         let file: FileInfo;
-        if (mode === "new") file = await client.put(source.file!, { ref, path, edit, signal: a.signal, timeout, onProgress: saving });
+        if (mode === "new") file = await media.put(source.file!, { ref, path, edit, signal: a.signal, timeout, onProgress: saving });
         else {
           const at = opts.current.file?.path ?? path;
-          await client.commit(ref, [{ op: "edit", path: at, ...(edit ? { edit } : {}) }], { signal: a.signal });
+          await media.commit(ref, [{ op: "edit", path: at, ...(edit ? { edit } : {}) }], { signal: a.signal });
           saving({ phase: "processing", loaded: 0, total: 0 });
-          file = await client.waitFor(ref, at, { signal: a.signal, timeout });
+          file = await media.waitFor(ref, at, { signal: a.signal, timeout });
         }
         if (a !== ctl.current) return undefined;
         set({ status: "done", file });
@@ -214,13 +214,13 @@ export function useSlotCrop(client: UploadClient, o: SlotCropOptions): UseSlotCr
         return file;
       } catch (e) {
         if (a !== ctl.current) return undefined;
-        const error = asError(e);
+        const error = toContentKitError(e);
         set(error.code === "aborted" ? { status: "cropping", source, edit, mode } : { status: "error", error, source, edit, mode });
         if (error.code !== "aborted") opts.current.onError?.(error, "slot.save");
         return undefined;
       }
     },
-    [client, set, setEdit],
+    [media, set, setEdit],
   );
 
   const cancel = useCallback(() => {

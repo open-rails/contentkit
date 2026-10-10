@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { fromResponse } from "./errors.js";
+import { readContentKitError as fromResponse } from "./errors.js";
 
 it("maps error replies, Retry-After and non-JSON bodies", async () => {
   const rate = await fromResponse(
@@ -18,4 +18,18 @@ it("maps error replies, Retry-After and non-JSON bodies", async () => {
   expect([down.code, down.transient, down.retryAfter]).toEqual(["unavailable", true, 5]);
   const gone = await fromResponse(new Response(JSON.stringify({ error: "again", code: "not_uploaded", blobs: ["sha256-a"] }), { status: 409 }));
   expect([gone.code, gone.blobs]).toEqual(["not_uploaded", ["sha256-a"]]);
+});
+
+it("reads the content modules' ban and rate-limit fields and unknown codes", async () => {
+  const until = "2026-11-01T00:00:00Z";
+  const banned = await fromResponse(
+    new Response(JSON.stringify({ error: "you can't comment here", code: "comment_banned", ban: { scope: "global", until } }), { status: 403 }),
+  );
+  expect([banned.code, banned.ban, banned.blocksQueue]).toEqual(["comment_banned", { scope: "global", until }, false]);
+  const limited = await fromResponse(
+    new Response(JSON.stringify({ error: "slow down", code: "rate_limited", action: "comment", retry_after: 30 }), { status: 429 }),
+  );
+  expect([limited.action, limited.retryAfter, limited.isLimit]).toEqual(["comment", 30, true]);
+  const future = await fromResponse(new Response(JSON.stringify({ error: "nope", code: "some_new_code" }), { status: 410 }));
+  expect([future.code, future.message]).toEqual(["gone", "nope"]);
 });

@@ -92,7 +92,7 @@ function namespaceInternals(): Plugin {
 }
 
 /**
- * Turns Tailwind's global output into contentkit-upload-owned CSS: layers removed,
+ * Turns Tailwind's global output into contentkit-ui-owned CSS: layers removed,
  * every selector scoped under `.ckui`, Tailwind variables and keyframes
  * namespaced, so neither the host nor the library can style the other.
  */

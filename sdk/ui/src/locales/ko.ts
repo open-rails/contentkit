@@ -1,6 +1,6 @@
-import type { UploadUiMessageBundle } from "../i18n/messages.js";
+import type { ContentKitUiMessageBundle } from "../i18n/messages.js";
 
-export const ko: UploadUiMessageBundle = {
+export const ko: ContentKitUiMessageBundle = {
   common: {
     cancel: "취소",
     close: "닫기",
@@ -158,5 +158,20 @@ export const ko: UploadUiMessageBundle = {
     animationFrames: "애니메이션은 최대 {maxFrames}프레임까지 가능합니다. 이 이미지는 {frames}프레임입니다.",
     animationSeconds: "애니메이션은 최대 {maxSeconds}초까지 가능합니다.",
     animationTooLarge: "이 애니메이션이 너무 큽니다: {width}×{height}px, {frames}프레임. 프레임 수나 크기를 줄이세요.",
+    too_many_files: "이 항목에 허용된 파일 수가 이미 찼습니다. 먼저 일부를 삭제하세요.",
+    animation_too_long: "이 애니메이션이 너무 깁니다.",
+    video_too_long: "이 파일은 허용된 길이보다 깁니다.",
+    video_too_large: "이 동영상의 프레임 크기가 허용 범위보다 큽니다.",
+    videoTooLongBy: "이 파일의 길이는 {duration}초입니다. 여기서는 최대 {maxSeconds}초까지 가능합니다.",
+    videoTooLargeBy: "이 동영상은 {width}×{height}px입니다. 동영상은 최대 {megapixels}메가픽셀까지 가능합니다.",
+    video_over_budget: "이 동영상은 처리 시간이 너무 오래 걸립니다. 더 짧거나 작은 동영상을 사용하세요.",
+    aborted: "취소되었습니다.",
+    resume_mismatch: "저장된 업로드가 다른 파일의 것입니다. 파일을 다시 선택하세요.",
+    moderation_rejected: "검토 결과 거부되었습니다.",
+    unprocessable: "이 요청을 처리할 수 없습니다.",
+    comment_banned: "여기에는 댓글을 달 수 없습니다.",
+    not_configured: "이 사이트에서는 사용할 수 없는 기능입니다.",
+    tenant_mismatch: "서버에서 문제가 발생했습니다. 다시 시도하세요.",
+    gone: "이 콘텐츠는 더 이상 사용할 수 없습니다.",
   },
 };

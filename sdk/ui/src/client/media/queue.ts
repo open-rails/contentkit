@@ -1,7 +1,7 @@
-import { samePath, stem, type Progress, type UploadClient, type UploadedFile, type UploadState } from "./client.js";
-import { UploadError } from "./errors.js";
-import { fill } from "./public.js";
-import type { FileInfo, Op, RefBody } from "./wire.gen.js";
+import { ContentKitError, toContentKitError } from "../errors.js";
+import type { FileInfo, Op, RefBody } from "../generated/wire.js";
+import { fill } from "../public.js";
+import { samePath, stem, type MediaClient, type Progress, type UploadedFile, type UploadState } from "./client.js";
 
 export type ItemStatus = "queued" | "uploading" | "uploaded" | "failed" | "committed";
 
@@ -13,7 +13,7 @@ export interface QueueItem {
   meta?: Record<string, unknown>;
   status: ItemStatus;
   progress?: Progress;
-  error?: UploadError;
+  error?: ContentKitError;
   result?: UploadedFile;
   /** Resumable multipart state while uploading or after a failure. */
   state?: UploadState;
@@ -31,7 +31,7 @@ export interface QueueItem {
 export interface QueueSnapshot {
   readonly items: readonly QueueItem[];
   /** A rate, quota or permission refusal: no new uploads start until start(). */
-  readonly blocked?: UploadError;
+  readonly blocked?: ContentKitError;
   /** Every item is uploaded (or committed) and none is in flight. */
   readonly ready: boolean;
 }
@@ -60,7 +60,7 @@ const END = 2 ** 31 - 1;
  */
 export class UploadQueue {
   private items: QueueItem[] = [];
-  private blocked?: UploadError;
+  private blocked?: ContentKitError;
   private running = new Map<string, AbortController>();
   private listeners = new Set<() => void>();
   private snap!: QueueSnapshot;
@@ -72,7 +72,7 @@ export class UploadQueue {
   private batch?: { input: string; operationID: string };
 
   constructor(
-    private readonly client: UploadClient,
+    private readonly client: MediaClient,
     private readonly o: QueueOptions,
   ) {
     this.started = o.autoStart ?? true;
@@ -249,7 +249,7 @@ export class UploadQueue {
           return f;
         },
         (error: unknown) => {
-          if (error instanceof UploadError && error.code === "conflict") {
+          if (error instanceof ContentKitError && error.code === "conflict") {
             this.patch(id, { status: "failed", error });
           }
           // Other failures leave it uploaded; commit() retries the same create.
@@ -356,7 +356,7 @@ export class UploadQueue {
         },
         (e: unknown) => {
           this.running.delete(id);
-          const error = e instanceof UploadError ? e : new UploadError("network", String(e));
+          const error = toContentKitError(e);
           if (error.code === "aborted") {
             this.patch(id, { status: "queued" });
             return;

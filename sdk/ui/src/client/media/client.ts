@@ -1,11 +1,14 @@
-import { UploadApi, type ApiOptions, type ReadOptions } from "./api.js";
-import { UploadError, aborted, failureError, throwIfAborted } from "./errors.js";
+import { ContentKitError, aborted, failureError, throwIfAborted, toContentKitError } from "../errors.js";
+import type { CommitBody, Edit, FileInfo, Op, PresignReply, ReadResult, RefBody, RequestReply } from "../generated/wire.js";
+import type { Http } from "../http.js";
+import { MediaApi, type ReadOptions } from "./api.js";
 import { sha256Hex } from "./hash.js";
 import { Pacer } from "./pacer.js";
 import { defaultTransport, type Transport } from "./transport.js";
-import type { CommitBody, Edit, FileInfo, Op, PresignReply, ReadResult, RefBody, RequestReply } from "./wire.gen.js";
 
-export interface ClientOptions extends ApiOptions {
+/** Upload tuning for the media module. */
+export interface MediaOptions {
+  /** Sends presigned PUTs. Default XMLHttpRequest (upload progress), else fetch. */
   transport?: Transport;
   /** Parallel parts per multipart upload (the pacer may run fewer). Default 4. */
   concurrency?: number;
@@ -126,16 +129,20 @@ export const stem = (path: string) => {
   return i > path.lastIndexOf("/") + 1 ? path.slice(0, i) : path;
 };
 
-export class UploadClient {
-  readonly api: UploadApi;
+/** The media module: uploads, commits, reads, frames and HLS. */
+export class MediaClient {
+  readonly api: MediaApi;
   private readonly transport: Transport;
   private readonly concurrency: number;
   private readonly retries: number;
   private readonly delay: (attempt: number, retryAfter?: number) => number;
   private readonly targetSeconds: number;
 
-  constructor(o: ClientOptions) {
-    this.api = new UploadApi(o);
+  constructor(
+    private readonly http: Http,
+    o: MediaOptions = {},
+  ) {
+    this.api = new MediaApi(http);
     this.transport = o.transport ?? defaultTransport;
     this.concurrency = o.concurrency ?? 4;
     this.retries = o.retries ?? 5;
@@ -153,7 +160,7 @@ export class UploadClient {
    */
   async upload(file: Uploadable, o: UploadOptions): Promise<UploadedFile> {
     const type = o.type || file.type;
-    if (!type) throw new UploadError("invalid_request", "the file has no content type");
+    if (!type) throw new ContentKitError("invalid_request", "the file has no content type");
     throwIfAborted(o.signal);
     if (o.resume) return this.resumeMultipart(file, o.resume, o);
     const total = file.size;
@@ -222,10 +229,11 @@ export class UploadClient {
     // ops while the first request or its response is still in flight.
     const body: CommitBody = structuredClone({ ref, ops, operation_id: o.operationID ?? crypto.randomUUID() });
     o.onState?.(structuredClone(body));
+    let files: FileInfo[];
     try {
-      return (await this.retry(() => this.api.commit(body, o.signal), o.signal)).files;
+      files = (await this.retry(() => this.api.commit(body, o.signal), o.signal)).files;
     } catch (e) {
-      if (!(e instanceof UploadError) || e.code !== "not_uploaded") throw e;
+      if (!(e instanceof ContentKitError) || e.code !== "not_uploaded") throw e;
       const sources = o.sources ?? {};
       const puts = body.ops.filter((op) => op.op === "put" && op.blob && op.blob in sources);
       const stale = [...new Set(puts.map((op) => op.blob!))].filter((b) => !e.blobs || e.blobs.includes(b));
@@ -243,13 +251,15 @@ export class UploadClient {
       // under the old ID; transport retries retain its new identity.
       const replacement = { ref: body.ref, ops: retried, operation_id: crypto.randomUUID() };
       o.onState?.(structuredClone(replacement));
-      return (await this.retry(() => this.api.commit(replacement, o.signal), o.signal)).files;
+      files = (await this.retry(() => this.api.commit(replacement, o.signal), o.signal)).files;
     }
+    this.http.emit({ type: "media.committed", ref: { kind: ref.kind, id: ref.id }, files });
+    return files;
   }
 
   /** The read API: the item's files under prefix in manifest order, with signed URLs for what this viewer may have. */
   async read(ref: RefBody, o: ReadOptions & { signal?: AbortSignal } = {}): Promise<ReadResult> {
-    this.api.itemURL(ref); // a bad ref or a missing readEndpoint fails at once
+    this.api.itemURL(ref); // a bad ref fails at once
     return this.retry(() => this.api.read(ref, o, o.signal), o.signal);
   }
 
@@ -266,11 +276,14 @@ export class UploadClient {
     for (;;) {
       const r = await this.read(ref, { editor: true, prefix: stem(path), signal: o.signal });
       const f = r.files.find((x) => x.upload && samePath(x.path, path));
-      if (!f) throw new UploadError("not_found", `no upload ${path}`, 404);
+      if (!f) throw new ContentKitError("not_found", `no upload ${path}`, { status: 404 });
       if (f.failed) throw failureError(f.failed);
-      if (!f.pending?.length && !f.staged && (f.size ?? 0) > 0) return f;
-      if (r.full) throw new UploadError("too_large", `${path} waits: the item is full; remove uploads to process more`, 413);
-      if (Date.now() >= until) throw new UploadError("render_timeout", `${path} is still processing`);
+      if (!f.pending?.length && !f.staged && (f.size ?? 0) > 0) {
+        this.http.emit({ type: "media.processed", ref: { kind: ref.kind, id: ref.id }, file: f });
+        return f;
+      }
+      if (r.full) throw new ContentKitError("too_large", `${path} waits: the item is full; remove uploads to process more`, { status: 413 });
+      if (Date.now() >= until) throw new ContentKitError("render_timeout", `${path} is still processing`);
       await sleep(o.interval ?? 1000, o.signal);
     }
   }
@@ -286,10 +299,10 @@ export class UploadClient {
     for (;;) {
       const r = await this.read(ref, { editor: true, prefix: stem(path), signal: o.signal });
       const f = r.files.find((x) => x.upload && samePath(x.path, path));
-      if (!f) throw new UploadError("not_found", `no upload ${path}`, 404);
+      if (!f) throw new ContentKitError("not_found", `no upload ${path}`, { status: 404 });
       if (f.editor_url && f.w && f.h) return { url: f.editor_url, width: f.w, height: f.h };
       if (f.failed) throw failureError(f.failed);
-      if (Date.now() >= until) throw new UploadError("render_timeout", `the editor view of ${path} is still rendering`);
+      if (Date.now() >= until) throw new ContentKitError("render_timeout", `the editor view of ${path} is still rendering`);
       await sleep(o.interval ?? 1000, o.signal);
     }
   }
@@ -299,27 +312,32 @@ export class UploadClient {
     return this.retry(() => this.api.frame(ref, path, t, w, signal), signal);
   }
 
-  /** The folder of an HLS ladder from a read's `hls`: `{readEndpoint}/{kind}/{id}/hls/{dir}`; master.m3u8 and sprite.vtt resolve under it. */
+  /** The folder of an HLS ladder from a read's `hls`: `{media}/{kind}/{id}/hls/{dir}`; master.m3u8 and sprite.vtt resolve under it. */
   hlsBase(ref: RefBody, dir: string): string {
     return `${this.api.itemURL(ref)}/hls/${dir}`;
   }
 
+  /** hls.js `xhrSetup` for playlists on the API (the client's token and credentials); pass it to players as is. */
+  get xhrSetup(): (xhr: XMLHttpRequest, url: string) => Promise<void> {
+    return this.http.xhrSetup;
+  }
+
   /** Discards a paused multipart upload. */
   async discard(state: UploadState): Promise<void> {
-    await this.api.abort({ ticket: state.ticket });
+    await this.api.abort(state.ref, { ticket: state.ticket });
   }
 
   private async resumeMultipart(file: Uploadable, state: UploadState, o: UploadOptions): Promise<UploadedFile> {
     const fp = fingerprint(file);
     if (fp.size !== state.size || fp.name !== state.file.name || fp.lastModified !== state.file.lastModified) {
-      throw new UploadError("resume_mismatch", "the saved upload is for a different file");
+      throw new ContentKitError("resume_mismatch", "the saved upload is for a different file");
     }
     let listed;
     try {
-      listed = await this.retry(() => this.api.listParts({ ticket: state.ticket }, o.signal), o.signal);
+      listed = await this.retry(() => this.api.listParts(state.ref, { ticket: state.ticket }, o.signal), o.signal);
     } catch (err) {
       // Gone: already completed (Complete is idempotent) or expired.
-      if (err instanceof UploadError && err.code === "not_found") return this.complete(state, o);
+      if (err instanceof ContentKitError && err.code === "not_found") return this.complete(state, o);
       throw err;
     }
     const landed = new Set<number>();
@@ -395,6 +413,7 @@ export class UploadClient {
           emitState();
         }
         const { parts } = await this.api.parts(
+          state.ref,
           { ticket: state.ticket, parts: [{ number: part.number, size: part.size, sha256: part.sha256 }] },
           signal,
         );
@@ -451,17 +470,17 @@ export class UploadClient {
 
   private async complete(state: UploadState, o: UploadOptions): Promise<UploadedFile> {
     o.onProgress?.({ phase: "completing", loaded: state.size, total: state.size });
-    const c = await this.retry(() => this.api.complete({ ticket: state.ticket }, o.signal), o.signal);
+    const c = await this.retry(() => this.api.complete(state.ref, { ticket: state.ticket }, o.signal), o.signal);
     o.onState?.(null);
     return { path: state.path, blob: c.blob, type: c.type, size: c.size, exists: false, processOnUpload: state.processOnUpload };
   }
 
-  private async retry<T>(fn: () => Promise<T>, signal?: AbortSignal, before?: (err: UploadError) => Promise<void>): Promise<T> {
+  private async retry<T>(fn: () => Promise<T>, signal?: AbortSignal, before?: (err: ContentKitError) => Promise<void>): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       try {
         return await fn();
       } catch (e) {
-        const err = e instanceof UploadError ? e : new UploadError("network", String(e), 0, undefined, { cause: e });
+        const err = toContentKitError(e);
         if (signal?.aborted) throw aborted(signal);
         if (!err.transient || attempt >= this.retries) throw err;
         await sleep(this.delay(attempt, err.retryAfter), signal);
@@ -469,10 +488,6 @@ export class UploadClient {
       }
     }
   }
-}
-
-export function createUploadClient(o: ClientOptions): UploadClient {
-  return new UploadClient(o);
 }
 
 function fingerprint(f: Uploadable): UploadState["file"] {

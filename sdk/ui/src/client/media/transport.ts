@@ -1,9 +1,9 @@
-import { UploadError, aborted } from "./errors.js";
-import type { RequestReply } from "./wire.gen.js";
+import { ContentKitError, aborted } from "../errors.js";
+import type { RequestReply } from "../generated/wire.js";
 
 /**
  * Sends a presigned request with its body. Resolves on 2xx; rejects with an
- * UploadError (storage, network or aborted). onProgress reports bytes sent.
+ * ContentKitError (storage, network or aborted). onProgress reports bytes sent.
  */
 export type Transport = (
   req: RequestReply,
@@ -20,7 +20,7 @@ export const xhrTransport: Transport = (req, body, { signal, onProgress }) =>
     if (signal?.aborted) return reject(aborted(signal));
     const xhr = new XMLHttpRequest();
     const onAbort = () => xhr.abort();
-    const done = (err?: UploadError) => {
+    const done = (err?: ContentKitError) => {
       signal?.removeEventListener("abort", onAbort);
       if (err) reject(err);
       else resolve();
@@ -30,7 +30,7 @@ export const xhrTransport: Transport = (req, body, { signal, onProgress }) =>
     xhr.upload.onprogress = (e) => onProgress?.(e.loaded);
     xhr.onload = () =>
       done(xhr.status >= 200 && xhr.status < 300 ? undefined : storageError(xhr.status, xhr.responseText));
-    xhr.onerror = () => done(new UploadError("network", "connection to storage failed"));
+    xhr.onerror = () => done(new ContentKitError("network", "connection to storage failed"));
     xhr.ontimeout = xhr.onerror;
     xhr.onabort = () => done(aborted(signal));
     signal?.addEventListener("abort", onAbort, { once: true });
@@ -43,14 +43,14 @@ export const fetchTransport: Transport = async (req, body, { signal, onProgress 
     res = await fetch(req.url, { method: req.method, headers: req.headers, body, signal: signal ?? null });
   } catch (err) {
     if (signal?.aborted) throw aborted(signal);
-    throw new UploadError("network", "connection to storage failed", 0, undefined, { cause: err });
+    throw new ContentKitError("network", "connection to storage failed", { cause: err });
   }
   if (!res.ok) throw storageError(res.status, await res.text().catch(() => ""));
   await res.body?.cancel();
   onProgress?.(body.size);
 };
 
-function storageError(status: number, body: string): UploadError {
+function storageError(status: number, body: string): ContentKitError {
   const code = /<Code>([^<]+)<\/Code>/.exec(body)?.[1];
-  return new UploadError("storage", `storage refused the upload (${status}${code ? " " + code : ""})`, status);
+  return new ContentKitError("storage", `storage refused the upload (${status}${code ? " " + code : ""})`, { status });
 }

@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import "../test/dom.js";
-import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { FakeServer, bytes, fakeClient } from "../../test/fake.js";
-import type { CropSource } from "../image.js";
+import type { CropSource } from "../client/image.js";
 import { ko } from "../locales/ko.js";
-import { UploadUiProvider, VideoPoster, VideoPosterPicker } from "../ui.js";
+import { ContentKitUiProvider, VideoPoster, VideoPosterPicker } from "../index.js";
+import { ContentKitProvider } from "../react/index.js";
 
 const item = { kind: "post", id: "0192f000-0000-7000-8000-000000000009" };
 
@@ -126,9 +127,11 @@ it("VideoPosterPicker: upload an image, crop it, and return to automatic", async
 it("VideoPosterPicker: a video not probed yet says so; errors are localized", async () => {
   const { client } = setup({ ...source, dur: undefined } as unknown as typeof source);
   render(
-    <UploadUiProvider client={client} messages={ko}>
-      <VideoPosterPicker open onOpenChange={() => {}} item={item} />
-    </UploadUiProvider>,
+    <ContentKitProvider client={client}>
+      <ContentKitUiProvider messages={ko}>
+        <VideoPosterPicker open onOpenChange={() => {}} item={item} />
+      </ContentKitUiProvider>
+    </ContentKitProvider>,
   );
   expect(await screen.findByText(ko.poster!.processing!)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: ko.poster!.useFrame! })).toBeNull();

@@ -1,4 +1,4 @@
-import type { Crop, Edit } from "./wire.gen.js";
+import type { Crop, Edit } from "./generated/wire.js";
 
 /** Clockwise degrees. */
 export type Rotation = 0 | 90 | 180 | 270;

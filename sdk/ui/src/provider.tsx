@@ -1,92 +1,69 @@
-import { createContext, useCallback, useContext, useMemo, useRef, type ReactNode } from "react";
-import type { UploadUiAppearance } from "./appearance.js";
-import type { UploadClient } from "./client.js";
-import { UploadError } from "./errors.js";
-import { MessagesContext } from "./i18n/context.js";
-import { createTranslator, resolveMessages, type UploadUiMessageBundle, type UploadUiTranslate } from "./i18n/messages.js";
-import { AppearanceContext } from "./scope.js";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { ContentKitUiAppearance } from "./appearance.js";
+import { DEFAULT_DENSITY, type DensityRange } from "./client/rendition.js";
 import { DensityContext } from "./components/rendition-img.js";
-import { DEFAULT_DENSITY, type DensityRange } from "./rendition.js";
-import { InlinePreviewContext } from "./inline-preview.js";
+import { MessagesContext } from "./i18n/context.js";
+import { createTranslator, resolveMessages, type ContentKitUiMessageBundle, type ContentKitUiTranslate } from "./i18n/messages.js";
+import { InlinePreviewContext } from "./react/inline-preview.js";
+import { AppearanceContext } from "./scope.js";
 
-const ClientContext = createContext<UploadClient | null>(null);
+/** Built-in bundles besides English, loaded on demand. */
+const BUNDLES: Record<string, () => Promise<ContentKitUiMessageBundle>> = {
+  de: () => import("./locales/de.js").then((m) => m.de),
+  es: () => import("./locales/es.js").then((m) => m.es),
+  ja: () => import("./locales/ja.js").then((m) => m.ja),
+  ko: () => import("./locales/ko.js").then((m) => m.ko),
+  zh: () => import("./locales/zh.js").then((m) => m.zh),
+};
 
-/** What failed: a component's save, load or render step. */
-export type UploadUiOperation =
-  | "poster.load"
-  | "poster.frame"
-  | "poster.save"
-  | "slot.load"
-  | "slot.decode"
-  | "slot.save"
-  | "slot.remove"
-  | "upload";
-
-/**
- * Every failure a component shows is also reported here (aborts excepted), so
- * the host can toast it or log it. Components still show it in place.
- */
-export type UploadUiErrorHandler = (error: UploadError, info: { operation: UploadUiOperation }) => void;
-
-const ErrorContext = createContext<UploadUiErrorHandler | undefined>(undefined);
-
-export const asUploadError = (e: unknown): UploadError =>
-  e instanceof UploadError ? e : new UploadError("network", e instanceof Error ? e.message : String(e), 0, undefined, { cause: e });
-
-/** A stable reporter: the component's own `onError`, else the provider's. */
-export function useErrorReporter(own?: UploadUiErrorHandler): (e: unknown, operation: UploadUiOperation) => void {
-  const ctx = useContext(ErrorContext);
-  const handler = useRef(own ?? ctx);
-  handler.current = own ?? ctx;
-  return useCallback((e: unknown, operation: UploadUiOperation) => {
-    const error = asUploadError(e);
-    if (error.code !== "aborted") handler.current?.(error, { operation });
-  }, []);
+/** The built-in bundle's language for a BCP 47 tag ("ja-JP" → "ja"); undefined for English or one we lack. */
+export function bundleLanguage(language: string | null | undefined): string | undefined {
+  const primary = language?.toLowerCase().split(/[-_]/)[0];
+  return primary && primary in BUNDLES ? primary : undefined;
 }
 
-export interface UploadUiProviderProps {
-  /** Default client for every component below; a component's own `client` prop wins. */
-  client?: UploadClient;
-  appearance?: UploadUiAppearance;
-  /** Locale bundle(s) layered over English; later entries win. */
-  messages?: UploadUiMessageBundle | readonly UploadUiMessageBundle[];
+export interface ContentKitUiProviderProps {
+  appearance?: ContentKitUiAppearance;
+  /** BCP 47 tag; its built-in bundle loads under `messages`. English until it arrives. */
+  language?: string;
+  /** Bundle(s) layered over English and the language's bundle; later entries win. */
+  messages?: ContentKitUiMessageBundle | readonly ContentKitUiMessageBundle[];
   /** Host translation hook, consulted before the bundles. */
-  t?: UploadUiTranslate;
+  t?: ContentKitUiTranslate;
   /** Device-pixel density range images and covers are picked for. Default [2, 3]. */
   density?: DensityRange;
-  /** Receives every failure the components show (a component's own `onError` wins). */
-  onError?: UploadUiErrorHandler;
   /** Playable videos preview muted inline (hover, or in view on touch). Default true. */
   inlinePreview?: boolean;
   children?: ReactNode;
 }
 
-/** Renders no DOM; components create their own `.ckui` styling roots. */
-export function UploadUiProvider({ client, appearance, messages, t, density = DEFAULT_DENSITY, onError, inlinePreview = true, children }: UploadUiProviderProps) {
-  const translator = useMemo(() => createTranslator(resolveMessages(messages), t), [messages, t]);
+/** Look and language for every component below. Renders no DOM; components create their own `.ckui` roots. */
+export function ContentKitUiProvider({ appearance, language, messages, t, density = DEFAULT_DENSITY, inlinePreview = true, children }: ContentKitUiProviderProps) {
+  const lang = bundleLanguage(language);
+  const [loaded, setLoaded] = useState<{ lang: string; bundle: ContentKitUiMessageBundle } | null>(null);
+  useEffect(() => {
+    if (!lang) return;
+    let live = true;
+    BUNDLES[lang]!().then(
+      (bundle) => live && setLoaded({ lang, bundle }),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [lang]);
+  const bundle = lang && loaded?.lang === lang ? loaded.bundle : undefined;
+  const translator = useMemo(() => {
+    const own = messages ? (Array.isArray(messages) ? messages : [messages]) : [];
+    return createTranslator(resolveMessages(bundle ? [bundle, ...own] : own), t);
+  }, [bundle, messages, t]);
   return (
-    <ClientContext.Provider value={client ?? null}>
-      <AppearanceContext.Provider value={appearance}>
-        <MessagesContext.Provider value={translator}>
-          <DensityContext.Provider value={density}>
-            <ErrorContext.Provider value={onError}>
-              <InlinePreviewContext.Provider value={inlinePreview}>{children}</InlinePreviewContext.Provider>
-            </ErrorContext.Provider>
-          </DensityContext.Provider>
-        </MessagesContext.Provider>
-      </AppearanceContext.Provider>
-    </ClientContext.Provider>
+    <AppearanceContext.Provider value={appearance}>
+      <MessagesContext.Provider value={translator}>
+        <DensityContext.Provider value={density}>
+          <InlinePreviewContext.Provider value={inlinePreview}>{children}</InlinePreviewContext.Provider>
+        </DensityContext.Provider>
+      </MessagesContext.Provider>
+    </AppearanceContext.Provider>
   );
-}
-
-export function useUploadClient(own?: UploadClient): UploadClient {
-  const ctx = useContext(ClientContext);
-  const c = own ?? ctx;
-  if (!c) throw new Error("contentkit-upload: pass `client` or render inside <UploadUiProvider client>");
-  return c;
-}
-
-export function useOptionalUploadClient(own?: UploadClient): UploadClient | null {
-  const ctx = useContext(ClientContext);
-  return own ?? ctx;
 }

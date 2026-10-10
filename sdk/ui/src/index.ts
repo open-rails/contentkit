@@ -1,5 +1,11 @@
+// @openrails/contentkit-ui: styled ContentKit components, ContentKitUiProvider
+// and i18n. Components that talk to ContentKit need ContentKitProvider from
+// `./react`. The entry installs its isolated stylesheet once in browsers.
 import "./styles.css";
 
+export { ContentKitUiProvider, type ContentKitUiProviderProps } from "./provider.js";
+export { ContentKitUiRoot } from "./scope.js";
+export type { ContentKitUiAppearance, ContentKitUiTheme, ContentKitUiVariables } from "./appearance.js";
 export { EncodeProgress, encodeLabel, formatRemaining, type EncodeProgressProps } from "./components/encode-progress.js";
 export { ImageCropDialog, type ImageCropDialogProps } from "./components/image-crop-dialog.js";
 export { SlotImage, type SlotImageProps } from "./components/slot-image.js";
@@ -14,14 +20,10 @@ export {
   type SlotEditorState,
 } from "./components/slot-editor.js";
 export { VideoPoster, type VideoPosterProps } from "./components/video-poster.js";
-export { HOVER_DELAY, InlinePreviewContext, useInlinePreview, useReducedMotion, type InlinePreviewOptions } from "./inline-preview.js";
 export { VideoPosterPicker, formatTime, type VideoPickerProps, type VideoPosterPickerProps } from "./components/video-poster-picker.js";
 export { MediaGallery, type MediaGalleryProps } from "./components/media-gallery.js";
 export { SpriteFrame, VideoPlayer, qualityLabel, type VideoPlayerProps } from "./components/video-player.js";
 export { AvatarUpload, CoverUpload, type SlotUploadProps } from "./components/slot-upload.js";
-export { UploadUiProvider, useErrorReporter, useUploadClient, type UploadUiErrorHandler, type UploadUiOperation, type UploadUiProviderProps } from "./provider.js";
-export { UploadUiRoot } from "./scope.js";
-export type { UploadUiAppearance, UploadUiTheme, UploadUiVariables } from "./appearance.js";
 export {
   createTranslator,
   defaultMessages,
@@ -30,8 +32,8 @@ export {
   type MessageKey,
   type MessageVars,
   type Translator,
-  type UploadUiMessageBundle,
-  type UploadUiMessages,
-  type UploadUiTranslate,
+  type ContentKitUiMessageBundle,
+  type ContentKitUiMessages,
+  type ContentKitUiTranslate,
 } from "./i18n/messages.js";
 export { useMessages } from "./i18n/context.js";

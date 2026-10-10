@@ -1,14 +1,14 @@
 import { expect, it, vi } from "vitest";
-import { FakeServer, bytes, fakeClient } from "../test/fake.js";
+import { FakeServer, bytes, fakeClient } from "../../../test/fake.js";
 import { UploadQueue, type QueueSnapshot } from "./queue.js";
-import type { Op } from "./wire.gen.js";
+import type { Op } from "../generated/wire.js";
 
 const ref = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000001" };
 const path = "originals/{name}";
 
 function setup() {
   const s = new FakeServer();
-  return { s, q: new UploadQueue(fakeClient(s), { ref, path }) };
+  return { s, q: new UploadQueue(fakeClient(s).media, { ref, path }) };
 }
 
 const png = (name: string, seed: number) => new File([bytes(1000, seed)], name, { type: "image/png" });
@@ -75,7 +75,7 @@ it("retains a stale file's replacement batch across lost responses and a later q
     if (loseResponses && String(input).endsWith("/commit") && response.ok) throw new Error("response lost");
     return response;
   };
-  const q = new UploadQueue(fakeClient(s, { retries: 1 }), { ref, path });
+  const q = new UploadQueue(fakeClient(s, { retries: 1 }).media, { ref, path });
   const [, b] = q.add([png("a.png", 1), png("b.png", 2)]);
   const snap = await until(q, (x) => x.ready);
   s.stale.add(snap.items.find((i) => i.id === b!.id)!.result!.blob);
@@ -110,7 +110,7 @@ it("does not remove an existing file when a cancelled staging create is rejected
     }
     return fetch(input, init);
   };
-  const q = new UploadQueue(fakeClient(s), { ref, path });
+  const q = new UploadQueue(fakeClient(s).media, { ref, path });
   const [item] = q.add([png("a.png", 1)]);
   await until(q, (x) => x.ready);
   const pending = q.commit();
@@ -135,7 +135,7 @@ it("retries a lost staging response with the same create ID and attaches the upl
     }
     return response;
   };
-  const q = new UploadQueue(fakeClient(s), { ref, path });
+  const q = new UploadQueue(fakeClient(s).media, { ref, path });
   const [item] = q.add([png("new.png", 2)]);
   await until(q, (x) => x.ready);
   const files = await q.commit();
@@ -163,7 +163,7 @@ it("processes on upload: stages unattached, polls until processed, attaches in q
   s.processOnUpload = true;
   s.pendingReads = 2;
   s.stagedReads = 3;
-  const q = new UploadQueue(fakeClient(s), { ref, path, pollInterval: 5 });
+  const q = new UploadQueue(fakeClient(s).media, { ref, path, pollInterval: 5 });
   const [a, b, d] = q.add([png("a.png", 1), png("b.png", 2), png("d.png", 3)]);
   await until(q, (x) => x.items.every((i) => i.unattached && i.processing));
   await until(q, (x) => x.items.every((i) => i.processed));

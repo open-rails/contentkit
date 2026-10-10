@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import "./test/dom.js";
+import "../test/dom.js";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import { useHlsPlayer, useRefreshBeforeExpiry, type HlsPlayerOptions } from "./gallery-react.js";
-import { expiryDelay, NETWORK_FAILURES_BEFORE_ERROR, refreshable } from "./playback.js";
+import { useHlsPlayer, useRefreshBeforeExpiry, type HlsPlayerOptions } from "./gallery.js";
+import { expiryDelay, NETWORK_FAILURES_BEFORE_ERROR, refreshable } from "../client/playback.js";
 
 // hls.js needs MediaSource, which jsdom lacks: a stand-in that records what the
 // player asks of it and lets the test deliver its events.

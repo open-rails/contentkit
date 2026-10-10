@@ -34,15 +34,16 @@ export default defineConfig({
       exclude: ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.worker.ts", "src/test/**"],
       tsconfigPath: path.resolve(root, "tsconfig.json"),
     }),
-    ckuiCssPlugin({ entries: ["ui"] }),
+    ckuiCssPlugin({ entries: ["index"] }),
   ],
   resolve: { alias: { "#ckui": path.resolve(root, "src") } },
   build: {
     lib: {
       entry: {
         index: src("index.ts"),
-        react: src("react.ts"),
-        ui: src("ui.ts"),
+        client: src("client/index.ts"),
+        react: src("react/index.ts"),
+        urls: src("urls/index.ts"),
         ...Object.fromEntries(LOCALES.map((l) => [`locales/${l}`, src(`locales/${l}.ts`)])),
       },
       formats: ["es"],

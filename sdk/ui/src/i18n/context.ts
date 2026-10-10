@@ -3,7 +3,7 @@ import { createTranslator, defaultMessages, type Translator } from "./messages.j
 
 export const MessagesContext = createContext<Translator>(createTranslator(defaultMessages));
 
-/** English defaults when rendered outside an `UploadUiProvider`. */
+/** English defaults when rendered outside a `ContentKitUiProvider`. */
 export function useMessages(): Translator {
   return useContext(MessagesContext);
 }

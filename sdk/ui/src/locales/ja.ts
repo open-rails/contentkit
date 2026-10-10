@@ -1,6 +1,6 @@
-import type { UploadUiMessageBundle } from "../i18n/messages.js";
+import type { ContentKitUiMessageBundle } from "../i18n/messages.js";
 
-export const ja: UploadUiMessageBundle = {
+export const ja: ContentKitUiMessageBundle = {
   common: {
     cancel: "キャンセル",
     close: "閉じる",
@@ -158,5 +158,20 @@ export const ja: UploadUiMessageBundle = {
     animationFrames: "アニメーションは最大 {maxFrames} フレームまでです（この画像は {frames} フレーム）。",
     animationSeconds: "アニメーションは最大 {maxSeconds} 秒までです。",
     animationTooLarge: "このアニメーションは大きすぎます：{width}×{height} px が {frames} フレーム。フレーム数かサイズを減らしてください。",
+    too_many_files: "この項目のファイル数は上限に達しています。先にいくつか削除してください。",
+    animation_too_long: "このアニメーションは長すぎます。",
+    video_too_long: "このファイルは許可されている長さを超えています。",
+    video_too_large: "この動画のフレームサイズは許可されている大きさを超えています。",
+    videoTooLongBy: "このファイルの長さは {duration} 秒です。ここでの上限は {maxSeconds} 秒です。",
+    videoTooLargeBy: "この動画は {width}×{height} px です。動画は最大 {megapixels} メガピクセルまでです。",
+    video_over_budget: "この動画は処理に時間がかかりすぎます。より短いか小さい動画を使ってください。",
+    aborted: "キャンセルしました。",
+    resume_mismatch: "保存されたアップロードは別のファイルのものです。もう一度ファイルを選んでください。",
+    moderation_rejected: "モデレーションにより拒否されました。",
+    unprocessable: "このリクエストを処理できませんでした。",
+    comment_banned: "ここではコメントできません。",
+    not_configured: "この機能はこのサイトでは利用できません。",
+    tenant_mismatch: "サーバー側で問題が発生しました。もう一度お試しください。",
+    gone: "このコンテンツはもう利用できません。",
   },
 };

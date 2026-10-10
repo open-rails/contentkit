@@ -1,4 +1,4 @@
-import type { FileInfo, ReadResult } from "./wire.gen.js";
+import type { FileInfo, ReadResult } from "./generated/wire.js";
 
 export type GalleryView = "carousel" | "grid";
 

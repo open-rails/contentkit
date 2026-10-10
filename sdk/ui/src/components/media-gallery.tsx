@@ -14,15 +14,15 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useMemo, useState, type ReactNode } from "react";
-import type { UploadUiAppearance } from "../appearance.js";
-import { formatDuration, galleryItems, stageAspect, type GalleryItem, type GalleryLockedItem, type GalleryMediaItem } from "../gallery.js";
-import { useCarousel, useGalleryView, useHlsPlayer, useRefreshBeforeExpiry, type GalleryViewOptions, type HlsPlayerOptions } from "../gallery-react.js";
-import { useInlinePreview } from "../inline-preview.js";
+import type { ContentKitUiAppearance } from "../appearance.js";
+import { formatDuration, galleryItems, stageAspect, type GalleryItem, type GalleryLockedItem, type GalleryMediaItem } from "../client/gallery.js";
+import { useCarousel, useGalleryView, useHlsPlayer, useRefreshBeforeExpiry, type GalleryViewOptions, type HlsPlayerOptions } from "../react/gallery.js";
+import { useInlinePreview } from "../react/inline-preview.js";
 import { useMessages } from "../i18n/context.js";
-import { publicRenditions, type PublicImage } from "../public.js";
-import { UploadUiRoot, useScopeProps } from "../scope.js";
+import { publicRenditions, type PublicPreset } from "../client/public.js";
+import { ContentKitUiRoot, useScopeProps } from "../scope.js";
 import { RenditionImg } from "./rendition-img.js";
-import type { FileInfo, ReadResult } from "../wire.gen.js";
+import type { FileInfo, ReadResult } from "../client/generated/wire.js";
 import { previewStartAt, SpriteFrame, VideoPlayer } from "./video-player.js";
 import { Button } from "#ckui/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "#ckui/ui/toggle-group";
@@ -34,10 +34,10 @@ export interface MediaGalleryProps extends GalleryViewOptions, Pick<HlsPlayerOpt
    * With `refresh`, the gallery reads again shortly before `read.expires`.
    */
   read: ReadResult | null | undefined;
-  /** A ladder's HLS folder from the read's `hls` dir: client.hlsBase(ref, dir). */
+  /** A ladder's HLS folder from the read's `hls` dir: client.media.hlsBase(ref, dir). */
   hlsBase?: (dir: string) => string;
   /** The item's poster (its public preset, or a URL), drawn on the first video. */
-  poster?: PublicImage | string | null;
+  poster?: PublicPreset | string | null;
   /** Where the first video's preview starts, seconds (e.g. the poster's frame); default 10% in. */
   previewStart?: number;
   /** Playable videos preview muted inline (hover, or in view on touch); default the provider's. */
@@ -52,7 +52,7 @@ export interface MediaGalleryProps extends GalleryViewOptions, Pick<HlsPlayerOpt
   maxHeight?: string;
   label?: string;
   className?: string;
-  appearance?: UploadUiAppearance;
+  appearance?: ContentKitUiAppearance;
 }
 
 interface Ctx extends MediaGalleryProps {
@@ -60,7 +60,7 @@ interface Ctx extends MediaGalleryProps {
 }
 
 // The item's poster and preview start belong to its first video.
-function videoArt(ctx: Ctx, item: GalleryMediaItem): { poster?: PublicImage | string; start: number } {
+function videoArt(ctx: Ctx, item: GalleryMediaItem): { poster?: PublicPreset | string; start: number } {
   const first = ctx.items.find((i): i is GalleryMediaItem => i.kind === "video") === item;
   return { poster: first ? (ctx.poster ?? undefined) : undefined, start: previewStartAt(first ? ctx.previewStart : undefined, item.file.dur) };
 }
@@ -85,7 +85,7 @@ export function MediaGallery(props: MediaGalleryProps) {
   const current = Math.min(index, items.length - 1);
   const shown = multi ? view : "carousel";
   return (
-    <UploadUiRoot appearance={appearance} className={cn("@container grid gap-2", className)} data-ckui="media-gallery" data-view={shown} role="region" aria-label={label ?? t("gallery.label")}>
+    <ContentKitUiRoot appearance={appearance} className={cn("@container grid gap-2", className)} data-ckui="media-gallery" data-view={shown} role="region" aria-label={label ?? t("gallery.label")}>
       {multi && (
         <div className="flex items-center justify-between gap-2" data-ckui="gallery-header">
           <span className="text-sm text-muted-foreground tabular-nums" data-ckui="gallery-count">
@@ -110,7 +110,7 @@ export function MediaGallery(props: MediaGalleryProps) {
         <Grid ctx={ctx} onOpen={setLightbox} />
       )}
       <Lightbox ctx={ctx} index={lightbox} onIndex={setLightbox} />
-    </UploadUiRoot>
+    </ContentKitUiRoot>
   );
 }
 

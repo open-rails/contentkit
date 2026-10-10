@@ -1,4 +1,5 @@
-import { createUploadClient } from "@openrails/contentkit-upload";
+import { createContentKitClient } from "@openrails/contentkit-ui/client";
+import { ContentKitProvider } from "@openrails/contentkit-ui/react";
 import {
   VideoPoster,
   VideoPosterPicker,
@@ -9,23 +10,23 @@ import {
   SlotEditMenu,
   SlotEditor,
   SlotImage,
-  UploadUiProvider,
+  ContentKitUiProvider,
   useSlotEditor,
-  type UploadUiTheme,
-} from "@openrails/contentkit-upload/ui";
+  type ContentKitUiTheme,
+} from "@openrails/contentkit-ui";
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { DemoServer, sampleAvatar, sampleImage } from "./fake";
 
 const q = new URLSearchParams(location.search);
-const theme = (q.get("theme") ?? "light") as UploadUiTheme;
+const theme = (q.get("theme") ?? "light") as ContentKitUiTheme;
 const dark = theme === "dark";
 document.documentElement.style.colorScheme = dark ? "dark" : "light";
 document.body.style.cssText = `margin:0;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:${dark ? "#09090b" : "#fafafa"};color:${dark ? "#fafafa" : "#09090b"}`;
 
 // Public files are served by e2e/media-server.ts (`node e2e/media-server.ts`).
 const server = new DemoServer(`http://127.0.0.1:${q.get("media") ?? 4180}`);
-const client = createUploadClient({ endpoint: "/api", readEndpoint: "/read", fetch: server.fetch, transport: server.transport });
+const client = createContentKitClient({ baseUrl: "", mounts: { upload: "/api", media: "/read" }, fetch: server.fetch, media: { transport: server.transport } });
 const channel = { kind: "channel", id: "0192f000-0000-7000-8000-000000000001" };
 const empty = { kind: "channel", id: "0192f000-0000-7000-8000-000000000002" };
 
@@ -78,8 +79,8 @@ function ChannelHeader() {
 
 const video = { kind: "post", id: "0192f000-0000-7000-8000-000000000001" };
 server.seedVideo(video);
-await client.commit(video, [{ op: "frame", path: "poster", auto: true }]);
-await client.waitFor(video, "poster", { interval: 200 });
+await client.media.commit(video, [{ op: "frame", path: "poster", auto: true }]);
+await client.media.waitFor(video, "poster", { interval: 200 });
 
 function VideoCard() {
   const [open, setOpen] = useState(false);
@@ -115,7 +116,8 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <UploadUiProvider client={client} appearance={{ theme }}>
+    <ContentKitProvider client={client}>
+    <ContentKitUiProvider appearance={{ theme }}>
       <main style={{ maxWidth: 760, margin: "0 auto", padding: "28px 16px", display: "grid", gap: 20 }}>
         <Card title="Channel header (SlotEditor)">
           <ChannelHeader />
@@ -139,6 +141,7 @@ createRoot(document.getElementById("root")!).render(
           <AvatarUpload item={empty} image={server.image(empty, "avatar")} />
         </Card>
       </main>
-    </UploadUiProvider>
+    </ContentKitUiProvider>
+    </ContentKitProvider>
   </StrictMode>,
 );

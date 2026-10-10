@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
-import { UploadClient, stem } from "../src/client.js";
-import { UploadError } from "../src/errors.js";
-import type { Transport } from "../src/transport.js";
-import type { CommitBody, ErrorReply, FileInfo, Op, PartBody, PresignBody, PublicImage, ReadResult, RequestReply } from "../src/wire.gen.js";
+import { createContentKitClient, type ContentKitClient } from "../src/client/client.js";
+import { ContentKitError } from "../src/client/errors.js";
+import type { CommitBody, ErrorReply, FileInfo, Op, PartBody, PresignBody, PublicImage, ReadResult, RequestReply } from "../src/client/generated/wire.js";
+import type { MediaOptions } from "../src/client/media/client.js";
+import { stem } from "../src/client/media/client.js";
+import type { Transport } from "../src/client/media/transport.js";
 
 const MiB = 1 << 20;
 const EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "video/mp4": "mp4", "application/x-subrip": "srt" };
@@ -22,7 +24,7 @@ interface Upload {
  * An in-process upload and read API and bucket with media.UploadHandler's
  * and Reader.Handler's semantics, for unit tests of the client's scheduling
  * and the components. The integration suite runs the real handlers over MinIO.
- * Mount: endpoint "http://x/api", readEndpoint "http://x/read".
+ * Mounts: upload "http://x/api", media "http://x/read".
  *
  * Fresh uploads are staged (u-{uuid}); a commit places them at once at
  * sha256-{hex} of the declared hash, so an identical upload then exists.
@@ -87,23 +89,23 @@ export class FakeServer {
       }
       return json(200, this.route(path, body));
     } catch (e) {
-      if (!(e instanceof UploadError)) throw e;
+      if (!(e instanceof ContentKitError)) throw e;
       const headers: Record<string, string> = e.retryAfter ? { "Retry-After": String(e.retryAfter) } : {};
       return json(e.status, { error: e.message, code: e.code, retry_after: e.retryAfter, blobs: e.blobs }, headers);
     }
   };
 
   transport: Transport = async (req, body, { signal, onProgress }) => {
-    if (signal?.aborted) throw new UploadError("aborted", "aborted");
+    if (signal?.aborted) throw new ContentKitError("aborted", "aborted");
     this.puts.push(req.url);
     if (this.dropPuts > 0) {
       this.dropPuts--;
       onProgress?.(Math.floor(body.size / 2));
-      throw new UploadError("network", "connection reset");
+      throw new ContentKitError("network", "connection reset");
     }
     const bytes = new Uint8Array(await body.arrayBuffer());
     const sum = createHash("sha256").update(bytes).digest("base64");
-    if (req.headers["X-Amz-Checksum-Sha256"] !== sum) throw new UploadError("storage", "BadDigest", 400);
+    if (req.headers["X-Amz-Checksum-Sha256"] !== sum) throw new ContentKitError("storage", "BadDigest", { status: 400 });
     const [, kind, a, b] = new URL(req.url).pathname.split("/");
     if (kind === "put") {
       this.objects.set(a!, bytes.length);
@@ -111,7 +113,7 @@ export class FakeServer {
     } else {
       const u = this.uploads.get(a!)!;
       const s = u.signed.get(Number(b))!;
-      if (s.size !== bytes.length) throw new UploadError("storage", "length", 403);
+      if (s.size !== bytes.length) throw new ContentKitError("storage", "length", { status: 403 });
       u.parts.set(Number(b), { size: bytes.length, sha256: s.sha256 });
     }
     onProgress?.(bytes.length);
@@ -134,9 +136,9 @@ export class FakeServer {
         const p = b as PresignBody;
         if (this.refuse) {
           const r = this.refuse;
-          throw new UploadError(r.code, r.error, r.status, r.retry_after);
+          throw new ContentKitError(r.code, r.error, { status: r.status, retryAfter: r.retry_after });
         }
-        if (!/^[0-9a-f]{64}$/.test(p.sha256)) throw new UploadError("invalid_request", "sha256 required", 400);
+        if (!/^[0-9a-f]{64}$/.test(p.sha256)) throw new ContentKitError("invalid_request", "sha256 required", { status: 400 });
         this.presigns.push(p);
         const ext = EXT[p.type] ?? "bin";
         // Named uploads are named by the server; a path without an extension gets one.
@@ -156,7 +158,7 @@ export class FakeServer {
         const u = this.ticket(b.ticket);
         return {
           parts: (b.parts as PartBody[]).map((p) => {
-            if (p.size > 16 * MiB || !p.sha256) throw new UploadError("invalid_request", "bad part", 400);
+            if (p.size > 16 * MiB || !p.sha256) throw new ContentKitError("invalid_request", "bad part", { status: 400 });
             u.signed.set(p.number, p);
             return { number: p.number, request: req(`fake://s3/part/${b.ticket}/${p.number}`, { "X-Amz-Checksum-Sha256": b64(p.sha256) }) };
           }),
@@ -168,15 +170,15 @@ export class FakeServer {
       }
       case "/complete": {
         const u = this.uploads.get(b.ticket);
-        if (!u) throw new UploadError("not_found", "no upload", 404);
+        if (!u) throw new ContentKitError("not_found", "no upload", { status: 404 });
         const parts = [...u.parts].sort((x, y) => x[0] - y[0]);
         let total = 0;
         parts.forEach(([n, p], i) => {
-          if (n !== i + 1) throw new UploadError("incomplete", `part ${i + 1} missing`, 409);
-          if (i < parts.length - 1 && p.size < 8 * MiB) throw new UploadError("invalid_request", "small part", 400);
+          if (n !== i + 1) throw new ContentKitError("incomplete", `part ${i + 1} missing`, { status: 409 });
+          if (i < parts.length - 1 && p.size < 8 * MiB) throw new ContentKitError("invalid_request", "small part", { status: 400 });
           total += p.size;
         });
-        if (total !== u.size) throw new UploadError("incomplete", "short", 409);
+        if (total !== u.size) throw new ContentKitError("incomplete", "short", { status: 409 });
         u.complete = true;
         this.objects.set(u.blob, total);
         return { blob: u.blob, type: u.type, size: total };
@@ -186,11 +188,11 @@ export class FakeServer {
         return undefined;
       case "/commit": {
         this.commitRequests.push(b);
-        if (!b.operation_id) throw new UploadError("invalid_request", "operation_id required", 400);
+        if (!b.operation_id) throw new ContentKitError("invalid_request", "operation_id required", { status: 400 });
         const input = JSON.stringify({ ref: b.ref, ops: b.ops });
         const prior = this.receipts.get(b.operation_id);
         if (prior !== undefined) {
-          if (prior !== input) throw new UploadError("conflict", "commit inputs changed", 409);
+          if (prior !== input) throw new ContentKitError("conflict", "commit inputs changed", { status: 409 });
           return { files: this.items.get(key(b.ref)) ?? [] };
         }
         const files = this.commit(b.ref, b.ops);
@@ -198,12 +200,12 @@ export class FakeServer {
         return { files };
       }
     }
-    throw new UploadError("not_found", path, 404);
+    throw new ContentKitError("not_found", path, { status: 404 });
   }
 
   private commit(ref: { kind: string; id: string }, ops: Op[]): FileInfo[] {
     const missing = [...new Set(ops.filter((op) => op.op === "put").map((op) => op.blob!))].filter((n) => this.stale.has(n) || !this.objects.has(n));
-    if (missing.length) throw new UploadError("not_uploaded", "upload again", 409, undefined, { blobs: this.omitBlobs ? undefined : missing });
+    if (missing.length) throw new ContentKitError("not_uploaded", "upload again", { status: 409, blobs: this.omitBlobs ? undefined : missing });
     this.commits.push(ops);
     let files = [...(this.items.get(key(ref)) ?? [])];
     const at = (p: string) => files.findIndex((f) => f.path === p || stem(f.path) === stem(p));
@@ -215,7 +217,7 @@ export class FakeServer {
     for (const op of ops) {
       const i = op.path ? at(op.path) : -1;
       const cur = files[i];
-      if (op.op !== "put" && op.op !== "frame" && !cur) throw new UploadError("not_found", `no upload ${op.path}`, 404);
+      if (op.op !== "put" && op.op !== "frame" && !cur) throw new ContentKitError("not_found", `no upload ${op.path}`, { status: 404 });
       switch (op.op) {
         case "put": {
           const type = op.path!.endsWith(".mp4") ? "video/mp4" : op.path!.endsWith(".srt") ? "application/x-subrip" : "image/png";
@@ -259,7 +261,7 @@ export class FakeServer {
 
   private ticket(t: string): Upload {
     const u = this.uploads.get(t);
-    if (!u || u.complete) throw new UploadError("not_found", "multipart upload not found", 404);
+    if (!u || u.complete) throw new ContentKitError("not_found", "multipart upload not found", { status: 404 });
     return u;
   }
 }
@@ -293,6 +295,11 @@ export function bytes(n: number, seed = 1): Uint8Array<ArrayBuffer> {
 }
 
 /** A client on a FakeServer. */
-export function fakeClient(s: FakeServer, o: { retries?: number; concurrency?: number } = {}): UploadClient {
-  return new UploadClient({ endpoint: "http://x/api", readEndpoint: "http://x/read", fetch: s.fetch, transport: s.transport, retryDelay: () => 0, ...o });
+export function fakeClient(s: FakeServer, o: MediaOptions = {}): ContentKitClient {
+  return createContentKitClient({
+    baseUrl: "http://x",
+    mounts: { upload: "http://x/api", media: "http://x/read" },
+    fetch: s.fetch,
+    media: { transport: s.transport, retryDelay: () => 0, ...o },
+  });
 }

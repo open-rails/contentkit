@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import vectors from "../../../contenturl/testdata/vectors.json" with { type: "json" };
-import { type ContentLink, contentPath, createContentURLs, isCode, parseCode, slugFor } from "../src/index.ts";
+import vectors from "../../../../contenturl/testdata/vectors.json" with { type: "json" };
+import { type ContentLink, contentPath, createContentURLs, isCode, parseCode, slugFor } from "./index.js";
 
 describe("codes (shared vectors)", () => {
   for (const c of vectors.codes) {
@@ -60,5 +60,12 @@ describe("building", () => {
     expect(() => createContentURLs({ routes: {} })).toThrow(/empty/);
     expect(() => createContentURLs({ routes: { video: "Watch" } })).toThrow(/path segment/);
     expect(() => createContentURLs({ routes: { video: "watch" }, languages: ["watch"] })).toThrow(/also a route/);
+    expect(() => createContentURLs({ routes: { video: "watch" }, origin: "example.com" })).toThrow(/origin/);
+  });
+
+  it("builds absolute URLs on the configured origin", () => {
+    const site = createContentURLs({ routes: { gallery: "g" }, languages: ["es"], origin: "https://example.com/" });
+    expect(site.url(link, { language: "es" })).toBe("https://example.com/es/g/G4VRQ3ZQ5/un-titulo");
+    expect(() => urls.url(link)).toThrow(/origin/);
   });
 });

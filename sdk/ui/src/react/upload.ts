@@ -1,23 +1,13 @@
-import { ratio, type AspectRatio } from "./aspect.js";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { Progress, PutOptions, UploadClient, UploadedFile, UploadOptions } from "./client.js";
-import { centeredCrop, constrainCrop, editOf, rotation, sameEdit, toOriginal, type Rotation, type Size } from "./crop.js";
-import { UploadError } from "./errors.js";
-import { encodeRemaining } from "./encode.js";
-import { UploadQueue, type QueueOptions, type QueueSnapshot } from "./queue.js";
-import type { Crop, Edit, EncodeProgress, FileInfo } from "./wire.gen.js";
-
-export {
-  editOutput,
-  useSlotCrop,
-  useSlotImage,
-  type SlotCropMode,
-  type SlotCropOptions,
-  type SlotCropState,
-  type SlotImageOptions,
-  type UseSlotCrop,
-  type UseSlotImage,
-} from "./slot-react.js";
+import { ratio, type AspectRatio } from "../client/aspect.js";
+import type { ContentKitClient } from "../client/client.js";
+import { centeredCrop, constrainCrop, editOf, rotation, sameEdit, toOriginal, type Rotation, type Size } from "../client/crop.js";
+import { toContentKitError, type ContentKitError } from "../client/errors.js";
+import type { Crop, Edit, EncodeProgress, FileInfo } from "../client/generated/wire.js";
+import type { Progress, PutOptions, UploadedFile, UploadOptions } from "../client/media/client.js";
+import { encodeRemaining } from "../client/media/encode.js";
+import { UploadQueue, type QueueOptions, type QueueSnapshot } from "../client/media/queue.js";
+import { useContentKitClient } from "./context.js";
 
 export interface UseUploadQueue extends QueueSnapshot {
   queue: UploadQueue;
@@ -31,12 +21,18 @@ export interface UseUploadQueue extends QueueSnapshot {
   commit: UploadQueue["commit"];
 }
 
+export interface UploadQueueOptions extends QueueOptions {
+  /** Overrides the provider's client. */
+  client?: ContentKitClient;
+}
+
 /**
  * A file queue for one item (options are read once; key the component by
  * ref to switch items). Unmounting pauses running uploads.
  */
-export function useUploadQueue(client: UploadClient, options: QueueOptions): UseUploadQueue {
-  const [queue] = useState(() => new UploadQueue(client, { ...options, autoStart: false }));
+export function useUploadQueue({ client: own, ...options }: UploadQueueOptions): UseUploadQueue {
+  const client = useContentKitClient(own);
+  const [queue] = useState(() => new UploadQueue(client.media, { ...options, autoStart: false }));
   const autoStart = options.autoStart ?? true;
   useEffect(() => {
     if (autoStart) queue.start();
@@ -60,7 +56,7 @@ export function useUploadQueue(client: UploadClient, options: QueueOptions): Use
 export interface UploadStatus {
   status: "idle" | "uploading" | "done" | "error";
   progress?: Progress;
-  error?: UploadError;
+  error?: ContentKitError;
   result?: UploadedFile & { file?: FileInfo };
 }
 
@@ -74,7 +70,8 @@ export interface UseUpload extends UploadStatus {
 }
 
 /** One upload at a time (a cover, an inline image); a new upload cancels the previous. */
-export function useUpload(client: UploadClient): UseUpload {
+export function useUpload({ client: own }: { client?: ContentKitClient } = {}): UseUpload {
+  const { media } = useContentKitClient(own);
   const [s, set] = useState<UploadStatus>({ status: "idle" });
   const ctl = useRef<AbortController | null>(null);
   useEffect(() => () => ctl.current?.abort(), []);
@@ -93,18 +90,18 @@ export function useUpload(client: UploadClient): UseUpload {
         let result: UploadedFile & { file?: FileInfo };
         if (put) {
           let up: UploadedFile | undefined;
-          const f = await client.put(file, { ...o, ...put, onUploaded: (u) => (up = u) });
+          const f = await media.put(file, { ...o, ...put, onUploaded: (u) => (up = u) });
           result = { ...up!, file: f };
-        } else result = await client.upload(file, o);
+        } else result = await media.upload(file, o);
         if (c === ctl.current) set((prev) => ({ status: "done", progress: prev.progress, result }));
         return result;
       } catch (e) {
-        const error = e instanceof UploadError ? e : new UploadError("network", String(e));
+        const error = toContentKitError(e);
         if (c === ctl.current) set(error.code === "aborted" ? { status: "idle" } : { status: "error", error });
         throw error;
       }
     },
-    [client],
+    [media],
   );
   const cancel = useCallback(() => ctl.current?.abort(), []);
   return { ...s, upload, cancel };
@@ -175,42 +172,6 @@ export function useCrop({ source: given, aspect: shape, initial }: UseCropOption
   }, [crop, source, rotate]);
   return { crop, rotate, edit, setCrop, setFromDisplay, rotateBy, reset };
 }
-
-export {
-  round3,
-  useFrameStrip,
-  useVideoFrame,
-  useVideoImages,
-  useVideoPoster,
-  type FrameStripOptions,
-  type StripFrame,
-  type UseVideoFrame,
-  type UseVideoImages,
-  type UseVideoPoster,
-  type VideoFrameOptions,
-  type VideoImagesOptions,
-  type VideoPosterOptions,
-  type VideoSaveState,
-} from "./video-react.js";
-
-export { useRead, type UseRead } from "./read-react.js";
-
-export {
-  GALLERY_VIEW_KEY,
-  PLAYER_QUALITY_KEY,
-  useCarousel,
-  useGalleryView,
-  useHlsPlayer,
-  useRefreshBeforeExpiry,
-  type CarouselOptions,
-  type GalleryViewOptions,
-  type HlsPlayerOptions,
-  type PlayerQuality,
-  type PlayerStatus,
-  type QualityLevel,
-  type UseCarousel,
-  type UseHlsPlayer,
-} from "./gallery-react.js";
 
 export interface UseEncodeProgress {
   progress?: EncodeProgress;

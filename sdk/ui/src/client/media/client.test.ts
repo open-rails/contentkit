@@ -1,9 +1,15 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { FakeServer, bytes, fakeClient } from "../test/fake.js";
-import { UploadClient, type UploadState } from "./client.js";
-import { UploadError } from "./errors.js";
-import type { CommitBody } from "./wire.gen.js";
+import { FakeServer, bytes, fakeClient } from "../../../test/fake.js";
+import { createContentKitClient } from "../client.js";
+import { ContentKitError } from "../errors.js";
+import type { CommitBody } from "../generated/wire.js";
+import type { MediaOptions, UploadState } from "./client.js";
+
+/** A media client with the upload API at endpoint and reads at readEndpoint. */
+function mediaClient({ endpoint, readEndpoint, fetch, ...media }: MediaOptions & { endpoint: string; readEndpoint?: string; fetch?: typeof globalThis.fetch }) {
+  return createContentKitClient({ baseUrl: "http://x", mounts: { upload: endpoint, ...(readEndpoint ? { media: readEndpoint } : {}) }, fetch, media }).media;
+}
 
 const MiB = 1 << 20;
 const ref = { kind: "video", id: "0192f000-0000-7000-8000-000000000001" };
@@ -12,7 +18,7 @@ const STAGED = /^u-[0-9a-f-]{36}$/;
 
 function setup(o: { retries?: number; concurrency?: number } = {}) {
   const s = new FakeServer();
-  return { s, c: fakeClient(s, o) };
+  return { s, c: fakeClient(s, o).media };
 }
 
 function file(n: number, seed = 1, type = "video/mp4"): File {
@@ -25,7 +31,7 @@ describe("single PUT", () => {
     s.seed(ref, [{ path: "source.mp4", type: "video/mp4", size: 100 }]);
     const ops = [{ op: "rename" as const, path: "source.mp4", to: "renamed.mp4" }];
     let dropped = false;
-    const c = new UploadClient({
+    const c = mediaClient({
       endpoint: "http://x/api",
       retryDelay: () => 0,
       fetch: async (input, init) => {
@@ -73,7 +79,7 @@ describe("single PUT", () => {
     const { s, c } = setup();
     s.refuse = { status: 429, code: "rate_limited", error: "too many uploads", retry_after: 60 };
     const err = await c.upload(file(MiB), { ref, path }).catch((e) => e);
-    expect(err).toBeInstanceOf(UploadError);
+    expect(err).toBeInstanceOf(ContentKitError);
     expect([err.code, err.retryAfter, err.isLimit, s.puts.length]).toEqual(["rate_limited", 60, true, 0]);
   });
 
@@ -130,7 +136,7 @@ describe("multipart", () => {
     let peak = 0;
     let ahead = 0;
     let started = 0;
-    const c = new UploadClient({
+    const c = mediaClient({
       endpoint: "http://x/api",
       fetch: s.fetch,
       retryDelay: () => 0,
@@ -178,7 +184,7 @@ describe("multipart", () => {
     expect(landed).toBeGreaterThanOrEqual(16 * MiB);
     const before = s.puts.length;
     let final: UploadState | null = null;
-    const resumed = await new UploadClient({ endpoint: "http://x/api", fetch: s.fetch, transport: s.transport }).upload(f, {
+    const resumed = await mediaClient({ endpoint: "http://x/api", fetch: s.fetch, transport: s.transport }).upload(f, {
       ref,
       path,
       resume: saved!,
@@ -228,7 +234,7 @@ describe("commit", () => {
       if (loseResponses && String(input).endsWith("/commit") && response.ok) throw new Error("response lost");
       return response;
     };
-    const c = fakeClient(s, { retries: 1 });
+    const c = fakeClient(s, { retries: 1 }).media;
     const source = file(1000, 18, "image/png");
     const uploaded = await c.upload(source, { ref: gallery, path: "originals/new.png" });
     s.stale.add(uploaded.blob);
@@ -287,7 +293,7 @@ describe("commit", () => {
     expect((await c.commit(gallery, ops).catch((e) => e)).code).toBe("not_uploaded");
     s.objects.delete(ua.blob); // gone even after the re-upload attempt below
     s.transport = async () => {}; // the PUT "succeeds" but nothing lands
-    const c2 = new UploadClient({ endpoint: "http://x/api", fetch: s.fetch, transport: s.transport, retryDelay: () => 0 });
+    const c2 = mediaClient({ endpoint: "http://x/api", fetch: s.fetch, transport: s.transport, retryDelay: () => 0 });
     const err = await c2.commit(gallery, ops, { sources: { [ua.blob]: a } }).catch((e) => e);
     expect(err.code).toBe("not_uploaded");
     expect(err.blobs).toEqual([expect.stringMatching(STAGED)]);
@@ -335,9 +341,9 @@ describe("reads", () => {
   });
 
   it("reads with options as query flags, and builds HLS and frame URLs", async () => {
-    const { s, c } = setup();
+    const { s } = setup();
     const urls: string[] = [];
-    const spy = new UploadClient({ endpoint: "http://x/api", readEndpoint: "http://x/read/", fetch: ((u: string, i: RequestInit) => (urls.push(String(u)), s.fetch(u, i))) as typeof fetch });
+    const spy = mediaClient({ endpoint: "http://x/api", readEndpoint: "http://x/read/", fetch: ((u: string, i: RequestInit) => (urls.push(String(u)), s.fetch(u, i))) as typeof fetch });
     await spy.read(ref, { prefix: "low-res/", offset: 50, limit: 25, download: true, editor: true });
     await spy.getFrame(ref, "source.mp4", 1.5, 320);
     expect(urls).toEqual([
@@ -345,17 +351,18 @@ describe("reads", () => {
       `http://x/api/frame?kind=video&id=${ref.id}&path=source.mp4&t=1.5&w=320`,
     ]);
     expect(spy.hlsBase(ref, "hls/")).toBe(`http://x/read/video/${ref.id}/hls/hls/`);
-    expect(() => new UploadClient({ endpoint: "/u" }).hlsBase(ref, "hls/")).toThrow(/readEndpoint/);
+    expect(mediaClient({ endpoint: "/u" }).hlsBase(ref, "hls/")).toBe(`http://x/media/video/${ref.id}/hls/hls/`);
   });
 });
 
 it("refuses a ref whose content id is not a UUIDv7 before any request", async () => {
   const { isContentId } = await import("./ref.js");
-  const { UploadApi } = await import("./api.js");
+  const { MediaApi } = await import("./api.js");
+  const { Http } = await import("../http.js");
   expect(isContentId("0192f000-0000-7000-8000-000000000001")).toBe(true);
   for (const bad of ["1", "0192f000-0000-4000-8000-000000000001", "0192F000-0000-7000-8000-000000000001", "0192f000-0000-7000-c000-000000000001"]) expect(isContentId(bad)).toBe(false);
   let called = false;
-  const api = new UploadApi({ endpoint: "/u", fetch: (async () => ((called = true), new Response("{}"))) as typeof fetch });
+  const api = new MediaApi(new Http({ baseUrl: "/u", fetch: (async () => ((called = true), new Response("{}"))) as typeof fetch }));
   await expect(api.presign({ ref: { kind: "post", id: "18" }, path: "cover", type: "image/png", size: 1, sha256: "0".repeat(64) })).rejects.toMatchObject({ code: "invalid_request" });
   expect(called).toBe(false);
 });

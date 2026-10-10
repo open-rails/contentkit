@@ -9,7 +9,10 @@ export default defineConfig({
   root: import.meta.dirname,
   plugins: [react()],
   resolve: {
-    alias: [{ find: /^@openrails\/contentkit-upload(\/.*)?$/, replacement: path.join(root, "dist") + "$1" }],
+    alias: [
+      { find: /^@openrails\/contentkit-ui$/, replacement: path.join(root, "dist/index.js") },
+      { find: /^@openrails\/contentkit-ui\/(client|react|urls|locales\/\w+)$/, replacement: path.join(root, "dist") + "/$1.js" },
+    ],
   },
   server: { host: "127.0.0.1", strictPort: true },
 });

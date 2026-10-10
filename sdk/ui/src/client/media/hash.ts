@@ -1,8 +1,8 @@
 import { bytesToHex } from "@noble/hashes/utils.js";
-import { aborted, throwIfAborted } from "./errors.js";
+import { aborted, throwIfAborted } from "../errors.js";
 import { streamSha256 } from "./hash-stream.js";
 import HashWorker from "./hash.worker.ts?worker&inline";
-import { MAX_SINGLE_PUT } from "./wire.gen.js";
+import { MAX_SINGLE_PUT } from "../generated/wire.js";
 
 export interface HashOptions {
   signal?: AbortSignal;

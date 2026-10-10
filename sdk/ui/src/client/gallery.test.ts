@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { formatDuration, galleryItems, stageAspect } from "./gallery.js";
-import type { Access, FileInfo, ReadResult } from "./wire.gen.js";
+import type { Access, FileInfo, ReadResult } from "./generated/wire.js";
 
 const read = (access: Access, files: FileInfo[], hls?: string[]): ReadResult => ({ access, total: files.length, offset: 0, limit: 50, expires: 0, files, hls });
 const img = (n: number, o: Partial<FileInfo> = {}): FileInfo => ({ path: `low-res/${n}.webp`, type: "image/webp", w: 800, h: 600, url: `https://m/${n}`, ...o });

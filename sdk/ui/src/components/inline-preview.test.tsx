@@ -2,8 +2,8 @@
 import "../test/dom.js";
 import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import type { FileInfo, ReadResult } from "../wire.gen.js";
-import { MediaGallery, UploadUiProvider, VideoPlayer } from "../ui.js";
+import type { FileInfo, ReadResult } from "../client/generated/wire.js";
+import { MediaGallery, ContentKitUiProvider, VideoPlayer } from "../index.js";
 
 // hls.js needs MediaSource, which jsdom lacks: a stand-in that records what the player asks of it.
 const hls = vi.hoisted(() => {
@@ -178,9 +178,9 @@ it("touch: the most visible video previews as it scrolls into view", async () =>
 
 it("the host setting turns it off; a locked or unencoded video never loads a stream", async () => {
   const { unmount } = render(
-    <UploadUiProvider inlinePreview={false}>
+    <ContentKitUiProvider inlinePreview={false}>
       <VideoPlayer base="/hls/a/" duration={40} />
-    </UploadUiProvider>,
+    </ContentKitUiProvider>,
   );
   fireEvent.pointerEnter(players()[0]!, { pointerType: "mouse" });
   await wait(700);

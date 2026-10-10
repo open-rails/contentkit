@@ -1,18 +1,18 @@
-import { ratio, type AspectRatio } from "../aspect.js";
+import { ratio, type AspectRatio } from "../client/aspect.js";
 import { Alert02Icon, Camera01Icon, CropIcon, Delete02Icon, ImageUpload01Icon, Loading03Icon } from "@hugeicons/core-free-icons";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { createContext, useContext, useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
-import type { UploadClient } from "../client.js";
+import type { ContentKitClient } from "../client/client.js";
 import { useMessages } from "../i18n/context.js";
-import type { CropSource } from "../image.js";
-import type { UploadError } from "../errors.js";
-import { asUploadError, useErrorReporter, useUploadClient, type UploadUiErrorHandler } from "../provider.js";
+import type { CropSource } from "../client/image.js";
+import { toContentKitError, type ContentKitError } from "../client/errors.js";
+import { useContentKitClient, useErrorReporter, type ContentKitErrorHandler } from "../react/context.js";
 import { useScopeProps } from "../scope.js";
-import type { PublicImage } from "../public.js";
-import { useSlotCrop, useSlotImage, type UseSlotCrop, type UseSlotImage } from "../slot-react.js";
-import type { FileInfo, ReadResult, RefBody } from "../wire.gen.js";
+import type { PublicPreset } from "../client/public.js";
+import { useSlotCrop, useSlotImage, type UseSlotCrop, type UseSlotImage } from "../react/slot.js";
+import type { FileInfo, ReadResult, RefBody } from "../client/generated/wire.js";
 import { Button } from "#ckui/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "#ckui/ui/dropdown-menu";
 import { ImageCropDialog } from "./image-crop-dialog.js";
@@ -23,14 +23,14 @@ export interface SlotEditorProps {
   /** The upload path, e.g. "cover" or "avatar". */
   path: string;
   /** The public preset showing the upload: children draw it, saves refetch it. */
-  image?: PublicImage | null;
-  client?: UploadClient;
+  image?: PublicPreset | null;
+  client?: ContentKitClient;
   /** An editor read of the item from the host; otherwise fetched. */
   read?: ReadResult | null;
   /** Called with the processed upload after every save, null after a removal. */
   onChange?: (file: FileInfo | null) => void;
   /** Every failure (load, decode, save or render); default the provider's. */
-  onError?: UploadUiErrorHandler;
+  onError?: ContentKitErrorHandler;
   /** The output's "W:H"; default the preset's aspect, else "1:1". */
   aspect?: AspectRatio;
   /** The narrowest edit the server accepts (the preset's Image.MinWidth). */
@@ -91,14 +91,15 @@ export function useSlotEditor(): SlotEditorState {
  */
 export function SlotEditor(p: SlotEditorProps) {
   const { t, error: errorText } = useMessages();
-  const client = useUploadClient(p.client);
+  const client = useContentKitClient(p.client);
   const report = useErrorReporter(p.onError);
-  const image = useSlotImage(client, { ref: p.item, path: p.path, image: p.image, read: p.read });
+  const image = useSlotImage({ client, ref: p.item, path: p.path, image: p.image, read: p.read });
   useEffect(() => void (image.error && report(image.error, "slot.load")), [image.error, report]);
   const aspect = p.aspect ?? image.aspect;
   const onChange = useRef(p.onChange);
   onChange.current = p.onChange;
-  const crop = useSlotCrop(client, {
+  const crop = useSlotCrop({
+    client,
     ref: p.item,
     path: p.path,
     file: image.file,
@@ -114,7 +115,7 @@ export function SlotEditor(p: SlotEditorProps) {
   });
   const input = useRef<HTMLInputElement>(null);
   const [removing, setRemoving] = useState(false);
-  const [removeError, setRemoveError] = useState<UploadError>();
+  const [removeError, setRemoveError] = useState<ContentKitError>();
   const busy = crop.status === "decoding" || crop.status === "saving" || removing;
   const disabled = !!p.disabled || busy;
   const round = p.round ?? ratio(aspect) === 1;
@@ -131,12 +132,12 @@ export function SlotEditor(p: SlotEditorProps) {
     setRemoving(true);
     setRemoveError(undefined);
     try {
-      if (image.file) await client.commit(p.item, [{ op: "remove", path: image.file.path }]);
+      if (image.file) await client.media.commit(p.item, [{ op: "remove", path: image.file.path }]);
       image.set(null);
       image.reload();
       onChange.current?.(null);
     } catch (e) {
-      setRemoveError(asUploadError(e));
+      setRemoveError(toContentKitError(e));
       report(e, "slot.remove");
     } finally {
       setRemoving(false);

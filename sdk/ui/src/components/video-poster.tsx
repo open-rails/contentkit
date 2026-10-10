@@ -1,16 +1,16 @@
-import { ratio, type AspectRatio } from "../aspect.js";
+import { ratio, type AspectRatio } from "../client/aspect.js";
 import { Video01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import type { ComponentProps, ReactNode } from "react";
-import { publicRenditions, type PublicImage } from "../public.js";
-import type { DensityRange } from "../rendition.js";
+import { publicRenditions, type PublicPreset } from "../client/public.js";
+import type { DensityRange } from "../client/rendition.js";
 import { RenditionImg } from "./rendition-img.js";
-import { UploadUiRoot } from "../scope.js";
+import { ContentKitUiRoot } from "../scope.js";
 
 export interface VideoPosterProps extends Omit<ComponentProps<"div">, "children"> {
   /** The poster's public preset (its aspect is the video's), or an image URL. */
-  poster?: PublicImage | string | null;
+  poster?: PublicPreset | string | null;
   /** The box's "W:H"; default the preset's aspect, else "16:9". */
   aspect?: AspectRatio;
   /** Density range for picking the poster's width; default the provider's (2–3×). */
@@ -34,7 +34,7 @@ export function VideoPoster({ poster, aspect, density, alt = "", placeholder, cl
   const shape = aspect ?? (preset?.aspect || "16:9");
   const img = "absolute inset-0 size-full object-contain";
   return (
-    <UploadUiRoot
+    <ContentKitUiRoot
       {...div}
       className={cn("relative w-full overflow-hidden rounded-lg bg-muted", className)}
       style={{ aspectRatio: String(ratio(shape) ?? 16 / 9), ...style }}
@@ -52,6 +52,6 @@ export function VideoPoster({ poster, aspect, density, alt = "", placeholder, cl
         ))
       )}
       {children}
-    </UploadUiRoot>
+    </ContentKitUiRoot>
   );
 }

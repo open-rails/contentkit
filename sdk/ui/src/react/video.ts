@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { samePath, type Progress, type UploadClient } from "./client.js";
-import { UploadError } from "./errors.js";
-import { useRead } from "./read-react.js";
-import type { Edit, FileInfo, Op, ReadResult, RefBody } from "./wire.gen.js";
+import type { ContentKitClient } from "../client/client.js";
+import { toContentKitError, type ContentKitError } from "../client/errors.js";
+import type { Edit, FileInfo, Op, ReadResult, RefBody } from "../client/generated/wire.js";
+import { samePath, type Progress } from "../client/media/client.js";
+import { useContentKitClient } from "./context.js";
+import { useRead } from "./read.js";
+import { withUpload } from "./store.js";
 
-const asError = (e: unknown) => (e instanceof UploadError ? e : new UploadError("network", String(e)));
+const asError = toContentKitError;
 const refKey = (ref: RefBody) => `${ref.kind}/${ref.id}`;
 
 export interface VideoImagesOptions {
@@ -15,6 +18,8 @@ export interface VideoImagesOptions {
   poster?: string;
   /** An editor read of the item the host already has; skips the fetch. */
   read?: ReadResult | null;
+  /** Overrides the provider's client; without one only a supplied read shows. */
+  client?: ContentKitClient | null;
 }
 
 export interface UseVideoImages {
@@ -23,25 +28,19 @@ export interface UseVideoImages {
   /** The poster upload: a frame ({t} or {auto}) or an uploaded image; null without one. */
   poster: FileInfo | null;
   loading: boolean;
-  error?: UploadError;
+  error?: ContentKitError;
   reload: () => void;
   /** Replaces the poster after a save without refetching. */
   set: (poster: FileInfo) => void;
 }
 
 /** A video item's video and poster uploads (an editor read). */
-export function useVideoImages(client: UploadClient | null | undefined, o: VideoImagesOptions): UseVideoImages {
-  const r = useRead(client, o.ref, { editor: true, read: o.read });
+export function useVideoImages(o: VideoImagesOptions): UseVideoImages {
+  const r = useRead(o.ref, { editor: true, read: o.read, client: o.client });
   const find = (p: string) => r.read?.files.find((f) => f.upload && samePath(f.path, p)) ?? null;
   const posterPath = o.poster ?? "poster";
   const { read, set: update } = r;
-  const set = useCallback(
-    (poster: FileInfo) => {
-      const files = (read?.files ?? []).filter((x) => !(x.upload && samePath(x.path, posterPath)));
-      update({ access: "full", expires: 0, total: 0, offset: 0, limit: 0, ...read, files: [...files, poster] });
-    },
-    [read, posterPath, update],
-  );
+  const set = useCallback((poster: FileInfo) => update(withUpload(read, posterPath, poster)), [read, posterPath, update]);
   return { video: find(o.video ?? "source"), poster: find(posterPath), loading: r.loading, error: r.error, reload: r.reload, set };
 }
 
@@ -56,7 +55,9 @@ export interface FrameStripOptions {
   /** Pixels. Default 160. */
   width?: number;
   /** The first failed grab (the strip keeps going without it). */
-  onError?: (e: UploadError) => void;
+  onError?: (e: ContentKitError) => void;
+  /** Overrides the provider's client. */
+  client?: ContentKitClient;
 }
 
 export interface StripFrame {
@@ -69,7 +70,8 @@ export interface StripFrame {
  * Evenly spaced frames for coarse browsing, fetched one at a time (the frame
  * endpoint allows two grabs at once per host), revoked on change or unmount.
  */
-export function useFrameStrip(client: UploadClient, o: FrameStripOptions): StripFrame[] {
+export function useFrameStrip(o: FrameStripOptions): StripFrame[] {
+  const { media } = useContentKitClient(o.client);
   const count = o.count ?? 8;
   const width = o.width ?? 160;
   const duration = o.duration ?? 0;
@@ -90,7 +92,7 @@ export function useFrameStrip(client: UploadClient, o: FrameStripOptions): Strip
     void (async () => {
       for (const [i, time] of times.entries()) {
         try {
-          const blob = await client.getFrame(ref.current, path, time, width, ctl.signal);
+          const blob = await media.getFrame(ref.current, path, time, width, ctl.signal);
           if (ctl.signal.aborted) return;
           const url = URL.createObjectURL(blob);
           urls.push(url);
@@ -106,7 +108,7 @@ export function useFrameStrip(client: UploadClient, o: FrameStripOptions): Strip
       ctl.abort();
       urls.forEach((u) => URL.revokeObjectURL(u));
     };
-  }, [client, key, duration, count, width, o.path]);
+  }, [media, key, duration, count, width, o.path]);
   return state.key === key ? state.frames : [];
 }
 
@@ -120,7 +122,9 @@ export interface VideoFrameOptions {
   width?: number;
   /** Debounce while scrubbing, ms. Default 120. */
   delay?: number;
-  onError?: (e: UploadError) => void;
+  onError?: (e: ContentKitError) => void;
+  /** Overrides the provider's client. */
+  client?: ContentKitClient;
 }
 
 export interface UseVideoFrame {
@@ -129,11 +133,12 @@ export interface UseVideoFrame {
   /** The time url shows. */
   time?: number;
   loading: boolean;
-  error?: UploadError;
+  error?: ContentKitError;
 }
 
 /** The exact frame at time, debounced while it changes. */
-export function useVideoFrame(client: UploadClient, o: VideoFrameOptions): UseVideoFrame {
+export function useVideoFrame(o: VideoFrameOptions): UseVideoFrame {
+  const { media } = useContentKitClient(o.client);
   const width = o.width ?? 640;
   const delay = o.delay ?? 120;
   const [state, setState] = useState<UseVideoFrame>({ loading: false });
@@ -150,7 +155,7 @@ export function useVideoFrame(client: UploadClient, o: VideoFrameOptions): UseVi
     const ctl = new AbortController();
     setState((s) => ({ ...s, loading: true, error: undefined }));
     const t = setTimeout(() => {
-      client.getFrame(ref.current, path, time, width, ctl.signal).then(
+      media.getFrame(ref.current, path, time, width, ctl.signal).then(
         (blob) => {
           if (ctl.signal.aborted) return;
           if (last.current) URL.revokeObjectURL(last.current);
@@ -168,7 +173,7 @@ export function useVideoFrame(client: UploadClient, o: VideoFrameOptions): UseVi
       clearTimeout(t);
       ctl.abort();
     };
-  }, [client, key, o.path, o.time, width, delay]);
+  }, [media, key, o.path, o.time, width, delay]);
   useEffect(
     () => () => {
       if (last.current) URL.revokeObjectURL(last.current);
@@ -181,7 +186,7 @@ export function useVideoFrame(client: UploadClient, o: VideoFrameOptions): UseVi
 export type VideoSaveState =
   | { status: "idle" }
   | { status: "saving"; progress?: Progress; rendering?: boolean }
-  | { status: "error"; error: UploadError };
+  | { status: "error"; error: ContentKitError };
 
 export interface VideoPosterOptions {
   ref: RefBody;
@@ -192,7 +197,9 @@ export interface VideoPosterOptions {
   /** Polling limit for the render, ms. Default 120000. */
   timeout?: number;
   /** Every failed save: the request, the render or the wait. */
-  onError?: (e: UploadError) => void;
+  onError?: (e: ContentKitError) => void;
+  /** Overrides the provider's client. */
+  client?: ContentKitClient;
 }
 
 export interface UseVideoPoster {
@@ -207,7 +214,8 @@ export interface UseVideoPoster {
 }
 
 /** Headless poster selection: a frame op or an uploaded image, then the wait for the worker to render it. */
-export function useVideoPoster(client: UploadClient, o: VideoPosterOptions): UseVideoPoster {
+export function useVideoPoster(o: VideoPosterOptions): UseVideoPoster {
+  const { media } = useContentKitClient(o.client);
   const [state, setState] = useState<VideoSaveState>({ status: "idle" });
   const opts = useRef(o);
   opts.current = o;
@@ -229,11 +237,11 @@ export function useVideoPoster(client: UploadClient, o: VideoPosterOptions): Use
     (op: Omit<Op, "op" | "path">) =>
       run(async (onProgress) => {
         const { ref, path = "poster", timeout } = opts.current;
-        await client.commit(ref, [{ op: "frame", path, ...op }]);
+        await media.commit(ref, [{ op: "frame", path, ...op }]);
         onProgress({ phase: "processing", loaded: 0, total: 0 });
-        return client.waitFor(ref, path, { timeout });
+        return media.waitFor(ref, path, { timeout });
       }),
-    [client, run],
+    [media, run],
   );
   return {
     state,
@@ -241,9 +249,9 @@ export function useVideoPoster(client: UploadClient, o: VideoPosterOptions): Use
     saveUpload: useCallback(
       (image, edit) => {
         const { ref, path = "poster", timeout } = opts.current;
-        return run((onProgress) => client.put(image, { ref, path, edit, timeout, onProgress }));
+        return run((onProgress) => media.put(image, { ref, path, edit, timeout, onProgress }));
       },
-      [client, run],
+      [media, run],
     ),
     saveAuto: useCallback(() => frame({ auto: true }), [frame]),
     reset: useCallback(() => setState({ status: "idle" }), []),

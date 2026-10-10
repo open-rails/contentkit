@@ -1,15 +1,15 @@
-import { aspectOf, ratio, type AspectRatio } from "../aspect.js";
+import { aspectOf, ratio, type AspectRatio } from "../client/aspect.js";
 import { Alert02Icon, ArrowLeft01Icon, ArrowRight01Icon, ImageUpload01Icon, Loading03Icon, Video01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
-import type { UploadClient } from "../client.js";
+import type { ContentKitClient } from "../client/client.js";
 import { useMessages } from "../i18n/context.js";
-import { decodeImage, type CropSource } from "../image.js";
-import { useErrorReporter, useUploadClient, type UploadUiErrorHandler } from "../provider.js";
-import { useFrameStrip, useVideoFrame, useVideoImages, useVideoPoster, type VideoSaveState } from "../video-react.js";
-import type { PublicImage } from "../public.js";
-import type { FileInfo, ReadResult, RefBody } from "../wire.gen.js";
+import { decodeImage, type CropSource } from "../client/image.js";
+import { useContentKitClient, useErrorReporter, type ContentKitErrorHandler } from "../react/context.js";
+import { useFrameStrip, useVideoFrame, useVideoImages, useVideoPoster, type VideoSaveState } from "../react/video.js";
+import type { PublicPreset } from "../client/public.js";
+import type { FileInfo, ReadResult, RefBody } from "../client/generated/wire.js";
 import { Alert, AlertDescription } from "#ckui/ui/alert";
 import { Button } from "#ckui/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "#ckui/ui/dialog";
@@ -30,14 +30,14 @@ export interface VideoPickerProps {
   /** The poster upload path (its Upload.Frames is the video). Default "poster". */
   path?: string;
   /** The poster's public preset, refetched after a save. */
-  image?: PublicImage | null;
-  client?: UploadClient;
+  image?: PublicPreset | null;
+  client?: ContentKitClient;
   /** An editor read of the item from the host; otherwise fetched. */
   read?: ReadResult | null;
   /** Called with the processed poster upload after a save. */
   onChange?: (poster: FileInfo) => void;
   /** Every failure (load, frame grab, save or render); default the provider's. The dialog shows it too. */
-  onError?: UploadUiErrorHandler;
+  onError?: ContentKitErrorHandler;
   title?: ReactNode;
   className?: string;
 }
@@ -80,9 +80,9 @@ export function VideoPosterPicker(p: VideoPosterPickerProps) {
 
 function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void }) {
   const { t, error: errorText } = useMessages();
-  const client = useUploadClient(p.client);
+  const client = useContentKitClient(p.client);
   const report = useErrorReporter(p.onError);
-  const loaded = useVideoImages(client, { ref: p.item, video: p.video, poster: p.path, read: p.read });
+  const loaded = useVideoImages({ client, ref: p.item, video: p.video, poster: p.path, read: p.read });
   useEffect(() => void (loaded.error && report(loaded.error, "poster.load")), [loaded.error, report]);
   const { video, poster: current } = loaded;
   const selection = current?.frame;
@@ -97,7 +97,8 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
   const shown = time ?? selection?.t ?? duration * 0.25;
   // Frames come from the placed video (GET /frame answers conflict while it is staged).
   const path = duration > 0 ? video!.path : undefined;
-  const poster = useVideoPoster(client, {
+  const poster = useVideoPoster({
+    client,
     ref: p.item,
     path: p.path,
     onSaved: (f) => {
@@ -112,8 +113,8 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
   onSaving.current = p.onSaving;
   useEffect(() => onSaving.current(busy), [busy]);
   const onFrameError = (e: unknown) => report(e, "poster.frame");
-  const frame = useVideoFrame(client, { ref: p.item, path, time: duration > 0 ? shown : undefined, width: 960, onError: onFrameError });
-  const strip = useFrameStrip(client, { ref: p.item, path, duration, count: 8, width: 160, onError: onFrameError });
+  const frame = useVideoFrame({ client, ref: p.item, path, time: duration > 0 ? shown : undefined, width: 960, onError: onFrameError });
+  const strip = useFrameStrip({ client, ref: p.item, path, duration, count: 8, width: 160, onError: onFrameError });
   useEffect(() => () => crop?.revoke?.(), [crop]);
 
   const openCrop = async (source: "frame" | "upload", f?: File) => {
@@ -121,7 +122,7 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
     try {
       if (source === "upload") setCrop(await (p.decode ?? decodeImage)(f!));
       else {
-        const blob = await client.getFrame(p.item, path!, shown, 1280);
+        const blob = await client.media.getFrame(p.item, path!, shown, 1280);
         const url = URL.createObjectURL(blob);
         // Frame edits are in the frame's pixels (the video's w×h), whatever the preview's size.
         setCrop({ url, width: video!.w!, height: video!.h!, revoke: () => URL.revokeObjectURL(url) });

@@ -3,10 +3,10 @@ import "../test/dom.js";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
-import { GALLERY_VIEW_KEY } from "../gallery-react.js";
+import { GALLERY_VIEW_KEY } from "../react/gallery.js";
 import { de } from "../locales/de.js";
-import type { Access, FileInfo, ReadResult } from "../wire.gen.js";
-import { MediaGallery, UploadUiProvider } from "../ui.js";
+import type { Access, FileInfo, ReadResult } from "../client/generated/wire.js";
+import { MediaGallery, ContentKitUiProvider } from "../index.js";
 
 const read = (access: Access, files: FileInfo[]): ReadResult => ({
   access,
@@ -216,9 +216,9 @@ it("failed and processing images, and translated labels", async () => {
     { path: "page.png", type: "image/png", upload: true, failed: { of: "x", message: "too small", code: "image_too_small", details: { width: 100, min_width: 300 } } },
   ];
   render(
-    <UploadUiProvider messages={de}>
+    <ContentKitUiProvider messages={de}>
       <MediaGallery read={read("full", files)} />
-    </UploadUiProvider>,
+    </ContentKitUiProvider>,
   );
   expect(screen.getByRole("button", { name: "Raster" })).toBeInTheDocument();
   expect(within(current() as HTMLElement).getByText(/Bild|Image/)).toBeInTheDocument();

@@ -2,7 +2,7 @@ import type { Plugin } from "vite"
 
 import { isolateCss } from "./isolate.ts"
 
-const STYLE_ELEMENT_ID = "openrails-contentkit-upload-styles"
+const STYLE_ELEMENT_ID = "openrails-contentkit-ui-styles"
 
 // Installing from the entry lets hosts import components alone; the emitted
 // stylesheet stays available for SSR or manual loading.
@@ -24,14 +24,14 @@ if (typeof document !== "undefined") {
 /** Isolates the emitted stylesheet and installs it from the given entries. */
 export function ckuiCssPlugin(options: { entries: string[] }): Plugin {
   return {
-    name: "openrails-contentkit-upload-css",
+    name: "openrails-contentkit-ui-css",
     enforce: "post",
     async generateBundle(_options, bundle) {
       const stylesheet = Object.values(bundle).find(
         (item) => item.type === "asset" && item.fileName.endsWith(".css")
       )
       if (!stylesheet || stylesheet.type !== "asset") {
-        throw new Error("contentkit-upload build did not emit a stylesheet")
+        throw new Error("contentkit-ui build did not emit a stylesheet")
       }
       const css = await isolateCss(String(stylesheet.source))
       stylesheet.source = css

@@ -1,4 +1,4 @@
-import { centeredCrop, fill, publicURL, rotation, stem, type Edit, type FileInfo, type Op, type PublicImage, type RefBody, type Transport } from "@openrails/contentkit-upload";
+import { centeredCrop, fill, publicURL, rotation, stem, type Edit, type FileInfo, type Op, type PublicPreset, type RefBody, type Transport } from "@openrails/contentkit-ui/client";
 
 /** The demo kinds' logical public presets by upload path. */
 const PRESETS: Record<string, { to: string; widths: number[]; aspect: [number, number] }> = {
@@ -18,13 +18,13 @@ export class DemoServer {
   private blobs = new Map<string, Blob>();
   private items = new Map<string, FileInfo[]>();
   private views = new Map<string, string>();
-  private published = new Map<string, PublicImage>();
+  private published = new Map<string, PublicPreset>();
   delay = 250;
 
   constructor(readonly media: string) {}
 
   /** The public preset of an upload path for an item. */
-  image(ref: RefBody, path: string): PublicImage {
+  image(ref: RefBody, path: string): PublicPreset {
     const p = PRESETS[path]!;
     return this.published.get(`${ref.kind}/${ref.id}/${path}`) ?? { preset: path, renditions: [], aspect: p.aspect.join(":") };
   }
@@ -132,7 +132,7 @@ export class DemoServer {
     const preset = PRESETS[stem(f.path)];
     if (!preset) return;
     const generation = crypto.randomUUID();
-    const published: PublicImage = { preset: stem(f.path), aspect: preset.aspect.join(":"), renditions: [] };
+    const published: PublicPreset = { preset: stem(f.path), aspect: preset.aspect.join(":"), renditions: [] };
     const bmp = await createImageBitmap(this.blobs.get(f.blob!)!, { imageOrientation: "from-image" });
     const [aw, ah] = preset.aspect;
     const rot = rotation(f.edit?.rotate ?? 0);

@@ -1,14 +1,14 @@
-import { ratio, type AspectRatio } from "../aspect.js";
+import { ratio, type AspectRatio } from "../client/aspect.js";
 import { Camera01Icon, CropIcon, Delete02Icon, ImageUpload01Icon, Loading03Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useState, type DragEvent, type ReactNode } from "react";
-import type { UploadClient } from "../client.js";
+import type { ContentKitClient } from "../client/client.js";
 import { useMessages } from "../i18n/context.js";
-import type { CropSource } from "../image.js";
-import { UploadUiRoot } from "../scope.js";
-import type { PublicImage } from "../public.js";
-import type { FileInfo, ReadResult, RefBody } from "../wire.gen.js";
+import type { CropSource } from "../client/image.js";
+import { ContentKitUiRoot } from "../scope.js";
+import type { PublicPreset } from "../client/public.js";
+import type { FileInfo, ReadResult, RefBody } from "../client/generated/wire.js";
 import { Button } from "#ckui/ui/button";
 import { SlotEditError, SlotEditor, useSlotEditor } from "./slot-editor.js";
 import { SlotImage } from "./slot-image.js";
@@ -19,8 +19,8 @@ export interface SlotUploadProps {
   /** The upload path; default "avatar" or "cover". */
   path?: string;
   /** The public preset showing it. */
-  image?: PublicImage | null;
-  client?: UploadClient;
+  image?: PublicPreset | null;
+  client?: ContentKitClient;
   /** An editor read of the item from the host; otherwise fetched. */
   read?: ReadResult | null;
   /** Called with the processed upload after every save, null after a removal. */
@@ -60,7 +60,7 @@ export function CoverUpload(p: SlotUploadProps) {
 function SlotUpload({ variant, ...p }: SlotUploadProps & { variant: Variant }) {
   const path = p.path ?? variant;
   return (
-    <UploadUiRoot className={cn("text-sm", p.className)} data-ckui={variant === "avatar" ? "avatar-upload" : "cover-upload"}>
+    <ContentKitUiRoot className={cn("text-sm", p.className)} data-ckui={variant === "avatar" ? "avatar-upload" : "cover-upload"}>
       <SlotEditor
         item={p.item}
         path={path}
@@ -80,7 +80,7 @@ function SlotUpload({ variant, ...p }: SlotUploadProps & { variant: Variant }) {
       >
         <SlotUploadLayout {...p} variant={variant} />
       </SlotEditor>
-    </UploadUiRoot>
+    </ContentKitUiRoot>
   );
 }
 

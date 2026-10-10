@@ -81,6 +81,8 @@ export interface ContentURLConfig {
   routes: Record<string, string>;
   /** Language segments a path may start with; kept in canonical paths. */
   languages?: string[];
+  /** The site's origin ("https://example.com") for absolute URLs (canonical links, og:url). */
+  origin?: string;
 }
 
 export interface ParsedContentPath {
@@ -106,6 +108,8 @@ export interface CanonicalResult {
 export interface ContentURLs {
   /** The canonical path of link; throws when its kind has no route. */
   path(link: ContentLink, options?: PathOptions): string;
+  /** path() on the configured origin; throws without one. */
+  url(link: ContentLink, options?: PathOptions): string;
   /** Splits a pathname; null when it is not a content path (or its code is invalid). */
   parse(pathname: string): ParsedContentPath | null;
   /**
@@ -122,14 +126,16 @@ const SEGMENT = /^[a-z0-9][a-z0-9_-]*$/;
 /** Builds the URL helpers for one host's routes. */
 export function createContentURLs(config: ContentURLConfig): ContentURLs {
   const routes = { ...config.routes };
+  const origin = config.origin?.replace(/\/+$/, "");
+  if (origin !== undefined && !/^https?:\/\/[^/?#]+$/.test(origin)) throw new Error(`contentkit-ui/urls: origin ${JSON.stringify(config.origin)} is not an http(s) origin`);
   const languages = [...(config.languages ?? [])];
   const routeSet = new Set(Object.values(routes));
-  if (routeSet.size === 0) throw new Error("contentkit-urls: routes is empty");
+  if (routeSet.size === 0) throw new Error("contentkit-ui/urls: routes is empty");
   for (const r of [...routeSet, ...languages]) {
-    if (!SEGMENT.test(r)) throw new Error(`contentkit-urls: ${JSON.stringify(r)} is not one lowercase path segment`);
+    if (!SEGMENT.test(r)) throw new Error(`contentkit-ui/urls: ${JSON.stringify(r)} is not one lowercase path segment`);
   }
   for (const l of languages) {
-    if (routeSet.has(l)) throw new Error(`contentkit-urls: language ${JSON.stringify(l)} is also a route`);
+    if (routeSet.has(l)) throw new Error(`contentkit-ui/urls: language ${JSON.stringify(l)} is also a route`);
   }
 
   const canonicalPath = (link: ContentLink, language: string): string | null => {
@@ -154,11 +160,17 @@ export function createContentURLs(config: ContentURLConfig): ContentURLs {
     return { language, route: segs[0]!, code, rawCode: segs[1]!, slug: segs[2] ?? "" };
   };
 
+  const path = (link: ContentLink, options: PathOptions = {}): string => {
+    const route = routes[link.content_kind];
+    if (route === undefined) throw new Error(`contentkit-ui/urls: no route for kind ${JSON.stringify(link.content_kind)}`);
+    return contentPath(route, link.code, slugFor(link, options.language), options);
+  };
+
   return {
-    path(link, options = {}) {
-      const route = routes[link.content_kind];
-      if (route === undefined) throw new Error(`contentkit-urls: no route for kind ${JSON.stringify(link.content_kind)}`);
-      return contentPath(route, link.code, slugFor(link, options.language), options);
+    path,
+    url(link, options) {
+      if (origin === undefined) throw new Error("contentkit-ui/urls: url() needs ContentURLConfig.origin");
+      return origin + path(link, options);
     },
     parse,
     canonical(location, link) {

@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-var update = flag.Bool("update", false, "rewrite sdk/upload/src/wire.gen.ts")
+var update = flag.Bool("update", false, "rewrite sdk/ui/src/client/generated/wire.ts")
 
-const path = "../../../sdk/upload/src/wire.gen.ts"
+const path = "../../../sdk/ui/src/client/generated/wire.ts"
 
 func TestWireTypesCurrent(t *testing.T) {
 	want := Render()
@@ -23,6 +23,6 @@ func TestWireTypesCurrent(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(got) != want {
-		t.Fatal("sdk/upload/src/wire.gen.ts is stale; run go test ./media/internal/wirets -update")
+		t.Fatal("sdk/ui/src/client/generated/wire.ts is stale; run go test ./media/internal/wirets -update")
 	}
 }

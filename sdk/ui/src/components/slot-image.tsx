@@ -1,16 +1,16 @@
-import { ratio, type AspectRatio } from "../aspect.js";
+import { ratio, type AspectRatio } from "../client/aspect.js";
 import { Image01Icon, UserIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useState, type ComponentProps, type ReactNode } from "react";
-import { publicRenditions, type PublicImage } from "../public.js";
-import type { DensityRange } from "../rendition.js";
+import { publicRenditions, type PublicPreset } from "../client/public.js";
+import type { DensityRange } from "../client/rendition.js";
 import { RenditionImg } from "./rendition-img.js";
-import { UploadUiRoot } from "../scope.js";
+import { ContentKitUiRoot } from "../scope.js";
 
 export interface SlotImageProps extends Omit<ComponentProps<"img">, "src" | "srcSet" | "sizes" | "width" | "height" | "placeholder"> {
   /** The item's published renditions; absent files use the placeholder. */
-  image?: PublicImage | null;
+  image?: PublicPreset | null;
   /** Density range for picking the width; default the provider's (2–3×). */
   density?: DensityRange;
   round?: boolean;
@@ -30,7 +30,7 @@ export function SlotImage({ image, density, round, aspect, placeholder, emptyLab
   const has = outputs.length > 0 && failed !== key;
   const a = ratio(aspect ?? image?.aspect) ?? 1;
   return (
-    <UploadUiRoot
+    <ContentKitUiRoot
       className={cn("relative overflow-hidden bg-muted", round ? "rounded-full" : "rounded-lg", className)}
       style={{ aspectRatio: String(a), ...style }}
       data-ckui="slot-image"
@@ -56,6 +56,6 @@ export function SlotImage({ image, density, round, aspect, placeholder, emptyLab
           </div>
         ))
       )}
-    </UploadUiRoot>
+    </ContentKitUiRoot>
   );
 }

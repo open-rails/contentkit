@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-import "./test/dom.js";
+import "../test/dom.js";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import { FakeServer, bytes, fakeClient } from "../test/fake.js";
-import type { CropSource } from "./image.js";
-import { useSlotCrop, useSlotImage } from "./slot-react.js";
+import { FakeServer, bytes, fakeClient } from "../../test/fake.js";
+import type { CropSource } from "../client/image.js";
+import { useSlotCrop, useSlotImage } from "./slot.js";
 
 const ref = { kind: "channel", id: "0192f000-0000-7000-8000-000000000007" };
 const image = { preset: "cover", aspect: "3:1", renditions: [
@@ -24,8 +24,8 @@ globalThis.fetch = vi.fn(async () => new Response(null)) as typeof fetch;
 
 it("useSlotImage reads the upload at its path and lists the preset's public files", async () => {
   const { s, c } = setup();
-  await c.put(png(), { ref, path: "cover" });
-  const { result } = renderHook(() => useSlotImage(c, { ref, path: "cover", image }));
+  await c.media.put(png(), { ref, path: "cover" });
+  const { result } = renderHook(() => useSlotImage({ client: c,  ref, path: "cover", image }));
   expect(result.current.loading).toBe(true);
   await waitFor(() => expect(result.current.loading).toBe(false));
   expect(result.current.file).toMatchObject({ path: "cover.png", w: 4000 });
@@ -41,7 +41,7 @@ it("useSlotImage reads the upload at its path and lists the preset's public file
 it("useSlotImage uses a given read without fetching, then adopts a fresh listing on reload", async () => {
   const { s, c } = setup();
   const read = { access: "full" as const, expires: 0, total: 0, offset: 0, limit: 50, files: [] };
-  const { result } = renderHook(() => useSlotImage(c, { ref, path: "avatar", read }));
+  const { result } = renderHook(() => useSlotImage({ client: c,  ref, path: "avatar", read }));
   expect([result.current.loading, result.current.file, result.current.aspect]).toEqual([false, null, "1:1"]);
   expect(s.calls).toEqual([]);
   s.seed(ref, [{ path: "avatar.png", type: "image/png", size: 10, w: 400, h: 400 }]);
@@ -56,7 +56,7 @@ it("useSlotImage uses a given read without fetching, then adopts a fresh listing
 it("useSlotCrop: pick → edit → save uploads and puts the file with the edit, without reloading retired URLs", async () => {
   const { s, c } = setup();
   const saved = vi.fn();
-  const { result } = renderHook(() => useSlotCrop(c, { ref, path: "avatar", aspect: "1:1", decode, onSaved: saved }));
+  const { result } = renderHook(() => useSlotCrop({ client: c,  ref, path: "avatar", aspect: "1:1", decode, onSaved: saved }));
   const file = png(2);
   await act(() => result.current.pick(file));
   expect(result.current.status).toBe("cropping");
@@ -79,8 +79,8 @@ it("useSlotCrop: pick → edit → save uploads and puts the file with the edit,
 it("useSlotCrop: recrop edits the committed upload from its editor view and waits for the render", async () => {
   const { s, c } = setup();
   const first = { crop: { x: 0, y: 40, w: 800, h: 266 } };
-  const file = await c.put(png(3), { ref, path: "cover", edit: first });
-  const { result } = renderHook(() => useSlotCrop(c, { ref, path: "cover", file, aspect: "3:1", decode }));
+  const file = await c.media.put(png(3), { ref, path: "cover", edit: first });
+  const { result } = renderHook(() => useSlotCrop({ client: c,  ref, path: "cover", file, aspect: "3:1", decode }));
   expect([result.current.canRecrop, result.current.aspect]).toEqual([true, "3:1"]);
   await act(() => result.current.recrop());
   expect(result.current).toMatchObject({ status: "cropping", mode: "recrop", edit: first, source: { url: "fake://cdn/private/e-cover.png", width: 4000, height: 3000 } });
@@ -94,7 +94,7 @@ it("useSlotCrop: recrop edits the committed upload from its editor view and wait
 
 it("useSlotCrop keeps the source on a refused save so the user can retry", async () => {
   const { s, c } = setup();
-  const { result } = renderHook(() => useSlotCrop(c, { ref, path: "avatar", aspect: "1:1", decode }));
+  const { result } = renderHook(() => useSlotCrop({ client: c,  ref, path: "avatar", aspect: "1:1", decode }));
   await act(() => result.current.pick(png(4)));
   s.refuse = { status: 413, code: "too_large", error: "too large" };
   await act(async () => void (await result.current.save()));
@@ -110,10 +110,10 @@ it("useSlotCrop reports undecodable files and cancel closes the source", async (
   const bad = vi.fn(async () => {
     throw new Error("nope");
   });
-  const { result } = renderHook(() => useSlotCrop(c, { ref, path: "avatar", decode: bad }));
+  const { result } = renderHook(() => useSlotCrop({ client: c,  ref, path: "avatar", decode: bad }));
   await act(() => result.current.pick(png()));
   expect(result.current).toMatchObject({ status: "error", error: { code: "decode" } });
-  const { result: r2 } = renderHook(() => useSlotCrop(c, { ref, path: "avatar", decode }));
+  const { result: r2 } = renderHook(() => useSlotCrop({ client: c,  ref, path: "avatar", decode }));
   await act(() => r2.current.pick(png()));
   const src = "source" in r2.current ? r2.current.source : undefined;
   act(() => r2.current.cancel());

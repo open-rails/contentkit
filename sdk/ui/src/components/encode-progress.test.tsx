@@ -2,10 +2,9 @@
 import "../test/dom.js";
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { UploadClient } from "../client.js";
 import { ja } from "../locales/ja.js";
-import { EncodeProgress, UploadUiProvider } from "../ui.js";
-import type { EncodeProgress as Progress } from "../wire.gen.js";
+import { ContentKitUiProvider, EncodeProgress } from "../index.js";
+import type { EncodeProgress as Progress } from "../client/generated/wire.js";
 
 beforeEach(() => vi.useFakeTimers({ now: 1_000_000 }));
 afterEach(() => vi.useRealTimers());
@@ -46,11 +45,10 @@ it("shows the queue position, an indeterminate bar before progress, and stalls",
 });
 
 it("is translated", () => {
-  const client = new UploadClient({ endpoint: "http://x/api" });
   render(
-    <UploadUiProvider client={client} messages={ja}>
+    <ContentKitUiProvider messages={ja}>
       <EncodeProgress progress={encoding({ eta: 3700 })} />
-    </UploadUiProvider>,
+    </ContentKitUiProvider>,
   );
   expect(screen.getByText("エンコード中 · セグメント 5 / 27 · 残り約 1 時間 2 分")).toBeInTheDocument();
 });

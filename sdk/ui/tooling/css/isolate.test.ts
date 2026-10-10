@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 import { isolateCss } from "./isolate"
 import { renderStyleInstaller } from "./vite-plugin"
 
-describe("contentkit-upload CSS isolation", () => {
+describe("contentkit-ui CSS isolation", () => {
   it("removes layers and scopes every selector", async () => {
     const css = await isolateCss(`
       @layer theme, utilities;
@@ -43,6 +43,6 @@ describe("contentkit-upload CSS isolation", () => {
   it("renders an idempotent style installer", () => {
     const installer = renderStyleInstaller(".ckui{display:block}")
     expect(installer).toContain('typeof document !== "undefined"')
-    expect(installer).toContain("openrails-contentkit-upload-styles")
+    expect(installer).toContain("openrails-contentkit-ui-styles")
   })
 })

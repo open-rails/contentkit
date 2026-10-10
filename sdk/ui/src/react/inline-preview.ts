@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 
-/** The host's default for inline previews (UploadUiProvider `inlinePreview`). */
+/** The host's default for inline previews (ContentKitUiProvider `inlinePreview`). */
 export const InlinePreviewContext = createContext(true);
 
 /** Hover this long (ms) before a preview starts. */

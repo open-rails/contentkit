@@ -21,8 +21,11 @@ export function srcSet(renditions: readonly Rendition[]): string {
     .map((r) => `${r.url} ${r.w}w`).join(", ");
 }
 
-/** One public image from a read or a host's authorized listing. */
-export interface PublicImage {
+/**
+ * A public preset at an item: what a slot or poster shows, with its current
+ * renditions (from a read's `public`, or a host's authorized listing).
+ */
+export interface PublicPreset {
   preset: string;
   renditions: readonly Rendition[];
   /** The preset's "W:H"; "" or omitted is the source's own. */
@@ -30,7 +33,7 @@ export interface PublicImage {
 }
 
 /** Published files, narrowest first; sizes and filenames are never inferred. */
-export function publicRenditions(p: PublicImage | null | undefined): Rendition[] {
+export function publicRenditions(p: PublicPreset | { renditions: readonly Rendition[] } | null | undefined): Rendition[] {
   if (!p) return [];
   return sortRenditions(p.renditions);
 }

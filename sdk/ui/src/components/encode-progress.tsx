@@ -1,17 +1,17 @@
 import { cn } from "cn";
-import type { UploadUiAppearance } from "../appearance.js";
+import type { ContentKitUiAppearance } from "../appearance.js";
 import { useMessages } from "../i18n/context.js";
 import type { Translator } from "../i18n/messages.js";
-import { useEncodeProgress } from "../react.js";
-import { UploadUiRoot } from "../scope.js";
-import type { EncodeProgress as Progress } from "../wire.gen.js";
+import { useEncodeProgress } from "../react/upload.js";
+import { ContentKitUiRoot } from "../scope.js";
+import type { EncodeProgress as Progress } from "../client/generated/wire.js";
 import { Progress as Bar } from "#ckui/ui/progress";
 
 export interface EncodeProgressProps {
   /** `files[i].progress` from the read API; absent renders a plain "Processing video" state. */
   progress?: Progress | null;
   className?: string;
-  appearance?: UploadUiAppearance;
+  appearance?: ContentKitUiAppearance;
 }
 
 /** "~40 s left", "~3 min left", "~1 h 5 min left"; "almost done" under 5 s. */
@@ -45,7 +45,7 @@ export function EncodeProgress({ progress, className, appearance }: EncodeProgre
   const label = encodeLabel(t, p, remaining);
   const value = p && p.percent > 0 ? Math.min(100, p.percent) : null;
   return (
-    <UploadUiRoot appearance={appearance} className={cn("grid w-full gap-1.5 text-sm", className)} data-ckui="encode-progress" data-phase={p?.phase}>
+    <ContentKitUiRoot appearance={appearance} className={cn("grid w-full gap-1.5 text-sm", className)} data-ckui="encode-progress" data-phase={p?.phase}>
       <p className="text-muted-foreground tabular-nums">
         {label}
       </p>
@@ -55,6 +55,6 @@ export function EncodeProgress({ progress, className, appearance }: EncodeProgre
         aria-valuetext={value === null ? label : `${Math.round(value)}% · ${label}`}
         className="[&_[data-slot=progress-indicator]]:motion-reduce:transition-none [&[data-indeterminate]_[data-slot=progress-track]]:motion-safe:animate-pulse"
       />
-    </UploadUiRoot>
+    </ContentKitUiRoot>
   );
 }

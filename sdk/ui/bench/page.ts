@@ -1,4 +1,4 @@
-import { UploadClient, xhrTransport, type Transport } from "../src/index.js";
+import { createContentKitClient, xhrTransport, type Transport } from "../src/client/index.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 
 type Span = { kind: string; start: number; end: number; bytes?: number; part?: number };
@@ -21,7 +21,7 @@ async function upload(o: { concurrency?: number }) {
     const part = Number(new URL(req.url).searchParams.get("partNumber")) || 0;
     spans.push({ kind: "put", start, end: performance.now(), bytes: body.size, part });
   };
-  const c = new UploadClient({ endpoint: "/upload", headers: () => ({ "X-Test-Actor": "bench" }), fetch: f, transport, concurrency: o.concurrency });
+  const c = createContentKitClient({ baseUrl: "", mounts: { upload: "/upload" }, headers: () => ({ "X-Test-Actor": "bench" }), fetch: f, media: { transport, concurrency: o.concurrency } }).media;
   const ref = { kind: "video", id: crypto.randomUUID().replace(/^(.{14})./, (_, head: string) => head + "7") };
   const t0 = performance.now();
   const up = await c.upload(file, { ref, path: "source" });

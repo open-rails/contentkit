@@ -2,7 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { UploadClient, UploadQueue, fetchTransport, type Op, type QueueSnapshot, type Transport, type UploadState } from "../src/index.js";
+import { UploadQueue, createContentKitClient, fetchTransport, type MediaOptions, type Op, type QueueSnapshot, type Transport, type UploadState } from "../src/client/index.js";
 import { bytes } from "./fake.js";
 import { KillProxy, startServer, stopServer } from "./server.js";
 
@@ -13,6 +13,10 @@ const hex = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 const png = (seed: number, n = 3000) => new File([bytes(n, seed)], `${seed}.png`, { type: "image/png" });
 const put = (up: { path: string; blob: string }): Op => ({ op: "put", path: up.path, blob: up.blob });
 const STAGED = /^u-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** A media client with the upload API at endpoint (the other modules unused). */
+function mediaClient({ endpoint, headers, fetch, ...media }: MediaOptions & { endpoint: string; headers?: () => HeadersInit; fetch?: typeof globalThis.fetch }) {
+  return createContentKitClient({ baseUrl: endpoint, mounts: { upload: endpoint }, headers, fetch, media }).media;
+}
 const ALLOCATION = /^sha256-[0-9a-f]{64}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handlers", () => {
@@ -35,13 +39,12 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
   });
 
   const client = ({ actor = "alice", upload = "upload", ...o }: { retries?: number; transport?: Transport; actor?: string; upload?: string } = {}) =>
-    new UploadClient({
-      endpoint: `${base}/${upload}`,
-      readEndpoint: `${base}/read`,
+    createContentKitClient({
+      baseUrl: base,
+      mounts: { upload: `${base}/${upload}`, media: `${base}/read` },
       headers: () => ({ "X-Test-Actor": actor }),
-      retryDelay: () => 200,
-      ...o,
-    });
+      media: { retryDelay: () => 200, ...o },
+    }).media;
 
   /** The stored bytes of an item's file (by path or stem) or public name; null when absent. */
   async function stored(ref: { kind: string; id: string }, name: string, at: "path" | "public" = "path") {
@@ -118,7 +121,7 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
 
     let lost = false;
     const requests: string[] = [];
-    const recovering = new UploadClient({
+    const recovering = mediaClient({
       endpoint: `${base}/upload`, headers: () => ({ "X-Test-Actor": "alice" }), retryDelay: () => 100,
       fetch: async (input, init) => {
         requests.push(String(init?.body));

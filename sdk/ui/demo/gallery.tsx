@@ -1,5 +1,5 @@
-import type { Access, FileInfo, ReadResult } from "@openrails/contentkit-upload";
-import { MediaGallery, VideoPlayer } from "@openrails/contentkit-upload/ui";
+import { MediaGallery, VideoPlayer } from "@openrails/contentkit-ui";
+import type { Access, FileInfo, ReadResult } from "@openrails/contentkit-ui/client";
 import { useState, type ReactNode } from "react";
 
 const q = new URLSearchParams(location.search);

@@ -1,16 +1,16 @@
-import { aspectOf, ratio, type AspectRatio } from "../aspect.js";
+import { aspectOf, ratio, type AspectRatio } from "../client/aspect.js";
 import { Alert02Icon, Image01Icon, RotateClockwiseIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import Cropper, { type Area, type Point } from "react-easy-crop";
-import type { Progress as UploadProgress } from "../client.js";
-import { editedSize, toRotated, type Size } from "../crop.js";
-import type { CropSource } from "../image.js";
+import type { Progress as UploadProgress } from "../client/media/client.js";
+import { editedSize, toRotated, type Size } from "../client/crop.js";
+import type { CropSource } from "../client/image.js";
 import { useMessages } from "../i18n/context.js";
-import { useCrop } from "../react.js";
-import { editOutput } from "../slot-react.js";
-import type { Edit } from "../wire.gen.js";
+import { useCrop } from "../react/upload.js";
+import { editOutput } from "../react/slot.js";
+import type { Edit } from "../client/generated/wire.js";
 import { Alert, AlertDescription } from "#ckui/ui/alert";
 import { Button } from "#ckui/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "#ckui/ui/dialog";
@@ -51,7 +51,7 @@ export interface ImageCropDialogProps {
   progress?: UploadProgress;
   /** The worker is rendering the outputs (indeterminate progress). */
   rendering?: boolean;
-  /** Shown above the footer, e.g. a mapped UploadError. */
+  /** Shown above the footer, e.g. a mapped ContentKitError. */
   error?: ReactNode;
   className?: string;
 }

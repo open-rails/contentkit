@@ -4,10 +4,10 @@ import type { CSSProperties } from "react";
  * `light`/`dark` force a palette, `auto` follows the OS, `inherit` reads the
  * host's shadcn tokens (`--primary`, …) and its `.dark` class.
  */
-export type UploadUiTheme = "light" | "dark" | "auto" | "inherit";
+export type ContentKitUiTheme = "light" | "dark" | "auto" | "inherit";
 
 /** Raw CSS values applied as `--ckui-*` custom properties on every root. */
-export interface UploadUiVariables {
+export interface ContentKitUiVariables {
   background?: string;
   foreground?: string;
   card?: string;
@@ -31,14 +31,14 @@ export interface UploadUiVariables {
   fontFamily?: string;
 }
 
-export interface UploadUiAppearance {
-  theme?: UploadUiTheme;
-  variables?: UploadUiVariables;
+export interface ContentKitUiAppearance {
+  theme?: ContentKitUiTheme;
+  variables?: ContentKitUiVariables;
 }
 
 const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 
-export function appearanceStyle(a: UploadUiAppearance | undefined): CSSProperties | undefined {
+export function appearanceStyle(a: ContentKitUiAppearance | undefined): CSSProperties | undefined {
   if (!a?.variables) return undefined;
   const style: Record<string, string> = {};
   for (const [key, value] of Object.entries(a.variables)) {
@@ -47,6 +47,6 @@ export function appearanceStyle(a: UploadUiAppearance | undefined): CSSPropertie
   return style as CSSProperties;
 }
 
-export function appearanceTheme(a: UploadUiAppearance | undefined): UploadUiTheme {
+export function appearanceTheme(a: ContentKitUiAppearance | undefined): ContentKitUiTheme {
   return a?.theme ?? "auto";
 }

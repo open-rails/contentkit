@@ -1,13 +1,17 @@
 {
-  "name": "@openrails/contentkit-upload",
+  "name": "@openrails/contentkit-ui",
   "version": "0.0.0",
-  "description": "Browser uploads and reads for ContentKit media: content-addressed PUTs, resumable multipart, cropping, React hooks and UI.",
+  "description": "ContentKit in the browser: client, React hooks and styled components for media, uploads and content URLs.",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/open-rails/contentkit.git",
-    "directory": "sdk/upload"
+    "directory": "sdk/ui"
+  },
+  "homepage": "https://github.com/open-rails/contentkit/tree/master/sdk/ui#readme",
+  "bugs": {
+    "url": "https://github.com/open-rails/contentkit/issues"
   },
   "packageManager": "pnpm@11.15.1",
   "engines": {
@@ -18,7 +22,7 @@
     "README.md"
   ],
   "sideEffects": [
-    "./dist/ui.js",
+    "./dist/index.js",
     "**/*.css"
   ],
   "exports": {
@@ -26,13 +30,17 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "import": "./dist/client.js"
+    },
     "./react": {
-      "types": "./dist/react.d.ts",
+      "types": "./dist/react/index.d.ts",
       "import": "./dist/react.js"
     },
-    "./ui": {
-      "types": "./dist/ui.d.ts",
-      "import": "./dist/ui.js"
+    "./urls": {
+      "types": "./dist/urls/index.d.ts",
+      "import": "./dist/urls.js"
     },
     "./locales/*": {
       "types": "./dist/locales/*.d.ts",
@@ -42,14 +50,20 @@
     "./package.json": "./package.json"
   },
   "types": "./dist/index.d.ts",
+  "style": "./dist/styles.css",
   "scripts": {
     "build": "vite build",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
     "test": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
     "demo": "vite --config demo/vite.config.ts",
     "screenshots": "playwright test",
-    "check": "pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "peerDependencies": {
     "react": ">=19 <20",
@@ -74,6 +88,7 @@
     "react-easy-crop": "6.2.3"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "1.60.0",
     "@tailwindcss/vite": "4.3.3",
     "@testing-library/dom": "10.4.2",
@@ -84,6 +99,9 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "6.1.1",
+    "eslint": "^10.12.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
     "jsdom": "^29.1.1",
     "postcss": "8.5.26",
     "react": "^19.3.0",
@@ -91,6 +109,7 @@
     "tailwindcss": "4.3.3",
     "tw-animate-css": "1.4.0",
     "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.1",
     "vite": "8.3.0",
     "vite-plugin-dts": "5.1.1",
     "vitest": "^4.1.11"

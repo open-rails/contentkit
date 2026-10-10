@@ -1,5 +1,5 @@
 import { en } from "../locales/en.js";
-import type { ErrorDetails } from "../wire.gen.js";
+import type { ErrorDetails } from "../client/generated/wire.js";
 
 type Widen<T> = { [K in keyof T]: T[K] extends string ? string : Widen<T[K]> };
 type DeepPartial<T> = { [K in keyof T]?: T[K] extends string ? string : DeepPartial<T[K]> };
@@ -8,18 +8,18 @@ type Paths<T, P extends string = ""> = {
 }[keyof T & string];
 
 /** The complete message tree; English is the reference shape. */
-export type UploadUiMessages = Widen<typeof en>;
+export type ContentKitUiMessages = Widen<typeof en>;
 /** A locale bundle or host override: any subset of the tree. */
-export type UploadUiMessageBundle = DeepPartial<UploadUiMessages>;
+export type ContentKitUiMessageBundle = DeepPartial<ContentKitUiMessages>;
 /** Dotted key of any message, e.g. `crop.title`. */
-export type MessageKey = Paths<UploadUiMessages>;
+export type MessageKey = Paths<ContentKitUiMessages>;
 export type MessageVars = Record<string, string | number>;
 /** Host translation hook; return nothing (or the key) to use ours. */
-export type UploadUiTranslate = (key: string, vars?: MessageVars) => string | null | undefined;
+export type ContentKitUiTranslate = (key: string, vars?: MessageVars) => string | null | undefined;
 
-export const defaultMessages: UploadUiMessages = en;
+export const defaultMessages: ContentKitUiMessages = en;
 
-export function defineMessages(bundle: UploadUiMessageBundle): UploadUiMessageBundle {
+export function defineMessages(bundle: ContentKitUiMessageBundle): ContentKitUiMessageBundle {
   return bundle;
 }
 
@@ -38,11 +38,11 @@ function mergeInto(target: Tree, source: Tree): Tree {
 }
 
 /** Layers bundles over English; later bundles win, missing keys fall back. */
-export function resolveMessages(bundles?: UploadUiMessageBundle | readonly UploadUiMessageBundle[]): UploadUiMessages {
+export function resolveMessages(bundles?: ContentKitUiMessageBundle | readonly ContentKitUiMessageBundle[]): ContentKitUiMessages {
   const list = bundles ? (Array.isArray(bundles) ? bundles : [bundles]) : [];
   let tree = en as unknown as Tree;
   for (const b of list) tree = mergeInto(tree, b as Tree);
-  return tree as unknown as UploadUiMessages;
+  return tree as unknown as ContentKitUiMessages;
 }
 
 export function interpolate(template: string, vars?: MessageVars): string {
@@ -50,7 +50,7 @@ export function interpolate(template: string, vars?: MessageVars): string {
   return template.replace(/\{(\w+)\}/g, (m, name: string) => (name in vars ? String(vars[name]) : m));
 }
 
-function lookup(messages: UploadUiMessages, key: string): string | undefined {
+function lookup(messages: ContentKitUiMessages, key: string): string | undefined {
   let node: unknown = messages;
   for (const part of key.split(".")) {
     if (!node || typeof node !== "object") return undefined;
@@ -60,13 +60,13 @@ function lookup(messages: UploadUiMessages, key: string): string | undefined {
 }
 
 export interface Translator {
-  messages: UploadUiMessages;
+  messages: ContentKitUiMessages;
   t(key: MessageKey, vars?: MessageVars): string;
-  /** Message for an UploadError (or its code). */
+  /** Message for a ContentKitError (or its code). */
   error(error: unknown): string;
 }
 
-export function createTranslator(messages: UploadUiMessages, hostT?: UploadUiTranslate): Translator {
+export function createTranslator(messages: ContentKitUiMessages, hostT?: ContentKitUiTranslate): Translator {
   const translate = (key: string, vars?: MessageVars) => {
     const hosted = hostT?.(key, vars);
     if (hosted && hosted !== key) return hosted;
@@ -95,13 +95,16 @@ export function createTranslator(messages: UploadUiMessages, hostT?: UploadUiTra
         frames: d.frames ?? "",
         maxFrames: d.max_frames ?? "",
         maxSeconds: d.max_seconds ?? "",
+        duration: d.seconds ?? "",
       };
       // A refusal the server words itself states its rule; show it rather than a vaguer line.
       if (code === "invalid_request" && server) return server;
       if (code === "type_not_allowed" && d.allowed?.length) return `${translate("errors.type_not_allowed", vars)} ${translate("errors.allowedTypes", vars)}`;
       if (code === "too_large" && d.max_bytes) return translate("errors.tooLargeBy", vars) ?? messages.errors.too_large;
       if (code === "image_too_large" && (d.frames ?? 0) > 1) return translate("errors.animationTooLarge", vars) ?? messages.errors.image_too_large;
-      if (code === "animation_too_long") return translate(d.max_frames ? "errors.animationFrames" : "errors.animationSeconds", vars) ?? messages.errors.generic;
+      if (code === "animation_too_long" && (d.max_frames || d.max_seconds)) return translate(d.max_frames ? "errors.animationFrames" : "errors.animationSeconds", vars) ?? messages.errors.generic;
+      if (code === "video_too_long" && d.max_seconds) return translate("errors.videoTooLongBy", vars) ?? messages.errors.video_too_long;
+      if (code === "video_too_large" && d.max_pixels) return translate("errors.videoTooLargeBy", vars) ?? messages.errors.video_too_large;
       const own = code && translate(`errors.${code}`, vars);
       if (own) return own;
       // An unknown refusal (4xx) says what is wrong; faults get the generic line.

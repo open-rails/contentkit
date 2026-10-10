@@ -1,4 +1,4 @@
-import type { EncodeProgress } from "./wire.gen.js";
+import type { EncodeProgress } from "../generated/wire.js";
 
 /** Seconds left of an encode, counted down from when its report arrived (local clock; the server's `at` may be skewed). */
 export function encodeRemaining(p: EncodeProgress | null | undefined, receivedAt: number, now: number): number | undefined {

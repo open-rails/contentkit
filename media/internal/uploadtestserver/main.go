@@ -1,6 +1,6 @@
 // Command uploadtestserver serves the media upload and read APIs over an
 // isolated MinIO/RGW namespace for the browser SDK's integration tests
-// (sdk/upload/test) and e2e specs. It reads the CONTENTKIT_TEST_S3_*
+// (sdk/ui/test) and e2e specs. It reads the CONTENTKIT_TEST_S3_*
 // variables, presigns for -public (a proxy the test controls), prints
 // "READY <url> <namespace>" and runs until stdin closes.
 // CONTENTKIT_TEST_S3_BUCKET selects an existing bucket; cleanup removes only
