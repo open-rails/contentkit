@@ -154,31 +154,59 @@ func (down) PublicUsers(context.Context, []string) (map[string]iam.PublicUser, e
 	return nil, errors.New("directory down")
 }
 
-// Authors gives comment authors their names and their avatar's fixed URL.
+type images struct {
+	reg  *media.Registry
+	byID map[string][]media.PublicImage
+	err  error
+}
+
+func (s images) Registry() *media.Registry { return s.reg }
+
+func (s images) PublicImages(_ context.Context, ref contentref.ContentRef) ([]media.PublicImage, error) {
+	if _, err := s.reg.Item(ref); err != nil {
+		return nil, err
+	}
+	return s.byID[ref.ContentID], s.err
+}
+
+// Authors gives comment authors their names and currently published avatar.
 func TestAuthors(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
 	reg := registry(t)
 	unknown := contentref.NewID()
-	got, err := (&ckauthkit.Authors{Directory: w.auth, Media: reg}).UsersByIDs(ctx, []string{w.alice.ID, unknown})
+	base := "https://media.doujins.test/v1/accounts/user/" + w.alice.ID + "/public/avatar-"
+	suffix := "-0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b.webp"
+	store := images{reg: reg, byID: map[string][]media.PublicImage{w.alice.ID: {
+		{Preset: "avatar", Renditions: []media.PublicRendition{
+			{URL: base + "64" + suffix, W: 64, H: 64},
+			{URL: base + "128" + suffix, W: 100, H: 100},
+			{URL: base + "256" + suffix, W: 100, H: 100},
+		}},
+	}}}
+	got, err := (&ckauthkit.Authors{Directory: w.auth, Media: store}).UsersByIDs(ctx, []string{w.alice.ID, unknown})
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := "https://media.doujins.test/v1/accounts/user/" + w.alice.ID + "/public/avatar-"
 	a := got[w.alice.ID]
-	if a.Username != w.alice.Username || a.Avatar != base+"64.webp" || !strings.HasPrefix(a.AvatarSrcSet, base+"64.webp 64w, ") || !strings.HasSuffix(a.AvatarSrcSet, base+"512.webp 512w") {
+	if a.Username != w.alice.Username || a.Avatar != base+"64"+suffix || a.AvatarSrcSet != base+"64"+suffix+" 64w, "+base+"128"+suffix+" 100w" {
 		t.Fatalf("alice %+v", a)
 	}
-	if u := got[unknown]; u.ID != unknown || !strings.HasPrefix(u.Username, "user-") || !strings.Contains(u.Avatar, unknown) {
+	if u := got[unknown]; u.ID != unknown || !strings.HasPrefix(u.Username, "user-") || u.Avatar != "" || u.AvatarSrcSet != "" {
 		t.Fatalf("unknown %+v", u)
 	}
-	got, err = (&ckauthkit.Authors{Directory: w.auth, Media: reg, Width: 100}).UsersByIDs(ctx, []string{w.alice.ID})
-	if err != nil || got[w.alice.ID].Avatar != base+"128.webp" {
+	got, err = (&ckauthkit.Authors{Directory: w.auth, Media: store, Width: 100}).UsersByIDs(ctx, []string{w.alice.ID})
+	if err != nil || got[w.alice.ID].Avatar != base+"128"+suffix {
 		t.Fatalf("width 100: %+v %v", got, err)
 	}
 	// A directory outage never fails a listing.
-	got, err = (&ckauthkit.Authors{Directory: down{w.auth}, Media: reg}).UsersByIDs(ctx, []string{w.alice.ID})
+	got, err = (&ckauthkit.Authors{Directory: down{w.auth}, Media: store}).UsersByIDs(ctx, []string{w.alice.ID})
 	if err != nil || len(got) != 1 || !strings.HasPrefix(got[w.alice.ID].Username, "user-") {
 		t.Fatalf("outage: %+v %v", got, err)
+	}
+	store.err = errors.New("media down")
+	got, err = (&ckauthkit.Authors{Directory: w.auth, Media: store}).UsersByIDs(ctx, []string{w.alice.ID})
+	if err != nil || got[w.alice.ID].Username != w.alice.Username || got[w.alice.ID].Avatar != "" || got[w.alice.ID].AvatarSrcSet != "" {
+		t.Fatalf("media outage: %+v %v", got, err)
 	}
 }

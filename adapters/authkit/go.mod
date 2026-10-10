@@ -4,7 +4,7 @@ go 1.26.6
 
 require (
 	github.com/open-rails/authkit v1.2.0
-	github.com/open-rails/contentkit v0.62.0
+	github.com/open-rails/contentkit v0.68.0
 )
 
 require (
@@ -55,7 +55,3 @@ require (
 	golang.org/x/text v0.42.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-// CI builds the adapter against this repository's ContentKit; consumers
-// resolve the required version.
-replace github.com/open-rails/contentkit => ../..
