@@ -214,6 +214,79 @@ type manifestPutStore struct {
 	put func(context.Context, string, io.Reader, int64, media.PutOptions) (media.Object, error)
 }
 
+func TestForeignJournalCannotEditOrCleanReceipt(t *testing.T) {
+	env := s3test.Open(t)
+	pool := pgtest.Pool(t, nil)
+	reg := miniRegistry(t, env.Tenant)
+	ref, _ := reg.Ref("post", cid(7))
+	item, _ := reg.Item(ref)
+	store := &uncertainManifestStore{Store: env.Store, key: item.ManifestKey(), uncertain: true, applied: true}
+	owner, err := media.NewManifests(store, reg, media.ManifestOptions{Locker: media.PGLocker(pool), Journal: env.Journal()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.Edit(t.Context(), ref, func(m *media.Manifest) error {
+		m.Meta = map[string]any{"title": "owner"}
+		return nil
+	}); !errors.Is(err, media.ErrUnavailable) {
+		t.Fatalf("lost response: %v", err)
+	}
+	foreign, err := media.NewPGJournal(pool, pgtest.Schema(t, t.Context(), pool), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Registry: reg, Locker: media.PGLocker(pool), Journal: foreign,
+		Now: func() time.Time { return time.Now().Add(72 * time.Hour) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob := blobOf([]byte("stray"))
+	private, _ := item.Blob(blob)
+	public, _ := item.Public("stray.webp")
+	for _, key := range []string{private, public} {
+		if _, err := env.Store.Put(t.Context(), key, strings.NewReader("stray"), 5, media.PutOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, settled := range []bool{false, true} {
+		if settled {
+			if err := owner.Recover(t.Context(), ref); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, etag, err := owner.Get(t.Context(), ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, action := range map[string]func() error{
+			"edit": func() error {
+				_, err := jobs.Manifests().Edit(t.Context(), ref, func(*media.Manifest) error {
+					t.Error("foreign journal ran an edit callback")
+					return nil
+				})
+				return err
+			},
+			"public cleanup": func() error { _, err := jobs.Manifests().SyncPublic(t.Context(), ref); return err },
+			"private cleanup": func() error {
+				return jobs.Manifests().DropUnreferenced(t.Context(), ref, media.Unreferenced{Blobs: []string{blob}})
+			},
+			"sweep": func() error { _, err := jobs.Sweep(t.Context(), ref); return err },
+		} {
+			if err := action(); !errors.Is(err, media.ErrCommitPending) {
+				t.Fatalf("%s (settled=%t) accepted a foreign receipt: %v", name, settled, err)
+			}
+		}
+		if _, after, err := owner.Get(t.Context(), ref); err != nil || after != etag {
+			t.Fatalf("foreign journal changed the manifest revision: %q/%q %v", etag, after, err)
+		}
+		for _, key := range []string{private, public} {
+			if _, err := env.Store.Head(t.Context(), key); err != nil {
+				t.Fatalf("foreign journal deleted %s: %v", key, err)
+			}
+		}
+	}
+}
+
 func (s *manifestPutStore) Put(ctx context.Context, key string, body io.Reader, size int64, opts media.PutOptions) (media.Object, error) {
 	return s.put(ctx, key, body, size, opts)
 }
@@ -264,11 +337,14 @@ func TestManifestsLockAndUseIfMatch(t *testing.T) {
 		t.Fatal("lock-free Manifests must be refused")
 	}
 	locker := media.PGLocker(pgtest.Pool(t, nil))
-	probed, err := media.NewManifests(env.Store, kinds, media.ManifestOptions{Locker: locker})
+	if _, err := media.NewManifests(env.Store, kinds, media.ManifestOptions{Locker: locker}); err == nil {
+		t.Fatal("journal-free Manifests must be refused")
+	}
+	probed, err := media.NewManifests(env.Store, kinds, media.ManifestOptions{Locker: locker, Journal: env.Journal()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := media.NewManifests(env.Store, kinds, media.ManifestOptions{Locker: locker})
+	other, err := media.NewManifests(env.Store, kinds, media.ManifestOptions{Locker: locker, Journal: env.Journal()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +381,12 @@ func TestManifestsLockAndUseIfMatch(t *testing.T) {
 		}
 		set(m, "inside")
 		return nil
-	}); err != nil {
+	}); !errors.Is(err, media.ErrCommitPending) && !errors.Is(err, media.ErrManifestConflict) {
+		t.Fatalf("frozen caller was not refused: %v", err)
+	}
+	// A fresh request may proceed; the frozen caller must not silently start
+	// another attempt against the replacement revision.
+	if _, err := probed.Edit(ctx, ref, func(m *media.Manifest) error { set(m, "inside"); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	got, _, err := probed.Get(ctx, ref)
@@ -322,7 +403,7 @@ func TestManifestsLockAndUseIfMatch(t *testing.T) {
 // outsideLock is a process with its own lock space (not the host's), so its
 // edits do not wait on the caller's lock.
 func outsideLock(t *testing.T, env *s3test.Env) *media.Manifests {
-	ms, err := media.NewManifests(env.Store, miniRegistry(t, env.Tenant), media.ManifestOptions{Locker: noLock{}})
+	ms, err := media.NewManifests(env.Store, miniRegistry(t, env.Tenant), media.ManifestOptions{Locker: noLock{}, Journal: env.Journal()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +419,7 @@ func TestManifestsRefuseUnconditionalWrites(t *testing.T) {
 	env := s3test.Open(t)
 	reg := miniRegistry(t, env.Tenant)
 	locker := media.PGLocker(pgtest.Pool(t, nil))
-	ms, err := media.NewManifests(env.WithCapabilities(t, media.Capabilities{}), reg, media.ManifestOptions{Locker: locker})
+	ms, err := media.NewManifests(env.WithCapabilities(t, media.Capabilities{}), reg, media.ManifestOptions{Locker: locker, Journal: env.Journal()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +505,7 @@ func TestUploadsRefuseUnconditionalStorageBeforeMovingBytes(t *testing.T) {
 func TestManifestRevisionFencesReturningToEarlierContent(t *testing.T) {
 	t.Parallel()
 	env := s3test.Open(t)
-	ms := s3test.Manifests(t, env.Store, miniRegistry(t, env.Tenant), media.ManifestOptions{})
+	ms := s3test.Manifests(t, env.Store, miniRegistry(t, env.Tenant), media.ManifestOptions{Journal: env.Journal()})
 	ref := contentref.New(env.Tenant, "post", cid(7))
 	set := func(value string) (*media.Manifest, error) {
 		return ms.Edit(t.Context(), ref, func(m *media.Manifest) error {

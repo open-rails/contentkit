@@ -204,6 +204,35 @@ WHERE tenant_id = $1 AND operation_id = $2`, c.Ref.TenantID, c.ID).Scan(&state)
 	return state, err
 }
 
+// checkReceipt refuses a writer pointed at another journal schema. A known
+// completed receipt can remain in S3 until the next write; an unknown receipt
+// must never be erased just because this schema has no pending row.
+func (j *PGJournal) checkReceipt(ctx context.Context, item Item, r *CommitReceipt) error {
+	if r == nil {
+		return nil
+	}
+	operation, err := uuid.Parse(r.Operation)
+	if err != nil {
+		return ErrCommitIdentity
+	}
+	attempt, err := uuid.Parse(r.Attempt)
+	if err != nil {
+		return ErrCommitIdentity
+	}
+	var known bool
+	err = j.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+j.table+`
+WHERE tenant_id = $1 AND operation_id = $2 AND attempt_id = $3
+AND content_kind = $4 AND content_id = $5 AND folder_prefix = $6 AND state = 'applied')`,
+		item.Ref().TenantID, operation, attempt, item.Ref().ContentKind, item.Ref().ContentID, item.Prefix()).Scan(&known)
+	if err != nil {
+		return err
+	}
+	if !known {
+		return ErrCommitPending
+	}
+	return nil
+}
+
 // finish settles at most once. An absent outcome is legal only before prepare,
 // or after recovery has fenced S3. Database effects and the outcome commit
 // together, so a crash or failed enqueue leaves the original receipt pending.

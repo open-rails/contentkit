@@ -167,12 +167,16 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 	if h.queue, err = workqueue.New(pool, h.reg, h.workers); err != nil {
 		t.Fatal(err)
 	}
+	journal, err := media.NewPGJournal(pool, env.ContentSchema(), h.queue)
+	if err != nil {
+		t.Fatal(err)
+	}
 	// The host's River: readiness, purges and sweeps the worker hands back run here.
 	h.schema = pgtest.EmptySchema(t, ctx, pool)
 	if err := riverhelpers.ApplyMigrations(ctx, pool, h.schema); err != nil {
 		t.Fatal(err)
 	}
-	if h.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: h.reg, Locker: s3test.Locker(t, env.Store), Pool: pool, Processes: h.queue}); err != nil {
+	if h.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: h.reg, Locker: s3test.Locker(t, env.Store), Journal: journal, Pool: pool, Processes: h.queue}); err != nil {
 		t.Fatal(err)
 	}
 	client, err := riverhelpers.New(ctx, pool, &river.Config{Schema: h.schema, FetchPollInterval: 100 * time.Millisecond,
@@ -198,7 +202,7 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 	if workerStore != nil {
 		store = workerStore(env)
 	}
-	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Schema: h.workers, Store: store, Kinds: h.reg, HostSchema: h.schema,
+	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Schema: h.workers, ContentSchema: env.ContentSchema(), Store: store, Kinds: h.reg, HostSchema: h.schema,
 		TempDir: t.TempDir(), Threads: 2, RiverHooks: riverHooks, ImageTimeout: imageTimeout})
 	if err != nil {
 		t.Fatal(err)
@@ -360,7 +364,7 @@ func TestOneShotWorkerStopsAfterOneJob(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			w, err := worker.New(context.Background(), worker.Config{Pool: pool, Schema: schema, Store: env.Store, Kinds: reg,
+			w, err := worker.New(context.Background(), worker.Config{Pool: pool, Schema: schema, ContentSchema: env.ContentSchema(), Store: env.Store, Kinds: reg,
 				Queue: tc.workerQueue, TempDir: scratch, Threads: 2})
 			if err != nil {
 				t.Fatal(err)
@@ -419,14 +423,21 @@ func TestWorkerProcessesImagesAndRelays(t *testing.T) {
 		t.Fatalf("thumb %+v", th)
 	}
 	item, _ := h.reg.Item(ref)
-	key, _ := item.Public("cover-300.webp")
+	cover, _ := h.file(ref, "cover.png")
+	publication, ok := cover.Publication("cover")
+	index := slices.Index(publication.Names, "cover-300.webp")
+	if !ok || !publication.Ready() || index < 0 {
+		t.Fatalf("no published cover: %+v", publication)
+	}
+	name := publication.NamesOnDisk()[index]
+	key, _ := item.Public(name)
 	if !h.exists(t, key) {
 		t.Fatal("no public cover")
 	}
 	eventually(t, "the cover purged", 30*time.Second, func() bool {
 		h.mu.Lock()
 		defer h.mu.Unlock()
-		return slices.Contains(h.purged, h.reg.PublicURL(ref, "cover-300.webp"))
+		return slices.Contains(h.purged, h.reg.PublicURL(ref, name))
 	})
 	var n int
 	if err := h.pool.QueryRow(context.Background(), "SELECT count(*) FROM "+h.schema+".river_job WHERE kind = 'contentkit_media_expose'").Scan(&n); err != nil || n == 0 {
@@ -471,7 +482,13 @@ func TestWorkerEncodesVideoAndPoster(t *testing.T) {
 		t.Fatalf("poster %+v", p)
 	}
 	item, _ := h.reg.Item(ref)
-	key, _ := item.Public("poster-160.webp")
+	poster, _ := m.Get("poster.png")
+	publication, ok := poster.Publication("poster")
+	index := slices.Index(publication.Names, "poster-160.webp")
+	if !ok || !publication.Ready() || index < 0 {
+		t.Fatalf("no published poster: %+v", publication)
+	}
+	key, _ := item.Public(publication.NamesOnDisk()[index])
 	if !h.exists(t, key) {
 		t.Fatal("no public poster")
 	}
@@ -865,19 +882,38 @@ func TestWorkerRunsAsAnUnprivilegedRole(t *testing.T) {
 	if err := workqueue.Migrate(ctx, admin, schema); err != nil {
 		t.Fatal(err)
 	}
-	dsn := pgtest.MediaWorkerRole(t, ctx, admin, schema, hostSchema)
+	contentSchema := pgtest.Schema(t, ctx, admin)
+	dsn := pgtest.MediaWorkerRole(t, ctx, admin, schema, hostSchema, contentSchema)
 	app, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(app.Close)
+	if _, err := admin.Exec(ctx, "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "+pgx.Identifier{contentSchema}.Sanitize()+" TO "+pgx.Identifier{app.Config().ConnConfig.User}.Sanitize()); err != nil {
+		t.Fatal(err)
+	}
 	reg, err := media.NewRegistry(registry(env.Tenant, media.Hooks{}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := worker.Config{Pool: app, Schema: schema, Store: env.Store, Kinds: reg, HostSchema: hostSchema, TempDir: t.TempDir(), Threads: 1}
+	cfg := worker.Config{Pool: app, Schema: schema, ContentSchema: contentSchema, Store: env.Store, Kinds: reg, HostSchema: hostSchema, TempDir: t.TempDir(), Threads: 1}
 	if _, err := worker.New(ctx, cfg); err != nil {
 		t.Fatalf("worker as the app role: %v", err)
+	}
+	journal, err := media.NewPGJournal(app, contentSchema, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifests, err := media.NewManifests(env.Store, reg, media.ManifestOptions{Locker: media.PGLocker(app), Journal: journal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, _ := reg.Ref("clip", newID())
+	if _, err := manifests.Edit(ctx, ref, func(m *media.Manifest) error {
+		m.Meta = map[string]any{"role": "worker"}
+		return nil
+	}); err != nil {
+		t.Fatalf("journalled write as the app role: %v", err)
 	}
 	for _, table := range []string{"encode_run", "encode_chunk"} {
 		t.Run(table, func(t *testing.T) {
@@ -895,6 +931,12 @@ func TestWorkerRunsAsAnUnprivilegedRole(t *testing.T) {
 				t.Fatalf("worker accepted missing %s or did not identify it: %v", table, err)
 			}
 		})
+	}
+	if _, err := admin.Exec(ctx, "ALTER TABLE "+pgx.Identifier{contentSchema, "content_media_commits"}.Sanitize()+" RENAME TO content_media_commits_missing"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := worker.New(ctx, cfg); err == nil || !strings.Contains(err.Error(), contentSchema) || !strings.Contains(err.Error(), "content_media_commits") {
+		t.Fatalf("worker accepted a missing journal or did not identify it: %v", err)
 	}
 }
 

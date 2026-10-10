@@ -126,7 +126,7 @@ func (e *env) deploy(t *testing.T, mutate func(*media.Config)) {
 	if e.reg, err = media.NewRegistry(cfg); err != nil {
 		t.Fatal(err)
 	}
-	e.ms = s3test.Manifests(t, e.Store, e.reg, media.ManifestOptions{})
+	e.ms = s3test.Manifests(t, e.Store, e.reg, media.ManifestOptions{Journal: e.Journal()})
 	if e.up, err = media.NewUploads(media.UploadOptions{Store: e.Store, Manifests: e.ms, Queue: nopQueue{}}); err != nil {
 		t.Fatal(err)
 	}

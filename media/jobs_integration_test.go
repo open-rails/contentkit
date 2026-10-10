@@ -37,7 +37,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 // later is the fixture's jobs at a clock past the grace and temp periods.
 func (f *fixture) later() *media.Jobs {
 	f.t.Helper()
-	j, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(f.t, f.env.Store),
+	j, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(f.t, f.env.Store), Journal: f.env.Journal(),
 		Processes: f.q, Now: func() time.Time { return time.Now().Add(72 * time.Hour) }})
 	if err != nil {
 		f.t.Fatal(err)
@@ -129,7 +129,7 @@ func TestSweepProgressesUnderEdits(t *testing.T) {
 	item, _ := f.reg.Item(g)
 	ctx := context.Background()
 	const grace = 6 * time.Second
-	jobs, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Processes: f.q, Grace: grace})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Journal: f.env.Journal(), Processes: f.q, Grace: grace})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +310,7 @@ func TestTakedownRetry(t *testing.T) {
 	item, _ := f.reg.Item(g)
 	ctx := context.Background()
 	store := failingStore{Store: f.env.Store, armed: &atomic.Bool{}}
-	up, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: s3test.Manifests(t, store, f.reg, media.ManifestOptions{}), Queue: f.q})
+	up, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: s3test.Manifests(t, store, f.reg, media.ManifestOptions{Journal: f.env.Journal()}), Queue: f.q})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -611,6 +611,40 @@ func riverHost(t *testing.T, jobs *media.Jobs, pool *pgxpool.Pool) string {
 	return schema
 }
 
+// The host's periodic job must discover a landed write even when its caller
+// disappeared before settlement and no sweep was scheduled.
+func TestHostRecoversInterruptedManifestOnStartup(t *testing.T) {
+	env := s3test.Open(t)
+	pool := pgtest.Pool(t, nil)
+	reg := miniRegistry(t, env.Tenant)
+	ref, _ := reg.Ref("post", cid(7))
+	item, _ := reg.Item(ref)
+	store := &uncertainManifestStore{Store: env.Store, key: item.ManifestKey(), uncertain: true, applied: true}
+	jobs, err := media.NewJobs(media.JobsConfig{Store: store, Registry: reg, Locker: media.PGLocker(pool), Journal: env.Journal()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := jobs.Manifests().Edit(t.Context(), ref, func(m *media.Manifest) error {
+		m.Meta = map[string]any{"title": "landed"}
+		return nil
+	}); !errors.Is(err, media.ErrUnavailable) {
+		t.Fatalf("lost response: %v", err)
+	}
+	riverHost(t, jobs, pool)
+	table := pgx.Identifier{env.ContentSchema(), "content_media_commits"}.Sanitize()
+	waitFor(t, "abandoned manifest recovery", func() bool {
+		var state string
+		if err := pool.QueryRow(t.Context(), "SELECT state FROM "+table+" WHERE tenant_id=$1 AND folder_prefix=$2", ref.TenantID, item.Prefix()).Scan(&state); err != nil {
+			t.Fatal(err)
+		}
+		return state == "applied"
+	})
+	man, _, err := jobs.Manifests().Get(t.Context(), ref)
+	if err != nil || man.Meta["title"] != "landed" {
+		t.Fatalf("recovered manifest: %+v %v", man, err)
+	}
+}
+
 // The worker's relays reach the host's hooks through its media queue:
 // ItemReady in a host transaction once the item settles, PurgePublic with
 // URLs; the host deletes items from its own transaction.
@@ -631,7 +665,7 @@ func TestHostRelays(t *testing.T) {
 			return nil
 		}
 	})
-	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: s3test.Locker(t, env.Store), Pool: pool, Processes: f.q})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: s3test.Locker(t, env.Store), Journal: env.Journal(), Pool: pool, Processes: f.q})
 	if err != nil {
 		t.Fatal(err)
 	}

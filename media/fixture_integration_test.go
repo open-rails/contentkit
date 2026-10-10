@@ -205,7 +205,7 @@ func newFixtureOn(t *testing.T, env *s3test.Env, mutate func(*media.Config)) *fi
 		t.Fatal(err)
 	}
 	locker := s3test.Locker(t, env.Store)
-	if f.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: locker, Processes: f.q, Pool: pgtest.Pool(t, nil)}); err != nil {
+	if f.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: locker, Journal: env.Journal(), Processes: f.q, Pool: pgtest.Pool(t, nil)}); err != nil {
 		t.Fatal(err)
 	}
 	f.ms = f.jobs.Manifests()

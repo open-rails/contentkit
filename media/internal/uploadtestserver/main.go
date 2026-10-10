@@ -5,6 +5,8 @@
 // "READY <url> <namespace>" and runs until stdin closes.
 // CONTENTKIT_TEST_S3_BUCKET selects an existing bucket; cleanup removes only
 // the test namespace.
+// CONTENTKIT_TEST_URL supplies PostgreSQL for the real recovery journal and
+// manifest lock; the fixture migrates and drops its own isolated schema.
 //
 //	/upload/...            the upload API; X-Test-Actor names the caller ("reader" may not upload)
 //	/upload-on-upload/...  the same with ProcessOnUpload
@@ -31,15 +33,20 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
+	"github.com/open-rails/contentkit/migrations"
 )
 
 var images = []string{"image/png", "image/jpeg"}
@@ -138,6 +145,25 @@ func main() {
 	_, err := rand.Read(suffix)
 	must(err)
 	namespace := "sdk-" + hex.EncodeToString(suffix)
+	pool, err := pgxpool.New(ctx, os.Getenv("CONTENTKIT_TEST_URL"))
+	must(err)
+	defer pool.Close()
+	schema := strings.ReplaceAll(namespace, "-", "_")
+	db := stdlib.OpenDBFromPool(pool)
+	must(migrations.ApplyPostgres(ctx, db, schema))
+	must(db.Close())
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		_, err := pool.Exec(cleanupCtx, "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
+		if err != nil {
+			log.Print(err)
+		}
+		_, err = pool.Exec(cleanupCtx, "DELETE FROM public.migrations WHERE schema = $1", schema)
+		if err != nil {
+			log.Print(err)
+		}
+	}()
 	cfg := mediaS3.Config{
 		Bucket:          os.Getenv("CONTENTKIT_TEST_S3_BUCKET"),
 		Region:          os.Getenv("CONTENTKIT_TEST_S3_REGION"),
@@ -172,7 +198,9 @@ func main() {
 	reg, err := media.NewRegistry(media.Config{Namespace: namespace, BaseURL: "http://media.invalid", Kinds: kinds,
 		Hooks: media.Hooks{Resolver: allow{}, CanUpload: allow{}}})
 	must(err)
-	manifests, err := media.NewManifests(store, reg, media.ManifestOptions{Locker: &procLocker{}})
+	journal, err := media.NewPGJournal(pool, schema, nil)
+	must(err)
+	manifests, err := media.NewManifests(store, reg, media.ManifestOptions{Locker: media.PGLocker(pool), Journal: journal})
 	must(err)
 	worker.reg, worker.manifests = reg, manifests
 	key := token.Key{ID: "k1", Secret: bytes.Repeat([]byte("s"), 32)}
@@ -304,14 +332,4 @@ func must(err error) {
 	if err != nil {
 		panic(err)
 	}
-}
-
-// procLocker serializes edits within this single process (no Postgres here).
-type procLocker struct{ locks sync.Map }
-
-func (l *procLocker) Lock(ctx context.Context, key string) (func(), error) {
-	m, _ := l.locks.LoadOrStore(key, &sync.Mutex{})
-	mu := m.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock, nil
 }

@@ -64,7 +64,7 @@ func TestManifestCaps(t *testing.T) {
 		}
 		last = m
 	}
-	fresh := s3test.Manifests(t, f.env.Store, f.reg, media.ManifestOptions{})
+	fresh := s3test.Manifests(t, f.env.Store, f.reg, media.ManifestOptions{Journal: f.env.Journal()})
 	m, _, err := fresh.Get(ctx, g)
 	if err != nil || len(m.Files) != len(last.Files) {
 		t.Fatalf("fresh read after the refused commit: %v", err)
@@ -82,7 +82,7 @@ func TestManifestCaps(t *testing.T) {
 	if err := limiter.Settle(ctx, media.Settlement{Tenant: f.ns, Owner: "owner", Delta: charged + 100}); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Limiter: limiter})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Journal: f.env.Journal(), Limiter: limiter})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestOversizedManifest(t *testing.T) {
 	if _, err := f.env.Store.Put(ctx, item.ManifestKey(), bytes.NewReader(body), int64(len(body)), media.PutOptions{ContentType: "application/gzip"}); err != nil {
 		t.Fatal(err)
 	}
-	fresh := s3test.Manifests(t, f.env.Store, f.reg, media.ManifestOptions{})
+	fresh := s3test.Manifests(t, f.env.Store, f.reg, media.ManifestOptions{Journal: f.env.Journal()})
 	if _, _, err := fresh.Get(ctx, g); !errors.Is(err, media.ErrManifestUnreadable) {
 		t.Fatalf("oversized read: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestOversizedManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Limiter: limiter})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Journal: f.env.Journal(), Limiter: limiter})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestLargeManifestIsCached(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	fresh := s3test.Manifests(t, f.env.Store, f.reg, media.ManifestOptions{})
+	fresh := s3test.Manifests(t, f.env.Store, f.reg, media.ManifestOptions{Journal: f.env.Journal()})
 	for _, ms := range []*media.Manifests{f.ms, fresh} {
 		a, _, err := ms.Get(ctx, post)
 		if err != nil {

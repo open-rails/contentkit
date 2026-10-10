@@ -408,7 +408,7 @@ func TestRemoveCleansPublicAfterCommitFailure(t *testing.T) {
 				}
 				return failure
 			})
-			manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{})
+			manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{Journal: e.Journal()})
 			uploads, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests, Queue: queue})
 			if err != nil {
 				t.Fatal(err)
@@ -460,7 +460,7 @@ func TestPublicCleanupDeletesConcurrently(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &parallelDelete{Store: e.Store, ready: make(chan struct{})}
-	manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{})
+	manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{Journal: e.Journal()})
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	keys, err := manifests.SyncPublic(ctx, ref)
@@ -483,7 +483,7 @@ func TestRemoveRetriesFailedPublicCleanup(t *testing.T) {
 	key, _ := item.Public(names[0])
 	failure := errors.New("public delete unavailable")
 	store := &failDelete{Store: e.Store, key: key, err: failure}
-	manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{})
+	manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{Journal: e.Journal()})
 	uploads, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests, Queue: nopQueue{}})
 	if err != nil {
 		t.Fatal(err)

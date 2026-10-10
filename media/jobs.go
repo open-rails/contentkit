@@ -26,6 +26,7 @@ type JobsConfig struct {
 	Store     Store
 	Registry  *Registry
 	Locker    Locker       // serializes manifest edits and sweep deletion; required
+	Journal   *PGJournal   // same ContentKit journal used by the uploader and media worker; required
 	Processes ProcessQueue // the worker's queue (workqueue.Queue): Expose and Regenerate render through it
 	// Pool is the host database Hooks.ItemReady's transaction runs on;
 	// required with ItemReady.
@@ -68,8 +69,8 @@ type Jobs struct {
 var ErrJobsNotBound = errors.New("media: River jobs are not composed into a client")
 
 func NewJobs(cfg JobsConfig) (*Jobs, error) {
-	if cfg.Store == nil || cfg.Registry == nil || cfg.Locker == nil {
-		return nil, errors.New("media: Jobs needs a Store, a Registry and a Locker")
+	if cfg.Store == nil || cfg.Registry == nil || cfg.Locker == nil || cfg.Journal == nil {
+		return nil, errors.New("media: Jobs needs a Store, a Registry, a Locker and a Journal")
 	}
 	if cfg.Registry.cfg.Hooks.ItemReady != nil && cfg.Pool == nil {
 		return nil, errors.New("media: Hooks.ItemReady needs JobsConfig.Pool")
@@ -100,7 +101,7 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 	}
 	j := &Jobs{cfg: cfg}
 	var err error
-	if j.manifests, err = NewManifests(cfg.Store, cfg.Registry, ManifestOptions{Locker: cfg.Locker, Sweeps: j}); err != nil {
+	if j.manifests, err = NewManifests(cfg.Store, cfg.Registry, ManifestOptions{Locker: cfg.Locker, Journal: cfg.Journal, Sweeps: j}); err != nil {
 		return nil, err
 	}
 	return j, nil
@@ -132,6 +133,7 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &exposeWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &readyWorker{j: j}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &purgeWorker{j: j}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &recoverWorker{j: j}) },
 		} {
 			if err := add(); err != nil {
 				return err
@@ -143,6 +145,11 @@ func (j *Jobs) RiverJobs() riverhelpers.Contribution {
 				return sweepPassArgs{}, &river.InsertOpts{Queue: j.cfg.Queue, MaxAttempts: 3,
 					UniqueOpts: river.UniqueOpts{ByPeriod: interval}}
 			}, &river.PeriodicJobOpts{ID: "contentkit_media_sweep_pass"}))
+		cfg.PeriodicJobs = append(cfg.PeriodicJobs, river.NewPeriodicJob(river.PeriodicInterval(time.Minute),
+			func() (river.JobArgs, *river.InsertOpts) {
+				return recoverArgs{}, &river.InsertOpts{Queue: j.cfg.Queue, MaxAttempts: 3,
+					UniqueOpts: river.UniqueOpts{ByPeriod: time.Minute}}
+			}, &river.PeriodicJobOpts{ID: "contentkit_media_recover", RunOnStart: true}))
 		return nil
 	}, func(_ context.Context, b riverhelpers.Binding) error {
 		j.mu.Lock()
@@ -391,6 +398,23 @@ func (w *sweepWorker) Work(ctx context.Context, job *river.Job[sweepArgs]) (err 
 		return river.JobSnooze(res.Wait)
 	}
 	return nil
+}
+
+type recoverArgs struct{}
+
+func (recoverArgs) Kind() string { return "contentkit_media_recover" }
+
+type recoverWorker struct {
+	river.WorkerDefaults[recoverArgs]
+	j *Jobs
+}
+
+func (w *recoverWorker) Timeout(*river.Job[recoverArgs]) time.Duration { return time.Minute }
+
+func (w *recoverWorker) Work(ctx context.Context, job *river.Job[recoverArgs]) (err error) {
+	defer func() { err = SnoozeUnavailable(ctx, w.j.cfg.Store, job.JobRow, err) }()
+	err = w.j.manifests.RecoverPending(ctx, 100)
+	return err
 }
 
 type sweepPassArgs struct{}

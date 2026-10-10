@@ -37,7 +37,7 @@ func TestStoreOutage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ms, err := media.NewManifests(store, kinds, media.ManifestOptions{Locker: media.PGLocker(pgtest.Pool(t, nil))})
+	ms, err := media.NewManifests(store, kinds, media.ManifestOptions{Locker: media.PGLocker(pgtest.Pool(t, nil)), Journal: env.Journal()})
 	if err != nil {
 		t.Fatal(err)
 	}

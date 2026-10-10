@@ -243,7 +243,7 @@ func TestPlaceAfterDeletion(t *testing.T) {
 	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: p, Blob: staged}}); err != nil {
 		t.Fatal(err)
 	}
-	ms := s3test.Manifests(t, deletingStore{Store: f.env.Store, manifest: item.ManifestKey()}, f.reg, media.ManifestOptions{})
+	ms := s3test.Manifests(t, deletingStore{Store: f.env.Store, manifest: item.ManifestKey()}, f.reg, media.ManifestOptions{Journal: f.env.Journal()})
 	if n, err := ms.Place(ctx, g); err != nil || n != 0 {
 		t.Fatalf("placed %d: %v", n, err)
 	}
@@ -285,7 +285,7 @@ func TestPlaceAfterTakedown(t *testing.T) {
 				t.Error(err)
 			}
 		})
-	}}, f.reg, media.ManifestOptions{})
+	}}, f.reg, media.ManifestOptions{Journal: f.env.Journal()})
 	if n, err := ms.Place(ctx, g); err != nil || n != 0 {
 		t.Fatalf("placed %d: %v", n, err)
 	}

@@ -229,7 +229,11 @@ func TestMedia_PostExposureCommitsWithContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := media.NewJobs(media.JobsConfig{Store: store, Registry: reg, Locker: media.PGLocker(pool)})
+	journal, err := media.NewPGJournal(pool, rt.schema, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := media.NewJobs(media.JobsConfig{Store: store, Registry: reg, Locker: media.PGLocker(pool), Journal: journal})
 	if err != nil {
 		t.Fatal(err)
 	}

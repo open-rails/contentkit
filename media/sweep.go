@@ -85,6 +85,9 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 		return SweepResult{}, err
 	}
 	defer unlock()
+	if _, _, err := j.manifests.recoverLocked(ctx, item); err != nil {
+		return SweepResult{}, err
+	}
 	objs, err := j.list(ctx, prefix)
 	if err != nil {
 		return SweepResult{}, err
@@ -98,6 +101,9 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 		} else if err != nil {
 			return SweepResult{}, err
 		}
+	}
+	if err := j.cfg.Journal.checkReceipt(ctx, item, m.Receipt); err != nil {
+		return SweepResult{}, err
 	}
 	keep := j.keeps(item, m)
 	var wait time.Duration // until the youngest-due unreferenced blob is a grace period old

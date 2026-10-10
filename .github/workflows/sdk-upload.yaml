@@ -26,10 +26,21 @@ jobs:
     if: '!github.event.pull_request.draft'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: groonga/pgroonga:4.0.8-debian-18
+        env:
+          POSTGRES_USER: contentkit
+          POSTGRES_PASSWORD: contentkit
+          POSTGRES_DB: contentkit_test
+        ports:
+        - 5432:5432
+        options: --health-cmd "pg_isready -U contentkit" --health-interval 5s --health-timeout 5s --health-retries 20
     defaults:
       run:
         working-directory: sdk/upload
     env:
+      CONTENTKIT_TEST_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_test?sslmode=disable
       CONTENTKIT_TEST_S3_ENDPOINT: http://localhost:9100
       CONTENTKIT_TEST_S3_ACCESS_KEY: contentkit
       CONTENTKIT_TEST_S3_SECRET_KEY: contentkit-secret
@@ -55,7 +66,7 @@ jobs:
         go-version-file: go.mod
     - run: pnpm install --frozen-lockfile --ignore-scripts
     - run: pnpm check
-    - name: integration (MinIO + media.UploadHandler)
+    - name: integration (Postgres + MinIO + media.UploadHandler)
       run: |
         timeout 60 sh -c "until curl -fsS http://localhost:9100/minio/health/ready; do sleep 1; done"
         pnpm test:integration

@@ -41,7 +41,7 @@ func TestRestoreAfterSweepAndFolderDeletion(t *testing.T) {
 	}
 	const grace = 24 * time.Hour
 	clock := time.Now()
-	jobs, err := media.NewJobs(media.JobsConfig{Store: s, Locker: s3test.Locker(t, s), Registry: kinds, Grace: grace, Now: func() time.Time { return clock }})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: s, Locker: s3test.Locker(t, s), Journal: env.Journal(), Registry: kinds, Grace: grace, Now: func() time.Time { return clock }})
 	if err != nil {
 		t.Fatal(err)
 	}

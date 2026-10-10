@@ -165,7 +165,7 @@ func newEnvOn(t *testing.T, s3 *s3test.Env, o opts, schema string) *env {
 	if err := workqueue.Migrate(e.ctx, e.pool, e.schema); err != nil {
 		t.Fatal(err)
 	}
-	if e.ms, err = media.NewManifests(e.store, e.reg, media.ManifestOptions{Locker: media.PGLocker(e.pool)}); err != nil {
+	if e.ms, err = media.NewManifests(e.store, e.reg, media.ManifestOptions{Locker: media.PGLocker(e.pool), Journal: s3.Journal()}); err != nil {
 		t.Fatal(err)
 	}
 	if e.queue, err = workqueue.New(e.pool, e.reg, e.schema); err != nil {

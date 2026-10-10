@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,10 +33,18 @@ import (
 
 // Env is an opened test bucket.
 type Env struct {
-	Store   *mediaS3.Store
-	Config  mediaS3.Config
-	Tenant  string // unique per test; all keys live under "{Tenant}/"
-	Created bool   // the bucket was created for this test
+	Store    *mediaS3.Store
+	Config   mediaS3.Config
+	Tenant   string // unique per test; all keys live under "{Tenant}/"
+	Created  bool   // the bucket was created for this test
+	recovery *recoveryState
+}
+
+type recoveryState struct {
+	owner         testing.TB
+	mu            sync.Mutex
+	journal       *media.PGJournal
+	contentSchema string
 }
 
 // Require reports whether CONTENTKIT_TEST_S3_REQUIRE lists capability.
@@ -65,7 +74,7 @@ func Open(t testing.TB) *Env {
 		SecretAccessKey: os.Getenv("CONTENTKIT_TEST_S3_SECRET_KEY"),
 		UsePathStyle:    true,
 	}
-	env := &Env{Tenant: "t" + strings.ReplaceAll(uuid.NewString(), "-", "")[:16]}
+	env := &Env{Tenant: "t" + strings.ReplaceAll(uuid.NewString(), "-", "")[:16], recovery: &recoveryState{owner: t}}
 	if cfg.Bucket == "" {
 		cfg.Bucket = "ck-media-" + env.Tenant[1:]
 		env.Created = true
@@ -119,6 +128,29 @@ func (e *Env) WithoutConditionalPut(t testing.TB) *Env {
 	c.Store = e.WithCapabilities(t, caps)
 	c.Config.Capabilities = &caps
 	return &c
+}
+
+// Journal is shared by every fixture process using this isolated namespace.
+// Resources belong to Open's test, not a shorter-lived nested subtest.
+func (e *Env) Journal() *media.PGJournal {
+	s := e.recovery
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.journal == nil {
+		pool := pgtest.Pool(s.owner, nil)
+		s.contentSchema = pgtest.Schema(s.owner, context.Background(), pool)
+		var err error
+		s.journal, err = media.NewPGJournal(pool, s.contentSchema, nil)
+		if err != nil {
+			s.owner.Fatal(err)
+		}
+	}
+	return s.journal
+}
+
+func (e *Env) ContentSchema() string {
+	e.Journal()
+	return e.recovery.contentSchema
 }
 
 // Locker is what a host wires: a PGLocker on CONTENTKIT_TEST_URL (skipping
