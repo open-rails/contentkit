@@ -22,7 +22,18 @@ export {
 export { VideoPoster, type VideoPosterProps } from "./components/video-poster.js";
 export { VideoPosterPicker, formatTime, type VideoPickerProps, type VideoPosterPickerProps } from "./components/video-poster-picker.js";
 export { MediaGallery, type MediaGalleryProps } from "./components/media-gallery.js";
-export { SpriteFrame, VideoPlayer, qualityLabel, type VideoPlayerProps } from "./components/video-player.js";
+export {
+  SpriteFrame,
+  VideoPlayer,
+  qualityLabel,
+  type PlayerEvent,
+  type PlayerHandoff,
+  type PlayerMenuItem,
+  type PlayerSlotContext,
+  type VideoPlayerProps,
+} from "./components/video-player.js";
+export { VideoMiniPlayer, type VideoMiniPlayerProps } from "./components/video-mini-player.js";
+export { playerButtonClass } from "./components/player-controls.js";
 export { AvatarUpload, CoverUpload, type SlotUploadProps } from "./components/slot-upload.js";
 export {
   createTranslator,

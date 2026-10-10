@@ -12,17 +12,18 @@ function rungs(page: Page) {
   return seen;
 }
 
-async function play(page: Page, before?: () => Promise<unknown>) {
+// Rungs count from the click: on touch an inline preview may already be playing the lowest.
+async function play(page: Page, seen?: number[]) {
   await page.goto(`/gallery.html?page=abr&media=${process.env.MEDIA_PORT ?? 4180}`);
-  await before?.();
   const player = page.locator("[data-demo=abr] [data-ckui=video-player]");
+  if (seen) seen.length = 0;
   await player.getByRole("button", { name: "Play video" }).click();
   return player;
 }
 
 test("a fast connection starts at 1080p or better", async ({ page }) => {
   const seen = rungs(page);
-  const player = await play(page);
+  const player = await play(page, seen);
   await expect(player).toHaveAttribute("data-status", "playing", { timeout: 15_000 });
   expect(seen[0]).toBeGreaterThanOrEqual(1080);
 });
@@ -36,7 +37,7 @@ test("1.5 Mbps starts low and plays without stalling", async ({ page }) => {
   await cdp.send("Network.enable");
   await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 60, downloadThroughput: 1_500_000 / 8, uploadThroughput: 750_000 / 8 });
   const seen = rungs(page);
-  const player = await play(page);
+  const player = await play(page, seen);
   expect(await page.evaluate(() => (navigator as unknown as { connection?: { downlink: number } }).connection?.downlink)).toBeCloseTo(1.5, 0);
   await expect(player).toHaveAttribute("data-status", "playing", { timeout: 15_000 });
   expect(seen[0]).toBe(480);
@@ -65,7 +66,8 @@ test("fullscreen on a 4K display climbs to 2160p", async ({ browser }, info) => 
   await page.waitForTimeout(4_000);
   expect(seen[0]).toBe(1080);
   expect(Math.max(...seen)).toBe(1080);
-  await page.getByRole("button", { name: "Fullscreen" }).click();
+  await player.hover();
+  await player.getByRole("button", { name: "Fullscreen" }).click();
   await expect.poll(() => Math.max(...seen), { timeout: 20_000 }).toBe(2160);
   await expect(player).toHaveAttribute("data-status", "playing");
   await context.close();
@@ -79,14 +81,25 @@ test("the quality menu locks a rung, remembers it, and returns to Auto", async (
   await expect(player).toHaveAttribute("data-status", "playing", { timeout: 15_000 });
   const menu = page.locator("[data-ckui=quality-menu]");
   const open = async () => {
-    await player.getByRole("button", { name: "Quality" }).click();
+    await player.hover();
+    await player.getByRole("button", { name: "Settings" }).click();
+    await page.locator("[data-ckui=settings-quality]").click();
     await expect(menu).toBeVisible();
   };
   await open();
   await expect(menu.getByRole("menuitemradio")).toHaveText(["2160p 4K", "1440p", "1080p HD", "720p", "480p", "Auto (1080p)"]);
   await expect(menu.getByRole("menuitemradio", { name: "Auto (1080p)" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator("[data-ckui=settings-quality]")).toContainText("Auto (1080p)");
   await page.screenshot({ path: `${dir}/player-quality-menu.png`, clip: (await player.boundingBox())! });
-  // Keyboard: ArrowUp from Auto reaches 480p.
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  // Keyboard: Settings, into Quality, ArrowUp from Auto reaches 480p.
+  await player.getByRole("button", { name: "Settings" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("[data-ckui=settings-quality]")).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(menu).toBeVisible();
   await page.keyboard.press("End");
   await page.keyboard.press("ArrowUp");
   await expect(menu.getByRole("menuitemradio", { name: "480p" })).toBeFocused();
@@ -100,8 +113,7 @@ test("the quality menu locks a rung, remembers it, and returns to Auto", async (
 
   // Remembered across loads.
   expect(await page.evaluate(() => localStorage.getItem("ckui.player.quality"))).toBe("480");
-  seen.length = 0;
-  await play(page);
+  await play(page, seen);
   await expect(player).toHaveAttribute("data-status", "playing", { timeout: 15_000 });
   expect(seen[0]).toBe(480);
   await open();

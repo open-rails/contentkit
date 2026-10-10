@@ -29,6 +29,8 @@ export interface ContentKitUiVariables {
   ring?: string;
   radius?: string;
   fontFamily?: string;
+  /** The video player's played range, seek thumb and pressed toggles. Default white. */
+  playerAccent?: string;
 }
 
 export interface ContentKitUiAppearance {

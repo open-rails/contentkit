@@ -48,6 +48,7 @@
   --color-border: var(--ckui-border);
   --color-input: var(--ckui-input);
   --color-ring: var(--ckui-ring);
+  --color-player-accent: var(--ckui-player-accent);
   --radius-sm: calc(var(--ckui-radius) - 4px);
   --radius-md: calc(var(--ckui-radius) - 2px);
   --radius-lg: var(--ckui-radius);
@@ -75,6 +76,8 @@
   --ckui-input: oklch(0.92 0.004 286.32);
   --ckui-ring: oklch(0.705 0.015 286.067);
   --ckui-radius: 0.625rem;
+  /* Played range, seek thumb and pressed toggles over video; hosts set their brand. */
+  --ckui-player-accent: oklch(0.985 0 0);
 
   color-scheme: light;
   color: var(--ckui-foreground);

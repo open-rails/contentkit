@@ -8,6 +8,7 @@
 //                  each padded with MPEG-TS null packets to its rung's bitrate
 //   /v1/…          public files like media-gateway serves them; the demo's stand-in
 //                  worker (demo/fake.ts) PUTs and DELETEs them
+// Files answer byte ranges (ContentKit's fMP4 playlists address one file by range).
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -19,6 +20,7 @@ const types: Record<string, string> = {
   ".seg": "video/mp2t",
   ".vtt": "text/vtt",
   ".jpg": "image/jpeg",
+  ".mp4": "video/mp4",
 };
 
 // Short side → bits/s, as a ContentKit master lists them (the 1080p rung first).
@@ -93,6 +95,10 @@ createServer(async (req, res) => {
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Vary", "Origin");
   };
+  if (req.method === "OPTIONS") {
+    cors();
+    return res.writeHead(204, { "Access-Control-Allow-Methods": "GET", "Access-Control-Allow-Headers": "range" }).end();
+  }
   if (mode === "auth") {
     const [token, ...f] = rest;
     file = f;
@@ -113,7 +119,13 @@ createServer(async (req, res) => {
   if (!p.startsWith(root)) return res.writeHead(400).end();
   try {
     const body = await readFile(p);
-    res.writeHead(200, { "Content-Type": types[path.extname(p)] ?? "application/octet-stream", "Cache-Control": "no-store" }).end(body);
+    const headers = { "Content-Type": types[path.extname(p)] ?? "application/octet-stream", "Cache-Control": "no-store", "Accept-Ranges": "bytes" };
+    const range = req.headers.range?.match(/^bytes=(\d+)-(\d*)$/);
+    if (!range) return res.writeHead(200, headers).end(body);
+    const from = Number(range[1]);
+    const to = Math.min(body.length - 1, range[2] ? Number(range[2]) : body.length - 1);
+    if (from > to) return res.writeHead(416, { "Content-Range": `bytes */${body.length}` }).end();
+    res.writeHead(206, { ...headers, "Content-Range": `bytes ${from}-${to}/${body.length}` }).end(body.subarray(from, to + 1));
   } catch {
     res.writeHead(404).end("not found");
   }
