@@ -54,7 +54,7 @@ const comment = (id: string, o: Partial<Comment> = {}): Comment => ({
   updated_at: at,
   ...o,
 });
-const standing = (o: Partial<CommentStanding> = {}): CommentStanding => ({ can_comment: true, anonymous: false, max_length: 400, user_id: "alice", moderate: false, ban_scopes: [], ...o });
+const standing = (o: Partial<CommentStanding> = {}): CommentStanding => ({ can_comment: true, anonymous: false, max_length: 2200, user_id: "alice", moderate: false, ban_scopes: [], ...o });
 const config = (anonymous: Partial<Config["anonymous"]> = {}) => () => ({ anonymous: { comments: false, reactions: false, votes: false, ...anonymous } });
 
 it("Comments: a thread with tombstones and the author's held comment; posting lands in place; Ctrl+Enter posts", async () => {

@@ -158,10 +158,10 @@ describe.skipIf(!endpoint)("content modules against contentkit.Runtime.Handler",
       expect.objectContaining({ code: "moderation_rejected", message: "not allowed here", status: 422 }),
     );
 
-    expect(await ck().comments.standing(video)).toEqual({ can_comment: true, anonymous: true, max_length: 400, moderate: false, ban_scopes: [] });
-    expect(await ck("creator").comments.standing(video)).toEqual({ can_comment: true, anonymous: true, max_length: 400, user_id: "creator", moderate: false, ban_scopes: ["owner"] });
-    await expect(ck("carol").comments.create(video, { body: "é".repeat(401) })).rejects.toEqual(
-      expect.objectContaining({ code: "comment_too_long", status: 422, details: { max: 400 } }),
+    expect(await ck().comments.standing(video)).toEqual({ can_comment: true, anonymous: true, max_length: 2200, moderate: false, ban_scopes: [] });
+    expect(await ck("creator").comments.standing(video)).toEqual({ can_comment: true, anonymous: true, max_length: 2200, user_id: "creator", moderate: false, ban_scopes: ["owner"] });
+    await expect(ck("carol").comments.create(video, { body: "é".repeat(2201) })).rejects.toEqual(
+      expect.objectContaining({ code: "comment_too_long", status: 422, details: { max: 2200 } }),
     );
     expect(await ck("moderator").comments.standing(video)).toMatchObject({ moderate: true, ban_scopes: ["global"] });
     expect(await ck("alice").comments.standing(item("video", "10cced"))).toMatchObject({ can_comment: false });
@@ -231,13 +231,13 @@ describe.skipIf(!endpoint)("content modules against contentkit.Runtime.Handler",
 
   it("anonymous participation is the server's setting: config, standing and refusals", async () => {
     const everyone = { comments: true, reactions: true, votes: true };
-    expect(await ck().config()).toEqual({ anonymous: everyone, comment_max_length: 400 });
+    expect(await ck().config()).toEqual({ anonymous: everyone, comment_max_length: 2200 });
     const members = (actor?: string) => ck(actor, "10.4.0.1", "/ck-members");
-    expect(await members().config()).toEqual({ anonymous: { comments: false, reactions: false, votes: false }, comment_max_length: 400 });
+    expect(await members().config()).toEqual({ anonymous: { comments: false, reactions: false, votes: false }, comment_max_length: 2200 });
 
     const video = item();
     const top = await members("alice").comments.create(video, { body: "members only" });
-    expect(await members().comments.standing(video)).toEqual({ can_comment: false, anonymous: false, max_length: 400, moderate: false, ban_scopes: [] });
+    expect(await members().comments.standing(video)).toEqual({ can_comment: false, anonymous: false, max_length: 2200, moderate: false, ban_scopes: [] });
     expect(await members("bob").comments.standing(video)).toMatchObject({ can_comment: true, anonymous: false, user_id: "bob" });
     const post = await members("editor").posts.create({ title: "Members", body: "b", language: "en" });
     const poll = await members("editor").polls.create({ question: "Members?", language: "en", options: [{ label: "Yes", position: 0 }, { label: "No", position: 1 }] });
