@@ -13,7 +13,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../appearance.js";
 import { formatDuration, galleryItems, stageAspect, type GalleryItem, type GalleryLockedItem, type GalleryMediaItem } from "../client/gallery.js";
 import { useCarousel, useGalleryView, useHlsPlayer, useRefreshBeforeExpiry, type GalleryViewOptions, type HlsPlayerOptions } from "../react/gallery.js";
@@ -22,18 +22,31 @@ import { useMessages } from "../i18n/context.js";
 import { publicRenditions, type PublicPreset } from "../client/public.js";
 import { ContentKitUiRoot, useScopeProps } from "../scope.js";
 import { RenditionImg } from "./rendition-img.js";
-import type { FileInfo, ReadResult } from "../client/generated/wire.js";
+import type { ContentKitClient } from "../client/client.js";
+import type { FileInfo, ReadResult, RefBody } from "../client/generated/wire.js";
+import { useOptionalContentKitClient } from "../react/context.js";
+import { useMediaRead } from "../react/read.js";
 import { previewStartAt, SpriteFrame, VideoPlayer } from "./video-player.js";
 import { Button } from "#ckui/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "#ckui/ui/toggle-group";
 
 export interface MediaGalleryProps extends GalleryViewOptions, Pick<HlsPlayerOptions, "xhrSetup" | "refresh" | "abr"> {
   /**
+   * The item to show, read through the client: its read (refreshed before
+   * the URLs expire, after commits), HLS bases, playlist auth and grant
+   * refresh. Or pass `read` (and hlsBase, xhrSetup, refresh) yourself.
+   */
+  item?: RefBody;
+  /** With item: only files under this path prefix. */
+  prefix?: string;
+  /** With item: each audio file's download name signed into its URL. */
+  download?: boolean;
+  /**
    * The read API result: files in manifest order with this viewer's access
    * (scope it with a prefix). A download read adds each audio file's download.
    * With `refresh`, the gallery reads again shortly before `read.expires`.
    */
-  read: ReadResult | null | undefined;
+  read?: ReadResult | null;
   /** A ladder's HLS folder from the read's `hls` dir: client.media.hlsBase(ref, dir). */
   hlsBase?: (dir: string) => string;
   /** The item's poster (its public preset, or a URL), drawn on the first video. */
@@ -53,6 +66,8 @@ export interface MediaGalleryProps extends GalleryViewOptions, Pick<HlsPlayerOpt
   label?: string;
   className?: string;
   appearance?: ContentKitUiAppearance;
+  /** Overrides the provider's client (item). */
+  client?: ContentKitClient;
 }
 
 interface Ctx extends MediaGalleryProps {
@@ -71,12 +86,13 @@ const baseOf = (ctx: Ctx, item: GalleryMediaItem) => (item.dir && ctx.hlsBase ? 
  * A post's images and videos as a swipeable carousel or a tile grid that opens
  * a lightbox, with a view toggle. One item renders alone.
  */
-export function MediaGallery(props: MediaGalleryProps) {
-  const { read, label, className, appearance, view: given, defaultView, onViewChange, storageKey } = props;
+export function MediaGallery(given: MediaGalleryProps) {
+  const props = useItemRead(given);
+  const { read, label, className, appearance, view: chosen, defaultView, onViewChange, storageKey } = props;
   const { t } = useMessages();
   const items = useMemo(() => galleryItems(read), [read]);
   useRefreshBeforeExpiry(read?.expires, props.refresh);
-  const [view, setView] = useGalleryView({ view: given, defaultView, onViewChange, storageKey });
+  const [view, setView] = useGalleryView({ view: chosen, defaultView, onViewChange, storageKey });
   const [index, setIndex] = useState(0);
   const [lightbox, setLightbox] = useState<number | null>(null);
   if (items.length === 0) return null;
@@ -112,6 +128,20 @@ export function MediaGallery(props: MediaGalleryProps) {
       <Lightbox ctx={ctx} index={lightbox} onIndex={setLightbox} />
     </ContentKitUiRoot>
   );
+}
+
+const NO_ITEM: RefBody = { kind: "", id: "" };
+
+// With item, the read, HLS bases, playlist auth and refresh come from the client.
+function useItemRead(p: MediaGalleryProps): MediaGalleryProps {
+  const client = useOptionalContentKitClient(p.client);
+  if (p.item && !client) throw new Error("contentkit-ui: MediaGallery item needs `client` or a <ContentKitProvider>");
+  // One refresh timer for the gallery and its players, keyed by r.refresh.
+  const r = useMediaRead(p.item ?? NO_ITEM, { prefix: p.prefix, download: p.download, read: p.item ? p.read : null, refresh: false, client });
+  const item = p.item;
+  const hlsBase = useCallback((dir: string) => client!.media.hlsBase(item!, dir), [client, item]);
+  if (!item || !client) return p;
+  return { ...p, read: r.read, hlsBase: p.hlsBase ?? hlsBase, xhrSetup: p.xhrSetup ?? client.media.xhrSetup, refresh: p.refresh ?? r.refresh };
 }
 
 function Carousel({ ctx, index: given, onIndex, lightbox }: { ctx: Ctx; index: number; onIndex: (i: number) => void; lightbox?: boolean }) {

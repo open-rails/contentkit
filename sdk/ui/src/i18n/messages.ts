@@ -1,5 +1,9 @@
 import { en } from "../locales/en.js";
 import type { ErrorDetails } from "../client/generated/wire.js";
+import { ratioLabel } from "../client/media/rules.js";
+
+// The video aspect and file cap fields the contract adds to ErrorDetails.
+type Details = ErrorDetails & { min_aspect?: number; max_aspect?: number; max?: number };
 
 type Widen<T> = { [K in keyof T]: T[K] extends string ? string : Widen<T[K]> };
 type DeepPartial<T> = { [K in keyof T]?: T[K] extends string ? string : DeepPartial<T[K]> };
@@ -89,7 +93,7 @@ export function createTranslator(messages: ContentKitUiMessages, hostT?: Content
     },
     error(error) {
       if (typeof error === "string") return translate(`errors.${error}`, { seconds: 60 }) ?? messages.errors.generic;
-      const e = (error ?? {}) as { code?: unknown; message?: unknown; status?: number; retryAfter?: number; details?: ErrorDetails; refusal?: boolean };
+      const e = (error ?? {}) as { code?: unknown; message?: unknown; status?: number; retryAfter?: number; details?: Details; refusal?: boolean };
       const code = typeof e.code === "string" ? e.code : undefined;
       const server = typeof e.message === "string" && e.message ? sentence(e.message) : undefined;
       const d = e.details ?? {};
@@ -107,6 +111,10 @@ export function createTranslator(messages: ContentKitUiMessages, hostT?: Content
         maxFrames: d.max_frames ?? "",
         maxSeconds: d.max_seconds ?? "",
         duration: d.seconds ?? "",
+        shape: d.width && d.height ? ratioLabel(d.width / d.height) : "",
+        minAspect: d.min_aspect ? ratioLabel(d.min_aspect) : "",
+        maxAspect: d.max_aspect ? ratioLabel(d.max_aspect) : "",
+        maxFiles: d.max ?? "",
       };
       // A refusal the server words itself states its rule; show it rather than a vaguer line.
       if (code === "invalid_request" && server) return server;
@@ -116,6 +124,8 @@ export function createTranslator(messages: ContentKitUiMessages, hostT?: Content
       if (code === "animation_too_long" && (d.max_frames || d.max_seconds)) return translate(d.max_frames ? "errors.animationFrames" : "errors.animationSeconds", vars) ?? messages.errors.generic;
       if (code === "video_too_long" && d.max_seconds) return translate("errors.videoTooLongBy", vars) ?? messages.errors.video_too_long;
       if (code === "video_too_large" && d.max_pixels) return translate("errors.videoTooLargeBy", vars) ?? messages.errors.video_too_large;
+      if (code === "video_aspect_unsupported" && d.width && d.height && d.min_aspect && d.max_aspect) return translate("errors.videoAspectBy", vars) ?? messages.errors.video_aspect_unsupported;
+      if (code === "too_many_files" && d.max) return translate("errors.tooManyFilesBy", vars) ?? messages.errors.too_many_files;
       const own = code && translate(`errors.${code}`, vars);
       if (own) return own;
       // An unknown refusal (4xx) says what is wrong; faults get the generic line.
@@ -132,7 +142,8 @@ export function formatName(type?: string): string {
   return (sub.split("+")[0] ?? sub).replace(/^x-/, "").toUpperCase().replace(/^JPG$/, "JPEG").replace(/^WEBP$/, "WebP");
 }
 
-function megabytes(n: number): string {
+/** A byte size as the messages state it: "2.5 MB", "25 MB", "20 GB". */
+export function megabytes(n: number): string {
   const mb = n / (1024 * 1024);
   return mb >= 1024 ? `${+(mb / 1024).toFixed(1)} GB` : `${+mb.toFixed(mb < 10 ? 1 : 0)} MB`;
 }

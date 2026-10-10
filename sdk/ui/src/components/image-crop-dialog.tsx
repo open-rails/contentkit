@@ -5,7 +5,7 @@ import { cn } from "cn";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import Cropper, { type Area, type Point } from "react-easy-crop";
 import type { Progress as UploadProgress } from "../client/media/client.js";
-import { editedSize, toRotated, type Size } from "../client/crop.js";
+import { editedSize, rotation, toRotated, type Rotation, type Size } from "../client/crop.js";
 import type { CropSource } from "../client/image.js";
 import { useMessages } from "../i18n/context.js";
 import { useCrop } from "../react/upload.js";
@@ -27,8 +27,15 @@ export interface ImageCropDialogProps {
   onOpenChange: (open: boolean) => void;
   /** The image and its EXIF-oriented original size; edits are in those pixels. */
   source: CropSource | null;
-  /** The output's "W:H" (after rotation); "" is free. */
+  /** The output's "W:H" (after rotation); "" keeps the image's own shape. */
   aspect: AspectRatio;
+  /**
+   * Shapes to choose from, "" being the original's (e.g. ["", "1:1", "4:5",
+   * "16:9"]). The chooser starts at aspect when listed, else the first.
+   */
+  aspects?: readonly AspectRatio[];
+  /** A small preview of the result beside the controls. Default true. */
+  preview?: boolean;
   /** Circular mask (avatars); the saved crop is still the square around it. */
   round?: boolean;
   /** Offer 90° rotation. Default true. */
@@ -67,19 +74,65 @@ export function ImageCropDialog(p: ImageCropDialogProps) {
           <DialogTitle>{p.title ?? t("crop.title")}</DialogTitle>
           <DialogDescription>{p.description ?? t("crop.description")}</DialogDescription>
         </DialogHeader>
-        {p.source && <CropBody key={p.source.url} {...p} source={p.source} />}
+        {p.source && <CropShapes key={p.source.url} {...p} source={p.source} />}
       </DialogContent>
     </Dialog>
   );
 }
 
-function CropBody(p: ImageCropDialogProps & { source: CropSource }) {
+// The shape chooser: each choice crops afresh; the initial edit belongs to the starting shape.
+function CropShapes(p: ImageCropDialogProps & { source: CropSource }) {
+  const { t } = useMessages();
+  const shapes = p.aspects?.length ? p.aspects : null;
+  const start = shapes && !shapes.includes(p.aspect) ? shapes[0]! : p.aspect;
+  const [shape, setShape] = useState(start);
+  const chooser = shapes && shapes.length > 1 && (
+    <div className="flex items-center gap-2 px-5 pb-3" data-ckui="crop-shapes">
+      <span className="text-xs text-muted-foreground">{t("crop.shape")}</span>
+      <div className="inline-flex flex-wrap gap-0.5 rounded-lg bg-muted p-0.5" role="group" aria-label={t("crop.shape")}>
+        {shapes.map((a) => (
+          <button
+            key={a || "original"}
+            type="button"
+            aria-pressed={shape === a}
+            disabled={!!p.busy}
+            onClick={() => setShape(a)}
+            className={cn(
+              "inline-flex h-7 items-center rounded-md px-2.5 text-xs font-medium text-muted-foreground tabular-nums transition-colors outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50",
+              shape === a && "bg-background text-foreground shadow-xs",
+            )}
+          >
+            {a || t("crop.original")}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+  return (
+    <>
+      {chooser}
+      <CropBody key={shape} {...p} aspect={shape} initialEdit={shape === start ? p.initialEdit : null} onReset={shape === start ? undefined : () => setShape(start)} />
+    </>
+  );
+}
+
+function CropBody(p: ImageCropDialogProps & { source: CropSource; onReset?: () => void }) {
   const { t } = useMessages();
   const { source } = p;
   // A native aspect ("") crops at the image's own shape.
-  const aspect = ratio(p.aspect) ? p.aspect : aspectOf(source.width, source.height);
+  // A native shape ("") is the image's own, turned with it: the whole image fits.
+  const [turn, setTurn] = useState<Rotation>(() => rotation(p.initialEdit?.rotate ?? 0));
+  const aspect = ratio(p.aspect) ? p.aspect : turn % 180 ? aspectOf(source.height, source.width) : aspectOf(source.width, source.height);
   const size: Size = useMemo(() => ({ width: source.width, height: source.height }), [source.width, source.height]);
   const c = useCrop({ source: size, aspect, initial: p.initialEdit });
+  // A native shape turned with the image: crop the whole image again, as the cropper recenters.
+  const shaped = useRef(aspect);
+  const { setCrop } = c;
+  useEffect(() => {
+    if (shaped.current === aspect) return;
+    shaped.current = aspect;
+    setCrop({ x: 0, y: 0, w: size.width, h: size.height });
+  }, [aspect, size, setCrop]);
   const [pos, setPos] = useState<Point>({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [interacting, setInteracting] = useState(false);
@@ -119,10 +172,13 @@ function CropBody(p: ImageCropDialogProps & { source: CropSource }) {
     setZoom(1);
   };
   const rotate = (deg: number) => {
+    setTurn((r) => rotation(r + deg));
     c.rotateBy(deg);
     recenter();
   };
   const reset = () => {
+    if (p.onReset) return p.onReset();
+    setTurn(0);
     c.reset();
     recenter();
   };
@@ -216,6 +272,7 @@ function CropBody(p: ImageCropDialogProps & { source: CropSource }) {
           </Button>
         </div>
 
+        {p.preview !== false && <ResultPreview source={source} crop={c.crop} rotate={c.rotate} round={p.round} size={out} />}
         {tooSmall && (
           <Alert variant="destructive" role="alert" data-ckui="too-small">
             <HugeiconsIcon icon={Alert02Icon} strokeWidth={2} />
@@ -254,6 +311,40 @@ function CropBody(p: ImageCropDialogProps & { source: CropSource }) {
 }
 
 function noop() {}
+
+const PREVIEW = 72;
+
+// The crop as it will render: the source drawn through the crop, turned.
+function ResultPreview({ source, crop, rotate, round, size }: { source: CropSource; crop: { x: number; y: number; w: number; h: number }; rotate: 0 | 90 | 180 | 270; round?: boolean; size: Size }) {
+  const { t } = useMessages();
+  const turned = rotate % 180 !== 0;
+  const k = PREVIEW / Math.max(crop.w, crop.h);
+  return (
+    <div className="flex items-center gap-3" data-ckui="crop-preview">
+      <span
+        role="img"
+        aria-label={t("crop.preview")}
+        className={cn("relative shrink-0 overflow-hidden bg-muted ring-1 ring-border", round ? "rounded-full" : "rounded-sm")}
+        style={{ width: (turned ? crop.h : crop.w) * k, height: (turned ? crop.w : crop.h) * k }}
+      >
+        <span
+          className="absolute top-1/2 left-1/2 bg-no-repeat"
+          style={{
+            width: crop.w * k,
+            height: crop.h * k,
+            backgroundImage: `url("${source.url}")`,
+            backgroundSize: `${source.width * k}px ${source.height * k}px`,
+            backgroundPosition: `${-crop.x * k}px ${-crop.y * k}px`,
+            transform: `translate(-50%, -50%) rotate(${rotate}deg)`,
+          }}
+        />
+      </span>
+      <span className="text-xs text-muted-foreground tabular-nums" data-ckui="crop-size">
+        {t("crop.size", { width: size.width, height: size.height })}
+      </span>
+    </div>
+  );
+}
 
 /** The crop as percentages of the rotated image, as the cropper takes it. */
 function percentOf(crop: { x: number; y: number; w: number; h: number }, source: Size, rot: 0 | 90 | 180 | 270): Area {

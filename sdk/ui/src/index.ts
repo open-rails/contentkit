@@ -35,6 +35,11 @@ export {
 export { VideoMiniPlayer, type VideoMiniPlayerProps } from "./components/video-mini-player.js";
 export { playerButtonClass } from "./components/player-controls.js";
 export { AvatarUpload, CoverUpload, type SlotUploadProps } from "./components/slot-upload.js";
+export { MediaFolderEditor, describeRules, type MediaFolderEditorHandle, type MediaFolderEditorProps } from "./components/media-folder-editor.js";
+export { SortableList, type SortableListProps } from "./components/sortable-list.js";
+export { HoverPreview, type HoverPreviewProps } from "./components/hover-preview.js";
+export { LazyMount, type LazyMountProps } from "./components/lazy-mount.js";
+export { MediaReadinessNotice, type MediaReadinessNoticeProps } from "./components/media-readiness-notice.js";
 export * from "./components/social/index.js";
 export {
   createTranslator,
