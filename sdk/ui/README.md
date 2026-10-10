@@ -96,7 +96,6 @@ q.add(input.files!); q.move(id, 0); await q.commit();
 const one = useUpload();
 await one.upload(file, { ref, path: "inline/x.png", put: {} });
 
-const { read, reload, set } = useRead(ref, { prefix: "low-res/", editor: true });
 const img = useSlotImage({ ref, path: "avatar", image });
 const crop = useSlotCrop({ ref, path: "avatar", file: img.file, aspect: "1:1", onSaved: img.set });
 ```
@@ -123,8 +122,91 @@ that stops it, and what it may do to others' comments), `useLatestComments`,
 
 Also: `useCrop`, `useVideoImages`, `useFrameStrip`, `useVideoFrame`,
 `useVideoPoster`, `useEncodeProgress`, `useHlsPlayer`, `useCarousel`,
-`useGalleryView`, `useInlinePreview`, `useRefreshBeforeExpiry`,
+`useGalleryView`, `useInlinePreview`, `useRefreshBeforeExpiry`, `usePresets`,
 `useContentKitClient`, `useContentURLs`, `useErrorReporter`.
+
+### useMediaRead
+
+```tsx
+const { read, loading, error, processing, reload, refresh, set } =
+  useMediaRead(ref, { prefix: "low-res/", editor: true, window: { start: 0, end: 120 } });
+```
+
+One read per item and options, shared by every hook showing it. It reads
+again shortly before the URLs expire, waits out `rate_limited`, polls while
+uploads process (editor reads, every 2.5 s; `poll`), and reloads after any
+commit through the same client. `window` splits a long item into reads of
+`chunk` files (default 50) merged into one result; windows once read stay
+loaded. `refresh()` joins a read in flight (a player's grant refresh);
+`reload()` restarts it. `read` shows a host's read until `reload()`.
+
+### useMediaFolder
+
+```tsx
+const folder = useMediaFolder(ref, { paths: ["images/{name}", "videos/{name}"], commit: "manual" });
+folder.add(files);               // screened, queued; returns the refusals
+await folder.commit();           // the uploaded files, in queue order
+await folder.move(path, 0); await folder.rename(path, "cover");
+await folder.edit(path, edit); await folder.replace(path, file); await folder.remove([path]);
+folder.discard();                // stop uploads and empty the queue
+```
+
+An item's folder for its editors: the editor read (all windows), an upload
+queue, and the kind's upload rules from the editor read, which screen type,
+size and file caps before anything uploads and name files around names
+taken. `groups` lists each path's uploads; `commit: "auto"` commits each
+upload once those before it have (a draft). Failures go to the provider's
+`onError` with an operation (`upload`, `folder.commit`, `folder.update`,
+`folder.process` for uploads the worker fails after the editor opened) and
+the file's name.
+
+### useEditorCrop
+
+```tsx
+const crop = useEditorCrop(ref, cropping); // a path, or null
+// crop.status: idle | loading | cropping (source, edit) | saving | done | error
+await crop.save(edit);
+```
+
+Re-crops a kept upload: while the path is set, its editor view (the
+original, oriented, unedited) and current edit load; `save` commits an edit
+op. Nothing is uploaded.
+
+### usePublicImage
+
+```tsx
+const { image, rule, isDefault } = usePublicImage("user", userId, "avatar");
+<SlotImage image={image} fallback={<Initials name={name} />} />
+```
+
+An item's image for a public preset: the exact renditions from a read's
+`public`, or from a host listing passed as `image` (no read), else the
+kind's default image. Published files carry a generation, so a URL built
+from a preset template only ever names the default; `rule` (from
+`GET /media/presets`) gives the shape, widths and narrowest edit.
+
+### useCanonicalContent
+
+```tsx
+useCanonicalContent(video.link, { title: video.title, image: posterURL, location: pathname + search, defaultLanguage: "en" });
+```
+
+Once a content page's link arrives, replaces the address with its canonical
+path (code spelling, merged code, current slug) through the provider's
+`navigate`, else `history.replaceState`, and keeps `<link rel=canonical>`,
+`og:url`, `og:title`, `og:image` and hreflang alternates (each language's
+own slug, plus `x-default`) in the head while mounted. Needs the provider's
+`urls`; `/urls` also exports `hreflang()` and `canonicalURL()` (drops
+tracking parameters) for server rendering.
+
+### useNearViewport
+
+```tsx
+const [ref, near] = useNearViewport({ margin: "800px 0px", leaveMargin: "2400px 0px" });
+```
+
+Whether an element is near the viewport, to mount media as it approaches;
+with `leaveMargin`, false again far away.
 
 ## Components
 
@@ -136,6 +218,78 @@ save and re-crop flow inside a host layout); `SlotImage`; `ImageCropDialog`;
 muted previews, a grant refresh before `expires`, and a reason, Retry and
 support code for every failure; see below). A `PublicPreset` (`{ preset, aspect, renditions }`)
 is what a slot or poster shows; a read's `public` lists `PublicImage`s.
+
+### MediaFolderEditor
+
+```tsx
+<MediaFolderEditor item={post} paths={["images/{name}", "videos/{name}"]} commit="auto" ref={handle}
+  toolbar={<ZipImport />} rowActions={(f) => <SetCover file={f} />} footer={note} />
+handle.current.discard();
+```
+
+`useMediaFolder` with its UI: a drop zone stating the rules, a queue with
+progress, retry and remove, and each path's uploads as a sortable list with
+thumbnail, name, edited badge, encode progress and failure; crop (with
+`aspects` when the path has no preset shape), rename, replace and bulk
+remove. `commit="manual"` adds the queue with "Add N"; `"auto"` commits as
+files finish. `confirmRemove` replaces the browser's confirm.
+
+### SortableList
+
+```tsx
+<SortableList items={rows} id={(r) => r.id} name={(r) => r.title} onMove={(from, to) => move(from, to)} layout="grid">
+  {(row, handle) => <>{handle}<Row row={row} /></>}
+</SortableList>
+```
+
+Reorders by a drag handle with a mouse, a finger or the keyboard (Space or
+Enter lifts, arrows move, Space or Enter drops, Escape cancels), with
+localized screen reader announcements. `onMove` fires once, on drop.
+
+### ImageCropDialog shapes
+
+`aspects={["", "1:1", "4:5", "16:9"]}` adds a shape chooser (`""` is the
+original's, turning with the image); a preview of the result and its size
+sit under the controls (`preview={false}` hides them), and Reset returns to
+the starting shape and edit.
+
+### MediaGallery item
+
+`<MediaGallery item={post} prefix="low-res/" renderLocked={unlock} />` reads
+through the client: the read (refreshed, reloaded after commits), HLS bases,
+playlist auth and the grant refresh. Passing `read`, `hlsBase`, `xhrSetup`
+and `refresh` yourself still works.
+
+### VideoPosterPicker frames from another video
+
+`frames={{ item: otherVideo, path: "source" }}` browses another item's video;
+the chosen frame (cropped or whole) is uploaded to the poster path as an
+image. Which video to offer is the host's choice.
+
+### HoverPreview
+
+```tsx
+<div className="card relative"><Thumbnail /><HoverPreview item={video} duration={video.duration} /></div>
+```
+
+A card's muted inline preview over the client's HLS base, fading in on hover
+(or while it is the most visible card on touch screens), one page-wide, off
+with reduced motion or Save-Data.
+
+### Images: fallback, skeleton, fit and LazyMount
+
+`RenditionImg`, `SlotImage` and `VideoPoster` take `fallback` (shown without
+renditions or after a failed load, e.g. a 404), and `RenditionImg` and
+`SlotImage` take `skeleton` (a pulsing fill until loaded) and `fit`
+(`cover` or `contain`). `<LazyMount placeholder={box}>` mounts its children
+as it nears the viewport (`useNearViewport` options).
+
+### MediaReadinessNotice
+
+`<MediaReadinessNotice item={post} description="Only editors see it until then." />`
+renders nothing once every upload is processed; while some process, a
+notice with the first video's encode progress; when uploads failed, which
+ones.
 
 ## Video player
 
@@ -223,10 +377,11 @@ code has a message in every bundle (`useMessages().error(e)`).
 | `UploadUiProvider client onError …` | `ContentKitProvider client onError` + `ContentKitUiProvider appearance messages t density inlinePreview` |
 | `UploadError`, `UploadErrorCode` | `ContentKitError`, `ContentKitErrorCode` |
 | `useUploadQueue(client, o)`, `useUpload(client)` | `useUploadQueue(o)`, `useUpload()` |
-| `useRead(client, ref, o)` | `useRead(ref, o)` |
+| `useRead(client, ref, o)` | `useMediaRead(ref, o)` |
 | `useSlotImage(client, o)`, `useSlotCrop(client, o)` | `useSlotImage(o)`, `useSlotCrop(o)` |
 | `useVideoImages`, `useFrameStrip`, `useVideoFrame`, `useVideoPoster` `(client, o)` | the same `(o)` |
 | `PublicImage` (preset at an item) | `PublicPreset` |
+| `SlotImage`, `VideoPoster` `placeholder` | `fallback` |
 | `UploadUi*` types, `UploadUiRoot` | `ContentKitUi*`, `ContentKitUiRoot` |
 
 ## Development
