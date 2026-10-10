@@ -45,7 +45,9 @@ const (
 func isFolder(kind string) bool { return kind == postFolder || kind == pollFolder }
 
 // inlineURLs is content.MediaURLs: an inline image's published file, or the
-// name its preset template gives until the worker has published it.
+// name its preset template gives until the worker has published it. A
+// workaround: published names carry a generation, so a stored URL goes
+// stale (ContentKit tracker #111, references resolved at render time).
 type inlineURLs struct{ manifests *media.Manifests }
 
 func (u inlineURLs) InlineURL(ctx context.Context, ref contentref.ContentRef, name string) (string, error) {
