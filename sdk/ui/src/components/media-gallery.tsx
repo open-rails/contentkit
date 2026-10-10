@@ -61,7 +61,7 @@ export interface MediaGalleryProps extends GalleryViewOptions, Pick<HlsPlayerOpt
   renderDetails?: (item: GalleryItem) => ReactNode;
   /** `sizes` for carousel images. Default "(min-width: 768px) 720px, 100vw". */
   sizes?: string;
-  /** Tallest the carousel gets; taller media letterboxes. Default none: every slide at its native aspect, full width. */
+  /** Tallest the carousel gets; taller media letterboxes. Default "80svh": every slide at its native aspect, full width, never taller than the screen; "none" lifts it. */
   maxHeight?: string;
   label?: string;
   className?: string;
@@ -150,7 +150,7 @@ function Carousel({ ctx, index: given, onIndex, lightbox }: { ctx: Ctx; index: n
   const c = useCarousel({ count: items.length, index: given, onIndexChange: onIndex });
   const { index } = c;
   const multi = items.length > 1;
-  const stage = lightbox ? {} : { aspectRatio: String(stageAspect(items, index)), maxHeight: ctx.maxHeight };
+  const stage = lightbox ? {} : { aspectRatio: String(stageAspect(items, index)), maxHeight: ctx.maxHeight ?? "80svh" };
   return (
     <div
       className={cn("group/carousel relative outline-none", lightbox ? "size-full" : "grid gap-2")}
@@ -262,18 +262,23 @@ function Slide({ ctx, item, position, active, lightbox }: { ctx: Ctx; item: Gall
   if (item.kind === "audio") return <AudioSlide item={item} position={position} />;
   if (item.kind === "image") {
     if (!f.url) return f.failed ? <ImageFailed file={f} /> : <Processing>{t("gallery.processingImage")}</Processing>;
+    // A public teaser of a locked item carries the unlock, so no one swipes past it to find it.
+    const locked = item.key.startsWith("preview/") && !lightbox ? ctx.items.find((i): i is GalleryLockedItem => i.kind === "locked") : undefined;
     return (
-      <img
-        src={f.url}
-        alt={t("gallery.image", { index: position + 1 })}
-        width={f.w}
-        height={f.h}
-        sizes={lightbox ? "100vw" : (ctx.sizes ?? "(min-width: 768px) 720px, 100vw")}
-        loading={active ? "eager" : "lazy"}
-        decoding="async"
-        draggable={false}
-        className="absolute inset-0 size-full object-contain"
-      />
+      <>
+        <img
+          src={f.url}
+          alt={t("gallery.image", { index: position + 1 })}
+          width={f.w}
+          height={f.h}
+          sizes={lightbox ? "100vw" : (ctx.sizes ?? "(min-width: 768px) 720px, 100vw")}
+          loading={active ? "eager" : "lazy"}
+          decoding="async"
+          draggable={false}
+          className="absolute inset-0 size-full object-contain"
+        />
+        {locked && <LockedBar ctx={ctx} item={locked} />}
+      </>
     );
   }
   const { poster, start } = videoArt(ctx, item);
@@ -373,6 +378,22 @@ function Locked({ ctx, item, tile }: { ctx: Ctx; item: GalleryLockedItem; tile?:
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function LockedBar({ ctx, item }: { ctx: Ctx; item: GalleryLockedItem }) {
+  const { t } = useMessages();
+  return (
+    <div
+      className="absolute inset-x-0 bottom-0 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 bg-linear-to-t from-black/75 via-black/45 to-transparent px-4 pt-10 pb-4 text-white"
+      data-ckui="locked-bar"
+    >
+      <span className="flex items-center gap-2 text-sm font-medium">
+        <HugeiconsIcon icon={SquareLock02Icon} className="size-5 shrink-0" strokeWidth={1.75} />
+        {lockedText(t, item.count)}
+      </span>
+      {ctx.renderLocked && <div data-ckui-noswipe="">{ctx.renderLocked({ count: item.count, videos: item.videos })}</div>}
     </div>
   );
 }

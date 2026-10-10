@@ -258,7 +258,9 @@ the starting shape and edit.
 `<MediaGallery item={post} prefix="low-res/" renderLocked={unlock} />` reads
 through the client: the read (refreshed, reloaded after commits), HLS bases,
 playlist auth and the grant refresh. Passing `read`, `hlsBase`, `xhrSetup`
-and `refresh` yourself still works.
+and `refresh` yourself still works. A locked item's public teaser carries
+the locked count and `renderLocked`, so the unlock is on the first slide;
+the stage is never taller than `maxHeight` (default `80svh`).
 
 ### VideoPosterPicker frames from another video
 
