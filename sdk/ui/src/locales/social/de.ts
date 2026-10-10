@@ -137,8 +137,6 @@ export const social: typeof en = {
     option: "Möglichkeit {index}",
     addOption: "Möglichkeit hinzufügen",
     newOption: "Neue Möglichkeit",
-    moveUp: "Nach oben",
-    moveDown: "Nach unten",
     removeOption: "Möglichkeit entfernen",
     removeOptionTitle: "Diese Möglichkeit entfernen?",
     removeOptionBody: "Ihre Stimmen werden ebenfalls gelöscht. Eine Umfrage behält mindestens zwei Möglichkeiten.",

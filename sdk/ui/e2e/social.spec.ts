@@ -107,7 +107,19 @@ test("staff: the review queue, bans and the poll editor", async ({ page }, info)
   await expect(create.getByText("Poll created.")).toBeVisible();
 
   const edit = page.locator("[data-demo=poll-edit]");
-  await edit.getByRole("button", { name: "Move up: Option 3" }).click();
+  // Keyboard: lift the third option by its handle, move it up one, drop.
+  await edit.getByRole("button", { name: "Reorder Autumn 2026" }).focus();
+  await page.keyboard.press("Space");
+  await page.waitForTimeout(80);
+  await page.keyboard.press("ArrowUp");
+  await page.waitForTimeout(80);
+  await page.keyboard.press("Space");
   await expect(edit.getByRole("textbox", { name: "Option 2" })).toHaveValue("Autumn 2026");
+  if (!info.project.use.isMobile) {
+    // Pointer: drag the first option onto the second.
+    await edit.getByRole("button", { name: "Reorder Spring 2026" }).dragTo(edit.getByRole("button", { name: "Reorder Autumn 2026" }), { steps: 12 });
+    await expect(edit.getByRole("textbox", { name: "Option 1" })).toHaveValue("Autumn 2026");
+    await expect(edit.getByRole("textbox", { name: "Option 2" })).toHaveValue("Spring 2026");
+  }
   await page.screenshot({ path: `${dir}/poll-editor-${info.project.name}.png`, fullPage: true });
 });

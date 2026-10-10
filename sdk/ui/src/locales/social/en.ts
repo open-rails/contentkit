@@ -136,8 +136,6 @@ export const social = {
     option: "Option {index}",
     addOption: "Add option",
     newOption: "New option",
-    moveUp: "Move up",
-    moveDown: "Move down",
     removeOption: "Remove option",
     removeOptionTitle: "Remove this option?",
     removeOptionBody: "Its votes are deleted too. A poll keeps at least two options.",

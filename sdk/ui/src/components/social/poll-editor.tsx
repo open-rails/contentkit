@@ -1,4 +1,4 @@
-import { ArrowDown01Icon, ArrowUp01Icon, Delete02Icon, ImageAdd01Icon } from "@hugeicons/core-free-icons";
+import { Delete02Icon, ImageAdd01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
@@ -18,6 +18,7 @@ import { Skeleton } from "#ckui/ui/skeleton";
 import { Switch } from "#ckui/ui/switch";
 import { Textarea } from "#ckui/ui/textarea";
 import { localInput } from "./bans.js";
+import { SortableList } from "../sortable-list.js";
 import { ConfirmDialog, contentError, ErrorLine } from "./parts.js";
 
 export interface PollEditorProps {
@@ -254,21 +255,27 @@ function CreateFields(p: {
       ) : (
         <fieldset className="grid gap-2">
           <legend className="mb-1.5 text-sm font-medium">{t("pollEditor.options")}</legend>
-          <ol className="grid gap-2">
-            {options.map((o, i) => (
+          <SortableList
+            items={options}
+            id={(o) => o.key}
+            name={(o) => o.label || t("pollEditor.option", { index: options.indexOf(o) + 1 })}
+            onMove={move}
+            label={t("pollEditor.options")}
+            className="gap-2"
+            row={() => ({ className: OPTION_ROW, "data-ckui": "poll-option" })}
+          >
+            {(o, handle, i) => (
               <OptionRow
-                key={o.key}
+                handle={handle}
                 index={i}
-                count={options.length}
                 label={o.label}
                 image={o.image}
                 onLabel={(label) => set(o.key, { label })}
                 onImage={(image) => set(o.key, { image })}
-                onMove={(to) => move(i, to)}
                 onRemove={options.length > 2 ? () => setOptions((os) => os.filter((x) => x.key !== o.key)) : undefined}
               />
-            ))}
-          </ol>
+            )}
+          </SortableList>
           {options.length < p.maxOptions ? (
             <Button type="button" variant="outline" size="sm" className="justify-self-start" onClick={() => setOptions((os) => [...os, draft()])}>
               {t("pollEditor.addOption")}
@@ -349,23 +356,30 @@ function EditFields(p: {
       ) : (
         <fieldset className="grid gap-2">
           <legend className="mb-1.5 text-sm font-medium">{t("pollEditor.options")}</legend>
-          <ol className="grid gap-2">
-            {options.map((o, i) => (
+          <SortableList
+            items={options}
+            id={(o) => o.id}
+            name={(o) => o.label}
+            disabled={p.saving}
+            onMove={(from, to) => act(() => editor.moveOption(options[from]!.id, to))}
+            label={t("pollEditor.options")}
+            className="gap-2"
+            row={() => ({ className: OPTION_ROW, "data-ckui": "poll-option" })}
+          >
+            {(o, handle, i) => (
               <OptionRow
-                key={o.id}
+                handle={handle}
                 index={i}
-                count={options.length}
                 label={o.label}
                 url={o.image_url}
                 votes={o.vote_count}
                 disabled={p.saving}
                 onCommit={(label) => label.trim() && label.trim() !== o.label && act(() => editor.renameOption(o.id, label.trim()))}
                 onImage={(f) => act(() => editor.setOptionImage(o.id, f))}
-                onMove={(to) => act(() => editor.moveOption(o.id, to))}
                 onRemove={options.length > 2 ? () => setRemoving(o) : undefined}
               />
-            ))}
-          </ol>
+            )}
+          </SortableList>
           {options.length < p.maxOptions ? (
             <form
               className="flex gap-2"
@@ -400,10 +414,12 @@ function EditFields(p: {
   );
 }
 
-/** One option: move buttons, its label, its image, its votes and remove. */
+const OPTION_ROW = "flex flex-wrap items-center gap-2 rounded-lg border border-border p-2";
+
+/** One option's content: its drag handle, label, image, votes and remove. */
 function OptionRow(p: {
+  handle: ReactNode;
   index: number;
-  count: number;
   label: string;
   /** A new poll's staged image. */
   image?: File | null;
@@ -416,7 +432,6 @@ function OptionRow(p: {
   /** An existing option's label, on blur or Enter. */
   onCommit?: (label: string) => void;
   onImage: (file: File | null) => void;
-  onMove: (to: number) => void;
   onRemove?: () => void;
 }) {
   const m = useMessages();
@@ -426,22 +441,8 @@ function OptionRow(p: {
   const staged = useObjectURL(p.image ?? null);
   const name = t("pollEditor.option", { index: p.index + 1 });
   return (
-    <li className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2" data-ckui="poll-option">
-      <div className="flex flex-col">
-        <Button type="button" variant="ghost" size="icon-xs" aria-label={`${t("pollEditor.moveUp")}: ${name}`} disabled={p.disabled || p.index === 0} onClick={() => p.onMove(p.index - 1)}>
-          <HugeiconsIcon icon={ArrowUp01Icon} strokeWidth={2} />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`${t("pollEditor.moveDown")}: ${name}`}
-          disabled={p.disabled || p.index === p.count - 1}
-          onClick={() => p.onMove(p.index + 1)}
-        >
-          <HugeiconsIcon icon={ArrowDown01Icon} strokeWidth={2} />
-        </Button>
-      </div>
+    <>
+      {p.handle}
       <Input
         className="min-w-40 flex-1"
         value={label}
@@ -467,7 +468,7 @@ function OptionRow(p: {
           <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
         </Button>
       )}
-    </li>
+    </>
   );
 }
 

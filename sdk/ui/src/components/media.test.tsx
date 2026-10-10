@@ -13,7 +13,8 @@ afterEach(() => vi.unstubAllGlobals());
 // jsdom lays nothing out: rows 40 px tall, one under the other, for dnd-kit's keyboard moves.
 function layOut() {
   const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
-    const li = this.closest("li");
+    // The drag overlay's row stands where the dragged row is.
+    const li = this.closest("[data-overlay]") ? document.querySelector("li[data-dragging]") : this.closest("li");
     const i = li?.parentElement ? [...li.parentElement.children].indexOf(li) : 0;
     return { x: 0, y: i * 40, top: i * 40, left: 0, bottom: i * 40 + 36, right: 300, width: 300, height: 36, toJSON: () => ({}) } as DOMRect;
   });
