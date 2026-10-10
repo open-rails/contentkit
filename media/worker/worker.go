@@ -283,7 +283,14 @@ func (w *Worker) Run(ctx context.Context) error {
 		case <-time.After(wait):
 		}
 	}
-	if err := w.client.Start(ctx); err != nil {
+	// River ends on its context's cancellation only: a context that ends by
+	// deadline makes its notifier retry without backoff. Pass ctx's end on
+	// as a cancellation.
+	runCtx, cancelRun := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelRun()
+	stopRun := context.AfterFunc(ctx, cancelRun)
+	defer stopRun()
+	if err := w.client.Start(runCtx); err != nil {
 		return err
 	}
 	w.c.Logger.Info("media-worker: started", "schema", w.c.Schema, "video_workers", w.c.VideoWorkers, "image_workers", w.c.ImageWorkers)

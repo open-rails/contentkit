@@ -12,6 +12,7 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -408,6 +409,57 @@ func TestOneShotWorkerStopsAfterOneJob(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A host's deadline context ends Run like a cancellation: River's notifier
+// spins on a context that ended by deadline, so Run must never hand it one.
+func TestRunUnderADeadline(t *testing.T) {
+	env := s3test.Open(t)
+	pool := pgtest.Pool(t, nil)
+	schema := workerSchema(t, pool)
+	if err := workqueue.Migrate(context.Background(), pool, schema); err != nil {
+		t.Fatal(err)
+	}
+	reg, err := media.NewRegistry(registry(env.Tenant, media.Hooks{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := &lockedBuffer{}
+	w, err := worker.New(context.Background(), worker.Config{Pool: pool, Schema: schema, ContentSchema: env.ContentSchema(), Store: env.Store, Kinds: reg,
+		TempDir: t.TempDir(), ShutdownGrace: time.Second, Logger: slog.New(slog.NewTextHandler(logs, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	started := time.Now()
+	if err := w.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(started); d > 10*time.Second {
+		t.Fatalf("Run took %v to stop after its deadline", d)
+	}
+	time.Sleep(time.Second)
+	if n := logs.count("Error running listener"); n > 3 {
+		t.Fatalf("the notifier logged %d listener errors after the deadline", n)
+	}
+}
+
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) count(s string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.Count(l.b.String(), s)
 }
 
 // The host commits; the worker renders the pages' thumbs and the public
