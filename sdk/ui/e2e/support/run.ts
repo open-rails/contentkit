@@ -21,7 +21,10 @@ for (const [cmd, ...args] of [
   ["vitest", "run", "--project", "integration-dom", "--passWithNoTests", ...vitest],
   ["playwright", "test", ...argv.slice(cut + 1)],
 ]) {
-  const r = spawnSync("pnpm", ["exec", cmd!, ...args], { stdio: "inherit" });
+  // Vite's build of the demo pages set NODE_ENV=production in this process:
+  // the suites need React's development build (act).
+  const { NODE_ENV: _built, ...env } = process.env;
+  const r = spawnSync("pnpm", ["exec", cmd!, ...args], { stdio: "inherit", env });
   failed ||= r.status !== 0;
 }
 await stop();
