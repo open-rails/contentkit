@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 25
     services:
       postgres:
-        image: postgres:18-alpine
+        image: groonga/pgroonga:4.0.8-debian-18
         env:
           POSTGRES_USER: contentkit
           POSTGRES_PASSWORD: contentkit

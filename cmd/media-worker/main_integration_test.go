@@ -64,12 +64,17 @@ func TestStartsWithoutItsDependencies(t *testing.T) {
 	if err := workqueue.Migrate(ctx, adminPool, schema); err != nil {
 		t.Fatal(err)
 	}
-	dsn = pgtest.MediaWorkerRole(t, ctx, adminPool, schema)
+	contentSchema := pgtest.Schema(t, ctx, adminPool)
+	dsn = pgtest.MediaWorkerRole(t, ctx, adminPool, schema, contentSchema)
 	pg, bucketProxy := tcpproxy.New(t, dsn), tcpproxy.New(t, endpoint)
 	pg.Down()
 	bucketProxy.Down()
 	cfg, err := pgx.ParseConfig(dsn)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adminPool.Exec(ctx, "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "+
+		pgx.Identifier{contentSchema}.Sanitize()+" TO "+pgx.Identifier{cfg.User}.Sanitize()); err != nil {
 		t.Fatal(err)
 	}
 	proxiedDSN := strings.Replace(dsn, fmt.Sprintf("%s:%d", cfg.Host, cfg.Port), strings.TrimPrefix(pg.URL, "postgres://"), 1)
@@ -86,6 +91,7 @@ func TestStartsWithoutItsDependencies(t *testing.T) {
 	addr := freeAddr(t)
 	cmd := exec.Command(bin)
 	cmd.Env = append(os.Environ(), "DATABASE_URL="+proxiedDSN, "MEDIA_WORKER_SCHEMA="+schema, "MEDIA_KINDS_FILE="+kinds,
+		"MEDIA_CONTENT_SCHEMA="+contentSchema,
 		"MEDIA_METRICS_ADDR="+addr, "MEDIA_WORKER_TMP="+dir, "MEDIA_S3_ENDPOINT="+bucketProxy.URL, "MEDIA_S3_BUCKET="+bucket,
 		"MEDIA_S3_ACCESS_KEY_ID="+access, "MEDIA_S3_SECRET_ACCESS_KEY="+secret)
 	cmd.Stderr = testWriter{t}
