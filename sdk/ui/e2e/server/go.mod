@@ -6,7 +6,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/open-rails/authkit v1.15.0
-	github.com/open-rails/contentkit v0.66.0
+	github.com/open-rails/contentkit v0.70.0
 	github.com/open-rails/contentkit/adapters/authkit v0.0.0
 	github.com/open-rails/helpers v1.6.0
 	github.com/riverqueue/river v0.47.0
