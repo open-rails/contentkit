@@ -14,6 +14,8 @@ ContentKit has a PostgreSQL migration chain and a ClickHouse baseline:
 | PostgreSQL | `migrations.Postgres` | `postgres/0008_canonical_interaction_ids.up.sql` | merges case spellings of interaction content ids and refuses them (`CHECK content_id = lower(content_id)`) |
 | PostgreSQL | `migrations.Postgres` | `postgres/0009_comment_bans.up.sql` | comment bans (`content_comment_bans`) |
 | PostgreSQL | `migrations.Postgres` | `postgres/0010_content_codes.up.sql` | content codes and legacy aliases (`content_codes`, `content_code_aliases`, `contentkit_content_code()`); backfills codes for existing taxonomy nodes and posts |
+| PostgreSQL | `migrations.Postgres` | `postgres/0011_media_commits.up.sql` | media commit journal and allocations (`content_media_commits`, `content_media_allocations`) |
+| PostgreSQL | `migrations.Postgres` | `postgres/0012_media_publications.up.sql` | current public publications per item (`content_media_publications`) and the media upgrade's progress (`content_media_upgrades`, `content_media_upgrade_failures`) |
 | ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, subject state, daily contributions, exposures, co-engagement and erasure fences |
 
 The baselines initialize fresh stores; PostgreSQL `0002` and later also upgrade
