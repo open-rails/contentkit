@@ -177,8 +177,9 @@ func mediaStack(t *testing.T) (*media.Uploads, *media.Reader) {
 	images := []string{"image/png"}
 	reg, err := media.NewRegistry(media.Config{Namespace: env.Tenant, BaseURL: "https://media.test",
 		Kinds: []media.Kind{{Name: "gallery", KeepOriginals: true,
-			Uploads: []media.Upload{{Path: "originals/{name}", Types: images, MaxBytes: 1 << 20, Max: 10}, {Path: "cover", Types: images, MaxBytes: 1 << 20}},
-			Public:  []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{200}, Image: media.Image{MinWidth: 8}}}}},
+			Uploads: []media.Upload{{Path: "originals/{name}", Types: images, MaxBytes: 1 << 20, Max: 10}, {Path: "cover", Types: images, MaxBytes: 1 << 20},
+				{Path: "extras/{name}", Types: images, MaxBytes: 1 << 20, Max: 1}},
+			Public: []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{200}, Image: media.Image{MinWidth: 8}}}}},
 		Hooks: media.Hooks{Resolver: itemResolver{}, CanUpload: uploadAllow{}}})
 	if err != nil {
 		t.Fatal(err)
@@ -372,27 +373,49 @@ func mediaScenario(t *testing.T, f *mountFixture, user, anon access.Actor) {
 	ref := media.RefBody{Kind: "gallery", ID: cid(1)}
 	body := pngBytes(t, 16)
 	sum := sha256.Sum256(body)
-	var plan media.PresignReply
-	f.want(http.StatusUnauthorized, anon, "POST", "/media/upload/presign", media.PresignBody{Ref: ref, Path: "originals/001", Type: "image/png", Size: int64(len(body)), SHA256: hex.EncodeToString(sum[:])}, nil)
-	f.want(http.StatusOK, user, "POST", "/media/upload/presign", media.PresignBody{Ref: ref, Path: "originals/001", Type: "image/png", Size: int64(len(body)), SHA256: hex.EncodeToString(sum[:])}, &plan)
-	if plan.Put == nil {
-		t.Fatalf("presign %+v", plan)
+	presign := func(path string) media.PresignBody {
+		return media.PresignBody{Ref: ref, Path: path, Type: "image/png", Size: int64(len(body)), SHA256: hex.EncodeToString(sum[:])}
 	}
-	req, _ := http.NewRequest(plan.Put.Method, plan.Put.URL, bytes.NewReader(body))
-	for k, v := range plan.Put.Headers {
-		req.Header.Set(k, v)
+	// upload presigns path and PUTs the bytes where the plan says, as a browser does.
+	upload := func(path string) media.PresignReply {
+		var plan media.PresignReply
+		f.want(http.StatusOK, user, "POST", "/media/upload/presign", presign(path), &plan)
+		if plan.Put == nil {
+			return plan // the folder already holds these bytes
+		}
+		req, _ := http.NewRequest(plan.Put.Method, plan.Put.URL, bytes.NewReader(body))
+		for k, v := range plan.Put.Headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("PUT %s: %d %s", path, resp.StatusCode, b)
+		}
+		return plan
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
+	commit := func(plan media.PresignReply) *httptest.ResponseRecorder {
+		return f.call(user, "POST", "/media/upload/commit", media.CommitBody{Ref: ref, OperationID: uuid.NewString(),
+			Ops: []media.Op{{Op: media.OpPut, Path: plan.Path, Blob: plan.Blob}}})
 	}
-	b, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("PUT: %d %s", resp.StatusCode, b)
+	f.want(http.StatusUnauthorized, anon, "POST", "/media/upload/presign", presign("originals/001"), nil)
+	if rec := commit(upload("originals/001")); rec.Code != http.StatusOK {
+		t.Fatalf("commit: %d %s", rec.Code, rec.Body)
 	}
-	f.want(http.StatusOK, user, "POST", "/media/upload/commit", media.CommitBody{Ref: ref, OperationID: uuid.NewString(),
-		Ops: []media.Op{{Op: media.OpPut, Path: plan.Path, Blob: plan.Blob}}}, nil)
+	// too_many_files says how many the path holds.
+	if rec := commit(upload("extras/a")); rec.Code != http.StatusOK {
+		t.Fatalf("commit extras/a: %d %s", rec.Code, rec.Body)
+	}
+	var refused media.ErrorReply
+	rec := commit(upload("extras/b"))
+	if err := json.Unmarshal(rec.Body.Bytes(), &refused); err != nil || rec.Code != http.StatusConflict ||
+		refused.Code != media.CodeTooManyFiles || refused.Details == nil || refused.Details.Max != 1 {
+		t.Fatalf("second extra: %d %s", rec.Code, rec.Body)
+	}
 	f.want(http.StatusUnsupportedMediaType, user, "POST", "/media/upload/presign", media.PresignBody{Ref: ref, Path: "cover", Type: "image/gif", Size: 10, SHA256: hex.EncodeToString(sum[:])}, nil)
 	for _, p := range []string{"/media/upload/parts/list", "/media/upload/complete", "/media/upload/abort"} {
 		f.want(http.StatusBadRequest, user, "POST", p, media.TicketBody{Ticket: "forged"}, nil)
@@ -400,14 +423,33 @@ func mediaScenario(t *testing.T, f *mountFixture, user, anon access.Actor) {
 	f.want(http.StatusBadRequest, user, "POST", "/media/upload/parts", media.PartsBody{Ticket: "forged", Parts: []media.PartBody{{Number: 1, Size: 1, SHA256: hex.EncodeToString(sum[:])}}}, nil)
 	f.want(http.StatusNotFound, user, "GET", "/media/upload/frame?kind=gallery&id="+cid(1)+"&path=originals/001&t=1", nil, nil)
 
+	// An editor read carries the kind's upload rules; a viewer's does not.
 	var read media.ReadResult
 	f.want(http.StatusOK, user, "GET", "/media/gallery/"+cid(1)+"?editor", nil, &read)
-	if len(read.Files) != 1 || !read.Files[0].Upload {
+	if len(read.Files) != 2 || !read.Files[0].Upload || len(read.Uploads) != 3 {
 		t.Fatalf("editor read %+v", read)
 	}
-	f.want(http.StatusOK, anon, "GET", "/media/gallery/"+cid(1)+"?limit=10", nil, nil)
+	if r := read.Uploads[0]; r.Path != "originals/{name}" || r.MaxBytes != 1<<20 || r.Max != 10 || len(r.Types) != 1 || r.Video != nil {
+		t.Fatalf("originals rule %+v", r)
+	}
+	if r := read.Uploads[1]; r.Path != "cover" || r.MinWidth != 8 {
+		t.Fatalf("cover rule %+v", r)
+	}
+	var viewer media.ReadResult
+	f.want(http.StatusOK, anon, "GET", "/media/gallery/"+cid(1)+"?limit=10&editor", nil, &viewer)
+	if viewer.Uploads != nil {
+		t.Fatalf("a viewer read the upload rules: %+v", viewer.Uploads)
+	}
 	f.want(http.StatusNotFound, anon, "GET", "/media/gallery/"+cid(2), nil, nil)
 	f.want(http.StatusNotFound, user, "GET", "/media/gallery/"+cid(1)+"/hls/master.m3u8?audio=ja", nil, nil)
+
+	// The preset rules, without a read.
+	var presets []media.PresetRule
+	f.want(http.StatusOK, anon, "GET", "/media/presets", nil, &presets)
+	if len(presets) != 1 || presets[0].Kind != "gallery" || presets[0].Name != "cover" || presets[0].MinWidth != 8 ||
+		presets[0].Base != "https://media.test" || presets[0].To != "cover-{w}.webp" || len(presets[0].Widths) != 1 {
+		t.Fatalf("presets %+v", presets)
+	}
 }
 
 func pngBytes(t *testing.T, w int) []byte {

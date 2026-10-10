@@ -572,6 +572,19 @@ export interface PostInput {
   live_at?: string;
 }
 
+export interface PresetRule {
+  kind: string;
+  name: string;
+  from: string;
+  base: string;
+  namespace: string;
+  to: string;
+  widths: number[];
+  aspect?: string;
+  min_width?: number;
+  first?: number;
+}
+
 export interface PresignBody {
   ref: RefBody;
   path: string;
@@ -626,6 +639,7 @@ export interface ReadResult {
   hls?: string[];
   state?: ItemState;
   full?: boolean;
+  uploads?: UploadRule[];
   files: FileInfo[];
 }
 
@@ -668,4 +682,25 @@ export interface ReviewOutcome {
 
 export interface TicketBody {
   ticket: string;
+}
+
+export interface UploadRule {
+  path: string;
+  types: string[];
+  max_bytes: number;
+  max?: number;
+  named?: boolean;
+  frames?: string;
+  aspect?: string;
+  min_width?: number;
+  video?: VideoLimits;
+  min_aspect?: number;
+  max_aspect?: number;
+}
+
+export interface VideoLimits {
+  max_seconds?: number;
+  max_fps?: number;
+  max_pixels?: number;
+  max_work?: number;
 }

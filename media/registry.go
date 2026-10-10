@@ -187,6 +187,19 @@ func (r *Registry) PublicURL(ref contentref.ContentRef, name string) string {
 	return PublicURL(r.cfg.BaseURL, ref.TenantID, ref.ContentKind, ref.ContentID, name)
 }
 
+// PresetRules lists every kind's public presets, in registry order.
+func (r *Registry) PresetRules() []PresetRule {
+	out := []PresetRule{}
+	for i := range r.cfg.Kinds {
+		k := &r.cfg.Kinds[i]
+		for _, p := range k.Public {
+			out = append(out, PresetRule{Kind: k.Name, Name: p.Name, From: p.From, Base: strings.TrimRight(r.cfg.BaseURL, "/"),
+				Namespace: k.ns, To: p.To, Widths: append([]int{}, p.Widths...), Aspect: p.Image.Aspect, MinWidth: p.Image.MinWidth, First: p.First})
+		}
+	}
+	return out
+}
+
 // MarshalJSON is the registry as data (no hooks, defaults or Choose): the
 // stock worker's MEDIA_KINDS_FILE.
 func (r *Registry) MarshalJSON() ([]byte, error) { return json.Marshal(r.cfg) }

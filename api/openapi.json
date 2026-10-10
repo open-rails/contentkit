@@ -3415,6 +3415,44 @@
         ]
       }
     },
+    "/media/presets": {
+      "get": {
+        "tags": [
+          "media"
+        ],
+        "summary": "Every kind's public preset rules: crop bounds, widths and default images. Current image URLs come from a read's public.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PresetRule"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "media",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:media"
+        ]
+      }
+    },
     "/media/{kind}/{id}": {
       "get": {
         "tags": [
@@ -6565,6 +6603,53 @@
           }
         }
       },
+      "PresetRule": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "base": {
+            "type": "string"
+          },
+          "namespace": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "widths": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "aspect": {
+            "type": "string"
+          },
+          "min_width": {
+            "type": "integer"
+          },
+          "first": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "from",
+          "base",
+          "namespace",
+          "to",
+          "widths"
+        ]
+      },
       "PresignBody": {
         "type": "object",
         "properties": {
@@ -6739,6 +6824,12 @@
           "full": {
             "type": "boolean"
           },
+          "uploads": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UploadRule"
+            }
+          },
           "files": {
             "type": "array",
             "items": {
@@ -6884,6 +6975,69 @@
         "properties": {
           "ticket": {
             "type": "string"
+          }
+        }
+      },
+      "UploadRule": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "max_bytes": {
+            "type": "integer"
+          },
+          "max": {
+            "type": "integer"
+          },
+          "named": {
+            "type": "boolean"
+          },
+          "frames": {
+            "type": "string"
+          },
+          "aspect": {
+            "type": "string"
+          },
+          "min_width": {
+            "type": "integer"
+          },
+          "video": {
+            "$ref": "#/components/schemas/VideoLimits"
+          },
+          "min_aspect": {
+            "type": "number"
+          },
+          "max_aspect": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "path",
+          "types",
+          "max_bytes"
+        ]
+      },
+      "VideoLimits": {
+        "type": "object",
+        "properties": {
+          "max_seconds": {
+            "type": "number"
+          },
+          "max_fps": {
+            "type": "number"
+          },
+          "max_pixels": {
+            "type": "integer"
+          },
+          "max_work": {
+            "type": "number"
           }
         }
       },

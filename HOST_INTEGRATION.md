@@ -757,8 +757,17 @@ out until `attach`.
   uploads come with `edit`, `frame`, `meta`, `pending`, `failed`, encode
   `progress` and an `editor_url`: the editor view, rendered on demand by the
   worker (`ReaderOptions.Queue`) into `private/` under the hash of its source
-  and `Config.Editor`, and swept a grace period later. Viewers never get
-  these fields, even for served originals.
+  and `Config.Editor`, and swept a grace period later. An editor read also
+  carries the kind's `uploads`: each upload path's types, `max_bytes`,
+  `max` files, crop `aspect` and `min_width`, and for video its limits in
+  effect and the `min_aspect`/`max_aspect` its HLS presets accept, so
+  clients refuse a file before uploading it. Viewers never get these
+  fields, even for served originals.
+- `GET /presets` lists every kind's public preset rules (`base`,
+  `namespace`, `kind`, `name`, `from`, `to`, `widths`, `aspect`, `min_width`,
+  `first`): crop bounds and widths without a read. Published files carry a
+  generation suffix, so a URL built from `to` names the kind's default image;
+  an item's current images come from a read's `public`.
 - `GET /{kind}/{id}/hls/{dir}master.m3u8` (a ladder in `hls`), `{path}.m3u8`
   (a track) and `{dir}sprite.vtt` are built per request from the manifest's
   tracks and their index blobs (cached by hash).
@@ -823,7 +832,10 @@ out until `attach`.
   `media.DefaultVideoLimits` (4 h, 60 fps, 8192×4320 px, 4e13). An upload
   past them, or a video averaging under one frame a second, fails before
   any encode with `video_too_long`, `video_too_large` or
-  `video_over_budget`. A source declaring a faster rate than its packets
+  `video_over_budget`; one outside its HLS presets' aspect bounds with
+  `video_aspect_unsupported` (`details` has `min_aspect` and `max_aspect`).
+  A commit past an upload path's `Max` answers `too_many_files` with
+  `details.max`. A source declaring a faster rate than its packets
   hold is encoded at its real rate.
 
 ### Sweep, deletion and erasure

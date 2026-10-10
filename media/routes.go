@@ -54,6 +54,10 @@ var uploadRoutes = []httpapi.Route[uploadHandler]{
 }
 
 var readRoutes = []httpapi.Route[readHandler]{
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/presets", Resource: "media", Auth: httpapi.Public,
+		Doc:       "Every kind's public preset rules: crop bounds, widths and default images. Current image URLs come from a read's public.",
+		Responses: []httpapi.Reply{httpapi.OK([]PresetRule{})}},
+		Serve: httpapi.H(readHandler.presets)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}", Resource: "media", Auth: httpapi.Public,
 		Doc: "An item's files under a prefix in manifest order: with access each has a URL (and the item cookie is set), without each is locked.",
 		Query: []httpapi.Param{httpapi.Text("prefix", "only files under this path prefix, e.g. low-res/"),

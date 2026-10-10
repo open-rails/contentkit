@@ -82,6 +82,12 @@ func (h readHandler) read(w http.ResponseWriter, req *http.Request) {
 	h.log.Debug("media read", "path", req.URL.Path, "duration", time.Since(start))
 }
 
+// presets lists the preset rules: the same for every viewer, so cacheable.
+func (h readHandler) presets(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	writeJSON(w, http.StatusOK, h.r.reg.PresetRules())
+}
+
 func (h readHandler) playlist(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	ref, actor, err := h.r.requestRef(req, h.o)

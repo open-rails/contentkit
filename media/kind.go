@@ -257,6 +257,35 @@ func (k *Kind) syncPreviews(before, m *Manifest) {
 	}
 }
 
+// UploadRules are the kind's upload paths with the rules a client checks.
+func (k *Kind) UploadRules() []UploadRule {
+	out := make([]UploadRule, 0, len(k.Uploads))
+	for _, u := range k.Uploads {
+		r := UploadRule{Path: u.Path, Types: slices.Clone(u.Types), MaxBytes: u.MaxBytes, Max: u.Max, Named: u.Named, Frames: u.Frames}
+		if i := slices.IndexFunc(k.Public, func(p Public) bool { return p.From == u.Path }); i >= 0 {
+			r.Aspect, r.MinWidth = k.Public[i].Image.Aspect, k.Public[i].Image.MinWidth
+		}
+		if slices.ContainsFunc(u.Types, func(t string) bool { return isVideoType(t) || isAudioType(t) }) {
+			lim := u.Video.Limits()
+			r.Video = &lim
+		}
+		for _, p := range k.Private {
+			if p.From != u.Path || p.HLS == nil {
+				continue
+			}
+			lo, hi := p.HLS.Aspects()
+			if r.MinAspect == 0 || lo > r.MinAspect {
+				r.MinAspect = lo
+			}
+			if r.MaxAspect == 0 || hi < r.MaxAspect {
+				r.MaxAspect = hi
+			}
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
 // EditBounds is the image that bounds an edit of the upload at path: its
 // first public preset's, else a native one.
 func (k *Kind) EditBounds(path string) Image {
