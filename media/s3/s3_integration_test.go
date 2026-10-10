@@ -428,6 +428,11 @@ func TestBucketVersioningAndLifecycle(t *testing.T) {
 func TestCopyInOneRequestOrInParts(t *testing.T) {
 	env := s3test.Open(t)
 	ctx := context.Background()
+	if env.Created {
+		if err := env.Store.Configure(ctx, 30); err != nil {
+			t.Fatal(err)
+		}
+	}
 	cfg := env.Config
 	cfg.CopyPartSize = 5 << 20
 	store, err := mediaS3.New(cfg)
@@ -459,6 +464,25 @@ func TestCopyInOneRequestOrInParts(t *testing.T) {
 		rc.Close()
 		if !bytes.Equal(b, body) || got.ContentType != "video/mp4" || got.CacheControl != "no-cache" || got.Metadata["of"] != "x" {
 			t.Fatalf("%d: copied %d bytes, %+v", size, len(b), got)
+		}
+		version, err := store.Client().HeadObject(ctx, &s3.HeadObjectInput{Bucket: &cfg.Bucket, Key: &src})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Put(ctx, src, strings.NewReader("newer"), 5, media.PutOptions{ContentType: "text/plain"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.CopyVersion(ctx, media.ObjectVersion{Key: src, VersionID: aws.ToString(version.VersionId)}, dst); err != nil {
+			t.Fatalf("%d: historical copy: %v", size, err)
+		}
+		rc, got, err = store.Get(ctx, dst, media.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err = io.ReadAll(rc)
+		rc.Close()
+		if err != nil || !bytes.Equal(b, body) || got.ContentType != "video/mp4" || got.CacheControl != "no-cache" || got.Metadata["of"] != "x" {
+			t.Fatalf("%d: historical copy used current bytes or metadata: %d bytes, %+v %v", size, len(b), got, err)
 		}
 	}
 }

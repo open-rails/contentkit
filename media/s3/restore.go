@@ -2,30 +2,19 @@ package s3
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
-	"maps"
+	"net/url"
 	"slices"
-	"sort"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/layout"
 )
-
-// RestoreReport lists what Restore changed, by key.
-type RestoreReport struct {
-	Reverted  []string // manifests set to their version at T
-	Removed   []string // such keys that did not exist at T
-	Undeleted []string // referenced blobs whose delete markers were removed
-	Missing   []string // referenced at T but no version is left
-	// Unreadable are manifests at T that do not decode (over their bound):
-	// every blob and staged upload their folders held is undeleted.
-	Unreadable []string
-}
 
 type version struct {
 	id       string
@@ -34,132 +23,119 @@ type version struct {
 	marker   bool
 }
 
-// Restore returns the folders under prefix to time at, on a versioned bucket
-// (see Configure): manifests take their version at T, then the blobs those
-// manifests reference lose the delete markers the sweep or a folder
-// deletion left. Restore the host database to T first, then Expose the
-// restored items (public/ renders again from their kept sources), and
-// re-apply erasures made after T.
-func (s *Store) Restore(ctx context.Context, prefix string, at time.Time) (RestoreReport, error) {
-	var rep RestoreReport
+// Snapshot reads an item's manifest and exact referenced object versions at at.
+// It changes no objects or delete markers. Apply it with media.Jobs.Restore after
+// restoring the host's records and reapplying any subsequent privacy erasures.
+func (s *Store) Snapshot(ctx context.Context, item media.Item, at time.Time) (media.Snapshot, error) {
+	var snap media.Snapshot
+	if at.IsZero() {
+		return snap, errors.New("s3: snapshot needs a historical time")
+	}
 	history := map[string][]version{}
+	prefix := item.Prefix()
 	p := s3.NewListObjectVersionsPaginator(s.client, &s3.ListObjectVersionsInput{Bucket: &s.bucket, Prefix: &prefix})
 	for p.HasMorePages() {
 		page, err := p.NextPage(ctx)
 		if err != nil {
-			return rep, mapErr("list versions", prefix, err)
+			return snap, mapErr("list versions", prefix, err)
 		}
 		for _, v := range page.Versions {
-			k := aws.ToString(v.Key)
-			history[k] = append(history[k], version{aws.ToString(v.VersionId), aws.ToTime(v.LastModified), aws.ToBool(v.IsLatest), false})
+			key := aws.ToString(v.Key)
+			history[key] = append(history[key], version{aws.ToString(v.VersionId), aws.ToTime(v.LastModified), aws.ToBool(v.IsLatest), false})
 		}
-		for _, m := range page.DeleteMarkers {
-			k := aws.ToString(m.Key)
-			history[k] = append(history[k], version{aws.ToString(m.VersionId), aws.ToTime(m.LastModified), aws.ToBool(m.IsLatest), true})
+		for _, v := range page.DeleteMarkers {
+			key := aws.ToString(v.Key)
+			history[key] = append(history[key], version{aws.ToString(v.VersionId), aws.ToTime(v.LastModified), aws.ToBool(v.IsLatest), true})
 		}
 	}
-	for _, vs := range history {
-		sort.SliceStable(vs, func(i, j int) bool {
-			if !vs[i].modified.Equal(vs[j].modified) {
-				return vs[i].modified.After(vs[j].modified)
+	selectVersion := func(key string) (string, error) {
+		versions := history[key]
+		slices.SortStableFunc(versions, func(a, b version) int {
+			if cmp := b.modified.Compare(a.modified); cmp != 0 {
+				return cmp
 			}
-			return vs[i].latest && !vs[j].latest
+			if a.latest && !b.latest {
+				return -1
+			}
+			if b.latest && !a.latest {
+				return 1
+			}
+			return 0
 		})
-	}
-
-	refs := map[string]bool{}
-	for _, key := range slices.Sorted(maps.Keys(history)) {
-		k, ok := layout.Parse(key)
-		if !ok || k.Area != layout.AreaManifest {
-			continue
-		}
-		vs := history[key]
-		var then *version
-		for i := range vs {
-			if !vs[i].modified.After(at) {
-				then = &vs[i]
+		for _, v := range versions {
+			if v.modified.After(at) {
+				continue
+			}
+			if v.marker {
 				break
 			}
+			if v.id == "" || v.id == "null" {
+				return "", errors.New("s3: snapshot requires immutable bucket versions")
+			}
+			return v.id, nil
 		}
-		now := vs[0]
-		switch {
-		case then != nil && !then.marker:
-			if now.id != then.id {
-				src := s.bucket + "/" + key + "?versionId=" + then.id
-				if _, err := s.client.CopyObject(ctx, &s3.CopyObjectInput{Bucket: &s.bucket, Key: &key, CopySource: &src}); err != nil {
-					return rep, mapErr("restore", key, err)
-				}
-				rep.Reverted = append(rep.Reverted, key)
-			}
-			ok, err := s.collectRefs(ctx, key, then.id, k, refs)
-			if err != nil {
-				return rep, err
-			}
-			if !ok {
-				rep.Unreadable = append(rep.Unreadable, key)
-				folder := layout.Prefix(k.Namespace, k.Kind, k.ID)
-				for other := range history {
-					if o, ok := layout.Parse(other); ok && strings.HasPrefix(other, folder) && (o.Area == layout.AreaPrivate || o.Area == layout.AreaTemp) {
-						refs[other] = true
-					}
-				}
-			}
-		case !now.marker:
-			if err := s.Delete(ctx, key); err != nil {
-				return rep, err
-			}
-			rep.Removed = append(rep.Removed, key)
-		}
+		return "", fmt.Errorf("s3: snapshot %s: %w", key, media.ErrNotFound)
 	}
-
-	for _, key := range slices.Sorted(maps.Keys(refs)) {
-		vs := history[key]
-		live := -1
-		for i, v := range vs {
-			if !v.marker {
-				live = i
-				break
-			}
-		}
-		if live < 0 {
-			rep.Missing = append(rep.Missing, key)
-			continue
-		}
-		if live == 0 {
-			continue
-		}
-		for _, m := range vs[:live] {
-			if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &s.bucket, Key: &key, VersionId: aws.String(m.id)}); err != nil {
-				return rep, mapErr("undelete", key, err)
-			}
-		}
-		rep.Undeleted = append(rep.Undeleted, key)
+	var err error
+	snap.Ref = item.Ref()
+	snap.VersionID, err = selectVersion(item.ManifestKey())
+	if err != nil {
+		return snap, err
 	}
-	return rep, nil
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: &s.bucket, Key: aws.String(item.ManifestKey()), VersionId: &snap.VersionID})
+	if err != nil {
+		return snap, mapErr("get snapshot", item.ManifestKey(), err)
+	}
+	body, err := io.ReadAll(io.LimitReader(out.Body, media.MaxManifestBytes+1))
+	out.Body.Close()
+	if err != nil {
+		return snap, err
+	}
+	snap.Manifest, err = media.DecodeManifest(body)
+	if err != nil {
+		return snap, err
+	}
+	if snap.Manifest.Deleted {
+		return snap, media.ErrNotFound
+	}
+	var keys []string
+	for _, name := range snap.Manifest.Blobs() {
+		key, err := item.Blob(name)
+		if err != nil {
+			return snap, err
+		}
+		keys = append(keys, key)
+	}
+	for _, name := range snap.Manifest.StagedNames() {
+		key, err := item.Staged(name)
+		if err != nil {
+			return snap, err
+		}
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for _, key := range slices.Compact(keys) {
+		id, err := selectVersion(key)
+		if err != nil {
+			return snap, err
+		}
+		snap.Objects = append(snap.Objects, media.ObjectVersion{Key: key, VersionID: id})
+	}
+	return snap, nil
 }
 
-// collectRefs adds what the manifest version references; ok is false when it
-// does not decode.
-func (s *Store) collectRefs(ctx context.Context, key, versionID string, k layout.Key, refs map[string]bool) (bool, error) {
-	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: &s.bucket, Key: &key, VersionId: &versionID})
+// CopyVersion copies an immutable historical object to a newly allocated key.
+// Large objects use the same bounded multipart path as ordinary worker copies.
+func (s *Store) CopyVersion(ctx context.Context, v media.ObjectVersion, dst string) (media.Object, error) {
+	if v.VersionID == "" || v.VersionID == "null" {
+		return media.Object{}, errors.New("s3: copy needs an immutable version")
+	}
+	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &s.bucket, Key: &v.Key, VersionId: &v.VersionID,
+		ChecksumMode: types.ChecksumModeEnabled})
 	if err != nil {
-		return false, mapErr("get version", key, err)
+		return media.Object{}, mapErr("head version", v.Key, err)
 	}
-	defer out.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(out.Body, media.MaxManifestBytes+1))
-	if err != nil {
-		return false, err
-	}
-	m, err := media.DecodeManifest(body)
-	if err != nil {
-		return false, nil
-	}
-	folder := layout.Prefix(k.Namespace, k.Kind, k.ID)
-	for _, b := range m.Blobs() {
-		refs[folder+layout.AreaPrivate+"/"+b] = true
-	}
-	for _, s := range m.StagedNames() {
-		refs[folder+layout.AreaTemp+"/"+s] = true
-	}
-	return true, nil
+	head := media.Object{Key: v.Key, Size: aws.ToInt64(out.ContentLength), ETag: aws.ToString(out.ETag),
+		ContentType: aws.ToString(out.ContentType), CacheControl: aws.ToString(out.CacheControl), Metadata: out.Metadata}
+	return s.copy(ctx, s.bucket+"/"+v.Key+"?versionId="+url.QueryEscape(v.VersionID), dst, head)
 }

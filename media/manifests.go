@@ -330,7 +330,7 @@ func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existin
 }
 
 type manifestMutation struct {
-	lifecycle bool // only deletion and explicit reset may edit a tombstone
+	lifecycle bool // only deletion, explicit reset and restore may edit a tombstone
 	commit    manifestCommit
 	effects   journalEffects
 	quota     int64
