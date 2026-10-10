@@ -92,6 +92,9 @@ type EditorImage struct {
 // Publication owns one public preset's physical files. Reservation precedes
 // every PUT; State becomes ready only after all renditions have landed. Retired
 // generations are never reused, even when their source bytes are identical.
+// An upload holds at most one ready publication per preset, the current one,
+// and one reserved successor, which replaces it once ready: cleanup never
+// retires the current files while their successor is written.
 type Publication struct {
 	Preset     string           `json:"preset"`
 	Source     string           `json:"source"` // the upload's Key
@@ -123,27 +126,39 @@ func (p Publication) NamesOnDisk() []string {
 	return names
 }
 
-// Publication returns the public generation owned by this upload and preset.
+// Publication returns the upload's latest generation of preset: its reserved
+// successor if any, else its current one.
 func (f File) Publication(preset string) (Publication, bool) {
+	if p, ok := f.publication(preset, PublicationReserved); ok {
+		return p, true
+	}
+	return f.Current(preset)
+}
+
+// Current returns the upload's ready generation of preset.
+func (f File) Current(preset string) (Publication, bool) {
+	return f.publication(preset, PublicationReady)
+}
+
+func (f File) publication(preset string, state PublicationState) (Publication, bool) {
 	for _, p := range f.Public {
-		if p.Preset == preset {
+		if p.Preset == preset && p.State == state {
 			return p, true
 		}
 	}
 	return Publication{}, false
 }
 
-// SetPublication records a reserved or ready generation on its source upload.
+// SetPublication records a generation on its source upload: a reservation
+// replaces an earlier successor and keeps the current generation, but in a
+// Full manifest, which has no room for both, replaces it too; a ready
+// generation replaces both.
 func (m *Manifest) SetPublication(from string, p Publication) {
 	if i := m.Find(from); i >= 0 {
-		pubs := slices.Clone(m.Files[i].Public)
-		j := slices.IndexFunc(pubs, func(old Publication) bool { return old.Preset == p.Preset })
-		if j < 0 {
-			pubs = append(pubs, p)
-		} else {
-			pubs[j] = p
-		}
-		m.Files[i].Public = pubs
+		pubs := slices.DeleteFunc(slices.Clone(m.Files[i].Public), func(old Publication) bool {
+			return old.Preset == p.Preset && (p.Ready() || !old.Ready() || m.Full)
+		})
+		m.Files[i].Public = append(pubs, p)
 	}
 }
 
@@ -375,14 +390,20 @@ func (m *Manifest) Validate() error {
 			return fmt.Errorf("media: manifest file %q: an upload has provenance", f.Path)
 		}
 		seen[f.Path] = true
-		presets := make(map[string]bool, len(f.Public))
+		type slot struct {
+			preset string
+			state  PublicationState
+		}
+		slots := make(map[slot]bool, len(f.Public))
 		for _, p := range f.Public {
 			id, err := uuid.Parse(p.Generation)
-			if p.Preset == "" || presets[p.Preset] || p.Source != f.Key() || p.FP == "" || err != nil || id == uuid.Nil || id.String() != p.Generation ||
-				len(p.Names) == 0 || len(p.Dims) != len(p.Names) || p.State > PublicationReady {
+			generation := err == nil && id != uuid.Nil && id.String() == p.Generation
+			current, _ := f.Current(p.Preset)
+			if p.Preset == "" || slots[slot{p.Preset, p.State}] || p.Source != f.Key() || p.FP == "" || !generation ||
+				!p.Ready() && current.Generation == p.Generation || len(p.Names) == 0 || len(p.Dims) != len(p.Names) || p.State > PublicationReady {
 				return fmt.Errorf("media: manifest file %q: invalid public publication", f.Path)
 			}
-			presets[p.Preset] = true
+			slots[slot{p.Preset, p.State}] = true
 			for j, name := range p.NamesOnDisk() {
 				if !layout.ValidSegment(p.Names[j]) || !layout.ValidPublicName(name) || p.Ready() && (p.Dims[j].W <= 0 || p.Dims[j].H <= 0) {
 					return fmt.Errorf("media: manifest file %q: invalid public rendition %q", f.Path, name)

@@ -179,7 +179,7 @@ func (k *Kind) previewNames(m *Manifest) []string {
 		p := &k.Public[i]
 		for _, path := range k.firsts(m, p) {
 			if f, _ := m.Get(path); rendered(f, p) {
-				if pub, ok := k.Publication(m, f, p); ok && pub.Ready() {
+				if pub, ok := k.Current(m, f, p); ok {
 					out = append(out, pub.NamesOnDisk()...)
 				}
 			}
@@ -188,16 +188,29 @@ func (k *Kind) previewNames(m *Manifest) []string {
 	return out
 }
 
-// Publication returns the generation still owned by the source and position.
-// A reservation need not be Ready: cleanup must protect it while PUTs run.
+// Publication returns the latest generation still owned by the source and
+// position: a reservation (cleanup must protect it while PUTs run), else
+// the current generation.
 func (k *Kind) Publication(m *Manifest, f File, p *Public) (Publication, bool) {
 	pub, ok := f.Publication(p.Name)
-	return pub, ok && !m.Hidden && !f.Unattached && f.Fail() == nil && pub.Source == f.Key() &&
+	return pub, ok && k.owned(m, f, p, pub)
+}
+
+// Current returns the ready generation still owned by the source and
+// position: what readers are shown.
+func (k *Kind) Current(m *Manifest, f File, p *Public) (Publication, bool) {
+	pub, ok := f.Current(p.Name)
+	return pub, ok && k.owned(m, f, p, pub)
+}
+
+func (k *Kind) owned(m *Manifest, f File, p *Public, pub Publication) bool {
+	return !m.Hidden && !f.Unattached && f.Fail() == nil && pub.Source == f.Key() &&
 		slices.Equal(pub.Names, k.PublicNames(m, p, f.Path))
 }
 
-// PublicKept protects every active reservation and published generation.
-// An unowned name is permanently retired; no later worker may reuse it.
+// PublicKept protects every owned generation: the current files and an
+// active reservation. An unowned name is permanently
+// retired; no later worker may reuse it.
 func (k *Kind) PublicKept(m *Manifest) []string {
 	var out []string
 	if m.Hidden {
@@ -208,8 +221,10 @@ func (k *Kind) PublicKept(m *Manifest) []string {
 			continue
 		}
 		for _, p := range k.PublicFor(f.Path) {
-			if pub, ok := k.Publication(m, f, p); ok {
-				out = append(out, pub.NamesOnDisk()...)
+			for _, pub := range f.Public {
+				if pub.Preset == p.Name && k.owned(m, f, p, pub) {
+					out = append(out, pub.NamesOnDisk()...)
+				}
 			}
 		}
 	}
