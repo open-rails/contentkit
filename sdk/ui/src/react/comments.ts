@@ -21,16 +21,15 @@ async function reactToComment(client: ContentKitClient, store: ResourceStore, sc
   if (!t) tokens.set(store, (t = new Map()));
   const token = (t.get(c.id) ?? 0) + 1;
   t.set(c.id, token);
-  const optimistic = new WeakSet<Comment>();
+  const reads = new Set<number>();
   const put = (counts: ReactionCounts, rollback = false) =>
     store.patch<Page<Comment>>(
       (tag) => commentLists.includes(tag.type) && tag.readScope === scope,
-      (page) => ({ ...page, items: page.items.map((x) => {
-        if (x.id !== c.id || (rollback && !optimistic.has(x))) return x;
-        const next = { ...x, ...counts };
-        optimistic.add(next);
-        return next;
-      }) }),
+      (page, readVersion) => {
+        if (rollback && !reads.has(readVersion)) return page;
+        reads.add(readVersion);
+        return { ...page, items: page.items.map((x) => (x.id === c.id ? { ...x, ...counts } : x)) };
+      },
     );
   put(withReaction({ likes: c.likes, dislikes: c.dislikes, mine: c.mine }, value));
   try {

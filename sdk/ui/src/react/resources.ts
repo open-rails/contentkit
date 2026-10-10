@@ -41,6 +41,8 @@ interface Slot {
   moreCtl?: AbortController;
   /** Bumped by mark(): an optimistic write rolls back only if no newer one started. */
   version: number;
+  /** Identifies the full read; item patches and appended pages retain it. */
+  readVersion: number;
 }
 
 const IDLE: Resource<never> = { data: undefined, loading: false, loaded: false };
@@ -63,7 +65,7 @@ export class ResourceStore {
 
   subscribe(key: string, tag: Tag, listener: () => void): () => void {
     let s = this.slots.get(key);
-    if (!s) this.slots.set(key, (s = { tag, listeners: new Set(), entry: IDLE, version: 0 }));
+    if (!s) this.slots.set(key, (s = { tag, listeners: new Set(), entry: IDLE, version: 0, readVersion: ++this.version }));
     const slot = s;
     slot.listeners.add(listener);
     return () => {
@@ -101,6 +103,7 @@ export class ResourceStore {
       (data) => {
         if (s.ctl !== ctl) return;
         s.ctl = undefined;
+        s.readVersion = ++this.version;
         this.update(s, { data, loading: false, loaded: true, error: undefined });
       },
       (e) => {
@@ -141,6 +144,7 @@ export class ResourceStore {
     const s = this.slots.get(key);
     if (!s) return;
     const next = typeof data === "function" ? (data as (p: T | undefined) => T)(s.entry.data as T | undefined) : data;
+    s.readVersion = ++this.version;
     this.update(s, { data: next, loaded: true, error: undefined });
   }
 
@@ -156,10 +160,10 @@ export class ResourceStore {
     if (s && s.version === token) this.update(s, { data, loaded: true });
   }
 
-  /** Applies fn to the data of every slot whose tag matches. */
-  patch<T>(match: (tag: Tag) => boolean, fn: (data: T) => T): void {
+  /** Applies fn to matching slots, with the read identity for scoped rollback. */
+  patch<T>(match: (tag: Tag) => boolean, fn: (data: T, readVersion: number) => T): void {
     for (const s of this.slots.values()) {
-      if (s.entry.data !== undefined && match(s.tag)) this.update(s, { data: fn(s.entry.data as T) });
+      if (s.entry.data !== undefined && match(s.tag)) this.update(s, { data: fn(s.entry.data as T, s.readVersion) });
     }
   }
 

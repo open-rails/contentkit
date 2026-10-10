@@ -7,9 +7,82 @@ import { ContentKitProvider } from "./provider.js";
 import { useComments } from "./comments.js";
 import { useMediaRead } from "./read.js";
 import { useReaction } from "./engagement.js";
+import { useSlotCrop, useSlotImage } from "./slot.js";
 
 afterEach(cleanup);
 const ref = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000001" };
+
+it.each([false, true])("rolls back a failed comment reaction after a reply, unless refetched: %s", async (refetch) => {
+  let mine = 0;
+  const reactions: ((response: Response) => void)[] = [];
+  const client = createContentKitClient({ baseUrl: "https://content.test/ck", fetch: async (url, init) => {
+    if (String(url).endsWith("/like")) return new Promise<Response>((resolve) => reactions.push(resolve));
+    if (init?.method === "POST") return Response.json({ id: "reply", reply_to_id: "parent", body: "reply", likes: 0, dislikes: 0, reply_count: 0 });
+    return Response.json([{ id: "parent", body: "parent", likes: mine, dislikes: 0, mine, reply_count: mine }]);
+  } });
+  const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} viewer="alice">{children}</ContentKitProvider>;
+  const { result } = renderHook(() => useComments(ref), { wrapper });
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  let pending: Promise<void>;
+  act(() => { pending = result.current.react(result.current.items[0]!, 1); });
+  const failed = expect(pending!).rejects.toMatchObject({ code: "unavailable" });
+  await waitFor(() => expect(reactions).toHaveLength(1));
+  await act(async () => { await result.current.post("reply", { replyTo: "parent" }); });
+  expect(result.current.items[0]?.reply_count).toBe(1);
+  if (refetch) {
+    mine = 1;
+    act(() => result.current.reload());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+  }
+  await act(async () => { reactions[0]!(Response.json({ error: "unavailable" }, { status: 503 })); await failed; });
+  expect(result.current.items[0]).toMatchObject({ mine: refetch ? 1 : 0, likes: refetch ? 1 : 0, reply_count: 1 });
+});
+
+it.each(["viewer", "accessRevision", "round-trip"] as const)("discards a late crop completion after %s changes", async (transition) => {
+  let scope = { viewer: "alice", accessRevision: 0 };
+  let afterCommit = false;
+  let currentScope = false;
+  const processing: { finish: (response: Response) => void; signal?: AbortSignal | null }[] = [];
+  const file = { path: "cover.jpg", upload: true, type: "image/jpeg", size: 10, w: 100, h: 100, editor_url: "https://media.test/alice.jpg" };
+  const empty = { access: "none", expires: 0, total: 0, offset: 0, limit: 50, files: [] };
+  const saved = vi.fn();
+  const client = createContentKitClient({ baseUrl: "https://content.test/ck", fetch: async (_url, init) => {
+    if (init?.method === "POST") { afterCommit = true; return Response.json({ files: [file] }); }
+    if (currentScope) return Response.json(empty);
+    if (afterCommit) return new Promise<Response>((finish) => processing.push({ finish, signal: init?.signal }));
+    return Response.json({ ...empty, access: "full", files: [file] });
+  } });
+  const wrapper = ({ children }: { children: ReactNode }) => <ContentKitProvider client={client} {...scope}>{children}</ContentKitProvider>;
+  const { result, rerender } = renderHook(() => {
+    const image = useSlotImage({ ref, path: "cover" });
+    const crop = useSlotCrop({ ref, path: "cover", file: image.file, onSaved: (f) => { image.set(f); image.reload(); saved(f); } });
+    return { image, crop };
+  }, { wrapper });
+  await waitFor(() => expect(result.current.image.file?.path).toBe("cover.jpg"));
+  await act(async () => { await result.current.crop.recrop(); });
+  let pending: ReturnType<typeof result.current.crop.save>;
+  act(() => { pending = result.current.crop.save(); });
+  await waitFor(() => expect(processing).toHaveLength(2));
+  currentScope = true;
+  scope = transition === "accessRevision" ? { ...scope, accessRevision: 1 } : { ...scope, viewer: "bob" };
+  rerender();
+  await waitFor(() => expect(result.current.image.loading).toBe(false));
+  if (transition === "round-trip") {
+    scope = { ...scope, viewer: "alice" };
+    rerender();
+    await waitFor(() => expect(result.current.image.loading).toBe(false));
+  }
+  expect(result.current.image.file).toBeNull();
+  expect(result.current.crop.status).toBe("idle");
+  expect(processing.every((p) => p.signal?.aborted)).toBe(true);
+  await act(async () => {
+    for (const p of processing) p.finish(Response.json({ ...empty, access: "full", files: [file] }));
+    expect(await pending).toBeUndefined();
+  });
+  expect(saved).not.toHaveBeenCalled();
+  expect(result.current.image.file).toBeNull();
+  expect(result.current.crop.status).toBe("idle");
+});
 
 it.each([
   ["comment", "language"], ["reaction", "viewer"], ["reaction", "round-trip"],
