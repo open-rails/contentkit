@@ -196,7 +196,7 @@ func TestCreateOnlyPreservesExistingUploadsAndRetries(t *testing.T) {
 	}
 	_, op.Blob = f.upload(g, p, "image/png", png(4))
 	after = f.commit(g, op)
-	if up, _ := after.Get(p); up.Fail() != nil || up.Blob != blobOf(png(4)) || up.Staged != "" || up.CreateID != op.CreateID {
+	if up, _ := after.Get(p); up.Fail() != nil || !matchesBlob(up.Blob, png(4)) || up.Staged != "" || up.CreateID != op.CreateID {
 		t.Fatalf("re-upload with the same receipt did not recover placement: %+v", up)
 	}
 	key, _ = item.Staged(op.Blob)
@@ -472,8 +472,24 @@ func TestCopy(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	m = f.commit(b, media.Op{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: page.Path}, To: "originals/2"})
-	if copied, _ := m.Get("originals/2.png"); !copied.Gone || copied.Blob != page.Blob {
+	limiter, err := media.NewPGLimiter(f.env.Pool(), f.env.ContentSchema(), media.PGLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, err := media.NewUploads(media.UploadOptions{Store: f.env.Store, Manifests: f.ms, Limiter: limiter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err = up.Commit(ctx, f.editor, b, uuid.NewString(), []media.Op{{Op: media.OpCopy,
+		From: &media.CopyFrom{ID: cid(1), Path: page.Path}, To: "originals/2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var emptyKeys int
+	if err := f.env.Pool().QueryRow(ctx, "SELECT count(*) FROM "+f.env.ContentSchema()+".content_media_reservations WHERE object_key = ''").Scan(&emptyKeys); err != nil || emptyKeys != 0 {
+		t.Fatalf("retained-output copy reserved an empty key: %d, %v", emptyKeys, err)
+	}
+	if copied, _ := m.Get("originals/2.png"); !copied.Gone || copied.Blob != f.fileBlob(a, page.Path) {
 		t.Fatalf("copy of retained outputs: %+v", copied)
 	}
 	if _, err := f.up.Commit(ctx, f.editor, b, uuid.NewString(), []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: page.Path}, To: "cover"}}); code(err) != media.CodeNotFound {
@@ -496,12 +512,10 @@ func TestCopyIsMetered(t *testing.T) {
 	f.put(a, "originals/2.png", "image/png", png(2))
 	f.produce(a)
 	// A thumb of its own blob: copying page 1 moves two blobs.
-	src, _ := f.reg.Item(a)
 	thumb := []byte("thumb one")
-	key, _ := src.Blob(blobOf(thumb))
-	f.object(key, string(thumb))
+	thumbBlob := f.blob(a, thumb, "image/webp")
 	if _, err := f.ms.EditExisting(ctx, a, func(m *media.Manifest) error {
-		m.Files[m.Find("thumb/1.webp")].Blob = blobOf(thumb)
+		m.Files[m.Find("thumb/1.webp")].Blob = thumbBlob
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -518,16 +532,26 @@ func TestCopyIsMetered(t *testing.T) {
 		return []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: path}}}
 	}
 	item, _ := f.reg.Item(b)
-	one, _ := item.Blob(blobOf(png(1)))
-	two, _ := item.Blob(blobOf(png(2)))
-	if _, err := up.Commit(ctx, f.editor, b, uuid.NewString(), copyOf("originals/1.png")); err != nil {
+	copied, err := up.Commit(ctx, f.editor, b, uuid.NewString(), copyOf("originals/1.png"))
+	if err != nil {
 		t.Fatalf("one copy, two blobs, one reservation: %v", err)
 	}
-	if copied, _ := item.Blob(blobOf(thumb)); !f.exists(copied) {
+	page, _ := copied.Get("originals/1.png")
+	one, _ := item.Blob(page.Blob)
+	preview, _ := copied.Get("thumb/1.webp")
+	if key, _ := item.Blob(preview.Blob); !f.exists(key) || !matchesBlob(preview.Blob, thumb) || preview.Blob == thumbBlob {
 		t.Fatal("the thumb was not copied")
 	}
-	if _, err := up.Commit(ctx, f.editor, b, uuid.NewString(), copyOf("originals/2.png")); code(err) != media.CodeRate || f.exists(two) {
-		t.Fatalf("a copy past the rate limit: %v, copied %v", err, f.exists(two))
+	if _, err := up.Commit(ctx, f.editor, b, uuid.NewString(), copyOf("originals/2.png")); code(err) != media.CodeRate {
+		t.Fatalf("a copy past the rate limit: %v", err)
+	}
+	for obj, err := range f.env.Store.List(ctx, item.PrivatePrefix()) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if matchesBlob(strings.TrimPrefix(obj.Key, item.PrivatePrefix()), png(2)) {
+			t.Fatal("rate-limited copy wrote bytes")
+		}
 	}
 
 	// Unreferenced and older than the grace period: copied again.
@@ -546,33 +570,30 @@ func TestCopyIsMetered(t *testing.T) {
 		Size: int64(len(png(1))), SHA256: mustSum(blobOf(png(1)))}); err != nil || p.Exists || p.Put == nil {
 		t.Fatalf("presign offered a blob due for cleanup: %+v %v", p, err)
 	}
-	if _, err := unlimited.Commit(ctx, f.editor, b, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: "originals/again.png", Blob: blobOf(png(1))}}); code(err) != media.CodeNotUploaded {
+	if _, err := unlimited.Commit(ctx, f.editor, b, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: "originals/again.png", Blob: page.Blob}}); code(err) != media.CodeNotUploaded {
 		t.Fatalf("a put naming a blob due for cleanup: %v", err)
 	}
-	if _, err := unlimited.Commit(ctx, f.editor, b, uuid.NewString(), copyOf("originals/1.png")); err != nil {
+	copied, err = unlimited.Commit(ctx, f.editor, b, uuid.NewString(), copyOf("originals/1.png"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if obj, err := f.env.Store.Head(ctx, one); err != nil || !obj.LastModified.After(old.LastModified) {
-		t.Fatalf("an unprotected blob was reused: %v %v", obj.LastModified, err)
+	next, _ := copied.Get("originals/1.png")
+	nextKey, _ := item.Blob(next.Blob)
+	if obj, err := f.env.Store.Head(ctx, nextKey); err != nil || next.Blob == page.Blob || !obj.LastModified.After(old.LastModified) {
+		t.Fatalf("copy reused the old allocation: %v %v", obj, err)
 	}
 }
 
-// An editor view is named by its source, not its bytes: no upload may name
-// it, through presign's "exists" or a put.
+// An editor view owns its bytes but is not an upload: neither presign's
+// "exists" nor a put may adopt it.
 func TestEditorViewIsNotAnUpload(t *testing.T) {
 	f := newFixture(t)
 	f.visible(1)
 	ctx := context.Background()
 	g := f.ref("gallery", 1)
-	m := f.put(g, "cover.png", "image/png", png(1))
-	cover, _ := m.Get("cover.png")
-	view := f.reg.EditorView(cover)
-	item, _ := f.reg.Item(g)
-	key, _ := item.Blob(view)
-	if _, err := f.env.Store.Put(ctx, key, strings.NewReader("view"), 4, media.PutOptions{ContentType: "image/webp"}); err != nil {
-		t.Fatal(err)
-	}
-	p, err := f.up.Presign(ctx, f.editor, media.PresignRequest{Ref: g, Path: "originals/v.webp", Type: "image/webp", Size: 4, SHA256: mustSum(view)})
+	f.put(g, "cover.png", "image/png", png(1))
+	view := f.editorView(g, "cover.png")
+	p, err := f.up.Presign(ctx, f.editor, media.PresignRequest{Ref: g, Path: "originals/v.webp", Type: "image/webp", Size: 11, SHA256: mustSum(view)})
 	if err != nil || p.Exists || p.Blob == view {
 		t.Fatalf("presign offered an editor view: %+v %v", p, err)
 	}
@@ -600,9 +621,11 @@ func TestFrame(t *testing.T) {
 		t.Fatalf("readiness %+v", r)
 	}
 	// The worker grabs it; a new video resets it.
+	frame := f.blob(v, []byte("frame"), "image/png")
 	if _, err := f.ms.EditExisting(ctx, v, func(m *media.Manifest) error {
 		i := m.Find("poster.png")
-		m.Files[i].Blob, m.Files[i].Size, m.Files[i].Frame.Of = blobOf([]byte("frame")), 5, blobOf([]byte("video one"))
+		source, _ := m.Get("source.mp4")
+		m.Files[i].Blob, m.Files[i].Size, m.Files[i].Frame.Of = frame, 5, source.Blob
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -663,8 +686,9 @@ func TestMetaAndRegenerate(t *testing.T) {
 	f.put(g, "originals/1.png", "image/png", png(1))
 	f.produce(g)
 	ctx := context.Background()
+	zip := f.blob(g, []byte("zip"), "application/zip")
 	if _, err := f.ms.EditExisting(ctx, g, func(m *media.Manifest) error {
-		return m.SetOutputs("high/", "zip", []media.File{{Path: "download/pages.zip", Blob: blobOf([]byte("zip")), Type: "application/zip", FP: "x"}})
+		return m.SetOutputs("high/", "zip", []media.File{{Path: "download/pages.zip", Blob: zip, Type: "application/zip", FP: "x"}})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -710,7 +734,7 @@ func TestCommitVerifiesBlobs(t *testing.T) {
 	f.put(g, "originals/1.png", "image/png", png(1))
 	sum := sha256.Sum256(png(1))
 	p, err := f.up.Presign(ctx, f.editor, media.PresignRequest{Ref: g, Path: "originals/again.png", Type: "image/png", Size: int64(len(png(1))), SHA256: sum[:]})
-	if err != nil || !p.Exists || p.Put != nil || p.Blob != blobOf(png(1)) {
+	if err != nil || !p.Exists || p.Put != nil || !matchesBlob(p.Blob, png(1)) || p.Blob != f.fileBlob(g, "originals/1.png") {
 		t.Fatalf("exists: %+v %v", p, err)
 	}
 	if m := f.commit(g, media.Op{Op: media.OpPut, Path: p.Path, Blob: p.Blob}); m.Find(p.Path) < 0 {
@@ -732,7 +756,7 @@ func TestNamedAndHiddenNewItem(t *testing.T) {
 	if u, _ := m.Get(p); !m.Hidden || u.Pending != nil {
 		t.Fatalf("hidden new item: hidden %v pending %v", m.Hidden, u.Pending)
 	}
-	if _, err := f.up.Commit(context.Background(), f.editor, post, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: "inline/mine.png", Blob: blobOf(png(1))}}); code(err) != media.CodeInvalid {
+	if _, err := f.up.Commit(context.Background(), f.editor, post, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: "inline/mine.png", Blob: f.fileBlob(post, p)}}); code(err) != media.CodeInvalid {
 		t.Fatalf("a client-chosen name: %v", err)
 	}
 }
@@ -762,10 +786,10 @@ func TestIngest(t *testing.T) {
 		t.Fatalf("single ingest %+v %v", small, err)
 	}
 	m := f.place(g)
-	if u, _ := m.Get("import/legacy.zip"); u.Blob != blobOf(body) || u.Staged != "" {
+	if u, _ := m.Get("import/legacy.zip"); !matchesBlob(u.Blob, body) || u.Staged != "" {
 		t.Fatalf("placed %+v", u)
 	}
-	if u, _ := m.Get("originals/1.png"); u.Blob != blobOf(png(1)) {
+	if u, _ := m.Get("originals/1.png"); !matchesBlob(u.Blob, png(1)) {
 		t.Fatalf("placed %+v", u)
 	}
 	item, _ := f.reg.Item(g)

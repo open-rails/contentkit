@@ -160,9 +160,8 @@ func (e *tooLargeError) Error() string {
 func (e *tooLargeError) Is(target error) bool { return target == ErrManifestTooLarge }
 
 // SyncPublic deletes the public names the manifest does not keep
-// (Kind.PublicKept), under the manifest lock. Cleanup is bounded to one
-// minute; deleted keys are returned for cache purging, including partial
-// success on failure.
+// (Kind.PublicKept). Cleanup is bounded to one minute. Selected keys are
+// returned for cache purging; failed deletes remain in the recovery journal.
 func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
@@ -170,60 +169,20 @@ func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) (
 	if err != nil {
 		return nil, err
 	}
-	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	if _, _, err := m.recoverLocked(ctx, item); err != nil {
-		return nil, err
-	}
-	cur, _, err := m.get(ctx, item.ManifestKey())
-	if errors.Is(err, ErrNotFound) {
-		cur = &Manifest{}
-	} else if err != nil {
-		return nil, err
-	}
-	if err := m.journal.checkReceipt(ctx, item, cur.Receipt); err != nil {
-		return nil, err
-	}
-	want := map[string]bool{}
-	for _, name := range item.Kind().PublicKept(cur) {
-		key, err := item.Public(name)
-		if err != nil {
-			return nil, err
-		}
-		want[key] = true
-	}
 	var keys []string
-	for obj, err := range m.store.List(ctx, item.PublicPrefix()) {
-		if err != nil {
-			return nil, err
-		}
-		if !want[obj.Key] {
-			keys = append(keys, obj.Key)
-		}
-	}
-	g, deleteCtx := errgroup.WithContext(ctx)
-	g.SetLimit(8)
-	var mu sync.Mutex
-	var gone []string
-	for _, key := range keys {
-		if deleteCtx.Err() != nil {
-			break
-		}
-		g.Go(func() error {
-			if err := m.store.Delete(deleteCtx, key); err != nil && !errors.Is(err, ErrNotFound) {
-				return err
+	err = m.cleanup(ctx, item, func(cur *Manifest, _ bool) (journalEffects, error) {
+		want := item.Kind().PublicKept(cur)
+		for obj, err := range m.store.List(ctx, item.PublicPrefix()) {
+			if err != nil {
+				return journalEffects{}, err
 			}
-			mu.Lock()
-			gone = append(gone, key)
-			mu.Unlock()
-			return nil
-		})
-	}
-	err = errors.Join(g.Wait(), ctx.Err())
-	return gone, err
+			if !slices.Contains(want, strings.TrimPrefix(obj.Key, item.PublicPrefix())) {
+				keys = append(keys, obj.Key)
+			}
+		}
+		return journalEffects{Public: keys}, nil
+	})
+	return keys, err
 }
 
 // Unreferenced selects what DropUnreferenced deletes.
@@ -247,6 +206,15 @@ func (m *Manifests) DropUnreferenced(ctx context.Context, ref contentref.Content
 	if err != nil {
 		return err
 	}
+	return m.cleanup(ctx, item, func(cur *Manifest, _ bool) (journalEffects, error) {
+		keys, err := m.unreferenced(ctx, item, cur, u)
+		return journalEffects{Private: keys}, err
+	})
+}
+
+// cleanup owns a journal lease before selecting targets. Retirement and its
+// recoverable exact-key effects commit together before any DELETE is sent.
+func (m *Manifests) cleanup(ctx context.Context, item Item, selectKeys func(*Manifest, bool) (journalEffects, error)) (err error) {
 	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
 	if err != nil {
 		return err
@@ -255,30 +223,34 @@ func (m *Manifests) DropUnreferenced(ctx context.Context, ref contentref.Content
 	if _, _, err := m.recoverLocked(ctx, item); err != nil {
 		return err
 	}
+	c, err := m.journal.begin(ctx, manifestCommit{ID: uuid.New(), Ref: item.Ref(), Folder: item.Prefix(),
+		Fingerprint: sha256.Sum256([]byte("internal-media-cleanup")), Effects: journalEffects{Cleanup: true}})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if c.State == "open" {
+			err = errors.Join(err, m.journal.finish(context.WithoutCancel(ctx), c, false))
+		}
+	}()
 	cur, _, err := m.get(ctx, item.ManifestKey())
+	exists := err == nil
 	if errors.Is(err, ErrNotFound) {
-		return nil // deleted: the folder deletion takes everything
+		cur = &Manifest{}
 	} else if err != nil {
 		return err
 	}
 	if err := m.journal.checkReceipt(ctx, item, cur.Receipt); err != nil {
 		return err
 	}
-	keys, err := m.unreferenced(ctx, item, cur, u)
+	effects, err := selectKeys(cur, exists)
 	if err != nil {
 		return err
 	}
-	g, ctx := errgroup.WithContext(ctx)
-	g.SetLimit(8)
-	for _, key := range keys {
-		g.Go(func() error {
-			if err := m.store.Delete(ctx, key); err != nil && !errors.Is(err, ErrNotFound) {
-				return err
-			}
-			return nil
-		})
+	if err := m.journal.prepareCleanup(ctx, &c, effects); err != nil {
+		return err
 	}
-	return g.Wait()
+	return m.finishCommit(ctx, item, c, true)
 }
 
 // unreferenced selects exact targets while the caller holds the folder lock.
@@ -303,6 +275,15 @@ func (m *Manifests) unreferenced(ctx context.Context, item Item, cur *Manifest, 
 				keys = append(keys, obj.Key)
 			}
 		}
+		allocated, err := m.allocationKeys(ctx, item)
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range allocated {
+			if strings.HasPrefix(key, item.PrivatePrefix()) && !keep[key] && !slices.Contains(keys, key) {
+				keys = append(keys, key)
+			}
+		}
 	} else {
 		keep := m.reg.editorViews(cur)
 		for _, b := range cur.Blobs() {
@@ -317,10 +298,9 @@ func (m *Manifests) unreferenced(ctx context.Context, item Item, cur *Manifest, 
 	return keys, nil
 }
 
-// DeleteUnreferenced deletes the blobs among blobs that cur does not
-// reference. A job calls it from its closing edit (the manifest lock held)
-// for what it wrote for a source that is gone, so a taken-down upload's
-// outputs do not come back under their old names.
+// DeleteUnreferenced records cleanup in a worker's closing edit. The edit's
+// journal retires and deletes these exact targets after its manifest write;
+// the callback itself never deletes from a potentially stale snapshot.
 func (m *Manifests) DeleteUnreferenced(ctx context.Context, item Item, cur *Manifest, blobs []string) error {
 	if len(blobs) == 0 {
 		return nil
@@ -329,15 +309,12 @@ func (m *Manifests) DeleteUnreferenced(ctx context.Context, item Item, cur *Mani
 	for _, b := range cur.Blobs() {
 		keep[b] = true
 	}
-	var errs []error
 	for _, b := range blobs {
 		if key, err := item.Blob(b); err == nil && !keep[b] {
-			if err := m.store.Delete(ctx, key); err != nil && !errors.Is(err, ErrNotFound) {
-				errs = append(errs, err)
-			}
+			cur.cleanup = append(cur.cleanup, key)
 		}
 	}
-	return errors.Join(errs...)
+	return nil
 }
 
 func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existing bool, b bound, fn func(*Manifest) error) (*Manifest, error) {
@@ -440,6 +417,24 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	if err := next.Validate(); err != nil {
 		return nil, false, err
 	}
+	var allocations []string
+	for _, name := range next.Blobs() {
+		key, _ := item.Blob(name)
+		allocations = append(allocations, key)
+	}
+	for _, name := range next.StagedNames() {
+		key, _ := item.Staged(name)
+		allocations = append(allocations, key)
+	}
+	if err := m.checkAllocations(ctx, item, allocations); err != nil {
+		return nil, false, err
+	}
+	for _, key := range next.cleanup {
+		if !slices.Contains(allocations, key) {
+			mutation.effects.Private = append(mutation.effects.Private, key)
+		}
+	}
+	next.cleanup = nil
 	if etag != "" && reflect.DeepEqual(mutation.effects, journalEffects{}) && next.Hidden == cur.Hidden && next.Full == cur.Full && next.Deficit == cur.Deficit && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) {
 		return cur, false, nil
 	}
@@ -553,6 +548,9 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 	if err != nil || commit == nil {
 		return nil, false, err
 	}
+	if commit.Effects.Cleanup {
+		return nil, true, m.finishCommit(ctx, item, *commit, true)
+	}
 	for range m.retries {
 		cur, etag, err := m.get(ctx, item.ManifestKey())
 		if errors.Is(err, ErrNotFound) {
@@ -601,6 +599,9 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 // after cleanup succeeds; the pending receipt remains discoverable on failure.
 func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifestCommit, applied bool) error {
 	if applied {
+		if err := m.retireAllocations(ctx, item, commit.Effects.Private); err != nil {
+			return err
+		}
 		g, deleteCtx := errgroup.WithContext(ctx)
 		g.SetLimit(8)
 		for _, key := range append(slices.Clone(commit.Effects.Public), commit.Effects.Private...) {
@@ -735,27 +736,13 @@ func (m *Manifests) DropIfDeleted(ctx context.Context, ref contentref.ContentRef
 	if err != nil {
 		return err
 	}
-	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	if _, _, err := m.get(ctx, item.ManifestKey()); err == nil {
-		return nil
-	} else if !errors.Is(err, ErrNotFound) {
-		return err
-	}
-	var errs []error
-	for _, b := range blobs {
-		key, err := item.Blob(b)
-		if err != nil {
-			return err
+	return m.cleanup(ctx, item, func(cur *Manifest, exists bool) (journalEffects, error) {
+		if exists {
+			return journalEffects{}, nil
 		}
-		if err := m.store.Delete(ctx, key); err != nil && !errors.Is(err, ErrNotFound) {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
+		keys, err := m.unreferenced(ctx, item, cur, Unreferenced{Blobs: blobs})
+		return journalEffects{Private: keys}, err
+	})
 }
 
 // manifestCache keeps decoded manifests by key, bounded by their JSON size

@@ -1,16 +1,17 @@
 package image_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"image/color"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // headHook runs before and after around each Head.
@@ -39,9 +40,8 @@ func (e *env) exists(t *testing.T, key string) bool {
 	return err == nil
 }
 
-// Two uploads of the same bytes share their output blob. One is taken down
-// while a pass renders the other, after the pass saw the blob in place: the
-// pass must not record a blob that is gone, and renders it again.
+// Identical uploads have independent output allocations. Taking down one
+// while the other renders cannot erase the other's newly written output.
 func TestSharedOutputTakenDownMidPass(t *testing.T) {
 	e := newEnv(t, nil)
 	ctx := context.Background()
@@ -54,21 +54,22 @@ func TestSharedOutputTakenDownMidPass(t *testing.T) {
 	shared, _ := item.Blob(e.file(t, ref, "web/a.webp").Blob)
 	var once sync.Once
 	var takedown error
-	var heads []string
-	p := e.processor(t, headHook{Store: e.Store, after: func(key string) {
-		heads = append(heads, key)
-		if key == shared {
+	var written string
+	p := e.processor(t, &hooked{Store: e.Store, onPut: func(key string, put func() error) error {
+		if strings.HasPrefix(key, item.PrivatePrefix()) {
 			once.Do(func() {
+				written = key
 				_, takedown = e.up.Commit(ctx, e.editor, ref, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: "files/a.png", Takedown: true}})
 			})
 		}
+		return put()
 	}})
 	err := p.Process(ctx, media.ProcessJob{Ref: ref})
 	if takedown != nil {
 		t.Fatal(takedown)
 	}
-	if !slices.Contains(heads, shared) {
-		t.Fatalf("the pass did not produce the shared output %s: %v (%v)", shared, heads, err)
+	if written == "" || written == shared || e.exists(t, shared) {
+		t.Fatalf("the takedown did not isolate output allocations: old=%s new=%s (%v)", shared, written, err)
 	}
 	if err != nil {
 		e.process(t, media.ProcessJob{Ref: ref}) // the job's retry; usually the next pass already rendered it again
@@ -85,9 +86,8 @@ func TestSharedOutputTakenDownMidPass(t *testing.T) {
 }
 
 // An upload taken down while a pass re-renders it leaves nothing: the pass
-// writes its outputs again after the takedown's deletes (the same bytes, the
-// same names), and its closing edit deletes them, so old URLs do not come
-// back.
+// writes fresh outputs after the takedown's deletes, and its closing edit
+// retires those too, so old URLs do not come back.
 func TestTakedownMidPassLeavesNoOutput(t *testing.T) {
 	e := newEnv(t, nil)
 	ctx := context.Background()
@@ -95,17 +95,19 @@ func TestTakedownMidPassLeavesNoOutput(t *testing.T) {
 	item, _ := e.reg.Item(ref)
 	e.put(t, ref, "originals/a.png", "image/png", solid(t, 80, 80, color.RGBA{30, 200, 30, 255}))
 	e.process(t, media.ProcessJob{Ref: ref})
-	source, _ := item.Blob(e.file(t, ref, "originals/a.png").Blob)
+	highSum, _ := layout.BlobDigest(e.file(t, ref, "high/a.webp").Blob)
+	highPrefix := item.PrivatePrefix() + layout.SHA256Name(highSum) + "-"
 	var once sync.Once
 	var takedown error
 	fired := false
-	p := e.processor(t, headHook{Store: e.Store, before: func(key string) {
-		if strings.HasPrefix(key, item.PrivatePrefix()) && key != source {
-			once.Do(func() { // the pass is about to write its first output
+	p := e.processor(t, &hooked{Store: e.Store, onPut: func(key string, put func() error) error {
+		if strings.HasPrefix(key, highPrefix) {
+			once.Do(func() { // all source reads are done; the high rendition is about to land
 				fired = true
 				_, takedown = e.up.Commit(ctx, e.editor, ref, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: "originals/a.png", Takedown: true}})
 			})
 		}
+		return put()
 	}})
 	if err := p.Process(ctx, media.ProcessJob{Ref: ref, Force: true}); err != nil {
 		t.Fatal(err)
@@ -121,10 +123,8 @@ func TestTakedownMidPassLeavesNoOutput(t *testing.T) {
 	}
 }
 
-// A decoy cannot waste a pass: an upload is recorded with a twin's output
-// blob, the twin is taken down after the pass saw the blob in place, and the
-// pass keeps everything else it rendered. Only that one upload is rendered
-// again.
+// Taking down an identical upload during rendering does not throw away the
+// pass or force unrelated sources to be read again.
 func TestDecoyTakedownCostsOneUpload(t *testing.T) {
 	e := newEnv(t, nil)
 	ctx := context.Background()
@@ -133,7 +133,6 @@ func TestDecoyTakedownCostsOneUpload(t *testing.T) {
 	decoy := solid(t, 80, 80, color.RGBA{200, 30, 30, 255})
 	e.put(t, ref, "files/p.png", "image/png", decoy)
 	e.process(t, media.ProcessJob{Ref: ref})
-	shared, _ := item.Blob(e.file(t, ref, "web/p.webp").Blob)
 	e.put(t, ref, "files/q.png", "image/png", decoy)
 	others := []string{"files/o0.png", "files/o1.png", "files/o2.png", "files/o3.png"}
 	for i, path := range others {
@@ -149,20 +148,17 @@ func TestDecoyTakedownCostsOneUpload(t *testing.T) {
 	var once sync.Once
 	var takedown error
 	fired := false
-	p := e.processor(t, headHook{
-		Store: &hooked{Store: e.Store, onGet: func(key string) {
-			mu.Lock()
-			reads[key]++
-			mu.Unlock()
-		}},
-		after: func(key string) {
-			if key == shared {
-				once.Do(func() {
-					fired = true
-					_, takedown = e.up.Commit(ctx, e.editor, ref, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: "files/p.png", Takedown: true}})
-				})
-			}
-		}})
+	p := e.processor(t, &hooked{Store: e.Store, onGet: func(key string) {
+		mu.Lock()
+		reads[key]++
+		mu.Unlock()
+		if key == twin {
+			once.Do(func() {
+				fired = true
+				_, takedown = e.up.Commit(ctx, e.editor, ref, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: "files/p.png", Takedown: true}})
+			})
+		}
+	}})
 	sources := map[string]string{}
 	for _, path := range others {
 		sources[path] = source(path)
@@ -189,8 +185,8 @@ func TestDecoyTakedownCostsOneUpload(t *testing.T) {
 			t.Fatalf("%s was rendered %d times: the pass was thrown away", path, reads[key])
 		}
 	}
-	if reads[twin] != 2 {
-		t.Fatalf("the twin was rendered %d times, want once more", reads[twin])
+	if reads[twin] != 1 {
+		t.Fatalf("the twin was rendered %d times, want once", reads[twin])
 	}
 }
 
@@ -211,12 +207,14 @@ func TestTakedownAndPutMidPassLeavesNoOutput(t *testing.T) {
 		key, _ := item.Blob(e.file(t, ref, path).Blob)
 		old = append(old, key)
 	}
+	highSum, _ := layout.BlobDigest(e.file(t, ref, "high/a.webp").Blob)
+	highPrefix := item.PrivatePrefix() + layout.SHA256Name(highSum) + "-"
 	var once sync.Once
 	var replaced error
 	fired := false
-	p := e.processor(t, headHook{Store: e.Store, before: func(key string) {
-		if key == old[1] {
-			once.Do(func() { // the pass is about to write the old source's first output
+	p := e.processor(t, &hooked{Store: e.Store, onPut: func(key string, put func() error) error {
+		if strings.HasPrefix(key, highPrefix) {
+			once.Do(func() { // the old source's high rendition is encoded but not yet written
 				fired = true
 				_, replaced = e.up.Commit(ctx, e.editor, ref, uuid.NewString(), []media.Op{
 					{Op: media.OpRemove, Path: "originals/a.png", Takedown: true},
@@ -224,6 +222,7 @@ func TestTakedownAndPutMidPassLeavesNoOutput(t *testing.T) {
 				})
 			})
 		}
+		return put()
 	}})
 	if err := p.Process(ctx, media.ProcessJob{Ref: ref, Force: true}); err != nil {
 		t.Fatal(err)
@@ -237,7 +236,7 @@ func TestTakedownAndPutMidPassLeavesNoOutput(t *testing.T) {
 		}
 	}
 	m := e.manifest(t, ref)
-	if a, z := m.Outputs("originals/a.png", "high"), m.Outputs("originals/z.png", "high"); len(a) != 1 || len(z) != 1 || a[0].Blob != z[0].Blob {
+	if a, z := m.Outputs("originals/a.png", "high"), m.Outputs("originals/z.png", "high"); len(a) != 1 || len(z) != 1 || a[0].Blob == z[0].Blob || !bytes.Equal(e.blob(t, ref, a[0]), e.blob(t, ref, z[0])) {
 		t.Fatalf("the new source was not rendered: %+v %+v", a, z)
 	}
 	for _, b := range m.Blobs() {

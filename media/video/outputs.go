@@ -208,9 +208,11 @@ func (e *Encoder) publish(ctx context.Context, item media.Item, outs []media.Fil
 	if testBeforePublish != nil {
 		testBeforePublish()
 	}
+	var gone bool
 	_, err := e.ms.EditExisting(ctx, item.Ref(), func(m *media.Manifest) error {
 		if err := edit(m); errors.Is(err, errGone) {
-			return errors.Join(err, e.ms.DeleteUnreferenced(ctx, item, m, blobs(outs...)))
+			gone = true
+			return e.ms.DeleteUnreferenced(ctx, item, m, blobs(outs...))
 		} else if err != nil {
 			return err
 		}
@@ -218,6 +220,9 @@ func (e *Encoder) publish(ctx context.Context, item media.Item, outs []media.Fil
 	})
 	if errors.Is(err, media.ErrNotFound) {
 		return e.ms.DropIfDeleted(ctx, item.Ref(), blobs(outs...))
+	}
+	if err == nil && gone {
+		return errGone
 	}
 	return err
 }

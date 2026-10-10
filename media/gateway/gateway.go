@@ -4,7 +4,7 @@
 //
 //	/v1/{ns}/{kind}/{id}/public/{name}         to anyone; when missing, {ns}/{kind}/_default/public/{name}
 //	                                           if a Default declares the name
-//	/v1/{ns}/{kind}/{id}/private/sha256-{hex}  with the item's unexpired token (?t= or an mt cookie);
+//	/v1/{ns}/{kind}/{id}/private/sha256-{hex}-{uuid}  with the item's unexpired token (?t= or an mt cookie);
 //	                                           ?dl={name} serves it as a download under that name
 //
 // A token opens every private file of its item or none. Everything else and
@@ -183,7 +183,7 @@ func (h *Handler) parse(r *http.Request) (object, bool) {
 	if strings.HasPrefix(o.id, "_") || !slices.Contains(h.cfg.Hosts[strings.ToLower(host)], o.ns) {
 		return object{}, false
 	}
-	return o, o.area == "public" && layout.ValidPublicName(o.name) || o.area == "private" && layout.ValidHashName(o.name)
+	return o, o.area == "public" && layout.ValidPublicName(o.name) || o.area == "private" && layout.ValidBlobName(o.name)
 }
 
 var errNoToken = errors.New("no token")

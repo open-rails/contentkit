@@ -522,11 +522,11 @@ const (
 // fields too (its label is at most 120 bytes of JSON) with the file name
 // under its directory.
 const (
-	outputEntryBytes  = 320
-	trackEntryBytes   = 640 + 24
-	blobFieldsBytes   = 256 // what a staged upload or a frame gains: its blob, size and dimensions
-	measuredBytes     = 48  // an upload's w and h, or dur, once measured
-	failureEntryBytes = 768 // a Failure: its key, a message of maxFailureBytes, code and details
+	outputEntryBytes  = 357           // includes the private allocation UUID
+	trackEntryBytes   = 640 + 24 + 74 // fresh allocation UUIDs in both Blob and Track.Index
+	blobFieldsBytes   = 256           // what a staged upload or a frame gains: its blob, size and dimensions
+	measuredBytes     = 48            // an upload's w and h, or dur, once measured
+	failureEntryBytes = 768           // a Failure: its key, a message of maxFailureBytes, code and details
 )
 
 // Tracks per source a video's HLS ladder carries beyond its renditions: the
@@ -560,6 +560,9 @@ func (k *Kind) Unwritten(m *Manifest) int64 {
 		var out int64
 		if f.Blob == "" {
 			out += blobFieldsBytes
+		}
+		if isImageType(f.Type) && f.Editor == nil {
+			out += 256 // an owned editor image and its source/spec fingerprint
 		}
 		from := jsonLen(f.Path)
 		public := k.PublicFor(f.Path)

@@ -209,7 +209,7 @@ func TestReplacedSource(t *testing.T) {
 	defer video.SetBeforePublish(func() {
 		mu.Lock()
 		defer mu.Unlock()
-		if m, _, err := e.ms.Get(e.ctx, e.ref); err == nil && atPublish == nil && second != "" && sourceBlob(m) == second {
+		if m, _, err := e.ms.Get(e.ctx, e.ref); err == nil && atPublish == nil && second != "" && strings.HasPrefix(sourceBlob(m), second+"-") {
 			atPublish = m
 		}
 	})()

@@ -1,6 +1,7 @@
 package media
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -24,7 +25,7 @@ import (
 // Upload size rules. An upload lands at a staged name in temp/ (u-{uuid}):
 // up to MaxSinglePut as one checksum-bound PUT, larger in parts of
 // MinPartSize up to MaxPartSize (the last may be smaller). Once committed,
-// the media worker hashes it and places it at private/sha256-{hex}
+// the media worker hashes it and places it at private/sha256-{hex}-{uuid}
 // (Manifests.Place), so a blob's bytes always hash to its name.
 const (
 	MaxSinglePut = 64 << 20
@@ -168,25 +169,34 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequ
 		return Presigned{}, ErrConditionalPutRequired
 	}
 	out := Presigned{Path: path, ProcessOnUpload: u.o.ProcessOnUpload}
-	// An identical blob already in the folder needs no upload, unless the
-	// sweep may soon take it. Anything else is staged: nothing a client
-	// sends is ever written under a blob name.
-	blob := layout.SHA256Name(r.SHA256)
-	key, _ := item.Blob(blob)
-	if obj, err := u.o.Store.Head(ctx, key); err == nil && obj.Size == r.Size && obj.ContentType == r.Type {
-		m, err := u.current(ctx, item)
-		if err != nil {
+	// An identical current allocation needs no upload. Unreferenced objects
+	// are never reused. Anything else is staged: nothing a client sends is
+	// ever written under a private blob name.
+	current, err := u.current(ctx, item)
+	if err != nil {
+		return Presigned{}, err
+	}
+	views := u.reg.editorViews(current)
+	for _, blob := range current.Blobs() {
+		sum, ok := layout.BlobDigest(blob)
+		if !ok || !bytes.Equal(sum, r.SHA256) || views[blob] {
+			continue
+		}
+		key, _ := item.Blob(blob)
+		obj, err := u.o.Store.Head(ctx, key)
+		if err != nil && !errors.Is(err, ErrNotFound) {
 			return Presigned{}, err
 		}
-		if u.reusable(m, u.reg.editorViews(m), blob, obj) {
+		if err == nil && obj.Size == r.Size && obj.ContentType == r.Type {
+			if err := u.o.Manifests.checkAllocations(ctx, item, []string{key}); err != nil {
+				return Presigned{}, err
+			}
 			out.Blob, out.Exists = blob, true
 			return out, nil
 		}
-	} else if err != nil && !errors.Is(err, ErrNotFound) {
-		return Presigned{}, err
 	}
 	out.Blob = NewStaged()
-	key, _ = item.Staged(out.Blob)
+	key, _ := item.Staged(out.Blob)
 	res := Reservation{Tenant: r.Ref.TenantID, Uploader: uploaderID(actor), Owner: grant.Owner, Key: key, Size: r.Size}
 	limited := u.o.Limiter != nil && !grant.Exempt
 	if limited {
@@ -194,7 +204,14 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r PresignRequ
 			return Presigned{}, err
 		}
 	}
+	if err := u.o.Manifests.journal.allocate(ctx, item, key); err != nil {
+		if limited {
+			_ = u.o.Limiter.Settle(context.WithoutCancel(ctx), Settlement{Tenant: r.Ref.TenantID, Keys: []string{key}})
+		}
+		return Presigned{}, err
+	}
 	if err := u.presign(ctx, item, key, res.Uploader, r, &out); err != nil {
+		_ = u.o.Manifests.retireAllocations(context.WithoutCancel(ctx), item, []string{key})
 		if limited {
 			_ = u.o.Limiter.Settle(context.WithoutCancel(ctx), Settlement{Tenant: r.Ref.TenantID, Keys: []string{key}})
 		}
@@ -265,6 +282,10 @@ func (u *Uploads) PresignParts(ctx context.Context, actor access.Actor, sealed s
 	if err != nil {
 		return nil, err
 	}
+	item, _ := u.reg.Item(t.Ref)
+	if err := u.o.Manifests.checkAllocations(ctx, item, []string{key}); err != nil {
+		return nil, err
+	}
 	if len(parts) == 0 || len(parts) > 100 {
 		return nil, uploadErr(CodeInvalid, "presign 1 to 100 parts at a time")
 	}
@@ -313,6 +334,10 @@ type UploadedBlob struct {
 func (u *Uploads) Complete(ctx context.Context, actor access.Actor, sealed string) (UploadedBlob, error) {
 	t, key, err := u.open(actor, sealed)
 	if err != nil {
+		return UploadedBlob{}, err
+	}
+	item, _ := u.reg.Item(t.Ref)
+	if err := u.o.Manifests.checkAllocations(ctx, item, []string{key}); err != nil {
 		return UploadedBlob{}, err
 	}
 	done := UploadedBlob{Blob: t.Blob, Type: t.Type, Size: t.Size}
@@ -683,7 +708,13 @@ func (u *Uploads) verify(ctx context.Context, item Item, m *Manifest, names []st
 		} else if err != nil {
 			return nil, err
 		}
-		if layout.ValidHashName(n) && !u.reusable(m, views, n, obj) {
+		if err := u.o.Manifests.checkAllocations(ctx, item, []string{key}); errors.Is(err, ErrAllocationRetired) {
+			missing = append(missing, n)
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		if layout.ValidBlobName(n) && !u.reusable(m, views, n) {
 			missing = append(missing, n)
 			continue
 		}
@@ -696,14 +727,13 @@ func (u *Uploads) verify(ctx context.Context, item Item, m *Manifest, names []st
 	return out, nil
 }
 
-// reusable reports whether an existing blob may be newly referenced: never
-// one of m's editor views (named by their source, not their bytes), else
-// one m references or the sweep cannot take within the commit's margin.
-func (u *Uploads) reusable(m *Manifest, views map[string]bool, blob string, obj Object) bool {
+// reusable accepts only current allocations, excluding editor-only views.
+// An unreferenced allocation must never be adopted after cleanup selected it.
+func (u *Uploads) reusable(m *Manifest, views map[string]bool, blob string) bool {
 	if views[blob] {
 		return false
 	}
-	return time.Now().Add(commitMargin(u.o.Grace)).Before(obj.LastModified.Add(u.o.Grace)) || slices.Contains(m.Blobs(), blob)
+	return slices.Contains(m.Blobs(), blob)
 }
 
 // current is item's manifest, empty when it has none.
@@ -721,19 +751,16 @@ func (u *Uploads) current(ctx context.Context, item Item) (*Manifest, error) {
 func commitMargin(grace time.Duration) time.Duration { return min(grace/4, time.Hour) }
 
 // copies reads each copy op's source upload and outputs from the other item
-// and copies their blobs into item, keyed by op index. An identical blob the
-// sweep cannot take first is reused, as verify does for puts; any other is
-// copied (over an old one: the same bytes, refreshed). Each copy op that
+// and copies their blobs into fresh destination allocations, keyed by op index.
+// Each copy op that
 // moves bytes is reserved once, like an upload of its source (rate limits
 // and pending quota; the commit charges it), so a failed commit leaves no
 // unmetered bytes; it returns the reserved keys.
 func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGrant, item Item, ops []Op) (map[int][]File, []string, error) {
 	out := map[int][]File{}
 	var reserved []string
-	seen := map[string]bool{}
+	copiedNames := map[string]string{}
 	limited := u.o.Limiter != nil && !grant.Exempt
-	var dst *Manifest
-	var views map[string]bool
 	for n, op := range ops {
 		if op.Op != OpCopy {
 			continue
@@ -763,30 +790,25 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 		}
 		var todo []string
 		for _, b := range fileBlobs(files) {
-			dstKey, _ := item.Blob(b)
-			if seen[dstKey] {
+			srcKey, _ := from.Blob(b)
+			if _, seen := copiedNames[srcKey]; seen {
 				continue
 			}
-			seen[dstKey] = true
-			if obj, err := u.o.Store.Head(ctx, dstKey); err == nil {
-				if dst == nil {
-					if dst, err = u.current(ctx, item); err != nil {
-						return nil, nil, err
-					}
-					views = u.reg.editorViews(dst)
-				}
-				if u.reusable(dst, views, b, obj) {
-					continue
-				}
-			} else if !errors.Is(err, ErrNotFound) {
+			sum, ok := layout.BlobDigest(b)
+			if !ok {
+				return nil, nil, fmt.Errorf("media: invalid copy source %q", b)
+			}
+			name, err := u.o.Manifests.NewBlob(ctx, item.Ref(), sum)
+			if err != nil {
 				return nil, nil, err
 			}
+			copiedNames[srcKey] = name
 			todo = append(todo, b)
 		}
 		// One reservation per copy, for the upload's bytes: what the commit
 		// charges (outputs are not charged).
 		if limited && len(todo) > 0 {
-			key, _ := item.Blob(files[0].Blob)
+			key, _ := item.Blob(copiedNames[from.PrivatePrefix()+todo[0]])
 			if err := u.o.Limiter.Reserve(ctx, Reservation{Tenant: item.Ref().TenantID, Uploader: uploaderID(actor),
 				Owner: grant.Owner, Key: key, Size: files[0].Size}); err != nil {
 				return nil, nil, err
@@ -795,9 +817,20 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 		}
 		for _, b := range todo {
 			srcKey, _ := from.Blob(b)
-			dstKey, _ := item.Blob(b)
+			dstKey, _ := item.Blob(copiedNames[srcKey])
 			if _, err := u.o.Store.Copy(ctx, srcKey, dstKey, CopyOptions{}); err != nil {
 				return nil, nil, fmt.Errorf("media: copy %s: %w", srcKey, err)
+			}
+		}
+		for i := range files {
+			files[i].Editor = nil // editor views belong to their original item's allocation
+			if !files[i].Gone && files[i].Blob != "" {
+				files[i].Blob = copiedNames[from.PrivatePrefix()+files[i].Blob]
+			}
+			if files[i].Track != nil && files[i].Track.Index != "" {
+				track := *files[i].Track
+				track.Index = copiedNames[from.PrivatePrefix()+track.Index]
+				files[i].Track = &track
 			}
 		}
 		out[n] = files

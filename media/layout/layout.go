@@ -2,7 +2,7 @@
 // gateway can classify paths without importing the media runtime:
 //
 //	{namespace}/{kind}/{id}/manifest.json         gzip JSON; never served
-//	                       /private/sha256-{hex}  every blob: uploads, derived files, editor views
+//	                       /private/sha256-{hex}-{uuid}  uploads, derived files, editor views
 //	                       /public/{name}         app-declared names, e.g. cover-460.webp
 //	                       /temp/{name}           in-flight writes and staged uploads (u-{uuid}); never served
 //	{namespace}/{kind}/_default/public/{name}     a public preset's default image
@@ -54,7 +54,7 @@ func Parse(key string) (Key, bool) {
 	switch {
 	case len(rest) == 1 && rest[0] == ManifestName:
 		k.Area = AreaManifest
-	case len(rest) == 2 && rest[0] == AreaPrivate && ValidHashName(rest[1]),
+	case len(rest) == 2 && rest[0] == AreaPrivate && ValidBlobName(rest[1]),
 		len(rest) == 2 && rest[0] == AreaPublic && ValidPublicName(rest[1]),
 		len(rest) == 2 && rest[0] == AreaTemp && ValidSegment(rest[1]):
 		k.Area, k.Name = rest[0], rest[1]
@@ -115,6 +115,26 @@ func ParseSHA256Name(name string) ([]byte, bool) {
 	return sum, err == nil
 }
 
+// BlobName names one physical allocation of SHA-256 bytes. A later write,
+// even of identical bytes, must receive a different allocation UUID.
+func BlobName(sum []byte, allocation string) string { return SHA256Name(sum) + "-" + allocation }
+
+// ValidBlobName accepts only the current private allocation layout.
+func ValidBlobName(name string) bool {
+	_, ok := BlobDigest(name)
+	return ok
+}
+
+// BlobDigest separates the content digest from its canonical allocation UUID.
+func BlobDigest(name string) ([]byte, bool) {
+	const digestEnd = len(SHA256Prefix) + 64
+	if len(name) != digestEnd+37 || name[digestEnd] != '-' || !ValidStagedName(StagedPrefix+name[digestEnd+1:]) ||
+		name[digestEnd+1:] == "00000000-0000-0000-0000-000000000000" {
+		return nil, false
+	}
+	return ParseSHA256Name(name[:digestEnd])
+}
+
 // ValidStagedName accepts "u-{uuid}", a canonical lowercase UUID.
 func ValidStagedName(name string) bool {
 	id, ok := strings.CutPrefix(name, StagedPrefix)
@@ -134,5 +154,5 @@ func ValidStagedName(name string) bool {
 	return true
 }
 
-// SHA256Name names a blob by its digest: "sha256-{hex}".
+// SHA256Name names a digest, not a physical allocation: "sha256-{hex}".
 func SHA256Name(sum []byte) string { return SHA256Prefix + hex.EncodeToString(sum) }

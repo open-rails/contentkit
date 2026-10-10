@@ -71,7 +71,7 @@ func TestSweep(t *testing.T) {
 	g := f.gallery(1, 2)
 	item, _ := f.reg.Item(g)
 	ctx := context.Background()
-	old, _ := item.Blob(blobOf(png(100)))
+	old, _ := item.Blob(f.fileBlob(g, "originals/000.png"))
 	f.put(g, "originals/000.png", "image/png", png(7)) // replaces page 0: its old blob is unreferenced
 	f.produce(g)
 	stray, _ := item.Blob(blobOf([]byte("stray")))
@@ -134,14 +134,14 @@ func TestSweepProgressesUnderEdits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old, _ := item.Blob(blobOf(png(100)))
+	old, _ := item.Blob(f.fileBlob(g, "originals/000.png"))
 	time.Sleep(grace + time.Second)
 	f.put(g, "originals/000.png", "image/png", png(7)) // drops the old blob and edits the manifest just now
 	f.produce(g)
 	if res, err := jobs.Sweep(ctx, g); err != nil || f.exists(old) || !slices.Contains(res.Deleted, old) {
 		t.Fatalf("an old blob survived a fresh edit: %+v %v", res, err)
 	}
-	young, _ := item.Blob(blobOf(png(7)))
+	young, _ := item.Blob(f.fileBlob(g, "originals/000.png"))
 	f.put(g, "originals/000.png", "image/png", png(8))
 	f.produce(g)
 	if res, err := jobs.Sweep(ctx, g); err != nil || !f.exists(young) || res.Wait <= 0 || res.Wait > grace+time.Second {
@@ -178,21 +178,19 @@ func TestTakedown(t *testing.T) {
 	item, _ := f.reg.Item(g)
 	ctx := context.Background()
 	staff := access.Actor{ID: "staff", Kind: "user"}
+	earlier, _ := item.Blob(f.fileBlob(g, "originals/000.png"))
 	f.put(g, "originals/000.png", "image/png", png(7))   // page 0's first version is unreferenced
 	f.put(g, "originals/003.png", "image/png", png(101)) // the same bytes as page 1
 	f.produce(g)
 	m, _, _ := f.ms.Get(ctx, g)
-	blob := func(body []byte) string { key, _ := item.Blob(blobOf(body)); return key }
 	view := func(path string) string {
-		u, _ := m.Get(path)
-		key, _ := item.Blob(f.reg.EditorView(u))
-		f.object(key, "editor view")
+		key, _ := item.Blob(f.editorView(g, path))
 		return key
 	}
-	earlier, page0, page1 := blob(png(100)), blob(png(7)), blob(png(101))
+	page0, _ := item.Blob(f.fileBlob(g, "originals/000.png"))
+	page1, _ := item.Blob(f.fileBlob(g, "originals/001.png"))
 	view0, view2 := view("originals/000.png"), view("originals/002.png")
-	unrecorded := blob([]byte("an output a job has not recorded yet"))
-	f.object(unrecorded, "unrecorded")
+	unrecorded, _ := item.Blob(f.blob(g, []byte("an output a job has not recorded yet"), "image/webp"))
 	f.q.take()
 	m = f.commit(g, media.Op{Op: media.OpRemove, Path: "originals/000.png", Takedown: true},
 		media.Op{Op: media.OpRemove, Path: "originals/001.png", Takedown: true})
@@ -218,7 +216,7 @@ func TestTakedown(t *testing.T) {
 	if _, err := f.up.Commit(ctx, staff, g, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: "originals/000.png", Takedown: true}}); err != nil {
 		t.Fatal(err)
 	}
-	if f.exists(view2) || f.exists(unrecorded) || f.exists(earlier) || !f.exists(page1) {
+	if !f.exists(view2) || f.exists(unrecorded) || f.exists(earlier) || !f.exists(page1) {
 		t.Fatalf("an exempt takedown: editor view kept %v, unrecorded output %v, earlier version %v; referenced blob kept %v",
 			f.exists(view2), f.exists(unrecorded), f.exists(earlier), f.exists(page1))
 	}
@@ -264,13 +262,14 @@ func TestTakedownFrames(t *testing.T) {
 	ctx := context.Background()
 	f.put(v, "source.mp4", "video/mp4", []byte("video one"))
 	f.commit(v, media.Op{Op: media.OpFrame, Path: "poster", T: ptr(3.5)})
-	frame, _ := item.Blob(blobOf([]byte("frame")))
-	f.object(frame, "frame")
+	frameBlob := f.blob(v, []byte("frame"), "image/png")
+	frame, _ := item.Blob(frameBlob)
 	public, _ := item.Public("poster-640.webp")
 	f.object(public, "poster")
 	if _, err := f.ms.EditExisting(ctx, v, func(m *media.Manifest) error {
 		i := m.Find("poster.png")
-		m.Files[i].Blob, m.Files[i].Size, m.Files[i].Frame.Of, m.Files[i].Pending = blobOf([]byte("frame")), 5, blobOf([]byte("video one")), nil
+		source, _ := m.Get("source.mp4")
+		m.Files[i].Blob, m.Files[i].Size, m.Files[i].Frame.Of, m.Files[i].Pending = frameBlob, 5, source.Blob, nil
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -316,7 +315,7 @@ func TestTakedownRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	page0, _ := item.Blob(blobOf(png(100)))
+	page0, _ := item.Blob(f.fileBlob(g, "originals/000.png"))
 	takedown := []media.Op{{Op: media.OpRemove, Path: "originals/000.png", Takedown: true}}
 	f.q.take()
 	store.armed.Store(true)

@@ -22,7 +22,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Recipe versions the image producer: a change re-renders every image output.
@@ -92,6 +91,7 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 	if err != nil {
 		return err
 	}
+	forceZips := job.Force
 	for range 8 {
 		m, _, err := p.c.Manifests.Get(ctx, job.Ref)
 		if errors.Is(err, media.ErrNotFound) {
@@ -106,7 +106,9 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 		if err != nil {
 			return err
 		}
-		zips := p.staleZips(item, m, job)
+		zipJob := job
+		zipJob.Force = forceZips
+		zips := p.staleZips(item, m, zipJob)
 		if m.Full {
 			// No record of a private output or zip fits. Public files still
 			// render when their existing reservation can be replaced without growth.
@@ -121,6 +123,14 @@ func (p *Processor) Process(ctx context.Context, job media.ProcessJob) error {
 				return p.editorViews(ctx, item, m)
 			}
 			return nil
+		}
+		// ZIP inputs must be the published renditions, not the outputs from
+		// the snapshot taken before rendering. A concurrent takedown can
+		// retire that snapshot's allocations while the new ones are written.
+		if len(todo) > 0 {
+			zips = nil
+		} else {
+			forceZips = false
 		}
 		if err := p.pass(ctx, item, m, todo, zips); err != nil {
 			if errors.Is(err, media.ErrManifestTooLarge) {
@@ -617,26 +627,32 @@ func (p *Processor) syncPublic(ctx context.Context, item media.Item) error {
 }
 
 // editorViews renders the missing editor views of the item's image uploads
-// (Config.Editor over the whole oriented source), named by source and spec.
+// (Config.Editor over the whole oriented source), recorded on that source.
 func (p *Processor) editorViews(ctx context.Context, item media.Item, m *media.Manifest) error {
 	want := map[string]media.File{}
 	for _, f := range m.Files {
-		if n := p.reg.EditorView(f); n != "" && f.Fail() == nil {
-			want[n] = f
+		if p.reg.EditorFingerprint(f) != "" && f.Fail() == nil {
+			want[f.Path] = f
 		}
 	}
 	if len(want) == 0 {
 		return nil
 	}
+	have := map[string]bool{}
 	for o, err := range p.c.Store.List(ctx, item.PrivatePrefix()) {
 		if err != nil {
 			return err
 		}
-		delete(want, strings.TrimPrefix(o.Key, item.PrivatePrefix()))
+		have[strings.TrimPrefix(o.Key, item.PrivatePrefix())] = true
+	}
+	for name, f := range want {
+		if have[p.reg.EditorView(f)] {
+			delete(want, name)
+		}
 	}
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(p.c.Workers)
-	for name, f := range want {
+	for _, f := range want {
 		g.Go(func() error {
 			key, _ := item.Blob(f.Blob)
 			src, err := p.read(gctx, key, f, item.Kind())
@@ -650,8 +666,25 @@ func (p *Processor) editorViews(ctx context.Context, item media.Item, m *media.M
 			if err != nil {
 				return nil
 			}
-			dst, _ := item.Blob(name)
-			_, err = p.c.Store.Put(gctx, dst, bytes.NewReader(out), int64(len(out)), media.PutOptions{ContentType: "image/webp"})
+			blob, err := p.putBlob(gctx, item, bytes.NewReader(out), int64(len(out)), sha(out), "image/webp")
+			if err != nil {
+				return err
+			}
+			_, err = p.c.Manifests.EditExisting(gctx, item.Ref(), func(cur *media.Manifest) error {
+				i := cur.Find(f.Path)
+				if i < 0 || cur.Files[i].Blob != f.Blob || cur.Files[i].Gone {
+					return p.c.Manifests.DeleteUnreferenced(gctx, item, cur, []string{blob})
+				}
+				key, _ := item.Blob(blob)
+				if _, err := p.c.Store.Head(gctx, key); err != nil {
+					return err
+				}
+				cur.Files[i].Editor = &media.EditorImage{Blob: blob, FP: p.reg.EditorFingerprint(f)}
+				return nil
+			})
+			if errors.Is(err, media.ErrNotFound) {
+				return p.c.Manifests.DropIfDeleted(gctx, item.Ref(), []string{blob})
+			}
 			return err
 		})
 	}
@@ -662,16 +695,14 @@ func (p *Processor) rules(animation media.Animation) rules {
 	return rules{maxPixels: p.c.MaxPixels, maxFrames: p.c.MaxFrames, maxSeconds: p.c.MaxAnimationSeconds, animation: animation}
 }
 
-// putBlob stores an immutable blob at private/{sha256} unless it exists.
+// putBlob records ownership and writes one immutable private allocation.
 func (p *Processor) putBlob(ctx context.Context, item media.Item, body io.Reader, size int64, sum []byte, contentType string) (string, error) {
-	name := layout.SHA256Name(sum)
-	key, err := item.Blob(name)
+	name, err := p.c.Manifests.NewBlob(ctx, item.Ref(), sum)
 	if err != nil {
 		return "", err
 	}
-	if obj, err := p.c.Store.Head(ctx, key); err == nil && obj.Size == size {
-		return name, nil
-	} else if err != nil && !errors.Is(err, media.ErrNotFound) {
+	key, err := item.Blob(name)
+	if err != nil {
 		return "", err
 	}
 	opts := media.PutOptions{ContentType: contentType, ChecksumSHA256: sum}

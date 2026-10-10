@@ -113,10 +113,16 @@ func (w *standIn) process(ctx context.Context, j media.ProcessJob) error {
 			if f, err = w.settle(ctx, item, m, f); err != nil {
 				return err
 			}
-			if view := w.reg.EditorView(f); j.Editor && view != "" {
+			if fp := w.reg.EditorFingerprint(f); j.Editor && fp != "" && w.reg.EditorView(f) == "" {
+				sum, _ := layout.BlobDigest(f.Blob)
+				view, err := w.manifests.NewBlob(ctx, item.Ref(), sum)
+				if err != nil {
+					return err
+				}
 				if err := w.copy(ctx, item, f.Blob, item.PrivatePrefix()+view); err != nil {
 					return err
 				}
+				m.Files[m.Find(f.Path)].Editor = &media.EditorImage{Blob: view, FP: fp}
 			}
 		}
 		// Public names no upload feeds any more go, as the worker's sync does.
@@ -151,7 +157,11 @@ func (w *standIn) settle(ctx context.Context, item media.Item, m *media.Manifest
 			return f, err
 		}
 		sum := sha256.Sum256(b.Bytes())
-		f.Blob, f.Type, f.Size, f.W, f.H = layout.SHA256Name(sum[:]), "image/png", int64(b.Len()), 64, 36
+		blob, err := w.manifests.NewBlob(ctx, item.Ref(), sum[:])
+		if err != nil {
+			return f, err
+		}
+		f.Blob, f.Type, f.Size, f.W, f.H = blob, "image/png", int64(b.Len()), 64, 36
 		f.Frame = &media.Frame{T: f.Frame.T, Auto: f.Frame.Auto, Of: w.video(k, m, f)}
 		key, _ := item.Blob(f.Blob)
 		if _, err := w.store.Put(ctx, key, bytes.NewReader(b.Bytes()), f.Size, media.PutOptions{ContentType: f.Type}); err != nil {

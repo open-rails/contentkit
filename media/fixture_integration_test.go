@@ -39,7 +39,55 @@ func cid(n int) string { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) 
 
 func blobOf(b []byte) string {
 	sum := sha256.Sum256(b)
-	return layout.SHA256Name(sum[:])
+	return layout.BlobName(sum[:], cid(1)) // synthetic names only; real writes use NewBlob
+}
+
+func matchesBlob(name string, body []byte) bool {
+	sum, ok := layout.BlobDigest(name)
+	want := sha256.Sum256(body)
+	return ok && bytes.Equal(sum, want[:])
+}
+
+// blob models a producer: record a fresh allocation before sending bytes.
+func (f *fixture) blob(ref contentref.ContentRef, body []byte, typ string) string {
+	f.t.Helper()
+	sum := sha256.Sum256(body)
+	name, err := f.ms.NewBlob(f.t.Context(), ref, sum[:])
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	item, _ := f.reg.Item(ref)
+	key, _ := item.Blob(name)
+	if _, err := f.env.Store.Put(f.t.Context(), key, bytes.NewReader(body), int64(len(body)), media.PutOptions{ContentType: typ}); err != nil {
+		f.t.Fatal(err)
+	}
+	return name
+}
+
+func (f *fixture) fileBlob(ref contentref.ContentRef, path string) string {
+	f.t.Helper()
+	m, _, err := f.ms.Get(f.t.Context(), ref)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	file, ok := m.Get(path)
+	if !ok {
+		f.t.Fatalf("no file %s", path)
+	}
+	return file.Blob
+}
+
+func (f *fixture) editorView(ref contentref.ContentRef, path string) string {
+	f.t.Helper()
+	name := f.blob(ref, []byte("editor view"), "image/webp")
+	if _, err := f.ms.EditExisting(f.t.Context(), ref, func(m *media.Manifest) error {
+		i := m.Find(path)
+		m.Files[i].Editor = &media.EditorImage{Blob: name, FP: f.reg.EditorFingerprint(m.Files[i])}
+		return nil
+	}); err != nil {
+		f.t.Fatal(err)
+	}
+	return name
 }
 
 var images = []string{"image/png", "image/jpeg", "image/webp", "image/gif"}

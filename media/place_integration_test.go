@@ -43,8 +43,8 @@ func TestPlaceNeverOverwritesABlob(t *testing.T) {
 			g := f.ref("gallery", 1)
 			item, _ := f.reg.Item(g)
 			orig := png(100)
-			x := blobOf(orig)
 			f.put(g, "originals/000.png", "image/png", orig)
+			x := f.fileBlob(g, "originals/000.png")
 			f.produce(g)
 			key, _ := item.Blob(x)
 			res, err := f.rd.Read(ctx, g, f.editor, media.ReadOptions{Prefix: "thumb/"})
@@ -78,10 +78,10 @@ func TestPlaceNeverOverwritesABlob(t *testing.T) {
 			}
 
 			m := f.commit(g, media.Op{Op: media.OpPut, Path: p.Path, Blob: p.Blob}, media.Op{Op: media.OpPut, Path: q.Path, Blob: q.Blob})
-			if u, _ := m.Get(p.Path); u.Blob != blobOf(evil) || u.Staged != "" {
+			if u, _ := m.Get(p.Path); !matchesBlob(u.Blob, evil) || u.Staged != "" {
 				t.Fatalf("multipart placed as %+v", u)
 			}
-			if u, _ := m.Get(q.Path); u.Blob != blobOf(small) {
+			if u, _ := m.Get(q.Path); !matchesBlob(u.Blob, small) {
 				t.Fatalf("single PUT placed as %+v", u)
 			}
 			if obj, err := f.env.Store.Head(ctx, key); err != nil || obj.Size != int64(len(orig)) {
@@ -90,7 +90,8 @@ func TestPlaceNeverOverwritesABlob(t *testing.T) {
 			if st, body, _ := f.fetch(thumb); st != http.StatusOK || body != string(orig) {
 				t.Fatalf("thumb serves %d %.20q", st, body)
 			}
-			big, _ := item.Blob(blobOf(evil))
+			file, _ := m.Get(p.Path)
+			big, _ := item.Blob(file.Blob)
 			if obj, err := f.env.Store.Head(ctx, big); err != nil || obj.Size != int64(len(evil)) || obj.ContentType != "application/zip" {
 				t.Fatalf("placed multipart %+v %v", obj, err)
 			}
@@ -101,7 +102,7 @@ func TestPlaceNeverOverwritesABlob(t *testing.T) {
 			h := sha256.New()
 			_, err = io.Copy(h, rc)
 			rc.Close()
-			if err != nil || layout.SHA256Name(h.Sum(nil)) != blobOf(evil) {
+			if sum, _ := layout.BlobDigest(file.Blob); err != nil || !bytes.Equal(h.Sum(nil), sum) {
 				t.Fatalf("placed bytes do not hash to their name: %v", err)
 			}
 			for o, err := range f.env.Store.List(ctx, item.TempPrefix()) {
@@ -145,7 +146,7 @@ func TestPlaceStagedUpload(t *testing.T) {
 		t.Fatalf("placed %d: %v", n, err)
 	}
 	m, _, _ = f.ms.Get(ctx, g)
-	if u, _ := m.Get(p); u.Blob != blobOf(png(1)) || u.Staged != "" {
+	if u, _ := m.Get(p); !matchesBlob(u.Blob, png(1)) || u.Staged != "" {
 		t.Fatalf("placed %+v", u)
 	}
 	if res, err = f.rd.Read(ctx, g, f.editor, media.ReadOptions{Editor: true, Prefix: p}); err != nil || len(res.Files) != 1 || res.Files[0].Staged {
@@ -160,7 +161,7 @@ func TestPlaceStagedUpload(t *testing.T) {
 	// Uploaded again, it is placed.
 	again, name := f.upload(g, "originals/2.png", "image/png", png(2))
 	m = f.commit(g, media.Op{Op: media.OpPut, Path: again, Blob: name})
-	if u, _ := m.Get(gone); u.Fail() != nil || u.Blob != blobOf(png(2)) {
+	if u, _ := m.Get(gone); u.Fail() != nil || !matchesBlob(u.Blob, png(2)) {
 		t.Fatalf("re-uploaded %+v", u)
 	}
 }
@@ -210,7 +211,7 @@ func putMultipart(t *testing.T, f *fixture, ticket string, body []byte) media.Up
 }
 
 func mustSum(blob string) []byte {
-	sum, ok := layout.ParseSHA256Name(blob)
+	sum, ok := layout.BlobDigest(blob)
 	if !ok {
 		panic("bad blob name " + blob)
 	}
@@ -290,9 +291,17 @@ func TestPlaceAfterTakedown(t *testing.T) {
 	if n, err := ms.Place(ctx, g); err != nil || n != 0 {
 		t.Fatalf("placed %d: %v", n, err)
 	}
-	blob, _ := item.Blob(blobOf(png(1)))
-	if key, _ := item.Staged(staged); f.exists(blob) || f.exists(key) {
-		t.Fatalf("a taken-down upload's blob kept %v, its staged object %v", f.exists(blob), f.exists(key))
+	for o, err := range f.env.Store.List(ctx, item.PrivatePrefix()) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		name := strings.TrimPrefix(o.Key, item.PrivatePrefix())
+		if matchesBlob(name, png(1)) {
+			t.Fatalf("taken-down allocation survived: %s", o.Key)
+		}
+	}
+	if key, _ := item.Staged(staged); f.exists(key) {
+		t.Fatal("taken-down staged object survived")
 	}
 	m, _, _ := f.ms.Get(ctx, g)
 	for _, b := range m.Blobs() {

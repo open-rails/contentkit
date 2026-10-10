@@ -85,8 +85,8 @@ func (op Op) validate() error {
 	}
 	switch op.Op {
 	case OpPut:
-		if !layout.ValidHashName(op.Blob) && !layout.ValidStagedName(op.Blob) {
-			return bad("blob must be sha256-{hex} or a staged u-{uuid}")
+		if !layout.ValidBlobName(op.Blob) && !layout.ValidStagedName(op.Blob) {
+			return bad("blob must be sha256-{hex}-{uuid} or a staged u-{uuid}")
 		}
 	case OpMove:
 		if op.Index == nil {

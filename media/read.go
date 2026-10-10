@@ -266,13 +266,17 @@ func (g *Grant) url(blob, download string, dl, cookie bool) (string, error) {
 	return u, nil
 }
 
-// EditorView is the blob name of an image upload's editor view: the hash of
-// its source and the editor spec, so a read finds it without rendering.
-// It is the one private blob not named by its bytes: only the worker
-// writes it, and no upload may name it (presign, put and copy refuse it).
-// Only editor reads list it; the sweep removes it after the grace period
-// and an editor read renders it again.
+// EditorView returns the upload's recorded view when its source/spec still
+// matches. Only editor reads list it; presign, put and copy cannot adopt it.
 func (r *Registry) EditorView(f File) string {
+	if f.Editor == nil || f.Editor.FP != r.EditorFingerprint(f) {
+		return ""
+	}
+	return f.Editor.Blob
+}
+
+// EditorFingerprint identifies the unedited source and current editor spec.
+func (r *Registry) EditorFingerprint(f File) string {
 	spec, _ := json.Marshal(r.cfg.Editor)
 	return editorView(f, spec)
 }
@@ -287,11 +291,10 @@ func editorView(f File, spec []byte) string {
 
 // editorViews are the names of m's editor views.
 func (r *Registry) editorViews(m *Manifest) map[string]bool {
-	spec, _ := json.Marshal(r.cfg.Editor)
 	out := map[string]bool{}
 	for _, f := range m.Files {
-		if v := editorView(f, spec); v != "" {
-			out[v] = true
+		if f.Editor != nil {
+			out[f.Editor.Blob] = true
 		}
 	}
 	return out
@@ -448,7 +451,11 @@ type editorViews struct {
 
 func (e *editorViews) url(ctx context.Context, f File) (string, error) {
 	name := e.g.r.reg.EditorView(f)
-	if name == "" || f.Fail() != nil {
+	if e.g.r.reg.EditorFingerprint(f) == "" || f.Fail() != nil {
+		return "", nil
+	}
+	if name == "" {
+		e.missing = true
 		return "", nil
 	}
 	if e.have == nil {

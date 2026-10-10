@@ -31,10 +31,11 @@ type TransactionalProcessQueue interface {
 // PGJournal records unfinished S3 attempts and their database effects. The S3
 // manifest remains authoritative; this table contains no current file list.
 type PGJournal struct {
-	pool    *pgxpool.Pool
-	table   string
-	limiter *PGLimiter
-	queue   TransactionalProcessQueue
+	pool        *pgxpool.Pool
+	table       string
+	allocations string
+	limiter     *PGLimiter
+	queue       TransactionalProcessQueue
 }
 
 // NewPGJournal uses the migrated ContentKit schema and a processing queue in
@@ -47,16 +48,50 @@ func NewPGJournal(pool *pgxpool.Pool, schema string, queue TransactionalProcessQ
 		return nil, err
 	}
 	return &PGJournal{pool: pool, table: pgx.Identifier{schema, "content_media_commits"}.Sanitize(),
-		limiter: limiter, queue: queue}, nil
+		allocations: pgx.Identifier{schema, "content_media_allocations"}.Sanitize(),
+		limiter:     limiter, queue: queue}, nil
 }
 
 type journalEffects struct {
+	Cleanup    bool        `json:"cleanup,omitempty"` // allocation retirement, no manifest PUT
 	Settlement Settlement  `json:"settlement"`
 	Cancel     bool        `json:"cancel,omitempty"`
 	Process    *ProcessJob `json:"process,omitempty"`
 	Public     []string    `json:"public,omitempty"`  // exact retired public names, selected before PUT
 	Private    []string    `json:"private,omitempty"` // exact takedown targets, selected before PUT
 	Notify     bool        `json:"notify,omitempty"`  // host's idempotent ItemCommitted hook still needs delivery
+}
+
+// prepareCleanup retires exact allocations while the operation still owns
+// the folder. A cleaner that lost its lease cannot delete from an old snapshot.
+func (j *PGJournal) prepareCleanup(ctx context.Context, c *manifestCommit, effects journalEffects) error {
+	effects.Cleanup = true
+	body, err := json.Marshal(effects)
+	if err != nil {
+		return err
+	}
+	attempt := uuid.New()
+	err = pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
+		found, err := j.load(ctx, tx, c.Ref.TenantID, c.ID)
+		if err != nil {
+			return err
+		}
+		if found.Lease != c.Lease || found.State != "open" {
+			return ErrCommitPending
+		}
+		if _, err := tx.Exec(ctx, `UPDATE `+j.allocations+` SET retired_at = now()
+WHERE tenant_id = $1 AND folder_prefix = $2 AND object_key = ANY($3::text[]) AND retired_at IS NULL`,
+			c.Ref.TenantID, c.Folder, effects.Private); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE `+j.table+` SET state = 'prepared', attempt_id = $3, effects = $4, updated_at = now()
+WHERE tenant_id = $1 AND operation_id = $2`, c.Ref.TenantID, c.ID, attempt, body)
+		return err
+	})
+	if err == nil {
+		c.Attempt, c.Effects, c.State = attempt, effects, "prepared"
+	}
+	return err
 }
 
 type manifestCommit struct {
@@ -77,11 +112,15 @@ func (c manifestCommit) terminal() bool { return c.State == "applied" || c.State
 
 func (j *PGJournal) begin(ctx context.Context, c manifestCommit) (manifestCommit, error) {
 	lease := uuid.New()
-	err := pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
+	effects, err := json.Marshal(c.Effects)
+	if err != nil {
+		return c, err
+	}
+	err = pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `INSERT INTO `+j.table+`
-(tenant_id, operation_id, content_kind, content_id, folder_prefix, actor_id, fingerprint, lease_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (tenant_id, operation_id) DO NOTHING`,
-			c.Ref.TenantID, c.ID, c.Ref.ContentKind, c.Ref.ContentID, c.Folder, c.Actor, c.Fingerprint[:], lease)
+(tenant_id, operation_id, content_kind, content_id, folder_prefix, actor_id, fingerprint, lease_id, effects)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (tenant_id, operation_id) DO NOTHING`,
+			c.Ref.TenantID, c.ID, c.Ref.ContentKind, c.Ref.ContentID, c.Folder, c.Actor, c.Fingerprint[:], lease, effects)
 		if err != nil {
 			var pe *pgconn.PgError
 			if errors.As(err, &pe) && pe.Code == "23505" && pe.ConstraintName == "content_media_commits_pending_folder" {

@@ -145,9 +145,9 @@ func (i Item) PrivatePrefix() string { return i.prefix + layout.AreaPrivate + "/
 func (i Item) PublicPrefix() string  { return i.prefix + layout.AreaPublic + "/" }
 func (i Item) TempPrefix() string    { return i.prefix + layout.AreaTemp + "/" }
 
-// Blob is the key of a private blob ("sha256-{hex}").
+// Blob is the key of a private allocation ("sha256-{hex}-{uuid}").
 func (i Item) Blob(name string) (string, error) {
-	if !layout.ValidHashName(name) {
+	if !layout.ValidBlobName(name) {
 		return "", fmt.Errorf("media: invalid blob name %q", name)
 	}
 	return i.PrivatePrefix() + name, nil

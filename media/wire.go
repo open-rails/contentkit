@@ -29,7 +29,7 @@ type PresignBody struct {
 // PresignReply is the upload plan: Exists (commit directly), one Put, or a
 // Multipart upload. Path is the path to commit: cleaned, with an
 // extension, and named by the server for a Named upload. Blob is the name
-// to commit: the folder's blob (sha256-{hex}) with Exists, else the staged
+// to commit: the folder's blob (sha256-{hex}-{uuid}) with Exists, else the staged
 // upload (u-{uuid}) the PUT or parts write, which the worker places.
 type PresignReply struct {
 	Path            string          `json:"path"`

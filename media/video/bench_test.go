@@ -20,10 +20,8 @@ package video_test
 
 import (
 	"bufio"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -43,7 +41,6 @@ import (
 
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/videotest"
-	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/video"
 	"github.com/open-rails/contentkit/media/workqueue"
 )
@@ -212,52 +209,32 @@ FROM `+jobTable+` WHERE queue IN ($1, $2) GROUP BY kind`, workqueue.VideoLightQu
 	}
 }
 
-// benchCommit stores the sample at its content address (in parts above
-// 1 GiB) and commits it as the source; it returns the source's path.
+// benchCommit ingests and places the sample before encoding begins.
 func benchCommit(t *testing.T, e *env, src string) string {
 	f, err := os.Open(src)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	h := sha256.New()
-	size, err := io.Copy(h, f)
+	info, err := f.Stat()
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum := h.Sum(nil)
-	blob := layout.SHA256Name(sum)
-	key, _ := e.item().Blob(blob)
 	typ := map[string]string{".mkv": "video/x-matroska", ".mov": "video/quicktime"}[filepath.Ext(src)]
 	if typ == "" {
 		typ = "video/mp4"
 	}
-	if size > 1<<30 {
-		id, err := e.store.CreateMultipart(e.ctx, key, typ)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var parts []media.Part
-		for off, n := int64(0), int32(1); off < size; off, n = off+256<<20, n+1 {
-			l := min(256<<20, size-off)
-			ph := sha256.New()
-			_, _ = io.Copy(ph, io.NewSectionReader(f, off, l))
-			p, err := e.store.PutPart(e.ctx, key, id, n, io.NewSectionReader(f, off, l), l, ph.Sum(nil))
-			if err != nil {
-				t.Fatal(err)
-			}
-			parts = append(parts, p)
-		}
-		if _, err := e.store.CompleteMultipart(e.ctx, key, id, parts); err != nil {
-			t.Fatal(err)
-		}
-	} else if _, err := e.store.Put(e.ctx, key, io.NewSectionReader(f, 0, size), size, media.PutOptions{ContentType: typ, ChecksumSHA256: sum}); err != nil {
+	result, err := e.up.Ingest(e.ctx, e.editor, media.IngestRequest{Ref: e.ref, Path: "source" + filepath.Ext(src),
+		Type: typ, Body: f, Size: info.Size(), PartSize: 256 << 20, Concurrency: 1})
+	if err != nil {
 		t.Fatal(err)
 	}
-	m := e.commit(media.Op{Op: media.OpPut, Path: "source" + filepath.Ext(src), Blob: blob})
-	for _, f := range m.Files {
-		if f.IsUpload() && f.Blob == blob {
-			return f.Path
+	if _, err := e.ms.Place(e.ctx, e.ref); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range result.Manifest.Files {
+		if file.Staged == result.Staged {
+			return file.Path
 		}
 	}
 	t.Fatal("source not committed")

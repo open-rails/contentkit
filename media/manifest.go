@@ -18,7 +18,7 @@ import (
 )
 
 // ManifestVersion is the manifest format.
-const ManifestVersion = 2
+const ManifestVersion = 3
 
 // Manifest is an item's manifest.json: an ordered, app-defined virtual file
 // system over the item's private blobs. Files is in an explicit,
@@ -38,8 +38,9 @@ type Manifest struct {
 	Files   []File         `json:"files"`
 	Receipt *CommitReceipt `json:"receipt,omitempty"` // the last manifest attempt; retained until its journal effects settle
 
-	index map[string]int
-	size  int64 // its JSON length when last read or written
+	index   map[string]int
+	size    int64    // its JSON length when last read or written
+	cleanup []string // worker scratch outputs, committed as exact journal effects
 }
 
 // CommitReceipt proves which prepared attempt reached S3. Every writer keeps
@@ -52,7 +53,7 @@ type CommitReceipt struct {
 // File is one file: an upload (no Preset) or a derived file.
 type File struct {
 	Path string  `json:"path"`           // app path: "originals/001.png", "low-res/001.webp"
-	Blob string  `json:"blob,omitempty"` // "sha256-{hex}" in private/; "" for a staged upload or a frame not grabbed yet
+	Blob string  `json:"blob,omitempty"` // "sha256-{hex}-{uuid}" in private/; "" for a staged upload or a frame not grabbed yet
 	Type string  `json:"type"`
 	Size int64   `json:"size,omitempty"`
 	W    int     `json:"w,omitempty"` // an upload's oriented size once measured; an output's size
@@ -70,6 +71,7 @@ type File struct {
 	Pending    []string       `json:"pending,omitempty"`    // presets still producing from this upload
 	Failed     *Failure       `json:"failed,omitempty"`     // this blob and edit cannot be processed
 	Public     []Publication  `json:"public,omitempty"`     // reserved or published public generations
+	Editor     *EditorImage   `json:"editor,omitempty"`     // selected immutable editor view, never listed to ordinary readers
 
 	// Derived files:
 	From     string `json:"from,omitempty"`     // the upload's path, or a zip's prefix
@@ -77,6 +79,12 @@ type File struct {
 	FP       string `json:"fp,omitempty"`       // Fingerprint of its inputs
 	Download string `json:"download,omitempty"` // the human download name
 	Track    *Track `json:"track,omitempty"`    // HLS
+}
+
+// EditorImage records the rendered view's allocation and source/spec fingerprint.
+type EditorImage struct {
+	Blob string `json:"blob"`
+	FP   string `json:"fp"`
 }
 
 // Publication owns one public preset's physical files. Reservation precedes
@@ -167,7 +175,7 @@ type Track struct {
 	Label     string `json:"label,omitempty"`
 	Default   bool   `json:"default,omitempty"`
 	Forced    bool   `json:"forced,omitempty"`
-	Index     string `json:"index,omitempty"` // "sha256-{hex}": the TrackIndex
+	Index     string `json:"index,omitempty"` // "sha256-{hex}-{uuid}": the TrackIndex
 }
 
 // Track kinds.
@@ -308,6 +316,9 @@ func (m *Manifest) Blobs() []string {
 		if f.Track != nil && f.Track.Index != "" {
 			out = append(out, f.Track.Index)
 		}
+		if f.Editor != nil && !f.Gone {
+			out = append(out, f.Editor.Blob)
+		}
 	}
 	return out
 }
@@ -341,11 +352,13 @@ func (m *Manifest) Validate() error {
 			return fmt.Errorf("media: manifest file %d: empty or duplicate path %q", i, f.Path)
 		case f.Staged != "" && (!layout.ValidStagedName(f.Staged) || f.Blob != "" || f.Frame != nil || !f.IsUpload()):
 			return fmt.Errorf("media: manifest file %q: invalid staged upload %q", f.Path, f.Staged)
-		case f.Blob != "" && !layout.ValidHashName(f.Blob), f.Blob == "" && f.Staged == "" && (f.Frame == nil || !f.IsUpload()):
+		case f.Blob != "" && !layout.ValidBlobName(f.Blob), f.Blob == "" && f.Staged == "" && (f.Frame == nil || !f.IsUpload()):
 			return fmt.Errorf("media: manifest file %q: invalid blob %q", f.Path, f.Blob)
-		case f.Track != nil && f.Track.Index != "" && !layout.ValidHashName(f.Track.Index):
+		case f.Track != nil && f.Track.Index != "" && !layout.ValidBlobName(f.Track.Index):
 			return fmt.Errorf("media: manifest file %q: invalid track index %q", f.Path, f.Track.Index)
-		case !f.IsUpload() && (f.Edit != nil || f.Frame != nil || f.Pending != nil || f.Unattached || len(f.Public) > 0):
+		case f.Editor != nil && (!layout.ValidBlobName(f.Editor.Blob) || f.Editor.FP == ""):
+			return fmt.Errorf("media: manifest file %q: invalid editor view", f.Path)
+		case !f.IsUpload() && (f.Edit != nil || f.Frame != nil || f.Pending != nil || f.Unattached || len(f.Public) > 0 || f.Editor != nil):
 			return fmt.Errorf("media: manifest file %q: a derived file has upload fields", f.Path)
 		case f.IsUpload() && (f.From != "" || f.FP != "" || f.Track != nil):
 			return fmt.Errorf("media: manifest file %q: an upload has provenance", f.Path)
@@ -378,6 +391,7 @@ func (m *Manifest) Validate() error {
 // so an edit never mutates it.
 func (m *Manifest) Clone() *Manifest {
 	out := *m
+	out.cleanup = nil
 	if m.Receipt != nil {
 		r := *m.Receipt
 		out.Receipt = &r
@@ -386,6 +400,10 @@ func (m *Manifest) Clone() *Manifest {
 	out.Files = make([]File, len(m.Files))
 	for i, f := range m.Files {
 		f.Meta, f.Pending = cloneMap(f.Meta), slices.Clone(f.Pending)
+		if f.Editor != nil {
+			editor := *f.Editor
+			f.Editor = &editor
+		}
 		f.Public = slices.Clone(f.Public)
 		for j := range f.Public {
 			f.Public[j].Names = slices.Clone(f.Public[j].Names)

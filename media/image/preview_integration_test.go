@@ -118,10 +118,6 @@ func TestPreviewMovedMidPass(t *testing.T) {
 	p := e.processor(t, headHook{
 		Store: &hooked{Store: e.Store, onPut: func(key string, put func() error) error {
 			record("put", key)
-			return put()
-		}},
-		before: func(key string) {
-			record("head", key)
 			if strings.HasPrefix(key, item.PrivatePrefix()) {
 				once.Do(func() { // the new page's preview is published; its private outputs come next
 					_, moved = e.up.Commit(ctx, e.editor, ref, uuid.NewString(), []media.Op{{Op: media.OpMove, Path: "originals/y.png", Index: &first}})
@@ -130,7 +126,10 @@ func TestPreviewMovedMidPass(t *testing.T) {
 					mu.Unlock()
 				})
 			}
-		}})
+			return put()
+		}},
+		before: func(key string) { record("head", key) },
+	})
 	if err := p.Process(ctx, media.ProcessJob{Ref: ref}); err != nil {
 		t.Fatal(err)
 	}

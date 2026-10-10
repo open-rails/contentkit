@@ -33,3 +33,16 @@ CREATE UNIQUE INDEX content_media_commits_pending_folder ON content_media_commit
     WHERE state IN ('open', 'prepared', 'frozen');
 CREATE INDEX content_media_commits_pending ON content_media_commits (tenant_id, updated_at, operation_id)
     WHERE state IN ('open', 'prepared', 'frozen');
+
+-- Ownership is recorded before bytes are sent. Retirement is permanent;
+-- cleanup may repeat, but a retired physical name cannot be adopted again.
+CREATE TABLE content_media_allocations (
+    tenant_id text NOT NULL,
+    folder_prefix text NOT NULL,
+    object_key text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    retired_at timestamptz,
+    PRIMARY KEY (tenant_id, object_key),
+    CHECK (tenant_id <> '' AND folder_prefix <> '' AND object_key <> '')
+);
+CREATE INDEX content_media_allocations_folder ON content_media_allocations (tenant_id, folder_prefix);

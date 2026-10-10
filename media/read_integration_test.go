@@ -1,7 +1,6 @@
 package media_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -209,15 +208,11 @@ func TestReadOriginalsAndDownloads(t *testing.T) {
 
 	f.visible(2)
 	g := f.gallery(2, 1)
+	zip := []byte("zip bytes")
+	zipBlob := f.blob(g, zip, "application/zip")
 	if _, err := f.ms.EditExisting(ctx, g, func(m *media.Manifest) error {
-		item, _ := f.reg.Item(g)
-		zip := []byte("zip bytes")
-		key, _ := item.Blob(blobOf(zip))
-		if _, err := f.env.Store.Put(ctx, key, bytes.NewReader(zip), int64(len(zip)), media.PutOptions{ContentType: "application/zip"}); err != nil {
-			return err
-		}
 		m.Meta = map[string]any{"title": "Café Book"}
-		return m.SetOutputs("high/", "zip", []media.File{{Path: "download/pages.zip", Blob: blobOf(zip), Type: "application/zip", Size: int64(len(zip)), FP: "x"}})
+		return m.SetOutputs("high/", "zip", []media.File{{Path: "download/pages.zip", Blob: zipBlob, Type: "application/zip", Size: int64(len(zip)), FP: "x"}})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -354,19 +349,13 @@ func TestReadEditor(t *testing.T) {
 	if jobs := f.q.take(); len(jobs) != 1 || !jobs[0].Editor {
 		t.Fatalf("editor views not asked for: %+v", jobs)
 	}
-	m, _, _ := f.ms.Get(ctx, g)
-	cover, _ := m.Get("cover.png")
-	item, _ := f.reg.Item(g)
-	key, _ := item.Blob(f.reg.EditorView(cover))
-	if _, err := f.env.Store.Put(ctx, key, strings.NewReader("view"), 4, media.PutOptions{ContentType: "image/webp"}); err != nil {
-		t.Fatal(err)
-	}
+	f.editorView(g, "cover.png")
 	f.produce(g)
 	res, _ = f.rd.Read(ctx, g, f.editor, media.ReadOptions{Editor: true})
 	if res.State != media.StateReady || res.Files[0].EditorURL == "" {
 		t.Fatalf("editor view %+v", res.Files[0])
 	}
-	if status, body, _ := f.fetch(res.Files[0].EditorURL); status != http.StatusOK || body != "view" {
+	if status, body, _ := f.fetch(res.Files[0].EditorURL); status != http.StatusOK || body != "editor view" {
 		t.Fatalf("editor view served %d %q", status, body)
 	}
 	// Non-editors never get the editing state.
@@ -387,14 +376,8 @@ func TestHLSPlaylists(t *testing.T) {
 	sub, blob := f.upload(v, "subs/en.srt", "application/x-subrip", []byte("1\n00:00:01,000 --> 00:00:02,000\nhi\n"))
 	f.commit(v, media.Op{Op: media.OpPut, Path: sub, Blob: blob, Meta: map[string]any{"lang": "en", "label": "English"}})
 	ctx := context.Background()
-	item, _ := f.reg.Item(v)
 	put := func(body string) string {
-		b := []byte(body)
-		key, _ := item.Blob(blobOf(b))
-		if _, err := f.env.Store.Put(ctx, key, bytes.NewReader(b), int64(len(b)), media.PutOptions{}); err != nil {
-			t.Fatal(err)
-		}
-		return blobOf(b)
+		return f.blob(v, []byte(body), "application/octet-stream")
 	}
 	index := func(idx media.TrackIndex) string {
 		b, _ := json.Marshal(idx)

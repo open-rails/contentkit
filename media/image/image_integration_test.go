@@ -108,7 +108,7 @@ func TestSpecChangeAndForce(t *testing.T) {
 		t.Fatal("Preset thumb touched high")
 	}
 	e.process(t, media.ProcessJob{Ref: g, Preset: "high", Force: true})
-	if h := e.file(t, g, "high/1.webp"); h.Blob != high.Blob {
+	if h := e.file(t, g, "high/1.webp"); h.Blob == thumb.Blob || h.Blob == high.Blob || h.FP != high.FP || h.W != high.W || h.H != high.H {
 		t.Fatalf("Force did not redo high: %+v", h)
 	}
 }

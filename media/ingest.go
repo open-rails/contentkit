@@ -122,6 +122,13 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 		temp = req.Resume.Temp
 	}
 	reserve, _ := item.Staged(temp)
+	if req.Resume != nil && temp == req.Resume.Temp {
+		if err := u.o.Manifests.checkAllocations(ctx, item, []string{reserve}); err != nil {
+			return IngestResult{}, err
+		}
+	} else if err := u.o.Manifests.journal.allocate(ctx, item, reserve); err != nil {
+		return IngestResult{}, err
+	}
 	if limited {
 		if err := u.o.Limiter.Reserve(ctx, Reservation{Tenant: req.Ref.TenantID, Uploader: uploaderID(actor),
 			Owner: grant.Owner, Key: reserve, Size: req.Size}); err != nil {

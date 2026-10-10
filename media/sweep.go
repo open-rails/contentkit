@@ -23,7 +23,7 @@ type SweepResult struct {
 	Wait    time.Duration
 }
 
-// Sweep collects garbage by manifest reference, with no other state:
+// Sweep collects garbage by manifest reference and allocation age:
 //   - private/ blobs the manifest does not reference, once the blob is
 //     older than the grace period (a job's outputs not recorded yet, editor
 //     views). Later edits never hold it back. A blob written long ago and
@@ -34,8 +34,8 @@ type SweepResult struct {
 //   - temp/ by age (JobsConfig.TempTTL), but for staged uploads the
 //     manifest references.
 //
-// It holds the manifest lock through selection and deletion, and decides on
-// a second listing, so a manifest written meanwhile keeps what it references.
+// Selection and retirement share a recoverable journal lease. A cleaner
+// that loses its folder lock cannot delete from a stale manifest snapshot.
 func (j *Jobs) Sweep(ctx context.Context, ref contentref.ContentRef) (SweepResult, error) {
 	item, err := j.cfg.Registry.Item(ref)
 	if err != nil {
@@ -80,76 +80,51 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 	if err != nil {
 		return SweepResult{}, err
 	}
-	unlock, err := j.cfg.Locker.Lock(ctx, item.ManifestKey())
-	if err != nil {
-		return SweepResult{}, err
-	}
-	defer unlock()
-	if _, _, err := j.manifests.recoverLocked(ctx, item); err != nil {
-		return SweepResult{}, err
-	}
-	objs, err := j.list(ctx, prefix)
-	if err != nil {
-		return SweepResult{}, err
-	}
-	man, etag := manifestOf(objs)
-	now := j.cfg.Now()
-	m := &Manifest{} // no manifest: uploads never committed, or a deleted item's leftovers
-	if man.Key != "" {
-		if m, err = j.readManifest(ctx, man.Key); errors.Is(err, ErrNotFound) {
-			return SweepResult{Wait: time.Minute}, nil
-		} else if err != nil {
-			return SweepResult{}, err
+	var result SweepResult
+	err = j.manifests.cleanup(ctx, item, func(m *Manifest, _ bool) (journalEffects, error) {
+		now := j.cfg.Now()
+		keep := j.keeps(item, m)
+		protected, err := j.manifests.protectedAllocations(ctx, item, now, j.cfg.Grace)
+		if err != nil {
+			return journalEffects{}, err
 		}
-	}
-	if err := j.cfg.Journal.checkReceipt(ctx, item, m.Receipt); err != nil {
-		return SweepResult{}, err
-	}
-	keep := j.keeps(item, m)
-	var wait time.Duration // until the youngest-due unreferenced blob is a grace period old
-	doomed := func(objs []Object) []string {
-		var keys []string
-		wait = 0
-		for _, o := range objs {
+		var effects journalEffects
+		for o, err := range j.cfg.Store.List(ctx, prefix) {
+			if err != nil {
+				return journalEffects{}, err
+			}
 			k, ok := layout.Parse(o.Key)
 			if !ok || k.Area == layout.AreaManifest || keep[k.Area+"/"+k.Name] {
 				continue
 			}
 			switch k.Area {
 			case layout.AreaPublic:
-				keys = append(keys, o.Key)
+				effects.Public = append(effects.Public, o.Key)
 			case layout.AreaTemp:
 				if !now.Before(o.LastModified.Add(j.cfg.TempTTL)) {
-					keys = append(keys, o.Key)
+					effects.Private = append(effects.Private, o.Key)
 				}
 			case layout.AreaPrivate:
+				if until, ok := protected[o.Key]; ok {
+					if left := until.Sub(now); result.Wait == 0 || left < result.Wait {
+						result.Wait = left + time.Second
+					}
+					continue
+				}
 				if left := o.LastModified.Add(j.cfg.Grace).Sub(now); left <= 0 {
-					keys = append(keys, o.Key)
-				} else if wait == 0 || left < wait {
-					wait = left + time.Second
+					effects.Private = append(effects.Private, o.Key)
+				} else if result.Wait == 0 || left < result.Wait {
+					result.Wait = left + time.Second
 				}
 			}
 		}
-		return keys
-	}
-	if len(doomed(objs)) == 0 {
-		return SweepResult{Wait: wait}, nil
-	}
-	// A manifest written since the listing may reference a doomed blob, and
-	// an upload may have refreshed one: only the second listing decides.
-	again, err := j.list(ctx, prefix)
+		result.Deleted = append(slices.Clone(effects.Public), effects.Private...)
+		return effects, nil
+	})
 	if err != nil {
 		return SweepResult{}, err
 	}
-	if m2, etag2 := manifestOf(again); m2.Key != man.Key || etag2 != etag {
-		return SweepResult{Wait: time.Minute}, nil
-	}
-	keys := doomed(again)
-	if err := j.deleteKeys(ctx, keys); err != nil {
-		return SweepResult{}, err
-	}
-	j.purge(ctx, slices.DeleteFunc(slices.Clone(keys), func(k string) bool { return !strings.Contains(k, "/"+layout.AreaPublic+"/") }))
-	return SweepResult{Deleted: keys, Wait: wait}, nil
+	return result, nil
 }
 
 // keeps is what an item's manifest keeps, as "{area}/{name}": its blobs and
@@ -167,15 +142,6 @@ func (j *Jobs) keeps(item Item, m *Manifest) map[string]bool {
 		keep[layout.AreaPublic+"/"+n] = true
 	}
 	return keep
-}
-
-func manifestOf(objs []Object) (Object, string) {
-	for _, o := range objs {
-		if k, ok := layout.Parse(o.Key); ok && k.Area == layout.AreaManifest {
-			return o, o.ETag
-		}
-	}
-	return Object{}, ""
 }
 
 // errBadManifest: a manifest that was read but does not decode.

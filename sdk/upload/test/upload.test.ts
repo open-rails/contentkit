@@ -13,6 +13,7 @@ const hex = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 const png = (seed: number, n = 3000) => new File([bytes(n, seed)], `${seed}.png`, { type: "image/png" });
 const put = (up: { path: string; blob: string }): Op => ({ op: "put", path: up.path, blob: up.blob });
 const STAGED = /^u-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const ALLOCATION = /^sha256-[0-9a-f]{64}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handlers", () => {
   let proxy: KillProxy;
@@ -66,14 +67,17 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
     expect(files).toMatchObject([{ path: "originals/001.png", type: "image/png", size: 4096, upload: true, staged: true, pending: ["low"] }]);
     const done = await c.waitFor(ref, "originals/001.png", { interval: 100 });
     expect([done.pending, done.staged]).toEqual([undefined, undefined]);
-    // Placed at the hash of its bytes: an identical upload now exists.
-    expect(await c.upload(file, { ref, path: "originals/001.png" })).toMatchObject({ exists: true, blob: `sha256-${hex(body)}` });
+    // The current identical allocation is returned, rather than uploaded again.
+    const again = await c.upload(file, { ref, path: "originals/001.png" });
+    expect(again).toMatchObject({ exists: true, blob: expect.stringMatching(ALLOCATION) });
+    expect(again.blob.startsWith(`sha256-${hex(body)}-`)).toBe(true);
+    expect((await c.upload(file, { ref, path: "originals/001.png" })).blob).toBe(again.blob);
 
     // A viewer gets the derived page, signed; the upload itself is never served.
     const read = await client({ actor: "reader" }).read(ref);
     expect(read).toMatchObject({ access: "full", total: 1 });
     expect(read.files).toEqual([
-      expect.objectContaining({ path: "low-res/001.webp", url: expect.stringMatching(new RegExp(`^http://media\\.invalid/v1/${namespace}/gallery/${ref.id}/private/sha256-${hex(body)}\\?t=`)) }),
+      expect.objectContaining({ path: "low-res/001.webp", url: expect.stringMatching(new RegExp(`^http://media\\.invalid/v1/${namespace}/gallery/${ref.id}/private/${again.blob}\\?t=`)) }),
     ]);
     expect(await stored(ref, "low-res/001.webp")).toEqual({ size: 4096, sha256: hex(body) });
 
@@ -179,19 +183,18 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
   });
 
   it("uploads a stale blob again when commit refuses it", async () => {
-    // The server's sweep grace is 20 s: presign offers an unreferenced blob as
-    // existing while it is fresh, and commit refuses it once it is 15 s old.
+    // Presign can reuse only a current allocation. Removing its last reference
+    // before commit makes the old offer unusable, regardless of object age.
     const ref = { kind: "gallery", id: id(2) };
     const file = png(8, 2048);
     const c = client();
     await c.put(file, { ref, path: "originals/001.png" });
-    await c.commit(ref, [{ op: "remove", path: "originals/001.png" }]);
     const up = await c.upload(file, { ref, path: "originals/002.png" });
-    expect(up).toMatchObject({ exists: true, blob: `sha256-${hex(bytes(2048, 8))}` });
-    await new Promise((r) => setTimeout(r, 17_000));
+    expect(up).toMatchObject({ exists: true, blob: expect.stringMatching(ALLOCATION) });
+    await c.commit(ref, [{ op: "remove", path: "originals/001.png" }]);
     const refused = await c.commit(ref, [put(up)]).catch((e) => e);
     expect([refused.code, refused.blobs]).toEqual(["not_uploaded", [up.blob]]);
-    // Uploaded again, staged, and placed at the same hash.
+    // Recovery stages the same bytes under a fresh allocation.
     const files = await c.commit(ref, [put(up)], { sources: { [up.blob]: file } });
     expect(files).toMatchObject([{ path: "originals/002.png", size: 2048 }]);
     await c.waitFor(ref, "originals/002.png", { interval: 100 });
@@ -231,7 +234,9 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
     expect(files).toMatchObject([{ path: "source.mp4", size: body.length }]);
     await c.waitFor(ref, "source", { interval: 100 });
     expect(await stored(ref, "source")).toEqual({ size: body.length, sha256: hex(body) });
-    expect(await c.upload(file, { ref, path: "source" })).toMatchObject({ exists: true, blob: `sha256-${hex(body)}` });
+    const again = await c.upload(file, { ref, path: "source" });
+    expect(again).toMatchObject({ exists: true, blob: expect.stringMatching(ALLOCATION) });
+    expect(again.blob.startsWith(`sha256-${hex(body)}-`)).toBe(true);
   });
 
   it("grabs a still of a video, sets the poster from a frame, then lets the worker choose", async () => {

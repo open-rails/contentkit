@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Blobs above multipartAbove upload in partSize parts (a 2 h 4K rendition
@@ -38,8 +37,8 @@ func (e *Encoder) checkOutputs(ctx context.Context, item media.Item, blobs ...st
 	return nil
 }
 
-// put stores a file as a content-addressed private blob unless it exists,
-// which makes retries cheap: outputs are byte-identical.
+// put hashes a file and writes a fresh private allocation. Already published
+// outputs are reused by their producers, not by sharing an unowned object key.
 func (e *Encoder) put(ctx context.Context, item media.Item, path, contentType string, fp *fileProgress) (string, int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -66,14 +65,11 @@ func (e *Encoder) putJSON(ctx context.Context, item media.Item, v any) (string, 
 }
 
 func (e *Encoder) putBlob(ctx context.Context, item media.Item, body io.ReaderAt, size int64, sum []byte, contentType string, fp *fileProgress) (string, int64, error) {
-	name := layout.SHA256Name(sum)
-	key, _ := item.Blob(name)
-	if obj, err := e.store.Head(ctx, key); err == nil && obj.Size == size {
-		fp.skipped(size)
-		return name, size, nil
-	} else if err != nil && !errors.Is(err, media.ErrNotFound) {
+	name, err := e.ms.NewBlob(ctx, item.Ref(), sum)
+	if err != nil {
 		return "", 0, err
 	}
+	key, _ := item.Blob(name)
 	start := time.Now()
 	if size > multipartAbove {
 		if err := e.putMultipart(ctx, key, body, size, contentType, fp); err != nil {
@@ -86,7 +82,7 @@ func (e *Encoder) putBlob(ctx context.Context, item media.Item, body io.ReaderAt
 	if e.store.Capabilities().ConditionalPut {
 		opts.IfNoneMatch = "*"
 	}
-	_, err := e.store.Put(ctx, key, fp.reader(io.NewSectionReader(body, 0, size)), size, opts)
+	_, err = e.store.Put(ctx, key, fp.reader(io.NewSectionReader(body, 0, size)), size, opts)
 	if err != nil && !errors.Is(err, media.ErrPreconditionFailed) {
 		return "", 0, err
 	}

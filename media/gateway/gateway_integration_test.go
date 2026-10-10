@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -43,7 +42,7 @@ const (
 
 func sha(s string) string {
 	sum := sha256.Sum256([]byte(s))
-	return "sha256-" + hex.EncodeToString(sum[:])
+	return layout.BlobName(sum[:], "01920000-0000-7000-8000-000000000001")
 }
 
 func ring(t *testing.T, cur token.Key, prev *token.Key) token.Ring {

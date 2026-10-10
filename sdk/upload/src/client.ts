@@ -44,7 +44,7 @@ export interface UploadedFile {
   /** The path to commit: cleaned, with an extension, named by the server for a Named upload. */
   path: string;
   /**
-   * The name to commit: the folder's identical blob ("sha256-{hex}") when
+   * The name to commit: the folder's identical blob ("sha256-{hex}-{uuid}") when
    * exists, else the staged upload ("u-{uuid}") the worker hashes and places
    * after the commit.
    */

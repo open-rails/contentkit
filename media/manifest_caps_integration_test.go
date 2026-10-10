@@ -36,7 +36,7 @@ func TestManifestCaps(t *testing.T) {
 	if !f.exists(cover) {
 		t.Fatal("no public cover")
 	}
-	seed := blobOf(png(2))
+	seed := f.fileBlob(g, "cover.png")
 	for _, op := range []media.Op{
 		{Op: media.OpPut, Path: "originals/x.png", Blob: seed, Meta: map[string]any{"x": strings.Repeat("A", 10<<20)}},
 		{Op: media.OpMeta, Meta: map[string]any{"title": strings.Repeat("A", media.MaxItemMetaBytes)}},
@@ -143,7 +143,7 @@ func TestOversizedManifest(t *testing.T) {
 // A manifest of exactly MaxManifestBytes of JSON loads; one byte more does not.
 func TestManifestBound(t *testing.T) {
 	for _, extra := range []int{0, 1} {
-		head, tail := `{"v":2,"meta":{"x":"`, `"},"files":[]}`
+		head, tail := `{"v":3,"meta":{"x":"`, `"},"files":[]}`
 		pad := media.MaxManifestBytes - len(head) - len(tail) + extra
 		var b bytes.Buffer
 		zw := gzip.NewWriter(&b)
@@ -163,7 +163,7 @@ func oversizedManifest(t *testing.T) []byte {
 	t.Helper()
 	var b bytes.Buffer
 	zw := gzip.NewWriter(&b)
-	zw.Write([]byte(`{"v":2,"meta":{"x":"`))
+	zw.Write([]byte(`{"v":3,"meta":{"x":"`))
 	zw.Write(bytes.Repeat([]byte("A"), media.MaxManifestBytes))
 	zw.Write([]byte(`"},"files":[]}`))
 	if err := zw.Close(); err != nil {
@@ -226,7 +226,7 @@ func TestFullItemStillShrinks(t *testing.T) {
 	ctx := context.Background()
 	g := f.ref("gallery", 1)
 	f.put(g, "originals/seed.png", "image/png", png(1))
-	seed := blobOf(png(1))
+	seed := f.fileBlob(g, "originals/seed.png")
 	meta := map[string]any{"x": strings.Repeat("A", media.MaxMetaBytes-16)}
 	if _, err := f.ms.EditExisting(ctx, g, func(m *media.Manifest) error {
 		for i := range 1800 {
@@ -255,7 +255,7 @@ func TestCommitProjectsOutputs(t *testing.T) {
 	g := f.ref("gallery", 1)
 	item, _ := f.reg.Item(g)
 	f.put(g, "originals/seed.png", "image/png", png(1))
-	seed := blobOf(png(1))
+	seed := f.fileBlob(g, "originals/seed.png")
 	name := strings.Repeat("<", 190)
 	var last *media.Manifest
 	for batch := 0; ; batch++ {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -27,6 +28,179 @@ import (
 	"github.com/open-rails/contentkit/media/internal/s3test"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 )
+
+// A cleaner may outlive its database lock. Its old selection must not
+// retire a file that a new writer adopted after recovering that lease.
+func TestCleanupLosingLeaseCannotRetireAdoptedFile(t *testing.T) {
+	for _, sweep := range []bool{false, true} {
+		for _, existing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("sweep=%t/existing=%t", sweep, existing), func(t *testing.T) {
+				f := newFixture(t)
+				ref := f.ref("gallery", 1)
+				if existing {
+					f.put(ref, "originals/current.png", "image/png", png(1))
+				}
+				name := f.blob(ref, png(2), "image/png")
+				item, _ := f.reg.Item(ref)
+				store := &cleanupListStore{Store: f.env.Store, prefix: item.Prefix(), selected: make(chan struct{}), resume: make(chan struct{})}
+				var release sync.Once
+				defer release.Do(func() { close(store.resume) })
+				jobs, err := media.NewJobs(media.JobsConfig{Store: store, Registry: f.reg, Journal: f.journal, Locker: noLock{},
+					Now: func() time.Time { return time.Now().Add(72 * time.Hour) }})
+				if err != nil {
+					t.Fatal(err)
+				}
+				done := make(chan error, 1)
+				go func() {
+					if sweep {
+						_, err := jobs.Sweep(t.Context(), ref)
+						done <- err
+					} else {
+						done <- jobs.Manifests().DropUnreferenced(t.Context(), ref, media.Unreferenced{All: true})
+					}
+				}()
+				select {
+				case <-store.selected:
+				case err := <-done:
+					t.Fatalf("cleanup did not reach selection: %v", err)
+				case <-time.After(10 * time.Second):
+					t.Fatal("cleanup did not reach selection")
+				}
+				if err := f.ms.Recover(t.Context(), ref); err != nil {
+					t.Fatal(err)
+				}
+				if !existing {
+					if _, err := f.env.Store.Head(t.Context(), item.ManifestKey()); !errors.Is(err, media.ErrNotFound) {
+						t.Fatalf("cleanup recovery created a manifest: %v", err)
+					}
+				}
+				if _, err := f.ms.Edit(t.Context(), ref, func(m *media.Manifest) error {
+					m.Files = append(m.Files, media.File{Path: "originals/adopted.png", Blob: name, Type: "image/png", Size: int64(len(png(2)))})
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				release.Do(func() { close(store.resume) })
+				if err := <-done; !errors.Is(err, media.ErrCommitPending) {
+					t.Fatalf("stale cleanup was not refused: %v", err)
+				}
+				key, _ := item.Blob(name)
+				if !f.exists(key) {
+					t.Fatal("stale cleanup deleted the adopted file")
+				}
+				if _, err := f.ms.EditExisting(t.Context(), ref, func(m *media.Manifest) error {
+					m.Meta = map[string]any{"after": true}
+					return nil
+				}); err != nil {
+					t.Fatalf("stale cleanup retired the adopted file: %v", err)
+				}
+			})
+		}
+	}
+}
+
+type cleanupListStore struct {
+	media.Store
+	prefix           string
+	selected, resume chan struct{}
+	paused           atomic.Bool
+}
+
+func (s *cleanupListStore) List(ctx context.Context, prefix string) iter.Seq2[media.Object, error] {
+	return func(yield func(media.Object, error) bool) {
+		var objects []media.Object
+		for obj, err := range s.Store.List(ctx, prefix) {
+			if err != nil {
+				yield(obj, err)
+				return
+			}
+			objects = append(objects, obj)
+		}
+		if strings.HasPrefix(prefix, s.prefix) && s.paused.CompareAndSwap(false, true) {
+			close(s.selected)
+			select {
+			case <-s.resume:
+			case <-ctx.Done():
+				yield(media.Object{}, ctx.Err())
+				return
+			}
+		}
+		for _, obj := range objects {
+			if !yield(obj, nil) {
+				return
+			}
+		}
+	}
+}
+
+// Cleanup retires ownership even when the bytes have not landed yet. A late
+// producer cannot publish that allocation or erase a later identical upload.
+func TestRetiredPrivateAllocationCannotBeAdopted(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	ref := f.ref("gallery", 1)
+	f.put(ref, "originals/current.png", "image/png", png(1))
+	item, _ := f.reg.Item(ref)
+	body := png(2)
+	sum := sha256.Sum256(body)
+	old, err := f.ms.NewBlob(t.Context(), ref, sum[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := failingStore{Store: f.env.Store, armed: &atomic.Bool{}}
+	cleaner := s3test.Manifests(t, store, f.reg, media.ManifestOptions{Journal: f.journal})
+	store.armed.Store(true)
+	if err := cleaner.DropUnreferenced(t.Context(), ref, media.Unreferenced{All: true}); err == nil {
+		t.Fatal("cleanup succeeded despite failed deletes")
+	}
+	store.armed.Store(false)
+	oldKey, _ := item.Blob(old)
+	f.object(oldKey, string(body)) // a late PUT lands before recovery
+	for range 2 {
+		if err := f.ms.Recover(t.Context(), ref); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if f.exists(oldKey) {
+		t.Fatal("recovery lost its recorded cleanup target")
+	}
+	if _, _, err := f.ms.Get(t.Context(), ref); err != nil {
+		t.Fatal(err)
+	}
+	f.object(oldKey, string(body)) // another late PUT completes after recovery
+	if _, err := f.ms.EditExisting(t.Context(), ref, func(m *media.Manifest) error {
+		m.Files = append(m.Files, media.File{Path: "originals/late.png", Blob: old, Type: "image/png", Size: int64(len(body))})
+		return nil
+	}); !errors.Is(err, media.ErrAllocationRetired) {
+		t.Fatalf("retired allocation was adopted: %v", err)
+	}
+	if _, err := f.up.Commit(t.Context(), f.editor, ref, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: "originals/late.png", Blob: old}}); code(err) != media.CodeNotUploaded {
+		t.Fatalf("upload adopted retired allocation: %v", err)
+	}
+	f.put(ref, "originals/replacement.png", "image/png", body)
+	fresh := f.fileBlob(ref, "originals/replacement.png")
+	if fresh == old || !matchesBlob(fresh, body) {
+		t.Fatalf("replacement reused retired name: %s", fresh)
+	}
+	if err := f.env.Store.Delete(t.Context(), oldKey); err != nil { // a delayed old DELETE
+		t.Fatal(err)
+	}
+	f.produce(ref)
+	read, err := f.rd.Read(t.Context(), ref, f.editor, media.ReadOptions{Prefix: "high/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range read.Files {
+		if file.Path == "high/replacement.webp" {
+			status, got, _ := f.fetch(file.URL)
+			if status != http.StatusOK || got != string(body) {
+				t.Fatalf("replacement did not survive delayed cleanup: %d %q", status, got)
+			}
+			return
+		}
+	}
+	t.Fatal("replacement missing from reader")
+}
 
 // A lost PUT response is not proof of failure, and reading the old object is
 // not proof that a delayed PUT cannot still land. Recovery must fence both a
