@@ -69,6 +69,20 @@ describe.skipIf(!endpoint)("content modules against contentkit.Runtime.Handler",
     await editor.posts.delete(post.id);
     expect(changes).toContainEqual({ type: "post.deleted", id: post.id });
     await expect(editor.posts.get(post.id)).rejects.toEqual(code("not_found"));
+
+    // Staff search, the deleted list and restore.
+    const word = `w${randomUUID().slice(0, 8)}`;
+    const found = await editor.posts.create({ title: `About ${word.toUpperCase()}`, body: "b", language: "en" });
+    expect((await editor.posts.adminList({ q: word })).map((p) => p.id)).toEqual([found.id]);
+    expect((await editor.posts.adminList({ deleted: true, limit: 100 })).find((p) => p.id === post.id)).toMatchObject({ deleted_at: expect.any(String) });
+    expect((await editor.posts.adminList({ limit: 100 })).map((p) => p.id)).not.toContain(post.id);
+    await expect(ck("alice").posts.restore(post.id)).rejects.toEqual(code("forbidden"));
+    const restored = await editor.posts.restore(post.id);
+    expect(restored).toMatchObject({ id: post.id, title: "Hello world", body: "edited" });
+    expect(restored.deleted_at).toBeUndefined();
+    expect(changes).toContainEqual({ type: "post.restored", post: restored });
+    expect((await ck().posts.get(post.id)).id).toBe(post.id);
+    await expect(editor.posts.restore(post.id)).rejects.toEqual(code("not_found"));
   });
 
   it("media.uploadInline places a body image in the post's folder and resolves its URL; covers go through the same uploads", async () => {

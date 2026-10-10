@@ -2,7 +2,7 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (81). `contentkit.Runtime.Handler` serves them under the one prefix the host mounts it at, each module at its sub-path: content `/`, upload `/media/upload`, media `/media`, codes `/codes`, taxonomy `/taxonomy`. A host that mounts a module alone serves its routes beneath that mount instead. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (82). `contentkit.Runtime.Handler` serves them under the one prefix the host mounts it at, each module at its sub-path: content `/`, upload `/media/upload`, media `/media`, codes `/codes`, taxonomy `/taxonomy`. A host that mounts a module alone serves its routes beneath that mount instead. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller: `public` (the actor is optional; the host's resolver decides what it sees), `user` (a signed-in actor, else 401 `unauthorized`), `staff` (the `content.Perms` permission named, else 403 `forbidden`). ContentKit never authenticates: it reads the actor the host's middleware put in the request context.
 
@@ -14,11 +14,12 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 |---|---|---|---|---|---|
 | GET | `/config` | public | — | 200 `Config` | What the content module allows: which interactions signed-out visitors may make. |
 | GET | `/posts` | public | — | 200 `Post[]` | Published posts. Query: `language`, `sort`, `limit`, `offset`. |
-| GET | `/posts/admin` | staff `PostWrite` | — | 200 `Post[]` | Every post, newest first: drafts, scheduled, held and rejected ones included. Query: `language`, `draft`, `limit`, `offset`. |
+| GET | `/posts/admin` | staff `PostWrite` | — | 200 `Post[]` | Every post, newest first: drafts, scheduled, held and rejected ones included; deleted ones on their own. Query: `language`, `draft`, `deleted`, `q`, `limit`, `offset`. |
 | GET | `/posts/{id}` | public | — | 200 `Post` | A post. A draft, scheduled, held or rejected post is shown only to its author and PostWrite holders. |
 | POST | `/posts` | staff `PostWrite` | `PostInput` | 201 `Post`<br>202 `Post` | Creates a post; 202 when the moderator holds it for review. |
 | PATCH | `/posts/{id}` | staff `PostWrite` | `PostInput` | 200 `Post`<br>202 `Post` | Updates a post's given fields; 202 when the moderator holds the new text. |
 | DELETE | `/posts/{id}` | staff `PostWrite` | — | 204 — | Deletes a post. |
+| POST | `/posts/{id}/restore` | staff `PostWrite` | — | 200 `Post` | Restores a deleted post as it was; 409 when another live post took its slug. |
 | POST | `/posts/{id}/like` | public | — | 200 `Post` | Likes a published post. |
 | POST | `/posts/{id}/dislike` | public | — | 200 `Post` | Dislikes a published post. |
 | POST | `/posts/{id}/neutral` | public | — | 200 `Post` | Clears the caller's reaction to a published post. |

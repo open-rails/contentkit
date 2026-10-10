@@ -232,6 +232,10 @@ export class ResourceStore {
         break;
       case "post.deleted":
         items<Post>(["posts"], (x) => (x.id === c.id ? null : x));
+        this.invalidate((t) => t.type === "posts" && t.scope === "deleted");
+        break;
+      case "post.restored":
+        this.invalidate((t) => (t.type === "post" && t.id === c.post.id) || t.type === "posts");
         break;
       case "poll.created":
         this.invalidate((t) => t.type === "polls" || (t.type === "poll" && !t.id));

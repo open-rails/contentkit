@@ -213,9 +213,10 @@ describe.skipIf(!endpoint)("content hooks against contentkit.Runtime.Handler", (
   it("usePost and usePosts: create, edit, cover and body images update every view", async () => {
     const language = `y${randomUUID().slice(0, 6)}`;
     const c = client("editor");
-    const { result } = renderHook(() => ({ post: usePost(null), all: usePosts({ admin: true, language }), drafts: usePosts({ admin: true, language, draft: true }) }), {
-      wrapper: wrap(c, "editor"),
-    });
+    const { result } = renderHook(
+      () => ({ post: usePost(null), all: usePosts({ admin: true, language }), drafts: usePosts({ admin: true, language, draft: true }), trash: usePosts({ admin: true, language, deleted: true }) }),
+      { wrapper: wrap(c, "editor") },
+    );
     await waitFor(() => expect(result.current.all.loading).toBe(false), wait);
     await act(async () => void (await result.current.post.create({ title: "Draft one", body: "b", language, is_draft: true })));
     await waitFor(() => expect(result.current.drafts.items.map((p) => p.title)).toEqual(["Draft one"]), wait);
@@ -229,6 +230,11 @@ describe.skipIf(!endpoint)("content hooks against contentkit.Runtime.Handler", (
     await waitFor(() => expect(result.current.post.post?.cover_url).toMatch(/\/ckpost\//), wait);
     await act(() => result.current.post.remove());
     expect(result.current.all.items).toEqual([]);
+    await waitFor(() => expect(result.current.trash.items.map((p) => p.title)).toEqual(["Draft, renamed"]), wait);
+    await act(async () => void (await result.current.post.restore()));
+    await waitFor(() => expect(result.current.all.items.map((p) => p.title)).toEqual(["Draft, renamed"]), wait);
+    await waitFor(() => expect(result.current.trash.items).toEqual([]), wait);
+    await waitFor(() => expect(result.current.post.post?.title).toBe("Draft, renamed"), wait);
   });
 
   it("usePost: an unpublished post's images show through its editor read; stored bodies keep their public URLs", async () => {

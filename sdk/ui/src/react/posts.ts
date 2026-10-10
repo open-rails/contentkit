@@ -13,6 +13,10 @@ export interface PostFilter {
   admin?: boolean;
   /** With admin: true only drafts, false no drafts. */
   draft?: boolean;
+  /** With admin: the deleted posts instead of the live ones. */
+  deleted?: boolean;
+  /** With admin: only posts whose title, excerpt or body contains this text. */
+  q?: string;
   pageSize?: number;
 }
 
@@ -22,10 +26,12 @@ export function usePosts(f: PostFilter = {}, o: { client?: ContentKitClient } = 
   const size = f.pageSize ?? 20;
   return useList(
     store,
-    keyOf("posts", viewer, !!f.admin, f.language, f.sort, f.draft, size),
-    { type: "posts" },
+    keyOf("posts", viewer, !!f.admin, f.language, f.sort, f.draft, f.deleted, f.q, size),
+    { type: "posts", scope: f.admin && f.deleted ? "deleted" : undefined },
     offsetPages(size, (q, signal) =>
-      f.admin ? client.posts.adminList({ ...q, language: f.language, draft: f.draft }, signal) : client.posts.list({ ...q, language: f.language, sort: f.sort }, signal),
+      f.admin
+        ? client.posts.adminList({ ...q, language: f.language, draft: f.draft, deleted: f.deleted, q: f.q }, signal)
+        : client.posts.list({ ...q, language: f.language, sort: f.sort }, signal),
     ),
   );
 }
@@ -42,6 +48,8 @@ export interface UsePost {
   /** Updates the given fields; a body from the editor is stored with its images' public URLs (storedBody). */
   update: (patch: PostInput) => Promise<Post>;
   remove: () => Promise<void>;
+  /** Restores the deleted post (PostWrite). */
+  restore: () => Promise<Post>;
   /** Uploads the cover (null clears it); resolves with a URL that shows it now. */
   setCover: (file: Blob | null) => Promise<string | null>;
   /** Uploads an image for the body; resolves with a URL that shows it now, to place in the editor. */
@@ -69,7 +77,7 @@ export function isPublished(post: Post, now = Date.now()): boolean {
   return !post.is_draft && !post.moderation && (!post.live_at || Date.parse(post.live_at) <= now);
 }
 
-/** One post: read, and for staff (PostWrite) create, update, delete, cover and body images. null creates a new post. */
+/** One post: read, and for staff (PostWrite) create, update, delete, restore, cover and body images. null creates a new post. */
 export function usePost(id: string | null | undefined, o: { initial?: Post; client?: ContentKitClient } = {}): UsePost {
   const { client, store, viewer } = useContentScope(o.client);
   const [created, setCreated] = useState<string | null>(null);
@@ -175,6 +183,7 @@ export function usePost(id: string | null | undefined, o: { initial?: Post; clie
     [client, run, need, storedBody],
   );
   const remove = useCallback(() => run(() => client.posts.delete(need())), [client, run, need]);
+  const restore = useCallback(() => run(() => client.posts.restore(need())), [client, run, need]);
   const setCover = useCallback(
     (file: Blob | null) =>
       run(async () => {
@@ -201,6 +210,7 @@ export function usePost(id: string | null | undefined, o: { initial?: Post; clie
     create,
     update,
     remove,
+    restore,
     setCover,
     uploadImage,
     imageSrc,

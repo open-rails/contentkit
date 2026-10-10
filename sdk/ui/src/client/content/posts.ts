@@ -13,9 +13,13 @@ export interface PostAdminQuery extends PageQuery {
   language?: string;
   /** true: only drafts; false: only posts that are not drafts. */
   draft?: boolean;
+  /** true: only deleted posts (with deleted_at); otherwise only live ones. */
+  deleted?: boolean;
+  /** Only posts whose title, excerpt or body contains this text, ignoring case. */
+  q?: string;
 }
 
-/** Posts: the published list, staff CRUD, reactions, the cover and body images. */
+/** Posts: the published list, staff CRUD, search and restore, reactions, the cover and body images. */
 export class PostsClient {
   constructor(
     private readonly http: Http,
@@ -26,7 +30,7 @@ export class PostsClient {
   list(q: PostQuery = {}, signal?: AbortSignal): Promise<Post[]> {
     return call(this.http, "GET", "/posts", { query: q, signal });
   }
-  /** Every post for staff: drafts, scheduled, held and rejected ones included (PostWrite). */
+  /** Every post for staff: drafts, scheduled, held and rejected ones included; deleted ones on their own; q searches (PostWrite). */
   adminList(q: PostAdminQuery = {}, signal?: AbortSignal): Promise<Post[]> {
     return call(this.http, "GET", "/posts/admin", { query: q, signal });
   }
@@ -48,6 +52,12 @@ export class PostsClient {
   async delete(id: string): Promise<void> {
     await call(this.http, "DELETE", "/posts/{id}", { params: { id } });
     this.http.emit({ type: "post.deleted", id });
+  }
+  /** Restores a deleted post as it was (PostWrite); conflict when a live post took its slug. */
+  async restore(id: string): Promise<Post> {
+    const post: Post = await call(this.http, "POST", "/posts/{id}/restore", { params: { id } });
+    this.http.emit({ type: "post.restored", post });
+    return post;
   }
   /** Sets the caller's reaction to a published post; resolves with the post's new totals. */
   async react(id: string, value: Reaction): Promise<Post> {

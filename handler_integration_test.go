@@ -249,6 +249,15 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusNoContent, staff, "DELETE", "/posts/"+post.ID, nil, nil)
 	f.want(http.StatusGone, anon, "GET", "/codes/"+post.Code, nil, nil)
 	f.want(http.StatusNotFound, anon, "GET", "/posts/"+post.ID, nil, nil)
+	var deleted []content.Post
+	f.want(http.StatusOK, staff, "GET", "/posts/admin?deleted=true&q=hello", nil, &deleted)
+	if len(deleted) != 1 || deleted[0].ID != post.ID || deleted[0].DeletedAt == nil {
+		t.Fatalf("deleted posts %+v", deleted)
+	}
+	f.want(http.StatusOK, staff, "POST", "/posts/"+post.ID+"/restore", nil, nil)
+	f.want(http.StatusOK, anon, "GET", "/codes/"+post.Code, nil, nil)
+	f.want(http.StatusNotFound, staff, "POST", "/posts/"+post.ID+"/restore", nil, nil)
+	f.want(http.StatusNoContent, staff, "DELETE", "/posts/"+post.ID, nil, nil)
 
 	// Comments.
 	var root, reply content.Comment

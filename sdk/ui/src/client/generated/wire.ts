@@ -566,6 +566,7 @@ export interface Post {
   url_slug: string;
   created_at: string;
   updated_at: string;
+  deleted_at?: string;
 }
 
 export interface PostCover {

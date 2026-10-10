@@ -27,6 +27,7 @@ export type ContentChange =
   /** The cover changed: refetch the post. */
   | { type: "post.changed"; id: string }
   | { type: "post.deleted"; id: string }
+  | { type: "post.restored"; post: Post }
   /** ref is the commented item. */
   | { type: "comment.created"; ref: RefBody; comment: Comment }
   | { type: "comment.updated"; comment: Comment }

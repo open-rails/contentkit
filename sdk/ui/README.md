@@ -65,7 +65,8 @@ const urls = createContentURLs({ routes: { video: "watch", gallery: "g" }, langu
   generated route table with its generated types: `posts`, `comments`,
   `reactions`, `favorites`, `polls`, `bans` (`"owner"` or `"global"`),
   `moderation`, `taxonomy`, `codes`. Lists take `limit`/`offset` (the review
-  queue a `cursor`); staff lists are `posts.adminList`, `polls.adminList`,
+  queue a `cursor`); staff lists are `posts.adminList` (`q` searches,
+  `deleted: true` lists deleted posts for `posts.restore`), `polls.adminList`,
   `comments.adminList`.
 - **Images of posts and polls** go to the item's server-named upload path:
   `media.uploadNamed(ref, file)` resolves the name content routes take;
@@ -136,7 +137,7 @@ const editor = usePost(postId);
 Also `useContentConfig` (`client.config()`, read once), `useCommentReplies`,
 `useCanComment` (may the caller comment, may signed-out visitors, the ban
 that stops it, and what it may do to others' comments), `useLatestComments`,
-`usePolls`, `usePosts`, `usePost`, and for staff `useAdminComments`,
+`usePolls`, `usePosts` (staff: `admin`, `deleted`, `q`), `usePost` (with `restore`), and for staff `useAdminComments`,
 `useModerationQueue`, `useCommentBans`.
 
 Also: `useCrop`, `useVideoImages`, `useFrameStrip`, `useVideoFrame`,
