@@ -3,6 +3,7 @@ import type { ContentKitClient } from "../client/client.js";
 import { ContentKitError, failureError, toContentKitError } from "../client/errors.js";
 import type { Edit, FileInfo, Op, ReadResult, RefBody, UploadRule } from "../client/generated/wire.js";
 import { stem } from "../client/media/client.js";
+import type { QueueItem } from "../client/media/queue.js";
 import { filesFor, isPattern, ruleDir, ruleFor, screenFiles, uniqueName, uploadRules, type Screened } from "../client/media/rules.js";
 import { useContentKitClient, useErrorReporter, type ContentKitErrorHandler } from "./context.js";
 import { useMediaRead, type UseMediaRead } from "./read.js";
@@ -13,7 +14,7 @@ export interface MediaFolderOptions {
    * The upload paths shown and added to, e.g. ["images/{name}",
    * "videos/{name}"]: one group each. Default every pattern path of the kind
    * the server does not name. A file goes to the first path whose rule takes
-   * its type; before the server states rules, to the first path.
+   * its type.
    */
   paths?: readonly string[];
   /**
@@ -43,15 +44,26 @@ export interface FolderGroup {
 }
 
 export interface UseMediaFolder {
+  /** The item; null until the host has one (files added meanwhile wait for it). */
+  ref: RefBody | null;
+  /** The options the folder was opened with. */
+  options: MediaFolderOptions;
   /** The editor read of the item (every window, polled while processing). */
   read: UseMediaRead;
   groups: FolderGroup[];
   /** Every group's uploads. */
   uploads: FileInfo[];
+  /** The upload queue; a file leaves it once the editor read lists it. */
   queue: UseUploadQueue;
-  /** Screens files against the rules and queues the rest; returns the refusals. */
-  add: (files: Iterable<File>) => Screened["refused"];
-  /** The last add()'s refusals. */
+  /**
+   * Files added before the item and its editor read (the upload rules) were
+   * known. They are screened and queued when the rules arrive, or refused
+   * when the read fails or states no rules (the actor may not edit the item).
+   */
+  waiting: readonly File[];
+  /** Screens files against the rules and queues the rest (once the rules are known); refusals land in refused. */
+  add: (files: Iterable<File>) => void;
+  /** The last screening's refusals. */
   refused: Screened["refused"];
   dismiss: () => void;
   /** Moves an upload to index among its group's uploads. */
@@ -62,13 +74,21 @@ export interface UseMediaFolder {
   edit: (path: string, edit: Edit | null) => Promise<void>;
   /** Uploads file in place of the upload at path (same position and meta, no edit). */
   replace: (path: string, file: File) => Promise<void>;
-  /** Commits the uploaded files in queue order and clears them from the queue. */
+  /** Commits the uploaded files in queue order. */
   commit: () => Promise<FileInfo[]>;
   /** Stops every upload, aborts its multipart upload and empties the queue (before deleting a draft). */
   discard: () => void;
   /** An update (move, remove, rename, edit, replace) is running. */
   updating: boolean;
   committing: boolean;
+  /**
+   * Work is in flight: files wait for the rules, uploads are queued or
+   * running, an automatic commit is due, or a commit or update runs.
+   * Leaving the page now interrupts it.
+   */
+  busy: boolean;
+  /** The item's uploads plus the files on their way in (waiting, queued, uploading, uploaded, being added); failed uploads are not counted. */
+  fileCount: number;
   /** The last update's or commit's failure; cleared by the next success. */
   error?: ContentKitError;
 }
@@ -88,17 +108,38 @@ export function thumbnailOf(read: ReadResult | null | undefined, upload: FileInf
   return best;
 }
 
+const NO_ITEM: RefBody = { kind: "", id: "" };
+const keyOf = (ref: RefBody | null) => (ref ? `${ref.kind}/${ref.id}` : "");
+
+const noRules = new WeakMap<ReadResult, ContentKitError>();
+/** The refusal for files added to an item whose read carries no upload rules (one per read). */
+function notEditor(read: ReadResult): ContentKitError {
+  let e = noRules.get(read);
+  if (!e) noRules.set(read, (e = new ContentKitError("forbidden", "the editor read states no upload rules", { status: 403 })));
+  return e;
+}
+
+/** Queue items still on their way in: not failed, and not yet listed by the read. */
+function inbound(items: readonly QueueItem[], listed: ReadonlySet<string>) {
+  return items.filter((i) => i.status !== "failed" && !(i.status === "committed" && listed.has(i.path)));
+}
+
 /**
  * An item's folder for its editors: the editor read, an upload queue, the
  * kind's upload rules screening files before they upload, and the updates
- * (move, remove, rename, edit, replace). Uploads the worker fails after this
- * mounted are reported once ("folder.process"). The queue is the first
- * item's: key the component by ref to switch items.
+ * (move, remove, rename, edit, replace). Files added before the editor read
+ * arrives wait for its rules; with a null ref they wait for the item too (a
+ * draft created on the first drop). Uploads the worker fails after the read
+ * are reported once ("folder.process"). Another ref gets a fresh queue.
  */
-export function useMediaFolder(ref: RefBody, o: MediaFolderOptions = {}): UseMediaFolder {
+export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOptions = {}): UseMediaFolder {
   const client = useContentKitClient(o.client);
   const report = useErrorReporter(o.onError);
-  const read = useMediaRead(ref, { editor: true, window: ALL, poll: o.poll, client });
+  const item = ref ?? null;
+  const key = keyOf(item);
+  const target = item ?? NO_ITEM;
+  // Without an item there is nothing to read: a supplied null read never fetches.
+  const read = useMediaRead(target, { editor: true, window: ALL, poll: o.poll, client, read: item ? undefined : null });
   const rules = uploadRules(read.read);
   const pathsKey = o.paths?.join("\n");
   const groupPaths = useMemo(
@@ -110,26 +151,38 @@ export function useMediaFolder(ref: RefBody, o: MediaFolderOptions = {}): UseMed
     return groupPaths.map((path) => ({ path, rule: rules.find((r) => r.path === path), files: filesFor(read.read, { path }, known) }));
   }, [groupPaths, rules, read.read]);
   const uploads = useMemo(() => groups.flatMap((g) => g.files), [groups]);
+  const listed = useMemo(() => new Set(uploads.map((f) => f.path)), [uploads]);
 
-  const queue = useUploadQueue({ client, ref, path: `${ruleDir(groupPaths[0] ?? "{name}")}{name}`, concurrency: o.concurrency });
-  // The UploadQueue itself is stable; the hook's wrapper is new every render.
-  const q = queue.queue;
+  const raw = useUploadQueue({ client, ref: target, path: `${ruleDir(groupPaths[0] ?? "{name}")}{name}`, concurrency: o.concurrency });
+  // The UploadQueue itself is stable per item; the hook's wrapper is new every render.
+  const q = raw.queue;
+  // A committed file stays in the queue until the read lists it, so it never drops out of view.
+  const items = useMemo(() => raw.items.filter((i) => !(i.status === "committed" && listed.has(i.path))), [raw.items, listed]);
+  const queue = { ...raw, items };
   const [refused, setRefused] = useState<Screened["refused"]>([]);
+  const [waiting, setWaiting] = useState<readonly File[]>([]);
+  const pending = useRef<File[]>([]);
   const [updating, setUpdating] = useState(0);
   const [committing, setCommitting] = useState(false);
   const [error, setError] = useState<ContentKitError>();
   // An automatic commit that failed: no more until commit() or new files.
-  const [stalled, setStalled] = useState<ContentKitError | undefined>();
+  const [stall, setStall] = useState<{ key: string; error: ContentKitError }>();
+  const stalled = stall?.key === key ? stall.error : undefined;
   const opts = useRef(o);
   opts.current = o;
-  const state = useRef({ groups, ref });
-  state.current = { groups, ref };
+  // The rules are known once the item's editor read states them. A failed read
+  // refuses what waits, and so does one without rules: the server answered a
+  // viewer's read, so nothing uploads here.
+  const ready = !!item && !!read.read?.uploads;
+  const loadError = !item ? undefined : !read.read ? read.error : !read.read.uploads ? notEditor(read.read) : undefined;
+  const live = useRef({ groups, ref: target, listed, ready, loadError });
+  live.current = { groups, ref: target, listed, ready, loadError };
 
-  const add = useCallback(
-    (files: Iterable<File>) => {
-      const { groups } = state.current;
+  const place = useCallback(
+    (files: File[]) => {
+      const { groups, listed } = live.current;
       const gs = groups.map((g) => g.rule ?? { path: g.path, types: [], max_bytes: 0 });
-      const queued = q.getSnapshot().items.filter((i) => i.status !== "failed");
+      const queued = inbound(q.getSnapshot().items, listed);
       const inGroup = (path: string, rule: UploadRule) => ruleFor(gs, path)?.path === rule.path;
       const s = screenFiles(files, gs, (rule) => groups.find((g) => g.path === rule.path)!.files.length + queued.filter((i) => inGroup(i.path, rule)).length);
       const taken = new Map<string, string[]>();
@@ -151,22 +204,45 @@ export function useMediaFolder(ref: RefBody, o: MediaFolderOptions = {}): UseMed
       }
       if (paths.size) {
         q.add(paths.keys(), { path: (f) => paths.get(f)! });
-        if (q.getSnapshot().blocked) q.start();
-        setStalled(undefined);
+        // New files lift a block and restart a queue discard() paused.
+        q.start();
+        setStall(undefined);
       }
       setRefused(s.refused);
       for (const r of s.refused) report(r.error, "upload", r.file.name);
-      return s.refused;
     },
     [q, report],
   );
+
+  // Screens what waits once the rules are known; a failed read refuses it (the read failure is reported once, as folder.load).
+  const flush = useCallback(() => {
+    const files = pending.current;
+    const { ready, loadError } = live.current;
+    if (!files.length || (!ready && !loadError)) return false;
+    pending.current = [];
+    setWaiting([]);
+    if (ready) place(files);
+    else setRefused(files.map((file) => ({ file, error: loadError! })));
+    return true;
+  }, [place]);
+
+  const add = useCallback(
+    (files: Iterable<File>) => {
+      const list = [...files];
+      if (!list.length) return;
+      pending.current = [...pending.current, ...list];
+      if (!flush()) setWaiting(pending.current);
+    },
+    [flush],
+  );
+  useEffect(() => void flush(), [flush, ready, loadError]);
 
   const update = useCallback(
     async (ops: Op[], run?: () => Promise<unknown>) => {
       setUpdating((n) => n + 1);
       try {
         if (run) await run();
-        else await client.media.commit(state.current.ref, ops);
+        else await client.media.commit(live.current.ref, ops);
         setError(undefined);
       } catch (e) {
         const err = toContentKitError(e);
@@ -184,7 +260,6 @@ export function useMediaFolder(ref: RefBody, o: MediaFolderOptions = {}): UseMed
     setCommitting(true);
     try {
       const files = await q.commit(undefined, { head: opts.current.commit === "auto" });
-      for (const i of q.getSnapshot().items) if (i.status === "committed") q.remove(i.id);
       setError(undefined);
       return files;
     } catch (e) {
@@ -197,59 +272,74 @@ export function useMediaFolder(ref: RefBody, o: MediaFolderOptions = {}): UseMed
     }
   }, [q, report]);
 
+  // Committed files leave the queue once the read lists them, or once a read lands without them.
+  useEffect(() => {
+    for (const i of raw.items) if (i.status === "committed" && (listed.has(i.path) || !read.loading)) q.remove(i.id);
+  }, [raw.items, listed, read.loading, q]);
+
   // A draft commits the uploaded head of the queue as it finishes; a failed commit waits for commit().
   const auto = o.commit === "auto";
-  const head = queue.items[0];
-  const headReady = head?.status === "uploaded";
+  const headReady = items.find((i) => i.status !== "committed")?.status === "uploaded";
   useEffect(() => {
     if (!auto || !headReady || committing || stalled) return;
-    commit().catch((e: unknown) => setStalled(toContentKitError(e)));
-  }, [auto, headReady, committing, stalled, commit]);
+    commit().catch((e: unknown) => setStall({ key, error: toContentKitError(e) }));
+  }, [auto, headReady, committing, stalled, commit, key]);
   const manualCommit = useCallback(async () => {
-    setStalled(undefined);
+    setStall(undefined);
     return commit();
   }, [commit]);
 
   // Each failed upload and queue-wide refusal is reported once; rows keep showing it.
   const seen = useRef(new Set<unknown>());
   useEffect(() => {
-    for (const i of queue.items) {
+    for (const i of raw.items) {
       if (i.status !== "failed" || !i.error || seen.current.has(i.error)) continue;
       seen.current.add(i.error);
       report(i.error, "upload", i.file.name);
     }
-    if (queue.blocked && !seen.current.has(queue.blocked)) {
-      seen.current.add(queue.blocked);
-      report(queue.blocked, "upload");
+    if (raw.blocked && !seen.current.has(raw.blocked)) {
+      seen.current.add(raw.blocked);
+      report(raw.blocked, "upload");
     }
-  }, [queue.items, queue.blocked, report]);
+  }, [raw.items, raw.blocked, report]);
 
-  // Processing failures that appear after the first read.
-  const failures = useRef<Set<string> | null>(null);
+  // Processing failures that appear after the item's first read.
+  const failures = useRef<{ key: string; seen: Set<string> } | null>(null);
   useEffect(() => {
     if (!read.read) return;
     const failed = uploads.filter((f) => f.failed);
-    if (!failures.current) {
-      failures.current = new Set(failed.map((f) => `${f.path}:${f.failed!.of}`));
+    if (failures.current?.key !== key) {
+      failures.current = { key, seen: new Set(failed.map((f) => `${f.path}:${f.failed!.of}`)) };
       return;
     }
     for (const f of failed) {
-      const key = `${f.path}:${f.failed!.of}`;
-      if (failures.current.has(key)) continue;
-      failures.current.add(key);
+      const id = `${f.path}:${f.failed!.of}`;
+      if (failures.current.seen.has(id)) continue;
+      failures.current.seen.add(id);
       report(failureError(f.failed!), "folder.process", f.path.split("/").pop());
     }
-  }, [read.read, uploads, report]);
+  }, [read.read, uploads, report, key]);
 
   useEffect(() => void (read.error && report(read.error, "folder.load")), [read.error, report]);
 
+  const busy =
+    waiting.length > 0 ||
+    committing ||
+    updating > 0 ||
+    (auto && headReady && !stalled) ||
+    items.some((i) => i.status === "uploading" || (i.status === "queued" && !raw.blocked));
+  const fileCount = uploads.length + waiting.length + inbound(items, listed).length;
+
   // Reads the latest groups, so callbacks stay stable.
-  const groupOf = (path: string) => state.current.groups.find((g) => ruleFor([{ path: g.path }], path));
+  const groupOf = (path: string) => live.current.groups.find((g) => ruleFor([{ path: g.path }], path));
   return {
+    ref: item,
+    options: o,
     read,
     groups,
     uploads,
     queue,
+    waiting,
     add,
     refused,
     dismiss: useCallback(() => setRefused([]), []),
@@ -271,16 +361,20 @@ export function useMediaFolder(ref: RefBody, o: MediaFolderOptions = {}): UseMed
     ),
     edit: useCallback((path, edit) => update([{ op: "edit", path, ...(edit ? { edit } : {}) }]), [update]),
     replace: useCallback(
-      (path, file) => update([], () => client.media.put(file, { ref: state.current.ref, path: stem(path), wait: false })),
+      (path, file) => update([], () => client.media.put(file, { ref: live.current.ref, path: stem(path), wait: false })),
       [update, client],
     ),
     commit: manualCommit,
     discard: useCallback(() => {
+      pending.current = [];
+      setWaiting([]);
       for (const i of q.getSnapshot().items) q.remove(i.id);
       q.pause();
     }, [q]),
     updating: updating > 0,
     committing,
+    busy,
+    fileCount,
     error: error ?? stalled,
   };
 }

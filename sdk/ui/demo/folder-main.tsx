@@ -1,7 +1,7 @@
-import { ContentKitProvider, useContentKitClient } from "@openrails/contentkit-ui/react";
-import { ContentKitUiProvider, MediaFolderEditor, MediaGallery, MediaReadinessNotice, type MediaFolderEditorHandle } from "@openrails/contentkit-ui";
+import { ContentKitProvider, useContentKitClient, useMediaFolder } from "@openrails/contentkit-ui/react";
+import { ContentKitUiProvider, MediaFolderEditor, MediaGallery, MediaReadinessNotice } from "@openrails/contentkit-ui";
 import type { RefBody } from "@openrails/contentkit-ui/client";
-import { StrictMode, useRef, useState, type ReactNode } from "react";
+import { StrictMode, useEffect, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { client, dark, item, q, theme } from "./session";
 
@@ -22,24 +22,43 @@ function Card({ title, children, demo }: { title: string; children: ReactNode; d
   );
 }
 
-// A draft composer: files commit as they finish; discarding stops uploads and removes what landed.
+// A draft composer that owns its folder: the draft is created on the first
+// drop, files commit as they finish, and Publish waits for them. Discarding
+// stops uploads and removes what landed.
 function Composer({ draft }: { draft: RefBody }) {
-  const handle = useRef<MediaFolderEditorHandle>(null);
   const { media } = useContentKitClient();
-  const [discarded, setDiscarded] = useState(0);
+  const [ref, setRef] = useState<RefBody | null>(null);
+  const [published, setPublished] = useState(false);
+  const folder = useMediaFolder(ref, { commit: "auto" });
+  const creating = useRef(false);
+  useEffect(() => {
+    if (ref || creating.current || !folder.fileCount) return;
+    creating.current = true;
+    // The host's create-draft request.
+    setTimeout(() => setRef(draft), 600);
+  }, [ref, folder.fileCount, draft]);
   const discard = async () => {
-    const folder = handle.current!.folder;
-    handle.current!.discard();
+    folder.discard();
     const paths = folder.uploads.map((f) => f.path);
     if (paths.length) await media.commit(draft, paths.map((path) => ({ op: "remove", path })));
-    setDiscarded((n) => n + 1);
+    creating.current = false;
+    setRef(null);
+    setPublished(false);
   };
   return (
     <>
-      <MediaFolderEditor key={discarded} item={draft} ref={handle} commit="auto" label="New post" />
-      <button type="button" onClick={() => void discard()} style={{ justifySelf: "start" }}>
-        Discard draft
-      </button>
+      <MediaFolderEditor folder={folder} label="New post" />
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button type="button" disabled={folder.busy || !folder.fileCount} onClick={() => setPublished(true)}>
+          Publish
+        </button>
+        <button type="button" onClick={() => void discard()}>
+          Discard draft
+        </button>
+        <small data-demo="files" style={{ opacity: 0.7 }}>
+          {published ? "Published" : `${folder.fileCount} files${folder.busy ? ", uploading" : ""}`}
+        </small>
+      </div>
     </>
   );
 }

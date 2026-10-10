@@ -183,7 +183,7 @@ loaded. `refresh()` joins a read in flight (a player's grant refresh);
 
 ```tsx
 const folder = useMediaFolder(ref, { paths: ["images/{name}", "videos/{name}"], commit: "manual" });
-folder.add(files);               // screened, queued; returns the refusals
+folder.add(files);               // screened and queued; refusals in folder.refused
 await folder.commit();           // the uploaded files, in queue order
 await folder.move(path, 0); await folder.rename(path, "cover");
 await folder.edit(path, edit); await folder.replace(path, file); await folder.remove([path]);
@@ -194,7 +194,13 @@ An item's folder for its editors: the editor read (all windows), an upload
 queue, and the kind's upload rules from the editor read, which screen type,
 size and file caps before anything uploads and name files around names
 taken. `groups` lists each path's uploads; `commit: "auto"` commits each
-upload once those before it have (a draft). Failures go to the provider's
+upload once those before it have (a draft). Files added before the editor
+read arrives wait in `waiting` and are screened when its rules do (or
+refused if the read fails or states no rules). `ref` may be null until the item exists,
+so a composer can create its draft on the first drop. `busy` is true while
+work is in flight (files waiting, uploads queued or running, a commit or
+update); `fileCount` counts the uploads and the files on their way in. A
+committed file leaves the queue once the read lists it. Failures go to the provider's
 `onError` with an operation (`upload`, `folder.commit`, `folder.update`,
 `folder.process` for uploads the worker fails after the editor opened) and
 the file's name.
@@ -264,6 +270,11 @@ is what a slot or poster shows; a read's `public` lists `PublicImage`s.
 <MediaFolderEditor item={post} paths={["images/{name}", "videos/{name}"]} commit="auto" ref={handle}
   toolbar={<ZipImport />} rowActions={(f) => <SetCover file={f} />} footer={note} />
 handle.current.discard();
+
+// Or the host owns the folder and renders with its state:
+const folder = useMediaFolder(draft, { paths, commit: "auto" }); // draft: null until created
+<MediaFolderEditor folder={folder} />
+<Button disabled={folder.busy || (!title && !text && !folder.fileCount)}>Publish</Button>
 ```
 
 `useMediaFolder` with its UI: a drop zone stating the rules, a queue with

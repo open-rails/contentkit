@@ -27,12 +27,17 @@ export interface UploadQueueOptions extends QueueOptions {
 }
 
 /**
- * A file queue for one item (options are read once; key the component by
- * ref to switch items). Unmounting pauses running uploads.
+ * A file queue for one item: another ref gets a fresh queue and the previous
+ * one pauses (the other options are read once per queue). Unmounting pauses
+ * running uploads.
  */
 export function useUploadQueue({ client: own, ...options }: UploadQueueOptions): UseUploadQueue {
   const client = useContentKitClient(own);
-  const [queue] = useState(() => new UploadQueue(client.media, { ...options, autoStart: false }));
+  const key = `${options.ref.kind}/${options.ref.id}`;
+  const open = () => ({ key, queue: new UploadQueue(client.media, { ...options, autoStart: false }) });
+  const [current, setCurrent] = useState(open);
+  if (current.key !== key) setCurrent(open());
+  const { queue } = current;
   const autoStart = options.autoStart ?? true;
   useEffect(() => {
     if (autoStart) queue.start();

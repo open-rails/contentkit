@@ -54,9 +54,9 @@ describe("media hooks against the real ContentKit", () => {
     await waitFor(() => expect(result.current.queue.ready).toBe(true), wait);
     expect(result.current.queue.items.map((i) => i.path)).toEqual(["originals/b.png", "originals/a.png", "originals/b-2.png"]);
     await act(async () => void (await result.current.commit()));
-    expect(result.current.queue.items).toEqual([]);
     const paths = () => result.current.uploads.map((f) => f.path);
     await waitFor(() => expect(paths()).toEqual(["originals/b.png", "originals/a.png", "originals/b-2.png"]), wait);
+    expect(result.current.queue.items).toEqual([]);
 
     await act(async () => result.current.move("originals/a.png", 0));
     await waitFor(() => expect(paths()).toEqual(["originals/a.png", "originals/b.png", "originals/b-2.png"]), wait);
@@ -80,16 +80,49 @@ describe("media hooks against the real ContentKit", () => {
     const { result } = renderHook(() => useMediaFolder(ref), { wrapper: provider(as()) });
     await waitFor(() => expect(result.current.groups.map((g) => g.path)).toEqual(["originals/{name}"]), wait);
     expect(result.current.groups[0]!.rule).toMatchObject({ types: ["image/png"], max_bytes: 1 << 20, max: 2 });
-    let refused: ReturnType<typeof result.current.add> = [];
     const jpeg = new NodeFile([new Uint8Array(10)], "a.jpg", { type: "image/jpeg" }) as unknown as File;
-    act(() => void (refused = result.current.add([png("1.png", 21), png("2.png", 22), png("3.png", 23), jpeg])));
-    expect(refused.map((r) => [r.file.name, r.error.code])).toEqual([
+    act(() => result.current.add([png("1.png", 21), png("2.png", 22), png("3.png", 23), jpeg]));
+    expect(result.current.refused.map((r) => [r.file.name, r.error.code])).toEqual([
       ["3.png", "too_many_files"],
       ["a.jpg", "type_not_allowed"],
     ]);
     await waitFor(() => expect(result.current.queue.ready).toBe(true), wait);
     await act(async () => void (await result.current.commit()));
     await waitFor(() => expect(result.current.uploads.map((f) => f.path)).toEqual(["originals/1.png", "originals/2.png"]), wait);
+  });
+
+  it("useMediaFolder holds files added before the editor read and routes them by its rules", async () => {
+    // note: originals/{name} takes at most two PNGs; inline/{name} (server-named) takes JPEGs too.
+    const ref = bare(await item(h, "note", accounts.get("alice")));
+    const { result } = renderHook(() => useMediaFolder(ref, { paths: ["originals/{name}", "inline/{name}"] }), { wrapper: provider(as()) });
+    expect(result.current.read.read).toBeNull();
+    act(() => result.current.add([png("1.png", 31), png("2.png", 32), png("3.png", 33), fixture("avatar.jpg", "image/jpeg", "a.jpg")]));
+    expect(result.current).toMatchObject({ busy: true, fileCount: 4, refused: [] });
+    expect(result.current.waiting.map((f) => f.name)).toEqual(["1.png", "2.png", "3.png", "a.jpg"]);
+    expect(result.current.queue.items).toEqual([]);
+
+    // The rules arrive: PNGs go to originals (at most 2), the JPEG only inline takes.
+    await waitFor(() => expect(result.current.queue.ready).toBe(true), wait);
+    expect(result.current.waiting).toEqual([]);
+    expect(result.current.queue.items.map((i) => i.path)).toEqual(["originals/1.png", "originals/2.png", expect.stringMatching(/^inline\/.+\.jpg$/)]);
+    expect(result.current.refused.map((r) => [r.file.name, r.error.code])).toEqual([["3.png", "too_many_files"]]);
+    expect(result.current).toMatchObject({ busy: false, fileCount: 3 });
+    await act(async () => void (await result.current.commit()));
+    await waitFor(() => expect(result.current.groups.map((g) => g.files.length)).toEqual([2, 1]), wait);
+    expect(result.current).toMatchObject({ busy: false, fileCount: 3 });
+    expect(result.current.queue.items).toEqual([]);
+  });
+
+  it("useMediaFolder refuses files waiting when the editor read states no rules (a reader's)", async () => {
+    const ref = bare(await item(h, "note", accounts.get("alice")));
+    const { result } = renderHook(() => useMediaFolder(ref, { paths: ["originals/{name}"] }), { wrapper: provider(as("reader")) });
+    act(() => result.current.add([png("1.png", 41)]));
+    expect(result.current.waiting).toHaveLength(1);
+    await waitFor(() => expect(result.current.refused.map((r) => [r.file.name, r.error.code])).toEqual([["1.png", "forbidden"]]), wait);
+    expect(result.current.read.read).toMatchObject({ access: "full" });
+    expect(result.current.read.read?.uploads).toBeUndefined();
+    expect(result.current).toMatchObject({ busy: false, fileCount: 0, waiting: [] });
+    expect(result.current.queue.items).toEqual([]);
   });
 
   it("usePublicImage shows an item's published image from its read, else the kind's default", async () => {
