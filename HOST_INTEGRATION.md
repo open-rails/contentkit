@@ -377,7 +377,7 @@ erased user and of their owner scope, and blanks them as `banned_by`.
 `content_poll_questions.kind` is `multiple_choice` (options + votes, as
 before) or `free_text`: one answer per signed-in actor in
 `content_poll_answers`, editable until the poll closes. `closes_at` (optional,
-`PATCH`-able) and `is_active = false` close a poll for votes and answers alike
+`PATCH`-able, `null` clears it) and `is_active = false` close a poll for votes and answers alike
 (`400 poll is closed`); results stay readable. Anonymous actors cannot answer
 (an IP-keyed editable answer would let NAT neighbours overwrite each other).
 

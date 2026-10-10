@@ -539,7 +539,7 @@ export interface PollUpdate {
   question?: string;
   is_active?: boolean;
   live_at?: string;
-  closes_at?: string;
+  closes_at?: string | null;
 }
 
 export interface PollVote {

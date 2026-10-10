@@ -2196,7 +2196,7 @@
         "tags": [
           "polls"
         ],
-        "summary": "Updates a poll's given fields.",
+        "summary": "Updates a poll's given fields; closes_at null reopens it until deactivated.",
         "parameters": [
           {
             "name": "id",

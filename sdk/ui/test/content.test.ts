@@ -306,6 +306,11 @@ describe.skipIf(!endpoint)("content modules against contentkit.Runtime.Handler",
     expect(read.options.find((o) => o.id === spring!.id)!.image_url).toBe(optionImage);
     expect(await editor.polls.setOptionImage(poll.id, spring!.id, null)).toBeNull();
 
+    const closed = await editor.polls.update(poll.id, { closes_at: new Date(Date.now() - 60_000).toISOString() });
+    expect(closed).toMatchObject({ closed: true, closes_at: expect.any(String) });
+    const reopened = await editor.polls.update(poll.id, { closes_at: null });
+    expect(reopened.closed).toBe(false);
+    expect(reopened.closes_at).toBeUndefined();
     const hidden = await editor.polls.update(poll.id, { is_active: false });
     expect(hidden).toMatchObject({ is_active: false, closed: true });
     await expect(ck().polls.get(poll.id)).rejects.toEqual(code("not_found"));

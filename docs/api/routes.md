@@ -49,7 +49,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | GET | `/polls/admin` | staff `PollWrite` | — | 200 `Poll[]` | Every poll, scheduled and inactive ones included. Query: `language`, `month`, `date`, `limit`, `offset`. |
 | GET | `/polls/{id}` | public | — | 200 `Poll` | A poll with the caller's vote or answer; a scheduled or inactive poll only for PollWrite holders. |
 | POST | `/polls` | staff `PollWrite` | `PollInput` | 201 `Poll` | Creates a poll with its options; a free-text poll needs an AnswerClassifier. |
-| PATCH | `/polls/{id}` | staff `PollWrite` | `PollUpdate` | 200 `Poll` | Updates a poll's given fields. |
+| PATCH | `/polls/{id}` | staff `PollWrite` | `PollUpdate` | 200 `Poll` | Updates a poll's given fields; closes_at null reopens it until deactivated. |
 | DELETE | `/polls/{id}` | staff `PollWrite` | — | 204 — | Deletes a poll and its media folder. |
 | POST | `/polls/{id}/vote` | public | `PollVote` | 200 `Poll` | Votes for an option of an open multiple-choice poll, signed out where Config.anonymous.votes allows it; a vote is final, and voting again changes nothing. |
 | POST | `/polls/{id}/answer` | user | `PollAnswerInput` | 200 `Poll` | Stores or replaces the caller's answer to an open free-text poll. |

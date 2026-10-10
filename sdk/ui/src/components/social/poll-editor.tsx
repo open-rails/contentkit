@@ -316,6 +316,7 @@ function EditFields(p: {
   if (question.trim() !== poll.question) patch.question = question.trim();
   if (toISO(liveAt) !== new Date(localInput(new Date(poll.live_at))).toISOString()) patch.live_at = toISO(liveAt);
   if (closesAt && toISO(closesAt) !== (poll.closes_at && new Date(localInput(new Date(poll.closes_at))).toISOString())) patch.closes_at = toISO(closesAt);
+  else if (!closesAt && poll.closes_at) patch.closes_at = null;
   if (active !== poll.is_active) patch.is_active = active;
   const dirty = Object.keys(patch).length > 0;
   const act = (fn: () => Promise<unknown>) => void fn().catch(p.onError);

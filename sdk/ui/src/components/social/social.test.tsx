@@ -396,6 +396,22 @@ it("PollEditor: a new poll needs a question and two options; an existing one mov
   await waitFor(() => expect(s.calls.filter((c) => c.startsWith("PATCH"))).toEqual(["PATCH /polls/p1/options/o3", "PATCH /polls/p1/options/o2"]));
 });
 
+it("PollEditor: emptying the closing time clears it (closes_at null)", async () => {
+  let current = poll({ closes_at: "2031-05-01T10:00:00Z" });
+  const s = server({
+    "GET /polls/p1": () => current,
+    "PATCH /polls/p1": ({ body }) => (expect(body).toEqual({ closes_at: null }), (current = { ...current, closes_at: undefined })),
+  });
+  const user = userEvent.setup();
+  render(<PollEditor poll="p1" />, { wrapper: wrap(s.client, { viewer: "editor" }) });
+  const closes = await screen.findByLabelText("Closes (optional)");
+  expect(closes).not.toHaveValue("");
+  await user.clear(closes);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(s.calls).toContain("PATCH /polls/p1"));
+  expect(await screen.findByText("Saved.")).toBeInTheDocument();
+});
+
 it("CommentModeration: deletes and restores; the queue approves, and says when an item changed since it was listed", async () => {
   const admin: AdminComment = { ...comment("c1"), tenant_id: "t", content_kind: "video", content_id: "v1", deleted: false };
   let deleted = false;

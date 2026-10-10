@@ -93,12 +93,13 @@ type PollOptionInput struct {
 	Position int    `json:"position"`
 }
 
-// PollUpdate uses pointers so absent fields are left untouched (COALESCE).
+// PollUpdate leaves absent fields untouched; closes_at null clears it (open
+// until deactivated).
 type PollUpdate struct {
-	Question *string    `json:"question"`
-	IsActive *bool      `json:"is_active"`
-	LiveAt   *time.Time `json:"live_at"`
-	ClosesAt *time.Time `json:"closes_at"`
+	Question *string             `json:"question"`
+	IsActive *bool               `json:"is_active"`
+	LiveAt   *time.Time          `json:"live_at"`
+	ClosesAt Nullable[time.Time] `json:"closes_at,omitzero"`
 }
 
 // --- admin (PollWrite-gated) ---
@@ -164,7 +165,8 @@ func (p *polls) create(ctx context.Context, actor access.Actor, in PollInput) (P
 	return p.get(ctx, actor, id)
 }
 
-// update mutates question/is_active; nil fields are left as-is via COALESCE.
+// update mutates the given fields; nil ones are left as-is via COALESCE, and
+// a null closes_at clears it.
 func (p *polls) update(ctx context.Context, actor access.Actor, id string, in PollUpdate) (Poll, error) {
 	if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PollWrite); err != nil {
 		return Poll{}, err
@@ -181,8 +183,8 @@ func (p *polls) update(ctx context.Context, actor access.Actor, id string, in Po
 	}
 	tag, err := p.s.pool.Exec(ctx, `UPDATE `+p.s.t.pollQuestions+`
 		SET question = COALESCE($2, question), is_active = COALESCE($3, is_active),
-		    live_at = COALESCE($4, live_at), closes_at = COALESCE($6, closes_at), updated_at = now()
-		WHERE id = $1 AND tenant_id = $5 AND deleted_at IS NULL`, id, in.Question, in.IsActive, in.LiveAt, p.s.tenant, in.ClosesAt)
+		    live_at = COALESCE($4, live_at), closes_at = CASE WHEN $7 THEN $6 ELSE closes_at END, updated_at = now()
+		WHERE id = $1 AND tenant_id = $5 AND deleted_at IS NULL`, id, in.Question, in.IsActive, in.LiveAt, p.s.tenant, in.ClosesAt.Value, in.ClosesAt.Set)
 	if err != nil {
 		return Poll{}, err
 	}
@@ -765,7 +767,7 @@ var pollRoutes = []httpapi.Route[*polls]{
 		Responses: []httpapi.Reply{httpapi.Created(Poll{})}, Errors: []string{CodeNotConfigured}},
 		Serve: httpapi.H((*polls).handleCreate)},
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/polls/{id}", Resource: "polls", Auth: httpapi.Staff, Perm: "PollWrite",
-		Doc:       "Updates a poll's given fields.",
+		Doc:       "Updates a poll's given fields; closes_at null reopens it until deactivated.",
 		Request:   PollUpdate{},
 		Responses: []httpapi.Reply{httpapi.OK(Poll{})}, Errors: []string{CodeNotFound}},
 		Serve: httpapi.H((*polls).handleUpdate)},

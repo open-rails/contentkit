@@ -67,7 +67,8 @@ func tsKey(name string) string {
 
 // wireTS is every wire type. A member is optional when Go omits it empty; a
 // request-only type's pointer members are optional too (omitted means
-// unchanged). A response member Go writes as null when unset is `| null`.
+// unchanged), and a content.Nullable one also takes null (clears). A response
+// member Go writes as null when unset is `| null`.
 func (m *model) wireTS() []byte {
 	var b bytes.Buffer
 	b.WriteString(tsHeader)
@@ -90,6 +91,8 @@ func (m *model) wireTS() []byte {
 			}
 			opt := ""
 			switch {
+			case f.clears:
+				opt, t = "?", t+" | null"
 			case f.optional, !o.output && f.t.Kind() == reflect.Pointer:
 				opt = "?"
 			case f.nullable && o.output:
