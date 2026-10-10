@@ -11,8 +11,29 @@ export {
   type ContentKitErrorHandler,
   type ContentKitOperation,
   type Navigate,
+  type SocialOperation,
 } from "./context.js";
 export { useRead, type UseRead, type UseReadOptions } from "./read.js";
+export {
+  useAdminComments,
+  useCanComment,
+  useCommentBans,
+  useCommentReplies,
+  useComments,
+  useLatestComments,
+  useModerationQueue,
+  withReaction,
+  type UseAdminComments,
+  type UseCommentBans,
+  type UseComments,
+  type UseCommentsOptions,
+  type UseModerationQueue,
+} from "./comments.js";
+export { useFavorite, useReaction, type UseFavorite, type UseReaction } from "./engagement.js";
+export { usePoll, usePollEditor, usePolls, withVote, type PollFilter, type PollImages, type UsePoll, type UsePollEditor } from "./polls.js";
+export { usePost, usePosts, type PostFilter, type UsePost } from "./posts.js";
+export { useContentScope, type UseList } from "./use-resource.js";
+export { ResourceStore, resourcesFor, type Page, type Resource } from "./resources.js";
 export {
   useCrop,
   useEncodeProgress,

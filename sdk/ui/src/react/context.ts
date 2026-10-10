@@ -13,7 +13,29 @@ export type ContentKitOperation =
   | "slot.decode"
   | "slot.save"
   | "slot.remove"
-  | "upload";
+  | "upload"
+  | SocialOperation;
+
+/** What failed in a content component: a load or a write. */
+export type SocialOperation =
+  | "comment.load"
+  | "comment.post"
+  | "comment.edit"
+  | "comment.delete"
+  | "comment.react"
+  | "comment.restore"
+  | "ban.save"
+  | "ban.lift"
+  | "reaction.save"
+  | "favorite.save"
+  | "poll.load"
+  | "poll.vote"
+  | "poll.answer"
+  | "poll.save"
+  | "post.load"
+  | "post.save"
+  | "moderation.load"
+  | "moderation.resolve";
 
 /**
  * Every failure a component shows is also reported here (aborts excepted), so
@@ -26,6 +48,13 @@ export type Navigate = (to: string, options?: { replace?: boolean }) => void;
 
 export interface ContentKitContextValue {
   client: ContentKitClient;
+  /**
+   * The signed-in user's id as ContentKit sees it, null when signed out,
+   * undefined when the host does not say. Content reads are kept per viewer.
+   */
+  viewer?: string | null;
+  /** Asks the visitor to sign in; with it, signed-out visitors are prompted instead of acting anonymously. */
+  onSignIn?: () => void;
   /** The host's content URL config (createContentURLs). */
   urls?: ContentURLs;
   navigate?: Navigate;
