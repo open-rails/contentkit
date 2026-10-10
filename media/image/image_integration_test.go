@@ -16,6 +16,8 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/image"
 	"github.com/open-rails/contentkit/media/internal/s3test"
@@ -380,9 +382,17 @@ func (s *failDelete) Delete(ctx context.Context, key string) error {
 	return s.Store.Delete(ctx, key)
 }
 
-type enqueueFunc func(context.Context, media.ProcessJob) error
+type failingQueue struct {
+	media.TransactionalProcessQueue
+	err error
+}
 
-func (f enqueueFunc) Enqueue(ctx context.Context, job media.ProcessJob) error { return f(ctx, job) }
+func (q *failingQueue) EnqueueTx(ctx context.Context, tx pgx.Tx, job media.ProcessJob) error {
+	if err := q.TransactionalProcessQueue.EnqueueTx(ctx, tx, job); err != nil {
+		return err
+	}
+	return q.err // fail after insertion, so the regression exercises rollback
+}
 
 func TestRemoveCleansPublicAfterCommitFailure(t *testing.T) {
 	for _, scenario := range []string{"enqueue failure", "client disconnect"} {
@@ -402,22 +412,21 @@ func TestRemoveCleansPublicAfterCommitFailure(t *testing.T) {
 				return err
 			}}
 			failure := errors.New("queue unavailable")
-			queue := enqueueFunc(func(ctx context.Context, _ media.ProcessJob) error {
-				if scenario == "client disconnect" {
-					return ctx.Err()
-				}
-				return failure
-			})
-			manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{Journal: e.Journal()})
-			uploads, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests, Queue: queue})
+			queue := &failingQueue{TransactionalProcessQueue: e.queue}
+			if scenario == "enqueue failure" {
+				queue.err = failure
+			}
+			journal, err := media.NewPGJournal(e.Pool(), e.ContentSchema(), queue)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{Journal: journal})
+			uploads, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests})
 			if err != nil {
 				t.Fatal(err)
 			}
 			_, err = uploads.Commit(ctx, e.editor, ref, []media.Op{{Op: media.OpRemove, Path: "cover.png"}})
-			if scenario == "client disconnect" {
-				failure = context.Canceled
-			}
-			if !errors.Is(err, failure) {
+			if scenario == "enqueue failure" && !errors.Is(err, failure) || scenario == "client disconnect" && err != nil {
 				t.Fatalf("commit did not preserve the queue error: %v", err)
 			}
 			for obj, err := range e.Store.List(t.Context(), item.PublicPrefix()) {
@@ -425,6 +434,12 @@ func TestRemoveCleansPublicAfterCommitFailure(t *testing.T) {
 					t.Fatal(err)
 				}
 				t.Fatalf("public file survived %s: %s", scenario, obj.Key)
+			}
+			queue.err = nil
+			for range 2 {
+				if err := manifests.Recover(t.Context(), ref); err != nil {
+					t.Fatal(err)
+				}
 			}
 		})
 	}
@@ -460,7 +475,7 @@ func TestPublicCleanupDeletesConcurrently(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &parallelDelete{Store: e.Store, ready: make(chan struct{})}
-	manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{Journal: e.Journal()})
+	manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{Journal: e.journal})
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	keys, err := manifests.SyncPublic(ctx, ref)
@@ -483,8 +498,8 @@ func TestRemoveRetriesFailedPublicCleanup(t *testing.T) {
 	key, _ := item.Public(names[0])
 	failure := errors.New("public delete unavailable")
 	store := &failDelete{Store: e.Store, key: key, err: failure}
-	manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{Journal: e.Journal()})
-	uploads, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests, Queue: nopQueue{}})
+	manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{Journal: e.journal})
+	uploads, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests})
 	if err != nil {
 		t.Fatal(err)
 	}

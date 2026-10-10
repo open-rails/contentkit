@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river/rivertype"
 
 	"github.com/open-rails/contentkit/contentref"
@@ -178,19 +179,29 @@ func TestDeletedFolderDropsInFlightOutputs(t *testing.T) {
 	}
 }
 
-// enqueueOnly is the queue without its Cancel: a removal whose cancel has
-// not reached the running job yet.
-type enqueueOnly struct{ q media.ProcessQueue }
+// delayedCancel deliberately suppresses cancellation delivery in this test,
+// while inserts still participate in the actual worker transaction.
+type delayedCancel struct {
+	media.TransactionalProcessQueue
+}
 
-func (e enqueueOnly) Enqueue(ctx context.Context, job media.ProcessJob) error {
-	return e.q.Enqueue(ctx, job)
+func (delayedCancel) CancelTx(context.Context, pgx.Tx, contentref.ContentRef) (int, error) {
+	return 0, nil
 }
 
 // An upload removed while its outputs are made leaves none of them: the
 // publish that finds its source gone deletes what the job wrote.
 func TestRemovedSourceDropsInFlightOutputs(t *testing.T) {
 	e := newEnv(t, opts{ladder: []int{360}})
-	up, err := media.NewUploads(media.UploadOptions{Store: e.store, Manifests: e.ms, Queue: enqueueOnly{e.queue}})
+	journal, err := media.NewPGJournal(e.pool, e.s3.ContentSchema(), delayedCancel{e.queue})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifests, err := media.NewManifests(e.store, e.reg, media.ManifestOptions{Locker: media.PGLocker(e.pool), Journal: journal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, err := media.NewUploads(media.UploadOptions{Store: e.store, Manifests: manifests})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -16,9 +16,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
+	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 // standIn is the media worker's stand-in: a job runs shortly after it is
@@ -34,6 +36,34 @@ type standIn struct {
 }
 
 const standInRecipe = "stand-in"
+
+// Commit jobs are delivered by real River transactions; only encoding is a stand-in.
+type placeWorker struct {
+	river.WorkerDefaults[workqueue.PlaceArgs]
+	worker *standIn
+}
+
+func (w *placeWorker) Work(ctx context.Context, job *river.Job[workqueue.PlaceArgs]) error {
+	return w.worker.process(ctx, media.ProcessJob{Ref: job.Args.Ref, Preset: job.Args.Preset, Force: job.Args.Force, Place: true})
+}
+
+type imageWorker struct {
+	river.WorkerDefaults[workqueue.ImageArgs]
+	worker *standIn
+}
+
+func (w *imageWorker) Work(ctx context.Context, job *river.Job[workqueue.ImageArgs]) error {
+	return w.worker.process(ctx, media.ProcessJob{Ref: job.Args.Ref, Preset: job.Args.Preset, Force: job.Args.Force, Editor: job.Args.Editor})
+}
+
+type videoWorker struct {
+	river.WorkerDefaults[workqueue.VideoPlanArgs]
+	worker *standIn
+}
+
+func (w *videoWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoPlanArgs]) error {
+	return w.worker.process(ctx, media.ProcessJob{Ref: job.Args.Ref, Preset: job.Args.Preset, Force: job.Args.Force})
+}
 
 func (w *standIn) Enqueue(_ context.Context, j media.ProcessJob) error {
 	w.wg.Add(1)

@@ -30,6 +30,7 @@ import (
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
+	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 // Env is an opened test bucket.
@@ -47,6 +48,7 @@ type recoveryState struct {
 	journal       *media.PGJournal
 	pool          *pgxpool.Pool
 	contentSchema string
+	workerSchema  string
 }
 
 // Require reports whether CONTENTKIT_TEST_S3_REQUIRE lists capability.
@@ -158,6 +160,30 @@ func (e *Env) ContentSchema() string {
 func (e *Env) Pool() *pgxpool.Pool {
 	e.Journal()
 	return e.recovery.pool
+}
+
+// Processing builds a real transactional queue and journal over this fixture's
+// database. The caller keeps this journal for every writer of its registry.
+func (e *Env) Processing(reg *media.Registry) (*media.PGJournal, *workqueue.Queue) {
+	e.Journal()
+	s := e.recovery
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.workerSchema == "" {
+		s.workerSchema = pgtest.EmptySchema(s.owner, context.Background(), s.pool)
+		if err := workqueue.Migrate(context.Background(), s.pool, s.workerSchema); err != nil {
+			s.owner.Fatal(err)
+		}
+	}
+	queue, err := workqueue.New(s.pool, reg, s.workerSchema)
+	if err != nil {
+		s.owner.Fatal(err)
+	}
+	journal, err := media.NewPGJournal(s.pool, s.contentSchema, queue)
+	if err != nil {
+		s.owner.Fatal(err)
+	}
+	return journal, queue
 }
 
 // Locker is what a host wires: a PGLocker on CONTENTKIT_TEST_URL (skipping

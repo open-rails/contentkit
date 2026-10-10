@@ -61,7 +61,21 @@ func TestItemCommittedReportsEveryCommit(t *testing.T) {
 
 func TestItemCommittedFiresWhileProcessingIsPending(t *testing.T) {
 	c := &committed{}
-	f := fixtureWithCommitted(t, c)
+	var f *fixture
+	f = newFixtureOn(t, s3test.Open(t), func(cfg *media.Config) {
+		cfg.Hooks.ItemCommitted = func(ctx context.Context, ref contentref.ContentRef) error {
+			// Host callbacks may themselves edit media. Holding the source's
+			// folder lock during notification would deadlock this write.
+			_, err := f.ms.EditExisting(ctx, ref, func(m *media.Manifest) error {
+				m.Meta = map[string]any{"notified": true}
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+			return c.hook(ctx, ref)
+		}
+	})
 	f.visible(1)
 	g := f.ref("gallery", 1)
 
@@ -71,6 +85,9 @@ func TestItemCommittedFiresWhileProcessingIsPending(t *testing.T) {
 	}
 	if state := f.reg.Config().Kinds[0].Readiness(m).State; state != media.StateProcessing {
 		t.Fatalf("readiness is %v at commit time; this hook exists because it is not settled yet", state)
+	}
+	if m, _, err := f.ms.Get(t.Context(), g); err != nil || m.Meta["notified"] != true {
+		t.Fatalf("reentrant host notification was lost: %v", err)
 	}
 }
 
@@ -87,6 +104,23 @@ func TestItemCommittedRefusalFailsTheCommit(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "the host said no") {
 		t.Fatalf("the commit hid why the host refused: %v", err)
+	}
+	if jobs := f.q.take(); len(jobs) != 1 {
+		t.Fatalf("host notification failure lost processing: %+v", jobs)
+	}
+	// Restart with the same database, not the request's in-memory mutation.
+	journal, err := media.NewPGJournal(f.env.Pool(), f.env.ContentSchema(), f.q.Queue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted := s3test.Manifests(t, f.env.Store, f.reg, media.ManifestOptions{Journal: journal})
+	for range 2 {
+		if err := restarted.RecoverPending(t.Context(), 100); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(c.seen()) != 1 || len(f.q.take()) != 0 {
+		t.Fatalf("notification was lost or replayed after acknowledgement: %v", c.seen())
 	}
 }
 

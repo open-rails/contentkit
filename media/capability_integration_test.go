@@ -224,7 +224,7 @@ func TestUploadQuotaRecoversWithManifestOutcome(t *testing.T) {
 				ref := f.ref("gallery", 1)
 				item, _ := f.reg.Item(ref)
 				store := &uncertainManifestStore{Store: f.env.Store, key: item.ManifestKey(), applied: applied}
-				manifests := s3test.Manifests(t, store, f.reg, media.ManifestOptions{Journal: f.env.Journal()})
+				manifests := s3test.Manifests(t, store, f.reg, media.ManifestOptions{Journal: f.journal})
 				quota := int64(1 << 20)
 				var quotaErr error
 				limiter, err := media.NewPGLimiter(f.env.Pool(), f.env.ContentSchema(), media.PGLimits{
@@ -233,7 +233,7 @@ func TestUploadQuotaRecoversWithManifestOutcome(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				f.up, err = media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests, Queue: f.q, Limiter: limiter})
+				f.up, err = media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests, Limiter: limiter})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -241,6 +241,7 @@ func TestUploadQuotaRecoversWithManifestOutcome(t *testing.T) {
 				if action != "insert" {
 					before = f.put(ref, "originals/one.png", "image/png", []byte("old")).UploadBytes()
 				}
+				f.q.take()
 				var ops []media.Op
 				var delta, reserved int64
 				switch action {
@@ -285,6 +286,9 @@ func TestUploadQuotaRecoversWithManifestOutcome(t *testing.T) {
 					t.Fatalf("uncertain write: %v", err)
 				}
 				usage(before+max(delta, 0), reserved)
+				if jobs := f.q.take(); len(jobs) != 0 {
+					t.Fatalf("uncertain commit queued processing before recovery: %+v", jobs)
+				}
 				store.blockFence = true
 				if err := manifests.Recover(t.Context(), ref); !errors.Is(err, media.ErrUnavailable) {
 					t.Fatalf("failed fence: %v", err)
@@ -300,6 +304,13 @@ func TestUploadQuotaRecoversWithManifestOutcome(t *testing.T) {
 					} else {
 						usage(before, reserved)
 					}
+				}
+				wantJobs := 0
+				if applied {
+					wantJobs = 1
+				}
+				if jobs := f.q.take(); len(jobs) != wantJobs {
+					t.Fatalf("recovery queued %d jobs, want %d: %+v", len(jobs), wantJobs, jobs)
 				}
 				if _, err := f.env.Store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(store.body), int64(len(store.body)), store.options); !errors.Is(err, media.ErrPreconditionFailed) {
 					t.Fatalf("late original write was not fenced: %v", err)
@@ -550,7 +561,7 @@ func TestUploadsRefuseUnconditionalStorageBeforeMovingBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	up, err := media.NewUploads(media.UploadOptions{Store: env.Store, Manifests: f.ms, Queue: f.q, Limiter: limiter})
+	up, err := media.NewUploads(media.UploadOptions{Store: env.Store, Manifests: f.ms, Limiter: limiter})
 	if err != nil {
 		t.Fatal(err)
 	}

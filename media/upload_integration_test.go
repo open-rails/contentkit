@@ -418,7 +418,7 @@ func TestCopyIsMetered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	up, err := media.NewUploads(media.UploadOptions{Store: f.env.Store, Manifests: f.ms, Queue: f.q, Limiter: limiter, Grace: 8 * time.Second})
+	up, err := media.NewUploads(media.UploadOptions{Store: f.env.Store, Manifests: f.ms, Limiter: limiter, Grace: 8 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +445,7 @@ func TestCopyIsMetered(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(9 * time.Second)
-	unlimited, err := media.NewUploads(media.UploadOptions{Store: f.env.Store, Manifests: f.ms, Queue: f.q, Grace: 8 * time.Second})
+	unlimited, err := media.NewUploads(media.UploadOptions{Store: f.env.Store, Manifests: f.ms, Grace: 8 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -538,7 +538,7 @@ func TestCommitRateLimit(t *testing.T) {
 	f.visible(1)
 	g := f.ref("gallery", 1)
 	ctx := context.Background()
-	up, err := media.NewUploads(media.UploadOptions{Store: f.env.Store, Manifests: f.ms, Queue: f.q, Commits: media.RateLimit{PerSecond: 0.01, Burst: 2}})
+	up, err := media.NewUploads(media.UploadOptions{Store: f.env.Store, Manifests: f.ms, Commits: media.RateLimit{PerSecond: 0.01, Burst: 2}})
 	if err != nil {
 		t.Fatal(err)
 	}

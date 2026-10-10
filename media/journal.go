@@ -54,6 +54,9 @@ type journalEffects struct {
 	Settlement Settlement  `json:"settlement"`
 	Cancel     bool        `json:"cancel,omitempty"`
 	Process    *ProcessJob `json:"process,omitempty"`
+	Public     []string    `json:"public,omitempty"`  // exact retired public names, selected before PUT
+	Private    []string    `json:"private,omitempty"` // exact takedown targets, selected before PUT
+	Notify     bool        `json:"notify,omitempty"`  // host's idempotent ItemCommitted hook still needs delivery
 }
 
 type manifestCommit struct {
@@ -282,10 +285,11 @@ WHERE tenant_id = $1 AND operation_id = $2`, found.Ref.TenantID, found.ID, state
 }
 
 // pending also discovers attempts that crashed before the first manifest PUT.
-func (j *PGJournal) pending(ctx context.Context, tenant string, kinds []string, limit int) ([]manifestCommit, error) {
+func (j *PGJournal) pending(ctx context.Context, tenant string, kinds []string, limit int, notifications bool) ([]manifestCommit, error) {
 	rows, err := j.pool.Query(ctx, `SELECT operation_id, content_kind, content_id, folder_prefix FROM `+j.table+`
-WHERE tenant_id = $1 AND content_kind = ANY($2) AND state IN ('open', 'prepared', 'frozen')
-ORDER BY updated_at, operation_id LIMIT $3`, tenant, kinds, limit)
+WHERE tenant_id = $1 AND content_kind = ANY($2)
+AND (state IN ('open', 'prepared', 'frozen') OR ($4 AND state = 'applied' AND effects->>'notify' = 'true'))
+ORDER BY CASE WHEN state = 'applied' THEN 1 ELSE 0 END, updated_at, operation_id LIMIT $3`, tenant, kinds, limit, notifications)
 	if err != nil {
 		return nil, err
 	}
@@ -299,6 +303,27 @@ ORDER BY updated_at, operation_id LIMIT $3`, tenant, kinds, limit)
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+func (j *PGJournal) notification(ctx context.Context, c manifestCommit) (bool, error) {
+	var pending bool
+	// Rotate a failed delivery behind other due notifications. Notification
+	// outages must not starve either newer callbacks or unfinished S3 attempts.
+	err := j.pool.QueryRow(ctx, `UPDATE `+j.table+` SET updated_at = now()
+WHERE tenant_id = $1 AND operation_id = $2 AND content_kind = $3 AND content_id = $4
+AND state = 'applied' AND effects->>'notify' = 'true' RETURNING true`,
+		c.Ref.TenantID, c.ID, c.Ref.ContentKind, c.Ref.ContentID).Scan(&pending)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return pending, err
+}
+
+func (j *PGJournal) acknowledgeNotification(ctx context.Context, c manifestCommit) error {
+	_, err := j.pool.Exec(ctx, `UPDATE `+j.table+` SET effects = jsonb_set(effects, '{notify}', 'false'), updated_at = now()
+WHERE tenant_id = $1 AND operation_id = $2 AND content_kind = $3 AND content_id = $4 AND state = 'applied'`,
+		c.Ref.TenantID, c.ID, c.Ref.ContentKind, c.Ref.ContentID)
+	return err
 }
 
 func (c manifestCommit) receipt() *CommitReceipt {

@@ -37,7 +37,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 // later is the fixture's jobs at a clock past the grace and temp periods.
 func (f *fixture) later() *media.Jobs {
 	f.t.Helper()
-	j, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(f.t, f.env.Store), Journal: f.env.Journal(),
+	j, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(f.t, f.env.Store), Journal: f.journal,
 		Processes: f.q, Now: func() time.Time { return time.Now().Add(72 * time.Hour) }})
 	if err != nil {
 		f.t.Fatal(err)
@@ -129,7 +129,7 @@ func TestSweepProgressesUnderEdits(t *testing.T) {
 	item, _ := f.reg.Item(g)
 	ctx := context.Background()
 	const grace = 6 * time.Second
-	jobs, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Journal: f.env.Journal(), Processes: f.q, Grace: grace})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Journal: f.journal, Processes: f.q, Grace: grace})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +310,8 @@ func TestTakedownRetry(t *testing.T) {
 	item, _ := f.reg.Item(g)
 	ctx := context.Background()
 	store := failingStore{Store: f.env.Store, armed: &atomic.Bool{}}
-	up, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: s3test.Manifests(t, store, f.reg, media.ManifestOptions{Journal: f.env.Journal()}), Queue: f.q})
+	manifests := s3test.Manifests(t, store, f.reg, media.ManifestOptions{Journal: f.journal})
+	up, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,11 +322,19 @@ func TestTakedownRetry(t *testing.T) {
 	if _, err := up.Commit(ctx, f.editor, g, takedown); err == nil || !f.exists(page0) {
 		t.Fatalf("a failed delete was not reported: %v", err)
 	}
-	if m, _, _ := f.ms.Get(ctx, g); m.Find("originals/000.png") >= 0 || len(f.q.take()) != 1 {
-		t.Fatal("the removal was not committed and queued before the deletes")
+	if m, _, _ := f.ms.Get(ctx, g); m.Find("originals/000.png") >= 0 || len(f.q.take()) != 0 {
+		t.Fatal("the removal was not committed, or cleanup failure allowed queue settlement")
 	}
 	store.armed.Store(false)
-	if _, err := up.Commit(ctx, f.editor, g, takedown); code(err) != media.CodeNotFound || !f.exists(page0) {
+	for range 2 {
+		if err := manifests.Recover(ctx, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if jobs := f.q.take(); len(jobs) != 1 || f.exists(page0) {
+		t.Fatalf("recovery did not finish cleanup and queue exactly once: %+v", jobs)
+	}
+	if _, err := up.Commit(ctx, f.editor, g, takedown); code(err) != media.CodeNotFound || f.exists(page0) {
 		t.Fatalf("a retry without an exempt grant: %v, blob kept %v", err, f.exists(page0))
 	}
 	if _, err := up.Commit(ctx, access.Actor{ID: "staff", Kind: "user"}, g, takedown); err != nil || f.exists(page0) {
@@ -367,7 +376,7 @@ func TestCopyDuringTakedown(t *testing.T) {
 			}
 		})
 	}}
-	up, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: f.ms, Queue: f.q})
+	up, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: f.ms})
 	if err != nil {
 		t.Fatal(err)
 	}

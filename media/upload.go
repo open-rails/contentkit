@@ -35,10 +35,9 @@ const (
 // UploadOptions configure Uploads.
 type UploadOptions struct {
 	Store     Store
-	Manifests *Manifests   // its Registry's Hooks.CanUpload authorizes, Hooks.Resolver hides new items
-	Tickets   *token.Ring  // signs multipart tickets (domain-separated from access tokens); required above MaxSinglePut
-	Limiter   *PGLimiter   // optional; must share the journal's pool and ContentKit schema
-	Queue     ProcessQueue // places staged uploads and processes items in the media worker; required
+	Manifests *Manifests  // Hooks authorize uploads; its journal supplies the transactional processing queue
+	Tickets   *token.Ring // signs multipart tickets (domain-separated from access tokens); required above MaxSinglePut
+	Limiter   *PGLimiter  // optional; must share the journal's pool and ContentKit schema
 	// PresignTTL bounds PUT and part URLs; default 15m. TicketTTL bounds a
 	// multipart ticket; default 24h, the bucket's abort-incomplete rule.
 	PresignTTL, TicketTTL time.Duration
@@ -69,8 +68,11 @@ type Uploads struct {
 }
 
 func NewUploads(o UploadOptions) (*Uploads, error) {
-	if o.Store == nil || o.Manifests == nil || o.Queue == nil {
-		return nil, errors.New("media: Uploads needs a Store, Manifests and a Queue")
+	if o.Store == nil || o.Manifests == nil {
+		return nil, errors.New("media: Uploads needs a Store and Manifests")
+	}
+	if o.Manifests.journal.queue == nil {
+		return nil, errors.New("media: Uploads needs a journal with a transactional processing queue")
 	}
 	if o.Limiter != nil && (o.Limiter.pool != o.Manifests.journal.pool || o.Limiter.usage != o.Manifests.journal.limiter.usage) {
 		return nil, errors.New("media: upload quota must use the journal's pool and ContentKit schema")
@@ -492,6 +494,15 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		if n := m.uploads(); n > MaxUploads && n > uploads {
 			return uploadErr(CodeTooManyFiles, "an item holds at most %d uploads", MaxUploads)
 		}
+		mutation.effects.Cancel = removesPending(prior, ops)
+		mutation.effects.Notify = u.reg.cfg.Hooks.ItemCommitted != nil
+		job := ProcessJob{Ref: ref, Place: len(m.StagedNames()) > 0}
+		for _, op := range ops {
+			if op.Op == OpRegenerate {
+				job.Preset, job.Force = op.Preset, op.Force
+			}
+		}
+		mutation.effects.Process = &job
 		if u.o.Limiter != nil {
 			mutation.effects.Settlement = Settlement{Tenant: ref.TenantID, Owner: grant.Owner,
 				Keys: append(slices.Clone(keys), copied...), Delta: m.uploadBytes() - before, Enforce: !grant.Exempt}
@@ -504,6 +515,36 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 				}
 			}
 		}
+		unkept := len(missing(item.Kind().PublicKept(prior), item.Kind().PublicKept(m))) > 0
+		if unkept || slices.ContainsFunc(ops, func(op Op) bool {
+			return op.Op == OpRemove && (len(item.Kind().PublicFor(op.Path)) > 0 || op.Takedown)
+		}) {
+			kept := item.Kind().PublicKept(m)
+			for obj, err := range u.o.Store.List(editCtx, item.PublicPrefix()) {
+				if err != nil {
+					return err
+				}
+				if !slices.Contains(kept, strings.TrimPrefix(obj.Key, item.PublicPrefix())) {
+					mutation.effects.Public = append(mutation.effects.Public, obj.Key)
+				}
+			}
+		}
+		if slices.ContainsFunc(ops, func(op Op) bool { return op.Takedown }) {
+			drop := Unreferenced{All: grant.Exempt, Staged: missing(prior.StagedNames(), m.StagedNames())}
+			if !drop.All {
+				drop.Blobs = missing(prior.Blobs(), m.Blobs())
+				now := u.reg.editorViews(m)
+				for view := range u.reg.editorViews(prior) {
+					if !now[view] {
+						drop.Blobs = append(drop.Blobs, view)
+					}
+				}
+			}
+			mutation.effects.Private, err = u.o.Manifests.unreferenced(editCtx, item, m, drop)
+			if err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if errors.Is(err, ErrManifestTooLarge) {
@@ -512,77 +553,9 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	if err != nil {
 		return nil, err
 	}
-	// The manifest is committed; cleanup must survive failures in the
-	// remaining request work.
-	var publicErr error
-	// A public name the manifest stopped vouching for goes now, not when the
-	// queued job runs: a preview position that another upload took, or whose
-	// upload was replaced or cropped again.
-	unkept := len(missing(item.Kind().PublicKept(prior), item.Kind().PublicKept(man))) > 0
-	for _, op := range ops {
-		if !unkept && (op.Op != OpRemove || len(item.Kind().PublicFor(op.Path)) == 0 && !op.Takedown) {
-			continue
-		}
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
-		keys, err := u.o.Manifests.SyncPublic(cleanupCtx, ref)
-		if purge := u.o.Manifests.reg.cfg.Hooks.PurgePublic; purge != nil && len(keys) > 0 {
-			urls := make([]string, len(keys))
-			for i, key := range keys {
-				urls[i] = strings.TrimRight(u.o.Manifests.reg.cfg.BaseURL, "/") + layout.URLPrefix + key
-			}
-			purge(cleanupCtx, urls)
-		}
-		cleanupCancel()
-		if err != nil {
-			publicErr = fmt.Errorf("media: remove public files: %w", err)
-		}
-		break
-	}
-	if c, ok := u.o.Queue.(ProcessCanceler); ok && removesPending(prior, ops) {
-		if _, err := c.Cancel(context.WithoutCancel(ctx), ref); err != nil {
-			return nil, errors.Join(err, publicErr)
-		}
-	}
-	var queueErr error
-	if !man.Full || publicPending(item.Kind(), man) { // only public files render for a Full item
-		job := ProcessJob{Ref: ref, Place: len(man.StagedNames()) > 0}
-		for _, op := range ops {
-			if op.Op == OpRegenerate {
-				job.Preset, job.Force = op.Preset, op.Force
-			}
-		}
-		queueErr = u.o.Queue.Enqueue(ctx, job)
-	}
-	// A takedown leaves nothing to fetch: with processing queued (dropped
-	// zips are built again), what the commit dropped goes now. An exempt
-	// grant sweeps the whole item instead, which costs every editor view and
-	// every output a job has not recorded yet. A failure is returned; an
-	// exempt repeat completes it, else the sweep does a grace period later.
-	var takedownErr error
-	if slices.ContainsFunc(ops, func(op Op) bool { return op.Takedown }) {
-		drop := Unreferenced{All: grant.Exempt, Staged: missing(prior.StagedNames(), man.StagedNames())}
-		if !drop.All {
-			drop.Blobs = missing(prior.Blobs(), man.Blobs())
-			now := u.reg.editorViews(man)
-			for v := range u.reg.editorViews(prior) {
-				if !now[v] {
-					drop.Blobs = append(drop.Blobs, v)
-				}
-			}
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
-		if err := u.o.Manifests.DropUnreferenced(cleanupCtx, ref, drop); err != nil {
-			takedownErr = fmt.Errorf("media: takedown: %w", err)
-		}
-		cancel()
-	}
-	var hookErr error
-	if hook := u.reg.cfg.Hooks.ItemCommitted; hook != nil {
-		if err := hook(ctx, item.Ref()); err != nil {
-			hookErr = fmt.Errorf("media: ItemCommitted: %w", err)
-		}
-	}
-	if err := errors.Join(queueErr, publicErr, takedownErr, hookErr); err != nil {
+	notifyCtx, notifyCancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+	defer notifyCancel()
+	if err := u.o.Manifests.notifyCommit(notifyCtx, mutation.commit); err != nil {
 		return nil, err
 	}
 	return man, nil

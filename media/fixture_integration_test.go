@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,15 +17,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/gateway"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
+	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 const mediaHost = "media.doujins.test"
@@ -143,24 +146,39 @@ func (a *authorizer) CanUpload(_ context.Context, actor access.Actor, t media.Up
 	return media.UploadGrant{Allowed: actor.ID != "reader" && !actor.Anonymous, Owner: "owner", Exempt: actor.ID == "staff"}, nil
 }
 
-// queue records the processing the app asks the worker for.
+// queue reads the real jobs committed into the fixture's worker schema.
 type queue struct {
-	mu   sync.Mutex
-	jobs []media.ProcessJob
-}
-
-func (q *queue) Enqueue(_ context.Context, j media.ProcessJob) error {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.jobs = append(q.jobs, j)
-	return nil
+	*workqueue.Queue
+	t    *testing.T
+	pool *pgxpool.Pool
 }
 
 func (q *queue) take() []media.ProcessJob {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	out := q.jobs
-	q.jobs = nil
+	q.t.Helper()
+	rows, err := q.pool.Query(q.t.Context(), `WITH taken AS (DELETE FROM `+pgx.Identifier{q.Schema(), "river_job"}.Sanitize()+`
+WHERE state IN ('available', 'scheduled', 'retryable') RETURNING id, kind, args)
+SELECT kind, args FROM taken ORDER BY id`)
+	if err != nil {
+		q.t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []media.ProcessJob
+	for rows.Next() {
+		var kind string
+		var args []byte
+		if err := rows.Scan(&kind, &args); err != nil {
+			q.t.Fatal(err)
+		}
+		var job media.ProcessJob
+		if err := json.Unmarshal(args, &job); err != nil {
+			q.t.Fatal(err)
+		}
+		job.Place = kind == (workqueue.PlaceArgs{}).Kind()
+		out = append(out, job)
+	}
+	if err := rows.Err(); err != nil {
+		q.t.Fatal(err)
+	}
 	return out
 }
 
@@ -180,6 +198,7 @@ type fixture struct {
 	res     *resolver
 	auth    *authorizer
 	q       *queue
+	journal *media.PGJournal
 	purged  chan []string
 	gateway *httptest.Server
 	editor  access.Actor
@@ -193,7 +212,7 @@ func newFixtureOn(t *testing.T, env *s3test.Env, mutate func(*media.Config)) *fi
 	t.Helper()
 	f := &fixture{t: t, env: env, ns: env.Tenant, shared: "acct" + strings.ReplaceAll(env.Tenant, "-", ""),
 		res:  &resolver{verdicts: map[string]access.Resolution{}, anon: map[string]access.Resolution{}},
-		auth: &authorizer{}, q: &queue{}, purged: make(chan []string, 64), editor: access.Actor{ID: "editor", Kind: "user"}}
+		auth: &authorizer{}, purged: make(chan []string, 64), editor: access.Actor{ID: "editor", Kind: "user"}}
 	t.Cleanup(func() { f.drop(f.shared + "/") })
 	cfg := testConfig(f.ns, f.shared)
 	cfg.Hooks = media.Hooks{Resolver: f.res, CanUpload: f.auth, PurgePublic: func(_ context.Context, urls []string) { f.purged <- urls }}
@@ -204,13 +223,16 @@ func newFixtureOn(t *testing.T, env *s3test.Env, mutate func(*media.Config)) *fi
 	if f.reg, err = media.NewRegistry(cfg); err != nil {
 		t.Fatal(err)
 	}
+	journal, processing := env.Processing(f.reg)
+	f.journal = journal
+	f.q = &queue{Queue: processing, t: t, pool: env.Pool()}
 	locker := s3test.Locker(t, env.Store)
-	if f.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: locker, Journal: env.Journal(), Processes: f.q, Pool: pgtest.Pool(t, nil)}); err != nil {
+	if f.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: locker, Journal: journal, Processes: f.q, Pool: env.Pool()}); err != nil {
 		t.Fatal(err)
 	}
 	f.ms = f.jobs.Manifests()
 	ring, _ := token.NewRing(signKey, nil)
-	if f.up, err = media.NewUploads(media.UploadOptions{Store: env.Store, Manifests: f.ms, Tickets: &ring, Queue: f.q}); err != nil {
+	if f.up, err = media.NewUploads(media.UploadOptions{Store: env.Store, Manifests: f.ms, Tickets: &ring}); err != nil {
 		t.Fatal(err)
 	}
 	if f.rd, err = media.NewReader(media.ReaderOptions{Manifests: f.ms, Queue: f.q,

@@ -193,7 +193,7 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 		_ = client.StopAndCancel(ctx)
 	})
 	h.ms = h.jobs.Manifests()
-	if h.uploads, err = media.NewUploads(media.UploadOptions{Store: env.Store, Manifests: h.ms, Queue: h.queue}); err != nil {
+	if h.uploads, err = media.NewUploads(media.UploadOptions{Store: env.Store, Manifests: h.ms}); err != nil {
 		t.Fatal(err)
 	}
 

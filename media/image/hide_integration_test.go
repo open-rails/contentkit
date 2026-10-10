@@ -110,7 +110,7 @@ func TestHideDuringPass(t *testing.T) {
 			}
 		}
 	})
-	jobs, err := media.NewJobs(media.JobsConfig{Store: e.Store, Registry: e.reg, Locker: s3test.Locker(t, e.Store), Journal: e.Journal()})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: e.Store, Registry: e.reg, Locker: s3test.Locker(t, e.Store), Journal: e.journal})
 	if err != nil {
 		t.Fatal(err)
 	}

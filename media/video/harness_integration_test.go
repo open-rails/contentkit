@@ -165,17 +165,21 @@ func newEnvOn(t *testing.T, s3 *s3test.Env, o opts, schema string) *env {
 	if err := workqueue.Migrate(e.ctx, e.pool, e.schema); err != nil {
 		t.Fatal(err)
 	}
-	if e.ms, err = media.NewManifests(e.store, e.reg, media.ManifestOptions{Locker: media.PGLocker(e.pool), Journal: s3.Journal()}); err != nil {
+	if e.queue, err = workqueue.New(e.pool, e.reg, e.schema); err != nil {
 		t.Fatal(err)
 	}
-	if e.queue, err = workqueue.New(e.pool, e.reg, e.schema); err != nil {
+	journal, err := media.NewPGJournal(e.pool, s3.ContentSchema(), e.queue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.ms, err = media.NewManifests(e.store, e.reg, media.ManifestOptions{Locker: media.PGLocker(e.pool), Journal: journal}); err != nil {
 		t.Fatal(err)
 	}
 	ring, err := token.NewRing(token.Key{ID: "k1", Secret: []byte("0123456789abcdef0123456789abcdef")}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.up, err = media.NewUploads(media.UploadOptions{Store: e.store, Manifests: e.ms, Tickets: &ring, Queue: e.queue}); err != nil {
+	if e.up, err = media.NewUploads(media.UploadOptions{Store: e.store, Manifests: e.ms, Tickets: &ring}); err != nil {
 		t.Fatal(err)
 	}
 	if o.codecs == nil {

@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Locker serializes manifest edits across every process sharing the bucket.
@@ -262,6 +264,25 @@ func (m *Manifests) DropUnreferenced(ctx context.Context, ref contentref.Content
 	if err := m.journal.checkReceipt(ctx, item, cur.Receipt); err != nil {
 		return err
 	}
+	keys, err := m.unreferenced(ctx, item, cur, u)
+	if err != nil {
+		return err
+	}
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(8)
+	for _, key := range keys {
+		g.Go(func() error {
+			if err := m.store.Delete(ctx, key); err != nil && !errors.Is(err, ErrNotFound) {
+				return err
+			}
+			return nil
+		})
+	}
+	return g.Wait()
+}
+
+// unreferenced selects exact targets while the caller holds the folder lock.
+func (m *Manifests) unreferenced(ctx context.Context, item Item, cur *Manifest, u Unreferenced) ([]string, error) {
 	var keys []string
 	for _, s := range u.Staged {
 		if key, err := item.Staged(s); err == nil && !slices.Contains(cur.StagedNames(), s) {
@@ -276,7 +297,7 @@ func (m *Manifests) DropUnreferenced(ctx context.Context, ref contentref.Content
 		}
 		for obj, err := range m.store.List(ctx, item.PrivatePrefix()) {
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if !keep[obj.Key] {
 				keys = append(keys, obj.Key)
@@ -293,17 +314,7 @@ func (m *Manifests) DropUnreferenced(ctx context.Context, ref contentref.Content
 			}
 		}
 	}
-	g, ctx := errgroup.WithContext(ctx)
-	g.SetLimit(8)
-	for _, key := range keys {
-		g.Go(func() error {
-			if err := m.store.Delete(ctx, key); err != nil && !errors.Is(err, ErrNotFound) {
-				return err
-			}
-			return nil
-		})
-	}
-	return g.Wait()
+	return keys, nil
 }
 
 // DeleteUnreferenced deletes the blobs among blobs that cur does not
@@ -432,6 +443,9 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 		}
 	}
 	mutation.commit.ETag = etag
+	if mutation.effects.Process != nil && next.Full && !publicPending(item.Kind(), next) {
+		mutation.effects.Process = nil
+	}
 	if err := m.journal.prepare(ctx, &mutation.commit, mutation.effects, mutation.quota); err != nil {
 		return nil, false, err
 	}
@@ -481,7 +495,7 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	// durable settlement or the cleanup that follows a successful edit.
 	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 	defer cancel()
-	if err := m.journal.finish(settleCtx, mutation.commit, true); err != nil {
+	if err := m.finishCommit(settleCtx, item, mutation.commit, true); err != nil {
 		return nil, true, err
 	}
 	return next, true, nil
@@ -551,12 +565,41 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 			return nil, false, err
 		}
 		m.cache.put(item.ManifestKey(), obj.ETag, next)
-		if err := m.journal.finish(ctx, *commit, applied); err != nil {
+		if err := m.finishCommit(ctx, item, *commit, applied); err != nil {
 			return nil, false, err
 		}
 		return next, applied, nil
 	}
 	return nil, false, ErrManifestConflict
+}
+
+// finishCommit repeats only the recorded cleanup targets, never a fresh list
+// that might include another producer's outputs. Database effects settle only
+// after cleanup succeeds; the pending receipt remains discoverable on failure.
+func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifestCommit, applied bool) error {
+	if applied {
+		g, deleteCtx := errgroup.WithContext(ctx)
+		g.SetLimit(8)
+		for _, key := range append(slices.Clone(commit.Effects.Public), commit.Effects.Private...) {
+			g.Go(func() error {
+				if err := m.store.Delete(deleteCtx, key); err != nil && !errors.Is(err, ErrNotFound) {
+					return err
+				}
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
+			return fmt.Errorf("media: commit cleanup: %w", err)
+		}
+		if purge := m.reg.cfg.Hooks.PurgePublic; purge != nil && len(commit.Effects.Public) > 0 {
+			urls := make([]string, len(commit.Effects.Public))
+			for i, key := range commit.Effects.Public {
+				urls[i] = strings.TrimRight(m.reg.cfg.BaseURL, "/") + layout.URLPrefix + key
+			}
+			purge(ctx, urls)
+		}
+	}
+	return m.journal.finish(ctx, commit, applied)
 }
 
 // RecoverPending scans the journal, including writes that never created an S3
@@ -573,7 +616,7 @@ func (m *Manifests) RecoverPending(ctx context.Context, limit int) error {
 				kinds = append(kinds, kind.Name)
 			}
 		}
-		pending, err := m.journal.pending(ctx, tenant, kinds, limit)
+		pending, err := m.journal.pending(ctx, tenant, kinds, limit, m.reg.cfg.Hooks.ItemCommitted != nil)
 		if err != nil {
 			return err
 		}
@@ -584,10 +627,32 @@ func (m *Manifests) RecoverPending(ctx context.Context, limit int) error {
 			}
 			if err := m.Recover(ctx, commit.Ref); err != nil {
 				errs = append(errs, err)
+				continue
+			}
+			if err := m.notifyCommit(ctx, commit); err != nil {
+				errs = append(errs, err)
 			}
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// notifyCommit runs outside the folder lock: host callbacks may read or edit
+// media themselves. A crash between delivery and acknowledgement repeats the
+// already-idempotent hook; it never removes an undelivered notification.
+func (m *Manifests) notifyCommit(ctx context.Context, commit manifestCommit) error {
+	hook := m.reg.cfg.Hooks.ItemCommitted
+	if hook == nil {
+		return nil // only the host owning the callback may acknowledge it
+	}
+	pending, err := m.journal.notification(ctx, commit)
+	if err != nil || !pending {
+		return err
+	}
+	if err := hook(ctx, commit.Ref); err != nil {
+		return fmt.Errorf("media: ItemCommitted: %w", err)
+	}
+	return m.journal.acknowledgeNotification(ctx, commit)
 }
 
 // get reads and decodes a manifest through the ETag-revalidated cache.
