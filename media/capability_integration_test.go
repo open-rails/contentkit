@@ -3,8 +3,12 @@ package media_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -13,7 +17,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
@@ -21,10 +29,725 @@ import (
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 )
 
-// Every Manifests takes the Locker, so processes that have and have not
-// probed the store serialize; once probed, edits also write with If-Match, so
-// a writer outside the lock (a stale process, an operator) is not overwritten.
-func TestManifestsLockAndUseIfMatchOnceProbed(t *testing.T) {
+// A cleaner may outlive its database lock. Its old selection must not
+// retire a file that a new writer adopted after recovering that lease.
+func TestCleanupLosingLeaseCannotRetireAdoptedFile(t *testing.T) {
+	for _, sweep := range []bool{false, true} {
+		for _, existing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("sweep=%t/existing=%t", sweep, existing), func(t *testing.T) {
+				f := newFixture(t)
+				ref := f.ref("gallery", 1)
+				if existing {
+					f.put(ref, "originals/current.png", "image/png", png(1))
+				}
+				name := f.blob(ref, png(2), "image/png")
+				initial, _, err := f.ms.Get(t.Context(), ref)
+				if err != nil {
+					t.Fatal(err)
+				}
+				item, _ := f.reg.Item(ref)
+				store := &cleanupListStore{Store: f.env.Store, prefix: item.Prefix(), selected: make(chan struct{}), resume: make(chan struct{})}
+				var release sync.Once
+				defer release.Do(func() { close(store.resume) })
+				jobs, err := media.NewJobs(media.JobsConfig{Store: store, Registry: f.reg, Journal: f.journal, Locker: noLock{},
+					Now: func() time.Time { return time.Now().Add(72 * time.Hour) }})
+				if err != nil {
+					t.Fatal(err)
+				}
+				done := make(chan error, 1)
+				go func() {
+					if sweep {
+						_, err := jobs.Sweep(t.Context(), ref)
+						done <- err
+					} else {
+						done <- jobs.Manifests().DropUnreferenced(t.Context(), ref, media.Unreferenced{All: true})
+					}
+				}()
+				select {
+				case <-store.selected:
+				case err := <-done:
+					t.Fatalf("cleanup did not reach selection: %v", err)
+				case <-time.After(10 * time.Second):
+					t.Fatal("cleanup did not reach selection")
+				}
+				if err := f.ms.Recover(t.Context(), ref); err != nil {
+					t.Fatal(err)
+				}
+				if !existing {
+					cur, _, err := f.ms.Get(t.Context(), ref)
+					if err != nil || cur.Incarnation != initial.Incarnation || len(cur.Files) != 0 {
+						t.Fatalf("cleanup recovery changed the allocation's empty incarnation: %+v %v", cur, err)
+					}
+				}
+				if _, err := f.ms.Edit(t.Context(), ref, func(m *media.Manifest) error {
+					m.Files = append(m.Files, media.File{Path: "originals/adopted.png", Blob: name, Type: "image/png", Size: int64(len(png(2)))})
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				release.Do(func() { close(store.resume) })
+				if err := <-done; !errors.Is(err, media.ErrCommitPending) {
+					t.Fatalf("stale cleanup was not refused: %v", err)
+				}
+				key, _ := item.Blob(name)
+				if !f.exists(key) {
+					t.Fatal("stale cleanup deleted the adopted file")
+				}
+				if _, err := f.ms.EditExisting(t.Context(), ref, func(m *media.Manifest) error {
+					m.Meta = map[string]any{"after": true}
+					return nil
+				}); err != nil {
+					t.Fatalf("stale cleanup retired the adopted file: %v", err)
+				}
+			})
+		}
+	}
+}
+
+type cleanupListStore struct {
+	media.Store
+	prefix           string
+	selected, resume chan struct{}
+	paused           atomic.Bool
+}
+
+func (s *cleanupListStore) List(ctx context.Context, prefix string) iter.Seq2[media.Object, error] {
+	return func(yield func(media.Object, error) bool) {
+		var objects []media.Object
+		for obj, err := range s.Store.List(ctx, prefix) {
+			if err != nil {
+				yield(obj, err)
+				return
+			}
+			objects = append(objects, obj)
+		}
+		if strings.HasPrefix(prefix, s.prefix) && s.paused.CompareAndSwap(false, true) {
+			close(s.selected)
+			select {
+			case <-s.resume:
+			case <-ctx.Done():
+				yield(media.Object{}, ctx.Err())
+				return
+			}
+		}
+		for _, obj := range objects {
+			if !yield(obj, nil) {
+				return
+			}
+		}
+	}
+}
+
+// Cleanup retires ownership even when the bytes have not landed yet. A late
+// producer cannot publish that allocation or erase a later identical upload.
+func TestRetiredPrivateAllocationCannotBeAdopted(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	ref := f.ref("gallery", 1)
+	f.put(ref, "originals/current.png", "image/png", png(1))
+	item, _ := f.reg.Item(ref)
+	body := png(2)
+	sum := sha256.Sum256(body)
+	old, err := f.ms.NewBlob(t.Context(), ref, sum[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := failingStore{Store: f.env.Store, armed: &atomic.Bool{}}
+	cleaner := s3test.Manifests(t, store, f.reg, media.ManifestOptions{Journal: f.journal})
+	store.armed.Store(true)
+	if err := cleaner.DropUnreferenced(t.Context(), ref, media.Unreferenced{All: true}); err == nil {
+		t.Fatal("cleanup succeeded despite failed deletes")
+	}
+	store.armed.Store(false)
+	oldKey, _ := item.Blob(old)
+	f.object(oldKey, string(body)) // a late PUT lands before recovery
+	for range 2 {
+		if err := f.ms.Recover(t.Context(), ref); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if f.exists(oldKey) {
+		t.Fatal("recovery lost its recorded cleanup target")
+	}
+	if _, _, err := f.ms.Get(t.Context(), ref); err != nil {
+		t.Fatal(err)
+	}
+	f.object(oldKey, string(body)) // another late PUT completes after recovery
+	if _, err := f.ms.EditExisting(t.Context(), ref, func(m *media.Manifest) error {
+		m.Files = append(m.Files, media.File{Path: "originals/late.png", Blob: old, Type: "image/png", Size: int64(len(body))})
+		return nil
+	}); !errors.Is(err, media.ErrAllocationRetired) {
+		t.Fatalf("retired allocation was adopted: %v", err)
+	}
+	if _, err := f.up.Commit(t.Context(), f.editor, ref, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: "originals/late.png", Blob: old}}); code(err) != media.CodeNotUploaded {
+		t.Fatalf("upload adopted retired allocation: %v", err)
+	}
+	f.put(ref, "originals/replacement.png", "image/png", body)
+	fresh := f.fileBlob(ref, "originals/replacement.png")
+	if fresh == old || !matchesBlob(fresh, body) {
+		t.Fatalf("replacement reused retired name: %s", fresh)
+	}
+	if err := f.env.Store.Delete(t.Context(), oldKey); err != nil { // a delayed old DELETE
+		t.Fatal(err)
+	}
+	f.produce(ref)
+	read, err := f.rd.Read(t.Context(), ref, f.editor, media.ReadOptions{Prefix: "high/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range read.Files {
+		if file.Path == "high/replacement.webp" {
+			status, got, _ := f.fetch(file.URL)
+			if status != http.StatusOK || got != string(body) {
+				t.Fatalf("replacement did not survive delayed cleanup: %d %q", status, got)
+			}
+			return
+		}
+	}
+	t.Fatal("replacement missing from reader")
+}
+
+// A lost PUT response is not proof of failure, and reading the old object is
+// not proof that a delayed PUT cannot still land. Recovery must fence both a
+// missing root and an existing root before recording an absent outcome.
+func TestManifestCommitRecoveryFencesLateWrites(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		for _, applied := range []bool{false, true} {
+			t.Run(fmt.Sprintf("existing=%t/applied=%t", existing, applied), func(t *testing.T) {
+				env := s3test.Open(t)
+				pool := pgtest.Pool(t, nil)
+				schema := pgtest.Schema(t, t.Context(), pool)
+				journal, err := media.NewPGJournal(pool, schema, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				reg := miniRegistry(t, env.Tenant)
+				ref := contentref.New(env.Tenant, "post", cid(7))
+				item, _ := reg.Item(ref)
+				store := &uncertainManifestStore{Store: env.Store, key: item.ManifestKey(), applied: applied}
+				ms, err := media.NewManifests(store, reg, media.ManifestOptions{Locker: media.PGLocker(pool), Journal: journal})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if existing {
+					if _, err := ms.Edit(t.Context(), ref, func(m *media.Manifest) error {
+						m.Meta = map[string]any{"title": "before"}
+						return nil
+					}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				store.uncertain = true
+				if _, err := ms.Edit(t.Context(), ref, func(m *media.Manifest) error {
+					m.Meta = map[string]any{"title": "attempt"}
+					return nil
+				}); !errors.Is(err, media.ErrUnavailable) {
+					t.Fatalf("lost response: %v", err)
+				}
+				table := pgx.Identifier{schema, "content_media_commits"}.Sanitize()
+				// An older pending item belongs to a different registry using
+				// this namespace/schema. It must not occupy our discovery limit.
+				if _, err := pool.Exec(t.Context(), `INSERT INTO `+table+`
+(tenant_id, operation_id, content_kind, content_id, folder_prefix, actor_id, fingerprint, lease_id, updated_at)
+VALUES ($1, gen_random_uuid(), 'other-kind', $2, $3, '', decode(repeat('00', 32), 'hex'), gen_random_uuid(), now() - interval '1 day')`,
+					ref.TenantID, cid(8), ref.TenantID+"/other-kind/"+cid(8)+"/"); err != nil {
+					t.Fatal(err)
+				}
+				state := func(want string) {
+					t.Helper()
+					var got string
+					if err := pool.QueryRow(t.Context(), `SELECT state FROM `+table+`
+WHERE tenant_id = $1 AND folder_prefix = $2 ORDER BY created_at DESC LIMIT 1`, ref.TenantID, item.Prefix()).Scan(&got); err != nil || got != want {
+						t.Fatalf("journal state %q, want %q: %v", got, want, err)
+					}
+				}
+				state("prepared")
+				store.blockFence = true
+				if err := ms.RecoverPending(t.Context(), 1); !errors.Is(err, media.ErrUnavailable) {
+					t.Fatalf("unreachable fence: %v", err)
+				}
+				state("frozen")
+				store.blockFence = false
+				if err := ms.RecoverPending(t.Context(), 1); err != nil {
+					t.Fatal(err)
+				}
+				wantState, wantTitle := "absent", ""
+				if applied {
+					wantState, wantTitle = "applied", "attempt"
+				} else if existing {
+					wantTitle = "before"
+				}
+				state(wantState)
+				if _, err := env.Store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(store.body), int64(len(store.body)), store.options); !errors.Is(err, media.ErrPreconditionFailed) {
+					t.Fatalf("delayed original PUT after recovery: %v", err)
+				}
+				man, etag, err := ms.Get(t.Context(), ref)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if title, _ := man.Meta["title"].(string); title != wantTitle {
+					t.Fatalf("recovered manifest %+v, want title %q: %v", man, wantTitle, err)
+				}
+				if err := ms.RecoverPending(t.Context(), 1); err != nil {
+					t.Fatal(err)
+				}
+				_, after, err := ms.Get(t.Context(), ref)
+				if err != nil || etag != after {
+					t.Fatalf("settled recovery was repeated: %q/%q %v", etag, after, err)
+				}
+				if _, err := ms.Edit(t.Context(), ref, func(m *media.Manifest) error {
+					m.Meta = map[string]any{"title": "later"}
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
+
+func TestLateCommitCannotAcknowledgeAnotherOperation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	env := s3test.Open(t)
+	pool := pgtest.Pool(t, nil)
+	schema := pgtest.Schema(t, ctx, pool)
+	journal, err := media.NewPGJournal(pool, schema, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := miniRegistry(t, env.Tenant)
+	ref := contentref.New(env.Tenant, "post", cid(7))
+	item, _ := reg.Item(ref)
+	prepared, release := make(chan struct{}), make(chan struct{})
+	var delayed atomic.Bool
+	store := &manifestPutStore{Store: env.Store, put: func(ctx context.Context, key string, body io.Reader, size int64, opts media.PutOptions) (media.Object, error) {
+		if key == item.ManifestKey() && delayed.CompareAndSwap(false, true) {
+			close(prepared)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return media.Object{}, ctx.Err()
+			}
+		}
+		return env.Store.Put(ctx, key, body, size, opts)
+	}}
+	// No lock models A losing its advisory session while its network request
+	// remains alive; B may now recover and edit the same item.
+	a, err := media.NewManifests(store, reg, media.ManifestOptions{Locker: noLock{}, Journal: journal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bStore := &uncertainManifestStore{Store: env.Store, key: item.ManifestKey()}
+	b, err := media.NewManifests(bStore, reg, media.ManifestOptions{Locker: noLock{}, Journal: journal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	aDone := make(chan error, 1)
+	go func() {
+		_, err := a.Edit(ctx, ref, func(m *media.Manifest) error {
+			m.Meta = map[string]any{"title": "A"}
+			return nil
+		})
+		aDone <- err
+	}()
+	select {
+	case <-prepared:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	// B first fences A, then loses its own response. Keep B prepared until A
+	// receives its late 412; A must not settle or acknowledge B's receipt.
+	if err := b.Recover(ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+	bStore.uncertain, bStore.applied = true, true
+	if _, err := b.Edit(ctx, ref, func(m *media.Manifest) error {
+		m.Meta = map[string]any{"title": "B"}
+		return nil
+	}); !errors.Is(err, media.ErrUnavailable) {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-aDone; !errors.Is(err, media.ErrManifestConflict) {
+		t.Fatalf("A acknowledged another operation or restarted: %v", err)
+	}
+	var pending int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{schema, "content_media_commits"}.Sanitize()+`
+WHERE tenant_id = $1 AND state = 'prepared'`, ref.TenantID).Scan(&pending); err != nil || pending != 1 {
+		t.Fatalf("A consumed B's pending receipt: %d %v", pending, err)
+	}
+	if err := b.Recover(ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+	man, _, err := b.Get(ctx, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if man.Meta["title"] != "B" {
+		t.Fatalf("A overwrote B: %+v", man)
+	}
+}
+
+type manifestPutStore struct {
+	media.Store
+	put func(context.Context, string, io.Reader, int64, media.PutOptions) (media.Object, error)
+}
+
+// Quota follows the fenced S3 outcome, not the caller's observed PUT error.
+func TestUploadQuotaRecoversWithManifestOutcome(t *testing.T) {
+	for _, action := range []string{"insert", "replace", "rename", "remove"} {
+		for _, applied := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/applied=%t", action, applied), func(t *testing.T) {
+				f := newFixture(t)
+				f.visible(1)
+				ref := f.ref("gallery", 1)
+				item, _ := f.reg.Item(ref)
+				store := &uncertainManifestStore{Store: f.env.Store, key: item.ManifestKey(), applied: applied}
+				manifests := s3test.Manifests(t, store, f.reg, media.ManifestOptions{Journal: f.journal})
+				quota := int64(1 << 20)
+				var quotaErr error
+				limiter, err := media.NewPGLimiter(f.env.Pool(), f.env.ContentSchema(), media.PGLimits{
+					Quota: func(context.Context, string, string) (int64, error) { return quota, quotaErr },
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.up, err = media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests, Limiter: limiter})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var before int64
+				if action != "insert" {
+					before = f.put(ref, "originals/one.png", "image/png", []byte("old")).UploadBytes()
+				}
+				f.q.take()
+				var ops []media.Op
+				var delta, reserved int64
+				switch action {
+				case "insert", "replace":
+					body := bytes.Repeat([]byte("n"), 96<<10) // above the existing per-upload accounting floor
+					p, staged := f.upload(ref, "originals/one.png", "image/png", body)
+					ops = []media.Op{{Op: media.OpPut, Path: p, Blob: staged}}
+					reserved, delta = int64(len(body)), int64(len(body))-before
+				case "rename":
+					ops = []media.Op{{Op: media.OpRename, Path: "originals/one.png", To: "originals/two.png"}}
+				case "remove":
+					ops = []media.Op{{Op: media.OpRemove, Path: "originals/one.png"}}
+					delta = -before
+				}
+				usage := func(wantUsed, wantPending int64) {
+					t.Helper()
+					used, pending, err := limiter.Usage(t.Context(), ref.TenantID, "owner")
+					if err != nil || used != wantUsed || pending != wantPending {
+						t.Fatalf("usage=%d pending=%d, want %d/%d: %v", used, pending, wantUsed, wantPending, err)
+					}
+				}
+				if delta > 0 {
+					_, beforeETag, beforeErr := manifests.Get(t.Context(), ref)
+					if beforeErr != nil && !errors.Is(beforeErr, media.ErrNotFound) {
+						t.Fatal(beforeErr)
+					}
+					quota = before + delta - 1 // the cap changed after the upload was reserved
+					if _, err := f.up.Commit(t.Context(), f.editor, ref, uuid.NewString(), ops); code(err) != media.CodeQuota {
+						t.Fatalf("growth past current quota was accepted: %v", err)
+					}
+					usage(before, reserved)
+					_, afterETag, afterErr := manifests.Get(t.Context(), ref)
+					if beforeETag != afterETag || errors.Is(beforeErr, media.ErrNotFound) != errors.Is(afterErr, media.ErrNotFound) || afterErr != nil && !errors.Is(afterErr, media.ErrNotFound) {
+						t.Fatalf("quota refusal changed S3: %q/%q %v/%v", beforeETag, afterETag, beforeErr, afterErr)
+					}
+					quota = 1 << 20
+				} else {
+					quotaErr = errors.New("quota policy unavailable")
+				}
+				store.uncertain = true
+				operationID := uuid.NewString()
+				if _, err := f.up.Commit(t.Context(), f.editor, ref, operationID, ops); !errors.Is(err, media.ErrUnavailable) {
+					t.Fatalf("uncertain write: %v", err)
+				}
+				usage(before+max(delta, 0), reserved)
+				if jobs := f.q.take(); len(jobs) != 0 {
+					t.Fatalf("uncertain commit queued processing before recovery: %+v", jobs)
+				}
+				store.blockFence = true
+				if err := manifests.Recover(t.Context(), ref); !errors.Is(err, media.ErrUnavailable) {
+					t.Fatalf("failed fence: %v", err)
+				}
+				usage(before+max(delta, 0), reserved)
+				store.blockFence = false
+				for range 2 {
+					if err := manifests.Recover(t.Context(), ref); err != nil {
+						t.Fatal(err)
+					}
+					if applied {
+						usage(before+delta, 0)
+					} else {
+						usage(before, reserved)
+					}
+				}
+				wantJobs := 0
+				if applied {
+					wantJobs = 1
+				}
+				if jobs := f.q.take(); len(jobs) != wantJobs {
+					t.Fatalf("recovery queued %d jobs, want %d: %+v", len(jobs), wantJobs, jobs)
+				}
+				if _, err := f.env.Store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(store.body), int64(len(store.body)), store.options); !errors.Is(err, media.ErrPreconditionFailed) {
+					t.Fatalf("late original write was not fenced: %v", err)
+				}
+				// Reuse the original identity, including the absent branch. A
+				// successful replay must not charge or queue the batch twice.
+				for range 2 {
+					if _, err := f.up.Commit(t.Context(), f.editor, ref, operationID, ops); err != nil {
+						t.Fatalf("same-batch retry: %v", err)
+					}
+					usage(before+delta, 0)
+				}
+				wantJobs = 0
+				if !applied {
+					wantJobs = 1
+				}
+				if jobs := f.q.take(); len(jobs) != wantJobs {
+					t.Fatalf("batch retry queued %d jobs, want %d", len(jobs), wantJobs)
+				}
+			})
+		}
+	}
+}
+
+func TestForeignJournalCannotEditOrCleanReceipt(t *testing.T) {
+	env := s3test.Open(t)
+	pool := pgtest.Pool(t, nil)
+	reg := miniRegistry(t, env.Tenant)
+	ref, _ := reg.Ref("post", cid(7))
+	item, _ := reg.Item(ref)
+	store := &uncertainManifestStore{Store: env.Store, key: item.ManifestKey(), uncertain: true, applied: true}
+	owner, err := media.NewManifests(store, reg, media.ManifestOptions{Locker: media.PGLocker(pool), Journal: env.Journal()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.Edit(t.Context(), ref, func(m *media.Manifest) error {
+		m.Meta = map[string]any{"title": "owner"}
+		return nil
+	}); !errors.Is(err, media.ErrUnavailable) {
+		t.Fatalf("lost response: %v", err)
+	}
+	foreign, err := media.NewPGJournal(pool, pgtest.Schema(t, t.Context(), pool), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Registry: reg, Locker: media.PGLocker(pool), Journal: foreign,
+		Now: func() time.Time { return time.Now().Add(72 * time.Hour) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob := blobOf([]byte("stray"))
+	private, _ := item.Blob(blob)
+	public, _ := item.Public("stray.webp")
+	for _, key := range []string{private, public} {
+		if _, err := env.Store.Put(t.Context(), key, strings.NewReader("stray"), 5, media.PutOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, settled := range []bool{false, true} {
+		if settled {
+			if err := owner.Recover(t.Context(), ref); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, etag, err := owner.Get(t.Context(), ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, action := range map[string]func() error{
+			"edit": func() error {
+				_, err := jobs.Manifests().Edit(t.Context(), ref, func(*media.Manifest) error {
+					t.Error("foreign journal ran an edit callback")
+					return nil
+				})
+				return err
+			},
+			"public cleanup": func() error { _, err := jobs.Manifests().SyncPublic(t.Context(), ref); return err },
+			"private cleanup": func() error {
+				return jobs.Manifests().DropUnreferenced(t.Context(), ref, media.Unreferenced{Blobs: []string{blob}})
+			},
+			"sweep": func() error { _, err := jobs.Sweep(t.Context(), ref); return err },
+		} {
+			if err := action(); !errors.Is(err, media.ErrCommitPending) {
+				t.Fatalf("%s (settled=%t) accepted a foreign receipt: %v", name, settled, err)
+			}
+		}
+		if _, after, err := owner.Get(t.Context(), ref); err != nil || after != etag {
+			t.Fatalf("foreign journal changed the manifest revision: %q/%q %v", etag, after, err)
+		}
+		for _, key := range []string{private, public} {
+			if _, err := env.Store.Head(t.Context(), key); err != nil {
+				t.Fatalf("foreign journal deleted %s: %v", key, err)
+			}
+		}
+	}
+}
+
+func (s *manifestPutStore) Put(ctx context.Context, key string, body io.Reader, size int64, opts media.PutOptions) (media.Object, error) {
+	return s.put(ctx, key, body, size, opts)
+}
+
+type uncertainManifestStore struct {
+	media.Store
+	key        string
+	uncertain  bool
+	applied    bool
+	blockFence bool
+	body       []byte
+	options    media.PutOptions
+}
+
+// A lost deletion response must refund exactly once. Reset isolates both
+// allocation ownership and a retry's cleanup from subsequently uploaded bytes.
+func TestPurgeRecoveryIsolatesRecreatedItem(t *testing.T) {
+	for _, applied := range []bool{false, true} {
+		t.Run(fmt.Sprintf("applied=%t", applied), func(t *testing.T) {
+			f := newFixture(t)
+			f.visible(1)
+			ref := f.gallery(1, 1)
+			item, _ := f.reg.Item(ref)
+			initial, _, err := f.ms.Get(t.Context(), ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			old := f.fileBlob(ref, "originals/000.png")
+			limiter, err := media.NewPGLimiter(f.env.Pool(), f.env.ContentSchema(), media.PGLimits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := limiter.Settle(t.Context(), media.Settlement{Tenant: f.ns, Owner: "owner", Delta: initial.UploadBytes() + 100}); err != nil {
+				t.Fatal(err)
+			}
+			store := &uncertainManifestStore{Store: f.env.Store, key: item.ManifestKey(), uncertain: true, applied: applied}
+			jobs, err := media.NewJobs(media.JobsConfig{Store: store, Registry: f.reg, Locker: s3test.Locker(t, store), Journal: f.journal, Limiter: limiter})
+			if err != nil {
+				t.Fatal(err)
+			}
+			deletion := media.Deletion{Ref: ref, Owner: "owner", OperationID: "reset-item"}
+			if err := jobs.Purge(t.Context(), deletion); !errors.Is(err, media.ErrUnavailable) {
+				t.Fatalf("lost deletion response: %v", err)
+			}
+			if err := jobs.Manifests().Recover(t.Context(), ref); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.Store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(store.body), int64(len(store.body)), store.options); !errors.Is(err, media.ErrPreconditionFailed) {
+				t.Fatalf("delayed deletion overwrote recovery: %v", err)
+			}
+			if applied {
+				if _, err := f.ms.Edit(t.Context(), ref, func(*media.Manifest) error { return nil }); !errors.Is(err, media.ErrNotFound) {
+					t.Fatalf("ordinary edit recreated a tombstone: %v", err)
+				}
+				sum := sha256.Sum256(png(1))
+				if _, err := f.ms.NewBlob(t.Context(), ref, sum[:]); !errors.Is(err, media.ErrNotFound) {
+					t.Fatalf("allocation recreated a tombstone: %v", err)
+				}
+			}
+			if err := jobs.Purge(t.Context(), deletion); err != nil {
+				t.Fatal(err)
+			}
+			reset, _, err := f.ms.Get(t.Context(), ref)
+			if err != nil || reset.Incarnation == initial.Incarnation || len(reset.Files) != 0 {
+				t.Fatalf("reset did not create an empty new incarnation: %+v %v", reset, err)
+			}
+			if used, _, err := limiter.Usage(t.Context(), f.ns, "owner"); err != nil || used != 100 {
+				t.Fatalf("deletion quota settled more than once: %d %v", used, err)
+			}
+			oldKey, _ := item.Blob(old)
+			f.object(oldKey, string(png(1)))
+			if _, err := f.ms.EditExisting(t.Context(), ref, func(m *media.Manifest) error {
+				m.Files = append(m.Files, media.File{Path: "originals/old.png", Blob: old, Type: "image/png"})
+				return nil
+			}); !errors.Is(err, media.ErrAllocationRetired) {
+				t.Fatalf("reset adopted an old allocation: %v", err)
+			}
+			f.put(ref, "originals/new.png", "image/png", png(1))
+			fresh := f.fileBlob(ref, "originals/new.png")
+			if err := jobs.Purge(t.Context(), deletion); err != nil {
+				t.Fatal(err)
+			}
+			if f.fileBlob(ref, "originals/new.png") != fresh {
+				t.Fatal("retry discarded the recreated item")
+			}
+		})
+	}
+}
+
+func TestPurgeRecoversUnreadableRootAfterLostFenceResponse(t *testing.T) {
+	f := newFixture(t)
+	f.visible(1)
+	ref := f.gallery(1, 1)
+	item, _ := f.reg.Item(ref)
+	body := oversizedManifest(t)
+	// Leave space for one fence only. Repeated lost responses must replace
+	// that empty gzip member, not accumulate suffixes until recovery stalls.
+	body = append(body, bytes.Repeat([]byte("X"), media.MaxManifestBytes-80-len(body))...)
+	if _, err := f.env.Store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(body), int64(len(body)), media.PutOptions{ContentType: "application/gzip"}); err != nil {
+		t.Fatal(err)
+	}
+	store := &uncertainManifestStore{Store: f.env.Store, key: item.ManifestKey(), uncertain: true}
+	jobs, err := media.NewJobs(media.JobsConfig{Store: store, Registry: f.reg, Locker: s3test.Locker(t, store), Journal: f.journal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deletion := media.Deletion{Ref: ref, OperationID: "oversized-reset"}
+	if err := jobs.Purge(t.Context(), deletion); !errors.Is(err, media.ErrUnavailable) {
+		t.Fatalf("lost absent deletion: %v", err)
+	}
+	delayedBody, delayedOptions := store.body, store.options
+	for range 3 {
+		store.uncertain, store.applied = true, true
+		if err := jobs.Manifests().Recover(t.Context(), ref); !errors.Is(err, media.ErrUnavailable) {
+			t.Fatalf("lost successful fence response: %v", err)
+		}
+	}
+	if err := jobs.Manifests().Recover(t.Context(), ref); err != nil {
+		t.Fatalf("unreadable fence did not remain recoverable: %v", err)
+	}
+	if _, err := f.env.Store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(delayedBody), int64(len(delayedBody)), delayedOptions); !errors.Is(err, media.ErrPreconditionFailed) {
+		t.Fatalf("delayed deletion defeated unreadable-root fence: %v", err)
+	}
+	if err := jobs.Purge(t.Context(), deletion); err != nil {
+		t.Fatal(err)
+	}
+	cur, _, err := f.ms.Get(t.Context(), ref)
+	if err != nil || len(cur.Files) != 0 || cur.Deleted {
+		t.Fatalf("unreadable root was not reset: %+v %v", cur, err)
+	}
+}
+
+func (s *uncertainManifestStore) Put(ctx context.Context, key string, body io.Reader, size int64, opts media.PutOptions) (media.Object, error) {
+	if key != s.key {
+		return s.Store.Put(ctx, key, body, size, opts)
+	}
+	if s.blockFence {
+		return media.Object{}, media.ErrUnavailable
+	}
+	if !s.uncertain {
+		return s.Store.Put(ctx, key, body, size, opts)
+	}
+	s.uncertain = false
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return media.Object{}, err
+	}
+	s.body, s.options = data, opts
+	if s.applied {
+		if _, err := s.Store.Put(ctx, key, bytes.NewReader(data), size, opts); err != nil {
+			return media.Object{}, err
+		}
+	}
+	return media.Object{}, media.ErrUnavailable
+}
+
+// The lock orders cooperating writers; If-Match also protects against a
+// writer outside that lock (for example a process whose session died).
+func TestManifestsLockAndUseIfMatch(t *testing.T) {
 	env := s3test.Open(t)
 	if !env.Store.Capabilities().ConditionalPut {
 		t.Skip("backend lacks conditional PUT")
@@ -34,11 +757,14 @@ func TestManifestsLockAndUseIfMatchOnceProbed(t *testing.T) {
 		t.Fatal("lock-free Manifests must be refused")
 	}
 	locker := media.PGLocker(pgtest.Pool(t, nil))
-	probed, err := media.NewManifests(env.Store, kinds, media.ManifestOptions{Locker: locker})
+	if _, err := media.NewManifests(env.Store, kinds, media.ManifestOptions{Locker: locker}); err == nil {
+		t.Fatal("journal-free Manifests must be refused")
+	}
+	probed, err := media.NewManifests(env.Store, kinds, media.ManifestOptions{Locker: locker, Journal: env.Journal()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	unprobed, err := media.NewManifests(env.WithCapabilities(t, media.Capabilities{}), kinds, media.ManifestOptions{Locker: locker})
+	other, err := media.NewManifests(env.Store, kinds, media.ManifestOptions{Locker: locker, Journal: env.Journal()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +780,7 @@ func TestManifestsLockAndUseIfMatchOnceProbed(t *testing.T) {
 	for i := range 8 {
 		ms := probed
 		if i%2 == 1 {
-			ms = unprobed
+			ms = other
 		}
 		wg.Add(1)
 		go func() {
@@ -69,13 +795,18 @@ func TestManifestsLockAndUseIfMatchOnceProbed(t *testing.T) {
 	var once atomic.Bool
 	if _, err := probed.Edit(ctx, ref, func(m *media.Manifest) error {
 		if once.CompareAndSwap(false, true) {
-			if _, err := unprobedRaw(t, env).Edit(ctx, ref, func(m *media.Manifest) error { set(m, "outside"); return nil }); err != nil {
+			if _, err := outsideLock(t, env).Edit(ctx, ref, func(m *media.Manifest) error { set(m, "outside"); return nil }); err != nil {
 				return err
 			}
 		}
 		set(m, "inside")
 		return nil
-	}); err != nil {
+	}); !errors.Is(err, media.ErrCommitPending) && !errors.Is(err, media.ErrManifestConflict) {
+		t.Fatalf("frozen caller was not refused: %v", err)
+	}
+	// A fresh request may proceed; the frozen caller must not silently start
+	// another attempt against the replacement revision.
+	if _, err := probed.Edit(ctx, ref, func(m *media.Manifest) error { set(m, "inside"); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	got, _, err := probed.Get(ctx, ref)
@@ -89,10 +820,10 @@ func TestManifestsLockAndUseIfMatchOnceProbed(t *testing.T) {
 	}
 }
 
-// unprobedRaw is a process with its own lock space (not the host's), so its
+// outsideLock is a process with its own lock space (not the host's), so its
 // edits do not wait on the caller's lock.
-func unprobedRaw(t *testing.T, env *s3test.Env) *media.Manifests {
-	ms, err := media.NewManifests(env.Store, miniRegistry(t, env.Tenant), media.ManifestOptions{Locker: noLock{}})
+func outsideLock(t *testing.T, env *s3test.Env) *media.Manifests {
+	ms, err := media.NewManifests(env.Store, miniRegistry(t, env.Tenant), media.ManifestOptions{Locker: noLock{}, Journal: env.Journal()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,6 +833,150 @@ func unprobedRaw(t *testing.T, env *s3test.Env) *media.Manifests {
 type noLock struct{}
 
 func (noLock) Lock(context.Context, string) (func(), error) { return func() {}, nil }
+
+func TestManifestsRefuseUnconditionalWrites(t *testing.T) {
+	t.Parallel()
+	env := s3test.Open(t)
+	reg := miniRegistry(t, env.Tenant)
+	locker := media.PGLocker(pgtest.Pool(t, nil))
+	ms, err := media.NewManifests(env.WithCapabilities(t, media.Capabilities{}), reg, media.ManifestOptions{Locker: locker, Journal: env.Journal()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := contentref.New(env.Tenant, "post", cid(7))
+	for _, tc := range []struct {
+		name string
+		edit func(context.Context, contentref.ContentRef, func(*media.Manifest) error) (*media.Manifest, error)
+	}{
+		{name: "create or edit", edit: ms.Edit},
+		{name: "worker edit", edit: ms.EditExisting},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tc.edit(t.Context(), ref, func(*media.Manifest) error {
+				t.Error("callback ran without a storage fence")
+				return nil
+			})
+			if !errors.Is(err, media.ErrConditionalPutRequired) {
+				t.Fatalf("unqualified write: %v", err)
+			}
+		})
+	}
+	item, _ := reg.Item(ref)
+	if _, err := env.Store.Head(t.Context(), item.ManifestKey()); !errors.Is(err, media.ErrNotFound) {
+		t.Fatalf("unqualified create wrote a manifest: %v", err)
+	}
+}
+
+func TestUploadsRefuseUnconditionalStorageBeforeMovingBytes(t *testing.T) {
+	t.Parallel()
+	env := s3test.Open(t).WithoutConditionalPut(t)
+	f := newFixtureOn(t, env, nil)
+	limiter, err := media.NewPGLimiter(env.Pool(), env.ContentSchema(), media.PGLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, err := media.NewUploads(media.UploadOptions{Store: env.Store, Manifests: f.ms, Limiter: limiter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := f.ref("gallery", 1)
+	data := []byte("must not be uploaded")
+	sum := sha256.Sum256(data)
+	if _, err := up.Presign(t.Context(), f.editor, media.PresignRequest{
+		Ref: ref, Path: "originals/1.png", Type: "image/png", Size: int64(len(data)), SHA256: sum[:],
+	}); !errors.Is(err, media.ErrConditionalPutRequired) {
+		t.Fatalf("unqualified presign: %v", err)
+	}
+	body := bytes.NewReader(data)
+	if _, err := up.Ingest(t.Context(), f.editor, media.IngestRequest{
+		Ref: ref, Path: "originals/1.png", Type: "image/png", Size: int64(len(data)), Body: body,
+	}); !errors.Is(err, media.ErrConditionalPutRequired) || body.Len() != len(data) {
+		t.Fatalf("unqualified ingest: %v, %d unread bytes", err, body.Len())
+	}
+	ops := []media.Op{{Op: media.OpMeta, Meta: map[string]any{"title": "refused"}}}
+	if _, err := up.Commit(t.Context(), f.editor, ref, uuid.NewString(), ops); !errors.Is(err, media.ErrConditionalPutRequired) {
+		t.Fatalf("unqualified commit: %v", err)
+	}
+	used, reserved, err := limiter.Usage(t.Context(), ref.TenantID, "owner")
+	if err != nil || used != 0 || reserved != 0 {
+		t.Fatalf("unqualified storage consumed quota: used=%d reserved=%d err=%v", used, reserved, err)
+	}
+	item, _ := f.reg.Item(ref)
+	for obj, err := range env.Store.List(t.Context(), item.Prefix()) {
+		t.Fatalf("unqualified storage wrote %s: %v", obj.Key, err)
+	}
+	if jobs := f.q.take(); len(jobs) != 0 {
+		t.Fatalf("unqualified commit queued processing: %+v", jobs)
+	}
+	payload, err := json.Marshal(media.CommitBody{Ref: media.RefBody{Kind: "gallery", ID: ref.ContentID}, OperationID: uuid.NewString(), Ops: ops})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := media.UploadHandler(up, media.UploadHandlerOptions{Actor: func(*http.Request) (access.Actor, bool) { return f.editor, true }})
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, httptest.NewRequest(http.MethodPost, "/commit", bytes.NewReader(payload)))
+	var reply media.ErrorReply
+	if err := json.Unmarshal(res.Body.Bytes(), &reply); err != nil || res.Code != http.StatusServiceUnavailable || reply.Code != media.CodeUnavailable {
+		t.Fatalf("unqualified HTTP commit: %d %s, %v", res.Code, res.Body.String(), err)
+	}
+}
+
+func TestManifestRevisionFencesReturningToEarlierContent(t *testing.T) {
+	t.Parallel()
+	env := s3test.Open(t)
+	ms := s3test.Manifests(t, env.Store, miniRegistry(t, env.Tenant), media.ManifestOptions{Journal: env.Journal()})
+	ref := contentref.New(env.Tenant, "post", cid(7))
+	set := func(value string) (*media.Manifest, error) {
+		return ms.Edit(t.Context(), ref, func(m *media.Manifest) error {
+			m.Meta = map[string]any{"title": value}
+			return nil
+		})
+	}
+	if _, err := set("first"); err != nil {
+		t.Fatal(err)
+	}
+	_, etag, err := ms.Get(t.Context(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := set("second"); err != nil {
+		t.Fatal(err)
+	}
+	item, _ := ms.Registry().Item(ref)
+	rc, _, err := env.Store.Get(t.Context(), item.ManifestKey(), media.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(rc)
+	rc.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := set("first"); err != nil {
+		t.Fatal(err)
+	}
+	_, lastETag, err := ms.Get(t.Context(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The delayed edit was prepared against the first state, before a newer
+	// writer changed the item and returned it to identical JSON.
+	_, err = env.Store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(body), int64(len(body)), media.PutOptions{IfMatch: etag})
+	if !errors.Is(err, media.ErrPreconditionFailed) {
+		t.Fatalf("late PUT matching an earlier state: %v", err)
+	}
+	current, _, err := ms.Get(t.Context(), ref)
+	if err != nil || current.Meta["title"] != "first" {
+		t.Fatalf("late PUT changed the newer content: %+v, %v", current, err)
+	}
+	if _, err := set("first"); err != nil {
+		t.Fatal(err)
+	}
+	_, unchangedETag, err := ms.Get(t.Context(), ref)
+	if err != nil || unchangedETag != lastETag {
+		t.Fatalf("semantic no-op changed ETag: %q, %v", unchangedETag, err)
+	}
+}
 
 // A transient failure during the capability probe (here a 429 on the
 // If-None-Match create) must not be recorded as "no conditional PUT".

@@ -100,7 +100,6 @@ function PosterBody(p: VideoPosterPickerProps & { onSaving: (b: boolean) => void
   const poster = useVideoPoster(client, {
     ref: p.item,
     path: p.path,
-    image: p.image,
     onSaved: (f) => {
       loaded.set(f);
       p.onChange?.(f);

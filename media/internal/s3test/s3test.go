@@ -6,8 +6,8 @@
 //	CONTENTKIT_TEST_S3_BUCKET     existing bucket; unset creates (and removes) one per test
 //	CONTENTKIT_TEST_S3_REQUIRE    comma list that must hold: conditional,checksum,abort-lifecycle
 //
-// A backend without conditional PUT (Ceph RGW) needs a Postgres PGLocker for
-// manifest edits, taken from CONTENTKIT_TEST_URL (see Manifests).
+// Manifest writes require conditional PUT; the capability tests separately
+// cover refusal on an unqualified backend. PGLocker uses CONTENTKIT_TEST_URL.
 //
 // Every test writes under its own tenant prefix, removed with all versions on cleanup.
 package s3test
@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,18 +25,30 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
+	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 // Env is an opened test bucket.
 type Env struct {
-	Store   *mediaS3.Store
-	Config  mediaS3.Config
-	Tenant  string // unique per test; all keys live under "{Tenant}/"
-	Created bool   // the bucket was created for this test
+	Store    *mediaS3.Store
+	Config   mediaS3.Config
+	Tenant   string // unique per test; all keys live under "{Tenant}/"
+	Created  bool   // the bucket was created for this test
+	recovery *recoveryState
+}
+
+type recoveryState struct {
+	owner         testing.TB
+	mu            sync.Mutex
+	journal       *media.PGJournal
+	pool          *pgxpool.Pool
+	contentSchema string
+	workerSchema  string
 }
 
 // Require reports whether CONTENTKIT_TEST_S3_REQUIRE lists capability.
@@ -65,7 +78,7 @@ func Open(t testing.TB) *Env {
 		SecretAccessKey: os.Getenv("CONTENTKIT_TEST_S3_SECRET_KEY"),
 		UsePathStyle:    true,
 	}
-	env := &Env{Tenant: "t" + strings.ReplaceAll(uuid.NewString(), "-", "")[:16]}
+	env := &Env{Tenant: "t" + strings.ReplaceAll(uuid.NewString(), "-", "")[:16], recovery: &recoveryState{owner: t}}
 	if cfg.Bucket == "" {
 		cfg.Bucket = "ck-media-" + env.Tenant[1:]
 		env.Created = true
@@ -119,6 +132,58 @@ func (e *Env) WithoutConditionalPut(t testing.TB) *Env {
 	c.Store = e.WithCapabilities(t, caps)
 	c.Config.Capabilities = &caps
 	return &c
+}
+
+// Journal is shared by every fixture process using this isolated namespace.
+// Resources belong to Open's test, not a shorter-lived nested subtest.
+func (e *Env) Journal() *media.PGJournal {
+	s := e.recovery
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.journal == nil {
+		s.pool = pgtest.Pool(s.owner, nil)
+		s.contentSchema = pgtest.Schema(s.owner, context.Background(), s.pool)
+		var err error
+		s.journal, err = media.NewPGJournal(s.pool, s.contentSchema, nil)
+		if err != nil {
+			s.owner.Fatal(err)
+		}
+	}
+	return s.journal
+}
+
+func (e *Env) ContentSchema() string {
+	e.Journal()
+	return e.recovery.contentSchema
+}
+
+func (e *Env) Pool() *pgxpool.Pool {
+	e.Journal()
+	return e.recovery.pool
+}
+
+// Processing builds a real transactional queue and journal over this fixture's
+// database. The caller keeps this journal for every writer of its registry.
+func (e *Env) Processing(reg *media.Registry) (*media.PGJournal, *workqueue.Queue) {
+	e.Journal()
+	s := e.recovery
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.workerSchema == "" {
+		s.workerSchema = pgtest.EmptySchema(s.owner, context.Background(), s.pool)
+		if err := workqueue.Migrate(context.Background(), s.pool, s.workerSchema); err != nil {
+			s.owner.Fatal(err)
+		}
+	}
+	queue, err := workqueue.New(s.pool, reg, s.workerSchema)
+	if err != nil {
+		s.owner.Fatal(err)
+	}
+	journal, err := media.NewPGJournal(s.pool, s.contentSchema, queue)
+	if err != nil {
+		s.owner.Fatal(err)
+	}
+	return journal, queue
 }
 
 // Locker is what a host wires: a PGLocker on CONTENTKIT_TEST_URL (skipping

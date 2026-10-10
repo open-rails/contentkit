@@ -1,6 +1,6 @@
 import { centeredCrop, fill, publicURL, rotation, stem, type Edit, type FileInfo, type Op, type PublicImage, type RefBody, type Transport } from "@openrails/contentkit-upload";
 
-/** The demo kinds' public presets by upload path: fixed names, as the app's registry declares them. */
+/** The demo kinds' logical public presets by upload path. */
 const PRESETS: Record<string, { to: string; widths: number[]; aspect: [number, number] }> = {
   avatar: { to: "avatar-{w}.webp", widths: [128, 256, 512], aspect: [1, 1] },
   cover: { to: "cover-{w}.webp", widths: [1500, 3000], aspect: [3, 1] },
@@ -18,6 +18,7 @@ export class DemoServer {
   private blobs = new Map<string, Blob>();
   private items = new Map<string, FileInfo[]>();
   private views = new Map<string, string>();
+  private published = new Map<string, PublicImage>();
   delay = 250;
 
   constructor(readonly media: string) {}
@@ -25,7 +26,7 @@ export class DemoServer {
   /** The public preset of an upload path for an item. */
   image(ref: RefBody, path: string): PublicImage {
     const p = PRESETS[path]!;
-    return { base: this.media, namespace: NAMESPACE, kind: ref.kind, id: ref.id, to: p.to, widths: p.widths, aspect: p.aspect.join(":") };
+    return this.published.get(`${ref.kind}/${ref.id}/${path}`) ?? { preset: path, renditions: [], aspect: p.aspect.join(":") };
   }
 
   fetch: typeof fetch = async (input, init) => {
@@ -39,7 +40,11 @@ export class DemoServer {
     if (url.pathname.startsWith("/read/")) {
       const [, , kind, id] = url.pathname.split("/");
       const files = this.uploads({ kind: kind!, id: id! }).map((f) => ({ ...f, editor_url: this.view(f) }));
-      return json({ access: "full", expires: 0, total: files.length, offset: 0, limit: 50, files });
+      const published = files.flatMap((f) => {
+        const p = this.published.get(`${kind}/${id}/${stem(f.path)}`);
+        return p ? [{ from: f.path, ...p }] : [];
+      });
+      return json({ access: "full", expires: 0, total: files.length, offset: 0, limit: 50, files, public: published });
     }
     const b = JSON.parse(String(init?.body));
     switch (url.pathname) {
@@ -113,6 +118,7 @@ export class DemoServer {
       if (op.edit) f.edit = op.edit;
       else if (op.op === "edit" || op.op === "frame") delete f.edit;
       f.pending = [stem(f.path)];
+      void this.unpublish(ref, f);
       if (i >= 0) files[i] = f;
       else files.push(f);
       // Rendering is asynchronous, like the worker's queue: pending first.
@@ -125,6 +131,8 @@ export class DemoServer {
     await sleep(this.delay * 3);
     const preset = PRESETS[stem(f.path)];
     if (!preset) return;
+    const generation = crypto.randomUUID();
+    const published: PublicImage = { preset: stem(f.path), aspect: preset.aspect.join(":"), renditions: [] };
     const bmp = await createImageBitmap(this.blobs.get(f.blob!)!, { imageOrientation: "from-image" });
     const [aw, ah] = preset.aspect;
     const rot = rotation(f.edit?.rotate ?? 0);
@@ -139,14 +147,24 @@ export class DemoServer {
       const [dw, dh] = rot === 90 || rot === 270 ? [height, width] : [width, height];
       g.drawImage(bmp, c.x, c.y, c.w, c.h, -dw / 2, -dh / 2, dw, dh);
       const body = await cv.convertToBlob({ type: "image/webp", quality: 0.9 });
-      await fetch(publicURL(this.media, NAMESPACE, ref.kind, ref.id, fill(preset.to, { w: width })), { method: "PUT", body, headers: { "Content-Type": "image/webp" } });
+      const name = fill(preset.to, { w: width }).replace(/\.webp$/, `-${generation}.webp`);
+      const url = publicURL(this.media, NAMESPACE, ref.kind, ref.id, name);
+      await fetch(url, { method: "PUT", body, headers: { "Content-Type": "image/webp" } });
+      published.renditions = [...published.renditions, { url, w: width, h: height }];
     }
+    if (!this.uploads(ref).includes(f)) {
+      for (const r of published.renditions) await fetch(r.url, { method: "DELETE" });
+      return;
+    }
+    this.published.set(`${ref.kind}/${ref.id}/${stem(f.path)}`, published);
     delete f.pending;
   }
 
   private async unpublish(ref: RefBody, f: FileInfo) {
-    const preset = PRESETS[stem(f.path)];
-    for (const w of preset?.widths ?? []) await fetch(publicURL(this.media, NAMESPACE, ref.kind, ref.id, fill(preset!.to, { w })), { method: "DELETE" });
+    const key = `${ref.kind}/${ref.id}/${stem(f.path)}`;
+    const published = this.published.get(key);
+    this.published.delete(key);
+    for (const r of published?.renditions ?? []) await fetch(r.url, { method: "DELETE" });
   }
 }
 

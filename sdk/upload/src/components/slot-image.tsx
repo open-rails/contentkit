@@ -5,12 +5,11 @@ import { cn } from "cn";
 import { useState, type ComponentProps, type ReactNode } from "react";
 import { publicRenditions, type PublicImage } from "../public.js";
 import type { DensityRange } from "../rendition.js";
-import { usePublicGeneration } from "../slot-react.js";
 import { RenditionImg } from "./rendition-img.js";
 import { UploadUiRoot } from "../scope.js";
 
 export interface SlotImageProps extends Omit<ComponentProps<"img">, "src" | "srcSet" | "sizes" | "width" | "height" | "placeholder"> {
-  /** The item's public preset (fixed URLs; a missing file is served its kind's default). */
+  /** The item's published renditions; absent files use the placeholder. */
   image?: PublicImage | null;
   /** Density range for picking the width; default the provider's (2–3×). */
   density?: DensityRange;
@@ -25,10 +24,9 @@ export interface SlotImageProps extends Omit<ComponentProps<"img">, "src" | "src
 
 /** A public image preset's file, in a box at its aspect, at the width its rendered width × density needs. */
 export function SlotImage({ image, density, round, aspect, placeholder, emptyLabel, className, alt = "", style, onError, ...img }: SlotImageProps) {
-  const generation = usePublicGeneration();
   const outputs = publicRenditions(image);
   const [failed, setFailed] = useState<string | null>(null);
-  const key = `${outputs[0]?.url}#${generation}`;
+  const key = outputs[0]?.url ?? "";
   const has = outputs.length > 0 && failed !== key;
   const a = ratio(aspect ?? image?.aspect) ?? 1;
   return (

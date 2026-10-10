@@ -3,22 +3,26 @@ package media
 import (
 	"bytes"
 	"cmp"
+	"compress/gzip"
 	"container/list"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand/v2"
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Locker serializes manifest edits across every process sharing the bucket.
@@ -34,14 +38,18 @@ type SweepScheduler interface {
 
 // ManifestOptions configure Manifests.
 type ManifestOptions struct {
-	// Locker is required: every edit runs under it, and also writes with
-	// If-Match once the store reports ConditionalPut. See PGLocker.
+	// Locker is required: every edit runs under it and uses conditional PUT.
+	// The lock coordinates manifest edits with cleanup; it cannot replace
+	// the storage precondition if a PUT outlives the caller. See PGLocker.
 	Locker Locker
+	// Journal is required. Every process sharing a folder must use the same
+	// migrated ContentKit schema to recover uncertain writes before proceeding.
+	Journal *PGJournal
 	// CacheBytes bounds the decoded manifests kept in process, revalidated
 	// by ETag. A manifest costs about three times its JSON, so the largest
 	// (MaxManifestBytes) costs 24 MiB; default 128 MiB, at least two of them.
 	CacheBytes int64
-	MaxRetries int // conditional-write attempts per edit; default 16
+	MaxRetries int // conditional-write attempts per recovery fence; default 16
 	// Sweeps schedules the folder's sweep after every written edit; best
 	// effort (the periodic pass backs it up).
 	Sweeps SweepScheduler
@@ -52,6 +60,7 @@ type Manifests struct {
 	store   Store
 	reg     *Registry
 	locker  Locker
+	journal *PGJournal
 	sweeps  SweepScheduler
 	retries int
 	cache   *manifestCache
@@ -59,9 +68,13 @@ type Manifests struct {
 
 var ErrManifestConflict = errors.New("media: manifest edit kept conflicting")
 
+// ErrConditionalPutRequired refuses mutations on a backend that cannot fence
+// a delayed manifest PUT. Probe or declare the backend's capabilities first.
+var ErrConditionalPutRequired = errors.New("media: manifest writes require conditional PUT support")
+
 func NewManifests(store Store, reg *Registry, o ManifestOptions) (*Manifests, error) {
-	if store == nil || reg == nil || o.Locker == nil {
-		return nil, errors.New("media: Manifests needs a Store, a Registry and a Locker")
+	if store == nil || reg == nil || o.Locker == nil || o.Journal == nil {
+		return nil, errors.New("media: Manifests needs a Store, a Registry, a Locker and a Journal")
 	}
 	if o.CacheBytes <= 0 {
 		o.CacheBytes = 128 << 20
@@ -70,7 +83,7 @@ func NewManifests(store Store, reg *Registry, o ManifestOptions) (*Manifests, er
 	if o.MaxRetries <= 0 {
 		o.MaxRetries = 16
 	}
-	return &Manifests{store: store, reg: reg, locker: o.Locker, sweeps: o.Sweeps, retries: o.MaxRetries,
+	return &Manifests{store: store, reg: reg, locker: o.Locker, journal: o.Journal, sweeps: o.Sweeps, retries: o.MaxRetries,
 		cache: newManifestCache(o.CacheBytes)}, nil
 }
 
@@ -88,14 +101,18 @@ func (m *Manifests) Get(ctx context.Context, ref contentref.ContentRef) (*Manife
 	if err != nil {
 		return nil, "", err
 	}
-	return m.get(ctx, item.ManifestKey())
+	cur, etag, err := m.get(ctx, item.ManifestKey())
+	if err == nil && cur.Deleted {
+		return nil, etag, ErrNotFound
+	}
+	return cur, etag, err
 }
 
 // Edit applies fn to ref's manifest (empty if none) and writes it with
-// If-Match on the ETag it read (If-None-Match for a new one), re-reading
-// and re-applying fn on conflict. fn must be safe to run more than once; an
-// error from fn aborts the edit. The result is normalized (Kind.Normalize)
-// and validated; an unchanged manifest is not written. A folder's first
+// If-Match on the ETag it read (If-None-Match for a new one). An uncertain
+// write is recovered before another edit starts; a fenced-out caller receives
+// an error rather than repeating fn against a newer revision. The result is
+// normalized (Kind.Normalize) and validated; an unchanged manifest is not written. A folder's first
 // manifest is refused (ErrFolderNotEmpty) over a previous item's public
 // files, and one growing to within editHeadroom of MaxManifestBytes with
 // ErrManifestTooLarge.
@@ -148,9 +165,8 @@ func (e *tooLargeError) Error() string {
 func (e *tooLargeError) Is(target error) bool { return target == ErrManifestTooLarge }
 
 // SyncPublic deletes the public names the manifest does not keep
-// (Kind.PublicKept), under the manifest lock. Cleanup is bounded to one
-// minute; deleted keys are returned for cache purging, including partial
-// success on failure.
+// (Kind.PublicKept). Cleanup is bounded to one minute. Selected keys are
+// returned for cache purging; failed deletes remain in the recovery journal.
 func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
@@ -158,54 +174,20 @@ func (m *Manifests) SyncPublic(ctx context.Context, ref contentref.ContentRef) (
 	if err != nil {
 		return nil, err
 	}
-	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	cur, _, err := m.get(ctx, item.ManifestKey())
-	if errors.Is(err, ErrNotFound) {
-		cur = &Manifest{}
-	} else if err != nil {
-		return nil, err
-	}
-	want := map[string]bool{}
-	for _, name := range item.Kind().PublicKept(cur) {
-		key, err := item.Public(name)
-		if err != nil {
-			return nil, err
-		}
-		want[key] = true
-	}
 	var keys []string
-	for obj, err := range m.store.List(ctx, item.PublicPrefix()) {
-		if err != nil {
-			return nil, err
-		}
-		if !want[obj.Key] {
-			keys = append(keys, obj.Key)
-		}
-	}
-	g, deleteCtx := errgroup.WithContext(ctx)
-	g.SetLimit(8)
-	var mu sync.Mutex
-	var gone []string
-	for _, key := range keys {
-		if deleteCtx.Err() != nil {
-			break
-		}
-		g.Go(func() error {
-			if err := m.store.Delete(deleteCtx, key); err != nil && !errors.Is(err, ErrNotFound) {
-				return err
+	err = m.cleanup(ctx, item, false, func(cur *Manifest, _ bool) (journalEffects, error) {
+		want := item.Kind().PublicKept(cur)
+		for obj, err := range m.store.List(ctx, item.PublicPrefix()) {
+			if err != nil {
+				return journalEffects{}, err
 			}
-			mu.Lock()
-			gone = append(gone, key)
-			mu.Unlock()
-			return nil
-		})
-	}
-	err = errors.Join(g.Wait(), ctx.Err())
-	return gone, err
+			if !slices.Contains(want, strings.TrimPrefix(obj.Key, item.PublicPrefix())) {
+				keys = append(keys, obj.Key)
+			}
+		}
+		return journalEffects{Public: keys}, nil
+	})
+	return keys, err
 }
 
 // Unreferenced selects what DropUnreferenced deletes.
@@ -229,17 +211,58 @@ func (m *Manifests) DropUnreferenced(ctx context.Context, ref contentref.Content
 	if err != nil {
 		return err
 	}
+	return m.cleanup(ctx, item, false, func(cur *Manifest, _ bool) (journalEffects, error) {
+		keys, err := m.unreferenced(ctx, item, cur, u)
+		return journalEffects{Private: keys}, err
+	})
+}
+
+// cleanup owns a journal lease before selecting targets. Retirement and its
+// recoverable exact-key effects commit together before any DELETE is sent.
+func (m *Manifests) cleanup(ctx context.Context, item Item, publicOnly bool, selectKeys func(*Manifest, bool) (journalEffects, error)) (err error) {
 	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	if _, _, err := m.recoverLocked(ctx, item); err != nil {
+		return err
+	}
+	c, err := m.journal.begin(ctx, manifestCommit{ID: uuid.New(), Ref: item.Ref(), Folder: item.Prefix(),
+		Fingerprint: sha256.Sum256([]byte("internal-media-cleanup")), Effects: journalEffects{Cleanup: true}})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if c.State == "open" {
+			err = errors.Join(err, m.journal.finish(context.WithoutCancel(ctx), c, false))
+		}
+	}()
 	cur, _, err := m.get(ctx, item.ManifestKey())
-	if errors.Is(err, ErrNotFound) {
-		return nil // deleted: the folder deletion takes everything
+	exists := err == nil
+	if errors.Is(err, ErrNotFound) || publicOnly && errors.Is(err, ErrManifestUnreadable) {
+		cur = &Manifest{}
 	} else if err != nil {
 		return err
 	}
+	if err := m.journal.checkReceipt(ctx, item, cur.Receipt); err != nil {
+		return err
+	}
+	effects, err := selectKeys(cur, exists)
+	if err != nil {
+		return err
+	}
+	if publicOnly && (len(effects.Private) != 0 || len(effects.Allocate) != 0) {
+		return errors.New("media: public cleanup cannot alter private allocation ownership")
+	}
+	if err := m.journal.prepareCleanup(ctx, &c, effects); err != nil {
+		return err
+	}
+	return m.finishCommit(ctx, item, c, true)
+}
+
+// unreferenced selects exact targets while the caller holds the folder lock.
+func (m *Manifests) unreferenced(ctx context.Context, item Item, cur *Manifest, u Unreferenced) ([]string, error) {
 	var keys []string
 	for _, s := range u.Staged {
 		if key, err := item.Staged(s); err == nil && !slices.Contains(cur.StagedNames(), s) {
@@ -254,10 +277,19 @@ func (m *Manifests) DropUnreferenced(ctx context.Context, ref contentref.Content
 		}
 		for obj, err := range m.store.List(ctx, item.PrivatePrefix()) {
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if !keep[obj.Key] {
 				keys = append(keys, obj.Key)
+			}
+		}
+		allocated, err := m.allocationKeys(ctx, item)
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range allocated {
+			if strings.HasPrefix(key, item.PrivatePrefix()) && !keep[key] && !slices.Contains(keys, key) {
+				keys = append(keys, key)
 			}
 		}
 	} else {
@@ -271,23 +303,12 @@ func (m *Manifests) DropUnreferenced(ctx context.Context, ref contentref.Content
 			}
 		}
 	}
-	g, ctx := errgroup.WithContext(ctx)
-	g.SetLimit(8)
-	for _, key := range keys {
-		g.Go(func() error {
-			if err := m.store.Delete(ctx, key); err != nil && !errors.Is(err, ErrNotFound) {
-				return err
-			}
-			return nil
-		})
-	}
-	return g.Wait()
+	return keys, nil
 }
 
-// DeleteUnreferenced deletes the blobs among blobs that cur does not
-// reference. A job calls it from its closing edit (the manifest lock held)
-// for what it wrote for a source that is gone, so a taken-down upload's
-// outputs do not come back under their old names.
+// DeleteUnreferenced records cleanup in a worker's closing edit. The edit's
+// journal retires and deletes these exact targets after its manifest write;
+// the callback itself never deletes from a potentially stale snapshot.
 func (m *Manifests) DeleteUnreferenced(ctx context.Context, item Item, cur *Manifest, blobs []string) error {
 	if len(blobs) == 0 {
 		return nil
@@ -296,21 +317,55 @@ func (m *Manifests) DeleteUnreferenced(ctx context.Context, item Item, cur *Mani
 	for _, b := range cur.Blobs() {
 		keep[b] = true
 	}
-	var errs []error
 	for _, b := range blobs {
 		if key, err := item.Blob(b); err == nil && !keep[b] {
-			if err := m.store.Delete(ctx, key); err != nil && !errors.Is(err, ErrNotFound) {
-				errs = append(errs, err)
-			}
+			cur.cleanup = append(cur.cleanup, key)
 		}
 	}
-	return errors.Join(errs...)
+	return nil
 }
 
 func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existing bool, b bound, fn func(*Manifest) error) (*Manifest, error) {
+	return m.editOperation(ctx, ref, existing, b, nil, fn)
+}
+
+type manifestMutation struct {
+	lifecycle bool // only deletion, explicit reset and restore may edit a tombstone
+	commit    manifestCommit
+	effects   journalEffects
+	quota     int64
+}
+
+// replayCommit resolves a known request before any copy or new-item policy
+// work. A successful retry returns today's manifest, never replays old edits.
+func (m *Manifests) replayCommit(ctx context.Context, item Item, c manifestCommit) (*Manifest, bool, error) {
+	found, err := m.journal.existing(ctx, c)
+	if err != nil || found == nil || found.State == "absent" {
+		return nil, false, err
+	}
+	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
+	if err != nil {
+		return nil, false, err
+	}
+	defer unlock()
+	if _, _, err := m.recoverLocked(ctx, item); err != nil {
+		return nil, false, err
+	}
+	found, err = m.journal.existing(ctx, c)
+	if err != nil || found == nil || found.State != "applied" {
+		return nil, false, err
+	}
+	cur, _, err := m.get(ctx, item.ManifestKey())
+	return cur, true, err
+}
+
+func (m *Manifests) editOperation(ctx context.Context, ref contentref.ContentRef, existing bool, b bound, mutation *manifestMutation, fn func(*Manifest) error) (*Manifest, error) {
 	item, err := m.reg.Item(ref)
 	if err != nil {
 		return nil, err
+	}
+	if !m.store.Capabilities().ConditionalPut {
+		return nil, ErrConditionalPutRequired
 	}
 	key := item.ManifestKey()
 	unlock, err := m.locker.Lock(ctx, key)
@@ -318,61 +373,99 @@ func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existin
 		return nil, err
 	}
 	defer unlock()
-	conditional := m.store.Capabilities().ConditionalPut
-	for attempt := 0; attempt < m.retries; attempt++ {
-		out, written, conflict, err := m.try(ctx, item, existing, conditional, b, fn)
-		if conflict {
-			backoff := time.Duration(1<<min(attempt, 6)) * 5 * time.Millisecond
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(backoff/2 + rand.N(backoff)):
-			}
-			continue
-		}
-		if err == nil && written && m.sweeps != nil {
-			if serr := m.sweeps.ScheduleSweep(ctx, ref); serr != nil {
-				slog.WarnContext(ctx, "media: schedule sweep", "key", key, "error", serr)
-			}
-		}
-		return out, err
+	if _, _, err := m.recoverLocked(ctx, item); err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("%w: %s", ErrManifestConflict, key)
+	if mutation == nil {
+		mutation = &manifestMutation{commit: manifestCommit{ID: uuid.New(),
+			Fingerprint: sha256.Sum256([]byte("internal-manifest-edit"))}}
+	}
+	mutation.commit.Ref, mutation.commit.Folder = ref, item.Prefix()
+	mutation.commit, err = m.journal.begin(ctx, mutation.commit)
+	if err != nil {
+		return nil, err
+	}
+	if mutation.commit.terminal() {
+		if mutation.commit.State == "absent" {
+			return nil, ErrManifestConflict
+		}
+		cur, _, err := m.get(ctx, key)
+		return cur, err
+	}
+	out, written, err := m.try(ctx, item, existing, b, mutation, fn)
+	if mutation.commit.State == "open" {
+		err = errors.Join(err, m.journal.finish(ctx, mutation.commit, err == nil))
+	}
+	if err == nil && written && m.sweeps != nil {
+		if serr := m.sweeps.ScheduleSweep(ctx, ref); serr != nil {
+			slog.WarnContext(ctx, "media: schedule sweep", "key", key, "error", serr)
+		}
+	}
+	return out, err
 }
 
-func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bool, b bound, fn func(*Manifest) error) (out *Manifest, written, conflict bool, err error) {
+func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, mutation *manifestMutation, fn func(*Manifest) error) (out *Manifest, written bool, err error) {
 	key := item.ManifestKey()
 	cur, etag, err := m.get(ctx, key)
 	switch {
 	case errors.Is(err, ErrNotFound) && existing:
-		return nil, false, false, err
+		return nil, false, err
 	case errors.Is(err, ErrNotFound):
-		cur, etag = &Manifest{V: ManifestVersion, Files: []File{}}, ""
+		cur, etag = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Hidden: true, Files: []File{}}, ""
+	case errors.Is(err, ErrManifestUnreadable) && mutation.lifecycle:
+		cur = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Hidden: true, Files: []File{}}
 	case err != nil:
-		return nil, false, false, err
+		return nil, false, err
+	}
+	if cur.Deleted && !mutation.lifecycle {
+		return nil, false, ErrNotFound
+	}
+	if err := m.journal.checkReceipt(ctx, item, cur.Receipt); err != nil {
+		return nil, false, err
 	}
 	next := cur.Clone()
 	if err := fn(next); err != nil {
-		return nil, false, false, err
+		return nil, false, err
+	}
+	if !mutation.lifecycle && (next.Deleted != cur.Deleted || next.Incarnation != cur.Incarnation) {
+		return nil, false, errors.New("media: only explicit lifecycle operations can change incarnation or deletion")
 	}
 	item.kind.Normalize(next)
 	if err := next.Validate(); err != nil {
-		return nil, false, false, err
+		return nil, false, err
 	}
-	if etag != "" && next.Hidden == cur.Hidden && next.Full == cur.Full && next.Deficit == cur.Deficit && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) {
-		return cur, false, false, nil
+	var allocations []string
+	for _, name := range next.Blobs() {
+		key, _ := item.Blob(name)
+		allocations = append(allocations, key)
 	}
-	if etag == "" {
+	for _, name := range next.StagedNames() {
+		key, _ := item.Staged(name)
+		allocations = append(allocations, key)
+	}
+	if err := m.checkAllocationsIn(ctx, item, allocations, next.Incarnation); err != nil {
+		return nil, false, err
+	}
+	for _, key := range next.cleanup {
+		if !slices.Contains(allocations, key) {
+			mutation.effects.Private = append(mutation.effects.Private, key)
+		}
+	}
+	next.cleanup = nil
+	if etag != "" && reflect.DeepEqual(mutation.effects, journalEffects{}) && next.Incarnation == cur.Incarnation && next.Deleted == cur.Deleted && next.Hidden == cur.Hidden && next.Full == cur.Full && next.Deficit == cur.Deficit && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) {
+		return cur, false, nil
+	}
+	if etag == "" && !mutation.lifecycle {
 		if err := m.requireFresh(ctx, item); err != nil {
-			return nil, false, false, err
+			return nil, false, err
 		}
 	}
 	body, err := encodeManifest(next)
 	if err != nil {
-		return nil, false, false, err
+		return nil, false, err
 	}
 	if err := b.check(cur, next); err != nil {
-		return nil, false, false, err
+		return nil, false, err
 	}
 	// A commit clears Full only when it really makes room: it frees, in the
 	// manifest and in what its uploads will still add, the bytes the refused
@@ -381,31 +474,281 @@ func (m *Manifests) try(ctx context.Context, item Item, existing, conditional bo
 	if cur.Full && b.project != nil && cur.size+b.project(cur)-next.size-b.project(next) >= max(cur.Deficit, 1) {
 		next.Full, next.Deficit = false, 0
 		if body, err = encodeManifest(next); err != nil {
-			return nil, false, false, err
+			return nil, false, err
 		}
+	}
+	mutation.commit.ETag = etag
+	if mutation.effects.Process != nil && next.Full && !publicPending(item.Kind(), next) {
+		mutation.effects.Process = nil
+	}
+	if err := m.journal.prepare(ctx, &mutation.commit, mutation.effects, mutation.quota); err != nil {
+		return nil, false, err
+	}
+	next.Receipt = mutation.commit.receipt()
+	body, err = encodeManifest(next)
+	if err == nil {
+		err = b.check(cur, next)
+	}
+	if err != nil {
+		// Prepared but never sent: recovery still fences before releasing
+		// the row, so a caller cannot mistake this for a sent attempt.
+		return nil, false, err
 	}
 	// The charged quota rides on the object, so releasing it never needs
 	// the manifest to decode.
 	opts := PutOptions{ContentType: "application/gzip", CacheControl: "no-store",
 		Metadata: map[string]string{uploadBytesMeta: strconv.FormatInt(next.uploadBytes(), 10)}}
-	if conditional {
+	if etag == "" {
+		opts.IfNoneMatch = "*"
+	} else {
+		opts.IfMatch = etag
+	}
+	obj, err := m.store.Put(ctx, key, bytes.NewReader(body), int64(len(body)), opts)
+	if errors.Is(err, ErrPreconditionFailed) {
+		m.cache.remove(key)
+		if _, _, err := m.recoverAttemptLocked(ctx, item, &mutation.commit.ID); err != nil {
+			return nil, false, err
+		}
+		state, err := m.journal.outcome(ctx, mutation.commit)
+		if err != nil {
+			return nil, false, err
+		}
+		if state != "applied" {
+			// A frozen caller must not prepare another write against the
+			// recovery ETag. The next authorized request starts the retry.
+			return nil, false, ErrManifestConflict
+		}
+		cur, _, err := m.get(ctx, key)
+		return cur, true, err
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	next.reindex()
+	m.cache.put(key, obj.ETag, next)
+	// S3 acknowledged the write. A disconnected caller must not prevent its
+	// durable settlement or the cleanup that follows a successful edit.
+	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+	defer cancel()
+	if err := m.finishCommit(settleCtx, item, mutation.commit, true); err != nil {
+		return nil, true, err
+	}
+	return next, true, nil
+}
+
+// Recover settles ref's unfinished attempt without replaying the edit. It
+// freezes the database attempt before advancing S3's ETag, so a late PUT using
+// the old ETag cannot land after an absent outcome has been refunded.
+func (m *Manifests) Recover(ctx context.Context, ref contentref.ContentRef) error {
+	item, err := m.reg.Item(ref)
+	if err != nil {
+		return err
+	}
+	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	_, _, err = m.recoverLocked(ctx, item)
+	return err
+}
+
+func (m *Manifests) recoverLocked(ctx context.Context, item Item) (*Manifest, bool, error) {
+	return m.recoverAttemptLocked(ctx, item, nil)
+}
+
+func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operation *uuid.UUID) (*Manifest, bool, error) {
+	if !m.store.Capabilities().ConditionalPut {
+		return nil, false, ErrConditionalPutRequired
+	}
+	commit, err := m.journal.freeze(ctx, item.Ref().TenantID, item.Prefix(), operation)
+	if err != nil || commit == nil {
+		return nil, false, err
+	}
+	if commit.Effects.Cleanup {
+		return nil, true, m.finishCommit(ctx, item, *commit, true)
+	}
+	for range m.retries {
+		cur, etag, err := m.get(ctx, item.ManifestKey())
+		if errors.Is(err, ErrNotFound) {
+			cur, etag = &Manifest{V: ManifestVersion, Incarnation: uuid.NewString(), Hidden: true, Files: []File{}}, ""
+		} else if errors.Is(err, ErrManifestUnreadable) && commit.Effects.Deletion {
+			if err := m.fenceUnreadable(ctx, item); errors.Is(err, ErrPreconditionFailed) {
+				continue
+			} else if err != nil {
+				return nil, false, err
+			}
+			return nil, false, m.finishCommit(ctx, item, *commit, false)
+		} else if err != nil {
+			return nil, false, err
+		}
+		applied := commit.matches(cur.Receipt)
+		if !applied {
+			if err := m.journal.checkReceipt(ctx, item, cur.Receipt); err != nil {
+				return nil, false, err
+			}
+		}
+		// Do not take the semantic no-op shortcut: this write is the fence.
+		next := cur.Clone()
+		body, err := encodeManifest(next)
+		if err != nil {
+			return nil, false, err
+		}
+		opts := PutOptions{ContentType: "application/gzip", CacheControl: "no-store",
+			Metadata: map[string]string{uploadBytesMeta: strconv.FormatInt(next.uploadBytes(), 10)}}
 		if etag == "" {
 			opts.IfNoneMatch = "*"
 		} else {
 			opts.IfMatch = etag
 		}
+		obj, err := m.store.Put(ctx, item.ManifestKey(), bytes.NewReader(body), int64(len(body)), opts)
+		if errors.Is(err, ErrPreconditionFailed) {
+			m.cache.remove(item.ManifestKey())
+			continue
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		m.cache.put(item.ManifestKey(), obj.ETag, next)
+		if err := m.finishCommit(ctx, item, *commit, applied); err != nil {
+			return nil, false, err
+		}
+		return next, applied, nil
 	}
-	obj, err := m.store.Put(ctx, key, bytes.NewReader(body), int64(len(body)), opts)
-	if errors.Is(err, ErrPreconditionFailed) {
-		m.cache.remove(key)
-		return nil, false, true, nil
-	}
+	return nil, false, ErrManifestConflict
+}
+
+// A deletion's attempted replacement is always readable. If the root is
+// still unreadable, preserve its bytes and fence the absent attempt with an
+// empty gzip member carrying a fresh nonce. Never erase an unknown root just
+// to settle quota. Oversized compressed objects remain refused.
+func (m *Manifests) fenceUnreadable(ctx context.Context, item Item) error {
+	rc, obj, err := m.store.Get(ctx, item.ManifestKey(), GetOptions{})
 	if err != nil {
-		return nil, false, false, err
+		return err
 	}
-	next.reindex()
-	m.cache.put(key, obj.ETag, next)
-	return next, true, false, nil
+	defer rc.Close()
+	body, err := io.ReadAll(io.LimitReader(rc, MaxManifestBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(body) > MaxManifestBytes {
+		return ErrManifestUnreadable
+	}
+	if _, err := decodeManifest(body); err == nil {
+		// A readable replacement landed between the failed read and this
+		// GET. Recovery must inspect its receipt instead of declaring absence.
+		return ErrPreconditionFailed
+	}
+	var suffix bytes.Buffer
+	zw := gzip.NewWriter(&suffix)
+	nonce := uuid.New()
+	const fenceMarker = "ck-recovery-fence:"
+	zw.Extra = append([]byte(fenceMarker), nonce[:]...)
+	if err := zw.Close(); err != nil {
+		return err
+	}
+	// Replace our prior empty member rather than growing the unreadable
+	// root on every ambiguous fence retry. Only the UUID bytes may differ.
+	const nonceOffset = 12 + len(fenceMarker) // gzip header and extra length
+	start := len(body) - suffix.Len()
+	if start >= 0 && bytes.Equal(body[start:start+nonceOffset], suffix.Bytes()[:nonceOffset]) &&
+		bytes.Equal(body[start+nonceOffset+len(nonce):], suffix.Bytes()[nonceOffset+len(nonce):]) {
+		body = body[:start]
+	}
+	if len(body)+suffix.Len() > MaxManifestBytes {
+		return ErrManifestUnreadable
+	}
+	body = append(body, suffix.Bytes()...)
+	_, err = m.store.Put(ctx, item.ManifestKey(), bytes.NewReader(body), int64(len(body)), PutOptions{
+		IfMatch: obj.ETag, ContentType: "application/gzip", CacheControl: "no-store", Metadata: obj.Metadata})
+	m.cache.remove(item.ManifestKey())
+	return err
+}
+
+// finishCommit repeats only the recorded cleanup targets, never a fresh list
+// that might include another producer's outputs. Database effects settle only
+// after cleanup succeeds; the pending receipt remains discoverable on failure.
+func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifestCommit, applied bool) error {
+	if applied {
+		if err := m.retireAllocations(ctx, item, commit.Effects.Private); err != nil {
+			return err
+		}
+		g, deleteCtx := errgroup.WithContext(ctx)
+		g.SetLimit(8)
+		for _, key := range append(slices.Clone(commit.Effects.Public), commit.Effects.Private...) {
+			g.Go(func() error {
+				if err := m.store.Delete(deleteCtx, key); err != nil && !errors.Is(err, ErrNotFound) {
+					return err
+				}
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
+			return fmt.Errorf("media: commit cleanup: %w", err)
+		}
+		if purge := m.reg.cfg.Hooks.PurgePublic; purge != nil && len(commit.Effects.Public) > 0 {
+			urls := make([]string, len(commit.Effects.Public))
+			for i, key := range commit.Effects.Public {
+				urls[i] = strings.TrimRight(m.reg.cfg.BaseURL, "/") + layout.URLPrefix + key
+			}
+			purge(ctx, urls)
+		}
+	}
+	return m.journal.finish(ctx, commit, applied)
+}
+
+// RecoverPending scans the journal, including writes that never created an S3
+// folder. It is bounded so the host's periodic maintenance can resume it.
+func (m *Manifests) RecoverPending(ctx context.Context, limit int) error {
+	if limit <= 0 {
+		return errors.New("media: pending recovery requires a positive limit")
+	}
+	var errs []error
+	for _, tenant := range m.reg.Namespaces() {
+		var kinds []string
+		for _, kind := range m.reg.cfg.Kinds {
+			if kind.ns == tenant {
+				kinds = append(kinds, kind.Name)
+			}
+		}
+		pending, err := m.journal.pending(ctx, tenant, kinds, limit, m.reg.cfg.Hooks.ItemCommitted != nil)
+		if err != nil {
+			return err
+		}
+		for _, commit := range pending {
+			item, err := m.reg.Item(commit.Ref)
+			if err != nil || item.Prefix() != commit.Folder {
+				continue // another registry sharing this schema owns this item
+			}
+			if err := m.Recover(ctx, commit.Ref); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			if err := m.notifyCommit(ctx, commit); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// notifyCommit runs outside the folder lock: host callbacks may read or edit
+// media themselves. A crash between delivery and acknowledgement repeats the
+// already-idempotent hook; it never removes an undelivered notification.
+func (m *Manifests) notifyCommit(ctx context.Context, commit manifestCommit) error {
+	hook := m.reg.cfg.Hooks.ItemCommitted
+	if hook == nil {
+		return nil // only the host owning the callback may acknowledge it
+	}
+	pending, err := m.journal.notification(ctx, commit)
+	if err != nil || !pending {
+		return err
+	}
+	if err := hook(ctx, commit.Ref); err != nil {
+		return fmt.Errorf("media: ItemCommitted: %w", err)
+	}
+	return m.journal.acknowledgeNotification(ctx, commit)
 }
 
 // get reads and decodes a manifest through the ETag-revalidated cache.
@@ -428,7 +771,7 @@ func (m *Manifests) get(ctx context.Context, key string) (*Manifest, string, err
 	}
 	man, err := decodeManifest(body)
 	if err != nil {
-		return nil, "", fmt.Errorf("media: decode manifest %s: %w", key, err)
+		return nil, obj.ETag, fmt.Errorf("media: decode manifest %s: %w", key, err)
 	}
 	m.cache.put(key, obj.ETag, man)
 	return man, obj.ETag, nil
@@ -465,27 +808,13 @@ func (m *Manifests) DropIfDeleted(ctx context.Context, ref contentref.ContentRef
 	if err != nil {
 		return err
 	}
-	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	if _, _, err := m.get(ctx, item.ManifestKey()); err == nil {
-		return nil
-	} else if !errors.Is(err, ErrNotFound) {
-		return err
-	}
-	var errs []error
-	for _, b := range blobs {
-		key, err := item.Blob(b)
-		if err != nil {
-			return err
+	return m.cleanup(ctx, item, false, func(cur *Manifest, exists bool) (journalEffects, error) {
+		if exists && !cur.Deleted {
+			return journalEffects{}, nil
 		}
-		if err := m.store.Delete(ctx, key); err != nil && !errors.Is(err, ErrNotFound) {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
+		keys, err := m.unreferenced(ctx, item, cur, Unreferenced{Blobs: blobs})
+		return journalEffects{Private: keys}, err
+	})
 }
 
 // manifestCache keeps decoded manifests by key, bounded by their JSON size

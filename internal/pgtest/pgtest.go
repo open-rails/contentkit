@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -42,7 +44,7 @@ func Pool(t testing.TB, mutate func(*pgxpool.Config)) *pgxpool.Pool {
 // ledger rows included) for a test that applies a lineage itself.
 func EmptySchema(t testing.TB, ctx context.Context, pool *pgxpool.Pool) string {
 	t.Helper()
-	schema := fmt.Sprintf("ck_test_%d_%d", os.Getpid(), time.Now().UnixNano())
+	schema := "ck_test_" + strings.ReplaceAll(uuid.NewString(), "-", "_")
 	quoted := pgx.Identifier{schema}.Sanitize()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -81,7 +83,7 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm SCHEMA public; CREATE EXTENSION IF NOT EX
 // concurrency-safe, so the first install is serialized.
 func Schema(t testing.TB, ctx context.Context, pool *pgxpool.Pool) string {
 	t.Helper()
-	schema := fmt.Sprintf("ck_test_%d_%d", os.Getpid(), time.Now().UnixNano())
+	schema := "ck_test_" + strings.ReplaceAll(uuid.NewString(), "-", "_")
 	quoted := pgx.Identifier{schema}.Sanitize()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

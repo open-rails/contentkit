@@ -4,10 +4,14 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"image/color"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -16,9 +20,14 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/gateway"
 	"github.com/open-rails/contentkit/media/image"
 	"github.com/open-rails/contentkit/media/internal/s3test"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // Image presets render each page through its edit, record provenance and
@@ -105,7 +114,7 @@ func TestSpecChangeAndForce(t *testing.T) {
 		t.Fatal("Preset thumb touched high")
 	}
 	e.process(t, media.ProcessJob{Ref: g, Preset: "high", Force: true})
-	if h := e.file(t, g, "high/1.webp"); h.Blob != high.Blob {
+	if h := e.file(t, g, "high/1.webp"); h.Blob == thumb.Blob || h.Blob == high.Blob || h.FP != high.FP || h.W != high.W || h.H != high.H {
 		t.Fatalf("Force did not redo high: %+v", h)
 	}
 }
@@ -153,7 +162,11 @@ func TestPublicPreset(t *testing.T) {
 	if p := e.takePurged(); len(p) != 3 {
 		t.Fatalf("re-crop purged %v", p)
 	}
-	if _, err := e.up.Commit(context.Background(), e.editor, g, []media.Op{{Op: media.OpEdit, Path: "cover.png", Edit: &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 50, H: 1}}}}); err == nil {
+	if len(removed) != 3 {
+		t.Fatalf("re-crop did not retire its old public generation: %v", removed)
+	}
+	removed = nil
+	if _, err := e.up.Commit(context.Background(), e.editor, g, uuid.NewString(), []media.Op{{Op: media.OpEdit, Path: "cover.png", Edit: &media.Edit{Crop: &media.Crop{X: 0, Y: 0, W: 50, H: 1}}}}); err == nil {
 		t.Fatal("an edit under MinWidth accepted")
 	}
 	e.commit(t, g, media.Op{Op: media.OpRemove, Path: "cover.png"})
@@ -238,6 +251,130 @@ func TestRemoveFencesInFlightPublicPublication(t *testing.T) {
 	}
 }
 
+// A PUT can outlive the manifest revision that authorized it. It must write
+// only its retired generation, never the current cover's filename or pixels.
+func TestPublicGenerationsFenceLateWrites(t *testing.T) {
+	e := newEnv(t, nil)
+	ref := e.ref(t, "gallery", 1)
+	e.put(t, ref, "cover.png", "image/png", quadrants(t))
+	e.process(t, media.ProcessJob{Ref: ref})
+	item, _ := e.reg.Item(ref)
+	started, resume := make(chan struct{}), make(chan struct{})
+	var paused atomic.Bool
+	var release sync.Once
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	defer release.Do(func() { close(resume) })
+	s := &hooked{Store: e.Store, onPut: func(key string, put func() error) error {
+		if strings.HasPrefix(key, item.PublicPrefix()) && paused.CompareAndSwap(false, true) {
+			close(started)
+			select {
+			case <-resume:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return put()
+	}}
+	worker := e.processor(t, s)
+	done := make(chan error, 1)
+	go func() { done <- worker.Process(ctx, media.ProcessJob{Ref: ref, Force: true, Preset: "cover"}) }()
+	select {
+	case <-started:
+	case err := <-done:
+		t.Fatalf("worker exited before the delayed PUT: %v", err)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	old, _ := e.file(t, ref, "cover.png").Publication("cover")
+	if old.Ready() {
+		t.Fatal("unwritten reservation was published")
+	}
+	// Cleanup during the PUT must protect this active reservation.
+	if _, err := e.ms.SyncPublic(ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+	e.commit(t, ref, media.Op{Op: media.OpEdit, Path: "cover.png",
+		Edit: &media.Edit{Crop: &media.Crop{X: 200, Y: 100, W: 200, H: 1}}})
+	e.process(t, media.ProcessJob{Ref: ref})
+	current, _ := e.file(t, ref, "cover.png").Publication("cover")
+	if !current.Ready() || old.Generation == current.Generation {
+		t.Fatalf("replacement reused the delayed generation: old=%+v, new=%+v", old, current)
+	}
+	release.Do(func() { close(resume) })
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	after, _ := e.file(t, ref, "cover.png").Publication("cover")
+	if after.Generation != current.Generation {
+		t.Fatalf("old worker replaced the current publication: %+v", after)
+	}
+	b, _, ok := e.public(t, ref, "cover-150.webp")
+	if !ok {
+		t.Fatal("current cover disappeared")
+	}
+	pixels(t, b, 150, 50, map[[2]int]color.RGBA{{75, 25}: white})
+	for _, name := range old.NamesOnDisk() {
+		key, _ := item.Public(name)
+		if _, err := e.Store.Head(ctx, key); !errors.Is(err, media.ErrNotFound) {
+			t.Fatalf("retired delayed PUT was not reclaimed: %s: %v", key, err)
+		}
+	}
+}
+
+func TestPublicReservationRecoversInterruptedWrite(t *testing.T) {
+	e := newEnv(t, nil)
+	ref := e.ref(t, "gallery", 1)
+	e.put(t, ref, "cover.png", "image/png", quadrants(t))
+	item, _ := e.reg.Item(ref)
+	var interrupted atomic.Bool
+	var verified atomic.Bool
+	failure := errors.New("response lost after public PUT")
+	s := &hooked{Store: e.Store, omitChecksums: true, onGet: func(key string) {
+		if strings.HasPrefix(key, item.PublicPrefix()) {
+			verified.Store(true)
+		}
+	}, onPut: func(key string, put func() error) error {
+		err := put()
+		if err == nil && strings.HasPrefix(key, item.PublicPrefix()) && interrupted.CompareAndSwap(false, true) {
+			return failure
+		}
+		return err
+	}}
+	worker := e.processor(t, s)
+	if err := worker.Process(t.Context(), media.ProcessJob{Ref: ref}); !errors.Is(err, failure) {
+		t.Fatalf("write interruption: %v", err)
+	}
+	reserved, _ := e.file(t, ref, "cover.png").Publication("cover")
+	if reserved.Generation == "" || reserved.Ready() {
+		t.Fatalf("lost the unpublished reservation: %+v", reserved)
+	}
+	keys, err := e.ms.SyncPublic(t.Context(), ref)
+	if err != nil || len(keys) != 0 {
+		t.Fatalf("cleanup retired active outputs: %v, %v", keys, err)
+	}
+	if err := worker.Process(t.Context(), media.ProcessJob{Ref: ref}); err != nil {
+		t.Fatal(err)
+	}
+	if !verified.Load() {
+		t.Fatal("retry accepted an existing allocation without a checksum or reading its bytes")
+	}
+	pub, _ := e.file(t, ref, "cover.png").Publication("cover")
+	if !pub.Ready() || pub.Generation != reserved.Generation {
+		t.Fatalf("retry failed to publish its reserved generation: before=%+v, after=%+v", reserved, pub)
+	}
+	for i, name := range pub.NamesOnDisk() {
+		b, _, ok := e.public(t, ref, name)
+		if !ok {
+			t.Fatalf("published missing rendition %s", name)
+		}
+		w, h := webpSize(t, b)
+		if pub.Dims[i] != (media.Dims{W: w, H: h}) {
+			t.Fatalf("published dimensions %+v do not describe %dx%d", pub.Dims[i], w, h)
+		}
+	}
+}
+
 type failDelete struct {
 	media.Store
 	key    string
@@ -252,9 +389,17 @@ func (s *failDelete) Delete(ctx context.Context, key string) error {
 	return s.Store.Delete(ctx, key)
 }
 
-type enqueueFunc func(context.Context, media.ProcessJob) error
+type failingQueue struct {
+	media.TransactionalProcessQueue
+	err error
+}
 
-func (f enqueueFunc) Enqueue(ctx context.Context, job media.ProcessJob) error { return f(ctx, job) }
+func (q *failingQueue) EnqueueTx(ctx context.Context, tx pgx.Tx, job media.ProcessJob) error {
+	if err := q.TransactionalProcessQueue.EnqueueTx(ctx, tx, job); err != nil {
+		return err
+	}
+	return q.err // fail after insertion, so the regression exercises rollback
+}
 
 func TestRemoveCleansPublicAfterCommitFailure(t *testing.T) {
 	for _, scenario := range []string{"enqueue failure", "client disconnect"} {
@@ -274,22 +419,21 @@ func TestRemoveCleansPublicAfterCommitFailure(t *testing.T) {
 				return err
 			}}
 			failure := errors.New("queue unavailable")
-			queue := enqueueFunc(func(ctx context.Context, _ media.ProcessJob) error {
-				if scenario == "client disconnect" {
-					return ctx.Err()
-				}
-				return failure
-			})
-			manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{})
-			uploads, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests, Queue: queue})
+			queue := &failingQueue{TransactionalProcessQueue: e.queue}
+			if scenario == "enqueue failure" {
+				queue.err = failure
+			}
+			journal, err := media.NewPGJournal(e.Pool(), e.ContentSchema(), queue)
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = uploads.Commit(ctx, e.editor, ref, []media.Op{{Op: media.OpRemove, Path: "cover.png"}})
-			if scenario == "client disconnect" {
-				failure = context.Canceled
+			manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{Journal: journal})
+			uploads, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests})
+			if err != nil {
+				t.Fatal(err)
 			}
-			if !errors.Is(err, failure) {
+			_, err = uploads.Commit(ctx, e.editor, ref, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: "cover.png"}})
+			if scenario == "enqueue failure" && !errors.Is(err, failure) || scenario == "client disconnect" && err != nil {
 				t.Fatalf("commit did not preserve the queue error: %v", err)
 			}
 			for obj, err := range e.Store.List(t.Context(), item.PublicPrefix()) {
@@ -297,6 +441,12 @@ func TestRemoveCleansPublicAfterCommitFailure(t *testing.T) {
 					t.Fatal(err)
 				}
 				t.Fatalf("public file survived %s: %s", scenario, obj.Key)
+			}
+			queue.err = nil
+			for range 2 {
+				if err := manifests.Recover(t.Context(), ref); err != nil {
+					t.Fatal(err)
+				}
 			}
 		})
 	}
@@ -332,7 +482,7 @@ func TestPublicCleanupDeletesConcurrently(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &parallelDelete{Store: e.Store, ready: make(chan struct{})}
-	manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{})
+	manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{Journal: e.journal})
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	keys, err := manifests.SyncPublic(ctx, ref)
@@ -350,27 +500,30 @@ func TestRemoveRetriesFailedPublicCleanup(t *testing.T) {
 	e.put(t, ref, "cover.png", "image/png", quadrants(t))
 	e.process(t, media.ProcessJob{Ref: ref})
 	item, _ := e.reg.Item(ref)
-	key, _ := item.Public("cover-150.webp")
+	pub, _ := e.file(t, ref, "cover.png").Publication("cover")
+	names := pub.NamesOnDisk()
+	key, _ := item.Public(names[0])
 	failure := errors.New("public delete unavailable")
 	store := &failDelete{Store: e.Store, key: key, err: failure}
-	manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{})
-	uploads, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests, Queue: nopQueue{}})
+	manifests := s3test.Manifests(t, store, e.reg, media.ManifestOptions{Journal: e.journal})
+	uploads, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ops := []media.Op{{Op: media.OpRemove, Path: "cover.png"}}
-	if _, err := uploads.Commit(t.Context(), e.editor, ref, ops); !errors.Is(err, failure) {
+	if _, err := uploads.Commit(t.Context(), e.editor, ref, uuid.NewString(), ops); !errors.Is(err, failure) {
 		t.Fatalf("remove did not report failed cleanup: %v", err)
 	}
 	if _, ok := e.manifest(t, ref).Get("cover.png"); ok {
 		t.Fatal("cleanup failure unexpectedly restored the removed upload")
 	}
-	if _, err := uploads.Commit(t.Context(), e.editor, ref, ops); err != nil {
+	if _, err := uploads.Commit(t.Context(), e.editor, ref, uuid.NewString(), ops); err != nil {
 		t.Fatalf("retry could not finish cleanup after the upload was removed: %v", err)
 	}
-	for _, name := range []string{"cover-150.webp", "cover-300.webp", "cover-600.webp"} {
-		if _, _, ok := e.public(t, ref, name); ok {
-			t.Fatalf("retry kept %s", name)
+	for _, name := range names {
+		key, _ := item.Public(name)
+		if _, err := e.Store.Head(t.Context(), key); !errors.Is(err, media.ErrNotFound) {
+			t.Fatalf("retry kept %s: %v", name, err)
 		}
 	}
 }
@@ -479,18 +632,103 @@ func TestPublishDefaults(t *testing.T) {
 		c.Kinds[0].Defaults = fstest.MapFS{"cover.png": {Data: quadrants(t)}}
 	})
 	ctx := context.Background()
-	keys, err := image.PublishDefaults(ctx, e.Store, e.reg)
-	if err != nil || len(keys) != 3 {
-		t.Fatalf("published %v %v", keys, err)
+	publication, err := image.PublishDefaults(ctx, e.Store, e.reg)
+	if err != nil || len(publication.Written) != 3 || len(publication.Defaults) != 1 {
+		t.Fatalf("published %v %v", publication, err)
 	}
 	k, _ := e.reg.Kind("gallery")
-	b, obj := e.read(t, k.DefaultKey("cover-300.webp"))
-	if w, h := webpSize(t, b); w != 300 || h != 100 || obj.Metadata["fp"] == "" {
-		t.Fatalf("default %dx%d %+v", w, h, obj.Metadata)
+	name := publication.Defaults[0].Files["cover-300.webp"]
+	b, _ := e.read(t, k.DefaultKey(name))
+	sum := sha256.Sum256(b)
+	if w, h := webpSize(t, b); w != 300 || h != 100 || name != layout.SHA256Name(sum[:])+".webp" {
+		t.Fatalf("default %dx%d %s", w, h, name)
 	}
-	if keys, err := image.PublishDefaults(ctx, e.Store, e.reg); err != nil || len(keys) != 0 {
-		t.Fatalf("republished %v %v", keys, err)
+	if next, err := image.PublishDefaults(ctx, e.Store, e.reg); err != nil || len(next.Written) != 0 || !reflect.DeepEqual(next.Defaults, publication.Defaults) {
+		t.Fatalf("republished %v %v", next, err)
 	}
+
+	t.Run("overlapping deployments", func(t *testing.T) {
+		e.deploy(t, func(c *media.Config) {
+			c.Kinds[0].Defaults = fstest.MapFS{"cover.png": {Data: solid(t, 600, 200, red)}}
+		})
+		older := e.reg
+		entered, release := make(chan struct{}), make(chan struct{})
+		var once sync.Once
+		defer once.Do(func() { close(release) })
+		var first atomic.Bool
+		done := make(chan error, 1)
+		store := &hooked{Store: e.Store, onPut: func(_ string, put func() error) error {
+			if first.CompareAndSwap(false, true) {
+				close(entered)
+				select {
+				case <-release:
+				case <-t.Context().Done():
+					return t.Context().Err()
+				}
+			}
+			return put()
+		}}
+		go func() {
+			_, err := image.PublishDefaults(t.Context(), store, older)
+			done <- err
+		}()
+		select {
+		case <-entered:
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		}
+		e.deploy(t, func(c *media.Config) {
+			c.Kinds[0].Defaults = fstest.MapFS{"cover.png": {Data: solid(t, 600, 200, blue)}}
+		})
+		newer, err := image.PublishDefaults(t.Context(), e.Store, e.reg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		once.Do(func() { close(release) })
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		rules := media.GatewayConfig(e.reg, newer.Defaults)
+		h, err := gateway.New(gateway.Config{Endpoint: e.Config.Endpoint, Bucket: e.Config.Bucket,
+			Region: e.Config.Region, AccessKeyID: e.Config.AccessKeyID, SecretAccessKey: e.Config.SecretAccessKey,
+			Hosts: map[string][]string{"media.test": rules.Namespaces}, Defaults: rules.Defaults})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"cover-300.webp", "cover-300-0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b.webp"} {
+			r := httptest.NewRequest(http.MethodGet, "http://media.test/v1/"+e.Tenant+"/gallery/"+e.ref(t, "gallery", 1).ContentID+"/public/"+name, nil)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != http.StatusOK {
+				t.Fatalf("fallback %s: %d", name, w.Code)
+			}
+			pixels(t, w.Body.Bytes(), 300, 100, map[[2]int]color.RGBA{{150, 50}: blue})
+		}
+	})
+
+	t.Run("lost publication response", func(t *testing.T) {
+		var first atomic.Bool
+		store := &hooked{Store: e.Store, onPut: func(_ string, put func() error) error {
+			err := put()
+			if err == nil && first.CompareAndSwap(false, true) {
+				return media.ErrUnavailable
+			}
+			return err
+		}}
+		e.deploy(t, func(c *media.Config) {
+			c.Kinds[0].Defaults = fstest.MapFS{"cover.png": {Data: solid(t, 600, 200, green)}}
+		})
+		if _, err := image.PublishDefaults(t.Context(), store, e.reg); !errors.Is(err, media.ErrUnavailable) {
+			t.Fatalf("lost response: %v", err)
+		}
+		retry, err := image.PublishDefaults(t.Context(), store, e.reg)
+		if err != nil || len(retry.Defaults) != 1 {
+			t.Fatalf("publication retry: %+v %v", retry, err)
+		}
+		k, _ := e.reg.Kind("gallery")
+		b, _ := e.read(t, k.DefaultKey(retry.Defaults[0].Files["cover-300.webp"]))
+		pixels(t, b, 300, 100, map[[2]int]color.RGBA{{150, 50}: green})
+	})
 }
 
 // A pass whose outputs the manifest cannot hold marks the item Full instead
@@ -537,9 +775,8 @@ func TestFullManifestStopsProcessing(t *testing.T) {
 	}
 }
 
-// A Full item still renders its public files: recording them only clears
-// pending names. Hidden and restored, it gets its cover back while its
-// private outputs stay stopped.
+// A Full item at the edit limit can replace an existing public reservation
+// without growing it, while its private outputs stay stopped.
 func TestFullStillRendersPublic(t *testing.T) {
 	e := newEnv(t, nil)
 	g := e.ref(t, "gallery", 1)
@@ -559,7 +796,7 @@ func TestFullStillRendersPublic(t *testing.T) {
 		if err := enc.Encode(&c); err != nil {
 			return err
 		}
-		m.Meta = map[string]any{"pad": strings.Repeat("A", media.MaxManifestBytes-4<<10-100-b.Len())}
+		m.Meta = map[string]any{"pad": strings.Repeat("A", media.MaxManifestBytes-4<<10-b.Len())}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -568,19 +805,16 @@ func TestFullStillRendersPublic(t *testing.T) {
 	if m := e.manifest(t, g); !m.Full || m.Deficit <= 0 {
 		t.Fatalf("full %v, deficit %d", m.Full, m.Deficit)
 	}
-	// Hidden (public/ emptied) and restored (the cover pending again).
+	// The objects disappeared but the manifest still owns their allocation.
+	// With no pending marker there is no space to grow one: reservation and
+	// completion must fit by replacing their fixed-width state.
 	item, _ := e.reg.Item(g)
-	for _, w := range []int{150, 300, 600} {
-		key, _ := item.Public(fmt.Sprintf("cover-%d.webp", w))
+	pub, _ := e.file(t, g, "cover.png").Publication("cover")
+	for _, name := range pub.NamesOnDisk() {
+		key, _ := item.Public(name)
 		if err := e.Store.Delete(ctx, key); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if _, err := e.ms.EditExisting(ctx, g, func(m *media.Manifest) error {
-		m.AddPending("cover.png", "cover")
-		return nil
-	}); err != nil {
-		t.Fatal(err)
 	}
 	e.process(t, media.ProcessJob{Ref: g})
 	m := e.manifest(t, g)

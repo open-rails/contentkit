@@ -13,10 +13,12 @@ import (
 	"image/png"
 	"io"
 	"net/http"
+	"slices"
 	"sync"
 	"testing"
 
 	"github.com/davidbyttow/govips/v2/vips"
+	"github.com/google/uuid"
 	"golang.org/x/image/webp"
 
 	"github.com/open-rails/contentkit/access"
@@ -24,6 +26,7 @@ import (
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/image"
 	"github.com/open-rails/contentkit/media/internal/s3test"
+	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 // cid is the n-th test item id, a canonical UUIDv7.
@@ -82,16 +85,14 @@ func (visible) Resolve(_ context.Context, refs []contentref.ContentRef, _ access
 	return out, nil
 }
 
-type nopQueue struct{}
-
-func (nopQueue) Enqueue(context.Context, media.ProcessJob) error { return nil }
-
 // env is one test's image producer over real MinIO, with the app's uploads
 // and manifests, recording failures and purges.
 type env struct {
 	*s3test.Env
 	reg     *media.Registry
 	ms      *media.Manifests
+	journal *media.PGJournal
+	queue   *workqueue.Queue
 	up      *media.Uploads
 	proc    *image.Processor
 	mu      sync.Mutex
@@ -125,8 +126,9 @@ func (e *env) deploy(t *testing.T, mutate func(*media.Config)) {
 	if e.reg, err = media.NewRegistry(cfg); err != nil {
 		t.Fatal(err)
 	}
-	e.ms = s3test.Manifests(t, e.Store, e.reg, media.ManifestOptions{})
-	if e.up, err = media.NewUploads(media.UploadOptions{Store: e.Store, Manifests: e.ms, Queue: nopQueue{}}); err != nil {
+	e.journal, e.queue = e.Processing(e.reg)
+	e.ms = s3test.Manifests(t, e.Store, e.reg, media.ManifestOptions{Journal: e.journal})
+	if e.up, err = media.NewUploads(media.UploadOptions{Store: e.Store, Manifests: e.ms}); err != nil {
 		t.Fatal(err)
 	}
 	if e.proc, err = image.New(image.Config{Store: e.Store, Manifests: e.ms, Purge: func(_ context.Context, keys []string) error {
@@ -176,7 +178,7 @@ func (e *env) put(t *testing.T, ref contentref.ContentRef, path, typ string, bod
 // commit commits ops and places staged uploads, as the worker's place job does.
 func (e *env) commit(t *testing.T, ref contentref.ContentRef, ops ...media.Op) {
 	t.Helper()
-	if _, err := e.up.Commit(context.Background(), e.editor, ref, ops); err != nil {
+	if _, err := e.up.Commit(context.Background(), e.editor, ref, uuid.NewString(), ops); err != nil {
 		t.Fatalf("commit %+v: %v", ops, err)
 	}
 	if _, err := e.ms.Place(context.Background(), ref); err != nil {
@@ -232,6 +234,13 @@ func (e *env) blob(t *testing.T, ref contentref.ContentRef, f media.File) []byte
 func (e *env) public(t *testing.T, ref contentref.ContentRef, name string) ([]byte, media.Object, bool) {
 	t.Helper()
 	item, _ := e.reg.Item(ref)
+	for _, f := range e.manifest(t, ref).Files {
+		for _, pub := range f.Public {
+			if i := slices.Index(pub.Names, name); i >= 0 && pub.Ready() {
+				name = pub.NamesOnDisk()[i]
+			}
+		}
+	}
 	key, _ := item.Public(name)
 	rc, obj, err := e.Store.Get(context.Background(), key, media.GetOptions{})
 	if errors.Is(err, media.ErrNotFound) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,14 +16,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/gateway"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
+	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 const mediaHost = "media.doujins.test"
@@ -34,7 +39,55 @@ func cid(n int) string { return fmt.Sprintf("01920000-0000-7000-8000-%012d", n) 
 
 func blobOf(b []byte) string {
 	sum := sha256.Sum256(b)
-	return layout.SHA256Name(sum[:])
+	return layout.BlobName(sum[:], cid(1)) // synthetic names only; real writes use NewBlob
+}
+
+func matchesBlob(name string, body []byte) bool {
+	sum, ok := layout.BlobDigest(name)
+	want := sha256.Sum256(body)
+	return ok && bytes.Equal(sum, want[:])
+}
+
+// blob models a producer: record a fresh allocation before sending bytes.
+func (f *fixture) blob(ref contentref.ContentRef, body []byte, typ string) string {
+	f.t.Helper()
+	sum := sha256.Sum256(body)
+	name, err := f.ms.NewBlob(f.t.Context(), ref, sum[:])
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	item, _ := f.reg.Item(ref)
+	key, _ := item.Blob(name)
+	if _, err := f.env.Store.Put(f.t.Context(), key, bytes.NewReader(body), int64(len(body)), media.PutOptions{ContentType: typ}); err != nil {
+		f.t.Fatal(err)
+	}
+	return name
+}
+
+func (f *fixture) fileBlob(ref contentref.ContentRef, path string) string {
+	f.t.Helper()
+	m, _, err := f.ms.Get(f.t.Context(), ref)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	file, ok := m.Get(path)
+	if !ok {
+		f.t.Fatalf("no file %s", path)
+	}
+	return file.Blob
+}
+
+func (f *fixture) editorView(ref contentref.ContentRef, path string) string {
+	f.t.Helper()
+	name := f.blob(ref, []byte("editor view"), "image/webp")
+	if _, err := f.ms.EditExisting(f.t.Context(), ref, func(m *media.Manifest) error {
+		i := m.Find(path)
+		m.Files[i].Editor = &media.EditorImage{Blob: name, FP: f.reg.EditorFingerprint(m.Files[i])}
+		return nil
+	}); err != nil {
+		f.t.Fatal(err)
+	}
+	return name
 }
 
 var images = []string{"image/png", "image/jpeg", "image/webp", "image/gif"}
@@ -141,24 +194,39 @@ func (a *authorizer) CanUpload(_ context.Context, actor access.Actor, t media.Up
 	return media.UploadGrant{Allowed: actor.ID != "reader" && !actor.Anonymous, Owner: "owner", Exempt: actor.ID == "staff"}, nil
 }
 
-// queue records the processing the app asks the worker for.
+// queue reads the real jobs committed into the fixture's worker schema.
 type queue struct {
-	mu   sync.Mutex
-	jobs []media.ProcessJob
-}
-
-func (q *queue) Enqueue(_ context.Context, j media.ProcessJob) error {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.jobs = append(q.jobs, j)
-	return nil
+	*workqueue.Queue
+	t    *testing.T
+	pool *pgxpool.Pool
 }
 
 func (q *queue) take() []media.ProcessJob {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	out := q.jobs
-	q.jobs = nil
+	q.t.Helper()
+	rows, err := q.pool.Query(q.t.Context(), `WITH taken AS (DELETE FROM `+pgx.Identifier{q.Schema(), "river_job"}.Sanitize()+`
+WHERE state IN ('available', 'scheduled', 'retryable') RETURNING id, kind, args)
+SELECT kind, args FROM taken ORDER BY id`)
+	if err != nil {
+		q.t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []media.ProcessJob
+	for rows.Next() {
+		var kind string
+		var args []byte
+		if err := rows.Scan(&kind, &args); err != nil {
+			q.t.Fatal(err)
+		}
+		var job media.ProcessJob
+		if err := json.Unmarshal(args, &job); err != nil {
+			q.t.Fatal(err)
+		}
+		job.Place = kind == (workqueue.PlaceArgs{}).Kind()
+		out = append(out, job)
+	}
+	if err := rows.Err(); err != nil {
+		q.t.Fatal(err)
+	}
 	return out
 }
 
@@ -178,6 +246,7 @@ type fixture struct {
 	res     *resolver
 	auth    *authorizer
 	q       *queue
+	journal *media.PGJournal
 	purged  chan []string
 	gateway *httptest.Server
 	editor  access.Actor
@@ -191,7 +260,7 @@ func newFixtureOn(t *testing.T, env *s3test.Env, mutate func(*media.Config)) *fi
 	t.Helper()
 	f := &fixture{t: t, env: env, ns: env.Tenant, shared: "acct" + strings.ReplaceAll(env.Tenant, "-", ""),
 		res:  &resolver{verdicts: map[string]access.Resolution{}, anon: map[string]access.Resolution{}},
-		auth: &authorizer{}, q: &queue{}, purged: make(chan []string, 64), editor: access.Actor{ID: "editor", Kind: "user"}}
+		auth: &authorizer{}, purged: make(chan []string, 64), editor: access.Actor{ID: "editor", Kind: "user"}}
 	t.Cleanup(func() { f.drop(f.shared + "/") })
 	cfg := testConfig(f.ns, f.shared)
 	cfg.Hooks = media.Hooks{Resolver: f.res, CanUpload: f.auth, PurgePublic: func(_ context.Context, urls []string) { f.purged <- urls }}
@@ -202,13 +271,16 @@ func newFixtureOn(t *testing.T, env *s3test.Env, mutate func(*media.Config)) *fi
 	if f.reg, err = media.NewRegistry(cfg); err != nil {
 		t.Fatal(err)
 	}
+	journal, processing := env.Processing(f.reg)
+	f.journal = journal
+	f.q = &queue{Queue: processing, t: t, pool: env.Pool()}
 	locker := s3test.Locker(t, env.Store)
-	if f.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: locker, Processes: f.q, Pool: pgtest.Pool(t, nil)}); err != nil {
+	if f.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: locker, Journal: journal, Processes: f.q, Pool: env.Pool()}); err != nil {
 		t.Fatal(err)
 	}
 	f.ms = f.jobs.Manifests()
 	ring, _ := token.NewRing(signKey, nil)
-	if f.up, err = media.NewUploads(media.UploadOptions{Store: env.Store, Manifests: f.ms, Tickets: &ring, Queue: f.q}); err != nil {
+	if f.up, err = media.NewUploads(media.UploadOptions{Store: env.Store, Manifests: f.ms, Tickets: &ring}); err != nil {
 		t.Fatal(err)
 	}
 	if f.rd, err = media.NewReader(media.ReaderOptions{Manifests: f.ms, Queue: f.q,
@@ -217,7 +289,7 @@ func newFixtureOn(t *testing.T, env *s3test.Env, mutate func(*media.Config)) *fi
 	}
 	h, err := gateway.New(gateway.Config{Endpoint: env.Config.Endpoint, Bucket: env.Config.Bucket, Region: env.Config.Region,
 		AccessKeyID: env.Config.AccessKeyID, SecretAccessKey: env.Config.SecretAccessKey, Ring: ring,
-		Hosts: map[string][]string{mediaHost: f.reg.Namespaces()}, Defaults: media.GatewayConfig(f.reg).Defaults})
+		Hosts: map[string][]string{mediaHost: f.reg.Namespaces()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +360,7 @@ func (f *fixture) put(ref contentref.ContentRef, path, typ string, body []byte, 
 // commit commits ops, then places staged uploads as the worker does first.
 func (f *fixture) commit(ref contentref.ContentRef, ops ...media.Op) *media.Manifest {
 	f.t.Helper()
-	m, err := f.up.Commit(context.Background(), f.editor, ref, ops)
+	m, err := f.up.Commit(context.Background(), f.editor, ref, uuid.NewString(), ops)
 	if err != nil {
 		f.t.Fatalf("commit %+v: %v", ops, err)
 	}
@@ -325,26 +397,43 @@ func (f *fixture) produce(ref contentref.ContentRef) {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	type public struct{ key, blob string }
+	type public struct {
+		from, blob string
+		pub        media.Publication
+	}
 	var publics []public
 	for _, u := range m.Files {
 		if !u.IsUpload() || u.Blob == "" || m.Hidden {
 			continue
 		}
 		for _, p := range k.PublicFor(u.Path) {
-			for _, n := range k.PublicNames(m, p, u.Path) {
-				key, _ := item.Public(n)
-				publics = append(publics, public{key, u.Blob})
+			names := k.PublicNames(m, p, u.Path)
+			if len(names) > 0 && !u.Unattached {
+				pub := media.Publication{Preset: p.Name, Source: u.Key(), FP: "test", Generation: uuid.NewString(),
+					Names: names, Dims: make([]media.Dims, len(names)), State: media.PublicationReady}
+				if old, ok := k.Publication(m, u, p); ok && old.Ready() {
+					pub = old
+				}
+				for i := range pub.Dims {
+					pub.Dims[i] = media.Dims{W: 1, H: 1}
+				}
+				publics = append(publics, public{u.Path, u.Blob, pub})
 			}
 		}
 	}
 	for _, p := range publics {
 		src, _ := item.Blob(p.blob)
-		if _, err := f.env.Store.Copy(ctx, src, p.key, media.CopyOptions{}); err != nil {
-			f.t.Fatal(err)
+		for _, name := range p.pub.NamesOnDisk() {
+			key, _ := item.Public(name)
+			if _, err := f.env.Store.Copy(ctx, src, key, media.CopyOptions{}); err != nil {
+				f.t.Fatal(err)
+			}
 		}
 	}
 	if _, err := f.ms.EditExisting(ctx, ref, func(m *media.Manifest) error {
+		for _, p := range publics {
+			m.SetPublication(p.from, p.pub)
+		}
 		for _, u := range slicesClone(m.Files) {
 			if !u.IsUpload() || u.Blob == "" {
 				continue
@@ -377,6 +466,26 @@ func (f *fixture) produce(ref contentref.ContentRef) {
 	}); err != nil {
 		f.t.Fatal(err)
 	}
+}
+
+// publicName resolves a logical preset name to the fixture's published key.
+func (f *fixture) publicName(ref contentref.ContentRef, name string) string {
+	f.t.Helper()
+	m, _, err := f.ms.Get(f.t.Context(), ref)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	for _, file := range m.Files {
+		for _, pub := range file.Public {
+			for i, logical := range pub.Names {
+				if logical == name && pub.Ready() {
+					return pub.NamesOnDisk()[i]
+				}
+			}
+		}
+	}
+	f.t.Fatalf("no published public image for %s", name)
+	return ""
 }
 
 func slicesClone(files []media.File) []media.File { return append([]media.File(nil), files...) }

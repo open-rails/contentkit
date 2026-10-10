@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -101,7 +102,7 @@ func TestPreviewMovedMidPass(t *testing.T) {
 	// A new page takes position 1; the pass renders it there.
 	first := 0
 	e.put(t, ref, "originals/n.png", "image/png", solid(t, 80, 80, blue), media.Op{Op: media.OpMove, Path: "originals/n.png", Index: &first})
-	second, _ := item.Public("preview-2.webp")
+	second := item.PublicPrefix() + "preview-2-"
 	var mu sync.Mutex
 	var events []string // what the processor does to preview-2 once the page has moved there
 	var once sync.Once
@@ -110,26 +111,25 @@ func TestPreviewMovedMidPass(t *testing.T) {
 	record := func(what, key string) {
 		mu.Lock()
 		defer mu.Unlock()
-		if fired && key == second {
+		if fired && strings.HasPrefix(key, second) {
 			events = append(events, what)
 		}
 	}
 	p := e.processor(t, headHook{
 		Store: &hooked{Store: e.Store, onPut: func(key string, put func() error) error {
 			record("put", key)
-			return put()
-		}},
-		before: func(key string) {
-			record("head", key)
 			if strings.HasPrefix(key, item.PrivatePrefix()) {
 				once.Do(func() { // the new page's preview is published; its private outputs come next
-					_, moved = e.up.Commit(ctx, e.editor, ref, []media.Op{{Op: media.OpMove, Path: "originals/y.png", Index: &first}})
+					_, moved = e.up.Commit(ctx, e.editor, ref, uuid.NewString(), []media.Op{{Op: media.OpMove, Path: "originals/y.png", Index: &first}})
 					mu.Lock()
 					fired = true
 					mu.Unlock()
 				})
 			}
-		}})
+			return put()
+		}},
+		before: func(key string) { record("head", key) },
+	})
 	if err := p.Process(ctx, media.ProcessJob{Ref: ref}); err != nil {
 		t.Fatal(err)
 	}

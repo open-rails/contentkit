@@ -236,35 +236,60 @@ WHERE tenant_id = $1 AND uploader = $2`, r.Tenant, r.Uploader).Scan(&day, &oldes
 
 func (l *PGLimiter) Settle(ctx context.Context, s Settlement) error {
 	var quota int64
-	if s.Enforce && s.Delta > 0 && s.Owner != "" && l.limits.Quota != nil {
+	if s.Enforce && s.Delta > 0 {
 		var err error
-		if quota, err = l.limits.Quota(ctx, s.Tenant, s.Owner); err != nil {
-			return fmt.Errorf("media: quota for %s: %w", s.Owner, err)
+		if quota, err = l.Quota(ctx, s.Tenant, s.Owner); err != nil {
+			return err
 		}
 	}
 	return pgx.BeginFunc(ctx, l.pool, func(tx pgx.Tx) error {
-		if len(s.Keys) > 0 {
-			if _, err := tx.Exec(ctx, `DELETE FROM `+l.res+` WHERE tenant_id = $1 AND object_key = ANY($2)`, s.Tenant, s.Keys); err != nil {
-				return err
-			}
-		}
-		if s.Owner == "" || s.Delta == 0 {
-			return nil
-		}
-		if quota > 0 {
-			var used int64
-			if err := tx.QueryRow(ctx, `INSERT INTO `+l.usage+` AS u (tenant_id, owner_id) VALUES ($1, $2)
-ON CONFLICT (tenant_id, owner_id) DO UPDATE SET used_bytes = u.used_bytes RETURNING used_bytes`, s.Tenant, s.Owner).Scan(&used); err != nil {
-				return err
-			}
-			if used+s.Delta > quota {
-				return &UploadError{Code: CodeQuota, Message: fmt.Sprintf("storage quota exceeded: %d used, %d more committed of %d", used, s.Delta, quota)}
-			}
-		}
-		_, err := tx.Exec(ctx, `INSERT INTO `+l.usage+` AS u (tenant_id, owner_id, used_bytes) VALUES ($1, $2, GREATEST($3, 0))
-ON CONFLICT (tenant_id, owner_id) DO UPDATE SET used_bytes = GREATEST(u.used_bytes + $3, 0)`, s.Tenant, s.Owner, s.Delta)
-		return err
+		return l.SettleTx(ctx, tx, s, quota)
 	})
+}
+
+// Quota resolves the owner's configured storage cap (<= 0 is unlimited).
+// Call it before borrowing a transaction: the host callback may use the same
+// pool. It does not read usage or reserve bytes.
+func (l *PGLimiter) Quota(ctx context.Context, tenant, owner string) (int64, error) {
+	if owner == "" || l.limits.Quota == nil {
+		return 0, nil
+	}
+	quota, err := l.limits.Quota(ctx, tenant, owner)
+	if err != nil {
+		return 0, fmt.Errorf("media: quota for %s: %w", owner, err)
+	}
+	return quota, nil
+}
+
+// SettleTx applies a settlement in the caller's transaction, so a recovery
+// receipt and queue effects can commit or roll back with it. quota is the cap
+// resolved by Quota before starting tx; it is checked only for enforced growth.
+// The caller must roll back tx on error. This method does not start another
+// transaction, call host code, or make the settlement independently idempotent.
+func (l *PGLimiter) SettleTx(ctx context.Context, tx pgx.Tx, s Settlement, quota int64) error {
+	if s.Owner != "" && (s.Delta != 0 || len(s.Keys) > 0) {
+		// Reserve takes this lock before touching reservations. Keep that order
+		// for refunds and unenforced recovery settlements as well.
+		var used int64
+		if err := tx.QueryRow(ctx, `INSERT INTO `+l.usage+` AS u (tenant_id, owner_id) VALUES ($1, $2)
+ON CONFLICT (tenant_id, owner_id) DO UPDATE SET used_bytes = u.used_bytes RETURNING used_bytes`, s.Tenant, s.Owner).Scan(&used); err != nil {
+			return err
+		}
+		if s.Enforce && s.Delta > 0 && quota > 0 && used+s.Delta > quota {
+			return &UploadError{Code: CodeQuota, Message: fmt.Sprintf("storage quota exceeded: %d used, %d more committed of %d", used, s.Delta, quota)}
+		}
+	}
+	if len(s.Keys) > 0 {
+		if _, err := tx.Exec(ctx, `DELETE FROM `+l.res+` WHERE tenant_id = $1 AND object_key = ANY($2)`, s.Tenant, s.Keys); err != nil {
+			return err
+		}
+	}
+	if s.Owner == "" || s.Delta == 0 {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `UPDATE `+l.usage+` SET used_bytes = GREATEST(used_bytes + $3, 0)
+WHERE tenant_id = $1 AND owner_id = $2`, s.Tenant, s.Owner, s.Delta)
+	return err
 }
 
 // Usage reports an owner's stored bytes and unexpired pending reservations.

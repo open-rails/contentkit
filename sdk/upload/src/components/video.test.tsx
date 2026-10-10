@@ -22,14 +22,14 @@ URL.createObjectURL ??= () => "blob:frame";
 URL.revokeObjectURL ??= () => {};
 globalThis.fetch = vi.fn(async () => new Response(null)) as typeof fetch;
 
-const poster = { base: "https://cdn", namespace: "app", kind: "post", id: item.id, to: "poster-{w}.webp", widths: [480, 960], aspect: "16:9" };
+const poster = { preset: "poster", aspect: "16:9", renditions: [480, 960].map((w) => ({ url: `https://cdn/v1/app/post/${item.id}/public/poster-${w}-generation.webp`, w, h: w * 9 / 16 })) };
 
 function reducedMotion(on: boolean) {
   window.matchMedia = vi.fn().mockImplementation((q: string) => ({ matches: on && q.includes("reduce"), addEventListener() {}, removeEventListener() {} }));
 }
 
 it("VideoPoster: the video's aspect from the preset, uncropped", () => {
-  const tall = { ...poster, widths: [480], aspect: "480:853" };
+  const tall = { ...poster, renditions: [{ url: poster.renditions[0]!.url, w: 480, h: 853 }], aspect: "480:853" };
   const { container } = render(<VideoPoster poster={tall} alt="tall" />);
   expect(container.firstElementChild).toHaveStyle({ aspectRatio: String(480 / 853) });
   expect(screen.getByRole("img", { name: "tall" })).toHaveClass("object-contain");
@@ -45,7 +45,7 @@ it("VideoPoster: srcset at the poster's aspect; a cover only, it never plays", (
   const root = container.firstElementChild!;
   expect(root).toHaveClass("ckui");
   expect(root).toHaveStyle({ aspectRatio: String(16 / 9) });
-  expect(screen.getByRole("img", { name: "clip" })).toHaveAttribute("src", `https://cdn/v1/app/post/${item.id}/public/poster-480.webp`);
+  expect(screen.getByRole("img", { name: "clip" })).toHaveAttribute("src", poster.renditions[0]!.url);
   fireEvent.pointerEnter(root);
   fireEvent.focus(screen.getByRole("link"));
   expect(container.querySelector("video")).toBeNull();

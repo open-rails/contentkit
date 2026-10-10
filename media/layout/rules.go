@@ -4,19 +4,15 @@ import (
 	"cmp"
 	"fmt"
 	"maps"
-	"regexp"
 	"slices"
 	"strings"
 )
 
-// Default declares the public names of {Namespace}/{Kind} that fall back to
-// {Namespace}/{Kind}/_default/public/{name} when an item's object is
-// missing: templates over [A-Za-z0-9._-] with {w} (digits) and {name}
-// placeholders, e.g. "cover-{w}.webp". The media gateway serves them; the
-// registry derives them (media.GatewayConfig).
+// Default maps logical public names to immutable rendered default objects.
+// The gateway uses this deployment-owned selection only when an item is missing.
 type Default struct {
 	Namespace, Kind string
-	Names           []string
+	Files           map[string]string // logical name -> sha256-{digest}.webp
 }
 
 // ParseHosts parses "media.doujins.ai=doujins,accounts; media.hanime.media=hentai0,accounts".
@@ -58,16 +54,25 @@ func CheckHosts(in map[string][]string) (map[string][]string, error) {
 	return out, nil
 }
 
-// ParseDefaults parses "doujins/gallery: cover-{w}.webp; hentai0/video: poster-{w}.webp, thumb-{w}.webp".
+// ParseDefaults parses "doujins/gallery: cover-460.webp=sha256-{digest}.webp".
 func ParseDefaults(s string) ([]Default, error) {
 	var out []Default
 	for _, e := range fields(s, ";") {
 		head, names, ok := strings.Cut(e, ":")
 		ns, kind, ok2 := strings.Cut(strings.TrimSpace(head), "/")
 		if !ok || !ok2 {
-			return nil, fmt.Errorf("layout: defaults entry %q: want {namespace}/{kind}: {name},…", e)
+			return nil, fmt.Errorf("layout: defaults entry %q: want {namespace}/{kind}: {logical}={immutable},…", e)
 		}
-		out = append(out, Default{Namespace: ns, Kind: kind, Names: fields(names, ",")})
+		d := Default{Namespace: ns, Kind: kind, Files: map[string]string{}}
+		for _, entry := range fields(names, ",") {
+			name, target, ok := strings.Cut(entry, "=")
+			name, target = strings.TrimSpace(name), strings.TrimSpace(target)
+			if _, dup := d.Files[name]; !ok || dup {
+				return nil, fmt.Errorf("layout: invalid or duplicate default mapping %q", entry)
+			}
+			d.Files[name] = target
+		}
+		out = append(out, d)
 	}
 	if _, err := CompileDefaults(out); err != nil {
 		return nil, err
@@ -83,30 +88,30 @@ func FormatDefaults(defs []Default) string {
 	})
 	parts := make([]string, len(defs))
 	for i, d := range defs {
-		parts[i] = d.Namespace + "/" + d.Kind + ": " + strings.Join(d.Names, ", ")
+		var files []string
+		for _, name := range slices.Sorted(maps.Keys(d.Files)) {
+			files = append(files, name+"="+d.Files[name])
+		}
+		parts[i] = d.Namespace + "/" + d.Kind + ": " + strings.Join(files, ", ")
 	}
 	return strings.Join(parts, "; ")
 }
 
-var (
-	sampleName  = strings.NewReplacer("{w}", "0", "{name}", "n")
-	namePattern = strings.NewReplacer(`\{w\}`, "[0-9]+", `\{name\}`, "[A-Za-z0-9._-]+")
-)
-
-// CompileDefaults turns the name templates into anchored patterns keyed by "{ns}/{kind}".
-func CompileDefaults(defs []Default) (map[string][]*regexp.Regexp, error) {
-	out := map[string][]*regexp.Regexp{}
+// CompileDefaults validates and copies the exact fallback selection.
+func CompileDefaults(defs []Default) (map[string]map[string]string, error) {
+	out := map[string]map[string]string{}
 	for _, d := range defs {
 		k := d.Namespace + "/" + d.Kind
-		if _, dup := out[k]; dup || !ValidSegment(d.Namespace) || !ValidSegment(d.Kind) || len(d.Names) == 0 {
+		if _, dup := out[k]; dup || !ValidSegment(d.Namespace) || !ValidSegment(d.Kind) || len(d.Files) == 0 {
 			return nil, fmt.Errorf("layout: default %q needs a valid, unique namespace and kind and at least one name", k)
 		}
-		for _, n := range d.Names {
-			if !ValidSegment(sampleName.Replace(n)) {
-				return nil, fmt.Errorf("layout: default %s: invalid name template %q", k, n)
+		for name, target := range d.Files {
+			digest, webp := strings.CutSuffix(target, ".webp")
+			if !ValidSegment(name) || !webp || !ValidHashName(digest) {
+				return nil, fmt.Errorf("layout: default %s: invalid mapping %q=%q", k, name, target)
 			}
-			out[k] = append(out[k], regexp.MustCompile("^"+namePattern.Replace(regexp.QuoteMeta(n))+"$"))
 		}
+		out[k] = maps.Clone(d.Files)
 	}
 	return out, nil
 }

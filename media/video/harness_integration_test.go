@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	riverhelpers "github.com/open-rails/helpers/river"
@@ -110,22 +111,23 @@ type failure struct {
 // registry and uploads, the host's worker queue, and a River client running
 // the video worker (start).
 type env struct {
-	t      *testing.T
-	ctx    context.Context
-	s3     *s3test.Env
-	store  media.Store
-	reg    *media.Registry
-	ms     *media.Manifests
-	up     *media.Uploads
-	pool   *pgxpool.Pool
-	schema string
-	queue  *workqueue.Queue
-	enc    *video.Encoder
-	wc     video.WorkerConfig
-	worker *river.Client[pgx.Tx]
-	events <-chan *river.Event
-	ref    contentref.ContentRef
-	editor access.Actor
+	t             *testing.T
+	ctx           context.Context
+	s3            *s3test.Env
+	store         media.Store
+	reg           *media.Registry
+	ms            *media.Manifests
+	up            *media.Uploads
+	pool          *pgxpool.Pool
+	schema        string
+	contentSchema string
+	queue         *workqueue.Queue
+	enc           *video.Encoder
+	wc            video.WorkerConfig
+	worker        *river.Client[pgx.Tx]
+	events        <-chan *river.Event
+	ref           contentref.ContentRef
+	editor        access.Actor
 
 	mu       sync.Mutex
 	failures []failure
@@ -135,13 +137,13 @@ func newEnv(t *testing.T, o opts) *env {
 	t.Helper()
 	videotest.RequireFFmpeg(t)
 	s3 := s3test.Open(t)
-	return newEnvOn(t, s3, o, "")
+	return newEnvOn(t, s3, o, "", s3.ContentSchema())
 }
 
 // newEnvOn builds the stack over s3; schema "" is a new one.
-func newEnvOn(t *testing.T, s3 *s3test.Env, o opts, schema string) *env {
+func newEnvOn(t *testing.T, s3 *s3test.Env, o opts, schema, contentSchema string) *env {
 	t.Helper()
-	e := &env{t: t, ctx: t.Context(), s3: s3, store: s3.Store, editor: access.Actor{ID: "editor", Kind: "user"}}
+	e := &env{t: t, ctx: t.Context(), s3: s3, store: s3.Store, contentSchema: contentSchema, editor: access.Actor{ID: "editor", Kind: "user"}}
 	cfg := media.Config{Namespace: s3.Tenant, Kinds: []media.Kind{testKind(o)},
 		Hooks: media.Hooks{CanUpload: grants{}, Resolver: grants{}, Failed: func(_ context.Context, ref contentref.ContentRef, path string, err error) {
 			e.mu.Lock()
@@ -165,17 +167,21 @@ func newEnvOn(t *testing.T, s3 *s3test.Env, o opts, schema string) *env {
 	if err := workqueue.Migrate(e.ctx, e.pool, e.schema); err != nil {
 		t.Fatal(err)
 	}
-	if e.ms, err = media.NewManifests(e.store, e.reg, media.ManifestOptions{Locker: media.PGLocker(e.pool)}); err != nil {
+	if e.queue, err = workqueue.New(e.pool, e.reg, e.schema); err != nil {
 		t.Fatal(err)
 	}
-	if e.queue, err = workqueue.New(e.pool, e.reg, e.schema); err != nil {
+	journal, err := media.NewPGJournal(e.pool, contentSchema, e.queue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.ms, err = media.NewManifests(e.store, e.reg, media.ManifestOptions{Locker: media.PGLocker(e.pool), Journal: journal}); err != nil {
 		t.Fatal(err)
 	}
 	ring, err := token.NewRing(token.Key{ID: "k1", Secret: []byte("0123456789abcdef0123456789abcdef")}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.up, err = media.NewUploads(media.UploadOptions{Store: e.store, Manifests: e.ms, Tickets: &ring, Queue: e.queue}); err != nil {
+	if e.up, err = media.NewUploads(media.UploadOptions{Store: e.store, Manifests: e.ms, Tickets: &ring}); err != nil {
 		t.Fatal(err)
 	}
 	if o.codecs == nil {
@@ -322,7 +328,7 @@ func (e *env) put(path, typ, file string, meta map[string]any, extra ...media.Op
 // the worker's place job does.
 func (e *env) commit(ops ...media.Op) *media.Manifest {
 	e.t.Helper()
-	m, err := e.up.Commit(e.ctx, e.editor, e.ref, ops)
+	m, err := e.up.Commit(e.ctx, e.editor, e.ref, uuid.NewString(), ops)
 	if err != nil {
 		e.t.Fatalf("commit %+v: %v", ops, err)
 	}

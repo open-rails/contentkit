@@ -11,7 +11,7 @@
 //	-cors-origins  MEDIA_GATEWAY_CORS_ORIGINS    comma list of exact site origins allowed with credentials,
 //	                                            e.g. https://doujins.ai; empty breaks hls.js (warned)
 //	-defaults      MEDIA_GATEWAY_DEFAULTS        public names that fall back to the kind's _default item,
-//	                                            e.g. "doujins/gallery: cover-{w}.webp; accounts/user: avatar-{w}.webp"
+//	                                            e.g. "doujins/gallery: cover-460.webp=sha256-{64 lowercase hex}.webp"
 //	               MEDIA_GATEWAY_S3_ACCESS_KEY_ID, MEDIA_GATEWAY_S3_SECRET_ACCESS_KEY   key reading only */private/* and */public/*
 //	               MEDIA_GATEWAY_TOKEN_KEY           current signing key "{kid}:{base64 secret}"
 //	               MEDIA_GATEWAY_TOKEN_KEY_PREVIOUS  previous key, accepted during rotation; optional
@@ -52,7 +52,7 @@ func run(log *slog.Logger, args []string) error {
 	region := fs.String("s3-region", env("MEDIA_GATEWAY_S3_REGION", "us-east-1"), "S3 region")
 	hosts := fs.String("hosts", env("MEDIA_GATEWAY_HOSTS", ""), "host=namespace,…; …")
 	origins := fs.String("cors-origins", env("MEDIA_GATEWAY_CORS_ORIGINS", ""), "CORS origins")
-	defaults := fs.String("defaults", env("MEDIA_GATEWAY_DEFAULTS", ""), "namespace/kind: name template,…; …")
+	defaults := fs.String("defaults", env("MEDIA_GATEWAY_DEFAULTS", ""), "namespace/kind: logical-name=immutable-name,…; …")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

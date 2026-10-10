@@ -42,11 +42,22 @@ func TestRegistry(t *testing.T) {
 	if got := reg.PublicURL(ref, "avatar-64.webp"); got != "https://"+mediaHost+"/v1/accounts/user/"+cid(1)+"/public/avatar-64.webp" {
 		t.Fatalf("public URL %s", got)
 	}
-	if got := reg.SrcSet(ref, "avatar"); !strings.HasSuffix(got, "avatar-128.webp 128w") || !strings.Contains(got, "avatar-64.webp 64w, ") {
+	image := media.PublicImage{Renditions: []media.PublicRendition{
+		{URL: "https://media.test/avatar-128-generation.webp", W: 100, H: 100},
+		{URL: "https://media.test/avatar-64-generation.webp", W: 64, H: 64},
+		{URL: "https://media.test/avatar-256-generation.webp", W: 100, H: 100},
+	}}
+	if got := image.SrcSet(); got != "https://media.test/avatar-64-generation.webp 64w, https://media.test/avatar-128-generation.webp 100w" {
 		t.Fatalf("srcset %s", got)
 	}
-	rules := media.GatewayConfig(reg)
-	if got := layout.FormatDefaults(rules.Defaults); got != "accounts/user: avatar-{w}.webp; doujins/gallery: cover-{w}.webp" {
+	for width, want := range map[int]string{1: image.Renditions[1].URL, 64: image.Renditions[1].URL, 65: image.Renditions[0].URL, 200: image.Renditions[0].URL} {
+		if got := image.URL(width); got != want {
+			t.Fatalf("width %d: %s, want %s", width, got, want)
+		}
+	}
+	defaults := []layout.Default{{Namespace: "accounts", Kind: "user", Files: map[string]string{"avatar-64.webp": "sha256-" + strings.Repeat("a", 64) + ".webp"}}}
+	rules := media.GatewayConfig(reg, defaults)
+	if got := layout.FormatDefaults(rules.Defaults); got != "accounts/user: avatar-64.webp=sha256-"+strings.Repeat("a", 64)+".webp" {
 		t.Fatalf("gateway defaults %q", got)
 	}
 	b, err := json.Marshal(reg)

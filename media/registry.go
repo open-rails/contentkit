@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/open-rails/contentkit/contentref"
@@ -146,9 +145,9 @@ func (i Item) PrivatePrefix() string { return i.prefix + layout.AreaPrivate + "/
 func (i Item) PublicPrefix() string  { return i.prefix + layout.AreaPublic + "/" }
 func (i Item) TempPrefix() string    { return i.prefix + layout.AreaTemp + "/" }
 
-// Blob is the key of a private blob ("sha256-{hex}").
+// Blob is the key of a private allocation ("sha256-{hex}-{uuid}").
 func (i Item) Blob(name string) (string, error) {
-	if !layout.ValidHashName(name) {
+	if !layout.ValidBlobName(name) {
 		return "", fmt.Errorf("media: invalid blob name %q", name)
 	}
 	return i.PrivatePrefix() + name, nil
@@ -164,7 +163,7 @@ func (i Item) Staged(name string) (string, error) {
 
 // Public is the key of a public name.
 func (i Item) Public(name string) (string, error) {
-	if !layout.ValidSegment(name) {
+	if !layout.ValidPublicName(name) {
 		return "", fmt.Errorf("media: invalid public name %q", name)
 	}
 	return i.PublicPrefix() + name, nil
@@ -183,32 +182,9 @@ func PublicURL(base, namespace, kind, id, name string) string {
 	return strings.TrimRight(base, "/") + layout.URLPrefix + layout.Prefix(namespace, kind, id) + layout.AreaPublic + "/" + name
 }
 
-// SrcSet is a srcset over a public template's widths: "{url} 230w, …".
-func SrcSet(base, namespace, kind, id, to string, widths []int) string {
-	set := make([]string, len(widths))
-	for i, w := range widths {
-		n := strconv.Itoa(w)
-		set[i] = PublicURL(base, namespace, kind, id, fill(to, map[string]string{"w": n})) + " " + n + "w"
-	}
-	return strings.Join(set, ", ")
-}
-
 // PublicURL is the URL of item ref's public name at the registry's BaseURL.
 func (r *Registry) PublicURL(ref contentref.ContentRef, name string) string {
 	return PublicURL(r.cfg.BaseURL, ref.TenantID, ref.ContentKind, ref.ContentID, name)
-}
-
-// SrcSet is the srcset of ref's public preset (by name), "" when the kind has none.
-func (r *Registry) SrcSet(ref contentref.ContentRef, preset string) string {
-	k, err := r.Kind(ref.ContentKind)
-	if err != nil {
-		return ""
-	}
-	p := k.public(preset)
-	if p == nil {
-		return ""
-	}
-	return SrcSet(r.cfg.BaseURL, ref.TenantID, ref.ContentKind, ref.ContentID, p.To, p.Widths)
 }
 
 // MarshalJSON is the registry as data (no hooks, defaults or Choose): the

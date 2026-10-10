@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	riverhelpers "github.com/open-rails/helpers/river"
@@ -37,7 +38,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 // later is the fixture's jobs at a clock past the grace and temp periods.
 func (f *fixture) later() *media.Jobs {
 	f.t.Helper()
-	j, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(f.t, f.env.Store),
+	j, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(f.t, f.env.Store), Journal: f.journal,
 		Processes: f.q, Now: func() time.Time { return time.Now().Add(72 * time.Hour) }})
 	if err != nil {
 		f.t.Fatal(err)
@@ -70,7 +71,7 @@ func TestSweep(t *testing.T) {
 	g := f.gallery(1, 2)
 	item, _ := f.reg.Item(g)
 	ctx := context.Background()
-	old, _ := item.Blob(blobOf(png(100)))
+	old, _ := item.Blob(f.fileBlob(g, "originals/000.png"))
 	f.put(g, "originals/000.png", "image/png", png(7)) // replaces page 0: its old blob is unreferenced
 	f.produce(g)
 	stray, _ := item.Blob(blobOf([]byte("stray")))
@@ -78,7 +79,7 @@ func TestSweep(t *testing.T) {
 	stale, _ := item.Public("cover-999.webp")
 	f.object(stale, "stale")
 	f.object(item.TempPrefix()+"u-1", "temp")
-	cover, _ := item.Public("cover-230.webp")
+	cover, _ := item.Public(f.publicName(g, "cover-230.webp"))
 
 	res, err := f.jobs.Sweep(ctx, g)
 	if err != nil {
@@ -109,7 +110,7 @@ func TestSweep(t *testing.T) {
 	otherItem, _ := f.reg.Item(other)
 	p, committed := f.upload(other, "originals/1.png", "image/png", png(1))
 	_, abandoned := f.upload(other, "originals/2.png", "image/png", png(2))
-	if _, err := f.up.Commit(ctx, f.editor, other, []media.Op{{Op: media.OpPut, Path: p, Blob: committed}}); err != nil {
+	if _, err := f.up.Commit(ctx, f.editor, other, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: p, Blob: committed}}); err != nil {
 		t.Fatal(err)
 	}
 	kept, _ := otherItem.Staged(committed)
@@ -129,18 +130,18 @@ func TestSweepProgressesUnderEdits(t *testing.T) {
 	item, _ := f.reg.Item(g)
 	ctx := context.Background()
 	const grace = 6 * time.Second
-	jobs, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Processes: f.q, Grace: grace})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Journal: f.journal, Processes: f.q, Grace: grace})
 	if err != nil {
 		t.Fatal(err)
 	}
-	old, _ := item.Blob(blobOf(png(100)))
+	old, _ := item.Blob(f.fileBlob(g, "originals/000.png"))
 	time.Sleep(grace + time.Second)
 	f.put(g, "originals/000.png", "image/png", png(7)) // drops the old blob and edits the manifest just now
 	f.produce(g)
 	if res, err := jobs.Sweep(ctx, g); err != nil || f.exists(old) || !slices.Contains(res.Deleted, old) {
 		t.Fatalf("an old blob survived a fresh edit: %+v %v", res, err)
 	}
-	young, _ := item.Blob(blobOf(png(7)))
+	young, _ := item.Blob(f.fileBlob(g, "originals/000.png"))
 	f.put(g, "originals/000.png", "image/png", png(8))
 	f.produce(g)
 	if res, err := jobs.Sweep(ctx, g); err != nil || !f.exists(young) || res.Wait <= 0 || res.Wait > grace+time.Second {
@@ -177,21 +178,19 @@ func TestTakedown(t *testing.T) {
 	item, _ := f.reg.Item(g)
 	ctx := context.Background()
 	staff := access.Actor{ID: "staff", Kind: "user"}
+	earlier, _ := item.Blob(f.fileBlob(g, "originals/000.png"))
 	f.put(g, "originals/000.png", "image/png", png(7))   // page 0's first version is unreferenced
 	f.put(g, "originals/003.png", "image/png", png(101)) // the same bytes as page 1
 	f.produce(g)
 	m, _, _ := f.ms.Get(ctx, g)
-	blob := func(body []byte) string { key, _ := item.Blob(blobOf(body)); return key }
 	view := func(path string) string {
-		u, _ := m.Get(path)
-		key, _ := item.Blob(f.reg.EditorView(u))
-		f.object(key, "editor view")
+		key, _ := item.Blob(f.editorView(g, path))
 		return key
 	}
-	earlier, page0, page1 := blob(png(100)), blob(png(7)), blob(png(101))
+	page0, _ := item.Blob(f.fileBlob(g, "originals/000.png"))
+	page1, _ := item.Blob(f.fileBlob(g, "originals/001.png"))
 	view0, view2 := view("originals/000.png"), view("originals/002.png")
-	unrecorded := blob([]byte("an output a job has not recorded yet"))
-	f.object(unrecorded, "unrecorded")
+	unrecorded, _ := item.Blob(f.blob(g, []byte("an output a job has not recorded yet"), "image/webp"))
 	f.q.take()
 	m = f.commit(g, media.Op{Op: media.OpRemove, Path: "originals/000.png", Takedown: true},
 		media.Op{Op: media.OpRemove, Path: "originals/001.png", Takedown: true})
@@ -207,17 +206,17 @@ func TestTakedown(t *testing.T) {
 	}
 	// On a path already gone it changes and queues nothing.
 	_, before, _ := f.ms.Get(ctx, g)
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpRemove, Path: "originals/000.png", Takedown: true}}); code(err) != media.CodeNotFound {
+	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: "originals/000.png", Takedown: true}}); code(err) != media.CodeNotFound {
 		t.Fatalf("a takedown of a gone path: %v", err)
 	}
 	if _, after, _ := f.ms.Get(ctx, g); before != after || len(f.q.take()) != 0 || !f.exists(view2) || !f.exists(unrecorded) {
 		t.Fatal("a takedown of a gone path changed or queued something")
 	}
 	// An exempt grant sweeps the item, on a gone path too.
-	if _, err := f.up.Commit(ctx, staff, g, []media.Op{{Op: media.OpRemove, Path: "originals/000.png", Takedown: true}}); err != nil {
+	if _, err := f.up.Commit(ctx, staff, g, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: "originals/000.png", Takedown: true}}); err != nil {
 		t.Fatal(err)
 	}
-	if f.exists(view2) || f.exists(unrecorded) || f.exists(earlier) || !f.exists(page1) {
+	if !f.exists(view2) || f.exists(unrecorded) || f.exists(earlier) || !f.exists(page1) {
 		t.Fatalf("an exempt takedown: editor view kept %v, unrecorded output %v, earlier version %v; referenced blob kept %v",
 			f.exists(view2), f.exists(unrecorded), f.exists(earlier), f.exists(page1))
 	}
@@ -239,12 +238,12 @@ func TestTakedown(t *testing.T) {
 	if urls := f.purges(); len(urls) != 2 {
 		t.Fatalf("purged %v", urls)
 	}
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpEdit, Path: "originals/002.png", Takedown: true}}); code(err) != media.CodeInvalid {
+	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpEdit, Path: "originals/002.png", Takedown: true}}); code(err) != media.CodeInvalid {
 		t.Fatalf("takedown on an edit: %v", err)
 	}
 	// A staged upload taken down before it is placed.
 	p, staged := f.upload(g, "originals/004.png", "image/png", png(4))
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: p, Blob: staged}}); err != nil {
+	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: p, Blob: staged}}); err != nil {
 		t.Fatal(err)
 	}
 	f.commit(g, media.Op{Op: media.OpRemove, Path: p, Takedown: true})
@@ -263,13 +262,14 @@ func TestTakedownFrames(t *testing.T) {
 	ctx := context.Background()
 	f.put(v, "source.mp4", "video/mp4", []byte("video one"))
 	f.commit(v, media.Op{Op: media.OpFrame, Path: "poster", T: ptr(3.5)})
-	frame, _ := item.Blob(blobOf([]byte("frame")))
-	f.object(frame, "frame")
+	frameBlob := f.blob(v, []byte("frame"), "image/png")
+	frame, _ := item.Blob(frameBlob)
 	public, _ := item.Public("poster-640.webp")
 	f.object(public, "poster")
 	if _, err := f.ms.EditExisting(ctx, v, func(m *media.Manifest) error {
 		i := m.Find("poster.png")
-		m.Files[i].Blob, m.Files[i].Size, m.Files[i].Frame.Of, m.Files[i].Pending = blobOf([]byte("frame")), 5, blobOf([]byte("video one")), nil
+		source, _ := m.Get("source.mp4")
+		m.Files[i].Blob, m.Files[i].Size, m.Files[i].Frame.Of, m.Files[i].Pending = frameBlob, 5, source.Blob, nil
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -310,25 +310,34 @@ func TestTakedownRetry(t *testing.T) {
 	item, _ := f.reg.Item(g)
 	ctx := context.Background()
 	store := failingStore{Store: f.env.Store, armed: &atomic.Bool{}}
-	up, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: s3test.Manifests(t, store, f.reg, media.ManifestOptions{}), Queue: f.q})
+	manifests := s3test.Manifests(t, store, f.reg, media.ManifestOptions{Journal: f.journal})
+	up, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests})
 	if err != nil {
 		t.Fatal(err)
 	}
-	page0, _ := item.Blob(blobOf(png(100)))
+	page0, _ := item.Blob(f.fileBlob(g, "originals/000.png"))
 	takedown := []media.Op{{Op: media.OpRemove, Path: "originals/000.png", Takedown: true}}
 	f.q.take()
 	store.armed.Store(true)
-	if _, err := up.Commit(ctx, f.editor, g, takedown); err == nil || !f.exists(page0) {
+	if _, err := up.Commit(ctx, f.editor, g, uuid.NewString(), takedown); err == nil || !f.exists(page0) {
 		t.Fatalf("a failed delete was not reported: %v", err)
 	}
-	if m, _, _ := f.ms.Get(ctx, g); m.Find("originals/000.png") >= 0 || len(f.q.take()) != 1 {
-		t.Fatal("the removal was not committed and queued before the deletes")
+	if m, _, _ := f.ms.Get(ctx, g); m.Find("originals/000.png") >= 0 || len(f.q.take()) != 0 {
+		t.Fatal("the removal was not committed, or cleanup failure allowed queue settlement")
 	}
 	store.armed.Store(false)
-	if _, err := up.Commit(ctx, f.editor, g, takedown); code(err) != media.CodeNotFound || !f.exists(page0) {
+	for range 2 {
+		if err := manifests.Recover(ctx, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if jobs := f.q.take(); len(jobs) != 1 || f.exists(page0) {
+		t.Fatalf("recovery did not finish cleanup and queue exactly once: %+v", jobs)
+	}
+	if _, err := up.Commit(ctx, f.editor, g, uuid.NewString(), takedown); code(err) != media.CodeNotFound || f.exists(page0) {
 		t.Fatalf("a retry without an exempt grant: %v, blob kept %v", err, f.exists(page0))
 	}
-	if _, err := up.Commit(ctx, access.Actor{ID: "staff", Kind: "user"}, g, takedown); err != nil || f.exists(page0) {
+	if _, err := up.Commit(ctx, access.Actor{ID: "staff", Kind: "user"}, g, uuid.NewString(), takedown); err != nil || f.exists(page0) {
 		t.Fatalf("the exempt retry: %v, blob kept %v", err, f.exists(page0))
 	}
 }
@@ -362,23 +371,23 @@ func TestCopyDuringTakedown(t *testing.T) {
 	store := takedownStore{Store: f.env.Store, after: func() {
 		once.Do(func() {
 			// An exempt takedown sweeps every blob the item does not reference.
-			if _, err := f.up.Commit(ctx, access.Actor{ID: "staff", Kind: "user"}, b, []media.Op{{Op: media.OpRemove, Path: "originals/gone.png", Takedown: true}}); err != nil {
+			if _, err := f.up.Commit(ctx, access.Actor{ID: "staff", Kind: "user"}, b, uuid.NewString(), []media.Op{{Op: media.OpRemove, Path: "originals/gone.png", Takedown: true}}); err != nil {
 				t.Error(err)
 			}
 		})
 	}}
-	up, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: f.ms, Queue: f.q})
+	up, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: f.ms})
 	if err != nil {
 		t.Fatal(err)
 	}
 	copyOp := []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: "originals/000.png"}, To: "originals/copy.png"}}
-	if _, err := up.Commit(ctx, f.editor, b, copyOp); code(err) != media.CodeConflict {
+	if _, err := up.Commit(ctx, f.editor, b, uuid.NewString(), copyOp); code(err) != media.CodeConflict {
 		t.Fatalf("a copy over a takedown: %v", err)
 	}
 	if m, _, _ := f.ms.Get(ctx, b); m.Find("originals/copy.png") >= 0 {
 		t.Fatal("the copy references a blob that was taken")
 	}
-	m, err := up.Commit(ctx, f.editor, b, copyOp)
+	m, err := up.Commit(ctx, f.editor, b, uuid.NewString(), copyOp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,9 +411,24 @@ func TestPreviewNamesGoWithTheCommit(t *testing.T) {
 	have := func() string {
 		t.Helper()
 		var out []string
+		m, _, err := f.ms.Get(t.Context(), g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		owned := item.Kind().PublicKept(m)
 		for n := 1; n <= 3; n++ {
-			if key, _ := item.Public(fmt.Sprintf("preview-%d.webp", n)); f.exists(key) {
-				out = append(out, fmt.Sprint(n))
+			prefix := fmt.Sprintf("preview-%d-", n)
+			for obj, err := range f.env.Store.List(t.Context(), item.PublicPrefix()) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				name := strings.TrimPrefix(obj.Key, item.PublicPrefix())
+				if strings.HasPrefix(name, prefix) {
+					if !slices.Contains(owned, name) {
+						t.Fatalf("an unowned preview survived the commit: %s", obj.Key)
+					}
+					out = append(out, fmt.Sprint(n))
+				}
 			}
 		}
 		return strings.Join(out, ",")
@@ -452,11 +476,12 @@ func TestExpose(t *testing.T) {
 	g := f.gallery(1, 1)
 	item, _ := f.reg.Item(g)
 	ctx := context.Background()
-	cover, _ := item.Public("cover-460.webp")
+	name := f.publicName(g, "cover-460.webp")
+	cover, _ := item.Public(name)
 	if !f.exists(cover) {
 		t.Fatal("no public cover")
 	}
-	if status, body, _ := f.fetch(f.reg.PublicURL(g, "cover-460.webp")); status != 200 || body != string(png(199)) {
+	if status, body, _ := f.fetch(f.reg.PublicURL(g, name)); status != 200 || body != string(png(199)) {
 		t.Fatalf("public cover %d %q", status, body)
 	}
 	f.res.set(cid(1), access.Resolution{})
@@ -506,14 +531,18 @@ func TestNewItemStartsHidden(t *testing.T) {
 		t.Fatalf("draft's first commit: hidden %v pending %v", m.Hidden, c.Pending)
 	}
 	f.produce(g)
-	if f.exists(cover) {
-		t.Fatal("a draft's cover is public")
+	for obj, err := range f.env.Store.List(ctx, item.PublicPrefix()) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Fatalf("a draft's cover is public: %s", obj.Key)
 	}
 	f.visible(1)
 	if err := f.jobs.Expose(ctx, g); err != nil {
 		t.Fatal(err)
 	}
 	f.produce(g)
+	cover, _ = item.Public(f.publicName(g, "cover-460.webp"))
 	if !f.exists(cover) {
 		t.Fatal("the published item's cover is not public")
 	}
@@ -554,12 +583,14 @@ func TestPurgeRegenerateOrphans(t *testing.T) {
 		t.Fatalf("orphan kept: %v", err)
 	}
 	f.purges() // the orphan's public cover
-	if err := f.jobs.Purge(ctx, media.Deletion{Ref: a}); err != nil {
+	if err := f.jobs.Purge(ctx, media.Deletion{Ref: a, OperationID: "purge-a"}); err != nil {
 		t.Fatal(err)
 	}
 	item, _ := f.reg.Item(a)
 	for o, err := range f.env.Store.List(ctx, item.Prefix()) {
-		t.Fatalf("purge kept %s %v", o.Key, err)
+		if err != nil || o.Key != item.ManifestKey() {
+			t.Fatalf("purge kept %s %v", o.Key, err)
+		}
 	}
 	if urls := f.purges(); len(urls) != 2 {
 		t.Fatalf("purged %v", urls)
@@ -591,6 +622,103 @@ func riverHost(t *testing.T, jobs *media.Jobs, pool *pgxpool.Pool) string {
 	return schema
 }
 
+// Both a delayed first pass and the exact-key late-upload pass must leave
+// an explicitly reset item alone. Exercise the actual River workers.
+func TestQueuedDeletionCannotEraseResetItem(t *testing.T) {
+	for _, final := range []bool{false, true} {
+		t.Run(fmt.Sprintf("final=%t", final), func(t *testing.T) {
+			f := newFixture(t)
+			f.visible(1)
+			ref := f.gallery(1, 1)
+			item, _ := f.reg.Item(ref)
+			oldKey, _ := item.Blob(f.fileBlob(ref, "originals/000.png"))
+			pool := f.env.Pool()
+			schema := riverHost(t, f.jobs, pool)
+			table := pgx.Identifier{schema, "river_job"}.Sanitize()
+			var target int64
+			if err := pgx.BeginFunc(t.Context(), pool, func(tx pgx.Tx) error {
+				if err := f.jobs.DeleteItemsTx(t.Context(), tx, media.Deletion{Ref: ref}); err != nil {
+					return err
+				}
+				if !final {
+					return tx.QueryRow(t.Context(), "UPDATE "+table+" SET state='scheduled', scheduled_at=now()+interval '1 day' WHERE kind='contentkit_media_delete_folder' RETURNING id").Scan(&target)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if final {
+				waitFor(t, "deletion's scheduled final pass", func() bool {
+					err := pool.QueryRow(t.Context(), "SELECT id FROM "+table+" WHERE kind='contentkit_media_delete_folder' AND args->>'final'='true'").Scan(&target)
+					if errors.Is(err, pgx.ErrNoRows) {
+						return false
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					return true
+				})
+			}
+			if err := f.jobs.Purge(t.Context(), media.Deletion{Ref: ref, OperationID: "reset-after-enqueue"}); err != nil {
+				t.Fatal(err)
+			}
+			f.put(ref, "originals/new.png", "image/png", png(1))
+			newKey, _ := item.Blob(f.fileBlob(ref, "originals/new.png"))
+			f.object(oldKey, string(png(1))) // an old presigned PUT lands after reset
+			if _, err := pool.Exec(t.Context(), "UPDATE "+table+" SET state='available', scheduled_at=now() WHERE id=$1", target); err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, "delayed deletion completion", func() bool {
+				var state string
+				if err := pool.QueryRow(t.Context(), "SELECT state FROM "+table+" WHERE id=$1", target).Scan(&state); err != nil {
+					t.Fatal(err)
+				}
+				return state == "completed"
+			})
+			if !f.exists(newKey) || f.fileBlob(ref, "originals/new.png") == "" {
+				t.Fatal("delayed deletion erased the recreated item")
+			}
+			if final && f.exists(oldKey) {
+				t.Fatal("final pass lost its original late-upload target")
+			}
+		})
+	}
+}
+
+// The host's periodic job must discover a landed write even when its caller
+// disappeared before settlement and no sweep was scheduled.
+func TestHostRecoversInterruptedManifestOnStartup(t *testing.T) {
+	env := s3test.Open(t)
+	pool := pgtest.Pool(t, nil)
+	reg := miniRegistry(t, env.Tenant)
+	ref, _ := reg.Ref("post", cid(7))
+	item, _ := reg.Item(ref)
+	store := &uncertainManifestStore{Store: env.Store, key: item.ManifestKey(), uncertain: true, applied: true}
+	jobs, err := media.NewJobs(media.JobsConfig{Store: store, Registry: reg, Locker: media.PGLocker(pool), Journal: env.Journal()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := jobs.Manifests().Edit(t.Context(), ref, func(m *media.Manifest) error {
+		m.Meta = map[string]any{"title": "landed"}
+		return nil
+	}); !errors.Is(err, media.ErrUnavailable) {
+		t.Fatalf("lost response: %v", err)
+	}
+	riverHost(t, jobs, pool)
+	table := pgx.Identifier{env.ContentSchema(), "content_media_commits"}.Sanitize()
+	waitFor(t, "abandoned manifest recovery", func() bool {
+		var state string
+		if err := pool.QueryRow(t.Context(), "SELECT state FROM "+table+" WHERE tenant_id=$1 AND folder_prefix=$2", ref.TenantID, item.Prefix()).Scan(&state); err != nil {
+			t.Fatal(err)
+		}
+		return state == "applied"
+	})
+	man, _, err := jobs.Manifests().Get(t.Context(), ref)
+	if err != nil || man.Meta["title"] != "landed" {
+		t.Fatalf("recovered manifest: %+v %v", man, err)
+	}
+}
+
 // The worker's relays reach the host's hooks through its media queue:
 // ItemReady in a host transaction once the item settles, PurgePublic with
 // URLs; the host deletes items from its own transaction.
@@ -611,7 +739,7 @@ func TestHostRelays(t *testing.T) {
 			return nil
 		}
 	})
-	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: s3test.Locker(t, env.Store), Pool: pool, Processes: f.q})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Registry: f.reg, Locker: s3test.Locker(t, env.Store), Journal: env.Journal(), Pool: pool, Processes: f.q})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -29,7 +29,7 @@ type PresignBody struct {
 // PresignReply is the upload plan: Exists (commit directly), one Put, or a
 // Multipart upload. Path is the path to commit: cleaned, with an
 // extension, and named by the server for a Named upload. Blob is the name
-// to commit: the folder's blob (sha256-{hex}) with Exists, else the staged
+// to commit: the folder's blob (sha256-{hex}-{uuid}) with Exists, else the staged
 // upload (u-{uuid}) the PUT or parts write, which the worker places.
 type PresignReply struct {
 	Path            string          `json:"path"`
@@ -92,8 +92,9 @@ type CompleteReply struct {
 
 // CommitBody applies ops to an item in one conditional write.
 type CommitBody struct {
-	Ref RefBody `json:"ref"`
-	Ops []Op    `json:"ops"`
+	Ref         RefBody `json:"ref"`
+	OperationID string  `json:"operation_id"` // stable UUID for this complete ordered batch
+	Ops         []Op    `json:"ops"`
 }
 
 // CommitReply is the item's uploads as an editor reads them.
@@ -130,9 +131,12 @@ type ReadResult struct {
 	// Previews are the item's public preview images in order (a Public
 	// preset with First): every viewer who can see the item gets them.
 	Previews []string `json:"previews,omitempty"`
-	Total    int      `json:"total"`
-	Offset   int      `json:"offset"`
-	Limit    int      `json:"limit"`
+	// Public lists the exact published renditions. Clients must not infer a
+	// current cover or avatar's physical filename from the preset template.
+	Public []PublicImage `json:"public,omitempty"`
+	Total  int           `json:"total"`
+	Offset int           `json:"offset"`
+	Limit  int           `json:"limit"`
 	// HLS lists the item's playable ladders by output directory ("hls/"):
 	// play {read API}/{kind}/{id}/hls/{dir}master.m3u8.
 	HLS []string `json:"hls,omitempty"`
@@ -145,6 +149,20 @@ type ReadResult struct {
 	Files []FileInfo `json:"files"`
 	// Cookie must be set on the response (cookie delivery, with access).
 	Cookie *http.Cookie `json:"-"`
+}
+
+// PublicImage is a published public preset for one upload.
+type PublicImage struct {
+	From       string            `json:"from"`
+	Preset     string            `json:"preset"`
+	Renditions []PublicRendition `json:"renditions"`
+}
+
+// PublicRendition carries its physical URL and actual encoded dimensions.
+type PublicRendition struct {
+	URL string `json:"url"`
+	W   int    `json:"w"`
+	H   int    `json:"h"`
 }
 
 // FileInfo is one file of a read.

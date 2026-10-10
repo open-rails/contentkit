@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { FakeServer, bytes, fakeClient } from "../test/fake.js";
 import { UploadClient, type UploadState } from "./client.js";
 import { UploadError } from "./errors.js";
+import type { CommitBody } from "./wire.gen.js";
 
 const MiB = 1 << 20;
 const ref = { kind: "video", id: "0192f000-0000-7000-8000-000000000001" };
@@ -19,6 +20,34 @@ function file(n: number, seed = 1, type = "video/mp4"): File {
 }
 
 describe("single PUT", () => {
+  it("retries a lost commit response with one immutable batch and preserves later edits", async () => {
+    const s = new FakeServer();
+    s.seed(ref, [{ path: "source.mp4", type: "video/mp4", size: 100 }]);
+    const ops = [{ op: "rename" as const, path: "source.mp4", to: "renamed.mp4" }];
+    let dropped = false;
+    const c = new UploadClient({
+      endpoint: "http://x/api",
+      retryDelay: () => 0,
+      fetch: async (input, init) => {
+        const res = await s.fetch(input, init);
+        if (!dropped) {
+          dropped = true;
+          ops[0]!.to = "mutated.mp4";
+          throw new Error("response lost after commit");
+        }
+        return res;
+      },
+    });
+    const id = crypto.randomUUID();
+    expect((await c.commit(ref, ops, { operationID: id }))[0]!.path).toBe("renamed.mp4");
+    expect(s.commitRequests[0]).toEqual(s.commitRequests[1]);
+    expect(s.commits).toHaveLength(1);
+    s.seed(ref, [{ path: "later.mp4", type: "video/mp4", size: 100 }]);
+    const original = s.commitRequests[0]!.ops;
+    expect((await c.commit(ref, original, { operationID: id }))[0]!.path).toBe("later.mp4");
+    await expect(c.commit(ref, ops, { operationID: id })).rejects.toMatchObject({ code: "conflict" });
+    expect(s.commits).toHaveLength(1);
+  });
   it("hashes, presigns the path with the checksum and stages one PUT; a placed identical file is not resent", async () => {
     const { s, c } = setup();
     const f = file(3 * MiB, 2, "image/png");
@@ -188,6 +217,36 @@ describe("multipart", () => {
 describe("commit", () => {
   const gallery = { kind: "gallery", id: "0192f000-0000-7000-8000-000000000001" };
   const put = (path: string, blob: string) => ({ op: "put" as const, path, blob });
+
+  it("resumes a replacement batch after its successful response is lost beyond the retry budget", async () => {
+    const s = new FakeServer();
+    s.seed(gallery, [{ path: "originals/old.png", type: "image/png", size: 100 }]);
+    const fetch = s.fetch;
+    let loseResponses = true;
+    s.fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      if (loseResponses && String(input).endsWith("/commit") && response.ok) throw new Error("response lost");
+      return response;
+    };
+    const c = fakeClient(s, { retries: 1 });
+    const source = file(1000, 18, "image/png");
+    const uploaded = await c.upload(source, { ref: gallery, path: "originals/new.png" });
+    s.stale.add(uploaded.blob);
+    const states: CommitBody[] = [];
+    await expect(c.commit(gallery, [
+      { op: "rename", path: "originals/old.png", to: "originals/renamed.png" },
+      put(uploaded.path, uploaded.blob),
+    ], { sources: { [uploaded.blob]: source }, onState: (body) => states.push(body) })).rejects.toMatchObject({ code: "network" });
+    expect(states).toHaveLength(2);
+    expect(states[1]!.operation_id).not.toBe(states[0]!.operation_id);
+    expect(states[1]!.ops[1]!.blob).not.toBe(uploaded.blob);
+    loseResponses = false;
+    const active = states[1]!;
+    const files = await c.commit(active.ref, active.ops, { operationID: active.operation_id });
+    expect(files.map((f) => f.path)).toEqual(["originals/renamed.png", "originals/new.png"]);
+    expect(s.commits).toHaveLength(1);
+    expect(s.commitRequests.slice(1).every((body) => JSON.stringify(body) === JSON.stringify(active))).toBe(true);
+  });
 
   it("uploads a file again when its blob is due for cleanup, then commits once more", async () => {
     const { s, c } = setup();

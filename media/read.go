@@ -266,13 +266,17 @@ func (g *Grant) url(blob, download string, dl, cookie bool) (string, error) {
 	return u, nil
 }
 
-// EditorView is the blob name of an image upload's editor view: the hash of
-// its source and the editor spec, so a read finds it without rendering.
-// It is the one private blob not named by its bytes: only the worker
-// writes it, and no upload may name it (presign, put and copy refuse it).
-// Only editor reads list it; the sweep removes it after the grace period
-// and an editor read renders it again.
+// EditorView returns the upload's recorded view when its source/spec still
+// matches. Only editor reads list it; presign, put and copy cannot adopt it.
 func (r *Registry) EditorView(f File) string {
+	if f.Editor == nil || f.Editor.FP != r.EditorFingerprint(f) {
+		return ""
+	}
+	return f.Editor.Blob
+}
+
+// EditorFingerprint identifies the unedited source and current editor spec.
+func (r *Registry) EditorFingerprint(f File) string {
 	spec, _ := json.Marshal(r.cfg.Editor)
 	return editorView(f, spec)
 }
@@ -287,11 +291,10 @@ func editorView(f File, spec []byte) string {
 
 // editorViews are the names of m's editor views.
 func (r *Registry) editorViews(m *Manifest) map[string]bool {
-	spec, _ := json.Marshal(r.cfg.Editor)
 	out := map[string]bool{}
 	for _, f := range m.Files {
-		if v := editorView(f, spec); v != "" {
-			out[v] = true
+		if f.Editor != nil {
+			out[f.Editor.Blob] = true
 		}
 	}
 	return out
@@ -335,6 +338,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	for _, n := range k.previewNames(g.Manifest) {
 		out.Previews = append(out.Previews, g.r.base+layout.URLPrefix+g.Item.PublicPrefix()+n)
 	}
+	out.Public = r.reg.publicImages(g.Item, g.Manifest)
 	if editor {
 		out.State, out.Full = k.Readiness(g.Manifest).State, g.Manifest.Full
 	}
@@ -386,6 +390,42 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	return out, g, nil
 }
 
+// PublicImages loads only ready, currently owned public generations. It does
+// not issue private grants or reveal unpublished allocations. A missing item
+// has no published images.
+func (m *Manifests) PublicImages(ctx context.Context, ref contentref.ContentRef) ([]PublicImage, error) {
+	man, _, err := m.Get(ctx, ref)
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	item, _ := m.reg.Item(ref) // Get already validated the ref
+	return m.reg.publicImages(item, man), nil
+}
+
+func (r *Registry) publicImages(item Item, m *Manifest) []PublicImage {
+	var images []PublicImage
+	for _, f := range m.Files {
+		if !f.IsUpload() {
+			continue
+		}
+		for _, p := range item.Kind().PublicFor(f.Path) {
+			pub, ok := item.Kind().Publication(m, f, p)
+			if !ok || !pub.Ready() {
+				continue
+			}
+			image := PublicImage{From: f.Path, Preset: p.Name}
+			for i, name := range pub.NamesOnDisk() {
+				image.Renditions = append(image.Renditions, PublicRendition{
+					URL: r.PublicURL(item.Ref(), name), W: pub.Dims[i].W, H: pub.Dims[i].H})
+			}
+			images = append(images, image)
+		}
+	}
+	return images
+}
+
 // listed reports a file a read lists: derived files and served uploads to
 // viewers (attached only); every file to an editor read.
 func (g *Grant) listed(f File, editor bool) bool {
@@ -411,7 +451,11 @@ type editorViews struct {
 
 func (e *editorViews) url(ctx context.Context, f File) (string, error) {
 	name := e.g.r.reg.EditorView(f)
-	if name == "" || f.Fail() != nil {
+	if e.g.r.reg.EditorFingerprint(f) == "" || f.Fail() != nil {
+		return "", nil
+	}
+	if name == "" {
+		e.missing = true
 		return "", nil
 	}
 	if e.have == nil {

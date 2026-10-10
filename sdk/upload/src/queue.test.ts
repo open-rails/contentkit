@@ -66,16 +66,31 @@ it("marks a file failed on its own refusal and retries it", async () => {
   expect(s.puts.length).toBe(0);
 });
 
-it("re-uploads a file whose blob went stale before commit", async () => {
-  const { s, q } = setup();
+it("retains a stale file's replacement batch across lost responses and a later queue retry", async () => {
+  const s = new FakeServer();
+  const fetch = s.fetch;
+  let loseResponses = true;
+  s.fetch = async (input, init) => {
+    const response = await fetch(input, init);
+    if (loseResponses && String(input).endsWith("/commit") && response.ok) throw new Error("response lost");
+    return response;
+  };
+  const q = new UploadQueue(fakeClient(s, { retries: 1 }), { ref, path });
   const [, b] = q.add([png("a.png", 1), png("b.png", 2)]);
   const snap = await until(q, (x) => x.ready);
   s.stale.add(snap.items.find((i) => i.id === b!.id)!.result!.blob);
+  await expect(q.commit()).rejects.toMatchObject({ code: "network" });
+  const replacement = s.commitRequests.at(-1)!;
+  expect(q.getSnapshot().items[1]!.result!.blob).toBe(replacement.ops[1]!.blob);
+  loseResponses = false;
   const files = await q.commit();
+  expect(s.commitRequests.at(-1)).toEqual(replacement);
+  expect(s.commits).toHaveLength(1);
   expect(files.map((f) => f.path)).toEqual(["originals/a.png", "originals/b.png"]);
   expect(s.puts.length).toBe(3);
   expect(s.commits[0]![1]!.create_id).toBe(b!.id);
   expect(q.getSnapshot().items.every((i) => i.status === "committed")).toBe(true);
+  q.dispose();
 });
 
 it("does not remove an existing file when a cancelled staging create is rejected", async () => {
@@ -125,10 +140,9 @@ it("retries a lost staging response with the same create ID and attaches the upl
   await until(q, (x) => x.ready);
   const files = await q.commit();
   expect(s.commits[0]![0]).toMatchObject({ create_id: item!.id, unattached: true });
-  expect(s.commits[1]).toMatchObject([
-    { op: "put", create_id: item!.id },
-    { op: "attach", path: "originals/new.png" },
-  ]);
+  expect(s.commits[1]).toMatchObject([{ op: "attach", path: "originals/new.png" }]);
+  expect(s.commitRequests[0]!.operation_id).toBe(s.commitRequests[1]!.operation_id);
+  expect(s.commitRequests[2]!.operation_id).not.toBe(s.commitRequests[0]!.operation_id);
   expect(files).toMatchObject([{ path: "originals/new.png" }]);
   expect(files[0]!.unattached).toBeUndefined();
   q.dispose();

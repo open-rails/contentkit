@@ -42,6 +42,9 @@ type Config struct {
 	// Schema is the host's worker River schema, the one its workqueue.Queue
 	// inserts into; required, and never shared with another host.
 	Schema string
+	// ContentSchema holds ContentKit's media journal and quota tables. Every
+	// writer for this host must use the same schema; migration is host-owned.
+	ContentSchema string
 	// Queue selects a one-task process: encode runs video chunks; light runs
 	// video planning/assembly plus the existing image and audio queues.
 	// Empty keeps the long-running all-queue worker.
@@ -96,6 +99,9 @@ func (c *Config) defaults() error {
 	}
 	if err := workqueue.ValidSchema(c.Schema); err != nil {
 		return err
+	}
+	if c.ContentSchema == "" {
+		return errors.New("media/worker: Config.ContentSchema is required")
 	}
 	if c.Queue != "" && c.Queue != workqueue.VideoLightQueue && c.Queue != workqueue.VideoEncodeQueue {
 		return fmt.Errorf("media/worker: unsupported queue %q", c.Queue)
@@ -153,6 +159,14 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 				c.Schema, table)
 		}
 	}
+	var journalExists bool
+	journalTable := pgx.Identifier{c.ContentSchema, "content_media_commits"}.Sanitize()
+	if err := c.Pool.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", journalTable).Scan(&journalExists); err != nil {
+		return nil, fmt.Errorf("media/worker: check media journal: %w", err)
+	}
+	if !journalExists {
+		return nil, fmt.Errorf("media/worker: missing %s; the host must apply ContentKit migrations", journalTable)
+	}
 	// One-shot workers use pod-private scratch, which Kubernetes removes with
 	// the pod. Sweeping a shared path here could erase another active worker's
 	// chunk when multiple one-shot processes start on the same host.
@@ -165,11 +179,15 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	manifests, err := media.NewManifests(c.Store, c.Kinds, media.ManifestOptions{Locker: media.PGLocker(c.Pool), Sweeps: host})
+	queue, err := workqueue.New(c.Pool, c.Kinds, c.Schema)
 	if err != nil {
 		return nil, err
 	}
-	queue, err := workqueue.New(c.Pool, c.Kinds, c.Schema)
+	journal, err := media.NewPGJournal(c.Pool, c.ContentSchema, queue)
+	if err != nil {
+		return nil, err
+	}
+	manifests, err := media.NewManifests(c.Store, c.Kinds, media.ManifestOptions{Locker: media.PGLocker(c.Pool), Journal: journal, Sweeps: host})
 	if err != nil {
 		return nil, err
 	}

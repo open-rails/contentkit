@@ -116,6 +116,7 @@ export interface Op {
 
 export interface CommitBody {
   ref: RefBody;
+  operation_id: string;
   ops: Op[];
 }
 
@@ -178,6 +179,7 @@ export interface ReadResult {
   expires: number;
   meta?: Record<string, unknown>;
   previews?: string[];
+  public?: PublicImage[];
   total: number;
   offset: number;
   limit: number;
@@ -185,6 +187,18 @@ export interface ReadResult {
   state?: ItemState;
   full?: boolean;
   files: FileInfo[];
+}
+
+export interface PublicImage {
+  from: string;
+  preset: string;
+  renditions: PublicRendition[];
+}
+
+export interface PublicRendition {
+  url: string;
+  w: number;
+  h: number;
 }
 
 export interface FileInfo {

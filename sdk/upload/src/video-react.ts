@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { samePath, type Progress, type UploadClient } from "./client.js";
 import { UploadError } from "./errors.js";
-import type { PublicImage } from "./public.js";
 import { useRead } from "./read-react.js";
-import { reloadImage } from "./slot-react.js";
 import type { Edit, FileInfo, Op, ReadResult, RefBody } from "./wire.gen.js";
 
 const asError = (e: unknown) => (e instanceof UploadError ? e : new UploadError("network", String(e)));
@@ -189,8 +187,6 @@ export interface VideoPosterOptions {
   ref: RefBody;
   /** The poster upload path. Default "poster". */
   path?: string;
-  /** The poster's public preset, refetched after each save. */
-  image?: PublicImage | null;
   /** With the processed poster upload after each save. */
   onSaved?: (poster: FileInfo) => void;
   /** Polling limit for the render, ms. Default 120000. */
@@ -219,7 +215,6 @@ export function useVideoPoster(client: UploadClient, o: VideoPosterOptions): Use
     setState({ status: "saving" });
     try {
       const f = await save((progress) => setState({ status: "saving", progress, rendering: progress.phase === "processing" }));
-      await reloadImage(opts.current.image);
       setState({ status: "idle" });
       opts.current.onSaved?.(f);
       return f;

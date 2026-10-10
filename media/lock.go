@@ -9,7 +9,7 @@ import (
 )
 
 // PGLocker serializes manifest edits with a per-manifest session advisory lock
-// in the host database: the fallback for backends without conditional PUT.
+// in the host database, alongside the store's required conditional PUT.
 // The lock holds its own connection, never one of pool's, so an edit may use
 // the pool (quota settlement) without starving it.
 func PGLocker(pool *pgxpool.Pool) Locker { return pgLocker{pool} }

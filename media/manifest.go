@@ -7,24 +7,29 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/google/uuid"
 
 	"github.com/open-rails/contentkit/media/layout"
 )
 
 // ManifestVersion is the manifest format.
-const ManifestVersion = 2
+const ManifestVersion = 3
 
 // Manifest is an item's manifest.json: an ordered, app-defined virtual file
 // system over the item's private blobs. Files is in an explicit,
 // deterministic order: each Upload's files by name by default (reordered by
 // commit ops), then each private preset's outputs in their uploads' order.
-// Readers never re-sort it. Public files are never listed.
+// Readers never re-sort it. Public publications belong to their source upload.
 type Manifest struct {
-	V      int  `json:"v"`
-	Hidden bool `json:"hidden,omitempty"` // set by Expose; public files are then absent
+	V           int    `json:"v"`
+	Hidden      bool   `json:"hidden,omitempty"`      // set by Expose; public files are then absent
+	Incarnation string `json:"incarnation,omitempty"` // changes only on explicit reset
+	Deleted     bool   `json:"deleted,omitempty"`     // retained S3 tombstone; ordinary edits cannot recreate it
 	// Full: a producer could not record its outputs within the bound, so
 	// private outputs stop until a commit frees Deficit bytes (in the
 	// manifest and in what its uploads would still add): how far past the
@@ -33,15 +38,24 @@ type Manifest struct {
 	Deficit int64          `json:"deficit,omitempty"`
 	Meta    map[string]any `json:"meta,omitempty"` // the app's template values, e.g. title
 	Files   []File         `json:"files"`
+	Receipt *CommitReceipt `json:"receipt,omitempty"` // the last manifest attempt; retained until its journal effects settle
 
-	index map[string]int
-	size  int64 // its JSON length when last read or written
+	index   map[string]int
+	size    int64    // its JSON length when last read or written
+	cleanup []string // worker scratch outputs, committed as exact journal effects
+}
+
+// CommitReceipt proves which prepared attempt reached S3. Every writer keeps
+// the receipt until recovery has settled it; it is not an authorization token.
+type CommitReceipt struct {
+	Operation string `json:"operation"`
+	Attempt   string `json:"attempt"`
 }
 
 // File is one file: an upload (no Preset) or a derived file.
 type File struct {
 	Path string  `json:"path"`           // app path: "originals/001.png", "low-res/001.webp"
-	Blob string  `json:"blob,omitempty"` // "sha256-{hex}" in private/; "" for a staged upload or a frame not grabbed yet
+	Blob string  `json:"blob,omitempty"` // "sha256-{hex}-{uuid}" in private/; "" for a staged upload or a frame not grabbed yet
 	Type string  `json:"type"`
 	Size int64   `json:"size,omitempty"`
 	W    int     `json:"w,omitempty"` // an upload's oriented size once measured; an output's size
@@ -58,6 +72,8 @@ type File struct {
 	Gone       bool           `json:"gone,omitempty"`       // blob dropped (KeepOriginals false); the hash stays for provenance
 	Pending    []string       `json:"pending,omitempty"`    // presets still producing from this upload
 	Failed     *Failure       `json:"failed,omitempty"`     // this blob and edit cannot be processed
+	Public     []Publication  `json:"public,omitempty"`     // reserved or published public generations
+	Editor     *EditorImage   `json:"editor,omitempty"`     // selected immutable editor view, never listed to ordinary readers
 
 	// Derived files:
 	From     string `json:"from,omitempty"`     // the upload's path, or a zip's prefix
@@ -65,6 +81,70 @@ type File struct {
 	FP       string `json:"fp,omitempty"`       // Fingerprint of its inputs
 	Download string `json:"download,omitempty"` // the human download name
 	Track    *Track `json:"track,omitempty"`    // HLS
+}
+
+// EditorImage records the rendered view's allocation and source/spec fingerprint.
+type EditorImage struct {
+	Blob string `json:"blob"`
+	FP   string `json:"fp"`
+}
+
+// Publication owns one public preset's physical files. Reservation precedes
+// every PUT; State becomes ready only after all renditions have landed. Retired
+// generations are never reused, even when their source bytes are identical.
+type Publication struct {
+	Preset     string           `json:"preset"`
+	Source     string           `json:"source"` // the upload's Key
+	FP         string           `json:"fp"`
+	Generation string           `json:"generation"`
+	Names      []string         `json:"names"` // logical preset names at this position
+	State      PublicationState `json:"state"`
+	Dims       []Dims           `json:"dims"`
+}
+
+// PublicationState has a fixed-width JSON representation: reserving and
+// publishing a replacement must not consume Full manifests' flag headroom.
+type PublicationState uint8
+
+const (
+	PublicationReserved PublicationState = iota
+	PublicationReady
+)
+
+func (p Publication) Ready() bool { return p.State == PublicationReady }
+
+// NamesOnDisk lists the immutable physical names reserved by the publication.
+func (p Publication) NamesOnDisk() []string {
+	names := make([]string, len(p.Names))
+	for i, name := range p.Names {
+		ext := path.Ext(name)
+		names[i] = strings.TrimSuffix(name, ext) + "-" + p.Generation + ext
+	}
+	return names
+}
+
+// Publication returns the public generation owned by this upload and preset.
+func (f File) Publication(preset string) (Publication, bool) {
+	for _, p := range f.Public {
+		if p.Preset == preset {
+			return p, true
+		}
+	}
+	return Publication{}, false
+}
+
+// SetPublication records a reserved or ready generation on its source upload.
+func (m *Manifest) SetPublication(from string, p Publication) {
+	if i := m.Find(from); i >= 0 {
+		pubs := slices.Clone(m.Files[i].Public)
+		j := slices.IndexFunc(pubs, func(old Publication) bool { return old.Preset == p.Preset })
+		if j < 0 {
+			pubs = append(pubs, p)
+		} else {
+			pubs[j] = p
+		}
+		m.Files[i].Public = pubs
+	}
 }
 
 // Frame is an upload grabbed from a frame of its Upload.Frames video at T
@@ -97,7 +177,7 @@ type Track struct {
 	Label     string `json:"label,omitempty"`
 	Default   bool   `json:"default,omitempty"`
 	Forced    bool   `json:"forced,omitempty"`
-	Index     string `json:"index,omitempty"` // "sha256-{hex}": the TrackIndex
+	Index     string `json:"index,omitempty"` // "sha256-{hex}-{uuid}": the TrackIndex
 }
 
 // Track kinds.
@@ -238,6 +318,9 @@ func (m *Manifest) Blobs() []string {
 		if f.Track != nil && f.Track.Index != "" {
 			out = append(out, f.Track.Index)
 		}
+		if f.Editor != nil && !f.Gone {
+			out = append(out, f.Editor.Blob)
+		}
 	}
 	return out
 }
@@ -256,6 +339,23 @@ func (m *Manifest) StagedNames() []string {
 // Validate requires unique paths, well-formed blobs and edits, and upload
 // and derived fields where they belong.
 func (m *Manifest) Validate() error {
+	if m.Incarnation != "" {
+		id, err := uuid.Parse(m.Incarnation)
+		if err != nil || id == uuid.Nil || id.String() != m.Incarnation {
+			return errors.New("media: invalid manifest incarnation")
+		}
+	}
+	if m.Deleted && (!m.Hidden || len(m.Files) != 0 || len(m.Meta) != 0 || m.Full || m.Deficit != 0) {
+		return errors.New("media: deletion tombstone must be hidden and empty")
+	}
+	if m.Receipt != nil {
+		for _, value := range []string{m.Receipt.Operation, m.Receipt.Attempt} {
+			id, err := uuid.Parse(value)
+			if err != nil || id == uuid.Nil || id.String() != value {
+				return errors.New("media: invalid manifest commit receipt")
+			}
+		}
+	}
 	seen := make(map[string]bool, len(m.Files))
 	for i, f := range m.Files {
 		switch {
@@ -263,16 +363,32 @@ func (m *Manifest) Validate() error {
 			return fmt.Errorf("media: manifest file %d: empty or duplicate path %q", i, f.Path)
 		case f.Staged != "" && (!layout.ValidStagedName(f.Staged) || f.Blob != "" || f.Frame != nil || !f.IsUpload()):
 			return fmt.Errorf("media: manifest file %q: invalid staged upload %q", f.Path, f.Staged)
-		case f.Blob != "" && !layout.ValidHashName(f.Blob), f.Blob == "" && f.Staged == "" && (f.Frame == nil || !f.IsUpload()):
+		case f.Blob != "" && !layout.ValidBlobName(f.Blob), f.Blob == "" && f.Staged == "" && (f.Frame == nil || !f.IsUpload()):
 			return fmt.Errorf("media: manifest file %q: invalid blob %q", f.Path, f.Blob)
-		case f.Track != nil && f.Track.Index != "" && !layout.ValidHashName(f.Track.Index):
+		case f.Track != nil && f.Track.Index != "" && !layout.ValidBlobName(f.Track.Index):
 			return fmt.Errorf("media: manifest file %q: invalid track index %q", f.Path, f.Track.Index)
-		case !f.IsUpload() && (f.Edit != nil || f.Frame != nil || f.Pending != nil || f.Unattached):
+		case f.Editor != nil && (!layout.ValidBlobName(f.Editor.Blob) || f.Editor.FP == ""):
+			return fmt.Errorf("media: manifest file %q: invalid editor view", f.Path)
+		case !f.IsUpload() && (f.Edit != nil || f.Frame != nil || f.Pending != nil || f.Unattached || len(f.Public) > 0 || f.Editor != nil):
 			return fmt.Errorf("media: manifest file %q: a derived file has upload fields", f.Path)
 		case f.IsUpload() && (f.From != "" || f.FP != "" || f.Track != nil):
 			return fmt.Errorf("media: manifest file %q: an upload has provenance", f.Path)
 		}
 		seen[f.Path] = true
+		presets := make(map[string]bool, len(f.Public))
+		for _, p := range f.Public {
+			id, err := uuid.Parse(p.Generation)
+			if p.Preset == "" || presets[p.Preset] || p.Source != f.Key() || p.FP == "" || err != nil || id == uuid.Nil || id.String() != p.Generation ||
+				len(p.Names) == 0 || len(p.Dims) != len(p.Names) || p.State > PublicationReady {
+				return fmt.Errorf("media: manifest file %q: invalid public publication", f.Path)
+			}
+			presets[p.Preset] = true
+			for j, name := range p.NamesOnDisk() {
+				if !layout.ValidSegment(p.Names[j]) || !layout.ValidPublicName(name) || p.Ready() && (p.Dims[j].W <= 0 || p.Dims[j].H <= 0) {
+					return fmt.Errorf("media: manifest file %q: invalid public rendition %q", f.Path, name)
+				}
+			}
+		}
 		// Bounds are checked at commit and by the producers (a failure, not
 		// a refused edit), so a measured size never wedges a worker's edit.
 		if err := f.Edit.Check(0, 0); err != nil {
@@ -286,10 +402,24 @@ func (m *Manifest) Validate() error {
 // so an edit never mutates it.
 func (m *Manifest) Clone() *Manifest {
 	out := *m
+	out.cleanup = nil
+	if m.Receipt != nil {
+		r := *m.Receipt
+		out.Receipt = &r
+	}
 	out.Meta = cloneMap(m.Meta)
 	out.Files = make([]File, len(m.Files))
 	for i, f := range m.Files {
 		f.Meta, f.Pending = cloneMap(f.Meta), slices.Clone(f.Pending)
+		if f.Editor != nil {
+			editor := *f.Editor
+			f.Editor = &editor
+		}
+		f.Public = slices.Clone(f.Public)
+		for j := range f.Public {
+			f.Public[j].Names = slices.Clone(f.Public[j].Names)
+			f.Public[j].Dims = slices.Clone(f.Public[j].Dims)
+		}
 		if f.Edit != nil {
 			e := *f.Edit
 			if e.Crop != nil {
@@ -431,6 +561,11 @@ func encodeManifest(m *Manifest) ([]byte, error) {
 	}
 	var b bytes.Buffer
 	zw, _ := gzip.NewWriterLevel(&b, gzip.BestSpeed)
+	// A return to earlier JSON must not restore its ETag: an old If-Match
+	// would become valid again. Keep the write nonce in gzip's extra header
+	// so it does not consume JSON headroom reserved for flags on full items.
+	revision := uuid.New()
+	zw.Extra = revision[:]
 	cw := &countWriter{w: zw}
 	enc := json.NewEncoder(cw)
 	enc.SetEscapeHTML(false)

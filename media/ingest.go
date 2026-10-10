@@ -9,6 +9,7 @@ import (
 	"io"
 	"path"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -98,6 +99,9 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 	if err != nil {
 		return IngestResult{}, err
 	}
+	if !u.o.Store.Capabilities().ConditionalPut {
+		return IngestResult{}, ErrConditionalPutRequired
+	}
 	limited := u.o.Limiter != nil && !grant.Exempt
 	if limited && req.Size == 0 {
 		return IngestResult{}, uploadErr(CodeInvalid, "a limited uploader must declare the size")
@@ -118,6 +122,13 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 		temp = req.Resume.Temp
 	}
 	reserve, _ := item.Staged(temp)
+	if req.Resume != nil && temp == req.Resume.Temp {
+		if err := u.o.Manifests.checkAllocations(ctx, item, []string{reserve}); err != nil {
+			return IngestResult{}, err
+		}
+	} else if err := u.o.Manifests.allocate(ctx, item, reserve); err != nil {
+		return IngestResult{}, err
+	}
 	if limited {
 		if err := u.o.Limiter.Reserve(ctx, Reservation{Tenant: req.Ref.TenantID, Uploader: uploaderID(actor),
 			Owner: grant.Owner, Key: reserve, Size: req.Size}); err != nil {
@@ -137,7 +148,7 @@ func (u *Uploads) Ingest(ctx context.Context, actor access.Actor, req IngestRequ
 		return IngestResult{}, err
 	}
 	res.Staged = temp
-	man, err := u.Commit(ctx, actor, req.Ref, []Op{{Op: OpPut, Path: req.Path, Blob: temp, Meta: req.Meta}})
+	man, err := u.Commit(ctx, actor, req.Ref, strings.TrimPrefix(temp, "u-"), []Op{{Op: OpPut, Path: req.Path, Blob: temp, Meta: req.Meta}})
 	if err != nil {
 		return IngestResult{}, err
 	}

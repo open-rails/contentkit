@@ -5,6 +5,8 @@
 // "READY <url> <namespace>" and runs until stdin closes.
 // CONTENTKIT_TEST_S3_BUCKET selects an existing bucket; cleanup removes only
 // the test namespace.
+// CONTENTKIT_TEST_URL supplies PostgreSQL for the real recovery journal and
+// manifest lock; the fixture migrates and drops its own isolated schema.
 //
 //	/upload/...            the upload API; X-Test-Actor names the caller ("reader" may not upload)
 //	/upload-on-upload/...  the same with ProcessOnUpload
@@ -31,15 +33,23 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
+	"github.com/open-rails/contentkit/media/workqueue"
+	"github.com/open-rails/contentkit/migrations"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 )
 
 var images = []string{"image/png", "image/jpeg"}
@@ -138,6 +148,25 @@ func main() {
 	_, err := rand.Read(suffix)
 	must(err)
 	namespace := "sdk-" + hex.EncodeToString(suffix)
+	pool, err := pgxpool.New(ctx, os.Getenv("CONTENTKIT_TEST_URL"))
+	must(err)
+	defer pool.Close()
+	schema := strings.ReplaceAll(namespace, "-", "_")
+	db := stdlib.OpenDBFromPool(pool)
+	must(migrations.ApplyPostgres(ctx, db, schema))
+	must(db.Close())
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		_, err := pool.Exec(cleanupCtx, "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
+		if err != nil {
+			log.Print(err)
+		}
+		_, err = pool.Exec(cleanupCtx, "DELETE FROM public.migrations WHERE schema = $1", schema)
+		if err != nil {
+			log.Print(err)
+		}
+	}()
 	cfg := mediaS3.Config{
 		Bucket:          os.Getenv("CONTENTKIT_TEST_S3_BUCKET"),
 		Region:          os.Getenv("CONTENTKIT_TEST_S3_REGION"),
@@ -172,9 +201,42 @@ func main() {
 	reg, err := media.NewRegistry(media.Config{Namespace: namespace, BaseURL: "http://media.invalid", Kinds: kinds,
 		Hooks: media.Hooks{Resolver: allow{}, CanUpload: allow{}}})
 	must(err)
-	manifests, err := media.NewManifests(store, reg, media.ManifestOptions{Locker: &procLocker{}})
+	workerSchema := schema + "_worker"
+	must(workqueue.Migrate(ctx, pool, workerSchema))
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		_, err := pool.Exec(cleanupCtx, "DROP SCHEMA "+pgx.Identifier{workerSchema}.Sanitize()+" CASCADE")
+		if err != nil {
+			log.Print(err)
+		}
+		_, err = pool.Exec(cleanupCtx, "DELETE FROM public.migrations WHERE schema = $1", workerSchema)
+		if err != nil {
+			log.Print(err)
+		}
+	}()
+	queue, err := workqueue.New(pool, reg, workerSchema)
+	must(err)
+	journal, err := media.NewPGJournal(pool, schema, queue)
+	must(err)
+	manifests, err := media.NewManifests(store, reg, media.ManifestOptions{Locker: media.PGLocker(pool), Journal: journal})
 	must(err)
 	worker.reg, worker.manifests = reg, manifests
+	workers := river.NewWorkers()
+	river.AddWorker(workers, &placeWorker{worker: worker})
+	river.AddWorker(workers, &imageWorker{worker: worker})
+	river.AddWorker(workers, &videoWorker{worker: worker})
+	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: workerSchema, Workers: workers,
+		Queues: map[string]river.QueueConfig{
+			workqueue.PlaceQueue: {MaxWorkers: 2}, workqueue.ImageQueue: {MaxWorkers: 2}, workqueue.VideoLightQueue: {MaxWorkers: 2},
+		}, FetchPollInterval: 100 * time.Millisecond, FetchCooldown: 50 * time.Millisecond})
+	must(err)
+	must(client.Start(ctx))
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		must(client.StopAndCancel(stopCtx))
+	}()
 	key := token.Key{ID: "k1", Secret: bytes.Repeat([]byte("s"), 32)}
 	ring, err := token.NewRing(key, nil)
 	must(err)
@@ -183,7 +245,7 @@ func main() {
 	must(err)
 	newUploads := func(onUpload bool) http.Handler {
 		u, err := media.NewUploads(media.UploadOptions{Store: store, Manifests: manifests, Tickets: &ring, Grace: *grace,
-			Queue: worker, Frames: worker, ProcessOnUpload: onUpload,
+			Frames: worker, ProcessOnUpload: onUpload,
 			Commits: media.RateLimit{Disabled: true}}) // one server for the whole SDK suite
 		must(err)
 		return media.UploadHandler(u, media.UploadHandlerOptions{Actor: actor})
@@ -304,14 +366,4 @@ func must(err error) {
 	if err != nil {
 		panic(err)
 	}
-}
-
-// procLocker serializes edits within this single process (no Postgres here).
-type procLocker struct{ locks sync.Map }
-
-func (l *procLocker) Lock(ctx context.Context, key string) (func(), error) {
-	m, _ := l.locks.LoadOrStore(key, &sync.Mutex{})
-	mu := m.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock, nil
 }

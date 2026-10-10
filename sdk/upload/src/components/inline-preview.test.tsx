@@ -59,7 +59,7 @@ const read = (files: FileInfo[]): ReadResult => ({
 });
 const vid = (index: number): FileInfo => ({ path: `hls/${index}/1080-h264.mp4`, type: "video/mp4", w: 1920, h: 1080, dur: 40, url: "u" });
 const hlsBase = (dir: string) => `/read/${dir}`;
-const poster = { base: "https://m", namespace: "app", kind: "post", id: "1", to: "poster-{w}.webp", widths: [480], aspect: "16:9" };
+const poster = { preset: "poster", renditions: [{ url: "https://m/v1/app/post/1/public/poster-480-generation.webp", w: 480, h: 270 }], aspect: "16:9" };
 
 let io: { cb: IntersectionObserverCallback; el?: Element }[] = [];
 
@@ -109,7 +109,7 @@ it("desktop hover: after the delay the real HLS plays muted from the cover frame
   expect(video.controls).toBe(false);
   act(() => void video.dispatchEvent(new Event("playing")));
   expect(box).toHaveAttribute("data-previewing");
-  expect(box!.querySelector("img[src*='poster-480.webp']")).toHaveClass("opacity-0");
+  expect(box!.querySelector(`img[src='${poster.renditions[0]!.url}']`)).toHaveClass("opacity-0");
 
   fireEvent.pointerLeave(box!);
   expect(h.destroyed).toBe(true);

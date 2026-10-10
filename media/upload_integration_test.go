@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"slices"
 	"strings"
@@ -13,8 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -33,6 +36,94 @@ func code(err error) string {
 	return ""
 }
 
+func TestCommitBatchRetriesPreserveLaterEdits(t *testing.T) {
+	for _, action := range []string{"put", "edit", "move", "rename", "remove", "attach", "copy", "meta", "regenerate"} {
+		t.Run(action, func(t *testing.T) {
+			f := newFixture(t)
+			f.visible(1)
+			ref := f.gallery(1, 2)
+			var ops []media.Op
+			switch action {
+			case "put":
+				p, blob := f.upload(ref, "originals/000.png", "image/png", png(99))
+				ops = []media.Op{{Op: media.OpPut, Path: p, Blob: blob}}
+			case "edit":
+				ops = []media.Op{{Op: media.OpEdit, Path: "originals/000.png", Edit: &media.Edit{Rotate: 90}}}
+			case "move":
+				index := 1
+				ops = []media.Op{{Op: media.OpMove, Path: "originals/000.png", Index: &index}}
+			case "rename":
+				ops = []media.Op{{Op: media.OpRename, Path: "originals/000.png", To: "originals/renamed.png"}}
+			case "remove":
+				ops = []media.Op{{Op: media.OpRemove, Path: "originals/000.png"}}
+			case "attach":
+				p, blob := f.upload(ref, "originals/unattached.png", "image/png", png(99))
+				f.commit(ref, media.Op{Op: media.OpPut, Path: p, Blob: blob, Unattached: true})
+				ops = []media.Op{{Op: media.OpAttach, Path: p}}
+			case "copy":
+				f.visible(2)
+				f.gallery(2, 1)
+				ops = []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(2), Path: "originals/000.png"}, To: "originals/copied.png"}}
+			case "meta":
+				ops = []media.Op{{Op: media.OpMeta, Meta: map[string]any{"title": "original"}}}
+			case "regenerate":
+				ops = []media.Op{{Op: media.OpRegenerate, Preset: "thumb", Force: false}}
+			}
+			f.q.take()
+			id := uuid.NewString()
+			if _, err := f.up.Commit(t.Context(), f.editor, ref, id, ops); err != nil {
+				t.Fatal(err)
+			}
+			if jobs := f.q.take(); len(jobs) != 1 {
+				t.Fatalf("initial batch queued %d jobs", len(jobs))
+			}
+			f.place(ref)
+			want, err := f.ms.EditExisting(t.Context(), ref, func(m *media.Manifest) error {
+				m.Meta = map[string]any{"title": "later"}
+				for i := range m.Files {
+					if m.Files[i].IsUpload() {
+						m.Files[i].Meta = map[string]any{"alt": "later"}
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if action == "copy" {
+				// A committed retry does not depend on the old source anymore.
+				f.drop(f.ns + "/gallery/" + cid(2) + "/")
+			}
+			_, beforeETag, _ := f.ms.Get(t.Context(), ref)
+			for range 2 {
+				got, err := f.up.Commit(t.Context(), f.editor, ref, id, ops)
+				if err != nil || !reflect.DeepEqual(got.Files, want.Files) || !reflect.DeepEqual(got.Meta, want.Meta) {
+					t.Fatalf("batch retry repeated an edit or lost current state: %v", err)
+				}
+			}
+			if _, afterETag, err := f.ms.Get(t.Context(), ref); err != nil || beforeETag != afterETag || len(f.q.take()) != 0 {
+				t.Fatalf("replay wrote or requeued the manifest: %v", err)
+			}
+			body, _ := json.Marshal(media.CommitBody{Ref: media.RefBody{Kind: "gallery", ID: ref.ContentID}, OperationID: id, Ops: ops})
+			res := httptest.NewRecorder()
+			media.UploadHandler(f.up, media.UploadHandlerOptions{Actor: func(*http.Request) (access.Actor, bool) { return f.editor, true }}).
+				ServeHTTP(res, httptest.NewRequest(http.MethodPost, "/commit", bytes.NewReader(body)))
+			if res.Code != http.StatusOK {
+				t.Fatalf("HTTP batch retry: %d %s", res.Code, res.Body.String())
+			}
+			if _, err := f.up.Commit(t.Context(), f.editor, ref, id, []media.Op{{Op: media.OpMeta, Meta: map[string]any{"title": "different"}}}); code(err) != media.CodeConflict {
+				t.Fatalf("changed inputs reused the batch ID: %v", err)
+			}
+			if _, err := f.up.Commit(t.Context(), access.Actor{ID: "staff", Kind: "user"}, ref, id, ops); code(err) != media.CodeConflict {
+				t.Fatalf("another actor reused the batch ID: %v", err)
+			}
+			if _, err := f.up.Commit(t.Context(), access.Actor{ID: "reader", Kind: "user"}, ref, id, ops); code(err) != media.CodeForbidden {
+				t.Fatalf("replay skipped upload authorization: %v", err)
+			}
+		})
+	}
+}
+
 func TestCreateOnlyPreservesExistingUploadsAndRetries(t *testing.T) {
 	f := newFixture(t)
 	f.visible(1)
@@ -45,7 +136,7 @@ func TestCreateOnlyPreservesExistingUploadsAndRetries(t *testing.T) {
 	if p != "originals/001.png" {
 		t.Fatalf("canonical path %q", p)
 	}
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: p, Blob: blob, CreateID: cid(100)}}); code(err) != media.CodeConflict {
+	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: p, Blob: blob, CreateID: cid(100)}}); code(err) != media.CodeConflict {
 		t.Fatalf("create over existing upload: %v", err)
 	}
 	after, _, _ := f.ms.Get(ctx, g)
@@ -69,7 +160,7 @@ func TestCreateOnlyPreservesExistingUploadsAndRetries(t *testing.T) {
 	}
 	other := op
 	other.CreateID = cid(102)
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{other}); code(err) != media.CodeConflict {
+	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{other}); code(err) != media.CodeConflict {
 		t.Fatalf("a different create reused the receipt: %v", err)
 	}
 	m := f.commit(g, media.Op{Op: media.OpCopy, From: &media.CopyFrom{ID: g.ContentID, Path: p}, To: "originals/003.png"})
@@ -82,13 +173,13 @@ func TestCreateOnlyPreservesExistingUploadsAndRetries(t *testing.T) {
 	if !reflect.DeepEqual(want.Files, m.Files) {
 		t.Fatal("an unchanged intentional put reset processing while clearing its receipt")
 	}
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{op}); code(err) != media.CodeConflict {
+	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{op}); code(err) != media.CodeConflict {
 		t.Fatalf("old create overwrote an intentional replacement: %v", err)
 	}
 
 	p, blob = f.upload(g, "originals/004.png", "image/png", png(4))
 	op = media.Op{Op: media.OpPut, Path: p, Blob: blob, CreateID: cid(103)}
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{op}); err != nil {
+	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{op}); err != nil {
 		t.Fatal(err)
 	}
 	key, _ = item.Staged(blob)
@@ -105,7 +196,7 @@ func TestCreateOnlyPreservesExistingUploadsAndRetries(t *testing.T) {
 	}
 	_, op.Blob = f.upload(g, p, "image/png", png(4))
 	after = f.commit(g, op)
-	if up, _ := after.Get(p); up.Fail() != nil || up.Blob != blobOf(png(4)) || up.Staged != "" || up.CreateID != op.CreateID {
+	if up, _ := after.Get(p); up.Fail() != nil || !matchesBlob(up.Blob, png(4)) || up.Staged != "" || up.CreateID != op.CreateID {
 		t.Fatalf("re-upload with the same receipt did not recover placement: %+v", up)
 	}
 	key, _ = item.Staged(op.Blob)
@@ -127,7 +218,7 @@ func TestConcurrentCreateOnlyCommits(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, err := f.up.Commit(context.Background(), f.editor, g, []media.Op{{Op: media.OpPut, Path: p, Blob: blob, CreateID: cid(200 + i)}})
+			_, err := f.up.Commit(context.Background(), f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: p, Blob: blob, CreateID: cid(200 + i)}})
 			results <- err
 		}()
 	}
@@ -209,7 +300,7 @@ func TestCommitOrderAndPaths(t *testing.T) {
 	// Max caps an Upload's files.
 	for i := range 3 {
 		p, blob := f.upload(g, "import/a"+string(rune('0'+i))+".zip", "application/zip", []byte{byte(i), 'z'})
-		_, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: p, Blob: blob}})
+		_, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: p, Blob: blob}})
 		if i < 2 && err != nil || i == 2 && code(err) != media.CodeTooManyFiles {
 			t.Fatalf("import %d: %v", i, err)
 		}
@@ -236,7 +327,7 @@ func TestReplaceRenameRemove(t *testing.T) {
 	if th, ok := m.Get("thumb/bee.webp"); !ok || th.From != "originals/bee.png" || m.Find("thumb/b.webp") >= 0 {
 		t.Fatalf("rename: %v", paths(m))
 	}
-	if _, err := f.up.Commit(context.Background(), f.editor, g, []media.Op{{Op: media.OpRename, Path: "originals/bee.png", To: "cover"}}); code(err) != media.CodeInvalid {
+	if _, err := f.up.Commit(context.Background(), f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpRename, Path: "originals/bee.png", To: "cover"}}); code(err) != media.CodeInvalid {
 		t.Fatalf("rename across uploads: %v", err)
 	}
 	m = f.commit(g, media.Op{Op: media.OpRemove, Path: "originals/bee.png"})
@@ -276,7 +367,7 @@ func TestEdit(t *testing.T) {
 		{Crop: &media.Crop{X: 800, Y: 0, W: 460, H: 1}},     // outside the source
 		{Crop: &media.Crop{X: 0, Y: 0, W: 460}, Rotate: 45}, // invalid rotation
 	} {
-		if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpEdit, Path: "cover.png", Edit: &e}}); err == nil {
+		if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpEdit, Path: "cover.png", Edit: &e}}); err == nil {
 			t.Errorf("edit %+v accepted", e)
 		}
 	}
@@ -327,8 +418,11 @@ func TestCopy(t *testing.T) {
 	if !reflect.DeepEqual(paths(m), want) {
 		t.Fatalf("copied %v", paths(m))
 	}
-	if c, _ := m.Get("cover.png"); !reflect.DeepEqual(c.Pending, []string{"cover"}) {
-		t.Fatalf("copied cover pending %v", c.Pending)
+	if c, _ := m.Get("cover.png"); !reflect.DeepEqual(c.Pending, []string{"cover"}) || len(c.Public) != 0 {
+		t.Fatalf("copied cover has pending=%v, public ownership=%+v", c.Pending, c.Public)
+	}
+	if res, err := f.rd.Read(t.Context(), b, f.editor, media.ReadOptions{}); err != nil || len(res.Public) != 0 {
+		t.Fatalf("copied originals advertised nonexistent public files: %+v, %v", res, err)
 	}
 	item, _ := f.reg.Item(b)
 	for _, blob := range m.Blobs() {
@@ -337,7 +431,7 @@ func TestCopy(t *testing.T) {
 			t.Fatalf("copied blob %s: %v", key, err)
 		}
 	}
-	if _, err := f.up.Commit(context.Background(), f.editor, b, []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: "originals/9.png"}}}); code(err) != media.CodeNotFound {
+	if _, err := f.up.Commit(context.Background(), f.editor, b, uuid.NewString(), []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: "originals/9.png"}}}); code(err) != media.CodeNotFound {
 		t.Fatalf("copy of a missing upload: %v", err)
 	}
 	m = f.commit(b, media.Op{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: "originals/1.png"}, To: "cover"})
@@ -361,15 +455,15 @@ func TestCopy(t *testing.T) {
 		{{Op: media.OpRemove, Path: page.Path}, {Op: media.OpCopy, From: &media.CopyFrom{ID: cid(2), Path: page.Path}, To: "cover"}},
 		{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(2), Path: "originals/missing.png"}, To: "cover"}},
 	} {
-		if _, err := f.up.Commit(ctx, f.editor, b, ops); code(err) != media.CodeNotFound {
+		if _, err := f.up.Commit(ctx, f.editor, b, uuid.NewString(), ops); code(err) != media.CodeNotFound {
 			t.Fatalf("copy must use current manifest state: %v", err)
 		}
 	}
 	f.put(b, "import/book.zip", "application/zip", []byte("zip"))
-	if _, err := f.up.Commit(ctx, f.editor, b, []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(2), Path: "import/book.zip"}, To: "cover"}}); code(err) != media.CodeType {
+	if _, err := f.up.Commit(ctx, f.editor, b, uuid.NewString(), []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(2), Path: "import/book.zip"}, To: "cover"}}); code(err) != media.CodeType {
 		t.Fatalf("copy bypassed cover types: %v", err)
 	}
-	if _, err := f.up.Commit(ctx, f.editor, b, []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(2), Path: page.Path}, To: "import/book"}}); code(err) != media.CodeType {
+	if _, err := f.up.Commit(ctx, f.editor, b, uuid.NewString(), []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(2), Path: page.Path}, To: "import/book"}}); code(err) != media.CodeType {
 		t.Fatalf("copy bypassed archive types: %v", err)
 	}
 	if _, err := f.ms.EditExisting(ctx, a, func(m *media.Manifest) error {
@@ -378,11 +472,27 @@ func TestCopy(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	m = f.commit(b, media.Op{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: page.Path}, To: "originals/2"})
-	if copied, _ := m.Get("originals/2.png"); !copied.Gone || copied.Blob != page.Blob {
+	limiter, err := media.NewPGLimiter(f.env.Pool(), f.env.ContentSchema(), media.PGLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, err := media.NewUploads(media.UploadOptions{Store: f.env.Store, Manifests: f.ms, Limiter: limiter})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err = up.Commit(ctx, f.editor, b, uuid.NewString(), []media.Op{{Op: media.OpCopy,
+		From: &media.CopyFrom{ID: cid(1), Path: page.Path}, To: "originals/2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var emptyKeys int
+	if err := f.env.Pool().QueryRow(ctx, "SELECT count(*) FROM "+f.env.ContentSchema()+".content_media_reservations WHERE object_key = ''").Scan(&emptyKeys); err != nil || emptyKeys != 0 {
+		t.Fatalf("retained-output copy reserved an empty key: %d, %v", emptyKeys, err)
+	}
+	if copied, _ := m.Get("originals/2.png"); !copied.Gone || copied.Blob != f.fileBlob(a, page.Path) {
 		t.Fatalf("copy of retained outputs: %+v", copied)
 	}
-	if _, err := f.up.Commit(ctx, f.editor, b, []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: page.Path}, To: "cover"}}); code(err) != media.CodeNotFound {
+	if _, err := f.up.Commit(ctx, f.editor, b, uuid.NewString(), []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: page.Path}, To: "cover"}}); code(err) != media.CodeNotFound {
 		t.Fatalf("cover copy without its original: %v", err)
 	}
 }
@@ -402,22 +512,19 @@ func TestCopyIsMetered(t *testing.T) {
 	f.put(a, "originals/2.png", "image/png", png(2))
 	f.produce(a)
 	// A thumb of its own blob: copying page 1 moves two blobs.
-	src, _ := f.reg.Item(a)
 	thumb := []byte("thumb one")
-	key, _ := src.Blob(blobOf(thumb))
-	f.object(key, string(thumb))
+	thumbBlob := f.blob(a, thumb, "image/webp")
 	if _, err := f.ms.EditExisting(ctx, a, func(m *media.Manifest) error {
-		m.Files[m.Find("thumb/1.webp")].Blob = blobOf(thumb)
+		m.Files[m.Find("thumb/1.webp")].Blob = thumbBlob
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	pool := pgtest.Pool(t, nil)
-	limiter, err := media.NewPGLimiter(pool, pgtest.Schema(t, ctx, pool), media.PGLimits{FilesPerHour: 1})
+	limiter, err := media.NewPGLimiter(f.env.Pool(), f.env.ContentSchema(), media.PGLimits{FilesPerHour: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	up, err := media.NewUploads(media.UploadOptions{Store: f.env.Store, Manifests: f.ms, Queue: f.q, Limiter: limiter, Grace: 8 * time.Second})
+	up, err := media.NewUploads(media.UploadOptions{Store: f.env.Store, Manifests: f.ms, Limiter: limiter, Grace: 8 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,16 +532,26 @@ func TestCopyIsMetered(t *testing.T) {
 		return []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: cid(1), Path: path}}}
 	}
 	item, _ := f.reg.Item(b)
-	one, _ := item.Blob(blobOf(png(1)))
-	two, _ := item.Blob(blobOf(png(2)))
-	if _, err := up.Commit(ctx, f.editor, b, copyOf("originals/1.png")); err != nil {
+	copied, err := up.Commit(ctx, f.editor, b, uuid.NewString(), copyOf("originals/1.png"))
+	if err != nil {
 		t.Fatalf("one copy, two blobs, one reservation: %v", err)
 	}
-	if copied, _ := item.Blob(blobOf(thumb)); !f.exists(copied) {
+	page, _ := copied.Get("originals/1.png")
+	one, _ := item.Blob(page.Blob)
+	preview, _ := copied.Get("thumb/1.webp")
+	if key, _ := item.Blob(preview.Blob); !f.exists(key) || !matchesBlob(preview.Blob, thumb) || preview.Blob == thumbBlob {
 		t.Fatal("the thumb was not copied")
 	}
-	if _, err := up.Commit(ctx, f.editor, b, copyOf("originals/2.png")); code(err) != media.CodeRate || f.exists(two) {
-		t.Fatalf("a copy past the rate limit: %v, copied %v", err, f.exists(two))
+	if _, err := up.Commit(ctx, f.editor, b, uuid.NewString(), copyOf("originals/2.png")); code(err) != media.CodeRate {
+		t.Fatalf("a copy past the rate limit: %v", err)
+	}
+	for obj, err := range f.env.Store.List(ctx, item.PrivatePrefix()) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if matchesBlob(strings.TrimPrefix(obj.Key, item.PrivatePrefix()), png(2)) {
+			t.Fatal("rate-limited copy wrote bytes")
+		}
 	}
 
 	// Unreferenced and older than the grace period: copied again.
@@ -444,7 +561,7 @@ func TestCopyIsMetered(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(9 * time.Second)
-	unlimited, err := media.NewUploads(media.UploadOptions{Store: f.env.Store, Manifests: f.ms, Queue: f.q, Grace: 8 * time.Second})
+	unlimited, err := media.NewUploads(media.UploadOptions{Store: f.env.Store, Manifests: f.ms, Grace: 8 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,37 +570,34 @@ func TestCopyIsMetered(t *testing.T) {
 		Size: int64(len(png(1))), SHA256: mustSum(blobOf(png(1)))}); err != nil || p.Exists || p.Put == nil {
 		t.Fatalf("presign offered a blob due for cleanup: %+v %v", p, err)
 	}
-	if _, err := unlimited.Commit(ctx, f.editor, b, []media.Op{{Op: media.OpPut, Path: "originals/again.png", Blob: blobOf(png(1))}}); code(err) != media.CodeNotUploaded {
+	if _, err := unlimited.Commit(ctx, f.editor, b, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: "originals/again.png", Blob: page.Blob}}); code(err) != media.CodeNotUploaded {
 		t.Fatalf("a put naming a blob due for cleanup: %v", err)
 	}
-	if _, err := unlimited.Commit(ctx, f.editor, b, copyOf("originals/1.png")); err != nil {
+	copied, err = unlimited.Commit(ctx, f.editor, b, uuid.NewString(), copyOf("originals/1.png"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if obj, err := f.env.Store.Head(ctx, one); err != nil || !obj.LastModified.After(old.LastModified) {
-		t.Fatalf("an unprotected blob was reused: %v %v", obj.LastModified, err)
+	next, _ := copied.Get("originals/1.png")
+	nextKey, _ := item.Blob(next.Blob)
+	if obj, err := f.env.Store.Head(ctx, nextKey); err != nil || next.Blob == page.Blob || !obj.LastModified.After(old.LastModified) {
+		t.Fatalf("copy reused the old allocation: %v %v", obj, err)
 	}
 }
 
-// An editor view is named by its source, not its bytes: no upload may name
-// it, through presign's "exists" or a put.
+// An editor view owns its bytes but is not an upload: neither presign's
+// "exists" nor a put may adopt it.
 func TestEditorViewIsNotAnUpload(t *testing.T) {
 	f := newFixture(t)
 	f.visible(1)
 	ctx := context.Background()
 	g := f.ref("gallery", 1)
-	m := f.put(g, "cover.png", "image/png", png(1))
-	cover, _ := m.Get("cover.png")
-	view := f.reg.EditorView(cover)
-	item, _ := f.reg.Item(g)
-	key, _ := item.Blob(view)
-	if _, err := f.env.Store.Put(ctx, key, strings.NewReader("view"), 4, media.PutOptions{ContentType: "image/webp"}); err != nil {
-		t.Fatal(err)
-	}
-	p, err := f.up.Presign(ctx, f.editor, media.PresignRequest{Ref: g, Path: "originals/v.webp", Type: "image/webp", Size: 4, SHA256: mustSum(view)})
+	f.put(g, "cover.png", "image/png", png(1))
+	view := f.editorView(g, "cover.png")
+	p, err := f.up.Presign(ctx, f.editor, media.PresignRequest{Ref: g, Path: "originals/v.webp", Type: "image/webp", Size: 11, SHA256: mustSum(view)})
 	if err != nil || p.Exists || p.Blob == view {
 		t.Fatalf("presign offered an editor view: %+v %v", p, err)
 	}
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: "originals/v.webp", Blob: view}}); code(err) != media.CodeNotUploaded {
+	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: "originals/v.webp", Blob: view}}); code(err) != media.CodeNotUploaded {
 		t.Fatalf("a put naming an editor view: %v", err)
 	}
 }
@@ -494,7 +608,7 @@ func TestFrame(t *testing.T) {
 	f.visible(1)
 	v := f.ref("video", 1)
 	ctx := context.Background()
-	if _, err := f.up.Commit(ctx, f.editor, v, []media.Op{{Op: media.OpFrame, Path: "poster", Auto: true}}); code(err) != media.CodeNotFound {
+	if _, err := f.up.Commit(ctx, f.editor, v, uuid.NewString(), []media.Op{{Op: media.OpFrame, Path: "poster", Auto: true}}); code(err) != media.CodeNotFound {
 		t.Fatalf("frame without a video: %v", err)
 	}
 	f.put(v, "source.mp4", "video/mp4", []byte("video one"))
@@ -507,9 +621,11 @@ func TestFrame(t *testing.T) {
 		t.Fatalf("readiness %+v", r)
 	}
 	// The worker grabs it; a new video resets it.
+	frame := f.blob(v, []byte("frame"), "image/png")
 	if _, err := f.ms.EditExisting(ctx, v, func(m *media.Manifest) error {
 		i := m.Find("poster.png")
-		m.Files[i].Blob, m.Files[i].Size, m.Files[i].Frame.Of = blobOf([]byte("frame")), 5, blobOf([]byte("video one"))
+		source, _ := m.Get("source.mp4")
+		m.Files[i].Blob, m.Files[i].Size, m.Files[i].Frame.Of = frame, 5, source.Blob
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -518,7 +634,7 @@ func TestFrame(t *testing.T) {
 	if p, _ := m.Get("poster.png"); p.Blob != "" || p.Frame.T != 3.5 || p.Frame.Of != "" {
 		t.Fatalf("not grabbed again: %+v", p)
 	}
-	if _, err := f.up.Commit(ctx, f.editor, v, []media.Op{{Op: media.OpFrame, Path: "source", Auto: true}}); code(err) != media.CodeInvalid {
+	if _, err := f.up.Commit(ctx, f.editor, v, uuid.NewString(), []media.Op{{Op: media.OpFrame, Path: "source", Auto: true}}); code(err) != media.CodeInvalid {
 		t.Fatalf("frame into an upload without Frames: %v", err)
 	}
 	// An unattached video is not part of the item yet: no frame from it.
@@ -526,7 +642,7 @@ func TestFrame(t *testing.T) {
 	f.visible(2)
 	vp, vb := f.upload(u, "source.mp4", "video/mp4", []byte("video three"))
 	f.commit(u, media.Op{Op: media.OpPut, Path: vp, Blob: vb, Unattached: true})
-	if _, err := f.up.Commit(ctx, f.editor, u, []media.Op{{Op: media.OpFrame, Path: "poster", Auto: true}}); code(err) != media.CodeConflict {
+	if _, err := f.up.Commit(ctx, f.editor, u, uuid.NewString(), []media.Op{{Op: media.OpFrame, Path: "poster", Auto: true}}); code(err) != media.CodeConflict {
 		t.Fatalf("frame from an unattached video: %v", err)
 	}
 }
@@ -537,7 +653,7 @@ func TestCommitRateLimit(t *testing.T) {
 	f.visible(1)
 	g := f.ref("gallery", 1)
 	ctx := context.Background()
-	up, err := media.NewUploads(media.UploadOptions{Store: f.env.Store, Manifests: f.ms, Queue: f.q, Commits: media.RateLimit{PerSecond: 0.01, Burst: 2}})
+	up, err := media.NewUploads(media.UploadOptions{Store: f.env.Store, Manifests: f.ms, Commits: media.RateLimit{PerSecond: 0.01, Burst: 2}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -545,16 +661,16 @@ func TestCommitRateLimit(t *testing.T) {
 		return []media.Op{{Op: media.OpMeta, Meta: map[string]any{"title": fmt.Sprint(i)}}}
 	}
 	for i := range 3 {
-		_, err := up.Commit(ctx, f.editor, g, meta(i))
+		_, err := up.Commit(ctx, f.editor, g, uuid.NewString(), meta(i))
 		if i < 2 && err != nil || i == 2 && code(err) != media.CodeRate {
 			t.Fatalf("commit %d: %v", i, err)
 		}
 	}
-	if ue, _ := media.AsUploadError(func() error { _, err := up.Commit(ctx, f.editor, g, meta(3)); return err }()); ue == nil || ue.RetryAfter <= 0 {
+	if ue, _ := media.AsUploadError(func() error { _, err := up.Commit(ctx, f.editor, g, uuid.NewString(), meta(3)); return err }()); ue == nil || ue.RetryAfter <= 0 {
 		t.Fatalf("no retry-after: %+v", ue)
 	}
 	for i := range 3 {
-		if _, err := up.Commit(ctx, access.Actor{ID: "staff"}, g, meta(10+i)); err != nil {
+		if _, err := up.Commit(ctx, access.Actor{ID: "staff"}, g, uuid.NewString(), meta(10+i)); err != nil {
 			t.Fatalf("exempt commit %d: %v", i, err)
 		}
 	}
@@ -570,8 +686,9 @@ func TestMetaAndRegenerate(t *testing.T) {
 	f.put(g, "originals/1.png", "image/png", png(1))
 	f.produce(g)
 	ctx := context.Background()
+	zip := f.blob(g, []byte("zip"), "application/zip")
 	if _, err := f.ms.EditExisting(ctx, g, func(m *media.Manifest) error {
-		return m.SetOutputs("high/", "zip", []media.File{{Path: "download/pages.zip", Blob: blobOf([]byte("zip")), Type: "application/zip", FP: "x"}})
+		return m.SetOutputs("high/", "zip", []media.File{{Path: "download/pages.zip", Blob: zip, Type: "application/zip", FP: "x"}})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -581,16 +698,16 @@ func TestMetaAndRegenerate(t *testing.T) {
 	}
 	f.q.take()
 	// Forcing rewrites and purges everything: exempt (staff) grants only.
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpRegenerate, Preset: "thumb", Force: true}}); code(err) != media.CodeForbidden {
+	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpRegenerate, Preset: "thumb", Force: true}}); code(err) != media.CodeForbidden {
 		t.Fatalf("a writer forced regeneration: %v", err)
 	}
-	if _, err := f.up.Commit(ctx, access.Actor{ID: "staff"}, g, []media.Op{{Op: media.OpRegenerate, Preset: "thumb", Force: true}}); err != nil {
+	if _, err := f.up.Commit(ctx, access.Actor{ID: "staff"}, g, uuid.NewString(), []media.Op{{Op: media.OpRegenerate, Preset: "thumb", Force: true}}); err != nil {
 		t.Fatal(err)
 	}
 	if jobs := f.q.take(); len(jobs) != 1 || jobs[0].Preset != "thumb" || !jobs[0].Force {
 		t.Fatalf("regenerate enqueued %+v", jobs)
 	}
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpRegenerate, Preset: "nope"}}); code(err) != media.CodeNotFound {
+	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpRegenerate, Preset: "nope"}}); code(err) != media.CodeNotFound {
 		t.Fatalf("an unknown preset: %v", err)
 	}
 }
@@ -605,19 +722,19 @@ func TestCommitVerifiesBlobs(t *testing.T) {
 	ctx := context.Background()
 	missing := blobOf([]byte("never uploaded"))
 	staged := media.NewStaged()
-	_, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: "originals/1.png", Blob: missing},
+	_, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: "originals/1.png", Blob: missing},
 		{Op: media.OpPut, Path: "originals/2.png", Blob: staged}})
 	var ue *media.UploadError
 	if !errors.As(err, &ue) || ue.Code != media.CodeNotUploaded || !reflect.DeepEqual(ue.Blobs, []string{missing, staged}) {
 		t.Fatalf("not uploaded: %v", err)
 	}
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: "originals/1.png", Blob: "u-not-a-uuid"}}); code(err) != media.CodeInvalid {
+	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: "originals/1.png", Blob: "u-not-a-uuid"}}); code(err) != media.CodeInvalid {
 		t.Fatalf("a malformed staged name: %v", err)
 	}
 	f.put(g, "originals/1.png", "image/png", png(1))
 	sum := sha256.Sum256(png(1))
 	p, err := f.up.Presign(ctx, f.editor, media.PresignRequest{Ref: g, Path: "originals/again.png", Type: "image/png", Size: int64(len(png(1))), SHA256: sum[:]})
-	if err != nil || !p.Exists || p.Put != nil || p.Blob != blobOf(png(1)) {
+	if err != nil || !p.Exists || p.Put != nil || !matchesBlob(p.Blob, png(1)) || p.Blob != f.fileBlob(g, "originals/1.png") {
 		t.Fatalf("exists: %+v %v", p, err)
 	}
 	if m := f.commit(g, media.Op{Op: media.OpPut, Path: p.Path, Blob: p.Blob}); m.Find(p.Path) < 0 {
@@ -639,7 +756,7 @@ func TestNamedAndHiddenNewItem(t *testing.T) {
 	if u, _ := m.Get(p); !m.Hidden || u.Pending != nil {
 		t.Fatalf("hidden new item: hidden %v pending %v", m.Hidden, u.Pending)
 	}
-	if _, err := f.up.Commit(context.Background(), f.editor, post, []media.Op{{Op: media.OpPut, Path: "inline/mine.png", Blob: blobOf(png(1))}}); code(err) != media.CodeInvalid {
+	if _, err := f.up.Commit(context.Background(), f.editor, post, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: "inline/mine.png", Blob: f.fileBlob(post, p)}}); code(err) != media.CodeInvalid {
 		t.Fatalf("a client-chosen name: %v", err)
 	}
 }
@@ -669,10 +786,10 @@ func TestIngest(t *testing.T) {
 		t.Fatalf("single ingest %+v %v", small, err)
 	}
 	m := f.place(g)
-	if u, _ := m.Get("import/legacy.zip"); u.Blob != blobOf(body) || u.Staged != "" {
+	if u, _ := m.Get("import/legacy.zip"); !matchesBlob(u.Blob, body) || u.Staged != "" {
 		t.Fatalf("placed %+v", u)
 	}
-	if u, _ := m.Get("originals/1.png"); u.Blob != blobOf(png(1)) {
+	if u, _ := m.Get("originals/1.png"); !matchesBlob(u.Blob, png(1)) {
 		t.Fatalf("placed %+v", u)
 	}
 	item, _ := f.reg.Item(g)

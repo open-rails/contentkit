@@ -2,7 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { UploadClient, UploadQueue, fetchTransport, fill, publicURL, stem, type Op, type QueueSnapshot, type Transport, type UploadState } from "../src/index.js";
+import { UploadClient, UploadQueue, fetchTransport, type Op, type QueueSnapshot, type Transport, type UploadState } from "../src/index.js";
 import { bytes } from "./fake.js";
 import { KillProxy, startServer, stopServer } from "./server.js";
 
@@ -13,6 +13,7 @@ const hex = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 const png = (seed: number, n = 3000) => new File([bytes(n, seed)], `${seed}.png`, { type: "image/png" });
 const put = (up: { path: string; blob: string }): Op => ({ op: "put", path: up.path, blob: up.blob });
 const STAGED = /^u-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const ALLOCATION = /^sha256-[0-9a-f]{64}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handlers", () => {
   let proxy: KillProxy;
@@ -48,6 +49,13 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
     return res.ok ? ((await res.json()) as { size: number; sha256: string }) : null;
   }
 
+  async function publicNames(ref: { kind: string; id: string }, preset: string) {
+    const read = await client().read(ref, { editor: true });
+    const image = read.public?.find((p) => p.preset === preset);
+    expect(image).toBeDefined();
+    return image!.renditions.map((r) => new URL(r.url).pathname.split("/").at(-1)!);
+  }
+
   it("stages a page, commits it, and reads the placed blob's derived file as a viewer", async () => {
     const ref = { kind: "gallery", id: id(1) };
     const body = bytes(4096, 7);
@@ -59,14 +67,17 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
     expect(files).toMatchObject([{ path: "originals/001.png", type: "image/png", size: 4096, upload: true, staged: true, pending: ["low"] }]);
     const done = await c.waitFor(ref, "originals/001.png", { interval: 100 });
     expect([done.pending, done.staged]).toEqual([undefined, undefined]);
-    // Placed at the hash of its bytes: an identical upload now exists.
-    expect(await c.upload(file, { ref, path: "originals/001.png" })).toMatchObject({ exists: true, blob: `sha256-${hex(body)}` });
+    // The current identical allocation is returned, rather than uploaded again.
+    const again = await c.upload(file, { ref, path: "originals/001.png" });
+    expect(again).toMatchObject({ exists: true, blob: expect.stringMatching(ALLOCATION) });
+    expect(again.blob.startsWith(`sha256-${hex(body)}-`)).toBe(true);
+    expect((await c.upload(file, { ref, path: "originals/001.png" })).blob).toBe(again.blob);
 
     // A viewer gets the derived page, signed; the upload itself is never served.
     const read = await client({ actor: "reader" }).read(ref);
     expect(read).toMatchObject({ access: "full", total: 1 });
     expect(read.files).toEqual([
-      expect.objectContaining({ path: "low-res/001.webp", url: expect.stringMatching(new RegExp(`^http://media\\.invalid/v1/${namespace}/gallery/${ref.id}/private/sha256-${hex(body)}\\?t=`)) }),
+      expect.objectContaining({ path: "low-res/001.webp", url: expect.stringMatching(new RegExp(`^http://media\\.invalid/v1/${namespace}/gallery/${ref.id}/private/${again.blob}\\?t=`)) }),
     ]);
     expect(await stored(ref, "low-res/001.webp")).toEqual({ size: 4096, sha256: hex(body) });
 
@@ -77,12 +88,12 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
 
   it("names an inline upload on the server and writes its public file", async () => {
     const ref = { kind: "post", id: id(3) };
-    const body = bytes(2048, 9);
+    const body = readFileSync(new URL("../e2e/fixtures/small.png", import.meta.url));
     const f = await client().put(new File([body], "i.png", { type: "image/png" }), { ref, path: "inline/x.png" });
     expect(f.path).toMatch(/^inline\/i-[0-9a-f-]{36}\.png$/);
-    const name = fill("{name}.webp", { name: stem(f.path).slice("inline/".length) });
-    expect(publicURL("http://media.invalid", namespace, "post", ref.id, name)).toBe(`http://media.invalid/v1/${namespace}/post/${ref.id}/public/${name}`);
-    expect(await stored(ref, name, "public")).toEqual({ size: 2048, sha256: hex(body) });
+    const [name] = await publicNames(ref, "inline");
+    expect(name).toMatch(/-[0-9a-f-]{36}\.webp$/);
+    expect(await stored(ref, name!, "public")).toEqual({ size: body.length, sha256: hex(body) });
   });
 
   it("edits, renames, moves and removes uploads, and refuses more than the upload's cap", async () => {
@@ -105,8 +116,29 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
     const refused = await c.commit(ref, [put(third)]).catch((e) => e);
     expect([refused.code, refused.status, refused.isCeiling]).toEqual(["too_many_files", 409, true]);
 
-    files = await c.commit(ref, [{ op: "remove", path: "originals/first.png" }]);
+    let lost = false;
+    const requests: string[] = [];
+    const recovering = new UploadClient({
+      endpoint: `${base}/upload`, headers: () => ({ "X-Test-Actor": "alice" }), retryDelay: () => 100,
+      fetch: async (input, init) => {
+        requests.push(String(init?.body));
+        const res = await fetch(input, init);
+        if (!lost && res.ok) {
+          lost = true;
+          await res.body?.cancel();
+          throw new Error("lost successful commit response");
+        }
+        return res;
+      },
+    });
+    const operationID = crypto.randomUUID();
+    const removal: Op[] = [{ op: "remove", path: "originals/first.png" }];
+    files = await recovering.commit(ref, removal, { operationID });
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toBe(requests[1]);
     expect(files.map((f) => f.path)).toEqual(["originals/b.png"]);
+    expect(await c.commit(ref, removal, { operationID })).toEqual(files);
+    expect((await c.commit(ref, [{ op: "remove", path: "originals/b.png" }], { operationID }).catch((e) => e)).code).toBe("conflict");
     expect((await c.commit(ref, [{ op: "remove", path: "originals/first.png" }]).catch((e) => e)).code).toBe("not_found");
   });
 
@@ -123,7 +155,9 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
     const f = await c.put(new File([image], "cover.png", { type: "image/png" }), { ref, path: "cover", edit: { crop: { x: 0, y: 40, w: 360, h: 7 } } });
     expect(f).toMatchObject({ path: "cover.png", w: 360, h: 240, edit: { crop: { x: 0, y: 40, w: 360, h: 120 } } });
     expect(puts).toHaveLength(1);
-    for (const w of [230, 460]) expect(await stored(ref, `cover-${w}.webp`, "public")).toEqual({ size: image.length, sha256: hex(image) });
+    const oldNames = await publicNames(ref, "cover");
+    expect(oldNames).toHaveLength(2);
+    for (const name of oldNames) expect(await stored(ref, name, "public")).toEqual({ size: image.length, sha256: hex(image) });
 
     // The first editor read asks the worker for the view; a later one has it.
     const view = await c.editorView(ref, "cover", { interval: 100, timeout: 20_000 });
@@ -133,31 +167,34 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
     const turned = { crop: { x: 100, y: 0, w: 80, h: 240 }, rotate: 90 };
     await c.commit(ref, [{ op: "edit", path: f.path, edit: turned }]);
     expect((await c.waitFor(ref, "cover", { interval: 100 })).edit).toEqual(turned);
+    const names = await publicNames(ref, "cover");
+    expect(names).toHaveLength(2);
+    expect(names.some((name) => oldNames.includes(name))).toBe(false);
+    for (const name of oldNames) expect(await stored(ref, name, "public")).toBeNull();
     expect(puts).toHaveLength(1);
     expect((await c.commit(ref, [{ op: "edit", path: f.path, edit: { rotate: 45 } }]).catch((e) => e)).code).toBe("invalid_request");
     expect((await c.commit(ref, [{ op: "edit", path: "banner", edit: turned }]).catch((e) => e)).code).toBe("not_found");
 
     // Removal confirms public cleanup before returning; retries are harmless.
     expect(await c.commit(ref, [{ op: "remove", path: f.path }])).toEqual([]);
-    for (const w of [230, 460]) expect(await stored(ref, `cover-${w}.webp`, "public")).toBeNull();
+    for (const name of names) expect(await stored(ref, name, "public")).toBeNull();
     expect((await c.editorView(ref, "cover").catch((e) => e)).code).toBe("not_found");
     expect(await c.commit(ref, [{ op: "remove", path: f.path }])).toEqual([]);
   });
 
   it("uploads a stale blob again when commit refuses it", async () => {
-    // The server's sweep grace is 20 s: presign offers an unreferenced blob as
-    // existing while it is fresh, and commit refuses it once it is 15 s old.
+    // Presign can reuse only a current allocation. Removing its last reference
+    // before commit makes the old offer unusable, regardless of object age.
     const ref = { kind: "gallery", id: id(2) };
     const file = png(8, 2048);
     const c = client();
     await c.put(file, { ref, path: "originals/001.png" });
-    await c.commit(ref, [{ op: "remove", path: "originals/001.png" }]);
     const up = await c.upload(file, { ref, path: "originals/002.png" });
-    expect(up).toMatchObject({ exists: true, blob: `sha256-${hex(bytes(2048, 8))}` });
-    await new Promise((r) => setTimeout(r, 17_000));
+    expect(up).toMatchObject({ exists: true, blob: expect.stringMatching(ALLOCATION) });
+    await c.commit(ref, [{ op: "remove", path: "originals/001.png" }]);
     const refused = await c.commit(ref, [put(up)]).catch((e) => e);
     expect([refused.code, refused.blobs]).toEqual(["not_uploaded", [up.blob]]);
-    // Uploaded again, staged, and placed at the same hash.
+    // Recovery stages the same bytes under a fresh allocation.
     const files = await c.commit(ref, [put(up)], { sources: { [up.blob]: file } });
     expect(files).toMatchObject([{ path: "originals/002.png", size: 2048 }]);
     await c.waitFor(ref, "originals/002.png", { interval: 100 });
@@ -197,7 +234,9 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
     expect(files).toMatchObject([{ path: "source.mp4", size: body.length }]);
     await c.waitFor(ref, "source", { interval: 100 });
     expect(await stored(ref, "source")).toEqual({ size: body.length, sha256: hex(body) });
-    expect(await c.upload(file, { ref, path: "source" })).toMatchObject({ exists: true, blob: `sha256-${hex(body)}` });
+    const again = await c.upload(file, { ref, path: "source" });
+    expect(again).toMatchObject({ exists: true, blob: expect.stringMatching(ALLOCATION) });
+    expect(again.blob.startsWith(`sha256-${hex(body)}-`)).toBe(true);
   });
 
   it("grabs a still of a video, sets the poster from a frame, then lets the worker choose", async () => {
@@ -211,7 +250,8 @@ describe.skipIf(!endpoint)("uploads and reads against MinIO and the media handle
     await c.commit(ref, [{ op: "frame", path: "poster", t: 1.5 }]);
     const poster = await c.waitFor(ref, "poster", { interval: 100 });
     expect(poster).toMatchObject({ path: "poster.png", type: "image/png", w: 64, h: 36, frame: { t: 1.5 } });
-    expect(await stored(ref, "poster-640.webp", "public")).toMatchObject({ size: poster.size });
+    const [name] = await publicNames(ref, "poster");
+    expect(await stored(ref, name!, "public")).toMatchObject({ size: poster.size });
 
     await c.commit(ref, [{ op: "frame", path: "poster", auto: true }]);
     expect((await c.waitFor(ref, "poster", { interval: 100 })).frame).toMatchObject({ auto: true });

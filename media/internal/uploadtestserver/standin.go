@@ -15,8 +15,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/riverqueue/river"
+
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
+	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 // standIn is the media worker's stand-in: a job runs shortly after it is
@@ -32,6 +36,34 @@ type standIn struct {
 }
 
 const standInRecipe = "stand-in"
+
+// Commit jobs are delivered by real River transactions; only encoding is a stand-in.
+type placeWorker struct {
+	river.WorkerDefaults[workqueue.PlaceArgs]
+	worker *standIn
+}
+
+func (w *placeWorker) Work(ctx context.Context, job *river.Job[workqueue.PlaceArgs]) error {
+	return w.worker.process(ctx, media.ProcessJob{Ref: job.Args.Ref, Preset: job.Args.Preset, Force: job.Args.Force, Place: true})
+}
+
+type imageWorker struct {
+	river.WorkerDefaults[workqueue.ImageArgs]
+	worker *standIn
+}
+
+func (w *imageWorker) Work(ctx context.Context, job *river.Job[workqueue.ImageArgs]) error {
+	return w.worker.process(ctx, media.ProcessJob{Ref: job.Args.Ref, Preset: job.Args.Preset, Force: job.Args.Force, Editor: job.Args.Editor})
+}
+
+type videoWorker struct {
+	river.WorkerDefaults[workqueue.VideoPlanArgs]
+	worker *standIn
+}
+
+func (w *videoWorker) Work(ctx context.Context, job *river.Job[workqueue.VideoPlanArgs]) error {
+	return w.worker.process(ctx, media.ProcessJob{Ref: job.Args.Ref, Preset: job.Args.Preset, Force: job.Args.Force})
+}
 
 func (w *standIn) Enqueue(_ context.Context, j media.ProcessJob) error {
 	w.wg.Add(1)
@@ -72,33 +104,53 @@ func (w *standIn) process(ctx context.Context, j media.ProcessJob) error {
 		return err
 	}
 	k := item.Kind()
+	snapshot, _, err := w.manifests.Get(ctx, j.Ref)
+	if errors.Is(err, media.ErrNotFound) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	frames := map[string]media.File{}
+	editors := map[string]*media.EditorImage{}
+	for _, f := range snapshot.Files {
+		if !f.IsUpload() || f.Gone {
+			continue
+		}
+		if f.Frame != nil && f.Blob == "" {
+			if f, err = w.grab(ctx, item, snapshot, f); err != nil {
+				return err
+			}
+			frames[f.Path] = f
+		}
+		if fp := w.reg.EditorFingerprint(f); j.Editor && fp != "" && w.reg.EditorView(f) == "" {
+			sum, _ := layout.BlobDigest(f.Blob)
+			view, err := w.manifests.NewBlob(ctx, item.Ref(), sum)
+			if err != nil {
+				return err
+			}
+			if err := w.copy(ctx, item, f.Blob, item.PrivatePrefix()+view); err != nil {
+				return err
+			}
+			editors[f.Path] = &media.EditorImage{Blob: view, FP: fp}
+		}
+	}
 	_, err = w.manifests.EditExisting(ctx, j.Ref, func(m *media.Manifest) error {
-		public := map[string]bool{}
 		for _, f := range slices.Clone(m.Files) {
 			if !f.IsUpload() || f.Gone {
 				continue
 			}
+			if frame, ok := frames[f.Path]; ok {
+				original, exists := snapshot.Get(f.Path)
+				if !exists || f.Key() != original.Key() || f.Frame == nil || *f.Frame != *original.Frame || w.video(k, m, f) != frame.Frame.Of {
+					continue
+				}
+				f.Blob, f.Type, f.Size, f.W, f.H, f.Frame = frame.Blob, frame.Type, frame.Size, frame.W, frame.H, frame.Frame
+			}
 			if f, err = w.settle(ctx, item, m, f); err != nil {
 				return err
 			}
-			if view := w.reg.EditorView(f); j.Editor && view != "" {
-				if err := w.copy(ctx, item, f.Blob, item.PrivatePrefix()+view); err != nil {
-					return err
-				}
-			}
-		}
-		// Public names no upload feeds any more go, as the worker's sync does.
-		for _, name := range k.PublicKept(m) {
-			public[name] = true
-		}
-		for o, err := range w.store.List(ctx, item.PublicPrefix()) {
-			if err != nil {
-				return err
-			}
-			if !public[strings.TrimPrefix(o.Key, item.PublicPrefix())] {
-				if err := w.store.Delete(ctx, o.Key); err != nil {
-					return err
-				}
+			if editor := editors[f.Path]; editor != nil && editor.FP == w.reg.EditorFingerprint(f) {
+				m.Files[m.Find(f.Path)].Editor = editor
 			}
 		}
 		return nil
@@ -106,26 +158,36 @@ func (w *standIn) process(ctx context.Context, j media.ProcessJob) error {
 	if errors.Is(err, media.ErrNotFound) {
 		return nil
 	}
+	if err == nil {
+		_, err = w.manifests.SyncPublic(ctx, j.Ref)
+	}
 	return err
 }
 
-// settle grabs, measures and renders upload f in m.
+// grab allocates and writes the frame before the closing manifest edit.
+func (w *standIn) grab(ctx context.Context, item media.Item, m *media.Manifest, f media.File) (media.File, error) {
+	var b bytes.Buffer
+	if err := png.Encode(&b, flat(64, 36, uint8(f.Frame.T))); err != nil {
+		return f, err
+	}
+	sum := sha256.Sum256(b.Bytes())
+	blob, err := w.manifests.NewBlob(ctx, item.Ref(), sum[:])
+	if err != nil {
+		return f, err
+	}
+	f.Blob, f.Type, f.Size, f.W, f.H = blob, "image/png", int64(b.Len()), 64, 36
+	f.Frame = &media.Frame{T: f.Frame.T, Auto: f.Frame.Auto, Of: w.video(item.Kind(), m, f)}
+	key, _ := item.Blob(f.Blob)
+	if _, err := w.store.Put(ctx, key, bytes.NewReader(b.Bytes()), f.Size, media.PutOptions{ContentType: f.Type}); err != nil {
+		return f, err
+	}
+	return f, nil
+}
+
+// settle measures and renders an already allocated upload in m.
 func (w *standIn) settle(ctx context.Context, item media.Item, m *media.Manifest, f media.File) (media.File, error) {
 	k := item.Kind()
 	i := m.Find(f.Path)
-	if f.Frame != nil && f.Blob == "" {
-		var b bytes.Buffer
-		if err := png.Encode(&b, flat(64, 36, uint8(f.Frame.T))); err != nil {
-			return f, err
-		}
-		sum := sha256.Sum256(b.Bytes())
-		f.Blob, f.Type, f.Size, f.W, f.H = layout.SHA256Name(sum[:]), "image/png", int64(b.Len()), 64, 36
-		f.Frame = &media.Frame{T: f.Frame.T, Auto: f.Frame.Auto, Of: w.video(k, m, f)}
-		key, _ := item.Blob(f.Blob)
-		if _, err := w.store.Put(ctx, key, bytes.NewReader(b.Bytes()), f.Size, media.PutOptions{ContentType: f.Type}); err != nil {
-			return f, err
-		}
-	}
 	if f.Blob == "" {
 		return f, nil
 	}
@@ -158,11 +220,21 @@ func (w *standIn) settle(ctx context.Context, item media.Item, m *media.Manifest
 		if !slices.Contains(f.Pending, p.Name) {
 			continue
 		}
-		for _, name := range k.PublicNames(m, p, f.Path) {
+		names := k.PublicNames(m, p, f.Path)
+		if len(names) == 0 || m.Hidden || f.Unattached {
+			continue
+		}
+		pub := media.Publication{Preset: p.Name, Source: f.Key(), FP: standInRecipe, Generation: uuid.NewString(),
+			Names: names, Dims: make([]media.Dims, len(names)), State: media.PublicationReady}
+		for i := range pub.Dims {
+			pub.Dims[i] = media.Dims{W: f.W, H: f.H}
+		}
+		for _, name := range pub.NamesOnDisk() {
 			if err := w.copy(ctx, item, f.Blob, item.PublicPrefix()+name); err != nil {
 				return f, err
 			}
 		}
+		m.SetPublication(f.Path, pub)
 		m.ClearPending(f.Path, p.Name)
 	}
 	return m.Files[m.Find(f.Path)], nil

@@ -17,9 +17,8 @@ import (
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 )
 
-// A host builds media with the bucket down: construction never dials, reads
-// and edits fail with ErrUnavailable (503 over HTTP), and everything works
-// once the bucket answers and Check has probed its capabilities.
+// Construction never dials. Writes require a successful capability probe;
+// once qualified, storage outages still return ErrUnavailable.
 func TestStoreOutage(t *testing.T) {
 	env := s3test.Open(t)
 	proxy := tcpproxy.New(t, env.Config.Endpoint)
@@ -38,7 +37,7 @@ func TestStoreOutage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ms, err := media.NewManifests(store, kinds, media.ManifestOptions{Locker: media.PGLocker(pgtest.Pool(t, nil))})
+	ms, err := media.NewManifests(store, kinds, media.ManifestOptions{Locker: media.PGLocker(pgtest.Pool(t, nil)), Journal: env.Journal()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,9 +61,10 @@ func TestStoreOutage(t *testing.T) {
 	}
 	ctx := context.Background()
 	ref := contentref.New(env.Tenant, "gallery", cid(1))
+	name := ""
 	edit := func() error {
 		_, err := ms.Edit(ctx, ref, func(m *media.Manifest) error {
-			m.Files = []media.File{{Path: "originals/a.jpg", Blob: blobOf([]byte("a")), Type: "image/jpeg"}}
+			m.Files = []media.File{{Path: "originals/a.jpg", Blob: name, Type: "image/jpeg"}}
 			return nil
 		})
 		return err
@@ -76,8 +76,8 @@ func TestStoreOutage(t *testing.T) {
 	if store.Capabilities() != (media.Capabilities{}) {
 		t.Fatalf("capabilities before a probe: %+v", store.Capabilities())
 	}
-	if err := edit(); !errors.Is(err, media.ErrUnavailable) {
-		t.Fatalf("edit while down: %v", err)
+	if err := edit(); !errors.Is(err, media.ErrConditionalPutRequired) {
+		t.Fatalf("edit before capability probe: %v", err)
 	}
 	if status, code := get(); status != http.StatusServiceUnavailable || code != "unavailable" {
 		t.Fatalf("read while down: %d %q", status, code)
@@ -90,12 +90,24 @@ func TestStoreOutage(t *testing.T) {
 	if got, want := store.Capabilities(), env.Store.Capabilities(); got != want {
 		t.Fatalf("probed capabilities %+v, want %+v", got, want)
 	}
+	name, err = ms.NewBlob(ctx, ref, mustSum(blobOf([]byte("a"))))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := edit(); err != nil {
 		t.Fatal(err)
 	}
 	if status, _ := get(); status != http.StatusOK {
 		t.Fatalf("read after recovery: %d", status)
 	}
+	proxy.Down()
+	if err := edit(); !errors.Is(err, media.ErrUnavailable) {
+		t.Fatalf("qualified edit while down: %v", err)
+	}
+	if status, code := get(); status != http.StatusServiceUnavailable || code != "unavailable" {
+		t.Fatalf("qualified read while down: %d %q", status, code)
+	}
+	proxy.Up(t)
 	if err := store.Check(ctx, env.Tenant+"/"); err != nil {
 		t.Fatalf("health check once probed: %v", err)
 	}

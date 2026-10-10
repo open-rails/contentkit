@@ -12,7 +12,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 // placeConcurrency bounds the staged uploads one Place reads at once; each
@@ -20,15 +19,14 @@ import (
 const placeConcurrency = 4
 
 // Place moves ref's staged uploads (temp/u-{uuid}) to their content
-// addresses, private/sha256-{hex} of the bytes the server read, and returns
+// allocations, private/sha256-{hex}-{uuid} of the bytes the server read, and returns
 // how many files it placed. The media worker runs it before processing:
 //
 //  1. read each staged upload, hashing it. A single PUT (at most
 //     MaxSinglePut, the only kind a client can send again while its URL
 //     lives) is written from the bytes that were hashed; a multipart upload,
 //     fixed once completed, is copied server-side while its ETag is the one
-//     read. Neither is written when the blob exists: a blob is never
-//     overwritten, so its bytes always hash to its name;
+//     read. Each write has a new allocation, so no existing file is overwritten;
 //  2. point the files at their blobs in one edit, which checks under the
 //     folder lock (the sweep holds it too) that each blob still exists;
 //  3. delete the staged objects no manifest references, and, in that
@@ -97,8 +95,8 @@ func (m *Manifests) Place(ctx context.Context, ref contentref.ContentRef) (int, 
 				failed = append(failed, f.Path)
 				continue
 			}
-			// A sweep run since the check above may have taken an existing
-			// blob; the next run writes it again.
+			// A sweep since the write may have retired the allocation; the
+			// next run writes a fresh one.
 			key, _ := item.Blob(blob)
 			if _, err := m.store.Head(ctx, key); err != nil {
 				return fmt.Errorf("media: place %s: %w", key, err)
@@ -164,13 +162,11 @@ func (m *Manifests) placeOne(ctx context.Context, item Item, name string, size i
 		return "", err
 	}
 	sum := h.Sum(nil)
-	blob := layout.SHA256Name(sum)
-	dst, _ := item.Blob(blob)
-	if _, err := m.store.Head(ctx, dst); err == nil {
-		return blob, nil
-	} else if !errors.Is(err, ErrNotFound) {
+	blob, err := m.NewBlob(ctx, item.Ref(), sum)
+	if err != nil {
 		return "", err
 	}
+	dst, _ := item.Blob(blob)
 	if body != nil {
 		opts := PutOptions{ContentType: obj.ContentType, ChecksumSHA256: sum}
 		if m.store.Capabilities().ConditionalPut {
@@ -190,28 +186,12 @@ func (m *Manifests) placeOne(ctx context.Context, item Item, name string, size i
 // references, under the folder lock, so a commit naming one either sees it
 // gone or keeps it.
 func (m *Manifests) dropStaged(ctx context.Context, item Item, names map[string]string) error {
-	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	keep := map[string]bool{}
-	if man, _, err := m.get(ctx, item.ManifestKey()); err == nil {
-		for _, s := range man.StagedNames() {
-			keep[s] = true
+	return m.cleanup(ctx, item, false, func(cur *Manifest, _ bool) (journalEffects, error) {
+		staged := make([]string, 0, len(names))
+		for name := range names {
+			staged = append(staged, name)
 		}
-	} else if !errors.Is(err, ErrNotFound) {
-		return err
-	}
-	var errs []error
-	for name := range names {
-		if keep[name] {
-			continue
-		}
-		key, _ := item.Staged(name)
-		if err := m.store.Delete(ctx, key); err != nil && !errors.Is(err, ErrNotFound) {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
+		keys, err := m.unreferenced(ctx, item, cur, Unreferenced{Staged: staged})
+		return journalEffects{Private: keys}, err
+	})
 }

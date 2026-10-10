@@ -5,10 +5,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	riverhelpers "github.com/open-rails/helpers/river"
+	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/internal/s3test"
 )
 
 // An upload commit settles quota inside the manifest edit. Under the PGLocker
@@ -53,5 +57,43 @@ func TestPGLockerLeavesPoolToTheEdit(t *testing.T) {
 	used, _, err := limiter.Usage(ctx, "t", "u")
 	if err != nil || used != 10 {
 		t.Fatalf("used=%d err=%v", used, err)
+	}
+}
+
+func TestDeleteItemsTxWithSingleConnectionPool(t *testing.T) {
+	env := s3test.Open(t)
+	pool := pgtest.Pool(t, func(c *pgxpool.Config) { c.MaxConns = 1 })
+	schema := pgtest.Schema(t, t.Context(), pool)
+	journal, err := media.NewPGJournal(pool, schema, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := miniRegistry(t, env.Tenant)
+	jobs, err := media.NewJobs(media.JobsConfig{Store: env.Store, Registry: reg, Locker: media.PGLocker(pool), Journal: journal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	riverSchema := pgtest.EmptySchema(t, t.Context(), pool)
+	if err := riverhelpers.ApplyMigrations(t.Context(), pool, riverSchema); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := riverhelpers.New(t.Context(), pool, &river.Config{Schema: riverSchema}, jobs.RiverJobs()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	ref, _ := reg.Ref("post", cid(7))
+	if err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		return jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref: ref})
+	}); err != nil {
+		t.Fatalf("delete empty item while the host transaction holds the only pooled connection: %v", err)
+	}
+	cur, _, err := jobs.Manifests().Get(ctx, ref)
+	if err != nil || cur.Incarnation == "" || !cur.Hidden || len(cur.Files) != 0 {
+		t.Fatalf("empty deletion lifetime was not captured: %+v %v", cur, err)
+	}
+	var incarnation string
+	if err := pool.QueryRow(ctx, "SELECT args->>'incarnation' FROM "+pgx.Identifier{riverSchema, "river_job"}.Sanitize()+" WHERE kind='contentkit_media_delete_folder'").Scan(&incarnation); err != nil || incarnation != cur.Incarnation {
+		t.Fatalf("queued wrong incarnation: %q %v", incarnation, err)
 	}
 }

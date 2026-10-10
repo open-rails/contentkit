@@ -275,16 +275,46 @@ func VideoPlanInsertOpts(class media.VideoJobClass) *river.InsertOpts {
 	return &river.InsertOpts{Queue: VideoLightQueue, Priority: priority, MaxAttempts: VideoRiverMaxAttempts}
 }
 
-// Cancel cancels ref's queued and running image and video jobs, every stage:
-// a running job's context is cancelled, so an encode is killed and publishes
-// nothing further. It returns how many jobs it cancelled.
+// Cancel cancels ref's queued and running image and video jobs, every stage.
+// Running workers stop cooperatively after commit; cancellation alone does
+// not fence writes already in flight. It returns how many jobs it cancelled.
 func (q *Queue) Cancel(ctx context.Context, ref contentref.ContentRef) (int, error) {
+	var count int
+	err := pgx.BeginFunc(ctx, q.pool, func(tx pgx.Tx) error {
+		var err error
+		count, err = q.CancelTx(ctx, tx, ref)
+		return err
+	})
+	return count, err
+}
+
+// CancelTx cancels jobs and encode runs in the caller's transaction. River's
+// cancellation notification is delivered only after commit. A recovery
+// receipt and replacement EnqueueTx can be written in this same transaction.
+func (q *Queue) CancelTx(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef) (int, error) {
 	match, err := RefMatch(ref)
 	if err != nil {
 		return 0, err
 	}
-	rows, err := q.pool.Query(ctx, `SELECT id FROM `+jobs(q.schema)+`
-WHERE kind = ANY($1) AND args @> $2 AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled')`,
+	refJSON, err := json.Marshal(ref)
+	if err != nil {
+		return 0, err
+	}
+	// Chunk completion locks its run before completing the River job. Taking
+	// the same order here avoids a deadlock with a finishing worker.
+	runs := pgx.Identifier{q.schema, "encode_run"}.Sanitize()
+	if _, err := tx.Exec(ctx, `WITH targets AS MATERIALIZED (
+SELECT id FROM `+runs+`
+WHERE ref = $1 AND state IN ('planned', 'encoding', 'assembling')
+ORDER BY file_name, source_name, source_etag, spec, rung, id FOR UPDATE
+)
+UPDATE `+runs+` AS r SET state = 'cancelled', updated_at = now()
+FROM targets WHERE r.id = targets.id`, refJSON); err != nil {
+		return 0, err
+	}
+	rows, err := tx.Query(ctx, `SELECT id FROM `+jobs(q.schema)+`
+WHERE kind = ANY($1) AND args @> $2 AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
+ORDER BY id`,
 		append([]string{ImageArgs{}.Kind()}, EncodeKinds...), match)
 	if err != nil {
 		return 0, err
@@ -294,19 +324,9 @@ WHERE kind = ANY($1) AND args @> $2 AND state IN ('available', 'pending', 'retry
 		return 0, err
 	}
 	for _, id := range ids {
-		if _, err := q.client.JobCancel(ctx, id); err != nil && !errors.Is(err, river.ErrNotFound) {
+		if _, err := q.client.JobCancelTx(ctx, tx, id); err != nil && !errors.Is(err, river.ErrNotFound) {
 			return 0, err
 		}
-	}
-	refJSON, err := json.Marshal(ref)
-	if err != nil {
-		return 0, err
-	}
-	_, err = q.pool.Exec(ctx, `UPDATE `+pgx.Identifier{q.schema, "encode_run"}.Sanitize()+`
-SET state = 'cancelled', updated_at = now()
-WHERE ref = $1 AND state IN ('planned', 'encoding', 'assembling')`, refJSON)
-	if err != nil {
-		return 0, err
 	}
 	return len(ids), nil
 }

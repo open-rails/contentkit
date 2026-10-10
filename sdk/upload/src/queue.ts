@@ -69,6 +69,7 @@ export class UploadQueue {
   private staging = new Map<string, Promise<FileInfo | undefined>>();
   private poll?: ReturnType<typeof setTimeout>;
   private disposed = false;
+  private batch?: { input: string; operationID: string };
 
   constructor(
     private readonly client: UploadClient,
@@ -195,7 +196,29 @@ export class UploadQueue {
       return i.result!.processOnUpload ? [put, attach] : [put];
     });
     const sources = Object.fromEntries(ready.map((i) => [i.result!.blob, { file: i.file, type: i.result!.type }]));
-    const files = await this.client.commit(this.o.ref, ops, { signal, sources });
+    const input = JSON.stringify(ops);
+    if (this.batch?.input !== input) this.batch = { input, operationID: crypto.randomUUID() };
+    const batch = this.batch;
+    const files = await this.client.commit(this.o.ref, ops, {
+      signal,
+      sources,
+      operationID: batch.operationID,
+      onState: (body) => {
+        batch.input = JSON.stringify(body.ops);
+        batch.operationID = body.operation_id;
+        let changed = false;
+        for (const op of body.ops) {
+          if (op.op !== "put" || !op.blob) continue;
+          const original = ready.find((i) => i.id === op.create_id);
+          if (!original?.result) continue;
+          const current = this.find(original.id);
+          if (current?.result && current.result.blob === original.result.blob && current.result.blob !== op.blob) {
+            changed = this.set(current.id, { result: { ...current.result, blob: op.blob } }) || changed;
+          }
+        }
+        if (changed) this.changed();
+      },
+    });
     for (const i of ready) this.set(i.id, { status: "committed", unattached: false });
     this.changed();
     return files.filter((f) => !f.unattached);

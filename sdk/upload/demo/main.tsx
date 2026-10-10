@@ -77,13 +77,13 @@ function ChannelHeader() {
 }
 
 const video = { kind: "post", id: "0192f000-0000-7000-8000-000000000001" };
-const poster = server.image(video, "poster");
 server.seedVideo(video);
 await client.commit(video, [{ op: "frame", path: "poster", auto: true }]);
 await client.waitFor(video, "poster", { interval: 200 });
 
 function VideoCard() {
   const [open, setOpen] = useState(false);
+  const poster = server.image(video, "poster");
   return (
     <div data-demo="video" style={{ display: "grid", gap: 12 }}>
       <VideoPoster poster={poster} style={{ maxWidth: 360 }} />

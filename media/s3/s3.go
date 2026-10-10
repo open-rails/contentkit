@@ -38,7 +38,7 @@ type Config struct {
 	UsePathStyle    bool
 	// Capabilities of the backend as recorded for its release. Nil: Check
 	// probes them once the bucket answers; until then the store claims none
-	// (edits write unconditionally under the Locker, uploads rehash).
+	// (manifest edits and presigns are refused, uploads rehash).
 	Capabilities *media.Capabilities
 	// CopyPartSize is the part size of a multipart copy, used for objects
 	// larger than it; default MaxSingleCopy (tests set a few MiB).
@@ -214,6 +214,11 @@ func (s *Store) Copy(ctx context.Context, src, dst string, o media.CopyOptions) 
 		return media.Object{}, fmt.Errorf("%w: s3 copy %s: source changed", media.ErrPreconditionFailed, src)
 	}
 	source := s.bucket + "/" + src
+	return s.copy(ctx, source, dst, head)
+}
+
+func (s *Store) copy(ctx context.Context, source, dst string, head media.Object) (media.Object, error) {
+	src := head.Key
 	ifMatch := optional(head.ETag)
 	if head.Size <= s.part {
 		out, err := s.client.CopyObject(ctx, &s3.CopyObjectInput{Bucket: &s.bucket, Key: &dst, CopySource: &source, CopySourceIfMatch: ifMatch})

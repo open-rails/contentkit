@@ -167,12 +167,16 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 	if h.queue, err = workqueue.New(pool, h.reg, h.workers); err != nil {
 		t.Fatal(err)
 	}
+	journal, err := media.NewPGJournal(pool, env.ContentSchema(), h.queue)
+	if err != nil {
+		t.Fatal(err)
+	}
 	// The host's River: readiness, purges and sweeps the worker hands back run here.
 	h.schema = pgtest.EmptySchema(t, ctx, pool)
 	if err := riverhelpers.ApplyMigrations(ctx, pool, h.schema); err != nil {
 		t.Fatal(err)
 	}
-	if h.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: h.reg, Locker: s3test.Locker(t, env.Store), Pool: pool, Processes: h.queue}); err != nil {
+	if h.jobs, err = media.NewJobs(media.JobsConfig{Store: env.Store, Registry: h.reg, Locker: s3test.Locker(t, env.Store), Journal: journal, Pool: pool, Processes: h.queue}); err != nil {
 		t.Fatal(err)
 	}
 	client, err := riverhelpers.New(ctx, pool, &river.Config{Schema: h.schema, FetchPollInterval: 100 * time.Millisecond,
@@ -189,7 +193,7 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 		_ = client.StopAndCancel(ctx)
 	})
 	h.ms = h.jobs.Manifests()
-	if h.uploads, err = media.NewUploads(media.UploadOptions{Store: env.Store, Manifests: h.ms, Queue: h.queue}); err != nil {
+	if h.uploads, err = media.NewUploads(media.UploadOptions{Store: env.Store, Manifests: h.ms}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -198,7 +202,7 @@ func newHostOn(t *testing.T, workerStore func(*s3test.Env) media.Store, riverHoo
 	if workerStore != nil {
 		store = workerStore(env)
 	}
-	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Schema: h.workers, Store: store, Kinds: h.reg, HostSchema: h.schema,
+	h.worker, err = worker.New(ctx, worker.Config{Pool: pool, Schema: h.workers, ContentSchema: env.ContentSchema(), Store: store, Kinds: h.reg, HostSchema: h.schema,
 		TempDir: t.TempDir(), Threads: 2, RiverHooks: riverHooks, ImageTimeout: imageTimeout})
 	if err != nil {
 		t.Fatal(err)
@@ -251,7 +255,7 @@ func (h *host) stage(t *testing.T, ref contentref.ContentRef, path, typ string, 
 
 func (h *host) commit(t *testing.T, ref contentref.ContentRef, ops ...media.Op) {
 	t.Helper()
-	if _, err := h.uploads.Commit(context.Background(), alice, ref, ops); err != nil {
+	if _, err := h.uploads.Commit(context.Background(), alice, ref, uuid.NewString(), ops); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -360,7 +364,7 @@ func TestOneShotWorkerStopsAfterOneJob(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			w, err := worker.New(context.Background(), worker.Config{Pool: pool, Schema: schema, Store: env.Store, Kinds: reg,
+			w, err := worker.New(context.Background(), worker.Config{Pool: pool, Schema: schema, ContentSchema: env.ContentSchema(), Store: env.Store, Kinds: reg,
 				Queue: tc.workerQueue, TempDir: scratch, Threads: 2})
 			if err != nil {
 				t.Fatal(err)
@@ -419,14 +423,21 @@ func TestWorkerProcessesImagesAndRelays(t *testing.T) {
 		t.Fatalf("thumb %+v", th)
 	}
 	item, _ := h.reg.Item(ref)
-	key, _ := item.Public("cover-300.webp")
+	cover, _ := h.file(ref, "cover.png")
+	publication, ok := cover.Publication("cover")
+	index := slices.Index(publication.Names, "cover-300.webp")
+	if !ok || !publication.Ready() || index < 0 {
+		t.Fatalf("no published cover: %+v", publication)
+	}
+	name := publication.NamesOnDisk()[index]
+	key, _ := item.Public(name)
 	if !h.exists(t, key) {
 		t.Fatal("no public cover")
 	}
 	eventually(t, "the cover purged", 30*time.Second, func() bool {
 		h.mu.Lock()
 		defer h.mu.Unlock()
-		return slices.Contains(h.purged, h.reg.PublicURL(ref, "cover-300.webp"))
+		return slices.Contains(h.purged, h.reg.PublicURL(ref, name))
 	})
 	var n int
 	if err := h.pool.QueryRow(context.Background(), "SELECT count(*) FROM "+h.schema+".river_job WHERE kind = 'contentkit_media_expose'").Scan(&n); err != nil || n == 0 {
@@ -471,7 +482,13 @@ func TestWorkerEncodesVideoAndPoster(t *testing.T) {
 		t.Fatalf("poster %+v", p)
 	}
 	item, _ := h.reg.Item(ref)
-	key, _ := item.Public("poster-160.webp")
+	poster, _ := m.Get("poster.png")
+	publication, ok := poster.Publication("poster")
+	index := slices.Index(publication.Names, "poster-160.webp")
+	if !ok || !publication.Ready() || index < 0 {
+		t.Fatalf("no published poster: %+v", publication)
+	}
+	key, _ := item.Public(publication.NamesOnDisk()[index])
 	if !h.exists(t, key) {
 		t.Fatal("no public poster")
 	}
@@ -537,7 +554,7 @@ func TestWorkerRendersAnEditLandingAsTheJobFinishes(t *testing.T) {
 	h := newHost(t, river.HookWorkEndFunc(func(ctx context.Context, job *rivertype.JobRow, err error) error {
 		if cur := tg.Load(); cur != nil && job.Kind == (workqueue.ImageArgs{}).Kind() && err == nil {
 			once.Do(func() {
-				_, cerr := cur.h.uploads.Commit(context.Background(), alice, cur.ref, []media.Op{{Op: media.OpEdit, Path: "cover.png", Edit: late}})
+				_, cerr := cur.h.uploads.Commit(context.Background(), alice, cur.ref, uuid.NewString(), []media.Op{{Op: media.OpEdit, Path: "cover.png", Edit: late}})
 				edited <- cerr
 			})
 		}
@@ -729,8 +746,119 @@ func TestHostsShareADatabase(t *testing.T) {
 	if n, err := a.queue.Cancel(ctx, clip); err != nil || n != 0 {
 		t.Fatalf("host a cancelled %d of host c's jobs: %v", n, err)
 	}
-	if n, err := qc.Cancel(ctx, clip); err != nil || n == 0 {
-		t.Fatalf("host c cancelled %d: %v", n, err)
+	// Recovery cancels old work and enqueues its replacement in one
+	// transaction. A later failure must preserve the original queue.
+	jobTable := pgx.Identifier{c, "river_job"}.Sanitize()
+	var oldJob int64
+	if err := a.pool.QueryRow(ctx, `SELECT id FROM `+jobTable+` WHERE kind = $1`,
+		(workqueue.VideoPlanArgs{}).Kind()).Scan(&oldJob); err != nil {
+		t.Fatal(err)
+	}
+	runTable := pgx.Identifier{c, "encode_run"}.Sanitize()
+	refJSON, err := json.Marshal(clip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// UUID order is deliberately opposite to rendition progression.
+	lowRun, highRun := "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000001"
+	if _, err := a.pool.Exec(ctx, `INSERT INTO `+runTable+`
+(id, tenant_id, ref, file_name, source_name, source_key, source_etag, spec, rung, class, probe, state)
+VALUES ($3, $1, $2, 'source.mp4', 'source.mp4', 'source', 'etag', 'hls', 240, '', '{}', 'encoding'),
+       ($4, $1, $2, 'source.mp4', 'source.mp4', 'source', 'etag', 'hls', 480, '', '{}', 'planned')`,
+		clip.TenantID, refJSON, lowRun, highRun); err != nil {
+		t.Fatal(err)
+	}
+	runStates := func(want []string) {
+		t.Helper()
+		var got []string
+		if err := a.pool.QueryRow(ctx, `SELECT array_agg(state ORDER BY rung) FROM `+runTable+` WHERE ref = $1`, refJSON).Scan(&got); err != nil || !slices.Equal(got, want) {
+			t.Fatalf("encode runs: states=%v err=%v; want %v", got, err, want)
+		}
+	}
+	replace := func(tx pgx.Tx) error {
+		n, err := qc.CancelTx(ctx, tx, clip)
+		if err != nil {
+			return err
+		}
+		if n != 2 {
+			return fmt.Errorf("cancelled %d jobs, want image and video jobs", n)
+		}
+		return qc.EnqueueTx(ctx, tx, media.ProcessJob{Ref: clip})
+	}
+	rolledBack := errors.New("rollback after replacement")
+	// finishRun holds the current rung, then releases the next. Cancellation
+	// must wait on that first lock without holding the later rung itself.
+	lockCtx, stop := context.WithTimeout(ctx, 10*time.Second)
+	defer stop()
+	finishing, err := a.pool.Begin(lockCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer finishing.Rollback(ctx)
+	if _, err := finishing.Exec(lockCtx, `SELECT id FROM `+runTable+` WHERE id = $1 FOR UPDATE`, lowRun); err != nil {
+		t.Fatal(err)
+	}
+	cancelPID, cancelled := make(chan int), make(chan error, 1)
+	go func() {
+		cancelled <- pgx.BeginFunc(lockCtx, a.pool, func(tx pgx.Tx) error {
+			var pid int
+			if err := tx.QueryRow(lockCtx, "SELECT pg_backend_pid()").Scan(&pid); err != nil {
+				return err
+			}
+			cancelPID <- pid
+			if err := replace(tx); err != nil {
+				return err
+			}
+			return rolledBack
+		})
+	}()
+	var pid int
+	select {
+	case pid = <-cancelPID:
+	case err := <-cancelled:
+		t.Fatalf("cancel did not start: %v", err)
+	}
+	eventually(t, "cancellation waiting on the current rung", 5*time.Second, func() bool {
+		var blocked bool
+		err := a.pool.QueryRow(lockCtx, "SELECT cardinality(pg_blocking_pids($1)) > 0", pid).Scan(&blocked)
+		return err == nil && blocked
+	})
+	if _, err := finishing.Exec(lockCtx, `SELECT id FROM `+runTable+` WHERE id = $1 FOR UPDATE`, highRun); err != nil {
+		t.Fatalf("completion and cancellation deadlocked: %v", err)
+	}
+	if err := finishing.Commit(lockCtx); err != nil {
+		t.Fatal(err)
+	}
+	err = <-cancelled
+	if !errors.Is(err, rolledBack) {
+		t.Fatal(err)
+	}
+	states := func() []string {
+		t.Helper()
+		rows, err := a.pool.Query(ctx, `SELECT state FROM `+jobTable+` ORDER BY id`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := states(); !slices.Equal(got, []string{"available", "available"}) {
+		t.Fatalf("rollback changed the queue: %v", got)
+	}
+	runStates([]string{"encoding", "planned"})
+	if err := pgx.BeginFunc(ctx, a.pool, replace); err != nil {
+		t.Fatal(err)
+	}
+	if got := states(); !slices.Equal(got, []string{"cancelled", "cancelled", "available", "available"}) {
+		t.Fatalf("replacement did not commit together: %v", got)
+	}
+	runStates([]string{"cancelled", "cancelled"})
+	var oldState string
+	if err := a.pool.QueryRow(ctx, `SELECT state FROM `+jobTable+` WHERE id = $1`, oldJob).Scan(&oldState); err != nil || oldState != "cancelled" {
+		t.Fatalf("original job: state=%s err=%v", oldState, err)
 	}
 	for _, bad := range []string{"", "Media", "media-worker", "a.b", strings.Repeat("x", 64)} {
 		if _, err := workqueue.New(a.pool, a.reg, bad); err == nil {
@@ -754,19 +882,38 @@ func TestWorkerRunsAsAnUnprivilegedRole(t *testing.T) {
 	if err := workqueue.Migrate(ctx, admin, schema); err != nil {
 		t.Fatal(err)
 	}
-	dsn := pgtest.MediaWorkerRole(t, ctx, admin, schema, hostSchema)
+	contentSchema := pgtest.Schema(t, ctx, admin)
+	dsn := pgtest.MediaWorkerRole(t, ctx, admin, schema, hostSchema, contentSchema)
 	app, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(app.Close)
+	if _, err := admin.Exec(ctx, "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "+pgx.Identifier{contentSchema}.Sanitize()+" TO "+pgx.Identifier{app.Config().ConnConfig.User}.Sanitize()); err != nil {
+		t.Fatal(err)
+	}
 	reg, err := media.NewRegistry(registry(env.Tenant, media.Hooks{}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := worker.Config{Pool: app, Schema: schema, Store: env.Store, Kinds: reg, HostSchema: hostSchema, TempDir: t.TempDir(), Threads: 1}
+	cfg := worker.Config{Pool: app, Schema: schema, ContentSchema: contentSchema, Store: env.Store, Kinds: reg, HostSchema: hostSchema, TempDir: t.TempDir(), Threads: 1}
 	if _, err := worker.New(ctx, cfg); err != nil {
 		t.Fatalf("worker as the app role: %v", err)
+	}
+	journal, err := media.NewPGJournal(app, contentSchema, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifests, err := media.NewManifests(env.Store, reg, media.ManifestOptions{Locker: media.PGLocker(app), Journal: journal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, _ := reg.Ref("clip", newID())
+	if _, err := manifests.Edit(ctx, ref, func(m *media.Manifest) error {
+		m.Meta = map[string]any{"role": "worker"}
+		return nil
+	}); err != nil {
+		t.Fatalf("journalled write as the app role: %v", err)
 	}
 	for _, table := range []string{"encode_run", "encode_chunk"} {
 		t.Run(table, func(t *testing.T) {
@@ -784,6 +931,12 @@ func TestWorkerRunsAsAnUnprivilegedRole(t *testing.T) {
 				t.Fatalf("worker accepted missing %s or did not identify it: %v", table, err)
 			}
 		})
+	}
+	if _, err := admin.Exec(ctx, "ALTER TABLE "+pgx.Identifier{contentSchema, "content_media_commits"}.Sanitize()+" RENAME TO content_media_commits_missing"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := worker.New(ctx, cfg); err == nil || !strings.Contains(err.Error(), contentSchema) || !strings.Contains(err.Error(), "content_media_commits") {
+		t.Fatalf("worker accepted a missing journal or did not identify it: %v", err)
 	}
 }
 

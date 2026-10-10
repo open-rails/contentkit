@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/video"
 	"github.com/open-rails/contentkit/media/workqueue"
 )
@@ -209,7 +210,7 @@ func TestReplacedSource(t *testing.T) {
 	defer video.SetBeforePublish(func() {
 		mu.Lock()
 		defer mu.Unlock()
-		if m, _, err := e.ms.Get(e.ctx, e.ref); err == nil && atPublish == nil && second != "" && sourceBlob(m) == second {
+		if m, _, err := e.ms.Get(e.ctx, e.ref); err == nil && atPublish == nil && second != "" && strings.HasPrefix(sourceBlob(m), second+"-") {
 			atPublish = m
 		}
 	})()
@@ -292,7 +293,11 @@ func TestRegenerate(t *testing.T) {
 	}
 	for _, preset := range []string{"hls", "mp4-240"} {
 		for i, o := range before.Outputs("source.mkv", preset) {
-			if cur := after.Outputs("source.mkv", preset)[i]; cur.Blob != o.Blob || cur.FP != o.FP {
+			cur := after.Outputs("source.mkv", preset)[i]
+			oldSum, oldValid := layout.BlobDigest(o.Blob)
+			newSum, newValid := layout.BlobDigest(cur.Blob)
+			if !oldValid || !newValid || !bytes.Equal(oldSum, newSum) || cur.FP != o.FP ||
+				(preset == "mp4-240") != (cur.Blob != o.Blob) {
 				t.Fatalf("%s %s: %s/%s, before %s/%s", preset, o.Path, cur.Blob, cur.FP, o.Blob, o.FP)
 			}
 		}
@@ -318,7 +323,10 @@ func TestRegenerate(t *testing.T) {
 	e.wait()
 	redone := e.manifest()
 	for i, o := range redone.Outputs("source.mkv", "hls") {
-		if was := before.Outputs("source.mkv", "hls")[i]; o.FP != was.FP || o.Blob != was.Blob {
+		was := before.Outputs("source.mkv", "hls")[i]
+		oldSum, oldValid := layout.BlobDigest(was.Blob)
+		newSum, newValid := layout.BlobDigest(o.Blob)
+		if !oldValid || !newValid || !bytes.Equal(oldSum, newSum) || o.Blob == was.Blob || o.FP != was.FP {
 			t.Fatalf("redone %s: %s/%s, want %s/%s", o.Path, o.Blob, o.FP, was.Blob, was.FP)
 		}
 	}

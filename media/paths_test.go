@@ -4,6 +4,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestPaths(t *testing.T) {
@@ -132,8 +134,23 @@ func TestPreviews(t *testing.T) {
 	rendered := m.Clone()
 	for i := range rendered.Files {
 		rendered.Files[i].Pending = nil
+		f := rendered.Files[i]
+		if names := k.PublicNames(rendered, p, f.Path); len(names) > 0 {
+			dims := make([]Dims, len(names))
+			for j := range dims {
+				dims[j] = Dims{W: p.Widths[j], H: p.Widths[j]}
+			}
+			rendered.SetPublication(f.Path, Publication{Preset: p.Name, Source: f.Key(), FP: "test",
+				Generation: uuid.NewString(), Names: names, Dims: dims, State: PublicationReady})
+		}
 	}
-	if got := k.previewNames(rendered); !slices.Equal(got, []string{"preview-1-100.webp", "preview-1-200.webp", "preview-2-100.webp", "preview-2-200.webp"}) ||
+	var expected []string
+	for _, f := range rendered.Files {
+		for _, pub := range f.Public {
+			expected = append(expected, pub.NamesOnDisk()...)
+		}
+	}
+	if got := k.previewNames(rendered); !slices.Equal(got, expected) ||
 		!slices.Equal(k.PublicKept(rendered), got) {
 		t.Fatalf("previews %v, kept %v", got, k.PublicKept(rendered))
 	}

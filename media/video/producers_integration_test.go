@@ -16,6 +16,7 @@ import (
 	"golang.org/x/text/encoding/korean"
 
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // loudness is a file's integrated loudness (EBU R128), LUFS.
@@ -135,7 +136,9 @@ func TestSubtitleSidecars(t *testing.T) {
 	e.put("subs/ja", "application/x-subrip", ja, map[string]any{"lang": "ja", "charset": "Shift_JIS"})
 	e.wait()
 	after := e.manifest().Outputs("subs/ja.srt", "vtt")[0]
-	if after.FP == before.FP || after.Blob != before.Blob {
+	oldSum, oldValid := layout.BlobDigest(before.Blob)
+	newSum, newValid := layout.BlobDigest(after.Blob)
+	if after.FP == before.FP || after.Blob == before.Blob || !oldValid || !newValid || !bytes.Equal(oldSum, newSum) {
 		t.Fatalf("re-converted %+v, before %+v", after, before)
 	}
 }

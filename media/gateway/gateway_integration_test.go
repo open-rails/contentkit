@@ -43,7 +43,12 @@ const (
 
 func sha(s string) string {
 	sum := sha256.Sum256([]byte(s))
-	return "sha256-" + hex.EncodeToString(sum[:])
+	return layout.BlobName(sum[:], "01920000-0000-7000-8000-000000000001")
+}
+
+func defaultName() string {
+	sum := sha256.Sum256([]byte("default cover"))
+	return "sha256-" + hex.EncodeToString(sum[:]) + ".webp"
 }
 
 func ring(t *testing.T, cur token.Key, prev *token.Key) token.Ring {
@@ -67,13 +72,13 @@ func seed(t *testing.T) *fixture {
 	env := s3test.Open(t)
 	f := &fixture{env: env, ns: env.Tenant}
 	for key, body := range map[string]string{
-		"gallery/456/public/cover-460.webp":      "cover",
-		"gallery/_default/public/cover-460.webp": "default cover",
-		"gallery/456/private/" + sha("a"):        bodyA,
-		"gallery/456/private/" + sha("b"):        "bee",
-		"gallery/789/private/" + sha("c"):        "other",
-		"gallery/456/manifest.json":              "{}",
-		"gallery/456/temp/" + sha("t"):           "temp",
+		"gallery/456/public/cover-460.webp":        "cover",
+		"gallery/_default/public/" + defaultName(): "default cover",
+		"gallery/456/private/" + sha("a"):          bodyA,
+		"gallery/456/private/" + sha("b"):          "bee",
+		"gallery/789/private/" + sha("c"):          "other",
+		"gallery/456/manifest.json":                "{}",
+		"gallery/456/temp/" + sha("t"):             "temp",
 	} {
 		if _, err := env.Store.Put(context.Background(), f.ns+"/"+key, strings.NewReader(body), int64(len(body)),
 			media.PutOptions{ContentType: "image/webp"}); err != nil {
@@ -96,7 +101,7 @@ func (f *fixture) config(t *testing.T) gateway.Config {
 		Ring:     ring(t, k2, &k1),
 		Hosts:    map[string][]string{host: {"accounts", f.ns}, "other.test": {"accounts"}},
 		Origins:  []string{origin},
-		Defaults: []layout.Default{{Namespace: f.ns, Kind: "gallery", Names: []string{"cover-{w}.webp"}}},
+		Defaults: []layout.Default{{Namespace: f.ns, Kind: "gallery", Files: map[string]string{"cover-460.webp": defaultName()}}},
 	}
 }
 
@@ -208,11 +213,18 @@ func TestGateway(t *testing.T) {
 			t.Fatalf("public headers: %v", r.header)
 		}
 		expect(t, do(t, srv, "GET", cover, map[string]string{"If-None-Match": r.header.Get("ETag")}), 304, "")
+		name := strings.Repeat("c", 123) + "-0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b.webp"
+		if _, err := f.env.Store.Put(t.Context(), f.key("gallery/456/public/"+name), strings.NewReader("generated"), 9, media.PutOptions{ContentType: "image/webp"}); err != nil {
+			t.Fatal(err)
+		}
+		expect(t, do(t, srv, "GET", f.path("gallery/456/public/"+name), nil), 200, "generated")
+		denied(t, do(t, srv, "GET", f.path("gallery/456/public/"+strings.Repeat("c", 166)), nil))
 	})
 
 	t.Run("default fallback", func(t *testing.T) {
 		r := do(t, srv, "GET", f.path("gallery/789/public/cover-460.webp"), nil)
 		expect(t, r, 200, "default cover")
+		expect(t, do(t, srv, "GET", f.path("gallery/789/public/cover-460-0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b.webp"), nil), 200, "default cover")
 		if r.header.Get("Cache-Control") != "public, max-age=300, stale-while-revalidate=86400" {
 			t.Fatalf("default headers: %v", r.header)
 		}
@@ -412,7 +424,7 @@ func TestBinary(t *testing.T) {
 		"MEDIA_GATEWAY_TOKEN_KEY_FILE=" + keyFile,
 		"MEDIA_GATEWAY_TOKEN_KEY_PREVIOUS=k1:" + base64.RawURLEncoding.EncodeToString(k1.Secret),
 		"MEDIA_GATEWAY_CORS_ORIGINS=" + origin,
-		"MEDIA_GATEWAY_DEFAULTS=" + f.ns + "/gallery: cover-{w}.webp",
+		"MEDIA_GATEWAY_DEFAULTS=" + f.ns + "/gallery: cover-460.webp=" + defaultName(),
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {

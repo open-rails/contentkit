@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 )
@@ -31,16 +31,16 @@ func TestManifestCaps(t *testing.T) {
 	item, _ := f.reg.Item(g)
 	f.put(g, "cover.png", "image/png", png(2))
 	f.produce(g)
-	cover, _ := item.Public("cover-460.webp")
+	cover, _ := item.Public(f.publicName(g, "cover-460.webp"))
 	if !f.exists(cover) {
 		t.Fatal("no public cover")
 	}
-	seed := blobOf(png(2))
+	seed := f.fileBlob(g, "cover.png")
 	for _, op := range []media.Op{
 		{Op: media.OpPut, Path: "originals/x.png", Blob: seed, Meta: map[string]any{"x": strings.Repeat("A", 10<<20)}},
 		{Op: media.OpMeta, Meta: map[string]any{"title": strings.Repeat("A", media.MaxItemMetaBytes)}},
 	} {
-		if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{op}); code(err) != media.CodeTooLarge {
+		if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{op}); code(err) != media.CodeTooLarge {
 			t.Fatalf("%s with oversized meta: %v", op.Op, err)
 		}
 	}
@@ -55,7 +55,7 @@ func TestManifestCaps(t *testing.T) {
 		for i := range ops {
 			ops[i] = media.Op{Op: media.OpPut, Path: fmt.Sprintf("originals/%d-%04d.png", batch, i), Blob: seed, Meta: meta}
 		}
-		m, err := f.up.Commit(ctx, f.editor, g, ops)
+		m, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), ops)
 		if err != nil {
 			if code(err) != media.CodeTooLarge || last == nil {
 				t.Fatalf("batch %d: %v", batch, err)
@@ -64,14 +64,13 @@ func TestManifestCaps(t *testing.T) {
 		}
 		last = m
 	}
-	fresh := s3test.Manifests(t, f.env.Store, f.reg, media.ManifestOptions{})
+	fresh := s3test.Manifests(t, f.env.Store, f.reg, media.ManifestOptions{Journal: f.env.Journal()})
 	m, _, err := fresh.Get(ctx, g)
 	if err != nil || len(m.Files) != len(last.Files) {
 		t.Fatalf("fresh read after the refused commit: %v", err)
 	}
 
-	pool := pgtest.Pool(t, nil)
-	limiter, err := media.NewPGLimiter(pool, pgtest.Schema(t, ctx, pool), media.PGLimits{})
+	limiter, err := media.NewPGLimiter(f.env.Pool(), f.env.ContentSchema(), media.PGLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +81,7 @@ func TestManifestCaps(t *testing.T) {
 	if err := limiter.Settle(ctx, media.Settlement{Tenant: f.ns, Owner: "owner", Delta: charged + 100}); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Limiter: limiter})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Journal: f.env.Journal(), Limiter: limiter})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,21 +108,20 @@ func TestOversizedManifest(t *testing.T) {
 	item, _ := f.reg.Item(g)
 	f.put(g, "cover.png", "image/png", png(2))
 	f.produce(g)
-	cover, _ := item.Public("cover-460.webp")
+	cover, _ := item.Public(f.publicName(g, "cover-460.webp"))
 	body := oversizedManifest(t)
 	if _, err := f.env.Store.Put(ctx, item.ManifestKey(), bytes.NewReader(body), int64(len(body)), media.PutOptions{ContentType: "application/gzip"}); err != nil {
 		t.Fatal(err)
 	}
-	fresh := s3test.Manifests(t, f.env.Store, f.reg, media.ManifestOptions{})
+	fresh := s3test.Manifests(t, f.env.Store, f.reg, media.ManifestOptions{Journal: f.env.Journal()})
 	if _, _, err := fresh.Get(ctx, g); !errors.Is(err, media.ErrManifestUnreadable) {
 		t.Fatalf("oversized read: %v", err)
 	}
-	pool := pgtest.Pool(t, nil)
-	limiter, err := media.NewPGLimiter(pool, pgtest.Schema(t, ctx, pool), media.PGLimits{})
+	limiter, err := media.NewPGLimiter(f.env.Pool(), f.env.ContentSchema(), media.PGLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobs, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Limiter: limiter})
+	jobs, err := media.NewJobs(media.JobsConfig{Store: f.env.Store, Registry: f.reg, Locker: s3test.Locker(t, f.env.Store), Journal: f.env.Journal(), Limiter: limiter})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,14 +133,16 @@ func TestOversizedManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	for o, err := range f.env.Store.List(ctx, item.Prefix()) {
-		t.Fatalf("kept %s %v", o.Key, err)
+		if err != nil || o.Key != item.ManifestKey() {
+			t.Fatalf("kept %s %v", o.Key, err)
+		}
 	}
 }
 
 // A manifest of exactly MaxManifestBytes of JSON loads; one byte more does not.
 func TestManifestBound(t *testing.T) {
 	for _, extra := range []int{0, 1} {
-		head, tail := `{"v":2,"meta":{"x":"`, `"},"files":[]}`
+		head, tail := `{"v":3,"meta":{"x":"`, `"},"files":[]}`
 		pad := media.MaxManifestBytes - len(head) - len(tail) + extra
 		var b bytes.Buffer
 		zw := gzip.NewWriter(&b)
@@ -162,7 +162,7 @@ func oversizedManifest(t *testing.T) []byte {
 	t.Helper()
 	var b bytes.Buffer
 	zw := gzip.NewWriter(&b)
-	zw.Write([]byte(`{"v":2,"meta":{"x":"`))
+	zw.Write([]byte(`{"v":3,"meta":{"x":"`))
 	zw.Write(bytes.Repeat([]byte("A"), media.MaxManifestBytes))
 	zw.Write([]byte(`"},"files":[]}`))
 	if err := zw.Close(); err != nil {
@@ -204,7 +204,7 @@ func TestLargeManifestIsCached(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	fresh := s3test.Manifests(t, f.env.Store, f.reg, media.ManifestOptions{})
+	fresh := s3test.Manifests(t, f.env.Store, f.reg, media.ManifestOptions{Journal: f.env.Journal()})
 	for _, ms := range []*media.Manifests{f.ms, fresh} {
 		a, _, err := ms.Get(ctx, post)
 		if err != nil {
@@ -225,7 +225,7 @@ func TestFullItemStillShrinks(t *testing.T) {
 	ctx := context.Background()
 	g := f.ref("gallery", 1)
 	f.put(g, "originals/seed.png", "image/png", png(1))
-	seed := blobOf(png(1))
+	seed := f.fileBlob(g, "originals/seed.png")
 	meta := map[string]any{"x": strings.Repeat("A", media.MaxMetaBytes-16)}
 	if _, err := f.ms.EditExisting(ctx, g, func(m *media.Manifest) error {
 		for i := range 1800 {
@@ -237,7 +237,7 @@ func TestFullItemStillShrinks(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.up.Commit(ctx, f.editor, g, []media.Op{{Op: media.OpPut, Path: "originals/new.png", Blob: seed}}); code(err) != media.CodeTooLarge {
+	if _, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), []media.Op{{Op: media.OpPut, Path: "originals/new.png", Blob: seed}}); code(err) != media.CodeTooLarge {
 		t.Fatalf("a page whose outputs would not fit: %v", err)
 	}
 	f.commit(g, media.Op{Op: media.OpRemove, Path: "originals/p0000.png"})
@@ -254,7 +254,7 @@ func TestCommitProjectsOutputs(t *testing.T) {
 	g := f.ref("gallery", 1)
 	item, _ := f.reg.Item(g)
 	f.put(g, "originals/seed.png", "image/png", png(1))
-	seed := blobOf(png(1))
+	seed := f.fileBlob(g, "originals/seed.png")
 	name := strings.Repeat("<", 190)
 	var last *media.Manifest
 	for batch := 0; ; batch++ {
@@ -265,7 +265,7 @@ func TestCommitProjectsOutputs(t *testing.T) {
 		for i := range ops {
 			ops[i] = media.Op{Op: media.OpPut, Path: fmt.Sprintf("originals/%s%d-%04d", name, batch, i), Blob: seed}
 		}
-		m, err := f.up.Commit(ctx, f.editor, g, ops)
+		m, err := f.up.Commit(ctx, f.editor, g, uuid.NewString(), ops)
 		if err != nil {
 			if code(err) != media.CodeTooLarge || last == nil {
 				t.Fatalf("batch %d: %v", batch, err)
@@ -299,7 +299,9 @@ func TestCommitProjectsOutputs(t *testing.T) {
 // decodes but leaves no room for the flag is refused and the error returned
 // (the job retries), never taken for hidden.
 func TestHideFits(t *testing.T) {
-	f := newFixture(t)
+	f := newFixtureOn(t, s3test.Open(t), func(c *media.Config) {
+		c.Kinds[1].Public = nil // no publication is retired to make room for the flag
+	})
 	f.visible(1)
 	f.visible(2)
 	ctx := context.Background()
