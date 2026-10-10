@@ -3,6 +3,7 @@ import "../src/test/dom.js";
 import { File as NodeFile } from "node:buffer";
 import type { ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -115,10 +116,11 @@ describe.skipIf(!endpoint)("hooks against MinIO and the media handlers", () => {
   it("usePublicImage shows an item's published image from its read, else the kind's default", async () => {
     const c = client();
     const ref = { kind: "gallery", id: id(4) };
-    const cover = new NodeFile([readFileSync(new URL("../e2e/fixtures/small.png", import.meta.url))], "cover.png", { type: "image/png" }) as unknown as File;
+    const cover = new NodeFile([readFileSync(resolve(import.meta.dirname, "../e2e/fixtures/small.png"))], "cover.png", { type: "image/png" }) as unknown as File;
     await c.media.put(cover, { ref, path: "cover" });
+    expect(await c.media.presets()).toContainEqual(expect.objectContaining({ kind: "gallery", name: "cover", from: "cover", namespace }));
     const { result } = renderHook(() => usePublicImage("gallery", ref.id, "cover"), { wrapper: provider(c) });
-    await waitFor(() => expect(result.current.isDefault).toBe(false), wait);
+    await waitFor(() => expect(result.current).toMatchObject({ loading: false, isDefault: false, image: expect.anything() }), wait);
     expect(result.current.rule).toMatchObject({ kind: "gallery", name: "cover", from: "cover", widths: [230, 460], aspect: "3:1" });
     expect(result.current.image).toMatchObject({ preset: "cover", aspect: "3:1" });
     // Published names carry a generation; a template never names them.
