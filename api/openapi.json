@@ -2190,7 +2190,7 @@
         "tags": [
           "polls"
         ],
-        "summary": "Votes for an option of an open multiple-choice poll, or changes the vote.",
+        "summary": "Votes for an option of an open multiple-choice poll; a vote is final, and voting again changes nothing.",
         "parameters": [
           {
             "name": "id",

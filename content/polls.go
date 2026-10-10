@@ -774,7 +774,7 @@ var pollRoutes = []httpapi.Route[*polls]{
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeNotFound}},
 		Serve: httpapi.H((*polls).handleDelete)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/polls/{id}/vote", Resource: "polls", Auth: httpapi.Public,
-		Doc:       "Votes for an option of an open multiple-choice poll, or changes the vote.",
+		Doc:       "Votes for an option of an open multiple-choice poll; a vote is final, and voting again changes nothing.",
 		Request:   PollVote{},
 		Responses: []httpapi.Reply{httpapi.OK(Poll{})}, Errors: []string{CodeForbidden, CodeNotFound, CodeRateLimited}},
 		Serve: httpapi.H((*polls).handleVote)},

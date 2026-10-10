@@ -49,7 +49,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | POST | `/polls` | staff `PollWrite` | `PollInput` | 201 `Poll` | Creates a poll with its options; a free-text poll needs an AnswerClassifier. |
 | PATCH | `/polls/{id}` | staff `PollWrite` | `PollUpdate` | 200 `Poll` | Updates a poll's given fields. |
 | DELETE | `/polls/{id}` | staff `PollWrite` | — | 204 — | Deletes a poll and its media folder. |
-| POST | `/polls/{id}/vote` | public | `PollVote` | 200 `Poll` | Votes for an option of an open multiple-choice poll, or changes the vote. |
+| POST | `/polls/{id}/vote` | public | `PollVote` | 200 `Poll` | Votes for an option of an open multiple-choice poll; a vote is final, and voting again changes nothing. |
 | POST | `/polls/{id}/answer` | user | `PollAnswerInput` | 200 `Poll` | Stores or replaces the caller's answer to an open free-text poll. |
 | PUT | `/polls/{id}/image` | staff `PollWrite` | `ImageInput` | 200 `PollImage` | Sets the question image to an inline image uploaded to the poll's media folder; "" clears it. |
 | POST | `/polls/{id}/options` | staff `PollWrite` | `PollOptionPatch` | 201 `PollOption` | Adds an option to a multiple-choice poll, at the end unless position is given. |
