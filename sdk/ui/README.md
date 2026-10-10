@@ -140,8 +140,9 @@ CONTENTKIT_TEST_S3_ENDPOINT=… CONTENTKIT_TEST_S3_ACCESS_KEY=… CONTENTKIT_TES
 pnpm build && pnpm screenshots   # demo/ in Chromium, light/dark × desktop/mobile
 ```
 
-Wire types in `src/client/generated/` are generated from the Go handlers
-(`go test ./media/internal/wirets -update`). UI primitives come from
+The wire types, route table and error codes in `src/client/generated/` are
+generated from ContentKit's route catalog (`pnpm contract`; CI runs
+`pnpm contract:check`). UI primitives come from
 `pnpm dlx shadcn@4.21.0 add …` (`components.json`); local edits are marked
 `// Local:`. The `release` workflow publishes the package to npm for every
 published `v*` release.

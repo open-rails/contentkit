@@ -75,6 +75,7 @@ type Perms struct {
 	CommentModerate  string // moderator delete/restore of another actor's comment
 	ModerationReview string // list and resolve held comments and posts
 	CommentBan       string // ban users from commenting anywhere in the tenant (global scope)
+	Taxonomy         string // the taxonomy admin API contentkit.Runtime.Handler serves at /taxonomy
 }
 
 // --- moderation and classification ports (nil -> publish / refuse) ---

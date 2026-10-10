@@ -7,7 +7,7 @@ import (
 
 // The HTTP wire types of the upload API (UploadHandler) and the read API
 // (Reader.Handler). The browser SDK's types are generated from them
-// (media/internal/wirets). SHA-256 values are lowercase hex.
+// (internal/contract). SHA-256 values are lowercase hex.
 
 // RefBody names an item of the handler's registry.
 type RefBody struct {

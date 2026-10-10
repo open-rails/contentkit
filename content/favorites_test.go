@@ -10,6 +10,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
 // favIsFavorited is the batch check narrowed to one target for terse assertions.
@@ -158,7 +159,7 @@ func TestFavorites_AnonymousRejected(t *testing.T) {
 	res.set("widget", cid(1), true, true)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	mux := http.NewServeMux()
-	newFavorites(rt).mount(mux)
+	httpapi.Mount(mux, newFavorites(rt), favoriteRoutes)
 
 	anon := access.Actor{Anonymous: true, IP: "10.0.0.9"}
 	for _, c := range []struct{ method, path string }{

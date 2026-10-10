@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
 // Comment bans hold current state only: who is banned, in which scope, why
@@ -70,9 +71,9 @@ type CommentBan struct {
 	Expired  bool        `json:"expired"`
 }
 
-// banInput is the PUT body; both fields are optional.
-type banInput struct {
-	Reason string     `json:"reason"`
+// BanInput is the ban body; both fields are optional.
+type BanInput struct {
+	Reason string     `json:"reason,omitempty"`
 	Until  *time.Time `json:"until"`
 }
 
@@ -101,7 +102,7 @@ func (rt *Runtime) checkCommentBan(ctx context.Context, userID, ownerID string) 
 
 // banCommenter bans (or re-bans, replacing the current ban) userID in scope.
 // The routes authorize who may ban which scope.
-func (rt *Runtime) banCommenter(ctx context.Context, by, scope, userID string, in banInput) (CommentBan, error) {
+func (rt *Runtime) banCommenter(ctx context.Context, by, scope, userID string, in BanInput) (CommentBan, error) {
 	userID = strings.TrimSpace(userID)
 	if userID == "" || len(userID) > maxBanUserID {
 		return CommentBan{}, badRequest("invalid user id")
@@ -206,13 +207,37 @@ func (rt *Runtime) enrichBans(ctx context.Context, bans []CommentBan) {
 
 // --- HTTP ---
 
-func (rt *Runtime) mountBans(mux *http.ServeMux) {
-	for prefix, global := range map[string]bool{"/comment-bans": false, "/global-comment-bans": true} {
-		mux.HandleFunc("GET "+prefix, rt.handleListBans(global))
-		mux.HandleFunc("PUT "+prefix+"/{user}", rt.handleBan(global))
-		mux.HandleFunc("DELETE "+prefix+"/{user}", rt.handleLiftBan(global))
-	}
-	mux.HandleFunc("GET /{kind}/{id}/can-comment", rt.handleCanComment)
+var banRoutes = []httpapi.Route[*Runtime]{
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/comment-bans", Resource: "bans", Auth: httpapi.User,
+		Doc:   "The bans the caller placed on commenters of its own content, newest first, expired ones included.",
+		Query: httpapi.Page, Responses: []httpapi.Reply{httpapi.OK([]CommentBan{})}},
+		Serve: func(rt *Runtime) http.HandlerFunc { return rt.handleListBans(false) }},
+	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/comment-bans/{user}", Resource: "bans", Auth: httpapi.User,
+		Doc:       "Bans a user from commenting on the caller's content, or replaces the ban; no body bans without reason or end.",
+		Request:   BanInput{},
+		Responses: []httpapi.Reply{httpapi.OK(CommentBan{})}},
+		Serve: func(rt *Runtime) http.HandlerFunc { return rt.handleBan(false) }},
+	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/comment-bans/{user}", Resource: "bans", Auth: httpapi.User,
+		Doc:       "Lifts the caller's ban on a user.",
+		Responses: []httpapi.Reply{httpapi.NoContent}},
+		Serve: func(rt *Runtime) http.HandlerFunc { return rt.handleLiftBan(false) }},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/global-comment-bans", Resource: "bans", Auth: httpapi.Staff, Perm: "CommentBan",
+		Doc:   "The tenant-wide comment bans, newest first, expired ones included.",
+		Query: httpapi.Page, Responses: []httpapi.Reply{httpapi.OK([]CommentBan{})}, Errors: []string{CodeUnauthorized}},
+		Serve: func(rt *Runtime) http.HandlerFunc { return rt.handleListBans(true) }},
+	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/global-comment-bans/{user}", Resource: "bans", Auth: httpapi.Staff, Perm: "CommentBan",
+		Doc:       "Bans a user from commenting anywhere in the tenant, or replaces the ban.",
+		Request:   BanInput{},
+		Responses: []httpapi.Reply{httpapi.OK(CommentBan{})}, Errors: []string{CodeUnauthorized}},
+		Serve: func(rt *Runtime) http.HandlerFunc { return rt.handleBan(true) }},
+	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/global-comment-bans/{user}", Resource: "bans", Auth: httpapi.Staff, Perm: "CommentBan",
+		Doc:       "Lifts a tenant-wide comment ban.",
+		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeUnauthorized}},
+		Serve: func(rt *Runtime) http.HandlerFunc { return rt.handleLiftBan(true) }},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}/can-comment", Resource: "bans", Auth: httpapi.Public,
+		Doc:       "Whether the caller may comment on a target, and the ban that stops it.",
+		Responses: []httpapi.Reply{httpapi.OK(CommentStanding{})}, Errors: []string{CodeNotFound}},
+		Serve: httpapi.H((*Runtime).handleCanComment)},
 }
 
 // banScope authorizes the caller for one scope: the global scope needs
@@ -255,7 +280,7 @@ func (rt *Runtime) handleBan(global bool) http.HandlerFunc {
 			writeErr(w, err)
 			return
 		}
-		var in banInput
+		var in BanInput
 		if req.ContentLength != 0 { // both fields are optional: no body is {}
 			if err := decodeJSON(req, &in); err != nil {
 				writeErr(w, err)
@@ -286,9 +311,9 @@ func (rt *Runtime) handleLiftBan(global bool) http.HandlerFunc {
 	}
 }
 
-// canComment is the caller's standing on a target: may they comment, and if a
+// CommentStanding is the caller's standing on a target: may they comment, and if a
 // ban stops them, which.
-type canComment struct {
+type CommentStanding struct {
 	CanComment bool       `json:"can_comment"`
 	Ban        *BanNotice `json:"ban,omitempty"`
 }
@@ -303,7 +328,7 @@ func (rt *Runtime) handleCanComment(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	out := canComment{CanComment: res.Accessible}
+	out := CommentStanding{CanComment: res.Accessible}
 	var banned *BannedError
 	if err := rt.checkCommentBan(ctx, viewerID(actor), res.Owner); errors.As(err, &banned) {
 		out.CanComment, out.Ban = false, &banned.BanNotice

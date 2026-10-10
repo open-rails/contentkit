@@ -61,7 +61,7 @@ func TestPostScreeningNeedsOnlyOneConnection(t *testing.T) {
 func TestPausedPostScreeningDoesNotBlockErasure(t *testing.T) {
 	mod := &pausedScreen{make(chan struct{}), make(chan struct{})}
 	rt := oneConnectionPostRuntime(t, mod)
-	rec := doJSON(t, rt.Handler(), access.Actor{ID: "author"}, "POST", "/posts", postWriteReq{Title: ptr("title"), Body: ptr("public"), IsDraft: ptr(false)})
+	rec := doJSON(t, rt.Handler(), access.Actor{ID: "author"}, "POST", "/posts", PostInput{Title: ptr("title"), Body: ptr("public"), IsDraft: ptr(false)})
 	post := decodePost(t, rec)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -106,7 +106,7 @@ func TestPausedCommentScreeningCannotOverwriteNewerEdit(t *testing.T) {
 	rt := moderatedRuntime(t, mod)
 	author := access.Actor{ID: "author"}
 	ctx := context.Background()
-	cm := mustComment(t, rt, author, "gallery", cid(1), createInput{Body: "public"})
+	cm := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "public"})
 	done := make(chan error, 1)
 	go func() { _, err := rt.comments.edit(ctx, author, cm.ID, "paused edit"); done <- err }()
 	<-mod.entered

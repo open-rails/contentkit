@@ -13,7 +13,9 @@ migration or ledger identity.
 Catalog construction is intentionally optional and host-configured: create
 `taxonomy.Store` with the same pool, keyword schema and tenant, plus your
 registered kinds, languages and count-eligibility rule. Wrap the runtime worker
-with the store builder/lister and mount its handler behind host authorization.
+with the store builder/lister, and pass `taxonomy.Handler(store)` as
+`RuntimeConfig.Taxonomy` (served at `/taxonomy` for `Perms.Taxonomy`) or mount it
+behind host authorization.
 `NewRuntime` does not infer these application-specific catalog choices.
 
 ## Tables (31 catalog columns + 6 derived)

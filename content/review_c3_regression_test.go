@@ -20,7 +20,7 @@ func TestReviewC3CountsKeepLocalizedCommentThreads(t *testing.T) {
 	actor := access.Actor{ID: "u1"}
 	mustReact(t, rt, actor, "gallery", localeID(42, "en"), 1)
 	mustFavorite(t, rt, actor, "gallery", localeID(42, "ja"), true)
-	mustComment(t, rt, actor, "gallery", localeID(42, "en"), createInput{Body: "English"})
+	mustComment(t, rt, actor, "gallery", localeID(42, "en"), CommentInput{Body: "English"})
 	for _, id := range []string{localeID(42, "en"), localeID(42, "ja")} {
 		got := countsOf(t, rt, ref("gallery", id))
 		wantComments := 0

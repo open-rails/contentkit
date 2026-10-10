@@ -42,7 +42,7 @@ func TestCanonicalRef_UnifiesAliases(t *testing.T) {
 	if _, err := rt.reactions.react(ctx, u, "gallery", "123", 1); err != nil {
 		t.Fatalf("react via alias: %v", err)
 	}
-	if _, err := rt.comments.create(ctx, u, "gallery", cid(123), createInput{Body: "hi"}); err != nil {
+	if _, err := rt.comments.create(ctx, u, "gallery", cid(123), CommentInput{Body: "hi"}); err != nil {
 		t.Fatalf("comment: %v", err)
 	}
 	list, err := rt.comments.list(ctx, u, "gallery", "slug-123", "", 10, 0)

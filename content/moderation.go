@@ -17,6 +17,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
 // Moderation states stored in content_comments.moderation / content_posts.moderation.
@@ -441,9 +442,31 @@ func (p *posts) resolve(ctx context.Context, id, state string, d ReviewDecision)
 
 // --- HTTP (ModerationReview-gated) ---
 
-func (rt *Runtime) mountModeration(mux *http.ServeMux) {
-	mux.HandleFunc("GET /moderation/held", rt.handleListHeld)
-	mux.HandleFunc("POST /moderation/{kind}/{id}/resolve", rt.handleResolve)
+var moderationRoutes = []httpapi.Route[*Runtime]{
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/moderation/held", Resource: "moderation", Auth: httpapi.Staff, Perm: "ModerationReview",
+		Doc: "Held comments or posts awaiting review, oldest first.",
+		Query: []httpapi.Param{httpapi.Text("kind", "comment or post"), httpapi.Text("cursor", "the previous page's next"),
+			httpapi.Int("limit", "page size: 20 by default, at most 100")},
+		Responses: []httpapi.Reply{httpapi.OK(HeldPage{})}},
+		Serve: httpapi.H((*Runtime).handleListHeld)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/moderation/{kind}/{id}/resolve", Resource: "moderation", Auth: httpapi.Staff, Perm: "ModerationReview",
+		Doc:       "Approves (publishes) or rejects a held comment or post, at the revision the queue listed.",
+		Request:   ResolveInput{},
+		Responses: []httpapi.Reply{httpapi.OK(ReviewOutcome{})}, Errors: []string{CodeConflict, CodeNotFound}},
+		Serve: httpapi.H((*Runtime).handleResolve)},
+}
+
+// ResolveInput resolves a held item at the revision the queue listed; Reason
+// replaces the moderator's on a rejection.
+type ResolveInput struct {
+	Decision Decision `json:"decision"`
+	Revision int64    `json:"revision"`
+	Reason   string   `json:"reason,omitempty"`
+}
+
+// ReviewOutcome is the decision applied.
+type ReviewOutcome struct {
+	Decision Decision `json:"decision"`
 }
 
 func (rt *Runtime) handleListHeld(w http.ResponseWriter, req *http.Request) {
@@ -467,11 +490,7 @@ func (rt *Runtime) handleResolve(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	var in struct {
-		Decision Decision `json:"decision"`
-		Revision int64    `json:"revision"`
-		Reason   string   `json:"reason,omitempty"`
-	}
+	var in ResolveInput
 	if err := decodeJSON(req, &in); err != nil {
 		writeErr(w, err)
 		return
@@ -484,7 +503,7 @@ func (rt *Runtime) handleResolve(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"decision": string(in.Decision)})
+	writeJSON(w, http.StatusOK, ReviewOutcome{Decision: in.Decision})
 }
 
 func (*BasicModerator) StatelessPolicy() {}

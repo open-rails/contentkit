@@ -32,7 +32,7 @@ func TestErrorMapping_PostSlugsAndPollIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, slug := range []string{"taken", "available"} {
-		rec := doJSON(t, h, admin, "POST", "/posts", postWriteReq{Title: ptr(slug), Body: ptr("body"), Slug: ptr(slug)})
+		rec := doJSON(t, h, admin, "POST", "/posts", PostInput{Title: ptr(slug), Body: ptr("body"), Slug: ptr(slug)})
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("create post: %d %s", rec.Code, rec.Body.String())
 		}
@@ -47,9 +47,9 @@ func TestErrorMapping_PostSlugsAndPollIDs(t *testing.T) {
 		status             int
 		code               string
 	}{
-		{"duplicate slug create", "POST", "/posts", postWriteReq{Title: ptr("new"), Body: ptr("body"), Slug: ptr("taken")}, http.StatusConflict, CodeConflict},
-		{"duplicate slug update", "PATCH", "/posts/" + postID, postWriteReq{Title: ptr("changed"), Slug: ptr("taken")}, http.StatusConflict, CodeConflict},
-		{"malformed poll update", "PATCH", "/polls/not-a-uuid", updatePollInput{Question: ptr("changed")}, http.StatusNotFound, CodeNotFound},
+		{"duplicate slug create", "POST", "/posts", PostInput{Title: ptr("new"), Body: ptr("body"), Slug: ptr("taken")}, http.StatusConflict, CodeConflict},
+		{"duplicate slug update", "PATCH", "/posts/" + postID, PostInput{Title: ptr("changed"), Slug: ptr("taken")}, http.StatusConflict, CodeConflict},
+		{"malformed poll update", "PATCH", "/polls/not-a-uuid", PollUpdate{Question: ptr("changed")}, http.StatusNotFound, CodeNotFound},
 		{"malformed vote option", "POST", "/polls/" + poll.ID + "/vote", map[string]string{"option_id": "not-a-uuid"}, http.StatusBadRequest, CodeInvalidRequest},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -75,7 +75,7 @@ func TestErrorMapping_PostSlugsAndPollIDs(t *testing.T) {
 func TestErrorMapping_UnwiredMediaIs501(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{Perms: Perms{PostWrite: "post", PollWrite: "poll"}})
 	admin := access.Actor{ID: "admin"}
-	poll, err := rt.polls.create(context.Background(), admin, createPollInput{Question: "Q?", Options: []createOptionInput{{Label: "A"}, {Label: "B"}}})
+	poll, err := rt.polls.create(context.Background(), admin, PollInput{Question: "Q?", Options: []PollOptionInput{{Label: "A"}, {Label: "B"}}})
 	if err != nil {
 		t.Fatalf("create poll: %v", err)
 	}

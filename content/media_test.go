@@ -72,7 +72,7 @@ func TestMedia_PostCoverAndInlineImages(t *testing.T) {
 	if code := send(t, rt, mediaAdmin, "PUT", "/posts/"+id+"/cover", image(name), &cover); code != 200 || *cover["cover_url"] != want {
 		t.Fatalf("cover %d %v", code, cover)
 	}
-	var v postView
+	var v Post
 	send(t, rt, mediaAdmin, "GET", "/posts/"+id, nil, &v)
 	if v.CoverURL == nil || *v.CoverURL != want {
 		t.Fatalf("stored cover %v", v.CoverURL)
@@ -89,14 +89,14 @@ func TestMedia_PostCoverAndInlineImages(t *testing.T) {
 	if code := send(t, rt, mediaAdmin, "PATCH", "/posts/"+id, map[string]bool{"is_draft": false}, &v); code != 200 || v.CoverURL == nil || *v.CoverURL != moved {
 		t.Fatalf("published cover after origin change: status=%d, cover=%v", code, v.CoverURL)
 	}
-	var listed []postView
+	var listed []Post
 	if code := send(t, rt, mediaAdmin, "GET", "/posts", nil, &listed); code != 200 || len(listed) != 1 || listed[0].CoverURL == nil || *listed[0].CoverURL != moved {
 		t.Fatalf("listed cover after origin change: status=%d, posts=%+v", code, listed)
 	}
 	if code := send(t, rt, mediaAdmin, "PUT", "/posts/"+id+"/cover", image(""), nil); code != 200 {
 		t.Fatalf("clear %d", code)
 	}
-	var cleared postView
+	var cleared Post
 	send(t, rt, mediaAdmin, "GET", "/posts/"+id, nil, &cleared)
 	if cleared.ID != id || cleared.CoverURL != nil {
 		t.Fatalf("cover not cleared: %+v", cleared)
@@ -136,11 +136,11 @@ func TestMedia_PostCoverAndInlineImages(t *testing.T) {
 
 func TestMedia_PollImages(t *testing.T) {
 	rt, m := newMediaTest(t, Options{})
-	poll, err := rt.polls.create(context.Background(), mediaAdmin, createPollInput{Question: "Q?", Options: []createOptionInput{{Label: "A"}, {Label: "B"}}})
+	poll, err := rt.polls.create(context.Background(), mediaAdmin, PollInput{Question: "Q?", Options: []PollOptionInput{{Label: "A"}, {Label: "B"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := rt.polls.create(context.Background(), mediaAdmin, createPollInput{Question: "R?", Options: []createOptionInput{{Label: "A"}, {Label: "B"}}})
+	other, err := rt.polls.create(context.Background(), mediaAdmin, PollInput{Question: "R?", Options: []PollOptionInput{{Label: "A"}, {Label: "B"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestMedia_PollImages(t *testing.T) {
 	if listed, err := rt.polls.list(t.Context(), mediaAdmin, listFilter{limit: 10}); err != nil || len(listed) != 2 || listed[1].ImageURL != movedFolder+q+".webp" {
 		t.Fatalf("poll list after origin change: %+v, err=%v", listed, err)
 	}
-	var edited pollOption
+	var edited PollOption
 	if code := send(t, rt, mediaAdmin, "PATCH", "/polls/"+strings.ToUpper(poll.ID)+"/options/"+oid, map[string]string{"label": "edited"}, &edited); code != 200 || edited.ImageURL != movedFolder+o+".webp" {
 		t.Fatalf("edited option after origin change: status=%d, option=%+v", code, edited)
 	}
@@ -194,7 +194,7 @@ func TestMedia_PollImages(t *testing.T) {
 func TestMedia_SoftDeleteHidesPostAndDeletesPoll(t *testing.T) {
 	rt, m := newMediaTest(t, Options{})
 	post := insertPost(t, rt)
-	poll, err := rt.polls.create(context.Background(), mediaAdmin, createPollInput{Question: "Q?", Options: []createOptionInput{{Label: "A"}, {Label: "B"}}})
+	poll, err := rt.polls.create(context.Background(), mediaAdmin, PollInput{Question: "Q?", Options: []PollOptionInput{{Label: "A"}, {Label: "B"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,14 +258,14 @@ func TestMedia_PostExposureCommitsWithContent(t *testing.T) {
 		}
 		return state
 	}
-	var post postView
+	var post Post
 	for i, step := range []struct {
 		name, method, path string
 		body               any
 		status             int
 	}{
-		{"create", "POST", "/posts", postWriteReq{Title: ptr("Title"), Body: ptr("iffy"), Language: ptr("en")}, 202},
-		{"update", "PATCH", "/posts/{id}", postWriteReq{Body: ptr("iffy edit"), Language: ptr("ja")}, 202},
+		{"create", "POST", "/posts", PostInput{Title: ptr("Title"), Body: ptr("iffy"), Language: ptr("en")}, 202},
+		{"update", "PATCH", "/posts/{id}", PostInput{Body: ptr("iffy edit"), Language: ptr("ja")}, 202},
 		{"approve", "POST", "/moderation/post/{id}/resolve", map[string]any{"revision": 2, "decision": "approve"}, 200},
 		{"delete", "DELETE", "/posts/{id}", nil, 200},
 	} {
@@ -284,7 +284,7 @@ func TestMedia_PostExposureCommitsWithContent(t *testing.T) {
 			if _, err := pool.Exec(ctx, `ALTER TABLE `+queue+` DROP CONSTRAINT reject_exposure`); err != nil {
 				t.Fatal(err)
 			}
-			var result postView
+			var result Post
 			if code := send(t, rt, mediaAdmin, step.method, path, step.body, &result); code != step.status {
 				t.Fatalf("status %d, want %d", code, step.status)
 			}
@@ -309,7 +309,7 @@ func TestMedia_CanUpload(t *testing.T) {
 	ctx := context.Background()
 	rt, _ := newMediaTest(t, Options{Media: (&testMedia{}).options()})
 	post := insertPost(t, rt)
-	poll, err := rt.polls.create(ctx, mediaAdmin, createPollInput{Question: "Q?", Options: []createOptionInput{{Label: "A"}, {Label: "B"}}})
+	poll, err := rt.polls.create(ctx, mediaAdmin, PollInput{Question: "Q?", Options: []PollOptionInput{{Label: "A"}, {Label: "B"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +355,7 @@ func TestMedia_ForeignTenantIsNotFound(t *testing.T) {
 		t.Fatal(err)
 	}
 	post := insertPost(t, a)
-	poll, err := a.polls.create(ctx, mediaAdmin, createPollInput{Question: "Q", Options: []createOptionInput{{Label: "a"}, {Label: "b"}}})
+	poll, err := a.polls.create(ctx, mediaAdmin, PollInput{Question: "Q", Options: []PollOptionInput{{Label: "a"}, {Label: "b"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

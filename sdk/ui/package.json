@@ -54,6 +54,8 @@
   "scripts": {
     "build": "vite build",
     "typecheck": "tsc --noEmit",
+    "contract": "cd ../.. && GOWORK=off go generate ./internal/contract",
+    "contract:check": "pnpm contract && git diff --exit-code -- src/client/generated ../../api ../../docs/api && test -z \"$(git status --porcelain -- src/client/generated ../../api ../../docs/api)\"",
     "lint": "eslint .",
     "test": "vitest run --project unit",
     "test:integration": "vitest run --project integration",

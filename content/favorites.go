@@ -10,6 +10,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
 // favorites is the user-only bookmark (wishlist) over a content key: value 1
@@ -160,11 +161,28 @@ func (f *favorites) list(ctx context.Context, userID string, limit, offset int) 
 
 // --- HTTP ---
 
-func (f *favorites) mount(mux *http.ServeMux) {
-	mux.HandleFunc("GET /favorites", f.handleList)
-	mux.HandleFunc("POST /{kind}/{id}/favorite", f.handleAdd)
-	mux.HandleFunc("DELETE /{kind}/{id}/favorite", f.handleRemove)
-	mux.HandleFunc("GET /{kind}/{id}/favorite", f.handleStatus)
+var favoriteRoutes = []httpapi.Route[*favorites]{
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/favorites", Resource: "favorites", Auth: httpapi.User,
+		Doc:   "The caller's favorites, newest first.",
+		Query: httpapi.Page, Responses: []httpapi.Reply{httpapi.OK([]FavoriteItem{})}},
+		Serve: httpapi.H((*favorites).handleList)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/{kind}/{id}/favorite", Resource: "favorites", Auth: httpapi.User,
+		Doc:       "Favorites a visible target; favoriting again is a no-op.",
+		Responses: []httpapi.Reply{httpapi.OK(FavoriteState{})}, Errors: []string{CodeForbidden, CodeNotFound, CodeRateLimited}},
+		Serve: httpapi.H((*favorites).handleAdd)},
+	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/{kind}/{id}/favorite", Resource: "favorites", Auth: httpapi.User,
+		Doc:       "Unfavorites a target, also one no longer visible.",
+		Responses: []httpapi.Reply{httpapi.OK(FavoriteState{})}, Errors: []string{CodeForbidden, CodeInvalidRequest, CodeRateLimited}},
+		Serve: httpapi.H((*favorites).handleRemove)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}/favorite", Resource: "favorites", Auth: httpapi.User,
+		Doc:       "Whether the caller has favorited a target.",
+		Responses: []httpapi.Reply{httpapi.OK(FavoriteState{})}, Errors: []string{CodeInvalidRequest}},
+		Serve: httpapi.H((*favorites).handleStatus)},
+}
+
+// FavoriteState says whether the caller has favorited the target.
+type FavoriteState struct {
+	Favorited bool `json:"favorited"`
 }
 
 func (f *favorites) handleAdd(w http.ResponseWriter, req *http.Request) {
@@ -180,7 +198,7 @@ func (f *favorites) handleAdd(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"favorited": true})
+	writeJSON(w, http.StatusOK, FavoriteState{Favorited: true})
 }
 
 func (f *favorites) handleRemove(w http.ResponseWriter, req *http.Request) {
@@ -196,7 +214,7 @@ func (f *favorites) handleRemove(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"favorited": false})
+	writeJSON(w, http.StatusOK, FavoriteState{})
 }
 
 func (f *favorites) handleStatus(w http.ResponseWriter, req *http.Request) {
@@ -215,7 +233,7 @@ func (f *favorites) handleStatus(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"favorited": m[ref.Key()]})
+	writeJSON(w, http.StatusOK, FavoriteState{Favorited: m[ref.Key()]})
 }
 
 func (f *favorites) handleList(w http.ResponseWriter, req *http.Request) {

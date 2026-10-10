@@ -203,22 +203,6 @@ func (rt *Runtime) Ref(contentKind, contentID string) contentref.ContentRef {
 	return contentref.New(rt.tenant, contentKind, contentID)
 }
 
-// Handler returns the mountable http.Handler. The host mounts it under a prefix
-// (e.g. "/api/social/") after its own auth middleware populated the identity.
-// Each request runs in an access.WithMemo context, so a Gate resolver reads
-// billing at most once per request.
-func (rt *Runtime) Handler() http.Handler {
-	mux := http.NewServeMux()
-	rt.reactions.mount(mux)
-	rt.polls.mount(mux)
-	rt.comments.mount(mux)
-	rt.posts.mount(mux)
-	rt.favorites.mount(mux)
-	rt.mountModeration(mux)
-	rt.mountBans(mux)
-	return rt.accessLog(memoized(mux))
-}
-
 // memoized runs each request in an access.WithMemo context.
 func memoized(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

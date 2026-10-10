@@ -16,6 +16,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
 // Identity reads the authenticated actor the host's middleware put in the
@@ -36,17 +37,12 @@ type HandlerOptions struct {
 	Limit RateLimit
 }
 
-// Handler serves the read API. The host mounts it under a prefix such as
-// "/media/" after its auth middleware. Errors are JSON {"error", "code"}:
-// 400 invalid_request, 404 not_found (also for what the viewer may not see),
-// 429 rate_limited (Retry-After: too many requests, or too many items opened
-// this hour), 503 unavailable, 500 internal_error (a resolver error denies
-// this way).
-//
-//	GET /{kind}/{id}?prefix=low-res/&offset=0&limit=50&download&editor -> ReadResult (+ Set-Cookie mt)
-//	GET /{kind}/{id}/hls/{dir}master.m3u8?audio=ja&subs=en (filters optional; empty = none)
-//	GET /{kind}/{id}/hls/{path}.m3u8   a track's media playlist
-//	GET /{kind}/{id}/hls/{dir}sprite.vtt
+// Handler serves the read API. contentkit.Runtime.Handler serves it at
+// /media; a host mounting it alone puts it under a prefix after its auth
+// middleware. Errors are ErrorReply: 400 invalid_request, 404 not_found
+// (also for what the viewer may not see), 429 rate_limited (Retry-After: too
+// many requests, or too many items opened this hour), 503 unavailable, 500
+// internal_error (a resolver error denies this way). The routes are readRoutes.
 //
 // Every response is "private, no-store"; playlists carry the item cookie
 // like reads. Signed responses log the viewer, item, access and expiry. Each
@@ -57,60 +53,69 @@ func (r *Reader) Handler(o HandlerOptions) http.Handler {
 		log = slog.Default()
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{kind}/{id}", func(w http.ResponseWriter, req *http.Request) {
-		start := time.Now()
-		w.Header().Set("Cache-Control", "private, no-store")
-		res, g, err := r.serveRead(req, o)
-		if err != nil {
-			fail(w, req, log, err)
-			return
-		}
-		if res.Cookie != nil {
-			http.SetCookie(w, res.Cookie)
-		}
-		writeJSON(w, http.StatusOK, res)
-		g.logIssued(req, log)
-		log.Debug("media read", "path", req.URL.Path, "duration", time.Since(start))
-	})
-	mux.HandleFunc("GET /{kind}/{id}/hls/{path...}", func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Cache-Control", "private, no-store")
-		ref, actor, err := r.requestRef(req, o)
-		var g *Grant
-		if err == nil {
-			g, err = r.Grant(req.Context(), ref, actor)
-		}
-		var body []byte
-		contentType := HLSContentType
-		if err == nil {
-			p := req.PathValue("path")
-			switch {
-			case strings.HasSuffix(p, "/master.m3u8") || p == "master.m3u8":
-				q := req.URL.Query()
-				body, err = g.MasterPlaylist(strings.TrimSuffix(p, "master.m3u8"), MasterOptions{Audio: queryList(q, "audio"), Subs: queryList(q, "subs")})
-			case strings.HasSuffix(p, "/sprite.vtt") || p == "sprite.vtt":
-				body, err = g.SpriteVTT(req.Context(), strings.TrimSuffix(p, "sprite.vtt"))
-				contentType = VTTContentType
-			case strings.HasSuffix(p, ".m3u8"):
-				body, err = g.MediaPlaylist(req.Context(), strings.TrimSuffix(p, ".m3u8"))
-			default:
-				err = ErrNotAllowed
-			}
-		}
-		if err != nil {
-			fail(w, req, log, err)
-			return
-		}
-		if c := g.Cookie(); c != nil {
-			http.SetCookie(w, c)
-		}
-		g.logIssued(req, log)
-		w.Header().Set("Content-Type", contentType)
-		_, _ = w.Write(body)
-	})
+	httpapi.Mount(mux, readHandler{r, o, log}, readRoutes)
 	h := limited(mux, o, log)
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		h.ServeHTTP(w, req.WithContext(access.WithMemo(req.Context())))
 	})
+}
+
+type readHandler struct {
+	r   *Reader
+	o   HandlerOptions
+	log *slog.Logger
+}
+
+func (h readHandler) read(w http.ResponseWriter, req *http.Request) {
+	start := time.Now()
+	w.Header().Set("Cache-Control", "private, no-store")
+	res, g, err := h.r.serveRead(req, h.o)
+	if err != nil {
+		fail(w, req, h.log, err)
+		return
+	}
+	if res.Cookie != nil {
+		http.SetCookie(w, res.Cookie)
+	}
+	writeJSON(w, http.StatusOK, res)
+	g.logIssued(req, h.log)
+	h.log.Debug("media read", "path", req.URL.Path, "duration", time.Since(start))
+}
+
+func (h readHandler) playlist(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	ref, actor, err := h.r.requestRef(req, h.o)
+	var g *Grant
+	if err == nil {
+		g, err = h.r.Grant(req.Context(), ref, actor)
+	}
+	var body []byte
+	contentType := HLSContentType
+	if err == nil {
+		p := req.PathValue("path")
+		switch {
+		case strings.HasSuffix(p, "/master.m3u8") || p == "master.m3u8":
+			q := req.URL.Query()
+			body, err = g.MasterPlaylist(strings.TrimSuffix(p, "master.m3u8"), MasterOptions{Audio: queryList(q, "audio"), Subs: queryList(q, "subs")})
+		case strings.HasSuffix(p, "/sprite.vtt") || p == "sprite.vtt":
+			body, err = g.SpriteVTT(req.Context(), strings.TrimSuffix(p, "sprite.vtt"))
+			contentType = VTTContentType
+		case strings.HasSuffix(p, ".m3u8"):
+			body, err = g.MediaPlaylist(req.Context(), strings.TrimSuffix(p, ".m3u8"))
+		default:
+			err = ErrNotAllowed
+		}
+	}
+	if err != nil {
+		fail(w, req, h.log, err)
+		return
+	}
+	if c := g.Cookie(); c != nil {
+		http.SetCookie(w, c)
+	}
+	g.logIssued(req, h.log)
+	w.Header().Set("Content-Type", contentType)
+	_, _ = w.Write(body)
 }
 
 func (r *Reader) serveRead(req *http.Request, o HandlerOptions) (*ReadResult, *Grant, error) {
@@ -181,7 +186,7 @@ func fail(w http.ResponseWriter, req *http.Request, log *slog.Logger, err error)
 		log.Error("media read failed", "path", req.URL.Path, "err", err.Error())
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, status, map[string]string{"error": msg, "code": code})
+	writeJSON(w, status, ErrorReply{Error: msg, Code: code})
 }
 
 // limited applies HandlerOptions.Limit to every route.
@@ -196,7 +201,7 @@ func limited(next http.Handler, o HandlerOptions, log *slog.Logger) http.Handler
 			log.Warn("media read rate limited", "viewer", actor.ID, "anonymous", actor.Anonymous, "path", req.URL.Path)
 			w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(wait.Seconds())))))
 			w.Header().Set("Cache-Control", "no-store")
-			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests", "code": "rate_limited"})
+			writeJSON(w, http.StatusTooManyRequests, ErrorReply{Error: "too many requests", Code: CodeRate})
 			return
 		}
 		next.ServeHTTP(w, req)

@@ -22,7 +22,7 @@ type limitFixture struct {
 	rt      *Runtime
 	h       http.Handler
 	post    string
-	poll    pollView
+	poll    Poll
 	comment string
 }
 
@@ -46,7 +46,7 @@ func newLimitFixture(t *testing.T, limits Limits, from *limitFixture) limitFixtu
 	f := limitFixture{rt: rt, h: rt.Handler()}
 	ctx := context.Background()
 	admin := access.Actor{ID: "admin", Kind: "user"}
-	rec := doJSON(t, f.h, admin, "POST", "/posts", postWriteReq{Title: ptr("Hello"), Body: ptr("world"), IsDraft: ptr(false)})
+	rec := doJSON(t, f.h, admin, "POST", "/posts", PostInput{Title: ptr("Hello"), Body: ptr("world"), IsDraft: ptr(false)})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create post: %d %s", rec.Code, rec.Body.String())
 	}
@@ -56,7 +56,7 @@ func newLimitFixture(t *testing.T, limits Limits, from *limitFixture) limitFixtu
 	if f.poll, err = rt.polls.create(ctx, admin, twoOptionPoll("en")); err != nil {
 		t.Fatal(err)
 	}
-	f.comment = mustComment(t, rt, admin, "gallery", cid(1), createInput{Body: "first"}).ID
+	f.comment = mustComment(t, rt, admin, "gallery", cid(1), CommentInput{Body: "first"}).ID
 	return f
 }
 
@@ -90,7 +90,7 @@ func TestRateLimitsPerActionAndChurn(t *testing.T) {
 		action Action
 		steps  [3]step
 	}{
-		{ActionComment, [3]step{{"POST", g1 + "/comments", createInput{Body: "a"}}, {"POST", g1 + "/comments", createInput{Body: "b"}}, {"POST", g2 + "/comments", createInput{Body: "c"}}}},
+		{ActionComment, [3]step{{"POST", g1 + "/comments", CommentInput{Body: "a"}}, {"POST", g1 + "/comments", CommentInput{Body: "b"}}, {"POST", g2 + "/comments", CommentInput{Body: "c"}}}},
 		{ActionCommentReaction, [3]step{{"POST", "/comments/" + f.comment + "/like", nil}, {"POST", "/comments/" + f.comment + "/neutral", nil}, {"POST", "/comments/" + f.comment + "/dislike", nil}}},
 		// The post routes and the generic route on kind post share one budget.
 		{ActionPostReaction, [3]step{{"POST", "/posts/" + f.post + "/like", nil}, {"POST", "/post/" + f.post + "/neutral", nil}, {"POST", "/posts/" + f.post + "/dislike", nil}}},
@@ -110,7 +110,7 @@ func TestRateLimitsPerActionAndChurn(t *testing.T) {
 			assertLimited(t, doJSON(t, f.h, bot, s.method, s.path, s.body), c.action, 3590, 3600)
 		})
 	}
-	if rec := doJSON(t, f.h, access.Actor{ID: "human", Kind: "user"}, "POST", g1+"/comments", createInput{Body: "hi"}); rec.Code != http.StatusCreated {
+	if rec := doJSON(t, f.h, access.Actor{ID: "human", Kind: "user"}, "POST", g1+"/comments", CommentInput{Body: "hi"}); rec.Code != http.StatusCreated {
 		t.Fatalf("another user's comment: %d %s", rec.Code, rec.Body.String())
 	}
 	a, b := access.Actor{Anonymous: true, IP: "10.0.0.1"}, access.Actor{Anonymous: true, IP: "10.0.0.2"}
@@ -131,7 +131,7 @@ func TestRateLimitCommentBurstAndSustained(t *testing.T) {
 	f := newLimitFixture(t, Limits{Comment: []Rate{{2, 3 * time.Second}, {3, time.Hour}}}, nil)
 	bot := access.Actor{ID: "bot", Kind: "user"}
 	post := func() *httptest.ResponseRecorder {
-		return doJSON(t, f.h, bot, "POST", "/gallery/"+cid(1)+"/comments", createInput{Body: "spam"})
+		return doJSON(t, f.h, bot, "POST", "/gallery/"+cid(1)+"/comments", CommentInput{Body: "spam"})
 	}
 	for i := range 2 {
 		if rec := post(); rec.Code != http.StatusCreated {
@@ -154,11 +154,11 @@ func TestRateLimitDefaults(t *testing.T) {
 	f := newLimitFixture(t, Limits{KeyPrefix: "defaults:"}, nil)
 	bot := access.Actor{ID: "bot", Kind: "user"}
 	for i := range 5 {
-		if rec := doJSON(t, f.h, bot, "POST", "/gallery/"+cid(1)+"/comments", createInput{Body: "c" + strconv.Itoa(i)}); rec.Code != http.StatusCreated {
+		if rec := doJSON(t, f.h, bot, "POST", "/gallery/"+cid(1)+"/comments", CommentInput{Body: "c" + strconv.Itoa(i)}); rec.Code != http.StatusCreated {
 			t.Fatalf("comment %d: %d %s", i, rec.Code, rec.Body.String())
 		}
 	}
-	assertLimited(t, doJSON(t, f.h, bot, "POST", "/gallery/"+cid(1)+"/comments", createInput{Body: "six"}), ActionComment, 290, 300)
+	assertLimited(t, doJSON(t, f.h, bot, "POST", "/gallery/"+cid(1)+"/comments", CommentInput{Body: "six"}), ActionComment, 290, 300)
 	for i := range 20 {
 		method := []string{"POST", "DELETE"}[i%2]
 		if rec := doJSON(t, f.h, bot, method, "/gallery/"+cid(1)+"/favorite", nil); rec.Code != http.StatusOK {
@@ -212,7 +212,7 @@ func TestRateLimitSharedAcrossReplicas(t *testing.T) {
 			b := newLimitFixture(t, limits(rdb), &a)
 			bot := access.Actor{ID: "bot", Kind: "user"}
 			comment := func(f limitFixture, who access.Actor) *httptest.ResponseRecorder {
-				return doJSON(t, f.h, who, "POST", "/gallery/"+cid(1)+"/comments", createInput{Body: "spam"})
+				return doJSON(t, f.h, who, "POST", "/gallery/"+cid(1)+"/comments", CommentInput{Body: "spam"})
 			}
 			before := RateLimitRedisErrors.Value()
 			for i, f := range []limitFixture{a, b, a} {

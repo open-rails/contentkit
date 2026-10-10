@@ -56,7 +56,7 @@ func TestCaseSpellingsKeyOneReaction(t *testing.T) {
 	attacker, anon := access.Actor{ID: "attacker"}, access.Actor{Anonymous: true, IP: "203.0.113.9"}
 	fans := []access.Actor{{ID: "u1"}, {ID: "u2"}}
 
-	comment := func(actor access.Actor, in createInput) Comment {
+	comment := func(actor access.Actor, in CommentInput) Comment {
 		t.Helper()
 		rec := doJSON(t, h, actor, "POST", "/gallery/"+gallery+"/comments", in)
 		var cm Comment
@@ -65,7 +65,7 @@ func TestCaseSpellingsKeyOneReaction(t *testing.T) {
 		}
 		return cm
 	}
-	target, rival := comment(attacker, createInput{Body: "mine"}).ID, comment(fans[0], createInput{Body: "theirs"}).ID
+	target, rival := comment(attacker, CommentInput{Body: "mine"}).ID, comment(fans[0], CommentInput{Body: "theirs"}).ID
 	// Many hex letters, so the spellings are many distinct strings.
 	const lettered = "0192abcd-ef01-7abc-8def-abcdefabcdef"
 	if _, err := pool.Exec(ctx, `UPDATE `+rt.store.t.comments+` SET id = $1 WHERE id = $2`, lettered, target); err != nil {
@@ -89,7 +89,7 @@ func TestCaseSpellingsKeyOneReaction(t *testing.T) {
 		like(fan, "/comments/"+rival+"/like")
 	}
 	like(attacker, "/gallery/"+gallery+"/like")
-	if reply := comment(fans[1], createInput{Body: "re", ReplyToID: strings.ToUpper(rival)}); reply.ReplyToID != rival {
+	if reply := comment(fans[1], CommentInput{Body: "re", ReplyToID: strings.ToUpper(rival)}); reply.ReplyToID != rival {
 		t.Fatalf("reply_to_id = %q, want the stored %q", reply.ReplyToID, rival)
 	}
 
@@ -112,7 +112,7 @@ func TestCaseSpellingsKeyOneReaction(t *testing.T) {
 	for _, route := range []string{"POST /gallery/" + upper + "/like", "GET /gallery/" + upper + "/reaction", "POST /gallery/" + upper + "/favorite",
 		"DELETE /gallery/" + upper + "/favorite", "GET /gallery/" + upper + "/favorite", "POST /gallery/" + upper + "/comments", "GET /gallery/" + upper + "/comments"} {
 		method, path, _ := strings.Cut(route, " ")
-		rec := doJSON(t, h, attacker, method, path, createInput{Body: "x"})
+		rec := doJSON(t, h, attacker, method, path, CommentInput{Body: "x"})
 		if rec.Code != http.StatusBadRequest || decodeErr(t, rec.Body.String()).Code != CodeInvalidRequest {
 			t.Errorf("%s = %d %s, want 400 invalid_request", route, rec.Code, rec.Body.String())
 		}

@@ -31,8 +31,8 @@ func TestTenantIsolation(t *testing.T) {
 	if err := a.favorites.add(ctx, u, "gallery", cid(1)); err != nil {
 		t.Fatal(err)
 	}
-	cm := mustComment(t, a, u, "gallery", cid(1), createInput{Body: "on a"})
-	poll, err := a.polls.create(ctx, u, createPollInput{Question: "a?", Options: []createOptionInput{{Label: "x"}, {Label: "y"}}})
+	cm := mustComment(t, a, u, "gallery", cid(1), CommentInput{Body: "on a"})
+	poll, err := a.polls.create(ctx, u, PollInput{Question: "a?", Options: []PollOptionInput{{Label: "x"}, {Label: "y"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
