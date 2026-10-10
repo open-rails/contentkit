@@ -16,6 +16,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/pgtest"
 )
 
@@ -35,7 +36,7 @@ func newPostRuntime(t *testing.T, opts Options) (*Runtime, *pgxpool.Pool) {
 // postMux mounts only the posts routes.
 func postMux(rt *Runtime) http.Handler {
 	mux := http.NewServeMux()
-	newPosts(rt).mount(mux)
+	httpapi.Mount(mux, newPosts(rt), postRoutes)
 	return mux
 }
 
@@ -76,9 +77,9 @@ func doJSON(t *testing.T, h http.Handler, actor access.Actor, method, target str
 	return rec
 }
 
-func decodePost(t *testing.T, rec *httptest.ResponseRecorder) postView {
+func decodePost(t *testing.T, rec *httptest.ResponseRecorder) Post {
 	t.Helper()
-	var v postView
+	var v Post
 	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
 		t.Fatalf("decode post: %v (body=%s)", err, rec.Body.String())
 	}
@@ -93,7 +94,7 @@ func TestPostCRUDHappyPath(t *testing.T) {
 	author := access.Actor{ID: "root1", Kind: "user"}
 
 	// create (published so it lands in the public list)
-	rec := doJSON(t, h, author, "POST", "/posts", postWriteReq{
+	rec := doJSON(t, h, author, "POST", "/posts", PostInput{
 		Title: ptr("Hello"), Body: ptr("<b>world</b>"), IsDraft: ptr(false),
 	})
 	if rec.Code != http.StatusCreated {
@@ -111,7 +112,7 @@ func TestPostCRUDHappyPath(t *testing.T) {
 	}
 
 	// update
-	rec = doJSON(t, h, author, "PATCH", "/posts/"+created.ID, postWriteReq{Title: ptr("Hello (edited)")})
+	rec = doJSON(t, h, author, "PATCH", "/posts/"+created.ID, PostInput{Title: ptr("Hello (edited)")})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update: status %d body %s", rec.Code, rec.Body.String())
 	}
@@ -151,7 +152,7 @@ func TestPostBodyProcessorIsIndependent(t *testing.T) {
 		return "rich:" + raw, nil
 	})
 	rt, _ := newPostRuntime(t, Options{Processor: plain, PostBodyProcessor: rich})
-	rec := doJSON(t, postMux(rt), access.Actor{ID: "root1"}, "POST", "/posts", postWriteReq{
+	rec := doJSON(t, postMux(rt), access.Actor{ID: "root1"}, "POST", "/posts", PostInput{
 		Title:   ptr("processors"),
 		Body:    ptr("body"),
 		Excerpt: ptr("excerpt"),
@@ -171,7 +172,7 @@ func TestPostBodyProcessorIsIndependent(t *testing.T) {
 
 func TestPostPermissionGate(t *testing.T) {
 	author := access.Actor{ID: "root1", Kind: "user"}
-	body := postWriteReq{Title: ptr("x"), Body: ptr("y")}
+	body := PostInput{Title: ptr("x"), Body: ptr("y")}
 
 	// denyAll: every write is 403.
 	rtDeny, _ := newPostRuntime(t, Options{Authz: denyAll{}})
@@ -201,7 +202,7 @@ func TestPostDraftVisibility(t *testing.T) {
 	editor := access.Actor{ID: "editor", Kind: "user"}
 	reader := access.Actor{ID: "reader", Kind: "user"}
 
-	rec := doJSON(t, h, editor, "POST", "/posts", postWriteReq{
+	rec := doJSON(t, h, editor, "POST", "/posts", PostInput{
 		Title: ptr("secret"), Body: ptr("draft body"), IsDraft: ptr(true),
 	})
 	if rec.Code != http.StatusCreated {
@@ -229,8 +230,8 @@ func TestPostListSortedAndCounts(t *testing.T) {
 	author := access.Actor{ID: "root1"}
 
 	// Two published posts with explicit past live_at so order is deterministic.
-	older := postWriteReq{Title: ptr("older"), Body: ptr("b"), IsDraft: ptr(false), LiveAt: ptr(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))}
-	newer := postWriteReq{Title: ptr("newer"), Body: ptr("b"), IsDraft: ptr(false), LiveAt: ptr(time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC))}
+	older := PostInput{Title: ptr("older"), Body: ptr("b"), IsDraft: ptr(false), LiveAt: ptr(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))}
+	newer := PostInput{Title: ptr("newer"), Body: ptr("b"), IsDraft: ptr(false), LiveAt: ptr(time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC))}
 	if rec := doJSON(t, h, author, "POST", "/posts", older); rec.Code != http.StatusCreated {
 		t.Fatalf("create older: %d %s", rec.Code, rec.Body.String())
 	}
@@ -316,11 +317,11 @@ func TestPostLikeHTTPRoute(t *testing.T) {
 	// Mount BOTH modules on one mux to prove /posts/{id}/like doesn't collide
 	// with reactions' /{type}/{id}/like.
 	mux := http.NewServeMux()
-	rt.reactions.mount(mux)
-	newPosts(rt).mount(mux)
+	httpapi.Mount(mux, rt.reactions, reactionRoutes)
+	httpapi.Mount(mux, newPosts(rt), postRoutes)
 
 	author := access.Actor{ID: "root1"}
-	rec := doJSON(t, mux, author, "POST", "/posts", postWriteReq{Title: ptr("t"), Body: ptr("b"), IsDraft: ptr(false)})
+	rec := doJSON(t, mux, author, "POST", "/posts", PostInput{Title: ptr("t"), Body: ptr("b"), IsDraft: ptr(false)})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: status %d body %s", rec.Code, rec.Body.String())
 	}
@@ -368,7 +369,7 @@ func TestPostReactionRoutesShareCounters(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := doJSON(t, h, actor, http.MethodPost, "/posts", postWriteReq{Title: ptr(tc.name), Body: ptr("body"), IsDraft: ptr(false)})
+			rec := doJSON(t, h, actor, http.MethodPost, "/posts", PostInput{Title: ptr(tc.name), Body: ptr("body"), IsDraft: ptr(false)})
 			if rec.Code != http.StatusCreated {
 				t.Fatalf("create post: %d %s", rec.Code, rec.Body.String())
 			}
@@ -387,7 +388,7 @@ func TestPostReactionRoutesShareCounters(t *testing.T) {
 							got.TotalLikes, got.TotalDislikes, step.likes, step.dislikes)
 					}
 				} else {
-					var got reactionCounts
+					var got ReactionCounts
 					if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 						t.Fatalf("%s response: %v", path, err)
 					}
@@ -427,7 +428,7 @@ func TestPostReactionRoutesRespectAccessAndPublication(t *testing.T) {
 	rt, pool := newPostRuntime(t, Options{Resolver: resolver, ContentKinds: []string{KindPost}})
 	h := rt.Handler()
 	actor := access.Actor{ID: "reactor", Kind: "user"}
-	rec := doJSON(t, h, actor, http.MethodPost, "/posts", postWriteReq{
+	rec := doJSON(t, h, actor, http.MethodPost, "/posts", PostInput{
 		Title: ptr("access"), Body: ptr("body"), IsDraft: ptr(false),
 	})
 	if rec.Code != http.StatusCreated {
@@ -479,7 +480,7 @@ func TestPostReactionMixedRoutesConcurrentExact(t *testing.T) {
 	rt, pool := newPostRuntime(t, Options{Resolver: resolver, ContentKinds: []string{KindPost}})
 	h := rt.Handler()
 	actor := access.Actor{ID: "reactor", Kind: "user"}
-	rec := doJSON(t, h, actor, http.MethodPost, "/posts", postWriteReq{
+	rec := doJSON(t, h, actor, http.MethodPost, "/posts", PostInput{
 		Title: ptr("concurrent"), Body: ptr("body"), IsDraft: ptr(false),
 	})
 	if rec.Code != http.StatusCreated {
@@ -518,7 +519,7 @@ func TestPostReactionMixedRoutesConcurrentExact(t *testing.T) {
 }
 
 // listPosts fetches GET /posts (optionally filtered by language) and decodes it.
-func listPosts(t *testing.T, h http.Handler, language string) []postView {
+func listPosts(t *testing.T, h http.Handler, language string) []Post {
 	t.Helper()
 	target := "/posts"
 	if language != "" {
@@ -528,7 +529,7 @@ func listPosts(t *testing.T, h http.Handler, language string) []postView {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list: status %d body %s", rec.Code, rec.Body.String())
 	}
-	var out []postView
+	var out []Post
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode list: %v (body=%s)", err, rec.Body.String())
 	}
@@ -546,7 +547,7 @@ func TestPostWritesQueueKeywordDocuments(t *testing.T) {
 	h := postMux(rt)
 	author := access.Actor{ID: "root1", Kind: "user"}
 
-	rec := doJSON(t, h, author, "POST", "/posts", postWriteReq{Title: ptr("Hello"), Body: ptr("b"), Language: ptr("en"), Slug: ptr("hello"), IsDraft: ptr(false)})
+	rec := doJSON(t, h, author, "POST", "/posts", PostInput{Title: ptr("Hello"), Body: ptr("b"), Language: ptr("en"), Slug: ptr("hello"), IsDraft: ptr(false)})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 	}
@@ -581,7 +582,7 @@ func TestPostWritesQueueKeywordDocuments(t *testing.T) {
 	}
 
 	// A language change deletes the old-language document and queues the new one.
-	if rec = doJSON(t, h, author, "PATCH", "/posts/"+id, postWriteReq{Language: ptr("ja")}); rec.Code != http.StatusOK {
+	if rec = doJSON(t, h, author, "PATCH", "/posts/"+id, PostInput{Language: ptr("ja")}); rec.Code != http.StatusOK {
 		t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
 	}
 	if got := dirty(); !got["en"] || got["ja"] {
@@ -591,7 +592,7 @@ func TestPostWritesQueueKeywordDocuments(t *testing.T) {
 		t.Fatalf("an en document survives the language change: %+v", docs)
 	}
 	// Unpublishing yields no document; deleting queues a deletion.
-	if rec = doJSON(t, h, author, "PATCH", "/posts/"+id, postWriteReq{IsDraft: ptr(true)}); rec.Code != http.StatusOK {
+	if rec = doJSON(t, h, author, "PATCH", "/posts/"+id, PostInput{IsDraft: ptr(true)}); rec.Code != http.StatusOK {
 		t.Fatalf("draft: %d", rec.Code)
 	}
 	if docs, _ := rt.KeywordDocuments(ctx, testTenant, KindPost, "ja", []contentref.ContentRef{rt.Ref(KindPost, id)}); len(docs) != 0 {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
 // UploadHandlerOptions configure UploadHandler.
@@ -20,30 +21,16 @@ type UploadHandlerOptions struct {
 	Logger *slog.Logger                             // 5xx causes; default slog.Default()
 }
 
-// UploadHandler serves the upload API the browser SDK calls. Every route
-// but GET /frame is POST with a JSON body. Errors are ErrorReply with the
+// UploadHandler serves the upload API the browser SDK calls (uploadRoutes).
+// contentkit.Runtime.Handler serves it at /media/upload; a host mounting it
+// alone puts it under a prefix behind its auth. Errors are ErrorReply with the
 // status of its code (Retry-After on 429).
-//
-//	POST /presign     PresignBody -> PresignReply
-//	POST /parts       PartsBody   -> PartsReply   presign multipart parts
-//	POST /parts/list  TicketBody  -> PartsReply   parts that landed (resume)
-//	POST /complete    TicketBody  -> CompleteReply
-//	POST /abort       TicketBody  -> 204
-//	POST /commit      CommitBody  -> CommitReply
-//	GET  /frame?kind=&id=&path=&t=&w= -> image/jpeg   a still of a video upload (UploadOptions.Frames)
 func UploadHandler(u *Uploads, o UploadHandlerOptions) http.Handler {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
-	h := uploadHandler{u, o}
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /presign", h.presign)
-	mux.HandleFunc("POST /parts", h.parts)
-	mux.HandleFunc("POST /parts/list", h.listParts)
-	mux.HandleFunc("POST /complete", h.complete)
-	mux.HandleFunc("POST /abort", h.abort)
-	mux.HandleFunc("POST /commit", h.commit)
-	mux.HandleFunc("GET /frame", h.frame)
+	httpapi.Mount(mux, uploadHandler{u, o}, uploadRoutes)
 	return mux
 }
 

@@ -1,0 +1,7150 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ContentKit",
+    "version": "v0",
+    "description": "ContentKit's HTTP API, from the prefix the host mounts contentkit.Runtime.Handler at. Each module sits at its own sub-path (x-contentkit-modules); a host that mounts a module alone serves its routes beneath that mount instead. Generated from the route catalog (internal/httpapi) by `go generate ./internal/contract`; do not edit."
+  },
+  "paths": {
+    "/posts": {
+      "get": {
+        "tags": [
+          "posts"
+        ],
+        "summary": "Published posts.",
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only posts in this language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "likes (most liked), best (Wilson lower bound) or newest (the default)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "items to skip",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Post"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      },
+      "post": {
+        "tags": [
+          "posts"
+        ],
+        "summary": "Creates a post; 202 when the moderator holds it for review.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Post"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Post"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "PostWrite",
+        "x-contentkit-errors": [
+          "conflict",
+          "forbidden",
+          "moderation_rejected"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/posts/{id}": {
+      "get": {
+        "tags": [
+          "posts"
+        ],
+        "summary": "A post. A draft, scheduled, held or rejected post is shown only to its author and PostWrite holders.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Post"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      },
+      "patch": {
+        "tags": [
+          "posts"
+        ],
+        "summary": "Updates a post's given fields; 202 when the moderator holds the new text.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Post"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Post"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "PostWrite",
+        "x-contentkit-errors": [
+          "conflict",
+          "forbidden",
+          "moderation_rejected",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "posts"
+        ],
+        "summary": "Deletes a post.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletedPost"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "PostWrite",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/posts/{id}/like": {
+      "post": {
+        "tags": [
+          "posts"
+        ],
+        "summary": "Likes a published post.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Post"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "not_found",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      }
+    },
+    "/posts/{id}/dislike": {
+      "post": {
+        "tags": [
+          "posts"
+        ],
+        "summary": "Dislikes a published post.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Post"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "not_found",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      }
+    },
+    "/posts/{id}/neutral": {
+      "post": {
+        "tags": [
+          "posts"
+        ],
+        "summary": "Clears the caller's reaction to a published post.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Post"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "not_found",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      }
+    },
+    "/posts/{id}/cover": {
+      "put": {
+        "tags": [
+          "posts"
+        ],
+        "summary": "Sets the cover to an inline image uploaded to the post's media folder; \"\" clears it.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImageInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostCover"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "PostWrite",
+        "x-contentkit-errors": [
+          "not_configured",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/posts/{id}/images": {
+      "post": {
+        "tags": [
+          "posts"
+        ],
+        "summary": "The public URL of an inline image uploaded to the post's media folder, to place in the body.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImageInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InlineImage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "PostWrite",
+        "x-contentkit-errors": [
+          "not_configured",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/{kind}/{id}/comments": {
+      "get": {
+        "tags": [
+          "comments"
+        ],
+        "summary": "A target's top-level comments with reply counts; the caller also sees its own held and rejected ones.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "likes (most liked), best (Wilson lower bound) or newest (the default)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "items to skip",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Comment"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      },
+      "post": {
+        "tags": [
+          "comments"
+        ],
+        "summary": "Comments on a target, or replies to a top-level comment; anonymous callers give anon_name. 202 when the moderator holds it.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comment"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comment"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "comment_banned",
+          "forbidden",
+          "moderation_rejected",
+          "not_found",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      }
+    },
+    "/comments/latest": {
+      "get": {
+        "tags": [
+          "comments"
+        ],
+        "summary": "The newest published comments across the tenant, with their targets; a page may under-fill.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "items to skip",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FeedItem"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      }
+    },
+    "/comments/admin": {
+      "get": {
+        "tags": [
+          "comments"
+        ],
+        "summary": "Every comment, newest first, deleted, held and rejected ones with their real bodies.",
+        "parameters": [
+          {
+            "name": "content_kind",
+            "in": "query",
+            "description": "only comments on this kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "items to skip",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminComment"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "CommentModerate",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/comments/{cid}/restore": {
+      "post": {
+        "tags": [
+          "comments"
+        ],
+        "summary": "Restores a deleted comment.",
+        "parameters": [
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Restored"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "CommentModerate",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/comments/{cid}/replies": {
+      "get": {
+        "tags": [
+          "comments"
+        ],
+        "summary": "A comment's replies, oldest first.",
+        "parameters": [
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "items to skip",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Comment"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      }
+    },
+    "/comments/{cid}": {
+      "patch": {
+        "tags": [
+          "comments"
+        ],
+        "summary": "Edits a comment: its author, or a CommentModerate holder. 202 when the moderator holds the new text.",
+        "parameters": [
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentEdit"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comment"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comment"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "comment_banned",
+          "conflict",
+          "forbidden",
+          "moderation_rejected",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "comments"
+        ],
+        "summary": "Deletes a comment, leaving a tombstone: its author, or a CommentModerate holder.",
+        "parameters": [
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      }
+    },
+    "/comments/{cid}/like": {
+      "post": {
+        "tags": [
+          "comments"
+        ],
+        "summary": "Likes a comment.",
+        "parameters": [
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionCounts"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "not_found",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      }
+    },
+    "/comments/{cid}/dislike": {
+      "post": {
+        "tags": [
+          "comments"
+        ],
+        "summary": "Dislikes a comment.",
+        "parameters": [
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionCounts"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "not_found",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      }
+    },
+    "/comments/{cid}/neutral": {
+      "post": {
+        "tags": [
+          "comments"
+        ],
+        "summary": "Clears the caller's reaction to a comment.",
+        "parameters": [
+          {
+            "name": "cid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionCounts"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "not_found",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      }
+    },
+    "/{kind}/{id}/like": {
+      "post": {
+        "tags": [
+          "reactions"
+        ],
+        "summary": "Likes a target.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionCounts"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "not_found",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      }
+    },
+    "/{kind}/{id}/dislike": {
+      "post": {
+        "tags": [
+          "reactions"
+        ],
+        "summary": "Dislikes a target.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionCounts"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "not_found",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      }
+    },
+    "/{kind}/{id}/neutral": {
+      "post": {
+        "tags": [
+          "reactions"
+        ],
+        "summary": "Clears the caller's reaction to a target.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionCounts"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "not_found",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      }
+    },
+    "/{kind}/{id}/reaction": {
+      "delete": {
+        "tags": [
+          "reactions"
+        ],
+        "summary": "Clears the caller's reaction to a target.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionCounts"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "not_found",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      },
+      "get": {
+        "tags": [
+          "reactions"
+        ],
+        "summary": "A target's like and dislike counts and the caller's own reaction.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionCounts"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      }
+    },
+    "/favorites": {
+      "get": {
+        "tags": [
+          "favorites"
+        ],
+        "summary": "The caller's favorites, newest first.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "items to skip",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FavoriteItem"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:user",
+          "request"
+        ]
+      }
+    },
+    "/{kind}/{id}/favorite": {
+      "post": {
+        "tags": [
+          "favorites"
+        ],
+        "summary": "Favorites a visible target; favoriting again is a no-op.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FavoriteState"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:user",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "favorites"
+        ],
+        "summary": "Unfavorites a target, also one no longer visible.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FavoriteState"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "forbidden",
+          "invalid_request",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:user",
+          "request"
+        ]
+      },
+      "get": {
+        "tags": [
+          "favorites"
+        ],
+        "summary": "Whether the caller has favorited a target.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FavoriteState"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "invalid_request"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:user",
+          "request"
+        ]
+      }
+    },
+    "/polls": {
+      "get": {
+        "tags": [
+          "polls"
+        ],
+        "summary": "Live polls, newest first.",
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only polls in this language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "description": "only polls live in this month, YYYY-MM",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "description": "only polls live on this day, YYYY-MM-DD",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "items to skip",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Poll"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      },
+      "post": {
+        "tags": [
+          "polls"
+        ],
+        "summary": "Creates a poll with its options; a free-text poll needs an AnswerClassifier.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PollInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Poll"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "PollWrite",
+        "x-contentkit-errors": [
+          "not_configured"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/polls/admin": {
+      "get": {
+        "tags": [
+          "polls"
+        ],
+        "summary": "Every poll, scheduled and inactive ones included.",
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only polls in this language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "description": "only polls live in this month, YYYY-MM",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "description": "only polls live on this day, YYYY-MM-DD",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "items to skip",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Poll"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "PollWrite",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/polls/{id}": {
+      "get": {
+        "tags": [
+          "polls"
+        ],
+        "summary": "A poll with the caller's vote or answer; a scheduled or inactive poll only for PollWrite holders.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Poll"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      },
+      "patch": {
+        "tags": [
+          "polls"
+        ],
+        "summary": "Updates a poll's given fields.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PollUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Poll"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "PollWrite",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "polls"
+        ],
+        "summary": "Deletes a poll and its media folder.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "PollWrite",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/polls/{id}/vote": {
+      "post": {
+        "tags": [
+          "polls"
+        ],
+        "summary": "Votes for an option of an open multiple-choice poll, or changes the vote.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PollVote"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Poll"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      }
+    },
+    "/polls/{id}/answer": {
+      "post": {
+        "tags": [
+          "polls"
+        ],
+        "summary": "Stores or replaces the caller's answer to an open free-text poll.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PollAnswerInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Poll"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:user",
+          "request"
+        ]
+      }
+    },
+    "/polls/{id}/image": {
+      "put": {
+        "tags": [
+          "polls"
+        ],
+        "summary": "Sets the question image to an inline image uploaded to the poll's media folder; \"\" clears it.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImageInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PollImage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "PollWrite",
+        "x-contentkit-errors": [
+          "not_configured",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/polls/{id}/options": {
+      "post": {
+        "tags": [
+          "polls"
+        ],
+        "summary": "Adds an option to a multiple-choice poll, at the end unless position is given.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PollOptionPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PollOption"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "PollWrite",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/polls/{id}/options/{oid}": {
+      "patch": {
+        "tags": [
+          "polls"
+        ],
+        "summary": "Updates an option's label or position.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "oid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PollOptionPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PollOption"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "PollWrite",
+        "x-contentkit-errors": [
+          "not_configured",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "polls"
+        ],
+        "summary": "Removes an option and its votes; a poll keeps at least two.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "oid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "PollWrite",
+        "x-contentkit-errors": [
+          "invalid_request",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/polls/{id}/options/{oid}/image": {
+      "put": {
+        "tags": [
+          "polls"
+        ],
+        "summary": "Sets an option's image to an inline image uploaded to the poll's media folder; \"\" clears it.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "oid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImageInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PollImage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "PollWrite",
+        "x-contentkit-errors": [
+          "not_configured",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/comment-bans": {
+      "get": {
+        "tags": [
+          "bans"
+        ],
+        "summary": "The bans the caller placed on commenters of its own content, newest first, expired ones included.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "items to skip",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CommentBan"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:user",
+          "request"
+        ]
+      }
+    },
+    "/comment-bans/{user}": {
+      "put": {
+        "tags": [
+          "bans"
+        ],
+        "summary": "Bans a user from commenting on the caller's content, or replaces the ban; no body bans without reason or end.",
+        "parameters": [
+          {
+            "name": "user",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BanInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentBan"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:user",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "bans"
+        ],
+        "summary": "Lifts the caller's ban on a user.",
+        "parameters": [
+          {
+            "name": "user",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:user",
+          "request"
+        ]
+      }
+    },
+    "/global-comment-bans": {
+      "get": {
+        "tags": [
+          "bans"
+        ],
+        "summary": "The tenant-wide comment bans, newest first, expired ones included.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "items to skip",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CommentBan"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "CommentBan",
+        "x-contentkit-errors": [
+          "unauthorized"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/global-comment-bans/{user}": {
+      "put": {
+        "tags": [
+          "bans"
+        ],
+        "summary": "Bans a user from commenting anywhere in the tenant, or replaces the ban.",
+        "parameters": [
+          {
+            "name": "user",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BanInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentBan"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "CommentBan",
+        "x-contentkit-errors": [
+          "unauthorized"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "bans"
+        ],
+        "summary": "Lifts a tenant-wide comment ban.",
+        "parameters": [
+          {
+            "name": "user",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "CommentBan",
+        "x-contentkit-errors": [
+          "unauthorized"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/{kind}/{id}/can-comment": {
+      "get": {
+        "tags": [
+          "bans"
+        ],
+        "summary": "Whether the caller may comment on a target, and the ban that stops it.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentStanding"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "request"
+        ]
+      }
+    },
+    "/moderation/held": {
+      "get": {
+        "tags": [
+          "moderation"
+        ],
+        "summary": "Held comments or posts awaiting review, oldest first.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "comment or post",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeldPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "ModerationReview",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/moderation/{kind}/{id}/resolve": {
+      "post": {
+        "tags": [
+          "moderation"
+        ],
+        "summary": "Approves (publishes) or rejects a held comment or post, at the revision the queue listed.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewOutcome"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "ModerationReview",
+        "x-contentkit-errors": [
+          "conflict",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/media/upload/presign": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Plans one upload after checking its path's rules and CanUpload: exists (commit directly), one PUT, or a multipart ticket.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresignBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresignReply"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "upload",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "conflict",
+          "forbidden",
+          "not_found",
+          "quota_exceeded",
+          "rate_limited",
+          "too_large",
+          "too_many_files",
+          "type_not_allowed"
+        ],
+        "x-contentkit-error-sets": [
+          "module:upload",
+          "tier:user",
+          "request"
+        ]
+      }
+    },
+    "/media/upload/parts": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Presigns multipart parts, each bound to its SHA-256.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PartsBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PartsReply"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "upload",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:upload",
+          "tier:user",
+          "request"
+        ]
+      }
+    },
+    "/media/upload/parts/list": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "The parts of a multipart upload that landed, to resume it.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TicketBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PartsReply"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "upload",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:upload",
+          "tier:user",
+          "request"
+        ]
+      }
+    },
+    "/media/upload/complete": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Assembles a multipart upload; blob is its staged name.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TicketBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompleteReply"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "upload",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "checksum_mismatch",
+          "forbidden",
+          "incomplete",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:upload",
+          "tier:user",
+          "request"
+        ]
+      }
+    },
+    "/media/upload/abort": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Abandons a multipart upload.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TicketBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "upload",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:upload",
+          "tier:user",
+          "request"
+        ]
+      }
+    },
+    "/media/upload/commit": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Applies ops to an item in one conditional write, then queues placement and processing; answers its uploads as an editor reads them.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommitBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommitReply"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "upload",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "conflict",
+          "forbidden",
+          "image_too_small",
+          "not_found",
+          "not_uploaded",
+          "quota_exceeded",
+          "rate_limited",
+          "too_large",
+          "too_many_files",
+          "type_not_allowed"
+        ],
+        "x-contentkit-error-sets": [
+          "module:upload",
+          "tier:user",
+          "request"
+        ]
+      }
+    },
+    "/media/upload/frame": {
+      "get": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "A JPEG still of a video upload, for the frame picker (UploadOptions.Frames).",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "the item's kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "description": "the item's id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "description": "the video upload's path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "t",
+            "in": "query",
+            "description": "seconds into the video",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "w",
+            "in": "query",
+            "description": "the still's width in pixels",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "upload",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:upload",
+          "tier:user",
+          "request"
+        ]
+      }
+    },
+    "/media/{kind}/{id}": {
+      "get": {
+        "tags": [
+          "media"
+        ],
+        "summary": "An item's files under a prefix in manifest order: with access each has a URL (and the item cookie is set), without each is locked.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "prefix",
+            "in": "query",
+            "description": "only files under this path prefix, e.g. low-res/",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "files to skip before the URLs start",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "files that get URLs",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "download",
+            "in": "query",
+            "description": "URLs carry their download names",
+            "allowEmptyValue": true,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "editor",
+            "in": "query",
+            "description": "editors: uploads with edits, failures, progress and editor views",
+            "allowEmptyValue": true,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "media",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:media",
+          "request"
+        ]
+      }
+    },
+    "/media/{kind}/{id}/hls/{path}": {
+      "get": {
+        "tags": [
+          "media"
+        ],
+        "summary": "HLS: {dir}master.m3u8 (a ladder of the read's hls), {path}.m3u8 (a track) or {dir}sprite.vtt (the seek sprite).",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "the rest of the path; may contain /",
+            "allowReserved": true
+          },
+          {
+            "name": "audio",
+            "in": "query",
+            "description": "audio languages the master playlist keeps; empty keeps none",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "subs",
+            "in": "query",
+            "description": "subtitle languages the master playlist keeps; empty keeps none",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/vnd.apple.mpegurl": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/vtt; charset=utf-8": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "media",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:media",
+          "request"
+        ]
+      }
+    },
+    "/codes/{code}": {
+      "get": {
+        "tags": [
+          "codes"
+        ],
+        "summary": "A content code's link and canonical path; any spelling of the code resolves.",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "lang",
+            "in": "query",
+            "description": "the language of the path's prefix and slug",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Resolved"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "codes",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "gone",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:codes",
+          "request"
+        ]
+      }
+    },
+    "/taxonomy/nodes": {
+      "get": {
+        "tags": [
+          "taxonomy"
+        ],
+        "summary": "Lists nodes: filtered, ordered and paged.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "only nodes of this kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "only nodes in these states; active by default",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "description": "only these taxonomy ids",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "slug",
+            "in": "query",
+            "description": "only the node with this slug",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language names resolve in",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language_mode",
+            "in": "query",
+            "description": "what a node without a name in language gets: fallback (the default), strict or required",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name_prefix",
+            "in": "query",
+            "description": "names starting with this",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "names containing this",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "content_kind",
+            "in": "query",
+            "description": "count contents of this kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "min_count",
+            "in": "query",
+            "description": "only nodes with at least this many contents",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "name, count, created, oldest or updated; taxonomy id by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor (default order only)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "nodes to skip",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodePage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "taxonomy",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:taxonomy",
+          "tier:staff",
+          "request"
+        ]
+      },
+      "post": {
+        "tags": [
+          "taxonomy"
+        ],
+        "summary": "Creates nodes with their names.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/NodeInput"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Node"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "taxonomy",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-errors": [
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:taxonomy",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/taxonomy/nodes/{id}": {
+      "get": {
+        "tags": [
+          "taxonomy"
+        ],
+        "summary": "A node with its names and edges.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeDetail"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "taxonomy",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:taxonomy",
+          "tier:staff",
+          "request"
+        ]
+      },
+      "patch": {
+        "tags": [
+          "taxonomy"
+        ],
+        "summary": "Updates a node's given fields.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodeUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Node"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "taxonomy",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-errors": [
+          "conflict",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:taxonomy",
+          "tier:staff",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "taxonomy"
+        ],
+        "summary": "Marks a node deleted.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Node"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "taxonomy",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:taxonomy",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/taxonomy/nodes/{id}/names": {
+      "put": {
+        "tags": [
+          "taxonomy"
+        ],
+        "summary": "Replaces a node's names.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Name"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeDetail"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "taxonomy",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-errors": [
+          "conflict",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:taxonomy",
+          "tier:staff",
+          "request"
+        ]
+      },
+      "post": {
+        "tags": [
+          "taxonomy"
+        ],
+        "summary": "Adds names to a node.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Name"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeDetail"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "taxonomy",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-errors": [
+          "conflict",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:taxonomy",
+          "tier:staff",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "taxonomy"
+        ],
+        "summary": "Removes names from a node.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Name"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeDetail"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "taxonomy",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:taxonomy",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/taxonomy/nodes/{id}/merge": {
+      "post": {
+        "tags": [
+          "taxonomy"
+        ],
+        "summary": "Merges a node into another: its assignments, names and edges move, and its URL redirects.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MergeInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MergeReport"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "taxonomy",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-errors": [
+          "conflict",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:taxonomy",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/taxonomy/edges": {
+      "post": {
+        "tags": [
+          "taxonomy"
+        ],
+        "summary": "Adds edges.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Edge"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EdgesWritten"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "taxonomy",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-errors": [
+          "conflict",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:taxonomy",
+          "tier:staff",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "taxonomy"
+        ],
+        "summary": "Removes edges.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Edge"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EdgesWritten"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "taxonomy",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:taxonomy",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/taxonomy/assignments": {
+      "post": {
+        "tags": [
+          "taxonomy"
+        ],
+        "summary": "Assigns nodes to contents.",
+        "parameters": [
+          {
+            "name": "suppress_counts",
+            "in": "query",
+            "description": "skip count maintenance; rebuild the counts afterwards",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Assignment"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentsWritten"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "taxonomy",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-errors": [
+          "conflict",
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:taxonomy",
+          "tier:staff",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "taxonomy"
+        ],
+        "summary": "Removes assignments.",
+        "parameters": [
+          {
+            "name": "suppress_counts",
+            "in": "query",
+            "description": "skip count maintenance; rebuild the counts afterwards",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Assignment"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentsWritten"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "taxonomy",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:taxonomy",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/taxonomy/effective": {
+      "post": {
+        "tags": [
+          "taxonomy"
+        ],
+        "summary": "The effective tags (work and version) of each content.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ContentRef"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EffectiveTagsOf"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "taxonomy",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:taxonomy",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/taxonomy/counts": {
+      "get": {
+        "tags": [
+          "taxonomy"
+        ],
+        "summary": "Content counts of nodes, by taxonomy id.",
+        "parameters": [
+          {
+            "name": "taxonomy_id",
+            "in": "query",
+            "description": "the nodes to count",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/Count"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "taxonomy",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:taxonomy",
+          "tier:staff",
+          "request"
+        ]
+      }
+    },
+    "/taxonomy/counts/rebuild": {
+      "post": {
+        "tags": [
+          "taxonomy"
+        ],
+        "summary": "Recomputes every count, after bulk loads written with suppress_counts.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CountsRebuilt"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "taxonomy",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:taxonomy",
+          "tier:staff"
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AdminComment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reply_to_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "anon_name": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "likes": {
+            "type": "integer"
+          },
+          "dislikes": {
+            "type": "integer"
+          },
+          "mine": {
+            "type": "integer"
+          },
+          "reply_count": {
+            "type": "integer"
+          },
+          "author": {
+            "$ref": "#/components/schemas/PublicUser"
+          },
+          "moderation": {
+            "$ref": "#/components/schemas/ModerationState"
+          },
+          "moderation_reason": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "content_kind": {
+            "type": "string"
+          },
+          "content_id": {
+            "type": "string"
+          },
+          "content_version_id": {
+            "type": "string"
+          },
+          "deleted_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "body",
+          "deleted",
+          "likes",
+          "dislikes",
+          "mine",
+          "reply_count",
+          "created_at",
+          "updated_at",
+          "tenant_id",
+          "content_kind",
+          "content_id"
+        ]
+      },
+      "Assignment": {
+        "type": "object",
+        "properties": {
+          "tenant_id": {
+            "type": "string"
+          },
+          "content_kind": {
+            "type": "string"
+          },
+          "content_id": {
+            "type": "string"
+          },
+          "content_version_id": {
+            "type": "string"
+          },
+          "taxonomy_id": {
+            "type": "string"
+          },
+          "relation": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "proposed"
+            ]
+          },
+          "source_revision": {
+            "type": "integer"
+          }
+        }
+      },
+      "AssignmentsWritten": {
+        "type": "object",
+        "properties": {
+          "assignments": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "assignments"
+        ]
+      },
+      "BanInput": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "until": {
+            "oneOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "BanNotice": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "scope"
+        ]
+      },
+      "Comment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reply_to_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "anon_name": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "likes": {
+            "type": "integer"
+          },
+          "dislikes": {
+            "type": "integer"
+          },
+          "mine": {
+            "type": "integer"
+          },
+          "reply_count": {
+            "type": "integer"
+          },
+          "author": {
+            "$ref": "#/components/schemas/PublicUser"
+          },
+          "moderation": {
+            "$ref": "#/components/schemas/ModerationState"
+          },
+          "moderation_reason": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "body",
+          "deleted",
+          "likes",
+          "dislikes",
+          "mine",
+          "reply_count",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "CommentBan": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/PublicUser"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "banned_by": {
+            "type": "string"
+          },
+          "banned_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expired": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "user_id",
+          "scope",
+          "banned_by",
+          "banned_at",
+          "expired"
+        ]
+      },
+      "CommentEdit": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string"
+          }
+        }
+      },
+      "CommentInput": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "reply_to_id": {
+            "type": "string"
+          },
+          "anon_name": {
+            "type": "string"
+          }
+        }
+      },
+      "CommentStanding": {
+        "type": "object",
+        "properties": {
+          "can_comment": {
+            "type": "boolean"
+          },
+          "ban": {
+            "$ref": "#/components/schemas/BanNotice"
+          }
+        },
+        "required": [
+          "can_comment"
+        ]
+      },
+      "CommitBody": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "$ref": "#/components/schemas/RefBody"
+          },
+          "operation_id": {
+            "type": "string"
+          },
+          "ops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Op"
+            }
+          }
+        }
+      },
+      "CommitReply": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileInfo"
+            }
+          }
+        },
+        "required": [
+          "files"
+        ]
+      },
+      "CompleteReply": {
+        "type": "object",
+        "properties": {
+          "blob": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "blob",
+          "type",
+          "size"
+        ]
+      },
+      "ContentRef": {
+        "type": "object",
+        "properties": {
+          "tenant_id": {
+            "type": "string"
+          },
+          "content_kind": {
+            "type": "string"
+          },
+          "content_id": {
+            "type": "string"
+          },
+          "content_version_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "content_kind",
+          "content_id"
+        ]
+      },
+      "CopyFrom": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "Count": {
+        "type": "object",
+        "properties": {
+          "content_kind": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "content_kind",
+          "language",
+          "count"
+        ]
+      },
+      "CountsRebuilt": {
+        "type": "object",
+        "properties": {
+          "nodes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "nodes"
+        ]
+      },
+      "Crop": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "w": {
+            "type": "integer"
+          },
+          "h": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "w",
+          "h"
+        ]
+      },
+      "DeletedPost": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "deleted"
+        ]
+      },
+      "Edge": {
+        "type": "object",
+        "properties": {
+          "from_taxonomy_id": {
+            "type": "string"
+          },
+          "relation": {
+            "type": "string",
+            "enum": [
+              "alias_of",
+              "artist_of",
+              "child",
+              "member_of",
+              "parent",
+              "synonym",
+              "voice_of"
+            ]
+          },
+          "to_taxonomy_id": {
+            "type": "string"
+          },
+          "source_revision": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "from_taxonomy_id",
+          "relation",
+          "to_taxonomy_id",
+          "source_revision"
+        ]
+      },
+      "EdgesWritten": {
+        "type": "object",
+        "properties": {
+          "edges": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "edges"
+        ]
+      },
+      "Edit": {
+        "type": "object",
+        "properties": {
+          "crop": {
+            "$ref": "#/components/schemas/Crop"
+          },
+          "rotate": {
+            "type": "integer"
+          }
+        }
+      },
+      "EffectiveTag": {
+        "type": "object",
+        "properties": {
+          "taxonomy_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "relation": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "content",
+              "version"
+            ]
+          }
+        },
+        "required": [
+          "taxonomy_id",
+          "kind",
+          "slug",
+          "relation",
+          "scope"
+        ]
+      },
+      "EffectiveTagsOf": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/ContentRef"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EffectiveTag"
+            }
+          }
+        },
+        "required": [
+          "content",
+          "tags"
+        ]
+      },
+      "EncodeProgress": {
+        "type": "object",
+        "properties": {
+          "phase": {
+            "$ref": "#/components/schemas/EncodePhase"
+          },
+          "queue_position": {
+            "type": "integer"
+          },
+          "segments_done": {
+            "type": "integer"
+          },
+          "segments_total": {
+            "type": "integer"
+          },
+          "percent": {
+            "type": "number"
+          },
+          "speed": {
+            "type": "number"
+          },
+          "eta": {
+            "type": "number"
+          },
+          "at": {
+            "type": "integer"
+          },
+          "stalled": {
+            "type": "boolean"
+          },
+          "stage": {
+            "type": "integer"
+          },
+          "stages": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "phase",
+          "percent",
+          "at"
+        ]
+      },
+      "ErrorDetails": {
+        "type": "object",
+        "properties": {
+          "width": {
+            "type": "integer"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "min_width": {
+            "type": "integer"
+          },
+          "max_pixels": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string"
+          },
+          "allowed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "size": {
+            "type": "integer"
+          },
+          "max_bytes": {
+            "type": "integer"
+          },
+          "frames": {
+            "type": "integer"
+          },
+          "max_frames": {
+            "type": "integer"
+          },
+          "seconds": {
+            "type": "number"
+          },
+          "max_seconds": {
+            "type": "number"
+          }
+        }
+      },
+      "ErrorReply": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "retry_after": {
+            "type": "integer"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "comment",
+              "comment_reaction",
+              "favorite",
+              "poll_vote",
+              "post_reaction",
+              "reaction"
+            ]
+          },
+          "ban": {
+            "$ref": "#/components/schemas/BanNotice"
+          },
+          "blobs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "details": {
+            "$ref": "#/components/schemas/ErrorDetails"
+          }
+        },
+        "required": [
+          "error",
+          "code"
+        ]
+      },
+      "Failure": {
+        "type": "object",
+        "properties": {
+          "of": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "details": {
+            "$ref": "#/components/schemas/ErrorDetails"
+          }
+        },
+        "required": [
+          "of",
+          "message"
+        ]
+      },
+      "FavoriteItem": {
+        "type": "object",
+        "properties": {
+          "tenant_id": {
+            "type": "string"
+          },
+          "content_kind": {
+            "type": "string"
+          },
+          "content_id": {
+            "type": "string"
+          },
+          "content_version_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "content_kind",
+          "content_id",
+          "created_at"
+        ]
+      },
+      "FavoriteState": {
+        "type": "object",
+        "properties": {
+          "favorited": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "favorited"
+        ]
+      },
+      "FeedItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reply_to_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "anon_name": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "likes": {
+            "type": "integer"
+          },
+          "dislikes": {
+            "type": "integer"
+          },
+          "mine": {
+            "type": "integer"
+          },
+          "reply_count": {
+            "type": "integer"
+          },
+          "author": {
+            "$ref": "#/components/schemas/PublicUser"
+          },
+          "moderation": {
+            "$ref": "#/components/schemas/ModerationState"
+          },
+          "moderation_reason": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "content_kind": {
+            "type": "string"
+          },
+          "content_id": {
+            "type": "string"
+          },
+          "content_version_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "body",
+          "deleted",
+          "likes",
+          "dislikes",
+          "mine",
+          "reply_count",
+          "created_at",
+          "updated_at",
+          "tenant_id",
+          "content_kind",
+          "content_id"
+        ]
+      },
+      "FileInfo": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "w": {
+            "type": "integer"
+          },
+          "h": {
+            "type": "integer"
+          },
+          "dur": {
+            "type": "number"
+          },
+          "download": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "upload": {
+            "type": "boolean"
+          },
+          "staged": {
+            "type": "boolean"
+          },
+          "from": {
+            "type": "string"
+          },
+          "edit": {
+            "$ref": "#/components/schemas/Edit"
+          },
+          "frame": {
+            "$ref": "#/components/schemas/Frame"
+          },
+          "meta": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "unattached": {
+            "type": "boolean"
+          },
+          "pending": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "failed": {
+            "$ref": "#/components/schemas/Failure"
+          },
+          "editor_url": {
+            "type": "string"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/EncodeProgress"
+          }
+        },
+        "required": [
+          "path",
+          "type"
+        ]
+      },
+      "Frame": {
+        "type": "object",
+        "properties": {
+          "t": {
+            "type": "number"
+          },
+          "auto": {
+            "type": "boolean"
+          },
+          "of": {
+            "type": "string"
+          }
+        }
+      },
+      "Group": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "count"
+        ]
+      },
+      "HeldItem": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "ref": {
+            "$ref": "#/components/schemas/ContentRef"
+          },
+          "author_id": {
+            "type": "string"
+          },
+          "anon_name": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "prompt_version": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "number"
+          },
+          "error": {
+            "type": "string"
+          },
+          "held_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "kind",
+          "revision",
+          "id",
+          "ref",
+          "body",
+          "reason",
+          "held_at",
+          "created_at"
+        ]
+      },
+      "HeldPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HeldItem"
+            }
+          },
+          "next": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "ImageInput": {
+        "type": "object",
+        "properties": {
+          "image": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "InlineImage": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "MergeInput": {
+        "type": "object",
+        "properties": {
+          "into_taxonomy_id": {
+            "type": "string"
+          }
+        }
+      },
+      "MergeReport": {
+        "type": "object",
+        "properties": {
+          "from_taxonomy_id": {
+            "type": "string"
+          },
+          "into_taxonomy_id": {
+            "type": "string"
+          },
+          "assignments_moved": {
+            "type": "integer"
+          },
+          "names_moved": {
+            "type": "integer"
+          },
+          "edges_rewritten": {
+            "type": "integer"
+          },
+          "assignments_merged": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "from_taxonomy_id",
+          "into_taxonomy_id",
+          "assignments_moved",
+          "names_moved",
+          "edges_rewritten",
+          "assignments_merged"
+        ]
+      },
+      "MultipartReply": {
+        "type": "object",
+        "properties": {
+          "ticket": {
+            "type": "string"
+          },
+          "min_part_size": {
+            "type": "integer"
+          },
+          "max_part_size": {
+            "type": "integer"
+          },
+          "max_parts": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ticket",
+          "min_part_size",
+          "max_part_size",
+          "max_parts"
+        ]
+      },
+      "Name": {
+        "type": "object",
+        "properties": {
+          "language": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "alias",
+              "name"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "normalized": {
+            "type": "string"
+          },
+          "source_revision": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "language",
+          "kind",
+          "name",
+          "source_revision"
+        ]
+      },
+      "Node": {
+        "type": "object",
+        "properties": {
+          "taxonomy_id": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "deleted",
+              "merged"
+            ]
+          },
+          "source_revision": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "taxonomy_id",
+          "tenant_id",
+          "kind",
+          "slug",
+          "state",
+          "source_revision",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "NodeDetail": {
+        "type": "object",
+        "properties": {
+          "taxonomy_id": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "deleted",
+              "merged"
+            ]
+          },
+          "source_revision": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Name"
+            }
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Edge"
+            }
+          },
+          "counts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Count"
+            }
+          }
+        },
+        "required": [
+          "taxonomy_id",
+          "tenant_id",
+          "kind",
+          "slug",
+          "state",
+          "source_revision",
+          "created_at",
+          "updated_at",
+          "names",
+          "edges",
+          "counts"
+        ]
+      },
+      "NodeInput": {
+        "type": "object",
+        "properties": {
+          "taxonomy_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Name"
+            }
+          },
+          "source_revision": {
+            "type": "integer"
+          }
+        }
+      },
+      "NodePage": {
+        "type": "object",
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NodeRow"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "nodes",
+          "total"
+        ]
+      },
+      "NodeRow": {
+        "type": "object",
+        "properties": {
+          "taxonomy_id": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "deleted",
+              "merged"
+            ]
+          },
+          "source_revision": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "name": {
+            "type": "string"
+          },
+          "name_language": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "taxonomy_id",
+          "tenant_id",
+          "kind",
+          "slug",
+          "state",
+          "source_revision",
+          "created_at",
+          "updated_at",
+          "count"
+        ]
+      },
+      "NodeUpdate": {
+        "type": "object",
+        "properties": {
+          "slug": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "deleted",
+              "merged"
+            ]
+          },
+          "source_revision": {
+            "type": "integer"
+          }
+        }
+      },
+      "Op": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "$ref": "#/components/schemas/OpName"
+          },
+          "path": {
+            "type": "string"
+          },
+          "blob": {
+            "type": "string"
+          },
+          "create_id": {
+            "type": "string"
+          },
+          "index": {
+            "type": "integer"
+          },
+          "meta": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "edit": {
+            "$ref": "#/components/schemas/Edit"
+          },
+          "unattached": {
+            "type": "boolean"
+          },
+          "to": {
+            "type": "string"
+          },
+          "from": {
+            "$ref": "#/components/schemas/CopyFrom"
+          },
+          "t": {
+            "type": "number"
+          },
+          "auto": {
+            "type": "boolean"
+          },
+          "preset": {
+            "type": "string"
+          },
+          "force": {
+            "type": "boolean"
+          },
+          "takedown": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PartBody": {
+        "type": "object",
+        "properties": {
+          "number": {
+            "type": "integer"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        }
+      },
+      "PartReply": {
+        "type": "object",
+        "properties": {
+          "number": {
+            "type": "integer"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/components/schemas/RequestReply"
+          }
+        },
+        "required": [
+          "number"
+        ]
+      },
+      "PartsBody": {
+        "type": "object",
+        "properties": {
+          "ticket": {
+            "type": "string"
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PartBody"
+            }
+          }
+        }
+      },
+      "PartsReply": {
+        "type": "object",
+        "properties": {
+          "parts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PartReply"
+            }
+          }
+        },
+        "required": [
+          "parts"
+        ]
+      },
+      "Poll": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PollKind"
+          },
+          "question": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "image_url": {
+            "type": "string"
+          },
+          "live_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "closes_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "closed": {
+            "type": "boolean"
+          },
+          "total_votes": {
+            "type": "integer"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PollOption"
+            }
+          },
+          "voted": {
+            "type": "boolean"
+          },
+          "my_option": {
+            "type": "string"
+          },
+          "answer_count": {
+            "type": "integer"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Group"
+            }
+          },
+          "my_answer": {
+            "$ref": "#/components/schemas/PollAnswer"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "question",
+          "language",
+          "is_active",
+          "live_at",
+          "closed",
+          "total_votes",
+          "options",
+          "voted"
+        ]
+      },
+      "PollAnswer": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "classified": {
+            "type": "boolean"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "classified",
+          "updated_at"
+        ]
+      },
+      "PollAnswerInput": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "PollImage": {
+        "type": "object",
+        "properties": {
+          "image_url": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "image_url"
+        ]
+      },
+      "PollInput": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/PollKind"
+          },
+          "question": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "live_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "closes_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PollOptionInput"
+            }
+          }
+        }
+      },
+      "PollOption": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "image_url": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer"
+          },
+          "vote_count": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "position",
+          "vote_count"
+        ]
+      },
+      "PollOptionInput": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer"
+          }
+        }
+      },
+      "PollOptionPatch": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "position": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "PollUpdate": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_active": {
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "live_at": {
+            "oneOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closes_at": {
+            "oneOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "PollVote": {
+        "type": "object",
+        "properties": {
+          "option_id": {
+            "type": "string"
+          }
+        }
+      },
+      "Post": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "author_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "cover_url": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "is_draft": {
+            "type": "boolean"
+          },
+          "live_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "total_likes": {
+            "type": "integer"
+          },
+          "total_dislikes": {
+            "type": "integer"
+          },
+          "comment_count": {
+            "type": "integer"
+          },
+          "moderation": {
+            "$ref": "#/components/schemas/ModerationState"
+          },
+          "moderation_reason": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "url_slug": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "author_id",
+          "title",
+          "body",
+          "language",
+          "is_draft",
+          "total_likes",
+          "total_dislikes",
+          "comment_count",
+          "code",
+          "url_slug",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "PostCover": {
+        "type": "object",
+        "properties": {
+          "cover_url": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "cover_url"
+        ]
+      },
+      "PostInput": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "body": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "excerpt": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "language": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slug": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_draft": {
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "live_at": {
+            "oneOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "PresignBody": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "$ref": "#/components/schemas/RefBody"
+          },
+          "path": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        }
+      },
+      "PresignReply": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "blob": {
+            "type": "string"
+          },
+          "exists": {
+            "type": "boolean"
+          },
+          "put": {
+            "$ref": "#/components/schemas/RequestReply"
+          },
+          "multipart": {
+            "$ref": "#/components/schemas/MultipartReply"
+          },
+          "process_on_upload": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "blob"
+        ]
+      },
+      "PublicImage": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "preset": {
+            "type": "string"
+          },
+          "renditions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicRendition"
+            }
+          }
+        },
+        "required": [
+          "from",
+          "preset",
+          "renditions"
+        ]
+      },
+      "PublicRendition": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "w": {
+            "type": "integer"
+          },
+          "h": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "url",
+          "w",
+          "h"
+        ]
+      },
+      "PublicUser": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "avatar": {
+            "type": "string"
+          },
+          "avatar_srcset": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username"
+        ]
+      },
+      "ReactionCounts": {
+        "type": "object",
+        "properties": {
+          "likes": {
+            "type": "integer"
+          },
+          "dislikes": {
+            "type": "integer"
+          },
+          "mine": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "likes",
+          "dislikes",
+          "mine"
+        ]
+      },
+      "ReadResult": {
+        "type": "object",
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/Access"
+          },
+          "expires": {
+            "type": "integer"
+          },
+          "meta": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "previews": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "public": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicImage"
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "hls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "state": {
+            "$ref": "#/components/schemas/ItemState"
+          },
+          "full": {
+            "type": "boolean"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileInfo"
+            }
+          }
+        },
+        "required": [
+          "access",
+          "expires",
+          "total",
+          "offset",
+          "limit",
+          "files"
+        ]
+      },
+      "RefBody": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "RequestReply": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "expires": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "method",
+          "url",
+          "headers",
+          "expires"
+        ]
+      },
+      "ResolveInput": {
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "reject",
+              "review"
+            ]
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "Resolved": {
+        "type": "object",
+        "properties": {
+          "tenant_id": {
+            "type": "string"
+          },
+          "content_kind": {
+            "type": "string"
+          },
+          "content_id": {
+            "type": "string"
+          },
+          "content_version_id": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "slugs": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "content_kind",
+          "content_id",
+          "code",
+          "slug",
+          "path"
+        ]
+      },
+      "Restored": {
+        "type": "object",
+        "properties": {
+          "restored": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "restored"
+        ]
+      },
+      "ReviewOutcome": {
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "reject",
+              "review"
+            ]
+          }
+        },
+        "required": [
+          "decision"
+        ]
+      },
+      "TicketBody": {
+        "type": "object",
+        "properties": {
+          "ticket": {
+            "type": "string"
+          }
+        }
+      },
+      "ErrorCode": {
+        "type": "string",
+        "enum": [
+          "animation_not_allowed",
+          "animation_too_long",
+          "animation_unsupported",
+          "checksum_mismatch",
+          "comment_banned",
+          "conflict",
+          "forbidden",
+          "gone",
+          "image_too_large",
+          "image_too_small",
+          "image_unreadable",
+          "incomplete",
+          "internal_error",
+          "invalid_request",
+          "moderation_rejected",
+          "not_configured",
+          "not_found",
+          "not_uploaded",
+          "quota_exceeded",
+          "rate_limited",
+          "tenant_mismatch",
+          "too_large",
+          "too_many_files",
+          "type_not_allowed",
+          "unauthorized",
+          "unavailable",
+          "video_over_budget",
+          "video_too_large",
+          "video_too_long"
+        ]
+      },
+      "OpName": {
+        "type": "string",
+        "enum": [
+          "put",
+          "edit",
+          "move",
+          "rename",
+          "remove",
+          "attach",
+          "copy",
+          "frame",
+          "meta",
+          "regenerate"
+        ]
+      },
+      "Access": {
+        "type": "string",
+        "enum": [
+          "full",
+          "none"
+        ]
+      },
+      "ItemState": {
+        "type": "string",
+        "enum": [
+          "ready",
+          "processing",
+          "failed"
+        ]
+      },
+      "EncodePhase": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "downloading",
+          "probing",
+          "encoding",
+          "muxing",
+          "uploading",
+          "publishing",
+          "images"
+        ]
+      },
+      "PollKind": {
+        "type": "string",
+        "enum": [
+          "multiple_choice",
+          "free_text"
+        ]
+      },
+      "ModerationState": {
+        "type": "string",
+        "enum": [
+          "approved",
+          "held",
+          "rejected"
+        ]
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "A refusal: a code of the operation's x-contentkit-errors or of an x-contentkit-error-sets set it names.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorReply"
+            }
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "host": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Whatever the host's auth middleware accepts: ContentKit reads the actor it puts in the request context."
+      }
+    }
+  },
+  "x-contentkit-modules": {
+    "content": "",
+    "upload": "/media/upload",
+    "media": "/media",
+    "codes": "/codes",
+    "taxonomy": "/taxonomy"
+  },
+  "x-contentkit-error-sets": {
+    "module:content": [
+      "internal_error",
+      "tenant_mismatch"
+    ],
+    "request": [
+      "invalid_request"
+    ],
+    "tier:staff": [
+      "forbidden"
+    ],
+    "tier:user": [
+      "unauthorized"
+    ],
+    "module:upload": [
+      "internal_error",
+      "unavailable"
+    ],
+    "module:media": [
+      "internal_error",
+      "not_found",
+      "rate_limited",
+      "unavailable"
+    ],
+    "module:codes": [
+      "internal_error"
+    ],
+    "module:taxonomy": [
+      "internal_error"
+    ]
+  },
+  "x-contentkit-error-codes": {
+    "animation_not_allowed": {
+      "status": 422,
+      "meaning": "An animated image where the upload path refuses animation."
+    },
+    "animation_too_long": {
+      "status": 422,
+      "meaning": "The animation has more frames or seconds than the processor allows."
+    },
+    "animation_unsupported": {
+      "status": 415,
+      "meaning": "An AVIF or HEIF image sequence, which is decoded as one frame."
+    },
+    "checksum_mismatch": {
+      "status": 422,
+      "meaning": "The stored bytes differ from the declared SHA-256."
+    },
+    "comment_banned": {
+      "status": 403,
+      "meaning": "The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends."
+    },
+    "conflict": {
+      "status": 409,
+      "meaning": "A concurrent change, a path or slug already taken, or an operation id already used for another commit."
+    },
+    "forbidden": {
+      "status": 403,
+      "meaning": "The actor may not do this."
+    },
+    "gone": {
+      "status": 410,
+      "meaning": "The content was removed."
+    },
+    "image_too_large": {
+      "status": 413,
+      "meaning": "The image has more pixels or frames than the processor decodes."
+    },
+    "image_too_small": {
+      "status": 422,
+      "meaning": "The edited image is narrower than its public preset's minimum width."
+    },
+    "image_unreadable": {
+      "status": 422,
+      "meaning": "The file is not a decodable image of its declared type."
+    },
+    "incomplete": {
+      "status": 409,
+      "meaning": "A multipart upload is missing parts."
+    },
+    "internal_error": {
+      "status": 500,
+      "meaning": "A server fault; the cause is in the server log."
+    },
+    "invalid_request": {
+      "status": 400,
+      "meaning": "The request is malformed: its body, a query parameter or a path value."
+    },
+    "moderation_rejected": {
+      "status": 422,
+      "meaning": "The moderator refused the text; `error` says why."
+    },
+    "not_configured": {
+      "status": 501,
+      "meaning": "The capability needs a port the host did not configure; retrying does not help."
+    },
+    "not_found": {
+      "status": 404,
+      "meaning": "Nothing by that name, or nothing the actor may see."
+    },
+    "not_uploaded": {
+      "status": 409,
+      "meaning": "A commit names an upload that has not landed; `blobs` lists the ones to upload again."
+    },
+    "quota_exceeded": {
+      "status": 413,
+      "meaning": "The uploader's storage quota is used up."
+    },
+    "rate_limited": {
+      "status": 429,
+      "meaning": "Too many requests; retry after `retry_after` seconds (also the Retry-After header)."
+    },
+    "tenant_mismatch": {
+      "status": 500,
+      "meaning": "A host port answered with another tenant's data: a configuration fault."
+    },
+    "too_large": {
+      "status": 413,
+      "meaning": "The file is larger than its upload path allows; `details` has `size` and `max_bytes`."
+    },
+    "too_many_files": {
+      "status": 409,
+      "meaning": "The commit would put more files in an upload path than its rules allow."
+    },
+    "type_not_allowed": {
+      "status": 415,
+      "meaning": "The file type is not allowed in the upload path; `details.allowed` lists the types."
+    },
+    "unauthorized": {
+      "status": 401,
+      "meaning": "The route needs a signed-in actor."
+    },
+    "unavailable": {
+      "status": 503,
+      "meaning": "Media storage cannot be reached, or a commit's recovery is pending; retry."
+    },
+    "video_over_budget": {
+      "status": 422,
+      "meaning": "The planned encode costs more than its upload path allows, or the source averages under a frame a second."
+    },
+    "video_too_large": {
+      "status": 422,
+      "meaning": "The video's frames are larger than its upload path allows."
+    },
+    "video_too_long": {
+      "status": 422,
+      "meaning": "The video or audio runs longer than its upload path allows."
+    }
+  }
+}

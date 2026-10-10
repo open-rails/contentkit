@@ -10,6 +10,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
 // reactions is the 3-state (like/dislike/neutral) reaction system over a
@@ -27,8 +28,8 @@ func newReactions(rt *Runtime) *reactions {
 	return &reactions{rt: rt, s: rt.store}
 }
 
-// reactionCounts is the split tally for a reference plus the caller's own value.
-type reactionCounts struct {
+// ReactionCounts is the split tally for a reference plus the caller's own value.
+type ReactionCounts struct {
 	Likes    int   `json:"likes"`
 	Dislikes int   `json:"dislikes"`
 	Mine     int16 `json:"mine"` // -1, 0, or 1; 0 also means "no reaction"
@@ -150,8 +151,8 @@ func (r *reactions) react(ctx context.Context, actor access.Actor, kind, id stri
 
 // counts returns the split tally plus the caller's own reaction: an O(1) read
 // of the rollup applyTx maintains in-tx.
-func (r *reactions) counts(ctx context.Context, q querier, actor access.Actor, key contentref.ContentKey) (reactionCounts, error) {
-	var out reactionCounts
+func (r *reactions) counts(ctx context.Context, q querier, actor access.Actor, key contentref.ContentKey) (ReactionCounts, error) {
+	var out ReactionCounts
 	if err := q.QueryRow(ctx, `SELECT likes, dislikes FROM `+r.s.t.counts+` WHERE `+keyPred(1), keyArgs(key)...).Scan(&out.Likes, &out.Dislikes); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return out, err
 	}
@@ -170,12 +171,21 @@ func (r *reactions) counts(ctx context.Context, q querier, actor access.Actor, k
 
 // --- HTTP ---
 
-func (r *reactions) mount(mux *http.ServeMux) {
-	mux.HandleFunc("POST /{kind}/{id}/like", r.handleSet(1))
-	mux.HandleFunc("POST /{kind}/{id}/dislike", r.handleSet(-1))
-	mux.HandleFunc("POST /{kind}/{id}/neutral", r.handleSet(0))
-	mux.HandleFunc("DELETE /{kind}/{id}/reaction", r.handleSet(0))
-	mux.HandleFunc("GET /{kind}/{id}/reaction", r.handleGet)
+var reactionRoutes = []httpapi.Route[*reactions]{
+	reaction(httpapi.POST, "like", "Likes a target.", 1),
+	reaction(httpapi.POST, "dislike", "Dislikes a target.", -1),
+	reaction(httpapi.POST, "neutral", "Clears the caller's reaction to a target.", 0),
+	reaction(httpapi.DELETE, "reaction", "Clears the caller's reaction to a target.", 0),
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}/reaction", Resource: "reactions", Auth: httpapi.Public,
+		Doc:       "A target's like and dislike counts and the caller's own reaction.",
+		Responses: []httpapi.Reply{httpapi.OK(ReactionCounts{})}, Errors: []string{CodeNotFound}},
+		Serve: httpapi.H((*reactions).handleGet)},
+}
+
+func reaction(method, verb, doc string, value int16) httpapi.Route[*reactions] {
+	return httpapi.Route[*reactions]{Spec: httpapi.Spec{Method: method, Path: "/{kind}/{id}/" + verb, Resource: "reactions", Auth: httpapi.Public,
+		Doc: doc, Responses: []httpapi.Reply{httpapi.OK(ReactionCounts{})}, Errors: []string{CodeForbidden, CodeInvalidRequest, CodeNotFound, CodeRateLimited}},
+		Serve: func(r *reactions) http.HandlerFunc { return r.handleSet(value) }}
 }
 
 func (r *reactions) handleSet(value int16) http.HandlerFunc {

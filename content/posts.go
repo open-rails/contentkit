@@ -13,6 +13,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/internal/codes"
+	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -45,8 +46,8 @@ func newPosts(rt *Runtime) *posts {
 	return &posts{rt: rt, s: s, cols: cols}
 }
 
-// postView is the JSON shape returned by get/list/create/update.
-type postView struct {
+// Post is a post as the API answers it: get, list, create, update and react.
+type Post struct {
 	ID            string     `json:"id"`
 	AuthorID      string     `json:"author_id"`
 	Title         string     `json:"title"`
@@ -72,10 +73,10 @@ type postView struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// postWriteReq is the create/update body. All-pointer so PATCH is partial (nil =
+// PostInput is the create and update body. All-pointer so PATCH is partial (nil =
 // leave unchanged); create requires title+body. The cover is set with
 // PUT /posts/{id}/cover.
-type postWriteReq struct {
+type PostInput struct {
 	Title    *string    `json:"title"`
 	Body     *string    `json:"body"`
 	Excerpt  *string    `json:"excerpt"`
@@ -87,26 +88,78 @@ type postWriteReq struct {
 
 // --- HTTP ---
 
-func (p *posts) mount(mux *http.ServeMux) {
-	mux.HandleFunc("GET /posts", p.handleList)
-	mux.HandleFunc("GET /posts/{id}", p.handleGet)
-	mux.HandleFunc("POST /posts", p.handleCreate)
-	mux.HandleFunc("PATCH /posts/{id}", p.handleUpdate)
-	mux.HandleFunc("DELETE /posts/{id}", p.handleDelete)
+var postRoutes = []httpapi.Route[*posts]{
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/posts", Resource: "posts", Auth: httpapi.Public,
+		Doc:       "Published posts.",
+		Query:     append([]httpapi.Param{httpapi.Text("language", "only posts in this language"), sortParam}, httpapi.Page...),
+		Responses: []httpapi.Reply{httpapi.OK([]Post{})}},
+		Serve: httpapi.H((*posts).handleList)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/posts/{id}", Resource: "posts", Auth: httpapi.Public,
+		Doc:       "A post. A draft, scheduled, held or rejected post is shown only to its author and PostWrite holders.",
+		Responses: []httpapi.Reply{httpapi.OK(Post{})}, Errors: []string{CodeNotFound}},
+		Serve: httpapi.H((*posts).handleGet)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/posts", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
+		Doc:       "Creates a post; 202 when the moderator holds it for review.",
+		Request:   PostInput{},
+		Responses: []httpapi.Reply{httpapi.Created(Post{}), httpapi.Accepted(Post{})},
+		Errors:    []string{CodeConflict, CodeForbidden, CodeModerationRejected}},
+		Serve: httpapi.H((*posts).handleCreate)},
+	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/posts/{id}", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
+		Doc:       "Updates a post's given fields; 202 when the moderator holds the new text.",
+		Request:   PostInput{},
+		Responses: []httpapi.Reply{httpapi.OK(Post{}), httpapi.Accepted(Post{})},
+		Errors:    []string{CodeConflict, CodeForbidden, CodeModerationRejected, CodeNotFound}},
+		Serve: httpapi.H((*posts).handleUpdate)},
+	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/posts/{id}", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
+		Doc:       "Deletes a post.",
+		Responses: []httpapi.Reply{httpapi.OK(DeletedPost{})}, Errors: []string{CodeNotFound}},
+		Serve: httpapi.H((*posts).handleDelete)},
 	// More specific than reactions' /{kind}/{id}/like, so no ServeMux conflict.
-	mux.HandleFunc("POST /posts/{id}/like", p.handleReact(1))
-	mux.HandleFunc("POST /posts/{id}/dislike", p.handleReact(-1))
-	mux.HandleFunc("POST /posts/{id}/neutral", p.handleReact(0))
-	mux.HandleFunc("PUT /posts/{id}/cover", p.handleCover)
-	mux.HandleFunc("POST /posts/{id}/images", p.handleImage)
+	postReaction("like", "Likes a published post.", 1),
+	postReaction("dislike", "Dislikes a published post.", -1),
+	postReaction("neutral", "Clears the caller's reaction to a published post.", 0),
+	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/posts/{id}/cover", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
+		Doc:       "Sets the cover to an inline image uploaded to the post's media folder; \"\" clears it.",
+		Request:   ImageInput{},
+		Responses: []httpapi.Reply{httpapi.OK(PostCover{})}, Errors: []string{CodeNotConfigured, CodeNotFound}},
+		Serve: httpapi.H((*posts).handleCover)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/posts/{id}/images", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
+		Doc:       "The public URL of an inline image uploaded to the post's media folder, to place in the body.",
+		Request:   ImageInput{},
+		Responses: []httpapi.Reply{httpapi.OK(InlineImage{})}, Errors: []string{CodeNotConfigured, CodeNotFound}},
+		Serve: httpapi.H((*posts).handleImage)},
 }
 
-type imageReq struct {
-	Image *string `json:"image"` // an inline image name; "" clears
+func postReaction(verb, doc string, value int16) httpapi.Route[*posts] {
+	return httpapi.Route[*posts]{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/posts/{id}/" + verb, Resource: "posts", Auth: httpapi.Public,
+		Doc: doc, Responses: []httpapi.Reply{httpapi.OK(Post{})}, Errors: []string{CodeForbidden, CodeInvalidRequest, CodeNotFound, CodeRateLimited}},
+		Serve: func(p *posts) http.HandlerFunc { return p.handleReact(value) }}
+}
+
+// ImageInput names an inline image of the item's media folder ("i-{uuid}");
+// "" clears where the route allows it.
+type ImageInput struct {
+	Image *string `json:"image"`
+}
+
+// InlineImage is an inline image's public URL.
+type InlineImage struct {
+	URL string `json:"url"`
+}
+
+// PostCover is the post's cover URL after a cover change; null when cleared.
+type PostCover struct {
+	CoverURL *string `json:"cover_url"`
+}
+
+// DeletedPost confirms a post's deletion.
+type DeletedPost struct {
+	ID      string `json:"id"`
+	Deleted bool   `json:"deleted"`
 }
 
 func decodeImage(req *http.Request) (string, error) {
-	var in imageReq
+	var in ImageInput
 	if err := decodeJSON(req, &in); err != nil {
 		return "", err
 	}
@@ -145,7 +198,7 @@ func (p *posts) handleImage(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"url": url})
+	writeJSON(w, http.StatusOK, InlineImage{URL: url})
 }
 
 // handleCover sets (or with "" clears) the post cover to an inline image of
@@ -184,7 +237,7 @@ func (p *posts) handleCover(w http.ResponseWriter, req *http.Request) {
 	if name != "" {
 		responseURL = &url
 	}
-	writeJSON(w, http.StatusOK, map[string]*string{"cover_url": responseURL})
+	writeJSON(w, http.StatusOK, PostCover{CoverURL: responseURL})
 }
 
 // liveID confirms a post exists in this tenant (not deleted).
@@ -206,7 +259,7 @@ func (p *posts) handleCreate(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	var in postWriteReq
+	var in PostInput
 	if err := decodeJSON(req, &in); err != nil {
 		writeErr(w, err)
 		return
@@ -301,7 +354,7 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	id := req.PathValue("id")
-	var in postWriteReq
+	var in PostInput
 	if err := decodeJSON(req, &in); err != nil {
 		writeErr(w, err)
 		return
@@ -453,7 +506,7 @@ func (p *posts) handleDelete(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "deleted": true})
+	writeJSON(w, http.StatusOK, DeletedPost{ID: id, Deleted: true})
 }
 
 func (p *posts) handleGet(w http.ResponseWriter, req *http.Request) {
@@ -491,7 +544,7 @@ func (p *posts) handleList(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer rows.Close()
-	out := []postView{}
+	out := []Post{}
 	for rows.Next() {
 		v, err := p.scan(ctx, rows)
 		if err != nil {
@@ -596,11 +649,11 @@ func (p *posts) putCode(ctx context.Context, tx pgx.Tx, id, title string, slug *
 	return err
 }
 
-func (p *posts) loadByID(ctx context.Context, q querier, id string) (postView, error) {
+func (p *posts) loadByID(ctx context.Context, q querier, id string) (Post, error) {
 	row := q.QueryRow(ctx, `SELECT `+p.cols+` FROM `+p.s.t.posts+` p WHERE p.id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL`, id, p.s.tenant)
 	v, err := p.scan(ctx, row)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return postView{}, ErrNotFound
+		return Post{}, ErrNotFound
 	}
 	return v, err
 }
@@ -630,21 +683,21 @@ func (p *posts) sanitizePtr(ctx context.Context, s *string) (*string, error) {
 }
 
 // scan reads p.cols and derives the cover URL from its stored image name.
-func (p *posts) scan(ctx context.Context, row pgx.Row) (postView, error) {
-	var v postView
+func (p *posts) scan(ctx context.Context, row pgx.Row) (Post, error) {
+	var v Post
 	var coverName *string
 	var state, reason, link string
 	err := row.Scan(&v.ID, &v.AuthorID, &v.Title, &v.Slug, &v.Body, &v.Excerpt,
 		&coverName, &v.Language, &v.IsDraft, &v.LiveAt, &v.TotalLikes,
 		&v.TotalDislikes, &v.CreatedAt, &v.UpdatedAt, &v.CommentCount, &state, &reason, &link)
 	if err != nil {
-		return postView{}, err
+		return Post{}, err
 	}
 	v.Code, v.URLSlug, _ = strings.Cut(link, " ")
 	if coverName != nil && *coverName != "" {
 		url, err := p.rt.imageURL(ctx, postFolder, v.ID, *coverName)
 		if err != nil {
-			return postView{}, err
+			return Post{}, err
 		}
 		v.CoverURL = &url
 	}
@@ -655,7 +708,7 @@ func (p *posts) scan(ctx context.Context, row pgx.Row) (postView, error) {
 }
 
 // isPublished mirrors the list predicate for a loaded row (deleted already excluded).
-func isPublished(v postView) bool {
+func isPublished(v Post) bool {
 	return !v.IsDraft && v.Moderation == "" && (v.LiveAt == nil || !v.LiveAt.After(time.Now()))
 }
 

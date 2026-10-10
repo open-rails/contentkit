@@ -42,8 +42,8 @@ func (c *fakeClassifier) Classify(_ context.Context, a Answer) (GroupAssignment,
 	return GroupAssignment{GroupID: word, Label: strings.ToUpper(word[:1]) + word[1:]}, nil
 }
 
-func freeTextPoll() createPollInput {
-	return createPollInput{Kind: PollFreeText, Question: "Favorite animal?", Language: "en"}
+func freeTextPoll() PollInput {
+	return PollInput{Kind: PollFreeText, Question: "Favorite animal?", Language: "en"}
 }
 
 func TestPolls_FreeTextRefusedWithoutClassifier(t *testing.T) {
@@ -70,11 +70,11 @@ func TestPolls_FreeTextAnswersOnePerActorEditableUntilClose(t *testing.T) {
 	u1, u2, anon := access.Actor{ID: "u1"}, access.Actor{ID: "u2"}, access.Actor{Anonymous: true, IP: "1.1.1.1"}
 
 	bad := freeTextPoll()
-	bad.Options = []createOptionInput{{Label: "x"}, {Label: "y"}}
+	bad.Options = []PollOptionInput{{Label: "x"}, {Label: "y"}}
 	if _, err := p.create(ctx, pollAdmin, bad); err == nil {
 		t.Fatal("free-text poll with options accepted")
 	}
-	if _, err := p.create(ctx, pollAdmin, createPollInput{Kind: "essay", Question: "?"}); err == nil {
+	if _, err := p.create(ctx, pollAdmin, PollInput{Kind: "essay", Question: "?"}); err == nil {
 		t.Fatal("unknown kind accepted")
 	}
 	poll, err := p.create(ctx, pollAdmin, freeTextPoll())
@@ -119,7 +119,7 @@ func TestPolls_FreeTextAnswersOnePerActorEditableUntilClose(t *testing.T) {
 	}
 	// close by closes_at: no more answers or edits, results still readable
 	past := time.Now().Add(-time.Minute)
-	if _, err := p.update(ctx, pollAdmin, poll.ID, updatePollInput{ClosesAt: &past}); err != nil {
+	if _, err := p.update(ctx, pollAdmin, poll.ID, PollUpdate{ClosesAt: &past}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := p.answer(ctx, u1, poll.ID, "too late"); err == nil {
@@ -134,7 +134,7 @@ func TestPolls_FreeTextAnswersOnePerActorEditableUntilClose(t *testing.T) {
 	}
 	// close by deactivation, for votes too
 	off := false
-	if _, err := p.update(ctx, pollAdmin, mc.ID, updatePollInput{IsActive: &off}); err != nil {
+	if _, err := p.update(ctx, pollAdmin, mc.ID, PollUpdate{IsActive: &off}); err != nil {
 		t.Fatal(err)
 	}
 	var he httpError

@@ -168,7 +168,6 @@ export const ja: ContentKitUiMessageBundle = {
     aborted: "キャンセルしました。",
     resume_mismatch: "保存されたアップロードは別のファイルのものです。もう一度ファイルを選んでください。",
     moderation_rejected: "モデレーションにより拒否されました。",
-    unprocessable: "このリクエストを処理できませんでした。",
     comment_banned: "ここではコメントできません。",
     not_configured: "この機能はこのサイトでは利用できません。",
     tenant_mismatch: "サーバー側で問題が発生しました。もう一度お試しください。",

@@ -1,35 +1,5 @@
-import type { ErrorCode as MediaErrorCode, ErrorDetails, Failure } from "./generated/wire.js";
-
-// Every code the media handlers answer; the Record keeps the list exhaustive.
-const MEDIA_CODES: Record<MediaErrorCode, true> = {
-  invalid_request: true,
-  unauthorized: true,
-  forbidden: true,
-  not_found: true,
-  conflict: true,
-  incomplete: true,
-  not_uploaded: true,
-  too_many_files: true,
-  too_large: true,
-  quota_exceeded: true,
-  type_not_allowed: true,
-  checksum_mismatch: true,
-  rate_limited: true,
-  unavailable: true,
-  image_too_small: true,
-  image_too_large: true,
-  image_unreadable: true,
-  animation_not_allowed: true,
-  animation_too_long: true,
-  animation_unsupported: true,
-  video_too_long: true,
-  video_too_large: true,
-  video_over_budget: true,
-  internal_error: true,
-};
-
-/** Codes the content, taxonomy and content-URL handlers add to the media ones. */
-export const CONTENT_ERROR_CODES = ["moderation_rejected", "unprocessable", "comment_banned", "not_configured", "tenant_mismatch", "gone"] as const;
+import { CONTENTKIT_ERROR_CODES, type ErrorCode } from "./generated/error-codes.js";
+import type { BanNotice, ErrorDetails, ErrorReply, Failure } from "./generated/wire.js";
 
 /**
  * Codes raised in the browser: network (no response), storage (the bucket
@@ -39,34 +9,10 @@ export const CONTENT_ERROR_CODES = ["moderation_rejected", "unprocessable", "com
  */
 export const CLIENT_ERROR_CODES = ["network", "storage", "aborted", "resume_mismatch", "decode", "render_timeout"] as const;
 
-export type ContentKitErrorCode = MediaErrorCode | (typeof CONTENT_ERROR_CODES)[number] | (typeof CLIENT_ERROR_CODES)[number];
+export type ContentKitErrorCode = ErrorCode | (typeof CLIENT_ERROR_CODES)[number];
 
-/** Every code a ContentKitError can carry. */
-export const ERROR_CODES: readonly ContentKitErrorCode[] = [...(Object.keys(MEDIA_CODES) as MediaErrorCode[]), ...CONTENT_ERROR_CODES, ...CLIENT_ERROR_CODES];
-
-/** The ban that stops a comment (comment_banned). */
-export interface BanNotice {
-  scope: string;
-  reason?: string;
-  /** RFC 3339; absent for a permanent ban. */
-  until?: string;
-}
-
-/** ContentKit's flat error body, as every module answers it. */
-export interface ContentKitErrorBody {
-  error: string;
-  code: string;
-  /** Seconds until a limit frees (rate_limited). */
-  retry_after?: number;
-  /** An image or video refusal's numbers. */
-  details?: ErrorDetails;
-  /** not_uploaded at commit: the blobs to upload again. */
-  blobs?: string[];
-  /** comment_banned: the ban that applies. */
-  ban?: BanNotice;
-  /** rate_limited: the limited interaction (comment, reaction, poll_vote, …). */
-  action?: string;
-}
+/** Every code a ContentKitError can carry: the server's registry, then the client's. */
+export const ERROR_CODES: readonly ContentKitErrorCode[] = [...(Object.keys(CONTENTKIT_ERROR_CODES) as ErrorCode[]), ...CLIENT_ERROR_CODES];
 
 export interface ContentKitErrorInit extends ErrorOptions {
   status?: number;
@@ -159,7 +105,6 @@ const byStatus: Record<number, ContentKitErrorCode> = {
   410: "gone",
   413: "too_large",
   415: "type_not_allowed",
-  422: "unprocessable",
   429: "rate_limited",
   501: "not_configured",
   503: "unavailable",
@@ -169,9 +114,9 @@ const known = new Set<string>(ERROR_CODES);
 
 /** Reads a response that is not 2xx. */
 export async function readContentKitError(res: Response): Promise<ContentKitError> {
-  let body: Partial<ContentKitErrorBody> = {};
+  let body: Partial<ErrorReply> = {};
   try {
-    body = (await res.json()) as Partial<ContentKitErrorBody>;
+    body = (await res.json()) as Partial<ErrorReply>;
   } catch {
     // not JSON (a proxy error page)
   }

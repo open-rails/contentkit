@@ -15,7 +15,7 @@ func TestPostContentCode(t *testing.T) {
 	rt, pool := newPostRuntime(t, Options{})
 	h := postMux(rt)
 	author := access.Actor{ID: "root1", Kind: "user"}
-	rec := doJSON(t, h, author, "POST", "/posts", postWriteReq{Title: ptr("Hello, World!"), Body: ptr("b"), IsDraft: ptr(false)})
+	rec := doJSON(t, h, author, "POST", "/posts", PostInput{Title: ptr("Hello, World!"), Body: ptr("b"), IsDraft: ptr(false)})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 	}
@@ -23,11 +23,11 @@ func TestPostContentCode(t *testing.T) {
 	if !regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{9}$`).MatchString(created.Code) || created.URLSlug != "hello-world" {
 		t.Fatalf("created post link %q %q", created.Code, created.URLSlug)
 	}
-	rec = doJSON(t, h, author, "PATCH", "/posts/"+created.ID, postWriteReq{Title: ptr("Second Title")})
+	rec = doJSON(t, h, author, "PATCH", "/posts/"+created.ID, PostInput{Title: ptr("Second Title")})
 	if v := decodePost(t, rec); v.Code != created.Code || v.URLSlug != "second-title" {
 		t.Fatalf("renamed post link %q %q", v.Code, v.URLSlug)
 	}
-	rec = doJSON(t, h, author, "PATCH", "/posts/"+created.ID, postWriteReq{Slug: ptr("My Own Slug")})
+	rec = doJSON(t, h, author, "PATCH", "/posts/"+created.ID, PostInput{Slug: ptr("My Own Slug")})
 	if v := decodePost(t, rec); v.Code != created.Code || v.URLSlug != "my-own-slug" {
 		t.Fatalf("slugged post link %q %q", v.Code, v.URLSlug)
 	}
@@ -44,15 +44,15 @@ func TestPostVisibilityAndErasure(t *testing.T) {
 	rt, pool := newPostRuntime(t, Options{})
 	h := postMux(rt)
 	author := access.Actor{ID: "writer1", Kind: "user"}
-	create := func(title string, draft bool) postView {
-		rec := doJSON(t, h, author, "POST", "/posts", postWriteReq{Title: ptr(title), Body: ptr("b"), IsDraft: ptr(draft)})
+	create := func(title string, draft bool) Post {
+		rec := doJSON(t, h, author, "POST", "/posts", PostInput{Title: ptr(title), Body: ptr("b"), IsDraft: ptr(draft)})
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 		}
 		return decodePost(t, rec)
 	}
 	published, draft, deleted, deletedDraft := create("Out Now", false), create("Secret Plan", true), create("Gone Soon", false), create("Never Shown", true)
-	for _, p := range []postView{deleted, deletedDraft} {
+	for _, p := range []Post{deleted, deletedDraft} {
 		if rec := doJSON(t, h, author, "DELETE", "/posts/"+p.ID, nil); rec.Code != http.StatusOK {
 			t.Fatalf("delete: %d", rec.Code)
 		}

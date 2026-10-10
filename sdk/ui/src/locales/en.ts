@@ -166,7 +166,6 @@ export const en = {
     aborted: "Canceled.",
     resume_mismatch: "The saved upload is for a different file. Please pick the file again.",
     moderation_rejected: "This was rejected by moderation.",
-    unprocessable: "This request could not be processed.",
     comment_banned: "You can't comment here.",
     not_configured: "This feature isn't available on this site.",
     tenant_mismatch: "Something went wrong on our end. Please try again.",

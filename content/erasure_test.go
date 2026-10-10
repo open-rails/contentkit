@@ -26,7 +26,7 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 	for _, a := range []access.Actor{u1, u2} {
 		mustFavorite(t, rt, a, "gallery", localeID(42, "en"), true)
 	}
-	cm := mustComment(t, rt, u2, "gallery", localeID(42, "en"), createInput{Body: "keep author's comment"})
+	cm := mustComment(t, rt, u2, "gallery", localeID(42, "en"), CommentInput{Body: "keep author's comment"})
 	for _, a := range []access.Actor{u1, u2, anon} {
 		if _, err := rt.comments.reactTx(ctx, a, cm.ID, 1); err != nil {
 			t.Fatal(err)
@@ -41,7 +41,7 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	poll, err := rt.polls.create(ctx, pollAdmin, createPollInput{Question: "q", Options: []createOptionInput{{Label: "a"}, {Label: "b"}}})
+	poll, err := rt.polls.create(ctx, pollAdmin, PollInput{Question: "q", Options: []PollOptionInput{{Label: "a"}, {Label: "b"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestSourceWritesRaceErasureWithoutResurrection(t *testing.T) {
 	rt := newPreferenceRuntime(t)
 	rt.perms.PollWrite = pollWritePerm
 	actor := access.Actor{ID: "racer"}
-	poll, err := rt.polls.create(ctx, pollAdmin, createPollInput{Question: "q", Options: []createOptionInput{{Label: "a"}, {Label: "b"}}})
+	poll, err := rt.polls.create(ctx, pollAdmin, PollInput{Question: "q", Options: []PollOptionInput{{Label: "a"}, {Label: "b"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,8 +215,8 @@ func TestConcurrentErasureWithCrossAuthoredReactionTargets(t *testing.T) {
 	ctx := context.Background()
 	rt := moderatedRuntime(t, &fakeModerator{})
 	a, b := access.Actor{ID: "a"}, access.Actor{ID: "b"}
-	ca := mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "published a"})
-	cb := mustComment(t, rt, b, "gallery", cid(1), createInput{Body: "published b"})
+	ca := mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "published a"})
+	cb := mustComment(t, rt, b, "gallery", cid(1), CommentInput{Body: "published b"})
 	if _, err := rt.comments.reactTx(ctx, a, cb.ID, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func TestSourceErasureRedactsDraftAndScheduledPosts(t *testing.T) {
 	rt, _ := newPostRuntime(t, Options{})
 	author := access.Actor{ID: "gone"}
 	future := time.Now().Add(time.Hour)
-	for _, in := range []postWriteReq{
+	for _, in := range []PostInput{
 		{Title: ptr("unpublished draft"), Body: ptr("draft secret"), Excerpt: ptr("draft excerpt"), IsDraft: ptr(true)},
 		{Title: ptr("scheduled"), Body: ptr("scheduled secret"), Excerpt: ptr("scheduled excerpt"), IsDraft: ptr(false), LiveAt: &future},
 	} {
@@ -332,7 +332,7 @@ func TestSourceErasureRedactsDraftAndScheduledPosts(t *testing.T) {
 			t.Fatalf("create %d %s", rec.Code, rec.Body.String())
 		}
 	}
-	rec := doJSON(t, rt.Handler(), author, "POST", "/posts", postWriteReq{Title: ptr("published"), Body: ptr("retain public"), IsDraft: ptr(false)})
+	rec := doJSON(t, rt.Handler(), author, "POST", "/posts", PostInput{Title: ptr("published"), Body: ptr("retain public"), IsDraft: ptr(false)})
 	if rec.Code != 201 {
 		t.Fatal(rec.Body.String())
 	}
@@ -356,12 +356,12 @@ func TestErasureDoesNotRetainScheduledPostAsPublishedBackup(t *testing.T) {
 	rt := moderatedRuntime(t, &fakeModerator{})
 	actor := access.Actor{ID: "reviewer"}
 	future := time.Now().Add(time.Hour)
-	rec := doJSON(t, rt.Handler(), actor, "POST", "/posts", postWriteReq{Title: ptr("scheduled"), Body: ptr("unpublished scheduled original"), IsDraft: ptr(false), LiveAt: &future})
+	rec := doJSON(t, rt.Handler(), actor, "POST", "/posts", PostInput{Title: ptr("scheduled"), Body: ptr("unpublished scheduled original"), IsDraft: ptr(false), LiveAt: &future})
 	if rec.Code != 201 {
 		t.Fatal(rec.Body.String())
 	}
 	post := decodePost(t, rec)
-	rec = doJSON(t, rt.Handler(), actor, "PATCH", "/posts/"+post.ID, postWriteReq{Body: ptr("iffy scheduled replacement")})
+	rec = doJSON(t, rt.Handler(), actor, "PATCH", "/posts/"+post.ID, PostInput{Body: ptr("iffy scheduled replacement")})
 	if rec.Code != 202 {
 		t.Fatal(rec.Body.String())
 	}
@@ -509,7 +509,7 @@ func TestErasureFencesPausedModerationBeforeSourceCommit(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{Moderator: provider, ProviderDataEraser: provider, Resolver: res, ContentKinds: []string{"gallery"}})
 	done := make(chan error, 1)
 	go func() {
-		_, err := rt.comments.create(ctx, access.Actor{ID: "u1"}, "gallery", cid(1), createInput{Body: "paused"})
+		_, err := rt.comments.create(ctx, access.Actor{ID: "u1"}, "gallery", cid(1), CommentInput{Body: "paused"})
 		done <- err
 	}()
 	<-provider.entered
@@ -534,9 +534,9 @@ func TestErasurePreservesPublicationRepliesAndOtherTenant(t *testing.T) {
 	rt := moderatedRuntime(t, &fakeModerator{})
 	author := access.Actor{ID: "u1"}
 	sibling := access.Actor{ID: "u2"}
-	published := mustComment(t, rt, author, "gallery", cid(1), createInput{Body: "published original"})
-	reply := mustComment(t, rt, sibling, "gallery", cid(1), createInput{ReplyToID: published.ID, Body: "sibling reply"})
-	unpublished := mustComment(t, rt, author, "gallery", cid(1), createInput{Body: "iffy never published"})
+	published := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "published original"})
+	reply := mustComment(t, rt, sibling, "gallery", cid(1), CommentInput{ReplyToID: published.ID, Body: "sibling reply"})
+	unpublished := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "iffy never published"})
 	if _, err := rt.comments.edit(ctx, author, published.ID, "iffy unpublished replacement"); err != nil {
 		t.Fatal(err)
 	}
@@ -570,12 +570,12 @@ func TestErasurePreservesPublishedPostSnapshot(t *testing.T) {
 	ctx := context.Background()
 	rt := moderatedRuntime(t, &fakeModerator{})
 	author := access.Actor{ID: "reviewer"}
-	rec := doJSON(t, rt.Handler(), author, "POST", "/posts", postWriteReq{Title: ptr("published"), Body: ptr("public body"), IsDraft: ptr(false)})
+	rec := doJSON(t, rt.Handler(), author, "POST", "/posts", PostInput{Title: ptr("published"), Body: ptr("public body"), IsDraft: ptr(false)})
 	if rec.Code != 201 {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 	}
 	post := decodePost(t, rec)
-	rec = doJSON(t, rt.Handler(), author, "PATCH", "/posts/"+post.ID, postWriteReq{Body: ptr("iffy unpublished edit")})
+	rec = doJSON(t, rt.Handler(), author, "PATCH", "/posts/"+post.ID, PostInput{Body: ptr("iffy unpublished edit")})
 	if rec.Code != 202 {
 		t.Fatalf("hold edit: %d %s", rec.Code, rec.Body.String())
 	}
@@ -616,7 +616,7 @@ func TestErasureFenceSurvivesRuntimeRestartAndReview(t *testing.T) {
 	ctx := context.Background()
 	rt := moderatedRuntime(t, &fakeModerator{})
 	author := access.Actor{ID: "u1"}
-	cm := mustComment(t, rt, author, "gallery", cid(1), createInput{Body: "iffy held"})
+	cm := mustComment(t, rt, author, "gallery", cid(1), CommentInput{Body: "iffy held"})
 	page, err := rt.ListHeld(ctx, KindComment, "", 10)
 	if err != nil {
 		t.Fatal(err)
@@ -629,7 +629,7 @@ func TestErasureFenceSurvivesRuntimeRestartAndReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := restarted.comments.create(ctx, author, "gallery", cid(1), createInput{Body: "new unpublished body"}); !errors.Is(err, ErrSubjectErased) {
+	if _, err := restarted.comments.create(ctx, author, "gallery", cid(1), CommentInput{Body: "new unpublished body"}); !errors.Is(err, ErrSubjectErased) {
 		t.Fatalf("new runtime forgot source fence: %v", err)
 	}
 	if err := restarted.Resolve(ctx, KindComment, cm.ID, ReviewDecision{Revision: page.Items[0].Revision, Decision: DecisionApprove, Reviewer: "reviewer"}); err == nil {
@@ -640,7 +640,7 @@ func TestErasureFenceSurvivesRuntimeRestartAndReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := other.comments.create(ctx, author, "gallery", cid(1), createInput{Body: "other tenant content"}); err != nil {
+	if _, err := other.comments.create(ctx, author, "gallery", cid(1), CommentInput{Body: "other tenant content"}); err != nil {
 		t.Fatalf("source fence crossed tenant runtime: %v", err)
 	}
 }

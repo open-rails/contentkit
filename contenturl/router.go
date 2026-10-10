@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+
+	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
 // Visibility is the host's verdict on resolved content for one request.
@@ -216,43 +218,59 @@ type errorBody struct {
 	Code  string `json:"code"`
 }
 
+// Tenant is the tenant whose codes the router resolves.
+func (r *Router) Tenant() string { return r.store.Tenant() }
+
 // Handler serves GET /{code}[?lang=xx]: the code's link and canonical path,
 // for clients that hold only a code. Any Crockford spelling resolves; the
 // response carries the canonical code. Unknown and hidden codes are 404
 // not_found, Gone content 410 gone, malformed codes 400 invalid_request.
-// Mount it under a prefix with http.StripPrefix.
+// contentkit.Runtime.Handler serves it at /codes; mounted alone it goes under
+// a prefix with http.StripPrefix.
 func (r *Router) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{code}", func(w http.ResponseWriter, req *http.Request) {
-		code, err := ParseCode(req.PathValue("code"))
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, errorBody{Error: "not a content code", Code: "invalid_request"})
-			return
-		}
-		lang := req.URL.Query().Get("lang")
-		if lang != "" && !slices.Contains(r.opts.Languages, lang) {
-			writeJSON(w, http.StatusBadRequest, errorBody{Error: "unknown language", Code: "invalid_request"})
-			return
-		}
-		link, err := r.store.Resolve(req.Context(), code)
-		v := Visible
-		if err == nil && r.opts.Visibility != nil {
-			v, err = r.opts.Visibility(req, link)
-		}
-		switch {
-		case errors.Is(err, ErrNotFound) || err == nil && v != Visible && v != Gone:
-			writeJSON(w, http.StatusNotFound, errorBody{Error: "no content has this code", Code: "not_found"})
-		case err != nil:
-			r.log.ErrorContext(req.Context(), "contenturl: resolve", "code", code, "err", err)
-			writeJSON(w, http.StatusInternalServerError, errorBody{Error: "internal error", Code: "internal_error"})
-		case v == Gone:
-			writeJSON(w, http.StatusGone, errorBody{Error: "this content was removed", Code: "gone"})
-		default:
-			path, _ := r.Path(link, lang)
-			writeJSON(w, http.StatusOK, Resolved{Link: link, Path: path})
-		}
-	})
+	httpapi.Mount(mux, r, codeRoutes)
 	return mux
+}
+
+func init() { httpapi.Register(httpapi.Codes, codeRoutes) }
+
+var codeRoutes = []httpapi.Route[*Router]{
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{code}", Resource: "codes", Auth: httpapi.Public,
+		Doc:       "A content code's link and canonical path; any spelling of the code resolves.",
+		Query:     []httpapi.Param{httpapi.Text("lang", "the language of the path's prefix and slug")},
+		Responses: []httpapi.Reply{httpapi.OK(Resolved{})}, Errors: []string{"gone", httpapi.CodeNotFound}},
+		Serve: httpapi.H((*Router).resolve)},
+}
+
+func (r *Router) resolve(w http.ResponseWriter, req *http.Request) {
+	code, err := ParseCode(req.PathValue("code"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody{Error: "not a content code", Code: "invalid_request"})
+		return
+	}
+	lang := req.URL.Query().Get("lang")
+	if lang != "" && !slices.Contains(r.opts.Languages, lang) {
+		writeJSON(w, http.StatusBadRequest, errorBody{Error: "unknown language", Code: "invalid_request"})
+		return
+	}
+	link, err := r.store.Resolve(req.Context(), code)
+	v := Visible
+	if err == nil && r.opts.Visibility != nil {
+		v, err = r.opts.Visibility(req, link)
+	}
+	switch {
+	case errors.Is(err, ErrNotFound) || err == nil && v != Visible && v != Gone:
+		writeJSON(w, http.StatusNotFound, errorBody{Error: "no content has this code", Code: "not_found"})
+	case err != nil:
+		r.log.ErrorContext(req.Context(), "contenturl: resolve", "code", code, "err", err)
+		writeJSON(w, http.StatusInternalServerError, errorBody{Error: "internal error", Code: "internal_error"})
+	case v == Gone:
+		writeJSON(w, http.StatusGone, errorBody{Error: "this content was removed", Code: "gone"})
+	default:
+		path, _ := r.Path(link, lang)
+		writeJSON(w, http.StatusOK, Resolved{Link: link, Path: path})
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

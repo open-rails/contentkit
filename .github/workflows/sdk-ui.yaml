@@ -11,6 +11,11 @@ name: sdk-ui
     - 'media/layout/**'
     - 'media/s3/**'
     - 'media/token/**'
+    - 'content/*.go'
+    - 'contenturl/*.go'
+    - 'taxonomy/*.go'
+    - 'internal/httpapi/**'
+    - 'internal/contract/**'
     - '!**.md'
     - 'go.mod'
     - 'go.sum'
@@ -66,6 +71,8 @@ jobs:
       with:
         go-version-file: go.mod
     - run: pnpm install --frozen-lockfile --ignore-scripts
+    - name: generated contract is fresh
+      run: pnpm contract:check
     - run: pnpm check
     - name: integration (Postgres + MinIO + media.UploadHandler)
       run: |

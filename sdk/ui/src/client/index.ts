@@ -4,15 +4,12 @@ export { createContentKitClient, type ContentKitClient, type ContentKitClientOpt
 export type { ContentKitChange, ContentKitModule, ContentKitMounts, Mount, TokenSource } from "./http.js";
 export {
   CLIENT_ERROR_CODES,
-  CONTENT_ERROR_CODES,
   ContentKitError,
   ERROR_CODES,
   failureError,
   isContentKitError,
   readContentKitError,
   toContentKitError,
-  type BanNotice,
-  type ContentKitErrorBody,
   type ContentKitErrorCode,
   type ContentKitErrorInit,
 } from "./errors.js";

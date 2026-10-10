@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
 // pollAdmin is the gated writer; pollWritePerm must be non-empty or requirePerm
@@ -31,18 +32,18 @@ func newPollTest(t *testing.T, opts Options) (*Runtime, *polls) {
 	return rt, newPolls(rt)
 }
 
-func twoOptionPoll(language string) createPollInput {
-	return createPollInput{
+func twoOptionPoll(language string) PollInput {
+	return PollInput{
 		Question: "Best girl?",
 		Language: language,
-		Options: []createOptionInput{
+		Options: []PollOptionInput{
 			{Label: "Rei", Position: 0},
 			{Label: "Asuka", Position: 1},
 		},
 	}
 }
 
-func optVoteCount(v pollView, optID string) int {
+func optVoteCount(v Poll, optID string) int {
 	for _, o := range v.Options {
 		if o.ID == optID {
 			return o.VoteCount
@@ -51,7 +52,7 @@ func optVoteCount(v pollView, optID string) int {
 	return -1
 }
 
-func totalVotes(v pollView) int {
+func totalVotes(v Poll) int {
 	n := 0
 	for _, o := range v.Options {
 		n += o.VoteCount
@@ -202,7 +203,7 @@ func TestPolls_AdminGateDeniedReturns403(t *testing.T) {
 
 	// same gate over HTTP
 	mux := http.NewServeMux()
-	p.mount(mux)
+	httpapi.Mount(mux, p, pollRoutes)
 	rec := doPollReq(t, mux, "POST", "/polls", twoOptionPoll(""), pollAdmin)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("POST /polls under denyAll: status %d, body %s", rec.Code, rec.Body.String())
@@ -253,13 +254,13 @@ func TestPolls_HasVotedReflectedPerCaller(t *testing.T) {
 func TestPolls_HTTPRoutesEndToEnd(t *testing.T) {
 	_, p := newPollTest(t, Options{})
 	mux := http.NewServeMux()
-	p.mount(mux)
+	httpapi.Mount(mux, p, pollRoutes)
 
 	rec := doPollReq(t, mux, "POST", "/polls", twoOptionPoll(""), pollAdmin)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("POST /polls: status %d, body %s", rec.Code, rec.Body.String())
 	}
-	var created pollView
+	var created Poll
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode create resp: %v", err)
 	}
@@ -274,7 +275,7 @@ func TestPolls_HTTPRoutesEndToEnd(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST vote: status %d, body %s", rec.Code, rec.Body.String())
 	}
-	var voted pollView
+	var voted Poll
 	if err := json.Unmarshal(rec.Body.Bytes(), &voted); err != nil {
 		t.Fatalf("decode vote resp: %v", err)
 	}
@@ -365,7 +366,7 @@ func TestPolls_LiveGatingAndAdminList(t *testing.T) {
 	}
 	// Rescheduling it into the past makes it publicly live.
 	past := time.Now().Add(-time.Minute)
-	if _, err := p.update(ctx, pollAdmin, scheduled.ID, updatePollInput{LiveAt: &past}); err != nil {
+	if _, err := p.update(ctx, pollAdmin, scheduled.ID, PollUpdate{LiveAt: &past}); err != nil {
 		t.Fatal(err)
 	}
 	pub, _ = p.list(ctx, access.Actor{ID: "user1"}, listFilter{limit: 20})
@@ -378,7 +379,7 @@ func TestPolls_MonthWindowsAndTotals(t *testing.T) {
 	_, p := newPollTest(t, Options{})
 	ctx := context.Background()
 
-	mk := func(lang, live string) pollView {
+	mk := func(lang, live string) Poll {
 		t.Helper()
 		at, _ := time.Parse("2006-01-02", live)
 		in := twoOptionPoll(lang)
@@ -421,7 +422,7 @@ func TestPolls_MonthWindowsAndTotals(t *testing.T) {
 
 }
 
-func pollIDs(vs []pollView) []string {
+func pollIDs(vs []Poll) []string {
 	ids := make([]string, len(vs))
 	for i := range vs {
 		ids[i] = vs[i].ID
@@ -455,7 +456,7 @@ func TestPolls_OptionCRUD(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("add option: %d %s", rec.Code, rec.Body.String())
 	}
-	var added pollOption
+	var added PollOption
 	if err := json.Unmarshal(rec.Body.Bytes(), &added); err != nil {
 		t.Fatal(err)
 	}
@@ -468,7 +469,7 @@ func TestPolls_OptionCRUD(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update option: %d %s", rec.Code, rec.Body.String())
 	}
-	var upd pollOption
+	var upd PollOption
 	_ = json.Unmarshal(rec.Body.Bytes(), &upd)
 	if upd.Label != "Kaji" || upd.Position != 0 {
 		t.Fatalf("update result = %+v", upd)
@@ -512,7 +513,7 @@ func TestPolls_ArchiveWindowShowsInactiveButNotFuture(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	deactivate := false
-	if _, err := p.update(ctx, pollAdmin, created.ID, updatePollInput{IsActive: &deactivate}); err != nil {
+	if _, err := p.update(ctx, pollAdmin, created.ID, PollUpdate{IsActive: &deactivate}); err != nil {
 		t.Fatalf("deactivate: %v", err)
 	}
 

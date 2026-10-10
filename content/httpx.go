@@ -45,7 +45,6 @@ const (
 	CodeNotFound           = "not_found"
 	CodeConflict           = "conflict"
 	CodeModerationRejected = "moderation_rejected"
-	CodeUnprocessable      = "unprocessable"
 	// CodeRateLimited: too many of one interaction; the body carries action
 	// and retry_after (seconds, as the Retry-After header). -> 429
 	CodeRateLimited = "rate_limited"
@@ -156,8 +155,6 @@ func codeForStatus(status int) string {
 		return CodeNotFound
 	case http.StatusConflict:
 		return CodeConflict
-	case http.StatusUnprocessableEntity:
-		return CodeUnprocessable
 	case http.StatusNotImplemented:
 		return CodeNotConfigured
 	}

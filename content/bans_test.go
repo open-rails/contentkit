@@ -46,7 +46,7 @@ func gallery(n int, rest string) string { return "/gallery/" + cid(n) + rest }
 // comment posts a comment (a reply when replyTo is set) and returns the response.
 func comment(t *testing.T, h http.Handler, who access.Actor, n int, replyTo string) *httptest.ResponseRecorder {
 	t.Helper()
-	return doJSON(t, h, who, "POST", gallery(n, "/comments"), createInput{Body: "words", ReplyToID: replyTo})
+	return doJSON(t, h, who, "POST", gallery(n, "/comments"), CommentInput{Body: "words", ReplyToID: replyTo})
 }
 
 func created(t *testing.T, rec *httptest.ResponseRecorder) Comment {
@@ -78,10 +78,10 @@ func bans(t *testing.T, h http.Handler, who access.Actor, path string) []Comment
 	return out
 }
 
-func standing(t *testing.T, h http.Handler, who access.Actor, n int) canComment {
+func standing(t *testing.T, h http.Handler, who access.Actor, n int) CommentStanding {
 	t.Helper()
 	rec := doJSON(t, h, who, "GET", gallery(n, "/can-comment"), nil)
-	var out canComment
+	var out CommentStanding
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
 		t.Fatalf("can-comment: %d %s", rec.Code, rec.Body.String())
 	}
@@ -98,7 +98,7 @@ func TestCommentBanOwnerScope(t *testing.T) {
 	theirs := created(t, comment(t, h, fan, 1, ""))
 	onOwn := created(t, comment(t, h, troll, 3, ""))
 
-	rec := doJSON(t, h, owner, "PUT", "/comment-bans/"+troll.ID, banInput{Reason: "spam"})
+	rec := doJSON(t, h, owner, "PUT", "/comment-bans/"+troll.ID, BanInput{Reason: "spam"})
 	var b CommentBan
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &b) != nil || b.Scope != OwnerScope(owner.ID) ||
 		b.UserID != troll.ID || b.BannedBy != owner.ID || b.Until != nil || b.Expired || b.User == nil || b.User.Username != "name-troll" {
@@ -108,7 +108,7 @@ func TestCommentBanOwnerScope(t *testing.T) {
 	assertBanned(t, comment(t, h, troll, 1, ""), "owner:owner", false)
 	assertBanned(t, comment(t, h, troll, 1, theirs.ID), "owner:owner", false)
 	assertBanned(t, comment(t, h, troll, 1, mine.ID), "owner:owner", false)
-	assertBanned(t, doJSON(t, h, troll, "PATCH", "/comments/"+mine.ID, editInput{Body: "edited"}), "owner:owner", false)
+	assertBanned(t, doJSON(t, h, troll, "PATCH", "/comments/"+mine.ID, CommentEdit{Body: "edited"}), "owner:owner", false)
 	if got := decodeErr(t, comment(t, h, troll, 1, "").Body.String()); got.Ban.Reason != "spam" {
 		t.Fatalf("the notice's reason: %+v", got.Ban)
 	}
@@ -163,24 +163,24 @@ func TestCommentBanGlobalScope(t *testing.T) {
 	_, h := bansRuntime(t)
 	onOwn := created(t, comment(t, h, troll, 3, ""))
 
-	if rec := doJSON(t, h, owner, "PUT", "/global-comment-bans/"+troll.ID, banInput{}); rec.Code != http.StatusForbidden {
+	if rec := doJSON(t, h, owner, "PUT", "/global-comment-bans/"+troll.ID, BanInput{}); rec.Code != http.StatusForbidden {
 		t.Fatalf("a non-operator's global ban: %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := doJSON(t, h, owner, "GET", "/global-comment-bans", nil); rec.Code != http.StatusForbidden {
 		t.Fatalf("a non-operator's global list: %d", rec.Code)
 	}
-	if rec := doJSON(t, h, access.Actor{Anonymous: true, IP: "10.0.0.9"}, "PUT", "/comment-bans/"+troll.ID, banInput{}); rec.Code != http.StatusUnauthorized {
+	if rec := doJSON(t, h, access.Actor{Anonymous: true, IP: "10.0.0.9"}, "PUT", "/comment-bans/"+troll.ID, BanInput{}); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("an anonymous ban: %d", rec.Code)
 	}
-	if rec := doJSON(t, h, operator, "PUT", "/global-comment-bans/"+troll.ID, banInput{Reason: "abuse"}); rec.Code != http.StatusOK {
+	if rec := doJSON(t, h, operator, "PUT", "/global-comment-bans/"+troll.ID, BanInput{Reason: "abuse"}); rec.Code != http.StatusOK {
 		t.Fatalf("global ban: %d %s", rec.Code, rec.Body.String())
 	}
 	for _, n := range []int{1, 2, 3, 4} {
 		assertBanned(t, comment(t, h, troll, n, ""), ScopeGlobal, false)
 	}
 	assertBanned(t, comment(t, h, troll, 3, onOwn.ID), ScopeGlobal, false)
-	assertBanned(t, doJSON(t, h, troll, "PATCH", "/comments/"+onOwn.ID, editInput{Body: "edited"}), ScopeGlobal, false)
-	if rec := doJSON(t, h, operator, "PATCH", "/comments/"+onOwn.ID, editInput{Body: "moderated"}); rec.Code != http.StatusOK {
+	assertBanned(t, doJSON(t, h, troll, "PATCH", "/comments/"+onOwn.ID, CommentEdit{Body: "edited"}), ScopeGlobal, false)
+	if rec := doJSON(t, h, operator, "PATCH", "/comments/"+onOwn.ID, CommentEdit{Body: "moderated"}); rec.Code != http.StatusOK {
 		t.Fatalf("a moderator edits a banned user's comment: %d %s", rec.Code, rec.Body.String())
 	}
 	rec := doJSON(t, h, fan, "GET", gallery(3, "/comments"), nil)
@@ -198,7 +198,7 @@ func TestCommentBanGlobalScope(t *testing.T) {
 	}
 
 	until := time.Now().Add(time.Hour)
-	if rec := doJSON(t, h, owner, "PUT", "/comment-bans/"+troll.ID, banInput{Until: &until}); rec.Code != http.StatusOK {
+	if rec := doJSON(t, h, owner, "PUT", "/comment-bans/"+troll.ID, BanInput{Until: &until}); rec.Code != http.StatusOK {
 		t.Fatalf("owner ban: %d %s", rec.Code, rec.Body.String())
 	}
 	assertBanned(t, comment(t, h, troll, 1, ""), ScopeGlobal, false) // the indefinite one
@@ -214,7 +214,7 @@ func TestCommentBanGlobalScope(t *testing.T) {
 func TestCommentBanExpiryAndValidation(t *testing.T) {
 	_, h := bansRuntime(t)
 	until := time.Now().Add(3 * time.Second)
-	if rec := doJSON(t, h, owner, "PUT", "/comment-bans/"+troll.ID, banInput{Reason: "cool off", Until: &until}); rec.Code != http.StatusOK {
+	if rec := doJSON(t, h, owner, "PUT", "/comment-bans/"+troll.ID, BanInput{Reason: "cool off", Until: &until}); rec.Code != http.StatusOK {
 		t.Fatalf("ban: %d %s", rec.Code, rec.Body.String())
 	}
 	assertBanned(t, comment(t, h, troll, 1, ""), "owner:owner", true)
@@ -242,9 +242,9 @@ func TestCommentBanExpiryAndValidation(t *testing.T) {
 		path string
 		body any
 	}{
-		"until in the past": {"/comment-bans/" + troll.ID, banInput{Until: &past}},
-		"yourself":          {"/comment-bans/" + owner.ID, banInput{}},
-		"long reason":       {"/comment-bans/" + troll.ID, banInput{Reason: strings.Repeat("x", maxBanReason+1)}},
+		"until in the past": {"/comment-bans/" + troll.ID, BanInput{Until: &past}},
+		"yourself":          {"/comment-bans/" + owner.ID, BanInput{}},
+		"long reason":       {"/comment-bans/" + troll.ID, BanInput{Reason: strings.Repeat("x", maxBanReason+1)}},
 		"unknown field":     {"/comment-bans/" + troll.ID, map[string]string{"scope": "global"}},
 	} {
 		if rec := doJSON(t, h, owner, "PUT", c.path, c.body); rec.Code != http.StatusBadRequest {
@@ -263,7 +263,7 @@ func TestCommentBanErasure(t *testing.T) {
 		who  access.Actor
 		path string
 	}{{owner, "/comment-bans/troll"}, {owner, "/comment-bans/fan"}, {operator, "/global-comment-bans/troll"}, {operator, "/global-comment-bans/fan"}} {
-		if rec := doJSON(t, h, s.who, "PUT", s.path, banInput{}); rec.Code != http.StatusOK {
+		if rec := doJSON(t, h, s.who, "PUT", s.path, BanInput{}); rec.Code != http.StatusOK {
 			t.Fatalf("%s: %d %s", s.path, rec.Code, rec.Body.String())
 		}
 	}
@@ -284,7 +284,7 @@ func TestCommentBanErasure(t *testing.T) {
 	if err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.commentBans+` WHERE scope = $1`, OwnerScope(owner.ID)).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("an erased owner's scope keeps %d bans (%v)", n, err)
 	}
-	if rec := doJSON(t, h, other, "PUT", "/comment-bans/"+troll.ID, banInput{}); rec.Code != http.StatusForbidden {
+	if rec := doJSON(t, h, other, "PUT", "/comment-bans/"+troll.ID, BanInput{}); rec.Code != http.StatusForbidden {
 		t.Fatalf("banning an erased user: %d %s", rec.Code, rec.Body.String())
 	}
 }

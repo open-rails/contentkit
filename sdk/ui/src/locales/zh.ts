@@ -168,7 +168,6 @@ export const zh: ContentKitUiMessageBundle = {
     aborted: "已取消。",
     resume_mismatch: "保存的上传属于另一个文件。请重新选择文件。",
     moderation_rejected: "已被审核拒绝。",
-    unprocessable: "无法处理此请求。",
     comment_banned: "你无法在此评论。",
     not_configured: "此网站未提供该功能。",
     tenant_mismatch: "我们这边出了点问题，请重试。",

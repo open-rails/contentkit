@@ -12,6 +12,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
 // comments is the threaded comment module over a content key. Threading is
@@ -36,15 +37,15 @@ const commentTombstone = "[deleted]"
 // row it names, so text keys (a comment's reactions) take the row's id::text.
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-// createInput is the POST body for a new comment.
-type createInput struct {
+// CommentInput is the body of a new comment.
+type CommentInput struct {
 	Body      string `json:"body"`
 	ReplyToID string `json:"reply_to_id,omitempty"`
 	AnonName  string `json:"anon_name,omitempty"`
 }
 
-// editInput is the PATCH body for an edit.
-type editInput struct {
+// CommentEdit is the body of a comment edit.
+type CommentEdit struct {
 	Body string `json:"body"`
 }
 
@@ -73,7 +74,7 @@ type Comment struct {
 // body and inserts. A reply must target a published top-level comment on the
 // same reference; replies are one level deep. A held comment is stored
 // author-only and counted only once a reviewer approves it.
-func (c *comments) create(ctx context.Context, actor access.Actor, kind, id string, in createInput) (Comment, error) {
+func (c *comments) create(ctx context.Context, actor access.Actor, kind, id string, in CommentInput) (Comment, error) {
 	ref, res, err := c.rt.resolveTarget(ctx, kind, id, actor, true)
 	if err != nil {
 		return Comment{}, err
@@ -673,49 +674,49 @@ func (c *comments) loadForWrite(ctx context.Context, actor access.Actor, cid str
 // reactTx writes the caller's reaction to a comment and denormalizes the split
 // counter on the comment row in the same tx. Its owning content must be visible;
 // the comment must still be published and not deleted when its row is locked.
-func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, value int16) (reactionCounts, error) {
+func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, value int16) (ReactionCounts, error) {
 	if !uuidRe.MatchString(cid) {
-		return reactionCounts{}, ErrNotFound
+		return ReactionCounts{}, ErrNotFound
 	}
 	ref, err := c.refOf(ctx, c.s.pool, cid)
 	if err != nil {
-		return reactionCounts{}, err
+		return ReactionCounts{}, err
 	}
 	if _, err := c.rt.gateRef(ctx, ref, actor, false); err != nil {
-		return reactionCounts{}, err
+		return ReactionCounts{}, err
 	}
 	tx, err := c.s.beginMutation(ctx)
 	if err != nil {
-		return reactionCounts{}, err
+		return ReactionCounts{}, err
 	}
 	defer tx.Rollback(ctx)
 	if err := c.rt.guardErasedSubject(ctx, tx, viewerID(actor)); err != nil {
-		return reactionCounts{}, err
+		return ReactionCounts{}, err
 	}
 	var deletedAt *time.Time
 	var state string
 	// Key by the stored id: every spelling of cid is one comment, one reaction.
 	if err := tx.QueryRow(ctx, `SELECT id::text, deleted_at, moderation FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, cid, c.s.tenant).Scan(&cid, &deletedAt, &state); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return reactionCounts{}, ErrNotFound
+			return ReactionCounts{}, ErrNotFound
 		}
-		return reactionCounts{}, err
+		return ReactionCounts{}, err
 	}
 	if deletedAt != nil || state != ModerationApproved {
-		return reactionCounts{}, ErrNotFound
+		return ReactionCounts{}, ErrNotFound
 	}
 	key := c.rt.Ref(KindComment, cid).Key()
 	dLikes, dDislikes, err := c.rt.reactions.applyTx(ctx, tx, actor, key, value)
 	if err != nil {
-		return reactionCounts{}, err
+		return ReactionCounts{}, err
 	}
 	if dLikes != 0 || dDislikes != 0 {
 		if _, err := tx.Exec(ctx, `UPDATE `+c.s.t.comments+` SET likes = likes + $2, dislikes = dislikes + $3, updated_at = now() WHERE id = $1`, cid, dLikes, dDislikes); err != nil {
-			return reactionCounts{}, err
+			return ReactionCounts{}, err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return reactionCounts{}, err
+		return ReactionCounts{}, err
 	}
 	return c.rt.reactions.counts(ctx, c.s.pool, actor, key)
 }
@@ -757,18 +758,59 @@ func (c *comments) reactionsByAuthor(ctx context.Context, userIDs []string) (map
 
 // --- HTTP ---
 
-func (c *comments) mount(mux *http.ServeMux) {
-	mux.HandleFunc("GET /{kind}/{id}/comments", c.handleList)
-	mux.HandleFunc("POST /{kind}/{id}/comments", c.handleCreate)
-	mux.HandleFunc("GET /comments/latest", c.handleLatest) // literal beats {cid}
-	mux.HandleFunc("GET /comments/admin", c.handleAdminList)
-	mux.HandleFunc("POST /comments/{cid}/restore", c.handleRestore)
-	mux.HandleFunc("GET /comments/{cid}/replies", c.handleReplies)
-	mux.HandleFunc("PATCH /comments/{cid}", c.handleEdit)
-	mux.HandleFunc("DELETE /comments/{cid}", c.handleDelete)
-	mux.HandleFunc("POST /comments/{cid}/like", c.handleReact(1))
-	mux.HandleFunc("POST /comments/{cid}/dislike", c.handleReact(-1))
-	mux.HandleFunc("POST /comments/{cid}/neutral", c.handleReact(0))
+var commentRoutes = []httpapi.Route[*comments]{
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}/comments", Resource: "comments", Auth: httpapi.Public,
+		Doc:       "A target's top-level comments with reply counts; the caller also sees its own held and rejected ones.",
+		Query:     append([]httpapi.Param{sortParam}, httpapi.Page...),
+		Responses: []httpapi.Reply{httpapi.OK([]Comment{})}, Errors: []string{CodeNotFound}},
+		Serve: httpapi.H((*comments).handleList)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/{kind}/{id}/comments", Resource: "comments", Auth: httpapi.Public,
+		Doc:       "Comments on a target, or replies to a top-level comment; anonymous callers give anon_name. 202 when the moderator holds it.",
+		Request:   CommentInput{},
+		Responses: []httpapi.Reply{httpapi.Created(Comment{}), httpapi.Accepted(Comment{})},
+		Errors:    []string{CodeCommentBanned, CodeForbidden, CodeModerationRejected, CodeNotFound, CodeRateLimited}},
+		Serve: httpapi.H((*comments).handleCreate)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/comments/latest", Resource: "comments", Auth: httpapi.Public,
+		Doc:   "The newest published comments across the tenant, with their targets; a page may under-fill.",
+		Query: httpapi.Page, Responses: []httpapi.Reply{httpapi.OK([]FeedItem{})}},
+		Serve: httpapi.H((*comments).handleLatest)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/comments/admin", Resource: "comments", Auth: httpapi.Staff, Perm: "CommentModerate",
+		Doc:       "Every comment, newest first, deleted, held and rejected ones with their real bodies.",
+		Query:     append([]httpapi.Param{httpapi.Text("content_kind", "only comments on this kind")}, httpapi.Page...),
+		Responses: []httpapi.Reply{httpapi.OK([]AdminComment{})}},
+		Serve: httpapi.H((*comments).handleAdminList)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/comments/{cid}/restore", Resource: "comments", Auth: httpapi.Staff, Perm: "CommentModerate",
+		Doc:       "Restores a deleted comment.",
+		Responses: []httpapi.Reply{httpapi.OK(Restored{})}, Errors: []string{CodeNotFound}},
+		Serve: httpapi.H((*comments).handleRestore)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/comments/{cid}/replies", Resource: "comments", Auth: httpapi.Public,
+		Doc:   "A comment's replies, oldest first.",
+		Query: httpapi.Page, Responses: []httpapi.Reply{httpapi.OK([]Comment{})}, Errors: []string{CodeNotFound}},
+		Serve: httpapi.H((*comments).handleReplies)},
+	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/comments/{cid}", Resource: "comments", Auth: httpapi.Public,
+		Doc:       "Edits a comment: its author, or a CommentModerate holder. 202 when the moderator holds the new text.",
+		Request:   CommentEdit{},
+		Responses: []httpapi.Reply{httpapi.OK(Comment{}), httpapi.Accepted(Comment{})},
+		Errors:    []string{CodeCommentBanned, CodeConflict, CodeForbidden, CodeModerationRejected, CodeNotFound}},
+		Serve: httpapi.H((*comments).handleEdit)},
+	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/comments/{cid}", Resource: "comments", Auth: httpapi.Public,
+		Doc:       "Deletes a comment, leaving a tombstone: its author, or a CommentModerate holder.",
+		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeForbidden, CodeNotFound}},
+		Serve: httpapi.H((*comments).handleDelete)},
+	commentReaction("like", "Likes a comment.", 1),
+	commentReaction("dislike", "Dislikes a comment.", -1),
+	commentReaction("neutral", "Clears the caller's reaction to a comment.", 0),
+}
+
+func commentReaction(verb, doc string, value int16) httpapi.Route[*comments] {
+	return httpapi.Route[*comments]{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/comments/{cid}/" + verb, Resource: "comments", Auth: httpapi.Public,
+		Doc: doc, Responses: []httpapi.Reply{httpapi.OK(ReactionCounts{})}, Errors: []string{CodeForbidden, CodeInvalidRequest, CodeNotFound, CodeRateLimited}},
+		Serve: func(c *comments) http.HandlerFunc { return c.handleReact(value) }}
+}
+
+// Restored confirms a comment's restoration.
+type Restored struct {
+	Restored bool `json:"restored"`
 }
 
 func (c *comments) handleList(w http.ResponseWriter, req *http.Request) {
@@ -808,7 +850,7 @@ func (c *comments) handleRestore(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"restored": true})
+	writeJSON(w, http.StatusOK, Restored{Restored: true})
 }
 
 func (c *comments) handleLatest(w http.ResponseWriter, req *http.Request) {
@@ -839,7 +881,7 @@ func (c *comments) handleCreate(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	var in createInput
+	var in CommentInput
 	if err := decodeJSON(req, &in); err != nil {
 		writeErr(w, err)
 		return
@@ -858,7 +900,7 @@ func (c *comments) handleCreate(w http.ResponseWriter, req *http.Request) {
 
 func (c *comments) handleEdit(w http.ResponseWriter, req *http.Request) {
 	actor := c.rt.actor(req.Context())
-	var in editInput
+	var in CommentEdit
 	if err := decodeJSON(req, &in); err != nil {
 		writeErr(w, err)
 		return

@@ -23,7 +23,7 @@ func TestCounts_RollupAggregates(t *testing.T) {
 	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u1"}, "gallery", cid(1), 1)))
 	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u2"}, "gallery", cid(1), -1)))
 	must(rt.favorites.add(ctx, access.Actor{ID: "u1"}, "gallery", cid(1)))
-	if _, err := rt.comments.create(ctx, access.Actor{ID: "u1"}, "gallery", cid(1), createInput{Body: "hi"}); err != nil {
+	if _, err := rt.comments.create(ctx, access.Actor{ID: "u1"}, "gallery", cid(1), CommentInput{Body: "hi"}); err != nil {
 		t.Fatal(err)
 	}
 	must(reactErr(rt.reactions.react(ctx, access.Actor{ID: "u3"}, "gallery", cid(2), 1)))
@@ -99,12 +99,12 @@ func TestCounts_CommentCountLifecycle(t *testing.T) {
 	a := access.Actor{ID: "u1"}
 	g := ref("gallery", cid(1))
 
-	top := mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "top"})
-	mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "reply", ReplyToID: top.ID}) // reply: no rollup bump
+	top := mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "top"})
+	mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "reply", ReplyToID: top.ID}) // reply: no rollup bump
 	if c := countsOf(t, rt, g); c.CommentCount != 1 {
 		t.Fatalf("comment_count = %d, want 1 (reply excluded)", c.CommentCount)
 	}
-	top2 := mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "top2"})
+	top2 := mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "top2"})
 	if c := countsOf(t, rt, g); c.CommentCount != 2 {
 		t.Fatalf("comment_count = %d, want 2", c.CommentCount)
 	}
@@ -121,9 +121,9 @@ func TestComments_SortByBest(t *testing.T) {
 	rt := commentsRuntime(t, Options{})
 	ctx := context.Background()
 	a := access.Actor{ID: "author"}
-	small := mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "1/0"})
-	big := mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "9/1"})
-	none := mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "0/0"})
+	small := mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "1/0"})
+	big := mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "9/1"})
+	none := mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "0/0"})
 
 	if _, err := rt.comments.reactTx(ctx, access.Actor{ID: "v0"}, small.ID, 1); err != nil {
 		t.Fatal(err)
@@ -149,9 +149,9 @@ func TestComments_SortByLikes(t *testing.T) {
 	rt := commentsRuntime(t, Options{})
 	ctx := context.Background()
 	a := access.Actor{ID: "author"}
-	c1 := mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "c1"})
-	c2 := mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "c2"})
-	c3 := mustComment(t, rt, a, "gallery", cid(1), createInput{Body: "c3"})
+	c1 := mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "c1"})
+	c2 := mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "c2"})
+	c3 := mustComment(t, rt, a, "gallery", cid(1), CommentInput{Body: "c3"})
 	for _, actor := range []access.Actor{{ID: "x1"}, {ID: "x2"}} {
 		if _, err := rt.comments.reactTx(ctx, actor, c2.ID, 1); err != nil {
 			t.Fatal(err)

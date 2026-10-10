@@ -12,50 +12,91 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
-// Handler is the admin API of one tenant's store. Hosts mount it behind their
-// own admin authorization; every route is scoped to the store's tenant and
-// content ids stay opaque. Errors are JSON {"error", "code"} with 400 for
+// Handler is the admin API of one tenant's store (taxonomyRoutes). Every
+// route is scoped to the store's tenant and content ids stay opaque.
+// contentkit.Runtime.Handler serves it at /taxonomy behind
+// content.Perms.Taxonomy; a host mounting it alone puts it behind its own
+// admin authorization. Errors are JSON {"error", "code"} with 400 for
 // ErrInvalid, 404 for ErrNotFound, 409 for ErrConflict and a sanitized 500 for
 // everything else; the cause always reaches Options.Logger.
-//
-//	GET    /nodes?kind=&state=&id=&slug=&language=&language_mode=
-//	              &name_prefix=&q=&content_kind=&min_count=
-//	              &sort=&cursor=&offset=&limit=           -> NodePage
-//	POST   /nodes                [NodeInput]          -> [Node]
-//	GET    /nodes/{id}                                -> NodeDetail
-//	PATCH  /nodes/{id}           NodeUpdate           -> Node
-//	DELETE /nodes/{id}                                -> Node (state deleted)
-//	PUT    /nodes/{id}/names     [Name]               replace
-//	POST   /nodes/{id}/names     [Name]               add
-//	DELETE /nodes/{id}/names     [Name]               remove
-//	POST   /nodes/{id}/merge     {"into_taxonomy_id"} -> MergeReport
-//	POST   /edges                [Edge]  ·  DELETE /edges [Edge]
-//	POST   /assignments?suppress_counts=1 [Assignment] ·  DELETE /assignments [Assignment]
-//	POST   /effective            [ContentRef]         -> [{content, tags}]
-//	GET    /counts?taxonomy_id=…                      -> {id: [Count]}
-//	POST   /counts/rebuild                            -> {"nodes": n}
 func Handler(s *Store) http.Handler {
 	mux := http.NewServeMux()
-	h := handler{s}
-	mux.HandleFunc("GET /nodes", h.listNodes)
-	mux.HandleFunc("POST /nodes", h.createNodes)
-	mux.HandleFunc("GET /nodes/{id}", h.node)
-	mux.HandleFunc("PATCH /nodes/{id}", h.updateNode)
-	mux.HandleFunc("DELETE /nodes/{id}", h.deleteNode)
-	mux.HandleFunc("PUT /nodes/{id}/names", h.names(s.SetNames))
-	mux.HandleFunc("POST /nodes/{id}/names", h.names(s.AddNames))
-	mux.HandleFunc("DELETE /nodes/{id}/names", h.names(s.RemoveNames))
-	mux.HandleFunc("POST /nodes/{id}/merge", h.merge)
-	mux.HandleFunc("POST /edges", h.edges(s.AddEdges))
-	mux.HandleFunc("DELETE /edges", h.edges(s.RemoveEdges))
-	mux.HandleFunc("POST /assignments", h.assignments(s.Assign))
-	mux.HandleFunc("DELETE /assignments", h.assignments(s.Unassign))
-	mux.HandleFunc("POST /effective", h.effective)
-	mux.HandleFunc("GET /counts", h.counts)
-	mux.HandleFunc("POST /counts/rebuild", h.rebuild)
+	httpapi.Mount(mux, handler{s}, taxonomyRoutes)
 	return accessLog(s.log, mux)
+}
+
+func init() { httpapi.Register(httpapi.Taxonomy, taxonomyRoutes) }
+
+var taxonomyRoutes = []httpapi.Route[handler]{
+	adminRoute(httpapi.GET, "/nodes", "Lists nodes: filtered, ordered and paged.", nil, okReply(NodePage{}), httpapi.H(handler.listNodes), nil,
+		httpapi.Text("kind", "only nodes of this kind"), httpapi.Repeated("state", "only nodes in these states; active by default"),
+		httpapi.Repeated("id", "only these taxonomy ids"), httpapi.Text("slug", "only the node with this slug"),
+		httpapi.Text("language", "the language names resolve in"),
+		httpapi.Text("language_mode", "what a node without a name in language gets: fallback (the default), strict or required"),
+		httpapi.Text("name_prefix", "names starting with this"), httpapi.Text("q", "names containing this"),
+		httpapi.Text("content_kind", "count contents of this kind"), httpapi.Int("min_count", "only nodes with at least this many contents"),
+		httpapi.Text("sort", "name, count, created, oldest or updated; taxonomy id by default"),
+		httpapi.Text("cursor", "the previous page's next_cursor (default order only)"),
+		httpapi.Int("offset", "nodes to skip"), httpapi.Int("limit", "page size")),
+	adminRoute(httpapi.POST, "/nodes", "Creates nodes with their names.", []NodeInput{}, []httpapi.Reply{httpapi.Created([]Node{})},
+		httpapi.H(handler.createNodes), []string{CodeConflict}),
+	adminRoute(httpapi.GET, "/nodes/{id}", "A node with its names and edges.", nil, okReply(NodeDetail{}), httpapi.H(handler.node), []string{CodeNotFound}),
+	adminRoute(httpapi.PATCH, "/nodes/{id}", "Updates a node's given fields.", NodeUpdate{}, okReply(Node{}), httpapi.H(handler.updateNode), []string{CodeConflict, CodeNotFound}),
+	adminRoute(httpapi.DELETE, "/nodes/{id}", "Marks a node deleted.", nil, okReply(Node{}), httpapi.H(handler.deleteNode), []string{CodeNotFound}),
+	adminRoute(httpapi.PUT, "/nodes/{id}/names", "Replaces a node's names.", []Name{}, okReply(NodeDetail{}),
+		func(h handler) http.HandlerFunc { return h.names(h.s.SetNames) }, []string{CodeConflict, CodeNotFound}),
+	adminRoute(httpapi.POST, "/nodes/{id}/names", "Adds names to a node.", []Name{}, okReply(NodeDetail{}),
+		func(h handler) http.HandlerFunc { return h.names(h.s.AddNames) }, []string{CodeConflict, CodeNotFound}),
+	adminRoute(httpapi.DELETE, "/nodes/{id}/names", "Removes names from a node.", []Name{}, okReply(NodeDetail{}),
+		func(h handler) http.HandlerFunc { return h.names(h.s.RemoveNames) }, []string{CodeNotFound}),
+	adminRoute(httpapi.POST, "/nodes/{id}/merge", "Merges a node into another: its assignments, names and edges move, and its URL redirects.",
+		MergeInput{}, okReply(MergeReport{}), httpapi.H(handler.merge), []string{CodeConflict, CodeNotFound}),
+	adminRoute(httpapi.POST, "/edges", "Adds edges.", []Edge{}, okReply(EdgesWritten{}),
+		func(h handler) http.HandlerFunc { return h.edges(h.s.AddEdges) }, []string{CodeConflict, CodeNotFound}),
+	adminRoute(httpapi.DELETE, "/edges", "Removes edges.", []Edge{}, okReply(EdgesWritten{}),
+		func(h handler) http.HandlerFunc { return h.edges(h.s.RemoveEdges) }, nil),
+	adminRoute(httpapi.POST, "/assignments", "Assigns nodes to contents.", []Assignment{}, okReply(AssignmentsWritten{}),
+		func(h handler) http.HandlerFunc { return h.assignments(h.s.Assign) }, []string{CodeConflict, CodeNotFound}, suppressCounts),
+	adminRoute(httpapi.DELETE, "/assignments", "Removes assignments.", []Assignment{}, okReply(AssignmentsWritten{}),
+		func(h handler) http.HandlerFunc { return h.assignments(h.s.Unassign) }, nil, suppressCounts),
+	adminRoute(httpapi.POST, "/effective", "The effective tags (work and version) of each content.", []contentref.ContentRef{}, okReply([]EffectiveTagsOf{}),
+		httpapi.H(handler.effective), nil),
+	adminRoute(httpapi.GET, "/counts", "Content counts of nodes, by taxonomy id.", nil, okReply(map[TaxonomyID][]Count{}), httpapi.H(handler.counts), nil,
+		httpapi.Repeated("taxonomy_id", "the nodes to count")),
+	adminRoute(httpapi.POST, "/counts/rebuild", "Recomputes every count, after bulk loads written with suppress_counts.", nil, okReply(CountsRebuilt{}),
+		httpapi.H(handler.rebuild), nil),
+}
+
+var suppressCounts = httpapi.Bool("suppress_counts", "skip count maintenance; rebuild the counts afterwards")
+
+func okReply(body any) []httpapi.Reply { return []httpapi.Reply{httpapi.OK(body)} }
+
+func adminRoute(method, path, doc string, request any, replies []httpapi.Reply, serve func(handler) http.HandlerFunc, errs []string, query ...httpapi.Param) httpapi.Route[handler] {
+	return httpapi.Route[handler]{Spec: httpapi.Spec{Method: method, Path: path, Resource: "taxonomy", Doc: doc,
+		Auth: httpapi.Staff, Perm: "Taxonomy", Query: query, Request: request, Responses: replies, Errors: errs}, Serve: serve}
+}
+
+// MergeInput names the node a merge folds into.
+type MergeInput struct {
+	Into TaxonomyID `json:"into_taxonomy_id"`
+}
+
+// EdgesWritten counts the edges of an edge write.
+type EdgesWritten struct {
+	Edges int `json:"edges"`
+}
+
+// AssignmentsWritten counts the assignments of an assignment write.
+type AssignmentsWritten struct {
+	Assignments int `json:"assignments"`
+}
+
+// CountsRebuilt counts the nodes a rebuild recounted.
+type CountsRebuilt struct {
+	Nodes int `json:"nodes"`
 }
 
 // statusWriter records the response status and the cause fail() withheld from
@@ -260,9 +301,7 @@ func (h handler) names(op func(context.Context, TaxonomyID, []Name) error) http.
 }
 
 func (h handler) merge(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Into TaxonomyID `json:"into_taxonomy_id"`
-	}
+	var body MergeInput
 	if err := decode(r, &body); err != nil {
 		fail(w, err)
 		return
@@ -286,7 +325,7 @@ func (h handler) edges(op func(context.Context, []Edge) error) http.HandlerFunc 
 			fail(w, err)
 			return
 		}
-		write(w, http.StatusOK, map[string]int{"edges": len(edges)})
+		write(w, http.StatusOK, EdgesWritten{Edges: len(edges)})
 	}
 }
 
@@ -307,7 +346,7 @@ func (h handler) assignments(op func(context.Context, []Assignment, AssignOption
 			fail(w, err)
 			return
 		}
-		write(w, http.StatusOK, map[string]int{"assignments": len(assignments)})
+		write(w, http.StatusOK, AssignmentsWritten{Assignments: len(assignments)})
 	}
 }
 
@@ -363,5 +402,5 @@ func (h handler) rebuild(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	write(w, http.StatusOK, map[string]int{"nodes": n})
+	write(w, http.StatusOK, CountsRebuilt{Nodes: n})
 }

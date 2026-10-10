@@ -168,7 +168,6 @@ export const es: ContentKitUiMessageBundle = {
     aborted: "Cancelado.",
     resume_mismatch: "La subida guardada es de otro archivo. Vuelve a elegir el archivo.",
     moderation_rejected: "La moderación lo ha rechazado.",
-    unprocessable: "No se pudo procesar esta solicitud.",
     comment_banned: "No puedes comentar aquí.",
     not_configured: "Esta función no está disponible en este sitio.",
     tenant_mismatch: "Algo salió mal por nuestra parte. Inténtalo de nuevo.",

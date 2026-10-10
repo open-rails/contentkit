@@ -168,7 +168,6 @@ export const de: ContentKitUiMessageBundle = {
     aborted: "Abgebrochen.",
     resume_mismatch: "Der gespeicherte Upload gehört zu einer anderen Datei. Bitte wähle die Datei erneut.",
     moderation_rejected: "Dies wurde von der Moderation abgelehnt.",
-    unprocessable: "Diese Anfrage konnte nicht verarbeitet werden.",
     comment_banned: "Du kannst hier nicht kommentieren.",
     not_configured: "Diese Funktion ist auf dieser Website nicht verfügbar.",
     tenant_mismatch: "Bei uns ist etwas schiefgelaufen. Bitte versuche es erneut.",
