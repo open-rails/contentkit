@@ -45,7 +45,7 @@ type enum struct {
 }
 
 var enums = []enum{
-	{"ErrorCode", errorCodeNames(), []string{"contract.ErrorReply.code"}},
+	{"ErrorCode", errorCodeNames(), []string{"contract.ErrorReply.code", "media.Failure.code"}},
 	{"OpName", []string{media.OpPut, media.OpEdit, media.OpMove, media.OpRename, media.OpRemove, media.OpAttach,
 		media.OpCopy, media.OpFrame, media.OpMeta, media.OpRegenerate}, []string{"media.Op.op"}},
 	{"Access", []string{media.AccessFull, media.AccessNone}, []string{"media.ReadResult.access"}},

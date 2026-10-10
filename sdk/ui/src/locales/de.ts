@@ -165,6 +165,7 @@ export const de: ContentKitUiMessageBundle = {
     videoTooLongBy: "Diese Datei läuft {duration} s; hier sind höchstens {maxSeconds} s erlaubt.",
     videoTooLargeBy: "Dieses Video hat {width}×{height} px; Videos dürfen höchstens {megapixels} Megapixel haben.",
     video_over_budget: "Die Verarbeitung dieses Videos würde zu lange dauern. Verwende ein kürzeres oder kleineres Video.",
+    video_aspect_unsupported: "Dieses Video ist zu breit oder zu hoch, um hier verwendet zu werden.",
     aborted: "Abgebrochen.",
     resume_mismatch: "Der gespeicherte Upload gehört zu einer anderen Datei. Bitte wähle die Datei erneut.",
     moderation_rejected: "Dies wurde von der Moderation abgelehnt.",

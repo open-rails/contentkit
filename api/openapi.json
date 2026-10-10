@@ -5285,6 +5285,15 @@
           },
           "max_seconds": {
             "type": "number"
+          },
+          "min_aspect": {
+            "type": "number"
+          },
+          "max_aspect": {
+            "type": "number"
+          },
+          "max": {
+            "type": "integer"
           }
         }
       },
@@ -5339,7 +5348,7 @@
             "type": "string"
           },
           "code": {
-            "type": "string"
+            "$ref": "#/components/schemas/ErrorCode"
           },
           "details": {
             "$ref": "#/components/schemas/ErrorDetails"
@@ -6907,6 +6916,7 @@
           "type_not_allowed",
           "unauthorized",
           "unavailable",
+          "video_aspect_unsupported",
           "video_over_budget",
           "video_too_large",
           "video_too_long"
@@ -7120,7 +7130,7 @@
     },
     "too_many_files": {
       "status": 409,
-      "meaning": "The commit would put more files in an upload path than its rules allow."
+      "meaning": "The commit would put more files in an upload path, or the item, than allowed; `details.max` is the limit."
     },
     "type_not_allowed": {
       "status": 415,
@@ -7133,6 +7143,10 @@
     "unavailable": {
       "status": 503,
       "meaning": "Media storage cannot be reached, or a commit's recovery is pending; retry."
+    },
+    "video_aspect_unsupported": {
+      "status": 422,
+      "meaning": "The video's display aspect is outside what its upload path accepts; `details` has `min_aspect` and `max_aspect` (width/height)."
     },
     "video_over_budget": {
       "status": 422,

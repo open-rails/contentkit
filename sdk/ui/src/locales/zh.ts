@@ -165,6 +165,7 @@ export const zh: ContentKitUiMessageBundle = {
     videoTooLongBy: "此文件时长 {duration} 秒；此处上限为 {maxSeconds} 秒。",
     videoTooLargeBy: "此视频为 {width}×{height} 像素；视频最多 {megapixels} 百万像素。",
     video_over_budget: "处理此视频耗时过长。请使用更短或更小的视频。",
+    video_aspect_unsupported: "此视频过宽或过高，无法在此使用。",
     aborted: "已取消。",
     resume_mismatch: "保存的上传属于另一个文件。请重新选择文件。",
     moderation_rejected: "已被审核拒绝。",

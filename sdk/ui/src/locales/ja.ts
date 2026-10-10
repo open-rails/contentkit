@@ -165,6 +165,7 @@ export const ja: ContentKitUiMessageBundle = {
     videoTooLongBy: "このファイルの長さは {duration} 秒です。ここでの上限は {maxSeconds} 秒です。",
     videoTooLargeBy: "この動画は {width}×{height} px です。動画は最大 {megapixels} メガピクセルまでです。",
     video_over_budget: "この動画は処理に時間がかかりすぎます。より短いか小さい動画を使ってください。",
+    video_aspect_unsupported: "この動画は横長または縦長すぎるため、ここでは使えません。",
     aborted: "キャンセルしました。",
     resume_mismatch: "保存されたアップロードは別のファイルのものです。もう一度ファイルを選んでください。",
     moderation_rejected: "モデレーションにより拒否されました。",

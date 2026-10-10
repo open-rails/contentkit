@@ -533,7 +533,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		}
 		item.Kind().syncPreviews(prior, m)
 		if n := m.uploads(); n > MaxUploads && n > uploads {
-			return uploadErr(CodeTooManyFiles, "an item holds at most %d uploads", MaxUploads)
+			return tooManyFiles(MaxUploads, "an item holds at most %d uploads", MaxUploads)
 		}
 		mutation.effects.Cancel = removesPending(prior, ops)
 		mutation.effects.Notify = u.reg.cfg.Hooks.ItemCommitted != nil

@@ -2,7 +2,6 @@ package video_test
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -389,14 +388,15 @@ func TestAspects(t *testing.T) {
 	e.ref = e.refOf("video", 20)
 	m := e.manifest()
 	src, poster := e.file(m, "source.mkv"), e.file(m, "poster.png")
-	if fail := src.Fail(); fail == nil || !strings.Contains(fail.Message, "480x180") || len(src.Pending) != 0 ||
+	if fail := src.Fail(); fail == nil || !strings.Contains(fail.Message, "480x180") || fail.Code != media.CodeVideoAspectUnsupported ||
+		fail.Details == nil || fail.Details.MaxAspect != media.DefaultMaxAspect || len(src.Pending) != 0 ||
 		len(m.Outputs("source.mkv", "hls")) != 0 || poster.Fail() == nil || e.readiness(m).State != media.StateFailed {
 		t.Fatalf("source %+v poster %+v readiness %+v", src, poster, e.readiness(m))
 	}
 	var aspect, frame int
 	for _, f := range e.failed() {
 		switch {
-		case f.ref == e.ref && f.path == "source.mkv" && errors.Is(f.err, video.ErrAspect):
+		case f.ref == e.ref && f.path == "source.mkv" && media.AsImageError(f.err) != nil && media.AsImageError(f.err).Code == media.CodeVideoAspectUnsupported:
 			aspect++
 		case f.ref == e.ref && f.path == "poster.png":
 			frame++

@@ -215,6 +215,9 @@ export interface ErrorDetails {
   max_frames?: number;
   seconds?: number;
   max_seconds?: number;
+  min_aspect?: number;
+  max_aspect?: number;
+  max?: number;
 }
 
 export interface ErrorReply {
@@ -230,7 +233,7 @@ export interface ErrorReply {
 export interface Failure {
   of: string;
   message: string;
-  code?: string;
+  code?: ErrorCode;
   details?: ErrorDetails;
 }
 

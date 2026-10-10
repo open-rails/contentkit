@@ -1,7 +1,6 @@
 package video
 
 import (
-	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -16,10 +15,6 @@ const (
 	maxArea = 3840 * 2160
 	maxFPS  = 60
 )
-
-// ErrAspect marks a source whose display aspect is outside the kind's
-// bounds; it is permanent and reported through Hooks.Failed.
-var ErrAspect = errors.New("aspect ratio out of range")
 
 // aspectSlack admits sources a pixel of rounding off the bounds.
 const aspectSlack = 0.005
@@ -78,11 +73,13 @@ func (r rung) rate(c media.Codec) rungRate {
 	return rt
 }
 
-// checkAspect refuses a w×h display outside [lo, hi].
+// checkAspect refuses a w×h display outside [lo, hi] (video_aspect_unsupported).
 func checkAspect(w, h int, lo, hi float64) error {
 	a := float64(w) / float64(h)
 	if a < lo*(1-aspectSlack) || a > hi*(1+aspectSlack) {
-		return fmt.Errorf("%w: %dx%d is %.3f, allowed %.3f–%.3f", ErrAspect, w, h, a, lo, hi)
+		return &media.ImageError{Code: media.CodeVideoAspectUnsupported,
+			Message: fmt.Sprintf("the video is %dx%d, %.3f wide per unit of height; videos may be %.3f to %.3f", w, h, a, lo, hi),
+			Details: media.ErrorDetails{Width: w, Height: h, MinAspect: lo, MaxAspect: hi}}
 	}
 	return nil
 }
