@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node", "vite/client"],
+    "paths": {
+      "#ckui/*": ["./src/*"],
+      "@openrails/contentkit-ui": ["./src/index.ts"],
+      "@openrails/contentkit-ui/*": ["./src/*/index.ts", "./src/*.ts"]
+    }
+  },
+  "include": ["src", "test", "bench", "tooling", "demo", "e2e", "vitest.config.ts", "vite.config.ts", "playwright.config.ts", "eslint.config.js"]
+}

@@ -13,7 +13,5 @@ jobs:
     uses: ./.github/workflows/media-image.yaml
   media-video:
     uses: ./.github/workflows/media-video.yaml
-  sdk-upload:
-    uses: ./.github/workflows/sdk-upload.yaml
-  sdk-urls:
-    uses: ./.github/workflows/sdk-urls.yaml
+  sdk-ui:
+    uses: ./.github/workflows/sdk-ui.yaml

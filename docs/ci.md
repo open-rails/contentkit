@@ -8,8 +8,8 @@ GitHub Actions minutes are paid for; CI is a final check, not the test runner. T
   - `go`: vet + `go test -race` for everything except `media/image`, `media/video`, `media/worker` and `cmd/media-worker`, against real PGroonga Postgres, ClickHouse+Keeper and MinIO. The `adapters/authkit` and `adapters/openrails` modules run there too; the OpenRails adapter in its own job against Postgres 18 and a real embedded OpenRails.
   - `media-video`: `media/**` (not `media/image`), `go.mod`; ffmpeg.
   - `media-image`: `media/**`, `cmd/media-worker`, `go.mod`; libvips + ffmpeg (`media/image`, `media/worker`, `cmd/media-worker`).
-  - `sdk-upload`: `sdk/upload`, the upload-handler media packages, `go.mod`.
-  - `sdk-urls`: `sdk/urls` and the shared `contenturl/testdata` vectors.
+  - `sdk-ui`: `sdk/ui`, the shared `contenturl/testdata` vectors, the upload-handler media packages, `go.mod`.
   - `images`: PRs touching a Dockerfile or `.dockerignore` build linux/amd64 only; `v*` tags publish multi-arch.
+- `release` (a published `v*` release) publishes `@openrails/contentkit-ui` at that version to npm (trusted publishing, with provenance).
 - `full` (manual `workflow_dispatch`) runs every suite regardless of paths. Run it on `master` for full-tree qualification; it also warms the caches PRs restore.
 - Nothing runs on pushes to `master`.

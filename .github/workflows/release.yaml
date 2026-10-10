@@ -1,0 +1,84 @@
+name: Release
+# A published release publishes @openrails/contentkit-ui at X.Y.Z to npm, built
+# from the release's tag, through npm trusted publishing with provenance.
+'on':
+  release:
+    types: [published]
+permissions:
+  contents: read
+env:
+  TAG: ${{ github.event.release.tag_name }}
+jobs:
+  package:
+    name: Pack @openrails/contentkit-ui
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: sdk/ui
+    steps:
+    - name: Version tag
+      working-directory: .
+      run: |
+        [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::$TAG is not a vX.Y.Z tag"; exit 1; }
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ env.TAG }}
+        persist-credentials: false
+    - uses: pnpm/action-setup@v4
+      with:
+        package_json_file: sdk/ui/package.json
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+    - run: pnpm install --frozen-lockfile --ignore-scripts
+    - run: pnpm check
+    - name: Version from tag
+      run: npm version "${TAG#v}" --no-git-tag-version --allow-same-version
+    - name: Pack
+      run: |
+        mkdir release
+        pnpm pack --pack-destination release
+        ls "release/openrails-contentkit-ui-${TAG#v}.tgz"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: contentkit-ui
+        path: sdk/ui/release/*.tgz
+        if-no-files-found: error
+        retention-days: 7
+  npm:
+    name: Publish @openrails/contentkit-ui to npm
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing
+    env:
+      PKG: '@openrails/contentkit-ui'
+    steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        registry-url: https://registry.npmjs.org
+    - uses: actions/download-artifact@v4
+      with:
+        name: contentkit-ui
+    - name: Publish
+      run: |
+        v="${TAG#v}"
+        need=11.5.1
+        [[ "$(printf '%s\n%s\n' "$need" "$(npm --version)" | sort -V | head -1)" == "$need" ]] || { echo "::error::trusted publishing needs npm >= $need"; exit 1; }
+        if npm view "$PKG@$v" version >/dev/null 2>&1; then
+          echo "$PKG@$v is already on npm"
+          exit 0
+        fi
+        latest="$(npm view "$PKG" dist-tags.latest 2>/dev/null || true)"
+        if [[ "$v" == *-* ]]; then
+          dist_tag=next
+        elif [[ -n "$latest" && "$(printf '%s\n%s\n' "$latest" "$v" | sort -V | tail -1)" != "$v" ]]; then
+          dist_tag="release-${v%.*}"
+        else
+          dist_tag=latest
+        fi
+        npm publish "openrails-contentkit-ui-$v.tgz" --tag "$dist_tag" --access public --provenance

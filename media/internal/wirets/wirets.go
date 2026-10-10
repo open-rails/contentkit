@@ -1,5 +1,5 @@
 // Package wirets renders the upload and read API wire types as TypeScript for the
-// browser SDK (sdk/upload/src/wire.gen.ts). The test keeps the file current:
+// browser package (sdk/ui/src/client/generated/wire.ts). The test keeps the file current:
 //
 //	go test ./media/internal/wirets -update
 package wirets
