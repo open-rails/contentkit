@@ -80,6 +80,9 @@ func (c *comments) create(ctx context.Context, actor access.Actor, kind, id stri
 	if err != nil {
 		return Comment{}, err
 	}
+	if err := c.rt.checkCommentPolicy(ctx, ref, actor); err != nil {
+		return Comment{}, err
+	}
 	key := ref.Key()
 
 	loggedIn := actor.ID != "" && !actor.Anonymous
@@ -562,6 +565,9 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 	if err != nil {
 		return Comment{}, err
 	}
+	if err := c.rt.checkCommentPolicy(ctx, target.ref, actor); err != nil {
+		return Comment{}, err
+	}
 	if author := deref(target.ownerID); author != "" && author == viewerID(actor) {
 		// The content's owner, when the resolver still answers for it.
 		res, err := access.ResolveOne(ctx, c.rt.resolver, target.ref, actor)
@@ -787,7 +793,7 @@ var commentRoutes = []httpapi.Route[*comments]{
 		Doc:       "Comments on a target, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.",
 		Request:   CommentInput{},
 		Responses: []httpapi.Reply{httpapi.Created(Comment{}), httpapi.Accepted(Comment{})},
-		Errors:    []string{CodeCommentBanned, CodeCommentTooLong, CodeForbidden, CodeModerationRejected, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
+		Errors:    []string{CodeCommentBanned, CodeCommentsClosed, CodeCommentTooLong, CodeForbidden, CodeModerationRejected, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
 		Serve: httpapi.H((*comments).handleCreate)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/comments/latest", Resource: "comments", Auth: httpapi.Public,
 		Doc:   "The newest published comments across the tenant, with their targets; a page may under-fill.",
@@ -810,7 +816,7 @@ var commentRoutes = []httpapi.Route[*comments]{
 		Doc:       "Edits a comment: its author, or a CommentModerate holder. 202 when the moderator holds the new text.",
 		Request:   CommentEdit{},
 		Responses: []httpapi.Reply{httpapi.OK(Comment{}), httpapi.Accepted(Comment{})},
-		Errors:    []string{CodeCommentBanned, CodeCommentTooLong, CodeConflict, CodeForbidden, CodeModerationRejected, CodeNotFound}},
+		Errors:    []string{CodeCommentBanned, CodeCommentsClosed, CodeCommentTooLong, CodeConflict, CodeForbidden, CodeModerationRejected, CodeNotFound}},
 		Serve: httpapi.H((*comments).handleEdit)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/comments/{cid}", Resource: "comments", Auth: httpapi.Public,
 		Doc:       "Deletes a comment, leaving a tombstone: its author, or a CommentModerate holder.",

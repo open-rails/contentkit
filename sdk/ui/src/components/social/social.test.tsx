@@ -54,7 +54,7 @@ const comment = (id: string, o: Partial<Comment> = {}): Comment => ({
   updated_at: at,
   ...o,
 });
-const standing = (o: Partial<CommentStanding> = {}): CommentStanding => ({ can_comment: true, anonymous: false, max_length: 2200, user_id: "alice", moderate: false, ban_scopes: [], ...o });
+const standing = (o: Partial<CommentStanding> = {}): CommentStanding => ({ can_comment: true, closed: false, anonymous: false, max_length: 2200, user_id: "alice", moderate: false, ban_scopes: [], ...o });
 const config = (anonymous: Partial<Config["anonymous"]> = {}) => () => ({ anonymous: { comments: false, reactions: false, votes: false, ...anonymous } });
 
 it("Comments: a thread with tombstones and the author's held comment; posting lands in place; Ctrl+Enter posts", async () => {
@@ -136,6 +136,39 @@ it("Comments: a banned caller sees why instead of the composer", async () => {
   expect(notice.closest("[data-ckui=ban-notice]")).toHaveTextContent("Reason: spam");
   expect(screen.queryByRole("textbox")).toBeNull();
   expect(screen.getByText("No comments yet. Be the first to comment!")).toBeInTheDocument();
+});
+
+it.each([
+  { user_id: "bob", moderate: false },
+  { user_id: "alice", moderate: true },
+  { user_id: undefined, moderate: false },
+])("Comments: closed threads remain readable without offering writes ($user_id, moderator $moderate)", async (caller) => {
+  const s = server({
+    "GET /video/v1/comments": () => [comment("c1", { reply_count: 1 })],
+    "GET /comments/c1/replies": () => [comment("r1", { reply_to_id: "c1", body: "existing reply" })],
+    "GET /video/v1/can-comment": () => standing({ ...caller, can_comment: false, closed: true, anonymous: true }),
+    "GET /config": config({ comments: true }),
+    "DELETE /comments/c1": () => undefined,
+  });
+  const user = userEvent.setup();
+  render(<Comments item={item} />, { wrapper: wrap(s.client, { viewer: caller.user_id ?? null, onSignIn: vi.fn() }) });
+  expect(await screen.findByText("You can't comment here.")).toBeInTheDocument();
+  await user.click(await screen.findByRole("button", { name: "Show 1 reply" }));
+  expect(await screen.findByText("existing reply")).toBeInTheDocument();
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Reply" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Sign in to comment" })).toBeNull();
+  const row = screen.getByText("body c1").closest("article")!;
+  if (caller.user_id) {
+    await user.click(within(row).getByRole("button", { name: "Comment actions" }));
+    const remove = await screen.findByRole("menuitem", { name: "Delete" });
+    expect(screen.queryByRole("menuitem", { name: "Edit" })).toBeNull();
+    await user.click(remove);
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Delete" }));
+    expect(await screen.findByText("This comment was deleted.")).toBeInTheDocument();
+  } else {
+    expect(within(row).queryByRole("button", { name: "Comment actions" })).toBeNull();
+  }
 });
 
 it("Comments: signed out, the server decides: a sign-in where it takes no anonymous comments or reactions, a name where it does", async () => {

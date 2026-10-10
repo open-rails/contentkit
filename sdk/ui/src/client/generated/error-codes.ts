@@ -7,6 +7,7 @@ export type ErrorCode =
   | "checksum_mismatch"
   | "comment_banned"
   | "comment_too_long"
+  | "comments_closed"
   | "conflict"
   | "forbidden"
   | "gone"
@@ -43,6 +44,7 @@ export const CONTENTKIT_ERROR_CODES: Readonly<Record<ErrorCode, { status: number
   checksum_mismatch: { status: 422, meaning: "The stored bytes differ from the declared SHA-256." },
   comment_banned: { status: 403, meaning: "The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends." },
   comment_too_long: { status: 422, meaning: "The comment is longer than the site allows; `details.max` is the limit in characters." },
+  comments_closed: { status: 403, meaning: "The host has closed comment creation, replies and edits for this caller; existing comments remain readable." },
   conflict: { status: 409, meaning: "A concurrent change, a path or slug already taken, or an operation id already used for another commit." },
   forbidden: { status: 403, meaning: "The actor may not do this." },
   gone: { status: 410, meaning: "The content was removed." },

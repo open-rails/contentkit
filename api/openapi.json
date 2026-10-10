@@ -897,6 +897,7 @@
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "comment_banned",
+          "comments_closed",
           "comment_too_long",
           "forbidden",
           "moderation_rejected",
@@ -1210,6 +1211,7 @@
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
           "comment_banned",
+          "comments_closed",
           "comment_too_long",
           "conflict",
           "forbidden",
@@ -5182,6 +5184,9 @@
           "ban": {
             "$ref": "#/components/schemas/BanNotice"
           },
+          "closed": {
+            "type": "boolean"
+          },
           "anonymous": {
             "type": "boolean"
           },
@@ -5207,6 +5212,7 @@
         },
         "required": [
           "can_comment",
+          "closed",
           "anonymous",
           "max_length",
           "moderate",
@@ -7289,6 +7295,7 @@
           "checksum_mismatch",
           "comment_banned",
           "comment_too_long",
+          "comments_closed",
           "conflict",
           "forbidden",
           "gone",
@@ -7457,6 +7464,10 @@
     "comment_too_long": {
       "status": 422,
       "meaning": "The comment is longer than the site allows; `details.max` is the limit in characters."
+    },
+    "comments_closed": {
+      "status": 403,
+      "meaning": "The host has closed comment creation, replies and edits for this caller; existing comments remain readable."
     },
     "conflict": {
       "status": 409,

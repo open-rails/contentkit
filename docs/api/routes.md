@@ -127,6 +127,7 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `checksum_mismatch` | 422 | The stored bytes differ from the declared SHA-256. |
 | `comment_banned` | 403 | The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends. |
 | `comment_too_long` | 422 | The comment is longer than the site allows; `details.max` is the limit in characters. |
+| `comments_closed` | 403 | The host has closed comment creation, replies and edits for this caller; existing comments remain readable. |
 | `conflict` | 409 | A concurrent change, a path or slug already taken, or an operation id already used for another commit. |
 | `forbidden` | 403 | The actor may not do this. |
 | `gone` | 410 | The content was removed. |

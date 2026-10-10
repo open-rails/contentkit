@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
@@ -37,6 +38,23 @@ const (
 
 // ErrCommentBanned refuses a comment write by a banned user. -> 403 comment_banned
 var ErrCommentBanned = errors.New("content: banned from commenting")
+
+// ErrCommentsClosed refuses comment writes denied by the host's CommentAllowed policy.
+var ErrCommentsClosed = errors.New("content: comments are closed")
+
+func (rt *Runtime) checkCommentPolicy(ctx context.Context, ref contentref.ContentRef, actor access.Actor) error {
+	if rt.commentAllowed == nil {
+		return nil
+	}
+	allowed, err := rt.commentAllowed(ctx, ref, actor)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrCommentsClosed
+	}
+	return nil
+}
 
 // BanNotice is what a banned user is told: the scope, the reason and when the
 // ban ends (nil: when lifted). It never names who banned them.
@@ -326,6 +344,9 @@ type CommentStanding struct {
 	// where Anonymous says so.
 	CanComment bool       `json:"can_comment"`
 	Ban        *BanNotice `json:"ban,omitempty"`
+	// Closed: the host's CommentAllowed policy denies new comments, replies
+	// and edits for this caller. Reading and removing comments are unaffected.
+	Closed bool `json:"closed"`
 	// Anonymous: signed-out visitors may comment here, under a name
 	// (Options.Anonymous.Comments); otherwise they are asked to sign in.
 	Anonymous bool `json:"anonymous"`
@@ -335,25 +356,31 @@ type CommentStanding struct {
 	// wrote are the ones it may edit and delete.
 	UserID string `json:"user_id,omitempty"`
 	// Moderate: the caller may edit, delete and restore anyone's comments
-	// (Perms.CommentModerate).
+	// (Perms.CommentModerate). Closed still prevents edits.
 	Moderate bool `json:"moderate"`
 	// BanScopes are the scopes the caller may ban the target's commenters in.
 	BanScopes []BanScope `json:"ban_scopes"`
 }
 
 // handleCanComment answers whether the caller may comment on a visible target
-// (it must be accessible to them, signed in unless anonymous comments are on,
-// and no ban may apply) and what it may do to the comments there.
+// (accessible, allowed by the host policy, signed in unless anonymous comments
+// are on, and not banned) and what it may do to the comments there.
 func (rt *Runtime) handleCanComment(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	actor := rt.actor(ctx)
-	_, res, err := rt.resolveTarget(ctx, req.PathValue("kind"), req.PathValue("id"), actor, false)
+	ref, res, err := rt.resolveTarget(ctx, req.PathValue("kind"), req.PathValue("id"), actor, false)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	out := CommentStanding{UserID: viewerID(actor), Anonymous: rt.anonymous.Comments, MaxLength: rt.commentMax, BanScopes: []BanScope{}}
-	out.CanComment = res.Accessible && (out.UserID != "" || out.Anonymous)
+	if err := rt.checkCommentPolicy(ctx, ref, actor); errors.Is(err, ErrCommentsClosed) {
+		out.Closed = true
+	} else if err != nil {
+		writeErr(w, err)
+		return
+	}
+	out.CanComment = !out.Closed && res.Accessible && (out.UserID != "" || out.Anonymous)
 	var banned *BannedError
 	if err := rt.checkCommentBan(ctx, viewerID(actor), res.Owner); errors.As(err, &banned) {
 		out.CanComment, out.Ban = false, &banned.BanNotice

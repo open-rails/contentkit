@@ -259,6 +259,7 @@ export const de: ContentKitUiMessageBundle = {
     resume_mismatch: "Der gespeicherte Upload gehört zu einer anderen Datei. Bitte wähle die Datei erneut.",
     moderation_rejected: "Dies wurde von der Moderation abgelehnt.",
     comment_banned: "Du kannst hier nicht kommentieren.",
+    comments_closed: "Du kannst hier nicht kommentieren.",
     comment_too_long: "Dieser Kommentar ist zu lang.",
     commentTooLongBy: "Ein Kommentar hat höchstens {maxChars} Zeichen.",
     not_configured: "Diese Funktion ist auf dieser Website nicht verfügbar.",

@@ -51,6 +51,12 @@ type Options struct {
 	Users             UserEnricher     // default: no enrichment (ids only)
 	Processor         ContentProcessor // comments and post excerpts; default: strip tags
 	PostBodyProcessor ContentProcessor // post bodies; default: Processor
+	// CommentAllowed is the host's read-only eligibility check, shared by
+	// can-comment and comment create/reply/edit (including moderator edits).
+	// It receives the resolved or stored thread reference. False closes writes
+	// without hiding reads; errors fail the request, never hold a submission.
+	// Nil adds no restriction. Identity, access and bans still apply separately.
+	CommentAllowed func(context.Context, contentref.ContentRef, access.Actor) (bool, error)
 	// Moderator screens comment/post writes; nil publishes everything.
 	// Compose a BasicModerator in front of an AI moderator with Chain.
 	Moderator ContentModerator
@@ -108,6 +114,7 @@ type Runtime struct {
 	media             *Media
 	processor         ContentProcessor
 	postBodyProcessor ContentProcessor
+	commentAllowed    func(context.Context, contentref.ContentRef, access.Actor) (bool, error)
 	moderator         ContentModerator
 	breaker           *moderatorBreaker
 	classifier        AnswerClassifier
@@ -168,6 +175,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		media:             media,
 		processor:         processor,
 		postBodyProcessor: orDefault[ContentProcessor](opts.PostBodyProcessor, processor),
+		commentAllowed:    opts.CommentAllowed,
 		moderator:         opts.Moderator,
 		breaker:           newModeratorBreaker(opts.ModeratorTimeout, opts.ModeratorCooldown),
 		classifier:        opts.Classifier,
