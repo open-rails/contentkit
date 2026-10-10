@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"container/list"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/open-rails/contentkit/contentref"
@@ -38,6 +40,8 @@ type ManifestOptions struct {
 	// The lock coordinates manifest edits with cleanup; it cannot replace
 	// the storage precondition if a PUT outlives the caller. See PGLocker.
 	Locker Locker
+	// Journal durably recovers uncertain writes before another edit can proceed.
+	Journal *PGJournal
 	// CacheBytes bounds the decoded manifests kept in process, revalidated
 	// by ETag. A manifest costs about three times its JSON, so the largest
 	// (MaxManifestBytes) costs 24 MiB; default 128 MiB, at least two of them.
@@ -53,6 +57,7 @@ type Manifests struct {
 	store   Store
 	reg     *Registry
 	locker  Locker
+	journal *PGJournal
 	sweeps  SweepScheduler
 	retries int
 	cache   *manifestCache
@@ -75,7 +80,7 @@ func NewManifests(store Store, reg *Registry, o ManifestOptions) (*Manifests, er
 	if o.MaxRetries <= 0 {
 		o.MaxRetries = 16
 	}
-	return &Manifests{store: store, reg: reg, locker: o.Locker, sweeps: o.Sweeps, retries: o.MaxRetries,
+	return &Manifests{store: store, reg: reg, locker: o.Locker, journal: o.Journal, sweeps: o.Sweeps, retries: o.MaxRetries,
 		cache: newManifestCache(o.CacheBytes)}, nil
 }
 
@@ -313,6 +318,16 @@ func (m *Manifests) DeleteUnreferenced(ctx context.Context, item Item, cur *Mani
 }
 
 func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existing bool, b bound, fn func(*Manifest) error) (*Manifest, error) {
+	return m.editOperation(ctx, ref, existing, b, nil, fn)
+}
+
+type manifestMutation struct {
+	commit  manifestCommit
+	effects journalEffects
+	quota   int64
+}
+
+func (m *Manifests) editOperation(ctx context.Context, ref contentref.ContentRef, existing bool, b bound, mutation *manifestMutation, fn func(*Manifest) error) (*Manifest, error) {
 	item, err := m.reg.Item(ref)
 	if err != nil {
 		return nil, err
@@ -326,8 +341,29 @@ func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existin
 		return nil, err
 	}
 	defer unlock()
+	if m.journal != nil {
+		if _, _, err := m.recoverLocked(ctx, item); err != nil {
+			return nil, err
+		}
+		if mutation == nil {
+			mutation = &manifestMutation{commit: manifestCommit{ID: uuid.New(),
+				Fingerprint: sha256.Sum256([]byte("internal-manifest-edit"))}}
+		}
+		mutation.commit.Ref, mutation.commit.Folder = ref, item.Prefix()
+		mutation.commit, err = m.journal.begin(ctx, mutation.commit)
+		if err != nil {
+			return nil, err
+		}
+		if mutation.commit.terminal() {
+			if mutation.commit.State == "absent" {
+				return nil, ErrManifestConflict
+			}
+			cur, _, err := m.get(ctx, key)
+			return cur, err
+		}
+	}
 	for attempt := 0; attempt < m.retries; attempt++ {
-		out, written, conflict, err := m.try(ctx, item, existing, b, fn)
+		out, written, conflict, err := m.try(ctx, item, existing, b, mutation, fn)
 		if conflict {
 			backoff := time.Duration(1<<min(attempt, 6)) * 5 * time.Millisecond
 			select {
@@ -336,6 +372,9 @@ func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existin
 			case <-time.After(backoff/2 + rand.N(backoff)):
 			}
 			continue
+		}
+		if m.journal != nil && mutation.commit.State == "open" {
+			err = errors.Join(err, m.journal.finish(ctx, mutation.commit, err == nil))
 		}
 		if err == nil && written && m.sweeps != nil {
 			if serr := m.sweeps.ScheduleSweep(ctx, ref); serr != nil {
@@ -347,7 +386,7 @@ func (m *Manifests) edit(ctx context.Context, ref contentref.ContentRef, existin
 	return nil, fmt.Errorf("%w: %s", ErrManifestConflict, key)
 }
 
-func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, fn func(*Manifest) error) (out *Manifest, written, conflict bool, err error) {
+func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, mutation *manifestMutation, fn func(*Manifest) error) (out *Manifest, written, conflict bool, err error) {
 	key := item.ManifestKey()
 	cur, etag, err := m.get(ctx, key)
 	switch {
@@ -358,6 +397,9 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	case err != nil:
 		return nil, false, false, err
 	}
+	if cur.Receipt != nil && m.journal == nil {
+		return nil, false, false, ErrCommitPending
+	}
 	next := cur.Clone()
 	if err := fn(next); err != nil {
 		return nil, false, false, err
@@ -366,7 +408,7 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	if err := next.Validate(); err != nil {
 		return nil, false, false, err
 	}
-	if etag != "" && next.Hidden == cur.Hidden && next.Full == cur.Full && next.Deficit == cur.Deficit && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) {
+	if etag != "" && (mutation == nil || reflect.DeepEqual(mutation.effects, journalEffects{})) && next.Hidden == cur.Hidden && next.Full == cur.Full && next.Deficit == cur.Deficit && reflect.DeepEqual(next.Meta, cur.Meta) && reflect.DeepEqual(next.Files, cur.Files) {
 		return cur, false, false, nil
 	}
 	if etag == "" {
@@ -391,6 +433,22 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 			return nil, false, false, err
 		}
 	}
+	if m.journal != nil {
+		mutation.commit.ETag = etag
+		if err := m.journal.prepare(ctx, &mutation.commit, mutation.effects, mutation.quota); err != nil {
+			return nil, false, false, err
+		}
+		next.Receipt = mutation.commit.receipt()
+		body, err = encodeManifest(next)
+		if err == nil {
+			err = b.check(cur, next)
+		}
+		if err != nil {
+			// Prepared but never sent: recovery still fences before releasing
+			// the row, so a caller cannot mistake this for a sent attempt.
+			return nil, false, false, err
+		}
+	}
 	// The charged quota rides on the object, so releasing it never needs
 	// the manifest to decode.
 	opts := PutOptions{ContentType: "application/gzip", CacheControl: "no-store",
@@ -403,6 +461,22 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	obj, err := m.store.Put(ctx, key, bytes.NewReader(body), int64(len(body)), opts)
 	if errors.Is(err, ErrPreconditionFailed) {
 		m.cache.remove(key)
+		if m.journal != nil {
+			if _, _, err := m.recoverAttemptLocked(ctx, item, &mutation.commit.ID); err != nil {
+				return nil, false, false, err
+			}
+			state, err := m.journal.outcome(ctx, mutation.commit)
+			if err != nil {
+				return nil, false, false, err
+			}
+			if state != "applied" {
+				// A frozen caller must not prepare another write against the
+				// recovery ETag. The next authorized request starts the retry.
+				return nil, false, false, ErrManifestConflict
+			}
+			cur, _, err := m.get(ctx, key)
+			return cur, true, false, err
+		}
 		return nil, false, true, nil
 	}
 	if err != nil {
@@ -410,7 +484,113 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	}
 	next.reindex()
 	m.cache.put(key, obj.ETag, next)
+	if m.journal != nil {
+		if err := m.journal.finish(ctx, mutation.commit, true); err != nil {
+			return nil, true, false, err
+		}
+	}
 	return next, true, false, nil
+}
+
+// Recover settles ref's unfinished attempt without replaying the edit. It
+// freezes the database attempt before advancing S3's ETag, so a late PUT using
+// the old ETag cannot land after an absent outcome has been refunded.
+func (m *Manifests) Recover(ctx context.Context, ref contentref.ContentRef) error {
+	if m.journal == nil {
+		return errors.New("media: recovery requires a commit journal")
+	}
+	item, err := m.reg.Item(ref)
+	if err != nil {
+		return err
+	}
+	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	_, _, err = m.recoverLocked(ctx, item)
+	return err
+}
+
+func (m *Manifests) recoverLocked(ctx context.Context, item Item) (*Manifest, bool, error) {
+	return m.recoverAttemptLocked(ctx, item, nil)
+}
+
+func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operation *uuid.UUID) (*Manifest, bool, error) {
+	if !m.store.Capabilities().ConditionalPut {
+		return nil, false, ErrConditionalPutRequired
+	}
+	commit, err := m.journal.freeze(ctx, item.Ref().TenantID, item.Prefix(), operation)
+	if err != nil || commit == nil {
+		return nil, false, err
+	}
+	for range m.retries {
+		cur, etag, err := m.get(ctx, item.ManifestKey())
+		if errors.Is(err, ErrNotFound) {
+			cur, etag = &Manifest{V: ManifestVersion, Files: []File{}}, ""
+		} else if err != nil {
+			return nil, false, err
+		}
+		applied := commit.matches(cur.Receipt)
+		// Do not take the semantic no-op shortcut: this write is the fence.
+		next := cur.Clone()
+		body, err := encodeManifest(next)
+		if err != nil {
+			return nil, false, err
+		}
+		opts := PutOptions{ContentType: "application/gzip", CacheControl: "no-store",
+			Metadata: map[string]string{uploadBytesMeta: strconv.FormatInt(next.uploadBytes(), 10)}}
+		if etag == "" {
+			opts.IfNoneMatch = "*"
+		} else {
+			opts.IfMatch = etag
+		}
+		obj, err := m.store.Put(ctx, item.ManifestKey(), bytes.NewReader(body), int64(len(body)), opts)
+		if errors.Is(err, ErrPreconditionFailed) {
+			m.cache.remove(item.ManifestKey())
+			continue
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		m.cache.put(item.ManifestKey(), obj.ETag, next)
+		if err := m.journal.finish(ctx, *commit, applied); err != nil {
+			return nil, false, err
+		}
+		return next, applied, nil
+	}
+	return nil, false, ErrManifestConflict
+}
+
+// RecoverPending scans the journal, including writes that never created an S3
+// folder. It is bounded so the host's periodic maintenance can resume it.
+func (m *Manifests) RecoverPending(ctx context.Context, limit int) error {
+	if m.journal == nil || limit <= 0 {
+		return errors.New("media: pending recovery requires a journal and positive limit")
+	}
+	var errs []error
+	for _, tenant := range m.reg.Namespaces() {
+		var kinds []string
+		for _, kind := range m.reg.cfg.Kinds {
+			if kind.ns == tenant {
+				kinds = append(kinds, kind.Name)
+			}
+		}
+		pending, err := m.journal.pending(ctx, tenant, kinds, limit)
+		if err != nil {
+			return err
+		}
+		for _, commit := range pending {
+			item, err := m.reg.Item(commit.Ref)
+			if err != nil || item.Prefix() != commit.Folder {
+				continue // another registry sharing this schema owns this item
+			}
+			if err := m.Recover(ctx, commit.Ref); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // get reads and decodes a manifest through the ETag-revalidated cache.

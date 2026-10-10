@@ -36,9 +36,17 @@ type Manifest struct {
 	Deficit int64          `json:"deficit,omitempty"`
 	Meta    map[string]any `json:"meta,omitempty"` // the app's template values, e.g. title
 	Files   []File         `json:"files"`
+	Receipt *CommitReceipt `json:"receipt,omitempty"` // the last manifest attempt; retained until its journal effects settle
 
 	index map[string]int
 	size  int64 // its JSON length when last read or written
+}
+
+// CommitReceipt proves which prepared attempt reached S3. Every writer keeps
+// the receipt until recovery has settled it; it is not an authorization token.
+type CommitReceipt struct {
+	Operation string `json:"operation"`
+	Attempt   string `json:"attempt"`
 }
 
 // File is one file: an upload (no Preset) or a derived file.
@@ -318,6 +326,14 @@ func (m *Manifest) StagedNames() []string {
 // Validate requires unique paths, well-formed blobs and edits, and upload
 // and derived fields where they belong.
 func (m *Manifest) Validate() error {
+	if m.Receipt != nil {
+		for _, value := range []string{m.Receipt.Operation, m.Receipt.Attempt} {
+			id, err := uuid.Parse(value)
+			if err != nil || id == uuid.Nil || id.String() != value {
+				return errors.New("media: invalid manifest commit receipt")
+			}
+		}
+	}
 	seen := make(map[string]bool, len(m.Files))
 	for i, f := range m.Files {
 		switch {
@@ -362,6 +378,10 @@ func (m *Manifest) Validate() error {
 // so an edit never mutates it.
 func (m *Manifest) Clone() *Manifest {
 	out := *m
+	if m.Receipt != nil {
+		r := *m.Receipt
+		out.Receipt = &r
+	}
 	out.Meta = cloneMap(m.Meta)
 	out.Files = make([]File, len(m.Files))
 	for i, f := range m.Files {

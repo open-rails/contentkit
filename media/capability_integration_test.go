@@ -16,7 +16,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
@@ -24,6 +26,231 @@ import (
 	"github.com/open-rails/contentkit/media/internal/s3test"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 )
+
+// A lost PUT response is not proof of failure, and reading the old object is
+// not proof that a delayed PUT cannot still land. Recovery must fence both a
+// missing root and an existing root before recording an absent outcome.
+func TestManifestCommitRecoveryFencesLateWrites(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		for _, applied := range []bool{false, true} {
+			t.Run(fmt.Sprintf("existing=%t/applied=%t", existing, applied), func(t *testing.T) {
+				env := s3test.Open(t)
+				pool := pgtest.Pool(t, nil)
+				schema := pgtest.Schema(t, t.Context(), pool)
+				journal, err := media.NewPGJournal(pool, schema, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				reg := miniRegistry(t, env.Tenant)
+				ref := contentref.New(env.Tenant, "post", cid(7))
+				item, _ := reg.Item(ref)
+				store := &uncertainManifestStore{Store: env.Store, key: item.ManifestKey(), applied: applied}
+				ms, err := media.NewManifests(store, reg, media.ManifestOptions{Locker: media.PGLocker(pool), Journal: journal})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if existing {
+					if _, err := ms.Edit(t.Context(), ref, func(m *media.Manifest) error {
+						m.Meta = map[string]any{"title": "before"}
+						return nil
+					}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				store.uncertain = true
+				if _, err := ms.Edit(t.Context(), ref, func(m *media.Manifest) error {
+					m.Meta = map[string]any{"title": "attempt"}
+					return nil
+				}); !errors.Is(err, media.ErrUnavailable) {
+					t.Fatalf("lost response: %v", err)
+				}
+				table := pgx.Identifier{schema, "content_media_commits"}.Sanitize()
+				// An older pending item belongs to a different registry using
+				// this namespace/schema. It must not occupy our discovery limit.
+				if _, err := pool.Exec(t.Context(), `INSERT INTO `+table+`
+(tenant_id, operation_id, content_kind, content_id, folder_prefix, actor_id, fingerprint, lease_id, updated_at)
+VALUES ($1, gen_random_uuid(), 'other-kind', $2, $3, '', decode(repeat('00', 32), 'hex'), gen_random_uuid(), now() - interval '1 day')`,
+					ref.TenantID, cid(8), ref.TenantID+"/other-kind/"+cid(8)+"/"); err != nil {
+					t.Fatal(err)
+				}
+				state := func(want string) {
+					t.Helper()
+					var got string
+					if err := pool.QueryRow(t.Context(), `SELECT state FROM `+table+`
+WHERE tenant_id = $1 AND folder_prefix = $2 ORDER BY created_at DESC LIMIT 1`, ref.TenantID, item.Prefix()).Scan(&got); err != nil || got != want {
+						t.Fatalf("journal state %q, want %q: %v", got, want, err)
+					}
+				}
+				state("prepared")
+				store.blockFence = true
+				if err := ms.RecoverPending(t.Context(), 1); !errors.Is(err, media.ErrUnavailable) {
+					t.Fatalf("unreachable fence: %v", err)
+				}
+				state("frozen")
+				store.blockFence = false
+				if err := ms.RecoverPending(t.Context(), 1); err != nil {
+					t.Fatal(err)
+				}
+				wantState, wantTitle := "absent", ""
+				if applied {
+					wantState, wantTitle = "applied", "attempt"
+				} else if existing {
+					wantTitle = "before"
+				}
+				state(wantState)
+				if _, err := env.Store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(store.body), int64(len(store.body)), store.options); !errors.Is(err, media.ErrPreconditionFailed) {
+					t.Fatalf("delayed original PUT after recovery: %v", err)
+				}
+				man, etag, err := ms.Get(t.Context(), ref)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if title, _ := man.Meta["title"].(string); title != wantTitle {
+					t.Fatalf("recovered manifest %+v, want title %q: %v", man, wantTitle, err)
+				}
+				if err := ms.RecoverPending(t.Context(), 1); err != nil {
+					t.Fatal(err)
+				}
+				_, after, err := ms.Get(t.Context(), ref)
+				if err != nil || etag != after {
+					t.Fatalf("settled recovery was repeated: %q/%q %v", etag, after, err)
+				}
+				if _, err := ms.Edit(t.Context(), ref, func(m *media.Manifest) error {
+					m.Meta = map[string]any{"title": "later"}
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
+
+func TestLateCommitCannotAcknowledgeAnotherOperation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	env := s3test.Open(t)
+	pool := pgtest.Pool(t, nil)
+	schema := pgtest.Schema(t, ctx, pool)
+	journal, err := media.NewPGJournal(pool, schema, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := miniRegistry(t, env.Tenant)
+	ref := contentref.New(env.Tenant, "post", cid(7))
+	item, _ := reg.Item(ref)
+	prepared, release := make(chan struct{}), make(chan struct{})
+	var delayed atomic.Bool
+	store := &manifestPutStore{Store: env.Store, put: func(ctx context.Context, key string, body io.Reader, size int64, opts media.PutOptions) (media.Object, error) {
+		if key == item.ManifestKey() && delayed.CompareAndSwap(false, true) {
+			close(prepared)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return media.Object{}, ctx.Err()
+			}
+		}
+		return env.Store.Put(ctx, key, body, size, opts)
+	}}
+	// No lock models A losing its advisory session while its network request
+	// remains alive; B may now recover and edit the same item.
+	a, err := media.NewManifests(store, reg, media.ManifestOptions{Locker: noLock{}, Journal: journal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bStore := &uncertainManifestStore{Store: env.Store, key: item.ManifestKey()}
+	b, err := media.NewManifests(bStore, reg, media.ManifestOptions{Locker: noLock{}, Journal: journal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	aDone := make(chan error, 1)
+	go func() {
+		_, err := a.Edit(ctx, ref, func(m *media.Manifest) error {
+			m.Meta = map[string]any{"title": "A"}
+			return nil
+		})
+		aDone <- err
+	}()
+	select {
+	case <-prepared:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	// B first fences A, then loses its own response. Keep B prepared until A
+	// receives its late 412; A must not settle or acknowledge B's receipt.
+	if err := b.Recover(ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+	bStore.uncertain, bStore.applied = true, true
+	if _, err := b.Edit(ctx, ref, func(m *media.Manifest) error {
+		m.Meta = map[string]any{"title": "B"}
+		return nil
+	}); !errors.Is(err, media.ErrUnavailable) {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-aDone; !errors.Is(err, media.ErrManifestConflict) {
+		t.Fatalf("A acknowledged another operation or restarted: %v", err)
+	}
+	var pending int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{schema, "content_media_commits"}.Sanitize()+`
+WHERE tenant_id = $1 AND state = 'prepared'`, ref.TenantID).Scan(&pending); err != nil || pending != 1 {
+		t.Fatalf("A consumed B's pending receipt: %d %v", pending, err)
+	}
+	if err := b.Recover(ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+	man, _, err := b.Get(ctx, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if man.Meta["title"] != "B" {
+		t.Fatalf("A overwrote B: %+v", man)
+	}
+}
+
+type manifestPutStore struct {
+	media.Store
+	put func(context.Context, string, io.Reader, int64, media.PutOptions) (media.Object, error)
+}
+
+func (s *manifestPutStore) Put(ctx context.Context, key string, body io.Reader, size int64, opts media.PutOptions) (media.Object, error) {
+	return s.put(ctx, key, body, size, opts)
+}
+
+type uncertainManifestStore struct {
+	media.Store
+	key        string
+	uncertain  bool
+	applied    bool
+	blockFence bool
+	body       []byte
+	options    media.PutOptions
+}
+
+func (s *uncertainManifestStore) Put(ctx context.Context, key string, body io.Reader, size int64, opts media.PutOptions) (media.Object, error) {
+	if key != s.key {
+		return s.Store.Put(ctx, key, body, size, opts)
+	}
+	if s.blockFence {
+		return media.Object{}, media.ErrUnavailable
+	}
+	if !s.uncertain {
+		return s.Store.Put(ctx, key, body, size, opts)
+	}
+	s.uncertain = false
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return media.Object{}, err
+	}
+	s.body, s.options = data, opts
+	if s.applied {
+		if _, err := s.Store.Put(ctx, key, bytes.NewReader(data), size, opts); err != nil {
+			return media.Object{}, err
+		}
+	}
+	return media.Object{}, media.ErrUnavailable
+}
 
 // The lock orders cooperating writers; If-Match also protects against a
 // writer outside that lock (for example a process whose session died).
