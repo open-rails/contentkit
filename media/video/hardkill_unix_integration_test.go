@@ -30,7 +30,8 @@ func TestHardKilledChunkResumesWithIdenticalOutput(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		e := newEnvOn(t, &s3test.Env{Store: store, Config: cfg, Tenant: os.Getenv("CONTENTKIT_HARDKILL_TENANT")}, o, os.Getenv("CONTENTKIT_HARDKILL_SCHEMA"))
+		e := newEnvOn(t, &s3test.Env{Store: store, Config: cfg, Tenant: os.Getenv("CONTENTKIT_HARDKILL_TENANT")}, o,
+			os.Getenv("CONTENTKIT_HARDKILL_SCHEMA"), os.Getenv("CONTENTKIT_HARDKILL_CONTENT_SCHEMA"))
 		e.start()
 		select {}
 	}
@@ -50,7 +51,7 @@ func TestHardKilledChunkResumesWithIdenticalOutput(t *testing.T) {
 	}
 	child := exec.Command(os.Args[0], "-test.run=^TestHardKilledChunkResumesWithIdenticalOutput$")
 	child.Env = append(os.Environ(), "CONTENTKIT_HARDKILL_CHILD=1", "CONTENTKIT_HARDKILL_SCHEMA="+e.schema,
-		"CONTENTKIT_HARDKILL_S3_CONFIG="+string(cfg), "CONTENTKIT_HARDKILL_TENANT="+e.s3.Tenant)
+		"CONTENTKIT_HARDKILL_CONTENT_SCHEMA="+e.contentSchema, "CONTENTKIT_HARDKILL_S3_CONFIG="+string(cfg), "CONTENTKIT_HARDKILL_TENANT="+e.s3.Tenant)
 	child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var out strings.Builder
 	var outMu sync.Mutex
@@ -98,7 +99,7 @@ func TestHardKilledChunkResumesWithIdenticalOutput(t *testing.T) {
 	if !rescued || attempt != 1 {
 		t.Fatalf("hard-killed chunk rescued %v, attempt %d; want a rescue with one working attempt", rescued, attempt)
 	}
-	if want, got := outputBlobs(baseline), outputBlobs(recovered); len(want) == 0 || !maps.Equal(got, want) {
+	if want, got := outputDigests(t, baseline), outputDigests(t, recovered); len(want) == 0 || !maps.Equal(got, want) {
 		t.Fatalf("recovered outputs %v, want %v", got, want)
 	}
 }

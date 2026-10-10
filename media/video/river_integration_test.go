@@ -2,6 +2,7 @@ package video_test
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/video"
 	"github.com/open-rails/contentkit/media/workqueue"
 )
@@ -54,11 +56,16 @@ WHERE kind = $1 AND state = 'running' AND args->'ref'->>'content_id' = $2 LIMIT 
 	}
 }
 
-func outputBlobs(m *media.Manifest) map[string]string {
+func outputDigests(t *testing.T, m *media.Manifest) map[string]string {
+	t.Helper()
 	out := map[string]string{}
 	for _, f := range m.Files {
 		if !f.IsUpload() {
-			out[f.Path] = f.Blob
+			sum, ok := layout.BlobDigest(f.Blob)
+			if !ok {
+				t.Fatalf("invalid output allocation %s", f.Blob)
+			}
+			out[f.Path] = hex.EncodeToString(sum)
 		}
 	}
 	return out
@@ -194,7 +201,7 @@ func (delayedCancel) CancelTx(context.Context, pgx.Tx, contentref.ContentRef) (i
 // publish that finds its source gone deletes what the job wrote.
 func TestRemovedSourceDropsInFlightOutputs(t *testing.T) {
 	e := newEnv(t, opts{ladder: []int{360}})
-	journal, err := media.NewPGJournal(e.pool, e.s3.ContentSchema(), delayedCancel{e.queue})
+	journal, err := media.NewPGJournal(e.pool, e.contentSchema, delayedCancel{e.queue})
 	if err != nil {
 		t.Fatal(err)
 	}
