@@ -92,7 +92,8 @@ export function thumbnailOf(read: ReadResult | null | undefined, upload: FileInf
  * An item's folder for its editors: the editor read, an upload queue, the
  * kind's upload rules screening files before they upload, and the updates
  * (move, remove, rename, edit, replace). Uploads the worker fails after this
- * mounted are reported once ("folder.process").
+ * mounted are reported once ("folder.process"). The queue is the first
+ * item's: key the component by ref to switch items.
  */
 export function useMediaFolder(ref: RefBody, o: MediaFolderOptions = {}): UseMediaFolder {
   const client = useContentKitClient(o.client);
@@ -129,7 +130,6 @@ export function useMediaFolder(ref: RefBody, o: MediaFolderOptions = {}): UseMed
       const queued = queue.queue.getSnapshot().items.filter((i) => i.status !== "failed");
       const inGroup = (path: string, rule: UploadRule) => ruleFor(gs, path)?.path === rule.path;
       const s = screenFiles(files, gs, (rule) => groups.find((g) => g.path === rule.path)!.files.length + queued.filter((i) => inGroup(i.path, rule)).length);
-      if (gs.length === 0) s.refused.push(...s.accepted.map(({ file }) => ({ file, error: new ContentKitError("type_not_allowed", `${file.name}: no upload path`) })));
       const taken = new Map<string, string[]>();
       const takenIn = (rule: UploadRule) => {
         let t = taken.get(rule.path);
@@ -141,7 +141,7 @@ export function useMediaFolder(ref: RefBody, o: MediaFolderOptions = {}): UseMed
         return t;
       };
       const paths = new Map<File, string>();
-      for (const { file, rule } of gs.length ? s.accepted : []) {
+      for (const { file, rule } of s.accepted) {
         const t = takenIn(rule);
         const name = opts.current.name?.(file) ?? uniqueName(file.name, t);
         t.push(name);

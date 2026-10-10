@@ -109,6 +109,11 @@ export function describeRules(t: Translator["t"], rules: readonly UploadRule[]):
  * files finish (a draft; discard() through the ref).
  */
 export function MediaFolderEditor(p: MediaFolderEditorProps) {
+  // The queue belongs to one item: another item gets a fresh editor.
+  return <FolderEditor key={`${p.item.kind}/${p.item.id}`} {...p} />;
+}
+
+function FolderEditor(p: MediaFolderEditorProps) {
   const { item, ref, label, toolbar, rowActions, footer, aspects = ASPECTS, confirmRemove, disabled, className, appearance, ...options } = p;
   const { t, error: errorText } = useMessages();
   const folder = useMediaFolder(item, options);
@@ -450,11 +455,11 @@ function UploadRow({
       />
       <Thumb kind={kind} url={thumb?.url} busy={busy} />
       <div className="grid min-w-0 flex-1 gap-1">
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
           {renaming ? (
             <RenameInput name={stem(name)} label={t("folder.renameLabel", { name })} onDone={(to) => (to === null ? onRename(null) : folder.rename(f.path, to).then(() => onRename(null)))} />
           ) : (
-            <span className="truncate text-sm" title={f.path} data-ckui="upload-name">
+            <span className="max-w-full truncate text-sm" title={f.path} data-ckui="upload-name">
               {name}
             </span>
           )}
