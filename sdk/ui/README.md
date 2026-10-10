@@ -240,7 +240,8 @@ Once a content page's link arrives, replaces the address with its canonical
 path (code spelling, merged code, current slug) through the provider's
 `navigate`, else `history.replaceState`, and keeps `<link rel=canonical>`,
 `og:url`, `og:title`, `og:image` and hreflang alternates (each language's
-own slug, plus `x-default`) in the head while mounted. Needs the provider's
+own slug, plus `x-default`) in the head while mounted. Unmounting removes
+them, server-rendered ones included, so the next page sets its own. Needs the provider's
 `urls`; `/urls` also exports `hreflang()` and `canonicalURL()` (drops
 tracking parameters) for server rendering.
 

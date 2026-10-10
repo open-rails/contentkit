@@ -57,8 +57,8 @@ const link = (rel: string, value: string, hreflang?: string): Tag => ({
  * address with the canonical path (code spelling, merged code, current slug)
  * through the provider's navigate (else history.replaceState), and keeps
  * `<link rel=canonical>`, og:url, og:title, og:image and hreflang alternates
- * (each language's own slug) in the head while mounted. Needs the
- * provider's `urls`.
+ * (each language's own slug) in the head while mounted; unmounting removes
+ * the tags it set, server-rendered ones included. Needs the provider's `urls`.
  */
 export function useCanonicalContent(content: ContentLink | null | undefined, o: CanonicalContentOptions = {}): CanonicalContent {
   const urls = useContentURLs();
@@ -100,20 +100,10 @@ export function useCanonicalContent(content: ContentLink | null | undefined, o: 
     if (title) tags.push(meta("og:title", title));
     if (image) tags.push(meta("og:image", image));
     for (const [lang, href] of Object.entries(JSON.parse(alternatesKey) as Record<string, string>)) tags.push(link("alternate", href, lang));
-    const undo: (() => void)[] = [];
-    for (const t of tags) {
-      const found = document.head.querySelector<HTMLElement>(t.selector);
-      if (found) {
-        const before = found.getAttribute(t.attr);
-        found.setAttribute(t.attr, t.value);
-        undo.push(() => (before === null ? found.removeAttribute(t.attr) : found.setAttribute(t.attr, before)));
-      } else {
-        const el = withAttr(t.create(), t.attr, t.value);
-        document.head.appendChild(el);
-        undo.push(() => el.remove());
-      }
-    }
-    return () => undo.forEach((u) => u());
+    const set = tags.map((t) => withAttr(document.head.querySelector<HTMLElement>(t.selector) ?? document.head.appendChild(t.create()), t.attr, t.value));
+    // The tags describe this page: leaving it removes them, server-rendered ones
+    // included (restoring those would leave this page's values on the next).
+    return () => set.forEach((el) => el.remove());
   }, [url, title, image, alternatesKey]);
 
   return { path: result.path, url: result.url, alternates: result.alternates };
