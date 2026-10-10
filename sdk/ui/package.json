@@ -58,10 +58,11 @@
     "contract:check": "pnpm contract && git diff --exit-code -- src/client/generated ../../api ../../docs/api && test -z \"$(git status --porcelain -- src/client/generated ../../api ../../docs/api)\"",
     "lint": "eslint .",
     "test": "vitest run --project unit",
-    "test:integration": "vitest run --project integration",
-    "demo": "vite --config demo/vite.config.ts",
-    "screenshots": "playwright test",
-    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build"
+    "test:integration": "vitest run --project integration && vitest run --project integration-dom",
+    "demo": "node e2e/support/up.ts",
+    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build",
+    "test:browser": "playwright test",
+    "test:e2e": "node e2e/support/run.ts"
   },
   "publishConfig": {
     "access": "public",
@@ -94,6 +95,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@openrails/auth-ui": "1.15.0",
     "@playwright/test": "1.60.0",
     "@tailwindcss/vite": "4.3.3",
     "@testing-library/dom": "10.4.2",

@@ -2,3 +2,4 @@
 .github
 docs
 **/*_test.go
+sdk
