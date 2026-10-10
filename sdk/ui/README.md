@@ -262,7 +262,10 @@ save and re-crop flow inside a host layout); `SlotImage`; `ImageCropDialog`;
 `MediaGallery`, `VideoPlayer` and `VideoMiniPlayer` (HLS with ABR, inline
 muted previews, a grant refresh before `expires`, and a reason, Retry and
 support code for every failure; see below). A `PublicPreset` (`{ preset, aspect, renditions }`)
-is what a slot or poster shows; a read's `public` lists `PublicImage`s.
+is what a slot or poster shows; a read's `public` lists `PublicImage`s. A
+slot crops at its image's aspect, else its public preset's
+(`GET /media/presets`), so an item without an image yet still crops a 3:1
+cover at 3:1.
 
 ### MediaFolderEditor
 

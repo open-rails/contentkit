@@ -3,12 +3,14 @@ import { ratio, type AspectRatio } from "../client/aspect.js";
 import type { ContentKitClient } from "../client/client.js";
 import { centeredCrop, constrainCrop, editedSize, rotation, sameEdit, type Size } from "../client/crop.js";
 import { ContentKitError, toContentKitError } from "../client/errors.js";
-import type { Edit, FileInfo, ReadResult, RefBody } from "../client/generated/wire.js";
+import type { Edit, FileInfo, PresetRule, ReadResult, RefBody } from "../client/generated/wire.js";
 import { decodeImage, isAnimatedImage, type CropSource } from "../client/image.js";
 import { samePath, stem, type Progress } from "../client/media/client.js";
+import { presetFor } from "../client/media/rules.js";
 import { publicRenditions, type PublicPreset } from "../client/public.js";
 import type { Rendition } from "../client/rendition.js";
 import { useContentKitClient, useReadScope } from "./context.js";
+import { usePresets } from "./public.js";
 import { useMediaRead } from "./read.js";
 import { withUpload } from "./store.js";
 
@@ -29,8 +31,10 @@ export interface UseSlotImage {
   file: FileInfo | null;
   /** The current published files; empty until the worker publishes them. */
   renditions: Rendition[];
-  /** "W:H": the preset's, else "1:1". */
+  /** "W:H": the image's, else its public preset's (GET /media/presets), else "1:1". */
   aspect: AspectRatio;
+  /** The path's public preset (aspect, widths, min_width) once the presets load. */
+  rule?: PresetRule;
   loading: boolean;
   error?: ContentKitError;
   reload: () => void;
@@ -41,6 +45,8 @@ export interface UseSlotImage {
 /** An upload path's state (an editor read) and its public image. */
 export function useSlotImage(o: SlotImageOptions): UseSlotImage {
   const r = useMediaRead(o.ref, { editor: true, prefix: stem(o.path), read: o.read, client: o.client });
+  const { presets } = usePresets({ client: o.client });
+  const rule = presetFor(presets, o.ref.kind, o.path, o.image?.preset);
   const read = r.read;
   const file = read?.files.find((f) => f.upload && samePath(f.path, o.path)) ?? null;
   const { path } = o;
@@ -51,7 +57,7 @@ export function useSlotImage(o: SlotImageOptions): UseSlotImage {
     const published = read.public?.find((p) => samePath(p.from, path) && (!o.image || p.preset === o.image.preset));
     return publicRenditions(published);
   }, [read, o.image, path]);
-  return { file, renditions, aspect: o.image?.aspect || "1:1", loading: r.loading, error: r.error, reload: r.reload, set };
+  return { file, renditions, aspect: o.image?.aspect || rule?.aspect || "1:1", rule, loading: r.loading, error: r.error, reload: r.reload, set };
 }
 
 export type SlotCropMode = "new" | "recrop";

@@ -16,6 +16,7 @@ export interface UsePresets {
 }
 
 const settled = new WeakMap<ContentKitClient, { presets: PresetRule[]; error?: ContentKitError }>();
+const inflight = new WeakMap<ContentKitClient, Promise<void>>();
 
 /** The public presets (`GET /media/presets`), fetched once per client. */
 export function usePresets(o: { client?: ContentKitClient | null } = {}): UsePresets {
@@ -25,10 +26,15 @@ export function usePresets(o: { client?: ContentKitClient | null } = {}): UsePre
   useEffect(() => {
     if (!client || settled.has(client)) return;
     let live = true;
-    client.media.presets().then(
-      (presets) => settled.set(client, { presets }),
-      (error: ContentKitError) => settled.set(client, { presets: [], error }),
-    ).finally(() => live && rerender((n) => n + 1));
+    let load = inflight.get(client);
+    if (!load) {
+      load = client.media.presets().then(
+        (presets) => void settled.set(client, { presets }),
+        (error: ContentKitError) => void settled.set(client, { presets: [], error }),
+      ).finally(() => inflight.delete(client));
+      inflight.set(client, load);
+    }
+    void load.then(() => live && rerender((n) => n + 1));
     return () => {
       live = false;
     };

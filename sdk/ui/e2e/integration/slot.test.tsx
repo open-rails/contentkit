@@ -47,7 +47,7 @@ describe("useSlotImage and useSlotCrop against the real ContentKit", () => {
     const first = await published(ref, "cover");
     expect(first.length).toBeGreaterThan(0);
     expect(result.current.renditions).toEqual(first);
-    expect(r.calls.at(-1)).toBe("/read");
+    expect(r.calls).toContain("/read");
 
     // A new cover publishes a new generation; a reload adopts it.
     await seed(ref, "cover", 2002, 900, 300);
@@ -63,12 +63,27 @@ describe("useSlotImage and useSlotCrop against the real ContentKit", () => {
     const read = { access: "full" as const, expires: 0, total: 0, offset: 0, limit: 50, files: [] };
     const { result } = renderHook(() => useSlotImage({ client: c, ref, path: "avatar", read }));
     expect([result.current.loading, result.current.file, result.current.aspect]).toEqual([false, null, "1:1"]);
-    expect(r.calls).toEqual([]);
+    const reads = () => r.calls.filter((p) => p === "/read");
+    expect(reads()).toEqual([]);
     await seed(ref, "avatar", 2003, 400, 400);
     act(() => result.current.reload());
     await waitFor(() => expect(result.current.file?.path).toBe("avatar.png"), wait);
     expect(result.current.renditions).toEqual(await published(ref, "avatar"));
-    expect(r.calls).toEqual(["/read"]);
+    expect(reads()).toEqual(["/read"]);
+  });
+
+  it("useSlotImage takes the aspect of the path's public preset while the item has no image", async () => {
+    const ref = await channel();
+    const c = client(h, cfg, alice);
+    const { result } = renderHook(() => useSlotImage({ client: c, ref, path: "cover" }));
+    await waitFor(() => expect(result.current.aspect).toBe("3:1"), wait);
+    expect(result.current).toMatchObject({ file: null, rule: { kind: "channel", name: "cover", from: "cover", widths: [1500, 3000] } });
+    // The image's own aspect wins; a path without a public preset keeps the default.
+    expect(renderHook(() => useSlotImage({ client: c, ref, path: "cover", image: { ...cover, aspect: "4:1" } })).result.current.aspect).toBe("4:1");
+    const file = await item(h, "file", alice);
+    const plain = renderHook(() => useSlotImage({ client: c, ref: { kind: file.kind, id: file.id }, path: "file" }));
+    await waitFor(() => expect(plain.result.current.loading).toBe(false), wait);
+    expect([plain.result.current.aspect, plain.result.current.rule]).toEqual(["1:1", undefined]);
   });
 
   it("useSlotCrop: pick → edit → save uploads and puts the file with the edit, without loading retired URLs", async () => {

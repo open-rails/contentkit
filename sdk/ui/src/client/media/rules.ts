@@ -130,6 +130,12 @@ export function ratioLabel(r: number): string {
   return r >= 1 ? `${round(r)}:1` : `1:${round(1 / r)}`;
 }
 
+/** The kind's public preset for an upload path: the one named name, else the first with an aspect, else the first. */
+export function presetFor(presets: readonly PresetRule[], kind: string, path: string, name?: string): PresetRule | undefined {
+  const at = presets.filter((p) => p.kind === kind && ruleFor([{ path: p.from }], path));
+  return (name ? at.find((p) => p.name === name) : undefined) ?? at.find((p) => p.aspect) ?? at[0];
+}
+
 /**
  * The kind's default image for a preset, at every width: what the gateway
  * serves for an item without its own (a URL from the template never names a
