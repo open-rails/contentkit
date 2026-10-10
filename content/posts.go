@@ -138,7 +138,7 @@ var postRoutes = []httpapi.Route[*posts]{
 
 func postReaction(verb, doc string, value int16) httpapi.Route[*posts] {
 	return httpapi.Route[*posts]{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/posts/{id}/" + verb, Resource: "posts", Auth: httpapi.Public,
-		Doc: doc, Responses: []httpapi.Reply{httpapi.OK(Post{})}, Errors: []string{CodeForbidden, CodeInvalidRequest, CodeNotFound, CodeRateLimited}},
+		Doc: doc, Responses: []httpapi.Reply{httpapi.OK(Post{})}, Errors: []string{CodeForbidden, CodeInvalidRequest, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
 		Serve: func(p *posts) http.HandlerFunc { return p.handleReact(value) }}
 }
 
@@ -592,7 +592,11 @@ func (p *posts) handleReact(value int16) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		ctx := req.Context()
 		actor := p.rt.actor(ctx)
-		if err := p.rt.limit(ctx, ActionPostReaction, actor); err != nil {
+		err := participant(actor, p.rt.anonymous.Reactions)
+		if err == nil {
+			err = p.rt.limit(ctx, ActionPostReaction, actor)
+		}
+		if err != nil {
 			writeErr(w, err)
 			return
 		}

@@ -35,6 +35,7 @@ export {
   type UseCommentsOptions,
   type UseModerationQueue,
 } from "./comments.js";
+export { useContentConfig, type UseContentConfig } from "./config.js";
 export { useFavorite, useReaction, type UseFavorite, type UseReaction } from "./engagement.js";
 export { usePoll, usePollEditor, usePolls, withVote, type PollFilter, type PollImages, type UsePoll, type UsePollEditor } from "./polls.js";
 export { usePost, usePosts, type PostFilter, type UsePost } from "./posts.js";

@@ -79,6 +79,10 @@ type Options struct {
 	// value takes the defaults, counted per process.
 	Limits Limits
 
+	// Anonymous is what signed-out visitors may do; the zero value lets them
+	// only read.
+	Anonymous Anonymous
+
 	// ContentKinds are the commentable/reactable/favoritable kinds the host
 	// registers (e.g. "gallery", "video", "post"). Unregistered kinds are 404.
 	ContentKinds []string
@@ -106,6 +110,7 @@ type Runtime struct {
 	classifier        AnswerClassifier
 	providerEraser    ProviderDataEraser
 	perms             Perms
+	anonymous         Anonymous
 	log               *slog.Logger
 	kinds             map[string]struct{}
 	limiters          map[Action]*ratelimit.Limiter
@@ -161,6 +166,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		classifier:        opts.Classifier,
 		providerEraser:    opts.ProviderDataEraser,
 		perms:             opts.Perms,
+		anonymous:         opts.Anonymous,
 		log:               log,
 		kinds:             make(map[string]struct{}, len(opts.ContentKinds)),
 		limiters:          limiters,

@@ -774,9 +774,9 @@ var pollRoutes = []httpapi.Route[*polls]{
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeNotFound}},
 		Serve: httpapi.H((*polls).handleDelete)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/polls/{id}/vote", Resource: "polls", Auth: httpapi.Public,
-		Doc:       "Votes for an option of an open multiple-choice poll; a vote is final, and voting again changes nothing.",
+		Doc:       "Votes for an option of an open multiple-choice poll, signed out where Config.anonymous.votes allows it; a vote is final, and voting again changes nothing.",
 		Request:   PollVote{},
-		Responses: []httpapi.Reply{httpapi.OK(Poll{})}, Errors: []string{CodeForbidden, CodeNotFound, CodeRateLimited}},
+		Responses: []httpapi.Reply{httpapi.OK(Poll{})}, Errors: []string{CodeForbidden, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
 		Serve: httpapi.H((*polls).handleVote)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/polls/{id}/answer", Resource: "polls", Auth: httpapi.User,
 		Doc:       "Stores or replaces the caller's answer to an open free-text poll.",
@@ -1144,7 +1144,12 @@ func (p *polls) handleAnswer(w http.ResponseWriter, req *http.Request) {
 }
 
 func (p *polls) handleVote(w http.ResponseWriter, req *http.Request) {
-	if err := p.rt.limit(req.Context(), ActionPollVote, p.rt.actor(req.Context())); err != nil {
+	actor := p.rt.actor(req.Context())
+	err := participant(actor, p.rt.anonymous.Votes)
+	if err == nil {
+		err = p.rt.limit(req.Context(), ActionPollVote, actor)
+	}
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -1153,7 +1158,7 @@ func (p *polls) handleVote(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	v, err := p.vote(req.Context(), p.rt.actor(req.Context()), req.PathValue("id"), in.OptionID)
+	v, err := p.vote(req.Context(), actor, req.PathValue("id"), in.OptionID)
 	if err != nil {
 		writeErr(w, err)
 		return

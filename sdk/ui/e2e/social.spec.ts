@@ -60,14 +60,36 @@ for (const theme of ["light", "dark"] as const) {
   });
 }
 
-test("signed out: comments, reactions and votes ask to sign in", async ({ page }) => {
-  await open(page, "actor=");
+test("signed out where the server takes nothing anonymous: comments, reactions and votes ask to sign in", async ({ page }) => {
+  await open(page, "actor=&mount=members");
   const comments = page.locator("[data-ckui=comments]");
   await comments.getByRole("button", { name: "Sign in to comment" }).click();
-  await page.locator("[data-demo=engagement]").getByRole("button", { name: "Like", exact: true }).click();
-  await page.locator("[data-ckui=poll]").getByRole("button", { name: /Spring 2026/ }).click();
+  await expect(comments.getByRole("textbox")).toHaveCount(0);
+  const like = page.locator("[data-demo=engagement]").getByRole("button", { name: "Like", exact: true });
+  await expect(like).toHaveAttribute("title", "Sign in to react");
+  await like.click();
+  const poll = page.locator("[data-ckui=poll]");
+  await expect(poll.getByText("Sign in to vote")).toBeVisible();
+  await poll.getByRole("button", { name: /Spring 2026/ }).click();
   await expect(page.locator("[data-demo=sign-in]")).toHaveText("Sign-in requested (3)");
-  await expect(page.locator("[data-ckui=poll]").getByRole("meter")).toHaveCount(0);
+  await expect(poll.getByRole("meter")).toHaveCount(0);
+});
+
+test("signed out where the server takes anonymous interactions: comment under a name, react and vote", async ({ page }) => {
+  await open(page, "actor=");
+  const comments = page.locator("[data-ckui=comments]");
+  await expect(comments.getByRole("button", { name: "Sign in to comment" })).toHaveCount(0);
+  await comments.getByRole("textbox", { name: "Name" }).fill("Guest");
+  await comments.getByRole("textbox", { name: "Add a comment…" }).fill("Passing through");
+  await comments.getByRole("button", { name: "Post", exact: true }).click();
+  await expect(comments.locator("[data-ckui=comment]").first()).toContainText("Guest", slow);
+  const like = page.locator("[data-demo=engagement]").getByRole("button", { name: "Like", exact: true });
+  await like.click();
+  await expect(like).toHaveAttribute("aria-pressed", "true");
+  const poll = page.locator("[data-ckui=poll]");
+  await poll.getByRole("button", { name: /Spring 2026/ }).click();
+  await expect(poll.getByRole("meter", { name: "Spring 2026" })).toBeVisible();
+  await expect(page.locator("[data-demo=sign-in]")).toHaveCount(0);
 });
 
 test("staff: the review queue, bans and the poll editor", async ({ page }, info) => {

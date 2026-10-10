@@ -2,16 +2,17 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (80). `contentkit.Runtime.Handler` serves them under the one prefix the host mounts it at, each module at its sub-path: content `/`, upload `/media/upload`, media `/media`, codes `/codes`, taxonomy `/taxonomy`. A host that mounts a module alone serves its routes beneath that mount instead. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (81). `contentkit.Runtime.Handler` serves them under the one prefix the host mounts it at, each module at its sub-path: content `/`, upload `/media/upload`, media `/media`, codes `/codes`, taxonomy `/taxonomy`. A host that mounts a module alone serves its routes beneath that mount instead. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller: `public` (the actor is optional; the host's resolver decides what it sees), `user` (a signed-in actor, else 401 `unauthorized`), `staff` (the `content.Perms` permission named, else 403 `forbidden`). ContentKit never authenticates: it reads the actor the host's middleware put in the request context.
 
 Every error is `{"error", "code", …}`; the codes are at the end.
 
-## Content: posts, comments, reactions, favorites, polls, bans, moderation (`/`)
+## Content: config, posts, comments, reactions, favorites, polls, bans, moderation (`/`)
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
+| GET | `/config` | public | — | 200 `Config` | What the content module allows: which interactions signed-out visitors may make. |
 | GET | `/posts` | public | — | 200 `Post[]` | Published posts. Query: `language`, `sort`, `limit`, `offset`. |
 | GET | `/posts/admin` | staff `PostWrite` | — | 200 `Post[]` | Every post, newest first: drafts, scheduled, held and rejected ones included. Query: `language`, `draft`, `limit`, `offset`. |
 | GET | `/posts/{id}` | public | — | 200 `Post` | A post. A draft, scheduled, held or rejected post is shown only to its author and PostWrite holders. |
@@ -24,7 +25,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | PUT | `/posts/{id}/cover` | staff `PostWrite` | `ImageInput` | 200 `PostCover` | Sets the cover to an inline image uploaded to the post's media folder; "" clears it. |
 | POST | `/posts/{id}/images` | staff `PostWrite` | `ImageInput` | 200 `InlineImage` | The public URL of an inline image uploaded to the post's media folder, to place in the body. |
 | GET | `/{kind}/{id}/comments` | public | — | 200 `Comment[]` | A target's top-level comments with reply counts; the caller also sees its own held and rejected ones. Query: `sort`, `limit`, `offset`. |
-| POST | `/{kind}/{id}/comments` | public | `CommentInput` | 201 `Comment`<br>202 `Comment` | Comments on a target, or replies to a top-level comment; anonymous callers give anon_name. 202 when the moderator holds it. |
+| POST | `/{kind}/{id}/comments` | public | `CommentInput` | 201 `Comment`<br>202 `Comment` | Comments on a target, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it. |
 | GET | `/comments/latest` | public | — | 200 `FeedItem[]` | The newest published comments across the tenant, with their targets; a page may under-fill. Query: `limit`, `offset`. |
 | GET | `/comments/admin` | staff `CommentModerate` | — | 200 `AdminComment[]` | Every comment, newest first, deleted, held and rejected ones with their real bodies. Query: `content_kind`, `limit`, `offset`. |
 | POST | `/comments/{cid}/restore` | staff `CommentModerate` | — | 200 `Restored` | Restores a deleted comment. |
@@ -49,7 +50,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | POST | `/polls` | staff `PollWrite` | `PollInput` | 201 `Poll` | Creates a poll with its options; a free-text poll needs an AnswerClassifier. |
 | PATCH | `/polls/{id}` | staff `PollWrite` | `PollUpdate` | 200 `Poll` | Updates a poll's given fields. |
 | DELETE | `/polls/{id}` | staff `PollWrite` | — | 204 — | Deletes a poll and its media folder. |
-| POST | `/polls/{id}/vote` | public | `PollVote` | 200 `Poll` | Votes for an option of an open multiple-choice poll; a vote is final, and voting again changes nothing. |
+| POST | `/polls/{id}/vote` | public | `PollVote` | 200 `Poll` | Votes for an option of an open multiple-choice poll, signed out where Config.anonymous.votes allows it; a vote is final, and voting again changes nothing. |
 | POST | `/polls/{id}/answer` | user | `PollAnswerInput` | 200 `Poll` | Stores or replaces the caller's answer to an open free-text poll. |
 | PUT | `/polls/{id}/image` | staff `PollWrite` | `ImageInput` | 200 `PollImage` | Sets the question image to an inline image uploaded to the poll's media folder; "" clears it. |
 | POST | `/polls/{id}/options` | staff `PollWrite` | `PollOptionPatch` | 201 `PollOption` | Adds an option to a multiple-choice poll, at the end unless position is given. |

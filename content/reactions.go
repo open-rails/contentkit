@@ -184,7 +184,7 @@ var reactionRoutes = []httpapi.Route[*reactions]{
 
 func reaction(method, verb, doc string, value int16) httpapi.Route[*reactions] {
 	return httpapi.Route[*reactions]{Spec: httpapi.Spec{Method: method, Path: "/{kind}/{id}/" + verb, Resource: "reactions", Auth: httpapi.Public,
-		Doc: doc, Responses: []httpapi.Reply{httpapi.OK(ReactionCounts{})}, Errors: []string{CodeForbidden, CodeInvalidRequest, CodeNotFound, CodeRateLimited}},
+		Doc: doc, Responses: []httpapi.Reply{httpapi.OK(ReactionCounts{})}, Errors: []string{CodeForbidden, CodeInvalidRequest, CodeNotFound, CodeRateLimited, CodeUnauthorized}},
 		Serve: func(r *reactions) http.HandlerFunc { return r.handleSet(value) }}
 }
 
@@ -195,7 +195,11 @@ func (r *reactions) handleSet(value int16) http.HandlerFunc {
 		if req.PathValue("kind") == KindPost {
 			action = ActionPostReaction
 		}
-		if err := r.rt.limit(req.Context(), action, actor); err != nil {
+		err := participant(actor, r.rt.anonymous.Reactions)
+		if err == nil {
+			err = r.rt.limit(req.Context(), action, actor)
+		}
+		if err != nil {
 			writeErr(w, err)
 			return
 		}

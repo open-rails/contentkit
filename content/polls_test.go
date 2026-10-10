@@ -252,7 +252,7 @@ func TestPolls_HasVotedReflectedPerCaller(t *testing.T) {
 }
 
 func TestPolls_HTTPRoutesEndToEnd(t *testing.T) {
-	_, p := newPollTest(t, Options{})
+	_, p := newPollTest(t, Options{Anonymous: Anonymous{Votes: true}})
 	mux := http.NewServeMux()
 	httpapi.Mount(mux, p, pollRoutes)
 

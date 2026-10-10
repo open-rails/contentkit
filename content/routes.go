@@ -9,6 +9,7 @@ import (
 // The content module's routes are declared in each resource's file; this
 // registers them in the catalog in the order they are documented.
 func init() {
+	httpapi.Register(httpapi.Content, configRoutes)
 	httpapi.Register(httpapi.Content, postRoutes)
 	httpapi.Register(httpapi.Content, commentRoutes)
 	httpapi.Register(httpapi.Content, reactionRoutes)
@@ -27,6 +28,7 @@ var sortParam = httpapi.Text("sort", "likes (most liked), best (Wilson lower bou
 // per request.
 func (rt *Runtime) Handler() http.Handler {
 	mux := http.NewServeMux()
+	httpapi.Mount(mux, rt, configRoutes)
 	httpapi.Mount(mux, rt.posts, postRoutes)
 	httpapi.Mount(mux, rt.comments, commentRoutes)
 	httpapi.Mount(mux, rt.reactions, reactionRoutes)

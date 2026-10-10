@@ -51,7 +51,7 @@ func spellings(id string, n int) []string {
 // and EraseSubjects undid only the lower-case one.
 func TestCaseSpellingsKeyOneReaction(t *testing.T) {
 	const gallery = "0192abcd-ef01-7abc-8def-0123456789ab"
-	rt, pool := newTestRuntime(t, Options{Resolver: foldingResolver{gallery: true}, ContentKinds: []string{"gallery"}})
+	rt, pool := newTestRuntime(t, Options{Resolver: foldingResolver{gallery: true}, ContentKinds: []string{"gallery"}, Anonymous: Anonymous{Reactions: true}})
 	h, ctx := rt.Handler(), context.Background()
 	attacker, anon := access.Actor{ID: "attacker"}, access.Actor{Anonymous: true, IP: "203.0.113.9"}
 	fans := []access.Actor{{ID: "u1"}, {ID: "u2"}}

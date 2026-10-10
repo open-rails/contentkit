@@ -11,7 +11,9 @@
 //	/upload/...            the upload API; X-Test-Actor names the caller ("reader" may not upload)
 //	/upload-on-upload/...  the same with ProcessOnUpload
 //	/read/...              the read API; "reader" reads as a viewer, everyone else as an editor
-//	/ck/...                contentkit.Runtime.Handler: content, media, codes, taxonomy (content.go)
+//	/ck/...                contentkit.Runtime.Handler: content, media, codes, taxonomy (content.go);
+//	                       signed-out visitors comment, react and vote
+//	/ck-members/...        the same over the same schema with the default: signed-out visitors only read
 //	GET /object?kind&id&path|public   {"size","sha256"} of a stored file: an
 //	                       item's file by path (or stem), or a public name
 //
@@ -43,6 +45,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/media"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
@@ -260,7 +263,9 @@ func main() {
 	mux.Handle("/upload/", http.StripPrefix("/upload", newUploads(false)))
 	mux.Handle("/upload-on-upload/", http.StripPrefix("/upload-on-upload", newUploads(true)))
 	mux.Handle("/read/", http.StripPrefix("/read", withActor(reader.Handler(media.HandlerOptions{Identity: identity{}, Limit: media.RateLimit{Disabled: true}}))))
-	mux.Handle("/ck/", http.StripPrefix("/ck", contentHandler(ctx, pool, schema, namespace, reg, hooks, uploads(false), reader)))
+	everyone := content.Anonymous{Comments: true, Reactions: true, Votes: true}
+	mux.Handle("/ck/", http.StripPrefix("/ck", contentHandler(ctx, pool, schema, namespace, reg, hooks, uploads(false), reader, everyone)))
+	mux.Handle("/ck-members/", http.StripPrefix("/ck-members", contentHandler(ctx, pool, schema, namespace, reg, nil, uploads(false), reader, content.Anonymous{})))
 	mux.HandleFunc("GET /object", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		ref, err := reg.Ref(q.Get("kind"), q.Get("id"))

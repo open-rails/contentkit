@@ -295,7 +295,8 @@ func TestCommentBanErasure(t *testing.T) {
 func TestCommentStandingCapabilities(t *testing.T) {
 	_, h := bansRuntime(t)
 	anon := access.Actor{Anonymous: true, IP: "10.0.0.9"}
-	if s := standing(t, h, anon, 1); s.UserID != "" || s.Moderate || len(s.BanScopes) != 0 || !s.CanComment {
+	// Signed out, nothing to moderate; no comment either, by default.
+	if s := standing(t, h, anon, 1); s.UserID != "" || s.Moderate || len(s.BanScopes) != 0 || s.CanComment || s.Anonymous {
 		t.Fatalf("anonymous: %+v", s)
 	}
 	if s := standing(t, h, owner, 1); s.UserID != owner.ID || !s.Moderate || len(s.BanScopes) != 1 || s.BanScopes[0] != BanOwner {

@@ -296,6 +296,17 @@ breaker. Register
 `Runtime.CheckModerator` as an optional dependency (helpers `deps`) so a
 tripped moderator shows on statusz and `app_dependency_up`.
 
+## Anonymous participation
+
+Signed-out visitors only read unless `content.Options.Anonymous` says
+otherwise: `Comments` (under an `anon_name`), `Reactions` (likes and
+dislikes of works, posts and comments, keyed by IP) and `Votes`
+(multiple-choice polls, keyed by IP). Free-text answers and favorites always
+need a signed-in actor. A refused anonymous attempt is `401 unauthorized`.
+`GET /config` answers the setting (`{"anonymous": {"comments", "reactions",
+"votes"}}`) and `GET /{kind}/{id}/can-comment` carries `anonymous`, so a
+client shows a sign-in prompt or an anonymous form from the server's answer.
+
 ## Interaction limits
 
 ContentKit limits each actor's interactions itself: the user id, or the IP
@@ -343,7 +354,7 @@ reactions, favorites or votes. Scopes:
 | `PUT /comment-bans/{user}` `{"reason","until"}` | the caller's owner scope | the ban (created or replaced) |
 | `DELETE /comment-bans/{user}` | the caller's owner scope | `204`, idempotent |
 | `GET`, `PUT`, `DELETE /global-comment-bans[/{user}]` | `global` | the same |
-| `GET /{kind}/{id}/can-comment` | the caller on that target | `{"can_comment", "ban"}` |
+| `GET /{kind}/{id}/can-comment` | the caller on that target | `{"can_comment", "ban", "anonymous", …}` |
 
 `until` is optional (absent: until lifted) and must be in the future; an
 expired ban stays listed with `expired: true` until lifted or replaced.

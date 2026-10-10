@@ -41,7 +41,7 @@ const urls = createContentURLs({ routes: { video: "watch", gallery: "g" }, langu
 <ContentKitProvider
   client={contentkit}
   viewer={user?.id ?? null}                 // the signed-in user as ContentKit sees it
-  onSignIn={() => openSignIn()}             // signed-out visitors are asked instead of acting anonymously
+  onSignIn={() => openSignIn()}             // asks signed-out visitors to sign in where the server refuses them
   urls={urls}
   navigate={(to, o) => navigate(to, o)}
   onChange={(change) => queryClient.invalidateQueries({ queryKey: ["media", change.ref.id] })}
@@ -72,6 +72,9 @@ const urls = createContentURLs({ routes: { video: "watch", gallery: "g" }, langu
   `media.uploadInline(postId, file)` resolves a body image's URL;
   `posts.uploadCover`, `polls.uploadImage` and `polls.uploadOptionImage` do
   both steps. `folders` renames the post and poll media kinds.
+- **`client.config()`** says what the content module allows: which
+  interactions signed-out visitors may make (`content.Options.Anonymous`,
+  none by default).
 - **`client.subscribe(listener)`** receives every successful mutation
   (`media.committed`, `media.processed`, `comment.created`, `reaction.changed`,
   `poll.updated`, `ban.saved`, …); `ContentKitProvider onChange` is the same
@@ -115,7 +118,8 @@ const { poll, vote } = usePoll(null, { language }); // the newest live poll
 const editor = usePollEditor(pollId);                // staff
 ```
 
-Also `useCommentReplies`, `useCanComment` (may the caller comment, the ban
+Also `useContentConfig` (`client.config()`, read once), `useCommentReplies`,
+`useCanComment` (may the caller comment, may signed-out visitors, the ban
 that stops it, and what it may do to others' comments), `useLatestComments`,
 `usePolls`, `usePosts`, `usePost`, and for staff `useAdminComments`,
 `useModerationQueue`, `useCommentBans`.
@@ -341,9 +345,10 @@ states shown to their author, reactions, edit, delete, ban and rate-limit
 notices), `ReactionButtons`, `FavoriteButton` (moves a host-given `count`)
 and `Poll` (a final vote with results scaled to the leading option, or a
 free-text answer and its groups; `results="always"` shows results before
-voting). With an `onSignIn` (the provider's or their own), signed-out
-visitors are asked to sign in; without one they comment under a name and
-react and vote anonymously, as ContentKit allows.
+voting). Signed-out visitors comment under a name, react and vote where the
+server allows it (`content.Options.Anonymous`, read from the comment standing
+and `client.config()`); elsewhere they are asked to sign in (`onSignIn`, the
+provider's or their own) or, without one, told to.
 
 Staff: `CommentModeration` (every comment, the review queue, the site's
 bans), `CommentBans` with `CommentBanDialog`, and `PollEditor`. They show what

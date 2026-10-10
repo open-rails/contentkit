@@ -216,6 +216,13 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	anon := access.Actor{Anonymous: true, IP: "10.0.0.9"}
 	item := "/gallery/" + cid(1)
 
+	// What signed-out visitors may do: nothing here (the default).
+	var cfg content.Config
+	f.want(http.StatusOK, anon, "GET", "/config", nil, &cfg)
+	if cfg.Anonymous != (content.Anonymous{}) {
+		t.Fatalf("config %+v", cfg)
+	}
+
 	// Posts.
 	var post content.Post
 	f.want(http.StatusForbidden, user, "POST", "/posts", content.PostInput{Title: ptr("Hello"), Body: ptr("World")}, nil)
@@ -246,7 +253,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	// Comments.
 	var root, reply content.Comment
 	f.want(http.StatusCreated, user, "POST", item+"/comments", content.CommentInput{Body: "first"}, &root)
-	f.want(http.StatusBadRequest, anon, "POST", item+"/comments", content.CommentInput{Body: "who?"}, nil)
+	f.want(http.StatusUnauthorized, anon, "POST", item+"/comments", content.CommentInput{Body: "who?", AnonName: "Guest"}, nil)
 	f.want(http.StatusCreated, owner, "POST", item+"/comments", content.CommentInput{Body: "reply", ReplyToID: root.ID}, &reply)
 	f.want(http.StatusOK, anon, "GET", item+"/comments?sort=best&limit=5", nil, nil)
 	f.want(http.StatusOK, anon, "GET", "/comments/"+root.ID+"/replies", nil, nil)

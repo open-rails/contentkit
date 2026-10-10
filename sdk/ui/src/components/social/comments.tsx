@@ -9,6 +9,7 @@ import type { BanNotice as BanNoticeData, Comment, CommentBan, CommentStanding, 
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import { useMessages } from "../../i18n/context.js";
 import { useCanComment, useCommentBans, useCommentReplies, useComments, type UseComments } from "../../react/comments.js";
+import { useContentConfig } from "../../react/config.js";
 import { ContentKitContext, useErrorReporter, type ContentKitErrorHandler } from "../../react/context.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Badge } from "#ckui/ui/badge";
@@ -36,8 +37,9 @@ export interface CommentsProps {
   /** Longest body. Default 400. */
   maxLength?: number;
   /**
-   * Asks a signed-out visitor to sign in (default the provider's). Without
-   * one, signed-out visitors comment under a name and react anonymously.
+   * Asks a signed-out visitor to sign in where the server takes no anonymous
+   * comments or reactions (default the provider's). Where it does, they
+   * comment under a name and react anonymously.
    */
   onSignIn?: () => void;
   /** A body as the host formats it (links, spoilers); default plain text. */
@@ -58,8 +60,10 @@ interface Thread {
   standing: CommentStanding | null;
   /** undefined: not known yet. */
   signedIn?: boolean;
-  /** Runs fn, or asks to sign in first. */
-  gate: (fn: () => void) => void;
+  /** Runs fn, or asks to sign in where signed-out visitors may not comment or react. */
+  gate: (kind: Act, fn: () => void) => void;
+  /** false: signed out where the server refuses it, with no sign-in to offer. */
+  can: (kind: Act) => boolean;
   maxLength: number;
   repliesPageSize: number;
   renderBody?: CommentsProps["renderBody"];
@@ -72,6 +76,8 @@ interface Thread {
   /** A post was refused by a ban: its notice. */
   onBanned: (ban: BanNoticeData) => void;
 }
+
+type Act = "comment" | "react";
 
 const ThreadContext = createContext<Thread | null>(null);
 const useThread = () => useContext(ThreadContext)!;
@@ -95,6 +101,7 @@ export function Comments(p: CommentsProps) {
   const [sort, setSort] = useState<Sort>(p.sort ?? "newest");
   const comments = useComments(p.item, { sort, pageSize: p.pageSize ?? 20, client: p.client });
   const { standing, reload: reloadStanding } = useCanComment(p.item, { client: p.client });
+  const { config } = useContentConfig({ client: p.client });
   const report = useErrorReporter(p.onError);
   const signIn = p.onSignIn ?? ctx?.onSignIn;
   const viewer = ctx?.viewer;
@@ -116,12 +123,15 @@ export function Comments(p: CommentsProps) {
     return out;
   }, [scopes, ownerBans.items, globalBans.items]);
 
+  // Signed out where the server refuses it: the standing says for comments, the config for reactions.
+  const mustSignIn = (kind: Act) => signedIn === false && (kind === "comment" ? standing?.anonymous === false : config?.anonymous.reactions === false);
   const thread: Thread = {
     item: p.item,
     comments,
     standing,
     signedIn,
-    gate: (fn) => (signedIn === false && signIn ? signIn() : fn()),
+    gate: (kind, fn) => (mustSignIn(kind) ? signIn?.() : fn()),
+    can: (kind) => !mustSignIn(kind) || !!signIn,
     maxLength: p.maxLength ?? 400,
     repliesPageSize: p.repliesPageSize ?? 10,
     renderBody: p.renderBody,
@@ -158,12 +168,16 @@ export function Comments(p: CommentsProps) {
         )}
         {ban ? (
           <BanNotice ban={ban} />
+        ) : mustSignIn("comment") ? (
+          signIn ? (
+            <Button variant="outline" className="justify-self-start" onClick={signIn}>
+              {t("comments.signIn")}
+            </Button>
+          ) : (
+            <p className="rounded-lg border border-border p-3 text-muted-foreground">{t("comments.signIn")}</p>
+          )
         ) : !canWrite ? (
           <p className="rounded-lg border border-border p-3 text-muted-foreground">{t("comments.locked")}</p>
-        ) : signedIn === false && signIn ? (
-          <Button variant="outline" className="justify-self-start" onClick={signIn}>
-            {t("comments.signIn")}
-          </Button>
         ) : (
           <Composer
             placeholder={t("comments.placeholder")}
@@ -258,13 +272,13 @@ function TopLevel({ comment }: { comment: Comment }) {
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const replies = useCommentReplies(comment.id, { pageSize: thread.repliesPageSize, enabled: open });
   const startReply = (name: string) =>
-    thread.gate(() => {
+    thread.gate("comment", () => {
       setReplyTo(name);
       if (comment.reply_count > 0) setOpen(true);
     });
   return (
     <div className="grid gap-2">
-      <Row comment={comment} onReply={comment.deleted || comment.moderation ? undefined : startReply} />
+      <Row comment={comment} onReply={comment.deleted || comment.moderation || !thread.can("comment") ? undefined : startReply} />
       {(comment.reply_count > 0 || (open && replies.items.length > 0)) && (
         <Button variant="link" size="xs" className="ms-11 justify-self-start px-0" aria-expanded={open} onClick={() => setOpen(!open)}>
           {open ? t("comments.hideReplies") : plural("comments.showReplies", comment.reply_count)}
@@ -275,7 +289,7 @@ function TopLevel({ comment }: { comment: Comment }) {
           {replies.loading && !replies.items.length && <li className="text-muted-foreground">{t("comments.loadingReplies")}</li>}
           {replies.items.map((r) => (
             <li key={r.id}>
-              <Row comment={r} onReply={r.deleted || r.moderation ? undefined : startReply} />
+              <Row comment={r} onReply={r.deleted || r.moderation || !thread.can("comment") ? undefined : startReply} />
             </li>
           ))}
           {replies.error && (
@@ -339,7 +353,7 @@ function Row({ comment: c, onReply }: { comment: Comment; onReply?: (name: strin
       thread.report(err, op);
     }
   };
-  const react = (v: Reaction) => thread.gate(() => void act("comment.react", () => thread.comments.react(c, c.mine === v ? 0 : v)));
+  const react = (v: Reaction) => thread.gate("react", () => void act("comment.react", () => thread.comments.react(c, c.mine === v ? 0 : v)));
   const long = !thread.renderBody && c.body.length > TRUNCATE + 40;
   const body = long && !expanded ? c.body.slice(0, TRUNCATE).trimEnd() + "…" : c.body;
 
@@ -402,11 +416,11 @@ function Row({ comment: c, onReply }: { comment: Comment; onReply?: (name: strin
         )}
         {!c.deleted && !c.moderation && !editing && (
           <div className="-ms-2 flex flex-wrap items-center gap-1">
-            <Button variant={c.mine === 1 ? "secondary" : "ghost"} size="xs" aria-pressed={c.mine === 1} aria-label={t("comments.like")} onClick={() => react(1)}>
+            <Button variant={c.mine === 1 ? "secondary" : "ghost"} size="xs" aria-pressed={c.mine === 1} aria-label={t("comments.like")} disabled={!thread.can("react")} onClick={() => react(1)}>
               <HugeiconsIcon icon={ThumbsUpIcon} strokeWidth={2} />
               <span>{c.likes}</span>
             </Button>
-            <Button variant={c.mine === -1 ? "secondary" : "ghost"} size="xs" aria-pressed={c.mine === -1} aria-label={t("comments.dislike")} onClick={() => react(-1)}>
+            <Button variant={c.mine === -1 ? "secondary" : "ghost"} size="xs" aria-pressed={c.mine === -1} aria-label={t("comments.dislike")} disabled={!thread.can("react")} onClick={() => react(-1)}>
               <HugeiconsIcon icon={ThumbsDownIcon} strokeWidth={2} />
               <span>{c.dislikes}</span>
             </Button>

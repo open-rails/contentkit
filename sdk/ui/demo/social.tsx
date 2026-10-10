@@ -5,7 +5,8 @@ import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 // The real content handlers (e2e/content-server.ts, proxied at /ck). ?actor=
-// picks the caller ("" signs out), ?view=staff the staff screens, ?lang= the UI.
+// picks the caller ("" signs out), ?view=staff the staff screens, ?lang= the UI,
+// ?mount=members a ContentKit that takes nothing from signed-out visitors.
 const q = new URLSearchParams(location.search);
 const theme = (q.get("theme") ?? "light") as ContentKitUiTheme;
 const dark = theme === "dark";
@@ -15,11 +16,11 @@ const lang = q.get("lang") ?? "en";
 document.documentElement.style.colorScheme = dark ? "dark" : "light";
 document.body.style.cssText = `margin:0;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:${dark ? "#09090b" : "#fafafa"};color:${dark ? "#fafafa" : "#09090b"}`;
 
-const as = (who: string) => {
+const as = (who: string, baseUrl = "/ck") => {
   const ip = `10.7.${Math.floor(Math.random() * 250)}.1`;
-  return createContentKitClient({ baseUrl: "/ck", headers: (): Record<string, string> => (who ? { "X-Test-Actor": who } : { "X-Test-IP": ip }), folders: { post: "ckpost", poll: "ckpoll" } });
+  return createContentKitClient({ baseUrl, headers: (): Record<string, string> => (who ? { "X-Test-Actor": who } : { "X-Test-IP": ip }), folders: { post: "ckpost", poll: "ckpoll" } });
 };
-const client = as(actor);
+const client = as(actor, q.get("mount") === "members" ? "/ck-members" : "/ck");
 
 function uuid7(): string {
   const hex = Date.now().toString(16).padStart(12, "0") + "7" + crypto.randomUUID().replace(/-/g, "").slice(0, 19);
@@ -29,7 +30,7 @@ function uuid7(): string {
 
 // A fresh item, thread and poll per page load.
 const item = { kind: "video", id: uuid7() };
-const [bob, carol, erin, editor] = ["bob", "carol", "erin", "editor"].map(as);
+const [bob, carol, erin, editor] = ["bob", "carol", "erin", "editor"].map((who) => as(who));
 const first = await bob!.comments.create(item, { body: "First! This trailer looks great." });
 await carol!.comments.create(item, { body: "Agreed, the soundtrack at 1:20 is the best part.\nCan't wait for the full episode.", reply_to_id: first.id });
 const gone = await carol!.comments.create(item, { body: "Oops, wrong thread." });

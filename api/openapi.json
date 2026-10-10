@@ -6,6 +6,41 @@
     "description": "ContentKit's HTTP API, from the prefix the host mounts contentkit.Runtime.Handler at. Each module sits at its own sub-path (x-contentkit-modules); a host that mounts a module alone serves its routes beneath that mount instead. Generated from the route catalog (internal/httpapi) by `go generate ./internal/contract`; do not edit."
   },
   "paths": {
+    "/config": {
+      "get": {
+        "tags": [
+          "config"
+        ],
+        "summary": "What the content module allows: which interactions signed-out visitors may make.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Config"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content"
+        ]
+      }
+    },
     "/posts": {
       "get": {
         "tags": [
@@ -413,7 +448,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -464,7 +500,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -515,7 +552,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -729,7 +767,7 @@
         "tags": [
           "comments"
         ],
-        "summary": "Comments on a target, or replies to a top-level comment; anonymous callers give anon_name. 202 when the moderator holds it.",
+        "summary": "Comments on a target, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.",
         "parameters": [
           {
             "name": "kind",
@@ -796,7 +834,8 @@
           "forbidden",
           "moderation_rejected",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -1198,7 +1237,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -1249,7 +1289,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -1300,7 +1341,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -1359,7 +1401,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -1418,7 +1461,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -1477,7 +1521,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -1536,7 +1581,8 @@
           "forbidden",
           "invalid_request",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -2183,7 +2229,7 @@
         "tags": [
           "polls"
         ],
-        "summary": "Votes for an option of an open multiple-choice poll; a vote is final, and voting again changes nothing.",
+        "summary": "Votes for an option of an open multiple-choice poll, signed out where Config.anonymous.votes allows it; a vote is final, and voting again changes nothing.",
         "parameters": [
           {
             "name": "id",
@@ -2230,7 +2276,8 @@
         "x-contentkit-errors": [
           "forbidden",
           "not_found",
-          "rate_limited"
+          "rate_limited",
+          "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -4834,6 +4881,25 @@
           "content_id"
         ]
       },
+      "Anonymous": {
+        "type": "object",
+        "properties": {
+          "comments": {
+            "type": "boolean"
+          },
+          "reactions": {
+            "type": "boolean"
+          },
+          "votes": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "comments",
+          "reactions",
+          "votes"
+        ]
+      },
       "Assignment": {
         "type": "object",
         "properties": {
@@ -5047,6 +5113,9 @@
           "ban": {
             "$ref": "#/components/schemas/BanNotice"
           },
+          "anonymous": {
+            "type": "boolean"
+          },
           "user_id": {
             "type": "string"
           },
@@ -5066,6 +5135,7 @@
         },
         "required": [
           "can_comment",
+          "anonymous",
           "moderate",
           "ban_scopes"
         ]
@@ -5118,6 +5188,17 @@
           "blob",
           "type",
           "size"
+        ]
+      },
+      "Config": {
+        "type": "object",
+        "properties": {
+          "anonymous": {
+            "$ref": "#/components/schemas/Anonymous"
+          }
+        },
+        "required": [
+          "anonymous"
         ]
       },
       "ContentRef": {

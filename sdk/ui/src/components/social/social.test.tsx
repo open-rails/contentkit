@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vitest";
 import { createContentKitClient, type ContentKitClient } from "../../client/index.js";
-import type { AdminComment, Comment, CommentStanding, HeldItem, Poll as PollData, PollOption } from "../../client/generated/wire.js";
+import type { AdminComment, Comment, CommentStanding, Config, HeldItem, Poll as PollData, PollOption } from "../../client/generated/wire.js";
 import { ContentKitProvider } from "../../react/index.js";
 import { CommentModeration, Comments, FavoriteButton, Poll, PollEditor, ReactionButtons } from "../../index.js";
 
@@ -54,7 +54,8 @@ const comment = (id: string, o: Partial<Comment> = {}): Comment => ({
   updated_at: at,
   ...o,
 });
-const standing = (o: Partial<CommentStanding> = {}): CommentStanding => ({ can_comment: true, user_id: "alice", moderate: false, ban_scopes: [], ...o });
+const standing = (o: Partial<CommentStanding> = {}): CommentStanding => ({ can_comment: true, anonymous: false, user_id: "alice", moderate: false, ban_scopes: [], ...o });
+const config = (anonymous: Partial<Config["anonymous"]> = {}) => () => ({ anonymous: { comments: false, reactions: false, votes: false, ...anonymous } });
 
 it("Comments: a thread with tombstones and the author's held comment; posting lands in place; Ctrl+Enter posts", async () => {
   const posted = comment("c9", { body: "hello there", user_id: "alice", author: { id: "alice", username: "alice" } });
@@ -121,24 +122,51 @@ it("Comments: a banned caller sees why instead of the composer", async () => {
   expect(screen.getByText("No comments yet. Be the first to comment!")).toBeInTheDocument();
 });
 
-it("Comments: signed out, the host's sign-in is offered; without one, a name is asked", async () => {
+it("Comments: signed out, the server decides: a sign-in where it takes no anonymous comments or reactions, a name where it does", async () => {
   const signIn = vi.fn();
-  const routes = { "GET /video/v1/comments": () => [comment("c1")], "GET /video/v1/can-comment": () => standing({ user_id: undefined }) };
+  const members = {
+    "GET /video/v1/comments": () => [comment("c1")],
+    "GET /video/v1/can-comment": () => standing({ user_id: undefined, can_comment: false }),
+    "GET /config": config(),
+  };
   const user = userEvent.setup();
-  const { unmount } = render(<Comments item={item} />, { wrapper: wrap(server(routes).client, { viewer: null, onSignIn: signIn }) });
+  let view = render(<Comments item={item} />, { wrapper: wrap(server(members).client, { viewer: null, onSignIn: signIn }) });
   await user.click(await screen.findByRole("button", { name: "Sign in to comment" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Like" })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: "Like" }));
   expect(signIn).toHaveBeenCalledTimes(2);
-  unmount();
+  expect(screen.queryByRole("button", { name: "Reply" })).toBeInTheDocument();
+  view.unmount();
 
-  const s = server({ ...routes, "POST /video/v1/comments": ({ body }) => json(201, comment("c2", { anon_name: (body as { anon_name: string }).anon_name, user_id: undefined, author: undefined, body: "hi" })) });
-  render(<Comments item={item} />, { wrapper: wrap(s.client, { viewer: null }) });
+  // No sign-in to offer: said, not offered; reactions and replies are off.
+  view = render(<Comments item={item} />, { wrapper: wrap(server(members).client, { viewer: null }) });
+  expect(await screen.findByText("Sign in to comment")).not.toHaveRole("button");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Like" })).toBeDisabled());
+  expect(screen.queryByRole("button", { name: "Reply" })).toBeNull();
+  expect(screen.queryByRole("textbox")).toBeNull();
+  view.unmount();
+
+  // Anonymous comments and reactions on: a name is asked although the host offers a sign-in.
+  const s = server({
+    "GET /video/v1/comments": () => [comment("c1")],
+    "GET /video/v1/can-comment": () => standing({ user_id: undefined, anonymous: true }),
+    "GET /config": config({ comments: true, reactions: true }),
+    "POST /video/v1/comments": ({ body }) => json(201, comment("c2", { anon_name: (body as { anon_name: string }).anon_name, user_id: undefined, author: undefined, body: "hi" })),
+    "POST /comments/c1/like": () => ({ likes: 1, dislikes: 0, mine: 1 }),
+  });
+  signIn.mockClear();
+  render(<Comments item={item} />, { wrapper: wrap(s.client, { viewer: null, onSignIn: signIn }) });
   await user.type(await screen.findByRole("textbox", { name: "Add a comment…" }), "hi");
   await user.click(screen.getByRole("button", { name: "Post" }));
   expect(screen.getByText("Enter a name.")).toBeInTheDocument();
   await user.type(screen.getByLabelText("Name"), "Guest");
   await user.click(screen.getByRole("button", { name: "Post" }));
   expect(await screen.findByText("Guest")).toBeInTheDocument();
+  await waitFor(() => expect(s.calls).toContain("GET /config"));
+  const like = within(screen.getByText("body c1").closest("article")!).getByRole("button", { name: "Like" });
+  await user.click(like);
+  await waitFor(() => expect(like).toHaveAttribute("aria-pressed", "true"));
+  expect(signIn).not.toHaveBeenCalled();
 });
 
 it("Comments: replies open under their comment; authors edit, moderators delete others' comments after confirming", async () => {
@@ -216,6 +244,31 @@ it("ReactionButtons and FavoriteButton change at once and roll back when refused
   expect(out.calls.some((c) => c.includes("favorite"))).toBe(false);
 });
 
+it("ReactionButtons signed out: ask to sign in where the server takes no anonymous reactions, react where it does", async () => {
+  const user = userEvent.setup();
+  const signIn = vi.fn();
+  const routes = { "GET /video/v1/reaction": () => ({ likes: 2, dislikes: 0, mine: 0 }), "POST /video/v1/like": () => ({ likes: 3, dislikes: 0, mine: 1 }) };
+  const off = server({ ...routes, "GET /config": config() });
+  let view = render(<ReactionButtons item={item} />, { wrapper: wrap(off.client, { viewer: null, onSignIn: signIn }) });
+  await waitFor(() => expect(off.calls).toContain("GET /config"));
+  await user.click(screen.getByRole("button", { name: "Like" }));
+  expect(signIn).toHaveBeenCalledTimes(1);
+  expect(off.calls).not.toContain("POST /video/v1/like");
+  view.unmount();
+
+  view = render(<ReactionButtons item={item} />, { wrapper: wrap(server({ ...routes, "GET /config": config() }).client, { viewer: null }) });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Like" })).toBeDisabled());
+  view.unmount();
+
+  const on = server({ ...routes, "GET /config": config({ reactions: true }) });
+  render(<ReactionButtons item={item} />, { wrapper: wrap(on.client, { viewer: null, onSignIn: signIn }) });
+  await waitFor(() => expect(on.calls).toContain("GET /config"));
+  const like = screen.getByRole("button", { name: "Like" });
+  await user.click(like);
+  await waitFor(() => expect(like).toHaveAttribute("aria-pressed", "true"));
+  expect(signIn).toHaveBeenCalledTimes(1);
+});
+
 const option = (id: string, label: string, position: number, votes = 0): PollOption => ({ id, label, position, vote_count: votes });
 const poll = (o: Partial<PollData> = {}): PollData => ({
   id: "p1",
@@ -247,6 +300,28 @@ it("Poll: a ballot until the vote, then results scaled to the leader with the ca
   expect(within(coffee).getByLabelText("Your vote")).toBeInTheDocument();
   expect(screen.getByText("5 votes")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Tea/ })).toBeNull();
+});
+
+it("Poll signed out: votes where the server takes anonymous votes, asks to sign in elsewhere", async () => {
+  const user = userEvent.setup();
+  const signIn = vi.fn();
+  const voted = poll({ voted: true, my_option: "o1", total_votes: 5, options: [option("o1", "Tea", 0, 4), option("o2", "Coffee", 1, 1)] });
+  const off = server({ "GET /polls/p1": () => poll(), "GET /config": config(), "POST /polls/p1/vote": () => voted });
+  let view = render(<Poll poll="p1" />, { wrapper: wrap(off.client, { viewer: null, onSignIn: signIn }) });
+  expect(await screen.findByText("Sign in to vote")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Tea/ }));
+  expect(signIn).toHaveBeenCalledTimes(1);
+  expect(off.calls).not.toContain("POST /polls/p1/vote");
+  view.unmount();
+
+  const on = server({ "GET /polls/p1": () => poll(), "GET /config": config({ votes: true }), "POST /polls/p1/vote": () => voted });
+  view = render(<Poll poll="p1" />, { wrapper: wrap(on.client, { viewer: null, onSignIn: signIn }) });
+  await waitFor(() => expect(on.calls).toContain("GET /config"));
+  await user.click(await screen.findByRole("button", { name: /Tea/ }));
+  expect(await screen.findByRole("meter", { name: "Tea" })).toBeInTheDocument();
+  expect(screen.queryByText("Sign in to vote")).toBeNull();
+  expect(signIn).toHaveBeenCalledTimes(1);
+  view.unmount();
 });
 
 it("Poll: a closed poll shows results; a free-text poll takes and edits an answer", async () => {

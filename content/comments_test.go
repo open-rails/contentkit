@@ -230,7 +230,7 @@ func TestComments_ReactionsAuthorizeStoredTarget(t *testing.T) {
 		"en": {Visible: true, Accessible: true},
 		"ja": {Visible: true, Accessible: true},
 	}}
-	rt, pool := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery_thread"}})
+	rt, pool := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery_thread"}, Anonymous: Anonymous{Reactions: true}})
 	ctx := context.Background()
 	cm := mustComment(t, rt, access.Actor{ID: "author"}, "gallery_thread", cid(1)+":ja", CommentInput{Body: "Japanese comment"})
 	actor := access.Actor{ID: "reactor"}

@@ -30,10 +30,10 @@ describe.skipIf(!endpoint)("content modules against contentkit.Runtime.Handler",
     if (proc) await stopServer(proc);
   });
 
-  /** A client as actor (signed in), or anonymous from ip. */
-  function ck(actor?: string, ip = "10.1.0.1"): ContentKitClient {
+  /** A client as actor (signed in), or anonymous from ip; mount "/ck-members" takes nothing from signed-out visitors. */
+  function ck(actor?: string, ip = "10.1.0.1", mount = "/ck"): ContentKitClient {
     const c = createContentKitClient({
-      baseUrl: `${base}/ck`,
+      baseUrl: `${base}${mount}`,
       headers: () => ({ "X-Test-IP": ip, ...(actor ? { "X-Test-Actor": actor } : {}) }),
       media: { retryDelay: () => 100 },
       folders: { post: "ckpost", poll: "ckpoll" },
@@ -144,8 +144,8 @@ describe.skipIf(!endpoint)("content modules against contentkit.Runtime.Handler",
       expect.objectContaining({ code: "moderation_rejected", message: "not allowed here", status: 422 }),
     );
 
-    expect(await ck().comments.standing(video)).toEqual({ can_comment: true, moderate: false, ban_scopes: [] });
-    expect(await ck("creator").comments.standing(video)).toEqual({ can_comment: true, user_id: "creator", moderate: false, ban_scopes: ["owner"] });
+    expect(await ck().comments.standing(video)).toEqual({ can_comment: true, anonymous: true, moderate: false, ban_scopes: [] });
+    expect(await ck("creator").comments.standing(video)).toEqual({ can_comment: true, anonymous: true, user_id: "creator", moderate: false, ban_scopes: ["owner"] });
     expect(await ck("moderator").comments.standing(video)).toMatchObject({ moderate: true, ban_scopes: ["global"] });
     expect(await ck("alice").comments.standing(item("video", "10cced"))).toMatchObject({ can_comment: false });
     await expect(ck("alice").comments.standing(item("video", "dead"))).rejects.toEqual(code("not_found"));
@@ -210,6 +210,33 @@ describe.skipIf(!endpoint)("content modules against contentkit.Runtime.Handler",
     expect((await ck("moderator").bans.list("global", { limit: 100 })).find((b) => b.user_id === troll)).toMatchObject({ banned_by: "moderator" });
     await ck("moderator").bans.lift("global", troll);
     expect((await ck(troll).comments.standing(item())).can_comment).toBe(true);
+  });
+
+  it("anonymous participation is the server's setting: config, standing and refusals", async () => {
+    const everyone = { comments: true, reactions: true, votes: true };
+    expect(await ck().config()).toEqual({ anonymous: everyone });
+    const members = (actor?: string) => ck(actor, "10.4.0.1", "/ck-members");
+    expect(await members().config()).toEqual({ anonymous: { comments: false, reactions: false, votes: false } });
+
+    const video = item();
+    const top = await members("alice").comments.create(video, { body: "members only" });
+    expect(await members().comments.standing(video)).toEqual({ can_comment: false, anonymous: false, moderate: false, ban_scopes: [] });
+    expect(await members("bob").comments.standing(video)).toMatchObject({ can_comment: true, anonymous: false, user_id: "bob" });
+    const post = await members("editor").posts.create({ title: "Members", body: "b", language: "en" });
+    const poll = await members("editor").polls.create({ question: "Members?", language: "en", options: [{ label: "Yes", position: 0 }, { label: "No", position: 1 }] });
+    for (const refused of [
+      () => members().comments.create(video, { body: "drive-by", anon_name: "Guest" }),
+      () => members().comments.react(top.id, 1),
+      () => members().reactions.set(video, 1),
+      () => members().posts.react(post.id, 1),
+      () => members().polls.vote(poll.id, poll.options[0]!.id),
+    ]) {
+      await expect(refused()).rejects.toEqual(expect.objectContaining({ code: "unauthorized", status: 401 }));
+    }
+    // Reads stay open, and the same items take anonymous interactions where the server allows them.
+    expect((await members().comments.list(video)).map((c) => c.id)).toEqual([top.id]);
+    expect(await ck(undefined, "10.4.0.2").reactions.set(video, 1)).toEqual({ likes: 1, dislikes: 0, mine: 1 });
+    expect(await ck(undefined, "10.4.0.2").polls.vote(poll.id, poll.options[0]!.id)).toMatchObject({ voted: true, total_votes: 1 });
   });
 
   it("reactions and favorites: per caller (anonymous by IP for reactions), gated by the item's access", async () => {
