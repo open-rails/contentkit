@@ -1,6 +1,7 @@
 import { ContentKitError, aborted, failureError, throwIfAborted, toContentKitError } from "../errors.js";
-import type { CommitBody, Edit, FileInfo, Op, PresignReply, ReadResult, RefBody, RequestReply } from "../generated/wire.js";
+import type { CommitBody, Edit, FileInfo, InlineImage, Op, PresignReply, ReadResult, RefBody, RequestReply } from "../generated/wire.js";
 import type { Http } from "../http.js";
+import { call } from "../route.js";
 import { MediaApi, type ReadOptions } from "./api.js";
 import { sha256Hex } from "./hash.js";
 import { Pacer } from "./pacer.js";
@@ -105,6 +106,36 @@ export interface UploadState {
   processOnUpload?: boolean;
 }
 
+/** An upload to a server-named (Named) path: a post's or poll's image. */
+export interface NamedOptions {
+  /** The requested path; the server names the file. Default the file's name. */
+  path?: string;
+  signal?: AbortSignal;
+  onProgress?: (p: Progress) => void;
+  /** Wait until the worker processed it. Default true. */
+  wait?: boolean;
+  /** How long to wait, ms. */
+  timeout?: number;
+}
+
+/** An upload to a Named path, committed. */
+export interface NamedUpload {
+  /** The server's name for it ("i-{uuid}"), which content routes take. */
+  name: string;
+  path: string;
+  file: FileInfo;
+}
+
+/** The media kinds of post and poll folders (content.Media.PostKind and PollKind). */
+export interface ContentFolders {
+  /** Default "post". */
+  post?: string;
+  /** Default "poll". */
+  poll?: string;
+}
+
+const named = /^i-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 /** A file to upload again when its blob is gone at commit; type defaults to the file's. */
 export type CommitSource = Blob | { file: Blob; type?: string };
 
@@ -138,10 +169,14 @@ export class MediaClient {
   private readonly delay: (attempt: number, retryAfter?: number) => number;
   private readonly targetSeconds: number;
 
+  private readonly folders: Required<ContentFolders>;
+
   constructor(
     private readonly http: Http,
     o: MediaOptions = {},
+    folders: ContentFolders = {},
   ) {
+    this.folders = { post: folders.post ?? "post", poll: folders.poll ?? "poll" };
     this.api = new MediaApi(http);
     this.transport = o.transport ?? defaultTransport;
     this.concurrency = o.concurrency ?? 4;
@@ -320,6 +355,35 @@ export class MediaClient {
   /** hls.js `xhrSetup` for playlists on the API (the client's token and credentials); pass it to players as is. */
   get xhrSetup(): (xhr: XMLHttpRequest, url: string) => Promise<void> {
     return this.http.xhrSetup;
+  }
+
+  /**
+   * Uploads an image to the item's server-named upload path and commits it
+   * (by default waiting until it is processed); resolves with the name content
+   * routes take: a poll or option image, a post cover.
+   */
+  async uploadNamed(ref: RefBody, file: Uploadable, o: NamedOptions = {}): Promise<NamedUpload> {
+    const f = await this.put(file, { ref, path: o.path ?? (file.name || "image"), signal: o.signal, onProgress: o.onProgress, wait: o.wait, timeout: o.timeout });
+    const name = stem(f.path.slice(f.path.lastIndexOf("/") + 1));
+    if (!named.test(name)) throw new ContentKitError("invalid_request", `${f.path} is not a server-named upload path of ${ref.kind}`);
+    return { name, path: f.path, file: f };
+  }
+
+  /** An image for a post's rich-text body: uploaded to the post's folder; resolves with the URL to place in the body. */
+  async uploadInline(post: string, file: Uploadable, o: NamedOptions = {}): Promise<NamedUpload & { url: string }> {
+    const up = await this.uploadNamed(this.postRef(post), file, o);
+    const r: InlineImage = await call(this.http, "POST", "/posts/{id}/images", { params: { id: post }, body: { image: up.name }, signal: o.signal });
+    return { ...up, url: r.url };
+  }
+
+  /** The media folder of a post. */
+  postRef(id: string): RefBody {
+    return { kind: this.folders.post, id };
+  }
+
+  /** The media folder of a poll. */
+  pollRef(id: string): RefBody {
+    return { kind: this.folders.poll, id };
   }
 
   /** Discards a paused multipart upload. */
