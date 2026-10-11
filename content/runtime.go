@@ -10,9 +10,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/open-rails/helpers/auth"
+	"github.com/open-rails/helpers/userinfo"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/ratelimit"
 )
 
@@ -23,8 +26,8 @@ const (
 	KindPost    = "post"
 )
 
-// Options configures a Runtime. Pool, Schema, Tenant, Identity, Authz and
-// Resolver are mandatory; the rest fall back to documented defaults.
+// Options configures a Runtime. Pool, Schema, Tenant, Auth and Resolver are
+// mandatory; the rest fall back to documented defaults.
 type Options struct {
 	// Pool is the host's shared pgx pool; the runtime does not own its lifecycle.
 	Pool *pgxpool.Pool
@@ -33,9 +36,18 @@ type Options struct {
 	// Tenant scopes every row, index, cursor and result. Required.
 	Tenant string
 
-	// Mandatory ports.
-	Identity Identity
-	Authz    Authorizer
+	// Auth says who a request is (helpers/auth; AuthKit's ak.Authenticator()).
+	// The routes ask it at most once per request and build the actor from
+	// its Verified: anonymous without a credential, 401 for one that fails.
+	// Staff hold ContentKit's permissions (access.Permissions) in its root
+	// scope (auth.Root), checked by the Verified's Can: declare them in its
+	// roles. Required.
+	Auth auth.Authenticator
+	// UserInfo is the host's directory (helpers/userinfo; AuthKit's
+	// ak.UserInfo()): authors' names and usernames, read once per response
+	// and never copied. Nil shows authors by id.
+	UserInfo userinfo.Lookup
+	// Resolver is the gating surface (access.ContentResolver). Required.
 	Resolver access.ContentResolver
 
 	// Canonicalizer enables the preference boundary (preferences.go): the
@@ -48,7 +60,6 @@ type Options struct {
 	PreferenceSyncOverlap time.Duration
 
 	// Optional ports (nil -> default).
-	Users             UserEnricher     // default: no enrichment (ids only)
 	Processor         ContentProcessor // comments and post excerpts; default: strip tags
 	PostBodyProcessor ContentProcessor // post bodies; default: Processor
 	// Moderator screens comment/post writes; nil publishes everything.
@@ -71,9 +82,6 @@ type Options struct {
 	// external personal data.
 	// Nil explicitly means stateless ports; never remove it during an outage.
 	ProviderDataEraser ProviderDataEraser
-
-	// Perms are the opaque host permission strings gating privileged writes.
-	Perms Perms
 
 	// Limits are the per-actor interaction rate limits (limits.go); the zero
 	// value takes the defaults, counted per process.
@@ -101,10 +109,9 @@ type Runtime struct {
 	store             *store
 	schema            string
 	tenant            string
-	identity          Identity
-	authz             Authorizer
+	guard             *gate.Gate
+	userInfo          userinfo.Lookup
 	resolver          access.ContentResolver
-	users             UserEnricher
 	media             *Media
 	processor         ContentProcessor
 	postBodyProcessor ContentProcessor
@@ -112,7 +119,6 @@ type Runtime struct {
 	breaker           *moderatorBreaker
 	classifier        AnswerClassifier
 	providerEraser    ProviderDataEraser
-	perms             Perms
 	anonymous         Anonymous
 	commentMax        int
 	log               *slog.Logger
@@ -138,8 +144,11 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if strings.TrimSpace(opts.Tenant) == "" {
 		return nil, fmt.Errorf("content: Tenant is required")
 	}
-	if opts.Identity == nil || opts.Authz == nil || opts.Resolver == nil {
-		return nil, fmt.Errorf("content: Identity, Authz and Resolver ports are required")
+	if err := gate.Check(opts.Auth, permissions...); err != nil {
+		return nil, fmt.Errorf("content: Auth: %w", err)
+	}
+	if opts.Resolver == nil {
+		return nil, fmt.Errorf("content: the Resolver port is required")
 	}
 	if opts.ProviderDataEraser == nil && (!policyIsStateless(opts.Moderator) || !policyIsStateless(opts.Classifier)) {
 		return nil, fmt.Errorf("content: retaining policy ports require ProviderDataEraser; stateless ports must declare StatelessPolicy")
@@ -161,10 +170,8 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		store:             newStore(opts.Pool, opts.Schema, opts.Tenant),
 		schema:            opts.Schema,
 		tenant:            opts.Tenant,
-		identity:          opts.Identity,
-		authz:             opts.Authz,
+		userInfo:          opts.UserInfo,
 		resolver:          opts.Resolver,
-		users:             orDefault[UserEnricher](opts.Users, noopEnricher{}),
 		media:             media,
 		processor:         processor,
 		postBodyProcessor: orDefault[ContentProcessor](opts.PostBodyProcessor, processor),
@@ -172,13 +179,13 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		breaker:           newModeratorBreaker(opts.ModeratorTimeout, opts.ModeratorCooldown),
 		classifier:        opts.Classifier,
 		providerEraser:    opts.ProviderDataEraser,
-		perms:             opts.Perms,
 		anonymous:         opts.Anonymous,
 		commentMax:        orDefault(opts.CommentMaxLength, DefaultCommentMaxLength),
 		log:               log,
 		kinds:             make(map[string]struct{}, len(opts.ContentKinds)),
 		limiters:          limiters,
 	}
+	rt.guard = &gate.Gate{Auth: opts.Auth, Log: log}
 	for _, k := range opts.ContentKinds {
 		rt.kinds[k] = struct{}{}
 	}
@@ -363,33 +370,30 @@ func (rt *Runtime) canonical(ctx context.Context, kind, id string, actor access.
 	return routeKey(requested)
 }
 
-// requirePerm is fail-closed: an unset perm, a denied check, or a check error
-// all deny.
-func (rt *Runtime) requirePerm(ctx context.Context, actor access.Actor, perm string) error {
-	if perm == "" {
-		return errForbidden
-	}
-	ok, err := rt.authz.Can(ctx, actor, perm)
-	if err != nil || !ok {
+// requirePerm asks the actor's Verified whether it holds perm in the
+// Authenticator's root scope. It fails closed: a denial is errForbidden, and
+// a failed check an AuthError (401 when the credential ended, else 503).
+func (rt *Runtime) requirePerm(ctx context.Context, actor access.Actor, perm access.Permission) error {
+	ok, err := gate.Can(ctx, rt.guard.Auth, actor, string(perm))
+	switch {
+	case err != nil:
+		return &AuthError{Err: err}
+	case !ok:
 		return errForbidden
 	}
 	return nil
 }
 
-// actor reads the (possibly anonymous) authenticated actor from context.
-func (rt *Runtime) actor(ctx context.Context) access.Actor {
-	a, ok := rt.identity.Actor(ctx)
-	if !ok {
-		return access.Actor{Anonymous: true}
-	}
-	return a
-}
+// actor is the request's actor as the route gate built it; anonymous outside
+// a request.
+func (rt *Runtime) actor(ctx context.Context) access.Actor { return gate.Actor(ctx) }
 
-// requireActor demands a non-anonymous authenticated actor.
+// requireActor demands a signed-in person: 401 when anonymous, 403 for an
+// application.
 func (rt *Runtime) requireActor(ctx context.Context) (access.Actor, error) {
-	a, ok := rt.identity.Actor(ctx)
-	if !ok || a.Anonymous || a.ID == "" {
-		return access.Actor{}, errUnauthorized
+	a := gate.Actor(ctx)
+	if err := participant(a, false); err != nil {
+		return access.Actor{}, err
 	}
 	return a, nil
 }

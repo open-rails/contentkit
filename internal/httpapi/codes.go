@@ -30,7 +30,7 @@ const (
 
 var codes = []ErrorCode{
 	{CodeInvalidRequest, http.StatusBadRequest, "The request is malformed: its body, a query parameter or a path value."},
-	{CodeUnauthorized, http.StatusUnauthorized, "The route needs a signed-in actor."},
+	{CodeUnauthorized, http.StatusUnauthorized, "The request needs a valid credential: it has none where the route needs one, or one that is expired, revoked or invalid. WWW-Authenticate says which."},
 	{CodeForbidden, http.StatusForbidden, "The actor may not do this."},
 	{"comment_banned", http.StatusForbidden, "The actor is banned from commenting on this target; `ban` says the scope, the reason and when it ends."},
 	{"comment_too_long", http.StatusUnprocessableEntity, "The comment is longer than the site allows; `details.max` is the limit in characters."},
@@ -59,7 +59,7 @@ var codes = []ErrorCode{
 	{CodeInternal, http.StatusInternalServerError, "A server fault; the cause is in the server log."},
 	{CodeTenantMismatch, http.StatusInternalServerError, "A host port answered with another tenant's data: a configuration fault."},
 	{"not_configured", http.StatusNotImplemented, "The capability needs a port the host did not configure; retrying does not help."},
-	{CodeUnavailable, http.StatusServiceUnavailable, "Media storage cannot be reached, or a commit's recovery is pending; retry."},
+	{CodeUnavailable, http.StatusServiceUnavailable, "The host's auth or media storage cannot be reached, or a commit's recovery is pending; retry."},
 	{CodeUpgrade, http.StatusServiceUnavailable, "The media item was stored before v0.68 and is served once the host's media upgrade (contentkit_media_upgrade) has converted it."},
 }
 

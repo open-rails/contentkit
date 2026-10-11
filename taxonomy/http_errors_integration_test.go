@@ -22,7 +22,7 @@ func TestHandlerErrorContract(t *testing.T) {
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	s := newStore(t, pool, schema, tenant, func(o *Options) { o.Logger = log })
-	srv := httptest.NewServer(Handler(s))
+	srv := httptest.NewServer(adminHandler(t, s))
 	t.Cleanup(srv.Close)
 
 	post := func(path, body string) (int, string) {

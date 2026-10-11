@@ -9,6 +9,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contenturl"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
 // Staff find posts by text, list the deleted ones on their own and restore
@@ -16,7 +17,7 @@ import (
 func TestPostRestoreAndStaffSearch(t *testing.T) {
 	ctx := context.Background()
 	m := &testMedia{}
-	rt, _ := newPostRuntime(t, Options{Authz: postRoleAuthz{writers: map[string]bool{"admin": true}}, Media: m.options()})
+	rt, _ := newPostRuntime(t, Options{Auth: testauth.Auth{Authz: postRoleAuthz{writers: map[string]bool{"admin": true}}}, Media: m.options()})
 	h := rt.Handler()
 	admin, reader := access.Actor{ID: "admin", Kind: "user"}, access.Actor{ID: "reader", Kind: "user"}
 	create := func(in PostInput) Post {

@@ -117,12 +117,15 @@ func newLimiters(l Limits, tenant string, log *slog.Logger) (map[Action]*ratelim
 	return out, nil
 }
 
-// limit spends one of actor's a allowance. An actor with neither a user id
+// limit spends one of actor's a allowance: per subject, and per invoker
+// within it when someone acts on its behalf. An actor with neither a subject
 // nor an IP has no key and is not limited here.
 func (rt *Runtime) limit(ctx context.Context, a Action, actor access.Actor) error {
 	l := rt.limiters[a]
 	key := ""
 	switch {
+	case actor.ID != "" && !actor.Anonymous && actor.Invoker.ID != "":
+		key = "u:" + actor.ID + "|" + actor.Invoker.Issuer + "|" + actor.Invoker.ID
 	case actor.ID != "" && !actor.Anonymous:
 		key = "u:" + actor.ID
 	case actor.IP != "":

@@ -12,6 +12,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
 // localeID is the content id of work n's language route: every language
@@ -140,7 +141,7 @@ func TestPreferences_ConcurrentLocaleRoutesShareOneOrderedPreference(t *testing.
 		t.Fatal(err)
 	}
 	defer second.Close()
-	other, err := New(ctx, Options{Pool: second, Schema: rt.schema, Tenant: testTenant, Identity: &fakeIdentity{}, Authz: allowAll{},
+	other, err := New(ctx, Options{Pool: second, Schema: rt.schema, Tenant: testTenant, Auth: testauth.Auth{Authz: allowAll{}},
 		Resolver: rt.resolver, ContentKinds: []string{"gallery"}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
 	if err != nil {
 		t.Fatal(err)
@@ -293,7 +294,7 @@ func TestPreferences_ExportScopeAndOptOut(t *testing.T) {
 	if len(got) != 2 || got[0].ContentKind != KindPost || got[0].Value != -1 || got[1].ContentID != cid(42) || got[1].ActorID != "u1" {
 		t.Fatalf("exported = %+v, want the post dislike then the work like", got)
 	}
-	other, err := New(ctx, Options{Pool: pool, Schema: rt.schema, Tenant: "other", Identity: &fakeIdentity{}, Authz: allowAll{},
+	other, err := New(ctx, Options{Pool: pool, Schema: rt.schema, Tenant: "other", Auth: testauth.Auth{Authz: allowAll{}},
 		Resolver: rt.resolver, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
 	if err != nil {
 		t.Fatal(err)
@@ -437,7 +438,7 @@ func TestPreferences_SyncSendsWithoutHoldingAConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	rt, err := New(context.Background(), Options{Pool: pool, Schema: base.schema, Tenant: base.tenant, Identity: &fakeIdentity{}, Authz: allowAll{},
+	rt, err := New(context.Background(), Options{Pool: pool, Schema: base.schema, Tenant: base.tenant, Auth: testauth.Auth{Authz: allowAll{}},
 		Resolver: &fakeResolver{}, ContentKinds: []string{"gallery", "tag"}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
 	if err != nil {
 		t.Fatal(err)

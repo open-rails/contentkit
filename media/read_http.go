@@ -1,45 +1,42 @@
 package media
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"log/slog"
 	"math"
-	"net"
 	"net/http"
 	"net/netip"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/open-rails/helpers/auth"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
-// Identity reads the authenticated actor the host's middleware put in the
-// context; the same shape as content.Identity.
-type Identity interface {
-	Actor(ctx context.Context) (access.Actor, bool)
-}
-
 // HandlerOptions configure the read API.
 type HandlerOptions struct {
-	Identity Identity
-	Logger   *slog.Logger
+	// Auth says who a request is (helpers/auth; AuthKit's
+	// ak.Authenticator()): the viewer is anonymous without a credential.
+	// Required.
+	Auth   auth.Authenticator
+	Logger *slog.Logger
 	// Limit is the per-viewer rate limit (default 2/s, burst 120, per
 	// process; set Limit.Redis to share it across replicas): every read,
 	// playlist and download counts.
-	// Viewers are keyed by Actor.ID, anonymous ones by Actor.IP, else by the
-	// connection's address.
+	// Viewers are keyed by Actor.ID, anonymous ones by their address.
 	Limit RateLimit
 }
 
 // Handler serves the read API. contentkit.Runtime.Handler serves it at
-// /media; a host mounting it alone puts it under a prefix after its auth
-// middleware. Errors are ErrorReply: 400 invalid_request, 404 not_found
+// /media; a host mounting it alone puts it under a prefix. It panics without
+// HandlerOptions.Auth. Errors are ErrorReply: 400 invalid_request, 404 not_found
 // (also for what the viewer may not see), 429 rate_limited (Retry-After: too
 // many requests, or too many items opened this hour), 503 unavailable, 500
 // internal_error (a resolver error denies this way). The routes are readRoutes.
@@ -52,11 +49,14 @@ func (r *Reader) Handler(o HandlerOptions) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
+	if err := gate.Check(o.Auth); err != nil {
+		panic("media: HandlerOptions.Auth: " + err.Error())
+	}
 	mux := http.NewServeMux()
-	httpapi.Mount(mux, readHandler{r, o, log}, readRoutes)
-	h := limited(mux, o, log)
+	g := &gate.Gate{Auth: o.Auth, Log: log, Then: limited(o, log)}
+	httpapi.Mount(mux, g.Guard, readHandler{r, o, log}, readRoutes)
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		h.ServeHTTP(w, req.WithContext(access.WithMemo(req.Context())))
+		mux.ServeHTTP(w, req.WithContext(access.WithMemo(req.Context())))
 	})
 }
 
@@ -147,31 +147,12 @@ func (r *Reader) serveRead(req *http.Request, o HandlerOptions) (*ReadResult, *G
 }
 
 func (r *Reader) requestRef(req *http.Request, o HandlerOptions) (contentref.ContentRef, access.Actor, error) {
-	actor := actorOf(req, o)
+	actor := gate.Actor(req.Context())
 	ref, err := r.reg.Ref(req.PathValue("kind"), req.PathValue("id"))
 	if err != nil {
 		return ref, actor, ErrNotVisible
 	}
 	return ref, actor, nil
-}
-
-// actorOf is the request's actor; an anonymous one without an IP takes the
-// connection's address, so limits never share one key across everyone.
-func actorOf(req *http.Request, o HandlerOptions) access.Actor {
-	a := access.Actor{Anonymous: true}
-	if o.Identity != nil {
-		if id, ok := o.Identity.Actor(req.Context()); ok {
-			a = id
-		}
-	}
-	if a.IP == "" && (a.Anonymous || a.ID == "") {
-		host, _, err := net.SplitHostPort(req.RemoteAddr)
-		if err != nil {
-			host = req.RemoteAddr
-		}
-		a.IP = host
-	}
-	return a
 }
 
 func fail(w http.ResponseWriter, req *http.Request, log *slog.Logger, err error) {
@@ -198,14 +179,18 @@ func fail(w http.ResponseWriter, req *http.Request, log *slog.Logger, err error)
 	writeJSON(w, status, ErrorReply{Error: msg, Code: code})
 }
 
-// limited applies HandlerOptions.Limit to every route.
-func limited(next http.Handler, o HandlerOptions, log *slog.Logger) http.Handler {
+// limited applies HandlerOptions.Limit to every route, inside its gate.
+func limited(o HandlerOptions, log *slog.Logger) func(http.Handler) http.Handler {
 	lim := newRateLimiter(o.Limit, viewerLimit, "read", time.Now, log)
 	if lim == nil {
-		return next
+		return nil
 	}
+	return func(next http.Handler) http.Handler { return limit(lim, next, log) }
+}
+
+func limit(lim rateLimiter, next http.Handler, log *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		actor := actorOf(req, o)
+		actor := gate.Actor(req.Context())
 		if ok, wait := lim.allow(req.Context(), viewerKey(actor)); !ok {
 			log.Warn("media read rate limited", "viewer", actor.ID, "anonymous", actor.Anonymous, "path", req.URL.Path)
 			w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(wait.Seconds())))))
@@ -218,7 +203,7 @@ func limited(next http.Handler, o HandlerOptions, log *slog.Logger) http.Handler
 }
 
 // viewerKey is the key limits count a viewer under: the actor's id, else
-// its IP (actorOf fills in the peer address), "" when it has neither. An
+// its IP (the gate fills in the peer address), "" when it has neither. An
 // IPv6 address is keyed by its /64, the least a client is handed: keyed
 // whole, one client would have as many keys as it has addresses.
 func viewerKey(a access.Actor) string {

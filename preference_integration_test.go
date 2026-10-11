@@ -17,6 +17,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
+	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -76,7 +77,8 @@ func (e prefEnv) runtime(t *testing.T, conn signal.Conn, overlap time.Duration) 
 	}
 	rt, err := NewRuntime(context.Background(), RuntimeConfig{
 		EmbeddedConfig: EmbeddedConfig{PG: e.pool, PGSchema: e.schema, Tenant: testTenant, CH: conn, CHDatabase: e.chDB},
-		Content: content.Options{Schema: e.schema, Identity: ctxIdentity{}, Authz: allowAuthz{}, Resolver: routeResolver{}, Anonymous: content.Anonymous{Reactions: true},
+		Auth:           testauth.Auth{Authz: allowAuthz{}},
+		Content: content.Options{Schema: e.schema, Resolver: routeResolver{}, Anonymous: content.Anonymous{Reactions: true},
 			Canonicalizer: content.ContentCanonicalizerFunc(canon), ContentKinds: []string{"gallery"}, PreferenceSyncOverlap: overlap},
 	})
 	if err != nil {

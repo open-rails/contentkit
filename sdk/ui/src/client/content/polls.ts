@@ -11,7 +11,7 @@ export interface PollQuery extends PageQuery {
   date?: string;
 }
 
-/** Site-wide polls: multiple choice or free text; staff write them (PollWrite). */
+/** Site-wide polls: multiple choice or free text; staff write them (root:polls:write). */
 export class PollsClient {
   constructor(
     private readonly http: Http,
@@ -22,7 +22,7 @@ export class PollsClient {
   list(q: PollQuery = {}, signal?: AbortSignal): Promise<Poll[]> {
     return call(this.http, "GET", "/polls", { query: q, signal });
   }
-  /** Every poll, scheduled and inactive ones included (PollWrite). */
+  /** Every poll, scheduled and inactive ones included (root:polls:write). */
   adminList(q: PollQuery = {}, signal?: AbortSignal): Promise<Poll[]> {
     return call(this.http, "GET", "/polls/admin", { query: q, signal });
   }

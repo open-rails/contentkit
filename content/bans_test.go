@@ -10,11 +10,12 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
-const banPerm = "comments:ban"
+const banPerm = string(access.CommentsBan)
 
-// banAuthz grants Perms.CommentBan to operators only, every other perm to all.
+// banAuthz grants access.CommentsBan to operators only, every other perm to all.
 type banAuthz struct{ operators map[string]bool }
 
 func (a banAuthz) Can(_ context.Context, actor access.Actor, perm string) (bool, error) {
@@ -36,8 +37,8 @@ func bansRuntime(t *testing.T) (*Runtime, http.Handler) {
 	res.setOwned("gallery", cid(2), other.ID)
 	res.setOwned("gallery", cid(3), troll.ID)
 	res.setOwned("gallery", cid(4), "")
-	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, Users: commentsEnricher{},
-		Authz: banAuthz{operators: map[string]bool{operator.ID: true}}, Perms: Perms{CommentBan: banPerm, CommentModerate: "mod"}})
+	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, UserInfo: commentsDirectory{},
+		Auth: testauth.Auth{Authz: banAuthz{operators: map[string]bool{operator.ID: true}}}})
 	return rt, rt.Handler()
 }
 
@@ -158,7 +159,7 @@ func TestCommentBanOwnerScope(t *testing.T) {
 
 // A global ban stops the user commenting anywhere in the tenant, on their own
 // content and replies to their own comments included, and hides nothing.
-// Only Perms.CommentBan may set it; of two bans the longer one is shown.
+// Only access.CommentsBan may set it; of two bans the longer one is shown.
 func TestCommentBanGlobalScope(t *testing.T) {
 	_, h := bansRuntime(t)
 	onOwn := created(t, comment(t, h, troll, 3, ""))

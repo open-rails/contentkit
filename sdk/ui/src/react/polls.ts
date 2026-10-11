@@ -79,7 +79,7 @@ export interface PollFilter {
   month?: string;
   /** YYYY-MM-DD */
   date?: string;
-  /** Staff: every poll, scheduled and inactive ones included (PollWrite). */
+  /** Staff: every poll, scheduled and inactive ones included (root:polls:write). */
   admin?: boolean;
   pageSize?: number;
 }
@@ -124,7 +124,7 @@ export interface UsePollEditor {
   setOptionImage: (option: string, file: Blob | null) => Promise<void>;
 }
 
-/** Staff: one poll's editor (PollWrite); null creates a new poll. */
+/** Staff: one poll's editor (root:polls:write); null creates a new poll. */
 export function usePollEditor(id: string | null | undefined, o: { client?: ContentKitClient } = {}): UsePollEditor {
   const { client, store, scope } = useContentScope(o.client);
   const [created, setCreated] = useState<string | null>(null);

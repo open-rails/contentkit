@@ -450,7 +450,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		return nil, uploadErr(CodeInvalid, "commit operations must be JSON: %v", err)
 	}
 	mutation := &manifestMutation{commit: manifestCommit{ID: id, Ref: ref, Folder: item.Prefix(),
-		Actor: actor.Kind + ":" + uploaderID(actor), Fingerprint: sha256.Sum256(input)}}
+		Actor: string(actor.Kind) + ":" + uploaderID(actor), Fingerprint: sha256.Sum256(input)}}
 	if man, replayed, err := u.o.Manifests.replayCommit(ctx, item, mutation.commit); err != nil || replayed {
 		if err != nil {
 			return nil, err

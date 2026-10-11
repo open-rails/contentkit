@@ -30,10 +30,21 @@ type Config struct {
 	BaseURL string `json:"base_url,omitempty"`
 	// Kinds are the app's kinds plus the shared kinds it imports.
 	Kinds []Kind `json:"kinds"`
+	// Avatars names people's avatars: content shows them beside comment
+	// authors and in moderation lists. Zero: people have none.
+	Avatars Avatars `json:"avatars,omitzero"`
 	// Editor is how editor views render (the whole oriented source the
 	// cropper draws on); zero is DefaultEditor.
 	Editor Image `json:"editor,omitzero"`
 	Hooks  Hooks `json:"-"`
+}
+
+// Avatars is Config.Avatars: Kind's items are people's accounts, keyed by the
+// host auth's subject (auth.Identity.Subject), such as the shared accounts
+// kind "user", and Preset is the public image each is shown with.
+type Avatars struct {
+	Kind   string `json:"kind"`
+	Preset string `json:"preset"`
 }
 
 // DefaultEditor renders editor views.

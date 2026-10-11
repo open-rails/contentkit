@@ -14,6 +14,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
 // fakeModerator decides by keyword: "spam" rejects, "iffy" asks for review,
@@ -60,14 +61,14 @@ func (reviewerOnly) Can(_ context.Context, a access.Actor, _ string) (bool, erro
 	return a.ID == "reviewer", nil
 }
 
-const reviewPerm = "moderation:review"
+const reviewPerm = string(access.ModerationReview)
 
 func moderatedRuntime(t *testing.T, mod ContentModerator) *Runtime {
 	t.Helper()
 	res := &fakeResolver{}
 	res.set("gallery", cid(1), true, true)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, Moderator: mod,
-		Authz: reviewerOnly{}, Perms: Perms{ModerationReview: reviewPerm, CommentModerate: "comment:moderate", PostWrite: postPerm}})
+		Auth: testauth.Auth{Authz: reviewerOnly{}}})
 	return rt
 }
 
@@ -591,8 +592,8 @@ func TestModeration_TenantIsolation(t *testing.T) {
 	res := &fakeResolver{}
 	res.set("gallery", cid(1), true, true)
 	mod := &fakeModerator{}
-	a, pool := newTestRuntime(t, Options{Tenant: "site_a", Resolver: res, ContentKinds: []string{"gallery"}, Moderator: mod, Perms: Perms{PostWrite: postPerm}})
-	b, err := New(ctx, Options{Pool: pool, Schema: a.schema, Tenant: "site_b", Identity: &fakeIdentity{}, Authz: allowAll{}, Resolver: res, ContentKinds: []string{"gallery"}, Moderator: mod, Perms: Perms{PostWrite: postPerm}})
+	a, pool := newTestRuntime(t, Options{Tenant: "site_a", Resolver: res, ContentKinds: []string{"gallery"}, Moderator: mod})
+	b, err := New(ctx, Options{Pool: pool, Schema: a.schema, Tenant: "site_b", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: res, ContentKinds: []string{"gallery"}, Moderator: mod})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -656,7 +657,7 @@ func TestModeration_HungModeratorBreaker(t *testing.T) {
 	res.set("gallery", cid(1), true, true)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, Moderator: mod,
 		ModeratorTimeout: 200 * time.Millisecond, ModeratorCooldown: time.Second,
-		Authz: reviewerOnly{}, Perms: Perms{ModerationReview: reviewPerm, CommentModerate: "comment:moderate", PostWrite: postPerm}})
+		Auth: testauth.Auth{Authz: reviewerOnly{}}})
 	author := access.Actor{ID: "author"}
 	ctx := context.Background()
 	start := time.Now()
@@ -712,7 +713,7 @@ func TestModeration_BreakerHalfOpenAdmitsOneTrial(t *testing.T) {
 	res.set("gallery", cid(1), true, true)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, Moderator: mod,
 		ModeratorTimeout: time.Second, ModeratorCooldown: 200 * time.Millisecond,
-		Authz: reviewerOnly{}, Perms: Perms{ModerationReview: reviewPerm, CommentModerate: "comment:moderate", PostWrite: postPerm}})
+		Auth: testauth.Auth{Authz: reviewerOnly{}}})
 	b := rt.breaker
 	b.mu.Lock()
 	b.failures, b.openUntil = moderatorBreakerFailures, time.Now().Add(-time.Millisecond) // tripped, cooldown over
@@ -739,7 +740,7 @@ func TestModeration_HeldItemsCarryAuthors(t *testing.T) {
 	res := &fakeResolver{}
 	res.set("gallery", cid(1), true, true)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, Moderator: &fakeModerator{},
-		Users: commentsEnricher{}, Authz: reviewerOnly{}, Perms: Perms{ModerationReview: reviewPerm}})
+		UserInfo: commentsDirectory{}, Auth: testauth.Auth{Authz: reviewerOnly{}}})
 	mustComment(t, rt, access.Actor{ID: "author"}, "gallery", cid(1), CommentInput{Body: "iffy"})
 	mustComment(t, rt, access.Actor{Anonymous: true, IP: "10.0.0.1"}, "gallery", cid(1), CommentInput{Body: "iffy too", AnonName: "guest"})
 	page, err := rt.ListHeld(context.Background(), KindComment, "", 10)

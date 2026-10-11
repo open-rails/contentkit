@@ -9,6 +9,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
 // Two tenants share one host schema: every row, read, count and route of one
@@ -17,8 +18,8 @@ func TestTenantIsolation(t *testing.T) {
 	ctx := context.Background()
 	res := &fakeResolver{}
 	res.set("gallery", cid(1), true, true)
-	a, pool := newTestRuntime(t, Options{Tenant: "site_a", Resolver: res, ContentKinds: []string{"gallery"}, Perms: Perms{PollWrite: "poll", PostWrite: "post"}})
-	b, err := New(ctx, Options{Pool: pool, Schema: a.schema, Tenant: "site_b", Identity: &fakeIdentity{}, Authz: allowAll{}, Resolver: res, ContentKinds: []string{"gallery"}, Perms: Perms{PollWrite: "poll", PostWrite: "post"}})
+	a, pool := newTestRuntime(t, Options{Tenant: "site_a", Resolver: res, ContentKinds: []string{"gallery"}})
+	b, err := New(ctx, Options{Pool: pool, Schema: a.schema, Tenant: "site_b", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: res, ContentKinds: []string{"gallery"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +33,7 @@ func TestTenantIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	cm := mustComment(t, a, u, "gallery", cid(1), CommentInput{Body: "on a"})
-	poll, err := a.polls.create(ctx, u, PollInput{Question: "a?", Options: []PollOptionInput{{Label: "x"}, {Label: "y"}}})
+	poll, err := a.polls.create(ctx, a.as(u), PollInput{Question: "a?", Options: []PollOptionInput{{Label: "x"}, {Label: "y"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +81,7 @@ func TestTenantIsolation(t *testing.T) {
 		t.Fatalf("tenant b lists a's polls: %v", lst)
 	}
 	req := httptest.NewRequest("PATCH", "/polls/"+poll.ID+"/options/"+poll.Options[0].ID, nil)
-	req = req.WithContext(withActor(req.Context(), u))
+	req = testauth.As(req, u)
 	req.Body = http.NoBody
 	rec := httptest.NewRecorder()
 	b.Handler().ServeHTTP(rec, req)

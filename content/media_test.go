@@ -17,11 +17,14 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/s3"
 )
 
-var mediaAdmin = access.Actor{ID: "admin", Kind: "user"}
+// mediaAdmin holds every permission when it calls the module directly; over
+// HTTP the runtime's Authorizer decides.
+var mediaAdmin = testauth.Actor(access.Actor{ID: "admin", Kind: "user"}, testauth.All{})
 
 func insertPost(t *testing.T, rt *Runtime) string {
 	t.Helper()
@@ -39,7 +42,6 @@ func newMediaTest(t *testing.T, opts Options) (*Runtime, *testMedia) {
 	if opts.Media == nil {
 		opts.Media = m.options()
 	}
-	opts.Perms = Perms{PostWrite: "post", PollWrite: "poll"}
 	rt, _ := newTestRuntime(t, opts)
 	return rt, m
 }
@@ -49,7 +51,7 @@ func send(t *testing.T, rt *Runtime, actor access.Actor, method, path string, bo
 	t.Helper()
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest(method, path, bytes.NewReader(b))
-	req = req.WithContext(withActor(req.Context(), actor))
+	req = testauth.As(req, actor)
 	rec := httptest.NewRecorder()
 	rt.Handler().ServeHTTP(rec, req)
 	if rec.Code < 300 && out != nil {
@@ -267,8 +269,7 @@ func TestMedia_PostExposureCommitsWithContent(t *testing.T) {
 	ctx := context.Background()
 	ports := (&testMedia{}).options()
 	ports.PostKind = "article"
-	rt, pool := newTestRuntime(t, Options{Media: ports, Moderator: &fakeModerator{},
-		Perms: Perms{PostWrite: "post", ModerationReview: "review"}})
+	rt, pool := newTestRuntime(t, Options{Media: ports, Moderator: &fakeModerator{}})
 	reg, err := media.NewRegistry(media.Config{Namespace: testTenant, Kinds: []media.Kind{{Name: "article",
 		Uploads: []media.Upload{{Path: "images/{name}", Types: []string{"image/png"}, MaxBytes: 1024, Named: true, Max: 100}}}}})
 	if err != nil {
@@ -384,14 +385,14 @@ func TestMedia_CanUpload(t *testing.T) {
 			t.Errorf("%s: %+v %v, want %v", tc.ref, g, err, tc.want)
 		}
 	}
-	denied, _ := newTestRuntime(t, Options{Authz: denyAll{}, Media: (&testMedia{}).options(), Perms: Perms{PostWrite: "post"}})
-	if g, err := denied.CanUpload(ctx, mediaAdmin, media.UploadTarget{Ref: denied.Ref("post", insertPost(t, denied))}); err != nil || g.Allowed {
+	denied, _ := newTestRuntime(t, Options{Auth: testauth.Auth{Authz: denyAll{}}, Media: (&testMedia{}).options()})
+	if g, err := denied.CanUpload(ctx, denied.as(mediaAdmin), media.UploadTarget{Ref: denied.Ref("post", insertPost(t, denied))}); err != nil || g.Allowed {
 		t.Fatalf("without PostWrite: %+v %v", g, err)
 	}
 }
 
 func TestMedia_ImageRoutesRequirePerm(t *testing.T) {
-	rt, _ := newTestRuntime(t, Options{Authz: denyAll{}, Media: (&testMedia{}).options(), Perms: Perms{PostWrite: "post", PollWrite: "poll"}})
+	rt, _ := newTestRuntime(t, Options{Auth: testauth.Auth{Authz: denyAll{}}, Media: (&testMedia{}).options()})
 	id := insertPost(t, rt)
 	if code := send(t, rt, access.Actor{ID: "nonadmin"}, "PUT", "/posts/"+id+"/cover", image("i-"+uuid.NewString()), nil); code != http.StatusForbidden {
 		t.Fatalf("want 403, got %d", code)
@@ -402,9 +403,9 @@ func TestMedia_ImageRoutesRequirePerm(t *testing.T) {
 func TestMedia_ForeignTenantIsNotFound(t *testing.T) {
 	ctx := context.Background()
 	m := &testMedia{}
-	a, pool := newTestRuntime(t, Options{Tenant: "site_a", Media: m.options(), Perms: Perms{PostWrite: "post", PollWrite: "poll"}})
-	b, err := New(ctx, Options{Pool: pool, Schema: a.schema, Tenant: "site_b", Identity: &fakeIdentity{}, Authz: allowAll{}, Resolver: &fakeResolver{},
-		Media: m.options(), Perms: Perms{PostWrite: "post", PollWrite: "poll"}})
+	a, pool := newTestRuntime(t, Options{Tenant: "site_a", Media: m.options()})
+	b, err := New(ctx, Options{Pool: pool, Schema: a.schema, Tenant: "site_b", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{},
+		Media: m.options()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +430,7 @@ func TestMedia_ForeignTenantIsNotFound(t *testing.T) {
 // poll's while the poll exists, edited by PollWrite holders.
 func TestMediaResolverShowsPostFoldersLikeThePost(t *testing.T) {
 	ctx := context.Background()
-	rt, _ := newMediaTest(t, Options{Authz: postRoleAuthz{writers: map[string]bool{"admin": true}}})
+	rt, _ := newMediaTest(t, Options{Auth: testauth.Auth{Authz: postRoleAuthz{writers: map[string]bool{"admin": true}}}})
 	draft, published, deleted, author := insertPost(t, rt), insertPost(t, rt), insertPost(t, rt), insertPost(t, rt)
 	exec := func(sql string, args ...any) {
 		t.Helper()

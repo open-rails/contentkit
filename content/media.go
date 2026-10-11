@@ -12,7 +12,8 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// Media connects post and poll images to ContentKit media. The browser uploads
+// Media connects post and poll images, and authors' avatars, to ContentKit
+// media. The browser uploads
 // an image to a Named upload path of the post's or poll's item (the host's
 // media registry declares it and its public preset), and hands its name
 // ("i-{uuid}") to ContentKit: covers and poll images store the name, a post
@@ -31,9 +32,11 @@ type Media struct {
 }
 
 // MediaImages answers image queries from the current publications in one
-// read; *media.Manifests implements it.
+// read, and people's avatars (media.Config.Avatars) in another;
+// *media.Manifests implements it.
 type MediaImages interface {
 	Images(ctx context.Context, qs ...media.ImageQuery) ([][]media.PublicImage, error)
+	Avatars(ctx context.Context, ids ...string) ([]media.PublicImage, error)
 }
 
 // MediaReader reads an item as the media read API does; *media.Reader
@@ -102,22 +105,23 @@ func (rt *Runtime) deleteMediaTx(ctx context.Context, tx pgx.Tx, f folder, id st
 }
 
 // CanUpload is media's UploadAuthorizer for post and poll items: the actor
-// holds Perms.PostWrite or Perms.PollWrite and the post or poll exists in this
+// holds root:posts:write or root:polls:write and the post or poll exists in this
 // tenant. Every other target is refused; hosts route their own kinds elsewhere.
 func (rt *Runtime) CanUpload(ctx context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
 	ref := t.Ref
 	if rt.media == nil || ref.TenantID != rt.tenant || ref.ContentVersionID != nil {
 		return media.UploadGrant{}, nil
 	}
-	var perm, table string
+	var perm access.Permission
+	var table string
 	switch ref.ContentKind {
 	case rt.media.PostKind:
-		perm, table = rt.perms.PostWrite, rt.store.t.posts
+		perm, table = access.PostsWrite, rt.store.t.posts
 	case rt.media.PollKind:
 		if !uuidRe.MatchString(ref.ContentID) {
 			return media.UploadGrant{}, nil
 		}
-		perm, table = rt.perms.PollWrite, rt.store.t.pollQuestions
+		perm, table = access.PollsWrite, rt.store.t.pollQuestions
 	default:
 		return media.UploadGrant{}, nil
 	}
@@ -143,9 +147,9 @@ var (
 // kinds: route the host registry's Hooks.Resolver to it for Media.PostKind and
 // PollKind, as CanUpload is routed. A post's folder shows like the post: a
 // published one to everyone, a draft, scheduled, held or rejected one only to
-// its author and PostWrite holders, its editors (an editor read gives them
+// its author and root:posts:write holders, its editors (an editor read gives them
 // the images before anyone else sees them), a deleted one to no one. A poll's
-// folder shows while the poll exists, edited by PollWrite holders. Other refs
+// folder shows while the poll exists, edited by root:polls:write holders. Other refs
 // are omitted (denied).
 func (rt *Runtime) MediaResolver() access.ContentResolver { return mediaResolver{rt} }
 
@@ -172,9 +176,9 @@ func (m mediaResolver) Resolve(ctx context.Context, refs []contentref.ContentRef
 		}
 	}
 	signedIn := !actor.Anonymous && actor.ID != ""
-	can := func(perm string) bool { return signedIn && rt.requirePerm(ctx, actor, perm) == nil }
+	can := func(perm access.Permission) bool { return signedIn && rt.requirePerm(ctx, actor, perm) == nil }
 	if len(posts) > 0 {
-		postWrite := can(rt.perms.PostWrite)
+		postWrite := can(access.PostsWrite)
 		rows, err := rt.store.pool.Query(ctx, `SELECT id, author_id, NOT is_draft AND moderation = 'approved' AND (live_at IS NULL OR live_at <= now())
 			FROM `+rt.store.t.posts+` WHERE tenant_id = $1 AND id = ANY($2) AND deleted_at IS NULL`, rt.tenant, posts)
 		if err != nil {
@@ -197,7 +201,7 @@ func (m mediaResolver) Resolve(ctx context.Context, refs []contentref.ContentRef
 		}
 	}
 	if len(polls) > 0 {
-		pollWrite := can(rt.perms.PollWrite)
+		pollWrite := can(access.PollsWrite)
 		rows, err := rt.store.pool.Query(ctx, `SELECT id::text FROM `+rt.store.t.pollQuestions+`
 			WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL`, rt.tenant, polls)
 		if err != nil {

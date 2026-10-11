@@ -18,25 +18,23 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
 // postPerm is the opaque PostWrite permission wired for the posts tests.
-const postPerm = "post:write"
+const postPerm = string(access.PostsWrite)
 
 // newPostRuntime builds a Runtime with PostWrite set (an unset perm fails closed,
 // so allowAll alone would still 403). Mirrors newTestRuntime otherwise.
 func newPostRuntime(t *testing.T, opts Options) (*Runtime, *pgxpool.Pool) {
 	t.Helper()
-	if opts.Perms.PostWrite == "" {
-		opts.Perms.PostWrite = postPerm
-	}
 	return newTestRuntime(t, opts)
 }
 
 // postMux mounts only the posts routes.
 func postMux(rt *Runtime) http.Handler {
 	mux := http.NewServeMux()
-	httpapi.Mount(mux, newPosts(rt), postRoutes)
+	httpapi.Mount(mux, rt.guard.Guard, newPosts(rt), postRoutes)
 	return mux
 }
 
@@ -71,7 +69,7 @@ func doJSON(t *testing.T, h http.Handler, actor access.Actor, method, target str
 		}
 	}
 	req := httptest.NewRequest(method, target, &buf)
-	req = req.WithContext(withActor(req.Context(), actor))
+	req = testauth.As(req, actor)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
@@ -175,7 +173,7 @@ func TestPostPermissionGate(t *testing.T) {
 	body := PostInput{Title: ptr("x"), Body: ptr("y")}
 
 	// denyAll: every write is 403.
-	rtDeny, _ := newPostRuntime(t, Options{Authz: denyAll{}})
+	rtDeny, _ := newPostRuntime(t, Options{Auth: testauth.Auth{Authz: denyAll{}}})
 	hDeny := postMux(rtDeny)
 	if rec := doJSON(t, hDeny, author, "POST", "/posts", body); rec.Code != http.StatusForbidden {
 		t.Fatalf("create under denyAll: status %d, want 403", rec.Code)
@@ -187,17 +185,17 @@ func TestPostPermissionGate(t *testing.T) {
 		t.Fatalf("delete under denyAll: status %d, want 403", rec.Code)
 	}
 
-	// FAIL-CLOSED: an authz error must NOT allow the write.
-	rtErr, _ := newPostRuntime(t, Options{Authz: postErrAuthz{}})
-	if rec := doJSON(t, postMux(rtErr), author, "POST", "/posts", body); rec.Code != http.StatusForbidden {
-		t.Fatalf("create under authz error: status %d, want 403 (fail-closed)", rec.Code)
+	// FAIL-CLOSED: a failed permission check never allows the write: 503.
+	rtErr, _ := newPostRuntime(t, Options{Auth: testauth.Auth{Authz: postErrAuthz{}}})
+	if rec := doJSON(t, postMux(rtErr), author, "POST", "/posts", body); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("create under authz error: status %d, want 503 (fail-closed)", rec.Code)
 	}
 }
 
 func TestPostDraftVisibility(t *testing.T) {
 	// One runtime; "editor" holds PostWrite, "reader" does not.
 	authz := postRoleAuthz{writers: map[string]bool{"editor": true}}
-	rt, _ := newPostRuntime(t, Options{Authz: authz})
+	rt, _ := newPostRuntime(t, Options{Auth: testauth.Auth{Authz: authz}})
 	h := postMux(rt)
 	editor := access.Actor{ID: "editor", Kind: "user"}
 	reader := access.Actor{ID: "reader", Kind: "user"}
@@ -504,7 +502,7 @@ func TestPostWritesQueueKeywordDocuments(t *testing.T) {
 // newest first, filtered by language and draft state; only PostWrite holders.
 func TestPostAdminList(t *testing.T) {
 	authz := postRoleAuthz{writers: map[string]bool{"editor": true}}
-	rt, _ := newPostRuntime(t, Options{Authz: authz})
+	rt, _ := newPostRuntime(t, Options{Auth: testauth.Auth{Authz: authz}})
 	h := postMux(rt)
 	editor := access.Actor{ID: "editor", Kind: "user"}
 	create := func(in PostInput) Post {

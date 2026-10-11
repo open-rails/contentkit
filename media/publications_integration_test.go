@@ -401,7 +401,7 @@ func TestLegacyItemUpgrade(t *testing.T) {
 	if _, _, err := f.ms.Get(ctx, l.ref); !errors.Is(err, media.ErrUpgradeRequired) {
 		t.Fatalf("a v2 manifest read: %v", err)
 	}
-	srv := httptest.NewServer(f.rd.Handler(media.HandlerOptions{Identity: identity{f.editor}, Limit: media.RateLimit{Disabled: true}}))
+	srv := httptest.NewServer(f.rd.Handler(media.HandlerOptions{Auth: identity{f.editor}, Limit: media.RateLimit{Disabled: true}}))
 	defer srv.Close()
 	resp, err := http.Get(srv.URL + "/gallery/" + cid(1))
 	if err != nil {

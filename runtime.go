@@ -8,10 +8,11 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/open-rails/helpers/auth"
+	"github.com/open-rails/helpers/userinfo"
 	"github.com/open-rails/migratekit"
 	"github.com/open-rails/migratekit/chmigrate"
 
-	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
@@ -30,18 +31,31 @@ import (
 // the keyword queue.
 type RuntimeConfig struct {
 	EmbeddedConfig
+	// Auth says who a request is (helpers/auth; AuthKit's
+	// ak.Authenticator()). Every module's routes are gated by it; ContentKit
+	// decides what each admits and answers refusals itself. Required.
+	Auth auth.Authenticator
+	// UserInfo is the host's directory (helpers/userinfo; AuthKit's
+	// ak.UserInfo()): authors' names and usernames.
+	UserInfo userinfo.Lookup
+	// Content is the interaction module; its Auth and UserInfo are the ones
+	// above, so leave them unset.
 	Content content.Options
 
-	// Optional modules Handler serves, each at its fixed sub-path. They
-	// identify the caller with Content.Identity.
+	// Optional modules Handler serves, each at its fixed sub-path.
 	Uploads *media.Uploads // the upload API at /media/upload
 	Reader  *media.Reader  // the read API at /media
 	// ReadLimit is the read API's per-viewer limit (media.HandlerOptions.Limit).
 	ReadLimit media.RateLimit
 	Codes     *contenturl.Router // GET /codes/{code}
-	// Taxonomy is taxonomy.Handler(store): the admin API at /taxonomy, for
-	// actors holding Content.Perms.Taxonomy.
-	Taxonomy http.Handler
+	// Taxonomy serves the store's admin API at /taxonomy, for staff holding
+	// access.TaxonomyWrite.
+	Taxonomy TaxonomyAdmin
+}
+
+// TaxonomyAdmin is *taxonomy.Store: the admin API it serves.
+type TaxonomyAdmin interface {
+	Handler(a auth.Authenticator) (http.Handler, error)
 }
 
 // Runtime is the one surface a host wires: the Hub (search, typeahead,
@@ -55,11 +69,15 @@ type Runtime struct {
 
 // NewRuntime builds the hub and the content module over the host pool.
 func NewRuntime(ctx context.Context, cfg RuntimeConfig) (*Runtime, error) {
+	c := cfg.Content
+	if c.Auth != nil || c.UserInfo != nil {
+		return nil, fmt.Errorf("contentkit: set RuntimeConfig.Auth and UserInfo, not Content's")
+	}
+	c.Auth, c.UserInfo = cfg.Auth, cfg.UserInfo
 	hub, err := NewEmbedded(cfg.EmbeddedConfig)
 	if err != nil {
 		return nil, err
 	}
-	c := cfg.Content
 	if c.Pool == nil {
 		c.Pool = cfg.PG
 	}
@@ -92,12 +110,17 @@ func NewRuntime(ctx context.Context, cfg RuntimeConfig) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{EmbeddedHub: hub, Content: rt, handler: handler(cfg, c, rt)}, nil
+	h, err := handler(cfg, c, rt)
+	if err != nil {
+		return nil, err
+	}
+	return &Runtime{EmbeddedHub: hub, Content: rt, handler: h}, nil
 }
 
 // Handler serves ContentKit's HTTP API: every configured module under one
-// prefix, each at its fixed sub-path (docs/api/routes.md). Mount it once,
-// after the host's auth middleware put the actor in the context:
+// prefix, each at its fixed sub-path (docs/api/routes.md), each route behind
+// its tier's gate over RuntimeConfig.Auth. Mount it once; no auth middleware
+// goes in front:
 //
 //	mux.Handle("/api/contentkit/", http.StripPrefix("/api/contentkit", rt.Handler()))
 //
@@ -106,7 +129,7 @@ func NewRuntime(ctx context.Context, cfg RuntimeConfig) (*Runtime, error) {
 // taxonomy.Handler) at paths of its choosing.
 func (r *Runtime) Handler() http.Handler { return r.handler }
 
-func handler(cfg RuntimeConfig, c content.Options, rt *content.Runtime) http.Handler {
+func handler(cfg RuntimeConfig, c content.Options, rt *content.Runtime) (http.Handler, error) {
 	mux := http.NewServeMux()
 	mount := func(m httpapi.Module, h http.Handler) {
 		if p := m.Prefix(); p != "" {
@@ -115,22 +138,22 @@ func handler(cfg RuntimeConfig, c content.Options, rt *content.Runtime) http.Han
 	}
 	mux.Handle("/", rt.Handler())
 	if cfg.Uploads != nil {
-		mount(httpapi.Upload, media.UploadHandler(cfg.Uploads, media.UploadHandlerOptions{Logger: c.Logger,
-			Actor: func(r *http.Request) (access.Actor, bool) {
-				a, ok := c.Identity.Actor(r.Context())
-				return a, ok && !a.Anonymous && a.ID != ""
-			}}))
+		mount(httpapi.Upload, media.UploadHandler(cfg.Uploads, media.UploadHandlerOptions{Auth: c.Auth, Logger: c.Logger}))
 	}
 	if cfg.Reader != nil {
-		mount(httpapi.Media, cfg.Reader.Handler(media.HandlerOptions{Identity: c.Identity, Logger: c.Logger, Limit: cfg.ReadLimit}))
+		mount(httpapi.Media, cfg.Reader.Handler(media.HandlerOptions{Auth: c.Auth, Logger: c.Logger, Limit: cfg.ReadLimit}))
 	}
 	if cfg.Codes != nil {
 		mount(httpapi.Codes, cfg.Codes.Handler())
 	}
 	if cfg.Taxonomy != nil {
-		mount(httpapi.Taxonomy, rt.Guard(c.Perms.Taxonomy, cfg.Taxonomy))
+		h, err := cfg.Taxonomy.Handler(c.Auth)
+		if err != nil {
+			return nil, err
+		}
+		mount(httpapi.Taxonomy, h)
 	}
-	return mux
+	return mux, nil
 }
 
 // WorkerOptions returns the host's keyword worker options extended with

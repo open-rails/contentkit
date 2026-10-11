@@ -14,6 +14,7 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
+	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -59,7 +60,8 @@ func TestRuntimeErasureIncludesContentPlaneIntegration(t *testing.T) {
 			provider := &runtimeRetainingPolicy{}
 			rt, err := NewRuntime(ctx, RuntimeConfig{
 				EmbeddedConfig: EmbeddedConfig{PG: pool, PGSchema: searchSchema, Tenant: testTenant, CH: conn, CHDatabase: chDB},
-				Content:        content.Options{Schema: host, Identity: ctxIdentity{}, Authz: allowAuthz{}, Resolver: routeResolver{}, ContentKinds: []string{"gallery"}, Canonicalizer: content.ContentCanonicalizerFunc(stripLanguage), Moderator: provider, Classifier: provider, ProviderDataEraser: provider, Perms: content.Perms{PollWrite: "poll"}},
+				Auth:           testauth.Auth{Authz: allowAuthz{}},
+				Content:        content.Options{Schema: host, Resolver: routeResolver{}, ContentKinds: []string{"gallery"}, Canonicalizer: content.ContentCanonicalizerFunc(stripLanguage), Moderator: provider, Classifier: provider, ProviderDataEraser: provider},
 			})
 			if err != nil {
 				t.Fatal(err)

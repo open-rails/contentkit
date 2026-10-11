@@ -12,6 +12,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
 // favIsFavorited is the batch check narrowed to one target for terse assertions.
@@ -160,14 +161,14 @@ func TestFavorites_AnonymousRejected(t *testing.T) {
 	res.set("widget", cid(1), true, true)
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"widget"}})
 	mux := http.NewServeMux()
-	httpapi.Mount(mux, newFavorites(rt), favoriteRoutes)
+	httpapi.Mount(mux, rt.guard.Guard, newFavorites(rt), favoriteRoutes)
 
 	anon := access.Actor{Anonymous: true, IP: "10.0.0.9"}
 	for _, c := range []struct{ method, path string }{
 		{"POST", "/widget/" + cid(1) + "/favorite"}, {"DELETE", "/widget/" + cid(1) + "/favorite"}, {"GET", "/favorites"},
 	} {
 		req := httptest.NewRequest(c.method, c.path, nil)
-		req = req.WithContext(withActor(req.Context(), anon))
+		req = testauth.As(req, anon)
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, req)
 		if w.Code != http.StatusUnauthorized {
@@ -175,7 +176,7 @@ func TestFavorites_AnonymousRejected(t *testing.T) {
 		}
 	}
 	req := httptest.NewRequest("POST", "/widget/"+cid(1)+"/favorite", nil)
-	req = req.WithContext(withActor(req.Context(), access.Actor{ID: "u1", Kind: "user"}))
+	req = testauth.As(req, access.Actor{ID: "u1", Kind: "user"})
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {

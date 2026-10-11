@@ -360,7 +360,7 @@ func TestListNodes_TenantScoping(t *testing.T) {
 func TestListNodes_HTTP(t *testing.T) {
 	ctx := context.Background()
 	_, _, s := catalogFixture(t, ctx)
-	srv := httptest.NewServer(Handler(s))
+	srv := httptest.NewServer(adminHandler(t, s))
 	t.Cleanup(srv.Close)
 
 	get := func(query string) NodePage {

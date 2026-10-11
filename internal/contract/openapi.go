@@ -218,9 +218,12 @@ func (m *model) operation(r httpapi.Spec) *obj {
 	}
 	responses.set("default", newObj("$ref", "#/components/responses/Error"))
 	op.set("responses", responses)
-	if r.Auth == httpapi.Public {
+	switch r.Auth {
+	case httpapi.Open:
+		op.set("security", []any{newObj()})
+	case httpapi.Public:
 		op.set("security", []any{newObj(), newObj("host", []string{})})
-	} else {
+	default:
 		op.set("security", []any{newObj("host", []string{})})
 	}
 	op.set("x-contentkit-module", string(r.Module))
@@ -291,7 +294,7 @@ func (m *model) openAPI() ([]byte, error) {
 			"responses", newObj("Error", newObj("description", "A refusal: a code of the operation's x-contentkit-errors or of an x-contentkit-error-sets set it names.",
 				"content", newObj("application/json", newObj("schema", newObj("$ref", "#/components/schemas/ErrorReply"))))),
 			"securitySchemes", newObj("host", newObj("type", "http", "scheme", "bearer",
-				"description", "Whatever the host's auth middleware accepts: ContentKit reads the actor it puts in the request context.")),
+				"description", "A credential the host's auth.Authenticator verifies (AuthKit's access tokens and API keys): ContentKit asks it who the request is.")),
 		),
 		"x-contentkit-modules", modules,
 		"x-contentkit-error-sets", sets,

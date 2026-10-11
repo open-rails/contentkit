@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/open-rails/helpers/auth"
 
 	"github.com/open-rails/contentkit/media"
 )
@@ -31,6 +32,14 @@ var (
 	errUnauthorized   = httpError{status: http.StatusUnauthorized, msg: "authentication required"}
 	errForbidden      = httpError{status: http.StatusForbidden, msg: "forbidden"}
 )
+
+// AuthError is a permission check the host's auth could not answer: 401
+// unauthorized when the credential ended since the request was verified
+// (auth.ErrExpired, auth.ErrRevoked), else 503 unavailable. Never a grant.
+type AuthError struct{ Err error }
+
+func (e *AuthError) Error() string { return "content: permission check failed: " + e.Err.Error() }
+func (e *AuthError) Unwrap() error { return e.Err }
 
 // TooLongError refuses a comment longer than Max characters. -> 422 comment_too_long
 type TooLongError struct{ Max int }
@@ -69,7 +78,10 @@ const (
 	// CodeTenantMismatch: a host port answered with another tenant's data.
 	// A configuration fault, not a client fault; the cause stays in the log.
 	CodeTenantMismatch = "tenant_mismatch"
-	CodeInternal       = "internal_error"
+	// CodeUnavailable: the host's auth could not answer a permission check;
+	// retry. -> 503
+	CodeUnavailable = "unavailable"
+	CodeInternal    = "internal_error"
 )
 
 // errorBody is ContentKit's flat error shape.
@@ -129,7 +141,13 @@ func writeErr(w http.ResponseWriter, err error) {
 func classifyErr(err error) (status int, code, msg string) {
 	var banned *BannedError
 	var long *TooLongError
+	var authErr *AuthError
 	switch {
+	case errors.As(err, &authErr):
+		if errors.Is(err, auth.ErrExpired) || errors.Is(err, auth.ErrRevoked) {
+			return http.StatusUnauthorized, CodeUnauthorized, "authentication required"
+		}
+		return http.StatusServiceUnavailable, CodeUnavailable, "authentication is unavailable; retry"
 	case errors.As(err, &long):
 		return http.StatusUnprocessableEntity, CodeCommentTooLong, long.Error()
 	case errors.Is(err, ErrRateLimited):

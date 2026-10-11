@@ -23,7 +23,7 @@ import (
 // signal planes. Every post write queues the post as a keyword document
 // (index.go).
 //
-// Writes are gated by the opaque host permission Perms.PostWrite (fail-closed).
+// Writes are gated by the opaque host permission root:posts:write (fail-closed).
 // Post like/dislike reuses reactions.applyTx; posts only denormalize
 // total_likes/total_dislikes.
 type posts struct {
@@ -104,7 +104,7 @@ var postRoutes = []httpapi.Route[*posts]{
 		Query:     append([]httpapi.Param{httpapi.Text("language", "only posts in this language"), sortParam}, httpapi.Page...),
 		Responses: []httpapi.Reply{httpapi.OK([]Post{})}},
 		Serve: httpapi.H((*posts).handleList)},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/posts/admin", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/posts/admin", Resource: "posts", Auth: httpapi.Staff, Perm: string(access.PostsWrite),
 		Doc: "Every post, newest first: drafts, scheduled, held and rejected ones included; deleted ones on their own.",
 		Query: append([]httpapi.Param{httpapi.Text("language", "only posts in this language"),
 			httpapi.Bool("draft", "true: only drafts; false: only posts that are not drafts"),
@@ -113,35 +113,35 @@ var postRoutes = []httpapi.Route[*posts]{
 		Responses: []httpapi.Reply{httpapi.OK([]Post{})}},
 		Serve: httpapi.H((*posts).handleAdminList)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/posts/{id}", Resource: "posts", Auth: httpapi.Public,
-		Doc:       "A post. A draft, scheduled, held or rejected post is shown only to its author and PostWrite holders.",
+		Doc:       "A post. A draft, scheduled, held or rejected post is shown only to its author and root:posts:write holders.",
 		Responses: []httpapi.Reply{httpapi.OK(Post{})}, Errors: []string{CodeNotFound}},
 		Serve: httpapi.H((*posts).handleGet)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/posts", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/posts", Resource: "posts", Auth: httpapi.Staff, Perm: string(access.PostsWrite),
 		Doc:       "Creates a post; 202 when the moderator holds it for review.",
 		Request:   PostInput{},
 		Responses: []httpapi.Reply{httpapi.Created(Post{}), httpapi.Accepted(Post{})},
 		Errors:    []string{CodeConflict, CodeForbidden, CodeModerationRejected}},
 		Serve: httpapi.H((*posts).handleCreate)},
-	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/posts/{id}", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
+	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/posts/{id}", Resource: "posts", Auth: httpapi.Staff, Perm: string(access.PostsWrite),
 		Doc:       "Updates a post's given fields; 202 when the moderator holds the new text.",
 		Request:   PostInput{},
 		Responses: []httpapi.Reply{httpapi.OK(Post{}), httpapi.Accepted(Post{})},
 		Errors:    []string{CodeConflict, CodeForbidden, CodeModerationRejected, CodeNotFound}},
 		Serve: httpapi.H((*posts).handleUpdate)},
-	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/posts/{id}", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
+	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/posts/{id}", Resource: "posts", Auth: httpapi.Staff, Perm: string(access.PostsWrite),
 		Doc:       "Deletes a post.",
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeNotFound}},
 		Serve: httpapi.H((*posts).handleDelete)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/posts/{id}/restore", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/posts/{id}/restore", Resource: "posts", Auth: httpapi.Staff, Perm: string(access.PostsWrite),
 		Doc:       "Restores a deleted post as it was; 409 when another live post took its slug.",
 		Responses: []httpapi.Reply{httpapi.OK(Post{})}, Errors: []string{CodeConflict, CodeNotFound}},
 		Serve: httpapi.H((*posts).handleRestore)},
-	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/posts/{id}/cover", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
+	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/posts/{id}/cover", Resource: "posts", Auth: httpapi.Staff, Perm: string(access.PostsWrite),
 		Doc:       "Sets the cover to an inline image uploaded to the post's media folder; \"\" clears it.",
 		Request:   ImageInput{},
 		Responses: []httpapi.Reply{httpapi.OK(PostCover{})}, Errors: []string{CodeNotConfigured, CodeNotFound}},
 		Serve: httpapi.H((*posts).handleCover)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/posts/{id}/images", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/posts/{id}/images", Resource: "posts", Auth: httpapi.Staff, Perm: string(access.PostsWrite),
 		Doc:       "The reference to store in the body for an inline image uploaded to the post's media folder, and a URL that shows it to the editor now.",
 		Request:   ImageInput{},
 		Responses: []httpapi.Reply{httpapi.OK(InlineImage{})}, Errors: []string{CodeNotConfigured, CodeNotFound}},
@@ -184,11 +184,11 @@ func decodeImage(req *http.Request) (string, error) {
 }
 
 // handleImage answers an inline image's body reference and preview for the
-// post's editor. PostWrite-gated.
+// post's editor. root:posts:write-gated.
 func (p *posts) handleImage(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	actor := p.rt.actor(ctx)
-	if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PostWrite); err != nil {
+	if err := p.rt.requirePerm(ctx, actor, access.PostsWrite); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -218,10 +218,10 @@ func (p *posts) handleImage(w http.ResponseWriter, req *http.Request) {
 }
 
 // handleCover sets (or with "" clears) the post cover to an inline image of
-// the post's media folder. PostWrite-gated.
+// the post's media folder. root:posts:write-gated.
 func (p *posts) handleCover(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
-	if err := p.rt.requirePerm(ctx, p.rt.actor(ctx), p.rt.perms.PostWrite); err != nil {
+	if err := p.rt.requirePerm(ctx, p.rt.actor(ctx), access.PostsWrite); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -272,7 +272,7 @@ func (p *posts) liveID(ctx context.Context, id string) (string, error) {
 func (p *posts) handleCreate(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	actor := p.rt.actor(ctx)
-	if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PostWrite); err != nil {
+	if err := p.rt.requirePerm(ctx, actor, access.PostsWrite); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -366,7 +366,7 @@ func (p *posts) screen(ctx context.Context, actor access.Actor, id, title, body 
 func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	actor := p.rt.actor(ctx)
-	if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PostWrite); err != nil {
+	if err := p.rt.requirePerm(ctx, actor, access.PostsWrite); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -489,7 +489,7 @@ func (p *posts) handleUpdate(w http.ResponseWriter, req *http.Request) {
 func (p *posts) handleDelete(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	actor := p.rt.actor(ctx)
-	if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PostWrite); err != nil {
+	if err := p.rt.requirePerm(ctx, actor, access.PostsWrite); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -526,11 +526,11 @@ func (p *posts) handleDelete(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusNoContent, nil)
 }
 
-// handleRestore undeletes a post (PostWrite): its keyword document and public
+// handleRestore undeletes a post (root:posts:write): its keyword document and public
 // media follow, and its code's URL serves again.
 func (p *posts) handleRestore(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
-	if err := p.rt.requirePerm(ctx, p.rt.actor(ctx), p.rt.perms.PostWrite); err != nil {
+	if err := p.rt.requirePerm(ctx, p.rt.actor(ctx), access.PostsWrite); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -587,10 +587,10 @@ func (p *posts) handleGet(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// A published post is public; a draft, held or rejected post is visible
-	// only to its author (with the moderation reason) or a PostWrite holder,
+	// only to its author (with the moderation reason) or a root:posts:write holder,
 	// else hidden as 404.
 	if !isPublished(v) && (actor.Anonymous || actor.ID == "" || actor.ID != v.AuthorID) {
-		if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PostWrite); err != nil {
+		if err := p.rt.requirePerm(ctx, actor, access.PostsWrite); err != nil {
 			writeErr(w, ErrNotFound)
 			return
 		}
@@ -613,10 +613,10 @@ func (p *posts) handleList(w http.ResponseWriter, req *http.Request) {
 
 // handleAdminList lists posts for staff, newest first: the live ones, or with
 // deleted=true the deleted ones; q searches title, excerpt and body.
-// PostWrite-gated.
+// root:posts:write-gated.
 func (p *posts) handleAdminList(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
-	if err := p.rt.requirePerm(ctx, p.rt.actor(ctx), p.rt.perms.PostWrite); err != nil {
+	if err := p.rt.requirePerm(ctx, p.rt.actor(ctx), access.PostsWrite); err != nil {
 		writeErr(w, err)
 		return
 	}

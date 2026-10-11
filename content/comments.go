@@ -180,8 +180,9 @@ func (c *comments) present(ctx context.Context, actor access.Actor, cm Comment) 
 	if cm.UserID != "" {
 		ids = []string{cm.UserID}
 	}
-	if err := errors.Join(c.enrichAuthors(ctx, list, ids), c.attachMine(ctx, actor, list)); err != nil {
-		c.rt.log.WarnContext(ctx, "content: comment author lookup failed", "err", err.Error())
+	c.enrichAuthors(ctx, list, ids)
+	if err := c.attachMine(ctx, actor, list); err != nil {
+		c.rt.log.WarnContext(ctx, "content: comment reaction lookup failed", "err", err.Error())
 	}
 	return list[0]
 }
@@ -345,9 +346,7 @@ func (c *comments) latest(ctx context.Context, actor access.Actor, limit, offset
 			authorIDs = append(authorIDs, flat[i].UserID)
 		}
 	}
-	if err := c.enrichAuthors(ctx, flat, authorIDs); err != nil {
-		return nil, err
-	}
+	c.enrichAuthors(ctx, flat, authorIDs)
 	if err := c.attachMine(ctx, actor, flat); err != nil {
 		return nil, err
 	}
@@ -416,9 +415,7 @@ func (c *comments) adminList(ctx context.Context, kind string, limit, offset int
 	if len(out) == 0 {
 		return []AdminComment{}, nil
 	}
-	if err := c.enrichAuthors(ctx, flat, authorIDs); err != nil {
-		return nil, err
-	}
+	c.enrichAuthors(ctx, flat, authorIDs)
 	for i := range out {
 		out[i].Author = flat[i].Author
 	}
@@ -484,24 +481,16 @@ func (c *comments) hydrate(ctx context.Context, actor access.Actor, rows pgx.Row
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := c.enrichAuthors(ctx, out, authorIDs); err != nil {
-		return nil, err
-	}
+	c.enrichAuthors(ctx, out, authorIDs)
 	if err := c.attachMine(ctx, actor, out); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// enrichAuthors batch-loads display data for the non-tombstoned authors.
-func (c *comments) enrichAuthors(ctx context.Context, list []Comment, authorIDs []string) error {
-	if len(authorIDs) == 0 {
-		return nil
-	}
-	users, err := c.rt.users.UsersByIDs(ctx, dedup(authorIDs))
-	if err != nil {
-		return err
-	}
+// enrichAuthors shows the non-tombstoned authors (Runtime.authors).
+func (c *comments) enrichAuthors(ctx context.Context, list []Comment, authorIDs []string) {
+	users := c.rt.authors(ctx, authorIDs)
 	for i := range list {
 		if list[i].Deleted || list[i].UserID == "" {
 			continue
@@ -511,7 +500,6 @@ func (c *comments) enrichAuthors(ctx context.Context, list []Comment, authorIDs 
 			list[i].Author = &pu
 		}
 	}
-	return nil
 }
 
 // attachMine sets each comment's Mine via one query over the comment kind.
@@ -684,7 +672,7 @@ func (c *comments) loadForWrite(ctx context.Context, actor access.Actor, cid str
 	if t.ownerID != nil && actor.ID != "" && !actor.Anonymous && actor.ID == *t.ownerID {
 		return t, nil
 	}
-	if err := c.rt.requirePerm(ctx, actor, c.rt.perms.CommentModerate); err != nil {
+	if err := c.rt.requirePerm(ctx, actor, access.CommentsModerate); err != nil {
 		return writeTarget{}, err
 	}
 	return t, nil
@@ -793,12 +781,12 @@ var commentRoutes = []httpapi.Route[*comments]{
 		Doc:   "The newest published comments across the tenant, with their targets; a page may under-fill.",
 		Query: httpapi.Page, Responses: []httpapi.Reply{httpapi.OK([]FeedItem{})}},
 		Serve: httpapi.H((*comments).handleLatest)},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/comments/admin", Resource: "comments", Auth: httpapi.Staff, Perm: "CommentModerate",
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/comments/admin", Resource: "comments", Auth: httpapi.Staff, Perm: string(access.CommentsModerate),
 		Doc:       "Every comment, newest first, deleted, held and rejected ones with their real bodies.",
 		Query:     append([]httpapi.Param{httpapi.Text("content_kind", "only comments on this kind")}, httpapi.Page...),
 		Responses: []httpapi.Reply{httpapi.OK([]AdminComment{})}},
 		Serve: httpapi.H((*comments).handleAdminList)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/comments/{cid}/restore", Resource: "comments", Auth: httpapi.Staff, Perm: "CommentModerate",
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/comments/{cid}/restore", Resource: "comments", Auth: httpapi.Staff, Perm: string(access.CommentsModerate),
 		Doc:       "Restores a deleted comment.",
 		Responses: []httpapi.Reply{httpapi.OK(Restored{})}, Errors: []string{CodeNotFound}},
 		Serve: httpapi.H((*comments).handleRestore)},
@@ -807,13 +795,13 @@ var commentRoutes = []httpapi.Route[*comments]{
 		Query: httpapi.Page, Responses: []httpapi.Reply{httpapi.OK([]Comment{})}, Errors: []string{CodeNotFound}},
 		Serve: httpapi.H((*comments).handleReplies)},
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/comments/{cid}", Resource: "comments", Auth: httpapi.Public,
-		Doc:       "Edits a comment: its author, or a CommentModerate holder. 202 when the moderator holds the new text.",
+		Doc:       "Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text.",
 		Request:   CommentEdit{},
 		Responses: []httpapi.Reply{httpapi.OK(Comment{}), httpapi.Accepted(Comment{})},
 		Errors:    []string{CodeCommentBanned, CodeCommentTooLong, CodeConflict, CodeForbidden, CodeModerationRejected, CodeNotFound}},
 		Serve: httpapi.H((*comments).handleEdit)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/comments/{cid}", Resource: "comments", Auth: httpapi.Public,
-		Doc:       "Deletes a comment, leaving a tombstone: its author, or a CommentModerate holder.",
+		Doc:       "Deletes a comment, leaving a tombstone: its author, or a root:comments:moderate holder.",
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeForbidden, CodeNotFound}},
 		Serve: httpapi.H((*comments).handleDelete)},
 	commentReaction(httpapi.POST, "like", "Likes a comment.", 1),
@@ -843,10 +831,10 @@ func (c *comments) handleList(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, orEmpty(list))
 }
 
-// handleAdminList serves the moderation queue (CommentModerate-gated).
+// handleAdminList serves the moderation queue (root:comments:moderate-gated).
 func (c *comments) handleAdminList(w http.ResponseWriter, req *http.Request) {
 	actor := c.rt.actor(req.Context())
-	if err := c.rt.requirePerm(req.Context(), actor, c.rt.perms.CommentModerate); err != nil {
+	if err := c.rt.requirePerm(req.Context(), actor, access.CommentsModerate); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -861,7 +849,7 @@ func (c *comments) handleAdminList(w http.ResponseWriter, req *http.Request) {
 
 func (c *comments) handleRestore(w http.ResponseWriter, req *http.Request) {
 	actor := c.rt.actor(req.Context())
-	if err := c.rt.requirePerm(req.Context(), actor, c.rt.perms.CommentModerate); err != nil {
+	if err := c.rt.requirePerm(req.Context(), actor, access.CommentsModerate); err != nil {
 		writeErr(w, err)
 		return
 	}

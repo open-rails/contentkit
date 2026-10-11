@@ -10,27 +10,36 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/open-rails/helpers/auth"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
 // UploadHandlerOptions configure UploadHandler.
 type UploadHandlerOptions struct {
-	Actor  func(*http.Request) (access.Actor, bool) // the host's authenticated caller; false answers 401
-	Logger *slog.Logger                             // 5xx causes; default slog.Default()
+	// Auth says who a request is (helpers/auth; AuthKit's
+	// ak.Authenticator()): every route takes a signed-in person. Required.
+	Auth   auth.Authenticator
+	Logger *slog.Logger // 5xx causes; default slog.Default()
 }
 
 // UploadHandler serves the upload API the browser SDK calls (uploadRoutes).
 // contentkit.Runtime.Handler serves it at /media/upload; a host mounting it
-// alone puts it under a prefix behind its auth. Errors are ErrorReply with the
-// status of its code (Retry-After on 429).
+// alone puts it under a prefix. It panics without UploadHandlerOptions.Auth.
+// Errors are ErrorReply with the status of its code (Retry-After on 429).
 func UploadHandler(u *Uploads, o UploadHandlerOptions) http.Handler {
+	if err := gate.Check(o.Auth); err != nil {
+		panic("media: UploadHandlerOptions.Auth: " + err.Error())
+	}
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
 	mux := http.NewServeMux()
-	httpapi.Mount(mux, uploadHandler{u, o}, uploadRoutes)
+	g := &gate.Gate{Auth: o.Auth, Log: o.Logger}
+	httpapi.Mount(mux, g.Guard, uploadHandler{u, o}, uploadRoutes)
 	return mux
 }
 
@@ -169,11 +178,7 @@ func uploadInfo(f File) FileInfo {
 }
 
 func (h uploadHandler) frame(w http.ResponseWriter, r *http.Request) {
-	actor, ok := h.o.Actor(r)
-	if !ok {
-		writeJSON(w, http.StatusUnauthorized, ErrorReply{Error: "authentication required", Code: "unauthorized"})
-		return
-	}
+	actor := gate.Actor(r.Context())
 	q := r.URL.Query()
 	t, err := strconv.ParseFloat(q.Get("t"), 64)
 	if err != nil {
@@ -204,11 +209,7 @@ func (h uploadHandler) frame(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h uploadHandler) read(w http.ResponseWriter, r *http.Request, v any) (access.Actor, bool) {
-	actor, ok := h.o.Actor(r)
-	if !ok {
-		writeJSON(w, http.StatusUnauthorized, ErrorReply{Error: "authentication required", Code: "unauthorized"})
-		return actor, false
-	}
+	actor := gate.Actor(r.Context())
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {

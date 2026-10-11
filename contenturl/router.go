@@ -229,14 +229,14 @@ func (r *Router) Tenant() string { return r.store.Tenant() }
 // a prefix with http.StripPrefix.
 func (r *Router) Handler() http.Handler {
 	mux := http.NewServeMux()
-	httpapi.Mount(mux, r, codeRoutes)
+	httpapi.Mount(mux, nil, r, codeRoutes)
 	return mux
 }
 
 func init() { httpapi.Register(httpapi.Codes, codeRoutes) }
 
 var codeRoutes = []httpapi.Route[*Router]{
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{code}", Resource: "codes", Auth: httpapi.Public,
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{code}", Resource: "codes", Auth: httpapi.Open,
 		Doc:       "A content code's link and canonical path; any spelling of the code resolves.",
 		Query:     []httpapi.Param{httpapi.Text("lang", "the language of the path's prefix and slug")},
 		Responses: []httpapi.Reply{httpapi.OK(Resolved{})}, Errors: []string{"gone", httpapi.CodeNotFound}},

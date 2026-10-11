@@ -19,7 +19,7 @@ import (
 // either multiple_choice (options, anon-capable one-vote-per-(poll,user)/
 // (poll,ip) tallying) or free_text (one editable answer per signed-in actor,
 // grouped by the host's AnswerClassifier). It is not tied to host content, so
-// it never gates on the access.ContentResolver: writes gate on the PollWrite perm;
+// it never gates on the access.ContentResolver: writes gate on the root:polls:write perm;
 // reads/votes/answers are public until the poll closes. Questions carry the
 // tenant; options, votes and answers hang off their question.
 type polls struct {
@@ -104,12 +104,12 @@ type PollUpdate struct {
 	ClosesAt Nullable[time.Time] `json:"closes_at,omitzero"`
 }
 
-// --- admin (PollWrite-gated) ---
+// --- admin (root:polls:write-gated) ---
 
 // create inserts a question and its options atomically. Fail-closed on perm.
 // A free_text poll is refused without a registered AnswerClassifier.
 func (p *polls) create(ctx context.Context, actor access.Actor, in PollInput) (Poll, error) {
-	if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PollWrite); err != nil {
+	if err := p.rt.requirePerm(ctx, actor, access.PollsWrite); err != nil {
 		return Poll{}, err
 	}
 	in.Question = strings.TrimSpace(in.Question)
@@ -170,7 +170,7 @@ func (p *polls) create(ctx context.Context, actor access.Actor, in PollInput) (P
 // update mutates the given fields; nil ones are left as-is via COALESCE, and
 // a null closes_at clears it.
 func (p *polls) update(ctx context.Context, actor access.Actor, id string, in PollUpdate) (Poll, error) {
-	if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PollWrite); err != nil {
+	if err := p.rt.requirePerm(ctx, actor, access.PollsWrite); err != nil {
 		return Poll{}, err
 	}
 	if !uuidRe.MatchString(id) {
@@ -199,7 +199,7 @@ func (p *polls) update(ctx context.Context, actor access.Actor, id string, in Po
 // softDelete flags deleted_at; the row (and its votes) stay for history, and
 // its media folder is deleted.
 func (p *polls) softDelete(ctx context.Context, actor access.Actor, id string) error {
-	if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PollWrite); err != nil {
+	if err := p.rt.requirePerm(ctx, actor, access.PollsWrite); err != nil {
 		return err
 	}
 	if !uuidRe.MatchString(id) {
@@ -228,7 +228,7 @@ func (p *polls) softDelete(ctx context.Context, actor access.Actor, id string) e
 // --- public read ---
 
 // listFilter narrows list: language, a month ("2006-01") or day ("2006-01-02")
-// live_at window, and admin (include future/inactive polls; PollWrite-gated by
+// live_at window, and admin (include future/inactive polls; root:polls:write-gated by
 // the caller).
 type listFilter struct {
 	language, month, date string
@@ -757,26 +757,26 @@ var pollRoutes = []httpapi.Route[*polls]{
 		Query:     append(pollFilter, httpapi.Page...),
 		Responses: []httpapi.Reply{httpapi.OK([]Poll{})}},
 		Serve: httpapi.H((*polls).handleList)},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/polls/admin", Resource: "polls", Auth: httpapi.Staff, Perm: "PollWrite",
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/polls/admin", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
 		Doc:       "Every poll, scheduled and inactive ones included.",
 		Query:     append(pollFilter, httpapi.Page...),
 		Responses: []httpapi.Reply{httpapi.OK([]Poll{})}},
 		Serve: httpapi.H((*polls).handleAdminList)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/polls/{id}", Resource: "polls", Auth: httpapi.Public,
-		Doc:       "A poll with the caller's vote or answer; a scheduled or inactive poll only for PollWrite holders.",
+		Doc:       "A poll with the caller's vote or answer; a scheduled or inactive poll only for root:polls:write holders.",
 		Responses: []httpapi.Reply{httpapi.OK(Poll{})}, Errors: []string{CodeNotFound}},
 		Serve: httpapi.H((*polls).handleGet)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/polls", Resource: "polls", Auth: httpapi.Staff, Perm: "PollWrite",
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/polls", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
 		Doc:       "Creates a poll with its options; a free-text poll needs an AnswerClassifier.",
 		Request:   PollInput{},
 		Responses: []httpapi.Reply{httpapi.Created(Poll{})}, Errors: []string{CodeNotConfigured}},
 		Serve: httpapi.H((*polls).handleCreate)},
-	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/polls/{id}", Resource: "polls", Auth: httpapi.Staff, Perm: "PollWrite",
+	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/polls/{id}", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
 		Doc:       "Updates a poll's given fields; closes_at null reopens it until deactivated.",
 		Request:   PollUpdate{},
 		Responses: []httpapi.Reply{httpapi.OK(Poll{})}, Errors: []string{CodeNotFound}},
 		Serve: httpapi.H((*polls).handleUpdate)},
-	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/polls/{id}", Resource: "polls", Auth: httpapi.Staff, Perm: "PollWrite",
+	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/polls/{id}", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
 		Doc:       "Deletes a poll and its media folder.",
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeNotFound}},
 		Serve: httpapi.H((*polls).handleDelete)},
@@ -790,28 +790,28 @@ var pollRoutes = []httpapi.Route[*polls]{
 		Request:   PollAnswerInput{},
 		Responses: []httpapi.Reply{httpapi.OK(Poll{})}, Errors: []string{CodeForbidden, CodeNotFound, CodeRateLimited}},
 		Serve: httpapi.H((*polls).handleAnswer)},
-	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/polls/{id}/image", Resource: "polls", Auth: httpapi.Staff, Perm: "PollWrite",
+	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/polls/{id}/image", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
 		Doc:       "Sets the question image to an inline image uploaded to the poll's media folder; \"\" clears it.",
 		Request:   ImageInput{},
 		Responses: []httpapi.Reply{httpapi.OK(PollImage{})}, Errors: []string{CodeNotConfigured, CodeNotFound}},
 		Serve: httpapi.H((*polls).handleQuestionImage)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/polls/{id}/options", Resource: "polls", Auth: httpapi.Staff, Perm: "PollWrite",
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/polls/{id}/options", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
 		Doc:       "Adds an option to a multiple-choice poll, at the end unless position is given.",
 		Request:   PollOptionPatch{},
 		Responses: []httpapi.Reply{httpapi.Created(PollOption{})}, Errors: []string{CodeNotFound}},
 		Serve: httpapi.H((*polls).handleAddOption)},
 	// Nested under the poll: a bare /polls/options/{oid} DELETE would ambiguously
 	// overlap reactions' generic DELETE /{kind}/{id}/reaction in ServeMux.
-	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/polls/{id}/options/{oid}", Resource: "polls", Auth: httpapi.Staff, Perm: "PollWrite",
+	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/polls/{id}/options/{oid}", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
 		Doc:       "Updates an option's label or position.",
 		Request:   PollOptionPatch{},
 		Responses: []httpapi.Reply{httpapi.OK(PollOption{})}, Errors: []string{CodeNotConfigured, CodeNotFound}},
 		Serve: httpapi.H((*polls).handleUpdateOption)},
-	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/polls/{id}/options/{oid}", Resource: "polls", Auth: httpapi.Staff, Perm: "PollWrite",
+	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/polls/{id}/options/{oid}", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
 		Doc:       "Removes an option and its votes; a poll keeps at least two.",
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeInvalidRequest, CodeNotFound}},
 		Serve: httpapi.H((*polls).handleDeleteOption)},
-	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/polls/{id}/options/{oid}/image", Resource: "polls", Auth: httpapi.Staff, Perm: "PollWrite",
+	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/polls/{id}/options/{oid}/image", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
 		Doc:       "Sets an option's image to an inline image uploaded to the poll's media folder; \"\" clears it.",
 		Request:   ImageInput{},
 		Responses: []httpapi.Reply{httpapi.OK(PollImage{})}, Errors: []string{CodeNotConfigured, CodeNotFound}},
@@ -847,10 +847,10 @@ type PollOptionPatch struct {
 }
 
 // handleAddOption appends an option to an existing multiple_choice poll.
-// Position defaults to end-of-list. PollWrite-gated.
+// Position defaults to end-of-list. root:polls:write-gated.
 func (p *polls) handleAddOption(w http.ResponseWriter, req *http.Request) {
 	actor := p.rt.actor(req.Context())
-	if err := p.rt.requirePerm(req.Context(), actor, p.rt.perms.PollWrite); err != nil {
+	if err := p.rt.requirePerm(req.Context(), actor, access.PollsWrite); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -892,10 +892,10 @@ func (p *polls) handleAddOption(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusCreated, o)
 }
 
-// handleUpdateOption edits an option's label/position. PollWrite-gated.
+// handleUpdateOption edits an option's label/position. root:polls:write-gated.
 func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 	actor := p.rt.actor(req.Context())
-	if err := p.rt.requirePerm(req.Context(), actor, p.rt.perms.PollWrite); err != nil {
+	if err := p.rt.requirePerm(req.Context(), actor, access.PollsWrite); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -943,10 +943,10 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 }
 
 // handleDeleteOption removes an option (its votes cascade). Refuses to shrink a
-// poll below 2 options — that would break voting. PollWrite-gated.
+// poll below 2 options — that would break voting. root:polls:write-gated.
 func (p *polls) handleDeleteOption(w http.ResponseWriter, req *http.Request) {
 	actor := p.rt.actor(req.Context())
-	if err := p.rt.requirePerm(req.Context(), actor, p.rt.perms.PollWrite); err != nil {
+	if err := p.rt.requirePerm(req.Context(), actor, access.PollsWrite); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -979,14 +979,14 @@ func (p *polls) handleDeleteOption(w http.ResponseWriter, req *http.Request) {
 }
 
 // handleQuestionImage sets (or with "" clears) the question image to an
-// inline image of the poll's media folder. PollWrite-gated.
+// inline image of the poll's media folder. root:polls:write-gated.
 func (p *polls) handleQuestionImage(w http.ResponseWriter, req *http.Request) {
 	p.setImage(w, req, `UPDATE `+p.s.t.pollQuestions+` SET image_name = NULLIF($3, ''), updated_at = now()
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`)
 }
 
 // handleOptionImage sets (or with "" clears) an option image to an inline
-// image of the poll's media folder. PollWrite-gated.
+// image of the poll's media folder. root:polls:write-gated.
 func (p *polls) handleOptionImage(w http.ResponseWriter, req *http.Request) {
 	if !uuidRe.MatchString(req.PathValue("oid")) {
 		writeErr(w, ErrNotFound)
@@ -999,7 +999,7 @@ func (p *polls) handleOptionImage(w http.ResponseWriter, req *http.Request) {
 // (NULL clears) and then extra.
 func (p *polls) setImage(w http.ResponseWriter, req *http.Request, update string, extra ...any) {
 	ctx := req.Context()
-	if err := p.rt.requirePerm(ctx, p.rt.actor(ctx), p.rt.perms.PollWrite); err != nil {
+	if err := p.rt.requirePerm(ctx, p.rt.actor(ctx), access.PollsWrite); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -1062,10 +1062,10 @@ func (p *polls) handleList(w http.ResponseWriter, req *http.Request) {
 }
 
 // handleAdminList returns ALL non-deleted polls (future/inactive included) for
-// the poll-management UI. PollWrite-gated.
+// the poll-management UI. root:polls:write-gated.
 func (p *polls) handleAdminList(w http.ResponseWriter, req *http.Request) {
 	actor := p.rt.actor(req.Context())
-	if err := p.rt.requirePerm(req.Context(), actor, p.rt.perms.PollWrite); err != nil {
+	if err := p.rt.requirePerm(req.Context(), actor, access.PollsWrite); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -1091,7 +1091,7 @@ func (p *polls) handleGet(w http.ResponseWriter, req *http.Request) {
 	}
 	// Future/inactive polls are admin-only; hide as 404 (don't leak schedules).
 	if !v.IsActive || v.LiveAt.After(time.Now()) {
-		if err := p.rt.requirePerm(req.Context(), actor, p.rt.perms.PollWrite); err != nil {
+		if err := p.rt.requirePerm(req.Context(), actor, access.PollsWrite); err != nil {
 			writeErr(w, ErrNotFound)
 			return
 		}

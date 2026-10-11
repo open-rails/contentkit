@@ -10,7 +10,7 @@ import { keyOf, offsetPages, useContentScope, useList, useResource, type UseList
 export interface PostFilter {
   language?: string;
   sort?: Sort;
-  /** Staff: every post, drafts and scheduled ones included (PostWrite). */
+  /** Staff: every post, drafts and scheduled ones included (root:posts:write). */
   admin?: boolean;
   /** With admin: true only drafts, false no drafts. */
   draft?: boolean;
@@ -49,7 +49,7 @@ export interface UsePost {
   /** Updates the given fields; a body from the editor is stored with image references (storedBody). */
   update: (patch: PostInput) => Promise<Post>;
   remove: () => Promise<void>;
-  /** Restores the deleted post (PostWrite). */
+  /** Restores the deleted post (root:posts:write). */
   restore: () => Promise<Post>;
   /** Uploads the cover (null clears it); resolves with a URL that shows it now. */
   setCover: (file: Blob | null) => Promise<string | null>;
@@ -83,7 +83,7 @@ export function isPublished(post: Post, now = Date.now()): boolean {
   return !post.is_draft && !post.moderation && (!post.live_at || Date.parse(post.live_at) <= now);
 }
 
-/** One post: read, and for staff (PostWrite) create, update, delete, restore, cover and body images. null creates a new post. */
+/** One post: read, and for staff (root:posts:write) create, update, delete, restore, cover and body images. null creates a new post. */
 export function usePost(id: string | null | undefined, o: { initial?: Post; client?: ContentKitClient } = {}): UsePost {
   const { client, store, scope } = useContentScope(o.client);
   const [created, setCreated] = useState<string | null>(null);

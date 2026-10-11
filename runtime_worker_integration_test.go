@@ -10,6 +10,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/search"
 	"github.com/open-rails/contentkit/worker"
 )
@@ -20,8 +21,9 @@ func TestWorkerOptionsMissingHostLister(t *testing.T) {
 	schema := keywordSchema(t, ctx, pool)
 	rt, err := NewRuntime(ctx, RuntimeConfig{
 		EmbeddedConfig: EmbeddedConfig{PG: pool, PGSchema: schema, Tenant: testTenant},
-		Content: content.Options{Identity: ctxIdentity{}, Authz: allowAuthz{}, Resolver: galleryResolver{},
-			ContentKinds: []string{"video"}, Perms: content.Perms{PostWrite: "post:write"}},
+		Auth:           testauth.Auth{Authz: allowAuthz{}},
+		Content: content.Options{Resolver: galleryResolver{},
+			ContentKinds: []string{"video"}},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -43,21 +43,21 @@ export class PostsClient {
   list(q: PostQuery = {}, signal?: AbortSignal): Promise<Post[]> {
     return call(this.http, "GET", "/posts", { query: q, signal });
   }
-  /** Every post for staff: drafts, scheduled, held and rejected ones included; deleted ones on their own; q searches (PostWrite). */
+  /** Every post for staff: drafts, scheduled, held and rejected ones included; deleted ones on their own; q searches (root:posts:write). */
   adminList(q: PostAdminQuery = {}, signal?: AbortSignal): Promise<Post[]> {
     return call(this.http, "GET", "/posts/admin", { query: q, signal });
   }
   get(id: string, signal?: AbortSignal): Promise<Post> {
     return call(this.http, "GET", "/posts/{id}", { params: { id }, signal });
   }
-  /** Creates a post (PostWrite); moderation "held" when the moderator holds it. */
+  /** Creates a post (root:posts:write); moderation "held" when the moderator holds it. */
   async create(input: PostInput): Promise<Post> {
     const emit = this.http.captureChanges();
     const post: Post = await call(this.http, "POST", "/posts", { body: input });
     emit({ type: "post.created", post });
     return post;
   }
-  /** Updates the given fields (PostWrite). */
+  /** Updates the given fields (root:posts:write). */
   async update(id: string, input: PostInput): Promise<Post> {
     const emit = this.http.captureChanges();
     const post: Post = await call(this.http, "PATCH", "/posts/{id}", { params: { id }, body: input });
@@ -69,7 +69,7 @@ export class PostsClient {
     await call(this.http, "DELETE", "/posts/{id}", { params: { id } });
     emit({ type: "post.deleted", id });
   }
-  /** Restores a deleted post as it was (PostWrite); conflict when a live post took its slug. */
+  /** Restores a deleted post as it was (root:posts:write); conflict when a live post took its slug. */
   async restore(id: string): Promise<Post> {
     const emit = this.http.captureChanges();
     const post: Post = await call(this.http, "POST", "/posts/{id}/restore", { params: { id } });

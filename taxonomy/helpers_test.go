@@ -3,14 +3,17 @@ package taxonomy
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"regexp"
 	"sort"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/search"
 )
 
@@ -198,4 +201,17 @@ func countString(counts []Count) string {
 		out += fmt.Sprintf("%s/%s=%d", c.ContentKind, c.Language, c.Count)
 	}
 	return out
+}
+
+// adminHandler is the store's admin API, every request sent by staff
+// holding its permission.
+func adminHandler(t *testing.T, s *Store) http.Handler {
+	t.Helper()
+	h, err := s.Handler(testauth.Auth{Authz: testauth.All{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(w, testauth.As(r, access.Actor{ID: "staff"}))
+	})
 }

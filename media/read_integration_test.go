@@ -18,10 +18,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/open-rails/helpers/auth"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 )
@@ -237,7 +239,7 @@ func TestReadCookieDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(rd.Handler(media.HandlerOptions{Identity: identity{f.editor}, Limit: media.RateLimit{Disabled: true}}))
+	srv := httptest.NewServer(rd.Handler(media.HandlerOptions{Auth: identity{f.editor}, Limit: media.RateLimit{Disabled: true}}))
 	defer srv.Close()
 	resp, err := http.Get(srv.URL + "/gallery/" + cid(1))
 	if err != nil {
@@ -329,9 +331,12 @@ func TestItemTokenIsAllOrNothing(t *testing.T) {
 	}
 }
 
+// identity says every request is a.
 type identity struct{ a access.Actor }
 
-func (i identity) Actor(context.Context) (access.Actor, bool) { return i.a, true }
+func (i identity) Authenticate(*http.Request) (auth.Verified, error) {
+	return testauth.Verify(i.a, nil)
+}
 
 // An editor read lists the uploads with their editing state; missing editor
 // views are asked of the worker and served once rendered.
@@ -406,7 +411,7 @@ func TestHLSPlaylists(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(f.rd.Handler(media.HandlerOptions{Identity: identity{f.editor}, Limit: media.RateLimit{Disabled: true}}))
+	srv := httptest.NewServer(f.rd.Handler(media.HandlerOptions{Auth: identity{f.editor}, Limit: media.RateLimit{Disabled: true}}))
 	defer srv.Close()
 	res, err := f.rd.Read(ctx, v, f.editor, media.ReadOptions{})
 	if err != nil || len(res.HLS) != 1 || res.HLS[0] != "hls/" {
@@ -468,7 +473,7 @@ func TestReadHandler(t *testing.T) {
 	f := newFixtureOn(t, s3test.Open(t), nil)
 	f.visible(1)
 	f.gallery(1, 1)
-	srv := httptest.NewServer(f.rd.Handler(media.HandlerOptions{Identity: identity{f.editor}, Limit: media.RateLimit{PerSecond: 1, Burst: 2}}))
+	srv := httptest.NewServer(f.rd.Handler(media.HandlerOptions{Auth: identity{f.editor}, Limit: media.RateLimit{PerSecond: 1, Burst: 2}}))
 	defer srv.Close()
 	status := func(p string) int {
 		resp, err := http.Get(srv.URL + p)
@@ -501,11 +506,11 @@ func TestIssuanceLimitOnReads(t *testing.T) {
 	f.res.set(cid(5), access.Resolution{Visible: true})
 	actor := viewer
 	rd, err := media.NewReader(media.ReaderOptions{Manifests: f.ms, Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: signKey},
-		Issuance: media.Issuance{PerHour: 2, Exempt: func(a access.Actor) bool { return a.Kind == "staff" }}})
+		Issuance: media.Issuance{PerHour: 2, Exempt: func(a access.Actor) bool { return a.ID == "staff" }}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(rd.Handler(media.HandlerOptions{Identity: identityFunc(func() access.Actor { return actor }), Limit: media.RateLimit{Disabled: true}}))
+	srv := httptest.NewServer(rd.Handler(media.HandlerOptions{Auth: identityFunc(func() access.Actor { return actor }), Limit: media.RateLimit{Disabled: true}}))
 	defer srv.Close()
 	get := func(path string) (*http.Response, string) {
 		t.Helper()
@@ -532,7 +537,7 @@ func TestIssuanceLimitOnReads(t *testing.T) {
 	if resp, _ := get("/gallery/" + cid(2)); resp.StatusCode != http.StatusOK {
 		t.Fatalf("an item opened this hour: %d", resp.StatusCode)
 	}
-	actor = access.Actor{ID: "staff", Kind: "staff"}
+	actor = access.Actor{ID: "staff", Kind: "user"}
 	for n := 1; n <= 4; n++ {
 		if resp, _ := get("/gallery/" + cid(n)); resp.StatusCode != http.StatusOK {
 			t.Fatalf("an exempt actor, item %d: %d", n, resp.StatusCode)
@@ -557,9 +562,12 @@ func TestIssuanceLimitOnReads(t *testing.T) {
 	}
 }
 
+// identityFunc says every request is the actor it returns then.
 type identityFunc func() access.Actor
 
-func (f identityFunc) Actor(context.Context) (access.Actor, bool) { return f(), true }
+func (f identityFunc) Authenticate(*http.Request) (auth.Verified, error) {
+	return testauth.Verify(f(), nil)
+}
 
 // redisURLs lists CONTENTKIT_TEST_REDIS_URLS (Redis and Garnet in CI); unset skips.
 func redisURLs(t *testing.T) []string {
