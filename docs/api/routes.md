@@ -4,7 +4,7 @@
 
 Every route of ContentKit's HTTP API (78). `contentkit.Runtime.Handler` serves them under the one prefix the host mounts it at, each module at its sub-path: content `/`, upload `/media/upload`, media `/media`, codes `/codes`, taxonomy `/taxonomy`. A host that mounts a module alone serves its routes beneath that mount instead. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
-**Tier** is what a route requires of its caller: `public` (the actor is optional; the host's resolver decides what it sees), `user` (a signed-in actor, else 401 `unauthorized`), `staff` (the `content.Perms` permission named, else 403 `forbidden`). ContentKit never authenticates: it reads the actor the host's middleware put in the request context.
+**Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
 
 Every error is `{"error", "code", …}`; the codes are at the end.
 
@@ -12,24 +12,24 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/config` | public | — | 200 `Config` | What the content module allows: which interactions signed-out visitors may make, and the longest comment. |
+| GET | `/config` | open | — | 200 `Config` | What the content module allows: which interactions signed-out visitors may make, and the longest comment. |
 | GET | `/posts` | public | — | 200 `Post[]` | Published posts. Query: `language`, `sort`, `limit`, `offset`. |
-| GET | `/posts/admin` | staff `PostWrite` | — | 200 `Post[]` | Every post, newest first: drafts, scheduled, held and rejected ones included; deleted ones on their own. Query: `language`, `draft`, `deleted`, `q`, `limit`, `offset`. |
-| GET | `/posts/{id}` | public | — | 200 `Post` | A post. A draft, scheduled, held or rejected post is shown only to its author and PostWrite holders. |
-| POST | `/posts` | staff `PostWrite` | `PostInput` | 201 `Post`<br>202 `Post` | Creates a post; 202 when the moderator holds it for review. |
-| PATCH | `/posts/{id}` | staff `PostWrite` | `PostInput` | 200 `Post`<br>202 `Post` | Updates a post's given fields; 202 when the moderator holds the new text. |
-| DELETE | `/posts/{id}` | staff `PostWrite` | — | 204 — | Deletes a post. |
-| POST | `/posts/{id}/restore` | staff `PostWrite` | — | 200 `Post` | Restores a deleted post as it was; 409 when another live post took its slug. |
-| PUT | `/posts/{id}/cover` | staff `PostWrite` | `ImageInput` | 200 `PostCover` | Sets the cover to an inline image uploaded to the post's media folder; "" clears it. |
-| POST | `/posts/{id}/images` | staff `PostWrite` | `ImageInput` | 200 `InlineImage` | The reference to store in the body for an inline image uploaded to the post's media folder, and a URL that shows it to the editor now. |
+| GET | `/posts/admin` | staff `root:posts:write` | — | 200 `Post[]` | Every post, newest first: drafts, scheduled, held and rejected ones included; deleted ones on their own. Query: `language`, `draft`, `deleted`, `q`, `limit`, `offset`. |
+| GET | `/posts/{id}` | public | — | 200 `Post` | A post. A draft, scheduled, held or rejected post is shown only to its author and root:posts:write holders. |
+| POST | `/posts` | staff `root:posts:write` | `PostInput` | 201 `Post`<br>202 `Post` | Creates a post; 202 when the moderator holds it for review. |
+| PATCH | `/posts/{id}` | staff `root:posts:write` | `PostInput` | 200 `Post`<br>202 `Post` | Updates a post's given fields; 202 when the moderator holds the new text. |
+| DELETE | `/posts/{id}` | staff `root:posts:write` | — | 204 — | Deletes a post. |
+| POST | `/posts/{id}/restore` | staff `root:posts:write` | — | 200 `Post` | Restores a deleted post as it was; 409 when another live post took its slug. |
+| PUT | `/posts/{id}/cover` | staff `root:posts:write` | `ImageInput` | 200 `PostCover` | Sets the cover to an inline image uploaded to the post's media folder; "" clears it. |
+| POST | `/posts/{id}/images` | staff `root:posts:write` | `ImageInput` | 200 `InlineImage` | The reference to store in the body for an inline image uploaded to the post's media folder, and a URL that shows it to the editor now. |
 | GET | `/{kind}/{id}/comments` | public | — | 200 `Comment[]` | A target's top-level comments with reply counts; the caller also sees its own held and rejected ones. Query: `sort`, `limit`, `offset`. |
 | POST | `/{kind}/{id}/comments` | public | `CommentInput` | 201 `Comment`<br>202 `Comment` | Comments on a target, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it. |
 | GET | `/comments/latest` | public | — | 200 `FeedItem[]` | The newest published comments across the tenant, with their targets; a page may under-fill. Query: `limit`, `offset`. |
-| GET | `/comments/admin` | staff `CommentModerate` | — | 200 `AdminComment[]` | Every comment, newest first, deleted, held and rejected ones with their real bodies. Query: `content_kind`, `limit`, `offset`. |
-| POST | `/comments/{cid}/restore` | staff `CommentModerate` | — | 200 `Restored` | Restores a deleted comment. |
+| GET | `/comments/admin` | staff `root:comments:moderate` | — | 200 `AdminComment[]` | Every comment, newest first, deleted, held and rejected ones with their real bodies. Query: `content_kind`, `limit`, `offset`. |
+| POST | `/comments/{cid}/restore` | staff `root:comments:moderate` | — | 200 `Restored` | Restores a deleted comment. |
 | GET | `/comments/{cid}/replies` | public | — | 200 `Comment[]` | A comment's replies, oldest first. Query: `limit`, `offset`. |
-| PATCH | `/comments/{cid}` | public | `CommentEdit` | 200 `Comment`<br>202 `Comment` | Edits a comment: its author, or a CommentModerate holder. 202 when the moderator holds the new text. |
-| DELETE | `/comments/{cid}` | public | — | 204 — | Deletes a comment, leaving a tombstone: its author, or a CommentModerate holder. |
+| PATCH | `/comments/{cid}` | public | `CommentEdit` | 200 `Comment`<br>202 `Comment` | Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text. |
+| DELETE | `/comments/{cid}` | public | — | 204 — | Deletes a comment, leaving a tombstone: its author, or a root:comments:moderate holder. |
 | POST | `/comments/{cid}/like` | public | — | 200 `ReactionCounts` | Likes a comment. |
 | POST | `/comments/{cid}/dislike` | public | — | 200 `ReactionCounts` | Dislikes a comment. |
 | DELETE | `/comments/{cid}/reaction` | public | — | 200 `ReactionCounts` | Clears the caller's reaction to a comment. |
@@ -42,27 +42,27 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | DELETE | `/{kind}/{id}/favorite` | user | — | 200 `FavoriteState` | Unfavorites a target, also one no longer visible. Answers the state with the target's favorite count. |
 | GET | `/{kind}/{id}/favorite` | public | — | 200 `FavoriteState` | A target's favorite count and whether the caller favorited it (never, signed out: then the target must be visible). |
 | GET | `/polls` | public | — | 200 `Poll[]` | Live polls, newest first. Query: `language`, `month`, `date`, `limit`, `offset`. |
-| GET | `/polls/admin` | staff `PollWrite` | — | 200 `Poll[]` | Every poll, scheduled and inactive ones included. Query: `language`, `month`, `date`, `limit`, `offset`. |
-| GET | `/polls/{id}` | public | — | 200 `Poll` | A poll with the caller's vote or answer; a scheduled or inactive poll only for PollWrite holders. |
-| POST | `/polls` | staff `PollWrite` | `PollInput` | 201 `Poll` | Creates a poll with its options; a free-text poll needs an AnswerClassifier. |
-| PATCH | `/polls/{id}` | staff `PollWrite` | `PollUpdate` | 200 `Poll` | Updates a poll's given fields; closes_at null reopens it until deactivated. |
-| DELETE | `/polls/{id}` | staff `PollWrite` | — | 204 — | Deletes a poll and its media folder. |
+| GET | `/polls/admin` | staff `root:polls:write` | — | 200 `Poll[]` | Every poll, scheduled and inactive ones included. Query: `language`, `month`, `date`, `limit`, `offset`. |
+| GET | `/polls/{id}` | public | — | 200 `Poll` | A poll with the caller's vote or answer; a scheduled or inactive poll only for root:polls:write holders. |
+| POST | `/polls` | staff `root:polls:write` | `PollInput` | 201 `Poll` | Creates a poll with its options; a free-text poll needs an AnswerClassifier. |
+| PATCH | `/polls/{id}` | staff `root:polls:write` | `PollUpdate` | 200 `Poll` | Updates a poll's given fields; closes_at null reopens it until deactivated. |
+| DELETE | `/polls/{id}` | staff `root:polls:write` | — | 204 — | Deletes a poll and its media folder. |
 | POST | `/polls/{id}/vote` | public | `PollVote` | 200 `Poll` | Votes for an option of an open multiple-choice poll, signed out where Config.anonymous.votes allows it; a vote is final, and voting again changes nothing. |
 | POST | `/polls/{id}/answer` | user | `PollAnswerInput` | 200 `Poll` | Stores or replaces the caller's answer to an open free-text poll. |
-| PUT | `/polls/{id}/image` | staff `PollWrite` | `ImageInput` | 200 `PollImage` | Sets the question image to an inline image uploaded to the poll's media folder; "" clears it. |
-| POST | `/polls/{id}/options` | staff `PollWrite` | `PollOptionPatch` | 201 `PollOption` | Adds an option to a multiple-choice poll, at the end unless position is given. |
-| PATCH | `/polls/{id}/options/{oid}` | staff `PollWrite` | `PollOptionPatch` | 200 `PollOption` | Updates an option's label or position. |
-| DELETE | `/polls/{id}/options/{oid}` | staff `PollWrite` | — | 204 — | Removes an option and its votes; a poll keeps at least two. |
-| PUT | `/polls/{id}/options/{oid}/image` | staff `PollWrite` | `ImageInput` | 200 `PollImage` | Sets an option's image to an inline image uploaded to the poll's media folder; "" clears it. |
+| PUT | `/polls/{id}/image` | staff `root:polls:write` | `ImageInput` | 200 `PollImage` | Sets the question image to an inline image uploaded to the poll's media folder; "" clears it. |
+| POST | `/polls/{id}/options` | staff `root:polls:write` | `PollOptionPatch` | 201 `PollOption` | Adds an option to a multiple-choice poll, at the end unless position is given. |
+| PATCH | `/polls/{id}/options/{oid}` | staff `root:polls:write` | `PollOptionPatch` | 200 `PollOption` | Updates an option's label or position. |
+| DELETE | `/polls/{id}/options/{oid}` | staff `root:polls:write` | — | 204 — | Removes an option and its votes; a poll keeps at least two. |
+| PUT | `/polls/{id}/options/{oid}/image` | staff `root:polls:write` | `ImageInput` | 200 `PollImage` | Sets an option's image to an inline image uploaded to the poll's media folder; "" clears it. |
 | GET | `/comment-bans` | user | — | 200 `CommentBan[]` | The bans the caller placed on commenters of its own content, newest first, expired ones included. Query: `limit`, `offset`. |
 | PUT | `/comment-bans/{user}` | user | `BanInput` | 200 `CommentBan` | Bans a user from commenting on the caller's content, or replaces the ban; no body bans without reason or end. |
 | DELETE | `/comment-bans/{user}` | user | — | 204 — | Lifts the caller's ban on a user. |
-| GET | `/global-comment-bans` | staff `CommentBan` | — | 200 `CommentBan[]` | The tenant-wide comment bans, newest first, expired ones included. Query: `limit`, `offset`. |
-| PUT | `/global-comment-bans/{user}` | staff `CommentBan` | `BanInput` | 200 `CommentBan` | Bans a user from commenting anywhere in the tenant, or replaces the ban. |
-| DELETE | `/global-comment-bans/{user}` | staff `CommentBan` | — | 204 — | Lifts a tenant-wide comment ban. |
+| GET | `/global-comment-bans` | staff `root:comments:ban` | — | 200 `CommentBan[]` | The tenant-wide comment bans, newest first, expired ones included. Query: `limit`, `offset`. |
+| PUT | `/global-comment-bans/{user}` | staff `root:comments:ban` | `BanInput` | 200 `CommentBan` | Bans a user from commenting anywhere in the tenant, or replaces the ban. |
+| DELETE | `/global-comment-bans/{user}` | staff `root:comments:ban` | — | 204 — | Lifts a tenant-wide comment ban. |
 | GET | `/{kind}/{id}/can-comment` | public | — | 200 `CommentStanding` | Whether the caller may comment on a target, and the ban that stops it. |
-| GET | `/moderation/held` | staff `ModerationReview` | — | 200 `HeldPage` | Held comments or posts awaiting review, oldest first. Query: `kind`, `cursor`, `limit`. |
-| POST | `/moderation/{kind}/{id}/resolve` | staff `ModerationReview` | `ResolveInput` | 200 `ReviewOutcome` | Approves (publishes) or rejects a held comment or post, at the revision the queue listed. |
+| GET | `/moderation/held` | staff `root:moderation:review` | — | 200 `HeldPage` | Held comments or posts awaiting review, oldest first. Query: `kind`, `cursor`, `limit`. |
+| POST | `/moderation/{kind}/{id}/resolve` | staff `root:moderation:review` | `ResolveInput` | 200 `ReviewOutcome` | Approves (publishes) or rejects a held comment or post, at the revision the queue listed. |
 
 ## Media uploads (`/media/upload`)
 
@@ -80,7 +80,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/media/presets` | public | — | 200 `PresetRule[]` | Every kind's public preset rules: crop bounds, widths and default images. Current image URLs come from a read's public. |
+| GET | `/media/presets` | open | — | 200 `PresetRule[]` | Every kind's public preset rules: crop bounds, widths and default images. Current image URLs come from a read's public. |
 | GET | `/media/{kind}/{id}` | public | — | 200 `ReadResult` | An item's files under a prefix in manifest order: with access each has a URL (and the item cookie is set), without each is locked. Query: `prefix`, `offset`, `limit`, `download`, `editor`. |
 | GET | `/media/{kind}/{id}/hls/{path...}` | public | — | 200 `application/vnd.apple.mpegurl`<br>200 `text/vtt` | HLS: {dir}master.m3u8 (a ladder of the read's hls), {path}.m3u8 (a track) or {dir}sprite.vtt (the seek sprite). Query: `audio`, `subs`. |
 
@@ -88,28 +88,28 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/codes/{code}` | public | — | 200 `Resolved` | A content code's link and canonical path; any spelling of the code resolves. Query: `lang`. |
+| GET | `/codes/{code}` | open | — | 200 `Resolved` | A content code's link and canonical path; any spelling of the code resolves. Query: `lang`. |
 
 ## Taxonomy admin (`/taxonomy`)
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/taxonomy/nodes` | staff `Taxonomy` | — | 200 `NodePage` | Lists nodes: filtered, ordered and paged. Query: `kind`, `state`, `id`, `slug`, `language`, `language_mode`, `name_prefix`, `q`, `content_kind`, `min_count`, `sort`, `cursor`, `offset`, `limit`. |
-| POST | `/taxonomy/nodes` | staff `Taxonomy` | `NodeInput[]` | 201 `Node[]` | Creates nodes with their names. |
-| GET | `/taxonomy/nodes/{id}` | staff `Taxonomy` | — | 200 `NodeDetail` | A node with its names and edges. |
-| PATCH | `/taxonomy/nodes/{id}` | staff `Taxonomy` | `NodeUpdate` | 200 `Node` | Updates a node's given fields. |
-| DELETE | `/taxonomy/nodes/{id}` | staff `Taxonomy` | — | 200 `Node` | Marks a node deleted. |
-| PUT | `/taxonomy/nodes/{id}/names` | staff `Taxonomy` | `Name[]` | 200 `NodeDetail` | Replaces a node's names. |
-| POST | `/taxonomy/nodes/{id}/names` | staff `Taxonomy` | `Name[]` | 200 `NodeDetail` | Adds names to a node. |
-| DELETE | `/taxonomy/nodes/{id}/names` | staff `Taxonomy` | `Name[]` | 200 `NodeDetail` | Removes names from a node. |
-| POST | `/taxonomy/nodes/{id}/merge` | staff `Taxonomy` | `MergeInput` | 200 `MergeReport` | Merges a node into another: its assignments, names and edges move, and its URL redirects. |
-| POST | `/taxonomy/edges` | staff `Taxonomy` | `Edge[]` | 200 `EdgesWritten` | Adds edges. |
-| DELETE | `/taxonomy/edges` | staff `Taxonomy` | `Edge[]` | 200 `EdgesWritten` | Removes edges. |
-| POST | `/taxonomy/assignments` | staff `Taxonomy` | `Assignment[]` | 200 `AssignmentsWritten` | Assigns nodes to contents. Query: `suppress_counts`. |
-| DELETE | `/taxonomy/assignments` | staff `Taxonomy` | `Assignment[]` | 200 `AssignmentsWritten` | Removes assignments. Query: `suppress_counts`. |
-| POST | `/taxonomy/effective` | staff `Taxonomy` | `ContentRef[]` | 200 `EffectiveTagsOf[]` | The effective tags (work and version) of each content. |
-| GET | `/taxonomy/counts` | staff `Taxonomy` | — | 200 `Record<string, Count[]>` | Content counts of nodes, by taxonomy id. Query: `taxonomy_id`. |
-| POST | `/taxonomy/counts/rebuild` | staff `Taxonomy` | — | 200 `CountsRebuilt` | Recomputes every count, after bulk loads written with suppress_counts. |
+| GET | `/taxonomy/nodes` | staff `root:taxonomy:write` | — | 200 `NodePage` | Lists nodes: filtered, ordered and paged. Query: `kind`, `state`, `id`, `slug`, `language`, `language_mode`, `name_prefix`, `q`, `content_kind`, `min_count`, `sort`, `cursor`, `offset`, `limit`. |
+| POST | `/taxonomy/nodes` | staff `root:taxonomy:write` | `NodeInput[]` | 201 `Node[]` | Creates nodes with their names. |
+| GET | `/taxonomy/nodes/{id}` | staff `root:taxonomy:write` | — | 200 `NodeDetail` | A node with its names and edges. |
+| PATCH | `/taxonomy/nodes/{id}` | staff `root:taxonomy:write` | `NodeUpdate` | 200 `Node` | Updates a node's given fields. |
+| DELETE | `/taxonomy/nodes/{id}` | staff `root:taxonomy:write` | — | 200 `Node` | Marks a node deleted. |
+| PUT | `/taxonomy/nodes/{id}/names` | staff `root:taxonomy:write` | `Name[]` | 200 `NodeDetail` | Replaces a node's names. |
+| POST | `/taxonomy/nodes/{id}/names` | staff `root:taxonomy:write` | `Name[]` | 200 `NodeDetail` | Adds names to a node. |
+| DELETE | `/taxonomy/nodes/{id}/names` | staff `root:taxonomy:write` | `Name[]` | 200 `NodeDetail` | Removes names from a node. |
+| POST | `/taxonomy/nodes/{id}/merge` | staff `root:taxonomy:write` | `MergeInput` | 200 `MergeReport` | Merges a node into another: its assignments, names and edges move, and its URL redirects. |
+| POST | `/taxonomy/edges` | staff `root:taxonomy:write` | `Edge[]` | 200 `EdgesWritten` | Adds edges. |
+| DELETE | `/taxonomy/edges` | staff `root:taxonomy:write` | `Edge[]` | 200 `EdgesWritten` | Removes edges. |
+| POST | `/taxonomy/assignments` | staff `root:taxonomy:write` | `Assignment[]` | 200 `AssignmentsWritten` | Assigns nodes to contents. Query: `suppress_counts`. |
+| DELETE | `/taxonomy/assignments` | staff `root:taxonomy:write` | `Assignment[]` | 200 `AssignmentsWritten` | Removes assignments. Query: `suppress_counts`. |
+| POST | `/taxonomy/effective` | staff `root:taxonomy:write` | `ContentRef[]` | 200 `EffectiveTagsOf[]` | The effective tags (work and version) of each content. |
+| GET | `/taxonomy/counts` | staff `root:taxonomy:write` | — | 200 `Record<string, Count[]>` | Content counts of nodes, by taxonomy id. Query: `taxonomy_id`. |
+| POST | `/taxonomy/counts/rebuild` | staff `root:taxonomy:write` | — | 200 `CountsRebuilt` | Recomputes every count, after bulk loads written with suppress_counts. |
 
 ## Error codes
 
@@ -142,8 +142,8 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `too_large` | 413 | The file is larger than its upload path allows; `details` has `size` and `max_bytes`. |
 | `too_many_files` | 409 | The commit would put more files in an upload path, or the item, than allowed; `details.max` is the limit. |
 | `type_not_allowed` | 415 | The file type is not allowed in the upload path; `details.allowed` lists the types. |
-| `unauthorized` | 401 | The route needs a signed-in actor. |
-| `unavailable` | 503 | Media storage cannot be reached, or a commit's recovery is pending; retry. |
+| `unauthorized` | 401 | The request needs a valid credential: it has none where the route needs one, or one that is expired, revoked or invalid. WWW-Authenticate says which. |
+| `unavailable` | 503 | The host's auth or media storage cannot be reached, or a commit's recovery is pending; retry. |
 | `upgrade_required` | 503 | The media item was stored before v0.68 and is served once the host's media upgrade (contentkit_media_upgrade) has converted it. |
 | `video_aspect_unsupported` | 422 | The video's display aspect is outside what its upload path accepts; `details` has `min_aspect` and `max_aspect` (width/height). |
 | `video_over_budget` | 422 | The planned encode costs more than its upload path allows, or the source averages under a frame a second. |

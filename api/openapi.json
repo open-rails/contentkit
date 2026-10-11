@@ -28,13 +28,10 @@
           }
         },
         "security": [
-          {},
-          {
-            "host": []
-          }
+          {}
         ],
         "x-contentkit-module": "content",
-        "x-contentkit-auth": "public",
+        "x-contentkit-auth": "open",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:content"
@@ -110,6 +107,7 @@
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       },
@@ -160,7 +158,7 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "PostWrite",
+        "x-contentkit-permission": "root:posts:write",
         "x-contentkit-errors": [
           "conflict",
           "forbidden",
@@ -168,7 +166,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -254,11 +252,11 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "PostWrite",
+        "x-contentkit-permission": "root:posts:write",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -268,7 +266,7 @@
         "tags": [
           "posts"
         ],
-        "summary": "A post. A draft, scheduled, held or rejected post is shown only to its author and PostWrite holders.",
+        "summary": "A post. A draft, scheduled, held or rejected post is shown only to its author and root:posts:write holders.",
         "parameters": [
           {
             "name": "id",
@@ -307,6 +305,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       },
@@ -367,7 +366,7 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "PostWrite",
+        "x-contentkit-permission": "root:posts:write",
         "x-contentkit-errors": [
           "conflict",
           "forbidden",
@@ -376,7 +375,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       },
@@ -410,13 +409,13 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "PostWrite",
+        "x-contentkit-permission": "root:posts:write",
         "x-contentkit-errors": [
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -459,14 +458,14 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "PostWrite",
+        "x-contentkit-permission": "root:posts:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -519,14 +518,14 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "PostWrite",
+        "x-contentkit-permission": "root:posts:write",
         "x-contentkit-errors": [
           "not_configured",
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -579,14 +578,14 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "PostWrite",
+        "x-contentkit-permission": "root:posts:write",
         "x-contentkit-errors": [
           "not_configured",
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -670,6 +669,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       },
@@ -750,6 +750,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       }
@@ -807,6 +808,7 @@
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       }
@@ -868,11 +870,11 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "CommentModerate",
+        "x-contentkit-permission": "root:comments:moderate",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -915,13 +917,13 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "CommentModerate",
+        "x-contentkit-permission": "root:comments:moderate",
         "x-contentkit-errors": [
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -989,6 +991,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       }
@@ -998,7 +1001,7 @@
         "tags": [
           "comments"
         ],
-        "summary": "Edits a comment: its author, or a CommentModerate holder. 202 when the moderator holds the new text.",
+        "summary": "Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text.",
         "parameters": [
           {
             "name": "cid",
@@ -1062,6 +1065,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       },
@@ -1069,7 +1073,7 @@
         "tags": [
           "comments"
         ],
-        "summary": "Deletes a comment, leaving a tombstone: its author, or a CommentModerate holder.",
+        "summary": "Deletes a comment, leaving a tombstone: its author, or a root:comments:moderate holder.",
         "parameters": [
           {
             "name": "cid",
@@ -1102,6 +1106,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       }
@@ -1154,6 +1159,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       }
@@ -1206,6 +1212,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       }
@@ -1258,6 +1265,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       }
@@ -1318,6 +1326,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       }
@@ -1378,6 +1387,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       }
@@ -1438,6 +1448,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       },
@@ -1492,6 +1503,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       }
@@ -1548,7 +1560,7 @@
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:user",
+          "auth",
           "request"
         ]
       }
@@ -1606,7 +1618,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:user",
+          "auth",
           "request"
         ]
       },
@@ -1662,7 +1674,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:user",
+          "auth",
           "request"
         ]
       },
@@ -1718,6 +1730,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       }
@@ -1799,6 +1812,7 @@
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       },
@@ -1839,13 +1853,13 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "PollWrite",
+        "x-contentkit-permission": "root:polls:write",
         "x-contentkit-errors": [
           "not_configured"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -1923,11 +1937,11 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "PollWrite",
+        "x-contentkit-permission": "root:polls:write",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -1937,7 +1951,7 @@
         "tags": [
           "polls"
         ],
-        "summary": "A poll with the caller's vote or answer; a scheduled or inactive poll only for PollWrite holders.",
+        "summary": "A poll with the caller's vote or answer; a scheduled or inactive poll only for root:polls:write holders.",
         "parameters": [
           {
             "name": "id",
@@ -1976,6 +1990,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       },
@@ -2026,13 +2041,13 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "PollWrite",
+        "x-contentkit-permission": "root:polls:write",
         "x-contentkit-errors": [
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       },
@@ -2066,13 +2081,13 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "PollWrite",
+        "x-contentkit-permission": "root:polls:write",
         "x-contentkit-errors": [
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -2134,6 +2149,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       }
@@ -2193,7 +2209,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:user",
+          "auth",
           "request"
         ]
       }
@@ -2246,14 +2262,14 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "PollWrite",
+        "x-contentkit-permission": "root:polls:write",
         "x-contentkit-errors": [
           "not_configured",
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -2306,13 +2322,13 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "PollWrite",
+        "x-contentkit-permission": "root:polls:write",
         "x-contentkit-errors": [
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -2373,14 +2389,14 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "PollWrite",
+        "x-contentkit-permission": "root:polls:write",
         "x-contentkit-errors": [
           "not_configured",
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       },
@@ -2422,14 +2438,14 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "PollWrite",
+        "x-contentkit-permission": "root:polls:write",
         "x-contentkit-errors": [
           "invalid_request",
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -2490,14 +2506,14 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "PollWrite",
+        "x-contentkit-permission": "root:polls:write",
         "x-contentkit-errors": [
           "not_configured",
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -2554,7 +2570,7 @@
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:user",
+          "auth",
           "request"
         ]
       }
@@ -2610,7 +2626,7 @@
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:user",
+          "auth",
           "request"
         ]
       },
@@ -2647,7 +2663,7 @@
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:user",
+          "auth",
           "request"
         ]
       }
@@ -2701,13 +2717,13 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "CommentBan",
+        "x-contentkit-permission": "root:comments:ban",
         "x-contentkit-errors": [
           "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -2760,13 +2776,13 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "CommentBan",
+        "x-contentkit-permission": "root:comments:ban",
         "x-contentkit-errors": [
           "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       },
@@ -2800,13 +2816,13 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "CommentBan",
+        "x-contentkit-permission": "root:comments:ban",
         "x-contentkit-errors": [
           "unauthorized"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -2863,6 +2879,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:content",
+          "auth",
           "request"
         ]
       }
@@ -2921,11 +2938,11 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "ModerationReview",
+        "x-contentkit-permission": "root:moderation:review",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -2986,14 +3003,14 @@
         ],
         "x-contentkit-module": "content",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "ModerationReview",
+        "x-contentkit-permission": "root:moderation:review",
         "x-contentkit-errors": [
           "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:content",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -3048,7 +3065,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:upload",
-          "tier:user",
+          "auth",
           "request"
         ]
       }
@@ -3097,7 +3114,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:upload",
-          "tier:user",
+          "auth",
           "request"
         ]
       }
@@ -3146,7 +3163,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:upload",
-          "tier:user",
+          "auth",
           "request"
         ]
       }
@@ -3197,7 +3214,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:upload",
-          "tier:user",
+          "auth",
           "request"
         ]
       }
@@ -3239,7 +3256,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:upload",
-          "tier:user",
+          "auth",
           "request"
         ]
       }
@@ -3296,7 +3313,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:upload",
-          "tier:user",
+          "auth",
           "request"
         ]
       }
@@ -3377,7 +3394,7 @@
         ],
         "x-contentkit-error-sets": [
           "module:upload",
-          "tier:user",
+          "auth",
           "request"
         ]
       }
@@ -3407,13 +3424,10 @@
           }
         },
         "security": [
-          {},
-          {
-            "host": []
-          }
+          {}
         ],
         "x-contentkit-module": "media",
-        "x-contentkit-auth": "public",
+        "x-contentkit-auth": "open",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:media"
@@ -3512,6 +3526,7 @@
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:media",
+          "auth",
           "request"
         ]
       }
@@ -3607,6 +3622,7 @@
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:media",
+          "auth",
           "request"
         ]
       }
@@ -3651,13 +3667,10 @@
           }
         },
         "security": [
-          {},
-          {
-            "host": []
-          }
+          {}
         ],
         "x-contentkit-module": "codes",
-        "x-contentkit-auth": "public",
+        "x-contentkit-auth": "open",
         "x-contentkit-errors": [
           "gone",
           "not_found"
@@ -3820,11 +3833,11 @@
         ],
         "x-contentkit-module": "taxonomy",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-permission": "root:taxonomy:write",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:taxonomy",
-          "tier:staff",
+          "auth",
           "request"
         ]
       },
@@ -3871,13 +3884,13 @@
         ],
         "x-contentkit-module": "taxonomy",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-permission": "root:taxonomy:write",
         "x-contentkit-errors": [
           "conflict"
         ],
         "x-contentkit-error-sets": [
           "module:taxonomy",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -3920,13 +3933,13 @@
         ],
         "x-contentkit-module": "taxonomy",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-permission": "root:taxonomy:write",
         "x-contentkit-errors": [
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:taxonomy",
-          "tier:staff",
+          "auth",
           "request"
         ]
       },
@@ -3977,14 +3990,14 @@
         ],
         "x-contentkit-module": "taxonomy",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-permission": "root:taxonomy:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:taxonomy",
-          "tier:staff",
+          "auth",
           "request"
         ]
       },
@@ -4025,13 +4038,13 @@
         ],
         "x-contentkit-module": "taxonomy",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-permission": "root:taxonomy:write",
         "x-contentkit-errors": [
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:taxonomy",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -4087,14 +4100,14 @@
         ],
         "x-contentkit-module": "taxonomy",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-permission": "root:taxonomy:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:taxonomy",
-          "tier:staff",
+          "auth",
           "request"
         ]
       },
@@ -4148,14 +4161,14 @@
         ],
         "x-contentkit-module": "taxonomy",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-permission": "root:taxonomy:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:taxonomy",
-          "tier:staff",
+          "auth",
           "request"
         ]
       },
@@ -4209,13 +4222,13 @@
         ],
         "x-contentkit-module": "taxonomy",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-permission": "root:taxonomy:write",
         "x-contentkit-errors": [
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:taxonomy",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -4268,14 +4281,14 @@
         ],
         "x-contentkit-module": "taxonomy",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-permission": "root:taxonomy:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:taxonomy",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -4321,14 +4334,14 @@
         ],
         "x-contentkit-module": "taxonomy",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-permission": "root:taxonomy:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:taxonomy",
-          "tier:staff",
+          "auth",
           "request"
         ]
       },
@@ -4372,11 +4385,11 @@
         ],
         "x-contentkit-module": "taxonomy",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-permission": "root:taxonomy:write",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:taxonomy",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -4432,14 +4445,14 @@
         ],
         "x-contentkit-module": "taxonomy",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-permission": "root:taxonomy:write",
         "x-contentkit-errors": [
           "conflict",
           "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:taxonomy",
-          "tier:staff",
+          "auth",
           "request"
         ]
       },
@@ -4493,11 +4506,11 @@
         ],
         "x-contentkit-module": "taxonomy",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-permission": "root:taxonomy:write",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:taxonomy",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -4546,11 +4559,11 @@
         ],
         "x-contentkit-module": "taxonomy",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-permission": "root:taxonomy:write",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:taxonomy",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -4604,11 +4617,11 @@
         ],
         "x-contentkit-module": "taxonomy",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-permission": "root:taxonomy:write",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:taxonomy",
-          "tier:staff",
+          "auth",
           "request"
         ]
       }
@@ -4641,11 +4654,11 @@
         ],
         "x-contentkit-module": "taxonomy",
         "x-contentkit-auth": "staff",
-        "x-contentkit-permission": "Taxonomy",
+        "x-contentkit-permission": "root:taxonomy:write",
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:taxonomy",
-          "tier:staff"
+          "auth"
         ]
       }
     }
@@ -6791,6 +6804,9 @@
           "id": {
             "type": "string"
           },
+          "name": {
+            "type": "string"
+          },
           "username": {
             "type": "string"
           },
@@ -7200,7 +7216,7 @@
       "host": {
         "type": "http",
         "scheme": "bearer",
-        "description": "Whatever the host's auth middleware accepts: ContentKit reads the actor it puts in the request context."
+        "description": "A credential the host's auth.Authenticator verifies (AuthKit's access tokens and API keys): ContentKit asks it who the request is."
       }
     }
   },
@@ -7216,14 +7232,13 @@
       "internal_error",
       "tenant_mismatch"
     ],
+    "auth": [
+      "forbidden",
+      "unauthorized",
+      "unavailable"
+    ],
     "request": [
       "invalid_request"
-    ],
-    "tier:staff": [
-      "forbidden"
-    ],
-    "tier:user": [
-      "unauthorized"
     ],
     "module:upload": [
       "internal_error",
@@ -7347,11 +7362,11 @@
     },
     "unauthorized": {
       "status": 401,
-      "meaning": "The route needs a signed-in actor."
+      "meaning": "The request needs a valid credential: it has none where the route needs one, or one that is expired, revoked or invalid. WWW-Authenticate says which."
     },
     "unavailable": {
       "status": 503,
-      "meaning": "Media storage cannot be reached, or a commit's recovery is pending; retry."
+      "meaning": "The host's auth or media storage cannot be reached, or a commit's recovery is pending; retry."
     },
     "upgrade_required": {
       "status": 503,

@@ -16,6 +16,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/migrations"
 )
@@ -43,11 +44,8 @@ func newTestRuntime(t *testing.T, opts Options) (*Runtime, *pgxpool.Pool) {
 	if opts.Tenant == "" {
 		opts.Tenant = testTenant
 	}
-	if opts.Identity == nil {
-		opts.Identity = &fakeIdentity{}
-	}
-	if opts.Authz == nil {
-		opts.Authz = allowAll{}
+	if opts.Auth == nil {
+		opts.Auth = testauth.Auth{Authz: allowAll{}}
 	}
 	if opts.Resolver == nil {
 		opts.Resolver = &fakeResolver{}
@@ -60,6 +58,13 @@ func newTestRuntime(t *testing.T, opts Options) (*Runtime, *pgxpool.Pool) {
 		t.Fatalf("New runtime: %v", err)
 	}
 	return rt, pool
+}
+
+// as is a as the route gate builds it over rt's test Auth: its Verified
+// answers Can as the runtime's Authorizer does.
+func (rt *Runtime) as(a access.Actor) access.Actor {
+	ta, _ := rt.guard.Auth.(testauth.Auth)
+	return testauth.Actor(a, ta.Authz)
 }
 
 // cid is the nth deterministic content id: a canonical UUIDv7, ordered by n.
@@ -79,20 +84,6 @@ func countsOf(t *testing.T, rt *Runtime, r contentref.ContentRef) Counts {
 }
 
 // --- fake ports ---
-
-// fakeIdentity returns the actor set per-request via withActor on context.
-type fakeIdentity struct{}
-
-type actorCtxKey struct{}
-
-func withActor(ctx context.Context, a access.Actor) context.Context {
-	return context.WithValue(ctx, actorCtxKey{}, a)
-}
-
-func (*fakeIdentity) Actor(ctx context.Context) (access.Actor, bool) {
-	a, ok := ctx.Value(actorCtxKey{}).(access.Actor)
-	return a, ok
-}
 
 // allowAll authorizes every perm; denyAll denies.
 type allowAll struct{}
@@ -152,6 +143,8 @@ type testMedia struct {
 	origin  string
 	gens    map[string]string // published image name -> its generation
 	lookups int
+	// avatarLookups counts Avatars calls.
+	avatarLookups int
 }
 
 // publish gives the image name a current public file at a new generation.
@@ -197,6 +190,23 @@ func (m *testMedia) Images(_ context.Context, qs ...media.ImageQuery) ([][]media
 			u := m.urlLocked(q.Ref, q.Name)
 			out[i] = []media.PublicImage{{From: q.Name + ".png", Preset: "inline", Renditions: []media.PublicRendition{
 				{URL: strings.Replace(u, ".webp", "-small.webp", 1), W: 400}, {URL: u, W: 800}}}}
+		}
+	}
+	return out, nil
+}
+
+// Avatars answers like the projection: an id with a published "avatar-{id}"
+// has its avatar in two renditions, every other none.
+func (m *testMedia) Avatars(_ context.Context, ids ...string) ([]media.PublicImage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.avatarLookups++
+	out := make([]media.PublicImage, len(ids))
+	for i, id := range ids {
+		out[i] = media.PublicImage{Preset: "avatar"}
+		if gen, ok := m.gens["avatar-"+id]; ok {
+			u := "https://media.test/accounts/user/" + id + "/public/avatar-" + gen
+			out[i].Renditions = []media.PublicRendition{{URL: u + "-64.webp", W: 64, H: 64}, {URL: u + "-128.webp", W: 128, H: 128}}
 		}
 	}
 	return out, nil

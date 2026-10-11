@@ -137,9 +137,10 @@ export type ContentKitRoute = {
   module: ContentKitModule;
   // The path from the module's mount: CONTENTKIT_MODULES[module] + path under the one mount.
   path: string;
-  // public: the actor is optional; user: a signed-in actor; staff: the host permission.
-  auth: "public" | "user" | "staff";
-  // A staff route's content.Perms field.
+  // open: never authenticates; public: the actor is optional; user: a signed-in person;
+  // staff: a person or an application holding the host permission.
+  auth: "open" | "public" | "user" | "staff";
+  // A staff route's permission: root:<resource>:<action>.
   permission: string | null;
   query: readonly string[];
   // wire.ts type names (or a content type): the JSON body, and each success by status.

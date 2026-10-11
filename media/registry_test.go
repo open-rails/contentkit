@@ -115,6 +115,15 @@ func TestRegistryRefuses(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
+	withCover := media.Kind{Name: "k", Uploads: up, Public: []media.Public{{Name: "c", From: "cover", To: "c.webp"}}}
+	for _, a := range []media.Avatars{{Kind: "nope", Preset: "c"}, {Kind: "k", Preset: "nope"}, {Kind: "k"}} {
+		if _, err := media.NewRegistry(media.Config{Namespace: "d", Kinds: []media.Kind{withCover}, Avatars: a}); err == nil {
+			t.Errorf("Avatars %+v: accepted", a)
+		}
+	}
+	if _, err := media.NewRegistry(media.Config{Namespace: "d", Kinds: []media.Kind{withCover}, Avatars: media.Avatars{Kind: "k", Preset: "c"}}); err != nil {
+		t.Errorf("Avatars of a kind's public preset refused: %v", err)
+	}
 	svg := media.Kind{Name: "k", Uploads: []media.Upload{{Path: "logo", Types: []string{"image/svg+xml"}, MaxBytes: 1}}}
 	if _, err := media.NewRegistry(media.Config{Namespace: "d", Kinds: []media.Kind{svg}}); err != nil {
 		t.Errorf("an SVG stored without presets refused: %v", err)

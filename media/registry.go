@@ -63,6 +63,12 @@ func NewRegistry(c Config) (*Registry, error) {
 		r.cfg.Kinds[i] = k
 		r.kinds[k.Name] = &r.cfg.Kinds[i]
 	}
+	if a := c.Avatars; a != (Avatars{}) {
+		k, ok := r.kinds[a.Kind]
+		if !ok || k.public(a.Preset) == nil {
+			return nil, fmt.Errorf("media: Avatars: kind %q has no public preset %q", a.Kind, a.Preset)
+		}
+	}
 	return r, nil
 }
 

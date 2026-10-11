@@ -21,19 +21,11 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/signaltest"
+	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/search"
 	"github.com/open-rails/contentkit/signal"
 	"github.com/open-rails/contentkit/worker"
 )
-
-type actorKey struct{}
-
-type ctxIdentity struct{}
-
-func (ctxIdentity) Actor(ctx context.Context) (access.Actor, bool) {
-	a, ok := ctx.Value(actorKey{}).(access.Actor)
-	return a, ok
-}
 
 type allowAuthz struct{}
 
@@ -61,7 +53,7 @@ func do(t *testing.T, h http.Handler, actor access.Actor, method, target string,
 		}
 	}
 	req := httptest.NewRequest(method, target, &buf)
-	req = req.WithContext(context.WithValue(req.Context(), actorKey{}, actor))
+	req = testauth.As(req, actor)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
@@ -100,9 +92,10 @@ func TestRuntimeIntegration(t *testing.T) {
 
 	rt, err := NewRuntime(ctx, RuntimeConfig{
 		EmbeddedConfig: EmbeddedConfig{PG: pool, PGSchema: searchSchema, Tenant: "doujins", CH: conn, CHDatabase: chDB},
+		Auth:           testauth.Auth{Authz: allowAuthz{}},
 		Content: content.Options{
-			Schema: hostSchema, Identity: ctxIdentity{}, Authz: allowAuthz{}, Resolver: galleryResolver{},
-			ContentKinds: []string{"gallery"}, Perms: content.Perms{PostWrite: "post:write", PollWrite: "poll:write"},
+			Schema: hostSchema, Resolver: galleryResolver{},
+			ContentKinds: []string{"gallery"},
 		},
 	})
 	if err != nil {
@@ -110,7 +103,8 @@ func TestRuntimeIntegration(t *testing.T) {
 	}
 	if _, err := NewRuntime(ctx, RuntimeConfig{
 		EmbeddedConfig: EmbeddedConfig{PG: pool, PGSchema: searchSchema, Tenant: "doujins"},
-		Content:        content.Options{Schema: hostSchema, Tenant: "hentai0", Identity: ctxIdentity{}, Authz: allowAuthz{}, Resolver: galleryResolver{}},
+		Auth:           testauth.Auth{Authz: allowAuthz{}},
+		Content:        content.Options{Schema: hostSchema, Tenant: "hentai0", Resolver: galleryResolver{}},
 	}); err == nil {
 		t.Fatal("a content tenant differing from the hub tenant was accepted")
 	}

@@ -11,23 +11,28 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/open-rails/helpers/userinfo"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
-// commentsEnricher is a fake UserEnricher for the enrichment assertion.
-type commentsEnricher struct{}
+// commentsDirectory is a host directory holding every id but "gone".
+type commentsDirectory struct{}
 
-func (commentsEnricher) UsersByIDs(_ context.Context, ids []string) (map[string]PublicUser, error) {
-	out := make(map[string]PublicUser, len(ids))
+func (commentsDirectory) Get(_ context.Context, ids []string) (map[string]userinfo.User, error) {
+	out := make(map[string]userinfo.User, len(ids))
 	for _, id := range ids {
-		out[id] = PublicUser{
-			ID: id, Username: "name-" + id,
-			Avatar:       "/avatars/" + id + "-80.webp",
-			AvatarSrcSet: "/avatars/" + id + "-80.webp 80w, /avatars/" + id + "-160.webp 160w",
+		if id != "gone" {
+			out[id] = userinfo.User{ID: id, Name: "Name " + id, Username: "name-" + id, Email: id + "@example.test"}
 		}
 	}
 	return out, nil
+}
+
+func (commentsDirectory) Search(context.Context, string, int) ([]userinfo.User, error) {
+	return nil, nil
 }
 
 func commentsRuntime(t *testing.T, opts Options) *Runtime {
@@ -53,7 +58,7 @@ func mustComment(t *testing.T, rt *Runtime, actor access.Actor, kind, id string,
 }
 
 func TestComments_TopLevelRepliesAndReplyCount(t *testing.T) {
-	rt := commentsRuntime(t, Options{Users: commentsEnricher{}})
+	rt := commentsRuntime(t, Options{UserInfo: commentsDirectory{}})
 	ctx := context.Background()
 	author := access.Actor{ID: "author"}
 
@@ -78,9 +83,7 @@ func TestComments_TopLevelRepliesAndReplyCount(t *testing.T) {
 		t.Fatalf("root A = %+v, want reply_count 1", top)
 	}
 	wantAuthor := PublicUser{
-		ID: "author", Username: "name-author",
-		Avatar:       "/avatars/author-80.webp",
-		AvatarSrcSet: "/avatars/author-80.webp 80w, /avatars/author-160.webp 160w",
+		ID: "author", Name: "Name author", Username: "name-author",
 	}
 	if top[ai].Author == nil || *top[ai].Author != wantAuthor {
 		t.Fatalf("author not enriched: %+v", top[ai].Author)
@@ -376,7 +379,7 @@ func TestComments_SoftDeleteKeepsThread(t *testing.T) {
 func TestComments_DeleteOwnerAndModerator(t *testing.T) {
 	denyRt, _ := newTestRuntime(t, Options{
 		Resolver: resolverWith("gallery", cid(1)), ContentKinds: []string{"gallery"},
-		Authz: denyAll{}, Perms: Perms{CommentModerate: "root:comment:moderate"},
+		Auth: testauth.Auth{Authz: denyAll{}},
 	})
 	ctx := context.Background()
 	c1 := mustComment(t, denyRt, access.Actor{ID: "author"}, "gallery", cid(1), CommentInput{Body: "mine"})
@@ -389,10 +392,10 @@ func TestComments_DeleteOwnerAndModerator(t *testing.T) {
 	}
 	modRt, _ := newTestRuntime(t, Options{
 		Resolver: resolverWith("gallery", cid(1)), ContentKinds: []string{"gallery"},
-		Authz: allowAll{}, Perms: Perms{CommentModerate: "root:comment:moderate"},
+		Auth: testauth.Auth{Authz: allowAll{}},
 	})
 	c3 := mustComment(t, modRt, access.Actor{ID: "author"}, "gallery", cid(1), CommentInput{Body: "theirs"})
-	if err := modRt.comments.softDelete(ctx, access.Actor{ID: "mod"}, c3.ID); err != nil {
+	if err := modRt.comments.softDelete(ctx, modRt.as(access.Actor{ID: "mod"}), c3.ID); err != nil {
 		t.Fatalf("moderator delete should succeed: %v", err)
 	}
 }
@@ -505,7 +508,7 @@ func TestComments_LatestFeed(t *testing.T) {
 	res := &fakeResolver{}
 	res.set("gallery", cid(1), true, true)
 	res.set("gallery", cid(2), true, true)
-	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, Users: commentsEnricher{}})
+	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, UserInfo: commentsDirectory{}})
 	ctx := context.Background()
 	a := access.Actor{ID: "author"}
 
@@ -627,10 +630,10 @@ func commentFeedIDs(items []FeedItem) []string {
 func TestComments_AdminListAndRestore(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{
 		Resolver: resolverWith("gallery", cid(1)), ContentKinds: []string{"gallery"},
-		Authz: pollAdminOnly{}, Perms: Perms{CommentModerate: "root:comments:delete"},
+		Auth: testauth.Auth{Authz: pollAdminOnly{}},
 	})
 	ctx := context.Background()
-	admin, user := access.Actor{ID: "admin"}, access.Actor{ID: "user1"}
+	admin, user := rt.as(access.Actor{ID: "admin"}), access.Actor{ID: "user1"}
 
 	top := mustComment(t, rt, user, "gallery", cid(1), CommentInput{Body: "visible"})
 	hidden := mustComment(t, rt, user, "gallery", cid(1), CommentInput{Body: "hide me"})
@@ -670,7 +673,7 @@ func TestComments_AdminListAndRestore(t *testing.T) {
 		t.Fatalf("restore live: want ErrNotFound, got %v", err)
 	}
 	req := httptest.NewRequest("GET", "/comments/admin", nil)
-	req = req.WithContext(withActor(req.Context(), user))
+	req = testauth.As(req, user)
 	rec := httptest.NewRecorder()
 	rt.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {

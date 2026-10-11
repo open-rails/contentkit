@@ -11,21 +11,29 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/open-rails/helpers/auth"
+
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
-// Handler is the admin API of one tenant's store (taxonomyRoutes). Every
-// route is scoped to the store's tenant and content ids stay opaque.
-// contentkit.Runtime.Handler serves it at /taxonomy behind
-// content.Perms.Taxonomy; a host mounting it alone puts it behind its own
-// admin authorization. Errors are JSON {"error", "code"} with 400 for
-// ErrInvalid, 404 for ErrNotFound, 409 for ErrConflict and a sanitized 500 for
-// everything else; the cause always reaches Options.Logger.
-func Handler(s *Store) http.Handler {
+// Handler is the store's admin API (taxonomyRoutes), for a person or an
+// application holding access.TaxonomyWrite in a's root scope: a says who each
+// request is (helpers/auth; AuthKit's ak.Authenticator()) and its Verified's
+// Can decides. Every route is scoped to the store's tenant and content ids
+// stay opaque. contentkit.Runtime.Handler serves it at /taxonomy. Errors are JSON {"error", "code"} with 400 for ErrInvalid, 404 for
+// ErrNotFound, 409 for ErrConflict and a sanitized 500 for everything else;
+// the cause always reaches Options.Logger.
+func (s *Store) Handler(a auth.Authenticator) (http.Handler, error) {
+	if err := gate.Check(a, access.TaxonomyWrite); err != nil {
+		return nil, fmt.Errorf("taxonomy: Handler: %w", err)
+	}
 	mux := http.NewServeMux()
-	httpapi.Mount(mux, handler{s}, taxonomyRoutes)
-	return accessLog(s.log, mux)
+	g := &gate.Gate{Auth: a, Log: s.log}
+	httpapi.Mount(mux, g.Guard, handler{s}, taxonomyRoutes)
+	return accessLog(s.log, mux), nil
 }
 
 func init() { httpapi.Register(httpapi.Taxonomy, taxonomyRoutes) }
@@ -76,7 +84,7 @@ func okReply(body any) []httpapi.Reply { return []httpapi.Reply{httpapi.OK(body)
 
 func adminRoute(method, path, doc string, request any, replies []httpapi.Reply, serve func(handler) http.HandlerFunc, errs []string, query ...httpapi.Param) httpapi.Route[handler] {
 	return httpapi.Route[handler]{Spec: httpapi.Spec{Method: method, Path: path, Resource: "taxonomy", Doc: doc,
-		Auth: httpapi.Staff, Perm: "Taxonomy", Query: query, Request: request, Responses: replies, Errors: errs}, Serve: serve}
+		Auth: httpapi.Staff, Perm: string(access.TaxonomyWrite), Query: query, Request: request, Responses: replies, Errors: errs}, Serve: serve}
 }
 
 // MergeInput names the node a merge folds into.

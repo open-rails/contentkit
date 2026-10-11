@@ -40,7 +40,7 @@ func TestHandlerIntegration(t *testing.T) {
 	ctx := context.Background()
 	pool, schema := testSchema(t, ctx)
 	s := newStore(t, pool, schema, tenant, nil)
-	srv := httptest.NewServer(Handler(s))
+	srv := httptest.NewServer(adminHandler(t, s))
 	t.Cleanup(srv.Close)
 	indexVersions(t, ctx, pool, schema, tenant, version{"gallery", cid(1), "v1", "en", "Blue Ocean", true, true})
 

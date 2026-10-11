@@ -106,7 +106,7 @@ func TestCommitBatchRetriesPreserveLaterEdits(t *testing.T) {
 			}
 			body, _ := json.Marshal(media.CommitBody{Ref: media.RefBody{Kind: "gallery", ID: ref.ContentID}, OperationID: id, Ops: ops})
 			res := httptest.NewRecorder()
-			media.UploadHandler(f.up, media.UploadHandlerOptions{Actor: func(*http.Request) (access.Actor, bool) { return f.editor, true }}).
+			media.UploadHandler(f.up, media.UploadHandlerOptions{Auth: identity{f.editor}}).
 				ServeHTTP(res, httptest.NewRequest(http.MethodPost, "/commit", bytes.NewReader(body)))
 			if res.Code != http.StatusOK {
 				t.Fatalf("HTTP batch retry: %d %s", res.Code, res.Body.String())

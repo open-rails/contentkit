@@ -54,7 +54,7 @@ var uploadRoutes = []httpapi.Route[uploadHandler]{
 }
 
 var readRoutes = []httpapi.Route[readHandler]{
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/presets", Resource: "media", Auth: httpapi.Public,
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/presets", Resource: "media", Auth: httpapi.Open,
 		Doc:       "Every kind's public preset rules: crop bounds, widths and default images. Current image URLs come from a read's public.",
 		Responses: []httpapi.Reply{httpapi.OK([]PresetRule{})}},
 		Serve: httpapi.H(readHandler.presets)},

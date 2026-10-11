@@ -6,10 +6,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/microcosm-cc/bluemonday v1.0.27
-	github.com/open-rails/authkit v1.15.0
+	github.com/open-rails/authkit v1.21.0
 	github.com/open-rails/contentkit v0.70.0
-	github.com/open-rails/contentkit/adapters/authkit v0.0.0
-	github.com/open-rails/helpers v1.6.0
+	github.com/open-rails/helpers v1.8.0
 	github.com/riverqueue/river v0.47.0
 )
 
@@ -50,6 +49,7 @@ require (
 	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/mr-tron/base58 v1.3.0 // indirect
 	github.com/muhlemmer/gu v0.3.1 // indirect
+	github.com/nyaruka/phonenumbers v1.8.1 // indirect
 	github.com/open-rails/migratekit v1.10.0 // indirect
 	github.com/paulmach/orb v0.12.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
@@ -81,10 +81,8 @@ require (
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace (
-	github.com/open-rails/contentkit => ../../../..
-	github.com/open-rails/contentkit/adapters/authkit => ../../../../adapters/authkit
-)
+replace github.com/open-rails/contentkit => ../../../..

@@ -14,26 +14,15 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 )
 
-// PublicUser is display enrichment for an author/actor id.
+// PublicUser is how an author is shown: its name and username from the
+// host's directory (Options.UserInfo) and its avatar from ContentKit media
+// (media.Config.Avatars). Never its email.
 type PublicUser struct {
 	ID           string `json:"id"`
+	Name         string `json:"name,omitempty"`
 	Username     string `json:"username"`
 	Avatar       string `json:"avatar,omitempty"`
 	AvatarSrcSet string `json:"avatar_srcset,omitempty"`
-}
-
-// --- mandatory ports ---
-
-// Identity reads the authenticated actor from context; the host's middleware
-// populated it upstream.
-type Identity interface {
-	Actor(ctx context.Context) (access.Actor, bool)
-}
-
-// Authorizer answers whether an actor holds an opaque host permission. Callers
-// are fail-closed: an error is never "allowed".
-type Authorizer interface {
-	Can(ctx context.Context, actor access.Actor, perm string) (bool, error)
 }
 
 // ContentCanonicalizer maps a resolved reference to the one reference an
@@ -55,11 +44,6 @@ func (f ContentCanonicalizerFunc) Canonical(ref contentref.ContentRef) (contentr
 	return f(ref)
 }
 
-// UserEnricher batch-loads display data for author/actor ids.
-type UserEnricher interface {
-	UsersByIDs(ctx context.Context, ids []string) (map[string]PublicUser, error)
-}
-
 // --- optional ports (nil -> documented default) ---
 
 // ContentProcessor sanitizes rich text on write. Default: strip tags.
@@ -67,16 +51,8 @@ type ContentProcessor interface {
 	Sanitize(ctx context.Context, raw string) (string, error)
 }
 
-// Perms carries the opaque host permission strings checked through
-// Authorizer.Can before privileged writes. An unset gate fails closed.
-type Perms struct {
-	PostWrite        string // create/update/delete posts
-	PollWrite        string // create/update/delete polls + options
-	CommentModerate  string // moderator delete/restore of another actor's comment
-	ModerationReview string // list and resolve held comments and posts
-	CommentBan       string // ban users from commenting anywhere in the tenant (global scope)
-	Taxonomy         string // the taxonomy admin API contentkit.Runtime.Handler serves at /taxonomy
-}
+// permissions are the staff permissions content checks (access.Permission).
+var permissions = []access.Permission{access.PostsWrite, access.PollsWrite, access.CommentsModerate, access.CommentsBan, access.ModerationReview}
 
 // --- moderation and classification ports (nil -> publish / refuse) ---
 

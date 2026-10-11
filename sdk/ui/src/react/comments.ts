@@ -108,7 +108,7 @@ export interface UseAdminComments extends UseList<AdminComment> {
   react: (comment: Comment, value: Reaction) => Promise<void>;
 }
 
-/** Staff: every comment, newest first, deleted, held and rejected ones with their bodies (CommentModerate). */
+/** Staff: every comment, newest first, deleted, held and rejected ones with their bodies (root:comments:moderate). */
 export function useAdminComments(o: { contentKind?: string; pageSize?: number; client?: ContentKitClient } = {}): UseAdminComments {
   const { client, store, scope } = useContentScope(o.client);
   const size = o.pageSize ?? 25;

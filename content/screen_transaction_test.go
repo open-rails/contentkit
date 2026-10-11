@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
 type pausedScreen struct{ entered, release chan struct{} }
@@ -32,7 +33,7 @@ func oneConnectionPostRuntime(t *testing.T, mod ContentModerator) *Runtime {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	out, err := New(context.Background(), Options{Pool: pool, Schema: rt.schema, Tenant: rt.tenant, Identity: &fakeIdentity{}, Authz: allowAll{}, Resolver: &fakeResolver{}, Moderator: mod, Perms: Perms{PostWrite: postPerm}})
+	out, err := New(context.Background(), Options{Pool: pool, Schema: rt.schema, Tenant: rt.tenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{}, Moderator: mod})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +41,7 @@ func oneConnectionPostRuntime(t *testing.T, mod ContentModerator) *Runtime {
 }
 func patchPostWithContext(rt *Runtime, ctx context.Context, id, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest("PATCH", "/posts/"+id, strings.NewReader(`{"body":"`+body+`"}`))
-	req = req.WithContext(withActor(ctx, access.Actor{ID: "author"}))
+	req = testauth.As(req.WithContext(ctx), access.Actor{ID: "author"})
 	rec := httptest.NewRecorder()
 	rt.Handler().ServeHTTP(rec, req)
 	return rec

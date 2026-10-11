@@ -21,7 +21,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/media"
@@ -912,7 +911,7 @@ func TestUploadsRefuseUnconditionalStorageBeforeMovingBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := media.UploadHandler(up, media.UploadHandlerOptions{Actor: func(*http.Request) (access.Actor, bool) { return f.editor, true }})
+	handler := media.UploadHandler(up, media.UploadHandlerOptions{Auth: identity{f.editor}})
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, httptest.NewRequest(http.MethodPost, "/commit", bytes.NewReader(payload)))
 	var reply media.ErrorReply

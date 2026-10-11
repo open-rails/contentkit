@@ -9,6 +9,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/access/accesstest"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
 type gateFacts func(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]access.Fact, error)
@@ -42,7 +43,7 @@ func TestHandlerMemoizesGateReads(t *testing.T) {
 	h := rt.Handler()
 	like := func(actor access.Actor) int {
 		req := httptest.NewRequest("POST", "/widget/"+cid(1)+"/like", nil)
-		req = req.WithContext(withActor(req.Context(), actor))
+		req = testauth.As(req, actor)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		return rec.Code

@@ -46,7 +46,7 @@ func TestStoreOutage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(http.StripPrefix("/media", reader.Handler(media.HandlerOptions{})))
+	srv := httptest.NewServer(http.StripPrefix("/media", reader.Handler(media.HandlerOptions{Auth: identity{access.Actor{Anonymous: true}}})))
 	defer srv.Close()
 	get := func() (int, string) {
 		t.Helper()

@@ -58,15 +58,24 @@ func (m Module) Prefix() string {
 // kind with one of these names would be unreachable under the one mount.
 func Reserved() []string { return []string{"media", "codes", "taxonomy"} }
 
-// Tier is what a route requires of its caller before its handler acts.
+// Tier is what a route requires of its caller before its handler acts. The
+// module's gate enforces it from the host's auth.Authenticator, asked at most
+// once per request.
 type Tier string
 
 const (
-	// Public: the actor is optional; the host's resolver decides what it sees.
+	// Open: anyone; the route reads no actor and never authenticates.
+	Open Tier = "open"
+	// Public: the actor is optional: anonymous without a credential, else the
+	// one the credential proves (401 unauthorized for one that fails); the
+	// host's resolver decides what it sees.
 	Public Tier = "public"
-	// User: a signed-in actor; 401 unauthorized without one.
+	// User: a signed-in person; 401 unauthorized without a credential, 403
+	// forbidden for an application.
 	User Tier = "user"
-	// Staff: the host permission named by Perm; 403 forbidden without it.
+	// Staff: a person or an application holding Perm in the root scope of
+	// the host's auth; 401 unauthorized without a credential, 403 forbidden
+	// without the permission.
 	Staff Tier = "staff"
 )
 
@@ -117,7 +126,8 @@ type Spec struct {
 	// Doc says what the route does, in one line.
 	Doc  string
 	Auth Tier
-	// Perm names the content.Perms field a Staff route checks.
+	// Perm is the permission a Staff route checks, an access.Permission's
+	// full name: root:<resource>:<action>.
 	Perm string
 	// Query lists the query parameters; Request is a zero value of the JSON
 	// body's type (nil for none); Responses is every success outcome.
@@ -150,10 +160,21 @@ func H[S any](fn func(S, http.ResponseWriter, *http.Request)) func(S) http.Handl
 	}
 }
 
-// Mount registers routes on mux, served from s.
-func Mount[S any](mux *http.ServeMux, s S, routes []Route[S]) {
+// Guard gates one route by its Spec's tier before next serves it.
+type Guard func(s Spec, next http.Handler) http.Handler
+
+// Mount registers routes on mux, served from s, each behind guard. Without a
+// guard only Open routes mount: a route is never mounted ungated.
+func Mount[S any](mux *http.ServeMux, guard Guard, s S, routes []Route[S]) {
 	for _, r := range routes {
-		mux.HandleFunc(r.Key(), r.Serve(s))
+		var h http.Handler = r.Serve(s)
+		switch {
+		case guard != nil:
+			h = guard(r.Spec, h)
+		case r.Auth != Open:
+			panic("httpapi: " + r.Key() + " is " + string(r.Auth) + " and mounted without a gate")
+		}
+		mux.Handle(r.Key(), h)
 	}
 }
 
@@ -190,7 +211,9 @@ func (s Spec) check() error {
 		return fmt.Errorf("needs a response")
 	case (s.Auth == Staff) != (s.Perm != ""):
 		return fmt.Errorf("a Staff route, and only one, names a Perm")
-	case s.Auth != Public && s.Auth != User && s.Auth != Staff:
+	case s.Perm != "" && (!strings.HasPrefix(s.Perm, "root:") || strings.Count(s.Perm, ":") != 2):
+		return fmt.Errorf("Perm %q is not root:<resource>:<action>", s.Perm)
+	case s.Auth != Open && s.Auth != Public && s.Auth != User && s.Auth != Staff:
 		return fmt.Errorf("unknown tier %q", s.Auth)
 	}
 	for _, code := range s.Errors {
@@ -254,8 +277,8 @@ func matchPath(pattern, path []string) (int, bool) {
 // ErrorSets names the shared code sets a route answers besides its own Errors.
 func (s Spec) ErrorSets() []string {
 	sets := []string{"module:" + string(s.Module)}
-	if s.Auth != Public {
-		sets = append(sets, "tier:"+string(s.Auth))
+	if s.Auth != Open {
+		sets = append(sets, "auth")
 	}
 	if s.Request != nil || len(s.Query) > 0 || strings.Contains(s.Path, "{") {
 		sets = append(sets, "request")
@@ -268,10 +291,8 @@ func ErrorSet(name string) []string {
 	switch name {
 	case "request":
 		return []string{CodeInvalidRequest}
-	case "tier:user":
-		return []string{CodeUnauthorized}
-	case "tier:staff":
-		return []string{CodeForbidden}
+	case "auth":
+		return []string{CodeForbidden, CodeUnauthorized, CodeUnavailable}
 	case "module:content":
 		return []string{CodeInternal, CodeTenantMismatch}
 	case "module:upload":

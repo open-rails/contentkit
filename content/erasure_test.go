@@ -11,13 +11,13 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/migrations"
 )
 
 func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 	ctx := context.Background()
 	rt := newPreferenceRuntime(t)
-	rt.perms.PollWrite = pollWritePerm
 	u1, u2, anon := access.Actor{ID: "erase"}, access.Actor{ID: "keep"}, access.Actor{ID: "erase", Anonymous: true, IP: "erase"}
 	target := ref("gallery", cid(42))
 	for _, a := range []access.Actor{u1, u2, anon} {
@@ -50,7 +50,7 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	other, err := New(ctx, Options{Pool: rt.store.pool, Schema: rt.schema, Tenant: "other", Identity: &fakeIdentity{}, Authz: allowAll{}, Resolver: rt.resolver, ContentKinds: []string{"gallery"}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
+	other, err := New(ctx, Options{Pool: rt.store.pool, Schema: rt.schema, Tenant: "other", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: rt.resolver, ContentKinds: []string{"gallery"}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,6 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 func TestSourceWritesRaceErasureWithoutResurrection(t *testing.T) {
 	ctx := context.Background()
 	rt := newPreferenceRuntime(t)
-	rt.perms.PollWrite = pollWritePerm
 	actor := access.Actor{ID: "racer"}
 	poll, err := rt.polls.create(ctx, pollAdmin, PollInput{Question: "q", Options: []PollOptionInput{{Label: "a"}, {Label: "b"}}})
 	if err != nil {
@@ -271,7 +270,7 @@ func TestSourceFenceSeesCommittedErasureWithRepeatableReadHostDefault(t *testing
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	rt, err := New(ctx, Options{Pool: pool, Schema: base.schema, Tenant: base.tenant, Identity: &fakeIdentity{}, Authz: allowAll{}, Resolver: base.resolver, ContentKinds: []string{"gallery"}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
+	rt, err := New(ctx, Options{Pool: pool, Schema: base.schema, Tenant: base.tenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: base.resolver, ContentKinds: []string{"gallery"}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +436,7 @@ func (p *retainingPolicy) EraseSubjects(_ context.Context, tenant string, ids []
 
 func TestErasureRejectsUnconfiguredRetainingPolicy(t *testing.T) {
 	rt, pool := newTestRuntime(t, Options{})
-	_, err := New(context.Background(), Options{Pool: pool, Schema: rt.schema, Tenant: testTenant, Identity: &fakeIdentity{}, Authz: allowAll{}, Resolver: &fakeResolver{}, Classifier: &retainingPolicy{}})
+	_, err := New(context.Background(), Options{Pool: pool, Schema: rt.schema, Tenant: testTenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{}, Classifier: &retainingPolicy{}})
 	if err == nil {
 		t.Fatal("retaining classifier accepted without lifecycle eraser")
 	}
@@ -624,7 +623,7 @@ func TestErasureFenceSurvivesRuntimeRestartAndReview(t *testing.T) {
 	if err := rt.EraseSubjects(ctx, []string{author.ID}); err != nil {
 		t.Fatal(err)
 	}
-	opts := Options{Pool: rt.store.pool, Schema: rt.schema, Tenant: rt.tenant, Identity: &fakeIdentity{}, Authz: allowAll{}, Resolver: rt.resolver, ContentKinds: []string{"gallery"}, Moderator: &fakeModerator{}}
+	opts := Options{Pool: rt.store.pool, Schema: rt.schema, Tenant: rt.tenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: rt.resolver, ContentKinds: []string{"gallery"}, Moderator: &fakeModerator{}}
 	restarted, err := New(ctx, opts)
 	if err != nil {
 		t.Fatal(err)
@@ -661,7 +660,7 @@ func TestBaselinePublishedContentSurvivesErasure(t *testing.T) {
 	if err := migrations.ApplyPostgres(ctx, db, schema); err != nil {
 		t.Fatal(err)
 	}
-	rt, err := New(ctx, Options{Pool: pool, Schema: schema, Tenant: testTenant, Identity: &fakeIdentity{}, Authz: allowAll{}, Resolver: &fakeResolver{}})
+	rt, err := New(ctx, Options{Pool: pool, Schema: schema, Tenant: testTenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{}})
 	if err != nil {
 		t.Fatal(err)
 	}

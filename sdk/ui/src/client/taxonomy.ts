@@ -21,7 +21,7 @@ import { call, type RouteQuery } from "./route.js";
 /** GET /taxonomy/nodes filters, as the route names them. */
 export type NodeQuery = RouteQuery<"GET", "/nodes">;
 
-/** The taxonomy admin API (Taxonomy permission). */
+/** The taxonomy admin API (root:taxonomy:write). */
 export class TaxonomyClient {
   constructor(private readonly http: Http) {}
 

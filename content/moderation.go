@@ -318,14 +318,7 @@ func (rt *Runtime) enrichHeld(ctx context.Context, items []HeldItem) {
 			ids = append(ids, it.AuthorID)
 		}
 	}
-	if len(ids) == 0 {
-		return
-	}
-	users, err := rt.users.UsersByIDs(ctx, dedup(ids))
-	if err != nil {
-		rt.log.WarnContext(ctx, "content: held item authors lookup failed", "err", err.Error())
-		return
-	}
+	users := rt.authors(ctx, ids)
 	for i := range items {
 		if u, ok := users[items[i].AuthorID]; ok {
 			items[i].Author = &u
@@ -468,13 +461,13 @@ func (p *posts) resolve(ctx context.Context, id, state string, d ReviewDecision)
 // --- HTTP (ModerationReview-gated) ---
 
 var moderationRoutes = []httpapi.Route[*Runtime]{
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/moderation/held", Resource: "moderation", Auth: httpapi.Staff, Perm: "ModerationReview",
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/moderation/held", Resource: "moderation", Auth: httpapi.Staff, Perm: string(access.ModerationReview),
 		Doc: "Held comments or posts awaiting review, oldest first.",
 		Query: []httpapi.Param{httpapi.Text("kind", "comment or post"), httpapi.Text("cursor", "the previous page's next"),
 			httpapi.Int("limit", "page size: 20 by default, at most 100")},
 		Responses: []httpapi.Reply{httpapi.OK(HeldPage{})}},
 		Serve: httpapi.H((*Runtime).handleListHeld)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/moderation/{kind}/{id}/resolve", Resource: "moderation", Auth: httpapi.Staff, Perm: "ModerationReview",
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/moderation/{kind}/{id}/resolve", Resource: "moderation", Auth: httpapi.Staff, Perm: string(access.ModerationReview),
 		Doc:       "Approves (publishes) or rejects a held comment or post, at the revision the queue listed.",
 		Request:   ResolveInput{},
 		Responses: []httpapi.Reply{httpapi.OK(ReviewOutcome{})}, Errors: []string{CodeConflict, CodeNotFound}},
@@ -495,7 +488,7 @@ type ReviewOutcome struct {
 }
 
 func (rt *Runtime) handleListHeld(w http.ResponseWriter, req *http.Request) {
-	if err := rt.requirePerm(req.Context(), rt.actor(req.Context()), rt.perms.ModerationReview); err != nil {
+	if err := rt.requirePerm(req.Context(), rt.actor(req.Context()), access.ModerationReview); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -511,7 +504,7 @@ func (rt *Runtime) handleListHeld(w http.ResponseWriter, req *http.Request) {
 
 func (rt *Runtime) handleResolve(w http.ResponseWriter, req *http.Request) {
 	actor := rt.actor(req.Context())
-	if err := rt.requirePerm(req.Context(), actor, rt.perms.ModerationReview); err != nil {
+	if err := rt.requirePerm(req.Context(), actor, access.ModerationReview); err != nil {
 		writeErr(w, err)
 		return
 	}

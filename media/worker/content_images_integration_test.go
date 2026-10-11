@@ -25,21 +25,13 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/worker"
 	"github.com/open-rails/contentkit/media/workqueue"
 )
-
-type ckActor struct{}
-
-type ckIdentity struct{}
-
-func (ckIdentity) Actor(ctx context.Context) (access.Actor, bool) {
-	a, ok := ctx.Value(ckActor{}).(access.Actor)
-	return a, ok
-}
 
 // ckStaff holds every content permission for "staff" only.
 type ckStaff struct{}
@@ -134,9 +126,10 @@ func TestPostImagesResolveAcrossGenerations(t *testing.T) {
 	}
 	rt, err := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
 		EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: schema, Tenant: env.Tenant},
-		Content: content.Options{Identity: ckIdentity{}, Authz: ckStaff{}, Resolver: noItems{}, ContentKinds: []string{"gallery"},
+		Auth:           testauth.Auth{Authz: ckStaff{}},
+		Content: content.Options{Resolver: noItems{}, ContentKinds: []string{"gallery"},
 			PostBodyProcessor: keepHTML{}, Limits: content.Limits{Disabled: true},
-			Media: &content.Media{Images: jobs.Manifests(), Folders: jobs}, Perms: content.Perms{PostWrite: "post", PollWrite: "poll"}},
+			Media: &content.Media{Images: jobs.Manifests(), Folders: jobs}},
 		Uploads: uploads, Reader: reader, ReadLimit: media.RateLimit{Disabled: true},
 	})
 	if err != nil {
@@ -166,7 +159,7 @@ func TestPostImagesResolveAcrossGenerations(t *testing.T) {
 		if body != nil {
 			_ = json.NewEncoder(&buf).Encode(body)
 		}
-		req := httptest.NewRequest(method, target, &buf).WithContext(context.WithValue(ctx, ckActor{}, actor))
+		req := testauth.As(httptest.NewRequest(method, target, &buf).WithContext(ctx), actor)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		if out != nil && rec.Code < 300 {

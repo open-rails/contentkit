@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
 // fakeClassifier groups an answer by its first word and owns the assignments
@@ -247,8 +248,8 @@ func TestPolls_FreeTextClassifierFailureRetry(t *testing.T) {
 func TestPolls_FreeTextTenantIsolation(t *testing.T) {
 	ctx := context.Background()
 	cl := &fakeClassifier{}
-	a, pool := newTestRuntime(t, Options{Tenant: "site_a", Classifier: cl, Perms: Perms{PollWrite: pollWritePerm}})
-	b, err := New(ctx, Options{Pool: pool, Schema: a.schema, Tenant: "site_b", Identity: &fakeIdentity{}, Authz: allowAll{}, Resolver: &fakeResolver{}, Classifier: cl, Perms: Perms{PollWrite: pollWritePerm}})
+	a, pool := newTestRuntime(t, Options{Tenant: "site_a", Classifier: cl})
+	b, err := New(ctx, Options{Pool: pool, Schema: a.schema, Tenant: "site_b", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{}, Classifier: cl})
 	if err != nil {
 		t.Fatal(err)
 	}

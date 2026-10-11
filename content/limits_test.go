@@ -14,6 +14,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
 // limitFixture is one replica's runtime over a seeded schema: two galleries,
@@ -30,7 +31,7 @@ type limitFixture struct {
 // the content (once per schema), otherwise it reuses from's schema and ids.
 func newLimitFixture(t *testing.T, limits Limits, from *limitFixture) limitFixture {
 	t.Helper()
-	opts := Options{Limits: limits, ContentKinds: []string{"gallery", "post"}, Perms: Perms{PostWrite: "post", PollWrite: "poll"},
+	opts := Options{Limits: limits, ContentKinds: []string{"gallery", "post"},
 		Anonymous: Anonymous{Comments: true, Reactions: true, Votes: true}}
 	if from != nil {
 		opts.Schema, opts.Resolver = from.rt.schema, from.rt.resolver
@@ -54,7 +55,7 @@ func newLimitFixture(t *testing.T, limits Limits, from *limitFixture) limitFixtu
 	f.post = decodePost(t, rec).ID
 	res.set("post", f.post, true, true)
 	var err error
-	if f.poll, err = rt.polls.create(ctx, admin, twoOptionPoll("en")); err != nil {
+	if f.poll, err = rt.polls.create(ctx, rt.as(admin), twoOptionPoll("en")); err != nil {
 		t.Fatal(err)
 	}
 	f.comment = mustComment(t, rt, admin, "gallery", cid(1), CommentInput{Body: "first"}).ID
@@ -168,8 +169,8 @@ func TestRateLimitDefaults(t *testing.T) {
 	}
 	assertLimited(t, doJSON(t, f.h, bot, "POST", "/gallery/"+cid(1)+"/favorite", nil), ActionFavorite, 50, 60)
 
-	_, err := New(context.Background(), Options{Pool: f.rt.store.pool, Schema: f.rt.schema, Tenant: testTenant, Identity: &fakeIdentity{},
-		Authz: allowAll{}, Resolver: &fakeResolver{}, Limits: Limits{Favorite: []Rate{{0, time.Minute}}}})
+	_, err := New(context.Background(), Options{Pool: f.rt.store.pool, Schema: f.rt.schema, Tenant: testTenant,
+		Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{}, Limits: Limits{Favorite: []Rate{{0, time.Minute}}}})
 	if err == nil || !strings.Contains(err.Error(), "favorite") {
 		t.Fatalf("a zero-count rate: %v", err)
 	}

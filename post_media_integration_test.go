@@ -21,6 +21,7 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/testauth"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/mediatest"
 	"github.com/open-rails/contentkit/media/token"
@@ -88,9 +89,9 @@ func TestDraftPostImagesReadForEditorsIntegration(t *testing.T) {
 	}
 	rt, err := NewRuntime(ctx, RuntimeConfig{
 		EmbeddedConfig: EmbeddedConfig{PG: pool, PGSchema: schema, Tenant: env.Tenant},
-		Content: content.Options{Identity: ctxIdentity{}, Authz: staffAuthz{}, Resolver: itemResolver{}, ContentKinds: []string{"gallery"},
-			Limits: content.Limits{Disabled: true}, Media: &content.Media{Images: jobs.Manifests(), Folders: jobs},
-			Perms: content.Perms{PostWrite: "post", PollWrite: "poll"}},
+		Auth:           testauth.Auth{Authz: staffAuthz{}},
+		Content: content.Options{Resolver: itemResolver{}, ContentKinds: []string{"gallery"},
+			Limits: content.Limits{Disabled: true}, Media: &content.Media{Images: jobs.Manifests(), Folders: jobs}},
 		Uploads: uploads, Reader: reader, ReadLimit: media.RateLimit{Disabled: true},
 	})
 	if err != nil {
@@ -105,7 +106,7 @@ func TestDraftPostImagesReadForEditorsIntegration(t *testing.T) {
 			_ = json.NewEncoder(&buf).Encode(body)
 		}
 		req := httptest.NewRequest(method, target, &buf)
-		req = req.WithContext(context.WithValue(req.Context(), actorKey{}, actor))
+		req = testauth.As(req, actor)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		if rec.Code != status {

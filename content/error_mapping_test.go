@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
 func decodeErr(t *testing.T, body string) errorBody {
@@ -23,10 +24,10 @@ func decodeErr(t *testing.T, body string) errorBody {
 }
 
 func TestErrorMapping_PostSlugsAndPollIDs(t *testing.T) {
-	rt, _ := newTestRuntime(t, Options{Perms: Perms{PostWrite: "post", PollWrite: "poll"}})
+	rt, _ := newTestRuntime(t, Options{})
 	h := rt.Handler()
 	ctx := context.Background()
-	admin := access.Actor{ID: "admin"}
+	admin := rt.as(access.Actor{ID: "admin"})
 	poll, err := rt.polls.create(ctx, admin, twoOptionPoll("en"))
 	if err != nil {
 		t.Fatal(err)
@@ -73,8 +74,8 @@ func TestErrorMapping_PostSlugsAndPollIDs(t *testing.T) {
 // A host that never wired Media must get 501 not_configured on every image
 // route, not a 500 indistinguishable from a crash.
 func TestErrorMapping_UnwiredMediaIs501(t *testing.T) {
-	rt, _ := newTestRuntime(t, Options{Perms: Perms{PostWrite: "post", PollWrite: "poll"}})
-	admin := access.Actor{ID: "admin"}
+	rt, _ := newTestRuntime(t, Options{})
+	admin := rt.as(access.Actor{ID: "admin"})
 	poll, err := rt.polls.create(context.Background(), admin, PollInput{Question: "Q?", Options: []PollOptionInput{{Label: "A"}, {Label: "B"}}})
 	if err != nil {
 		t.Fatalf("create poll: %v", err)
@@ -86,7 +87,7 @@ func TestErrorMapping_UnwiredMediaIs501(t *testing.T) {
 		method, path, _ := strings.Cut(route, " ")
 		b, _ := json.Marshal(name)
 		req := httptest.NewRequest(method, path, bytes.NewReader(b))
-		req = req.WithContext(withActor(req.Context(), admin))
+		req = testauth.As(req, admin)
 		rec := httptest.NewRecorder()
 		rt.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusNotImplemented {
@@ -113,7 +114,7 @@ func TestErrorMapping_ForeignTenantRefIsSanitized500(t *testing.T) {
 	})
 
 	req := httptest.NewRequest("GET", "/gallery/"+cid(1)+"/comments", nil)
-	req = req.WithContext(withActor(req.Context(), access.Actor{ID: "u1"}))
+	req = testauth.As(req, access.Actor{ID: "u1"})
 	rec := httptest.NewRecorder()
 	rt.Handler().ServeHTTP(rec, req)
 
@@ -146,9 +147,8 @@ func TestErrorMapping_PublicCodes(t *testing.T) {
 	var logs bytes.Buffer
 	rt, _ := newTestRuntime(t, Options{
 		Resolver:     res,
-		Authz:        denyAll{},
+		Auth:         testauth.Auth{Authz: denyAll{}},
 		ContentKinds: []string{"gallery"},
-		Perms:        Perms{PostWrite: "post", PollWrite: "poll"},
 		Logger:       slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
 
@@ -166,7 +166,7 @@ func TestErrorMapping_PublicCodes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
-			req = req.WithContext(withActor(req.Context(), access.Actor{ID: "u1"}))
+			req = testauth.As(req, access.Actor{ID: "u1"})
 			rec := httptest.NewRecorder()
 			rt.Handler().ServeHTTP(rec, req)
 			if rec.Code != tc.status {
@@ -194,7 +194,7 @@ func TestErrorMapping_ModerationRejection(t *testing.T) {
 	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}, Moderator: &fakeModerator{}})
 
 	req := httptest.NewRequest("POST", "/gallery/"+cid(1)+"/comments", strings.NewReader(`{"body":"spam"}`))
-	req = req.WithContext(withActor(req.Context(), access.Actor{ID: "u1"}))
+	req = testauth.As(req, access.Actor{ID: "u1"})
 	rec := httptest.NewRecorder()
 	rt.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnprocessableEntity {

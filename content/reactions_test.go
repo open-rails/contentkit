@@ -10,6 +10,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
 func TestReactions_TransitionsAndCounts(t *testing.T) {
@@ -131,7 +132,7 @@ func TestReactions_HTTPRoute(t *testing.T) {
 	h := rt.Handler()
 
 	req := httptest.NewRequest("POST", "/widget/"+cid(1)+"/like", nil)
-	req = req.WithContext(withActor(req.Context(), access.Actor{ID: "u1", Kind: "user"}))
+	req = testauth.As(req, access.Actor{ID: "u1", Kind: "user"})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

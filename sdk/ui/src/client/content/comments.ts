@@ -64,12 +64,12 @@ export class CommentsClient {
   latest(q: PageQuery = {}, signal?: AbortSignal): Promise<FeedItem[]> {
     return call(this.http, "GET", "/comments/latest", { query: q, signal });
   }
-  /** Every comment, newest first, deleted, held and rejected ones with their bodies (CommentModerate). */
+  /** Every comment, newest first, deleted, held and rejected ones with their bodies (root:comments:moderate). */
   adminList(q: AdminCommentQuery = {}, signal?: AbortSignal): Promise<AdminComment[]> {
     const { contentKind, ...page } = q;
     return call(this.http, "GET", "/comments/admin", { query: { ...page, content_kind: contentKind }, signal });
   }
-  /** Restores a deleted comment (CommentModerate). */
+  /** Restores a deleted comment (root:comments:moderate). */
   async restore(id: string): Promise<void> {
     const emit = this.http.captureChanges();
     await call(this.http, "POST", "/comments/{cid}/restore", { params: { cid: id } });

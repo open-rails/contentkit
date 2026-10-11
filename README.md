@@ -46,7 +46,7 @@ another tenant is an error, never remapped.
 |---|---|
 | `contentref` | `ContentRef`, `ContentKey`, `TaxonomyID` |
 | `contenturl` | uniform content URLs `[/{lang}]/{route}/{CODE}[/{slug}]`: permanent 9-character codes per tenant, slugs, merges, legacy aliases, canonical redirects, a JSON lookup; the browser half is `@openrails/contentkit-ui/urls` ([Content URLs](HOST_INTEGRATION.md#content-urls-contenturl)) |
-| `access` | `Actor`, the batch `ContentResolver` port (`Resolve(ctx, refs, actor) → map[ContentKey]Resolution`; an omitted ref denies) and its `Resolution{Ref, Visible, Accessible, Editor}`, shared by `content` and media; paywalls: the entitlement key grammar, item rules, the `Gate`, its listing `Filter` (with a SQL predicate) and the request memo over the `Entitlements` port ([Paywalls and listings](#paywalls-and-listings-access)) |
+| `access` | `Actor`, the staff permissions (`Permission`, `Permissions()`), the batch `ContentResolver` port (`Resolve(ctx, refs, actor) → map[ContentKey]Resolution`; an omitted ref denies) and its `Resolution{Ref, Visible, Accessible, Editor}`, shared by `content` and media; paywalls: the entitlement key grammar, item rules, the `Gate`, its listing `Filter` (with a SQL predicate) and the request memo over the `Entitlements` port ([Paywalls and listings](#paywalls-and-listings-access)) |
 | `access/accesstest` | an in-memory `Entitlements` and `CountingEntitlements`, for "one billing read per page" tests |
 | `media` | the registry (`Config`, kinds, upload paths, private and public presets), ordered manifests with provenance and conditional-write edits, the `Store` port, direct uploads and commit ops with their HTTP API, reads and HLS playlists, the optional `UploadLimiter`, and the sweep, deletion, `Expose` and relays as River jobs |
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
@@ -57,7 +57,7 @@ another tenant is an error, never remapped.
 | `media/video` | ffmpeg producers: byte-range fMP4 HLS ladders with audio, subtitle and sprite tracks, MP4 per rung, audio, subtitles, frame grabs; `Frames` for the frame picker |
 | `media/worker` | the media worker: one process for every producer, built from the host's registry (`cmd/media-worker` is the stock build) |
 | `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
-| `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; the `Identity`/`Authorizer`/`UserEnricher`/`ContentProcessor` ports, post and poll images through `Media`, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
+| `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; authors' names from the host's `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, post and poll images through `Media`, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
 | `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
 | `worker` | one tenant's document maintenance: dirty queue, bounded backfill, sink delivery |
 | `taxonomy` | generic catalog: nodes (tags, artists, creators, characters, series, seasons, voice actors), localized names/aliases, edges, content assignments, effective tags, per-language counts, typeahead documents, admin routes |
@@ -66,8 +66,8 @@ another tenant is an error, never remapped.
 | `discovery` | `SimilarTo`/`Recommend`: the `Candidates` port, the default co-engagement source (`Engagement`), `Fallback`, and the shared exclusion/fill policy (`Recommender`) |
 | `eval` | lexical golden-case evaluation, reports, baselines |
 | `migrations` | PostgreSQL migration chain and ClickHouse baseline |
-| `adapters/authkit` | its own module (opt-in): account avatars and content authors from AuthKit; see HOST_INTEGRATION "Account avatars" |
 | `adapters/openrails` | its own module (opt-in): `access.Entitlements` over OpenRails `CheckEntitlements` (one request per read) |
+| `e2e` | its own module: every route end to end over PostgreSQL, MinIO and a real AuthKit |
 | root | `Runtime` (one constructor: hub + content + one HTTP mount for every module), `Migrate` (all PostgreSQL features and optional ClickHouse signals), `Client` (keyword search + typeahead), `EmbeddedHub` (signal + discovery) |
 
 ## Install
@@ -92,8 +92,10 @@ current lineage, not retired migration chains. See [docs/migration.md](docs/migr
 ```go
 rt, _ := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
 	EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: "doujins", Tenant: "doujins", CH: ch, CHDatabase: "hub"},
-	Content: content.Options{Schema: "doujins", Identity: identity, Authz: authz, Resolver: resolver, ContentKinds: []string{"gallery", "post"}},
-	Uploads: uploads, Reader: reader, Codes: router, Taxonomy: taxonomy.Handler(store), // optional modules
+	Auth:           ak.Authenticator(), // says who a request is; ContentKit decides what to admit
+	UserInfo:       ak.UserInfo(),      // authors' names
+	Content: content.Options{Schema: "doujins", Resolver: resolver, ContentKinds: []string{"gallery", "post"}},
+	Uploads: uploads, Reader: reader, Codes: router, Taxonomy: store, // optional modules
 })
 mux.Handle("/api/contentkit/", http.StripPrefix("/api/contentkit", rt.Handler()))
 counts, _ := rt.Content.Counts(ctx, []contentkit.ContentRef{rt.Content.Ref("gallery", "42")})
@@ -105,8 +107,9 @@ _ = worker.SyncOnce(ctx, rt.WorkerOptions(hostWorkerOptions)) // host documents 
 
 ## HTTP API
 
-`rt.Handler()` serves every configured module under one prefix, after the
-host's auth middleware put the actor in the context:
+`rt.Handler()` serves every configured module under one prefix. No auth
+middleware goes in front: each route's gate asks `Auth` who the request is
+(once) and admits it by its tier:
 
 | Sub-path | Module | Configured by |
 |---|---|---|
@@ -114,12 +117,27 @@ host's auth middleware put the actor in the context:
 | `/media/upload/…` | media uploads | `Uploads` |
 | `/media/…` | media reads and HLS playlists | `Reader`, `ReadLimit` |
 | `/codes/{code}` | content codes | `Codes` |
-| `/taxonomy/…` | taxonomy admin, for `Content.Perms.Taxonomy` | `Taxonomy` |
+| `/taxonomy/…` | taxonomy admin, for `root:taxonomy:write` | `Taxonomy` |
 
-Media and taxonomy identify the caller with `Content.Identity`. No content kind
-may be named `media`, `codes` or `taxonomy`. A host can still mount a module
-alone (`content.Runtime.Handler`, `media.UploadHandler`, `media.Reader.Handler`,
-`contenturl.Router.Handler`, `taxonomy.Handler`) at a path of its choosing.
+| Tier | Admits |
+|---|---|
+| `open` | anyone; never authenticates |
+| `public` | anyone: anonymous without a credential, else the subject it proves (a credential that fails is 401 with the provider's challenge) |
+| `user` | a signed-in person (401 anonymous, 403 an application) |
+| `staff` | a person or an application holding the route's permission, one of `access.Permissions()` (`root:<resource>:<action>`), in the Authenticator's root scope, by its `Verified.Can` (403 without it) |
+
+Refusals carry `auth.Refuse`'s status and `WWW-Authenticate`; an auth outage
+is 503. ContentKit names its staff permissions (`access.Permissions()`); the
+host declares them in its auth's roles from those constants and configures
+no permission or scope. They are root-wide; per-item rights (owner, editor)
+are the resolver's.
+No staff action asks for a recent sign-in. Behind a proxy, set
+`Request.RemoteAddr` to the client's address before the mount: anonymous
+reactions, votes and limits are keyed by it. No content kind may be named
+`media`, `codes` or `taxonomy`. A host can still mount a module alone
+(`content.Runtime.Handler`, `media.UploadHandler`, `media.Reader.Handler`,
+`contenturl.Router.Handler`, `taxonomy.Store.Handler`) at a path of its
+choosing, each with the same `Auth`.
 
 Every route is declared once, in its module's route table
 (`internal/httpapi`): method, path, tier, query, bodies and error codes. The
@@ -277,8 +295,9 @@ overwritten in place (ETags and a CDN purge keep them fresh). Every URL is
 
 ```go
 reg, _ := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https://media.doujins.ai",
-	Kinds: []media.Kind{Gallery, accountmedia.User},
-	Hooks: media.Hooks{Resolver: resolver, CanUpload: authorizer, PurgePublic: purge, ItemReady: ready}})
+	Kinds:   []media.Kind{Gallery, accountmedia.User},
+	Avatars: media.Avatars{Kind: "user", Preset: "avatar"}, // comment authors' avatars
+	Hooks:   media.Hooks{Resolver: resolver, CanUpload: authorizer, PurgePublic: purge, ItemReady: ready}})
 store, _ := s3.New(s3.Config{Bucket: "media", Endpoint: rgw, PublicEndpoint: "https://s3.doujins.ai", UsePathStyle: true,
 	AccessKeyID: id, SecretAccessKey: secret})
 key, _ := token.ParseKey(os.Getenv("MEDIA_TOKEN_KEY")) // "{kid}:{base64}", shared with media-gateway
@@ -437,7 +456,7 @@ _ = store.WithTx(tx).Assign(ctx, []taxonomy.Assignment{{ContentRef: g1.WithVersi
 tags, _ := store.EffectiveTags(ctx, []contentkit.ContentRef{g1.WithVersion(v2)})
 filter, args, _ := taxonomy.RequireAll(schema, []taxonomy.TaxonomyID{"colored"})
 page, _ := client.Search(ctx, q, contentkit.SearchOptions{Language: "es", ContentKinds: []string{"gallery"}, FilterSQL: filter, FilterArgs: args, Eligibility: elig})
-// RuntimeConfig.Taxonomy: taxonomy.Handler(store), served at /taxonomy for Content.Perms.Taxonomy
+// RuntimeConfig.Taxonomy: store, served at /taxonomy for root:taxonomy:write
 ```
 
 `ListNodes` backs a catalog index page directly: the display name in the

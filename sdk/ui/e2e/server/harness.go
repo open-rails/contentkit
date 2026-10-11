@@ -20,9 +20,10 @@ import (
 
 	"github.com/open-rails/authkit"
 	"github.com/open-rails/authkit/authtest"
+	"github.com/open-rails/authkit/iam"
+	"github.com/open-rails/helpers/auth"
 
 	contentkit "github.com/open-rails/contentkit"
-	ckauthkit "github.com/open-rails/contentkit/adapters/authkit"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
@@ -64,7 +65,7 @@ type harness struct {
 	river      *river.Client[pgx.Tx]
 	items      *items
 	faults     *faults
-	avatars    *ckauthkit.Avatars
+	staff      auth.Scope // AuthKit's root scope (the root group), where staff hold their permissions
 	router     *contenturl.Router
 	s3Endpoint *url.URL
 	bucket     string
@@ -88,7 +89,9 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if h.auth, h.outbox, err = newAuth(ctx, c.origin, h.pool); err != nil {
 		return nil, fmt.Errorf("authkit: %w", err)
 	}
-	h.avatars = &ckauthkit.Avatars{Directory: h.auth, Staff: permMedia}
+	if h.staff, err = h.auth.Scope(ctx, iam.RootGroup()); err != nil {
+		return nil, err
+	}
 
 	db := stdlib.OpenDBFromPool(h.pool)
 	err = contentkit.Migrate(ctx, contentkit.MigrateConfig{DB: db, Schema: schema})
@@ -187,9 +190,10 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	newRuntime := func(anonymous content.Anonymous) (*contentkit.Runtime, error) {
 		return contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
 			EmbeddedConfig: contentkit.EmbeddedConfig{PG: h.pool, PGSchema: schema, Tenant: tenant},
+			Auth:           h.auth.Authenticator(),
+			UserInfo:       h.auth.UserInfo(),
 			Content: content.Options{
-				Identity: identity{}, Authz: h, Resolver: h,
-				Users:     &ckauthkit.Authors{Directory: h.auth, Media: h.manifests},
+				Resolver:  h,
 				Moderator: moderator{}, Classifier: classifier{}, PostBodyProcessor: newPostHTML(),
 				Media: &content.Media{Images: h.manifests, Folders: jobs, PostKind: postFolder, PollKind: pollFolder},
 				// Commentable kinds; posts are content's own.
@@ -197,13 +201,11 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 				Anonymous:    anonymous,
 				// The suites test the bound; the default may change.
 				CommentMaxLength: 400,
-				Perms: content.Perms{PostWrite: "post", PollWrite: "poll", CommentModerate: "moderate", ModerationReview: "review",
-					CommentBan: "ban", Taxonomy: "taxonomy"},
 				// Generous for a shared suite; a test reaches the comment limit with its own account.
 				Limits: content.Limits{Comment: []content.Rate{{Count: 20, Per: time.Minute}}},
 			},
 			Uploads: uploads, Reader: reader, ReadLimit: media.RateLimit{Disabled: true},
-			Codes: h.router, Taxonomy: taxonomy.Handler(tax),
+			Codes: h.router, Taxonomy: tax,
 		})
 	}
 	// The main mount takes signed-out comments, reactions and votes; the

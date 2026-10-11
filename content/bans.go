@@ -21,7 +21,7 @@ import (
 // own) and hides or deletes nothing. Reactions, favorites and votes are not
 // banned; the rate limits cover them.
 const (
-	// ScopeGlobal is the whole tenant, managed by holders of Perms.CommentBan.
+	// ScopeGlobal is the whole tenant, managed by holders of root:comments:ban.
 	ScopeGlobal = "global"
 	ownerScope  = "owner:"
 )
@@ -183,21 +183,14 @@ func (rt *Runtime) listCommentBans(ctx context.Context, scope string, limit, off
 	return out, nil
 }
 
-// enrichBans attaches the banned users' display data; a failed lookup leaves
-// bare ids.
+// enrichBans shows the banned users (Runtime.authors); a failed lookup
+// leaves bare ids.
 func (rt *Runtime) enrichBans(ctx context.Context, bans []CommentBan) {
-	if len(bans) == 0 {
-		return
-	}
 	ids := make([]string, len(bans))
 	for i := range bans {
 		ids[i] = bans[i].UserID
 	}
-	users, err := rt.users.UsersByIDs(ctx, dedup(ids))
-	if err != nil {
-		rt.log.WarnContext(ctx, "content: comment ban users lookup failed", "err", err.Error())
-		return
-	}
+	users := rt.authors(ctx, ids)
 	for i := range bans {
 		if u, ok := users[bans[i].UserID]; ok {
 			bans[i].User = &u
@@ -221,16 +214,16 @@ var banRoutes = []httpapi.Route[*Runtime]{
 		Doc:       "Lifts the caller's ban on a user.",
 		Responses: []httpapi.Reply{httpapi.NoContent}},
 		Serve: func(rt *Runtime) http.HandlerFunc { return rt.handleLiftBan(false) }},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/global-comment-bans", Resource: "bans", Auth: httpapi.Staff, Perm: "CommentBan",
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/global-comment-bans", Resource: "bans", Auth: httpapi.Staff, Perm: string(access.CommentsBan),
 		Doc:   "The tenant-wide comment bans, newest first, expired ones included.",
 		Query: httpapi.Page, Responses: []httpapi.Reply{httpapi.OK([]CommentBan{})}, Errors: []string{CodeUnauthorized}},
 		Serve: func(rt *Runtime) http.HandlerFunc { return rt.handleListBans(true) }},
-	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/global-comment-bans/{user}", Resource: "bans", Auth: httpapi.Staff, Perm: "CommentBan",
+	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/global-comment-bans/{user}", Resource: "bans", Auth: httpapi.Staff, Perm: string(access.CommentsBan),
 		Doc:       "Bans a user from commenting anywhere in the tenant, or replaces the ban.",
 		Request:   BanInput{},
 		Responses: []httpapi.Reply{httpapi.OK(CommentBan{})}, Errors: []string{CodeUnauthorized}},
 		Serve: func(rt *Runtime) http.HandlerFunc { return rt.handleBan(true) }},
-	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/global-comment-bans/{user}", Resource: "bans", Auth: httpapi.Staff, Perm: "CommentBan",
+	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/global-comment-bans/{user}", Resource: "bans", Auth: httpapi.Staff, Perm: string(access.CommentsBan),
 		Doc:       "Lifts a tenant-wide comment ban.",
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeUnauthorized}},
 		Serve: func(rt *Runtime) http.HandlerFunc { return rt.handleLiftBan(true) }},
@@ -241,7 +234,7 @@ var banRoutes = []httpapi.Route[*Runtime]{
 }
 
 // banScope authorizes the caller for one scope: the global scope needs
-// Perms.CommentBan; the owner scope is the caller's own.
+// root:comments:ban; the owner scope is the caller's own.
 func (rt *Runtime) banScope(ctx context.Context, global bool) (access.Actor, string, error) {
 	actor, err := rt.requireActor(ctx)
 	if err != nil {
@@ -250,7 +243,7 @@ func (rt *Runtime) banScope(ctx context.Context, global bool) (access.Actor, str
 	if !global {
 		return actor, OwnerScope(actor.ID), nil
 	}
-	if err := rt.requirePerm(ctx, actor, rt.perms.CommentBan); err != nil {
+	if err := rt.requirePerm(ctx, actor, access.CommentsBan); err != nil {
 		return access.Actor{}, "", err
 	}
 	return actor, ScopeGlobal, nil
@@ -316,7 +309,7 @@ type BanScope string
 
 const (
 	BanOwner  BanScope = "owner"  // the caller owns the target: /comment-bans
-	BanGlobal BanScope = "global" // Perms.CommentBan: /global-comment-bans
+	BanGlobal BanScope = "global" // root:comments:ban: /global-comment-bans
 )
 
 // CommentStanding is the caller's standing on a target: may they comment, if a
@@ -335,7 +328,7 @@ type CommentStanding struct {
 	// wrote are the ones it may edit and delete.
 	UserID string `json:"user_id,omitempty"`
 	// Moderate: the caller may edit, delete and restore anyone's comments
-	// (Perms.CommentModerate).
+	// (root:comments:moderate).
 	Moderate bool `json:"moderate"`
 	// BanScopes are the scopes the caller may ban the target's commenters in.
 	BanScopes []BanScope `json:"ban_scopes"`
@@ -362,11 +355,11 @@ func (rt *Runtime) handleCanComment(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if out.UserID != "" {
-		out.Moderate = rt.requirePerm(ctx, actor, rt.perms.CommentModerate) == nil
+		out.Moderate = rt.requirePerm(ctx, actor, access.CommentsModerate) == nil
 		if res.Owner == out.UserID {
 			out.BanScopes = append(out.BanScopes, BanOwner)
 		}
-		if rt.requirePerm(ctx, actor, rt.perms.CommentBan) == nil {
+		if rt.requirePerm(ctx, actor, access.CommentsBan) == nil {
 			out.BanScopes = append(out.BanScopes, BanGlobal)
 		}
 	}

@@ -122,6 +122,37 @@ func (m *Manifests) PresetImages(ctx context.Context, preset string, refs ...con
 	return out, nil
 }
 
+// Avatars returns, per id in order, the person's avatar (Config.Avatars):
+// their account item's current image of the preset, else the preset's
+// default, else one without renditions; none at all without Config.Avatars.
+// One query for the whole list.
+func (m *Manifests) Avatars(ctx context.Context, ids ...string) ([]PublicImage, error) {
+	a := m.reg.cfg.Avatars
+	if a == (Avatars{}) || len(ids) == 0 {
+		return nil, nil
+	}
+	out := make([]PublicImage, len(ids))
+	var refs []contentref.ContentRef
+	var at []int
+	for i, id := range ids {
+		out[i] = PublicImage{Preset: a.Preset}
+		if ref, err := m.reg.Ref(a.Kind, id); err == nil {
+			refs, at = append(refs, ref), append(at, i)
+		}
+	}
+	if len(refs) == 0 {
+		return out, nil
+	}
+	images, err := m.PresetImages(ctx, a.Preset, refs...)
+	if err != nil {
+		return nil, err
+	}
+	for j, i := range at {
+		out[i] = images[j]
+	}
+	return out, nil
+}
+
 // DefaultImage is preset's default image for ref, which the media gateway
 // serves while the item has no publication (Public.hasDefault). From is empty and heights follow the preset's
 // aspect (0 without one).

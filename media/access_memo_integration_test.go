@@ -47,7 +47,7 @@ func TestReadHandlerMemoizesGateReads(t *testing.T) {
 	owned, other := f.ref("gallery", 1), f.ref("gallery", 2)
 	viewer := access.Actor{ID: "0192aaaa-0000-7000-8000-000000000001", Kind: "user"}
 	held.Grant(viewer.ID, access.Own(owned).String())
-	srv := httptest.NewServer(f.rd.Handler(media.HandlerOptions{Identity: identity{viewer}}))
+	srv := httptest.NewServer(f.rd.Handler(media.HandlerOptions{Auth: identity{viewer}}))
 	defer srv.Close()
 	for _, tc := range []struct {
 		ref  contentref.ContentRef

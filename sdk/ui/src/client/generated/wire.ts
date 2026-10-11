@@ -634,6 +634,7 @@ export interface PublicRendition {
 
 export interface PublicUser {
   id: string;
+  name?: string;
   username: string;
   avatar?: string;
   avatar_srcset?: string;

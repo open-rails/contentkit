@@ -9,6 +9,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
 // What signed-out visitors may do is the server's setting: off by default,
@@ -20,8 +21,7 @@ func TestAnonymousParticipationIsAServerSetting(t *testing.T) {
 	setup := func(t *testing.T, a Anonymous) (http.Handler, Post, Poll, Comment) {
 		res := &fakeResolver{}
 		res.set("gallery", cid(1), true, true)
-		rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery", "post"}, Anonymous: a,
-			Perms: Perms{PostWrite: "post", PollWrite: "poll"}})
+		rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery", "post"}, Anonymous: a})
 		h := rt.Handler()
 		staff := access.Actor{ID: "staff", Kind: "user"}
 		post := decodePost(t, doJSON(t, h, staff, "POST", "/posts", PostInput{Title: ptr("Hello"), Body: ptr("world")}))
@@ -137,7 +137,7 @@ func TestCommentLengthIsAServerSetting(t *testing.T) {
 			}
 		}
 	}
-	if _, err := New(context.Background(), Options{Pool: pgtest.Pool(t, nil), Schema: "x", Tenant: "t", Identity: &fakeIdentity{}, Authz: allowAll{}, Resolver: &fakeResolver{}, CommentMaxLength: -1}); err == nil {
+	if _, err := New(context.Background(), Options{Pool: pgtest.Pool(t, nil), Schema: "x", Tenant: "t", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{}, CommentMaxLength: -1}); err == nil {
 		t.Fatal("a negative CommentMaxLength was accepted")
 	}
 }

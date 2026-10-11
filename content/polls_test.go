@@ -15,20 +15,20 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/testauth"
 )
 
 // pollAdmin is the gated writer; pollWritePerm must be non-empty or requirePerm
 // fails closed even under allowAll.
-var pollAdmin = access.Actor{ID: "admin", Kind: "user"}
+// pollAdmin holds every permission when it calls the module directly; over
+// HTTP the runtime's Authorizer decides.
+var pollAdmin = testauth.Actor(access.Actor{ID: "admin", Kind: "user"}, testauth.All{})
 
-const pollWritePerm = "poll:write"
+const pollWritePerm = string(access.PollsWrite)
 
 // newPollTest builds a Runtime with PollWrite wired and returns the polls service.
 func newPollTest(t *testing.T, opts Options) (*Runtime, *polls) {
 	t.Helper()
-	if opts.Perms.PollWrite == "" {
-		opts.Perms.PollWrite = pollWritePerm
-	}
 	rt, _ := newTestRuntime(t, opts)
 	return rt, newPolls(rt)
 }
@@ -193,10 +193,10 @@ func TestPolls_LanguageSlicing(t *testing.T) {
 }
 
 func TestPolls_AdminGateDeniedReturns403(t *testing.T) {
-	rt, p := newPollTest(t, Options{Authz: denyAll{}})
+	rt, p := newPollTest(t, Options{Auth: testauth.Auth{Authz: denyAll{}}})
 	ctx := context.Background()
 
-	_, err := p.create(ctx, pollAdmin, twoOptionPoll(""))
+	_, err := p.create(ctx, rt.as(pollAdmin), twoOptionPoll(""))
 	var he httpError
 	if !errors.As(err, &he) || he.status != http.StatusForbidden {
 		t.Fatalf("create under denyAll: want 403 httpError, got %v", err)
@@ -204,7 +204,7 @@ func TestPolls_AdminGateDeniedReturns403(t *testing.T) {
 
 	// same gate over HTTP
 	mux := http.NewServeMux()
-	httpapi.Mount(mux, p, pollRoutes)
+	httpapi.Mount(mux, p.rt.guard.Guard, p, pollRoutes)
 	rec := doPollReq(t, mux, "POST", "/polls", twoOptionPoll(""), pollAdmin)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("POST /polls under denyAll: status %d, body %s", rec.Code, rec.Body.String())
@@ -255,7 +255,7 @@ func TestPolls_HasVotedReflectedPerCaller(t *testing.T) {
 func TestPolls_HTTPRoutesEndToEnd(t *testing.T) {
 	_, p := newPollTest(t, Options{Anonymous: Anonymous{Votes: true}})
 	mux := http.NewServeMux()
-	httpapi.Mount(mux, p, pollRoutes)
+	httpapi.Mount(mux, p.rt.guard.Guard, p, pollRoutes)
 
 	rec := doPollReq(t, mux, "POST", "/polls", twoOptionPoll(""), pollAdmin)
 	if rec.Code != http.StatusCreated {
@@ -296,7 +296,7 @@ func doPollReq(t *testing.T, h http.Handler, method, target string, body any, ac
 		r = bytes.NewReader(b)
 	}
 	req := httptest.NewRequest(method, target, r)
-	req = req.WithContext(withActor(req.Context(), actor))
+	req = testauth.As(req, actor)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
@@ -311,7 +311,7 @@ func (pollAdminOnly) Can(_ context.Context, a access.Actor, _ string) (bool, err
 }
 
 func TestPolls_LiveGatingAndAdminList(t *testing.T) {
-	rt, p := newPollTest(t, Options{Authz: pollAdminOnly{}})
+	rt, p := newPollTest(t, Options{Auth: testauth.Auth{Authz: pollAdminOnly{}}})
 	ctx := context.Background()
 	future := time.Now().Add(time.Hour)
 
@@ -346,7 +346,7 @@ func TestPolls_LiveGatingAndAdminList(t *testing.T) {
 	// admin list endpoint 403s for the public.
 	get := func(actor access.Actor, path string) int {
 		req := httptest.NewRequest("GET", path, nil)
-		req = req.WithContext(withActor(req.Context(), actor))
+		req = testauth.As(req, actor)
 		rec := httptest.NewRecorder()
 		rt.Handler().ServeHTTP(rec, req)
 		return rec.Code
@@ -432,7 +432,7 @@ func pollIDs(vs []Poll) []string {
 }
 
 func TestPolls_OptionCRUD(t *testing.T) {
-	rt, p := newPollTest(t, Options{Authz: pollAdminOnly{}})
+	rt, p := newPollTest(t, Options{Auth: testauth.Auth{Authz: pollAdminOnly{}}})
 	ctx := context.Background()
 	v, err := p.create(ctx, pollAdmin, twoOptionPoll("en"))
 	if err != nil {
@@ -446,7 +446,7 @@ func TestPolls_OptionCRUD(t *testing.T) {
 			rdr = bytes.NewBufferString(body)
 		}
 		req := httptest.NewRequest(method, path, rdr)
-		req = req.WithContext(withActor(req.Context(), actor))
+		req = testauth.As(req, actor)
 		rec := httptest.NewRecorder()
 		rt.Handler().ServeHTTP(rec, req)
 		return rec
@@ -564,7 +564,7 @@ func TestPolls_ArchiveWindowShowsInactiveButNotFuture(t *testing.T) {
 func TestPolls_ClosesAtClearsWithNull(t *testing.T) {
 	_, p := newPollTest(t, Options{})
 	mux := http.NewServeMux()
-	httpapi.Mount(mux, p, pollRoutes)
+	httpapi.Mount(mux, p.rt.guard.Guard, p, pollRoutes)
 	var poll Poll
 	rec := doPollReq(t, mux, "POST", "/polls", twoOptionPoll("en"), pollAdmin)
 	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &poll) != nil {
@@ -573,7 +573,7 @@ func TestPolls_ClosesAtClearsWithNull(t *testing.T) {
 	patch := func(body string) Poll {
 		t.Helper()
 		req := httptest.NewRequest("PATCH", "/polls/"+poll.ID, strings.NewReader(body))
-		req = req.WithContext(withActor(req.Context(), pollAdmin))
+		req = testauth.As(req, pollAdmin)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		var out Poll

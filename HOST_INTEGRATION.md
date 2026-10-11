@@ -15,15 +15,91 @@ serves every configured module at its sub-path: content at the root,
 _ = contentkit.Migrate(ctx, contentkit.MigrateConfig{DB: sqlDB, Schema: "doujins", ClickHouse: &chmigrate.Config{...}})
 rt, _ := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
 	EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: "doujins", Tenant: "doujins", CH: ch, CHDatabase: "hub"},
-	Content: content.Options{Schema: "doujins", Identity: identity, Authz: authz, Resolver: resolver, Users: users,
-		Media: &content.Media{Images: jobs.Manifests(), Folders: jobs}, Processor: sanitizer, Perms: content.Perms{...}, ContentKinds: []string{"gallery", "post", "tag"},
+	Auth:           ak.Authenticator(), // who a request is (helpers/auth)
+	UserInfo:       ak.UserInfo(),      // authors' names (helpers/userinfo)
+	Content: content.Options{Schema: "doujins", Resolver: resolver,
+		Media: &content.Media{Images: jobs.Manifests(), Folders: jobs}, Processor: sanitizer, ContentKinds: []string{"gallery", "post", "tag"},
 		Limits: content.Limits{Redis: rdb}},
 	Uploads: uploads, Reader: reader, ReadLimit: media.RateLimit{Redis: rdb}, // /media/upload, /media
-	Codes:    router,                  // /codes/{code}
-	Taxonomy: taxonomy.Handler(store), // /taxonomy, for Perms.Taxonomy
+	Codes:    router, // /codes/{code}
+	Taxonomy: store,  // /taxonomy, for root:taxonomy:write
 })
 mux.Handle("/api/contentkit/", http.StripPrefix("/api/contentkit", rt.Handler()))
 ```
+
+## Auth
+
+ContentKit has no auth of its own and no auth middleware goes in front of
+it. The host passes two helpers interfaces, which AuthKit provides:
+
+- `RuntimeConfig.Auth` (`auth.Authenticator`, `ak.Authenticator()`): who a
+  request is. Each route's gate asks it at most once per request and builds
+  the `access.Actor` from the `Verified`'s `Identity`: `ID` is the subject,
+  `Kind` a person (`auth.SubjectUser`) or an application, `Invoker` who acts
+  on the subject's behalf when someone does, `Verified` the credential.
+- `RuntimeConfig.UserInfo` (`userinfo.Lookup`, `ak.UserInfo()`): authors'
+  names and usernames (Authors below).
+
+ContentKit names its staff permissions, always the full
+`root:<resource>:<action>`, as typed constants (`access.Permission`,
+`access.Permissions()`); the host names none and spells none out:
+
+| Constant | Permission | Holders may |
+|---|---|---|
+| `access.PostsWrite` | `root:posts:write` | write, delete and restore posts and their images; see drafts |
+| `access.PollsWrite` | `root:polls:write` | write and delete polls, options and images; see inactive ones |
+| `access.CommentsModerate` | `root:comments:moderate` | edit, delete and restore anyone's comments; list every comment |
+| `access.CommentsBan` | `root:comments:ban` | ban users from commenting anywhere in the tenant |
+| `access.ModerationReview` | `root:moderation:review` | list and resolve held comments and posts |
+| `access.TaxonomyWrite` | `root:taxonomy:write` | use the taxonomy admin API |
+
+Declare them in the auth's roles from the constants, so a rename breaks the
+build instead of drifting:
+
+```go
+rbac := authkit.NewRoles()
+perm := map[access.Permission]iam.Perm{}
+for _, p := range access.Permissions() {
+	perm[p] = rbac.Root.Declare(p.String())[0]
+}
+rbac.Root.Role("moderator", perm[access.CommentsModerate], perm[access.ModerationReview], perm[access.CommentsBan])
+rbac.Root.Role("editor", perm[access.PostsWrite], perm[access.PollsWrite])
+```
+
+Staff hold them in the Authenticator's root scope, which it names (helpers'
+`auth.Root`, `RootScope(ctx)`, asked per check: unresolved is 503, never a
+grant; AuthKit v1.21.0 implements it). There is no scope or permission
+setting: a staff member's permissions are root-wide, and per-item rights are
+the resolver's (`Owner`, `Editor`). The gate asks the `Verified`'s
+`Can(root, perm)`, live. `NewRuntime` refuses an Authenticator that names no
+root scope, or whose roles lack one of the permissions
+(`auth.PermissionCatalog`).
+
+| Tier | Admits | Refuses |
+|---|---|---|
+| `open` (`/config`, `/media/presets`, `/codes/{code}`) | anyone; never authenticates | |
+| `public` | anonymous without a credential, else the subject it proves | a credential that fails: 401 `unauthorized` |
+| `user` | a signed-in person | anonymous: 401; an application: 403 `forbidden` |
+| `staff` | a person or an application holding the route's permission in the root scope | anonymous: 401; without it: 403 |
+
+Personal interactions (comments, reactions, votes, favorites, answers, own
+bans) are a person's: an application gets 403 on public routes too. No staff
+action asks for a recent sign-in: they are moderation and editing, all
+reversible. Every refusal has `auth.Refuse`'s status and `WWW-Authenticate`
+(a DPoP challenge stays the provider's) and ContentKit's body; an auth
+outage, a panic or a `Can` error is 503 `unavailable`, and a credential that
+ended between `Authenticate` and `Can` is 401. Hooks get the actor:
+`access.Actor.Can(ctx, scope, perm)` asks its `Verified`, and `Person()`
+tells a person from an application.
+
+Anonymous actors are keyed by `Request.RemoteAddr` (reactions, votes,
+limits). Behind a proxy, rewrite it to the client's address in a
+trusted-proxy step before the mount, or every anonymous visitor is the proxy.
+
+A host mounting a module alone passes the same Auth: `content.Options.Auth`
+(and `UserInfo`), `media.HandlerOptions.Auth`,
+`media.UploadHandlerOptions.Auth`, `taxonomy.Store.Handler(auth)`;
+`contenturl.Router.Handler` needs none.
 
 Hosts use:
 
@@ -176,20 +252,29 @@ Ports (in `content` unless qualified):
 
 | Port | Required | Contract |
 |---|---|---|
-| `Identity` | yes | reads the already-authenticated `access.Actor` from context; ContentKit never authenticates |
-| `Authorizer` | yes | `Can(actor, perm)` for `Perms{PostWrite, PollWrite, CommentModerate, ModerationReview, CommentBan, Taxonomy}`; fail-closed on error and on an unset perm |
+| `Auth` | yes | `auth.Authenticator` (Auth above); `NewRuntime` fills it from `RuntimeConfig.Auth` |
 | `access.ContentResolver` | yes | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request, which must then be lower case (else 400); another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`. `Owner` is the user who owns the content (its creator; `""` for site content): owner-scoped comment bans apply to it. For media an item's private files are all or nothing: `Full()` (visible and accessible) gets every one, anyone else none; what a viewer without access may see is the item's public files (a preview preset), which need only `Visible` to anonymous viewers; the ref is the item, i.e. the host's version; `Editor` (the actor may edit the item) unlocks editor reads (uploads, edits, editor views) and every private file of a visible item, so set it only for people who may see them all |
-| `UserEnricher` | no | display data for author ids |
+| `UserInfo` | no | `userinfo.Lookup`: authors' names (Authors below); `NewRuntime` fills it from `RuntimeConfig.UserInfo` |
 | `Media` | no | post and poll images in ContentKit media (see below); absent = image routes answer 501 |
 | `ContentProcessor` | no | rich-text sanitizer for comment/post bodies (default strips tags) |
 | `ContentModerator` | no | `Screen(ModerationInput) → Verdict{Decision, Reason, Model, PromptVersion, Confidence}` before a comment/post publishes; absent = publish (see Moderation) |
 | `AnswerClassifier` | no | `Classify(Answer) → GroupAssignment` when a free-text answer revision is stored; results are source-owned; absent = free-text polls are refused (see Free-text polls) |
 
+**Authors.** Comments, replies, the latest-comments feed, held items and
+bans show each author as `{id, name, username, avatar, avatar_srcset}`:
+`name` and `username` from `UserInfo.Get` (never the email), the avatar from
+ContentKit media (the registry's `Avatars`: that kind's current image of its
+preset, else the preset's default), with one `Get` and one projection query
+per response, never per author. An id the directory does not hold (a
+deleted account) has no author; a directory or media failure is logged and
+leaves bare ids, never failing the response. The avatar needs
+`content.Options.Media`; without `UserInfo` authors are bare ids.
+
 **Post and poll images** live in media folders `{tenant}/post/{post_id}/` and
 `{tenant}/poll/{poll_id}/` (`Media.PostKind`/`PollKind`). Register both kinds
 with a `Named` upload path (`inline/{name}`, with a `Max`) and its public preset (`To:
-"{name}.webp"`), route their `CanUpload` to `rt.Content.CanUpload` (PostWrite
-or PollWrite, and the post or poll must exist) and their `Hooks.Resolver` to
+"{name}.webp"`), route their `CanUpload` to `rt.Content.CanUpload` (`root:posts:write`
+or `root:polls:write`, and the post or poll must exist) and their `Hooks.Resolver` to
 `rt.Content.MediaResolver()`, and pass
 `content.Media{Images: jobs.Manifests(), Folders: jobs}` (`NewRuntime` adds
 its `Reader`). The editor uploads each image with the SDK's `upload(file,
@@ -222,7 +307,7 @@ Create and update bodies take no cover or poll image, so images are added
 once the post or poll exists. Public files exist after the image job runs
 (seconds), and only while the post is published: `MediaResolver` shows a
 post's folder like the post (a draft, scheduled, held or rejected one only to
-its author and PostWrite holders, as editors). Its editors see an
+its author and `root:posts:write` holders, as editors). Its editors see an
 unpublished post's images through an editor read (`GET /media/{post kind}/{id}?editor`,
 signed `editor_url`s); the SDK's `usePost` does this for them and turns the
 URLs it shows back into references when it saves.
@@ -285,7 +370,7 @@ Decision, Reviewer, Reason})` writes the final state: `approve` publishes (count
 index follow), `reject` keeps the item author-visible as `rejected` with the
 reason. Over HTTP: `GET /moderation/held?kind=comment|post&cursor=&limit=` and
 `POST /moderation/{kind}/{id}/resolve {"revision","decision","reason"}` (the
-actor id is the reviewer), both gated by `Perms.ModerationReview`.
+actor id is the reviewer), both gated by `root:moderation:review`.
 `GET /comments/admin` shows every state with real bodies.
 
 Screening is revision-fenced. A decision must echo the held `revision`, so it
@@ -304,7 +389,7 @@ Doujins adapter (`moderator{svc}` on the old `Moderation` port): implement
 where it returned `RejectModeration(reason)`, `DecisionApprove` where it
 returned nil; wire `Options.Moderator = content.Chain{&content.BasicModerator{},
 userIntelligence.Moderator}` once User Intelligence's `moderate` module exists;
-set `Perms.ModerationReview` and point the admin review page at
+grant `root:moderation:review` and point the admin review page at
 `/moderation/held` and `/moderation/{kind}/{id}/resolve`.
 
 Each `Screen` is bounded by `Options.ModeratorTimeout` (5s); a failure holds
@@ -367,7 +452,7 @@ reactions, favorites or votes. Scopes:
 
 - `owner:<id>`: content whose resolver `Owner` is `<id>`; managed by that
   owner, any signed-in user, over their own scope only.
-- `global`: the whole tenant; managed by holders of `Perms.CommentBan` (an
+- `global`: the whole tenant; managed by holders of `root:comments:ban` (an
   operator permission, e.g. AuthKit `root:comments:ban`), over that scope only.
 
 | Route | Scope | Result |
@@ -380,7 +465,7 @@ reactions, favorites or votes. Scopes:
 
 `until` is optional (absent: until lifted) and must be in the future; an
 expired ban stays listed with `expired: true` until lifted or replaced.
-`CommentBan` carries `user_id`, `user` (from `UserEnricher`), `scope`,
+`CommentBan` carries `user_id`, `user` (Authors), `scope`,
 `reason`, `until`, `banned_by`, `banned_at` and `expired`. A banned write is
 `403 comment_banned` with `ban: {scope, reason, until}` (never who banned);
 when both scopes apply it reports the one lasting longer
@@ -676,9 +761,25 @@ var Video = media.Kind{Name: "video", KeepOriginals: true,
 }
 
 reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https://media.doujins.ai",
-	Kinds: []media.Kind{Gallery, accountmedia.User},
-	Hooks: media.Hooks{Resolver: resolver, CanUpload: authorizer, PurgePublic: purge, ItemReady: ready}})
+	Kinds:   []media.Kind{Gallery, accountmedia.User},
+	Avatars: media.Avatars{Kind: "user", Preset: "avatar"}, // people's avatars (Authors)
+	Hooks:   media.Hooks{Resolver: resolver, CanUpload: authorizer, PurgePublic: purge, ItemReady: ready}})
 ```
+
+- **Account avatars.** `Avatars` names the kind whose item ids are the auth's
+  subjects (the shared `accounts` kind `user`) and the public preset people
+  are shown with; `Manifests.Avatars(ctx, ids...)` answers a list in one
+  query. Authorize the kind's uploads in `CanUpload` from the actor: a person
+  their own (their quota), staff anyone's (exempt):
+
+  ```go
+  case "user":
+  	if a.Person() && a.ID == t.Ref.ContentID {
+  		return media.UploadGrant{Allowed: true, Owner: a.ID}, nil
+  	}
+  	ok, err := a.Can(ctx, staff, editMedia.String())
+  	return media.UploadGrant{Allowed: ok, Exempt: ok}, err
+  ```
 
 - **Uploads** are paths: a literal (`cover`) or a pattern (`originals/{name}`);
   a file's path adds its extension (`cover.png`), and a put to the same stem
@@ -773,7 +874,7 @@ out until `attach`.
 ### Reads and playback
 
 `rt.Handler()` serves the read API at `/media` (`RuntimeConfig.Reader`,
-`ReadLimit`); mounted alone it is `reader.Handler(media.HandlerOptions{Identity, Limit})`:
+`ReadLimit`); mounted alone it is `reader.Handler(media.HandlerOptions{Auth, Limit})`:
 
 - `GET /{kind}/{id}?prefix=low-res/&offset=&limit=&download&editor` answers
   `{access, expires, meta, previews, total, hls, files: [{path, type, size, w, h, url | locked}]}`
@@ -978,9 +1079,42 @@ public URLs: a body that names one keeps naming a file that goes stale.
   `ref`, and its `url` is a preview (null while none exists);
   `posts.imageURL` is `posts.inlineImage`. `defaultImage` and `usePublicImage` give no image for
   a preset without a default (`PresetRule.default`).
-- `adapters/authkit` v0.5.1 (AuthKit ≥ v1.9) and v0.3.2 (AuthKit v1.2):
-  `Authors` resolves every author's avatar with one `PresetImages` lookup,
-  falling back to the preset's default.
+
+## Upgrading from v0.70
+
+ContentKit takes the host's auth as helpers interfaces and builds its own
+gates (Auth). No compatibility: the old ports are gone.
+
+- `RuntimeConfig.Auth: ak.Authenticator()` and `UserInfo: ak.UserInfo()`
+  replace `content.Options.Identity`, `Authz` and `Users`; delete the auth
+  middleware in front of the mount and the `Identity`/`Authorizer` code.
+  `content.Perms` is gone: ContentKit names its permissions
+  (`access.Permissions()`, full `root:<resource>:<action>` names), held in
+  the Authenticator's root scope. Declare them in the auth's roles from the
+  constants (Auth); there is no permission or scope setting.
+- `adapters/authkit` is deleted: authors are ContentKit's (declare
+  `media.Config.Avatars`), and account uploads are a few lines of
+  `CanUpload` (Account avatars).
+- `media.HandlerOptions.Identity` and `UploadHandlerOptions.Actor` are `Auth`;
+  `media.Identity`, `content.Identity`, `content.Authorizer`,
+  `content.UserEnricher` and `content.Runtime.Guard` are gone.
+- `RuntimeConfig.Taxonomy` is the `*taxonomy.Store`; `taxonomy.Handler(store)`
+  is `store.Handler(auth)`.
+- `access.Actor.Kind` is an `auth.SubjectKind`; it gains `Invoker`,
+  `Verified`, `Can` and `Person`. Hooks check staff with
+  `actor.Can(ctx, scope, perm)`.
+- Behind a proxy, rewrite `Request.RemoteAddr` to the client's address:
+  anonymous actors are keyed by it.
+- Applications (API keys) may use staff routes by permission; personal
+  interactions refuse them (403). A failed permission check is 503 (or 401
+  when the credential ended), no longer 403.
+- `/config`, `/media/presets` and `/codes/{code}` never authenticate; every
+  other route answers 401 for a credential that fails, with the provider's
+  `WWW-Authenticate`.
+- `PublicUser` gains `name`. A deleted account's comments have no `author`.
+- go.mod: helpers v1.8.0; the host needs AuthKit v1.21.0 or later
+  (`auth.Root`). A host embedding OpenRails needs its release on helpers
+  v1.6+ (flat auth).
 
 ## Media worker schema
 
@@ -1051,7 +1185,7 @@ the host's periodic jobs. The worker migrates its schema itself.
     (`ErrRateLimited`). Opening the same item again within the hour is free;
     viewers without access, the item's editors and `Issuance.Exempt` actors
     (staff) are not counted. An anonymous viewer is counted by `Actor.IP`
-    (an IPv6 address by its /64). The read API fills it from the connection;
+    (an IPv6 address by its /64). The read API fills it from `RemoteAddr`;
     a host route that calls `Grant` or `Read` itself for an anonymous actor
     must set it, or the grant fails with `ErrNoViewerKey` rather than put
     every anonymous viewer in one count. The per-process count holds at most
@@ -1063,8 +1197,8 @@ the host's periodic jobs. The worker migrates its schema itself.
     in a loop (the SDK does not).
 
   So an account pulls at most `Issuance.PerHour` items an hour, each at the
-  ingress's rate. Behind a proxy set `Actor.IP` to the client's address, or
-  every anonymous viewer is counted as the proxy.
+  ingress's rate. Behind a proxy rewrite `RemoteAddr` to the client's
+  address, or every anonymous viewer is counted as the proxy.
   Signed-URL logs name the viewer.
 - **Multiple replicas**: the limit is per process unless `Limit.Redis` is set
   (logged at startup), so N replicas allow N times it. Pass the host's
@@ -1134,8 +1268,8 @@ change, `RebuildCounts` after bulk loads written with
 the transaction that calls `Assign`/`Unassign` (`store.WithTx(tx)`).
 Typeahead documents of nodes are built by the store: register its kinds with
 the worker through `store.Lister`/`store.Builder`. `RuntimeConfig.Taxonomy:
-taxonomy.Handler(store)` serves the admin routes at `/taxonomy` to actors
-holding `Perms.Taxonomy`; mounted alone, put it behind your admin authorization. Adoption: [docs/taxonomy-migration.md](docs/taxonomy-migration.md).
+store` serves the admin routes at `/taxonomy` to staff holding
+`root:taxonomy:write`; mounted alone it is `store.Handler(auth)`. Adoption: [docs/taxonomy-migration.md](docs/taxonomy-migration.md).
 
 ## Preference boundary (reactions and favorites into the signal plane)
 
@@ -1266,7 +1400,7 @@ priors, the judged fixture and the host adoption steps.
 - Index per-version documents; move visibility/trait policy into `Eligibility`.
 - Page with `Offset`/`Limit` and `HasMore`; never fetch N documents and dedupe.
 - Apply the baselines with `contentkit.Migrate` per [docs/migration.md](docs/migration.md); gate startup on `signal.CheckSchema`.
-- Wire `Options.Moderator` (a `Chain` of `BasicModerator` and the AI moderator), `Options.Classifier` for free-text polls, `Perms.ModerationReview`, and schedule `ReclassifyPending`.
+- Wire `Options.Moderator` (a `Chain` of `BasicModerator` and the AI moderator), `Options.Classifier` for free-text polls, grant `root:moderation:review`, and schedule `ReclassifyPending`.
 - Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, implement `ContentCanonicalizer`, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, schedule `SyncPreferences` (and `ResyncPreferences` as the periodic repair), wire `EraseSubjects` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.
 - Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the `post` and `poll` kinds with a `Named` upload path and its public preset, and move image uploads to the SDK's `upload` plus the image routes above (`POST /posts/media`, multipart `POST .../cover|image` and `image_url`/`cover_url` in write bodies are gone).

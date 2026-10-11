@@ -13,7 +13,7 @@ name: sdk-ui
     - 'taxonomy/**'
     - 'migrations/**'
     - 'internal/**'
-    - 'adapters/authkit/**'
+    - 'access/**'
     - 'cmd/media-gateway/**'
     - 'cmd/media-worker/**'
     - '.dockerignore'

@@ -91,8 +91,8 @@ jobs:
         pkgs=$(go list ./... | grep -vE '/media/(image|video|worker)$|/cmd/media-worker$')
         go vet $pkgs
         go test $pkgs -count=1 -race -p 2
-    - name: AuthKit adapter (its own module), vet, test
-      working-directory: adapters/authkit
+    - name: e2e with a real AuthKit (its own module), vet, test
+      working-directory: e2e
       env:
         AUTHKIT_TEST_DATABASE_URL: postgres://contentkit:contentkit@localhost:5432/contentkit_test?sslmode=disable
         AUTHKIT_TEST_REQUIRE_DB: '1'
