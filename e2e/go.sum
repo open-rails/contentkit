@@ -153,6 +153,10 @@ github.com/open-rails/authkit v1.21.0 h1:yLkQPPFpiSuqR6d1MJYZ3aFSZLWpIwC5eIHF833
 github.com/open-rails/authkit v1.21.0/go.mod h1:pAUhDrsLeOlwzZ3IfO21xsMukuIyt+wx1RRC+jjU7zY=
 github.com/open-rails/helpers v1.10.1 h1:JHdfouHr630YY0INxfHe8FI0EHSBXAbO5VLA3wuqr2s=
 github.com/open-rails/helpers v1.10.1/go.mod h1:USlSGNYBaNY6/+dLAmB1H610EDSCprhUGmQyBg1NGfM=
+github.com/open-rails/authkit v1.24.0 h1:u3T/tiO1QXeGviLAxdQPgaTbez+UWWYdsqsBSUXkFtE=
+github.com/open-rails/authkit v1.24.0/go.mod h1:Wjuwi9zv9fTSabArvdCrpJwdF2PQu/Ovh1X4IqT2Epo=
+github.com/open-rails/helpers v1.9.0 h1:KH7CxeEW/a/fMkv4hGvlkBdlZUgv2sSyESqrgzTdeZU=
+github.com/open-rails/helpers v1.9.0/go.mod h1:USlSGNYBaNY6/+dLAmB1H610EDSCprhUGmQyBg1NGfM=
 github.com/open-rails/migratekit v1.10.0 h1:ujeSd7Arz7etqkRhRUaHevOZy2PFX9+8874xZqOgzNs=
 github.com/open-rails/migratekit v1.10.0/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
 github.com/paulmach/orb v0.12.0 h1:z+zOwjmG3MyEEqzv92UN49Lg1JFYx0L9GpGKNVDKk1s=
