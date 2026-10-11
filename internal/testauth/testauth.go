@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/open-rails/helpers/auth"
+	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/access"
 )
@@ -40,7 +40,7 @@ func (None) Can(context.Context, access.Actor, string) (bool, error) { return fa
 // bearer is refused. Authz answers Can in Scope; nil holds nothing.
 type Auth struct{ Authz Authorizer }
 
-// RootScope is Scope (helpers/auth Root).
+// RootScope is Scope (authkit/auth Root).
 func (Auth) RootScope(context.Context) (auth.Scope, error) { return Scope, nil }
 
 func (a Auth) Authenticate(r *http.Request) (auth.Verified, error) {

@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/open-rails/helpers/auth"
+	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -20,7 +20,7 @@ import (
 
 // UploadHandlerOptions configure UploadHandler.
 type UploadHandlerOptions struct {
-	// Auth says who a request is (helpers/auth; AuthKit's
+	// Auth says who a request is (authkit/auth; AuthKit's
 	// ak.Authenticator()): every route takes a signed-in person. Required.
 	Auth   auth.Authenticator
 	Logger *slog.Logger // 5xx causes; default slog.Default()

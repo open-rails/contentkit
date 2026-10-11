@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/open-rails/authkit/auth"
+	contracttest "github.com/open-rails/authkit/auth/authtest"
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
-	"github.com/open-rails/helpers/auth"
-	helpersauthtest "github.com/open-rails/helpers/auth/authtest"
 
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
@@ -127,7 +127,7 @@ type unrooted struct{ a auth.Authenticator }
 
 func (u unrooted) Authenticate(r *http.Request) (auth.Verified, error) { return u.a.Authenticate(r) }
 
-// The AuthKit a host passes conforms to helpers/auth with ContentKit's scope
+// The AuthKit a host passes conforms to authkit/auth with ContentKit's scope
 // and permissions: exactly each permission in exactly the root group, live.
 func TestAuthKitConformsWithContentKitPermissions(t *testing.T) {
 	w := newWorld(t)
@@ -148,7 +148,7 @@ func TestAuthKitConformsWithContentKitPermissions(t *testing.T) {
 			return r
 		}
 	}
-	helpersauthtest.Check(t, w.ak.Authenticator(), helpersauthtest.Cases{
+	contracttest.Check(t, w.ak.Authenticator(), contracttest.Cases{
 		Permissions: access.Names(access.Permissions()...),
 		Staff:       bearer(staff),
 		User:        bearer(user),

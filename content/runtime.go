@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/open-rails/helpers/auth"
-	"github.com/open-rails/helpers/userinfo"
+	"github.com/open-rails/authkit/auth"
+	"github.com/open-rails/authkit/userinfo"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -36,14 +36,14 @@ type Options struct {
 	// Tenant scopes every row, index, cursor and result. Required.
 	Tenant string
 
-	// Auth says who a request is (helpers/auth; AuthKit's ak.Authenticator()).
+	// Auth says who a request is (authkit/auth; AuthKit's ak.Authenticator()).
 	// The routes ask it at most once per request and build the actor from
 	// its Verified: anonymous without a credential, 401 for one that fails.
 	// Staff hold ContentKit's permissions (access.Permissions) in its root
 	// scope (auth.Root), checked by the Verified's Can: declare them in its
 	// roles. Required.
 	Auth auth.Authenticator
-	// UserInfo is the host's directory (helpers/userinfo; AuthKit's
+	// UserInfo is the host's directory (authkit/userinfo; AuthKit's
 	// ak.UserInfo()): authors' names and usernames, read once per response
 	// and never copied. Nil shows authors by id.
 	UserInfo userinfo.Lookup

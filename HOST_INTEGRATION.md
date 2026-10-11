@@ -15,8 +15,8 @@ serves every configured module at its sub-path: content at the root,
 _ = contentkit.Migrate(ctx, contentkit.MigrateConfig{DB: sqlDB, Schema: "doujins", ClickHouse: &chmigrate.Config{...}})
 rt, _ := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
 	EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: "doujins", Tenant: "doujins", CH: ch, CHDatabase: "hub"},
-	Auth:           ak.Authenticator(), // who a request is (helpers/auth)
-	UserInfo:       ak.UserInfo(),      // authors' names (helpers/userinfo)
+	Auth:           ak.Authenticator(), // who a request is (authkit/auth)
+	UserInfo:       ak.UserInfo(),      // authors' names (authkit/userinfo)
 	Content: content.Options{Schema: "doujins", Resolver: resolver,
 		Media: &content.Media{Images: jobs.Manifests(), Folders: jobs}, Processor: sanitizer, ContentKinds: []string{"gallery", "post", "tag"},
 		Limits: content.Limits{Redis: rdb}},
@@ -30,7 +30,10 @@ mux.Handle("/api/contentkit/", http.StripPrefix("/api/contentkit", rt.Handler())
 ## Auth
 
 ContentKit has no auth of its own and no auth middleware goes in front of
-it. The host passes two helpers interfaces, which AuthKit provides:
+it. The host implements two standard-library-only contracts from AuthKit's
+module (`github.com/open-rails/authkit/auth` and
+`github.com/open-rails/authkit/userinfo`), or passes AuthKit's implementations.
+ContentKit links neither AuthKit's server nor its database runtime:
 
 - `RuntimeConfig.Auth` (`auth.Authenticator`, `ak.Authenticator()`): who a
   request is. Each route's gate asks it at most once per request and builds
@@ -66,9 +69,9 @@ rbac.Root.Role("moderator", perm[access.CommentsModerate], perm[access.Moderatio
 rbac.Root.Role("editor", perm[access.PostsWrite], perm[access.PollsWrite])
 ```
 
-Staff hold them in the Authenticator's root scope, which it names (helpers'
+Staff hold them in the Authenticator's root scope, which it names (AuthKit's
 `auth.Root`, `RootScope(ctx)`, asked per check: unresolved is 503, never a
-grant; AuthKit v1.21.0 implements it). There is no scope or permission
+grant). There is no scope or permission
 setting: a staff member's permissions are root-wide, and per-item rights are
 the resolver's (`Owner`, `Editor`). The gate asks the `Verified`'s
 `Can(root, perm)`, live. `NewRuntime` refuses an Authenticator that names no
@@ -1082,7 +1085,7 @@ public URLs: a body that names one keeps naming a file that goes stale.
 
 ## Upgrading from v0.70
 
-ContentKit takes the host's auth as helpers interfaces and builds its own
+ContentKit takes the host's auth through AuthKit's contract interfaces and builds its own
 gates (Auth). No compatibility: the old ports are gone.
 
 - `RuntimeConfig.Auth: ak.Authenticator()` and `UserInfo: ak.UserInfo()`
@@ -1112,9 +1115,14 @@ gates (Auth). No compatibility: the old ports are gone.
   other route answers 401 for a credential that fails, with the provider's
   `WWW-Authenticate`.
 - `PublicUser` gains `name`. A deleted account's comments have no `author`.
-- go.mod: helpers v1.8.0; the host needs AuthKit v1.21.0 or later
-  (`auth.Root`). A host embedding OpenRails needs its release on helpers
-  v1.6+ (flat auth).
+- Authentication and user-directory types now come from AuthKit v1.24.0:
+  change imports from `github.com/open-rails/helpers/auth` and
+  `github.com/open-rails/helpers/userinfo` to `github.com/open-rails/authkit/auth`
+  and `github.com/open-rails/authkit/userinfo`; the conformance kit is
+  `github.com/open-rails/authkit/auth/authtest`. These Go types have the new
+  package identity; update the host's implementations and every library
+  sharing them together. Shared `helpers/deps` and `helpers/river` utilities
+  remain dependencies. A custom host needs no AuthKit runtime.
 
 ## Media worker schema
 

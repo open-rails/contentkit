@@ -1,7 +1,7 @@
 // Package gate builds ContentKit's route gates from the host's auth. It asks
 // the auth.Authenticator who a request is, at most once, builds the
 // access.Actor from the Verified, enforces the route's tier (httpapi.Tier)
-// and answers every refusal with the status and challenge helpers/auth's
+// and answers every refusal with the status and challenge authkit/auth's
 // Refuse gives, in ContentKit's error body.
 package gate
 
@@ -17,7 +17,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/open-rails/helpers/auth"
+	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/httpapi"
