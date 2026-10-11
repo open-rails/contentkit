@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/open-rails/authkit/iam"
+	"github.com/open-rails/helpers/notify"
 
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
@@ -96,6 +97,18 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusNoContent, owner, "DELETE", "/comments/"+reply.ID, nil, nil)
 	f.want(http.StatusOK, staff, "POST", "/comments/"+reply.ID+"/restore", nil, nil)
 	f.want(http.StatusNotFound, anon, "GET", "/gallery/"+cid(2)+"/comments", nil, nil)
+
+	// Native reply/like notices use the same authenticated user and mount.
+	var notices notify.Page
+	f.want(http.StatusUnauthorized, anon, "GET", "/notifications/inbox", nil, nil)
+	f.want(http.StatusOK, user, "GET", "/notifications/inbox?limit=20&unread=true", nil, &notices)
+	if len(notices.Items) != 2 {
+		t.Fatalf("native notifications = %+v", notices)
+	}
+	id := notices.Items[0].ID
+	f.want(http.StatusNotFound, owner, "PUT", "/notifications/"+id+"/read", nil, nil)
+	f.want(http.StatusNoContent, user, "PUT", "/notifications/"+id+"/read", nil, nil)
+	f.want(http.StatusNoContent, user, "DELETE", "/notifications/"+id+"/read", nil, nil)
 
 	// Reactions on host content.
 	for _, verb := range []string{"like", "dislike"} {
