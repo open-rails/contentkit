@@ -13,9 +13,9 @@ migration or ledger identity.
 Catalog construction is intentionally optional and host-configured: create
 `taxonomy.Store` with the same pool, keyword schema and tenant, plus your
 registered kinds, languages and count-eligibility rule. Wrap the runtime worker
-with the store builder/lister, and pass `taxonomy.Handler(store)` as
-`RuntimeConfig.Taxonomy` (served at `/taxonomy` for `Perms.Taxonomy`) or mount it
-behind host authorization.
+with the store builder/lister, and pass the store as
+`RuntimeConfig.Taxonomy` (served at `/taxonomy` for `root:taxonomy:write`) or
+mount `store.Handler(auth)` yourself.
 `NewRuntime` does not infer these application-specific catalog choices.
 
 ## Tables (31 catalog columns + 6 derived)
@@ -142,7 +142,7 @@ document with the function over the live-version join:
 4. Register the taxonomy kinds in the worker (`ContentKinds`, `store.Lister`,
    `store.Builder`); run the backfill; compare typeahead goldens.
 5. Switch reads (`Node`, `ListNodes`, `EffectiveTags`, `Browse`/`RequireAll`,
-   `Counts`) and the admin routes (`taxonomy.Handler`), mark content documents
+   `Counts`) and the admin routes (`Store.Handler`), mark content documents
    dirty in the transactions that call `Assign`/`Unassign`.
 6. Drop the old tables, triggers, views and count functions; record the merge,
    counts diff and golden results in the tracker.
