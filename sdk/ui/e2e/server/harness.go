@@ -183,7 +183,7 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if err != nil {
 		return nil, err
 	}
-	tax, err := taxonomy.New(taxonomy.Options{Pool: h.pool, Schema: schema, Tenant: tenant, Kinds: []string{"tag"}, Languages: []string{"en"}})
+	tax, err := taxonomy.New(taxonomy.Options{Pool: h.pool, Schema: schema, Tenant: tenant, Kinds: []string{"tag", "series", "character"}, Languages: []string{"en", "ja"}})
 	if err != nil {
 		return nil, err
 	}

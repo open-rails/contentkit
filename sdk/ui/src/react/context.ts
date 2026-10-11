@@ -41,7 +41,9 @@ export type SocialOperation =
   | "post.load"
   | "post.save"
   | "moderation.load"
-  | "moderation.resolve";
+  | "moderation.resolve"
+  | "taxonomy.load"
+  | "taxonomy.save";
 
 /** The failure's context: the operation and, for one file, its name. */
 export interface ContentKitErrorInfo {

@@ -44,6 +44,14 @@ export * from "./components/social/index.js";
 export { UserCommentStanding, useUserCommentStandingAccess, type UserCommentStandingProps } from "./components/admin/user-comment-standing.js";
 export { PollManager, pollState, usePollManagerAccess, type PollManagerProps } from "./components/admin/poll-manager.js";
 export { PostManager, postStatus, usePostManagerAccess, type PostEditorProps, type PostManagerProps, type PostStatus } from "./components/admin/post-manager.js";
+export {
+  TaxonomyManager,
+  slugify,
+  useTaxonomyManagerAccess,
+  type TaxonomyKind,
+  type TaxonomyManagerProps,
+  type TaxonomyRelation,
+} from "./components/admin/taxonomy-manager.js";
 export { NoAccess, Pager, useConfirm, type AdminFlowProps, type AdminRouteProps, type ConfirmOptions, type ContentKitGuard } from "./components/admin/shell.js";
 export type { AdminNavigation, ContentKitAuth, StaffAccess, StaffArea } from "./react/admin.js";
 export {
