@@ -58,7 +58,7 @@ const END = 2 ** 31 - 1;
  * order the user arranges, and commits the uploads as puts appended in that
  * order. Framework-free; the React hooks wrap it.
  */
-export class UploadQueue {
+export class ItemUploadQueue {
   private items: QueueItem[] = [];
   private blocked?: ContentKitError;
   private running = new Map<string, AbortController>();

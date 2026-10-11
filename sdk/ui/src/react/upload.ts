@@ -6,19 +6,19 @@ import { toContentKitError, type ContentKitError } from "../client/errors.js";
 import type { Crop, Edit, EncodeProgress, FileInfo } from "../client/generated/wire.js";
 import type { Progress, PutOptions, UploadedFile, UploadOptions } from "../client/media/client.js";
 import { encodeRemaining } from "../client/media/encode.js";
-import { UploadQueue, type QueueOptions, type QueueSnapshot } from "../client/media/queue.js";
+import { ItemUploadQueue, type QueueOptions, type QueueSnapshot } from "../client/media/queue.js";
 import { useContentKitClient } from "./context.js";
 
 export interface UseUploadQueue extends QueueSnapshot {
-  queue: UploadQueue;
-  add: UploadQueue["add"];
-  move: UploadQueue["move"];
-  update: UploadQueue["update"];
-  remove: UploadQueue["remove"];
-  retry: UploadQueue["retry"];
-  start: UploadQueue["start"];
-  pause: UploadQueue["pause"];
-  commit: UploadQueue["commit"];
+  queue: ItemUploadQueue;
+  add: ItemUploadQueue["add"];
+  move: ItemUploadQueue["move"];
+  update: ItemUploadQueue["update"];
+  remove: ItemUploadQueue["remove"];
+  retry: ItemUploadQueue["retry"];
+  start: ItemUploadQueue["start"];
+  pause: ItemUploadQueue["pause"];
+  commit: ItemUploadQueue["commit"];
 }
 
 export interface UploadQueueOptions extends QueueOptions {
@@ -34,7 +34,7 @@ export interface UploadQueueOptions extends QueueOptions {
 export function useUploadQueue({ client: own, ...options }: UploadQueueOptions): UseUploadQueue {
   const client = useContentKitClient(own);
   const key = `${options.ref.kind}/${options.ref.id}`;
-  const open = () => ({ key, queue: new UploadQueue(client.media, { ...options, autoStart: false }) });
+  const open = () => ({ key, queue: new ItemUploadQueue(client.media, { ...options, autoStart: false }) });
   const [current, setCurrent] = useState(open);
   if (current.key !== key) setCurrent(open());
   const { queue } = current;

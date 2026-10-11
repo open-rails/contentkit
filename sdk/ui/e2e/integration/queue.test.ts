@@ -1,6 +1,6 @@
 import { File as NodeFile } from "node:buffer";
 import { beforeAll, expect, it, vi } from "vitest";
-import { UploadQueue, createContentKitClient, type Op, type QueueSnapshot, type RefBody } from "../../src/client/index.js";
+import { ItemUploadQueue, createContentKitClient, type Op, type QueueSnapshot, type RefBody } from "../../src/client/index.js";
 import { bytes } from "../support/bytes.js";
 import type { Config, TestUser } from "../support/harness.js";
 import { Accounts, client, harness, item, png, recorder, wait, type Recorder } from "./setup.js";
@@ -21,7 +21,7 @@ const gallery = () => item(h, "gallery", owner);
 const media = (rec?: Recorder, onUpload = false, retries?: number) => client(h, cfg, owner, { record: rec, onUpload, media: { retries } }).media;
 const gif = () => new NodeFile([bytes(10)], "x.gif", { type: "" }) as unknown as File;
 
-function until(q: UploadQueue, ok: (s: QueueSnapshot) => boolean): Promise<QueueSnapshot> {
+function until(q: ItemUploadQueue, ok: (s: QueueSnapshot) => boolean): Promise<QueueSnapshot> {
   return new Promise((resolve) => {
     const check = () => ok(q.getSnapshot()) && (off(), resolve(q.getSnapshot()));
     const off = q.subscribe(check);
@@ -50,7 +50,7 @@ it("uploads, keeps the arranged order and commits puts appended in it", async ()
   const ref = await gallery();
   await media().put(png("0.png", 10), { ref, path: "originals/0.png" });
   const rec = recorder();
-  const q = new UploadQueue(media(rec), { ref, path });
+  const q = new ItemUploadQueue(media(rec), { ref, path });
   const [a, b, c] = q.add([png("a.png", 1), png("b.png", 2), png("c.png", 3)]);
   expect(a!.path).toBe("originals/a.png");
   await until(q, (x) => x.ready);
@@ -73,7 +73,7 @@ it("blocks on a rate limit before starting the next file, and resumes on start()
   const ref = await gallery();
   const rec = recorder();
   await h.faults([{ item: ref.id, fault: "api", path: "/media/upload/presign", status: 429, code: "rate_limited", error: "slow down", retry_after: 30 }]);
-  const q = new UploadQueue(media(rec), { ref, path });
+  const q = new ItemUploadQueue(media(rec), { ref, path });
   try {
     q.add([png("a.png", 1), png("b.png", 2), png("c.png", 3)]);
     const blocked = await until(q, (x) => !!x.blocked && x.items.every((i) => i.status === "queued"));
@@ -91,7 +91,7 @@ it("blocks on a rate limit before starting the next file, and resumes on start()
 it("marks a file failed on its own refusal and retries it", async () => {
   const ref = await gallery();
   const rec = recorder();
-  const q = new UploadQueue(media(rec), { ref, path });
+  const q = new ItemUploadQueue(media(rec), { ref, path });
   const [bad] = q.add([gif()]);
   await until(q, (x) => x.items[0]!.status === "failed");
   expect(q.getSnapshot().blocked).toBeUndefined();
@@ -108,7 +108,7 @@ it("retains a stale file's replacement batch across lost responses and a later q
   const keep = await media().put(b2, { ref, path: "originals/keep.png" });
   const rec = recorder();
   let loseResponses = true;
-  const q = new UploadQueue(losing(rec, () => loseResponses, false, 1), { ref, path });
+  const q = new ItemUploadQueue(losing(rec, () => loseResponses, false, 1), { ref, path });
   const [, b] = q.add([png("a.png", 1), b2]);
   const snap = await until(q, (x) => x.ready);
   expect(snap.items.find((i) => i.id === b!.id)!.result).toMatchObject({ exists: true });
@@ -150,7 +150,7 @@ it("does not remove an existing file when a cancelled staging create is rejected
       return rec.fetch(input, init);
     },
   }).media;
-  const q = new UploadQueue(c, { ref, path });
+  const q = new ItemUploadQueue(c, { ref, path });
   const [up] = q.add([png("a.png", 1)]);
   await until(q, (x) => x.ready);
   const pending = q.commit().catch((e) => e);
@@ -168,7 +168,7 @@ it("retries a lost staging response with the same create ID and attaches the upl
   const ref = await gallery();
   const rec = recorder();
   let dropped = false;
-  const q = new UploadQueue(
+  const q = new ItemUploadQueue(
     losing(rec, () => !dropped && (dropped = true), true),
     { ref, path },
   );
@@ -187,7 +187,7 @@ it("retries a lost staging response with the same create ID and attaches the upl
 
 it("commits only the uploaded head of the queue with head", async () => {
   const ref = await gallery();
-  const q = new UploadQueue(media(), { ref, path });
+  const q = new ItemUploadQueue(media(), { ref, path });
   const [a, bad, c] = q.add([png("a.png", 1), gif(), png("c.png", 3)]);
   await until(q, (x) => x.items.every((i) => i.status !== "queued" && i.status !== "uploading"));
   const files = await q.commit(undefined, { head: true });
@@ -202,7 +202,7 @@ it("processes on upload: stages unattached, polls until processed, attaches in q
   const rec = recorder();
   // The worker is held on this item: the uploads stay processing until released.
   await h.faults([{ item: ref.id, fault: "hold" }]);
-  const q = new UploadQueue(media(rec, true), { ref, path, pollInterval: 50 });
+  const q = new ItemUploadQueue(media(rec, true), { ref, path, pollInterval: 50 });
   let d;
   let b;
   try {
