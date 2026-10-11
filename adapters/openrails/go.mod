@@ -2,10 +2,13 @@ module github.com/open-rails/contentkit/adapters/openrails
 
 go 1.26.9
 
+// Built against released ContentKit until an OpenRails release takes helpers
+// v1.6+ (flat auth): ContentKit at master requires helpers v1.8.0, which this
+// OpenRails predates. Then replace ContentKit with ../.. again.
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/contentkit v0.66.0
+	github.com/open-rails/contentkit v0.70.0
 	github.com/open-rails/openrails v0.233.0
 )
 
@@ -88,5 +91,3 @@ require (
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 )
-
-replace github.com/open-rails/contentkit => ../..
