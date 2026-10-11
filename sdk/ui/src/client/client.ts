@@ -10,6 +10,7 @@ import type { Config, RefBody } from "./generated/wire.js";
 import { Http, type ContentKitChange, type ContentKitModule, type HttpOptions } from "./http.js";
 import { MediaClient, type ContentFolders, type MediaOptions } from "./media/client.js";
 import { call } from "./route.js";
+import { NotificationsClient } from "./notifications.js";
 import { TaxonomyClient } from "./taxonomy.js";
 
 export interface ContentKitClientOptions extends HttpOptions {
@@ -44,6 +45,8 @@ export interface ContentKitClient {
   readonly taxonomy: TaxonomyClient;
   /** Content-code lookup. */
   readonly codes: CodesClient;
+  /** The signed-in person's native and imported notifications. */
+  readonly notifications: NotificationsClient;
 
   /** What the content module allows: which interactions signed-out visitors may make. */
   config(signal?: AbortSignal): Promise<Config>;
@@ -70,6 +73,7 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     moderation: new ModerationClient(h),
     taxonomy: new TaxonomyClient(h),
     codes: new CodesClient(h),
+    notifications: new NotificationsClient(h),
     config: (signal) => call(h, "GET", "/config", { signal }),
     url: (module, ref) => h.mount(module, ref),
     setReadScope: (scope) => h.setReadScope(scope),

@@ -356,6 +356,21 @@ export interface InlineImage {
   url: string | null;
 }
 
+export interface Item {
+  id: string;
+  recipient: Recipient;
+  origin: Origin;
+  kind: string;
+  data: unknown;
+  created_at: string;
+  status?: string;
+  severity?: string;
+  read_at: string | null;
+  resolved_at: string | null;
+  updated_at: string;
+  revision: number;
+}
+
 export interface MergeInput {
   into_taxonomy_id: string;
 }
@@ -459,6 +474,17 @@ export interface Op {
   preset?: string;
   force?: boolean;
   takedown?: boolean;
+}
+
+export interface Origin {
+  system: string;
+  scope: string;
+  id: string;
+}
+
+export interface Page {
+  items: Item[];
+  next_cursor?: string;
 }
 
 export interface PartBody {
@@ -665,6 +691,11 @@ export interface ReadResult {
   full?: boolean;
   uploads?: UploadRule[];
   files: FileInfo[];
+}
+
+export interface Recipient {
+  audience: string;
+  id: string;
 }
 
 export interface RefBody {

@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/open-rails/helpers/notify"
 )
 
 // Options binds one trusted OpenRails deployment and merchant. Token returns a
@@ -19,6 +21,8 @@ import (
 // may instead supply authentication through its transport. URL is the origin
 // and any deployment prefix, before /v1. Credentials never enter a browser.
 type Options struct {
+	// Name is the stable producer deployment identity; defaults to URL.
+	Name       string
 	URL        string
 	MerchantID string
 	Client     *http.Client
@@ -28,6 +32,7 @@ type Options struct {
 // Source reads customer notifications from one configured OpenRails merchant.
 type Source struct {
 	base     string
+	name     string
 	merchant string
 	client   *http.Client
 	token    func(context.Context) (string, error)
@@ -49,7 +54,11 @@ func New(opts Options) (*Source, error) {
 		client = *opts.Client
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Source{base: strings.TrimRight(u.String(), "/"), merchant: opts.MerchantID, client: &client, token: opts.Token}, nil
+	name := opts.Name
+	if name == "" {
+		name = strings.TrimRight(u.String(), "/")
+	}
+	return &Source{base: strings.TrimRight(u.String(), "/"), name: name, merchant: opts.MerchantID, client: &client, token: opts.Token}, nil
 }
 
 // Notice is the consumed subset of OpenRails' public customer notification.
@@ -62,6 +71,7 @@ type Notice struct {
 	EventType  string          `json:"event_type"`
 	Data       json.RawMessage `json:"data"`
 	CreatedAt  time.Time       `json:"created_at"`
+	Status     notify.Status   `json:"status,omitempty"`
 }
 
 // Page is one retained source inbox page. An empty NextCursor finishes a scan.

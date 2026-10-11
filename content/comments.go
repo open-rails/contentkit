@@ -159,6 +159,9 @@ func (c *comments) create(ctx context.Context, actor access.Actor, kind, id stri
 		if err := c.count(ctx, tx, replyID, key, 1); err != nil {
 			return Comment{}, err
 		}
+		if err := c.notifyReply(ctx, tx, out.ID); err != nil {
+			return Comment{}, err
+		}
 	} else {
 		out.Moderation, out.ModerationReason = sc.state, deref(sc.reason)
 	}
@@ -608,6 +611,11 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 			return Comment{}, err
 		}
 	}
+	if sc.state == ModerationApproved && before != ModerationApproved {
+		if err := c.notifyReply(ctx, tx, cid); err != nil {
+			return Comment{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Comment{}, err
 	}
@@ -725,6 +733,11 @@ func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, 
 	}
 	if dLikes != 0 || dDislikes != 0 {
 		if _, err := tx.Exec(ctx, `UPDATE `+c.s.t.comments+` SET likes = likes + $2, dislikes = dislikes + $3, updated_at = now() WHERE id = $1`, cid, dLikes, dDislikes); err != nil {
+			return ReactionCounts{}, err
+		}
+	}
+	if dLikes > 0 {
+		if err := c.notifyLike(ctx, tx, actor, cid, ref); err != nil {
 			return ReactionCounts{}, err
 		}
 	}

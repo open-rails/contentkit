@@ -20,6 +20,8 @@ export interface ContentKitMounts {
   codes?: string;
   /** Taxonomy. Default `{baseUrl}/taxonomy`. */
   taxonomy?: string;
+  /** User inbox. Default `{baseUrl}/notifications`. */
+  notifications?: string;
 }
 
 export type ContentKitModule = keyof ContentKitMounts;
@@ -30,6 +32,7 @@ export type ContentKitChange =
   | { type: "media.committed"; ref: RefBody; files: FileInfo[] }
   /** An upload finished processing, as an editor read returns it. */
   | { type: "media.processed"; ref: RefBody; file: FileInfo }
+  | { type: "notifications.read"; id: string; read: boolean }
   | ContentChange;
 
 export type TokenSource = () => string | null | undefined | Promise<string | null | undefined>;

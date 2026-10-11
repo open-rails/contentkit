@@ -540,3 +540,5 @@ without them unless `CONTENTKIT_TEST_FFMPEG=1`).
 Tests run against real PGroonga Postgres and ClickHouse+Keeper and skip
 without the variables; `CONTENTKIT_PROFILE_URL` needs `CREATEDB`. Regenerate the eval baseline with
 `CONTENTKIT_EVAL_UPDATE=1`.
+
+User inboxes, native comment events and OpenRails imports use the shared notification library. See [notifications](docs/notifications.md) for APIs, identity mapping, retained-history semantics and erasure.

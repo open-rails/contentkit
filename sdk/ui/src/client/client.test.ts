@@ -62,3 +62,26 @@ it("xhrSetup opens the request and adds the bearer only on the API origin", asyn
   await client.media.xhrSetup(cdn as unknown as XMLHttpRequest, "https://media.test/seg/0.m4s");
   expect(cdn.headers).toEqual({});
 });
+
+
+it("reads the authenticated inbox and changes only local read state", async () => {
+  const calls: { url: string; method: string | undefined }[] = [];
+  const client = createContentKitClient({
+    baseUrl: "http://api.test/ck",
+    fetch: (async (url: string, init: RequestInit) => {
+      calls.push({ url, method: init.method });
+      return init.method === "GET" ? new Response(JSON.stringify({ items: [], next_cursor: "next" })) : new Response(null, { status: 204 });
+    }) as typeof fetch,
+  });
+  const changes: ContentKitChange[] = [];
+  client.subscribe((c) => changes.push(c));
+  expect(await client.notifications.list({ limit: 10, cursor: "opaque", unread: true })).toEqual({ items: [], next_cursor: "next" });
+  await client.notifications.setRead("item/1");
+  await client.notifications.setRead("item/1", false);
+  expect(calls).toEqual([
+    { url: "http://api.test/ck/notifications/inbox?limit=10&cursor=opaque&unread=true", method: "GET" },
+    { url: "http://api.test/ck/notifications/item%2F1/read", method: "PUT" },
+    { url: "http://api.test/ck/notifications/item%2F1/read", method: "DELETE" },
+  ]);
+  expect(changes).toEqual([{ type: "notifications.read", id: "item/1", read: true }, { type: "notifications.read", id: "item/1", read: false }]);
+});

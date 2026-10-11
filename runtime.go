@@ -19,6 +19,7 @@ import (
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/migrations"
+	"github.com/open-rails/contentkit/notification"
 	"github.com/open-rails/contentkit/search"
 	"github.com/open-rails/contentkit/worker"
 )
@@ -64,7 +65,9 @@ type TaxonomyAdmin interface {
 type Runtime struct {
 	*EmbeddedHub
 	Content *content.Runtime
-	handler http.Handler
+	// Notifications is the tenant inbox. Only trusted host code creates notices.
+	Notifications *notification.Store
+	handler       http.Handler
 }
 
 // NewRuntime builds the hub and the content module over the host pool.
@@ -110,11 +113,12 @@ func NewRuntime(ctx context.Context, cfg RuntimeConfig) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	h, err := handler(cfg, c, rt)
+	notices := rt.Notifications
+	h, err := handler(cfg, c, rt, notices)
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{EmbeddedHub: hub, Content: rt, handler: h}, nil
+	return &Runtime{EmbeddedHub: hub, Content: rt, Notifications: notices, handler: h}, nil
 }
 
 // Handler serves ContentKit's HTTP API: every configured module under one
@@ -126,10 +130,10 @@ func NewRuntime(ctx context.Context, cfg RuntimeConfig) (*Runtime, error) {
 //
 // A host may instead mount the modules alone (content.Runtime.Handler,
 // media.UploadHandler, media.Reader.Handler, contenturl.Router.Handler,
-// taxonomy.Handler) at paths of its choosing.
+// taxonomy.Handler, notification.Store.Handler) at paths of its choosing.
 func (r *Runtime) Handler() http.Handler { return r.handler }
 
-func handler(cfg RuntimeConfig, c content.Options, rt *content.Runtime) (http.Handler, error) {
+func handler(cfg RuntimeConfig, c content.Options, rt *content.Runtime, notices *notification.Store) (http.Handler, error) {
 	mux := http.NewServeMux()
 	mount := func(m httpapi.Module, h http.Handler) {
 		if p := m.Prefix(); p != "" {
@@ -137,6 +141,11 @@ func handler(cfg RuntimeConfig, c content.Options, rt *content.Runtime) (http.Ha
 		}
 	}
 	mux.Handle("/", rt.Handler())
+	nh, err := notices.Handler(c.Auth)
+	if err != nil {
+		return nil, err
+	}
+	mount(httpapi.Notifications, nh)
 	if cfg.Uploads != nil {
 		mount(httpapi.Upload, media.UploadHandler(cfg.Uploads, media.UploadHandlerOptions{Auth: c.Auth, Logger: c.Logger}))
 	}

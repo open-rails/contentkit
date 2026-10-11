@@ -33,10 +33,12 @@ const (
 	Codes Module = "codes"
 	// Taxonomy is the taxonomy admin API (taxonomy.Handler).
 	Taxonomy Module = "taxonomy"
+	// Notifications is the authenticated user inbox.
+	Notifications Module = "notifications"
 )
 
 // Modules lists every module in catalog order.
-var Modules = []Module{Content, Upload, Media, Codes, Taxonomy}
+var Modules = []Module{Content, Upload, Media, Codes, Taxonomy, Notifications}
 
 // Prefix is the module's sub-path under the one mount: content at its root,
 // the others beneath their own first segment, which no content kind may take.
@@ -50,13 +52,15 @@ func (m Module) Prefix() string {
 		return "/codes"
 	case Taxonomy:
 		return "/taxonomy"
+	case Notifications:
+		return "/notifications"
 	}
 	return ""
 }
 
 // Reserved is the first path segments the non-content modules take: a content
 // kind with one of these names would be unreachable under the one mount.
-func Reserved() []string { return []string{"media", "codes", "taxonomy"} }
+func Reserved() []string { return []string{"media", "codes", "taxonomy", "notifications"} }
 
 // Tier is what a route requires of its caller before its handler acts. The
 // module's gate enforces it from the host's auth.Authenticator, asked at most
@@ -299,7 +303,7 @@ func ErrorSet(name string) []string {
 		return []string{CodeInternal, CodeUnavailable, CodeUpgrade}
 	case "module:media":
 		return []string{CodeInternal, CodeNotFound, CodeRateLimited, CodeUnavailable, CodeUpgrade}
-	case "module:codes", "module:taxonomy":
+	case "module:codes", "module:taxonomy", "module:notifications":
 		return []string{CodeInternal}
 	}
 	return nil

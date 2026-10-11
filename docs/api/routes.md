@@ -2,7 +2,7 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (80). `contentkit.Runtime.Handler` serves them under the one prefix the host mounts it at, each module at its sub-path: content `/`, upload `/media/upload`, media `/media`, codes `/codes`, taxonomy `/taxonomy`. A host that mounts a module alone serves its routes beneath that mount instead. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (83). `contentkit.Runtime.Handler` serves them under the one prefix the host mounts it at, each module at its sub-path: content `/`, upload `/media/upload`, media `/media`, codes `/codes`, taxonomy `/taxonomy`, notifications `/notifications`. A host that mounts a module alone serves its routes beneath that mount instead. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
 
@@ -112,6 +112,14 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | POST | `/taxonomy/effective` | staff `root:taxonomy:write` | `ContentRef[]` | 200 `EffectiveTagsOf[]` | The effective tags (work and version) of each content. |
 | GET | `/taxonomy/counts` | staff `root:taxonomy:write` | — | 200 `Record<string, Count[]>` | Content counts of nodes, by taxonomy id. Query: `taxonomy_id`. |
 | POST | `/taxonomy/counts/rebuild` | staff `root:taxonomy:write` | — | 200 `CountsRebuilt` | Recomputes every count, after bulk loads written with suppress_counts. |
+
+##  (`/notifications`)
+
+| Method | Path | Tier | Request | Response | Description |
+|---|---|---|---|---|---|
+| GET | `/notifications/inbox` | user | — | 200 `Page` | The signed-in person's inbox, newest first. Query: `limit`, `cursor`, `unread`. |
+| PUT | `/notifications/{id}/read` | user | — | 204 — | Marks one of the signed-in person's notices read locally. |
+| DELETE | `/notifications/{id}/read` | user | — | 204 — | Marks one of the signed-in person's notices unread locally. |
 
 ## Error codes
 

@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/migrations"
+	"github.com/open-rails/helpers/notify/postgres"
 )
 
 // Pool connects to CONTENTKIT_TEST_URL or skips; mutate may adjust the config.
@@ -113,6 +114,9 @@ func Schema(t testing.TB, ctx context.Context, pool *pgxpool.Pool) string {
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Migrate(ctx, pool, schema); err != nil {
 		t.Fatal(err)
 	}
 	return schema

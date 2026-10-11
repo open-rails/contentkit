@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/codes"
+	"github.com/open-rails/helpers/notify"
 )
 
 // ProviderDataEraser deletes personal data retained by optional moderator and
@@ -58,7 +59,8 @@ func (rt *Runtime) erasedSubjectsTable() string {
 	return pgx.Identifier{rt.schema, "content_erased_subjects"}.Sanitize()
 }
 
-// EraseSubjects fences future authenticated content writes, removes reactions,
+// EraseSubjects first erases and fences the user inbox, then fences future
+// authenticated content writes, removes reactions,
 // favorites, poll votes/answers and comment bans of or by them atomically,
 // and removes unpublished held/rejected/draft/scheduled payloads and moderation
 // provenance. A previously published item retains its last approved payload
@@ -86,6 +88,14 @@ func (rt *Runtime) EraseSubjects(ctx context.Context, actorIDs []string) error {
 	ids = compact
 	if len(ids) == 0 {
 		return nil
+	}
+	// Erase and fence the inbox before content work; retries are idempotent.
+	// Keeping the two fences in separate transactions avoids locking recipients
+	// in the reverse order of a comment producer.
+	for _, id := range ids {
+		if err := rt.Notifications.EraseRecipient(ctx, notify.Recipient{Audience: notify.AudienceUser, ID: id}); err != nil {
+			return fmt.Errorf("content: erase notifications: %w", err)
+		}
 	}
 	tx, err := rt.store.beginMutation(ctx)
 	if err != nil {

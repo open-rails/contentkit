@@ -17,6 +17,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/ratelimit"
+	"github.com/open-rails/contentkit/notification"
 )
 
 // Reserved content kinds owned by this package: reactions on comments and
@@ -106,6 +107,8 @@ type Options struct {
 // Runtime is one tenant's embedded content module: shared deps + the module
 // services, exposing one mountable http.Handler.
 type Runtime struct {
+	// Notifications is this tenant's user inbox, shared with contentkit.Runtime.
+	Notifications     *notification.Store
 	store             *store
 	schema            string
 	tenant            string
@@ -185,6 +188,11 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		kinds:             make(map[string]struct{}, len(opts.ContentKinds)),
 		limiters:          limiters,
 	}
+	notices, err := notification.New(notification.Options{Pool: opts.Pool, Schema: opts.Schema, Tenant: opts.Tenant, Logger: log})
+	if err != nil {
+		return nil, err
+	}
+	rt.Notifications = notices
 	rt.guard = &gate.Gate{Auth: opts.Auth, Log: log}
 	for _, k := range opts.ContentKinds {
 		rt.kinds[k] = struct{}{}

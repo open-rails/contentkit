@@ -58,7 +58,7 @@ func (r *Runtime) ResyncPreferences(ctx context.Context) (content.PreferenceSync
 }
 
 // EraseSubjects erases every configured runtime plane: signals, interaction
-// data and data retained by moderation/classifier providers. Current approved
+// data, user inboxes and data retained by moderation/classifier providers. Current approved
 // authored content remains under host retention policy
 // (content.EraseSubjects). ContentKit-owned reactions, favorites, poll votes
 // and unpublished submissions are removed atomically behind the source fence.

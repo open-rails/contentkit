@@ -9,6 +9,7 @@ import (
 	"io/fs"
 
 	"github.com/open-rails/contentkit/search"
+	"github.com/open-rails/helpers/notify/postgres"
 	"github.com/open-rails/migratekit"
 )
 
@@ -45,6 +46,9 @@ func ApplyPostgres(ctx context.Context, db *sql.DB, schema string) error {
 	}
 	if err := migratekit.NewPostgres(db, "contentkit").WithSchema(schema).ApplyMigrations(ctx, steps); err != nil {
 		return fmt.Errorf("contentkit: apply PostgreSQL migrations: %w", err)
+	}
+	if err := postgres.MigrateDB(ctx, db, schema); err != nil {
+		return fmt.Errorf("contentkit: apply shared notification migrations: %w", err)
 	}
 	return nil
 }

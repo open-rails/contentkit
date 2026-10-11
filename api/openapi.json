@@ -4814,6 +4814,148 @@
           "auth"
         ]
       }
+    },
+    "/notifications/inbox": {
+      "get": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "The signed-in person's inbox, newest first.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "unread",
+            "in": "query",
+            "description": "only unread notices",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "notifications",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:notifications",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/notifications/{id}/read": {
+      "put": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Marks one of the signed-in person's notices read locally.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "notifications",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:notifications",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Marks one of the signed-in person's notices unread locally.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "notifications",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:notifications",
+          "auth",
+          "request"
+        ]
+      }
     }
   },
   "components": {
@@ -5945,6 +6087,75 @@
           "url"
         ]
       },
+      "Item": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "recipient": {
+            "$ref": "#/components/schemas/Recipient"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/Origin"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "data": {},
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "read_at": {
+            "oneOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_at": {
+            "oneOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "revision": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "recipient",
+          "origin",
+          "kind",
+          "data",
+          "created_at",
+          "read_at",
+          "resolved_at",
+          "updated_at",
+          "revision"
+        ]
+      },
       "MergeInput": {
         "type": "object",
         "properties": {
@@ -6319,6 +6530,42 @@
             "type": "boolean"
           }
         }
+      },
+      "Origin": {
+        "type": "object",
+        "properties": {
+          "system": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "system",
+          "scope",
+          "id"
+        ]
+      },
+      "Page": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Item"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ]
       },
       "PartBody": {
         "type": "object",
@@ -7087,6 +7334,21 @@
           "files"
         ]
       },
+      "Recipient": {
+        "type": "object",
+        "properties": {
+          "audience": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "audience",
+          "id"
+        ]
+      },
       "RefBody": {
         "type": "object",
         "properties": {
@@ -7403,7 +7665,8 @@
     "upload": "/media/upload",
     "media": "/media",
     "codes": "/codes",
-    "taxonomy": "/taxonomy"
+    "taxonomy": "/taxonomy",
+    "notifications": "/notifications"
   },
   "x-contentkit-error-sets": {
     "module:content": [
@@ -7434,6 +7697,9 @@
       "internal_error"
     ],
     "module:taxonomy": [
+      "internal_error"
+    ],
+    "module:notifications": [
       "internal_error"
     ]
   },
