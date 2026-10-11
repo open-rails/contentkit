@@ -347,7 +347,8 @@ export interface ImageInput {
 }
 
 export interface InlineImage {
-  url: string;
+  ref: string;
+  url: string | null;
 }
 
 export interface MergeInput {
@@ -556,7 +557,9 @@ export interface Post {
   slug?: string;
   body: string;
   excerpt?: string;
+  cover?: string;
   cover_url?: string;
+  images?: Record<string, string>;
   language: string;
   is_draft: boolean;
   live_at?: string;
@@ -597,6 +600,7 @@ export interface PresetRule {
   aspect?: string;
   min_width?: number;
   first?: number;
+  default: boolean;
 }
 
 export interface PresignBody {

@@ -52,7 +52,7 @@ export interface PublicImageOptions {
 }
 
 export interface UsePublicImage {
-  /** The item's current renditions; the kind's default image when it has none; null while unknown. */
+  /** The item's current renditions; else the kind's default image (when the preset has one); null while unknown or when there is neither. */
   image: PublicPreset | null;
   /** The preset's rules (aspect, widths, min_width) once the presets load. */
   rule?: PresetRule;
@@ -66,7 +66,7 @@ export interface UsePublicImage {
 /**
  * An item's public image for a preset ("avatar", "cover"): the exact
  * renditions from a read's `public` (or the host's listing), else the kind's
- * default image. Reads refresh after commits through the same client.
+ * default image, else none. Reads refresh after commits through the same client.
  */
 export function usePublicImage(kind: string, id: string, preset: string, o: PublicImageOptions = {}): UsePublicImage {
   const client = useOptionalContentKitClient(o.client);
@@ -80,7 +80,8 @@ export function usePublicImage(kind: string, id: string, preset: string, o: Publ
     const own = listed ? o.image : r.read?.public?.find((p) => p.preset === preset);
     if (own && own.renditions.length) return { image: { preset, renditions: own.renditions, aspect: ("aspect" in own && own.aspect) || rule?.aspect }, isDefault: false };
     if (!listed && !r.read) return { image: null, isDefault: false };
-    return rule ? { image: defaultImage(rule, id), isDefault: true } : { image: null, isDefault: false };
+    const def = rule && defaultImage(rule, id);
+    return def ? { image: def, isDefault: true } : { image: null, isDefault: false };
   }, [listed, o.image, r.read, preset, rule, id]);
   return { ...image, rule, loading: !loaded || r.loading, error: r.error, reload: r.reload };
 }

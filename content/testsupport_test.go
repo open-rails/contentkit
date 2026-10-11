@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -148,14 +150,62 @@ type testMedia struct {
 	deleted []string
 	exposed []string
 	origin  string
+	gens    map[string]string // published image name -> its generation
+	lookups int
 }
 
-func (m *testMedia) InlineURL(_ context.Context, ref contentref.ContentRef, name string) (string, error) {
+// publish gives the image name a current public file at a new generation.
+func (m *testMedia) publish(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.gens == nil {
+		m.gens = map[string]string{}
+	}
+	m.gens[name] = uuid.NewString()
+}
+
+func (m *testMedia) unpublish(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.gens, name)
+}
+
+// url is the published file of name in ref's folder.
+func (m *testMedia) url(ref contentref.ContentRef, name string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.urlLocked(ref, name)
+}
+
+func (m *testMedia) urlLocked(ref contentref.ContentRef, name string) string {
 	origin := m.origin
 	if origin == "" {
 		origin = "https://media.test"
 	}
-	return origin + "/" + ref.TenantID + "/" + ref.ContentKind + "/" + ref.ContentID + "/public/" + name + ".webp", nil
+	return origin + "/" + ref.TenantID + "/" + ref.ContentKind + "/" + ref.ContentID + "/public/" + name + "-" + m.gens[name] + ".webp"
+}
+
+// Images answers like the publications projection: a published name has one
+// image of two renditions.
+func (m *testMedia) Images(_ context.Context, qs ...media.ImageQuery) ([][]media.PublicImage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lookups++
+	out := make([][]media.PublicImage, len(qs))
+	for i, q := range qs {
+		if _, ok := m.gens[q.Name]; ok {
+			u := m.urlLocked(q.Ref, q.Name)
+			out[i] = []media.PublicImage{{From: q.Name + ".png", Preset: "inline", Renditions: []media.PublicRendition{
+				{URL: strings.Replace(u, ".webp", "-small.webp", 1), W: 400}, {URL: u, W: 800}}}}
+		}
+	}
+	return out, nil
+}
+
+func (m *testMedia) lookupCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lookups
 }
 
 func (m *testMedia) DeleteItemsTx(_ context.Context, tx pgx.Tx, items ...media.Deletion) error {
@@ -176,7 +226,7 @@ func (m *testMedia) ExposeTx(_ context.Context, _ pgx.Tx, refs ...contentref.Con
 	return nil
 }
 
-func (m *testMedia) options() *Media { return &Media{URLs: m, Folders: m} }
+func (m *testMedia) options() *Media { return &Media{Images: m, Folders: m} }
 
 func (m *testMedia) deletions() []string {
 	m.mu.Lock()

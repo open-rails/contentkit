@@ -194,7 +194,8 @@ func (r *Registry) PresetRules() []PresetRule {
 		k := &r.cfg.Kinds[i]
 		for _, p := range k.Public {
 			out = append(out, PresetRule{Kind: k.Name, Name: p.Name, From: p.From, Base: strings.TrimRight(r.cfg.BaseURL, "/"),
-				Namespace: k.ns, To: p.To, Widths: append([]int{}, p.Widths...), Aspect: p.Image.Aspect, MinWidth: p.Image.MinWidth, First: p.First})
+				Namespace: k.ns, To: p.To, Widths: append([]int{}, p.Widths...), Aspect: p.Image.Aspect, MinWidth: p.Image.MinWidth, First: p.First,
+				Default: p.hasDefault()})
 		}
 	}
 	return out

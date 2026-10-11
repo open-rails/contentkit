@@ -536,7 +536,7 @@
         "tags": [
           "posts"
         ],
-        "summary": "The public URL of an inline image uploaded to the post's media folder, to place in the body.",
+        "summary": "The reference to store in the body for an inline image uploaded to the post's media folder, and a URL that shows it to the editor now.",
         "parameters": [
           {
             "name": "id",
@@ -5735,11 +5735,22 @@
       "InlineImage": {
         "type": "object",
         "properties": {
-          "url": {
+          "ref": {
             "type": "string"
+          },
+          "url": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
+          "ref",
           "url"
         ]
       },
@@ -6469,8 +6480,17 @@
           "excerpt": {
             "type": "string"
           },
+          "cover": {
+            "type": "string"
+          },
           "cover_url": {
             "type": "string"
+          },
+          "images": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
           },
           "language": {
             "type": "string"
@@ -6661,6 +6681,9 @@
           },
           "first": {
             "type": "integer"
+          },
+          "default": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -6670,7 +6693,8 @@
           "base",
           "namespace",
           "to",
-          "widths"
+          "widths",
+          "default"
         ]
       },
       "PresignBody": {

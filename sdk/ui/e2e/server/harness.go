@@ -190,8 +190,8 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 			Content: content.Options{
 				Identity: identity{}, Authz: h, Resolver: h,
 				Users:     &ckauthkit.Authors{Directory: h.auth, Media: h.manifests},
-				Moderator: moderator{}, Classifier: classifier{},
-				Media: &content.Media{URLs: inlineURLs{h.manifests}, Folders: jobs, PostKind: postFolder, PollKind: pollFolder},
+				Moderator: moderator{}, Classifier: classifier{}, PostBodyProcessor: newPostHTML(),
+				Media: &content.Media{Images: h.manifests, Folders: jobs, PostKind: postFolder, PollKind: pollFolder},
 				// Commentable kinds; posts are content's own.
 				ContentKinds: []string{"gallery", "album", "video", content.KindPost},
 				Anonymous:    anonymous,

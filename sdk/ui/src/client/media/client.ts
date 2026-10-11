@@ -386,11 +386,15 @@ export class MediaClient {
     return { name, path: f.path, file: f };
   }
 
-  /** An image for a post's rich-text body: uploaded to the post's folder; resolves with the URL to place in the body. */
-  async uploadInline(post: string, file: Uploadable, o: NamedOptions = {}): Promise<NamedUpload & { url: string }> {
+  /**
+   * An image for a post's rich-text body, uploaded to the post's folder;
+   * resolves with its reference to store in the body (`ref`) and a URL that
+   * shows it to the editor now (`url`, null while none exists).
+   */
+  async uploadInline(post: string, file: Uploadable, o: NamedOptions = {}): Promise<NamedUpload & InlineImage> {
     const up = await this.uploadNamed(this.postRef(post), file, o);
     const r: InlineImage = await call(this.http, "POST", "/posts/{id}/images", { params: { id: post }, body: { image: up.name }, signal: o.signal });
-    return { ...up, url: r.url };
+    return { ...up, ...r };
   }
 
   /** The media folder of a post. */

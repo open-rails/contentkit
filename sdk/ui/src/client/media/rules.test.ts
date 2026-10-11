@@ -66,8 +66,8 @@ describe("upload rules", () => {
     expect(filesFor(read, images, [images, videos]).map((f) => f.path)).toEqual(["images/a.png"]);
   });
 
-  it("builds a preset's default image at every width, never for a preview", () => {
-    const preset = { kind: "user", name: "avatar", from: "avatar", base: "https://m.example/", namespace: "app", to: "avatar-{w}.webp", widths: [128, 256], aspect: "1:1" };
+  it("builds a preset's default image at every width, only when it has one", () => {
+    const preset = { kind: "user", name: "avatar", from: "avatar", base: "https://m.example/", namespace: "app", to: "avatar-{w}.webp", widths: [128, 256], aspect: "1:1", default: true };
     expect(defaultImage(preset, "0192f000-0000-7000-8000-000000000001")).toEqual({
       preset: "avatar",
       aspect: "1:1",
@@ -76,7 +76,8 @@ describe("upload rules", () => {
         { url: "https://m.example/v1/app/user/0192f000-0000-7000-8000-000000000001/public/avatar-256.webp", w: 256, h: 256 },
       ],
     });
-    expect(defaultImage({ ...preset, first: 1, to: "preview-{n}.webp" }, "x").renditions).toEqual([]);
+    expect(defaultImage({ ...preset, default: false }, "x")).toBeNull();
+    expect(defaultImage({ ...preset, first: 1, to: "preview-{n}.webp" }, "x")).toBeNull();
   });
 });
 

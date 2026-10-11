@@ -5,8 +5,9 @@ go 1.26.6
 require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/open-rails/authkit v1.15.0
-	github.com/open-rails/contentkit v0.66.0
+	github.com/open-rails/contentkit v0.70.0
 	github.com/open-rails/contentkit/adapters/authkit v0.0.0
 	github.com/open-rails/helpers v1.6.0
 	github.com/riverqueue/river v0.47.0
@@ -27,6 +28,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.17 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.17 // indirect
 	github.com/aws/smithy-go v1.27.3 // indirect
+	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.4 // indirect
 	github.com/go-faster/city v1.0.1 // indirect
@@ -40,6 +42,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/gorilla/css v1.0.1 // indirect
 	github.com/gorilla/securecookie v1.1.2 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
@@ -73,6 +76,7 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect

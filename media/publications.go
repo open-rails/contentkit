@@ -123,8 +123,7 @@ func (m *Manifests) PresetImages(ctx context.Context, preset string, refs ...con
 }
 
 // DefaultImage is preset's default image for ref, which the media gateway
-// serves while the item has no publication: only a preset declaring Default,
-// without {n} or {name}. From is empty and heights follow the preset's
+// serves while the item has no publication (Public.hasDefault). From is empty and heights follow the preset's
 // aspect (0 without one).
 func (r *Registry) DefaultImage(ref contentref.ContentRef, preset string) (PublicImage, bool) {
 	item, err := r.Item(ref)
@@ -132,7 +131,7 @@ func (r *Registry) DefaultImage(ref contentref.ContentRef, preset string) (Publi
 		return PublicImage{}, false
 	}
 	p := item.Kind().public(preset)
-	if p == nil || p.Default == "" || p.First > 0 || strings.Contains(p.To, "{name}") {
+	if p == nil || !p.hasDefault() {
 		return PublicImage{}, false
 	}
 	image := PublicImage{Preset: preset}
@@ -149,6 +148,12 @@ func (r *Registry) DefaultImage(ref contentref.ContentRef, preset string) (Publi
 		image.Renditions = append(image.Renditions, PublicRendition{URL: r.PublicURL(ref, name), W: w, H: h})
 	}
 	return image, true
+}
+
+// hasDefault reports a default image at the preset's names: a preset
+// declaring Default, neither a preview nor per upload ({name}).
+func (p *Public) hasDefault() bool {
+	return p.Default != "" && p.First == 0 && !strings.Contains(p.To, "{name}")
 }
 
 // publication is one current publication as the projection stores it.

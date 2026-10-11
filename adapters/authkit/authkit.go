@@ -87,9 +87,10 @@ func (a *Avatars) CanUpload(ctx context.Context, actor access.Actor, t media.Upl
 
 // Authors is content's UserEnricher over AuthKit: each id's display name
 // (tombstones and unknown ids get AuthKit's fallback) and its avatar, the
-// account kind's currently published preset. A directory or media failure is
-// logged and degrades to fallback names or an absent avatar; it never fails a
-// listing.
+// account kind's current image of the avatar preset, else the preset's
+// default. One directory call and one media lookup per listing. A directory
+// or media failure is logged and degrades to fallback names or absent
+// avatars; it never fails a listing.
 type Authors struct {
 	Directory Directory
 	Media     Images
@@ -104,7 +105,7 @@ type Authors struct {
 // Images is the public lookup Authors uses of *media.Manifests.
 type Images interface {
 	Registry() *media.Registry
-	PublicImages(context.Context, contentref.ContentRef) ([]media.PublicImage, error)
+	PresetImages(ctx context.Context, preset string, refs ...contentref.ContentRef) ([]media.PublicImage, error)
 }
 
 func (a *Authors) UsersByIDs(ctx context.Context, ids []string) (map[string]content.PublicUser, error) {
@@ -121,26 +122,32 @@ func (a *Authors) UsersByIDs(ctx context.Context, ids []string) (map[string]cont
 		log.WarnContext(ctx, "contentkit/authkit: public users failed; showing fallback names", "error", err)
 		users = nil
 	}
+	var refs []contentref.ContentRef
+	var owners []string
 	for _, id := range ids {
-		u := content.PublicUser{ID: id, Username: iam.PublicDisplayName(users, id)}
+		out[id] = content.PublicUser{ID: id, Username: iam.PublicDisplayName(users, id)}
 		if ref, err := a.Media.Registry().Ref(or(a.Kind, DefaultKind), id); err == nil {
-			images, err := a.Media.PublicImages(ctx, ref)
-			if err != nil {
-				log.WarnContext(ctx, "contentkit/authkit: public images failed; showing no avatar", "user", id, "error", err)
-			} else {
-				for _, image := range images {
-					if image.Preset == or(a.Preset, "avatar") {
-						width := a.Width
-						if width <= 0 {
-							width = 64
-						}
-						u.Avatar, u.AvatarSrcSet = image.URL(width), image.SrcSet()
-						break
-					}
-				}
-			}
+			refs, owners = append(refs, ref), append(owners, id)
 		}
-		out[id] = u
+	}
+	if len(refs) == 0 {
+		return out, nil
+	}
+	images, err := a.Media.PresetImages(ctx, or(a.Preset, "avatar"), refs...)
+	if err != nil {
+		log.WarnContext(ctx, "contentkit/authkit: avatars failed; showing none", "error", err)
+		return out, nil
+	}
+	width := a.Width
+	if width <= 0 {
+		width = 64
+	}
+	for i, id := range owners {
+		if len(images[i].Renditions) > 0 {
+			u := out[id]
+			u.Avatar, u.AvatarSrcSet = images[i].URL(width), images[i].SrcSet()
+			out[id] = u
+		}
 	}
 	return out, nil
 }

@@ -55,6 +55,14 @@ func TestRegistry(t *testing.T) {
 			t.Fatalf("width %d: %s, want %s", width, got, want)
 		}
 	}
+	// Preset rules say which presets have a default image.
+	has := map[string]bool{}
+	for _, r := range reg.PresetRules() {
+		has[r.Kind+"/"+r.Name] = r.Default
+	}
+	if !has["gallery/cover"] || !has["user/avatar"] || has["post/inline"] || has["video/poster"] {
+		t.Fatalf("preset defaults %v", has)
+	}
 	defaults := []layout.Default{{Namespace: "accounts", Kind: "user", Files: map[string]string{"avatar-64.webp": "sha256-" + strings.Repeat("a", 64) + ".webp"}}}
 	rules := media.GatewayConfig(reg, defaults)
 	if got := layout.FormatDefaults(rules.Defaults); got != "accounts/user: avatar-64.webp=sha256-"+strings.Repeat("a", 64)+".webp" {

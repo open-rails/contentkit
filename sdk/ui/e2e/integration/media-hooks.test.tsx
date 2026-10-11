@@ -25,7 +25,7 @@ describe("usePublicImage, useEditorCrop and useMediaFolder against the real Cont
       return <ContentKitProvider client={c}>{children}</ContentKitProvider>;
     };
 
-  it("usePublicImage shows the kind's default image, then a read's exact renditions; a host listing skips the read", async () => {
+  it("usePublicImage shows no image for a preset without a default, then a read's exact renditions; a host listing skips the read", async () => {
     // An account's own avatar (the shared user kind, through adapters/authkit).
     const alice = accounts.get("alice");
     const ref = { kind: "user", id: alice.id };
@@ -33,14 +33,15 @@ describe("usePublicImage, useEditorCrop and useMediaFolder against the real Cont
     const c = client(h, cfg, alice, { record: r });
     const { result } = renderHook(() => usePublicImage("user", alice.id, "avatar"), { wrapper: wrap(c) });
     await waitFor(() => expect(result.current.loading).toBe(false), wait);
-    expect(result.current).toMatchObject({ isDefault: true, rule: { kind: "user", name: "avatar", from: "avatar", namespace: "accounts", widths: [64, 128, 256], aspect: "1:1" } });
-    expect(result.current.image?.renditions[0]).toEqual({ url: `${cfg.media}/v1/accounts/user/${alice.id}/public/avatar-64.webp`, w: 64, h: 64 });
+    // The harness's avatar preset declares no default: no URL that would 404.
+    expect(result.current).toMatchObject({ image: null, isDefault: false, rule: { kind: "user", name: "avatar", from: "avatar", namespace: "accounts", widths: [64, 128, 256], aspect: "1:1", default: false } });
 
     await act(async () => {
       await c.media.put(png("avatar.png", 41, 300, 300), { ref, path: "avatar" });
       await c.media.waitFor(ref, "avatar", wait);
     });
-    await waitFor(() => expect(result.current.isDefault).toBe(false), wait);
+    await waitFor(() => expect(result.current.image?.renditions.length).toBeGreaterThan(0), wait);
+    expect(result.current.isDefault).toBe(false);
     const own = result.current.image!.renditions;
     expect(own.length).toBeGreaterThan(0);
     for (const x of own) expect(new URL(x.url).pathname).toMatch(new RegExp(`^/v1/accounts/user/${alice.id}/public/avatar-\\d+-.+\\.webp$`));
