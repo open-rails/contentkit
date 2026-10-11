@@ -10,6 +10,8 @@ export interface CommentQuery extends PageQuery {
 export interface AdminCommentQuery extends PageQuery {
   /** Only comments on this content kind. */
   contentKind?: string;
+  /** Only comments by this user id. */
+  author?: string;
 }
 
 // Content ids are the host's opaque text (not only media's UUIDv7s).
@@ -66,8 +68,8 @@ export class CommentsClient {
   }
   /** Every comment, newest first, deleted, held and rejected ones with their bodies (root:comments:moderate). */
   adminList(q: AdminCommentQuery = {}, signal?: AbortSignal): Promise<AdminComment[]> {
-    const { contentKind, ...page } = q;
-    return call(this.http, "GET", "/comments/admin", { query: { ...page, content_kind: contentKind }, signal });
+    const { contentKind, ...rest } = q;
+    return call(this.http, "GET", "/comments/admin", { query: { ...rest, content_kind: contentKind }, signal });
   }
   /** Restores a deleted comment (root:comments:moderate). */
   async restore(id: string): Promise<void> {

@@ -183,6 +183,13 @@ export const social: typeof en = {
     loadMore: "さらに表示",
     queueComments: "コメント",
     queuePosts: "投稿",
+    noAccess: "コメントをモデレートする権限がありません。",
+    author: "投稿者",
+    authorPlaceholder: "ユーザー ID で絞り込む",
+    filter: "絞り込む",
+    byAuthor: "{name} さんのコメント",
+    clearAuthor: "すべて表示",
+    theirComments: "このユーザーのコメント",
   },
   time: {
     justNow: "たった今",

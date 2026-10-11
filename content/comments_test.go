@@ -640,7 +640,7 @@ func TestComments_AdminListAndRestore(t *testing.T) {
 	if err := rt.comments.softDelete(ctx, admin, hidden.ID); err != nil {
 		t.Fatal(err)
 	}
-	items, err := rt.comments.adminList(ctx, "", 10, 0)
+	items, err := rt.comments.adminList(ctx, "", "", 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -656,7 +656,7 @@ func TestComments_AdminListAndRestore(t *testing.T) {
 	if del == nil || !del.Deleted || del.Body != "hide me" || del.DeletedAt == nil || !del.ContentRef.Equal(ref("gallery", cid(1))) {
 		t.Fatalf("deleted row wrong in admin view: %+v", del)
 	}
-	if only, _ := rt.comments.adminList(ctx, "video", 10, 0); len(only) != 0 {
+	if only, _ := rt.comments.adminList(ctx, "video", "", 10, 0); len(only) != 0 {
 		t.Fatalf("kind filter returned %d rows, want 0", len(only))
 	}
 	if err := rt.comments.restore(ctx, hidden.ID); err != nil {

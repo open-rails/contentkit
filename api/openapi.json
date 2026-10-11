@@ -829,6 +829,14 @@
             }
           },
           {
+            "name": "author",
+            "in": "query",
+            "description": "only comments by this user id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "description": "page size: 20 by default, at most 100",
@@ -2729,6 +2737,54 @@
       }
     },
     "/global-comment-bans/{user}": {
+      "get": {
+        "tags": [
+          "bans"
+        ],
+        "summary": "A user's tenant-wide comment ban, expired or not; 404 when they have none.",
+        "parameters": [
+          {
+            "name": "user",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentBan"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:comments:ban",
+        "x-contentkit-errors": [
+          "not_found",
+          "unauthorized"
+        ],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      },
       "put": {
         "tags": [
           "bans"
@@ -4233,6 +4289,87 @@
         ]
       }
     },
+    "/taxonomy/nodes/{id}/assignments": {
+      "get": {
+        "tags": [
+          "taxonomy"
+        ],
+        "summary": "The contents assigned to a node, paged.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "content_kind",
+            "in": "query",
+            "description": "only contents of this kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "relation",
+            "in": "query",
+            "description": "only this relation",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 50 by default, at most 500",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "taxonomy",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:taxonomy:write",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:taxonomy",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/taxonomy/nodes/{id}/merge": {
       "post": {
         "tags": [
@@ -4797,7 +4934,32 @@
           "source_revision": {
             "type": "integer"
           }
-        }
+        },
+        "required": [
+          "tenant_id",
+          "content_kind",
+          "content_id",
+          "taxonomy_id",
+          "relation",
+          "source_revision"
+        ]
+      },
+      "AssignmentPage": {
+        "type": "object",
+        "properties": {
+          "assignments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Assignment"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "assignments"
+        ]
       },
       "AssignmentsWritten": {
         "type": "object",

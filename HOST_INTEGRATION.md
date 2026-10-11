@@ -242,7 +242,7 @@ host schema's `content_*` interaction tables. Every row is keyed by the `Content
 the host-owned work: `(tenant_id, content_kind, content_id,
 content_version_id)`; comment threading is `reply_to_id`. Routes are
 `/{kind}/{id}/comments|like|dislike|reaction|favorite`,
-`/comments/{cid}/...`, `/comments/latest`, `/comments/admin?content_kind=`,
+`/comments/{cid}/...`, `/comments/latest`, `/comments/admin?content_kind=&author=`,
 `/favorites`, `/polls...` (incl. `/polls/{id}/answer`), `/posts...`,
 `/moderation/held`, `/moderation/{kind}/{id}/resolve`, `/comment-bans...`,
 `/global-comment-bans...`, `/{kind}/{id}/can-comment`; `kind` must be in
@@ -371,7 +371,7 @@ index follow), `reject` keeps the item author-visible as `rejected` with the
 reason. Over HTTP: `GET /moderation/held?kind=comment|post&cursor=&limit=` and
 `POST /moderation/{kind}/{id}/resolve {"revision","decision","reason"}` (the
 actor id is the reviewer), both gated by `root:moderation:review`.
-`GET /comments/admin` shows every state with real bodies.
+`GET /comments/admin` shows every state with real bodies and authors, by content kind or `author`.
 
 Screening is revision-fenced. A decision must echo the held `revision`, so it
 cannot publish an intervening edit. Edits are screened outside SQL
@@ -460,7 +460,7 @@ reactions, favorites or votes. Scopes:
 | `GET /comment-bans?limit=&offset=` | the caller's owner scope | `[CommentBan]`, newest first |
 | `PUT /comment-bans/{user}` `{"reason","until"}` | the caller's owner scope | the ban (created or replaced) |
 | `DELETE /comment-bans/{user}` | the caller's owner scope | `204`, idempotent |
-| `GET`, `PUT`, `DELETE /global-comment-bans[/{user}]` | `global` | the same |
+| `GET`, `PUT`, `DELETE /global-comment-bans[/{user}]` | `global` | the same; `GET /global-comment-bans/{user}` is that user's ban, `404` when none |
 | `GET /{kind}/{id}/can-comment` | the caller on that target | `{"can_comment", "ban", "anonymous", …}` |
 
 `until` is optional (absent: until lifted) and must be in the future; an
@@ -863,7 +863,7 @@ way.
 | `copy {from: {id, path}, to?, edit?}` | Copies an upload within the kind, including the current item. Copies within an Upload preserve current private outputs; another Upload or a supplied edit renders its own presets from the original. Blobs copied from another item are reserved like uploads (rate limits, pending quota) before they move. |
 | `frame {path, t \| auto}` | Fills an upload from a frame of its `Frames` video; a new video grabs again. |
 | `meta {meta}` | Sets the template values (`{title}` in download names). |
-| `regenerate {preset?, force?}` | Asks the worker to redo stale outputs (all with `force`, which needs an exempt grant). |
+| `regenerate {preset?, force?}` | Asks the worker to redo stale outputs and retry uploads that failed for their current blob and edit, which any writer of the item may do; `force` redoes every output and needs an exempt grant. |
 
 `CanUpload` is asked for `UploadTarget{Ref, Path}` per op (the upload's stem;
 "" for item-wide ops), and for a copy's source too. A new item starts hidden

@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { BanScope, Decision, HeldKind, Reaction, Sort } from "../client/content/types.js";
+import type { ContentKitError } from "../client/errors.js";
 import type { AdminComment, BanInput, Comment, CommentBan, CommentStanding, FeedItem, HeldItem, ReactionCounts, RefBody } from "../client/generated/wire.js";
 import type { Page, ResourceStore } from "./resources.js";
 import { keyOf, offsetPages, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
@@ -108,16 +109,17 @@ export interface UseAdminComments extends UseList<AdminComment> {
   react: (comment: Comment, value: Reaction) => Promise<void>;
 }
 
-/** Staff: every comment, newest first, deleted, held and rejected ones with their bodies (root:comments:moderate). */
-export function useAdminComments(o: { contentKind?: string; pageSize?: number; client?: ContentKitClient } = {}): UseAdminComments {
+/** Staff: every comment, newest first, deleted, held and rejected ones with their bodies (root:comments:moderate); or one content kind's, or one author's. */
+export function useAdminComments(o: { contentKind?: string; author?: string; pageSize?: number; client?: ContentKitClient } = {}): UseAdminComments {
   const { client, store, scope } = useContentScope(o.client);
   const size = o.pageSize ?? 25;
   const kind = o.contentKind || undefined;
+  const author = o.author || undefined;
   const list = useList(
     store,
-    keyOf("admin-comments", scope, kind, size),
+    keyOf("admin-comments", scope, kind, author, size),
     { type: "admin-comments" },
-    offsetPages(size, (q, signal) => client.comments.adminList({ ...q, contentKind: kind }, signal)),
+    offsetPages(size, (q, signal) => client.comments.adminList({ ...q, contentKind: kind, author }, signal)),
   );
   const remove = useCallback((id: string) => client.comments.delete(id), [client]);
   const restore = useCallback((id: string) => client.comments.restore(id), [client]);
@@ -162,4 +164,24 @@ export function useCommentBans(o: { scope?: BanScope; pageSize?: number; enabled
   const ban = useCallback((user: string, input?: BanInput) => client.bans.ban(scope, user, input), [client, scope]);
   const lift = useCallback((user: string) => client.bans.lift(scope, user), [client, scope]);
   return { ...list, ban, lift };
+}
+
+export interface UseGlobalCommentBan {
+  /** The user's site-wide ban, expired or not; null when none. */
+  ban: CommentBan | null;
+  loading: boolean;
+  error?: ContentKitError;
+  reload: () => void;
+  /** Bans them, or replaces their ban. */
+  save: (input?: BanInput) => Promise<CommentBan>;
+  lift: () => Promise<void>;
+}
+
+/** Staff: one user's site-wide comment ban (root:comments:ban). */
+export function useGlobalCommentBan(user: string, o: { client?: ContentKitClient } = {}): UseGlobalCommentBan {
+  const { client, store, scope } = useContentScope(o.client);
+  const r = useResource<CommentBan | null>(store, keyOf("ban", scope, user), { type: "bans", scope: "global", id: user }, (signal) => client.bans.get("global", user, signal));
+  const save = useCallback((input?: BanInput) => client.bans.ban("global", user, input), [client, user]);
+  const lift = useCallback(() => client.bans.lift("global", user), [client, user]);
+  return { ban: r.data ?? null, loading: r.loading || !r.loaded, error: r.error, reload: r.reload, save, lift };
 }

@@ -21,7 +21,7 @@ export { PollsClient, type PollQuery } from "./content/polls.js";
 export { BansClient } from "./content/bans.js";
 export { ModerationClient, type HeldQuery } from "./content/moderation.js";
 export { reactionVerb, type BanScope, type ContentChange, type Decision, type HeldKind, type Reaction, type Sort } from "./content/types.js";
-export { TaxonomyClient, type NodeQuery } from "./taxonomy.js";
+export { TaxonomyClient, type NodeAssignmentQuery, type NodeQuery } from "./taxonomy.js";
 export { CodesClient } from "./codes.js";
 export { call, routeURL, type CallOptions, type Method, type PageQuery, type PathParams, type RouteQuery, type RoutePath } from "./route.js";
 export { MediaApi, type ReadOptions } from "./media/api.js";

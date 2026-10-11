@@ -60,6 +60,10 @@ var taxonomyRoutes = []httpapi.Route[handler]{
 		func(h handler) http.HandlerFunc { return h.names(h.s.AddNames) }, []string{CodeConflict, CodeNotFound}),
 	adminRoute(httpapi.DELETE, "/nodes/{id}/names", "Removes names from a node.", []Name{}, okReply(NodeDetail{}),
 		func(h handler) http.HandlerFunc { return h.names(h.s.RemoveNames) }, []string{CodeNotFound}),
+	adminRoute(httpapi.GET, "/nodes/{id}/assignments", "The contents assigned to a node, paged.", nil, okReply(AssignmentPage{}),
+		httpapi.H(handler.nodeAssignments), []string{CodeNotFound},
+		httpapi.Text("content_kind", "only contents of this kind"), httpapi.Text("relation", "only this relation"),
+		httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 50 by default, at most 500")),
 	adminRoute(httpapi.POST, "/nodes/{id}/merge", "Merges a node into another: its assignments, names and edges move, and its URL redirects.",
 		MergeInput{}, okReply(MergeReport{}), httpapi.H(handler.merge), []string{CodeConflict, CodeNotFound}),
 	adminRoute(httpapi.POST, "/edges", "Adds edges.", []Edge{}, okReply(EdgesWritten{}),
@@ -306,6 +310,19 @@ func (h handler) names(op func(context.Context, TaxonomyID, []Name) error) http.
 		}
 		write(w, http.StatusOK, d)
 	}
+}
+
+func (h handler) nodeAssignments(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	page, err := h.s.NodeAssignments(r.Context(), TaxonomyID(r.PathValue("id")), AssignmentListOptions{
+		ContentKind: q.Get("content_kind"), Relation: q.Get("relation"), Cursor: q.Get("cursor"), Limit: limit,
+	})
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	write(w, http.StatusOK, page)
 }
 
 func (h handler) merge(w http.ResponseWriter, r *http.Request) {

@@ -6,8 +6,8 @@ import type { BanNotice as BanNoticeData, CommentBan, PublicUser } from "../../c
 import { useMessages } from "../../i18n/context.js";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitErrorHandler } from "../../react/context.js";
-import { useCommentBans } from "../../react/comments.js";
 import { useContentKitClient } from "../../react/context.js";
+import { keyOf, useContentScope, usePaged } from "../../react/use-resource.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Alert, AlertDescription } from "#ckui/ui/alert";
 import { Badge } from "#ckui/ui/badge";
@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "#ckui/ui/input";
 import { Label } from "#ckui/ui/label";
 import { Textarea } from "#ckui/ui/textarea";
+import { LoadFailed, Pager } from "../admin/shell.js";
 import { ConfirmDialog, ErrorLine, formatDate, UserAvatar, UserName, useAction } from "./parts.js";
 
 /** What a banned user is told: where, why and until when (never who). */
@@ -154,6 +155,9 @@ export interface CommentBansProps {
   /** "global": the site's bans (CommentBan); "owner": the caller's own. Default "global". */
   scope?: BanScope;
   pageSize?: number;
+  /** The page shown (from 1), when the host keeps it, e.g. in the URL; with onPageChange. */
+  page?: number;
+  onPageChange?: (page: number) => void;
   userHref?: (user: PublicUser) => string | undefined;
   client?: ContentKitClient;
   onError?: ContentKitErrorHandler;
@@ -161,11 +165,17 @@ export interface CommentBansProps {
   appearance?: ContentKitUiAppearance;
 }
 
-/** A scope's comment bans, newest first: who, why, until when; ban a user by id, update or lift a ban. */
-export function CommentBans({ scope = "global", pageSize = 25, userHref, client, onError, className, appearance }: CommentBansProps) {
+/** A scope's comment bans, newest first, a page at a time: who, why, until when; ban a user by id, update or lift a ban. */
+export function CommentBans({ scope = "global", pageSize = 25, page: shown, onPageChange, userHref, client: own, onError, className, appearance }: CommentBansProps) {
   const m = useMessages();
   const { t } = m;
-  const bans = useCommentBans({ scope, pageSize, client });
+  const { client, store, scope: readScope } = useContentScope(own);
+  const [local, setLocal] = useState(1);
+  const page = shown ?? local;
+  const setPage = (n: number) => (onPageChange ? onPageChange(n) : setLocal(n));
+  const bans = usePaged(store, keyOf("bans-page", readScope, scope, pageSize), { type: "bans", scope }, page, pageSize, async (q, signal) =>
+    (await client.bans.list(scope, q, signal)).map((b) => ({ ...b, id: b.user_id })),
+  );
   const ids = useId();
   const [editing, setEditing] = useState<{ user: { id: string; name?: string }; ban?: CommentBan } | null>(null);
   const [lifting, setLifting] = useState<CommentBan | null>(null);
@@ -190,12 +200,7 @@ export function CommentBans({ scope = "global", pageSize = 25, userHref, client,
       </form>
       <ErrorLine error={lift.error} />
       {bans.error && !bans.items.length ? (
-        <div className="grid justify-items-start gap-2">
-          <ErrorLine>{t("bans.loadFailed")}</ErrorLine>
-          <Button size="sm" variant="outline" onClick={bans.reload}>
-            {t("common.retry")}
-          </Button>
-        </div>
+        <LoadFailed error={bans.error} message={t("bans.loadFailed")} retry={bans.reload} />
       ) : !bans.loading && !bans.items.length ? (
         <p className="text-muted-foreground">{t("bans.empty")}</p>
       ) : (
@@ -228,11 +233,7 @@ export function CommentBans({ scope = "global", pageSize = 25, userHref, client,
           })}
         </ul>
       )}
-      {bans.hasMore && (
-        <Button variant="outline" className="justify-self-center" disabled={bans.loadingMore} onClick={() => void bans.loadMore()}>
-          {t("moderation.loadMore")}
-        </Button>
-      )}
+      <Pager page={page} hasNext={bans.hasNext} onPage={setPage} disabled={bans.loading} />
       {editing && (
         <CommentBanDialog
           open
@@ -251,7 +252,7 @@ export function CommentBans({ scope = "global", pageSize = 25, userHref, client,
         title={t("bans.liftTitle", { name: lifting?.user?.username ?? lifting?.user_id ?? "" })}
         description={t("bans.liftBody")}
         confirm={t("bans.lift")}
-        onConfirm={() => lifting && void lift.run(() => bans.lift(lifting.user_id))}
+        onConfirm={() => lifting && void lift.run(() => client.bans.lift(scope, lifting.user_id))}
       />
     </ContentKitUiRoot>
   );

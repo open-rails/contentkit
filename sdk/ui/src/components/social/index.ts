@@ -3,4 +3,4 @@ export { BanNotice, CommentBanDialog, CommentBans, type CommentBanDialogProps, t
 export { FavoriteButton, ReactionButtons, type FavoriteButtonProps, type ReactionButtonsProps } from "./engagement.js";
 export { Poll, type PollProps } from "./poll.js";
 export { PollEditor, type PollEditorProps } from "./poll-editor.js";
-export { CommentModeration, type CommentModerationProps, type ModerationSection } from "./moderation.js";
+export { CommentModeration, useCommentModerationAccess, type CommentModerationProps, type ModerationSection } from "./moderation.js";

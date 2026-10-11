@@ -182,6 +182,13 @@ export const social = {
     loadMore: "Show more",
     queueComments: "Comments",
     queuePosts: "Posts",
+    noAccess: "You don't have permission to moderate comments.",
+    author: "Author",
+    authorPlaceholder: "Filter by user id",
+    filter: "Filter",
+    byAuthor: "Comments by {name}",
+    clearAuthor: "Show everyone's",
+    theirComments: "Their comments",
   },
   time: {
     justNow: "just now",

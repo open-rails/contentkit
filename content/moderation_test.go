@@ -245,7 +245,7 @@ func TestModeration_CommentVerdicts(t *testing.T) {
 		t.Fatalf("queue after reject = %v", ids)
 	}
 	// admin list shows everything with its state
-	adm, _ := rt.comments.adminList(ctx, "", 50, 0)
+	adm, _ := rt.comments.adminList(ctx, "", "", 50, 0)
 	states := map[string]string{}
 	for _, a := range adm {
 		states[a.ID] = a.Moderation

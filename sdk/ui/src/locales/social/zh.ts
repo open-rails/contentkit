@@ -183,6 +183,13 @@ export const social: typeof en = {
     loadMore: "显示更多",
     queueComments: "评论",
     queuePosts: "文章",
+    noAccess: "你没有审核评论的权限。",
+    author: "作者",
+    authorPlaceholder: "按用户 ID 筛选",
+    filter: "筛选",
+    byAuthor: "{name} 的评论",
+    clearAuthor: "显示所有人的",
+    theirComments: "该用户的评论",
   },
   time: {
     justNow: "刚刚",

@@ -37,8 +37,8 @@ export interface ContentKitUiProviderProps {
   children?: ReactNode;
 }
 
-/** Look and language for every component below. Renders no DOM; components create their own `.ckui` roots. */
-export function ContentKitUiProvider({ appearance, language, messages, t, density = DEFAULT_DENSITY, inlinePreview = true, children }: ContentKitUiProviderProps) {
+/** The translator for a language's bundle (loaded on demand) under the given bundles and host hook. */
+export function useTranslator(language?: string, messages?: ContentKitUiMessageBundle | readonly ContentKitUiMessageBundle[], t?: ContentKitUiTranslate) {
   const lang = bundleLanguage(language);
   const [loaded, setLoaded] = useState<{ lang: string; bundle: ContentKitUiMessageBundle } | null>(null);
   useEffect(() => {
@@ -53,10 +53,15 @@ export function ContentKitUiProvider({ appearance, language, messages, t, densit
     };
   }, [lang]);
   const bundle = lang && loaded?.lang === lang ? loaded.bundle : undefined;
-  const translator = useMemo(() => {
+  return useMemo(() => {
     const own = messages ? (Array.isArray(messages) ? messages : [messages]) : [];
     return createTranslator(resolveMessages(bundle ? [bundle, ...own] : own), t, language);
   }, [bundle, messages, t, language]);
+}
+
+/** Look and language for every component below. Renders no DOM; components create their own `.ckui` roots. */
+export function ContentKitUiProvider({ appearance, language, messages, t, density = DEFAULT_DENSITY, inlinePreview = true, children }: ContentKitUiProviderProps) {
+  const translator = useTranslator(language, messages, t);
   return (
     <AppearanceContext.Provider value={appearance}>
       <MessagesContext.Provider value={translator}>

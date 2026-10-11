@@ -143,6 +143,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusNoContent, owner, "DELETE", "/comment-bans/"+u.ID, nil, nil)
 	f.want(http.StatusUnauthorized, anon, "GET", "/comment-bans", nil, nil)
 	f.want(http.StatusOK, staff, "PUT", "/global-comment-bans/u1", nil, nil)
+	f.want(http.StatusOK, staff, "GET", "/global-comment-bans/u1", nil, nil)
 	f.want(http.StatusOK, staff, "GET", "/global-comment-bans", nil, nil)
 	f.want(http.StatusNoContent, staff, "DELETE", "/global-comment-bans/u1", nil, nil)
 	f.want(http.StatusForbidden, user, "GET", "/global-comment-bans", nil, nil)
@@ -181,6 +182,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, staff, "POST", "/taxonomy/assignments?suppress_counts=true", assignments, nil)
 	f.want(http.StatusOK, staff, "POST", "/taxonomy/counts/rebuild", nil, nil)
 	f.want(http.StatusOK, staff, "GET", "/taxonomy/counts?taxonomy_id="+color, nil, nil)
+	f.want(http.StatusOK, staff, "GET", "/taxonomy/nodes/"+color+"/assignments?content_kind=gallery&limit=10", nil, nil)
 	f.want(http.StatusOK, staff, "POST", "/taxonomy/effective", []contentref.ContentRef{{ContentKind: "gallery", ContentID: cid(1)}}, nil)
 	f.want(http.StatusOK, staff, "DELETE", "/taxonomy/assignments", assignments, nil)
 	f.want(http.StatusOK, staff, "POST", "/taxonomy/nodes/"+colour+"/merge", taxonomy.MergeInput{Into: taxonomy.TaxonomyID(color)}, nil)
@@ -205,31 +207,8 @@ func mediaScenario(t *testing.T, f *server, user, anon string) {
 	ref := media.RefBody{Kind: "gallery", ID: cid(1)}
 	body := pngBytes(t, 16)
 	sum := sha256.Sum256(body)
-	presign := func(path string) media.PresignBody {
-		return media.PresignBody{Ref: ref, Path: path, Type: "image/png", Size: int64(len(body)), SHA256: hex.EncodeToString(sum[:])}
-	}
-	// upload presigns path and PUTs the bytes where the plan says, as a browser does.
-	upload := func(path string) media.PresignReply {
-		var plan media.PresignReply
-		f.want(http.StatusOK, user, "POST", "/media/upload/presign", presign(path), &plan)
-		if plan.Put == nil {
-			return plan // the folder already holds these bytes
-		}
-		req, _ := http.NewRequest(plan.Put.Method, plan.Put.URL, bytes.NewReader(body))
-		for k, v := range plan.Put.Headers {
-			req.Header.Set(k, v)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		b, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("PUT %s: %d %s", path, resp.StatusCode, b)
-		}
-		return plan
-	}
+	presign := func(path string) media.PresignBody { return presignPNG(ref, path, body) }
+	upload := func(path string) media.PresignReply { return upload(t, f, user, ref, path, body) }
 	commit := func(plan media.PresignReply) *httptest.ResponseRecorder {
 		return f.call(user, "POST", "/media/upload/commit", media.CommitBody{Ref: ref, OperationID: uuid.NewString(),
 			Ops: []media.Op{{Op: media.OpPut, Path: plan.Path, Blob: plan.Blob}}})
@@ -282,4 +261,33 @@ func mediaScenario(t *testing.T, f *server, user, anon string) {
 		presets[0].Base != "https://media.test" || presets[0].To != "cover-{w}.webp" || len(presets[0].Widths) != 1 || presets[1].Name != "avatar" {
 		t.Fatalf("presets %+v", presets)
 	}
+}
+
+func presignPNG(ref media.RefBody, path string, body []byte) media.PresignBody {
+	sum := sha256.Sum256(body)
+	return media.PresignBody{Ref: ref, Path: path, Type: "image/png", Size: int64(len(body)), SHA256: hex.EncodeToString(sum[:])}
+}
+
+// upload presigns path and PUTs the bytes where the plan says, as a browser does.
+func upload(t *testing.T, f *server, bearer string, ref media.RefBody, path string, body []byte) media.PresignReply {
+	t.Helper()
+	var plan media.PresignReply
+	f.want(http.StatusOK, bearer, "POST", "/media/upload/presign", presignPNG(ref, path, body), &plan)
+	if plan.Put == nil {
+		return plan // the folder already holds these bytes
+	}
+	req, _ := http.NewRequest(plan.Put.Method, plan.Put.URL, bytes.NewReader(body))
+	for k, v := range plan.Put.Headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT %s: %d %s", path, resp.StatusCode, b)
+	}
+	return plan
 }
