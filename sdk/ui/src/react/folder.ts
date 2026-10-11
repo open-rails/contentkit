@@ -154,7 +154,7 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
   const listed = useMemo(() => new Set(uploads.map((f) => f.path)), [uploads]);
 
   const raw = useUploadQueue({ client, ref: target, path: `${ruleDir(groupPaths[0] ?? "{name}")}{name}`, concurrency: o.concurrency });
-  // The UploadQueue itself is stable per item; the hook's wrapper is new every render.
+  // The ItemUploadQueue itself is stable per item; the hook's wrapper is new every render.
   const q = raw.queue;
   // A committed file stays in the queue until the read lists it, so it never drops out of view.
   const items = useMemo(() => raw.items.filter((i) => !(i.status === "committed" && listed.has(i.path))), [raw.items, listed]);

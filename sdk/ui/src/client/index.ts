@@ -44,7 +44,7 @@ export {
   type UploadedFile,
   type WaitOptions,
 } from "./media/client.js";
-export { UploadQueue, type ItemStatus, type QueueItem, type QueueOptions, type QueueSnapshot } from "./media/queue.js";
+export { ItemUploadQueue, type ItemStatus, type QueueItem, type QueueOptions, type QueueSnapshot } from "./media/queue.js";
 export {
   acceptOf,
   defaultImage,

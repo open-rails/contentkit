@@ -43,7 +43,8 @@ export type SocialOperation =
   | "moderation.load"
   | "moderation.resolve"
   | "taxonomy.load"
-  | "taxonomy.save";
+  | "taxonomy.save"
+  | "media.save";
 
 /** The failure's context: the operation and, for one file, its name. */
 export interface ContentKitErrorInfo {

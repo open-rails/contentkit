@@ -52,6 +52,8 @@ export {
   type TaxonomyManagerProps,
   type TaxonomyRelation,
 } from "./components/admin/taxonomy-manager.js";
+export { MediaItemPanel, type MediaItemPanelProps } from "./components/admin/media-item-panel.js";
+export { UploadQueue, type UploadQueueProps } from "./components/admin/upload-queue.js";
 export { NoAccess, Pager, useConfirm, type AdminFlowProps, type AdminRouteProps, type ConfirmOptions, type ContentKitGuard } from "./components/admin/shell.js";
 export type { AdminNavigation, ContentKitAuth, StaffAccess, StaffArea } from "./react/admin.js";
 export {

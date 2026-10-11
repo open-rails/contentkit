@@ -1,14 +1,18 @@
-import { CommentModeration, PollManager, PostManager, TaxonomyManager, UserCommentStanding, type AdminNavigation, type TaxonomyKind } from "@openrails/contentkit-ui";
+import { CommentModeration, MediaItemPanel, PollManager, PostManager, TaxonomyManager, UploadQueue, UserCommentStanding, type AdminNavigation, type TaxonomyKind } from "@openrails/contentkit-ui";
 import { richTextEditor } from "@openrails/contentkit-ui/editor";
 import { StrictMode, useMemo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Link, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
-import { auth, client, dark, q } from "./session";
+import type { RefBody } from "@openrails/contentkit-ui/client";
+import { auth, client, dark, q, viewer } from "./session";
 
 // A host's admin area. /admin/comments/* CommentModeration, /admin/users/{id}
 // UserCommentStanding, /admin/polls/* PollManager, /admin/posts/* PostManager
 // (with the package's rich-text editor), /admin/taxonomy/* TaxonomyManager
-// (tags; series with covers; characters, members of series). ?router=1 mounts each flow in React Router through
+// (tags; series with covers; characters, members of series),
+// /admin/media/{kind}/{id} MediaItemPanel, /admin/uploads UploadQueue (each
+// file a new ?kind= item at ?path=; [data-demo=created] counts the items made,
+// across reloads; localStorage demo.last is the last one). ?router=1 mounts each flow in React Router through
 // `navigation` (with the client); otherwise alone over the history API (with
 // baseUrl and auth). ?size= pages, ?lang= the UI language. The flows take the
 // host's shadcn theme ("inherit", their default); ?theme=dark adds `.dark`.
@@ -38,6 +42,23 @@ const restricted = (n: { taxonomy_id: string }) => (
     <input type="checkbox" /> Restricted (host field of {n.taxonomy_id.slice(0, 8)})
   </label>
 );
+const subtitleLanguages = [{ value: "en", label: "English" }, { value: "ja", label: "Japanese" }];
+const createItem = async (): Promise<RefBody> => {
+  const res = await fetch("/__test/items", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: q.get("kind") ?? "file", owner: viewer }) });
+  const it = (await res.json()) as RefBody;
+  localStorage.setItem("demo.last", it.id);
+  // ?hold=1: the item's third browser PUT waits until the test clears it.
+  if (q.get("hold")) {
+    await fetch("/__test/faults", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify([{ item: it.id, fault: "hold", from: "browser", skip: 2 }]) });
+  }
+  const n = Number(localStorage.getItem("demo.created") ?? 0) + 1;
+  localStorage.setItem("demo.created", String(n));
+  document.querySelector("[data-demo=created]")!.textContent = String(n);
+  return { kind: it.kind, id: it.id };
+};
+function Created() {
+  return <p data-demo="created">{localStorage.getItem("demo.created") ?? "0"}</p>;
+}
 const contentLink = (ref: { content_kind: string; content_id: string }) => <a href={`#${ref.content_kind}/${ref.content_id}`}>{`${ref.content_kind} ${ref.content_id.slice(0, 8)}`}</a>;
 const itemHref = (i: { kind: string; id: string }) => `#${i.kind}/${i.id}`;
 
@@ -62,6 +83,13 @@ function Alone() {
         <UserCommentStanding {...common} user={decodeURIComponent(user)} name={name} itemHref={itemHref} />
       ) : at.startsWith("/admin/polls") ? (
         <PollManager {...common} basePath="/admin/polls" languages={languages} />
+      ) : at.startsWith("/admin/media/") ? (
+        <MediaItemPanel {...common} item={{ kind: at.split("/")[3]!, id: at.split("/")[4]! }} languages={subtitleLanguages} />
+      ) : at.startsWith("/admin/uploads") ? (
+        <>
+          <Created />
+          <UploadQueue {...common} createItem={createItem} path={q.get("path") ?? "file"} />
+        </>
       ) : at.startsWith("/admin/taxonomy") ? (
         <TaxonomyManager {...common} basePath="/admin/taxonomy" kinds={taxonomyKinds} languages={languages} renderFields={restricted} renderContent={contentLink} />
       ) : at.startsWith("/admin/posts") ? (
@@ -95,6 +123,16 @@ function Hosted() {
           element={<CommentModeration client={client} basePath="/admin/comments" navigation={navigation} contentKinds={kinds} itemHref={itemHref} pageSize={size} language={lang} />}
         />
         <Route path="/admin/users/:id" element={<UserPage />} />
+        <Route path="/admin/media/:kind/:id" element={<MediaPage />} />
+        <Route
+          path="/admin/uploads"
+          element={
+            <>
+              <Created />
+              <UploadQueue client={client} createItem={createItem} path={q.get("path") ?? "file"} language={lang} />
+            </>
+          }
+        />
         <Route
           path="/admin/taxonomy/*"
           element={
@@ -109,6 +147,11 @@ function Hosted() {
       </Routes>
     </Page>
   );
+}
+
+function MediaPage() {
+  const { kind, id } = useParams();
+  return <MediaItemPanel client={client} item={{ kind: kind!, id: id! }} languages={subtitleLanguages} language={lang} />;
 }
 
 function UserPage() {

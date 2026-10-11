@@ -64,7 +64,8 @@ it("SortableList reorders from the keyboard and announces it in the provider's l
   await tick();
   fireEvent.keyDown(document.activeElement!, { key: " ", code: "Space" });
   await waitFor(() => expect(moves).toEqual([[0, 1]]));
-  expect([...container.querySelectorAll("[data-ckui=sortable-list] > li span")].map((s) => s.textContent)).toEqual(["b", "a", "c"]);
+  // The drop animation's clone leaves the list a frame later on a slow runner.
+  await waitFor(() => expect([...container.querySelectorAll("[data-ckui=sortable-list] > li span")].map((s) => s.textContent)).toEqual(["b", "a", "c"]));
   await waitFor(() => expect(document.body.textContent).toContain("item a an Position 2 von 3 abgelegt."));
   restore();
 });

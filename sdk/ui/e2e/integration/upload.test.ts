@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, inject, it, vi } from "vitest";
-import { UploadQueue, createContentKitClient, fetchTransport, type Op, type QueueSnapshot, type RefBody, type Transport, type UploadState } from "../../src/client/index.js";
+import { ItemUploadQueue, createContentKitClient, fetchTransport, type Op, type QueueSnapshot, type RefBody, type Transport, type UploadState } from "../../src/client/index.js";
 import { bytes, png } from "../support/bytes.js";
 import { Harness, type Config, type TestUser } from "../support/harness.js";
 
@@ -260,7 +260,7 @@ describe("uploads and reads against the real ContentKit", () => {
   it("processes on upload: stages unattached uploads, attaches them in queue order, discards a removed one", async () => {
     const ref = await item("gallery");
     const c = client({ onUpload: true });
-    const q = new UploadQueue(c, { ref, path: "originals/{name}", pollInterval: 200 });
+    const q = new ItemUploadQueue(c, { ref, path: "originals/{name}", pollInterval: 200 });
     const until = (ok: (s: QueueSnapshot) => boolean) =>
       new Promise<QueueSnapshot>((resolve) => {
         const check = () => ok(q.getSnapshot()) && (off(), resolve(q.getSnapshot()));
