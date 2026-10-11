@@ -8,7 +8,7 @@ require (
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/open-rails/authkit v1.24.0
 	github.com/open-rails/contentkit v0.70.0
-	github.com/open-rails/helpers v1.8.0
+	github.com/open-rails/helpers v1.9.0
 	github.com/riverqueue/river v0.47.0
 )
 

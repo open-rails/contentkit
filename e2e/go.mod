@@ -7,7 +7,6 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/open-rails/authkit v1.24.0
 	github.com/open-rails/contentkit v0.70.0
-	github.com/open-rails/helpers v1.8.0
 )
 
 require (
@@ -46,6 +45,7 @@ require (
 	github.com/mr-tron/base58 v1.3.0 // indirect
 	github.com/muhlemmer/gu v0.3.1 // indirect
 	github.com/nyaruka/phonenumbers v1.8.1 // indirect
+	github.com/open-rails/helpers v1.9.0 // indirect
 	github.com/open-rails/migratekit v1.10.0 // indirect
 	github.com/paulmach/orb v0.12.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
