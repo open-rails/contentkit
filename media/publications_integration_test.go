@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -532,7 +533,7 @@ func TestUpgradeConvergesAfterCrash(t *testing.T) {
 			ctx := t.Context()
 			f.visible(1)
 			l := f.legacyGallery(1, false)
-			crash := errors.New("crashed at the manifest write")
+			crash := fmt.Errorf("%w: crashed at the manifest write", media.ErrUnavailable)
 			s := &lossyStore{Store: f.env.Store, key: l.item.ManifestKey(), land: land, err: crash}
 			jobs, err := media.NewJobs(media.JobsConfig{Store: s, Registry: f.reg, Locker: s3test.Locker(t, s), Journal: f.journal})
 			if err != nil {

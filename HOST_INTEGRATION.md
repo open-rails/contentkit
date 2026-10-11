@@ -950,8 +950,10 @@ Order:
    command can run `jobs.Upgrade(ctx, limit)` in a loop instead.
 3. Wait until `jobs.UpgradeStatus(ctx)` reports `Done` (also in
    `content_media_upgrades`). Items it cannot convert are listed in
-   `Failures` (`content_media_upgrade_failures`), left as they were and
-   retried daily.
+   `Failures` (`content_media_upgrade_failures`) with the reason and left as
+   they were (`upgrade_required`) while the pass goes on; only an unreachable
+   store or database fails the job. Failures are retried on host start and
+   daily, so a fixed release retries them when deployed.
 4. Deploy the media gateway and media worker images at the same version.
    The gateway serves both the legacy and the current names.
 

@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/helpers/deps"
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/contentref"
@@ -73,6 +74,19 @@ type errUnconvertible struct{ err error }
 
 func (e errUnconvertible) Error() string { return e.err.Error() }
 func (e errUnconvertible) Unwrap() error { return e.err }
+
+// itemFailure reports whether err, from upgrading one item, is that item's:
+// recorded, and the pass goes on. A cancelled run or an unreachable store or
+// database is the job's: it fails and retries.
+func itemFailure(ctx context.Context, err error) bool {
+	switch {
+	case err == nil || ctx.Err() != nil:
+		return false
+	case errors.As(err, new(errUnconvertible)):
+		return true
+	}
+	return !errors.Is(err, ErrUnavailable) && !errors.Is(err, ErrConditionalPutRequired) && !deps.PostgresUnavailable(err)
+}
 
 // Upgrade visits at most limit item folders where the last run stopped, then
 // retries recorded failures, and returns the progress. It is idempotent and
@@ -136,8 +150,8 @@ finished_at = CASE WHEN $7 THEN now() END, updated_at = now() WHERE tenant_id = 
 		if id != layout.DefaultID && contentref.ValidateID(id) == nil {
 			ref := contentref.New(k.ns, k.Name, id)
 			outcome, err := j.manifests.upgradeItem(ctx, ref)
-			if u := (errUnconvertible{}); errors.As(err, &u) {
-				err = j.recordUpgradeFailure(ctx, ref, u)
+			if itemFailure(ctx, err) {
+				outcome, err = upgradeNone, j.recordUpgradeFailure(ctx, ref, err)
 			}
 			if err != nil {
 				return visited, errors.Join(err, advance(false))
@@ -176,12 +190,18 @@ func (j *Jobs) folders(ctx context.Context, root, after string) iter.Seq2[string
 	}
 }
 
+// recordUpgradeFailure logs a failure once, not on every retry that repeats it.
 func (j *Jobs) recordUpgradeFailure(ctx context.Context, ref contentref.ContentRef, cause error) error {
 	jr := j.cfg.Journal
-	j.cfg.Logger.WarnContext(ctx, "media: upgrade left an item as it was", "ref", ref.String(), "error", cause)
-	_, err := jr.pool.Exec(ctx, `INSERT INTO `+jr.upgradeFails+` (tenant_id, content_kind, content_id, error)
-VALUES ($1, $2, $3, $4) ON CONFLICT (tenant_id, content_kind, content_id) DO UPDATE SET error = EXCLUDED.error, failed_at = now()`,
-		ref.TenantID, ref.ContentKind, ref.ContentID, cause.Error())
+	var prior *string
+	err := jr.pool.QueryRow(ctx, `WITH prior AS (SELECT error FROM `+jr.upgradeFails+`
+WHERE tenant_id = $1 AND content_kind = $2 AND content_id = $3),
+f AS (INSERT INTO `+jr.upgradeFails+` (tenant_id, content_kind, content_id, error)
+VALUES ($1, $2, $3, $4) ON CONFLICT (tenant_id, content_kind, content_id) DO UPDATE SET error = EXCLUDED.error, failed_at = now())
+SELECT (SELECT error FROM prior)`, ref.TenantID, ref.ContentKind, ref.ContentID, cause.Error()).Scan(&prior)
+	if err == nil && (prior == nil || *prior != cause.Error()) {
+		j.cfg.Logger.WarnContext(ctx, "media: upgrade left an item as it was", "ref", ref.String(), "error", cause)
+	}
 	return err
 }
 
@@ -206,8 +226,8 @@ AND f.tenant_id = ANY($1) ORDER BY f.failed_at LIMIT $2`, j.cfg.Registry.Namespa
 			continue // another registry sharing this schema owns it
 		}
 		_, err := j.manifests.upgradeItem(ctx, ref)
-		if u := (errUnconvertible{}); errors.As(err, &u) {
-			err = j.recordUpgradeFailure(ctx, ref, u)
+		if itemFailure(ctx, err) {
+			err = j.recordUpgradeFailure(ctx, ref, err)
 		} else if err == nil {
 			_, err = jr.pool.Exec(ctx, `DELETE FROM `+jr.upgradeFails+` WHERE tenant_id = $1 AND content_kind = $2 AND content_id = $3`,
 				ref.TenantID, ref.ContentKind, ref.ContentID)
@@ -245,6 +265,14 @@ WHERE tenant_id = ANY($1) ORDER BY failed_at LIMIT 100`, j.cfg.Registry.Namespac
 		return f, r.Scan(&f.Ref.TenantID, &f.Ref.ContentKind, &f.Ref.ContentID, &f.Error, &f.At)
 	})
 	return st, err
+}
+
+func (st UpgradeStatus) failed() int64 {
+	var n int64
+	for _, k := range st.Kinds {
+		n += k.Failed
+	}
+	return n
 }
 
 type upgradeOutcome int
@@ -414,6 +442,9 @@ func (m *Manifests) convert(ctx context.Context, item Item, stored *Manifest) (*
 		key, _ := item.Staged(name)
 		effects.Adopt = append(effects.Adopt, key)
 	}
+	// v0.67 blobs are content-addressed: files with equal bytes share one.
+	slices.Sort(effects.Adopt)
+	effects.Adopt = slices.Compact(effects.Adopt)
 	kept := k.PublicKept(next)
 	for key := range public {
 		if !slices.Contains(kept, strings.TrimPrefix(key, item.PublicPrefix())) {
@@ -545,16 +576,19 @@ func (w *upgradeWorker) Work(ctx context.Context, job *river.Job[upgradeArgs]) (
 	if err := w.j.waitFor(ctx, job.Args.After); err != nil {
 		return err
 	}
-	if st, err := w.j.UpgradeStatus(ctx); err != nil || st.Done {
+	before, err := w.j.UpgradeStatus(ctx)
+	if err != nil || before.Done {
 		return err
 	}
 	st, err := w.j.Upgrade(ctx, upgradeBatch)
 	if err != nil {
 		return err
 	}
-	w.j.cfg.Logger.InfoContext(ctx, "media: upgrade batch", "done", st.Done, "failures", len(st.Failures))
-	if st.Done || !slices.ContainsFunc(st.Kinds, func(k KindUpgrade) bool { return k.Finished == nil }) {
-		return nil // finished; failures are retried by the next periodic run
+	w.j.cfg.Logger.InfoContext(ctx, "media: upgrade batch", "done", st.Done, "failures", st.failed())
+	// Go on while a pass is unfinished or retries clear failures; failures
+	// left are retried by the next periodic run.
+	if st.Done || !slices.ContainsFunc(st.Kinds, func(k KindUpgrade) bool { return k.Finished == nil }) && st.failed() >= before.failed() {
+		return nil
 	}
 	return InsertOnce(ctx, w.j.Insert, upgradeArgs{}, river.InsertOpts{})
 }
