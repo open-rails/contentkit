@@ -2,7 +2,9 @@ package taxonomy
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -185,6 +187,108 @@ func (s *Store) Assignments(ctx context.Context, refs []contentref.ContentRef) (
 		return rows.Err()
 	})
 	return out, err
+}
+
+// AssignmentListOptions filters and pages NodeAssignments.
+type AssignmentListOptions struct {
+	// ContentKind keeps one host content kind; empty keeps every kind.
+	ContentKind string
+	// Relation keeps one relation; empty keeps every relation.
+	Relation string
+	// Cursor is the previous page's NextCursor.
+	Cursor string
+	// Limit defaults to 50 and is capped at 500.
+	Limit int
+}
+
+// AssignmentPage is one page of a node's assignments.
+type AssignmentPage struct {
+	Assignments []Assignment `json:"assignments"`
+	// NextCursor pages on; empty on the last page.
+	NextCursor string `json:"next_cursor,omitempty"`
+}
+
+// assignmentCursor is the last row of a page: content kind, id, version and
+// relation, the page order.
+type assignmentCursor [4]string
+
+// NodeAssignments pages the contents assigned to a node, in either state,
+// ordered by content kind, content id, version (work first) and relation.
+// ErrNotFound for a node the tenant lacks.
+func (s *Store) NodeAssignments(ctx context.Context, id TaxonomyID, opts AssignmentListOptions) (AssignmentPage, error) {
+	page := AssignmentPage{Assignments: []Assignment{}}
+	if err := validateID(id); err != nil {
+		return page, err
+	}
+	relation, err := validateRelationName(opts.Relation)
+	if err != nil {
+		return page, err
+	}
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 500 {
+		return page, fmt.Errorf("%w: Limit must not exceed 500", ErrInvalid)
+	}
+	args := []any{s.tenant, string(id)}
+	where := ""
+	if kind := strings.TrimSpace(opts.ContentKind); kind != "" {
+		args = append(args, kind)
+		where += fmt.Sprintf(" AND a.content_kind=$%d", len(args))
+	}
+	if relation != "" {
+		args = append(args, relation)
+		where += fmt.Sprintf(" AND a.relation=$%d", len(args))
+	}
+	if opts.Cursor != "" {
+		var c assignmentCursor
+		b, err := base64.RawURLEncoding.DecodeString(opts.Cursor)
+		if err == nil {
+			err = json.Unmarshal(b, &c)
+		}
+		if err != nil {
+			return page, fmt.Errorf("%w: cursor", ErrInvalid)
+		}
+		n := len(args)
+		args = append(args, c[0], c[1], c[2], c[3])
+		where += fmt.Sprintf(" AND (a.content_kind, a.content_id, coalesce(a.content_version_id,''), a.relation) > ($%d, $%d, $%d, $%d)", n+1, n+2, n+3, n+4)
+	}
+	args = append(args, limit+1)
+	err = s.read(ctx, func(q querier) error {
+		var one int
+		if err := q.QueryRow(ctx, fmt.Sprintf(`SELECT 1 FROM %s WHERE tenant_id=$1 AND taxonomy_id=$2`, s.table("content_nodes")), s.tenant, string(id)).Scan(&one); errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT a.content_kind, a.content_id, a.content_version_id, a.relation, a.state, a.source_revision
+ FROM %s a WHERE a.tenant_id=$1 AND a.taxonomy_id=$2%s
+ ORDER BY a.content_kind, a.content_id, coalesce(a.content_version_id,''), a.relation LIMIT $%d`, s.table("content_assignments"), where, len(args)), args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			a := Assignment{TaxonomyID: id}
+			if err := rows.Scan(&a.ContentKind, &a.ContentID, &a.ContentVersionID, &a.Relation, &a.State, &a.SourceRevision); err != nil {
+				return err
+			}
+			a.TenantID = s.tenant
+			page.Assignments = append(page.Assignments, a)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return AssignmentPage{Assignments: []Assignment{}}, err
+	}
+	if len(page.Assignments) > limit {
+		page.Assignments = page.Assignments[:limit]
+		last := page.Assignments[limit-1]
+		b, _ := json.Marshal(assignmentCursor{last.ContentKind, last.ContentID, last.Version(), last.Relation})
+		page.NextCursor = base64.RawURLEncoding.EncodeToString(b)
+	}
+	return page, nil
 }
 
 // EffectiveTags returns, per reference, the deduplicated union of the work's

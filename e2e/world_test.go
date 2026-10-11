@@ -31,6 +31,7 @@ import (
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/mediatest"
 	"github.com/open-rails/contentkit/media/token"
+	"github.com/open-rails/contentkit/media/workqueue"
 	"github.com/open-rails/contentkit/taxonomy"
 )
 
@@ -53,6 +54,7 @@ type world struct {
 	env    *mediatest.Env
 	reg    *media.Registry
 	jobs   *media.Jobs
+	queue  *workqueue.Queue
 	up     *media.Uploads
 	rd     *media.Reader
 	tax    *taxonomy.Store
@@ -104,9 +106,10 @@ func newWorld(t *testing.T) *world {
 		Hooks:   media.Hooks{Resolver: w, CanUpload: w}}); err != nil {
 		t.Fatal(err)
 	}
-	journal, queue := w.env.Processing(w.reg)
+	var journal *media.PGJournal
+	journal, w.queue = w.env.Processing(w.reg)
 	if w.jobs, err = media.NewJobs(media.JobsConfig{Store: w.env.Store, Registry: w.reg, Locker: mediatest.Locker(t, w.env.Store),
-		Journal: journal, Processes: queue, Pool: w.env.Pool()}); err != nil {
+		Journal: journal, Processes: w.queue, Pool: w.env.Pool()}); err != nil {
 		t.Fatal(err)
 	}
 	key := token.Key{ID: "k1", Secret: bytes.Repeat([]byte("s"), 32)}

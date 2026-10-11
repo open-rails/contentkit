@@ -25,7 +25,7 @@ const (
 	OpCopy       = "copy"       // copy an upload within the kind, optionally with a new edit
 	OpFrame      = "frame"      // fill an upload from a frame of its Upload.Frames video
 	OpMeta       = "meta"       // set the template values (download names)
-	OpRegenerate = "regenerate" // redo stale outputs (of Preset), or every output with Force
+	OpRegenerate = "regenerate" // redo stale outputs and retry failed uploads (of Preset), or every output with Force
 )
 
 // Op is one commit op.
@@ -164,6 +164,19 @@ func (o *opRun) apply(n int, op Op) error {
 	case OpRegenerate:
 		if op.Preset != "" && k.private(op.Preset) == nil && k.public(op.Preset) == nil {
 			return uploadErr(CodeNotFound, "kind %q has no preset %q", k.Name, op.Preset)
+		}
+		// Uploads that failed for their current blob and edit are retried:
+		// their presets are pending again, as after a new upload.
+		for i, f := range m.Files {
+			if !f.IsUpload() || f.Gone || f.Blob == "" || f.Fail() == nil {
+				continue
+			}
+			presets := k.Presets(f.Path, m.Hidden)
+			if op.Preset != "" && !slices.Contains(presets, op.Preset) {
+				continue
+			}
+			f.Failed, f.Pending = nil, presets
+			m.Files[i] = f
 		}
 		return nil
 	case OpPut:

@@ -2,7 +2,7 @@
 
 # Routes
 
-Every route of ContentKit's HTTP API (78). `contentkit.Runtime.Handler` serves them under the one prefix the host mounts it at, each module at its sub-path: content `/`, upload `/media/upload`, media `/media`, codes `/codes`, taxonomy `/taxonomy`. A host that mounts a module alone serves its routes beneath that mount instead. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
+Every route of ContentKit's HTTP API (80). `contentkit.Runtime.Handler` serves them under the one prefix the host mounts it at, each module at its sub-path: content `/`, upload `/media/upload`, media `/media`, codes `/codes`, taxonomy `/taxonomy`. A host that mounts a module alone serves its routes beneath that mount instead. Request and response names are the schemas of [`api/openapi.json`](../../api/openapi.json), which also lists each route's query parameters and error codes.
 
 **Tier** is what a route requires of its caller, enforced by ContentKit's gate over the host's `auth.Authenticator`, asked at most once per request: `open` (anyone; never authenticates), `public` (anonymous without a credential, else the one it proves; the host's resolver decides what it sees), `user` (a signed-in person, else 401 `unauthorized`, 403 `forbidden` for an application), `staff` (a person or an application holding the permission named, one of `access.Permissions()`, in the root scope of the host's auth, else 403 `forbidden`). A credential that fails is 401 `unauthorized` with the provider's `WWW-Authenticate` challenge on every tier but `open`; an auth outage is 503 `unavailable`.
 
@@ -25,7 +25,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | GET | `/{kind}/{id}/comments` | public | — | 200 `Comment[]` | A target's top-level comments with reply counts; the caller also sees its own held and rejected ones. Query: `sort`, `limit`, `offset`. |
 | POST | `/{kind}/{id}/comments` | public | `CommentInput` | 201 `Comment`<br>202 `Comment` | Comments on a target, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it. |
 | GET | `/comments/latest` | public | — | 200 `FeedItem[]` | The newest published comments across the tenant, with their targets; a page may under-fill. Query: `limit`, `offset`. |
-| GET | `/comments/admin` | staff `root:comments:moderate` | — | 200 `AdminComment[]` | Every comment, newest first, deleted, held and rejected ones with their real bodies. Query: `content_kind`, `limit`, `offset`. |
+| GET | `/comments/admin` | staff `root:comments:moderate` | — | 200 `AdminComment[]` | Every comment, newest first, deleted, held and rejected ones with their real bodies. Query: `content_kind`, `author`, `limit`, `offset`. |
 | POST | `/comments/{cid}/restore` | staff `root:comments:moderate` | — | 200 `Restored` | Restores a deleted comment. |
 | GET | `/comments/{cid}/replies` | public | — | 200 `Comment[]` | A comment's replies, oldest first. Query: `limit`, `offset`. |
 | PATCH | `/comments/{cid}` | public | `CommentEdit` | 200 `Comment`<br>202 `Comment` | Edits a comment: its author, or a root:comments:moderate holder. 202 when the moderator holds the new text. |
@@ -58,6 +58,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | PUT | `/comment-bans/{user}` | user | `BanInput` | 200 `CommentBan` | Bans a user from commenting on the caller's content, or replaces the ban; no body bans without reason or end. |
 | DELETE | `/comment-bans/{user}` | user | — | 204 — | Lifts the caller's ban on a user. |
 | GET | `/global-comment-bans` | staff `root:comments:ban` | — | 200 `CommentBan[]` | The tenant-wide comment bans, newest first, expired ones included. Query: `limit`, `offset`. |
+| GET | `/global-comment-bans/{user}` | staff `root:comments:ban` | — | 200 `CommentBan` | A user's tenant-wide comment ban, expired or not; 404 when they have none. |
 | PUT | `/global-comment-bans/{user}` | staff `root:comments:ban` | `BanInput` | 200 `CommentBan` | Bans a user from commenting anywhere in the tenant, or replaces the ban. |
 | DELETE | `/global-comment-bans/{user}` | staff `root:comments:ban` | — | 204 — | Lifts a tenant-wide comment ban. |
 | GET | `/{kind}/{id}/can-comment` | public | — | 200 `CommentStanding` | Whether the caller may comment on a target, and the ban that stops it. |
@@ -102,6 +103,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | PUT | `/taxonomy/nodes/{id}/names` | staff `root:taxonomy:write` | `Name[]` | 200 `NodeDetail` | Replaces a node's names. |
 | POST | `/taxonomy/nodes/{id}/names` | staff `root:taxonomy:write` | `Name[]` | 200 `NodeDetail` | Adds names to a node. |
 | DELETE | `/taxonomy/nodes/{id}/names` | staff `root:taxonomy:write` | `Name[]` | 200 `NodeDetail` | Removes names from a node. |
+| GET | `/taxonomy/nodes/{id}/assignments` | staff `root:taxonomy:write` | — | 200 `AssignmentPage` | The contents assigned to a node, paged. Query: `content_kind`, `relation`, `cursor`, `limit`. |
 | POST | `/taxonomy/nodes/{id}/merge` | staff `root:taxonomy:write` | `MergeInput` | 200 `MergeReport` | Merges a node into another: its assignments, names and edges move, and its URL redirects. |
 | POST | `/taxonomy/edges` | staff `root:taxonomy:write` | `Edge[]` | 200 `EdgesWritten` | Adds edges. |
 | DELETE | `/taxonomy/edges` | staff `root:taxonomy:write` | `Edge[]` | 200 `EdgesWritten` | Removes edges. |

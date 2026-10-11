@@ -16,6 +16,7 @@ ContentKit has a PostgreSQL migration chain and a ClickHouse baseline:
 | PostgreSQL | `migrations.Postgres` | `postgres/0010_content_codes.up.sql` | content codes and legacy aliases (`content_codes`, `content_code_aliases`, `contentkit_content_code()`); backfills codes for existing taxonomy nodes and posts |
 | PostgreSQL | `migrations.Postgres` | `postgres/0011_media_commits.up.sql` | media commit journal and allocations (`content_media_commits`, `content_media_allocations`) |
 | PostgreSQL | `migrations.Postgres` | `postgres/0012_media_publications.up.sql` | current public publications per item (`content_media_publications`) and the media upgrade's progress (`content_media_upgrades`, `content_media_upgrade_failures`) |
+| PostgreSQL | `migrations.Postgres` | `postgres/0013_comment_author_index.up.sql` | a person's comments for moderators (`content_comments_author_idx`) |
 | ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, subject state, daily contributions, exposures, co-engagement and erasure fences |
 
 The baselines initialize fresh stores; PostgreSQL `0002` and later also upgrade

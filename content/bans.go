@@ -159,6 +159,23 @@ func (rt *Runtime) liftCommentBan(ctx context.Context, scope, userID string) err
 	return err
 }
 
+// commentBan is userID's ban in scope, expired or not; ErrNotFound when none.
+func (rt *Runtime) commentBan(ctx context.Context, scope, userID string) (CommentBan, error) {
+	b := CommentBan{UserID: strings.TrimSpace(userID), Scope: scope}
+	err := rt.store.pool.QueryRow(ctx, `SELECT reason, until, banned_by, banned_at, coalesce(until <= now(), false)
+		FROM `+rt.store.t.commentBans+` WHERE tenant_id = $1 AND scope = $2 AND user_id = $3`, rt.tenant, scope, b.UserID).
+		Scan(&b.Reason, &b.Until, &b.BannedBy, &b.BannedAt, &b.Expired)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CommentBan{}, ErrNotFound
+	}
+	if err != nil {
+		return CommentBan{}, err
+	}
+	out := []CommentBan{b}
+	rt.enrichBans(ctx, out)
+	return out[0], nil
+}
+
 // listCommentBans pages a scope's bans, newest first, expired ones included.
 func (rt *Runtime) listCommentBans(ctx context.Context, scope string, limit, offset int) ([]CommentBan, error) {
 	rows, err := rt.store.pool.Query(ctx, `SELECT user_id, scope, reason, until, banned_by, banned_at, coalesce(until <= now(), false)
@@ -218,6 +235,10 @@ var banRoutes = []httpapi.Route[*Runtime]{
 		Doc:   "The tenant-wide comment bans, newest first, expired ones included.",
 		Query: httpapi.Page, Responses: []httpapi.Reply{httpapi.OK([]CommentBan{})}, Errors: []string{CodeUnauthorized}},
 		Serve: func(rt *Runtime) http.HandlerFunc { return rt.handleListBans(true) }},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/global-comment-bans/{user}", Resource: "bans", Auth: httpapi.Staff, Perm: string(access.CommentsBan),
+		Doc:       "A user's tenant-wide comment ban, expired or not; 404 when they have none.",
+		Responses: []httpapi.Reply{httpapi.OK(CommentBan{})}, Errors: []string{CodeNotFound, CodeUnauthorized}},
+		Serve: httpapi.H((*Runtime).handleGlobalBan)},
 	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/global-comment-bans/{user}", Resource: "bans", Auth: httpapi.Staff, Perm: string(access.CommentsBan),
 		Doc:       "Bans a user from commenting anywhere in the tenant, or replaces the ban.",
 		Request:   BanInput{},
@@ -264,6 +285,20 @@ func (rt *Runtime) handleListBans(global bool) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, orEmpty(bans))
 	}
+}
+
+func (rt *Runtime) handleGlobalBan(w http.ResponseWriter, req *http.Request) {
+	_, scope, err := rt.banScope(req.Context(), true)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	b, err := rt.commentBan(req.Context(), scope, req.PathValue("user"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, b)
 }
 
 func (rt *Runtime) handleBan(global bool) http.HandlerFunc {

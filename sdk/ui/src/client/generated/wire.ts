@@ -56,6 +56,11 @@ export interface Assignment {
   source_revision: number;
 }
 
+export interface AssignmentPage {
+  assignments: Assignment[];
+  next_cursor?: string;
+}
+
 export interface AssignmentsWritten {
   assignments: number;
 }

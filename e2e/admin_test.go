@@ -1,0 +1,272 @@
+package e2e
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/authkit/iam"
+
+	"github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/taxonomy"
+)
+
+// A user page reads the person's site-wide comment ban: none (404), the ban
+// with its reason, end and banned user, expired once its end passed, and none
+// again once lifted. Owner-scope bans are not it.
+func TestGlobalCommentBanOfUser(t *testing.T) {
+	w := newWorld(t)
+	staffUser, staff := w.person(w.staff)
+	o, owner := w.person(iam.Role{})
+	u, user := w.person(iam.Role{})
+	w.owner = o.ID
+	f := serve(t, w.runtime(nil))
+	target := "/global-comment-bans/" + u.ID
+
+	f.want(http.StatusNotFound, staff, "GET", target, nil, nil)
+	f.want(http.StatusOK, owner, "PUT", "/comment-bans/"+u.ID, content.BanInput{Reason: "rude"}, nil)
+	f.want(http.StatusNotFound, staff, "GET", target, nil, nil)
+	f.want(http.StatusForbidden, user, "GET", target, nil, nil)
+	f.want(http.StatusUnauthorized, "", "GET", target, nil, nil)
+
+	until := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Second)
+	f.want(http.StatusOK, staff, "PUT", target, content.BanInput{Reason: "spam links", Until: &until}, nil)
+	var ban content.CommentBan
+	f.want(http.StatusOK, staff, "GET", target, nil, &ban)
+	if ban.UserID != u.ID || ban.Scope != content.ScopeGlobal || ban.Reason != "spam links" || ban.Until == nil || !ban.Until.Equal(until) ||
+		ban.BannedBy != staffUser.ID || ban.Expired || ban.User == nil || ban.User.Username != u.Username {
+		t.Fatalf("ban %+v", ban)
+	}
+
+	if _, err := w.pool.Exec(t.Context(), `UPDATE `+pgx.Identifier{w.schema, "content_comment_bans"}.Sanitize()+`
+		SET until = now() - interval '1 minute' WHERE user_id = $1 AND scope = 'global'`, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.want(http.StatusOK, staff, "GET", target, nil, &ban)
+	if !ban.Expired {
+		t.Fatalf("expired ban %+v", ban)
+	}
+
+	f.want(http.StatusNoContent, staff, "DELETE", target, nil, nil)
+	f.want(http.StatusNotFound, staff, "GET", target, nil, nil)
+}
+
+// A user page lists the person's comments for moderators: theirs only,
+// newest first, deleted ones with their text, paged, and by content kind.
+func TestAdminCommentsByAuthor(t *testing.T) {
+	w := newWorld(t)
+	_, staff := w.person(w.staff)
+	o, owner := w.person(iam.Role{})
+	u, user := w.person(iam.Role{})
+	w.owner = o.ID
+	f := serve(t, w.runtime(nil))
+	item := "/gallery/" + cid(1)
+
+	var first, reply, gone content.Comment
+	f.want(http.StatusCreated, user, "POST", item+"/comments", content.CommentInput{Body: "one"}, &first)
+	f.want(http.StatusCreated, owner, "POST", item+"/comments", content.CommentInput{Body: "the owner's"}, nil)
+	f.want(http.StatusCreated, user, "POST", item+"/comments", content.CommentInput{Body: "two", ReplyToID: first.ID}, &reply)
+	f.want(http.StatusCreated, user, "POST", item+"/comments", content.CommentInput{Body: "three"}, &gone)
+	f.want(http.StatusNoContent, user, "DELETE", "/comments/"+gone.ID, nil, nil)
+
+	list := func(q url.Values) []content.AdminComment {
+		t.Helper()
+		var out []content.AdminComment
+		f.want(http.StatusOK, staff, "GET", "/comments/admin?"+q.Encode(), nil, &out)
+		return out
+	}
+	ids := func(cs []content.AdminComment) string {
+		s := ""
+		for _, c := range cs {
+			s += c.Body + ","
+		}
+		return s
+	}
+	all := list(url.Values{"author": {u.ID}})
+	if ids(all) != "three,two,one," {
+		t.Fatalf("by author: %s", ids(all))
+	}
+	for _, c := range all {
+		if c.UserID != u.ID || c.Author == nil || c.Author.Username != u.Username || c.ContentKind != "gallery" || c.ContentID != cid(1) {
+			t.Fatalf("comment %s by %s (%+v) on %s/%s", c.ID, c.UserID, c.Author, c.ContentKind, c.ContentID)
+		}
+	}
+	if !all[0].Deleted || all[0].DeletedAt == nil || all[1].ReplyToID != first.ID {
+		t.Fatalf("deleted and reply %+v %+v", all[0], all[1])
+	}
+	page1 := list(url.Values{"author": {u.ID}, "limit": {"2"}})
+	page2 := list(url.Values{"author": {u.ID}, "limit": {"2"}, "offset": {"2"}})
+	if ids(page1) != "three,two," || ids(page2) != "one," {
+		t.Fatalf("pages %s | %s", ids(page1), ids(page2))
+	}
+	if got := list(url.Values{"author": {u.ID}, "content_kind": {"gallery"}}); len(got) != 3 {
+		t.Fatalf("by author and kind: %s", ids(got))
+	}
+	if got := list(url.Values{"author": {u.ID}, "content_kind": {"video"}}); len(got) != 0 {
+		t.Fatalf("by author on another kind: %s", ids(got))
+	}
+	if got := list(url.Values{"author": {uuid.NewString()}}); len(got) != 0 {
+		t.Fatalf("by a stranger: %s", ids(got))
+	}
+	if got := list(nil); len(got) != 4 {
+		t.Fatalf("everyone's: %s", ids(got))
+	}
+	f.want(http.StatusForbidden, user, "GET", "/comments/admin?author="+u.ID, nil, nil)
+}
+
+// A node's page lists its contents: every assignment in either state, paged
+// by cursor in content order, by content kind and by relation.
+func TestTaxonomyNodeAssignments(t *testing.T) {
+	w := newWorld(t)
+	_, staff := w.person(w.staff)
+	_, user := w.person(iam.Role{})
+	f := serve(t, w.runtime(nil))
+
+	var nodes []taxonomy.Node
+	f.want(http.StatusCreated, staff, "POST", "/taxonomy/nodes", []taxonomy.NodeInput{
+		{Kind: "tag", Slug: "color", Names: []taxonomy.Name{{Language: "en", Kind: taxonomy.NameCanonical, Name: "Color"}}},
+		{Kind: "tag", Slug: "empty", Names: []taxonomy.Name{{Language: "en", Kind: taxonomy.NameCanonical, Name: "Empty"}}},
+	}, &nodes)
+	color, empty := string(nodes[0].TaxonomyID), string(nodes[1].TaxonomyID)
+	ref := func(kind string, n int) contentref.ContentRef {
+		return contentref.ContentRef{ContentKind: kind, ContentID: cid(n)}
+	}
+	version := ref("gallery", 2)
+	version.ContentVersionID = ptr(cid(20))
+	at := func(r contentref.ContentRef, relation string, state taxonomy.AssignmentState) taxonomy.Assignment {
+		return taxonomy.Assignment{ContentRef: r, TaxonomyID: taxonomy.TaxonomyID(color), Relation: relation, State: state}
+	}
+	f.want(http.StatusOK, staff, "POST", "/taxonomy/assignments", []taxonomy.Assignment{
+		at(ref("gallery", 3), "", ""), at(ref("gallery", 1), "", ""), at(version, "", ""), at(ref("gallery", 2), "", taxonomy.AssignmentProposed),
+		at(ref("post", 1), "", ""), at(ref("gallery", 1), "featured", ""),
+	}, nil)
+
+	page := func(id string, q url.Values) taxonomy.AssignmentPage {
+		t.Helper()
+		var p taxonomy.AssignmentPage
+		f.want(http.StatusOK, staff, "GET", "/taxonomy/nodes/"+id+"/assignments?"+q.Encode(), nil, &p)
+		return p
+	}
+	key := func(as []taxonomy.Assignment) string {
+		s := ""
+		for _, a := range as {
+			s += fmt.Sprintf("%s/%s", a.ContentKind, a.ContentID[len(a.ContentID)-2:])
+			if a.ContentVersionID != nil {
+				s += "@" + (*a.ContentVersionID)[len(*a.ContentVersionID)-2:]
+			}
+			s += ":" + a.Relation
+			if a.State == taxonomy.AssignmentProposed {
+				s += "?"
+			}
+			s += " "
+		}
+		return s
+	}
+	want := "gallery/01:featured gallery/01:tag gallery/02:tag? gallery/02@20:tag gallery/03:tag post/01:tag "
+	var walked string
+	cursor := ""
+	for i := 0; ; i++ {
+		p := page(color, url.Values{"limit": {"2"}, "cursor": {cursor}})
+		for _, a := range p.Assignments {
+			if string(a.TaxonomyID) != color || a.TenantID != tenant {
+				t.Fatalf("assignment %+v", a)
+			}
+		}
+		walked += key(p.Assignments)
+		if cursor = p.NextCursor; cursor == "" {
+			if i != 2 {
+				t.Fatalf("%d pages", i+1)
+			}
+			break
+		}
+	}
+	if walked != want {
+		t.Fatalf("walked\n %s\nwant\n %s", walked, want)
+	}
+	if got := key(page(color, nil).Assignments); got != want {
+		t.Fatalf("one page: %s", got)
+	}
+	if got := key(page(color, url.Values{"content_kind": {"post"}}).Assignments); got != "post/01:tag " {
+		t.Fatalf("by kind: %s", got)
+	}
+	if got := key(page(color, url.Values{"relation": {"featured"}}).Assignments); got != "gallery/01:featured " {
+		t.Fatalf("by relation: %s", got)
+	}
+	if p := page(empty, nil); len(p.Assignments) != 0 || p.NextCursor != "" {
+		t.Fatalf("empty node: %+v", p)
+	}
+	f.want(http.StatusNotFound, staff, "GET", "/taxonomy/nodes/"+uuid.Must(uuid.NewV7()).String()+"/assignments", nil, nil)
+	f.want(http.StatusBadRequest, staff, "GET", "/taxonomy/nodes/not-an-id/assignments", nil, nil)
+	f.want(http.StatusBadRequest, staff, "GET", "/taxonomy/nodes/"+color+"/assignments?cursor=%21", nil, nil)
+	f.want(http.StatusForbidden, user, "GET", "/taxonomy/nodes/"+color+"/assignments", nil, nil)
+}
+
+// An item's editor (a writer, not exempt) regenerates its media: an upload
+// that failed for its current blob is retried, its presets pending again and
+// a processing job queued. Forcing every output stays staff's.
+func TestEditorRegeneratesMedia(t *testing.T) {
+	w := newWorld(t)
+	ctx := t.Context()
+	_, editor := w.person(iam.Role{})
+	f := serve(t, w.runtime(nil))
+	ref := media.RefBody{Kind: "gallery", ID: cid(1)}
+	item, err := w.reg.Ref(ref.Kind, ref.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plan := upload(t, f, editor, ref, "cover", pngBytes(t, 16))
+	f.want(http.StatusOK, editor, "POST", "/media/upload/commit", media.CommitBody{Ref: ref, OperationID: uuid.NewString(),
+		Ops: []media.Op{{Op: media.OpPut, Path: plan.Path, Blob: plan.Blob}}}, nil)
+	// The worker places the upload, then its producer fails.
+	if _, err := w.jobs.Manifests().Place(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.jobs.Manifests().EditExisting(ctx, item, func(m *media.Manifest) error {
+		i := m.Find(plan.Path)
+		if i < 0 || m.Files[i].Blob == "" {
+			return fmt.Errorf("cover not placed: %+v", m.Files)
+		}
+		m.Files[i].Failed, m.Files[i].Pending = media.NewFailure(m.Files[i], errors.New("vips: unreadable")), nil
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	jobs := func() int {
+		var n int
+		if err := w.pool.QueryRow(ctx, `SELECT count(*) FROM `+pgx.Identifier{w.queue.Schema(), "river_job"}.Sanitize()).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	before := jobs()
+
+	var reply media.CommitReply
+	f.want(http.StatusOK, editor, "POST", "/media/upload/commit", media.CommitBody{Ref: ref, OperationID: uuid.NewString(),
+		Ops: []media.Op{{Op: media.OpRegenerate}}}, &reply)
+	if len(reply.Files) != 1 || reply.Files[0].Failed != nil || len(reply.Files[0].Pending) != 1 || reply.Files[0].Pending[0] != "cover" {
+		t.Fatalf("regenerated %+v", reply)
+	}
+	m, _, err := w.jobs.Manifests().Get(ctx, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := m.Files[m.Find(plan.Path)]; f.Failed != nil || len(f.Pending) != 1 {
+		t.Fatalf("manifest %+v", f)
+	}
+	if after := jobs(); after <= before {
+		t.Fatalf("no processing queued: %d jobs, %d before", after, before)
+	}
+
+	f.want(http.StatusForbidden, editor, "POST", "/media/upload/commit", media.CommitBody{Ref: ref, OperationID: uuid.NewString(),
+		Ops: []media.Op{{Op: media.OpRegenerate, Force: true}}}, nil)
+	f.want(http.StatusUnauthorized, "", "POST", "/media/upload/commit", media.CommitBody{Ref: ref, OperationID: uuid.NewString(),
+		Ops: []media.Op{{Op: media.OpRegenerate}}}, nil)
+}

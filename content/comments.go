@@ -3,6 +3,7 @@ package content
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -374,23 +375,26 @@ type AdminComment struct {
 }
 
 // adminList returns comments newest-first for moderation, soft-deleted, held
-// and rejected ones included with their real bodies. Optional content kind
-// filter.
-func (c *comments) adminList(ctx context.Context, kind string, limit, offset int) ([]AdminComment, error) {
+// and rejected ones included with their real bodies, optionally only those on
+// one content kind or by one author.
+func (c *comments) adminList(ctx context.Context, kind, author string, limit, offset int) ([]AdminComment, error) {
 	where, args := "", []any{c.s.tenant, limit, offset}
 	if kind != "" {
-		where = ` AND content_kind = $4`
 		args = append(args, kind)
+		where += fmt.Sprintf(` AND content_kind = $%d`, len(args))
+	}
+	if author != "" {
+		args = append(args, author)
+		where += fmt.Sprintf(` AND user_id = $%d`, len(args))
 	}
 	rows, err := c.s.pool.Query(ctx, `SELECT `+commentCols+`, content_kind, content_id, content_version_id
 		FROM `+c.s.t.comments+` WHERE tenant_id = $1`+where+`
-		ORDER BY created_at DESC LIMIT $2 OFFSET $3`, args...)
+		ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []AdminComment
-	var flat []Comment
 	var authorIDs []string
 	for rows.Next() {
 		var it AdminComment
@@ -407,7 +411,6 @@ func (c *comments) adminList(ctx context.Context, kind string, limit, offset int
 		}
 		it.Deleted = it.DeletedAt != nil
 		out = append(out, it)
-		flat = append(flat, it.Comment)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -415,9 +418,12 @@ func (c *comments) adminList(ctx context.Context, kind string, limit, offset int
 	if len(out) == 0 {
 		return []AdminComment{}, nil
 	}
-	c.enrichAuthors(ctx, flat, authorIDs)
+	// Moderators see deleted comments' authors too.
+	users := c.rt.authors(ctx, authorIDs)
 	for i := range out {
-		out[i].Author = flat[i].Author
+		if u, ok := users[out[i].UserID]; ok && out[i].UserID != "" {
+			out[i].Author = &u
+		}
 	}
 	return out, nil
 }
@@ -782,8 +788,9 @@ var commentRoutes = []httpapi.Route[*comments]{
 		Query: httpapi.Page, Responses: []httpapi.Reply{httpapi.OK([]FeedItem{})}},
 		Serve: httpapi.H((*comments).handleLatest)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/comments/admin", Resource: "comments", Auth: httpapi.Staff, Perm: string(access.CommentsModerate),
-		Doc:       "Every comment, newest first, deleted, held and rejected ones with their real bodies.",
-		Query:     append([]httpapi.Param{httpapi.Text("content_kind", "only comments on this kind")}, httpapi.Page...),
+		Doc: "Every comment, newest first, deleted, held and rejected ones with their real bodies.",
+		Query: append([]httpapi.Param{httpapi.Text("content_kind", "only comments on this kind"),
+			httpapi.Text("author", "only comments by this user id")}, httpapi.Page...),
 		Responses: []httpapi.Reply{httpapi.OK([]AdminComment{})}},
 		Serve: httpapi.H((*comments).handleAdminList)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/comments/{cid}/restore", Resource: "comments", Auth: httpapi.Staff, Perm: string(access.CommentsModerate),
@@ -839,7 +846,8 @@ func (c *comments) handleAdminList(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	limit, offset := parsePage(req)
-	items, err := c.adminList(req.Context(), req.URL.Query().Get("content_kind"), limit, offset)
+	q := req.URL.Query()
+	items, err := c.adminList(req.Context(), q.Get("content_kind"), strings.TrimSpace(q.Get("author")), limit, offset)
 	if err != nil {
 		writeErr(w, err)
 		return
