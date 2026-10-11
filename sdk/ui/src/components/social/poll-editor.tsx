@@ -143,6 +143,7 @@ export function PollEditor(p: PollEditorProps) {
         title={t("pollEditor.deleteTitle")}
         description={t("pollEditor.deleteBody")}
         confirm={t("pollEditor.delete")}
+        typed={t("admin.deleteWord")}
         onConfirm={() =>
           void ed.remove().then(
             () => p.onDeleted?.(),

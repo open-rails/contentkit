@@ -12,7 +12,7 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: /^@openrails\/contentkit-ui$/, replacement: path.join(root, "dist/index.js") },
-      { find: /^@openrails\/contentkit-ui\/(client|react|urls|locales\/\w+)$/, replacement: path.join(root, "dist") + "/$1.js" },
+      { find: /^@openrails\/contentkit-ui\/(client|react|urls|editor|locales\/\w+)$/, replacement: path.join(root, "dist") + "/$1.js" },
     ],
   },
 });

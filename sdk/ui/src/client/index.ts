@@ -17,7 +17,7 @@ export { IMAGE_SCHEME, imageRef, imageRefs, PostsClient, type PostAdminQuery, ty
 export { CommentsClient, type AdminCommentQuery, type CommentQuery } from "./content/comments.js";
 export { ReactionsClient } from "./content/reactions.js";
 export { FavoritesClient } from "./content/favorites.js";
-export { PollsClient, type PollQuery } from "./content/polls.js";
+export { PollsClient, type PollAdminQuery, type PollQuery, type PollState } from "./content/polls.js";
 export { BansClient } from "./content/bans.js";
 export { ModerationClient, type HeldQuery } from "./content/moderation.js";
 export { reactionVerb, type BanScope, type ContentChange, type Decision, type HeldKind, type Reaction, type Sort } from "./content/types.js";

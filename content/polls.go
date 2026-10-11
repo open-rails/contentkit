@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -232,8 +233,18 @@ func (p *polls) softDelete(ctx context.Context, actor access.Actor, id string) e
 // the caller).
 type listFilter struct {
 	language, month, date string
-	admin                 bool
-	limit, offset         int
+	// state and query narrow the staff list.
+	state, query  string
+	admin         bool
+	limit, offset int
+}
+
+// pollStates are the staff list's state filters.
+var pollStates = map[string]string{
+	"live":      `is_active AND live_at <= now() AND (closes_at IS NULL OR closes_at > now())`,
+	"scheduled": `is_active AND live_at > now()`,
+	"closed":    `is_active AND live_at <= now() AND closes_at <= now()`,
+	"inactive":  `NOT is_active`,
 }
 
 // list returns non-deleted polls newest-live-first with options + caller vote.
@@ -264,7 +275,17 @@ func (p *polls) list(ctx context.Context, actor access.Actor, f listFilter) ([]P
 	if hasWindow {
 		sql += ` AND live_at >= ` + arg(from) + ` AND live_at < ` + arg(to)
 	}
-	sql += ` ORDER BY live_at DESC LIMIT ` + arg(f.limit) + ` OFFSET ` + arg(f.offset)
+	if f.state != "" {
+		cond, ok := pollStates[f.state]
+		if !ok {
+			return nil, badRequest("state must be live, scheduled, closed or inactive")
+		}
+		sql += ` AND ` + cond
+	}
+	if q := strings.TrimSpace(f.query); q != "" {
+		sql += ` AND strpos(lower(question), lower(` + arg(q) + `)) > 0`
+	}
+	sql += ` ORDER BY live_at DESC, id DESC LIMIT ` + arg(f.limit) + ` OFFSET ` + arg(f.offset)
 
 	rows, err := p.s.pool.Query(ctx, sql, args...)
 	if err != nil {
@@ -758,8 +779,9 @@ var pollRoutes = []httpapi.Route[*polls]{
 		Responses: []httpapi.Reply{httpapi.OK([]Poll{})}},
 		Serve: httpapi.H((*polls).handleList)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/polls/admin", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
-		Doc:       "Every poll, scheduled and inactive ones included.",
-		Query:     append(pollFilter, httpapi.Page...),
+		Doc: "Every poll, scheduled and inactive ones included.",
+		Query: append(append(slices.Clone(pollFilter), httpapi.Text("state", "only live, scheduled, closed or inactive polls"),
+			httpapi.Text("q", "only polls whose question contains this, ignoring case")), httpapi.Page...),
 		Responses: []httpapi.Reply{httpapi.OK([]Poll{})}},
 		Serve: httpapi.H((*polls).handleAdminList)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/polls/{id}", Resource: "polls", Auth: httpapi.Public,
@@ -1073,7 +1095,7 @@ func (p *polls) handleAdminList(w http.ResponseWriter, req *http.Request) {
 	limit, offset := parsePage(req)
 	views, err := p.list(req.Context(), actor, listFilter{
 		language: q.Get("language"), month: q.Get("month"), date: q.Get("date"),
-		admin: true, limit: limit, offset: offset,
+		state: q.Get("state"), query: q.Get("q"), admin: true, limit: limit, offset: offset,
 	})
 	if err != nil {
 		writeErr(w, err)

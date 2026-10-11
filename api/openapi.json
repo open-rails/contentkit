@@ -1904,6 +1904,22 @@
             }
           },
           {
+            "name": "state",
+            "in": "query",
+            "description": "only live, scheduled, closed or inactive polls",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "only polls whose question contains this, ignoring case",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "description": "page size: 20 by default, at most 100",

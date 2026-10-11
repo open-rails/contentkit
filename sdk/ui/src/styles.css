@@ -6,6 +6,7 @@
 @import "react-easy-crop/react-easy-crop.css";
 @source "./ui";
 @source "./components";
+@source "./editor";
 
 /* The build scopes every rule under `.ckui` (tooling/css). Components read only
    `--ckui-*` tokens; `data-ckui-theme` picks the palette and appearance

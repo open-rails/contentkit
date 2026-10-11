@@ -25,6 +25,7 @@ const EXTERNAL = [
   "cn",
   "hls.js",
   "react-easy-crop",
+  "@tiptap",
 ];
 
 export default defineConfig({
@@ -47,6 +48,7 @@ export default defineConfig({
         client: src("client/index.ts"),
         react: src("react/index.ts"),
         urls: src("urls/index.ts"),
+        editor: src("editor/index.ts"),
         ...Object.fromEntries(LOCALES.map((l) => [`locales/${l}`, src(`locales/${l}.ts`)])),
       },
       formats: ["es"],

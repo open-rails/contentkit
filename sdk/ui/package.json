@@ -42,6 +42,10 @@
       "types": "./dist/urls/index.d.ts",
       "import": "./dist/urls.js"
     },
+    "./editor": {
+      "types": "./dist/editor/index.d.ts",
+      "import": "./dist/editor.js"
+    },
     "./locales/*": {
       "types": "./dist/locales/*.d.ts",
       "import": "./dist/locales/*.js"
@@ -70,13 +74,37 @@
   },
   "peerDependencies": {
     "react": ">=19 <20",
-    "react-dom": ">=19 <20"
+    "react-dom": ">=19 <20",
+    "@tiptap/core": ">=3.31.4 <4",
+    "@tiptap/extension-image": ">=3.31.4 <4",
+    "@tiptap/extensions": ">=3.31.4 <4",
+    "@tiptap/pm": ">=3.31.4 <4",
+    "@tiptap/react": ">=3.31.4 <4",
+    "@tiptap/starter-kit": ">=3.31.4 <4"
   },
   "peerDependenciesMeta": {
     "react": {
       "optional": true
     },
     "react-dom": {
+      "optional": true
+    },
+    "@tiptap/core": {
+      "optional": true
+    },
+    "@tiptap/extension-image": {
+      "optional": true
+    },
+    "@tiptap/extensions": {
+      "optional": true
+    },
+    "@tiptap/pm": {
+      "optional": true
+    },
+    "@tiptap/react": {
+      "optional": true
+    },
+    "@tiptap/starter-kit": {
       "optional": true
     }
   },
@@ -102,6 +130,12 @@
     "@testing-library/jest-dom": "6.9.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "14.6.7",
+    "@tiptap/core": "3.31.4",
+    "@tiptap/extension-image": "3.31.4",
+    "@tiptap/extensions": "3.31.4",
+    "@tiptap/pm": "3.31.4",
+    "@tiptap/react": "3.31.4",
+    "@tiptap/starter-kit": "3.31.4",
     "@types/node": "^24.13.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
