@@ -364,6 +364,7 @@ export interface Item {
   data: unknown;
   created_at: string;
   status?: string;
+  action_requested?: boolean;
   severity?: string;
   read_at: string | null;
   resolved_at: string | null;

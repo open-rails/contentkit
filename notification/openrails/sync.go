@@ -28,8 +28,8 @@ type ScanResult struct {
 }
 
 // Sync copies bounded retained-inbox pages into the application's shared
-// notification publisher. It preserves the source's derived workflow status, leaving
-// business resolution with OpenRails. It never marks source notices read.
+// notification publisher. Historical action requests remain general notices;
+// live business resolution stays with OpenRails. It never marks source notices read.
 // Imported history remains until the destination's explicit retention/erasure
 // policy removes it, even if OpenRails supersedes or expires its source row.
 func (s *Source) Sync(ctx context.Context, destination notify.Publisher, binding Binding, opts ScanOptions) (ScanResult, error) {
@@ -50,7 +50,7 @@ func (s *Source) Sync(ctx context.Context, destination notify.Publisher, binding
 			return result, err
 		}
 		for _, n := range page.Data {
-			_, err := destination.Publish(ctx, notify.Input{Recipient: recipient, Origin: notify.Origin{System: "openrails:" + s.name, Scope: n.MerchantID, ID: n.ID}, Kind: n.EventType, Data: n.Data, CreatedAt: n.CreatedAt, Status: n.Status})
+			_, err := destination.Publish(ctx, notify.Input{Recipient: recipient, Origin: notify.Origin{System: s.name, Scope: n.MerchantID, ID: n.ID}, Kind: n.EventType, Data: n.Data, CreatedAt: n.CreatedAt, ActionRequested: n.ActionRequested})
 			if err != nil {
 				return result, fmt.Errorf("openrails notifications: import: %w", err)
 			}

@@ -69,7 +69,7 @@ pulling in the full OpenRails Go module:
 
 ```go
 source, err := openrails.New(openrails.Options{
-    Name: "billing-production", // stable across URL changes
+    Name: "openrails:billing-production", // same origin for embedded/HTTP paths
     URL: billingURL,            // before /v1
     MerchantID: merchantID,
     Token: applicationToken,    // func(context.Context) (string, error)
@@ -86,8 +86,10 @@ The token requires `merchant:customers:read`. Each page is checked against the
 configured merchant and mapped customer before any notice is imported. All
 customer event kinds, including future strings, are accepted. JSON numbers are
 not round-tripped through floating point. Origin retains the stable deployment
-name, merchant ID and source notification ID. Source workflow status is retained
-as a historical snapshot; source `seen`/`read_at` is ignored.
+name, merchant ID and source notification ID. The source's `action_requested`
+flag records a request made when the event occurred;
+it is not a claim that a current issue remains open. Imported events remain
+general notices. Source `seen`/`read_at` is ignored.
 
 The host owns scheduling. Continue a bounded scan using `result.NextCursor`;
 retry the same cursor after failure (partially imported pages are idempotent).
@@ -100,7 +102,7 @@ notifications seen.
 This copies the **retained customer inbox**, not a guaranteed historical event
 archive. OpenRails may supersede or expire notices before a delayed scan. The
 destination retains imported history until its own retention or erasure policy
-removes it, so an imported `open` snapshot may be stale after a source resolution.
+removes it, so a historical action request may no longer need action.
 For current billing action/status, fetch OpenRails domain state before acting.
 Operators' findings remain in the operator audience and are never imported into
 customer inboxes.

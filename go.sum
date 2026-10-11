@@ -80,8 +80,8 @@ github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+
 github.com/montanaflynn/stats v0.0.0-20171201202039-1bf9dbcd8cbe/go.mod h1:wL8QJuTMNUDYhXwkmfOly8iTdp5TEcJFWZD2D7SIkUc=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
-github.com/open-rails/helpers v1.10.1-0.20261011234031-704271b98ef6 h1:m9Z1TMi4RYPYEXNDUGRUDhLDzID6Ac+zlZFosn9CPyk=
-github.com/open-rails/helpers v1.10.1-0.20261011234031-704271b98ef6/go.mod h1:USlSGNYBaNY6/+dLAmB1H610EDSCprhUGmQyBg1NGfM=
+github.com/open-rails/helpers v1.10.1-0.20261011234644-fa076c81f396 h1:0dJ7izi2N9QcGLUVEer/PY8h0D0NlGFeZWEPEgh6YqU=
+github.com/open-rails/helpers v1.10.1-0.20261011234644-fa076c81f396/go.mod h1:USlSGNYBaNY6/+dLAmB1H610EDSCprhUGmQyBg1NGfM=
 github.com/open-rails/migratekit v1.0.5 h1:5D9b+Yp8+q5PQWl1U4fYrh+dcVcUTg3ROQAx26fhy/Y=
 github.com/open-rails/migratekit v1.0.5/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
 github.com/paulmach/orb v0.12.0 h1:z+zOwjmG3MyEEqzv92UN49Lg1JFYx0L9GpGKNVDKk1s=

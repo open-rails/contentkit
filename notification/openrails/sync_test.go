@@ -39,10 +39,10 @@ func TestSyncReplaysInterruptedPagesPreservingLocalState(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Errorf("source mutation %s", r.Method)
 		}
-		fmt.Fprint(w, `{"data":[{"id":"n1","merchant_id":"m","customer_id":"customer","event_type":"payment.failed","status":"open","data":{"amount":"19.95"},"created_at":"2026-10-11T00:00:00Z","seen":true},{"id":"n2","merchant_id":"m","customer_id":"customer","event_type":"future.kind","data":{"new":true},"created_at":"2026-10-11T01:00:00Z"}],"next_cursor":null}`)
+		fmt.Fprint(w, `{"data":[{"id":"n1","merchant_id":"m","customer_id":"customer","event_type":"payment.failed","action_requested":true,"data":{"amount":"19.95"},"created_at":"2026-10-11T00:00:00Z","seen":true},{"id":"n2","merchant_id":"m","customer_id":"customer","event_type":"future.kind","data":{"new":true},"created_at":"2026-10-11T01:00:00Z"}],"next_cursor":null}`)
 	}))
 	defer server.Close()
-	source, _ := New(Options{URL: server.URL, Name: "billing-prod", MerchantID: "m"})
+	source, _ := New(Options{URL: server.URL, Name: "openrails:billing-prod", MerchantID: "m"})
 	binding := Binding{CustomerID: "customer", RecipientID: "user"}
 	sink := &interruptedPublisher{target: store, fail: true}
 	result, err := source.Sync(ctx, sink, binding, ScanOptions{})
@@ -55,8 +55,8 @@ func TestSyncReplaysInterruptedPagesPreservingLocalState(t *testing.T) {
 		t.Fatalf("partial page %+v %v", page, err)
 	}
 	first := page.Items[0]
-	if first.Status != notify.StatusOpen {
-		t.Fatalf("source action status lost: %+v", first)
+	if first.Status != notify.StatusNotice || !first.ActionRequested {
+		t.Fatalf("historical action request became workflow or lost hint: %+v", first)
 	}
 	if first.ReadAt != nil {
 		t.Fatal("source seen state copied")
@@ -79,8 +79,8 @@ func TestSyncReplaysInterruptedPagesPreservingLocalState(t *testing.T) {
 		if item.Origin.System != "openrails:billing-prod" || item.Origin.Scope != "m" {
 			t.Fatalf("provenance %+v", item)
 		}
-		if item.ID == first.ID && item.Status != notify.StatusOpen {
-			t.Fatal("reading resolved source action")
+		if item.ID == first.ID && (item.Status != notify.StatusNotice || !item.ActionRequested) {
+			t.Fatal("reading changed historical action request")
 		}
 		if item.ID == first.ID && item.ReadAt == nil {
 			t.Fatal("rescan reset read state")

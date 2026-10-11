@@ -6110,6 +6110,9 @@
           "status": {
             "type": "string"
           },
+          "action_requested": {
+            "type": "boolean"
+          },
           "severity": {
             "type": "string"
           },
