@@ -142,3 +142,16 @@ export async function seedModeration(h: Harness) {
   await contentKit(h, carol).comments.create(item, { body: `Carol ${tag}` });
   return { item, owner, bob, carol, staff, tag };
 }
+
+/** For PollManager: a live, a scheduled and an inactive poll whose questions carry tag, and staff to manage them. */
+export async function seedPolls(h: Harness) {
+  const staff = await h.user({ role: "staff" });
+  const ck = contentKit(h, staff);
+  const tag = Math.random().toString(36).slice(2, 8);
+  const options = ["Yes", "No"].map((label, position) => ({ label, position }));
+  await ck.polls.create({ question: `Live ${tag}?`, language: "en", options });
+  await ck.polls.create({ question: `Scheduled ${tag}?`, language: "en", live_at: new Date(Date.now() + 2 * 86_400_000).toISOString(), options });
+  const off = await ck.polls.create({ question: `Inactive ${tag}?`, language: "ja", options });
+  await ck.polls.update(off.id, { is_active: false });
+  return { staff, tag };
+}

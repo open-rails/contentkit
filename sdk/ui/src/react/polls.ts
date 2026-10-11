@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import { toContentKitError, type ContentKitError } from "../client/errors.js";
 import type { Poll, PollInput, PollOption, PollUpdate } from "../client/generated/wire.js";
+import { useGuarded } from "./context.js";
 import { keyOf, offsetPages, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
 
 /** The poll after the caller votes for option; a vote is final. */
@@ -133,14 +134,15 @@ export function usePollEditor(id: string | null | undefined, o: { client?: Conte
   const r = useResource<Poll | null>(store, key, { type: "poll", id: pid ?? undefined }, (s) => client.polls.get(pid!, s));
   const poll = r.data ?? null;
   const [inflight, setInflight] = useState(0);
+  const guarded = useGuarded();
   const run = useCallback(async <T>(fn: () => Promise<T>): Promise<T> => {
     setInflight((n) => n + 1);
     try {
-      return await fn();
+      return await guarded(fn);
     } finally {
       setInflight((n) => n - 1);
     }
-  }, []);
+  }, [guarded]);
   const need = useCallback(() => {
     if (!pid) throw new Error("contentkit-ui: create the poll first");
     return pid;

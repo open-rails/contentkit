@@ -5,6 +5,7 @@ import type { Sort } from "../client/content/types.js";
 import type { Post, PostInput } from "../client/generated/wire.js";
 import { IMAGE_SCHEME, imageRef, imageRefs } from "../client/content/posts.js";
 import { useMediaRead } from "./read.js";
+import { useGuarded } from "./context.js";
 import { keyOf, offsetPages, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
 
 export interface PostFilter {
@@ -92,14 +93,15 @@ export function usePost(id: string | null | undefined, o: { initial?: Post; clie
   const r = useResource<Post | null>(store, key, { type: "post", id: pid ?? undefined }, (s) => client.posts.get(pid!, s), { initial: o.initial });
   const post = r.data ?? null;
   const [inflight, setInflight] = useState(0);
+  const guarded = useGuarded();
   const run = useCallback(async <T>(fn: () => Promise<T>): Promise<T> => {
     setInflight((n) => n + 1);
     try {
-      return await fn();
+      return await guarded(fn);
     } finally {
       setInflight((n) => n - 1);
     }
-  }, []);
+  }, [guarded]);
   const need = useCallback(() => {
     if (!pid) throw new Error("contentkit-ui: create the post first");
     return pid;

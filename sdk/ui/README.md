@@ -15,6 +15,7 @@ pnpm add @openrails/contentkit-ui@X.Y.Z
 | `@openrails/contentkit-ui/react` | `ContentKitProvider` and every hook | `react` |
 | `@openrails/contentkit-ui/client` | `createContentKitClient`, `ContentKitError`, generated wire types, crop/aspect/rendition/ABR/gallery math | nothing |
 | `@openrails/contentkit-ui/urls` | content codes, `[/{lang}]/{route}/{CODE}[/{slug}]` paths, `canonical` | nothing |
+| `@openrails/contentkit-ui/editor` | `RichTextEditor`, `richTextEditor` (PostManager's body editor) | the optional peers `@tiptap/core`, `@tiptap/pm`, `@tiptap/react`, `@tiptap/starter-kit`, `@tiptap/extension-image`, `@tiptap/extensions` (3.31+) |
 | `@openrails/contentkit-ui/locales/{de,es,ja,ko,zh}` | message bundles (English is built in) | |
 | `@openrails/contentkit-ui/styles.css` | the stylesheet, scoped under `.ckui` (the root entry also installs it) | |
 
@@ -84,7 +85,7 @@ operation. This does not change the operation's result or its authentication.
   `reactions`, `favorites`, `polls`, `bans` (`"owner"` or `"global"`; `get("global", user)`),
   `moderation`, `taxonomy`, `codes`. Lists take `limit`/`offset` (the review
   queue a `cursor`); staff lists are `posts.adminList` (`q` searches,
-  `deleted: true` lists deleted posts for `posts.restore`), `polls.adminList`,
+  `deleted: true` lists deleted posts for `posts.restore`), `polls.adminList` (`state`, `q`),
   `comments.adminList` (`contentKind`, `author`); `taxonomy.nodeAssignments(id)`
   pages a node's contents.
 - **Images of posts and polls** go to the item's server-named upload path:
@@ -407,7 +408,7 @@ and `client.config()`); elsewhere they are asked to sign in (`onSignIn`, the
 provider's or their own) or, without one, told to.
 
 Staff building blocks: `CommentBans` (paged) with `CommentBanDialog`, and
-`PollEditor`. The complete staff screens are the admin flows below.
+`PollEditor` (deleting asks for a typed confirmation). The complete staff screens are the admin flows below.
 
 ```tsx
 <Comments item={{ kind: "video", id }} count={video.comment_count} userHref={(u) => `/u/${u.username}`} />
@@ -431,7 +432,8 @@ The host writes no API calls. Every flow takes:
 | `onError` | every failure the flow shows, for a toast or a log |
 
 Each has an access hook (`use…Access`) for hiding its tab: per area, whether
-the caller's permission admits it.
+the caller's permission admits it. `useConfirm()` is the flows' promise-based
+confirmation (`typed` for acts that cannot be undone).
 
 ```tsx
 const location = useLocation();
@@ -448,6 +450,32 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
   ```tsx
   <CommentModeration client={contentkit} basePath="/admin/comments" navigation={nav} contentKinds={["video", "post"]} />
   ```
+
+- **`PollManager`**: every poll by language, month or day, state (live,
+  scheduled, closed, inactive) and question; create and edit through
+  `PollEditor` at `basePath/new` and `basePath/{id}`; delete with a typed
+  confirmation. Props: `languages`, `freeText`, `maxOptions`, `pageSize`.
+  `usePollManagerAccess()`.
+
+  ```tsx
+  <PollManager client={contentkit} basePath="/admin/polls" navigation={nav} languages={["en", "ja"]} />
+  ```
+
+- **`PostManager`**: every post by language, draft state and text, deleted
+  ones to restore; title, slug, language, excerpt, schedule, cover and body
+  with inline images; draft or publish; the moderation state. Props:
+  `languages`, `renderEditor` (`richTextEditor` from `/editor`, or the
+  host's; a plain HTML field without it), `postHref`, `pageSize`.
+  `usePostManagerAccess()`.
+
+  ```tsx
+  import { richTextEditor } from "@openrails/contentkit-ui/editor";
+  <PostManager client={contentkit} basePath="/admin/posts" navigation={nav} renderEditor={richTextEditor} />
+  ```
+
+  `RichTextEditor` (`value`, `onChange`, `uploadImage`) is Tiptap: headings,
+  emphasis, lists, quotes, links and images picked, pasted or dropped. Its
+  HTML keeps to that schema, so bodies stay a small, predictable subset.
 
 - **`UserCommentStanding`**: for a user page, the person's site-wide comment
   ban (ban, replace, lift) and their recent comments (delete, restore). Props:

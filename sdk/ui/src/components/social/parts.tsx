@@ -1,5 +1,5 @@
 import { cn } from "cn";
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import type { PublicUser } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
@@ -16,7 +16,9 @@ import {
   AlertDialogTitle,
 } from "#ckui/ui/alert-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "#ckui/ui/avatar";
-import { useGuarded } from "../admin/shell.js";
+import { Input } from "#ckui/ui/input";
+import { Label } from "#ckui/ui/label";
+import { useGuarded } from "../../react/context.js";
 
 /** A content refusal or fault in words: the content wording for shared codes, else the code's. */
 export function contentError(m: Translator, e: unknown): string {
@@ -105,16 +107,23 @@ export function UserName({ user, name, href, className }: { user?: PublicUser; n
   );
 }
 
-/** A confirmation for a destructive action. */
+/** A confirmation for a destructive action; with typed, the word must be typed first (acts that cannot be undone). */
 export function ConfirmDialog(p: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: ReactNode;
   description?: ReactNode;
   confirm: ReactNode;
+  typed?: string;
   onConfirm: () => void;
 }) {
   const { t } = useMessages();
+  const id = useId();
+  const [word, setWord] = useState("");
+  useEffect(() => {
+    if (p.open) setWord("");
+  }, [p.open]);
+  const ready = !p.typed || word.trim().toLowerCase() === p.typed.toLowerCase();
   return (
     <AlertDialog open={p.open} onOpenChange={p.onOpenChange}>
       <AlertDialogContent>
@@ -122,13 +131,21 @@ export function ConfirmDialog(p: {
           <AlertDialogTitle>{p.title}</AlertDialogTitle>
           {p.description && <AlertDialogDescription>{p.description}</AlertDialogDescription>}
         </AlertDialogHeader>
+        {p.typed && (
+          <div className="grid gap-1.5">
+            <Label htmlFor={`${id}-typed`}>{t("admin.typeToConfirm", { word: p.typed })}</Label>
+            <Input id={`${id}-typed`} value={word} autoComplete="off" onChange={(e) => setWord(e.target.value)} />
+          </div>
+        )}
         <AlertDialogFooter>
           <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
           <AlertDialogAction
             variant="destructive"
+            disabled={!ready}
             onClick={() => {
-              p.onOpenChange(false);
+              if (!ready) return;
               p.onConfirm();
+              p.onOpenChange(false);
             }}
           >
             {p.confirm}

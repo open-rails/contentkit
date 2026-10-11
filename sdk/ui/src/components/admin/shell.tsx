@@ -1,5 +1,5 @@
 import { cn } from "cn";
-import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
+import { useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { ContentKitError } from "../../client/errors.js";
@@ -7,21 +7,13 @@ import { MessagesContext, useMessages } from "../../i18n/context.js";
 import { createTranslator, resolveMessages, type ContentKitUiMessageBundle } from "../../i18n/messages.js";
 import { useTranslator } from "../../provider.js";
 import type { AdminNavigation, ContentKitAuth } from "../../react/admin.js";
-import type { ContentKitErrorHandler } from "../../react/context.js";
+import { GuardContext, useGuarded, type ContentKitErrorHandler, type ContentKitGuard } from "../../react/context.js";
 import { AppearanceContext, ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { Skeleton } from "#ckui/ui/skeleton";
+import { ConfirmDialog } from "../social/parts.js";
 
-/** Runs a write, e.g. auth-ui's useStepUpGuard(): re-authenticates when the write asks for a recent sign-in, then retries. */
-export type ContentKitGuard = <T>(write: () => Promise<T>) => Promise<T>;
-
-const GuardContext = createContext<ContentKitGuard | undefined>(undefined);
-
-/** Runs fn through the flow's guard, when the host gave one. */
-export function useGuarded(): <T>(fn: () => Promise<T>) => Promise<T> {
-  const guard = useContext(GuardContext);
-  return useCallback(<T,>(fn: () => Promise<T>) => (guard ? guard(fn) : fn()), [guard]);
-}
+export { useGuarded, type ContentKitGuard };
 
 /** What every drop-in admin flow takes. */
 export interface AdminFlowProps {
@@ -152,4 +144,38 @@ export function Pager({ page, hasNext, onPage, disabled }: { page: number; hasNe
 export function pageOf(q: URLSearchParams): number {
   const n = Number(q.get("page"));
   return Number.isInteger(n) && n > 1 ? n : 1;
+}
+
+export interface ConfirmOptions {
+  title: ReactNode;
+  description?: ReactNode;
+  confirm: ReactNode;
+  /** A word to type first: for acts that cannot be undone. */
+  typed?: string;
+}
+
+/** A promise-based confirmation: `if (await confirm({ … })) …`; render `dialog` once. */
+export function useConfirm(): { confirm: (o: ConfirmOptions) => Promise<boolean>; dialog: ReactNode } {
+  const [asking, setAsking] = useState<(ConfirmOptions & { resolve: (ok: boolean) => void }) | null>(null);
+  const confirm = useCallback((o: ConfirmOptions) => new Promise<boolean>((resolve) => setAsking({ ...o, resolve })), []);
+  const dialog = (
+    <ConfirmDialog
+      open={!!asking}
+      onOpenChange={(open) => {
+        if (!open && asking) {
+          asking.resolve(false);
+          setAsking(null);
+        }
+      }}
+      title={asking?.title}
+      description={asking?.description}
+      confirm={asking?.confirm}
+      typed={asking?.typed}
+      onConfirm={() => {
+        asking?.resolve(true);
+        setAsking(null);
+      }}
+    />
+  );
+  return { confirm, dialog };
 }

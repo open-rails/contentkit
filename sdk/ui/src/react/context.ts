@@ -126,3 +126,15 @@ export function useErrorReporter(own?: ContentKitErrorHandler): (e: unknown, ope
     if (error.code !== "aborted") handler.current?.(error, file === undefined ? { operation } : { operation, file });
   }, []);
 }
+
+/** Runs a write, e.g. auth-ui's useStepUpGuard(): re-authenticates when the write asks for a recent sign-in, then retries. */
+export type ContentKitGuard = <T>(write: () => Promise<T>) => Promise<T>;
+
+/** The admin flow's guard; hooks run their writes through it. */
+export const GuardContext = createContext<ContentKitGuard | undefined>(undefined);
+
+/** Runs fn through the flow's guard, when the host gave one. */
+export function useGuarded(): <T>(fn: () => Promise<T>) => Promise<T> {
+  const guard = useContext(GuardContext);
+  return useCallback(<T,>(fn: () => Promise<T>) => (guard ? guard(fn) : fn()), [guard]);
+}

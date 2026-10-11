@@ -1,11 +1,13 @@
-import { CommentModeration, UserCommentStanding, type AdminNavigation } from "@openrails/contentkit-ui";
+import { CommentModeration, PollManager, PostManager, UserCommentStanding, type AdminNavigation } from "@openrails/contentkit-ui";
+import { richTextEditor } from "@openrails/contentkit-ui/editor";
 import { StrictMode, useMemo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Link, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
 import { auth, client, dark, q } from "./session";
 
 // A host's admin area. /admin/comments/* CommentModeration, /admin/users/{id}
-// UserCommentStanding. ?router=1 mounts each flow in React Router through
+// UserCommentStanding, /admin/polls/* PollManager, /admin/posts/* PostManager
+// (with the package's rich-text editor). ?router=1 mounts each flow in React Router through
 // `navigation` (with the client); otherwise alone over the history API (with
 // baseUrl and auth). ?size= pages, ?lang= the UI language. The flows take the
 // host's shadcn theme ("inherit", their default); ?theme=dark adds `.dark`.
@@ -23,6 +25,8 @@ document.head.append(style);
 document.documentElement.classList.toggle("dark", dark);
 
 const kinds = [{ value: "video", label: "Videos" }, { value: "post", label: "Posts" }];
+const languages = [{ value: "en", label: "English" }, { value: "ja", label: "日本語" }];
+const postHref = (p: { code: string; url_slug: string }) => `#/blog/${p.code}/${p.url_slug}`;
 const itemHref = (i: { kind: string; id: string }) => `#${i.kind}/${i.id}`;
 
 function Page({ children }: { children: ReactNode }) {
@@ -39,12 +43,17 @@ function Page({ children }: { children: ReactNode }) {
 function Alone() {
   const at = location.pathname;
   const user = at.match(/^\/admin\/users\/([^/]+)/)?.[1];
+  const common = { baseUrl: "/api/contentkit", auth, pageSize: size, language: lang };
   return (
     <Page>
       {user ? (
-        <UserCommentStanding baseUrl="/api/contentkit" auth={auth} user={decodeURIComponent(user)} name={name} itemHref={itemHref} pageSize={size} language={lang} />
+        <UserCommentStanding {...common} user={decodeURIComponent(user)} name={name} itemHref={itemHref} />
+      ) : at.startsWith("/admin/polls") ? (
+        <PollManager {...common} basePath="/admin/polls" languages={languages} />
+      ) : at.startsWith("/admin/posts") ? (
+        <PostManager {...common} basePath="/admin/posts" languages={languages} renderEditor={richTextEditor} postHref={postHref} />
       ) : (
-        <CommentModeration baseUrl="/api/contentkit" auth={auth} basePath="/admin/comments" contentKinds={kinds} itemHref={itemHref} pageSize={size} language={lang} />
+        <CommentModeration {...common} basePath="/admin/comments" contentKinds={kinds} itemHref={itemHref} />
       )}
     </Page>
   );
@@ -59,6 +68,8 @@ function Hosted() {
       <nav data-demo="host-nav" style={{ display: "flex", flexWrap: "wrap", gap: 12, minWidth: 0 }}>
         <Link to="/admin/comments">Comments</Link>
         <Link to="/admin/comments/bans">Bans</Link>
+        <Link to="/admin/polls">Polls</Link>
+        <Link to="/admin/posts">Posts</Link>
         <span data-demo="router-location" style={{ minWidth: 0, overflowWrap: "anywhere" }}>
           {loc.pathname + loc.search}
         </span>
@@ -69,6 +80,11 @@ function Hosted() {
           element={<CommentModeration client={client} basePath="/admin/comments" navigation={navigation} contentKinds={kinds} itemHref={itemHref} pageSize={size} language={lang} />}
         />
         <Route path="/admin/users/:id" element={<UserPage />} />
+        <Route path="/admin/polls/*" element={<PollManager client={client} basePath="/admin/polls" navigation={navigation} languages={languages} pageSize={size} language={lang} />} />
+        <Route
+          path="/admin/posts/*"
+          element={<PostManager client={client} basePath="/admin/posts" navigation={navigation} languages={languages} renderEditor={richTextEditor} postHref={postHref} pageSize={size} language={lang} />}
+        />
       </Routes>
     </Page>
   );

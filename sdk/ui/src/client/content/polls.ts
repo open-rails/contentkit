@@ -11,6 +11,15 @@ export interface PollQuery extends PageQuery {
   date?: string;
 }
 
+/** A poll's state in the staff list. */
+export type PollState = "live" | "scheduled" | "closed" | "inactive";
+
+export interface PollAdminQuery extends PollQuery {
+  state?: PollState;
+  /** Only polls whose question contains this text, ignoring case. */
+  q?: string;
+}
+
 /** Site-wide polls: multiple choice or free text; staff write them (root:polls:write). */
 export class PollsClient {
   constructor(
@@ -22,8 +31,8 @@ export class PollsClient {
   list(q: PollQuery = {}, signal?: AbortSignal): Promise<Poll[]> {
     return call(this.http, "GET", "/polls", { query: q, signal });
   }
-  /** Every poll, scheduled and inactive ones included (root:polls:write). */
-  adminList(q: PollQuery = {}, signal?: AbortSignal): Promise<Poll[]> {
+  /** Every poll, scheduled and inactive ones included, by state and question (root:polls:write). */
+  adminList(q: PollAdminQuery = {}, signal?: AbortSignal): Promise<Poll[]> {
     return call(this.http, "GET", "/polls/admin", { query: q, signal });
   }
   /** A poll with the caller's vote or answer. */
