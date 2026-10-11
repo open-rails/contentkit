@@ -494,6 +494,30 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
       { kind: "character", label: "Characters", relations: [{ relation: "member_of", to: "series", label: "Series" }] }]} />
   ```
 
+- **`MediaItemPanel`**: one video item for its editors: encode state and
+  progress, failures with their reason, replace the source, subtitle
+  sidecars (language, label, forced), the poster from a frame or an image,
+  and regenerate (retries failed uploads). Props: `item`, `source`,
+  `subtitles` (path pattern, `null` hides), `poster` (`null` hides),
+  `posterPreset`, `languages`. Access is the item's: the host's `CanUpload`.
+
+  ```tsx
+  <MediaItemPanel client={contentkit} item={{ kind: "video", id }} languages={["en", "ja"]} />
+  ```
+
+- **`UploadQueue`**: many files, each into a new item from `createItem(file)`
+  (the host's ref): progress, pause, retry, a leave-page guard, and resume:
+  an unfinished upload is kept in `localStorage` (`storageKey`), and adding
+  the same file after a reload continues it in the same item. Props:
+  `createItem`, `path`, `accept`, `concurrency`, `onUploaded`, `storageKey`.
+
+  ```tsx
+  <UploadQueue client={contentkit} accept="video/*" createItem={(f) => api.createVideo(f.name)} onUploaded={(ref) => open(ref)} />
+  ```
+
+  The per-item queue engine behind `useUploadQueue` is `ItemUploadQueue` in
+  `/client`.
+
 - **`UserCommentStanding`**: for a user page, the person's site-wide comment
   ban (ban, replace, lift) and their recent comments (delete, restore). Props:
   `user` (their id), `name`, `itemHref`, `pageSize`.
