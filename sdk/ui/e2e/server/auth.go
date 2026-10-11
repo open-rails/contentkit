@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -16,8 +17,6 @@ import (
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/authkit/keys"
-	"github.com/open-rails/authkit/verify"
-	helpersauth "github.com/open-rails/helpers/auth"
 
 	"github.com/open-rails/contentkit/access"
 )
@@ -27,22 +26,23 @@ const authAPIPath = "/api/auth"
 
 var (
 	rbac = authkit.NewRoles()
-	// perms maps content.Perms' opaque strings to AuthKit permissions.
-	perms = map[string]iam.Perm{
-		"post":     rbac.Root.Permission("posts", "write"),
-		"poll":     rbac.Root.Permission("polls", "write"),
-		"moderate": rbac.Root.Permission("comments", "moderate"),
-		"review":   rbac.Root.Permission("moderation", "review"),
-		"ban":      rbac.Root.Permission("comments", "ban"),
-		"taxonomy": rbac.Root.Permission("taxonomy", "write"),
-	}
-	// permMedia lets staff edit every item's media.
+	// perm is ContentKit's staff permissions as AuthKit's: the host declares
+	// them from access.Permissions() and builds its roles from the constants.
+	perm = func() map[access.Permission]iam.Perm {
+		out := map[access.Permission]iam.Perm{}
+		for _, p := range access.Permissions() {
+			out[p] = rbac.Root.Declare(p.String())[0]
+		}
+		return out
+	}()
+	// permMedia, the host's own, lets staff edit every item's media.
 	permMedia = rbac.Root.Permission("media", "edit")
 	// roles are what /__test/users hands out.
 	roles = map[string]iam.Role{
-		"staff":     rbac.Root.Role("staff", permMedia, perms["post"], perms["poll"], perms["moderate"], perms["review"], perms["ban"], perms["taxonomy"]),
-		"moderator": rbac.Root.Role("moderator", perms["moderate"], perms["review"], perms["ban"]),
-		"editor":    rbac.Root.Role("editor", perms["post"], perms["poll"]),
+		"staff": rbac.Root.Role("staff", permMedia, perm[access.PostsWrite], perm[access.PollsWrite], perm[access.CommentsModerate],
+			perm[access.ModerationReview], perm[access.CommentsBan], perm[access.TaxonomyWrite]),
+		"moderator": rbac.Root.Role("moderator", perm[access.CommentsModerate], perm[access.ModerationReview], perm[access.CommentsBan]),
+		"editor":    rbac.Root.Role("editor", perm[access.PostsWrite], perm[access.PollsWrite]),
 	}
 )
 
@@ -81,50 +81,22 @@ func newAuth(ctx context.Context, origin string, pool *pgxpool.Pool) (*authkit.C
 	return auth, outbox, err
 }
 
-type actorKey struct{}
-
-// identify is the host's auth middleware in front of ContentKit: AuthKit's
-// gate verifies a bearer (refusing a bad one with 401) and the verified user
-// becomes the actor; without one the actor is anonymous.
-func (h *harness) identify(next http.Handler) http.Handler {
-	return verify.Optional(h.auth)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		a := access.Actor{Anonymous: true}
-		if id, ok := verify.IdentityFromContext(r.Context()); ok && id.SubjectKind == helpersauth.SubjectUser {
-			a = access.Actor{ID: id.Subject, Kind: "user"}
+// behindProxy is the host's trusted-proxy step in front of ContentKit: the
+// client's address in X-Forwarded-For becomes RemoteAddr, which ContentKit
+// keys signed-out visitors by. Tests give each signed-out visitor its own.
+func behindProxy(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			r.RemoteAddr = net.JoinHostPort(strings.TrimSpace(strings.Split(xff, ",")[0]), "0")
 		}
-		// The harness stands behind a trusted local proxy: tests give each
-		// signed-out visitor its own address.
-		if a.IP = clientIP(r); r.Header.Get("X-Forwarded-For") != "" {
-			a.IP = strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0])
-		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorKey{}, a)))
-	}))
+		next.ServeHTTP(w, r)
+	})
 }
 
-// identity is content.Identity and media.Identity over identify's actor.
-type identity struct{}
-
-func (identity) Actor(ctx context.Context) (access.Actor, bool) {
-	a, ok := ctx.Value(actorKey{}).(access.Actor)
-	return a, ok
-}
-
-// Can is content.Authorizer: the permission checked live in AuthKit's root
-// group for the identity the gate verified.
-func (h *harness) Can(ctx context.Context, a access.Actor, perm string) (bool, error) {
-	p, ok := perms[perm]
-	if !ok {
-		return false, fmt.Errorf("unknown permission %q", perm)
-	}
-	return h.can(ctx, a, p)
-}
-
-func (h *harness) can(ctx context.Context, a access.Actor, p iam.Perm) (bool, error) {
-	who, ok := verify.IdentityFromContext(ctx)
-	if !ok || a.Anonymous || who.Subject != a.ID {
-		return false, nil
-	}
-	return h.auth.Can(ctx, who, iam.RootGroup(), p)
+// editsAllMedia reports staff: permMedia in the root group, checked live by
+// AuthKit through the actor's Verified.
+func (h *harness) editsAllMedia(ctx context.Context, a access.Actor) (bool, error) {
+	return a.Can(ctx, h.staff, permMedia.String())
 }
 
 // testUser is a signed-in account the control surface hands a test.

@@ -26,7 +26,7 @@ describe("usePublicImage, useEditorCrop and useMediaFolder against the real Cont
     };
 
   it("usePublicImage shows no image for a preset without a default, then a read's exact renditions; a host listing skips the read", async () => {
-    // An account's own avatar (the shared user kind, through adapters/authkit).
+    // An account's own avatar (the shared user kind: its person's, or staff's).
     const alice = accounts.get("alice");
     const ref = { kind: "user", id: alice.id };
     const r = recorder();

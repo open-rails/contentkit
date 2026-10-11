@@ -12,7 +12,6 @@ import (
 	"path"
 	"strings"
 
-	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/media"
@@ -25,13 +24,10 @@ func (h *harness) routes(static string) http.Handler {
 	if err := h.auth.Mount(mux); err != nil {
 		panic(err)
 	}
-	mux.Handle(apiPrefix+"/", h.faults.api(h.identify(http.StripPrefix(apiPrefix, h.rt.Handler()))))
-	mux.Handle(membersPrefix+"/", h.faults.api(h.identify(http.StripPrefix(membersPrefix, h.members.Handler()))))
-	upload := media.UploadHandler(h.onUpload, media.UploadHandlerOptions{Actor: func(r *http.Request) (a access.Actor, ok bool) {
-		a, ok = identity{}.Actor(r.Context())
-		return a, ok && !a.Anonymous
-	}})
-	mux.Handle(onUploadPrefix+"/media/upload/", h.faults.api(h.identify(http.StripPrefix(onUploadPrefix+"/media/upload", upload))))
+	mux.Handle(apiPrefix+"/", h.faults.api(behindProxy(http.StripPrefix(apiPrefix, h.rt.Handler()))))
+	mux.Handle(membersPrefix+"/", h.faults.api(behindProxy(http.StripPrefix(membersPrefix, h.members.Handler()))))
+	upload := media.UploadHandler(h.onUpload, media.UploadHandlerOptions{Auth: h.auth.Authenticator()})
+	mux.Handle(onUploadPrefix+"/media/upload/", h.faults.api(behindProxy(http.StripPrefix(onUploadPrefix+"/media/upload", upload))))
 	// The bucket, for presigned uploads and the media worker (its S3 endpoint).
 	bucket := h.faults.bucket(h.s3Endpoint)
 	mux.Handle("/"+h.bucket, bucket)

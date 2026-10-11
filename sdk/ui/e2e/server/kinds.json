@@ -1,5 +1,9 @@
 {
   "namespace": "e2e",
+  "avatars": {
+    "kind": "user",
+    "preset": "avatar"
+  },
   "kinds": [
     {
       "name": "gallery",

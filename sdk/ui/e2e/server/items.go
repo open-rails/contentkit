@@ -70,7 +70,7 @@ func (h *harness) Resolve(ctx context.Context, refs []contentref.ContentRef, a a
 		editor := !a.Anonymous && a.ID != "" && a.ID == it.Owner
 		if !editor && !a.Anonymous {
 			if staff == nil {
-				s, err := h.can(ctx, a, permMedia)
+				s, err := h.editsAllMedia(ctx, a)
 				if err != nil {
 					return nil, err
 				}
@@ -95,13 +95,17 @@ func (h *harness) Resolve(ctx context.Context, refs []contentref.ContentRef, a a
 
 const ckUserKind = "user"
 
-// CanUpload is media's upload authorizer: accounts' media through
-// adapters/authkit and post and poll images through the content module (as
-// hosts wire them), every other item's by its editors.
+// CanUpload is media's upload authorizer: an account's media by its person
+// (their quota) or staff (exempt), post and poll images through the content
+// module (as hosts wire them), every other item's by its editors.
 func (h *harness) CanUpload(ctx context.Context, a access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
 	switch {
 	case t.Ref.ContentKind == ckUserKind:
-		return h.avatars.CanUpload(ctx, a, t)
+		if a.Person() && a.ID == t.Ref.ContentID {
+			return media.UploadGrant{Allowed: true, Owner: a.ID}, nil
+		}
+		staff, err := h.editsAllMedia(ctx, a)
+		return media.UploadGrant{Allowed: staff, Exempt: staff}, err
 	case isFolder(t.Ref.ContentKind):
 		return h.rt.Content.CanUpload(ctx, a, t)
 	}

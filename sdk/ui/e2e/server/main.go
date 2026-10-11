@@ -1,7 +1,7 @@
 // Command server runs a real ContentKit for @openrails/contentkit-ui's
-// integration and browser tests: AuthKit for identity (adapters/authkit, as
-// hosts wire it), the ContentKit Runtime (content, taxonomy, codes, media
-// upload and read) over PostgreSQL and MinIO, its River jobs, the built demo
+// integration and browser tests: AuthKit passed straight in as its auth and
+// directory (as hosts wire it), the ContentKit Runtime (content, taxonomy,
+// codes, media upload and read) over PostgreSQL and MinIO, its River jobs, the built demo
 // apps and the bucket on one origin, a fault proxy in front of media-gateway
 // on another, and a test-control surface at /__test. Test-only.
 //
@@ -24,7 +24,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 )
@@ -144,13 +143,4 @@ func run(c config) error {
 		log.Print("e2e server: shutdown timed out")
 	}
 	return failed
-}
-
-// clientIP is the request's peer address.
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return strings.TrimSpace(r.RemoteAddr)
-	}
-	return host
 }
