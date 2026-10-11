@@ -26,7 +26,8 @@ import (
 // planes (EmbeddedConfig), the interaction module (Content) and the modules
 // Handler serves beside it. Pool, tenant and schema are shared:
 // Content.Pool, Content.Tenant and Content.Schema are filled from the hub
-// configuration when empty. Posts join the keyword queue.
+// configuration when empty, and Content.Media.Reader from Reader. Posts join
+// the keyword queue.
 type RuntimeConfig struct {
 	EmbeddedConfig
 	Content content.Options
@@ -73,6 +74,11 @@ func NewRuntime(ctx context.Context, cfg RuntimeConfig) (*Runtime, error) {
 	}
 	if c.Schema != cfg.PGSchema {
 		return nil, fmt.Errorf("contentkit: content schema %q differs from PostgreSQL schema %q", c.Schema, cfg.PGSchema)
+	}
+	if c.Media != nil && c.Media.Reader == nil && cfg.Reader != nil {
+		m := *c.Media
+		m.Reader = cfg.Reader
+		c.Media = &m
 	}
 	if cfg.Codes != nil && cfg.Codes.Tenant() != c.Tenant {
 		return nil, fmt.Errorf("contentkit: codes tenant %q differs from content tenant %q", cfg.Codes.Tenant(), c.Tenant)

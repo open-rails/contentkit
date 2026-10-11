@@ -62,43 +62,89 @@ func send(t *testing.T, rt *Runtime, actor access.Actor, method, path string, bo
 
 func image(name string) map[string]string { return map[string]string{"image": name} }
 
+// Bodies store references and covers names; reads resolve both to the
+// images' current public files, so a new generation or origin shows at once
+// and an image without one stays a reference.
 func TestMedia_PostCoverAndInlineImages(t *testing.T) {
-	rt, m := newMediaTest(t, Options{})
+	// A host's HTML sanitizer that keeps <img src>.
+	html := processorFunc(func(_ context.Context, raw string) (string, error) { return raw, nil })
+	rt, m := newMediaTest(t, Options{PostBodyProcessor: html})
 	id := insertPost(t, rt)
-	name := "i-" + uuid.NewString()
-	want := "https://media.test/" + testTenant + "/post/" + id + "/public/" + name + ".webp"
+	ref := rt.Ref("post", id)
+	name, other := "i-"+uuid.NewString(), "i-"+uuid.NewString()
 
 	var cover map[string]*string
-	if code := send(t, rt, mediaAdmin, "PUT", "/posts/"+id+"/cover", image(name), &cover); code != 200 || *cover["cover_url"] != want {
-		t.Fatalf("cover %d %v", code, cover)
+	if code := send(t, rt, mediaAdmin, "PUT", "/posts/"+id+"/cover", image(name), &cover); code != 200 || cover["cover_url"] != nil {
+		t.Fatalf("cover without a public file %d %v", code, cover)
 	}
+	var inline InlineImage
+	if code := send(t, rt, mediaAdmin, "POST", "/posts/"+id+"/images", image(name), &inline); code != 200 || inline.Ref != "contentkit:"+name || inline.URL != nil {
+		t.Fatalf("inline %d %+v", code, inline)
+	}
+	page := func(src string) string {
+		return `<p><img src="` + src + `"> and <img src="` + ImageRef(other) + `"> again <img src="` + src + `"></p>`
+	}
+	body := page(inline.Ref)
 	var v Post
+	if code := send(t, rt, mediaAdmin, "PATCH", "/posts/"+id, PostInput{Body: &body}, &v); code != 200 || v.Body != body || v.Images != nil || *v.Cover != name || v.CoverURL != nil {
+		t.Fatalf("unpublished post %d %+v", code, v)
+	}
+
+	m.publish(name)
+	want := m.url(ref, name)
+	check := func(v Post) {
+		t.Helper()
+		if v.Body != page(want) || v.CoverURL == nil || *v.CoverURL != want || len(v.Images) != 1 || v.Images[name] != want {
+			t.Fatalf("resolved post %+v", v)
+		}
+	}
 	send(t, rt, mediaAdmin, "GET", "/posts/"+id, nil, &v)
-	if v.CoverURL == nil || *v.CoverURL != want {
-		t.Fatalf("stored cover %v", v.CoverURL)
+	check(v)
+	var stored, storedCover string
+	if err := rt.store.pool.QueryRow(t.Context(), `SELECT body, cover_name FROM `+rt.store.t.posts+` WHERE id=$1`, id).Scan(&stored, &storedCover); err != nil || stored != body || storedCover != name {
+		t.Fatalf("stored %q %q, err=%v", stored, storedCover, err)
 	}
-	var stored string
-	if err := rt.store.pool.QueryRow(t.Context(), `SELECT cover_name FROM `+rt.store.t.posts+` WHERE id=$1`, id).Scan(&stored); err != nil || stored != name {
-		t.Fatalf("stored cover name %q, err=%v", stored, err)
+	if code := send(t, rt, mediaAdmin, "POST", "/posts/"+id+"/images", image(name), &inline); code != 200 || inline.URL == nil || *inline.URL != want {
+		t.Fatalf("published inline %d %+v", code, inline)
 	}
+
+	// A new generation (a regenerate, a hide and show) and a new origin show
+	// at once; lists resolve every post with one lookup.
+	m.publish(name)
 	m.origin = "https://moved-media.test"
-	moved := strings.Replace(want, "https://media.test", m.origin, 1)
-	if code := send(t, rt, mediaAdmin, "GET", "/posts/"+id, nil, &v); code != 200 || v.CoverURL == nil || *v.CoverURL != moved {
-		t.Fatalf("cover after origin change: status=%d, cover=%v", code, v.CoverURL)
+	want = m.url(ref, name)
+	if code := send(t, rt, mediaAdmin, "PATCH", "/posts/"+id, map[string]bool{"is_draft": false}, &v); code != 200 {
+		t.Fatalf("publish %d", code)
 	}
-	if code := send(t, rt, mediaAdmin, "PATCH", "/posts/"+id, map[string]bool{"is_draft": false}, &v); code != 200 || v.CoverURL == nil || *v.CoverURL != moved {
-		t.Fatalf("published cover after origin change: status=%d, cover=%v", code, v.CoverURL)
-	}
+	check(v)
+	second := insertPost(t, rt)
+	secondBody := "see " + ImageRef(other)
+	send(t, rt, mediaAdmin, "PATCH", "/posts/"+second, PostInput{Body: &secondBody, IsDraft: ptr(false)}, nil)
+	m.publish(other)
+	before := m.lookupCount()
 	var listed []Post
-	if code := send(t, rt, mediaAdmin, "GET", "/posts", nil, &listed); code != 200 || len(listed) != 1 || listed[0].CoverURL == nil || *listed[0].CoverURL != moved {
-		t.Fatalf("listed cover after origin change: status=%d, posts=%+v", code, listed)
+	if code := send(t, rt, mediaAdmin, "GET", "/posts", nil, &listed); code != 200 || len(listed) != 2 || m.lookupCount() != before+1 {
+		t.Fatalf("list %d %+v, lookups %d", code, listed, m.lookupCount()-before)
 	}
+	for _, p := range listed {
+		if p.ID == second && p.Body != "see "+m.url(rt.Ref("post", second), other) {
+			t.Fatalf("second post %+v", p)
+		}
+	}
+
+	// The exported helper resolves stored rows the way the routes do.
+	rows := []Post{{ID: id, Body: body, Cover: &name}}
+	both := strings.ReplaceAll(page(want), ImageRef(other), m.url(ref, other))
+	if err := rt.ResolvePosts(t.Context(), rows); err != nil || rows[0].Body != both || *rows[0].CoverURL != want || len(rows[0].Images) != 2 {
+		t.Fatalf("ResolvePosts %+v %v", rows[0], err)
+	}
+
 	if code := send(t, rt, mediaAdmin, "PUT", "/posts/"+id+"/cover", image(""), nil); code != 200 {
 		t.Fatalf("clear %d", code)
 	}
 	var cleared Post
 	send(t, rt, mediaAdmin, "GET", "/posts/"+id, nil, &cleared)
-	if cleared.ID != id || cleared.CoverURL != nil {
+	if cleared.ID != id || cleared.Cover != nil || cleared.CoverURL != nil {
 		t.Fatalf("cover not cleared: %+v", cleared)
 	}
 	var clearedName *string
@@ -106,10 +152,6 @@ func TestMedia_PostCoverAndInlineImages(t *testing.T) {
 		t.Fatalf("cleared cover name %v, err=%v", clearedName, err)
 	}
 
-	var inline map[string]string
-	if code := send(t, rt, mediaAdmin, "POST", "/posts/"+id+"/images", image(name), &inline); code != 200 || inline["url"] != moved {
-		t.Fatalf("inline %d %v", code, inline)
-	}
 	for _, tc := range []struct {
 		path string
 		body any
@@ -145,17 +187,19 @@ func TestMedia_PollImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	q, o := "i-"+uuid.NewString(), "i-"+uuid.NewString()
-	folder := "https://media.test/" + testTenant + "/poll/" + poll.ID + "/public/"
+	ref := rt.Ref("poll", poll.ID)
 	oid := poll.Options[0].ID
-	if code := send(t, rt, mediaAdmin, "PUT", "/polls/"+poll.ID+"/image", image(q), nil); code != 200 {
-		t.Fatalf("question image %d", code)
-	}
 	var got map[string]*string
-	if code := send(t, rt, mediaAdmin, "PUT", "/polls/"+poll.ID+"/options/"+oid+"/image", image(o), &got); code != 200 || *got["image_url"] != folder+o+".webp" {
+	if code := send(t, rt, mediaAdmin, "PUT", "/polls/"+poll.ID+"/image", image(q), &got); code != 200 || got["image_url"] != nil {
+		t.Fatalf("question image without a public file %d %v", code, got)
+	}
+	m.publish(q)
+	m.publish(o)
+	if code := send(t, rt, mediaAdmin, "PUT", "/polls/"+poll.ID+"/options/"+oid+"/image", image(o), &got); code != 200 || *got["image_url"] != m.url(ref, o) {
 		t.Fatalf("option image %d %v", code, got)
 	}
 	v, _ := rt.polls.get(context.Background(), mediaAdmin, poll.ID)
-	if v.ImageURL != folder+q+".webp" || v.Options[0].ImageURL != folder+o+".webp" && v.Options[1].ImageURL != folder+o+".webp" {
+	if v.ImageURL != m.url(ref, q) || v.Options[0].ImageURL != m.url(ref, o) {
 		t.Fatalf("stored %+v", v)
 	}
 	var questionName, optionName string
@@ -163,16 +207,21 @@ func TestMedia_PollImages(t *testing.T) {
 		t.Fatalf("stored image names %q/%q, err=%v", questionName, optionName, err)
 	}
 	m.origin = "https://moved-media.test"
-	movedFolder := strings.Replace(folder, "https://media.test", m.origin, 1)
-	if v, err := rt.polls.get(t.Context(), mediaAdmin, poll.ID); err != nil || v.ImageURL != movedFolder+q+".webp" {
-		t.Fatalf("poll after origin change: %+v, err=%v", v, err)
+	m.publish(q)
+	if v, err := rt.polls.get(t.Context(), mediaAdmin, poll.ID); err != nil || v.ImageURL != m.url(ref, q) {
+		t.Fatalf("poll after a new generation and origin: %+v, err=%v", v, err)
 	}
-	if listed, err := rt.polls.list(t.Context(), mediaAdmin, listFilter{limit: 10}); err != nil || len(listed) != 2 || listed[1].ImageURL != movedFolder+q+".webp" {
-		t.Fatalf("poll list after origin change: %+v, err=%v", listed, err)
+	before := m.lookupCount()
+	if listed, err := rt.polls.list(t.Context(), mediaAdmin, listFilter{limit: 10}); err != nil || len(listed) != 2 || listed[1].ImageURL != m.url(ref, q) || m.lookupCount() != before+1 {
+		t.Fatalf("poll list: %+v, err=%v, lookups %d", listed, err, m.lookupCount()-before)
 	}
 	var edited PollOption
-	if code := send(t, rt, mediaAdmin, "PATCH", "/polls/"+strings.ToUpper(poll.ID)+"/options/"+oid, map[string]string{"label": "edited"}, &edited); code != 200 || edited.ImageURL != movedFolder+o+".webp" {
-		t.Fatalf("edited option after origin change: status=%d, option=%+v", code, edited)
+	if code := send(t, rt, mediaAdmin, "PATCH", "/polls/"+strings.ToUpper(poll.ID)+"/options/"+oid, map[string]string{"label": "edited"}, &edited); code != 200 || edited.ImageURL != m.url(ref, o) {
+		t.Fatalf("edited option: status=%d, option=%+v", code, edited)
+	}
+	m.unpublish(o)
+	if v, _ := rt.polls.get(t.Context(), mediaAdmin, poll.ID); v.Options[0].ImageURL != "" {
+		t.Fatalf("option without a public file: %+v", v.Options[0])
 	}
 	if code := send(t, rt, mediaAdmin, "PUT", "/polls/"+other.ID+"/options/"+oid+"/image", image(o), nil); code != 404 {
 		t.Fatalf("option of another poll: %d", code)
@@ -180,8 +229,9 @@ func TestMedia_PollImages(t *testing.T) {
 	if code := send(t, rt, mediaAdmin, "PUT", "/polls/"+poll.ID+"/image", image("../x"), nil); code != 400 {
 		t.Fatalf("bad name: %d", code)
 	}
-	if code := send(t, rt, mediaAdmin, "PUT", "/polls/"+poll.ID+"/options/"+oid+"/image", image(""), nil); code != 200 {
-		t.Fatalf("clear option: %d", code)
+	m.publish(o)
+	if code := send(t, rt, mediaAdmin, "PUT", "/polls/"+poll.ID+"/options/"+oid+"/image", image(""), &got); code != 200 || got["image_url"] != nil {
+		t.Fatalf("clear option: %d %v", code, got)
 	}
 	v, _ = rt.polls.get(context.Background(), mediaAdmin, poll.ID)
 	for _, opt := range v.Options {

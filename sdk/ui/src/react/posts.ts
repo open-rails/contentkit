@@ -3,6 +3,7 @@ import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
 import type { Sort } from "../client/content/types.js";
 import type { Post, PostInput } from "../client/generated/wire.js";
+import { IMAGE_SCHEME, imageRef, imageRefs } from "../client/content/posts.js";
 import { useMediaRead } from "./read.js";
 import { keyOf, offsetPages, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
 
@@ -45,7 +46,7 @@ export interface UsePost {
   saving: boolean;
   /** Creates the post; the hook then edits it. */
   create: (input: PostInput) => Promise<Post>;
-  /** Updates the given fields; a body from the editor is stored with its images' public URLs (storedBody). */
+  /** Updates the given fields; a body from the editor is stored with image references (storedBody). */
   update: (patch: PostInput) => Promise<Post>;
   remove: () => Promise<void>;
   /** Restores the deleted post (PostWrite). */
@@ -55,22 +56,27 @@ export interface UsePost {
   /** Uploads an image for the body; resolves with a URL that shows it now, to place in the editor. */
   uploadImage: (file: Blob) => Promise<string>;
   /**
-   * A URL that shows one of the post's images now (the cover, a body image):
-   * an unpublished post's images are not public yet, so its editors see them
-   * through signed URLs of an editor read; a fresh upload shows from the
-   * file itself. Any other URL is returned as is.
+   * A URL that shows one of the post's images now, by name ("i-{uuid}") or
+   * reference: a fresh upload from its file, else its public file
+   * (`post.images`), else, while it has none (an unpublished post's), its
+   * signed editor view from an editor read. Anything else is returned as is.
    */
-  imageSrc: (url: string | null | undefined) => string | undefined;
+  imageSrc: (image: string | null | undefined) => string | undefined;
+  /** The cover through imageSrc. */
+  coverSrc: string | undefined;
   /** post.body with its images through imageSrc: what a rich-text editor shows. */
   editorBody: string | undefined;
-  /** HTML from the editor with the URLs imageSrc gave back to the images' public URLs. */
+  /** HTML from the editor with every image URL this hook showed turned back into the image's reference. */
   storedBody: (html: string) => string;
 }
 
-const NAME = "i-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
-const nameIn = (url: string) => url.match(new RegExp(NAME))?.[0];
-// An image URL in HTML: everything around a name up to a quote, a space or a bracket.
-const imageURLs = new RegExp(`[^\\s"'()<>]*${NAME}[^\\s"'()<>]*`, "g");
+/** The names of the images a body still references, once each. */
+const refNames = (body: string | undefined) => [...new Set([...(body ?? "").matchAll(imageRefs())].map((m) => m[1]!))];
+const uploadName = (path: string) => {
+  const base = path.slice(path.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(0, dot) : base;
+};
 
 /** Whether readers see the post, and so its images' public files exist. */
 export function isPublished(post: Post, now = Date.now()): boolean {
@@ -99,36 +105,32 @@ export function usePost(id: string | null | undefined, o: { initial?: Post; clie
     return pid;
   }, [pid]);
 
-  // Images: fresh uploads show from their file; an unpublished post's from an editor read.
+  // Images: fresh uploads show from their file, published ones from post.images,
+  // the rest (an unpublished post's) from an editor read.
   const [previews, setPreviews] = useState<ReadonlyMap<string, string>>(new Map());
-  const given = useRef(new Map<string, string>()); // each URL imageSrc gave -> the image's public URL
+  const blobs = useRef<string[]>([]);
   useEffect(() => {
-    const urls = given.current;
+    const urls = blobs.current;
     return () => {
-      for (const u of urls.keys()) if (u.startsWith("blob:")) URL.revokeObjectURL(u);
+      for (const u of urls) URL.revokeObjectURL(u);
     };
   }, []);
-  const names = useMemo(() => {
-    const out = new Map<string, string>();
-    for (const u of [...(post?.body.match(imageURLs) ?? []), post?.cover_url ?? ""]) {
-      const n = nameIn(u);
-      if (n && !out.has(n)) out.set(n, u);
-    }
-    return out;
-  }, [post?.body, post?.cover_url]);
-  const unread = !!post && !isPublished(post) && [...names.keys()].some((n) => !previews.has(n));
+  const published = useMemo(() => new Map(Object.entries(post?.images ?? {})), [post?.images]);
+  const pending = useMemo(() => {
+    const names = refNames(post?.body);
+    if (post?.cover && !post.cover_url && !names.includes(post.cover)) names.push(post.cover);
+    return names.filter((n) => !previews.has(n));
+  }, [post?.body, post?.cover, post?.cover_url, previews]);
   const folder = useMemo(() => client.media.postRef(pid ?? "none"), [client, pid]);
-  const read = useMediaRead(folder, { editor: true, read: unread ? undefined : null, client });
+  const read = useMediaRead(folder, { editor: true, read: pending.length ? undefined : null, client });
   const views = useMemo(() => {
     const out = new Map<string, string>();
-    for (const f of read.read?.files ?? []) {
-      const n = f.upload && f.editor_url ? nameIn(f.path) : undefined;
-      if (n) out.set(n, f.editor_url!);
-    }
+    for (const f of read.read?.files ?? []) if (f.upload && f.editor_url) out.set(uploadName(f.path), f.editor_url);
     return out;
   }, [read.read]);
   // Editor views render on the first editor read that misses them: read again, backing off.
-  const missing = unread && !!read.read && [...names.keys()].some((n) => !previews.has(n) && !views.has(n) && !read.read!.files.some((f) => f.failed && nameIn(f.path) === n));
+  const failed = (n: string) => !!read.read?.files.some((f) => f.failed && uploadName(f.path) === n);
+  const missing = !!read.read && pending.some((n) => !views.has(n) && !failed(n));
   const tries = useRef(0);
   const { reload } = read;
   useEffect(() => {
@@ -144,29 +146,37 @@ export function usePost(id: string | null | undefined, o: { initial?: Post; clie
     return () => clearTimeout(t);
   }, [missing, read.read, reload]);
 
+  // Every URL shown for an image, of this and earlier reads, back to its name.
+  const shown = useRef(new Map<string, string>());
+  useEffect(() => {
+    for (const m of [previews, published, views]) for (const [n, u] of m) shown.current.set(u, n);
+  }, [previews, published, views]);
+
   const imageSrc = useCallback(
-    (url: string | null | undefined) => {
-      if (!url) return undefined;
-      const n = nameIn(url);
-      const shown = n ? (previews.get(n) ?? views.get(n)) : undefined;
-      if (!shown) return url;
-      given.current.set(shown, url);
-      return shown;
+    (image: string | null | undefined) => {
+      if (!image) return undefined;
+      const n = image.startsWith(IMAGE_SCHEME) ? image.slice(IMAGE_SCHEME.length) : image;
+      return previews.get(n) ?? published.get(n) ?? views.get(n) ?? image;
     },
-    [previews, views],
+    [previews, published, views],
   );
-  const editorBody = useMemo(() => post?.body.replace(imageURLs, (u) => imageSrc(u) ?? u), [post?.body, imageSrc]);
-  const storedBody = useCallback((html: string) => {
-    let out = html;
-    for (const [shown, url] of given.current) out = out.split(shown).join(url).split(shown.replaceAll("&", "&amp;")).join(url);
-    return out;
-  }, []);
-  const preview = useCallback((name: string, url: string, file: Blob) => {
-    if (typeof URL.createObjectURL !== "function") return url;
-    const shown = URL.createObjectURL(file);
-    given.current.set(shown, url);
-    setPreviews((m) => new Map(m).set(name, shown));
-    return shown;
+  const editorBody = useMemo(() => post?.body.replace(imageRefs(), (ref, n: string) => previews.get(n) ?? views.get(n) ?? ref), [post?.body, previews, views]);
+  const storedBody = useCallback(
+    (html: string) => {
+      const back = new Map(shown.current);
+      for (const m of [previews, published, views]) for (const [n, u] of m) back.set(u, n);
+      let out = html;
+      for (const [u, n] of back) out = out.split(u).join(imageRef(n)).split(u.replaceAll("&", "&amp;")).join(imageRef(n));
+      return out;
+    },
+    [previews, published, views],
+  );
+  const preview = useCallback((name: string, file: Blob): string | undefined => {
+    if (typeof URL.createObjectURL !== "function") return undefined;
+    const url = URL.createObjectURL(file);
+    blobs.current.push(url);
+    setPreviews((m) => new Map(m).set(name, url));
+    return url;
   }, []);
 
   const create = useCallback(
@@ -189,8 +199,10 @@ export function usePost(id: string | null | undefined, o: { initial?: Post; clie
       run(async () => {
         if (!file) return client.posts.setCover(need(), null);
         const up = await client.media.uploadNamed(client.media.postRef(need()), file);
-        const url = await client.posts.setCover(need(), up.name);
-        return url && preview(up.name, url, file);
+        const cover = await client.posts.setCover(need(), up.name);
+        const url = preview(up.name, file) ?? cover;
+        if (url) shown.current.set(url, up.name);
+        return url;
       }),
     [client, run, need, preview],
   );
@@ -198,7 +210,9 @@ export function usePost(id: string | null | undefined, o: { initial?: Post; clie
     (file: Blob) =>
       run(async () => {
         const up = await client.media.uploadInline(need(), file);
-        return preview(up.name, up.url, file);
+        const url = preview(up.name, file) ?? up.url ?? up.ref;
+        shown.current.set(url, up.name);
+        return url;
       }),
     [client, run, need, preview],
   );
@@ -214,6 +228,7 @@ export function usePost(id: string | null | undefined, o: { initial?: Post; clie
     setCover,
     uploadImage,
     imageSrc,
+    coverSrc: imageSrc(post?.cover),
     editorBody,
     storedBody,
   };

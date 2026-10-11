@@ -14,7 +14,7 @@ export async function buildDemo(): Promise<string> {
       emptyOutDir: true,
       target: "es2022",
       minify: false,
-      rollupOptions: { input: Object.fromEntries(["index", "gallery", "upload", "folder", "social"].map((n) => [n, path.join(ui, "demo", `${n}.html`)])) },
+      rollupOptions: { input: Object.fromEntries(["index", "gallery", "upload", "folder", "social", "post"].map((n) => [n, path.join(ui, "demo", `${n}.html`)])) },
     },
   });
   return outDir;

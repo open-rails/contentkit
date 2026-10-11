@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
-import { createContentKitClient, type ContentKitChange, type ContentKitClient } from "../../src/client/index.js";
+import { createContentKitClient, imageRef, type ContentKitChange, type ContentKitClient } from "../../src/client/index.js";
 import type { Config, TestUser } from "../support/harness.js";
 import { Accounts, fixture, harness } from "./setup.js";
 
@@ -77,18 +77,24 @@ describe("content modules against the real ContentKit", () => {
     await expect(editor.posts.restore(post.id)).rejects.toEqual(code("not_found"));
   });
 
-  it("media.uploadInline places a body image in the post's folder and resolves its URL; covers go through the same uploads", async () => {
+  it("media.uploadInline places a body image in the post's folder and resolves its reference; reads resolve references; covers go through the same uploads", async () => {
     const editor = ck("editor");
     const post = await editor.posts.create({ title: "Pictures", body: "b", language: "en" });
     const img = await editor.media.uploadInline(post.id, png());
     expect(img.name).toMatch(/^i-[0-9a-f-]{36}$/);
     expect(img.path).toBe(`${img.name}.png`);
-    expect(img.url).toMatch(new RegExp(`^${cfg.media}/v1/${cfg.namespace}/post/${post.id}/public/${img.name}(-[0-9a-f-]{36})?\\.webp$`));
-    expect(await editor.posts.imageURL(post.id, img.name)).toBe(img.url);
+    expect(img.ref).toBe(imageRef(img.name));
+    // Published, the upload waited for its public file.
+    expect(img.url).toMatch(new RegExp(`^${cfg.media}/v1/${cfg.namespace}/post/${post.id}/public/${img.name}-[0-9a-f-]{36}\\.webp$`));
+    expect(await editor.posts.inlineImage(post.id, img.name)).toEqual({ ref: img.ref, url: img.url });
+    const withImage = await editor.posts.update(post.id, { body: `see ${img.ref} twice ${img.ref}` });
+    expect(withImage).toMatchObject({ body: `see ${img.url} twice ${img.url}`, images: { [img.name]: img.url } });
+    expect((await ck().posts.list({ limit: 100 })).find((p) => p.id === post.id)?.body).toBe(withImage.body);
+    expect((await fetch(img.url!)).status).toBe(200);
 
     const cover = await editor.posts.uploadCover(post.id, png());
-    expect(cover).toMatch(new RegExp(`/post/${post.id}/public/i-[0-9a-f-]{36}(-[0-9a-f-]{36})?\\.webp$`));
-    expect((await editor.posts.get(post.id)).cover_url).toBe(cover);
+    expect(cover).toMatch(new RegExp(`/post/${post.id}/public/i-[0-9a-f-]{36}-[0-9a-f-]{36}\\.webp$`));
+    expect(await editor.posts.get(post.id)).toMatchObject({ cover_url: cover, cover: expect.stringMatching(/^i-/) });
     expect(await editor.posts.uploadCover(post.id, null)).toBeNull();
     expect(changes).toContainEqual({ type: "post.changed", id: post.id });
 

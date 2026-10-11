@@ -88,11 +88,14 @@ operation. This does not change the operation's result or its authentication.
   `comments.adminList`.
 - **Images of posts and polls** go to the item's server-named upload path:
   `media.uploadNamed(ref, file)` resolves the name content routes take;
-  `media.uploadInline(postId, file)` resolves a body image's public URL;
-  `posts.uploadCover`, `polls.uploadImage` and `polls.uploadOptionImage` do
-  both steps. `folders` renames the post and poll media kinds. A post's
-  public image files exist only while it is published; `usePost` shows an
-  unpublished post's images to its editors (below).
+  `media.uploadInline(postId, file)` resolves a body image's reference
+  (`ref`, `contentkit:i-{uuid}`, what the body stores: `imageRef(name)`) and
+  a URL that shows it now; `posts.uploadCover`, `polls.uploadImage` and
+  `polls.uploadOptionImage` do both steps. Reads resolve references: a
+  post's `body` shows the images' current public files and `images` maps
+  each name to its URL. `folders` renames the post and poll media kinds. A
+  post's public image files exist only while it is published; `usePost`
+  shows an unpublished post's images to its editors (below).
 - **`client.config()`** says what the content module allows: which
   interactions signed-out visitors may make (`content.Options.Anonymous`,
   none by default) and the longest comment (`CommentMaxLength`, 2,200 by
@@ -142,15 +145,15 @@ const editor = usePollEditor(pollId);                // staff
 
 A post editor puts `editorBody` in its rich-text field and inserts what
 `uploadImage(file)` resolves: URLs that show the images now (the file for a
-fresh upload, signed editor views of an unpublished post's images, read and
-refreshed as needed). `update({ body })` stores the images' public URLs
-(`storedBody(html)` does the same for a host's own save); `imageSrc(url)` shows
-the cover.
+fresh upload, public files, signed editor views of an unpublished post's
+images, read and refreshed as needed). `update({ body })` stores each of
+those URLs as the image's reference (`storedBody(html)` does the same for a
+host's own save); `coverSrc` shows the cover, `imageSrc(name)` any image.
 
 ```tsx
 const editor = usePost(postId);
 <RichText value={editor.editorBody} onImage={editor.uploadImage} onSave={(html) => editor.update({ body: html })} />
-<img src={editor.imageSrc(editor.post?.cover_url)} alt="" />
+<img src={editor.coverSrc} alt="" />
 ```
 
 Also `useContentConfig` (`client.config()`, read once), `useCommentReplies`,

@@ -38,12 +38,6 @@ func (c *contentFolders) CanUpload(ctx context.Context, a access.Actor, t media.
 	return c.rt.CanUpload(ctx, a, t)
 }
 
-type registryURLs struct{ reg *media.Registry }
-
-func (u registryURLs) InlineURL(_ context.Context, ref contentref.ContentRef, name string) (string, error) {
-	return u.reg.PublicURL(ref, name+".webp"), nil
-}
-
 // A draft post's images are private until it is published: its editors read
 // them through the media read path, everyone else is refused, and publishing
 // shows the folder to anonymous viewers.
@@ -95,7 +89,7 @@ func TestDraftPostImagesReadForEditorsIntegration(t *testing.T) {
 	rt, err := NewRuntime(ctx, RuntimeConfig{
 		EmbeddedConfig: EmbeddedConfig{PG: pool, PGSchema: schema, Tenant: env.Tenant},
 		Content: content.Options{Identity: ctxIdentity{}, Authz: staffAuthz{}, Resolver: itemResolver{}, ContentKinds: []string{"gallery"},
-			Limits: content.Limits{Disabled: true}, Media: &content.Media{URLs: registryURLs{reg}, Folders: jobs},
+			Limits: content.Limits{Disabled: true}, Media: &content.Media{Images: jobs.Manifests(), Folders: jobs},
 			Perms: content.Perms{PostWrite: "post", PollWrite: "poll"}},
 		Uploads: uploads, Reader: reader, ReadLimit: media.RateLimit{Disabled: true},
 	})
@@ -145,10 +139,12 @@ func TestDraftPostImagesReadForEditorsIntegration(t *testing.T) {
 	call(http.StatusOK, staff, "POST", "/media/upload/commit", media.CommitBody{Ref: ref, OperationID: uuid.NewString(),
 		Ops: []media.Op{{Op: media.OpPut, Path: plan.Path, Blob: plan.Blob}}}, nil)
 	name := strings.TrimSuffix(plan.Path, ".png")
+	// No worker runs here: the draft's image has neither a public file nor an
+	// editor view yet, so the editor gets only its reference.
 	var inline content.InlineImage
 	call(http.StatusOK, staff, "POST", "/posts/"+post.ID+"/images", content.ImageInput{Image: &name}, &inline)
-	if !strings.Contains(inline.URL, "/post/"+post.ID+"/public/"+name+".webp") {
-		t.Fatalf("inline URL %q", inline.URL)
+	if inline.Ref != content.ImageRef(name) || inline.URL != nil {
+		t.Fatalf("inline image %+v", inline)
 	}
 	call(http.StatusOK, staff, "PUT", "/posts/"+post.ID+"/cover", content.ImageInput{Image: &name}, nil)
 

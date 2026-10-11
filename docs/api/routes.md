@@ -21,7 +21,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | DELETE | `/posts/{id}` | staff `PostWrite` | — | 204 — | Deletes a post. |
 | POST | `/posts/{id}/restore` | staff `PostWrite` | — | 200 `Post` | Restores a deleted post as it was; 409 when another live post took its slug. |
 | PUT | `/posts/{id}/cover` | staff `PostWrite` | `ImageInput` | 200 `PostCover` | Sets the cover to an inline image uploaded to the post's media folder; "" clears it. |
-| POST | `/posts/{id}/images` | staff `PostWrite` | `ImageInput` | 200 `InlineImage` | The public URL of an inline image uploaded to the post's media folder, to place in the body. |
+| POST | `/posts/{id}/images` | staff `PostWrite` | `ImageInput` | 200 `InlineImage` | The reference to store in the body for an inline image uploaded to the post's media folder, and a URL that shows it to the editor now. |
 | GET | `/{kind}/{id}/comments` | public | — | 200 `Comment[]` | A target's top-level comments with reply counts; the caller also sees its own held and rejected ones. Query: `sort`, `limit`, `offset`. |
 | POST | `/{kind}/{id}/comments` | public | `CommentInput` | 201 `Comment`<br>202 `Comment` | Comments on a target, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it. |
 | GET | `/comments/latest` | public | — | 200 `FeedItem[]` | The newest published comments across the tenant, with their targets; a page may under-fill. Query: `limit`, `offset`. |

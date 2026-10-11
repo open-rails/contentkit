@@ -2,12 +2,11 @@ package main
 
 import (
 	"context"
-	"path"
 	"strings"
 
+	"github.com/microcosm-cc/bluemonday"
+
 	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/media"
 )
 
 // The host's content policies, deterministic for tests: a comment or post
@@ -44,21 +43,16 @@ const (
 
 func isFolder(kind string) bool { return kind == postFolder || kind == pollFolder }
 
-// inlineURLs is content.MediaURLs: an inline image's published file, or the
-// name its preset template gives until the worker has published it. A
-// workaround: published names carry a generation, so a stored URL goes
-// stale (ContentKit tracker #111, references resolved at render time).
-type inlineURLs struct{ manifests *media.Manifests }
+// postHTML is the host's post body sanitizer: user-generated HTML, images by
+// image reference (contentkit:i-{uuid}) as well as http(s) URLs.
+type postHTML struct{ p *bluemonday.Policy }
 
-func (u inlineURLs) InlineURL(ctx context.Context, ref contentref.ContentRef, name string) (string, error) {
-	images, err := u.manifests.PublicImages(ctx, ref)
-	if err != nil {
-		return "", err
-	}
-	for _, im := range images {
-		if strings.TrimSuffix(im.From, path.Ext(im.From)) == name && len(im.Renditions) > 0 {
-			return im.Renditions[0].URL, nil
-		}
-	}
-	return u.manifests.Registry().PublicURL(ref, name+".webp"), nil
+func newPostHTML() postHTML {
+	p := bluemonday.UGCPolicy()
+	p.AllowURLSchemes("http", "https", "mailto", "contentkit")
+	return postHTML{p}
+}
+
+func (h postHTML) Sanitize(_ context.Context, raw string) (string, error) {
+	return strings.TrimSpace(h.p.Sanitize(raw)), nil
 }

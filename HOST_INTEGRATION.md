@@ -16,7 +16,7 @@ _ = contentkit.Migrate(ctx, contentkit.MigrateConfig{DB: sqlDB, Schema: "doujins
 rt, _ := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
 	EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: "doujins", Tenant: "doujins", CH: ch, CHDatabase: "hub"},
 	Content: content.Options{Schema: "doujins", Identity: identity, Authz: authz, Resolver: resolver, Users: users,
-		Media: &content.Media{URLs: reader, Folders: jobs}, Processor: sanitizer, Perms: content.Perms{...}, ContentKinds: []string{"gallery", "post", "tag"},
+		Media: &content.Media{Images: jobs.Manifests(), Folders: jobs}, Processor: sanitizer, Perms: content.Perms{...}, ContentKinds: []string{"gallery", "post", "tag"},
 		Limits: content.Limits{Redis: rdb}},
 	Uploads: uploads, Reader: reader, ReadLimit: media.RateLimit{Redis: rdb}, // /media/upload, /media
 	Codes:    router,                  // /codes/{code}
@@ -191,28 +191,41 @@ with a `Named` upload path (`inline/{name}`, with a `Max`) and its public preset
 "{name}.webp"`), route their `CanUpload` to `rt.Content.CanUpload` (PostWrite
 or PollWrite, and the post or poll must exist) and their `Hooks.Resolver` to
 `rt.Content.MediaResolver()`, and pass
-`content.Media{URLs: urls, Folders: jobs}`, where `urls.InlineURL` is the
-public preset's URL (`reg.PublicURL(ref, name+".webp")`; a pure function).
-The editor uploads each image with the SDK's `upload(file, {ref: {kind:
-"post", id}, path: "inline/x.png"})` (browser to bucket; the server names it
-`i-{uuid}`), then hands the name to ContentKit. Covers and poll images store
-that name, not the public URL; reads derive the URL from the current registry.
-The public URL serves the kind's default until the worker renders it:
+`content.Media{Images: jobs.Manifests(), Folders: jobs}` (`NewRuntime` adds
+its `Reader`). The editor uploads each image with the SDK's `upload(file,
+{ref: {kind: "post", id}, path: "inline/x.png"})` (browser to bucket; the
+server names it `i-{uuid}`), then hands the name to ContentKit.
+
+Nothing stores an image URL: a public file's name carries a generation that
+changes whenever it is published again (a regenerate, hiding and showing the
+post), and an unpublished post has no public files. Covers and poll images
+store the name. A post body stores a reference, `contentkit:i-{uuid}`
+(`content.ImageRef`, the SDK's `imageRef`), where the image's URL goes (an
+`<img src>`, a Quill image embed): the host's `PostBodyProcessor` must keep
+the `contentkit:` scheme there. Every read resolves names and references to
+the images' current public files with one projection lookup per response
+(`Media.Images`): a post's `body` shows each resolved reference as its URL,
+`images` maps each resolved name to its URL and `cover_url` is the cover's;
+a reference without a public file (an unpublished post's, one still
+rendering) stays as it is, and `cover_url`/`image_url` are absent. A host
+reading `content_posts` itself resolves its rows with
+`rt.Content.ResolvePosts(ctx, posts)` (one lookup for the page).
 
 | Route | Body | Result |
 |---|---|---|
-| `POST /posts/{id}/images` | `{"image": "i-…"}` | `{"url"}` to place in the body |
-| `PUT /posts/{id}/cover` | `{"image": "i-…"}` (`""` clears) | `{"cover_url"}` |
-| `PUT /polls/{id}/image` | same | `{"image_url"}` |
-| `PUT /polls/{id}/options/{oid}/image` | same | `{"image_url"}` |
+| `POST /posts/{id}/images` | `{"image": "i-…"}` | `{"ref", "url"}`: the reference to place in the body; a URL that shows it now (the public file, else the editor view once rendered; null until then) |
+| `PUT /posts/{id}/cover` | `{"image": "i-…"}` (`""` clears) | `{"cover_url"}` (null until it has a public file) |
+| `PUT /polls/{id}/image` | same | `{"image_url"}` (same) |
+| `PUT /polls/{id}/options/{oid}/image` | same | `{"image_url"}` (same) |
 
-Create and update bodies take no image URLs, so images are added once the post
-or poll exists. The public URL serves after the image job runs (seconds), and
-only while the post is published: `MediaResolver` shows a post's folder like
-the post (a draft, scheduled, held or rejected one only to its author and
-PostWrite holders, as editors). Its editors see an unpublished post's images
-through an editor read (`GET /media/{post kind}/{id}?editor`, signed
-`editor_url`s); the SDK's `usePost` does this for them.
+Create and update bodies take no cover or poll image, so images are added
+once the post or poll exists. Public files exist after the image job runs
+(seconds), and only while the post is published: `MediaResolver` shows a
+post's folder like the post (a draft, scheduled, held or rejected one only to
+its author and PostWrite holders, as editors). Its editors see an
+unpublished post's images through an editor read (`GET /media/{post kind}/{id}?editor`,
+signed `editor_url`s); the SDK's `usePost` does this for them and turns the
+URLs it shows back into references when it saves.
 Post creation, edits, moderation decisions and soft deletion queue `ExposeTx`
 in the content transaction. Soft deletion hides public media and keeps private
 sources; deleting a poll still queues its folder's deletion. Replaced images
@@ -810,7 +823,7 @@ indexed query and no bucket read. `*media.Manifests` (`jobs.Manifests()`):
 - `Images(ctx, media.ImageQuery{Ref, Preset, Name}...)` answers many queries in
   one read: an item's images, one preset's, or one upload's by its `{name}`
   (an inline image's `i-{uuid}`). Store names, not URLs, and resolve them
-  when rendering.
+  when rendering; post bodies store references (Interactions).
 - `PublicImages(ctx, ref)` is one item's images; `Registry.DefaultImage`
   is a preset's default.
 
@@ -941,6 +954,31 @@ Order:
    retried daily.
 4. Deploy the media gateway and media worker images at the same version.
    The gateway serves both the legacy and the current names.
+
+## Upgrading from v0.69
+
+Post bodies store image references (`contentkit:i-{uuid}`), never URLs;
+reads resolve them (Interactions). There is no compatibility for stored
+public URLs: a body that names one keeps naming a file that goes stale.
+
+- `content.Media.URLs` (`MediaURLs.InlineURL`) is replaced by
+  `Images`: pass `jobs.Manifests()`. `NewRuntime` fills `Media.Reader` from
+  its `Reader`.
+- `POST /posts/{id}/images` answers `{"ref", "url"}`: store `ref`, show
+  `url`. Cover and poll image routes answer null until the image has a
+  public file.
+- Posts carry `cover` (the name) and `images`; `body` is resolved.
+- The host's `PostBodyProcessor` must keep `contentkit:` image URLs.
+- Rewrite stored bodies: replace each image URL of a post's own folder
+  (`…/{kind}/{post_id}/public/i-{uuid}….webp`) with `contentkit:i-{uuid}`.
+- SDK: `usePost` stores references (`update`, `storedBody`) and shows them
+  (`editorBody`, `imageSrc(name)`, `coverSrc`); `media.uploadInline` adds
+  `ref`, and its `url` is a preview (null while none exists);
+  `posts.imageURL` is `posts.inlineImage`. `defaultImage` and `usePublicImage` give no image for
+  a preset without a default (`PresetRule.default`).
+- `adapters/authkit` v0.5.1 (AuthKit ≥ v1.9) and v0.3.2 (AuthKit v1.2):
+  `Authors` resolves every author's avatar with one `PresetImages` lookup,
+  falling back to the preset's default.
 
 ## Media worker schema
 

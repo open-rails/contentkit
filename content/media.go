@@ -15,20 +15,31 @@ import (
 // Media connects post and poll images to ContentKit media. The browser uploads
 // an image to a Named upload path of the post's or poll's item (the host's
 // media registry declares it and its public preset), and hands its name
-// ("i-{uuid}") to ContentKit, which stores the name and derives its public URL.
-// Post visibility changes reconcile public files; poll deletion removes the item.
-// Runtime.CanUpload authorizes those uploads.
+// ("i-{uuid}") to ContentKit: covers and poll images store the name, a post
+// body references it (ImageRef). Reads resolve names to the images' current
+// public files, one MediaImages lookup per response. Post visibility changes
+// reconcile public files; poll deletion removes the item. Runtime.CanUpload
+// authorizes those uploads.
 type Media struct {
-	URLs     MediaURLs    // host registry's inline-image URLs
-	Folders  MediaFolders // *media.Jobs
-	PostKind string       // media kind of post folders; default "post"
-	PollKind string       // media kind of poll folders; default "poll"
+	Images  MediaImages  // *media.Manifests
+	Folders MediaFolders // *media.Jobs
+	// Reader gives editors an unpublished post's image previews (POST
+	// /posts/{id}/images); contentkit.NewRuntime fills it from its Reader.
+	Reader   MediaReader
+	PostKind string // media kind of post folders; default "post"
+	PollKind string // media kind of poll folders; default "poll"
 }
 
-// MediaURLs maps an inline image name to its public URL, a pure function of
-// the host's registry (media.Registry.PublicURL of its public preset).
-type MediaURLs interface {
-	InlineURL(ctx context.Context, ref contentref.ContentRef, name string) (string, error)
+// MediaImages answers image queries from the current publications in one
+// read; *media.Manifests implements it.
+type MediaImages interface {
+	Images(ctx context.Context, qs ...media.ImageQuery) ([][]media.PublicImage, error)
+}
+
+// MediaReader reads an item as the media read API does; *media.Reader
+// implements it.
+type MediaReader interface {
+	Read(ctx context.Context, ref contentref.ContentRef, actor access.Actor, o media.ReadOptions) (*media.ReadResult, error)
 }
 
 // MediaFolders queues visibility changes and folder deletions in the content
@@ -44,8 +55,8 @@ func newMedia(m *Media) (*Media, error) {
 	if m == nil {
 		return nil, nil
 	}
-	if m.URLs == nil || m.Folders == nil {
-		return nil, fmt.Errorf("content: Media needs URLs and Folders")
+	if m.Images == nil || m.Folders == nil {
+		return nil, fmt.Errorf("content: Media needs Images and Folders")
 	}
 	out := *m
 	if out.PostKind == "" {
@@ -73,18 +84,6 @@ func (m *Media) kind(f folder) string {
 		return m.PostKind
 	}
 	return m.PollKind
-}
-
-// imageURL resolves an inline image name of a post or poll folder to its
-// public URL; an empty name has no image, even without media configured.
-func (rt *Runtime) imageURL(ctx context.Context, f folder, id, name string) (string, error) {
-	if name == "" {
-		return "", nil
-	}
-	if rt.media == nil {
-		return "", errMediaNotConfigured
-	}
-	return rt.media.URLs.InlineURL(ctx, rt.Ref(rt.media.kind(f), id), name)
 }
 
 func (rt *Runtime) exposePostMediaTx(ctx context.Context, tx pgx.Tx, id string) error {
@@ -134,7 +133,11 @@ func (rt *Runtime) CanUpload(ctx context.Context, actor access.Actor, t media.Up
 	return media.UploadGrant{Allowed: err == nil && id == ref.ContentID}, err // folders use the canonical id
 }
 
-var _ media.UploadAuthorizer = (*Runtime)(nil)
+var (
+	_ media.UploadAuthorizer = (*Runtime)(nil)
+	_ MediaImages            = (*media.Manifests)(nil)
+	_ MediaReader            = (*media.Reader)(nil)
+)
 
 // MediaResolver is the access.ContentResolver of the post and poll media
 // kinds: route the host registry's Hooks.Resolver to it for Media.PostKind and

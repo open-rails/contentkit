@@ -48,19 +48,27 @@ func newPosts(rt *Runtime) *posts {
 
 // Post is a post as the API answers it: get, list, create, update and react.
 type Post struct {
-	ID            string     `json:"id"`
-	AuthorID      string     `json:"author_id"`
-	Title         string     `json:"title"`
-	Slug          *string    `json:"slug,omitempty"`
-	Body          string     `json:"body"`
-	Excerpt       *string    `json:"excerpt,omitempty"`
-	CoverURL      *string    `json:"cover_url,omitempty"`
-	Language      string     `json:"language"`
-	IsDraft       bool       `json:"is_draft"`
-	LiveAt        *time.Time `json:"live_at,omitempty"`
-	TotalLikes    int        `json:"total_likes"`
-	TotalDislikes int        `json:"total_dislikes"`
-	CommentCount  int        `json:"comment_count"`
+	ID       string  `json:"id"`
+	AuthorID string  `json:"author_id"`
+	Title    string  `json:"title"`
+	Slug     *string `json:"slug,omitempty"`
+	// Body shows each image reference (ImageRef) whose image has a current
+	// public file as that file's URL; the rest stay references.
+	Body    string  `json:"body"`
+	Excerpt *string `json:"excerpt,omitempty"`
+	// Cover is the cover's image name; CoverURL its current public URL,
+	// absent until it has one.
+	Cover    *string `json:"cover,omitempty"`
+	CoverURL *string `json:"cover_url,omitempty"`
+	// Images maps each resolved image name of Body and Cover to its URL: an
+	// editor turns those URLs back into references (ImageRef) to save.
+	Images        map[string]string `json:"images,omitempty"`
+	Language      string            `json:"language"`
+	IsDraft       bool              `json:"is_draft"`
+	LiveAt        *time.Time        `json:"live_at,omitempty"`
+	TotalLikes    int               `json:"total_likes"`
+	TotalDislikes int               `json:"total_dislikes"`
+	CommentCount  int               `json:"comment_count"`
 	// Moderation is "held" or "rejected" (with the reason) on an unpublished
 	// post; absent when approved.
 	Moderation       string `json:"moderation,omitempty"`
@@ -134,7 +142,7 @@ var postRoutes = []httpapi.Route[*posts]{
 		Responses: []httpapi.Reply{httpapi.OK(PostCover{})}, Errors: []string{CodeNotConfigured, CodeNotFound}},
 		Serve: httpapi.H((*posts).handleCover)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/posts/{id}/images", Resource: "posts", Auth: httpapi.Staff, Perm: "PostWrite",
-		Doc:       "The public URL of an inline image uploaded to the post's media folder, to place in the body.",
+		Doc:       "The reference to store in the body for an inline image uploaded to the post's media folder, and a URL that shows it to the editor now.",
 		Request:   ImageInput{},
 		Responses: []httpapi.Reply{httpapi.OK(InlineImage{})}, Errors: []string{CodeNotConfigured, CodeNotFound}},
 		Serve: httpapi.H((*posts).handleImage)},
@@ -146,12 +154,17 @@ type ImageInput struct {
 	Image *string `json:"image"`
 }
 
-// InlineImage is an inline image's public URL.
+// InlineImage is an inline image of a post: Ref goes in the body where its
+// URL would ("contentkit:i-{uuid}"); URL shows it to the editor now, its
+// public file once the post is published, else its editor view once
+// rendered (null until then; asking renders it).
 type InlineImage struct {
-	URL string `json:"url"`
+	Ref string  `json:"ref"`
+	URL *string `json:"url"`
 }
 
-// PostCover is the post's cover URL after a cover change; null when cleared.
+// PostCover is the cover's public URL after a cover change; null when
+// cleared or while it has no public file (an unpublished post's).
 type PostCover struct {
 	CoverURL *string `json:"cover_url"`
 }
@@ -170,15 +183,19 @@ func decodeImage(req *http.Request) (string, error) {
 	return *in.Image, nil
 }
 
-// handleImage returns the public URL of an inline image uploaded to the
-// post's media folder, for the editor to place in the body. PostWrite-gated.
+// handleImage answers an inline image's body reference and preview for the
+// post's editor. PostWrite-gated.
 func (p *posts) handleImage(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
-	if err := p.rt.requirePerm(ctx, p.rt.actor(ctx), p.rt.perms.PostWrite); err != nil {
+	actor := p.rt.actor(ctx)
+	if err := p.rt.requirePerm(ctx, actor, p.rt.perms.PostWrite); err != nil {
 		writeErr(w, err)
 		return
 	}
 	name, err := decodeImage(req)
+	if err == nil && name == "" {
+		err = badRequest("image is required")
+	}
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -188,15 +205,16 @@ func (p *posts) handleImage(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	url, err := p.rt.imageURL(ctx, postFolder, id, name)
-	if err == nil && name == "" {
-		err = badRequest("image is required")
-	}
+	url, err := p.rt.previewURL(ctx, actor, id, name)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, InlineImage{URL: url})
+	out := InlineImage{Ref: ImageRef(name)}
+	if url != "" {
+		out.URL = &url
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleCover sets (or with "" clears) the post cover to an inline image of
@@ -217,11 +235,6 @@ func (p *posts) handleCover(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	url, err := p.rt.imageURL(ctx, postFolder, id, name)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
 	tag, err := p.s.pool.Exec(ctx, `UPDATE `+p.s.t.posts+` SET cover_name = NULLIF($2, ''), updated_at = now() WHERE id = $1 AND tenant_id = $3 AND deleted_at IS NULL`, id, name, p.s.tenant)
 	if err != nil {
 		writeErr(w, err)
@@ -231,11 +244,17 @@ func (p *posts) handleCover(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, ErrNotFound)
 		return
 	}
-	var responseURL *string
-	if name != "" {
-		responseURL = &url
+	set := p.rt.images()
+	set.add(postFolder, id, name)
+	if err := set.resolve(ctx); err != nil {
+		writeErr(w, err)
+		return
 	}
-	writeJSON(w, http.StatusOK, PostCover{CoverURL: responseURL})
+	var out PostCover
+	if url, ok := set.url(postFolder, id, name); ok {
+		out.CoverURL = &url
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // liveID confirms a post exists in this tenant (not deleted).
@@ -640,14 +659,17 @@ func (p *posts) writeList(ctx context.Context, w http.ResponseWriter, rows pgx.R
 	defer rows.Close()
 	out := []Post{}
 	for rows.Next() {
-		v, err := p.scan(ctx, rows)
+		v, err := p.scan(rows)
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
 		out = append(out, v)
 	}
-	if err := rows.Err(); err != nil {
+	if err = rows.Err(); err == nil {
+		err = p.rt.ResolvePosts(ctx, out)
+	}
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -723,11 +745,16 @@ func (p *posts) putCode(ctx context.Context, tx pgx.Tx, id, title string, slug *
 
 func (p *posts) loadByID(ctx context.Context, q querier, id string) (Post, error) {
 	row := q.QueryRow(ctx, `SELECT `+p.cols+` FROM `+p.s.t.posts+` p WHERE p.id = $1 AND p.tenant_id = $2 AND p.deleted_at IS NULL`, id, p.s.tenant)
-	v, err := p.scan(ctx, row)
+	v, err := p.scan(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Post{}, ErrNotFound
 	}
-	return v, err
+	if err != nil {
+		return Post{}, err
+	}
+	one := []Post{v}
+	err = p.rt.ResolvePosts(ctx, one)
+	return one[0], err
 }
 
 // requirePublished asserts the post exists and is publicly published;
@@ -754,24 +781,19 @@ func (p *posts) sanitizePtr(ctx context.Context, s *string) (*string, error) {
 	return &out, nil
 }
 
-// scan reads p.cols and derives the cover URL from its stored image name.
-func (p *posts) scan(ctx context.Context, row pgx.Row) (Post, error) {
+// scan reads p.cols: the stored post, its images unresolved (ResolvePosts).
+func (p *posts) scan(row pgx.Row) (Post, error) {
 	var v Post
-	var coverName *string
 	var state, reason, link string
 	err := row.Scan(&v.ID, &v.AuthorID, &v.Title, &v.Slug, &v.Body, &v.Excerpt,
-		&coverName, &v.Language, &v.IsDraft, &v.LiveAt, &v.TotalLikes,
+		&v.Cover, &v.Language, &v.IsDraft, &v.LiveAt, &v.TotalLikes,
 		&v.TotalDislikes, &v.CreatedAt, &v.UpdatedAt, &v.DeletedAt, &v.CommentCount, &state, &reason, &link)
 	if err != nil {
 		return Post{}, err
 	}
 	v.Code, v.URLSlug, _ = strings.Cut(link, " ")
-	if coverName != nil && *coverName != "" {
-		url, err := p.rt.imageURL(ctx, postFolder, v.ID, *coverName)
-		if err != nil {
-			return Post{}, err
-		}
-		v.CoverURL = &url
+	if v.Cover != nil && *v.Cover == "" {
+		v.Cover = nil
 	}
 	if state != ModerationApproved {
 		v.Moderation, v.ModerationReason = state, reason

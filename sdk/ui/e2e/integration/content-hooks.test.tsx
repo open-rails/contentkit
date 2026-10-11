@@ -3,7 +3,7 @@ import "../../src/test/dom.js";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeAll, describe, expect, it } from "vitest";
-import { createContentKitClient, fetchTransport, type ContentKitClient } from "../../src/client/index.js";
+import { createContentKitClient, fetchTransport, imageRef, type ContentKitClient } from "../../src/client/index.js";
 import {
   ContentKitProvider,
   useCanComment,
@@ -24,6 +24,7 @@ import { Accounts, fixture, harness } from "./setup.js";
 
 const png = () => fixture("small.png", "image/png", "photo.png");
 const wait = { timeout: 30_000, interval: 50 };
+const slow = { timeout: 60_000, interval: 500 };
 
 describe("content hooks against the real ContentKit", () => {
   const h = harness();
@@ -216,7 +217,7 @@ describe("content hooks against the real ContentKit", () => {
     await act(async () => void (url = await result.current.post.uploadImage(png())));
     expect(url).toMatch(/^blob:/); // the file itself until the post's image is served
     await act(async () => void (await result.current.post.setCover(png())));
-    await waitFor(() => expect(result.current.post.post?.cover_url).toMatch(/\/post\//), wait);
+    await waitFor(() => expect(result.current.post.post?.cover).toMatch(/^i-/), wait);
     await act(() => result.current.post.remove());
     expect(result.current.all.items).toEqual([]);
     await waitFor(() => expect(result.current.trash.items.map((p) => p.title)).toEqual(["Draft, renamed"]), wait);
@@ -226,43 +227,76 @@ describe("content hooks against the real ContentKit", () => {
     await waitFor(() => expect(result.current.post.post?.title).toBe("Draft, renamed"), wait);
   });
 
-  it("usePost: an unpublished post's images show through its editor read; stored bodies keep their public URLs", async () => {
+  it("usePost: bodies store image references; an unpublished post's images show its editors through an editor read, published ones through their current files", async () => {
     const c = client("editor");
     const writer = renderHook(() => usePost(null), { wrapper: wrap(c, "editor") });
     await act(async () => void (await writer.result.current.create({ title: "With pictures", body: "b", language: "en", is_draft: true })));
     await waitFor(() => expect(writer.result.current.post).not.toBeNull(), wait);
     const id = writer.result.current.post!.id;
-    // A fresh upload shows from its file; the stored body names its public URL.
+    // A fresh upload shows from its file; the stored body references it.
     let fresh = "";
     await act(async () => void (fresh = await writer.result.current.uploadImage(png())));
     expect(fresh).toMatch(/^blob:/);
-    // Posts take plain text here (tags stripped); a host's HTML sanitizer keeps <img src>.
-    await act(async () => void (await writer.result.current.update({ body: `Look: ${fresh}` })));
-    const url = writer.result.current.post!.body.slice("Look: ".length);
-    expect(url).toMatch(new RegExp(`/post/${id}/public/i-[0-9a-f-]{36}(-[0-9a-f-]{36})?\\.webp$`));
-    expect(writer.result.current.imageSrc(url)).toBe(fresh);
+    // The harness's sanitizer, like a host's, keeps <img src="contentkit:…"> and drops blob: URLs.
+    const page = (src: string, more = "") => `<p>Look: <img src="${src}"></p>${more}`;
+    await act(async () => void (await writer.result.current.update({ body: page(fresh) })));
+    const stored = writer.result.current.post!.body;
+    const name = /contentkit:(i-[0-9a-f-]{36})/.exec(stored)?.[1] ?? "";
+    expect(stored).toBe(page(imageRef(name)));
+    expect(writer.result.current.editorBody).toBe(page(fresh));
+    expect(writer.result.current.imageSrc(name)).toBe(fresh);
+    expect(writer.result.current.imageSrc(imageRef(name))).toBe(fresh);
     await act(async () => void (await writer.result.current.setCover(png())));
-    await waitFor(() => expect(writer.result.current.post?.cover_url).toMatch(/\/post\//), wait);
+    await waitFor(() => expect(writer.result.current.post?.cover).toMatch(/^i-/), wait);
+    expect(writer.result.current.post?.cover_url).toBeUndefined();
+    expect(writer.result.current.post?.images).toBeUndefined();
     writer.unmount();
 
     // Reopened, the draft's images show through the editor read once their editor views render.
     const { result } = renderHook(() => usePost(id), { wrapper: wrap(client("editor"), "editor") });
-    await waitFor(() => expect(result.current.imageSrc(url)).toContain("?t="), wait);
+    await waitFor(() => expect(result.current.imageSrc(name)).toContain("?t="), wait);
     // The cover's editor view renders on its own schedule (each read signs anew).
-    await waitFor(() => expect(result.current.imageSrc(result.current.post!.cover_url)).toContain("?t="), wait);
-    const shown = result.current.imageSrc(url)!;
+    await waitFor(() => expect(result.current.coverSrc).toContain("?t="), wait);
+    const shown = result.current.imageSrc(name)!;
     expect(shown).not.toContain("/public/");
-    expect(result.current.editorBody).toBe(`Look: ${shown}`);
+    expect(result.current.editorBody).toBe(page(shown));
     expect(result.current.imageSrc("https://example.com/other.png")).toBe("https://example.com/other.png");
     await act(async () => void (await result.current.update({ body: `${result.current.editorBody} More.` })));
-    expect(result.current.post!.body).toBe(`Look: ${url} More.`);
+    expect(result.current.post!.body).toBe(page(imageRef(name), " More."));
     expect(result.current.storedBody(result.current.editorBody!)).toBe(result.current.post!.body);
 
-    // The folder is its editors': another caller cannot read it.
+    // The draft and its folder are its editors'.
+    await expect(client("alice").posts.get(id)).rejects.toMatchObject({ code: "not_found" });
     await expect(client("alice").media.read({ kind: "post", id }, { editor: true })).rejects.toMatchObject({ code: "not_found" });
-    // Published, its public URLs serve and no editor read is made.
+
+    // Published, every read resolves the reference to the current public file, which serves.
     await act(async () => void (await result.current.update({ is_draft: false })));
-    expect(result.current.imageSrc(url)).toBe(url);
+    const readerSees = async (not?: string) => {
+      let url = "";
+      await waitFor(async () => {
+        const p = await client().posts.get(id);
+        url = p.images?.[name] ?? "";
+        expect(url).toMatch(new RegExp(`/post/${id}/public/${name}-[0-9a-f-]{36}\\.webp$`));
+        expect(url).not.toBe(not);
+        expect(p.body).toBe(page(url, " More."));
+        expect(p.cover_url).toMatch(/\/public\/i-/);
+      }, slow);
+      expect((await fetch(url)).status).toBe(200);
+      return url;
+    };
+    const first = await readerSees();
+    // An editor opening the published post edits the public files and stores references.
+    const reopened = renderHook(() => usePost(id), { wrapper: wrap(client("editor"), "editor") });
+    await waitFor(() => expect(reopened.result.current.editorBody).toBe(page(first, " More.")), wait);
+    expect(reopened.result.current.storedBody(`${reopened.result.current.editorBody} Again.`)).toBe(page(imageRef(name), " More. Again."));
+    reopened.unmount();
+
+    // Hidden and shown again, the image publishes a new generation and the old file goes; the body follows.
+    await act(async () => void (await result.current.update({ is_draft: true })));
+    await waitFor(async () => expect((await client("editor").posts.get(id)).images).toBeUndefined(), slow);
+    await act(async () => void (await result.current.update({ is_draft: false })));
+    await readerSees(first);
+    await waitFor(async () => expect((await fetch(first)).status).toBe(404), slow);
   });
 
   it("useModerationQueue and useCommentBans: a resolved item leaves the queue; a ban joins the list", async () => {

@@ -13,7 +13,7 @@ export {
   type ContentKitErrorCode,
   type ContentKitErrorInit,
 } from "./errors.js";
-export { PostsClient, type PostAdminQuery, type PostQuery } from "./content/posts.js";
+export { IMAGE_SCHEME, imageRef, imageRefs, PostsClient, type PostAdminQuery, type PostQuery } from "./content/posts.js";
 export { CommentsClient, type AdminCommentQuery, type CommentQuery } from "./content/comments.js";
 export { ReactionsClient } from "./content/reactions.js";
 export { FavoritesClient } from "./content/favorites.js";
