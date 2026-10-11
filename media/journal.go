@@ -333,21 +333,23 @@ AND content_kind = $4 AND content_id = $5 AND folder_prefix = $6 AND state = 'ap
 
 // adoptTx records a legacy item's objects under the upgrade's incarnation
 // before its manifest PUT. A retry after an absent attempt moves them to its
-// own incarnation; a retired object is never adopted again.
+// own incarnation; a retired object is never adopted again. Keys repeat when
+// files share a blob; each is adopted once.
 func (j *PGJournal) adoptTx(ctx context.Context, tx pgx.Tx, c *manifestCommit, effects journalEffects) error {
 	if len(effects.Adopt) == 0 {
 		return nil
 	}
-	var adopted int
-	err := tx.QueryRow(ctx, `WITH a AS (INSERT INTO `+j.allocations+` AS a (tenant_id, folder_prefix, object_key, incarnation)
-SELECT $1, $2, key, $4 FROM unnest($3::text[]) AS key
+	var all bool
+	err := tx.QueryRow(ctx, `WITH k AS (SELECT DISTINCT key FROM unnest($3::text[]) AS key),
+a AS (INSERT INTO `+j.allocations+` AS a (tenant_id, folder_prefix, object_key, incarnation)
+SELECT $1, $2, key, $4 FROM k
 ON CONFLICT (tenant_id, object_key) DO UPDATE SET incarnation = EXCLUDED.incarnation
 WHERE a.folder_prefix = EXCLUDED.folder_prefix AND a.retired_at IS NULL RETURNING 1)
-SELECT count(*) FROM a`, c.Ref.TenantID, c.Folder, effects.Adopt, effects.Incarnation).Scan(&adopted)
+SELECT (SELECT count(*) FROM a) = (SELECT count(*) FROM k)`, c.Ref.TenantID, c.Folder, effects.Adopt, effects.Incarnation).Scan(&all)
 	if err != nil {
 		return err
 	}
-	if adopted != len(effects.Adopt) {
+	if !all {
 		return ErrAllocationRetired
 	}
 	return nil
