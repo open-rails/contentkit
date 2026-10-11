@@ -1,3 +1,4 @@
+import { ContentKitError } from "../errors.js";
 import type { BanInput, CommentBan } from "../generated/wire.js";
 import type { Http } from "../http.js";
 import { call, type PageQuery } from "../route.js";
@@ -12,6 +13,15 @@ export class BansClient {
     return scope === "global"
       ? call(this.http, "GET", "/global-comment-bans", { query: q, signal })
       : call(this.http, "GET", "/comment-bans", { query: q, signal });
+  }
+  /** The user's site-wide ban, expired or not; null when they have none (root:comments:ban). */
+  async get(scope: "global", user: string, signal?: AbortSignal): Promise<CommentBan | null> {
+    try {
+      return await call(this.http, "GET", "/global-comment-bans/{user}", { params: { user }, signal });
+    } catch (e) {
+      if (e instanceof ContentKitError && e.code === "not_found") return null;
+      throw e;
+    }
   }
   /** Bans user from commenting in the scope, replacing any ban there; no until lasts until lifted. */
   async ban(scope: BanScope, user: string, input: BanInput = {}): Promise<CommentBan> {

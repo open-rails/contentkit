@@ -183,6 +183,13 @@ export const social: typeof en = {
     loadMore: "더 보기",
     queueComments: "댓글",
     queuePosts: "게시물",
+    noAccess: "댓글을 관리할 권한이 없습니다.",
+    author: "작성자",
+    authorPlaceholder: "사용자 ID로 필터",
+    filter: "필터",
+    byAuthor: "{name} 님의 댓글",
+    clearAuthor: "전체 보기",
+    theirComments: "이 사용자의 댓글",
   },
   time: {
     justNow: "방금",

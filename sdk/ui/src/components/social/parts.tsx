@@ -16,6 +16,7 @@ import {
   AlertDialogTitle,
 } from "#ckui/ui/alert-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "#ckui/ui/avatar";
+import { useGuarded } from "../admin/shell.js";
 
 /** A content refusal or fault in words: the content wording for shared codes, else the code's. */
 export function contentError(m: Translator, e: unknown): string {
@@ -26,9 +27,10 @@ export function contentError(m: Translator, e: unknown): string {
   return m.error(err);
 }
 
-/** Runs one async action at a time: its pending state and last error, reported once. */
+/** Runs one async action at a time (through the flow's guard): its pending state and last error, reported once. */
 export function useAction(operation: SocialOperation, onError?: ContentKitErrorHandler) {
   const report = useErrorReporter(onError);
+  const guarded = useGuarded();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<ContentKitError | null>(null);
   const run = useCallback(
@@ -36,7 +38,7 @@ export function useAction(operation: SocialOperation, onError?: ContentKitErrorH
       setPending(true);
       setError(null);
       try {
-        return await fn();
+        return await guarded(fn);
       } catch (e) {
         const err = toContentKitError(e);
         if (err.code !== "aborted") {
@@ -48,7 +50,7 @@ export function useAction(operation: SocialOperation, onError?: ContentKitErrorH
         setPending(false);
       }
     },
-    [operation, report],
+    [operation, report, guarded],
   );
   return { run, pending, error, setError };
 }

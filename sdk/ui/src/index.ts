@@ -41,6 +41,9 @@ export { HoverPreview, type HoverPreviewProps } from "./components/hover-preview
 export { LazyMount, type LazyMountProps } from "./components/lazy-mount.js";
 export { MediaReadinessNotice, type MediaReadinessNoticeProps } from "./components/media-readiness-notice.js";
 export * from "./components/social/index.js";
+export { UserCommentStanding, useUserCommentStandingAccess, type UserCommentStandingProps } from "./components/admin/user-comment-standing.js";
+export { NoAccess, Pager, type AdminFlowProps, type AdminRouteProps, type ContentKitGuard } from "./components/admin/shell.js";
+export type { AdminNavigation, ContentKitAuth, StaffAccess, StaffArea } from "./react/admin.js";
 export {
   createTranslator,
   defaultMessages,

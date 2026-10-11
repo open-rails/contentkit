@@ -54,6 +54,11 @@ func (h *harness) routes(static string) http.Handler {
 	})
 	if static != "" {
 		files := http.FileServer(http.Dir(static))
+		// The admin fixture is one page; its flows keep their views under /admin/.
+		mux.HandleFunc("/admin/", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			http.ServeFile(w, r, path.Join(static, "admin.html"))
+		})
 		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Built assets are content-hashed; the pages are not.
 			if strings.HasPrefix(r.URL.Path, "/assets/") {

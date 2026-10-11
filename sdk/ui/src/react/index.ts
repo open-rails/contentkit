@@ -21,9 +21,22 @@ export { usePresets, usePublicImage, type PublicImageOptions, type UsePresets, t
 export { useCanonicalContent, type CanonicalContent, type CanonicalContentOptions } from "./canonical.js";
 export { useNearViewport, type NearViewportOptions } from "./viewport.js";
 export {
+  useAdminLocation,
+  useFlowClient,
+  useStaffAccess,
+  type AdminLocation,
+  type AdminNavigation,
+  type AdminQuery,
+  type ContentKitAuth,
+  type FlowClientOptions,
+  type StaffAccess,
+  type StaffArea,
+} from "./admin.js";
+export {
   useAdminComments,
   useCanComment,
   useCommentBans,
+  useGlobalCommentBan,
   useCommentReplies,
   useComments,
   useLatestComments,
@@ -31,6 +44,7 @@ export {
   withReaction,
   type UseAdminComments,
   type UseCommentBans,
+  type UseGlobalCommentBan,
   type UseComments,
   type UseCommentsOptions,
   type UseModerationQueue,
@@ -39,7 +53,7 @@ export { useContentConfig, type UseContentConfig } from "./config.js";
 export { useFavorite, useReaction, type UseFavorite, type UseReaction } from "./engagement.js";
 export { usePoll, usePollEditor, usePolls, withVote, type PollFilter, type PollImages, type UsePoll, type UsePollEditor } from "./polls.js";
 export { isPublished, usePost, usePosts, type PostFilter, type UsePost } from "./posts.js";
-export { useContentScope, type UseList } from "./use-resource.js";
+export { useContentScope, usePaged, type UseList, type UsePaged } from "./use-resource.js";
 export { ResourceStore, resourcesFor, type Page, type Resource } from "./resources.js";
 export {
   useCrop,

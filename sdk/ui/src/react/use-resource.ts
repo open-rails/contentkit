@@ -94,3 +94,30 @@ export function offsetPages<T>(limit: number, list: (q: { limit: number; offset:
 
 /** A stable store key. */
 export const keyOf = (...parts: unknown[]) => JSON.stringify(parts);
+
+/** One numbered page of a list. */
+export interface UsePaged<T> {
+  items: T[];
+  loading: boolean;
+  error?: ContentKitError;
+  /** Another page follows. */
+  hasNext: boolean;
+  reload: () => void;
+}
+
+/** Page `page` (from 1) of a limit/offset list: one read of limit + 1 tells whether another follows. */
+export function usePaged<T extends { id: string }>(
+  store: ResourceStore,
+  key: string | null,
+  tag: Tag,
+  page: number,
+  limit: number,
+  list: (q: { limit: number; offset: number }, signal: AbortSignal) => Promise<T[]>,
+): UsePaged<T> {
+  const offset = (Math.max(1, page) - 1) * limit;
+  const r = useResource<Page<T>>(store, key === null ? null : `${key}#${offset}`, tag, async (signal) => {
+    const items = await list({ limit: limit + 1, offset }, signal);
+    return { items: items.slice(0, limit), next: items.length > limit ? offset + limit : null };
+  });
+  return { items: r.data?.items ?? [], loading: r.loading || (!!key && !r.loaded), error: r.error, hasNext: r.data ? r.data.next !== null : false, reload: r.reload };
+}

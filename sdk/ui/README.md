@@ -81,11 +81,12 @@ operation. This does not change the operation's result or its authentication.
   `PUT` from the app's origin with `Content-Type` and `x-amz-checksum-sha256`.
 - **Content modules**, one per resource, each method one route of the
   generated route table with its generated types: `posts`, `comments`,
-  `reactions`, `favorites`, `polls`, `bans` (`"owner"` or `"global"`),
+  `reactions`, `favorites`, `polls`, `bans` (`"owner"` or `"global"`; `get("global", user)`),
   `moderation`, `taxonomy`, `codes`. Lists take `limit`/`offset` (the review
   queue a `cursor`); staff lists are `posts.adminList` (`q` searches,
   `deleted: true` lists deleted posts for `posts.restore`), `polls.adminList`,
-  `comments.adminList`.
+  `comments.adminList` (`contentKind`, `author`); `taxonomy.nodeAssignments(id)`
+  pages a node's contents.
 - **Images of posts and polls** go to the item's server-named upload path:
   `media.uploadNamed(ref, file)` resolves the name content routes take;
   `media.uploadInline(postId, file)` resolves a body image's reference
@@ -159,8 +160,9 @@ const editor = usePost(postId);
 Also `useContentConfig` (`client.config()`, read once), `useCommentReplies`,
 `useCanComment` (may the caller comment, may signed-out visitors, the ban
 that stops it, and what it may do to others' comments), `useLatestComments`,
-`usePolls`, `usePosts` (staff: `admin`, `deleted`, `q`), `usePost` (with `restore`), and for staff `useAdminComments`,
-`useModerationQueue`, `useCommentBans`.
+`usePolls`, `usePosts` (staff: `admin`, `deleted`, `q`), `usePost` (with `restore`), and for staff `useAdminComments`
+(`contentKind`, `author`), `useModerationQueue`, `useCommentBans`, `useGlobalCommentBan` (one user's), and
+`useStaffAccess`, `useAdminLocation`, `useFlowClient` and `usePaged`, which the admin flows are built from.
 
 Also: `useCrop`, `useVideoImages`, `useFrameStrip`, `useVideoFrame`,
 `useVideoPoster`, `useEncodeProgress`, `useHlsPlayer`, `useCarousel`,
@@ -404,16 +406,57 @@ server allows it (`content.Options.Anonymous`, read from the comment standing
 and `client.config()`); elsewhere they are asked to sign in (`onSignIn`, the
 provider's or their own) or, without one, told to.
 
-Staff: `CommentModeration` (every comment, the review queue, the site's
-bans), `CommentBans` with `CommentBanDialog`, and `PollEditor`. They show what
-the caller's permissions allow and say so when a route refuses; the host
-decides who sees them.
+Staff building blocks: `CommentBans` (paged) with `CommentBanDialog`, and
+`PollEditor`. The complete staff screens are the admin flows below.
 
 ```tsx
 <Comments item={{ kind: "video", id }} count={video.comment_count} userHref={(u) => `/u/${u.username}`} />
 <Poll language={lang} />
-<CommentModeration contentKinds={["video", "post"]} itemHref={(i) => `/${i.kind}/${i.id}`} />
 ```
+
+## Admin flows
+
+Drop-in staff screens for a host's own admin area: each makes its own reads
+and writes, shows loading, empty, error (with retry) and no-access states,
+confirms destructive acts and shows only what the caller's permissions allow.
+The host writes no API calls. Every flow takes:
+
+| Prop | |
+| --- | --- |
+| `client`, or `baseUrl` + `auth` | the ContentKit client, or where ContentKit is mounted and auth-ui's `AuthClient` (anything with `authFetch`); else the provider's client |
+| `basePath`, `navigation` | multi-view flows: views are paths under `basePath`, filters and pages its query; `navigation` is the host router (`{ pathname, search, navigate(to, { replace }) }`), else the history API; without `basePath`, views stay in memory |
+| `guard` | runs every write (auth-ui's `useStepUpGuard()`) |
+| `appearance`, `className` | theme `"inherit"` by default: the host's shadcn variables (`--background`, `--primary`, …) and `.dark` |
+| `language`, `messages` | the UI language (its bundle loads) and overrides; default the provider's |
+| `onError` | every failure the flow shows, for a toast or a log |
+
+Each has an access hook (`use…Access`) for hiding its tab: per area, whether
+the caller's permission admits it.
+
+```tsx
+const location = useLocation();
+const navigate = useNavigate();
+const nav = useMemo(() => ({ pathname: location.pathname, search: location.search, navigate }), [location, navigate]);
+```
+
+- **`CommentModeration`**: every comment (deleted, held and rejected ones with
+  their text) by content kind or author, to delete, restore or ban its author;
+  the review queue; the site's bans. Sections at `basePath`, `/queue`,
+  `/bans`; `?kind`, `?author`, `?page`. Props: `contentKinds`, `itemHref`,
+  `userHref`, `sections`, `pageSize`. `useCommentModerationAccess()`.
+
+  ```tsx
+  <CommentModeration client={contentkit} basePath="/admin/comments" navigation={nav} contentKinds={["video", "post"]} />
+  ```
+
+- **`UserCommentStanding`**: for a user page, the person's site-wide comment
+  ban (ban, replace, lift) and their recent comments (delete, restore). Props:
+  `user` (their id), `name`, `itemHref`, `pageSize`.
+  `useUserCommentStandingAccess()`.
+
+  ```tsx
+  <UserCommentStanding client={contentkit} user={u.id} name={u.username} />
+  ```
 
 ## Errors
 

@@ -183,6 +183,13 @@ export const social: typeof en = {
     loadMore: "Ver más",
     queueComments: "Comentarios",
     queuePosts: "Publicaciones",
+    noAccess: "No tienes permiso para moderar comentarios.",
+    author: "Autor",
+    authorPlaceholder: "Filtrar por id de usuario",
+    filter: "Filtrar",
+    byAuthor: "Comentarios de {name}",
+    clearAuthor: "Mostrar los de todos",
+    theirComments: "Sus comentarios",
   },
   time: {
     justNow: "justo ahora",

@@ -1,5 +1,6 @@
 import type {
   Assignment,
+  AssignmentPage,
   AssignmentsWritten,
   ContentRef,
   Count,
@@ -20,6 +21,8 @@ import { call, type RouteQuery } from "./route.js";
 
 /** GET /taxonomy/nodes filters, as the route names them. */
 export type NodeQuery = RouteQuery<"GET", "/nodes">;
+/** GET /taxonomy/nodes/{id}/assignments filters. */
+export type NodeAssignmentQuery = RouteQuery<"GET", "/nodes/{id}/assignments">;
 
 /** The taxonomy admin API (root:taxonomy:write). */
 export class TaxonomyClient {
@@ -30,6 +33,10 @@ export class TaxonomyClient {
   }
   node(id: string, signal?: AbortSignal): Promise<NodeDetail> {
     return call(this.http, "GET", "/nodes/{id}", { params: { id }, signal });
+  }
+  /** The contents assigned to a node, a cursor page at a time. */
+  nodeAssignments(id: string, q: NodeAssignmentQuery = {}, signal?: AbortSignal): Promise<AssignmentPage> {
+    return call(this.http, "GET", "/nodes/{id}/assignments", { params: { id }, query: q, signal });
   }
   createNodes(nodes: NodeInput[]): Promise<Node[]> {
     return this.write(call(this.http, "POST", "/nodes", { body: nodes }));

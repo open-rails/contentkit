@@ -130,3 +130,15 @@ export async function seedSocial(h: Harness, o: { viewer?: TestUser | null; lang
   }
   return { item, poll };
 }
+
+/** For the admin flows: a video with comments by bob (three) and carol (one), and staff to moderate them. */
+export async function seedModeration(h: Harness) {
+  const [owner, bob, carol, staff] = await Promise.all([h.user(), h.user(), h.user(), h.user({ role: "staff" })]);
+  const it = await h.item({ kind: "video", owner: owner.id, title: "Moderated video" });
+  const item = { kind: it.kind, id: it.id };
+  const tag = Math.random().toString(36).slice(2, 8);
+  const b = contentKit(h, bob);
+  for (const body of [`Bob one ${tag}`, `Bob two ${tag}`, `Bob three ${tag}`]) await b.comments.create(item, { body });
+  await contentKit(h, carol).comments.create(item, { body: `Carol ${tag}` });
+  return { item, owner, bob, carol, staff, tag };
+}

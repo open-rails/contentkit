@@ -1,7 +1,9 @@
+import { admin } from "./admin/en.js";
 import { social } from "./social/en.js";
 
 export const en = {
   ...social,
+  ...admin,
   common: {
     cancel: "Cancel",
     close: "Close",
