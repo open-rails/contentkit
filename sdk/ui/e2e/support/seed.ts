@@ -155,3 +155,30 @@ export async function seedPolls(h: Harness) {
   await ck.polls.update(off.id, { is_active: false });
   return { staff, tag };
 }
+
+/**
+ * For TaxonomyManager: a series (English and Japanese names, registered as a
+ * media item for its cover), two characters, and two tags assigned to
+ * galleries (Color to two, Colour to one), each name carrying tag.
+ */
+export async function seedTaxonomy(h: Harness) {
+  const staff = await h.user({ role: "staff" });
+  const ck = contentKit(h, staff);
+  const tag = Math.random().toString(36).slice(2, 8);
+  const name = (en: string, ja?: string) => [
+    { language: "en", kind: "name" as const, name: en, source_revision: 0 },
+    ...(ja ? [{ language: "ja", kind: "name" as const, name: ja, source_revision: 0 }] : []),
+  ];
+  const [series, aria, bram, color, colour] = await ck.taxonomy.createNodes([
+    { kind: "series", slug: `night-watch-${tag}`, names: name(`Night Watch ${tag}`, `夜警 ${tag}`), source_revision: 0 },
+    { kind: "character", slug: `aria-${tag}`, names: name(`Aria ${tag}`), source_revision: 0 },
+    { kind: "character", slug: `bram-${tag}`, names: name(`Bram ${tag}`), source_revision: 0 },
+    { kind: "tag", slug: `color-${tag}`, names: name(`Color ${tag}`), source_revision: 0 },
+    { kind: "tag", slug: `colour-${tag}`, names: name(`Colour ${tag}`), source_revision: 0 },
+  ]);
+  await h.item({ kind: "series", id: series!.taxonomy_id });
+  const galleries = await Promise.all([1, 2, 3].map(() => h.item({ kind: "gallery", owner: staff.id })));
+  const at = (g: Item, node: string) => ({ tenant_id: "", content_kind: "gallery", content_id: g.id, taxonomy_id: node, relation: "", source_revision: 0 });
+  await ck.taxonomy.assignments("add", [at(galleries[0]!, color!.taxonomy_id), at(galleries[1]!, color!.taxonomy_id), at(galleries[2]!, colour!.taxonomy_id)]);
+  return { staff, tag, series: series!, aria: aria!, bram: bram!, color: color!, colour: colour! };
+}

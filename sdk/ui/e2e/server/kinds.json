@@ -429,6 +429,36 @@
           "download": "clip.mp4"
         }
       ]
+    },
+    {
+      "name": "series",
+      "keep_originals": true,
+      "uploads": [
+        {
+          "path": "cover",
+          "types": [
+            "image/png",
+            "image/jpeg",
+            "image/webp"
+          ],
+          "max_bytes": 26214400
+        }
+      ],
+      "public": [
+        {
+          "name": "cover",
+          "from": "cover",
+          "to": "cover-{w}.webp",
+          "widths": [
+            320,
+            640
+          ],
+          "image": {
+            "aspect": "16:9",
+            "quality": 85
+          }
+        }
+      ]
     }
   ]
 }

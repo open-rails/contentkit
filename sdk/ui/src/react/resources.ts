@@ -271,6 +271,9 @@ export class ResourceStore {
       case "ban.lifted":
         this.invalidate((t) => (t.type === "bans" && t.scope === c.scope) || t.type === "standing");
         break;
+      case "taxonomy.changed":
+        this.invalidate((t) => t.type.startsWith("taxonomy"));
+        break;
       case "moderation.resolved":
         items<{ id: string }>(["held"], (x) => (x.id === c.id ? null : x));
         if (c.kind === "comment") this.invalidate((t) => comments.includes(t.type));

@@ -477,6 +477,23 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
   emphasis, lists, quotes, links and images picked, pasted or dropped. Its
   HTML keeps to that schema, so bodies stay a small, predictable subset.
 
+- **`TaxonomyManager`**: the taxonomy per kind (`kinds`: `kind`, `label`,
+  `relations` such as a character `member_of` a series, `cover` in a media
+  kind). Each kind's nodes by name, state, language, minimum count and order
+  at `basePath/{kind}`; a node at `basePath/{kind}/{id}`: slug, names and
+  aliases per language, host fields (`renderFields`), relations with a
+  typeahead (both directions), cover, counts and assigned contents
+  (`renderContent`); create, delete, restore, and merge with a typed
+  confirmation. Props: `kinds`, `languages`, `contentKind`, `renderFields`,
+  `renderContent`, `pageSize`. `useTaxonomyManagerAccess()`. Host-owned
+  fields stay in host tables.
+
+  ```tsx
+  <TaxonomyManager client={contentkit} basePath="/admin/taxonomy" navigation={nav} languages={["en", "ja"]}
+    kinds={[{ kind: "tag", label: "Tags" }, { kind: "series", label: "Series", cover: { kind: "series" } },
+      { kind: "character", label: "Characters", relations: [{ relation: "member_of", to: "series", label: "Series" }] }]} />
+  ```
+
 - **`UserCommentStanding`**: for a user page, the person's site-wide comment
   ban (ban, replace, lift) and their recent comments (delete, restore). Props:
   `user` (their id), `name`, `itemHref`, `pageSize`.

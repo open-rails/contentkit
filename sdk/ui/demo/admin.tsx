@@ -1,4 +1,4 @@
-import { CommentModeration, PollManager, PostManager, UserCommentStanding, type AdminNavigation } from "@openrails/contentkit-ui";
+import { CommentModeration, PollManager, PostManager, TaxonomyManager, UserCommentStanding, type AdminNavigation, type TaxonomyKind } from "@openrails/contentkit-ui";
 import { richTextEditor } from "@openrails/contentkit-ui/editor";
 import { StrictMode, useMemo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
@@ -7,7 +7,8 @@ import { auth, client, dark, q } from "./session";
 
 // A host's admin area. /admin/comments/* CommentModeration, /admin/users/{id}
 // UserCommentStanding, /admin/polls/* PollManager, /admin/posts/* PostManager
-// (with the package's rich-text editor). ?router=1 mounts each flow in React Router through
+// (with the package's rich-text editor), /admin/taxonomy/* TaxonomyManager
+// (tags; series with covers; characters, members of series). ?router=1 mounts each flow in React Router through
 // `navigation` (with the client); otherwise alone over the history API (with
 // baseUrl and auth). ?size= pages, ?lang= the UI language. The flows take the
 // host's shadcn theme ("inherit", their default); ?theme=dark adds `.dark`.
@@ -27,6 +28,17 @@ document.documentElement.classList.toggle("dark", dark);
 const kinds = [{ value: "video", label: "Videos" }, { value: "post", label: "Posts" }];
 const languages = [{ value: "en", label: "English" }, { value: "ja", label: "日本語" }];
 const postHref = (p: { code: string; url_slug: string }) => `#/blog/${p.code}/${p.url_slug}`;
+const taxonomyKinds: TaxonomyKind[] = [
+  { kind: "tag", label: "Tags" },
+  { kind: "series", label: "Series", cover: { kind: "series" } },
+  { kind: "character", label: "Characters", relations: [{ relation: "member_of", to: "series", label: "Series", inverseLabel: "Characters" }] },
+];
+const restricted = (n: { taxonomy_id: string }) => (
+  <label data-demo="host-field" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+    <input type="checkbox" /> Restricted (host field of {n.taxonomy_id.slice(0, 8)})
+  </label>
+);
+const contentLink = (ref: { content_kind: string; content_id: string }) => <a href={`#${ref.content_kind}/${ref.content_id}`}>{`${ref.content_kind} ${ref.content_id.slice(0, 8)}`}</a>;
 const itemHref = (i: { kind: string; id: string }) => `#${i.kind}/${i.id}`;
 
 function Page({ children }: { children: ReactNode }) {
@@ -50,6 +62,8 @@ function Alone() {
         <UserCommentStanding {...common} user={decodeURIComponent(user)} name={name} itemHref={itemHref} />
       ) : at.startsWith("/admin/polls") ? (
         <PollManager {...common} basePath="/admin/polls" languages={languages} />
+      ) : at.startsWith("/admin/taxonomy") ? (
+        <TaxonomyManager {...common} basePath="/admin/taxonomy" kinds={taxonomyKinds} languages={languages} renderFields={restricted} renderContent={contentLink} />
       ) : at.startsWith("/admin/posts") ? (
         <PostManager {...common} basePath="/admin/posts" languages={languages} renderEditor={richTextEditor} postHref={postHref} />
       ) : (
@@ -70,6 +84,7 @@ function Hosted() {
         <Link to="/admin/comments/bans">Bans</Link>
         <Link to="/admin/polls">Polls</Link>
         <Link to="/admin/posts">Posts</Link>
+        <Link to="/admin/taxonomy/series">Series</Link>
         <span data-demo="router-location" style={{ minWidth: 0, overflowWrap: "anywhere" }}>
           {loc.pathname + loc.search}
         </span>
@@ -80,6 +95,12 @@ function Hosted() {
           element={<CommentModeration client={client} basePath="/admin/comments" navigation={navigation} contentKinds={kinds} itemHref={itemHref} pageSize={size} language={lang} />}
         />
         <Route path="/admin/users/:id" element={<UserPage />} />
+        <Route
+          path="/admin/taxonomy/*"
+          element={
+            <TaxonomyManager client={client} basePath="/admin/taxonomy" navigation={navigation} kinds={taxonomyKinds} languages={languages} renderFields={restricted} renderContent={contentLink} pageSize={size} language={lang} />
+          }
+        />
         <Route path="/admin/polls/*" element={<PollManager client={client} basePath="/admin/polls" navigation={navigation} languages={languages} pageSize={size} language={lang} />} />
         <Route
           path="/admin/posts/*"
