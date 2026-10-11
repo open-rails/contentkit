@@ -270,3 +270,57 @@ func TestEditorRegeneratesMedia(t *testing.T) {
 	f.want(http.StatusUnauthorized, "", "POST", "/media/upload/commit", media.CommitBody{Ref: ref, OperationID: uuid.NewString(),
 		Ops: []media.Op{{Op: media.OpRegenerate}}}, nil)
 }
+
+// The poll manager lists polls by state and question: live, scheduled,
+// closed and inactive ones, each only where it belongs.
+func TestAdminPollsByStateAndSearch(t *testing.T) {
+	w := newWorld(t)
+	_, staff := w.person(w.staff)
+	_, user := w.person(iam.Role{})
+	f := serve(t, w.runtime(nil))
+	create := func(question string, liveAt *time.Time) content.Poll {
+		var p content.Poll
+		f.want(http.StatusCreated, staff, "POST", "/polls", content.PollInput{Question: question, Language: "en", LiveAt: liveAt,
+			Options: []content.PollOptionInput{{Label: "Yes"}, {Label: "No", Position: 1}}}, &p)
+		return p
+	}
+	create("Alpha, live?", nil)
+	create("Beta, scheduled?", ptr(time.Now().Add(24*time.Hour)))
+	gamma := create("Gamma, inactive?", nil)
+	f.want(http.StatusOK, staff, "PATCH", "/polls/"+gamma.ID, content.PollUpdate{IsActive: ptr(false)}, nil)
+	delta := create("Delta, closed?", nil)
+	if _, err := w.pool.Exec(t.Context(), `UPDATE `+pgx.Identifier{w.schema, "content_poll_questions"}.Sanitize()+`
+		SET closes_at = now() - interval '1 minute' WHERE id = $1`, delta.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	list := func(q url.Values) string {
+		t.Helper()
+		var out []content.Poll
+		f.want(http.StatusOK, staff, "GET", "/polls/admin?"+q.Encode(), nil, &out)
+		s := ""
+		for _, p := range out {
+			s += p.Question + " "
+		}
+		return s
+	}
+	for state, want := range map[string]string{"live": "Alpha, live? ", "scheduled": "Beta, scheduled? ", "inactive": "Gamma, inactive? ", "closed": "Delta, closed? "} {
+		if got := list(url.Values{"state": {state}}); got != want {
+			t.Errorf("state %s: %q", state, got)
+		}
+	}
+	if got := list(url.Values{"q": {"ALPHA"}}); got != "Alpha, live? " {
+		t.Errorf("search: %q", got)
+	}
+	if got := list(url.Values{"q": {"a, "}, "state": {"inactive"}}); got != "Gamma, inactive? " {
+		t.Errorf("search and state: %q", got)
+	}
+	if got := list(url.Values{"language": {"ja"}}); got != "" {
+		t.Errorf("another language: %q", got)
+	}
+	if got := list(nil); got != "Beta, scheduled? Delta, closed? Gamma, inactive? Alpha, live? " {
+		t.Errorf("every poll: %q", got)
+	}
+	f.want(http.StatusBadRequest, staff, "GET", "/polls/admin?state=open", nil, nil)
+	f.want(http.StatusForbidden, user, "GET", "/polls/admin?state=live", nil, nil)
+}

@@ -42,7 +42,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 | DELETE | `/{kind}/{id}/favorite` | user | — | 200 `FavoriteState` | Unfavorites a target, also one no longer visible. Answers the state with the target's favorite count. |
 | GET | `/{kind}/{id}/favorite` | public | — | 200 `FavoriteState` | A target's favorite count and whether the caller favorited it (never, signed out: then the target must be visible). |
 | GET | `/polls` | public | — | 200 `Poll[]` | Live polls, newest first. Query: `language`, `month`, `date`, `limit`, `offset`. |
-| GET | `/polls/admin` | staff `root:polls:write` | — | 200 `Poll[]` | Every poll, scheduled and inactive ones included. Query: `language`, `month`, `date`, `limit`, `offset`. |
+| GET | `/polls/admin` | staff `root:polls:write` | — | 200 `Poll[]` | Every poll, scheduled and inactive ones included. Query: `language`, `month`, `date`, `state`, `q`, `limit`, `offset`. |
 | GET | `/polls/{id}` | public | — | 200 `Poll` | A poll with the caller's vote or answer; a scheduled or inactive poll only for root:polls:write holders. |
 | POST | `/polls` | staff `root:polls:write` | `PollInput` | 201 `Poll` | Creates a poll with its options; a free-text poll needs an AnswerClassifier. |
 | PATCH | `/polls/{id}` | staff `root:polls:write` | `PollUpdate` | 200 `Poll` | Updates a poll's given fields; closes_at null reopens it until deactivated. |
