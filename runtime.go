@@ -8,8 +8,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/open-rails/helpers/auth"
-	"github.com/open-rails/helpers/userinfo"
+	"github.com/open-rails/authkit/auth"
+	"github.com/open-rails/authkit/userinfo"
 	"github.com/open-rails/migratekit"
 	"github.com/open-rails/migratekit/chmigrate"
 
@@ -32,11 +32,11 @@ import (
 // the keyword queue.
 type RuntimeConfig struct {
 	EmbeddedConfig
-	// Auth says who a request is (helpers/auth; AuthKit's
+	// Auth says who a request is (authkit/auth; AuthKit's
 	// ak.Authenticator()). Every module's routes are gated by it; ContentKit
 	// decides what each admits and answers refusals itself. Required.
 	Auth auth.Authenticator
-	// UserInfo is the host's directory (helpers/userinfo; AuthKit's
+	// UserInfo is the host's directory (authkit/userinfo; AuthKit's
 	// ak.UserInfo()): authors' names and usernames.
 	UserInfo userinfo.Lookup
 	// Content is the interaction module; its Auth and UserInfo are the ones

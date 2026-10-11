@@ -19,9 +19,9 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/authkit"
+	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
-	"github.com/open-rails/helpers/auth"
 
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"

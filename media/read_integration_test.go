@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/open-rails/helpers/auth"
+	"github.com/open-rails/authkit/auth"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/open-rails/contentkit/access"

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/open-rails/helpers/userinfo"
+	"github.com/open-rails/authkit/userinfo"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"

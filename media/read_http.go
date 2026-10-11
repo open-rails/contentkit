@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/open-rails/helpers/auth"
+	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -22,7 +22,7 @@ import (
 
 // HandlerOptions configure the read API.
 type HandlerOptions struct {
-	// Auth says who a request is (helpers/auth; AuthKit's
+	// Auth says who a request is (authkit/auth; AuthKit's
 	// ak.Authenticator()): the viewer is anonymous without a credential.
 	// Required.
 	Auth   auth.Authenticator

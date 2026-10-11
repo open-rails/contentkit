@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/open-rails/authkit/iam"
-	"github.com/open-rails/helpers/userinfo"
+	"github.com/open-rails/authkit/userinfo"
 
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"

@@ -8,7 +8,7 @@ package access
 import (
 	"context"
 
-	"github.com/open-rails/helpers/auth"
+	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/contentref"
 )

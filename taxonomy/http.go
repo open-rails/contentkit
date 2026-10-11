@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/open-rails/helpers/auth"
+	"github.com/open-rails/authkit/auth"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -21,7 +21,7 @@ import (
 
 // Handler is the store's admin API (taxonomyRoutes), for a person or an
 // application holding access.TaxonomyWrite in a's root scope: a says who each
-// request is (helpers/auth; AuthKit's ak.Authenticator()) and its Verified's
+// request is (authkit/auth; AuthKit's ak.Authenticator()) and its Verified's
 // Can decides. Every route is scoped to the store's tenant and content ids
 // stay opaque. contentkit.Runtime.Handler serves it at /taxonomy. Errors are JSON {"error", "code"} with 400 for ErrInvalid, 404 for
 // ErrNotFound, 409 for ErrConflict and a sanitized 500 for everything else;
