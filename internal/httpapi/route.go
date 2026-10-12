@@ -37,10 +37,13 @@ const (
 	PublicCatalog Module = "catalog"
 	// Notifications is the authenticated user inbox.
 	Notifications Module = "notifications"
+	// Versions is content versions' reader plan, reader metadata, forks and
+	// downloads (versions.Service.Handler).
+	Versions Module = "versions"
 )
 
 // Modules lists every module in catalog order.
-var Modules = []Module{Content, Upload, Media, Codes, Taxonomy, PublicCatalog, Notifications}
+var Modules = []Module{Content, Upload, Media, Codes, Taxonomy, PublicCatalog, Notifications, Versions}
 
 // Prefix is the module's sub-path under the one mount: content at its root,
 // the others beneath their own first segment, which no content kind may take.
@@ -58,13 +61,17 @@ func (m Module) Prefix() string {
 		return "/catalog"
 	case Notifications:
 		return "/notifications"
+	case Versions:
+		return "/contents"
 	}
 	return ""
 }
 
 // Reserved is the first path segments the non-content modules take: a content
 // kind with one of these names would be unreachable under the one mount.
-func Reserved() []string { return []string{"media", "codes", "taxonomy", "catalog", "notifications"} }
+func Reserved() []string {
+	return []string{"media", "codes", "taxonomy", "catalog", "notifications", "contents"}
+}
 
 // Tier is what a route requires of its caller before its handler acts. The
 // module's gate enforces it from the host's auth.Authenticator, asked at most
@@ -309,6 +316,8 @@ func ErrorSet(name string) []string {
 		return []string{CodeInternal, CodeNotFound, CodeRateLimited, CodeUnavailable, CodeUpgrade}
 	case "module:codes", "module:taxonomy", "module:catalog", "module:notifications":
 		return []string{CodeInternal}
+	case "module:versions":
+		return []string{CodeInternal, CodeNotFound, CodeUnavailable}
 	}
 	return nil
 }

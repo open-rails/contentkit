@@ -480,7 +480,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	var prior *Manifest
 	man, err := u.o.Manifests.editOperation(editCtx, ref, false, bound{project: item.Kind().Unwritten}, mutation, func(m *Manifest) error {
 		prior = m.Clone()
-		o := &opRun{k: item.Kind(), m: m, id: ref.ContentID, copies: copies, exempt: grant.Exempt}
+		o := &opRun{k: item.Kind(), m: m, ref: ref, copies: copies, exempt: grant.Exempt}
 		keys = keys[:0]
 		var names []string
 		for _, op := range ops {
