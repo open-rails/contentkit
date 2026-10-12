@@ -17,6 +17,7 @@ import (
 	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/offers"
 )
 
 // ContentInput creates a content item, a draft until published.
@@ -26,7 +27,7 @@ type ContentInput struct {
 	Text    map[string]Text `json:"text,omitempty"`
 	Listing string          `json:"listing,omitempty"` // default listed
 	// Access defaults to public.
-	Access       *Rule          `json:"access,omitempty"`
+	Access       *access.Rule   `json:"access,omitempty"`
 	Restrictions []string       `json:"restrictions,omitempty"`
 	Attributes   map[string]any `json:"attributes,omitempty"`
 	// OwnerGroupID is the home group (a channel); its editors edit the item.
@@ -42,7 +43,7 @@ type ContentInput struct {
 // ContentPatch edits a content item; nil fields stay.
 type ContentPatch struct {
 	Listing      *string        `json:"listing,omitempty"`
-	Access       *Rule          `json:"access,omitempty"`
+	Access       *access.Rule   `json:"access,omitempty"`
 	Restrictions *[]string      `json:"restrictions,omitempty"`
 	Attributes   map[string]any `json:"attributes,omitempty"` // replaces all
 	Creators     *[]Creator     `json:"creators,omitempty"`
@@ -62,7 +63,7 @@ type VersionInput struct {
 	State     string     `json:"state,omitempty"`
 	PublishAt *time.Time `json:"publish_at,omitempty"`
 	// Access overrides the content's rule; ClearAccess inherits it again.
-	Access      *Rule                  `json:"access,omitempty"`
+	Access      *access.Rule           `json:"access,omitempty"`
 	ClearAccess bool                   `json:"clear_access,omitempty"`
 	Attributes  map[string]any         `json:"attributes,omitempty"` // replaces all
 	Text        map[string]VersionText `json:"text,omitempty"`       // replaces all
@@ -105,6 +106,8 @@ type effects struct {
 	events []Event
 	codes  bool // slugs may have changed
 	expose bool // anonymous visibility may have changed
+	// retitled are offer targets whose product name may have changed.
+	retitled []offers.Target
 }
 
 // mutate runs fn over the authorized, locked items in one transaction, then
@@ -145,6 +148,11 @@ func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) 
 	if err := s.emit(ctx, tx, fx.events...); err != nil {
 		return err
 	}
+	if len(fx.retitled) > 0 && s.offers != nil {
+		if err := s.offers.Resync(ctx, tx, fx.retitled); err != nil {
+			return err
+		}
+	}
 	if fx.expose {
 		return s.exposeTx(ctx, tx, ids)
 	}
@@ -175,7 +183,7 @@ func (s *Store) Create(ctx context.Context, actor access.Actor, in []ContentInpu
 		if err := s.checkListing(p.Listing); err != nil {
 			return nil, err
 		}
-		rule := Rule{Level: LevelPublic}
+		rule := access.Rule{Level: access.Public}
 		if c.Access != nil {
 			rule = *c.Access
 		}
@@ -512,6 +520,11 @@ func (s *Store) PutText(ctx context.Context, actor access.Actor, in []TextPut) e
 					set[p.Language] = *p.Text
 				}
 			}
+			retitled, err := s.retitled(ctx, tx, id, set, drop)
+			if err != nil {
+				return fx, err
+			}
+			fx.retitled = append(fx.retitled, retitled...)
 			if err := s.writeTexts(ctx, tx, id, set, drop); err != nil {
 				return fx, err
 			}
@@ -522,6 +535,51 @@ func (s *Store) PutText(ctx context.Context, actor access.Actor, in []TextPut) e
 		}
 		return fx, nil
 	})
+}
+
+// retitled is the offer targets of content id and its versions when the
+// write changes a title.
+func (s *Store) retitled(ctx context.Context, tx pgx.Tx, id string, set map[string]Text, drop []string) ([]offers.Target, error) {
+	rows, err := tx.Query(ctx, `SELECT language, title FROM `+s.t.text+` WHERE tenant_id = $1 AND content_id = $2`, s.tenant, id)
+	if err != nil {
+		return nil, err
+	}
+	titles := map[string]string{}
+	for rows.Next() {
+		var l, t string
+		if err := rows.Scan(&l, &t); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		titles[l] = t
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	changed := slices.ContainsFunc(drop, func(l string) bool { _, ok := titles[l]; return ok })
+	for l, t := range set {
+		if old, ok := titles[l]; !ok || old != t.Title {
+			changed = true
+		}
+	}
+	if !changed {
+		return nil, nil
+	}
+	out := []offers.Target{{Kind: offers.ContentTarget, ID: id}}
+	vrows, err := tx.Query(ctx, `SELECT id FROM `+s.t.versions+` WHERE tenant_id = $1 AND content_id = $2 ORDER BY id`, s.tenant, id)
+	if err != nil {
+		return nil, err
+	}
+	defer vrows.Close()
+	for vrows.Next() {
+		var vid string
+		if err := vrows.Scan(&vid); err != nil {
+			return nil, err
+		}
+		out = append(out, offers.Target{Kind: offers.VersionTarget, ID: vid, Content: id})
+	}
+	return out, vrows.Err()
 }
 
 // syncHiddenVersion keeps a hidden version serving its content's languages.
@@ -704,6 +762,9 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []Versio
 			if err := s.updateVersion(ctx, tx, p.ContentID, o.kind, k, p.VersionID, p.VersionInput); err != nil {
 				return fx, err
 			}
+			if p.Label != nil {
+				fx.retitled = append(fx.retitled, offers.Target{Kind: offers.VersionTarget, ID: p.VersionID, Content: p.ContentID})
+			}
 			out[i] = p.VersionID
 			fx.events = append(fx.events, Event{Type: EventVersionUpdated, Kind: o.kind, ContentID: p.ContentID, VersionID: p.VersionID})
 		}
@@ -808,7 +869,7 @@ func (s *Store) checkVersionRule(ctx context.Context, tx pgx.Tx, raw []byte) err
 	if raw == nil {
 		return nil
 	}
-	var r Rule
+	var r access.Rule
 	if err := json.Unmarshal(raw, &r); err != nil {
 		return err
 	}

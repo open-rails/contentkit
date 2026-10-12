@@ -27,11 +27,14 @@ const (
 	// GroupsWrite: create, edit, merge and delete groups, and set content's
 	// memberships.
 	GroupsWrite Permission = "root:groups:write"
+	// OffersWrite: put and withdraw offers on any content, version or group;
+	// creators and group owners need it for nobody else's.
+	OffersWrite Permission = "root:offers:write"
 )
 
 // Permissions is every staff permission.
 func Permissions() []Permission {
-	return []Permission{ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, GroupsWrite}
+	return []Permission{ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, GroupsWrite, OffersWrite}
 }
 
 func (p Permission) String() string { return string(p) }

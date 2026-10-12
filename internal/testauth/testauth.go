@@ -64,6 +64,19 @@ type verified struct {
 
 func (v verified) Identity() auth.Identity { return v.id }
 
+// Claimer also names the entitlement claims a test actor's token carries
+// (access.Entitled).
+type Claimer interface {
+	Claims(subject string) []string
+}
+
+func (v verified) Entitlements() []string {
+	if c, ok := v.authz.(Claimer); ok {
+		return c.Claims(v.id.Subject)
+	}
+	return nil
+}
+
 // GroupAuthorizer also decides permissions in the scopes of groups (an
 // owner group's AuthKit scope), named by their scope id under Issuer.
 type GroupAuthorizer interface {

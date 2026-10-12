@@ -39,10 +39,13 @@ const (
 	Groups Module = "groups"
 	// Notifications is the authenticated user inbox.
 	Notifications Module = "notifications"
+	// Offers is offers on content, versions and groups, free group joins and
+	// the viewer's library (offers.Service.Handler).
+	Offers Module = "offers"
 )
 
 // Modules lists every module in catalog order.
-var Modules = []Module{Content, Contents, Upload, Media, Codes, Groups, Notifications}
+var Modules = []Module{Content, Contents, Upload, Media, Codes, Groups, Notifications, Offers}
 
 // Prefix is the module's sub-path under the one mount: content at its root,
 // the others beneath their own first segment, which no content kind may take.
@@ -56,7 +59,7 @@ func (m Module) Prefix() string {
 		return "/media"
 	case Codes:
 		return "/codes"
-	case Groups:
+	case Groups, Offers:
 		return "/v1"
 	case Notifications:
 		return "/notifications"
@@ -313,6 +316,8 @@ func ErrorSet(name string) []string {
 		return []string{CodeInternal, CodeUnavailable}
 	case "module:codes", "module:groups", "module:notifications":
 		return []string{CodeInternal}
+	case "module:offers":
+		return []string{CodeInternal, CodeUnavailable}
 	}
 	return nil
 }

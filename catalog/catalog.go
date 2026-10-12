@@ -28,6 +28,7 @@ import (
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/kinds"
+	"github.com/open-rails/contentkit/offers"
 )
 
 // HeldKind is the review queue's kind for held content (content.Runtime's
@@ -61,6 +62,12 @@ type Moderation interface {
 	Screen(ctx context.Context, in content.ModerationInput) (content.Screening, error)
 }
 
+// Offers is *offers.Service: Resync re-syncs the targets' products in the
+// writing transaction.
+type Offers interface {
+	Resync(ctx context.Context, tx pgx.Tx, targets []offers.Target) error
+}
+
 // Sanitizer cleans rich text on write: content.ContentProcessor.
 type Sanitizer = content.ContentProcessor
 
@@ -73,8 +80,12 @@ type Options struct {
 	Kinds kinds.Config
 	// Auth gates the routes and answers staff and owner-group permissions.
 	Auth auth.Authenticator
-	// Gate answers viewers' entitlements; nil holds nothing but public.
+	// Gate answers viewers' entitlements; nil builds one without billing
+	// (only free rules and claimed tiers open).
 	Gate *access.Gate
+	// Offers renames the products of content whose title changes; nil when
+	// nothing is sold.
+	Offers Offers
 	// Groups answers effective group ids for content_facets; nil: none. Wire
 	// its Options.ContentChanged to Store.ContentChanged.
 	Groups Groups
@@ -101,6 +112,7 @@ type Store struct {
 	t         tables
 	guard     *gate.Gate
 	accessG   *access.Gate
+	offers    Offers
 	groups    Groups
 	moderator Moderation
 	body      Sanitizer
@@ -140,8 +152,17 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 			versionText: q("content_version_text"), segments: q("content_segments"), facets: q("content_facets"), events: q("content_events"),
 			groups: q("content_groups"), groupNames: q("content_group_names"), memberships: q("content_memberships"),
 			prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), docs: q("content_search_documents")},
-		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, groups: opts.Groups, moderator: opts.Moderation,
+		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, offers: opts.Offers, groups: opts.Groups, moderator: opts.Moderation,
 		body: opts.Body, retention: opts.DeletedRetention, now: opts.Now, log: opts.Logger,
+	}
+	if s.accessG == nil {
+		g, err := access.NewGate(access.GateConfig{Tenant: opts.Tenant, Kinds: opts.Kinds, Logger: opts.Logger})
+		if err != nil {
+			return nil, fmt.Errorf("catalog: %w", err)
+		}
+		s.accessG = g
+	} else if s.accessG.Tenant() != opts.Tenant {
+		return nil, fmt.Errorf("catalog: Gate tenant %q differs from %q", s.accessG.Tenant(), opts.Tenant)
 	}
 	if s.body == nil {
 		s.body = stripTags{}

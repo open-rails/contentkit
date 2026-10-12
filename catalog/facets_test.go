@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"encoding/json"
+	"github.com/open-rails/contentkit/access"
 	"reflect"
 	"slices"
 	"testing"
@@ -17,7 +18,8 @@ type facet struct {
 	Deleted      bool
 	Listing      string
 	Languages    []string
-	Level        string
+	Level        access.Level
+	FreeAfter    *time.Time
 	Tiers        []string
 	Group        string
 	Restrictions []string
@@ -34,7 +36,7 @@ type facet struct {
 func (f *fixture) facets(id string) []facet {
 	f.t.Helper()
 	rows, err := f.pool.Query(f.ctx, `SELECT version_id, coalesce(live_from <= $2, false), deleted, listing, languages, access_level, access_tiers,
- coalesce(access_group_id, ''), restrictions, group_ids, traits, coalesce(owner_group_id, ''), position, attributes, likes, favorites
+ coalesce(access_group_id, ''), access_free_after, restrictions, group_ids, traits, coalesce(owner_group_id, ''), position, attributes, likes, favorites
  FROM `+f.table("content_facets")+` WHERE tenant_id = $1 AND content_id = $3 ORDER BY position, version_id`, tenant, f.now(), id)
 	if err != nil {
 		f.t.Fatal(err)
@@ -44,7 +46,7 @@ func (f *fixture) facets(id string) []facet {
 	for rows.Next() {
 		var x facet
 		var attrs []byte
-		if err := rows.Scan(&x.Version, &x.Live, &x.Deleted, &x.Listing, &x.Languages, &x.Level, &x.Tiers, &x.Group, &x.Restrictions,
+		if err := rows.Scan(&x.Version, &x.Live, &x.Deleted, &x.Listing, &x.Languages, &x.Level, &x.Tiers, &x.Group, &x.FreeAfter, &x.Restrictions,
 			&x.Groups, &x.Traits, &x.Owner, &x.Position, &attrs, &x.Likes, &x.Favorites); err != nil {
 			f.t.Fatal(err)
 		}
@@ -69,7 +71,7 @@ func TestFacetsFollowEveryChangeIntegration(t *testing.T) {
 	in.Attributes = map[string]any{"format": "doujin"}
 	id := f.create("staff", in)
 	vs := f.facets(id)
-	if len(vs) != 2 || vs[0].Live || vs[0].Listing != ListingListed || vs[0].Level != LevelPublic || vs[0].Owner != studio ||
+	if len(vs) != 2 || vs[0].Live || vs[0].Listing != ListingListed || vs[0].Level != access.Public || vs[0].Owner != studio ||
 		!slices.Equal(vs[0].Languages, []string{"en"}) || !slices.Equal(vs[1].Languages, []string{"ja"}) || vs[0].Attributes["format"] != "doujin" {
 		t.Fatalf("a draft's facets %+v", vs)
 	}
@@ -78,30 +80,32 @@ func TestFacetsFollowEveryChangeIntegration(t *testing.T) {
 	if vs := f.facets(id); !vs[0].Live || !vs[1].Live {
 		t.Fatalf("published %+v", vs)
 	}
+	free := f.now().Add(24 * time.Hour)
 	err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Listing: ptr(ListingMembers),
-		Access: &Rule{Level: LevelTier, Tiers: []string{"premium"}}, Restrictions: &[]string{"restricted"}, Attributes: map[string]any{"volume": 2}}}})
+		Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}, FreeAfter: &free}, Restrictions: &[]string{"restricted"}, Attributes: map[string]any{"volume": 2}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	vs = f.facets(id)
-	if vs[0].Listing != ListingMembers || vs[0].Level != LevelTier || !slices.Equal(vs[0].Tiers, []string{"premium"}) ||
+	if vs[0].Listing != ListingMembers || vs[0].Level != access.TierLevel || !slices.Equal(vs[0].Tiers, []string{"premium"}) ||
+		vs[0].FreeAfter == nil || !vs[0].FreeAfter.Equal(free) ||
 		!slices.Equal(vs[1].Restrictions, []string{"restricted"}) || vs[1].Attributes["volume"] != float64(2) || vs[1].Attributes["format"] != nil {
 		t.Fatalf("after the item's edit %+v", vs)
 	}
 	_, err = f.s.PutVersions(f.ctx, f.as("staff"), []VersionPut{{ContentID: id, VersionID: ja, VersionInput: VersionInput{Traits: &[]string{"uncensored"},
-		Access: &Rule{Level: LevelGroup, GroupID: studio}, Attributes: map[string]any{"note": "ja only"}}}})
+		Access: &access.Rule{Level: access.GroupLevel, Group: studio}, Attributes: map[string]any{"note": "ja only"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	vs = f.facets(id)
-	if vs[1].Level != LevelGroup || vs[1].Group != studio || !slices.Equal(vs[1].Traits, []string{"uncensored"}) ||
-		vs[1].Attributes["note"] != "ja only" || vs[1].Attributes["volume"] != float64(2) || vs[0].Level != LevelTier {
+	if vs[1].Level != access.GroupLevel || vs[1].Group != studio || !slices.Equal(vs[1].Traits, []string{"uncensored"}) ||
+		vs[1].Attributes["note"] != "ja only" || vs[1].Attributes["volume"] != float64(2) || vs[0].Level != access.TierLevel {
 		t.Fatalf("after the version's edit %+v", vs)
 	}
 	if _, err := f.s.PutVersions(f.ctx, f.as("staff"), []VersionPut{{ContentID: id, VersionID: ja, VersionInput: VersionInput{ClearAccess: true, State: StateDraft}}}); err != nil {
 		t.Fatal(err)
 	}
-	if vs := f.facets(id); vs[1].Level != LevelTier || vs[1].Live {
+	if vs := f.facets(id); vs[1].Level != access.TierLevel || vs[1].Live {
 		t.Fatalf("a cleared override inherits and a draft version is not live: %+v", vs[1])
 	}
 	if err := f.s.OrderVersions(f.ctx, f.as("staff"), id, []string{ja, en}); err != nil {

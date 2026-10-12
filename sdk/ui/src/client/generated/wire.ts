@@ -18,7 +18,6 @@ export type ModerationState = "approved" | "held" | "rejected";
 export type ContentState = "draft" | "published" | "deleted";
 export type VersionState = "draft" | "published";
 export type Listing = "listed" | "members" | "unlisted";
-export type AccessLevel = "public" | "tier" | "group" | "ppv" | "group_ppv";
 
 export interface AdminComment {
   id: string;
@@ -258,6 +257,8 @@ export interface Decision {
   unknown?: boolean;
   sell?: string[];
   requires?: string;
+  preview?: Preview;
+  free_after?: string;
 }
 
 export interface Edge {
@@ -464,6 +465,12 @@ export interface GroupInput {
   text?: GroupsText[];
 }
 
+export interface GroupJoin {
+  group_id: string;
+  key: string;
+  member: boolean;
+}
+
 export interface GroupPage {
   groups: GroupCard[];
   next_cursor?: string;
@@ -555,6 +562,22 @@ export interface LanguageTotal {
   tiers: Record<string, number>;
 }
 
+export interface LibraryItem {
+  content_id: string;
+  kind: string;
+  title: string;
+  language?: string;
+  deleted: boolean;
+  whole: boolean;
+  version_ids: string[];
+}
+
+export interface LibraryPage {
+  items: LibraryItem[];
+  next_cursor?: string;
+  complete: boolean;
+}
+
 export interface MemberPage {
   members: Membership[];
   next_cursor?: string;
@@ -600,6 +623,25 @@ export interface Name {
   language: string;
   kind: "alias" | "name";
   name: string;
+}
+
+export interface Offer {
+  id: string;
+  target: Target;
+  key: string;
+  terms: Terms;
+  state: "active" | "withdrawn";
+  synced: boolean;
+  product_id?: string;
+  price_id?: string;
+  last_error?: string;
+  revision: number;
+  updated_at: string;
+}
+
+export interface OfferPage {
+  offers: Offer[];
+  next_cursor?: string;
 }
 
 export interface Op {
@@ -765,6 +807,11 @@ export interface PresignReply {
   process_on_upload?: boolean;
 }
 
+export interface Preview {
+  pages?: number;
+  segments?: number;
+}
+
 export interface PublicImage {
   from: string;
   preset: string;
@@ -854,9 +901,11 @@ export interface ReviewOutcome {
 }
 
 export interface Rule {
-  level: AccessLevel;
+  level: "group" | "group_ppv" | "ppv" | "public" | "tier";
   tiers?: string[];
   group_id?: string;
+  preview?: Preview;
+  free_after?: string;
 }
 
 export interface Segment {
@@ -870,6 +919,19 @@ export interface Segment {
 
 export interface SegmentsInput {
   segments: Segment[];
+}
+
+export interface Target {
+  kind: "content" | "group" | "version";
+  id: string;
+  content_id?: string;
+}
+
+export interface Terms {
+  amount: string;
+  currency: string;
+  access_hours?: number;
+  renew_hours?: number;
 }
 
 export interface TicketBody {

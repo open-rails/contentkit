@@ -19,6 +19,7 @@ var moduleTitles = map[httpapi.Module]string{
 	httpapi.Codes:         "Content codes",
 	httpapi.Groups:        "Groups: listings, pages, writes and memberships",
 	httpapi.Notifications: "Notifications",
+	httpapi.Offers:        "Offers, free group joins and the library",
 }
 
 func (m *model) bodyDoc(v any) string {

@@ -59,7 +59,6 @@ var enums = []enum{
 	{"VersionState", []string{catalog.StateDraft, catalog.StatePublished}, []string{"catalog.VersionInput.state"}},
 	{"Listing", []string{catalog.ListingListed, catalog.ListingMembers, catalog.ListingUnlisted},
 		[]string{"catalog.Content.listing", "catalog.ContentInput.listing", "catalog.ContentPatch.listing"}},
-	{"AccessLevel", []string{catalog.LevelPublic, catalog.LevelTier, catalog.LevelGroup, catalog.LevelPPV, catalog.LevelGroupPPV}, []string{"catalog.Rule.level"}},
 }
 
 func errorCodeNames() []string {

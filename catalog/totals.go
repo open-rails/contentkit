@@ -12,8 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/helpers/cache"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/kinds"
 )
 
@@ -180,8 +182,8 @@ func (s *Store) loadTotals(ctx context.Context, keys []totalsKey) (map[totalsKey
 
 // countTotals counts over content_facets: live, not deleted, listed or
 // members-listed versions in the site's scope outside the default-hidden
-// filter groups. A public row opens to anyone and every tier; a tier row to
-// its tiers; group and pay-per-view rows to no audience. Versions collapse to
+// filter groups. Audiences are access.AudiencesSQL's: a free row opens to
+// anyone and every tier, a tier row to its tiers, others to nobody. Versions collapse to
 // their content item, once per language and once per kind.
 func (s *Store) countTotals(ctx context.Context, site kinds.Site, kindNames []string) (map[string]Total, error) {
 	refs := append([]kinds.GroupRef{}, site.RequireGroups...)
@@ -211,16 +213,22 @@ func (s *Store) countTotals(ctx context.Context, site kinds.Site, kindNames []st
 			hidden = append(hidden, id)
 		}
 	}
-	tiers := orEmpty(s.cfg.Tiers)
+	audiences, args, err := access.AudiencesSQL("f", s.accessG.Tiers())
+	if err != nil {
+		return nil, err
+	}
+	named := pgx.NamedArgs{"tenant": s.tenant, "kinds": kindNames, "now": s.now(), "exclude": orEmpty(site.ExcludeRestrictions),
+		"require": require, "hidden": hidden}
+	for k, v := range args {
+		named[k] = v
+	}
 	rows, err := s.pool.Query(ctx, `SELECT a.kind, coalesce(a.language, ''), GROUPING(a.language) = 1, a.audience, count(DISTINCT a.content_id) FROM (
  SELECT DISTINCT f.kind, f.content_id, l.language, au.audience FROM `+s.t.facets+` f
  CROSS JOIN LATERAL unnest(f.languages) AS l(language)
- CROSS JOIN LATERAL unnest(CASE WHEN f.access_level = 'public' THEN ARRAY[''] || $7::text[]
-  WHEN f.access_level = 'tier' THEN ARRAY(SELECT t FROM unnest(f.access_tiers) t WHERE t = ANY($7::text[])) ELSE '{}'::text[] END) AS au(audience)
- WHERE f.tenant_id = $1 AND f.kind = ANY($2) AND NOT f.deleted AND f.live_from <= $3 AND f.listing IN ('listed', 'members')
-  AND NOT (f.restrictions && $4::text[]) AND f.group_ids @> $5::text[] AND NOT (f.group_ids && $6::text[])
-) a GROUP BY GROUPING SETS ((a.kind, a.audience, a.language), (a.kind, a.audience))`,
-		s.tenant, kindNames, s.now(), orEmpty(site.ExcludeRestrictions), require, hidden, tiers)
+ CROSS JOIN LATERAL unnest(`+audiences+`) AS au(audience)
+ WHERE f.tenant_id = @tenant AND f.kind = ANY(@kinds) AND NOT f.deleted AND f.live_from <= @now AND f.listing IN ('listed', 'members')
+  AND NOT (f.restrictions && @exclude::text[]) AND f.group_ids @> @require::text[] AND NOT (f.group_ids && @hidden::text[])
+) a GROUP BY GROUPING SETS ((a.kind, a.audience, a.language), (a.kind, a.audience))`, named)
 	if err != nil {
 		return nil, err
 	}

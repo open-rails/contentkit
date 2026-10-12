@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"maps"
 	"slices"
 	"testing"
 	"time"
@@ -38,19 +39,18 @@ func TestVisibilityIntegration(t *testing.T) {
 	reddish := item("Red", nil, "ja")
 	f.join(red, reddish, "")
 	members := item("Members", func(c *ContentInput) {
-		c.Listing, c.Access = ListingMembers, &Rule{Level: LevelTier, Tiers: []string{"premium"}}
+		c.Listing, c.Access = ListingMembers, &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}
 	}, "en")
 	unlisted := item("Unlisted", func(c *ContentInput) { c.Listing = ListingUnlisted }, "en")
-	premium := item("Premium", func(c *ContentInput) { c.Access = &Rule{Level: LevelTier, Tiers: []string{"premium"}} }, "en")
-	channel := item("Channel", func(c *ContentInput) { c.Access = &Rule{Level: LevelGroup, GroupID: studio} }, "en")
-	ppv := item("Pay per view", func(c *ContentInput) { c.Access = &Rule{Level: LevelPPV} }, "en")
+	premium := item("Premium", func(c *ContentInput) { c.Access = &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}} }, "en")
+	channel := item("Channel", func(c *ContentInput) { c.Access = &access.Rule{Level: access.GroupLevel, Group: studio} }, "en")
+	ppv := item("Pay per view", func(c *ContentInput) { c.Access = &access.Rule{Level: access.PPV} }, "en")
 	draft := f.create("staff", func() ContentInput {
 		in := gallery("Draft", "en")
 		in.OwnerGroupID, in.Creators = studio, &[]Creator{{UserID: "alice"}}
 		return in
 	}())
-	f.ent.Grant("pam", "premium")
-	f.ent.Grant("max", access.Members(contentref.New(tenant, "channel", studio)).String(), access.Own(contentref.New(tenant, "gallery", ppv)).String())
+	f.claim("pam", "premium")
 	if _, err := f.pool.Exec(f.ctx, `INSERT INTO `+f.table("content_filter_prefs")+` (tenant_id, user_id, overrides) VALUES ($1, 'carol', $2)`,
 		tenant, `{"`+gore+`": "show", "`+red+`": "hide"}`); err != nil {
 		t.Fatal(err)
@@ -71,8 +71,8 @@ func TestVisibilityIntegration(t *testing.T) {
 		{"the gay site shows only its group", anon, "gay.test", ViewerOptions{}, []string{gay}},
 		{"a tier holder also lists the members listing it opens", "pam", "main.test", ViewerOptions{},
 			[]string{plain, restricted, gay, reddish, members, premium, channel, ppv}},
-		{"hide mode: only what the viewer opens", anon, "main.test", ViewerOptions{Mode: Hide}, []string{plain, restricted, gay, reddish}},
-		{"hide mode for a member and owner", "max", "main.test", ViewerOptions{Mode: Hide}, []string{plain, restricted, gay, reddish, channel, ppv}},
+		{"hide mode: only what the viewer opens", anon, "main.test", ViewerOptions{Mode: access.Hide}, []string{plain, restricted, gay, reddish}},
+		{"hide mode for a tier holder", "pam", "main.test", ViewerOptions{Mode: access.Hide}, []string{plain, restricted, gay, reddish, members, premium}},
 		{"a viewer's overrides: show gore, hide red", "carol", "main.test", ViewerOptions{},
 			[]string{plain, restricted, gay, gory, premium, channel, ppv}},
 		{"a language lists only items with a live version serving it", anon, "main.test", ViewerOptions{Language: "ja"}, []string{plain, reddish}},
@@ -98,18 +98,21 @@ func TestVisibilityIntegration(t *testing.T) {
 	if got[0] == nil || got[1] == nil || got[2] == nil || got[6] != nil {
 		t.Fatalf("anonymous direct reads %v", ids(got))
 	}
-	if d := got[3].Versions[0].Decision; d.Allowed || !slices.Equal(d.Sell, []string{"premium"}) {
+	// Sell: the rule's own keys (tiers, group), then the version's and the content's.
+	vkey := func(c *Content) string { return tenant + ":content:" + c.ID + "/" + c.Versions[0].ID }
+	ckey := func(c *Content) string { return tenant + ":content:" + c.ID }
+	if d := got[3].Versions[0].Decision; d.Allowed || !slices.Equal(d.Sell, []string{"premium", vkey(got[3]), ckey(got[3])}) {
 		t.Fatalf("anonymous on premium %+v", d)
 	}
-	if d := got[4].Versions[0].Decision; d.Allowed || len(d.Sell) != 1 {
+	if d := got[4].Versions[0].Decision; d.Allowed || !slices.Equal(d.Sell, []string{tenant + ":group:" + studio, vkey(got[4]), ckey(got[4])}) {
 		t.Fatalf("anonymous on a channel's item %+v", d)
 	}
-	if d := got[5].Versions[0].Decision; d.Allowed || len(d.Sell) != 1 {
+	if d := got[5].Versions[0].Decision; d.Allowed || !slices.Equal(d.Sell, []string{vkey(got[5]), ckey(got[5])}) {
 		t.Fatalf("anonymous on pay per view %+v", d)
 	}
-	got = f.read("max", "main.test", channel, ppv, premium)
-	if !got[0].Versions[0].Decision.Allowed || !got[1].Versions[0].Decision.Allowed || got[2].Versions[0].Decision.Allowed {
-		t.Fatalf("the member and owner's decisions %+v %+v %+v", got[0].Versions[0].Decision, got[1].Versions[0].Decision, got[2].Versions[0].Decision)
+	got = f.read("pam", "main.test", channel, ppv, premium)
+	if got[0].Versions[0].Decision.Allowed || got[1].Versions[0].Decision.Allowed || !got[2].Versions[0].Decision.Allowed {
+		t.Fatalf("the tier holder's decisions %+v %+v %+v", got[0].Versions[0].Decision, got[1].Versions[0].Decision, got[2].Versions[0].Decision)
 	}
 	if got := f.read(anon, "moe.test", restricted)[0]; got != nil {
 		t.Fatal("a restricted item reads on the restricted site")
@@ -141,13 +144,13 @@ func TestVisibilityIntegration(t *testing.T) {
 func TestResolverIntegration(t *testing.T) {
 	f := newFixture(t, nil)
 	in := gallery("Resolved", "en", "ja")
-	in.Access = &Rule{Level: LevelTier, Tiers: []string{"premium"}}
+	in.Access = &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}
 	in.Creators = &[]Creator{{UserID: "alice"}}
 	id := f.create("staff", in)
 	f.publish("staff", id, nil)
 	vs := f.read("staff", "main.test", id)[0].Versions
 	draft := f.create("staff", gallery("Draft", "en"))
-	f.ent.Grant("pam", "premium")
+	f.claim("pam", "premium")
 	ref := contentref.New(tenant, "gallery", id)
 	refs := []contentref.ContentRef{ref, ref.WithVersion(vs[1].ID), ref.WithVersion("missing"), contentref.New(tenant, "gallery", draft),
 		contentref.New(tenant, "blog", id), contentref.New("other", "gallery", id)}
@@ -156,14 +159,11 @@ func TestResolverIntegration(t *testing.T) {
 		want  map[contentref.ContentKey]access.Resolution
 	}{
 		{anon, map[contentref.ContentKey]access.Resolution{ref.Key(): {Ref: ref, Visible: true, Owner: "alice"},
-			ref.WithVersion(vs[1].ID).Key():  {Ref: ref.WithVersion(vs[1].ID), Visible: true, Owner: "alice"},
-			ref.WithVersion("missing").Key(): {Ref: ref.WithVersion("missing"), Owner: "alice"}}},
+			ref.WithVersion(vs[1].ID).Key(): {Ref: ref.WithVersion(vs[1].ID), Visible: true, Owner: "alice"}}},
 		{"pam", map[contentref.ContentKey]access.Resolution{ref.Key(): {Ref: ref, Visible: true, Accessible: true, Owner: "alice"},
-			ref.WithVersion(vs[1].ID).Key():  {Ref: ref.WithVersion(vs[1].ID), Visible: true, Accessible: true, Owner: "alice"},
-			ref.WithVersion("missing").Key(): {Ref: ref.WithVersion("missing"), Owner: "alice"}}},
+			ref.WithVersion(vs[1].ID).Key(): {Ref: ref.WithVersion(vs[1].ID), Visible: true, Accessible: true, Owner: "alice"}}},
 		{"staff", map[contentref.ContentKey]access.Resolution{ref.Key(): {Ref: ref, Visible: true, Accessible: true, Editor: true, Owner: "alice"},
 			ref.WithVersion(vs[1].ID).Key():                {Ref: ref.WithVersion(vs[1].ID), Visible: true, Accessible: true, Editor: true, Owner: "alice"},
-			ref.WithVersion("missing").Key():               {Ref: ref.WithVersion("missing"), Editor: true, Owner: "alice"},
 			contentref.New(tenant, "gallery", draft).Key(): {Ref: contentref.New(tenant, "gallery", draft), Visible: true, Accessible: true, Editor: true, Owner: "staff"}}},
 	} {
 		got, err := f.s.Resolver().Resolve(access.WithMemo(f.ctx), refs, f.as(c.actor))
@@ -179,6 +179,38 @@ func TestResolverIntegration(t *testing.T) {
 				t.Errorf("%q %v: %+v, want %+v", c.actor, k, got[k], want)
 			}
 		}
+	}
+
+	// See and Open answer media for content and versions: a locked
+	// version's preview segments are free.
+	preview := &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}, Preview: &access.Preview{Segments: 1}}
+	if err := f.s.Update(f.ctx, f.as("staff"), []Update{{ID: id, ContentPatch: ContentPatch{Access: preview}}}); err != nil {
+		t.Fatal(err)
+	}
+	version := Target{Content: id, Version: vs[0].ID}
+	targets := []Target{{Content: id}, version, {Content: draft}}
+	for _, c := range []struct {
+		actor  string
+		sights map[Target]Sight
+		open   Opening
+	}{
+		{anon, map[Target]Sight{{Content: id}: {Visible: true, Live: true}, version: {Visible: true, Live: true}}, Opening{Free: 1}},
+		{"pam", map[Target]Sight{{Content: id}: {Visible: true, Live: true}, version: {Visible: true, Live: true}}, Opening{Opens: true}},
+		{"staff", map[Target]Sight{{Content: id}: {Visible: true, Live: true, Editor: true}, version: {Visible: true, Live: true, Editor: true},
+			{Content: draft}: {Visible: true, Editor: true}}, Opening{Opens: true}},
+	} {
+		ctx := access.WithMemo(f.ctx)
+		sights, err := f.s.See(ctx, f.as(c.actor), targets)
+		if err != nil || !maps.Equal(sights, c.sights) {
+			t.Errorf("%q sees %+v %v", c.actor, sights, err)
+		}
+		opens, err := f.s.Open(ctx, f.as(c.actor), []Target{version})
+		if err != nil || len(opens) != 1 || opens[version] != c.open {
+			t.Errorf("%q opens %+v %v", c.actor, opens, err)
+		}
+	}
+	if tiers, err := f.s.Tiers(f.ctx, f.as("pam")); err != nil || !slices.Equal(tiers, []string{"premium"}) {
+		t.Fatalf("pam's tiers %v %v", tiers, err)
 	}
 }
 

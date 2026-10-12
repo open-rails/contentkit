@@ -16,7 +16,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/access/accesstest"
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/pgtest"
@@ -34,6 +33,7 @@ func config() kinds.Config {
 	return kinds.Config{
 		Languages:    []string{"en", "ja"},
 		Tiers:        []string{"premium"},
+		TokenClaims:  []string{"premium"},
 		Restrictions: []string{"restricted"},
 		Sites: []kinds.Site{
 			{Name: "main", Hosts: []string{"main.test"}},
@@ -55,12 +55,19 @@ func config() kinds.Config {
 	}
 }
 
-// roles is the test auth: root permissions per actor ("*" holds all), and
-// the editors of each group scope.
+// roles is the test auth: root permissions per actor ("*" holds all), the
+// editors of each group scope, and the tier claims of each actor's token.
 type roles struct {
 	mu     sync.Mutex
 	root   map[string][]string
 	groups map[string]map[string]bool
+	claims map[string][]string
+}
+
+func (r *roles) Claims(subject string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.claims[subject]
 }
 
 func (r *roles) Can(_ context.Context, a access.Actor, perm string) (bool, error) {
@@ -82,34 +89,31 @@ type fixture struct {
 	schema string
 	s      *Store
 	groups *groups.Store
-	ent    *accesstest.Entitlements
 	roles  *roles
 	mu     sync.Mutex
 	clock  time.Time
 }
 
-// newFixture is a catalog over a fresh schema with the real access Gate over
-// in-memory entitlements, effective groups read from memberships, and a
-// clock the test moves.
+// newFixture is a catalog over a fresh schema with the real access Gate
+// without billing (tiers come from token claims; held keys are
+// adapters/openrails' tests), the real groups store, and a clock the test
+// moves.
 func newFixture(t *testing.T, mutate func(*Options)) *fixture {
 	t.Helper()
 	ctx := t.Context()
 	pool := pgtest.Pool(t, nil)
-	f := &fixture{t: t, ctx: ctx, pool: pool, schema: pgtest.Schema(t, ctx, pool), ent: &accesstest.Entitlements{},
-		roles: &roles{root: map[string][]string{"staff": {"*"}, "viewer": {string(access.ContentViewRestricted)}}, groups: map[string]map[string]bool{}},
+	f := &fixture{t: t, ctx: ctx, pool: pool, schema: pgtest.Schema(t, ctx, pool),
+		roles: &roles{root: map[string][]string{"staff": {"*"}, "viewer": {string(access.ContentViewRestricted)}}, groups: map[string]map[string]bool{},
+			claims: map[string][]string{}},
 		clock: time.Now().UTC().Truncate(time.Second)}
-	gate, err := access.NewGate(access.GateConfig{Entitlements: f.ent, Tenant: tenant, Tiers: []string{"premium"},
-		OwnedKinds: []string{"blog", "gallery"}, MemberKinds: []string{"channel"}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	var err error
 	if f.groups, err = groups.New(groups.Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: config(),
 		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
 			return f.s.ContentChanged(ctx, q, ids)
 		}}); err != nil {
 		t.Fatal(err)
 	}
-	opts := Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: config(), Auth: testauth.Auth{Authz: f.roles}, Gate: gate,
+	opts := Options{Pool: pool, Schema: f.schema, Tenant: tenant, Kinds: config(), Auth: testauth.Auth{Authz: f.roles},
 		Groups: f.groups, Now: f.now}
 	if mutate != nil {
 		mutate(&opts)
@@ -158,6 +162,13 @@ func (f *fixture) join(groupID, contentID, versionID string) {
 	if err := f.groups.AddMemberships(f.ctx, []groups.Membership{{GroupID: groups.GroupID(groupID), ContentID: contentID, VersionID: versionID}}); err != nil {
 		f.t.Fatal(err)
 	}
+}
+
+// claim gives actorID's token the tier claims.
+func (f *fixture) claim(actorID string, tiers ...string) {
+	f.roles.mu.Lock()
+	defer f.roles.mu.Unlock()
+	f.roles.claims[actorID] = tiers
 }
 
 // editor makes actorID an editor of the channel's scope.

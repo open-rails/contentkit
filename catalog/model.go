@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/open-rails/contentkit/access"
 )
 
 // Errors; match with errors.Is.
@@ -16,7 +18,7 @@ var (
 	ErrConflict  = errors.New("catalog: conflict")
 )
 
-// Content states, listings and access levels.
+// Content states and listings.
 const (
 	StateDraft     = "draft"
 	StatePublished = "published"
@@ -25,22 +27,7 @@ const (
 	ListingListed   = "listed"
 	ListingMembers  = "members"
 	ListingUnlisted = "unlisted"
-
-	LevelPublic   = "public"
-	LevelTier     = "tier"
-	LevelGroup    = "group"
-	LevelPPV      = "ppv"
-	LevelGroupPPV = "group_ppv"
 )
-
-// Rule is a content or version access rule: public, tier (any of Tiers),
-// group (members of GroupID), ppv (owners) or group_ppv (owners; buying
-// needs membership of GroupID).
-type Rule struct {
-	Level   string   `json:"level"`
-	Tiers   []string `json:"tiers,omitempty"`
-	GroupID string   `json:"group_id,omitempty"`
-}
 
 // Text is a content item's text in one language. Body is rich text whose
 // inline images are "contentkit:i-{uuid}" references (ImageRef).
@@ -93,6 +80,9 @@ type Decision struct {
 	// Sell is the keys a paywall offers; Requires the key a buyer holds first.
 	Sell     []string `json:"sell,omitempty"`
 	Requires string   `json:"requires,omitempty"`
+	// Preview is what a locked viewer still reads; FreeAfter when it opens to all.
+	Preview   *access.Preview `json:"preview,omitempty"`
+	FreeAfter *time.Time      `json:"free_after,omitempty"`
 }
 
 // Version is what a viewer opens.
@@ -112,7 +102,7 @@ type Version struct {
 	// Live: published, past PublishAt, its content live.
 	Live bool `json:"live"`
 	// Access is the version's own rule; nil inherits the content's.
-	Access     *Rule          `json:"access,omitempty"`
+	Access     *access.Rule   `json:"access,omitempty"`
 	Attributes map[string]any `json:"attributes"`
 	Pages      *int           `json:"pages,omitempty"`
 	DurationMS *int64         `json:"duration_ms,omitempty"`
@@ -158,7 +148,7 @@ type Content struct {
 	PublishAt    *time.Time        `json:"publish_at,omitempty"`
 	PublishedAt  *time.Time        `json:"published_at,omitempty"`
 	Live         bool              `json:"live"`
-	Access       Rule              `json:"access"`
+	Access       access.Rule       `json:"access"`
 	Restrictions []string          `json:"restrictions"`
 	Attributes   map[string]any    `json:"attributes"`
 	OwnerGroupID string            `json:"owner_group_id,omitempty"`

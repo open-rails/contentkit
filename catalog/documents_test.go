@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"github.com/open-rails/contentkit/access"
 	"slices"
 	"testing"
 
@@ -20,9 +21,9 @@ func TestSearchDocumentsIntegration(t *testing.T) {
 	f.join(tag, live, "")
 	draft := f.create("staff", gallery("Blue Draft", "en"))
 	premium := f.create("staff", ContentInput{Kind: "gallery", Text: map[string]Text{"en": {Title: "Blue Premium"}}, Listing: ListingMembers,
-		Access: &Rule{Level: LevelTier, Tiers: []string{"premium"}}, Versions: []VersionInput{{Languages: []string{"en"}}}})
+		Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}, Versions: []VersionInput{{Languages: []string{"en"}}}})
 	f.publish("staff", premium, nil)
-	f.ent.Grant("pam", "premium")
+	f.claim("pam", "premium")
 	opts := worker.Options{Pool: f.pool, Schema: f.schema, Tenant: tenant, SupportedLanguages: f.s.Kinds().Languages, Sources: []worker.Source{f.s}}
 	sync := func() {
 		t.Helper()

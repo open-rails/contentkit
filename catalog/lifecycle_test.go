@@ -95,10 +95,9 @@ func TestLifecycleIntegration(t *testing.T) {
 	if got := f.read(anon, "main.test", id)[0]; got != nil {
 		t.Fatal("anonymous reads a deleted item")
 	}
-	f.ent.Grant("bob", access.Own(contentref.New(tenant, "gallery", id)).String())
-	held := f.read("bob", "main.test", id)[0]
-	if held == nil || held.State != StateDeleted || held.Live || len(held.Versions) != 3 || !held.Versions[0].Decision.Allowed {
-		t.Fatalf("the key holder's deleted item: %+v", held)
+	// Key holders read it too: adapters/openrails TestCatalogOverOpenRails.
+	if got := f.read("staff", "main.test", id)[0]; got == nil || got.State != StateDeleted || got.Live || len(got.Versions) != 3 {
+		t.Fatalf("staff read the deleted item: %+v", got)
 	}
 	if err := f.s.Delete(f.ctx, f.as("staff"), []string{id}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("deleting twice: %v", err)
@@ -204,11 +203,11 @@ func TestValidationIntegration(t *testing.T) {
 	tag := f.group("tag", "red")
 	ok := gallery("Valid", "en")
 	ok.Attributes = map[string]any{"format": "manga", "volume": float64(3), "complete": true, "released": "2026-01-02T03:04:05Z", "note": "n"}
-	ok.Access = &Rule{Level: LevelGroup, GroupID: channel}
+	ok.Access = &access.Rule{Level: access.GroupLevel, Group: channel}
 	ok.Restrictions = []string{"restricted"}
 	id := f.create("staff", ok)
 	got := f.read("staff", "main.test", id)[0]
-	if got.Attributes["volume"] != float64(3) || got.Attributes["format"] != "manga" || got.Access.GroupID != channel || got.Restrictions[0] != "restricted" {
+	if got.Attributes["volume"] != float64(3) || got.Attributes["format"] != "manga" || got.Access.Group != channel || got.Restrictions[0] != "restricted" {
 		t.Fatalf("stored %+v", got)
 	}
 	for name, in := range map[string]ContentInput{
@@ -225,9 +224,9 @@ func TestValidationIntegration(t *testing.T) {
 		"time":                {Kind: "gallery", Attributes: map[string]any{"released": "yesterday"}, Versions: []VersionInput{{Languages: []string{"en"}}}},
 		"restriction":         {Kind: "gallery", Restrictions: []string{"nsfw"}, Versions: []VersionInput{{Languages: []string{"en"}}}},
 		"listing":             {Kind: "gallery", Listing: "secret", Versions: []VersionInput{{Languages: []string{"en"}}}},
-		"tier":                {Kind: "gallery", Access: &Rule{Level: LevelTier, Tiers: []string{"gold"}}, Versions: []VersionInput{{Languages: []string{"en"}}}},
-		"group not sellable":  {Kind: "gallery", Access: &Rule{Level: LevelGroup, GroupID: tag}, Versions: []VersionInput{{Languages: []string{"en"}}}},
-		"missing group":       {Kind: "gallery", Access: &Rule{Level: LevelGroupPPV, GroupID: contentref.NewID()}, Versions: []VersionInput{{Languages: []string{"en"}}}},
+		"tier":                {Kind: "gallery", Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}}, Versions: []VersionInput{{Languages: []string{"en"}}}},
+		"group not sellable":  {Kind: "gallery", Access: &access.Rule{Level: access.GroupLevel, Group: tag}, Versions: []VersionInput{{Languages: []string{"en"}}}},
+		"missing group":       {Kind: "gallery", Access: &access.Rule{Level: access.GroupPPV, Group: contentref.NewID()}, Versions: []VersionInput{{Languages: []string{"en"}}}},
 		"hidden with version": {Kind: "blog", Versions: []VersionInput{{Languages: []string{"en"}}}},
 	} {
 		if _, err := f.s.Create(f.ctx, f.as("staff"), []ContentInput{in}); !errors.Is(err, ErrInvalid) {

@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"encoding/json"
+	"github.com/open-rails/contentkit/access"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -18,7 +19,7 @@ import (
 func TestTotalsIntegration(t *testing.T) {
 	f := newFixture(t, nil)
 	yaoi, gore, studio := f.group("tag", "yaoi"), f.group("tag", "gore"), f.group("channel", "studio")
-	premium := &Rule{Level: LevelTier, Tiers: []string{"premium"}}
+	premium := &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}
 	item := func(in ContentInput, publish bool) string {
 		id := f.create("staff", in)
 		if publish {
@@ -41,8 +42,8 @@ func TestTotalsIntegration(t *testing.T) {
 	item(with(gallery("Premium", "en"), func(c *ContentInput) { c.Access = premium }), true)
 	item(with(gallery("Members", "ja"), func(c *ContentInput) { c.Access, c.Listing = premium, ListingMembers }), true)
 	item(with(gallery("Unlisted", "en"), func(c *ContentInput) { c.Listing = ListingUnlisted }), true)
-	item(with(gallery("Channel", "en"), func(c *ContentInput) { c.Access = &Rule{Level: LevelGroup, GroupID: studio} }), true)
-	item(with(gallery("Pay per view", "en"), func(c *ContentInput) { c.Access = &Rule{Level: LevelPPV} }), true)
+	item(with(gallery("Channel", "en"), func(c *ContentInput) { c.Access = &access.Rule{Level: access.GroupLevel, Group: studio} }), true)
+	item(with(gallery("Pay per view", "en"), func(c *ContentInput) { c.Access = &access.Rule{Level: access.PPV} }), true)
 	gory := item(gallery("Gory", "en"), true)
 	f.join(gore, gory, "")
 	deleted := item(gallery("Deleted", "en"), true)

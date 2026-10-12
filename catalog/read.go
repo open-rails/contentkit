@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contenturl"
 )
 
@@ -212,7 +213,7 @@ func (s *Store) pickLanguage(want string, texts map[string]Text) string {
 type itemRow struct {
 	kind, state, listing, ownerGroup  string
 	moderation, moderationReason      string
-	access                            Rule
+	access                            access.Rule
 	restrictions                      []string
 	attributes                        map[string]any
 	cover                             *Cover

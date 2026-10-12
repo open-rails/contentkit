@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/contentkit/kinds"
 )
@@ -83,41 +84,23 @@ func (s *Store) checkListing(l string) error {
 	return invalid("listing %q must be listed, members or unlisted", l)
 }
 
-// checkRule validates r's shape; its group is checked against storage on
-// write (checkRuleGroups).
-func (s *Store) checkRule(r Rule) (Rule, error) {
-	switch r.Level {
-	case LevelPublic, LevelPPV:
-		if len(r.Tiers) > 0 || r.GroupID != "" {
-			return r, invalid("access %s takes no tiers or group", r.Level)
-		}
-	case LevelTier:
-		if len(r.Tiers) == 0 || r.GroupID != "" {
-			return r, invalid("access tier names one or more tiers and no group")
-		}
-		for _, t := range r.Tiers {
-			if !slices.Contains(s.cfg.Tiers, t) {
-				return r, invalid("tier %q is not one of %v", t, s.cfg.Tiers)
-			}
-		}
-		r.Tiers = slices.Compact(slices.Sorted(slices.Values(r.Tiers)))
-	case LevelGroup, LevelGroupPPV:
-		if r.GroupID == "" || len(r.Tiers) > 0 {
-			return r, invalid("access %s names a group and no tiers", r.Level)
-		}
-	default:
-		return r, invalid("access level %q must be public, tier, group, ppv or group_ppv", r.Level)
+// checkRule validates r against the config (access.Rule.Validate) and sorts
+// its tiers; its group is checked against storage on write (checkRuleGroups).
+func (s *Store) checkRule(r access.Rule) (access.Rule, error) {
+	if err := r.Validate(s.cfg); err != nil {
+		return r, fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
+	r.Tiers = slices.Sorted(slices.Values(r.Tiers))
 	return r, nil
 }
 
 // checkRuleGroups refuses a rule naming a group that is not an active group of
 // a sellable kind.
-func (s *Store) checkRuleGroups(ctx context.Context, q Querier, rules ...*Rule) error {
+func (s *Store) checkRuleGroups(ctx context.Context, q Querier, rules ...*access.Rule) error {
 	var ids []string
 	for _, r := range rules {
-		if r != nil && r.GroupID != "" && !slices.Contains(ids, r.GroupID) {
-			ids = append(ids, r.GroupID)
+		if r != nil && r.Group != "" && !slices.Contains(ids, r.Group) {
+			ids = append(ids, r.Group)
 		}
 	}
 	if len(ids) == 0 {
