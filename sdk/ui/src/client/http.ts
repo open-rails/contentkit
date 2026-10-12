@@ -1,6 +1,6 @@
 import { ContentKitError, aborted, readContentKitError } from "./errors.js";
 import type { ContentChange } from "./content/types.js";
-import type { FileInfo, RefBody } from "./generated/wire.js";
+import type { FileInfo, Item, RefBody } from "./generated/wire.js";
 
 /** A module's base URL, or one per item (a host that splits uploads by kind). */
 export type Mount = string | ((ref: RefBody) => string);
@@ -32,7 +32,8 @@ export type ContentKitChange =
   | { type: "media.committed"; ref: RefBody; files: FileInfo[] }
   /** An upload finished processing, as an editor read returns it. */
   | { type: "media.processed"; ref: RefBody; file: FileInfo }
-  | { type: "notifications.read"; id: string; read: boolean }
+  | { type: "notifications.changed" }
+  | { type: "notifications.updated"; item: Item }
   | ContentChange;
 
 export type TokenSource = () => string | null | undefined | Promise<string | null | undefined>;

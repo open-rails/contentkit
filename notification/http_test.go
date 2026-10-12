@@ -70,17 +70,75 @@ func TestHandlerUsesAuthenticatedUserAndTenant(t *testing.T) {
 	if w := request("PUT", "/"+foreign.ID+"/read", "user:alice"); w.Code != http.StatusNotFound {
 		t.Fatalf("foreign read = %d", w.Code)
 	}
-	if w := request("PUT", "/"+own.ID+"/read", "user:alice"); w.Code != http.StatusNoContent {
+	if w := request("PUT", "/"+own.ID+"/read", "user:alice"); w.Code != http.StatusOK {
 		t.Fatalf("own read = %d %s", w.Code, w.Body)
 	}
 	w = request("GET", "/inbox?unread=true", "user:alice")
 	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil || len(p.Items) != 0 {
 		t.Fatalf("unread filter %+v %v", p, err)
 	}
-	if w := request("DELETE", "/"+own.ID+"/read", "user:alice"); w.Code != http.StatusNoContent {
+	if w := request("DELETE", "/"+own.ID+"/read", "user:alice"); w.Code != http.StatusOK {
 		t.Fatalf("unread = %d", w.Code)
 	}
 	if w := request("POST", "/inbox", "user:alice"); w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("user ingest = %d", w.Code)
+	}
+}
+
+func TestHandlerArchivesReceiptWithoutResolvingWork(t *testing.T) {
+	ctx := context.Background()
+	pool := pgtest.Pool(t, nil)
+	schema := pgtest.Schema(t, ctx, pool)
+	store, err := notification.New(notification.Options{Pool: pool, Schema: schema, Tenant: "site"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := notify.Recipient{Audience: notify.AudienceUser, ID: "alice"}
+	task, err := store.Publish(ctx, notify.Input{Recipient: target, Origin: notify.Origin{System: "app", Scope: "site", ID: "review"}, Kind: "app.review", Status: notify.StatusOpen, CreatedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := store.Handler(testauth.Auth{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(method, path, user string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, nil)
+		r.Header.Set("Authorization", "Bearer user:"+user)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	if w := request("PUT", "/"+task.ID+"/dismiss", "bob"); w.Code != http.StatusNotFound {
+		t.Fatalf("foreign archive = %d", w.Code)
+	}
+	var archived notify.Item
+	w := request("PUT", "/"+task.ID+"/dismiss", "alice")
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &archived) != nil || archived.DismissedAt == nil || archived.ReadAt != nil || archived.Status != notify.StatusOpen || archived.Revision != task.Revision+1 {
+		t.Fatalf("archive = %d %s", w.Code, w.Body)
+	}
+	var page notify.Page
+	w = request("GET", "/inbox", "alice")
+	if json.Unmarshal(w.Body.Bytes(), &page) != nil || len(page.Items) != 0 {
+		t.Fatalf("active inbox %s", w.Body)
+	}
+	w = request("GET", "/inbox?dismissed=true", "alice")
+	if json.Unmarshal(w.Body.Bytes(), &page) != nil || len(page.Items) != 1 || page.Items[0].ID != task.ID {
+		t.Fatalf("archived inbox %s", w.Body)
+	}
+	var restored notify.Item
+	w = request("DELETE", "/"+task.ID+"/dismiss", "alice")
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &restored) != nil || restored.DismissedAt != nil || restored.Status != notify.StatusOpen {
+		t.Fatalf("restore = %d %s", w.Code, w.Body)
+	}
+	var read notify.Item
+	w = request("PUT", "/"+task.ID+"/read", "alice")
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &read) != nil || read.ReadAt == nil || read.Revision != restored.Revision+1 || read.Status != notify.StatusOpen {
+		t.Fatalf("read = %d %s", w.Code, w.Body)
+	}
+	var again notify.Item
+	w = request("PUT", "/"+task.ID+"/read", "alice")
+	if json.Unmarshal(w.Body.Bytes(), &again) != nil || again.Revision != read.Revision || !again.ReadAt.Equal(*read.ReadAt) {
+		t.Fatalf("read retry changed receipt %s", w.Body)
 	}
 }

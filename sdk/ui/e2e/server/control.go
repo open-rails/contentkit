@@ -11,6 +11,10 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/open-rails/helpers/notify"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
@@ -35,6 +39,7 @@ func (h *harness) routes(static string) http.Handler {
 
 	mux.HandleFunc("GET /__test/config", h.config)
 	mux.HandleFunc("POST /__test/users", h.createUser)
+	mux.HandleFunc("POST /__test/notifications", h.createNotification)
 	mux.HandleFunc("POST /__test/items", h.createItem)
 	mux.HandleFunc("PATCH /__test/items/{kind}/{id}", h.updateItem)
 	mux.HandleFunc("GET /__test/object", h.object)
@@ -256,4 +261,25 @@ func (h *harness) fileKey(ctx context.Context, it media.Item, p string) (string,
 		}
 	}
 	return "", fmt.Errorf("no file %q", p)
+}
+
+// createNotification is host-only fixture publication, not a product API.
+func (h *harness) createNotification(w http.ResponseWriter, r *http.Request) {
+	var in notify.Input
+	if err := decode(r, &in); err != nil {
+		fail(w, http.StatusBadRequest, err)
+		return
+	}
+	if in.CreatedAt.IsZero() {
+		in.CreatedAt = time.Now().UTC()
+	}
+	if in.Origin.System == "" {
+		in.Origin = notify.Origin{System: "fixture-host", Scope: tenant, ID: uuid.NewString()}
+	}
+	item, err := h.rt.Notifications.Publish(r.Context(), in)
+	if err != nil {
+		fail(w, http.StatusBadRequest, err)
+		return
+	}
+	reply(w, http.StatusCreated, item)
 }

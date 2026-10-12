@@ -1,6 +1,6 @@
 import type { ContentKitClient } from "../client/client.js";
 import { toContentKitError, type ContentKitError } from "../client/errors.js";
-import type { Comment, Poll, Post, RefBody } from "../client/generated/wire.js";
+import type { Comment, Item, Poll, Post, RefBody } from "../client/generated/wire.js";
 import type { ContentKitChange } from "../client/http.js";
 
 /** One shared read: its data, whether a fetch is in flight, and its last failure. */
@@ -193,6 +193,12 @@ export class ResourceStore {
       );
     const comments = ["comments", "replies", "latest", "admin-comments"];
     switch (c.type) {
+      case "notifications.updated":
+        this.updateNotification(c.item, scope);
+        break;
+      case "notifications.changed":
+        this.invalidate((t) => t.type === "notifications");
+        break;
       case "comment.created": {
         const parent = c.comment.reply_to_id;
         const published = !c.comment.moderation;
@@ -279,6 +285,26 @@ export class ResourceStore {
         if (c.kind === "comment") this.invalidate((t) => comments.includes(t.type));
         else this.invalidate((t) => (t.type === "post" && t.id === c.id) || t.type === "posts");
         break;
+    }
+  }
+
+  // Preserve loaded pages and canonical receipt revisions. Reads that started
+  // before a successful mutation cannot overwrite it when they finish later.
+  private updateNotification(item: Item, scope: string | null): void {
+    for (const [key, slot] of this.slots) {
+      if (slot.tag.type !== "notifications" || !slot.listeners.size) continue;
+      const page = slot.entry.data as Page<Item> | undefined;
+      const archived = slot.tag.scope?.startsWith("archived:") ?? false;
+      const matches = archived === !!item.dismissed_at;
+      if ((slot.tag.readScope ?? "{}") !== scope || !page || slot.tag.scope?.endsWith(":unread") || (matches && !page.items.some((n) => n.id === item.id))) {
+        this.load(key, true);
+        continue;
+      }
+      if (!matches && !page.items.some((n) => n.id === item.id)) continue;
+      slot.ctl?.abort();
+      slot.moreCtl?.abort();
+      slot.ctl = slot.moreCtl = undefined;
+      this.update(slot, { loading: false, loadingMore: false, data: { ...page, items: page.items.flatMap((n) => n.id === item.id ? matches ? [item] : [] : [n]) } });
     }
   }
 

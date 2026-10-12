@@ -69,3 +69,5 @@ export {
   type ContentKitUiTranslate,
 } from "./i18n/messages.js";
 export { useMessages } from "./i18n/context.js";
+
+export { NotificationInbox, NotificationBell, type NotificationInboxProps, type NotificationBellProps } from "./components/notifications.js";

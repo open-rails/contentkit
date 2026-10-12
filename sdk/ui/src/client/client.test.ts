@@ -64,24 +64,27 @@ it("xhrSetup opens the request and adds the bearer only on the API origin", asyn
 });
 
 
-it("reads the authenticated inbox and changes only local read state", async () => {
+it("reads the authenticated inbox and returns canonical local receipts", async () => {
   const calls: { url: string; method: string | undefined }[] = [];
   const client = createContentKitClient({
     baseUrl: "http://api.test/ck",
     fetch: (async (url: string, init: RequestInit) => {
       calls.push({ url, method: init.method });
-      return init.method === "GET" ? new Response(JSON.stringify({ items: [], next_cursor: "next" })) : new Response(null, { status: 204 });
+      return Response.json(init.method === "GET" ? { items: [], next_cursor: "next" } : { id: "item/1", read_at: init.method === "PUT" ? "2026-10-11T12:00:00Z" : null, revision: 2 });
     }) as typeof fetch,
   });
   const changes: ContentKitChange[] = [];
   client.subscribe((c) => changes.push(c));
   expect(await client.notifications.list({ limit: 10, cursor: "opaque", unread: true })).toEqual({ items: [], next_cursor: "next" });
-  await client.notifications.setRead("item/1");
+  expect((await client.notifications.setRead("item/1")).revision).toBe(2);
   await client.notifications.setRead("item/1", false);
   expect(calls).toEqual([
     { url: "http://api.test/ck/notifications/inbox?limit=10&cursor=opaque&unread=true", method: "GET" },
     { url: "http://api.test/ck/notifications/item%2F1/read", method: "PUT" },
     { url: "http://api.test/ck/notifications/item%2F1/read", method: "DELETE" },
   ]);
-  expect(changes).toEqual([{ type: "notifications.read", id: "item/1", read: true }, { type: "notifications.read", id: "item/1", read: false }]);
+  expect(changes).toEqual([
+    { type: "notifications.updated", item: { id: "item/1", read_at: "2026-10-11T12:00:00Z", revision: 2 } },
+    { type: "notifications.updated", item: { id: "item/1", read_at: null, revision: 2 } },
+  ]);
 });

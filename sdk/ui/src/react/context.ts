@@ -44,7 +44,10 @@ export type SocialOperation =
   | "moderation.resolve"
   | "taxonomy.load"
   | "taxonomy.save"
-  | "media.save";
+  | "media.save"
+  | "notifications.load"
+  | "notifications.read"
+  | "notifications.dismiss";
 
 /** The failure's context: the operation and, for one file, its name. */
 export interface ContentKitErrorInfo {

@@ -1,6 +1,30 @@
 import type { social as en } from "./en.js";
 
 export const social: typeof en = {
+  notifications: {
+    "archived": "Archiviert",
+    "dismiss": "Archivieren",
+    "restore": "In den Posteingang verschieben",
+    "dismissed": "Verworfen",
+      "title": "Benachrichtigungen",
+      "filter": "Benachrichtigungsfilter",
+      "all": "Alle",
+      "unread": "Ungelesen",
+      "refresh": "Benachrichtigungen aktualisieren",
+      "signInHint": "Melde dich an, um deine Benachrichtigungen zu sehen.",
+      "signIn": "Anmelden",
+      "loadFailed": "Benachrichtigungen konnten nicht geladen werden.",
+      "loading": "Benachrichtigungen werden geladen…",
+      "empty": "Noch keine Benachrichtigungen.",
+      "emptyUnread": "Du bist auf dem neuesten Stand.",
+      "loadMore": "Mehr anzeigen",
+      "open": "Aktion erforderlich",
+      "resolved": "Erledigt",
+      "markRead": "Als gelesen markieren",
+      "markUnread": "Als ungelesen markieren",
+      "unreadLabel": "Benachrichtigungen, ungelesene Einträge"
+  },
+
   comments: {
     title: "Kommentare",
     count_one: "{count} Kommentar",

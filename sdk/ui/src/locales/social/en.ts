@@ -1,5 +1,29 @@
 // Comments, reactions, favorites, polls and their staff screens.
 export const social = {
+  notifications: {
+    "archived": "Archived",
+    "dismiss": "Dismiss",
+    "restore": "Restore to inbox",
+    "dismissed": "Dismissed",
+      "title": "Notifications",
+      "filter": "Notification filter",
+      "all": "All",
+      "unread": "Unread",
+      "refresh": "Refresh notifications",
+      "signInHint": "Sign in to see your notifications.",
+      "signIn": "Sign in",
+      "loadFailed": "Notifications could not be loaded.",
+      "loading": "Loading notifications…",
+      "empty": "No notifications yet.",
+      "emptyUnread": "You're all caught up.",
+      "loadMore": "Show more",
+      "open": "Needs action",
+      "resolved": "Resolved",
+      "markRead": "Mark read",
+      "markUnread": "Mark unread",
+      "unreadLabel": "Notifications, unread items"
+  },
+
   comments: {
     title: "Comments",
     count_one: "{count} comment",

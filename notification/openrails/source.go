@@ -1,6 +1,6 @@
-// Package openrails imports OpenRails customer inbox notices without depending
-// on its Go module. The host owns identity mapping, credentials and scheduling.
-// It never reads operator findings or acknowledges OpenRails host events.
+// Package openrails consumes independently acknowledged OpenRails notification
+// events. Hosts own identity mapping, optional-event policy and scheduling.
+// OpenRails produces facts; ContentKit owns the user inbox and its read state.
 package openrails
 
 import (
@@ -10,59 +10,66 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
-// Options binds one trusted OpenRails deployment and merchant. Token returns a
-// merchant-bound application access token with merchant:customers:read. Client
-// may instead supply authentication through its transport. URL is the origin
-// and any deployment prefix, before /v1. Credentials never enter a browser.
+// Options binds one trusted OpenRails deployment, merchant and independent
+// consumer. Token supplies a merchant-authorized application access token;
+// Client may instead authenticate through its transport. URL precedes /v1.
 type Options struct {
-	// Name is the full stable origin system, used verbatim; defaults to openrails:URL.
+	// Name is the complete stable origin system; defaults to openrails:URL.
 	Name       string
 	URL        string
 	MerchantID string
-	Client     *http.Client
-	Token      func(context.Context) (string, error)
+	// Consumer is stable across restarts and unique per destination within the
+	// authenticated application/merchant. Tokens can rotate without losing ACKs.
+	Consumer string
+	Client   *http.Client
+	Token    func(context.Context) (string, error)
 }
 
-// Source reads customer notifications from one configured OpenRails merchant.
+// Source consumes the notification events of one configured merchant.
 type Source struct {
-	base     string
-	name     string
-	merchant string
-	client   *http.Client
-	token    func(context.Context) (string, error)
+	base, name, merchant, consumer string
+	client                         *http.Client
+	token                          func(context.Context) (string, error)
 }
 
-// New validates deployment configuration. Requests have a 15-second deadline
-// even when Client has no timeout. Redirects are refused to keep credentials
-// and requests on the configured deployment.
+var consumerName = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
+
+// New validates configuration. Every HTTP request has a 15-second deadline.
+// Redirects are refused to keep credentials on the configured deployment.
 func New(opts Options) (*Source, error) {
 	u, err := url.Parse(opts.URL)
 	if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return nil, fmt.Errorf("openrails notifications: URL must be a trusted HTTP(S) deployment URL")
 	}
-	if strings.TrimSpace(opts.MerchantID) == "" {
-		return nil, fmt.Errorf("openrails notifications: MerchantID is required")
+	if strings.TrimSpace(opts.MerchantID) == "" || len(opts.MerchantID) > 512 || strings.ContainsRune(opts.MerchantID, 0) || !consumerName.MatchString(opts.Consumer) {
+		return nil, fmt.Errorf("openrails notifications: merchant and a 1-64 character consumer name are required")
+	}
+	name := opts.Name
+	if name == "" {
+		name = "openrails:" + strings.TrimRight(u.String(), "/")
+	}
+	if strings.TrimSpace(name) == "" || len(name) > 512 || strings.ContainsRune(name, 0) {
+		return nil, fmt.Errorf("openrails notifications: invalid origin system name")
 	}
 	client := http.Client{}
 	if opts.Client != nil {
 		client = *opts.Client
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	name := opts.Name
-	if name == "" {
-		name = "openrails:" + strings.TrimRight(u.String(), "/")
-	}
-	return &Source{base: strings.TrimRight(u.String(), "/"), name: name, merchant: opts.MerchantID, client: &client, token: opts.Token}, nil
+	return &Source{base: strings.TrimRight(u.String(), "/"), name: name, merchant: opts.MerchantID, consumer: opts.Consumer, client: &client, token: opts.Token}, nil
 }
 
-// Notice is the consumed subset of OpenRails' public customer notification.
-// EventType intentionally accepts future kinds. Data contains only the
-// user-visible billing payload; host applications choose how to render it.
-type Notice struct {
+// Event is an immutable source fact, not an OpenRails-owned inbox item. Kind
+// strings and JSON fields remain extensible. ActionRequested is historical,
+// independent of a destination's tracked workflow state.
+type Event struct {
 	ID              string          `json:"id"`
 	MerchantID      string          `json:"merchant_id"`
 	CustomerID      string          `json:"customer_id"`
@@ -70,81 +77,112 @@ type Notice struct {
 	Data            json.RawMessage `json:"data"`
 	CreatedAt       time.Time       `json:"created_at"`
 	ActionRequested bool            `json:"action_requested,omitempty"`
+	Optional        bool            `json:"optional,omitempty"`
 }
 
-// Page is one retained source inbox page. An empty NextCursor finishes a scan.
-// Source read state is deliberately ignored: each destination owns its state.
-type Page struct {
-	Data       []Notice `json:"data"`
-	NextCursor *string  `json:"next_cursor"`
+type eventPage struct {
+	Data []Event `json:"data"`
 }
 
-// Fetch reads one newest-first page. CustomerID must come from the host's
-// verified account mapping, never an untrusted browser's recipient selection.
-// Begin periodic rescans with an empty cursor: this retained inbox is not an
-// append-only event archive and timestamps are not delivery watermarks.
-func (s *Source) Fetch(ctx context.Context, customerID, cursor string) (Page, error) {
-	var page Page
-	if strings.TrimSpace(customerID) == "" || len(customerID) > 512 || len(cursor) > 4096 {
-		return page, fmt.Errorf("openrails notifications: invalid customer or cursor")
+func (s *Source) path() string { return "/v1/app/notification-consumers/" + s.consumer }
+
+// Register idempotently establishes this consumer's independent ACK namespace.
+// Register before scheduling Consume; the source controls historical retention.
+func (s *Source) Register(ctx context.Context) error {
+	return s.request(ctx, http.MethodPost, s.path(), nil, nil)
+}
+
+// Retire explicitly ends this consumer's delivery obligation. Do not retire on
+// an ordinary worker shutdown: registration and ACKs must survive restarts.
+func (s *Source) Retire(ctx context.Context) error {
+	return s.request(ctx, http.MethodDelete, s.path(), nil, nil)
+}
+
+func (s *Source) pending(ctx context.Context, limit int) ([]Event, error) {
+	var page eventPage
+	if err := s.request(ctx, http.MethodGet, fmt.Sprintf("%s/events?limit=%d", s.path(), limit), nil, &page); err != nil {
+		return nil, err
 	}
+	if page.Data == nil || len(page.Data) > limit {
+		return nil, fmt.Errorf("openrails notifications: invalid event page")
+	}
+	for _, e := range page.Data {
+		if e.MerchantID != s.merchant || strings.TrimSpace(e.CustomerID) == "" || len(e.CustomerID) > 512 || strings.ContainsRune(e.CustomerID, 0) {
+			return nil, fmt.Errorf("openrails notifications: event is outside configured merchant or lacks a valid customer")
+		}
+		if e.ID == "" || len(e.ID) > 512 || e.EventType == "" || len(e.EventType) > 512 || e.CreatedAt.IsZero() {
+			return nil, fmt.Errorf("openrails notifications: event lacks identity, kind or time")
+		}
+		var data map[string]json.RawMessage
+		if len(e.Data) > 64<<10 || json.Unmarshal(e.Data, &data) != nil || data == nil {
+			return nil, fmt.Errorf("openrails notifications: data must be a JSON object up to 64 KiB")
+		}
+	}
+	return page.Data, nil
+}
+
+func (s *Source) acknowledge(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.request(ctx, http.MethodPost, s.path()+"/acknowledge", struct {
+		IDs []string `json:"notification_ids"`
+	}{ids}, nil)
+}
+
+func (s *Source) request(ctx context.Context, method, path string, input, output any) error {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	q := url.Values{"limit": {"100"}}
-	if cursor != "" {
-		q.Set("cursor", cursor)
+	var body io.Reader
+	if input != nil {
+		b, err := json.Marshal(input)
+		if err != nil {
+			return fmt.Errorf("openrails notifications: encode request: %w", err)
+		}
+		body = strings.NewReader(string(b))
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.base+"/v1/app/customers/"+url.PathEscape(customerID)+"/notifications?"+q.Encode(), nil)
+	req, err := http.NewRequestWithContext(ctx, method, s.base+path, body)
 	if err != nil {
-		return page, fmt.Errorf("openrails notifications: request: %w", err)
+		return fmt.Errorf("openrails notifications: request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
+	if method != http.MethodGet {
+		req.Header.Set("Idempotency-Key", uuid.NewString())
+	}
+	if input != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	if s.token != nil {
 		token, err := s.token(ctx)
 		if err != nil {
-			return page, fmt.Errorf("openrails notifications: obtain application token: %w", err)
+			return fmt.Errorf("openrails notifications: obtain application token: %w", err)
 		}
 		if strings.TrimSpace(token) == "" {
-			return page, fmt.Errorf("openrails notifications: application token is empty")
+			return fmt.Errorf("openrails notifications: application token is empty")
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	res, err := s.client.Do(req)
 	if err != nil {
-		return page, fmt.Errorf("openrails notifications: fetch: %w", err)
+		return fmt.Errorf("openrails notifications: request: %w", err)
 	}
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return page, fmt.Errorf("openrails notifications: source returned HTTP %d", res.StatusCode)
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return fmt.Errorf("openrails notifications: source returned HTTP %d", res.StatusCode)
+	}
+	if output == nil {
+		return nil
 	}
 	const maxPage = 8 << 20
-	body, err := io.ReadAll(io.LimitReader(res.Body, maxPage+1))
+	b, err := io.ReadAll(io.LimitReader(res.Body, maxPage+1))
 	if err != nil {
-		return page, fmt.Errorf("openrails notifications: read page: %w", err)
+		return fmt.Errorf("openrails notifications: read events: %w", err)
 	}
-	if len(body) > maxPage {
-		return page, fmt.Errorf("openrails notifications: page exceeds 8 MiB")
+	if len(b) > maxPage {
+		return fmt.Errorf("openrails notifications: event page exceeds 8 MiB")
 	}
-	if err = json.Unmarshal(body, &page); err != nil {
-		return page, fmt.Errorf("openrails notifications: decode page: %w", err)
+	if err := json.Unmarshal(b, output); err != nil {
+		return fmt.Errorf("openrails notifications: decode events: %w", err)
 	}
-	if page.Data == nil || len(page.Data) > 100 {
-		return Page{}, fmt.Errorf("openrails notifications: invalid page data")
-	}
-	if page.NextCursor != nil && (len(*page.NextCursor) > 4096 || (*page.NextCursor != "" && *page.NextCursor == cursor)) {
-		return Page{}, fmt.Errorf("openrails notifications: invalid next cursor")
-	}
-	for _, n := range page.Data {
-		if n.MerchantID != s.merchant || n.CustomerID != customerID {
-			return Page{}, fmt.Errorf("openrails notifications: source notification is outside configured merchant/customer")
-		}
-		if n.ID == "" || n.EventType == "" || n.CreatedAt.IsZero() {
-			return Page{}, fmt.Errorf("openrails notifications: source notification lacks identity, type or time")
-		}
-		var data map[string]json.RawMessage
-		if len(n.Data) > 64<<10 || json.Unmarshal(n.Data, &data) != nil || data == nil {
-			return Page{}, fmt.Errorf("openrails notifications: data must be a JSON object up to 64 KiB")
-		}
-	}
-	return page, nil
+	return nil
 }

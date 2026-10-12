@@ -28,9 +28,11 @@ func (s *Store) Handler(a auth.Authenticator) (http.Handler, error) {
 func init() { httpapi.Register(httpapi.Notifications, routes) }
 
 var routes = []httpapi.Route[*Store]{
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/inbox", Resource: "notifications", Doc: "The signed-in person's inbox, newest first.", Auth: httpapi.User, Query: []httpapi.Param{httpapi.Int("limit", "page size: 20 by default, at most 100"), httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Bool("unread", "only unread notices")}, Responses: []httpapi.Reply{httpapi.OK(notify.Page{})}}, Serve: httpapi.H((*Store).handleList)},
-	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/{id}/read", Resource: "notifications", Doc: "Marks one of the signed-in person's notices read locally.", Auth: httpapi.User, Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{httpapi.CodeNotFound}}, Serve: func(s *Store) http.HandlerFunc { return s.handleRead(true) }},
-	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/{id}/read", Resource: "notifications", Doc: "Marks one of the signed-in person's notices unread locally.", Auth: httpapi.User, Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{httpapi.CodeNotFound}}, Serve: func(s *Store) http.HandlerFunc { return s.handleRead(false) }},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/inbox", Resource: "notifications", Doc: "The signed-in person's inbox, newest first.", Auth: httpapi.User, Query: []httpapi.Param{httpapi.Int("limit", "page size: 20 by default, at most 100"), httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Bool("unread", "only unread notices"), httpapi.Bool("dismissed", "archived receipts instead of the active inbox")}, Responses: []httpapi.Reply{httpapi.OK(notify.Page{})}}, Serve: httpapi.H((*Store).handleList)},
+	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/{id}/read", Resource: "notifications", Doc: "Marks one of the signed-in person's notices read locally.", Auth: httpapi.User, Responses: []httpapi.Reply{httpapi.OK(notify.Item{})}, Errors: []string{httpapi.CodeNotFound}}, Serve: func(s *Store) http.HandlerFunc { return s.handleRead(true) }},
+	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/{id}/read", Resource: "notifications", Doc: "Marks one of the signed-in person's notices unread locally.", Auth: httpapi.User, Responses: []httpapi.Reply{httpapi.OK(notify.Item{})}, Errors: []string{httpapi.CodeNotFound}}, Serve: func(s *Store) http.HandlerFunc { return s.handleRead(false) }},
+	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/{id}/dismiss", Resource: "notifications", Doc: "Archives this receipt without changing its read or workflow state.", Auth: httpapi.User, Responses: []httpapi.Reply{httpapi.OK(notify.Item{})}, Errors: []string{httpapi.CodeNotFound}}, Serve: func(s *Store) http.HandlerFunc { return s.handleDismiss(true) }},
+	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/{id}/dismiss", Resource: "notifications", Doc: "Restores an archived receipt to this user's inbox.", Auth: httpapi.User, Responses: []httpapi.Reply{httpapi.OK(notify.Item{})}, Errors: []string{httpapi.CodeNotFound}}, Serve: func(s *Store) http.HandlerFunc { return s.handleDismiss(false) }},
 }
 
 func (s *Store) handleList(w http.ResponseWriter, r *http.Request) {
@@ -51,6 +53,13 @@ func (s *Store) handleList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if q.Has("dismissed") {
+		opts.Dismissed, err = strconv.ParseBool(q.Get("dismissed"))
+		if err != nil {
+			s.fail(w, r, notify.ErrInvalid)
+			return
+		}
+	}
 	page, err := s.List(r.Context(), recipient(r), opts)
 	if err != nil {
 		s.fail(w, r, err)
@@ -62,12 +71,31 @@ func (s *Store) handleList(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Store) handleRead(read bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := s.SetRead(r.Context(), recipient(r), r.PathValue("id"), read); err != nil {
+		item, err := s.SetRead(r.Context(), recipient(r), r.PathValue("id"), read)
+		if err != nil {
 			s.fail(w, r, err)
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+		writeItem(w, item)
 	}
+}
+func (s *Store) handleDismiss(dismissed bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		target := recipient(r)
+		id := r.PathValue("id")
+
+		item, err := s.SetDismissed(r.Context(), target, id, dismissed)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		writeItem(w, item)
+	}
+}
+func writeItem(w http.ResponseWriter, item notify.Item) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(item)
 }
 func (s *Store) fail(w http.ResponseWriter, r *http.Request, err error) {
 	status, code, msg := http.StatusInternalServerError, httpapi.CodeInternal, "notifications unavailable"

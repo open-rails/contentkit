@@ -585,3 +585,31 @@ generated from ContentKit's route catalog (`pnpm contract`; CI runs
 `pnpm dlx shadcn@4.21.0 add …` (`components.json`); local edits are marked
 `// Local:`. The `release` workflow publishes the package to npm for every
 published `v*` release.
+
+
+## Notifications
+
+`NotificationInbox` and `NotificationBell` use the authenticated ContentKit inbox.
+The host supplies `renderItem(item)` for its own kinds and optional
+`renderActions(item)` for domain links/actions. The components supply cursor
+pagination, All/Unread/Archived filters, read/unread, archive/restore, errors and
+retries, and actual tracked-work status. Reading or archiving never resolves
+work or acknowledges a producer event stream.
+
+```tsx
+import { NotificationBell, NotificationInbox } from "@openrails/contentkit-ui";
+import { ContentKitProvider } from "@openrails/contentkit-ui/react";
+
+<ContentKitProvider client={client} viewer={user.id} accessRevision={user.accessRevision}>
+  <NotificationBell renderItem={renderNotification} />
+  <NotificationInbox renderItem={renderNotification} renderActions={renderActions} />
+</ContentKitProvider>
+```
+
+Handle unknown kinds in the renderer. No billing-specific content is copied into
+these components. The bell uses an unread-present dot and polls while visible
+(default 30s, `unreadRefreshInterval={false}` disables it). Inbox pages do not
+poll by default. Call `client.notifications.refresh()` when your application's
+event channel announces new data. `useNotifications` and `useNotificationUnread`
+are available from `/react` for a custom presentation. Keep provider viewer and
+access revision current; signed-out viewers do not fetch an inbox.

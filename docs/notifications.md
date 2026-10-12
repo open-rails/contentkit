@@ -1,33 +1,22 @@
 # Notifications
 
-ContentKit uses `github.com/open-rails/helpers/notify` and its PostgreSQL store.
-The shared library owns notification identities, pagination, read state,
-workflow state, transactional publication and account erasure. ContentKit owns
-user authentication, native comment events and its OpenRails source adapter.
-There is no additional ContentKit notification table or delivery worker.
+ContentKit is an application's user-notification aggregator. It accepts native
+comment events, OpenRails producer events and notices selected by the host,
+stores local receipts, and serves the application's inbox and UI. The reusable
+`github.com/open-rails/helpers/notify` package owns persistence, idempotency,
+read/archive state, tracked workflow state and erasure. Hosts own identity
+mapping, rendering, optional-event preferences, scheduling and domain actions.
 
 `contentkit.Migrate` installs the shared store in the host-selected schema.
+Run it before starting an upgraded runtime. Hosts applying the exported
+`migrations.Postgres` filesystem themselves must also apply
+`notify/postgres.Migrate` or `MigrateDB`; the shared library has its own ledger.
 `Runtime.Notifications` and `Runtime.Content.Notifications` are the same store,
-scoped to `contentkit:<tenant>`. Embedded hosts can publish their own kinds with
-`Publish` or join a domain transaction with `PublishTx`:
+scoped to `contentkit:<tenant>`.
 
-```go
-_, err := rt.Notifications.Publish(ctx, notify.Input{
-    Recipient: notify.Recipient{Audience: notify.AudienceUser, ID: userID},
-    Origin: notify.Origin{System: "host-app", Scope: tenant, ID: stableEventID},
-    Kind: "content.available",
-    Data: json.RawMessage(`{"content_id":"..."}`),
-    CreatedAt: occurredAt,
-})
-```
+## Native and host-authored events
 
-An origin is the producer deployment, its namespace and a stable event ID.
-Replaying it for the same recipient preserves the original payload and local
-read/workflow state. Hosts must authorize recipient IDs; matching email
-addresses does not establish an account association. Data must be a user-visible
-JSON object, without credentials or private operator details.
-
-Native events are automatic:
+ContentKit automatically publishes:
 
 - `comment.reply`: an approved reply to another registered person's published
   comment, including first publication through editing or moderator approval.
@@ -36,79 +25,167 @@ Native events are automatic:
   published comment. Retrying the same like does not notify twice; a later
   unlike and like creates a new event. Self and anonymous likes do not notify.
 
-The interaction and notification commit in the same transaction. Their payloads
+The interaction and notification commit in the same transaction. Payloads
 contain content/comment/actor references, never copied comment bodies or
-anonymous IPs. A host resolves references through current content access checks
-when displaying or following them; retained history does not grant access.
-Notification delivery preferences and display choices belong to the host.
+anonymous IPs. Resolve references through current content access checks when
+displaying or following them; retained history does not grant access.
 
-The authenticated user API is mounted under `Runtime.Handler()`:
-
-| Method and path | Behavior |
-| --- | --- |
-| `GET /notifications/inbox?limit=20&cursor=...&unread=true` | Newest-first page (`items`, `next_cursor`), at most 100 |
-| `PUT /notifications/{id}/read` | Mark this user's local notice read |
-| `DELETE /notifications/{id}/read` | Mark this user's local notice unread |
-
-The caller's verified subject selects the user inbox. Query parameters cannot
-select another recipient, tenant or operator audience. Applications cannot use
-these person-only routes, and no browser ingestion endpoint exists. The browser
-SDK exposes `client.notifications.list()` and `.setRead(id, read)`; hosts choose
-labels, links, badges and UI layout.
-
-Read state and workflow state are separate. An item with `status: "open"` still
-requires action after it is read. ContentKit exposes no generic browser endpoint
-that claims to repair billing by changing notification status. Trusted host code
-can use shared `Transition`/`TransitionTx` after authorizing and completing its
-own domain action.
-
-## OpenRails integration
-
-`notification/openrails` consumes the merchant-authorized app API without
-pulling in the full OpenRails Go module:
+Hosts publish their own selected kinds with `Publish`, or join a domain
+transaction with `PublishTx`:
 
 ```go
-source, err := openrails.New(openrails.Options{
-    Name: "openrails:billing-production", // same origin for embedded/HTTP paths
-    URL: billingURL,            // before /v1
-    MerchantID: merchantID,
-    Token: applicationToken,    // func(context.Context) (string, error)
-})
-// The host obtains this association from its trusted account records.
-binding := openrails.Binding{CustomerID: billingCustomerID, RecipientID: userID}
-result, err := source.Sync(ctx, rt.Notifications, binding, openrails.ScanOptions{
-    Cursor: savedCursor,
-    MaxPages: 10,
+_, err := rt.Notifications.Publish(ctx, notify.Input{
+    Recipient: notify.Recipient{Audience: notify.AudienceUser, ID: userID},
+    Origin: notify.Origin{System: "host-app", Scope: tenant, ID: stableEventID},
+    Kind: "export.ready",
+    Data: json.RawMessage(`{"export_id":"..."}`),
+    CreatedAt: occurredAt,
 })
 ```
 
-The token requires `merchant:customers:read`. Each page is checked against the
-configured merchant and mapped customer before any notice is imported. All
-customer event kinds, including future strings, are accepted. JSON numbers are
-not round-tripped through floating point. Origin retains the stable deployment
-name, merchant ID and source notification ID. The source's `action_requested`
-flag records a request made when the event occurred;
-it is not a claim that a current issue remains open. Imported events remain
-general notices. Source `seen`/`read_at` is ignored.
+An origin identifies the producer deployment, namespace and stable source event.
+Its optional `Subject` preserves the original recipient when the host maps that
+account to a local user. Replaying an origin for the same local recipient keeps
+the original payload and local receipt/workflow state. Hosts must authorize
+recipient IDs; matching email addresses is not an account association. Data is
+a user-visible JSON object without credentials or private operator details.
 
-The host owns scheduling. Continue a bounded scan using `result.NextCursor`;
-retry the same cursor after failure (partially imported pages are idempotent).
-When `result.Complete` is true, restart periodically from an empty cursor. Do not
-turn the latest timestamp into a permanent watermark: late commits can appear
-behind it. Source fetches have deadlines and response/page limits and refuse
-redirects. This path never acknowledges OpenRails host events or marks source
-notifications seen.
+## Inbox and frontend
 
-This copies the **retained customer inbox**, not a guaranteed historical event
-archive. OpenRails may supersede or expire notices before a delayed scan. The
-destination retains imported history until its own retention or erasure policy
-removes it, so a historical action request may no longer need action.
-For current billing action/status, fetch OpenRails domain state before acting.
-Operators' findings remain in the operator audience and are never imported into
-customer inboxes.
+`Runtime.Handler()` mounts these person-only routes. Every recipient comes from
+the authenticated subject; query parameters cannot select another user, tenant
+or operator audience. There is no browser publication or source-ACK endpoint.
 
-`Runtime.EraseSubjects` (and standalone `content.Runtime.EraseSubjects`) erases
-and permanently fences the user's shared inbox before other content cleanup.
-Delayed imports cannot recreate it; interactions on retained published comments
-skip notification to an erased recipient. The host must keep failed erasure
-obligations pending and retry until the full erasure succeeds.
+| Method and path | Behavior |
+| --- | --- |
+| `GET /notifications/inbox?limit=20&cursor=...&unread=true` | Active receipts, newest first; at most 100 |
+| `GET /notifications/inbox?dismissed=true` | Archived receipts instead of active ones |
+| `PUT /notifications/{id}/read` | Mark the local receipt read |
+| `DELETE /notifications/{id}/read` | Mark the local receipt unread |
+| `PUT /notifications/{id}/dismiss` | Archive the local receipt |
+| `DELETE /notifications/{id}/dismiss` | Restore the receipt to the inbox |
+
+Mutations return the canonical `Item` with server timestamps and revision.
+Reading or archiving changes only the receipt. A tracked item with
+`status: "open"` remains open after either operation. The API exposes no generic
+browser action that claims to repair a billing problem or complete source work.
+Trusted hosts perform their domain action and then use shared
+`Transition`/`TransitionTx` when they actually own a tracked workflow.
+
+The browser SDK exposes `client.notifications.list()`, `.setRead()` and
+`.setDismissed()`. The React package provides `useNotifications` and
+`useNotificationUnread`. Styled `NotificationInbox` and `NotificationBell`
+components provide filters, pagination, error/retry states, read/archive/restore
+controls, tracked-status labels, and a keyboard-accessible popover. The bell's
+dot means unread items exist; it does not invent a total from a partial page.
+
+```tsx
+<ContentKitProvider client={client} viewer={currentUser.id}
+  accessRevision={currentUser.accessRevision}>
+  <NotificationBell
+    renderItem={item => renderAppNotification(item)}
+    renderActions={item => renderAuthorizedActions(item)}
+  />
+  <NotificationInbox renderItem={item => renderAppNotification(item)} />
+</ContentKitProvider>
+```
+
+The required `renderItem` handles arbitrary source kinds, including a fallback
+for future ones. Components contain no billing-specific templates or domain
+actions. They use ContentKit's appearance/localization provider and support
+English, German, Spanish, Japanese, Korean and Chinese. Keep `viewer` and
+`accessRevision` current so cached data is cleared when identity/access changes.
+Signed-out viewers do not fetch inboxes. Local mutations synchronize mounted
+views; an older in-flight refresh cannot overwrite a successful receipt change.
+
+The bell checks unread presence every 30 seconds while the page is visible;
+`unreadRefreshInterval={false}` disables that. Inbox pages do not poll by default,
+so loading more stays stable. Hosts can call `client.notifications.refresh()`
+when their own event channel signals a change.
+
+## OpenRails producer events
+
+OpenRails owns billing facts and a durable producer stream. ContentKit consumes
+it through `notification/openrails`, without a dependency on the OpenRails Go
+module or a second billing inbox UI.
+
+```go
+source, err := openrails.New(openrails.Options{
+    Name: "openrails:billing-production", // complete origin system, used verbatim
+    URL: billingURL,                      // before /v1
+    MerchantID: merchantID,
+    Consumer: "contentkit-site-a",        // stable independent destination name
+    Token: applicationToken,             // func(context.Context) (string, error)
+})
+if err != nil { return err }
+if err := source.Register(ctx); err != nil { return err }
+
+result, err := source.Consume(ctx, rt.Notifications,
+    func(ctx context.Context, event openrails.Event) (string, bool, error) {
+        // Resolve a verified merchant/customer association from host records.
+        // false deliberately skips this event; an error leaves it pending.
+        return lookupLocalRecipient(ctx, event.MerchantID, event.CustomerID)
+    }, openrails.ConsumeOptions{Limit: 100})
+```
+
+The consumer is independently namespaced by the authenticated application and
+merchant. Registration is idempotent and persists across worker restarts. Each
+call reads a bounded pending page and ACKs only after destination publication
+commits or the host deliberately skips an event. No timestamp or cursor is used
+as a delivery watermark. A failed source ACK safely replays publication without
+resetting read/archive state. One mapping/publication failure leaves that event
+pending while allowing other events in the page to proceed. Host scheduling
+retries returned errors; `Retire` is an explicit deprovisioning action, not normal
+worker shutdown.
+
+Optional events default to skip plus ACK. Set `IncludeOptional: true` to map
+them; the mapper can apply per-user preferences and explicitly skip unwanted
+ones. Unmapped accounts are skipped only when the host returns `deliver=false`.
+Erased recipients are also a deliberate skip. Lookup/storage failures are not
+silently acknowledged. Every page is checked against the configured merchant;
+source customer IDs remain in `Origin.Subject`. All event kinds are accepted,
+and JSON numbers are never round-tripped through floating point.
+
+The source's `action_requested` flag records a request at event creation; it is
+not evidence that a current issue remains open. Imported events remain general
+notices. Fetch current OpenRails domain state before offering a billing action.
+The adapter uses bounded requests and idempotency keys, refuses redirects, and
+never reads operator findings or acknowledges a different consumer's stream.
+Historical availability before registration follows the producer's retention
+policy; this adapter does not reconstruct deleted pre-subscription history.
+
+## Optional AuthKit/application callbacks
+
+An existing host callback can use the same publisher. For example, AuthKit's
+`Deps.OnEvent` receives committed `iam.Event` values with stable `ID`, `UserID`
+and `OccurredAt`; its durable delivery retries errors. The following is an
+**opt-in host policy**, not a built-in AuthKit notification catalog:
+
+```go
+deps.OnEvent = func(ctx context.Context, event iam.Event) error {
+    if event.Kind != iam.EventUserEmailChanged { return nil }
+    userID, deliver, err := lookupAuthAccount(ctx, accountIssuer, event.UserID)
+    if err != nil || !deliver { return err }
+    _, err = rt.Notifications.Publish(ctx, notify.Input{
+        Recipient: notify.Recipient{Audience: notify.AudienceUser, ID: userID},
+        Origin: notify.Origin{System: "authkit:" + accountIssuer,
+            Scope: accountIssuer, Subject: event.UserID, ID: event.ID},
+        Kind: string(event.Kind), CreatedAt: event.OccurredAt,
+        Data: json.RawMessage(`{}`), // select only fields this user should see
+    })
+    if errors.Is(err, notify.ErrRecipientErased) { return nil }
+    return err
+}
+```
+
+Compose this into existing callback work, explicitly ignore unselected/future
+kinds and return persistence errors for retry. Do not copy the entire audit event
+or manufacture random event IDs on each retry. This example uses the concrete
+callback contract available in the repository's AuthKit v1.21 cohort; migrating
+ContentKit's authentication interfaces to AuthKit v1.24 is separate work.
+
+`Runtime.EraseSubjects` (and standalone `content.Runtime.EraseSubjects`) removes
+and permanently fences the user inbox before other content cleanup. Delayed
+imports cannot recreate it. Interactions on retained published comments skip
+notification to an erased recipient. Keep failed host erasure obligations
+pending until the whole erasure succeeds.

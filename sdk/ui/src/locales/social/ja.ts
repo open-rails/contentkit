@@ -1,6 +1,30 @@
 import type { social as en } from "./en.js";
 
 export const social: typeof en = {
+  notifications: {
+    "archived": "アーカイブ",
+    "dismiss": "アーカイブする",
+    "restore": "受信トレイに戻す",
+    "dismissed": "却下済み",
+      "title": "通知",
+      "filter": "通知フィルター",
+      "all": "すべて",
+      "unread": "未読",
+      "refresh": "通知を更新",
+      "signInHint": "通知を表示するにはログインしてください。",
+      "signIn": "ログイン",
+      "loadFailed": "通知を読み込めませんでした。",
+      "loading": "通知を読み込み中…",
+      "empty": "通知はまだありません。",
+      "emptyUnread": "未読の通知はありません。",
+      "loadMore": "さらに表示",
+      "open": "対応が必要",
+      "resolved": "解決済み",
+      "markRead": "既読にする",
+      "markUnread": "未読にする",
+      "unreadLabel": "通知、未読あり"
+  },
+
   comments: {
     title: "コメント",
     count_one: "コメント {count} 件",

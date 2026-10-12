@@ -39,7 +39,7 @@ func TestCommentNotificationsPublicationAndIdentity(t *testing.T) {
 	if len(got) != 1 || got[0].Kind != "comment.reply" || !strings.Contains(string(got[0].Data), held.ID) || strings.Contains(string(got[0].Data), "iffy") {
 		t.Fatalf("published notice: %+v", got)
 	}
-	if err := rt.Notifications.SetRead(ctx, got[0].Recipient, got[0].ID, true); err != nil {
+	if _, err := rt.Notifications.SetRead(ctx, got[0].Recipient, got[0].ID, true); err != nil {
 		t.Fatal(err)
 	}
 	// A later held edit and reapproval do not re-notify or reset local read state.

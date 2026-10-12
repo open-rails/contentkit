@@ -107,8 +107,11 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	}
 	id := notices.Items[0].ID
 	f.want(http.StatusNotFound, owner, "PUT", "/notifications/"+id+"/read", nil, nil)
-	f.want(http.StatusNoContent, user, "PUT", "/notifications/"+id+"/read", nil, nil)
-	f.want(http.StatusNoContent, user, "DELETE", "/notifications/"+id+"/read", nil, nil)
+	f.want(http.StatusOK, user, "PUT", "/notifications/"+id+"/read", nil, nil)
+	f.want(http.StatusOK, user, "DELETE", "/notifications/"+id+"/read", nil, nil)
+	f.want(http.StatusOK, user, "PUT", "/notifications/"+id+"/dismiss", nil, nil)
+	f.want(http.StatusOK, user, "GET", "/notifications/inbox?dismissed=true", nil, nil)
+	f.want(http.StatusOK, user, "DELETE", "/notifications/"+id+"/dismiss", nil, nil)
 
 	// Reactions on host content.
 	for _, verb := range []string{"like", "dislike"} {

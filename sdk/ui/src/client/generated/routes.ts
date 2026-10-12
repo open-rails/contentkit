@@ -112,9 +112,11 @@ export const CONTENTKIT_ROUTES = [
   { method: "POST", module: "taxonomy", path: "/effective", auth: "staff", permission: "root:taxonomy:write", query: [], request: "ContentRef[]", responses: { 200: "EffectiveTagsOf[]" }, errors: [], errorSets: ["module:taxonomy", "auth", "request"] },
   { method: "GET", module: "taxonomy", path: "/counts", auth: "staff", permission: "root:taxonomy:write", query: ["taxonomy_id"], request: null, responses: { 200: "Record<string, Count[]>" }, errors: [], errorSets: ["module:taxonomy", "auth", "request"] },
   { method: "POST", module: "taxonomy", path: "/counts/rebuild", auth: "staff", permission: "root:taxonomy:write", query: [], request: null, responses: { 200: "CountsRebuilt" }, errors: [], errorSets: ["module:taxonomy", "auth"] },
-  { method: "GET", module: "notifications", path: "/inbox", auth: "user", permission: null, query: ["limit", "cursor", "unread"], request: null, responses: { 200: "Page" }, errors: [], errorSets: ["module:notifications", "auth", "request"] },
-  { method: "PUT", module: "notifications", path: "/{id}/read", auth: "user", permission: null, query: [], request: null, responses: { 204: null }, errors: ["not_found"], errorSets: ["module:notifications", "auth", "request"] },
-  { method: "DELETE", module: "notifications", path: "/{id}/read", auth: "user", permission: null, query: [], request: null, responses: { 204: null }, errors: ["not_found"], errorSets: ["module:notifications", "auth", "request"] },
+  { method: "GET", module: "notifications", path: "/inbox", auth: "user", permission: null, query: ["limit", "cursor", "unread", "dismissed"], request: null, responses: { 200: "Page" }, errors: [], errorSets: ["module:notifications", "auth", "request"] },
+  { method: "PUT", module: "notifications", path: "/{id}/read", auth: "user", permission: null, query: [], request: null, responses: { 200: "Item" }, errors: ["not_found"], errorSets: ["module:notifications", "auth", "request"] },
+  { method: "DELETE", module: "notifications", path: "/{id}/read", auth: "user", permission: null, query: [], request: null, responses: { 200: "Item" }, errors: ["not_found"], errorSets: ["module:notifications", "auth", "request"] },
+  { method: "PUT", module: "notifications", path: "/{id}/dismiss", auth: "user", permission: null, query: [], request: null, responses: { 200: "Item" }, errors: ["not_found"], errorSets: ["module:notifications", "auth", "request"] },
+  { method: "DELETE", module: "notifications", path: "/{id}/dismiss", auth: "user", permission: null, query: [], request: null, responses: { 200: "Item" }, errors: ["not_found"], errorSets: ["module:notifications", "auth", "request"] },
 ] as const satisfies readonly ContentKitRoute[];
 
 // The codes every route of a kind answers, by set name.

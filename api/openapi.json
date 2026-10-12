@@ -4845,6 +4845,14 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "dismissed",
+            "in": "query",
+            "description": "archived receipts instead of the active inbox",
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -4894,8 +4902,15 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": "No Content"
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item"
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -4933,8 +4948,109 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": "No Content"
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "notifications",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:notifications",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/notifications/{id}/dismiss": {
+      "put": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Archives this receipt without changing its read or workflow state.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "notifications",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:notifications",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Restores an archived receipt to this user's inbox.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item"
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -6127,6 +6243,17 @@
               }
             ]
           },
+          "dismissed_at": {
+            "oneOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "resolved_at": {
             "oneOf": [
               {
@@ -6154,6 +6281,7 @@
           "data",
           "created_at",
           "read_at",
+          "dismissed_at",
           "resolved_at",
           "updated_at",
           "revision"
@@ -6544,6 +6672,9 @@
             "type": "string"
           },
           "id": {
+            "type": "string"
+          },
+          "subject": {
             "type": "string"
           }
         },

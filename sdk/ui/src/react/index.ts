@@ -117,3 +117,5 @@ export {
 } from "./gallery.js";
 export type { PlaybackProgress, ProgressReason } from "./player.js";
 export { HOVER_DELAY, InlinePreviewContext, useInlinePreview, useReducedMotion, type InlinePreviewOptions } from "./inline-preview.js";
+
+export { useNotifications, useNotificationUnread, type UseNotifications, type UseNotificationsOptions } from "./notifications.js";

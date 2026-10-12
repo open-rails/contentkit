@@ -367,6 +367,7 @@ export interface Item {
   action_requested?: boolean;
   severity?: string;
   read_at: string | null;
+  dismissed_at: string | null;
   resolved_at: string | null;
   updated_at: string;
   revision: number;
@@ -481,6 +482,7 @@ export interface Origin {
   system: string;
   scope: string;
   id: string;
+  subject?: string;
 }
 
 export interface Page {

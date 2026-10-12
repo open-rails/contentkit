@@ -37,7 +37,7 @@ func TestRuntimeNotificationsMountAndErasure(t *testing.T) {
 		t.Fatalf("inbox mount %d %s", response.Code, response.Body)
 	}
 	response = do(t, rt.Handler(), access.Actor{ID: "owner"}, "PUT", "/notifications/"+item.ID+"/read", nil)
-	if response.Code != http.StatusNoContent {
+	if response.Code != http.StatusOK {
 		t.Fatalf("read mount %d %s", response.Code, response.Body)
 	}
 	report, err := rt.EraseSubjects(ctx, []signal.Subject{{UserID: "owner"}})
