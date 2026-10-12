@@ -48,11 +48,12 @@ export function attributeInput(spec: AttributeSpec, value: unknown): string | bo
 }
 
 /**
- * An attribute's value from its form field; undefined drops it. A value that
- * is not of the attribute's type throws a RangeError.
+ * An attribute's value from its form field; undefined drops it (an empty
+ * field, an unchecked switch: absent reads as false). A value that is not of
+ * the attribute's type throws a RangeError.
  */
 export function parseAttribute(spec: AttributeSpec, input: string | boolean): unknown {
-  if (spec.type === "bool") return input === true;
+  if (spec.type === "bool") return input === true || undefined;
   const s = String(input).trim();
   if (!s) return undefined;
   switch (spec.type) {

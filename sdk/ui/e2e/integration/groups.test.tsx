@@ -4,7 +4,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { ContentKitClient, Group, Kinds } from "../../src/client/index.js";
-import { ContentKitProvider, useContentGroups, useGroup, useGroupMembers, useGroups, useKinds, useStaffAccess } from "../../src/react/index.js";
+import { ContentKitProvider, type GroupFilter, useContentGroups, useGroup, useGroupMembers, useGroups, useKinds, useStaffAccess } from "../../src/react/index.js";
 import type { Config } from "../support/harness.js";
 import { Accounts, client, fixture, harness } from "./setup.js";
 
@@ -55,9 +55,9 @@ describe("groups against the real ContentKit", () => {
     await h.recount();
 
     const c = client(h, cfg, null);
-    const { result, rerender } = renderHook((f: Parameters<typeof useGroups>[0]) => useGroups(f), {
+    const { result, rerender } = renderHook((f: GroupFilter) => useGroups(f), {
       wrapper: wrap(c, "en"),
-      initialProps: { kind: "series", parent: parent.id, letter: "a" },
+      initialProps: { kind: "series", parent: parent.id, letter: "a" } as GroupFilter,
     });
     await waitFor(() => expect(result.current.items.map((g) => g.id)).toEqual([abaco.id, alpha.id]), wait);
     expect(result.current.items[1]).toMatchObject({ name: `Alpha ${r}`, slug: `alpha-${r}`, count: 1, path: expect.stringContaining("/series/") });
@@ -65,7 +65,7 @@ describe("groups against the real ContentKit", () => {
     rerender({ kind: "series", parent: parent.id, letter: "#" });
     await waitFor(() => expect(result.current.items.map((g) => g.id)).toEqual([digits.id]), wait);
 
-    rerender({ kind: "series", parent: parent.id, sort: "count", pageSize: 2 } as never);
+    rerender({ kind: "series", parent: parent.id, sort: "count", pageSize: 2 });
     await waitFor(() => expect(result.current.items.map((g) => g.id)).toEqual([beta.id, alpha.id]), wait);
     expect(result.current.hasMore).toBe(true);
     await act(() => result.current.loadMore());

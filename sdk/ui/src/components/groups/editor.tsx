@@ -1,5 +1,5 @@
 import { cn } from "cn";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
@@ -94,14 +94,33 @@ export function GroupEditor(p: GroupEditorProps) {
   return root(
     <>
       <Head group={group} g={g} labels={p.labels} onMerged={p.onMerged} onDeleted={p.onDeleted} onError={p.onError} client={p.client} />
-      <Details key={`${group.id}:${group.revision}`} group={group} spec={spec} g={g} labels={p.labels} onError={p.onError} client={p.client} />
+      <Details key={group.id} group={group} spec={spec} g={g} labels={p.labels} onError={p.onError} client={p.client} />
       <Names group={group} g={g} languages={languages} onError={p.onError} />
-      <Texts key={`text:${group.id}:${group.revision}`} group={group} g={g} languages={languages} onError={p.onError} />
+      <Texts key={group.id} group={group} g={g} languages={languages} onError={p.onError} />
       <CoverSection group={group} g={g} renderCover={p.renderCover} onError={p.onError} />
       <Edges group={group} g={g} kinds={kinds} labels={p.labels} onError={p.onError} client={p.client} />
       {p.children?.(group)}
     </>,
   );
+}
+
+/** Form state seeded from the record, seeded again when it changes unless edited since; settle() after a save. */
+function useSeeded<T>(seed: () => T, revision: unknown): [T, (next: (prev: T) => T) => void, () => void] {
+  const [value, setValue] = useState(seed);
+  const edited = useRef(false);
+  const latest = useRef(seed);
+  latest.current = seed;
+  useEffect(() => {
+    if (!edited.current) setValue(latest.current());
+  }, [revision]);
+  const set = useCallback((next: (prev: T) => T) => {
+    edited.current = true;
+    setValue(next);
+  }, []);
+  const settle = useCallback(() => {
+    edited.current = false;
+  }, []);
+  return [value, set, settle];
 }
 
 function Section({ title, children, ckui, action }: { title: ReactNode; children: ReactNode; ckui: string; action?: ReactNode }) {
@@ -445,10 +464,19 @@ function Details({ group, spec, g, labels, onError, client }: { group: GroupDeta
   const { t } = m;
   const id = useId();
   const declared = spec.attributes ?? {};
-  const [slug, setSlug] = useState(group.slug);
-  const [parent, setParent] = useState<GroupLike | null>(group.parent ?? null);
-  const [scope, setScope] = useState<GroupLike | null>(group.scope ?? null);
-  const [attrs, setAttrs] = useState<Record<string, string | boolean>>(() => formOf(declared, group.attributes));
+  const [form, setForm, settle] = useSeeded(
+    () => ({ slug: group.slug, parent: (group.parent ?? null) as GroupLike | null, scope: (group.scope ?? null) as GroupLike | null, attrs: formOf(declared, group.attributes) }),
+    group.revision,
+  );
+  const { slug, parent, scope, attrs } = form;
+  const edit = (patch: Partial<typeof form>) => {
+    setSaved(false);
+    setForm((f) => ({ ...f, ...patch }));
+  };
+  const setSlug = (v: string) => edit({ slug: v });
+  const setParent = (v: GroupLike | null) => edit({ parent: v });
+  const setScope = (v: GroupLike | null) => edit({ scope: v });
+  const setAttrs = (fn: (a: Record<string, string | boolean>) => Record<string, string | boolean>) => edit({ attrs: fn(attrs) });
   const [invalid, setInvalid] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const save = useAction("group.save", onError);
@@ -470,7 +498,10 @@ function Details({ group, spec, g, labels, onError, client }: { group: GroupDeta
         ...(spec.scoped_by && scope ? { scope_id: scope.id } : {}),
       }),
     );
-    if (done) setSaved(true);
+    if (done) {
+      settle();
+      setSaved(true);
+    }
   };
   return (
     <Section title={t("groupEditor.details")} ckui="group-details">
@@ -589,7 +620,10 @@ function Texts({ group, g, languages, onError }: { group: GroupDetail; g: UseGro
   const id = useId();
   const languageName = useLanguageName();
   const offered = [...new Set([...languages, ...group.text.map((x) => x.language)])];
-  const [form, setForm] = useState<Record<string, Text>>(() => Object.fromEntries(offered.map((l) => [l, group.text.find((x) => x.language === l) ?? { language: l }])));
+  const [form, setForm, settle] = useSeeded<Record<string, Text>>(
+    () => Object.fromEntries(offered.map((l) => [l, group.text.find((x) => x.language === l) ?? { language: l }])),
+    group.revision,
+  );
   const [saved, setSaved] = useState(false);
   const save = useAction("group.save", onError);
   const set = (l: string, patch: Partial<Text>) => {
@@ -605,7 +639,11 @@ function Texts({ group, g, languages, onError }: { group: GroupDetail; g: UseGro
           const text = Object.values(form)
             .map((x) => ({ language: x.language, description: x.description?.trim() || undefined, sort_key: x.sort_key?.trim() || undefined }))
             .filter((x) => x.description || x.sort_key);
-          void save.run(() => g.update({ text })).then((d) => d && setSaved(true));
+          void save.run(() => g.update({ text })).then((d) => {
+            if (!d) return;
+            settle();
+            setSaved(true);
+          });
         }}
       >
         {offered.map((l) => (

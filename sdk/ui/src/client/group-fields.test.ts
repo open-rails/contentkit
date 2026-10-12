@@ -22,7 +22,8 @@ describe("group fields", () => {
     expect(parseAttribute({ type: "string" }, " ")).toBeUndefined();
     expect(parseAttribute({ type: "int" }, "42")).toBe(42);
     expect(() => parseAttribute({ type: "int" }, "4.2")).toThrow(RangeError);
-    expect(parseAttribute({ type: "bool" }, false)).toBe(false);
+    expect(parseAttribute({ type: "bool" }, true)).toBe(true);
+    expect(parseAttribute({ type: "bool" }, false)).toBeUndefined();
     expect(parseAttribute({ type: "enum", values: ["artist", "circle"] }, "circle")).toBe("circle");
     expect(() => parseAttribute({ type: "enum", values: ["artist"] }, "company")).toThrow(RangeError);
     const t = parseAttribute({ type: "time" }, "2026-10-12T14:30") as string;

@@ -87,7 +87,8 @@ operation. This does not change the operation's result or its authentication.
   queue and group listings a `cursor`); staff lists are `posts.adminList` (`q` searches,
   `deleted: true` lists deleted posts for `posts.restore`), `polls.adminList` (`state`, `q`),
   `comments.adminList` (`contentKind`, `author`); `groups.members(id)` pages
-  a group's memberships, `groups.ofContent(id)` / `setOfContent` a content's.
+  a group's memberships, `groups.ofContent(id)` / `setOfContent` a content's,
+  `groups.uploadCover(group, file)` its cover; `client.kinds()` the content model.
 - **Images of posts and polls** go to the item's server-named upload path:
   `media.uploadNamed(ref, file)` resolves the name content routes take;
   `media.uploadInline(postId, file)` resolves a body image's reference
@@ -415,6 +416,37 @@ Staff building blocks: `CommentBans` (paged) with `CommentBanDialog`, and
 <Poll language={lang} />
 ```
 
+## Groups
+
+Tags, artists, series, characters, channels and rails: the kinds the site's
+content model declares. `useKinds()` reads it (`GET /v1/kinds`); until that
+route is served, pass the host's model as `initial` (and `kinds` to the
+components below).
+
+```tsx
+const { items, hasMore, loadMore } = useGroups({ kind: "artist", letter: "a", sort: "count" }); // parent, scope, contentKind, language
+const g = useGroup(id);           // g.group: names, text, attributes, parent, scope, children, edges, counts
+await g.update({ attributes: { artist_type: "circle" } }); // staff: create, names, edges, merge, remove, restore
+await g.uploadCover(file);         // into the group kind's folder (cover/{name}), then selected
+const members = useGroupMembers(id);       // add, remove, reorder
+const content = useContentGroups(contentId); // content.set(memberships, kinds)
+```
+
+- **`GroupDirectory`**: one kind's groups with A–Z buckets (`letter` and
+  `onLetterChange` to keep it in the URL), content counts, `layout` list or
+  grid, paged. **`GroupHeader`**: a group page's cover, names, description,
+  typed attributes, parent, scope and sub-groups. Links go to each group's
+  canonical path (`href` overrides) through the provider's `navigate`.
+- **`GroupEditor`** (staff): create, or edit slug, parent, scope, declared
+  attributes, names and aliases per language, description and sort key per
+  language, cover, related groups; `GroupMergeDialog`; delete and restore.
+- **`MembershipEditor`** (staff): a content's groups per group kind, with the
+  version (`versions`), role, position and window each kind allows; one save.
+  **`GroupMembers`**: a group's members, reordered, windowed, used as cover.
+- `labels` names kinds, attributes, roles and values by identifier; others
+  show humanized. Covers render `cover.renditions`; `renderCover` stands in
+  until group reads carry them.
+
 ## Admin flows
 
 Drop-in staff screens for a host's own admin area: each makes its own reads
@@ -500,6 +532,16 @@ const nav = useMemo(() => ({ pathname: location.pathname, search: location.searc
 
   The per-item queue engine behind `useUploadQueue` is `ItemUploadQueue` in
   `/client`.
+
+- **`GroupManager`**: groups per kind (tabs at `basePath/{kind}`): by
+  letter, order and language; a new group at `basePath/{kind}/new`; a group
+  at `basePath/{kind}/{id}` with `GroupEditor` and `GroupMembers`. Props:
+  `groupKinds` (default the model's site-owned ones), `kinds`, `labels`,
+  `contentKind`, `renderContent`, `pageSize`. `useGroupManagerAccess()`.
+
+  ```tsx
+  <GroupManager client={contentkit} basePath="/admin/groups" navigation={nav} labels={{ artist: "Artists" }} />
+  ```
 
 - **`UserCommentStanding`**: for a user page, the person's site-wide comment
   ban (ban, replace, lift) and their recent comments (delete, restore). Props:

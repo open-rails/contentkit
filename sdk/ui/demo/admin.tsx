@@ -1,14 +1,15 @@
-import { CommentModeration, MediaItemPanel, PollManager, PostManager, UploadQueue, UserCommentStanding, type AdminNavigation } from "@openrails/contentkit-ui";
+import { CommentModeration, GroupManager, MediaItemPanel, PollManager, PostManager, UploadQueue, UserCommentStanding, type AdminNavigation } from "@openrails/contentkit-ui";
 import { richTextEditor } from "@openrails/contentkit-ui/editor";
 import { StrictMode, useMemo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Link, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
-import type { RefBody } from "@openrails/contentkit-ui/client";
+import type { Kinds, Membership, RefBody } from "@openrails/contentkit-ui/client";
 import { auth, client, dark, q, viewer } from "./session";
 
 // A host's admin area. /admin/comments/* CommentModeration, /admin/users/{id}
 // UserCommentStanding, /admin/polls/* PollManager, /admin/posts/* PostManager
-// (with the package's rich-text editor), /admin/media/{kind}/{id} MediaItemPanel, /admin/uploads UploadQueue (each
+// (with the package's rich-text editor), /admin/groups/* GroupManager (the
+// content model from /__test/kinds), /admin/media/{kind}/{id} MediaItemPanel, /admin/uploads UploadQueue (each
 // file a new ?kind= item at ?path=; [data-demo=created] counts the items made,
 // across reloads; localStorage demo.last is the last one). ?router=1 mounts each flow in React Router through
 // `navigation` (with the client); otherwise alone over the history API (with
@@ -48,6 +49,8 @@ function Created() {
   return <p data-demo="created">{localStorage.getItem("demo.created") ?? "0"}</p>;
 }
 const itemHref = (i: { kind: string; id: string }) => `#${i.kind}/${i.id}`;
+const model = (await (await fetch("/__test/kinds")).json()) as Kinds;
+const member = (m: Membership) => <span data-demo="member">{m.content_id}</span>;
 
 function Page({ children }: { children: ReactNode }) {
   return (
@@ -77,6 +80,8 @@ function Alone() {
           <Created />
           <UploadQueue {...common} createItem={createItem} path={q.get("path") ?? "file"} />
         </>
+      ) : at.startsWith("/admin/groups") ? (
+        <GroupManager {...common} basePath="/admin/groups" kinds={model} renderContent={member} />
       ) : at.startsWith("/admin/posts") ? (
         <PostManager {...common} basePath="/admin/posts" languages={languages} renderEditor={richTextEditor} postHref={postHref} />
       ) : (
@@ -97,6 +102,7 @@ function Hosted() {
         <Link to="/admin/comments/bans">Bans</Link>
         <Link to="/admin/polls">Polls</Link>
         <Link to="/admin/posts">Posts</Link>
+        <Link to="/admin/groups">Groups</Link>
         <span data-demo="router-location" style={{ minWidth: 0, overflowWrap: "anywhere" }}>
           {loc.pathname + loc.search}
         </span>
@@ -116,6 +122,10 @@ function Hosted() {
               <UploadQueue client={client} createItem={createItem} path={q.get("path") ?? "file"} language={lang} />
             </>
           }
+        />
+        <Route
+          path="/admin/groups/*"
+          element={<GroupManager client={client} basePath="/admin/groups" navigation={navigation} kinds={model} renderContent={member} pageSize={size} language={lang} />}
         />
         <Route path="/admin/polls/*" element={<PollManager client={client} basePath="/admin/polls" navigation={navigation} languages={languages} pageSize={size} language={lang} />} />
         <Route
