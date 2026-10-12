@@ -1,0 +1,430 @@
+package importer_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	contentkit "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/groups"
+	"github.com/open-rails/contentkit/importer"
+	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/internal/testauth"
+	"github.com/open-rails/contentkit/kinds"
+	"github.com/open-rails/contentkit/offers"
+)
+
+const tenant = "site"
+
+// importer holds root:import:write; staff holds every other permission.
+type authz struct{}
+
+func (authz) Can(_ context.Context, a access.Actor, perm string) (bool, error) {
+	return a.ID == "importer" || a.ID == "staff" && perm != string(access.ImportWrite), nil
+}
+
+func id(kind string, n int64) string { return contentref.LegacyID("test", kind, n, time.Time{}) }
+
+func ptr[T any](v T) *T { return &v }
+
+var (
+	t0     = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	future = time.Now().Add(365 * 24 * time.Hour).Truncate(time.Second).UTC()
+)
+
+type fixture struct {
+	e      *contentkit.Engine
+	pool   *pgxpool.Pool
+	schema string
+	routes http.Handler
+}
+
+func newEngine(t *testing.T) fixture {
+	t.Helper()
+	ctx := t.Context()
+	pool := pgtest.Pool(t, nil)
+	pgtest.EnsureExtensions(t, ctx, pool)
+	schema := "ck_i_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		for _, name := range []string{schema, schema + "_river"} {
+			_, _ = pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{name}.Sanitize()+" CASCADE")
+		}
+		_, _ = pool.Exec(ctx, "DELETE FROM public.migrations WHERE schema = $1", schema)
+	})
+	cfg := contentkit.Config{Tenant: tenant, Database: contentkit.DatabaseConfig{Schema: schema},
+		Content: kinds.Config{Languages: []string{"en", "ja"}, Tiers: []string{"premium"}, Restrictions: []string{"restricted"},
+			Kinds: map[string]kinds.Kind{
+				"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one", Traits: []string{"colored"}}, Segments: true,
+					Groups: []string{"tag", "artist", "series", "character"}, Attributes: map[string]kinds.Attribute{"format": {Type: "enum", Values: []string{"doujin", "manga"}}}},
+				"blog": {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}, Groups: []string{"tag"}},
+			},
+			GroupKinds: map[string]kinds.GroupKind{
+				"tag":       {Route: "tags"},
+				"artist":    {Route: "artists", Roles: []string{"publisher"}},
+				"series":    {Route: "series", Ordered: true, Parent: "series"},
+				"character": {Route: "characters", ScopedBy: "series"},
+			}},
+		Interactions: contentkit.InteractionsConfig{Limits: contentkit.LimitsConfig{Disabled: true}}}
+	e, err := contentkit.New(ctx, cfg, contentkit.Deps{Postgres: pool, Auth: testauth.Auth{Authz: authz{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = e.Close(context.Background()) })
+	routes, err := e.Routes(contentkit.Routes{Prefix: "/api", Groups: contentkit.AllRoutes &^ (contentkit.UploadRoutes | contentkit.MediaRoutes | contentkit.OfferRoutes)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	for _, r := range routes {
+		mux.Handle(r.Path, r.Handler)
+	}
+	return fixture{e: e, pool: pool, schema: schema, routes: mux}
+}
+
+// catalogBatch is a small catalog in every section.
+func catalogBatch() importer.Batch {
+	tag := func(n int) importer.Ref { return importer.Ref{ExternalID: "tag:" + string(rune('0'+n))} }
+	gallery1 := importer.Ref{ExternalID: "gallery:1"}
+	comment := func(n int) *importer.Ref { return &importer.Ref{ExternalID: "comment:" + string(rune('0'+n))} }
+	return importer.Batch{
+		Source: "test-legacy",
+		Groups: []importer.Group{
+			{ExternalID: "tag:1", ID: id("tag", 1), Kind: "tag", Slug: "big", Code: "TAG000001",
+				Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Big"}, {Language: "en", Kind: groups.NameAlias, Name: "Huge"}},
+				Text:  []groups.Text{{Language: "en", Description: "Big things."}}, CreatedAt: &t0},
+			{ExternalID: "tag:2", Kind: "tag", Slug: "color", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Color"}}, CreatedAt: &t0},
+			{ExternalID: "artist:1", ID: id("artist", 1), Kind: "artist", Slug: "artist-one",
+				Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Artist One"}, {Language: "ja", Kind: groups.NameCanonical, Name: "アーティスト"}}},
+			{ExternalID: "series:1", ID: id("series", 1), Kind: "series", Slug: "saga", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Saga"}}},
+			{ExternalID: "series:2", ID: id("series", 2), Kind: "series", Slug: "saga-two", Parent: &importer.Ref{ExternalID: "series:1"},
+				Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Saga Two"}}},
+			{ExternalID: "char:1", ID: id("character", 1), Kind: "character", Slug: "hero", Scope: &importer.Ref{ExternalID: "series:2"},
+				Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Hero"}},
+				Edges: []importer.Edge{{Relation: "member_of", To: importer.Ref{ExternalID: "series:1"}}}},
+		},
+		Contents: []importer.Content{
+			{ExternalID: "gallery:1", ID: id("gallery", 1), Kind: "gallery", State: "published", PublishedAt: ptr(t0.Add(24 * time.Hour)), Code: "GAZ000001",
+				Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}, Attributes: map[string]any{"format": "doujin"},
+				Creators: []catalog.Creator{{UserID: "u-1"}},
+				Text: map[string]catalog.Text{"en": {Title: "First", Description: "The first."}, "ja": {Title: "最初"}},
+				Versions: []importer.Version{
+					{ExternalID: "version:1", ID: id("version", 1), Languages: []string{"en"}, Ordinal: ptr(1), PublishedAt: ptr(t0.Add(24 * time.Hour)),
+						Text:     map[string]catalog.VersionText{"en": {Title: "First, in English"}},
+						Segments: []catalog.Segment{{Start: 0, End: 10}, {Start: 10, End: 20, ReleaseAt: &future}}, CreatedAt: &t0},
+					{ExternalID: "version:2", ID: id("version", 2), Languages: []string{"ja"}, Traits: []string{"colored"}, State: "draft", CreatedAt: &t0},
+				}, CreatedAt: &t0, UpdatedAt: ptr(t0.Add(48 * time.Hour))},
+			{ExternalID: "gallery:2", ID: id("gallery", 2), Kind: "gallery", State: "deleted", PublishedAt: &t0, DeletedAt: ptr(t0.Add(72 * time.Hour)),
+				Text:     map[string]catalog.Text{"en": {Title: "Gone"}},
+				Versions: []importer.Version{{ExternalID: "version:3", Languages: []string{"en"}, PublishedAt: &t0, CreatedAt: &t0}}, CreatedAt: &t0},
+			{ExternalID: "gallery:3", ID: id("gallery", 3), Kind: "gallery", State: "published", PublishAt: &future, Restrictions: []string{"restricted"},
+				Text:     map[string]catalog.Text{"en": {Title: "Soon"}},
+				Versions: []importer.Version{{ExternalID: "version:4", ID: id("version", 4), Languages: []string{"en"}, CreatedAt: &t0}}, CreatedAt: &t0},
+			{ExternalID: "post:1", ID: id("post", 1), Kind: "blog", State: "published", PublishedAt: &t0, Text: map[string]catalog.Text{"en": {Title: "News", Body: "<p>Hello</p>"}},
+				CreatedAt: &t0},
+		},
+		Memberships: []importer.Memberships{
+			{Content: gallery1, Kinds: []string{"tag"}, Memberships: []importer.Membership{{Group: tag(1)}, {Group: tag(2)}}},
+			{Content: gallery1, Kinds: []string{"artist"}, Memberships: []importer.Membership{{Group: importer.Ref{ExternalID: "artist:1"}},
+				{Group: importer.Ref{ExternalID: "artist:1"}, Role: "publisher"}}},
+			{Content: gallery1, Kinds: []string{"series"}, Memberships: []importer.Membership{{Group: importer.Ref{ExternalID: "series:2"}, Position: ptr(3)}}},
+			{Content: gallery1, Kinds: []string{"character"}, Memberships: []importer.Membership{{Group: importer.Ref{ExternalID: "char:1"}}}},
+			{Content: importer.Ref{ExternalID: "post:1"}, Kinds: []string{"tag"}, Memberships: []importer.Membership{{Group: tag(1)}}},
+		},
+		Offers:  []importer.Offer{{Target: importer.Target{Content: &gallery1}, Terms: offers.Terms{Amount: 4_990_000}}},
+		Aliases: []importer.Alias{{Kind: "folder", Key: "12345", Target: importer.Target{Content: &gallery1}}, {Kind: "tag-name", Key: "Big", Target: importer.Target{Group: ptr(tag(1))}}},
+		Comments: []importer.Comment{
+			{ExternalID: "comment:1", ID: id("comment", 1), Target: importer.Target{Content: &gallery1}, Language: "en", UserID: "u-1", Body: "Great", CreatedAt: &t0},
+			{ExternalID: "comment:2", ID: id("comment", 2), Target: importer.Target{Content: &gallery1}, Language: "en", AnonName: "guest", Body: "Agreed",
+				ReplyTo: comment(1), CreatedAt: ptr(t0.Add(time.Hour))},
+			{ExternalID: "comment:3", ID: id("comment", 3), Target: importer.Target{Content: &gallery1}, UserID: "u-2", Body: "spam", DeletedAt: ptr(t0.Add(time.Hour)), CreatedAt: &t0},
+			{ExternalID: "comment:4", ID: id("comment", 4), Target: importer.Target{Content: &gallery1}, Language: "ja", UserID: "u-3", Body: "同意",
+				ReplyTo: comment(2), CreatedAt: ptr(t0.Add(2 * time.Hour))},
+		},
+		Reactions: []importer.Reaction{
+			{Target: importer.Target{Content: &gallery1}, UserID: "u-1", Value: 1, CreatedAt: &t0},
+			{Target: importer.Target{Content: &gallery1}, UserID: "u-2", Value: -1, CreatedAt: &t0},
+			{Target: importer.Target{Content: &gallery1}, IP: "203.0.113.9", Value: 1, CreatedAt: &t0},
+			{Target: importer.Target{Comment: comment(1)}, UserID: "u-1", Value: 1, CreatedAt: &t0},
+			{Target: importer.Target{Group: ptr(tag(1))}, UserID: "u-1", Value: -1, CreatedAt: &t0},
+			{Target: importer.Target{Version: &importer.Ref{ExternalID: "version:1"}}, UserID: "u-3", Value: 0, CreatedAt: &t0},
+		},
+		Favorites: []importer.Favorite{{Target: importer.Target{Content: &gallery1}, UserID: "u-1", CreatedAt: &t0},
+			{Target: importer.Target{Version: &importer.Ref{ExternalID: "version:1"}}, UserID: "u-2", CreatedAt: &t0}},
+		Polls: []importer.Poll{
+			{ExternalID: "poll:1", ID: id("poll", 1), Question: "Best?", Language: "en", CreatedAt: &t0,
+				Options: []importer.PollOption{{ExternalID: "answer:1", ID: id("option", 1), Label: "This", Position: 0}, {ExternalID: "answer:2", Label: "That", Position: 1}}},
+			{ExternalID: "poll:2", Kind: "free_text", Question: "Why?", Language: "en", CreatedAt: &t0},
+		},
+		Votes: []importer.Vote{
+			{Poll: importer.Ref{ExternalID: "poll:1"}, Option: importer.Ref{ExternalID: "answer:1"}, UserID: "u-1", CreatedAt: &t0},
+			{Poll: importer.Ref{ExternalID: "poll:1"}, Option: importer.Ref{ExternalID: "answer:2"}, IP: "203.0.113.9", CreatedAt: &t0},
+			{Poll: importer.Ref{ExternalID: "poll:1"}, Option: importer.Ref{ExternalID: "answer:1"}, UserID: "u-2", CreatedAt: &t0},
+		},
+		Answers: []importer.Answer{{Poll: importer.Ref{ExternalID: "poll:2"}, UserID: "u-1", Text: "Because", CreatedAt: &t0}},
+		Signals: []importer.Signal{
+			{Target: importer.Target{Version: &importer.Ref{ExternalID: "version:1"}}, UserID: "u-1", Type: "view", EventID: "view:1", OccurredAt: t0, Progress: 5},
+			{Target: importer.Target{Content: &gallery1}, AnonKey: "a-1", Type: "view", EventID: "view:2", OccurredAt: t0},
+		},
+	}
+}
+
+func (f fixture) importBatch(t *testing.T, b importer.Batch) importer.Result {
+	t.Helper()
+	res, err := f.e.Client().PostImport(t.Context(), b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+func (f fixture) scalar(t *testing.T, sql string, args ...any) string {
+	t.Helper()
+	var out string
+	if err := f.pool.QueryRow(t.Context(), strings.ReplaceAll(sql, "$s.", pgx.Identifier{f.schema}.Sanitize()+"."), args...).Scan(&out); err != nil {
+		t.Fatalf("%s: %v", sql, err)
+	}
+	return out
+}
+
+// fingerprint is every imported table's content.
+func (f fixture) fingerprint(t *testing.T) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, table := range []string{"content_items", "content_text", "content_creators", "content_versions", "content_version_text", "content_segments",
+		"content_facets", "content_events", "content_groups", "content_group_names", "content_group_text", "content_group_edges", "content_memberships",
+		"content_codes", "content_code_aliases", "content_external_ids", "content_comments", "content_reactions", "content_favorites",
+		"content_interaction_counts", "content_poll_questions", "content_poll_options", "content_poll_votes", "content_poll_answers", "content_search_dirty"} {
+		out[table] = f.scalar(t, `SELECT count(*) || ':' || md5(coalesce(string_agg(x::text, '|' ORDER BY x::text), '')) FROM $s.`+table+` x`)
+	}
+	return out
+}
+
+// A small catalog in every section imports with its ids, times and
+// threads kept and its counts exact; importing it again changes nothing.
+func TestImportConverges(t *testing.T) {
+	f := newEngine(t)
+	b := catalogBatch()
+	res := f.importBatch(t, b)
+	if len(res.Failed) > 0 {
+		t.Fatalf("failures: %+v", res.Failed)
+	}
+	want := map[string]int{"groups": 6, "contents": 4, "memberships": 5, "aliases": 2, "comments": 4, "reactions": 6, "favorites": 2, "polls": 2,
+		"votes": 3, "answers": 1}
+	for s, n := range want {
+		if res.Written[s] != n {
+			t.Errorf("written %s = %d, want %d (%v)", s, res.Written[s], n, res.Written)
+		}
+	}
+	if res.Skipped["offers"] != 1 || res.Skipped["signals"] != 2 {
+		t.Errorf("skipped %v: offers need billing, signals a signal plane", res.Skipped)
+	}
+	if res.IDs["content"]["gallery:1"] != id("gallery", 1) || res.IDs["version"]["version:2"] != id("version", 2) || res.IDs["group"]["tag:1"] != id("tag", 1) ||
+		res.IDs["version"]["version:3"] == "" || res.IDs["group"]["tag:2"] == "" || res.IDs["poll_option"]["answer:2"] == "" {
+		t.Errorf("ids %v", res.IDs)
+	}
+	g1, c1 := id("gallery", 1), id("comment", 1)
+	for sql, want := range map[string]string{
+		`SELECT state || ' ' || extract(epoch FROM published_at)::bigint || ' ' || extract(epoch FROM created_at)::bigint || ' ' || extract(epoch FROM updated_at)::bigint
+ FROM $s.content_items WHERE id = $1`: "published 1577923200 1577836800 1578009600",
+		`SELECT access::text || ' ' || attributes::text FROM $s.content_items WHERE id = $1`:                                `{"level": "tier", "tiers": ["premium"]} {"format": "doujin"}`,
+		`SELECT string_agg(language || '=' || title, ',' ORDER BY language) FROM $s.content_text WHERE content_id = $1`:      "en=First,ja=最初",
+		`SELECT string_agg(id || ':' || position || ':' || state || ':' || coalesce(ordinal, 0), ',' ORDER BY position) FROM $s.content_versions WHERE content_id = $1`: id("version", 1) + ":0:published:1," + id("version", 2) + ":1:draft:0",
+		`SELECT count(*)::text FROM $s.content_segments WHERE version_id = (SELECT id FROM $s.content_versions WHERE content_id = $1 AND position = 0)`: "2",
+		`SELECT code FROM $s.content_codes WHERE content_id = $1`: "GAZ000001",
+		`SELECT likes || '/' || dislikes || '/' || favorites || '/' || comment_count FROM $s.content_interaction_counts WHERE content_id = $1 AND content_version_id = ''`: "2/1/1/1",
+		`SELECT array_length(group_ids, 1)::text FROM $s.content_facets WHERE content_id = $1 AND version_id = (SELECT id FROM $s.content_versions WHERE content_id = $1 AND position = 0)`: "6",
+	} {
+		if got := f.scalar(t, sql, g1); got != want {
+			t.Errorf("%s\n got %q\nwant %q", sql, got, want)
+		}
+	}
+	for sql, want := range map[string]string{
+		`SELECT reply_count || '/' || likes || '/' || language FROM $s.content_comments WHERE id = $1::uuid`:                                    "2/1/en",
+		`SELECT string_agg(id::text, ',' ORDER BY created_at) FROM $s.content_comments WHERE reply_to_id = $1::uuid`:                          id("comment", 2) + "," + id("comment", 4),
+		`SELECT string_agg(vote_count::text, ',' ORDER BY position) FROM $s.content_poll_options WHERE question_id = (SELECT id FROM $s.content_poll_questions WHERE question = 'Best?') AND $1 <> ''`: "2,1",
+		`SELECT code FROM $s.content_codes WHERE content_id = '` + id("tag", 1) + `' AND $1 <> ''`:                                         "TAG000001",
+		`SELECT state || ' ' || (published_at IS NULL) FROM $s.content_items WHERE id = '` + id("gallery", 3) + `' AND $1 <> ''`:           "published true",
+		`SELECT array_to_string(languages, ',') FROM $s.content_versions WHERE content_id = '` + id("post", 1) + `' AND $1 <> ''`:          "en",
+		`SELECT scope_id || ' ' || slug FROM $s.content_groups WHERE id = '` + id("character", 1) + `' AND $1 <> ''`:                      id("series", 2) + " hero",
+		`SELECT count(*)::text FROM $s.content_code_aliases WHERE source = 'test-legacy' AND $1 <> ''`:                                    "2",
+		`SELECT count(*)::text FROM $s.content_reactions WHERE content_kind = 'tag' AND content_id = '` + id("tag", 1) + `' AND $1 <> ''`: "1",
+	} {
+		if got := f.scalar(t, sql, c1); got != want {
+			t.Errorf("%s\n got %q\nwant %q", sql, got, want)
+		}
+	}
+	before := f.fingerprint(t)
+	if again := f.importBatch(t, catalogBatch()); len(again.Failed) > 0 || !mapsEqual(again.IDs, res.IDs) {
+		t.Fatalf("re-import: failures %+v, ids %v", again.Failed, again.IDs)
+	}
+	after := f.fingerprint(t)
+	for table, fp := range before {
+		if after[table] != fp {
+			t.Errorf("re-import changed %s: %s -> %s", table, fp, after[table])
+		}
+	}
+	// A changed record is updated alone.
+	edit := catalogBatch()
+	edit.Contents = edit.Contents[:1]
+	edit.Contents[0].Text["en"] = catalog.Text{Title: "First, revised"}
+	revisions := f.scalar(t, `SELECT string_agg(id || ':' || revision, ',' ORDER BY id) FROM $s.content_items WHERE $1 <> ''`, "x")
+	if res := f.importBatch(t, importer.Batch{Source: edit.Source, Contents: edit.Contents}); len(res.Failed) > 0 || res.Written["contents"] != 1 {
+		t.Fatalf("edit: %+v", res)
+	}
+	now := f.scalar(t, `SELECT string_agg(id || ':' || revision, ',' ORDER BY id) FROM $s.content_items WHERE $1 <> ''`, "x")
+	if strings.Count(now, ":2") != strings.Count(revisions, ":2")+1 || f.scalar(t, `SELECT title FROM $s.content_text WHERE content_id = $1 AND language = 'en'`, g1) != "First, revised" {
+		t.Errorf("revisions %s -> %s", revisions, now)
+	}
+	if f.scalar(t, `SELECT count(*)::text FROM $s.content_external_ids WHERE $1 <> ''`, "x") != "22" {
+		t.Errorf("external ids duplicated: %s", f.scalar(t, `SELECT count(*)::text FROM $s.content_external_ids WHERE $1 <> ''`, "x"))
+	}
+}
+
+func mapsEqual(a, b map[string]map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, m := range a {
+		n := b[k]
+		if len(m) != len(n) {
+			return false
+		}
+		for x, v := range m {
+			if n[x] != v {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// Records that fail are reported and the rest written, in the same
+// transaction; sending the batch again once fixed completes it.
+func TestImportPartialFailureResumes(t *testing.T) {
+	f := newEngine(t)
+	gallery := func(n int, state string, owner *importer.Ref) importer.Content {
+		ext := "gallery:" + string(rune('0'+n))
+		return importer.Content{ExternalID: ext, ID: id("gallery", int64(n)), Kind: "gallery", State: state, OwnerGroup: owner,
+			Text: map[string]catalog.Text{"en": {Title: ext}}, Versions: []importer.Version{{ExternalID: "version:" + ext, Languages: []string{"en"}}}}
+	}
+	b := importer.Batch{Source: "test-legacy",
+		Contents: []importer.Content{gallery(1, "published", nil), gallery(2, "published", &importer.Ref{ExternalID: "tag:9"}), gallery(3, "live", nil), gallery(4, "draft", nil)},
+		Comments: []importer.Comment{
+			{ExternalID: "c:1", Target: importer.Target{Content: &importer.Ref{ExternalID: "gallery:1"}}, UserID: "u", Body: "hi"},
+			{ExternalID: "c:2", Target: importer.Target{Content: &importer.Ref{ExternalID: "gallery:3"}}, UserID: "u", Body: "lost"},
+			{ExternalID: "c:3", Target: importer.Target{Content: &importer.Ref{ExternalID: "gallery:1"}}, UserID: "u", Body: "orphan", ReplyTo: &importer.Ref{ID: id("comment", 99)}},
+		},
+	}
+	res := f.importBatch(t, b)
+	failed := map[string]string{}
+	for _, x := range res.Failed {
+		failed[x.Section+" "+x.ExternalID] = x.Code
+	}
+	wantFailed := map[string]string{"contents gallery:2": "not_found", "contents gallery:3": "invalid", "comments c:2": "not_found", "comments c:3": "not_found"}
+	if !mapsEqual(map[string]map[string]string{"": failed}, map[string]map[string]string{"": wantFailed}) || res.Written["contents"] != 2 || res.Written["comments"] != 1 {
+		t.Fatalf("result %+v", res)
+	}
+	if f.scalar(t, `SELECT string_agg(id, ',' ORDER BY id) FROM $s.content_items WHERE $1 <> ''`, "x") != id("gallery", 1)+","+id("gallery", 4) {
+		t.Fatal("the failed records were written")
+	}
+	// Fix the causes and send it all again.
+	b.Groups = []importer.Group{{ExternalID: "tag:9", ID: id("tag", 9), Kind: "tag", Slug: "nine"}}
+	b.Contents[2].State = "published"
+	b.Comments[2].ReplyTo = &importer.Ref{ExternalID: "c:1"}
+	res = f.importBatch(t, b)
+	if len(res.Failed) > 0 || res.Written["contents"] != 4 || res.Written["comments"] != 3 {
+		t.Fatalf("resume %+v", res)
+	}
+	for sql, want := range map[string]string{
+		`SELECT count(*)::text FROM $s.content_items WHERE $1 <> ''`:                                    "4",
+		`SELECT count(*)::text FROM $s.content_comments WHERE $1 <> ''`:                                 "3",
+		`SELECT count(*)::text FROM $s.content_external_ids WHERE entity = 'content' AND $1 <> ''`:       "4",
+		`SELECT owner_group_id FROM $s.content_items WHERE id = '` + id("gallery", 2) + `' AND $1 <> ''`: id("tag", 9),
+	} {
+		if got := f.scalar(t, sql, "x"); got != want {
+			t.Errorf("%s = %q, want %q", sql, got, want)
+		}
+	}
+	// A given id never moves an imported record.
+	b.Contents[0].ID = id("gallery", 7)
+	res = f.importBatch(t, importer.Batch{Source: b.Source, Contents: b.Contents[:1]})
+	if len(res.Failed) != 1 || res.Failed[0].Code != "conflict" {
+		t.Fatalf("moved id %+v", res)
+	}
+}
+
+// The route admits root:import:write holders only, refuses a malformed
+// batch as a whole, and answers the result.
+func TestImportRoute(t *testing.T) {
+	f := newEngine(t)
+	post := func(actor string, body any) *httptest.ResponseRecorder {
+		var buf bytes.Buffer
+		_ = json.NewEncoder(&buf).Encode(body)
+		req := testauth.As(httptest.NewRequest(http.MethodPost, "/api/v1/import", &buf), access.Actor{ID: actor})
+		rec := httptest.NewRecorder()
+		f.routes.ServeHTTP(rec, req)
+		return rec
+	}
+	b := importer.Batch{Source: "test-legacy", Groups: []importer.Group{{ExternalID: "t", Kind: "tag", Slug: "t"}}}
+	if rec := post("staff", b); rec.Code != http.StatusForbidden {
+		t.Fatalf("staff without the permission: %d %s", rec.Code, rec.Body)
+	}
+	if rec := post("importer", importer.Batch{Source: "Bad Source"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad source: %d", rec.Code)
+	}
+	if rec := post("importer", map[string]any{"source": "x", "galleries": []int{1}}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown section: %d", rec.Code)
+	}
+	rec := post("importer", b)
+	var res importer.Result
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || rec.Code != http.StatusOK || res.Written["groups"] != 1 {
+		t.Fatalf("import: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// After an import the engine's jobs rebuild what it changed: search
+// documents, group counts and covers, listing counts.
+func TestImportRebuildsProjections(t *testing.T) {
+	f := newEngine(t)
+	if err := f.e.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if res := f.importBatch(t, catalogBatch()); len(res.Failed) > 0 {
+		t.Fatalf("failures %+v", res.Failed)
+	}
+	g1 := id("gallery", 1)
+	deadline := time.Now().Add(90 * time.Second)
+	for _, c := range []struct{ name, sql, want string }{
+		{"search documents", `SELECT (count(DISTINCT content_id) = 2 AND count(*) >= 3)::text FROM $s.content_search_documents WHERE content_id IN ($1, '` + id("tag", 1) + `')`, "true"},
+		{"group counts", `SELECT coalesce(max(content_count), 0)::text FROM $s.content_group_counts WHERE group_id = '` + id("tag", 1) + `' AND language = '' AND $1 <> ''`, "1"},
+		{"automatic cover", `SELECT coalesce(cover->>'content_id', '') FROM $s.content_groups WHERE id = '` + id("artist", 1) + `' AND $1 <> ''`, g1},
+		{"listing counts", `SELECT likes || '/' || favorites FROM $s.content_facets WHERE content_id = $1 ORDER BY position LIMIT 1`, "2/1"},
+	} {
+		for {
+			if got := f.scalar(t, c.sql, g1); got == c.want {
+				break
+			} else if time.Now().After(deadline) {
+				t.Fatalf("%s: %q, want %q", c.name, got, c.want)
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	if !slices.Contains([]string{"0", "1", "2"}, f.scalar(t, `SELECT count(*)::text FROM $s.content_search_dirty WHERE content_id = $1`, g1)) {
+		t.Error("search marks pile up")
+	}
+}

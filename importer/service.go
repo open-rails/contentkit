@@ -309,17 +309,13 @@ func classify(err error) (string, string) {
 		errors.Is(err, content.ErrInvalid), errors.Is(err, codes.ErrInvalid), errors.Is(err, discovery.ErrInvalid), errors.Is(err, contentref.ErrInvalidID):
 		return CodeInvalid, err.Error()
 	case errors.As(err, &pg):
-		switch pg.Code[:2] {
-		case "23":
-			if pg.Code == "23505" {
-				return CodeConflict, "conflict: " + pg.ConstraintName
-			}
-			if pg.Code == "23503" {
-				return CodeNotFound, "not found: " + pg.ConstraintName
-			}
-			return CodeInvalid, "invalid: " + pg.ConstraintName
-		case "22":
-			return CodeInvalid, "invalid: " + pg.Message
+		switch {
+		case pg.Code == "23505":
+			return CodeConflict, pg.Message
+		case pg.Code == "23503":
+			return CodeNotFound, pg.Message
+		case strings.HasPrefix(pg.Code, "23"), strings.HasPrefix(pg.Code, "22"):
+			return CodeInvalid, pg.Message
 		}
 	}
 	return CodeInternal, "internal error"

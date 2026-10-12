@@ -180,13 +180,16 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []ImportContent) error
 	if err != nil {
 		return err
 	}
-	stored, err := s.lockStamped(ctx, tx, `SELECT v.id, c.kind, v.content_id, v.state, v.publish_at, v.published_at, v.deleted_at, v.created_at
- FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
- WHERE v.tenant_id = $1 AND v.id = ANY($2) ORDER BY v.id FOR UPDATE OF v`, vids)
+	hidden, err := s.hiddenVersions(ctx, tx, in)
 	if err != nil {
 		return err
 	}
-	hidden, err := s.hiddenVersions(ctx, tx, in)
+	for _, v := range hidden {
+		vids = append(vids, v)
+	}
+	stored, err := s.lockStamped(ctx, tx, `SELECT v.id, c.kind, v.content_id, v.state, v.publish_at, v.published_at, v.deleted_at, v.created_at
+ FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id = v.tenant_id AND c.id = v.content_id
+ WHERE v.tenant_id = $1 AND v.id = ANY($2) ORDER BY v.id FOR UPDATE OF v`, vids)
 	if err != nil {
 		return err
 	}
@@ -396,7 +399,8 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
 			return nil, nil, err
 		}
 		if err := run(retitled, `INSERT INTO `+s.t.text+` AS t (tenant_id, content_id, language, title, slug, description, body, sort_key, aliases)
- SELECT $1, r.content_id, r.language, r.title, r.slug, r.description, r.body, r.sort_key, r.aliases
+ SELECT $1, r.content_id, r.language, r.title, coalesce(r.slug, ''), coalesce(r.description, ''), coalesce(r.body, ''), coalesce(r.sort_key, ''),
+  coalesce(r.aliases, '{}')
  FROM jsonb_to_recordset($2::jsonb) AS r(content_id text, language text, title text, slug text, description text, body text, sort_key text, aliases text[])
  ON CONFLICT (tenant_id, content_id, language) DO UPDATE SET title = EXCLUDED.title, slug = EXCLUDED.slug, description = EXCLUDED.description,
   body = EXCLUDED.body, sort_key = EXCLUDED.sort_key, aliases = EXCLUDED.aliases, updated_at = clock_timestamp()
@@ -446,7 +450,7 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
 			return nil, nil, err
 		}
 		if err := run(changed, content(`INSERT INTO `+s.t.versionText+` AS t (tenant_id, version_id, language, title, description)
- SELECT $1, r.version_id, r.language, r.title, r.description FROM jsonb_to_recordset($2::jsonb) AS r(version_id text, language text, title text, description text)
+ SELECT $1, r.version_id, r.language, coalesce(r.title, ''), coalesce(r.description, '') FROM jsonb_to_recordset($2::jsonb) AS r(version_id text, language text, title text, description text)
  ON CONFLICT (tenant_id, version_id, language) DO UPDATE SET title = EXCLUDED.title, description = EXCLUDED.description
  WHERE (t.title, t.description) IS DISTINCT FROM (EXCLUDED.title, EXCLUDED.description)`), s.tenant, data(b.vtexts)); err != nil {
 			return nil, nil, err
@@ -459,7 +463,7 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
 			return nil, nil, err
 		}
 		if err := run(changed, content(`INSERT INTO `+s.t.segments+` AS g (tenant_id, version_id, position, title, start_index, end_index, release_at)
- SELECT $1, r.version_id, r.position, r.title, r.start_index, r.end_index, r.release_at
+ SELECT $1, r.version_id, r.position, coalesce(r.title, ''), r.start_index, r.end_index, r.release_at
  FROM jsonb_to_recordset($2::jsonb) AS r(version_id text, position int, title text, start_index int, end_index int, release_at timestamptz)
  ON CONFLICT (tenant_id, version_id, position) DO UPDATE SET title = EXCLUDED.title, start_index = EXCLUDED.start_index, end_index = EXCLUDED.end_index,
   release_at = EXCLUDED.release_at
