@@ -26,7 +26,9 @@ func TestLockedBodyIntegration(t *testing.T) {
 	ctx := t.Context()
 	var cat *catalog.Store
 	grp, err := groups.New(groups.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Kinds: w.kinds,
-		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error { return cat.ContentChanged(ctx, q, ids) }})
+		ContentChanged: func(ctx context.Context, q groups.Querier, ids []string) error {
+			return cat.ContentChanged(ctx, q, ids)
+		}})
 	if err != nil {
 		t.Fatal(err)
 	}
