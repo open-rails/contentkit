@@ -64,6 +64,7 @@ type Chip struct {
 // viewers of all time.
 type Counts struct {
 	Likes     int   `json:"likes"`
+	Dislikes  int   `json:"dislikes"`
 	Favorites int   `json:"favorites"`
 	Views     int64 `json:"views"`
 }
@@ -135,7 +136,7 @@ func (s *Service) cards(ctx context.Context, q *sel, picks []pick, o cardOptions
 	for i, p := range picks {
 		vids[i] = p.version
 	}
-	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, f.languages, f.traits, f.group_ids, f.likes, f.favorites,
+	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT c.id, c.kind, c.access, v.access, f.languages, f.traits, f.group_ids, f.likes, f.dislikes, f.favorites,
  f.popularity, f.published_at, f.attributes, v.id, v.label, v.pages, v.duration_ms,
  coalesce(cd.code, ''), coalesce(cd.slugs->>@d_display, cd.slug, ''), coalesce(nullif(vt.title, ''), t.title, ''), coalesce(t.language, '')
 FROM unnest(@d_vids::text[]) WITH ORDINALITY AS p(vid, ord)
@@ -156,7 +157,7 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 		var pop []byte
 		var code string
 		err := r.Scan(&c.ID, &c.Kind, &c.contentRule, &c.override, &c.Version.Languages, &c.Version.Traits, &c.groupIDs, &c.Counts.Likes,
-			&c.Counts.Favorites, &pop, &c.PublishedAt, &c.Attributes, &c.Version.ID, &c.Version.Label, &c.Version.Pages, &c.Version.DurationMS,
+			&c.Counts.Dislikes, &c.Counts.Favorites, &pop, &c.PublishedAt, &c.Attributes, &c.Version.ID, &c.Version.Label, &c.Version.Pages, &c.Version.DurationMS,
 			&code, &c.slug, &c.Title, &c.Language)
 		if err != nil {
 			return c, err

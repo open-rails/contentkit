@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"net/http"
 	"regexp"
 	"slices"
@@ -406,15 +405,14 @@ func (e *Engine) contentOptions(deps Deps) content.Options {
 	}
 	l := in.Limits
 	o := content.Options{
-		Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Auth: e.auth, UserInfo: deps.Users, Resolver: e.catalog.Resolver(),
+		Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Auth: e.auth, UserInfo: deps.Users, Resolver: interactionTargets{e}, Kinds: e.cfg.Content,
 		Processor: deps.Processor,
 		Moderator: deps.Moderator, ModeratorTimeout: in.ModeratorTimeout, ModeratorCooldown: in.ModeratorCooldown,
 		Classifier: deps.Classifier, ProviderDataEraser: deps.ProviderDataEraser,
 		Limits: content.Limits{Disabled: l.Disabled, Redis: deps.Redis, Comment: rates(l.Comment), CommentReaction: rates(l.CommentReaction),
 			Reaction: rates(l.Reaction), Favorite: rates(l.Favorite), PollVote: rates(l.PollVote)},
 		Anonymous: in.Anonymous, CommentMaxLength: in.CommentMaxLength,
-		ContentKinds: slices.Sorted(maps.Keys(e.cfg.Content.Kinds)),
-		Logger:       e.log,
+		Logger: e.log,
 	}
 	if e.media != nil {
 		o.Media = &content.Media{Images: e.media.jobs.Manifests(), Folders: e.media.jobs, Reader: e.media.reader}
@@ -624,7 +622,8 @@ func (e *Engine) newProbes(deps Deps) []Probe {
 }
 
 // EraseSubjects erases subjects from every plane: signals, interaction data,
-// inboxes and data retained by moderation and classifier providers; approved
+// recent searches, inboxes and data retained by moderation and classifier
+// providers; approved
 // authored content stays (content.EraseSubjects). Retry while error != nil or
 // !report.Complete(); Remaining names a plane that could not finish
 // (content_plane, signal_plane). Without a signal plane only the content
@@ -652,7 +651,7 @@ func (e *Engine) EraseSubjects(ctx context.Context, subjects []signal.Subject) (
 			actors = append(actors, s.Key())
 		}
 	}
-	contentErr := e.content.EraseSubjects(ctx, actors)
+	contentErr := errors.Join(e.content.EraseSubjects(ctx, actors), e.discover.EraseSearches(ctx, subjects))
 	if signalErr != nil {
 		report.Remaining["signal_plane"] = 1
 	}

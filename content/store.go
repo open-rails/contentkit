@@ -43,6 +43,10 @@ type tables struct {
 	counts        string
 	commentBans   string
 	codes         string
+	items         string
+	groups        string
+	bannedWords   string
+	ipBans        string
 
 	preferenceSync string
 }
@@ -65,6 +69,10 @@ func newStore(pool *pgxpool.Pool, schema, tenant string) *store {
 			counts:        q("content_interaction_counts"),
 			commentBans:   q("content_comment_bans"),
 			codes:         q("content_codes"),
+			items:         q("content_items"),
+			groups:        q("content_groups"),
+			bannedWords:   q("content_banned_words"),
+			ipBans:        q("content_ip_bans"),
 
 			preferenceSync: q("content_preference_sync"),
 		},

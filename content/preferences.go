@@ -52,28 +52,6 @@ func (p *preferences) work(ref contentref.ContentRef) (contentref.ContentRef, bo
 	return ref, ref.ContentKind != KindComment
 }
 
-// storedRefSet maps caller references to the references their rows are stored
-// under, and back.
-type storedRefSet struct {
-	refs    []contentref.ContentRef
-	callers map[contentref.ContentKey][]contentref.ContentKey
-}
-
-// storedRefs validates the caller's references and resolves each through the
-// canonical rule, so own-state reads agree with the writes.
-func (p *preferences) storedRefs(refs []contentref.ContentRef) (storedRefSet, error) {
-	out := storedRefSet{refs: make([]contentref.ContentRef, 0, len(refs)), callers: make(map[contentref.ContentKey][]contentref.ContentKey, len(refs))}
-	for _, r := range refs {
-		if err := p.rt.checkRef(r); err != nil {
-			return storedRefSet{}, err
-		}
-		w, _ := p.work(r)
-		out.refs = append(out.refs, w)
-		out.callers[w.Key()] = append(out.callers[w.Key()], r.Key())
-	}
-	return out, nil
-}
-
 // Preference is one exported row: an actor's current value on one axis of a
 // canonical reference, with the revision and time of its last change.
 type Preference struct {

@@ -42,7 +42,7 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	other, err := New(ctx, Options{Pool: rt.store.pool, Schema: rt.schema, Tenant: "other", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: rt.resolver, ContentKinds: []string{"gallery"}})
+	other, err := New(ctx, Options{Pool: rt.store.pool, Schema: rt.schema, Tenant: "other", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: rt.resolver, Kinds: testKinds("gallery")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,9 +72,9 @@ func TestAccountErasureOwnsSourceInteractionsAndExactCounters(t *testing.T) {
 		t.Fatalf("other tenant damaged: %+v", got)
 	}
 	for name, write := range map[string]func() error{
-		"reaction":         func() error { _, e := rt.reactions.react(ctx, u1, "gallery", localeID(42, "en"), 1); return e },
-		"favorite":         func() error { return favErr(rt.favorites.add(ctx, u1, "gallery", localeID(42, "en"))) },
-		"unfavorite":       func() error { return favErr(rt.favorites.remove(ctx, u1, "gallery", localeID(42, "en"))) },
+		"reaction":         func() error { _, e := rt.reactions.react(ctx, u1, rt.Ref("gallery", localeID(42, "en")), 1); return e },
+		"favorite":         func() error { return favErr(rt.favorites.add(ctx, u1, rt.Ref("gallery", localeID(42, "en")))) },
+		"unfavorite":       func() error { return favErr(rt.favorites.remove(ctx, u1, rt.Ref("gallery", localeID(42, "en")))) },
 		"comment reaction": func() error { _, e := rt.comments.reactTx(ctx, u1, cm.ID, 1); return e },
 		"poll vote":        func() error { _, e := rt.polls.vote(ctx, u1, poll.ID, poll.Options[0].ID); return e },
 	} {
@@ -108,9 +108,9 @@ func TestSourceWritesRaceErasureWithoutResurrection(t *testing.T) {
 			var err error
 			switch i % 3 {
 			case 0:
-				_, err = rt.reactions.react(ctx, actor, "gallery", localeID(42, "en"), 1)
+				_, err = rt.reactions.react(ctx, actor, rt.Ref("gallery", localeID(42, "en")), 1)
 			case 1:
-				err = favErr(rt.favorites.add(ctx, actor, "gallery", localeID(42, "en")))
+				err = favErr(rt.favorites.add(ctx, actor, rt.Ref("gallery", localeID(42, "en"))))
 			case 2:
 				_, err = rt.polls.vote(ctx, actor, poll.ID, poll.Options[0].ID)
 			}
@@ -261,7 +261,7 @@ func TestSourceFenceSeesCommittedErasureWithRepeatableReadHostDefault(t *testing
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	rt, err := New(ctx, Options{Pool: pool, Schema: base.schema, Tenant: base.tenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: base.resolver, ContentKinds: []string{"gallery"}})
+	rt, err := New(ctx, Options{Pool: pool, Schema: base.schema, Tenant: base.tenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: base.resolver, Kinds: testKinds("gallery")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestSourceFenceSeesCommittedErasureWithRepeatableReadHostDefault(t *testing
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := rt.reactions.react(ctx, access.Actor{ID: "gone"}, "gallery", localeID(42, "en"), 1)
+		_, err := rt.reactions.react(ctx, access.Actor{ID: "gone"}, rt.Ref("gallery", localeID(42, "en")), 1)
 		done <- err
 	}()
 	// Observe the writer's advisory-lock wait before committing the erasure.
@@ -367,7 +367,7 @@ func (p *retainingPolicy) EraseSubjects(_ context.Context, tenant string, ids []
 
 func TestErasureRejectsUnconfiguredRetainingPolicy(t *testing.T) {
 	rt, pool := newTestRuntime(t, Options{})
-	_, err := New(context.Background(), Options{Pool: pool, Schema: rt.schema, Tenant: testTenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{}, Classifier: &retainingPolicy{}})
+	_, err := New(context.Background(), Options{Kinds: testKinds("gallery"), Pool: pool, Schema: rt.schema, Tenant: testTenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{}, Classifier: &retainingPolicy{}})
 	if err == nil {
 		t.Fatal("retaining classifier accepted without lifecycle eraser")
 	}
@@ -436,10 +436,10 @@ func TestErasureFencesPausedModerationBeforeSourceCommit(t *testing.T) {
 	provider := &retainingPolicy{entered: make(chan struct{}), release: make(chan struct{})}
 	res := &fakeResolver{}
 	res.set("gallery", cid(1), true, true)
-	rt, _ := newTestRuntime(t, Options{Moderator: provider, ProviderDataEraser: provider, Resolver: res, ContentKinds: []string{"gallery"}})
+	rt, _ := newTestRuntime(t, Options{Moderator: provider, ProviderDataEraser: provider, Resolver: res, Kinds: testKinds("gallery")})
 	done := make(chan error, 1)
 	go func() {
-		_, err := rt.comments.create(ctx, access.Actor{ID: "u1"}, "gallery", cid(1), CommentInput{Body: "paused"})
+		_, err := rt.comments.create(ctx, access.Actor{ID: "u1"}, rt.Ref("gallery", cid(1)), CommentInput{Body: "paused"})
 		done <- err
 	}()
 	<-provider.entered
@@ -528,12 +528,12 @@ func TestErasureFenceSurvivesRuntimeRestartAndReview(t *testing.T) {
 	if err := rt.EraseSubjects(ctx, []string{author.ID}); err != nil {
 		t.Fatal(err)
 	}
-	opts := Options{Pool: rt.store.pool, Schema: rt.schema, Tenant: rt.tenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: rt.resolver, ContentKinds: []string{"gallery"}, Moderator: &fakeModerator{}}
+	opts := Options{Pool: rt.store.pool, Schema: rt.schema, Tenant: rt.tenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: rt.resolver, Kinds: testKinds("gallery"), Moderator: &fakeModerator{}}
 	restarted, err := New(ctx, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := restarted.comments.create(ctx, author, "gallery", cid(1), CommentInput{Body: "new unpublished body"}); !errors.Is(err, ErrSubjectErased) {
+	if _, err := restarted.comments.create(ctx, author, restarted.Ref("gallery", cid(1)), CommentInput{Body: "new unpublished body"}); !errors.Is(err, ErrSubjectErased) {
 		t.Fatalf("new runtime forgot source fence: %v", err)
 	}
 	if err := restarted.Resolve(ctx, KindComment, cm.ID, ReviewDecision{Revision: page.Items[0].Revision, Decision: DecisionApprove, Reviewer: "reviewer"}); err == nil {
@@ -544,7 +544,7 @@ func TestErasureFenceSurvivesRuntimeRestartAndReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := other.comments.create(ctx, author, "gallery", cid(1), CommentInput{Body: "other tenant content"}); err != nil {
+	if _, err := other.comments.create(ctx, author, other.Ref("gallery", cid(1)), CommentInput{Body: "other tenant content"}); err != nil {
 		t.Fatalf("source fence crossed tenant runtime: %v", err)
 	}
 }
@@ -565,7 +565,7 @@ func TestBaselinePublishedContentSurvivesErasure(t *testing.T) {
 	if err := migrations.ApplyPostgres(ctx, db, schema); err != nil {
 		t.Fatal(err)
 	}
-	rt, err := New(ctx, Options{Pool: pool, Schema: schema, Tenant: testTenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{}})
+	rt, err := New(ctx, Options{Kinds: testKinds("gallery"), Pool: pool, Schema: schema, Tenant: testTenant, Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{}})
 	if err != nil {
 		t.Fatal(err)
 	}

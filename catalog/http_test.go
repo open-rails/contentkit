@@ -195,7 +195,7 @@ func TestModerationHoldIntegration(t *testing.T) {
 	f := newFixture(t, func(o *Options) {
 		var err error
 		rt, err = content.New(t.Context(), content.Options{Pool: o.Pool, Schema: o.Schema, Tenant: tenant, Auth: o.Auth,
-			Resolver: late, ContentKinds: []string{"gallery", "blog"}, Moderator: mod, Limits: content.Limits{Disabled: true}})
+			Resolver: late, Kinds: o.Kinds, Moderator: mod, Limits: content.Limits{Disabled: true}})
 		if err != nil {
 			t.Fatal(err)
 		}

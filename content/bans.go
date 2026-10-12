@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
@@ -217,7 +218,18 @@ func (rt *Runtime) enrichBans(ctx context.Context, bans []CommentBan) {
 
 // --- HTTP ---
 
-var banRoutes = []httpapi.Route[*Runtime]{
+func banRoutes() []httpapi.Route[*Runtime] {
+	out := append([]httpapi.Route[*Runtime](nil), userBanRoutes...)
+	for _, typ := range TargetTypes {
+		out = append(out, httpapi.Route[*Runtime]{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/" + string(typ) + "/{id}/can-comment", Resource: "bans", Auth: httpapi.Public,
+			Doc: "Whether the caller may comment on " + targetNoun(typ) + ", and the ban that stops it.", Query: targetQuery(typ),
+			Responses: []httpapi.Reply{httpapi.OK(CommentStanding{})}, Errors: []string{CodeNotFound}},
+			Serve: func(rt *Runtime) http.HandlerFunc { return rt.targetHandler(typ, rt.handleCanComment) }})
+	}
+	return out
+}
+
+var userBanRoutes = []httpapi.Route[*Runtime]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/comment-bans", Resource: "bans", Auth: httpapi.User,
 		Doc:   "The bans the caller placed on commenters of its own content, newest first, expired ones included.",
 		Query: httpapi.Page, Responses: []httpapi.Reply{httpapi.OK([]CommentBan{})}},
@@ -248,10 +260,6 @@ var banRoutes = []httpapi.Route[*Runtime]{
 		Doc:       "Lifts a tenant-wide comment ban.",
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{CodeUnauthorized}},
 		Serve: func(rt *Runtime) http.HandlerFunc { return rt.handleLiftBan(true) }},
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}/can-comment", Resource: "bans", Auth: httpapi.Public,
-		Doc:       "Whether the caller may comment on a target, and the ban that stops it.",
-		Responses: []httpapi.Reply{httpapi.OK(CommentStanding{})}, Errors: []string{CodeNotFound}},
-		Serve: httpapi.H((*Runtime).handleCanComment)},
 }
 
 // banScope authorizes the caller for one scope: the global scope needs
@@ -372,18 +380,22 @@ type CommentStanding struct {
 // handleCanComment answers whether the caller may comment on a visible target
 // (it must be accessible to them, signed in unless anonymous comments are on,
 // and no ban may apply) and what it may do to the comments there.
-func (rt *Runtime) handleCanComment(w http.ResponseWriter, req *http.Request) {
+func (rt *Runtime) handleCanComment(w http.ResponseWriter, req *http.Request, target contentref.ContentRef) {
 	ctx := req.Context()
 	actor := rt.actor(ctx)
-	_, res, err := rt.resolveTarget(ctx, req.PathValue("kind"), req.PathValue("id"), actor, false)
+	_, res, err := rt.resolveTarget(ctx, target, actor, false)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	out := CommentStanding{UserID: viewerID(actor), Anonymous: rt.anonymous.Comments, MaxLength: rt.commentMax, BanScopes: []BanScope{}}
 	out.CanComment = res.Accessible && (out.UserID != "" || out.Anonymous)
+	err = rt.checkCommentBan(ctx, viewerID(actor), res.Owner)
+	if err == nil {
+		err = rt.checkIPBan(ctx, actor)
+	}
 	var banned *BannedError
-	if err := rt.checkCommentBan(ctx, viewerID(actor), res.Owner); errors.As(err, &banned) {
+	if errors.As(err, &banned) {
 		out.CanComment, out.Ban = false, &banned.BanNotice
 	} else if err != nil {
 		writeErr(w, err)

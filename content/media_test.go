@@ -138,7 +138,7 @@ func TestMedia_CanUpload(t *testing.T) {
 			t.Errorf("%s: %+v %v, want %v", tc.ref, g, err, tc.want)
 		}
 	}
-	denied, err := New(ctx, Options{Pool: rt.store.pool, Schema: rt.schema, Tenant: rt.tenant, Auth: testauth.Auth{Authz: denyAll{}},
+	denied, err := New(ctx, Options{Kinds: testKinds("gallery"), Pool: rt.store.pool, Schema: rt.schema, Tenant: rt.tenant, Auth: testauth.Auth{Authz: denyAll{}},
 		Resolver: &fakeResolver{}, Media: (&testMedia{}).options()})
 	if err != nil {
 		t.Fatal(err)
@@ -153,7 +153,7 @@ func TestMedia_ForeignTenantIsNotFound(t *testing.T) {
 	ctx := context.Background()
 	m := &testMedia{}
 	a, pool := newTestRuntime(t, Options{Tenant: "site_a", Media: m.options()})
-	b, err := New(ctx, Options{Pool: pool, Schema: a.schema, Tenant: "site_b", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{},
+	b, err := New(ctx, Options{Kinds: testKinds("gallery"), Pool: pool, Schema: a.schema, Tenant: "site_b", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: &fakeResolver{},
 		Media: m.options()})
 	if err != nil {
 		t.Fatal(err)

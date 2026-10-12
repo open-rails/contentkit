@@ -28,25 +28,24 @@ func (aliasResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ 
 // Writes through any alias land on one canonical row; reads through any alias
 // see it.
 func TestCanonicalRef_UnifiesAliases(t *testing.T) {
-	rt, pool := newTestRuntime(t, Options{Resolver: aliasResolver{}, ContentKinds: []string{"gallery"}})
+	rt, pool := newTestRuntime(t, Options{Resolver: aliasResolver{}, Kinds: testKinds("gallery")})
 	ctx := context.Background()
 	u := access.Actor{ID: "u1"}
 	canonical := ref("gallery", cid(123))
 
-	if err := favErr(rt.favorites.add(ctx, u, "gallery", "slug-123")); err != nil {
+	if err := favErr(rt.favorites.add(ctx, u, rt.Ref("gallery", "slug-123"))); err != nil {
 		t.Fatalf("add via alias: %v", err)
 	}
-	fav, err := rt.IsFavorited(ctx, "u1", []contentref.ContentRef{canonical})
-	if err != nil || !fav[canonical.Key()] {
-		t.Fatalf("favorite via alias not stored under the canonical reference: %v %v", fav, err)
+	if !favorited(t, rt, "u1", canonical) {
+		t.Fatal("favorite via alias not stored under the canonical reference")
 	}
-	if _, err := rt.reactions.react(ctx, u, "gallery", "123", 1); err != nil {
+	if _, err := rt.reactions.react(ctx, u, rt.Ref("gallery", "123"), 1); err != nil {
 		t.Fatalf("react via alias: %v", err)
 	}
-	if _, err := rt.comments.create(ctx, u, "gallery", cid(123), CommentInput{Body: "hi"}); err != nil {
+	if _, err := rt.comments.create(ctx, u, rt.Ref("gallery", cid(123)), CommentInput{Body: "hi"}); err != nil {
 		t.Fatalf("comment: %v", err)
 	}
-	list, err := rt.comments.list(ctx, u, "gallery", "slug-123", "", 10, 0)
+	list, err := rt.comments.list(ctx, u, rt.Ref("gallery", "slug-123"), "", "", 10, 0)
 	if err != nil || len(list) != 1 {
 		t.Fatalf("comment list via alias = %d rows err=%v, want 1", len(list), err)
 	}
@@ -57,7 +56,7 @@ func TestCanonicalRef_UnifiesAliases(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.counts+` WHERE content_id <> $1`, cid(123)).Scan(&leaked); err != nil || leaked != 0 {
 		t.Fatalf("alias keys leaked into the rollup: %d rows err=%v", leaked, err)
 	}
-	if err := favErr(rt.favorites.remove(ctx, u, "gallery", "123")); err != nil {
+	if err := favErr(rt.favorites.remove(ctx, u, rt.Ref("gallery", "123"))); err != nil {
 		t.Fatal(err)
 	}
 	if c := countsOf(t, rt, canonical); c.Favorites != 0 {
@@ -83,20 +82,19 @@ func (versionResolver) Resolve(_ context.Context, refs []contentref.ContentRef, 
 }
 
 func TestCanonicalRef_VersionIsADistinctKey(t *testing.T) {
-	rt, _ := newTestRuntime(t, Options{Resolver: versionResolver{}, ContentKinds: []string{"gallery"}})
+	rt, _ := newTestRuntime(t, Options{Resolver: versionResolver{}, Kinds: testKinds("gallery")})
 	ctx := context.Background()
 	u := access.Actor{ID: "u1"}
 	work, version := ref("gallery", cid(1)), contentref.NewVersion(testTenant, "gallery", cid(1), "v2")
 
-	if _, err := rt.reactions.react(ctx, u, "gallery", cid(1), 1); err != nil {
+	if _, err := rt.reactions.react(ctx, u, rt.Ref("gallery", cid(1)), 1); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := rt.reactions.react(ctx, u, "gallery", cid(1)+"@v2", -1); err != nil || !got.Equal(version) {
+	if got, err := rt.reactions.react(ctx, u, rt.Ref("gallery", cid(1)+"@v2"), -1); err != nil || !got.Equal(version) {
 		t.Fatalf("version react = %s err=%v", got, err)
 	}
-	mine, err := rt.MyReactions(ctx, u, []contentref.ContentRef{work, version})
-	if err != nil || mine[work.Key()] != 1 || mine[version.Key()] != -1 {
-		t.Fatalf("MyReactions = %v err=%v, want work=1 version=-1", mine, err)
+	if w, v := reactionOf(t, rt, u, work), reactionOf(t, rt, u, version); w != 1 || v != -1 {
+		t.Fatalf("reactions work=%d version=%d, want 1 and -1", w, v)
 	}
 	if c := countsOf(t, rt, work); c.Likes != 1 || c.Dislikes != 0 {
 		t.Fatalf("work counts = %+v", c)
@@ -118,34 +116,13 @@ func (foreignResolver) Resolve(_ context.Context, refs []contentref.ContentRef, 
 }
 
 func TestCanonicalRef_ForeignTenantIsRefused(t *testing.T) {
-	rt, pool := newTestRuntime(t, Options{Resolver: foreignResolver{}, ContentKinds: []string{"gallery"}})
+	rt, pool := newTestRuntime(t, Options{Resolver: foreignResolver{}, Kinds: testKinds("gallery")})
 	ctx := context.Background()
-	if err := reactErr(rt.reactions.react(ctx, access.Actor{ID: "u1"}, "gallery", cid(1), 1)); !errors.Is(err, ErrTenant) {
+	if err := reactErr(rt.reactions.react(ctx, access.Actor{ID: "u1"}, rt.Ref("gallery", cid(1)), 1)); !errors.Is(err, ErrTenant) {
 		t.Fatalf("react: want ErrTenant, got %v", err)
 	}
 	var n int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.reactions).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("rows written for a foreign tenant = %d err=%v", n, err)
-	}
-}
-
-func TestRuntime_ListFavoritesExported(t *testing.T) {
-	res := &fakeResolver{}
-	res.set("gallery", cid(1), true, true)
-	res.set("gallery", cid(2), true, true)
-	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}})
-	ctx := context.Background()
-	u := access.Actor{ID: "u1"}
-	for _, id := range []string{cid(1), cid(2)} {
-		if err := favErr(rt.favorites.add(ctx, u, "gallery", id)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	items, err := rt.ListFavorites(ctx, "u1", 0, 0) // limit <= 0 = all
-	if err != nil || len(items) != 2 || items[0].ContentID != cid(2) {
-		t.Fatalf("ListFavorites = %+v err=%v, want [b, a]", items, err)
-	}
-	if one, err := rt.ListFavorites(ctx, "u1", 1, 0); err != nil || len(one) != 1 {
-		t.Fatalf("paged ListFavorites = %+v (%v), want 1 row", one, err)
 	}
 }
