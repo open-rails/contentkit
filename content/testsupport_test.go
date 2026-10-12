@@ -1,8 +1,12 @@
 package content
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"sync"
@@ -112,6 +116,17 @@ func (f *fakeResolver) set(kind, id string, visible, accessible bool) {
 	f.entries[kind+":"+id] = access.Resolution{Visible: visible, Accessible: accessible}
 }
 
+// setCanonical is set for a visible, accessible route id the resolver maps to
+// canonical, keeping a requested version.
+func (f *fakeResolver) setCanonical(kind, id, canonical string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.entries == nil {
+		f.entries = map[string]access.Resolution{}
+	}
+	f.entries[kind+":"+id] = access.Resolution{Visible: true, Accessible: true, Ref: contentref.New(testTenant, kind, canonical)}
+}
+
 // setOwned is set for a visible, accessible target owned by owner.
 func (f *fakeResolver) setOwned(kind, id, owner string) {
 	f.mu.Lock()
@@ -129,6 +144,9 @@ func (f *fakeResolver) Resolve(_ context.Context, refs []contentref.ContentRef, 
 	out := map[contentref.ContentKey]access.Resolution{}
 	for _, r := range refs {
 		if res, ok := f.entries[r.ContentKind+":"+r.ContentID]; ok {
+			if res.Ref.ContentID != "" && r.Version() != "" {
+				res.Ref = res.Ref.WithVersion(r.Version())
+			}
 			out[r.Key()] = res
 		}
 	}
@@ -249,3 +267,26 @@ func favErr(_ contentref.ContentRef, err error) error { return err }
 
 // reactErr adapts react's (reference, error) return for error-only assertions.
 func reactErr(_ contentref.ContentRef, err error) error { return err }
+
+type processorFunc func(context.Context, string) (string, error)
+
+func (f processorFunc) Sanitize(ctx context.Context, raw string) (string, error) {
+	return f(ctx, raw)
+}
+
+// doJSON issues a request as actor and returns the recorder.
+func doJSON(t *testing.T, h http.Handler, actor access.Actor, method, target string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	var buf bytes.Buffer
+	if body != nil {
+		if err := json.NewEncoder(&buf).Encode(body); err != nil {
+			t.Fatalf("encode body: %v", err)
+		}
+	}
+	req := testauth.As(httptest.NewRequest(method, target, &buf), actor)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func ptr[T any](v T) *T { return &v }

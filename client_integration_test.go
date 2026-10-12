@@ -43,11 +43,11 @@ func TestClientSearch_Integration_Keyword(t *testing.T) {
 	}
 
 	// Host filter and typeahead.
-	filtered, err := client.Search(ctx, "two factor", SearchOptions{Language: "en", ContentKinds: kinds, FilterSQL: "sd.content_id = @allowed_id", FilterArgs: map[string]any{"allowed_id": cid(1)}})
+	filtered, err := client.Search(ctx, "two factor", SearchOptions{Language: "en", ContentKinds: kinds, eligibility: where("sd.content_id = @allowed_id", map[string]any{"allowed_id": cid(1)})})
 	if err != nil || !reflect.DeepEqual(ids(filtered.Hits), []string{cid(1)}) {
 		t.Fatalf("filtered: %+v %v", filtered, err)
 	}
-	suggestions, err := client.Typeahead(ctx, "two", TypeaheadOptions{Language: "en", ContentKinds: kinds, FilterSQL: "sd.content_id = @allowed_id", FilterArgs: map[string]any{"allowed_id": cid(1)}})
+	suggestions, err := client.Typeahead(ctx, "two", TypeaheadOptions{Language: "en", ContentKinds: kinds, eligibility: where("sd.content_id = @allowed_id", map[string]any{"allowed_id": cid(1)})})
 	if err != nil || len(suggestions) != 1 || suggestions[0].ContentID != cid(1) {
 		t.Fatalf("filtered typeahead: %+v %v", suggestions, err)
 	}

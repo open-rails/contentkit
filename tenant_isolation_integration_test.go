@@ -63,11 +63,11 @@ func TestTenantIsolationIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	var requested []ContentRef
-	opts := worker.Options{Pool: pool, Schema: schema, Tenant: a, SupportedLanguages: []string{"en"}, ContentKinds: []string{"gallery"},
-		ListContent: func(_ context.Context, tenant, _, _, _ string, _ int) ([]ContentRef, string, bool, error) {
+	opts := worker.Options{Pool: pool, Schema: schema, Tenant: a, SupportedLanguages: []string{"en"}, Sources: []worker.Source{funcSource{tenant: a,
+		list: func(_ context.Context, tenant, _, _, _ string, _ int) ([]ContentRef, string, bool, error) {
 			return []ContentRef{contentref.New(tenant, "gallery", cid(3))}, "", true, nil
 		},
-		BuildKeywordDocuments: func(_ context.Context, tenant, kind, lang string, refs []ContentRef) ([]KeywordDocument, error) {
+		build: func(_ context.Context, tenant, kind, lang string, refs []ContentRef) ([]KeywordDocument, error) {
 			var out []KeywordDocument
 			for _, ref := range refs {
 				if ref.TenantID != tenant {
@@ -77,7 +77,7 @@ func TestTenantIsolationIntegration(t *testing.T) {
 				out = append(out, KeywordDocument{DocumentKey: DocumentKey{ContentRef: ref, Language: lang}, Title: "Built " + ref.ContentID})
 			}
 			return out, nil
-		}}
+		}}}}
 	for i := 0; i < 2; i++ {
 		if err := worker.SyncOnce(ctx, opts); err != nil {
 			t.Fatal(err)

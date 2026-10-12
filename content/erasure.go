@@ -8,7 +8,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/internal/codes"
 	"github.com/open-rails/helpers/notify"
 )
 
@@ -62,10 +61,11 @@ func (rt *Runtime) erasedSubjectsTable() string {
 // EraseSubjects first erases and fences the user inbox, then fences future
 // authenticated content writes, removes reactions,
 // favorites, poll votes/answers and comment bans of or by them atomically,
-// and removes unpublished held/rejected/draft/scheduled payloads and moderation
-// provenance. A previously published item retains its last approved payload
-// without publishing it again; its unpublished replacement is erased. Never-published items become
-// tombstones. Published content and reply structure stay under host policy.
+// and removes unpublished held/rejected comment payloads and moderation
+// provenance. A previously published comment retains its last approved
+// payload without publishing it again; its unpublished replacement is erased.
+// Never-published comments become tombstones. Published content and reply
+// structure stay under host policy.
 //
 // The source transaction commits BEFORE calling the external eraser. A provider
 // failure must keep the HOST's downstream erasure obligation pending for retry.
@@ -132,31 +132,6 @@ func (rt *Runtime) EraseSubjects(ctx context.Context, actorIDs []string) error {
  WHERE tenant_id=$1 AND user_id=ANY($2) AND moderation IN ('held','rejected')`, rt.tenant, ids); err != nil {
 		return err
 	}
-	rows, err := tx.Query(ctx, `UPDATE `+rt.store.t.posts+` SET title=coalesce(published_content->>'title',''), body=coalesce(published_content->>'body',''), excerpt=published_content->>'excerpt', author_id=CASE WHEN published_content IS NOT NULL THEN author_id ELSE '' END, moderation='rejected', moderation_reason=NULL, moderation_verdict=NULL, moderated_by=NULL, moderated_at=NULL, deleted_at=CASE WHEN published_content IS NOT NULL THEN deleted_at ELSE coalesce(deleted_at,clock_timestamp()) END, moderation_revision=moderation_revision+1, updated_at=clock_timestamp()
- WHERE tenant_id=$1 AND author_id=ANY($2) AND (moderation IN ('held','rejected') OR is_draft OR live_at > clock_timestamp())
- RETURNING id, CASE WHEN deleted_at IS NULL THEN coalesce(nullif(slug, ''), title) ELSE '' END`, rt.tenant, ids)
-	if err != nil {
-		return err
-	}
-	// Their URL slugs follow the reverted titles; erased posts keep a bare code.
-	var reslug []codes.Entry
-	for rows.Next() {
-		var id, title string
-		if err := rows.Scan(&id, &title); err != nil {
-			rows.Close()
-			return err
-		}
-		if id == strings.ToLower(id) {
-			reslug = append(reslug, codes.Entry{Key: codes.Key{Kind: KindPost, ID: id}, Slug: codes.Slugify(title)})
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if _, err := codes.Put(ctx, codes.Pgx(tx), rt.store.qs, rt.tenant, reslug); err != nil {
-		return err
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
@@ -173,33 +148,27 @@ func (rt *Runtime) EraseSubjects(ctx context.Context, actorIDs []string) error {
 // ordering across concurrent erasures of different subjects on shared content.
 func (rt *Runtime) eraseInteractions(ctx context.Context, tx pgx.Tx, ids []string) error {
 	s := rt.store
-	for _, target := range []struct{ table, author, kind string }{{s.t.comments, "user_id", KindComment}, {s.t.posts, "author_id", KindPost}} {
-		unpublished := "moderation IN ('held','rejected')"
-		if target.kind == KindPost {
-			unpublished = "(" + unpublished + " OR is_draft OR live_at > clock_timestamp())"
-		}
-		rows, err := tx.Query(ctx, `SELECT id::text FROM `+target.table+` WHERE tenant_id=$1 AND (
-   (`+target.author+`=ANY($2) AND `+unpublished+`) OR id::text IN (
+	rows, err := tx.Query(ctx, `SELECT id::text FROM `+s.t.comments+` WHERE tenant_id=$1 AND (
+   (user_id=ANY($2) AND moderation IN ('held','rejected')) OR id::text IN (
     SELECT content_id FROM `+s.t.reactions+` WHERE tenant_id=$1 AND user_id=ANY($2) AND content_kind=$3 AND content_version_id=''))
-   ORDER BY id FOR UPDATE`, rt.tenant, ids, target.kind)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+   ORDER BY id FOR UPDATE`, rt.tenant, ids, KindComment)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
 			return err
 		}
 	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
 	type delta struct{ likes, dislikes, favorites int }
 	changes := map[contentref.ContentKey]delta{}
-	rows, err := tx.Query(ctx, `DELETE FROM `+s.t.reactions+` WHERE tenant_id=$1 AND user_id=ANY($2) RETURNING `+keyCols+`,value`, rt.tenant, ids)
+	rows, err = tx.Query(ctx, `DELETE FROM `+s.t.reactions+` WHERE tenant_id=$1 AND user_id=ANY($2) RETURNING `+keyCols+`,value`, rt.tenant, ids)
 	if err != nil {
 		return err
 	}
@@ -261,13 +230,8 @@ func (rt *Runtime) eraseInteractions(ctx context.Context, tx pgx.Tx, ids []strin
 		if k.ContentVersionID != "" || d.likes == 0 && d.dislikes == 0 {
 			continue
 		}
-		switch k.ContentKind {
-		case KindComment:
+		if k.ContentKind == KindComment {
 			if _, err := tx.Exec(ctx, `UPDATE `+s.t.comments+` SET likes=GREATEST(likes-$3,0),dislikes=GREATEST(dislikes-$4,0) WHERE tenant_id=$1 AND id::text=$2`, rt.tenant, k.ContentID, d.likes, d.dislikes); err != nil {
-				return err
-			}
-		case KindPost:
-			if _, err := tx.Exec(ctx, `UPDATE `+s.t.posts+` SET total_likes=GREATEST(total_likes-$3,0),total_dislikes=GREATEST(total_dislikes-$4,0) WHERE tenant_id=$1 AND id=$2`, rt.tenant, k.ContentID, d.likes, d.dislikes); err != nil {
 				return err
 			}
 		}

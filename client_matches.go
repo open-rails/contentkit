@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/search"
 )
 
@@ -15,9 +17,9 @@ import (
 type SearchMatchOptions struct {
 	Language     string
 	ContentKinds []string
-	Eligibility  *Eligibility
-	FilterSQL    string
-	FilterArgs   map[string]any
+	// Viewer is the reader; see SearchOptions.
+	Viewer      *catalog.Viewer
+	eligibility *search.Eligibility
 }
 
 // WalkSearchMatches visits batches of up to 256 matched works in identity
@@ -56,7 +58,7 @@ func (c *Client) WalkSearchMatches(ctx context.Context, tx pgx.Tx, text string, 
 	}
 	err := search.WalkKeywordMatches(ctx, tx, text, search.Options{
 		Schema: c.schema, Tenant: c.tenant, Language: language, ContentKinds: kinds,
-		Eligibility: opts.Eligibility, FilterSQL: opts.FilterSQL, FilterArgs: opts.FilterArgs,
+		Eligibility: join(opts.Viewer, opts.eligibility),
 	}, func(h search.Hit) error {
 		doc := groupedDoc{ref: h.ContentRef, language: h.Language, priority: h.Priority, score: h.Score, requested: true}
 		if haveCurrent && current.best.ref.Content().Key() != h.Content().Key() {

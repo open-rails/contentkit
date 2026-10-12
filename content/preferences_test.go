@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,7 +15,7 @@ import (
 )
 
 // localeID is the content id of work n's language route: every language
-// edition is its own content, and localeWorks maps it back to its work.
+// edition is its own route id, which the resolver maps to its work.
 func localeID(n int, lang string) string {
 	return cid(n*1000 + map[string]int{"en": 1, "ja": 2}[lang])
 }
@@ -25,31 +24,14 @@ var localeWorks = map[string]string{
 	localeID(42, "en"): cid(42), localeID(42, "ja"): cid(42), localeID(7, "en"): cid(7), localeID(9, "en"): cid(9),
 }
 
-// galleryWork is a host canonical rule: every language edition votes on its
-// one work; an explicit version stays; posts export under their own id;
-// taxonomy stays out of the boundary entirely.
-func galleryWork(r contentref.ContentRef) (contentref.ContentRef, bool) {
-	switch r.ContentKind {
-	case "gallery":
-		id := r.ContentID
-		if w, ok := localeWorks[id]; ok {
-			id = w
-		}
-		return contentref.New(r.TenantID, "gallery", id).WithVersion(r.Version()), true
-	case KindPost:
-		return r, true
-	}
-	return contentref.ContentRef{}, false
-}
-
 func newPreferenceRuntime(t *testing.T) *Runtime {
 	t.Helper()
 	res := &fakeResolver{}
 	for _, id := range []string{localeID(42, "en"), localeID(42, "ja"), localeID(7, "en"), localeID(9, "en")} {
-		res.set("gallery", id, true, true)
+		res.setCanonical("gallery", id, localeWorks[id])
 	}
 	res.set("tag", cid(9), true, true)
-	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery", "tag"}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
+	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery", "tag"}})
 	return rt
 }
 
@@ -142,7 +124,7 @@ func TestPreferences_ConcurrentLocaleRoutesShareOneOrderedPreference(t *testing.
 	}
 	defer second.Close()
 	other, err := New(ctx, Options{Pool: second, Schema: rt.schema, Tenant: testTenant, Auth: testauth.Auth{Authz: allowAll{}},
-		Resolver: rt.resolver, ContentKinds: []string{"gallery"}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
+		Resolver: rt.resolver, ContentKinds: []string{"gallery"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,24 +139,6 @@ func TestPreferences_ConcurrentLocaleRoutesShareOneOrderedPreference(t *testing.
 			t.Fatalf("revision %d did not increase past %d across backends", rev, prev)
 		}
 		prev, next = rev, -next
-	}
-}
-
-// Own-state reads resolve through the same rule as the writes.
-func TestPreferences_OwnStateReadsUseTheSameIdentity(t *testing.T) {
-	rt := newPreferenceRuntime(t)
-	ctx := context.Background()
-	actor := access.Actor{ID: "u1", Kind: "user"}
-	mustReact(t, rt, actor, "gallery", localeID(42, "en"), 1)
-	mustFavorite(t, rt, actor, "gallery", localeID(42, "ja"), true)
-	locale, work := ref("gallery", localeID(42, "ja")), ref("gallery", cid(42))
-	reactions, err := rt.MyReactions(ctx, actor, []contentref.ContentRef{locale, work})
-	if err != nil || reactions[locale.Key()] != 1 || reactions[work.Key()] != 1 {
-		t.Fatalf("MyReactions = %+v err=%v, want the like under both keys", reactions, err)
-	}
-	favs, err := rt.IsFavorited(ctx, "u1", []contentref.ContentRef{locale, work})
-	if err != nil || !favs[locale.Key()] || !favs[work.Key()] {
-		t.Fatalf("IsFavorited = %+v err=%v, want true under both keys", favs, err)
 	}
 }
 
@@ -258,94 +222,6 @@ func TestPreferences_RolledBackMutationExportsNothing(t *testing.T) {
 	var n int
 	if err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.reactions).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("reactions = %d err=%v, want none after the rollback", n, err)
-	}
-}
-
-// Anonymous rows, declined targets and comment threads never export; another
-// tenant sees nothing; export disabled sends nothing while the source works.
-func TestPreferences_ExportScopeAndOptOut(t *testing.T) {
-	res := &fakeResolver{}
-	res.set("gallery", localeID(42, "en"), true, true)
-	res.set("tag", cid(9), true, true)
-	rt, pool := newPostRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery", "tag", KindPost}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
-	ctx := context.Background()
-	u1 := access.Actor{ID: "u1", Kind: "user"}
-	mustReact(t, rt, access.Actor{IP: "10.0.0.1", Anonymous: true}, "gallery", localeID(42, "en"), 1)
-	mustReact(t, rt, u1, "tag", cid(9), 1)
-	post, commentID := cid(500), cid(501)
-	res.set(KindPost, post, true, true)
-	if _, err := pool.Exec(ctx, `INSERT INTO `+rt.store.t.posts+` (id, tenant_id, author_id, title, body, is_draft) VALUES ($2, $1, 'a', 't', 'b', false)`, testTenant, post); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `INSERT INTO `+rt.store.t.comments+` (id, tenant_id, content_kind, content_id, content_version_id, user_id, body) VALUES ($3, $1, 'post', $2, '', 'a', 'hi')`, testTenant, post, commentID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := rt.comments.reactTx(ctx, u1, commentID, 1); err != nil {
-		t.Fatal(err)
-	}
-	if got := exported(t, rt); len(got) != 0 {
-		t.Fatalf("exported = %+v, want nothing", got)
-	}
-	if _, err := rt.posts.react(ctx, u1, post, -1); err != nil {
-		t.Fatal(err)
-	}
-	mustReact(t, rt, u1, "gallery", localeID(42, "en"), 1)
-	got := exported(t, rt)
-	if len(got) != 2 || got[0].ContentKind != KindPost || got[0].Value != -1 || got[1].ContentID != cid(42) || got[1].ActorID != "u1" {
-		t.Fatalf("exported = %+v, want the post dislike then the work like", got)
-	}
-	other, err := New(ctx, Options{Pool: pool, Schema: rt.schema, Tenant: "other", Auth: testauth.Auth{Authz: allowAll{}},
-		Resolver: rt.resolver, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := exported(t, other); len(got) != 0 {
-		t.Fatalf("another tenant exports %+v", got)
-	}
-
-	plain, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}})
-	mustReact(t, plain, u1, "gallery", localeID(42, "en"), 1)
-	mustFavorite(t, plain, u1, "gallery", localeID(42, "en"), true)
-	if _, _, ok := row(t, plain, plain.store.t.reactions, "u1", localeID(42, "en")); !ok {
-		t.Fatal("export disabled: the reaction is not stored under the resolver reference")
-	}
-	report, err := plain.SyncPreferences(ctx, func(context.Context, []Preference) error { return errors.New("called") })
-	if err != nil || report.Sent != 0 {
-		t.Fatalf("sync with export disabled = %+v err=%v", report, err)
-	}
-	if report, err := plain.SyncPreferences(ctx, nil); err != nil || report != (PreferenceSyncReport{}) {
-		t.Fatalf("disabled sync with nil sender = %+v, error=%v", report, err)
-	}
-	if report, err := plain.ResyncPreferences(ctx, nil); err != nil || report != (PreferenceSyncReport{}) {
-		t.Fatalf("disabled resync with nil sender = %+v, error=%v", report, err)
-	}
-}
-
-// The canonicalizer decides at sync time: a stored row whose target the host
-// now declines is skipped.
-func TestPreferences_SyncSkipsTargetsTheCanonicalizerDeclines(t *testing.T) {
-	var decline atomic.Bool
-	res := &fakeResolver{}
-	res.set("gallery", localeID(42, "en"), true, true)
-	res.set("gallery", localeID(7, "en"), true, true)
-	rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"},
-		Canonicalizer: ContentCanonicalizerFunc(func(r contentref.ContentRef) (contentref.ContentRef, bool) {
-			w, ok := galleryWork(r)
-			return w, ok && !(decline.Load() && w.ContentID == cid(7))
-		})})
-	u1 := access.Actor{ID: "u1", Kind: "user"}
-	mustReact(t, rt, u1, "gallery", localeID(42, "en"), 1)
-	mustFavorite(t, rt, u1, "gallery", localeID(7, "en"), true)
-	decline.Store(true)
-	var sent []Preference
-	if _, err := rt.SyncPreferences(context.Background(), func(_ context.Context, page []Preference) error {
-		sent = append(sent, page...)
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if len(sent) != 1 || sent[0].ContentID != cid(42) {
-		t.Fatalf("sent = %+v, want only the accepted target", sent)
 	}
 }
 
@@ -439,7 +315,7 @@ func TestPreferences_SyncSendsWithoutHoldingAConnection(t *testing.T) {
 	}
 	defer pool.Close()
 	rt, err := New(context.Background(), Options{Pool: pool, Schema: base.schema, Tenant: base.tenant, Auth: testauth.Auth{Authz: allowAll{}},
-		Resolver: &fakeResolver{}, ContentKinds: []string{"gallery", "tag"}, Canonicalizer: ContentCanonicalizerFunc(galleryWork)})
+		Resolver: &fakeResolver{}, ContentKinds: []string{"gallery", "tag"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -461,5 +337,37 @@ func TestPreferences_SyncSendsWithoutHoldingAConnection(t *testing.T) {
 	}
 	if sent != 2 {
 		t.Fatalf("sent %d, want the row on both syncs (overlap window)", sent)
+	}
+}
+
+// Anonymous rows and comment threads never export; another tenant sees
+// nothing.
+func TestPreferences_ExportScope(t *testing.T) {
+	res := &fakeResolver{}
+	res.set("gallery", cid(42), true, true)
+	rt, pool := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery"}})
+	ctx := context.Background()
+	u1 := access.Actor{ID: "u1", Kind: "user"}
+	mustReact(t, rt, access.Actor{IP: "10.0.0.1", Anonymous: true}, "gallery", cid(42), 1)
+	commentID := cid(501)
+	if _, err := pool.Exec(ctx, `INSERT INTO `+rt.store.t.comments+` (id, tenant_id, content_kind, content_id, content_version_id, user_id, body) VALUES ($3, $1, 'gallery', $2, '', 'a', 'hi')`, testTenant, cid(42), commentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.comments.reactTx(ctx, u1, commentID, 1); err != nil {
+		t.Fatal(err)
+	}
+	if got := exported(t, rt); len(got) != 0 {
+		t.Fatalf("exported = %+v, want nothing", got)
+	}
+	mustReact(t, rt, u1, "gallery", cid(42), -1)
+	if got := exported(t, rt); len(got) != 1 || got[0].ContentID != cid(42) || got[0].Value != -1 || got[0].ActorID != "u1" {
+		t.Fatalf("exported = %+v, want the work dislike", got)
+	}
+	other, err := New(ctx, Options{Pool: pool, Schema: rt.schema, Tenant: "other", Auth: testauth.Auth{Authz: allowAll{}}, Resolver: rt.resolver})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := exported(t, other); len(got) != 0 {
+		t.Fatalf("another tenant exports %+v", got)
 	}
 }

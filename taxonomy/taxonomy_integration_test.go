@@ -8,6 +8,7 @@ import (
 
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/search"
 	"github.com/open-rails/contentkit/worker"
 )
 
@@ -277,25 +278,6 @@ func TestEffectiveTagsAndVersionEligibilityIntegration(t *testing.T) {
 		t.Fatalf("paged browse: %+v %v", page, err)
 	}
 
-	// The same filter inside keyword search: the requested trait and the
-	// requested language hold on one document.
-	client, err := contentkit.NewClient(contentkit.ClientConfig{Pool: pool, Schema: schema, Tenant: tenant})
-	if err != nil {
-		t.Fatal(err)
-	}
-	filter, args, err := RequireAll(schema, []TaxonomyID{tid("colored")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for lang, want := range map[string]string{"es": "g2@v4", "en": "g1@v2"} {
-		res, err := client.Search(ctx, "océano", contentkit.SearchOptions{Language: lang, ContentKinds: []string{"gallery"}, FilterSQL: filter, FilterArgs: args, Eligibility: liveEligibility(schema)})
-		if lang == "en" {
-			res, err = client.Search(ctx, "blue ocean", contentkit.SearchOptions{Language: lang, ContentKinds: []string{"gallery"}, FilterSQL: filter, FilterArgs: args, Eligibility: liveEligibility(schema)})
-		}
-		if err != nil || len(res.Hits) != 1 || label(res.Hits[0].ContentID)+"@"+res.Hits[0].Version() != want {
-			t.Fatalf("search %s: %+v %v", lang, res.Hits, err)
-		}
-	}
 	if _, _, err := RequireAll(schema, nil); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("RequireAll without ids: %v", err)
 	}
@@ -409,7 +391,7 @@ func TestTypeaheadDocumentsIntegration(t *testing.T) {
 	)
 	sync := func() {
 		t.Helper()
-		opts := worker.Options{Pool: pool, Schema: schema, Tenant: tenant, SupportedLanguages: []string{"en", "es"}, ContentKinds: s.Kinds(), ListContent: s.Lister(nil), BuildKeywordDocuments: s.Builder(nil)}
+		opts := worker.Options{Pool: pool, Schema: schema, Tenant: tenant, SupportedLanguages: []string{"en", "es"}, Sources: []worker.Source{s}}
 		for i := 0; i < 3; i++ {
 			if err := worker.SyncOnce(ctx, opts); err != nil {
 				t.Fatal(err)
@@ -485,12 +467,9 @@ func TestTypeaheadDocumentsIntegration(t *testing.T) {
 	if got := ahead("en", "shindo", "artist"); got != "artist/shindol," {
 		t.Fatalf("after backfill: %q", got)
 	}
-	// A builder never serves another tenant or an unregistered kind.
-	if _, err := s.BuildKeywordDocuments(ctx, "hentai0", "artist", "en", nil); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("foreign tenant build: %v", err)
-	}
-	if _, err := s.Builder(nil)(ctx, tenant, "gallery", "en", nil); err == nil {
-		t.Fatal("unregistered kind without next builder")
+	// A builder never serves an unregistered kind.
+	if _, err := s.BuildDocuments(ctx, "gallery", "en", nil); err == nil {
+		t.Fatal("unregistered kind built")
 	}
 }
 
@@ -548,7 +527,7 @@ func TestTenantIsolationIntegration(t *testing.T) {
 	if page, err = b.Browse(ctx, BrowseOptions{ContentKind: "video", Language: "en", RequireAll: []TaxonomyID{tid("t1")}, Eligibility: liveEligibility(schema)}); err != nil || hitIDs(page.Hits) != "m1@w1:0" {
 		t.Fatalf("B's own browse: %+v %v", page, err)
 	}
-	if docs, err := b.BuildKeywordDocuments(ctx, other, "tag", "en", []contentref.ContentRef{work(other, "tag", string(tid("only-a"))), work(other, "tag", string(tid("t1")))}); err != nil || len(docs) != 1 || docs[0].Title != "Uncensored" {
+	if docs, err := b.BuildDocuments(ctx, "tag", "en", []contentref.ContentRef{work(other, "tag", string(tid("only-a"))), work(other, "tag", string(tid("t1")))}); err != nil || len(docs) != 1 || docs[0].Title != "Uncensored" {
 		t.Fatalf("B built A's document: %+v %v", docs, err)
 	}
 	if n, err := b.RebuildCounts(ctx); err != nil || n != 1 {
@@ -570,8 +549,8 @@ func TestMarketplaceListingFixtureIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Published listings are public; an unpublished one is visible to entitled subjects.
-	entitled := func(subject string) *contentkit.Eligibility {
-		return &contentkit.Eligibility{SQL: fmt.Sprintf(`SELECT (NOT hv.is_default)::int AS priority FROM %s.hv hv
+	entitled := func(subject string) *search.Eligibility {
+		return &search.Eligibility{SQL: fmt.Sprintf(`SELECT (NOT hv.is_default)::int AS priority FROM %s.hv hv
  WHERE hv.tenant_id=sd.tenant_id AND hv.content_kind=sd.content_kind AND hv.content_id=sd.content_id AND hv.version_id=sd.content_version_id AND hv.language=sd.language
    AND (hv.live OR EXISTS (SELECT 1 FROM %s.entitlements e WHERE e.subject=@subject AND e.content_id=sd.content_id))`, schema, schema), Args: map[string]any{"subject": subject}}
 	}

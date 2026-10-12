@@ -15,6 +15,10 @@ export type ItemState = "ready" | "processing" | "failed";
 export type EncodePhase = "queued" | "downloading" | "probing" | "encoding" | "muxing" | "uploading" | "publishing" | "images";
 export type PollKind = "multiple_choice" | "free_text";
 export type ModerationState = "approved" | "held" | "rejected";
+export type ContentState = "draft" | "published" | "deleted";
+export type VersionState = "draft" | "published";
+export type Listing = "listed" | "members" | "unlisted";
+export type AccessLevel = "public" | "tier" | "group" | "ppv" | "group_ppv";
 
 export interface AdminComment {
   id: string;
@@ -146,6 +150,63 @@ export interface Config {
   comment_max_length: number;
 }
 
+export interface Content {
+  id: string;
+  kind: string;
+  code: string;
+  path: string;
+  language: string;
+  title: string;
+  slug?: string;
+  description?: string;
+  body?: string;
+  images?: Record<string, string>;
+  cover?: Cover;
+  state: ContentState;
+  listing: Listing;
+  publish_at?: string;
+  published_at?: string;
+  live: boolean;
+  access: Rule;
+  restrictions: string[];
+  attributes: Record<string, unknown>;
+  owner_group_id?: string;
+  creators: Creator[];
+  groups: GroupSummary[];
+  versions: Version[];
+  editor: boolean;
+  text?: Record<string, Text>;
+  moderation?: ModerationState;
+  moderation_reason?: string;
+  ever_sold?: boolean;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string;
+}
+
+export interface ContentInput {
+  kind: string;
+  text?: Record<string, Text>;
+  listing?: Listing;
+  access?: Rule;
+  restrictions?: string[];
+  attributes?: Record<string, unknown>;
+  owner_group_id?: string;
+  creators?: Creator[];
+  versions?: VersionInput[];
+}
+
+export interface ContentPatch {
+  listing?: Listing;
+  access?: Rule;
+  restrictions?: string[];
+  attributes?: Record<string, unknown>;
+  creators?: Creator[];
+  cover?: string;
+  revision?: number;
+}
+
 export interface ContentRef {
   tenant_id: string;
   content_kind: string;
@@ -168,11 +229,33 @@ export interface CountsRebuilt {
   nodes: number;
 }
 
+export interface Cover {
+  image: string;
+  url?: string;
+}
+
+export interface Creator {
+  user_id: string;
+  role?: string;
+  position: number;
+}
+
+export interface CreatorsInput {
+  creators: Creator[];
+}
+
 export interface Crop {
   x: number;
   y: number;
   w: number;
   h: number;
+}
+
+export interface Decision {
+  allowed: boolean;
+  unknown?: boolean;
+  sell?: string[];
+  requires?: string;
 }
 
 export interface Edge {
@@ -240,7 +323,7 @@ export interface ErrorReply {
   error: string;
   code: ErrorCode;
   retry_after?: number;
-  action?: "comment" | "comment_reaction" | "favorite" | "poll_vote" | "post_reaction" | "reaction";
+  action?: "comment" | "comment_reaction" | "favorite" | "poll_vote" | "reaction";
   ban?: BanNotice;
   blobs?: string[];
   details?: ErrorDetails;
@@ -321,6 +404,13 @@ export interface Group {
   id: string;
   label: string;
   count: number;
+}
+
+export interface GroupSummary {
+  id: string;
+  kind: string;
+  slug: string;
+  name: string;
 }
 
 export interface HeldItem {
@@ -483,6 +573,10 @@ export interface Op {
   takedown?: boolean;
 }
 
+export interface OrderInput {
+  ids: string[];
+}
+
 export interface Origin {
   system: string;
   scope: string;
@@ -589,45 +683,6 @@ export interface PollVote {
   option_id: string;
 }
 
-export interface Post {
-  id: string;
-  author_id: string;
-  title: string;
-  slug?: string;
-  body: string;
-  excerpt?: string;
-  cover?: string;
-  cover_url?: string;
-  images?: Record<string, string>;
-  language: string;
-  is_draft: boolean;
-  live_at?: string;
-  total_likes: number;
-  total_dislikes: number;
-  comment_count: number;
-  moderation?: ModerationState;
-  moderation_reason?: string;
-  code: string;
-  url_slug: string;
-  created_at: string;
-  updated_at: string;
-  deleted_at?: string;
-}
-
-export interface PostCover {
-  cover_url: string | null;
-}
-
-export interface PostInput {
-  title?: string;
-  body?: string;
-  excerpt?: string;
-  language?: string;
-  slug?: string;
-  is_draft?: boolean;
-  live_at?: string;
-}
-
 export interface PresetRule {
   kind: string;
   name: string;
@@ -677,6 +732,10 @@ export interface PublicUser {
   username: string;
   avatar?: string;
   avatar_srcset?: string;
+}
+
+export interface PublishInput {
+  publish_at?: string;
 }
 
 export interface ReactionCounts {
@@ -743,6 +802,34 @@ export interface ReviewOutcome {
   decision: "approve" | "reject" | "review";
 }
 
+export interface Rule {
+  level: AccessLevel;
+  tiers?: string[];
+  group_id?: string;
+}
+
+export interface Segment {
+  position: number;
+  title?: string;
+  start: number;
+  end: number;
+  release_at?: string;
+  released: boolean;
+}
+
+export interface SegmentsInput {
+  segments: Segment[];
+}
+
+export interface Text {
+  title: string;
+  slug?: string;
+  description?: string;
+  body?: string;
+  sort_key?: string;
+  aliases?: string[];
+}
+
 export interface TicketBody {
   ticket: string;
 }
@@ -769,6 +856,50 @@ export interface UploadRule {
   video?: VideoLimits;
   min_aspect?: number;
   max_aspect?: number;
+}
+
+export interface Version {
+  id: string;
+  position: number;
+  languages: string[];
+  traits: string[];
+  label?: string;
+  title?: string;
+  description?: string;
+  state?: ContentState;
+  publish_at?: string;
+  published_at?: string;
+  live: boolean;
+  access?: Rule;
+  attributes: Record<string, unknown>;
+  pages?: number;
+  duration_ms?: number;
+  width?: number;
+  height?: number;
+  has_audio: boolean;
+  ordinal?: number;
+  segments: Segment[];
+  decision: Decision;
+  text?: Record<string, VersionText>;
+}
+
+export interface VersionInput {
+  languages?: string[];
+  traits?: string[];
+  label?: string;
+  state?: VersionState;
+  publish_at?: string;
+  access?: Rule;
+  clear_access?: boolean;
+  attributes?: Record<string, unknown>;
+  text?: Record<string, VersionText>;
+  segments?: Segment[];
+  ordinal?: number;
+}
+
+export interface VersionText {
+  title?: string;
+  description?: string;
 }
 
 export interface VideoLimits {

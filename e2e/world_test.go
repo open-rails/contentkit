@@ -23,16 +23,17 @@ import (
 
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/internal/contract"
 	"github.com/open-rails/contentkit/internal/pgtest"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/mediatest"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/workqueue"
-	"github.com/open-rails/contentkit/search"
 	"github.com/open-rails/contentkit/taxonomy"
 )
 
@@ -59,6 +60,7 @@ type world struct {
 	up     *media.Uploads
 	rd     *media.Reader
 	tax    *taxonomy.Store
+	cat    *catalog.Store
 	router *contenturl.Router
 	owner  string // the gallery's owner, when a test has one
 }
@@ -124,11 +126,16 @@ func newWorld(t *testing.T) *world {
 	if w.rd, err = media.NewReader(media.ReaderOptions{Manifests: w.jobs.Manifests(), Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: key}}); err != nil {
 		t.Fatal(err)
 	}
-	if w.tax, err = taxonomy.New(taxonomy.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Kinds: []string{"tag"}, Languages: []string{"en"},
-		Listing: &taxonomy.Listing{Kinds: []string{"gallery"}, Eligibility: search.Eligibility{SQL: `SELECT 'free'::text AS access`},
-			Access: access.Columns{Level: "h.access", TierName: "premium", Levels: map[string]access.Level{"free": access.Public, "premium": access.TierLevel}}}}); err != nil {
+	if w.tax, err = taxonomy.New(taxonomy.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Kinds: []string{"tag"}, Languages: []string{"en"}}); err != nil {
 		t.Fatal(err)
 	}
+	if w.cat, err = catalog.New(ctx, catalog.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant, Auth: w.ak.Authenticator(),
+		Kinds: kinds.Config{Languages: []string{"en", "ja"}, Tiers: []string{"premium"},
+			Kinds: map[string]kinds.Kind{"blog": {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
+				"album": {Route: "album", Presentation: "reader", Segments: true, Versions: kinds.VersionRules{Languages: "one", Traits: []string{"colored"}}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(w.cat.Close)
 	return w
 }
 
@@ -136,23 +143,13 @@ func newWorld(t *testing.T) *world {
 // passed straight in; staff hold ContentKit's permissions in the root group.
 func (w *world) runtime(edit func(*contentkit.RuntimeConfig)) *contentkit.Runtime {
 	w.t.Helper()
-	var rt *contentkit.Runtime
 	urls, err := contenturl.New(contenturl.Options{Pool: w.pool, Schema: w.schema, Tenant: tenant})
 	if err != nil {
 		w.t.Fatal(err)
 	}
-	router, err := contenturl.NewRouter(urls, contenturl.RouterOptions{
-		Routes: contenturl.Routes{"post": "blog", "tag": "tag"}, Languages: []string{"en"},
-		Visibility: func(r *http.Request, l contenturl.Link) (contenturl.Visibility, error) {
-			if l.ContentKind == content.KindPost {
-				return rt.Content.PostVisibility(r.Context(), l.ContentID)
-			}
-			return contenturl.Visible, nil
-		}})
-	if err != nil {
-		w.t.Fatal(err)
-	}
-	catalog, err := w.tax.CatalogHandler(taxonomy.CatalogOptions{})
+	routes := w.cat.Routes()
+	routes["tag"] = "tag"
+	router, err := contenturl.NewRouter(urls, contenturl.RouterOptions{Routes: routes, Languages: []string{"en"}, Visibility: w.cat.Visibility})
 	if err != nil {
 		w.t.Fatal(err)
 	}
@@ -163,12 +160,16 @@ func (w *world) runtime(edit func(*contentkit.RuntimeConfig)) *contentkit.Runtim
 		Content: content.Options{Resolver: w, ContentKinds: []string{"gallery"},
 			Limits: content.Limits{Disabled: true}},
 		Uploads: w.up, Reader: w.rd, ReadLimit: media.RateLimit{Disabled: true},
-		Codes: router, Taxonomy: w.tax, Catalog: catalog,
+		Codes: router, Taxonomy: w.tax,
 	}
 	if edit != nil {
 		edit(&cfg)
 	}
-	if rt, err = contentkit.NewRuntime(w.t.Context(), cfg); err != nil {
+	rt, err := contentkit.NewRuntime(w.t.Context(), cfg)
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	if err := rt.Content.AddHeldSource(catalog.HeldKind, w.cat); err != nil {
 		w.t.Fatal(err)
 	}
 	return rt
@@ -235,7 +236,8 @@ type server struct {
 	broken  []string
 }
 
-func serve(t *testing.T, rt *contentkit.Runtime) *server {
+func (w *world) serve(rt *contentkit.Runtime) *server {
+	t := w.t
 	t.Helper()
 	checker, err := contract.NewChecker(os.DirFS(".."))
 	if err != nil {
@@ -244,6 +246,7 @@ func serve(t *testing.T, rt *contentkit.Runtime) *server {
 	s := &server{t: t, checker: checker}
 	mux := http.NewServeMux()
 	mux.Handle(prefix+"/", http.StripPrefix(prefix, rt.Handler()))
+	mux.Handle(prefix+"/v1/", http.StripPrefix(prefix+"/v1", w.cat.Handler()))
 	s.h = checker.Wrap(prefix, mux, func(err error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()

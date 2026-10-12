@@ -64,11 +64,24 @@ type verified struct {
 
 func (v verified) Identity() auth.Identity { return v.id }
 
+// GroupAuthorizer also decides permissions in the scopes of groups (an
+// owner group's AuthKit scope), named by their scope id under Issuer.
+type GroupAuthorizer interface {
+	Authorizer
+	CanIn(ctx context.Context, a access.Actor, scopeID, perm string) (bool, error)
+}
+
 func (v verified) Can(ctx context.Context, scope auth.Scope, perm string) (bool, error) {
-	if scope != Scope || v.authz == nil {
+	actor := access.Actor{ID: v.id.Subject, Kind: v.id.SubjectKind}
+	switch g, ok := v.authz.(GroupAuthorizer); {
+	case v.authz == nil || scope.Authority != Issuer:
 		return false, nil
+	case scope == Scope:
+		return v.authz.Can(ctx, actor, perm)
+	case ok:
+		return g.CanIn(ctx, actor, scope.ID, perm)
 	}
-	return v.authz.Can(ctx, access.Actor{ID: v.id.Subject, Kind: v.id.SubjectKind}, perm)
+	return false, nil
 }
 
 // Token is the bearer As sends for a signed-in actor.

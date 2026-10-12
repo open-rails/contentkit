@@ -7,7 +7,6 @@ import (
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/search"
-	"github.com/open-rails/contentkit/worker"
 )
 
 type nodeKey struct {
@@ -39,15 +38,16 @@ const (
 	maxKeywords = 256
 )
 
-// BuildKeywordDocuments is the worker.BuildKeywordDocuments of taxonomy
-// kinds: one document per active node and language titled by that language's
-// canonical name (falling back to English, then any language), with the
-// language's aliases and every other name as aliases and overflow as
-// keywords. Missing, merged and deleted nodes yield no document.
-func (s *Store) BuildKeywordDocuments(ctx context.Context, tenant, kind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
-	if tenant != s.tenant {
-		return nil, fmt.Errorf("%w: tenant %s", ErrInvalid, tenant)
-	}
+// DocumentKinds are the node kinds: the store is a worker.Source.
+func (s *Store) DocumentKinds() []string { return s.Kinds() }
+
+// BuildDocuments builds taxonomy documents: one per active node and language
+// titled by that language's canonical name (falling back to English, then
+// any language), with the language's aliases and every other name as aliases
+// and overflow as keywords. Missing, merged and deleted nodes yield no
+// document.
+func (s *Store) BuildDocuments(ctx context.Context, kind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
+	tenant := s.tenant
 	if err := s.requireKind(kind); err != nil {
 		return nil, err
 	}
@@ -158,12 +158,8 @@ func (s *Store) document(k nodeKey, language string, names []Name) search.Keywor
 	return doc
 }
 
-// ListContent is the worker.ListContentPage of taxonomy kinds: active nodes
-// of the kind in taxonomy_id order.
-func (s *Store) ListContent(ctx context.Context, tenant, kind, language, cursor string, limit int) ([]contentref.ContentRef, string, bool, error) {
-	if tenant != s.tenant {
-		return nil, "", false, fmt.Errorf("%w: tenant %s", ErrInvalid, tenant)
-	}
+// ListDocuments pages the active nodes of kind in taxonomy_id order.
+func (s *Store) ListDocuments(ctx context.Context, kind, language, cursor string, limit int) ([]contentref.ContentRef, string, bool, error) {
 	if err := s.requireKind(kind); err != nil {
 		return nil, "", false, err
 	}
@@ -193,32 +189,4 @@ func (s *Store) ListContent(ctx context.Context, tenant, kind, language, cursor 
 		return refs, "", true, nil
 	}
 	return refs, refs[len(refs)-1].ContentID, false, nil
-}
-
-// Builder returns a worker builder that serves this store's kinds and
-// delegates every other kind to next (the host's content builder).
-func (s *Store) Builder(next worker.BuildKeywordDocuments) worker.BuildKeywordDocuments {
-	return func(ctx context.Context, tenant, kind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
-		if s.isKind(kind) {
-			return s.BuildKeywordDocuments(ctx, tenant, kind, language, refs)
-		}
-		if next == nil {
-			return nil, fmt.Errorf("taxonomy: no builder for content kind %q", kind)
-		}
-		return next(ctx, tenant, kind, language, refs)
-	}
-}
-
-// Lister returns a worker lister that enumerates this store's kinds for
-// backfill and delegates every other kind to next.
-func (s *Store) Lister(next worker.ListContentPage) worker.ListContentPage {
-	return func(ctx context.Context, tenant, kind, language, cursor string, limit int) ([]contentref.ContentRef, string, bool, error) {
-		if s.isKind(kind) {
-			return s.ListContent(ctx, tenant, kind, language, cursor, limit)
-		}
-		if next == nil {
-			return nil, "", false, fmt.Errorf("taxonomy: no lister for content kind %q", kind)
-		}
-		return next(ctx, tenant, kind, language, cursor, limit)
-	}
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/helpers/notify"
 
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
@@ -35,7 +36,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	u, user := w.person(iam.Role{})
 	w.owner = o.ID
 	anon := ""
-	f := serve(t, w.runtime(nil))
+	f := w.serve(w.runtime(nil))
 	item := "/gallery/" + cid(1)
 
 	// What signed-out visitors may do: nothing here (the default).
@@ -45,38 +46,70 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 		t.Fatalf("config %+v", cfg)
 	}
 
-	// Posts.
-	var post content.Post
-	f.want(http.StatusForbidden, user, "POST", "/posts", content.PostInput{Title: ptr("Hello"), Body: ptr("World")}, nil)
-	f.want(http.StatusCreated, staff, "POST", "/posts", content.PostInput{Title: ptr("Hello"), Body: ptr("World"), Language: ptr("en")}, &post)
-	f.want(http.StatusOK, anon, "GET", "/posts?language=en&sort=likes", nil, nil)
-	f.want(http.StatusOK, staff, "GET", "/posts/admin?draft=false&language=en", nil, nil)
-	f.want(http.StatusForbidden, user, "GET", "/posts/admin", nil, nil)
-	f.want(http.StatusOK, anon, "GET", "/posts/"+post.ID, nil, nil)
-	f.want(http.StatusOK, staff, "PATCH", "/posts/"+post.ID, content.PostInput{Excerpt: ptr("Short")}, nil)
-	f.want(http.StatusNotImplemented, staff, "PUT", "/posts/"+post.ID+"/cover", content.ImageInput{Image: ptr("")}, nil)
-	f.want(http.StatusNotImplemented, staff, "POST", "/posts/"+post.ID+"/images", content.ImageInput{Image: ptr("i-" + uuid.NewString())}, nil)
+	// Contents: a staff member creates, writes, publishes and schedules; a
+	// person without content:write is refused; everyone reads what is live.
+	var post catalog.Content
+	f.want(http.StatusUnauthorized, anon, "POST", "/v1/contents", catalog.ContentInput{Kind: "blog"}, nil)
+	f.want(http.StatusForbidden, user, "POST", "/v1/contents", catalog.ContentInput{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Hello"}}}, nil)
+	f.want(http.StatusCreated, staff, "POST", "/v1/contents", catalog.ContentInput{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Hello", Body: "World"}}}, &post)
+	f.want(http.StatusNotFound, anon, "GET", "/v1/contents/"+post.ID, nil, nil)
+	f.want(http.StatusOK, staff, "PUT", "/v1/contents/"+post.ID+"/text/en", catalog.Text{Title: "Hello", Description: "Short", Body: "World"}, nil)
+	f.want(http.StatusOK, staff, "PATCH", "/v1/contents/"+post.ID, catalog.ContentPatch{Attributes: map[string]any{}}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/v1/contents/"+post.ID+"/creators", catalog.CreatorsInput{Creators: []catalog.Creator{{UserID: o.ID}}}, nil)
+	f.want(http.StatusNotImplemented, staff, "POST", "/v1/contents/"+post.ID+"/images", content.ImageInput{Image: ptr("i-" + uuid.NewString())}, nil)
+	f.want(http.StatusBadRequest, staff, "POST", "/v1/contents/"+post.ID+"/versions", catalog.VersionInput{Languages: []string{"en"}}, nil)
+	f.want(http.StatusOK, staff, "POST", "/v1/contents/"+post.ID+"/publish", catalog.PublishInput{}, &post)
+	f.want(http.StatusOK, anon, "GET", "/v1/contents/"+post.ID+"?language=en", nil, &post)
+	if !post.Live || post.Title != "Hello" || post.Editor || len(post.Versions) != 1 || post.Code == "" {
+		t.Fatalf("published %+v", post)
+	}
+	f.want(http.StatusOK, anon, "GET", "/v1/contents/"+post.ID+"/versions/"+post.Versions[0].ID, nil, nil)
+	f.want(http.StatusOK, owner, "GET", "/v1/manage/contents?kind=blog&state=published", nil, nil)
+	var managed []catalog.Content
+	f.want(http.StatusOK, staff, "GET", "/v1/manage/contents?q=hello", nil, &managed)
+	if len(managed) != 1 || managed[0].ID != post.ID {
+		t.Fatalf("managed %+v", managed)
+	}
+	f.want(http.StatusOK, staff, "POST", "/v1/contents/"+post.ID+"/unpublish", nil, nil)
+	f.want(http.StatusNotFound, anon, "GET", "/v1/contents/"+post.ID, nil, nil)
+	f.want(http.StatusOK, staff, "POST", "/v1/contents/"+post.ID+"/publish", catalog.PublishInput{}, nil)
 
-	// Codes resolve the post's code.
+	// An album has versions in order, with segments; one stays.
+	var album catalog.Content
+	f.want(http.StatusCreated, staff, "POST", "/v1/contents", catalog.ContentInput{Kind: "album", Text: map[string]catalog.Text{"en": {Title: "Album"}},
+		Versions: []catalog.VersionInput{{Languages: []string{"en"}}}}, &album)
+	var second catalog.Version
+	f.want(http.StatusCreated, staff, "POST", "/v1/contents/"+album.ID+"/versions", catalog.VersionInput{Languages: []string{"ja"}, Traits: &[]string{"colored"}}, &second)
+	f.want(http.StatusOK, staff, "PATCH", "/v1/contents/"+album.ID+"/versions/"+second.ID, catalog.VersionInput{Label: ptr("Colored")}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/v1/contents/"+album.ID+"/versions/"+second.ID+"/segments", catalog.SegmentsInput{Segments: []catalog.Segment{{Start: 0, End: 10, Title: "One"}}}, nil)
+	f.want(http.StatusOK, staff, "PUT", "/v1/contents/"+album.ID+"/versions/order", catalog.OrderInput{IDs: []string{second.ID, album.Versions[0].ID}}, nil)
+	f.want(http.StatusNoContent, staff, "DELETE", "/v1/contents/"+album.ID+"/versions/"+album.Versions[0].ID, nil, nil)
+	f.want(http.StatusConflict, staff, "DELETE", "/v1/contents/"+album.ID+"/versions/"+second.ID, nil, nil)
+	f.want(http.StatusOK, staff, "PUT", "/v1/contents/"+album.ID+"/text/ja", catalog.Text{Title: "アルバム"}, nil)
+	f.want(http.StatusOK, staff, "DELETE", "/v1/contents/"+album.ID+"/text/ja", nil, nil)
+
+	// Codes resolve the item's code; its URL is gone once it is deleted.
 	var resolved contenturl.Resolved
 	f.want(http.StatusOK, anon, "GET", "/codes/"+strings.ToLower(post.Code)+"?lang=en", nil, &resolved)
-	if resolved.ContentID != post.ID || resolved.Path != "/en/blog/"+post.Code+"/"+post.URLSlug {
+	if resolved.ContentID != post.ID || resolved.Path != "/en/blog/"+post.Code+"/hello" {
 		t.Fatalf("resolved %+v", resolved)
 	}
 	f.want(http.StatusBadRequest, anon, "GET", "/codes/not-a-code", nil, nil)
 	f.want(http.StatusNotFound, anon, "GET", "/codes/ZZZZZZZZ9", nil, nil)
-	f.want(http.StatusNoContent, staff, "DELETE", "/posts/"+post.ID, nil, nil)
+	f.want(http.StatusNoContent, staff, "DELETE", "/v1/contents/"+post.ID, nil, nil)
 	f.want(http.StatusGone, anon, "GET", "/codes/"+post.Code, nil, nil)
-	f.want(http.StatusNotFound, anon, "GET", "/posts/"+post.ID, nil, nil)
-	var deleted []content.Post
-	f.want(http.StatusOK, staff, "GET", "/posts/admin?deleted=true&q=hello", nil, &deleted)
-	if len(deleted) != 1 || deleted[0].ID != post.ID || deleted[0].DeletedAt == nil {
-		t.Fatalf("deleted posts %+v", deleted)
-	}
-	f.want(http.StatusOK, staff, "POST", "/posts/"+post.ID+"/restore", nil, nil)
+	f.want(http.StatusNotFound, anon, "GET", "/v1/contents/"+post.ID, nil, nil)
+	f.want(http.StatusOK, staff, "POST", "/v1/contents/"+post.ID+"/restore", nil, nil)
 	f.want(http.StatusOK, anon, "GET", "/codes/"+post.Code, nil, nil)
-	f.want(http.StatusNotFound, staff, "POST", "/posts/"+post.ID+"/restore", nil, nil)
-	f.want(http.StatusNoContent, staff, "DELETE", "/posts/"+post.ID, nil, nil)
+	f.want(http.StatusNotFound, staff, "POST", "/v1/contents/"+post.ID+"/restore", nil, nil)
+
+	// The catalog's totals, open to anyone.
+	var totals catalog.Totals
+	f.want(http.StatusOK, anon, "GET", "/v1/catalog/totals?kinds=blog&languages=en", nil, &totals)
+	if b := totals.Kinds["blog"]; b.Public != 1 || b.Tiers["premium"] != 1 || b.Languages["en"].Public != 1 {
+		t.Fatalf("totals %+v", totals)
+	}
+	f.want(http.StatusBadRequest, anon, "GET", "/v1/catalog/totals?kinds=post", nil, nil)
 
 	// Comments.
 	var root, reply content.Comment
@@ -166,6 +199,7 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 
 	// Moderation.
 	f.want(http.StatusOK, staff, "GET", "/moderation/held?kind=comment", nil, nil)
+	f.want(http.StatusOK, staff, "GET", "/moderation/held?kind=content", nil, nil)
 	f.want(http.StatusBadRequest, staff, "GET", "/moderation/held?kind=gallery", nil, nil)
 	f.want(http.StatusNotFound, staff, "POST", "/moderation/comment/"+uuid.NewString()+"/resolve", content.ResolveInput{Decision: content.DecisionApprove, Revision: 1}, nil)
 	f.want(http.StatusForbidden, user, "GET", "/moderation/held?kind=comment", nil, nil)
@@ -203,14 +237,6 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, staff, "DELETE", "/taxonomy/assignments", assignments, nil)
 	f.want(http.StatusOK, staff, "POST", "/taxonomy/nodes/"+colour+"/merge", taxonomy.MergeInput{Into: taxonomy.TaxonomyID(color)}, nil)
 	f.want(http.StatusOK, staff, "DELETE", "/taxonomy/nodes/"+art, nil, nil)
-
-	// The public catalog's totals, open to anyone.
-	var totals taxonomy.Totals
-	f.want(http.StatusOK, anon, "GET", "/catalog/totals?kinds=gallery", nil, &totals)
-	if g, ok := totals.Kinds["gallery"]; !ok || g.Tiers == nil {
-		t.Fatalf("totals %+v", totals)
-	}
-	f.want(http.StatusBadRequest, anon, "GET", "/catalog/totals?kinds=post", nil, nil)
 
 	mediaScenario(t, f, user, anon)
 

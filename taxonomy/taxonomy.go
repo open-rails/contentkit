@@ -22,7 +22,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/open-rails/helpers/cache"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/search"
@@ -163,9 +162,6 @@ type Options struct {
 	// counts (see search.Eligibility). Without it every document counts.
 	// Reserved arg names: tenant, ids, taxonomy_kinds.
 	CountEligibility *search.Eligibility
-	// Listing enables Totals and the public catalog API (CatalogHandler).
-	// Stopgap: ContentKit #117 removes it.
-	Listing *Listing
 	// Logger receives the admin API access log: each request at DEBUG, a 5xx
 	// at ERROR, both with the cause the response withheld. nil -> slog.Default().
 	Logger *slog.Logger
@@ -182,8 +178,6 @@ type Store struct {
 	kindList  []string
 	languages []string
 	countElig *search.Eligibility
-	listing   *listing
-	totals    *cache.Cache[totalsKey, Total]
 	log       *slog.Logger
 }
 
@@ -232,14 +226,6 @@ func New(opts Options) (*Store, error) {
 	}
 	if s.countElig != nil && strings.TrimSpace(s.countElig.SQL) == "" {
 		s.countElig = nil
-	}
-	if opts.Listing != nil {
-		if s.listing, err = s.compileListing(opts.Listing); err != nil {
-			return nil, err
-		}
-		if s.totals, err = cache.New(totalsPolicy, s.loadTotals); err != nil {
-			return nil, err
-		}
 	}
 	return s, nil
 }

@@ -121,7 +121,7 @@ func TestEvalConfigDiff_Integration(t *testing.T) {
 	suite := loadGoldenSuite(t)
 
 	full := runGolden(ctx, t, client, suite, "keyword", SearchOptions{})
-	filtered := runGolden(ctx, t, client, suite, "keyword-without-1", SearchOptions{FilterSQL: "sd.content_id <> @hidden", FilterArgs: map[string]any{"hidden": cid(1)}})
+	filtered := runGolden(ctx, t, client, suite, "keyword-without-1", SearchOptions{eligibility: where("sd.content_id <> @hidden", map[string]any{"hidden": cid(1)})})
 	if full.Metrics.RecallAtK != 1 || filtered.Metrics.RecallAtK >= 1 {
 		t.Fatalf("recall full=%v filtered=%v", full.Metrics.RecallAtK, filtered.Metrics.RecallAtK)
 	}

@@ -60,11 +60,8 @@ func TestKeywordProfileIntegration(t *testing.T) {
 
 	documents := map[string]string{cid(1): "Blue ocean"}
 	var buildErr error
-	opts := worker.Options{Pool: pool, Schema: "app", Tenant: testTenant, SupportedLanguages: []string{"en"}, ContentKinds: []string{"gallery"},
-		ListContent: func(context.Context, string, string, string, string, int) ([]ContentRef, string, bool, error) {
-			return nil, "", true, nil
-		},
-		BuildKeywordDocuments: func(_ context.Context, _, kind, lang string, refs []ContentRef) ([]KeywordDocument, error) {
+	opts := worker.Options{Pool: pool, Schema: "app", Tenant: testTenant, SupportedLanguages: []string{"en"}, Sources: []worker.Source{funcSource{tenant: testTenant,
+		build: func(_ context.Context, _, kind, lang string, refs []ContentRef) ([]KeywordDocument, error) {
 			if buildErr != nil {
 				return nil, buildErr
 			}
@@ -75,7 +72,7 @@ func TestKeywordProfileIntegration(t *testing.T) {
 				}
 			}
 			return out, nil
-		}}
+		}}}}
 	mark := func(deleted bool) {
 		t.Helper()
 		if err := search.MarkDirty(ctx, pool, "app", []search.DirtyMark{{DocumentKey: DocumentKey{ContentRef: gallery(cid(1)), Language: "en"}, Deleted: deleted}}); err != nil {

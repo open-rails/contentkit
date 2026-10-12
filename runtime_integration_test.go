@@ -152,30 +152,25 @@ func TestRuntimeIntegration(t *testing.T) {
 		t.Fatalf("vote: %d %s", rec.Code, rec.Body.String())
 	}
 
-	// A post is a search document: its write queues it, the worker builds it.
-	rec = do(t, h, user, "POST", "/posts", map[string]any{"title": "Autumn Festival Report", "body": "b", "language": "en", "is_draft": false})
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("post: %d %s", rec.Code, rec.Body.String())
-	}
-	opts := rt.WorkerOptions(worker.Options{
-		SupportedLanguages: []string{"en"}, ContentKinds: []string{"gallery"},
-		ListContent: func(_ context.Context, tenant, kind, _, _ string, _ int) ([]contentref.ContentRef, string, bool, error) {
+	// Search documents come from a worker source.
+	opts := worker.Options{Pool: rt.client.pool, Schema: rt.client.schema, Tenant: rt.tenant, SupportedLanguages: []string{"en"}, Sources: []worker.Source{funcSource{tenant: rt.tenant,
+		list: func(_ context.Context, tenant, kind, _, _ string, _ int) ([]contentref.ContentRef, string, bool, error) {
 			return []contentref.ContentRef{contentref.New(tenant, kind, cid(1))}, "", true, nil
 		},
-		BuildKeywordDocuments: func(_ context.Context, tenant, kind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
+		build: func(_ context.Context, tenant, kind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
 			var docs []search.KeywordDocument
 			for _, r := range refs {
 				docs = append(docs, search.KeywordDocument{DocumentKey: search.DocumentKey{ContentRef: r, Language: language}, Title: "Moonlit Garden"})
 			}
 			return docs, nil
 		},
-	})
+	}}}
 	for i := 0; i < 3; i++ { // backfill queues, next ticks build
 		if err := worker.SyncOnce(ctx, opts); err != nil {
 			t.Fatalf("worker tick %d: %v", i, err)
 		}
 	}
-	for _, c := range []struct{ q, kind, want string }{{"autumn festival", content.KindPost, "Autumn"}, {"moonlit", "gallery", cid(1)}} {
+	for _, c := range []struct{ q, kind, want string }{{"moonlit", "gallery", cid(1)}} {
 		res, err := rt.Search(ctx, c.q, HubSearchOptions{SearchOptions: SearchOptions{Language: "en", ContentKinds: []string{c.kind}}})
 		if err != nil || len(res.Hits) != 1 || res.Hits[0].ContentKind != c.kind {
 			t.Fatalf("search %q: %+v err=%v", c.q, res, err)

@@ -14,7 +14,7 @@ func TestAddingEquivalentAliasKeepsCanonicalDocument(t *testing.T) {
 	if err := s.AddNames(ctx, tid("tag-a"), []Name{alias("en", "CAFE")}); err != nil {
 		t.Fatal(err)
 	}
-	docs, err := s.BuildKeywordDocuments(ctx, tenant, "tag", "en", []contentref.ContentRef{contentref.New(tenant, "tag", string(tid("tag-a")))})
+	docs, err := s.BuildDocuments(ctx, "tag", "en", []contentref.ContentRef{contentref.New(tenant, "tag", string(tid("tag-a")))})
 	if err != nil {
 		t.Fatal(err)
 	}

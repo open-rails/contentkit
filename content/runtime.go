@@ -20,12 +20,9 @@ import (
 	"github.com/open-rails/contentkit/notification"
 )
 
-// Reserved content kinds owned by this package: reactions on comments and
-// posts are keyed by them and never pass through the access.ContentResolver.
-const (
-	KindComment = "comment"
-	KindPost    = "post"
-)
+// KindComment is the reserved content kind of comments: reactions on comments
+// are keyed by it and never pass through the access.ContentResolver.
+const KindComment = "comment"
 
 // Options configures a Runtime. Pool, Schema, Tenant, Auth and Resolver are
 // mandatory; the rest fall back to documented defaults.
@@ -51,19 +48,15 @@ type Options struct {
 	// Resolver is the gating surface (access.ContentResolver). Required.
 	Resolver access.ContentResolver
 
-	// Canonicalizer enables the preference boundary (preferences.go): the
-	// reaction/favorite row, the counts rollup and the export all use the
-	// reference it returns. nil = no preference export.
-	Canonicalizer ContentCanonicalizer
 	// PreferenceSyncOverlap bounds how long a preference write may take to
 	// commit and still be picked up by SyncPreferences.
 	// Default DefaultPreferenceSyncOverlap.
 	PreferenceSyncOverlap time.Duration
 
 	// Optional ports (nil -> default).
-	Processor         ContentProcessor // comments and post excerpts; default: strip tags
-	PostBodyProcessor ContentProcessor // post bodies; default: Processor
-	// Moderator screens comment/post writes; nil publishes everything.
+	Processor ContentProcessor // comments; default: strip tags
+	// Moderator screens comment writes, and the catalog's (Screen); nil
+	// publishes everything.
 	// Compose a BasicModerator in front of an AI moderator with Chain.
 	Moderator ContentModerator
 	// ModeratorTimeout bounds one Screen call (default 5s); a slower
@@ -75,8 +68,8 @@ type Options struct {
 	// Classifier groups free-text poll answers; nil refuses free-text polls.
 	Classifier AnswerClassifier
 
-	// Media stores post and poll images in ContentKit media; nil refuses
-	// image writes with 501 not_configured. See Media.
+	// Media stores poll images in ContentKit media; nil refuses image writes
+	// with 501 not_configured. See Media.
 	Media *Media
 
 	// ProviderDataEraser is required when moderator/classifier ports retain
@@ -95,8 +88,8 @@ type Options struct {
 	// default DefaultCommentMaxLength.
 	CommentMaxLength int
 
-	// ContentKinds are the commentable/reactable/favoritable kinds the host
-	// registers (e.g. "gallery", "video", "post"). Unregistered kinds are 404.
+	// ContentKinds are the commentable/reactable/favoritable kinds (the
+	// catalog's kinds, groups). Unregistered kinds are 404.
 	ContentKinds []string
 
 	// Logger receives the access log: each request at DEBUG, a 500 at ERROR
@@ -108,32 +101,31 @@ type Options struct {
 // services, exposing one mountable http.Handler.
 type Runtime struct {
 	// Notifications is this tenant's user inbox, shared with contentkit.Runtime.
-	Notifications     *notification.Store
-	store             *store
-	schema            string
-	tenant            string
-	guard             *gate.Gate
-	userInfo          userinfo.Lookup
-	resolver          access.ContentResolver
-	media             *Media
-	processor         ContentProcessor
-	postBodyProcessor ContentProcessor
-	moderator         ContentModerator
-	breaker           *moderatorBreaker
-	classifier        AnswerClassifier
-	providerEraser    ProviderDataEraser
-	anonymous         Anonymous
-	commentMax        int
-	log               *slog.Logger
-	kinds             map[string]struct{}
-	limiters          map[Action]*ratelimit.Limiter
+	Notifications  *notification.Store
+	store          *store
+	schema         string
+	tenant         string
+	guard          *gate.Gate
+	userInfo       userinfo.Lookup
+	resolver       access.ContentResolver
+	media          *Media
+	processor      ContentProcessor
+	moderator      ContentModerator
+	breaker        *moderatorBreaker
+	classifier     AnswerClassifier
+	providerEraser ProviderDataEraser
+	anonymous      Anonymous
+	commentMax     int
+	log            *slog.Logger
+	kinds          map[string]struct{}
+	limiters       map[Action]*ratelimit.Limiter
 
 	preferences *preferences
 	reactions   *reactions
 	polls       *polls
 	comments    *comments
-	posts       *posts
 	favorites   *favorites
+	held        map[string]HeldSource
 }
 
 // New constructs a Runtime over a schema the ContentKit baseline was applied to and wires the module services.
@@ -170,23 +162,23 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	}
 	processor := orDefault[ContentProcessor](opts.Processor, stripProcessor{})
 	rt := &Runtime{
-		store:             newStore(opts.Pool, opts.Schema, opts.Tenant),
-		schema:            opts.Schema,
-		tenant:            opts.Tenant,
-		userInfo:          opts.UserInfo,
-		resolver:          opts.Resolver,
-		media:             media,
-		processor:         processor,
-		postBodyProcessor: orDefault[ContentProcessor](opts.PostBodyProcessor, processor),
-		moderator:         opts.Moderator,
-		breaker:           newModeratorBreaker(opts.ModeratorTimeout, opts.ModeratorCooldown),
-		classifier:        opts.Classifier,
-		providerEraser:    opts.ProviderDataEraser,
-		anonymous:         opts.Anonymous,
-		commentMax:        orDefault(opts.CommentMaxLength, DefaultCommentMaxLength),
-		log:               log,
-		kinds:             make(map[string]struct{}, len(opts.ContentKinds)),
-		limiters:          limiters,
+		store:          newStore(opts.Pool, opts.Schema, opts.Tenant),
+		schema:         opts.Schema,
+		tenant:         opts.Tenant,
+		userInfo:       opts.UserInfo,
+		resolver:       opts.Resolver,
+		media:          media,
+		processor:      processor,
+		moderator:      opts.Moderator,
+		breaker:        newModeratorBreaker(opts.ModeratorTimeout, opts.ModeratorCooldown),
+		classifier:     opts.Classifier,
+		providerEraser: opts.ProviderDataEraser,
+		anonymous:      opts.Anonymous,
+		commentMax:     orDefault(opts.CommentMaxLength, DefaultCommentMaxLength),
+		log:            log,
+		kinds:          make(map[string]struct{}, len(opts.ContentKinds)),
+		limiters:       limiters,
+		held:           map[string]HeldSource{},
 	}
 	notices, err := notification.New(notification.Options{Pool: opts.Pool, Schema: opts.Schema, Tenant: opts.Tenant, Logger: log})
 	if err != nil {
@@ -201,12 +193,11 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		return nil, err
 	}
 	// preferences before the writers that resolve through it; reactions before
-	// comments and posts, which reuse its applyTx primitive.
-	rt.preferences = newPreferences(rt, opts.Canonicalizer, opts.PreferenceSyncOverlap)
+	// comments, which reuse its applyTx primitive.
+	rt.preferences = newPreferences(rt, opts.PreferenceSyncOverlap)
 	rt.reactions = newReactions(rt)
 	rt.polls = newPolls(rt)
 	rt.comments = newComments(rt)
-	rt.posts = newPosts(rt)
 	rt.favorites = newFavorites(rt)
 	return rt, nil
 }
@@ -216,7 +207,7 @@ func (rt *Runtime) checkSchema(ctx context.Context) error {
 	if _, err := rt.store.pool.Exec(ctx, `SELECT tenant_id, content_kind, content_id, content_version_id FROM `+rt.store.t.counts+` LIMIT 0;
 		SELECT revision FROM `+rt.store.t.reactions+` LIMIT 0; SELECT value, revision FROM `+rt.store.t.favorites+` LIMIT 0;
 		SELECT revision FROM `+rt.store.t.preferenceSync+` LIMIT 0;
-		SELECT moderation FROM `+rt.store.t.comments+` LIMIT 0; SELECT moderation FROM `+rt.store.t.posts+` LIMIT 0;
+		SELECT moderation FROM `+rt.store.t.comments+` LIMIT 0;
 		SELECT kind, closes_at FROM `+rt.store.t.pollQuestions+` LIMIT 0; SELECT group_id FROM `+rt.store.t.pollAnswers+` LIMIT 0;
 		SELECT scope, until FROM `+rt.store.t.commentBans+` LIMIT 0`); err != nil {
 		return fmt.Errorf("content: schema %q lacks the ContentKit baseline (apply contentkit.Migrate): %w", rt.schema, err)

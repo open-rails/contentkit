@@ -1,5 +1,5 @@
-// Package content is ContentKit's interaction module: posts, comments,
-// reactions, favorites and polls over tenant-scoped content references, stored
+// Package content is ContentKit's interaction module: comments, reactions,
+// favorites and polls over tenant-scoped content references, stored
 // in the host schema's content_* interaction tables. Everything host-specific
 // lives behind the ports in this file; the package imports no sibling kit and
 // bakes in no host assumption. Content kinds are host-registered, access is an opaque host
@@ -25,25 +25,6 @@ type PublicUser struct {
 	AvatarSrcSet string `json:"avatar_srcset,omitempty"`
 }
 
-// ContentCanonicalizer maps a resolved reference to the one reference an
-// actor's reaction or favorite is recorded, counted and exported under:
-// per-language routes ("42:en", "42:ja") collapse to one content_id; an
-// explicit content_version_id stays a distinct key; a language suffix never
-// implies a version. ok=false keeps the target out of the preference boundary
-// (its rows keep the resolver's reference and nothing is exported). Comment
-// threads never pass through it. Nil disables export: standalone hosts need no
-// analytics sink.
-type ContentCanonicalizer interface {
-	Canonical(ref contentref.ContentRef) (contentref.ContentRef, bool)
-}
-
-// ContentCanonicalizerFunc adapts a function to the ContentCanonicalizer port.
-type ContentCanonicalizerFunc func(ref contentref.ContentRef) (contentref.ContentRef, bool)
-
-func (f ContentCanonicalizerFunc) Canonical(ref contentref.ContentRef) (contentref.ContentRef, bool) {
-	return f(ref)
-}
-
 // --- optional ports (nil -> documented default) ---
 
 // ContentProcessor sanitizes rich text on write. Default: strip tags.
@@ -52,7 +33,7 @@ type ContentProcessor interface {
 }
 
 // permissions are the staff permissions content checks (access.Permission).
-var permissions = []access.Permission{access.PostsWrite, access.PollsWrite, access.CommentsModerate, access.CommentsBan, access.ModerationReview}
+var permissions = []access.Permission{access.PollsWrite, access.CommentsModerate, access.CommentsBan, access.ModerationReview}
 
 // --- moderation and classification ports (nil -> publish / refuse) ---
 
@@ -65,18 +46,18 @@ const (
 	DecisionReview  Decision = "review"  // store held: author-only until a reviewer resolves it
 )
 
-// ModerationInput is one comment or post body about to publish. The moderator
-// sees sanitized text and opaque ids only.
+// ModerationInput is one comment, or a catalog item's text, about to publish.
+// The moderator sees sanitized text and opaque ids only.
 type ModerationInput struct {
 	SubjectID string // opaque content author; may differ from editing moderator
 	Tenant    string
 	Actor     access.Actor
-	// Ref is the content the item belongs to: the commented work for a
-	// comment, the post's own reference for a post.
+	// Ref is the content the item belongs to: the commented content for a
+	// comment, the item's own reference for catalog text.
 	Ref    contentref.ContentRef
-	Kind   string // KindComment | KindPost
+	Kind   string // KindComment, or a HeldSource's kind (catalog.HeldKind)
 	ItemID string // the existing item on an edit; empty on create
-	Title  string // posts only
+	Title  string // catalog text only
 	Text   string
 }
 

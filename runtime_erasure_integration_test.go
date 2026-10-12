@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/stdlib"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/internal/pgtest"
@@ -61,7 +62,7 @@ func TestRuntimeErasureIncludesContentPlaneIntegration(t *testing.T) {
 			rt, err := NewRuntime(ctx, RuntimeConfig{
 				EmbeddedConfig: EmbeddedConfig{PG: pool, PGSchema: searchSchema, Tenant: testTenant, CH: conn, CHDatabase: chDB},
 				Auth:           testauth.Auth{Authz: allowAuthz{}},
-				Content:        content.Options{Schema: host, Resolver: routeResolver{}, ContentKinds: []string{"gallery"}, Canonicalizer: content.ContentCanonicalizerFunc(stripLanguage), Moderator: provider, Classifier: provider, ProviderDataEraser: provider},
+				Content:        content.Options{Schema: host, Resolver: routeResolver{}, ContentKinds: []string{"gallery"}, Moderator: provider, Classifier: provider, ProviderDataEraser: provider},
 			})
 			if err != nil {
 				t.Fatal(err)

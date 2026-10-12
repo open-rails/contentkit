@@ -151,14 +151,14 @@ func TestKeywordNativeIntegration(t *testing.T) {
 	}
 	// Server and client ceilings apply even without a host-provided deadline.
 	t.Run("budgets", func(t *testing.T) {
-		page, err := client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", ContentKinds: []string{"gallery"}, FilterSQL: "current_setting('statement_timeout')='2s'"})
+		page, err := client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", ContentKinds: []string{"gallery"}, eligibility: where("current_setting('statement_timeout')='2s'", nil)})
 		if err != nil || len(page.Hits) != 3 {
 			t.Fatalf("statement budget: %v %v", page, err)
 		}
 		for _, duration := range []time.Duration{25 * time.Millisecond, 10 * time.Second} {
 			request, cancel := context.WithTimeout(ctx, duration)
 			started := time.Now()
-			_, err := client.Search(request, "Not Guilty", SearchOptions{Language: "en", ContentKinds: []string{"gallery"}, FilterSQL: "EXISTS (SELECT 1 FROM pg_sleep(5))"})
+			_, err := client.Search(request, "Not Guilty", SearchOptions{Language: "en", ContentKinds: []string{"gallery"}, eligibility: where("EXISTS (SELECT 1 FROM pg_sleep(5))", nil)})
 			cancel()
 			if err == nil {
 				t.Fatal("unbounded query completed")
@@ -179,7 +179,7 @@ func TestKeywordNativeIntegration(t *testing.T) {
 	if hits[0].Score != 1 || hits[1].Score != .9 || hits[2].Score != .75 {
 		t.Fatalf("lexical scores are match tiers: %+v", hits)
 	}
-	page, err = client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", ContentKinds: []string{"gallery"}, FilterSQL: "sd.content_id = @eligible", FilterArgs: map[string]any{"eligible": alias}})
+	page, err = client.Search(ctx, "Not Guilty", SearchOptions{Language: "en", ContentKinds: []string{"gallery"}, eligibility: where("sd.content_id = @eligible", map[string]any{"eligible": alias})})
 	if err != nil || len(page.Hits) != 1 || page.Hits[0].ContentID != alias {
 		t.Fatalf("host filter page=%v err=%v", page, err)
 	}

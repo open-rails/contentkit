@@ -22,10 +22,12 @@ import (
 
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/testauth"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 	"github.com/open-rails/contentkit/media/token"
@@ -40,33 +42,41 @@ func (ckStaff) Can(_ context.Context, a access.Actor, _ string) (bool, error) {
 	return a.ID == "staff" && !a.Anonymous, nil
 }
 
-type noItems struct{}
-
-func (noItems) Resolve(context.Context, []contentref.ContentRef, access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	return map[contentref.ContentKey]access.Resolution{}, nil
+// folders routes the blog kind to the catalog and the poll kind to the
+// content module, as a host's registry hooks do.
+type folders struct {
+	catalog *catalog.Store
+	content *content.Runtime
 }
 
-// contentFolders routes the post and poll kinds to the content module, as a
-// host's registry hooks do.
-type contentFolders struct{ rt *content.Runtime }
-
-func (c *contentFolders) Resolve(ctx context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	return c.rt.MediaResolver().Resolve(ctx, refs, a)
+func (f *folders) Resolve(ctx context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
+	out, err := f.catalog.Resolver().Resolve(ctx, refs, a)
+	if err != nil {
+		return nil, err
+	}
+	polls, err := f.content.MediaResolver().Resolve(ctx, refs, a)
+	for k, v := range polls {
+		out[k] = v
+	}
+	return out, err
 }
 
-func (c *contentFolders) CanUpload(ctx context.Context, a access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
-	return c.rt.CanUpload(ctx, a, t)
+func (f *folders) CanUpload(ctx context.Context, a access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
+	if t.Ref.ContentKind == "poll" {
+		return f.content.CanUpload(ctx, a, t)
+	}
+	return f.catalog.CanUpload(ctx, a, t)
 }
 
 type keepHTML struct{}
 
 func (keepHTML) Sanitize(_ context.Context, raw string) (string, error) { return raw, nil }
 
-// A post body stores references to its images, so every image it shows
-// resolves to the current file through publish, a forced regenerate and a
-// hide and show (each a new generation, the old one retired), with the real
-// worker rendering. A draft's images are its editors' alone.
-func TestPostImagesResolveAcrossGenerations(t *testing.T) {
+// A content body stores references to its images, so every image it shows
+// resolves to the current file through publish, a forced regenerate and an
+// unpublish and publish (each a new generation, the old one retired), with
+// the real worker rendering. A draft's images are its editors' alone.
+func TestContentImagesResolveAcrossGenerations(t *testing.T) {
 	env := s3test.Open(t)
 	if !env.Store.Capabilities().ConditionalPut {
 		t.Skip("backend lacks conditional PUT")
@@ -77,9 +87,9 @@ func TestPostImagesResolveAcrossGenerations(t *testing.T) {
 		return media.Kind{Name: name, Uploads: []media.Upload{{Path: "{name}", Types: pngs, MaxBytes: 10 << 20, Named: true, Max: 20}},
 			Public: []media.Public{{Name: "inline", From: "{name}", To: "{name}.webp", Image: media.Image{Width: 320}}}}
 	}
-	hooks := &contentFolders{}
+	hooks := &folders{}
 	reg, err := media.NewRegistry(media.Config{Namespace: env.Tenant, BaseURL: "https://media.example",
-		Kinds: []media.Kind{folder("post"), folder("poll")}, Hooks: media.Hooks{Resolver: hooks, CanUpload: hooks}})
+		Kinds: []media.Kind{folder("blog"), folder("poll")}, Hooks: media.Hooks{Resolver: hooks, CanUpload: hooks}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,15 +137,22 @@ func TestPostImagesResolveAcrossGenerations(t *testing.T) {
 	rt, err := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
 		EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: schema, Tenant: env.Tenant},
 		Auth:           testauth.Auth{Authz: ckStaff{}},
-		Content: content.Options{Resolver: noItems{}, ContentKinds: []string{"gallery"},
-			PostBodyProcessor: keepHTML{}, Limits: content.Limits{Disabled: true},
+		Content: content.Options{Resolver: hooks, ContentKinds: []string{"blog"}, Limits: content.Limits{Disabled: true},
 			Media: &content.Media{Images: jobs.Manifests(), Folders: jobs}},
 		Uploads: uploads, Reader: reader, ReadLimit: media.RateLimit{Disabled: true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	hooks.rt = rt.Content
+	cat, err := catalog.New(ctx, catalog.Options{Pool: pool, Schema: schema, Tenant: env.Tenant, Auth: testauth.Auth{Authz: ckStaff{}},
+		Kinds: kinds.Config{Languages: []string{"en"}, Kinds: map[string]kinds.Kind{"blog": {Route: "blog", Presentation: "post",
+			Versions: kinds.VersionRules{Languages: "one", Hidden: true}}}},
+		Moderation: rt.Content, Body: keepHTML{}, Media: &catalog.Media{Images: jobs.Manifests(), Expose: jobs, Reader: reader}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(cat.Close)
+	hooks.catalog, hooks.content = cat, rt.Content
 	w, err := worker.New(ctx, worker.Config{Pool: pool, Schema: workers, ContentSchema: schema, Store: env.Store, Kinds: reg,
 		HostSchema: hostRiver, TempDir: t.TempDir(), Threads: 2})
 	if err != nil {
@@ -151,7 +168,10 @@ func TestPostImagesResolveAcrossGenerations(t *testing.T) {
 		}
 	})
 
-	h := rt.Handler()
+	mux := http.NewServeMux()
+	mux.Handle("/v1/", http.StripPrefix("/v1", cat.Handler()))
+	mux.Handle("/", rt.Handler())
+	h := mux
 	staff, reader1, anon := access.Actor{ID: "staff", Kind: "user"}, access.Actor{ID: "reader", Kind: "user"}, access.Actor{Anonymous: true, IP: "10.0.0.9"}
 	call := func(actor access.Actor, method, target string, body, out any) int {
 		t.Helper()
@@ -211,70 +231,65 @@ func TestPostImagesResolveAcrossGenerations(t *testing.T) {
 		return err == nil
 	}
 
-	var post content.Post
-	must(http.StatusCreated, staff, "POST", "/posts", content.PostInput{Title: ptrTo("Pictures"), Body: ptrTo("soon"), IsDraft: ptrTo(true)}, &post)
-	id := post.ID
-	a, b := upload("post", id, 3), upload("post", id, 9)
-	var inline content.InlineImage
-	must(http.StatusOK, staff, "POST", "/posts/"+id+"/images", content.ImageInput{Image: &a}, &inline)
-	if inline.Ref != content.ImageRef(a) {
+	var created catalog.Content
+	must(http.StatusCreated, staff, "POST", "/v1/contents", catalog.ContentInput{Kind: "blog", Text: map[string]catalog.Text{"en": {Title: "Pictures", Body: "soon"}}}, &created)
+	id := created.ID
+	a, b := upload("blog", id, 3), upload("blog", id, 9)
+	var inline catalog.InlineImage
+	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/images", content.ImageInput{Image: &a}, &inline)
+	if inline.Ref != catalog.ImageRef(a) {
 		t.Fatalf("inline image %+v", inline)
 	}
-	body := fmt.Sprintf(`<p><img src="%s"></p><p>and</p><p><img src="%s"></p>`, inline.Ref, content.ImageRef(b))
-	must(http.StatusOK, staff, "PATCH", "/posts/"+id, content.PostInput{Body: &body}, nil)
-	must(http.StatusOK, staff, "PUT", "/posts/"+id+"/cover", content.ImageInput{Image: &b}, nil)
+	body := fmt.Sprintf(`<p><img src="%s"></p><p>and</p><p><img src="%s"></p>`, inline.Ref, catalog.ImageRef(b))
+	must(http.StatusOK, staff, "PUT", "/v1/contents/"+id+"/text/en", catalog.Text{Title: "Pictures", Body: body}, nil)
+	must(http.StatusOK, staff, "PATCH", "/v1/contents/"+id, catalog.ContentPatch{Cover: &b}, nil)
 
 	// A draft: its editors read references and see the images through
-	// signed editor views; no one else sees the post or its folder.
+	// signed editor views; no one else sees the item or its folder.
 	for _, actor := range []access.Actor{anon, reader1} {
-		must(http.StatusNotFound, actor, "GET", "/posts/"+id, nil, nil)
-		must(http.StatusNotFound, actor, "GET", "/media/post/"+id+"?editor", nil, nil)
+		must(http.StatusNotFound, actor, "GET", "/v1/contents/"+id, nil, nil)
+		must(http.StatusNotFound, actor, "GET", "/media/blog/"+id+"?editor", nil, nil)
 	}
-	var draft content.Post
-	must(http.StatusOK, staff, "GET", "/posts/"+id, nil, &draft)
-	if draft.Body != body || draft.Images != nil || draft.CoverURL != nil || *draft.Cover != b {
+	var draft catalog.Content
+	must(http.StatusOK, staff, "GET", "/v1/contents/"+id, nil, &draft)
+	if draft.Body != body || draft.Images != nil || draft.Cover == nil || draft.Cover.URL != nil || draft.Cover.Image != b {
 		t.Fatalf("draft %+v", draft)
 	}
 	eventually(t, "the editor preview", time.Minute, func() bool {
-		must(http.StatusOK, staff, "POST", "/posts/"+id+"/images", content.ImageInput{Image: &a}, &inline)
+		must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/images", content.ImageInput{Image: &a}, &inline)
 		return inline.URL != nil && strings.Contains(*inline.URL, "?t=") && !strings.Contains(*inline.URL, "/public/") && exists(*inline.URL)
 	})
 
 	// Published, every reference resolves to a file that exists; each new
 	// generation resolves to its own.
-	resolved := func(what string, before map[string]string) content.Post {
+	resolved := func(what string, before map[string]string) catalog.Content {
 		t.Helper()
-		var p content.Post
+		var c catalog.Content
 		eventually(t, what, 2*time.Minute, func() bool {
-			p = content.Post{}
-			if call(anon, "GET", "/posts/"+id, nil, &p) != http.StatusOK || strings.Contains(p.Body, content.ImageScheme) || len(p.Images) != 2 {
+			c = catalog.Content{}
+			if call(anon, "GET", "/v1/contents/"+id, nil, &c) != http.StatusOK || strings.Contains(c.Body, catalog.ImageScheme) || len(c.Images) != 2 {
 				return false
 			}
-			for name, u := range p.Images {
+			for name, u := range c.Images {
 				if u == before[name] || !exists(u) {
 					return false
 				}
 			}
 			return true
 		})
-		if want := fmt.Sprintf(`<p><img src="%s"></p><p>and</p><p><img src="%s"></p>`, p.Images[a], p.Images[b]); p.Body != want || p.CoverURL == nil || *p.CoverURL != p.Images[b] {
-			t.Fatalf("%s: %+v", what, p)
+		if want := fmt.Sprintf(`<p><img src="%s"></p><p>and</p><p><img src="%s"></p>`, c.Images[a], c.Images[b]); c.Body != want || c.Cover == nil || c.Cover.URL == nil || *c.Cover.URL != c.Images[b] {
+			t.Fatalf("%s: %+v", what, c)
 		}
 		var stored string
-		if err := pool.QueryRow(ctx, `SELECT body FROM `+schema+`.content_posts WHERE id = $1`, id).Scan(&stored); err != nil || stored != body {
+		if err := pool.QueryRow(ctx, `SELECT body FROM `+schema+`.content_text WHERE content_id = $1 AND language = 'en'`, id).Scan(&stored); err != nil || stored != body {
 			t.Fatalf("stored body %q, err=%v", stored, err)
 		}
-		return p
+		return c
 	}
-	must(http.StatusOK, staff, "PATCH", "/posts/"+id, content.PostInput{IsDraft: ptrTo(false)}, nil)
+	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/publish", nil, nil)
 	published := resolved("the published images", nil)
-	var listed []content.Post
-	must(http.StatusOK, anon, "GET", "/posts", nil, &listed)
-	if len(listed) != 1 || listed[0].Body != published.Body {
-		t.Fatalf("listed %+v", listed)
-	}
 
-	ref, err := reg.Ref("post", id)
+	ref, err := reg.Ref("blog", id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,14 +301,14 @@ func TestPostImagesResolveAcrossGenerations(t *testing.T) {
 		return !exists(published.Images[a]) && !exists(published.Images[b])
 	})
 
-	must(http.StatusOK, staff, "PATCH", "/posts/"+id, content.PostInput{IsDraft: ptrTo(true)}, nil)
-	must(http.StatusNotFound, anon, "GET", "/posts/"+id, nil, nil)
-	eventually(t, "the hidden post's references", time.Minute, func() bool {
-		var hidden content.Post
-		must(http.StatusOK, staff, "GET", "/posts/"+id, nil, &hidden)
-		return hidden.Body == body && hidden.Images == nil && hidden.CoverURL == nil
+	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/unpublish", nil, nil)
+	must(http.StatusNotFound, anon, "GET", "/v1/contents/"+id, nil, nil)
+	eventually(t, "the unpublished item's references", time.Minute, func() bool {
+		var hidden catalog.Content
+		must(http.StatusOK, staff, "GET", "/v1/contents/"+id, nil, &hidden)
+		return hidden.Body == body && hidden.Images == nil && hidden.Cover != nil && hidden.Cover.URL == nil
 	})
-	must(http.StatusOK, staff, "PATCH", "/posts/"+id, content.PostInput{IsDraft: ptrTo(false)}, nil)
+	must(http.StatusOK, staff, "POST", "/v1/contents/"+id+"/publish", nil, nil)
 	resolved("the images shown again", regenerated.Images)
 
 	// Poll images store names and resolve the same way.
@@ -317,5 +332,3 @@ func TestPostImagesResolveAcrossGenerations(t *testing.T) {
 		return p.ImageURL != "" && p.ImageURL != first.ImageURL && exists(p.ImageURL)
 	})
 }
-
-func ptrTo[T any](v T) *T { return &v }

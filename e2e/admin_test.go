@@ -27,7 +27,7 @@ func TestGlobalCommentBanOfUser(t *testing.T) {
 	o, owner := w.person(iam.Role{})
 	u, user := w.person(iam.Role{})
 	w.owner = o.ID
-	f := serve(t, w.runtime(nil))
+	f := w.serve(w.runtime(nil))
 	target := "/global-comment-bans/" + u.ID
 
 	f.want(http.StatusNotFound, staff, "GET", target, nil, nil)
@@ -66,7 +66,7 @@ func TestAdminCommentsByAuthor(t *testing.T) {
 	o, owner := w.person(iam.Role{})
 	u, user := w.person(iam.Role{})
 	w.owner = o.ID
-	f := serve(t, w.runtime(nil))
+	f := w.serve(w.runtime(nil))
 	item := "/gallery/" + cid(1)
 
 	var first, reply, gone content.Comment
@@ -127,7 +127,7 @@ func TestTaxonomyNodeAssignments(t *testing.T) {
 	w := newWorld(t)
 	_, staff := w.person(w.staff)
 	_, user := w.person(iam.Role{})
-	f := serve(t, w.runtime(nil))
+	f := w.serve(w.runtime(nil))
 
 	var nodes []taxonomy.Node
 	f.want(http.StatusCreated, staff, "POST", "/taxonomy/nodes", []taxonomy.NodeInput{
@@ -215,7 +215,7 @@ func TestEditorRegeneratesMedia(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
 	_, editor := w.person(iam.Role{})
-	f := serve(t, w.runtime(nil))
+	f := w.serve(w.runtime(nil))
 	ref := media.RefBody{Kind: "gallery", ID: cid(1)}
 	item, err := w.reg.Ref(ref.Kind, ref.ID)
 	if err != nil {
@@ -277,7 +277,7 @@ func TestAdminPollsByStateAndSearch(t *testing.T) {
 	w := newWorld(t)
 	_, staff := w.person(w.staff)
 	_, user := w.person(iam.Role{})
-	f := serve(t, w.runtime(nil))
+	f := w.serve(w.runtime(nil))
 	create := func(question string, liveAt *time.Time) content.Poll {
 		var p content.Poll
 		f.want(http.StatusCreated, staff, "POST", "/polls", content.PollInput{Question: question, Language: "en", LiveAt: liveAt,

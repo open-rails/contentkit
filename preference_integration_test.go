@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,26 +22,19 @@ import (
 
 const prefTestCHDB = "contentkit_preference_test"
 
-// routeResolver accepts any gallery route id ("<id>:en", "<id>:ja"); the
-// canonicalizer collapses the language suffix to the work.
+// routeResolver accepts any gallery route id ("<id>:en", "<id>:ja") and
+// answers the work's canonical reference without the language suffix.
 type routeResolver struct{}
 
 func (routeResolver) Resolve(_ context.Context, refs []contentref.ContentRef, _ access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
 	out := map[contentref.ContentKey]access.Resolution{}
 	for _, r := range refs {
 		if r.ContentKind == "gallery" {
-			out[r.Key()] = access.Resolution{Visible: true, Accessible: true}
+			id, _, _ := strings.Cut(r.ContentID, ":")
+			out[r.Key()] = access.Resolution{Visible: true, Accessible: true, Ref: contentref.New(r.TenantID, "gallery", id).WithVersion(r.Version())}
 		}
 	}
 	return out, nil
-}
-
-func stripLanguage(r contentref.ContentRef) (contentref.ContentRef, bool) {
-	if r.ContentKind != "gallery" {
-		return contentref.ContentRef{}, false
-	}
-	id, _, _ := strings.Cut(r.ContentID, ":")
-	return contentref.New(r.TenantID, "gallery", id).WithVersion(r.Version()), true
 }
 
 type prefEnv struct {
@@ -50,8 +42,6 @@ type prefEnv struct {
 	schema string
 	conn   signal.Conn
 	chDB   string
-	// declined makes the canonicalizer refuse gallery "8" at sync time.
-	declined *atomic.Bool
 }
 
 func newPrefEnv(t *testing.T, chDB string) prefEnv {
@@ -66,20 +56,16 @@ func newPrefEnv(t *testing.T, chDB string) prefEnv {
 		t.Fatal(err)
 	}
 	_ = sqlDB.Close()
-	return prefEnv{pool: pool, schema: schema, conn: env.Fresh(t, chDB), chDB: chDB, declined: &atomic.Bool{}}
+	return prefEnv{pool: pool, schema: schema, conn: env.Fresh(t, chDB), chDB: chDB}
 }
 
 func (e prefEnv) runtime(t *testing.T, conn signal.Conn, overlap time.Duration) *Runtime {
 	t.Helper()
-	canon := func(r contentref.ContentRef) (contentref.ContentRef, bool) {
-		w, ok := stripLanguage(r)
-		return w, ok && !(e.declined.Load() && w.ContentID == cid(8))
-	}
 	rt, err := NewRuntime(context.Background(), RuntimeConfig{
 		EmbeddedConfig: EmbeddedConfig{PG: e.pool, PGSchema: e.schema, Tenant: testTenant, CH: conn, CHDatabase: e.chDB},
 		Auth:           testauth.Auth{Authz: allowAuthz{}},
 		Content: content.Options{Schema: e.schema, Resolver: routeResolver{}, Anonymous: content.Anonymous{Reactions: true},
-			Canonicalizer: content.ContentCanonicalizerFunc(canon), ContentKinds: []string{"gallery"}, PreferenceSyncOverlap: overlap},
+			ContentKinds: []string{"gallery"}, PreferenceSyncOverlap: overlap},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -172,17 +158,11 @@ func TestPreferenceBoundaryIntegration(t *testing.T) {
 		t.Fatalf("metrics after the favorite cycle = %+v, want one identity per axis", m)
 	}
 
-	// Anonymous rows and targets the canonicalizer declines at sync time stay out.
+	// Anonymous rows stay out.
 	post(access.Actor{IP: "10.0.0.1", Anonymous: true}, "POST", galleryRoute(7, ":en/like"))
-	post(u1, "POST", galleryRoute(8, ":en/like"))
-	e.declined.Store(true)
 	mustSync(t, rt)
-	e.declined.Store(false)
 	if m := metrics(t, rt, cid(7)); m.Events != 0 {
 		t.Fatalf("anonymous reaction exported: %+v", m)
-	}
-	if s := state(t, rt, "u1", cid(8)); s.Feedback != 0 {
-		t.Fatalf("declined target exported: %+v", s)
 	}
 
 	// The sink is unreachable: the write succeeded, the sync fails without

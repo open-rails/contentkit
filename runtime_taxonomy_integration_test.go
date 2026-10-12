@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
+
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/migrations"
 	"github.com/open-rails/contentkit/taxonomy"
@@ -78,13 +79,13 @@ func TestMigrateHostSchemaAndForeignKeysIntegration(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM "+q+".content_node_names WHERE taxonomy_id=$1 AND normalized='color'", tax(1)).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("catalog preserved on rerun: %d %v", count, err)
 	}
-	for _, table := range []string{"host_entities", "content_comments", "content_posts", "content_preference_sync", "content_search_documents", "content_search_invalid", "content_nodes", "content_media_releases"} {
+	for _, table := range []string{"host_entities", "content_comments", "content_items", "content_facets", "content_preference_sync", "content_search_documents", "content_search_invalid", "content_nodes", "content_media_releases"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, pgx.Identifier{schema, table}.Sanitize()).Scan(&exists); err != nil || !exists {
 			t.Fatalf("missing same-schema table %s: %v", table, err)
 		}
 	}
-	for _, table := range []string{"content_media_slots", "content_media_slot_backfill"} {
+	for _, table := range []string{"content_media_slots", "content_media_slot_backfill", "content_posts"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, pgx.Identifier{schema, table}.Sanitize()).Scan(&exists); err != nil || exists {
 			t.Fatalf("migration 0006 keeps %s: %v", table, err)

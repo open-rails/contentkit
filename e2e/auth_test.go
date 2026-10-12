@@ -29,7 +29,7 @@ func TestGatesWithAuthKit(t *testing.T) {
 	o, owner := w.person(iam.Role{})
 	_, user := w.person(iam.Role{})
 	w.owner = o.ID
-	f := serve(t, w.runtime(nil))
+	f := w.serve(w.runtime(nil))
 	item := "/gallery/" + cid(1)
 	comment := content.CommentInput{Body: "hello"}
 
@@ -73,10 +73,10 @@ func TestGatesWithAuthKit(t *testing.T) {
 		{"notifications, an application", app, "GET", "/notifications/inbox", nil, 403, ""},
 		{"an application comments", app, "POST", item + "/comments", comment, 403, ""},
 		{"a person comments", user, "POST", item + "/comments", comment, 201, ""},
-		{"staff route, anonymous", "", "GET", "/posts/admin", nil, 401, "Bearer"},
-		{"staff route, without the permission", user, "GET", "/posts/admin", nil, 403, ""},
-		{"staff route, staff", staff, "GET", "/posts/admin", nil, 200, ""},
-		{"staff route, an application holding it", app, "GET", "/posts/admin", nil, 200, ""},
+		{"staff route, anonymous", "", "GET", "/comments/admin", nil, 401, "Bearer"},
+		{"staff route, without the permission", user, "GET", "/comments/admin", nil, 403, ""},
+		{"staff route, staff", staff, "GET", "/comments/admin", nil, 200, ""},
+		{"staff route, an application holding it", app, "GET", "/comments/admin", nil, 200, ""},
 		{"staff route, a stale sign-in (no step-up)", stale, "GET", "/global-comment-bans", nil, 200, ""},
 		{"taxonomy, without the permission", user, "GET", "/taxonomy/nodes", nil, 403, ""},
 		{"taxonomy, an application holding it", app, "GET", "/taxonomy/nodes", nil, 200, ""},
@@ -106,7 +106,7 @@ func TestGatesWithAuthKit(t *testing.T) {
 
 	// Permissions are checked live: a revoked role refuses the next request.
 	authtest.RevokeRole(t, w.ak, iam.RootGroup(), iam.UserSubject(staffUser.ID), w.staff)
-	f.want(http.StatusForbidden, staff, "GET", "/posts/admin", nil, nil)
+	f.want(http.StatusForbidden, staff, "GET", "/comments/admin", nil, nil)
 
 	// An auth whose roles lack ContentKit's permissions fails the runtime,
 	// not every request; so does one naming no root scope.
@@ -117,7 +117,7 @@ func TestGatesWithAuthKit(t *testing.T) {
 		return err
 	}
 	bare, _ := authtest.New(t)
-	if err := newRuntime(bare.Authenticator()); err == nil || !strings.Contains(err.Error(), string(access.PostsWrite)) {
+	if err := newRuntime(bare.Authenticator()); err == nil || !strings.Contains(err.Error(), string(access.PollsWrite)) {
 		t.Fatalf("roles without ContentKit's permissions: %v", err)
 	}
 	if err := newRuntime(unrooted{w.ak.Authenticator()}); err == nil || !strings.Contains(err.Error(), "root scope") {
@@ -146,7 +146,7 @@ func TestAuthKitConformsWithContentKitPermissions(t *testing.T) {
 	}
 	bearer := func(token string) func() *http.Request {
 		return func() *http.Request {
-			r := httptest.NewRequest(http.MethodGet, prefix+"/posts/admin", nil).WithContext(context.Background())
+			r := httptest.NewRequest(http.MethodGet, prefix+"/comments/admin", nil).WithContext(context.Background())
 			r.Header.Set("Authorization", "Bearer "+token)
 			return r
 		}

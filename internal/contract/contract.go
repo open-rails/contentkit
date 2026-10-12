@@ -20,6 +20,7 @@ import (
 	"github.com/open-rails/contentkit/internal/httpapi"
 
 	// The modules register their routes.
+	_ "github.com/open-rails/contentkit/catalog"
 	_ "github.com/open-rails/contentkit/content"
 	_ "github.com/open-rails/contentkit/contenturl"
 	_ "github.com/open-rails/contentkit/media"

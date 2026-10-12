@@ -14,14 +14,11 @@ import (
 	"github.com/open-rails/migratekit/chmigrate"
 
 	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/migrations"
 	"github.com/open-rails/contentkit/notification"
-	"github.com/open-rails/contentkit/search"
-	"github.com/open-rails/contentkit/worker"
 )
 
 // RuntimeConfig configures one tenant's full ContentKit: the search and signal
@@ -52,9 +49,6 @@ type RuntimeConfig struct {
 	// Taxonomy serves the store's admin API at /taxonomy, for staff holding
 	// access.TaxonomyWrite.
 	Taxonomy TaxonomyAdmin
-	// Catalog serves the public catalog API at /catalog
-	// (taxonomy.Store.CatalogHandler).
-	Catalog http.Handler
 }
 
 // TaxonomyAdmin is *taxonomy.Store: the admin API it serves.
@@ -133,7 +127,7 @@ func NewRuntime(ctx context.Context, cfg RuntimeConfig) (*Runtime, error) {
 //
 // A host may instead mount the modules alone (content.Runtime.Handler,
 // media.UploadHandler, media.Reader.Handler, contenturl.Router.Handler,
-// taxonomy.Handler, taxonomy.Store.CatalogHandler, notification.Store.Handler)
+// taxonomy.Handler, notification.Store.Handler)
 // at paths of its choosing.
 func (r *Runtime) Handler() http.Handler { return r.handler }
 
@@ -166,54 +160,7 @@ func handler(cfg RuntimeConfig, c content.Options, rt *content.Runtime, notices 
 		}
 		mount(httpapi.Taxonomy, h)
 	}
-	if cfg.Catalog != nil {
-		mount(httpapi.PublicCatalog, cfg.Catalog)
-	}
 	return mux, nil
-}
-
-// WorkerOptions returns the host's keyword worker options extended with
-// ContentKit's own documents: posts (content.KindPost) are listed and built by
-// the content module, every other kind by the host callbacks. Missing host
-// callbacks for configured kinds fail backfill.
-func (r *Runtime) WorkerOptions(host worker.Options) worker.Options {
-	out := host
-	if out.Pool == nil {
-		out.Pool = r.client.pool
-	}
-	if out.Schema == "" {
-		out.Schema = r.client.schema
-	}
-	if out.Tenant == "" {
-		out.Tenant = r.tenant
-	}
-	hasPost := false
-	for _, k := range out.ContentKinds {
-		hasPost = hasPost || k == content.KindPost
-	}
-	if !hasPost {
-		out.ContentKinds = append(append([]string(nil), out.ContentKinds...), content.KindPost)
-	}
-	list, build := host.ListContent, host.BuildKeywordDocuments
-	out.ListContent = func(ctx context.Context, tenant, kind, language, cursor string, limit int) ([]contentref.ContentRef, string, bool, error) {
-		if kind == content.KindPost {
-			return r.Content.ListContent(ctx, tenant, kind, language, cursor, limit)
-		}
-		if list == nil {
-			return nil, "", false, fmt.Errorf("contentkit: no ListContent for kind %q", kind)
-		}
-		return list(ctx, tenant, kind, language, cursor, limit)
-	}
-	out.BuildKeywordDocuments = func(ctx context.Context, tenant, kind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
-		if kind == content.KindPost {
-			return r.Content.KeywordDocuments(ctx, tenant, kind, language, refs)
-		}
-		if build == nil {
-			return nil, fmt.Errorf("contentkit: no BuildKeywordDocuments for kind %q", kind)
-		}
-		return build(ctx, tenant, kind, language, refs)
-	}
-	return out
 }
 
 // MigrateConfig selects the host-owned stores for ContentKit migrations.
