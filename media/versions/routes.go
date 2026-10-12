@@ -39,7 +39,7 @@ type errorReply struct {
 
 var routes = []httpapi.Route[handler]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{id}/versions/{version}/reader", Resource: "reader", Auth: httpapi.Public,
-		Doc:       "A version's reader plan: its segments with their release state, the published item of each the viewer opens, the previews of a locked version, its playback item and reader metadata. 202 while it is first published.",
+		Doc:       "A version's reader plan: its segments with their release state, the published item of each the viewer opens, the previews of a locked version, its playback item and reader metadata. 202 while it has no current publication.",
 		Responses: []httpapi.Reply{httpapi.OK(ReaderPlan{}), httpapi.Accepted(Pending{})}},
 		Serve: httpapi.H(handler.plan)},
 	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/{id}/versions/{version}/reader", Resource: "reader", Auth: httpapi.User,
