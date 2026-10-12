@@ -863,7 +863,9 @@ that name. The media worker then hashes each staged upload and places it at
 `private/sha256-{hex}` of its bytes before processing (an upload gone or
 changed by then fails with `not_uploaded`), so no client ever writes under a
 blob name. Server-side imports use `Uploads.Ingest`, which stages the same
-way.
+way: from a stream (`Body`), or with a server-side copy of another key in the
+item's bucket (`From`, outside ContentKit's namespaces) so no byte passes
+through the host.
 
 | Op | Does |
 | --- | --- |
