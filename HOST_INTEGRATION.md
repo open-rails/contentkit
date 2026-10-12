@@ -1123,6 +1123,10 @@ gates (Auth). No compatibility: the old ports are gone.
   package identity; update the host's implementations and every library
   sharing them together. Shared `helpers/deps` and `helpers/river` utilities
   remain dependencies. A custom host needs no AuthKit runtime.
+- The separately versioned `adapters/openrails` module now targets OpenRails
+  v0.240.0. Its client port takes `CheckEntitlementsParams` with `CustomerID`
+  in the request. Custom wrappers must use that signature; embedded hosts
+  pass the client returned by `Engine.MerchantBySlug`.
 
 ## Media worker schema
 

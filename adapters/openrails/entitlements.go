@@ -15,7 +15,7 @@ import (
 // Client is the OpenRails method the adapter needs; *openrails.Client
 // (embedded or remote) implements it.
 type Client interface {
-	CheckEntitlements(context.Context, billing.CustomerID, billing.CheckEntitlementsParams, ...openrails.RequestOption) (*billing.EntitlementCheck, error)
+	CheckEntitlements(context.Context, billing.CheckEntitlementsParams, ...openrails.RequestOption) (*billing.EntitlementCheck, error)
 }
 
 var _ Client = (*openrails.Client)(nil)
@@ -40,7 +40,7 @@ func (e entitlements) Held(ctx context.Context, subject string, q access.Query) 
 	keys := q.Keys
 	for first := true; first || len(keys) > 0; first = false {
 		n := min(len(keys), billing.MaxEntitlementChecks)
-		params := billing.CheckEntitlementsParams{Entitlements: keys[:n]}
+		params := billing.CheckEntitlementsParams{CustomerID: customer, Entitlements: keys[:n]}
 		if first {
 			params.Prefixes, params.PrefixLimit = q.Prefixes, q.Limit
 		}
@@ -48,7 +48,7 @@ func (e entitlements) Held(ctx context.Context, subject string, q access.Query) 
 		if len(params.Entitlements) == 0 && len(params.Prefixes) == 0 {
 			break
 		}
-		res, err := e.c.CheckEntitlements(ctx, customer, params)
+		res, err := e.c.CheckEntitlements(ctx, params)
 		if err != nil {
 			return access.Answer{}, err
 		}

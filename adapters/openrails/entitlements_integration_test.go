@@ -29,9 +29,9 @@ type counting struct {
 	n atomic.Int64
 }
 
-func (c *counting) CheckEntitlements(ctx context.Context, id billing.CustomerID, p billing.CheckEntitlementsParams, o ...openrails.RequestOption) (*billing.EntitlementCheck, error) {
+func (c *counting) CheckEntitlements(ctx context.Context, p billing.CheckEntitlementsParams, o ...openrails.RequestOption) (*billing.EntitlementCheck, error) {
 	c.n.Add(1)
-	return c.c.CheckEntitlements(ctx, id, p, o...)
+	return c.c.CheckEntitlements(ctx, p, o...)
 }
 
 func (c *counting) take() int { return int(c.n.Swap(0)) }
@@ -59,12 +59,16 @@ func embedded(t *testing.T) *openrails.Client {
 		pool.Close()
 	})
 	cfg := openrails.Config{Database: openrails.DatabaseConfig{Schema: schema, RiverSchema: schema}, TestMode: openrails.Sandbox,
-		ProviderWriteMode: openrails.ProviderWritesReadOnly, Merchant: openrails.MerchantDeclaration{Slug: tenant, DisplayName: "OnlyDemo"}}
-	client, err := openrails.New(t.Context(), cfg, openrails.Deps{Postgres: pool})
+		ProviderWriteMode: openrails.ProviderWritesReadOnly, Merchants: map[string]openrails.MerchantDeclaration{tenant: {DisplayName: "OnlyDemo"}}}
+	engine, err := openrails.New(t.Context(), cfg, openrails.Deps{Postgres: pool})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = client.Close(context.Background()) })
+	t.Cleanup(func() { _ = engine.Close(context.Background()) })
+	client, err := engine.MerchantBySlug(tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return client
 }
 
@@ -79,7 +83,7 @@ func TestEntitlementsOverEmbeddedOpenRails(t *testing.T) {
 	ctx := t.Context()
 	bill := embedded(t)
 	customer := billing.CustomerID(uuid.New())
-	if _, err := bill.EnsureCustomers(ctx, []billing.EnsureCustomerParams{{ID: customer}}); err != nil {
+	if _, err := bill.UpdateCustomer(ctx, customer, billing.UpdateCustomerParams{}); err != nil {
 		t.Fatal(err)
 	}
 	grant := func(keys ...string) {
