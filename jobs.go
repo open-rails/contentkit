@@ -141,7 +141,9 @@ func (e *Engine) rebuild(ctx context.Context, signals bool) error {
 	if c == nil {
 		return nil
 	}
-	opts := func(queue string) *river.InsertOpts { return &river.InsertOpts{Queue: queue, MaxAttempts: 3, UniqueOpts: media.PendingOnce} }
+	opts := func(queue string) *river.InsertOpts {
+		return &river.InsertOpts{Queue: queue, MaxAttempts: 3, UniqueOpts: media.PendingOnce}
+	}
 	params := []river.InsertManyParams{{Args: searchSyncArgs{}, InsertOpts: opts(QueueContentKit)}, {Args: groupsArgs{}, InsertOpts: opts(QueueContentKit)},
 		{Args: catalog.RefreshCountsJob(), InsertOpts: opts(catalog.Queue)}}
 	if signals && e.hub.SignalPlane() {

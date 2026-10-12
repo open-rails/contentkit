@@ -293,7 +293,9 @@ func (s *Store) replaceNames(ctx context.Context, q Querier, given map[string][]
 		for _, n := range stored[GroupID(id)] {
 			have = append(have, name{n.Language, string(n.Kind), n.Name})
 		}
-		cmp := func(a, b name) int { return strings.Compare(a.language+"\x00"+a.kind+"\x00"+a.name, b.language+"\x00"+b.kind+"\x00"+b.name) }
+		cmp := func(a, b name) int {
+			return strings.Compare(a.language+"\x00"+a.kind+"\x00"+a.name, b.language+"\x00"+b.kind+"\x00"+b.name)
+		}
 		slices.SortFunc(want, cmp)
 		slices.SortFunc(have, cmp)
 		if slices.Equal(slices.Compact(want), have) {
@@ -440,7 +442,9 @@ func (s *Store) ImportMemberships(ctx context.Context, q Querier, sets []Content
 // sameMemberships reports whether set leaves the stored memberships as they
 // are: the same ones in its kinds, positions omitted being kept.
 func (s *Store) sameMemberships(f facts, set ContentGroups, stored []Membership) bool {
-	key := func(m Membership) string { return string(m.GroupID) + "\x00" + m.VersionID + "\x00" + strings.TrimSpace(m.Role) }
+	key := func(m Membership) string {
+		return string(m.GroupID) + "\x00" + m.VersionID + "\x00" + strings.TrimSpace(m.Role)
+	}
 	have := map[string]Membership{}
 	for _, m := range stored {
 		if g, ok := f.groups[string(m.GroupID)]; ok && slices.Contains(set.Kinds, g.Kind) {

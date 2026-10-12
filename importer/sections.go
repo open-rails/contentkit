@@ -31,10 +31,14 @@ func (run *batchRun) sections() []section {
 	s, b := run.s, run.b
 	out := []section{
 		{name: SectionGroups, n: len(b.Groups), prepare: run.group,
-			write: typed(func(ctx context.Context, tx pgx.Tx, in []groups.ImportGroup) error { return s.o.Groups.ImportGroups(ctx, tx, in) })},
+			write: typed(func(ctx context.Context, tx pgx.Tx, in []groups.ImportGroup) error {
+				return s.o.Groups.ImportGroups(ctx, tx, in)
+			})},
 		{name: SectionContents, n: len(b.Contents), prepare: run.content, write: typed(s.o.Catalog.Import)},
 		{name: SectionMemberships, n: len(b.Memberships), prepare: run.memberships,
-			write: typed(func(ctx context.Context, tx pgx.Tx, in []groups.ContentGroups) error { return s.o.Groups.ImportMemberships(ctx, tx, in) })},
+			write: typed(func(ctx context.Context, tx pgx.Tx, in []groups.ContentGroups) error {
+				return s.o.Groups.ImportMemberships(ctx, tx, in)
+			})},
 		{name: SectionOffers, n: len(b.Offers), prepare: run.offer},
 		{name: SectionAliases, n: len(b.Aliases), prepare: run.alias,
 			write: typed(func(ctx context.Context, tx pgx.Tx, in []codes.Alias) error {
@@ -47,7 +51,9 @@ func (run *batchRun) sections() []section {
 		{name: SectionVotes, n: len(b.Votes), prepare: run.vote, write: typed(s.o.Content.ImportVotes)},
 		{name: SectionAnswers, n: len(b.Answers), prepare: run.answer, write: typed(s.o.Content.ImportAnswers)},
 		{name: SectionSignals, n: len(b.Signals), prepare: run.signal,
-			write: typed(func(ctx context.Context, _ pgx.Tx, in []discovery.ImportSignal) error { return s.o.Signals.ImportSignals(ctx, in) })},
+			write: typed(func(ctx context.Context, _ pgx.Tx, in []discovery.ImportSignal) error {
+				return s.o.Signals.ImportSignals(ctx, in)
+			})},
 	}
 	if s.o.Offers == nil {
 		out[3].skip = "no billing"

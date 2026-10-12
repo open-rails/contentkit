@@ -121,7 +121,7 @@ func catalogBatch() importer.Batch {
 			{ExternalID: "gallery:1", ID: id("gallery", 1), Kind: "gallery", State: "published", PublishedAt: ptr(t0.Add(24 * time.Hour)), Code: "GAZ000001",
 				Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"premium"}}, Attributes: map[string]any{"format": "doujin"},
 				Creators: []catalog.Creator{{UserID: "u-1"}},
-				Text: map[string]catalog.Text{"en": {Title: "First", Description: "The first."}, "ja": {Title: "最初"}},
+				Text:     map[string]catalog.Text{"en": {Title: "First", Description: "The first."}, "ja": {Title: "最初"}},
 				Versions: []importer.Version{
 					{ExternalID: "version:1", ID: id("version", 1), Languages: []string{"en"}, Ordinal: ptr(1), PublishedAt: ptr(t0.Add(24 * time.Hour)),
 						Text:     map[string]catalog.VersionText{"en": {Title: "First, in English"}},
@@ -241,12 +241,12 @@ func TestImportConverges(t *testing.T) {
 	for sql, want := range map[string]string{
 		`SELECT state || ' ' || extract(epoch FROM published_at)::bigint || ' ' || extract(epoch FROM created_at)::bigint || ' ' || extract(epoch FROM updated_at)::bigint
  FROM $s.content_items WHERE id = $1`: "published 1577923200 1577836800 1578009600",
-		`SELECT access::text || ' ' || attributes::text FROM $s.content_items WHERE id = $1`:                                `{"level": "tier", "tiers": ["premium"]} {"format": "doujin"}`,
-		`SELECT string_agg(language || '=' || title, ',' ORDER BY language) FROM $s.content_text WHERE content_id = $1`:      "en=First,ja=最初",
-		`SELECT string_agg(id || ':' || position || ':' || state || ':' || coalesce(ordinal, 0), ',' ORDER BY position) FROM $s.content_versions WHERE content_id = $1`: id("version", 1) + ":0:published:1," + id("version", 2) + ":1:draft:0",
-		`SELECT count(*)::text FROM $s.content_segments WHERE version_id = (SELECT id FROM $s.content_versions WHERE content_id = $1 AND position = 0)`: "2",
-		`SELECT code FROM $s.content_codes WHERE content_id = $1`: "GAZ000001",
-		`SELECT likes || '/' || dislikes || '/' || favorites || '/' || comment_count FROM $s.content_interaction_counts WHERE content_id = $1 AND content_version_id = ''`: "2/1/1/1",
+		`SELECT access::text || ' ' || attributes::text FROM $s.content_items WHERE id = $1`:                                                                                                `{"level": "tier", "tiers": ["premium"]} {"format": "doujin"}`,
+		`SELECT string_agg(language || '=' || title, ',' ORDER BY language) FROM $s.content_text WHERE content_id = $1`:                                                                     "en=First,ja=最初",
+		`SELECT string_agg(id || ':' || position || ':' || state || ':' || coalesce(ordinal, 0), ',' ORDER BY position) FROM $s.content_versions WHERE content_id = $1`:                     id("version", 1) + ":0:published:1," + id("version", 2) + ":1:draft:0",
+		`SELECT count(*)::text FROM $s.content_segments WHERE version_id = (SELECT id FROM $s.content_versions WHERE content_id = $1 AND position = 0)`:                                     "2",
+		`SELECT code FROM $s.content_codes WHERE content_id = $1`:                                                                                                                           "GAZ000001",
+		`SELECT likes || '/' || dislikes || '/' || favorites || '/' || comment_count FROM $s.content_interaction_counts WHERE content_id = $1 AND content_version_id = ''`:                  "2/1/1/1",
 		`SELECT array_length(group_ids, 1)::text FROM $s.content_facets WHERE content_id = $1 AND version_id = (SELECT id FROM $s.content_versions WHERE content_id = $1 AND position = 0)`: "6",
 	} {
 		if got := f.scalar(t, sql, g1); got != want {
@@ -254,15 +254,15 @@ func TestImportConverges(t *testing.T) {
 		}
 	}
 	for sql, want := range map[string]string{
-		`SELECT reply_count || '/' || likes || '/' || language FROM $s.content_comments WHERE id = $1::uuid`:                                    "2/1/en",
-		`SELECT string_agg(id::text, ',' ORDER BY created_at) FROM $s.content_comments WHERE reply_to_id = $1::uuid`:                          id("comment", 2) + "," + id("comment", 4),
+		`SELECT reply_count || '/' || likes || '/' || language FROM $s.content_comments WHERE id = $1::uuid`:                                                                                           "2/1/en",
+		`SELECT string_agg(id::text, ',' ORDER BY created_at) FROM $s.content_comments WHERE reply_to_id = $1::uuid`:                                                                                   id("comment", 2) + "," + id("comment", 4),
 		`SELECT string_agg(vote_count::text, ',' ORDER BY position) FROM $s.content_poll_options WHERE question_id = (SELECT id FROM $s.content_poll_questions WHERE question = 'Best?') AND $1 <> ''`: "2,1",
-		`SELECT code FROM $s.content_codes WHERE content_id = '` + id("tag", 1) + `' AND $1 <> ''`:                                         "TAG000001",
-		`SELECT state || ' ' || (published_at IS NULL) FROM $s.content_items WHERE id = '` + id("gallery", 3) + `' AND $1 <> ''`:           "published true",
-		`SELECT array_to_string(languages, ',') FROM $s.content_versions WHERE content_id = '` + id("post", 1) + `' AND $1 <> ''`:          "en",
-		`SELECT scope_id || ' ' || slug FROM $s.content_groups WHERE id = '` + id("character", 1) + `' AND $1 <> ''`:                      id("series", 2) + " hero",
-		`SELECT count(*)::text FROM $s.content_code_aliases WHERE source = 'test-legacy' AND $1 <> ''`:                                    "2",
-		`SELECT count(*)::text FROM $s.content_reactions WHERE content_kind = 'tag' AND content_id = '` + id("tag", 1) + `' AND $1 <> ''`: "1",
+		`SELECT code FROM $s.content_codes WHERE content_id = '` + id("tag", 1) + `' AND $1 <> ''`:                                                                                                     "TAG000001",
+		`SELECT state || ' ' || (published_at IS NULL) FROM $s.content_items WHERE id = '` + id("gallery", 3) + `' AND $1 <> ''`:                                                                       "published true",
+		`SELECT array_to_string(languages, ',') FROM $s.content_versions WHERE content_id = '` + id("post", 1) + `' AND $1 <> ''`:                                                                      "en",
+		`SELECT scope_id || ' ' || slug FROM $s.content_groups WHERE id = '` + id("character", 1) + `' AND $1 <> ''`:                                                                                   id("series", 2) + " hero",
+		`SELECT count(*)::text FROM $s.content_code_aliases WHERE source = 'test-legacy' AND $1 <> ''`:                                                                                                 "2",
+		`SELECT count(*)::text FROM $s.content_reactions WHERE content_kind = 'tag' AND content_id = '` + id("tag", 1) + `' AND $1 <> ''`:                                                              "1",
 	} {
 		if got := f.scalar(t, sql, c1); got != want {
 			t.Errorf("%s\n got %q\nwant %q", sql, got, want)
@@ -351,8 +351,8 @@ func TestImportPartialFailureResumes(t *testing.T) {
 		t.Fatalf("resume %+v", res)
 	}
 	for sql, want := range map[string]string{
-		`SELECT count(*)::text FROM $s.content_items WHERE $1 <> ''`:                                    "4",
-		`SELECT count(*)::text FROM $s.content_comments WHERE $1 <> ''`:                                 "3",
+		`SELECT count(*)::text FROM $s.content_items WHERE $1 <> ''`:                                     "4",
+		`SELECT count(*)::text FROM $s.content_comments WHERE $1 <> ''`:                                  "3",
 		`SELECT count(*)::text FROM $s.content_external_ids WHERE entity = 'content' AND $1 <> ''`:       "4",
 		`SELECT owner_group_id FROM $s.content_items WHERE id = '` + id("gallery", 2) + `' AND $1 <> ''`: id("tag", 9),
 	} {
