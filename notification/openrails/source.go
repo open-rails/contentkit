@@ -48,8 +48,8 @@ func New(opts Options) (*Source, error) {
 	if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return nil, fmt.Errorf("openrails notifications: URL must be a trusted HTTP(S) deployment URL")
 	}
-	if strings.TrimSpace(opts.MerchantID) == "" || len(opts.MerchantID) > 512 || strings.ContainsRune(opts.MerchantID, 0) || !consumerName.MatchString(opts.Consumer) {
-		return nil, fmt.Errorf("openrails notifications: merchant and a 1-64 character consumer name are required")
+	if strings.TrimSpace(opts.MerchantID) == "" || len(opts.MerchantID) > 512 || strings.ContainsRune(opts.MerchantID, 0) || !consumerName.MatchString(opts.Consumer) || opts.Consumer == "." || opts.Consumer == ".." {
+		return nil, fmt.Errorf("openrails notifications: merchant and a valid 1-64 character consumer name are required")
 	}
 	name := opts.Name
 	if name == "" {

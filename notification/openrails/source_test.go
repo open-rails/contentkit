@@ -28,10 +28,13 @@ func TestConsumerConfigurationAndWire(t *testing.T) {
 	if path != "/billing/v1/app/notification-consumers/site-a/events" || token != "Bearer app" || len(events) != 1 || events[0].EventType != "future.new_kind" || !strings.Contains(string(events[0].Data), "9007199254740993.01") {
 		t.Fatalf("wire %s %s %+v", path, token, events)
 	}
-	for _, name := range []string{"", "a/b", "../other", "space here", strings.Repeat("x", 65)} {
+	for _, name := range []string{"", ".", "..", "a/b", "../other", "space here", strings.Repeat("x", 65)} {
 		if _, err := New(Options{URL: server.URL, MerchantID: "m", Consumer: name}); err == nil {
 			t.Fatalf("accepted consumer %q", name)
 		}
+	}
+	if _, err := New(Options{URL: server.URL, MerchantID: "m", Consumer: "site.v1"}); err != nil {
+		t.Fatalf("valid dotted consumer: %v", err)
 	}
 }
 
