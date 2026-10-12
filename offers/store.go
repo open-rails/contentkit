@@ -83,7 +83,9 @@ func (s *Service) Withdraw(ctx context.Context, targets []Target) ([]Offer, erro
 		for _, t := range targets {
 			var id string
 			err := tx.QueryRow(ctx, `UPDATE `+s.t.offers+` SET state = 'withdrawn', revision = revision + 1, updated_at = now()
-				WHERE tenant_id = $1 AND target_kind = $2 AND target_id = $3 AND state = 'active' RETURNING id`, s.tenant, t.Kind, t.ID).Scan(&id)
+				WHERE tenant_id = $1 AND target_kind = $2 AND target_id = $3 AND state = 'active'
+					AND ($2 <> 'version' OR EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id = $1 AND v.id = $3 AND v.content_id = $4))
+				RETURNING id`, s.tenant, t.Kind, t.ID, t.Content).Scan(&id)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return fmt.Errorf("%w: %s %s has no offer", ErrNotFound, t.Kind, t.ID)
 			}
@@ -243,6 +245,13 @@ func (s *Service) resolve(ctx context.Context, q querier, targets []Target) erro
 	return nil
 }
 
+func versionOf(t Target) string {
+	if t.Kind == VersionTarget {
+		return t.ID
+	}
+	return ""
+}
+
 func orID(t Target) string {
 	if t.Content == "" {
 		return t.ID
@@ -302,7 +311,9 @@ func (s *Service) Authorize(ctx context.Context, a auth.Authenticator, actor acc
 		case ContentTarget, VersionTarget:
 			err = s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.creators+` cr WHERE cr.tenant_id = c.tenant_id AND cr.content_id = c.id AND cr.user_id = $3)
 					OR EXISTS (SELECT 1 FROM `+s.t.groups+` g WHERE g.tenant_id = c.tenant_id AND g.id = c.owner_group_id AND g.owner_user_id = $3)
-				FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = $2`, s.tenant, orID(t), actor.ID).Scan(&ok)
+				FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = $2
+					AND ($4 = '' OR EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id = c.tenant_id AND v.content_id = c.id AND v.id = $4))`,
+				s.tenant, orID(t), actor.ID, versionOf(t)).Scan(&ok)
 		case GroupTarget:
 			err = s.pool.QueryRow(ctx, `SELECT coalesce(owner_user_id = $3, false) FROM `+s.t.groups+` WHERE tenant_id = $1 AND id = $2`,
 				s.tenant, t.ID, actor.ID).Scan(&ok)

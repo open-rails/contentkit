@@ -79,6 +79,7 @@ func TestOfferRoutes(t *testing.T) {
 	channel := w.group("channel", "Night Owls", owner.ID)
 	owned := w.content(access.Rule{Level: access.GroupPPV, Group: channel}, "Channel post", "")
 	w.exec(`UPDATE `+w.table("content_items")+` SET owner_group_id = $1 WHERE id = $2`, channel, owned)
+	mine := w.content(access.Rule{Level: access.PPV}, "Stranger's", stranger.ID)
 
 	var o offers.Offer
 	for _, tc := range []struct {
@@ -99,6 +100,8 @@ func TestOfferRoutes(t *testing.T) {
 		{"PUT", "/groups/" + channel + "/offer", owner, map[string]any{"amount": "9.99", "renew_hours": 720}, 200},
 		{"PUT", "/contents/" + uid(404) + "/offer", admin, map[string]any{"amount": "4.99"}, 404},
 		{"DELETE", "/contents/" + c + "/versions/" + v + "/offer", stranger, nil, 403},
+		{"DELETE", "/contents/" + mine + "/versions/" + v + "/offer", stranger, nil, 404},
+		{"PUT", "/contents/" + mine + "/versions/" + v + "/offer", stranger, map[string]any{"amount": "1"}, 404},
 		{"DELETE", "/contents/" + c + "/versions/" + v + "/offer", admin, nil, 200},
 		{"DELETE", "/contents/" + c + "/versions/" + v + "/offer", admin, nil, 404},
 	} {

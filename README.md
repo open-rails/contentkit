@@ -46,8 +46,9 @@ another tenant is an error, never remapped.
 |---|---|
 | `contentref` | `ContentRef`, `ContentKey`, `TaxonomyID` |
 | `contenturl` | uniform content URLs `[/{lang}]/{route}/{CODE}[/{slug}]`: permanent 9-character codes per tenant, slugs, merges, legacy aliases, canonical redirects, a JSON lookup; the browser half is `@openrails/contentkit-ui/urls` ([Content URLs](HOST_INTEGRATION.md#content-urls-contenturl)) |
-| `access` | `Actor`, the staff permissions (`Permission`, `Permissions()`), the batch `ContentResolver` port (`Resolve(ctx, refs, actor) → map[ContentKey]Resolution`; an omitted ref denies) and its `Resolution{Ref, Visible, Accessible, Editor}`, shared by `content` and media; paywalls: the entitlement key grammar, item rules, the `Gate`, its listing `Filter` (with a SQL predicate) and the request memo over the `Entitlements` port ([Paywalls and listings](#paywalls-and-listings-access)) |
-| `access/accesstest` | an in-memory `Entitlements` and `CountingEntitlements`, for "one billing read per page" tests |
+| `access` | `Actor`, the staff permissions (`Permission`, `Permissions()`), the batch `ContentResolver` port and its `Resolution` shared by `content` and media; the key grammar, rules, the `Gate`, its listing `Filter` over `content_facets`, the request memo and the `Billing` dependency ([Access and offers](#access-and-offers-access-offers)) |
+| `offers` | offers on content, versions and groups, their OpenRails sync job, free group joins and the library |
+| `adapters/openrails` | `access.Billing` over the OpenRails client (its own module) |
 | `media` | the registry (`Config`, kinds, upload paths, private and public presets), ordered manifests with provenance and conditional-write edits, the `Store` port, direct uploads and commit ops with their HTTP API, reads and HLS playlists, the optional `UploadLimiter`, and the sweep, deletion, `Expose` and relays as River jobs |
 | `media/s3` | `Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
 | `media/image` | libvips (CGO) producer: Image presets, public presets, zips, editor views, `PublishDefaults` |
@@ -216,62 +217,57 @@ statuses are listed in [docs/api/routes.md](docs/api/routes.md#error-codes).
 unset) with the request method, path, status and duration. Postgres constraint
 names, driver text and stack traces are logged, never served.
 
-## Paywalls and listings (`access`)
+## Access and offers (`access`, `offers`)
 
 ContentKit gives entitlement keys meaning; OpenRails grants them and never
 parses one. Keys are constructed, never typed:
 
-| Key | Grants |
+| Key | Opens |
 |---|---|
-| `access.Own(ref)` → `content:<tenant>:<kind>:<id>` | one work (bought, rented, bundled, granted), at every level |
-| `access.Members(scope)` → `members:<tenant>:<kind>:<id>` | membership of a scope: a channel, series, collection |
-| `access.Tier("premium")` → `premium` | a merchant-wide tier, interpreted only when declared in `GateConfig.Tiers` |
+| `access.ContentKey` → `<tenant>:content:<id>` | every version of a content item |
+| `access.VersionKey` → `<tenant>:content:<id>/<version>` | one version |
+| `access.GroupKey` → `<tenant>:group:<id>` | every member of the group, and content whose rule names it |
+| `access.TierKey` → `premium` | versions whose rule names the tier (`kinds.Config.Tiers`) |
 
-Ids are content ids, keys are work-level (a version shares its work's key),
-tenants and kinds match `[a-z0-9_-]{1,64}`, and `ParseKey` refuses anything
-else. An item's `Rule` is a host fact: `Public`, `TierLevel` (any of
-`Tiers`), `MembersLevel` (`Scope`), `PPV`, or `MembersPPV` (owned; buying it
-requires the membership).
+A `Rule` is stored as JSON on content (`content_items.access`), as a
+version's override (`content_versions.access`) and on sellable groups:
+`{"level": "public" | "tier" | "group" | "ppv" | "group_ppv", "tiers", "group_id", "preview": {"pages" | "segments"}, "free_after"}`.
+`Rule.Validate(kinds)` checks it; `Rule.Facet()` projects it onto
+`content_facets`. A version opens with any of: its version key, its content
+key, the key of a group holding it, a tier its rule names, its rule's group
+(`group`), or a free rule (`public`, past `free_after`).
 
 ```go
-gate, _ := access.NewGate(access.GateConfig{Entitlements: ckopenrails.Entitlements(bill), Tenant: "onlydemo",
-	Tiers: []string{"premium"}, MemberKinds: []string{"channel"}, OwnedKinds: []string{"post"}})
-
-f, err := gate.Filter(ctx, actor) // one billing read: the tiers and the keys held per keyspace
-pred, args, _ := f.SQL(postColumns) // hide mode: access inside the listing query, so pages are full
-rows, _ := pool.Query(ctx, `SELECT `+cols+` FROM posts p WHERE p.state = 'published'
-	AND (p.published_at, p.id) < (@cursor_at, @cursor_id) AND `+pred+`
-	ORDER BY p.published_at DESC, p.id DESC LIMIT @n`, pgx.NamedArgs(args))
+gate, _ := access.NewGate(access.GateConfig{Tenant: "onlydemo", Kinds: cfg.Kinds, Billing: ckopenrails.Billing(client)})
+f, _ := gate.Filter(ctx, actor)                  // one billing read: tiers, content and group keyspaces
+pred, args, _ := f.SQL("f", access.Hide)         // over content_facets f: only what the viewer opens
 keep, short, _ := gate.Settle(ctx, actor, f, items) // free unless a keyspace was truncated
-ok, known := f.Allows(item)                         // lock mode: pure, no I/O
-ds, _ := gate.Decide(ctx, actor, items)             // paywalls: Allowed, Sell, Requires
-reg, _ := media.NewRegistry(media.Config{ /* … */ Hooks: media.Hooks{Resolver: gate.Resolver(facts)}})
+ds, _ := gate.Decide(ctx, actor, items)          // Allowed, or Sell, Requires, Preview, FreeAfter
+prices, _ := offerSvc.Live(ctx, ds[0].Sell)      // which Sell keys are on sale, with their prices
 ```
 
 - `access.WithMemo(ctx)` keeps the viewer's `Filter` and the keys read for
-  the request, so `Filter` then `Decide` (or a resolver) is one read. The
-  content and media handlers install it; install it in host middleware too.
-- `Decide` and `Settle` take a batch; there is no single-item check.
-- A failed read fails closed per item: `Filter.Unknown()` (its SQL admits
-  public rows only), `Decision.Unknown` (denied, nothing offered), and an
-  error wrapping `access.ErrUnavailable`. Public content keeps serving.
-- `GateConfig.Claims` (optional) answers a declared tier present in the
-  verified token without a read; a refund then lags by the token TTL.
-- `accesstest.CountingEntitlements` lets host tests assert one read per page.
+  the request: a request costs one billing read. Anonymous viewers cost none.
+- Tiers in `kinds.Config.TokenClaims` are answered from the verified token
+  when its `auth.Verified` implements `access.Entitled`; a refund then lags
+  by the token TTL.
+- A failed read fails closed: `Filter.Unknown()`, `Decision.Unknown` and an
+  error wrapping `access.ErrUnavailable`; free rules keep serving.
+- Past `access.HeldLimit` keys a keyspace is truncated: `SQL(Hide)` admits its
+  candidates and `Settle` decides them in one exact read.
 
-| Operation | Billing reads |
-|---|---|
-| Listing page, lock or hide mode | 1 (`Filter`) |
-| Hydration, item pages, comments in the same request | 0 (memo; items of declared kinds) |
-| Media item read (token mint) | 1 (the item's own, membership and tier keys) |
-| Media files, HLS segments | 0 (the token covers them) |
-| Viewer holding more than `HeldLimit` keys in a keyspace (hide mode) | +1 per page (`Settle`) |
-| Anonymous viewer | 0 |
+`access.Billing` is the billing dependency: `Held`, catalog edits (products
+and prices) and free grants. `adapters/openrails.Billing` implements it over
+the OpenRails client, embedded or remote.
 
-Embedded OpenRails answers a read with two index-backed statements on the
-host's Postgres; standalone adds one HTTPS round trip. HOST_INTEGRATION
-[Listing with access](HOST_INTEGRATION.md#listing-with-access) covers columns,
-indexes, UNION listings and truncation.
+`offers` sells content, versions and groups (`PUT|DELETE
+/contents/{id}/offer`, `/contents/{id}/versions/{vid}/offer`,
+`/groups/{id}/offer`). Its River job syncs each target to one OpenRails
+product whose key and only entitlement is the access key, named after the
+title, with one price (`offers.PriceKey`): a reprice is a new price, a
+withdrawal archives the product and buyers keep their key. A free group
+offer (amount 0) is joined with `POST /groups/{id}/join`; `GET /me/library`
+lists the content a viewer bought.
 
 ## Media
 
@@ -438,9 +434,8 @@ period old, unexpected public names at once, `temp/` by age); folder
 deletion (with a late-upload second pass and quota release); `Expose`;
 `Regenerate`; `SweepOrphans`; and the worker's relays.
 
-**Paywalls**: `Hooks.Resolver` is `gate.Resolver(facts)` (see
-[Paywalls and listings](#paywalls-and-listings-access)); one item read is one
-billing read, and its token covers every file and segment.
+**Paywalls**: media gates each item through `Hooks.Resolver`; one item read
+is one billing read, and its token covers every file and segment.
 
 **Browser package** (`sdk/ui`, `@openrails/contentkit-ui` on npm, one version
 per release): the client (uploads, commit ops, reads, `waitFor`, frames, HLS),
