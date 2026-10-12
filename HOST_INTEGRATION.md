@@ -1297,11 +1297,12 @@ store` serves the admin routes at `/taxonomy` to staff holding
 
 ### Catalog totals
 
-`store.Totals(ctx, taxonomy.TotalsQuery{Kinds, Scope})` sizes the catalog
+`store.Totals(ctx, taxonomy.TotalsQuery{Kinds, Languages, Scope})` sizes the catalog
 per kind: `public` is the works the anonymous listing shows and anyone opens;
 each tier is every work its holders see and open, public ones and ones the
-anonymous listing hides included. A work counts once across languages and
-versions. Configure `Options.Listing`: the kinds, a listing eligibility (not
+anonymous listing hides included. Totals are per kind, language and
+audience: a work counts once in each language any of its eligible documents is
+in, and once in the kind's total, never once per version. Configure `Options.Listing`: the kinds, a listing eligibility (not
 `CountEligibility`: it admits only live, undeleted versions the members'
 listing shows on this deployment) whose row carries the access columns,
 `access.Columns` mapping them, and `PublicListed`, a boolean over that row
@@ -1321,17 +1322,26 @@ Listing: &taxonomy.Listing{Kinds: []string{"gallery"},
 A site's slice is a `taxonomy.CatalogScope`: `AnyOf`/`NoneOf` node keys
 (kind and slug) effective on the counted version. `RuntimeConfig.Catalog:
 store.CatalogHandler(taxonomy.CatalogOptions{Scope: fromHost})` serves the
-open `GET /catalog/totals?kinds=gallery` with `Cache-Control: public,
-max-age=600`:
+open `GET /catalog/totals?kinds=gallery&languages=en,es` with
+`Cache-Control: public, max-age=600`. `languages` limits the breakdown, never
+the kind totals; without it every language with a counted work is listed:
 
 ```json
-{"kinds": {"gallery": {"public": 1200, "tiers": {"premium": 5400}}}}
+{"kinds": {"gallery": {"public": 1200, "tiers": {"premium": 5400},
+  "languages": {"en": {"public": 1100, "tiers": {"premium": 5000}},
+                "es": {"public": 60, "tiers": {"premium": 210}}}}}}
 ```
+
+Languages come from the search documents, so the listing eligibility must admit
+a document only in a language its version actually serves. A host that writes a
+document in every language for every version (Hentai0) must check the version's
+languages in that SQL, or the work counts in languages it lacks.
 
 Totals are cached per kind and scope (helpers `cache`): reloaded in the
 background after ten minutes, the last good count served while reloads fail,
 for up to a day. A sibling deployment's totals, cached the same way:
-`taxonomy.NewTotalsClient(baseURL, nil).Totals(ctx, kinds)`. `Close` either
+`taxonomy.NewTotalsClient(baseURL, nil).Totals(ctx, taxonomy.TotalsQuery{Kinds: kinds})`
+(`Kinds` required, `Scope` empty). `Close` either
 when discarding it. Counts read your search documents, so a listed work
 without one is not counted.
 
