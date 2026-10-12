@@ -1,4 +1,3 @@
--- parent: 8 sha256:1582d9a394e920cef1dbe3397a222263e8c74e754bf857d125a9246d8c523623
 
 -- Comment bans hold current state only (no history). scope is 'global' (the
 -- tenant) or 'owner:<owner id>' (content that owner owns). A NULL until holds

@@ -1,4 +1,3 @@
--- parent: 1 sha256:af673faa8e22e627ea8631acb6b95832593904bb3a3ee89cd4e04fd1f180fad3
 
 CREATE TABLE content_search_invalid (
     tenant_id text NOT NULL,

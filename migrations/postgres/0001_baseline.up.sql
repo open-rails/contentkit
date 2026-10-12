@@ -1,4 +1,3 @@
--- parent: root
 -- Complete ContentKit schema; migratekit selects the host schema.
 -- Extensions live in public so multiple application schemas can share them.
 CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;

@@ -236,7 +236,7 @@ func Migrate(ctx context.Context, cfg MigrateConfig) error {
 	if ch.PostgresDB == nil {
 		ch.PostgresDB = cfg.DB
 	}
-	chmigs, err := migratekit.Load(migrations.ClickHouse, ".", migratekit.RequireParentLinks())
+	chmigs, err := migratekit.Load(migrations.ClickHouse, ".")
 	if err != nil {
 		return fmt.Errorf("contentkit: load signal migrations: %w", err)
 	}

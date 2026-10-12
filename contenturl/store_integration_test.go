@@ -469,7 +469,7 @@ func migrateBefore0010(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (s
 		}
 		old[e.Name()] = &fstest.MapFile{Data: b}
 	}
-	steps, err := migratekit.Load(old, ".", migratekit.RequireParentLinks())
+	steps, err := migratekit.Load(old, ".")
 	if err != nil {
 		t.Fatal(err)
 	}

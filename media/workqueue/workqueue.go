@@ -71,7 +71,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, schema string) error {
 	if err != nil {
 		return err
 	}
-	baseline, err := migratekit.Load(scripts, ".", migratekit.RequireParentLinks())
+	baseline, err := migratekit.Load(scripts, ".")
 	if err != nil {
 		return fmt.Errorf("media/workqueue: load migrations: %w", err)
 	}

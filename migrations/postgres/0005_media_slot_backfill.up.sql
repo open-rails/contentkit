@@ -1,4 +1,3 @@
--- parent: 4 sha256:3e66b999b684d0e7691829928df81c55303dfaedbe07ec10b9cd7e6eaf6c33fb
 
 -- The slot index backfill, per tenant: until completed_at is set, the host's
 -- media jobs index the slots that already exist, resuming after after_folder.

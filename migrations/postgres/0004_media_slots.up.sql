@@ -1,4 +1,3 @@
--- parent: 3 sha256:b8a3826ef9e32d2f84d126cc1a07959e5e066b9fd96e758ee09d091a9f8c583e
 
 -- The slot index: one row per set slot whose renditions are in public/.
 CREATE TABLE content_media_slots (

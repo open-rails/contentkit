@@ -29,7 +29,7 @@ func TestPostgresUpgradePreservesDirtyDocuments(t *testing.T) {
 	}
 	old, err := migratekit.Load(fstest.MapFS{
 		"0001_baseline.up.sql": {Data: baseline},
-	}, ".", migratekit.RequireParentLinks())
+	}, ".")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestPostgresUpgradeMergesCaseSpellings(t *testing.T) {
 			before[e.Name()] = &fstest.MapFile{Data: data}
 		}
 	}
-	old, err := migratekit.Load(before, ".", migratekit.RequireParentLinks())
+	old, err := migratekit.Load(before, ".")
 	if err != nil {
 		t.Fatal(err)
 	}

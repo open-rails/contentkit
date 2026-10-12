@@ -1,4 +1,3 @@
--- parent: 11 sha256:f7329ee9ffcb77f5b19cd75343e6f69319271ff8f48c4528c1d8151df6d7df04
 
 -- Each item's current public publications, projected from its S3 manifest in
 -- the journal transaction that settles the write making them current. Hosts
