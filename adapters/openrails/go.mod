@@ -2,13 +2,11 @@ module github.com/open-rails/contentkit/adapters/openrails
 
 go 1.26.9
 
-// Qualify against the public AuthKit-contract/notification core checkpoint
-// and released OpenRails. The publisher replaces the core checkpoint with
-// the stable ContentKit release when this cohort ships.
+// Use released ContentKit with AuthKit-owned contracts and released OpenRails.
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/contentkit v0.73.1-0.20261012020652-853a9f7acea0
+	github.com/open-rails/contentkit v0.75.0
 	github.com/open-rails/openrails v0.240.0
 )
 
