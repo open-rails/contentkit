@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
-	"github.com/open-rails/helpers/auth"
 	"github.com/open-rails/helpers/notify"
 )
 
