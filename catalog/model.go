@@ -173,11 +173,11 @@ type Content struct {
 	ModerationReason string          `json:"moderation_reason,omitempty"`
 	EverSold         bool            `json:"ever_sold,omitempty"`
 	// Offer is the item's current offer, for its offer editors.
-	Offer *offers.Offer `json:"offer,omitempty"`
-	Revision         int64           `json:"revision"`
-	CreatedAt        time.Time       `json:"created_at"`
-	UpdatedAt        time.Time       `json:"updated_at"`
-	DeletedAt        *time.Time      `json:"deleted_at,omitempty"`
+	Offer     *offers.Offer `json:"offer,omitempty"`
+	Revision  int64         `json:"revision"`
+	CreatedAt time.Time     `json:"created_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
+	DeletedAt *time.Time    `json:"deleted_at,omitempty"`
 }
 
 // ImageScheme is the URL scheme of an inline image reference in a body.
