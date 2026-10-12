@@ -39,6 +39,13 @@ export interface AdminComment {
   deleted_at?: string;
 }
 
+export interface Anchor {
+  id: string;
+  page: string;
+  offset_percent: number;
+  duration_seconds?: number;
+}
+
 export interface Anonymous {
   comments: boolean;
   reactions: boolean;
@@ -49,6 +56,16 @@ export interface AnswerGroup {
   id: string;
   label: string;
   count: number;
+}
+
+export interface BackgroundCue {
+  file: string;
+  from_page?: string;
+  to_page?: string;
+  from_anchor?: string;
+  to_anchor?: string;
+  loop?: boolean;
+  layer?: string;
 }
 
 export interface BanInput {
@@ -152,6 +169,7 @@ export interface ContentRef {
 
 export interface CopyFrom {
   id: string;
+  version?: string;
   path: string;
 }
 
@@ -165,6 +183,7 @@ export interface Cover {
   image?: string;
   content_id?: string;
   auto?: boolean;
+  renditions?: Rendition[];
 }
 
 export interface Crop {
@@ -295,6 +314,18 @@ export interface FileInfo {
   failed?: Failure;
   editor_url?: string;
   progress?: EncodeProgress;
+}
+
+export interface ForegroundCue {
+  file: string;
+  page?: string;
+  anchor?: string;
+}
+
+export interface ForkBody {
+  from: string;
+  playback?: boolean;
+  segments?: boolean;
 }
 
 export interface Frame {
@@ -589,6 +620,48 @@ export interface PartsReply {
   parts: PartReply[];
 }
 
+export interface Pending {
+  status: string;
+}
+
+export interface PlanPage {
+  name: string;
+  w: number;
+  h: number;
+  files: Record<string, string>;
+}
+
+export interface PlanPlayback {
+  item: RefBody;
+  tracks: PlanTrack[];
+}
+
+export interface PlanPreview {
+  index: number;
+  name: string;
+  url: string;
+  w: number;
+  h: number;
+}
+
+export interface PlanSegment {
+  position?: number;
+  title?: string;
+  start: number;
+  end: number;
+  released: boolean;
+  release_at?: string;
+  locked: boolean;
+  item?: RefBody;
+  pages?: PlanPage[];
+}
+
+export interface PlanTrack {
+  name: string;
+  path: string;
+  duration?: number;
+}
+
 export interface Poll {
   id: string;
   kind: PollKind;
@@ -773,6 +846,29 @@ export interface ReadResult {
   files: FileInfo[];
 }
 
+export interface ReaderDefaults {
+  auto_advance_seconds?: number;
+}
+
+export interface ReaderMeta {
+  schema_version: number;
+  defaults?: ReaderDefaults;
+  anchors?: Anchor[];
+  background?: BackgroundCue[];
+  foreground?: ForegroundCue[];
+}
+
+export interface ReaderPlan {
+  content_id: string;
+  version_id: string;
+  publication_id: string;
+  pages: number;
+  segments: PlanSegment[];
+  previews: PlanPreview[];
+  playback?: PlanPlayback;
+  reader?: ReaderMeta;
+}
+
 export interface Recipient {
   audience: string;
   id: string;
@@ -781,6 +877,13 @@ export interface Recipient {
 export interface RefBody {
   kind: string;
   id: string;
+  version?: string;
+}
+
+export interface Rendition {
+  url: string;
+  w: number;
+  h: number;
 }
 
 export interface RequestReply {

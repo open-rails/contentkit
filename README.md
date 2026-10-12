@@ -281,13 +281,16 @@ commit ops, reads and exposure.
                        /private/sha256-{hex}  every blob: uploads, derived files, editor views (token)
                        /public/{name}         app-declared names, e.g. cover-460.webp (anyone)
                        /temp/{name}           staged uploads (u-{uuid}) and in-flight writes; never served
+{namespace}/{kind}/{id}/{version}/...         a content version's item, laid out alike
 {namespace}/{kind}/_default/public/{name}     a public preset's default image
 ```
 
-An item is the host's version (`gallery/456` English, `gallery/789` Korean).
-Private blobs are content-addressed and immutable; public names are fixed and
-overwritten in place (ETags and a CDN purge keep them fresh). Every URL is
-`https://media.<site>/v1/{namespace}/{kind}/{id}/{public|private}/{name}`.
+A content kind's items are its versions, `{kind, content, version}`, each in
+its content's folder beside the content-level item (its cover); other kinds'
+items have no versions. Private blobs are content-addressed and immutable;
+public names carry a generation. Every URL is
+`https://media.<site>/v1/{namespace}/{kind}/{id}[/{version}]/{public|private}/{name}`.
+`media/versions` publishes versions to viewers (see HOST_INTEGRATION "Media").
 
 ```go
 reg, _ := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https://media.doujins.ai",

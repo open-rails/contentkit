@@ -26,6 +26,12 @@ type Authorizer interface {
 	Can(ctx context.Context, a access.Actor, perm string) (bool, error)
 }
 
+// ScopedAuthorizer, when an Authorizer is one, decides in every scope, not
+// only Scope: AuthKit group scopes.
+type ScopedAuthorizer interface {
+	CanIn(ctx context.Context, a access.Actor, scope auth.Scope, perm string) (bool, error)
+}
+
 // All holds every permission.
 type All struct{}
 
@@ -37,8 +43,12 @@ type None struct{}
 func (None) Can(context.Context, access.Actor, string) (bool, error) { return false, nil }
 
 // Auth authenticates "Bearer user:{id}" and "Bearer app:{id}"; any other
-// bearer is refused. Authz answers Can in Scope; nil holds nothing.
-type Auth struct{ Authz Authorizer }
+// bearer is refused. Authz answers Can in Scope; nil holds nothing. Claims
+// are a subject's token entitlement claims (access.Entitled).
+type Auth struct {
+	Authz  Authorizer
+	Claims map[string][]string
+}
 
 // RootScope is Scope (authkit/auth Root).
 func (Auth) RootScope(context.Context) (auth.Scope, error) { return Scope, nil }
@@ -54,17 +64,25 @@ func (a Auth) Authenticate(r *http.Request) (auth.Verified, error) {
 		return nil, auth.ErrUnauthenticated
 	}
 	return verified{id: auth.Identity{Issuer: Issuer, Subject: id, SubjectKind: sk,
-		Invoker: auth.Invoker{Issuer: Issuer, ID: id}, Credential: auth.Credential{Kind: auth.CredentialSession}}, authz: a.Authz}, nil
+		Invoker: auth.Invoker{Issuer: Issuer, ID: id}, Credential: auth.Credential{Kind: auth.CredentialSession}}, authz: a.Authz,
+		claims: a.Claims[id]}, nil
 }
 
 type verified struct {
-	id    auth.Identity
-	authz Authorizer
+	id     auth.Identity
+	authz  Authorizer
+	claims []string
 }
 
 func (v verified) Identity() auth.Identity { return v.id }
 
+// Entitlements are the subject's token entitlement claims.
+func (v verified) Entitlements() []string { return v.claims }
+
 func (v verified) Can(ctx context.Context, scope auth.Scope, perm string) (bool, error) {
+	if sa, ok := v.authz.(ScopedAuthorizer); ok {
+		return sa.CanIn(ctx, access.Actor{ID: v.id.Subject, Kind: v.id.SubjectKind}, scope, perm)
+	}
 	if scope != Scope || v.authz == nil {
 		return false, nil
 	}

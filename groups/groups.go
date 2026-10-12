@@ -76,6 +76,28 @@ type Cover struct {
 	Image     string `json:"image,omitempty"`
 	ContentID string `json:"content_id,omitempty"`
 	Auto      bool   `json:"auto,omitempty"`
+	// Renditions are its public images, filled on reads (Options.Covers).
+	Renditions []Rendition `json:"renditions,omitempty"`
+}
+
+// Rendition is one public image of a cover, as media.PublicRendition.
+type Rendition struct {
+	URL string `json:"url"`
+	W   int    `json:"w"`
+	H   int    `json:"h"`
+}
+
+// CoverResolver turns covers into their public renditions, per cover in
+// order, one call per page: media/versions.Service.GroupCovers.
+type CoverResolver interface {
+	Covers(ctx context.Context, covers []CoverOf) ([][]Rendition, error)
+}
+
+// CoverOf is one group's cover to resolve.
+type CoverOf struct {
+	Kind  string
+	ID    GroupID
+	Cover Cover
 }
 
 // Group is one group record.
@@ -116,6 +138,8 @@ type Options struct {
 	// already re-derived), so the engine can rebuild what else depends on
 	// them, such as search documents. Optional.
 	ContentChanged func(ctx context.Context, q Querier, contentIDs []string) error
+	// Covers fills covers' renditions on reads. Optional.
+	Covers CoverResolver
 	// Logger receives the HTTP API's failures. nil -> slog.Default().
 	Logger *slog.Logger
 }
@@ -129,6 +153,7 @@ type Store struct {
 	tenant  string
 	cfg     kinds.Config
 	changed func(ctx context.Context, q Querier, contentIDs []string) error
+	covers  CoverResolver
 	log     *slog.Logger
 }
 
@@ -152,7 +177,8 @@ func New(opts Options) (*Store, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Store{pool: opts.Pool, qs: qs, schema: strings.TrimSpace(opts.Schema), tenant: tenant, cfg: opts.Kinds, changed: opts.ContentChanged, log: log}, nil
+	return &Store{pool: opts.Pool, qs: qs, schema: strings.TrimSpace(opts.Schema), tenant: tenant, cfg: opts.Kinds, changed: opts.ContentChanged,
+		covers: opts.Covers, log: log}, nil
 }
 
 // Tenant returns the tenant this store is scoped to.

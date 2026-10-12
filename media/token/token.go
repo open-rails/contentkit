@@ -3,8 +3,8 @@
 //
 //	{kid}.{exp}.base64url(HMAC-SHA256(secret, "{scope}|{exp}"))
 //
-// The one access scope is an item's, "{ns}/{kind}/{id}": every private file
-// of the item or none. Tokens are bearer tokens, revoked only by expiry.
+// The one access scope is an item's, "{ns}/{kind}/{id}" or a version's
+// "{ns}/{kind}/{id}/{version}": every private file of the item or none. Tokens are bearer tokens, revoked only by expiry.
 package token
 
 import (
@@ -116,8 +116,14 @@ func Expiry(now time.Time, ttl, window time.Duration) time.Time {
 	return time.Unix(intervals*w, 0).UTC()
 }
 
-// ItemScope covers every private file of one item: "{ns}/{kind}/{id}".
-func ItemScope(ns, kind, id string) string { return ns + "/" + kind + "/" + id }
+// ItemScope covers every private file of one item: "{ns}/{kind}/{id}", or
+// "{ns}/{kind}/{id}/{version}" for a version's.
+func ItemScope(ns, kind, id, version string) string {
+	if version != "" {
+		return ns + "/" + kind + "/" + id + "/" + version
+	}
+	return ns + "/" + kind + "/" + id
+}
 
 // Sign signs scope until exp with the current key.
 func (r Ring) Sign(scope string, exp time.Time) string {
@@ -126,14 +132,23 @@ func (r Ring) Sign(scope string, exp time.Time) string {
 }
 
 // VerifyPrivate checks tok for the private object key
-// "{ns}/{kind}/{id}/private/{name}" at now: its item's token.
+// "{ns}/{kind}/{id}[/{version}]/private/{name}" at now: its item's token.
 func (r Ring) VerifyPrivate(tok, key string, now time.Time) error {
 	p := strings.Split(key, "/")
-	if len(p) != 5 || p[3] != "private" || slices.Contains(p, "") {
+	if slices.Contains(p, "") {
 		return ErrInvalid
 	}
-	return r.VerifyScope(tok, ItemScope(p[0], p[1], p[2]), now)
+	switch {
+	case len(p) == 5 && p[3] == "private":
+		return r.VerifyScope(tok, ItemScope(p[0], p[1], p[2], ""), now)
+	case len(p) == 6 && p[4] == "private" && !slices.Contains(reserved, p[3]):
+		return r.VerifyScope(tok, ItemScope(p[0], p[1], p[2], p[3]), now)
+	}
+	return ErrInvalid
 }
+
+// reserved are an item folder's own names, never a version.
+var reserved = []string{"manifest.json", "private", "public", "temp"}
 
 // VerifyScope checks tok for exactly scope at now.
 func (r Ring) VerifyScope(tok, scope string, now time.Time) error {

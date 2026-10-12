@@ -81,6 +81,8 @@ func seed(t *testing.T) *fixture {
 		"gallery/789/private/" + sha("c"):          "other",
 		"gallery/456/manifest.json":                "{}",
 		"gallery/456/temp/" + sha("t"):             "temp",
+		"gallery/456/v1/private/" + sha("v"):       "version",
+		"gallery/456/v1/public/page-1.webp":        "version page",
 	} {
 		if _, err := env.Store.Put(context.Background(), f.ns+"/"+key, strings.NewReader(body), int64(len(body)),
 			media.PutOptions{ContentType: "image/webp"}); err != nil {
@@ -184,7 +186,7 @@ func TestGateway(t *testing.T) {
 	srv := serve(t, f.config(t))
 	cur := ring(t, k2, nil)
 	exp := token.Expiry(time.Now(), time.Hour, 0)
-	item := cur.Sign(token.ItemScope(f.ns, "gallery", "456"), exp)
+	item := cur.Sign(token.ItemScope(f.ns, "gallery", "456", ""), exp)
 	blobA, blobB := f.path("gallery/456/private/"+sha("a")), f.path("gallery/456/private/"+sha("b"))
 	fileA := cur.Sign(f.key("gallery/456/private/"+sha("a")), exp) // a file's own key: no such scope
 	cover := f.path("gallery/456/public/cover-460.webp")
@@ -253,17 +255,17 @@ func TestGateway(t *testing.T) {
 		}
 		expect(t, do(t, srv, "GET", blobB, cookie(item)), 200, "bee")
 		expect(t, do(t, srv, "GET", withQuery(blobB, "t", item), nil), 200, "bee")
-		other := cur.Sign(token.ItemScope(f.ns, "gallery", "789"), exp)
+		other := cur.Sign(token.ItemScope(f.ns, "gallery", "789", ""), exp)
 		expect(t, do(t, srv, "GET", blobA, map[string]string{"Cookie": "mt=" + other + "; mt=" + item}), 200, bodyA)
-		expect(t, do(t, srv, "GET", withQuery(blobA, "t", ring(t, k1, nil).Sign(token.ItemScope(f.ns, "gallery", "456"), exp)), nil), 200, bodyA)
+		expect(t, do(t, srv, "GET", withQuery(blobA, "t", ring(t, k1, nil).Sign(token.ItemScope(f.ns, "gallery", "456", ""), exp)), nil), 200, bodyA)
 		for name, r := range map[string]result{
 			"no token":       do(t, srv, "GET", blobA, nil),
 			"garbage":        do(t, srv, "GET", withQuery(blobA, "t", "garbage"), nil),
 			"other item":     do(t, srv, "GET", withQuery(blobA, "t", other), cookie(other)),
 			"file token":     do(t, srv, "GET", withQuery(blobA, "t", fileA), cookie(fileA)),
 			"folder scope":   do(t, srv, "GET", blobA, cookie(cur.Sign(f.key("gallery/456/private/"), exp))),
-			"expired":        do(t, srv, "GET", blobA, cookie(cur.Sign(token.ItemScope(f.ns, "gallery", "456"), time.Now().Add(-time.Second)))),
-			"unknown key":    do(t, srv, "GET", withQuery(blobA, "t", ring(t, k0, nil).Sign(token.ItemScope(f.ns, "gallery", "456"), exp)), nil),
+			"expired":        do(t, srv, "GET", blobA, cookie(cur.Sign(token.ItemScope(f.ns, "gallery", "456", ""), time.Now().Add(-time.Second)))),
+			"unknown key":    do(t, srv, "GET", withQuery(blobA, "t", ring(t, k0, nil).Sign(token.ItemScope(f.ns, "gallery", "456", ""), exp)), nil),
 			"other cookie":   do(t, srv, "GET", blobA, map[string]string{"Cookie": "other=" + item}),
 			"other blob 789": do(t, srv, "GET", f.path("gallery/789/private/"+sha("c")), cookie(item)),
 		} {
@@ -319,6 +321,21 @@ func TestGateway(t *testing.T) {
 		} {
 			t.Run(p, func(t *testing.T) { denied(t, do(t, srv, "GET", withQuery(p, "t", item), cookie(item))) })
 		}
+	})
+
+	// A version's folder is its own item: its token opens it alone.
+	t.Run("version", func(t *testing.T) {
+		blobV := f.path("gallery/456/v1/private/" + sha("v"))
+		version := cur.Sign(token.ItemScope(f.ns, "gallery", "456", "v1"), exp)
+		expect(t, do(t, srv, "GET", blobV, cookie(version)), 200, "version")
+		expect(t, do(t, srv, "GET", f.path("gallery/456/v1/public/page-1.webp"), nil), 200, "version page")
+		expect(t, do(t, srv, "GET", f.path("gallery/456/v2/public/cover-460.webp"), nil), 200, "default cover")
+		denied(t, do(t, srv, "GET", blobV, cookie(item)))
+		denied(t, do(t, srv, "GET", blobA, cookie(version)))
+		denied(t, do(t, srv, "GET", f.path("gallery/456/v2/private/"+sha("v")), cookie(version)))
+		denied(t, do(t, srv, "GET", f.path("gallery/456/_v/public/page-1.webp"), nil))
+		denied(t, do(t, srv, "GET", f.path("gallery/456/v1/manifest.json"), cookie(version)))
+		denied(t, do(t, srv, "GET", f.path("gallery/456/v1/w/public/page-1.webp"), nil))
 	})
 
 	t.Run("range, conditional and HEAD", func(t *testing.T) {
@@ -510,10 +527,10 @@ func TestBinary(t *testing.T) {
 	blob := f.path("gallery/456/private/" + sha("a"))
 	for path, want := range map[string]int{
 		"/healthz": 200,
-		f.path("gallery/456/public/cover-460.webp"):                                               200,
-		f.path("gallery/789/public/cover-460.webp"):                                               200,
-		withQuery(blob, "t", ring(t, k2, nil).Sign(token.ItemScope(f.ns, "gallery", "456"), exp)): 200,
-		withQuery(blob, "t", ring(t, k1, nil).Sign(token.ItemScope(f.ns, "gallery", "456"), exp)): 200,
+		f.path("gallery/456/public/cover-460.webp"):                                                   200,
+		f.path("gallery/789/public/cover-460.webp"):                                                   200,
+		withQuery(blob, "t", ring(t, k2, nil).Sign(token.ItemScope(f.ns, "gallery", "456", ""), exp)): 200,
+		withQuery(blob, "t", ring(t, k1, nil).Sign(token.ItemScope(f.ns, "gallery", "456", ""), exp)): 200,
 		blob:                                404,
 		f.path("gallery/456/manifest.json"): 404,
 	} {

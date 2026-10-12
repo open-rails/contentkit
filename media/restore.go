@@ -65,7 +65,7 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 	versions := make(map[string]ObjectVersion, len(snap.Objects))
 	for _, object := range snap.Objects {
 		key, ok := layout.Parse(object.Key)
-		if !ok || !strings.HasPrefix(object.Key, item.Prefix()) || (key.Area != layout.AreaPrivate && key.Area != layout.AreaTemp) ||
+		if !ok || key.Folder() != item.Prefix() || (key.Area != layout.AreaPrivate && key.Area != layout.AreaTemp) ||
 			object.VersionID == "" || object.VersionID == "null" {
 			return nil, errors.New("media: snapshot contains an invalid object version")
 		}
@@ -147,6 +147,9 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 		for obj, err := range j.cfg.Store.List(ctx, item.Prefix()) {
 			if err != nil {
 				return err
+			}
+			if k, ok := layout.Parse(obj.Key); ok && k.Folder() != item.Prefix() {
+				continue // a version's folder within a content's
 			}
 			if strings.HasPrefix(obj.Key, item.PublicPrefix()) {
 				mutation.effects.Public = append(mutation.effects.Public, obj.Key)
