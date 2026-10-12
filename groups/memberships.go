@@ -365,6 +365,11 @@ func (s *Store) SetContentGroups(ctx context.Context, sets []ContentGroups) erro
 		}
 	}
 	return s.run(ctx, func(q Querier) error {
+		// Concurrent sets of one content serialize, so neither merges into the other.
+		if _, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('contentkit:groups:' || $1 || ':' || id, 0)) FROM unnest($2::text[]) AS id ORDER BY id`,
+			s.tenant, contentIDs); err != nil {
+			return err
+		}
 		rows, f, err := s.prepare(ctx, q, all)
 		if err != nil {
 			return err
