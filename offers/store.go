@@ -74,7 +74,8 @@ func (s *Service) Put(ctx context.Context, puts []Put) ([]Offer, error) {
 }
 
 // Withdraw ends each target's active offer, in one transaction, and queues
-// its sync, which archives the product: buyers and subscribers keep theirs.
+// its sync, which archives the product: buyers keep theirs, and a group's
+// subscribers theirs until their paid period ends, without renewing.
 // A target without an active offer is ErrNotFound.
 func (s *Service) Withdraw(ctx context.Context, targets []Target) ([]Offer, error) {
 	var ids []string
@@ -294,8 +295,10 @@ func (s *Service) Resync(ctx context.Context, tx pgx.Tx, targets []Target) error
 }
 
 // Authorize admits actor to change targets' offers: staff holding
-// access.OffersWrite in a's root scope, else a creator of the content, the
-// owner of the group, or the owner of the content's owner group.
+// access.OffersWrite in a's root scope, else a creator of the content, or an
+// editor of the user-owned group sold or owning the content: its owner, or a
+// holder of access.GroupOffersWrite or access.GroupSettingsManage in its
+// AuthKit scope.
 func (s *Service) Authorize(ctx context.Context, a auth.Authenticator, actor access.Actor, targets []Target) error {
 	if actor.Anonymous {
 		return ErrForbidden
@@ -305,25 +308,34 @@ func (s *Service) Authorize(ctx context.Context, a auth.Authenticator, actor acc
 		return err
 	}
 	for _, t := range targets {
-		var ok bool
+		var creator bool
+		var kind, owner, scope string
 		var err error
 		switch t.Kind {
 		case ContentTarget, VersionTarget:
-			err = s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.creators+` cr WHERE cr.tenant_id = c.tenant_id AND cr.content_id = c.id AND cr.user_id = $3)
-					OR EXISTS (SELECT 1 FROM `+s.t.groups+` g WHERE g.tenant_id = c.tenant_id AND g.id = c.owner_group_id AND g.owner_user_id = $3)
-				FROM `+s.t.items+` c WHERE c.tenant_id = $1 AND c.id = $2
+			err = s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.creators+` cr WHERE cr.tenant_id = c.tenant_id AND cr.content_id = c.id AND cr.user_id = $3),
+					coalesce(g.kind, ''), coalesce(g.owner_user_id, ''), coalesce(g.auth_scope, '')
+				FROM `+s.t.items+` c LEFT JOIN `+s.t.groups+` g ON g.tenant_id = c.tenant_id AND g.id = c.owner_group_id AND g.state = 'active'
+				WHERE c.tenant_id = $1 AND c.id = $2
 					AND ($4 = '' OR EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id = c.tenant_id AND v.content_id = c.id AND v.id = $4))`,
-				s.tenant, orID(t), actor.ID, versionOf(t)).Scan(&ok)
+				s.tenant, orID(t), actor.ID, versionOf(t)).Scan(&creator, &kind, &owner, &scope)
 		case GroupTarget:
-			err = s.pool.QueryRow(ctx, `SELECT coalesce(owner_user_id = $3, false) FROM `+s.t.groups+` WHERE tenant_id = $1 AND id = $2`,
-				s.tenant, t.ID, actor.ID).Scan(&ok)
+			err = s.pool.QueryRow(ctx, `SELECT kind, coalesce(owner_user_id, ''), coalesce(auth_scope, '') FROM `+s.t.groups+` WHERE tenant_id = $1 AND id = $2`,
+				s.tenant, t.ID).Scan(&kind, &owner, &scope)
 		}
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			return fmt.Errorf("%w: %s %s", ErrNotFound, t.Kind, t.ID)
 		case err != nil:
 			return err
-		case !ok:
+		}
+		ok := creator && actor.Person()
+		if !ok && s.kinds.GroupKinds[kind].Owner == "user" {
+			if ok, err = gate.GroupEditor(ctx, a, actor, owner, scope, access.GroupOffersWrite(kind), access.GroupSettingsManage(kind)); err != nil {
+				return err
+			}
+		}
+		if !ok {
 			return ErrForbidden
 		}
 	}

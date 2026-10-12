@@ -47,17 +47,21 @@ const prefix = "/api/contentkit"
 // Fixtures stand in for the media worker through their own registry over the
 // same bucket and journal.
 type world struct {
-	t      *testing.T
-	ak     *authkit.Client
-	scope  auth.Scope // the root group: AuthKit's root scope, where staff hold their permissions
-	staff  iam.Role
-	pool   *pgxpool.Pool
-	schema string
-	tenant string // the media namespace too
-	env    *mediatest.Env
-	reg    *media.Registry
-	jobs   *media.Jobs
-	queue  *workqueue.Queue
+	t     *testing.T
+	ak    *authkit.Client
+	scope auth.Scope // the root group: AuthKit's root scope, where staff hold their permissions
+	staff iam.Role
+	// channelEditor is the channel persona's role holding every group
+	// permission (access.GroupPermissions); channelWriter only
+	// channel:content:write.
+	channelEditor, channelWriter iam.Role
+	pool                         *pgxpool.Pool
+	schema                       string
+	tenant                       string // the media namespace too
+	env                          *mediatest.Env
+	reg                          *media.Registry
+	jobs                         *media.Jobs
+	queue                        *workqueue.Queue
 }
 
 func newWorld(t *testing.T) *world {
@@ -72,6 +76,14 @@ func newWorld(t *testing.T) *world {
 		grants = append(grants, p)
 	}
 	w.staff = rbac.Root.Role("staff", grants...)
+	channel := rbac.Persona("channel")
+	var editing []iam.Grant
+	perms := channel.Declare(access.GroupPermissions("channel")...)
+	for _, p := range perms {
+		editing = append(editing, p)
+	}
+	w.channelEditor = channel.Role("editor", editing...)
+	w.channelWriter = channel.Role("writer", perms[0])
 	w.ak, _ = authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles = rbac }))
 	var err error
 	if w.scope, err = w.ak.Scope(ctx, iam.RootGroup()); err != nil {

@@ -192,6 +192,16 @@ func TestOfferTargets(t *testing.T) {
 	if err := w.pool.QueryRow(ctx, `SELECT ever_sold FROM `+w.table("content_groups")+` WHERE id = $1`, channel).Scan(&sold); err != nil || !sold {
 		t.Fatalf("group ever_sold %v %v", sold, err)
 	}
+	// Free again: no price is on sale and the sync stops every renewal.
+	if _, err := w.offers.Put(ctx, []offers.Put{{Target: offers.Target{Kind: offers.GroupTarget, ID: channel}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.offers.Sync(ctx, []offers.Target{out[1].Target}); err != nil {
+		t.Fatalf("a renewing group's offer made free: %v", err)
+	}
+	if p, prices := w.product(gk(channel)); p.Archived || slices.ContainsFunc(prices, func(pr billing.Price) bool { return !pr.Archived }) {
+		t.Fatalf("free group product %+v %+v", p, prices)
+	}
 
 	for name, tc := range map[string]struct {
 		put  offers.Put

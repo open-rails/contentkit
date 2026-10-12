@@ -26,6 +26,7 @@ const (
 	CodeUpgrade        = "upgrade_required"
 	CodeInternal       = "internal_error"
 	CodeTenantMismatch = "tenant_mismatch"
+	CodeLimitReached   = "limit_reached"
 )
 
 var codes = []ErrorCode{
@@ -37,6 +38,7 @@ var codes = []ErrorCode{
 	{CodeNotFound, http.StatusNotFound, "Nothing by that name, or nothing the actor may see."},
 	{CodeConflict, http.StatusConflict, "A concurrent change, a path or slug already taken, or an operation id already used for another commit."},
 	{"incomplete", http.StatusConflict, "A multipart upload is missing parts."},
+	{CodeLimitReached, http.StatusConflict, "The owner already has as many groups of the kind as the site allows (max_per_owner)."},
 	{"not_uploaded", http.StatusConflict, "A commit names an upload that has not landed; `blobs` lists the ones to upload again."},
 	{"too_many_files", http.StatusConflict, "The commit would put more files in an upload path, or the item, than allowed; `details.max` is the limit."},
 	{"gone", http.StatusGone, "The content was removed."},

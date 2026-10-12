@@ -13,6 +13,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/discovery"
+	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
@@ -183,6 +184,10 @@ type Deps struct {
 	// over an embedded engine or the remote client): held keys, offers' products
 	// and prices, free grants. Nil holds no keys and sells nothing.
 	Billing access.Billing
+	// Scopes provisions and retires the AuthKit groups of auth_scope group
+	// kinds (adapters/authkit.Scopes over an AuthKit client); nil leaves
+	// auth_scope to staff.
+	Scopes groups.Scopes
 
 	// Store is the media bucket; required with Config.Media.
 	Store media.Store

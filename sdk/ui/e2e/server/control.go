@@ -20,6 +20,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/notification"
 )
 
 // mount serves an engine's route groups under prefix.
@@ -167,9 +168,9 @@ func (h *harness) createItem(w http.ResponseWriter, r *http.Request) {
 		input.Creators = &[]catalog.Creator{{UserID: it.Owner}}
 	}
 	ck := h.ck.Client()
-	c, err := ck.CreateContent(r.Context(), input)
+	c, err := ck.PostContents(r.Context(), input)
 	if err == nil && !it.Hidden {
-		c, err = ck.PublishContent(r.Context(), c.ID, catalog.PublishInput{})
+		c, err = ck.PostContentPublish(r.Context(), c.ID, catalog.PublishInput{})
 	}
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)
@@ -221,7 +222,7 @@ func (h *harness) updateItem(w http.ResponseWriter, r *http.Request) {
 	}
 	ck := h.ck.Client()
 	if in.Access != nil {
-		if _, err := ck.UpdateContent(r.Context(), it.ID, catalog.ContentPatch{Access: itemRule(*in.Access)}); err != nil {
+		if _, err := ck.PatchContent(r.Context(), it.ID, catalog.ContentPatch{Access: itemRule(*in.Access)}); err != nil {
 			fail(w, http.StatusBadRequest, err)
 			return
 		}
@@ -229,9 +230,9 @@ func (h *harness) updateItem(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Hidden != nil && *in.Hidden != it.Hidden {
 		if *in.Hidden {
-			_, err = ck.UnpublishContent(r.Context(), it.ID)
+			_, err = ck.PostContentUnpublish(r.Context(), it.ID)
 		} else {
-			_, err = ck.PublishContent(r.Context(), it.ID, catalog.PublishInput{})
+			_, err = ck.PostContentPublish(r.Context(), it.ID, catalog.PublishInput{})
 		}
 		if err != nil {
 			fail(w, http.StatusBadRequest, err)
@@ -326,7 +327,8 @@ func (h *harness) createNotification(w http.ResponseWriter, r *http.Request) {
 	if in.Origin.System == "" {
 		in.Origin = notify.Origin{System: "fixture-host", Scope: tenant, ID: uuid.NewString()}
 	}
-	items, err := h.ck.Client().PublishNotifications(r.Context(), []notify.Input{in})
+	published, err := h.ck.Client().PostNotificationsPublish(r.Context(), notification.Publication{Notifications: []notify.Input{in}})
+	items := published.Items
 	if err == nil && len(items) == 0 {
 		err = errors.New("the recipient was erased")
 	}

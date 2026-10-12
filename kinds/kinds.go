@@ -101,8 +101,15 @@ type GroupKind struct {
 	// ScopedBy makes slugs unique within a group of that kind (character
 	// within series).
 	ScopedBy string `json:"scoped_by,omitempty" yaml:"scoped_by"`
-	// Owner is "site" (staff-managed) or "user" (channels, playlists).
+	// Owner is "site" (staff-managed) or "user" (channels, playlists): a
+	// signed-in person creates a user-owned group and owns it.
 	Owner string `json:"owner,omitempty" yaml:"owner"`
+	// MaxPerOwner caps the active groups of the kind one person owns; 0 is
+	// no cap. Staff are not capped.
+	MaxPerOwner int `json:"max_per_owner,omitempty" yaml:"max_per_owner"`
+	// Uploads limit what editors other than staff upload to a user-owned
+	// group's media.
+	Uploads UploadLimits `json:"uploads,omitzero" yaml:"uploads"`
 	// Sellable groups carry offers; their key unlocks every member.
 	Sellable bool `json:"sellable,omitempty" yaml:"sellable"`
 	// AuthScope groups name an AuthKit group whose permissions govern their
@@ -115,6 +122,15 @@ type GroupKind struct {
 	// Roles are membership roles (publisher on an artist group).
 	Roles      []string             `json:"roles,omitempty" yaml:"roles"`
 	Attributes map[string]Attribute `json:"attributes,omitempty" yaml:"attributes"`
+}
+
+// UploadLimits bound a user-owned group's uploads; zero fields are off.
+type UploadLimits struct {
+	// FilesPerHour and BytesPerDay limit each uploader.
+	FilesPerHour int   `json:"files_per_hour,omitempty" yaml:"files_per_hour"`
+	BytesPerDay  int64 `json:"bytes_per_day,omitempty" yaml:"bytes_per_day"`
+	// QuotaBytes caps the group's stored originals.
+	QuotaBytes int64 `json:"quota_bytes,omitempty" yaml:"quota_bytes"`
 }
 
 var (
@@ -179,6 +195,12 @@ func (c Config) Validate() error {
 		}
 		if gk.Owner != "" && gk.Owner != "site" && gk.Owner != "user" {
 			return fmt.Errorf("%w: group kind %s owner %q", ErrInvalid, name, gk.Owner)
+		}
+		if gk.MaxPerOwner < 0 || gk.MaxPerOwner > 0 && gk.Owner != "user" {
+			return fmt.Errorf("%w: group kind %s: max_per_owner is a non-negative cap of user-owned groups", ErrInvalid, name)
+		}
+		if u := gk.Uploads; u.FilesPerHour < 0 || u.BytesPerDay < 0 || u.QuotaBytes < 0 || u != (UploadLimits{}) && gk.Owner != "user" {
+			return fmt.Errorf("%w: group kind %s: uploads are non-negative limits of user-owned groups", ErrInvalid, name)
 		}
 		for _, r := range gk.Roles {
 			if !identRE.MatchString(r) {
