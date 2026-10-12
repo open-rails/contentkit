@@ -24,6 +24,8 @@ export interface ContentKitMounts {
   catalog?: string;
   /** User inbox. Default `{baseUrl}/notifications`. */
   notifications?: string;
+  /** Offers, group joins and the library. Default baseUrl. */
+  offers?: string;
 }
 
 export type ContentKitModule = keyof ContentKitMounts;
@@ -90,6 +92,7 @@ export class Http {
     if (m !== undefined) return trim(m);
     switch (module) {
       case "content":
+      case "offers":
         return this.base;
       case "media":
         return `${this.base}/media`;
