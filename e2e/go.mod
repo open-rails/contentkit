@@ -7,7 +7,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/open-rails/authkit v1.24.0
 	github.com/open-rails/contentkit v0.70.0
-	github.com/open-rails/helpers v1.11.1-0.20261012190327-b8cc78ffef1d
+	github.com/open-rails/helpers v1.12.0
 )
 
 require (
