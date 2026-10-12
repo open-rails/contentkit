@@ -204,6 +204,14 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusOK, staff, "POST", "/taxonomy/nodes/"+colour+"/merge", taxonomy.MergeInput{Into: taxonomy.TaxonomyID(color)}, nil)
 	f.want(http.StatusOK, staff, "DELETE", "/taxonomy/nodes/"+art, nil, nil)
 
+	// The public catalog's totals, open to anyone.
+	var totals taxonomy.Totals
+	f.want(http.StatusOK, anon, "GET", "/catalog/totals?kinds=gallery", nil, &totals)
+	if g, ok := totals.Kinds["gallery"]; !ok || g.Tiers == nil {
+		t.Fatalf("totals %+v", totals)
+	}
+	f.want(http.StatusBadRequest, anon, "GET", "/catalog/totals?kinds=post", nil, nil)
+
 	mediaScenario(t, f, user, anon)
 
 	served := f.checker.Served()

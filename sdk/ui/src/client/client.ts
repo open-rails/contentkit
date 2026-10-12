@@ -1,3 +1,4 @@
+import { CatalogClient } from "./catalog.js";
 import { CodesClient } from "./codes.js";
 import { BansClient } from "./content/bans.js";
 import { CommentsClient } from "./content/comments.js";
@@ -45,6 +46,8 @@ export interface ContentKitClient {
   readonly taxonomy: TaxonomyClient;
   /** Content-code lookup. */
   readonly codes: CodesClient;
+  /** The public catalog: listing totals by kind and audience. */
+  readonly catalog: CatalogClient;
   /** The signed-in person's native and imported notifications. */
   readonly notifications: NotificationsClient;
 
@@ -73,6 +76,7 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     moderation: new ModerationClient(h),
     taxonomy: new TaxonomyClient(h),
     codes: new CodesClient(h),
+    catalog: new CatalogClient(h),
     notifications: new NotificationsClient(h),
     config: (signal) => call(h, "GET", "/config", { signal }),
     url: (module, ref) => h.mount(module, ref),

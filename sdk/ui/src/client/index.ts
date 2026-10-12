@@ -23,6 +23,7 @@ export { ModerationClient, type HeldQuery } from "./content/moderation.js";
 export { reactionVerb, type BanScope, type ContentChange, type Decision, type HeldKind, type Reaction, type Sort } from "./content/types.js";
 export { TaxonomyClient, type NodeAssignmentQuery, type NodeQuery } from "./taxonomy.js";
 export { CodesClient } from "./codes.js";
+export { CatalogClient, type CatalogTotalsQuery } from "./catalog.js";
 export { NotificationsClient, type NotificationItem } from "./notifications.js";
 export { call, routeURL, type CallOptions, type Method, type PageQuery, type PathParams, type RouteQuery, type RoutePath } from "./route.js";
 export { MediaApi, type ReadOptions } from "./media/api.js";

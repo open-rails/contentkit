@@ -1295,6 +1295,56 @@ the worker through `store.Lister`/`store.Builder`. `RuntimeConfig.Taxonomy:
 store` serves the admin routes at `/taxonomy` to staff holding
 `root:taxonomy:write`; mounted alone it is `store.Handler(auth)`. Adoption: [docs/taxonomy-migration.md](docs/taxonomy-migration.md).
 
+### Catalog totals
+
+`store.Totals(ctx, taxonomy.TotalsQuery{Kinds, Languages, Scope})` sizes the catalog
+per kind: `public` is the works the anonymous listing shows and anyone opens;
+each tier is every work its holders see and open, public ones and ones the
+anonymous listing hides included. Totals are per kind, language and
+audience: a work counts once in each language any of its eligible documents is
+in, and once in the kind's total, never once per version. Configure `Options.Listing`: the kinds, a listing eligibility (not
+`CountEligibility`: it admits only live, undeleted versions the members'
+listing shows on this deployment) whose row carries the access columns,
+`access.Columns` mapping them, and `PublicListed`, a boolean over that row
+(alias `h`) for the works the anonymous listing also shows:
+
+```go
+Listing: &taxonomy.Listing{Kinds: []string{"gallery"},
+	Eligibility: search.Eligibility{SQL: `SELECT CASE WHEN g.is_premium THEN 'premium' ELSE 'free' END AS access, g.is_unlisted
+	  FROM doujins.gallery_versions gv JOIN doujins.galleries g ON g.id = gv.gallery_id AND g.deleted_at IS NULL
+	  WHERE sd.content_kind = 'gallery' AND g.id::text = sd.content_id AND gv.id::text = sd.content_version_id
+	    AND gv.deleted_at IS NULL AND gv.live_at <= now()`},
+	Access: access.Columns{Level: "h.access", TierName: "premium",
+		Levels: map[string]access.Level{"free": access.Public, "premium": access.TierLevel}},
+	PublicListed: "NOT h.is_unlisted"},
+```
+
+A site's slice is a `taxonomy.CatalogScope`: `AnyOf`/`NoneOf` node keys
+(kind and slug) effective on the counted version. `RuntimeConfig.Catalog:
+store.CatalogHandler(taxonomy.CatalogOptions{Scope: fromHost})` serves the
+open `GET /catalog/totals?kinds=gallery&languages=en,es` with
+`Cache-Control: public, max-age=600`. `languages` limits the breakdown, never
+the kind totals; without it every language with a counted work is listed:
+
+```json
+{"kinds": {"gallery": {"public": 1200, "tiers": {"premium": 5400},
+  "languages": {"en": {"public": 1100, "tiers": {"premium": 5000}},
+                "es": {"public": 60, "tiers": {"premium": 210}}}}}}
+```
+
+Languages come from the search documents, so the listing eligibility must admit
+a document only in a language its version actually serves. A host that writes a
+document in every language for every version (Hentai0) must check the version's
+languages in that SQL, or the work counts in languages it lacks.
+
+Totals are cached per kind and scope (helpers `cache`): reloaded in the
+background after ten minutes, the last good count served while reloads fail,
+for up to a day. A sibling deployment's totals, cached the same way:
+`taxonomy.NewTotalsClient(baseURL, nil).Totals(ctx, taxonomy.TotalsQuery{Kinds: kinds})`
+(`Kinds` required, `Scope` empty). `Close` either
+when discarding it. Counts read your search documents, so a listed work
+without one is not counted.
+
 ## Preference boundary (reactions and favorites into the signal plane)
 
 Reactions and favorites reach the signal plane straight from their own rows.

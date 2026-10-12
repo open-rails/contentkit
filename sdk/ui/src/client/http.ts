@@ -20,6 +20,8 @@ export interface ContentKitMounts {
   codes?: string;
   /** Taxonomy. Default `{baseUrl}/taxonomy`. */
   taxonomy?: string;
+  /** The public catalog. Default `{baseUrl}/catalog`. */
+  catalog?: string;
   /** User inbox. Default `{baseUrl}/notifications`. */
   notifications?: string;
 }
