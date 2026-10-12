@@ -6099,6 +6099,12 @@
           },
           "auto": {
             "type": "boolean"
+          },
+          "renditions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rendition"
+            }
           }
         }
       },
@@ -8379,6 +8385,25 @@
         "required": [
           "kind",
           "id"
+        ]
+      },
+      "Rendition": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "w": {
+            "type": "integer"
+          },
+          "h": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "url",
+          "w",
+          "h"
         ]
       },
       "RequestReply": {

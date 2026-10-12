@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/open-rails/authkit/auth"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 
@@ -33,6 +34,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/internal/testauth"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/internal/s3test"
 	"github.com/open-rails/contentkit/media/token"
@@ -46,11 +48,11 @@ var (
 	signer = token.Key{ID: "k", Secret: bytes.Repeat([]byte("k"), 32)}
 )
 
-// kinds is a site's media: galleries publishing their versions' pages,
+// mediaKinds is a site's media: galleries publishing their versions' pages,
 // previews, audio, archives and downloads, with a content-level cover;
 // movies with an HLS ladder, subtitles and audio tracks per version; and
 // people's avatars.
-func kinds(ns string, hooks media.Hooks) media.Config {
+func mediaKinds(ns string, hooks media.Hooks) media.Config {
 	return media.Config{Namespace: ns, BaseURL: "https://media.example", Hooks: hooks,
 		Avatars: media.Avatars{Kind: "user", Preset: "avatar"},
 		Kinds: []media.Kind{
@@ -95,6 +97,31 @@ func kinds(ns string, hooks media.Hooks) media.Config {
 				Uploads: []media.Upload{{Path: "avatar", Types: pngs, MaxBytes: 1 << 20}},
 				Public:  []media.Public{{Name: "avatar", From: "avatar", To: "avatar-{w}.webp", Widths: []int{32}}}},
 		}}
+}
+
+// siteKinds is the site's one kinds list: galleries and movies, tags and
+// user-owned channels.
+var siteKinds = kinds.Config{Languages: []string{"en"},
+	Kinds: map[string]kinds.Kind{
+		"gallery": {Route: "g", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one"}, Segments: true, Groups: []string{"tag", "channel"}},
+		"movie":   {Route: "m", Presentation: "player", Versions: kinds.VersionRules{Languages: "many"}},
+	},
+	GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tags"}, "channel": {Owner: "user", AuthScope: true}}}
+
+// grants are the test auth's permissions: staff holds root:groups:write;
+// in a channel's AuthKit scope, its editor holds channel:media:write.
+type grants struct {
+	staff  string
+	scoped map[string]string // scope id -> editor id
+}
+
+func (g *grants) Can(context.Context, access.Actor, string) (bool, error) { return false, nil }
+
+func (g *grants) CanIn(_ context.Context, a access.Actor, scope auth.Scope, perm string) (bool, error) {
+	if scope == testauth.Scope {
+		return a.ID == g.staff && perm == string(access.GroupsWrite), nil
+	}
+	return g.scoped[scope.ID] == a.ID && perm == "channel:media:write", nil
 }
 
 // catalog stands in for the catalog's and the gate's decisions over the
@@ -204,6 +231,7 @@ type site struct {
 	pool    *pgxpool.Pool
 	schema  string
 	cat     *catalog
+	grants  *grants
 	reg     *media.Registry
 	ms      *media.Manifests
 	uploads *media.Uploads
@@ -232,13 +260,19 @@ func newSite(t *testing.T, o siteOptions) *site {
 	s.staff, s.creator, s.fan, s.stranger = person(), person(), person(), person()
 	s.cat = &catalog{pool: s.pool, schema: s.schema, tenant: s.tenant, staff: s.staff.ID,
 		tiers: map[string][]string{s.fan.ID: {"premium"}}}
+	s.grants = &grants{staff: s.staff.ID, scoped: map[string]string{}}
+	authn := testauth.Auth{Authz: s.grants}
 	var err error
-	s.svc, err = versions.New(versions.Options{Tenant: s.tenant, Schema: s.schema, Pool: s.pool, Visibility: s.cat, Access: s.cat,
-		Facets: s.cat, Watermark: o.watermark, Downloads: o.downloads})
+	s.svc, err = versions.New(versions.Options{Tenant: s.tenant, Schema: s.schema, Pool: s.pool, Kinds: siteKinds, Auth: authn,
+		Visibility: s.cat, Access: s.cat, Facets: s.cat, Watermark: o.watermark, Downloads: o.downloads})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.reg, err = media.NewRegistry(kinds(s.tenant, s.svc.Hooks())); err != nil {
+	cfg, err := media.ForContent(mediaKinds(s.tenant, s.svc.Hooks()), siteKinds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.reg, err = media.NewRegistry(cfg); err != nil {
 		t.Fatal(err)
 	}
 	workers := pgtest.EmptySchema(t, ctx, s.pool)
@@ -299,11 +333,10 @@ func newSite(t *testing.T, o siteOptions) *site {
 			t.Error(err)
 		}
 	})
-	auth := testauth.Auth{}
 	mux := http.NewServeMux()
-	mux.Handle("/media/upload/", http.StripPrefix("/media/upload", media.UploadHandler(s.uploads, media.UploadHandlerOptions{Auth: auth})))
-	mux.Handle("/media/", http.StripPrefix("/media", s.reader.Handler(media.HandlerOptions{Auth: auth, Limit: media.RateLimit{Disabled: true}})))
-	h, err := s.svc.Handler(auth, nil)
+	mux.Handle("/media/upload/", http.StripPrefix("/media/upload", media.UploadHandler(s.uploads, media.UploadHandlerOptions{Auth: authn})))
+	mux.Handle("/media/", http.StripPrefix("/media", s.reader.Handler(media.HandlerOptions{Auth: authn, Limit: media.RateLimit{Disabled: true}})))
+	h, err := s.svc.Handler(authn, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

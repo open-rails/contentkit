@@ -26,6 +26,12 @@ type Authorizer interface {
 	Can(ctx context.Context, a access.Actor, perm string) (bool, error)
 }
 
+// ScopedAuthorizer, when an Authorizer is one, decides in every scope, not
+// only Scope: AuthKit group scopes.
+type ScopedAuthorizer interface {
+	CanIn(ctx context.Context, a access.Actor, scope auth.Scope, perm string) (bool, error)
+}
+
 // All holds every permission.
 type All struct{}
 
@@ -65,6 +71,9 @@ type verified struct {
 func (v verified) Identity() auth.Identity { return v.id }
 
 func (v verified) Can(ctx context.Context, scope auth.Scope, perm string) (bool, error) {
+	if sa, ok := v.authz.(ScopedAuthorizer); ok {
+		return sa.CanIn(ctx, access.Actor{ID: v.id.Subject, Kind: v.id.SubjectKind}, scope, perm)
+	}
 	if scope != Scope || v.authz == nil {
 		return false, nil
 	}

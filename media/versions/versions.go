@@ -20,10 +20,13 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/open-rails/authkit/auth"
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/gate"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -78,6 +81,8 @@ type Options struct {
 	Tenant     string // the content tables' tenant
 	Schema     string // ContentKit's schema
 	Pool       *pgxpool.Pool
+	Kinds      kinds.Config       // the site's content and group kinds
+	Auth       auth.Authenticator // the host's: staff and group scope checks
 	Visibility Visibility
 	Access     Access
 	Facets     Facets
@@ -108,13 +113,19 @@ type Service struct {
 }
 
 type tables struct {
-	items, versions, segments, publications, pubItems string
+	items, versions, segments, publications, pubItems, groups string
 }
 
 // New validates o. Build the media runtime with Hooks, then Bind it.
 func New(o Options) (*Service, error) {
 	if o.Tenant == "" || o.Schema == "" || o.Pool == nil || o.Visibility == nil || o.Access == nil || o.Facets == nil {
 		return nil, errors.New("versions: Tenant, Schema, Pool, Visibility, Access and Facets are required")
+	}
+	if err := o.Kinds.Validate(); err != nil {
+		return nil, fmt.Errorf("versions: Kinds: %w", err)
+	}
+	if err := gate.Check(o.Auth); err != nil {
+		return nil, fmt.Errorf("versions: Auth: %w", err)
 	}
 	if o.Logger == nil {
 		o.Logger = slog.Default()
@@ -124,7 +135,7 @@ func New(o Options) (*Service, error) {
 	}
 	q := func(t string) string { return pgxIdent(o.Schema, t) }
 	s := &Service{o: o, t: tables{items: q("content_items"), versions: q("content_versions"), segments: q("content_segments"),
-		publications: q("content_version_publications"), pubItems: q("content_version_publication_items")}}
+		publications: q("content_version_publications"), pubItems: q("content_version_publication_items"), groups: q("content_groups")}}
 	var err error
 	if s.dl, err = newQuotas(o.Downloads, o.Logger, o.Now); err != nil {
 		return nil, err

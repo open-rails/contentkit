@@ -183,6 +183,7 @@ export interface Cover {
   image?: string;
   content_id?: string;
   auto?: boolean;
+  renditions?: Rendition[];
 }
 
 export interface Crop {
@@ -836,6 +837,12 @@ export interface RefBody {
   kind: string;
   id: string;
   version?: string;
+}
+
+export interface Rendition {
+  url: string;
+  w: number;
+  h: number;
 }
 
 export interface RequestReply {

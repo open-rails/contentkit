@@ -23,7 +23,7 @@ type resolver struct{ s *Service }
 func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, actor access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
 	s := r.s
 	out := map[contentref.ContentKey]access.Resolution{}
-	var owned, published, others []contentref.ContentRef
+	var owned, published, grouped, others []contentref.ContentRef
 	for _, ref := range refs {
 		k, err := s.reg.Kind(ref.ContentKind)
 		switch {
@@ -32,6 +32,8 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 			owned = append(owned, ref)
 		case k.Of() != nil:
 			published = append(published, ref)
+		case s.isGroupKind(k.Name):
+			grouped = append(grouped, ref)
 		case k.Name == s.reg.Config().Avatars.Kind:
 			out[ref.Key()] = access.Resolution{Visible: true, Editor: actor.Person() && actor.ID == ref.ContentID}
 		default:
@@ -42,6 +44,9 @@ func (r resolver) Resolve(ctx context.Context, refs []contentref.ContentRef, act
 		return nil, err
 	}
 	if err := s.resolvePublished(ctx, published, actor, out); err != nil {
+		return nil, err
+	}
+	if err := s.resolveGroups(ctx, grouped, actor, out); err != nil {
 		return nil, err
 	}
 	if len(others) > 0 && s.o.Others != nil {
@@ -219,9 +224,9 @@ WHERE p.tenant_id = $1 AND p.id = ANY($2) AND p.kind = 'playback'`, s.o.Tenant, 
 type uploads struct{ s *Service }
 
 // CanUpload lets editors of a content (staff, its creators, its owner
-// group's editors) write its items, a person write their own avatar, and
-// this package alone write published items and preview copies. A version
-// being forked takes no other writes.
+// group's editors) write its items, a group's editors its item, a person
+// their own avatar, and this package alone published items and preview
+// copies. A version being forked takes no other writes.
 func (u uploads) CanUpload(ctx context.Context, actor access.Actor, t media.UploadTarget) (media.UploadGrant, error) {
 	s := u.s
 	k, err := s.reg.Kind(t.Ref.ContentKind)
@@ -234,6 +239,8 @@ func (u uploads) CanUpload(ctx context.Context, actor access.Actor, t media.Uplo
 		return media.UploadGrant{}, nil
 	case k.Versions:
 		return s.canEdit(ctx, actor, k, t)
+	case s.isGroupKind(k.Name):
+		return s.canEditGroup(ctx, actor, t)
 	case k.Name == s.reg.Config().Avatars.Kind:
 		return media.UploadGrant{Allowed: actor.Person() && actor.ID == t.Ref.ContentID, Owner: actor.ID}, nil
 	case s.o.Others != nil:

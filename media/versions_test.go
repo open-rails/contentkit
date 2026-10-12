@@ -37,7 +37,8 @@ func bookKind() media.Kind {
 
 func TestVersionsKind(t *testing.T) {
 	site := kinds.Config{Languages: []string{"en"}, Kinds: map[string]kinds.Kind{"book": {Route: "b", Presentation: "reader",
-		Versions: kinds.VersionRules{Languages: "one"}}}, GroupKinds: map[string]kinds.GroupKind{"tag": {}}}
+		Versions: kinds.VersionRules{Languages: "one"}}}, GroupKinds: map[string]kinds.GroupKind{"tag": {}, "series": {},
+		"channel": {Owner: "user"}}}
 	book := bookKind()
 	cfg, err := media.ForContent(media.Config{Namespace: "site", Kinds: []media.Kind{book, {Name: "tag",
 		Uploads: []media.Upload{{Path: "cover", Types: []string{"image/png"}, MaxBytes: 1}}}}}, site)
@@ -47,6 +48,17 @@ func TestVersionsKind(t *testing.T) {
 	reg, err := media.NewRegistry(cfg)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Every group kind has media; a declared one is kept as declared.
+	for name, uploads := range map[string]string{"tag": "cover", "series": "cover/{name}", "channel": "cover/{name} avatar/{name}"} {
+		k, err := reg.Kind(name)
+		var paths []string
+		for _, u := range k.Uploads {
+			paths = append(paths, u.Path)
+		}
+		if err != nil || strings.Join(paths, " ") != uploads || k.Versions {
+			t.Fatalf("group kind %s: %v %v", name, paths, err)
+		}
 	}
 	content, version := cid(1), cid(2)
 	top, err := reg.Ref("book", content)

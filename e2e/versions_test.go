@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media/versions"
 )
 
@@ -54,7 +55,10 @@ func (b books) t(name string) string                                { return pgx
 // versionsScenario reaches the versions module's routes, and media's
 // version reads, over a premium book version by owner with no media yet.
 func versionsScenario(t *testing.T, w *world, f *server, owner, user, anon string) {
-	svc, err := versions.New(versions.Options{Tenant: tenant, Schema: w.schema, Pool: w.pool, Visibility: books{w}, Access: books{w}, Facets: books{w}})
+	site := kinds.Config{Languages: []string{"en"}, Kinds: map[string]kinds.Kind{"book": {Route: "b", Presentation: "reader",
+		Versions: kinds.VersionRules{Languages: "one"}}}}
+	svc, err := versions.New(versions.Options{Tenant: tenant, Schema: w.schema, Pool: w.pool, Kinds: site, Auth: w.ak.Authenticator(),
+		Visibility: books{w}, Access: books{w}, Facets: books{w}})
 	if err != nil {
 		t.Fatal(err)
 	}
