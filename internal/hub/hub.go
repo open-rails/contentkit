@@ -14,8 +14,8 @@ import (
 	"github.com/open-rails/contentkit/signal"
 )
 
-// ErrSignalPlaneDisabled is returned by signal/discovery methods when the hub
-// was constructed without a ClickHouse connection.
+// ErrSignalPlaneDisabled is returned by signal methods when the hub was
+// constructed without a ClickHouse connection.
 var ErrSignalPlaneDisabled = errors.New("contentkit: signal plane disabled (no ClickHouse configured)")
 
 // Config configures one tenant's hub.
@@ -27,11 +27,11 @@ type Config struct {
 	// Content-plane defaults (as in ClientConfig).
 	DefaultLanguage string
 	DefaultLimit    int
-	// DefaultRRFK controls deterministic popularity/discovery fusion (default 60).
+	// DefaultRRFK controls deterministic popularity fusion in personalized search (default 60).
 	DefaultRRFK int
 
 	// Signal plane (ClickHouse). Optional: omit CH to run content-only
-	// (signal/discovery methods return ErrSignalPlaneDisabled). CHDatabase
+	// (signal methods return ErrSignalPlaneDisabled). CHDatabase
 	// is the hub's dedicated ClickHouse database; apply
 	// migrations.ClickHouse and gate startup on signal.CheckSchema.
 	CH         signal.Conn
@@ -102,8 +102,8 @@ func (h *Hub) requireStore() (*signal.Store, error) {
 // --- Content plane ---
 
 // Personalization fuses signal aggregates into search ranking. Recall is
-// unchanged — this is a ranking-only layer over the candidate set. A
-// per-request toggle the host flips (e.g. only for logged-in users).
+// unchanged: a ranking-only layer over the candidate set, which discovery
+// applies for signed-in readers.
 type Personalization struct {
 	Subject signal.Subject
 
