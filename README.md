@@ -295,7 +295,7 @@ overwritten in place (ETags and a CDN purge keep them fresh). Every URL is
 
 ```go
 reg, _ := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https://media.doujins.ai",
-	Kinds:   []media.Kind{Gallery, accountmedia.User},
+	Kinds:   []media.Kind{Gallery, avatar.User()},
 	Avatars: media.Avatars{Kind: "user", Preset: "avatar"}, // comment authors' avatars
 	Hooks:   media.Hooks{Resolver: resolver, CanUpload: authorizer, PurgePublic: purge, ItemReady: ready}})
 store, _ := s3.New(s3.Config{Bucket: "media", Endpoint: rgw, PublicEndpoint: "https://s3.doujins.ai", UsePathStyle: true,
@@ -314,6 +314,10 @@ reader, _ := media.NewReader(media.ReaderOptions{Manifests: jobs.Manifests(), Qu
 _ = jobs.ExposeTx(ctx, tx, ref)                                          // whenever anonymous visibility changes
 _ = jobs.DeleteItemsTx(ctx, tx, media.Deletion{Ref: ref, Owner: owner}) // in the host's delete transaction
 ```
+
+The user-avatar kind comes from `github.com/open-rails/contentkit/media/avatar`;
+`avatar.User()` includes its upload rules and embedded default silhouette.
+Publish defaults with `media/image.PublishDefaults` as part of deployment.
 
 **Manifests.** Every edit runs under the `Locker` (required: `PGLocker`, a
 Postgres advisory lock shared by every process on the bucket) and writes with
