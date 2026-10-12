@@ -63,7 +63,7 @@ require (
 	github.com/mostynb/zstdpool-freelist v0.0.0-20201229113212-927304c0c3b1 // indirect
 	github.com/oasisprotocol/curve25519-voi v0.0.0-20251114093237-2ab5a27a1729 // indirect
 	github.com/open-rails/authkit v1.24.0 // indirect
-	github.com/open-rails/helpers v1.10.1-0.20261012013546-b6228219b9b3 // indirect
+	github.com/open-rails/helpers v1.10.2-0.20261012014735-85896a569aa8 // indirect
 	github.com/open-rails/migratekit v1.10.0 // indirect
 	github.com/redis/go-redis/v9 v9.22.0 // indirect
 	github.com/riverqueue/river v0.47.0 // indirect
