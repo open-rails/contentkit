@@ -226,6 +226,7 @@ func (s *Store) positions(ctx context.Context, q Querier, rows []memberRow, f fa
 		return err
 	}
 	defer res.Close()
+	// Every role of one member shares its position.
 	existing := map[memberKey]int{}
 	next := map[string]int{}
 	for res.Next() {
@@ -234,7 +235,9 @@ func (s *Store) positions(ctx context.Context, q Querier, rows []memberRow, f fa
 		if err := res.Scan(&k.group, &k.content, &k.version, &k.role, &p); err != nil {
 			return err
 		}
-		existing[k] = p
+		if k.role = ""; p >= 0 {
+			existing[k] = p
+		}
 		next[k.group] = max(next[k.group], p+1)
 	}
 	if err := res.Err(); err != nil {
@@ -245,10 +248,12 @@ func (s *Store) positions(ctx context.Context, q Querier, rows []memberRow, f fa
 		if r.Position != nil || !slices.Contains(ordered, r.GroupID) {
 			continue
 		}
-		p, ok := existing[r.key()]
-		if !ok || p < 0 {
+		k := r.key()
+		k.role = ""
+		p, ok := existing[k]
+		if !ok {
 			p = max(next[r.GroupID], 1)
-			next[r.GroupID] = p + 1
+			next[r.GroupID], existing[k] = p+1, p
 		}
 		r.Position = &p
 	}
