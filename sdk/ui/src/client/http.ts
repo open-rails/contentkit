@@ -25,6 +25,8 @@ export interface ContentKitMounts {
   catalog?: string;
   /** User inbox. Default `{baseUrl}/notifications`. */
   notifications?: string;
+  /** Content versions: reader plans, reader metadata, forks, downloads. Default `{baseUrl}/v1`. */
+  versions?: string;
 }
 
 export type ContentKitModule = keyof ContentKitMounts;
