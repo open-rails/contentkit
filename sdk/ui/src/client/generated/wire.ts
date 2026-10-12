@@ -118,6 +118,7 @@ export interface CardAccess {
   requires?: string;
   preview?: Preview;
   free_after?: string;
+  offers?: Sale[];
 }
 
 export interface CardVersion {
@@ -250,6 +251,7 @@ export interface Content {
   moderation?: ModerationState;
   moderation_reason?: string;
   ever_sold?: boolean;
+  offer?: Offer;
   revision: number;
   created_at: string;
   updated_at: string;
@@ -381,6 +383,7 @@ export interface Decision {
   requires?: string;
   preview?: Preview;
   free_after?: string;
+  offers?: Sale[];
 }
 
 export interface Edge {
@@ -1238,6 +1241,13 @@ export interface Rule {
   free_after?: string;
 }
 
+export interface Sale {
+  key: string;
+  target: Target;
+  terms: Terms;
+  price_id?: string;
+}
+
 export interface Segment {
   position: number;
   title?: string;
@@ -1346,6 +1356,7 @@ export interface Version {
   segments: Segment[];
   decision: Decision;
   text?: Record<string, VersionText>;
+  offer?: Offer;
 }
 
 export interface VersionFork {

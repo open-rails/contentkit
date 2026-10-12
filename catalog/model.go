@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/offers"
 )
 
 // Errors; match with errors.Is.
@@ -83,6 +84,9 @@ type Decision struct {
 	// Preview is what a locked viewer still reads; FreeAfter when it opens to all.
 	Preview   *access.Preview `json:"preview,omitempty"`
 	FreeAfter *time.Time      `json:"free_after,omitempty"`
+	// Offers are the purchasable offers of Sell's keys; tiers are the host's
+	// to label.
+	Offers []offers.Sale `json:"offers,omitempty"`
 }
 
 // Version is what a viewer opens.
@@ -114,6 +118,8 @@ type Version struct {
 	Decision   Decision       `json:"decision"`
 	// Text is every language's override, for editors.
 	Text map[string]VersionText `json:"text,omitempty"`
+	// Offer is the version's current offer, for its offer editors.
+	Offer *offers.Offer `json:"offer,omitempty"`
 }
 
 // GroupSummary names one group a content item belongs to.
@@ -166,6 +172,8 @@ type Content struct {
 	Moderation       string          `json:"moderation,omitempty"`
 	ModerationReason string          `json:"moderation_reason,omitempty"`
 	EverSold         bool            `json:"ever_sold,omitempty"`
+	// Offer is the item's current offer, for its offer editors.
+	Offer *offers.Offer `json:"offer,omitempty"`
 	Revision         int64           `json:"revision"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`

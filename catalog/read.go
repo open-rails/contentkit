@@ -8,6 +8,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contenturl"
+	"github.com/open-rails/contentkit/offers"
 )
 
 // Contents reads content items as v sees them (spec §4): an item the viewer
@@ -162,10 +163,67 @@ func (s *Store) Contents(ctx context.Context, v *Viewer, ids []string) ([]*Conte
 			return compare(a.Slug, b.Slug)
 		})
 	}
+	if err := s.fillOffers(ctx, v, built); err != nil {
+		return nil, err
+	}
 	for i, id := range ids {
 		out[i] = built[id]
 	}
 	return out, nil
+}
+
+// fillOffers attaches every paywall's purchasable offers in one read and, on
+// the items the viewer edits, their and their versions' current offers for
+// offer editors in one more. A failed editor check leaves those out.
+func (s *Store) fillOffers(ctx context.Context, v *Viewer, built map[string]*Content) error {
+	if s.offers == nil {
+		return nil
+	}
+	var walls []*Decision
+	var keys []string
+	var targets []offers.Target
+	var put []**offers.Offer
+	for _, c := range built {
+		walls = append(walls, &c.Decision)
+		if c.Editor {
+			targets, put = append(targets, offers.Target{Kind: offers.ContentTarget, ID: c.ID}), append(put, &c.Offer)
+		}
+		for i := range c.Versions {
+			ver := &c.Versions[i]
+			walls = append(walls, &ver.Decision)
+			if c.Editor {
+				targets, put = append(targets, offers.Target{Kind: offers.VersionTarget, ID: ver.ID, Content: c.ID}), append(put, &ver.Offer)
+			}
+		}
+	}
+	for _, d := range walls {
+		keys = append(keys, d.Sell...)
+	}
+	if len(keys) > 0 {
+		sales, err := s.offers.Sales(ctx, keys)
+		if err != nil {
+			return err
+		}
+		for _, d := range walls {
+			for _, k := range d.Sell {
+				if sale, ok := sales[k]; ok {
+					d.Offers = append(d.Offers, sale)
+				}
+			}
+		}
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	current, err := s.offers.Current(ctx, s.guard.Auth, v.actor, targets)
+	if err != nil {
+		s.log.WarnContext(ctx, "catalog: offer editor check failed; reading without offers", "err", err)
+		return nil
+	}
+	for i, o := range current {
+		*put[i] = o
+	}
+	return nil
 }
 
 // bundle is the viewer's access to an item's body: allowed when they edit it

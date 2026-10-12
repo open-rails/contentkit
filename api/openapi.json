@@ -8598,6 +8598,12 @@
           "free_after": {
             "type": "string",
             "format": "date-time"
+          },
+          "offers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Sale"
+            }
           }
         },
         "required": [
@@ -9041,6 +9047,9 @@
           },
           "ever_sold": {
             "type": "boolean"
+          },
+          "offer": {
+            "$ref": "#/components/schemas/Offer"
           },
           "revision": {
             "type": "integer"
@@ -9509,6 +9518,12 @@
           "free_after": {
             "type": "string",
             "format": "date-time"
+          },
+          "offers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Sale"
+            }
           }
         },
         "required": [
@@ -12387,6 +12402,28 @@
           "level"
         ]
       },
+      "Sale": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/Target"
+          },
+          "terms": {
+            "$ref": "#/components/schemas/Terms"
+          },
+          "price_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "target",
+          "terms"
+        ]
+      },
       "Segment": {
         "type": "object",
         "properties": {
@@ -12739,6 +12776,9 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/VersionText"
             }
+          },
+          "offer": {
+            "$ref": "#/components/schemas/Offer"
           }
         },
         "required": [

@@ -610,7 +610,7 @@ func (q GetContentQuery) values() url.Values {
 	return v
 }
 
-// GetContent is GET /v1/contents/{id} (public). A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes. Editors see every version, every language and the moderation state.
+// GetContent is GET /v1/contents/{id} (public). A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes; the body only to viewers who open a version, everyone else its description and the paywall decision. Editors see every version, every language and the moderation state.
 func (c *Client) GetContent(ctx context.Context, id string, q GetContentQuery) (catalog.Content, error) {
 	var out catalog.Content
 	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}", "{id}", url.PathEscape(id)), q.values(), nil, &out)

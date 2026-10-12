@@ -315,38 +315,12 @@ func (v *Viewer) decide(ctx context.Context, ids []string) (map[string]*itemView
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// Owner-group editorship is asked only of items the rule does not show
-	// whole (drafts, scheduled, deleted, held, out of the site's scope), once
-	// per owner group: a published page asks AuthKit nothing.
-	var groups []string
-	for id, rs := range byID {
-		g := rs[0].ownerGroup
-		if g == "" || v.staff || creator[id] || slices.Contains(groups, g) || v.editable(g) {
-			continue
-		}
-		if slices.ContainsFunc(rs, func(r facetRow) bool { return !v.live(r) || !v.inScope(r) || r.deleted || r.contentDeleted || r.held }) {
-			groups = append(groups, g)
-		}
-	}
-	editors := map[string]bool{}
-	if len(groups) > 0 && !v.actor.Anonymous {
-		editors = s.readEditors(ctx, v.actor, groups)
-	}
-	for _, g := range v.editorGroups {
-		editors[g] = true
-	}
 	// Live versions are decided by their rule; deleted ones that were live
 	// open only to holders of their own content or version key.
+	known := func(id string) bool { return v.staff || creator[id] || v.editable(byID[id][0].ownerGroup) }
 	var live, held []facetRow
 	for id, rs := range byID {
-		iv := &itemView{found: true, decisions: map[string]Decision{}}
-		out[id] = iv
-		iv.editor = v.staff || creator[id] || editors[rs[0].ownerGroup]
-		if iv.editor {
-			iv.visible, iv.versions = true, rs
-			for _, r := range rs {
-				iv.decisions[r.versionID] = Decision{Allowed: true}
-			}
+		if known(id) {
 			continue
 		}
 		for _, r := range rs {
@@ -370,16 +344,52 @@ func (v *Viewer) decide(ctx context.Context, ids []string) (map[string]*itemView
 	if err != nil {
 		return nil, err
 	}
+	shown := map[string][]facetRow{}
+	decisions := map[string]Decision{}
+	opens := map[string]bool{}
 	for i, r := range slices.Concat(live, held) {
 		if i >= len(live) && !ds[i].Allowed {
 			continue
 		}
-		iv := out[r.contentID]
-		iv.versions = append(iv.versions, r)
-		iv.decisions[r.versionID] = decision(ds[i])
+		shown[r.contentID] = append(shown[r.contentID], r)
+		decisions[r.versionID] = decision(ds[i])
+		opens[r.contentID] = opens[r.contentID] || ds[i].Allowed
+	}
+	// Owner-group editorship is asked only of items the rule does not show
+	// whole (drafts, scheduled, deleted, held, out of the site's scope) or
+	// does not open, once per owner group: an open published page asks
+	// AuthKit nothing.
+	var groups []string
+	for id, rs := range byID {
+		g := rs[0].ownerGroup
+		if g == "" || known(id) || slices.Contains(groups, g) {
+			continue
+		}
+		if !opens[id] || slices.ContainsFunc(rs, func(r facetRow) bool { return !v.live(r) || !v.inScope(r) || r.deleted || r.contentDeleted || r.held }) {
+			groups = append(groups, g)
+		}
+	}
+	editors := map[string]bool{}
+	if len(groups) > 0 && !v.actor.Anonymous {
+		editors = s.readEditors(ctx, v.actor, groups)
+	}
+	for id, rs := range byID {
+		iv := &itemView{found: true, decisions: map[string]Decision{}}
+		out[id] = iv
+		if iv.editor = known(id) || editors[rs[0].ownerGroup]; iv.editor {
+			iv.versions = rs
+			for _, r := range rs {
+				iv.decisions[r.versionID] = Decision{Allowed: true}
+			}
+			continue
+		}
+		iv.versions = shown[id]
+		for _, r := range iv.versions {
+			iv.decisions[r.versionID] = decisions[r.versionID]
+		}
 	}
 	for _, iv := range out {
-		iv.visible = iv.visible || len(iv.versions) > 0
+		iv.visible = iv.editor || len(iv.versions) > 0
 		slices.SortFunc(iv.versions, func(a, b facetRow) int {
 			if a.position != b.position {
 				return a.position - b.position

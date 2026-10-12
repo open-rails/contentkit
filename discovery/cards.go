@@ -17,6 +17,7 @@ import (
 	"github.com/open-rails/contentkit/groups"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
+	"github.com/open-rails/contentkit/offers"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -79,6 +80,9 @@ type CardAccess struct {
 	Requires  string          `json:"requires,omitempty"`
 	Preview   *access.Preview `json:"preview,omitempty"`
 	FreeAfter *time.Time      `json:"free_after,omitempty"`
+	// Offers are the purchasable offers of Sell's keys; tiers are the host's
+	// to label.
+	Offers []offers.Sale `json:"offers,omitempty"`
 }
 
 // ViewerState is the signed-in reader's own standing with a content item.
@@ -204,7 +208,8 @@ ORDER BY p.ord`, s.t.facets, s.t.items, s.t.versions, s.t.codes, s.t.text, s.t.v
 	return out, nil
 }
 
-// decide asks the Gate for every card's version in one call.
+// decide asks the Gate for every card's version in one call, and the offers
+// its paywalls sell in one more.
 func (s *Service) decide(ctx context.Context, q *sel, rows []cardRow) error {
 	items := make([]access.Item, len(rows))
 	for i, c := range rows {
@@ -214,6 +219,7 @@ func (s *Service) decide(ctx context.Context, q *sel, rows []cardRow) error {
 	if err != nil && (ds == nil || !errors.Is(err, access.ErrUnavailable)) {
 		return err
 	}
+	var keys []string
 	for i, d := range ds {
 		a := CardAccess{Allowed: d.Allowed, Unknown: d.Unknown, Preview: d.Preview, FreeAfter: d.FreeAfter}
 		for _, k := range d.Sell {
@@ -223,6 +229,22 @@ func (s *Service) decide(ctx context.Context, q *sel, rows []cardRow) error {
 			a.Requires = d.Requires.String()
 		}
 		rows[i].Access = a
+		keys = append(keys, a.Sell...)
+	}
+	if s.o.Sales == nil || len(keys) == 0 {
+		return nil
+	}
+	sales, err := s.o.Sales.Sales(ctx, keys)
+	if err != nil {
+		return err
+	}
+	for i := range rows {
+		a := &rows[i].Access
+		for _, k := range a.Sell {
+			if sale, ok := sales[k]; ok {
+				a.Offers = append(a.Offers, sale)
+			}
+		}
 	}
 	return nil
 }

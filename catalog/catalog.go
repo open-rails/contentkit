@@ -59,9 +59,12 @@ type Moderation interface {
 }
 
 // Offers is *offers.Service: Resync re-syncs the targets' products in the
-// writing transaction.
+// writing transaction; Sales and Current fill reads' paywalls and editors'
+// offers.
 type Offers interface {
 	Resync(ctx context.Context, tx pgx.Tx, targets []offers.Target) error
+	Sales(ctx context.Context, keys []string) (map[string]offers.Sale, error)
+	Current(ctx context.Context, a auth.Authenticator, actor access.Actor, targets []offers.Target) ([]*offers.Offer, error)
 }
 
 // Sanitizer cleans rich text on write: content.ContentProcessor.
@@ -79,8 +82,8 @@ type Options struct {
 	// Gate answers viewers' entitlements; nil builds one without billing
 	// (only free rules and claimed tiers open).
 	Gate *access.Gate
-	// Offers renames the products of content whose title changes; nil when
-	// nothing is sold.
+	// Offers renames the products of content whose title changes and answers
+	// paywalls' offers; nil when nothing is sold.
 	Offers Offers
 	// Groups answers effective group ids for content_facets; nil: none. Wire
 	// its Options.ContentChanged to Store.ContentChanged.

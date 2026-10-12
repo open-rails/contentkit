@@ -15,7 +15,6 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/internal/gate"
 )
 
 // Put sets each target's offer, in one transaction: a target without an
@@ -294,50 +293,19 @@ func (s *Service) Resync(ctx context.Context, tx pgx.Tx, targets []Target) error
 	return s.enqueue(ctx, tx, targets)
 }
 
-// Authorize admits actor to change targets' offers: staff holding
-// access.OffersWrite in a's root scope, else a creator of the content, or an
-// editor of the user-owned group sold or owning the content: its owner, or a
-// holder of access.GroupOffersWrite or access.GroupSettingsManage in its
-// AuthKit scope.
+// Authorize admits actor to change targets' offers (editors): staff, the
+// content's creators, and editors of the user-owned group sold or owning the
+// content.
 func (s *Service) Authorize(ctx context.Context, a auth.Authenticator, actor access.Actor, targets []Target) error {
 	if actor.Anonymous {
 		return ErrForbidden
 	}
-	staff, err := gate.Can(ctx, a, actor, string(access.OffersWrite))
-	if err != nil || staff {
+	ok, err := s.editors(ctx, a, actor, targets)
+	if err != nil {
 		return err
 	}
-	for _, t := range targets {
-		var creator bool
-		var kind, owner, scope string
-		var err error
-		switch t.Kind {
-		case ContentTarget, VersionTarget:
-			err = s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.creators+` cr WHERE cr.tenant_id = c.tenant_id AND cr.content_id = c.id AND cr.user_id = $3),
-					coalesce(g.kind, ''), coalesce(g.owner_user_id, ''), coalesce(g.auth_scope, '')
-				FROM `+s.t.items+` c LEFT JOIN `+s.t.groups+` g ON g.tenant_id = c.tenant_id AND g.id = c.owner_group_id AND g.state = 'active'
-				WHERE c.tenant_id = $1 AND c.id = $2
-					AND ($4 = '' OR EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id = c.tenant_id AND v.content_id = c.id AND v.id = $4))`,
-				s.tenant, orID(t), actor.ID, versionOf(t)).Scan(&creator, &kind, &owner, &scope)
-		case GroupTarget:
-			err = s.pool.QueryRow(ctx, `SELECT kind, coalesce(owner_user_id, ''), coalesce(auth_scope, '') FROM `+s.t.groups+` WHERE tenant_id = $1 AND id = $2`,
-				s.tenant, t.ID).Scan(&kind, &owner, &scope)
-		}
-		switch {
-		case errors.Is(err, pgx.ErrNoRows):
-			return fmt.Errorf("%w: %s %s", ErrNotFound, t.Kind, t.ID)
-		case err != nil:
-			return err
-		}
-		ok := creator && actor.Person()
-		if !ok && s.kinds.GroupKinds[kind].Owner == "user" {
-			if ok, err = gate.GroupEditor(ctx, a, actor, owner, scope, access.GroupOffersWrite(kind), access.GroupSettingsManage(kind)); err != nil {
-				return err
-			}
-		}
-		if !ok {
-			return ErrForbidden
-		}
+	if slices.Contains(ok, false) {
+		return ErrForbidden
 	}
 	return nil
 }
