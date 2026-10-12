@@ -27,7 +27,7 @@ var (
 )
 
 // Listing is the catalog Totals sizes: the works its listings show, and who
-// opens each.
+// opens each. Stopgap: ContentKit #117 removes it with every host-SQL hook.
 type Listing struct {
 	// Kinds are the content kinds counted; Totals answers no other.
 	Kinds []string
@@ -37,7 +37,7 @@ type Listing struct {
 	// on this deployment), else one row Access and PublicListed read as h. It
 	// is not CountEligibility, which also admits what listings hide. Reserved
 	// arg names: tenant, kinds, any_of_kinds, any_of_slugs, none_of_kinds,
-	// none_of_slugs and Access's.
+	// none_of_slugs and Access's. Stopgap: ContentKit #117 removes it.
 	Eligibility search.Eligibility
 	// Access maps h to its access level: Level, Levels and Tier or TierName,
 	// expressions over h. ID, Kind and Scope are unused.
@@ -108,8 +108,8 @@ type NodeKey struct {
 
 // CatalogScope narrows totals to one site's slice of the catalog by the nodes
 // effective on each counted version: its work's and its own active
-// assignments of active nodes, as listings filter by tags. Interim: ContentKit's
-// general listing restrictions replace it; restricted modes wait for those.
+// assignments of active nodes, as listings filter by tags. Stopgap: ContentKit
+// #117 replaces it with site scopes; restricted modes wait for those.
 type CatalogScope struct {
 	// AnyOf keeps versions with at least one of these; empty keeps all.
 	AnyOf []NodeKey `json:"any_of,omitempty"`
@@ -145,18 +145,29 @@ func (s *Store) scopeKey(sc CatalogScope) (string, error) {
 	return string(b), err
 }
 
-// TotalsQuery selects the kinds to total and the site scope to total them in.
+// TotalsQuery selects the kinds and languages to total and the site scope to
+// total them in.
 type TotalsQuery struct {
 	// Kinds are Listing kinds; empty means all of them.
 	Kinds []string
-	Scope CatalogScope
+	// Languages are the document languages Total.Languages reports; empty
+	// means every language with a counted work. The kind totals ignore it.
+	Languages []string
+	Scope     CatalogScope
 }
 
 // Total sizes one kind: Public works the anonymous listing shows and anyone
 // opens, and per tier every eligible work its holders open, public ones and
 // ones the anonymous listing hides included. A work counts once whatever its
-// languages and versions.
+// versions: once per language it is available in, once in the kind's total.
 type Total struct {
+	Public    int64                    `json:"public"`
+	Tiers     map[string]int64         `json:"tiers"`
+	Languages map[string]LanguageTotal `json:"languages"`
+}
+
+// LanguageTotal sizes one kind in one language, as Total does.
+type LanguageTotal struct {
 	Public int64            `json:"public"`
 	Tiers  map[string]int64 `json:"tiers"`
 }
@@ -182,6 +193,10 @@ func (s *Store) Totals(ctx context.Context, q TotalsQuery) (Totals, error) {
 	if err != nil {
 		return out, err
 	}
+	languages, err := normalizeLanguages(q.Languages)
+	if err != nil {
+		return out, err
+	}
 	kinds := q.Kinds
 	if len(kinds) == 0 {
 		kinds = s.listing.kinds
@@ -198,9 +213,48 @@ func (s *Store) Totals(ctx context.Context, q TotalsQuery) (Totals, error) {
 		return out, err
 	}
 	for _, k := range keys {
-		out.Kinds[k.kind] = got[k]
+		out.Kinds[k.kind] = got[k].only(languages, s.listing.tiers)
 	}
 	return out, nil
+}
+
+func normalizeLanguages(in []string) ([]string, error) {
+	out := make([]string, 0, len(in))
+	for _, l := range in {
+		l, err := normalizeLanguage(l)
+		if err != nil {
+			return nil, err
+		}
+		if !slices.Contains(out, l) {
+			out = append(out, l)
+		}
+	}
+	return out, nil
+}
+
+// only copies t with the given languages, zero where no work counts; none
+// keeps all. Copies keep callers off the cached maps.
+func (t Total) only(languages, tiers []string) Total {
+	if len(languages) == 0 {
+		languages = slices.Collect(maps.Keys(t.Languages))
+	}
+	out := Total{Public: t.Public, Tiers: maps.Clone(t.Tiers), Languages: make(map[string]LanguageTotal, len(languages))}
+	for _, l := range languages {
+		lt, ok := t.Languages[l]
+		if !ok {
+			lt = LanguageTotal{Tiers: zeroTiers(tiers)}
+		}
+		out.Languages[l] = LanguageTotal{Public: lt.Public, Tiers: maps.Clone(lt.Tiers)}
+	}
+	return out
+}
+
+func zeroTiers(tiers []string) map[string]int64 {
+	m := make(map[string]int64, len(tiers))
+	for _, t := range tiers {
+		m[t] = 0
+	}
+	return m
 }
 
 // Close releases the totals cache's goroutines; call it when discarding a
@@ -263,38 +317,49 @@ func (s *Store) countTotals(ctx context.Context, sc CatalogScope, kinds []string
 	}
 	out := make(map[string]Total, len(kinds))
 	for _, k := range kinds {
-		t := Total{Tiers: make(map[string]int64, len(l.tiers))}
-		for _, tier := range l.tiers {
-			t.Tiers[tier] = 0
-		}
-		out[k] = t
+		out[k] = Total{Tiers: zeroTiers(l.tiers), Languages: map[string]LanguageTotal{}}
 	}
-	// One row per work and audience: languages and versions collapse to the work.
+	// Versions collapse to the work: once per language and audience, and once
+	// per audience across languages.
 	err := s.read(ctx, func(q querier) error {
-		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT w.content_kind, w.audience, count(*) FROM (
- SELECT DISTINCT sd.content_kind, sd.content_id, au.audience
+		rows, err := q.Query(ctx, fmt.Sprintf(`SELECT w.content_kind, coalesce(w.language, ''), GROUPING(w.language) = 1, w.audience, count(DISTINCT w.content_id) FROM (
+ SELECT DISTINCT sd.content_kind, sd.content_id, sd.language, au.audience
  FROM %s.content_search_documents sd
  JOIN LATERAL (SELECT %s AS audiences FROM (%s) AS h LIMIT 1) e ON true
  CROSS JOIN LATERAL unnest(e.audiences) AS au(audience)
  WHERE sd.tenant_id=@tenant AND sd.content_kind=ANY(@kinds::text[])%s
-) w GROUP BY w.content_kind, w.audience`, s.qs, l.audiences, l.sql, where), args)
+) w GROUP BY GROUPING SETS ((w.content_kind, w.audience, w.language), (w.content_kind, w.audience))`, s.qs, l.audiences, l.sql, where), args)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var kind, audience string
+			var kind, language, audience string
+			var all bool
 			var n int64
-			if err := rows.Scan(&kind, &audience, &n); err != nil {
+			if err := rows.Scan(&kind, &language, &all, &audience, &n); err != nil {
 				return err
 			}
 			t := out[kind]
-			if audience == access.Anyone {
-				t.Public = n
-			} else {
-				t.Tiers[audience] = n
+			if all {
+				if audience == access.Anyone {
+					t.Public = n
+				} else {
+					t.Tiers[audience] = n
+				}
+				out[kind] = t
+				continue
 			}
-			out[kind] = t
+			lt, ok := t.Languages[language]
+			if !ok {
+				lt = LanguageTotal{Tiers: zeroTiers(l.tiers)}
+			}
+			if audience == access.Anyone {
+				lt.Public = n
+			} else {
+				lt.Tiers[audience] = n
+			}
+			t.Languages[language] = lt
 		}
 		return rows.Err()
 	})

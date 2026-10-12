@@ -35,8 +35,9 @@ func init() { httpapi.Register(httpapi.PublicCatalog, catalogRoutes) }
 
 var catalogRoutes = []httpapi.Route[catalogHandler]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/totals", Resource: "catalog", Auth: httpapi.Open,
-		Doc:       "Each kind's works: how many the anonymous listing shows that anyone opens, and how many each tier's holders see and open. Cacheable for ten minutes.",
-		Query:     []httpapi.Param{httpapi.List("kinds", "content kinds to total; every listed kind by default")},
+		Doc: "Each kind's works, in all and per language: how many the anonymous listing shows that anyone opens, and how many each tier's holders see and open. Cacheable for ten minutes.",
+		Query: []httpapi.Param{httpapi.List("kinds", "content kinds to total; every listed kind by default"),
+			httpapi.List("languages", "languages to break the totals down by; every counted language by default")},
 		Responses: []httpapi.Reply{httpapi.OK(Totals{})}, Errors: []string{httpapi.CodeUnavailable}},
 		Serve: httpapi.H(catalogHandler.totals)},
 }
@@ -57,6 +58,15 @@ func (h catalogHandler) totals(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		q.Kinds = append(q.Kinds, k)
+	}
+	for _, l := range strings.Split(strings.Join(r.URL.Query()["languages"], ","), ",") {
+		if l = strings.TrimSpace(l); l != "" {
+			q.Languages = append(q.Languages, l)
+		}
+	}
+	if _, err := normalizeLanguages(q.Languages); err != nil {
+		fail(w, err)
+		return
 	}
 	if h.opts.Scope != nil {
 		var err error

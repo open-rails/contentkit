@@ -164,6 +164,7 @@ type Options struct {
 	// Reserved arg names: tenant, ids, taxonomy_kinds.
 	CountEligibility *search.Eligibility
 	// Listing enables Totals and the public catalog API (CatalogHandler).
+	// Stopgap: ContentKit #117 removes it.
 	Listing *Listing
 	// Logger receives the admin API access log: each request at DEBUG, a 5xx
 	// at ERROR, both with the cause the response withheld. nil -> slog.Default().

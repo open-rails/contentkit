@@ -117,7 +117,7 @@ Every error is `{"error", "code", …}`; the codes are at the end.
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/catalog/totals` | open | — | 200 `Totals` | Each kind's works: how many the anonymous listing shows that anyone opens, and how many each tier's holders see and open. Cacheable for ten minutes. Query: `kinds`. |
+| GET | `/catalog/totals` | open | — | 200 `Totals` | Each kind's works, in all and per language: how many the anonymous listing shows that anyone opens, and how many each tier's holders see and open. Cacheable for ten minutes. Query: `kinds`, `languages`. |
 
 ## Notifications (`/notifications`)
 

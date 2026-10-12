@@ -4820,12 +4820,25 @@
         "tags": [
           "catalog"
         ],
-        "summary": "Each kind's works: how many the anonymous listing shows that anyone opens, and how many each tier's holders see and open. Cacheable for ten minutes.",
+        "summary": "Each kind's works, in all and per language: how many the anonymous listing shows that anyone opens, and how many each tier's holders see and open. Cacheable for ten minutes.",
         "parameters": [
           {
             "name": "kinds",
             "in": "query",
             "description": "content kinds to total; every listed kind by default",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "languages",
+            "in": "query",
+            "description": "languages to break the totals down by; every counted language by default",
             "style": "form",
             "explode": false,
             "schema": {
@@ -6337,6 +6350,24 @@
           "revision"
         ]
       },
+      "LanguageTotal": {
+        "type": "object",
+        "properties": {
+          "public": {
+            "type": "integer"
+          },
+          "tiers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          }
+        },
+        "required": [
+          "public",
+          "tiers"
+        ]
+      },
       "MergeInput": {
         "type": "object",
         "properties": {
@@ -7676,11 +7707,18 @@
             "additionalProperties": {
               "type": "integer"
             }
+          },
+          "languages": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LanguageTotal"
+            }
           }
         },
         "required": [
           "public",
-          "tiers"
+          "tiers",
+          "languages"
         ]
       },
       "Totals": {

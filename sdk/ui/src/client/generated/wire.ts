@@ -373,6 +373,11 @@ export interface Item {
   revision: number;
 }
 
+export interface LanguageTotal {
+  public: number;
+  tiers: Record<string, number>;
+}
+
 export interface MergeInput {
   into_taxonomy_id: string;
 }
@@ -745,6 +750,7 @@ export interface TicketBody {
 export interface Total {
   public: number;
   tiers: Record<string, number>;
+  languages: Record<string, LanguageTotal>;
 }
 
 export interface Totals {
