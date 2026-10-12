@@ -133,6 +133,7 @@ func (s *Service) charge(ctx context.Context, actor access.Actor) error {
 type Archive struct {
 	Name string // the attachment's file name
 	Size int64  // the prepared archive's, 0 when zipped as it streams
+	ctx  context.Context
 	s    *Service
 	src  io.ReadCloser
 	keys []string
@@ -201,7 +202,7 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t Target) (*
 	if len(pages) == 0 {
 		return nil, ErrNotFound
 	}
-	a := &Archive{Name: s.archiveName(ctx, v, z), s: s, v: t, who: actor}
+	a := &Archive{Name: s.archiveName(ctx, v, z), ctx: ctx, s: s, v: t, who: actor}
 	if s.o.Watermark != nil && !actor.Anonymous {
 		if a.mark, err = s.o.Watermark.Pages(ctx, actor, t, len(pages)); err != nil {
 			return nil, err
@@ -297,13 +298,13 @@ WHERE c.tenant_id = $1 AND c.id = $2 ORDER BY ct.language = $4 DESC, ct.language
 	return name
 }
 
-// WriteTo streams the archive.
+// WriteTo streams the archive within Download's context.
 func (a *Archive) WriteTo(w io.Writer) (int64, error) {
 	if a.src != nil {
 		defer a.src.Close()
 		return io.Copy(w, a.src)
 	}
-	return 0, a.s.streamMarked(context.Background(), w, a)
+	return 0, a.s.streamMarked(a.ctx, w, a)
 }
 
 // Close releases an archive not streamed.

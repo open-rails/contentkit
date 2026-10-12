@@ -170,3 +170,26 @@ func TestWithdrawal(t *testing.T) {
 	}
 	s.plan(s.creator, v, func(p *versions.ReaderPlan) bool { return p.Pages == 5 })
 }
+
+// Previews follow releases: the recovery pass widens them once a segment
+// releases.
+func TestPreviewsFollowReleases(t *testing.T) {
+	s := newSite(t, siteOptions{})
+	c := s.content("gallery", `{"level":"tier","tiers":["premium"]}`)
+	v := s.version(c)
+	ref := s.ref("gallery", v)
+	for i := range 4 {
+		s.mustUpload(s.creator, ref, fmt.Sprintf("originals/%03d", i+1), "image/png", pngOf(t, 30, 40, uint8(i+1)))
+	}
+	later := time.Now().Add(time.Hour)
+	s.segment(v, 1, 0, 1, nil)
+	s.segment(v, 2, 1, 4, &later)
+	anon := access.Actor{Anonymous: true, IP: "203.0.113.4"}
+	s.plan(anon, v, func(p *versions.ReaderPlan) bool { return len(p.Previews) == 1 })
+	s.exec(`UPDATE `+s.table("content_segments")+` SET release_at = now() - interval '1 second' WHERE tenant_id = $1 AND version_id = $2 AND position = 2`,
+		s.tenant, v.Version)
+	if err := versions.RecoverPublications(s.svc, s.ctx); err != nil {
+		t.Fatal(err)
+	}
+	s.plan(anon, v, func(p *versions.ReaderPlan) bool { return len(p.Previews) == 3 })
+}

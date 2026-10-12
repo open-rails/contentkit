@@ -2,6 +2,7 @@ package versions
 
 import (
 	"context"
+	"errors"
 	"math"
 	"strings"
 
@@ -79,7 +80,7 @@ func (s *Service) recordFacts(ctx context.Context, tx pgx.Tx, k *media.Kind, v T
 WHERE tenant_id = $1 AND id = $2 AND content_id = $3
 AND (pages, duration_ms, width, height, has_audio) IS DISTINCT FROM ($4, $5, $6, $7, $8) RETURNING id`,
 		s.o.Tenant, v.Version, v.Content, f.Pages, f.Duration, f.Width, f.Height, f.HasAudio).Scan(&id)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	} else if err != nil {
 		return err
