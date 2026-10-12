@@ -1,5 +1,5 @@
 // Package codes writes the content-code registry (content_codes) for the
-// packages that own content: contenturl for host content, taxonomy and content
+// packages that own content: contenturl for host content, groups and content
 // for ContentKit's own records. Codes are generated in Postgres
 // (contentkit_content_code), so one generator serves runtime and migrations.
 package codes

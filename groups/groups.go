@@ -111,19 +111,25 @@ type Options struct {
 	Tenant string
 	// Kinds is the site's content model; its GroupKinds govern every write.
 	Kinds kinds.Config
+	// ContentChanged runs in the writing transaction whenever the effective
+	// groups of contents may have changed (their facets' group_ids are
+	// already re-derived), so the engine can rebuild what else depends on
+	// them, such as search documents. Optional.
+	ContentChanged func(ctx context.Context, q Querier, contentIDs []string) error
 	// Logger receives the HTTP API's failures. nil -> slog.Default().
 	Logger *slog.Logger
 }
 
 // Store is one tenant's groups.
 type Store struct {
-	pool   *pgxpool.Pool
-	tx     Querier
-	qs     string
-	schema string
-	tenant string
-	cfg    kinds.Config
-	log    *slog.Logger
+	pool    *pgxpool.Pool
+	tx      Querier
+	qs      string
+	schema  string
+	tenant  string
+	cfg     kinds.Config
+	changed func(ctx context.Context, q Querier, contentIDs []string) error
+	log     *slog.Logger
 }
 
 // New validates the options and returns the store.
@@ -146,7 +152,7 @@ func New(opts Options) (*Store, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Store{pool: opts.Pool, qs: qs, schema: strings.TrimSpace(opts.Schema), tenant: tenant, cfg: opts.Kinds, log: log}, nil
+	return &Store{pool: opts.Pool, qs: qs, schema: strings.TrimSpace(opts.Schema), tenant: tenant, cfg: opts.Kinds, changed: opts.ContentChanged, log: log}, nil
 }
 
 // Tenant returns the tenant this store is scoped to.

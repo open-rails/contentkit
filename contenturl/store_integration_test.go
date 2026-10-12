@@ -20,7 +20,6 @@ import (
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/migrations"
-	"github.com/open-rails/contentkit/taxonomy"
 )
 
 const tenant = "doujins"
@@ -368,66 +367,6 @@ func TestAliases(t *testing.T) {
 		if err := s.PutAliases(ctx, bad); !errors.Is(err, contenturl.ErrInvalid) {
 			t.Errorf("PutAliases(%+v) = %v", bad, err)
 		}
-	}
-}
-
-func TestTaxonomyNodesCarryCodes(t *testing.T) {
-	ctx, pool, schema, s := setup(t)
-	store, err := taxonomy.New(taxonomy.Options{Pool: pool, Schema: schema, Tenant: tenant, Kinds: []string{"artist", "series"}, Languages: []string{"en", "es"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	nodes, err := store.CreateNodes(ctx, []taxonomy.NodeInput{
-		{Kind: "artist", Slug: "artist-internal-1", Names: []taxonomy.Name{{Language: "en", Kind: taxonomy.NameCanonical, Name: "Hiroshi Tanaka"}, {Language: "ja", Kind: taxonomy.NameCanonical, Name: "田中"}}},
-		{Kind: "artist", Slug: "artist-internal-2", Names: []taxonomy.Name{{Language: "es", Kind: taxonomy.NameCanonical, Name: "Señor Pérez"}}},
-		{Kind: "series", Slug: "s", Names: nil},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	refs := []contentref.ContentRef{
-		contentref.New(tenant, "artist", string(nodes[0].TaxonomyID)),
-		contentref.New(tenant, "artist", string(nodes[1].TaxonomyID)),
-		contentref.New(tenant, "series", string(nodes[2].TaxonomyID)),
-	}
-	links, err := s.Links(ctx, refs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	a, b, c := links[refs[0].Key()], links[refs[1].Key()], links[refs[2].Key()]
-	if a.Slug != "hiroshi-tanaka" || len(a.Slugs) != 1 || b.Slug != "senor-perez" || b.Slugs["es"] != "senor-perez" || c.Code == "" || c.Slug != "" {
-		t.Fatalf("node links %+v %+v %+v", a, b, c)
-	}
-
-	if err := store.SetNames(ctx, nodes[0].TaxonomyID, []taxonomy.Name{{Language: "en", Kind: taxonomy.NameCanonical, Name: "Tanaka Hiroshi"}, {Language: "es", Kind: taxonomy.NameCanonical, Name: "Tanaka H."}}); err != nil {
-		t.Fatal(err)
-	}
-	renamed, _ := s.Resolve(ctx, a.Code)
-	if renamed.Code != a.Code || renamed.Slug != "tanaka-hiroshi" || renamed.Slugs["es"] != "tanaka-h" {
-		t.Fatalf("renamed node %+v", renamed)
-	}
-
-	// The code registry joins a host's SQL transaction with taxonomy.
-	db := stdlib.OpenDBFromPool(pool)
-	defer db.Close()
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.WithSQLTx(tx).CreateNodes(ctx, []taxonomy.NodeInput{{Kind: "series", Slug: "rolled-back", Names: []taxonomy.Name{{Language: "en", Kind: taxonomy.NameCanonical, Name: "Gone"}}}}); err != nil {
-		t.Fatal(err)
-	}
-	_ = tx.Rollback()
-
-	if _, err := store.Merge(ctx, nodes[1].TaxonomyID, nodes[0].TaxonomyID); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := s.Resolve(ctx, b.Code); err != nil || got.Code != a.Code || got.Slug != "tanaka-hiroshi" {
-		t.Fatalf("merged node resolves to %+v %v", got, err)
-	}
-	var n int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+schema+`.content_codes`).Scan(&n); err != nil || n != 3 {
-		t.Fatalf("%d codes, want 3 (the rolled-back node has none)", n)
 	}
 }
 

@@ -57,16 +57,21 @@ func (s *Store) EffectiveGroups(ctx context.Context, q Querier, versionIDs []str
 }
 
 // refreshFacets re-derives content_facets.group_ids of every version of the
-// given contents in q.
+// given contents in q and tells Options.ContentChanged.
 func (s *Store) refreshFacets(ctx context.Context, q Querier, contentIDs []string) error {
 	if len(contentIDs) == 0 {
 		return nil
 	}
-	_, err := q.Exec(ctx, s.effectiveSQL(fmt.Sprintf(`SELECT f.version_id, f.content_id FROM %s f WHERE f.tenant_id = $1 AND f.content_id = ANY($2::text[])`,
+	if _, err := q.Exec(ctx, s.effectiveSQL(fmt.Sprintf(`SELECT f.version_id, f.content_id FROM %s f WHERE f.tenant_id = $1 AND f.content_id = ANY($2::text[])`,
 		s.table("content_facets")))+fmt.Sprintf(`
 UPDATE %s f SET group_ids = eff.group_ids, updated_at = now() FROM eff
- WHERE f.tenant_id = $1 AND f.version_id = eff.version_id AND f.group_ids IS DISTINCT FROM eff.group_ids`, s.table("content_facets")), s.tenant, contentIDs)
-	return err
+ WHERE f.tenant_id = $1 AND f.version_id = eff.version_id AND f.group_ids IS DISTINCT FROM eff.group_ids`, s.table("content_facets")), s.tenant, contentIDs); err != nil {
+		return err
+	}
+	if s.changed == nil {
+		return nil
+	}
+	return s.changed(ctx, q, contentIDs)
 }
 
 // refreshGroupFacets re-derives the facets of every content a change to the
@@ -133,4 +138,40 @@ func collectStrings(rows interface {
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+// Memberships is popularity.Catalog: per content id, the ids of the active
+// groups of groupKind its versions are effective in; contents in none are
+// absent.
+func (s *Store) Memberships(ctx context.Context, tenant, contentKind, groupKind string, contentIDs []string) (map[string][]GroupID, error) {
+	if tenant != s.tenant {
+		return nil, fmt.Errorf("%w: tenant %s", ErrInvalid, tenant)
+	}
+	out := map[string][]GroupID{}
+	if len(contentIDs) == 0 {
+		return out, nil
+	}
+	err := s.read(ctx, func(q Querier) error {
+		rows, err := q.Query(ctx, s.effectiveSQL(fmt.Sprintf(`SELECT cv.id AS version_id, cv.content_id FROM %s cv
+ JOIN %s c ON c.tenant_id = cv.tenant_id AND c.id = cv.content_id AND c.kind = $3
+ WHERE cv.tenant_id = $1 AND cv.content_id = ANY($2::text[])`, s.table("content_versions"), s.table("content_items")))+fmt.Sprintf(`
+SELECT v.content_id, array_agg(DISTINCT gid ORDER BY gid) FROM v JOIN eff ON eff.version_id = v.version_id CROSS JOIN LATERAL unnest(eff.group_ids) AS gid
+ JOIN %s g ON g.tenant_id = $1 AND g.id = gid AND g.kind = $4 GROUP BY v.content_id`, s.table("content_groups")), s.tenant, contentIDs, contentKind, groupKind)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			var ids []string
+			if err := rows.Scan(&id, &ids); err != nil {
+				return err
+			}
+			for _, g := range ids {
+				out[id] = append(out[id], GroupID(g))
+			}
+		}
+		return rows.Err()
+	})
+	return out, err
 }
