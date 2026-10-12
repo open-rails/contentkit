@@ -230,8 +230,8 @@ func TestHandlerServesTheCatalogIntegration(t *testing.T) {
 	f.want(http.StatusNotFound, staff, "POST", "/moderation/comment/"+uuid.NewString()+"/resolve", content.ResolveInput{Decision: content.DecisionApprove, Revision: 1}, nil)
 	f.want(http.StatusForbidden, user, "GET", "/moderation/held?kind=comment", nil, nil)
 
-	// Groups: public reads, writes behind root:groups:write.
-	f.want(http.StatusForbidden, user, "POST", "/groups", []groups.GroupInput{}, nil)
+	// Groups: public reads, the site's groups' writes behind root:groups:write.
+	f.want(http.StatusForbidden, user, "POST", "/groups", []groups.GroupInput{{Kind: "tag", Slug: "nope"}}, nil)
 	name := func(n string) groups.Name { return groups.Name{Language: "en", Kind: groups.NameCanonical, Name: n} }
 	var made []groups.Group
 	f.want(http.StatusCreated, staff, "POST", "/groups", []groups.GroupInput{

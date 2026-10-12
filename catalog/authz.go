@@ -5,7 +5,6 @@ import (
 	"errors"
 	"slices"
 
-
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/gate"
 )
@@ -71,6 +70,17 @@ func (s *Store) groupEditor(ctx context.Context, q Querier, actor access.Actor, 
 		out[id] = ok
 	}
 	return out, nil
+}
+
+// readEditors is groupEditor for reads: a check that fails answers "not an
+// editor", logged, so it never fails a read of what the rule shows anyway.
+func (s *Store) readEditors(ctx context.Context, actor access.Actor, groupIDs []string) map[string]bool {
+	editors, err := s.groupEditor(ctx, s.pool, actor, groupIDs)
+	if err != nil {
+		s.log.WarnContext(ctx, "catalog: owner-group editor check failed; reading as a non-editor", "groups", groupIDs, "err", err)
+		return map[string]bool{}
+	}
+	return editors
 }
 
 // owned is what authorizing a write learned about one content item.

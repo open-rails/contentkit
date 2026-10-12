@@ -5,11 +5,13 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/openrails"
@@ -209,4 +211,90 @@ func TestChannels(t *testing.T) {
 		` WHERE kind = 'contentkit_media_delete_folder' AND args->>'prefix' LIKE '%' || $1 || '%'`, string(ch.ID)).Scan(&queued); err != nil || queued == 0 {
 		t.Fatalf("the media folder's deletion: %d queued, %v", queued, err)
 	}
+}
+
+// scopeCounter is AuthKit's Authenticator, counting the permission checks
+// asked in group scopes (any but the root) and failing them while fail is
+// set.
+type scopeCounter struct {
+	auth.Authenticator
+	root  auth.Scope
+	asked *atomic.Int32
+	fail  *atomic.Bool
+}
+
+func (c scopeCounter) RootScope(ctx context.Context) (auth.Scope, error) {
+	return c.Authenticator.(auth.Root).RootScope(ctx)
+}
+
+func (c scopeCounter) KnownPermission(p string) bool {
+	return c.Authenticator.(auth.PermissionCatalog).KnownPermission(p)
+}
+
+func (c scopeCounter) Authenticate(r *http.Request) (auth.Verified, error) {
+	v, err := c.Authenticator.Authenticate(r)
+	if err != nil {
+		return nil, err
+	}
+	return countedVerified{Verified: v, c: c}, nil
+}
+
+type countedVerified struct {
+	auth.Verified
+	c scopeCounter
+}
+
+func (v countedVerified) Can(ctx context.Context, scope auth.Scope, perm string) (bool, error) {
+	if scope != v.c.root {
+		v.c.asked.Add(1)
+		if v.c.fail.Load() {
+			return false, errors.Join(auth.ErrUnavailable, errors.New("authkit down"))
+		}
+	}
+	return v.Verified.(auth.PermissionChecker).Can(ctx, scope, perm)
+}
+
+// A signed-in reader of a published channel post costs AuthKit no editor
+// check, and a failing one never fails it; the channel's writer still sees
+// its draft, and a failing check hides a draft rather than answering 503.
+func TestChannelPostReads(t *testing.T) {
+	w := newWorld(t)
+	writer, writerToken := w.person(iam.Role{})
+	_, readerToken := w.person(iam.Role{})
+	creator, creatorToken := w.person(iam.Role{})
+	counter := scopeCounter{Authenticator: w.ak.Authenticator(), root: w.scope, asked: new(atomic.Int32), fail: new(atomic.Bool)}
+	f := serve(t, w.engine(func(c *contentkit.Config, d *contentkit.Deps) {
+		c.Content.GroupKinds["channel"] = channel
+		d.Auth, d.Scopes = counter, ckauthkit.Scopes(w.ak)
+	}))
+	var made []groups.Group
+	f.want(http.StatusCreated, creatorToken, "POST", "/groups", []groups.GroupInput{{Kind: "channel", Slug: "studio"}}, &made)
+	ch := made[0]
+	if ch.OwnerUserID != creator.ID || ch.AuthScope == "" {
+		t.Fatalf("channel %+v", ch)
+	}
+	authtest.GrantRole(t, w.ak, iam.GroupByID(ch.AuthScope), iam.UserSubject(writer.ID), w.channelWriter)
+	in := catalog.ContentInput{Kind: "blog", OwnerGroupID: string(ch.ID), Creators: &[]catalog.Creator{},
+		Text: map[string]catalog.Text{"en": {Title: "Hello"}}}
+	var post, draft catalog.Content
+	f.want(http.StatusCreated, writerToken, "POST", "/contents", in, &post)
+	f.want(http.StatusOK, writerToken, "POST", "/contents/"+post.ID+"/publish", catalog.PublishInput{}, nil)
+	f.want(http.StatusCreated, writerToken, "POST", "/contents", in, &draft)
+
+	counter.asked.Store(0)
+	var got catalog.Content
+	f.want(http.StatusOK, readerToken, "GET", "/contents/"+post.ID, nil, &got)
+	if got.ID != post.ID || got.Editor || counter.asked.Load() != 0 {
+		t.Fatalf("published read %+v: %d group checks, want none", got, counter.asked.Load())
+	}
+	f.want(http.StatusOK, writerToken, "GET", "/contents/"+draft.ID, nil, &got)
+	if !got.Editor || counter.asked.Load() == 0 {
+		t.Fatalf("the writer's draft %+v after %d group checks", got, counter.asked.Load())
+	}
+
+	counter.fail.Store(true)
+	f.want(http.StatusOK, readerToken, "GET", "/contents/"+post.ID, nil, nil)
+	f.want(http.StatusOK, writerToken, "GET", "/contents/"+post.ID, nil, nil)
+	f.want(http.StatusNotFound, writerToken, "GET", "/contents/"+draft.ID, nil, nil)
+	f.want(http.StatusServiceUnavailable, writerToken, "PATCH", "/contents/"+draft.ID, catalog.ContentPatch{}, nil)
 }
