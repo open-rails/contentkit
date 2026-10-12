@@ -20,8 +20,10 @@ func (e *Engine) owns(ref contentref.ContentRef) bool {
 	return e.media != nil && e.media.folders && (ref.ContentKind == postFolder || ref.ContentKind == pollFolder)
 }
 
-// engineResolver answers for ContentKit's own items and asks the host's
-// resolver (Deps.Resolver) for the content it still owns.
+// engineResolver is the one access.ContentResolver content and media consume:
+// ContentKit's own posts and polls, then the host's (Deps.Resolver). The
+// catalog's resolver (visibility plus Gate.Decide, #120) replaces the host's
+// here, and Deps.Resolver and Deps.CanUpload go.
 type engineResolver struct {
 	e    *Engine
 	host access.ContentResolver
