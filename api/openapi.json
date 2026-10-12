@@ -3,10 +3,42 @@
   "info": {
     "title": "ContentKit",
     "version": "v0",
-    "description": "ContentKit's HTTP API, from the prefix the host mounts contentkit.Runtime.Handler at. Each module sits at its own sub-path (x-contentkit-modules); a host that mounts a module alone serves its routes beneath that mount instead. Generated from the route catalog (internal/httpapi) by `go generate ./internal/contract`; do not edit."
+    "description": "ContentKit's HTTP API, under the prefix the host mounts contentkit.Engine.Routes at (contentkit.Routes.Prefix). Each module sits at its own sub-path (x-contentkit-modules) and is one route group. Generated from the route catalog (internal/httpapi) by `go generate ./internal/contract`; do not edit."
   },
   "paths": {
-    "/config": {
+    "/v1/kinds": {
+      "get": {
+        "tags": [
+          "kinds"
+        ],
+        "summary": "The site's content model: languages, tiers, content kinds, group kinds and content filters. Cacheable for five minutes.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentModel"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {}
+        ],
+        "x-contentkit-module": "kinds",
+        "x-contentkit-auth": "open",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:kinds"
+        ]
+      }
+    },
+    "/v1/config": {
       "get": {
         "tags": [
           "config"
@@ -38,7 +70,7 @@
         ]
       }
     },
-    "/posts": {
+    "/v1/posts": {
       "get": {
         "tags": [
           "posts"
@@ -171,7 +203,7 @@
         ]
       }
     },
-    "/posts/admin": {
+    "/v1/posts/admin": {
       "get": {
         "tags": [
           "posts"
@@ -261,7 +293,7 @@
         ]
       }
     },
-    "/posts/{id}": {
+    "/v1/posts/{id}": {
       "get": {
         "tags": [
           "posts"
@@ -420,7 +452,7 @@
         ]
       }
     },
-    "/posts/{id}/restore": {
+    "/v1/posts/{id}/restore": {
       "post": {
         "tags": [
           "posts"
@@ -470,7 +502,7 @@
         ]
       }
     },
-    "/posts/{id}/cover": {
+    "/v1/posts/{id}/cover": {
       "put": {
         "tags": [
           "posts"
@@ -530,7 +562,7 @@
         ]
       }
     },
-    "/posts/{id}/images": {
+    "/v1/posts/{id}/images": {
       "post": {
         "tags": [
           "posts"
@@ -590,7 +622,7 @@
         ]
       }
     },
-    "/{kind}/{id}/comments": {
+    "/v1/{kind}/{id}/comments": {
       "get": {
         "tags": [
           "comments"
@@ -755,7 +787,7 @@
         ]
       }
     },
-    "/comments/latest": {
+    "/v1/comments/latest": {
       "get": {
         "tags": [
           "comments"
@@ -813,7 +845,7 @@
         ]
       }
     },
-    "/comments/admin": {
+    "/v1/comments/admin": {
       "get": {
         "tags": [
           "comments"
@@ -887,7 +919,7 @@
         ]
       }
     },
-    "/comments/{cid}/restore": {
+    "/v1/comments/{cid}/restore": {
       "post": {
         "tags": [
           "comments"
@@ -936,7 +968,7 @@
         ]
       }
     },
-    "/comments/{cid}/replies": {
+    "/v1/comments/{cid}/replies": {
       "get": {
         "tags": [
           "comments"
@@ -1004,7 +1036,7 @@
         ]
       }
     },
-    "/comments/{cid}": {
+    "/v1/comments/{cid}": {
       "patch": {
         "tags": [
           "comments"
@@ -1119,7 +1151,7 @@
         ]
       }
     },
-    "/comments/{cid}/like": {
+    "/v1/comments/{cid}/like": {
       "post": {
         "tags": [
           "comments"
@@ -1172,7 +1204,7 @@
         ]
       }
     },
-    "/comments/{cid}/dislike": {
+    "/v1/comments/{cid}/dislike": {
       "post": {
         "tags": [
           "comments"
@@ -1225,7 +1257,7 @@
         ]
       }
     },
-    "/comments/{cid}/reaction": {
+    "/v1/comments/{cid}/reaction": {
       "delete": {
         "tags": [
           "comments"
@@ -1278,7 +1310,7 @@
         ]
       }
     },
-    "/{kind}/{id}/like": {
+    "/v1/{kind}/{id}/like": {
       "post": {
         "tags": [
           "reactions"
@@ -1339,7 +1371,7 @@
         ]
       }
     },
-    "/{kind}/{id}/dislike": {
+    "/v1/{kind}/{id}/dislike": {
       "post": {
         "tags": [
           "reactions"
@@ -1400,7 +1432,7 @@
         ]
       }
     },
-    "/{kind}/{id}/reaction": {
+    "/v1/{kind}/{id}/reaction": {
       "delete": {
         "tags": [
           "reactions"
@@ -1516,7 +1548,7 @@
         ]
       }
     },
-    "/favorites": {
+    "/v1/favorites": {
       "get": {
         "tags": [
           "favorites"
@@ -1573,7 +1605,7 @@
         ]
       }
     },
-    "/{kind}/{id}/favorite": {
+    "/v1/{kind}/{id}/favorite": {
       "post": {
         "tags": [
           "favorites"
@@ -1743,7 +1775,7 @@
         ]
       }
     },
-    "/polls": {
+    "/v1/polls": {
       "get": {
         "tags": [
           "polls"
@@ -1872,7 +1904,7 @@
         ]
       }
     },
-    "/polls/admin": {
+    "/v1/polls/admin": {
       "get": {
         "tags": [
           "polls"
@@ -1970,7 +2002,7 @@
         ]
       }
     },
-    "/polls/{id}": {
+    "/v1/polls/{id}": {
       "get": {
         "tags": [
           "polls"
@@ -2116,7 +2148,7 @@
         ]
       }
     },
-    "/polls/{id}/vote": {
+    "/v1/polls/{id}/vote": {
       "post": {
         "tags": [
           "polls"
@@ -2178,7 +2210,7 @@
         ]
       }
     },
-    "/polls/{id}/answer": {
+    "/v1/polls/{id}/answer": {
       "post": {
         "tags": [
           "polls"
@@ -2238,7 +2270,7 @@
         ]
       }
     },
-    "/polls/{id}/image": {
+    "/v1/polls/{id}/image": {
       "put": {
         "tags": [
           "polls"
@@ -2298,7 +2330,7 @@
         ]
       }
     },
-    "/polls/{id}/options": {
+    "/v1/polls/{id}/options": {
       "post": {
         "tags": [
           "polls"
@@ -2357,7 +2389,7 @@
         ]
       }
     },
-    "/polls/{id}/options/{oid}": {
+    "/v1/polls/{id}/options/{oid}": {
       "patch": {
         "tags": [
           "polls"
@@ -2474,7 +2506,7 @@
         ]
       }
     },
-    "/polls/{id}/options/{oid}/image": {
+    "/v1/polls/{id}/options/{oid}/image": {
       "put": {
         "tags": [
           "polls"
@@ -2542,7 +2574,7 @@
         ]
       }
     },
-    "/comment-bans": {
+    "/v1/comment-bans": {
       "get": {
         "tags": [
           "bans"
@@ -2599,7 +2631,7 @@
         ]
       }
     },
-    "/comment-bans/{user}": {
+    "/v1/comment-bans/{user}": {
       "put": {
         "tags": [
           "bans"
@@ -2692,7 +2724,7 @@
         ]
       }
     },
-    "/global-comment-bans": {
+    "/v1/global-comment-bans": {
       "get": {
         "tags": [
           "bans"
@@ -2752,7 +2784,7 @@
         ]
       }
     },
-    "/global-comment-bans/{user}": {
+    "/v1/global-comment-bans/{user}": {
       "get": {
         "tags": [
           "bans"
@@ -2899,7 +2931,7 @@
         ]
       }
     },
-    "/{kind}/{id}/can-comment": {
+    "/v1/{kind}/{id}/can-comment": {
       "get": {
         "tags": [
           "bans"
@@ -2956,7 +2988,7 @@
         ]
       }
     },
-    "/moderation/held": {
+    "/v1/moderation/held": {
       "get": {
         "tags": [
           "moderation"
@@ -3019,7 +3051,7 @@
         ]
       }
     },
-    "/moderation/{kind}/{id}/resolve": {
+    "/v1/moderation/{kind}/{id}/resolve": {
       "post": {
         "tags": [
           "moderation"
@@ -3087,7 +3119,7 @@
         ]
       }
     },
-    "/media/upload/presign": {
+    "/v1/media/upload/presign": {
       "post": {
         "tags": [
           "uploads"
@@ -3142,7 +3174,7 @@
         ]
       }
     },
-    "/media/upload/parts": {
+    "/v1/media/upload/parts": {
       "post": {
         "tags": [
           "uploads"
@@ -3191,7 +3223,7 @@
         ]
       }
     },
-    "/media/upload/parts/list": {
+    "/v1/media/upload/parts/list": {
       "post": {
         "tags": [
           "uploads"
@@ -3240,7 +3272,7 @@
         ]
       }
     },
-    "/media/upload/complete": {
+    "/v1/media/upload/complete": {
       "post": {
         "tags": [
           "uploads"
@@ -3291,7 +3323,7 @@
         ]
       }
     },
-    "/media/upload/abort": {
+    "/v1/media/upload/abort": {
       "post": {
         "tags": [
           "uploads"
@@ -3333,7 +3365,7 @@
         ]
       }
     },
-    "/media/upload/commit": {
+    "/v1/media/upload/commit": {
       "post": {
         "tags": [
           "uploads"
@@ -3390,7 +3422,7 @@
         ]
       }
     },
-    "/media/upload/frame": {
+    "/v1/media/upload/frame": {
       "get": {
         "tags": [
           "uploads"
@@ -3409,6 +3441,14 @@
             "name": "id",
             "in": "query",
             "description": "the item's id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "a Versions kind's version id; absent for its content-level item",
             "schema": {
               "type": "string"
             }
@@ -3471,7 +3511,7 @@
         ]
       }
     },
-    "/media/presets": {
+    "/v1/media/presets": {
       "get": {
         "tags": [
           "media"
@@ -3506,7 +3546,7 @@
         ]
       }
     },
-    "/media/{kind}/{id}": {
+    "/v1/media/{kind}/{id}": {
       "get": {
         "tags": [
           "media"
@@ -3603,7 +3643,7 @@
         ]
       }
     },
-    "/media/{kind}/{id}/hls/{path}": {
+    "/v1/media/{kind}/{id}/hls/{path}": {
       "get": {
         "tags": [
           "media"
@@ -3699,7 +3739,216 @@
         ]
       }
     },
-    "/codes/{code}": {
+    "/v1/media/{kind}/{id}/versions/{version}": {
+      "get": {
+        "tags": [
+          "media"
+        ],
+        "summary": "A version's item, read as GET /{kind}/{id} reads a content-level or unversioned item.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "prefix",
+            "in": "query",
+            "description": "only files under this path prefix, e.g. low-res/",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "files to skip before the URLs start",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "files that get URLs",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "download",
+            "in": "query",
+            "description": "URLs carry their download names",
+            "allowEmptyValue": true,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "editor",
+            "in": "query",
+            "description": "editors: uploads with edits, failures, progress and editor views",
+            "allowEmptyValue": true,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "media",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:media",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/media/{kind}/{id}/versions/{version}/hls/{path}": {
+      "get": {
+        "tags": [
+          "media"
+        ],
+        "summary": "A version's HLS playlists, as GET /{kind}/{id}/hls/{path...} serves an item's.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "the rest of the path; may contain /",
+            "allowReserved": true
+          },
+          {
+            "name": "audio",
+            "in": "query",
+            "description": "audio languages the master playlist keeps; empty keeps none",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "subs",
+            "in": "query",
+            "description": "subtitle languages the master playlist keeps; empty keeps none",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/vnd.apple.mpegurl": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/vtt; charset=utf-8": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "media",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:media",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/codes/{code}": {
       "get": {
         "tags": [
           "codes"
@@ -4825,7 +5074,7 @@
         ]
       }
     },
-    "/notifications/inbox": {
+    "/v1/notifications/inbox": {
       "get": {
         "tags": [
           "notifications"
@@ -4895,7 +5144,7 @@
         ]
       }
     },
-    "/notifications/{id}/read": {
+    "/v1/notifications/{id}/read": {
       "put": {
         "tags": [
           "notifications"
@@ -4989,7 +5238,7 @@
         ]
       }
     },
-    "/notifications/{id}/dismiss": {
+    "/v1/notifications/{id}/dismiss": {
       "put": {
         "tags": [
           "notifications"
@@ -5082,6 +5331,2220 @@
           "request"
         ]
       }
+    },
+    "/v1/notifications/publish": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Publishes notices in one transaction, each once per origin and recipient; a notice to an erased recipient is dropped.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Publication"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Published"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "notifications",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:notifications:publish",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:notifications",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/contents/{id}/versions/{version}/reader": {
+      "get": {
+        "tags": [
+          "reader"
+        ],
+        "summary": "A version's reader plan: its segments with their release state, the published item of each the viewer opens, the previews of a locked version, its playback item and reader metadata. 202 while it has no current publication.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReaderPlan"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pending"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "versions",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:versions",
+          "auth",
+          "request"
+        ]
+      },
+      "put": {
+        "tags": [
+          "reader"
+        ],
+        "summary": "Sets a version's reader metadata (editors): anchors and audio cues on its pages and audio uploads.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReaderMeta"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "versions",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:versions",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/contents/{id}/versions/{version}/fork": {
+      "post": {
+        "tags": [
+          "reader"
+        ],
+        "summary": "Fills a version without media from a sibling (editors): its uploads with their outputs, reader metadata and optionally its audio and segments, in a durable job.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForkBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pending"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "versions",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:versions",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/contents/{id}/versions/{version}/download": {
+      "get": {
+        "tags": [
+          "reader"
+        ],
+        "summary": "A version's pages as a zip: every segment released and the version open. Charged to the viewer's download quota; marked by the host's watermark. 202 while it is prepared.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pending"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "versions",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "rate_limited"
+        ],
+        "x-contentkit-error-sets": [
+          "module:versions",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/contents/{id}/offer": {
+      "put": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "Puts an offer on a content item: its content key opens every version. For creators of the content, owners of its owner group and staff holding root:offers:write.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Terms"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Offer"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "Withdraws a content item's offer; buyers keep it. For creators of the content, owners of its owner group and staff holding root:offers:write.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Offer"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/contents/{id}/versions/{vid}/offer": {
+      "put": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "Puts an offer on one version: its version key opens it. For creators of the content, owners of its owner group and staff holding root:offers:write.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "vid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Terms"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Offer"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "Withdraws a version's offer; buyers keep it. For creators of the content, owners of its owner group and staff holding root:offers:write.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "vid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Offer"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/groups/{id}/offer": {
+      "put": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "Puts an offer on a sellable group: its key opens its members and its members-only content. renew_hours makes it a subscription; amount 0 makes it free to join. For owners of the group and staff holding root:offers:write.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Terms"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Offer"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "Withdraws a group's offer; members and subscribers keep theirs. For owners of the group and staff holding root:offers:write.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Offer"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/groups/{id}/join": {
+      "post": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "Joins a group free to join: grants the viewer its key.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupJoin"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "Leaves a group joined free; a bought membership stays.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupJoin"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found",
+          "conflict"
+        ],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/me/library": {
+      "get": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "The content the viewer bought, newest first, deleted content included.",
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language of the titles",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 20 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/offers": {
+      "get": {
+        "tags": [
+          "offers"
+        ],
+        "summary": "Offers, newest first, with their OpenRails sync state.",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "description": "active or withdrawn",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "unsynced",
+            "in": "query",
+            "description": "only offers OpenRails does not match yet",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 50 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "offers",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:offers:write",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:offers",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/contents": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Lists contents as cards, one per content item with the version that fits the reader, under their visibility, site and content filters.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "only this content kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "groups",
+            "in": "query",
+            "description": "group ids every listed version is in; a position sort orders by the first",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "exclude_groups",
+            "in": "query",
+            "description": "group ids no listed version is in",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "traits",
+            "in": "query",
+            "description": "version traits every listed version has",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "attribute",
+            "in": "query",
+            "description": "name:value of one of the kind's filterable attributes; repeat for more",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "released_on",
+            "in": "query",
+            "description": "published on this day (YYYY-MM-DD) or month (YYYY-MM)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tz",
+            "in": "query",
+            "description": "the IANA time zone of released_on and release dates; UTC by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "view_status",
+            "in": "query",
+            "description": "the signed-in reader's unseen, in_progress or completed contents",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only content with a live version in this language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "display_language",
+            "in": "query",
+            "description": "the language of titles, group names and paths, and the preferred language of each card's version; language by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "description": "lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "newest, oldest, title, popular[:period], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "card_groups",
+            "in": "query",
+            "description": "the group kinds cards name; every kind with a page by default",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 24 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_configured"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/search": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Keyword search over contents, grouped per content item, personalized for a signed-in reader unless sorted otherwise.",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "the query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "only this content kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "groups",
+            "in": "query",
+            "description": "group ids every listed version is in; a position sort orders by the first",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "exclude_groups",
+            "in": "query",
+            "description": "group ids no listed version is in",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "traits",
+            "in": "query",
+            "description": "version traits every listed version has",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "attribute",
+            "in": "query",
+            "description": "name:value of one of the kind's filterable attributes; repeat for more",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "released_on",
+            "in": "query",
+            "description": "published on this day (YYYY-MM-DD) or month (YYYY-MM)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tz",
+            "in": "query",
+            "description": "the IANA time zone of released_on and release dates; UTC by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "view_status",
+            "in": "query",
+            "description": "the signed-in reader's unseen, in_progress or completed contents",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only content with a live version in this language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "display_language",
+            "in": "query",
+            "description": "the language of titles, group names and paths, and the preferred language of each card's version; language by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "description": "lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "relevance (the default) or a list sort of the best matches",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "card_groups",
+            "in": "query",
+            "description": "the group kinds cards name; every kind with a page by default",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "personalize",
+            "in": "query",
+            "description": "false ranks a signed-in reader's results as anyone's",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 24 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_configured"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/typeahead": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Suggests contents and groups while the reader types, tolerating typos and partial words.",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "the partial query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "only contents of this kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group_kinds",
+            "in": "query",
+            "description": "the group kinds suggested; every kind with a page by default",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only content with a live version in this language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "display_language",
+            "in": "query",
+            "description": "the language of titles, group names and paths, and the preferred language of each card's version; language by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "description": "lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "per section: 8 by default, at most 20",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Typeahead"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/contents/{id}/similar": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Contents like this one (co-engagement, or the configured source), of its kind unless kind names another.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "only this content kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "groups",
+            "in": "query",
+            "description": "group ids every listed version is in; a position sort orders by the first",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "exclude_groups",
+            "in": "query",
+            "description": "group ids no listed version is in",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "traits",
+            "in": "query",
+            "description": "version traits every listed version has",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "attribute",
+            "in": "query",
+            "description": "name:value of one of the kind's filterable attributes; repeat for more",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "released_on",
+            "in": "query",
+            "description": "published on this day (YYYY-MM-DD) or month (YYYY-MM)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tz",
+            "in": "query",
+            "description": "the IANA time zone of released_on and release dates; UTC by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "view_status",
+            "in": "query",
+            "description": "the signed-in reader's unseen, in_progress or completed contents",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only content with a live version in this language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "display_language",
+            "in": "query",
+            "description": "the language of titles, group names and paths, and the preferred language of each card's version; language by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "description": "lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "card_groups",
+            "in": "query",
+            "description": "the group kinds cards name; every kind with a page by default",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "12 by default, at most 50",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found",
+          "not_configured"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/recommendations": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Contents for the signed-in reader from their history, filled from what is popular; seen and disliked content left out.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "only this content kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "groups",
+            "in": "query",
+            "description": "group ids every listed version is in; a position sort orders by the first",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "exclude_groups",
+            "in": "query",
+            "description": "group ids no listed version is in",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "traits",
+            "in": "query",
+            "description": "version traits every listed version has",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "attribute",
+            "in": "query",
+            "description": "name:value of one of the kind's filterable attributes; repeat for more",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "released_on",
+            "in": "query",
+            "description": "published on this day (YYYY-MM-DD) or month (YYYY-MM)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tz",
+            "in": "query",
+            "description": "the IANA time zone of released_on and release dates; UTC by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "view_status",
+            "in": "query",
+            "description": "the signed-in reader's unseen, in_progress or completed contents",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only content with a live version in this language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "display_language",
+            "in": "query",
+            "description": "the language of titles, group names and paths, and the preferred language of each card's version; language by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "description": "lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "card_groups",
+            "in": "query",
+            "description": "the group kinds cards name; every kind with a page by default",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "12 by default, at most 50",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_configured"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/release-dates": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "The release date index: per day or month, newest first, the contents the reader's listing shows released then and how many are free.",
+        "parameters": [
+          {
+            "name": "by",
+            "in": "query",
+            "description": "month (the default) or day",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "only this content kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "groups",
+            "in": "query",
+            "description": "group ids every listed version is in; a position sort orders by the first",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "exclude_groups",
+            "in": "query",
+            "description": "group ids no listed version is in",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "traits",
+            "in": "query",
+            "description": "version traits every listed version has",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "attribute",
+            "in": "query",
+            "description": "name:value of one of the kind's filterable attributes; repeat for more",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "released_on",
+            "in": "query",
+            "description": "published on this day (YYYY-MM-DD) or month (YYYY-MM)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tz",
+            "in": "query",
+            "description": "the IANA time zone of released_on and release dates; UTC by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "view_status",
+            "in": "query",
+            "description": "the signed-in reader's unseen, in_progress or completed contents",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only content with a live version in this language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "display_language",
+            "in": "query",
+            "description": "the language of titles, group names and paths, and the preferred language of each card's version; language by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "description": "lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "60 by default, at most 1000",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseDates"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_configured"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/me/content-filters": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "The reader's content filters: each configured filter's group, default and setting; every read applies them.",
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language of labels and group names",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentFilters"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      },
+      "put": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Replaces the reader's content filter settings and whether lists include deleted content they hold.",
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language of labels and group names",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContentFiltersUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentFilters"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/me/history": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "The contents the reader engaged with, most recent first, with their progress.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "only this content kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "seen, in_progress or completed; any by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "card_groups",
+            "in": "query",
+            "description": "the group kinds cards name; every kind with a page by default",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only content with a live version in this language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "display_language",
+            "in": "query",
+            "description": "the language of titles, group names and paths, and the preferred language of each card's version; language by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "description": "lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 24 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_configured"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Erases the reader's history: of one content item, one kind or everything.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "only this content kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "content_id",
+            "in": "query",
+            "description": "only this content item",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [
+          "not_found",
+          "not_configured"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/signals": {
+      "post": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Records views and clicks of the signed-in reader or, signed out, of the session named; a view's progress is scored against its version.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Signals"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found",
+          "not_configured"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/exposures": {
+      "post": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Records result lists a client served, rendered or showed, for click attribution.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Exposures"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found",
+          "not_configured"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
     }
   },
   "components": {
@@ -5168,6 +7631,28 @@
           "content_id"
         ]
       },
+      "Anchor": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "page": {
+            "type": "string"
+          },
+          "offset_percent": {
+            "type": "number"
+          },
+          "duration_seconds": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "page",
+          "offset_percent"
+        ]
+      },
       "Anonymous": {
         "type": "object",
         "properties": {
@@ -5206,6 +7691,58 @@
           "count"
         ]
       },
+      "Attribute": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "filterable": {
+            "type": "boolean"
+          },
+          "sortable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "BackgroundCue": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "from_page": {
+            "type": "string"
+          },
+          "to_page": {
+            "type": "string"
+          },
+          "from_anchor": {
+            "type": "string"
+          },
+          "to_anchor": {
+            "type": "string"
+          },
+          "loop": {
+            "type": "boolean"
+          },
+          "layer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ]
+      },
       "BanInput": {
         "type": "object",
         "properties": {
@@ -5241,6 +7778,164 @@
         },
         "required": [
           "scope"
+        ]
+      },
+      "Card": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "cover": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicRendition"
+            }
+          },
+          "version": {
+            "$ref": "#/components/schemas/CardVersion"
+          },
+          "groups": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Chip"
+              }
+            }
+          },
+          "counts": {
+            "$ref": "#/components/schemas/Counts"
+          },
+          "access": {
+            "$ref": "#/components/schemas/CardAccess"
+          },
+          "viewer": {
+            "$ref": "#/components/schemas/ViewerState"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "code",
+          "path",
+          "title",
+          "language",
+          "cover",
+          "version",
+          "groups",
+          "counts",
+          "access",
+          "attributes"
+        ]
+      },
+      "CardAccess": {
+        "type": "object",
+        "properties": {
+          "allowed": {
+            "type": "boolean"
+          },
+          "unknown": {
+            "type": "boolean"
+          },
+          "sell": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requires": {
+            "type": "string"
+          },
+          "preview": {
+            "$ref": "#/components/schemas/Preview"
+          },
+          "free_after": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "allowed"
+        ]
+      },
+      "CardVersion": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "languages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "traits": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "label": {
+            "type": "string"
+          },
+          "pages": {
+            "type": "integer"
+          },
+          "duration_ms": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "languages",
+          "traits"
+        ]
+      },
+      "Chip": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name"
         ]
       },
       "Comment": {
@@ -5471,6 +8166,86 @@
           "comment_max_length"
         ]
       },
+      "ContentFilter": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "$ref": "#/components/schemas/GroupRef"
+          },
+          "default_visible": {
+            "type": "boolean"
+          },
+          "labels": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "group",
+          "default_visible"
+        ]
+      },
+      "ContentFilterState": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "$ref": "#/components/schemas/GroupCard"
+          },
+          "label": {
+            "type": "string"
+          },
+          "default_visible": {
+            "type": "boolean"
+          },
+          "visible": {
+            "type": "boolean"
+          },
+          "overridden": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "group",
+          "label",
+          "default_visible",
+          "visible",
+          "overridden"
+        ]
+      },
+      "ContentFilters": {
+        "type": "object",
+        "properties": {
+          "filters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentFilterState"
+            }
+          },
+          "include_deleted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "filters",
+          "include_deleted"
+        ]
+      },
+      "ContentFiltersUpdate": {
+        "type": "object",
+        "properties": {
+          "filters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FilterSetting"
+            }
+          },
+          "include_deleted": {
+            "type": "boolean"
+          }
+        }
+      },
       "ContentGroups": {
         "type": "object",
         "properties": {
@@ -5513,6 +8288,65 @@
           "groups"
         ]
       },
+      "ContentModel": {
+        "type": "object",
+        "properties": {
+          "languages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tiers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kinds": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Kind"
+            }
+          },
+          "group_kinds": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/GroupKind"
+            }
+          },
+          "content_filters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentFilter"
+            }
+          }
+        },
+        "required": [
+          "languages",
+          "tiers",
+          "kinds",
+          "group_kinds",
+          "content_filters"
+        ]
+      },
+      "ContentPage": {
+        "type": "object",
+        "properties": {
+          "contents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Card"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contents"
+        ]
+      },
       "ContentRef": {
         "type": "object",
         "properties": {
@@ -5541,6 +8375,9 @@
           "id": {
             "type": "string"
           },
+          "version": {
+            "type": "string"
+          },
           "path": {
             "type": "string"
           }
@@ -5565,6 +8402,25 @@
           "count"
         ]
       },
+      "Counts": {
+        "type": "object",
+        "properties": {
+          "likes": {
+            "type": "integer"
+          },
+          "favorites": {
+            "type": "integer"
+          },
+          "views": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "likes",
+          "favorites",
+          "views"
+        ]
+      },
       "Cover": {
         "type": "object",
         "properties": {
@@ -5576,6 +8432,12 @@
           },
           "auto": {
             "type": "boolean"
+          },
+          "renditions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rendition"
+            }
           }
         }
       },
@@ -5600,6 +8462,25 @@
           "y",
           "w",
           "h"
+        ]
+      },
+      "DateCount": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "free": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "date",
+          "count",
+          "free"
         ]
       },
       "Edge": {
@@ -5779,6 +8660,56 @@
           "error",
           "code"
         ]
+      },
+      "ExposureInput": {
+        "type": "object",
+        "properties": {
+          "render_id": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "query_id": {
+            "type": "string"
+          },
+          "surface": {
+            "type": "string"
+          },
+          "ranker": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "shown": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Placement"
+            }
+          }
+        }
+      },
+      "Exposures": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "exposures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExposureInput"
+            }
+          }
+        }
       },
       "Failure": {
         "type": "object",
@@ -5993,6 +8924,48 @@
           "path",
           "type"
         ]
+      },
+      "FilterSetting": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "visible": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ForegroundCue": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "page": {
+            "type": "string"
+          },
+          "anchor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ]
+      },
+      "ForkBody": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "playback": {
+            "type": "boolean"
+          },
+          "segments": {
+            "type": "boolean"
+          }
+        }
       },
       "Frame": {
         "type": "object",
@@ -6292,6 +9265,69 @@
           }
         }
       },
+      "GroupJoin": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "member": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "group_id",
+          "key",
+          "member"
+        ]
+      },
+      "GroupKind": {
+        "type": "object",
+        "properties": {
+          "route": {
+            "type": "string"
+          },
+          "ordered": {
+            "type": "boolean"
+          },
+          "parent": {
+            "type": "string"
+          },
+          "scoped_by": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "sellable": {
+            "type": "boolean"
+          },
+          "auth_scope": {
+            "type": "boolean"
+          },
+          "windows": {
+            "type": "boolean"
+          },
+          "version_level": {
+            "type": "boolean"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Attribute"
+            }
+          }
+        }
+      },
       "GroupPage": {
         "type": "object",
         "properties": {
@@ -6307,6 +9343,21 @@
         },
         "required": [
           "groups"
+        ]
+      },
+      "GroupRef": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "slug"
         ]
       },
       "GroupUpdate": {
@@ -6469,6 +9520,34 @@
           "url"
         ]
       },
+      "Input": {
+        "type": "object",
+        "properties": {
+          "recipient": {
+            "$ref": "#/components/schemas/Recipient"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/Origin"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "data": {},
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          },
+          "action_requested": {
+            "type": "boolean"
+          },
+          "severity": {
+            "type": "string"
+          }
+        }
+      },
       "Item": {
         "type": "object",
         "properties": {
@@ -6551,6 +9630,101 @@
           "resolved_at",
           "updated_at",
           "revision"
+        ]
+      },
+      "Kind": {
+        "type": "object",
+        "properties": {
+          "route": {
+            "type": "string"
+          },
+          "presentation": {
+            "type": "string"
+          },
+          "versions": {
+            "$ref": "#/components/schemas/VersionRules"
+          },
+          "segments": {
+            "type": "boolean"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Attribute"
+            }
+          },
+          "sort": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "route",
+          "presentation",
+          "versions"
+        ]
+      },
+      "LibraryItem": {
+        "type": "object",
+        "properties": {
+          "content_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "whole": {
+            "type": "boolean"
+          },
+          "version_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "content_id",
+          "kind",
+          "title",
+          "deleted",
+          "whole",
+          "version_ids"
+        ]
+      },
+      "LibraryPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryItem"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "complete": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "complete"
         ]
       },
       "MemberPage": {
@@ -6699,6 +9873,76 @@
           "language",
           "kind",
           "name"
+        ]
+      },
+      "Offer": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/Target"
+          },
+          "key": {
+            "type": "string"
+          },
+          "terms": {
+            "$ref": "#/components/schemas/Terms"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "withdrawn"
+            ]
+          },
+          "synced": {
+            "type": "boolean"
+          },
+          "product_id": {
+            "type": "string"
+          },
+          "price_id": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "target",
+          "key",
+          "terms",
+          "state",
+          "synced",
+          "revision",
+          "updated_at"
+        ]
+      },
+      "OfferPage": {
+        "type": "object",
+        "properties": {
+          "offers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Offer"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "offers"
         ]
       },
       "Op": {
@@ -6862,6 +10106,159 @@
         },
         "required": [
           "parts"
+        ]
+      },
+      "Pending": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "Placement": {
+        "type": "object",
+        "properties": {
+          "content_id": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer"
+          }
+        }
+      },
+      "PlanPage": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "w": {
+            "type": "integer"
+          },
+          "h": {
+            "type": "integer"
+          },
+          "files": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "w",
+          "h",
+          "files"
+        ]
+      },
+      "PlanPlayback": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/RefBody"
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanTrack"
+            }
+          }
+        },
+        "required": [
+          "item",
+          "tracks"
+        ]
+      },
+      "PlanPreview": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "w": {
+            "type": "integer"
+          },
+          "h": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "index",
+          "name",
+          "url",
+          "w",
+          "h"
+        ]
+      },
+      "PlanSegment": {
+        "type": "object",
+        "properties": {
+          "position": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "start": {
+            "type": "integer"
+          },
+          "end": {
+            "type": "integer"
+          },
+          "released": {
+            "type": "boolean"
+          },
+          "release_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "item": {
+            "$ref": "#/components/schemas/RefBody"
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanPage"
+            }
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "released",
+          "locked"
+        ]
+      },
+      "PlanTrack": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "path"
         ]
       },
       "Poll": {
@@ -7417,6 +10814,17 @@
           "blob"
         ]
       },
+      "Preview": {
+        "type": "object",
+        "properties": {
+          "pages": {
+            "type": "integer"
+          },
+          "segments": {
+            "type": "integer"
+          }
+        }
+      },
       "PublicImage": {
         "type": "object",
         "properties": {
@@ -7480,6 +10888,31 @@
         "required": [
           "id",
           "username"
+        ]
+      },
+      "Publication": {
+        "type": "object",
+        "properties": {
+          "notifications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Input"
+            }
+          }
+        }
+      },
+      "Published": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Item"
+            }
+          }
+        },
+        "required": [
+          "items"
         ]
       },
       "ReactionCounts": {
@@ -7569,6 +11002,89 @@
           "files"
         ]
       },
+      "ReaderDefaults": {
+        "type": "object",
+        "properties": {
+          "auto_advance_seconds": {
+            "type": "number"
+          }
+        }
+      },
+      "ReaderMeta": {
+        "type": "object",
+        "properties": {
+          "schema_version": {
+            "type": "integer"
+          },
+          "defaults": {
+            "$ref": "#/components/schemas/ReaderDefaults"
+          },
+          "anchors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Anchor"
+            }
+          },
+          "background": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BackgroundCue"
+            }
+          },
+          "foreground": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ForegroundCue"
+            }
+          }
+        },
+        "required": [
+          "schema_version"
+        ]
+      },
+      "ReaderPlan": {
+        "type": "object",
+        "properties": {
+          "content_id": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": "string"
+          },
+          "publication_id": {
+            "type": "string"
+          },
+          "pages": {
+            "type": "integer"
+          },
+          "segments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanSegment"
+            }
+          },
+          "previews": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanPreview"
+            }
+          },
+          "playback": {
+            "$ref": "#/components/schemas/PlanPlayback"
+          },
+          "reader": {
+            "$ref": "#/components/schemas/ReaderMeta"
+          }
+        },
+        "required": [
+          "content_id",
+          "version_id",
+          "publication_id",
+          "pages",
+          "segments",
+          "previews"
+        ]
+      },
       "Recipient": {
         "type": "object",
         "properties": {
@@ -7592,8 +11108,51 @@
           },
           "id": {
             "type": "string"
+          },
+          "version": {
+            "type": "string"
           }
-        }
+        },
+        "required": [
+          "kind",
+          "id"
+        ]
+      },
+      "ReleaseDates": {
+        "type": "object",
+        "properties": {
+          "dates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DateCount"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "dates"
+        ]
+      },
+      "Rendition": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "w": {
+            "type": "integer"
+          },
+          "h": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "url",
+          "w",
+          "h"
+        ]
       },
       "RequestReply": {
         "type": "object",
@@ -7708,6 +11267,106 @@
           "decision"
         ]
       },
+      "SignalInput": {
+        "type": "object",
+        "properties": {
+          "content_id": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "duration_s": {
+            "type": "integer"
+          },
+          "progress": {
+            "type": "integer"
+          },
+          "resume": {
+            "type": "string"
+          },
+          "render_id": {
+            "type": "string"
+          },
+          "surface": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer"
+          }
+        }
+      },
+      "Signals": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "signals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SignalInput"
+            }
+          }
+        }
+      },
+      "Target": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "content",
+              "group",
+              "version"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "content_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ]
+      },
+      "Terms": {
+        "type": "object",
+        "properties": {
+          "amount": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "access_hours": {
+            "type": "integer"
+          },
+          "renew_hours": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "amount",
+          "currency"
+        ]
+      },
       "Text": {
         "type": "object",
         "properties": {
@@ -7732,6 +11391,27 @@
             "type": "string"
           }
         }
+      },
+      "Typeahead": {
+        "type": "object",
+        "properties": {
+          "contents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Card"
+            }
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupCard"
+            }
+          }
+        },
+        "required": [
+          "contents",
+          "groups"
+        ]
       },
       "UploadRule": {
         "type": "object",
@@ -7779,6 +11459,26 @@
           "max_bytes"
         ]
       },
+      "VersionRules": {
+        "type": "object",
+        "properties": {
+          "languages": {
+            "type": "string"
+          },
+          "traits": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "hidden": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "languages"
+        ]
+      },
       "VideoLimits": {
         "type": "object",
         "properties": {
@@ -7795,6 +11495,40 @@
             "type": "number"
           }
         }
+      },
+      "ViewerState": {
+        "type": "object",
+        "properties": {
+          "favorited": {
+            "type": "boolean"
+          },
+          "seen": {
+            "type": "boolean"
+          },
+          "completed": {
+            "type": "boolean"
+          },
+          "progress": {
+            "type": "integer"
+          },
+          "progress_max": {
+            "type": "integer"
+          },
+          "resume": {
+            "type": "string"
+          },
+          "last_view_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "favorited",
+          "seen",
+          "completed",
+          "progress",
+          "progress_max"
+        ]
       },
       "Written": {
         "type": "object",
@@ -7924,15 +11658,22 @@
     }
   },
   "x-contentkit-modules": {
-    "content": "",
-    "upload": "/media/upload",
-    "media": "/media",
-    "codes": "/codes",
+    "kinds": "/v1",
+    "content": "/v1",
+    "upload": "/v1/media/upload",
+    "media": "/v1/media",
+    "codes": "/v1/codes",
     "groups": "/v1",
-    "catalog": "/catalog",
-    "notifications": "/notifications"
+    "catalog": "/v1/catalog",
+    "notifications": "/v1/notifications",
+    "versions": "/v1",
+    "offers": "/v1",
+    "discovery": "/v1"
   },
   "x-contentkit-error-sets": {
+    "module:kinds": [
+      "internal_error"
+    ],
     "module:content": [
       "internal_error",
       "tenant_mismatch"
@@ -7965,6 +11706,19 @@
     ],
     "module:notifications": [
       "internal_error"
+    ],
+    "module:versions": [
+      "internal_error",
+      "not_found",
+      "unavailable"
+    ],
+    "module:offers": [
+      "internal_error",
+      "unavailable"
+    ],
+    "module:discovery": [
+      "internal_error",
+      "unavailable"
     ]
   },
   "x-contentkit-error-codes": {

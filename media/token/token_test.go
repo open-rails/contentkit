@@ -36,14 +36,16 @@ func TestVerifyPrivate(t *testing.T) {
 	exp := token.Expiry(now, time.Hour, 0)
 	const item = "doujins/gallery/456/private/"
 	a, b, other := item+"sha256-3a", item+"sha256-7d", "doujins/gallery/789/private/sha256-3a"
-	whole := r.Sign(token.ItemScope("doujins", "gallery", "456"), exp)
+	whole := r.Sign(token.ItemScope("doujins", "gallery", "456", ""), exp)
+	version := r.Sign(token.ItemScope("doujins", "gallery", "456", "v1"), exp)
+	inVersion := "doujins/gallery/456/v1/private/sha256-3a"
 	for _, c := range []struct {
 		tok, key string
 		want     error
 	}{
 		{whole, a, nil},
 		{whole, b, nil},
-		{ring(t, k1, nil).Sign(token.ItemScope("doujins", "gallery", "456"), exp), b, nil},
+		{ring(t, k1, nil).Sign(token.ItemScope("doujins", "gallery", "456", ""), exp), b, nil},
 		{whole, other, token.ErrInvalid},
 		{r.Sign(a, exp), a, token.ErrInvalid},                 // a file's own key: no such scope
 		{r.Sign(a+"#dl=Title.zip", exp), a, token.ErrInvalid}, // nor a download's
@@ -52,15 +54,20 @@ func TestVerifyPrivate(t *testing.T) {
 		{whole, "doujins/gallery/456/private/", token.ErrInvalid},
 		{whole, "doujins/gallery/456/private/a/b", token.ErrInvalid},
 		{whole, "doujins/gallery/456", token.ErrInvalid},
-		{r.Sign(token.ItemScope("doujins", "gallery", "456"), now), a, token.ErrExpired},
-		{ring(t, token.Key{ID: "k3", Secret: k1.Secret}, nil).Sign(token.ItemScope("doujins", "gallery", "456"), exp), a, token.ErrUnknownKey},
-		{token.Ring{}.Sign(token.ItemScope("doujins", "gallery", "456"), exp), a, token.ErrMalformed}, // a zero Ring signs with an empty key id
+		{version, inVersion, nil},
+		{whole, inVersion, token.ErrInvalid},                                    // the content's item opens none of its versions
+		{version, a, token.ErrInvalid},                                          // a version opens nothing of its content's item
+		{version, "doujins/gallery/456/v2/private/sha256-3a", token.ErrInvalid}, // nor of another version
+		{r.Sign(token.ItemScope("doujins", "gallery", "456", "public"), exp), "doujins/gallery/456/public/private/sha256-3a", token.ErrInvalid},
+		{r.Sign(token.ItemScope("doujins", "gallery", "456", ""), now), a, token.ErrExpired},
+		{ring(t, token.Key{ID: "k3", Secret: k1.Secret}, nil).Sign(token.ItemScope("doujins", "gallery", "456", ""), exp), a, token.ErrUnknownKey},
+		{token.Ring{}.Sign(token.ItemScope("doujins", "gallery", "456", ""), exp), a, token.ErrMalformed}, // a zero Ring signs with an empty key id
 	} {
 		if err := r.VerifyPrivate(c.tok, c.key, now); !errors.Is(err, c.want) {
 			t.Errorf("VerifyPrivate(%.12s…, %s) = %v, want %v", c.tok, c.key, err, c.want)
 		}
 	}
-	if err := (token.Ring{}).VerifyPrivate(token.Ring{}.Sign(token.ItemScope("doujins", "gallery", "456"), exp), a, now); !errors.Is(err, token.ErrMalformed) {
+	if err := (token.Ring{}).VerifyPrivate(token.Ring{}.Sign(token.ItemScope("doujins", "gallery", "456", ""), exp), a, now); !errors.Is(err, token.ErrMalformed) {
 		t.Fatalf("a zero Ring verified its own token: %v", err)
 	}
 }

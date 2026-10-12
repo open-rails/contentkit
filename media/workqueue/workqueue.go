@@ -313,7 +313,7 @@ FROM targets WHERE r.id = targets.id`, refJSON); err != nil {
 		return 0, err
 	}
 	rows, err := tx.Query(ctx, `SELECT id FROM `+jobs(q.schema)+`
-WHERE kind = ANY($1) AND args @> $2 AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
+WHERE kind = ANY($1) AND args @> $2 AND args->'ref' = $2::jsonb->'ref' AND state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
 ORDER BY id`,
 		append([]string{ImageArgs{}.Kind()}, EncodeKinds...), match)
 	if err != nil {
@@ -331,10 +331,10 @@ ORDER BY id`,
 	return len(ids), nil
 }
 
-// RefMatch is the jsonb containment a job query matches ref's jobs by.
+// RefMatch is the jsonb a job query matches ref's jobs by: args contain it,
+// and args' ref equals its ref exactly (a content's item is not its versions').
 func RefMatch(ref contentref.ContentRef) ([]byte, error) {
-	return json.Marshal(map[string]any{"ref": map[string]string{
-		"tenant_id": ref.TenantID, "content_kind": ref.ContentKind, "content_id": ref.ContentID}})
+	return json.Marshal(map[string]any{"ref": ref})
 }
 
 // Progress lives on the running video job's row (metadata.contentkit_progress):
@@ -373,7 +373,7 @@ SELECT j.state, j.metadata->'` + progressKey + `',
   CASE WHEN j.state = 'available' THEN 1 + (SELECT count(*) FROM ` + jobs(schema) + ` a
     WHERE a.state = 'available' AND a.queue = j.queue AND (a.priority, a.scheduled_at, a.id) < (j.priority, j.scheduled_at, j.id)) END
 FROM ` + jobs(schema) + ` j
-WHERE j.kind = ANY($1) AND j.args @> $2
+WHERE j.kind = ANY($1) AND j.args @> $2 AND j.args->'ref' = $2::jsonb->'ref'
   AND j.state IN ('available', 'pending', 'retryable', 'running', 'scheduled')
 ORDER BY j.id`, runSQL: `
 SELECT DISTINCT ON (r.file_name) r.file_name, r.state,

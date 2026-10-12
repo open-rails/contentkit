@@ -65,6 +65,9 @@ func Can(ctx context.Context, a auth.Authenticator, actor access.Actor, perm str
 	if perm == "" || actor.Anonymous {
 		return false, nil
 	}
+	if _, ok := actor.Verified.(hostVerified); ok {
+		return true, nil
+	}
 	root, err := RootScope(ctx, a)
 	if err != nil {
 		return false, err
@@ -107,6 +110,25 @@ func isNil(v any) bool {
 }
 
 type actorKey struct{}
+
+type hostKey struct{}
+
+// HostSubject is the actor id of the engine's own in-process client.
+const HostSubject = "contentkit"
+
+// AsHost marks ctx as a request of the engine's in-process client: the gate
+// admits it as the host application holding every permission, with no
+// credential. Only in-process code can set it; nothing on the wire does.
+func AsHost(ctx context.Context) context.Context { return context.WithValue(ctx, hostKey{}, true) }
+
+// hostVerified is the in-process host's authority: holding the Engine is it.
+type hostVerified struct{}
+
+func (hostVerified) Identity() auth.Identity {
+	return auth.Identity{Subject: HostSubject, SubjectKind: auth.SubjectApplication}
+}
+
+func (hostVerified) Can(context.Context, auth.Scope, string) (bool, error) { return true, nil }
 
 // Actor is the actor the gate bound to ctx; anonymous when none was.
 func Actor(ctx context.Context) access.Actor {
@@ -179,6 +201,9 @@ func (f fault) Error() string { return string(f) }
 // actor asks the Authenticator who r is: anonymous when it carries no
 // credential, else the Verified's subject.
 func (g *Gate) actor(r *http.Request) (access.Actor, error) {
+	if host, _ := r.Context().Value(hostKey{}).(bool); host {
+		return access.Actor{ID: HostSubject, Kind: auth.SubjectApplication, Verified: hostVerified{}}, nil
+	}
 	v, err := g.authenticate(r)
 	switch {
 	case err == nil:
@@ -294,9 +319,18 @@ var (
 	_ auth.PermissionChecker   = (*memo)(nil)
 	_ auth.RecentSignInChecker = (*memo)(nil)
 	_ auth.Bound               = (*memo)(nil)
+	_ access.Entitled          = (*memo)(nil)
 )
 
 func (m *memo) Identity() auth.Identity { return m.v.Identity() }
+
+// Entitlements forwards the token's entitlement claims (access.Entitled).
+func (m *memo) Entitlements() []string {
+	if e, ok := m.v.(access.Entitled); ok {
+		return e.Entitlements()
+	}
+	return nil
+}
 
 func (m *memo) Can(ctx context.Context, scope auth.Scope, permission string) (ok bool, err error) {
 	key := canKey{scope, permission}

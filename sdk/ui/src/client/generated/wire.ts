@@ -39,6 +39,13 @@ export interface AdminComment {
   deleted_at?: string;
 }
 
+export interface Anchor {
+  id: string;
+  page: string;
+  offset_percent: number;
+  duration_seconds?: number;
+}
+
 export interface Anonymous {
   comments: boolean;
   reactions: boolean;
@@ -51,6 +58,23 @@ export interface AnswerGroup {
   count: number;
 }
 
+export interface Attribute {
+  type: string;
+  values?: string[];
+  filterable?: boolean;
+  sortable?: boolean;
+}
+
+export interface BackgroundCue {
+  file: string;
+  from_page?: string;
+  to_page?: string;
+  from_anchor?: string;
+  to_anchor?: string;
+  loop?: boolean;
+  layer?: string;
+}
+
 export interface BanInput {
   reason?: string;
   until?: string;
@@ -60,6 +84,48 @@ export interface BanNotice {
   scope: string;
   reason?: string;
   until?: string;
+}
+
+export interface Card {
+  id: string;
+  kind: string;
+  code: string;
+  path: string;
+  title: string;
+  language: string;
+  cover: PublicRendition[];
+  version: CardVersion;
+  groups: Record<string, Chip[]>;
+  counts: Counts;
+  access: CardAccess;
+  viewer?: ViewerState;
+  published_at?: string;
+  attributes: Record<string, unknown>;
+}
+
+export interface CardAccess {
+  allowed: boolean;
+  unknown?: boolean;
+  sell?: string[];
+  requires?: string;
+  preview?: Preview;
+  free_after?: string;
+}
+
+export interface CardVersion {
+  id: string;
+  languages: string[];
+  traits: string[];
+  label?: string;
+  pages?: number;
+  duration_ms?: number;
+}
+
+export interface Chip {
+  id: string;
+  slug: string;
+  name: string;
+  path?: string;
 }
 
 export interface Comment {
@@ -132,6 +198,30 @@ export interface Config {
   comment_max_length: number;
 }
 
+export interface ContentFilter {
+  group: GroupRef;
+  default_visible: boolean;
+  labels?: Record<string, string>;
+}
+
+export interface ContentFilterState {
+  group: GroupCard;
+  label: string;
+  default_visible: boolean;
+  visible: boolean;
+  overridden: boolean;
+}
+
+export interface ContentFilters {
+  filters: ContentFilterState[];
+  include_deleted: boolean;
+}
+
+export interface ContentFiltersUpdate {
+  filters: FilterSetting[];
+  include_deleted: boolean;
+}
+
 export interface ContentGroups {
   kinds?: string[];
   memberships: Membership[];
@@ -143,6 +233,19 @@ export interface ContentMemberships {
   groups: GroupCard[];
 }
 
+export interface ContentModel {
+  languages: string[];
+  tiers: string[];
+  kinds: Record<string, Kind>;
+  group_kinds: Record<string, GroupKind>;
+  content_filters: ContentFilter[];
+}
+
+export interface ContentPage {
+  contents: Card[];
+  next_cursor?: string;
+}
+
 export interface ContentRef {
   tenant_id: string;
   content_kind: string;
@@ -152,6 +255,7 @@ export interface ContentRef {
 
 export interface CopyFrom {
   id: string;
+  version?: string;
   path: string;
 }
 
@@ -161,10 +265,17 @@ export interface Count {
   count: number;
 }
 
+export interface Counts {
+  likes: number;
+  favorites: number;
+  views: number;
+}
+
 export interface Cover {
   image?: string;
   content_id?: string;
   auto?: boolean;
+  renditions?: Rendition[];
 }
 
 export interface Crop {
@@ -172,6 +283,12 @@ export interface Crop {
   y: number;
   w: number;
   h: number;
+}
+
+export interface DateCount {
+  date: string;
+  count: number;
+  free: number;
 }
 
 export interface Edge {
@@ -230,6 +347,23 @@ export interface ErrorReply {
   ban?: BanNotice;
   blobs?: string[];
   details?: ErrorDetails;
+}
+
+export interface ExposureInput {
+  render_id: string;
+  stage: string;
+  revision?: number;
+  query_id?: string;
+  surface?: string;
+  ranker?: string;
+  language?: string;
+  occurred_at?: string;
+  shown: Placement[];
+}
+
+export interface Exposures {
+  session?: string;
+  exposures: ExposureInput[];
 }
 
 export interface Failure {
@@ -295,6 +429,23 @@ export interface FileInfo {
   failed?: Failure;
   editor_url?: string;
   progress?: EncodeProgress;
+}
+
+export interface FilterSetting {
+  group_id: string;
+  visible: boolean;
+}
+
+export interface ForegroundCue {
+  file: string;
+  page?: string;
+  anchor?: string;
+}
+
+export interface ForkBody {
+  from: string;
+  playback?: boolean;
+  segments?: boolean;
 }
 
 export interface Frame {
@@ -378,9 +529,34 @@ export interface GroupInput {
   text?: Text[];
 }
 
+export interface GroupJoin {
+  group_id: string;
+  key: string;
+  member: boolean;
+}
+
+export interface GroupKind {
+  route?: string;
+  ordered?: boolean;
+  parent?: string;
+  scoped_by?: string;
+  owner?: string;
+  sellable?: boolean;
+  auth_scope?: boolean;
+  windows?: boolean;
+  version_level?: boolean;
+  roles?: string[];
+  attributes?: Record<string, Attribute>;
+}
+
 export interface GroupPage {
   groups: GroupCard[];
   next_cursor?: string;
+}
+
+export interface GroupRef {
+  kind: string;
+  slug: string;
 }
 
 export interface GroupUpdate {
@@ -428,6 +604,17 @@ export interface InlineImage {
   url: string | null;
 }
 
+export interface Input {
+  recipient: Recipient;
+  origin: Origin;
+  kind: string;
+  data: unknown;
+  created_at: string;
+  status?: string;
+  action_requested?: boolean;
+  severity?: string;
+}
+
 export interface Item {
   id: string;
   recipient: Recipient;
@@ -443,6 +630,32 @@ export interface Item {
   resolved_at: string | null;
   updated_at: string;
   revision: number;
+}
+
+export interface Kind {
+  route: string;
+  presentation: string;
+  versions: VersionRules;
+  segments?: boolean;
+  groups?: string[];
+  attributes?: Record<string, Attribute>;
+  sort?: string;
+}
+
+export interface LibraryItem {
+  content_id: string;
+  kind: string;
+  title: string;
+  language?: string;
+  deleted: boolean;
+  whole: boolean;
+  version_ids: string[];
+}
+
+export interface LibraryPage {
+  items: LibraryItem[];
+  next_cursor?: string;
+  complete: boolean;
 }
 
 export interface MemberPage {
@@ -490,6 +703,25 @@ export interface Name {
   language: string;
   kind: "alias" | "name";
   name: string;
+}
+
+export interface Offer {
+  id: string;
+  target: Target;
+  key: string;
+  terms: Terms;
+  state: "active" | "withdrawn";
+  synced: boolean;
+  product_id?: string;
+  price_id?: string;
+  last_error?: string;
+  revision: number;
+  updated_at: string;
+}
+
+export interface OfferPage {
+  offers: Offer[];
+  next_cursor?: string;
 }
 
 export interface Op {
@@ -546,6 +778,53 @@ export interface PartsBody {
 
 export interface PartsReply {
   parts: PartReply[];
+}
+
+export interface Pending {
+  status: string;
+}
+
+export interface Placement {
+  content_id: string;
+  position: number;
+}
+
+export interface PlanPage {
+  name: string;
+  w: number;
+  h: number;
+  files: Record<string, string>;
+}
+
+export interface PlanPlayback {
+  item: RefBody;
+  tracks: PlanTrack[];
+}
+
+export interface PlanPreview {
+  index: number;
+  name: string;
+  url: string;
+  w: number;
+  h: number;
+}
+
+export interface PlanSegment {
+  position?: number;
+  title?: string;
+  start: number;
+  end: number;
+  released: boolean;
+  release_at?: string;
+  locked: boolean;
+  item?: RefBody;
+  pages?: PlanPage[];
+}
+
+export interface PlanTrack {
+  name: string;
+  path: string;
+  duration?: number;
 }
 
 export interface Poll {
@@ -690,6 +969,11 @@ export interface PresignReply {
   process_on_upload?: boolean;
 }
 
+export interface Preview {
+  pages?: number;
+  segments?: number;
+}
+
 export interface PublicImage {
   from: string;
   preset: string;
@@ -708,6 +992,14 @@ export interface PublicUser {
   username: string;
   avatar?: string;
   avatar_srcset?: string;
+}
+
+export interface Publication {
+  notifications: Input[];
+}
+
+export interface Published {
+  items: Item[];
 }
 
 export interface ReactionCounts {
@@ -732,6 +1024,29 @@ export interface ReadResult {
   files: FileInfo[];
 }
 
+export interface ReaderDefaults {
+  auto_advance_seconds?: number;
+}
+
+export interface ReaderMeta {
+  schema_version: number;
+  defaults?: ReaderDefaults;
+  anchors?: Anchor[];
+  background?: BackgroundCue[];
+  foreground?: ForegroundCue[];
+}
+
+export interface ReaderPlan {
+  content_id: string;
+  version_id: string;
+  publication_id: string;
+  pages: number;
+  segments: PlanSegment[];
+  previews: PlanPreview[];
+  playback?: PlanPlayback;
+  reader?: ReaderMeta;
+}
+
 export interface Recipient {
   audience: string;
   id: string;
@@ -740,6 +1055,18 @@ export interface Recipient {
 export interface RefBody {
   kind: string;
   id: string;
+  version?: string;
+}
+
+export interface ReleaseDates {
+  dates: DateCount[];
+  next_cursor?: string;
+}
+
+export interface Rendition {
+  url: string;
+  w: number;
+  h: number;
 }
 
 export interface RequestReply {
@@ -774,6 +1101,39 @@ export interface ReviewOutcome {
   decision: "approve" | "reject" | "review";
 }
 
+export interface SignalInput {
+  content_id: string;
+  version_id?: string;
+  type: string;
+  event_id: string;
+  revision?: number;
+  occurred_at: string;
+  duration_s?: number;
+  progress?: number;
+  resume?: string;
+  render_id?: string;
+  surface?: string;
+  position?: number;
+}
+
+export interface Signals {
+  session?: string;
+  signals: SignalInput[];
+}
+
+export interface Target {
+  kind: "content" | "group" | "version";
+  id: string;
+  content_id?: string;
+}
+
+export interface Terms {
+  amount: string;
+  currency: string;
+  access_hours?: number;
+  renew_hours?: number;
+}
+
 export interface Text {
   language: string;
   description?: string;
@@ -782,6 +1142,11 @@ export interface Text {
 
 export interface TicketBody {
   ticket: string;
+}
+
+export interface Typeahead {
+  contents: Card[];
+  groups: GroupCard[];
 }
 
 export interface UploadRule {
@@ -798,11 +1163,27 @@ export interface UploadRule {
   max_aspect?: number;
 }
 
+export interface VersionRules {
+  languages: string;
+  traits?: string[];
+  hidden?: boolean;
+}
+
 export interface VideoLimits {
   max_seconds?: number;
   max_fps?: number;
   max_pixels?: number;
   max_work?: number;
+}
+
+export interface ViewerState {
+  favorited: boolean;
+  seen: boolean;
+  completed: boolean;
+  progress: number;
+  progress_max: number;
+  resume?: string;
+  last_view_at?: string;
 }
 
 export interface Written {

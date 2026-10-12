@@ -26,7 +26,7 @@ func TestGlobalCommentBanOfUser(t *testing.T) {
 	o, owner := w.person(iam.Role{})
 	u, user := w.person(iam.Role{})
 	w.owner = o.ID
-	f := serve(t, w.runtime(nil))
+	f := serve(t, w.engine(nil))
 	target := "/global-comment-bans/" + u.ID
 
 	f.want(http.StatusNotFound, staff, "GET", target, nil, nil)
@@ -65,7 +65,7 @@ func TestAdminCommentsByAuthor(t *testing.T) {
 	o, owner := w.person(iam.Role{})
 	u, user := w.person(iam.Role{})
 	w.owner = o.ID
-	f := serve(t, w.runtime(nil))
+	f := serve(t, w.engine(nil))
 	item := "/gallery/" + cid(1)
 
 	var first, reply, gone content.Comment
@@ -126,16 +126,16 @@ func TestGroupMembers(t *testing.T) {
 	w := newWorld(t)
 	_, staff := w.person(w.staff)
 	_, user := w.person(iam.Role{})
-	f := serve(t, w.runtime(nil))
+	f := serve(t, w.engine(nil))
 	w.galleries(1, 2, 3)
 
 	var made []groups.Group
-	f.want(http.StatusCreated, staff, "POST", "/v1/groups", []groups.GroupInput{
+	f.want(http.StatusCreated, staff, "POST", "/groups", []groups.GroupInput{
 		{Kind: "tag", Slug: "color", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Color"}}},
 		{Kind: "tag", Slug: "empty", Names: []groups.Name{{Language: "en", Kind: groups.NameCanonical, Name: "Empty"}}},
 	}, &made)
 	color, empty := string(made[0].ID), string(made[1].ID)
-	f.want(http.StatusOK, staff, "POST", "/v1/groups/"+color+"/members", []groups.Membership{
+	f.want(http.StatusOK, staff, "POST", "/groups/"+color+"/members", []groups.Membership{
 		{ContentID: cid(3)}, {ContentID: cid(1)}, {ContentID: cid(2), VersionID: cid(20)}, {ContentID: cid(2), State: groups.MembershipProposed},
 		{ContentID: cid(1), Role: "featured"},
 	}, nil)
@@ -143,7 +143,7 @@ func TestGroupMembers(t *testing.T) {
 	page := func(id string, q url.Values) groups.MemberPage {
 		t.Helper()
 		var p groups.MemberPage
-		f.want(http.StatusOK, staff, "GET", "/v1/groups/"+id+"/members?"+q.Encode(), nil, &p)
+		f.want(http.StatusOK, staff, "GET", "/groups/"+id+"/members?"+q.Encode(), nil, &p)
 		return p
 	}
 	key := func(ms []groups.Membership) string {
@@ -185,10 +185,10 @@ func TestGroupMembers(t *testing.T) {
 	if p := page(empty, nil); len(p.Members) != 0 || p.NextCursor != "" {
 		t.Fatalf("empty group: %+v", p)
 	}
-	f.want(http.StatusNotFound, staff, "GET", "/v1/groups/"+uuid.Must(uuid.NewV7()).String()+"/members", nil, nil)
-	f.want(http.StatusBadRequest, staff, "GET", "/v1/groups/not-an-id/members", nil, nil)
-	f.want(http.StatusBadRequest, staff, "GET", "/v1/groups/"+color+"/members?cursor=%21", nil, nil)
-	f.want(http.StatusForbidden, user, "GET", "/v1/groups/"+color+"/members", nil, nil)
+	f.want(http.StatusNotFound, staff, "GET", "/groups/"+uuid.Must(uuid.NewV7()).String()+"/members", nil, nil)
+	f.want(http.StatusBadRequest, staff, "GET", "/groups/not-an-id/members", nil, nil)
+	f.want(http.StatusBadRequest, staff, "GET", "/groups/"+color+"/members?cursor=%21", nil, nil)
+	f.want(http.StatusForbidden, user, "GET", "/groups/"+color+"/members", nil, nil)
 }
 
 // An item's editor (a writer, not exempt) regenerates its media: an upload
@@ -198,8 +198,8 @@ func TestEditorRegeneratesMedia(t *testing.T) {
 	w := newWorld(t)
 	ctx := t.Context()
 	_, editor := w.person(iam.Role{})
-	f := serve(t, w.runtime(nil))
-	ref := media.RefBody{Kind: "gallery", ID: cid(1)}
+	f := serve(t, w.engine(nil))
+	ref := media.RefBody{Kind: "album", ID: cid(1)}
 	item, err := w.reg.Ref(ref.Kind, ref.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -260,7 +260,7 @@ func TestAdminPollsByStateAndSearch(t *testing.T) {
 	w := newWorld(t)
 	_, staff := w.person(w.staff)
 	_, user := w.person(iam.Role{})
-	f := serve(t, w.runtime(nil))
+	f := serve(t, w.engine(nil))
 	create := func(question string, liveAt *time.Time) content.Poll {
 		var p content.Poll
 		f.want(http.StatusCreated, staff, "POST", "/polls", content.PollInput{Question: question, Language: "en", LiveAt: liveAt,

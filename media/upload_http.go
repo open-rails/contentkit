@@ -27,8 +27,7 @@ type UploadHandlerOptions struct {
 }
 
 // UploadHandler serves the upload API the browser SDK calls (uploadRoutes).
-// contentkit.Runtime.Handler serves it at /media/upload; a host mounting it
-// alone puts it under a prefix. It panics without UploadHandlerOptions.Auth.
+// The engine serves it as the upload route group (/v1/media/upload). It panics without UploadHandlerOptions.Auth.
 // Errors are ErrorReply with the status of its code (Retry-After on 429).
 func UploadHandler(u *Uploads, o UploadHandlerOptions) http.Handler {
 	if err := gate.Check(o.Auth); err != nil {
@@ -192,7 +191,7 @@ func (h uploadHandler) frame(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	ref, err := h.ref(RefBody{Kind: q.Get("kind"), ID: q.Get("id")})
+	ref, err := h.ref(RefBody{Kind: q.Get("kind"), ID: q.Get("id"), Version: q.Get("version")})
 	var jpeg []byte
 	if err == nil {
 		jpeg, err = h.u.Frame(r.Context(), actor, ref, q.Get("path"), t, width)
@@ -229,7 +228,7 @@ func (h uploadHandler) digest(w http.ResponseWriter, s string) ([]byte, bool) {
 }
 
 func (h uploadHandler) ref(b RefBody) (contentref.ContentRef, error) {
-	return h.u.reg.Ref(b.Kind, b.ID)
+	return h.u.reg.VersionRef(b.Kind, b.ID, b.Version)
 }
 
 func (h uploadHandler) fail(w http.ResponseWriter, r *http.Request, err error) {

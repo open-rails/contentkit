@@ -12,113 +12,126 @@ import (
 type KeyKind uint8
 
 const (
-	KeyOwn     KeyKind = iota + 1 // content:<tenant>:<kind>:<id>: owning one item; unlocks it at any level
-	KeyMembers                    // members:<tenant>:<kind>:<id>: membership of a scope (channel, series)
-	KeyTier                       // <tier>: a merchant-wide tier such as premium
+	KeyContent KeyKind = iota + 1 // <tenant>:content:<id>: every version of one content item
+	KeyVersion                    // <tenant>:content:<id>/<version>: one version
+	KeyGroup                      // <tenant>:group:<id>: every member of a group, and content whose rule names it
+	KeyTier                       // <tier>: a tier from config, such as premium
 )
 
 const (
-	ownNamespace     = "content"
-	membersNamespace = "members"
-	maxComponent     = 64
-	// MaxKeyBytes bounds a key: members:<64>:<64>:<36>.
-	MaxKeyBytes = len(membersNamespace) + 1 + maxComponent + 1 + maxComponent + 1 + 36
+	contentNamespace = "content"
+	groupNamespace   = "group"
+	maxTenant        = 64
+	// MaxKeyBytes bounds a key: <tenant>:content:<id>/<version>.
+	MaxKeyBytes = maxTenant + len(":content:") + 36 + 1 + 36
 )
 
-// ErrNotContentKey is a string or reference outside the key grammar.
+// ErrNotContentKey is a string outside the key grammar.
 var ErrNotContentKey = errors.New("access: not a content key")
 
 // Key is an entitlement key ContentKit gives meaning to. OpenRails stores keys
-// opaquely; construct them here, never by hand. Keys are work-level: a
-// version shares its work's key. The zero Key is invalid.
+// opaquely; construct them here, never by hand. The zero Key is invalid.
 type Key struct {
-	kind KeyKind
-	ref  contentref.ContentKey // KeyOwn, KeyMembers; ContentVersionID is ""
-	tier string                // KeyTier
+	kind    KeyKind
+	tenant  string
+	id      string // the content or group id
+	version string // KeyVersion
 }
 
-// MakeOwn returns the key that owns item. It refuses an invalid or versioned
-// reference and a tenant or kind outside [a-z0-9_-]{1,64}.
-func MakeOwn(item contentref.ContentRef) (Key, error) { return makeRef(KeyOwn, item) }
+// ContentKey is the key of content id: it opens every version.
+func ContentKey(tenant, id string) (Key, error) { return makeKey(KeyContent, tenant, id, "") }
 
-// MakeMembers returns the membership key of scope (a channel, series or
-// collection), under the same rules as MakeOwn.
-func MakeMembers(scope contentref.ContentRef) (Key, error) { return makeRef(KeyMembers, scope) }
+// VersionKey is the key of one version of content.
+func VersionKey(tenant, content, version string) (Key, error) {
+	return makeKey(KeyVersion, tenant, content, version)
+}
 
-// MakeTier returns a tier key: ^[a-z][a-z0-9_-]{0,62}$.
-func MakeTier(name string) (Key, error) {
+// GroupKey is the key of group id.
+func GroupKey(tenant, id string) (Key, error) { return makeKey(KeyGroup, tenant, id, "") }
+
+// TierKey is a tier's key, its bare name: ^[a-z][a-z0-9_-]{0,62}$.
+func TierKey(name string) (Key, error) {
 	if !validTier(name) {
 		return Key{}, fmt.Errorf("%w: tier %q must match [a-z][a-z0-9_-]{0,62}", ErrNotContentKey, name)
 	}
-	return Key{kind: KeyTier, tier: name}, nil
+	return Key{kind: KeyTier, id: name}, nil
 }
 
-// Own is MakeOwn for constants and tests: it panics on an invalid reference.
-func Own(item contentref.ContentRef) Key { return must(MakeOwn(item)) }
+// ContentPrefix is the keyspace of a tenant's content and version keys.
+func ContentPrefix(tenant string) string { return tenant + ":" + contentNamespace + ":" }
 
-// Members is MakeMembers, panicking on an invalid reference.
-func Members(scope contentref.ContentRef) Key { return must(MakeMembers(scope)) }
-
-// Tier is MakeTier, panicking on an invalid name.
-func Tier(name string) Key { return must(MakeTier(name)) }
+// GroupPrefix is the keyspace of a tenant's group keys.
+func GroupPrefix(tenant string) string { return tenant + ":" + groupNamespace + ":" }
 
 // ParseKey parses a key string. Anything outside the grammar is
-// ErrNotContentKey, including a bare string that is not a valid tier name.
+// ErrNotContentKey, a bare string that is not a valid tier name included.
 func ParseKey(s string) (Key, error) {
 	if len(s) > MaxKeyBytes {
 		return Key{}, fmt.Errorf("%w: longer than %d bytes", ErrNotContentKey, MaxKeyBytes)
 	}
-	ns, rest, ok := strings.Cut(s, ":")
+	tenant, rest, ok := strings.Cut(s, ":")
 	if !ok {
-		return MakeTier(s)
+		return TierKey(s)
 	}
-	var kind KeyKind
-	switch ns {
-	case ownNamespace:
-		kind = KeyOwn
-	case membersNamespace:
-		kind = KeyMembers
-	default:
+	ns, id, ok := strings.Cut(rest, ":")
+	switch {
+	case !ok:
+		return Key{}, fmt.Errorf("%w: %q", ErrNotContentKey, s)
+	case ns == groupNamespace:
+		return GroupKey(tenant, id)
+	case ns != contentNamespace:
 		return Key{}, fmt.Errorf("%w: namespace %q", ErrNotContentKey, ns)
 	}
-	parts := strings.Split(rest, ":")
-	if len(parts) != 3 {
-		return Key{}, fmt.Errorf("%w: %q is not %s:<tenant>:<kind>:<id>", ErrNotContentKey, s, ns)
+	if content, version, ok := strings.Cut(id, "/"); ok {
+		return VersionKey(tenant, content, version)
 	}
-	return makeRef(kind, contentref.New(parts[0], parts[1], parts[2]))
-}
-
-// OwnPrefix is the keyspace of a kind's owned items: "content:<tenant>:<kind>:".
-func OwnPrefix(tenant, kind string) string { return ownNamespace + ":" + tenant + ":" + kind + ":" }
-
-// MembersPrefix is the keyspace of a scope kind: "members:<tenant>:<kind>:".
-func MembersPrefix(tenant, kind string) string {
-	return membersNamespace + ":" + tenant + ":" + kind + ":"
+	return ContentKey(tenant, id)
 }
 
 // Kind returns what the key grants; 0 for the zero Key.
 func (k Key) Kind() KeyKind { return k.kind }
 
-// Ref returns the work an own or members key names.
-func (k Key) Ref() (contentref.ContentRef, bool) {
-	if k.kind != KeyOwn && k.kind != KeyMembers {
-		return contentref.ContentRef{}, false
+// Tenant is the tenant of a content, version or group key.
+func (k Key) Tenant() string { return k.tenant }
+
+// Content is the content id of a content or version key.
+func (k Key) Content() string {
+	if k.kind == KeyContent || k.kind == KeyVersion {
+		return k.id
 	}
-	return k.ref.Ref(), true
+	return ""
 }
 
-// Tier returns a tier key's name.
-func (k Key) Tier() (string, bool) { return k.tier, k.kind == KeyTier }
+// Version is the version id of a version key.
+func (k Key) Version() string { return k.version }
+
+// Group is the group id of a group key.
+func (k Key) Group() string {
+	if k.kind == KeyGroup {
+		return k.id
+	}
+	return ""
+}
+
+// Tier is the name of a tier key.
+func (k Key) Tier() string {
+	if k.kind == KeyTier {
+		return k.id
+	}
+	return ""
+}
 
 // String is the key as OpenRails stores it; "" for the zero Key.
 func (k Key) String() string {
 	switch k.kind {
-	case KeyOwn:
-		return OwnPrefix(k.ref.TenantID, k.ref.ContentKind) + k.ref.ContentID
-	case KeyMembers:
-		return MembersPrefix(k.ref.TenantID, k.ref.ContentKind) + k.ref.ContentID
+	case KeyContent:
+		return ContentPrefix(k.tenant) + k.id
+	case KeyVersion:
+		return ContentPrefix(k.tenant) + k.id + "/" + k.version
+	case KeyGroup:
+		return GroupPrefix(k.tenant) + k.id
 	case KeyTier:
-		return k.tier
+		return k.id
 	}
 	return ""
 }
@@ -141,28 +154,24 @@ func (k *Key) UnmarshalText(b []byte) error {
 	return nil
 }
 
-func makeRef(kind KeyKind, ref contentref.ContentRef) (Key, error) {
-	if ref.ContentVersionID != nil {
-		return Key{}, fmt.Errorf("%w: %s is a version; keys are work-level", ErrNotContentKey, ref)
+func makeKey(kind KeyKind, tenant, id, version string) (Key, error) {
+	if !ValidTenant(tenant) {
+		return Key{}, fmt.Errorf("%w: tenant %q must match [a-z0-9_-]{1,64}", ErrNotContentKey, tenant)
 	}
-	if !validComponent(ref.TenantID) || !validComponent(ref.ContentKind) {
-		return Key{}, fmt.Errorf("%w: tenant %q and kind %q must match [a-z0-9_-]{1,64}", ErrNotContentKey, ref.TenantID, ref.ContentKind)
-	}
-	if err := contentref.ValidateID(ref.ContentID); err != nil {
+	if err := contentref.ValidateID(id); err != nil {
 		return Key{}, fmt.Errorf("%w: %w", ErrNotContentKey, err)
 	}
-	return Key{kind: kind, ref: ref.Key()}, nil
-}
-
-func must(k Key, err error) Key {
-	if err != nil {
-		panic(err)
+	if kind == KeyVersion {
+		if err := contentref.ValidateID(version); err != nil {
+			return Key{}, fmt.Errorf("%w: version: %w", ErrNotContentKey, err)
+		}
 	}
-	return k
+	return Key{kind: kind, tenant: tenant, id: id, version: version}, nil
 }
 
-func validComponent(s string) bool {
-	if s == "" || len(s) > maxComponent {
+// ValidTenant reports a tenant id usable in keys: [a-z0-9_-]{1,64}.
+func ValidTenant(s string) bool {
+	if s == "" || len(s) > maxTenant {
 		return false
 	}
 	for i := 0; i < len(s); i++ {
@@ -174,5 +183,5 @@ func validComponent(s string) bool {
 }
 
 func validTier(s string) bool {
-	return len(s) <= 63 && s != "" && s[0] >= 'a' && s[0] <= 'z' && validComponent(s)
+	return len(s) <= 63 && s != "" && s[0] >= 'a' && s[0] <= 'z' && ValidTenant(s)
 }

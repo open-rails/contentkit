@@ -1,30 +1,27 @@
 # ContentKit Host Integration Guide
 
-ContentKit is a library. Hosts own HTTP routes, auth, visibility, hydration
-and response shaping. Every call is scoped to one tenant; references of
-another tenant are rejected.
+ContentKit runs in the host's process as an engine (or standalone, `server/`)
+for one tenant. The host configures it, mounts its routes and passes
+providers; it never reads or writes ContentKit's storage.
 
 ## Contract
 
-One migrate call, one constructor, one HTTP mount per tenant. The mount
-serves every configured module at its sub-path: content at the root,
-`/media/upload/…`, `/media/…`, `/codes/{code}` and `/v1/…` (groups)
-([docs/api/routes.md](docs/api/routes.md)):
+One `New`, one `Start`, the routes mounted under one prefix, each route group
+at its sub-path under `/v1` ([docs/api/routes.md](docs/api/routes.md)):
 
 ```go
-_ = contentkit.Migrate(ctx, contentkit.MigrateConfig{DB: sqlDB, Schema: "doujins", ClickHouse: &chmigrate.Config{...}})
-rt, _ := contentkit.NewRuntime(ctx, contentkit.RuntimeConfig{
-	EmbeddedConfig: contentkit.EmbeddedConfig{PG: pool, PGSchema: "doujins", Tenant: "doujins", CH: ch, CHDatabase: "hub"},
-	Auth:           ak.Authenticator(), // who a request is (authkit/auth)
-	UserInfo:       ak.UserInfo(),      // authors' names (authkit/userinfo)
-	Content: content.Options{Schema: "doujins", Resolver: resolver,
-		Media: &content.Media{Images: jobs.Manifests(), Folders: jobs}, Processor: sanitizer, ContentKinds: []string{"gallery", "post", "tag"},
-		Limits: content.Limits{Redis: rdb}},
-	Uploads: uploads, Reader: reader, ReadLimit: media.RateLimit{Redis: rdb}, // /media/upload, /media
-	Codes:    router, // /codes/{code}
-	Groups:   groupStore, // /v1/groups…, writes for root:groups:write
+ck, _ := contentkit.New(ctx, cfg, contentkit.Deps{
+	Postgres: pool, ClickHouse: ch, Redis: rdb,
+	Auth:  ak.Authenticator(), // who a request is (authkit/auth)
+	Users: ak.UserInfo(),      // authors' names (authkit/userinfo)
+	Store: bucket, Moderator: moderator, PostBodyProcessor: sanitizer,
+	Resolver: resolver, CanUpload: authorizer, // content the host still owns (#120, #121)
 })
-mux.Handle("/api/contentkit/", http.StripPrefix("/api/contentkit", rt.Handler()))
+_ = ck.Start(ctx, contentkit.WithRiverClient(fleet)) // fleet built with ck.RiverJobs()
+routes, _ := ck.Routes(contentkit.Routes{Prefix: "/api/contentkit", Groups: contentkit.AllRoutes})
+for _, r := range routes {
+	mux.Handle(r.Path, r.Handler)
+}
 ```
 
 ## Auth
@@ -35,12 +32,12 @@ module (`github.com/open-rails/authkit/auth` and
 `github.com/open-rails/authkit/userinfo`), or passes AuthKit's implementations.
 ContentKit links neither AuthKit's server nor its database runtime:
 
-- `RuntimeConfig.Auth` (`auth.Authenticator`, `ak.Authenticator()`): who a
+- `Deps.Auth` (`auth.Authenticator`, `ak.Authenticator()`): who a
   request is. Each route's gate asks it at most once per request and builds
   the `access.Actor` from the `Verified`'s `Identity`: `ID` is the subject,
   `Kind` a person (`auth.SubjectUser`) or an application, `Invoker` who acts
   on the subject's behalf when someone does, `Verified` the credential.
-- `RuntimeConfig.UserInfo` (`userinfo.Lookup`, `ak.UserInfo()`): authors'
+- `Deps.Users` (`userinfo.Lookup`, `ak.UserInfo()`): authors'
   names and usernames (Authors below).
 
 ContentKit names its staff permissions, always the full
@@ -74,7 +71,7 @@ Staff hold them in the Authenticator's root scope, which it names (AuthKit's
 grant). There is no scope or permission
 setting: a staff member's permissions are root-wide, and per-item rights are
 the resolver's (`Owner`, `Editor`). The gate asks the `Verified`'s
-`Can(root, perm)`, live. `NewRuntime` refuses an Authenticator that names no
+`Can(root, perm)`, live. `New` refuses an Authenticator that names no
 root scope, or whose roles lack one of the permissions
 (`auth.PermissionCatalog`).
 
@@ -104,16 +101,9 @@ A host mounting a module alone passes the same Auth: `content.Options.Auth`
 `media.UploadHandlerOptions.Auth`, `groups.Store.Handler(auth)`;
 `contenturl.Router.Handler` needs none.
 
-Hosts use:
-
-- `rt.Search(ctx, query, contentkit.HubSearchOptions{...})` → `SearchResult{Hits, HasMore, Truncated}`
-- `rt.Client().SearchWithTrace(...)` for offline evaluation/debugging
-- `rt.Typeahead(ctx, query, contentkit.TypeaheadOptions{...})`
-- `worker.SyncOnce(ctx, rt.WorkerOptions(hostOptions))` on a schedule, `search.MarkDirty` in content transactions
-- the `Hub` methods for the signal and discovery planes
-- `rt.Content` (package `content`) for interactions: `Counts`, `MyReactions`, `IsFavorited`, `ListFavorites`, `LatestComments`, `ReactionsByActor`
-
-Do not call `search` package SQL helpers from request paths.
+Hosts use the routes and `ck.Client()` (the same surface in process).
+Search, typeahead, signals and discovery run inside the engine; their routes
+land with #122.
 
 ## Content ids
 
@@ -200,9 +190,9 @@ _ = urls.Merge(ctx, duplicate, survivor)             // the duplicate's URL redi
   path, with the query kept. The canonical path carries the language prefix and
   that language's slug. `Visibility` returns `Visible`, `Hidden` or `Gone`.
   `Hidden` behaves like an unknown code and serves the host's 404 without
-  leaking the slug. `Gone` answers 410. For posts, use
-  `rt.Content.PostVisibility`. For groups, map the group state: a deleted
-  group is `Gone`, and merged groups already resolve to their survivor.
+  leaking the slug. `Gone` answers 410. The engine's codes route group answers
+  posts' visibility itself. For groups, map the group state: a deleted group
+  is `Gone`, and merged groups already resolve to their survivor.
   `kinds.Config.Routes()` maps every content and group kind to its route.
   A canonical request reaches the page
   with `FromContext(ctx)`, and gets a `Link: <…>; rel="canonical"` header when
@@ -215,7 +205,7 @@ router, _ := contenturl.NewRouter(urls, contenturl.RouterOptions{
 	Visibility: func(r *http.Request, l contenturl.Link) (contenturl.Visibility, error) { /* drafts, removals */ },
 })
 mux.Handle("/", router.Middleware(spa))
-// RuntimeConfig.Codes: router, so rt.Handler() serves GET /codes/{code}[?lang=]
+// the engine's codes route group serves GET /v1/codes/{code}[?lang=], routed by Config.Content's kinds
 ```
 
 - **Legacy aliases.** An import records the identifiers of the old site in the
@@ -256,9 +246,9 @@ Ports (in `content` unless qualified):
 
 | Port | Required | Contract |
 |---|---|---|
-| `Auth` | yes | `auth.Authenticator` (Auth above); `NewRuntime` fills it from `RuntimeConfig.Auth` |
+| `Auth` | yes | `auth.Authenticator` (Auth above); the engine fills it from `Deps.Auth` |
 | `access.ContentResolver` | yes | `Resolve(ctx, refs, actor) → map[ContentKey]access.Resolution{Ref, Visible, Accessible, Editor}`, keyed by each requested ref's `Key()`: the whole gating surface, shared with media. Batch-first: ContentKit passes every ref a request needs in one call (`/comments/latest` resolves its whole page at once; single-item routes pass one ref), so answer it with one query, never a per-ref loop. An omitted ref denies (404); an error fails the whole batch. `Ref` is the canonical reference rows are stored under (an alias or per-language route resolves to it); zero keeps the request, which must then be lower case (else 400); another tenant is an error. React/comment need `Accessible`, favorite needs `Visible`. `Owner` is the user who owns the content (its creator; `""` for site content): owner-scoped comment bans apply to it. For media an item's private files are all or nothing: `Full()` (visible and accessible) gets every one, anyone else none; what a viewer without access may see is the item's public files (a preview preset), which need only `Visible` to anonymous viewers; the ref is the item, i.e. the host's version; `Editor` (the actor may edit the item) unlocks editor reads (uploads, edits, editor views) and every private file of a visible item, so set it only for people who may see them all |
-| `UserInfo` | no | `userinfo.Lookup`: authors' names (Authors below); `NewRuntime` fills it from `RuntimeConfig.UserInfo` |
+| `UserInfo` | no | `userinfo.Lookup`: authors' names (Authors below); the engine fills it from `Deps.Users` |
 | `Media` | no | post and poll images in ContentKit media (see below); absent = image routes answer 501 |
 | `ContentProcessor` | no | rich-text sanitizer for comment/post bodies (default strips tags) |
 | `ContentModerator` | no | `Screen(ModerationInput) → Verdict{Decision, Reason, Model, PromptVersion, Confidence}` before a comment/post publishes; absent = publish (see Moderation) |
@@ -277,11 +267,8 @@ leaves bare ids, never failing the response. The avatar needs
 **Post and poll images** live in media folders `{tenant}/post/{post_id}/` and
 `{tenant}/poll/{poll_id}/` (`Media.PostKind`/`PollKind`). Register both kinds
 with a `Named` upload path (`inline/{name}`, with a `Max`) and its public preset (`To:
-"{name}.webp"`), route their `CanUpload` to `rt.Content.CanUpload` (`root:posts:write`
-or `root:polls:write`, and the post or poll must exist) and their `Hooks.Resolver` to
-`rt.Content.MediaResolver()`, and pass
-`content.Media{Images: jobs.Manifests(), Folders: jobs}` (`NewRuntime` adds
-its `Reader`). The editor uploads each image with the SDK's `upload(file,
+"{name}.webp"`); the engine answers their uploads (`root:posts:write` or
+`root:polls:write`, and the post or poll must exist) and reads itself. The editor uploads each image with the SDK's `upload(file,
 {ref: {kind: "post", id}, path: "inline/x.png"})` (browser to bucket; the
 server names it `i-{uuid}`), then hands the name to ContentKit.
 
@@ -296,9 +283,7 @@ the images' current public files with one projection lookup per response
 (`Media.Images`): a post's `body` shows each resolved reference as its URL,
 `images` maps each resolved name to its URL and `cover_url` is the cover's;
 a reference without a public file (an unpublished post's, one still
-rendering) stays as it is, and `cover_url`/`image_url` are absent. A host
-reading `content_posts` itself resolves its rows with
-`rt.Content.ResolvePosts(ctx, posts)` (one lookup for the page).
+rendering) stays as it is, and `cover_url`/`image_url` are absent.
 
 | Route | Body | Result |
 |---|---|---|
@@ -336,9 +321,8 @@ the signal plane through ContentKit's own preference outbox, and the
 
 Posts are ContentKit's own keyword documents (kind `post`, the post's
 language): every post write queues its `DocumentKey` in the keyword schema's
-dirty queue inside the write transaction; `rt.WorkerOptions` routes kind
-`post` to the module's builder and lister, so one worker tick maintains host
-documents and posts.
+dirty queue inside the write transaction; the engine's search job builds
+them.
 
 The tenant is pinned at construction and stamped on every row; a `ContentRef`
 of another tenant passed to any read is `content.ErrTenant`, never remapped.
@@ -366,15 +350,14 @@ and the text (title + body for posts). The verdict sets the item's
   ever published unscreened and no submission is lost.
 - No moderator: everything publishes.
 
-Review queue: `rt.Content.ListHeld(ctx, kind, cursor, limit)` pages held
-comments or posts oldest-first (`HeldItem` carries the body, the content
+Review queue: `GET /v1/moderation/held?kind=comment|post&cursor=&limit=` pages
+held comments or posts oldest-first (each carries the body, the content
 reference, the reason, model, prompt version, confidence, any moderator error
-and `revision`); `rt.Content.Resolve(ctx, kind, id, ReviewDecision{Revision,
-Decision, Reviewer, Reason})` writes the final state: `approve` publishes (counts and the keyword
-index follow), `reject` keeps the item author-visible as `rejected` with the
-reason. Over HTTP: `GET /moderation/held?kind=comment|post&cursor=&limit=` and
-`POST /moderation/{kind}/{id}/resolve {"revision","decision","reason"}` (the
-actor id is the reviewer), both gated by `root:moderation:review`.
+and `revision`); `POST /v1/moderation/{kind}/{id}/resolve
+{"revision","decision","reason"}` (the actor id is the reviewer) writes the
+final state: `approve` publishes (counts and the keyword index follow),
+`reject` keeps the item author-visible as `rejected` with the reason. Both
+need `root:moderation:review`.
 `GET /comments/admin` shows every state with real bodies and authors, by content kind or `author`.
 
 Screening is revision-fenced. A decision must echo the held `revision`, so it
@@ -400,9 +383,7 @@ Each `Screen` is bounded by `Options.ModeratorTimeout` (5s); a failure holds
 the write. After 3 consecutive failures the moderator is skipped (writes held
 at once) for `Options.ModeratorCooldown` (30s); then one trial call reaches
 it while other writes are still held, and its result closes or reopens the
-breaker. Register
-`Runtime.CheckModerator` as an optional dependency (helpers `deps`) so a
-tripped moderator shows on statusz and `app_dependency_up`.
+breaker. The engine's `contentkit_moderator` probe fails while it is tripped.
 
 ## Anonymous participation
 
@@ -489,10 +470,8 @@ before) or `free_text`: one answer per signed-in actor in
 Creating a free-text poll without `Options.Classifier` is refused (`501`,
 `content.ErrNoClassifier`). Each stored or edited answer is classified right
 after commit; a classifier failure keeps the answer with `classified: false`
-and the host retries with `rt.Content.ReclassifyPending(ctx, after, limit)` on a
-schedule (returns `ClassificationPage{Classified, Next}` and the first error).
-Continue `Next` even after provider failure, and restart from empty when the
-sweep ends. This is a per-sweep cursor, never a durable high-water mark. The classifier
+and the engine's reclassify job retries every pending answer every 10
+minutes, each sweep from the start. The classifier
 returns a group id and label for an immutable `(tenant, answer_id, revision)`.
 ContentKit CAS-persists that assignment only while the revision is current.
 Membership, labels and counts are read from these durable assignments:
@@ -505,11 +484,10 @@ old assignment until the new revision is classified; late old results cannot win
 
 ## Interaction erasure
 
-`rt.EraseSubjects(ctx, subjects)` erases deleted accounts from every configured
+`ck.EraseSubjects(ctx, subjects)` erases deleted accounts from every configured
 plane: signals ([completion contract](#subject-erasure-completion-contract)),
 ContentKit interaction data and data retained by
-moderator/classifier providers. Standalone content consumers call
-`rt.Content.EraseSubjects`; `rt.EmbeddedHub.EraseSubjects` is analytics-only. A
+moderator/classifier providers. A
 deliberately disabled signal plane is absent, not unfinished. Any
 configured-plane failure returns an error and an incomplete report: keep the
 host's obligation pending and retry (calls are idempotent). The host may
@@ -576,132 +554,48 @@ work tags ∪ that version's tags (never a sibling's). Mark every version's
 alias changes. Ungrouped records (tags, artists, series) are one document per
 language referenced by their group id as `ContentRef{tag, <group id>}`.
 
-## Eligibility join (host-owned, trusted)
+## Discovery (`/v1`, route group `discovery`)
 
-`Eligibility{SQL, Args}` is trusted host SQL joined laterally to each
-candidate document (`sd.tenant_id`, `sd.content_kind`, `sd.content_id`,
-`sd.content_version_id`, `sd.language`) inside every retrieval route, before
-any limit:
+Hosts list, search and recommend only through these routes
+([docs/api/routes.md](docs/api/routes.md)); ContentKit applies access, site
+scope, content filters, listing and language itself, over
+`content_facets`, and answers one card per content item with the version
+that fits the reader (`display_language` first, then position).
 
-- return **no row** when the document is not eligible for this request;
-- return **one row** with `priority` (integer; lower is preferred among a
-  work's equal matches, e.g. `0` for the language default);
-- ownership, access, publication **and every requested version trait** must
-  hold on that one row. Never OR across sibling versions.
+- `GET /contents`: `kind`, `groups` (all of), `exclude_groups`, `traits`,
+  `attribute=name:value` (declared filterable attributes), `released_on`
+  (`YYYY-MM-DD` or `YYYY-MM`, in `tz`), `view_status`
+  (`unseen|in_progress|completed`, signed in), `language` (only content
+  serving it), `display_language`, `mode` (`lock` marks locked cards,
+  `hide` lists only what the reader opens), `sort` (`newest`, `oldest`,
+  `title`, `popular[:period]`, `top_rated[:period]`, `most_favorited`,
+  `position` in the first of `groups`, `random`), `cursor`, `limit`.
+- `GET /search` (`q`, the same filters; `relevance` personalized for a
+  signed-in reader, or any list sort of the best 1000 matches), `GET
+  /typeahead` (contents and groups).
+- `GET /contents/{id}/similar`, `GET /recommendations`: `Deps.Candidates`
+  (co-engagement by default), admitted through the reader's visibility.
+- `GET /release-dates` (`by=day|month`, the list filters): counts and free
+  counts per date.
+- `GET|PUT /me/content-filters`: the configured `content_filters`, each the
+  reader may show or hide, and `include_deleted`.
+- `GET|DELETE /me/history`, `POST /signals` (views and clicks; signed out,
+  `session` names the browser), `POST /exposures`.
 
-ContentKit groups documents per work `(tenant, kind, content_id)` across the
-searched languages before `Offset`/`Limit`. Each hit returns the matched
-document's reference (`ContentID` = the work, `Version()` = the matched
-version or `""`) and `Language`; `Score` ranks the work by its best document in
-any searched language. Hosts re-check authorization while hydrating.
+A card carries title and path in the display language, cover renditions, the
+version (languages, traits, pages, duration), the version's groups with pages
+by kind, likes, favorites and all-time viewers, the access decision
+(`allowed`, `sell`, `requires`, `preview`, `free_after`), the signed-in
+reader's favorite and progress, `published_at` and attributes. Signal reads
+answer 501 `not_configured` without ClickHouse.
 
-## Filter policy (host-owned)
+## Search documents
 
-- `FilterSQL`/`FilterArgs`: a WHERE fragment on `sd`, named args only.
-- Reserved arg names: `tenant`, `language`, `q`, `prefix`, `limit`, `kinds`,
-  `candidates`; names must be unique across `FilterArgs` and `Eligibility.Args`.
-- Never concatenate user input into either.
-
-## Pages and candidate depth
-
-- `Limit`: page size in works; `Offset`: works skipped; both apply after grouping.
-- `CandidateLimit`: the document window per language source before grouping.
-  Defaults to `max(100, 2*(Offset+Limit))`, capped at 10000. Pass the same
-  value on every page when a `Truncated` window must stay identical.
-- `HasMore` is true when works follow the page or when `Truncated`.
-
-## Language strictness
-
-- `LanguageModeExact` (default): requested language only.
-- `LanguageModeFallbackEnglish`: requested language + English; a work matched
-  in both is returned once, represented by its requested-language document;
-  ties never prefer English.
-
-## External document consumers
-
-`DocumentSink` is an optional, neutral change feed for external indexes,
-caches and audit consumers. Semantic search belongs entirely to the deferred
-User Intelligence library; ContentKit exposes no semantic search hook.
-
-## Worker
-
-`worker.SyncOnce` holds no connection or transaction across host callbacks
-or sink calls, so a one-connection pool suffices and callbacks may query the
-same pool. Each write is a short transaction fenced by the dirty revision:
-overlapping ticks only repeat work, and a stale build never overwrites a newer
-one. Sink effects happen after the keyword row commits and before the row is
-acknowledged. Both sink operations carry the dirty revision: apply only newer
-versions atomically and retain a tombstone version after deletion. This fences
-operations that finish remotely after the caller sees a timeout. A failed sink
-stays queued under a new revision. Callbacks must be bounded, read-only and
-respect cancellation.
-
-## Listing with access
-
-A paywalled listing filters in SQL, not after `LIMIT`: hide mode then
-returns full keyset pages. `gate.Filter(ctx, actor)` reads the viewer once
-(see README [Paywalls and listings](README.md#paywalls-and-listings-access));
-`Filter.SQL(access.Columns{…})` turns it into one boolean predicate with pgx
-named args (prefix `ck_`, or `ArgPrefix`). Its text depends only on the
-columns, so one prepared statement serves every viewer. Put the same
-predicate inside a search `Eligibility` to get hide mode in keyword search.
-
-```go
-postCols := access.Columns{ID: "p.id", Kind: "post", Level: "p.access_policy",
-	Levels: map[string]access.Level{"public": access.Public, "membership": access.MembersLevel,
-		"ppv": access.PPV, "members_ppv": access.MembersPPV},
-	Scope: "p.channel_id", ScopeKind: "channel"}
-// One tier flag (Doujins, Hentai0):
-galleryCols := access.Columns{ID: "g.id", Kind: "gallery", TierName: "premium",
-	Level:  "CASE WHEN g.is_premium THEN 'premium' ELSE 'public' END",
-	Levels: map[string]access.Level{"public": access.Public, "premium": access.TierLevel}}
-```
-
-- `Kind` must be a `GateConfig.OwnedKinds` entry, `ScopeKind` a
-  `MemberKinds` entry and `TierName` a declared tier: the filter then holds
-  the viewer's whole holdings and the predicate is exact. `Tier` instead of
-  `TierName` names a per-row tier column.
-- A level value missing from `Levels` is never admitted, owned or not.
-- Every `Columns` string is trusted SQL; never build one from input.
-- Lock mode (locked items shown with a paywall) uses `f.Allows(item)` per row
-  and `gate.Decide` for `Sell`/`Requires`, with no further read.
-
-Indexes the listing needs:
-
-| Listing | Index | Plan |
-|---|---|---|
-| Global feed | `(published_at DESC, id DESC) WHERE <published>` | index scan in order, access as a filter, stops at `LIMIT n+1` |
-| Scope page | `(channel_id, published_at DESC, id DESC) WHERE <published>` | `channel_id = $1` index condition |
-| Sparse visibility | the two above and the primary key | `Filter.Branches`, below |
-
-A viewer who sees a small fraction of a feed scans far for each page. Split
-the predicate by access class with `Filter.Branches` (public, tier, members,
-owned, candidates; classes that can match nothing are left out), limit each
-branch on its own index and merge:
-
-```sql
-SELECT * FROM (
-  (SELECT … FROM posts p WHERE <published> AND <keyset> AND <branch 1> ORDER BY p.published_at DESC, p.id DESC LIMIT @n)
-  UNION
-  (SELECT … FROM posts p WHERE <published> AND <keyset> AND <branch 2> ORDER BY p.published_at DESC, p.id DESC LIMIT @n)
-) page ORDER BY published_at DESC, id DESC LIMIT @n
-```
-
-**Truncation.** A keyspace holding more than `HeldLimit` keys (default 1,000,
-at most 10,000) leaves `Filter.Complete(kind)` false, and the predicate also
-admits that keyspace's candidate rows. `gate.Settle(ctx, actor, f, items)`
-decides them in one exact read and returns `keep` and `short` (a dropped row:
-the page may hold fewer rows). It reads nothing when the filter decided every
-row, so call it on every hide-mode page. Only viewers past the limit get
-short pages.
-
-**Serving.** `gate.Resolver(facts)` is the `ContentResolver` for content and
-media: one `Facts` query per batch, at most one billing read, and
-`Accessible = Visible && !Withheld && (Editor || Bypass || allowed)`. In a
-request that already read the `Filter` it costs nothing for items of declared
-kinds. A media token (1 h TTL in 4 h
-windows) opens every private file of its item, so a refund or revocation
-reaches a viewer who holds one within about 5 hours.
+The engine's search job (every 30 s, and at start) drains the dirty queue and
+runs a bounded backfill. It holds no connection or transaction across
+builders; each write is a short transaction fenced by the dirty revision, so
+overlapping runs only repeat work and a stale build never overwrites a newer
+one.
 
 ## Media
 
@@ -710,12 +604,25 @@ table records what media exists. The app declares everything in one registry
 at startup (`media.Config`); ContentKit hard-codes no kinds, names or
 layouts.
 
-- **Items.** An item is `{namespace}/{kind}/{id}/`: the host's version id is
-  the item id (ContentKit has no versions; a work's versions are separate
-  items). It holds `manifest.json` (gzip JSON, never served), `private/`
-  (hash-named blobs: uploads, derived files, editor views), `public/`
-  (published renditions such as `cover-460-{generation}.webp`) and `temp/`
-  (in-flight server-side writes).
+- **Items.** An item is `{namespace}/{kind}/{id}/`, or for a content kind
+  (`Kind.Versions`, derived from the kinds config by `media.ForContent`) a
+  version's `{namespace}/{kind}/{content}/{version}/` beside its content's
+  item, which holds the `Content` uploads (the cover). An item holds
+  `manifest.json` (gzip JSON, never served), `private/` (hash-named blobs:
+  uploads, derived files, editor views), `public/` (published renditions
+  such as `cover-460-{generation}.webp`) and `temp/` (in-flight server-side
+  writes).
+- **Content versions.** `media/versions` answers media's hooks from the
+  content model: editors (staff, creators, owner-group editors) upload, a
+  person their own avatar; reads follow the catalog's
+  `access.ContentResolver`, plus segments' release and the rule's preview;
+  a version's media writes its pages, duration, size and
+  audio onto `content_versions` (`Facets` refreshes listings). A `Publish`
+  kind reaches viewers only through `{kind}.published` items: one per
+  segment of its pages, a locked version's previews, and one playback item,
+  planned by `GET /v1/contents/{id}/versions/{vid}/reader`. Forks, page-archive
+  imports, reader metadata and downloads (a host watermark, quota buckets)
+  complete it.
 - **Manifest.** An ordered virtual file system over the item's private
   blobs: each Upload's files in natural order unless an op reorders them,
   then each private preset's outputs in their uploads' order. A derived file
@@ -723,7 +630,7 @@ layouts.
   exactly when the fingerprint no longer matches. Each upload records its
   public publications: the current generation of each preset and, while
   the worker writes one, its successor.
-- **URLs.** `https://media.<site>/v1/{namespace}/{kind}/{id}/{public|private}/{name}`.
+- **URLs.** `https://media.<site>/v1/{namespace}/{kind}/{id}[/{version}]/{public|private}/{name}`.
   Public names carry a generation that changes on every render, so a URL
   built from a preset's `to` template is never valid: it serves the kind's
   default image, or 404 when the preset declares no `Default`. Build public
@@ -848,8 +755,7 @@ reg, err := media.NewRegistry(media.Config{Namespace: "doujins", BaseURL: "https
 
 ### Uploads and commit ops
 
-`rt.Handler()` serves the upload API at `/media/upload` (`RuntimeConfig.Uploads`);
-mounted alone it is `media.UploadHandler(uploads, opts)`, behind the host's auth:
+The upload route group serves the upload API at `/v1/media/upload`:
 
 | Route | Does |
 | --- | --- |
@@ -887,8 +793,8 @@ out until `attach`.
 
 ### Reads and playback
 
-`rt.Handler()` serves the read API at `/media` (`RuntimeConfig.Reader`,
-`ReadLimit`); mounted alone it is `reader.Handler(media.HandlerOptions{Auth, Limit})`:
+The media route group serves the read API at `/v1/media`
+(`Config.Media.ReadLimit`):
 
 - `GET /{kind}/{id}?prefix=low-res/&offset=&limit=&download&editor` answers
   `{access, expires, meta, previews, total, hls, files: [{path, type, size, w, h, url | locked}]}`
@@ -1280,10 +1186,11 @@ content's memberships in the kinds it names. Membership writes, group
 deletes, parent moves and merges keep `content_facets.group_ids` current (a
 version's effective groups, ancestors included: `EffectiveGroups`).
 `Options.ContentChanged` runs in the same transaction for whatever else
-derives from them. Engine jobs: `Recount` (counts per group, content kind and
+derives from them. Engine jobs: `Recount` (every 15 minutes: (counts per group, content kind and
 language from the facets, and automatic covers) and `RefreshWindows`
-(featured-rail windows). Group documents are built by the store
-(`BuildKeywordDocuments`, `ListContent`, `IsKind`).
+(every minute: featured-rail windows). The engine's search job builds group
+documents. The group route group serves `/v1/groups…` and
+`/v1/contents/{id}/groups`; writes need `root:groups:write`.
 
 ## Preference boundary (reactions and favorites into the signal plane)
 
@@ -1303,22 +1210,22 @@ reactions and comment threads never do.
   is re-checked at sync time. `MyReactions`/`IsFavorited` accept route
   references and read under the canonical one; `Counts` reads exactly the
   reference given.
-- **Sync**: schedule `rt.SyncPreferences(ctx)` from the host worker (e.g.
-  every few seconds). It sends rows past the tenant's watermark in revision
+- **Sync**: the engine's preference job runs every 30 s. It sends rows past the tenant's watermark in revision
   order as one `signal` event per subject × reference × axis (`Type` = axis,
-  `EventID` = `contentkit.PreferenceEventID`, `Revision`, `OccurredAt` =
+  `EventID` = `"current"`, `Revision`, `OccurredAt` =
   row `updated_at`, `Value`), then records a checkpoint; the newest revision
   wins, so re-sends are harmless. Each scan restarts from the newest
   checkpoint older than `Options.PreferenceSyncOverlap` (default 5m) before
   the previous sync: a write is delivered if its transaction commits within
   the overlap of allocating its revision. A failed sync advances nothing.
-- **Repair**: schedule `rt.ResyncPreferences(ctx)` (e.g. daily) and run it
-  after sink loss: a full re-send, zeros included.
-- **Erasure**: `rt.EraseSubjects` deletes the subject's rows behind the source
+- **Repair**: the engine re-sends every preference daily (zeros included),
+  which repairs a sink loss.
+- **Erasure**: `ck.EraseSubjects` deletes the subject's rows behind the source
   fence and fences the signal plane, which drops any late send.
-- **Restore**: after restoring PostgreSQL against a retained signal plane, run
-  `rt.Content.SeedPreferenceRevisionFloor(maxSinkRevision)` before writers
-  resume (only ever advances; fails closed outside `[0, MaxInt64/2]`).
+- **Restore**: after restoring PostgreSQL against a retained signal plane, the
+  preference revision floor must be seeded to the sink's newest revision
+  before writers resume (`content.Runtime.SeedPreferenceRevisionFloor`, only
+  ever advancing; an operator step until the import API exposes it).
 
 ## Attribution export (paged evaluation data)
 
@@ -1347,14 +1254,14 @@ true only when:
    and export evaluates the ledger inside its own statement.
 
 The subject key is dead in that tenant forever. Residue (rows that landed
-after the fence or came back with a restore) is unreadable; schedule
-`hub.EnforceErasures` and run it after every restore, after re-erasing the
-subjects deleted since the backup. A shared account exists in every tenant:
+after the fence or came back with a restore) is unreadable; the engine's
+erasure job removes it daily. After a restore, re-erase the subjects deleted
+since the backup. A shared account exists in every tenant:
 each host erases its own tenant.
 
 ## Discovery candidates
 
-`SimilarTo` and `Recommend` get candidates from one port:
+Similar and recommended lists get candidates from one port:
 
 ```go
 type Candidates interface { // package discovery
@@ -1363,59 +1270,31 @@ type Candidates interface { // package discovery
 }
 ```
 
-Candidates are ranked best-first; oversample past `q.Limit`. The hub then
-applies the same policy to every source: tenant and `ContentKinds`, never the
-anchor, seen works (per options), always disliked works, dedupe, limit, and the
-`Recommend` popularity fill. `EmbeddedConfig.Candidates` nil =
-`discovery.Engagement` (co-engagement seeded from the subject's top works).
-To switch sources, set that one field; wrap it in `Fallback` so errors and thin
-results fall back to engagement:
-
-```go
-engagement, err := discovery.NewEngagement(ch, "hub", "doujins")
-cfg.Candidates = discovery.Fallback{Primary: aiSource, Secondary: engagement, OnError: logErr}
-```
+Candidates are ranked best-first; oversample past `q.Limit`. The
+`Recommender` applies one policy to every source: tenant and kinds, never the
+anchor, seen and disliked works, the reader's visibility (admission in one
+batch), dedupe, limit, and the popularity fill. `Deps.Candidates` nil is
+`discovery.Engagement`; wrap a provider in `discovery.Fallback` so errors and
+thin results fall back to engagement.
 
 ## Popularity (policy-ranked)
 
-Hosts rank by a named policy, never by the default rank: resolve the configured
-name at startup and build one `popularity.Ranker` per hub.
-
-```go
-policy, err := popularity.ByName(cfg.PopularityPolicy) // "" = v1; unknown names refuse startup
-ranker, err := popularity.New(popularity.Config{Source: hub, Policy: policy, Cache: cache, Catalog: catalog})
-
-window, err := popularity.WindowForPeriod(period, time.Now()) // 7d|30d|90d|365d|all, else error
-top, err := ranker.Popular(ctx, "gallery", window, offset+limit)     // ClickHouse RankExpr, global; slice for the page
-scores, err := ranker.Scores(ctx, "gallery", artistGalleryIDs, window) // Go over Metrics: host-selected candidates
-artists, err := ranker.Groups(ctx, "gallery", "artist", window)       // member sums through the Catalog port
-```
-
-- `Hit` carries the score next to the raw metrics: show `Viewers` and
-  `MeanEngagement()` as public counts, never anything derived from the score.
-- Register `popularity.SessionScorer` (or your own `signal.Scorer`) per content
-  kind so session scores are coverage of the selected version × dwell.
-- `Catalog.Memberships(tenant, contentKind, groupKind, ids)` maps ranked
-  works to their group ids; `*groups.Store` implements it. ContentKit never
-  records a signal against a group.
-- Cache keys carry tenant, policy name, kind, window and bounds; two policies
-  sharing one cache never read each other's entries.
-- `Popular` serves at most `Config.MaxDepth` works (default 2000) and reads
-  power-of-two prefixes, so a request-chosen offset can neither deepen a read
-  nor add cache entries. `popularity.NewMemoryCache(maxBytes)` is LRU within
-  its byte budget; a host cache passed as `Cache` must be bounded too.
-
-See [docs/popularity-policy.md](docs/popularity-policy.md) for the formula,
-priors, the judged fixture and the host adoption steps.
+The engine's `contentkit_popularity` job (hourly, with ClickHouse) copies
+`popularity.PolicyV1` scores per period (`7d`, `30d`, `90d`, `365d`, `all`),
+each window's rating (Wilson lower bound of the subjects whose feedback is
+positive) and all-time viewers into `content_facets.popularity`, so a filtered
+`popular` or `top_rated` sort is one Postgres query. A view is scored by
+`popularity.SessionScore` against its version: pages (reader kinds, 8 s of
+dwell a page), seconds (player kinds) or scroll percent (post kinds). See
+[docs/popularity-policy.md](docs/popularity-policy.md) for the formula.
 
 ## Migration checklist
 
-- Create and reuse one `contentkit.Runtime` per tenant.
-- Index per-version documents; move visibility/trait policy into `Eligibility`.
-- Page with `Offset`/`Limit` and `HasMore`; never fetch N documents and dedupe.
-- Apply the baselines with `contentkit.Migrate` per [docs/migration.md](docs/migration.md); gate startup on `signal.CheckSchema`.
+- Create and reuse one `contentkit.Engine` per tenant.
+- Read lists, search and recommendations through the discovery routes; send views as `POST /signals`.
+- `contentkit.New` applies the baselines ([docs/migration.md](docs/migration.md)) and checks the signal schema.
 - Wire `Options.Moderator` (a `Chain` of `BasicModerator` and the AI moderator), `Options.Classifier` for free-text polls, grant `root:moderation:review`, and schedule `ReclassifyPending`.
-- Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, implement `ContentCanonicalizer`, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, schedule `SyncPreferences` (and `ResyncPreferences` as the periodic repair), wire `EraseSubjects` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.
+- Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, implement `ContentCanonicalizer`, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, wire `Engine.EraseSubjects` into deletion, rewrite direct SQL readers (`split_part(entity_id, ':', 1)`, favorite-key helpers) to the canonical `content_id` and filter `content_favorites` on `value = 1`.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.
 - Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the `post` and `poll` kinds with a `Named` upload path and its public preset, and move image uploads to the SDK's `upload` plus the image routes above (`POST /posts/media`, multipart `POST .../cover|image` and `image_url`/`cover_url` in write bodies are gone).
 - Adopt the one media model (v0.62.0): declare the registry (`media.Config`), use version ids as item ids, replace slots with upload paths and public presets, and wire the hooks; see "Media".

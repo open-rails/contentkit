@@ -25,7 +25,7 @@ type Media struct {
 	Images  MediaImages  // *media.Manifests
 	Folders MediaFolders // *media.Jobs
 	// Reader gives editors an unpublished post's image previews (POST
-	// /posts/{id}/images); contentkit.NewRuntime fills it from its Reader.
+	// /posts/{id}/images); the engine fills it from its Reader.
 	Reader   MediaReader
 	PostKind string // media kind of post folders; default "post"
 	PollKind string // media kind of poll folders; default "poll"

@@ -143,7 +143,7 @@ describe("useSlotImage and useSlotCrop against the real ContentKit", () => {
     const { result } = renderHook(() => useSlotCrop({ client: c, ref, path: "avatar", aspect: "1:1", decode }));
     await act(() => result.current.pick(png("a.png", 2006, 800, 400)));
     // The next presign anywhere is refused (presign names no item in its path).
-    await h.faults([{ fault: "api", path: "/api/contentkit/media/upload/presign", method: "POST", status: 413, code: "too_large", error: "too large", times: 1 }]);
+    await h.faults([{ fault: "api", path: "/api/contentkit/v1/media/upload/presign", method: "POST", status: 413, code: "too_large", error: "too large", times: 1 }]);
     await act(async () => void (await result.current.save()));
     expect(result.current).toMatchObject({ status: "error", error: { code: "too_large" }, mode: "new" });
     expect("source" in result.current && result.current.source).toBeTruthy();

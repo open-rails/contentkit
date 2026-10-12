@@ -12,6 +12,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 // deletionIncarnation captures even an item with no uploads without opening
@@ -80,6 +82,9 @@ func (j *Jobs) deleteItem(ctx context.Context, item Item, owner string, operatio
 			if err != nil {
 				return err
 			}
+			if k, ok := layout.Parse(obj.Key); ok && k.Folder() != item.Prefix() {
+				continue // a version's folder within a content's
+			}
 			if !before.IsZero() && obj.LastModified.After(before) {
 				return errOrphanChanged
 			}
@@ -129,7 +134,7 @@ func (j *Jobs) repeatDeletion(ctx context.Context, item Item, operation uuid.UUI
 	if err != nil {
 		return err
 	}
-	if c.Ref != item.Ref() || c.Folder != item.Prefix() || c.State != "applied" {
+	if !c.Ref.Equal(item.Ref()) || c.Folder != item.Prefix() || c.State != "applied" {
 		return ErrCommitPending
 	}
 	return j.manifests.finishCommit(ctx, item, c, true, nil)

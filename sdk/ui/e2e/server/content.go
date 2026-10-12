@@ -35,14 +35,6 @@ func (classifier) Classify(_ context.Context, a content.Answer) (content.GroupAs
 
 func (classifier) StatelessPolicy() {}
 
-// Post and poll images live in these media kinds (content.Media's defaults).
-const (
-	postFolder = "post"
-	pollFolder = "poll"
-)
-
-func isFolder(kind string) bool { return kind == postFolder || kind == pollFolder }
-
 // postHTML is the host's post body sanitizer: user-generated HTML, images by
 // image reference (contentkit:i-{uuid}) as well as http(s) URLs.
 type postHTML struct{ p *bluemonday.Policy }

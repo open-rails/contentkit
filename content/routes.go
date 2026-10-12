@@ -22,8 +22,7 @@ func init() {
 var sortParam = httpapi.Text("sort", "likes (most liked), best (Wilson lower bound) or newest (the default)")
 
 // Handler returns the content routes, each behind its tier's gate over
-// Options.Auth. contentkit.Runtime.Handler serves them at the root of its
-// mount; a host mounting them alone puts them under a prefix. Each request
+// Options.Auth: the engine's content route group (/v1). Each request
 // runs in an access.WithMemo context, so a Gate resolver reads billing at
 // most once per request.
 func (rt *Runtime) Handler() http.Handler {

@@ -22,9 +22,13 @@ import (
 	// The modules register their routes.
 	_ "github.com/open-rails/contentkit/content"
 	_ "github.com/open-rails/contentkit/contenturl"
+	_ "github.com/open-rails/contentkit/discovery"
 	_ "github.com/open-rails/contentkit/groups"
+	_ "github.com/open-rails/contentkit/internal/kindsroute"
 	_ "github.com/open-rails/contentkit/media"
+	_ "github.com/open-rails/contentkit/media/versions"
 	_ "github.com/open-rails/contentkit/notification"
+	_ "github.com/open-rails/contentkit/offers"
 )
 
 // Where each generated file lives, relative to the repository.

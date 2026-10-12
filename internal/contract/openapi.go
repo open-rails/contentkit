@@ -284,8 +284,8 @@ func (m *model) openAPI() ([]byte, error) {
 		"info", newObj(
 			"title", "ContentKit",
 			"version", "v0",
-			"description", "ContentKit's HTTP API, from the prefix the host mounts contentkit.Runtime.Handler at. "+
-				"Each module sits at its own sub-path (x-contentkit-modules); a host that mounts a module alone serves its routes beneath that mount instead. "+
+			"description", "ContentKit's HTTP API, under the prefix the host mounts contentkit.Engine.Routes at (contentkit.Routes.Prefix). "+
+				"Each module sits at its own sub-path (x-contentkit-modules) and is one route group. "+
 				"Generated from the route catalog (internal/httpapi) by `go generate ./internal/contract`; do not edit.",
 		),
 		"paths", paths,

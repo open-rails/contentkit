@@ -11,8 +11,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/contentref"
+	ckhub "github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/signaltest"
 	"github.com/open-rails/contentkit/popularity"
 	"github.com/open-rails/contentkit/signal"
@@ -255,7 +255,7 @@ const (
 // the work view and the selected version's view with one event id. Delivery
 // rounds keep each session's checkpoints in their listed order, so a batch
 // never carries two checkpoints of one session.
-func (fx popularityFixture) record(t *testing.T, hub contentkit.Hub) {
+func (fx popularityFixture) record(t *testing.T, hub *scoringHub) {
 	t.Helper()
 	for round := 0; ; round++ {
 		var batch []signal.Signal
@@ -291,7 +291,7 @@ func (fx popularityFixture) record(t *testing.T, hub contentkit.Hub) {
 	recordBatched(t, hub, prefs)
 }
 
-func recordBatched(t *testing.T, hub contentkit.Hub, signals []signal.Signal) {
+func recordBatched(t *testing.T, hub *scoringHub, signals []signal.Signal) {
 	t.Helper()
 	for start := 0; start < len(signals); start += signal.MaxSignalsPerBatch {
 		if err := hub.RecordSignals(context.Background(), signals[start:min(start+signal.MaxSignalsPerBatch, len(signals))]); err != nil {
@@ -376,20 +376,39 @@ func lazyPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-func newHub(t *testing.T, ch signal.Conn, database, tenant string, scorer signal.Scorer) *contentkit.EmbeddedHub {
+// scoringHub scores the fixture kind's signals before recording them, as
+// the signals route scores views.
+type scoringHub struct {
+	*ckhub.Hub
+	scorer signal.Scorer
+}
+
+func (h *scoringHub) RecordSignals(ctx context.Context, signals []signal.Signal) error {
+	out := make([]signal.Signal, len(signals))
+	for i, s := range signals {
+		if h.scorer != nil && s.ContentKind == fxKind {
+			scored, err := h.scorer.Score(ctx, s)
+			if err != nil {
+				return err
+			}
+			s.Score, s.Progress, s.ProgressMax, s.Completed = scored.Score, scored.Progress, scored.ProgressMax, scored.Completed
+		}
+		out[i] = s
+	}
+	return h.Hub.RecordSignals(ctx, out)
+}
+
+func newHub(t *testing.T, ch signal.Conn, database, tenant string, scorer signal.Scorer) *scoringHub {
 	t.Helper()
-	hub, err := contentkit.NewEmbedded(contentkit.EmbeddedConfig{
-		PG: lazyPool(t), PGSchema: "hub", CH: ch, CHDatabase: database, Tenant: tenant,
-		Scorers: map[string]signal.Scorer{fxKind: scorer},
-	})
+	hub, err := ckhub.New(ckhub.Config{PG: lazyPool(t), PGSchema: "hub", CH: ch, CHDatabase: database, Tenant: tenant})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return hub
+	return &scoringHub{Hub: hub, scorer: scorer}
 }
 
 // metricsByID reads work-level metrics keyed by content id.
-func metricsByID(t *testing.T, hub contentkit.Hub, ids []string, w signal.Window) map[string]signal.ContentMetrics {
+func metricsByID(t *testing.T, hub *scoringHub, ids []string, w signal.Window) map[string]signal.ContentMetrics {
 	t.Helper()
 	refs := make([]signal.ContentRef, 0, len(ids))
 	for _, id := range ids {

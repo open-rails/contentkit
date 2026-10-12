@@ -22,7 +22,6 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 // The media upgrade brings items stored before v0.68 to the current format in
@@ -150,8 +149,8 @@ finished_at = CASE WHEN $7 THEN now() END, updated_at = now() WHERE tenant_id = 
 		if visited == limit {
 			return visited, advance(false)
 		}
-		if id != layout.DefaultID && contentref.ValidateID(id) == nil {
-			ref := contentref.New(k.ns, k.Name, id)
+		ref := contentref.New(k.ns, k.Name, id)
+		if _, err := j.cfg.Registry.Item(ref); err == nil { // a content's versions were never stored before v0.68
 			outcome, err := j.manifests.upgradeItem(ctx, ref)
 			if itemFailure(ctx, err) {
 				outcome, err = upgradeNone, j.recordUpgradeFailure(ctx, ref, err)
