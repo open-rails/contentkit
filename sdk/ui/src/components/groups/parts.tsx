@@ -2,7 +2,7 @@ import { cn } from "cn";
 import { useCallback, useContext, useEffect, useId, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { humanize } from "../../client/group-fields.js";
-import type { GroupCard, GroupDetail, GroupsCover } from "../../client/generated/wire.js";
+import type { Avatar, GroupCard, GroupDetail, GroupsCover } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { ContentKitContext, useContentKitClient } from "../../react/context.js";
 import { useTypeahead } from "../../react/discovery.js";
@@ -11,7 +11,7 @@ import { RenditionImg } from "../rendition-img.js";
 import { ErrorLine } from "../social/parts.js";
 
 /** A group as covers and links need it. */
-export type GroupLike = Pick<GroupCard, "id" | "kind" | "name" | "slug" | "path"> & { cover?: GroupsCover };
+export type GroupLike = Pick<GroupCard, "id" | "kind" | "name" | "slug" | "path"> & { cover?: GroupsCover; avatar?: Avatar };
 
 /** Display names of kinds, attributes, roles and values by identifier; a missing one shows the identifier humanized. */
 export type Labels = Readonly<Record<string, string>>;
@@ -52,6 +52,16 @@ export function GroupCover({ group, src, className }: GroupCoverProps) {
   if (src) return <img src={src} alt="" className={cn(box, "object-cover")} data-ckui="group-cover" />;
   const renditions = group.cover?.renditions;
   if (renditions?.length) return <RenditionImg outputs={renditions} fit="cover" skeleton className={box} fallback={initial} data-ckui="group-cover" />;
+  return initial;
+}
+
+/** A group's avatar: its renditions, else its initial in a circle. */
+export function GroupAvatar({ group, src, className }: GroupCoverProps) {
+  const box = cn("aspect-square overflow-hidden rounded-full bg-muted", className);
+  const initial = <span className={cn(box, "grid place-items-center font-semibold text-muted-foreground")}>{(group.name || group.slug).trim().charAt(0).toUpperCase() || "?"}</span>;
+  if (src) return <img src={src} alt="" className={cn(box, "object-cover")} data-ckui="group-avatar" />;
+  const renditions = group.avatar?.renditions;
+  if (renditions?.length) return <RenditionImg outputs={renditions} fit="cover" skeleton className={box} fallback={initial} data-ckui="group-avatar" />;
   return initial;
 }
 

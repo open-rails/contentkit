@@ -18,6 +18,10 @@ export const groups: typeof en = {
     noMatch: "Sin resultados.",
   },
   groupEditor: {
+    uploadAvatar: "Subir avatar",
+    removeAvatar: "Quitar avatar",
+    images: "Imágenes",
+    membershipPrice: "Precio de la membresía",
     loadFailed: "No se pudo cargar el grupo.",
     newTitle: "Nuevo: {kind}",
     nameIn: "Nombre ({language})",
@@ -99,6 +103,15 @@ export const groups: typeof en = {
     versionId: "ID de la versión (opcional)",
     newMember: "Nuevo miembro",
     addMember: "Añadir miembro",
+  },
+  membership: {
+    unknown: "Ahora no podemos comprobar tu membresía.",
+    member: "Miembro",
+    leave: "Salir",
+    paidPitch: "Los miembros abren todo lo que contiene.",
+    freePitch: "Únete para seguirlo y abrir lo que abren los miembros.",
+    joinFor: "Unirse por {price}",
+    join: "Unirse",
   },
   groupManager: {
     noAccess: "No tienes permiso para gestionar grupos.",

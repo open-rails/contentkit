@@ -18,6 +18,10 @@ export const groups: typeof en = {
     noMatch: "一致するものはありません。",
   },
   groupEditor: {
+    uploadAvatar: "アバターをアップロード",
+    removeAvatar: "アバターを削除",
+    images: "画像",
+    membershipPrice: "メンバーシップ価格",
     loadFailed: "グループを読み込めませんでした。",
     newTitle: "新規: {kind}",
     nameIn: "名前（{language}）",
@@ -99,6 +103,15 @@ export const groups: typeof en = {
     versionId: "バージョン ID（任意）",
     newMember: "新しいメンバー",
     addMember: "メンバーを追加",
+  },
+  membership: {
+    unknown: "現在メンバーシップを確認できません。",
+    member: "メンバー",
+    leave: "退会",
+    paidPitch: "メンバーはすべてを開けます。",
+    freePitch: "参加するとフォローでき、メンバー向けの内容を開けます。",
+    joinFor: "{price} で参加",
+    join: "参加",
   },
   groupManager: {
     noAccess: "グループを管理する権限がありません。",

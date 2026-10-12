@@ -8,8 +8,10 @@ import type { Translator } from "../../i18n/messages.js";
 import { ContentKitContext } from "../../react/context.js";
 import { Badge } from "#ckui/ui/badge";
 import { RenditionImg } from "../rendition-img.js";
-import { formatDate } from "../social/parts.js";
+import { formatDate, RelativeTime } from "../social/parts.js";
 import { labelOf, useLanguageName, type Labels } from "../groups/parts.js";
+import { offersOf } from "../../react/detail.js";
+import { priceLabel } from "./paywall.js";
 
 export interface ContentCardProps {
   card: Card;
@@ -34,10 +36,12 @@ export interface ContentCardProps {
 
 const compact = (n: number, language?: string) => new Intl.NumberFormat(language, { notation: "compact", maximumFractionDigits: 1 }).format(n);
 
-/** Why a card is locked, in words; null when it opens. */
+/** Why a card is locked, in words (its price when it is on sale); null when it opens. */
 export function lockLabel(m: Translator, a: CardAccess, tiers: readonly string[] = [], labels?: Labels): string | null {
   if (a.allowed) return null;
   if (a.unknown) return m.t("contents.unknownAccess");
+  const offer = offersOf(a)[0];
+  if (offer) return priceLabel(m, offer.terms);
   const tier = a.sell?.find((k) => tiers.includes(k));
   if (tier) return labelOf(labels, tier);
   if (a.sell?.some((k) => k.includes(":group:"))) return m.t("contents.members");
@@ -154,5 +158,53 @@ function Chip({ url, name }: { url?: string; name: string }) {
     </a>
   ) : (
     <span className={cls}>{name}</span>
+  );
+}
+
+export interface PostCardProps extends Omit<ContentCardProps, "shape" | "chips" | "groupKinds"> {
+  /** Above the title: the post's channel or author, from the host. */
+  byline?: ReactNode;
+}
+
+/** A post in a feed: a wide cover, its title, when it was published and what unlocking it costs. */
+export function PostCard({ card, href, onOpen, tiers, labels, byline, children, className }: PostCardProps) {
+  const m = useMessages();
+  const url = href ? href(card) : card.path;
+  const open = useCallback(() => onOpen?.(card), [onOpen, card]);
+  const onClick = useLink(url, open);
+  const lock = lockLabel(m, card.access, tiers, labels);
+  const title = card.title || card.code;
+  return (
+    <article className={cn("grid gap-3 rounded-lg border border-border p-3", className)} data-ckui="post-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
+      {byline}
+      <a href={url} onClick={onClick} className="grid gap-2">
+        <span className="font-medium break-words hover:underline" data-ckui="card-title">
+          {title}
+        </span>
+        {card.cover.length > 0 && (
+          <span className="relative block aspect-video overflow-hidden rounded-md bg-muted">
+            <RenditionImg outputs={card.cover} alt="" fit="cover" skeleton className={cn("size-full", lock && "blur-md")} />
+            {lock && (
+              <span className="absolute inset-0 grid place-items-center">
+                <span className="inline-flex items-center gap-1 rounded-md bg-background/85 px-2 py-1 text-xs font-medium shadow-sm" data-ckui="card-lock">
+                  <HugeiconsIcon icon={LockIcon} strokeWidth={2} className="size-3.5" aria-hidden />
+                  {lock}
+                </span>
+              </span>
+            )}
+          </span>
+        )}
+      </a>
+      <p className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+        {card.published_at && <RelativeTime at={card.published_at} />}
+        {!card.cover.length && lock && <span data-ckui="card-lock">{lock}</span>}
+        <span className="inline-flex items-center gap-1 tabular-nums">
+          <HugeiconsIcon icon={FavouriteIcon} strokeWidth={2} className={cn("size-3.5", card.viewer?.favorited && "fill-current text-primary")} aria-hidden />
+          <span className="sr-only">{m.t("contents.favorites")}</span>
+          {compact(card.counts.favorites, m.language)}
+        </span>
+      </p>
+      {children}
+    </article>
   );
 }

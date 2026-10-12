@@ -18,6 +18,10 @@ export const groups: typeof en = {
     noMatch: "没有匹配项。",
   },
   groupEditor: {
+    uploadAvatar: "上传头像",
+    removeAvatar: "移除头像",
+    images: "图片",
+    membershipPrice: "会员价格",
     loadFailed: "无法加载该分组。",
     newTitle: "新建：{kind}",
     nameIn: "名称（{language}）",
@@ -99,6 +103,15 @@ export const groups: typeof en = {
     versionId: "版本 ID（可选）",
     newMember: "新成员",
     addMember: "添加成员",
+  },
+  membership: {
+    unknown: "暂时无法确认你的会员身份。",
+    member: "会员",
+    leave: "退出",
+    paidPitch: "会员可以打开其中的所有内容。",
+    freePitch: "加入即可关注并打开会员可见的内容。",
+    joinFor: "以 {price} 加入",
+    join: "加入",
   },
   groupManager: {
     noAccess: "你没有管理分组的权限。",

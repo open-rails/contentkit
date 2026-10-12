@@ -107,7 +107,7 @@ describe("groups against the real ContentKit", () => {
 
     // The cover: an upload to the group's folder, a member's cover, then automatic.
     await act(async () => {
-      await result.current.uploadCover(fixture("small.png", "image/png", "face.png"), { wait: false });
+      await result.current.uploadImage("cover", fixture("small.png", "image/png", "face.png"), { wait: false });
     });
     await waitFor(() => expect(result.current.group?.cover?.image).toMatch(/^i-[0-9a-f-]{36}$/), wait);
     const image = result.current.group!.cover!.image!;

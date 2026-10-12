@@ -22,7 +22,7 @@ export { PollsClient, type PollAdminQuery, type PollQuery, type PollState } from
 export { BansClient } from "./content/bans.js";
 export { ModerationClient, type HeldQuery } from "./content/moderation.js";
 export { reactionVerb, type BanScope, type ContentChange, type Decision, type HeldKind, type Reaction, type Sort } from "./content/types.js";
-export { GroupsClient, type GroupQuery, type MemberQuery } from "./groups.js";
+export { GroupsClient, type GroupImageSlot, type GroupQuery, type MemberQuery, type MyGroupQuery } from "./groups.js";
 export {
   DiscoveryClient,
   type AccessMode,

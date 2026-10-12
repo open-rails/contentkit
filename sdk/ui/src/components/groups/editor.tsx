@@ -3,8 +3,8 @@ import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
-import { attributeInput, parseAttributes, slugify } from "../../client/group-fields.js";
-import type { Attribute, ContentModel, Group, GroupCard, GroupDetail, GroupKind, GroupsText as Text, MergeReport, Name } from "../../client/generated/wire.js";
+import { parseAttributes, slugify } from "../../client/group-fields.js";
+import type { ContentModel, Group, GroupCard, GroupDetail, GroupKind, GroupsText as Text, MergeReport, Name } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import type { ContentKitErrorHandler } from "../../react/context.js";
 import { useGroup, useKinds, type UseGroup } from "../../react/groups.js";
@@ -16,10 +16,13 @@ import { Input } from "#ckui/ui/input";
 import { Label } from "#ckui/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { Skeleton } from "#ckui/ui/skeleton";
-import { Switch } from "#ckui/ui/switch";
 import { Textarea } from "#ckui/ui/textarea";
 import { contentError, ErrorLine, useAction } from "../social/parts.js";
-import { GroupCover, GroupPicker, labelOf, useGroupNames, useLanguageName, type GroupLike, type Labels } from "./parts.js";
+import { OfferFields } from "../content/offer-fields.js";
+import { AttributeFields, formOf } from "./fields.js";
+import { useContentKitClient } from "../../react/context.js";
+import { GroupImageEditor } from "./banner.js";
+import { GroupPicker, labelOf, useGroupNames, useLanguageName, type GroupLike, type Labels } from "./parts.js";
 
 export interface GroupEditorProps {
   /** The group edited; null creates one of `kind`. */
@@ -41,7 +44,6 @@ export interface GroupEditorProps {
   appearance?: ContentKitUiAppearance;
 }
 
-const NONE = "__none__";
 
 /**
  * Staff (root:groups:write): creates a group, or edits one: slug, parent,
@@ -92,7 +94,8 @@ export function GroupEditor(p: GroupEditorProps) {
       <Details key={group.id} group={group} spec={spec} g={g} labels={p.labels} onError={p.onError} client={p.client} />
       <Names group={group} g={g} languages={languages} onError={p.onError} />
       <Texts key={group.id} group={group} g={g} languages={languages} onError={p.onError} />
-      <CoverSection group={group} g={g} onError={p.onError} />
+      <Images group={group} spec={spec} onError={p.onError} client={p.client} />
+      {spec.sellable && <Membership group={group} onError={p.onError} client={p.client} />}
       <Edges group={group} g={g} kinds={kinds} labels={p.labels} onError={p.onError} client={p.client} />
       {p.children?.(group)}
     </>,
@@ -295,66 +298,6 @@ export function GroupMergeDialog({ open, onOpenChange, group, onMerge, language,
     </Dialog>
   );
 }
-
-/** A kind's declared attributes as form fields. */
-export function AttributeFields({ declared, form, onChange, labels }: { declared: Readonly<Record<string, Attribute>>; form: Record<string, string | boolean>; onChange: (name: string, v: string | boolean) => void; labels?: Labels }) {
-  const { t } = useMessages();
-  const id = useId();
-  const names = Object.keys(declared).sort();
-  if (!names.length) return null;
-  return (
-    <div className="grid gap-3 sm:grid-cols-2" data-ckui="group-attributes-form">
-      {names.map((name) => {
-        const spec = declared[name]!;
-        const label = labelOf(labels, name);
-        const value = form[name] ?? attributeInput(spec, undefined);
-        if (spec.type === "bool")
-          return (
-            <div key={name} className="flex items-center gap-2">
-              <Switch id={`${id}-${name}`} checked={value === true} onCheckedChange={(v) => onChange(name, v)} aria-label={label} />
-              <Label htmlFor={`${id}-${name}`}>{label}</Label>
-            </div>
-          );
-        if (spec.type === "enum")
-          return (
-            <div key={name} className="grid gap-1.5">
-              <Label>{label}</Label>
-              <Select value={String(value) || NONE} onValueChange={(v) => onChange(name, v === NONE ? "" : String(v))}>
-                <SelectTrigger size="sm" aria-label={label}>
-                  <SelectValue>{(v: string) => (v === NONE ? t("groupEditor.none") : labelOf(labels, v))}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NONE}>{t("groupEditor.none")}</SelectItem>
-                  {(spec.values ?? []).map((v) => (
-                    <SelectItem key={v} value={v}>
-                      {labelOf(labels, v)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          );
-        return (
-          <div key={name} className="grid gap-1.5">
-            <Label htmlFor={`${id}-${name}`}>{label}</Label>
-            <Input
-              id={`${id}-${name}`}
-              className="h-8"
-              type={spec.type === "int" ? "number" : spec.type === "time" ? "datetime-local" : "text"}
-              step={spec.type === "int" ? 1 : undefined}
-              value={String(value)}
-              onChange={(e) => onChange(name, e.target.value)}
-            />
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/** The form values of stored attributes. */
-export const formOf = (declared: Readonly<Record<string, Attribute>>, values: Record<string, unknown>) =>
-  Object.fromEntries(Object.entries(declared).map(([n, s]) => [n, attributeInput(s, values[n])]));
 
 /** A parent or scope: the chosen group with a change and a clear, or a picker. */
 function GroupField({ label, kind, value, onChange, exclude, required, client }: { label: string; kind: string; value: GroupLike | null; onChange: (g: GroupLike | null) => void; exclude?: string[]; required?: boolean; client?: ContentKitClient }) {
@@ -685,46 +628,35 @@ function Texts({ group, g, languages, onError }: { group: GroupDetail; g: UseGro
   );
 }
 
-function CoverSection({ group, g, onError }: { group: GroupDetail; g: UseGroup; onError?: ContentKitErrorHandler }) {
+function Images({ group, spec, onError, client }: { group: GroupDetail; spec: GroupKind; onError?: ContentKitErrorHandler; client?: ContentKitClient }) {
   const { t } = useMessages();
-  const input = useRef<HTMLInputElement>(null);
-  const save = useAction("group.save", onError);
   const c = group.cover;
   const mode = c?.image ? "image" : c?.content_id && !c.auto ? "content" : "auto";
   return (
-    <Section title={t("groupEditor.cover")} ckui="group-cover-editor">
-      <div className="flex flex-wrap items-start gap-4" data-mode={mode}>
-        <GroupCover group={group} src={g.coverPreview} className="aspect-[3/4] w-28" />
-        <div className="grid gap-2">
-          <p className="text-muted-foreground" data-ckui="cover-mode">
-            {t(mode === "image" ? "groupEditor.coverImage" : mode === "content" ? "groupEditor.coverContent" : "groupEditor.coverAuto")}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" disabled={save.pending} onClick={() => input.current?.click()}>
-              {save.pending ? t("groupEditor.uploading") : t("groupEditor.uploadCover")}
-            </Button>
-            {mode !== "auto" && (
-              <Button size="sm" variant="ghost" disabled={save.pending} onClick={() => void save.run(() => g.update({ cover: {} }))}>
-                {t("groupEditor.coverUseAuto")}
-              </Button>
-            )}
-          </div>
-          <input
-            ref={input}
-            type="file"
-            accept="image/*"
-            hidden
-            aria-label={t("groupEditor.uploadCover")}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = "";
-              // Selected at once; its renditions follow once the worker has made them.
-              if (file) void save.run(() => g.uploadCover(file, { wait: false }));
-            }}
-          />
-          <ErrorLine error={save.error} />
-        </div>
-      </div>
+    <Section title={t(spec.owner === "user" ? "groupEditor.images" : "groupEditor.cover")} ckui="group-cover-editor">
+      <p className="text-muted-foreground" data-ckui="cover-mode">
+        {t(mode === "image" ? "groupEditor.coverImage" : mode === "content" ? "groupEditor.coverContent" : "groupEditor.coverAuto")}
+      </p>
+      <GroupImageEditor group={group} slot="cover" client={client} onError={onError} />
+      {spec.owner === "user" && <GroupImageEditor group={group} slot="avatar" client={client} onError={onError} />}
+    </Section>
+  );
+}
+
+function Membership({ group, onError, client }: { group: GroupDetail; onError?: ContentKitErrorHandler; client?: ContentKitClient }) {
+  const { t } = useMessages();
+  const ck = useContentKitClient(client);
+  const offer = useAction("offer.save", onError);
+  const current = group.access?.offer;
+  return (
+    <Section title={t("groupEditor.membershipPrice")} ckui="group-offer">
+      <OfferFields
+        offer={current ? { terms: current } : undefined}
+        pending={offer.pending}
+        onSell={(terms) => void offer.run(() => ck.offers.sellGroup(group.id, terms))}
+        onWithdraw={() => void offer.run(() => ck.offers.withdrawGroup(group.id))}
+      />
+      <ErrorLine error={offer.error} />
     </Section>
   );
 }

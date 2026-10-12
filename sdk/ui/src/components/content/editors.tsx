@@ -2,7 +2,7 @@ import { cn } from "cn";
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { fromLocalInput, parseAttributes, toLocalInput } from "../../client/group-fields.js";
-import type { Content, ContentModel, Listing, Offer, Rule, Segment, Terms, Version } from "../../client/generated/wire.js";
+import type { Content, ContentModel, Listing, Rule, Segment, Version } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContentKitClient, type ContentKitErrorHandler } from "../../react/context.js";
 import { offerOf } from "../../react/detail.js";
@@ -17,9 +17,9 @@ import { MediaFolderEditor } from "../media-folder-editor.js";
 import { SortableList } from "../sortable-list.js";
 import { ErrorLine, useAction } from "../social/parts.js";
 import { GroupPicker, labelOf, useGroupNames, useLanguageName, type Labels } from "../groups/parts.js";
-import { AttributeFields, formOf } from "../groups/editor.js";
+import { AttributeFields, formOf } from "../groups/fields.js";
 import { MembershipEditor } from "../groups/memberships.js";
-import { priceLabel } from "./paywall.js";
+import { OfferFields } from "./offer-fields.js";
 
 interface Common {
   client?: ContentKitClient;
@@ -228,82 +228,6 @@ function cleanRule(r: Rule): Rule {
     preview: r.level === "public" ? undefined : preview,
     free_after: r.level === "public" ? undefined : r.free_after,
   };
-}
-
-type Mode = "once" | "rent" | "renew";
-
-/** An offer's form: price, currency and whether it rents or renews; the current offer with its withdrawal. */
-function OfferFields({ offer, onSell, onWithdraw, pending }: { offer?: Offer; onSell: (t: Terms) => void; onWithdraw: () => void; pending: boolean }) {
-  const m = useMessages();
-  const { t } = m;
-  const id = useId();
-  const active = offer?.state === "active" ? offer : undefined;
-  const [amount, setAmount] = useState(active?.terms.amount ?? "");
-  const [currency, setCurrency] = useState(active?.terms.currency ?? "USD");
-  const [mode, setMode] = useState<Mode>(active?.terms.renew_hours ? "renew" : active?.terms.access_hours ? "rent" : "once");
-  const [days, setDays] = useState(String(((active?.terms.renew_hours ?? active?.terms.access_hours ?? 720) / 24) | 0));
-  return (
-    <div className="grid gap-2" data-ckui="offer-fields">
-      {active ? (
-        <p className="flex flex-wrap items-center gap-2" data-ckui="current-offer">
-          <Badge variant="secondary">{t("contentEditor.onSale")}</Badge>
-          <span>{priceLabel(m, active.terms)}</span>
-          {!active.synced && <span className="text-xs text-muted-foreground">{t("contentEditor.syncing")}</span>}
-          <Button type="button" size="xs" variant="ghost" disabled={pending} onClick={onWithdraw}>
-            {t("contentEditor.withdraw")}
-          </Button>
-        </p>
-      ) : (
-        <p className="text-muted-foreground">{t("contentEditor.notForSale")}</p>
-      )}
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="grid gap-1">
-          <Label htmlFor={`${id}-amount`} className="text-xs text-muted-foreground">
-            {t("contentEditor.price")}
-          </Label>
-          <Input id={`${id}-amount`} className="h-8 w-28" inputMode="decimal" value={amount} placeholder="4.99" onChange={(e) => setAmount(e.target.value)} />
-        </div>
-        <div className="grid gap-1">
-          <Label htmlFor={`${id}-currency`} className="text-xs text-muted-foreground">
-            {t("contentEditor.currency")}
-          </Label>
-          <Input id={`${id}-currency`} className="h-8 w-20 uppercase" maxLength={3} value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} />
-        </div>
-        <Select value={mode} onValueChange={(v) => setMode(v as Mode)}>
-          <SelectTrigger size="sm" aria-label={t("contentEditor.priceMode")}>
-            <SelectValue>{(v: string) => t(`contentEditor.mode_${v as Mode}`)}</SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {(["once", "rent", "renew"] as const).map((x) => (
-              <SelectItem key={x} value={x}>
-                {t(`contentEditor.mode_${x}`)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {mode !== "once" && (
-          <div className="grid gap-1">
-            <Label htmlFor={`${id}-days`} className="text-xs text-muted-foreground">
-              {t("contentEditor.days")}
-            </Label>
-            <Input id={`${id}-days`} className="h-8 w-20" type="number" min={1} value={days} onChange={(e) => setDays(e.target.value)} />
-          </div>
-        )}
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={pending || !/^\d+(\.\d{1,2})?$/.test(amount.trim()) || currency.length !== 3}
-          onClick={() => {
-            const hours = Math.max(1, Math.trunc(Number(days) || 0)) * 24;
-            onSell({ amount: amount.trim(), currency, access_hours: mode === "rent" ? hours : undefined, renew_hours: mode === "renew" ? hours : undefined });
-          }}
-        >
-          {t(active ? "contentEditor.reprice" : "contentEditor.sell")}
-        </Button>
-      </div>
-    </div>
-  );
 }
 
 /** Who may open the content and what it sells for. */

@@ -287,7 +287,7 @@ export class ResourceStore {
         this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "release-dates");
         break;
       case "access.changed":
-        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "content-detail" || t.type === "reader-plan");
+        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "content-detail" || t.type === "reader-plan" || t.type.startsWith("group"));
         break;
       case "history.changed":
         this.invalidate((t) => t.type === "history" || t.type === "cards");

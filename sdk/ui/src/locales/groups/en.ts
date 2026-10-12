@@ -17,6 +17,10 @@ export const groups = {
     noMatch: "No match.",
   },
   groupEditor: {
+    uploadAvatar: "Upload avatar",
+    removeAvatar: "Remove avatar",
+    images: "Images",
+    membershipPrice: "Membership price",
     loadFailed: "The group couldn't be loaded.",
     newTitle: "New {kind}",
     nameIn: "Name ({language})",
@@ -98,6 +102,15 @@ export const groups = {
     versionId: "Version id (optional)",
     newMember: "New member",
     addMember: "Add member",
+  },
+  membership: {
+    unknown: "We can't check your membership right now.",
+    member: "Member",
+    leave: "Leave",
+    paidPitch: "Members open everything in it.",
+    freePitch: "Join to follow it and open what members can.",
+    joinFor: "Join for {price}",
+    join: "Join",
   },
   groupManager: {
     noAccess: "You don't have permission to manage groups.",

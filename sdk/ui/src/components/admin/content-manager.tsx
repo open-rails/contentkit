@@ -5,7 +5,7 @@ import { imageRefs } from "../../client/contents.js";
 import type { Content } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useAdminLocation, useFlowClient, useStaffAccess, type AdminLocation, type FlowClientOptions, type StaffAccess } from "../../react/admin.js";
-import { useErrorReporter } from "../../react/context.js";
+import { useContentKitClient, useErrorReporter, type ContentKitErrorHandler } from "../../react/context.js";
 import { useContent } from "../../react/contents.js";
 import { keyOf, useContentScope, usePaged } from "../../react/use-resource.js";
 import { Alert, AlertDescription } from "#ckui/ui/alert";
@@ -106,7 +106,13 @@ function Contents({ basePath, navigation, ...p }: Inner) {
       <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => loc.go("")}>
         {t("contentManager.back")}
       </Button>
-      <ContentForm key={loc.view} {...p} loc={loc} id={loc.view === "new" ? null : loc.view} />
+      <ContentEditor
+        key={loc.view}
+        {...p}
+        id={loc.view === "new" ? null : loc.view}
+        onCreated={(c) => loc.go(c.id, undefined, { replace: true })}
+        onDeleted={() => loc.go("", undefined, { replace: true })}
+      />
     </>
   );
 }
@@ -256,7 +262,33 @@ interface Form {
 
 const empty: Form = { title: "", slug: "", description: "", publishAt: "", body: "" };
 
-function ContentForm({ id, loc, client, kind, languages: offered, renderEditor, contentHref, labels, onError }: Inner & { id: string | null; loc: AdminLocation }) {
+export interface ContentEditorProps {
+  /** The item edited; null creates one of kind. */
+  id: string | null;
+  kind: string;
+  /** Languages to write in: codes, or codes with labels; the first is a new item's. */
+  languages?: readonly Choice[];
+  /** The body editor; without it, a plain HTML field. */
+  renderEditor?: (props: BodyEditorProps) => ReactNode;
+  /** A link to a live item's page. */
+  contentHref?: (content: Content) => string | undefined;
+  labels?: Labels;
+  /** A new item's owner group: a channel its editors write for. */
+  ownerGroup?: string;
+  /** After create: show the new item (the editor goes on editing it). */
+  onCreated?: (content: Content) => void;
+  onDeleted?: (content: Content) => void;
+  client?: ContentKitClient;
+  onError?: ContentKitErrorHandler;
+}
+
+/**
+ * One content item for its creators and staff: title, slug, description,
+ * schedule, cover and body per language, publish, unpublish and delete;
+ * then listing and attributes, access rule and price, versions and groups.
+ */
+export function ContentEditor({ id, client: own, kind, languages: offered, renderEditor, contentHref, labels, ownerGroup, onCreated, onDeleted, onError }: ContentEditorProps) {
+  const client = useContentKitClient(own);
   const m = useMessages();
   const { t } = m;
   const ids = useId();
@@ -285,7 +317,7 @@ function ContentForm({ id, loc, client, kind, languages: offered, renderEditor, 
     [form?.body, imageSrc],
   );
   if (id && !form) {
-    if (ed.error) return <LoadFailed error={ed.error} message={t("contentManager.loadFailed")} retry={() => loc.go(id, undefined, { replace: true })} />;
+    if (ed.error) return <LoadFailed error={ed.error} message={t("contentManager.loadFailed")} retry={ed.reload} />;
     return (
       <div className="grid gap-3" aria-busy>
         <Skeleton className="h-9 w-full" />
@@ -307,8 +339,8 @@ function ContentForm({ id, loc, client, kind, languages: offered, renderEditor, 
     if (!f.title.trim()) return setError(t("contentManager.titleRequired"));
     try {
       if (!item) {
-        const created = await ed.create({ kind, text: { [language]: text() } });
-        loc.go(created.id, undefined, { replace: true });
+        const created = await ed.create({ kind, text: { [language]: text() }, owner_group_id: ownerGroup });
+        onCreated?.(created);
         return;
       }
       const saved = await ed.putText(text());
@@ -333,7 +365,7 @@ function ContentForm({ id, loc, client, kind, languages: offered, renderEditor, 
     if (!item || !(await confirm({ title: t("contentManager.deleteTitle", { title: item.title }), description: t("contentManager.deleteBody"), confirm: t("contentManager.delete") }))) return;
     try {
       await ed.remove();
-      loc.go("", undefined, { replace: true });
+      onDeleted?.(item);
     } catch (e) {
       fail(e);
     }

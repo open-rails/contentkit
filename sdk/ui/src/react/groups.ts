@@ -14,8 +14,11 @@ import type {
   MemberRef,
   Membership,
   MergeReport,
+  MyGroup,
   Name,
+  Edit,
 } from "../client/generated/wire.js";
+import type { GroupImageSlot, MyGroupQuery } from "../client/groups.js";
 import { useGuarded } from "./context.js";
 import { keyOf, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
 
@@ -94,10 +97,10 @@ export interface UseGroup {
   edges: (op: "add" | "remove", edges: EdgeInput[]) => Promise<Edge[]>;
   /** Merges the group into another of its kind; the hook then shows the survivor. */
   merge: (into: string) => Promise<MergeReport>;
-  /** Uploads an image and selects it as the cover. */
-  uploadCover: (file: Blob & { name?: string }, o?: { wait?: boolean }) => Promise<Group>;
-  /** Shows the cover uploaded here until its renditions exist. */
-  coverPreview?: string;
+  /** Uploads an image (cropped by edit) and selects it as the cover or avatar. */
+  uploadImage: (slot: GroupImageSlot, file: Blob & { name?: string }, o?: { wait?: boolean; edit?: Edit }) => Promise<Group>;
+  /** Shows the images uploaded here until their renditions exist. */
+  previews: Partial<Record<GroupImageSlot, string>>;
 }
 
 /** One group: its page for anyone; create, edit, names, edges, cover, merge, delete and restore for staff (root:groups:write). null creates. */
@@ -132,10 +135,10 @@ export function useGroup(id: string | null | undefined, o: { language?: string; 
     return gid;
   }, [gid]);
 
-  const [coverPreview, setCoverPreview] = useState<string>();
-  const previews = useRef<string[]>([]);
+  const [previews, setPreviews] = useState<Partial<Record<GroupImageSlot, string>>>({});
+  const blobs = useRef<string[]>([]);
   useEffect(() => {
-    const urls = previews.current;
+    const urls = blobs.current;
     return () => urls.forEach((u) => URL.revokeObjectURL(u));
   }, []);
 
@@ -186,23 +189,35 @@ export function useGroup(id: string | null | undefined, o: { language?: string; 
         }),
       [client, run, need],
     ),
-    uploadCover: useCallback(
-      (file: Blob & { name?: string }, u: { wait?: boolean } = {}) =>
+    uploadImage: useCallback(
+      (slot: GroupImageSlot, file: Blob & { name?: string }, u: { wait?: boolean; edit?: Edit } = {}) =>
         run(async () => {
           const kind = group?.kind;
           if (!kind) throw new Error("contentkit-ui: load the group first");
-          const g = await client.groups.uploadCover({ kind, id: need() }, file, u);
-          if (typeof URL.createObjectURL === "function") {
+          const g = await client.groups.uploadImage({ kind, id: need() }, slot, file, u);
+          // A cropped upload's renditions show the crop; until then the file shows uncropped.
+          if (typeof URL.createObjectURL === "function" && !u.edit) {
             const url = URL.createObjectURL(file);
-            previews.current.push(url);
-            setCoverPreview(url);
+            blobs.current.push(url);
+            setPreviews((p) => ({ ...p, [slot]: url }));
           }
           return g;
         }),
       [client, run, need, group?.kind],
     ),
-    coverPreview: group?.cover?.image ? coverPreview : undefined,
+    previews: { cover: group?.cover?.image ? previews.cover : undefined, avatar: group?.avatar?.image ? previews.avatar : undefined },
   };
+}
+
+/** Groups the signed-in person owns, edits or belongs to, a cursor page at a time; nothing signed out. */
+export function useMyGroups(q: Omit<MyGroupQuery, "cursor" | "limit"> & { pageSize?: number } = {}, o: { client?: ContentKitClient } = {}): UseList<MyGroup> {
+  const { client, store, scope, viewer, language } = useContentScope(o.client);
+  const { pageSize, ...rest } = q;
+  const query = { language, ...rest };
+  return useList(store, viewer === null ? null : keyOf("groups-mine", scope, query, pageSize), { type: "groups-mine" }, async (cursor, signal) => {
+    const page = await client.groups.mine({ ...query, cursor: cursor as string | undefined, limit: pageSize }, signal);
+    return { items: page.groups, next: page.next_cursor ?? null };
+  });
 }
 
 /** A membership with a stable id: (group, content, version, role) is its identity. */
