@@ -325,3 +325,6 @@ CREATE TABLE content_group_counts (
 );
 
 CREATE INDEX content_group_counts_rank_idx ON content_group_counts (tenant_id, content_kind, language, content_count DESC);
+
+-- Comments target content with a language facet (written by the bulk import).
+ALTER TABLE content_comments ADD COLUMN language text DEFAULT ''::text NOT NULL;

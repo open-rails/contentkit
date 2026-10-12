@@ -184,15 +184,8 @@ func New(opts Options) (*Store, error) {
 // Tenant returns the tenant this store is scoped to.
 func (s *Store) Tenant() string { return s.tenant }
 
-// WithTx returns the store bound to tx, so group writes commit with the
-// engine change (an import batch) that caused them; the caller commits.
-func (s *Store) WithTx(tx pgx.Tx) *Store {
-	c := *s
-	c.tx = tx
-	return &c
-}
-
-// run executes fn in the bound transaction or in a new one.
+// run executes fn in the bound transaction (an import's, bound) or in a new
+// one.
 func (s *Store) run(ctx context.Context, fn func(q Querier) error) error {
 	if s.tx != nil {
 		return mapPGError(fn(s.tx))

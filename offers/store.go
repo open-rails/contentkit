@@ -23,54 +23,60 @@ import (
 // equal terms change nothing. The target's ever_sold is set and a sync job
 // is queued. It answers the active offers, in order.
 func (s *Service) Put(ctx context.Context, puts []Put) ([]Offer, error) {
+	if err := s.tx(ctx, func(tx pgx.Tx) error { return s.PutTx(ctx, tx, puts) }); err != nil {
+		return nil, err
+	}
+	targets := make([]Target, len(puts))
+	for i, p := range puts {
+		targets[i] = p.Target
+	}
+	return s.active(ctx, targets)
+}
+
+// PutTx is Put in tx (the bulk import's).
+func (s *Service) PutTx(ctx context.Context, tx pgx.Tx, puts []Put) error {
 	targets := make([]Target, len(puts))
 	terms := make([]Terms, len(puts))
 	for i, p := range puts {
 		var err error
 		if terms[i], err = s.cfg.normalize(p.Target.Kind, p.Terms); err != nil {
-			return nil, err
+			return err
 		}
 		targets[i] = p.Target
 	}
-	err := s.tx(ctx, func(tx pgx.Tx) error {
-		if err := s.resolve(ctx, tx, targets); err != nil {
-			return err
-		}
-		var changed []Target
-		for i, t := range targets {
-			body, err := json.Marshal(terms[i])
-			if err != nil {
-				return err
-			}
-			var id string
-			var old Terms
-			err = tx.QueryRow(ctx, `SELECT id, terms FROM `+s.t.offers+` WHERE tenant_id = $1 AND target_kind = $2 AND target_id = $3 AND state = 'active' FOR UPDATE`,
-				s.tenant, t.Kind, t.ID).Scan(&id, &old)
-			switch {
-			case errors.Is(err, pgx.ErrNoRows):
-				_, err = tx.Exec(ctx, `INSERT INTO `+s.t.offers+` (tenant_id, id, target_kind, target_id, terms) VALUES ($1, $2, $3, $4, $5)`,
-					s.tenant, contentref.NewID(), t.Kind, t.ID, body)
-			case err != nil:
-			case old.equal(terms[i]):
-				continue
-			default:
-				_, err = tx.Exec(ctx, `UPDATE `+s.t.offers+` SET terms = $3, revision = revision + 1, updated_at = now() WHERE tenant_id = $1 AND id = $2`,
-					s.tenant, id, body)
-			}
-			if err != nil {
-				return conflict(err)
-			}
-			changed = append(changed, t)
-		}
-		if err := s.markSold(ctx, tx, changed); err != nil {
-			return err
-		}
-		return s.enqueue(ctx, tx, changed)
-	})
-	if err != nil {
-		return nil, err
+	if err := s.resolve(ctx, tx, targets); err != nil {
+		return err
 	}
-	return s.active(ctx, targets)
+	var changed []Target
+	for i, t := range targets {
+		body, err := json.Marshal(terms[i])
+		if err != nil {
+			return err
+		}
+		var id string
+		var old Terms
+		err = tx.QueryRow(ctx, `SELECT id, terms FROM `+s.t.offers+` WHERE tenant_id = $1 AND target_kind = $2 AND target_id = $3 AND state = 'active' FOR UPDATE`,
+			s.tenant, t.Kind, t.ID).Scan(&id, &old)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			_, err = tx.Exec(ctx, `INSERT INTO `+s.t.offers+` (tenant_id, id, target_kind, target_id, terms) VALUES ($1, $2, $3, $4, $5)`,
+				s.tenant, contentref.NewID(), t.Kind, t.ID, body)
+		case err != nil:
+		case old.equal(terms[i]):
+			continue
+		default:
+			_, err = tx.Exec(ctx, `UPDATE `+s.t.offers+` SET terms = $3, revision = revision + 1, updated_at = now() WHERE tenant_id = $1 AND id = $2`,
+				s.tenant, id, body)
+		}
+		if err != nil {
+			return conflict(err)
+		}
+		changed = append(changed, t)
+	}
+	if err := s.markSold(ctx, tx, changed); err != nil {
+		return err
+	}
+	return s.enqueue(ctx, tx, changed)
 }
 
 // Withdraw ends each target's active offer, in one transaction, and queues

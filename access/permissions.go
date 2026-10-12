@@ -32,11 +32,14 @@ const (
 	OffersWrite Permission = "root:offers:write"
 	// NotificationsPublish: publish notices to users' inboxes (a host service).
 	NotificationsPublish Permission = "root:notifications:publish"
+	// ImportWrite: bulk-import content, groups, interactions and signals (a
+	// legacy importer).
+	ImportWrite Permission = "root:import:write"
 )
 
 // Permissions is every staff permission.
 func Permissions() []Permission {
-	return []Permission{ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, GroupsWrite, OffersWrite, NotificationsPublish}
+	return []Permission{ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, GroupsWrite, OffersWrite, NotificationsPublish, ImportWrite}
 }
 
 func (p Permission) String() string { return string(p) }
