@@ -1,3 +1,4 @@
+-- parent: 1 sha256:0d2be33bce1f2bcb481f90c5fa16d1ab296ed2b9e169eb88471de94081d0ba7f
 -- Coordinated dev cutover: stop signal writers and require empty legacy
 -- projections. Raw events and the erasure ledger are unchanged. Hosts rebuild
 -- each tenant before starting readers/writers on the new library version.
