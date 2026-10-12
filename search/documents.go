@@ -34,7 +34,8 @@ func (k DocumentKey) validate() error {
 	return nil
 }
 
-// KeywordDocument is the host's canonical search input for one document.
+// KeywordDocument is the search input for one document, built by ContentKit
+// from its own records.
 // Derived search text belongs to ContentKit; callers never write it. An empty
 // Title deletes the document. Aliases are alternate names; Keywords are
 // contextual terms (for example trusted tags), not descriptions.
@@ -66,32 +67,6 @@ func (d KeywordDocument) Validate() error {
 		}
 	}
 	return nil
-}
-
-// PublishedDocument is one keyword document as delivered to a DocumentSink.
-type PublishedDocument struct {
-	KeywordDocument
-	// Version orders deliveries of one DocumentKey: the dirty-queue revision
-	// that published the document. Retries may repeat it; sinks atomically
-	// ignore equal or lower versions across both upserts and deletes.
-	Version int64
-}
-
-// DocumentSink receives every keyword document the worker publishes or
-// deletes, after the document is written and before its dirty row is
-// acknowledged. Delivery is at-least-once: a failing call keeps the row queued
-// (with a new Version) while the keyword index still commits, so an
-// unavailable sink never blocks keyword search. Implementations must be
-// bounded and atomically apply only versions newer than the last version of
-// each DocumentKey. Keep that version after deletion as a tombstone, so late
-// upserts cannot resurrect a deleted document and late deletes cannot erase
-// a newer upsert. A remote call may finish after returning an error or timeout;
-// the worker's transaction lock cannot serialize those remote effects.
-// These external writes do not share the Postgres transaction. Implementations
-// may durably enqueue work; ContentKit ships no sink implementation.
-type DocumentSink interface {
-	Upsert(ctx context.Context, doc PublishedDocument) error
-	Delete(ctx context.Context, key DocumentKey, version int64) error
 }
 
 type documentRow struct {
@@ -189,8 +164,8 @@ type DirtyMark struct {
 	Reason  string
 }
 
-// MarkDirty queues documents for the worker. Hosts call it in the transaction
-// that changes the content; the queue trigger assigns each row a new revision.
+// MarkDirty queues documents for the worker, in the transaction that changes
+// their records; the queue trigger assigns each row a new revision.
 func MarkDirty(ctx context.Context, db Executor, schema string, marks []DirtyMark) error {
 	if db == nil {
 		return fmt.Errorf("search: database is required")

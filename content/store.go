@@ -39,7 +39,6 @@ type tables struct {
 	pollOptions   string
 	pollVotes     string
 	pollAnswers   string
-	posts         string
 	favorites     string
 	counts        string
 	commentBans   string
@@ -62,7 +61,6 @@ func newStore(pool *pgxpool.Pool, schema, tenant string) *store {
 			pollOptions:   q("content_poll_options"),
 			pollVotes:     q("content_poll_votes"),
 			pollAnswers:   q("content_poll_answers"),
-			posts:         q("content_posts"),
 			favorites:     q("content_favorites"),
 			counts:        q("content_interaction_counts"),
 			commentBans:   q("content_comment_bans"),

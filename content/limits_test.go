@@ -18,11 +18,10 @@ import (
 )
 
 // limitFixture is one replica's runtime over a seeded schema: two galleries,
-// a published post, a poll and a comment.
+// a poll and a comment.
 type limitFixture struct {
 	rt      *Runtime
 	h       http.Handler
-	post    string
 	poll    Poll
 	comment string
 }
@@ -48,12 +47,6 @@ func newLimitFixture(t *testing.T, limits Limits, from *limitFixture) limitFixtu
 	f := limitFixture{rt: rt, h: rt.Handler()}
 	ctx := context.Background()
 	admin := access.Actor{ID: "admin", Kind: "user"}
-	rec := doJSON(t, f.h, admin, "POST", "/posts", PostInput{Title: ptr("Hello"), Body: ptr("world"), IsDraft: ptr(false)})
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("create post: %d %s", rec.Code, rec.Body.String())
-	}
-	f.post = decodePost(t, rec).ID
-	res.set("post", f.post, true, true)
 	var err error
 	if f.poll, err = rt.polls.create(ctx, rt.as(admin), twoOptionPoll("en")); err != nil {
 		t.Fatal(err)
@@ -84,7 +77,7 @@ func assertLimited(t *testing.T, rec *httptest.ResponseRecorder, action Action, 
 // IP) keep their own budgets.
 func TestRateLimitsPerActionAndChurn(t *testing.T) {
 	two := []Rate{{2, time.Hour}}
-	f := newLimitFixture(t, Limits{Comment: two, CommentReaction: two, PostReaction: two, Reaction: two, Favorite: two, PollVote: two}, nil)
+	f := newLimitFixture(t, Limits{Comment: two, CommentReaction: two, Reaction: two, Favorite: two, PollVote: two}, nil)
 	bot := access.Actor{ID: "bot", Kind: "user"}
 	g1, g2 := "/gallery/"+cid(1), "/gallery/"+cid(2)
 	opt := map[string]string{"option_id": f.poll.Options[0].ID}
@@ -94,8 +87,6 @@ func TestRateLimitsPerActionAndChurn(t *testing.T) {
 	}{
 		{ActionComment, [3]step{{"POST", g1 + "/comments", CommentInput{Body: "a"}}, {"POST", g1 + "/comments", CommentInput{Body: "b"}}, {"POST", g2 + "/comments", CommentInput{Body: "c"}}}},
 		{ActionCommentReaction, [3]step{{"POST", "/comments/" + f.comment + "/like", nil}, {"DELETE", "/comments/" + f.comment + "/reaction", nil}, {"POST", "/comments/" + f.comment + "/dislike", nil}}},
-		// Kind post spends its own budget, not the generic one.
-		{ActionPostReaction, [3]step{{"POST", "/post/" + f.post + "/like", nil}, {"DELETE", "/post/" + f.post + "/reaction", nil}, {"POST", "/post/" + f.post + "/dislike", nil}}},
 		{ActionReaction, [3]step{{"POST", g1 + "/like", nil}, {"DELETE", g1 + "/reaction", nil}, {"POST", g2 + "/dislike", nil}}},
 		{ActionFavorite, [3]step{{"POST", g1 + "/favorite", nil}, {"DELETE", g1 + "/favorite", nil}, {"POST", g1 + "/favorite", nil}}},
 		// A free-text answer spends the vote budget, even one refused for

@@ -32,8 +32,9 @@ type Routes struct {
 type RouteGroups uint
 
 const (
-	// ContentRoutes: the content model (/v1/kinds), config, posts, comments,
-	// reactions, favorites, polls, comment bans and moderation (/v1).
+	// ContentRoutes: the content model (/v1/kinds), content items and their
+	// versions, catalog totals, config, comments, reactions, favorites, polls,
+	// comment bans and moderation (/v1).
 	ContentRoutes RouteGroups = 1 << iota
 	// UploadRoutes: media uploads and commits (/v1/media/upload).
 	UploadRoutes
@@ -67,7 +68,7 @@ var groupModules = []struct {
 	modules []httpapi.Module
 	name    string
 }{
-	{ContentRoutes, []httpapi.Module{httpapi.Kinds, httpapi.Content}, "content"},
+	{ContentRoutes, []httpapi.Module{httpapi.Kinds, httpapi.Content, httpapi.Contents}, "content"},
 	{UploadRoutes, []httpapi.Module{httpapi.Upload}, "upload"},
 	{MediaRoutes, []httpapi.Module{httpapi.Media, httpapi.Versions}, "media"},
 	{CodeRoutes, []httpapi.Module{httpapi.Codes}, "codes"},

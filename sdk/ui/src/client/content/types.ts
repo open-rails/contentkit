@@ -1,4 +1,4 @@
-import type { CommentBan, CommentStanding, Comment, Poll, Post, ReactionCounts, RefBody, ResolveInput } from "../generated/wire.js";
+import type { CommentBan, CommentStanding, Comment, Content, Poll, ReactionCounts, RefBody, ResolveInput } from "../generated/wire.js";
 
 /** A reaction: like 1, dislike -1, none 0. */
 export type Reaction = -1 | 0 | 1;
@@ -8,26 +8,25 @@ export function reactionVerb(value: -1 | 1): "like" | "dislike" {
   return value === 1 ? "like" : "dislike";
 }
 
-/** Comment and post order: newest (the default), likes (most liked) or best (Wilson lower bound). */
+/** Comment order: newest (the default), likes (most liked) or best (Wilson lower bound). */
 export type Sort = "newest" | "likes" | "best";
 
 /** A ban route family: "owner" bans from the caller's own content, "global" from the whole site. */
 export type BanScope = CommentStanding["ban_scopes"][number];
 
-/** What the review queue holds. */
-export type HeldKind = "comment" | "post";
+/** What the review queue holds: comments and content items. */
+export type HeldKind = "comment" | "content";
 
 /** A reviewer's decision on a held item. */
 export type Decision = Exclude<ResolveInput["decision"], "review">;
 
 /** A content-module mutation made through the client. */
 export type ContentChange =
-  | { type: "post.created"; post: Post }
-  | { type: "post.updated"; post: Post }
-  /** The cover changed: refetch the post. */
-  | { type: "post.changed"; id: string }
-  | { type: "post.deleted"; id: string }
-  | { type: "post.restored"; post: Post }
+  /** Created or edited: the item as the server now answers it. */
+  | { type: "content.saved"; content: Content }
+  /** A version changed: refetch the item. */
+  | { type: "content.changed"; id: string }
+  | { type: "content.deleted"; id: string }
   /** ref is the commented item. */
   | { type: "comment.created"; ref: RefBody; comment: Comment }
   | { type: "comment.updated"; comment: Comment }

@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
-	"slices"
 	"sync"
 	"time"
 
@@ -13,12 +11,9 @@ import (
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 
-	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/worker"
-	"github.com/open-rails/contentkit/search"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -126,9 +121,9 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		j.mu.Unlock()
 		return nil
 	})
-	parts := []riverhelpers.Contribution{own}
+	parts := []riverhelpers.Contribution{own, e.catalog.RiverJobs()}
 	if e.media != nil {
-		parts = append(parts, e.media.jobs.RiverJobs())
+		parts = append(parts, e.media.jobs.RiverJobs(), e.media.versions.RiverJobs())
 	}
 	if e.offers != nil {
 		parts = append(parts, e.offers.RiverJobs())
@@ -140,8 +135,8 @@ type searchSyncArgs struct{}
 
 func (searchSyncArgs) Kind() string { return "contentkit_search_sync" }
 
-// searchSyncWorker maintains the keyword documents of the kinds ContentKit
-// owns: posts and groups.
+// searchSyncWorker maintains the keyword documents of content items and
+// groups.
 type searchSyncWorker struct {
 	river.WorkerDefaults[searchSyncArgs]
 	e *Engine
@@ -150,28 +145,9 @@ type searchSyncWorker struct {
 func (w *searchSyncWorker) Timeout(*river.Job[searchSyncArgs]) time.Duration { return 10 * time.Minute }
 
 func (w *searchSyncWorker) Work(ctx context.Context, _ *river.Job[searchSyncArgs]) error {
-	e, g := w.e, w.e.groups
-	list := func(ctx context.Context, tenant, kind, language, cursor string, limit int) ([]contentref.ContentRef, string, bool, error) {
-		switch {
-		case kind == content.KindPost:
-			return e.content.ListContent(ctx, tenant, kind, language, cursor, limit)
-		case g.IsKind(kind):
-			return g.ListContent(ctx, tenant, kind, language, cursor, limit)
-		}
-		return nil, "", false, fmt.Errorf("contentkit: no documents for kind %q", kind)
-	}
-	build := func(ctx context.Context, tenant, kind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error) {
-		switch {
-		case kind == content.KindPost:
-			return e.content.KeywordDocuments(ctx, tenant, kind, language, refs)
-		case g.IsKind(kind):
-			return g.BuildKeywordDocuments(ctx, tenant, kind, language, refs)
-		}
-		return nil, fmt.Errorf("contentkit: no documents for kind %q", kind)
-	}
-	kinds := append([]string{content.KindPost}, slices.Sorted(maps.Keys(e.cfg.Content.GroupKinds))...)
+	e := w.e
 	return worker.SyncOnce(ctx, worker.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant,
-		SupportedLanguages: e.cfg.Content.Languages, ContentKinds: kinds, ListContent: list, BuildKeywordDocuments: build})
+		SupportedLanguages: e.cfg.Content.Languages, Sources: []worker.Source{e.catalog, e.groups}})
 }
 
 type groupsArgs struct {

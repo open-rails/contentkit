@@ -94,3 +94,32 @@ func ids(hits []SearchHit) []string {
 	}
 	return out
 }
+
+// funcSource documents galleries through test functions: a host's documents
+// in the search tests, which predate the catalog.
+type funcSource struct {
+	tenant string
+	list   func(ctx context.Context, tenant, kind, lang, cursor string, limit int) ([]ContentRef, string, bool, error)
+	build  func(ctx context.Context, tenant, kind, lang string, refs []ContentRef) ([]KeywordDocument, error)
+}
+
+func (funcSource) DocumentKinds() []string { return []string{"gallery"} }
+
+func (s funcSource) ListDocuments(ctx context.Context, kind, lang, cursor string, limit int) ([]ContentRef, string, bool, error) {
+	if s.list == nil {
+		return nil, "", true, nil
+	}
+	return s.list(ctx, s.tenant, kind, lang, cursor, limit)
+}
+
+func (s funcSource) BuildDocuments(ctx context.Context, kind, lang string, refs []ContentRef) ([]KeywordDocument, error) {
+	return s.build(ctx, s.tenant, kind, lang, refs)
+}
+
+// where is an eligibility join admitting the documents cond holds for.
+func where(cond string, args map[string]any) *search.Eligibility {
+	return &search.Eligibility{SQL: "SELECT 0 AS priority WHERE " + cond, Args: args}
+}
+
+// hostJoin is an eligibility join (search.Eligibility).
+type hostJoin = search.Eligibility

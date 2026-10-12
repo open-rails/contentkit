@@ -206,7 +206,7 @@ export const social: typeof en = {
     stale: "Der Text wurde seit dem Laden bearbeitet; prüf ihn erneut.",
     loadMore: "Mehr anzeigen",
     queueComments: "Kommentare",
-    queuePosts: "Beiträge",
+    queueContent: "Beiträge",
     noAccess: "Du hast keine Berechtigung, Kommentare zu moderieren.",
     author: "Autor",
     authorPlaceholder: "Nach Benutzer-ID filtern",

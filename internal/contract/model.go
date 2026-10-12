@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/media"
@@ -53,7 +54,11 @@ var enums = []enum{
 	{"EncodePhase", media.EncodePhases, []string{"media.EncodeProgress.phase"}},
 	{"PollKind", []string{content.PollMultipleChoice, content.PollFreeText}, []string{"content.Poll.kind", "content.PollInput.kind"}},
 	{"ModerationState", []string{content.ModerationApproved, content.ModerationHeld, content.ModerationRejected},
-		[]string{"content.Comment.moderation", "content.Post.moderation"}},
+		[]string{"content.Comment.moderation", "catalog.Content.moderation"}},
+	{"ContentState", []string{catalog.StateDraft, catalog.StatePublished, catalog.StateDeleted}, []string{"catalog.Content.state", "catalog.Version.state"}},
+	{"VersionState", []string{catalog.StateDraft, catalog.StatePublished}, []string{"catalog.VersionInput.state"}},
+	{"Listing", []string{catalog.ListingListed, catalog.ListingMembers, catalog.ListingUnlisted},
+		[]string{"catalog.Content.listing", "catalog.ContentInput.listing", "catalog.ContentPatch.listing"}},
 }
 
 func errorCodeNames() []string {

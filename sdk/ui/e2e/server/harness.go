@@ -17,14 +17,11 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/open-rails/authkit"
-	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/authkit/authtest"
-	"github.com/open-rails/authkit/iam"
 
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
@@ -58,32 +55,34 @@ type harness struct {
 	river    *river.Client[pgx.Tx]
 	items    *items
 	faults   *faults
-	staff    auth.Scope // AuthKit's root scope (the root group), where staff hold their permissions
 	// Fixture views of ContentKit's storage, standing in for the media
-	// worker and for content the host still owns: the registry, manifests,
-	// token ring, and the codes of host items.
+	// worker: the registry, manifests and token ring.
 	reg        *media.Registry
 	manifests  *media.Manifests
 	ring       token.Ring
-	urls       *contenturl.Store
-	router     *contenturl.Router
 	s3Endpoint *url.URL
 	bucket     string
 	origin     string
 	media      string
 }
 
-// site is the content model: ContentKit's posts, and the group kinds.
+// site is the content model: the items tests create (/__test/items) and
+// blogs, each a content kind whose media item tests use is its content-level
+// one (kinds.json), and the group kinds.
 var site = func() kinds.Config {
+	one := kinds.VersionRules{Languages: "one"}
+	item := func(route, presentation string) kinds.Kind {
+		return kinds.Kind{Route: route, Presentation: presentation, Versions: one, Groups: []string{"tag", "series", "character"}}
+	}
 	return kinds.Config{Languages: []string{"en", "de", "ja"},
-		Kinds: map[string]kinds.Kind{"post": {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}}},
+		Kinds: map[string]kinds.Kind{
+			"gallery": item("g", "reader"), "album": item("album", "reader"), "note": item("note", "reader"), "channel": item("channel", "reader"),
+			"file": item("file", "reader"), "video": item("v", "player"), "watch": item("watch", "player"), "abr": item("abr", "player"),
+			blogKind: {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
+		},
 		GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tag"}, "series": {Route: "series", Ordered: true, Parent: "series"},
 			"character": {Route: "characters", ScopedBy: "series"}}}
 }
-
-// hostKinds are the items the host owns (/__test/items): commentable, with
-// plain media.
-var hostKinds = []string{"gallery", "album", "video"}
 
 func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, err error) {
 	h := &harness{items: newItems(), bucket: c.bucket, origin: c.origin, media: mediaOrigin}
@@ -101,9 +100,6 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if h.auth, h.outbox, err = newAuth(ctx, c.origin, h.pool); err != nil {
 		return nil, fmt.Errorf("authkit: %w", err)
 	}
-	if h.staff, err = h.auth.Scope(ctx, iam.RootGroup()); err != nil {
-		return nil, err
-	}
 	if err := riverkit.ApplyMigrations(ctx, h.pool, riverSchema); err != nil {
 		return nil, err
 	}
@@ -120,10 +116,9 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	}
 	mc.BaseURL = mediaOrigin
 
-	// One ContentKit per mount, over one schema: AuthKit and the host's
-	// hooks for the items it still owns passed straight in.
+	// One ContentKit per mount, over one schema, AuthKit passed straight in.
 	cfg := contentkit.Config{Tenant: tenant, Database: contentkit.DatabaseConfig{Schema: schema, RiverSchema: riverSchema}, Content: site(),
-		Interactions: contentkit.InteractionsConfig{HostKinds: hostKinds,
+		Interactions: contentkit.InteractionsConfig{
 			Anonymous: content.Anonymous{Comments: true, Reactions: true, Votes: true},
 			// The suites test the bound; the default may change.
 			CommentMaxLength: 400,
@@ -137,7 +132,7 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 			Issuance: contentkit.IssuanceConfig{Disabled: true}},
 	}
 	deps := contentkit.Deps{Postgres: h.pool, Auth: h.auth.Authenticator(), Users: h.auth.UserInfo(), Store: h.store,
-		Moderator: moderator{}, Classifier: classifier{}, PostBodyProcessor: newPostHTML(), Resolver: h, CanUpload: h}
+		Moderator: moderator{}, Classifier: classifier{}, BodyProcessor: newPostHTML()}
 	if h.ck, err = contentkit.New(ctx, cfg, deps); err != nil {
 		return nil, err
 	}
@@ -153,7 +148,12 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 		return nil, err
 	}
 
-	if h.reg, err = media.NewRegistry(mc); err != nil {
+	fixture, err := media.ForContent(mc, site())
+	if err != nil {
+		return nil, err
+	}
+	fixture.Namespace = tenant
+	if h.reg, err = media.NewRegistry(fixture); err != nil {
 		return nil, err
 	}
 	queue, err := workqueue.New(h.pool, h.reg, workerSchema)
@@ -174,15 +174,6 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if h.ring, err = token.NewRing(signing, nil); err != nil {
 		return nil, err
 	}
-	if h.urls, err = contenturl.New(contenturl.Options{Pool: h.pool, Schema: schema, Tenant: tenant}); err != nil {
-		return nil, err
-	}
-	routes := site().Routes()
-	routes["gallery"], routes["album"], routes["video"] = "g", "post", "watch"
-	if h.router, err = contenturl.NewRouter(h.urls, contenturl.RouterOptions{Routes: routes, Languages: site().Languages}); err != nil {
-		return nil, err
-	}
-
 	// The host's River runs AuthKit's jobs and the main mount's ContentKit
 	// jobs; the other mounts run theirs on their own River in its schema,
 	// as replicas would.

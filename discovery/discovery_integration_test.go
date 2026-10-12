@@ -12,12 +12,12 @@ import (
 
 func strp(s string) *string { return &s }
 
-// catalog seeds a small site: galleries in English and Japanese, a premium
+// seeded is a small site: galleries in English and Japanese, a premium
 // one behind a default-hidden content filter, a restricted one in the yaoi
 // tag, and ones no listing shows.
-func catalog(t *testing.T) *fixture { return catalogOn(t, nil, "") }
+func seeded(t *testing.T) *fixture { return seededOn(t, nil, "") }
 
-func catalogOn(t *testing.T, ch signal.Conn, chDB string) *fixture {
+func seededOn(t *testing.T, ch signal.Conn, chDB string) *fixture {
 	f := newFixture(t, ch, chDB)
 	f.group("tag", "romance", "big-breasts", "yaoi")
 	f.group("artist", "alice")
@@ -35,19 +35,19 @@ func catalogOn(t *testing.T, ch signal.Conn, chDB string) *fixture {
 		item{n: 6, titles: map[string]string{"en": "Foxtrot"}, age: time.Hour, deleted: true, versions: []ver{{langs: []string{"en"}}}},
 		item{n: 7, kind: "video", titles: map[string]string{"en": "Golf"}, age: 12 * time.Hour, versions: []ver{{langs: []string{"en", "ja"}}}},
 	)
-	f.exec(`UPDATE {s}.content_memberships SET position = CASE content_id WHEN $1 THEN 2 ELSE 1 END WHERE group_id = $2`, cid(1), f.ids["saga"])
+	f.exec(`UPDATE {s}.content_memberships SET position = CASE content_id WHEN $1 THEN 2 ELSE 1 END WHERE group_id = $2`, f.cid(1), f.ids["saga"])
 	return f
 }
 
 func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
-	f := catalog(t)
+	f := seeded(t)
 	const host = "main.test"
 	got, page := f.list(host, "", q("/contents", "kind", "gallery"))
-	if want := []string{cid(3), cid(1)}; !reflect.DeepEqual(got, want) {
+	if want := []string{f.cid(3), f.cid(1)}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("newest gallery list = %v, want %v (drafts, unlisted, deleted and default-hidden content left out)", got, want)
 	}
 	alpha := page.Contents[1]
-	if alpha.Title != "Alpha" || alpha.Language != "en" || alpha.Version.ID != vid(1, 0) || alpha.Code != "G00000001" || alpha.Path != "/g/G00000001/alpha" {
+	if alpha.Title != "Alpha" || alpha.Language != "en" || alpha.Version.ID != f.vid(1, 0) || alpha.Code != f.codes[1] || alpha.Path != "/g/"+f.codes[1]+"/alpha" {
 		t.Fatalf("card: %+v", alpha)
 	}
 	if !alpha.Access.Allowed || alpha.Counts.Favorites != 5 || alpha.Counts.Views != 40 || alpha.Version.Pages == nil || *alpha.Version.Pages != 20 {
@@ -70,7 +70,7 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 	t.Run("display language picks the version and text", func(t *testing.T) {
 		_, page := f.list(host, "", q("/contents", "kind", "gallery", "display_language", "ja"))
 		alpha := page.Contents[1]
-		if alpha.Version.ID != vid(1, 1) || alpha.Title != "アルファ" || alpha.Language != "ja" || alpha.Path != "/ja/g/G00000001/alpha" {
+		if alpha.Version.ID != f.vid(1, 1) || alpha.Title != "アルファ" || alpha.Language != "ja" || alpha.Path != "/ja/g/"+f.codes[1]+"/alpha" {
 			t.Fatalf("ja card: %+v", alpha)
 		}
 	})
@@ -79,17 +79,17 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 			path string
 			want []string
 		}{
-			{q("/contents", "kind", "gallery", "language", "en"), []string{cid(1)}},
-			{q("/contents", "kind", "gallery", "language", "ja"), []string{cid(3), cid(1)}},
-			{q("/contents", "kind", "gallery", "traits", "colored"), []string{cid(1)}},
-			{q("/contents", "kind", "gallery", "groups", f.ids["romance"]), []string{cid(1)}},
-			{q("/contents", "kind", "gallery", "groups", f.ids["romance"]+","+f.ids["alice"]), []string{cid(1)}},
-			{q("/contents", "kind", "gallery", "exclude_groups", f.ids["romance"]), []string{cid(3)}},
-			{q("/contents", "kind", "gallery", "attribute", "format:doujin"), []string{cid(3)}},
-			{q("/contents", "kind", "gallery", "released_on", f.now.Add(-72*time.Hour).Format(time.DateOnly)), []string{cid(1)}},
+			{q("/contents", "kind", "gallery", "language", "en"), []string{f.cid(1)}},
+			{q("/contents", "kind", "gallery", "language", "ja"), []string{f.cid(3), f.cid(1)}},
+			{q("/contents", "kind", "gallery", "traits", "colored"), []string{f.cid(1)}},
+			{q("/contents", "kind", "gallery", "groups", f.ids["romance"]), []string{f.cid(1)}},
+			{q("/contents", "kind", "gallery", "groups", f.ids["romance"]+","+f.ids["alice"]), []string{f.cid(1)}},
+			{q("/contents", "kind", "gallery", "exclude_groups", f.ids["romance"]), []string{f.cid(3)}},
+			{q("/contents", "kind", "gallery", "attribute", "format:doujin"), []string{f.cid(3)}},
+			{q("/contents", "kind", "gallery", "released_on", f.now.Add(-72*time.Hour).Format(time.DateOnly)), []string{f.cid(1)}},
 			{q("/contents", "kind", "gallery", "released_on", "1999-01"), []string{}},
-			{q("/contents", "kind", "video"), []string{cid(7)}},
-			{q("/contents"), []string{cid(7), cid(3), cid(1)}},
+			{q("/contents", "kind", "video"), []string{f.cid(7)}},
+			{q("/contents"), []string{f.cid(7), f.cid(3), f.cid(1)}},
 		}
 		for _, c := range cases {
 			if got, _ := f.list(host, "", c.path); !reflect.DeepEqual(got, c.want) {
@@ -111,28 +111,28 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 		}
 	})
 	t.Run("site scopes", func(t *testing.T) {
-		if got, _ := f.list("gay.test", "", q("/contents", "kind", "gallery")); !reflect.DeepEqual(got, []string{cid(3)}) {
+		if got, _ := f.list("gay.test", "", q("/contents", "kind", "gallery")); !reflect.DeepEqual(got, []string{f.cid(3)}) {
 			t.Errorf("a site requiring yaoi = %v", got)
 		}
-		if got, _ := f.list("clean.test:8080", "", q("/contents", "kind", "gallery")); !reflect.DeepEqual(got, []string{cid(1)}) {
+		if got, _ := f.list("clean.test:8080", "", q("/contents", "kind", "gallery")); !reflect.DeepEqual(got, []string{f.cid(1)}) {
 			t.Errorf("a site excluding restricted = %v", got)
 		}
 	})
 	t.Run("sorts", func(t *testing.T) {
 		cases := map[string][]string{
-			"oldest":         {cid(1), cid(3)},
-			"title":          {cid(1), cid(3)},
-			"most_favorited": {cid(1), cid(3)},
-			"popular:7d":     {cid(3), cid(1)},
-			"popular":        {cid(1), cid(3)},
-			"top_rated":      {cid(3), cid(1)},
+			"oldest":         {f.cid(1), f.cid(3)},
+			"title":          {f.cid(1), f.cid(3)},
+			"most_favorited": {f.cid(1), f.cid(3)},
+			"popular:7d":     {f.cid(3), f.cid(1)},
+			"popular":        {f.cid(1), f.cid(3)},
+			"top_rated":      {f.cid(3), f.cid(1)},
 		}
 		for sort, want := range cases {
 			if got, _ := f.list(host, "", q("/contents", "kind", "gallery", "sort", sort)); !reflect.DeepEqual(got, want) {
 				t.Errorf("sort %s = %v, want %v", sort, got, want)
 			}
 		}
-		if got, _ := f.list(host, "", q("/contents", "kind", "gallery", "sort", "position", "groups", f.ids["saga"])); !reflect.DeepEqual(got, []string{cid(3), cid(1)}) {
+		if got, _ := f.list(host, "", q("/contents", "kind", "gallery", "sort", "position", "groups", f.ids["saga"])); !reflect.DeepEqual(got, []string{f.cid(3), f.cid(1)}) {
 			t.Errorf("position = %v", got)
 		}
 	})
@@ -149,7 +149,7 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 				path = q("/contents", "sort", sort, "limit", "1", "cursor", page.NextCursor)
 			}
 			slices.Sort(seen)
-			if want := []string{cid(1), cid(3), cid(7)}; !reflect.DeepEqual(seen, want) {
+			if want := []string{f.cid(1), f.cid(3), f.cid(7)}; !reflect.DeepEqual(seen, want) {
 				t.Errorf("sort %s paged %v, want %v", sort, seen, want)
 			}
 		}
@@ -157,7 +157,7 @@ func TestListShowsOneCardPerContentUnderVisibility(t *testing.T) {
 }
 
 func TestContentFiltersApplyToEveryRead(t *testing.T) {
-	f := catalog(t)
+	f := seeded(t)
 	const host = "main.test"
 	var filters ContentFilters
 	if status, _ := f.call(http.MethodGet, host, "plain", "/me/content-filters", nil, &filters); status != http.StatusOK {
@@ -188,7 +188,7 @@ func TestContentFiltersApplyToEveryRead(t *testing.T) {
 		t.Fatalf("after PUT: %+v", filters)
 	}
 	got, page := f.list(host, "plain", q("/contents", "kind", "gallery"))
-	if !reflect.DeepEqual(got, []string{cid(2), cid(1)}) {
+	if !reflect.DeepEqual(got, []string{f.cid(2), f.cid(1)}) {
 		t.Fatalf("shown big-breasts, hidden yaoi = %v", got)
 	}
 	bravo := page.Contents[0]
@@ -198,21 +198,21 @@ func TestContentFiltersApplyToEveryRead(t *testing.T) {
 	if bravo.Viewer == nil || bravo.Viewer.Favorited {
 		t.Fatalf("viewer state: %+v", bravo.Viewer)
 	}
-	if got, _ := f.list(host, "plain", q("/contents", "kind", "gallery", "mode", "hide")); !reflect.DeepEqual(got, []string{cid(1)}) {
+	if got, _ := f.list(host, "plain", q("/contents", "kind", "gallery", "mode", "hide")); !reflect.DeepEqual(got, []string{f.cid(1)}) {
 		t.Fatalf("hide mode = %v", got)
 	}
 	_, page = f.list(host, "fan", q("/contents", "kind", "gallery", "mode", "hide"))
 	if len(page.Contents) != 2 || !page.Contents[0].Access.Allowed || len(page.Contents[0].Access.Sell) != 0 {
 		t.Fatalf("a premium holder opens it: %+v", page.Contents)
 	}
-	f.exec(`INSERT INTO {s}.content_favorites (tenant_id, user_id, content_kind, content_id, value, revision) VALUES ($1, 'plain', 'gallery', $2, 1, 1)`, tenant, cid(1))
+	f.exec(`INSERT INTO {s}.content_favorites (tenant_id, user_id, content_kind, content_id, value, revision) VALUES ($1, 'plain', 'gallery', $2, 1, 1)`, tenant, f.cid(1))
 	if _, page := f.list(host, "plain", q("/contents", "kind", "gallery")); !page.Contents[1].Viewer.Favorited || page.Contents[0].Viewer.Favorited {
 		t.Fatalf("favorited: %+v %+v", page.Contents[0].Viewer, page.Contents[1].Viewer)
 	}
 }
 
 func TestReleaseDates(t *testing.T) {
-	f := catalog(t)
+	f := seeded(t)
 	var dates ReleaseDates
 	if status, _ := f.call(http.MethodGet, "main.test", "", q("/release-dates", "by", "day", "kind", "gallery"), nil, &dates); status != http.StatusOK {
 		t.Fatalf("release dates: %d", status)
@@ -240,22 +240,22 @@ func TestReleaseDates(t *testing.T) {
 }
 
 func TestSearchAndTypeahead(t *testing.T) {
-	f := catalog(t)
+	f := seeded(t)
 	const host = "main.test"
-	f.docs(doc("gallery", cid(1), "en", "Alpha Saga"), doc("gallery", cid(1), "ja", "アルファ"), doc("gallery", cid(2), "en", "Bravo Saga"),
-		doc("gallery", cid(3), "ja", "Charlie Saga"), doc("gallery", cid(5), "en", "Echo Saga"), doc("video", cid(7), "en", "Golf Saga"),
+	f.docs(doc("gallery", f.cid(1), "en", "Alpha Saga"), doc("gallery", f.cid(1), "ja", "アルファ"), doc("gallery", f.cid(2), "en", "Bravo Saga"),
+		doc("gallery", f.cid(3), "ja", "Charlie Saga"), doc("gallery", f.cid(5), "en", "Echo Saga"), doc("video", f.cid(7), "en", "Golf Saga"),
 		doc("series", f.ids["saga"], "en", "Saga"), doc("tag", f.ids["romance"], "en", "Romance"))
 	got, page := f.list(host, "", q("/search", "q", "saga", "kind", "gallery"))
-	if !reflect.DeepEqual(got, []string{cid(1)}) || page.Contents[0].Title != "Alpha" {
+	if !reflect.DeepEqual(got, []string{f.cid(1)}) || page.Contents[0].Title != "Alpha" {
 		t.Fatalf("search = %v (hidden, unlisted, other-language and other-kind matches left out)", got)
 	}
-	if got, _ := f.list(host, "", q("/search", "q", "saga", "display_language", "ja")); !reflect.DeepEqual(got, []string{cid(1), cid(3), cid(7)}) && !slices.Equal(sorted(got), []string{cid(1), cid(3), cid(7)}) {
+	if got, _ := f.list(host, "", q("/search", "q", "saga", "display_language", "ja")); !reflect.DeepEqual(got, []string{f.cid(1), f.cid(3), f.cid(7)}) && !slices.Equal(sorted(got), sorted([]string{f.cid(1), f.cid(3), f.cid(7)})) {
 		t.Fatalf("ja search = %v", got)
 	}
-	if got, _ := f.list(host, "", q("/search", "q", "saga", "display_language", "ja", "sort", "newest")); !reflect.DeepEqual(got, []string{cid(7), cid(3), cid(1)}) {
+	if got, _ := f.list(host, "", q("/search", "q", "saga", "display_language", "ja", "sort", "newest")); !reflect.DeepEqual(got, []string{f.cid(7), f.cid(3), f.cid(1)}) {
 		t.Fatalf("search sorted newest = %v", got)
 	}
-	if got, _ := f.list(host, "", q("/search", "q", "saga", "display_language", "ja", "exclude_groups", f.ids["saga"])); !reflect.DeepEqual(got, []string{cid(7)}) {
+	if got, _ := f.list(host, "", q("/search", "q", "saga", "display_language", "ja", "exclude_groups", f.ids["saga"])); !reflect.DeepEqual(got, []string{f.cid(7)}) {
 		t.Fatalf("filtered search = %v", got)
 	}
 	var seen []string
@@ -268,13 +268,13 @@ func TestSearchAndTypeahead(t *testing.T) {
 		}
 		path = q("/search", "q", "saga", "display_language", "ja", "limit", "1", "cursor", page.NextCursor)
 	}
-	if !reflect.DeepEqual(sorted(seen), []string{cid(1), cid(3), cid(7)}) {
+	if !reflect.DeepEqual(sorted(seen), sorted([]string{f.cid(1), f.cid(3), f.cid(7)})) {
 		t.Fatalf("paged search = %v", seen)
 	}
 	if status, _ := f.call(http.MethodGet, host, "", "/search", nil, nil); status != http.StatusBadRequest {
 		t.Fatalf("search without q: %d", status)
 	}
-	if got, _ := f.list("gay.test", "", q("/search", "q", "saga", "display_language", "ja")); !reflect.DeepEqual(got, []string{cid(3)}) {
+	if got, _ := f.list("gay.test", "", q("/search", "q", "saga", "display_language", "ja")); !reflect.DeepEqual(got, []string{f.cid(3)}) {
 		t.Fatalf("search on a scoped site = %v", got)
 	}
 
@@ -286,7 +286,7 @@ func TestSearchAndTypeahead(t *testing.T) {
 	for _, c := range ta.Contents {
 		contents = append(contents, c.ID)
 	}
-	if !reflect.DeepEqual(sorted(contents), []string{cid(1), cid(7)}) || len(ta.Groups) != 1 || string(ta.Groups[0].ID) != f.ids["saga"] {
+	if !reflect.DeepEqual(sorted(contents), sorted([]string{f.cid(1), f.cid(7)})) || len(ta.Groups) != 1 || string(ta.Groups[0].ID) != f.ids["saga"] {
 		t.Fatalf("typeahead = %v %+v", contents, ta.Groups)
 	}
 	if status, _ := f.call(http.MethodGet, host, "", q("/typeahead", "q", "rom", "group_kinds", "tag"), nil, &ta); status != http.StatusOK || len(ta.Groups) != 1 || ta.Groups[0].Slug != "romance" {
@@ -295,9 +295,9 @@ func TestSearchAndTypeahead(t *testing.T) {
 }
 
 func TestSignalPlaneReadsNeedOne(t *testing.T) {
-	f := catalog(t)
+	f := seeded(t)
 	for _, c := range []struct{ method, user, path string }{
-		{http.MethodGet, "", "/contents/" + cid(1) + "/similar"},
+		{http.MethodGet, "", "/contents/" + f.cid(1) + "/similar"},
 		{http.MethodGet, "reader", "/recommendations"},
 		{http.MethodGet, "reader", "/me/history"},
 		{http.MethodDelete, "reader", "/me/history"},
@@ -306,7 +306,7 @@ func TestSignalPlaneReadsNeedOne(t *testing.T) {
 			t.Errorf("%s %s: %d %s", c.method, c.path, status, code)
 		}
 	}
-	body := Signals{Session: "s1", Signals: []SignalInput{{ContentID: cid(1), Type: TypeView, EventID: "e1", OccurredAt: time.Now()}}}
+	body := Signals{Session: "s1", Signals: []SignalInput{{ContentID: f.cid(1), Type: TypeView, EventID: "e1", OccurredAt: time.Now()}}}
 	if status, code := f.call(http.MethodPost, "main.test", "", "/signals", body, nil); status != http.StatusNotImplemented || code != "not_configured" {
 		t.Errorf("signals: %d %s", status, code)
 	}

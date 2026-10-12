@@ -18,14 +18,13 @@ import (
 func TestAnonymousParticipationIsAServerSetting(t *testing.T) {
 	user := access.Actor{ID: "u1", Kind: "user"}
 	anon := access.Actor{Anonymous: true, IP: "10.9.0.1"}
-	setup := func(t *testing.T, a Anonymous) (http.Handler, Post, Poll, Comment) {
+	setup := func(t *testing.T, a Anonymous) (http.Handler, Poll, Comment) {
 		res := &fakeResolver{}
 		res.set("gallery", cid(1), true, true)
-		rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery", "post"}, Anonymous: a})
+		res.set("blog", cid(2), true, true)
+		rt, _ := newTestRuntime(t, Options{Resolver: res, ContentKinds: []string{"gallery", "blog"}, Anonymous: a})
 		h := rt.Handler()
 		staff := access.Actor{ID: "staff", Kind: "user"}
-		post := decodePost(t, doJSON(t, h, staff, "POST", "/posts", PostInput{Title: ptr("Hello"), Body: ptr("world")}))
-		res.set("post", post.ID, true, true)
 		var poll Poll
 		rec := doJSON(t, h, staff, "POST", "/polls", PollInput{Question: "Which?", Language: "en",
 			Options: []PollOptionInput{{Label: "A"}, {Label: "B", Position: 1}}})
@@ -37,14 +36,14 @@ func TestAnonymousParticipationIsAServerSetting(t *testing.T) {
 		if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &cm) != nil {
 			t.Fatalf("signed-in comment: %d %s", rec.Code, rec.Body)
 		}
-		return h, post, poll, cm
+		return h, poll, cm
 	}
 	type attempt struct {
 		name, method, path string
 		body               any
 		allowed            func(Anonymous) bool
 	}
-	attempts := func(post Post, poll Poll, cm Comment) []attempt {
+	attempts := func(poll Poll, cm Comment) []attempt {
 		comments := func(a Anonymous) bool { return a.Comments }
 		reactions := func(a Anonymous) bool { return a.Reactions }
 		return []attempt{
@@ -52,18 +51,18 @@ func TestAnonymousParticipationIsAServerSetting(t *testing.T) {
 			{"reply", "POST", gallery(1, "/comments"), CommentInput{Body: "re", AnonName: "Guest", ReplyToID: cm.ID}, comments},
 			{"work like", "POST", gallery(1, "/like"), nil, reactions},
 			{"work reaction clear", "DELETE", gallery(1, "/reaction"), nil, reactions},
-			{"post like by kind", "POST", "/post/" + post.ID + "/dislike", nil, reactions},
+			{"another kind's dislike", "POST", "/blog/" + cid(2) + "/dislike", nil, reactions},
 			{"comment like", "POST", "/comments/" + cm.ID + "/like", nil, reactions},
 			{"vote", "POST", "/polls/" + poll.ID + "/vote", PollVote{OptionID: poll.Options[0].ID}, func(a Anonymous) bool { return a.Votes }},
 		}
 	}
 	for _, a := range []Anonymous{{}, {Comments: true}, {Reactions: true}, {Votes: true}, {Comments: true, Reactions: true, Votes: true}} {
-		h, post, poll, cm := setup(t, a)
+		h, poll, cm := setup(t, a)
 		var cfg Config
 		if rec := doJSON(t, h, anon, "GET", "/config", nil); rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &cfg) != nil || cfg.Anonymous != a {
 			t.Fatalf("%+v: GET /config = %d %s", a, rec.Code, rec.Body)
 		}
-		for _, at := range attempts(post, poll, cm) {
+		for _, at := range attempts(poll, cm) {
 			rec := doJSON(t, h, anon, at.method, at.path, at.body)
 			switch {
 			case at.allowed(a) && (rec.Code < 200 || rec.Code > 299):

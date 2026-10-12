@@ -8,9 +8,12 @@ package access
 type Permission string
 
 const (
-	// PostsWrite: create, edit, delete and restore posts and their images,
-	// and see drafts.
-	PostsWrite Permission = "root:posts:write"
+	// ContentWrite: create, edit, publish, delete and restore any content
+	// item, and see everything.
+	ContentWrite Permission = "root:content:write"
+	// ContentViewRestricted: see every content item, whatever its state,
+	// listing, site scope or access.
+	ContentViewRestricted Permission = "root:content:view-restricted"
 	// PollsWrite: create, edit and delete polls, their options and images,
 	// and see scheduled and inactive ones.
 	PollsWrite Permission = "root:polls:write"
@@ -19,7 +22,7 @@ const (
 	CommentsModerate Permission = "root:comments:moderate"
 	// CommentsBan: ban users from commenting anywhere in the tenant.
 	CommentsBan Permission = "root:comments:ban"
-	// ModerationReview: list and resolve held comments and posts.
+	// ModerationReview: list and resolve held comments and content.
 	ModerationReview Permission = "root:moderation:review"
 	// GroupsWrite: create, edit, merge and delete groups, and set content's
 	// memberships.
@@ -33,7 +36,7 @@ const (
 
 // Permissions is every staff permission.
 func Permissions() []Permission {
-	return []Permission{PostsWrite, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, GroupsWrite, OffersWrite, NotificationsPublish}
+	return []Permission{ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, GroupsWrite, OffersWrite, NotificationsPublish}
 }
 
 func (p Permission) String() string { return string(p) }

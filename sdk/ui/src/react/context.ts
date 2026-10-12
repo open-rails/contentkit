@@ -39,7 +39,7 @@ export type SocialOperation =
   | "poll.answer"
   | "poll.save"
   | "post.load"
-  | "post.save"
+  | "content.save"
   | "moderation.load"
   | "moderation.resolve"
   | "media.save"

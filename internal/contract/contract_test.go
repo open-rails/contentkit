@@ -67,6 +67,8 @@ func TestPermissionsAreRootNames(t *testing.T) {
 			t.Errorf("%s %s checks %q, which access.Permissions() does not list", r.Method, r.FullPath(), r.Perm)
 		}
 	}
+	// The catalog decides these per item, beside creators and group editors.
+	used[string(access.ContentWrite)], used[string(access.ContentViewRestricted)] = true, true
 	for p := range listed {
 		if !used[p] {
 			t.Errorf("no route checks %q", p)

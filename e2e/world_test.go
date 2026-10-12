@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -31,7 +30,7 @@ import (
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	ckopenrails "github.com/open-rails/contentkit/adapters/openrails"
-	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/internal/contract"
 	"github.com/open-rails/contentkit/internal/pgtest"
 	"github.com/open-rails/contentkit/kinds"
@@ -43,10 +42,10 @@ import (
 // prefix is where the host mounts ContentKit's routes.
 const prefix = "/api/contentkit"
 
-// world is a host: AuthKit with root roles holding ContentKit's permissions,
-// the media bucket, and the host's resolver and upload hooks for the
-// galleries and accounts it still owns. Fixtures stand in for the media
-// worker through their own registry over the same bucket and journal.
+// world is a host: AuthKit with root roles holding ContentKit's permissions
+// and the media bucket. Content is created through the catalog's routes.
+// Fixtures stand in for the media worker through their own registry over the
+// same bucket and journal.
 type world struct {
 	t      *testing.T
 	ak     *authkit.Client
@@ -59,7 +58,6 @@ type world struct {
 	reg    *media.Registry
 	jobs   *media.Jobs
 	queue  *workqueue.Queue
-	owner  string // the gallery's owner, when a test has one
 }
 
 func newWorld(t *testing.T) *world {
@@ -96,19 +94,24 @@ func newWorld(t *testing.T) *world {
 	return w
 }
 
-// mediaConfig is the site's media registry: the host's albums, books'
-// versions, accounts' avatars and ContentKit's own post and poll images.
+// mediaConfig is the site's media registry: albums' content-level files,
+// books' versions, blog images, accounts' avatars and poll images.
 func (w *world) mediaConfig() media.Config {
 	images := []string{"image/png"}
 	folder := func(name string) media.Kind {
 		return media.Kind{Name: name, Uploads: []media.Upload{{Path: "{name}", Types: images, MaxBytes: 1 << 20, Named: true, Max: 10}},
 			Public: []media.Public{{Name: "inline", From: "{name}", To: "{name}.webp", Image: media.Image{Width: 800}}}}
 	}
+	blog := folder("blog")
+	blog.Uploads[0].Content = true
+	blog.Uploads = append(blog.Uploads, media.Upload{Path: "files/{name}", Types: images, MaxBytes: 1 << 20})
 	return media.Config{BaseURL: "https://media.test",
 		Kinds: []media.Kind{
 			{Name: "album", KeepOriginals: true,
-				Uploads: []media.Upload{{Path: "originals/{name}", Types: images, MaxBytes: 1 << 20, Max: 10}, {Path: "cover", Types: images, MaxBytes: 1 << 20},
-					{Path: "extras/{name}", Types: images, MaxBytes: 1 << 20, Max: 1}},
+				Uploads: []media.Upload{{Path: "originals/{name}", Content: true, Types: images, MaxBytes: 1 << 20, Max: 10},
+					{Path: "cover", Content: true, Types: images, MaxBytes: 1 << 20},
+					{Path: "extras/{name}", Content: true, Types: images, MaxBytes: 1 << 20, Max: 1},
+					{Path: "pages/{name}", Types: images, MaxBytes: 1 << 20}},
 				Public: []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{200}, Image: media.Image{MinWidth: 8}}}},
 			{Name: "book", Versions: true, KeepOriginals: true,
 				Publish: &media.Publish{Pages: "pages/{name}", Renditions: []string{"read"}, Download: "zip"},
@@ -119,7 +122,7 @@ func (w *world) mediaConfig() media.Config {
 				Uploads: []media.Upload{{Path: "avatar", Types: images, MaxBytes: 1 << 20}},
 				Public: []media.Public{{Name: "avatar", From: "avatar", To: "avatar-{w}.webp", Widths: []int{64, 128},
 					Image: media.Image{Aspect: media.Square}, Default: "avatar.png"}}},
-			folder("post"), folder("poll"),
+			blog, folder("poll"),
 		},
 		Avatars: media.Avatars{Kind: "user", Preset: "avatar"}}
 }
@@ -128,25 +131,24 @@ func (w *world) mediaConfig() media.Config {
 func (w *world) config() contentkit.Config {
 	one := kinds.VersionRules{Languages: "one"}
 	return contentkit.Config{Tenant: w.tenant, Database: contentkit.DatabaseConfig{Schema: w.schema},
-		Content: kinds.Config{Languages: []string{"en"},
+		Content: kinds.Config{Languages: []string{"en", "ja"}, Tiers: []string{"premium"},
 			Kinds: map[string]kinds.Kind{
 				"gallery": {Route: "g", Presentation: "reader", Versions: one, Groups: []string{"tag", "series"}},
-				"book":    {Route: "b", Presentation: "reader", Versions: one},
-				"post":    {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
+				"book":    {Route: "b", Presentation: "reader", Segments: true, Versions: kinds.VersionRules{Languages: "one", Traits: []string{"colored"}}},
+				"album":   {Route: "a", Presentation: "reader", Versions: one},
+				"blog":    {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
 			},
 			GroupKinds: map[string]kinds.GroupKind{"tag": {Route: "tags", VersionLevel: true, Roles: []string{"featured"}}, "series": {Route: "series", Ordered: true, Sellable: true}}},
-		Interactions: contentkit.InteractionsConfig{HostKinds: []string{"album"}, Limits: contentkit.LimitsConfig{Disabled: true}},
+		Interactions: contentkit.InteractionsConfig{Limits: contentkit.LimitsConfig{Disabled: true}},
 		Media: &contentkit.MediaConfig{Config: w.mediaConfig(),
 			Delivery:    contentkit.DeliveryConfig{SigningKey: "k1:" + base64.RawStdEncoding.EncodeToString(bytes.Repeat([]byte("s"), 32))},
 			CommitLimit: contentkit.RateLimitConfig{Disabled: true}, ReadLimit: contentkit.RateLimitConfig{Disabled: true}},
 	}
 }
 
-// deps are the host's connections and providers: AuthKit passed straight in,
-// and the hooks over the galleries and accounts it still owns.
+// deps are the host's connections and providers: AuthKit passed straight in.
 func (w *world) deps() contentkit.Deps {
-	return contentkit.Deps{Postgres: w.pool, Auth: w.ak.Authenticator(), Users: w.ak.UserInfo(), Store: w.env.Store,
-		Resolver: w, CanUpload: w}
+	return contentkit.Deps{Postgres: w.pool, Auth: w.ak.Authenticator(), Users: w.ak.UserInfo(), Store: w.env.Store}
 }
 
 // billing is the site's merchant on a real OpenRails engine embedded over
@@ -174,19 +176,26 @@ func (w *world) billing() access.Billing {
 	return ckopenrails.Billing(merchant)
 }
 
-// galleries writes gallery contents cid(n), each with the version
-// cid(n*10), as ContentKit's content routes will.
-func (w *world) galleries(ns ...int) {
+// published creates a content item of kind through the catalog's routes as
+// staff, credited to creators, publishes it and returns its id and first
+// version.
+func (w *world) published(f *server, staff, kind string, creators ...string) (id, version string) {
 	w.t.Helper()
-	q := pgx.Identifier{w.schema}.Sanitize()
-	for _, n := range ns {
-		if _, err := w.pool.Exec(w.t.Context(), `INSERT INTO `+q+`.content_items (tenant_id, id, kind) VALUES ($1, $2, 'gallery')`, w.tenant, cid(n)); err != nil {
-			w.t.Fatal(err)
-		}
-		if _, err := w.pool.Exec(w.t.Context(), `INSERT INTO `+q+`.content_versions (tenant_id, id, content_id, languages) VALUES ($1, $2, $3, '{en}')`, w.tenant, cid(n*10), cid(n)); err != nil {
-			w.t.Fatal(err)
-		}
+	in := catalog.ContentInput{Kind: kind, Text: map[string]catalog.Text{"en": {Title: kind + " " + uuid.NewString()[:8]}}}
+	if kind != "blog" {
+		in.Versions = []catalog.VersionInput{{Languages: []string{"en"}}}
 	}
+	if len(creators) > 0 {
+		cs := make([]catalog.Creator, len(creators))
+		for i, c := range creators {
+			cs[i] = catalog.Creator{UserID: c}
+		}
+		in.Creators = &cs
+	}
+	var c catalog.Content
+	f.want(http.StatusCreated, staff, "POST", "/contents", in, &c)
+	f.want(http.StatusOK, staff, "POST", "/contents/"+c.ID+"/publish", catalog.PublishInput{}, &c)
+	return c.ID, c.Versions[0].ID
 }
 
 // engine is the host's one ContentKit, started on its own River; edit
@@ -206,8 +215,11 @@ func (w *world) engine(edit func(*contentkit.Config, *contentkit.Deps)) *content
 		w.t.Fatal(err)
 	}
 	// The fixtures' own view of the registry, as the media worker has one.
-	mc := cfg.Media.Config
-	mc.Namespace, mc.Hooks = w.tenant, media.Hooks{Resolver: w, CanUpload: w}
+	mc, err := media.ForContent(cfg.Media.Config, cfg.Content)
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	mc.Namespace = w.tenant
 	if w.reg, err = media.NewRegistry(mc); err != nil {
 		w.t.Fatal(err)
 	}
@@ -234,42 +246,6 @@ func (w *world) person(role iam.Role) (authtest.User, string) {
 		authtest.GrantRole(w.t, w.ak, iam.RootGroup(), iam.UserSubject(u.ID), role)
 	}
 	return u, authtest.SignIn(w.t, w.ak, u).AccessToken
-}
-
-// Resolve is the host's resolver: the gallery and the album cid(1), owned
-// by w.owner, are visible to everyone and edited by any signed-in person.
-// Books stand in for the catalog's resolver over the contract tables: a
-// version is live when it and its content are published, its content's
-// creators edit it, and only a public rule opens it.
-func (w *world) Resolve(ctx context.Context, refs []contentref.ContentRef, a access.Actor) (map[contentref.ContentKey]access.Resolution, error) {
-	out := map[contentref.ContentKey]access.Resolution{}
-	for _, r := range refs {
-		switch {
-		case (r.ContentKind == "gallery" || r.ContentKind == "album") && r.ContentID == cid(1):
-			out[r.Key()] = access.Resolution{Visible: true, Accessible: true, Owner: w.owner, Editor: a.Person()}
-		case r.ContentKind == "book":
-			t := func(name string) string { return pgx.Identifier{w.schema, name}.Sanitize() }
-			var live, creator, public bool
-			err := w.pool.QueryRow(ctx, `SELECT c.state = 'published' AND v.state = 'published',
-	EXISTS (SELECT 1 FROM `+t("content_creators")+` cr WHERE cr.tenant_id = c.tenant_id AND cr.content_id = c.id AND cr.user_id = $4),
-	c.access->>'level' = 'public'
-FROM `+t("content_items")+` c JOIN `+t("content_versions")+` v ON v.tenant_id = c.tenant_id AND v.content_id = c.id
-WHERE c.tenant_id = $1 AND c.id = $2 AND ($3 = '' OR v.id = $3) LIMIT 1`, w.tenant, r.ContentID, r.Version(), a.ID).Scan(&live, &creator, &public)
-			if errors.Is(err, pgx.ErrNoRows) {
-				continue
-			} else if err != nil {
-				return nil, err
-			}
-			out[r.Key()] = access.Resolution{Visible: live || creator && a.Person(), Accessible: public, Editor: creator && a.Person()}
-		}
-	}
-	return out, nil
-}
-
-// CanUpload is the host's upload authorizer: the album for any signed-in
-// person. ContentKit decides avatars, versions and groups itself.
-func (w *world) CanUpload(_ context.Context, a access.Actor, _ media.UploadTarget) (media.UploadGrant, error) {
-	return media.UploadGrant{Allowed: a.Person()}, nil
 }
 
 // server serves the engine's routes under prefix, every response held to

@@ -128,12 +128,6 @@ func (r *reactions) react(ctx context.Context, actor access.Actor, kind, id stri
 	if err != nil {
 		return contentref.ContentRef{}, err
 	}
-	if ref.ContentKind == KindPost {
-		if ref.Version() != "" {
-			return contentref.ContentRef{}, ErrNotFound
-		}
-		return r.rt.posts.react(ctx, actor, ref.ContentID, value)
-	}
 	storage, _ := r.rt.preferences.work(ref)
 	tx, err := r.s.beginMutation(ctx)
 	if err != nil {
@@ -190,13 +184,9 @@ func reaction(method, verb, doc string, value int16) httpapi.Route[*reactions] {
 func (r *reactions) handleSet(value int16) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		actor := r.rt.actor(req.Context())
-		action := ActionReaction
-		if req.PathValue("kind") == KindPost {
-			action = ActionPostReaction
-		}
 		err := participant(actor, r.rt.anonymous.Reactions)
 		if err == nil {
-			err = r.rt.limit(req.Context(), action, actor)
+			err = r.rt.limit(req.Context(), ActionReaction, actor)
 		}
 		if err != nil {
 			writeErr(w, err)

@@ -21,13 +21,13 @@ import StarterKit from "@tiptap/starter-kit";
 import { cn } from "cn";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { toContentKitError, type ContentKitError } from "../client/errors.js";
-import type { PostEditorProps } from "../components/admin/post-manager.js";
+import type { ContentEditorProps } from "../components/admin/content-manager.js";
 import { useMessages } from "../i18n/context.js";
 import { Button } from "#ckui/ui/button";
 import { Input } from "#ckui/ui/input";
 import { ErrorLine } from "../components/social/parts.js";
 
-export type RichTextEditorProps = PostEditorProps & {
+export type RichTextEditorProps = ContentEditorProps & {
   className?: string;
 };
 
@@ -122,8 +122,8 @@ export function RichTextEditor({ value, onChange, uploadImage, disabled, placeho
   );
 }
 
-/** A render prop for PostManager: `renderEditor={richTextEditor}`. */
-export function richTextEditor(props: PostEditorProps): ReactNode {
+/** A render prop for ContentManager: `renderEditor={richTextEditor}`. */
+export function richTextEditor(props: ContentEditorProps): ReactNode {
   return <RichTextEditor {...props} />;
 }
 
