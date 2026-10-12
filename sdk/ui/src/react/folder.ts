@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { itemKey } from "../client/media/ref.js";
 import type { ContentKitClient } from "../client/client.js";
 import { ContentKitError, failureError, toContentKitError } from "../client/errors.js";
 import type { Edit, FileInfo, Op, ReadResult, RefBody, UploadRule } from "../client/generated/wire.js";
@@ -109,7 +110,7 @@ export function thumbnailOf(read: ReadResult | null | undefined, upload: FileInf
 }
 
 const NO_ITEM: RefBody = { kind: "", id: "" };
-const keyOf = (ref: RefBody | null) => (ref ? `${ref.kind}/${ref.id}` : "");
+const keyOf = (ref: RefBody | null) => (ref ? itemKey(ref) : "");
 
 const noRules = new WeakMap<ReadResult, ContentKitError>();
 /** The refusal for files added to an item whose read carries no upload rules (one per read). */

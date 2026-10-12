@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { itemKey } from "../client/media/ref.js";
 import type { ContentKitClient } from "../client/client.js";
 import { toContentKitError, type ContentKitError } from "../client/errors.js";
 import type { Edit, FileInfo, Op, ReadResult, RefBody } from "../client/generated/wire.js";
@@ -8,7 +9,7 @@ import { useMediaRead } from "./read.js";
 import { withUpload } from "./store.js";
 
 const asError = toContentKitError;
-const refKey = (ref: RefBody) => `${ref.kind}/${ref.id}`;
+const refKey = (ref: RefBody) => itemKey(ref);
 
 export interface VideoImagesOptions {
   ref: RefBody;

@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { harness, page as at, screenshots as dir } from "./pages.ts";
+import { itemParam, harness, page as at, screenshots as dir } from "./pages.ts";
 
 const img = (n: string) => ({ name: n, mimeType: "image/jpeg", buffer: readFileSync(path.join(import.meta.dirname, "..", "fixtures", "media", "img", n)) });
 const h = harness();
@@ -9,7 +9,7 @@ const h = harness();
 /** The folder page signed in as a new owner of fresh album items. */
 async function folder(params: Record<string, string>, items: ("post" | "draft")[]) {
   const owner = await h.user();
-  const ids = Object.fromEntries(await Promise.all(items.map(async (k) => [k, (await h.item({ kind: "album", owner: owner.id })).id] as const)));
+  const ids = Object.fromEntries(await Promise.all(items.map(async (k) => [k, itemParam(await h.item({ kind: "album", owner: owner.id }))] as const)));
   return { url: at("folder.html", owner, { ...params, ...ids }), ids };
 }
 const names = (editor: Locator) => () => editor.locator("[data-ckui=upload-name]").allTextContents();

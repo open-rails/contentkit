@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { ContentKitError, createContentKitClient, fetchTransport, type CommitBody, type RefBody, type UploadState } from "../../src/client/index.js";
 import { bytes, png as pngBytes } from "../support/bytes.js";
 import type { Config, TestUser } from "../support/harness.js";
-import { Accounts, client, fixture, harness, item, recorder, wait, type ClientOptions, type Recorder } from "./setup.js";
+import { Accounts, client, content, fixture, harness, item, recorder, wait, type ClientOptions, type Recorder } from "./setup.js";
 
 const MiB = 1 << 20;
 const STAGED = /^u-[0-9a-f-]{36}$/;
@@ -78,7 +78,7 @@ describe("single PUT", () => {
   });
 
   it("hashes, presigns the path with the checksum and stages one PUT; a placed identical file is not resent", async () => {
-    const ref = await item(h, "gallery", owner);
+    const ref = content(await item(h, "gallery", owner));
     const rec = recorder();
     const c = media(rec);
     const body = pngBytes(1024, 1024, 2); // about 3 MiB of noise
@@ -362,14 +362,15 @@ describe("reads", () => {
 
   it("waits for an upload by path or stem, and rejects on its failure or absence", async () => {
     const ref = await item(h, "gallery", owner);
+    const cover = content(ref);
     const rec = recorder();
     const c = media(rec);
-    await c.put(image(5, "c.png", 600, 400), { ref, path: "cover" });
+    await c.put(image(5, "c.png", 600, 400), { ref: cover, path: "cover" });
     // Pending: the worker is held on this item until released.
     await h.faults([{ item: ref.id, fault: "hold" }]);
     try {
-      await c.commit(ref, [{ op: "edit", path: "cover.png", edit }]);
-      const done = c.waitFor(ref, "cover", { interval: 50, timeout: 60_000 });
+      await c.commit(cover, [{ op: "edit", path: "cover.png", edit }]);
+      const done = c.waitFor(cover, "cover", { interval: 50, timeout: 60_000 });
       await sleep(400);
       expect(reads(rec)).toBeGreaterThanOrEqual(2);
       await h.clearFaults(ref.id);
@@ -415,7 +416,7 @@ describe("reads", () => {
   });
 
   it("finds the editor view of an upload for re-cropping", async () => {
-    const ref = await item(h, "gallery", owner);
+    const ref = content(await item(h, "gallery", owner));
     const rec = recorder();
     const c = media(rec);
     // 1280×720; a 1200×400 crop is the cover's 3:1.
@@ -441,10 +442,10 @@ describe("reads", () => {
     expect([still.type, still.size > 0]).toEqual(["image/jpeg", true]);
     const api = `${h.origin}${cfg.api}`;
     expect(urls).toEqual([
-      `${api}/v1/media/video/${ref.id}?prefix=low-res%2F&offset=50&limit=25&download=1&editor=1`,
-      `${api}/v1/media/upload/frame?kind=video&id=${ref.id}&path=source.mp4&t=1.5&w=320`,
+      `${api}/v1/media/video/${ref.id}/versions/${ref.version}?prefix=low-res%2F&offset=50&limit=25&download=1&editor=1`,
+      `${api}/v1/media/upload/frame?kind=video&id=${ref.id}&path=source.mp4&t=1.5&version=${ref.version}&w=320`,
     ]);
-    expect(spy.hlsBase(ref, "hls/")).toBe(`${api}/v1/media/video/${ref.id}/hls/hls/`);
-    expect(createContentKitClient({ baseUrl: "http://x", mounts: { upload: "/u" } }).media.hlsBase(ref, "hls/")).toBe(`http://x/v1/media/video/${ref.id}/hls/hls/`);
+    expect(spy.hlsBase(ref, "hls/")).toBe(`${api}/v1/media/video/${ref.id}/versions/${ref.version}/hls/hls/`);
+    expect(createContentKitClient({ baseUrl: "http://x", mounts: { upload: "/u" } }).media.hlsBase(ref, "hls/")).toBe(`http://x/v1/media/video/${ref.id}/versions/${ref.version}/hls/hls/`);
   });
 });

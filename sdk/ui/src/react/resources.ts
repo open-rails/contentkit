@@ -1,6 +1,6 @@
 import type { ContentKitClient } from "../client/client.js";
 import { toContentKitError, type ContentKitError } from "../client/errors.js";
-import type { Comment, Content, Item, Poll, RefBody } from "../client/generated/wire.js";
+import type { Card, Comment, Content, Item, Poll, RefBody } from "../client/generated/wire.js";
 import type { ContentKitChange } from "../client/http.js";
 
 /** One shared read: its data, whether a fetch is in flight, and its last failure. */
@@ -192,6 +192,17 @@ export class ResourceStore {
         },
       );
     const comments = ["comments", "replies", "latest", "admin-comments"];
+    // Cards in lists (pages) and rails (arrays) show a content's counts and the viewer's state.
+    const cards = (id: string, fn: (card: Card) => Card) =>
+      patch<Page<Card> | Card[]>(
+        (t) => t.type === "cards" || t.type === "history",
+        (data) => {
+          const each = (list: Card[]) => (list.some((x) => x.id === id) ? list.map((x) => (x.id === id ? fn(x) : x)) : list);
+          if (Array.isArray(data)) return each(data);
+          const items = each(data.items);
+          return items === data.items ? data : { ...data, items };
+        },
+      );
     switch (c.type) {
       case "notifications.updated":
         this.updateNotification(c.item, scope);
@@ -231,22 +242,24 @@ export class ResourceStore {
         break;
       case "reaction.changed":
         patch((t) => t.type === "reaction" && sameRef(t.ref, c.ref), () => c.counts);
+        cards(c.ref.id, (x) => ({ ...x, counts: { ...x.counts, likes: c.counts.likes } }));
         break;
       case "favorite.changed":
         patch((t) => t.type === "favorite" && sameRef(t.ref, c.ref), () => ({ favorited: c.favorited, count: c.count }));
+        cards(c.ref.id, (x) => ({ ...x, counts: { ...x.counts, favorites: c.count }, viewer: x.viewer && { ...x.viewer, favorited: c.favorited } }));
         this.invalidate((t) => t.type === "favorites");
         break;
       case "content.saved":
         patch<Content | null>((t) => t.type === "content" && t.id === c.content.id, () => c.content);
         // A state, kind or text change can move it between lists: refetch them.
-        this.invalidate((t) => t.type === "contents");
+        this.invalidate((t) => t.type === "contents" || t.type === "cards" || (t.type === "content-detail" && t.id === c.content.id));
         break;
       case "content.changed":
-        this.invalidate((t) => (t.type === "content" && t.id === c.id) || t.type === "contents");
+        this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || t.type === "contents" || t.type === "cards");
         break;
       case "content.deleted":
-        items<Content>(["contents"], (x) => (x.id === c.id ? null : x));
-        this.invalidate((t) => (t.type === "content" && t.id === c.id) || (t.type === "contents" && t.scope === "deleted"));
+        items<{ id: string }>(["contents", "cards", "history"], (x) => (x.id === c.id ? null : x));
+        this.invalidate((t) => ((t.type === "content" || t.type === "content-detail") && t.id === c.id) || (t.type === "contents" && t.scope === "deleted"));
         break;
       case "poll.created":
         this.invalidate((t) => t.type === "polls" || (t.type === "poll" && !t.id));
@@ -269,6 +282,15 @@ export class ResourceStore {
         break;
       case "groups.changed":
         this.invalidate((t) => t.type.startsWith("group"));
+        break;
+      case "contentFilters.changed":
+        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "release-dates");
+        break;
+      case "access.changed":
+        this.invalidate((t) => t.type === "cards" || t.type === "history" || t.type === "content-detail" || t.type === "reader-plan" || t.type.startsWith("group"));
+        break;
+      case "history.changed":
+        this.invalidate((t) => t.type === "history" || t.type === "cards");
         break;
       case "moderation.resolved":
         items<{ id: string }>(["held"], (x) => (x.id === c.id ? null : x));

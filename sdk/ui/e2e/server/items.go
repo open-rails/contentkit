@@ -17,6 +17,8 @@ type item struct {
 	Hidden bool   `json:"hidden,omitempty"`
 	Code   string `json:"code,omitempty"`
 	Path   string `json:"path,omitempty"` // its canonical page, when its kind has a route
+	// Version is its one version: the item its version-level media live on.
+	Version string `json:"version,omitempty"`
 }
 
 type items struct {

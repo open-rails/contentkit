@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { ContentKitChange, ContentKitClient } from "../../src/client/index.js";
 import { ContentKitProvider, useUpload, useUploadQueue } from "../../src/react/index.js";
 import type { Config, TestUser } from "../support/harness.js";
-import { Accounts, client, harness, item, png, recorder, wait } from "./setup.js";
+import { Accounts, client, content, harness, item, png, recorder, wait } from "./setup.js";
 
 describe("upload hooks against the real ContentKit", () => {
   const h = harness();
@@ -28,10 +28,7 @@ describe("upload hooks against the real ContentKit", () => {
         </ContentKitProvider>
       );
     };
-  const gallery = async () => {
-    const { kind, id } = await item(h, "gallery", alice);
-    return { kind, id };
-  };
+  const gallery = () => item(h, "gallery", alice);
 
   it("useUploadQueue uploads, reorders and commits with the provider's client", async () => {
     const ref = await gallery();
@@ -65,7 +62,7 @@ describe("upload hooks against the real ContentKit", () => {
     expect(r.commits).toEqual([]);
 
     await act(async () => {
-      await result.current.upload(png("c.png", 3012, 60, 40), { ref, path: "cover", put: { edit: { rotate: 180 } } });
+      await result.current.upload(png("c.png", 3012, 60, 40), { ref: content(ref), path: "cover", put: { edit: { rotate: 180 } } });
     });
     expect(result.current.result).toMatchObject({ path: "cover.png", file: { path: "cover.png", edit: { rotate: 180 } } });
     expect(result.current.progress?.phase).toBe("processing");

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import type { UploadState } from "@openrails/contentkit-ui/client";
-import { harness, page as at } from "./pages.ts";
+import { mediaRef, harness, page as at } from "./pages.ts";
 
 const MiB = 1 << 20;
 const size = 72 * MiB + 4321;
@@ -19,15 +19,16 @@ test.describe("browser uploads", () => {
     const ref = await h.item({ kind: "gallery", owner: owner.id });
     await page.goto(at("upload.html", owner, {}));
     await expect(page.locator("body[data-ready]")).toBeAttached();
+    const media = mediaRef(ref);
     const result = await page.evaluate(async ({ ref, image }) => {
       const { auth, createContentKitClient } = window.demo;
       const file = new File([new Uint8Array(image)], "small.png", { type: "image/png" });
       const client = createContentKitClient({ baseUrl: "/api/contentkit", fetch: auth.authFetch }).media;
-      return client.put(file, { ref: { kind: ref.kind, id: ref.id }, path: "originals/001.png" });
-    }, { ref, image });
+      return client.put(file, { ref, path: "originals/001.png" });
+    }, { ref: media, image });
 
     expect(result).toMatchObject({ path: "originals/001.png", size: image.length, w: 360, h: 240 });
-    expect(await h.object(ref, "originals/001.png")).toEqual({ size: image.length, sha256: createHash("sha256").update(Buffer.from(image)).digest("hex") });
+    expect(await h.object(media, "originals/001.png")).toEqual({ size: image.length, sha256: createHash("sha256").update(Buffer.from(image)).digest("hex") });
   });
 
   test("resumes after a dropped part and commits the file once", async ({ page }) => {

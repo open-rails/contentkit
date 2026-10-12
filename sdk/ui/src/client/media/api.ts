@@ -56,6 +56,7 @@ export class MediaApi {
   async frame(ref: RefBody, path: string, t: number, w?: number, signal?: AbortSignal) {
     checkRef(ref);
     const q = new URLSearchParams({ kind: ref.kind, id: ref.id, path, t: String(t) });
+    if (ref.version) q.set("version", ref.version);
     if (w) q.set("w", String(w));
     return this.http.request<Blob>(`${this.http.mount("upload", ref)}/frame?${q}`, { signal, blob: true });
   }
@@ -76,10 +77,11 @@ export class MediaApi {
     return this.http.request<PresetRule[]>(`${this.http.mount("media")}/presets`, { signal });
   }
 
-  /** The item under the read API: `{media}/{kind}/{id}`. */
+  /** The item under the read API: `{media}/{kind}/{id}`, a version's at `…/versions/{version}`. */
   itemURL(ref: RefBody): string {
     checkRef(ref);
-    return `${this.http.mount("media", ref)}/${encodeURIComponent(ref.kind)}/${encodeURIComponent(ref.id)}`;
+    const item = `${this.http.mount("media", ref)}/${encodeURIComponent(ref.kind)}/${encodeURIComponent(ref.id)}`;
+    return ref.version ? `${item}/versions/${encodeURIComponent(ref.version)}` : item;
   }
 
   private async post<T>(ref: RefBody, path: string, body: object, signal?: AbortSignal) {
