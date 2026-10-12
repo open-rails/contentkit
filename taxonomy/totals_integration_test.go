@@ -9,9 +9,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/open-rails/helpers/cache"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -302,5 +306,144 @@ func TestCatalogHandlerIntegration(t *testing.T) {
 	}
 	if _, err := newStore(t, pool, schema, tenant, nil).CatalogHandler(CatalogOptions{}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("handler without a Listing: %v", err)
+	}
+}
+
+type testClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *testClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *testClock) advance(d time.Duration) {
+	c.mu.Lock()
+	c.t = c.t.Add(d)
+	c.mu.Unlock()
+}
+
+func loadFailures(name string) uint64 {
+	for _, s := range cache.Snapshot() {
+		if s.Name == name {
+			return s.LoadFailures
+		}
+	}
+	return 0
+}
+
+// eventually polls f for up to five seconds: background reloads land on their own.
+func eventually(t *testing.T, what string, f func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); !f(); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("never: %s", what)
+		}
+	}
+}
+
+// Totals serve the cached count for ten minutes, then reload in the
+// background; while reloads fail the last good count serves for a day, after
+// which the route answers 503 until counting works again. TotalsClient keeps a
+// sibling's totals the same way.
+func TestCatalogTotalsCacheIntegration(t *testing.T) {
+	ctx := context.Background()
+	pool, schema := totalsFixture(t, ctx)
+	addWorks(t, ctx, pool, schema, tenant, hostWork{"gallery", cid(1), "free", "", true, false}, hostWork{"gallery", cid(2), "free", "", true, false})
+	indexVersions(t, ctx, pool, schema, tenant, version{"gallery", cid(1), "g1", "en", "Blue", true, true})
+	s := newStore(t, pool, schema, tenant, func(o *Options) { o.Listing = premiumListing(schema) })
+	clk := &testClock{t: time.Unix(1_800_000_000, 0)}
+	s.Close()
+	policy := totalsPolicy
+	policy.Clock = clk
+	var err error
+	if s.totals, err = cache.New(policy, s.loadTotals); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	public := func() (int64, error) {
+		got, err := s.Totals(ctx, TotalsQuery{Kinds: []string{"gallery"}})
+		return got.Kinds["gallery"].Public, err
+	}
+	if n, err := public(); n != 1 || err != nil {
+		t.Fatalf("first count %d %v", n, err)
+	}
+	indexVersions(t, ctx, pool, schema, tenant, version{"gallery", cid(2), "g2", "en", "Red", true, true})
+	clk.advance(9 * time.Minute)
+	if n, err := public(); n != 1 || err != nil {
+		t.Fatalf("within ten minutes %d %v", n, err)
+	}
+	clk.advance(2 * time.Minute)
+	eventually(t, "the background reload counts g2", func() bool { n, err := public(); return n == 2 && err == nil })
+
+	// Counting breaks: the last good count serves.
+	if _, err := pool.Exec(ctx, fmt.Sprintf(`ALTER TABLE %[1]s.hw RENAME TO hw_gone`, schema)); err != nil {
+		t.Fatal(err)
+	}
+	failed := loadFailures(policy.Name)
+	clk.advance(11 * time.Minute)
+	if n, err := public(); n != 2 || err != nil {
+		t.Fatalf("stale %d %v", n, err)
+	}
+	eventually(t, "the background reload fails", func() bool { return loadFailures(policy.Name) > failed })
+	if n, err := public(); n != 2 || err != nil {
+		t.Fatalf("after a failed reload %d %v", n, err)
+	}
+	h, err := s.CatalogHandler(CatalogOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clk.advance(24 * time.Hour)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/totals", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a day stale: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := pool.Exec(ctx, fmt.Sprintf(`ALTER TABLE %[1]s.hw_gone RENAME TO hw`, schema)); err != nil {
+		t.Fatal(err)
+	}
+	clk.advance(time.Minute) // past the failure backoff
+	if n, err := public(); n != 2 || err != nil {
+		t.Fatalf("recovered %d %v", n, err)
+	}
+
+	// The client: one request per refresh, the last good totals while the sibling is down.
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.StripPrefix("/ck/catalog", h).ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := NewTotalsClient(srv.URL+"/ck", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Close()
+	remote := remoteTotalsPolicy
+	remote.Clock = clk
+	if client.totals, err = cache.New(remote, client.load); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(client.Close)
+	for range 3 {
+		if got, err := client.Totals(ctx, []string{"gallery"}); err != nil || got.Kinds["gallery"].Public != 2 {
+			t.Fatalf("client %+v %v", got, err)
+		}
+	}
+	if n := requests.Load(); n != 1 {
+		t.Fatalf("client sent %d requests, want 1", n)
+	}
+	srv.Close()
+	clientFailed := loadFailures(remote.Name)
+	clk.advance(11 * time.Minute)
+	if got, err := client.Totals(ctx, []string{"gallery"}); err != nil || got.Kinds["gallery"].Public != 2 {
+		t.Fatalf("client stale %+v %v", got, err)
+	}
+	eventually(t, "the client's background reload fails", func() bool { return loadFailures(remote.Name) > clientFailed })
+	if got, err := client.Totals(ctx, []string{"gallery"}); err != nil || got.Kinds["gallery"].Public != 2 {
+		t.Fatalf("client after a failed reload %+v %v", got, err)
 	}
 }

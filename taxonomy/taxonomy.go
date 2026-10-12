@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/open-rails/helpers/cache"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/search"
@@ -181,6 +182,7 @@ type Store struct {
 	languages []string
 	countElig *search.Eligibility
 	listing   *listing
+	totals    *cache.Cache[totalsKey, Total]
 	log       *slog.Logger
 }
 
@@ -232,6 +234,9 @@ func New(opts Options) (*Store, error) {
 	}
 	if opts.Listing != nil {
 		if s.listing, err = s.compileListing(opts.Listing); err != nil {
+			return nil, err
+		}
+		if s.totals, err = cache.New(totalsPolicy, s.loadTotals); err != nil {
 			return nil, err
 		}
 	}

@@ -1325,8 +1325,12 @@ max-age=600`:
 {"kinds": {"gallery": {"public": 1200, "tiers": {"premium": 5400}}}}
 ```
 
-A sibling deployment's totals: `taxonomy.NewTotalsClient(baseURL, nil).Totals(ctx, kinds)`.
-Counts read your search documents, so a listed work without one is not counted.
+Totals are cached per kind and scope (helpers `cache`): reloaded in the
+background after ten minutes, the last good count served while reloads fail,
+for up to a day. A sibling deployment's totals, cached the same way:
+`taxonomy.NewTotalsClient(baseURL, nil).Totals(ctx, kinds)`. `Close` either
+when discarding it. Counts read your search documents, so a listed work
+without one is not counted.
 
 ## Preference boundary (reactions and favorites into the signal plane)
 

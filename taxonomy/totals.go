@@ -7,11 +7,23 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/helpers/cache"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/search"
+)
+
+// ContentKit's catalog-totals cache policy, in one place.
+var (
+	// Store.Totals: one COUNT over every listed document, reloaded in the
+	// background every ten minutes; the last good count serves for a day.
+	totalsPolicy = cache.Options{Name: "contentkit.catalog_totals", RefreshAfter: 10 * time.Minute, MaxStale: 24 * time.Hour, LoadTimeout: 30 * time.Second}
+	// TotalsClient: a sibling deployment's totals, which its route lets any
+	// cache keep for ten minutes.
+	remoteTotalsPolicy = cache.Options{Name: "contentkit.remote_catalog_totals", RefreshAfter: 10 * time.Minute, MaxStale: 24 * time.Hour}
 )
 
 // Listing is the public catalog Totals sizes: the works an anonymous listing
@@ -146,7 +158,9 @@ type Totals struct {
 // totalsKey is one kind under one canonical scope: the unit totals load and cache.
 type totalsKey struct{ kind, scope string }
 
-// Totals counts the listed works of each kind by who opens them. It needs
+// Totals counts the listed works of each kind by who opens them, cached per
+// kind and scope: a count is reloaded in the background after ten minutes and
+// the last good one served while reloads fail, for up to a day. It needs
 // Options.Listing.
 func (s *Store) Totals(ctx context.Context, q TotalsQuery) (Totals, error) {
 	out := Totals{Kinds: map[string]Total{}}
@@ -168,7 +182,7 @@ func (s *Store) Totals(ctx context.Context, q TotalsQuery) (Totals, error) {
 		}
 		keys = append(keys, totalsKey{k, scope})
 	}
-	got, err := s.loadTotals(ctx, keys)
+	got, err := s.totals.Get(ctx, keys)
 	if err != nil {
 		return out, err
 	}
@@ -176,6 +190,14 @@ func (s *Store) Totals(ctx context.Context, q TotalsQuery) (Totals, error) {
 		out.Kinds[k.kind] = got[k]
 	}
 	return out, nil
+}
+
+// Close releases the totals cache's goroutines; call it when discarding a
+// store with a Listing.
+func (s *Store) Close() {
+	if s.totals != nil {
+		s.totals.Close()
+	}
 }
 
 // loadTotals counts keys, one query per scope.

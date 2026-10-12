@@ -11,14 +11,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/open-rails/helpers/cache"
+
 	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
 // TotalsClient reads another deployment's catalog totals (GET /catalog/totals),
-// such as a sibling site's, server to server.
+// such as a sibling site's, server to server, cached per kind: reloaded in the
+// background after ten minutes, the last good totals served while reloads
+// fail, for up to a day.
 type TotalsClient struct {
-	url  string
-	http *http.Client
+	url    string
+	http   *http.Client
+	totals *cache.Cache[string, Total]
 }
 
 // NewTotalsClient reads the deployment whose ContentKit is mounted at baseURL,
@@ -32,8 +37,15 @@ func NewTotalsClient(baseURL string, hc *http.Client) (*TotalsClient, error) {
 	if hc == nil {
 		hc = &http.Client{Timeout: 10 * time.Second}
 	}
-	return &TotalsClient{url: u.String() + httpapi.PublicCatalog.Prefix() + "/totals", http: hc}, nil
+	c := &TotalsClient{url: u.String() + httpapi.PublicCatalog.Prefix() + "/totals", http: hc}
+	if c.totals, err = cache.New(remoteTotalsPolicy, c.load); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
+
+// Close releases the cache's goroutines.
+func (c *TotalsClient) Close() { c.totals.Close() }
 
 // Totals reads the totals of kinds, in the scope the remote derives from the
 // request.
@@ -47,7 +59,7 @@ func (c *TotalsClient) Totals(ctx context.Context, kinds []string) (Totals, erro
 			return out, fmt.Errorf("%w: kind %q must match %s", ErrInvalid, k, identRE)
 		}
 	}
-	got, err := c.load(ctx, kinds)
+	got, err := c.totals.Get(ctx, kinds)
 	if err != nil {
 		return out, err
 	}
