@@ -145,8 +145,8 @@ github.com/open-rails/contentkit v0.75.0 h1:sylwYBtg/jFE1dDwh7lDC5SuI//2iANqz+07
 github.com/open-rails/contentkit v0.75.0/go.mod h1:q4mDhKUA4fWYHqB+jaUNy4a3Sw3G4SvdQxLHkONJ4ZY=
 github.com/open-rails/helpers v1.11.0 h1:2rIY2tS8eaVNYyOtf811w/e2llJtXm+OAcI0AihnJJY=
 github.com/open-rails/helpers v1.11.0/go.mod h1:USlSGNYBaNY6/+dLAmB1H610EDSCprhUGmQyBg1NGfM=
-github.com/open-rails/migratekit v1.10.0 h1:ujeSd7Arz7etqkRhRUaHevOZy2PFX9+8874xZqOgzNs=
-github.com/open-rails/migratekit v1.10.0/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
+github.com/open-rails/migratekit v1.11.0 h1:kcpTyoiqDNUVDHc0lnBQ/q6USpjYRpi95tV1PiAGS5c=
+github.com/open-rails/migratekit v1.11.0/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
 github.com/open-rails/openrails v0.240.0 h1:QyIckUm+dsqO4mRM8Yx/2Py4tgKptKNIb3DGpk45iMw=
 github.com/open-rails/openrails v0.240.0/go.mod h1:fEBsa7HYClUb31Cy4CXmUvGYNz+964ye2VxWukiMCsc=
 github.com/pkg/errors v0.8.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=

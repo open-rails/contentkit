@@ -1,4 +1,3 @@
--- parent: 7 sha256:95b592392007650f84ea3e023a603e4c0f45e40a67ba35d38d5e1ab8c16d4286
 
 -- Interaction rows are keyed by the canonical lower-case content id. Case
 -- spellings of one id were separate keys, so one actor could react to one

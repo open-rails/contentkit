@@ -1,4 +1,3 @@
--- parent: 2 sha256:bd648a43b9b0dd910088a117316c332cc967d82a2dc00b9992628aaada9e1bc2
 
 CREATE TABLE content_media_releases (
     tenant_id text NOT NULL,

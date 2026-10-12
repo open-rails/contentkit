@@ -1,4 +1,3 @@
--- parent: root
 -- Canonical signal plane; the host selects its ClickHouse database.
 
 CREATE TABLE IF NOT EXISTS signals {{ON_CLUSTER}} (

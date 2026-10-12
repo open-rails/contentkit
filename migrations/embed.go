@@ -40,7 +40,7 @@ func ApplyPostgres(ctx context.Context, db *sql.DB, schema string) error {
 		return fmt.Errorf("contentkit: Schema: %w", err)
 	}
 	// MigrateKit creates the selected schema under its migration lock.
-	steps, err := migratekit.Load(Postgres, ".", migratekit.RequireParentLinks())
+	steps, err := migratekit.Load(Postgres, ".")
 	if err != nil {
 		return fmt.Errorf("contentkit: load PostgreSQL migrations: %w", err)
 	}

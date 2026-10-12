@@ -1,4 +1,3 @@
--- parent: 9 sha256:69d6084e3d17bdf1469034caa456e2c33c36de1b6fbc47d77677f31a08d9adde
 
 -- Content codes: the short, random, permanent id a content URL carries
 -- (/{route}/{CODE}/{slug}). Nine uppercase Crockford base32 characters with at

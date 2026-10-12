@@ -17,7 +17,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/open-rails/authkit v1.24.0
 	github.com/open-rails/helpers v1.11.0
-	github.com/open-rails/migratekit v1.10.0
+	github.com/open-rails/migratekit v1.11.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/riverqueue/river v0.47.0

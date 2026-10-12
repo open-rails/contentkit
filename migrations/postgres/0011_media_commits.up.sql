@@ -1,4 +1,3 @@
--- parent: 10 sha256:ccd31a1dbe2e760bf90f374419b1a14bc821b1c9b9a2e601e9aad09eb0c794c3
 
 -- Pending manifest writes and their effects, not a manifest head or file list.
 -- An item cannot start another write until its prior outcome is fenced and
