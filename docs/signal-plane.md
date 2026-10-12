@@ -56,8 +56,9 @@ equally. The default popularity rank is `log10(1 + viewers) × max(floor,
 Bayesian mean view score)`; hosts may tune `RankWeights` or replace the
 expression with `RankExpr` over the metric columns.
 
-## Scorer
+## Scoring
 
-Hosts map a raw session to `Scored{Score, Progress, ProgressMax, Completed}`
-per content kind: gallery pages read / page count, video watch %, post scroll
-depth. The kit owns everything else.
+`POST /v1/signals` scores a view against its version
+(`popularity.SessionScore`): pages read of the version's pages (reader kinds),
+seconds watched of its duration (player kinds), percent scrolled (post kinds).
+Clients send progress, never scores.

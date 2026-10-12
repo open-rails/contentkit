@@ -59,11 +59,11 @@ another tenant is an error, never remapped.
 | `media/worker` | the media worker: one process for every producer, built from the host's registry (`cmd/media-worker` is the stock build) |
 | `media/workqueue` | the host's side of the worker: its per-host River schema, insert-only `Queue` (enqueue, cancel), encode progress |
 | `content` | posts, comments, reactions, favorites, polls (multiple-choice and free-text) and their counts over `ContentRef`, in the host schema's `content_*` interaction tables; authors' names from the host's `userinfo.Lookup` and avatars from media, the `ContentProcessor` port, post and poll images through `Media`, the optional `ContentModerator` (held/review queue) and `AnswerClassifier` ports, per-user interaction limits, owner and global comment bans, and the HTTP routes |
-| `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO), documents and dirty queue, RRF, the `DocumentSink` port |
+| `search` | PGroonga keyword search (exact/alias/prefix/typo, EN/ZH/JA/KO) with a visibility join, documents and dirty queue, RRF, the `DocumentSink` port |
 | `groups` | groups of content by kind (`kinds.Config.GroupKinds`): localized names/aliases and text, attributes, covers, parents, scopes, edges, merge; content- and version-level memberships with roles, positions and windows; effective groups for facets, per-language counts, typeahead documents, `/v1` routes |
 | `signal` | ClickHouse signal plane: canonical signals, compact subject state, daily rollups, windows, erasure fence, exposures/attribution, repair |
 | `popularity` | named ranking policy (`PolicyV1`) over the window metrics: ClickHouse `RankExpr` and Go `Score` in agreement, literal windows, session scorer, group popularity through the `Catalog` port (`*groups.Store`) |
-| `discovery` | `SimilarTo`/`Recommend`: the `Candidates` port, the default co-engagement source (`Engagement`), `Fallback`, and the shared exclusion/fill policy (`Recommender`) |
+| `discovery` | the public reads under `/v1`: lists, search, typeahead, similar and recommended contents, release dates, content filters, history, signals and exposures, as cards under one visibility rule; the popularity job; the `Candidates` port, `Engagement`, `Fallback` and the shared `Recommender` policy |
 | `eval` | lexical golden-case evaluation, reports, baselines |
 | `migrations` | PostgreSQL migration chain and ClickHouse baseline |
 | `adapters/openrails` | its own module (opt-in): `access.Entitlements` over OpenRails `CheckEntitlements` (one request per read) |
