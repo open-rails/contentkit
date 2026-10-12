@@ -15,6 +15,7 @@ import (
 
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/worker"
 	"github.com/open-rails/contentkit/search"
@@ -60,6 +61,7 @@ const (
 	reclassifyEvery     = 10 * time.Minute
 	recountEvery        = 15 * time.Minute
 	windowsEvery        = time.Minute
+	popularityEvery     = time.Hour
 	windowsLookback     = 5 * time.Minute // well past windowsEvery, so no window change is missed
 )
 
@@ -83,6 +85,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &erasureWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &reclassifyWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &groupsWorker{e: e}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &popularityWorker{e: e}) },
 		} {
 			if err := add(); err != nil {
 				return err
@@ -106,6 +109,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			periodic("contentkit_coengagement", coEngagementEvery, coEngagementArgs{}, false)
 			periodic("contentkit_projection_repair", repairEvery, repairArgs{}, true)
 			periodic("contentkit_erasure", erasureEvery, erasureArgs{}, false)
+			periodic("contentkit_popularity", popularityEvery, popularityArgs{}, true)
 		}
 		return nil
 	}, func(_ context.Context, b riverhelpers.Binding) error {
@@ -191,6 +195,26 @@ func (w *groupsWorker) Work(ctx context.Context, job *river.Job[groupsArgs]) err
 		return w.e.groups.RefreshWindows(ctx, windowsLookback)
 	}
 	return w.e.groups.Recount(ctx)
+}
+
+type popularityArgs struct{}
+
+func (popularityArgs) Kind() string { return "contentkit_popularity" }
+
+// popularityWorker copies the signal plane's popularity into content_facets
+// for popular and top_rated sorts.
+type popularityWorker struct {
+	river.WorkerDefaults[popularityArgs]
+	e *Engine
+}
+
+func (w *popularityWorker) Timeout(*river.Job[popularityArgs]) time.Duration { return 30 * time.Minute }
+
+func (w *popularityWorker) Work(ctx context.Context, _ *river.Job[popularityArgs]) error {
+	if err := w.e.discover.RefreshPopularity(ctx); !errors.Is(err, discovery.ErrNoSignals) {
+		return err
+	}
+	return nil
 }
 
 type preferenceSyncArgs struct {

@@ -291,6 +291,45 @@ func (s *Store) List(ctx context.Context, opts ListOptions) (GroupPage, error) {
 	return page, s.fill(ctx, shows)
 }
 
+// CardOptions resolve Cards.
+type CardOptions struct {
+	// Language resolves names and paths as ListOptions.Language does.
+	Language string
+	// Covers fills covers' renditions; chips leave them out.
+	Covers bool
+}
+
+// Cards returns the active groups among ids as cards, resolved as List
+// resolves them, in no particular order.
+func (s *Store) Cards(ctx context.Context, ids []GroupID, o CardOptions) ([]GroupCard, error) {
+	want, err := uniqueIDs(ids)
+	if err != nil || len(want) == 0 {
+		return []GroupCard{}, err
+	}
+	c, err := s.compile(ListOptions{Language: o.Language}, want)
+	if err != nil {
+		return nil, err
+	}
+	c.limit, c.args["limit"] = len(want), len(want)+1
+	var page GroupPage
+	if err := s.read(ctx, func(q Querier) error {
+		page, err = s.cards(ctx, q, c)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	if o.Covers {
+		slots := make([]coverSlot, len(page.Groups))
+		for i := range page.Groups {
+			slots[i] = coverSlot{page.Groups[i].Kind, page.Groups[i].ID, page.Groups[i].Cover}
+		}
+		if err := s.fillCovers(ctx, slots); err != nil {
+			return nil, err
+		}
+	}
+	return page.Groups, nil
+}
+
 // coverSlot is a cover to fill in place.
 type coverSlot struct {
 	kind  string

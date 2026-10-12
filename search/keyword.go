@@ -24,7 +24,7 @@ type documentKey struct {
 // KeywordSearch preserves names and aliases, including native scripts. Exact
 // names precede aliases, token/prefix matches, then conservative one-edit typos.
 // PostgreSQL retrieves bounded candidates; Go never scans the document catalog.
-// Host filters and the eligibility join run inside every route before its limit.
+// The eligibility join runs inside every route before its limit.
 func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts Options) (Result, error) {
 	if pool == nil {
 		return Result{}, fmt.Errorf("pool is required")
@@ -42,30 +42,14 @@ func KeywordSearch(ctx context.Context, pool *pgxpool.Pool, query string, opts O
 		return Result{}, err
 	}
 	defer tx.Rollback(ctx)
-	result, err := keywordSearch(ctx, tx, query, opts, nil)
+	result, err := keywordSearch(ctx, tx, query, opts)
 	if err != nil {
 		return result, err
 	}
 	return result, tx.Commit(ctx)
 }
 
-// WalkKeywordMatches visits every eligible matched document in content-reference
-// order. Limit is ignored. The caller owns the transaction and must roll it back
-// on error. Rows are closed before callbacks, which may use the same transaction.
-func WalkKeywordMatches(ctx context.Context, tx pgx.Tx, query string, opts Options, visit func(Hit) error) error {
-	if tx == nil {
-		return fmt.Errorf("transaction is required")
-	}
-	if visit == nil {
-		return fmt.Errorf("match visitor is required")
-	}
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	_, err := keywordSearch(ctx, tx, query, opts, visit)
-	return err
-}
-
-func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options, visit func(Hit) error) (Result, error) {
+func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (Result, error) {
 	var result Result
 	if utf8.RuneCountInString(query) > 256 {
 		return result, fmt.Errorf("keyword query exceeds 256 characters")
@@ -124,32 +108,13 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options, v
 	if utf8.RuneCountInString(q) >= 3 {
 		queries = append(queries, fuzzy)
 	}
-	if visit != nil {
-		// One predicate union avoids repeated eligibility/scoring-field work and
-		// sorting duplicate documents when several indexed routes match a row.
-		predicates := []string{fmt.Sprintf(`%s @> ARRAY[@q::text]`, terms),
-			fmt.Sprintf(`%s OPERATOR(%s.&@~) @prefix`, terms, qn)}
-		if utf8.RuneCountInString(q) >= 3 {
-			predicates = append(predicates, fmt.Sprintf(`%s OPERATOR(%s.%%>) @q`, corpus, qt))
-		}
-		cursorSQL := selectSQL + "(" + strings.Join(predicates, " OR ") + ") ORDER BY 1,2,3,4"
-		if _, err := tx.Exec(ctx, "DECLARE contentkit_keyword_matches NO SCROLL CURSOR FOR "+cursorSQL, args); err != nil {
-			return result, err
-		}
-		queries = []string{"FETCH FORWARD 256 FROM contentkit_keyword_matches"}
-	}
 	found := map[documentKey]Hit{}
-	for i := 0; i < len(queries); {
-		var queryArgs []any
-		if visit == nil {
-			queryArgs = []any{args}
-		}
-		rows, err := tx.Query(ctx, queries[i], queryArgs...)
+	for _, query := range queries {
+		rows, err := tx.Query(ctx, query, args)
 		if err != nil {
 			return result, err
 		}
 		seen := 0
-		var batch []Hit
 		for rows.Next() {
 			if err := ctx.Err(); err != nil {
 				rows.Close()
@@ -171,10 +136,6 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options, v
 				return result, err
 			}
 			if h.Score > 0 {
-				if visit != nil {
-					batch = append(batch, h)
-					continue
-				}
 				k := documentKey{h.Key(), h.Language}
 				if old, ok := found[k]; !ok || h.Score > old.Score {
 					found[k] = h
@@ -185,21 +146,9 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options, v
 		if err := rows.Err(); err != nil {
 			return result, err
 		}
-		if visit == nil && seen >= sqlLimit {
+		if seen >= sqlLimit {
 			result.Truncated = true
 		}
-		for _, hit := range batch {
-			if err := visit(hit); err != nil {
-				return result, err
-			}
-		}
-		if visit == nil || seen < 256 {
-			i++
-		}
-	}
-	if visit != nil {
-		_, err := tx.Exec(ctx, "CLOSE contentkit_keyword_matches")
-		return result, err
 	}
 	out := make([]Hit, 0, len(found))
 	for _, h := range found {
@@ -231,7 +180,7 @@ func hitLess(a, b Hit) bool {
 }
 
 // Eligible returns the candidates that exist as documents of the request tenant
-// and language and pass the host filter and eligibility join, in their input
+// and language and pass the eligibility join, in their input
 // order with Priority filled. Candidates another source proposes are never
 // trusted with eligibility: this is the same join every keyword route runs.
 func Eligible(ctx context.Context, pool *pgxpool.Pool, opts Options, candidates []Candidate) ([]Hit, error) {
