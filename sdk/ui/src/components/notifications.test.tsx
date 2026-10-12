@@ -135,3 +135,36 @@ it("archives receipts, restores them, and preserves tracked work", async () => {
   const archivedTask = (await screen.findByText("Notice task")).closest("li")!;
   expect(within(archivedTask).getByText("Needs action")).toBeVisible();
 });
+
+it("ignores an older successful mutation response across mounted inbox views", async () => {
+  let current = item("one", { status: "open", action_requested: true });
+  let finishRead: (() => void) | undefined;
+  const client = createContentKitClient({ baseUrl: "https://content.test/ck", fetch: async (url, init) => {
+    const u = new URL(String(url));
+    if (init?.method === "GET") return Response.json({ items: !!current.dismissed_at === (u.searchParams.get("dismissed") === "true") ? [current] : [] });
+    if (u.pathname.endsWith("/read")) {
+      current = { ...current, read_at: "2026-10-11T13:00:00Z", revision: 2 };
+      const earlier = current;
+      return new Promise<Response>((resolve) => { finishRead = () => resolve(Response.json(earlier)); });
+    }
+    current = { ...current, dismissed_at: "2026-10-11T13:01:00Z", revision: 3 };
+    return Response.json(current);
+  } });
+  const renderActions = (notice: Item) => <span>Revision {notice.revision}</span>;
+  render(<ContentKitProvider client={client} viewer="alice">
+    <section data-testid="first"><NotificationInbox renderItem={renderItem} /></section>
+    <section data-testid="second"><NotificationInbox renderItem={renderItem} /></section>
+    <section data-testid="archived"><NotificationInbox initialFilter="archived" renderItem={renderItem} renderActions={renderActions} /></section>
+  </ContentKitProvider>);
+  const first = within(screen.getByTestId("first")), second = within(screen.getByTestId("second")), archive = within(screen.getByTestId("archived"));
+  await first.findByText("Notice one");
+  await userEvent.click(first.getByRole("button", { name: "Mark read" }));
+  await waitFor(() => expect(finishRead).toBeDefined());
+  await userEvent.click(second.getByRole("button", { name: "Dismiss" }));
+  await archive.findByText("Revision 3");
+  await act(async () => { finishRead!(); });
+  expect(archive.getByText("Notice one")).toBeVisible();
+  expect(archive.getByText("Revision 3")).toBeVisible();
+  expect(archive.getByText("Needs action")).toBeVisible();
+  expect(first.queryByText("Notice one")).toBeNull();
+});

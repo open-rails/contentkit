@@ -294,6 +294,10 @@ export class ResourceStore {
     for (const [key, slot] of this.slots) {
       if (slot.tag.type !== "notifications" || !slot.listeners.size) continue;
       const page = slot.entry.data as Page<Item> | undefined;
+      const cached = page?.items.find((n) => n.id === item.id);
+      // Mutations from separate mounted views can complete out of order.
+      // In particular, an old active receipt must not evict a newer archive.
+      if ((slot.tag.readScope ?? "{}") === scope && cached && cached.revision > item.revision) continue;
       const archived = slot.tag.scope?.startsWith("archived:") ?? false;
       const matches = archived === !!item.dismissed_at;
       if ((slot.tag.readScope ?? "{}") !== scope || !page || slot.tag.scope?.endsWith(":unread") || (matches && !page.items.some((n) => n.id === item.id))) {
